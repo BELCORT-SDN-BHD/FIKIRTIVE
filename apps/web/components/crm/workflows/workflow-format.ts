@@ -238,7 +238,7 @@ export function validationIssueCopy(issue: ValidationIssue): string {
  *
  * Every key is a reason `customer-workflow-service` can record on a run or step, and
  * `lib/__tests__/workflow-format.test.ts` pins this key set equal to
- * CUSTOMER_WORKFLOW_REASON_CODES in BOTH directions — the same pinboard #770 built for
+ * customerWorkflowReasonCodes() in BOTH directions — the same pinboard #770 built for
  * ERROR_COPY, which is the thing that was missing here (#811). Two send-gate reasons had
  * been reachable with no sentence at all since before #807, so a merchant read
  * "This workflow stopped with reason consentstop:consent unknown d5 eligible".

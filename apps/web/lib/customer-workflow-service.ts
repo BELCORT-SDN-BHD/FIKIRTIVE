@@ -81,7 +81,7 @@ export type CustomerWorkflowErrorCode =
 
 /**
  * The four stop reasons this service names itself. Every other reason a merchant can read
- * comes from an enumeration owned elsewhere (see CUSTOMER_WORKFLOW_REASON_CODES below) —
+ * comes from an enumeration owned elsewhere (see customerWorkflowReasonCodes below) —
  * these are the ones written here, so they are written ONCE, here, and referenced at the
  * settlement sites rather than retyped as literals.
  */
@@ -116,17 +116,23 @@ const NO_BLOCKING_AXIS_REASON = "eligibility:unknown";
  * NOT here, on purpose: `delegated_then_routine_authority_*`. Those are one family answered by
  * one sentence (the hand-off already happened; delivery is unknown until receipts exist), so
  * `reasonCodeCopy` answers them by prefix. The pinboard covers that family separately.
+ *
+ * A function, not a module-level array: nothing in this service needs the assembled list at
+ * import time, and reading four other modules' enumerations while this one is still being
+ * evaluated would make importing the workflow gateway depend on all of them being loaded.
  */
-export const CUSTOMER_WORKFLOW_REASON_CODES: readonly string[] = [
-  ...ROUTINE_AUTHORITY_FAILURES.map((failure) => `routine_authority_${failure}`),
-  ...WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS,
-  ...Object.values(SERVICE_STOP_REASONS),
-  ...BUSINESS_HOURS_UNAVAILABLE_REASONS.map((reason) => `BUSINESS_HOURS_${reason}`),
-  ...Object.entries(SEND_ELIGIBILITY_NON_PASS_REASONS).flatMap(([axisName, reasons]) =>
-    reasons.map((reason) => `${axisName}:${reason}`),
-  ),
-  NO_BLOCKING_AXIS_REASON,
-];
+export function customerWorkflowReasonCodes(): readonly string[] {
+  return [
+    ...ROUTINE_AUTHORITY_FAILURES.map((failure) => `routine_authority_${failure}`),
+    ...WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS,
+    ...Object.values(SERVICE_STOP_REASONS),
+    ...BUSINESS_HOURS_UNAVAILABLE_REASONS.map((reason) => `BUSINESS_HOURS_${reason}`),
+    ...Object.entries(SEND_ELIGIBILITY_NON_PASS_REASONS).flatMap(([axisName, reasons]) =>
+      reasons.map((reason) => `${axisName}:${reason}`),
+    ),
+    NO_BLOCKING_AXIS_REASON,
+  ];
+}
 
 export class CustomerWorkflowError extends Error {
   constructor(public readonly code: CustomerWorkflowErrorCode) {
@@ -367,13 +373,11 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const TOKEN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
 /**
- * The four axes, in the order `firstNonPass` reports them. Read off the reason enumeration
- * rather than retyped: a fifth axis with no reasons enumerated would otherwise be a stop the
- * merchant reads with no sentence behind it (#811). Object key order is insertion order.
+ * The four axes, in the order `firstNonPass` reports them. Typed against the reason
+ * enumeration, so a name that is not an axis with enumerated reasons does not compile (#811).
  */
-const AXES = Object.keys(SEND_ELIGIBILITY_NON_PASS_REASONS) as Array<
-  keyof typeof SEND_ELIGIBILITY_NON_PASS_REASONS
->;
+const AXES = ["consentStop", "doNotDisturb", "providerRefusal", "frequency"] as const satisfies
+  readonly (keyof typeof SEND_ELIGIBILITY_NON_PASS_REASONS)[];
 
 function fail(code: CustomerWorkflowErrorCode): never {
   throw new CustomerWorkflowError(code);

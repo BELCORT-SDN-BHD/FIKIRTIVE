@@ -12,7 +12,7 @@ import {
 } from "@/components/crm/workflows/workflow-format";
 import {
   CUSTOMER_WORKFLOW_ERROR_CODES,
-  CUSTOMER_WORKFLOW_REASON_CODES,
+  customerWorkflowReasonCodes,
 } from "@/lib/customer-workflow-service";
 import { routineLimitsSummary } from "@/lib/routine-authorization-facts";
 
@@ -108,18 +108,20 @@ describe("workflow failure copy (#753)", () => {
 });
 
 describe("workflow stop-reason copy (#811)", () => {
+  const reasonCodes = customerWorkflowReasonCodes();
+
   it("covers exactly the reasons a Routine can stop with", () => {
     // TOTALITY, both directions — the pinboard #770 built for ERROR_COPY, which never covered
     // REASON_COPY. `consentStop:consent_unknown_d5_eligible` and
     // `consentStop:consent_unknown_unconfirmed_automatic_hard_block` had been reachable with
     // no sentence since before #807 because nothing compared these two sets.
-    expect([...WORKFLOW_REASON_COPY_CODES].sort()).toEqual([...CUSTOMER_WORKFLOW_REASON_CODES].sort());
+    expect([...WORKFLOW_REASON_COPY_CODES].sort()).toEqual([...reasonCodes].sort());
   });
 
   it("keeps the authority list honest (a collapsed enumeration would pin nothing)", () => {
     // Both sets being equal proves nothing if the authority itself went empty. These are the
     // four families it is assembled from, and the two reasons this ticket is about.
-    expect(CUSTOMER_WORKFLOW_REASON_CODES.length).toBeGreaterThan(25);
+    expect(reasonCodes.length).toBeGreaterThan(25);
     for (const code of [
       "routine_authority_hash_drift",
       "workflow_target_unavailable",
@@ -130,12 +132,12 @@ describe("workflow stop-reason copy (#811)", () => {
       "providerRefusal:account_level_block",
       "frequency:frequency_cap_reached",
     ]) {
-      expect(CUSTOMER_WORKFLOW_REASON_CODES, code).toContain(code);
+      expect(reasonCodes, code).toContain(code);
     }
   });
 
   it("never puts a machine code in what the merchant reads", () => {
-    for (const code of CUSTOMER_WORKFLOW_REASON_CODES) {
+    for (const code of reasonCodes) {
       const message = reasonCodeCopy(code);
       // The symptom itself: an uncovered reason came out as the humanised token
       // ("This workflow stopped with reason consentstop:consent unknown d5 eligible.").
@@ -161,7 +163,7 @@ describe("workflow stop-reason copy (#811)", () => {
   });
 
   it("says D5 nowhere — it is an internal document number, not a sentence (#728)", () => {
-    for (const code of CUSTOMER_WORKFLOW_REASON_CODES) {
+    for (const code of reasonCodes) {
       expect(reasonCodeCopy(code), code).not.toMatch(/\bd5\b/i);
     }
   });
