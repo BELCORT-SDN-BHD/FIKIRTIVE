@@ -644,6 +644,95 @@ async function mountForEffects(element: ReturnType<typeof createElement>) {
   };
 }
 
+/**
+ * r7 判官 P1 — wait for the STATE, never for a duration.
+ *
+ * The preview host was awaited with a fixed 600ms sleep. The judge delayed the action's promise
+ * and the host was still showing "Calculating" when the assertion ran: a sleep encodes a guess
+ * about someone else's latency, and on a slower machine (or a busy CI box) the guess is wrong in
+ * the direction that produces a mystery failure. This polls the host until the condition the test
+ * actually depends on is true, with a cap so a genuine hang fails loudly instead of hanging.
+ */
+async function waitForHost(
+  mounted: { host: HTMLElement; settle: (ms: number) => Promise<void> },
+  selector: string,
+  heading: string,
+  condition: (text: string) => boolean,
+  what: string,
+): Promise<string> {
+  const timeoutMs = 10_000;
+  const stepMs = 20;
+  const startedAt = Date.now();
+  let last = "";
+  for (;;) {
+    try {
+      last = hostContainerText(mounted.host, selector, heading);
+      if (condition(last)) return last;
+    } catch {
+      // The host branch is not mounted yet — that is one of the states we are waiting out.
+      last = "";
+    }
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`timed out waiting for ${what}; last host text was: ${last}`);
+    }
+    await mounted.settle(stepMs);
+  }
+}
+
+/**
+ * Mount the broadcast page and actually freeze: pick the segment in the real `<select>`, click the
+ * real button, wait for the action's own answer. Shared by the note board and the note drill so
+ * both look at the same host in the same state.
+ */
+async function mountFrozenBroadcast() {
+  vi.mocked(broadcastUiActions.freezeAudience).mockResolvedValue({
+    ok: true,
+    consent: NOTE_TIGHTENED,
+  } as unknown as Awaited<ReturnType<typeof broadcastUiActions.freezeAudience>>);
+  vi.mocked(broadcastUiActions.getBroadcastRunLivePreflight).mockResolvedValue({
+    ok: true,
+    resource: { run: BROADCAST_RUN_FIXTURE, members: [BROADCAST_MEMBER_FIXTURE] },
+  } as unknown as Awaited<ReturnType<typeof broadcastUiActions.getBroadcastRunLivePreflight>>);
+
+  const mounted = await mountForEffects(createElement(BroadcastDetailPage, BROADCAST_PAGE_FIXTURE));
+  const select = mounted.host.querySelector<HTMLSelectElement>(
+    'select[aria-label="Audience segment"]',
+  );
+  if (!select) throw new Error("the audience segment select is not on the page");
+  const setValue = Object.getOwnPropertyDescriptor(
+    window.HTMLSelectElement.prototype,
+    "value",
+  )?.set;
+  await act(async () => {
+    setValue?.call(select, "01ARZ3NDEKTSV4RRFFQ69G5FAW");
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const freeze = Array.from(mounted.host.querySelectorAll("button")).find(
+    (button) => (button.textContent ?? "").trim() === "Freeze audience",
+  );
+  if (!freeze) throw new Error("the freeze button is not on the page");
+  await act(async () => {
+    freeze.click();
+  });
+  const text = await waitForHost(
+    mounted,
+    "div",
+    "1 · Freeze the audience",
+    (value) => value.includes("excluded for opting out"),
+    "the freeze action's note to appear",
+  );
+  return { mounted, text };
+}
+
+/** The live preview has settled when the server's phrase is showing and nothing is in flight. */
+function previewSettled(text: string): boolean {
+  return (
+    text.includes("All of: Contact is not a known opt-out") &&
+    !text.includes("Calculating") &&
+    !text.includes("Waiting")
+  );
+}
+
 /** The container whose text starts with this heading — the host, not the child inside it. */
 function hostContainer(host: HTMLElement, selector: string, heading: string): Element {
   const node = Array.from(host.querySelectorAll(selector)).find((element) =>
@@ -1368,9 +1457,15 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     actAs(ORG_A);
     const mounted = await mountForEffects(createElement(SegmentsPage, SEGMENTS_PAGE_FIXTURE));
     try {
-      // The draft preview is debounced by 350ms and then awaits the real action.
-      await mounted.settle(600);
-      const text = hostContainerText(mounted.host, "section", "Live preview");
+      // The draft preview is debounced and then awaits the real action: wait for the settled
+      // STATE (server phrase present, nothing calculating), never for a fixed duration.
+      const text = await waitForHost(
+        mounted,
+        "section",
+        "Live preview",
+        previewSettled,
+        "the live preview to settle",
+      );
       expect(text).toBe(APPROVED_HOSTS.livePreview);
       // The parts that live in the host and NOT in the child — proof the scope really widened.
       expect(text).toContain("Current");
@@ -1390,43 +1485,9 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
    * r6 判官 ② — the freeze note HOST, after the real button was clicked and the action returned.
    */
   it("pins the freeze step host container after the action returned", async () => {
-    vi.mocked(broadcastUiActions.freezeAudience).mockResolvedValue({
-      ok: true,
-      consent: NOTE_TIGHTENED,
-    } as unknown as Awaited<ReturnType<typeof broadcastUiActions.freezeAudience>>);
-    vi.mocked(broadcastUiActions.getBroadcastRunLivePreflight).mockResolvedValue({
-      ok: true,
-      resource: { run: BROADCAST_RUN_FIXTURE, members: [BROADCAST_MEMBER_FIXTURE] },
-    } as unknown as Awaited<ReturnType<typeof broadcastUiActions.getBroadcastRunLivePreflight>>);
-
-    const mounted = await mountForEffects(
-      createElement(BroadcastDetailPage, BROADCAST_PAGE_FIXTURE),
-    );
+    const { mounted, text } = await mountFrozenBroadcast();
     try {
-      const select = mounted.host.querySelector<HTMLSelectElement>(
-        'select[aria-label="Audience segment"]',
-      );
-      if (!select) throw new Error("the audience segment select is not on the page");
-      const setValue = Object.getOwnPropertyDescriptor(
-        window.HTMLSelectElement.prototype,
-        "value",
-      )?.set;
-      await act(async () => {
-        setValue?.call(select, "01ARZ3NDEKTSV4RRFFQ69G5FAW");
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-
-      const freeze = Array.from(mounted.host.querySelectorAll("button")).find(
-        (button) => (button.textContent ?? "").trim() === "Freeze audience",
-      );
-      if (!freeze) throw new Error("the freeze button is not on the page");
-      await act(async () => {
-        freeze.click();
-      });
-      await mounted.settle(0);
-
       expect(vi.mocked(broadcastUiActions.freezeAudience)).toHaveBeenCalledTimes(1);
-      const text = hostContainerText(mounted.host, "div", "1 · Freeze the audience");
       expect(text).toBe(APPROVED_HOSTS.freezeStep);
       // The note really is inside the host now, not pinned as a component beside it.
       expect(text).toContain("2 contacts were excluded for opting out.");
@@ -1450,7 +1511,13 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     actAs(ORG_A);
     const mounted = await mountForEffects(createElement(SegmentsPage, SEGMENTS_PAGE_FIXTURE));
     try {
-      await mounted.settle(600);
+      await waitForHost(
+        mounted,
+        "section",
+        "Live preview",
+        previewSettled,
+        "the live preview to settle",
+      );
       const section = Array.from(mounted.host.querySelectorAll("section")).find((element) =>
         (element.textContent ?? "").trim().startsWith("Live preview"),
       );
@@ -1458,11 +1525,22 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
       const clean = hostContainerText(mounted.host, "section", "Live preview");
       expect(clean).toBe(APPROVED_HOSTS.livePreview);
 
+      // r7 判官 P2 — inject where the comment CLAIMS. `section.lastElementChild` is the wrapper
+      // that holds the phrase AND the child panel, so inserting before it put the block above the
+      // wrapper, not between the two. The board caught it either way, but a drill that describes
+      // the wrong position is a drill nobody can check. The real position is inside that wrapper.
+      const wrapper = section.lastElementChild;
+      if (!wrapper) throw new Error("the preview host branch is not mounted");
+      expect(wrapper.firstElementChild?.textContent).toBe(
+        "All of: Contact is not a known opt-out",
+      );
+      expect(wrapper.childElementCount).toBe(2);
+
       for (const fixture of RED_FIXTURES) {
         const injected = document.createElement("p");
         injected.textContent = fixture.sentence;
         // Between the phrase and the child panel — exactly where the judge put it.
-        section.insertBefore(injected, section.lastElementChild);
+        wrapper.insertBefore(injected, wrapper.lastElementChild);
         const mutated = hostContainerText(mounted.host, "section", "Live preview");
         expect(mutated, `${fixture.label} inside the preview host`).not.toBe(
           APPROVED_HOSTS.livePreview,
@@ -1478,6 +1556,40 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
       }
       expect(hostContainerText(mounted.host, "section", "Live preview")).toBe(
         APPROVED_HOSTS.livePreview,
+      );
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  /**
+   * r7 判官 P2 — the same drill on the note host: inside the freeze-step container, immediately
+   * BEFORE `ConsentExclusionNote`. That is the note-side twin of the shape r5 could not see.
+   */
+  it("fails the freeze step snapshot for a block injected before the note, inside the host", async () => {
+    const { mounted, text } = await mountFrozenBroadcast();
+    try {
+      expect(text).toBe(APPROVED_HOSTS.freezeStep);
+      const container = hostContainer(mounted.host, "div", "1 · Freeze the audience");
+      const note = container.lastElementChild;
+      if (!note) throw new Error("the freeze step host is empty");
+      expect(note.textContent).toContain("contacts were excluded for opting out");
+
+      for (const fixture of RED_FIXTURES) {
+        const injected = document.createElement("p");
+        injected.textContent = fixture.sentence;
+        container.insertBefore(injected, note);
+        const mutated = hostContainerText(mounted.host, "div", "1 · Freeze the audience");
+        expect(mutated, `${fixture.label} inside the freeze step host`).not.toBe(
+          APPROVED_HOSTS.freezeStep,
+        );
+        expect(mutated).toContain(fixture.sentence);
+        // And the r5-era board for this surface — the detached note component — stays green.
+        expect(renderSurface("noteTightened")).toBe(APPROVED_SURFACES.noteTightened);
+        injected.remove();
+      }
+      expect(hostContainerText(mounted.host, "div", "1 · Freeze the audience")).toBe(
+        APPROVED_HOSTS.freezeStep,
       );
     } finally {
       mounted.unmount();
