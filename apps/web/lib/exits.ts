@@ -10,8 +10,12 @@
  * 侧栏里就挂着 /billing,Brand memory 就是 /otto?view=memory。所以这里不发明新去处,
  * 只是把已有的三个去处收成一处 —— 谁要指路,只能从这里取地址。
  *
- * 纯常量 + 纯函数,不含 JSX:`"use server"` 的 billing-actions 和客户端组件都要读它。
- * 渲染成可点元素的那一层在 components/exits/Exits.tsx。
+ * 纯常量 + 纯函数,不含 JSX,也不 import 任何东西 —— 所以服务端组件(法务页)、客户端
+ * 组件(Settings、Otto 各卡)和纯模块都能读同一份,不受 `"use client"` / `"use server"`
+ * 边界限制。渲染成可点元素的那一层在 components/exits/Exits.tsx。
+ *
+ * (#786:这里原本写着 billing-actions 也读这个模块。它没有 —— 它只在自己的返回体上带一个
+ *  `contactSupport` 标记,由 BuyPackButton 拿去换出口。注释与事实不符就是下一个假前提。)
  */
 
 /** 唯一的人工出口。历来就是这个地址(隐私页、条款页、删号确认框都用它)。 */
