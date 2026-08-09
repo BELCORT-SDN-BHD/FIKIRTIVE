@@ -123,6 +123,47 @@ describe("CRM Segment skills", () => {
     expect(segmentPorts.build).toHaveBeenCalledTimes(2);
   });
 
+  /**
+   * #758 — the merchant's optional "also exclude the opt-outs I recorded myself" is a field on
+   * the rule group, so Otto reaches it through the same object the CRM page sends and the same
+   * action layer validates. These examples pin that Otto is not a second, weaker door: the
+   * schema accepts the field, and both skills hand it on byte-for-byte instead of dropping it.
+   */
+  it("carries the merchant's optional reported-opt-out exclusion through, unchanged", async () => {
+    const strict = { ...rules, excludeReportedOptOut: true };
+    expect(crmSegmentRuleGroup.safeParse(strict).success).toBe(true);
+    expect(crmSegmentRuleGroup.parse(strict)).toEqual(strict);
+    expect(crmSegmentRuleGroup.safeParse({ ...rules, excludeReportedOptOut: "yes" }).success).toBe(
+      false,
+    );
+
+    const segmentPorts = ports();
+    await executeReadSegments({ operation: "preview", rules: strict }, runContext(segmentPorts));
+    await executeBuildSegment(
+      { operation: "create", name: "Audience", rules: strict },
+      runContext(segmentPorts),
+    );
+
+    expect(segmentPorts.preview).toHaveBeenCalledWith(strict);
+    expect(segmentPorts.build).toHaveBeenCalledWith({
+      operation: "create",
+      segmentId: undefined,
+      name: "Audience",
+      rules: strict,
+    });
+  });
+
+  it("never turns the exclusion on by itself", async () => {
+    // Off is the default the Founder ruled for, and "the model thought it was safer" is not a
+    // merchant asking. Parsing a plain group must not invent the field.
+    expect(crmSegmentRuleGroup.parse(rules)).toEqual(rules);
+    expect("excludeReportedOptOut" in crmSegmentRuleGroup.parse(rules)).toBe(false);
+
+    const segmentPorts = ports();
+    await executeReadSegments({ operation: "preview", rules }, runContext(segmentPorts));
+    expect(segmentPorts.preview).toHaveBeenCalledWith(rules);
+  });
+
   it("fails closed when the authenticated web port is absent", async () => {
     await expect(executeReadSegments({ operation: "list" }, runContext())).resolves.toMatchObject({
       ok: false,

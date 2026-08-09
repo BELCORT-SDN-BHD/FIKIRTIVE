@@ -54,6 +54,8 @@ export type CrmSegmentSummary = {
   unresolvedLegacyOptOutCount: number;
   /** Contacts kept in on an opt-out the merchant recorded himself (unverified) — #716. */
   reportedOptOutCount: number;
+  /** Contacts the segment's own optional "exclude the opt-outs I recorded" left out — #758. */
+  excludedByReportedOptOutCount: number;
   createdAt: string;
 };
 
@@ -388,6 +390,7 @@ export interface OttoContext {
           excludedByConsentCount: number;
           unresolvedLegacyOptOutCount: number;
           reportedOptOutCount: number;
+          excludedByReportedOptOutCount: number;
           contacts: CrmSegmentContact[];
         }
       | { error: string }
@@ -411,6 +414,7 @@ export interface OttoContext {
             | "excludedByConsentCount"
             | "unresolvedLegacyOptOutCount"
             | "reportedOptOutCount"
+            | "excludedByReportedOptOutCount"
           >;
         }
       | { error: string }

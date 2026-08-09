@@ -54,7 +54,9 @@ export const buildSegmentSkill = defineOttoSkill({
     "internal write. Pass a STRUCTURED one-level rule object only; never compile or send free-form natural language " +
     "inside this skill. create needs name + rules and uses a server-issued id. update also needs the exact segmentId " +
     "returned by readSegments. Unknown consent stays in the audience; only known opt-out is excluded from the " +
-    "contactable estimate, and do-not-disturb remains a send-time restriction.",
+    "contactable estimate, and do-not-disturb remains a send-time restriction. The rule group's optional " +
+    "excludeReportedOptOut additionally leaves out contacts whose only opt-out is one the user recorded himself; " +
+    "it is off unless the user asked for it, and it applies to this segment's counts, preview and broadcasts alike.",
   parameters: params,
   execute: executeBuildSegment,
 });

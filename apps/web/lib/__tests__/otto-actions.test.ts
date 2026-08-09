@@ -714,6 +714,31 @@ describe("buildOttoContext", () => {
       rules,
     });
     expect(JSON.stringify(mockBuildCrmSegment.mock.calls)).not.toContain("owner_xyz");
+
+    // #758 — the merchant's optional "also exclude the opt-outs I recorded myself" rides on the
+    // rule group, so this port must hand it to the shared action untouched and hand its count
+    // back. A number the CRM page prints and Otto cannot see is two versions of one truth.
+    const strict = { ...rules, excludeReportedOptOut: true as const };
+    mockPreviewCrmSegment.mockResolvedValue({
+      ok: true,
+      evaluatedAt: "2026-07-18T00:00:00.000Z",
+      phrase: segment.phrase,
+      matchedCount: 2,
+      contactableCount: 2,
+      knownOptOutCount: 1,
+      excludedByConsentCount: 1,
+      unresolvedLegacyOptOutCount: 0,
+      reportedOptOutCount: 0,
+      excludedByReportedOptOutCount: 2,
+      contacts: [],
+      unavailableFacts: { lastOrderAt: true, tags: true },
+    });
+    await expect(segments.preview(strict)).resolves.toMatchObject({
+      ok: true,
+      matchedCount: 2,
+      excludedByReportedOptOutCount: 2,
+    });
+    expect(mockPreviewCrmSegment).toHaveBeenLastCalledWith(strict);
   });
 
   it("injects CRM Contact reads and engine-routed writes without threading owner identity", async () => {

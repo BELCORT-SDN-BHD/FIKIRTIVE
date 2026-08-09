@@ -113,11 +113,22 @@ export function selectedIntoAudience(
   rules: SegmentRuleGroup,
   evaluatedAt: string,
 ): boolean {
+  // #758 — the merchant's own optional tightening, and the ONLY thing it can do is subtract.
+  // It runs inside the same gate as everything else so the count, the preview and the frozen
+  // audience cannot disagree about it (#750), and it is checked before the rules because no
+  // rule can undo it: a contact the merchant asked to leave out stays out of every shape,
+  // including a segment deliberately built out of opt-outs.
+  if (rules.excludeReportedOptOut === true && truth.reportedOptOut) return false;
   const matchesAs = (marketingConsent: "opt_in" | "opt_out"): boolean =>
     contactMatchesRules({ ...facts, marketingConsent, doNotDisturb: false }, rules, { evaluatedAt });
   const optedOut = isKnownOptOut(truth);
   if (!matchesAs(optedOut ? "opt_out" : "opt_in")) return false;
   return optedOut ? !matchesAs("opt_in") : true;
+}
+
+/** The same rules with the merchant's optional exclusion off — "who would this have selected?" */
+function withoutReportedOptOutExclusion(rules: SegmentRuleGroup): SegmentRuleGroup {
+  return { match: rules.match, rules: rules.rules };
 }
 
 export type ConsentExclusionCandidate = {
@@ -132,6 +143,13 @@ export type ConsentExclusionCounts = {
   excluded: number;
   /** Of those, the ones held out by the pre-ledger fence — resolvable one contact at a time. */
   unresolvedLegacy: number;
+  /**
+   * #758 — contacts this selection would have kept, and the merchant's own optional exclusion
+   * removed. Counted apart from `excluded` on purpose: that number is what the consent ledger
+   * decided, this one is what the merchant chose, and the page may not present a choice as
+   * evidence (#768). The two can never contain the same contact — see the function below.
+   */
+  excludedByReportedOptOut: number;
 };
 
 /**
@@ -160,9 +178,25 @@ export function countExcludedByConsent(
         { evaluatedAt },
       ),
   );
+  // #758 — who the merchant's own exclusion removed, and nobody else. The test is the exclusion
+  // itself: the same gate, on the same rules, with the option off would have selected them. So a
+  // contact the ledger already holds out (the `excluded` number above) is never counted here —
+  // turning the option off would not bring her back, and one person may not be reported twice
+  // under two different reasons.
+  const withoutOption = withoutReportedOptOutExclusion(rules);
+  const excludedByReportedOptOut =
+    rules.excludeReportedOptOut === true
+      ? contacts.filter(
+          (contact) =>
+            contact.truth.reportedOptOut &&
+            !contact.selected &&
+            selectedIntoAudience(contact.truth, contact.facts, withoutOption, evaluatedAt),
+        ).length
+      : 0;
   return {
     excluded: excluded.length,
     unresolvedLegacy: excluded.filter((contact) => contact.truth.unresolvedLegacyOptOut).length,
+    excludedByReportedOptOut,
   };
 }
 

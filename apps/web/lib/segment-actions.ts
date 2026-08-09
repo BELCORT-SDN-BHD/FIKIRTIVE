@@ -116,10 +116,21 @@ function leafPhrase(rule: SegmentLeafRule): string {
   }
 }
 
+/**
+ * #758 — the merchant's optional exclusion belongs in the sentence that describes the segment.
+ * The phrase is the only thing the saved list shows besides the name, so a segment that quietly
+ * drops contacts the phrase never mentions would be the page saying less than it does. The
+ * wording says whose record it is (#768): it is the merchant's own, not the customer's.
+ */
+const REPORTED_OPT_OUT_EXCLUSION_PHRASE = "also excluding opt-outs you recorded yourself";
+
 function canonicalPhrase(rules: SegmentRuleGroup): string {
   const joined = rules.rules.map(leafPhrase).join(rules.match === "all" ? " and " : " or ");
   const sentence = joined.charAt(0).toUpperCase() + joined.slice(1);
-  return `${rules.match === "all" ? "All" : "Any"} of: ${sentence}`;
+  const base = `${rules.match === "all" ? "All" : "Any"} of: ${sentence}`;
+  return rules.excludeReportedOptOut === true
+    ? `${base} — ${REPORTED_OPT_OUT_EXCLUSION_PHRASE}`
+    : base;
 }
 
 function hasExactSpendPrecision(rules: SegmentRuleGroup): boolean {
@@ -279,6 +290,10 @@ function countsOf(
     excludedByConsentCount: excluded.excluded,
     unresolvedLegacyOptOutCount: excluded.unresolvedLegacy,
     reportedOptOutCount: reportedOptOutCountOf(matched),
+    // #758 — how many the merchant's own optional exclusion removed. With the option off it is
+    // zero and `reportedOptOutCount` carries the disclosure instead; the two are never both
+    // about the same contact, so the page can print whichever one is the truth today.
+    excludedByReportedOptOutCount: excluded.excludedByReportedOptOut,
   };
 }
 
@@ -327,6 +342,7 @@ function evaluatedSegment(row: SegmentRow, contacts: EvaluatedContact[], evaluat
       excludedByConsentCount: 0,
       unresolvedLegacyOptOutCount: 0,
       reportedOptOutCount: 0,
+      excludedByReportedOptOutCount: 0,
       createdAt: row.createdAt.toISOString(),
     };
   }

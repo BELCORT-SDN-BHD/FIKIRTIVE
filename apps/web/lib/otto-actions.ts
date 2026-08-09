@@ -159,6 +159,10 @@ function makeOttoSegmentsPort() {
         excludedByConsentCount: result.excludedByConsentCount,
         unresolvedLegacyOptOutCount: result.unresolvedLegacyOptOutCount,
         reportedOptOutCount: result.reportedOptOutCount,
+        // #758 — Otto reads the same disclosure the page prints, including what the merchant's
+        // own optional exclusion removed. A number the human surface shows and Otto does not is
+        // the two-surfaces-one-truth defect this port exists to prevent.
+        excludedByReportedOptOutCount: result.excludedByReportedOptOutCount,
         contacts: result.contacts,
       };
     },
