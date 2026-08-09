@@ -38,3 +38,13 @@ export const BRAND_MEMORY_HREF = "/otto?view=memory";
  *  产品自己并不知道哪一种,更不知道多久 —— 说了就是承诺一件不知道的事。能给的只有
  *  「找得到人」,那条出口由调用方接上 supportMailto。 */
 export const NO_CREDIT_PACKS_MESSAGE = "No credit packs are available right now.";
+
+/** 没能读到积分包目录时,商家读到的那一句(#786)。
+ *
+ *  上面那一句的孪生兄弟,所以住在同一处:两个账务页对同一个状态必须说同一句话。
+ *
+ *  这一句**没有**人工出口,是刻意的 —— 目录读失败是一个可重试的状态,而这一层的围栏是
+ *  「可重试的错误不挂人工出口」(#686 起就是这条,createTopupCheckout 里唯一带
+ *  `contactSupport` 的那一支正是它的反面)。给的下一步是刷新,与同页「余额读不到」
+ *  「花费记录读不到」两句用的是同一个动作。 */
+export const CREDIT_PACKS_UNREADABLE_MESSAGE = "Could not load the credit packs. Please refresh.";

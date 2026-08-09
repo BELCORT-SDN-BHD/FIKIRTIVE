@@ -110,7 +110,7 @@ describe("#686 Danger zone hands over a way to reach us", () => {
       account,
       settings: DEFAULT_SETTINGS,
       channels: [],
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: false,
       onDeleteAccountRequest: vi.fn(),
@@ -136,7 +136,7 @@ describe("#686 the not_configured dead end has an exit", () => {
     mocks.getAccountViewData.mockResolvedValue({
       settings: {},
       channels: [],
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: false,
       meta: { connected: false },

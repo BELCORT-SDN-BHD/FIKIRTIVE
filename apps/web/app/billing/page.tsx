@@ -6,7 +6,7 @@ import { SpendHistory } from "@/components/billing/SpendHistory";
 import { Card } from "@/components/ui/card";
 import { Wallet } from "lucide-react";
 import { formatCredits } from "@/lib/credit-format";
-import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
+import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export default async function BillingPage({
   searchParams: Promise<{ status?: string }>;
 }) {
   const { status } = await searchParams;
-  const [accountResult, packs, spendResult] = await Promise.all([
+  const [accountResult, shelf, spendResult] = await Promise.all([
     getMyAccount(),
     listCreditPacks(),
     getSpendOverview(),
@@ -104,7 +104,14 @@ export default async function BillingPage({
 
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 12px" }}>Top up</h2>
 
-        {packs.length === 0 ? (
+        {"unreadable" in shelf ? (
+          // #786 — we did not read the shelf, so we may not say it is empty, and we may not
+          // hand out a human exit either: a catalogue read that failed is a retryable state,
+          // and this layer's fence is "no human exit on a retryable error".
+          <div className="text-muted-foreground" style={{ fontSize: 14 }}>
+            {CREDIT_PACKS_UNREADABLE_MESSAGE}
+          </div>
+        ) : shelf.packs.length === 0 ? (
           // #687 — one sentence for one state (Settings renders the same constant), and an
           // exit: a merchant on this page has already decided to pay, so "there is nothing
           // here" cannot be the last thing the product says to them.
@@ -113,7 +120,7 @@ export default async function BillingPage({
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {packs.map((pack) => (
+            {shelf.packs.map((pack) => (
               <Card key={pack.priceId}>
                 <div
                   style={{
