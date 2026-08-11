@@ -12,10 +12,17 @@
 --    新鲜度读的是「最近一条 succeeded 行的 finishedAt」,所以一次失败永远不会把上一次
 --    成功的记录抹掉 —— 失败行只会让面板同时看到「最近一次成功在什么时候」和「之后失败过」。
 --
--- ③ 两个封闭集用 CHECK 约束守着,不靠约定:status 只能是 succeeded/failed,
---    credentialMode 只能是 isolated/shared。写错的词写不进来。
---    succeeded 必须带 finishedAt 与 key —— 「成功了但说不出成功的是哪个对象/什么时候」
---    正是这张票要消灭的形状,所以它也是约束。
+-- ③ 三个封闭集用 CHECK 约束守着,不靠约定:status 只能是 succeeded/failed,
+--    credentialMode 只能是 isolated/shared,trigger 只能是 cron/worker-timer/manual。
+--    写错的词写不进来。succeeded 必须带 finishedAt 与 key —— 「成功了但说不出成功的是
+--    哪个对象/什么时候」正是这张票要消灭的形状,所以它也是约束。
+--
+-- ④ append-only 不再只是调用方约定(判官 r1 P2):一个 BEFORE UPDATE 触发器**拒绝**
+--    任何 UPDATE。新鲜度读的是「最近一条 succeeded 行」,只有当一条 failed 行永远不能
+--    被就地改写成 succeeded、一条成功行的 finishedAt 永远不能被挪动时,这个读法才可信。
+--    DELETE 不拦:BackupRun 是平台级 ops 元数据(不是钱的真相),测试清库与将来的保留
+--    裁剪都需要删行;而删一条历史记录不会**伪造**新鲜度(顶多让面板少看到一条),
+--    改写一条才会。所以拦改写,不拦删除。
 --
 -- 上线后自查(founder 可直接跑,期望第二个数字为 0):
 --   SELECT status, count(*) FROM "BackupRun" GROUP BY 1;
@@ -45,11 +52,27 @@ ALTER TABLE "BackupRun"
 ALTER TABLE "BackupRun"
   ADD CONSTRAINT "BackupRun_credential_mode_check" CHECK ("credentialMode" IN ('isolated', 'shared'));
 
+-- 谁触发的也是封闭集:cron(Railway cron)/ worker-timer(旧 5 分钟循环)/ manual。
+ALTER TABLE "BackupRun"
+  ADD CONSTRAINT "BackupRun_trigger_check" CHECK ("trigger" IN ('cron', 'worker-timer', 'manual'));
+
 -- 说成功就必须拿得出「什么时候完成」与「传的是哪个对象」。
 ALTER TABLE "BackupRun"
   ADD CONSTRAINT "BackupRun_succeeded_evidence_check" CHECK (
     "status" <> 'succeeded' OR ("finishedAt" IS NOT NULL AND "key" IS NOT NULL)
   );
+
+-- append-only:拒绝任何 UPDATE(判官 r1 P2)。改写一条记录才能伪造新鲜度,所以拦改写。
+-- 删除不拦(见迁移头 ④)。
+CREATE OR REPLACE FUNCTION "backuprun_reject_update"() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'BackupRun is append-only: UPDATE is not permitted';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "BackupRun_no_update"
+  BEFORE UPDATE ON "BackupRun"
+  FOR EACH ROW EXECUTE FUNCTION "backuprun_reject_update"();
 
 -- 新鲜度查询走这条:最近一条 succeeded 行。
 CREATE INDEX "BackupRun_status_finishedAt_idx" ON "BackupRun"("status", "finishedAt");

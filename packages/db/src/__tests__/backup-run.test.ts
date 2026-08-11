@@ -64,12 +64,34 @@ describe("BackupRun — the database enforces what a backup record may say", () 
     await expect(prisma.backupRun.create({ data: { ...succeeded, credentialMode: "unknown" } })).rejects.toThrow();
   });
 
+  it("REFUSES a trigger outside {cron, worker-timer, manual} (judge r1 P2)", async () => {
+    await expect(prisma.backupRun.create({ data: { ...succeeded, trigger: "timer" } })).rejects.toThrow();
+    await expect(prisma.backupRun.create({ data: { ...succeeded, trigger: "CRON" } })).rejects.toThrow();
+  });
+
   it("REFUSES a success that cannot say WHEN it finished", async () => {
     await expect(prisma.backupRun.create({ data: { ...succeeded, finishedAt: null } })).rejects.toThrow();
   });
 
   it("REFUSES a success that cannot say WHICH object it wrote", async () => {
     await expect(prisma.backupRun.create({ data: { ...succeeded, key: null } })).rejects.toThrow();
+  });
+
+  it("is append-only: UPDATE is rejected by the database (judge r1 P2)", async () => {
+    // 改写一条记录才能伪造新鲜度(把 failed 改成 succeeded、挪 finishedAt),所以 UPDATE 被拦。
+    const row = await prisma.backupRun.create({ data: succeeded });
+    await expect(
+      prisma.backupRun.update({ where: { id: row.id }, data: { error: "rewritten after the fact" } }),
+    ).rejects.toThrow(/append-only|not permitted/i);
+    // 未被改动:原样读回。
+    const after = await prisma.backupRun.findUnique({ where: { id: row.id } });
+    expect(after?.error).toBeNull();
+  });
+
+  it("allows DELETE (ops metadata: test cleanup / retention delete a whole row, never rewrite one)", async () => {
+    const row = await prisma.backupRun.create({ data: succeeded });
+    await expect(prisma.backupRun.delete({ where: { id: row.id } })).resolves.toBeTruthy();
+    expect(await prisma.backupRun.findUnique({ where: { id: row.id } })).toBeNull();
   });
 
   it("the freshness query reads the last SUCCESS, never the last row", async () => {

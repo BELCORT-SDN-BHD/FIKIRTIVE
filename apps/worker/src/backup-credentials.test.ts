@@ -74,16 +74,28 @@ describe("opsR2Config — which key writes the backups", () => {
     expect(cfg.endpoint).toBe("https://other.r2.cloudflarestorage.com");
   });
 
-  it("REFUSES a half-set isolated credential instead of silently falling back", () => {
-    // The one belief this whole item exists to prevent: "we isolated the backups"
-    // when a typo'd variable name means we did not. A silent fallback to the shared
-    // key would produce exactly that belief and nothing would ever contradict it.
-    process.env.R2_BACKUP_ACCESS_KEY_ID = "backup-key";
-    expect(() => opsR2Config()).toThrow(/must be set together/);
+  // The one belief this whole item exists to prevent: "we isolated the backups" when a
+  // typo'd or lone variable means we did not. Every partial R2_BACKUP_* combination must
+  // throw, never silently fall back to shared (judge r1 P1-5).
+  it.each([
+    ["only access key", { R2_BACKUP_ACCESS_KEY_ID: "k" }],
+    ["only secret", { R2_BACKUP_SECRET_ACCESS_KEY: "s" }],
+    ["only bucket (lone routing var, no credential)", { R2_BACKUP_BUCKET: "b" }],
+    ["only endpoint (lone routing var, no credential)", { R2_BACKUP_ENDPOINT: "https://e" }],
+    ["bucket + endpoint but no credential", { R2_BACKUP_BUCKET: "b", R2_BACKUP_ENDPOINT: "https://e" }],
+    ["access + bucket but no secret", { R2_BACKUP_ACCESS_KEY_ID: "k", R2_BACKUP_BUCKET: "b" }],
+    ["secret + endpoint but no access", { R2_BACKUP_SECRET_ACCESS_KEY: "s", R2_BACKUP_ENDPOINT: "https://e" }],
+  ])("REFUSES a partial R2_BACKUP_* config: %s", (_label, vars) => {
+    Object.assign(process.env, vars);
+    expect(() => opsR2Config()).toThrow(/partially set/);
+  });
 
-    delete process.env.R2_BACKUP_ACCESS_KEY_ID;
+  it("accepts the full credential even with a lone extra routing var", () => {
+    // Once the credential PAIR is present, bucket/endpoint are legitimately optional.
+    process.env.R2_BACKUP_ACCESS_KEY_ID = "backup-key";
     process.env.R2_BACKUP_SECRET_ACCESS_KEY = "backup-secret";
-    expect(() => opsR2Config()).toThrow(/must be set together/);
+    process.env.R2_BACKUP_BUCKET = "fikirtive-backups";
+    expect(opsR2Config().mode).toBe("isolated");
   });
 
   it("still refuses an incomplete BASE r2 config (pre-existing guard, unchanged)", () => {

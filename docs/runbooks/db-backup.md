@@ -20,12 +20,21 @@
 3. 该服务的 Start Command 改成 `node apps/worker/dist/backup-cron.js`。
 4. Cron Schedule 填 `0 19 * * *` —— UTC 19:00 = 吉隆坡 03:00(KL 是 UTC+8,无夏令时)。
    Railway 的 cron 按 UTC 解释,别填 `0 3 * * *`。
-5. 手动跑一次确认:该服务运行一次应当退出码 0,日志出现 `[backup-cron] ok: backups/db/…`。
+5. 手动跑一次确认:配置齐备时该服务运行一次退出码 0,日志出现 `[backup-cron] ok: backups/db/…`
+   (配置缺失会退出 1,见下)。
 
-cron 入口的行为:**不再检查 03:00 窗口**(cron 表达式本身就是窗口,再检查一次会把
-founder 的手动补跑悄悄吞掉),但**保留当天 key 已存在就跳过**的 exactly-once 闸,
-所以同一天重复跑是廉价的 no-op,不会产生第二份 dump。真失败才退出码 1 ——
-Railway 上一条红的 cron run 就一定意味着「备份坏了」,而不是「这不是生产环境」。
+cron 入口(`backup-cron.ts`)的行为:
+- **只在自己是触发方时才跑**:`BACKUP_TRIGGER` 不是 `cron` 就**拒绝执行、退出 1**
+  (单一归属是硬的——两个触发方是配置错误,不是「继续跑就好」)。
+- **不再检查 03:00 窗口**(cron 表达式本身就是窗口,再检查一次会把 founder 的手动补跑
+  悄悄吞掉),但**保留当天 key 已存在就跳过**的 exactly-once 闸。
+- **原子只写**:上传用 `If-None-Match: *`(put-if-absent),存储层保证当天 key 只会被写一次。
+  即使 worker 定时器与 cron 在同一窗口同时触发,先落地的赢,后来的拿到 412、什么都不记 ——
+  「双触发不双备份」靠存储原子性,不靠先查后传。
+- **配置缺失=失败**:cron 服务发现自己没有 R2 目标或没有 `DATABASE_URL`,**退出 1**
+  (一个专职备份的服务没配好就是坏了;绿的 run 只能意味着「昨晚备份是好的」)。
+- 手动跑一次确认(见步骤 5):配好时退出码 0、日志出现 `[backup-cron] ok: backups/db/…`;
+  没配好会退出 1 并打印 `[backup-cron] FAILED: not configured …`。
 
 ## 跑什么
 - `pg_dump --format=custom --no-owner --no-privileges` → gzip → 上传
@@ -141,7 +150,9 @@ docker compose exec postgres psql -U fikirtive -d restore_drill \
   以及 `pgEnvFromUrl` 的口令脱敏证明(口令只进 PG* env,永不进 pg_dump argv)。
   翻 `STORAGE_DRIVER=r2` 前跑一遍看计划对不对。
 - **恢复演练**:`scripts/db-restore-drill.sh <dump[.gz]>`。默认 DRY RUN(只打印将执行的命令,不动任何库);
-  `--apply` 才真跑,且**硬拒绝任何非本地 host 与非 drill/test 库**(prod/Neon 恢复=founder 带外操作,脚本永不碰)。
+  `--apply` 才真跑,且**硬拒绝任何非本地 host 与非 drill/test 库**(prod/Neon 恢复=founder 带外操作,脚本永不碰);
+  也**拒绝任何能改写连接目标的参数**(`host=`/`hostaddr=`/`port=`/`dbname=`/`user=`/`service=`)——
+  否则 `…@localhost/restore_drill?host=prod` 会骗过「只看主体」的本地校验、被 libpq 解析成远端生产库(判官 r1 P1-1)。
   真跑会把 dump 恢复进本地一次性库并对账 `CreditLedger`/`CreditAccount` 行数(钱的真相)。
   #794 之后它是**过/不过**,不是打印:
   ```bash

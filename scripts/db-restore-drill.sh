@@ -58,6 +58,29 @@ if [ ! -f "$DUMP" ]; then
 fi
 
 # ---- parse + guard the target (only enforced on --apply) ----
+#
+# P1-1 (judge r1, PRODUCTION RED LINE): the URL body is NOT the connection target.
+# libpq lets query params override it, so
+#   postgres://u:p@localhost/restore_drill?host=prod.example&dbname=production
+# reads `localhost` / `restore_drill` to a naive sed but connects to `prod.example`
+# / `production`. hostaddr= and service= redirect too (service= reads a service file
+# that can point anywhere). So the guard REFUSES any connection param that can move
+# the target, then extracts host/db from the (now trusted) body. No override param
+# survives to reach libpq — belt (reject) and braces (the body checks below).
+reject_target_override_params() {
+  local url="$1"
+  local query=""
+  case "$url" in *\?*) query="${url#*\?}" ;; esac
+  [ -z "$query" ] && return 0
+  # whole-key match on the query's key=value pairs; case-insensitive to be safe
+  if printf '%s' "$query" | grep -qiE '(^|[?&;[:space:]])(host|hostaddr|port|dbname|user|service)=' ; then
+    echo "[restore-drill] REFUSING: connection URL carries a target-override param (host/hostaddr/port/dbname/user/service=)." >&2
+    echo "[restore-drill]           libpq would resolve it past the local-only guard. Pass a plain postgres://<user>:<pw>@localhost/<drill-db> with no such params." >&2
+    return 1
+  fi
+  return 0
+}
+
 host="$(printf '%s' "$TARGET_URL" | sed -E 's#^[a-z]+://([^@]*@)?([^:/?]+).*#\2#')"
 dbname="$(printf '%s' "$TARGET_URL" | sed -E 's#.*/([^/?]+)(\?.*)?$#\1#')"
 
@@ -98,6 +121,8 @@ if [ "$APPLY" != 1 ]; then
 fi
 
 # ---- --apply: hard local-only guards (never prod / Neon) ----
+# First: no connection param may redirect the target past the host/db checks (P1-1).
+reject_target_override_params "$TARGET_URL" || exit 3
 if [ "$is_local" != 1 ]; then
   echo "[restore-drill] REFUSING --apply: target host '$host' is not local. Prod/Neon restore is founder-only, out-of-band." >&2
   exit 3

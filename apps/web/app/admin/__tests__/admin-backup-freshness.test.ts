@@ -41,7 +41,7 @@ async function record(over: {
       startedAt: new Date(over.finishedAt.getTime() - 47_000),
       finishedAt: over.finishedAt,
       key: over.status === "succeeded" ? "backups/db/fikirtive-2026-08-11.dump.gz" : null,
-      sizeBytes: over.status === "succeeded" ? 42_000_000n : null,
+      sizeBytes: over.status === "succeeded" ? BigInt(42_000_000) : null,
       durationMs: 47_000,
       error: over.error ?? null,
     },
