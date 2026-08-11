@@ -2268,9 +2268,15 @@ model PublishAttempt {
 
 // 2026-07-04 盲区修复(可观测性):worker 活性心跳,单行(id="worker"),worker 每 60s
 // upsert;/api/health 读它给外部监控服务判活。无租户数据(平台级),不进 tenant guard。
+//
+// #797:再加两列部署身份。「worker 活着」答不了「web 与 worker 是不是同一个部署」——
+// 半成功的部署会留下一新一旧,或者两边代码同版但共享密钥不同(#569 的形状)。两列都可空:
+// 平台没注入 sha 时写 null,绝不假造一个。configFingerprint 是 8 位摘要,原始密钥不进库。
 model WorkerHeartbeat {
-  id String   @id
-  at DateTime
+  id                String   @id
+  at                DateTime
+  commitSha         String?
+  configFingerprint String?
 }
 
 // ─── L0 量测原语(第 0 大陆:所有环共用的水表)────────────────────────────────

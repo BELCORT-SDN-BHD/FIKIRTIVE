@@ -18,6 +18,7 @@ import {
   ENV_CONTRACT,
   ENV_CONTRACT_BY_NAME,
   FINGERPRINT_VARS,
+  bootEnvDecision,
   checkEnv,
   commitShaFrom,
   configFingerprint,
@@ -69,10 +70,13 @@ const sourceText = sourceFiles.map((f) => readFileSync(f, "utf8")).join("\n");
 /** 源码里以 process.env.X 或 const { X, Y } = process.env 形式读到的变量名。 */
 function envNamesReadInSource(text: string): Set<string> {
   const names = new Set<string>();
-  for (const m of text.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(m[1]);
+  for (const m of text.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) {
+    const name = m[1];
+    if (name) names.add(name);
+  }
   for (const m of text.matchAll(/const\s*\{([^}]*)\}\s*=\s*process\.env/g)) {
-    for (const piece of m[1].split(",")) {
-      const name = piece.split(":")[0].trim();
+    for (const piece of (m[1] ?? "").split(",")) {
+      const name = (piece.split(":")[0] ?? "").trim();
       if (/^[A-Z][A-Z0-9_]*$/.test(name)) names.add(name);
     }
   }
@@ -86,7 +90,7 @@ function envNamesInExample(text: string): Set<string> {
   const names = new Set<string>();
   for (const line of text.split("\n")) {
     const m = /^\s*#?\s*([A-Z][A-Z0-9_]*)=/.exec(line);
-    if (m) names.add(m[1]);
+    if (m?.[1]) names.add(m[1]);
   }
   return names;
 }
@@ -246,6 +250,52 @@ describe("checkEnv", () => {
     const report = formatEnvProblems(problems, "worker");
     expect(report).toContain("TOKEN_ENCRYPTION_KEY");
     expect(report).not.toContain(secret);
+  });
+});
+
+describe("bootEnvDecision", () => {
+  const goodProd = {
+    NODE_ENV: "production",
+    DATABASE_URL: "postgresql://u:p@host:5432/db",
+    BETTER_AUTH_SECRET: "s".repeat(32),
+    BETTER_AUTH_URL: "https://app.example.com",
+  };
+
+  it("ok when the environment satisfies the contract", () => {
+    expect(bootEnvDecision(goodProd, { surface: "web", production: true })).toEqual({ action: "ok" });
+  });
+
+  it("production with a missing required var exits — that is the fail-fast", () => {
+    const d = bootEnvDecision({ ...goodProd, DATABASE_URL: undefined }, { surface: "web", production: true });
+    expect(d.action).toBe("exit");
+  });
+
+  it("outside production a missing var is not even a problem — dev boots with an empty env", () => {
+    const d = bootEnvDecision({}, { surface: "web", production: false });
+    expect(d.action).toBe("ok");
+  });
+
+  it("outside production a MALFORMED value still warns — a typo is a typo everywhere", () => {
+    const d = bootEnvDecision({ TOKEN_ENCRYPTION_KEY: "abcd" }, { surface: "web", production: false });
+    expect(d.action).toBe("warn");
+    expect(d.action === "warn" && d.report).toContain("TOKEN_ENCRYPTION_KEY");
+  });
+
+  it("FIKIRTIVE_ENV_CONTRACT=warn downgrades production to a warning (the escape hatch)", () => {
+    const d = bootEnvDecision(
+      { ...goodProd, DATABASE_URL: undefined, FIKIRTIVE_ENV_CONTRACT: "warn" },
+      { surface: "web", production: true },
+    );
+    expect(d.action).toBe("warn");
+  });
+
+  it("an unrecognized escape-hatch value does NOT downgrade — only the exact word does", () => {
+    const d = bootEnvDecision(
+      { ...goodProd, DATABASE_URL: undefined, FIKIRTIVE_ENV_CONTRACT: "yes-please" },
+      { surface: "web", production: true },
+    );
+    // 值本身也不合法(enum),所以它自己也是一条问题;关键是没有换来降级。
+    expect(d.action).toBe("exit");
   });
 });
 

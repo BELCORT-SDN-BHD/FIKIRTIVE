@@ -25,6 +25,8 @@ import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
+import { assertWorkerEnv } from "./boot-env.js";
+import { beatOnce } from "./heartbeat.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -49,8 +51,13 @@ import {
   type ResearchJobData,
   type PublishJobData,
 } from "@fikirtive/core";
-import { prisma } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
+
+// #797 env contract, fail-FAST: a production worker whose required configuration is missing, or
+// whose values are the wrong shape, exits here instead of running jobs that will fail in odd
+// places later. Outside production it only warns. (The fail-SOFT publish-chain check below asks
+// a different question and stays.)
+assertWorkerEnv();
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
 // from PgBouncer and the direct path avoids pooler quirks (audit P3).
@@ -215,17 +222,13 @@ async function main(): Promise<void> {
   // Heartbeat: the status panel's "worker alive" signal (appendix A) + the durable
   // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
   // logged but never crashes the worker — health degrades to "stale", which is the signal.
-  // #463: platform-level row (WorkerHeartbeat has no tenant), written under a named system identity.
-  const beat = () =>
-    runAsSystem("worker-heartbeat", () =>
-      prisma.workerHeartbeat
-        .upsert({ where: { id: "worker" }, create: { id: "worker", at: new Date() }, update: { at: new Date() } })
-        .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e)));
+  // The row now also carries this deploy's identity (commit sha + config fingerprint) so admin
+  // can see when web and worker are NOT the same deploy — see ./heartbeat.ts (#797).
   setInterval(() => {
     console.log(`[worker] heartbeat ${new Date().toISOString()}`);
-    void beat();
+    void beatOnce();
   }, 60_000);
-  void beat(); // flip /api/health to "up" immediately on boot, not after the first minute
+  void beatOnce(); // flip /api/health to "up" immediately on boot, not after the first minute
 
   // Reaper: jobs the worker hung/crashed on (no redelivery → the on-claim stale path
   // never runs) would sit GENERATING forever, holding the credit reservation and spinning

@@ -26,6 +26,8 @@ import { listConversations } from "@/lib/conversation-admin";
 import { listTenants } from "@/lib/tenant-admin";
 import { resolveVisionConfig } from "@/lib/runtime-config";
 import { buildBytePlusPackSignal } from "@/lib/byteplus-pack-alert";
+import { buildDeploySignal } from "@/lib/deploy-fingerprint";
+import { commitShaFrom, configFingerprint } from "@fikirtive/core/env-contract";
 import { sanitizeUserError } from "@/lib/provider-secrecy";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -401,6 +403,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       vision,
       runtimeProvider,
       knowledgeRows,
+      workerHeartbeat,
     ] = await Promise.all([
       listTenants(),
       prisma.creditAccount.findUnique({
@@ -555,6 +558,11 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       prisma.runtimeConfig.findMany({
         where: { key: { in: ["planner_system", "brief_default", "description_template"] } },
         select: { key: true, valueJson: true },
+      }),
+      // #797 — the worker's own deploy identity, to compare against this web process's.
+      prisma.workerHeartbeat.findUnique({
+        where: { id: "worker" },
+        select: { commitSha: true, configFingerprint: true },
       }),
     ]);
 
@@ -748,6 +756,23 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       detail: bytePlusPack.detail,
       updatedAt: new Date().toISOString(),
       tone: bytePlusPack.tone,
+    });
+
+    // #797 — is the worker the SAME deploy as this web process? A half-finished deploy, or two
+    // services holding different values of a shared secret, otherwise leaves both processes
+    // alive and only some business paths quietly broken.
+    const deploy = buildDeploySignal(
+      { commitSha: commitShaFrom(process.env), configFingerprint: configFingerprint(process.env) },
+      workerHeartbeat,
+    );
+    systemIncidents.push({
+      id: "deploy-fingerprint",
+      area: "Deploy identity",
+      status: deploy.status,
+      count: 0,
+      detail: deploy.detail,
+      updatedAt: new Date().toISOString(),
+      tone: deploy.tone,
     });
 
     const cases: CaseRow[] = [

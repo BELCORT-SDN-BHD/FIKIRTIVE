@@ -702,6 +702,18 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Remaining-capacity percentage at or below which the admin panel warns.",
   },
   {
+    name: "FIKIRTIVE_ENV_CONTRACT",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    format: "enum",
+    values: ["enforce", "warn"],
+    secret: false,
+    shared: false,
+    summary:
+      "Boot-check mode. Default enforce: a production process with contract problems exits instead of serving. \"warn\" logs and starts anyway — the escape hatch for the case where the CHECK is what is wrong, so a launch gate can never brick production with no way out.",
+  },
+  {
     name: "NODE_ENV",
     surface: "both",
     readBy: "code",
@@ -713,6 +725,17 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
   },
 
   // ── 平台注入(仓库永不设置)────────────────────────────────────────────────
+  {
+    name: "NEXT_PHASE",
+    surface: "web",
+    readBy: "platform",
+    requirement: "optional",
+    format: "free",
+    secret: false,
+    shared: false,
+    summary:
+      "Set by Next.js itself. \"phase-production-build\" means this is a BUILD, not a serving process — the boot check downgrades to a warning there, because a build machine has no reason to hold production secrets.",
+  },
   {
     name: "RAILWAY_GIT_COMMIT_SHA",
     surface: "both",
@@ -853,6 +876,32 @@ export function formatEnvProblems(problems: readonly EnvProblem[], surface: "web
     ...lines,
     `  See .env.example and packages/core/src/env-contract.ts. Values are never printed.`,
   ].join("\n");
+}
+
+/* ────────────────────────── 开机决策 ────────────────────────── */
+
+export type BootEnvDecision =
+  | { action: "ok" }
+  | { action: "warn"; report: string; problems: EnvProblem[] }
+  | { action: "exit"; report: string; problems: EnvProblem[] };
+
+/**
+ * 开机时该怎么办。纯函数——决定写在这里,执行(console / process.exit)留给各自的宿主,
+ * 于是 web 与 worker 的行为逐字相同,而 core 不替任何进程做生死决定。
+ *
+ * 规则:
+ *   - 没问题 → ok。
+ *   - 非生产 → 一律 warn。上线前大量能力刻意 inert,dev/CI 缺配置是正常态,
+ *     把开发者的机器搞得起不来只会让人把整个检查关掉。
+ *   - 生产 → exit,除非 FIKIRTIVE_ENV_CONTRACT=warn 明确要求降级。
+ */
+export function bootEnvDecision(env: EnvRecord, opts: CheckEnvOptions): BootEnvDecision {
+  const problems = checkEnv(env, opts);
+  if (problems.length === 0) return { action: "ok" };
+  const report = formatEnvProblems(problems, opts.surface);
+  const mode = (env.FIKIRTIVE_ENV_CONTRACT ?? "").trim().toLowerCase();
+  if (!opts.production || mode === "warn") return { action: "warn", report, problems };
+  return { action: "exit", report, problems };
 }
 
 /* ────────────────────────── .env.example 生成 ────────────────────────── */
