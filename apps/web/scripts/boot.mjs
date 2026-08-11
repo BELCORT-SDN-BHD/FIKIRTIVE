@@ -94,8 +94,13 @@ async function main() {
     env: { ...process.env, [MIGRATION_STATUS_ENV]: status },
   });
   // Forward shutdown signals so Railway's graceful stop reaches Next, not just this wrapper.
-  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
-  child.on("close", (code) => process.exit(code ?? 1));
+  // A child that exits because WE asked it to is a clean stop (exit 0) — reporting a shutdown
+  // as a crash would make the platform's restart logic treat every normal deploy as a failure.
+  let shuttingDown = false;
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => { shuttingDown = true; child.kill(signal); });
+  }
+  child.on("close", (code) => process.exit(shuttingDown ? 0 : code ?? 1));
   child.on("error", (err) => {
     console.error("[web:boot] failed to start the web server:", err);
     process.exit(1);
