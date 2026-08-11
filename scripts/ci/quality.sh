@@ -959,13 +959,13 @@ echo "quality: using isolated database $local_database"
 # what a gate is, so the `tests` leg is the wall-clock floor until that suite itself
 # gets faster.
 #
-# Per-gate wall time measured 2026-08-12 with `pnpm quality` on a shared dev laptop:
-# packages build 82s — every leg pays it, it is the prerequisite — typecheck 212s,
-# lint 78s, PR-scope self-test 16s, prisma migrate deploy 16s, otto catalog 7s,
-# schema drift 6s, the fences and margin gates under 1s each. That run was stopped
-# before the two long poles, so their numbers here would be invented; the first CI
-# run of the split clocks every leg on a dedicated VM and those are the numbers on
-# the PR.
+# Per-leg wall time on the first run of the split (CI, 2026-08-11, one ephemeral VM
+# each): tests 500s ← the floor, build 220s, typecheck 206s, lint 149s, checks 116s.
+# 1,191s of work in 522s of wall clock, against ~18-20 min for the old single job.
+# Per-gate, from `pnpm quality` on a dev laptop: packages build 82s — every leg pays
+# it, it is the prerequisite — typecheck 212s, lint 78s, PR-scope self-test 16s,
+# prisma migrate deploy 16s, otto catalog 7s, schema drift 6s, fences and margin
+# gates under 1s each.
 
 # 1. Pure text fences — grep only, no build, ~1s. Nothing should ever run before these.
 gate typecheck "skill-import fence" bash scripts/check-skill-imports.sh

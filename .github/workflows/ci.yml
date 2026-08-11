@@ -145,26 +145,31 @@ jobs:
   # nobody anticipated all land on "run the gate". A scope job that FAILS skips the legs
   # entirely — and the fan-in treats that as a failure, not as a pass.
   #
-  # Why these five. The fan-in waits for the SLOWEST leg, so the split is only worth
-  # what its longest leg costs:
-  #   tests      the full suite. `pnpm -r test` is ONE gate and cannot be divided
-  #              without changing what a gate is, so this leg is the wall-clock FLOOR
-  #              until that suite itself gets faster. It gets a leg to itself.
-  #   build      `next build`, the second long pole. A leg to itself keeps it off the
-  #              critical path entirely.
-  #   typecheck  `pnpm -r typecheck` (212s measured) plus the three text fences and
-  #              self-tests, which are seconds each and have to run somewhere.
-  #   lint       `pnpm lint` (78s measured).
-  #   checks     everything else — otto catalog 7s, the two margin gates under 1s,
-  #              prisma migrate deploy 16s, schema drift 6s.
-  # Every leg additionally pays the 82s packages build, because `packages/*/dist` and
-  # the generated Prisma client are the prerequisite for everything downstream. That is
-  # the price of the split, and it is why five legs cost more RUNNER time than one job
-  # while costing far less WALL time.
+  # Why these five. The fan-in waits for the SLOWEST leg, so the split is worth exactly
+  # what its longest leg costs — legs under that floor are free, legs over it are the
+  # whole bill. Measured on the first run of this split (2026-08-11, run 31513415188):
   #
-  # Numbers above are per-gate wall time from `pnpm quality` on a shared dev laptop,
-  # 2026-08-12. The first CI run of this split clocks each leg on a dedicated VM; those
-  # per-leg numbers are on the PR that introduced this file.
+  #   tests      500s  ← THE FLOOR. `pnpm -r test` is ONE gate and cannot be divided
+  #                      without changing what a gate is, so nothing gets faster than
+  #                      this until that suite does. It gets a leg to itself.
+  #   build      220s    `next build`, the second pole; a leg of its own keeps it off
+  #                      the critical path entirely.
+  #   typecheck  206s    the third pole, plus the text fences and the three self-tests
+  #                      — seconds each, and they have to live somewhere.
+  #   lint       149s
+  #   checks     116s    everything left over (otto catalog, both margin gates, migrate
+  #                      deploy, schema drift).
+  #   scope        7s
+  #
+  # 1,191s of leg work, 522s of wall clock, all five legs starting within 9s of each
+  # other. The old single job was ~18-20 min. Every leg's number already includes the
+  # packages build it must pay for itself (`packages/*/dist` + the generated Prisma
+  # client are the prerequisite for everything downstream) — that duplication is why
+  # five legs cost more RUNNER time than one job while costing far less WALL time, and
+  # runner time on per-PR ephemeral VMs is the cheap axis.
+  #
+  # The 280s of slack under the floor is also the answer to "why not ten legs": a
+  # sixth leg would shave nothing off 500s and would pay another packages build.
   #
   # Every leg declares Postgres even where its gates never query it. quality.sh takes one
   # path — machine lock, per-run database, force-drop on exit — for local runs and for CI
