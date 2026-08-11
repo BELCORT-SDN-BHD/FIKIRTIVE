@@ -50,6 +50,27 @@ export const auth = betterAuth({
       trustedProviders: ["google"],     // Google's email_verified claim is trustworthy
       requireLocalEmailVerified: true,  // never link onto an unverified local credential
     },
+    // #795 — Google's OAuth tokens were the ONE credential this product stored in the clear.
+    // Meta's and X's page tokens have been AES-256-GCM at rest since L1 (@fikirtive/token-crypto);
+    // these sat in `ba_account.accessToken` / `refreshToken` / `idToken` as plain text, so a
+    // database backup, a log of a row, or read access to one table was a working Google
+    // credential for every merchant who signed in that way.
+    //
+    // WHY BETTER AUTH'S OWN FLAG AND NOT @fikirtive/token-crypto (the ticket named it). Better
+    // Auth encrypts on write AND decrypts on every read it does itself — refresh, `getAccessToken`,
+    // account listing. Our own encrypt-on-write hook would have no matching decrypt inside those
+    // paths: the library would hand a caller our ciphertext believing it was a token, and the
+    // first future use of a Google token would fail somewhere far from here. Same cipher family
+    // (AES-256-GCM), same "no new vendor", key = BETTER_AUTH_SECRET (already required and already
+    // ≥32 chars — see the guard above). The named package stays the standard for the tokens WE
+    // read and write ourselves; this one is read and written by the library, so the library's
+    // own transparent cipher is the honest home for it.
+    //
+    // Existing rows are NOT rewritten by this flag: Better Auth passes a value that does not look
+    // encrypted straight through, so old plaintext keeps working and is re-encrypted only when
+    // that account next signs in. Converting the existing rows is a separate, explicitly-confirmed
+    // step — see the ticket's PR description.
+    encryptOAuthTokens: true,
   },
   verification: { modelName: "BetterAuthVerification" },
   emailAndPassword: {
@@ -102,10 +123,32 @@ export const auth = betterAuth({
   // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
   // (5 per address per hour) still caps mail volume per victim address on top of this.
   rateLimit: {
+    // #795 — THE fix for "the gate is a number nobody can trust". Better Auth's limiter defaults
+    // to PROCESS MEMORY, so every one of the rules below was per-instance: a second web replica
+    // silently doubled every budget, and every deploy reset every window. Beta is open
+    // registration (Founder, 2026-08-11), which makes these the doors that carry the load.
+    //
+    // "database" is Better Auth's own storage backend — no new vendor, no Redis, one table
+    // (`ba_rate_limit`, #795 migration). It reads and writes through the SAME Prisma adapter this
+    // config already uses, and it prunes its own expired rows.
+    //
+    // NOT enabled outside production: Better Auth's own default (`enabled ?? isProduction`) is
+    // left alone deliberately — a dev/test run must not be rate-limited into flakiness, and the
+    // thing this ticket fixes is a production-scale-out defect.
+    storage: "database",
+    modelName: "BetterAuthRateLimit",
     customRules: {
       "/sign-up/email": { window: 60 * 60, max: 5 },
       "/request-password-reset": { window: 60 * 60, max: 5 },
       "/send-verification-email": { window: 60 * 60, max: 5 },
+      // NOTE (#795): there is deliberately NO rule for "/sign-in/email" here either, and that is
+      // the OPPOSITE of leaving the password door unguarded. Better Auth's built-in special rule
+      // already caps every /sign-in path at 3 per 10 seconds, and `customRules` REPLACES a rule
+      // rather than adding to it — an hourly rule written here would delete that burst cap. The
+      // password door needs both (a burst cap stops credential stuffing at speed; an hourly cap
+      // stops the patient version), so the hourly one is layered in front of this handler instead,
+      // in app/api/better-auth/[...all]/route.ts. Nothing here is loosened; a cap is added.
+      //
       // NOTE (#678 r3): there is deliberately NO rule for "/sign-in/magic-link" here. These
       // rules only run inside `auth.handler`, and that endpoint no longer receives public
       // traffic — app/api/better-auth/[...all]/route.ts answers it through the same throttled

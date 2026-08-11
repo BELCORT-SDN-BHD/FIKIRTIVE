@@ -1131,6 +1131,39 @@ model BetterAuthVerification {
   @@map("ba_verification")
 }
 
+/// #795 —— Better Auth 自己的限流台账。
+///
+/// 它此前跑在**进程内存**里。开第二个实例的那一刻,每个实例各有一份计数,同一个 IP 的
+/// 预算就凭空翻倍;每次部署重启又把计数清零。也就是说:闸门看起来在,数字是假的。
+/// 挪到这张表之后,几个实例共用同一份计数,重启不清零。
+///
+/// 形状由 Better Auth 定(key/count/lastRequest,lastRequest 是 epoch 毫秒的 bigint),
+/// 我们只负责让它落在自己的表里。**不要**把它和 RateLimitCounter 合并:那张是我们自己
+/// 那几道闸的表,两边的算法与语义不同,合表等于把两套规则绑在一次 schema 变更上。
+model BetterAuthRateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+  @@map("ba_rate_limit")
+}
+
+/// #795 —— 我们自己那几道闸的跨实例计数器(登录链接门、密码门、生成、上传、外链)。
+///
+/// 固定窗口:一个 key 一行,`count` 是本窗口内已经**放行**过多少次,`expiresAt` 是本窗口
+/// 什么时候结束(epoch 毫秒)。用 bigint 存毫秒而不是 timestamp,是为了让比较是纯整数运算
+/// —— 时区、精度、会话 TZ 这些东西一个都不必参与判断「还有没有额度」。
+///
+/// 被拒的一次**不加计数**(见 rate-limit.ts):这是 #757 已经买过一次教训的性质 —— 让拒绝
+/// 也推窗口,窗口就永远不结束,一个人的重试循环会把同一出口后面所有人一起锁死。
+model RateLimitCounter {
+  key       String @id
+  count     Int
+  expiresAt BigInt
+  @@index([expiresAt])
+  @@map("rate_limit_counter")
+}
+
 model CanvasNode {
   id           String    @id
   ownerId      String

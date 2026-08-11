@@ -142,17 +142,17 @@ beforeAll(async () => {
   });
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   trace.length = 0;
   mockSend.mockReset();
   mockSend.mockResolvedValue(undefined);
   mockHeaders.mockReset();
   mockHeaders.mockReturnValue(CALLER);
-  // Both budgets are process memory with an hour-long window. Reset them so each case starts
-  // from a known state — this file is about the SHAPE of the path, and the two files that own
-  // the budgets (better-auth-sender / magic-link-throttle) test them without any reset.
-  __resetMagicLinkThrottleForTests();
-  __resetAuthEmailCapsForTests();
+  // #795 — both budgets are shared rows with an hour-long window. Reset them so each case
+  // starts from a known state; this file is about the SHAPE of the path, and the two files that
+  // own the budgets (better-auth-sender / magic-link-throttle) test them without any reset.
+  await __resetMagicLinkThrottleForTests();
+  await __resetAuthEmailCapsForTests();
   // This file is about the REQUEST path, whose whole claim is that it waits on none of this.
   // The executor's per-job jitter and its slot floor would only add real seconds to every case
   // here; both have their own file (auth-email-queue-executor) where they are the thing being

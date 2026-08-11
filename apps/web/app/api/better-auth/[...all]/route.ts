@@ -2,12 +2,24 @@ import { toNextJsHandler } from "better-auth/next-js";
 import { auth } from "@/lib/better-auth/server";
 import { MAGIC_LINK_INVALID_EMAIL_MESSAGE } from "@/lib/better-auth/magic-link-contract";
 import { acceptMagicLinkRequest } from "@/lib/better-auth/magic-link-request";
+import { consumePasswordDoor } from "@/lib/rate-limit-gates";
 
 const handlers = toNextJsHandler(auth);
 
 export const GET = handlers.GET;
 
 const MAGIC_LINK_PATH = "/sign-in/magic-link";
+const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
+
+/** Better Auth's own 429, byte for byte (api/rate-limiter/index.ts), so a caller cannot tell
+ *  which of the two caps refused it — and so the client plugin's error handling is unchanged. */
+function tooManyRequests(retryAfterMs: number): Response {
+  return new Response(JSON.stringify({ message: "Too many requests. Please try again later." }), {
+    status: 429,
+    statusText: "Too Many Requests",
+    headers: { "X-Retry-After": String(Math.ceil(retryAfterMs / 1000)) },
+  });
+}
 
 /**
  * #678 r3 — the magic-link endpoint is mounted here by Better Auth, so it is a public door
@@ -23,7 +35,25 @@ const MAGIC_LINK_PATH = "/sign-in/magic-link";
  * Every other Better Auth endpoint is untouched and still goes to its own handler.
  */
 export async function POST(request: Request): Promise<Response> {
-  if (!new URL(request.url).pathname.endsWith(MAGIC_LINK_PATH)) {
+  const pathname = new URL(request.url).pathname;
+
+  // #795 — the PATIENT half of the password door's protection.
+  //
+  // Better Auth caps /sign-in/* at 3 per 10 seconds, which ends a fast credential-stuffing run
+  // and leaves the slow one completely unbounded: 3 every 10 seconds is over a thousand attempts
+  // an hour from one address, forever. The hourly cap has to live HERE rather than in Better
+  // Auth's `customRules`, because a rule there REPLACES the burst rule instead of adding to it —
+  // writing the hourly cap in that map would have deleted the burst cap it was meant to reinforce.
+  //
+  // Counted on the CALLING ADDRESS ONLY, never on the submitted email: a 429 must never be
+  // readable as "that account exists". Same discipline as the magic-link door below.
+  if (pathname.endsWith(PASSWORD_SIGN_IN_PATH)) {
+    const retryAfterMs = await consumePasswordDoor(request.headers);
+    if (retryAfterMs !== null) return tooManyRequests(retryAfterMs);
+    return handlers.POST(request);
+  }
+
+  if (!pathname.endsWith(MAGIC_LINK_PATH)) {
     return handlers.POST(request);
   }
 
@@ -34,7 +64,7 @@ export async function POST(request: Request): Promise<Response> {
     body = {};
   }
 
-  const outcome = acceptMagicLinkRequest({
+  const outcome = await acceptMagicLinkRequest({
     email: body.email,
     callbackURL: typeof body.callbackURL === "string" ? body.callbackURL : "/",
     requestHeaders: request.headers,

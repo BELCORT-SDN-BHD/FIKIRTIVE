@@ -154,14 +154,14 @@ beforeAll(async () => {
   await prisma.betterAuthVerification.deleteMany({ where: { value: { contains: warmup } } });
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   delivered.length = 0;
   openSends.clear();
   hold.clear();
   heldAccessChecks.clear();
   mockSend.mockClear();
-  __resetAuthEmailCapsForTests();
-  __resetMagicLinkThrottleForTests();
+  await __resetAuthEmailCapsForTests();
+  await __resetMagicLinkThrottleForTests();
   __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
 });
 
@@ -177,7 +177,7 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
    */
   async function canaryDelayAfter(target: string, holdTarget: boolean): Promise<number> {
     delivered.length = 0;
-    __resetMagicLinkThrottleForTests();
+    await __resetMagicLinkThrottleForTests();
     __configureAuthEmailQueueForTests({
       maxConcurrency: 1,
       jitterMaxMs: 0,
@@ -187,8 +187,11 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
     if (holdTarget) hold.add(target);
 
     const startedAt = Date.now();
-    press(target, "203.0.113.50");
-    press(CANARY, "203.0.113.50");
+    // #795 — awaited, not fired and forgotten: the throttle now writes a shared counter, so the
+    // hand-over happens after that write. Awaiting is what keeps the probe's job ahead of the
+    // canary's, which is the whole shape this case measures.
+    await press(target, "203.0.113.50");
+    await press(CANARY, "203.0.113.50");
     expect(await waitUntil(() => delivered.includes(CANARY))).toBe(true);
     const elapsed = Date.now() - startedAt;
 
@@ -203,16 +206,16 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     // Branch A — no access at all: the job returns at the allowlist check in a millisecond.
-    __resetAuthEmailCapsForTests();
+    await __resetAuthEmailCapsForTests();
     const unknown = await canaryDelayAfter(TARGET_UNKNOWN, false);
 
     // Branch B — access, and the provider never answers: the job runs until its deadline.
-    __resetAuthEmailCapsForTests();
+    await __resetAuthEmailCapsForTests();
     const allowed = await canaryDelayAfter(TARGET_ALLOWED, true);
 
     // Branch C — the REVERSE oracle: on a list, but its hourly send budget is spent, so the job
     // answers out of memory with no database work at all — faster even than branch A.
-    __resetAuthEmailCapsForTests();
+    await __resetAuthEmailCapsForTests();
     for (let i = 0; i < 5; i++) {
       enqueueAuthEmail({ purpose: "sign-in-link", email: TARGET_SPENT, callbackURL: "/", overBudget: false });
       await authEmailQueueSettled();
@@ -233,13 +236,13 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
   it("the three branches really are different underneath — the parity above is not vacuous", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     hold.add(TARGET_ALLOWED);
-    press(TARGET_ALLOWED, "203.0.113.51");
+    await press(TARGET_ALLOWED, "203.0.113.51");
     expect(await waitUntil(() => openSends.has(TARGET_ALLOWED))).toBe(true);
     expect(
       await prisma.betterAuthVerification.count({ where: { value: { contains: TARGET_ALLOWED } } }),
     ).toBeGreaterThan(0);
 
-    press(TARGET_UNKNOWN, "203.0.113.52");
+    await press(TARGET_UNKNOWN, "203.0.113.52");
     await waitUntil(() => false, 200);
     expect(mockSend.mock.calls.some((c) => c[0].to === TARGET_UNKNOWN)).toBe(false);
     expect(
@@ -374,9 +377,20 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
       // a flood is the one that ships.
     });
 
+    // #795 — the flood is handed over DIRECTLY rather than through `press`. The request path's
+    // throttle now writes a shared counter, so 5 000 presses would be 5 000 database round trips
+    // and the loop could no longer observe the depth between them. Nothing about the claim moves:
+    // the property under test is what the QUEUE does when 5 000 jobs arrive with nothing draining,
+    // `enqueueAuthEmail` here is still the REAL one (mocking it is what hid the unbounded queue
+    // last round), and "every request hands over a job" is asserted in magic-link-throttle.
     let peak = 0;
     for (let i = 0; i < 5_000; i++) {
-      press(`flood-${i}@shop.test`, "203.0.113.210");
+      enqueueAuthEmail({
+        purpose: "sign-in-link",
+        email: `flood-${i}@shop.test`,
+        callbackURL: "/",
+        overBudget: false,
+      });
       peak = Math.max(peak, __authEmailQueueDepthForTests());
     }
     // RED before the bound: 5 000 presses, 5 000 outstanding jobs, and every real merchant's

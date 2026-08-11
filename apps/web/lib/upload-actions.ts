@@ -41,10 +41,18 @@ import { storage } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";
 import { requireOwner } from "@/lib/auth-guard";
+import { consumeUploadGate } from "@/lib/rate-limit-gates";
 
 export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResult | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
+  // #795 — the upload gate, per tenant, per hour. Every call to this action mints a presigned URL
+  // into our own bucket, and until now nothing counted them. Placed after the owner is known and
+  // before anything is signed, so a refusal hands out no URL and reserves no key. Sized well above
+  // a bulk product import (see UPLOAD_PER_TENANT_PER_HOUR).
+  if (!(await consumeUploadGate(ownerId))) {
+    return { error: "Too many uploads in the last hour. Wait a few minutes and try again." };
+  }
   const parsed = authorizeUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "That file can't be uploaded (type or size out of bounds)." };
   // F41: not an error — the client falls back to the server-action upload path
