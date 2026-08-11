@@ -17,6 +17,10 @@
  *    scan is right for a brand-new generation and wrong for a derived one: on a busy board it
  *    put the new video far from the image it was made from, so the merchant had to hunt for
  *    what they had just paid for.
+ *
+ * 4. Whatever a caller ASKS for, the card it puts down never covers a card that is already
+ *    there (`freeCanvasRect`). 1–3 are the rule; this is the rule applied at the moment of the
+ *    write, which is the only place every writer passes through (#549).
  */
 
 export type CanvasRect = { x: number; y: number; w: number; h: number };
@@ -171,4 +175,42 @@ export function nearestFreeCanvasSlot(
     }
   }
   return null;
+}
+
+/**
+ * The spot a NEW card may actually take, given what is already on the board (#549).
+ *
+ * Everything above answers "where should this go?" for one caller who can see the board. This
+ * answers the question the DATABASE has to answer, for every caller at once: the requested spot
+ * is honoured whenever it is genuinely free — a card made from another card asks to sit beside
+ * it, and that is the merchant's own intent — and is moved to the nearest free spot when it is
+ * not. It never returns a rectangle that lies on top of an existing card.
+ *
+ * Why that matters more than tidiness: a card already on the board is usually a picture the
+ * merchant PAID for, and a covered card is an unreachable card — the picture underneath cannot
+ * be clicked, and keyboard focus lands on it while the eye sees the one on top, so the merchant
+ * acts on the wrong card. "New work never buries paid work" is the rule; this is where it holds.
+ *
+ * A requested rectangle with no usable size or position is returned untouched: nothing can be
+ * reasoned about it, and inventing a spot would be a second opinion about a caller's data.
+ */
+export function freeCanvasRect(
+  occupied: readonly CanvasRect[],
+  requested: CanvasRect,
+): CanvasRect {
+  const usable = Number.isFinite(requested.x) && Number.isFinite(requested.y)
+    && Number.isFinite(requested.w) && Number.isFinite(requested.h)
+    && requested.w > 0 && requested.h > 0;
+  if (!usable) return requested;
+  if (!occupied.some((rect) => canvasRectsOverlap(requested, rect))) return requested;
+
+  const footprint = { w: requested.w, h: requested.h };
+  const beside = nearestFreeCanvasSlot(occupied, requested, footprint);
+  if (beside) return { ...beside, ...footprint };
+  // The whole neighbourhood is taken — fall back to the board-wide scan rather than let this
+  // function invent a spot of its own.
+  const origin = nextCanvasSpawnOrigin(occupied, footprint, {
+    step: { x: footprint.w + CANVAS_CARD_GAP, y: footprint.h + CANVAS_CARD_GAP },
+  });
+  return { ...origin, ...footprint };
 }

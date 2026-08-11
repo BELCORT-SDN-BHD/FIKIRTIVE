@@ -6,6 +6,7 @@ import {
   canvasBatchRects,
   canvasBatchSlotOffset,
   canvasRectsOverlap,
+  freeCanvasRect,
   nearestFreeCanvasSlot,
   nextCanvasSpawnOrigin,
 } from "../canvas-batch-layout";
@@ -172,5 +173,61 @@ describe("nearestFreeCanvasSlot", () => {
     }
 
     expect(nearestFreeCanvasSlot(board, SOURCE, CARD, { rings: 2 })).toBeNull();
+  });
+});
+
+/**
+ * #549 — the rule that runs at the moment a card is written, for every writer at once.
+ * The functions above answer "where should this go?" for a caller who can see the board;
+ * this one answers "may this go here?" for callers who cannot.
+ */
+describe("freeCanvasRect", () => {
+  const OCCUPIED = { x: 80, y: 80, ...CARD };
+
+  it("keeps a requested spot that is genuinely free", () => {
+    const beside = { x: 420, y: 80, ...CARD };
+
+    expect(freeCanvasRect([OCCUPIED], beside)).toEqual(beside);
+  });
+
+  it("keeps the spot on an empty board", () => {
+    expect(freeCanvasRect([], OCCUPIED)).toEqual(OCCUPIED);
+  });
+
+  it("moves a card that would cover an existing one, and lands it beside instead", () => {
+    const spot = freeCanvasRect([OCCUPIED], { ...OCCUPIED });
+
+    expect(canvasRectsOverlap(spot, OCCUPIED)).toBe(false);
+    expect(spot).toMatchObject(CARD);
+    // Nearest-first: the free neighbour, not the far end of the board.
+    expect(spot).toEqual({ x: 420, y: 80, ...CARD });
+  });
+
+  it("never returns a rectangle that touches anything, however crowded the board", () => {
+    const board = [];
+    for (let column = 0; column < 5; column += 1) {
+      for (let row = 0; row < 5; row += 1) {
+        board.push({ x: 80 + column * 340, y: 80 + row * 340, ...CARD });
+      }
+    }
+
+    const spot = freeCanvasRect(board, { x: 80, y: 80, ...CARD });
+
+    expect(board.some((rect) => canvasRectsOverlap(spot, rect))).toBe(false);
+  });
+
+  it("keeps a card of a different size clear of the ones already there", () => {
+    const text = { x: 80, y: 80, w: 240, h: 120 };
+
+    const spot = freeCanvasRect([OCCUPIED], text);
+
+    expect(canvasRectsOverlap(spot, OCCUPIED)).toBe(false);
+    expect(spot).toMatchObject({ w: 240, h: 120 });
+  });
+
+  it("hands back a rectangle it cannot reason about, untouched", () => {
+    const nonsense = { x: 0, y: 0, w: 0, h: 0 };
+
+    expect(freeCanvasRect([OCCUPIED], nonsense)).toEqual(nonsense);
   });
 });
