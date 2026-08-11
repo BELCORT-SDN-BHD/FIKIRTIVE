@@ -32,6 +32,7 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import { navLinkByKey } from "@fikirtive/core/navigation";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", async () => ({
@@ -167,15 +168,26 @@ describe("#699 an out-of-credits merchant is told how to pay, not who to ask", (
 // ---------------------------------------------------------------------------
 describe("#699 the top-up destination the copy names is live navigation", () => {
   it("Billing is a real route the merchant can reach from the global navigation", () => {
-    const nav = readFileSync(path.join(WEB_ROOT, "components/global-navigation.tsx"), "utf8");
+    // #801 — this used to grep global-navigation.tsx for the literal `href="/billing"`.
+    // The rail stopped writing paths of its own that ticket (it renders the authoritative
+    // tree in packages/core/src/navigation.ts), so the literal is gone and the grep went
+    // red on a change that made navigation MORE honest, not less. What #699 actually needs
+    // proved is unchanged and now read from the source of truth: Billing is a destination
+    // the merchant can reach from the global navigation, and the page behind it sells credits.
+    const billingDestination = navLinkByKey("billing");
+    expect(billingDestination.href, "Billing is no longer a global navigation destination").toBe("/billing");
 
-    // the sidebar entry the copy is sending them to
-    expect(nav, "global navigation no longer links to /billing").toMatch(/href="\/billing"/);
+    // …and the rail really renders that tree (rather than having quietly forked from it).
+    const nav = readFileSync(path.join(WEB_ROOT, "components/global-navigation.tsx"), "utf8");
+    expect(nav, "the global navigation no longer reads the authoritative tree").toMatch(
+      /from\s+["']@fikirtive\/core\/navigation["']/,
+    );
+
     // …and the page itself exists
-    expect(() => readFileSync(path.join(WEB_ROOT, "app/billing/page.tsx"), "utf8")).not.toThrow();
+    const routePath = path.join(WEB_ROOT, "app", billingDestination.href.replace(/^\//, ""), "page.tsx");
+    expect(() => readFileSync(routePath, "utf8")).not.toThrow();
     // …and it is the page that sells credits
-    const billing = readFileSync(path.join(WEB_ROOT, "app/billing/page.tsx"), "utf8");
-    expect(billing, "the Billing page no longer offers a top-up").toMatch(/Top up/);
+    expect(readFileSync(routePath, "utf8"), "the Billing page no longer offers a top-up").toMatch(/Top up/);
   });
 });
 

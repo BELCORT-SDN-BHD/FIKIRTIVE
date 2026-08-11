@@ -8,11 +8,13 @@ import {
   BookOpen,
   ChevronDown,
   Coins,
+  Compass,
   Contact,
   CreditCard,
   FileText,
   Frame,
   Inbox,
+  LayoutTemplate,
   Library,
   LogOut,
   Megaphone,
@@ -71,6 +73,8 @@ const NAV_ICONS: Record<string, NavigationIcon> = {
   // Workspace
   library: Library,
   brand: BookOpen,
+  templates: LayoutTemplate,
+  discover: Compass,
   schedule: CalendarDays,
   analytics: BarChart3,
   // Settings

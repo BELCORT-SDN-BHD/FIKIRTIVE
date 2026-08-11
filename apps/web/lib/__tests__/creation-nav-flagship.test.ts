@@ -93,16 +93,53 @@ describe("创作是主导航的第一格", () => {
 });
 
 describe("六扇门都有门,且 375px 抽屉里到得了", () => {
+  /**
+   * 期望侧**独立于权威表**(判官 r1 P2)。
+   *
+   * 上一版拿 `everyNavDestination()` 生成期望,再拿它去比对渲染 —— 两边同一份清单,
+   * 于是「权威表漏了一扇门」这件事围栏照绿。判官正是这样发现 templates / discover 两扇
+   * 漏网的:围栏全绿,门却不存在。
+   *
+   * 所以这份名单是**手写的、逐条点名的**:商家必须到得了的每一处。它与 MERCHANT_NAV 谁都
+   * 不生成谁 —— 权威表漏一条,这里就红;这里漏一条,下面那条「反向核对」就红。
+   */
+  const EVERY_DOOR_A_MERCHANT_MUST_REACH: readonly string[] = [
+    "/otto",                    // 助手
+    "/northstar-immersive",     // Create(画布的家)
+    "/campaign",
+    "/crm/inbox",
+    "/crm/contacts",
+    "/crm/segments",
+    "/crm/templates",
+    "/crm/broadcasts",
+    "/crm/workflows",
+    "/crm/reports",
+    "/otto?view=library",
+    "/otto?view=memory",        // Brand & products
+    "/otto?view=templates",
+    "/otto?view=discover",
+    "/otto?view=schedule",      // 唯一的日历
+    "/otto?view=analytics",
+    "/otto?view=connections",
+    "/otto?view=account",       // Preferences
+    "/billing",
+  ];
+
   it("导轨在手机档把每一个目的地都画出来(抽屉里,不是折起来看不见)", () => {
     // 手机档导轨就是这同一段 markup —— 它靠 translate 滑入,不是靠条件渲染,所以
     // 「抽屉里有没有」等于「这段 markup 里有没有」。
     const markup = renderShell("/campaign");
 
-    const missing = everyNavDestination()
-      .map((item) => item.href)
-      .filter((href) => !markup.includes(`href="${href.replace(/&/g, "&amp;")}"`));
+    const missing = EVERY_DOOR_A_MERCHANT_MUST_REACH.filter(
+      (href) => !markup.includes(`href="${href.replace(/&/g, "&amp;")}"`),
+    );
 
     expect(missing).toEqual([]);
+  });
+
+  it("权威表与这份名单互为对照 —— 谁多一条谁少一条都红", () => {
+    const registry = [...everyNavDestination().map((item) => item.href)].sort();
+    expect(registry).toEqual([...EVERY_DOOR_A_MERCHANT_MUST_REACH].sort());
   });
 
   it("手机档不画第二颗汉堡:自带顶栏的面自己承担入口", () => {
@@ -160,6 +197,51 @@ describe("收敛掉的旧路由一律 redirect,不 404", () => {
 
   it("全仓只剩一本日历页(第二本的组件已经不在了)", () => {
     expect(existsSync(path.join(WEB_ROOT, "components/campaign/campaign-calendar-page.tsx"))).toBe(false);
+  });
+});
+
+/* ── 漏网扫描:界面里到得了的,权威表里必须有 ───────────────────────────────── */
+
+/**
+ * 「活着但没门」的复发检测(判官 r1 P1)。
+ *
+ * templates 与 discover 当初就是这样漏掉的:Otto 自有导轨有入口、OttoView 真渲染、路由真
+ * 接受 —— 只有主导航不知道它们存在。所以这条不从权威表出发,而从**产品自己接受什么**出发:
+ * `/otto` 路由白名单 `VALID_VIEWS` 是 Otto 表面的独立事实源,逐个视图核对权威表里有没有门。
+ */
+describe("Otto 表面没有第二处漏网", () => {
+  /** 有意不进主导航的视图,逐个写明理由 —— 空豁免簿比长豁免簿更容易骗过自己。 */
+  const NOT_A_NAV_DESTINATION: Record<string, string> = {
+    otto: "助手本身:它是 Ask Otto,不占板块位(#801 的整件事)",
+    stuff: "旧别名:路由自己就把它改写成 library,不是第二个表面",
+  };
+
+  function ottoValidViews(): string[] {
+    const source = readFileSync(path.join(WEB_ROOT, "app/otto/page.tsx"), "utf8");
+    const list = /const VALID_VIEWS = \[([^\]]*)\]/.exec(source)?.[1] ?? "";
+    return [...list.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+  }
+
+  it("路由白名单本身还读得出来(读不出来就等于这条围栏空转)", () => {
+    expect(ottoValidViews().length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("每一个 Otto 视图要么在主导航里有门,要么写明了为什么没有", () => {
+    const doors = new Set(everyNavDestination().map((item) => item.href));
+    const homeless = ottoValidViews().filter(
+      (view) => !(view in NOT_A_NAV_DESTINATION) && !doors.has(`/otto?view=${view}`),
+    );
+
+    expect(homeless, "这些视图商家点得到、产品也渲染,但主导航里没有门").toEqual([]);
+  });
+
+  it("豁免簿里不许躺着一个其实已经有门的视图(免得豁免变成掩护)", () => {
+    const doors = new Set(everyNavDestination().map((item) => item.href));
+    const contradictory = Object.keys(NOT_A_NAV_DESTINATION).filter((view) =>
+      doors.has(`/otto?view=${view}`),
+    );
+
+    expect(contradictory).toEqual([]);
   });
 });
 

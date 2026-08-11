@@ -100,16 +100,24 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
       { key: "crm-segments", label: "Segments", href: "/crm/segments", does: "Group customers by what they did, so a broadcast reaches the right people." },
       { key: "crm-templates", label: "Templates", href: "/crm/templates", does: "Keep the message wording you reuse when you write to customers." },
       { key: "crm-broadcasts", label: "Broadcasts", href: "/crm/broadcasts", does: "Send one message to a segment, with its own approval." },
-      { key: "crm-workflows", label: "Workflows", href: "/crm/workflows", does: "Set up a reply or follow-up that happens on its own." },
+      { key: "crm-workflows", label: "Workflows", href: "/crm/workflows", does: "Set up a reply or follow-up that goes out automatically." },
       { key: "crm-reports", label: "Reports", href: "/crm/reports", does: "See how your conversations and broadcasts are doing." },
     ],
   },
   {
     key: "workspace",
     label: "Workspace",
+    // 顺序照商家在 Otto 自有导轨里已经习惯的那一串(Library → 品牌 → Templates →
+    // Discover → Schedule → Analytics),不另发明一套。
+    //
+    // 为什么 Templates 与 Discover 在这里而不在 Create:它们确实是「开始做一件新东西」的
+    // 两条捷径,但 Create 必须保持**一格直达**画布 —— Founder 裁的是画布是主要卖点,把它
+    // 变成一个要先展开的分组,等于给旗舰面多加一次点击。分组留给工具,直达留给旗舰。
     items: [
       { key: "library", label: "Library", href: "/otto?view=library", does: "Find every image and video you have already made." },
       { key: "brand", label: "Brand & products", href: "/otto?view=memory", does: "Keep what Otto should remember about your brand and the things you sell." },
+      { key: "templates", label: "Templates", href: "/otto?view=templates", does: "Start from a ready-made setup: pick one, add your product, get a polished image." },
+      { key: "discover", label: "Discover", href: "/otto?view=discover", does: "Browse ideas worth trying when you are not sure what to make next." },
       {
         key: "schedule",
         label: "Schedule",
