@@ -371,10 +371,11 @@ describe("#678 r3 — Better Auth's own endpoint answers every address identical
     expect(known.status).toBe(200);
     expect(stranger.status).toBe(known.status);
     expect(await stranger.json()).toEqual(await known.json());
-    // The endpoint takes the same four steps the login page does — no `headers()` here, because
-    // the caller's headers arrived on the Request itself.
+    // The endpoint takes the same four steps the login page does — minus `headers()`, because the
+    // caller's headers arrived on the Request itself. Derived from REQUEST_PATH rather than
+    // restated, so a change to the path cannot leave the two doors describing different shapes.
     expect(strangerTrace).toEqual(knownTrace);
-    expect(knownTrace).toEqual(["enqueue"]);
+    expect(knownTrace).toEqual(REQUEST_PATH.filter((step) => step !== "headers"));
   });
 });
 
