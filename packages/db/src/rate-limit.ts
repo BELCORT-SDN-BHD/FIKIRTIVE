@@ -46,7 +46,11 @@
  * that was off by a factor of the instance count, permanently).
  */
 import { Prisma } from "../generated/prisma/client.js";
-import { prisma } from "./index.js";
+// NOT "./index.js". See the header of ./client.ts: this module has to reach the database even in
+// the many test files that replace the `@fikirtive/db` barrel wholesale, because a gate whose
+// counter is unreachable fails CLOSED — a stubbed barrel would turn those files into a cascade of
+// refusals that say nothing about what they are testing. Same client, same pool, different path.
+import { prisma } from "./client.js";
 
 /** One counter. `key` names the door AND who is being counted; callers own its namespacing. */
 export type RateLimitBucket = {

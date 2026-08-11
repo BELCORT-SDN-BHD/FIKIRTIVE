@@ -50,6 +50,23 @@ vi.mock("@fikirtive/db", async (importOriginal) => {
   };
 });
 
+// #795 — the shared rate-limit counter, RECORDED not replaced. The real limiter runs; this only
+// notes that the request consulted it, and where in the sequence. It has to be traced separately
+// from the Prisma hook above because the limiter deliberately reaches the database through a path
+// the `@fikirtive/db` double does not sit on (packages/db/src/client.ts) — so the hook above
+// cannot see it, and a step this file cannot see is a step an address-dependent query could be
+// added to without this file noticing. That is the one thing this file exists to prevent.
+vi.mock("@fikirtive/db/rate-limit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fikirtive/db/rate-limit")>();
+  return {
+    ...actual,
+    consumeRateLimit: (...args: Parameters<typeof actual.consumeRateLimit>) => {
+      trace.push("rate-limit");
+      return actual.consumeRateLimit(...args);
+    },
+  };
+});
+
 vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
   return {
@@ -146,7 +163,6 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  trace.length = 0;
   mockSend.mockReset();
   mockSend.mockResolvedValue(undefined);
   mockHeaders.mockReset();
@@ -161,6 +177,9 @@ beforeEach(async () => {
   // here; both have their own file (auth-email-queue-executor) where they are the thing being
   // asserted.
   __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
+  // LAST, on purpose: the two resets above are themselves database calls, and the tracer records
+  // every one. Clearing before them would leave their rows in the first case's trace.
+  trace.length = 0;
 });
 
 /**
@@ -169,7 +188,7 @@ beforeEach(async () => {
  * test. #795 added the middle item: the throttle's counter used to be a process-local Map, which
  * made the published cap a fiction as soon as a second instance existed.
  */
-const REQUEST_PATH = ["headers", "db:raw.$queryRaw", "enqueue"] as const;
+const REQUEST_PATH = ["headers", "rate-limit", "enqueue"] as const;
 
 // ── ① the request path is blind to what kind of address it was handed ────────────────────────
 describe("#678 r3 ① — the request performs identical work for every kind of address", () => {
@@ -194,10 +213,11 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     // job. No allowlist lookup, no token mint, no send — none of the work whose cost depends on
     // the answer.
     //
-    // #795 — the counter query is the one database call on this path, and it is address-blind by
-    // construction: a single statement over keys that were normalised before they were hashed, so
-    // it costs the same for an address with an account, one on a list, and one nobody has ever
-    // heard of. That it appears in ALL THREE traces, in the same position, is the assertion above.
+    // #795 — consulting the shared counter is the one storage round trip on this path, and it is
+    // address-blind by construction: a single statement over keys that were normalised before they
+    // were hashed, so it costs the same for an address with an account, one on a list, and one
+    // nobody has ever heard of. That it appears in ALL THREE traces, in the same position, is the
+    // assertion above.
     expect(env.recorded).toEqual([...REQUEST_PATH]);
 
     // The answers are the same too, which was round 1's claim and is still required.
