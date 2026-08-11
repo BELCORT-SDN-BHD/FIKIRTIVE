@@ -18,6 +18,7 @@ import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
 import type { OttoContext, LibraryItemView } from "../context.js";
+import { navLabel } from "@fikirtive/core";
 
 /** Cap the history payload returned to the model (the port already keyset-pages at ~60). */
 export const HISTORY_ITEM_CAP = 40;
@@ -55,7 +56,7 @@ export async function executeManageLibrary(
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
   const library = ctx.library;
-  if (!library) return { ok: false, error: "The Library isn't available right now." };
+  if (!library) return { ok: false, error: `The ${navLabel("library")} isn't available right now.` };
 
   switch (input.action) {
     case "history": {
@@ -97,7 +98,7 @@ export const manageLibrarySkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Browse the user's Library — every image/video they've made — $0, never generates or spends. " +
+    `Browse the user's ${navLabel("library")} — every image/video they've made — $0, never generates or spends. ` +
     "history: a page of their generation history, newest first (optional search text, favoriteOnly, and a cursor to page). " +
     "detail: one generation's prompt/kind/favorite (needs generationId). " +
     "set_favorite: star or unstar a generation (needs generationId + favorite). " +

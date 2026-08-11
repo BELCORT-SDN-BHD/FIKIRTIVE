@@ -20,7 +20,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
-import { creditDirection } from "@fikirtive/core";
+import { creditDirection, navPath } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -119,7 +119,8 @@ export const readSpendingSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Read the workspace's credit balance and recent credit history — the same rows the merchant " +
-    "sees under Billing & credits → Spend history. $0 and read-only: it can never top up, charge, " +
+    // #802:目的地由导航权威给。技能描述也是 Otto 的描述面,手打一个地名就是第二份地图。
+    `sees under ${navPath("billing")}. $0 and read-only: it can never top up, charge, ` +
     "or refund. Use it whenever they ask what they have left, what they have spent, or what " +
     "something cost. Returns: balance and reserved (credits held for work in flight); totals " +
     "already added up for you — do not re-add them — where totals.charged is money actually " +

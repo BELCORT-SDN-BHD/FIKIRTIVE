@@ -20,9 +20,9 @@ import {
 } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
+import { PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button as UiButton } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
@@ -609,7 +609,7 @@ export default function DetailPanel({
           className="al-iconbtn al-iconbtn-md"
           style={{ position: "absolute", top: 12, right: 12 }}
         >
-          <IcX size={17} />
+          <XIcon size={17} />
         </button>
 
         {/* Content */}
@@ -731,7 +731,7 @@ export default function DetailPanel({
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {/* Favorite */}
               <Button
-                variant={favorite ? "primary" : "ghost"}
+                variant={favorite ? "default" : "ghost"}
                 size="sm"
                 onClick={handleFavorite}
                 disabled={readOnly}
@@ -745,11 +745,11 @@ export default function DetailPanel({
                 <Button
                   variant="ghost"
                   size="sm"
-                  icon={<IcRetry size={14} />}
                   onClick={() => requestSpendConfirm("regen")}
                   disabled={assetSpendControlDisabled(regenStatus, readOnly)}
                   title={readOnlyReason}
                 >
+                  <RotateCcwIcon />
                   {regenStatus === "running"
                     ? "Generating…"
                     : regenStatus === "done"
@@ -769,11 +769,11 @@ export default function DetailPanel({
                 <Button
                   variant="ghost"
                   size="sm"
-                  icon={<IcPlay size={14} />}
                   onClick={() => requestSpendConfirm("animate")}
                   disabled={assetSpendControlDisabled(animStatus, readOnly)}
                   title={readOnlyReason}
                 >
+                  <PlayIcon />
                   {animStatus === "running"
                     ? "Animating…"
                     : animStatus === "done"
@@ -842,7 +842,7 @@ export default function DetailPanel({
                     />
                   </div>
                   <Button
-                    variant="primary"
+                    variant="default"
                     size="sm"
                     onClick={requestEditSubmit}
                     disabled={assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim()}
@@ -902,7 +902,7 @@ export default function DetailPanel({
                     Cancel
                   </Button>
                   <Button
-                    variant="primary"
+                    variant="default"
                     size="sm"
                     onClick={handleCropConfirm}
                     disabled={readOnly || cropStatus === "saving"}
@@ -922,14 +922,14 @@ export default function DetailPanel({
             <DialogDescription>{confirmDetails?.description ?? ""}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <UiButton variant="ghost" onClick={() => setConfirmAction(null)}>Cancel</UiButton>
-            <UiButton
+            <Button variant="ghost" onClick={() => setConfirmAction(null)}>Cancel</Button>
+            <Button
               variant={confirmAction === "delete" ? "destructive" : "default"}
               disabled={confirmDetails?.disabled ?? true}
               onClick={runConfirmedAction}
             >
               {confirmDetails?.confirmLabel ?? "Confirm"}
-            </UiButton>
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
