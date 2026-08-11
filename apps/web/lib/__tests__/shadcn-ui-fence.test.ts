@@ -20,12 +20,14 @@
  * 就把自己这几行从板上划掉。板上的数字是**上限**,只减不增(退役色围栏 design-tokens
  * 用的是同一种棘轮:存量列出来,新的一个都不许加)。
  *
- * 红→绿演练(2026-08-11 三条逐一实做,做完全部还原):
- *   - 往板外文件 components/crm/contacts-page.tsx 插一个 `<button>` ⇒ 第一条断言红,
- *     报 `components/crm/contacts-page.tsx:1 <button> → <Button>`,第四条也红(226 > 225)。
- *   - 把 FlowCanvas 的记账从 22 调成 21 ⇒ 第二条断言红,报「实测 22 > 记账 21」。
- *   - 往板上挂一个已经零违例的文件 ⇒ 第三条断言红,报「已清零,请从豁免板删除这一行」。
- * 三条都验过会红,才敢说它绿的时候是在说事实。
+ * 红→绿演练(逐一实做,做完全部还原):
+ *   - 往板外文件 components/crm/contacts-page.tsx 插一个 `<button>` ⇒ 第一闸红,
+ *     报 `components/crm/contacts-page.tsx:1 <button> → <Button>`,第四闸也红(226 > 225)。
+ *   - 把 FlowCanvas 的记账从 22 调成 21 ⇒ 第二闸红,报「实测 22 > 记账 21」。
+ *   - 往板上挂一个已经零违例的文件 ⇒ 第三闸红,报「已清零,请从豁免板删除这一行」。
+ *   - 判官 r1 的绕法(见下面 FROZEN_2026_08_11 的注释):给板外文件加一颗、写进豁免板,
+ *     同时从 FlowCanvas 迁走一颗 ⇒ 前四闸确实全绿,第五闸红。
+ * 四条都验过会红,才敢说它绿的时候是在说事实。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -191,13 +193,92 @@ const EXEMPT: Family[] = [
   },
   {
     family: "asset",
-    why: "资产详情面:#840 本 PR 已把 ds.tsx 的 8 颗按钮迁到 ui/Button,剩下两颗是关闭按钮与裁剪覆盖层,连同 al-iconbtn 配方一起在这一族收尾。",
+    why: "资产详情面:#840 本 PR 已把 ds.tsx 的 9 颗按钮迁到 ui/Button,剩下两颗裸 <button> 是 al-iconbtn 关闭键(606)与变体缩略图切换键(659),连同 al-iconbtn 配方一起在这一族收尾。",
     files: { "components/asset/DetailPanel.tsx": 2 },
   },
 ];
 
 /** 2026-08-11 实测总数,棘轮的刻度。只许调小。 */
 const EXEMPT_TOTAL_BASELINE = 225;
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ * 冻结基线 —— 2026-08-11 那一次全量扫描的原始账。这是**历史记录,一行都不许动**:
+ * 不加行、不删行、数字不改。上面那块豁免板是「今天还欠多少」,会随每一族迁完而缩;
+ * 这一块是「当初欠多少」,历史不会因为今天干了活就改变。
+ * 下面「冻结基线自己没被动过」那条断言(60 行 / 合计 225)就是钉子:谁想靠往这里
+ * 加一行来给新文件开后门,那条先红。
+ *
+ * 为什么要有第二份看起来一样的清单(判官 r1 P1 复现的绕法):
+ * 只有「总数 ≤ 225」这道闸时,**给一个新文件加违例并把它写进豁免板,同时在别处
+ * 迁走等量的一颗**,四道闸会全绿 —— 板确实没变大,但板上多了一个当初不欠账的
+ * 文件,「只减不增」就成了「可以换着欠」。冻结集把「谁可以在板上」钉死在历史上,
+ * 与总数无关:新文件一上板就红。逐文件的数字也一并冻死,堵住同一招的兄弟版本
+ * (把 A 的记账调大、把 B 迁走,总数不变)。
+ * ══════════════════════════════════════════════════════════════════════════
+ */
+const FROZEN_2026_08_11: Readonly<Record<string, number>> = {
+  "app/login/LoginForm.tsx": 3,
+  "app/signup/SignupForm.tsx": 2,
+  "components/admin/AdminDashboardV2.tsx": 5,
+  "components/admin/ImpersonationBanner.tsx": 1,
+  "components/admin/SettingsAdmin.tsx": 4,
+  "components/admin/TenantDetail.tsx": 3,
+  "components/asset/DetailPanel.tsx": 2,
+  "components/canvas/CanvasComparePanel.tsx": 1,
+  "components/canvas/CanvasLineagePanel.tsx": 2,
+  "components/canvas/FlowCanvas.tsx": 22,
+  "components/canvas/NorthstarCanvasWorkspace.tsx": 2,
+  "components/canvas/NorthstarHome.tsx": 1,
+  "components/canvas/nodes/GeneratingBody.tsx": 1,
+  "components/canvas/nodes/ImageNode.tsx": 9,
+  "components/canvas/nodes/NodeLineagePanel.tsx": 1,
+  "components/canvas/nodes/TextNode.tsx": 2,
+  "components/canvas/nodes/VideoNode.tsx": 9,
+  "components/crm/broadcasts/broadcast-composer-page.tsx": 4,
+  "components/crm/broadcasts/broadcast-detail-page.tsx": 1,
+  "components/crm/inbox/inbox-conversation-page.tsx": 1,
+  "components/crm/inbox/inbox-templates-page.tsx": 1,
+  "components/crm/segments-page.tsx": 1,
+  "components/crm/workflows/archive-workflow-dialog.tsx": 1,
+  "components/crm/workflows/routine-authorization-panel.tsx": 4,
+  "components/crm/workflows/workflow-detail-page.tsx": 1,
+  "components/crm/workflows/workflow-list-page.tsx": 1,
+  "components/gen/ImageShapePicker.tsx": 1,
+  "components/gen/VideoSpecPicker.tsx": 3,
+  "components/global-navigation.tsx": 3,
+  "components/northstar/immersive/immersive-nav.tsx": 1,
+  "components/northstar/immersive/immersive-shell.tsx": 2,
+  "components/otto/ConvoTabs.tsx": 2,
+  "components/otto/OttoAnalytics.tsx": 5,
+  "components/otto/OttoApp.tsx": 3,
+  "components/otto/OttoChatStream.tsx": 9,
+  "components/otto/OttoConversation.tsx": 3,
+  "components/otto/OttoDiscover.tsx": 1,
+  "components/otto/OttoFrontDoor.tsx": 3,
+  "components/otto/OttoMemory.tsx": 2,
+  "components/otto/OttoNav.tsx": 15,
+  "components/otto/OttoOnboarding.tsx": 2,
+  "components/otto/OttoPlanCard.tsx": 2,
+  "components/otto/OttoResult.tsx": 5,
+  "components/otto/OttoSchedule.tsx": 19,
+  "components/otto/OttoStuff.tsx": 1,
+  "components/otto/OttoTemplates.tsx": 1,
+  "components/otto/OttoView.tsx": 2,
+  "components/otto/QuickBrief.tsx": 7,
+  "components/otto/StoryboardCard.tsx": 7,
+  "components/otto/TemplateModal.tsx": 1,
+  "components/otto/memory/FactSection.tsx": 3,
+  "components/otto/memory/OfferList.tsx": 4,
+  "components/otto/memory/ProductShowcase.tsx": 8,
+  "components/otto/memory/SegmentCards.tsx": 6,
+  "components/otto/memory/UndoBar.tsx": 1,
+  "components/otto/parts/ReasoningPart.tsx": 1,
+  "components/otto/settings/SettingsPage.tsx": 7,
+  "components/otto/settings/Switch.tsx": 1,
+  "components/otto/stuff/AddAssetDialog.tsx": 5,
+  "components/otto/stuff/StuffLibrary.tsx": 4,
+};
 
 function walk(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -287,9 +368,43 @@ describe("#840 — 商家可见面的交互原语一律走 @/components/ui", () 
     for (const count of byFile.values()) total += count;
     expect(total).toBeLessThanOrEqual(EXEMPT_TOTAL_BASELINE);
   });
+
+  /**
+   * 第五闸 —— 判官 r1 P1:前四闸只看「板有多大」,不看「板上是谁」。给一个当初不欠账的
+   * 文件加违例、把它写进豁免板,同时在别处迁走等量的一颗 —— 总数不变,四闸全绿,
+   * 「只减不增」被换成了「可以换着欠」。这一闸把「谁可以在板上」钉死在冻结基线上,
+   * 与总数无关:任何新文件一上板就红,任何记账数字一调大就红。
+   */
+  it("豁免板只能是冻结基线的子集:不许上新文件,不许把记账调大", () => {
+    const intruders: string[] = [];
+    for (const [file, { family, allowed }] of board) {
+      const frozen = FROZEN_2026_08_11[file];
+      if (frozen === undefined) {
+        intruders.push(
+          `${file}(${family}):不在 2026-08-11 冻结基线里。` +
+            `新文件不许上豁免板 —— 它该走 @/components/ui,不是进账本。`,
+        );
+        continue;
+      }
+      if (allowed > frozen) {
+        intruders.push(`${file}(${family}):记账 ${allowed} > 冻结基线 ${frozen},账本只能往下走`);
+      }
+    }
+    expect(intruders).toEqual([]);
+  });
 });
 
 describe("#840 — 围栏自身的可信度", () => {
+  /**
+   * 第五闸只有在冻结基线本身不可动的前提下才成立 —— 否则「给新文件开后门」只需要
+   * 往冻结基线里也加一行。这条断言就是那颗钉子:60 行、合计 225,一个字都不许改。
+   */
+  it("冻结基线自己没被动过:60 行、合计 225", () => {
+    const entries = Object.entries(FROZEN_2026_08_11);
+    expect(entries.length).toBe(60);
+    expect(entries.reduce((sum, [, count]) => sum + count, 0)).toBe(EXEMPT_TOTAL_BASELINE);
+  });
+
   it("扫描器仍然在扫整棵界面树", () => {
     // 2026-08-11 实测 211 个 .tsx。地板是为了抓「扫描范围塌了」,不是为了冻结数量。
     expect(sweep().scanned).toBeGreaterThanOrEqual(190);
