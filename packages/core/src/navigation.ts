@@ -3,8 +3,9 @@
  *
  * 为什么在 core:这份树有三个读者 —— 左侧导轨(画它)、Otto(照它指路)、围栏测试(照它
  * 核对)。抄成三份,就一定有一份先烂掉;本仓已经在「说的与做的失同步」上栽过太多次。
- * 从此导航只有数据,壳只是渲染器:后面的票(#792 CRM 折叠、#802 Otto 界面地图)改这里的
- * 数据即可,不必再动壳。
+ * 从此导航只有数据,壳只是渲染器:后面的票(#802 Otto 界面地图)改这里的数据即可,不必
+ * 再动壳。#792 是第一次验证 —— CRM 七扇门收成一扇预览门,只改了这里的数据;壳唯一的改动
+ * 是学会画一枚 Preview 徽章,而那是一种新的**表现**,不是第二份导航。
  *
  * 纯数据、零依赖(没有 React、没有图标、没有 node/network),所以主 barrel 装得下,
  * Otto 的指令与浏览器端导轨可以读同一份。图标在 apps/web 按 key 配。
@@ -16,6 +17,9 @@
  *      OTTO_ASSISTANT,导轨把它画在板块之上、随处可点。
  *   ③ **一个日历** —— 排期日历是唯一权威(真有 ScheduledPost 表、worker 会照它发布);
  *      /campaign/calendar 那张草稿列表收敛成重定向,见 MERCHANT_NAV_REDIRECTS。
+ *   ④ **没通电的能力只开一扇诚实的门**(#792)—— CRM 七扇门收成 Customers 一扇,并带
+ *      一句 `preview`:消息渠道一个都连不上,所以那些页面发不出也收不到消息。页面本身
+ *      一页没删,商家从预览页照样进得去。
  */
 
 /** 一条真能点开的目的地。 */
@@ -29,15 +33,23 @@ export type MerchantNavLink = {
   /** 一句人话:在这里能做什么。Otto 照它指路,所以它与导轨写的是同一句 —— 商家听到的
    *  和看到的永远对得上。 */
   readonly does: string;
+  /**
+   * 这扇门后面的能力**还不完整**时,这一句就是它的实话(#792)。
+   *
+   * 为什么是一个字段而不是把「(preview)」塞进 label:「这扇门是预览」是一个关于目的地的
+   * 事实,它有两个读者 —— 导轨要画一枚 Preview 徽章,Otto 要把这句话说给商家听。写进
+   * label 就等于把事实藏进一个字符串里,两个读者各自去解析它,那正是本仓的老病。
+   *
+   * 有它 = 商家点进去之前就知道这里还没通电;没有它 = 这扇门后面说的话全部作数。
+   * 能力通电的那一天,删掉这一行,徽章与那句话一起消失,没有第二处要找。
+   */
+  readonly preview?: string;
 };
 
 /** 一组目的地(导轨里可折叠的一段)。 */
 export type MerchantNavGroup = {
   readonly key: string;
   readonly label: string;
-  /** 这一组在路由上的根。有它,「我现在算不算在这一组里」就不必靠壳去猜 —— 也不必在壳里
-   *  硬写一次 "/crm"。只有真的独占一段路径前缀的组才有;其余组按子项逐条判定。 */
-  readonly rootPath?: string;
   readonly items: readonly MerchantNavLink[];
 };
 
@@ -89,20 +101,24 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     does: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
   },
   {
-    key: "crm",
-    label: "CRM",
-    // /crm 底下还有没进导航的子路由(如 /crm/inbox/templates),所以这一组按根判定:
-    // 走进 /crm 的任何一页,CRM 这一段就该是展开且高亮的。
-    rootPath: "/crm",
-    items: [
-      { key: "crm-inbox", label: "Inbox", href: "/crm/inbox", does: "Read and reply to customer conversations." },
-      { key: "crm-contacts", label: "Contacts", href: "/crm/contacts", does: "Look up a customer and everything you know about them." },
-      { key: "crm-segments", label: "Segments", href: "/crm/segments", does: "Group customers by what they did, so a broadcast reaches the right people." },
-      { key: "crm-templates", label: "Templates", href: "/crm/templates", does: "Keep the message wording you reuse when you write to customers." },
-      { key: "crm-broadcasts", label: "Broadcasts", href: "/crm/broadcasts", does: "Send one message to a segment, with its own approval." },
-      { key: "crm-workflows", label: "Workflows", href: "/crm/workflows", does: "Set up a reply or follow-up that goes out automatically." },
-      { key: "crm-reports", label: "Reports", href: "/crm/reports", does: "See how your conversations and broadcasts are doing." },
-    ],
+    // #792 —— 七扇门收成一扇诚实的预览门(Founder 裁决 2026-08-08)。
+    //
+    // 原来这一组把 Inbox / Broadcasts / Workflows / Reports 与 Contacts 并排放在导轨上,
+    // 每一扇都长得像一个能用的能力。可是**一个消息渠道都连不上**(Connections 里 Messaging
+    // 整段写着 "Not available yet",全仓没有任何一条商家可走的连接路径),所以那六扇门后面
+    // 没有一条消息发得出去、收得进来。导轨因此在替产品说大话。
+    //
+    // 收敛之后:导轨只承诺一件**现在真的做得到**的事 —— 建客户档案;那句 preview 把没通电
+    // 的部分说在前面;那些页面本身一页没删,商家从预览页进得去(引擎 4600 行原地保留,等
+    // 通电)。渠道接通的那一天(独立里程碑),删掉 preview 这一行即可。
+    key: "customers",
+    label: "Customers",
+    // /crm 底下每一页都在这扇门后面(pathMatches 按前缀判定),所以走进 /crm 的任何一页,
+    // 导轨亮的都是这一格。
+    href: "/crm",
+    does: "Keep a record of every customer — who they are, how to reach them, and what you may contact them about.",
+    preview:
+      "No messaging channel can be connected yet, so nothing in here can send a message to a customer or receive one from them. Keeping customer records is the part that works today.",
   },
   {
     key: "workspace",
@@ -191,16 +207,25 @@ export function everyNavDestination(): readonly MerchantNavLink[] {
  */
 export function merchantNavMap(): string {
   const lines: string[] = [];
-  lines.push(`- ${OTTO_ASSISTANT.label} (${OTTO_ASSISTANT.href}) — ${OTTO_ASSISTANT.does}`);
+  lines.push(describeNavLink(OTTO_ASSISTANT));
   for (const node of MERCHANT_NAV) {
     if (!isNavGroup(node)) {
-      lines.push(`- ${node.label} (${node.href}) — ${node.does}`);
+      lines.push(describeNavLink(node));
       continue;
     }
     lines.push(`- ${node.label}`);
     for (const item of node.items) {
-      lines.push(`  - ${node.label} › ${item.label} (${item.href}) — ${item.does}`);
+      lines.push(describeNavLink(item, `${node.label} › `, "  "));
     }
   }
   return lines.join("\n");
+}
+
+/**
+ * 地图上的一行。预览门把那句实话**接在同一行**上,所以 Otto 读到「这里能做什么」的同时
+ * 就读到「这里还不能做什么」—— 两句话分不开,也就不会只说前一半(#792)。
+ */
+function describeNavLink(item: MerchantNavLink, prefix = "", indent = ""): string {
+  const preview = item.preview ? ` ${item.preview}` : "";
+  return `${indent}- ${prefix}${item.label} (${item.href}) — ${item.does}${preview}`;
 }

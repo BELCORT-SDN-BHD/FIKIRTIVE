@@ -9,24 +9,18 @@ import {
   ChevronDown,
   Coins,
   Compass,
-  Contact,
   CreditCard,
-  FileText,
   Frame,
-  Inbox,
   LayoutTemplate,
   Library,
   LogOut,
   Megaphone,
   Menu,
   Plug,
-  Send,
   Settings,
-  Sparkles,
   SlidersHorizontal,
   User,
   Users,
-  UsersRound,
   CalendarDays,
   X,
 } from "lucide-react";
@@ -41,6 +35,7 @@ import {
 } from "@fikirtive/core/navigation";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
@@ -59,17 +54,9 @@ const NAV_ICONS: Record<string, NavigationIcon> = {
   // 板块
   create: Frame,
   campaign: Megaphone,
-  crm: Users,
+  customers: Users,
   workspace: Library,
   settings: Settings,
-  // CRM
-  "crm-inbox": Inbox,
-  "crm-contacts": Contact,
-  "crm-segments": UsersRound,
-  "crm-templates": FileText,
-  "crm-broadcasts": Send,
-  "crm-workflows": Sparkles,
-  "crm-reports": BarChart3,
   // Workspace
   library: Library,
   brand: BookOpen,
@@ -90,7 +77,6 @@ type RailLink = MerchantNavLink & { readonly icon: NavigationIcon };
 type RailGroup = {
   readonly key: string;
   readonly label: string;
-  readonly rootPath?: string;
   readonly icon: NavigationIcon;
   readonly items: readonly RailLink[];
 };
@@ -109,7 +95,6 @@ const RAIL_TREE: readonly RailNode[] = MERCHANT_NAV.map((node): RailNode =>
     ? {
         key: node.key,
         label: node.label,
-        rootPath: node.rootPath,
         icon: NAV_ICONS[node.key] ?? Frame,
         items: node.items.map(withIcon),
       }
@@ -181,12 +166,10 @@ function nextDisclosureOpenFor(matches: (pathname: string) => boolean, update: D
   return update.type === "toggle" ? update.open : matches(update.pathname);
 }
 
-/** A group is "on" when the current location is one of its own destinations — or, for a
- *  group that owns a whole path prefix, anywhere under that prefix (so an unlisted
- *  sub-route like /crm/inbox/templates still lights its group up). The prefix comes from
- *  the registry, never from a literal written here. */
+/** A group is "on" when the current location is one of its own destinations. `pathMatches`
+ *  is already prefix-aware, so an unlisted sub-route under one of those destinations still
+ *  lights its group up. */
 function groupMatches(group: RailGroup, pathname: string): boolean {
-  if (group.rootPath && pathMatches(pathname, group.rootPath)) return true;
   return activeItemHref(pathname, group.items) !== null;
 }
 
@@ -194,12 +177,12 @@ export function nextGroupDisclosureOpen(group: RailGroup, update: DisclosureUpda
   return nextDisclosureOpenFor((p) => groupMatches(group, p), update);
 }
 
-/** Kept for the existing CRM fence — it is `nextGroupDisclosureOpen` for the CRM group,
- *  named. The group is looked up by key, so the route prefix stays in the registry. */
-export function nextCrmDisclosureOpen(update: DisclosureUpdate): boolean {
-  const crm = NAV_GROUPS.find((group) => group.key === "crm");
-  if (!crm) return update.type === "toggle" ? update.open : false;
-  return nextGroupDisclosureOpen(crm, update);
+/** `nextGroupDisclosureOpen` for a group named by its registry key — the shape the fence
+ *  drives, without handing it a RailGroup object it would have to build itself. */
+export function nextDisclosureOpenForGroup(groupKey: string, update: DisclosureUpdate): boolean {
+  const group = NAV_GROUPS.find((node) => node.key === groupKey);
+  if (!group) return update.type === "toggle" ? update.open : false;
+  return nextGroupDisclosureOpen(group, update);
 }
 
 /** Every path prefix the merchant shell owns. Derived from the registry, so a new
@@ -298,6 +281,16 @@ function NavigationLink({
     >
       <Icon className="size-4 shrink-0" aria-hidden />
       <span className="lg:hidden xl:inline">{item.label}</span>
+      {/* #792 — a destination whose ability is not finished yet says so BEFORE it is
+          clicked. The badge is drawn from the registry's `preview` field, so a rail row
+          can never claim more than the authority source does; the sentence itself is the
+          title, and the preview page repeats it in full. It follows the label's own
+          visibility rule — at the 1024–1279 icon-only rail there is no label to qualify. */}
+      {item.preview ? (
+        <Badge variant="outline" className="ml-auto shrink-0 lg:hidden xl:inline-flex" title={item.preview}>
+          Preview
+        </Badge>
+      ) : null}
     </Link>
   );
 }
