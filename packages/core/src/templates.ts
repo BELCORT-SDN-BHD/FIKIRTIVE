@@ -236,7 +236,7 @@ export const TEMPLATES: Template[] = [
       "restyle this photo for Chinese New Year — deep red and gold palette, hanging lanterns softly out of focus, mandarin oranges, plum blossom sprigs, gold ingot accents, warm celebratory light, the product sharp and centred with clean empty space above it, photorealistic",
     captions: [
       { language: "en", text: "Gong Xi Fa Cai. [your product] is ready for your reunion table — [price]." },
-      { language: "ms", text: "Gong Xi Fa Cai! [your product] sedia untuk meja perhimpunan keluarga anda — [price]." },
+      { language: "ms", text: "Gong Xi Fa Cai! [your product] sedia untuk jamuan keluarga anda — [price]." },
       { language: "zh", text: "恭喜发财!团圆桌上少不了 [your product],[price] 起,现已接单。" },
     ],
   },
@@ -299,7 +299,7 @@ export const TEMPLATES: Template[] = [
       "restyle this photo as a Christmas gifting scene — pine sprigs, warm fairy lights bokeh, kraft paper and red ribbon, soft snow-free tropical styling, cosy evening light, the product unwrapped and sharp in the foreground, clean space at the top, photorealistic",
     captions: [
       { language: "en", text: "Christmas gifting sorted. [your product] from [price] — order by [date] to get it in time." },
-      { language: "ms", text: "Hadiah Krismas dah selesai. [your product] dari [price] — tempah sebelum [date]." },
+      { language: "ms", text: "Hadiah Krismas dah settle. [your product] dari [price] — tempah sebelum [date] supaya sempat." },
       { language: "zh", text: "圣诞送礼不用烦。[your product],[price] 起,[date] 前下单可准时送达。" },
     ],
   },
@@ -413,7 +413,7 @@ export const TEMPLATES: Template[] = [
       "a square e-commerce bundle image showing {q} arranged together as one set on a pure white seamless background, items overlapping slightly in a balanced pyramid, even studio lighting, soft contact shadows, generous clean margin, no text, photorealistic",
     captions: [
       { language: "en", text: "Bundle and save. [your product] set at [price] — cheaper than buying separately." },
-      { language: "ms", text: "Beli set, jimat lagi. Set [your product] pada [price] — lebih murah dari beli berasingan." },
+      { language: "ms", text: "Beli set, jimat lagi. Set [your product] pada [price] — lebih murah daripada beli berasingan." },
     ],
   },
   {
@@ -483,7 +483,7 @@ export const TEMPLATES: Template[] = [
       "a mouth-watering hero food photograph of this dish — 45-degree angle, shallow depth of field, warm directional window light with a soft fill, fresh garnish, gentle steam, dark wood or slate surface, styled but honest, razor-sharp on the food, photorealistic",
     captions: [
       { language: "en", text: "[your product], made fresh every day. [price]. Dine in, take away or delivery." },
-      { language: "ms", text: "[your product], segar dimasak setiap hari. [price]. Makan sini, bungkus atau penghantaran." },
+      { language: "ms", text: "[your product], segar dimasak setiap hari. [price]. Makan sini, bungkus atau hantar." },
     ],
   },
   {
@@ -711,7 +711,7 @@ export const TEMPLATES: Template[] = [
       "a square top-down flat lay of this product styled with {q} — balanced composition with generous negative space, natural textures, soft diffused daylight, shot straight down, editorial and calm, photorealistic",
     captions: [
       { language: "en", text: "Little things that make the day better. [your product], [price]." },
-      { language: "ms", text: "Benda kecil yang buat hari jadi lebih baik. [your product], [price]." },
+      { language: "ms", text: "Benda kecil yang buat hari anda lebih baik. [your product], [price]." },
     ],
   },
   {
