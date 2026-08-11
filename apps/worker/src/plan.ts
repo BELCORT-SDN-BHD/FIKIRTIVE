@@ -26,6 +26,13 @@ import {
   RESEARCH_QUEUE,
   PUBLISH_QUEUE,
 } from "@fikirtive/core";
+// 请求级上限的**唯一**来源:真正拦住请求的就是这个闸门,启动日志必须报它,而不是另算一份。
+import { PROVIDER_MAX_CONCURRENT_REQUESTS_ENV, providerRequestLimit } from "@fikirtive/generation";
+
+/** packages/db 的默认池上限(未设 `DB_POOL_MAX` 时,见 packages/db/src/index.ts)。 */
+export const PRISMA_POOL_DEFAULT = 10;
+/** pg-boss 12.18.2 自建 pg.Pool 的默认上限 —— 判官 r1 P1-3:这一笔以前不在任何账上。 */
+export const PGBOSS_POOL_DEFAULT = 10;
 
 export const WORKER_ROLES = ["compute", "wait", "all"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -37,21 +44,21 @@ export const WAIT_QUEUES = [GEN_QUEUE, REFGEN_QUEUE, RESEARCH_QUEUE, PUBLISH_QUE
 
 /**
  * 供应商官方并发额度(2026-08-08 arkcli 实测:三个视频模型都是
- * `concurrent_requests: 10` / `create_task_rpm: 600`)。这是**整个账户**的额度,
- * 不是每进程的 —— gen 和 refgen 都打同一个账户,所以两条队列的并发要一起算。
+ * `concurrent_requests: 10` / `create_task_rpm: 600`)。这是**整个账户**的额度。
  */
 export const PROVIDER_CONCURRENT_REQUESTS = 10;
-/** 留给重试、Otto 顺手发起的调用和突发的余量:实际可用 = 10 − 2 = 8。 */
+/** 留给重试和突发的余量:实际可用 = 10 − 2 = 8。 */
 export const PROVIDER_CONCURRENCY_HEADROOM = 2;
-/** 打同一个供应商账户的队列 —— 预算要按它们的**和**来算。 */
-export const PROVIDER_QUEUES = [GEN_QUEUE, REFGEN_QUEUE] as const;
 
 /**
- * 等待型队列的默认并发。
+ * 等待型队列的默认并发。**只在显式 `WORKER_ROLE=wait` 时生效**(见 workerPlan)。
  *
- * gen 4 + refgen 2 = 6,落在可用额度 8 以内并留了余量;research / publish 打的是别家
- * (LLM、Meta),各 2 是「一个商家的慢活不挡下一个商家」的最小值。全部可用环境变量覆盖
- * (#760 要求「建议可配置」),但改之前先读 `providerBudgetLine()` 打在启动日志里的那行算术。
+ * research / publish 打的是别家(LLM、Meta),各 2 是「一个商家的慢活不挡下一个商家」的最小值。
+ *
+ * gen 4 / refgen 2 是**任务槽位**,不是供应商请求预算 —— 判官 r1 P1-1 点破的正是这个混淆:
+ * 一个图片任务会为它的每张图各发一个付费请求(gen count ≤ 4,refgen ≤ 6),所以这六个槽位
+ * 在最坏情况下是 4×4 + 2×6 = 28 个并发请求。真正的请求上限由 `@fikirtive/generation` 的
+ * 进程内闸门(`providerRequestLimit`)按**请求**来管,与这里的槽位无关。
  */
 const WAIT_DEFAULTS: Record<string, number> = {
   [GEN_QUEUE]: 4,
@@ -59,6 +66,9 @@ const WAIT_DEFAULTS: Record<string, number> = {
   [RESEARCH_QUEUE]: 2,
   [PUBLISH_QUEUE]: 2,
 };
+
+/** merge-base(#796 之前)的行为:每条队列并发 1,连接池两边都不碰。`all` 必须与它一字不差。 */
+export const LEGACY_QUEUE_CONCURRENCY = 1;
 
 const CONCURRENCY_ENV: Record<string, string> = {
   [GEN_QUEUE]: "GEN_CONCURRENCY",
@@ -73,8 +83,24 @@ export type WorkerPlan = {
   concurrency: Readonly<Record<string, number>>;
   /** 清道夫、发布调度器、夜间备份是否在这个角色里跑(只跑在一处,不能两个服务都跑一遍)。 */
   supervises: boolean;
-  /** 这个角色的并发假设下,Prisma 连接池至少要多大(见 dbPoolPlan)。 */
-  dbPoolFloor: number;
+  /**
+   * 这个角色**是否把并发抬到了 1 以上**。没抬,就一个池子都不许碰 —— 那是 merge-base
+   * 的行为,而 `all`(不设变量时的默认)必须与它一字不差(判官 r1 P0)。
+   */
+  raisesConcurrency: boolean;
+  /** 抬了并发才有值:Prisma 连接池下限。没抬 ⇒ null ⇒ 沿用 packages/db 的默认。 */
+  dbPoolFloor: number | null;
+  /** 抬了并发才有值:pg-boss 自己那个池的上限。没抬 ⇒ null ⇒ 沿用 pg-boss 默认 10。 */
+  pgBossPoolMax: number | null;
+  /**
+   * 这个角色写哪一行心跳(判官 r1 P2-2)。
+   *
+   * 拆分之后两个角色如果共用 `"worker"` 这一行,任何一班死掉都会被另一班的心跳盖住 ——
+   * `/api/health` 照样说 "up",而商家那边视频再也出不来。所以每个角色写自己的行。
+   * `all` 仍然写 `"worker"`:那是今天唯一的服务,也是 `/api/health` 一直在读的那一行,
+   * 不设变量时连这里都不许变。
+   */
+  heartbeatId: string;
 };
 
 /** 未设 ⇒ `all`(保持既有单服务行为);设了但不认识 ⇒ 抛。**不猜**:猜错等于半个平台悄悄不干活。 */
@@ -109,32 +135,68 @@ export function dbPoolFloorFor(totalConcurrency: number): number {
   return totalConcurrency * 2 + 4;
 }
 
+/**
+ * pg-boss **自己**也开一个 pg.Pool(默认 max 10),跟 Prisma 那个是两回事 —— 判官 r1 P1-3
+ * 点的就是这笔没进账的连接。等待型角色有 10 个独立轮询器,每个都在自己的节奏上取件、
+ * 完成、维护,默认 10 正好卡在边上。每个轮询器一条,再加 4 条给 send / 维护 / 完成写回。
+ */
+export function pgBossPoolMaxFor(totalConcurrency: number): number {
+  return totalConcurrency + 4;
+}
+
 export function workerPlan(env: NodeJS.ProcessEnv = process.env): WorkerPlan {
   const role = parseWorkerRole(env.WORKER_ROLE);
   const concurrency: Record<string, number> = {};
   if (role === "compute" || role === "all") {
     // 固定 1:ffmpeg/whisper 是 CPU 型,进程内并发只会互相抢 CPU。扩容 = 加副本。
-    for (const queue of COMPUTE_QUEUES) concurrency[queue] = 1;
+    for (const queue of COMPUTE_QUEUES) concurrency[queue] = LEGACY_QUEUE_CONCURRENCY;
   }
-  if (role === "wait" || role === "all") {
+  if (role === "wait") {
+    // 判官 r1 P0 —— 新并发**只在显式 `WORKER_ROLE=wait` 时**启用。
+    //
+    // r1 把它挂在 `role === "wait" || role === "all"` 上,于是「不设变量 = 今天的行为」这句
+    // 话当场不成立:一次普通的部署会把等待型队列从 1 静悄悄抬到 4/2/2/2、把 Prisma 池默认
+    // 从 10 抬到 30,而运维以为自己什么都没改。抬并发是一个**要人点头**的动作,不是升级的
+    // 副作用 —— 所以它现在要求把 `WORKER_ROLE=wait` 明确写出来。
     for (const queue of WAIT_QUEUES) {
       concurrency[queue] = positiveInt(env[CONCURRENCY_ENV[queue]!], WAIT_DEFAULTS[queue]!);
     }
+  } else if (role === "all") {
+    // merge-base 的形状:七条队列,每条 1。
+    for (const queue of WAIT_QUEUES) concurrency[queue] = LEGACY_QUEUE_CONCURRENCY;
   }
   const total = Object.values(concurrency).reduce((a, b) => a + b, 0);
+  // 没有任何一条队列被抬到 1 以上 ⇒ 连接压力与 merge-base 相同 ⇒ 两个池都不碰。
+  const raisesConcurrency = Object.values(concurrency).some((n) => n > LEGACY_QUEUE_CONCURRENCY);
   return {
     role,
     concurrency,
     // 清道夫扫的全是等待型队列的钱路行(gen/refgen/research/publish 的预扣与退款),
     // 发布调度器喂的也是等待型队列 —— 跟着 wait 走。compute 角色只跑心跳。
     supervises: role === "wait" || role === "all",
-    dbPoolFloor: dbPoolFloorFor(total),
+    raisesConcurrency,
+    dbPoolFloor: raisesConcurrency ? dbPoolFloorFor(total) : null,
+    pgBossPoolMax: raisesConcurrency ? pgBossPoolMaxFor(total) : null,
+    heartbeatId: heartbeatIdFor(role),
   };
 }
 
-/** 这个进程一次最多向供应商账户发起多少个并发请求。 */
-export function providerConcurrency(plan: WorkerPlan): number {
-  return PROVIDER_QUEUES.reduce((sum, queue) => sum + (plan.concurrency[queue] ?? 0), 0);
+/** `all` 保持 `"worker"`(今天 /api/health 读的那一行);拆开的两班各写各的行。 */
+export function heartbeatIdFor(role: WorkerRole): string {
+  return role === "all" ? "worker" : `worker-${role}`;
+}
+
+/** 拆分后可能存在的全部心跳行 id —— `/api/health` 用它来逐个角色报活。 */
+export const HEARTBEAT_IDS = ["worker", "worker-compute", "worker-wait"] as const;
+
+/**
+ * 这个角色会不会向供应商发付费请求。
+ *
+ * **不再返回一个「并发请求数」** —— 判官 r1 P1-1:那个数按任务槽位算,而一个图片任务会
+ * 扇出 count 个请求,所以它从来就不是请求上限。真正的上限是 `providerRequestLimit()`。
+ */
+export function touchesProvider(plan: WorkerPlan): boolean {
+  return (plan.concurrency[GEN_QUEUE] ?? 0) > 0 || (plan.concurrency[REFGEN_QUEUE] ?? 0) > 0;
 }
 
 export function providerBudgetUsable(): number {
@@ -142,29 +204,33 @@ export function providerBudgetUsable(): number {
 }
 
 /**
- * 启动日志里那行算术。只要这个角色会打供应商就**无条件打印**,不做成「超了才警告」:
- * 额度是按账户算的,而副本数只有 Railway 知道 —— 沉默的检查会在多副本时骗人,一行明账不会。
- * 算力型角色一个供应商队列都不消费,那行算术对它没有意义,返回 null。
+ * 启动日志里那行算术 —— 现在按**请求**报,不按任务槽位报(判官 r1 P1-1)。
+ *
+ * 上限来自 `@fikirtive/generation` 的进程内闸门,也就是真正拦住请求的那个东西;任务槽位
+ * 只是「同时有几件活在跑」,与账户额度没有换算关系,所以这行明账里不再出现它。
+ * 无条件打印(只要这个角色会打供应商):副本数只有 Railway 知道,沉默的检查会在多副本时骗人。
  */
-export function providerBudgetLine(plan: WorkerPlan): string | null {
-  const per = providerConcurrency(plan);
-  if (per === 0) return null;
+export function providerBudgetLine(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!touchesProvider(plan)) return null;
+  const limit = providerRequestLimit(env);
   return (
-    `[worker] provider concurrency: ${PROVIDER_QUEUES.map((q) => `${q} ${plan.concurrency[q] ?? 0}`).join(" + ")}` +
-    ` = ${per} per replica; account budget ${PROVIDER_CONCURRENT_REQUESTS}` +
-    ` (usable ${providerBudgetUsable()} after headroom ${PROVIDER_CONCURRENCY_HEADROOM}).` +
-    ` Keep replicas × ${per} ≤ ${providerBudgetUsable()}.`
+    `[worker] provider REQUESTS: hard cap ${limit} concurrent per replica ` +
+    `(${PROVIDER_MAX_CONCURRENT_REQUESTS_ENV}; shared by gen + refgen — one account). ` +
+    `Job slots do NOT bound this: one image job fans out up to its image count in paid requests. ` +
+    `Account budget ${PROVIDER_CONCURRENT_REQUESTS} (usable ${providerBudgetUsable()} after headroom ` +
+    `${PROVIDER_CONCURRENCY_HEADROOM}). Keep replicas × ${limit} ≤ ${providerBudgetUsable()}.`
   );
 }
 
 /** 单个进程自己就已经超出可用额度 —— 这个不用知道副本数也能确定,所以这条才做成警告。 */
-export function providerBudgetWarning(plan: WorkerPlan): string | null {
-  const per = providerConcurrency(plan);
-  if (per <= providerBudgetUsable()) return null;
+export function providerBudgetWarning(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!touchesProvider(plan)) return null;
+  const limit = providerRequestLimit(env);
+  if (limit <= providerBudgetUsable()) return null;
   return (
-    `[worker] WARNING: this process alone asks the provider for ${per} concurrent requests, ` +
+    `[worker] WARNING: this process alone may hold ${limit} concurrent provider requests, ` +
     `above the usable budget ${providerBudgetUsable()} of ${PROVIDER_CONCURRENT_REQUESTS}. ` +
-    `Lower GEN_CONCURRENCY / REFGEN_CONCURRENCY — over-budget requests come back as 429s, ` +
+    `Lower ${PROVIDER_MAX_CONCURRENT_REQUESTS_ENV} — over-budget requests come back as 429s, ` +
     `which merchants see as failed generations.`
   );
 }
@@ -174,34 +240,55 @@ export type DbPoolPlan =
   | { action: "default"; value: number; message: string }
   /** 运维显式设过但低于下限 ⇒ **不覆盖**(硬顶死数据库比池子小更糟),只大声说。 */
   | { action: "warn"; message: string }
-  /** 够用 ⇒ 什么都不做。 */
+  /** 够用,或者这个角色根本没抬并发 ⇒ 什么都不做。 */
   | { action: "keep" };
 
 /**
- * `DB_POOL_MAX` 只在**没被显式设过**时由我们按并发定默认值。
+ * `DB_POOL_MAX` 只在**这个角色抬了并发、而且没人显式设过**时由我们定默认值。
+ *
+ * 「没抬并发就不碰」是判官 r1 P0 的要求:`all`(不设变量)必须与 merge-base 一字不差,
+ * 而 merge-base 从来不碰这个变量。
  *
  * 为什么不覆盖显式值:那个数是按「副本数 × 每进程上限 ≤ 数据库预算」算出来的,
  * 只有运维知道副本数。我们替他调大,可能把整个数据库的连接顶爆 —— 那比池子偏小严重得多。
  */
 export function dbPoolPlan(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): DbPoolPlan {
+  const floor = plan.dbPoolFloor;
+  if (floor === null) return { action: "keep" };
   const raw = (env.DB_POOL_MAX ?? "").trim();
   if (raw === "") {
     return {
       action: "default",
-      value: plan.dbPoolFloor,
-      message: `[worker] DB_POOL_MAX unset — defaulting to ${plan.dbPoolFloor} for role "${plan.role}" (2 per concurrent job + 4 for timers)`,
+      value: floor,
+      message: `[worker] DB_POOL_MAX unset — defaulting to ${floor} for role "${plan.role}" (2 per concurrent job + 4 for timers)`,
     };
   }
   const current = Number(raw);
-  if (Number.isFinite(current) && current >= plan.dbPoolFloor) return { action: "keep" };
+  if (Number.isFinite(current) && current >= floor) return { action: "keep" };
   return {
     action: "warn",
     message:
-      `[worker] WARNING: DB_POOL_MAX=${raw} is below the floor ${plan.dbPoolFloor} for role "${plan.role}" ` +
+      `[worker] WARNING: DB_POOL_MAX=${raw} is below the floor ${floor} for role "${plan.role}" ` +
       `at this concurrency. Leaving your value alone (only you know the replica count), but concurrent jobs ` +
       `will queue on connections and a money transaction can sit behind them.`,
   };
 }
+
+/**
+ * 这个进程**总共**会向 Postgres 开多少条连接:Prisma 的池 + pg-boss 自己的池。
+ * 判官 r1 P1-3:第二项从来没进过明账,于是文档报的每副本上限只有真实值的一半。
+ */
+export function connectionBudgetLine(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): string {
+  const prismaMax = plan.dbPoolFloor ?? Number((env.DB_POOL_MAX ?? "").trim()) ?? PRISMA_POOL_DEFAULT;
+  const prisma = Number.isFinite(prismaMax) && prismaMax > 0 ? prismaMax : PRISMA_POOL_DEFAULT;
+  const boss = plan.pgBossPoolMax ?? PGBOSS_POOL_DEFAULT;
+  return (
+    `[worker] postgres connections: prisma ${prisma} + pg-boss ${boss} = ${prisma + boss} per replica. ` +
+    `Budget check is replicas × this, PLUS web (prisma ${PRISMA_POOL_DEFAULT} + pg-boss 2 per replica), ` +
+    `against the database's max_connections.`
+  );
+}
+
 
 /** 启动日志:这个服务到底在消费什么。别人排查「为什么我的任务没人干」时第一眼看的就是这行。 */
 export function planSummary(plan: WorkerPlan): string {

@@ -19,7 +19,7 @@
 import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { QUEUES } from "./queues.js";
-import { dbPoolPlan, planSummary, providerBudgetLine, providerBudgetWarning, workerPlan } from "./plan.js";
+import { connectionBudgetLine, dbPoolPlan, planSummary, providerBudgetLine, providerBudgetWarning, workerPlan } from "./plan.js";
 import { handleIngest, redispatchLostIngest, type IngestJobData } from "./jobs/ingest.js";
 import { handleRender } from "./jobs/render.js";
 import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
@@ -85,13 +85,16 @@ const plan = (() => {
 })();
 console.log(`[worker] ${planSummary(plan)}`);
 {
-  const budget = providerBudgetLine(plan);
+  const budget = providerBudgetLine(plan, process.env);
   if (budget) console.log(budget);
-  const warning = providerBudgetWarning(plan);
+  const warning = providerBudgetWarning(plan, process.env);
   if (warning) console.warn(warning);
+  // Only a role that RAISED concurrency touches the pools; `all` (unset WORKER_ROLE) leaves both
+  // exactly where merge-base left them (判官 r1 P0).
   const pool = dbPoolPlan(plan, process.env);
   if (pool.action === "default") { process.env.DB_POOL_MAX = String(pool.value); console.log(pool.message); }
   else if (pool.action === "warn") console.warn(pool.message);
+  console.log(connectionBudgetLine(plan, process.env));
 }
 
 // L1 publish-chain contract (spec §四), fail-SOFT: a half-configured chain (some secrets set, one
@@ -132,6 +135,12 @@ async function runHandler<T>(fn: () => Promise<T>): Promise<T> {
 const boss = new PgBoss({
   connectionString,
   schema: "pgboss",
+  // #796 判官 r1 P1-3 — pg-boss opens its OWN pg.Pool (default max 10), entirely separate from
+  // Prisma's. At `localConcurrency: N` this process runs N independent pollers, each fetching,
+  // completing and maintaining on its own clock, so the default sits right at the edge. Sized
+  // only for a role that raised concurrency; `all` and `compute` keep pg-boss's own default so
+  // an unset WORKER_ROLE changes no connection count at all.
+  ...(plan.pgBossPoolMax === null ? {} : { max: plan.pgBossPoolMax }),
 });
 
 boss.on("error", (err) => { console.error("[worker] pg-boss error:", err); captureError(err); });
@@ -215,13 +224,19 @@ async function main(): Promise<void> {
   // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
   // logged but never crashes the worker — health degrades to "stale", which is the signal.
   // #463: platform-level row (WorkerHeartbeat has no tenant), written under a named system identity.
+  //
+  // #796 判官 r1 P2-2: the row id is PER ROLE. Two split services sharing one `"worker"` row would
+  // let either one die invisibly — the survivor keeps the row fresh and /api/health keeps saying
+  // "up" while half the platform's work has stopped. `all` still writes `"worker"`, so the unsplit
+  // deployment (and everything reading that row today) is untouched.
+  const heartbeatId = plan.heartbeatId;
   const beat = () =>
     runAsSystem("worker-heartbeat", () =>
       prisma.workerHeartbeat
-        .upsert({ where: { id: "worker" }, create: { id: "worker", at: new Date() }, update: { at: new Date() } })
+        .upsert({ where: { id: heartbeatId }, create: { id: heartbeatId, at: new Date() }, update: { at: new Date() } })
         .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e)));
   setInterval(() => {
-    console.log(`[worker] heartbeat ${new Date().toISOString()}`);
+    console.log(`[worker] heartbeat ${heartbeatId} ${new Date().toISOString()}`);
     void beat();
   }, 60_000);
   void beat(); // flip /api/health to "up" immediately on boot, not after the first minute
