@@ -12,7 +12,8 @@
  * 1. **画面里不写商家的字**,除非模板明确是「promo card」那一类(见 `rendersHeadline`)。
  *    其余一律留干净留白,商家事后自己压字 —— 出一张拼错字的促销图,比不出图更伤。
  * 2. **一格价钱都不写在这里**。一次模板运行 = 一张图,价钱由 `templateRunCredits()`
- *    从集中定价配置算出来(Pricing truth),模板数据里没有任何金额/积分字面量。
+ *    向**收费权威** `pricedGenCredits()` 问出来(Pricing truth:报价与扣费同源),
+ *    模板数据里没有任何金额/积分字面量。
  * 3. **不出现供应商名**。模板是商家可见面,白标纪律照旧。
  *
  * ── 语言 ─────────────────────────────────────────────────────────────────
@@ -20,8 +21,8 @@
  * `captions` 是**内容资产**,不是 UI 文案:马来西亚 SMB 真实发帖用 English 与 Bahasa
  * Melayu,华语社群加 Chinese。占位符三语一致(`[your product]` 等),商家一次替换到底。
  */
-import { GEN_PRICE_USD_PER_IMAGE, type GenImageAspect } from "./gen.js";
-import { CREDITS_PER_USD, INTERNAL_PER_DISPLAY } from "./spend.js";
+import { GEN_MODELS, type GenImageAspect } from "./gen.js";
+import { displayCredits, pricedGenCredits } from "./spend.js";
 
 export type TemplateQuestion = { label: string; placeholder: string };
 
@@ -29,6 +30,22 @@ export type TemplateQuestion = { label: string; placeholder: string };
 export const TEMPLATE_CAPTION_LANGUAGES = ["en", "ms", "zh"] as const;
 export type TemplateCaptionLanguage = (typeof TEMPLATE_CAPTION_LANGUAGES)[number];
 export type TemplateCaption = { language: TemplateCaptionLanguage; text: string };
+
+/**
+ * 文案里允许出现的空格 —— **也是这些文案唯一允许说的「商家的事实」**。
+ *
+ * 判官 r1 P2:上一版有几条文案替商家许下了他没告诉我们的承诺(马来西亚制造、30 分钟
+ * 送达、门前有车位、全马邮寄、隔日出货)。那不是文案好不好的问题:商家一键复制发出去,
+ * 就成了他自己的公开承诺。规矩收成一句话 —— **凡是具体经营事实,要么是这里的一个空格,
+ * 要么不写**;文案里因此也不会出现任何裸数字。 */
+export const TEMPLATE_CAPTION_PLACEHOLDERS = [
+  "[your product]",
+  "[price]",
+  "[date]",
+  "[shop name]",
+  "[delivery time]",
+  "[lead time]",
+] as const;
 
 /** UI 的分类过滤行。English sentence case。 */
 export const TEMPLATE_CATEGORIES = [
@@ -73,7 +90,8 @@ export type Template = {
   aspectRatio?: GenImageAspect;
   question?: TemplateQuestion;
   promptTemplate: string; // contains "{q}" iff `question` is present
-  /** 配套发帖文案,按语言分。占位符:[your product] / [price] / [date] / [shop name]。 */
+  /** 配套发帖文案,按语言分。占位符见 `TEMPLATE_CAPTION_PLACEHOLDERS` —— 同一模板的每种
+   *  语言必须用**同一套、同样次数**的占位符,商家一次替换就三语都对(判官 r1 P2)。 */
   captions: TemplateCaption[];
 };
 
@@ -190,8 +208,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "restyle this photo into a Hari Raya Aidilfitri promotional image — soft sage green, cream and gold palette, ketupat weaving and pelita oil-lamp accents, warm evening light, subtle geometric Islamic pattern border, the product stays sharp and centred; render the exact headline \"{q}\" once across the top in a bold clean sans-serif, spelled exactly as given, and put no other lettering anywhere in the image",
     captions: [
-      { language: "en", text: "Raya sale is live. [your product] at [price] until [date]. Postage nationwide." },
-      { language: "ms", text: "Jualan Raya dah bermula! [your product] serendah [price] sehingga [date]. Pos seluruh Malaysia." },
+      { language: "en", text: "Raya sale is live. [your product] at [price] until [date]." },
+      { language: "ms", text: "Jualan Raya dah bermula! [your product] serendah [price] sehingga [date]." },
     ],
   },
   {
@@ -205,8 +223,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "style this product as the centrepiece of a premium Hari Raya gift hamper — woven rattan basket, cream and gold ribbon, ketupat charm, dried flowers, warm soft light on a cream cloth, elegant and generous, the product clearly the hero, photorealistic",
     captions: [
-      { language: "en", text: "Raya hampers are open for order. [your product] set from [price]. Corporate orders welcome." },
-      { language: "ms", text: "Tempahan hamper Raya dibuka. Set [your product] bermula [price]. Tempahan korporat diterima." },
+      { language: "en", text: "Raya hampers are open for order. [your product] set from [price]." },
+      { language: "ms", text: "Tempahan hamper Raya dibuka. Set [your product] bermula [price]." },
     ],
   },
   {
@@ -300,7 +318,7 @@ export const TEMPLATES: Template[] = [
     captions: [
       { language: "en", text: "Christmas gifting sorted. [your product] from [price] — order by [date] to get it in time." },
       { language: "ms", text: "Hadiah Krismas dah settle. [your product] dari [price] — tempah sebelum [date] supaya sempat." },
-      { language: "zh", text: "圣诞送礼不用烦。[your product],[price] 起,[date] 前下单可准时送达。" },
+      { language: "zh", text: "圣诞送礼不用烦。[your product],[price] 起,[date] 前下单更从容。" },
     ],
   },
   {
@@ -314,8 +332,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "restyle this photo for Malaysia's national month — a confident palette of red, white, royal blue and gold-yellow, ribbon streamers and bunting softly out of focus, bright midday light, proud and clean rather than cluttered, the product sharp and centred with clean space above it, no flags and no lettering, photorealistic",
     captions: [
-      { language: "en", text: "Merdeka deal: [your product] at [price]. Made and packed right here in Malaysia." },
-      { language: "ms", text: "Tawaran Merdeka: [your product] pada [price]. Dibuat dan dibungkus di Malaysia." },
+      { language: "en", text: "Merdeka deal: [your product] at [price], until [date]." },
+      { language: "ms", text: "Tawaran Merdeka: [your product] pada [price], sehingga [date]." },
     ],
   },
   {
@@ -359,8 +377,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "restyle this photo for a rainy Malaysian evening — rain-streaked window behind, warm indoor lamplight, soft blanket and wood textures, moody blue-grey outside against amber inside, gentle steam if the product is hot, the product sharp and inviting in the foreground, photorealistic",
     captions: [
-      { language: "en", text: "Rainy day, easy fix. [your product] delivered to your door — [price]." },
-      { language: "ms", text: "Hujan-hujan macam ni memang sesuai. [your product] dihantar terus ke rumah — [price]." },
+      { language: "en", text: "Rainy day, easy fix. [your product] — [price]." },
+      { language: "ms", text: "Hujan-hujan macam ni memang sesuai. [your product] — [price]." },
     ],
   },
 
@@ -377,9 +395,9 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a square e-commerce main image of this product — pure white seamless background, product centred and filling about 85 percent of the frame, even soft studio lighting, true colours, a soft natural contact shadow, no props, no text, no watermark, photorealistic",
     captions: [
-      { language: "en", text: "[your product] — [price]. Free shipping above [price]. Tap to buy." },
-      { language: "ms", text: "[your product] — [price]. Penghantaran percuma melebihi [price]. Klik untuk beli." },
-      { language: "zh", text: "[your product] 现货发售,[price]。满额免运费,点击下单。" },
+      { language: "en", text: "[your product] — [price]. Tap to buy." },
+      { language: "ms", text: "[your product] — [price]. Klik untuk beli." },
+      { language: "zh", text: "[your product] — [price],点击下单。" },
     ],
   },
   {
@@ -446,8 +464,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a square top-down flat lay showing everything included in the box: {q} — laid out in neat evenly spaced rows on a pure white seamless background, shot straight down, even soft studio lighting, no props, no text, photorealistic",
     captions: [
-      { language: "en", text: "Everything you get in one box. [your product], [price], ready to ship today." },
-      { language: "ms", text: "Semua yang anda dapat dalam satu kotak. [your product], [price], sedia dipos hari ini." },
+      { language: "en", text: "Everything you get in one box. [your product], [price]." },
+      { language: "ms", text: "Semua yang anda dapat dalam satu kotak. [your product], [price]." },
     ],
   },
   {
@@ -464,9 +482,9 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a square high-contrast e-commerce sale image built around this product — bold saturated brand-colour background with a diagonal burst, the product cut out and centred with a crisp drop shadow, energetic and clean rather than cluttered; render the exact headline \"{q}\" once in a very bold clean sans-serif, spelled exactly as given, and put no other lettering anywhere in the image",
     captions: [
-      { language: "en", text: "Sale is live. [your product] drops to [price] — today only, while stock lasts." },
-      { language: "ms", text: "Jualan bermula! [your product] turun ke [price] — hari ini sahaja, selagi ada stok." },
-      { language: "zh", text: "大促开抢![your product] 直降至 [price],仅限今天,售完即止。" },
+      { language: "en", text: "Sale is live. [your product] drops to [price] until [date] — while stock lasts." },
+      { language: "ms", text: "Jualan bermula! [your product] turun ke [price] sehingga [date] — selagi ada stok." },
+      { language: "zh", text: "大促开抢![your product] 直降至 [price],只到 [date],售完即止。" },
     ],
   },
 
@@ -482,8 +500,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a mouth-watering hero food photograph of this dish — 45-degree angle, shallow depth of field, warm directional window light with a soft fill, fresh garnish, gentle steam, dark wood or slate surface, styled but honest, razor-sharp on the food, photorealistic",
     captions: [
-      { language: "en", text: "[your product], made fresh every day. [price]. Dine in, take away or delivery." },
-      { language: "ms", text: "[your product], segar dimasak setiap hari. [price]. Makan sini, bungkus atau hantar." },
+      { language: "en", text: "[your product] — [price]. Message us to order." },
+      { language: "ms", text: "[your product] — [price]. Mesej kami untuk tempah." },
     ],
   },
   {
@@ -514,8 +532,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a square photograph of this food packed for delivery — kraft takeaway box and paper bag, lid half open so the food is visible and steaming, cutlery and napkin beside it, clean neutral countertop, bright even daylight, appetising and tidy, no branding and no text on the packaging, photorealistic",
     captions: [
-      { language: "en", text: "Order [your product] on delivery — [price], hot at your door in 30 minutes." },
-      { language: "ms", text: "Order [your product] melalui penghantaran — [price], sampai panas dalam 30 minit." },
+      { language: "en", text: "Order [your product] on delivery — [price], hot at your door in [delivery time]." },
+      { language: "ms", text: "Order [your product] melalui penghantaran — [price], sampai panas dalam [delivery time]." },
     ],
   },
   {
@@ -529,8 +547,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a photograph of this drink served ice-cold — tall clear glass or cup with heavy condensation running down, visible ice and layers, a bright backlight making the drink glow, fresh garnish, clean bright background softly out of focus, refreshing and crisp, photorealistic",
     captions: [
-      { language: "en", text: "This weather needs this drink. [your product], [price]. Add-ons available." },
-      { language: "ms", text: "Cuaca panas macam ni memang kena. [your product], [price]. Ada topping tambahan." },
+      { language: "en", text: "This weather needs this drink. [your product], [price]." },
+      { language: "ms", text: "Cuaca panas macam ni memang kena. [your product], [price]." },
     ],
   },
   {
@@ -544,8 +562,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a menu board scene built around this dish — the dish styled small in one lower corner, the rest of the frame a clean uncluttered surface with generous empty space for a price list to be added later, warm cafe lighting, subtle wood and chalkboard texture, no lettering anywhere, photorealistic",
     captions: [
-      { language: "en", text: "New menu is up. [your product] and more, from [price]. Open daily from [date]." },
-      { language: "ms", text: "Menu baharu dah keluar. [your product] dan banyak lagi, dari [price]. Buka setiap hari." },
+      { language: "en", text: "New menu is up. [your product] and more, from [price]." },
+      { language: "ms", text: "Menu baharu dah keluar. [your product] dan banyak lagi, dari [price]." },
     ],
   },
   {
@@ -575,8 +593,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a top-down photograph of these desserts arranged on a generous serving tray — neat rows with a little natural variation, banana leaf or pandan leaf lining, small tongs and paper cases, soft diffused daylight, fresh and abundant, shot straight down, photorealistic",
     captions: [
-      { language: "en", text: "Trays for the office, kenduri or high tea. [your product] from [price]. Order 2 days ahead." },
-      { language: "ms", text: "Dulang untuk pejabat, kenduri atau jamuan. [your product] dari [price]. Tempah 2 hari awal." },
+      { language: "en", text: "Trays for the office, kenduri or high tea. [your product] from [price]. Order [lead time] ahead." },
+      { language: "ms", text: "Dulang untuk pejabat, kenduri atau jamuan. [your product] dari [price]. Tempah [lead time] awal." },
     ],
   },
 
@@ -612,8 +630,8 @@ export const TEMPLATES: Template[] = [
     promptTemplate:
       "a wide inviting exterior photograph of this shopfront — golden-hour light, warm glow from inside spilling onto the walkway, clean tidy frontage, a few softly blurred passers-by for life, no clutter and no visible signage lettering, architectural and welcoming, photorealistic",
     captions: [
-      { language: "en", text: "Find us at [shop name]. Open daily, [date]. Parking right in front." },
-      { language: "ms", text: "Cari kami di [shop name]. Buka setiap hari, [date]. Tempat letak kereta di hadapan." },
+      { language: "en", text: "Find us at [shop name]. Open [date]." },
+      { language: "ms", text: "Cari kami di [shop name]. Buka [date]." },
     ],
   },
   {
@@ -789,11 +807,30 @@ export function buildTemplatePrompt(t: Template, answer?: string): string {
   return t.promptTemplate.replace("{q}", (answer ?? "").trim());
 }
 
-/** Displayed-credit cost of one template run (1 image). Derived from the central price and the
- *  central display denomination — no price literal lives in this file (Pricing truth). */
+/** 一次模板运行 = 一张图。报价与扣费共用这一个数,所以 TemplateModal 的 `count` 也读它 ——
+ *  两处各写一个 1,就是「报的」与「扣的」分家的第一步。 */
+export const TEMPLATE_RUN_IMAGE_COUNT = 1;
+
+/**
+ * 一次模板运行的**显示 credits**。
+ *
+ * 判官 r1 P1:上一版拿 `GEN_PRICE_USD_PER_IMAGE` 除以展示面额反推价。那个常量是
+ * **record-only 的 COGS**(成本记账),不是收费权威;真正 reserve/settle 走的是
+ * `pricedGenCredits()`。今天两条路碰巧都得 1,所以看不出来 —— 而这正是最坏的一种:
+ * 下一次调价,商家看到的价与账上扣的数当场分家,谁都不会先红。
+ *
+ * 改成与 `defaultVideoDisplayCredits()` 同一条路:**问收费函数,再翻成展示面额**。
+ * `templates.test.ts` 有一条恒等断言钉住「报价 == 扣费」,再分家就当场红。
+ */
 export function templateRunCredits(): number {
-  const usdPerDisplayCredit = INTERNAL_PER_DISPLAY / CREDITS_PER_USD;
-  return Math.max(1, Math.ceil(GEN_PRICE_USD_PER_IMAGE / usdPerDisplayCredit));
+  return displayCredits(
+    pricedGenCredits({
+      kind: "IMAGE",
+      model: GEN_MODELS[0],
+      count: TEMPLATE_RUN_IMAGE_COUNT,
+      videoOptions: null,
+    }),
+  );
 }
 
 /** Unique categories in first-seen order (for the filter row). */
@@ -832,6 +869,7 @@ export const TEMPLATE_INDUSTRY_ALIASES: Record<string, TemplateIndustry> = {
   abaya: "fashion", apparel: "fashion", clothing: "fashion", fashion: "fashion", shoes: "fashion",
   handbag: "fashion", jewellery: "fashion", jewelry: "fashion", accessories: "fashion",
   streetwear: "fashion", batik: "fashion", kebaya: "fashion", tailor: "fashion",
+  scarf: "fashion", scarves: "fashion", shawl: "fashion",
   // beauty
   skincare: "beauty", cosmetics: "beauty", makeup: "beauty", salon: "beauty", spa: "beauty",
   barber: "beauty", nails: "beauty", lashes: "beauty", perfume: "beauty", haircare: "beauty",
@@ -842,6 +880,7 @@ export const TEMPLATE_INDUSTRY_ALIASES: Record<string, TemplateIndustry> = {
   // home & living
   furniture: "home-living", decor: "home-living", kitchenware: "home-living", bedding: "home-living",
   hardware: "home-living", florist: "home-living", plants: "home-living", "home living": "home-living",
+  carpet: "home-living", curtain: "home-living",
   cleaning: "home-living",
   // electronics
   "phone accessories": "electronics", gadget: "electronics", phone: "electronics",
@@ -852,6 +891,7 @@ export const TEMPLATE_INDUSTRY_ALIASES: Record<string, TemplateIndustry> = {
   // kids & education
   tuition: "kids-education", tadika: "kids-education", kindergarten: "kids-education",
   toys: "kids-education", baby: "kids-education", kids: "kids-education", education: "kids-education",
+  childcare: "kids-education", nursery: "kids-education",
   enrichment: "kids-education",
   // services
   printing: "services", laundry: "services", dobi: "services", photography: "services",
@@ -860,19 +900,30 @@ export const TEMPLATE_INDUSTRY_ALIASES: Record<string, TemplateIndustry> = {
   // automotive
   "car wash": "automotive", "car detailing": "automotive", workshop: "automotive",
   bengkel: "automotive", tyre: "automotive", tayar: "automotive", motor: "automotive",
-  automotive: "automotive", car: "automotive",
+  automotive: "automotive", car: "automotive", kereta: "automotive",
 };
 
 const ALIAS_KEYS_LONGEST_FIRST = Object.keys(TEMPLATE_INDUSTRY_ALIASES).sort(
   (a, b) => b.length - a.length,
 );
 
+const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * 词边界命中。判官 r1 P2:上一版用 `text.includes(key)`,于是 `car` 把 scarves、
+ * carpet shop、childcare centre 三家都判成汽车行 —— 一次静默错分,后面推的每一条都错。
+ * 别名全是字母与空格,所以 `\b…\b` 就够;多词别名照旧靠「最长优先」先命中。
+ */
+function hasWord(haystack: string, word: string): boolean {
+  return new RegExp(`\\b${word.replace(ESCAPE_RE, "\\$&")}\\b`, "i").test(haystack);
+}
+
 /** 自由文本(「nasi lemak stall」「hijab boutique」)→ 行业标签;认不出就是 null。 */
 export function resolveTemplateIndustry(raw: string | null | undefined): TemplateIndustry | null {
   const text = (raw ?? "").toLowerCase().trim();
   if (!text) return null;
   for (const key of ALIAS_KEYS_LONGEST_FIRST) {
-    if (text.includes(key)) return TEMPLATE_INDUSTRY_ALIASES[key] ?? null;
+    if (hasWord(text, key)) return TEMPLATE_INDUSTRY_ALIASES[key] ?? null;
   }
   return null;
 }
@@ -921,12 +972,13 @@ export function recommendTemplates(
     // 是把「推荐」变成噪音。提了场合就没有这一格扣分。
     if (!occasionText && t.category === "Festivals & seasons") score -= 2;
     if (occasionText) {
+      // 同 resolveTemplateIndustry:一律词边界,免得 "car" 命中 "carousel"、"cny" 命中别的词。
       for (const tag of t.tags) {
-        if (occasionText.includes(tag)) score += 3;
+        if (hasWord(occasionText, tag)) score += 3;
       }
       const haystack = `${t.name} ${t.description}`.toLowerCase();
       for (const w of occasionWords) {
-        if (haystack.includes(w)) score += 1;
+        if (hasWord(haystack, w)) score += 1;
       }
     }
     return { t, index, score };

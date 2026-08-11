@@ -32,7 +32,7 @@ export default function OttoTemplates({ projectId, entities = [] }: { projectId:
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search — raya, delivery, Shopee, before and after…"
+          placeholder="Search — Raya, delivery, Shopee, before and after…"
           aria-label="Search templates"
         />
       </div>

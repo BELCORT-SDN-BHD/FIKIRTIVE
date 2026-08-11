@@ -7,6 +7,8 @@ export {
   TEMPLATE_CATEGORIES,
   TEMPLATE_CAPTION_LANGUAGES,
   TEMPLATE_INDUSTRIES,
+  TEMPLATE_CAPTION_PLACEHOLDERS,
+  TEMPLATE_RUN_IMAGE_COUNT,
   buildTemplatePrompt,
   templateRunCredits,
   templateCategories,

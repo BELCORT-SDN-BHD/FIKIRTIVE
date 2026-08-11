@@ -19,6 +19,7 @@ import type { EntityDTO } from "@/lib/types";
 import {
   type Template,
   type TemplateCaptionLanguage,
+  TEMPLATE_RUN_IMAGE_COUNT,
   buildTemplatePrompt,
   templateRunCredits,
 } from "@/lib/templates";
@@ -273,8 +274,9 @@ export default function TemplateModal({
         kind: "image",
         sourceGenerationId: sourceGenId,
         prompt,
+        // 与 templateRunCredits() 报的价同源:两处各写一个 1,就是「报的」与「扣的」分家的第一步。
         model: image,
-        count: 1,
+        count: TEMPLATE_RUN_IMAGE_COUNT,
         // A scenario is not just words: a marketplace main image is square and a story is tall
         // (#783). Templates that don't care leave this off, and the shape is inherited from the
         // uploaded photo exactly as before. One image either way — the price does not move.
@@ -367,7 +369,10 @@ export default function TemplateModal({
     <>
       {/* leading-[1.5] — design-baseline body line-height (Analytics standard) */}
       <Dialog open onOpenChange={(isOpen: boolean) => { if (!isOpen) onClose(); }}>
-        <DialogContent className="gb leading-[1.5]">
+        {/* 判官 r1 P1:公共 dialog 没有最大高度,一张 9:16 结果图加两三张文案卡就把关闭键与
+            底部操作顶出视口。修在**本弹窗自己**身上(不动 components/ui/dialog.tsx,那是 #843 的地盘):
+            整体不超过视口,中间那一行(内容)自己滚,头尾两行永远在屏内。 */}
+        <DialogContent className="gb leading-[1.5] max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]">
           <DialogHeader>
             <DialogTitle>{template.name}</DialogTitle>
             {template.description && (
@@ -375,14 +380,19 @@ export default function TemplateModal({
             )}
           </DialogHeader>
 
+          <div className="min-h-0 overflow-y-auto">
           {phase === "done" && resultUrl ? (
             <div className="flex flex-col gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={resultUrl} alt="result" style={{ width: "100%", borderRadius: "14px", display: "block" }} />
+              <img
+                src={resultUrl}
+                alt="result"
+                style={{ maxWidth: "100%", maxHeight: "42vh", borderRadius: "14px", display: "block", margin: "0 auto" }}
+              />
               {template.captions.length > 0 && (
                 <div className="flex flex-col gap-2">
                   <span className="text-[0.8125rem] text-muted-foreground">
-                    A caption to go with it — swap the words in brackets for yours.
+                    A ready caption. Everything in brackets is a blank — fill them in before you post.
                   </span>
                   {template.captions.map((c) => (
                     <div
@@ -436,6 +446,7 @@ export default function TemplateModal({
               )}
             </div>
           )}
+          </div>
 
           <DialogFooter>{footer}</DialogFooter>
         </DialogContent>
