@@ -19,11 +19,25 @@ const mocks = vi.hoisted(() => {
     }
   }
 
+  // #524 — the route now tells the two refusals apart (out of credits vs the merchant's own
+  // spend cap), so the double for the cap error has to exist here too.
+  class MockSpendCapBlocked extends Error {
+    readonly requiredInternal: number;
+    readonly capInternal: number | null;
+    constructor(detail: { requiredInternal: number; capInternal: number | null }) {
+      super("Spend cap reached.");
+      this.name = "SpendCapBlocked";
+      this.requiredInternal = detail.requiredInternal;
+      this.capInternal = detail.capInternal;
+    }
+  }
+
   const parts: unknown[] = [];
 
   return {
     parts,
     MockInsufficientCredits,
+    MockSpendCapBlocked,
     requireOwner: vi.fn(),
     isImpersonating: vi.fn(),
     projectFindFirst: vi.fn(),
@@ -69,6 +83,7 @@ vi.mock("@/lib/otto-generation-validate", () => ({
 }));
 vi.mock("@fikirtive/db", () => ({
   InsufficientCredits: mocks.MockInsufficientCredits,
+  SpendCapBlocked: mocks.MockSpendCapBlocked,
   prisma: {
     project: { findFirst: mocks.projectFindFirst },
     chatThread: {

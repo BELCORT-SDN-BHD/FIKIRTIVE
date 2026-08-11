@@ -321,3 +321,223 @@ describe("case 10 — grantCredits idempotency: a webhook replay never double-gr
     expect(rows.filter((r) => r.kind === "GRANT" && r.idempotencyKey === key)).toHaveLength(1);
   });
 });
+
+// ── Case 16: spend cap —— 商家自己设的上限,真的在扣费路径上执行(#524) ──────────
+// 在 #524 之前,`Organization.settings.spendCapCredits` 是一句自言自语:设置页承诺
+// 「超过这个数 Otto 会暂停任务」,而 reserve/settle 从不打开它。这一组测试证明的是
+// **说的 = 做的**:上限在 reserveCredits 里判,判不过就整笔回滚,零建任务零预扣。
+//
+// 口径(与设置页那句话逐字对齐):上限是**单次动作**的天花板,不是月度预算。
+// 5 显示 credits = 50 内部 credits(INTERNAL_PER_DISPLAY),所以下面的数都是内部值。
+import { SpendCapBlocked } from "./index.js";
+import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+
+/** 把商家在设置页存下的上限写进这个 org(显示 credits,和商家输入的那个数一样)。 */
+async function setCap(orgId: string, spendCapCredits: unknown): Promise<void> {
+  await prisma.organization.update({
+    where: { id: orgId },
+    data: { settings: { spendCapCredits } as never },
+  });
+}
+
+describe("case 16 — spend cap is enforced by the charging path (#524)", () => {
+  it("no cap set (the default) → an expensive action still runs, exactly as before", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 1000 }));
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(1000);
+  });
+
+  it("a stored cap of 0 means NO cap — the merchant's own words on the Settings screen", async () => {
+    await setCap(ORG, 0);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 1000 }));
+    expect((await account(ORG)).reserved).toBe(1000);
+  });
+
+  it("under the cap → runs and charges normally", async () => {
+    await setCap(ORG, 5); // 50 internal
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 40 }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(960);
+    expect(acc.reserved).toBe(40);
+    expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+  });
+
+  it("EXACTLY at the cap → runs (a ceiling you may spend up to, not one you must stay under)", async () => {
+    await setCap(ORG, 5);
+    await prisma.$transaction((tx) =>
+      reserveCredits(tx, { orgId: ORG, refId: REF, cost: 5 * INTERNAL_PER_DISPLAY }),
+    );
+    expect((await account(ORG)).reserved).toBe(50);
+  });
+
+  it("one credit over the cap → refused, and NOTHING moved: no ledger row, no hold, no debit", async () => {
+    await setCap(ORG, 5);
+
+    await expect(
+      prisma.$transaction((tx) =>
+        reserveCredits(tx, { orgId: ORG, refId: REF, cost: 5 * INTERNAL_PER_DISPLAY + 1 }),
+      ),
+    ).rejects.toThrow(SpendCapBlocked);
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000); // untouched — the merchant has the credits, their cap said no
+    expect(acc.reserved).toBe(0);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("carries the two numbers the refusal was judged against (required + cap, internal)", async () => {
+    await setCap(ORG, 5);
+    const error = await prisma
+      .$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 110 }))
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SpendCapBlocked);
+    expect((error as SpendCapBlocked).requiredInternal).toBe(110);
+    expect((error as SpendCapBlocked).capInternal).toBe(50);
+  });
+
+  it("is a refusal, not a shortfall — it is NOT an InsufficientCredits", async () => {
+    await setCap(ORG, 5);
+    const error = await prisma
+      .$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 110 }))
+      .catch((e: unknown) => e);
+    // 分型是钱路对外说话的依据:混成一类,商家就会被送去 Billing 充值,
+    // 而挡住他的其实是自己在 Settings 里设的那个数。
+    expect(error).not.toBeInstanceOf(InsufficientCredits);
+  });
+
+  it("raising the cap unblocks the SAME action — the merchant's exit actually works", async () => {
+    await setCap(ORG, 5);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 110 })),
+    ).rejects.toThrow(SpendCapBlocked);
+
+    await setCap(ORG, 20);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 110 }));
+    expect((await account(ORG)).reserved).toBe(110);
+  });
+
+  it("lowering the cap does NOT claw back an in-flight hold — settle still completes", async () => {
+    await setCap(ORG, 20);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 110 }));
+
+    await setCap(ORG, 1); // the cap gates NEW spend; it is not a retroactive verdict
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(890);
+    expect(acc.reserved).toBe(0);
+    const rows = await ledger(ORG);
+    expect(rows.filter((r) => r.kind === "SETTLE")).toHaveLength(1);
+    // The ledger invariants survive a cap change mid-flight (the seed is not a ledger row,
+    // so the deltas net to exactly the one charge).
+    expect(sumBalance(rows)).toBe(-110);
+    expect(sumReserved(rows)).toBe(0);
+  });
+});
+
+// ── Case 17: fail closed —— 读不到上限就拒绝,绝不当成「无上限」 ─────────────────
+describe("case 17 — an unreadable spend cap refuses (fail closed, #524)", () => {
+  it("a fractional stored cap is unreadable → refuse, nothing charged", async () => {
+    await setCap(ORG, 12.5); // the write path rejects this; only a foreign writer produces it
+    const error = await prisma
+      .$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 10 }))
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SpendCapBlocked);
+    expect((error as SpendCapBlocked).capInternal).toBeNull();
+    expect((await account(ORG)).balance).toBe(1000);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("a negative stored cap is unreadable → refuse (never read as unlimited)", async () => {
+    await setCap(ORG, -5);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 10 })),
+    ).rejects.toThrow(SpendCapBlocked);
+    expect((await account(ORG)).balance).toBe(1000);
+  });
+
+  it("no organization row at all → refuse, and never charge against a ceiling we cannot see", async () => {
+    const error = await prisma
+      .$transaction((tx) => reserveCredits(tx, { orgId: "org-that-does-not-exist", refId: REF, cost: 10 }))
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SpendCapBlocked);
+    expect((error as SpendCapBlocked).capInternal).toBeNull();
+    expect(await ledger("org-that-does-not-exist")).toHaveLength(0);
+  });
+});
+
+// ── Case 18: 并发 + 双租户 —— 上限不会被并发穿透,也不会串台 ──────────────────
+describe("case 18 — spend cap under concurrency and across tenants (#524)", () => {
+  it("two concurrent over-cap actions are BOTH refused — no one slips through", async () => {
+    await setCap(ORG, 5);
+
+    const results = await Promise.allSettled([
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "cap-race-a", cost: 110 })),
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "cap-race-b", cost: 110 })),
+    ]);
+
+    expect(results.every((r) => r.status === "rejected")).toBe(true);
+    for (const r of results) {
+      expect((r as PromiseRejectedResult).reason).toBeInstanceOf(SpendCapBlocked);
+    }
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000);
+    expect(acc.reserved).toBe(0);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("with a cap in force, the never-double-spend guard still holds: 1 of 2 concurrent wins", async () => {
+    // 上限放行(70 < 100),余额只够一笔 —— 加了上限之后,原本那道「永不双扣」的
+    // 原子条件扣减必须一格不动。
+    await setCap(ORG, 10); // 100 internal
+    const results = await Promise.allSettled([
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "cap-mix-a", cost: 70 })),
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "cap-mix-b", cost: 70 })),
+    ]);
+    // 只有余额那道闸能挡住第二笔(两笔都在上限内)
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(
+      (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason,
+    ).toBeInstanceOf(InsufficientCredits);
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(930);
+    expect(acc.reserved).toBe(70);
+    expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+  });
+
+  it("merchant A's cap never touches merchant B — two tenants, two ceilings", async () => {
+    const ORG_B = "test-org-2";
+    await seedOrg(ORG_B, 1000);
+    await setCap(ORG, 5);    // A capped at 5 credits per action
+    await setCap(ORG_B, 50); // B capped at 50
+
+    // The SAME action: refused for A, allowed for B.
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "tenant-a", cost: 110 })),
+    ).rejects.toThrow(SpendCapBlocked);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG_B, refId: "tenant-b", cost: 110 }));
+
+    expect(await account(ORG)).toMatchObject({ balance: 1000, reserved: 0 });
+    expect(await account(ORG_B)).toMatchObject({ balance: 890, reserved: 110 });
+    expect(await ledger(ORG)).toHaveLength(0);
+    expect((await ledger(ORG_B)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+  });
+
+  it("an uncapped tenant is unaffected by a capped neighbour", async () => {
+    const ORG_B = "test-org-3";
+    await seedOrg(ORG_B, 1000);
+    await setCap(ORG, 1); // A allows 10 internal at most
+    // B never opened Settings: settings stays null → no cap → the expensive action runs.
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG_B, refId: "free-b", cost: 900 }));
+    expect((await account(ORG_B)).reserved).toBe(900);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "capped-a", cost: 900 })),
+    ).rejects.toThrow(SpendCapBlocked);
+  });
+});

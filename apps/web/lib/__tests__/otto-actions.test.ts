@@ -43,6 +43,7 @@ const {
   mockExecuteRaw,
   mockTransaction,
   MockInsufficientCredits,
+  MockSpendCapBlocked,
   mockRun,
   mockRunStateFromString,
   mockRestoreWithContext,
@@ -134,6 +135,20 @@ const {
     }
   }
 
+  // #524 — ottoFailureMessage tells the merchant's own spend cap apart from a shortfall, and
+  // it keys on the class the @fikirtive/db mock below exports. Without this double the mapper
+  // would blow up on the `instanceof` before it could say anything.
+  class MockSpendCapBlocked extends Error {
+    readonly requiredInternal: number;
+    readonly capInternal: number | null;
+    constructor(detail: { requiredInternal: number; capInternal: number | null }) {
+      super("Spend cap reached.");
+      this.name = "SpendCapBlocked";
+      this.requiredInternal = detail.requiredInternal;
+      this.capInternal = detail.capInternal;
+    }
+  }
+
   const mockWithLlmBudget = vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
     const out = await fn();
     return (out as { result: unknown }).result;
@@ -175,6 +190,7 @@ const {
     MockRunState,
     MockMaxTurnsExceededError,
     MockInsufficientCredits,
+    MockSpendCapBlocked,
     mockApprove,
     mockReject,
     mockGetInterruptions,
@@ -307,6 +323,7 @@ vi.mock("@fikirtive/db", () => ({
     $transaction: mockTransaction,
   },
   InsufficientCredits: MockInsufficientCredits,
+  SpendCapBlocked: MockSpendCapBlocked,
 }));
 
 // Spread the REAL module so pure helpers (newId, coworkTurnRequest, OTTO_MAX_STEPS,
@@ -3544,6 +3561,29 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
 
     expect(res.error).toBe("You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.");
     expect(res.error).not.toMatch(/Couldn't approve/);
+  });
+
+  // #524 —— 同一条口子上的第二种拒绝:不是没钱,是商家自己设的上限拦住了。
+  // 把它说成「余额不足」会把人送去 Billing 充值,而挡住他的那个数在 Settings 里。
+  it("spend cap:说的是上限而不是余额,出口是 Settings 不是 Billing", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, ownerId: OWNER_ID });
+    mockChatThreadFindFirst.mockResolvedValue({ projectId: PROJECT_ID, ottoState: null });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    mockWithLlmBudget.mockRejectedValue(
+      new MockSpendCapBlocked({ requiredInternal: 40, capInternal: 20 }),
+    );
+
+    const res = (await ottoTurn({ threadId: "t1", projectId: PROJECT_ID, text: "hi", entityIds: [], variantSel: {} })) as {
+      error?: string;
+    };
+
+    expect(res.error).toBe(
+      "Paused by your spend cap — this needs 4 credits and your cap is 2 credits per action. Raise the cap in Settings to run it.",
+    );
+    expect(res.error).not.toMatch(/Top up|Billing|Couldn't reach Otto/);
   });
 
   it("别的故障仍然照实说是哪个动作失败了(这不是把所有错误都改成钱不够)", async () => {

@@ -56,12 +56,20 @@ const db = vi.hoisted(() => {
 });
 
 class MockInsufficientCredits extends Error {}
+/** #524 — the merchant's own cap refusing inside the reserve. Carries the cap it was judged
+ *  against (internal credits) exactly as the real error does; `null` = it could not be read. */
+class MockSpendCapBlocked extends Error {
+  constructor(readonly capInternal: number | null) {
+    super("spend cap");
+  }
+}
 
 vi.mock("@fikirtive/db", () => ({
   prisma: db.prisma,
   reserveCredits: db.reserveCredits,
   refundReservation: db.refundReservation,
   InsufficientCredits: MockInsufficientCredits,
+  SpendCapBlocked: MockSpendCapBlocked,
 }));
 
 const queue = vi.hoisted(() => {
@@ -1114,6 +1122,51 @@ describe("startGen", () => {
     expect(db.genJobUpdate).not.toHaveBeenCalled();
     expect(db.actionEventCreate).not.toHaveBeenCalled();
     expect(db.refundReservation).not.toHaveBeenCalled(); // nothing was reserved → nothing to refund
+  });
+
+  // #524 — the spend cap is a refusal on the charging path, so startGen must report it as
+  // one: named numbers, the merchant's own limit, and the exit that actually moves (Settings).
+  // Saying "not enough credits" here would be the second untrue sentence about this setting.
+  it("fails closed on SpendCapBlocked — names the cap and points at Settings, not Billing", async () => {
+    db.reserveCredits.mockRejectedValueOnce(new MockSpendCapBlocked(5 * INTERNAL_PER_DISPLAY));
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "over the merchant's own cap",
+      entityIds: [],
+      count: 3,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cap-key",
+    });
+
+    expect(result).toEqual({
+      error: "Paused by your spend cap — this needs 3 credits and your cap is 5 credits per action. Raise the cap in Settings to run it.",
+    });
+    expect(mockBossSend).not.toHaveBeenCalled();
+    expect(db.genJobUpdate).not.toHaveBeenCalled();
+    expect(db.actionEventCreate).not.toHaveBeenCalled();
+    expect(db.refundReservation).not.toHaveBeenCalled(); // nothing was reserved → nothing to refund
+  });
+
+  it("fails closed when the cap itself could not be read — never silently spends anyway", async () => {
+    db.reserveCredits.mockRejectedValueOnce(new MockSpendCapBlocked(null));
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "unreadable cap",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cap-unreadable-key",
+    });
+
+    expect(result).toEqual({
+      error: "Paused — your spend cap couldn't be read, so nothing was charged. Try again in a moment.",
+    });
+    expect(mockBossSend).not.toHaveBeenCalled();
+    expect(db.refundReservation).not.toHaveBeenCalled();
   });
 
   it("fails before create/reserve when queue preparation is unavailable, after locked replay gets first say", async () => {

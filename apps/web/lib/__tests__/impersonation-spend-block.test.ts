@@ -16,6 +16,7 @@ vi.mock("@fikirtive/db", () => ({
     entityVariant: { findFirst: entityVariantFindFirst },
   },
   reserveCredits, refundReservation: vi.fn(), InsufficientCredits: class extends Error {},
+  SpendCapBlocked: class extends Error {},
 }));
 beforeEach(() => { vi.clearAllMocks(); mockRequireOwner.mockResolvedValue({ email: "founder@t.test", ownerId: "founder" }); });
 
