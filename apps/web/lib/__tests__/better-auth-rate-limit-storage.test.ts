@@ -26,29 +26,59 @@ describe("#795 Better Auth 限流不再活在进程内存里", () => {
   });
 
   /**
-   * r2 判词 P1-1 的围栏。
+   * r2 判词 P1-1 的围栏,r3 补齐它的牙齿。
    *
    * Better Auth 的 database storage 清理过期行时用的截止时间是
    *   max(rateLimit.window, ...它自带的 special rules) = max(10s, 10s, 60s) = 60s,
    * 而且它**不看**当时命中的那条 customRule。所以任何窗口大于 60 秒的 customRule 都是假的:
    * 行会在最后一次请求之后 61 秒被删掉,「每小时 5 次」实际执行成「每分钟 5 次」。
+   * 小时级的门因此在 app/api/better-auth/[...all]/route.ts,走我们自己的计数器。
    *
-   * 这条断言把那个陷阱变成机器规则:谁再往 customRules 里写一条一小时的规则,这里当场红。
-   * 小时级的门在 app/api/better-auth/[...all]/route.ts,走我们自己的计数器。
+   * r2 那版围栏有两个洞,判官都点了:
+   *   ① 规则表现在是空的,所以它只是一次**空遍历** —— 一条永远为真的断言不是围栏;
+   *   ② 它跳过函数形式的规则,而 BA 会调用函数规则并采用它返回的窗口,函数返回 61 秒照样绕过。
+   *
+   * 修法:规则改由一个**可以自我检验**的函数来判,而且函数形式的规则一律不许写(声明式 only)
+   * —— 一条要执行起来才知道窗口是多少的规则,没有任何静态围栏能替它担保。下面既把它对真实配置
+   * 跑一遍,也拿三个合成配置证明它真的会红。
    */
-  it("customRules 里没有任何窗口超过库自己清理截止时间的规则", async () => {
-    const { auth } = await import("@/lib/better-auth/server");
-    const rules: Array<[string, unknown]> = Object.entries(auth.options.rateLimit?.customRules ?? {});
-    const PRUNE_CUTOFF_SECONDS = 60;
-    for (const [path, rule] of rules) {
-      // 只有「静态规则对象」才有可核对的窗口;函数形式的规则在请求时才定,不在这条围栏的射程内。
-      const window = (rule as { window?: unknown } | null)?.window;
-      if (typeof window !== "number") continue;
-      expect(
-        window,
-        `${path} 的窗口是 ${window}s,超过库的 ${PRUNE_CUTOFF_SECONDS}s 清理截止 —— 它执行不出这个数`,
-      ).toBeLessThanOrEqual(PRUNE_CUTOFF_SECONDS);
+  const PRUNE_CUTOFF_SECONDS = 60;
+
+  /** 返回违规说明;空数组 = 这份 customRules 里没有库执行不出来的东西。 */
+  function customRuleViolations(rules: Record<string, unknown>): string[] {
+    const violations: string[] = [];
+    for (const [path, rule] of Object.entries(rules)) {
+      if (typeof rule === "function") {
+        violations.push(`${path}: 函数形式的规则 —— 窗口要到请求时才定,静态围栏担保不了(只许声明式)`);
+        continue;
+      }
+      if (rule === false || rule === null || rule === undefined) continue;
+      const window = (rule as { window?: unknown }).window;
+      if (typeof window !== "number") {
+        violations.push(`${path}: 规则没有可读的窗口`);
+        continue;
+      }
+      if (window > PRUNE_CUTOFF_SECONDS) {
+        violations.push(`${path}: 窗口 ${window}s 超过库的 ${PRUNE_CUTOFF_SECONDS}s 清理截止 —— 它执行不出这个数`);
+      }
     }
+    return violations;
+  }
+
+  it("围栏本身有牙齿 —— 拿合成配置证明它会红", () => {
+    // 每小时规则:正是 r1 踩的那个坑。
+    expect(customRuleViolations({ "/sign-up/email": { window: 3600, max: 5 } })).toHaveLength(1);
+    // 函数规则:BA 会调用它并采用返回的窗口,返回 61 秒同样绕过截止 —— 所以整类不许写。
+    expect(customRuleViolations({ "/sign-up/email": () => ({ window: 61, max: 5 }) })).toHaveLength(1);
+    // 边界之内的声明式规则:干净。
+    expect(customRuleViolations({ "/sign-in/email": { window: 60, max: 3 } })).toHaveLength(0);
+    expect(customRuleViolations({ "/sign-in/email": false })).toHaveLength(0);
+  });
+
+  it("真实配置里没有任何库执行不出来的 customRule", async () => {
+    const { auth } = await import("@/lib/better-auth/server");
+    const rules = (auth.options.rateLimit?.customRules ?? {}) as Record<string, unknown>;
+    expect(customRuleViolations(rules)).toEqual([]);
   });
 
   it("密码门**不**在 customRules 里 —— 那里写一条会把 BA 自带的突发规则替换掉", async () => {

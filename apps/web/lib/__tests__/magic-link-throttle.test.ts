@@ -98,33 +98,22 @@ describe("the shared-egress bound", () => {
     expect(deliverable()).toHaveLength(1);
   });
 
-  it("puts every unidentifiable caller in ONE bucket — never a fresh budget each (#795 r2)", async () => {
-    // r2 — this case used to assert an `x-real-ip` FALLBACK, and that fallback is gone on
-    // purpose: a second header nobody's proxy is known to write is a second header an anonymous
-    // caller can write for themselves, which is a fresh bucket for the asking. Now there is one
-    // trusted source, and anything else lands in the shared unknown bucket.
-    //
-    // Sharing is the conservative direction — the whole point is that an unidentifiable caller
-    // must never get a PRIVATE budget — so the assertion is that they share, and that the shared
-    // budget really does run out.
-    for (let i = 0; i < MAX_PER_CALLER_PER_ADDRESS; i++) {
-      expect(
-        await acceptMagicLinkRequest({
-          email: "owner@shop.test",
-          callbackURL: "/",
-          requestHeaders: new Headers({ "x-real-ip": "192.0.2.5" }),
-        }),
-      ).toBe("accepted");
-    }
+  it("puts every unidentifiable caller in ONE bucket — never a fresh budget each (#795 r3)", async () => {
+    // WHICH header is trusted is a property of the deployment (`CALLER_IP_SOURCE`, see
+    // caller-identity.ts) and is asserted shape by shape in caller-identity.test.ts. What this
+    // case asserts is the part that must hold in EVERY shape: a request the shape cannot
+    // identify shares one bucket with every other such request, and that shared budget really
+    // does run out. An unidentifiable caller must never be handed a PRIVATE budget — that is
+    // what a per-request fallback would do, and it would make the cap decorative.
+    const unidentifiable = () =>
+      acceptMagicLinkRequest({ email: "owner@shop.test", callbackURL: "/", requestHeaders: new Headers() });
+
+    for (let i = 0; i < MAX_PER_CALLER_PER_ADDRESS; i++) expect(await unidentifiable()).toBe("accepted");
     expect(deliverable()).toHaveLength(MAX_PER_CALLER_PER_ADDRESS);
 
-    // A different unidentifiable shape — no headers at all — does NOT get its own five.
+    // A second unidentifiable request does NOT get its own five — same bucket, already spent.
     queued.length = 0;
-    await acceptMagicLinkRequest({
-      email: "owner@shop.test",
-      callbackURL: "/",
-      requestHeaders: new Headers(),
-    });
+    await unidentifiable();
     expect(deliverable()).toHaveLength(0);
   });
 });
