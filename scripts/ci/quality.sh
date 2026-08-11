@@ -144,8 +144,9 @@ quality_lock_held=""
 # whatever is there NOW, not the incarnation that was judged. So the steal happens
 # inside a tiny arbiter mutex and RE-DERIVES staleness in there: under the arbiter
 # no other stealer can interleave, and a fresh holder's lock re-reads as alive (or
-# as too young) and is left alone. The arbiter's own critical section is
-# milliseconds; one older than 60s can only be a corpse and is cleared the same way.
+# as too young) and is left alone. A corpse ARBITER (stealer killed inside the
+# ms-long critical section) is deliberately NOT auto-recovered — see the note in
+# try_steal_stale_lock; runs keep waiting and print the manual recovery line.
 quality_steal_arbiter="${quality_lock_dir}.arbiter"
 
 lock_mtime_epoch() {
@@ -217,12 +218,22 @@ acquire_quality_lock() {
     if mkdir "$quality_lock_dir" 2>/dev/null; then
       # Flag before pid write: the EXIT trap is already installed, so a death in
       # this window still removes the lock instead of leaving a pid-less corpse.
+      # ACCEPTED RESIDUAL: a signal landing between the mkdir syscall and this
+      # assignment leaves a flagless, pid-less lock that cleanup will not remove —
+      # bash cannot fuse a syscall and a variable write into one atom. That corpse
+      # is exactly what the >60s pid-less rule recovers, so the cost is a bounded
+      # one-minute stall, not a deadlock.
       quality_lock_held=1
       echo "$$" > "$quality_lock_dir/pid"
       return 0
     fi
     if current_lock_is_stale; then
-      try_steal_stale_lock || true
+      # A failed steal (arbiter busy or corpse-arbiter policy) must NOT skip the
+      # wait: with a corpse main lock AND a corpse arbiter this branch would
+      # otherwise spin hot and flood the log. One steal attempt per 30s is plenty.
+      if ! try_steal_stale_lock; then
+        sleep 30
+      fi
       continue
     fi
     local holder
