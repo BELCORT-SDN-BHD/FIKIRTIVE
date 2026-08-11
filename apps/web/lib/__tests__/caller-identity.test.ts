@@ -13,7 +13,16 @@
  *     只剩五次注册。那不是保守,那是我们自己造的一次停服。
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { callerKey, foldIPv6ToPrefix64, resolveCallerIpSource, UNKNOWN_CALLER } from "@/lib/caller-identity";
+import { isIP } from "node:net";
+import {
+  assertCallerIpSourceIsDeployable,
+  callerKey,
+  CALLER_IP_HEADER,
+  foldIPv6ToPrefix64,
+  resolveCallerIpSource,
+  UNKNOWN_CALLER,
+  withCallerIdentityHeader,
+} from "@/lib/caller-identity";
 
 const realIp = (value: string) => new Headers({ "x-real-ip": value });
 const xff = (value: string) => new Headers({ "x-forwarded-for": value });
@@ -126,6 +135,61 @@ describe("#795 r3 形态四:配置本身", () => {
     for (const bad of ["xff", "xff:0", "xff:-1", "xff:two", "railwayy", "true"]) {
       expect(() => resolveCallerIpSource(bad), bad).toThrow(/CALLER_IP_SOURCE/);
     }
+  });
+
+  it("开机就检查,而不是等第一个请求(r5)", () => {
+    // 留到第一次 callerKey() 才抛 = 生产上某个商家的登录变成 500,而且是部署之后好几个小时。
+    // 开机检查把它变成「这次部署没起来,日志写着为什么」。
+    process.env.CALLER_IP_SOURCE = "xff:oops";
+    expect(() => assertCallerIpSourceIsDeployable()).toThrow(/CALLER_IP_SOURCE/);
+    process.env.CALLER_IP_SOURCE = "railway";
+    expect(() => assertCallerIpSourceIsDeployable()).not.toThrow();
+  });
+
+  it("生产里配 dev 是**拒绝**,不是警告(r5)", () => {
+    // dev = 「哪个地址头来了就信哪个」,也就是可伪造的那种读法:调用方自己写一个,就自己挑桶。
+    // beta 是公开注册,这些闸就是挡在它前面的东西 —— 部署日志里的一行 warning 不是守卫。
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.CALLER_IP_SOURCE = "dev";
+    expect(() => assertCallerIpSourceIsDeployable()).toThrow(/dev/);
+    // 生产里说清楚形态就没事。
+    process.env.CALLER_IP_SOURCE = "railway";
+    expect(() => assertCallerIpSourceIsDeployable()).not.toThrow();
+  });
+});
+
+describe("#795 r5 形态五:交给 Better Auth 的那根管子", () => {
+  it("盖的是权威地址,而且**先删掉调用方自带的同名头**", async () => {
+    process.env.CALLER_IP_SOURCE = "railway";
+    const stamped = withCallerIdentityHeader(
+      new Request("http://localhost/x", {
+        headers: {
+          "x-real-ip": "203.0.113.7",
+          "x-forwarded-for": "1.1.1.1",
+          [CALLER_IP_HEADER]: "8.8.8.8", // 调用方伪造的合成头
+        },
+      }),
+    );
+    expect(stamped.headers.get(CALLER_IP_HEADER)).toBe("203.0.113.7");
+  });
+
+  it("认不出来的调用方:合成头**不写**,让 BA 落到它自己那个共用桶", () => {
+    process.env.CALLER_IP_SOURCE = "railway";
+    const stamped = withCallerIdentityHeader(
+      new Request("http://localhost/x", { headers: { [CALLER_IP_HEADER]: "8.8.8.8" } }),
+    );
+    // 留着调用方那份 = 送它一个私有桶。删掉之后 BA 用 NO_TRUSTED_IP_KEY,与我们的
+    // UNKNOWN_CALLER 同义。
+    expect(stamped.headers.get(CALLER_IP_HEADER)).toBeNull();
+  });
+
+  it("盖出来的值 BA 认得(它只收合法 IP)", () => {
+    process.env.CALLER_IP_SOURCE = "railway";
+    const stamped = withCallerIdentityHeader(
+      new Request("http://localhost/x", { headers: { "x-real-ip": "2001:db8:abcd:1234::5" } }),
+    );
+    const value = stamped.headers.get(CALLER_IP_HEADER)!;
+    expect(isIP(value)).toBe(6); // /64 折叠之后仍然是一个合法 IPv6 字面量
   });
 });
 

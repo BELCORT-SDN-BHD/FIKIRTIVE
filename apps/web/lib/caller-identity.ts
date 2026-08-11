@@ -52,10 +52,20 @@ import { isIP } from "node:net";
  * `xff:<hops>` is for an edge that appends to `X-Forwarded-For` (nginx, most CDNs, a self-run
  * ingress). Entries are APPENDED, so the caller can only ever add entries on the LEFT: the
  * Nth-from-the-right entry is the one written by our own Nth trusted proxy, and it is unforgeable
- * as long as the hop count matches the deployment. Getting the count wrong fails in a direction
- * you notice — too high reads an address the caller invented (they cannot aim it at somebody
- * else's bucket without sitting behind the same proxies, and "nobody is ever limited" shows up
- * immediately); too low reads a proxy's own constant address, so everybody shares one bucket.
+ * WHEN THE HOP COUNT MATCHES THE DEPLOYMENT — that condition is load-bearing, not decorative:
+ *
+ *   · Too HIGH is the dangerous direction. With `xff:2` behind a single edge, the entry read is
+ *     `<client-written>, <client-written>, <edge>` → index 1, which the caller wrote. They do not
+ *     merely get an address of their own — they can put ANY valid address there, including a
+ *     VICTIM's, and land in that victim's bucket. Spending someone else's budget is a denial of
+ *     service aimed at one person, and it is available to anyone who can read this file.
+ *     (An earlier revision of this comment claimed a caller "cannot aim it at somebody else's
+ *     bucket". That was wrong, and the number below is the only thing standing between the two
+ *     readings.)
+ *   · Too LOW reads a proxy's own constant address, so everybody shares one bucket: far too
+ *     strict, and noticed at once.
+ *
+ * Neither is a shape to guess at, which is the reason this is configuration and not a default.
  *
  * `dev` is for a laptop and for CI: there is no proxy, so it takes whichever of the two headers is
  * present and otherwise returns {@link UNKNOWN_CALLER}. It is deliberately NOT a production shape:
@@ -100,6 +110,31 @@ export function resolveCallerIpSource(raw: string | undefined = process.env.CALL
   throw new Error(
     `CALLER_IP_SOURCE is "${raw}", which names no deployment shape. Use "railway", "xff:<hops>" (hops ≥ 1), or "dev".`,
   );
+}
+
+/**
+ * BOOT CHECK (#795 r5) — call this once at server start (`instrumentation.ts`).
+ *
+ * Two ways a deploy can be wrong about who it is counting, and both are refused here rather than
+ * at the first request that happens to gate:
+ *
+ *   · An unrecognised value. `resolveCallerIpSource` throws; doing it at boot turns "a 500 on
+ *     somebody's login, hours later" into "this deploy did not start, and the log says why".
+ *   · `dev` IN PRODUCTION. `dev` means "believe whichever of the two headers showed up", which is
+ *     precisely the forgeable reading — a caller writes one and picks their own bucket, and every
+ *     per-caller cap in the product quietly stops capping. This REFUSES rather than warns: beta is
+ *     open registration, these gates are what stands in front of it, and a warning in a deploy log
+ *     is not a guard. Naming the real shape is one environment variable.
+ */
+export function assertCallerIpSourceIsDeployable(): void {
+  const source = resolveCallerIpSource(); // throws on an unrecognised value
+  if (process.env.NODE_ENV === "production" && source.shape === "dev") {
+    throw new Error(
+      'CALLER_IP_SOURCE is "dev" in production. "dev" trusts whichever address header arrives, ' +
+        "which lets any caller choose their own rate-limit bucket. Set the real deployment shape " +
+        '("railway", or "xff:<hops>" for an edge that appends to X-Forwarded-For).',
+    );
+  }
 }
 
 /** Every caller we cannot identify shares ONE bucket. Conservative on purpose: an unidentifiable
@@ -164,18 +199,62 @@ function trustedCandidate(requestHeaders: Headers, source: CallerIpSource): stri
 }
 
 /**
+ * THE ONE AUTHORITATIVE ADDRESS for this request, or `null` when this deployment shape cannot
+ * identify the caller. Every gate in the product — ours and Better Auth's — counts this value and
+ * nothing else.
+ */
+export function callerAddress(requestHeaders: Headers): string | null {
+  const candidate = trustedCandidate(requestHeaders, resolveCallerIpSource());
+  if (candidate === undefined) return null;
+
+  const address = bareAddress(candidate);
+  const version = isIP(address);
+  if (version === 4) return address;
+  if (version !== 6) return null;
+  const asIPv4 = mappedIPv4(address);
+  return asIPv4 ?? foldIPv6ToPrefix64(address);
+}
+
+/**
  * The identity every per-caller gate counts. Returns {@link UNKNOWN_CALLER} when the request
  * carries nothing this deployment shape is willing to trust — never a per-request value, which
  * would be a fresh budget for anyone who sends a malformed header.
  */
 export function callerKey(requestHeaders: Headers): string {
-  const candidate = trustedCandidate(requestHeaders, resolveCallerIpSource());
-  if (candidate === undefined) return UNKNOWN_CALLER;
+  return callerAddress(requestHeaders) ?? UNKNOWN_CALLER;
+}
 
-  const address = bareAddress(candidate);
-  const version = isIP(address);
-  if (version === 4) return address;
-  if (version !== 6) return UNKNOWN_CALLER;
-  const asIPv4 = mappedIPv4(address);
-  return asIPv4 ?? foldIPv6ToPrefix64(address);
+/**
+ * THE PIPE INTO BETTER AUTH (#795 r5).
+ *
+ * Better Auth resolves its own client address for its built-in burst rules, and its default is
+ * `X-Forwarded-For`, first entry (`utils/get-request-ip.mjs`). On this deployment that default is
+ * wrong in both directions at once:
+ *
+ *   · Railway's edge does not send `X-Forwarded-For` — but Next fills one in from the socket
+ *     (`base-server.js`: `req.headers['x-forwarded-for'] ??= originalRequest.socket.remoteAddress`),
+ *     and that socket is the platform's internal proxy. Every real merchant would land in ONE
+ *     bucket and Better Auth's 3-per-10-seconds sign-in rule would refuse the entire product.
+ *   · If anything upstream ever did pass a caller-supplied `X-Forwarded-For` through, `??=` keeps
+ *     it and the first entry is whatever the caller wrote — the forgeable reading, restored.
+ *
+ * Better Auth's option takes a list of header NAMES and reads the first value of the first header
+ * it finds; there is no hook for "count from the right", so the `xff:<hops>` shape cannot be
+ * expressed as a header name. So the deployment shape is resolved ONCE, here, and handed to
+ * Better Auth through a header of our own: {@link CALLER_IP_HEADER}. The stamping function
+ * DELETES any inbound copy first — otherwise it would be one more header a caller could write.
+ *
+ * When the caller is unidentifiable the header is left off entirely, and Better Auth's own
+ * fallback puts every such request into one shared bucket (`NO_TRUSTED_IP_KEY`) — the same
+ * semantics as {@link UNKNOWN_CALLER} on our side, reached by its own code path.
+ */
+export const CALLER_IP_HEADER = "x-fikirtive-caller-ip";
+
+/** Return a request whose {@link CALLER_IP_HEADER} is ours and only ours. */
+export function withCallerIdentityHeader(request: Request): Request {
+  const headers = new Headers(request.headers);
+  headers.delete(CALLER_IP_HEADER); // never inherit a caller-supplied copy
+  const address = callerAddress(request.headers);
+  if (address) headers.set(CALLER_IP_HEADER, address);
+  return new Request(request, { headers });
 }

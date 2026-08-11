@@ -8,6 +8,7 @@ import { prisma } from "@fikirtive/db";
 import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_LINK_TTL_SECONDS } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
+import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
@@ -124,6 +125,24 @@ export const auth = betterAuth({
   // #543 — basic abuse control on the newly public endpoints, using Better Auth's own
   // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
   // (5 per address per hour) still caps mail volume per victim address on top of this.
+  // #795 r5 — BETTER AUTH COUNTS THE SAME CALLER WE DO. One fact, one source.
+  //
+  // Its default is `X-Forwarded-For`, first entry (`utils/get-request-ip.mjs`), and on this
+  // deployment that default is wrong in both directions at once. Railway's edge does not send
+  // `X-Forwarded-For` at all — but Next fills one in from the socket
+  // (`base-server.js`: `req.headers['x-forwarded-for'] ??= originalRequest.socket.remoteAddress`),
+  // and that socket belongs to the platform's internal proxy: every merchant would share ONE
+  // address, and the built-in 3-per-10-seconds sign-in rule would refuse the whole product at
+  // once. And if anything upstream ever passed a caller-written `X-Forwarded-For` through, `??=`
+  // keeps it and its first entry is whatever the caller typed — the forgeable reading, back again.
+  //
+  // Better Auth's option is a list of header NAMES whose FIRST value it takes; it has no hook for
+  // "count from the right", so the `xff:<hops>` deployment shape cannot be written as a header
+  // name. The shape is therefore resolved once, in `caller-identity.ts`, and the answer is handed
+  // over in a header of ours that the route stamps on every forwarded request (deleting any
+  // inbound copy first). When the caller is unidentifiable the header is absent and Better Auth
+  // falls back to its own single shared bucket — the same semantics our side gives that case.
+  advanced: { ipAddress: { ipAddressHeaders: [CALLER_IP_HEADER] } },
   rateLimit: {
     // #795 — THE fix for "the gate is a number nobody can trust". Better Auth's limiter defaults
     // to PROCESS MEMORY, so every one of the rules below was per-instance: a second web replica

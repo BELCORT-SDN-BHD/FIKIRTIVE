@@ -3,10 +3,26 @@ import { auth } from "@/lib/better-auth/server";
 import { MAGIC_LINK_INVALID_EMAIL_MESSAGE } from "@/lib/better-auth/magic-link-contract";
 import { acceptMagicLinkRequest } from "@/lib/better-auth/magic-link-request";
 import { consumePasswordDoor, consumePublicAuthDoor } from "@/lib/rate-limit-gates";
+import { withCallerIdentityHeader } from "@/lib/caller-identity";
 
 const handlers = toNextJsHandler(auth);
 
-export const GET = handlers.GET;
+/**
+ * #795 r5 — EVERY request that reaches Better Auth is stamped with the one authoritative caller
+ * address first (see `withCallerIdentityHeader`). Better Auth's own burst rules read that header
+ * and nothing else, so its buckets and ours are the same buckets. Without this, its default
+ * (`X-Forwarded-For`, first entry) reads a header Next fills in from the platform proxy's socket
+ * on our deployment — one bucket for the entire product.
+ *
+ * The stamp goes on the request we FORWARD, never on one whose body we then read ourselves:
+ * constructing a Request from a Request disturbs the original's body.
+ */
+const forward = {
+  GET: (request: Request) => handlers.GET(withCallerIdentityHeader(request)),
+  POST: (request: Request) => handlers.POST(withCallerIdentityHeader(request)),
+};
+
+export const GET = forward.GET;
 
 const MAGIC_LINK_PATH = "/sign-in/magic-link";
 const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
@@ -23,7 +39,11 @@ const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
  * Better Auth's own short built-in rules still apply to all three underneath this — burst is its
  * job, the hour is ours.
  */
-const HOURLY_PUBLIC_DOORS = ["/sign-up/email", "/request-password-reset", "/send-verification-email"] as const;
+export const HOURLY_PUBLIC_DOORS = [
+  "/sign-up/email",
+  "/request-password-reset",
+  "/send-verification-email",
+] as const;
 
 /** Better Auth's own 429, byte for byte (api/rate-limiter/index.ts), so a caller cannot tell
  *  which of the two caps refused it — and so the client plugin's error handling is unchanged. */
@@ -64,7 +84,7 @@ export async function POST(request: Request): Promise<Response> {
   if (pathname.endsWith(PASSWORD_SIGN_IN_PATH)) {
     const retryAfterMs = await consumePasswordDoor(request.headers);
     if (retryAfterMs !== null) return tooManyRequests(retryAfterMs);
-    return handlers.POST(request);
+    return forward.POST(request);
   }
 
   // The hourly half of the three public doors — see HOURLY_PUBLIC_DOORS. Each door counts into
@@ -73,11 +93,11 @@ export async function POST(request: Request): Promise<Response> {
   if (hourlyDoor) {
     const retryAfterMs = await consumePublicAuthDoor(hourlyDoor, request.headers);
     if (retryAfterMs !== null) return tooManyRequests(retryAfterMs);
-    return handlers.POST(request);
+    return forward.POST(request);
   }
 
   if (!pathname.endsWith(MAGIC_LINK_PATH)) {
-    return handlers.POST(request);
+    return forward.POST(request);
   }
 
   let body: Record<string, unknown> = {};

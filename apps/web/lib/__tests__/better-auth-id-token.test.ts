@@ -14,6 +14,8 @@
  * 剩下的残余风险(idToken 仍是明文,库外无法加密)登记在 PR 与 #795 上,不在这里假装解决。
  */
 import { describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
+import { prisma } from "@fikirtive/db";
 
 process.env.BETTER_AUTH_SECRET = "x".repeat(40);
 process.env.BETTER_AUTH_URL = "http://localhost:3100";
@@ -59,6 +61,37 @@ describe("#795 r3 · 没有任何 account 写钩子在动令牌列", () => {
     const hooks = (auth.options.databaseHooks ?? {}) as Record<string, unknown>;
     expect(hooks.account).toBeUndefined();
   });
+
+  it("**行为回路**:走库自己的写入路径存一个 idToken,读回来还在(r5)", async () => {
+    // r5 判词:上一版只证明端点挂着,证明不了「写进去的 idToken 真的还在」——
+    // 换一条别的置空路径(写钩子、adapter 包装、schema 默认值)照样绿。
+    // 这条走的是库自己的 internalAdapter,也就是 OAuth 回调真正用的那条写入路径:
+    // 任何一处把 idToken 抹掉,这里都会红。
+    const ctx = await auth.$context;
+    const email = `id-token-${randomUUID()}@fikirtive.test`;
+    // 这个产品的用户写入是 deny-by-default 的(#543 名单闸),所以先把这个地址放进名单 ——
+    // 这条用例问的是「令牌列有没有被抹」,不是名单闸本身(那有它自己的用例)。
+    await prisma.allowedEmail.create({ data: { email, status: "active", invitedBy: "id-token-test" } });
+    const user = await ctx.internalAdapter.createUser({ email, name: "ID token round trip", emailVerified: true });
+    // 值本身不是真令牌,只是一个可辨认的标记;真令牌不会出现在测试里,也不会被打印。
+    const marker = `not-a-real-token.${randomUUID()}`;
+    await ctx.internalAdapter.createAccount({
+      userId: user.id,
+      providerId: "google",
+      accountId: `acct-${randomUUID()}`,
+      idToken: marker,
+    });
+
+    const stored = await prisma.betterAuthAccount.findFirst({
+      where: { userId: user.id },
+      select: { idToken: true },
+    });
+    expect(stored?.idToken, "idToken 被某处抹掉了 —— 读它的那些端点会安静地答错").toBe(marker);
+
+    await prisma.betterAuthAccount.deleteMany({ where: { userId: user.id } });
+    await prisma.betterAuthUser.deleteMany({ where: { id: user.id } });
+    await prisma.allowedEmail.deleteMany({ where: { email } });
+  }, 60_000);
 
   it("access/refresh 仍然走库自己的透明加解密(这一半没有被撤)", () => {
     expect(auth.options.account?.encryptOAuthTokens).toBe(true);
