@@ -465,6 +465,42 @@ describe("case 17 — an unreadable spend cap refuses (fail closed, #524)", () =
     expect(await ledger(ORG)).toHaveLength(0);
   });
 
+  // r1 判官 P1-1:这是 r1 真正漏掉的形状 —— 字符串走 mergeSettings 会被丢弃回退默认 0,
+  // 于是「上限 5」被读成「无上限」,任意金额放行。它和小数/负数是同一族威胁,必须同样拒绝。
+  it("a stored STRING cap is unreadable → refuse (the fail-OPEN shape r1 shipped)", async () => {
+    await setCap(ORG, "5");
+    const error = await prisma
+      .$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 1000 }))
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SpendCapBlocked);
+    expect((error as SpendCapBlocked).capInternal).toBeNull();
+    expect((await account(ORG)).balance).toBe(1000);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("other corrupted shapes refuse too — one threat family, one answer", async () => {
+    for (const bad of [true, { amount: 5 }, [5], "lots", ""] as const) {
+      await setCap(ORG, bad);
+      await expect(
+        prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: `bad-${String(bad)}`, cost: 10 })),
+        JSON.stringify(bad),
+      ).rejects.toThrow(SpendCapBlocked);
+    }
+    expect((await account(ORG)).balance).toBe(1000);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("a workspace that never set the key is NOT corrupted — it simply has no ceiling", async () => {
+    // Fail-closed must never stop a merchant who set nothing. A blob without the key reads as none.
+    await prisma.organization.update({
+      where: { id: ORG },
+      data: { settings: { autoPublish: true } as never },
+    });
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 1000 }));
+    expect((await account(ORG)).reserved).toBe(1000);
+  });
+
   it("a negative stored cap is unreadable → refuse (never read as unlimited)", async () => {
     await setCap(ORG, -5);
     await expect(

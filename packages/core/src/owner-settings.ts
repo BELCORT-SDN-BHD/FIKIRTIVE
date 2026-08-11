@@ -82,20 +82,33 @@ export type SpendCapReading =
  * INTERNAL credits, so the conversion goes through `INTERNAL_PER_DISPLAY` rather than a
  * hand-written 10 — the cap has to move with the pricing unit, not beside it.
  *
- * A fractional or negative stored cap is `unreadable`, NOT "no cap": the write path already
- * rejects both (owner-settings-actions.ts), so reaching here means the blob was written by
- * something that is not this product, and the safe reading of a corrupted ceiling is "stop",
- * not "unlimited".
+ * WHY IT READS THE BLOB RAW INSTEAD OF THROUGH `mergeSettings` (r1 judge P1-1). `mergeSettings`
+ * answers "what should the screen show", and its answer for a wrong-TYPED value is to drop it
+ * and fall back to the default — which for this key is 0, i.e. NO CAP. On the charging path
+ * that is fail OPEN: a stored `"5"` would let every amount through. A string, an object, a
+ * boolean, an explicit `null`, `NaN`, a fraction and a negative are all one threat — a value
+ * this product's write path cannot produce (owner-settings-actions.ts rejects them), so the
+ * blob was written by something that is not this product. Every one of those shapes is
+ * `unreadable` here, and `unreadable` refuses.
  *
- * A WRONG-TYPED value ("lots") is a different case and is deliberately not caught here: it
- * never survives `mergeSettings`, so the Settings screen and this function both read that
- * workspace as one that never set a cap. Reading it raw would fail closed on the charging
- * path while the screen still said "No cap set" — one number, two answers, which is the class
- * of bug #524 is closing rather than a stricter version of the fix.
+ * The one shape that must NOT be caught is "never set": a workspace that has never opened
+ * Settings has no `spendCapCredits` key at all, and a merchant who set no ceiling must not be
+ * stopped. Absent key (and a `null`/absent settings blob) = `none`; a present-but-invalid
+ * value = `unreadable`. That distinction is the whole function.
  */
 export function readSpendCap(rawSettings: unknown): SpendCapReading {
-  const cap = mergeSettings(rawSettings).spendCapCredits;
-  if (!Number.isInteger(cap) || cap < 0) return { kind: "unreadable" };
-  if (cap === 0) return { kind: "none" };
+  // No blob at all = a workspace that never touched Settings. Not corruption; no ceiling.
+  if (rawSettings === null || rawSettings === undefined) return { kind: "none" };
+  // A settings blob that is not a plain object cannot be searched for the key, so we cannot
+  // tell a set cap from an unset one — refuse rather than guess "unlimited".
+  if (typeof rawSettings !== "object" || Array.isArray(rawSettings)) return { kind: "unreadable" };
+  const stored = (rawSettings as Record<string, unknown>).spendCapCredits;
+  if (stored === undefined) return { kind: "none" }; // key never written → no ceiling set
+  // Present. From here the ONLY acceptable shape is a whole number of credits ≥ 0.
+  // `Number.isInteger` already rejects NaN, ±Infinity, fractions and every non-number
+  // (string/object/boolean/null), so this one test covers the whole corrupted-value family.
+  if (!Number.isInteger(stored) || (stored as number) < 0) return { kind: "unreadable" };
+  const cap = stored as number;
+  if (cap === 0) return { kind: "none" }; // the merchant's own "No cap set"
   return { kind: "cap", internal: cap * INTERNAL_PER_DISPLAY };
 }
