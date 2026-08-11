@@ -146,11 +146,12 @@ export function ConsentExclusionNote({ consent }: { consent: AudienceConsentSumm
         : ""}
       {/*
         #792 r6 — "can reach on its channel" promised delivery the count never measured. What it
-        counts is a channel-confirmed identity on this broadcast's channel plus no known opt-out
-        (customer-broadcast-service.ts); do-not-disturb is not part of it, and no message leaves
-        Fikirtive at all yet.
+        counts is a channel-confirmed identity on the channel this broadcast sends from, plus no
+        known opt-out (customer-broadcast-service.ts); do-not-disturb is not part of it, and no
+        message leaves Fikirtive at all yet. Worded without a possessive on purpose (r6b): the
+        #726 fence pins this sentence against raw markup, where an apostrophe arrives escaped.
       */}
-      {" This count covers the contacts with a confirmed identity on this broadcast's channel and no known opt-out, so it can be lower than the count on the segments page, which covers every contact you have."}
+      {" This count covers the contacts with a confirmed identity on the channel this broadcast sends from and no known opt-out, so it can be lower than the count on the segments page, which covers every contact you have."}
       {consent.reportedOptOutKept > 0
         ? ` ${consent.reportedOptOutKept} ${consent.reportedOptOutKept === 1 ? "contact is" : "contacts are"} in this audience with an opt-out you recorded yourself, which is not verified — open the contact to see its consent history.`
         : ""}

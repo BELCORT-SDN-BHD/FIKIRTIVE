@@ -537,7 +537,8 @@ describe("#726 the two pages count different populations, and each one says whic
     // is one of the opt-outs it reports excluding, even though neither has a WhatsApp identity.
     expect(preview.contactableCount).toBe(13);
     expect(preview.excludedByConsentCount).toBe(5);
-    // The broadcast can only count the people it can reach, so both numbers are one lower.
+    // The broadcast counts only the people holding an identity on its own channel, so both
+    // numbers are one lower.
     const delivered = new Set(frozen.members.map((member) => member.contactId));
     expect(delivered.size).toBe(12);
     expect(delivered.has(farid)).toBe(false);
@@ -552,10 +553,18 @@ describe("#726 the two pages count different populations, and each one says whic
 
     const page = renderToStaticMarkup(createElement(ContactPreview, { preview }));
     expect(page).toContain("These counts cover every contact you have");
-    expect(page).toContain("A broadcast counts only the contacts it can reach");
+    // #792 r6b — both pages used to name the broadcast's population as "the contacts it can
+    // reach", which promised delivery neither number measures. What each one still has to do —
+    // and what this test is here for — is print WHICH population it counted next to the number;
+    // the population is now named by what the run actually selects on.
+    expect(page).toContain(
+      "A broadcast counts only the contacts with a confirmed identity on the channel it sends from and no known opt-out",
+    );
 
     const note = renderToStaticMarkup(createElement(ConsentExclusionNote, { consent: frozen.consent }));
-    expect(note).toContain("This count covers the contacts this broadcast can reach on its channel");
+    expect(note).toContain(
+      "This count covers the contacts with a confirmed identity on the channel this broadcast sends from and no known opt-out",
+    );
     // The freeze must not claim to have excluded the very same people the segment did.
     expect(note).not.toContain("the same contacts the segment left out");
   });
