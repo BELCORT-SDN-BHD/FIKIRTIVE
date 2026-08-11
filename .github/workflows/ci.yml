@@ -1,80 +1,87 @@
 name: CI
 
+# THE SHAPE OF THIS FILE, IN ONE PARAGRAPH. `quality` used to be one job that ran
+# five kinds of check one after another, so its wall clock was their SUM (~18 min).
+# It is now five jobs that run the same checks at the same time on five ephemeral
+# VMs, plus a fan-in job — still named `quality`, still the required check — that
+# passes only when every leg passed. The wall clock is the SLOWEST leg, not the
+# sum. Nothing about what is checked changed: the legs are `scripts/ci/quality.sh
+# --leg <name>`, the same script, and its default (no --leg) still runs every gate
+# in the same order, which is what `pnpm quality` on a laptop does.
+#
+# Two invariants hold the whole thing up, and both are machine-checked by
+# scripts/__tests__/quality-legs.test.sh (which runs inside the `typecheck` leg):
+#   - the union of the legs is the entire gate list, so nothing stopped running
+#   - this file launches exactly the legs quality.sh declares, and the fan-in job
+#     is still called `quality`, byte for byte
+# The third invariant lives in the fan-in job below: it fails closed on anything
+# that is not an explicit, expected success.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  # Pre-wiring for a merge queue, which is the natural next step once `quality`
+  # finishes in minutes: GitHub runs the queued batch under `merge_group`, and a
+  # required check that never fires on that event would deadlock the queue. There
+  # is no PR in a merge-group context, so the scope job cannot ask which files
+  # changed — it runs every gate. Fail-safe by construction: the only thing lost
+  # is the docs-only short-circuit, on an event nobody has enabled yet.
+  merge_group:
 
 # `pull-requests: read` is for the docs-only scope check below (it lists the PR's files).
 permissions:
   contents: read
   pull-requests: read
 
+# `github.ref` is the fallback for merge_group, where there is no PR number: without
+# it every merge-group run would share one concurrency group and cancel the others.
 concurrency:
-  group: quality-${{ github.event.pull_request.number }}
+  group: quality-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Workflow-level, so the five legs cannot drift apart. A leg quietly running with a
+# different DATABASE_URL or a different heap ceiling than its siblings would be a
+# gate checking something other than what it claims.
+env:
+  # `next build` re-runs a TypeScript pass in a child worker, and that worker had grown to
+  # the ~2 GB default heap: it now OOMs on a coin flip, independently of what a PR changed
+  # (measured: 11 MB added to a 1,088 MB `tsc` run — under 1%). Raising the ceiling weakens
+  # no gate; the check still runs, and `pnpm -r typecheck` runs before it.
+  NODE_OPTIONS: --max-old-space-size=6144
+  # The service container each leg declares. quality.sh only uses this as the
+  # maintenance connection; the run itself happens on a per-run database it creates
+  # and force-drops (name ends in _test, enforced there). Every leg gets its own
+  # Postgres and its own database, so no leg can see another's rows.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
+  BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
+  BETTER_AUTH_URL: http://localhost:3000
+  GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
+  GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
+
 jobs:
-  quality:
-    # The `quality` context is the required status check in the protect-main ruleset
-    # (bypass_actors is empty — nobody can merge around it). Renaming this job, or letting
-    # it be skipped, freezes every merge in the repository. Speed work goes INSIDE the job.
-    name: quality
-    if: github.event.pull_request.draft == false
-    # GitHub-hosted runner (2026-08-11, Founder-approved after fixing the billing method
-    # that froze merges in #577): PR runs get a dedicated ephemeral VM each, so they run in
-    # PARALLEL and are fully isolated from the dev machine — the shared-machine false-red
-    # families (job-timeout kills, vitest load timeouts, Postgres saturation: #862) cannot
-    # occur here by construction. The self-hosted runner (fikirtive-mac) stays registered
-    # as a manual fallback: if billing ever fails again, one PR flips `runs-on` back.
-    # Postgres is a service container (same shape this workflow used before #838);
-    # quality.sh still creates a unique per-run `*_test` database and force-drops it on
-    # exit — its machine-wide mutex now trivially acquires on a fresh VM and guards nothing
-    # away. The `quality` check name and its gates are byte-identical — only the floor moved.
+  # ── the docs-only decision, unchanged (#809) ─────────────────────────────────
+  # Docs-only PRs have nothing for these gates to check. This is deliberately NOT a
+  # workflow-level `paths-ignore`: a workflow skipped by a path filter never posts its
+  # check, and `quality` is required — a docs-only PR would sit unmergeable forever.
+  # Deciding inside the workflow means `quality` still reports on every PR, it just
+  # finishes in seconds. Fail-safe: anything unexpected (API error, empty list, no PR
+  # in context) runs the full gate.
+  #
+  # It is its own job now only because five legs have to read one answer. The step
+  # inside it is the same step, and the decision still lives in scripts/ci/pr-scope.jq,
+  # covered by scripts/__tests__/pr-scope.test.sh, which the `typecheck` leg runs.
+  scope:
+    name: scope
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    # Dedicated VM: the run itself is ~12-20 min; 45 leaves honest headroom without letting
-    # a wedged run camp for over an hour (the 75 on the shared machine covered lock waits
-    # and host contention that no longer exist here).
-    timeout-minutes: 45
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: fikirtive_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      # `next build` re-runs a TypeScript pass in a child worker, and that worker had grown to
-      # the ~2 GB default heap: it now OOMs on a coin flip, independently of what a PR changed
-      # (measured: this PR's own diff adds 11 MB to a 1,088 MB `tsc` run — under 1%). Raising the
-      # ceiling weakens no gate; the check still runs, and `pnpm -r typecheck` runs before it.
-      NODE_OPTIONS: --max-old-space-size=6144
-      # The service container above. quality.sh only uses this as the maintenance
-      # connection; the run itself happens on a per-run database it creates and
-      # force-drops (name ends in _test, enforced there).
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
-      BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
-      BETTER_AUTH_URL: http://localhost:3000
-      GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
-      GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
+    timeout-minutes: 10
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
     steps:
       - uses: actions/checkout@v4
 
-      # Docs-only PRs have nothing for these gates to check. This is deliberately NOT a
-      # workflow-level `paths-ignore`: a workflow skipped by a path filter never posts its
-      # check, and `quality` is required — a docs-only PR would sit unmergeable forever.
-      # Deciding inside the job means `quality` still reports on every PR, it just finishes
-      # in seconds. Fail-safe: anything unexpected (API error, empty list) runs the full gate.
-      #
-      # The decision lives in scripts/ci/pr-scope.jq and is covered by
-      # scripts/__tests__/pr-scope.test.sh, which `quality` runs. This step does no
-      # interpretation at all: it saves both API responses verbatim and forwards the answer.
+      # This step does no interpretation at all: it saves both API responses verbatim
+      # and forwards the answer.
       #
       # Saving them verbatim is the point. Four review rounds of #809 each found another
       # input that survived a text projection and came out the other side as a WRONG
@@ -91,17 +98,30 @@ jobs:
       # itself — and turn each into "run every gate". `set -e` covers everything we did not
       # predict, and above all the write to $GITHUB_OUTPUT: without it, a failed write left
       # the step green with no `code` output at all, which the old `== 'true'` conditions
-      # downstream read as "skip". Now that write failing fails the step, and a failed step
-      # fails the job — merge blocked, which is the safe direction.
+      # downstream read as "skip". Now that write failing fails the step, a failed step
+      # fails this job, and the fan-in below turns a failed scope job into a failed
+      # `quality`. Merge blocked, which is the safe direction.
+      #
+      # The PR number arrives as an environment variable rather than a `${{ }}` splice into
+      # the script body, because on `merge_group` there is no PR and the empty case has to
+      # be a value this script can test, not a hole in its source text.
       - name: Scope — does this PR touch anything outside docs/?
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "no pull request in this context (event: $EVENT_NAME) — running every gate"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           files_json="${RUNNER_TEMP:-/tmp}/pr-files.json"
           pr_json="${RUNNER_TEMP:-/tmp}/pr-object.json"
-          pr="repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}"
+          pr="repos/${REPOSITORY}/pulls/${PR_NUMBER}"
           gh api --paginate --slurp "$pr/files" >"$files_json" 2>/dev/null || : >"$files_json"
           gh api "$pr" >"$pr_json" 2>/dev/null || : >"$pr_json"
           if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
@@ -118,47 +138,317 @@ jobs:
             echo "docs/** only, and the file list is provably complete — every gate below is a no-op"
           fi
 
-      # Polarity is deliberate: `!= 'false'` and never `== 'true'`. Only the one string the
-      # step writes on purpose buys a skip; a missing output, an empty output, a skipped or
-      # failed scope step, or any value nobody anticipated all land on "run the gate".
+  # ── the five legs ────────────────────────────────────────────────────────────
+  # Same `if:` on all five. Polarity is deliberate and identical to what the old
+  # single job used: `!= 'false'` and never `== 'true'`. Only the one string the scope
+  # step writes on purpose buys a skip; a missing output, an empty output, or any value
+  # nobody anticipated all land on "run the gate". A scope job that FAILS skips the legs
+  # entirely — and the fan-in treats that as a failure, not as a pass.
+  #
+  # Why these five. The fan-in waits for the SLOWEST leg, so the split is only worth
+  # what its longest leg costs:
+  #   tests      the full suite. `pnpm -r test` is ONE gate and cannot be divided
+  #              without changing what a gate is, so this leg is the wall-clock FLOOR
+  #              until that suite itself gets faster. It gets a leg to itself.
+  #   build      `next build`, the second long pole. A leg to itself keeps it off the
+  #              critical path entirely.
+  #   typecheck  `pnpm -r typecheck` (212s measured) plus the three text fences and
+  #              self-tests, which are seconds each and have to run somewhere.
+  #   lint       `pnpm lint` (78s measured).
+  #   checks     everything else — otto catalog 7s, the two margin gates under 1s,
+  #              prisma migrate deploy 16s, schema drift 6s.
+  # Every leg additionally pays the 82s packages build, because `packages/*/dist` and
+  # the generated Prisma client are the prerequisite for everything downstream. That is
+  # the price of the split, and it is why five legs cost more RUNNER time than one job
+  # while costing far less WALL time.
+  #
+  # Numbers above are per-gate wall time from `pnpm quality` on a shared dev laptop,
+  # 2026-08-12. The first CI run of this split clocks each leg on a dedicated VM; those
+  # per-leg numbers are on the PR that introduced this file.
+  #
+  # Every leg declares Postgres even where its gates never query it. quality.sh takes one
+  # path — machine lock, per-run database, force-drop on exit — for local runs and for CI
+  # alike, and a leg that quietly skipped part of that preamble would be a second path to
+  # keep honest. A container that starts and is never used costs seconds on a leg that is
+  # not the critical path; it buys one code path.
 
-      - if: steps.scope.outputs.code != 'false'
-        uses: pnpm/action-setup@v4
-      - if: steps.scope.outputs.code != 'false'
-        uses: actions/setup-node@v4
+  typecheck:
+    name: typecheck
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - if: steps.scope.outputs.code != 'false'
-        run: pnpm install --frozen-lockfile
-
-      # TypeScript's incremental state, for both TS passes `quality` runs over apps/web:
-      # `tsc --noEmit` (apps/web/tsconfig.tsbuildinfo) and the one inside `next build`
-      # (.next/cache/.tsbuildinfo). tsc re-checks any file whose hash moved plus everything
-      # downstream of it, so a cache restored from another commit weakens nothing — it only
-      # skips re-deriving types for files that did not change. ~1 MB, so the restore is
-      # nearly free. The `github.sha` suffix makes every run save a fresh entry; the
-      # restore-keys are what actually load one.
+      - run: pnpm install --frozen-lockfile
+      # TypeScript's incremental state for `tsc --noEmit` over apps/web. tsc re-checks
+      # any file whose hash moved plus everything downstream of it, so a cache restored
+      # from another commit weakens nothing — it only skips re-deriving types for files
+      # that did not change. ~1 MB, so the restore is nearly free. The `github.sha`
+      # suffix makes every run save a fresh entry; the restore-keys load one.
       #
-      # Measured on this PR, so nobody has to guess: the saving tracks how much of the diff
-      # the restored state still covers. Restoring across a large diff bought nothing
-      # (typecheck 86s → 86s); restoring across a one-comment diff cut typecheck 86s → 49s.
-      # `next build` did not move either way (98s both). So expect real savings on push-after-
-      # push of the same branch, and none on the first run of a fresh branch.
-      - name: Restore TypeScript / Next build cache
-        if: steps.scope.outputs.code != 'false'
+      # Measured, so nobody has to guess: the saving tracks how much of the diff the
+      # restored state still covers. Restoring across a large diff bought nothing
+      # (typecheck 86s → 86s); across a one-comment diff it cut typecheck 86s → 49s. So
+      # expect real savings on push-after-push of the same branch, none on a fresh one.
+      #
+      # Separate from the `build` leg's cache on purpose: two parallel jobs writing one
+      # cache key means one loses the race and warns, and neither leg produces the
+      # other's artifact anyway.
+      - name: Restore the tsc incremental state
         uses: actions/cache@v4
         with:
-          path: |
-            apps/web/.next/cache
-            apps/web/tsconfig.tsbuildinfo
-          key: build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          path: apps/web/tsconfig.tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
-            build-${{ runner.os }}-node22-
+            tsbuildinfo-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
+            tsbuildinfo-${{ runner.os }}-node22-
+      # quality.sh's machine-wide mutex still runs on every leg; on an ephemeral VM it
+      # acquires instantly and serializes nothing — it exists for shared machines (dev
+      # laptops, the fallback self-hosted runner) and is harmless here.
+      - run: pnpm quality --leg typecheck
 
-      # quality.sh's machine-wide mutex still runs; on this ephemeral VM it acquires
-      # instantly and serializes nothing — it exists for shared machines (dev laptops,
-      # the fallback self-hosted runner) and is harmless here.
-      - if: steps.scope.outputs.code != 'false'
-        run: pnpm quality
+  tests:
+    name: tests
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality --leg tests
+
+  build:
+    name: build
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `next build`'s own cache, including the TypeScript pass it runs in a child
+      # worker (.next/cache/.tsbuildinfo). Measured on the old single job: `next build`
+      # did not move either way with or without it (98s both), so this is kept for the
+      # rest of Next's cache rather than for the type pass.
+      - name: Restore the Next build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: nextcache-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nextcache-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
+            nextcache-${{ runner.os }}-node22-
+      - run: pnpm quality --leg build
+
+  lint:
+    name: lint
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality --leg lint
+
+  checks:
+    name: checks
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality --leg checks
+
+  # ── the fan-in ───────────────────────────────────────────────────────────────
+  # The `quality` context is the required status check in the protect-main ruleset
+  # (bypass_actors is empty — nobody can merge around it). Renaming this job, or letting
+  # it be skipped when it should not be, freezes every merge in the repository. The name
+  # is byte-identical to what it always was; only what stands behind it changed, from one
+  # job running five kinds of check to five jobs running them at once.
+  #
+  # It runs under `always()` because its whole purpose is to have an opinion about legs
+  # that did NOT succeed — without it, a failed leg would simply skip this job and
+  # `quality` would never report at all, which reads as "still running", not "failed".
+  # `always()` also means it must re-derive the draft condition for itself; every other
+  # job inherits that through `needs`.
+  quality:
+    name: quality
+    needs: [scope, typecheck, tests, build, lint, checks]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Fail closed, stated positively: this step names the ONE outcome that passes and
+      # rejects everything else, rather than listing the outcomes that fail. A status
+      # nobody anticipated — a new GitHub result string, a leg that vanished from this
+      # file, an infrastructure abort, a cancellation — lands on "not the expected
+      # value", which blocks the merge. Same polarity rule the scope check uses
+      # (`!= 'false'`, never `== 'true'`), one level up.
+      #
+      # The expected outcome depends on one thing only, the scope answer this run's legs
+      # were themselves gated on:
+      #   scope is anything but success  → fail, whatever the legs say
+      #   scope says code != 'false'     → every leg must be `success`
+      #   scope says code == 'false'     → every leg must be `skipped` (docs-only PR)
+      # Both directions are strict equality on purpose. The legs read the same output
+      # from the same job as this step does, so a leg that ran while the scope said
+      # docs-only (or the reverse) means the two sides disagree about what this run was —
+      # and a run we cannot explain is not a run that may merge.
+      - name: Every leg must have passed — or been skipped for a provably docs-only PR
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          SCOPE_CODE: ${{ needs.scope.outputs.code }}
+          LEG_RESULTS: |
+            typecheck ${{ needs.typecheck.result }}
+            tests ${{ needs.tests.result }}
+            build ${{ needs.build.result }}
+            lint ${{ needs.lint.result }}
+            checks ${{ needs.checks.result }}
+        run: |
+          set -euo pipefail
+
+          if [ "$SCOPE_RESULT" != "success" ]; then
+            echo "scope: $SCOPE_RESULT (expected success)"
+            echo ""
+            echo "quality: the scope job did not succeed, so nothing below can be trusted — failing closed."
+            exit 1
+          fi
+
+          if [ "$SCOPE_CODE" = "false" ]; then
+            expected=skipped
+            echo "scope: docs/** only and provably complete — every leg must have been skipped"
+          else
+            expected=success
+            echo "scope: code=${SCOPE_CODE:-<empty>} — every leg must have passed"
+          fi
+
+          legs_seen=0
+          verdict=0
+          while read -r leg result; do
+            [ -n "$leg" ] || continue
+            legs_seen=$((legs_seen + 1))
+            if [ "$result" = "$expected" ]; then
+              echo "  $leg: $result"
+            else
+              echo "  $leg: ${result:-<no result>} (expected $expected)"
+              verdict=1
+            fi
+          done <<EOF
+          $LEG_RESULTS
+          EOF
+
+          # A leg deleted from the `needs` list above would silently stop being
+          # checked here, and this job would pass on four legs. The count is the one
+          # thing the loop cannot notice by itself.
+          if [ "$legs_seen" != "5" ]; then
+            echo ""
+            echo "quality: expected 5 legs, saw $legs_seen — failing closed."
+            exit 1
+          fi
+          if [ "$verdict" != "0" ]; then
+            echo ""
+            echo "quality: at least one leg is not $expected — failing closed."
+            exit 1
+          fi
+          echo ""
+          echo "quality: all 5 legs are $expected."
