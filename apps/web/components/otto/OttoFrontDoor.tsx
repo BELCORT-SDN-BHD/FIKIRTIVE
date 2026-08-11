@@ -307,7 +307,9 @@ export function OttoFrontDoor({
               {greeting}
             </h1>
             <p className="m-0 text-[0.875rem] text-muted-foreground leading-normal">
-              Tell me in your own words, or pick a goal below. No experience needed — I&apos;ll guide you through it.
+              {/* #805 — Otto's in-app self-introduction says what comes back finished, not how
+                  pleasant the conversation is. */}
+              Tell me in your own words, or pick a goal below. No experience needed — I&apos;ll do the work and bring it back for you to approve.
             </p>
           </div>
         </div>

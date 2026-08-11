@@ -34,6 +34,18 @@ export const crmSegmentRuleGroup = z
   .object({
     match: z.enum(["all", "any"]),
     rules: z.array(crmSegmentRule).min(1),
+    /**
+     * #758 — the merchant's optional tightening, carried on the rule group so Otto reaches it
+     * through the same field the CRM page uses and the same validator checks it again. Never set
+     * it because it sounds safer: it excludes people on the merchant's own unverified record, so
+     * it goes on only when the user asked for it.
+     */
+    excludeReportedOptOut: z
+      .boolean()
+      .optional()
+      .describe(
+        "Optional, defaults to off. On: also leave out every contact the user has recorded an opt-out for himself, including one who additionally opted out through their own channel. It only removes contacts from this segment; it never adds one, and it does not change what the consent record decides. Set it only when the user asked to exclude the contacts he recorded.",
+      ),
   })
   .strict();
 
@@ -80,7 +92,10 @@ export const readSegmentsSkill = defineOttoSkill({
     "operation=get needs an exact segmentId from list and returns that Segment's rule and counts. " +
     "operation=preview evaluates a STRUCTURED one-level rule object without saving. Never send free-form natural " +
     "language as rules and never guess an id. Contactable here is an audience estimate: unknown consent stays " +
-    "included, only known opt-out is excluded, and do-not-disturb is enforced later at send time.",
+    "included, only known opt-out is excluded, and do-not-disturb is enforced later at send time. A rule group may " +
+    "also carry excludeReportedOptOut: on, it additionally leaves out every contact the user recorded an opt-out " +
+    "for himself, and the count comes back as excludedByReportedOptOutCount. It only ever removes people, and it " +
+    "does not change what the consent record already decides.",
   parameters: params,
   execute: executeReadSegments,
 });

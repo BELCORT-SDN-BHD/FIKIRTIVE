@@ -82,7 +82,8 @@ describe("full-page containers are mobile-first", () => {
       ["app/crm/workflows/error.tsx", 1],
       ["components/campaign/campaign-list-page.tsx", 1],
       ["components/campaign/campaign-detail-page.tsx", 2],
-      ["components/campaign/campaign-calendar-page.tsx", 1],
+      // campaign-calendar-page.tsx 不在这份名单里了:#801「两个日历择一为准」把它整页
+      // 收敛成重定向(计划日期在战役自己那一页改,真日历只有 Workspace › Schedule 一本)。
       ["components/campaign/campaign-trends-page.tsx", 1],
       ["components/campaign/campaign-workbench-page.tsx", 1],
       ["components/crm/inbox/inbox-list-page.tsx", 2],

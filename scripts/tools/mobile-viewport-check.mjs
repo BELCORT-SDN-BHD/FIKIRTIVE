@@ -34,7 +34,6 @@ const SURFACES = [
   { ticket: "#685", path: "/billing", topAnchor: "h1" },
   { ticket: "#685", path: "/profile", topAnchor: "h1" },
   { ticket: "#685", path: "/campaign", topAnchor: "a:has-text('Return to Otto')" },
-  { ticket: "#685", path: "/campaign/calendar", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685", path: "/campaign/trends", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685", path: "/campaign/workbench", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685/#730", path: "/crm/inbox", topAnchor: "a:has-text('Return to Otto')" },

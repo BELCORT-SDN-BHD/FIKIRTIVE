@@ -86,7 +86,10 @@ const contacts = [
     totalOrdersMyr: "1200.50",
     doNotDisturb: false,
     marketingConsent: "unknown",
-    identities: [{ channel: "whatsapp" }, { channel: "email" }],
+    identities: [
+      { channel: "whatsapp", verificationStatus: "channel_verified" },
+      { channel: "email", verificationStatus: "channel_verified" },
+    ],
   },
   {
     id: "contact-2",
@@ -94,7 +97,7 @@ const contacts = [
     totalOrdersMyr: "800",
     doNotDisturb: false,
     marketingConsent: "unknown",
-    identities: [{ channel: "email" }],
+    identities: [{ channel: "email", verificationStatus: "channel_verified" }],
   },
 ];
 
@@ -181,7 +184,9 @@ describe("previewSegment", () => {
         marketingConsent: true,
         identities: {
           where: { ownerId: "owner-1", deletedAt: null },
-          select: { channel: true },
+          // #803 — the grade rides with the channel: only a channel-verified identity is a
+          // channel fact, so the read that feeds the matcher has to ask for it.
+          select: { channel: true, verificationStatus: true },
         },
       },
     });
@@ -198,6 +203,8 @@ describe("previewSegment", () => {
       excludedByConsentCount: 1,
       unresolvedLegacyOptOutCount: 0,
       reportedOptOutCount: 0,
+      // #758 — the merchant's optional exclusion is off on these rules, so it removed nobody.
+      excludedByReportedOptOutCount: 0,
       contacts: [
         {
           id: "contact-1",
@@ -259,14 +266,14 @@ describe("previewSegment", () => {
         name: "Chen",
         totalOrdersMyr: "900",
         doNotDisturb: false,
-        identities: [{ channel: "whatsapp" }],
+        identities: [{ channel: "whatsapp", verificationStatus: "channel_verified" }],
       },
       {
         id: "contact-4",
         name: "Dina",
         totalOrdersMyr: "700",
         doNotDisturb: true,
-        identities: [{ channel: "whatsapp" }],
+        identities: [{ channel: "whatsapp", verificationStatus: "channel_verified" }],
       },
     ]);
     mockConsentProjectionFindMany.mockResolvedValue([
@@ -454,6 +461,7 @@ describe("listSegments", () => {
           excludedByConsentCount: 1,
           unresolvedLegacyOptOutCount: 0,
           reportedOptOutCount: 0,
+          excludedByReportedOptOutCount: 0,
           createdAt: "2026-07-14T00:00:00.000Z",
         },
       ],

@@ -29,6 +29,12 @@ export function contactForOtto(contact: CrmContactRow) {
       ...contact.consentState,
       lastReceivedAt: contact.consentState.lastReceivedAt?.toISOString() ?? null,
     },
+    // #803 — the credibility grade crosses WITH the number, for the same reason the page counts
+    // cross with the rows: a number handed over bare reads as a number Otto can act on.
+    identities: contact.identities.map((identity) => ({
+      ...identity,
+      verifiedAt: identity.verifiedAt?.toISOString() ?? null,
+    })),
   };
 }
 

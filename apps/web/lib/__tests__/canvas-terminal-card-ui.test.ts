@@ -38,6 +38,8 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 const { ImageNode } = await import("@/components/canvas/nodes/ImageNode");
 const { VideoNode } = await import("@/components/canvas/nodes/VideoNode");
 const { TERMINAL_CARD_STATUSES } = await import("@/lib/canvas-card-status");
+const { REFERENCE_IMAGE_PERSON_REJECTED } = await import("@fikirtive/core/gen-failure");
+const { redactProviderNames } = await import("@fikirtive/core/provider-secrecy");
 const { applyCanvasResolve, isInFlightPaidGen } = await import("@/components/canvas/useCanvasGen");
 
 let root: Root | null = null;
@@ -59,13 +61,16 @@ afterEach(async () => {
 async function renderCard(
   component: typeof ImageNode | typeof VideoNode,
   status: string,
+  extra: Record<string, unknown> = {},
 ): Promise<string> {
   await act(async () => {
     root!.render(createElement(component, {
       id: "card-1",
       type: "image",
       selected: false,
-      data: { status, prompt: "a cup steaming" },
+      // `extra` carries whatever else the board read put on this card — since #827 that includes
+      // `failureReason`, which is how a reloaded card knows WHY it rested.
+      data: { status, prompt: "a cup steaming", ...extra },
       // React Flow hands its node components more than these; the card bodies read only `data`.
     } as never));
   });
@@ -109,6 +114,85 @@ describe("what a card says once it has stopped being made", () => {
     // `unknown` joined the list in #602 T3: a card with no account of itself has come to rest
     // too, and the one thing it must not do is keep spinning.
     expect([...TERMINAL_CARD_STATUSES]).toEqual(["failed", "cancelled", "timeout", "missing", "unknown"]);
+  });
+});
+
+/**
+ * #827 — A CARD THAT WAS REFUSED SAYS WHY, AND KEEPS SAYING IT.
+ *
+ * #765 taught the system to recognise one refusal a merchant can act on and to explain it in
+ * plain words. But the explaining was LIVE: a toast and a poll inside the tab that pressed
+ * generate. Reload, and the card went back to "That didn't finish — you weren't charged. Try
+ * again." — true, and an invitation to retry the one thing that cannot work.
+ *
+ * Every render below is a FRESH MOUNT with nothing but the board read's own data on it. That is
+ * exactly what a reload is: no component state, no poll in flight, no toast — just the card's
+ * durable state, painted from scratch.
+ */
+describe("a refused card explains itself, on every mount", () => {
+  it("shows the refusal in the words the merchant was already given", async () => {
+    const text = await renderCard(VideoNode, "failed", { failureReason: "referenceImagePerson" });
+
+    // Byte-identical to the ONE whitelisted sentence — compared against the constant, never a
+    // copy of the words, so the card cannot drift from the toast and Otto.
+    expect(text).toContain(REFERENCE_IMAGE_PERSON_REJECTED);
+    // The generic line it replaces is gone: "Try again" is the wrong advice for this ending.
+    expect(text).not.toContain("You weren't charged. Try again.");
+    // It is still a failed card, and it still says so.
+    expect(text).toContain("That didn't finish");
+    expect(text).not.toContain("Rendering…");
+  });
+
+  it("says the same thing on a second, independent mount — this is the reload", async () => {
+    // Unmount and mount again from the same durable data. Nothing carries over between the two;
+    // if the explanation lived in component state or in a poll's memory, this render would be
+    // the generic face, which is exactly the defect #827 reports.
+    const first = await renderCard(VideoNode, "failed", { failureReason: "referenceImagePerson" });
+    await act(async () => root?.unmount());
+    root = createRoot(container!);
+    const second = await renderCard(VideoNode, "failed", { failureReason: "referenceImagePerson" });
+
+    expect(second).toContain(REFERENCE_IMAGE_PERSON_REJECTED);
+    expect(second).toBe(first);
+  });
+
+  it("shows the honest generic ending for a card that never recorded a reason", async () => {
+    // Every card settled before #827, and every ordinary failure since. Nothing is invented for
+    // an ending we cannot explain.
+    const text = await renderCard(ImageNode, "failed", { failureReason: "unexplained" });
+
+    expect(text).toContain("That didn't finish");
+    expect(text).toContain("You weren't charged. Try again.");
+    expect(text).not.toContain("reference image");
+  });
+
+  it("treats a card with no reason at all exactly as a card that says unexplained", async () => {
+    // A locally-placed card that no board read has answered for yet, or an older deploy's row.
+    // React Flow's data bag is untyped, so the card narrows whatever it finds back into the set.
+    const missingField = await renderCard(ImageNode, "failed");
+    const nonsense = await renderCard(ImageNode, "failed", { failureReason: "somethingWeNeverShipped" });
+    const explicit = await renderCard(ImageNode, "failed", { failureReason: "unexplained" });
+
+    expect(missingField).toBe(explicit);
+    expect(nonsense).toBe(explicit);
+  });
+
+  it("never explains an ending that is not this refusal", async () => {
+    // The reason is only ever attached to `failed` by `canvasCardState`; this is the renderer
+    // refusing the impossible combination too. Telling a merchant their still-running job was
+    // refused is not a mistake worth leaving to a type that was erased two frames ago.
+    for (const status of ["cancelled", "timeout", "missing", "unknown"]) {
+      const text = await renderCard(ImageNode, status, { failureReason: "referenceImagePerson" });
+      expect(text, status).not.toContain(REFERENCE_IMAGE_PERSON_REJECTED);
+    }
+  });
+
+  it("names no engine, model or vendor — the sentence is white-label at the source", async () => {
+    const text = await renderCard(VideoNode, "failed", { failureReason: "referenceImagePerson" });
+
+    // Scrubbing on the way out would break the byte comparison the whitelist runs on, so the
+    // sentence has to arrive clean. This is that claim, checked on the pixels a merchant reads.
+    expect(redactProviderNames(text)).toBe(text);
   });
 });
 

@@ -18,6 +18,7 @@ describe("readContacts", () => {
     const contacts = {
       list: vi.fn(), get: vi.fn(), search: vi.fn(), create: vi.fn(), update: vi.fn(),
       importCsv: vi.fn(), recordConsent: vi.fn(), setDnd: vi.fn(),
+      addPhone: vi.fn(), updatePhone: vi.fn(), removePhone: vi.fn(),
     } satisfies NonNullable<OttoContext["contacts"]>;
     await expect(executeReadContacts({ operation: "get" }, context(contacts))).resolves.toEqual({
       ok: false,
@@ -32,6 +33,7 @@ describe("readContacts", () => {
       get: vi.fn().mockResolvedValue({ error: "Contact not found." }),
       search: vi.fn().mockResolvedValue({ ok: true, contacts: [] }),
       create: vi.fn(), update: vi.fn(), importCsv: vi.fn(), recordConsent: vi.fn(), setDnd: vi.fn(),
+      addPhone: vi.fn(), updatePhone: vi.fn(), removePhone: vi.fn(),
     } satisfies NonNullable<OttoContext["contacts"]>;
     await executeReadContacts({ operation: "list", lifecycleStage: "Active", limit: 10 }, context(contacts));
     await executeReadContacts({ operation: "get", contactId: "contact-1" }, context(contacts));
@@ -59,6 +61,7 @@ describe("readContacts — #742 a page is never handed over as the whole list", 
       search: vi.fn().mockResolvedValue(page),
       get: vi.fn(), create: vi.fn(), update: vi.fn(),
       importCsv: vi.fn(), recordConsent: vi.fn(), setDnd: vi.fn(),
+      addPhone: vi.fn(), updatePhone: vi.fn(), removePhone: vi.fn(),
     } satisfies NonNullable<OttoContext["contacts"]>;
   }
 

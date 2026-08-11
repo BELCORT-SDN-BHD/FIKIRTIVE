@@ -520,10 +520,14 @@ describe("#830 an expression container inside JSX text no longer throws the sent
 describe("#682 ② every cured surface says the name", () => {
   const CURED: Array<{ file: string; says: string[]; neverAgain: RegExp; why: string }> = [
     {
+      // #805 换掉了登录页主话术,治好的那句话本身跟着换 —— 但**准则没变**:名字仍旧站在
+      // 代词原来的位置。旧病灶 `It researches your brand` 的禁令原样留着(它再也回不来),
+      // 另加一条:新主段落改写时最容易滑回去的形状,就是把 Otto 接成 `…and it runs the job`。
+      // 词法围栏抓不到句中的 it(见文件头),所以这一处逐句钉必须把它写死。
       file: "apps/web/app/login/page.tsx",
-      says: ["Otto researches your brand"],
-      neverAgain: /It researches your brand/,
-      why: "登录页:首跑第一屏,票面的 it",
+      says: ["Otto runs the job end to end"],
+      neverAgain: /It researches your brand|and it runs the job|Tell Otto[^.]*\bit\b/i,
+      why: "登录页:首跑第一屏,票面的 it(#805 改主话术后,名字仍在代词原来的位置)",
     },
     {
       file: "apps/web/components/otto/OttoMemory.tsx",

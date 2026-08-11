@@ -8,7 +8,8 @@ import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import { censusCanvasJobCards, displayGenerationIdForCard } from "./otto-canvas-bridge-core";
-import { canvasCardFace, isCanvasCardRowStatus, OVERWRITABLE_CARD_STATUSES, type CanvasCardFace } from "./canvas-card-status";
+import { canvasCardState, isCanvasCardRowStatus, OVERWRITABLE_CARD_STATUSES, type CanvasCardFace } from "./canvas-card-status";
+import type { GenFailureReason } from "@fikirtive/core/gen-failure";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
@@ -16,6 +17,11 @@ export type CanvasNodeDTO = {
   genJobId: string | null;
   /** What this card SAYS — derived by `canvasCardFace`, never the stored row word (#602 T3). */
   status: CanvasCardFace;
+  /** WHY it rested, when its ending has a reason we can prove (#827). REQUIRED and closed: every
+   *  card has one, and `unexplained` — the answer for every ordinary failure and for every card
+   *  that ended before this existed — is a member of the set, not a missing field. Resolved from
+   *  the job row, so it survives a reload and reads the same on another device. */
+  failureReason: GenFailureReason;
   /** Batch identity as the server settled it — never re-derived from coordinates (#603 T4). */
   batchIndex: number | null;
   batchSize: number | null;
@@ -74,7 +80,11 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const jobs = linkedJobIds.length
     ? await prisma.genJob.findMany({
       where: { id: { in: linkedJobIds }, ownerId: gate.ownerId, projectId },
-      select: { id: true, generationIds: true, status: true, idempotencyKey: true },
+      // `error` joins the read for #827: it is where the worker durably recorded WHY a refusal
+      // happened, and without it a reloaded card can only ever show the generic resting face.
+      // It is NEVER forwarded as text — `canvasCardState` hands it to the core whitelist, which
+      // answers with a name from a closed set. That column doubles as an ops column.
+      select: { id: true, generationIds: true, status: true, idempotencyKey: true, error: true },
     })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
@@ -103,11 +113,18 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     });
     const thumb = generationId ? thumbs[generationId] : undefined;
     const url = thumb?.src ?? null;
-    const status = canvasCardFace({ rowStatus: n.status, jobStatus: job?.status, generationId, url });
+    const { face: status, failureReason } = canvasCardState({
+      rowStatus: n.status,
+      jobStatus: job?.status,
+      jobError: job?.error,
+      generationId,
+      url,
+    });
     return {
       ...n,
       generationId,
       status,
+      failureReason,
       url,
       mediaWidth: thumb?.width ?? null,
       mediaHeight: thumb?.height ?? null,
