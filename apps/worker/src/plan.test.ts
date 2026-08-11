@@ -20,6 +20,7 @@ import {
   connectionBudgetLine,
   dbPoolFloorFor,
   dbPoolPlan,
+  effectivePrismaPoolMax,
   heartbeatIdFor,
   parseWorkerRole,
   pgBossPoolMaxFor,
@@ -204,6 +205,49 @@ describe("连接预算:Prisma 与 pg-boss 两个池都要进账(判官 P1-3)", (
   it("未抬并发的角色报的就是两边的默认值(与 merge-base 相同)", () => {
     const line = connectionBudgetLine(workerPlan({} as NodeJS.ProcessEnv), {} as NodeJS.ProcessEnv);
     expect(line).toContain(`prisma ${PRISMA_POOL_DEFAULT} + pg-boss ${PGBOSS_POOL_DEFAULT}`);
+  });
+
+  /**
+   * 判官 r2 P1-4:显式 `DB_POOL_MAX` 必须进计算,优先级与 packages/db 的
+   * `Number(process.env.DB_POOL_MAX) || 10` 逐条对齐。报小了的明账比没有明账更糟 ——
+   * 人是照着它去核 max_connections 的。
+   */
+  describe("显式 DB_POOL_MAX 必须进明账(判官 r2 P1-4)", () => {
+    const waitPlan = workerPlan({ WORKER_ROLE: "wait" } as NodeJS.ProcessEnv);
+
+    it("显式设得比下限高 → 报显式值,不是下限", () => {
+      // r2 的写法把下限排在 env 前面:设 30 时 Prisma 真用 30(每副本 44),日志却报 38。
+      const env = { DB_POOL_MAX: "30" } as NodeJS.ProcessEnv;
+      expect(effectivePrismaPoolMax(waitPlan, env)).toBe(30);
+      const line = connectionBudgetLine(waitPlan, env);
+      expect(line).toContain(`prisma 30 + pg-boss ${waitPlan.pgBossPoolMax} = ${30 + waitPlan.pgBossPoolMax!}`);
+      expect(line).not.toContain(`prisma ${waitPlan.dbPoolFloor}`);
+    });
+
+    it("显式设得比下限低 → 也报显式值(dbPoolPlan 只警告不覆盖,Prisma 真会用它)", () => {
+      const env = { DB_POOL_MAX: "4" } as NodeJS.ProcessEnv;
+      expect(dbPoolPlan(waitPlan, env).action).toBe("warn"); // 我们不覆盖
+      expect(effectivePrismaPoolMax(waitPlan, env)).toBe(4); // 所以明账必须照实报
+      expect(connectionBudgetLine(waitPlan, env)).toContain("prisma 4 +");
+    });
+
+    it("没设 → 抬了并发的角色报下限;没抬并发的角色报包默认", () => {
+      expect(effectivePrismaPoolMax(waitPlan, {} as NodeJS.ProcessEnv)).toBe(waitPlan.dbPoolFloor);
+      expect(effectivePrismaPoolMax(workerPlan({} as NodeJS.ProcessEnv), {} as NodeJS.ProcessEnv)).toBe(PRISMA_POOL_DEFAULT);
+    });
+
+    it("0 / 空串 / 垃圾值的处理与 packages/db 的 `|| 10` 逐条对齐", () => {
+      // packages/db: Number(env) || 10 —— 0、""、NaN 全部落回默认。这里不许自作主张地不一样。
+      const allPlan = workerPlan({} as NodeJS.ProcessEnv);
+      for (const junk of ["0", "", "  ", "abc", "-3"]) {
+        expect(effectivePrismaPoolMax(allPlan, { DB_POOL_MAX: junk } as NodeJS.ProcessEnv)).toBe(PRISMA_POOL_DEFAULT);
+      }
+    });
+
+    it("显式值也参与合计 —— 每副本总数跟着一起变", () => {
+      const env = { DB_POOL_MAX: "30" } as NodeJS.ProcessEnv;
+      expect(connectionBudgetLine(waitPlan, env)).toContain(`= ${30 + waitPlan.pgBossPoolMax!} per replica`);
+    });
   });
 
   it("unset DB_POOL_MAX + 抬了并发 ⇒ 我们设下限", () => {

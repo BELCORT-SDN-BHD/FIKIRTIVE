@@ -3,7 +3,7 @@
  * worker 心跳每 60s 一次;5 分钟无心跳 = stale(容忍部署重启窗口),无记录 = unknown。
  */
 import { describe, it, expect } from "vitest";
-import { workerStatus, workersHealth, WORKER_STALE_MS } from "../health";
+import { bestEffort, workerStatus, workersHealth, WORKER_STALE_MS } from "../health";
 
 describe("workerStatus", () => {
   const now = new Date("2026-07-04T12:00:00Z");
@@ -47,5 +47,46 @@ describe("workersHealth", () => {
     // 那是一个纯粹的假警报。按班告警归 #793,数据在 workers 里已经摆好了。
     expect(workersHealth([{ id: "worker", at: old }, { id: "worker-wait", at: fresh }], now).worker).toBe("up");
     expect(workersHealth([{ id: "worker", at: old }], now).worker).toBe("stale");
+  });
+});
+
+/**
+ * #796 判官 r2 P1-2 —— 存活探针不许依赖下游。
+ *
+ * 从前 `/api/health` 直接 await 一次数据库查询,库不可达就回 503;而平台的**重启**探针
+ * 指的正是这里。于是「数据库故障」会变成「重启还活着的 Web」,每一轮重启又跑三次迁移
+ * 重试 —— 正好复活本票要消灭的那个重启循环。失败与挂住必须是同一个结果:不知道,但我活着。
+ */
+describe("bestEffort(存活探针的顺带读取)", () => {
+  it("成功就返回值", async () => {
+    await expect(bestEffort(async () => [1, 2, 3], 50)).resolves.toEqual([1, 2, 3]);
+  });
+
+  it("下游抛错 → null,**不抛**", async () => {
+    await expect(bestEffort(async () => { throw new Error("db down"); }, 50)).resolves.toBeNull();
+  });
+
+  it("同步抛错也接得住(连接构造阶段就炸的形状)", async () => {
+    await expect(bestEffort(() => { throw new Error("no DATABASE_URL"); }, 50)).resolves.toBeNull();
+  });
+
+  it("下游挂住 → 到点返回 null,不把探针一起拖住", async () => {
+    const started = Date.now();
+    // 永不 settle:池子耗尽 / 连接卡在 TCP 超时里就是这个形状
+    await expect(bestEffort(() => new Promise(() => {}), 30)).resolves.toBeNull();
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("超时之后落单的拒绝被吞掉,不会变成 unhandledRejection", async () => {
+    const seen: unknown[] = [];
+    const onRejection = (e: unknown) => seen.push(e);
+    process.on("unhandledRejection", onRejection);
+    try {
+      await bestEffort(() => new Promise((_, reject) => setTimeout(() => reject(new Error("late")), 10)), 1);
+      await new Promise((r) => setTimeout(r, 40));
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    expect(seen).toEqual([]);
   });
 });

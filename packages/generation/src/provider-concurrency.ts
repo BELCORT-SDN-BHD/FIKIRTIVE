@@ -36,19 +36,40 @@ export class RequestGate {
   get inFlight(): number { return this.#inFlight; }
   get peakInFlight(): number { return this.#peak; }
 
-  /** 取一个位,返回归还函数。归还**必须**在 finally 里调用,否则位子会永久漏掉。 */
+  /**
+   * 取一个位,返回归还函数。归还**必须**在 finally 里调用,否则位子会永久漏掉。
+   *
+   * **槽位移交语义**(#796 判官 r2 P1-1 修正)。r2 的写法是「归还时先 `inFlight--`,再唤醒
+   * 一个等待者」,而被唤醒者要等到**下一轮 microtask** 才 `inFlight++`。这中间有一条缝:
+   *
+   *   1. `release()` 把 inFlight 从 6 减到 5,并唤醒等待者 W(W 还没跑);
+   *   2. **同一轮**里来了一个新请求 N,它看到 5 < 6,直接 `++` 占走那个空位(6);
+   *   3. microtask 轮到 W,它也 `++` —— inFlight 变成 **7**,超了上限。
+   *
+   * 判官给的最小复现就是这个形状({limit:6, inFlight:7, peak:7}),同步连着释放几个还能更糟。
+   * 对我们来说 7 就是账户额度上多出来的一个并发请求 —— 429,商家读作「生成失败」。
+   *
+   * 修法是把那条缝取消掉:归还时**如果有等待者,槽位直接移交** —— 计数一动不动,唤醒者
+   * 醒来后也不再 `++`。只有在没人等的时候才真的把计数减掉。于是任何时刻的 `inFlight`
+   * 都是「已发出去的位子数」,新请求在同一轮里看到的就是移交后的真实值,插不进队。
+   */
   async acquire(): Promise<() => void> {
     if (this.#inFlight >= this.#limit) {
+      // 等的是一个**已经算在 inFlight 里**的位子(移交)。醒来即持有,不再自增。
       await new Promise<void>((resolve) => this.#waiting.push(resolve));
+    } else {
+      this.#inFlight++;
+      if (this.#inFlight > this.#peak) this.#peak = this.#inFlight;
     }
-    this.#inFlight++;
-    if (this.#inFlight > this.#peak) this.#peak = this.#inFlight;
     let released = false;
     return () => {
       if (released) return; // 双重归还不许多放一个位子进来
       released = true;
-      this.#inFlight--;
-      this.#waiting.shift()?.();
+      const next = this.#waiting.shift();
+      // 有人在等 ⇒ 把这个位子直接交给他,计数不变(所以峰值也不可能因此上升)。
+      // 没人在等 ⇒ 位子真的空出来。
+      if (next) next();
+      else this.#inFlight--;
     };
   }
 

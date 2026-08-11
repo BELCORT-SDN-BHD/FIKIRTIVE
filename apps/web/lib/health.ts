@@ -38,3 +38,33 @@ export function workersHealth(
   const worker: WorkerStatus = statuses.includes("up") ? "up" : statuses.includes("stale") ? "stale" : "unknown";
   return { worker, workers };
 }
+
+/**
+ * 存活探针允许等下游多久(#796 判官 r2 P1-2)。
+ *
+ * 存活的问题是「这个进程还答不答得出话」,而不是「数据库好不好」。所以心跳那次读取是
+ * **顺带的**:1 秒内回来就报,回不来就如实写 unknown —— 绝不让一次慢查询把存活探针拖到
+ * 超时。库好不好由 /api/ready 专管。
+ */
+export const HEALTH_DOWNSTREAM_TIMEOUT_MS = 1_000;
+
+/**
+ * 顺带读:成功返回值,失败或超时返回 null。**永不抛**。
+ *
+ * 为什么必须有这个:r2 的存活端点直接 `await` 了一次数据库查询,库不可达时它回 503。
+ * 而文档又把它指定成平台的**重启**探针 —— 于是「数据库故障」会变成「重启还活着的 Web」,
+ * 每一轮重启又跑三次迁移重试,正好复活本票要消灭的那个重启循环。
+ * 一次挂住的查询和一次失败的查询在这里必须是同一个结果:不知道,但我还活着。
+ */
+export async function bestEffort<T>(work: () => Promise<T>, timeoutMs = HEALTH_DOWNSTREAM_TIMEOUT_MS): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const started = work().catch(() => null); // 落单的拒绝必须就地吞掉,否则会变成 unhandledRejection
+    const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
+    return await Promise.race([started, timeout]);
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

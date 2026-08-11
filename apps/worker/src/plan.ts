@@ -275,12 +275,28 @@ export function dbPoolPlan(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.en
 }
 
 /**
+ * Prisma 这个进程**真正**会用的池上限。
+ *
+ * 判官 r2 P1-4:明账不许说谎。优先级必须跟 `packages/db/src/index.ts` 里那行
+ * `Number(process.env.DB_POOL_MAX) || 10` **完全一致** —— 显式设过就是显式值(哪怕它比
+ * 我们算的下限低,`dbPoolPlan` 也只警告不覆盖),没设才轮到角色下限,再没有才是包默认。
+ *
+ * r2 的写法把下限排在 env 前面,于是运维显式设 30 时,Prisma 真的用 30(每副本 44),
+ * 而日志报 38。一个报小了的明账比没有明账更糟:人是照着它去核 max_connections 的。
+ */
+export function effectivePrismaPoolMax(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): number {
+  const explicit = Number((env.DB_POOL_MAX ?? "").trim());
+  // `|| 10` 的语义:0、空串、NaN 都落回默认 —— 这里逐条对齐,不自作主张。
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return plan.dbPoolFloor ?? PRISMA_POOL_DEFAULT;
+}
+
+/**
  * 这个进程**总共**会向 Postgres 开多少条连接:Prisma 的池 + pg-boss 自己的池。
  * 判官 r1 P1-3:第二项从来没进过明账,于是文档报的每副本上限只有真实值的一半。
  */
 export function connectionBudgetLine(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): string {
-  const prismaMax = plan.dbPoolFloor ?? Number((env.DB_POOL_MAX ?? "").trim()) ?? PRISMA_POOL_DEFAULT;
-  const prisma = Number.isFinite(prismaMax) && prismaMax > 0 ? prismaMax : PRISMA_POOL_DEFAULT;
+  const prisma = effectivePrismaPoolMax(plan, env);
   const boss = plan.pgBossPoolMax ?? PGBOSS_POOL_DEFAULT;
   return (
     `[worker] postgres connections: prisma ${prisma} + pg-boss ${boss} = ${prisma + boss} per replica. ` +
