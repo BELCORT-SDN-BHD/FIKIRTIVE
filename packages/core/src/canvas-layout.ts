@@ -119,7 +119,21 @@ export function nextCanvasSpawnOrigin(
       }
     }
   }
-  return { x: origin.x + columns * step.x, y: origin.y };
+  // EXHAUSTED — and this answer has to be free, not merely far away.
+  //
+  // It used to be "one column past the end of the scan", which is still a point INSIDE the band
+  // the scan just walked: a single occupied rectangle bigger than that band simply contains it,
+  // and the card lands on top of whatever that rectangle is. Starting a row BELOW EVERYTHING is
+  // not a guess — no rectangle reaches past its own bottom edge, so a row beginning under the
+  // lowest one cannot touch any of them. Still one arithmetic pass, still bounded, still ends.
+  // Rectangles with no usable position are skipped: they cannot be overlapped either
+  // (`canvasRectsOverlap` is false for them), so they cannot push this answer around.
+  const lowestBottom = occupied.reduce((bottom, rect) => (
+    Number.isFinite(rect.y) && Number.isFinite(rect.h)
+      ? Math.max(bottom, rect.y + rect.h)
+      : bottom
+  ), origin.y);
+  return { x: origin.x, y: lowestBottom + CANVAS_CARD_GAP };
 }
 
 /** How far out from a source card we look for a free spot before giving up. */

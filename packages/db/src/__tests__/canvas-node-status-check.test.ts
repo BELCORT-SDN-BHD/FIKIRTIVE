@@ -225,12 +225,28 @@ describe("the settlement's own write refuses a card that was deleted after the b
    * settlement correctly answered `suppressed` for a case this test meant to force into the
    * write. A green run then meant "the machine was quiet", and a red one meant nothing at all.
    *
-   * So the wait now names the lock it is actually waiting for: a request for a lock on
-   * `ChatThread`, in THIS database, that has not been granted — which is the settlement's own
-   * read blocked behind the ACCESS EXCLUSIVE lock the blocker is holding, and nothing else. The
-   * blocker's own lock is granted, so it never counts itself.
+   * Naming the relation and the database is still not enough on its own. `ChatThread` is locked
+   * this exact way by another race test in this repo (`canvas-terminal-settlement.test.ts`), and
+   * CI runs suites in parallel against one database — so "somebody is waiting for ChatThread"
+   * can be that OTHER test's waiter, and this one would race ahead on a signal that was never
+   * about it.
+   *
+   * So the wait names two things at once, and a waiter has to be both:
+   *
+   *   · blocked by THIS transaction's own backend — `pg_blocking_pids`, so the other test's
+   *     blocker/waiter pair (different process ids entirely) can never satisfy it; and
+   *   · READING `ChatThread`, not locking it — the settlement's thread lookup is a SELECT, while
+   *     a race test's blocker is a `LOCK TABLE … ACCESS EXCLUSIVE`. The pid test alone does not
+   *     separate those two: a parallel suite's blocker queuing behind THIS lock is also "blocked
+   *     by me", and it says nothing about any settlement having read a board.
+   *
+   * What remains, and is not claimed away: another suite's own settlement, reading `ChatThread`
+   * while blocked behind this lock, has the same shape. It has to be in that exact window to
+   * matter, and if it ever is, this waits on the wrong backend for a moment rather than skipping
+   * the wait entirely — the failure mode the cluster-wide version had. The blocker never counts
+   * itself either: its own lock is granted.
    */
-  async function waitForLockWait(): Promise<void> {
+  async function waitForLockWait(blockerPid: number): Promise<void> {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const rows = await prisma.$queryRaw<{ n: bigint }[]>`
         SELECT count(*)::bigint AS n
@@ -239,7 +255,10 @@ describe("the settlement's own write refuses a card that was deleted after the b
          WHERE NOT l.granted
            AND l.locktype = 'relation'
            AND l.relation = to_regclass('"ChatThread"')
-           AND a.datname = current_database()`;
+           AND a.datname = current_database()
+           AND ${blockerPid} = ANY (pg_blocking_pids(a.pid))
+           AND a.query ILIKE '%ChatThread%'
+           AND a.query NOT ILIKE '%LOCK TABLE%'`;
       if (Number(rows[0]!.n) > 0) return;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -280,7 +299,10 @@ describe("the settlement's own write refuses a card that was deleted after the b
     // card, then let go. Its own transaction commits the tombstone before the settlement resumes.
     const blocker = prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe('LOCK TABLE "ChatThread" IN ACCESS EXCLUSIVE MODE');
-      await waitForLockWait();
+      // An interactive transaction is pinned to one backend, so this is the process that holds
+      // the lock — the one the settlement must be found waiting behind.
+      const [self] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid()::int AS pid`;
+      await waitForLockWait(self!.pid);
       await tx.$executeRawUnsafe(`UPDATE "CanvasNode" SET "status" = 'deleted' WHERE "id" = $1`, cardId);
     }, { timeout: 20_000, maxWait: 20_000 });
 

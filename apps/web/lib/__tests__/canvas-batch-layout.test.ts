@@ -230,4 +230,52 @@ describe("freeCanvasRect", () => {
 
     expect(freeCanvasRect([OCCUPIED], nonsense)).toEqual(nonsense);
   });
+
+  /**
+   * #549 r2 judge P2-1. Both searches give up on shapes this big — the neighbourhood scan and
+   * then the board scan — and what the board scan USED to answer when it gave up was "one column
+   * past the end of the grid I just walked", which is a point inside that grid. One rectangle
+   * wider than the grid contains it, so the card landed on top of the very thing being avoided.
+   */
+  it("stays clear of a single occupied rectangle far larger than the whole scanned grid", () => {
+    const huge = { x: -2000, y: -2000, w: 16000, h: 16000 };
+
+    const spot = freeCanvasRect([huge], { x: 80, y: 80, ...CARD });
+
+    expect(canvasRectsOverlap(spot, huge)).toBe(false);
+    expect(spot).toMatchObject(CARD);
+  });
+
+  it("clears every rectangle when several oversized ones cover the grid", () => {
+    const board = [
+      { x: -5000, y: -5000, w: 20000, h: 9000 },
+      { x: -5000, y: 4000, w: 20000, h: 3000 },
+      { x: 0, y: 7000, w: 900, h: 900 },
+    ];
+
+    const spot = freeCanvasRect(board, { x: 80, y: 80, ...CARD });
+
+    for (const rect of board) expect(canvasRectsOverlap(spot, rect)).toBe(false);
+  });
+
+  it("gives the board scan itself a free answer when its whole grid is full", () => {
+    const huge = { x: -2000, y: -2000, w: 16000, h: 16000 };
+
+    const origin = nextCanvasSpawnOrigin([huge], CARD);
+
+    expect(canvasRectsOverlap({ ...origin, ...CARD }, huge)).toBe(false);
+  });
+
+  it("is not pushed around by rectangles with no usable position", () => {
+    const board = [
+      { x: 80, y: 80, ...CARD },
+      { x: Number.NaN, y: Number.NaN, w: Number.NaN, h: Number.NaN },
+      { x: 0, y: Number.POSITIVE_INFINITY, w: 320, h: 320 },
+    ];
+
+    const spot = freeCanvasRect(board, { x: 80, y: 80, ...CARD });
+
+    expect(Number.isFinite(spot.x) && Number.isFinite(spot.y)).toBe(true);
+    for (const rect of board) expect(canvasRectsOverlap(spot, rect)).toBe(false);
+  });
 });

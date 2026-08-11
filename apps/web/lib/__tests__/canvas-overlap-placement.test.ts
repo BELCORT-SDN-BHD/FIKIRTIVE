@@ -44,6 +44,7 @@ const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const { storage } = await import("@/lib/storage");
 const { createCanvasNode, deleteCanvasNode, listCanvasNodes, moveCanvasNode } = await import("@/lib/canvas-actions");
+const { syncOttoCanvasNodes } = await import("@/lib/otto-canvas-bridge");
 const { canvasRectsOverlap } = await import("@/lib/canvas-batch-layout");
 
 const EMAIL = `canvas549-${randomUUID()}@fikirtive.test`;
@@ -213,6 +214,90 @@ describe("#549 — the durable write never buries a card that is already on the 
     if ("error" in text) throw new Error(text.error);
 
     expect(canvasRectsOverlap(paid.rect, { x: text.x, y: text.y, w: text.w, h: text.h })).toBe(false);
+  });
+
+  /**
+   * THE FOURTH WRITER (#549 r2, judge P1-1).
+   *
+   * The chat→canvas bridge puts down the in-flight card of a batch started from an Otto chat, and
+   * it kept a placement rule of its own: `80 + (number of rows on the board) * 340`. A count
+   * cannot see WHERE cards are and counts removed ones as if they still took up room, so one card
+   * dragged into the second slot was enough — the next in-flight card was written straight on top
+   * of it. The settlement afterwards keeps the anchor's coordinates and only binds the output to
+   * it, so that overlap becomes permanent, over a picture the merchant paid for.
+   */
+  async function seedChatCardForInFlightJob(): Promise<string> {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "Otto" } });
+    const messageId = `msg_${randomUUID()}`;
+    const jobId = `gjb_${randomUUID()}`;
+    // An in-flight paid job, linked to the chat card the way the bridge resolves it.
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, threadId, prompt: "a cup steaming", kind: "IMAGE",
+        model: "seedream", count: 1, status: "GENERATING", generationIds: [],
+        idempotencyKey: `cowork:${messageId}`, startedAt: new Date(),
+      },
+    });
+    await prisma.chatMessage.create({
+      data: {
+        id: messageId, threadId, ownerId, role: "AGENT", kind: "GEN_CARD", seq: 1,
+        text: "a cup steaming", payload: { kind: "image", prompt: "a cup steaming" },
+      },
+    });
+    return jobId;
+  }
+
+  it("never lets the Otto chat bridge write its in-flight card onto a paid card", async () => {
+    // The judge's board: one paid card, moved by the merchant into the second slot. A rule that
+    // counts cards says "one card, so the next goes at 80 + 340 = 420" — exactly where it sits.
+    const paid = await placePaidCard(ORIGIN);
+    const moved = { x: ORIGIN.x + CARD.w + 20, y: ORIGIN.y };
+    expect(await moveCanvasNode(projectId, paid.id, { ...moved, ...CARD })).toEqual({ ok: true });
+
+    const jobId = await seedChatCardForInFlightJob();
+    const board = await syncOttoCanvasNodes(projectId);
+    if ("error" in board) throw new Error(board.error);
+
+    const pending = await prisma.canvasNode.findFirstOrThrow({
+      where: { ownerId, projectId, genJobId: jobId },
+      select: { x: true, y: true, w: true, h: true, status: true },
+    });
+    expect(pending.status).toBe("pending");
+    expect(canvasRectsOverlap(pending, { ...moved, ...CARD })).toBe(false);
+    expect(overlappingPairs(await liveRects())).toEqual([]);
+  });
+
+  it("gives the bridge's card a spot clear of every paid card on a full row", async () => {
+    for (let i = 0; i < 3; i += 1) await placePaidCard(ORIGIN);
+
+    const jobId = await seedChatCardForInFlightJob();
+    const board = await syncOttoCanvasNodes(projectId);
+    if ("error" in board) throw new Error(board.error);
+
+    const pending = await prisma.canvasNode.findFirstOrThrow({
+      where: { ownerId, projectId, genJobId: jobId },
+      select: { x: true, y: true, w: true, h: true },
+    });
+    expect(overlappingPairs(await liveRects())).toEqual([]);
+    expect(Number.isFinite(pending.x) && Number.isFinite(pending.y)).toBe(true);
+  });
+
+  it("does not reserve space for cards the merchant removed — a tombstone is not a card", async () => {
+    // The counting rule grew the offset for every row ever written, tombstones included, so a
+    // board that had been cleared still pushed new cards further and further right.
+    const first = await placePaidCard(ORIGIN);
+    expect(await deleteCanvasNode(projectId, first.id)).toEqual({ ok: true });
+
+    const jobId = await seedChatCardForInFlightJob();
+    const board = await syncOttoCanvasNodes(projectId);
+    if ("error" in board) throw new Error(board.error);
+
+    const pending = await prisma.canvasNode.findFirstOrThrow({
+      where: { ownerId, projectId, genJobId: jobId },
+      select: { x: true, y: true },
+    });
+    expect(pending).toEqual(ORIGIN);
   });
 
   it("still lets the merchant arrange their own board, overlaps included", async () => {
