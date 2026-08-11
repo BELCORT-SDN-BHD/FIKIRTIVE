@@ -61,10 +61,12 @@ if [[ ! -s "$lib" ]]; then
   echo "drill: found no 'quality-lock library' block in $quality_sh" >&2
   exit 1
 fi
-for fn in process_start_signature process_is_gone collect_process_tree kill_process_tree \
-  run_with_timeout lock_mtime_epoch path_age_seconds lock_field holder_is_abandoned_orphan \
-  current_lock_is_stale capture_lock_generation lock_generation_unchanged \
-  target_holder_is_gone try_steal_stale_lock acquire_quality_lock; do
+for fn in process_start_signature process_is_gone collect_process_tree signal_if_identified \
+  kill_process_tree sweep_identified_subtree run_with_timeout lock_mtime_epoch \
+  lock_inode_number path_age_seconds lock_field read_lock_snapshot lock_matches_snapshot \
+  holder_is_abandoned_orphan snapshot_is_stale current_lock_is_stale \
+  reclaim_lock_directory reclaim_if_snapshot_unchanged try_steal_stale_lock \
+  acquire_quality_lock; do
   if ! grep -q "^${fn}() {" "$lib"; then
     echo "drill: the extracted library defines no ${fn}() — did the markers move?" >&2
     exit 1
@@ -75,14 +77,18 @@ done
 
 # Paranoia, not ceremony: everything below kills processes and deletes
 # directories, so prove first that the sourced library is pointed at the drill's
-# own workspace and not at the machine's real lock.
-case "$quality_lock_dir" in
-  "$tmp"/*) ;;
-  *)
-    echo "drill: refuses to run against $quality_lock_dir — the drill must never touch the real machine lock" >&2
-    exit 1
-    ;;
-esac
+# own workspace and not at the machine's real lock. The comparison is between
+# RESOLVED PHYSICAL paths (`pwd -P`), not strings: a symlink, a `..`, or a
+# /tmp → /private/tmp indirection makes a string prefix say "inside" about a
+# directory that physically is not, and the check exists precisely for the case
+# where the path is not what it looks like.
+lock_parent_physical="$(cd "$(dirname "$quality_lock_dir")" 2>/dev/null && pwd -P)" || lock_parent_physical=""
+workspace_physical="$(cd "$tmp" && pwd -P)"
+if [[ -z "$lock_parent_physical" || "$lock_parent_physical" != "$workspace_physical" ]]; then
+  echo "drill: refuses to run against $quality_lock_dir" >&2
+  echo "drill: it resolves to ${lock_parent_physical:-<unresolvable>}, which is not the drill workspace $workspace_physical" >&2
+  exit 1
+fi
 
 # ── process bookkeeping ───────────────────────────────────────────────────────
 # Every spawned process is recorded WITH its start signature, and cleanup kills
@@ -101,7 +107,7 @@ drill_cleanup() {
     [[ -n "$pid" ]] || continue
     current="$(process_start_signature "$pid")"
     [[ -n "$current" && "$current" == "$identity" ]] || continue
-    kill_process_tree "$pid" >/dev/null 2>&1 || true
+    kill_process_tree "$pid" "$identity" >/dev/null 2>&1 || true
   done <"$spawned"
   rm -rf "$tmp"
 }
@@ -112,9 +118,10 @@ trap drill_cleanup EXIT
 # that quietly performs fewer checks than it claims is worse than no drill, so the
 # tally is reconciled against expected_checks at the end and a skip can never be
 # reported as a pass.
-# 3 (free machine) + 4 (pre-existing rules) + 3 (recycled pid) + 5 (attended)
-# + 7 (cancellation) + 4 (cross-generation race) + 3 (watchdog)
-expected_checks=29
+# 3 (free machine) + 5 (pre-existing rules) + 3 (recycled pid) + 5 (attended)
+# + 7 (cancellation) + 4 (orphan cross-generation race) + 5 (dead-branch race)
+# + 3 (watchdog)
+expected_checks=35
 pass=0
 fail=0
 skip=0
@@ -202,8 +209,12 @@ mode="${3:-plain}"
 # shellcheck source=/dev/null
 . "$lib"
 acquire_quality_lock >/dev/null
+# mode=cleanup wears production's shape exactly: the release hangs off EXIT, not
+# off TERM, and it only removes a lock whose token is still its own. EXIT is the
+# load-bearing part — a tree kill takes the children first, so this shell most
+# often dies by its `wait` returning, not by catching a signal.
 if [[ "$mode" == "cleanup" ]]; then
-  trap 'if [[ "$(cat "$quality_lock_dir/token" 2>/dev/null || true)" == "$quality_lock_token" ]]; then rm -rf "$quality_lock_dir"; fi; exit 143' TERM
+  trap 'if [[ "$(cat "$quality_lock_dir/token" 2>/dev/null || true)" == "$quality_lock_token" ]]; then rm -rf "$quality_lock_dir"; fi' EXIT
 fi
 sleep 100000 &
 : >"$ready"
@@ -307,6 +318,14 @@ if wait_for_file "$tmp/acquired" 15; then
   ok "the next run reclaims a dead holder's lock"
 else
   bad "the next run never reclaimed a dead holder's lock"
+fi
+# `mv dir existing-dir` moves it INSIDE, so a reused graveyard name would report a
+# successful reclaim while leaving the lock exactly where it was.
+leftovers="$(find "$tmp" -maxdepth 1 -name 'lock.stale.*' 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "$leftovers" == "0" ]]; then
+  ok "the reclaim left no graveyard behind"
+else
+  bad "$leftovers graveyard directories survived the reclaim"
 fi
 
 # ── 3. a recycled pid is not a holder ─────────────────────────────────────────
@@ -487,9 +506,68 @@ else
   kill_process_tree "$competitor" >/dev/null 2>&1 || true
 fi
 
-# ── 7. the drop watchdog ──────────────────────────────────────────────────────
+# ── 7. the dead-branch race ───────────────────────────────────────────────────
+# The interleaving a review probe caught in the previous round, replayed step by
+# step rather than raced for, because a race you cannot schedule is a test you
+# cannot trust:
+#
+#   B reads the lock (A holds it) → A exits and releases → C takes the free path
+#   → B checks A and finds it dead → B reclaims … C's lock.
+#
+# Every one of those steps is true. The conclusion is not: "the holder I judged is
+# dead" is a fact about a process, and reclaiming is an act on a path. The gate
+# below is what makes B stop — and it is the same function the real steal calls,
+# on the same snapshot the real steal takes.
 echo ""
-echo "7. the timeout that keeps cleanup moving"
+echo "7. the holder dies between the reading and the reclaim"
+reset_lock
+bash "$tmp/holder.sh" "$lib" "$tmp/ready-a" cleanup &
+holder_a=$!
+record "$holder_a"
+if ! wait_for_file "$tmp/ready-a" 15; then
+  bad "holder A never took the lock — drill cannot continue"
+  exit 1
+fi
+# B's one and only read of the lock.
+read_lock_snapshot
+if [[ "$quality_snapshot_pid" == "$holder_a" && -n "$quality_snapshot_token" ]]; then
+  ok "the snapshot names holder A ($holder_a)"
+else
+  bad "the snapshot names ${quality_snapshot_pid:-nobody}, expected $holder_a"
+fi
+# A exits normally: its cleanup releases the lock, exactly as production does.
+kill_process_tree "$holder_a" "" >/dev/null 2>&1 || true
+wait_for_gone "$holder_a" 15 || true
+# C takes the free path. It never consults the arbiter, and it does not have to.
+bash "$tmp/competitor.sh" "$lib" "$tmp/ready-c" &
+holder_c=$!
+record "$holder_c"
+if wait_for_file "$tmp/ready-c" 15; then
+  ok "holder C took the freed path without asking anyone"
+else
+  bad "holder C never got the lock — the interleaving did not happen"
+fi
+# B, still holding its original snapshot, now judges A — and A really is dead.
+if snapshot_is_stale && [[ "$quality_stale_reason" == "dead" ]]; then
+  ok "B's snapshot judges A dead (reason: dead) — every step so far is true"
+else
+  bad "B's snapshot judged ${quality_stale_reason:-not stale}, expected dead"
+fi
+if reclaim_if_snapshot_unchanged >"$tmp/dead-race.log" 2>&1; then
+  bad "B reclaimed the path — that is C's lock: $(tr '\n' ' ' <"$tmp/dead-race.log")"
+else
+  ok "B stood down: $(tr '\n' ' ' <"$tmp/dead-race.log")"
+fi
+if [[ "$(lock_field pid)" == "$holder_c" ]] && ! process_is_gone "$holder_c"; then
+  ok "C still holds its lock, alive and unharmed"
+else
+  bad "C lost its lock: lock pid $(lock_field pid), C is $holder_c"
+fi
+kill_process_tree "$holder_c" "" >/dev/null 2>&1 || true
+
+# ── 8. the drop watchdog ──────────────────────────────────────────────────────
+echo ""
+echo "8. the timeout that keeps cleanup moving"
 status=0
 run_with_timeout 30 bash -c 'exit 7' || status=$?
 if [[ "$status" == "7" ]]; then

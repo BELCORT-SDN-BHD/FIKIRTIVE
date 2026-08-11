@@ -163,8 +163,16 @@ drop_local_database() {
 # holder is alive. Every judgment below pairs the pid with the process's start
 # time, and a mismatch reads as "the holder is gone", never as "the holder is
 # here". Resolution is one second, which is far finer than a pid can wrap.
+#
+# LC_ALL=C is load-bearing, not hygiene. `ps -o lstart=` formats through
+# strftime("%c"), whose output changes with the locale — and the runner (a
+# launchd service) and a developer's shell do not have the same locale. Written
+# under one locale and compared under another, the identity of a perfectly
+# healthy holder fails to match, it reads as a recycled pid, its lock gets
+# reclaimed, and two runs hold the machine at once. Writer and every reader go
+# through this one function, under one fixed locale.
 process_start_signature() {
-  ps -p "$1" -o lstart= 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' || true
+  LC_ALL=C LANG=C ps -p "$1" -o lstart= 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' || true
 }
 
 # Gone means gone: not running at all, or a zombie. Zombies matter because
@@ -180,51 +188,102 @@ process_is_gone() {
   esac
 }
 
-# The pid and every live descendant, children before parents. Order matters:
-# killing a parent first hands its children to pid 1, which is how #855 also left
-# a vitest burning CPU for two hours after its run was cancelled.
+# The pid and every live descendant as "pid<TAB>start-time" lines, children before
+# parents. Order matters: killing a parent first hands its children to pid 1,
+# which is how #855 also left a vitest burning CPU for two hours after its run was
+# cancelled. The start time travels with the pid so that the signal, sent later,
+# can still tell whether it is aimed at the same process that was enumerated.
 collect_process_tree() {
-  local pid="$1" child
+  local pid="$1" child signature
   for child in $(pgrep -P "$pid" 2>/dev/null || true); do
     collect_process_tree "$child"
   done
   if ! process_is_gone "$pid"; then
-    echo "$pid"
+    signature="$(process_start_signature "$pid")"
+    if [[ -n "$signature" ]]; then
+      printf '%s\t%s\n' "$pid" "$signature"
+    fi
   fi
 }
 
-# Kill a tree within a fixed budget and PROVE the whole tree is gone — not just
-# its root. Each pass re-enumerates, because a snapshot taken before the first
-# signal misses anything forked after it; escalates TERM → KILL after three
-# passes; and returns 0 only when a final enumeration comes back empty.
+# Send a signal ONLY to the process that was identified. Between enumerating a pid
+# and signalling it, that pid can die and be handed to something else; re-reading
+# the start time immediately before the kill is what keeps a stranger from
+# collecting our SIGKILL. RESIDUAL, accepted: if the recycled process happened to
+# start within the same second as the one we meant, the two signatures are equal
+# and the signal lands on the stranger. That needs a pid to wrap (~99k spawns on
+# macOS) inside one second, and it is the last window user-space bash can see.
+signal_if_identified() {
+  local pid="$1" identity="$2" signal="$3" live
+  live="$(process_start_signature "$pid")"
+  [[ -n "$live" && "$live" == "$identity" ]] || return 1
+  kill -"$signal" "$pid" 2>/dev/null || true
+}
+
+# Kill a tree within a fixed budget, signalling only identified processes, and
+# report whether the ROOT WE WERE AIMED AT is gone. Each pass re-enumerates
+# (anything forked after a snapshot would otherwise be missed) and escalates
+# TERM → KILL after three passes. Descendants can outlive their root by being
+# reparented to pid 1, where re-enumerating from the root can no longer see them,
+# so the last list we did see is swept once more at the end.
 #
-# The residual is honest and bounded: a process forked after the LAST enumeration
-# is not seen here. That is why the caller never treats "kill succeeded" as
-# permission to act — it re-verifies the lock generation afterwards (see
-# try_steal_stale_lock), so a survivor can cost a wasted steal but never a lock
-# held twice.
+# KNOWN RESIDUAL, deliberately not chased: user-space cannot close the fork race.
+# A child that forks after our final enumeration is reparented to init and becomes
+# invisible from the root — so this function can return success while a CPU burner
+# survives. That is acceptable BECAUSE LOCK SAFETY DOES NOT REST ON IT: the caller
+# takes nothing over until it has re-checked, under the arbiter, that the lock is
+# byte-for-byte the one it judged. A survivor costs CPU until the next orphan
+# sweep notices it; it can never cost a lock held twice.
 kill_process_tree() {
-  local root="$1" budget="${2:-12}"
+  local root="$1" root_identity="${2:-}" budget="${3:-12}"
   # Never aim at init, at "the whole process group" (pid 0), or at ourselves.
   if [[ ! "$root" =~ ^[0-9]+$ ]] || (( root <= 1 )) || [[ "$root" == "$$" || "$root" == "${BASHPID:-}" ]]; then
     return 1
   fi
-  local started signal victims victim passes
+  [[ -n "$root_identity" ]] || root_identity="$(process_start_signature "$root")"
+  # Nothing there, or something else there: either way the process we were aimed
+  # at is gone, and whatever wears its pid now is not ours to touch.
+  [[ -n "$root_identity" ]] || return 0
+  local started signal passes victims seen live pid identity
   started="$(date +%s)"
   signal=TERM
   passes=0
+  seen=""
   while :; do
+    live="$(process_start_signature "$root")"
+    [[ "$live" == "$root_identity" ]] || break
     victims="$(collect_process_tree "$root")"
-    [[ -z "$victims" ]] && return 0
-    for victim in $victims; do
-      kill -"$signal" "$victim" 2>/dev/null || true
-    done
+    [[ -z "$victims" ]] && break
+    seen="$victims"
+    while IFS="$(printf '\t')" read -r pid identity; do
+      [[ -n "$pid" ]] || continue
+      signal_if_identified "$pid" "$identity" "$signal" || true
+    done <<<"$victims"
     (( $(date +%s) - started >= budget )) && break
     sleep 1
     passes=$((passes + 1))
     (( passes >= 3 )) && signal=KILL
   done
-  [[ -z "$(collect_process_tree "$root")" ]]
+  # One more sweep over the descendants we last saw, each with its own subtree:
+  # by now they may have been reparented and be unreachable from the root.
+  if [[ -n "$seen" ]]; then
+    while IFS="$(printf '\t')" read -r pid identity; do
+      [[ -n "$pid" && "$pid" != "$root" ]] || continue
+      sweep_identified_subtree "$pid" "$identity"
+    done <<<"$seen"
+  fi
+  live="$(process_start_signature "$root")"
+  [[ "$live" != "$root_identity" ]]
+}
+
+sweep_identified_subtree() {
+  local pid="$1" identity="$2" live child child_identity
+  live="$(process_start_signature "$pid")"
+  [[ -n "$live" && "$live" == "$identity" ]] || return 0
+  while IFS="$(printf '\t')" read -r child child_identity; do
+    [[ -n "$child" ]] || continue
+    signal_if_identified "$child" "$child_identity" KILL || true
+  done <<<"$(collect_process_tree "$pid")"
 }
 
 # macOS ships no GNU `timeout` and CI must not depend on Homebrew being on PATH,
@@ -332,8 +391,79 @@ path_age_seconds() {
   fi
 }
 
+lock_inode_number() {
+  # Same BSD-then-GNU dance, same "discard anything that is not a pure integer"
+  # rule as lock_mtime_epoch. The inode is what tells two same-second lock
+  # directories apart: mkdir hands out a fresh one, so an empty new lock cannot
+  # impersonate the empty old lock it replaced.
+  local raw
+  raw="$(stat -f %i "$1" 2>/dev/null)"
+  if [[ ! "$raw" =~ ^[0-9]+$ ]]; then
+    raw="$(stat -c %i "$1" 2>/dev/null)"
+  fi
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    echo "$raw"
+  else
+    echo ""
+  fi
+}
+
 lock_field() {
   cat "$quality_lock_dir/$1" 2>/dev/null || true
+}
+
+# ── the candidate snapshot ────────────────────────────────────────────────────
+# THE rule this whole section exists to enforce: read the lock's entire state
+# ONCE, judge only that reading, and — before any destructive act — prove under
+# the arbiter that the path still holds exactly it.
+#
+# Everything that went wrong in review came from breaking that rule. Judging from
+# one reading and acting on another means the thing acted upon is not the thing
+# judged: the lock may have been released and re-taken in between, by a run that
+# never touched the arbiter (mkdir is atomic and needs no permission). Then "the
+# holder I judged is dead" is true and irrelevant — the live lock now on the path
+# belongs to somebody else, and reclaiming it puts two runs on one machine.
+#
+# So there is exactly one read (read_lock_snapshot), exactly one judge
+# (snapshot_is_stale), and exactly one gate before anything is destroyed
+# (reclaim_if_snapshot_unchanged). No branch is exempt — not the ones where the
+# holder is obviously dead.
+quality_snapshot_present=""
+quality_snapshot_token=""
+quality_snapshot_pid=""
+quality_snapshot_identity=""
+quality_snapshot_mtime=""
+quality_snapshot_inode=""
+
+read_lock_snapshot() {
+  quality_snapshot_present=""
+  quality_snapshot_token=""
+  quality_snapshot_pid=""
+  quality_snapshot_identity=""
+  quality_snapshot_mtime=""
+  quality_snapshot_inode=""
+  [[ -d "$quality_lock_dir" ]] || return 1
+  quality_snapshot_inode="$(lock_inode_number "$quality_lock_dir")"
+  quality_snapshot_mtime="$(lock_mtime_epoch "$quality_lock_dir")"
+  quality_snapshot_token="$(lock_field token)"
+  quality_snapshot_identity="$(lock_field identity)"
+  quality_snapshot_pid="$(lock_field pid)"
+  quality_snapshot_present=1
+  return 0
+}
+
+# Is the directory on the path still, byte for byte, the snapshot we judged?
+# Inode included on purpose: a lock released and re-created inside the same
+# second has the same mtime and, for the first microseconds of its life, the same
+# (empty) fields — but never the same inode.
+lock_matches_snapshot() {
+  [[ -n "$quality_snapshot_present" ]] || return 1
+  [[ -d "$quality_lock_dir" ]] || return 1
+  [[ "$(lock_inode_number "$quality_lock_dir")" == "$quality_snapshot_inode" ]] || return 1
+  [[ "$(lock_mtime_epoch "$quality_lock_dir")" == "$quality_snapshot_mtime" ]] || return 1
+  [[ "$(lock_field token)" == "$quality_snapshot_token" ]] || return 1
+  [[ "$(lock_field pid)" == "$quality_snapshot_pid" ]] || return 1
+  [[ "$(lock_field identity)" == "$quality_snapshot_identity" ]]
 }
 
 # The third staleness rule, and the only one that judges a LIVE process (#855).
@@ -363,10 +493,12 @@ lock_field() {
 # killed, and QUALITY_ORPHAN_GRACE_SECONDS raises the bar if such a run must
 # survive longer.
 holder_is_abandoned_orphan() {
-  local holder="$1" ppid
+  local holder="$1" held_since="$2" ppid age
   ppid="$(ps -p "$holder" -o ppid= 2>/dev/null | tr -d '[:space:]' || true)"
   [[ "$ppid" == "1" ]] || return 1
-  (( $(path_age_seconds "$quality_lock_dir") > quality_orphan_grace_seconds ))
+  [[ -n "$held_since" ]] || return 1
+  age=$(( $(date +%s) - held_since ))
+  (( age > quality_orphan_grace_seconds ))
 }
 
 # Why the verdict is a reason and not just a boolean: only ONE of these describes
@@ -375,8 +507,8 @@ holder_is_abandoned_orphan() {
 # get an unrelated service killed.
 quality_stale_reason=""
 
-# Returns 0 if the CURRENT lock at $quality_lock_dir is stale, and records why in
-# quality_stale_reason:
+# Judges THE SNAPSHOT — never the files, which may already describe a different
+# lock. Records why in quality_stale_reason:
 #   pidless  no pid at all and older than 60s — a corpse from the mkdir window
 #   dead     the recorded holder is provably gone
 #   reused   the recorded pid is alive but is a DIFFERENT process now, so the
@@ -386,69 +518,44 @@ quality_stale_reason=""
 #            held the machine past the grace period
 # A live holder whose identity cannot be established at all is never judged:
 # unverifiable means wait, not kill.
-current_lock_is_stale() {
-  local holder age recorded live
+snapshot_is_stale() {
+  local age live
   quality_stale_reason=""
-  holder="$(lock_field pid)"
-  if [[ -z "$holder" ]]; then
-    age="$(path_age_seconds "$quality_lock_dir")"
+  [[ -n "$quality_snapshot_present" ]] || return 1
+  if [[ -z "$quality_snapshot_pid" ]]; then
+    [[ -n "$quality_snapshot_mtime" ]] || return 1
+    age=$(( $(date +%s) - quality_snapshot_mtime ))
     if (( age > 60 )); then
       quality_stale_reason="pidless"
       return 0
     fi
     return 1
   fi
-  if process_is_gone "$holder"; then
+  if process_is_gone "$quality_snapshot_pid"; then
     quality_stale_reason="dead"
     return 0
   fi
-  recorded="$(lock_field identity)"
-  live="$(process_start_signature "$holder")"
-  if [[ -z "$recorded" || -z "$live" ]]; then
+  live="$(process_start_signature "$quality_snapshot_pid")"
+  if [[ -z "$quality_snapshot_identity" || -z "$live" ]]; then
     return 1
   fi
-  if [[ "$recorded" != "$live" ]]; then
+  if [[ "$quality_snapshot_identity" != "$live" ]]; then
     quality_stale_reason="reused"
     return 0
   fi
-  if holder_is_abandoned_orphan "$holder"; then
+  if holder_is_abandoned_orphan "$quality_snapshot_pid" "$quality_snapshot_mtime"; then
     quality_stale_reason="orphan"
     return 0
   fi
   return 1
 }
 
-# The generation of the lock we judged, captured under the arbiter so it can be
-# re-checked under the arbiter later.
-quality_target_token=""
-quality_target_pid=""
-quality_target_identity=""
-quality_target_mtime=""
-
-capture_lock_generation() {
-  quality_target_token="$(lock_field token)"
-  quality_target_pid="$(lock_field pid)"
-  quality_target_identity="$(lock_field identity)"
-  quality_target_mtime="$(lock_mtime_epoch "$quality_lock_dir")"
-}
-
-# True only if the directory at the path is still the exact lock we judged. `mv`
-# moves whatever is there NOW, so between judging and moving, the path may have
-# been released and re-taken by a run that is perfectly healthy — a different
-# generation wearing the same name. The token settles it; the creation time
-# settles the sliver where a brand-new lock has not written its token yet.
-lock_generation_unchanged() {
-  [[ -d "$quality_lock_dir" ]] || return 1
-  [[ "$(lock_field token)" == "$quality_target_token" ]] || return 1
-  [[ "$(lock_mtime_epoch "$quality_lock_dir")" == "$quality_target_mtime" ]]
-}
-
-# True when the holder we judged is provably gone: either the process is gone, or
-# its pid is now worn by a different process (which means ours ended).
-target_holder_is_gone() {
-  [[ -n "$quality_target_pid" ]] || return 0
-  process_is_gone "$quality_target_pid" && return 0
-  [[ "$(process_start_signature "$quality_target_pid")" != "$quality_target_identity" ]]
+# Read once, judge that reading. The only entry point that does both, used by
+# waiters as a cheap look before they bother with the arbiter — a read decides
+# nothing on its own, so it is safe outside it.
+current_lock_is_stale() {
+  read_lock_snapshot || return 1
+  snapshot_is_stale
 }
 
 enter_steal_arbiter() {
@@ -459,14 +566,38 @@ leave_steal_arbiter() {
   rmdir "$quality_steal_arbiter" 2>/dev/null || rm -rf "$quality_steal_arbiter"
 }
 
-# Move the judged lock out of the way, then delete it. Only ever called with the
-# arbiter held and the generation freshly verified.
+# Move the judged lock out of the way, then delete it. Only ever reached through
+# reclaim_if_snapshot_unchanged, with the arbiter held.
+#
+# The graveyard is a FRESH directory every time, and the lock is moved to a named
+# slot inside it. `mv dir existing-dir` means "move it INSIDE", so a graveyard
+# name that happens to exist already would bury the lock instead of clearing the
+# path — the reclaim would report success while the lock stayed exactly where it
+# was, under a new parent.
 reclaim_lock_directory() {
-  local graveyard="${quality_lock_dir}.stale.$$"
-  if mv "$quality_lock_dir" "$graveyard" 2>/dev/null; then
-    echo "quality: reclaimed stale lock"
-    rm -rf "$graveyard"
+  local grave
+  grave="$(mktemp -d "${quality_lock_dir}.stale.XXXXXX" 2>/dev/null || true)"
+  if [[ -z "$grave" ]]; then
+    grave="${quality_lock_dir}.stale.${quality_lock_token}.${RANDOM}"
+    [[ -e "$grave" ]] && return 1
+    mkdir "$grave" 2>/dev/null || return 1
   fi
+  if mv "$quality_lock_dir" "$grave/lock" 2>/dev/null; then
+    echo "quality: reclaimed stale lock"
+  fi
+  rm -rf "$grave"
+}
+
+# The single gate in front of every destructive act. Call with the arbiter held.
+# There is no branch — however dead the holder looked — that may reclaim without
+# passing through here.
+reclaim_if_snapshot_unchanged() {
+  if lock_matches_snapshot; then
+    reclaim_lock_directory
+    return 0
+  fi
+  echo "quality: the lock on the path is no longer the one that was judged — standing down"
+  return 1
 }
 
 try_steal_stale_lock() {
@@ -483,15 +614,18 @@ try_steal_stale_lock() {
   if ! enter_steal_arbiter; then
     return 1  # another stealer is arbitrating — just go back to waiting
   fi
-  if ! current_lock_is_stale; then
+  # Step one, and the ONLY read: the whole lock state as one candidate snapshot.
+  # Everything from here on judges that snapshot and nothing else.
+  if ! read_lock_snapshot || ! snapshot_is_stale; then
     leave_steal_arbiter
     return 0
   fi
   if [[ "$quality_stale_reason" != "orphan" ]]; then
     # dead / reused / pidless: the holder is already gone, so there is nothing to
-    # kill and nothing to wait for. Judge and move inside the same critical
-    # section, exactly as this function has always done.
-    reclaim_lock_directory
+    # kill — but "gone" is a fact about a PROCESS, and reclaiming is an act on a
+    # PATH. Between the two, the path can change hands without ever asking this
+    # arbiter, so these branches pass the same gate as every other.
+    reclaim_if_snapshot_unchanged || true
     leave_steal_arbiter
     return 0
   fi
@@ -501,14 +635,15 @@ try_steal_stale_lock() {
   # stealer cancelled inside it leaves a corpse arbiter that policy says only a
   # human may clear. So the arbiter is released for the killing and re-entered for
   # the decision:
-  #   in  → judge, record the generation      (milliseconds)
-  #   out → kill the abandoned tree, bounded  (seconds, arbiter free)
-  #   in  → re-verify, then move              (milliseconds)
-  capture_lock_generation
-  local target="$quality_target_pid"
+  #   in  → read the snapshot, judge it       (milliseconds)
+  #   out → kill that snapshot's tree, bounded (seconds, arbiter free)
+  #   in  → re-verify the snapshot, then move (milliseconds)
+  local target="$quality_snapshot_pid" target_identity="$quality_snapshot_identity"
   leave_steal_arbiter
   echo "quality: lock holder pid $target is an orphan (PPID 1) past ${quality_orphan_grace_seconds}s — clearing it before taking the lock"
-  if ! kill_process_tree "$target"; then
+  # Identity, not just pid: if this pid stopped being the holder while we were
+  # deciding, the signals must not follow it to whoever holds the number now.
+  if ! kill_process_tree "$target" "$target_identity"; then
     # A lock held by a process we could not stop is not ours to give away.
     # Non-zero sends the caller back to its 30s wait instead of spinning on a
     # steal that cannot succeed.
@@ -519,16 +654,11 @@ try_steal_stale_lock() {
   if ! enter_steal_arbiter; then
     return 1
   fi
-  # The cross-generation check, and the reason the kill is not enough on its own:
-  # the holder's own cleanup runs as it dies and removes ITS lock, after which any
+  # The holder's own cleanup runs as it dies and removes ITS lock, after which any
   # third run can take the freed path atomically without ever consulting this
   # arbiter. That run's lock is live, healthy, and none of our business — proving
   # the old holder is dead says nothing about who owns the path now.
-  if lock_generation_unchanged && target_holder_is_gone; then
-    reclaim_lock_directory
-  else
-    echo "quality: the lock changed hands while the abandoned holder was cleared — standing down"
-  fi
+  reclaim_if_snapshot_unchanged || true
   leave_steal_arbiter
   return 0
 }
