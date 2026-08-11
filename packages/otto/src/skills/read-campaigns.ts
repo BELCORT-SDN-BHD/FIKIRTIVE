@@ -44,7 +44,7 @@ export const readCampaignsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Read the user's Campaign list, one exact Campaign with structured plan entries and grouped existing work, " +
-    "or saved Trend conclusions through the same owner-scoped actions as the Campaign pages. $0 read-only. " +
+    "or saved Trend conclusions through the same owner-scoped actions the merchant's own screens use. $0 read-only. " +
     "Use operation=list before get and never guess ids. Campaign is an intent/grouping container only: there is " +
     "no editable UTM authority here, and missing or invalid plan data stays unavailable rather than guessed.",
   parameters: params,

@@ -3,9 +3,9 @@ import type { RunContext } from "@openai/agents";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 import { MONEY_RULE } from "../money-rule.js";
-import { isConnectionBlocked, ottoConnectionBlockedAnswer } from "../connection-copy.js";
+import { isConnectionBlocked, metaNotConnectedMessage, ottoConnectionBlockedAnswer } from "../connection-copy.js";
 
-const NOT_CONNECTED = "Meta isn't connected yet, so I can't read your per-ad performance. Connect Instagram or Facebook in Connections first.";
+const NOT_CONNECTED = metaNotConnectedMessage("so I can't read your per-ad performance");
 const META_UNREACHABLE =
   "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 

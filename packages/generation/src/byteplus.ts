@@ -1,6 +1,7 @@
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@fikirtive/core";
 import { imageOutputSize, REFERENCE_IMAGE_PERSON_REJECTED, referenceImagePersonRejected } from "@fikirtive/core";
 import { chargedError, permanentInputError, extFromUrl } from "./index.js";
+import { providerRequestGate } from "./provider-concurrency.js";
 
 export const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
 /** internal model id → Ark foundation-model id (verified active on the account). */
@@ -36,6 +37,17 @@ export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-mini": "dre
  */
 export const ARK_CONTROL_TIMEOUT_MS = 60_000;
 export const ARK_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * How long this client keeps polling one video task before it gives up (F06 — the full
+ * reasoning lives at the poll loop below; do not change this number without reading it).
+ *
+ * Exported because it is the FIRST clock in the worker's chain: provider timeout <
+ * stale cutoff < queue expiry < reaper cutoff. apps/worker/src/jobs/clock-invariants.test.ts
+ * asserts that ordering against this exact constant, so the chain can no longer be broken by
+ * editing one end of it (#796).
+ */
+export const VIDEO_POLL_TIMEOUT_MS = 15 * 60_000;
 
 export class BytePlusProvider implements GenerationProvider {
   readonly name = "byteplus";
@@ -121,13 +133,22 @@ export class BytePlusProvider implements GenerationProvider {
     // unaffected: this engine bills per image, not per size.
     const { width, height } = imageOutputSize(req.aspectRatio);
     // one request per image (count <= MAX_GEN_COUNT); each is all-or-nothing.
+    //
+    // #796 判官 r1 P1-1 — THIS is where a "job" stops being one request. A single image job
+    // fans out `count` paid POSTs at once, so N concurrent jobs are N×count concurrent requests
+    // against an account whose ceiling is 10. Every POST therefore goes through the shared
+    // process-wide gate (gen and refgen spend the SAME account budget); over-budget requests
+    // WAIT instead of coming back as a 429, which a merchant reads as "generation failed".
+    // The gate is held around the POST only — the result download afterwards is not a call
+    // against the generation API.
+    const gate = providerRequestGate();
     const results = await Promise.allSettled(
       Array.from({ length: req.count }, async () => {
         // #672: this POST IS the billing event on a sync endpoint. paidPost() owns the
         // whole charge boundary for it — only a 4xx (rejected before the model ran) comes
         // back PLAIN; a network throw or a 5xx is "outcome unknown" ⇒ charged. Do not
         // re-inspect the status here.
-        const res = await this.paidPost("image request", `${ARK_BASE}/images/generations`, model, {
+        const res = await gate.run(() => this.paidPost("image request", `${ARK_BASE}/images/generations`, model, {
           model, prompt: req.prompt, size: `${width}x${height}`, response_format: "url",
           // F40: Ark Seedream defaults watermark=true — paying customers must not receive
           // watermarked images, so set it false explicitly.
@@ -138,7 +159,7 @@ export class BytePlusProvider implements GenerationProvider {
           // presigned set so product+logo+character all condition. Keep the proven single-
           // string form for exactly one ref (the live-verified prod shape); array only for 2+.
           ...(conditioned ? { image: req.inputImageUrls.length === 1 ? req.inputImageUrls[0] : req.inputImageUrls } : {}),
-        });
+        }));
         // res.ok ⇒ billed; a failure past here is a CHARGED failure (a retry would re-bill).
         // EVERY way of dying past this line is wrapped, not just the ones with a status code:
         // a malformed receipt (`res.json()` throwing), a download whose connection drops
@@ -178,7 +199,21 @@ export class BytePlusProvider implements GenerationProvider {
     if (anyCharged) throw chargedError(`generation provider returned only ${ok.length}/${req.count} usable images`);
     throw rejections[0] instanceof Error ? rejections[0] : new Error(String(rejections[0]));
   }
+  /**
+   * #796 判官 r1 P1-1 — a video task holds ONE account slot for its WHOLE life (submit through
+   * the last poll), not just for the submit. The account's video ceiling is about tasks the
+   * engine is running, and a task stays running until it succeeds or is terminated. Choosing
+   * the conservative reading costs us a little unused headroom; the other reading costs 429s,
+   * which the merchant reads as a failed generation.
+   *
+   * The gate is taken HERE and never again inside — `#videoTask` must not re-enter it (a
+   * second acquire on the same call chain is how a semaphore deadlocks itself).
+   */
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
+    return providerRequestGate().run(() => this.#videoTask(req));
+  }
+
+  async #videoTask(req: VideoRequest): Promise<GeneratedVideo> {
     const model = VIDEO_MODEL_MAP[req.model];
     if (!model) throw new Error("generation provider has no video model mapping"); // pre-spend
     // #646 T5. First+last frames, single first frame, and whole-clip reference video are three
@@ -265,7 +300,7 @@ export class BytePlusProvider implements GenerationProvider {
     // was [15 min, 48h]. `execution_expires_after: 3600` (the minimum it accepts) shrinks it to
     // [15 min, 1h]: past one hour the engine terminates the task itself as `expired` — no output,
     // nothing billed — so an abandoned task can no longer quietly complete a day later.
-    const TIMEOUT_MS = 15 * 60_000;
+    const TIMEOUT_MS = VIDEO_POLL_TIMEOUT_MS;
     // eslint-disable-next-line no-constant-condition
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));
