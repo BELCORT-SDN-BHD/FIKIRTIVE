@@ -12,6 +12,20 @@
 - web/worker 含 Sentry instrumentation,但只有 live environment 配置生效后才会记录。
 - 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
   在当前部署和权限下验证。
+- `/admin/queue`(#779)只读生成队列指标库,回答「队列堵没堵」。未配置 `QUEUE_METRICS_QUERY_URL`
+  时页面显示 "Not connected" 且一次外呼都不发;能否读到必须现场验证,不能从本页推断。
+
+## 两套监控并存,互不替代(#779 stack 声明)
+
+- **供应商侧队列指标库**(`/admin/queue`):只观测生成队列本身——等待条数、排队时长、并发、
+  成功率、失败原因、取消/过期、时长、回调速率。
+- **应用侧监控**(Railway、`/api/health`、worker 心跳、Sentry):观测我们自己的进程。
+- 两者 coexist:队列指标库看不见我们的 web/worker 是否活着,应用侧监控也看不见供应商队列排了
+  多长。任一侧「绿」都不能代表另一侧健康,汇报时必须分开说。
+- 计费按上报量;我们只查询、从不写入,未配置即零成本。接线后第一周须核对一次真实账单。
+- `PublicQueryBandwidth` / `PublicWriteBandwidth` 为 null(平台默认额度),且我们的服务不在
+  供应商内网、走公网端点——生产量级前须查清额度,量大再议。以上三项均为 external state,
+  查不到写 `Unknown`。
 
 ## 事故开始时先固定 live facts
 
