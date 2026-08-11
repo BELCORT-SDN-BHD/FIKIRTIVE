@@ -40,6 +40,16 @@ describe("CI workflow shape (#797)", () => {
     expect(post.text).toContain("pnpm quality");
   });
 
+  it("post-merge.yml runs on a hosted runner — a self-hosted target would silently never run", () => {
+    // 2026-08-11:自托管跑手的监听进程已停(注册保留,纯人工备援)。排在它上面的 job 不会红,
+    // 会永远排队——「静默的不跑」比红更贵,而且看起来和「还没跑完」一模一样。
+    const post = workflows.find((w) => w.file === "post-merge.yml")!;
+    expect(post.text).not.toContain("self-hosted");
+    for (const line of post.text.split("\n")) {
+      if (/^\s*runs-on:/.test(line)) expect(line).toContain("ubuntu-latest");
+    }
+  });
+
   it("post-merge.yml never passes a workflow input straight into a shell line", () => {
     const post = workflows.find((w) => w.file === "post-merge.yml")!;
     // ${{ inputs.* }} 只允许出现在 env: 映射里,不允许出现在 run: 的命令文本中。
