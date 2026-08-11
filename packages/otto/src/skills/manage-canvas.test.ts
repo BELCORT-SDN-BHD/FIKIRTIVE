@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { canvasCardIsInFlightPaid } from "@fikirtive/core/canvas-card-status";
+import { REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core/gen-failure";
 import { executeManageCanvas, manageCanvasSkill, isInFlightPaidNode, VIEW_NODE_CAP } from "./manage-canvas.js";
 import type { OttoContext, CanvasNodeView } from "../context.js";
 
@@ -27,6 +28,9 @@ function node(over: Partial<CanvasNodeView> = {}): CanvasNodeView {
   return {
     id: "n-1", type: "text", x: 80, y: 80, w: 240, h: 120,
     text: "hello", prompt: null, generationId: null, status: "done",
+    // Every card carries WHY it rested, and almost every card's answer is "no reason we can
+    // prove" (#827). It is required, not optional, so a fixture cannot quietly omit it.
+    failureReason: "unexplained",
     genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
     url: null, ...over,
   };
@@ -68,10 +72,43 @@ describe("view", () => {
       nodes: [{
         id: "a", type: "image", status: "done", x: 80, y: 80, w: 240, h: 120,
         text: "hello", prompt: null, generationId: "g1", hasMedia: true,
+        // Why this card rested — null for every card that is not a refusal we can prove (#827).
+        failureExplanation: null,
         // The two relationships, under their own names (#603 T4).
         genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
       }],
     });
+  });
+
+  /**
+   * #827 — the second surface of one refusal. A merchant who pressed generate on the BOARD has
+   * no conversation to be answered in, so the card is the only thing that ever told them why.
+   * When they later open Otto and ask, Otto must say the same thing — read from the card's own
+   * recorded reason through the same core whitelist, not from a second copy of the wording.
+   */
+  it("hands Otto the failed card's explanation, in the SAME words the card shows", async () => {
+    const sync = vi.fn(async () => [node({ id: "a", type: "video", status: "failed", failureReason: "referenceImagePerson" })]);
+    const res = (await executeManageCanvas({ action: "view" }, { context: makeCtx({ sync }) })) as {
+      nodes: Array<{ failureExplanation: string | null }>;
+    };
+    // Compared against the constant, never a copy of the sentence — a copy is how one refusal
+    // comes to be described two ways to one merchant.
+    expect(res.nodes[0]!.failureExplanation).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+  });
+
+  it("says nothing about a card whose ending has no reason we can prove", async () => {
+    const sync = vi.fn(async () => [node({ id: "a", status: "failed", failureReason: "unexplained" })]);
+    const res = (await executeManageCanvas({ action: "view" }, { context: makeCtx({ sync }) })) as {
+      nodes: Array<{ failureExplanation: string | null }>;
+    };
+    expect(res.nodes[0]!.failureExplanation).toBeNull();
+  });
+
+  it("tells the model to repeat that sentence rather than reword it", async () => {
+    // Two surfaces paraphrasing one event is the drift #765 closed; the instruction is the only
+    // thing standing between a whitelisted sentence and a model's own summary of it.
+    expect(manageCanvasSkill.description).toContain("failureExplanation");
+    expect(manageCanvasSkill.description).toContain("do not reword it");
   });
   it("caps the payload on a busy canvas and says so", async () => {
     const many = Array.from({ length: VIEW_NODE_CAP + 5 }, (_, i) => node({ id: `n-${i}` }));
@@ -219,6 +256,7 @@ describe("C1 $0 sub-journey: empty board → place → derivation visible (Otto 
           id, type: input.type, x: input.x, y: input.y, w: input.w, h: input.h,
           text: input.text ?? null, prompt: input.prompt ?? null,
           generationId: input.generationId ?? null, status: "done",
+          failureReason: "unexplained",
           genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
           url: input.generationId ? "https://cdn/g.png" : null,
         });
