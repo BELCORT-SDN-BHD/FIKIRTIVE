@@ -275,6 +275,14 @@ export function contactConsentCompatibility(fold: ConsentFoldResult): ContactCon
  *
  * R-010 §4.6.1 also fixes this as the ONLY scope the legacy `Contact.marketingConsent` column
  * mirrors, which is why the pre-ledger fence below is scoped to it and to nothing else.
+ *
+ * #758 r2 — and it is the only scope `reportedOptOut` is ever WRITTEN to, which makes it the only
+ * scope that fact may be read from. The per-run reading above covers the VERIFIED state, which
+ * really is channel-and-purpose specific; the merchant's own record is not, and reading it per
+ * run made a broadcast on another channel see no record where the segments page saw one — so the
+ * run re-admitted the very contacts the page had excluded. `readContactConsentTruth` therefore
+ * pins that half of the read to this constant; if a merchant surface ever starts recording per
+ * channel, that reader must change in the same commit as the writer.
  */
 export const CRM_CONSENT_SCOPE = { channel: "whatsapp", purpose: "marketing" } as const;
 
