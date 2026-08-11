@@ -34,13 +34,16 @@ vi.mock("@fikirtive/db", async (importOriginal) => {
     ...actual,
     // Records at DISPATCH time (Prisma promises are lazy), which is exactly when the request
     // would start paying for the query.
+    // #795 — TOP-LEVEL `$allOperations`, not `$allModels`. The model-scoped hook is blind to raw
+    // SQL (a raw operation arrives with `model === undefined`), and the request path now makes
+    // exactly one raw call: the shared rate-limit counter. A tracer that cannot see it would let
+    // an address-dependent query be added there without this file noticing — which is the one
+    // thing this file exists to prevent.
     prisma: actual.prisma.$extends({
       query: {
-        $allModels: {
-          async $allOperations({ model, operation, args, query }) {
-            trace.push(`db:${model}.${operation}`);
-            return query(args);
-          },
+        async $allOperations({ model, operation, args, query }) {
+          trace.push(`db:${model ?? "raw"}.${operation}`);
+          return query(args);
         },
       },
     }),
@@ -160,6 +163,14 @@ beforeEach(async () => {
   __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
 });
 
+/**
+ * THE WHOLE REQUEST PATH, as a sequence. Named once so every case below asserts the same list and
+ * a change to the path has to be made deliberately, in one place, rather than absorbed test by
+ * test. #795 added the middle item: the throttle's counter used to be a process-local Map, which
+ * made the published cap a fiction as soon as a second instance existed.
+ */
+const REQUEST_PATH = ["headers", "db:raw.$queryRaw", "enqueue"] as const;
+
 // ── ① the request path is blind to what kind of address it was handed ────────────────────────
 describe("#678 r3 ① — the request performs identical work for every kind of address", () => {
   it("records the same awaits and the same database calls for all three", async () => {
@@ -179,9 +190,15 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     expect(db.recorded).toEqual(env.recorded);
     expect(unknown.recorded).toEqual(env.recorded);
 
-    // And what that sequence IS: read the caller, hand over an opaque job. No allowlist lookup,
-    // no database call, no send — none of the work whose cost depends on the answer.
-    expect(env.recorded).toEqual(["headers", "enqueue"]);
+    // And what that sequence IS: read the caller, consult ONE shared counter, hand over an opaque
+    // job. No allowlist lookup, no token mint, no send — none of the work whose cost depends on
+    // the answer.
+    //
+    // #795 — the counter query is the one database call on this path, and it is address-blind by
+    // construction: a single statement over keys that were normalised before they were hashed, so
+    // it costs the same for an address with an account, one on a list, and one nobody has ever
+    // heard of. That it appears in ALL THREE traces, in the same position, is the assertion above.
+    expect(env.recorded).toEqual([...REQUEST_PATH]);
 
     // The answers are the same too, which was round 1's claim and is still required.
     expect(env.answer).toEqual(NEUTRAL);
@@ -205,7 +222,7 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
 
     // RED before r4: the over-budget presses recorded ["headers"] — no "enqueue" at all.
     for (const recorded of [...inBudget, ...overBudget]) {
-      expect(recorded).toEqual(["headers", "enqueue"]);
+      expect(recorded).toEqual([...REQUEST_PATH]);
     }
     // …and the throttle really did bite, so the sameness is not vacuous: the address budget is
     // 5, so exactly five of the eight presses put mail in flight.
@@ -261,7 +278,7 @@ describe("#678 r3 ③ — the request answers while the email is still in flight
     const result = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
     expect(result).toEqual(NEUTRAL);
     // Nothing about the job had even STARTED at that point — the queue drains on a macrotask.
-    expect(trace).toEqual(["headers", "enqueue"]);
+    expect(trace).toEqual([...REQUEST_PATH]);
 
     await sendStarted;
     let settled = false;
