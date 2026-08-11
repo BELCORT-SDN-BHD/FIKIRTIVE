@@ -849,13 +849,16 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
   const problems: EnvProblem[] = [];
   for (const spec of ENV_CONTRACT) {
     if (!appliesTo(spec, opts.surface)) continue;
-    // platform / library 读取的变量不参与存在性判定:前者由宿主注入,后者的缺失由 SDK 自己报。
     const raw = env[spec.name];
     const present = isSet(raw);
 
     if (!present) {
       if (!opts.production) continue;
-      if (spec.requirement === "required" && spec.readBy === "code") {
+      // platform / library 读取的变量不参与存在性判定:前者由宿主注入,后者的缺失由 SDK
+      // 自己报得更准。写成守卫而不是逐条判断,是为了将来有人把某个 library 变量标成
+      // required 时,这条不变量仍然成立。
+      if (spec.readBy !== "code") continue;
+      if (spec.requirement === "required") {
         problems.push({ name: spec.name, kind: "missing", message: `${spec.name} is required in production but is not set` });
       } else if (spec.requirement === "conditional" && spec.requiredWhen?.(env)) {
         problems.push({

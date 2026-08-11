@@ -239,6 +239,11 @@ describe("checkEnv", () => {
     expect(problems.map((p) => p.name)).toEqual(["GENERATION_PROVIDER"]);
   });
 
+  it("a variable read by a third-party SDK is never reported as missing — the SDK reports that better", () => {
+    const problems = checkEnv(good, { surface: "web", production: true });
+    expect(problems.map((p) => p.name)).not.toContain("ANTHROPIC_API_KEY");
+  });
+
   it("web is not asked for worker-only variables and vice versa", () => {
     const webProblems = checkEnv({ ...good, GENERATION_PROVIDER: "byteplus" }, { surface: "web", production: true });
     expect(webProblems.map((p) => p.name)).not.toContain("BYTEPLUS_API_KEY");
