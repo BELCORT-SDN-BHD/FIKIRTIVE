@@ -45,7 +45,7 @@
 | readSpending | free | read | internal | ❌ | Read the workspace's credit balance and recent credit history — the same rows th |
 | readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, immutable revisions, Routine authorization |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
-| renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — ffmpeg/whisp |
+| renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — never spends |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
 | runFactoryBatch | spend | write | internal | ✅ | Generate a BATCH of ads/images/videos in one go — either a variant fan-out (one  |
 | saveCustomerSegment | free | write | internal | ❌ | Save or update ONE customer-group NOTE CARD in the user's Brand memory (upsert b |
