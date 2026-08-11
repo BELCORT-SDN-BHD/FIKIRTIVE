@@ -184,7 +184,11 @@ const EXEMPT: Family[] = [
     files: {
       "components/global-navigation.tsx": 3,
       "components/northstar/immersive/immersive-shell.tsx": 2,
-      "components/northstar/immersive/immersive-nav.tsx": 1,
+      // immersive-nav.tsx was on this board at freeze time and was then deleted
+      // whole by #839 (nav single-source) — the stale-account gate caught the
+      // leftover row when main merged in. The row leaves the BOARD; the frozen
+      // baseline keeps it, because that table is the 2026-08-11 historical
+      // snapshot and board ⊆ frozen stays true when the board shrinks.
     },
   },
   {
