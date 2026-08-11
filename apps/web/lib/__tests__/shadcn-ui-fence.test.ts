@@ -27,10 +27,14 @@
  *   - 往板上挂一个已经零违例的文件 ⇒ 第三闸红,报「已清零,请从豁免板删除这一行」。
  *   - 判官 r1 的绕法(见下面 FROZEN_2026_08_11 的注释):给板外文件加一颗、写进豁免板,
  *     同时从 FlowCanvas 迁走一颗 ⇒ 前四闸确实全绿,第五闸红。
- * 四条都验过会红,才敢说它绿的时候是在说事实。
+ *   - 判官 r2 的绕法(见下面 FROZEN_FINGERPRINT 的注释):把冻结表里一个 1 处的历史键
+ *     **换成**新文件,60 行 / 合计 225 都不动 ⇒ 五闸全绿,指纹闸红并点名换掉的两个键。
+ * 五条都验过会红,才敢说它绿的时候是在说事实。
  */
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -206,8 +210,8 @@ const EXEMPT_TOTAL_BASELINE = 225;
  * 冻结基线 —— 2026-08-11 那一次全量扫描的原始账。这是**历史记录,一行都不许动**:
  * 不加行、不删行、数字不改。上面那块豁免板是「今天还欠多少」,会随每一族迁完而缩;
  * 这一块是「当初欠多少」,历史不会因为今天干了活就改变。
- * 下面「冻结基线自己没被动过」那条断言(60 行 / 合计 225)就是钉子:谁想靠往这里
- * 加一行来给新文件开后门,那条先红。
+ * 钉子是下面 FROZEN_FINGERPRINT 那条 SHA-256 断言 —— 它钉的是**内容**,不是行数与总和
+ * 这两个聚合数(判官 r2:只钉聚合数时,把一个 1 处的历史键换成新文件,60/225 纹丝不动)。
  *
  * 为什么要有第二份看起来一样的清单(判官 r1 P1 复现的绕法):
  * 只有「总数 ≤ 225」这道闸时,**给一个新文件加违例并把它写进豁免板,同时在别处
@@ -279,6 +283,81 @@ const FROZEN_2026_08_11: Readonly<Record<string, number>> = {
   "components/otto/stuff/AddAssetDialog.tsx": 5,
   "components/otto/stuff/StuffLibrary.tsx": 4,
 };
+
+/**
+ * 规范序列化:键排序,每行 `路径\t处数\n`。排序是为了让指纹与书写顺序无关 ——
+ * 有人重排这张表不该红,改内容才该红。
+ */
+function canonicalize(table: Readonly<Record<string, number>>): string {
+  return Object.keys(table)
+    .sort()
+    .map((key) => `${key}\t${table[key]}\n`)
+    .join("");
+}
+
+function fingerprintOf(table: Readonly<Record<string, number>>): string {
+  return createHash("sha256").update(canonicalize(table), "utf8").digest("hex");
+}
+
+/**
+ * ── 2026-08-11 历史基线校验和 —— 除非 Founder 重新立法,永不修改 ──────────────
+ *
+ * FROZEN_2026_08_11 规范序列化后的 SHA-256(60 行、2406 字节、合计 225 处)。
+ *
+ * 为什么光钉「60 行 / 合计 225」不够(判官 r2 内存重放复现):那是两个**聚合数**。
+ * 把冻结表里 `components/otto/OttoDiscover.tsx: 1` 这样一个 1 处的历史键,直接
+ * **换成** `components/crm/contacts-page.tsx: 1` —— 行数还是 60,总和还是 225,
+ * 五闸全绿,债务照样迁进了一个当初不欠账的新文件。指纹钉的是内容,换任何一个
+ * 键或数字都会变。
+ *
+ * ⚠️ 认识论,别声称做不到的事:**围栏和它守的常量在同一个文件里,防不住篡改** ——
+ * 谁改了表、顺手把这一行指纹也改了,测试照样绿。这道闸买到的不是「改不了」,
+ * 是「**改必吵闹**」:任何一次改动都必须连这一行历史校验和一起改,而这一行在
+ * diff 里是刺眼的、无法用「顺手整理一下」解释的一处修改,审阅者一眼就看见。
+ * 真正的不可篡改要靠仓库外的东西(受保护分支 + 人审),不在这个文件的能力范围内。
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+const FROZEN_FINGERPRINT = "c6f15c6598b4504a491ea5963e585c6e9f065caf338178799151ccadea255b0d";
+
+/**
+ * 指纹对不上时,把「多了/少了/变了哪个键」指出来 —— 报一串十六进制没法让人动手改。
+ *
+ * 参照物取自 git:同一个文件在 origin/main / main / HEAD 里的那一份。这是**诊断**,
+ * 不是闸门 —— 闸门是上面那个指纹断言,永远会红;这里拿不到 git 就退回打印重算值,
+ * 不影响判定。
+ */
+function diffAgainstGit(current: Readonly<Record<string, number>>): string[] {
+  const relative = path.relative(path.resolve(WEB_ROOT, "../.."), path.join(__dirname, "shadcn-ui-fence.test.ts"));
+  for (const ref of ["origin/main", "main", "HEAD"]) {
+    let committed: string;
+    try {
+      committed = execFileSync("git", ["show", `${ref}:${relative}`], {
+        cwd: WEB_ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      continue;
+    }
+    const block = committed.match(/const FROZEN_2026_08_11[^{]*\{([\s\S]*?)\n\};/)?.[1];
+    if (!block) continue;
+    const before: Record<string, number> = {};
+    for (const entry of block.matchAll(/"([^"]+)":\s*(\d+),/g)) before[entry[1]] = Number(entry[2]);
+    if (Object.keys(before).length === 0) continue;
+    if (fingerprintOf(before) === fingerprintOf(current)) continue; // 这一版和现在一样,换下一个 ref
+
+    const lines = [`对照 ${ref} 里的同一张表:`];
+    for (const key of Object.keys(current).sort()) {
+      if (!(key in before)) lines.push(`  + 多了 ${key}: ${current[key]}(当初不在冻结基线里)`);
+      else if (before[key] !== current[key]) lines.push(`  ~ 变了 ${key}: ${before[key]} → ${current[key]}`);
+    }
+    for (const key of Object.keys(before).sort()) {
+      if (!(key in current)) lines.push(`  - 少了 ${key}: ${before[key]}(历史条目被删掉了)`);
+    }
+    return lines;
+  }
+  return ["(拿不到 git 里的参照版本,无法逐键对比 —— 指纹不符这件事本身仍然成立)"];
+}
 
 function walk(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -396,13 +475,45 @@ describe("#840 — 商家可见面的交互原语一律走 @/components/ui", () 
 
 describe("#840 — 围栏自身的可信度", () => {
   /**
-   * 第五闸只有在冻结基线本身不可动的前提下才成立 —— 否则「给新文件开后门」只需要
-   * 往冻结基线里也加一行。这条断言就是那颗钉子:60 行、合计 225,一个字都不许改。
+   * 第五闸只有在冻结基线本身不可动的前提下才成立。r2 这里只钉了「60 行 / 合计 225」
+   * 两个聚合数 —— 判官重放:把一个 1 处的历史键换成新文件,两个数纹丝不动,五闸全绿。
+   * r3 改钉**内容**:规范序列化后的 SHA-256。换任何一个键、动任何一个数字都会红。
+   * 两个聚合数留着,是因为它们红的时候比一串十六进制更快说明发生了什么。
    */
-  it("冻结基线自己没被动过:60 行、合计 225", () => {
+  it("冻结基线一个字都没被动过:SHA-256 指纹对得上", () => {
+    const actual = fingerprintOf(FROZEN_2026_08_11);
+    if (actual !== FROZEN_FINGERPRINT) {
+      const report = [
+        "冻结基线被改了 —— 它是 2026-08-11 的历史账,不该随任何一次迁移变动。",
+        `  记录在案:${FROZEN_FINGERPRINT}`,
+        `  现在重算:${actual}`,
+        ...diffAgainstGit(FROZEN_2026_08_11),
+        "如果这次改动确实是 Founder 重新立法,请连同这一行指纹一起改,并在 PR 里说清为什么。",
+      ].join("\n");
+      expect.fail(report);
+    }
+    // 聚合数照旧断言:指纹说「变了」,这两条说「变成了什么样」。
     const entries = Object.entries(FROZEN_2026_08_11);
     expect(entries.length).toBe(60);
     expect(entries.reduce((sum, [, count]) => sum + count, 0)).toBe(EXEMPT_TOTAL_BASELINE);
+  });
+
+  /**
+   * 指纹机制本身的两条:排序让它对书写顺序免疫,规范序列化让它对内容敏感。
+   * 断言的是「重排 == 原表」而不是「重排 == 常量」—— 后者在上面那条已经红过一次时
+   * 会跟着一起红,一个原因报两次,看的人得多花一次力气分辨。
+   */
+  it("规范序列化与书写顺序无关:重排冻结表不该红,换键才该红", () => {
+    const reordered = Object.fromEntries(Object.entries(FROZEN_2026_08_11).reverse());
+    expect(fingerprintOf(reordered)).toBe(fingerprintOf(FROZEN_2026_08_11));
+
+    // 判官 r2 的换键绕法,就地演一遍:60 行 / 合计 225 都不变,指纹必须变。
+    const swapped = { ...FROZEN_2026_08_11 };
+    delete (swapped as Record<string, number>)["components/otto/OttoDiscover.tsx"];
+    swapped["components/crm/contacts-page.tsx"] = 1;
+    expect(Object.keys(swapped).length).toBe(60);
+    expect(Object.values(swapped).reduce((a, b) => a + b, 0)).toBe(EXEMPT_TOTAL_BASELINE);
+    expect(fingerprintOf(swapped)).not.toBe(FROZEN_FINGERPRINT);
   });
 
   it("扫描器仍然在扫整棵界面树", () => {
