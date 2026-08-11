@@ -6,6 +6,7 @@ import type {
   ScheduleDraftInput,
   SegmentRuleGroup,
 } from "@fikirtive/core";
+import type { GenFailureReason } from "@fikirtive/core/gen-failure";
 
 /** Patch for the editScheduledPost skill (debt-72). Structural re-declaration mirroring the web
  *  UpdateScheduledPostPatch — the web type (apps/web/lib/schedule-actions.ts) must NOT be imported
@@ -923,6 +924,13 @@ export type CanvasNodeView = {
   prompt: string | null;
   generationId: string | null;
   status: string;
+  /** WHY this card rested, as a name from the closed `GenFailureReason` set (#827).
+   *
+   *  Required, like `status`, because it is part of the card's state rather than a caption: a
+   *  merchant who asks Otto "why did that one fail?" a day later must get the SAME sentence the
+   *  card shows, and Otto looks it up through the one whitelist in core. Almost every card is
+   *  `unexplained`, which is the honest name for "this ending has no reason we can prove". */
+  failureReason: GenFailureReason;
   /** Which paid press produced this card, and where in it this card sits (#603 T4). */
   genJobId: string | null;
   batchIndex: number | null;

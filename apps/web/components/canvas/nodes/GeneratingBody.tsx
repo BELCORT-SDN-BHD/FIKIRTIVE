@@ -4,6 +4,8 @@
 // ("billed only when it finishes" — no fabricated credit number). The legacy
 // skin keeps the plain centered text so the old look is untouched (strangler).
 import type { TerminalCardStatus } from "@/lib/canvas-card-status";
+import { terminalCardCopy } from "@/lib/canvas-terminal-copy";
+import type { GenFailureReason } from "@fikirtive/core/gen-failure";
 function OttoCloud() {
   return (
     <svg width="30" height="27" viewBox="0 0 120 110" aria-hidden>
@@ -45,47 +47,30 @@ function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
   );
 }
 
-/** ONE FACE PER RESTING STATE — a card that has stopped being made says which ending it reached.
+/** ONE FACE PER RESTING STATE — a card that has stopped being made says which ending it reached,
+ *  and (since #827) WHY, when its own state records a reason.
  *
- *  "failed" is a hard fail (the worker FAILED + refunded the job, so it's safe to say "not
- *  charged"); "cancelled" is the merchant's own decision, not a failure, so it says nothing about
- *  money it cannot prove and offers nothing to retry; "timeout" is soft — the client stopped
- *  polling but the worker may still settle it, so it invites a check-back rather than claiming
- *  failure; "missing" means the job finished but the preview URL could not be resolved, so do not
- *  claim a refund; "unknown" is the fallback (#602 T3) — the card has no account of itself, and
- *  saying so with a way to look again beats a spinner that will never stop (F21). Without this
- *  whole family, a card that stopped showed GeneratingBody for ever. */
-export function FailedBody({ status, onRefresh }: { status: TerminalCardStatus; onRefresh?: () => void }) {
-  const timeout = status === "timeout";
-  const missing = status === "missing";
-  const cancelled = status === "cancelled";
-  const unknown = status === "unknown";
+ *  The words themselves live in `@/lib/canvas-terminal-copy`: a `Record` over the terminal faces,
+ *  so a new resting face cannot ship without copy, and a plain module so the board's durable read
+ *  and this component can be proved against the SAME function. Without this whole family, a card
+ *  that stopped showed GeneratingBody for ever (F21).
+ *
+ *  `reason` is REQUIRED, not optional. An optional explanation is one every caller may forget and
+ *  no compiler will ask about, which is the shape of the bug #827 fixed one layer up; every card
+ *  has a reason, and for almost all of them it is `unexplained` — the honest name that reads
+ *  exactly as this card always has. */
+export function FailedBody({
+  status,
+  reason,
+  onRefresh,
+}: { status: TerminalCardStatus; reason: GenFailureReason; onRefresh?: () => void }) {
+  const copy = terminalCardCopy(status, reason);
   return (
     <div style={{ display: "grid", placeItems: "center", height: "100%", padding: 12, textAlign: "center", gap: 6 }}>
-      <div style={{ fontSize: 20, opacity: 0.5 }} aria-hidden>{timeout ? "⏳" : cancelled ? "⃠" : unknown ? "？" : "⚠️"}</div>
-      <div style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.8 }}>
-        {timeout
-          ? "Still working…"
-          : missing
-            ? "Preview missing"
-            : cancelled
-              ? "Cancelled"
-              : unknown
-                ? "Status unknown"
-                : "That didn't finish"}
-      </div>
-      <div style={{ fontSize: 11.5, opacity: 0.55, lineHeight: 1.4 }}>
-        {timeout
-          ? "This is taking longer than usual — check back in a moment."
-          : missing
-            ? "The job finished, but this card could not load the media."
-            : cancelled
-              ? "This generation was cancelled."
-              : unknown
-                ? "We can't tell what happened to this one. Check again to reload it."
-                : "You weren't charged. Try again."}
-      </div>
-      {(timeout || missing || unknown) && <RefreshButton onRefresh={onRefresh} />}
+      <div style={{ fontSize: 20, opacity: 0.5 }} aria-hidden>{copy.icon}</div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.8 }}>{copy.title}</div>
+      <div style={{ fontSize: 11.5, opacity: 0.55, lineHeight: 1.4 }}>{copy.detail}</div>
+      {copy.offersRefresh && <RefreshButton onRefresh={onRefresh} />}
     </div>
   );
 }

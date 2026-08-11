@@ -12,6 +12,8 @@
  *   ③ 单向前进 —— 写入者各自的 WHERE 谓词必须是这条序关系的子集,规则才是**库里**的规则,
  *      而不是注释里的规则。
  *   ④ 一份词表 —— 行的词表和迁移里的取值检查逐字对齐,面的词表和渲染分支逐条对齐。
+ *   ⑤ 停下的卡还带着**为什么**(#827)—— 原因是卡自己状态的一部分,取自任务行,所以刷新、
+ *      换设备都还在;而且只有 `failed` 那张脸能带原因,别的脸带上就是在说没发生过的事。
  *
  * 全程零花费:纯函数 + 两个卡片组件,没有任何服务端动作被调用。
  */
@@ -47,12 +49,14 @@ const {
   OVERWRITABLE_CARD_STATUSES,
   TERMINAL_CARD_STATUSES,
   canvasCardFace,
+  canvasCardState,
   canvasCardRowAdvances,
   isCanvasCardFace,
   isCanvasCardRowStatus,
   isInFlightCardFace,
   isTerminalCardStatus,
 } = await import("@/lib/canvas-card-status");
+const { REFERENCE_IMAGE_PERSON_REJECTED } = await import("@fikirtive/core/gen-failure");
 const { ImageNode } = await import("@/components/canvas/nodes/ImageNode");
 const { VideoNode } = await import("@/components/canvas/nodes/VideoNode");
 const { isInFlightPaidGen } = await import("@/components/canvas/useCanvasGen");
@@ -320,5 +324,66 @@ describe("④ 一份词表:代码、迁移与渲染分支逐字对齐", () => {
 
   it("停下的那几张脸就是 TERMINAL_CARD_STATUSES,unknown 也在里面", () => {
     expect([...TERMINAL_CARD_STATUSES]).toEqual(["failed", "cancelled", "timeout", "missing", "unknown"]);
+  });
+});
+
+describe("⑤ 停下的卡还带着「为什么」(#827)", () => {
+  // #765 认出的那句拒绝,是 worker 落在 GenJob.error 上的原话。测试比的是常量本身,不是
+  // 抄一遍的字面量 —— 抄本会漂,而商家读到的是代码里的那一份。
+  const REFUSAL = REFERENCE_IMAGE_PERSON_REJECTED;
+
+  it("失败的卡把任务行上的原因收进自己的状态", () => {
+    expect(canvasCardState({ rowStatus: "pending", jobStatus: "FAILED", jobError: REFUSAL }))
+      .toEqual({ face: "failed", failureReason: "referenceImagePerson" });
+  });
+
+  it("每一张卡都有一个原因,普通失败的那个原因叫「说不出」", () => {
+    // 不是缺字段,是集合里的一个成员 —— 所以没有哪个读者需要一条「万一没有呢」的分支。
+    expect(canvasCardState({ rowStatus: "pending", jobStatus: "FAILED", jobError: "provider said no" }))
+      .toEqual({ face: "failed", failureReason: "unexplained" });
+    // 历史卡:#827 之前结算的任务,error 栏是运维串或者干脆是空的。
+    expect(canvasCardState({ rowStatus: "failed" }))
+      .toEqual({ face: "failed", failureReason: "unexplained" });
+    expect(canvasCardState({ rowStatus: "pending", jobStatus: "FAILED", jobError: null }))
+      .toEqual({ face: "failed", failureReason: "unexplained" });
+  });
+
+  it("只有 failed 那张脸能带原因 —— 别的脸带上就是在说没发生过的事", () => {
+    // 就算把同一句话塞给每一种输入:取消是商家自己的决定,timeout 根本还没结束,missing 是
+    // 活儿在但这张卡放不出来,unknown 是「说不清这张卡怎么了」。它们都不是这次拒绝。
+    for (const [input, face] of [
+      [{ rowStatus: "pending", jobStatus: "CANCELLED" }, "cancelled"],
+      [{ rowStatus: "timeout" }, "timeout"],
+      [{ rowStatus: "done", jobStatus: "DONE", generationId: "gen_1" }, "missing"],
+      [{ rowStatus: "a-word-nobody-planned-for" }, "unknown"],
+      [{ rowStatus: "pending", jobStatus: "GENERATING" }, "generating"],
+      [{ rowStatus: "pending", jobStatus: "QUEUED" }, "queued"],
+      [{ rowStatus: "pending", jobStatus: "GENERATING", url: "https://cdn/a.png" }, "done"],
+    ] as const) {
+      expect(canvasCardState({ ...input, jobError: REFUSAL }), face)
+        .toEqual({ face, failureReason: "unexplained" });
+    }
+  });
+
+  it("脸的推导一个字没动:两个函数对同一组输入永远同一张脸", () => {
+    for (const rowStatus of ROW_INPUTS) {
+      for (const jobStatus of JOB_STATUSES) {
+        for (const url of [null, "https://cdn.example/a.png"]) {
+          const input = { rowStatus, jobStatus, url };
+          expect(canvasCardState({ ...input, jobError: REFUSAL }).face).toBe(canvasCardFace(input));
+        }
+      }
+    }
+  });
+
+  it("运维串永远不会变成商家看到的原因(GenJob.error 同时是运维栏)", () => {
+    for (const ops of [
+      "conditioning refs unreachable (0/1) — refusing to spend",
+      "stale GENERATING reaped — worker hung or crashed; refunded",
+      `${REFUSAL} …and here is the raw engine reply`,
+    ]) {
+      expect(canvasCardState({ rowStatus: "pending", jobStatus: "FAILED", jobError: ops }).failureReason)
+        .toBe("unexplained");
+    }
   });
 });

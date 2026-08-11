@@ -12,7 +12,7 @@ import { canvasJobPlacementLockKey } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
 import { censusCanvasJobCards, displayGenerationIdForCard, planPendingJobNodes } from "./otto-canvas-bridge-core";
-import { canvasCardFace } from "./canvas-card-status";
+import { canvasCardState } from "./canvas-card-status";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -240,7 +240,9 @@ export async function syncOttoCanvasNodes(
   const jobs = linkedJobIds.length
     ? await prisma.genJob.findMany({
       where: { id: { in: linkedJobIds }, ownerId, projectId },
-      select: { id: true, generationIds: true, status: true, idempotencyKey: true },
+      // `error` for the same reason the other board read takes it (#827): it is the durable
+      // record of WHY a refusal happened. Handed to the core whitelist, never forwarded as text.
+      select: { id: true, generationIds: true, status: true, idempotencyKey: true, error: true },
     })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
@@ -275,11 +277,18 @@ export async function syncOttoCanvasNodes(
     });
     const thumb = gid ? thumbs[gid] : undefined;
     const url = thumb?.src ?? null;
-    const status = canvasCardFace({ rowStatus: n.status, jobStatus: job?.status, generationId: gid, url });
+    const { face: status, failureReason } = canvasCardState({
+      rowStatus: n.status,
+      jobStatus: job?.status,
+      jobError: job?.error,
+      generationId: gid,
+      url,
+    });
     return {
       ...n,
       generationId: gid,
       status,
+      failureReason,
       url,
       mediaWidth: thumb?.width ?? null,
       mediaHeight: thumb?.height ?? null,
