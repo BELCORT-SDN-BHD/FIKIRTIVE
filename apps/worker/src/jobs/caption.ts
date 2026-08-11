@@ -34,17 +34,51 @@ import {
 } from "@fikirtive/core";
 import { probeFile } from "./ingest.js";
 
-const WHISPER_MODEL_PATH = process.env.WHISPER_MODEL_PATH ?? "/opt/whisper/models/ggml-base.en.bin";
-const WHISPER_MODEL_NAME = "base.en"; // cache key dimension
+/**
+ * The transcription model baked into the worker image — and ALSO the Transcript cache-key
+ * dimension (@@unique([contentHash, model])). ONE name, because #787 was caused by two:
+ * the worker said "base.en" and apps/web's getTranscript said "base.en" independently.
+ *
+ * It MUST be a multilingual build (never a `.en` one) and it MUST stay in step with the
+ * Dockerfile's WHISPER_MODEL arg — caption.test.ts fails on either, so the drift that
+ * produced #787 cannot come back silently.
+ *
+ * Changing this name is free and safe: cached transcripts are keyed by (contentHash, model),
+ * so rows written by an older model are simply not read, never mis-read. Nothing to migrate.
+ */
+export const WHISPER_MODEL_NAME = "small";
+const WHISPER_MODEL_PATH =
+  process.env.WHISPER_MODEL_PATH ?? `/opt/whisper/models/ggml-${WHISPER_MODEL_NAME}.bin`;
+
+/**
+ * Language policy (#787): DETECT, never pin, never translate.
+ *
+ * The Malaysian merchant we build for records in Malay, English, Mandarin — often mixed in
+ * one sentence. `auto` lets the model decide from the audio; pinning any single language
+ * would just move the breakage from one group of merchants to another (which is exactly
+ * what `-l en` did: it silently forced every non-English clip through an English decoder).
+ *
+ * We deliberately do NOT pass `--translate`: that flag rewrites the audio into English, and
+ * a merchant's Malay captions must stay Malay — those are their own words on their own video.
+ *
+ * Known limit, stated plainly rather than hidden: the model detects ONE language per clip
+ * (from the opening audio) and transcribes the whole clip as that language. A clip that
+ * switches language halfway is transcribed in the dominant one.
+ */
+const WHISPER_LANGUAGE = "auto";
+
 const WHISPER_THREADS = Math.max(1, Math.min(8, Number(process.env.WHISPER_THREADS ?? 4)));
 const WHISPER_MAX_SECONDS = Math.max(1, Number(process.env.WHISPER_MAX_SECONDS ?? 600));
 const WHISPER_TIMEOUT_MS = 1000 * 60 * 10; // = render's ffmpeg magnitude; < expire (15m)
 const EXTRACT_TIMEOUT_MS = 60_000; // like probeFile
 const STALE_MS = 1000 * 60 * 13; // > whisper timeout, < expire (same invariant as render)
 
-/** whisper-cli -oj emits { transcription: [{ offsets: { from, to }, text }] }
- *  with offsets in MILLISECONDS. */
+/** whisper-cli -oj emits { result: { language }, transcription: [{ offsets: { from, to }, text }] }
+ *  with offsets in MILLISECONDS. `result.language` is the language the run actually used —
+ *  under `-l auto` that is the DETECTED one, which is the only place we can observe the
+ *  detection outcome (it is logged, not persisted: no schema change, no merchant surface). */
 interface WhisperJson {
+  result?: { language?: string };
   transcription?: Array<{ offsets?: { from?: number; to?: number }; text?: string }>;
 }
 
@@ -140,7 +174,7 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
         [
           "-m", WHISPER_MODEL_PATH,
           "-f", wav,
-          "-l", "en",
+          "-l", WHISPER_LANGUAGE,
           "-t", String(WHISPER_THREADS),
           "-d", String(Math.round(maxS * 1000)),
           "-ml", "1",
@@ -183,7 +217,12 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
         where: { id: job.id, status: "RENDERING" },
         data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" },
       });
-      console.log(`[caption] ${job.id}: DONE → ${cues.length} cues cached (${job.contentHash.slice(0, 12)}…)`);
+      // the detected language is operational evidence for #787 ("did the Malay clip actually
+      // come back as Malay?") — a log line only: nothing is persisted and nothing reaches a merchant.
+      const detected = raw.result?.language ?? "unknown";
+      console.log(
+        `[caption] ${job.id}: DONE → ${cues.length} cues cached, language=${detected} (${job.contentHash.slice(0, 12)}…)`,
+      );
     } catch (err) {
       // PERSISTED error must never carry the whisper/ffmpeg argv (it contains the
       // presigned source URL + signature) — it surfaces verbatim in the admin UI.

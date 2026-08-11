@@ -49,6 +49,16 @@ const PROVIDER_NAME_RE = new RegExp(
     `\\b(?:seedance|seedream|byteplus|bytedance|jimeng)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
     `\\bfal(?:provider|client|error|[./:_-][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b`,
     `即梦`,
+    // #787 — the CAPTION engine and its model files. A merchant buys "Subtitles", not an
+    // engine name, so these belong here with the rest.
+    //
+    // Deliberately NARROWER than the names above, and the narrowness is the point: "whisper"
+    // is an ordinary English word a merchant may well be selling ("whisper-quiet fan"), so
+    // only the shapes that are unambiguously the software are matched — never bare "whisper",
+    // and no open-ended tail that would swallow "whisper-quiet". "ggml" is not a word in any
+    // language, so it matches bare and with its model-file tail ("ggml-small.bin").
+    `\\bwhisper(?:[-.]?cpp|-cli)\\b`,
+    `\\bggml(?:[-_.][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b`,
     `\\b(?:claude|anthropic)(?:(?:as|via)?(?:api|sdk|model|provider|error|version)\\b|(?:[-_./0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})\\b)`,
     `\\b(?:claude|anthropic)\\b(?=(?:[ \\t]{1,${MAX_GAP}}[a-z0-9'-]{1,${MAX_WORD}})?[ \\t]{1,${MAX_GAP}}(?:api|sdk|model|provider|error|version)\\b)`,
     `(\\b(?:api|sdk|model|provider|error|version)\\b(?:[ \\t]{1,${MAX_GAP}}[a-z0-9'-]{1,${MAX_WORD}})?[ \\t]{1,${MAX_GAP}})(?:claude|anthropic)\\b`,
@@ -76,6 +86,8 @@ const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "giu");
  *
  *   names        "bytedance"(9) + "[./:_-]x" + tail(20) = 22 + version/fast(4+4+15+4+4 = 31) → 62
  *   fal          "fal"(3) + "[./:_-]" + tail(20) = 24, + `\b`                                → 25
+ *   whisper.cpp  "whisper"(7) + "-cpp"(4) = 11, + `\b`                                       → 12
+ *   ggml         "ggml"(4) + "[-_.]x" + tail(20) = 26, + `\b`                                → 27
  *   claude-glued "anthropic"(9) + "[-_./0-9]" + tail(20) = 30, + `\b`                        → 31
  *   claude ahead "anthropic"(9) + gap(4) + word(20) + gap(4) + "provider"(8), + `\b`         → 46
  *   claude after "provider"(8) + gap(4) + word(20) + gap(4) + "anthropic"(9), + `\b`         → 46
