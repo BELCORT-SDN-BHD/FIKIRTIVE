@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { navLinkByKey } from "@fikirtive/core/navigation";
 import { SupportExit } from "@/components/exits/Exits";
-import { CHANNEL_CONNECT_UNAVAILABLE_NOTE } from "@/lib/crm-channel-connection";
+import { sendStatePresentation } from "@/components/crm/reports/report-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +42,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
  * 工作区的状态。这些卡点一处一处接通时,`crm-honest-preview.test.ts` 会红着提醒来改这一页。
  */
 
+/**
+ * 商家看到的「模拟发送」四个字 —— 从**展示层**取,不自己造(r3 判词 P2-3)。
+ *
+ * 这一句原来写着 `simulated-sent`:那是内部列 `sendState` 的值换了个连字符,商家从来不该
+ * 读到它。产品早就有这个状态的译法(投递报告页的 `sendStatePresentation`),所以这里读它 ——
+ * 译法哪天改了,这一页跟着改,不会剩下一句只有我们看得懂的话。
+ */
+const SIMULATED_ATTEMPT_LABEL = sendStatePresentation("simulated_sent").label;
+
 /** 一条真能点开的去处。`works` 与 `blocked` 分开写 —— 只写一句,总会有一半被吞掉。
  *  两张表都是 export 的:`crm-honest-preview.test.ts` 逐条把 `blocked` 与实现里的证据
  *  绑在一起(实现变了围栏就红,文案跟着改),用正则去源码里刮字是刮不准的。 */
@@ -70,7 +79,7 @@ export const WORKS_TODAY: readonly PreviewEntry[] = [
     href: "/crm/segments",
     label: "Segments",
     works:
-      "Group customers by lifetime spend, by channel, and by whether they can be contacted at all. The group is real and it counts real people.",
+      "Group customers by lifetime spend, by channel, and by whether they are a known opt-out. The group is real and it counts real people.",
     blocked:
       "Two of the five facts are not connected yet — last order recency and tags — so a rule using either one matches nobody rather than guessing.",
     icon: Sparkles,
@@ -100,8 +109,7 @@ export const IN_PREVIEW: readonly PreviewEntry[] = [
     label: "Broadcasts",
     works:
       "Build a broadcast, freeze exactly who is in it, and run it as a simulation that re-checks every contact's eligibility and records who would be skipped and why.",
-    blocked:
-      "The real send is refused at all times, whatever the broadcast's state. A run only ever marks contacts as simulated-sent — no message leaves Fikirtive.",
+    blocked: `The real send is refused at all times, whatever the broadcast's state. A run only ever records a ${SIMULATED_ATTEMPT_LABEL.toLowerCase()} against a contact — no message leaves Fikirtive.`,
     icon: Send,
   },
   {
@@ -170,9 +178,9 @@ export function CustomersPreviewPage() {
             {door.preview}
           </p>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            {CHANNEL_CONNECT_UNAVAILABLE_NOTE} Posting to Instagram and Facebook is a different
-            connection, and that one does work. A messaging channel on its own would still not be
-            enough here: each page below stops in its own place, and each one says where.
+            Posting to Instagram and Facebook is a different connection, and that one does work. A
+            messaging channel on its own would still not be enough here: each page below stops in
+            its own place, and each one says where.
           </p>
         </header>
 

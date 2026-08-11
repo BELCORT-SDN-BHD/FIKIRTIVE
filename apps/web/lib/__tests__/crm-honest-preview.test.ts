@@ -22,13 +22,20 @@
  * 零后端、零生成:静态渲染 + 源码读取 + jsdom 里的真组件事件。
  */
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { everyNavDestination, merchantNavMap, navLinkByKey } from "@fikirtive/core/navigation";
-import { MESSAGING_STATUS_ASSISTANT, MESSAGING_STATUS_MERCHANT } from "@fikirtive/core/messaging-status";
+import {
+  MESSAGING_STATUS_ASSISTANT,
+  MESSAGING_STATUS_CANNOT_CONNECT,
+  MESSAGING_STATUS_MERCHANT,
+} from "@fikirtive/core/messaging-status";
 import { MerchantShellContent } from "@/components/global-navigation";
 import CustomersPreviewPage, { IN_PREVIEW, WORKS_TODAY } from "@/components/crm/customers-preview-page";
 
@@ -52,6 +59,7 @@ vi.mock("@/lib/crm-view-data", () => ({
 }));
 
 import ContactsPage from "@/components/crm/contacts-page";
+import { sendStatePresentation } from "@/components/crm/reports/report-format";
 import SegmentsPage from "@/components/crm/segments-page";
 import { createContact } from "@/lib/crm-actions";
 
@@ -85,6 +93,11 @@ function entry(href: string) {
 
 function source(relativeToWebRoot: string): string {
   return readFileSync(path.join(WEB_ROOT, relativeToWebRoot), "utf8");
+}
+
+/** 实现不一定住在 apps/web 里 —— Routine 的写入点在 packages/db。 */
+function repoSource(relativeToRepoRoot: string): string {
+  return readFileSync(path.join(REPO_ROOT, relativeToRepoRoot), "utf8");
 }
 
 /** 取一个具名函数的函数体 —— 断言「这一支永远失败」时必须只看这一支。 */
@@ -158,9 +171,202 @@ describe("导轨上只剩一格,而且它先说自己是预览", () => {
   it("站在任何一个 CRM 表面上,亮的都是这一格", () => {
     for (const surface of ["/crm", ...FOLDED_CRM_SURFACES]) {
       expect(renderShell(surface), surface).toMatch(
-        new RegExp(`aria-current="page" title="${CUSTOMERS.label}"`),
+        // r3:预览门的 title 现在带着那句实话(见「各断点都诚实」那一组),所以按前缀匹配。
+        new RegExp(`aria-current="page" title="${CUSTOMERS.label} — Preview\\.`),
       );
     }
+  });
+});
+
+/* ── 各断点都诚实:徽章的可见性由**真编译出来的 CSS** 说了算(r3 判词 P1-1)────────── */
+
+/**
+ * r2 的围栏只断言「服务端 HTML 里有那枚徽章」。徽章带着 `lg:hidden xl:inline-flex`,标签带着
+ * `lg:hidden xl:inline` —— 于是 1024–1279(最常见的笔电宽度)那一档,导轨只剩一个没有任何
+ * 说明的图标,而围栏照绿。**HTML 里存在 ≠ 屏幕上看得见**,这一组补的就是这半句。
+ *
+ * 判定不靠我重写一份 Tailwind 语义,而是把这些类名喂给**产品自己那条 Tailwind v4 管线**
+ * (@tailwindcss/node,`next build` 用的同一个编译器,做法与 design-tokens.test.ts 一致),
+ * 再从编译出来的 CSS 里读每个断点下的 `display`。
+ */
+const RAIL_TIERS = [
+  { width: 375, what: "手机抽屉" },
+  { width: 800, what: "平板" },
+  { width: 1100, what: "笔电(图标档,判词点名的那一档)" },
+  { width: 1440, what: "宽屏" },
+] as const;
+
+/**
+ * 一个工具类生成的那条 `display` 规则(以及它属于哪个断点)。
+ *
+ * Tailwind v4 把断点写成**嵌套**在类规则里的 `@media`:
+ *   `.lg\:block { @media (width >= 64rem) { display: block } }`
+ * 所以判定是「找到这个类的规则块,再看 display 落在块内哪一层」,不是去切顶层 @media。
+ * 不生成 display 的类(例如 `shrink-0`)返回 null。
+ */
+function displayRuleOf(css: string, token: string): { minWidth: number; display: string } | null {
+  const selector = `.${token.replace(/([:.[\]/])/g, "\\$1")}`;
+  const at = css.indexOf(`${selector} {`);
+  if (at < 0) return null;
+
+  const open = css.indexOf("{", at);
+  let depth = 1;
+  let i = open + 1;
+  while (i < css.length && depth > 0) {
+    if (css[i] === "{") depth += 1;
+    else if (css[i] === "}") depth -= 1;
+    i += 1;
+  }
+  const body = css.slice(open + 1, i - 1);
+
+  const nested = /@media\s*\(([^)]*)\)\s*\{([\s\S]*?)\}/.exec(body);
+  if (nested) {
+    const display = /display:\s*([^;}]+)/.exec(nested[2]);
+    if (!display) return null;
+    const rem = /width\s*>=\s*([\d.]+)rem/.exec(nested[1]);
+    const px = /width\s*>=\s*([\d.]+)px/.exec(nested[1]);
+    return {
+      minWidth: rem ? Number(rem[1]) * 16 : px ? Number(px[1]) : 0,
+      display: display[1].trim(),
+    };
+  }
+
+  const display = /display:\s*([^;}]+)/.exec(body);
+  return display ? { minWidth: 0, display: display[1].trim() } : null;
+}
+
+/** 这串 class 在 `width` 这个宽度下,元素的 display 是什么 —— 断点最大的那条赢。 */
+function displayAt(css: string, className: string, width: number): string {
+  const applicable = className
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => displayRuleOf(css, token))
+    .filter((rule): rule is { minWidth: number; display: string } => rule !== null)
+    .filter((rule) => rule.minWidth <= width)
+    .sort((left, right) => left.minWidth - right.minWidth);
+  return applicable.at(-1)?.display ?? "inline";
+}
+
+function visibleAt(css: string, className: string, width: number): boolean {
+  return displayAt(css, className, width) !== "none";
+}
+
+/** 产品自己那条 Tailwind v4 管线(与 design-tokens.test.ts 同一条路)。 */
+async function compileUtilities(candidates: string[]): Promise<string> {
+  const require_ = createRequire(path.join(WEB_ROOT, "package.json"));
+  const requireFromPostcss = createRequire(require_.resolve("@tailwindcss/postcss"));
+  const { compile } = await import(
+    pathToFileURL(requireFromPostcss.resolve("@tailwindcss/node")).href
+  );
+  const entry = path.join(WEB_ROOT, "app/globals.css");
+  const compiler = await compile(await readFile(entry, "utf8"), {
+    base: path.dirname(entry),
+    onDependency: () => {},
+  });
+  return compiler.build(candidates);
+}
+
+/** 导轨里 Customers 那一行的 markup —— 只在这一行里找诚实标识,免得别处的字混进来。 */
+function customersRailRow(): string {
+  const markup = renderShell("/campaign");
+  const start = markup.indexOf(`href="${CUSTOMERS.href}"`);
+  expect(start, "导轨里找不到 Customers 那一行").toBeGreaterThan(-1);
+  const open = markup.lastIndexOf("<a", start);
+  const end = markup.indexOf("</a>", start);
+  return markup.slice(open, end);
+}
+
+describe("Preview 在每一个断点都说得出口(r3 判词 P1-1)", () => {
+  const row = customersRailRow();
+  // 徽章与那颗点:两块可见的诚实标识,各管一段宽度。
+  const badgeClass = /<span[^>]*class="([^"]*)"[^>]*>Preview</.exec(row)?.[1] ?? "";
+  const dotClass = /<span[^>]*data-preview-dot[^>]*class="([^"]*)"/.exec(row)
+    ?? /<span[^>]*class="([^"]*)"[^>]*data-preview-dot/.exec(row);
+  const previewDotClass = dotClass?.[1] ?? "";
+
+  let css = "";
+
+  beforeAll(async () => {
+    css = await compileUtilities([
+      ...badgeClass.split(/\s+/),
+      ...previewDotClass.split(/\s+/),
+      "bg-warning",
+      // 自检用的合成类,必须与产品用的是同一批语义。
+      "hidden",
+      "block",
+      "lg:block",
+      "xl:hidden",
+      "lg:hidden",
+      "xl:inline-flex",
+    ]);
+  }, 60_000);
+
+  it("两块标识都真的在这一行里(找不到就等于底下全是空转)", () => {
+    expect(badgeClass, "徽章不在 Customers 那一行").not.toBe("");
+    expect(previewDotClass, "图标档那颗点不在 Customers 那一行").not.toBe("");
+  });
+
+  // 自检①:判定器逮得住 —— 一个在该宽度下确实被藏起来的类,必须被判为不可见。
+  it("判定器逮得住:lg:hidden 在 1100 判不可见,xl:inline-flex 在 1440 判可见", () => {
+    expect(displayAt(css, "hidden lg:hidden xl:inline-flex", 1100)).toBe("none");
+    expect(visibleAt(css, "hidden lg:hidden xl:inline-flex", 1100)).toBe(false);
+    expect(visibleAt(css, "hidden lg:hidden xl:inline-flex", 1440)).toBe(true);
+  });
+
+  // 自检②:判定器不误伤 —— 只在中间那一档出现的写法,必须两头判不可见、中间判可见。
+  it("判定器不误伤:hidden lg:block xl:hidden 只在 1024–1279 可见", () => {
+    expect(visibleAt(css, "hidden lg:block xl:hidden", 800)).toBe(false);
+    expect(visibleAt(css, "hidden lg:block xl:hidden", 1100)).toBe(true);
+    expect(visibleAt(css, "hidden lg:block xl:hidden", 1440)).toBe(false);
+    // 没有任何 display 工具类时不许瞎判成隐藏。
+    expect(visibleAt(css, "shrink-0 rounded-full", 1100)).toBe(true);
+  });
+
+  it.each(RAIL_TIERS.map((tier) => [tier.width, tier.what] as const))(
+    "%dpx(%s):这一行至少有一块看得见的诚实标识",
+    (width) => {
+      const visible = [
+        ["badge", badgeClass],
+        ["dot", previewDotClass],
+      ].filter(([, className]) => visibleAt(css, className, width));
+
+      expect(
+        visible.map(([name]) => name),
+        `${width}px 下 Customers 只剩一个没有说明的入口 —— 「点开之前就诚实」在这一档失效了`,
+      ).not.toEqual([]);
+    },
+  );
+
+  it("而且它的名字在**每一个**宽度都带着实话(徽章有没有地方画都一样)", () => {
+    const row = customersRailRow();
+
+    // 无障碍名字与 tooltip 不吃宽度,所以它们是那句实话的底线。
+    expect(row).toContain(`aria-label="${CUSTOMERS.label} (preview)"`);
+    expect(row).toContain(`title="${CUSTOMERS.label} — Preview. ${PREVIEW_TRUTH}"`);
+  });
+
+  it("那颗点是真的画得出来的 —— 尺寸与颜色都编译得出规则", () => {
+    // display 判定说它「在这一档不是 none」,但一个拼错的颜色类会让它照样看不见。
+    // 所以再核一层:它的每个类都真的生成了声明,而且真有背景色。
+    const tokens = previewDotClass.split(/\s+/).filter(Boolean);
+    const dead = tokens.filter((token) => {
+      const selector = `.${token.replace(/([:.[\]/])/g, "\\$1")}`;
+      return !css.includes(`${selector} {`);
+    });
+    expect(dead, "这些类名没编译出任何规则(多半是拼错了)").toEqual([]);
+
+    const background = css.slice(css.indexOf(".bg-warning {"));
+    expect(background.slice(0, 120)).toMatch(/background-color:/);
+  });
+
+  it("能力齐的门不许被这套标识碰到", () => {
+    const markup = renderShell("/campaign");
+    const campaignAt = markup.indexOf('href="/campaign"');
+    const campaignRow = markup.slice(markup.lastIndexOf("<a", campaignAt), markup.indexOf("</a>", campaignAt));
+
+    expect(campaignRow).not.toContain("data-preview-dot");
+    expect(campaignRow).not.toContain("aria-label=");
+    expect(campaignRow).toContain('title="Campaign"');
   });
 });
 
@@ -207,10 +413,29 @@ describe("预览页先说实话,再指路", () => {
     expect(previewMarkup).toContain("mailto:");
   });
 
-  it("「连不上渠道」那一句用的是全仓唯一那份措辞,不是自己又写一遍", () => {
-    const page = source("components/crm/customers-preview-page.tsx");
-    expect(page).toContain("CHANNEL_CONNECT_UNAVAILABLE_NOTE");
-    expect(page).not.toContain("Messaging channels are not available to connect yet.");
+  it("「连不上渠道」这个产品事实全仓只有一个常量(r3 判词 P2-1)", () => {
+    // 这句话原来有两份:crm-channel-connection.ts 自己声明了一份,messaging-status.ts 又一份,
+    // 而预览页把两份**前后脚渲染了出来**。收编之后,声明只剩 core 里那一个。
+    expect(source("lib/crm-channel-connection.ts")).not.toMatch(
+      /=\s*"Messaging channels are not available to connect yet\."/,
+    );
+    expect(MESSAGING_STATUS_MERCHANT.startsWith(MESSAGING_STATUS_CANNOT_CONNECT)).toBe(true);
+
+    // 三个调用点都读 core 那一份,谁都不再手写这句话。
+    for (const file of [
+      "components/crm/inbox/inbox-list-page.tsx",
+      "components/crm/inbox/inbox-templates-page.tsx",
+      "lib/crm-channel-connection.ts",
+    ]) {
+      expect(source(file), file).toContain("MESSAGING_STATUS_CANNOT_CONNECT");
+      expect(source(file), `${file} 又手抄了一遍`).not.toContain(
+        `"${MESSAGING_STATUS_CANNOT_CONNECT}"`,
+      );
+    }
+
+    // 预览页不再把同一件事说两遍:那句话是 door.preview 的第一句,页面只渲染 door.preview。
+    const sentenceCount = previewMarkup.split(MESSAGING_STATUS_CANNOT_CONNECT).length - 1;
+    expect(sentenceCount, "同一个事实在预览页上出现了不止一次").toBe(1);
   });
 });
 
@@ -226,7 +451,16 @@ describe("预览页先说实话,再指路", () => {
 const CAPABILITY_TRUTH: readonly {
   readonly href: string;
   readonly what: string;
-  readonly evidence: readonly { readonly file: string; readonly probe: RegExp; readonly slice?: string }[];
+  readonly evidence: readonly {
+    /** 相对 apps/web;`repo: true` 时相对仓库根(实现不一定住在 web 里)。 */
+    readonly file: string;
+    readonly repo?: boolean;
+    readonly probe: RegExp;
+    /** 只看这个具名函数的函数体 —— 断言「这一支永远失败」时必须只看这一支。 */
+    readonly slice?: string;
+    /** 反向证据:出现即说明卡点没了(例如写得出 `simulated: false`)。 */
+    readonly absent?: RegExp;
+  }[];
   /** 页面那句 `blocked` 必须说到的事。 */
   readonly claim: RegExp;
 }[] = [
@@ -251,7 +485,7 @@ const CAPABILITY_TRUTH: readonly {
         slice: "submitTemplateReview",
         probe: /fail\("TEMPLATE_SUBMISSION_UNAVAILABLE"\)/,
       },
-      // 页面自己也这么说 —— 两处同一个事实,不许一处改了另一处不知道。
+      // 模板页自己也这么说 —— 同一个事实两处,不许一处改了另一处不知道。
       { file: "components/crm/inbox/inbox-templates-page.tsx", probe: /provider submission isn't available yet/ },
     ],
     claim: /approval is not built|stays? unapproved/i,
@@ -270,22 +504,42 @@ const CAPABILITY_TRUTH: readonly {
   },
   {
     href: "/crm/workflows",
-    what: "每一次 run 都是模拟,投递与花费断开",
+    what: "每一次 RoutineRun 都写 simulated: true,写不出别的",
     evidence: [
+      // r3 判词 P2-2:原来这一条只搜另一页的一句文案 —— 拿文案证明文案。真身在这里:
+      // 建 RoutineRun 的两个写入点(首建与补建)都把 simulated 钉死为 true。
+      { file: "packages/db/src/workflow-engine.ts", repo: true, probe: /simulated: true/ },
       {
-        file: "components/crm/workflows/workflow-list-page.tsx",
-        probe: /Provider delivery and spend are disconnected/,
+        file: "packages/db/src/workflow-engine.ts",
+        repo: true,
+        probe: /simulated: true[\s\S]*simulated: true/,
+      },
+      // 写得出 false 的那一天,这一条红 —— 那正是回来改这句文案的时刻。
+      {
+        file: "packages/db/src/workflow-engine.ts",
+        repo: true,
+        probe: /simulated/,
+        absent: /simulated:\s*false/,
       },
     ],
     claim: /every run is simulated/i,
   },
   {
     href: "/crm/reports",
-    what: "没有 provider 回执,三个结果永远 Unknown",
+    what: "报告服务把 delivered / read / failed 三个轴钉死成 unknown+null",
     evidence: [
+      // r3 判词 P2-2:同样不再拿另一页的句子当证据。真身是报告服务返回的形状。
       {
-        file: "components/crm/reports/broadcast-report-list-page.tsx",
-        probe: /Provider receipts are not connected/,
+        file: "lib/customer-broadcast-report-service.ts",
+        probe: /delivered: \{ status: "unknown", value: null \}/,
+      },
+      {
+        file: "lib/customer-broadcast-report-service.ts",
+        probe: /read: \{ status: "unknown", value: null \}/,
+      },
+      {
+        file: "lib/customer-broadcast-report-service.ts",
+        probe: /failed: \{ status: "unknown", value: null \}/,
       },
     ],
     claim: /no provider receipts are connected/i,
@@ -297,13 +551,18 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
     "%s 的说法与实现对得上",
     (href, row) => {
       for (const item of row.evidence) {
-        const text = item.slice
-          ? functionBody(source(item.file), item.slice)
-          : source(item.file);
+        const whole = item.repo ? repoSource(item.file) : source(item.file);
+        const text = item.slice ? functionBody(whole, item.slice) : whole;
         expect(
           text,
           `${href}:${row.what} —— 这条证据在 ${item.file} 里没了。卡点接通了就回预览页改那句话`,
         ).toMatch(item.probe);
+        if (item.absent) {
+          expect(
+            text,
+            `${href}:${item.file} 里出现了 ${item.absent} —— 卡点松了,预览页那句话必须跟着改`,
+          ).not.toMatch(item.absent);
+        }
       }
       expect(entry(href).blocked, `${href} 的文案没说到 ${row.what}`).toMatch(row.claim);
     },
@@ -329,6 +588,35 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
     expect(segments.blocked).toMatch(/last order recency/i);
     expect(segments.blocked).toMatch(/tags/i);
     expect(segments.works).not.toMatch(/last order|tag/i);
+  });
+
+  it("分群那条规则说的是「已知退订」,不是「联系得上」(r3 判词 P1-2)", () => {
+    // 规则的真身:phrase 只会说 known opt-out,页面上那两个选项也是。DND 开着的联系人**留在**
+    // 分群里(segment-actions 那条断言守着),所以「按能不能联系分群」是一句对外的假话。
+    const rules = source("lib/segment-actions.ts");
+    expect(rules).toContain("contact is not a known opt-out");
+    expect(rules).toContain("contact is a known opt-out");
+    expect(source("components/crm/segments-page.tsx")).toContain("Not known opt-out");
+
+    const segments = entry("/crm/segments");
+    expect(segments.works, "分群那句话没说到「已知退订」").toMatch(/known opt-out/i);
+    expect(
+      segments.works,
+      "分群那句话又把「已知退订」说成了「联系得上」—— DND 开着的联系人仍在群里",
+    ).not.toMatch(/contact(ed|able)|reach(able)?|whether they can be/i);
+  });
+
+  it("对外不许泄露内部状态名 —— 模拟发送用展示层那个词(r3 判词 P2-3)", () => {
+    // 内部列值是 `simulated_sent`;商家读到的词早就有了(投递报告页的展示层)。
+    expect(sendStatePresentation("simulated_sent").label).toBe("Simulated attempt");
+    expect(previewMarkup).toContain(sendStatePresentation("simulated_sent").label.toLowerCase());
+
+    // 内部值本身(以及它换个连字符的伪装)一律不许出现在商家面前。
+    for (const leaked of ["simulated_sent", "simulated-sent", "skipped_ineligible", "send_unavailable"]) {
+      expect(previewMarkup, `预览页把内部状态名 ${leaked} 端给了商家`).not.toContain(leaked);
+    }
+    // 预览页从展示层读,不自己写一份译法。
+    expect(source("components/crm/customers-preview-page.tsx")).toContain("sendStatePresentation");
   });
 
   it("联系人手动录入的号码确实是「未验证」,页面照实说", () => {

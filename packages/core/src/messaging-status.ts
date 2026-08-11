@@ -16,15 +16,29 @@
  */
 
 /**
+ * 「连不上渠道」这件事的**那一句**(r3 判词 P2-1)。
+ *
+ * 它原来住在 `apps/web/lib/crm-channel-connection.ts`,自称「产品里关于连接渠道的唯一一句」
+ * (#727 立的)。#792 r2 又在这里立了第二份权威,于是同一个产品事实有了两个常量,预览页还
+ * 一次把两句都渲染出来 —— 修漂移的那一单自己制造了一次漂移。r3 把它收编到这里:收件箱、
+ * 模板页与预览页读的都是这一个常量,`crm-channel-connection.ts` 里那份已删。
+ *
+ * 措辞一字未改(那三个面上的字不动),换的只是它住在哪。
+ */
+export const MESSAGING_STATUS_CANNOT_CONNECT = "Messaging channels are not available to connect yet.";
+
+/**
  * 商家读到的那一句(导轨 Preview 徽章的 title + Customers 预览页第一屏)。
  *
  * **两层实话**(r2 判词 P1):渠道连不上只是第一层。就算明天接上一个渠道也不够 —— 发送与
  * 接收本身在产品里也还没接线(收件箱的回复送出、模板送审、广播真发,三处都是永远失败的
  * chokepoint;广播与 Routine 的执行只有模拟分支)。只说渠道,等于把「还差很多」说成
  * 「只差一根线」。
+ *
+ * 第一句**拼**自上面那个常量,不是抄一遍 —— 两处措辞从此不可能各自漂移(r3 判词 P2-1)。
  */
 export const MESSAGING_STATUS_MERCHANT =
-  "No messaging channel can be connected yet, and the sending and receiving paths are not wired up either — nothing in here can send a message to a customer or receive one from them. Keeping customer records is the part that works today.";
+  `${MESSAGING_STATUS_CANNOT_CONNECT} The sending and receiving paths are not wired up either — nothing in here can send a message to a customer or receive one from them. Keeping customer records is the part that works today.`;
 
 /**
  * Otto 读到的那一句(系统指令 + `listChannelScopes` 技能描述)。

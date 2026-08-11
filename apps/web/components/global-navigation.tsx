@@ -273,7 +273,13 @@ function NavigationLink({
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
-      title={item.label}
+      // #792 r3 (判词 P1-1) — a preview row carries its truth in its NAME, at every width.
+      // The badge below can only be drawn where there is a label to qualify; between 1024 and
+      // 1279 the rail is 64px of bare icon, which is the most common laptop width and was
+      // exactly where "honest before the click" stopped being true. The accessible name and
+      // the tooltip do not depend on room, so they carry it everywhere.
+      title={item.preview ? `${item.label} — Preview. ${item.preview}` : item.label}
+      aria-label={item.preview ? `${item.label} (preview)` : undefined}
       className={cn(
         navigationLinkClass,
         nested && "pl-10",
@@ -282,15 +288,27 @@ function NavigationLink({
           : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
-      <Icon className="size-4 shrink-0" aria-hidden />
+      <span className="relative shrink-0">
+        <Icon className="size-4" aria-hidden />
+        {/* The icon-only tier's visible mark. A dot cannot spell "preview" on its own — the
+            accessible name above does that — but it stops the row from looking like every
+            finished section, which is what sends a merchant clicking. */}
+        {item.preview ? (
+          <span
+            aria-hidden
+            data-preview-dot
+            className="absolute -right-1 -top-1 hidden size-1.5 rounded-full bg-warning lg:block xl:hidden"
+          />
+        ) : null}
+      </span>
       <span className="lg:hidden xl:inline">{item.label}</span>
       {/* #792 — a destination whose ability is not finished yet says so BEFORE it is
-          clicked. The badge is drawn from the registry's `preview` field, so a rail row
-          can never claim more than the authority source does; the sentence itself is the
-          title, and the preview page repeats it in full. It follows the label's own
-          visibility rule — at the 1024–1279 icon-only rail there is no label to qualify. */}
+          clicked. The badge is drawn from the registry's `preview` field, so a rail row can
+          never claim more than the authority source does, and the preview page repeats the
+          sentence in full. It follows the label's own visibility rule; the dot above covers
+          the tier where there is no label. */}
       {item.preview ? (
-        <Badge variant="outline" className="ml-auto shrink-0 lg:hidden xl:inline-flex" title={item.preview}>
+        <Badge variant="outline" className="ml-auto shrink-0 lg:hidden xl:inline-flex">
           Preview
         </Badge>
       ) : null}
