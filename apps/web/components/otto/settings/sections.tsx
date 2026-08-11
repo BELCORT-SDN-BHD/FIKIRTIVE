@@ -216,7 +216,7 @@ export function buildSettingsSections(args: {
           // because nothing read the setting. The cap is now enforced inside reserveCredits,
           // so this says what the charging path actually does — per single action, because
           // that is what is enforced; it is not a monthly budget.
-          hint: "Otto stops any single action that would cost more than this — nothing is charged (0 = no cap)",
+          hint: "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)",
           value: settings.spendCapCredits,
           unit: "credits",
           onSave: num("spendCapCredits"),

@@ -166,7 +166,7 @@ describe("spend cap honesty (decision ①)", () => {
   it("tells the truth about what the cap does — a refusal, per action, nothing charged", () => {
     const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 500 }), "otto", "cap");
     expect(cap.hint).toBe(
-      "Otto stops any single action that would cost more than this — nothing is charged (0 = no cap)",
+      "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)",
     );
     expect(cap.hint).not.toMatch(/doesn't|budget target|yet/i);
   });

@@ -86,6 +86,12 @@ export type SpendCapReading =
  * rejects both (owner-settings-actions.ts), so reaching here means the blob was written by
  * something that is not this product, and the safe reading of a corrupted ceiling is "stop",
  * not "unlimited".
+ *
+ * A WRONG-TYPED value ("lots") is a different case and is deliberately not caught here: it
+ * never survives `mergeSettings`, so the Settings screen and this function both read that
+ * workspace as one that never set a cap. Reading it raw would fail closed on the charging
+ * path while the screen still said "No cap set" — one number, two answers, which is the class
+ * of bug #524 is closing rather than a stricter version of the fix.
  */
 export function readSpendCap(rawSettings: unknown): SpendCapReading {
   const cap = mergeSettings(rawSettings).spendCapCredits;

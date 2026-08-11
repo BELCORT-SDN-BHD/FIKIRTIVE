@@ -56,11 +56,17 @@ export class SpendCapBlocked extends Error {
    *  action is refused precisely because the guardrail's state is unknown. */
   readonly capInternal: number | null;
 
+  /** The `message` is deliberately merchant-safe and NUMBER-FREE. Not every surface maps this
+   *  error to copy of its own — the research worker persists a sanitized `e.message` straight
+   *  onto the card the merchant reads — and the two numbers here are INTERNAL credits, a unit
+   *  the product never shows anyone. The sentence WITH the numbers (in displayed credits) is
+   *  built at the web seam by `spendCapBlockedMessage`; both amounts stay on the error as
+   *  fields for it, and for logs. */
   constructor(detail: { requiredInternal: number; capInternal: number | null }) {
     super(
       detail.capInternal === null
-        ? "Spend cap could not be read."
-        : `Spend cap reached (${detail.requiredInternal} > ${detail.capInternal} internal credits).`,
+        ? "Paused — your spend cap couldn't be read, so nothing was charged."
+        : "Paused by your spend cap — raise it in Settings to run this.",
     );
     this.name = "SpendCapBlocked";
     this.requiredInternal = detail.requiredInternal;

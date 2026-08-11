@@ -398,6 +398,19 @@ describe("case 16 — spend cap is enforced by the charging path (#524)", () => 
     expect((error as SpendCapBlocked).capInternal).toBe(50);
   });
 
+  it("its raw message is merchant-safe: no internal-credit numbers leak to a surface that shows it", async () => {
+    // The research worker persists a sanitized `e.message` straight onto the card the merchant
+    // reads. Internal credits (1 = $0.01) are a unit this product never shows anyone, so the
+    // default sentence carries none — the numbered version is built where credits are formatted.
+    await setCap(ORG, 5);
+    const error = await prisma
+      .$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 110 }))
+      .catch((e: unknown) => e);
+
+    expect((error as Error).message).toBe("Paused by your spend cap — raise it in Settings to run this.");
+    expect((error as Error).message).not.toMatch(/\d/);
+  });
+
   it("is a refusal, not a shortfall — it is NOT an InsufficientCredits", async () => {
     await setCap(ORG, 5);
     const error = await prisma
@@ -492,8 +505,10 @@ describe("case 18 — spend cap under concurrency and across tenants (#524)", ()
   });
 
   it("with a cap in force, the never-double-spend guard still holds: 1 of 2 concurrent wins", async () => {
-    // 上限放行(70 < 100),余额只够一笔 —— 加了上限之后,原本那道「永不双扣」的
+    // 上限放行(70 ≤ 100),余额只够一笔(100)—— 加了上限之后,原本那道「永不双扣」的
     // 原子条件扣减必须一格不动。
+    await prisma.$executeRawUnsafe(`TRUNCATE "CreditLedger", "CreditAccount", "Organization" RESTART IDENTITY CASCADE`);
+    await seedOrg(ORG, 100);
     await setCap(ORG, 10); // 100 internal
     const results = await Promise.allSettled([
       prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "cap-mix-a", cost: 70 })),
@@ -506,7 +521,7 @@ describe("case 18 — spend cap under concurrency and across tenants (#524)", ()
     ).toBeInstanceOf(InsufficientCredits);
 
     const acc = await account(ORG);
-    expect(acc.balance).toBe(930);
+    expect(acc.balance).toBe(30);
     expect(acc.reserved).toBe(70);
     expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
   });
