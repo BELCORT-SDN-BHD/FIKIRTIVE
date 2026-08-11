@@ -21,11 +21,20 @@
  *   **不能**:两份实现共有的盲区。r4 的模板字符串顺序错就是这样 —— 两边一样乱序,
  *   差集当然是空的,而屏幕上的文案确实带着被禁的代词。共有盲区只能靠人造反例去钉,
  *   那些反例在测试文件的红→绿演练里。
+ *
+ * #834 r6 补充,同一条道理再走一遍:现役实现已从「一条线性流」换成
+ * **「分支组合的集合」**(三元两支、`&&` 的有/无两态各是一条呈现路径,围栏跑在每一条上)。
+ * 这个脚本比对的仍是**线性基线**,所以它量得出的只有「线性覆盖面没丢」;
+ * 变体模型多抓到的那一类(只在某一支上才相邻的两句)**它按定义就看不见** ——
+ * 那一类同样只能靠人造反例,判官 r5 的反例就在测试文件里。
+ * 换句话说:差集为 0 是**必要条件,不是充分条件**。两样都要。
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+
+import { copyPieces, copyVariants, VariantOverflow } from "./copy-stream-model.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 // typescript 是 apps/web 的依赖,不是根依赖 —— 从那里解析,脚本才能在仓库根目录跑。
@@ -148,35 +157,7 @@ function retiredCopyRuns(source) {
   return runs.map((run) => run.trim()).filter((run) => /[A-Za-z]/.test(run));
 }
 
-// ── 现役:AST(与测试文件里的那一份保持一致,含 r5 的模板顺序修正) ────────────
-function astCopyRuns(source, file) {
-  const parsed = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    false,
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
-  const runs = [];
-  const visit = (node) => {
-    if (ts.isJsxText(node)) {
-      runs.push(node.text);
-    } else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      runs.push(node.text);
-    } else if (ts.isTemplateExpression(node)) {
-      runs.push(node.head.text);
-      for (const span of node.templateSpans) {
-        visit(span.expression);
-        runs.push(span.literal.text);
-      }
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(parsed, visit);
-  return runs.map((run) => run.trim()).filter((run) => /[A-Za-z]/.test(run));
-}
-
+// ── 现役:AST 变体模型 —— 从共用模块导入,脚本不再自己抄一份 ──────────────────
 // ── 四条规则:与测试文件逐字一致 ──────────────────────────────────────────────
 const MENTIONS_OTTO = /\bOtto\b/;
 const GENDERED_PRONOUN = /\b(he|him|his|she|her|hers)\b/i;
@@ -205,7 +186,11 @@ function offencesIn(file, stream) {
 
 const retired = new Set();
 const current = new Set();
+const overCap = [];
+let totalChoices = 0;
+let maxChoices = { file: "(none)", count: 0 };
 const files = trackedSources();
+const startedAt = Date.now();
 
 for (const relative of files) {
   const source = readFileSync(path.join(REPO_ROOT, relative), "utf8");
@@ -216,13 +201,29 @@ for (const relative of files) {
     current.add(offence);
   }
   for (const offence of offencesIn(relative, retiredCopyRuns(stripped).join(" "))) retired.add(offence);
-  for (const offence of offencesIn(relative, astCopyRuns(source, relative).join(" "))) current.add(offence);
+  const seen = copyPieces(source, relative).choices;
+  totalChoices += seen;
+  if (seen > maxChoices.count) maxChoices = { file: relative, count: seen };
+  let variants;
+  try {
+    variants = copyVariants(source, relative);
+  } catch (error) {
+    if (!(error instanceof VariantOverflow)) throw error;
+    overCap.push(relative);
+    continue;
+  }
+  for (const variant of variants) {
+    for (const offence of offencesIn(relative, variant)) current.add(offence);
+  }
 }
 
 const missedByCurrent = [...retired].filter((offence) => !current.has(offence));
 const foundOnlyByCurrent = [...current].filter((offence) => !retired.has(offence));
 
 console.log(`files scanned:        ${files.length}`);
+console.log(`branching choices:    ${totalChoices} (most in one file: ${maxChoices.count} — ${maxChoices.file})`);
+console.log(`over the choice cap:  ${overCap.length}${overCap.length ? ` (${overCap.join(", ")})` : ""}`);
+console.log(`elapsed:              ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
 console.log(`retired scanner hits: ${retired.size}`);
 console.log(`AST scanner hits:     ${current.size}`);
 console.log(`missed by AST:        ${missedByCurrent.length}`);

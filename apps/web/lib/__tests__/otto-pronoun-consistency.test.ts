@@ -33,8 +33,10 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
+
+// 模型只有一份,测试与取证脚本共用 —— 见 scripts/tools/copy-stream-model.mjs 的抬头。
+import { copyVariants, VariantOverflow } from "../../../../scripts/tools/copy-stream-model.mjs";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
@@ -106,45 +108,35 @@ function sentencesOf(text: string): string[] {
  * 它证明不了两份实现**共有**的盲区(r5 的模板顺序错就是共有盲区),那种只能靠下面
  * 那些人造反例钉住 —— 两样都要,少一样都不够。
  */
-function scriptKindOf(file: string): ts.ScriptKind {
-  return file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-}
-
 /**
- * 按源顺序收「给人读的文本」。注释不是节点,天然不进流。
+ * #834 r6 —— **模型修正:呈现文本是分支组合的集合,不是一条线。**
  *
- * #834 r5 —— **模板字符串必须按源顺序交错着收**。
- * r4 先把 head 与全部 span 的静态片段一次推完,再靠 `forEachChild` 走到 `${…}` 里的
- * 表达式 —— 于是静态尾巴排到了插值前面。判官的反例:
- *   `aria-label={`Meet Otto. ${ready ? "It researches…" : "Nothing is sent."} Today.`}`
- * 收成 `["Meet Otto.", "Today.", "It researches…", "Nothing is sent."]`:句子顺序被打乱,
- * 「Otto 句后紧跟代词开头句」这条规则一次也命中不了,而屏幕上读到的正是被禁的那句。
- * 这条流的全部价值就是**顺序**,顺序错了等于没有这条流。
- * TemplateHead / TemplateSpan 本来就带着源顺序:head → (表达式, literal) → (表达式,
- * literal) …… 照着走一趟即可,走完直接返回,不再让 forEachChild 重走一遍。
+ * r5 之前把三元两支前后压进同一条线性流。判官的反例:
+ *   `` `Meet ${ready ? "Otto." : "the assistant."} It researches…` ``
+ * 流成「Meet Otto. the assistant. It researches…」—— `ready=true` 时屏幕上真正读到的
+ * 「Meet Otto.」「It researches…」这两句**在流里从不相邻**,规则零命中;而那正是被禁的形状。
+ * 这不是收流顺序错(r5 修的那个),是**模型错**:一个带条件的容器不产生一段文本,
+ * 它产生一组文本,每条对应一条真实的呈现路径。围栏必须跑在每一条上。
+ *
+ * 收流因此改成两层:
+ *   1. `copyPieces` 把源码收成**带分叉的片段序列**:
+ *        · 三元 `a ? X : Y` → 两支;
+ *        · `&&` / `||` → 「有 / 无」两态(**无**这一态很重要:条件不成立时,它前后两句
+ *          就贴在一起了 —— 判官这一族反例的另一半);
+ *        · 其余按源顺序拼接。
+ *      只在**呈现位置**(JSX 的 `{…}` 与模板的 `${…}`)分叉:类型守卫里的
+ *      `typeof x === "string" && …` 不是文案,分叉它只会把组合数炸掉。
+ *   2. `copyVariants` 把片段序列展开成一组变体流,围栏对**每条变体**各跑一遍。
+ *
+ * 组合上限 = 64(2^6),两处含义:
+ *   · 一个分叉自身嵌套超过 6 层条件 → **fail closed**,该容器整个判红并要求拆简或上板;
+ *     绝不静默放行(测试里有这一条的红→绿演练)。
+ *   · 一个容器里并列的条件多于 6 个时,按**连续 6 个一组的滑动窗口**展开,窗口外的条件
+ *     分别钉在各自的两支上跑两遍。规则一次只看「一句 + 它的前一句」,所以相邻条件的组合
+ *     才可能改变相邻关系;实测全仓最多 14 个并列条件(Otto 卡片那种一行一条件的详情卡),
+ *     全交叉是 2^14,而**窗口法把它压回线性且不留盲区**。若改成对这类容器直接判红,
+ *     main 上会有 9 处永久红——其中 5 处正是 Otto 卡片,等于把这道围栏最该看的地方蒙上。
  */
-function copyRuns(source: string, file = "planted.tsx"): string[] {
-  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, false, scriptKindOf(file));
-  const runs: string[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isJsxText(node)) {
-      runs.push(node.text);
-    } else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      runs.push(node.text);
-    } else if (ts.isTemplateExpression(node)) {
-      runs.push(node.head.text);
-      for (const span of node.templateSpans) {
-        visit(span.expression);
-        runs.push(span.literal.text);
-      }
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(parsed, visit);
-  return runs.map((run) => run.trim()).filter((run) => /[A-Za-z]/.test(run));
-}
-
 /**
  * 两条流:整份源码(剥掉整行注释)+ 只有文案、句界落在真句号上的那一条(#816)。
  *
@@ -152,8 +144,24 @@ function copyRuns(source: string, file = "planted.tsx"): string[] {
  * `stripComments` 是按行删的,删完可能不再是合法语法。让解析器读它本来的样子。
  */
 function streamsOf(source: string, file = "planted.tsx"): string[] {
-  return [stripComments(source), copyRuns(source, file).join(" ")];
+  return [stripComments(source), ...copyVariants(source, file)];
 }
+
+/**
+ * 组合超限的豁免板 —— 一处一行,带理由,不许目录级整批豁免。
+ *
+ * 上板的代价是明写的:这个文件只剩「整份源码」那一条流,**没有变体扫描**。
+ * 所以它必须是「条件多到穷举没有意义」且「对客文案风险低」的地方,不能是 Otto 的面孔。
+ */
+const VARIANT_CAP_EXEMPTIONS = [
+  {
+    file: "apps/web/components/admin/AdminDashboardV2.tsx",
+    why:
+      "Founder 后台总览:74 个条件渲染分支,全是运维读数(队列、额度、任务状态),没有一句是商家读到的 Otto 文案。" +
+      "穷举它的组合既算不动也没意义;它仍受整份源码那条流覆盖。",
+  },
+] as const;
+
 
 const MENTIONS_OTTO = /\bOtto\b/;
 const GENDERED_PRONOUN = /\b(he|him|his|she|her|hers)\b/i;
@@ -191,7 +199,23 @@ function scan(): Offence[] {
   for (const relative of trackedSources()) {
     const source = readFileSync(path.join(REPO_ROOT, relative), "utf8");
     // 文件名带进去:`.ts` 与 `.tsx` 的解析方式不同(JSX 只在 .tsx 里合法)。
-    for (const stream of streamsOf(source, relative)) {
+    let streams: string[];
+    try {
+      streams = streamsOf(source, relative);
+    } catch (error) {
+      if (!(error instanceof VariantOverflow)) throw error;
+      const exempt = VARIANT_CAP_EXEMPTIONS.some((entry) => entry.file === relative);
+      if (!exempt) {
+        // 不静默放行:算不动就说算不动,并且是一条红。
+        offences.set(`${relative} variant-cap`, {
+          file: relative,
+          rule: "condition combinations over the cap (split it, or put it on the board with a reason)",
+          sentence: error.message,
+        });
+      }
+      streams = [stripComments(source)];
+    }
+    for (const stream of streams) {
       // 两条流会重复命中同一句;去重后 offenders 才是「几处病」而不是「扫了几遍」。
       for (const offence of offencesIn(relative, stream)) {
         offences.set(`${offence.file} ${offence.rule} ${offence.sentence}`, offence);
@@ -223,6 +247,24 @@ describe("#682 ① no third-person pronoun stands in for Otto anywhere in produc
     // 本文件自身不在扫查范围内 —— 不是靠一条路径豁免,是靠**结构**:测试与快照整类排除。
     // 围栏必须写得出被禁的形状,所以这件事得是真的,不能只是写在注释里。
     expect(tracked.filter((relative) => /(__tests__|__snapshots__)/.test(relative))).toEqual([]);
+  });
+
+  it("keeps the over-the-cap board honest (a stale entry is a hole nobody sees)", () => {
+    for (const entry of VARIANT_CAP_EXEMPTIONS) {
+      const source = readFileSync(path.join(REPO_ROOT, entry.file), "utf8");
+      let threw = false;
+      try {
+        copyVariants(source, entry.file);
+      } catch (error) {
+        threw = error instanceof VariantOverflow;
+      }
+      expect(threw, `${entry.file} 已经不超限了 —— 把它从豁免板上删掉`).toBe(true);
+    }
+    // 板上只准放对客文案风险低的地方。Otto 的面孔一个都不许上板。
+    for (const entry of VARIANT_CAP_EXEMPTIONS) {
+      expect(entry.file, "Otto 的面孔不得上豁免板").not.toMatch(/components\/otto\//);
+      expect(entry.why.length, `${entry.file} 的理由太短`).toBeGreaterThan(40);
+    }
   });
 
   it("finds no banned pronoun shape", () => {
@@ -290,10 +332,11 @@ describe("#816 the sentence boundary survives a tag or a comma between the two s
   });
 
   it("reads JSX text and string literals in the order they appear, and nothing else", () => {
-    expect(copyRuns(`<p>Meet Otto.</p><Foo label="Say hello." />`)).toEqual(["Meet Otto.", "Say hello."]);
+    // 没有条件 = 只有一条呈现路径 = 一条变体。
+    expect(copyVariants(`<p>Meet Otto.</p><Foo label="Say hello." />`)).toEqual(["Meet Otto. Say hello."]);
     // `don&apos;t` 的撇号不得被当成一个字符串的开头。
-    expect(copyRuns(`<p>Otto doesn't ask.</p>`)).toEqual(["Otto doesn't ask."]);
-    expect(copyRuns(`const total = a > b ? 1 : 2;`)).toEqual([]);
+    expect(copyVariants(`<p>Otto doesn't ask.</p>`)).toEqual(["Otto doesn't ask."]);
+    expect(copyVariants(`const total = a > b ? 1 : 2;`)).toEqual([""]);
   });
 });
 
@@ -312,11 +355,9 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   it("catches a pronoun that opens the next sentence after a {\" \"} join", () => {
     const planted = `<p>Meet Otto.{" "}It researches your brand.</p>`;
     expect(offencesIn("planted.tsx", stripComments(planted)), "the whole-source stream").toEqual([]);
-    // 两段都在流里,顺序不变 —— `{" "}` 本身是一段(纯空白,过滤掉)。
-    expect(copyRuns(planted), "the old copy stream dropped both sentences").toEqual([
-      "Meet Otto.",
-      "It researches your brand.",
-    ]);
+    // 两段在同一条变体里,顺序不变 —— `{" "}` 本身是一段(纯空白,过滤掉)。
+    expect(copyVariants(planted), "the old copy stream dropped both sentences")
+      .toEqual(["Meet Otto. It researches your brand."]);
     expect(rulesFor(planted)).toContain(RULE);
   });
 
@@ -325,7 +366,9 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   it("catches a pronoun that opens a sentence hidden inside a conditional expression", () => {
     const planted = `<p>Meet Otto.{condition && " It researches your brand."}</p>`;
     expect(rulesFor(planted)).toContain(RULE);
-    expect(copyRuns(planted)).toEqual(["Meet Otto.", "It researches your brand."]);
+    // 两条呈现路径:条件成立(有那句)与不成立(没有)。
+    expect(copyVariants(planted).sort())
+      .toEqual(["Meet Otto.", "Meet Otto. It researches your brand."]);
   });
 
   // 判官 2026-08-10 r3 的反例(#834 r4 P1)。同一个条件容器换成跨行写法,r3 的手搓
@@ -333,7 +376,8 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   // 一个形状修好,换行就换出下一个形状 —— 这正是不再打补丁、改问编译器的理由。
   it("keeps both the outer and the inner sentence when the container spans lines", () => {
     const planted = `<p>Meet Otto.{condition &&\n  " It researches your brand."}</p>`;
-    expect(copyRuns(planted)).toEqual(["Meet Otto.", "It researches your brand."]);
+    expect(copyVariants(planted).sort())
+      .toEqual(["Meet Otto.", "Meet Otto. It researches your brand."]);
     expect(rulesFor(planted)).toContain(RULE);
   });
 
@@ -342,23 +386,18 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   // 规则就看不见它。这一条钉的是**顺序**本身。
   it("reads a template string in source order, interpolations in place", () => {
     const planted = '<img aria-label={`Meet Otto. ${ready ? "It researches your brand." : "Nothing is sent."} Today.`} />';
-    expect(copyRuns(planted)).toEqual([
-      "Meet Otto.",
-      "It researches your brand.",
-      "Nothing is sent.",
-      "Today.",
+    expect(copyVariants(planted).sort()).toEqual([
+      "Meet Otto. It researches your brand. Today.",
+      "Meet Otto. Nothing is sent. Today.",
     ]);
     expect(rulesFor(planted)).toContain(RULE);
   });
 
   it("keeps order across several interpolations in one template", () => {
     const planted = '<p>{`Otto drafts ${count} posts. ${busy ? "It is still working." : "Done."} Ask ${name}.`}</p>';
-    expect(copyRuns(planted)).toEqual([
-      "Otto drafts",
-      "posts.",
-      "It is still working.",
-      "Done.",
-      "Ask",
+    expect(copyVariants(planted).sort()).toEqual([
+      "Otto drafts posts. Done. Ask",
+      "Otto drafts posts. It is still working. Ask",
     ]);
     expect(rulesFor(planted)).toContain(RULE);
   });
@@ -366,6 +405,45 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   it("keeps the static prefix in front of a template that opens with an interpolation", () => {
     const planted = '<p>{`${greeting} Otto is ready. It researches your brand.`}</p>';
     expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  // 判官 2026-08-10 r5 的反例(#834 r6 P1)。**模型**错:三元两支被压进同一条线,
+  // `ready=true` 时真实读到的「Meet Otto.」「It researches…」在流里从不相邻。
+  it("catches the pair that only exists on one branch of a ternary", () => {
+    const planted = '<p>{`Meet ${ready ? "Otto." : "the assistant."} It researches your brand.`}</p>';
+    expect(copyVariants(planted).sort()).toEqual([
+      "Meet Otto. It researches your brand.",
+      "Meet the assistant. It researches your brand.",
+    ]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("enumerates all four renderings of two ternaries in one container", () => {
+    const planted = '<p>{a ? "Meet Otto." : "Meet us."}{b ? " It researches your brand." : " Nothing is sent."}</p>';
+    expect(copyVariants(planted).sort()).toEqual([
+      "Meet Otto. It researches your brand.",
+      "Meet Otto. Nothing is sent.",
+      "Meet us. It researches your brand.",
+      "Meet us. Nothing is sent.",
+    ]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("mixes a ternary with an && and still finds the branch that puts the two sentences together", () => {
+    // `&&` 的「无」态才是要害:插播那句不出现时,前后两句就贴在一起了。
+    const planted = '<p>{a ? "Meet Otto." : "Meet us."}{extra && " Also, a note."} It researches your brand.</p>';
+    const variants = copyVariants(planted);
+    expect(variants).toContain("Meet Otto. It researches your brand.");
+    expect(variants).toContain("Meet Otto. Also, a note. It researches your brand.");
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("refuses to guess when the condition count is over the cap, instead of quietly passing", () => {
+    // fail closed:算不动就说算不动。静默放行才是这道围栏最坏的失败方式。
+    const many = Array.from({ length: 70 }, (_, i) => `{c${i} && " Otto waits."}`).join("");
+    expect(() => copyVariants(`<p>${many}</p>`)).toThrow(/组合超限/);
+    // 上限之内照常展开。
+    expect(() => copyVariants(`<p>{c0 && " Otto waits."}</p>`)).not.toThrow();
   });
 
   it("keeps every branch of a ternary in the stream, not just the first", () => {
@@ -376,17 +454,15 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   it("treats a value expression as the whitespace it occupies, not as a full stop", () => {
     // `{count}` 的值机器读不到,它把一段 JSX 文本切成两段 —— 但切开的两段接回流里
     // 仍由空白隔开,句号还在句号的位置上,句界不受影响。
-    expect(copyRuns(`<p>Otto drafted {count} posts. It is waiting.</p>`)).toEqual([
-      "Otto drafted",
-      "posts. It is waiting.",
-    ]);
+    expect(copyVariants(`<p>Otto drafted {count} posts. It is waiting.</p>`))
+      .toEqual(["Otto drafted posts. It is waiting."]);
     expect(rulesFor(`<p>Otto drafted {count} posts.</p><p>It is waiting.</p>`)).toContain(RULE);
   });
 
   it("reads copy out of a nested, multi-line, mapped JSX subtree", () => {
     // 箭头函数体里 `.map()` 出来的 JSX:手搓扫描器在这里只能整段放弃,AST 照常往下走。
     const planted = `<div>\n  {items.map((item) => (\n    <p>{"Otto waited."}</p>\n  ))}\n</div>`;
-    expect(copyRuns(planted)).toContain("Otto waited.");
+    expect(copyVariants(planted)).toEqual(["Otto waited."]);
   });
 
   it("leaves the copy Founder named as correct alone", () => {
