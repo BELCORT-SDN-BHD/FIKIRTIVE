@@ -58,10 +58,13 @@ describe("runMigrations", () => {
     expect(migrationRetryDelayMs(2)).toBeGreaterThan(migrationRetryDelayMs(1));
   });
 
-  it("失败横幅点名说了站点在旧 schema 上带病运行", () => {
+  it("失败横幅点名说了站点在旧 schema 上带病运行,以及流量不会被切过来", () => {
     const banner = migrationFailureBanner();
     expect(banner).toMatch(/MIGRATIONS DID NOT APPLY/);
-    expect(banner).toMatch(/migrations.*failed/);
+    expect(banner).toMatch(/migrations: failed/);
+    // 判官 r1 P1-2:横幅必须说清楚就绪端点会挡住流量,否则读日志的人会以为新代码已经上线了。
+    expect(banner).toMatch(/\/api\/ready/);
+    expect(banner).toMatch(/503/);
   });
 });
 

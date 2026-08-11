@@ -13,9 +13,15 @@
  * 为什么失败了还要起:因为「旧 schema 上的网站」比「没有网站」强得多。商家还能登录、
  * 还能看自己的东西;只有真正依赖新字段的那部分会报错。而 crash loop 是全线 100% 不可用。
  *
- * 这条选择的代价必须写在这里,不许含糊:一次**滚动发布**里,迁移失败但容器仍然健康,
- * Railway 就会用新代码替换掉旧版本,于是新代码跑在旧 schema 上。所以 `"migrations":"failed"`
- * 不是装饰 —— 它是这条选择的安全带,监控必须盯着它(告警接线是 #793 的活)。
+ * 这条选择原本有一个代价 —— #796 判官 r1 P1-2 点破的正是它:一次**滚动发布**里,迁移失败
+ * 但容器「健康」,平台就会用新代码替换掉旧版本,于是新代码跑在旧 schema 上。也就是说
+ * 「起得来」被当成了「可以接流量」,而那是错的。
+ *
+ * 所以现在两件事分开了:
+ *   - 起来了 = **存活**(`/api/health`,回 200):别重启我,我答得出话。
+ *   - 能接流量 = **就绪**(`/api/ready`):迁移没跑成就回 503,平台不会把流量切过来,
+ *     **旧部署继续承载**,直到人把迁移修好。
+ * 平台的部署/负载探针必须指 `/api/ready`(见 docs/ops/worker-services.md)。
  */
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -64,9 +70,10 @@ export function migrationFailureBanner() {
     "[web:boot] # DATABASE MIGRATIONS DID NOT APPLY.                       #",
     "[web:boot] # Starting the web server anyway on the CURRENT schema —   #",
     "[web:boot] # a site on an old schema beats a crash loop with no site. #",
-    "[web:boot] # /api/health now reports \"migrations\":\"failed\".           #",
-    "[web:boot] # Anything that needs the new schema WILL error until this #",
-    "[web:boot] # is fixed. Treat it as an incident, not a warning.        #",
+    "[web:boot] # /api/ready now returns 503, so this container will NOT   #",
+    "[web:boot] # be given traffic and the previous deploy keeps serving.  #",
+    "[web:boot] # /api/health stays 200 and reports migrations: failed.    #",
+    "[web:boot] # Treat this as an incident, not a warning.                #",
     "[web:boot] ############################################################",
   ].join("\n");
 }
