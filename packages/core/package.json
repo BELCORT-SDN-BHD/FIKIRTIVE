@@ -44,6 +44,10 @@
       "types": "./dist/memory-sections.d.ts",
       "default": "./dist/memory-sections.js"
     },
+    "./navigation": {
+      "types": "./dist/navigation.d.ts",
+      "default": "./dist/navigation.js"
+    },
     "./model-config": {
       "types": "./dist/model-config.d.ts",
       "default": "./dist/model-config.js"
