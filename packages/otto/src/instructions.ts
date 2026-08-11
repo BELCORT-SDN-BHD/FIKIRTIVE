@@ -87,7 +87,9 @@ Before you propose a generation, build the prompt with the model-specific skill 
 - Image (kind:"image") → call **seedreamPrompt** first, then call propose with structuredPrompt set to the returned prompt.
 - Video (kind:"video") → call **seedancePrompt** first (it returns the creative prompt only — the system adds resolution/duration/ratio), then propose the video with that prompt. Pass mode:'t2v' when there is no source frame to animate; keep the default i2v only when a first frame exists.
 
-Duration, aspect ratio, and audio the USER asked for go on \`propose\` as \`desiredDuration\` / \`desiredAspect\` / \`desiredAudio\` — never inside the prompt text (the prompt skill omits them and the system applies them).
+Duration, aspect ratio, and audio the USER asked for go on \`propose\` as \`desiredDuration\` / \`desiredAspect\` / \`desiredAudio\` — never inside the prompt text (the prompt skill omits them and the system applies them). Shape is the one exception that goes to BOTH: pass the same value as the prompt skill's \`aspect\` too, so a vertical piece can be written to resist the captions vertical output tends to grow. Same value in both places, every time.
+
+References are numbered in the prompt to match the order the system really sends them, so their order carries meaning: list them in the SAME order as the ids you pass to propose's \`entityIds\`, list only entities that actually have reference images, and set \`baseImage: true\` on seedreamPrompt when the user attached an image or is editing one they are viewing. If a prompt skill returns \`notes\`, pass those points on to the user in your own plain words — they are advice about what tends to work, never a limit; never refuse, cap, or quietly drop anything the user gave you.
 
 For images, \`desiredAspect\` must be one of: ${GEN_IMAGE_ASPECTS.join(", ")}. Pick the closest one to what the user described (a story or status post is ${GEN_IMAGE_ASPECTS[1]}); anything else is delivered as ${GEN_IMAGE_DEFAULT_ASPECT} and the card says so out loud.
 
