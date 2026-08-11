@@ -793,6 +793,19 @@ export type WorkflowStepTarget = {
   purpose: string;
 };
 
+/**
+ * The closed set of reasons a step can be recorded as unavailable BEFORE anything is
+ * dispatched. A VALUE, not just a type — the merchant reads one of these on the monitoring
+ * panel, and workflow-format's copy pinboard reads this list to prove each has a sentence
+ * (#811).
+ */
+export const WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS = [
+  "workflow_dependency_unavailable",
+  "workflow_target_unavailable",
+] as const;
+
+type PreDispatchUnavailableReason = (typeof WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS)[number];
+
 export type ReserveWorkflowStepInput = {
   id: string;
   ownerId: string;
@@ -802,21 +815,14 @@ export type ReserveWorkflowStepInput = {
   actionPayload: unknown;
   actionOccurrence: WorkflowActionOccurrence | null;
   target: WorkflowStepTarget | null;
-  preDispatchUnavailableReason?:
-    | "workflow_dependency_unavailable"
-    | "workflow_target_unavailable";
+  preDispatchUnavailableReason?: PreDispatchUnavailableReason;
   now: Date;
 };
-
-type PreDispatchUnavailableReason = NonNullable<
-  ReserveWorkflowStepInput["preDispatchUnavailableReason"]
->;
 
 function isPreDispatchUnavailableReason(
   value: string | null,
 ): value is PreDispatchUnavailableReason {
-  return value === "workflow_dependency_unavailable" ||
-    value === "workflow_target_unavailable";
+  return (WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS as readonly string[]).includes(value ?? "");
 }
 
 export type WorkflowStepExecutionRecord = {

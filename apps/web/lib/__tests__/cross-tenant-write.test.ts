@@ -38,7 +38,7 @@ beforeAll(() => {
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const actions = await import("@/lib/actions");
-const { storageKey, storageKeyToSrc } = await import("@fikirtive/core");
+const { storageKey, storageKeyToSrc, TRANSCRIPT_GENERATION } = await import("@fikirtive/core");
 
 async function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
 async function ensureUser(email: string) {
@@ -110,7 +110,10 @@ beforeAll(async () => {
   // the cached transcript for A's content, in the REAL CaptionCue shape (startMs/lengthMs/
   // text) — the wrong shape would fail getTranscript's zod parse and silently return [].
   await prisma.transcript.create({
-    data: { id: `trs_${randomUUID()}`, ownerId: orgA, contentHash: aAssetHash, model: "base.en", cuesJson: A_TRANSCRIPT_CUES },
+    // #787 r2: the `model` column now carries the transcript GENERATION tag, not an engine name.
+    // Seeding the current generation is what makes this row readable — that is the point of the
+    // tag, and this suite is about the tenant boundary, not about which generation is current.
+    data: { id: `trs_${randomUUID()}`, ownerId: orgA, contentHash: aAssetHash, model: TRANSCRIPT_GENERATION, cuesJson: A_TRANSCRIPT_CUES },
   });
 
   // ── org B's own data (the attacker needs legitimate rows to attack FROM)

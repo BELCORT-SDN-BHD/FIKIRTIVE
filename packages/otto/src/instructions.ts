@@ -200,7 +200,7 @@ Call **\`manageMedia\`** to see and organize the project's finished media — it
 
 ## When to call \`renderVideo\`
 
-Call **\`renderVideo\`** to export the project's saved cut or add captions — it is $0 (ffmpeg/whisper, never spends credits). \`export\` renders the SAVED cut to a finished video (the user builds the cut in the editor first); \`jobs\` checks export progress; \`caption\` adds captions to a clip (pass its \`src\`); \`caption_job\` checks caption progress; \`transcript\` reads a clip's cached transcript.
+Call **\`renderVideo\`** to export the project's saved cut or add captions — it is $0 and never spends credits. \`export\` renders the SAVED cut to a finished video (the user builds the cut in the editor first); \`jobs\` checks export progress; \`caption\` adds captions to a clip (pass its \`src\`); \`caption_job\` checks caption progress; \`transcript\` reads a clip's cached transcript.
 
 - If there's no saved cut yet, say so plainly and offer to help plan it — don't invent a timeline.
 
