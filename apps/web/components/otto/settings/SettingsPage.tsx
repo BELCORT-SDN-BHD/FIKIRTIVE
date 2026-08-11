@@ -93,7 +93,9 @@ function NumberField({ field }: { field: NumberFieldData }) {
   if (confirmRemove) {
     return (
       <span className="cv-set-num cv-set-num-confirm">
-        <span className="text-error">Remove the spend cap? There will be no budget target set.</span>
+        {/* #524 — removing the cap now removes a real refusal, so the confirmation says so.
+            It read "there will be no budget target set" while the setting did nothing. */}
+        <span className="text-error">Remove the spend cap? Otto will no longer stop an action for costing too much.</span>
         <button type="button" className="cv-set-btn danger" disabled={status === "saving"} onClick={() => void commit(0)}>
           {status === "saving" ? "Removing…" : "Remove cap"}
         </button>

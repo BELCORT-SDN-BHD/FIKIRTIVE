@@ -7,7 +7,7 @@
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { fromPrisma } from "pg-boss";
-import { prisma, reserveCredits, InsufficientCredits } from "@fikirtive/db";
+import { prisma, reserveCredits, InsufficientCredits, SpendCapBlocked } from "@fikirtive/db";
 import {
   genRequest,
   newId,
@@ -38,7 +38,7 @@ import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
-import { outOfCreditsMessage } from "./credit-format";
+import { outOfCreditsMessage, spendCapBlockedMessage } from "./credit-format";
 // #744 判官 r2 P1 —— 撤销与扣费共用的那把 campaign 锁。它必须由**提交扣费的这笔事务**持有,
 // 所以它进到下面的 money transaction 里,而不是包在 startGen 外面(包在外面的话,外层超时先
 // 放锁、内层稍后才提交,撤销就能插进中间,落成「已撤销且已扣费」)。
@@ -753,6 +753,17 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       // transaction rolled back with nothing created, nothing reserved and nothing queued.
       const gateRefusal = campaignApprovalGateRefusal(e);
       if (gateRefusal) return gateRefusal;
+      // #524 — the merchant's own spend cap refused this action inside the reserve, so the
+      // tx rolled back with nothing created, reserved or queued. Checked before the
+      // out-of-credits arm because SpendCapBlocked is the more specific refusal.
+      if (e instanceof SpendCapBlocked) {
+        return {
+          error: spendCapBlockedMessage(
+            displayedCost,
+            e.capInternal === null ? null : displayCredits(e.capInternal),
+          ),
+        };
+      }
       // out of credits: the reserve rolled the tx back, so no job was created/queued.
       if (e instanceof InsufficientCredits) {
         return { error: outOfCreditsMessage(displayedCost) };

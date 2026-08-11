@@ -6,7 +6,7 @@
  * calls the provider, and attaches generated ReferenceImages to the entity.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@fikirtive/db";
+import { prisma, reserveCredits, refundReservation, InsufficientCredits, SpendCapBlocked } from "@fikirtive/db";
 import {
   refGenRequest,
   newId,
@@ -23,7 +23,7 @@ import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
-import { outOfCreditsMessage } from "./credit-format";
+import { outOfCreditsMessage, spendCapBlockedMessage } from "./credit-format";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
 // (worker died mid-run) so a new generation isn't blocked forever.
@@ -102,6 +102,16 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
         return created;
       });
     } catch (e) {
+      // #524 — the merchant's own cap refused this action inside the reserve: nothing was
+      // created, reserved or queued. More specific than the out-of-credits arm below.
+      if (e instanceof SpendCapBlocked) {
+        return {
+          error: spendCapBlockedMessage(
+            displayCredits(cost),
+            e.capInternal === null ? null : displayCredits(e.capInternal),
+          ),
+        };
+      }
       if (e instanceof InsufficientCredits) {
         return { error: outOfCreditsMessage(displayCredits(cost)) };
       }
@@ -219,6 +229,15 @@ async function dispatchVariantJob(ownerId: string, entityId: string, variantId: 
       return created;
     });
   } catch (e) {
+    // #524 — same cap refusal on the variant path (see startRefGen above).
+    if (e instanceof SpendCapBlocked) {
+      return {
+        error: spendCapBlockedMessage(
+          displayCredits(cost),
+          e.capInternal === null ? null : displayCredits(e.capInternal),
+        ),
+      };
+    }
     if (e instanceof InsufficientCredits) {
       return { error: outOfCreditsMessage(displayCredits(cost)) };
     }

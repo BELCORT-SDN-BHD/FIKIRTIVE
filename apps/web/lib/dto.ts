@@ -143,7 +143,7 @@ export function toChatMessageDTO(
     if (p.cancelled === true) {
       payload = { kind: "cancelled", cancelled: true };
     } else if (
-      (error?.kind === "insufficient_credits" || error?.kind === "error")
+      (error?.kind === "insufficient_credits" || error?.kind === "spend_cap" || error?.kind === "error")
       && typeof error.text === "string"
     ) {
       payload = {

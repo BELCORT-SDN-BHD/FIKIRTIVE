@@ -1,6 +1,9 @@
 /**
  * Credit service (closed-beta P2) — the ONLY writer of CreditAccount/CreditLedger.
- * The per-org credits ledger IS the spend cap (M1). Charges are deterministic
+ * The per-org credits ledger IS the hard spend ceiling (M1) — you cannot spend credits you
+ * do not hold — and since #524 the merchant's OWN per-action cap is enforced on the same
+ * line (see assertWithinSpendCap): the balance is what they have, the cap is what they are
+ * willing to spend at once, and both refuse before any money moves. Charges are deterministic
  * (pricedGenCredits/pricedRefgenCredits in @fikirtive/core), so RESERVE == SETTLE: there
  * is no variable actual-cost reconciliation. Every worker write is exactly-once via the
  * partial-unique (orgId, refId, kind) index — a resume/redelivery no-ops.
@@ -10,6 +13,7 @@
  * Costs are INTERNAL credits (1 = $0.01).
  */
 import { randomUUID } from "node:crypto";
+import { readSpendCap } from "@fikirtive/core";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "./index.js";
 
@@ -36,17 +40,76 @@ export class InsufficientCredits extends Error {
   }
 }
 
+/** Thrown by reserveCredits when the merchant's OWN spend cap refuses this action (#524).
+ *
+ *  Distinct from InsufficientCredits on purpose: the merchant is not out of credits, their
+ *  own ceiling stopped the action, and the way out is Settings, not Billing. Telling them
+ *  to top up here would be a second untrue sentence on top of the one #524 exists to fix.
+ *
+ *  Like InsufficientCredits it rolls back the enclosing transaction, so the job is never
+ *  created and nothing is ever charged. */
+export class SpendCapBlocked extends Error {
+  /** INTERNAL credits the refused action asked for. */
+  readonly requiredInternal: number;
+  /** The merchant's ceiling in INTERNAL credits, or `null` when the cap could not be read
+   *  at all (no organization row / corrupted setting). `null` is the FAIL-CLOSED arm: the
+   *  action is refused precisely because the guardrail's state is unknown. */
+  readonly capInternal: number | null;
+
+  constructor(detail: { requiredInternal: number; capInternal: number | null }) {
+    super(
+      detail.capInternal === null
+        ? "Spend cap could not be read."
+        : `Spend cap reached (${detail.requiredInternal} > ${detail.capInternal} internal credits).`,
+    );
+    this.name = "SpendCapBlocked";
+    this.requiredInternal = detail.requiredInternal;
+    this.capInternal = detail.capInternal;
+  }
+}
+
 type Tx = Prisma.TransactionClient;
 const isP2002 = (e: unknown): boolean =>
   typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
 
+/** The spend-cap verdict for ONE charge, read inside the caller's transaction (#524).
+ *
+ *  Read here and nowhere else: every paid action in the product reaches the ledger through
+ *  reserveCredits, so a cap enforced at this line cannot be walked around by adding a new
+ *  call site — which is exactly how the cap became decorative in the first place (a promise
+ *  made in the Settings screen, kept nowhere).
+ *
+ *  A missing organization row is `unreadable`, not "no cap": we refuse rather than spend
+ *  against a ceiling we cannot see. (A CreditAccount cannot outlive its Organization — the
+ *  FK cascades — so in a healthy database this arm is unreachable; it is the machine-checked
+ *  form of "fail closed", not a guess about likelihood.) */
+async function assertWithinSpendCap(tx: Tx, orgId: string, cost: number): Promise<void> {
+  const org = await tx.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
+  if (!org) throw new SpendCapBlocked({ requiredInternal: cost, capInternal: null });
+  const cap = readSpendCap(org.settings);
+  if (cap.kind === "unreadable") throw new SpendCapBlocked({ requiredInternal: cost, capInternal: null });
+  // `>` not `>=`: the cap is a ceiling the merchant may spend UP TO, so an action priced
+  // exactly at the cap runs. "Otto pauses a task OVER this many credits" — the sentence the
+  // Settings screen has shown since the setting existed.
+  if (cap.kind === "cap" && cost > cap.internal) {
+    throw new SpendCapBlocked({ requiredInternal: cost, capInternal: cap.internal });
+  }
+}
+
 /** RESERVE `cost` internal credits for `refId`. MUST run inside the same $transaction as
  *  the GenJob/RefGenJob insert. Atomic conditional decrement: two concurrent submits
  *  serialize on the CreditAccount row and the loser affects 0 rows → InsufficientCredits
- *  (rolls back the whole tx → no job). balance can never go negative. */
+ *  (rolls back the whole tx → no job). balance can never go negative.
+ *
+ *  #524: the merchant's own spend cap is checked HERE, before the decrement — the cap is a
+ *  refusal, so it must run on the authority path, in the same transaction, or it is only a
+ *  sentence in a settings screen. Cap first, balance second: a merchant who is both over
+ *  their ceiling and short on credits is told about the ceiling, because that is the limit
+ *  they set and the one they can move. Nothing is charged on either refusal. */
 export async function reserveCredits(tx: Tx, args: { orgId: string; refId: string; cost: number }): Promise<void> {
   const { orgId, refId, cost } = args;
   if (cost <= 0) return;
+  await assertWithinSpendCap(tx, orgId, cost);
   const { count } = await tx.creditAccount.updateMany({
     where: { orgId, balance: { gte: cost } },
     data: { balance: { decrement: cost }, reserved: { increment: cost } },

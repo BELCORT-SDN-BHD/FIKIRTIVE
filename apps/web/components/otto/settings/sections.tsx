@@ -211,7 +211,12 @@ export function buildSettingsSections(args: {
           kind: "number",
           id: "cap",
           label: "Spend cap",
-          hint: "A budget target you record for reference — Otto doesn't alert you or stop spending based on it yet (0 = no target set)",
+          // #524 — the sentence is true again. It was the original promise ("Otto pauses a
+          // task over this many credits"), then #487's honest-copy pass had to retract it
+          // because nothing read the setting. The cap is now enforced inside reserveCredits,
+          // so this says what the charging path actually does — per single action, because
+          // that is what is enforced; it is not a monthly budget.
+          hint: "Otto stops any single action that would cost more than this — nothing is charged (0 = no cap)",
           value: settings.spendCapCredits,
           unit: "credits",
           onSave: num("spendCapCredits"),
