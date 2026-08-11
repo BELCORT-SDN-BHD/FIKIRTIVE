@@ -28,17 +28,29 @@ const trace: string[] = [];
 
 const { mockSend } = vi.hoisted(() => ({ mockSend: vi.fn() }));
 
-vi.mock("@fikirtive/db", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@fikirtive/db")>();
+/**
+ * THE RECORDER, installed ONCE at the client both paths share (#795 r2).
+ *
+ * The client lives in its own module (`@fikirtive/db/client`) so the limiter can reach the
+ * database even in the many suites that replace the `@fikirtive/db` barrel wholesale. That same
+ * split used to make this file blind: tracing the barrel recorded the allowlist query and missed
+ * every statement the limiter ran, so a query branching on the EMAIL could have been added inside
+ * the limiter and this fence would still have been green. A step this file cannot see is a step
+ * the defect can hide in — which is the one thing it exists to prevent.
+ *
+ * So the recorder goes on the client, and the barrel below simply re-exports it. Every database
+ * call on the request path — allowlist, counter, transaction control — lands in `trace`, exactly
+ * once, in dispatch order.
+ *
+ * TOP-LEVEL `$allOperations`, not `$allModels`: the model-scoped hook never fires for raw SQL
+ * (a raw operation arrives with `model === undefined`), and the counter is raw SQL.
+ */
+vi.mock("@fikirtive/db/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fikirtive/db/client")>();
   return {
     ...actual,
     // Records at DISPATCH time (Prisma promises are lazy), which is exactly when the request
     // would start paying for the query.
-    // #795 — TOP-LEVEL `$allOperations`, not `$allModels`. The model-scoped hook is blind to raw
-    // SQL (a raw operation arrives with `model === undefined`), and the request path now makes
-    // exactly one raw call: the shared rate-limit counter. A tracer that cannot see it would let
-    // an address-dependent query be added there without this file noticing — which is the one
-    // thing this file exists to prevent.
     prisma: actual.prisma.$extends({
       query: {
         async $allOperations({ model, operation, args, query }) {
@@ -50,22 +62,9 @@ vi.mock("@fikirtive/db", async (importOriginal) => {
   };
 });
 
-// #795 — the shared rate-limit counter, RECORDED not replaced. The real limiter runs; this only
-// notes that the request consulted it, and where in the sequence. It has to be traced separately
-// from the Prisma hook above because the limiter deliberately reaches the database through a path
-// the `@fikirtive/db` double does not sit on (packages/db/src/client.ts) — so the hook above
-// cannot see it, and a step this file cannot see is a step an address-dependent query could be
-// added to without this file noticing. That is the one thing this file exists to prevent.
-vi.mock("@fikirtive/db/rate-limit", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@fikirtive/db/rate-limit")>();
-  return {
-    ...actual,
-    consumeRateLimit: (...args: Parameters<typeof actual.consumeRateLimit>) => {
-      trace.push("rate-limit");
-      return actual.consumeRateLimit(...args);
-    },
-  };
-});
+// The barrel is left alone on purpose: it re-exports the very client mocked above, so extending
+// it a second time here would record every call twice and the sequences would stop meaning
+// "one entry per database call".
 
 vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
@@ -185,10 +184,16 @@ beforeEach(async () => {
 /**
  * THE WHOLE REQUEST PATH, as a sequence. Named once so every case below asserts the same list and
  * a change to the path has to be made deliberately, in one place, rather than absorbed test by
- * test. #795 added the middle item: the throttle's counter used to be a process-local Map, which
+ * test. #795 added the middle items: the throttle's counter used to be a process-local Map, which
  * made the published cap a fiction as soon as a second instance existed.
+ *
+ * Those two entries ARE that counter's transaction — one statement that locks every bucket and
+ * reads it, one that writes every bucket back. Both are keyed on strings normalised before they
+ * were hashed, so both cost the same for an address with an account, one on a list, and one
+ * nobody has ever heard of; and both are RECORDED, so a query added inside the limiter that
+ * branched on the address would change this list and fail every case below.
  */
-const REQUEST_PATH = ["headers", "rate-limit", "enqueue"] as const;
+const REQUEST_PATH = ["headers", "db:raw.$queryRaw", "db:raw.$executeRaw", "enqueue"] as const;
 
 // ── ① the request path is blind to what kind of address it was handed ────────────────────────
 describe("#678 r3 ① — the request performs identical work for every kind of address", () => {
@@ -213,11 +218,9 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     // job. No allowlist lookup, no token mint, no send — none of the work whose cost depends on
     // the answer.
     //
-    // #795 — consulting the shared counter is the one storage round trip on this path, and it is
-    // address-blind by construction: a single statement over keys that were normalised before they
-    // were hashed, so it costs the same for an address with an account, one on a list, and one
-    // nobody has ever heard of. That it appears in ALL THREE traces, in the same position, is the
-    // assertion above.
+    // #795 — consulting the shared counter is the only storage this path touches, and it is
+    // address-blind by construction. That its statements appear in ALL THREE traces, in the same
+    // positions, is the assertion above.
     expect(env.recorded).toEqual([...REQUEST_PATH]);
 
     // The answers are the same too, which was round 1's claim and is still required.

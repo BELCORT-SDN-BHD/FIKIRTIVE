@@ -427,14 +427,32 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
   await sleep(Math.max(0, slotFloorMs - (Date.now() - workStartedAt)));
 }
 
+/**
+ * #795 r2 — THE SAME WORK FOR EVERY ADDRESS, on this side too.
+ *
+ * Both questions are asked for every address, and only then is anything decided. The obvious
+ * shape — `if (!allowed) return;` before consulting the cap — makes an address WITHOUT access
+ * cost one query while an address WITH access costs two, and since the counter moved out of
+ * process memory (#795) that second query is a database round trip rather than a Map lookup.
+ * The slot floor in front of this exists to hide exactly this kind of branch difference, and
+ * widening the floor's tolerance to cover a difference we chose to create would be treating the
+ * measurement as the problem. So the difference is removed instead: same two questions, same two
+ * round trips, whatever the answer.
+ *
+ * CHARGING THE CAP FOR AN ADDRESS WITHOUT ACCESS COSTS NOTHING. That address is never sent mail
+ * on any branch, so its "budget" is a counter nobody spends; and the caller who could burn it is
+ * already bounded by the throttle on the door in front (magic-link-request.ts).
+ *
+ * WHAT IS UNCHANGED: an address without access still never reaches Better Auth, so it still
+ * never causes a verification row to be written. The refusal moved AFTER the cap read, not after
+ * the mint.
+ */
 async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
   if (job.purpose === "sign-in-link") {
-    // ORDER MATTERS. Access first, minting second: an address without access never reaches
-    // Better Auth, so it never writes a verification row. That is what closes "an anonymous
-    // caller can write unbounded verification rows" — the row is a consequence of being
-    // allowed in, not of having asked.
-    if (!(await isAllowedEmail(job.email))) return;
-    if (!(await consumeAddressCap(job.email))) {
+    const allowed = await isAllowedEmail(job.email);
+    const withinCap = await consumeAddressCap(job.email);
+    if (!allowed) return;
+    if (!withinCap) {
       console.warn("[better-auth] auth email suppressed: per-address hourly cap reached");
       return;
     }
@@ -449,9 +467,13 @@ async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
   }
 
   // Password reset re-checks access; verification email is the ONE path a brand-new
-  // self-service account walks before it is on any list (#543), so it does not.
-  if (job.purpose === "password-reset" && !(await isAllowedEmail(job.email))) return;
-  if (!(await consumeAddressCap(job.email))) {
+  // self-service account walks before it is on any list (#543), so it does not. That difference
+  // is between PURPOSES, which the caller states openly — it says nothing about the address, so
+  // it is not an oracle. Within a purpose the work is identical, for the reason above.
+  const allowed = job.purpose === "password-reset" ? await isAllowedEmail(job.email) : true;
+  const withinCap = await consumeAddressCap(job.email);
+  if (!allowed) return;
+  if (!withinCap) {
     console.warn("[better-auth] auth email suppressed: per-address hourly cap reached");
     return;
   }

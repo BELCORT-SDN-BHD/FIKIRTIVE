@@ -32,18 +32,28 @@
  *    cannot time the difference between "refused" and "granted", which matters because on the
  *    sign-in doors the answer itself is deliberately identical (see magic-link-request.ts).
  *
- * ── HOW ONE STATEMENT DOES ALL THREE ───────────────────────────────────────────────────────
+ * ④ AND THE VERDICT IS ATOMIC. A limit of `max` has to admit `max`, not `max` plus however many
+ *    callers happened to arrive at the same moment. An earlier round read every bucket in one
+ *    snapshot and wrote in the same statement, so N simultaneous requests could each read
+ *    "max - 1 used, room for one more" and each be granted. The published number was, once again,
+ *    not the number being enforced — the same defect the whole ticket is about, one layer down.
  *
- * A single SQL statement with three CTEs over one snapshot: `probe` reads every named key,
- * `decision` computes ONE verdict from all of them, and the upsert adds `1` when granted and `0`
- * when not — so a refusal touches the row (property ③) without moving the counter or the window
- * (property ①), and every bucket sees the same verdict (property ②).
+ * ── HOW IT HOLDS ALL FOUR: LOCK, DECIDE, WRITE ─────────────────────────────────────────────
  *
- * WHAT IT DOES NOT PROMISE: strict serialization. Two calls that overlap inside the same
- * statement can both read "room left" and both be granted, so a limit of N can be overshot by
- * roughly the number of genuinely simultaneous callers. That is the standard trade for a
- * lock-free limiter, and it is bounded and tiny next to what it replaces (a per-instance counter
- * that was off by a factor of the instance count, permanently).
+ * One transaction, three steps, spelled out at each step below:
+ *
+ *   1. LOCK every named bucket and read what is under the lock. `INSERT … ON CONFLICT DO UPDATE
+ *      SET key = key` creates a missing bucket (already-expired and empty, so a refusal cannot
+ *      start a window) and row-locks an existing one, returning the state under that lock. A
+ *      concurrent caller blocks here and, when it resumes, sees the committed result — which is
+ *      what makes property ④ true rather than likely.
+ *   2. DECIDE once, from all of them (property ②).
+ *   3. WRITE every bucket, on both verdicts — a refusal writes its rows back unchanged, which is
+ *      what makes properties ① and ③ true at the same time.
+ *
+ * The buckets are sorted by key before any of this, and that is the whole deadlock story: two
+ * requests naming the same pair in opposite orders would take the two locks in opposite orders.
+ * Sorting removes the possibility instead of relying on Postgres to detect it afterwards.
  */
 import { Prisma } from "../generated/prisma/client.js";
 // NOT "./index.js". See the header of ./client.ts: this module has to reach the database even in
@@ -89,7 +99,7 @@ export type ConsumeRateLimitOptions = {
   onStorageFailure?: RateLimitStorageFailure;
 };
 
-type DecisionRow = { granted: boolean; retry_at: bigint | number | null };
+type LockedBucketRow = { key: string; count: number; expiresAt: bigint | number };
 
 /**
  * Consult (and, when granted, charge) every named bucket. Returns ONE verdict for the request.
@@ -103,9 +113,8 @@ export async function consumeRateLimit(
 ): Promise<RateLimitVerdict> {
   if (buckets.length === 0) throw new Error("consumeRateLimit needs at least one bucket");
   const keys = new Set(buckets.map((b) => b.key));
-  // A duplicate key would make the upsert try to touch the same row twice in one statement,
-  // which Postgres refuses outright ("ON CONFLICT DO UPDATE command cannot affect row a second
-  // time"). Catching it here names the actual mistake instead of surfacing that sentence.
+  // A duplicate key would make one statement try to touch the same row twice, which Postgres
+  // refuses outright. Catching it here names the actual mistake instead of surfacing that.
   if (keys.size !== buckets.length) throw new Error("consumeRateLimit was given duplicate bucket keys");
   for (const b of buckets) {
     if (!Number.isInteger(b.max) || b.max < 1) throw new Error(`rate limit max must be a positive integer (${b.key})`);
@@ -113,67 +122,94 @@ export async function consumeRateLimit(
   }
 
   const now = options.now ?? Date.now();
+  const nowMs = BigInt(Math.round(now));
   const onStorageFailure = options.onStorageFailure ?? "deny";
 
-  const values = Prisma.join(
-    buckets.map(
-      (b) => Prisma.sql`(${b.key}::text, ${b.max}::int, ${BigInt(Math.round(now + b.windowMs))}::bigint)`,
-    ),
-    ", ",
-  );
-  const nowMs = BigInt(Math.round(now));
+  // SORTED, and that is load-bearing: it is the only thing that makes the lock order the same for
+  // every caller. Two requests that name the same pair of buckets in opposite orders would take
+  // the two row locks in opposite orders and deadlock; sorting removes the possibility rather than
+  // relying on Postgres to detect it.
+  const sorted = [...buckets].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
   try {
-    const rows = await prisma.$queryRaw<DecisionRow[]>(Prisma.sql`
-      WITH input("key", max_count, expires_at) AS (VALUES ${values}),
-      probe AS (
-        SELECT i."key", i.max_count, i.expires_at,
-               c."count"     AS cur_count,
-               c."expiresAt" AS cur_expires
-          FROM input i
-          LEFT JOIN "rate_limit_counter" c ON c."key" = i."key"
-      ),
-      decision AS (
-        SELECT
-          -- Granted only when EVERY bucket has room: a fresh key, an ended window, or a live
-          -- window still under its own max.
-          bool_and(cur_count IS NULL OR cur_expires <= ${nowMs}::bigint OR cur_count < max_count) AS granted,
-          -- When refused, the caller is told when the LAST of the blocking windows ends.
-          max(CASE WHEN cur_count IS NOT NULL AND cur_expires > ${nowMs}::bigint AND cur_count >= max_count
-                   THEN cur_expires END) AS retry_at
-          FROM probe
-      ),
-      charged AS (
+    return await prisma.$transaction(async (tx) => {
+      // ── STEP 1: LOCK, and read what is under the lock ───────────────────────────────────────
+      //
+      // `INSERT … ON CONFLICT DO UPDATE SET key = key` is the locking-upsert idiom, and it is
+      // doing three jobs at once:
+      //   · a bucket that does not exist yet is created — as an ALREADY-EXPIRED, EMPTY row
+      //     (count 0, expiresAt = now). Creating it is what makes it lockable, and creating it
+      //     expired is what keeps a REFUSED request from starting a window it was never granted;
+      //   · a bucket that does exist is row-locked by the no-op update;
+      //   · RETURNING hands back the state UNDER THAT LOCK.
+      //
+      // The lock is the whole point. A concurrent transaction that reaches the same row blocks
+      // here, and when it resumes Postgres re-evaluates the row against the newly committed
+      // version — so the state this transaction decides on cannot be stale by the time it writes.
+      // The previous shape read every bucket in one snapshot and wrote in the same statement,
+      // which meant N simultaneous requests could all read "N-1 used, room for one more" and all
+      // be granted. That is a limit of `max` that admits `max + concurrency` under load, i.e. the
+      // number on the door was again not the number being enforced.
+      const locked = await tx.$queryRaw<LockedBucketRow[]>(Prisma.sql`
         INSERT INTO "rate_limit_counter" ("key", "count", "expiresAt")
-        SELECT p."key",
-               -- 1 on a grant, 0 on a refusal. The row is written either way (property ③);
-               -- only the counter and the window move, and only on a grant (property ①).
-               CASE WHEN d.granted THEN 1 ELSE 0 END,
-               p.expires_at
-          FROM probe p CROSS JOIN decision d
-        ON CONFLICT ("key") DO UPDATE SET
-          "count" = CASE WHEN "rate_limit_counter"."expiresAt" <= ${nowMs}::bigint
-                         THEN EXCLUDED."count"
-                         ELSE "rate_limit_counter"."count" + EXCLUDED."count" END,
-          "expiresAt" = CASE WHEN "rate_limit_counter"."expiresAt" <= ${nowMs}::bigint
-                             THEN EXCLUDED."expiresAt"
-                             ELSE "rate_limit_counter"."expiresAt" END
-        RETURNING 1 AS written
-      )
-      SELECT d.granted, d.retry_at, (SELECT count(*) FROM charged) AS written
-        FROM decision d
-    `);
+        VALUES ${Prisma.join(
+          sorted.map((b) => Prisma.sql`(${b.key}::text, 0::int, ${nowMs}::bigint)`),
+          ", ",
+        )}
+        ON CONFLICT ("key") DO UPDATE SET "key" = "rate_limit_counter"."key"
+        RETURNING "key", "count", "expiresAt"
+      `);
 
-    const row = rows[0];
-    // A decision CTE over a non-empty VALUES list always produces exactly one row; an empty
-    // result would mean the statement did not run the way this code believes it does.
-    if (!row) return { granted: onStorageFailure === "allow", retryAfterMs: 0, degraded: true };
-    const retryAt = row.retry_at === null || row.retry_at === undefined ? null : Number(row.retry_at);
-    return {
-      granted: row.granted,
-      retryAfterMs: row.granted || retryAt === null ? 0 : Math.max(0, retryAt - now),
-      degraded: false,
-    };
+      // ── STEP 2: ONE verdict, from all of them ───────────────────────────────────────────────
+      //
+      // Granted only when EVERY bucket has room. A bucket that still had room must not bank a
+      // press the other bucket refused (#757 r2): one address's retry loop would otherwise spend
+      // the shared per-egress budget that every other merchant behind it is sharing.
+      const state = new Map(locked.map((r) => [r.key, r]));
+      let granted = true;
+      let retryAt: number | null = null;
+      for (const bucket of sorted) {
+        const row = state.get(bucket.key);
+        // Step 1 either inserted or locked a row for every key, so a missing one means the
+        // statement did not do what this code believes. Fail closed rather than guess.
+        if (!row) return { granted: onStorageFailure === "allow", retryAfterMs: 0, degraded: true };
+        const expiresAt = Number(row.expiresAt);
+        const live = expiresAt > now;
+        if (live && row.count >= bucket.max) {
+          granted = false;
+          retryAt = retryAt === null ? expiresAt : Math.max(retryAt, expiresAt);
+        }
+      }
+
+      // ── STEP 3: WRITE every bucket, on both verdicts ────────────────────────────────────────
+      //
+      // A refusal writes its rows back unchanged. That is not a wasted statement: it is what
+      // makes the two verdicts cost the same, which matters because the doors in front of this
+      // deliberately give the same ANSWER either way (see magic-link-request.ts) — an answer that
+      // reads alike but costs differently is still an oracle.
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "rate_limit_counter" AS c
+           SET "count" = CASE
+                 WHEN NOT ${granted} THEN c."count"
+                 WHEN c."expiresAt" <= ${nowMs}::bigint THEN 1
+                 ELSE c."count" + 1 END,
+               "expiresAt" = CASE
+                 WHEN NOT ${granted} THEN c."expiresAt"
+                 WHEN c."expiresAt" <= ${nowMs}::bigint THEN v.expires_at
+                 ELSE c."expiresAt" END
+          FROM (VALUES ${Prisma.join(
+            sorted.map((b) => Prisma.sql`(${b.key}::text, ${BigInt(Math.round(now + b.windowMs))}::bigint)`),
+            ", ",
+          )}) AS v("key", expires_at)
+         WHERE c."key" = v."key"
+      `);
+
+      return {
+        granted,
+        retryAfterMs: granted || retryAt === null ? 0 : Math.max(0, retryAt - now),
+        degraded: false,
+      };
+    });
   } catch (error) {
     // Never let a storage fault read as a granted request by accident — the fallback is a
     // decision the CALLER made, and it is recorded so it cannot be mistaken for a real verdict.

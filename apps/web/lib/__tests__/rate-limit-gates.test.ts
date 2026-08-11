@@ -29,15 +29,14 @@ beforeEach(async () => {
   await prisma.rateLimitCounter.deleteMany({});
 });
 
-describe("#795 谁在被数", () => {
-  it("取第一个转发地址,没有转发头就退到 x-real-ip", () => {
-    expect(callerKey(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }))).toBe("203.0.113.9");
-    expect(callerKey(new Headers({ "x-real-ip": "192.0.2.5" }))).toBe("192.0.2.5");
-  });
-
-  it("两个头都没有的请求共用一个桶 —— 保守方向,不是发一份新预算", () => {
-    expect(callerKey(new Headers())).toBe("unknown-caller");
-    expect(callerKey(new Headers({ "x-forwarded-for": "   " }))).toBe("unknown-caller");
+// 「谁在被数」本身的规则(取最右一段、IPv6 归 /64、认不出就并桶)在 caller-identity.test.ts,
+// 那是它自己的文件。这里只钉一件事:这些闸确实用的是那个函数,而不是各自另起炉灶。
+describe("#795 r2 闸门用的是同一个可信调用方身份", () => {
+  it("单段转发头 = 那一段;伪造的左侧前缀改不了桶", async () => {
+    expect(callerKey(new Headers({ "x-forwarded-for": "203.0.113.9" }))).toBe("203.0.113.9");
+    await consumePasswordDoor(new Headers({ "x-forwarded-for": "1.1.1.1, 203.0.113.9" }));
+    const keys = (await prisma.rateLimitCounter.findMany({ select: { key: true } })).map((r) => r.key);
+    expect(keys).toEqual(["pw:203.0.113.9"]);
   });
 });
 

@@ -112,8 +112,25 @@ describe("#795 性质③ 两种判决做同样的事", () => {
     const now = 6_000_000;
     await consumeRateLimit([loose], { now }); // 先把松桶用满
     expect((await consumeRateLimit([loose, fresh], { now })).granted).toBe(false);
-    // 关键:被拒的那次仍然为这个新 key 建了行(工作量相同),只是计数是 0。
-    expect(await row(fresh.key)).toEqual({ count: 0, expiresAt: now + MINUTE });
+    // 关键:被拒的那次仍然为这个新 key 建了行(工作量相同),只是计数是 0 ——
+    // 而且 expiresAt 就是 now,也就是**没有启动窗口**(见下一条)。
+    expect(await row(fresh.key)).toEqual({ count: 0, expiresAt: now });
+  });
+
+  it("被拒不启动窗口 —— 新桶落地即过期,第一次真放行才定窗口的终点", async () => {
+    // r2:上一版被拒时插入的是 (0, now+window),于是一次从未被放行的请求就把窗口开了头,
+    // 后面第一次真放行只能用这个已经走掉一截的窗口。注释说「拒绝不启动窗口」,实现没做到 ——
+    // 这条把两者对齐,并且钉的是**实现**那一边。
+    const loose = { key: "ip:6.6.6.6", max: 1, windowMs: 10 * MINUTE };
+    const fresh = { key: "ip:6.6.6.6|late@shop.test", max: 2, windowMs: 10 * MINUTE };
+    const start = 6_500_000;
+    await consumeRateLimit([loose], { now: start }); // 松桶用满
+    await consumeRateLimit([loose, fresh], { now: start }); // 被拒:fresh 建行但不开窗
+
+    // 五分钟后松桶的窗口还没到点,但只要单独用 fresh,它必须拿到一个**完整**的新窗口。
+    const later = start + 5 * MINUTE;
+    expect((await consumeRateLimit([fresh], { now: later })).granted).toBe(true);
+    expect(await row(fresh.key)).toEqual({ count: 1, expiresAt: later + 10 * MINUTE });
   });
 });
 
@@ -143,6 +160,38 @@ describe("#795 调用方用错了要当场说清楚", () => {
     await expect(consumeRateLimit([{ key: "k", max: 0, windowMs: MINUTE }])).rejects.toThrow(/positive integer/u);
     await expect(consumeRateLimit([{ key: "k", max: 1, windowMs: 0 }])).rejects.toThrow(/window must be positive/u);
   });
+});
+
+describe("#795 并发下额度就是额度(不是「额度 + 同时到达的人数」)", () => {
+  it("N 路真并发打同一个 key,放行数恰好等于剩余额度", async () => {
+    // r2 判词 P1-2:上一版是「一条语句里先 probe 再写」,同一快照下 N 个请求会各自读到
+    // 「还差一个就满」而全部放行 —— max 变成了 max + 并发数。顺序调用测不出这件事,所以这条
+    // 用 Promise.all 真的一起打。
+    const key = "race:door";
+    const max = 5;
+    const attempts = 12;
+    const verdicts = await Promise.all(
+      Array.from({ length: attempts }, () => consumeRateLimit([{ key, max, windowMs: MINUTE }])),
+    );
+    const granted = verdicts.filter((v) => v.granted).length;
+    expect(verdicts.every((v) => !v.degraded), "并发跑出了存储故障,这条就不算数").toBe(true);
+    expect(granted, `${attempts} 路并发放行了 ${granted} 次,额度是 ${max}`).toBe(max);
+    expect((await row(key))?.count).toBe(max);
+  }, 120_000);
+
+  it("多桶并发也不许超发,而且被拒的那些一个都没记账", async () => {
+    const loose = { key: "race:ip", max: 3, windowMs: MINUTE };
+    const tight = (n: number) => ({ key: `race:ip|addr-${n}`, max: 2, windowMs: MINUTE });
+    const verdicts = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => consumeRateLimit([loose, tight(i)])),
+    );
+    const granted = verdicts.filter((v) => v.granted).length;
+    expect(granted).toBe(3); // 松桶是瓶颈
+    expect((await row(loose.key))?.count).toBe(3);
+    // 被拒的那些各自的紧桶必须还是 0 —— 「要么都记要么都不记」在并发下同样成立。
+    const tightCounts = await Promise.all(Array.from({ length: 10 }, (_, i) => row(tight(i).key)));
+    expect(tightCounts.filter((r) => (r?.count ?? 0) > 0)).toHaveLength(3);
+  }, 120_000);
 });
 
 describe("#795 计数器够不到的时候", () => {

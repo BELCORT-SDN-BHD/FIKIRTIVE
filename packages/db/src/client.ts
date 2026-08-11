@@ -15,8 +15,16 @@
  * One client, one pool, one singleton — two import paths, and only one of them is the one the
  * doubles replace.
  *
- * Nothing else should import from this file. Every other module in the package keeps importing
- * `prisma` from `./index.js`, because those ARE the ones a test double is meant to stand in for.
+ * Nothing else in application code should import from this file. Every other module in the
+ * package keeps importing `prisma` from `./index.js`, because those ARE the ones a test double is
+ * meant to stand in for.
+ *
+ * IT IS AN EXPORTED ENTRY POINT (`@fikirtive/db/client`) FOR ONE REASON: a test that claims to
+ * record EVERY database call the request path makes has to be able to reach this client too.
+ * Tracing only the barrel leaves the limiter's calls invisible, and an invisible step is a step
+ * where an address-dependent query could be added without the enumeration fence going red — see
+ * apps/web/lib/__tests__/auth-enumeration-structural.test.ts, which mocks this entry point to
+ * install its recorder at the single place both paths share.
  */
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";

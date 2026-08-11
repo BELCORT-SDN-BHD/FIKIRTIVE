@@ -51,25 +51,27 @@ export const auth = betterAuth({
       requireLocalEmailVerified: true,  // never link onto an unverified local credential
     },
     // #795 — Google's OAuth tokens were the ONE credential this product stored in the clear.
-    // Meta's and X's page tokens have been AES-256-GCM at rest since L1 (@fikirtive/token-crypto);
+    // Meta's and X's page tokens have been encrypted at rest since L1 (@fikirtive/token-crypto);
     // these sat in `ba_account.accessToken` / `refreshToken` / `idToken` as plain text, so a
     // database backup, a log of a row, or read access to one table was a working Google
     // credential for every merchant who signed in that way.
     //
     // WHY BETTER AUTH'S OWN FLAG AND NOT @fikirtive/token-crypto (the ticket named it). Better
-    // Auth encrypts on write AND decrypts on every read it does itself — refresh, `getAccessToken`,
-    // account listing. Our own encrypt-on-write hook would have no matching decrypt inside those
-    // paths: the library would hand a caller our ciphertext believing it was a token, and the
-    // first future use of a Google token would fail somewhere far from here. Same cipher family
-    // (AES-256-GCM), same "no new vendor", key = BETTER_AUTH_SECRET (already required and already
-    // ≥32 chars — see the guard above). The named package stays the standard for the tokens WE
-    // read and write ourselves; this one is read and written by the library, so the library's
-    // own transparent cipher is the honest home for it.
+    // Auth encrypts on write AND decrypts on every read it does itself — refresh,
+    // `getAccessToken`, account info. Our own encrypt-on-write hook would have no matching
+    // decrypt inside those paths: the library would hand a caller our ciphertext believing it was
+    // a token, and the first future use of a Google token would fail somewhere far from here.
     //
-    // Existing rows are NOT rewritten by this flag: Better Auth passes a value that does not look
-    // encrypted straight through, so old plaintext keeps working and is re-encrypted only when
-    // that account next signs in. Converting the existing rows is a separate, explicitly-confirmed
-    // step — see the ticket's PR description.
+    // WHAT THE CIPHER ACTUALLY IS (r2 — the earlier note here said AES-256-GCM and that was
+    // simply wrong): XChaCha20-Poly1305 with a managed nonce, over a key derived as SHA-256 of
+    // the secret, hex-encoded behind a `$ba$<version>$` envelope
+    // (better-auth/dist/crypto/index.mjs, `rawEncrypt`). Still AEAD, still no new vendor, key =
+    // BETTER_AUTH_SECRET (already required and already ≥32 chars — see the guard above).
+    //
+    // WHAT THIS FLAG DOES **NOT** COVER — measured, not assumed. `setTokenUtil` is applied to
+    // exactly two fields, `accessToken` and `refreshToken`, at every call site in the library
+    // (callback, link-account, account routes, generic-oauth). `idToken` is written RAW. That gap
+    // is closed by `databaseHooks.account` below.
     encryptOAuthTokens: true,
   },
   verification: { modelName: "BetterAuthVerification" },
@@ -137,10 +139,31 @@ export const auth = betterAuth({
     // thing this ticket fixes is a production-scale-out defect.
     storage: "database",
     modelName: "BetterAuthRateLimit",
+    // #795 r2 — EMPTY, and that is the fix rather than a regression.
+    //
+    // Three hourly rules used to live here (`/sign-up/email`, `/request-password-reset`,
+    // `/send-verification-email`, each 5 per hour). Under `storage: "database"` Better Auth
+    // cannot honour them: its pruning cutoff is
+    //   max(rateLimit.window, …its built-in special rules) = max(10 s, 10 s, 60 s) = 60 s
+    // and it applies that cutoff without consulting the custom rule that matched. A counter row
+    // is therefore deleted 61 seconds after its last request, so "5 per hour" enforced 5 per
+    // MINUTE — about 300 an hour. A rule that reads one number and enforces another is the exact
+    // defect this ticket exists to close, so the rules are gone from here and the hourly caps run
+    // on our own counter (app/api/better-auth/[...all]/route.ts), which prunes on its own window.
+    //
+    // Raising the global `window` to an hour WOULD fix the cutoff, and was rejected: it re-prices
+    // every other endpoint this limiter guards (`/get-session` and friends) from 100-per-10-seconds
+    // to 100-per-hour, which takes out a shared office address doing nothing wrong.
+    //
+    // What Better Auth still enforces here — and what the database storage genuinely fixes — is
+    // its BUILT-IN short rules: 3 per 10 s on every /sign-in and /sign-up path, 3 per 60 s on
+    // password-reset and verification resend. Those windows are at or under the 60-second cutoff,
+    // so the pruning cannot undercut them, and they are now shared across instances instead of
+    // being per-process. Burst is its job; the hour is ours.
+    //
+    // The fence for all of this is `better-auth-rate-limit-storage.test.ts`: it refuses any
+    // customRule whose window exceeds the cutoff, so this trap cannot be walked back into.
     customRules: {
-      "/sign-up/email": { window: 60 * 60, max: 5 },
-      "/request-password-reset": { window: 60 * 60, max: 5 },
-      "/send-verification-email": { window: 60 * 60, max: 5 },
       // NOTE (#795): there is deliberately NO rule for "/sign-in/email" here either, and that is
       // the OPPOSITE of leaving the password door unguarded. Better Auth's built-in special rule
       // already caps every /sign-in path at 3 per 10 seconds, and `customRules` REPLACES a rule
@@ -203,6 +226,33 @@ export const auth = betterAuth({
   // Deny-by-default allowlist gates in databaseHooks — covers ALL methods including OAuth callbacks.
   // Throwing APIError here aborts the operation and propagates a 403 to the caller.
   databaseHooks: {
+    /**
+     * #795 r2 — the `idToken` gap that `encryptOAuthTokens` does not cover.
+     *
+     * MEASURED, not assumed (better-auth 1.6.20, read from node_modules):
+     *   · `setTokenUtil` (encrypt on write) appears at 12 call sites, and every one of them
+     *     passes `accessToken` or `refreshToken`. Never `idToken`.
+     *   · `decryptOAuthToken` (decrypt on read) appears at exactly 3 call sites, all in
+     *     `api/routes/account.mjs`, all on `accessToken` / `refreshToken`. Never `idToken`.
+     *   · `db/schema.mjs` strips `idToken` from every account OUTPUT, so it never leaves the
+     *     library toward a client either.
+     * So `idToken` is written in the clear and is never read back by anything — in the library or
+     * in this repository (no reader of `betterAuthAccount` tokens exists anywhere in the repo).
+     *
+     * WHICH MAKES NOT STORING IT THE ROOT FIX. Encrypting an unused credential still leaves a key
+     * to manage, an envelope format to keep compatible, and a value in every backup. A Google ID
+     * token is a sign-in artefact — it is minted fresh on every sign-in — so dropping it costs
+     * nothing and removes the asset entirely. A credential that is not stored cannot leak, cannot
+     * be decrypted by the wrong party, and cannot be mis-encrypted.
+     *
+     * If a future feature genuinely needs the ID token, the honest change is to store it through
+     * @fikirtive/token-crypto and read it back the same way — deliberately, with a reader that
+     * exists, rather than keeping it "just in case".
+     */
+    account: {
+      create: { before: async (account) => ({ data: { ...account, idToken: null } }) },
+      update: { before: async (account) => ({ data: { ...account, idToken: null } }) },
+    },
     user: {
       create: {
         // Gate 1: prevents any non-allowlisted email from getting a ba_user row (first sign-up, any method).

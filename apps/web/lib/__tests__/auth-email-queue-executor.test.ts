@@ -233,17 +233,16 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
 
     const spread = Math.max(unknown, allowed, spent) - Math.min(unknown, allowed, spent);
     // RED before the floor: branch A and C returned their slot in single-digit milliseconds while
-    // branch B held it to its deadline, so the spread was most of DEADLINE (~1200 ms).
+    // branch B held it to its deadline, so the spread was most of DEADLINE (~1200 ms). The
+    // threshold is a fifth of the floor; the defect is more than half of it.
     //
-    // #795 — the tolerance moved from FLOOR/5 to FLOOR/3, and it is a NOISE budget, not a weaker
-    // claim. The window being measured now contains one shared-counter round trip on every branch
-    // (the per-address outbound cap used to be a Map lookup and is a database statement since the
-    // counters moved out of process memory). That round trip is IDENTICAL on all three branches —
-    // it cannot encode which one ran — but on a loaded machine it varies by a couple of hundred
-    // milliseconds run to run, which is most of a 400 ms budget on its own. The defect this case
-    // exists to catch is ~DEADLINE (1200 ms), so FLOOR/3 (≈667 ms) still refuses it with room to
-    // spare, and the "every branch really did fill the floor" assertion below is unchanged.
-    expect(spread, `unknown=${unknown} allowed=${allowed} spent=${spent}`).toBeLessThan(FLOOR / 3);
+    // #795 r2 — this threshold was briefly widened to FLOOR/3 to absorb a branch difference the
+    // counter move had introduced (an address without access skipped the cap read, so it made one
+    // database round trip where the other branches made two). That was the wrong repair: widening
+    // the measurement to fit an asymmetry treats the ruler as the problem. The asymmetry is gone
+    // instead — `runAuthEmailJob` now asks both questions on every branch — so the threshold is
+    // back where it belongs.
+    expect(spread, `unknown=${unknown} allowed=${allowed} spent=${spent}`).toBeLessThan(FLOOR / 5);
     // …and the floor really was in force, so the parity is not "everything was instant".
     for (const elapsed of [unknown, allowed, spent]) expect(elapsed).toBeGreaterThanOrEqual(FLOOR);
 

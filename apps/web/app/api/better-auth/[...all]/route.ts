@@ -2,7 +2,7 @@ import { toNextJsHandler } from "better-auth/next-js";
 import { auth } from "@/lib/better-auth/server";
 import { MAGIC_LINK_INVALID_EMAIL_MESSAGE } from "@/lib/better-auth/magic-link-contract";
 import { acceptMagicLinkRequest } from "@/lib/better-auth/magic-link-request";
-import { consumePasswordDoor } from "@/lib/rate-limit-gates";
+import { consumePasswordDoor, consumePublicAuthDoor } from "@/lib/rate-limit-gates";
 
 const handlers = toNextJsHandler(auth);
 
@@ -10,6 +10,20 @@ export const GET = handlers.GET;
 
 const MAGIC_LINK_PATH = "/sign-in/magic-link";
 const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
+
+/**
+ * #795 r2 — the three public doors whose HOURLY cap has to live here.
+ *
+ * They used to be `rateLimit.customRules` entries with a one-hour window. Better Auth's database
+ * storage prunes its own rows on a 60-second cutoff that ignores the custom rule, so an hourly
+ * budget of five silently became five per MINUTE the moment the counters moved to the database.
+ * The full reasoning, and why raising Better Auth's global window is not the fix, is at
+ * PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR.
+ *
+ * Better Auth's own short built-in rules still apply to all three underneath this — burst is its
+ * job, the hour is ours.
+ */
+const HOURLY_PUBLIC_DOORS = ["/sign-up/email", "/request-password-reset", "/send-verification-email"] as const;
 
 /** Better Auth's own 429, byte for byte (api/rate-limiter/index.ts), so a caller cannot tell
  *  which of the two caps refused it — and so the client plugin's error handling is unchanged. */
@@ -49,6 +63,15 @@ export async function POST(request: Request): Promise<Response> {
   // readable as "that account exists". Same discipline as the magic-link door below.
   if (pathname.endsWith(PASSWORD_SIGN_IN_PATH)) {
     const retryAfterMs = await consumePasswordDoor(request.headers);
+    if (retryAfterMs !== null) return tooManyRequests(retryAfterMs);
+    return handlers.POST(request);
+  }
+
+  // The hourly half of the three public doors — see HOURLY_PUBLIC_DOORS. Each door counts into
+  // its own bucket, so spending the registration budget never closes password reset.
+  const hourlyDoor = HOURLY_PUBLIC_DOORS.find((door) => pathname.endsWith(door));
+  if (hourlyDoor) {
+    const retryAfterMs = await consumePublicAuthDoor(hourlyDoor, request.headers);
     if (retryAfterMs !== null) return tooManyRequests(retryAfterMs);
     return handlers.POST(request);
   }

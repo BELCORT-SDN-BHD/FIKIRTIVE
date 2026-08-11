@@ -83,3 +83,28 @@ describe("#795 安全响应头", () => {
     expect(CSP_REPORT_ONLY).not.toContain("report-to");
   });
 });
+
+/**
+ * #795 r2 —— 接线本身也要被测。
+ *
+ * 上面那一族只证明「规则这个值是对的」。把 next.config.ts 里的 headers() 整段删掉,它们照样
+ * 全绿 —— 也就是说,整站零安全响应头这件事,上面一条都拦不住。这一族测的是**配置真的用了
+ * 那个值**:直接 import next.config.ts,调用它自己的 headers(),拿结果比对。
+ */
+describe("#795 next.config.ts 真的接上了", () => {
+  it("headers() 就是 securityHeaderRules 的结果,一条不多一条不少", async () => {
+    const config = (await import("@/next.config")).default;
+    expect(typeof config.headers, "next.config.ts 没有 headers() —— 整站零安全响应头").toBe("function");
+    const wired = await config.headers!();
+    expect(wired).toEqual(securityHeaderRules({ production: process.env.NODE_ENV === "production" }));
+  });
+
+  it("接出来的头里确实有那条挡点击劫持的(不是只有形状对)", async () => {
+    const config = (await import("@/next.config")).default;
+    const wired = await config.headers!();
+    const global = wired.find((rule) => rule.source === "/:path*");
+    const csp = global?.headers.find((h) => h.key === "Content-Security-Policy");
+    expect(csp?.value).toBe("frame-ancestors 'none'");
+    expect(global?.headers.some((h) => h.key === "X-Frame-Options" && h.value === "DENY")).toBe(true);
+  });
+});

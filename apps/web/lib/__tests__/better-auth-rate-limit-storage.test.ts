@@ -25,11 +25,27 @@ describe("#795 Better Auth 限流不再活在进程内存里", () => {
     expect(auth.options.rateLimit?.modelName).toBe("BetterAuthRateLimit");
   });
 
-  it("公开的三道门仍然各有每小时规则(公开注册之后这三道才是承流量的)", async () => {
+  /**
+   * r2 判词 P1-1 的围栏。
+   *
+   * Better Auth 的 database storage 清理过期行时用的截止时间是
+   *   max(rateLimit.window, ...它自带的 special rules) = max(10s, 10s, 60s) = 60s,
+   * 而且它**不看**当时命中的那条 customRule。所以任何窗口大于 60 秒的 customRule 都是假的:
+   * 行会在最后一次请求之后 61 秒被删掉,「每小时 5 次」实际执行成「每分钟 5 次」。
+   *
+   * 这条断言把那个陷阱变成机器规则:谁再往 customRules 里写一条一小时的规则,这里当场红。
+   * 小时级的门在 app/api/better-auth/[...all]/route.ts,走我们自己的计数器。
+   */
+  it("customRules 里没有任何窗口超过库自己清理截止时间的规则", async () => {
     const { auth } = await import("@/lib/better-auth/server");
-    const rules = auth.options.rateLimit?.customRules ?? {};
-    for (const path of ["/sign-up/email", "/request-password-reset", "/send-verification-email"]) {
-      expect(rules[path], `${path} 没有规则`).toEqual({ window: 60 * 60, max: 5 });
+    const rules = Object.entries(auth.options.rateLimit?.customRules ?? {});
+    const PRUNE_CUTOFF_SECONDS = 60;
+    for (const [path, rule] of rules) {
+      if (typeof rule !== "object" || rule === null) continue;
+      expect(
+        rule.window,
+        `${path} 的窗口是 ${rule.window}s,超过库的 ${PRUNE_CUTOFF_SECONDS}s 清理截止 —— 它执行不出这个数`,
+      ).toBeLessThanOrEqual(PRUNE_CUTOFF_SECONDS);
     }
   });
 

@@ -1,5 +1,8 @@
 import "server-only";
 import { consumeRateLimit } from "@fikirtive/db/rate-limit";
+import { callerKey } from "@/lib/caller-identity";
+
+export { callerKey } from "@/lib/caller-identity";
 
 /**
  * #795 — the product's own gates, in one place.
@@ -43,6 +46,29 @@ const HOUR = 60 * MINUTE;
 export const PASSWORD_DOOR_PER_CALLER_PER_HOUR = 30;
 
 /**
+ * #795 r2 — the three PUBLIC Better Auth doors, per calling address, per hour.
+ *
+ * These used to be `rateLimit.customRules` entries with a 3600-second window, and moving Better
+ * Auth's storage to the database silently broke them. Its database backend prunes with a cutoff
+ * of `max(rateLimit.window, …built-in special rules)` — 10 s and 60 s respectively, so 60
+ * seconds — and it does that pruning without consulting the custom rule that actually applied.
+ * A row therefore disappears 61 seconds after it was last touched, and an hourly budget of five
+ * became five per minute: roughly 300 an hour, from a rule that reads "5". The published number
+ * was not the enforced number, which is the exact defect this whole ticket exists to remove.
+ *
+ * Raising Better Auth's global `window` to an hour would fix the cutoff and re-price EVERY other
+ * endpoint it guards (`/get-session` and friends) from 100-per-10-seconds to 100-per-hour, which
+ * would take out a shared office address in ordinary use. So the hourly caps move here instead,
+ * onto our own counter, which prunes on its own `expiresAt` and cannot be undercut by a window
+ * it does not know about. Better Auth keeps its short built-in burst rules on the same paths —
+ * this is a second cap in front, never a replacement.
+ *
+ * The number is UNCHANGED at five per address per hour: this ticket restores what the config
+ * already claimed, it does not re-price the door.
+ */
+export const PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR = 5;
+
+/**
  * Paid generation dispatch, per tenant, per hour.
  *
  * Sized against the largest legitimate burst the product can produce: one factory batch is up to
@@ -75,21 +101,26 @@ export const UPLOAD_PER_TENANT_PER_HOUR = 1000;
  */
 export const MEDIA_PROXY_PER_CALLER_PER_10_MIN = 600;
 
-/**
- * Best-effort caller identity for the public doors. Behind Railway's proxy this is
- * `x-forwarded-for`; a request that arrives with neither header shares one bucket, which is the
- * conservative direction (unknown callers are counted together, never given a fresh budget).
- */
-export function callerKey(requestHeaders: Headers): string {
-  const forwarded = requestHeaders.get("x-forwarded-for");
-  const first = forwarded ? forwarded.split(",")[0] : requestHeaders.get("x-real-ip");
-  return (first ?? "").trim() || "unknown-caller";
-}
-
 /** The password door. Returns the retry hint (ms) when refused, or null when allowed through. */
 export async function consumePasswordDoor(requestHeaders: Headers): Promise<number | null> {
   const verdict = await consumeRateLimit([
     { key: `pw:${callerKey(requestHeaders)}`, max: PASSWORD_DOOR_PER_CALLER_PER_HOUR, windowMs: HOUR },
+  ]);
+  return verdict.granted ? null : verdict.retryAfterMs;
+}
+
+/**
+ * The three public Better Auth doors (registration, password reset, verification resend), each
+ * with its OWN hourly bucket so one door being spent never closes another.
+ * Returns the retry hint (ms) when refused, or null when allowed through.
+ */
+export async function consumePublicAuthDoor(door: string, requestHeaders: Headers): Promise<number | null> {
+  const verdict = await consumeRateLimit([
+    {
+      key: `authdoor:${door}:${callerKey(requestHeaders)}`,
+      max: PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR,
+      windowMs: HOUR,
+    },
   ]);
   return verdict.granted ? null : verdict.retryAfterMs;
 }
