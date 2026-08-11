@@ -62,7 +62,11 @@ export function EditDesk({ projectId }: { projectId: string }) {
     setLoading(false);
   }, [projectId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  // Deferred with queueMicrotask for the same reason OttoConnections' load() is: setting
+  // state synchronously in an effect body trips react-hooks/set-state-in-effect.
+  useEffect(() => {
+    queueMicrotask(() => void refresh());
+  }, [refresh]);
 
   /** Every write lands the same way: clear the last words, run it, show what the server said. */
   const run = useCallback(
