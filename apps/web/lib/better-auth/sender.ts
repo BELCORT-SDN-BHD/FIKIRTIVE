@@ -1,7 +1,7 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { consumeRateLimit, prisma } from "@fikirtive/db";
+import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { emailPort } from "@/lib/email";
 import { isAllowedEmail } from "@/lib/allowlist";
 
@@ -541,7 +541,7 @@ export async function sendAuthEmail(message: {
  *  cannot wait an hour out. #795 — they live in Postgres now, so clearing them is a delete and
  *  this returns a promise. */
 export async function __resetAuthEmailCapsForTests(): Promise<void> {
-  await prisma.rateLimitCounter.deleteMany({ where: { key: { startsWith: "authmail:" } } });
+  await clearRateLimitCounters("authmail:");
   droppedSinceLastLog = 0;
   lastDropLog = 0;
   if (dropLogTimer) clearTimeout(dropLogTimer);

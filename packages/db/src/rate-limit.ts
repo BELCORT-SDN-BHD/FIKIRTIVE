@@ -199,3 +199,21 @@ export async function pruneRateLimitCounters(options: { now?: number; graceMs?: 
   const result = await prisma.rateLimitCounter.deleteMany({ where: { expiresAt: { lt: cutoff } } });
   return result.count;
 }
+
+/**
+ * Give back every counter under one door's key prefix — the "let them back in now" lever.
+ *
+ * Two callers, one shape. An OPERATOR needs it when a cap turns out to be wrong for a real
+ * merchant and waiting out the window is not an answer. A TEST needs it because the windows are
+ * an hour long and no test can wait one out. Keeping it here rather than in each door's module is
+ * what lets every door reach its counters through this one import, so a caller never has to hold
+ * a database client of its own just to reset a budget.
+ *
+ * Prefix, not key: a door owns a namespace (`magic:`, `pw:`, `gen:`…), and resetting "the door"
+ * has to include the per-address buckets underneath it.
+ */
+export async function clearRateLimitCounters(keyPrefix: string): Promise<number> {
+  if (!keyPrefix) throw new Error("clearRateLimitCounters needs a key prefix");
+  const result = await prisma.rateLimitCounter.deleteMany({ where: { key: { startsWith: keyPrefix } } });
+  return result.count;
+}

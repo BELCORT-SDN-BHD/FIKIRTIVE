@@ -1,5 +1,5 @@
 import "server-only";
-import { consumeRateLimit } from "@fikirtive/db";
+import { consumeRateLimit } from "@fikirtive/db/rate-limit";
 
 /**
  * #795 — the product's own gates, in one place.

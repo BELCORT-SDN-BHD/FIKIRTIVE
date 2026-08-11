@@ -49,7 +49,8 @@ import {
   type ResearchJobData,
   type PublishJobData,
 } from "@fikirtive/core";
-import { prisma, pruneRateLimitCounters } from "@fikirtive/db";
+import { prisma } from "@fikirtive/db";
+import { pruneRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { runAsSystem } from "@fikirtive/db/principal";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing

@@ -38,8 +38,11 @@ export * from "./consent-runtime.js";
 // #803: the sole upgrade path from a merchant-entered identity to a channel-verified one.
 export * from "./contact-identity.js";
 export * from "./send-eligibility.js";
-// #795: the one cross-instance rate limiter. Every gate in the product counts through this.
-export * from "./rate-limit.js";
+// #795 — the cross-instance rate limiter is DELIBERATELY NOT re-exported here. It lives behind
+// its own entry point (`@fikirtive/db/rate-limit`) so a gate imports counting and nothing else:
+// this barrel pulls in the whole Prisma client surface, and dozens of test files replace it
+// wholesale — a limiter reached through it would break in every one of them for a reason that has
+// nothing to do with what those tests are about.
 
 function buildClient(): PrismaClient {
   // `||` not `??`: empty-string env vars (common in .env templates) must fall through.

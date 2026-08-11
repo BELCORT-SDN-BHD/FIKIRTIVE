@@ -1,5 +1,5 @@
 import "server-only";
-import { consumeRateLimit, prisma } from "@fikirtive/db";
+import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { normalizeMagicLinkEmail } from "./magic-link-contract";
 import { enqueueAuthEmail } from "./sender";
 import { sanitizeCallbackURL } from "@/lib/safe-redirect";
@@ -132,7 +132,7 @@ export async function acceptMagicLinkRequest(input: {
 }
 
 /** TEST ONLY. The buckets have an hour-long window; a test that wants a fresh budget cannot wait
- *  one out. #795 — they are rows now, so clearing them is a delete and this returns a promise. */
+ *  one out. #795 — they are shared rows now, so clearing them is a delete and this is async. */
 export async function __resetMagicLinkThrottleForTests(): Promise<void> {
-  await prisma.rateLimitCounter.deleteMany({ where: { key: { startsWith: "magic:" } } });
+  await clearRateLimitCounters("magic:");
 }
