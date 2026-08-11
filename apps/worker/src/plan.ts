@@ -289,6 +289,10 @@ export function dbPoolPlan(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.en
  *   - r3 又漏了另一半:显式 `0` 或垃圾值时 `dbPoolPlan` 只警告**不覆盖**,于是 env 里留着
  *     那个坏值,Prisma 的 `|| 10` 把它变成 **10** —— 而当时的写法退回角色下限 24,wait 角色
  *     的日志会报 38,真实只有 24。现在 0/垃圾值在**所有角色**下都落 10,与 db 逐字一致。
+ *
+ * ⚠️ 这里返回的是**交给 pg-pool 的那个 `max` 原样**(raw),不是池子的真实容量:
+ * `|| 10` 只兜 falsy,负数是 truthy,会原样穿过去。负数的真实容量见 `effectivePoolCapacity`
+ * —— 求和、报账一律用它,不要拿这个函数的返回值直接相加(判官 r4b P1-2)。
  */
 export function effectivePrismaPoolMax(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): number {
   const decision = dbPoolPlan(plan, env);
@@ -298,14 +302,79 @@ export function effectivePrismaPoolMax(plan: WorkerPlan, env: NodeJS.ProcessEnv 
 }
 
 /**
+ * 一个 `max` 交给 pg-pool 之后,这个池**真正**能开出几条连接 —— 判官 r4b P1-2。
+ *
+ * 两个池最后都落到同一份代码上:packages/db 把 `max` 交给 `@prisma/adapter-pg`,adapter 里是
+ * `new pg.Pool(config)`;pg-boss 也自建 `pg.Pool`。而 `pg.Pool` 就是 pg-pool。
+ *
+ * 锁定版 pg-pool 3.14.0 实测(`node_modules/.../pg-pool/index.js`):
+ *   - 第 89 行 `this.options.max = this.options.max || this.options.poolSize || 10`
+ *     —— 只有 **falsy** 才回落 10。`-3` 是 truthy,原样留下。
+ *   - 第 120 行 `_isFull()` 是 `this._clients.length >= this.options.max`
+ *     —— `0 >= -3` 为真,于是**一条连接都还没建**就判定池满。
+ *   - 于是 `connect()` 走进第 200 行那个分支,把请求压进 `_pendingQueue` 就再也没人取
+ *     (`_pulseQueue` 第 153 行同样被 `_isFull()` 挡回),永远不会走到 `newClient()`。
+ *
+ * 所以负数的真实容量是 **0**,不是那个负数:Prisma 一条连接都开不出来,每条查询无限等待。
+ * 明账过去直接把 `-3` 当条数加进总和,报出「prisma -3 + pg-boss 14 = 11」—— 容量不是负三条,
+ * 总数也不是 11,两个数字都是假的。
+ */
+export function effectivePoolCapacity(max: number): number {
+  return max > 0 ? max : 0;
+}
+
+/** 明账里的一个来源:`raw` 是配置原样(照报,保透明),`effective` 是 pg-pool 真实容量。 */
+export type PoolAccount = {
+  name: string;
+  /** 配置/计算出来、真正交给 pg-pool 的那个值。负数照报,不擦。 */
+  raw: number;
+  /** 按 pg-pool 行为折算出来的真实容量(`max ≤ 0` ⇒ 0)。**只有它能进总和。** */
+  effective: number;
+};
+
+export type ConnectionBudget = {
+  sources: PoolAccount[];
+  /** 每副本真实连接数 —— 只用 `effective` 求和(判官 r4b P1-2)。 */
+  effectiveTotal: number;
+  /** `raw !== effective` 的来源。非空 ⇒ 这个进程有池子根本开不出连接。 */
+  degraded: PoolAccount[];
+};
+
+/**
  * 这个进程**总共**会向 Postgres 开多少条连接:Prisma 的池 + pg-boss 自己的池。
  * 判官 r1 P1-3:第二项从来没进过明账,于是文档报的每副本上限只有真实值的一半。
+ * 判官 r4b P1-2:每个来源现在都带 `raw` 与 `effective` 两个值,总数只用 `effective` 求和。
  */
+export function connectionBudget(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): ConnectionBudget {
+  const account = (name: string, raw: number): PoolAccount => ({ name, raw, effective: effectivePoolCapacity(raw) });
+  const sources = [
+    account("prisma", effectivePrismaPoolMax(plan, env)),
+    account("pg-boss", plan.pgBossPoolMax ?? PGBOSS_POOL_DEFAULT),
+  ];
+  return {
+    sources,
+    effectiveTotal: sources.reduce((sum, s) => sum + s.effective, 0),
+    degraded: sources.filter((s) => s.raw !== s.effective),
+  };
+}
+
 export function connectionBudgetLine(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): string {
-  const prisma = effectivePrismaPoolMax(plan, env);
-  const boss = plan.pgBossPoolMax ?? PGBOSS_POOL_DEFAULT;
+  const budget = connectionBudget(plan, env);
+  // 加号两边一律用 effective,算术才自洽(「-3 + 14 = 14」读起来像笔误,而且总数是假的)。
+  // raw 与 effective 不同的来源,把 raw 原样挂在括号里 —— 透明不靠把假数字加进总和来换。
+  const parts = budget.sources.map((s) =>
+    s.raw === s.effective
+      ? `${s.name} ${s.effective}`
+      : `${s.name} ${s.effective} (configured ${s.raw} — pg-pool counts max ≤ 0 as already full, so this pool opens no connection)`,
+  );
+  const degraded =
+    budget.degraded.length === 0
+      ? ""
+      : ` WARNING: ${budget.degraded
+          .map((s) => `${s.name} pool max ${s.raw}`)
+          .join(", ")} — that is not a capacity. Every query on that pool waits forever. Fix the value.`;
   return (
-    `[worker] postgres connections: prisma ${prisma} + pg-boss ${boss} = ${prisma + boss} per replica. ` +
+    `[worker] postgres connections: ${parts.join(" + ")} = ${budget.effectiveTotal} per replica.${degraded} ` +
     `Budget check is replicas × this, PLUS web (prisma ${PRISMA_POOL_DEFAULT} + pg-boss 2 per replica), ` +
     `against the database's max_connections.`
   );

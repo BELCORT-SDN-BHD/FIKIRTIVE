@@ -17,9 +17,11 @@ import {
   PRISMA_POOL_DEFAULT,
   PROVIDER_CONCURRENT_REQUESTS,
   WAIT_QUEUES,
+  connectionBudget,
   connectionBudgetLine,
   dbPoolFloorFor,
   dbPoolPlan,
+  effectivePoolCapacity,
   effectivePrismaPoolMax,
   heartbeatIdFor,
   parseWorkerRole,
@@ -31,6 +33,12 @@ import {
   workerPlan,
 } from "./plan.js";
 import { PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT, PROVIDER_MAX_CONCURRENT_REQUESTS_ENV } from "@fikirtive/generation";
+
+/**
+ * pg-pool 的内部字段 —— 只给下面那条「锁定版实证」用。
+ * 断言真实行为就得读它自己的账本(`_clients` / `_isFull`),而不是读我们的复述。
+ */
+type PgPoolInternals = { options: { max: number }; _clients: unknown[]; _isFull(): boolean };
 
 describe("parseWorkerRole", () => {
   it("unset ⇒ all — an existing single-service deploy keeps working with no env change", () => {
@@ -274,11 +282,99 @@ describe("连接预算:Prisma 与 pg-boss 两个池都要进账(判官 P1-3)", (
       }
     });
 
-    it("负数被原样报出来 —— `|| 10` 只兜住 falsy,-3 是 truthy,packages/db 真会拿它去建池", () => {
-      // 明账的职责是**说实话**,不是替配置擦屁股。-3 在日志里刺眼是好事:它旁边就站着
-      // dbPoolPlan 的警告。要修的是那个配置(或将来修 packages/db),不是这行报数。
-      expect(effectivePrismaPoolMax(waitPlan, { DB_POOL_MAX: "-3" } as NodeJS.ProcessEnv)).toBe(-3);
-      expect(dbPoolPlan(waitPlan, { DB_POOL_MAX: "-3" } as NodeJS.ProcessEnv).action).toBe("warn");
+    /**
+     * 判官 r4b P1-2 —— r4 这条曾经把**假账固化成了断言**。
+     *
+     * r4 的设计是「-3 原样报出,刺眼是好事」,于是明账打出
+     * `prisma -3 + pg-boss 14 = 11`。判官离线实验证伪:锁定版 pg-pool 在 `max = -3` 时
+     * **零连接就判池满**,Prisma 一条连接都开不出来。所以容量既不是负三条、总数也不是 11
+     * —— 两个数字都是假的,而这条用例正是把它们钉住的那颗钉子。
+     *
+     * 现在的口径:每个来源报 `raw`(原样,-3 照报,保透明)+ `effective`(按 pg-pool 真实
+     * 行为折算),**总数只用 effective 求和**。
+     */
+    describe("负数池:raw 照报,但真实容量是 0(判官 r4b P1-2)", () => {
+      const negEnv = { DB_POOL_MAX: "-3" } as NodeJS.ProcessEnv;
+
+      /**
+       * 先把根因钉在**真正装着的那份代码**上,而不是钉在我们的复述上。
+       *
+       * 生产链路:packages/db 把 `max` 交给 `@prisma/adapter-pg` → adapter 里 `new pg.Pool(config)`;
+       * pg-boss 也自建 `pg.Pool`。`pg.Pool` 是 pg-pool 的子类(`BoundPool extends Pool`),
+       * 所以这里直接拿 pg-boss 依赖链上的那个 `pg.Pool` 来构造 —— 它就是生产里那个类。
+       *
+       * 哪天 pg-pool 换了行为(比如把 `max` 夹到 ≥ 1),这条会先红,提醒把折算规则一起改。
+       */
+      it("锁定版 pg-pool 的实证:max ≤ 0 时零连接即判池满,连接永远建不出来", async () => {
+        const { createRequire } = await import("node:module");
+        const { readFileSync } = await import("node:fs");
+        const { dirname, join } = await import("node:path");
+
+        const fromTest = createRequire(import.meta.url);
+        const fromBoss = createRequire(fromTest.resolve("pg-boss")); // worker 的直接依赖
+        const pg = fromBoss("pg") as { Pool: new (o: { max?: number }) => PgPoolInternals };
+        const fromPg = createRequire(fromBoss.resolve("pg"));
+        const pgPoolDir = dirname(fromPg.resolve("pg-pool"));
+        const pgPoolVersion = JSON.parse(readFileSync(join(pgPoolDir, "package.json"), "utf8")).version;
+
+        // 锁死在实验做过的那个版本上 —— 换版本必须重做实验,不能顺手改数字。
+        expect(pgPoolVersion).toBe("3.14.0");
+
+        const probe = (max: number) => {
+          const pool = new pg.Pool({ max });
+          return { pgPoolMax: pool.options.max, clients: pool._clients.length, isFullAtZero: pool._isFull() };
+        };
+
+        // 负数是 truthy,躲过 pg-pool 的 `max || 10`,再被 `_clients.length >= max` 判成满。
+        expect(probe(-3)).toEqual({ pgPoolMax: -3, clients: 0, isFullAtZero: true });
+        expect(probe(-1)).toEqual({ pgPoolMax: -1, clients: 0, isFullAtZero: true });
+        // 对照组:0 是 falsy,被 `|| 10` 兜住 —— 所以 0 根本走不到 pg-pool 这一步(见上一条用例)。
+        expect(probe(0)).toEqual({ pgPoolMax: 10, clients: 0, isFullAtZero: false });
+        expect(probe(24)).toEqual({ pgPoolMax: 24, clients: 0, isFullAtZero: false });
+      });
+
+      it("折算规则与实验一致:max ≤ 0 ⇒ 有效 0", () => {
+        expect(effectivePoolCapacity(-3)).toBe(0);
+        expect(effectivePoolCapacity(0)).toBe(0);
+        expect(effectivePoolCapacity(24)).toBe(24);
+      });
+
+      it("raw 仍然照报 -3(透明),但 effective 是 0", () => {
+        // raw 这一半没变:packages/db 的 `|| 10` 只兜 falsy,-3 真的会被交给 pg-pool。
+        expect(effectivePrismaPoolMax(waitPlan, negEnv)).toBe(-3);
+        expect(dbPoolPlan(waitPlan, negEnv).action).toBe("warn"); // 我们仍然不覆盖运维的值
+
+        const budget = connectionBudget(waitPlan, negEnv);
+        expect(budget.sources).toEqual([
+          { name: "prisma", raw: -3, effective: 0 },
+          { name: "pg-boss", raw: waitPlan.pgBossPoolMax, effective: waitPlan.pgBossPoolMax },
+        ]);
+        expect(budget.degraded).toEqual([{ name: "prisma", raw: -3, effective: 0 }]);
+      });
+
+      it("总数只用 effective 求和 —— 不再出现 r4 那个 11", () => {
+        const budget = connectionBudget(waitPlan, negEnv);
+        // r4:-3 + 14 = 11(假)。现在:0 + 14 = 14(真)。
+        expect(budget.effectiveTotal).toBe(waitPlan.pgBossPoolMax);
+        expect(budget.effectiveTotal).toBe(14);
+        expect(budget.effectiveTotal).not.toBe(11);
+
+        const line = connectionBudgetLine(waitPlan, negEnv);
+        expect(line).not.toContain("= 11 per replica");
+        expect(line).not.toContain("prisma -3 + pg-boss");
+        expect(line).toContain("= 14 per replica");
+        expect(line).toContain("configured -3"); // raw 照报
+        expect(line).toContain("opens no connection"); // 而且说明白后果
+        expect(line).toContain("WARNING");
+      });
+
+      it("正常值一个字都不多说 —— 只有 raw ≠ effective 才加注解", () => {
+        const line = connectionBudgetLine(waitPlan, { DB_POOL_MAX: "30" } as NodeJS.ProcessEnv);
+        expect(line).toContain(`prisma 30 + pg-boss ${waitPlan.pgBossPoolMax} = ${30 + waitPlan.pgBossPoolMax!}`);
+        expect(line).not.toContain("WARNING");
+        expect(line).not.toContain("configured");
+        expect(connectionBudget(waitPlan, { DB_POOL_MAX: "30" } as NodeJS.ProcessEnv).degraded).toEqual([]);
+      });
     });
 
     it("wait 角色的垃圾值:dbPoolPlan 仍然只警告不覆盖(所以坏值真的会留在 env 里)", () => {
