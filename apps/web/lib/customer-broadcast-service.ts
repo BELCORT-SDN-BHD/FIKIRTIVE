@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import {
   effectiveOrgRoles,
+  isChannelVerifiedIdentity,
   newId,
   orgRolesAllow,
   validateSegmentRuleGroup,
@@ -160,6 +161,12 @@ export type AudienceConsentSummary = {
   unresolvedLegacyOptOut: number;
   /** Reachable contacts in this audience whose only opt-out is the merchant's own record. */
   reportedOptOutKept: number;
+  /**
+   * #758 — reachable contacts this audience would have kept, and the segment's own optional
+   * "exclude the opt-outs I recorded myself" left out. Zero unless the merchant turned that
+   * option on for this segment; when it is on, `reportedOptOutKept` is zero instead.
+   */
+  excludedByReportedOptOut: number;
 };
 
 type ResolvedSegmentAudience = {
@@ -426,7 +433,12 @@ export function createCustomerBroadcastService(
           // `channels` fact describes the contact; narrowing it to the run's channel made this
           // side answer the shared gate differently from the segments page (see
           // `contactChannelFacts`). Which identities this run may send to is filtered below.
-          identities: { where: { ownerId, deletedAt: null }, select: { id: true, channel: true } },
+          // #803: the grade rides along, because both questions below need it — a merchant-entered
+          // number is neither a channel fact nor a thing this run may send to.
+          identities: {
+            where: { ownerId, deletedAt: null },
+            select: { id: true, channel: true, verificationStatus: true },
+          },
         },
       }),
       readContactConsentTruth(client, ownerId, { channel, purpose }),
@@ -462,7 +474,11 @@ export function createCustomerBroadcastService(
       const selected = selectedIntoAudience(truth, facts, validated.value, evaluatedAt);
       // This run can only speak about — and only send to — identities on its own channel. That
       // is a targeting question, deliberately kept out of the selection facts above.
-      const sendTargets = contact.identities.filter((identity) => identity.channel === channel);
+      // #803: and only identities a channel has actually confirmed. A number the merchant typed
+      // is stored, shown and searchable — it is not an address this product will message.
+      const sendTargets = contact.identities.filter(
+        (identity) => identity.channel === channel && isChannelVerifiedIdentity(identity),
+      );
       // Only contacts this run can reach are counted: an audience summary must describe the
       // audience, not the address book.
       if (sendTargets.length === 0) continue;
@@ -480,6 +496,7 @@ export function createCustomerBroadcastService(
         excludedByConsent: excluded.excluded,
         unresolvedLegacyOptOut: excluded.unresolvedLegacy,
         reportedOptOutKept,
+        excludedByReportedOptOut: excluded.excludedByReportedOptOut,
       },
     };
   }

@@ -1,5 +1,6 @@
 import {
   contactMatchesRules,
+  isChannelVerifiedIdentity,
   type SegmentContactFacts,
   type SegmentRuleGroup,
 } from "@fikirtive/core";
@@ -75,11 +76,22 @@ function normalizedChannel(value: string): string | null {
  * A rule fact describes the CONTACT. Which identities a run may actually send to is a separate
  * question, answered separately by each caller (the broadcast still targets — and still counts
  * over — only identities on its own channel).
+ *
+ * #803 — only CHANNEL-VERIFIED identities become channel facts. A merchant who types a customer's
+ * number into the contact page is recording an address book, not a delivery guarantee: nobody has
+ * confirmed that number reaches anyone, let alone on WhatsApp. If a typed number counted here,
+ * "channel is whatsapp" — a segment rule that says nothing about consent and needs no opt-in —
+ * would quietly sweep every hand-typed digit into a broadcast audience. That is the same shape
+ * #806 closed for consent, arriving through a different door, and it is exactly what the Founder
+ * ruling forbids: the lower grade is stored, shown, and searchable, never messaged.
  */
-export function contactChannelFacts(identities: readonly { channel: string }[]): string[] {
+export function contactChannelFacts(
+  identities: readonly { channel: string; verificationStatus: string }[],
+): string[] {
   return [
     ...new Set(
       identities
+        .filter(isChannelVerifiedIdentity)
         .map((identity) => normalizedChannel(identity.channel))
         .filter((channel): channel is string => channel !== null),
     ),
@@ -113,11 +125,22 @@ export function selectedIntoAudience(
   rules: SegmentRuleGroup,
   evaluatedAt: string,
 ): boolean {
+  // #758 — the merchant's own optional tightening, and the ONLY thing it can do is subtract.
+  // It runs inside the same gate as everything else so the count, the preview and the frozen
+  // audience cannot disagree about it (#750), and it is checked before the rules because no
+  // rule can undo it: a contact the merchant asked to leave out stays out of every shape,
+  // including a segment deliberately built out of opt-outs.
+  if (rules.excludeReportedOptOut === true && truth.reportedOptOut) return false;
   const matchesAs = (marketingConsent: "opt_in" | "opt_out"): boolean =>
     contactMatchesRules({ ...facts, marketingConsent, doNotDisturb: false }, rules, { evaluatedAt });
   const optedOut = isKnownOptOut(truth);
   if (!matchesAs(optedOut ? "opt_out" : "opt_in")) return false;
   return optedOut ? !matchesAs("opt_in") : true;
+}
+
+/** The same rules with the merchant's optional exclusion off — "who would this have selected?" */
+function withoutReportedOptOutExclusion(rules: SegmentRuleGroup): SegmentRuleGroup {
+  return { match: rules.match, rules: rules.rules };
 }
 
 export type ConsentExclusionCandidate = {
@@ -132,6 +155,13 @@ export type ConsentExclusionCounts = {
   excluded: number;
   /** Of those, the ones held out by the pre-ledger fence — resolvable one contact at a time. */
   unresolvedLegacy: number;
+  /**
+   * #758 — contacts this selection would have kept, and the merchant's own optional exclusion
+   * removed. Counted apart from `excluded` on purpose: that number is what the consent ledger
+   * decided, this one is what the merchant chose, and the page may not present a choice as
+   * evidence (#768). The two can never contain the same contact — see the function below.
+   */
+  excludedByReportedOptOut: number;
 };
 
 /**
@@ -160,9 +190,25 @@ export function countExcludedByConsent(
         { evaluatedAt },
       ),
   );
+  // #758 — who the merchant's own exclusion removed, and nobody else. The test is the exclusion
+  // itself: the same gate, on the same rules, with the option off would have selected them. So a
+  // contact the ledger already holds out (the `excluded` number above) is never counted here —
+  // turning the option off would not bring her back, and one person may not be reported twice
+  // under two different reasons.
+  const withoutOption = withoutReportedOptOutExclusion(rules);
+  const excludedByReportedOptOut =
+    rules.excludeReportedOptOut === true
+      ? contacts.filter(
+          (contact) =>
+            contact.truth.reportedOptOut &&
+            !contact.selected &&
+            selectedIntoAudience(contact.truth, contact.facts, withoutOption, evaluatedAt),
+        ).length
+      : 0;
   return {
     excluded: excluded.length,
     unresolvedLegacy: excluded.filter((contact) => contact.truth.unresolvedLegacyOptOut).length,
+    excludedByReportedOptOut,
   };
 }
 
@@ -176,12 +222,23 @@ function asState(value: string): ConsentState {
  * rows the legacy column lives on.
  *
  * Two owner-fenced queries, no per-contact fan-out:
- *  1. the projection rows (the verified authority);
- *  2. every merchant declaration in this scope, folded in R-010's own `(receivedAt, id)` order so
- *     the LAST one wins. Looking at the merchant's latest record — rather than at the folded
- *     state — is what makes an opt-out recorded after a verified opt-in visible: that fold stays
- *     `verified_grant` (correctly, the customer's own evidence decides the send), so a reading
- *     keyed on the state reported such a contact as zero and #716's disclosure gap survived.
+ *  1. the projection rows in the CALLER's scope (the verified authority, which really is
+ *     per-channel and per-purpose: a customer's unsubscribe is about the channel she used it on);
+ *  2. every merchant declaration, folded in R-010's own `(receivedAt, id)` order so the LAST one
+ *     wins. Looking at the merchant's latest record — rather than at the folded state — is what
+ *     makes an opt-out recorded after a verified opt-in visible: that fold stays `verified_grant`
+ *     (correctly, the customer's own evidence decides the send), so a reading keyed on the state
+ *     reported such a contact as zero and #716's disclosure gap survived.
+ *
+ * #758 r2 判官 P1 — that second read is fixed to `CRM_CONSENT_SCOPE`, NOT the caller's scope,
+ * because that is the one tuple the merchant's own record is ever WRITTEN to: both merchant
+ * surfaces hardcode it (crm-actions.ts `setContactConsent` and the CSV import), exactly as
+ * R-010 §4.6.1 fixes it. Reading it at the caller's scope made one fact answer differently per
+ * caller: the segments page (always this scope) called a contact a reported opt-out while a
+ * broadcast on any other channel looked in its own tuple, found nothing, and put back precisely
+ * the people the page had just excluded — #750's defect arriving through the scope instead of
+ * through the rules. If a merchant surface ever starts writing this record per channel, this
+ * read has to follow it in the same commit.
  */
 export async function readContactConsentTruth(
   client: Prisma.TransactionClient,
@@ -196,7 +253,12 @@ export async function readContactConsentTruth(
     // `actorKind: "merchant"` is the closed R-010 writer set for the two surfaces a merchant can
     // record consent from himself (contact profile and CSV import); both are always `asserted`.
     client.consentEvent.findMany({
-      where: { ownerId, channel: scope.channel, purpose: scope.purpose, actorKind: "merchant" },
+      where: {
+        ownerId,
+        channel: CRM_CONSENT_SCOPE.channel,
+        purpose: CRM_CONSENT_SCOPE.purpose,
+        actorKind: "merchant",
+      },
       select: { contactId: true, action: true },
       orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
     }),
@@ -212,6 +274,14 @@ export async function readContactConsentTruth(
       unresolvedLegacyOptOut: false,
       reportedOptOut: latestMerchantAction.get(row.contactId) === "revoke",
     });
+  }
+  // A merchant record can exist where THIS scope's ledger has said nothing at all — the record
+  // lives in one scope, the projection is read in another. Dropping such a contact from the map
+  // is how the same person became a stranger to a run on another channel, so she is carried with
+  // the state this scope actually has (nothing) and the record she actually carries.
+  for (const [contactId, action] of latestMerchantAction) {
+    if (action !== "revoke" || truth.has(contactId)) continue;
+    truth.set(contactId, { state: "unknown", unresolvedLegacyOptOut: false, reportedOptOut: true });
   }
   return truth;
 }

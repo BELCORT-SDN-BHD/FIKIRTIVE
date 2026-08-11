@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
+import { isGenFailureReason } from "@fikirtive/core/gen-failure";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
@@ -24,6 +25,10 @@ export function imageNodeActionable(d: { status?: string; url?: string; generati
 export function ImageNode({ data, id, selected }: NodeProps) {
   const d = data as {
     status: string;
+    /** WHY this card rested, as the board read resolved it from the job row (#827). A string
+     *  here because React Flow's data bag is untyped either way; it is narrowed back into the
+     *  closed `GenFailureReason` set below, and an unrecognised word rests on `unexplained`. */
+    failureReason?: string;
     url?: string;
     prompt?: string;
     generationId?: string;
@@ -93,6 +98,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     if (!soloSelected) setInfoOpen(false);
   }
   const terminal = isTerminalCardStatus(d.status);
+  // WHY this card rested, narrowed back into the algebra (#827). React Flow's `data` is an
+  // untyped bag, so the board read's word is re-checked here exactly as `status` is above:
+  // anything this build does not recognise reads as `unexplained`, which is what a card with
+  // no recorded reason has always said. Never a crash, never an invented reason.
+  const failureReason = isGenFailureReason(d.failureReason) ? d.failureReason : "unexplained";
   const actionable = imageNodeActionable(d);
   // Only a card a board read has answered for wears a letter. What a press ASKED for is not
   // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
@@ -313,11 +323,13 @@ export function ImageNode({ data, id, selected }: NodeProps) {
           which resting state it is in, and `missing` is the board's own word for "the work exists,
           this card cannot show it". */}
       {terminal ? (
-        <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
+        <FailedBody status={d.status as TerminalCardStatus} reason={failureReason} onRefresh={d.onRefresh} />
       ) : isInFlightCardFace(d.status) ? (
         <GeneratingBody gb={d.skin === "gb"} kind="image" queued={d.status === "queued"} onRefresh={d.onRefresh} />
       ) : !d.url ? (
-        <FailedBody status="missing" onRefresh={d.onRefresh} />
+        // Not this card's own ending — a face this renderer could not draw media for. It has no
+        // refusal to explain, so it says the `missing` words and nothing more (#827).
+        <FailedBody status="missing" reason="unexplained" onRefresh={d.onRefresh} />
       ) : (
         <img
           src={d.url}

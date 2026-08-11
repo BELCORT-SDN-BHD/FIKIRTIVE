@@ -9,8 +9,12 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  GEN_FAILURE_REASONS,
   REFERENCE_IMAGE_PERSON_REJECTED,
+  isGenFailureReason,
+  merchantGenFailureExplanation,
   merchantGenFailureMessage,
+  merchantGenFailureReason,
   referenceImagePersonRejected,
 } from "./gen-failure.js";
 import { redactProviderNames } from "./provider-secrecy.js";
@@ -157,5 +161,85 @@ describe("merchantGenFailureMessage — a whitelist, never a passthrough", () =>
   it("treats an absent error as nothing to say", () => {
     expect(merchantGenFailureMessage(null)).toBeNull();
     expect(merchantGenFailureMessage(undefined)).toBeNull();
+  });
+});
+
+/**
+ * #827 — the reason as a NAME, so a card can carry it instead of a surface being handed a
+ * sentence in the moment. Same whitelist, asked a different question.
+ */
+describe("merchantGenFailureReason — the closed set of names", () => {
+  it("names the one refusal we can prove", () => {
+    expect(merchantGenFailureReason(REFERENCE_IMAGE_PERSON_REJECTED)).toBe("referenceImagePerson");
+  });
+
+  // The honest answer for every ordinary failure, and for every card that ended before #827
+  // existed. `unexplained` is a MEMBER of the set, which is why no reader needs an "and if there
+  // is nothing?" branch it could forget.
+  it.each([
+    "conditioning refs unreachable (0/1) — refusing to spend",
+    "stale GENERATING reaped — worker hung or crashed; refunded",
+    `${REFERENCE_IMAGE_PERSON_REJECTED} …and here is the raw engine reply`,
+    "",
+    "   ",
+  ])("answers unexplained for %j", (persisted) => {
+    expect(merchantGenFailureReason(persisted)).toBe("unexplained");
+  });
+
+  it("answers unexplained for a job that recorded nothing at all", () => {
+    expect(merchantGenFailureReason(null)).toBe("unexplained");
+    expect(merchantGenFailureReason(undefined)).toBe("unexplained");
+  });
+
+  it("survives whitespace on the way through storage, exactly as the sentence reader does", () => {
+    expect(merchantGenFailureReason(`  ${REFERENCE_IMAGE_PERSON_REJECTED}  `)).toBe("referenceImagePerson");
+  });
+
+  it("only ever answers with a member of the closed set", () => {
+    for (const persisted of [REFERENCE_IMAGE_PERSON_REJECTED, "anything else", "", null, undefined]) {
+      expect(GEN_FAILURE_REASONS).toContain(merchantGenFailureReason(persisted));
+    }
+  });
+});
+
+describe("isGenFailureReason — the untyped edges land back inside the set", () => {
+  it("recognises every name and nothing else", () => {
+    for (const reason of GEN_FAILURE_REASONS) expect(isGenFailureReason(reason)).toBe(true);
+    // A React node's data bag, a board read from an older deploy, a hand-written fixture.
+    for (const stranger of ["", "REFERENCE_IMAGE_PERSON", "referenceimageperson", null, undefined]) {
+      expect(isGenFailureReason(stranger)).toBe(false);
+    }
+  });
+});
+
+describe("merchantGenFailureExplanation — ONE table, so two surfaces cannot drift", () => {
+  it("gives the whitelisted sentence, byte for byte", () => {
+    expect(merchantGenFailureExplanation("referenceImagePerson")).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+  });
+
+  it("gives nothing for an ending with no proven reason", () => {
+    // Null is not a gap to paper over: the surface must say its own honest generic thing.
+    expect(merchantGenFailureExplanation("unexplained")).toBeNull();
+  });
+
+  it("is the same answer the sentence reader gives — one table, asked two ways", () => {
+    // This is the join that keeps the card (which holds a name) and the live poll (which holds a
+    // sentence) saying the same words about the same job. If these two ever diverge, a merchant
+    // reads one story in a toast and another on the card.
+    for (const persisted of [REFERENCE_IMAGE_PERSON_REJECTED, "conditioning refs unreachable (0/1) — refusing to spend", "", null]) {
+      expect(merchantGenFailureExplanation(merchantGenFailureReason(persisted)))
+        .toBe(merchantGenFailureMessage(persisted));
+    }
+  });
+
+  it("every explained reason has a sentence, and it is white-label", () => {
+    for (const reason of GEN_FAILURE_REASONS) {
+      if (reason === "unexplained") continue;
+      const sentence = merchantGenFailureExplanation(reason);
+      expect(sentence, `reason "${reason}" has no sentence`).toBeTruthy();
+      // Vendor-free at the source, not scrubbed on the way out — the whitelist compares bytes,
+      // so a scrub would silently turn the merchant's own advice back into the generic apology.
+      expect(redactProviderNames(String(sentence))).toBe(sentence);
+    }
   });
 });

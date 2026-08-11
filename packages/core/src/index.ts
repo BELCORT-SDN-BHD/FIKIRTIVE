@@ -146,6 +146,10 @@ export {
   type PublishJobData,
 } from "./publish.js";
 export * from "./segment-rules.js";
+// The two credibility grades a stored contact identity can carry (#803). Pure and shared,
+// because the database constraint, the CRM write path, the audience gate and the badge in the
+// browser must all mean the same thing by "not verified".
+export * from "./contact-identity-grade.js";
 // Canvas board geometry — WHERE a card lands. Pure (no Prisma, no server-only), so the three
 // runtimes that place cards can share ONE grid: the browser, the web server, and the worker
 // that writes a finished job's whole batch (#601).
