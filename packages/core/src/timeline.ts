@@ -400,6 +400,51 @@ export const CAPTION_QUEUE_POLICY = {
   deadLetter: CAPTION_DLQ,
 } as const;
 
+/**
+ * Which GENERATION of cached transcripts the product currently reads and writes.
+ *
+ * This is the value stored in `Transcript.model` (@@unique([contentHash, model])) — the column
+ * is named after what it used to hold, but what it holds now is this generation tag, and that
+ * change is the whole point (#787 r2).
+ *
+ * ── why a generation and not the engine's model name ──────────────────────────────────────
+ * Two independent requirements collide, and a generation tag is the one thing that satisfies
+ * both:
+ *
+ *   1. The reader must not know the engine. `apps/web` naming a model was the silent half of
+ *      #787: two copies of one constant, and changing the worker's copy alone would have
+ *      emptied every merchant's captions with no error anywhere.
+ *   2. Selecting a row must be STRUCTURAL, not chronological. "Newest row wins" is not a
+ *      guarantee: during a rolling deploy an OLD worker can finish a job AFTER a new one and
+ *      write the later row, so the freshest row can be the stale engine's — and the new
+ *      worker's cache hit means it is never corrected. A merchant would then be shown an
+ *      English transcript of Malay audio, permanently, with nothing logged.
+ *
+ * A generation tag is not the engine's name (requirement 1 holds: this constant travels to the
+ * web app, the model name never does) and it is not a timestamp (requirement 2 holds: a row
+ * either carries the current generation or it is invisible, whenever it was written).
+ *
+ * ── rolling deploys are safe in BOTH directions ───────────────────────────────────────────
+ * Old and new code overlap for minutes on every deploy, in both mixed states:
+ *   · new web + old worker → old worker writes the OLD tag; new web asks for this one, finds
+ *     nothing, returns []. The merchant sees "no captions yet" and can re-run — an honest
+ *     empty, never a wrong language.
+ *   · old web + new worker → new worker writes THIS tag; old web asks for the old one and
+ *     likewise finds nothing. Same honest empty.
+ * Neither direction can serve one engine's transcript as another's, because neither direction
+ * involves a comparison — only an exact tag match. The rows also never collide: different tags
+ * are different keys under the unique index, so both workers can write during the overlap.
+ *
+ * ── bump it when, and only when, older transcripts stop being equivalent ──────────────────
+ * Changing the transcription model or its decoding flags means the cached cues are no longer
+ * what the current pipeline would produce; bump this and the old rows retire themselves. The
+ * bump is pinned against the worker's model constant by a test (apps/worker caption.test.ts),
+ * so the model cannot move without this moving too.
+ *
+ * g1 = the retired English-only era (rows tagged "base.en"). g2 = multilingual (#787).
+ */
+export const TRANSCRIPT_GENERATION = "g2";
+
 /** strip the /files/ prefix → storage key (worker side) */
 export function srcToStorageKey(src: string): string {
   return src.replace(/^\/files\//, "");

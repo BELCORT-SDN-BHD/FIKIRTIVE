@@ -17,6 +17,7 @@ import {
   INGEST_QUEUE,
   RENDER_QUEUE,
   CAPTION_QUEUE,
+  TRANSCRIPT_GENERATION,
   type FikirtiveEdit,
   type CaptionCue,
   type CaptionJobData,
@@ -1254,13 +1255,17 @@ export async function getCaptionJob(jobId: string) {
  *  into timeline.captions after the caption job finishes. Returns [] when no transcript is
  *  cached yet (or the cached transcript is empty).
  *
- *  #787: this used to name the transcription model itself, hardcoded — a SECOND
- *  copy of a constant the worker also held. When the worker's model changed, this side kept
- *  asking for the old one and every merchant's captions came back empty, with no error
- *  anywhere. The fix removes the second knower rather than syncing it: this side no longer
- *  knows or needs the engine's model name at all, it just takes the newest transcript cached
- *  for these bytes. Which model produced it is the worker's business (and stays off this
- *  side of the wall, where merchant-visible strings live). */
+ *  #787: this used to name the transcription model itself, hardcoded — a SECOND copy of a
+ *  constant the worker also held. When the worker's model changed, this side kept asking for
+ *  the old one and every merchant's captions came back empty, with no error anywhere.
+ *
+ *  The fix removes the second knower rather than syncing it: this side asks for the current
+ *  TRANSCRIPT_GENERATION, a shared tag that is NOT the engine's name — which engine produced
+ *  the cues stays the worker's business, and off this side of the wall where merchant-visible
+ *  strings live. See the constant in packages/core for why the selection is an exact tag match
+ *  and not "the newest row" (short version: during a rolling deploy an old worker can write the
+ *  later row, so newest is not current, and the wrong-language transcript it returns would
+ *  never correct itself). */
 export async function getTranscript(projectId: string, src: string): Promise<CaptionCue[]> {
   const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
   const principal = await resolveUserPrincipal(gate);
@@ -1276,11 +1281,12 @@ export async function getTranscript(projectId: string, src: string): Promise<Cap
     // is a GLOBAL content-addressed cache (@@unique([contentHash, model])); whether to make it
     // per-org is a P3 schema decision (a per-org filter here without changing that unique would
     // break a second org's write). Left global+gated for P0 (no schema change).
-    // newest row for these bytes: the unique is (contentHash, model), so a hash can carry one
-    // row per model that has ever transcribed it — the newest is the current engine's.
-    const transcript = await prisma.transcript.findFirst({
-      where: { contentHash: asset.contentHash },
-      orderBy: { createdAt: "desc" },
+    // exact tag match, never a comparison: a row either carries the generation this build reads
+    // or it does not exist as far as this call is concerned, whenever it was written.
+    const transcript = await prisma.transcript.findUnique({
+      where: {
+        contentHash_model: { contentHash: asset.contentHash, model: TRANSCRIPT_GENERATION },
+      },
     });
     if (!transcript) return [];
     const parsed = captionCue.array().safeParse(transcript.cuesJson);

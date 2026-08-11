@@ -53,7 +53,12 @@ vi.mock("node:fs/promises", () => ({
   readFile: m.readFile,
 }));
 
+import { TRANSCRIPT_GENERATION } from "@fikirtive/core";
 import { handleCaption, WHISPER_MODEL_NAME } from "./caption.js";
+
+/** The generation tag rows written before #787 carry. Named here so the transition tests can
+ *  build the mixed-deploy states that actually occur. */
+const RETIRED_GENERATION = "base.en";
 
 const job = {
   id: "cj1",
@@ -176,52 +181,108 @@ describe("#787 — the languages this market actually speaks survive the round t
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
-describe("#787 — the cache cannot serve English cues for a model that no longer runs", () => {
-  it("reads and writes the cache under the CURRENT model name, not the retired one", async () => {
+describe("#787 r2 — transcripts are tagged by GENERATION, and only the current one counts", () => {
+  it("reads and writes the cache under the current generation tag", async () => {
     await handleCaption({ captionJobId: "cj1" });
 
-    const lookup = firstArg(m.transcriptFindUnique).where.contentHash_model;
-    expect(lookup).toEqual({ contentHash: job.contentHash, model: WHISPER_MODEL_NAME });
-    expect(lookup.model).not.toBe("base.en");
-    expect(firstArg(m.transcriptUpsert).create.model).toBe(WHISPER_MODEL_NAME);
+    expect(firstArg(m.transcriptFindUnique).where.contentHash_model).toEqual({
+      contentHash: job.contentHash,
+      model: TRANSCRIPT_GENERATION,
+    });
+    expect(firstArg(m.transcriptUpsert).create.model).toBe(TRANSCRIPT_GENERATION);
   });
 
-  it("a transcript cached by the retired English model is not served as a hit", async () => {
-    // The row exists for these bytes — but under the OLD model, so findUnique misses and the
-    // clip is transcribed again. Merchants who captioned before this fix get real captions.
-    m.transcriptFindUnique.mockImplementation(async ({ where }: { where: { contentHash_model: { model: string } } }) =>
-      where.contentHash_model.model === "base.en" ? { cuesJson: [] } : null,
+  it("the tag is NOT the engine's name — the reader must never learn the model", () => {
+    // The whole reason for a generation tag: it travels to apps/web, so it must carry no
+    // information about which engine produced the cues.
+    expect(TRANSCRIPT_GENERATION).not.toBe(WHISPER_MODEL_NAME);
+    expect(TRANSCRIPT_GENERATION).not.toContain(WHISPER_MODEL_NAME);
+  });
+
+  it("a retired-generation row is neither a cache hit nor overwritten", async () => {
+    // ROLLING DEPLOY, direction A (new worker, rows left by the old one). The old row exists for
+    // these bytes but carries the retired tag: it must not short-circuit this run, and it must not be
+    // clobbered either — an old worker still serving traffic is entitled to its own row.
+    m.transcriptFindUnique.mockImplementation(
+      async ({ where }: { where: { contentHash_model: { model: string } } }) =>
+        where.contentHash_model.model === RETIRED_GENERATION ? { cuesJson: [{ startMs: 0, lengthMs: 1, text: "stale English" }] } : null,
     );
+    m.readFile.mockResolvedValue(transcriptJson("ms", ["Selamat", "pagi"]));
 
     await handleCaption({ captionJobId: "cj1" });
 
+    // it transcribed rather than serving the stale row …
     expect(m.execa.mock.calls.some((c) => c[0] === "whisper-cli")).toBe(true);
+    // … and it wrote its OWN tag, leaving the retired row untouched.
+    expect(firstArg(m.transcriptUpsert).where.contentHash_model.model).toBe(TRANSCRIPT_GENERATION);
+    expect(firstArg(m.transcriptUpsert).create.model).toBe(TRANSCRIPT_GENERATION);
+    expect(firstArg(m.transcriptUpsert).create.cuesJson).toEqual([
+      { startMs: 0, lengthMs: 480, text: "Selamat" },
+      { startMs: 500, lengthMs: 480, text: "pagi" },
+    ]);
+  });
+
+  it("a LATE write from an old worker cannot displace the current row", async () => {
+    // ROLLING DEPLOY, direction B — the shape that broke r1's "newest row wins": the old worker
+    // finishes AFTER the new one, so the freshest row in the table is the retired engine's.
+    // Because both sides address rows by an exact tag, the late write lands on the retired key
+    // and the current key is untouched. Nothing here compares timestamps, so nothing can lose.
+    const rows = new Map<string, { model: string; cuesJson: unknown; writtenAt: number }>();
+    m.transcriptUpsert.mockImplementation(
+      async ({ where, create }: { where: { contentHash_model: { model: string } }; create: { cuesJson: unknown } }) => {
+        const tag = where.contentHash_model.model;
+        rows.set(tag, { model: tag, cuesJson: create.cuesJson, writtenAt: rows.size + 1 });
+        return {};
+      },
+    );
+    // the new worker (this code) writes the current generation first …
+    m.readFile.mockResolvedValue(transcriptJson("ms", ["Selamat"]));
+    await handleCaption({ captionJobId: "cj1" });
+    // … then the old worker lands its row LATER, under the retired tag.
+    rows.set(RETIRED_GENERATION, { model: RETIRED_GENERATION, cuesJson: [{ startMs: 0, lengthMs: 1, text: "Salamat" }], writtenAt: 99 });
+
+    const newest = [...rows.values()].sort((a, b) => b.writtenAt - a.writtenAt)[0]!;
+    expect(newest.model).toBe(RETIRED_GENERATION); // "newest" really is the stale one …
+    expect(rows.get(TRANSCRIPT_GENERATION)!.cuesJson).toEqual([
+      { startMs: 0, lengthMs: 480, text: "Selamat" },
+    ]); // … and the row addressed by the current tag is still the right one.
   });
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
-describe("#787 — the model name has exactly one owner", () => {
+describe("#787 r2 — the model has exactly one owner and no half-configurable dials", () => {
   const repoRoot = path.resolve(import.meta.dirname, "../../../..");
   const dockerfile = readFileSync(path.join(repoRoot, "apps/worker/Dockerfile"), "utf8");
 
-  it("the Dockerfile builds the same model this handler loads", () => {
-    expect(dockerfile).toMatch(new RegExp(`^ARG WHISPER_MODEL=${WHISPER_MODEL_NAME}$`, "m"));
-    expect(dockerfile).toMatch(
-      new RegExp(`^ENV WHISPER_MODEL_PATH=/opt/whisper/models/ggml-${WHISPER_MODEL_NAME}\\.bin$`, "m"),
-    );
+  it("the Dockerfile downloads and locates the same model file this handler loads", () => {
+    expect(dockerfile).toContain(`download-ggml-model.sh ${WHISPER_MODEL_NAME} /opt/whisper/models`);
+    expect(dockerfile).toContain(`/opt/whisper/models/ggml-${WHISPER_MODEL_NAME}.bin`);
+    expect(dockerfile).toMatch(/^ENV WHISPER_MODEL_DIR=\/opt\/whisper\/models$/m);
+  });
+
+  it("no build arg or env can move the model on its own", () => {
+    // The P2 the judge caught: a WHISPER_MODEL arg that the runtime path did not follow produced
+    // an image that either could not run or stored one engine's cues under another's tag.
+    expect(dockerfile).not.toMatch(/^ARG WHISPER_MODEL=/m);
+    expect(dockerfile).not.toMatch(/^ENV WHISPER_MODEL_PATH=/m);
+    // the code takes a DIRECTORY from the environment and derives the filename itself
+    const handler = readFileSync(path.join(repoRoot, "apps/worker/src/jobs/caption.ts"), "utf8");
+    expect(handler.includes("process.env.WHISPER_MODEL_PATH"), "the model path is env-overridable again").toBe(false);
+    expect(handler).toContain("process.env.WHISPER_MODEL_DIR");
   });
 
   it("the model download is checksum-pinned — a 466 MiB blob does not enter the image unverified", () => {
-    expect(dockerfile).toMatch(/^ARG WHISPER_MODEL_SHA256=[0-9a-f]{64}$/m);
+    expect(dockerfile).toMatch(/[0-9a-f]{64} {2}\/opt\/whisper\/models\/ggml-small\.bin/);
     expect(dockerfile).toContain("sha256sum -c -");
   });
 
-  it("apps/web no longer keeps a second copy of the model name", () => {
-    // The silent half of #787: getTranscript asked the cache for `model: "base.en"` on its own
-    // authority. It must not name a model at all — that knowledge belongs to the worker.
-    // (booleans, not toContain — a failed toContain on a 3k-line file prints the whole file)
-    const actions = readFileSync(path.join(repoRoot, "apps/web/lib/actions.ts"), "utf8");
-    expect(actions.includes('model: "base.en"'), "actions.ts still hardcodes the retired model").toBe(false);
-    expect(actions.includes("contentHash_model"), "actions.ts still reads the cache by model name").toBe(false);
+  it("model and generation are pinned as a PAIR — moving one without the other fails here", () => {
+    // A tripwire, deliberately. Changing the model without bumping the generation would serve
+    // the previous engine's cached cues as if they were current, which is silent and permanent.
+    // If this line is red: bump TRANSCRIPT_GENERATION in packages/core, then update it here.
+    expect({ model: WHISPER_MODEL_NAME, generation: TRANSCRIPT_GENERATION }).toEqual({
+      model: "small",
+      generation: "g2",
+    });
   });
 });

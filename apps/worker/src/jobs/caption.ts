@@ -29,26 +29,34 @@ import {
   MAX_CAPTIONS,
   newId,
   storageKey,
+  TRANSCRIPT_GENERATION,
   type CaptionJobData,
   type CaptionCue,
 } from "@fikirtive/core";
 import { probeFile } from "./ingest.js";
 
 /**
- * The transcription model baked into the worker image — and ALSO the Transcript cache-key
- * dimension (@@unique([contentHash, model])). ONE name, because #787 was caused by two:
- * the worker said "base.en" and apps/web's getTranscript said "base.en" independently.
+ * The transcription model baked into the worker image. It MUST be a multilingual build
+ * (never a `.en` one — that was #787) and the worker is its ONLY knower: nothing outside this
+ * package learns the engine's name, and the cached transcripts are tagged with
+ * TRANSCRIPT_GENERATION rather than with this.
  *
- * It MUST be a multilingual build (never a `.en` one) and it MUST stay in step with the
- * Dockerfile's WHISPER_MODEL arg — caption.test.ts fails on either, so the drift that
- * produced #787 cannot come back silently.
- *
- * Changing this name is free and safe: cached transcripts are keyed by (contentHash, model),
- * so rows written by an older model are simply not read, never mis-read. Nothing to migrate.
+ * ── changing the model is a CODE change, in four places, together ─────────────────────────
+ *   1. this constant,
+ *   2. TRANSCRIPT_GENERATION in packages/core (bump it — cues from the old model are not what
+ *      this pipeline would now produce, and the bump is what retires them),
+ *   3. the Dockerfile's download + the ENV path (both spell the filename literally),
+ *   4. the Dockerfile's pinned sha256 for the new file.
+ * There is deliberately NO build arg or env var that can move the model on its own: a
+ * half-configurable model is how an image ends up either unrunnable or writing one engine's
+ * cues under another's tag. caption.test.ts asserts 1-4 agree, so a partial change fails loudly.
  */
 export const WHISPER_MODEL_NAME = "small";
-const WHISPER_MODEL_PATH =
-  process.env.WHISPER_MODEL_PATH ?? `/opt/whisper/models/ggml-${WHISPER_MODEL_NAME}.bin`;
+
+/** Where the model FILE lives — the only thing deployment may relocate. The filename is always
+ *  derived from the constant above, so this can move the file but never change the model. */
+const WHISPER_MODEL_DIR = process.env.WHISPER_MODEL_DIR ?? "/opt/whisper/models";
+const WHISPER_MODEL_PATH = path.join(WHISPER_MODEL_DIR, `ggml-${WHISPER_MODEL_NAME}.bin`);
 
 /**
  * Language policy (#787): DETECT, never pin, never translate.
@@ -61,9 +69,10 @@ const WHISPER_MODEL_PATH =
  * We deliberately do NOT pass `--translate`: that flag rewrites the audio into English, and
  * a merchant's Malay captions must stay Malay — those are their own words on their own video.
  *
- * Known limit, stated plainly rather than hidden: the model detects ONE language per clip
- * (from the opening audio) and transcribes the whole clip as that language. A clip that
- * switches language halfway is transcribed in the dominant one.
+ * Known limit, stated plainly rather than hidden: the language is decided ONCE, from the
+ * OPENING audio, and the whole clip is then transcribed as that language. There is no
+ * re-judgement and no notion of a dominant language — a clip that opens in English and
+ * continues in Malay is transcribed as English throughout.
  */
 const WHISPER_LANGUAGE = "auto";
 
@@ -94,12 +103,14 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
 
   // #463: the payload carries only the job id — the tenant is knowable only after the row
   // load above. Note the Transcript cache below is reached by a tenant-free unique key
-  // (contentHash+model); the scope names the owner, it does not change that lookup.
+  // (contentHash + generation); the scope names the owner, it does not change that lookup.
   await runAsTenant(job.ownerId, async () => {
-    // CACHE SHORT-CIRCUIT: a re-request for the same audio bytes + model reuses the
-    // cached transcript for $0 + 0 CPU. Whisper is deterministic for fixed inputs.
+    // CACHE SHORT-CIRCUIT: a re-request for the same audio bytes at the same generation reuses
+    // the cached transcript for $0 + 0 CPU. Whisper is deterministic for fixed inputs.
+    // A row from an OLDER generation is not a hit — it is invisible here, which is what makes
+    // a merchant captioned before #787 get real captions instead of the stale English ones.
     const cached = await prisma.transcript.findUnique({
-      where: { contentHash_model: { contentHash: job.contentHash, model: WHISPER_MODEL_NAME } },
+      where: { contentHash_model: { contentHash: job.contentHash, model: TRANSCRIPT_GENERATION } },
     });
     if (cached) {
       await prisma.captionJob.update({
@@ -139,13 +150,13 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
       const probe = await probeFile(file);
       if (!probe.hasAudio) {
         await prisma.transcript.upsert({
-          where: { contentHash_model: { contentHash: job.contentHash, model: WHISPER_MODEL_NAME } },
+          where: { contentHash_model: { contentHash: job.contentHash, model: TRANSCRIPT_GENERATION } },
           update: { cuesJson: [] },
           create: {
             id: newId(),
             ownerId: job.ownerId,
             contentHash: job.contentHash,
-            model: WHISPER_MODEL_NAME,
+            model: TRANSCRIPT_GENERATION,
             cuesJson: [],
           },
         });
@@ -202,13 +213,13 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
 
       // upsert the cache (content-hash + model keyed → reused for $0 on re-render).
       await prisma.transcript.upsert({
-        where: { contentHash_model: { contentHash: job.contentHash, model: WHISPER_MODEL_NAME } },
+        where: { contentHash_model: { contentHash: job.contentHash, model: TRANSCRIPT_GENERATION } },
         update: { cuesJson: cues },
         create: {
           id: newId(),
           ownerId: job.ownerId,
           contentHash: job.contentHash,
-          model: WHISPER_MODEL_NAME,
+          model: TRANSCRIPT_GENERATION,
           cuesJson: cues,
         },
       });
