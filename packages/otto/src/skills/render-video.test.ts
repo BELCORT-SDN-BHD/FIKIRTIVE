@@ -66,13 +66,17 @@ describe("export — renders the SAVED cut", () => {
 describe("desk / join / music — the merchant's own moves, asked for in words", () => {
   const cut = { clips: [{ src: "/files/a.mp4", kind: "video" as const, seconds: 4 }], seconds: 4, captionCount: 0, music: null };
 
-  it("desk reports what they have and what the video holds", async () => {
-    const desk = vi.fn(async () => ({ media: [{ src: "/files/a.mp4", kind: "video" as const, seconds: 4 }], cut }));
+  it("desk reports what they have — by the name the merchant gave it — and what the video holds", async () => {
+    const desk = vi.fn(async () => ({
+      media: [{ src: "/files/a.mp4", kind: "video" as const, seconds: 4, label: "our new sauce" }],
+      cut,
+    }));
     const res = (await executeRenderVideo({ action: "desk" }, { context: makeCtx({ desk }) })) as {
-      ok: boolean; media: unknown[]; cut: unknown;
+      ok: boolean; media: { label: string }[]; cut: unknown;
     };
     expect(res.ok).toBe(true);
-    expect(res.media).toHaveLength(1);
+    // Otto must be able to SAY which clip it means; a content hash is not a name
+    expect(res.media.map((m) => m.label)).toEqual(["our new sauce"]);
     expect(res.cut).toEqual(cut);
   });
 
