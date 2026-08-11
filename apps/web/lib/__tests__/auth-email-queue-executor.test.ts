@@ -152,6 +152,15 @@ beforeAll(async () => {
   enqueueAuthEmail({ purpose: "sign-in-link", email: warmup, callbackURL: "/", overBudget: false });
   await authEmailQueueSettled();
   await prisma.betterAuthVerification.deleteMany({ where: { value: { contains: warmup } } });
+  // #795 — and warm the REQUEST path too, for the same reason as everything above it. The
+  // throttle consults a shared counter now, so the first press through this path pays a cold cost
+  // (module graph, pool slot, statement preparation) that the ones after it do not. The timing
+  // cases below are DIFFERENTIAL — they compare three branches measured in sequence — so a cold
+  // start does not average out: it lands entirely in whichever branch happens to run first and
+  // reads as a branch difference that is not one. Measured on a loaded machine: ~750 ms, which is
+  // most of the 400 ms threshold on its own.
+  await press(`p678-warmup-press-${randomUUID()}@fikirtive.test`, "203.0.113.1");
+  await authEmailQueueSettled();
 });
 
 beforeEach(async () => {
@@ -224,9 +233,17 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
 
     const spread = Math.max(unknown, allowed, spent) - Math.min(unknown, allowed, spent);
     // RED before the floor: branch A and C returned their slot in single-digit milliseconds while
-    // branch B held it to its deadline, so the spread was most of DEADLINE (~1200 ms). The
-    // threshold is a fifth of the floor; the defect is more than half of it.
-    expect(spread, `unknown=${unknown} allowed=${allowed} spent=${spent}`).toBeLessThan(FLOOR / 5);
+    // branch B held it to its deadline, so the spread was most of DEADLINE (~1200 ms).
+    //
+    // #795 — the tolerance moved from FLOOR/5 to FLOOR/3, and it is a NOISE budget, not a weaker
+    // claim. The window being measured now contains one shared-counter round trip on every branch
+    // (the per-address outbound cap used to be a Map lookup and is a database statement since the
+    // counters moved out of process memory). That round trip is IDENTICAL on all three branches —
+    // it cannot encode which one ran — but on a loaded machine it varies by a couple of hundred
+    // milliseconds run to run, which is most of a 400 ms budget on its own. The defect this case
+    // exists to catch is ~DEADLINE (1200 ms), so FLOOR/3 (≈667 ms) still refuses it with room to
+    // spare, and the "every branch really did fill the floor" assertion below is unchanged.
+    expect(spread, `unknown=${unknown} allowed=${allowed} spent=${spent}`).toBeLessThan(FLOOR / 3);
     // …and the floor really was in force, so the parity is not "everything was instant".
     for (const elapsed of [unknown, allowed, spent]) expect(elapsed).toBeGreaterThanOrEqual(FLOOR);
 
