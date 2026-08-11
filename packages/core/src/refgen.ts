@@ -105,11 +105,31 @@ export interface GenerationRequest {
   aspectRatio?: string;
 }
 
+/**
+ * #776 —— 一次付费产出的**回执**:引擎自己报回来的事实,产出之后才读,只用来记账。
+ *
+ * 这是**记录**,不是计费。reserve / settle / refund 的权威、幂等键、以及每一条
+ * charged / permanent 的判定,都不读这里一个字段;回执读不回来也绝不允许反过来
+ * 影响这一单的结果或扣费(适配器里读回执的那几行永不抛)。
+ *
+ * 两个字段都**可缺席**,缺席的语义是「引擎没报,我们不知道」——**不是零、不是空串**。
+ * 编一个看起来像事实的数字,比承认不知道更糟:毛利对账会拿它当真,商家也会。
+ */
+export interface GenerationReceipt {
+  /** 引擎自报**真正跑的那句提示词**(它在服务端改写/加固之后的版本)。缺席 = 未知。 */
+  finalPrompt?: string;
+  /** 引擎自报的**真实计费量**(它自己的计量单位)。缺席 = 未知。内部成本口径,
+   *  不上商家面 —— 那是我们的 COGS,不是商家买的东西。 */
+  billedUnits?: number;
+}
+
 /** One generated image, already downloaded by the provider — the worker
  *  stores these bytes content-addressed (same as any asset). */
 export interface GeneratedImage {
   bytes: Uint8Array;
   ext: string;
+  /** #776:这一张的回执。适配器读不到就不带 —— 缺席 = 未知,worker 如实落 null。 */
+  receipt?: GenerationReceipt;
 }
 
 /** What the worker hands a provider to animate an image into a clip (i2v).
@@ -136,6 +156,8 @@ export interface VideoRequest {
 export interface GeneratedVideo {
   bytes: Uint8Array;
   ext: string;
+  /** #776:这一条片子的回执。语义同 GeneratedImage.receipt。 */
+  receipt?: GenerationReceipt;
 }
 
 export interface GenerationProvider {

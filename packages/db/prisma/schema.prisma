@@ -259,6 +259,11 @@ model Generation {
   assetId        String
   source         AssetSource
   promptText     String      @default("")
+  /// #776 生成回执:引擎自报**它真正跑的那句提示词**(服务端改写/加固之后的版本)。
+  /// 商家可见 —— 「每个东西都要有迹可循」:商家写的那句在 promptText,引擎实际跑的那句在这里。
+  /// null = 引擎没报(或迁移前的历史行)= **未知**,读取端必须如实说不知道,不得回落成
+  /// promptText 冒充引擎的话。展示前过 redactProviderNames(白标)。
+  finalPromptText String?
   // 模板/模型标识（阶段一=模板 slug@version；阶段二=模型注册表条目）
   modelRef       String      @default("")
   params         Json?
@@ -497,6 +502,13 @@ model GenJob {
   /// videoPriceUsd，image=GEN_PRICE_USD_PER_IMAGE*count），冻结如 Generation.entitySnapshot。
   /// null = 没扣过费。绝不参与任何 spend 判定。
   spentUsd           Float?
+  /// #776 生成回执(纯记录):这一单**引擎自报的真实计费量**,按它自己的计量单位,
+  /// 在 commit tx 里与 spentUsd 并排冻结 —— 于是「我们按公式估的成本」与「引擎真收的量」
+  /// 同一行可比,毛利公式第一次可以反查而不是只能估。
+  /// null = 未知,三种情形同一个语义:引擎没报、这一单还没扣过费、或者这一单只有部分产出
+  /// 报了量(部分求和会低估成本,比空着更危险)。绝不参与任何 spend 判定。
+  /// 内部成本口径,不上商家面。
+  billedUnits        Int?
   error              String    @default("")
   queueJobId         String    @default("")
   attempts           Int       @default(0)

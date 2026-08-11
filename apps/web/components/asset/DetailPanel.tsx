@@ -45,6 +45,8 @@ type GenDTO = {
   variants: { id: string; url: string; favorite: boolean }[]; // aligned to urls; carries each variant's own id/state (F08)
   kind: string;
   prompt: string;
+  /** #776：引擎自报「真正跑的那句提示词」。没报 / 老行 ⇒ null，面板据此什么也不说。 */
+  finalPrompt: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
@@ -688,6 +690,31 @@ export default function DetailPanel({
             {/* Prompt text */}
             {gen.prompt && (
               <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
+            )}
+
+            {/* #776 生成回执 —— 引擎自报「它真正跑的那句话」。
+                上面那句是商家写的，这一句是引擎实际执行的；两者常常不同（引擎会在服务端
+                改写、加固、补细节），而在此之前这条链在交付那一步就断了：商家看得到结果，
+                看不到结果是按什么做出来的。
+
+                三条纪律都写在渲染条件里：
+                  · null（引擎没报 / 回执落库前的历史行）⇒ 整块不出现。不知道就不说，
+                    绝不拿商家自己那句话冒充引擎跑的那句；
+                  · 一模一样 ⇒ 只说一句「就是你写的那句」，不把同一段文字并排贴两遍；
+                  · 供应商指纹词已在服务端一处（asset-actions.merchantFinalPrompt）滤掉，
+                    这里拿到的就是可以直接上屏的白标文本。
+                样式沿用本面板既有的内联写法；这一面的 shadcn 化属于 #840 的界面族拆分。 */}
+            {gen.finalPrompt && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                  What the engine ran
+                </span>
+                <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+                  {gen.finalPrompt.trim() === gen.prompt.trim()
+                    ? "Your prompt, exactly as you wrote it."
+                    : gen.finalPrompt}
+                </p>
+              </div>
             )}
 
             {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.

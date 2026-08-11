@@ -33,12 +33,33 @@ import {
   type GenJobData,
   type GenModel,
   type GenVideoModel,
+  type GenerationReceipt,
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
+
+/**
+ * #776 —— 这一单**引擎自报的真实计费量**,或者 null = 未知。
+ *
+ * 全报了才求和。**少一个就整单未知**,这是刻意的:图片一单是 count 次付费调用,一次没报
+ * 就把剩下几次加起来,得到的是一个**偏低**的成本,而它会挨着 spentUsd 躺在同一行上,看起
+ * 来像一个可以拿去对账的数。低估成本的假数字比空着危险得多 —— 毛利地板正是靠这类数守的。
+ *
+ * 纯函数,不读库、不参与任何 spend 判定。
+ */
+function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {
+  if (outputs.length === 0) return null;
+  let total = 0;
+  for (const o of outputs) {
+    const units = o.receipt?.billedUnits;
+    if (typeof units !== "number") return null; // 有一个没报 ⇒ 整单未知
+    total += units;
+  }
+  return total;
+}
 
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp"
@@ -643,7 +664,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
 
       // THE paid call — exactly once per job. Image: t2i/edit. Video (i2v):
       // animate the shot's latest IMAGE generation into a clip.
-      let outputs: { bytes: Uint8Array; ext: string }[];
+      let outputs: { bytes: Uint8Array; ext: string; receipt?: GenerationReceipt }[];
       if (job.kind === "VIDEO") {
         // i2v source priority: an explicit owned still (Gen space upload→animate)
         // → the shot's latest still (Storyboard Animate) → none (text-to-video).
@@ -781,10 +802,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       let generationIds: string[] = [];
       for (let attempt = 1; ; attempt++) {
         try {
-          const stored: { contentHash: string; ext: string; size: number }[] = [];
+          // #776:回执随字节一起走完这一段 —— 它属于**这一个**产出,顺序即绑定,不能靠事后
+          // 按 id 找回来。落库仍然是纯记录:下面的 create 多写一列,commit 的判定一字未改。
+          const stored: { contentHash: string; ext: string; size: number; receipt?: GenerationReceipt }[] = [];
           for (const img of outputs) {
             const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
-            stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength });
+            stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength, ...(img.receipt ? { receipt: img.receipt } : {}) });
           }
           generationIds = await prisma.$transaction(async (tx) => {
             const ids: string[] = [];
@@ -799,6 +822,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
                   id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
                   threadId: job.threadId ?? null, // cowork tag (null for normal studio gens) → keeps it out of candidate/asset views
                   assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
+                  // #776:引擎自报它真正跑的那句提示词。没报 ⇒ null = 未知,**绝不**回落成
+                  // job.prompt —— 那会让这一列变成 promptText 的副本,商家从此看不出两者何时不同。
+                  finalPromptText: s.receipt?.finalPrompt ?? null,
                   entitySnapshot, version: 1, attachedAt: null,
                 },
               });
@@ -814,7 +840,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
             const marked = await tx.genJob.updateMany({
               where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
-              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) },
+              // #776: billedUnits 与 spentUsd 在**同一次写入**里冻结 —— 估的成本与引擎报的
+              // 量必须来自同一个瞬间,否则日后对账的两个数说的不是同一单。纯记录:它既不
+              // 参与 marked.count 的判定,也不进 settle。
+              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }), billedUnits: jobBilledUnits(stored) },
             });
             if (marked.count === 0) throw REDELIVERY_DISCARD;
             // SETTLE the hold atomically with the resume marker — the generation succeeded,

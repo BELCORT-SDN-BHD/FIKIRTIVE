@@ -4,6 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { storage, kindOf, extFromFilename } from "./storage";
+import { redactProviderNames } from "./provider-secrecy";
 
 export type GenerationDTO = {
   id: string;
@@ -17,6 +18,18 @@ export type GenerationDTO = {
   variants: { id: string; url: string; favorite: boolean }[];
   kind: string;
   prompt: string;
+  /**
+   * #776 —— 引擎自报**它真正跑的那句提示词**,商家可见。
+   *
+   * null 有两种情形,语义是同一个:引擎没报,或者这是回执落库之前的历史行。两种都叫
+   * **未知**,面板据此什么也不说 —— 绝不回落成 `prompt` 冒充引擎的话(那样这个字段就
+   * 变成一句永远为真的废话,商家再也看不出两句何时真的不同)。
+   *
+   * 白标在这里(服务端一处)完成:引擎改写出来的句子可能带供应商指纹词,过
+   * `redactProviderNames` 之后才越过这道边界。原文按原样留在库里 —— 那是记账真相,
+   * 过滤是展示层的事。
+   */
+  finalPrompt: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /**
@@ -40,6 +53,7 @@ export async function getGeneration(
       id: true,
       projectId: true,
       promptText: true,
+      finalPromptText: true,
       favorite: true,
       asset: { select: { ownerId: true, contentHash: true, ext: true } },
     },
@@ -86,10 +100,25 @@ export async function getGeneration(
     variants,
     kind: kindOf(asset.ext),
     prompt: gen.promptText,
+    finalPrompt: merchantFinalPrompt(gen.finalPromptText),
     favorite: gen.favorite,
     sourceGenerationId: job?.sourceGenerationId ?? null,
     imageAspect: snapshotImageAspect(job?.imageOptions),
   };
+}
+
+/**
+ * #776 —— 引擎自报的那句提示词跨过商家边界时的**唯一**出口。
+ *
+ * 两件事在这一处做完,所以别处不必各做一遍:
+ *   ① 白标 —— 过 `redactProviderNames`,引擎改写时带出来的供应商指纹词到不了商家眼前;
+ *   ② 空即未知 —— null / 空串 / 过滤后只剩空白,一律回 null。面板对 null 什么也不说。
+ *      「不知道」必须长得像不知道,不能长得像一个空白的答案。
+ */
+function merchantFinalPrompt(stored: string | null): string | null {
+  if (!stored) return null;
+  const shown = redactProviderNames(stored).trim();
+  return shown.length > 0 ? shown : null;
 }
 
 /** 快照里的形状，且必须仍在今天的菜单上 —— 一个已下线的旧形状不得靠这条路回到付费请求里。 */

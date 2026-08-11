@@ -1,6 +1,57 @@
-import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@fikirtive/core";
+import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenerationReceipt } from "@fikirtive/core";
 import { imageOutputSize, REFERENCE_IMAGE_PERSON_REJECTED, referenceImagePersonRejected } from "@fikirtive/core";
 import { chargedError, permanentInputError, extFromUrl } from "./index.js";
+
+/** #776 —— 落库的提示词上限。引擎报回来的是它自己改写过的一段文字,长度不由我们决定,
+ *  所以在**入口**处封顶一次,而不是指望下游每个读者都记得。超长的截断,不是丢弃:
+ *  半句真话仍然是真话,而丢弃会把「引擎报过」抹成「引擎没报」。 */
+const MAX_FINAL_PROMPT_CHARS = 4_000;
+
+/** 正整数才是计费量。0 / 负数 / 小数 / NaN / Infinity 都不是引擎在报数,是我们读错了 —— 一律当没读到。 */
+function billedUnitsOf(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined;
+}
+
+function finalPromptOf(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim();
+  return trimmed.length > 0 ? trimmed.slice(0, MAX_FINAL_PROMPT_CHARS) : undefined;
+}
+
+/**
+ * #776 —— 从引擎的响应里读**回执**:真实计费量(`usage.total_tokens`)与它真正跑的那句
+ * 提示词(`revised_prompt`)。
+ *
+ * 三条纪律,缺一条这个函数就会变成一个新的花钱风险:
+ *
+ *   ① **永不抛**。它在付费边界的**内侧**被调用 —— 图片路径上 `res.ok` 之后的每一次抛出
+ *      都会被那圈 catch 翻译成 chargedError 并终态失败。一个记账字段读崩了就把一单已经
+ *      成功的生成判成失败,是拿商家的钱赔我们的好奇心。所以整段包在 try 里,任何异常都
+ *      退化成「没读到」。
+ *   ② **不发明**。字段缺席、类型不对、数值不合理,一律回 undefined,让 worker 落 null =
+ *      未知。这两个数会被拿去反查毛利和向商家解释结果,编出来的比空着危险得多。
+ *   ③ **只读**。不改请求体、不影响 status 判定、不参与 charged/permanent 的分类。
+ *
+ * `revised_prompt` 在两个位置都找过:图片响应把它挂在 `data[i]` 上(逐张不同),视频任务
+ * 把它挂在任务对象上。官方档案里现役这两个端点**未必**总带这个字段 —— 带就记,不带就
+ * 诚实地空着,绝不拿商家自己那句话冒充引擎跑的那句(那会让整个字段失去意义)。
+ */
+export function readReceipt(payload: unknown, item?: unknown): GenerationReceipt | undefined {
+  try {
+    const p = (payload ?? {}) as Record<string, unknown>;
+    const it = (item ?? {}) as Record<string, unknown>;
+    const usage = (p.usage ?? {}) as Record<string, unknown>;
+    const billedUnits = billedUnitsOf(usage.total_tokens);
+    const finalPrompt = finalPromptOf(it.revised_prompt) ?? finalPromptOf(p.revised_prompt);
+    if (billedUnits === undefined && finalPrompt === undefined) return undefined;
+    return {
+      ...(finalPrompt !== undefined ? { finalPrompt } : {}),
+      ...(billedUnits !== undefined ? { billedUnits } : {}),
+    };
+  } catch {
+    return undefined; // 回执读不回来,绝不许反过来影响这一单的结果或扣费
+  }
+}
 
 export const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
 /** internal model id → Ark foundation-model id (verified active on the account). */
@@ -115,9 +166,16 @@ export class BytePlusProvider implements GenerationProvider {
           const data = (await res.json()) as { data?: { url: string }[] };
           const url = data.data?.[0]?.url;
           if (!url) throw chargedError("generation provider image response had no result URL");
+          // #776:回执在下载**之前**读 —— 它读的是这份已经到手的响应,和字节能不能拿到无关。
+          // readReceipt 永不抛,所以这一行不会把一单成功的生成推进 charged 分支。
+          const receipt = readReceipt(data, data.data?.[0]);
           const r = await fetch(url);
           if (!r.ok) throw chargedError(`image download → ${r.status}`);
-          return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "png" } as GeneratedImage;
+          return {
+            bytes: new Uint8Array(await r.arrayBuffer()),
+            ext: extFromUrl(url) ?? "png",
+            ...(receipt ? { receipt } : {}),
+          } as GeneratedImage;
         } catch (e) {
           if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
           throw chargedError(`generation provider billed but the image result was unusable (${e instanceof Error ? e.message : String(e)})`);
@@ -241,7 +299,7 @@ export class BytePlusProvider implements GenerationProvider {
           if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`generation provider video poll returned ${st.status} after timeout`);
           continue; // transient non-2xx — retry
         }
-        t = (await st.json()) as { status?: string; content?: { video_url?: string } };
+        t = (await st.json()) as { status?: string; content?: { video_url?: string }; usage?: unknown; revised_prompt?: unknown };
       } catch (e) {
         // A chargedError thrown above must propagate (terminal); any other exception (network reset,
         // malformed body) is a transient poll failure — the task was already submitted and may still
@@ -257,10 +315,18 @@ export class BytePlusProvider implements GenerationProvider {
         // (`arrayBuffer()` throwing). PLAIN here would requeue and generate a SECOND paid clip.
         const url = t.content?.video_url;
         if (!url) throw chargedError("generation provider video response had no result URL");
+        // #776:回执来自这条**成功任务**自己的响应(计费量与它真正跑的提示词都在这一份里),
+        // 读在下载之前 —— 拿不拿得到字节与引擎报了什么无关。readReceipt 永不抛,所以这一行
+        // 不会把一条已经做出来、已经计费的片子推进 charged 分支。
+        const receipt = readReceipt(t);
         try {
           const r = await fetch(url);
           if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
-          return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
+          return {
+            bytes: new Uint8Array(await r.arrayBuffer()),
+            ext: extFromUrl(url) ?? "mp4",
+            ...(receipt ? { receipt } : {}),
+          };
         } catch (e) {
           if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
           throw chargedError(`generation provider video download failed (${e instanceof Error ? e.message : String(e)})`);

@@ -44,7 +44,13 @@ export function makeOttoLibraryPort() {
     detail: async (generationId: string): Promise<LibraryItemView | { error: string }> => {
       const res = await getGeneration(generationId);
       if ("error" in res) return { error: res.error };
-      return { id: res.id, projectId: res.projectId, kind: res.kind, prompt: res.prompt, favorite: res.favorite };
+      // #776:回执里的「引擎真正跑的那句」只在 detail 上有(history 不查这一列)。null =
+      // 未知,就**不带这个键** —— 让「不知道」在类型上也是缺席,而不是一个空字符串。
+      return {
+        id: res.id, projectId: res.projectId, kind: res.kind, prompt: res.prompt,
+        ...(res.finalPrompt !== null ? { finalPrompt: res.finalPrompt } : {}),
+        favorite: res.favorite,
+      };
     },
     setFavorite: (generationId: string, favorite: boolean) => setFavorite(generationId, favorite),
   };

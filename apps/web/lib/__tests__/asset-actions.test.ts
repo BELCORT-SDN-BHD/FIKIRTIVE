@@ -177,6 +177,42 @@ describe("getGeneration", () => {
     });
   });
 
+  // ---- #776：引擎自报「它真正跑的那句提示词」跨过商家边界的那一步 --------------
+  describe("finalPrompt", () => {
+    const rowWith = (finalPromptText: string | null) => ({
+      id: "g1",
+      promptText: "a poster for the weekend sale",
+      finalPromptText,
+      favorite: false,
+      asset: { ownerId: "u1", contentHash: "abc", ext: "png" },
+    });
+    const finalPromptOf = async () => (await getGeneration("g1") as { finalPrompt: string | null }).finalPrompt;
+
+    it("落过库的那一句原样交给面板", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith("a bright poster, weekend sale, bold type"));
+      expect(await finalPromptOf()).toBe("a bright poster, weekend sale, bold type");
+    });
+
+    it("引擎没报（或回执落库前的老行）⇒ null —— 不知道就是不知道，绝不回落成商家自己那句", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith(null));
+      const result = await getGeneration("g1") as { finalPrompt: string | null; prompt: string };
+      expect(result.finalPrompt).toBeNull();
+      expect(result.prompt).toBe("a poster for the weekend sale"); // 商家那句照旧在，只是不冒充
+    });
+
+    it("白标：引擎改写时带出来的供应商指纹词到不了商家眼前", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith("rendered by seedance 2.0 for byteplus: a bright poster"));
+      const shown = await finalPromptOf();
+      expect(shown).not.toMatch(/seedance|byteplus/iu);
+      expect(shown).toContain("a bright poster"); // 过滤掉的是名字，不是整句话
+    });
+
+    it("过滤后只剩空白 ⇒ null（未知必须长得像未知，不能长得像一个空答案）", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith("   "));
+      expect(await finalPromptOf()).toBeNull();
+    });
+  });
+
   it("returns { error } when generation is not owned by caller", async () => {
     mockGenFindFirst.mockResolvedValue(null);
     expect(await getGeneration("other-g")).toEqual({ error: "Not found." });

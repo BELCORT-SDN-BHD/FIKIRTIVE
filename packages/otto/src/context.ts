@@ -998,6 +998,16 @@ export type LibraryItemView = {
   projectId: string;
   kind: string; // "image" | "video"
   prompt: string;
+  /**
+   * #776 —— 引擎自报**它真正跑的那句提示词**,只有 detail 读回来时才有。
+   *
+   * Otto 解释「上次为什么长这样」时需要的正是这一句 —— 商家写的那句在 `prompt`,引擎
+   * 实际执行的那句在这里,两者常常不同,而差别往往就是答案。
+   *
+   * 缺席 = 引擎没报(或回执落库前的历史行)= **未知**:此时 Otto 只能说不知道,不得拿
+   * `prompt` 冒充它。已在 web 侧一处过白标过滤,到这里就是可以直接说出口的文本。
+   */
+  finalPrompt?: string;
   favorite: boolean;
   createdAt?: string; // ISO instant (history rows carry it; a single detail read may not)
 };
