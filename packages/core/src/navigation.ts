@@ -187,6 +187,26 @@ export function everyNavDestination(): readonly MerchantNavLink[] {
 export const NAV_PATH_SEPARATOR = "›";
 
 /**
+ * 会被当成「路的那一格」读的字符族。
+ *
+ * 为什么要列出来:#802 判官 r1 [P2] 用同形字穿透过围栏 —— `Workspace 〉 Insights`(U+3009)
+ * 与 `Workspace > Insights`(ASCII)在商家眼里就是一条路,在只认 U+203A 的围栏眼里却什么
+ * 都不是。围栏先把这一族归一成 NAV_PATH_SEPARATOR 再对账;标签里也一律不许含它们,否则
+ * 一个标签自己就能伪造出一层不存在的下级(见 navigation.test.ts 的结构断言)。
+ */
+export const NAV_PATH_SEPARATOR_FAMILY = [
+  NAV_PATH_SEPARATOR, // U+203A,权威写法
+  "〉", // U+3009
+  "》", // U+300B
+  "»", // U+00BB
+  "＞", // U+FF1E 全角
+  ">", // ASCII
+  "⟩", // U+27E9
+  "⟫", // U+27EB
+  "❯", // U+276F
+] as const;
+
+/**
  * 一条目的地在商家眼里的**完整路名**:组内的写成「Workspace › Schedule」,顶层的就是它
  * 自己的名字。
  *
@@ -204,6 +224,22 @@ export function navPath(key: string): string {
     if (item) return `${node.label} ${NAV_PATH_SEPARATOR} ${item.label}`;
   }
   throw new Error(`navPath: no navigation destination with key "${key}"`);
+}
+
+/**
+ * 一条目的地在导轨上的**那个词**(不带分组前缀)。
+ *
+ * 句子里顺口提到一个地方时用它(「look through the user's Library」),需要指路时用
+ * navPath()。两者都不许手打 —— #802 判官 r1 [P1-1] 逮到的就是一处手打的裸地名:地图和
+ * navPath() 会跟着改名,那句话不会。
+ */
+export function navLabel(key: string): string {
+  if (key === OTTO_ASSISTANT.key) return OTTO_ASSISTANT.label;
+  const found = merchantNavLinks().find((item) => item.key === key);
+  if (found) return found.label;
+  const group = MERCHANT_NAV.find((node) => isNavGroup(node) && node.key === key);
+  if (group) return group.label;
+  throw new Error(`navLabel: no navigation destination or group with key "${key}"`);
 }
 
 /**

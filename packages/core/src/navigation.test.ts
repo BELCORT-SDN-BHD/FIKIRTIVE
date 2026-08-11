@@ -14,11 +14,13 @@ import {
   MERCHANT_NAV,
   MERCHANT_NAV_REDIRECTS,
   NAV_PATH_SEPARATOR,
+  NAV_PATH_SEPARATOR_FAMILY,
   OTTO_ASSISTANT,
   everyNavDestination,
   isNavGroup,
   merchantNavLinks,
   merchantNavMap,
+  navLabel,
   navPath,
   navPointableNames,
 } from "./navigation.js";
@@ -122,6 +124,21 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
 
   it("不存在的 key 直接炸 —— 不许静默返回一个编出来的名字", () => {
     expect(() => navPath("insights")).toThrow(/insights/);
+    expect(() => navLabel("insights")).toThrow(/insights/);
+  });
+
+  // r2 · #802 判官 [P1-1]:句子里顺口提到一个地方时用 navLabel(),指路时用 navPath()。
+  // 两者都不许手打 —— 判官逮到的是提示词里一处手打的 `Campaign`。
+  it("navLabel 给的是导轨上那个词(不带分组前缀),分组名也取得到", () => {
+    expect(navLabel("library")).toBe("Library");
+    expect(navLabel("crm-inbox")).toBe("Inbox");
+    expect(navLabel("campaign")).toBe("Campaign");
+    expect(navLabel("crm")).toBe("CRM");
+    expect(navLabel("otto")).toBe(OTTO_ASSISTANT.label);
+    // 组内项:navPath 带分组前缀,navLabel 不带 —— 两者只差那一格。
+    expect(navPath("library")).toBe(
+      `${navLabel("workspace")} ${NAV_PATH_SEPARATOR} ${navLabel("library")}`,
+    );
   });
 
   it("每一条目的地都取得到路名,且路名与地图里的写法逐字一致", () => {
@@ -151,6 +168,30 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
     for (const group of MERCHANT_NAV.filter(isNavGroup)) {
       expect(group.label, `${group.key} 的分组名带了空格`).not.toMatch(/\s/);
     }
+  });
+
+  // r2 · #802 判官 [P2]:标签自己就能伪造一层。`label: "Connections 〉 Advanced"` 会让
+  // navPath() 吐出一条看起来有两级、实则不存在的路,而 Otto 侧围栏拿它当授权名单 ——
+  // 一份被污染的权威,下游再严的对账也白搭。所以标签一律不许含「路的那一格」那族字符。
+  it("标签不许含分隔符字符族 —— 权威自己不能伪造出一层(#802 r2)", () => {
+    for (const item of everyNavDestination()) {
+      for (const separator of NAV_PATH_SEPARATOR_FAMILY) {
+        expect(item.label.includes(separator), `${item.key} 的标签含分隔符「${separator}」`).toBe(false);
+      }
+    }
+    for (const group of MERCHANT_NAV.filter(isNavGroup)) {
+      for (const separator of NAV_PATH_SEPARATOR_FAMILY) {
+        expect(group.label.includes(separator), `${group.key} 的分组名含分隔符「${separator}」`).toBe(false);
+      }
+    }
+  });
+
+  it("字符族本身覆盖到已知的同形写法(名单空了,上一条就是永远为真)", () => {
+    // 判官内存复现用过的三种,加上全角与书名号 —— 少一个,上一条就少挡一种。
+    for (const separator of ["›", "〉", ">", "》", "»", "＞"]) {
+      expect(NAV_PATH_SEPARATOR_FAMILY, `${separator} 不在字符族里`).toContain(separator);
+    }
+    expect(NAV_PATH_SEPARATOR_FAMILY).toContain(NAV_PATH_SEPARATOR);
   });
 });
 
