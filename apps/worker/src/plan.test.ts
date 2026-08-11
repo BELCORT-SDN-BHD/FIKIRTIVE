@@ -106,6 +106,12 @@ describe("provider concurrency budget (arkcli 2026-08-08: concurrent_requests 10
     const plan = workerPlan({ WORKER_ROLE: "wait" } as NodeJS.ProcessEnv);
     expect(providerBudgetLine(plan)).toContain("Keep replicas ×");
   });
+
+  it("the compute role touches no provider, so it prints no budget line", () => {
+    const plan = workerPlan({ WORKER_ROLE: "compute" } as NodeJS.ProcessEnv);
+    expect(providerConcurrency(plan)).toBe(0);
+    expect(providerBudgetLine(plan)).toBeNull();
+  });
 });
 
 describe("DB pool floor", () => {

@@ -83,9 +83,10 @@ const plan = (() => {
     process.exit(1);
   }
 })();
-console.log(planSummary(plan));
-console.log(providerBudgetLine(plan));
+console.log(`[worker] ${planSummary(plan)}`);
 {
+  const budget = providerBudgetLine(plan);
+  if (budget) console.log(budget);
   const warning = providerBudgetWarning(plan);
   if (warning) console.warn(warning);
   const pool = dbPoolPlan(plan, process.env);

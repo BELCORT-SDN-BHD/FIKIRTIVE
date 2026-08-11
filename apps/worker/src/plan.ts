@@ -142,11 +142,13 @@ export function providerBudgetUsable(): number {
 }
 
 /**
- * 启动日志里那行算术。**无条件打印**,不做成「超了才警告」:额度是按账户算的,
- * 而副本数只有 Railway 知道 —— 沉默的检查会在多副本时骗人,一行明账不会。
+ * 启动日志里那行算术。只要这个角色会打供应商就**无条件打印**,不做成「超了才警告」:
+ * 额度是按账户算的,而副本数只有 Railway 知道 —— 沉默的检查会在多副本时骗人,一行明账不会。
+ * 算力型角色一个供应商队列都不消费,那行算术对它没有意义,返回 null。
  */
-export function providerBudgetLine(plan: WorkerPlan): string {
+export function providerBudgetLine(plan: WorkerPlan): string | null {
   const per = providerConcurrency(plan);
+  if (per === 0) return null;
   return (
     `[worker] provider concurrency: ${PROVIDER_QUEUES.map((q) => `${q} ${plan.concurrency[q] ?? 0}`).join(" + ")}` +
     ` = ${per} per replica; account budget ${PROVIDER_CONCURRENT_REQUESTS}` +
@@ -206,5 +208,5 @@ export function planSummary(plan: WorkerPlan): string {
   const queues = Object.entries(plan.concurrency)
     .map(([queue, n]) => `${queue}×${n}`)
     .join(", ");
-  return `[worker] role=${plan.role} — consuming ${queues || "(nothing)"}; supervision(reapers, publish scheduler, nightly backup)=${plan.supervises ? "on" : "off"}`;
+  return `role=${plan.role} — consuming ${queues || "(nothing)"}; supervision(reapers, publish scheduler, nightly backup)=${plan.supervises ? "on" : "off"}`;
 }
