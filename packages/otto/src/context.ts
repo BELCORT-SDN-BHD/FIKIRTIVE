@@ -98,6 +98,15 @@ export type CrmContactSummary = {
     externalId: string;
     handle: string | null;
     label: string | null;
+    /**
+     * #803 — `merchant_unverified` (the merchant typed it; stored and searchable, never messaged)
+     * or `channel_verified` (a connected channel confirmed it, and the two fields below say when
+     * and by what). Otto reads the grade with the number so it can never describe a hand-typed
+     * digit as a number this product can reach.
+     */
+    verificationStatus: string;
+    verifiedAt: string | null;
+    verifiedSourceKind: string | null;
   }[];
 };
 
@@ -445,6 +454,14 @@ export interface OttoContext {
       patch: { name?: string; lifecycleStage?: "New" | "Active" | "Dormant" };
     }): Promise<unknown>;
     importCsv(input: { csv: string; importId: string }): Promise<unknown>;
+    /**
+     * #803 — the merchant's own phone entry, through the SAME action the contact page posts to.
+     * The grade is decided by the writer: everything stored here is merchant entered and
+     * unverified, and no argument exists by which Otto could store one as verified.
+     */
+    addPhone(input: { contactId: string; phone: string }): Promise<unknown>;
+    updatePhone(input: { contactId: string; identityId: string; phone: string }): Promise<unknown>;
+    removePhone(input: { contactId: string; identityId: string }): Promise<unknown>;
     recordConsent(input: {
       contactId: string;
       action: "grant" | "revoke";

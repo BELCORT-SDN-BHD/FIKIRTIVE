@@ -6,9 +6,27 @@ import type { OttoContext } from "../context.js";
 
 const lifecycleStage = z.enum(["New", "Active", "Dormant"]);
 const params = z.object({
-  operation: z.enum(["create", "update", "import_csv", "record_consent", "set_dnd"]),
+  operation: z.enum([
+    "create",
+    "update",
+    "import_csv",
+    "record_consent",
+    "set_dnd",
+    "add_phone",
+    "update_phone",
+    "remove_phone",
+  ]),
   contactId: z.string().trim().min(1).max(64).optional().describe(
-    "update/record_consent/set_dnd: exact Contact id returned by readContacts. Never guess.",
+    "update/record_consent/set_dnd/add_phone/update_phone/remove_phone: exact Contact id returned "
+      + "by readContacts. Never guess.",
+  ),
+  identityId: z.string().trim().min(1).max(64).optional().describe(
+    "update_phone/remove_phone: exact identity id from readContacts. Only a merchant-entered "
+      + "number can be edited or removed; a channel-verified one is refused.",
+  ),
+  phone: z.string().trim().min(1).max(64).optional().describe(
+    "add_phone/update_phone: the number as the merchant says it. A number with no country code "
+      + "is read as Malaysian (+60) and stored in full international form.",
   ),
   name: z.string().trim().min(1).max(200).optional(),
   lifecycleStage: lifecycleStage.optional(),
@@ -68,6 +86,25 @@ export async function executeManageContacts(
         return { ok: false, error: "set_dnd needs exact `contactId`, `enabled`, and `requestId`." };
       }
       return contacts.setDnd({ contactId: input.contactId, enabled: input.enabled, requestId: input.requestId });
+    case "add_phone":
+      if (!input.contactId || !input.phone) {
+        return { ok: false, error: "add_phone needs exact `contactId` and `phone`." };
+      }
+      return contacts.addPhone({ contactId: input.contactId, phone: input.phone });
+    case "update_phone":
+      if (!input.contactId || !input.identityId || !input.phone) {
+        return { ok: false, error: "update_phone needs exact `contactId`, `identityId`, and `phone`." };
+      }
+      return contacts.updatePhone({
+        contactId: input.contactId,
+        identityId: input.identityId,
+        phone: input.phone,
+      });
+    case "remove_phone":
+      if (!input.contactId || !input.identityId) {
+        return { ok: false, error: "remove_phone needs exact `contactId` and `identityId`." };
+      }
+      return contacts.removePhone({ contactId: input.contactId, identityId: input.identityId });
   }
 }
 
@@ -77,11 +114,14 @@ export const manageContactsSkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Create or update standard CRM Contact fields, import a bounded CSV, record a merchant-reported consent " +
-    "assertion, or set/clear DND through the same authenticated actions as the CRM UI. $0 internal writes only. " +
-    "Inputs are structured and never accept owner identity. Identity records are read-only; phone/email import values " +
-    "produce duplicate suggestions but are not attached. No merge/unmerge, send, provider, money, tags, or custom-field " +
-    "path exists. record_consent enters ConsentEvent as crm_manual backfill/asserted and never fabricates verified opt-in. " +
+    "Create or update standard CRM Contact fields, import a bounded CSV, store or correct a merchant-entered phone " +
+    "number, record a merchant-reported consent assertion, or set/clear DND through the same authenticated actions as " +
+    "the CRM UI. $0 internal writes only. Inputs are structured and never accept owner identity. Phone numbers stored " +
+    "here — typed or imported — are saved as merchant entered and NOT verified: they are kept and searchable, they are " +
+    "never used for broadcasts or segments, and only a connected channel can upgrade one. Say so plainly instead of " +
+    "implying a stored number can be messaged. update_phone/remove_phone touch merchant-entered numbers only; a " +
+    "channel-verified number is refused. No merge/unmerge, send, provider, money, tags, or custom-field path exists. " +
+    "record_consent enters ConsentEvent as crm_manual backfill/asserted and never fabricates verified opt-in. " +
     "Use caller-stable request/import ids on retries and get exact Contact ids from readContacts.",
   parameters: params,
   execute: executeManageContacts,
