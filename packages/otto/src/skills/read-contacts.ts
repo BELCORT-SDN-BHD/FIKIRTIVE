@@ -44,9 +44,14 @@ export const readContactsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "List, search, or read one exact CRM Contact through the same owner-scoped actions as the Contacts pages. " +
-    "$0 read-only. Results include lifecycle, existing read-only identities, DND, order receipt total, and the " +
+    "$0 read-only. Results include lifecycle, stored identities with their credibility grade, DND, order receipt "
+    + "total, and the " +
     "WhatsApp × marketing ConsentStateProjection plus consent history on get. Unknown is reported honestly: it is " +
-    "not verified opt-in and remains in the merchant's records. Never guess a Contact id. " +
+    "not verified opt-in and remains in the merchant's records. Each identity carries "
+    + "`verificationStatus`: `merchant_unverified` means the merchant typed that number himself — it is stored and "
+    + "searchable but nothing has confirmed it and it is not used for broadcasts; `channel_verified` means a "
+    + "connected channel confirmed it (`verifiedAt`/`verifiedSourceKind` say when and by what). Never describe an "
+    + "unverified number as reachable. Never guess a Contact id. " +
     "IMPORTANT: list and search give you ONE PAGE, not the whole list. `returned` is how many contacts are in " +
     "this result, `totalCount` is how many the merchant actually has under the same filter, and `hasMore` is true " +
     "when the rest were left out. Quote both numbers as they are — never re-count the rows, never answer " +

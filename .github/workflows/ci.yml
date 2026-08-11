@@ -20,29 +20,30 @@ jobs:
     # it be skipped, freezes every merge in the repository. Speed work goes INSIDE the job.
     name: quality
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: fikirtive_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # Self-hosted runner (fikirtive-mac): GitHub-hosted minutes are metered on a private
+    # repo, and a 2026-08 billing failure froze every merge for two days (#577). The runner
+    # registers ONE job slot (serializes CI-vs-CI); quality.sh's own machine-wide mutex
+    # serializes CI-vs-local. Postgres is the machine's own server (same role quality.sh
+    # defaults to); there is no Docker on this runner, so no `services:` block —
+    # quality.sh creates a unique per-run `*_test` database and force-drops it on exit,
+    # in CI exactly as locally (the old GITHUB_ACTIONS skip-path is gone).
+    # Caveat, stated honestly: CI now depends on that one machine being awake. If it is
+    # off, checks queue until it returns. The `quality` check name and its gates are
+    # byte-identical to before — only the floor it runs on changed.
+    runs-on: [self-hosted, fikirtive-ci]
+    # 30 → 45: the serialization guard below may first wait out a locally started quality
+    # run (~12 min worst case) before this job's own ~12 min run begins.
+    timeout-minutes: 45
     env:
       # `next build` re-runs a TypeScript pass in a child worker, and that worker had grown to
       # the ~2 GB default heap: it now OOMs on a coin flip, independently of what a PR changed
       # (measured: this PR's own diff adds 11 MB to a 1,088 MB `tsc` run — under 1%). Raising the
       # ceiling weakens no gate; the check still runs, and `pnpm -r typecheck` runs before it.
       NODE_OPTIONS: --max-old-space-size=6144
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
+      # The runner machine's own Postgres, same local-only dev role quality.sh defaults to.
+      # quality.sh only uses this as the maintenance connection; the run itself happens on a
+      # per-run database it creates and force-drops (name ends in _test, enforced there).
+      DATABASE_URL: postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test
       BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
       BETTER_AUTH_URL: http://localhost:3000
       GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
@@ -141,5 +142,9 @@ jobs:
             build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
             build-${{ runner.os }}-node22-
 
+      # CI-vs-local serialization is NOT handled here: quality.sh itself takes a
+      # machine-wide mutex (atomic mkdir + stale-pid recovery), so whichever run
+      # starts second — this job or a locally started gate — waits its turn inside
+      # the script. The runner's single job slot already serializes CI-vs-CI.
       - if: steps.scope.outputs.code != 'false'
         run: pnpm quality

@@ -29,6 +29,7 @@
  */
 import { z } from "zod";
 import { canvasCardIsInFlightPaid } from "@fikirtive/core/canvas-card-status";
+import { merchantGenFailureExplanation } from "@fikirtive/core/gen-failure";
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
 import type { OttoContext, CanvasNodeView } from "../context.js";
@@ -68,12 +69,23 @@ const params = z.object({
 
 type ManageCanvasInput = z.infer<typeof params>;
 
-/** Trimmed node view for the model: drop pixel metadata the agent doesn't act on. */
+/** Trimmed node view for the model: drop pixel metadata the agent doesn't act on.
+ *
+ *  WHY A FAILED CARD ALSO CARRIES ITS EXPLANATION (#827). A merchant who presses generate on the
+ *  board has no conversation to be answered in, so the card is the only thing that ever told them
+ *  why a refusal happened — until they open Otto and ask. Otto reads the card's own recorded
+ *  reason through the SAME core whitelist the card renders from, so both surfaces say one
+ *  sentence about one card instead of two stories about one refusal (#765). `null` for every
+ *  other card, which is most of them: nothing is invented for an ending with no proven reason.
+ *
+ *  `GenJob.error` itself never reaches here. The reason is a NAME, and only a name maps to a
+ *  sentence written for merchants — an ops string has no entry and comes out as null. */
 function toModelNode(n: CanvasNodeView) {
   return {
     id: n.id,
     type: n.type,
     status: n.status,
+    failureExplanation: merchantGenFailureExplanation(n.failureReason),
     x: n.x,
     y: n.y,
     w: n.w,
@@ -198,6 +210,7 @@ export const manageCanvasSkill = defineOttoSkill({
   description:
     "See and arrange the project's creative canvas ($0 — never generates media or spends credits). " +
     "view: all nodes with status, prompts, which paid press each came out of (genJobId + batchIndex + batchSize — cards of one press are siblings, not parent and children), and madeFromNodeId, the only card a node was actually built on. " +
+    "A card that failed may also carry failureExplanation — the exact sentence the user already reads on that card. If they ask why it failed, repeat that sentence as written and do not reword it; when it is null, say only that it did not go through and they were not charged. " +
     "place: add a text note, or show an ALREADY-generated image/video (needs generationId). " +
     "edit_text: change a text note. resolve: stamp a node's terminal display state. " +
     "remove: delete a settled node (a card whose generation is still in flight can only be removed by the user, by hand on the canvas). " +

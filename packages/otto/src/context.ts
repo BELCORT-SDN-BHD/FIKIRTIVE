@@ -6,6 +6,7 @@ import type {
   ScheduleDraftInput,
   SegmentRuleGroup,
 } from "@fikirtive/core";
+import type { GenFailureReason } from "@fikirtive/core/gen-failure";
 
 /** Patch for the editScheduledPost skill (debt-72). Structural re-declaration mirroring the web
  *  UpdateScheduledPostPatch — the web type (apps/web/lib/schedule-actions.ts) must NOT be imported
@@ -54,6 +55,8 @@ export type CrmSegmentSummary = {
   unresolvedLegacyOptOutCount: number;
   /** Contacts kept in on an opt-out the merchant recorded himself (unverified) — #716. */
   reportedOptOutCount: number;
+  /** Contacts the segment's own optional "exclude the opt-outs I recorded" left out — #758. */
+  excludedByReportedOptOutCount: number;
   createdAt: string;
 };
 
@@ -95,6 +98,15 @@ export type CrmContactSummary = {
     externalId: string;
     handle: string | null;
     label: string | null;
+    /**
+     * #803 — `merchant_unverified` (the merchant typed it; stored and searchable, never messaged)
+     * or `channel_verified` (a connected channel confirmed it, and the two fields below say when
+     * and by what). Otto reads the grade with the number so it can never describe a hand-typed
+     * digit as a number this product can reach.
+     */
+    verificationStatus: string;
+    verifiedAt: string | null;
+    verifiedSourceKind: string | null;
   }[];
 };
 
@@ -388,6 +400,7 @@ export interface OttoContext {
           excludedByConsentCount: number;
           unresolvedLegacyOptOutCount: number;
           reportedOptOutCount: number;
+          excludedByReportedOptOutCount: number;
           contacts: CrmSegmentContact[];
           /** #819 — the sample is cut at ten rows; `returned`/`hasMore` say so in the payload
            *  so the sample can never be read as the whole match. Same shape as the contact
@@ -416,6 +429,7 @@ export interface OttoContext {
             | "excludedByConsentCount"
             | "unresolvedLegacyOptOutCount"
             | "reportedOptOutCount"
+            | "excludedByReportedOptOutCount"
           >;
         }
       | { error: string }
@@ -440,6 +454,14 @@ export interface OttoContext {
       patch: { name?: string; lifecycleStage?: "New" | "Active" | "Dormant" };
     }): Promise<unknown>;
     importCsv(input: { csv: string; importId: string }): Promise<unknown>;
+    /**
+     * #803 — the merchant's own phone entry, through the SAME action the contact page posts to.
+     * The grade is decided by the writer: everything stored here is merchant entered and
+     * unverified, and no argument exists by which Otto could store one as verified.
+     */
+    addPhone(input: { contactId: string; phone: string }): Promise<unknown>;
+    updatePhone(input: { contactId: string; identityId: string; phone: string }): Promise<unknown>;
+    removePhone(input: { contactId: string; identityId: string }): Promise<unknown>;
     recordConsent(input: {
       contactId: string;
       action: "grant" | "revoke";
@@ -919,6 +941,13 @@ export type CanvasNodeView = {
   prompt: string | null;
   generationId: string | null;
   status: string;
+  /** WHY this card rested, as a name from the closed `GenFailureReason` set (#827).
+   *
+   *  Required, like `status`, because it is part of the card's state rather than a caption: a
+   *  merchant who asks Otto "why did that one fail?" a day later must get the SAME sentence the
+   *  card shows, and Otto looks it up through the one whitelist in core. Almost every card is
+   *  `unexplained`, which is the honest name for "this ending has no reason we can prove". */
+  failureReason: GenFailureReason;
   /** Which paid press produced this card, and where in it this card sits (#603 T4). */
   genJobId: string | null;
   batchIndex: number | null;

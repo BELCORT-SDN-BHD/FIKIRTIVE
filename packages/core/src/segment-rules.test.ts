@@ -95,6 +95,35 @@ describe("validateSegmentRuleGroup", () => {
       }),
     ).toMatchObject({ ok: false });
   });
+
+  /**
+   * #758 — the merchant's optional "also exclude the opt-outs I recorded myself" is one boolean
+   * on the group. Canonical form carries it ONLY when it is on, so a segment saved with it off
+   * is byte-for-byte a segment saved before the option existed: an unchanged re-save must not
+   * read as an edit, and a replay must stay a replay.
+   */
+  it("normalizes the optional reported-opt-out exclusion to on-or-absent", () => {
+    const plain = { match: "all" as const, rules: [{ kind: "contactability" as const, value: "contactable" as const }] };
+
+    expect(validateSegmentRuleGroup({ ...plain, excludeReportedOptOut: true })).toEqual({
+      ok: true,
+      value: { ...plain, excludeReportedOptOut: true },
+    });
+    // Off and never-set are the same segment, and produce the same object.
+    expect(validateSegmentRuleGroup({ ...plain, excludeReportedOptOut: false })).toEqual({
+      ok: true,
+      value: plain,
+    });
+    expect(validateSegmentRuleGroup(plain)).toEqual({ ok: true, value: plain });
+    // Anything that is not a boolean fails closed rather than being read as "on".
+    for (const value of ["true", 1, null, {}]) {
+      expect(validateSegmentRuleGroup({ ...plain, excludeReportedOptOut: value })).toMatchObject({
+        ok: false,
+      });
+    }
+    // The group is still closed: an unknown key is still refused.
+    expect(validateSegmentRuleGroup({ ...plain, excludeEveryone: true })).toMatchObject({ ok: false });
+  });
 });
 
 describe("contactMatchesRules", () => {
@@ -116,6 +145,19 @@ describe("contactMatchesRules", () => {
     expect(contactMatchesRules(complete, compiled("contactable"), NOW)).toBe(true);
     expect(contactMatchesRules(complete, compiled("channel is email or tag is wholesale"), NOW)).toBe(true);
     expect(contactMatchesRules(complete, compiled("channel is email and tag is wholesale"), NOW)).toBe(false);
+  });
+
+  /**
+   * #758 — this matcher answers "do these rules describe this contact", and it has no evidence
+   * about who recorded an opt-out. Applying the exclusion here would need a second copy of the
+   * consent rule in this package, which is the shape #716 removed, so the flag is deliberately
+   * inert here and the consent-authority gate applies it around this call.
+   */
+  it("leaves the merchant's reported-opt-out exclusion to the consent authority", () => {
+    const rules = compiled("channel is whatsapp");
+    expect(contactMatchesRules(complete, { ...rules, excludeReportedOptOut: true }, NOW)).toBe(
+      contactMatchesRules(complete, rules, NOW),
+    );
   });
 
   it("recomputes the same result from the same explicit inputs", () => {

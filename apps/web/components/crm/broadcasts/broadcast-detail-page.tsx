@@ -148,6 +148,14 @@ export function ConsentExclusionNote({ consent }: { consent: AudienceConsentSumm
       {consent.reportedOptOutKept > 0
         ? ` ${consent.reportedOptOutKept} ${consent.reportedOptOutKept === 1 ? "contact is" : "contacts are"} in this audience with an opt-out you recorded yourself, which is not verified — open the contact to see its consent history.`
         : ""}
+      {/*
+        #758 — the segment's own optional exclusion. It is the merchant's choice, not a consent
+        decision, so it is reported as a separate sentence that names who made it rather than
+        being added to the number above.
+      */}
+      {consent.excludedByReportedOptOut > 0
+        ? ` This segment also leaves out opt-outs you recorded yourself, so ${consent.excludedByReportedOptOut} more ${consent.excludedByReportedOptOut === 1 ? "contact is" : "contacts are"} not in this audience.`
+        : ""}
     </p>
   );
 }

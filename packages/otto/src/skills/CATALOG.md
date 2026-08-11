@@ -22,7 +22,7 @@
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
 | manageBrandMemory | free | write | internal | ❌ | Remove or restore brand memory — $0, never generates or spends. delete_record: r |
 | manageCanvas | free | write | internal | ❌ | See and arrange the project's creative canvas ($0 — never generates media or spe |
-| manageContacts | free | write | internal | ❌ | Create or update standard CRM Contact fields, import a bounded CSV, record a mer |
+| manageContacts | free | write | internal | ❌ | Create or update standard CRM Contact fields, import a bounded CSV, store or cor |
 | manageEntities | free | write | internal | ❌ | Manage the user's reusable elements — the @-referenceable characters, locations, |
 | manageLibrary | free | write | internal | ❌ | Browse the user's Library — every image/video they've made — $0, never generates |
 | manageMedia | free | write | internal | ❌ | See and organize the project's generated media ($0 — never generates media or sp |

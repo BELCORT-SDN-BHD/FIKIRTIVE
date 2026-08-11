@@ -19,11 +19,14 @@
  *      recognise is not this refusal, and takes the ordinary route. A classifier that guessed
  *      would tell merchants to crop a face out of a picture that was never the problem.
  *
- *   2. `merchantGenFailureMessage` — is THIS persisted job error one of our own merchant
- *      sentences? A WHITELIST, never a passthrough: `GenJob.error` also carries internal
- *      strings ("conditioning refs unreachable (0/1) — refusing to spend"), and a surface that
- *      forwarded whatever it found there would eventually show one of those to a merchant as
- *      advice. Only a sentence this file wrote for merchants can come back out of it.
+ *   2. `merchantGenFailureReason` / `merchantGenFailureExplanation` — is THIS persisted job error
+ *      one of our own merchant sentences, and if so which one? A WHITELIST, never a passthrough:
+ *      `GenJob.error` also carries internal strings ("conditioning refs unreachable (0/1) —
+ *      refusing to spend"), and a surface that forwarded whatever it found there would eventually
+ *      show one of those to a merchant as advice. Only a sentence this file wrote for merchants
+ *      can come back out of it. The reason is a NAME from a closed set (#827) so that a card can
+ *      carry it as state rather than a surface having to be handed a sentence in the moment;
+ *      `merchantGenFailureMessage` is the two composed, for readers that only want the words.
  *
  * WHITE LABEL. Every sentence below is read by a merchant, so none of them may name the engine,
  * the model, or the vendor — the standing Founder order enforced by `provider-secrecy`. They are
@@ -51,9 +54,85 @@ export const REFERENCE_IMAGE_PERSON_REJECTED =
   + "Try one where the face isn't visible — from behind, further away, or cropped out — "
   + "and generate again. You weren't charged.";
 
-/** Every sentence this system writes FOR A MERCHANT about a failed generation. The whitelist
- *  `merchantGenFailureMessage` reads; nothing else may be presented to a merchant as advice. */
-const MERCHANT_GEN_FAILURE_MESSAGES: readonly string[] = [REFERENCE_IMAGE_PERSON_REJECTED];
+/**
+ * WHY A GENERATION FAILED, as a CLOSED SET OF NAMES (#827).
+ *
+ * #765 gave the refusal a sentence. This gives it a NAME, and the difference is what survives a
+ * page reload: a sentence is something a surface was handed once, while a name is something a
+ * card can carry as part of its own state, be read back out of the database, and be projected
+ * onto every surface that asks. Before this, a merchant who refreshed lost the explanation
+ * entirely and the card went back to the generic resting face (#827).
+ *
+ * `unexplained` is a MEMBER, not an absence, and that is the point of shape here. Most failures
+ * genuinely have no merchant-facing reason — a queue hiccup, a dropped download — and so does
+ * every card that ended before this existed. Naming that case means every terminal card has a
+ * reason of some kind, so the projection is total and no reader needs an "and if there is
+ * nothing?" branch that could be forgotten. It also means the honest generic copy is a branch of
+ * the same algebra rather than the fallback of a missing field.
+ *
+ * ADDING ONE IS DELIBERATELY NOISY. A new name has to be placed in `MERCHANT_GEN_FAILURE_SENTENCES`
+ * below (a `Record` over the union, so `tsc` refuses an unhandled member) and in the card copy
+ * table `apps/web/lib/canvas-terminal-copy.ts` (the same trick). That is the closed algebra doing
+ * its job: a reason nobody wrote copy for cannot ship as a blank card.
+ */
+export const GEN_FAILURE_REASONS = ["unexplained", "referenceImagePerson"] as const;
+
+export type GenFailureReason = (typeof GEN_FAILURE_REASONS)[number];
+
+/** The reasons that HAVE something to say. `unexplained` is excluded by construction, so the
+ *  sentence table below cannot be given an entry for "we have no idea" — inventing one is exactly
+ *  the failure this whole file exists to prevent. */
+export type ExplainedGenFailureReason = Exclude<GenFailureReason, "unexplained">;
+
+/**
+ * THE ONE TABLE: a reason's name → the sentence a merchant reads for it.
+ *
+ * Every surface reads THIS — the card on the board, Otto describing that card, the live poll's
+ * toast, the durable turn message. A second mapping anywhere is how one refusal comes to be
+ * described two ways to one merchant, which is the defect #765 closed and the reason this stayed
+ * a single table when #827 added names on top of it.
+ *
+ * It is also still the WHITELIST `merchantGenFailureMessage` reads: `GenJob.error` doubles as an
+ * ops column, and only a sentence written here may come back out of it.
+ */
+const MERCHANT_GEN_FAILURE_SENTENCES: Readonly<Record<ExplainedGenFailureReason, string>> = {
+  referenceImagePerson: REFERENCE_IMAGE_PERSON_REJECTED,
+};
+
+/** Is this string one of the names above? For the untyped edges — a React node's data bag, a
+ *  board read that crossed a wire — where an unrecognised word must land on `unexplained`
+ *  rather than on a blank card. */
+export function isGenFailureReason(value: string | null | undefined): value is GenFailureReason {
+  return (GEN_FAILURE_REASONS as readonly string[]).includes(value ?? "");
+}
+
+/**
+ * WHICH reason a persisted job error is — total, and `unexplained` for everything unrecognised.
+ *
+ * Exact match against the table above, trimmed on both sides only: the one thing that happens
+ * between the worker writing this string and a reader asking about it is whitespace
+ * normalisation, never rewording. Not a prefix and not a substring, so an internal ops string
+ * that happens to begin with one of our sentences is still `unexplained`.
+ */
+export function merchantGenFailureReason(persistedError: string | null | undefined): GenFailureReason {
+  const written = String(persistedError ?? "").trim();
+  if (!written) return "unexplained";
+  for (const [reason, sentence] of Object.entries(MERCHANT_GEN_FAILURE_SENTENCES)) {
+    if (sentence.trim() === written) return reason as ExplainedGenFailureReason;
+  }
+  return "unexplained";
+}
+
+/**
+ * The sentence for a reason, or null when the reason is `unexplained`.
+ *
+ * Null is not a gap to paper over: it means this ending has no explanation we can prove, and the
+ * surface must say its own honest generic thing rather than invent one. Card and Otto both come
+ * through here, which is what keeps them saying the same words about the same card.
+ */
+export function merchantGenFailureExplanation(reason: GenFailureReason): string | null {
+  return reason === "unexplained" ? null : MERCHANT_GEN_FAILURE_SENTENCES[reason];
+}
 
 /**
  * THE MEASURED SHAPE of the refusal — the only thing this classifier is allowed to be sure of.
@@ -136,13 +215,11 @@ export function referenceImagePersonRejected(detail: string | null | undefined):
 /**
  * The merchant-facing sentence a persisted job error IS, or null when it is anything else.
  *
- * Exact match against the whitelist above — not a prefix, not a substring — so no internal error
- * text can carry itself into a merchant's view by starting with one of our sentences. Trimmed on
- * both sides only, because the one thing between the worker writing this string and a surface
- * reading it back is whitespace normalisation, never rewording.
+ * The whitelist read, kept as one call for the surfaces that only ever want the words (the live
+ * poll's `guidance`, Otto's status line). Since #827 it is the composition of the two functions
+ * above rather than a second lookup of its own — name the reason, then ask the one table what
+ * that reason says — so a sentence can never be reachable through one reader and not the other.
  */
 export function merchantGenFailureMessage(persistedError: string | null | undefined): string | null {
-  const written = String(persistedError ?? "").trim();
-  if (!written) return null;
-  return MERCHANT_GEN_FAILURE_MESSAGES.find((sentence) => sentence.trim() === written) ?? null;
+  return merchantGenFailureExplanation(merchantGenFailureReason(persistedError));
 }

@@ -116,11 +116,14 @@ import {
 import { getCampaign, listCampaigns } from "./campaign-view-data";
 import { listTrendSnapshots, saveTrendSnapshot } from "./trend-actions";
 import {
+  addContactPhoneFromOtto,
   createContact,
   importContacts,
+  removeContactPhoneFromOtto,
   setContactConsent,
   setContactDndFromOtto,
   updateContact,
+  updateContactPhoneFromOtto,
 } from "./crm-actions";
 import { getContact, listContacts, searchContacts } from "./crm-view-data";
 // #742: the contact-list boundary — the page's counts cross into chat with the rows.
@@ -160,6 +163,10 @@ function makeOttoSegmentsPort() {
         excludedByConsentCount: result.excludedByConsentCount,
         unresolvedLegacyOptOutCount: result.unresolvedLegacyOptOutCount,
         reportedOptOutCount: result.reportedOptOutCount,
+        // #758 — Otto reads the same disclosure the page prints, including what the merchant's
+        // own optional exclusion removed. A number the human surface shows and Otto does not is
+        // the two-surfaces-one-truth defect this port exists to prevent.
+        excludedByReportedOptOutCount: result.excludedByReportedOptOutCount,
         contacts: result.contacts,
         // #819 — the preview cuts the sample at ten. The cut crosses the boundary with the
         // rows, so "these ten are everyone" is contradicted by the payload itself.
@@ -282,6 +289,11 @@ function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
     importCsv: (input) => importContacts(input),
     recordConsent: (input) => setContactConsent(input),
     setDnd: (input) => setContactDndFromOtto(input),
+    // #803 — Otto stores a number through the same writer as the contact page, at the same
+    // merchant-entered grade. There is no Otto-only path and no way to claim verification.
+    addPhone: (input) => addContactPhoneFromOtto(input),
+    updatePhone: (input) => updateContactPhoneFromOtto(input),
+    removePhone: (input) => removeContactPhoneFromOtto(input),
   };
 }
 
@@ -569,7 +581,9 @@ export async function buildOttoContext({
     // action layer; no UTM, generation, credits, schedule approval, send, publish, or provider port.
     campaigns: makeOttoCampaignsPort(),
     // B0-59/60/C1: owner-scoped Contact reads/writes re-enter the same authenticated actions.
-    // Identity stays read-only; consent and DND mutations route through the closed runtime writers.
+    // #803: phone entry/correction/removal is open to Otto, at the merchant-entered grade only —
+    // a channel-verified number is refused, and no argument can store one as verified. Consent
+    // and DND mutations still route through the closed runtime writers.
     contacts: makeOttoContactsPort(),
     // #495/#500: connected channel-account list re-enters the same gateway read as the human pickers.
     channelScopes: makeOttoChannelScopesPort(),
