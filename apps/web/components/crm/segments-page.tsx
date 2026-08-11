@@ -957,7 +957,14 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
         audience disagree with the page that promised it.
       */}
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        These counts cover every contact you have. A broadcast counts only the contacts it can reach on the channel it sends from, so its own numbers can be lower.
+        {/*
+          #792 r6 — "the contacts it can reach" was a promise this count does not make.
+          customer-broadcast-service.ts counts a contact when it has a channel-confirmed identity
+          on that channel and is not a known opt-out; do-not-disturb is deliberately not part of
+          that reckoning (it is enforced later, at send eligibility), and nothing can actually be
+          sent yet at all. So the sentence says what was counted, not what would arrive.
+        */}
+        These counts cover every contact you have. A broadcast counts only the contacts with a confirmed identity on the channel it sends from and no known opt-out, so its own numbers can be lower.
       </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}

@@ -29,6 +29,7 @@ import { pathToFileURL } from "node:url";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { everyNavDestination, merchantNavMap, navLinkByKey } from "@fikirtive/core/navigation";
 import {
@@ -714,25 +715,96 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
    * `preview.contactableCount`、`contact.contactable`、`value="contactable"` 里都放行,因为它
    * 们是机器读的;裸着出现在一行字中间(前后都不是标识符/引号的一部分)才是说给商家听的。
    */
-  const OVERPROMISE = /contactabl\w*|contactability|reachable|can be contacted|able to contact/gi;
+  const OVERPROMISE =
+    /contactabl\w*|contactability|reachabl\w*|can be contacted|able to contact|can reach|able to reach|reach(?:es|ed)? (?:them|him|her|the customer|the contact|customers|contacts)/i;
 
-  /** 这个词是「说给商家听的」还是「写给机器看的」。 */
-  function overpromisingLines(fileSource: string): string[] {
-    const code = fileSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
-    const hits: string[] = [];
-    for (const match of code.matchAll(OVERPROMISE)) {
-      const at = match.index ?? 0;
-      const before = code[at - 1] ?? " ";
-      const after = code[at + match[0].length] ?? " ";
-      // 前面挨着 . " ' ` _ 或字母 = 属性名/字符串/标识符的一部分 —— 机器读的,放行。
-      if (/[.\w"'`_]/.test(before)) continue;
-      // 后面挨着字母、引号、( 或 : = 还是标识符/键名/调用 —— 同样放行。
-      if (/[\w"'`(:]/.test(after)) continue;
-      const lineStart = code.lastIndexOf("\n", at) + 1;
-      const lineEnd = code.indexOf("\n", at);
-      hits.push(code.slice(lineStart, lineEnd < 0 ? code.length : lineEnd).trim());
+  /**
+   * 商家真读得到的字 —— 用 **TypeScript AST** 取,不再靠「前后是不是标识符」猜(r6 判词 P1)。
+   *
+   * r4 那把尺子有三种稳定绕过,判官逐一验过:
+   *   ① `<p>{"contact" + "able"}</p>` —— 拼接起来才成词,单看字面量谁都不违规;
+   *   ② `<input readOnly value="contactable" />` —— `value=` 被一刀切当机器值放行,可它就是
+   *      商家眼睛里的那行字;
+   *   ③ `<button aria-label="Reachable contacts" />` —— 无障碍名字是**朗读出来的文案**。
+   * 加上词族本身漏了 `can reach` 一整族。
+   *
+   * 所以判定改成语义的:问「这段字符串会不会被商家读到/听到」,而不是「它长得像不像代码」。
+   * 会被读到的有四类:
+   *   · JSX 文本节点;
+   *   · 会被朗读或悬停读到的属性:aria-label / aria-description / aria-describedby 的文本 /
+   *     title / placeholder / alt;
+   *   · **非 hidden input 上的 `value=`**(`<input type="hidden">` 才是机器值);
+   *   · 以及以上任意一处的 **JSX 表达式内字面量拼接**(`{"a" + "b"}`、模板串)——
+   *     AST 把拼接式的每个字面量取出来按序拼回,① 就藏不住了。
+   * 变量名、props 键名、`value` 在 hidden input 上、类型里的字符串联合,都不在此列。
+   *
+   * 做法沿用 #848 已经合并的先例(instructions-nav-map.test.ts 的 `ts.createSourceFile`):
+   * 手搓状态机数不清嵌套模板串,AST 数得清。
+   */
+  function merchantVisibleStrings(fileSource: string, fileName = "surface.tsx"): string[] {
+    const tree = ts.createSourceFile(fileName, fileSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const spoken: string[] = [];
+
+    /** 一个表达式里所有字面量按源码顺序拼回一条字符串(拼接与模板串都算)。 */
+    function flatten(node: ts.Node): string {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+      if (ts.isTemplateExpression(node)) {
+        return node.head.text + node.templateSpans.map((span) => flatten(span.expression) + span.literal.text).join("");
+      }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+        return flatten(node.left) + flatten(node.right);
+      }
+      if (ts.isParenthesizedExpression(node)) return flatten(node.expression);
+      if (ts.isConditionalExpression(node)) return `${flatten(node.whenTrue)}\n${flatten(node.whenFalse)}`;
+      if (ts.isJsxExpression(node) && node.expression) return flatten(node.expression);
+      // 标识符、属性访问、调用 —— 机器读的,取不出字面量就当它没有字。
+      return "";
     }
-    return hits;
+
+    /** 这个属性名是「读给商家听的」还是「给机器的值」。 */
+    function spokenAttribute(attribute: ts.JsxAttribute, element: ts.JsxTagNameExpression, attributes: ts.JsxAttributes): boolean {
+      const name = attribute.name.getText();
+      if (["aria-label", "aria-description", "title", "placeholder", "alt"].includes(name)) return true;
+      if (name !== "value") return false;
+      // `value=` 只在**非 hidden input** 上才是商家看得到的字。
+      const tag = element.getText();
+      if (!/^(?:input|textarea|Input|Textarea)$/.test(tag)) return false;
+      const type = attributes.properties.find(
+        (property): property is ts.JsxAttribute =>
+          ts.isJsxAttribute(property) && property.name.getText() === "type",
+      );
+      const typeValue = type?.initializer ? flatten(type.initializer) : "";
+      return typeValue !== "hidden";
+    }
+
+    function visit(node: ts.Node): void {
+      if (ts.isJsxText(node)) {
+        const text = node.text.trim();
+        if (text) spoken.push(text);
+      } else if (ts.isJsxExpression(node) && node.expression && node.parent && !ts.isJsxAttribute(node.parent)) {
+        // JSX 里的表达式:只有拼得出字面量的才是字(`{count}` 拼不出,自然不算)。
+        const text = flatten(node.expression).trim();
+        if (text) spoken.push(text);
+      } else if (ts.isJsxAttribute(node) && node.initializer) {
+        const owner = node.parent;
+        const element = ts.isJsxSelfClosingElement(owner.parent) || ts.isJsxOpeningElement(owner.parent)
+          ? owner.parent.tagName
+          : undefined;
+        if (element && spokenAttribute(node, element, owner)) {
+          const text = flatten(node.initializer).trim();
+          if (text) spoken.push(text);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(tree);
+    return spoken;
+  }
+
+  /** 商家读得到、又对能力过度承诺的那几句。 */
+  function overpromisingLines(fileSource: string, fileName?: string): string[] {
+    return merchantVisibleStrings(fileSource, fileName).filter((text) => OVERPROMISE.test(text));
   }
 
   function crmSurfaces(): string[] {
@@ -745,43 +817,66 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
     return walk(path.join(WEB_ROOT, "components/crm"));
   }
 
-  // 自检:这把尺子逮得住真话说错的那一行,又不会误伤机器读的那些同名标识符。
-  it("尺子自检:逮得住裸着的说法,放行标识符与机器值", () => {
-    // 逮得住 —— r4 之前 segments 页上那一行的原样。
-    expect(
-      overpromisingLines("<p>{preview.matchedCount} matched · {preview.contactableCount} contactable · x</p>"),
-    ).toHaveLength(1);
-    expect(overpromisingLines("<p>everyone here is reachable today</p>")).toHaveLength(1);
-
-    // 不误伤 —— 属性访问、机器值属性、键名、下划线常量,一个都不算。
-    expect(
-      overpromisingLines(
-        [
-          "const n = preview.contactableCount;",
-          "{contact.contactable ? a : b}",
-          '<SelectItem value="contactable">Not known opt-out</SelectItem>',
-          '<SelectItem value="not_contactable">Known opt-out</SelectItem>',
-          "  contactableCount: preview.contactableCount,",
-          '| { kind: "contactability"; value: "contactable" }',
-        ].join("\n"),
-      ),
-    ).toEqual([]);
+  // ── 自检①:三种绕过 + 两类实词,一条都不许溜 ─────────────────────────────
+  it("尺子自检:逮得住 r6 判官点名的三种绕过", () => {
+    // ① 字符串拼接
+    expect(overpromisingLines('<p>{"contact" + "able"}</p>')).toHaveLength(1);
+    expect(overpromisingLines("<p>{`reach` + `able` + ` today`}</p>")).toHaveLength(1);
+    // ② 非 hidden input 上的 value = 商家看得到的字
+    expect(overpromisingLines('<input readOnly value="contactable" />')).toHaveLength(1);
+    // ③ 无障碍名字 = 朗读出来的文案
+    expect(overpromisingLines('<button aria-label="Reachable contacts" />')).toHaveLength(1);
+    expect(overpromisingLines('<button title="Contacts we can reach" />')).toHaveLength(1);
+    expect(overpromisingLines('<input placeholder="Search contactable people" />')).toHaveLength(1);
   });
 
-  it("扫描面本身没瘸 —— 真的走遍了 CRM 的商家面", () => {
-    expect(crmSurfaces().length, "components/crm 下一个面都没扫到").toBeGreaterThanOrEqual(10);
+  it("尺子自检:can reach 一族(r6 判官点名的两处实词形状)", () => {
+    for (const line of [
+      "<p>A broadcast counts only the contacts it can reach on the channel it sends from.</p>",
+      "<p>This count covers the contacts this broadcast can reach on its channel.</p>",
+      "<p>We reach them on WhatsApp.</p>",
+      "<p>everyone here is reachable today</p>",
+    ]) {
+      expect(overpromisingLines(line), `「${line}」必须被逮住`).toHaveLength(1);
+    }
   });
 
-  it("CRM 面上没有一处把「不是已知退订」说成「联系得上」(r4 判词 P1)", () => {
+  it("尺子自检:机器读的那些同名东西,一个都不误伤", () => {
+    const machineOnly = [
+      "const n = preview.contactableCount;",
+      "<p>{contact.contactable ? a : b}</p>",
+      '<SelectItem value="contactable">Not known opt-out</SelectItem>',
+      '<SelectItem value="not_contactable">Known opt-out</SelectItem>',
+      '<input type="hidden" value="contactable" />',
+      "function f({ contactableCount }: { contactableCount: number }) { return null; }",
+      'type Rule = { kind: "contactability"; value: "contactable" | "not_contactable" };',
+      "<Badge data-state=\"contactable\">Included</Badge>",
+    ];
+    for (const line of machineOnly) {
+      expect(overpromisingLines(line), `「${line}」不该被逮`).toEqual([]);
+    }
+  });
+
+  it("扫描面本身没瘸 —— 真的走遍了 CRM 的商家面,而且真读出了字", () => {
+    const files = crmSurfaces();
+    expect(files.length, "components/crm 下一个面都没扫到").toBeGreaterThanOrEqual(10);
+
+    // 读不出字的扫描器会让底下那条永远绿。这里钉住它确实读到了页面上的话。
+    const spoken = files.flatMap((file) => merchantVisibleStrings(readFileSync(file, "utf8"), file));
+    expect(spoken.length).toBeGreaterThan(200);
+    expect(spoken.join("\n")).toContain("known opt-out excluded");
+  });
+
+  it("CRM 面上没有一处把「不是已知退订」说成「联系得上 / 送得到」(r4 判词 P1 · r6 扩面)", () => {
     const offenders = crmSurfaces().flatMap((file) =>
-      overpromisingLines(readFileSync(file, "utf8")).map(
-        (line) => `${path.relative(WEB_ROOT, file)}: ${line}`,
+      overpromisingLines(readFileSync(file, "utf8"), file).map(
+        (line) => `${path.relative(WEB_ROOT, file)}: ${line.slice(0, 120)}`,
       ),
     );
 
     expect(
       offenders,
-      "这些字对商家承诺了「联系得上」,而产品只知道「不是已知退订」—— DND 开着的联系人也在里面",
+      "这些字对商家承诺了「联系得上 / 送得到」,而产品只知道「渠道已确认的身份 + 不是已知退订」",
     ).toEqual([]);
   });
 

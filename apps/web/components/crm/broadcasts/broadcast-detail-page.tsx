@@ -144,7 +144,13 @@ export function ConsentExclusionNote({ consent }: { consent: AudienceConsentSumm
       {consent.unresolvedLegacyOptOut > 0
         ? ` ${consent.unresolvedLegacyOptOut} of them opted out before consent history was kept, so they stay out until the customer opts in again.`
         : ""}
-      {" This count covers the contacts this broadcast can reach on its channel, so it can be lower than the count on the segments page, which covers every contact you have."}
+      {/*
+        #792 r6 — "can reach on its channel" promised delivery the count never measured. What it
+        counts is a channel-confirmed identity on this broadcast's channel plus no known opt-out
+        (customer-broadcast-service.ts); do-not-disturb is not part of it, and no message leaves
+        Fikirtive at all yet.
+      */}
+      {" This count covers the contacts with a confirmed identity on this broadcast's channel and no known opt-out, so it can be lower than the count on the segments page, which covers every contact you have."}
       {consent.reportedOptOutKept > 0
         ? ` ${consent.reportedOptOutKept} ${consent.reportedOptOutKept === 1 ? "contact is" : "contacts are"} in this audience with an opt-out you recorded yourself, which is not verified — open the contact to see its consent history.`
         : ""}
