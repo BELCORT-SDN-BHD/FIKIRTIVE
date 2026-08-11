@@ -51,7 +51,7 @@ export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResu
   // before anything is signed, so a refusal hands out no URL and reserves no key. Sized well above
   // a bulk product import (see UPLOAD_PER_TENANT_PER_HOUR).
   if (!(await consumeUploadGate(ownerId))) {
-    return { error: "Too many uploads in the last hour. Wait a few minutes and try again." };
+    return { error: "You've uploaded a lot of files in the last hour. Try again a little later." };
   }
   const parsed = authorizeUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "That file can't be uploaded (type or size out of bounds)." };
