@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { Plus, X, Check, Pencil } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -25,6 +26,10 @@ import {
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
 import { AUTO_PUBLISH_GATE_HINT } from "@/lib/auto-publish-gate";
+// Whether a post can actually reach a social account today, and the ONE set of words for saying so
+// (#851). This screen is the surface a merchant is most likely to read as "send" — so it states the
+// answer itself rather than hoping the merchant infers it from a greyed-out switch.
+import { publishPreviewBadge, publishSurfaceCopy, publishSurfaceLines } from "@fikirtive/core/schedule-draft";
 import { CONNECTABLE_CHANNEL_META, channelMeta, isConnectableChannel } from "@/lib/channels/channel-meta";
 // The single source of "which accounts is this merchant connected to right now" and the ONE
 // derived judgement built on it (#741 r2). This screen never touches the raw list — the type
@@ -370,6 +375,10 @@ export function OttoSchedule({
   // Same single source, same "unknown never unlocks anything" rule as everything else on the screen.
   const autoPublishAvailable = autoPublishAllowed(accounts);
   const headerBlocker = blockedConnection(accounts);
+  // Whether posts can actually go out, and the words for saying so. A product fact, not a fact
+  // about this merchant's workspace — so it needs no read, no state and no loading branch (#851).
+  const publishCopy = publishSurfaceCopy();
+  const previewBadge = publishPreviewBadge();
 
   function openNew() {
     setComposer({
@@ -409,6 +418,14 @@ export function OttoSchedule({
         {/* ── Shared header ── */}
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Schedule</h1>
+          {/* #851 — the merchant must know BEFORE they write anything that the sending half is not
+              on. The word and the sentence behind it both come from the publish authority, so the
+              day it is switched on the badge disappears with nothing else to edit. */}
+          {previewBadge && (
+            <Badge variant="warning" title={publishCopy.fact}>
+              {previewBadge}
+            </Badge>
+          )}
           <div className="flex items-center gap-1.5">
             {/* Chips and the status notice are NOT alternatives (#741 r5 P1). When one channel
                 read fine and another did not, the old if/else took the "connected" branch and
@@ -466,7 +483,7 @@ export function OttoSchedule({
               actually reads (apps/worker scanDuePublishPosts) — off means approved posts wait. */}
           <label
             className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none"
-            title={autoPublishAvailable ? "Publish approved posts automatically at their time" : AUTO_PUBLISH_GATE_HINT}
+            title={autoPublishAvailable ? publishCopy.why : AUTO_PUBLISH_GATE_HINT}
           >
             <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto || !autoPublishAvailable} aria-label="Otto auto-publish" />
             Auto-publish
@@ -488,12 +505,17 @@ export function OttoSchedule({
           </div>
         </div>
 
-        {/* ── Always-on banner (App Review gate) ── */}
+        {/* ── Always-on banner: what this screen does and does not do ──
+            #851 — this used to explain the auto-publish switch and nothing else, which left the
+            bigger fact ("nothing here reaches a social account at all") to be guessed. Every
+            sentence now comes from the publish authority, in its reading order: the fact, why,
+            what is still real, and what comes next — with no date attached to that last one. */}
         <div className="flex items-start gap-[11px] bg-[#FFF6F2] border border-[#FBD9C9] rounded-[14px] px-[15px] py-[12px] mb-4">
           <CoralCloud size={22} />
-          <span className="flex-1 text-[13px] leading-[1.5] text-[#9A3A1A]">
-            Auto-publish needs two things: Meta&rsquo;s approval to publish, and this switch turned on.
-            Schedule your posts now — until both are true they wait here for you.
+          <span className="flex-1 text-[13px] leading-[1.5] text-[#9A3A1A] flex flex-col gap-1">
+            {publishSurfaceLines().map((line) => (
+              <span key={line}>{line}</span>
+            ))}
           </span>
         </div>
 
@@ -802,7 +824,11 @@ function PlanCard({
           <span className="text-[12px] text-muted-foreground flex-1">
             {outstanding.length > 0
               ? `${approvable.length} of ${posts.length} ready — ${outstanding.join(" ")}`
-              : "Say go once you're happy — nothing publishes yet (Meta review pending)."}
+              // #851 — this sentence used to name an approval queue the merchant was supposedly
+              // waiting in, which implies the far end is wired up and only gated. It isn't. The
+              // fact comes from the publish authority now, so it cannot go stale on its own.
+              // (The old wording is deliberately not quoted here: a fence checks this file for it.)
+              : `Say go once you're happy. ${publishSurfaceCopy().fact}`}
           </span>
         )}
         <Button variant="brand" size="sm" disabled={pending || approvable.length === 0} onClick={approveAll}>
@@ -1363,8 +1389,11 @@ function Composer({
         <DialogHeader>
           <DialogTitle>{seed.mode === "create" ? "New post" : "Edit post"}</DialogTitle>
           <DialogDescription>
-            Reuse media you&rsquo;ve already made — scheduling never generates anything new. Nothing
-            publishes until Meta approves; approving just queues it.
+            {/* Two different promises, kept apart on purpose: this composer never spends (it only
+                reuses media the merchant already has), and — #851 — approving here does not send
+                anything anywhere. The second half comes from the publish authority. */}
+            Reuse media you&rsquo;ve already made — scheduling never generates anything new.{" "}
+            {publishSurfaceCopy().fact}
           </DialogDescription>
         </DialogHeader>
 

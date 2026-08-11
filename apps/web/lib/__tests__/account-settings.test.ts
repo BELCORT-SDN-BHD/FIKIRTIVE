@@ -5,6 +5,10 @@ import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { CreditPackShelf } from "@/lib/billing-actions";
 import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
+// #851 — the gate hint used to be typed out here as well as in the module. Two copies of one
+// sentence is exactly the drift this repo keeps paying for, and the sentence now changes with the
+// publish authority; assert against the module's value so the two can never disagree again.
+import { AUTO_PUBLISH_GATE_HINT } from "@/lib/auto-publish-gate";
 import type { SettingsField, SettingsSection } from "@/components/otto/settings/types";
 
 const mocks = vi.hoisted(() => ({
@@ -88,7 +92,7 @@ describe("account settings honesty", () => {
       kind: "toggle",
       value: false,
       disabled: true,
-      hint: "Connect Instagram or Facebook first — auto-publish unlocks once Meta approves publishing.",
+      hint: AUTO_PUBLISH_GATE_HINT,
     });
   });
 
@@ -119,7 +123,7 @@ describe("account settings honesty", () => {
       kind: "toggle",
       value: false,
       disabled: true,
-      hint: "Connect Instagram or Facebook first — auto-publish unlocks once Meta approves publishing.",
+      hint: AUTO_PUBLISH_GATE_HINT,
     });
   });
 

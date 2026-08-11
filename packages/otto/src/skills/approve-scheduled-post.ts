@@ -18,6 +18,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -51,12 +52,15 @@ export const approveScheduledPostSkill = defineOttoSkill({
   cost: "free",
   effect: "write",
   reach: "external",
+  // #851 — what approving actually DOES comes from the publish authority in core, the same one the
+  // Schedule screen and the approval card read. Hand-writing it here is how the assistant ended up
+  // able to promise an outcome the buttons no longer claim.
   description:
-    "Approve a DRAFT scheduled post so it can publish to Instagram/Facebook at its scheduled time. " +
-    "Approving is consent to a real, irreversible external publish, so this ALWAYS needs the user's " +
-    "explicit approval — you propose it on their behalf and they confirm on the approval card. Use only " +
-    "when the user asks you to approve/publish a specific post they have already reviewed. Give the " +
-    "scheduledPostId. Nothing publishes until the user confirms.",
+    "Approve a DRAFT scheduled post so it takes its slot on the user's schedule. " +
+    `${ottoPublishTruth()} ` +
+    "This ALWAYS needs the user's explicit approval — you propose it on their behalf and they confirm " +
+    "on the approval card. Use only when the user asks you to approve a specific post they have already " +
+    "reviewed. Give the scheduledPostId. Nothing at all happens until the user confirms.",
   parameters: params,
   execute: executeApproveScheduledPost,
 });

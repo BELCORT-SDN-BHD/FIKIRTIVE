@@ -10,6 +10,7 @@
  * the client renders it through approvalCardView. Skill human names come from TOOL_STEP_LABELS
  * (labelForTool, B9 契约4) so the card and the step trace speak the same language.
  */
+import { approvalCardTitleLine, approvalOutcomeLine } from "@fikirtive/core/schedule-draft";
 import { labelForTool } from "./otto-stream-bridge";
 import { socialPlatformLabel } from "./social-labels";
 
@@ -98,18 +99,23 @@ export function approvalCardView(payload: ApprovalCardPayload): ApprovalCardView
     const s = payload.summary;
     const channel = socialPlatformLabel(s.channel);
     const when = formatScheduledAt(s.scheduledAt, s.scheduledTz);
+    // #851 — the outcome line and the title come from the publish authority, not from this file.
+    // This card is the last thing a merchant reads before consenting, so it is the last place that
+    // may claim an outcome the product cannot deliver: while publishing is off it says the slot is
+    // booked and nothing is sent, and the day it is switched back on it says "Publishes to …"
+    // again with nothing here to edit.
     const detailLines = [
-      `Publishes to ${channel}`,
+      approvalOutcomeLine(channel),
       ...(when ? [`Scheduled for ${when}`] : []),
       `${s.mediaCount} media item${s.mediaCount === 1 ? "" : "s"} attached`,
     ];
     const captionExcerpt =
       s.caption.length > CAPTION_EXCERPT_MAX ? `${s.caption.slice(0, CAPTION_EXCERPT_MAX)}…` : s.caption;
-    return { title: "Approve this post for publishing", detailLines, captionExcerpt, summaryMissing: false };
+    return { title: approvalCardTitleLine(), detailLines, captionExcerpt, summaryMissing: false };
   }
   if (payload.toolName === "approveScheduledPost") {
     return {
-      title: "Approve this post for publishing",
+      title: approvalCardTitleLine(),
       detailLines: ["This post's details couldn't be loaded — it may have been deleted. Review your schedule before approving."],
       captionExcerpt: null,
       summaryMissing: true,
