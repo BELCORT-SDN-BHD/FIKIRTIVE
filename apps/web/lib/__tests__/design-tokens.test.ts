@@ -22,6 +22,49 @@ import { pathToFileURL } from "node:url";
 
 const webRoot = path.resolve(__dirname, "../..");
 
+/**
+ * The declared surface of a stylesheet — every selector, property, value and at-rule param,
+ * with comments structurally absent (#834 r4).
+ *
+ * r2 stripped comments with two regexes; the judge broke it with `url("//assets…")`.
+ * r3 replaced that with a hand-written scanner; the judge broke it again with
+ * `url("https://…/a)//tail?tint=#E5484D")` — it counted to the first `)`, which was inside the
+ * quotes. Two rounds, one root cause: **deciding what is a comment is CSS parsing**, and every
+ * patch just moves the seam to the next punctuation mark.
+ *
+ * So it is parsed now. postcss hands back a tree in which a comment is its own node type, so
+ * "without comments" is not something this file has to compute — it is what walking the
+ * declarations gives you. Resolved through @tailwindcss/postcss, exactly as `compileGlobals`
+ * below already resolves @tailwindcss/node: no new dependency.
+ */
+/**
+ * The four node kinds walked below. Declared here rather than imported: postcss is a
+ * transitive dependency, so its types do not resolve from this package — and naming only the
+ * shape actually used keeps the fence honest about how little of postcss it relies on.
+ */
+type PostcssNode =
+  | { type: "decl"; prop: string; value: string }
+  | { type: "rule"; selector: string }
+  | { type: "atrule"; name: string; params: string }
+  | { type: "comment"; text: string };
+
+function declaredCss(css: string): string {
+  const req = createRequire(path.join(webRoot, "package.json"));
+  const reqFromPostcss = createRequire(req.resolve("@tailwindcss/postcss"));
+  const postcss = reqFromPostcss("postcss") as {
+    parse(css: string): { walk(callback: (node: PostcssNode) => void): void };
+  };
+
+  const parts: string[] = [];
+  postcss.parse(css).walk((node) => {
+    if (node.type === "decl") parts.push(`${node.prop}: ${node.value}`);
+    else if (node.type === "rule") parts.push(node.selector);
+    else if (node.type === "atrule") parts.push(`@${node.name} ${node.params}`);
+    // node.type === "comment" is deliberately not collected — that is the whole point.
+  });
+  return parts.join("\n");
+}
+
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((offset) => {
     const srgb = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -134,42 +177,101 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
    * the literals themselves: once retired, they must not reappear anywhere in the markup.
    * This is not a ban on hex in general (the product still ships hundreds) — only on the
    * two shades that were measured and replaced.
+   *
+   * #830 — the first version only read `.tsx`, which is not where most colour lives. The
+   * stylesheet that DEFINES the tokens, and every `.ts` that hands a colour to a chart or a
+   * canvas, were outside the fence: `app/globals.css` could have re-typed the retired red as
+   * a token value and this test would have stayed green. Scanned extensions are now
+   * `.tsx` + `.ts` + `.css` over the same two roots.
    */
-  it("the retired state-colour literals survive nowhere in the markup (#813)", async () => {
+  it("the retired state-colour literals survive nowhere in the markup (#813, #830)", async () => {
     const RETIRED = [
       { literal: "#E5484D", why: "the pre-#739 destructive/error red — 3.91:1 on white" },
       { literal: "#3FB950", why: "an off-token green that never tracked --success" },
     ];
 
-    async function markupFiles(dir: string): Promise<string[]> {
+    /**
+     * One file, one literal, one reason — never a whole directory. The retirement of a
+     * colour is a fact the codebase has to be able to state, and stating it means writing
+     * the old value down once. An exemption here does NOT stop the fence in that file: the
+     * assertion below re-reads it with comments stripped, so the moment the literal moves
+     * out of the note and into a value, this test goes red anyway.
+     */
+    const COMMENT_ONLY_EXEMPTIONS = [
+      {
+        file: "app/globals.css",
+        literal: "#E5484D",
+        why: "the #739 retirement note itself — `--destructive #E5484D → #D02F35: AA fix` is the record of the replacement, and the audit trail is worth more than a shorter comment",
+      },
+    ];
+
+    async function scannedFiles(dir: string): Promise<string[]> {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       const nested = await Promise.all(
         entries.map(async (entry) => {
           const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) return entry.name === "node_modules" ? [] : markupFiles(full);
-          return full.endsWith(".tsx") ? [full] : [];
+          if (entry.isDirectory()) return entry.name === "node_modules" ? [] : scannedFiles(full);
+          return /\.(tsx|ts|css)$/.test(entry.name) ? [full] : [];
         }),
       );
       return nested.flat();
     }
 
     const files = [
-      ...(await markupFiles(path.join(webRoot, "app"))),
-      ...(await markupFiles(path.join(webRoot, "components"))),
+      ...(await scannedFiles(path.join(webRoot, "app"))),
+      ...(await scannedFiles(path.join(webRoot, "components"))),
     ];
-    // An empty file list would make the assertion vacuously green.
+    // An empty file list would make the assertion vacuously green. The stylesheet that
+    // defines every token has to be one of the files actually read.
     expect(files.length).toBeGreaterThan(100);
+    expect(files.map((file) => path.relative(webRoot, file))).toContain("app/globals.css");
 
     const offenders: string[] = [];
     for (const file of files) {
+      const relative = path.relative(webRoot, file);
       const text = await fs.readFile(file, "utf8");
       for (const { literal, why } of RETIRED) {
-        if (text.toUpperCase().includes(literal)) {
-          offenders.push(`${path.relative(webRoot, file)} — ${literal} (${why})`);
+        if (!text.toUpperCase().includes(literal)) continue;
+        const exemption = COMMENT_ONLY_EXEMPTIONS.find(
+          (entry) => entry.file === relative && entry.literal === literal,
+        );
+        // An exempt file is still scanned — only its comments are forgiven.
+        const body = exemption ? declaredCss(text) : text;
+        if (body.toUpperCase().includes(literal)) {
+          offenders.push(`${relative} — ${literal} (${why})`);
         }
       }
     }
     expect(offenders).toEqual([]);
+
+    // 判官两轮的全部反例(#834 r2/r3 P1)。豁免只赦免**真注释** —— 赦免范围一旦能被
+    // 扫描内容自己撑开,围栏就等于关掉了。这几行钉的是「谁来判定注释」这件事本身。
+    const protocolRelative = 'a { background: url("//assets.example.com/s.png?tint=#E5484D"); }';
+    expect(declaredCss(protocolRelative), "r2: a protocol-relative url() is not a comment")
+      .toContain("#E5484D");
+    const parenInsideQuotes = 'a { background: url("https://cdn.example.com/a)//tail?tint=#E5484D"); }';
+    expect(declaredCss(parenInsideQuotes), "r3: a ) inside the quotes does not end the url()")
+      .toContain("#E5484D");
+    expect(declaredCss("/* --destructive #E5484D → #D02F35 */ .gb { --destructive: #D02F35; }"))
+      .not.toContain("#E5484D");
+    // 注释在声明中间、值里带函数、以及多段注释,同样只留声明。
+    expect(declaredCss(".gb { --error: /* was #E5484D */ color-mix(in oklab, #D02F35 90%, white); }"))
+      .not.toContain("#E5484D");
+    expect(declaredCss(".gb { --error: #E5484D; /* keep */ }"), "a value is never a comment")
+      .toContain("#E5484D");
+
+    // Every exemption must still be earning its place: a stale entry is a hole nobody sees.
+    for (const exemption of COMMENT_ONLY_EXEMPTIONS) {
+      // Only a stylesheet can be forgiven this way — `declaredCss` reads CSS and nothing else.
+      // A `.ts`/`.tsx` entry here would silently forgive the whole file, so it is refused
+      // outright rather than approximated.
+      expect(exemption.file.endsWith(".css"), `${exemption.file} is not a stylesheet`).toBe(true);
+      const text = await fs.readFile(path.join(webRoot, exemption.file), "utf8");
+      expect(
+        text.toUpperCase().includes(exemption.literal),
+        `${exemption.file} no longer carries ${exemption.literal} — drop the exemption`,
+      ).toBe(true);
+    }
   });
 
   it("global two-layer coral focus ring (§A2) is present", async () => {

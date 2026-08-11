@@ -130,10 +130,13 @@ describe("未登录访问北极星路由", () => {
 /* ── ② 登录了照常 ─────────────────────────────────────────────────────────── */
 
 describe("已登录商家照常进出", () => {
-  it("壳写的是登录进来的这个人的名字与邮箱", async () => {
+  // #801:身份栏随「六扇门」自有导航一起退场 —— 名字、邮箱、余额与 Sign out 只在全局导轨
+  // 里写一次。所以壳不再解析身份;它要证明的只剩「闸没放宽,内容照常交给认证商家」。
+  it("壳把内容交给认证商家,且不再自己解析身份", async () => {
     signedIn();
     const element = await NorthstarShellEntry({ children: "content" });
-    expect(element.props.identity).toEqual({ name: "Nurul Huda", email: SIGNED_IN.email });
+    expect(element.props.children).toBe("content");
+    expect(element.props.identity).toBeUndefined();
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 

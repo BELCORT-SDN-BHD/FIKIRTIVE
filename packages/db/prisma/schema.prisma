@@ -1420,6 +1420,17 @@ model ContactIdentity {
   externalId     String
   handle         String?
   label          String?
+  // #803 — credibility grade, enforced by a CHECK constraint in
+  // 20260809100000_contact_identity_verification_grade (Prisma cannot express the closed set
+  // or the evidence pairing). 'merchant_unverified' = the merchant typed it; 'channel_verified'
+  // = a connected channel confirmed it, and then verifiedAt/verifiedSourceKind say when and by
+  // what. The two are NOT interchangeable: only channel_verified rows are audience/send
+  // material (see contactChannelFacts / the broadcast's send targets).
+  // The defaults are self-consistent on purpose (see the migration): the evidence CHECK is
+  // strict in both directions, so a row that names no grade at all still has to be a legal one.
+  verificationStatus String    @default("channel_verified")
+  verifiedAt         DateTime? @default(now())
+  verifiedSourceKind String?   @default("channel_record")
   createdAt      DateTime @default(now())
   deletedAt      DateTime?
 

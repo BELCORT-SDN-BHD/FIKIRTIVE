@@ -648,7 +648,11 @@ export function OttoNav({
           <button
             type="button"
             onClick={handleOpenGlobalNavigation}
-            title="Go to Campaign, CRM, billing, and account"
+            // #801 — this tooltip used to LIST the sections ("Campaign, CRM, billing, and
+            // account"). A list here is a second copy of the navigation tree: it went stale the
+            // moment a section was added, and it had already dropped one. The fix is not a
+            // longer list, it is not having one — the drawer it opens shows the real tree.
+            title="Open navigation"
             className="flex items-center gap-[9px] w-full border-0 bg-transparent text-muted-foreground font-normal text-[0.8125rem] px-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 hover:bg-secondary/60 hover:text-foreground"
           >
             <ArrowUpRight size={18} className="shrink-0" aria-hidden />

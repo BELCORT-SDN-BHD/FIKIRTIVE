@@ -23,6 +23,10 @@
  * Pure presentation: no data access, no tenant logic, no authority over what is true.
  */
 
+// The SUBPATH, not the barrel: this module is reachable from client components, and the core
+// barrel pulls in Node-capable code (fenced by lib/__tests__/client-core-imports.test.ts).
+import { isChannelVerifiedIdentity } from "@fikirtive/core/contact-identity-grade";
+
 export type CrmBadgeVariant =
   | "default"
   | "brand"
@@ -71,6 +75,35 @@ const CONTACT_SOURCE_LABELS: Record<string, string> = {
 
 export function contactSourceLabel(source: string): string {
   return CONTACT_SOURCE_LABELS[source] ?? humanizeToken(source);
+}
+
+// ── Contact identity credibility grade (#803) ────────────────────────────────────────────────
+
+/**
+ * The badge next to a stored number. A closed, code-validated set of two, so an unrecognized
+ * value is NOT humanized: a grade this build does not know is a grade it cannot vouch for, and
+ * the honest badge for it is the cautious one.
+ *
+ * The words are chosen to answer the merchant's real question — "can I message this?" — without
+ * promising a timeline nobody controls. No channel is connected yet (#792), so the verified badge
+ * describes what happened, and the unverified one describes what is missing, and neither says
+ * "soon".
+ */
+export function identityGradePresentation(
+  verificationStatus: string,
+): { label: string; variant: CrmBadgeVariant; note: string } {
+  if (isChannelVerifiedIdentity({ verificationStatus })) {
+    return {
+      label: "Channel verified",
+      variant: "success",
+      note: "A connected channel confirmed this number.",
+    };
+  }
+  return {
+    label: "Not verified",
+    variant: "warning",
+    note: "You entered this number. It is saved on the record and is not used for broadcasts.",
+  };
 }
 
 // ── Broadcast purpose ────────────────────────────────────────────────────────────────────────

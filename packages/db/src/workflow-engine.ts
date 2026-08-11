@@ -1,5 +1,8 @@
 import type { Prisma, PrismaClient } from "../generated/prisma/client.js";
 import { canonicalHash, canonicalJson } from "./workflow-compiler.js";
+// Type-only on purpose: workflow-reason-codes reads this module's ROUTINE_AUTHORITY_FAILURES,
+// so a value import here would close a runtime cycle. `import type` is erased.
+import type { WorkflowRunReasonCode } from "./workflow-reason-codes.js";
 
 export const WORKFLOW_ENGINE_ERROR_CODES = {
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
@@ -736,8 +739,14 @@ export type TransitionRoutineRunInput = {
   currentStepKey?: string | null;
   summaryJson?: unknown;
   summaryUnavailableReason?: string;
-  blockReason?: string;
-  errorCode?: string;
+  /**
+   * #834 r2 (P1): both columns are merchant-visible — the Routine monitoring panel renders
+   * `blockReason ?? errorCode` as an English sentence — so neither may take a free-form string.
+   * A code with no sentence behind it is exactly the defect #811 closed, and `string` here was
+   * the way back in: hand-write a new code, persist it, and the copy pinboard never notices.
+   */
+  blockReason?: WorkflowRunReasonCode;
+  errorCode?: WorkflowRunReasonCode;
   now: Date;
 };
 
@@ -784,7 +793,7 @@ export async function transitionRoutineRun(
     const current = loaded.run;
     if (current.rowRevision !== input.expectedRowRevision) fail("CAS_CONFLICT");
     if (TERMINAL_RUN_STATUSES.has(current.status)) fail("RUN_TERMINAL");
-    const authorityBlockReason = !loaded.authority.ok
+    const authorityBlockReason: WorkflowRunReasonCode | null = !loaded.authority.ok
       ? `routine_authority_${loaded.authority.reason}`
       : null;
     const effectiveStatus = authorityBlockReason === null ? input.toStatus : "blocked";

@@ -5,6 +5,7 @@ import {
   NorthstarCanvasWorkspace,
   type ImmersiveCanvasRuntimeContext,
 } from "@/components/canvas/NorthstarCanvasWorkspace";
+import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
@@ -76,7 +77,7 @@ export function buildImmersiveCanvasCanonicalUrl(
     if (selection.activeThreadId) next.set("thread", selection.activeThreadId);
     else next.delete("thread");
   }
-  return `/northstar-immersive/create/canvas?${next.toString()}`;
+  return `${CANVAS_HREF}?${next.toString()}`;
 }
 
 export async function ImmersiveCanvasEntry({
