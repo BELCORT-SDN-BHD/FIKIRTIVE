@@ -6,7 +6,8 @@
  *   - runtime  → DATABASE_URL_POOLED (Neon -pooler endpoint) falling back to DATABASE_URL
  *   - migrate  → DATABASE_URL (direct), used by prisma.config.ts / CLI only
  *
- * Singleton via globalThis so Next.js dev hot-reload doesn't leak pools.
+ * The client itself lives in ./client.ts (#795) and is re-exported below; this file is the
+ * package's barrel.
  */
 export * from "../generated/prisma/client.js";
 export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCreditsTx, InsufficientCredits, type CreditGrantSource } from "./credits.js";
