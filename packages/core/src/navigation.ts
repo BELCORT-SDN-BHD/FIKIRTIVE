@@ -187,12 +187,17 @@ export function everyNavDestination(): readonly MerchantNavLink[] {
 export const NAV_PATH_SEPARATOR = "›";
 
 /**
- * 会被当成「路的那一格」读的字符族。
+ * 会被当成「路的那一格」读的字符族 —— 归一化用。
  *
  * 为什么要列出来:#802 判官 r1 [P2] 用同形字穿透过围栏 —— `Workspace 〉 Insights`(U+3009)
  * 与 `Workspace > Insights`(ASCII)在商家眼里就是一条路,在只认 U+203A 的围栏眼里却什么
- * 都不是。围栏先把这一族归一成 NAV_PATH_SEPARATOR 再对账;标签里也一律不许含它们,否则
- * 一个标签自己就能伪造出一层不存在的下级(见 navigation.test.ts 的结构断言)。
+ * 都不是。围栏先把这一族归一成 NAV_PATH_SEPARATOR 再对账。
+ *
+ * **这份名单不是围栏的封闭性所在**(判官 r3 [P2-2] 又补了 `∕`、`：`、`⇒` 三个):字符表
+ * 永远数不完。围栏真正的封闭手段是 packages/otto 那道「合法名 + 任意标点 + 大写词」的形状
+ * 判定 —— 不认字符,认形状。这份名单只负责把常见写法折成一个字符,让报错更好读。
+ * 标签侧的封闭手段同理:navigation.test.ts 钉的是**字符白名单**(标签只能由字母/数字/空格/
+ * `&`/`-`/`'` 组成),而不是逐个禁这份名单。
  */
 export const NAV_PATH_SEPARATOR_FAMILY = [
   NAV_PATH_SEPARATOR, // U+203A,权威写法
@@ -205,6 +210,20 @@ export const NAV_PATH_SEPARATOR_FAMILY = [
   "⟫", // U+27EB
   "❯", // U+276F
 ] as const;
+
+// 刻意**不**收进这一族:`→`、`⇒`、`/`、`∕`、`／`、`：`。它们在正当英语里到处都是
+// (`image/video`、`kind:"image" → call seedreamPrompt`),归一化会把它们变成假路径而制造
+// 满屏误伤。判官 r3 [P2-2] 点名的正是这三个字符 —— 它们由 packages/otto 那把**形状**尺子
+// 兜住(合法名 + 任意连接符 + 大写词),不靠字符表。
+
+/**
+ * 标签里允许出现的字符 —— **白名单**,不是黑名单。
+ *
+ * 判官 r3 [P2-2]:禁一族字符永远追不上同形字。反过来规定「标签只能长这样」就封闭了:
+ * 字母、数字、空格、`&`(Brand & products)、`-`、`'`。任何标点/箭头/斜线/冒号都进不来,
+ * 于是一个标签**不可能**自己伪造出一层不存在的下级。
+ */
+export const NAV_LABEL_ALLOWED_CHARS = /^[A-Za-z0-9 &'-]+$/;
 
 /**
  * 一条目的地在商家眼里的**完整路名**:组内的写成「Workspace › Schedule」,顶层的就是它

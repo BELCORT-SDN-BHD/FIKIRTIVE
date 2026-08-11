@@ -14,6 +14,7 @@ import {
   MERCHANT_NAV,
   MERCHANT_NAV_REDIRECTS,
   NAV_PATH_SEPARATOR,
+  NAV_LABEL_ALLOWED_CHARS,
   NAV_PATH_SEPARATOR_FAMILY,
   OTTO_ASSISTANT,
   everyNavDestination,
@@ -170,28 +171,58 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
     }
   });
 
-  // r2 · #802 判官 [P2]:标签自己就能伪造一层。`label: "Connections 〉 Advanced"` 会让
+  // #802 判官 [P2] / r3 [P2-2]:标签自己就能伪造一层。`label: "Connections 〉 Advanced"` 会让
   // navPath() 吐出一条看起来有两级、实则不存在的路,而 Otto 侧围栏拿它当授权名单 ——
-  // 一份被污染的权威,下游再严的对账也白搭。所以标签一律不许含「路的那一格」那族字符。
-  it("标签不许含分隔符字符族 —— 权威自己不能伪造出一层(#802 r2)", () => {
+  // 一份被污染的权威,下游再严的对账也白搭。
+  //
+  // r2 用的是「不许含这一族字符」;r3 判官接着补了 `∕`、`：`、`⇒` 三个 —— 黑名单永远追不上
+  // 同形字。r4 改成**白名单**:标签只能由字母/数字/空格/`&`/`-`/`'` 组成,一切标点、箭头、
+  // 斜线、冒号自然全部在外。这条是可证的,不必再随判官的下一次复现加字符。
+  it("标签只由白名单字符组成 —— 权威自己不可能伪造出一层(#802 r4)", () => {
     for (const item of everyNavDestination()) {
-      for (const separator of NAV_PATH_SEPARATOR_FAMILY) {
-        expect(item.label.includes(separator), `${item.key} 的标签含分隔符「${separator}」`).toBe(false);
-      }
+      expect(NAV_LABEL_ALLOWED_CHARS.test(item.label), `${item.key} 的标签有白名单外的字符:${item.label}`).toBe(
+        true,
+      );
     }
     for (const group of MERCHANT_NAV.filter(isNavGroup)) {
-      for (const separator of NAV_PATH_SEPARATOR_FAMILY) {
-        expect(group.label.includes(separator), `${group.key} 的分组名含分隔符「${separator}」`).toBe(false);
-      }
+      expect(
+        NAV_LABEL_ALLOWED_CHARS.test(group.label),
+        `${group.key} 的分组名有白名单外的字符:${group.label}`,
+      ).toBe(true);
     }
   });
 
-  it("字符族本身覆盖到已知的同形写法(名单空了,上一条就是永远为真)", () => {
-    // 判官内存复现用过的三种,加上全角与书名号 —— 少一个,上一条就少挡一种。
+  it("白名单真的挡得住伪造(不是一条永远为真的断言)", () => {
+    // 判官三轮点过名的写法,逐个验红。
+    for (const forged of [
+      "Connections 〉 Advanced",
+      "Connections > Advanced",
+      "Connections ∕ Advanced", // U+2215(r3)
+      "Connections：Advanced", // 全角冒号(r3)
+      "Connections ⇒ Advanced", // U+21D2(r3)
+      "Connections › Advanced",
+      "Connections / Advanced",
+      "Connections｜Advanced",
+    ]) {
+      expect(NAV_LABEL_ALLOWED_CHARS.test(forged), `伪造标签「${forged}」必须被挡`).toBe(false);
+    }
+    // 反向:现役标签的形状(含 & 与空格)必须过,否则白名单会逼着产品改名。
+    for (const real of ["Brand & products", "Billing & credits", "Ask Otto", "CRM", "Create"]) {
+      expect(NAV_LABEL_ALLOWED_CHARS.test(real), `真标签「${real}」不该被挡`).toBe(true);
+    }
+  });
+
+  it("归一化字符族只收无歧义的分隔符(它只管报错可读性,封闭性在白名单与形状)", () => {
     for (const separator of ["›", "〉", ">", "》", "»", "＞"]) {
-      expect(NAV_PATH_SEPARATOR_FAMILY, `${separator} 不在字符族里`).toContain(separator);
+      expect(NAV_PATH_SEPARATOR_FAMILY, `${separator} 不在归一化字符族里`).toContain(separator);
     }
     expect(NAV_PATH_SEPARATOR_FAMILY).toContain(NAV_PATH_SEPARATOR);
+    // 刻意在族外:这些字符在正当英语里到处都是,归一化它们会制造满屏误伤
+    // (`image/video`、`kind:"image" → call seedreamPrompt`)。判官 r3 点名的三个就在其中,
+    // 它们由 packages/otto 的形状尺子兜住,不靠字符表 —— 这是「可证」与「数字符」的分工。
+    for (const everyday of ["/", "→", "⇒", "∕", "：", ":"]) {
+      expect(NAV_PATH_SEPARATOR_FAMILY, `${everyday} 不该进归一化字符族`).not.toContain(everyday);
+    }
   });
 });
 
