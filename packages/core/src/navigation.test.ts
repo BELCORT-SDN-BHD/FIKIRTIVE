@@ -13,11 +13,17 @@ import {
   CREATE_NAV_LABEL,
   MERCHANT_NAV,
   MERCHANT_NAV_REDIRECTS,
+  NAV_PATH_SEPARATOR,
+  NAV_LABEL_ALLOWED_CHARS,
+  NAV_PATH_SEPARATOR_FAMILY,
   OTTO_ASSISTANT,
   everyNavDestination,
   isNavGroup,
   merchantNavLinks,
   merchantNavMap,
+  navLabel,
+  navPath,
+  navPointableNames,
 } from "./navigation.js";
 
 describe("MERCHANT_NAV 的形状", () => {
@@ -109,7 +115,122 @@ describe("两个日历择一为准", () => {
   });
 });
 
+describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
+  it("组内的写成「分组 › 子项」,顶层的就是它自己的名字", () => {
+    expect(navPath("schedule")).toBe("Workspace › Schedule");
+    expect(navPath("connections")).toBe("Settings › Connections");
+    expect(navPath("create")).toBe(CREATE_NAV_LABEL);
+    expect(navPath("otto")).toBe(OTTO_ASSISTANT.label);
+  });
+
+  it("不存在的 key 直接炸 —— 不许静默返回一个编出来的名字", () => {
+    expect(() => navPath("insights")).toThrow(/insights/);
+    expect(() => navLabel("insights")).toThrow(/insights/);
+  });
+
+  // r2 · #802 判官 [P1-1]:句子里顺口提到一个地方时用 navLabel(),指路时用 navPath()。
+  // 两者都不许手打 —— 判官逮到的是提示词里一处手打的 `Campaign`。
+  it("navLabel 给的是导轨上那个词(不带分组前缀),分组名也取得到", () => {
+    expect(navLabel("library")).toBe("Library");
+    expect(navLabel("crm-inbox")).toBe("Inbox");
+    expect(navLabel("campaign")).toBe("Campaign");
+    expect(navLabel("crm")).toBe("CRM");
+    expect(navLabel("otto")).toBe(OTTO_ASSISTANT.label);
+    // 组内项:navPath 带分组前缀,navLabel 不带 —— 两者只差那一格。
+    expect(navPath("library")).toBe(
+      `${navLabel("workspace")} ${NAV_PATH_SEPARATOR} ${navLabel("library")}`,
+    );
+  });
+
+  it("每一条目的地都取得到路名,且路名与地图里的写法逐字一致", () => {
+    const map = merchantNavMap();
+    for (const item of everyNavDestination()) {
+      const path = navPath(item.key);
+      expect(path.trim().length, item.key).toBeGreaterThan(0);
+      expect(map, `${item.key} 的路名与地图写法不一致`).toContain(`${path} (${item.href})`);
+    }
+  });
+
+  it("可说出口的名单 = 助手 + 顶层板块 + 分组名 + 每条完整路名,一条不多一条不少", () => {
+    const names = navPointableNames();
+    const expected = [
+      OTTO_ASSISTANT.label,
+      ...MERCHANT_NAV.flatMap((node) =>
+        isNavGroup(node) ? [node.label, ...node.items.map((item) => navPath(item.key))] : [node.label],
+      ),
+    ];
+    expect([...names].sort()).toEqual([...expected].sort());
+    expect(new Set(names).size, "名单里不许有重名").toBe(names.length);
+  });
+
+  it("分组名是单个词 —— Otto 侧围栏按这个形状取词(#802)", () => {
+    // 这条不是洁癖:packages/otto 的界面地图围栏用「分隔符两侧」认路名,分组名一旦带空格,
+    // 那道围栏会取错左半边并**变红**。真要给分组起一个两词的名字,先改那道围栏再改这里。
+    for (const group of MERCHANT_NAV.filter(isNavGroup)) {
+      expect(group.label, `${group.key} 的分组名带了空格`).not.toMatch(/\s/);
+    }
+  });
+
+  // #802 判官 [P2] / r3 [P2-2]:标签自己就能伪造一层。`label: "Connections 〉 Advanced"` 会让
+  // navPath() 吐出一条看起来有两级、实则不存在的路,而 Otto 侧围栏拿它当授权名单 ——
+  // 一份被污染的权威,下游再严的对账也白搭。
+  //
+  // r2 用的是「不许含这一族字符」;r3 判官接着补了 `∕`、`：`、`⇒` 三个 —— 黑名单永远追不上
+  // 同形字。r4 改成**白名单**:标签只能由字母/数字/空格/`&`/`-`/`'` 组成,一切标点、箭头、
+  // 斜线、冒号自然全部在外。这条是可证的,不必再随判官的下一次复现加字符。
+  it("标签只由白名单字符组成 —— 权威自己不可能伪造出一层(#802 r4)", () => {
+    for (const item of everyNavDestination()) {
+      expect(NAV_LABEL_ALLOWED_CHARS.test(item.label), `${item.key} 的标签有白名单外的字符:${item.label}`).toBe(
+        true,
+      );
+    }
+    for (const group of MERCHANT_NAV.filter(isNavGroup)) {
+      expect(
+        NAV_LABEL_ALLOWED_CHARS.test(group.label),
+        `${group.key} 的分组名有白名单外的字符:${group.label}`,
+      ).toBe(true);
+    }
+  });
+
+  it("白名单真的挡得住伪造(不是一条永远为真的断言)", () => {
+    // 判官三轮点过名的写法,逐个验红。
+    for (const forged of [
+      "Connections 〉 Advanced",
+      "Connections > Advanced",
+      "Connections ∕ Advanced", // U+2215(r3)
+      "Connections：Advanced", // 全角冒号(r3)
+      "Connections ⇒ Advanced", // U+21D2(r3)
+      "Connections › Advanced",
+      "Connections / Advanced",
+      "Connections｜Advanced",
+    ]) {
+      expect(NAV_LABEL_ALLOWED_CHARS.test(forged), `伪造标签「${forged}」必须被挡`).toBe(false);
+    }
+    // 反向:现役标签的形状(含 & 与空格)必须过,否则白名单会逼着产品改名。
+    for (const real of ["Brand & products", "Billing & credits", "Ask Otto", "CRM", "Create"]) {
+      expect(NAV_LABEL_ALLOWED_CHARS.test(real), `真标签「${real}」不该被挡`).toBe(true);
+    }
+  });
+
+  it("归一化字符族只收无歧义的分隔符(它只管报错可读性,封闭性在白名单与形状)", () => {
+    for (const separator of ["›", "〉", ">", "》", "»", "＞"]) {
+      expect(NAV_PATH_SEPARATOR_FAMILY, `${separator} 不在归一化字符族里`).toContain(separator);
+    }
+    expect(NAV_PATH_SEPARATOR_FAMILY).toContain(NAV_PATH_SEPARATOR);
+    // 刻意在族外:这些字符在正当英语里到处都是,归一化它们会制造满屏误伤
+    // (`image/video`、`kind:"image" → call seedreamPrompt`)。判官 r3 点名的三个就在其中,
+    // 它们由 packages/otto 的形状尺子兜住,不靠字符表 —— 这是「可证」与「数字符」的分工。
+    for (const everyday of ["/", "→", "⇒", "∕", "：", ":"]) {
+      expect(NAV_PATH_SEPARATOR_FAMILY, `${everyday} 不该进归一化字符族`).not.toContain(everyday);
+    }
+  });
+});
+
 describe("给 Otto 的界面地图", () => {
+  it("路名用的是同一个分隔符(围栏按它认路)", () => {
+    expect(merchantNavMap()).toContain(`Workspace ${NAV_PATH_SEPARATOR} Schedule`);
+  });
+
   it("从同一棵树生成 —— 每一条门都在地图里", () => {
     const map = merchantNavMap();
     for (const item of everyNavDestination()) {

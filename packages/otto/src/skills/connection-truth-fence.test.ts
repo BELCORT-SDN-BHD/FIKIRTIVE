@@ -21,7 +21,8 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core";
+import { CONNECTION_BLOCKER_COPY, navPath } from "@fikirtive/core";
+import { metaNotConnectedMessage } from "../connection-copy.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -95,10 +96,52 @@ describe("Otto 的连接状态口径", () => {
   it("凡是会说「还没连 Meta」的技能,都必须先问过共享权威", () => {
     // 反面断言做成行为要求:一个技能只要写得出 not-connected 那句话,就必须先经过
     // isConnectionBlocked —— 否则它没有能力把「授权过期」和「没连过」分开。
+    //
+    // #802:那句话本身已经收进 connection-copy.ts(metaNotConnectedMessage),所以检测器
+    // 要认得**调用**,不只是认字面量 —— 否则这条会因为「谁都不再写那句话」而静默失效。
     const offenders = files
-      .filter((f) => /isn't connected yet|Meta isn't connected/.test(f.code))
+      .filter((f) => /isn't connected yet|Meta isn't connected|metaNotConnectedMessage/.test(f.code))
       .filter((f) => !f.code.includes("isConnectionBlocked"))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);
+  });
+
+  // ── #802 上手第一坎:说「还没连」的时候,得把人送到真的那扇门 ──────────────────
+  //
+  // 商家的第一坎就是连 Meta,而这七个技能的每一句「还没连」都以「去某处连上」收尾。改这张
+  // 票之前,七个文件各自手打了一遍目的地(裸词 "Connections"),导航权威把它叫作
+  // `Settings › Connections` —— 明天改个名,七张嘴一起说错。
+  //
+  // 这一条是**行为**断言:七个技能真的跑一遍 notConnected,答复里必须带导航权威此刻给出的
+  // 那个路名。谁再手打一份,它与权威一分岔就红。
+  it.each([
+    ["list-meta-pages", (list: () => unknown) => ({ metaPages: { list } })],
+    ["meta-list-objects", (list: () => unknown) => ({ metaAds: { list } })],
+    ["meta-insights", (get: () => unknown) => ({ metaInsights: { get } })],
+    ["meta-ad-performance", (getAds: () => unknown) => ({ metaPerformance: { getAds } })],
+    ["meta-expert", (getAds: () => unknown) => ({ metaPerformance: { getAds } })],
+    ["propose-ad-build", (propose: () => unknown) => ({ metaBuild: { propose } })],
+    ["propose-meta-action", (metaPropose: () => unknown) => ({ metaPropose })],
+  ])("%s:notConnected 的回答把商家送到真实入口,而不是一个手打的名字", async (name, makeCtx) => {
+    const mod: Record<string, unknown> = await import(`./${name}.js`);
+    const execute = Object.entries(mod).find(([k]) => k.startsWith("execute"))?.[1] as
+      | ((input: unknown, rc: { context: unknown }) => Promise<unknown>)
+      | undefined;
+    expect(execute, `${name} 没有导出 execute*`).toBeTruthy();
+
+    const ctx = makeCtx(async () => ({ notConnected: true }));
+    const res = (await execute!({ datePreset: "last_30d" }, { context: ctx })) as Record<string, unknown>;
+    const text = JSON.stringify(res);
+    expect(text, `${name} 必须说出导航权威此刻给的路名`).toContain(navPath("connections"));
+  });
+
+  it("那句话的路名真的来自权威,不是恰好拼对了", () => {
+    // 自检:把权威换个名字,答复必须跟着换 —— 否则上一条只是在比对一个巧合。
+    expect(metaNotConnectedMessage()).toContain(navPath("connections"));
+    expect(metaNotConnectedMessage()).not.toMatch(/open Connections\b/);
+    // 技能自己那半句(为什么这件事因此做不了)原样保留,不被共用文案吃掉。
+    expect(metaNotConnectedMessage("so I can't read your per-ad performance")).toContain(
+      "so I can't read your per-ad performance",
+    );
   });
 });

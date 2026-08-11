@@ -12,10 +12,9 @@ import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
-import { isConnectionBlocked, ottoConnectionBlockedAnswer } from "../connection-copy.js";
+import { isConnectionBlocked, metaNotConnectedMessage, ottoConnectionBlockedAnswer } from "../connection-copy.js";
 
-const NOT_CONNECTED =
-  "Meta isn't connected yet. Ask the user to open Connections and connect Instagram or Facebook, then try again.";
+const NOT_CONNECTED = metaNotConnectedMessage();
 const META_UNREACHABLE =
   "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 

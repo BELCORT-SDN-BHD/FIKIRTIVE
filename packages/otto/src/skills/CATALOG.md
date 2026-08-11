@@ -41,7 +41,7 @@
 | proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
 | readCampaigns | free | read | internal | ❌ | Read the user's Campaign list, one exact Campaign with structured plan entries a |
 | readContacts | free | read | internal | ❌ | List, search, or read one exact CRM Contact through the same owner-scoped action |
-| readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the same owner-scoped action layer as the C |
+| readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the same owner-scoped action layer the merc |
 | readSpending | free | read | internal | ❌ | Read the workspace's credit balance and recent credit history — the same rows th |
 | readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, immutable revisions, Routine authorization |
 | recommendTemplates | free | read | internal | ❌ | Look up the built-in template library — ready-made one-tap scenarios written for |

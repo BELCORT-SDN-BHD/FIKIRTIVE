@@ -11,6 +11,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { navLabel } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -33,7 +34,7 @@ export const listChannelScopesSkill = defineOttoSkill({
   reach: "internal",
   description:
     "List the workspace's connected messaging channel accounts (channel + scope key) — the same rows " +
-    "a human sees in the Inbox template and broadcast channel pickers. $0 read-only. An empty list " +
+    `a human sees in the ${navLabel("crm-inbox")} template and broadcast channel pickers. $0 read-only. An empty list ` +
     "means no channel is connected yet — tell the user to connect one instead of guessing an id.",
   parameters: params,
   execute: executeListChannelScopes,
