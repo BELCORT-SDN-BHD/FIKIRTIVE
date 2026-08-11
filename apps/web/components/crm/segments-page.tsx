@@ -921,7 +921,15 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
   return (
     <div className="mt-4">
       <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold tabular-nums">
-        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} contactable · {preview.excludedByConsentCount} known opt-out excluded
+        {/*
+          #792 r4 — this number used to be labelled "contactable", which is a promise the count
+          does not make. It is `!isKnownOptOut(truth)` (segment-actions.ts) and nothing more: a
+          contact with do-not-disturb switched on is counted here, and whether anyone can
+          actually be messaged is decided later by the four send-eligibility axes. So the label
+          says exactly what was measured — and it now reads as the pair it always was with the
+          exclusion beside it.
+        */}
+        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} with no known opt-out · {preview.excludedByConsentCount} known opt-out excluded
         {preview.reportedOptOutCount > 0
           ? ` · ${preview.reportedOptOutCount} reported opt-out still included`
           : ""}

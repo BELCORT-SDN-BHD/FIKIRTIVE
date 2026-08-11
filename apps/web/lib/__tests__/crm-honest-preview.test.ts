@@ -21,7 +21,7 @@
  *
  * 零后端、零生成:静态渲染 + 源码读取 + jsdom 里的真组件事件。
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -100,12 +100,89 @@ function repoSource(relativeToRepoRoot: string): string {
   return readFileSync(path.join(REPO_ROOT, relativeToRepoRoot), "utf8");
 }
 
+/**
+ * 从 `openIndex` 处那个 `{` 起,取到与它配对的 `}` —— 括号配平,且跳过字符串与注释。
+ *
+ * r4 判词 P2:上一版靠「下一个 `\n  }`」猜函数体边界,而 evidence 又整文件搜。于是一条
+ * 「实现里必须有这个形状」的断言,可以被文件里**任何**地方的同形文本喂饱 —— 包括一段类型
+ * 声明。判定范围必须是真实现那一块,才谈得上「实现变了就红」。
+ */
+function balancedBlockFrom(text: string, openIndex: number): string {
+  let depth = 0;
+  let quote = "";
+  let lineComment = false;
+  let blockComment = false;
+
+  for (let i = openIndex; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (lineComment) {
+      if (char === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (char === "\\") i += 1;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      lineComment = true;
+      i += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      blockComment = true;
+      i += 1;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(openIndex, i + 1);
+    }
+  }
+  throw new Error("这个块没有闭合");
+}
+
+/** 某个标记之后的第一个 `{ … }` 块 —— 用来钉住一次真正的写入(而不是整份文件)。 */
+function blockAfter(text: string, marker: string): string {
+  const at = text.indexOf(marker);
+  if (at < 0) throw new Error(`找不到 ${marker}`);
+  const open = text.indexOf("{", at + marker.length);
+  if (open < 0) throw new Error(`${marker} 后面没有块`);
+  return balancedBlockFrom(text, open);
+}
+
 /** 取一个具名函数的函数体 —— 断言「这一支永远失败」时必须只看这一支。 */
 function functionBody(text: string, name: string): string {
-  const start = text.indexOf(`async function ${name}(`);
+  const start = text.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`找不到 ${name}`);
-  const end = text.indexOf("\n  }", start);
-  return text.slice(start, end < 0 ? text.length : end);
+
+  // 先跳过参数表(它自己可能带括号),函数体是它后面的第一个 `{`。
+  let depth = 0;
+  let i = text.indexOf("(", start);
+  for (; i < text.length; i += 1) {
+    if (text[i] === "(") depth += 1;
+    else if (text[i] === ")") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  const open = text.indexOf("{", i);
+  if (open < 0) throw new Error(`${name} 没有函数体`);
+  return balancedBlockFrom(text, open);
 }
 
 function renderShell(pathname: string): string {
@@ -458,6 +535,8 @@ const CAPABILITY_TRUTH: readonly {
     readonly probe: RegExp;
     /** 只看这个具名函数的函数体 —— 断言「这一支永远失败」时必须只看这一支。 */
     readonly slice?: string;
+    /** 只看这个标记后面那一个 `{ … }` 块 —— 用来钉住一次真正的写入。 */
+    readonly block?: string;
     /** 反向证据:出现即说明卡点没了(例如写得出 `simulated: false`)。 */
     readonly absent?: RegExp;
   }[];
@@ -504,17 +583,27 @@ const CAPABILITY_TRUTH: readonly {
   },
   {
     href: "/crm/workflows",
-    what: "每一次 RoutineRun 都写 simulated: true,写不出别的",
+    what: "唯一那次写入把 simulated 钉死为 true,写不出别的",
     evidence: [
-      // r3 判词 P2-2:原来这一条只搜另一页的一句文案 —— 拿文案证明文案。真身在这里:
-      // 建 RoutineRun 的两个写入点(首建与补建)都把 simulated 钉死为 true。
-      { file: "packages/db/src/workflow-engine.ts", repo: true, probe: /simulated: true/ },
+      // r3 判词 P2-2:原来这一条只搜另一页的一句文案 —— 拿文案证明文案。真身在这里。
+      // r4 判词 P3:并且**真正的写入只有一处** —— `tx.routineRun.createMany`。所以断言钉在
+      // 那一次写入的 data 块上,不再整文件搜。
       {
         file: "packages/db/src/workflow-engine.ts",
         repo: true,
-        probe: /simulated: true[\s\S]*simulated: true/,
+        block: "tx.routineRun.createMany(",
+        probe: /simulated: true/,
       },
-      // 写得出 false 的那一天,这一条红 —— 那正是回来改这句文案的时刻。
+      // 另一处 `simulated: true` 在 `expected` 里 —— 那是**比对记录**,不是写入:
+      // `sameRunComparison` 拿它核对落库结果,所以写入一旦漂移就会被它拦下。两处一起钉,
+      // 「写入是模拟的」这件事才既写得对、也核得住。
+      {
+        file: "packages/db/src/workflow-engine.ts",
+        repo: true,
+        block: "const expected: RoutineRunRecord =",
+        probe: /simulated: true/,
+      },
+      // 全文件写得出 false 的那一天,这一条红 —— 那正是回来改这句文案的时刻。
       {
         file: "packages/db/src/workflow-engine.ts",
         repo: true,
@@ -529,16 +618,21 @@ const CAPABILITY_TRUTH: readonly {
     what: "报告服务把 delivered / read / failed 三个轴钉死成 unknown+null",
     evidence: [
       // r3 判词 P2-2:同样不再拿另一页的句子当证据。真身是报告服务返回的形状。
+      // r4 判词 P2:而且必须**只看那个函数体**。整文件搜时,同一份文件顶上的 `Report` 类型
+      // 声明里也写着 delivered/read/failed —— 把真返回值改错,类型声明照样喂饱断言。
       {
         file: "lib/customer-broadcast-report-service.ts",
+        slice: "getCustomerBroadcastReport",
         probe: /delivered: \{ status: "unknown", value: null \}/,
       },
       {
         file: "lib/customer-broadcast-report-service.ts",
+        slice: "getCustomerBroadcastReport",
         probe: /read: \{ status: "unknown", value: null \}/,
       },
       {
         file: "lib/customer-broadcast-report-service.ts",
+        slice: "getCustomerBroadcastReport",
         probe: /failed: \{ status: "unknown", value: null \}/,
       },
     ],
@@ -552,7 +646,11 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
     (href, row) => {
       for (const item of row.evidence) {
         const whole = item.repo ? repoSource(item.file) : source(item.file);
-        const text = item.slice ? functionBody(whole, item.slice) : whole;
+        const text = item.slice
+          ? functionBody(whole, item.slice)
+          : item.block
+            ? blockAfter(whole, item.block)
+            : whole;
         expect(
           text,
           `${href}:${row.what} —— 这条证据在 ${item.file} 里没了。卡点接通了就回预览页改那句话`,
@@ -604,6 +702,93 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
       segments.works,
       "分群那句话又把「已知退订」说成了「联系得上」—— DND 开着的联系人仍在群里",
     ).not.toMatch(/contact(ed|able)|reach(able)?|whether they can be/i);
+  });
+
+  /* ── r4 判词 P1:同一把尺子,扫描面扩一档 ─────────────────────────────────────
+   *
+   * r3 只量了预览页与导轨,于是 `segments-page.tsx` 那行 `N contactable` 计数漏了网 —— 它数
+   * 的是 `!isKnownOptOut(truth)`,DND 开着的联系人照算,所以「contactable」是这个数没做过的
+   * 承诺。同一句假话换个页面就躲过去,说明尺子太短,不是文案太多。
+   *
+   * 现在扫**整个 CRM 商家面**。禁的是**说法**,不是变量名:同一个词出现在
+   * `preview.contactableCount`、`contact.contactable`、`value="contactable"` 里都放行,因为它
+   * 们是机器读的;裸着出现在一行字中间(前后都不是标识符/引号的一部分)才是说给商家听的。
+   */
+  const OVERPROMISE = /contactabl\w*|contactability|reachable|can be contacted|able to contact/gi;
+
+  /** 这个词是「说给商家听的」还是「写给机器看的」。 */
+  function overpromisingLines(fileSource: string): string[] {
+    const code = fileSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+    const hits: string[] = [];
+    for (const match of code.matchAll(OVERPROMISE)) {
+      const at = match.index ?? 0;
+      const before = code[at - 1] ?? " ";
+      const after = code[at + match[0].length] ?? " ";
+      // 前面挨着 . " ' ` _ 或字母 = 属性名/字符串/标识符的一部分 —— 机器读的,放行。
+      if (/[.\w"'`_]/.test(before)) continue;
+      // 后面挨着字母、引号、( 或 : = 还是标识符/键名/调用 —— 同样放行。
+      if (/[\w"'`(:]/.test(after)) continue;
+      const lineStart = code.lastIndexOf("\n", at) + 1;
+      const lineEnd = code.indexOf("\n", at);
+      hits.push(code.slice(lineStart, lineEnd < 0 ? code.length : lineEnd).trim());
+    }
+    return hits;
+  }
+
+  function crmSurfaces(): string[] {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((item) => {
+        const full = path.join(dir, item.name);
+        if (item.isDirectory()) return walk(full);
+        return full.endsWith(".tsx") ? [full] : [];
+      });
+    return walk(path.join(WEB_ROOT, "components/crm"));
+  }
+
+  // 自检:这把尺子逮得住真话说错的那一行,又不会误伤机器读的那些同名标识符。
+  it("尺子自检:逮得住裸着的说法,放行标识符与机器值", () => {
+    // 逮得住 —— r4 之前 segments 页上那一行的原样。
+    expect(
+      overpromisingLines("<p>{preview.matchedCount} matched · {preview.contactableCount} contactable · x</p>"),
+    ).toHaveLength(1);
+    expect(overpromisingLines("<p>everyone here is reachable today</p>")).toHaveLength(1);
+
+    // 不误伤 —— 属性访问、机器值属性、键名、下划线常量,一个都不算。
+    expect(
+      overpromisingLines(
+        [
+          "const n = preview.contactableCount;",
+          "{contact.contactable ? a : b}",
+          '<SelectItem value="contactable">Not known opt-out</SelectItem>',
+          '<SelectItem value="not_contactable">Known opt-out</SelectItem>',
+          "  contactableCount: preview.contactableCount,",
+          '| { kind: "contactability"; value: "contactable" }',
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("扫描面本身没瘸 —— 真的走遍了 CRM 的商家面", () => {
+    expect(crmSurfaces().length, "components/crm 下一个面都没扫到").toBeGreaterThanOrEqual(10);
+  });
+
+  it("CRM 面上没有一处把「不是已知退订」说成「联系得上」(r4 判词 P1)", () => {
+    const offenders = crmSurfaces().flatMap((file) =>
+      overpromisingLines(readFileSync(file, "utf8")).map(
+        (line) => `${path.relative(WEB_ROOT, file)}: ${line}`,
+      ),
+    );
+
+    expect(
+      offenders,
+      "这些字对商家承诺了「联系得上」,而产品只知道「不是已知退订」—— DND 开着的联系人也在里面",
+    ).toEqual([]);
+  });
+
+  it("那个计数改口之后,说的正是它数的东西", () => {
+    // 数的是 `!isKnownOptOut(truth)`,标签就只能说这件事。
+    expect(source("lib/segment-actions.ts")).toContain("const contactable = !isKnownOptOut(truth);");
+    expect(source("components/crm/segments-page.tsx")).toContain("with no known opt-out");
   });
 
   it("对外不许泄露内部状态名 —— 模拟发送用展示层那个词(r3 判词 P2-3)", () => {
