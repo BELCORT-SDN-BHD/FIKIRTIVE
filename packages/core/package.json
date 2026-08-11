@@ -32,6 +32,10 @@
       "types": "./dist/cowork-directives.d.ts",
       "default": "./dist/cowork-directives.js"
     },
+    "./env-contract": {
+      "types": "./dist/env-contract.d.ts",
+      "default": "./dist/env-contract.js"
+    },
     "./gen": {
       "types": "./dist/gen.d.ts",
       "default": "./dist/gen.js"
