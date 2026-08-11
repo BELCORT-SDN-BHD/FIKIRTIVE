@@ -125,9 +125,9 @@ drop_local_database() {
 # One machine, one Postgres: two overlapping quality runs starve each other into
 # false reds (hook timeouts in packages/db — measured repeatedly on this repo), so a
 # run first takes a machine-wide mutex. mkdir is atomic; the pid file inside makes a
-# crashed holder detectable, and only a lock whose recorded pid is provably dead is
-# stolen. An empty pid file is the tiny window between mkdir and the write — always
-# wait on it, never steal it.
+# crashed holder detectable. A lock is stale when its recorded pid is provably dead,
+# or when it has sat >60s with no pid at all (a healthy holder writes its pid
+# milliseconds after mkdir, so an old pid-less lock can only be a corpse).
 # Fixed /tmp on purpose, NOT $TMPDIR: a mutex only works if every party resolves the
 # same path, and on macOS TMPDIR differs between launchd services (the CI runner) and
 # user shells (local runs) — an env-dependent lock path would quietly stop excluding.
@@ -188,9 +188,15 @@ current_lock_is_stale() {
 }
 
 try_steal_stale_lock() {
-  # Clear a corpse arbiter first (crash inside the ms-long critical section).
+  # A corpse arbiter (a stealer killed inside this ms-long critical section) is NOT
+  # auto-recovered: any "judge age, then remove the shared path" here would recreate
+  # the exact cross-generation race this arbiter exists to prevent, one level down —
+  # and there is no deeper mutex to hide behind. The trade is deliberate: dying
+  # inside a window this narrow is vanishingly rare, and the failure mode is loud
+  # (every run prints the manual recovery line below until a human clears it),
+  # while the common corpse — a dead quality RUN — is still recovered automatically.
   if [[ -d "$quality_steal_arbiter" ]] && (( $(path_age_seconds "$quality_steal_arbiter") > 60 )); then
-    rm -rf "$quality_steal_arbiter"
+    echo "quality: steal arbiter has been held for >60s — if no stealer process is alive, recover manually with: rm -rf $quality_steal_arbiter" >&2
   fi
   if ! mkdir "$quality_steal_arbiter" 2>/dev/null; then
     return 1  # another stealer is arbitrating — just go back to waiting
@@ -209,8 +215,10 @@ try_steal_stale_lock() {
 acquire_quality_lock() {
   while true; do
     if mkdir "$quality_lock_dir" 2>/dev/null; then
-      echo "$$" > "$quality_lock_dir/pid"
+      # Flag before pid write: the EXIT trap is already installed, so a death in
+      # this window still removes the lock instead of leaving a pid-less corpse.
       quality_lock_held=1
+      echo "$$" > "$quality_lock_dir/pid"
       return 0
     fi
     if current_lock_is_stale; then
@@ -242,13 +250,15 @@ cleanup_quality_run() {
 # runners got a fresh dockerized Postgres per run. On a self-hosted runner that
 # assumption silently inverts: reusing one long-lived database across PRs loses the
 # fresh-database guarantee. One path, per-run database, force-dropped on exit.
-acquire_quality_lock
-# Trap goes on right after the lock so no exit path leaks it. At this point
-# local_database is still "" — cleanup only releases the lock. The name is
-# validated BEFORE it is assigned to local_database, so the FORCE-drop in cleanup
-# can never see an unvalidated name (FIKIRTIVE_TEST_DB=fikirtive must die at the
-# validation, not reach DROP DATABASE — that is the dev database).
+# Trap goes on BEFORE the lock so no exit path can leak it — a SIGTERM between
+# mkdir and anything later still runs cleanup (which no-ops on whatever was not
+# yet acquired). At this point local_database is still "" — cleanup only releases
+# the lock. The name is validated BEFORE it is assigned to local_database, so the
+# FORCE-drop in cleanup can never see an unvalidated name (FIKIRTIVE_TEST_DB=
+# fikirtive must die at the validation, not reach DROP DATABASE — that is the dev
+# database).
 trap cleanup_quality_run EXIT
+acquire_quality_lock
 requested_database="${FIKIRTIVE_TEST_DB:-fikirtive_$$_${RANDOM}_test}"
 if [[ ! "$requested_database" =~ ^[a-z0-9_]+_test$ ]]; then
   echo "quality: FIKIRTIVE_TEST_DB must match ^[a-z0-9_]+_test$" >&2
