@@ -737,6 +737,17 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
       "Set by Next.js itself. \"phase-production-build\" means this is a BUILD, not a serving process — the boot check downgrades to a warning there, because a build machine has no reason to hold production secrets.",
   },
   {
+    name: "NEXT_RUNTIME",
+    surface: "web",
+    readBy: "platform",
+    requirement: "optional",
+    format: "free",
+    secret: false,
+    shared: false,
+    summary:
+      "Set by Next.js itself: \"nodejs\" or \"edge\". The boot check only runs on the Node server — the edge runtime sees a different slice of the environment.",
+  },
+  {
     name: "RAILWAY_GIT_COMMIT_SHA",
     surface: "both",
     readBy: "platform",

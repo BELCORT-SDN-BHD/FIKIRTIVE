@@ -1,0 +1,118 @@
+name: post-merge
+
+# 债 #6:CI 只在 PR 上跑。合进 main 之后,没有任何东西再验证过 main。
+#
+# 这不是理论问题。两个 PR 各自绿、各自合,合并后的 main 可以是红的——A 删了一个 B 刚开始
+# 用的导出,两边的 CI 都没见过对方的改动。今天这种 main 会一直红到下一个人开 PR 才被发现,
+# 而在那之前它已经被部署过了。
+#
+# 这个 workflow 就是那一步:main 每次前进,重跑一遍与 PR 上逐字相同的门。
+#
+# 刻意分成独立文件、绝不改 ci.yml:`quality` 是 protect-main ruleset 里的必需检查
+# (bypass_actors 为空,没人能绕开它合并)。在同一个 workflow 上加一个新触发器,等于让那个
+# 必需检查的形态与运行条件多一种可能——那一族错误的代价是整仓无法合并。所以这里是另一个
+# workflow、另一个 job 名,PR 上的 `quality` 一个字节都没动。
+on:
+  push:
+    branches: [main]
+    # 只改 docs/ 的合并没有任何门可跑。这里可以用 paths-ignore,而 ci.yml 不可以:被路径
+    # 过滤跳过的 workflow 不会汇报 check,对必需检查来说等于永远无法合并;而本 workflow
+    # 不是必需检查,跳过就是真的没事可做。
+    paths-ignore:
+      - "docs/**"
+  # 部署窗口用:人手填一个 URL 跑烟测。仓库里不存任何环境 URL(见下面 smoke job 的说明)。
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to smoke-test (e.g. https://staging.example.com). Leave empty to only re-run the gate."
+        required: false
+        type: string
+      require_worker:
+        description: "Also fail unless the worker heartbeat is fresh"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  # 连续几次合并只需要验证最后那个 main。取消在飞的旧的那次,是为了把这台跑手还给 PR。
+  group: post-merge-main
+  cancel-in-progress: true
+
+jobs:
+  quality-on-main:
+    name: quality-on-main
+    # 与 ci.yml 同一台自托管跑手,理由也相同:私有仓库的 GitHub 托管分钟数是计费的,
+    # 2026-08 的一次账单失败冻结了全仓合并两天(#577,至今未关)。把这个 workflow 放到
+    # 云端跑手上,等于把那条已经咬过我们一次的依赖重新引回来——而且它坏的时候不会红,
+    # 是不会跑,那种「静默的绿」比红更贵。
+    #
+    # 诚实说清代价:这台跑手只注册一个 job 槽,所以 main 上的这次运行会和 PR 的 quality
+    # 抢同一个槽,PR 最坏情况下多等一轮(约 12 分钟)。上面的 cancel-in-progress 与
+    # docs-only 跳过是为了把这个代价压到最小。如果哪天等待成了真问题,下一步是加第二个
+    # job 槽或第二台跑手,而不是把这个门搬到计费跑手上。
+    runs-on: [self-hosted, fikirtive-ci]
+    timeout-minutes: 75
+    env:
+      # 与 ci.yml 相同的运行环境。`next build` 的 TypeScript 子进程在默认 ~2 GB 堆下会
+      # 随机 OOM,与改动无关。
+      NODE_OPTIONS: --max-old-space-size=6144
+      DATABASE_URL: postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test
+      BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
+      BETTER_AUTH_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
+      GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # 与 ci.yml 同一份缓存键族,于是刚合并的这次可以直接吃到该 PR 最后一次运行留下的
+      # 增量状态。
+      - name: Restore TypeScript / Next build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/web/.next/cache
+            apps/web/tsconfig.tsbuildinfo
+          key: build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
+            build-${{ runner.os }}-node22-
+
+      # 与 PR 上逐字相同的那一句。quality.sh 自己持机器级互斥锁,所以它与本地运行、与
+      # 另一次 CI 都会自动排队,不会互相踩。
+      - run: pnpm quality
+
+  # 部署后烟测(债 #6)。刻意与上面的门分开,也刻意不自动跑:
+  #
+  # 仓库里没有任何一个部署目标的 URL,也不应该有——把 URL 写死在 workflow 里,等于让
+  # 每一次合并都去打某个环境,而那个环境是什么、归谁、此刻是不是生产,仓库无从判断。
+  # 所以这是一个手动触发的 job:部署窗口里由人填 URL 跑一次。脚本本身只发 GET、不带凭据。
+  #
+  # 脚本的行为由 apps/web/lib/__tests__/smoke-script.test.ts 在每个 PR 上验证(喂给它
+  # 健康检查 503、数据库不通、匿名页 500、心跳过期,逐个断言退出码),所以「烟测脚本本身
+  # 是好的」不依赖任何一次真实部署。
+  smoke:
+    name: smoke (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.base_url != ''
+    runs-on: [self-hosted, fikirtive-ci]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # 输入经 env 传进来再引用,不做字符串拼接:直接把 ${{ }} 展开进 run: 的那一行,
+      # 输入里的引号或分号就会变成这台跑手上执行的命令。
+      - env:
+          BASE_URL: ${{ inputs.base_url }}
+          REQUIRE_WORKER: ${{ inputs.require_worker }}
+        run: |
+          set -euo pipefail
+          args=("$BASE_URL")
+          if [ "$REQUIRE_WORKER" = "true" ]; then args+=(--require-worker); fi
+          bash scripts/ops/smoke.sh "${args[@]}"
