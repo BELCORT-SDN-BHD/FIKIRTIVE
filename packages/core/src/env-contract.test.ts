@@ -178,12 +178,23 @@ describe("env contract ↔ source ↔ .env.example (#797 债#8)", () => {
   });
 });
 
+/** 生产上一个真正能用的最小环境。注意它必须带对象存储——见 STORAGE_DRIVER 那一组测试。 */
+const REMOTE_STORAGE = {
+  STORAGE_DRIVER: "r2",
+  R2_ENDPOINT: "https://acct.r2.cloudflarestorage.com",
+  R2_ACCESS_KEY_ID: "id",
+  R2_SECRET_ACCESS_KEY: "secret",
+  R2_BUCKET: "fikirtive-prod",
+};
+
+const CORE = {
+  DATABASE_URL: "postgresql://u:p@host:5432/db",
+  BETTER_AUTH_SECRET: "s".repeat(32),
+  BETTER_AUTH_URL: "https://app.example.com",
+};
+
 describe("checkEnv", () => {
-  const good = {
-    DATABASE_URL: "postgresql://u:p@host:5432/db",
-    BETTER_AUTH_SECRET: "s".repeat(32),
-    BETTER_AUTH_URL: "https://app.example.com",
-  };
+  const good = { ...CORE, ...REMOTE_STORAGE };
 
   it("passes a minimal production web env", () => {
     expect(checkEnv(good, { surface: "web", production: true })).toEqual([]);
@@ -206,32 +217,21 @@ describe("checkEnv", () => {
   });
 
   it("half-configured generation is caught: byteplus selected with no key", () => {
-    const problems = checkEnv(
-      { ...good, DATABASE_URL: good.DATABASE_URL, GENERATION_PROVIDER: "byteplus" },
-      { surface: "worker", production: true },
-    );
+    const problems = checkEnv({ ...good, GENERATION_PROVIDER: "byteplus" }, { surface: "worker", production: true });
     expect(problems.map((p) => p.name)).toContain("BYTEPLUS_API_KEY");
     expect(problems.find((p) => p.name === "BYTEPLUS_API_KEY")?.kind).toBe("conditional-missing");
   });
 
   it("half-configured storage is caught: r2 selected with three of four vars", () => {
-    const problems = checkEnv(
-      {
-        ...good,
-        STORAGE_DRIVER: "r2",
-        R2_ENDPOINT: "https://acct.r2.cloudflarestorage.com",
-        R2_ACCESS_KEY_ID: "id",
-        R2_SECRET_ACCESS_KEY: "secret",
-      },
-      { surface: "web", production: true },
-    );
+    const { R2_BUCKET: _dropped, ...threeOfFour } = REMOTE_STORAGE;
+    const problems = checkEnv({ ...CORE, ...threeOfFour }, { surface: "web", production: true });
     expect(problems.map((p) => p.name)).toEqual(["R2_BUCKET"]);
   });
 
   it("fully unset optional groups stay silent — inert is a legitimate state", () => {
     const problems = checkEnv(good, { surface: "worker", production: true });
     expect(problems.map((p) => p.name)).not.toContain("MEDIA_PROXY_SECRET");
-    expect(problems.map((p) => p.name)).not.toContain("R2_BUCKET");
+    expect(problems.map((p) => p.name)).not.toContain("TAVILY_API_KEY");
   });
 
   it("an unrecognized enum value is rejected rather than silently ignored", () => {
@@ -258,13 +258,66 @@ describe("checkEnv", () => {
   });
 });
 
+/**
+ * 判官 r1 P1-2:第一版把 STORAGE_DRIVER 设成 optional 且放行 local,于是一个生产进程可以
+ * 一个问题都不报地跑在 LocalDiskStorage 上——商家的图和视频写进容器自己的盘,换一次容器就
+ * 全没了,而且 web 与 worker 各写各的盘、看不见对方的文件。那正是这张票声称要消灭的生产形状。
+ *
+ * 格式合法与生产可用是两件事,所以契约里分成 values(格式)与 productionValues(生产档位),
+ * 这一组把三格钉住:生产+local=红、生产+远端=绿、开发+local=绿。
+ */
+describe("STORAGE_DRIVER must be a remote driver in production (#797 r2 P1-2)", () => {
+  for (const surface of ["web", "worker"] as const) {
+    it(`production + local = RED (${surface})`, () => {
+      const problems = checkEnv({ ...CORE, STORAGE_DRIVER: "local" }, { surface, production: true });
+      const storage = problems.find((p) => p.name === "STORAGE_DRIVER");
+      expect(storage, "local disk in production must be fatal").toBeTruthy();
+      expect(storage?.kind).toBe("not-production-safe");
+      expect(storage?.message).toContain("r2");
+      // 报错要说清楚为什么,否则没法照着修。
+      expect(storage?.message).toMatch(/scatters|ephemeral|dev-only/);
+    });
+
+    it(`production + remote = GREEN (${surface})`, () => {
+      const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE }, { surface, production: true });
+      expect(problems).toEqual([]);
+    });
+
+    it(`development + local = GREEN (${surface}) — dev machines legitimately use the disk`, () => {
+      const problems = checkEnv({ ...CORE, STORAGE_DRIVER: "local" }, { surface, production: false });
+      expect(problems).toEqual([]);
+    });
+  }
+
+  it("production with STORAGE_DRIVER unset is RED — unset resolves to local disk in the factory", () => {
+    const problems = checkEnv(CORE, { surface: "web", production: true });
+    const storage = problems.find((p) => p.name === "STORAGE_DRIVER");
+    expect(storage?.kind).toBe("missing");
+  });
+
+  it("a production process refuses to start on local disk", () => {
+    const decision = bootEnvDecision(
+      { ...CORE, NODE_ENV: "production", STORAGE_DRIVER: "local" },
+      { surface: "worker", production: true },
+    );
+    expect(decision.action).toBe("exit");
+  });
+
+  it("the declared production values are a subset of the declared format values", () => {
+    for (const spec of ENV_CONTRACT) {
+      if (!spec.productionValues) continue;
+      expect(spec.productionReason, `${spec.name}: productionValues without a reason`).toBeTruthy();
+      if (spec.format === "enum") {
+        for (const v of spec.productionValues) {
+          expect(spec.values ?? [], `${spec.name}: "${v}" is not one of the declared values`).toContain(v);
+        }
+      }
+    }
+  });
+});
+
 describe("bootEnvDecision", () => {
-  const goodProd = {
-    NODE_ENV: "production",
-    DATABASE_URL: "postgresql://u:p@host:5432/db",
-    BETTER_AUTH_SECRET: "s".repeat(32),
-    BETTER_AUTH_URL: "https://app.example.com",
-  };
+  const goodProd = { NODE_ENV: "production", ...CORE, ...REMOTE_STORAGE };
 
   it("ok when the environment satisfies the contract", () => {
     expect(bootEnvDecision(goodProd, { surface: "web", production: true })).toEqual({ action: "ok" });

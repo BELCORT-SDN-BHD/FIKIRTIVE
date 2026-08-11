@@ -77,6 +77,17 @@ export type EnvVarSpec = {
    * 不是同一把,发布链每次都在解密那一步静默失败)。
    */
   shared: boolean;
+  /**
+   * 生产环境下这个变量只允许取这几个值(未列的取值在生产是硬错,在 dev/CI 照旧合法)。
+   *
+   * 存在的理由:有些开关的**默认档就是一个只在开发机上成立的形状**。STORAGE_DRIVER 是标准
+   * 例子——不设或设成 local,工厂落 LocalDiskStorage,文件写进容器自己的盘,容器一换就没了。
+   * 那是「跑起来了、也没报错、但生产形状是错的」,正是这张票要消灭的东西。格式合法与生产可用
+   * 是两件事,所以分成两个字段。
+   */
+  productionValues?: readonly string[];
+  /** productionValues 的人话理由,进报错信息。 */
+  productionReason?: string;
   /** 一行说明,渲染进 .env.example 的生成片段。 */
   summary: string;
 };
@@ -402,12 +413,19 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     name: "STORAGE_DRIVER",
     surface: "both",
     readBy: "code",
-    requirement: "optional",
+    // 生产必填。不设 = 走 LocalDiskStorage,商家的每一张图、每一段视频写进容器自己的盘,
+    // 下一次部署换掉容器就全没了,而且 web 与 worker 各写各的盘、彼此看不见对方的文件。
+    // 这个形状不会报任何错,所以只能在开机时拦。
+    requirement: "required",
     format: "enum",
     values: ["local", "r2"],
+    // 格式合法 ≠ 生产可用:local 在开发机上完全正当,在生产是数据丢失。
+    productionValues: ["r2"],
+    productionReason:
+      "local disk is dev-only — in production it scatters merchant media across ephemeral containers and web/worker cannot see each other's files",
     secret: false,
     shared: true,
-    summary: "local (disk, dev only) | r2. Production must be r2 — local disk in production scatters files across containers.",
+    summary: "local (disk, dev only) | r2. REQUIRED in production and must be r2 — the boot check refuses to start a production process on local disk.",
   },
   {
     name: "R2_ENDPOINT",
@@ -822,7 +840,7 @@ function formatSchema(spec: EnvVarSpec): z.ZodType<unknown> {
   }
 }
 
-export type EnvProblemKind = "missing" | "conditional-missing" | "invalid";
+export type EnvProblemKind = "missing" | "conditional-missing" | "invalid" | "not-production-safe";
 
 export type EnvProblem = {
   name: string;
@@ -874,6 +892,19 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
     if (!parsed.success) {
       const reason = parsed.error.issues[0]?.message ?? "has an invalid value";
       problems.push({ name: spec.name, kind: "invalid", message: `${spec.name} ${reason}` });
+      continue;
+    }
+
+    // 值合法,但这个档位只在开发机上成立。报的是变量名与允许档位——档位名不是秘密,
+    // 而且不说清楚该改成什么,这条错误就没法照着修。
+    if (opts.production && spec.productionValues && !spec.productionValues.includes(raw.trim())) {
+      problems.push({
+        name: spec.name,
+        kind: "not-production-safe",
+        message:
+          `${spec.name} is set to a value that is not allowed in production ` +
+          `(allowed: ${spec.productionValues.join(", ")}) — ${spec.productionReason ?? "dev-only setting"}`,
+      });
     }
   }
   return problems;
