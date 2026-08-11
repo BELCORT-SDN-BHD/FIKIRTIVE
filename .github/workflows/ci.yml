@@ -399,16 +399,30 @@ jobs:
       # from the same job as this step does, so a leg that ran while the scope said
       # docs-only (or the reverse) means the two sides disagree about what this run was —
       # and a run we cannot explain is not a run that may merge.
+      #
+      # WHAT IS CHECKED IS AN IDENTITY, NOT A COUNT. The first version of this step
+      # folded the five results into one blob of "name result" lines, counted the
+      # lines, and passed on "five lines, all success". Review (#874) showed two
+      # wrong PASSes that shape makes expressible: a rogue job standing in for a
+      # missing `checks`, and `lint` wired in twice while `checks` was absent — in
+      # both, the required `quality` check goes green while a gate never reported at
+      # all. Five fixed identities, each read from its own variable, cannot express
+      # either: there is no line to add, and nothing except `checks` can ever answer
+      # for `checks`. A count would now be redundant, and is gone.
       - name: Every leg must have passed — or been skipped for a provably docs-only PR
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
           SCOPE_CODE: ${{ needs.scope.outputs.code }}
-          LEG_RESULTS: |
-            typecheck ${{ needs.typecheck.result }}
-            tests ${{ needs.tests.result }}
-            build ${{ needs.build.result }}
-            lint ${{ needs.lint.result }}
-            checks ${{ needs.checks.result }}
+          # Exactly one variable per declared leg, named after that leg, fed by that
+          # leg's own job — machine-checked, both directions, by
+          # scripts/__tests__/quality-legs.test.sh: a leg with no variable, a
+          # variable with no leg, a duplicate, or a variable wired to the wrong job
+          # all fail that gate.
+          LEG_RESULT_TYPECHECK: ${{ needs.typecheck.result }}
+          LEG_RESULT_TESTS: ${{ needs.tests.result }}
+          LEG_RESULT_BUILD: ${{ needs.build.result }}
+          LEG_RESULT_LINT: ${{ needs.lint.result }}
+          LEG_RESULT_CHECKS: ${{ needs.checks.result }}
         run: |
           set -euo pipefail
 
@@ -427,33 +441,49 @@ jobs:
             echo "scope: code=${SCOPE_CODE:-<empty>} — every leg must have passed"
           fi
 
-          legs_seen=0
           verdict=0
-          while read -r leg result; do
-            [ -n "$leg" ] || continue
-            legs_seen=$((legs_seen + 1))
-            if [ "$result" = "$expected" ]; then
-              echo "  $leg: $result"
+
+          # One named leg, one named variable, one comparison. `${VAR:-}` and never
+          # `$VAR`: a leg cut out of the `needs` list above expands to nothing, and
+          # "nothing" must read as a missing result and fail — not abort the shell
+          # before the other four have been reported.
+          leg_is() {
+            if [ "$2" = "$expected" ]; then
+              echo "  $1: $2"
             else
-              echo "  $leg: ${result:-<no result>} (expected $expected)"
+              echo "  $1: ${2:-<no result>} (expected $expected)"
               verdict=1
             fi
-          done <<EOF
-          $LEG_RESULTS
-          EOF
+          }
 
-          # A leg deleted from the `needs` list above would silently stop being
-          # checked here, and this job would pass on four legs. The count is the one
-          # thing the loop cannot notice by itself.
-          if [ "$legs_seen" != "5" ]; then
-            echo ""
-            echo "quality: expected 5 legs, saw $legs_seen — failing closed."
-            exit 1
-          fi
+          leg_is typecheck "${LEG_RESULT_TYPECHECK:-}"
+          leg_is tests     "${LEG_RESULT_TESTS:-}"
+          leg_is build     "${LEG_RESULT_BUILD:-}"
+          leg_is lint      "${LEG_RESULT_LINT:-}"
+          leg_is checks    "${LEG_RESULT_CHECKS:-}"
+
+          # The other direction, and the reason the five comparisons above are not
+          # the whole story: they prove every declared leg was judged, not that
+          # nothing ELSE was wired in. A sixth job added to `needs` and to the
+          # variables above — but not to the comparisons — would be a gate whose
+          # result this step silently discards. Bash enumerates the variables by
+          # prefix, so nothing here has to know what the environment holds; the
+          # case arm is the same five identities once more, and mis-stating it
+          # fails closed — a leg left out of it flags that leg's own variable.
+          for leg_result_var in ${!LEG_RESULT_@}; do
+            case "$leg_result_var" in
+              LEG_RESULT_TYPECHECK|LEG_RESULT_TESTS|LEG_RESULT_BUILD|LEG_RESULT_LINT|LEG_RESULT_CHECKS) ;;
+              *)
+                echo "  $leg_result_var: answers for no leg this step judges"
+                verdict=1
+                ;;
+            esac
+          done
+
           if [ "$verdict" != "0" ]; then
             echo ""
             echo "quality: at least one leg is not $expected — failing closed."
             exit 1
           fi
           echo ""
-          echo "quality: all 5 legs are $expected."
+          echo "quality: typecheck, tests, build, lint and checks are all $expected."
