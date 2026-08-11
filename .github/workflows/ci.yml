@@ -33,7 +33,7 @@ jobs:
     runs-on: [self-hosted, fikirtive-ci]
     # 30 → 45: the serialization guard below may first wait out a locally started quality
     # run (~12 min worst case) before this job's own ~12 min run begins.
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       # `next build` re-runs a TypeScript pass in a child worker, and that worker had grown to
       # the ~2 GB default heap: it now OOMs on a coin flip, independently of what a PR changed
