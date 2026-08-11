@@ -165,6 +165,7 @@ describe("spend cap honesty (decision ①)", () => {
   // The one thing it must never do is drift back to describing a feature that does not exist.
   it("tells the truth about what the cap does — a refusal, per action, nothing charged", () => {
     const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 500 }), "otto", "cap");
+    if (cap.kind !== "number") throw new Error("Expected the spend cap number field");
     expect(cap.hint).toBe(
       "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)",
     );
