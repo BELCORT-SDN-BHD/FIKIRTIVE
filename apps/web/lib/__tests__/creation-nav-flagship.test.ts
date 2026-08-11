@@ -19,6 +19,7 @@ import {
   CANVAS_HREF,
   CREATE_NAV_HREF,
   CREATE_NAV_LABEL,
+  MERCHANT_NAV,
   MERCHANT_NAV_REDIRECTS,
   OTTO_ASSISTANT,
   everyNavDestination,
@@ -37,6 +38,16 @@ vi.mock("@/lib/tenant-actions", () => ({
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
+
+/** Every section name the rail draws — the list a tooltip must not quietly re-copy. */
+const NAV_SECTION_LABELS = MERCHANT_NAV.map((node) => node.label);
+
+/** Source with comments stripped: a path in a comment is history, not a destination. */
+function sourceCode(relative: string): string {
+  return readFileSync(path.join(WEB_ROOT, relative), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
 
 function renderShell(pathname: string): string {
   return renderToStaticMarkup(
@@ -149,6 +160,55 @@ describe("收敛掉的旧路由一律 redirect,不 404", () => {
 
   it("全仓只剩一本日历页(第二本的组件已经不在了)", () => {
     expect(existsSync(path.join(WEB_ROOT, "components/campaign/campaign-calendar-page.tsx"))).toBe(false);
+  });
+});
+
+/* ── 路径归源:壳里不许留第二份地址 ─────────────────────────────────────────── */
+
+/**
+ * #801 收尾 —— 两类漂移点,各钉一条。
+ *
+ * ① **硬写路径**:壳里每写一次 "/northstar-immersive" 或 "/otto",导航就多了一份会各自
+ *    漂移的真相。白标改名、路由搬家,漏掉任何一处就是一条死链。所以壳只准引权威常量。
+ * ② **抄一份结构**:任何在导航之外把板块名列一遍的文案(tooltip、说明、指路),都会在下一次
+ *    加板块时悄悄过期 —— 它已经过期过一次(那句 tooltip 列了四项,漏了 Workspace)。
+ *    修法不是补全枚举,是不枚举。
+ */
+describe("壳里不留第二份地址", () => {
+  const SHELLS = [
+    "components/global-navigation.tsx",
+    "components/northstar/immersive/immersive-shell.tsx",
+    "components/canvas/NorthstarHome.tsx",
+    "components/canvas/NorthstarCanvasWorkspace.tsx",
+    "components/canvas/ImmersiveCanvasEntry.tsx",
+  ] as const;
+
+  it.each(SHELLS)("%s 不硬写创作面或助手的路径", (file) => {
+    const source = sourceCode(file);
+
+    expect(source, `${file} 硬写了创作面路径`).not.toContain(`"${CREATE_NAV_HREF}"`);
+    expect(source, `${file} 硬写了画布路径`).not.toContain(`"${CANVAS_HREF}"`);
+    expect(source, `${file} 硬写了画布路径(模板串)`).not.toContain(`\`${CANVAS_HREF}`);
+    expect(source, `${file} 硬写了助手路径`).not.toContain(`"${OTTO_ASSISTANT.href}"`);
+  });
+
+  it("引的是权威源,不是自己又定义了一份常量", () => {
+    for (const file of SHELLS) {
+      expect(sourceCode(file), `${file} 没有引权威源`).toMatch(/from\s+["']@fikirtive\/core\/navigation["']/);
+    }
+  });
+});
+
+describe("导航之外不抄一份板块名单", () => {
+  it("Otto 手机菜单那颗「Go to…」的说明不枚举板块", () => {
+    const ottoNav = sourceCode("components/otto/OttoNav.tsx");
+    const titles = [...ottoNav.matchAll(/title="([^"]*)"/g)].map((m) => m[1]);
+    const listing = titles.filter((title) =>
+      NAV_SECTION_LABELS.some((label) => title.includes(label)),
+    );
+
+    expect(listing, "这颗按钮的说明又把板块列了一遍,列表一定会先过期").toEqual([]);
+    expect(ottoNav).toContain('title="Open navigation"');
   });
 });
 

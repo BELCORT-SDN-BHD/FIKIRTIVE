@@ -31,6 +31,7 @@ import { describe, expect, it } from "vitest";
 import {
   CANVAS_HREF,
   CREATE_NAV_HREF,
+  OTTO_ASSISTANT,
   everyNavDestination,
 } from "@fikirtive/core/navigation";
 
@@ -231,7 +232,9 @@ describe("退场", () => {
 
   it("壳里那一颗 Otto 按钮跳的是真对话", () => {
     const shell = readFileSync(resolve(WEB_ROOT, "components/northstar/immersive/immersive-shell.tsx"), "utf8");
-    expect(shell).toContain('"/otto"');
+    // #801:地址不再抄在壳里,而是引权威源那一条助手常量 —— 解析出来仍然是 /otto。
+    expect(shell).toContain("OTTO_ASSISTANT.href");
+    expect(OTTO_ASSISTANT.href).toBe("/otto");
     expect(shell).not.toContain("/northstar-immersive/otto");
   });
 

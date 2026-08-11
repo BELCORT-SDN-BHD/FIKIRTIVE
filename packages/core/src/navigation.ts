@@ -35,6 +35,9 @@ export type MerchantNavLink = {
 export type MerchantNavGroup = {
   readonly key: string;
   readonly label: string;
+  /** 这一组在路由上的根。有它,「我现在算不算在这一组里」就不必靠壳去猜 —— 也不必在壳里
+   *  硬写一次 "/crm"。只有真的独占一段路径前缀的组才有;其余组按子项逐条判定。 */
+  readonly rootPath?: string;
   readonly items: readonly MerchantNavLink[];
 };
 
@@ -88,6 +91,9 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
   {
     key: "crm",
     label: "CRM",
+    // /crm 底下还有没进导航的子路由(如 /crm/inbox/templates),所以这一组按根判定:
+    // 走进 /crm 的任何一页,CRM 这一段就该是展开且高亮的。
+    rootPath: "/crm",
     items: [
       { key: "crm-inbox", label: "Inbox", href: "/crm/inbox", does: "Read and reply to customer conversations." },
       { key: "crm-contacts", label: "Contacts", href: "/crm/contacts", does: "Look up a customer and everything you know about them." },
@@ -148,6 +154,16 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
     why: "The old simple-mode surface was retired; there is one Otto.",
   },
 ];
+
+/**
+ * 按 key 取一条链接。壳要单独用某一条(例如导轨底部那行 credits 点进账单)时走这里,
+ * 而不是在壳里再硬写一次它的路径 —— 路径只有权威源写。
+ */
+export function navLinkByKey(key: string): MerchantNavLink {
+  const found = everyNavDestination().find((item) => item.key === key);
+  if (!found) throw new Error(`navLinkByKey: no navigation destination with key "${key}"`);
+  return found;
+}
 
 /** 树里每一条链接(组内的也算),顺序即导轨顺序。助手不在内 —— 它不是板块。 */
 export function merchantNavLinks(): readonly MerchantNavLink[] {

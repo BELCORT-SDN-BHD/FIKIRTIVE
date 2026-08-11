@@ -21,17 +21,15 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
+import { CANVAS_HREF, CREATE_NAV_HREF, OTTO_ASSISTANT } from "@fikirtive/core/navigation";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import {
   useGlobalNavigationOpen,
   useOpenGlobalNavigation,
 } from "@/components/global-navigation";
 
-/** 真 Otto 对话的家(线上产品本体);壳里任何一个 Otto 入口都落到这里。 */
-const REAL_OTTO_HREF = "/otto";
-
-/** 创作旗舰面的首页 —— 顶栏品牌回这里,与主导航 Create 同一个目的地。 */
-const CREATE_HOME_HREF = "/northstar-immersive";
+/** 路径一律引权威源(packages/core/src/navigation.ts):这层壳里不留第二份地址。
+ *  顶栏品牌回的就是主导航 Create 那一格的目的地;Otto 按钮落的就是助手那一条。 */
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 function useReducedMotion(): boolean {
@@ -67,7 +65,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   // 画布页自带真输入框(#600 合体内核),再挂一颗按钮就是两个 Otto 同屏。
-  const hideOttoButton = pathname === "/northstar-immersive/create/canvas";
+  const hideOttoButton = pathname === CANVAS_HREF;
 
   return (
     <div className="gb ns-immersive flex h-dvh flex-col bg-background text-foreground">
@@ -83,7 +81,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
           >
             <Menu className="size-5" strokeWidth={2} />
           </button>
-          <Link href={CREATE_HOME_HREF} className="flex min-w-0 items-center gap-2" aria-label="FIKIRTIVE home">
+          <Link href={CREATE_NAV_HREF} className="flex min-w-0 items-center gap-2" aria-label="FIKIRTIVE home">
             <OttoAvatar size={24} mood="idle" />
             <span className="truncate text-[16px] font-bold tracking-[-0.01em] text-foreground">FIKIRTIVE</span>
           </Link>
@@ -100,8 +98,8 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
       {/* 一颗真 Otto 按钮:跳真对话。没有小窗、没有编造的经营事实、没有假消息流。 */}
       {!hideOttoButton && (
         <Link
-          href={REAL_OTTO_HREF}
-          aria-label="Ask Otto"
+          href={OTTO_ASSISTANT.href}
+          aria-label={OTTO_ASSISTANT.label}
           className="fixed right-4 bottom-4 z-[70] flex size-12 items-center justify-center rounded-full border border-border bg-card shadow-[var(--shadow-md)] transition-[background-color,transform] duration-[160ms] ease-out hover:bg-accent active:scale-[0.96] motion-reduce:transition-colors motion-reduce:active:scale-100"
         >
           <OttoAvatar size={26} mood="idle" />

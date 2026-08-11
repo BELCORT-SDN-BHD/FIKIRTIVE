@@ -29,10 +29,12 @@ import {
   X,
 } from "lucide-react";
 import {
+  CREATE_NAV_HREF,
   MERCHANT_NAV,
   OTTO_ASSISTANT,
   isNavGroup,
   merchantNavLinks,
+  navLinkByKey,
   type MerchantNavLink,
 } from "@fikirtive/core/navigation";
 import { cn } from "@/lib/utils";
@@ -81,7 +83,13 @@ const NAV_ICONS: Record<string, NavigationIcon> = {
  *  a component looked up during render is a component created during render, which React
  *  is right to refuse — and there is nothing per-render about a nav icon anyway. */
 type RailLink = MerchantNavLink & { readonly icon: NavigationIcon };
-type RailGroup = { readonly key: string; readonly label: string; readonly icon: NavigationIcon; readonly items: readonly RailLink[] };
+type RailGroup = {
+  readonly key: string;
+  readonly label: string;
+  readonly rootPath?: string;
+  readonly icon: NavigationIcon;
+  readonly items: readonly RailLink[];
+};
 type RailNode = RailLink | RailGroup;
 
 function withIcon(link: MerchantNavLink): RailLink {
@@ -94,11 +102,20 @@ function isRailGroup(node: RailNode): node is RailGroup {
 
 const RAIL_TREE: readonly RailNode[] = MERCHANT_NAV.map((node): RailNode =>
   isNavGroup(node)
-    ? { key: node.key, label: node.label, icon: NAV_ICONS[node.key] ?? Frame, items: node.items.map(withIcon) }
+    ? {
+        key: node.key,
+        label: node.label,
+        rootPath: node.rootPath,
+        icon: NAV_ICONS[node.key] ?? Frame,
+        items: node.items.map(withIcon),
+      }
     : withIcon(node),
 );
 
 const ASSISTANT: RailLink = withIcon(OTTO_ASSISTANT);
+/** The credits row at the foot of the rail clicks through to this. Same destination the
+ *  Settings group lists — read from the registry so there is one path, not two. */
+const BILLING: MerchantNavLink = navLinkByKey("billing");
 const NAV_GROUPS: readonly RailGroup[] = RAIL_TREE.filter(isRailGroup);
 const NAV_TOP_LEVEL_LINKS: readonly RailLink[] = RAIL_TREE.filter((node) => !isRailGroup(node)) as RailLink[];
 
@@ -160,8 +177,12 @@ function nextDisclosureOpenFor(matches: (pathname: string) => boolean, update: D
   return update.type === "toggle" ? update.open : matches(update.pathname);
 }
 
-/** A group is "on" when the current location is one of its own destinations. */
+/** A group is "on" when the current location is one of its own destinations — or, for a
+ *  group that owns a whole path prefix, anywhere under that prefix (so an unlisted
+ *  sub-route like /crm/inbox/templates still lights its group up). The prefix comes from
+ *  the registry, never from a literal written here. */
 function groupMatches(group: RailGroup, pathname: string): boolean {
+  if (group.rootPath && pathMatches(pathname, group.rootPath)) return true;
   return activeItemHref(pathname, group.items) !== null;
 }
 
@@ -169,10 +190,12 @@ export function nextGroupDisclosureOpen(group: RailGroup, update: DisclosureUpda
   return nextDisclosureOpenFor((p) => groupMatches(group, p), update);
 }
 
-/** Kept for the existing CRM fence — CRM's disclosure also opens on any /crm route, not
- *  only on the seven listed destinations. */
+/** Kept for the existing CRM fence — it is `nextGroupDisclosureOpen` for the CRM group,
+ *  named. The group is looked up by key, so the route prefix stays in the registry. */
 export function nextCrmDisclosureOpen(update: DisclosureUpdate): boolean {
-  return nextDisclosureOpenFor((p) => pathMatches(p, "/crm"), update);
+  const crm = NAV_GROUPS.find((group) => group.key === "crm");
+  if (!crm) return update.type === "toggle" ? update.open : false;
+  return nextGroupDisclosureOpen(crm, update);
 }
 
 /** Every path prefix the merchant shell owns. Derived from the registry, so a new
@@ -212,7 +235,7 @@ export function isMerchantSurface(pathname: string): boolean {
  *  A surface that owns the bar owns the entry, so the global drawer reaches it from
  *  INSIDE that bar's own menu instead — see useOpenGlobalNavigation below. */
 export function ownsFullHeightWorkspace(pathname: string): boolean {
-  return pathMatches(pathname, OTTO_ASSISTANT.href) || pathMatches(pathname, "/northstar-immersive");
+  return pathMatches(pathname, OTTO_ASSISTANT.href) || pathMatches(pathname, CREATE_NAV_HREF);
 }
 
 /** The one way to open the global navigation drawer from a surface that owns the mobile
@@ -358,9 +381,8 @@ export function SectionTabs({ pathname }: { pathname: string }) {
 /** One grouped section: a real disclosure at the drawer and 1280+ tiers, a single icon
  *  link at the 1024–1279 rail (its children move to SectionTabs there). */
 function NavigationGroup({ group, pathname }: { group: RailGroup; pathname: string }) {
-  const active = group.key === "crm" ? pathMatches(pathname, "/crm") : groupMatches(group, pathname);
-  const nextOpen = (update: DisclosureUpdate) =>
-    group.key === "crm" ? nextCrmDisclosureOpen(update) : nextGroupDisclosureOpen(group, update);
+  const active = groupMatches(group, pathname);
+  const nextOpen = (update: DisclosureUpdate) => nextGroupDisclosureOpen(group, update);
 
   const [open, setOpen] = useState(() => nextOpen({ type: "navigation", pathname }));
 
@@ -569,7 +591,7 @@ export function GlobalNavigation({
             ))}
 
             {/* Credits — sits above the identity area, clicks through to Billing & credits. */}
-            <Link href="/billing" title="Billing & credits" className={navigationLinkClass}>
+            <Link href={BILLING.href} title={BILLING.label} className={navigationLinkClass}>
               <Coins className="size-4 shrink-0" aria-hidden />
               <span className="truncate lg:hidden xl:inline">
                 {account ? creditsLabel(account.balance) : "Credits"}
