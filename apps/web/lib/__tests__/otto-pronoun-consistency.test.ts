@@ -99,22 +99,45 @@ function sentencesOf(text: string): string[] {
  *   · 一切字符串字面量与模板字面量的文本(属性值、数组元素、条件/三元的分支、模板片段)。
  * 容器嵌几层、跨几行、条件还是三元,对 AST 都是同一件事:它们都是子节点,顺序天然正确。
  * `typescript` 是仓库现成依赖(apps/web 5.9.3),零新增。
+ *
+ * 换实现最怕的是**悄悄少抓** —— 少抓是静默的,不会有任何东西变红。
+ * `scripts/tools/audit-copy-stream-equivalence.mjs` 把退役的那个扫描器与这一份在全仓
+ * tracked 源码上各跑一遍、逐条比差集,AST 一旦漏掉旧实现抓得到的条目就非零退出。
+ * 它证明不了两份实现**共有**的盲区(r5 的模板顺序错就是共有盲区),那种只能靠下面
+ * 那些人造反例钉住 —— 两样都要,少一样都不够。
  */
 function scriptKindOf(file: string): ts.ScriptKind {
   return file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
 
-/** 按源顺序收「给人读的文本」。注释不是节点,天然不进流。 */
+/**
+ * 按源顺序收「给人读的文本」。注释不是节点,天然不进流。
+ *
+ * #834 r5 —— **模板字符串必须按源顺序交错着收**。
+ * r4 先把 head 与全部 span 的静态片段一次推完,再靠 `forEachChild` 走到 `${…}` 里的
+ * 表达式 —— 于是静态尾巴排到了插值前面。判官的反例:
+ *   `aria-label={`Meet Otto. ${ready ? "It researches…" : "Nothing is sent."} Today.`}`
+ * 收成 `["Meet Otto.", "Today.", "It researches…", "Nothing is sent."]`:句子顺序被打乱,
+ * 「Otto 句后紧跟代词开头句」这条规则一次也命中不了,而屏幕上读到的正是被禁的那句。
+ * 这条流的全部价值就是**顺序**,顺序错了等于没有这条流。
+ * TemplateHead / TemplateSpan 本来就带着源顺序:head → (表达式, literal) → (表达式,
+ * literal) …… 照着走一趟即可,走完直接返回,不再让 forEachChild 重走一遍。
+ */
 function copyRuns(source: string, file = "planted.tsx"): string[] {
   const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, false, scriptKindOf(file));
   const runs: string[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isJsxText(node)) runs.push(node.text);
-    else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) runs.push(node.text);
-    else if (ts.isTemplateExpression(node)) {
-      // 模板的文字片段按顺序进流;`${…}` 里的表达式由下面的 forEachChild 照常走到。
+    if (ts.isJsxText(node)) {
+      runs.push(node.text);
+    } else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      runs.push(node.text);
+    } else if (ts.isTemplateExpression(node)) {
       runs.push(node.head.text);
-      for (const span of node.templateSpans) runs.push(span.literal.text);
+      for (const span of node.templateSpans) {
+        visit(span.expression);
+        runs.push(span.literal.text);
+      }
+      return;
     }
     ts.forEachChild(node, visit);
   };
@@ -311,6 +334,37 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   it("keeps both the outer and the inner sentence when the container spans lines", () => {
     const planted = `<p>Meet Otto.{condition &&\n  " It researches your brand."}</p>`;
     expect(copyRuns(planted)).toEqual(["Meet Otto.", "It researches your brand."]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  // 判官 2026-08-10 r4 的反例(#834 r5 P1)。模板字符串把一句话切成
+  // 「静态前缀 + 插值 + 静态后缀」,读屏软件读到的是拼起来的那一句;流的顺序错了,
+  // 规则就看不见它。这一条钉的是**顺序**本身。
+  it("reads a template string in source order, interpolations in place", () => {
+    const planted = '<img aria-label={`Meet Otto. ${ready ? "It researches your brand." : "Nothing is sent."} Today.`} />';
+    expect(copyRuns(planted)).toEqual([
+      "Meet Otto.",
+      "It researches your brand.",
+      "Nothing is sent.",
+      "Today.",
+    ]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("keeps order across several interpolations in one template", () => {
+    const planted = '<p>{`Otto drafts ${count} posts. ${busy ? "It is still working." : "Done."} Ask ${name}.`}</p>';
+    expect(copyRuns(planted)).toEqual([
+      "Otto drafts",
+      "posts.",
+      "It is still working.",
+      "Done.",
+      "Ask",
+    ]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("keeps the static prefix in front of a template that opens with an interpolation", () => {
+    const planted = '<p>{`${greeting} Otto is ready. It researches your brand.`}</p>';
     expect(rulesFor(planted)).toContain(RULE);
   });
 
