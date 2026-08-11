@@ -7,6 +7,9 @@
  *  3. A FAILED model call (fn throws) refunds the WHOLE reservation; user never charged.
  *  4. Mock/free calls (paid:false) bypass all metering — ZERO credits touched.
  *  5. Unknown model → sonnet pricing (never free = never a metering hole).
+ *  6. (#524 r3) An optional `afterReserve` claim runs between the hold and the model call. It can
+ *     only STOP the call: a lost/failed claim refunds the whole hold and fn never runs. It cannot
+ *     raise, lower or redirect a charge — reserve/settle/refund are byte-identical to before.
  */
 import {
   CREDITS_PER_USD,
@@ -118,7 +121,32 @@ export type LlmBudgetArgs = {
    *  unchanged: settleCredits still clamps the charge to the held amount. */
   reserveCapInternal?: number;
   usageOnError?: (e: unknown) => TokenUsage | null;
+  /**
+   * A claim on the work, run AFTER the hold is taken and BEFORE the model is called (#524 r3).
+   *
+   * It exists so a caller holding a ONE-SHOT consent (ottoApprove's approval card) can consume it
+   * at the only moment that is safe: after the authoritative reserve has already said yes. Any
+   * reserve refusal — spend cap or balance — therefore happens while the consent is still intact,
+   * and `fn` never runs, so "the model did not run ⇒ the consent is still pending" holds by
+   * CONSTRUCTION rather than by a preflight racing the ledger.
+   *
+   * Return false = the claim was lost (someone else already consumed it): the hold is refunded in
+   * full through the ordinary `refundReservation` path and `ReservationNotClaimed` is thrown; `fn`
+   * is never called, so nothing ran and the net ledger effect is zero. A throw is treated the same
+   * way, then re-thrown — a claim that errored must not leave a hold standing.
+   */
+  afterReserve?: () => Promise<boolean>;
 };
+
+/** Thrown when `afterReserve` did not claim the work: the hold was taken and then fully refunded,
+ *  and `fn` was never called. Nothing ran, nothing was charged. Callers map it to their own benign
+ *  "someone else already did this" answer. */
+export class ReservationNotClaimed extends Error {
+  constructor() {
+    super("The reserved work was already claimed elsewhere; the hold was refunded.");
+    this.name = "ReservationNotClaimed";
+  }
+}
 
 /**
  * The EXACT number of internal credits `withLlmBudget` will hold for this call — extracted so
@@ -183,10 +211,32 @@ export async function withLlmBudget<T>(
   // composition cap may only LOWER it, and a malformed cap is ignored.
   const reserve = llmHoldInternal(args);
 
-  // Invariant #1: reserve first. InsufficientCredits propagates; fn never called.
+  // Invariant #1: reserve first. InsufficientCredits (and #524's SpendCapBlocked) propagate;
+  // fn is never called, and NOTHING the caller does after this line has happened yet.
   await prisma.$transaction((tx) =>
     reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve }),
   );
+
+  // #524 r3 — the claim window. It sits HERE, between a successful hold and the model call, so a
+  // caller consuming a one-shot consent does it only once the ledger has already agreed to pay.
+  // A lost or failed claim refunds the whole hold through the ordinary path and never calls fn.
+  if (args.afterReserve) {
+    let claimed: boolean;
+    try {
+      claimed = await args.afterReserve();
+    } catch (e) {
+      await prisma.$transaction((tx) =>
+        refundReservation(tx, { orgId: args.orgId, refId: args.refId }),
+      );
+      throw e;
+    }
+    if (!claimed) {
+      await prisma.$transaction((tx) =>
+        refundReservation(tx, { orgId: args.orgId, refId: args.refId }),
+      );
+      throw new ReservationNotClaimed();
+    }
+  }
 
   // Invariant #3: refund the whole reservation if fn throws (unless usageOnError yields actual usage).
   let out: { result: T; usage?: TokenUsage };
