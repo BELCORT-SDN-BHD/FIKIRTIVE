@@ -122,7 +122,7 @@ describe("Otto 的连接状态口径", () => {
     ["meta-expert", (getAds: () => unknown) => ({ metaPerformance: { getAds } })],
     ["propose-ad-build", (propose: () => unknown) => ({ metaBuild: { propose } })],
     ["propose-meta-action", (metaPropose: () => unknown) => ({ metaPropose })],
-  ])("%s:notConnected 的回答把商家送到 %# 真实入口,而不是一个手打的名字", async (name, makeCtx) => {
+  ])("%s:notConnected 的回答把商家送到真实入口,而不是一个手打的名字", async (name, makeCtx) => {
     const mod: Record<string, unknown> = await import(`./${name}.js`);
     const execute = Object.entries(mod).find(([k]) => k.startsWith("execute"))?.[1] as
       | ((input: unknown, rc: { context: unknown }) => Promise<unknown>)
