@@ -47,8 +47,11 @@ type NavigationIcon = ComponentType<{ className?: string; "aria-hidden"?: boolea
  * #801 — 这个文件不再自己写一份导航树。树在 `@fikirtive/core` 的 MERCHANT_NAV 里,
  * 这里只负责把它画出来:一条 key → 图标的对照表,加上壳的行为(高亮、折叠、抽屉)。
  *
- * 后面的票(#792 CRM 折叠成诚实预览、#802 Otto 界面地图)因此只改 core 里的数据,
- * 不必再动这层壳 —— 「说的」与「做的」从此共用同一份声明。
+ * #792 是第一次验收这条分工,结果是**基本成立但不是零改动**:CRM 七扇门收成一扇预览门,
+ * 树的形状全在 core 里改;这层壳只学会了一种新的**画法** —— 目的地带 `preview` 时多画一枚
+ * Preview 徽章(见 NavigationLink)。徽章的文字与 title 全部来自权威源,壳没有新增任何
+ * 声明。所以准确的说法不是「后面的票都不必动壳」,而是:**改的是数据,壳只在需要一种新
+ * 画法时才动,而且不得自带内容**。
  */
 const NAV_ICONS: Record<string, NavigationIcon> = {
   // 板块

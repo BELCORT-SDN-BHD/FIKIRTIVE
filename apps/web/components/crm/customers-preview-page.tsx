@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { navLinkByKey } from "@fikirtive/core/navigation";
 import { SupportExit } from "@/components/exits/Exits";
+import { CHANNEL_CONNECT_UNAVAILABLE_NOTE } from "@/lib/crm-channel-connection";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,76 +20,104 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
  * Customers —— 折叠之后的那一扇门(#792,Founder 裁决 2026-08-08)。
  *
  * 折叠前,导轨上并排站着七扇门(Inbox / Contacts / Segments / Templates / Broadcasts /
- * Workflows / Reports),每一扇都长得像一个能用的能力。可是**一个消息渠道都连不上** ——
- * Connections 里 Messaging 整段写着 "Not available yet",全仓没有任何一条商家可走的连接
- * 路径(能建 ChannelScope 的只有测试)。所以那六扇门后面一条消息也发不出去、收不进来。
+ * Workflows / Reports),每一扇都长得像一个能用的能力。
  *
- * 这一页是收敛后唯一的入口,它的工作只有一件:**先说实话,再指路**。
- *   · 说实话 = 渠道连不上这件事写在第一屏,不藏在某个空态里;
- *   · 指路 = 现在真的做得到的(建档案、分群)在最上面,没通电的照旧进得去 —— 页面一页
- *     没删(4600 行引擎原地保留),只是不再假装它们是今天的能力。
+ * **r2 判词 P1 —— 这一页第一版自己就犯了它要修的病**:它写着这些面「已经完成、全都只差
+ * 渠道」。逐面读实现之后,那句话不成立 ——
+ *   · 收件箱:`submitConversationReply` 永远 `fail("SEND_PATH_UNAVAILABLE")`,而且没有任何
+ *     provider 入站,所以进不来也出不去,不是「只差一根线」;
+ *   · 消息模板:`submitTemplateReview` 永远 `fail("TEMPLATE_SUBMISSION_UNAVAILABLE")` ——
+ *     送审这条路根本没建,版本因此永远拿不到批准,拿不到批准就永远发不了;
+ *   · 广播:真发的 chokepoint `submitBroadcastRun` 无条件失败,唯一会动的是**模拟**执行
+ *     (`simulated_sent`),与渠道状态无关;
+ *   · Routine:每一次 run 都是 `simulated: true`,投递与花费都断开;
+ *   · 投递报告:没有 provider 回执,delivered / read / failed 永远是 Unknown。
+ * 「差一样东西」和「差四样东西」是两句不同的话,后者才是实话。所以每一面分成两句写:
+ * **今天真的做得到什么**,和**今天真实卡在哪**。
+ *
+ * 「What works today」那两面同样逐能力核过:分群五个事实只接通三个(`UNAVAILABLE_FACTS`
+ * = lastOrderAt / tags),所以不能笼统说「按你标的标签分群」。
  *
  * 纯服务端、零 I/O:这一页不读数据库,因为它说的每一句都是**产品形状**的事实,不是某个
- * 工作区的状态。渠道接通的那一天,这一页与导航里的 `preview` 一起删。
+ * 工作区的状态。这些卡点一处一处接通时,`crm-honest-preview.test.ts` 会红着提醒来改这一页。
  */
 
-/** 一条真能点开的去处 + 它今天的实话。 */
-type PreviewEntry = {
+/** 一条真能点开的去处。`works` 与 `blocked` 分开写 —— 只写一句,总会有一半被吞掉。
+ *  两张表都是 export 的:`crm-honest-preview.test.ts` 逐条把 `blocked` 与实现里的证据
+ *  绑在一起(实现变了围栏就红,文案跟着改),用正则去源码里刮字是刮不准的。 */
+export type PreviewEntry = {
   readonly href: string;
   readonly label: string;
-  readonly truth: string;
+  /** 今天真的做得到什么。 */
+  readonly works: string;
+  /** 今天真实卡在哪。**必填** —— 七个面每一个都有自己的限度,只写好话就是回到 r1 那句
+   *  「全都只差渠道」。围栏逐条核这一句在实现里找得到证据。 */
+  readonly blocked: string;
   readonly icon: typeof Inbox;
 };
 
 /** 现在就成立的能力 —— 商家点进去能把事做完。 */
-const WORKS_TODAY: readonly PreviewEntry[] = [
+export const WORKS_TODAY: readonly PreviewEntry[] = [
   {
     href: "/crm/contacts",
     label: "Contacts",
-    truth:
-      "Add a customer by hand or import a file, keep what you know about them, and read it back any time. These records are yours.",
+    works:
+      "Add a customer by hand or import a file, search your records, and keep phone numbers, consent facts and do-not-disturb on each one. These records are yours.",
+    blocked: "A number you type in is saved as not verified, and an unverified number is never used for a broadcast.",
     icon: UsersRound,
   },
   {
     href: "/crm/segments",
     label: "Segments",
-    truth:
-      "Group customers by what they spent, when they last ordered, or how you tagged them. The group is real and it counts real people — there is just nothing to send to it yet.",
+    works:
+      "Group customers by lifetime spend, by channel, and by whether they can be contacted at all. The group is real and it counts real people.",
+    blocked:
+      "Two of the five facts are not connected yet — last order recency and tags — so a rule using either one matches nobody rather than guessing.",
     icon: Sparkles,
   },
 ];
 
-/** 建好了、但等渠道 —— 每一句写明今天做不到什么,不写工期。 */
-const WAITING_ON_A_CHANNEL: readonly PreviewEntry[] = [
+/** 建好了、但每一面卡在不同的地方 —— 逐面写明今天做不到什么,不写工期。 */
+export const IN_PREVIEW: readonly PreviewEntry[] = [
   {
     href: "/crm/inbox",
     label: "Inbox",
-    truth: "Where customer conversations land once a channel is connected. Nothing can arrive today.",
+    works: "Read, search and organise the conversation records this workspace holds, and write a draft reply.",
+    blocked:
+      "Nothing comes in and nothing goes out. No channel delivers customer messages here, and sending a reply is refused by Fikirtive itself — the send path is not built, so there is no setting that would turn it on.",
     icon: Inbox,
   },
   {
     href: "/crm/templates",
     label: "Message templates",
-    truth:
-      "The wording a messaging channel has to approve before it will carry your message. There is no channel to approve one against.",
+    works: "Write the wording you would send and keep every version of it, with its own review record.",
+    blocked:
+      "A version can never become sendable. Submitting one for a messaging provider's approval is not built, so every version stays unapproved — and an unapproved version cannot carry a message.",
     icon: FileText,
   },
   {
     href: "/crm/broadcasts",
     label: "Broadcasts",
-    truth: "One message to a whole segment. It cannot be created without a channel to send it through.",
+    works:
+      "Build a broadcast, freeze exactly who is in it, and run it as a simulation that re-checks every contact's eligibility and records who would be skipped and why.",
+    blocked:
+      "The real send is refused at all times, whatever the broadcast's state. A run only ever marks contacts as simulated-sent — no message leaves Fikirtive.",
     icon: Send,
   },
   {
     href: "/crm/workflows",
     label: "Workflows",
-    truth: "A reply or a follow-up that goes out automatically. Nothing goes out today.",
+    works: "Write a rule, authorise exactly what a Routine may do, and inspect every decision it takes.",
+    blocked:
+      "Every run is simulated, and delivery and spend are disconnected. A published rule is not an active Routine, and no workflow action reaches a customer.",
     icon: Sparkles,
   },
   {
     href: "/crm/reports",
     label: "Delivery reports",
-    truth: "What a broadcast actually did — delivered, read, failed. There are no broadcasts to report on.",
+    works: "See what each broadcast attempted, contact by contact, and why anyone was skipped.",
+    blocked:
+      "Delivered, read and failed stay unknown — never zero, never a green tick. No provider receipts are connected, and the attempts on record are simulated ones.",
     icon: BarChart3,
   },
 ];
@@ -109,7 +138,10 @@ function EntryRow({ entry }: { entry: PreviewEntry }) {
           {entry.label}
           <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         </span>
-        <span className="mt-1 block text-sm leading-6 text-muted-foreground">{entry.truth}</span>
+        <span className="mt-1 block text-sm leading-6 text-muted-foreground">{entry.works}</span>
+        <span className="mt-1.5 block text-sm leading-6 text-warning-soft-foreground">
+          {entry.blocked}
+        </span>
       </span>
     </Link>
   );
@@ -138,9 +170,9 @@ export function CustomersPreviewPage() {
             {door.preview}
           </p>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            Posting to Instagram and Facebook already works — messaging is a different connection,
-            and that one does not exist yet. Connections lists WhatsApp as not available, and there
-            is no other messaging channel to connect.
+            {CHANNEL_CONNECT_UNAVAILABLE_NOTE} Posting to Instagram and Facebook is a different
+            connection, and that one does work. A messaging channel on its own would still not be
+            enough here: each page below stops in its own place, and each one says where.
           </p>
         </header>
 
@@ -148,7 +180,8 @@ export function CustomersPreviewPage() {
           <CardHeader>
             <CardTitle>What works today</CardTitle>
             <CardDescription>
-              These do the whole job right now, with no channel involved.
+              These do their whole job right now, with no channel involved — and each says where its
+              own limit is.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
@@ -160,14 +193,14 @@ export function CustomersPreviewPage() {
 
         <Card className="mt-5">
           <CardHeader>
-            <CardTitle>Built, waiting on a channel</CardTitle>
+            <CardTitle>In preview — open, but they cannot reach a customer</CardTitle>
             <CardDescription>
-              These pages are finished and they open, so you can see exactly what is coming. Every
-              one of them stops at the same missing piece, and each says where it stops.
+              These pages open and do real work inside your own records. What none of them can do is
+              reach a customer, and they are not all missing the same thing.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
-            {WAITING_ON_A_CHANNEL.map((entry) => (
+            {IN_PREVIEW.map((entry) => (
               <EntryRow key={entry.href} entry={entry} />
             ))}
           </CardContent>

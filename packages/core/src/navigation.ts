@@ -22,6 +22,8 @@
  *      一页没删,商家从预览页照样进得去。
  */
 
+import { MESSAGING_STATUS_MERCHANT } from "./messaging-status.js";
+
 /** 一条真能点开的目的地。 */
 export type MerchantNavLink = {
   /** 稳定的机器 key —— 图标、测试与后续票都按它认人,标签改字不影响。 */
@@ -117,8 +119,9 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     // 导轨亮的都是这一格。
     href: "/crm",
     does: "Keep a record of every customer — who they are, how to reach them, and what you may contact them about.",
-    preview:
-      "No messaging channel can be connected yet, so nothing in here can send a message to a customer or receive one from them. Keeping customer records is the part that works today.",
+    // 那句实话不写在这里 —— 它是消息渠道状态的**唯一措辞**,Otto 的指令与技能描述读的是
+    // 同一份(#792 r2 判词 P1:从前这里说「连不上」,Otto 那边却在劝商家「去连一个」)。
+    preview: MESSAGING_STATUS_MERCHANT,
   },
   {
     key: "workspace",
