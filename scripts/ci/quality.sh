@@ -134,27 +134,76 @@ drop_local_database() {
 quality_lock_dir="${QUALITY_LOCK_DIR:-/tmp/fikirtive-quality.lock}"
 quality_lock_held=""
 
-# Stealing a stale lock must itself be atomic: two waiters can both judge the same
-# lock dead. Renaming the directory decides the winner — exactly one mv succeeds,
-# the loser's mv fails on the now-missing path and goes back to waiting on the
-# winner's fresh lock. Never rm -rf the live path: between "judged dead" and "rm",
-# the path may already be someone else's brand-new lock.
-steal_stale_lock() {
-  local graveyard="${quality_lock_dir}.stale.$$"
-  if mv "$quality_lock_dir" "$graveyard" 2>/dev/null; then
-    echo "quality: reclaimed stale lock ($1)"
-    rm -rf "$graveyard"
+# A lock is stale when its recorded pid is provably dead, or when it has sat for
+# over 60s with no pid at all (a healthy holder writes its pid milliseconds after
+# mkdir, so an old pid-less lock can only be a corpse — without this rule a crash
+# inside that window would park every later run forever).
+#
+# STEALING IS NOT "judge, then mv": between a waiter's staleness judgment and its
+# mv, the path may already hold someone else's brand-new live lock, and mv moves
+# whatever is there NOW, not the incarnation that was judged. So the steal happens
+# inside a tiny arbiter mutex and RE-DERIVES staleness in there: under the arbiter
+# no other stealer can interleave, and a fresh holder's lock re-reads as alive (or
+# as too young) and is left alone. The arbiter's own critical section is
+# milliseconds; one older than 60s can only be a corpse and is cleared the same way.
+quality_steal_arbiter="${quality_lock_dir}.arbiter"
+
+lock_mtime_epoch() {
+  # BSD stat first, GNU stat second — and trust neither blindly: GNU stat -f
+  # writes a filesystem report to stdout before failing, so anything that is not
+  # a pure integer is discarded rather than fed into arithmetic.
+  local raw
+  raw="$(stat -f %m "$1" 2>/dev/null)"
+  if [[ ! "$raw" =~ ^[0-9]+$ ]]; then
+    raw="$(stat -c %Y "$1" 2>/dev/null)"
+  fi
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    echo "$raw"
+  else
+    echo ""
   fi
 }
 
-lock_age_seconds() {
+path_age_seconds() {
   local mtime
-  mtime="$(stat -f %m "$quality_lock_dir" 2>/dev/null || stat -c %Y "$quality_lock_dir" 2>/dev/null || true)"
+  mtime="$(lock_mtime_epoch "$1")"
   if [[ -z "$mtime" ]]; then
     echo 0
   else
     echo $(( $(date +%s) - mtime ))
   fi
+}
+
+# Returns 0 if the CURRENT lock at $quality_lock_dir is stale (dead pid, or no pid
+# and older than 60s). Must be called with the arbiter held for a steal decision.
+current_lock_is_stale() {
+  local holder age
+  holder="$(cat "$quality_lock_dir/pid" 2>/dev/null || true)"
+  if [[ -n "$holder" ]]; then
+    ! kill -0 "$holder" 2>/dev/null
+    return
+  fi
+  age="$(path_age_seconds "$quality_lock_dir")"
+  (( age > 60 ))
+}
+
+try_steal_stale_lock() {
+  # Clear a corpse arbiter first (crash inside the ms-long critical section).
+  if [[ -d "$quality_steal_arbiter" ]] && (( $(path_age_seconds "$quality_steal_arbiter") > 60 )); then
+    rm -rf "$quality_steal_arbiter"
+  fi
+  if ! mkdir "$quality_steal_arbiter" 2>/dev/null; then
+    return 1  # another stealer is arbitrating — just go back to waiting
+  fi
+  if current_lock_is_stale; then
+    local graveyard="${quality_lock_dir}.stale.$$"
+    if mv "$quality_lock_dir" "$graveyard" 2>/dev/null; then
+      echo "quality: reclaimed stale lock"
+      rm -rf "$graveyard"
+    fi
+  fi
+  rmdir "$quality_steal_arbiter" 2>/dev/null || rm -rf "$quality_steal_arbiter"
+  return 0
 }
 
 acquire_quality_lock() {
@@ -164,24 +213,12 @@ acquire_quality_lock() {
       quality_lock_held=1
       return 0
     fi
-    local holder
-    holder="$(cat "$quality_lock_dir/pid" 2>/dev/null || true)"
-    if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
-      steal_stale_lock "held by dead pid $holder"
+    if current_lock_is_stale; then
+      try_steal_stale_lock || true
       continue
     fi
-    if [[ -z "$holder" ]]; then
-      # No pid file: the holder is inside the mkdir→write-pid window (milliseconds),
-      # or it died inside it. Age decides — a healthy holder writes its pid long
-      # before 60s, so an old pid-less lock can only be a corpse. Without this, a
-      # crash in that window would park every later run forever.
-      local age
-      age="$(lock_age_seconds)"
-      if (( age > 60 )); then
-        steal_stale_lock "no pid recorded after ${age}s"
-        continue
-      fi
-    fi
+    local holder
+    holder="$(cat "$quality_lock_dir/pid" 2>/dev/null || true)"
     echo "quality: another quality run (pid ${holder:-starting}) holds this machine — waiting 30s"
     sleep 30
   done
