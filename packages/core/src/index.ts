@@ -46,6 +46,7 @@ export {
   CAPTION_DLQ,
   CAPTION_RETRY_LIMIT,
   CAPTION_QUEUE_POLICY,
+  TRANSCRIPT_GENERATION,
   type FikirtiveEdit,
   type FikirtiveClip,
   type BetweenClipTransition,

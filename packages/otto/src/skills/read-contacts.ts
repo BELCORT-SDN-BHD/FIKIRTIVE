@@ -43,7 +43,7 @@ export const readContactsSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "List, search, or read one exact CRM Contact through the same owner-scoped actions as the Contacts pages. " +
+    "List, search, or read one exact CRM Contact through the same owner-scoped actions the merchant's own screens use. " +
     "$0 read-only. Results include lifecycle, stored identities with their credibility grade, DND, order receipt "
     + "total, and the " +
     "WhatsApp × marketing ConsentStateProjection plus consent history on get. Unknown is reported honestly: it is " +

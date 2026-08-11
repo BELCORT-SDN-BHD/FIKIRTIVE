@@ -8,7 +8,7 @@
  * editable here (restart-required), only the DB-backed runtime config.
  */
 import { useState } from "react";
-import { Button } from "@/components/ds";
+import { Button } from "@/components/ui/button";
 import { saveRuntimeConfig } from "@/lib/admin-actions";
 
 type Vision = { enabled: boolean; maxImages: number; maxBytes: number };
@@ -68,7 +68,7 @@ function VisionCard({ vision }: { vision: Vision }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "var(--success)" : "var(--destructive)" }}>{msg.text}</span>}
         <div style={{ marginLeft: "auto" }}>
-          <Button variant="primary" size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
+          <Button size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
         </div>
       </div>
     </section>
@@ -113,7 +113,7 @@ function ProviderCard({ provider, canModal }: { provider: string; canModal: bool
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "var(--success)" : "var(--destructive)" }}>{msg.text}</span>}
         <div style={{ marginLeft: "auto" }}>
-          <Button variant="primary" size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
+          <Button size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
         </div>
       </div>
     </section>

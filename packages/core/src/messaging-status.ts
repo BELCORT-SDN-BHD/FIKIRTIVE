@@ -45,6 +45,9 @@ export const MESSAGING_STATUS_MERCHANT =
  *
  * 关键是最后半句:空的渠道列表**不是商家的待办**。旧措辞让 Otto 把一个产品侧的空白说成
  * 商家没做的事,商家照做就撞上一堵没有门的墙。
+ *
+ * 这里**不写地名**(#802):该指去哪儿由调用点用 `navPath()` / `navLabel()` 接上去 —— 地名
+ * 手打一次,改名就漂一次,而这个文件够不着导航那棵树(navigation.ts 反过来 import 它)。
  */
 export const MESSAGING_STATUS_ASSISTANT =
-  "There is no way to connect a messaging channel in Fikirtive yet, and the sending and receiving paths are not wired up either. An empty channel list is therefore NOT a to-do for the merchant — never tell them to connect one. Say plainly that messaging is not available yet, and point them at Customers, where what does and does not work is written out.";
+  "There is no way to connect a messaging channel in Fikirtive yet, and the sending and receiving paths are not wired up either. An empty channel list is therefore NOT a to-do for the merchant — never tell them to connect one. Say plainly that messaging is not available yet.";

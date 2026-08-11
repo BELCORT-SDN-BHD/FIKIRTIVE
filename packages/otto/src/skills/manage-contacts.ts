@@ -116,7 +116,7 @@ export const manageContactsSkill = defineOttoSkill({
   description:
     "Create or update standard CRM Contact fields, import a bounded CSV, store or correct a merchant-entered phone " +
     "number, record a merchant-reported consent assertion, or set/clear DND through the same authenticated actions as " +
-    "the CRM UI. $0 internal writes only. Inputs are structured and never accept owner identity. Phone numbers stored " +
+    "the merchant's own screens use. $0 internal writes only. Inputs are structured and never accept owner identity. Phone numbers stored " +
     "here — typed or imported — are saved as merchant entered and NOT verified: they are kept and searchable, they are " +
     "never used for broadcasts or segments, and only a connected channel can upgrade one. Say so plainly instead of " +
     "implying a stored number can be messaged. update_phone/remove_phone touch merchant-entered numbers only; a " +

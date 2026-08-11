@@ -9,6 +9,7 @@ import {
 } from "@fikirtive/core";
 import { broadcastPurposeFromTemplateClassification } from "./customer-broadcast-purpose";
 import {
+  WORKFLOW_SERVICE_STOP_REASONS,
   canonicalHash,
   canonicalJson,
   canonicalizeBusinessHoursPolicy,
@@ -41,11 +42,13 @@ import {
   type PrismaClient,
   type RoutineAuthorizationMaterial,
   type RoutineRunRecord,
+  type SEND_ELIGIBILITY_NON_PASS_REASONS,
   type SendEligibilityResult,
   type SettleWorkflowStepInput,
   type TransitionRoutineRunInput,
   type WorkflowActionOccurrence,
   type WorkflowDependencyResolver,
+  type WorkflowRunReasonCode,
   type WorkflowTrigger,
 } from "@fikirtive/db";
 
@@ -313,7 +316,12 @@ const MAX_SAFE_RUN_SUMMARY_KEYS = 64;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const TOKEN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
-const AXES = ["consentStop", "doNotDisturb", "providerRefusal", "frequency"] as const;
+/**
+ * The four axes, in the order `firstNonPass` reports them. Typed against the reason
+ * enumeration, so a name that is not an axis with enumerated reasons does not compile (#811).
+ */
+const AXES = ["consentStop", "doNotDisturb", "providerRefusal", "frequency"] as const satisfies
+  readonly (keyof typeof SEND_ELIGIBILITY_NON_PASS_REASONS)[];
 
 function fail(code: CustomerWorkflowErrorCode): never {
   throw new CustomerWorkflowError(code);
@@ -585,12 +593,25 @@ function allAxesPass(verdict: SendEligibilityResult): boolean {
   return AXES.every((name) => (verdict[name] as EligibilityAxis).status === "pass");
 }
 
-function firstNonPass(verdict: SendEligibilityResult): string {
+/**
+ * The blocking axis, as the merchant-visible code `<axis>:<that axis's reason>`.
+ *
+ * Only ever called under `!allAxesPass(verdict)`, so "no blocking axis" is not a state this
+ * can reach — #834 r2 (P2) removed the `eligibility:unknown` it used to return there, along
+ * with the copy key that answered for it. `axis.reason` is likewise no longer optional on a
+ * non-pass axis (send-eligibility's overloads), so the old `?? axis.status` fallback, which
+ * could write back the `<axis>:block` keys the copy table dropped, is gone too.
+ */
+function firstNonPass(verdict: SendEligibilityResult): WorkflowRunReasonCode {
   for (const name of AXES) {
     const axis = verdict[name] as EligibilityAxis;
-    if (axis.status !== "pass") return `${name}:${axis.reason ?? axis.status}`;
+    if (axis.status !== "pass" && axis.reason !== undefined) {
+      return `${name}:${axis.reason}` as WorkflowRunReasonCode;
+    }
   }
-  return "eligibility:unknown";
+  // Unreachable by construction. Fail closed rather than invent a reason: an unnamed refusal
+  // is the one thing this whole pinboard exists to prevent reaching a merchant.
+  return fail("AUTHORITY_UNAVAILABLE");
 }
 
 function unavailableConversationEligibility(checkedAt: string): SendEligibilityResult {
@@ -2535,14 +2556,14 @@ export function workflowLifecycleService(
       if (conversationAutomationState === "paused_by_human") {
         settlement = {
           status: "blocked",
-          reasonCode: "HUMAN_TAKEOVER_AUTOMATION_PAUSED",
+          reasonCode: WORKFLOW_SERVICE_STOP_REASONS.humanTakeover,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };
       } else if (businessHoursResult?.status === "inside") {
         settlement = {
           status: "blocked",
-          reasonCode: "BUSINESS_HOURS_INSIDE",
+          reasonCode: WORKFLOW_SERVICE_STOP_REASONS.businessHoursInside,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };
@@ -2558,7 +2579,7 @@ export function workflowLifecycleService(
           status: action.action.type === "conversation_reply" ? "unavailable" : "blocked",
           reasonCode:
             action.action.type === "conversation_reply"
-              ? "CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE"
+              ? WORKFLOW_SERVICE_STOP_REASONS.conversationStrictClassificationUnavailable
               : firstNonPass(verdict),
           eligibilityInput,
           eligibilityVerdict: verdict,
@@ -2566,7 +2587,7 @@ export function workflowLifecycleService(
       } else {
         settlement = {
           status: "unavailable",
-          reasonCode: "BROADCAST_ONE_MEMBER_SUBMIT_SEAM_UNAVAILABLE",
+          reasonCode: WORKFLOW_SERVICE_STOP_REASONS.broadcastOneMemberSubmitSeamUnavailable,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };

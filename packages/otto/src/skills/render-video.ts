@@ -74,8 +74,10 @@ export const renderVideoSkill = defineOttoSkill({
   cost: "free",
   effect: "write",
   reach: "internal",
+  // WHITE LABEL (#787): the description is prompt text — Otto can repeat it to a merchant
+  // verbatim, so it names the CAPABILITY (captions), never the engine behind it.
   description:
-    "Export the project's saved cut to a video and add $0 captions ($0 — ffmpeg/whisper, never spends credits). " +
+    "Export the project's saved cut to a video and add $0 captions ($0 — never spends credits). " +
     "export: render the SAVED cut to a finished video (build the cut in the editor first). " +
     "jobs: check export progress. caption: add captions to a clip (pass its src). " +
     "caption_job: check caption progress. transcript: read a clip's cached transcript. " +

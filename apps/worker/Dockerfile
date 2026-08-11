@@ -24,7 +24,28 @@ FROM base AS build
 # -march=native SIMD into the binary, which SIGILLs at runtime if the build
 # host has wider SIMD than the runtime host. OFF builds a portable baseline.
 ARG WHISPER_REF=v1.7.4
-ARG WHISPER_MODEL=base.en
+# MULTILINGUAL, not `.en` (#787). `base.en` was an English-ONLY build: a Malay or Mandarin clip
+# came back as nonsense or empty, which for a Malaysian merchant is the whole feature missing.
+# `small` is multilingual and is the largest tier that keeps this container's memory profile
+# under ~1 GB (upstream: base 142 MiB disk / ~388 MB RAM, small 466 MiB / ~852 MB,
+# medium 1.5 GiB / ~2.1 GB). This container also runs generation/publish/render jobs, so the
+# medium tier's ~2.1 GB is not a trade worth making for one job type.
+#
+# The model name is written LITERALLY here, on purpose — there is no build arg for it (#787 r2).
+# A build arg made the model half-configurable: overriding it downloaded one model while the
+# runtime ENV below still pointed at another, producing an image that either could not run or
+# stored one engine's cues under another engine's tag. Changing the model is a code change in
+# four places that must move together:
+#   1. WHISPER_MODEL_NAME in apps/worker/src/jobs/caption.ts,
+#   2. TRANSCRIPT_GENERATION in packages/core/src/timeline.ts (BUMP it — that is what retires
+#      the transcripts the previous model cached),
+#   3. the two `small` filenames below (download + ENV),
+#   4. the pinned sha256 below, taken from the new file.
+# apps/worker/src/jobs/caption.test.ts asserts all four agree, so a partial change fails loudly.
+#
+# The sha256 is of huggingface.co/ggerganov/whisper.cpp `ggml-small.bin` (487,601,967 bytes).
+# download-ggml-model.sh fetches from a MOVING ref (`resolve/main`) and verifies NOTHING, so a
+# 466 MiB binary blob would otherwise enter the image unchecked.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git build-essential cmake curl \
   && rm -rf /var/lib/apt/lists/* \
@@ -33,7 +54,8 @@ RUN apt-get update \
   && cmake --build /tmp/whisper.cpp/build -j --config Release --target whisper-cli \
   && install -Dm755 /tmp/whisper.cpp/build/bin/whisper-cli /opt/whisper/bin/whisper-cli \
   && mkdir -p /opt/whisper/models \
-  && bash /tmp/whisper.cpp/models/download-ggml-model.sh "${WHISPER_MODEL}" /opt/whisper/models \
+  && bash /tmp/whisper.cpp/models/download-ggml-model.sh small /opt/whisper/models \
+  && echo "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b  /opt/whisper/models/ggml-small.bin" | sha256sum -c - \
   && rm -rf /tmp/whisper.cpp
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
@@ -70,6 +92,8 @@ WORKDIR /repo
 COPY --from=build /repo ./
 COPY --from=build /opt/whisper/bin/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=build /opt/whisper/models /opt/whisper/models
-ENV WHISPER_MODEL_PATH=/opt/whisper/models/ggml-base.en.bin
+# The DIRECTORY only — the filename is always derived from WHISPER_MODEL_NAME in the code, so
+# nothing in the environment can swap the model out from under the transcript generation tag.
+ENV WHISPER_MODEL_DIR=/opt/whisper/models
 USER node
 CMD ["node", "apps/worker/dist/index.js"]

@@ -15,6 +15,9 @@ const SECRETS = [
   "we call the fal.ai endpoint",
   "即梦 rendered it",
   "I'm running on the claude model",
+  "captions come from whisper.cpp", // #787 字幕引擎
+  "whisper-cli returned nothing",
+  "the model file is ggml-small.bin",
 ];
 
 describe("redactProviderNames", () => {
@@ -22,7 +25,9 @@ describe("redactProviderNames", () => {
     for (const s of SECRETS) {
       const out = redactProviderNames(s);
       expect(out).toContain("generation provider");
-      expect(out.toLowerCase()).not.toMatch(/seedance|seedream|byteplus|bytedance|jimeng|即梦/);
+      expect(out.toLowerCase()).not.toMatch(
+        /seedance|seedream|byteplus|bytedance|jimeng|即梦|whisper\.cpp|whisper-cli|ggml/,
+      );
     }
   });
 
@@ -30,6 +35,18 @@ describe("redactProviderNames", () => {
     expect(redactProviderNames("Your video is ready — 5 seconds, 9:16.")).toBe(
       "Your video is ready — 5 seconds, 9:16.",
     );
+  });
+
+  // #787:字幕引擎那两条是**故意收窄**的。whisper 是一个普通英文词,商家真的可能在卖
+  // 「whisper-quiet fan」;洗掉商家自己的商品名比说出引擎名更糟(#810 已经栽过一次)。
+  it("商家自己的 whisper 不许被洗掉", () => {
+    for (const innocent of [
+      "Our whisper-quiet fan is back in stock",
+      "a whisper of vanilla in every cup",
+      "Whisper Lane, Penang",
+    ]) {
+      expect(redactProviderNames(innocent)).toBe(innocent);
+    }
   });
 });
 

@@ -343,9 +343,14 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   // "click Launch"、"Pick Confirm"、"costs the same as"、"three credits"(拼写
   // 数字)穿透过历轮词表。漏过某种写法**不构成缺陷** —— 那一层由快照兜住。
   const UI_VOCAB_ALLOWED = [
-    // ① 按钮指路两句(r2 判官已认可,提示词侧一字未动)——它们必须提到 button 才能下禁令。
+    // ① 按钮指路几句(r2 判官已认可)——它们必须提到 button 才能下禁令。
     "Point at the card, never at a button label — the card walks the user through its own cost check, and you cannot see what its buttons say.",
-    "Never tell the user to click a specific button or UI element — describe the outcome they want instead.",
+    // #802:旧的「Never tell the user to click a specific button or UI element」已被裁掉 ——
+    // 硬规则改成「只许提地图里存在的入口」,禁令由下面两句承担。r2(判官 [P1-2]):禁令必须
+    // 同时挡住**点名控件**与**指示操作控件**(连商家自己提的那个也不行)——只禁点名会放行
+    // 「对,用那个」这类回答,而那正是旧句明令禁止的。
+    "Everything else in the app you cannot see and do not know about: any other page, and any button, tab, menu, switch or setting anywhere.",
+    "Never name a button or any other control, because you cannot see one; and never tell the user to use, act on, or look at any control — not even one THEY named to you, because you still cannot see it, what state it is in, or what it does.",
     "The one exception is a card you yourself put in this conversation: you may tell the user to act on that card (approve it, change it, cancel it), because you know it is there — but never name the button on it, because you still cannot see its label.",
     // ② main 的画布文案把 "press" 当**名词**用(一次付费生成),不是 UI 控件。
     //    #603/#605 的批次血缘段。留在词表里会误伤,故按原文剥离;
@@ -413,10 +418,22 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   });
 
   // 2) 肯定式存在断言 —— 直接 expect,没有 if。任一句被删都会红。
-  it("keeps the button-naming ban itself in the prompt", () => {
+  //
+  // #802 改的是这条禁令的**方向**,不是它的存在:旧句「不许点名按钮或界面元素」连指路
+  // 一起禁掉了,新句只禁控件,地图里的入口反而必须敢说。名字仍不许瞎编 ——「只许提地图
+  // 里有的」那一半由 instructions-nav-map.test.ts 结构化钉住。
+  it("keeps BOTH halves of the control ban in the prompt (r2 · 判官 [P1-2])", () => {
+    // ① 不许点名控件。
     expect(ottoInstructions).toContain(
-      "Never tell the user to click a specific button or UI element",
+      "Never name a button or any other control, because you cannot see one",
     );
+    // ② 不许指示操作控件 —— 包括商家自己说出名字的那一个。旧句禁的就是这一半,
+    //    r1 一度只留下 ①,判官的漏洞是「商家提到某个控件,Otto 答 yes, use it」。
+    expect(ottoInstructions).toContain(
+      "never tell the user to use, act on, or look at any control — not even one THEY named to you",
+    );
+    // ③ 替代动作仍然写明:说结果,不说控件。
+    expect(ottoInstructions).toContain("Describe the outcome they want instead.");
   });
 
   it("keeps the narrow carve-out for Otto's own card, and its no-label rider", () => {
