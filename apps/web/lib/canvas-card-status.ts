@@ -13,6 +13,9 @@ export {
   OVERWRITABLE_CARD_STATUSES,
   TERMINAL_CARD_STATUSES,
   canvasCardFace,
+  // The whole resting state — the face AND why it rested (#827). The board projection reads this
+  // one; `canvasCardFace` remains for the readers that only ever wanted the word.
+  canvasCardState,
   canvasCardIsInFlightPaid,
   canvasCardRowAdvances,
   isCanvasCardFace,
@@ -22,6 +25,7 @@ export {
   isTerminalCardStatus,
   type CanvasCardFace,
   type CanvasCardRowStatus,
+  type CanvasCardState,
   type TerminalCardStatus,
 }
   // The BROWSER-SAFE subpath, never the main barrel: card components are client modules, and

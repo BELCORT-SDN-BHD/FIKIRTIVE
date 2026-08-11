@@ -17,6 +17,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowUp, Plus } from "lucide-react";
+import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { createProject } from "@/lib/actions";
 import { Button } from "@/components/ui/button";
 
@@ -27,7 +28,7 @@ export interface NorthstarHomeProject {
 }
 
 export function canvasHref(projectId: string): string {
-  return `/northstar-immersive/create/canvas?project=${encodeURIComponent(projectId)}`;
+  return `${CANVAS_HREF}?project=${encodeURIComponent(projectId)}`;
 }
 
 function formatUpdated(iso: string): string {

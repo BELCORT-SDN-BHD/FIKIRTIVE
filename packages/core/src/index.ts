@@ -146,6 +146,10 @@ export {
   type PublishJobData,
 } from "./publish.js";
 export * from "./segment-rules.js";
+// The two credibility grades a stored contact identity can carry (#803). Pure and shared,
+// because the database constraint, the CRM write path, the audience gate and the badge in the
+// browser must all mean the same thing by "not verified".
+export * from "./contact-identity-grade.js";
 // Canvas board geometry — WHERE a card lands. Pure (no Prisma, no server-only), so the three
 // runtimes that place cards can share ONE grid: the browser, the web server, and the worker
 // that writes a finished job's whole batch (#601).
@@ -171,3 +175,6 @@ export { buildSpecChips, videoAspectChip, type SpecChipParams } from "./spec-chi
 // 「这一条是扣款、进账,还是还没结算的占用」只判一次:/billing、账务设置页与 Otto 的
 // readSpending 三个对客口径共用它,web 与 otto 不再各写一套(#684)。
 export { creditDirection, type CreditDirection } from "./credit-direction.js";
+// 商家主导航的唯一权威源(#801)。三个读者共用:左侧导轨画它、Otto 照它指路、围栏照它核对。
+// 纯数据(无 React、无图标、无 node/network),所以主 barrel 装得下。
+export * from "./navigation.js";

@@ -29,7 +29,12 @@
  *
  * What a JOB's own ending is called lives with the projection (`canvasTerminalCardStatus`), and
  * the two meet only where the settlement writes a row.
+ *
+ * A third word joined the two vocabularies in #827: a resting card also carries WHY it rested,
+ * as a name from the closed `GenFailureReason` set. See `canvasCardState` at the foot of this
+ * file for why that is part of the card's state and not a caption a surface is handed.
  */
+import { merchantGenFailureReason, type GenFailureReason } from "./gen-failure.js";
 
 /**
  * EVERY WORD A CARD ROW MAY CARRY — the finite set the database enforces (#602 T3).
@@ -243,6 +248,66 @@ export function canvasCardFace(input: {
     case "missing": return "missing";
   }
   return "unknown";
+}
+
+/**
+ * WHAT THIS CARD SAYS, AND WHY — the whole resting state of a card, in one value (#827).
+ *
+ * THE DEFECT. #765 taught the system to recognise one refusal a merchant can act on (their
+ * reference image showed a recognisable face) and to say so in plain words. But the saying was
+ * LIVE only: a toast, and a poll running in the tab that pressed generate. Reload the page and
+ * the card fell back to "That didn't finish — you weren't charged. Try again.", which is true and
+ * useless: it invites the merchant to retry the one thing that cannot work. Told once and only to
+ * whoever was looking is not told (#827).
+ *
+ * WHY THE REASON IS PART OF THE STATE. The obvious fix — hang an optional explanation off the
+ * card DTO — reintroduces the same class of bug one layer down: an optional field is one every
+ * reader may forget, every fixture may omit, and no compiler will ask about. So the reason is a
+ * REQUIRED member of a closed set, derived here, by the same total function that decides the
+ * face. Every card has one; `unexplained` is the honest name for "this ending has no reason we
+ * can prove", and it is what every card made before #827 answers.
+ *
+ * ONLY A `failed` CARD MAY CARRY A REASON, and the guard is here rather than at each surface:
+ *   · `cancelled` is the merchant's own decision. Explaining it back to them is absurd, and the
+ *     one sentence there is to give ends "You weren't charged", which the cancel path proves
+ *     separately and must not be borrowed for.
+ *   · `timeout` has not ended at all — the browser stopped watching and the job may still be
+ *     running. A reason on it would be an ending this card has not reached.
+ *   · `missing` means the work EXISTS and this card cannot show it; a refusal explanation there
+ *     would describe an event that did not happen to this job.
+ *   · `unknown` is "we cannot say what became of this", so saying why is a contradiction.
+ * A `done` card shows its picture and says nothing. That leaves `failed`, which is the one face
+ * that is a refusal, and the reason it carries comes from the job row the refusal was written on.
+ *
+ * DURABLE BY CONSTRUCTION: the input is `GenJob.error`, which the worker wrote and the database
+ * kept. Nothing here reads a live poll, a toast, or anything the tab happened to see, so a board
+ * read on a different device an hour later resolves the identical state.
+ */
+export type CanvasCardState = {
+  /** The one word a merchant reads off the card — exactly `canvasCardFace`'s answer. */
+  face: CanvasCardFace;
+  /** WHY it rested. Never optional: every card has one, and most are `unexplained`. */
+  failureReason: GenFailureReason;
+};
+
+export function canvasCardState(input: {
+  /** `CanvasNode.status`, exactly as stored. */
+  rowStatus: string;
+  /** `GenJob.status` of the job this card belongs to, when the reader could load it. */
+  jobStatus?: string | null;
+  /** `GenJob.error` as persisted — an OPS column that sometimes holds one of our merchant
+   *  sentences. Never forwarded as text: only the whitelist in `gen-failure` may name it. */
+  jobError?: string | null;
+  /** The output this card is showing, after the display rule picked it. */
+  generationId?: string | null;
+  /** The resolved media URL for that output, when it resolved. */
+  url?: string | null;
+}): CanvasCardState {
+  const face = canvasCardFace(input);
+  return {
+    face,
+    failureReason: face === "failed" ? merchantGenFailureReason(input.jobError) : "unexplained",
+  };
 }
 
 /**

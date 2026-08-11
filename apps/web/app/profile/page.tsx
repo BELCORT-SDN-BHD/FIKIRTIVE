@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Profile · Fikirtive" };
 
 // #513 三.1 — the identity area's "Profile" destination: who you are, nothing more.
-// Team/workspace defaults live under Workspace settings; billing lives under Billing
+// Team/workspace defaults live under Settings; billing lives under Billing
 // & credits. This page never reads or writes credits.
 //
 // #542 — and it is now WRITABLE. Both names live here rather than in Settings because

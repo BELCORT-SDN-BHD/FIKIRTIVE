@@ -1169,6 +1169,10 @@ export default function FlowCanvas({
           // agree, until it did not. `canvasCardFace` is the one derivation and it
           // has already weighed the URL; re-deciding it here is how forks start.
           status: r.status,
+          // WHY this card rested (#827). The board read resolved it from the job row, so a card
+          // that says "your reference image showed a face" still says it after a reload and on
+          // another device — the durable half of the explanation #765 could only say live.
+          failureReason: r.failureReason,
           url: r.url ?? undefined,
           generationId: r.generationId ?? undefined,
           prompt: r.prompt,
