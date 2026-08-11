@@ -22,11 +22,11 @@ jobs:
     if: github.event.pull_request.draft == false
     # Self-hosted runner (fikirtive-mac): GitHub-hosted minutes are metered on a private
     # repo, and a 2026-08 billing failure froze every merge for two days (#577). The runner
-    # registers ONE job slot, so quality runs are serialized by construction — the same
-    # discipline local runs enforce with pgrep (two concurrent runs starve packages/db into
-    # false reds). Postgres is the machine's own server (same role quality.sh defaults to);
-    # there is no Docker on this runner, so no `services:` block — quality.sh creates and
-    # drops its own per-run `*_test` database either way.
+    # registers ONE job slot (serializes CI-vs-CI); quality.sh's own machine-wide mutex
+    # serializes CI-vs-local. Postgres is the machine's own server (same role quality.sh
+    # defaults to); there is no Docker on this runner, so no `services:` block —
+    # quality.sh creates a unique per-run `*_test` database and force-drops it on exit,
+    # in CI exactly as locally (the old GITHUB_ACTIONS skip-path is gone).
     # Caveat, stated honestly: CI now depends on that one machine being awake. If it is
     # off, checks queue until it returns. The `quality` check name and its gates are
     # byte-identical to before — only the floor it runs on changed.
@@ -142,16 +142,9 @@ jobs:
             build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
             build-${{ runner.os }}-node22-
 
-      # One machine, one database server: a quality run started locally (an agent's
-      # pre-push gate) and this job would starve each other into false reds if they
-      # overlapped. The runner itself serializes CI-vs-CI; this guard serializes CI-vs-local.
-      - name: Wait for any locally started quality run to finish
-        if: steps.scope.outputs.code != 'false'
-        run: |
-          while pgrep -f "^bash scripts/ci/quality.sh" >/dev/null; do
-            echo "a local quality run is holding the machine — waiting 30s"
-            sleep 30
-          done
-
+      # CI-vs-local serialization is NOT handled here: quality.sh itself takes a
+      # machine-wide mutex (atomic mkdir + stale-pid recovery), so whichever run
+      # starts second — this job or a locally started gate — waits its turn inside
+      # the script. The runner's single job slot already serializes CI-vs-CI.
       - if: steps.scope.outputs.code != 'false'
         run: pnpm quality

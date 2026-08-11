@@ -122,27 +122,65 @@ drop_local_database() {
   '
 }
 
-if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
-  local_database="${FIKIRTIVE_TEST_DB:-fikirtive_$$_${RANDOM}_test}"
-  if [[ ! "$local_database" =~ ^[a-z0-9_]+_test$ ]]; then
-    echo "quality: FIKIRTIVE_TEST_DB must match ^[a-z0-9_]+_test$" >&2
-    exit 1
+# One machine, one Postgres: two overlapping quality runs starve each other into
+# false reds (hook timeouts in packages/db — measured repeatedly on this repo), so a
+# run first takes a machine-wide mutex. mkdir is atomic; the pid file inside makes a
+# crashed holder detectable, and only a lock whose recorded pid is provably dead is
+# stolen. An empty pid file is the tiny window between mkdir and the write — always
+# wait on it, never steal it.
+quality_lock_dir="${QUALITY_LOCK_DIR:-${TMPDIR:-/tmp}/fikirtive-quality.lock}"
+quality_lock_held=""
+acquire_quality_lock() {
+  while true; do
+    if mkdir "$quality_lock_dir" 2>/dev/null; then
+      echo "$$" > "$quality_lock_dir/pid"
+      quality_lock_held=1
+      return 0
+    fi
+    local holder
+    holder="$(cat "$quality_lock_dir/pid" 2>/dev/null || true)"
+    if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+      echo "quality: removing stale lock left by dead pid $holder"
+      rm -rf "$quality_lock_dir"
+      continue
+    fi
+    echo "quality: another quality run (pid ${holder:-starting}) holds this machine — waiting 30s"
+    sleep 30
+  done
+}
+
+# Single EXIT trap for both responsibilities: bash keeps only one, so the database
+# drop and the lock release live in one function. The lock must outlive the drop.
+cleanup_quality_run() {
+  if [[ -n "$local_database" && "${FIKIRTIVE_KEEP_TEST_DB:-}" != "1" ]]; then
+    drop_local_database
   fi
-  DATABASE_URL="$(DATABASE_URL="$base_database_url" FIKIRTIVE_TEST_DB="$local_database" node -e '
-    const url = new URL(process.env.DATABASE_URL);
-    url.pathname = `/${process.env.FIKIRTIVE_TEST_DB}`;
-    process.stdout.write(url.toString());
-  ')"
-  export DATABASE_URL
-  export FIKIRTIVE_TEST_DB="$local_database"
-  create_local_database
-  if [[ "${FIKIRTIVE_KEEP_TEST_DB:-}" != "1" ]]; then
-    trap drop_local_database EXIT
+  if [[ -n "$quality_lock_held" ]]; then
+    rm -rf "$quality_lock_dir"
   fi
-  echo "quality: using isolated local database $local_database"
-else
-  export DATABASE_URL="$base_database_url"
+}
+
+# CI and local runs take the same path on purpose — there used to be a
+# GITHUB_ACTIONS branch that skipped database creation because GitHub-hosted
+# runners got a fresh dockerized Postgres per run. On a self-hosted runner that
+# assumption silently inverts: reusing one long-lived database across PRs loses the
+# fresh-database guarantee. One path, per-run database, force-dropped on exit.
+acquire_quality_lock
+trap cleanup_quality_run EXIT
+local_database="${FIKIRTIVE_TEST_DB:-fikirtive_$$_${RANDOM}_test}"
+if [[ ! "$local_database" =~ ^[a-z0-9_]+_test$ ]]; then
+  echo "quality: FIKIRTIVE_TEST_DB must match ^[a-z0-9_]+_test$" >&2
+  exit 1
 fi
+DATABASE_URL="$(DATABASE_URL="$base_database_url" FIKIRTIVE_TEST_DB="$local_database" node -e '
+  const url = new URL(process.env.DATABASE_URL);
+  url.pathname = `/${process.env.FIKIRTIVE_TEST_DB}`;
+  process.stdout.write(url.toString());
+')"
+export DATABASE_URL
+export FIKIRTIVE_TEST_DB="$local_database"
+create_local_database
+echo "quality: using isolated database $local_database"
 
 # ── gate order ─────────────────────────────────────────────────────────────────
 # Same gates as before, nothing dropped — only reordered so a failure surfaces as
