@@ -104,22 +104,107 @@ create_local_database() {
   '
 }
 
-drop_local_database() {
+# The drop runs on the exit path, and on the exit path a hang is not a slow drop —
+# it is a machine-wide outage. Cleanup never reaches the lock release, the run
+# becomes an abandoned holder of the machine mutex, and every later run starves on
+# it (#855, measured 2026-08-11: one DROP sat 1h31m, its run held the lock 2h12m,
+# two CI runs died waiting). So the drop is bounded three times over:
+#   - Postgres aborts the statement itself (statement_timeout). DROP ... WITH
+#     (FORCE) waits on other backends, and on a loaded machine that wait has no
+#     ceiling of its own.
+#   - node exits hard on error instead of setting process.exitCode: an errored
+#     client is still connected, and an open socket keeps the event loop — and the
+#     whole cleanup — alive forever.
+#   - a pure-bash watchdog kills the process tree if anything UPSTREAM of the
+#     statement is what wedged (connect, pnpm, node startup).
+# Every budget is far below the job budget on purpose: an abandoned drop costs one
+# stray database, a wedged drop costs the machine.
+quality_drop_timeout_seconds="${QUALITY_DROP_TIMEOUT_SECONDS:-60}"
+
+drop_local_database_now() {
   FIKIRTIVE_TEST_DB="$local_database" pnpm --filter @fikirtive/db exec node -e '
     const { Client } = require("pg");
     const target = process.env.FIKIRTIVE_TEST_DB;
     const url = new URL(process.env.DATABASE_URL);
     url.pathname = "/postgres";
     (async () => {
-      const client = new Client({ connectionString: url.toString() });
+      const client = new Client({
+        connectionString: url.toString(),
+        connectionTimeoutMillis: 15000,
+      });
       await client.connect();
+      await client.query("SET statement_timeout = 30000");
       await client.query(`DROP DATABASE IF EXISTS "${target}" WITH (FORCE)`);
       await client.end();
     })().catch((error) => {
       console.error(`quality: failed to drop isolated test database: ${error.message}`);
-      process.exitCode = 1;
+      process.exit(1);
     });
   '
+}
+
+# run_with_timeout lives in the lock library below — defined later in the file,
+# resolved at call time, which is inside the EXIT trap.
+drop_local_database() {
+  run_with_timeout "$quality_drop_timeout_seconds" drop_local_database_now
+}
+
+# >>> quality-lock library ─────────────────────────────────────────────────────
+# Everything between these two markers is extracted verbatim and sourced by
+# scripts/ci/quality-lock.drill.sh, which exercises it against a throwaway
+# QUALITY_LOCK_DIR. Keep this block free of anything that needs the database, the
+# network, or an installed workspace: the drill has to be able to run the real
+# code on a machine where nothing is built.
+
+# Kill a process and everything below it, children first. Parent-first kills hand
+# the children to pid 1, which is how #855 also left a vitest burning CPU for two
+# hours after its run was cancelled. Returns 0 only when the target is provably
+# gone; callers use that answer to decide whether taking over the target's lock is
+# safe.
+kill_process_tree() {
+  local pid="$1" child waited=0
+  # Never aim at init, at "the whole process group" (pid 0), or at ourselves.
+  if [[ ! "$pid" =~ ^[0-9]+$ ]] || (( pid <= 1 )) || [[ "$pid" == "$$" || "$pid" == "${BASHPID:-}" ]]; then
+    return 1
+  fi
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill_process_tree "$child" || true
+  done
+  kill -0 "$pid" 2>/dev/null || return 0
+  kill -TERM "$pid" 2>/dev/null || true
+  while (( waited < 5 )); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 1
+    waited=$((waited + 1))
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+  sleep 1
+  ! kill -0 "$pid" 2>/dev/null
+}
+
+# macOS ships no GNU `timeout` and CI must not depend on Homebrew being on PATH,
+# so the watchdog is pure bash: run the command in the background, poll once a
+# second, kill its whole tree when the budget is spent. Returns the command's own
+# status, or 124 (timeout(1)'s convention) when the budget ran out. Polling with
+# `kill -0` is safe here because bash reaps background children as they exit, so a
+# finished child stops being visible while `wait` still reports its status.
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  local status=0 waited=0 child
+  "$@" &
+  child=$!
+  while (( waited < seconds )); do
+    if ! kill -0 "$child" 2>/dev/null; then
+      wait "$child" || status=$?
+      return "$status"
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  kill_process_tree "$child" || true
+  wait "$child" 2>/dev/null || true
+  return 124
 }
 
 # One machine, one Postgres: two overlapping quality runs starve each other into
@@ -133,6 +218,10 @@ drop_local_database() {
 # user shells (local runs) — an env-dependent lock path would quietly stop excluding.
 quality_lock_dir="${QUALITY_LOCK_DIR:-/tmp/fikirtive-quality.lock}"
 quality_lock_held=""
+
+# How long an ORPHANED holder may keep the machine before waiters treat its lock
+# as abandoned. See holder_is_abandoned_orphan for why orphan ≠ dead.
+quality_orphan_grace_seconds="${QUALITY_ORPHAN_GRACE_SECONDS:-120}"
 
 # A lock is stale when its recorded pid is provably dead, or when it has sat for
 # over 60s with no pid at all (a healthy holder writes its pid milliseconds after
@@ -175,14 +264,46 @@ path_age_seconds() {
   fi
 }
 
-# Returns 0 if the CURRENT lock at $quality_lock_dir is stale (dead pid, or no pid
-# and older than 60s). Must be called with the arbiter held for a steal decision.
+# The third staleness rule, and the only one that judges a LIVE process (#855).
+# A cancelled CI job leaves quality.sh running but reparented to pid 1: its
+# launcher is gone, so nobody will ever read its result, and if it is wedged in
+# cleanup (the incident: a DROP DATABASE that sat 1h31m) it will never release the
+# lock either. "Provably dead" never fires for such a holder, so before this rule
+# every later run simply waited until its own job timeout killed it — the machine
+# was starved by a process no one wanted any more.
+#
+# PPID 1 is the honest signal that the holder was abandoned rather than merely
+# slow, and the grace period is what keeps the rule from being a race: the holder
+# must ALSO have owned the machine longer than the grace period, so a run that is
+# reparented milliseconds before finishing is left alone.
+#
+# ACCEPTED COST: a run deliberately detached from its launcher (`nohup`, `disown`,
+# a background job whose parent shell exits) is orphaned from birth and therefore
+# reads as abandoned once past the grace period — it can be killed and its lock
+# taken. Attended runs — CI, a terminal, any launcher that outlives the run — are
+# untouched, and every steal names the pid it killed. Raise
+# QUALITY_ORPHAN_GRACE_SECONDS if a detached run must survive longer.
+holder_is_abandoned_orphan() {
+  local holder="$1" ppid
+  ppid="$(ps -p "$holder" -o ppid= 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$ppid" == "1" ]] || return 1
+  (( $(path_age_seconds "$quality_lock_dir") > quality_orphan_grace_seconds ))
+}
+
+# Returns 0 if the CURRENT lock at $quality_lock_dir is stale (dead pid, abandoned
+# orphan pid, or no pid and older than 60s). Must be called with the arbiter held
+# for a steal decision.
 current_lock_is_stale() {
   local holder age
   holder="$(cat "$quality_lock_dir/pid" 2>/dev/null || true)"
   if [[ -n "$holder" ]]; then
-    ! kill -0 "$holder" 2>/dev/null
-    return
+    if ! kill -0 "$holder" 2>/dev/null; then
+      return 0
+    fi
+    if holder_is_abandoned_orphan "$holder"; then
+      return 0
+    fi
+    return 1
   fi
   age="$(path_age_seconds "$quality_lock_dir")"
   (( age > 60 ))
@@ -202,15 +323,39 @@ try_steal_stale_lock() {
   if ! mkdir "$quality_steal_arbiter" 2>/dev/null; then
     return 1  # another stealer is arbitrating — just go back to waiting
   fi
+  local outcome=0
   if current_lock_is_stale; then
-    local graveyard="${quality_lock_dir}.stale.$$"
-    if mv "$quality_lock_dir" "$graveyard" 2>/dev/null; then
-      echo "quality: reclaimed stale lock"
-      rm -rf "$graveyard"
+    local holder take=1
+    holder="$(cat "$quality_lock_dir/pid" 2>/dev/null || true)"
+    if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+      # Only the orphan rule can call a LIVE holder stale, and an abandoned holder
+      # has to be gone BEFORE its lock changes hands: it still owns a wedged
+      # cleanup whose last act is `rm -rf $quality_lock_dir`, which would delete
+      # the next holder's brand-new lock, and its children may still be burning the
+      # CPU the next run needs. kill_process_tree only reports success once the
+      # holder is provably dead, so that cleanup has already run by then.
+      echo "quality: lock holder pid $holder is an orphan (PPID 1) past ${quality_orphan_grace_seconds}s — clearing it before taking the lock"
+      if kill_process_tree "$holder"; then
+        echo "quality: cleared abandoned holder pid $holder and its children"
+      else
+        # A lock held by a process we could not stop is not ours to give away.
+        # Returning non-zero sends the caller back to its 30s wait instead of
+        # spinning on a steal that cannot succeed.
+        echo "quality: could not kill abandoned holder pid $holder — NOT stealing its lock; recover manually with: kill -9 $holder && rm -rf $quality_lock_dir" >&2
+        take=0
+        outcome=1
+      fi
+    fi
+    if (( take )); then
+      local graveyard="${quality_lock_dir}.stale.$$"
+      if mv "$quality_lock_dir" "$graveyard" 2>/dev/null; then
+        echo "quality: reclaimed stale lock"
+        rm -rf "$graveyard"
+      fi
     fi
   fi
   rmdir "$quality_steal_arbiter" 2>/dev/null || rm -rf "$quality_steal_arbiter"
-  return 0
+  return "$outcome"
 }
 
 acquire_quality_lock() {
@@ -243,14 +388,19 @@ acquire_quality_lock() {
     sleep 30
   done
 }
+# <<< quality-lock library ─────────────────────────────────────────────────────
 
 # Single EXIT trap for both responsibilities: bash keeps only one, so the database
 # drop and the lock release live in one function. Each step is guarded so no step
 # can abort the function under `set -e` — the lock release must run even when the
-# database drop fails (Postgres down, run SIGTERMed mid-create, ...).
+# database drop fails (Postgres down, run SIGTERMed mid-create, ...) and, since
+# #855, even when the drop does not fail but simply never answers: the drop is
+# time-bounded, so this function always reaches the release below. Leaving a stray
+# database is litter (its name is unique to this run); leaving the machine locked
+# is an outage.
 cleanup_quality_run() {
   if [[ -n "$local_database" && "${FIKIRTIVE_KEEP_TEST_DB:-}" != "1" ]]; then
-    drop_local_database || echo "quality: test-database drop failed — leaving $local_database behind" >&2
+    drop_local_database || echo "quality: test-database drop failed or timed out after ${quality_drop_timeout_seconds}s — leaving $local_database behind and releasing the machine anyway" >&2
   fi
   if [[ -n "$quality_lock_held" ]]; then
     rm -rf "$quality_lock_dir" || true
