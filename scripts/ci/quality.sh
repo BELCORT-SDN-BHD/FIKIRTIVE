@@ -133,6 +133,30 @@ drop_local_database() {
 # user shells (local runs) — an env-dependent lock path would quietly stop excluding.
 quality_lock_dir="${QUALITY_LOCK_DIR:-/tmp/fikirtive-quality.lock}"
 quality_lock_held=""
+
+# Stealing a stale lock must itself be atomic: two waiters can both judge the same
+# lock dead. Renaming the directory decides the winner — exactly one mv succeeds,
+# the loser's mv fails on the now-missing path and goes back to waiting on the
+# winner's fresh lock. Never rm -rf the live path: between "judged dead" and "rm",
+# the path may already be someone else's brand-new lock.
+steal_stale_lock() {
+  local graveyard="${quality_lock_dir}.stale.$$"
+  if mv "$quality_lock_dir" "$graveyard" 2>/dev/null; then
+    echo "quality: reclaimed stale lock ($1)"
+    rm -rf "$graveyard"
+  fi
+}
+
+lock_age_seconds() {
+  local mtime
+  mtime="$(stat -f %m "$quality_lock_dir" 2>/dev/null || stat -c %Y "$quality_lock_dir" 2>/dev/null || true)"
+  if [[ -z "$mtime" ]]; then
+    echo 0
+  else
+    echo $(( $(date +%s) - mtime ))
+  fi
+}
+
 acquire_quality_lock() {
   while true; do
     if mkdir "$quality_lock_dir" 2>/dev/null; then
@@ -143,9 +167,20 @@ acquire_quality_lock() {
     local holder
     holder="$(cat "$quality_lock_dir/pid" 2>/dev/null || true)"
     if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
-      echo "quality: removing stale lock left by dead pid $holder"
-      rm -rf "$quality_lock_dir"
+      steal_stale_lock "held by dead pid $holder"
       continue
+    fi
+    if [[ -z "$holder" ]]; then
+      # No pid file: the holder is inside the mkdir→write-pid window (milliseconds),
+      # or it died inside it. Age decides — a healthy holder writes its pid long
+      # before 60s, so an old pid-less lock can only be a corpse. Without this, a
+      # crash in that window would park every later run forever.
+      local age
+      age="$(lock_age_seconds)"
+      if (( age > 60 )); then
+        steal_stale_lock "no pid recorded after ${age}s"
+        continue
+      fi
     fi
     echo "quality: another quality run (pid ${holder:-starting}) holds this machine — waiting 30s"
     sleep 30
@@ -153,13 +188,15 @@ acquire_quality_lock() {
 }
 
 # Single EXIT trap for both responsibilities: bash keeps only one, so the database
-# drop and the lock release live in one function. The lock must outlive the drop.
+# drop and the lock release live in one function. Each step is guarded so no step
+# can abort the function under `set -e` — the lock release must run even when the
+# database drop fails (Postgres down, run SIGTERMed mid-create, ...).
 cleanup_quality_run() {
   if [[ -n "$local_database" && "${FIKIRTIVE_KEEP_TEST_DB:-}" != "1" ]]; then
-    drop_local_database
+    drop_local_database || echo "quality: test-database drop failed — leaving $local_database behind" >&2
   fi
   if [[ -n "$quality_lock_held" ]]; then
-    rm -rf "$quality_lock_dir"
+    rm -rf "$quality_lock_dir" || true
   fi
 }
 
@@ -169,12 +206,18 @@ cleanup_quality_run() {
 # assumption silently inverts: reusing one long-lived database across PRs loses the
 # fresh-database guarantee. One path, per-run database, force-dropped on exit.
 acquire_quality_lock
+# Trap goes on right after the lock so no exit path leaks it. At this point
+# local_database is still "" — cleanup only releases the lock. The name is
+# validated BEFORE it is assigned to local_database, so the FORCE-drop in cleanup
+# can never see an unvalidated name (FIKIRTIVE_TEST_DB=fikirtive must die at the
+# validation, not reach DROP DATABASE — that is the dev database).
 trap cleanup_quality_run EXIT
-local_database="${FIKIRTIVE_TEST_DB:-fikirtive_$$_${RANDOM}_test}"
-if [[ ! "$local_database" =~ ^[a-z0-9_]+_test$ ]]; then
+requested_database="${FIKIRTIVE_TEST_DB:-fikirtive_$$_${RANDOM}_test}"
+if [[ ! "$requested_database" =~ ^[a-z0-9_]+_test$ ]]; then
   echo "quality: FIKIRTIVE_TEST_DB must match ^[a-z0-9_]+_test$" >&2
   exit 1
 fi
+local_database="$requested_database"
 DATABASE_URL="$(DATABASE_URL="$base_database_url" FIKIRTIVE_TEST_DB="$local_database" node -e '
   const url = new URL(process.env.DATABASE_URL);
   url.pathname = `/${process.env.FIKIRTIVE_TEST_DB}`;
