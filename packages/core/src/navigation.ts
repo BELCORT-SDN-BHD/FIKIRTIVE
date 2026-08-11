@@ -183,11 +183,50 @@ export function everyNavDestination(): readonly MerchantNavLink[] {
   return [OTTO_ASSISTANT, ...merchantNavLinks()];
 }
 
+/** 分组名与组内项之间的那一格 —— 商家跟着走的那条路只有这一种写法。 */
+export const NAV_PATH_SEPARATOR = "›";
+
+/**
+ * 一条目的地在商家眼里的**完整路名**:组内的写成「Workspace › Schedule」,顶层的就是它
+ * 自己的名字。
+ *
+ * #802:Otto 说出口的每一个地名都从这里取,提示词里不再手打第二份。名字改一个字,Otto 的
+ * 指路话与导轨同时改口 —— 这正是 #801 把导航收成一棵树要买的东西。
+ */
+export function navPath(key: string): string {
+  if (key === OTTO_ASSISTANT.key) return OTTO_ASSISTANT.label;
+  for (const node of MERCHANT_NAV) {
+    if (!isNavGroup(node)) {
+      if (node.key === key) return node.label;
+      continue;
+    }
+    const item = node.items.find((child) => child.key === key);
+    if (item) return `${node.label} ${NAV_PATH_SEPARATOR} ${item.label}`;
+  }
+  throw new Error(`navPath: no navigation destination with key "${key}"`);
+}
+
+/**
+ * Otto 可以说出口的**全部**地名:助手、顶层板块、分组名,以及组内每一条的完整路名。
+ *
+ * 围栏的枚举源(#802):Otto 描述面里凡是写成路的地方,都必须落在这份名单内 —— 名单外的
+ * 名字一律视为编造。
+ */
+export function navPointableNames(): readonly string[] {
+  const names: string[] = [OTTO_ASSISTANT.label];
+  for (const node of MERCHANT_NAV) {
+    names.push(node.label);
+    if (!isNavGroup(node)) continue;
+    for (const item of node.items) names.push(navPath(item.key));
+  }
+  return names;
+}
+
 /**
  * 给 Otto 读的界面地图。
  *
- * 它从同一棵树生成,所以 Otto 说的路与导轨画的路不可能对不上。#802 会在这份地图上做更细
- * 的技能;在那之前,这一段已经足够让 Otto 把商家送到对的地方。
+ * 它从同一棵树生成,所以 Otto 说的路与导轨画的路不可能对不上。路名走 navPath(),因此地图
+ * 里的写法与提示词其他段落里的写法必然是同一种。
  */
 export function merchantNavMap(): string {
   const lines: string[] = [];
@@ -199,7 +238,7 @@ export function merchantNavMap(): string {
     }
     lines.push(`- ${node.label}`);
     for (const item of node.items) {
-      lines.push(`  - ${node.label} › ${item.label} (${item.href}) — ${item.does}`);
+      lines.push(`  - ${navPath(item.key)} (${item.href}) — ${item.does}`);
     }
   }
   return lines.join("\n");

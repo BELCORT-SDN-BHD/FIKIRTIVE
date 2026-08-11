@@ -13,11 +13,14 @@ import {
   CREATE_NAV_LABEL,
   MERCHANT_NAV,
   MERCHANT_NAV_REDIRECTS,
+  NAV_PATH_SEPARATOR,
   OTTO_ASSISTANT,
   everyNavDestination,
   isNavGroup,
   merchantNavLinks,
   merchantNavMap,
+  navPath,
+  navPointableNames,
 } from "./navigation.js";
 
 describe("MERCHANT_NAV 的形状", () => {
@@ -109,7 +112,53 @@ describe("两个日历择一为准", () => {
   });
 });
 
+describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
+  it("组内的写成「分组 › 子项」,顶层的就是它自己的名字", () => {
+    expect(navPath("schedule")).toBe("Workspace › Schedule");
+    expect(navPath("connections")).toBe("Settings › Connections");
+    expect(navPath("create")).toBe(CREATE_NAV_LABEL);
+    expect(navPath("otto")).toBe(OTTO_ASSISTANT.label);
+  });
+
+  it("不存在的 key 直接炸 —— 不许静默返回一个编出来的名字", () => {
+    expect(() => navPath("insights")).toThrow(/insights/);
+  });
+
+  it("每一条目的地都取得到路名,且路名与地图里的写法逐字一致", () => {
+    const map = merchantNavMap();
+    for (const item of everyNavDestination()) {
+      const path = navPath(item.key);
+      expect(path.trim().length, item.key).toBeGreaterThan(0);
+      expect(map, `${item.key} 的路名与地图写法不一致`).toContain(`${path} (${item.href})`);
+    }
+  });
+
+  it("可说出口的名单 = 助手 + 顶层板块 + 分组名 + 每条完整路名,一条不多一条不少", () => {
+    const names = navPointableNames();
+    const expected = [
+      OTTO_ASSISTANT.label,
+      ...MERCHANT_NAV.flatMap((node) =>
+        isNavGroup(node) ? [node.label, ...node.items.map((item) => navPath(item.key))] : [node.label],
+      ),
+    ];
+    expect([...names].sort()).toEqual([...expected].sort());
+    expect(new Set(names).size, "名单里不许有重名").toBe(names.length);
+  });
+
+  it("分组名是单个词 —— Otto 侧围栏按这个形状取词(#802)", () => {
+    // 这条不是洁癖:packages/otto 的界面地图围栏用「分隔符两侧」认路名,分组名一旦带空格,
+    // 那道围栏会取错左半边并**变红**。真要给分组起一个两词的名字,先改那道围栏再改这里。
+    for (const group of MERCHANT_NAV.filter(isNavGroup)) {
+      expect(group.label, `${group.key} 的分组名带了空格`).not.toMatch(/\s/);
+    }
+  });
+});
+
 describe("给 Otto 的界面地图", () => {
+  it("路名用的是同一个分隔符(围栏按它认路)", () => {
+    expect(merchantNavMap()).toContain(`Workspace ${NAV_PATH_SEPARATOR} Schedule`);
+  });
+
   it("从同一棵树生成 —— 每一条门都在地图里", () => {
     const map = merchantNavMap();
     for (const item of everyNavDestination()) {
