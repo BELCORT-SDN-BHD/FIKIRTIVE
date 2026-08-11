@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   backupKeyFor,
+  backupTriggerMode,
   isBackupWindow,
   klDateString,
   klHour,
@@ -59,6 +60,29 @@ describe("isBackupWindow (trigger decision table: KL time >= 03:00)", () => {
       expect(isBackupWindow(new Date(utc))).toBe(expected);
     });
   }
+});
+
+describe("backupTriggerMode (#794② — exactly one trigger owns the backup)", () => {
+  it("defaults to the worker timer when BACKUP_TRIGGER is unset", () => {
+    expect(backupTriggerMode({})).toBe("worker-timer");
+  });
+
+  it("hands the trigger to cron on BACKUP_TRIGGER=cron", () => {
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "cron" })).toBe("cron");
+  });
+
+  it("tolerates the shapes a Railway variable actually arrives in", () => {
+    expect(backupTriggerMode({ BACKUP_TRIGGER: " CRON " })).toBe("cron");
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "Cron" })).toBe("cron");
+  });
+
+  it("falls back to the timer for any other value — the backup never has ZERO triggers", () => {
+    // The failure worth designing against is "nobody runs it". A typo'd value must land
+    // on the shape that still fires, not on silence.
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "" })).toBe("worker-timer");
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "railway" })).toBe("worker-timer");
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "true" })).toBe("worker-timer");
+  });
 });
 
 describe("selectExpiredBackups (30-day retention, dates parsed from keys)", () => {

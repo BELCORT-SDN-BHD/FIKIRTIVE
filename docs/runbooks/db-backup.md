@@ -1,21 +1,85 @@
-# 数据库夜间备份(P0-1②,判决 7-1 = ③)
+# 数据库夜间备份(P0-1②,判决 7-1 = ③;#794 备份可信化)
 
-## 跑什么、什么时候跑
-- worker 的 5 分钟定时循环(`apps/worker/src/db-backup.ts`)每次 tick 检查:
-  吉隆坡时间 ≥ 03:00 且当天的 R2 key 不存在 → 跑 `pg_dump --format=custom
-  --no-owner --no-privileges` → gzip → 上传。key 存在 = 当晚已备份(exactly-once
-  闸,无新增 DB 状态);某晚失败会在下一个 tick 自愈重试。失败只记日志 + Sentry,
-  永不弄崩 worker。
+## 谁触发(#794 ②:定时器 → Railway cron)
+`BACKUP_TRIGGER` 一个变量决定,永远只有一个触发方在跑:
+
+| `BACKUP_TRIGGER` | 谁跑 | 什么时候 |
+|---|---|---|
+| `cron`(**目标形态**) | Railway cron 服务,启动命令 `node apps/worker/dist/backup-cron.js` | cron 表达式说了算(见下) |
+| 未设 / 其它值(旧形态) | worker 自己的 5 分钟循环 | 吉隆坡时间 ≥ 03:00 的第一个 tick |
+
+**为什么要搬**:定时器把整个系统里最重要的一张安全网,挂在了最不可靠的一根钉子上 ——
+一个同时在跑生成、发布、渲染的长驻进程。它在 03:00 那一刻正好在崩溃重启、被 OOM 杀掉
+或者正在部署,当晚的备份就不会发生,而且**没有任何东西会说这件事**。cron 是独立调度器,
+有自己的运行历史:漏跑会在 Railway 的运行列表里留下一条红的,而定时器漏跑不留任何痕迹。
+
+**Founder 侧配置(Railway 控制台,agent 不碰)**:
+1. 在 worker 服务上置 `BACKUP_TRIGGER=cron` —— 这会让 worker 的定时器路径变成 no-op。
+2. 新建一个服务,**用同一个 worker 镜像/同一份仓库**,环境变量与 worker 一致
+   (`DATABASE_URL` / `STORAGE_DRIVER=r2` / `R2_*` / `SENTRY_DSN` / `BACKUP_TRIGGER=cron`)。
+3. 该服务的 Start Command 改成 `node apps/worker/dist/backup-cron.js`。
+4. Cron Schedule 填 `0 19 * * *` —— UTC 19:00 = 吉隆坡 03:00(KL 是 UTC+8,无夏令时)。
+   Railway 的 cron 按 UTC 解释,别填 `0 3 * * *`。
+5. 手动跑一次确认:该服务运行一次应当退出码 0,日志出现 `[backup-cron] ok: backups/db/…`。
+
+cron 入口的行为:**不再检查 03:00 窗口**(cron 表达式本身就是窗口,再检查一次会把
+founder 的手动补跑悄悄吞掉),但**保留当天 key 已存在就跳过**的 exactly-once 闸,
+所以同一天重复跑是廉价的 no-op,不会产生第二份 dump。真失败才退出码 1 ——
+Railway 上一条红的 cron run 就一定意味着「备份坏了」,而不是「这不是生产环境」。
+
+## 跑什么
+- `pg_dump --format=custom --no-owner --no-privileges` → gzip → 上传
+  (`apps/worker/src/db-backup.ts`)。连接串只经 PG* 环境变量传,永不进 argv,
+  所以任何日志/异常里都不会带出口令。
 - 只在 `STORAGE_DRIVER=r2` 时生效;本地开发(local driver)自动跳过。
 
-## 备份放在哪
-- 与内容同一个 R2 bucket,key:`backups/db/fikirtive-<YYYY-MM-DD>.dump.gz`
-  (吉隆坡日期)。`backups/` 前缀在 `u/<ownerId>/` 内容寻址方案之外,
-  `/files` 路由只认 `u/` key —— 备份对浏览器永远不可达。
+## 备份放在哪 + 用哪把钥匙(#794 ④)
+- key:`backups/db/fikirtive-<YYYY-MM-DD>.dump.gz`(吉隆坡日期)。
+  `backups/` 前缀在 `u/<ownerId>/` 内容寻址方案之外,`/files` 路由只认 `u/` key
+  —— 备份对浏览器永远不可达。
+- **凭据**:默认与内容存储共用 `R2_ACCESS_KEY_ID`。这是债 #2 点名的一半问题 ——
+  偷到应用那把钥匙的人,同时也拿到了那些本来用来在内容丢了之后救命的备份。
+  置上 `R2_BACKUP_ACCESS_KEY_ID` + `R2_BACKUP_SECRET_ACCESS_KEY`(必须成对,
+  半套是硬启动错误、绝不静默回退到共用钥匙)后,备份改用单独铸的 token 写。
+  `R2_BACKUP_BUCKET` / `R2_BACKUP_ENDPOINT` 可选,默认沿用内容的。
+- 用了哪一族凭据**记在每一行 `BackupRun` 上**,admin 面板报的是「上一次真的用了什么」,
+  不是「现在 env 里配了什么」——后者会在改配置但没重启时说谎。
+
+**Founder 侧配置(Cloudflare 控制台,agent 不碰)**:
+1. R2 → 目标 bucket → Settings → 打开 **Object versioning**。
+   有了版本历史,即使 token 被滥用发起删除,旧版本仍在 —— 这是「只写 token」真正的底。
+2. R2 → Manage R2 API Tokens → 新建 token,权限 **Object Read & Write**,
+   **Specify bucket** 只勾这一个 bucket。把 Access Key ID / Secret 填进 worker 与
+   cron 服务的 `R2_BACKUP_*`。
+3. **保留策略的取舍**:R2 的控制台 token 目前不能按前缀(`backups/`)细分,
+   也没有「纯只写」档。所以两条路二选一,别两边都留着:
+   - **(推荐)** token 给 Object Read & Write,代码继续做 30 天裁剪。versioning 兜底删除。
+   - token 收成只读+写不删(或用 R2 lifecycle rule 做裁剪):代码里的裁剪会失败,
+     但**失败只影响裁剪、不会把当晚成功的备份记成失败**(#794 已把两件事拆开,
+     裁剪失败单独进日志/Sentry)。
 
 ## 保留策略
 - 上传成功后清理:`backups/db/` 下 key 里日期早于 30 天前的对象删除。
   只按 key 命名匹配删,不认识的对象一律不碰。
+- 裁剪失败**不改变当晚备份的成败结论**(#794):dump 传上去了就是成功了,
+  删旧文件删不掉是另一件事,分开记、分开告警。
+
+## 新鲜度怎么看(#794 ③)
+每次备份尝试(成功与失败)都往 `BackupRun` 表落一行,append-only,永不改写。
+「最近一次 `succeeded` 行的 `finishedAt`」就是新鲜度的唯一依据 ——
+一次失败绝不会把上一次成功从面板上抹掉。
+
+| 看哪里 | 看到什么 | 谁用 |
+|---|---|---|
+| `GET /api/health` | `{"backup":"fresh"\|"stale"\|"missing"\|"unknown"}` | 外部监控。关键词告警建议盯 `"backup":"stale"` 与 `"backup":"missing"` |
+| `/admin/system` → Database backup | 距上次成功多少小时、dump 多大、跑了多久、哪个 trigger、是不是隔离凭据、之后有没有失败过 | Founder |
+| `/admin`(首页 risk signals) | Database backup 一格,stale/never 时变红 | Founder |
+
+- **门槛 30 小时**:备份每 KL 日一份,24 小时是节拍本身,留 6 小时余量吸收
+  「跑晚了/重试了/部署窗口错开了」。漏整整一晚 = 48 小时,远超门槛,必被抓到。
+- **/api/health 的 HTTP 状态码不受备份影响**:备份不新鲜不代表站点宕机,
+  算进 503 会让现有 uptime 监控在一次跑晚时误报整站故障。
+- 这个端点免鉴权,所以只吐三个词:不报 key 名、不报大小、不报时间戳。细节去 admin 看。
 
 ## 完整恢复步骤(⚠️ 没有恢复演练的备份不算备份)
 先在本地 docker Postgres 演练一遍,确认 dump 可用,再考虑动真库:
