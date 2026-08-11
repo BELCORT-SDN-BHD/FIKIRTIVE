@@ -128,7 +128,10 @@ drop_local_database() {
 # crashed holder detectable, and only a lock whose recorded pid is provably dead is
 # stolen. An empty pid file is the tiny window between mkdir and the write — always
 # wait on it, never steal it.
-quality_lock_dir="${QUALITY_LOCK_DIR:-${TMPDIR:-/tmp}/fikirtive-quality.lock}"
+# Fixed /tmp on purpose, NOT $TMPDIR: a mutex only works if every party resolves the
+# same path, and on macOS TMPDIR differs between launchd services (the CI runner) and
+# user shells (local runs) — an env-dependent lock path would quietly stop excluding.
+quality_lock_dir="${QUALITY_LOCK_DIR:-/tmp/fikirtive-quality.lock}"
 quality_lock_held=""
 acquire_quality_lock() {
   while true; do
