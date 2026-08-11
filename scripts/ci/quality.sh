@@ -346,6 +346,26 @@ quality_lock_held=""
 # the wrong run is not a mutex.
 quality_lock_token="$$.$(date +%s).${RANDOM}${RANDOM}"
 
+# The shape of what is written inside the lock, so that two quality.sh versions
+# sharing one machine can tell each other's locks apart. During any rollout they
+# WILL share it: a self-hosted runner keeps running jobs from older commits while
+# the new one lands.
+#
+# FORWARD AND BACKWARD POLICY, one sentence: a shape we cannot fully read is
+# never a corpse. Concretely —
+#   - no marker at all (a lock from before this scheme): the only verdicts allowed
+#     are the ones that need no field comparison — a pid that is provably dead, or
+#     no pid at all past the corpse threshold. Anything that would compare the
+#     recorded identity is off, because an older quality.sh recorded it under
+#     whatever locale it happened to run in and the two strings are not
+#     comparable. A live holder of such a lock is simply waited for.
+#   - a marker we do not recognise (a NEWER quality.sh holds the machine): no
+#     verdict at all. We cannot assume its `pid` file even means what ours does,
+#     so we conclude nothing and wait, loudly.
+# Bump this ONLY when the meaning or the set of files inside the lock changes; a
+# future version reading THIS lock will then take the same conservative path.
+quality_lock_format=1
+
 # How long an ORPHANED holder may keep the machine before waiters treat its lock
 # as abandoned. See holder_is_abandoned_orphan for why orphan ≠ dead.
 quality_orphan_grace_seconds="${QUALITY_ORPHAN_GRACE_SECONDS:-120}"
@@ -429,6 +449,7 @@ lock_field() {
 # (reclaim_if_snapshot_unchanged). No branch is exempt — not the ones where the
 # holder is obviously dead.
 quality_snapshot_present=""
+quality_snapshot_format=""
 quality_snapshot_token=""
 quality_snapshot_pid=""
 quality_snapshot_identity=""
@@ -437,6 +458,7 @@ quality_snapshot_inode=""
 
 read_lock_snapshot() {
   quality_snapshot_present=""
+  quality_snapshot_format=""
   quality_snapshot_token=""
   quality_snapshot_pid=""
   quality_snapshot_identity=""
@@ -445,11 +467,24 @@ read_lock_snapshot() {
   [[ -d "$quality_lock_dir" ]] || return 1
   quality_snapshot_inode="$(lock_inode_number "$quality_lock_dir")"
   quality_snapshot_mtime="$(lock_mtime_epoch "$quality_lock_dir")"
+  quality_snapshot_format="$(lock_field format)"
   quality_snapshot_token="$(lock_field token)"
   quality_snapshot_identity="$(lock_field identity)"
   quality_snapshot_pid="$(lock_field pid)"
   quality_snapshot_present=1
   return 0
+}
+
+# Do we understand the shape well enough to compare its recorded fields with
+# what we would write ourselves? Only an exact format match earns that.
+snapshot_format_is_ours() {
+  [[ "$quality_snapshot_format" == "$quality_lock_format" ]]
+}
+
+# A shape from the future — a newer quality.sh holds this machine. Nothing in it
+# can be interpreted, not even its pid file, so nothing may be concluded from it.
+snapshot_format_is_unreadable() {
+  [[ -n "$quality_snapshot_format" ]] && [[ "$quality_snapshot_format" != "$quality_lock_format" ]]
 }
 
 # Is the directory on the path still, byte for byte, the snapshot we judged?
@@ -461,6 +496,7 @@ lock_matches_snapshot() {
   [[ -d "$quality_lock_dir" ]] || return 1
   [[ "$(lock_inode_number "$quality_lock_dir")" == "$quality_snapshot_inode" ]] || return 1
   [[ "$(lock_mtime_epoch "$quality_lock_dir")" == "$quality_snapshot_mtime" ]] || return 1
+  [[ "$(lock_field format)" == "$quality_snapshot_format" ]] || return 1
   [[ "$(lock_field token)" == "$quality_snapshot_token" ]] || return 1
   [[ "$(lock_field pid)" == "$quality_snapshot_pid" ]] || return 1
   [[ "$(lock_field identity)" == "$quality_snapshot_identity" ]]
@@ -522,6 +558,18 @@ snapshot_is_stale() {
   local age live
   quality_stale_reason=""
   [[ -n "$quality_snapshot_present" ]] || return 1
+
+  # A shape we cannot read is not a corpse. Not one verdict below — not even
+  # "the pid is dead" — is safe here, because in an unknown layout we cannot be
+  # sure the file named `pid` holds the holder's pid at all.
+  if snapshot_format_is_unreadable; then
+    return 1
+  fi
+
+  # These two verdicts compare nothing: "no process wears that pid" and "no pid
+  # was recorded at all" are true or false whatever the rest of the layout is.
+  # They are therefore the only ones an older, marker-less lock may reach — and
+  # they are also the ones that cannot possibly harm a live process.
   if [[ -z "$quality_snapshot_pid" ]]; then
     [[ -n "$quality_snapshot_mtime" ]] || return 1
     age=$(( $(date +%s) - quality_snapshot_mtime ))
@@ -535,10 +583,18 @@ snapshot_is_stale() {
     quality_stale_reason="dead"
     return 0
   fi
+
+  # Past this point the holder is ALIVE, and every remaining verdict rests on
+  # comparing the identity the lock recorded against the one we read now. That
+  # comparison is only meaningful when the lock was written by this exact format:
+  # an older quality.sh wrote its identity under whatever locale it ran in, and
+  # comparing that string with ours would read a perfectly healthy holder as a
+  # recycled pid — and reclaim a live lock. So an unrecognised shape with a live
+  # holder is waited for, never judged.
+  snapshot_format_is_ours || return 1
+  [[ -n "$quality_snapshot_identity" ]] || return 1
   live="$(process_start_signature "$quality_snapshot_pid")"
-  if [[ -z "$quality_snapshot_identity" || -z "$live" ]]; then
-    return 1
-  fi
+  [[ -n "$live" ]] || return 1
   if [[ "$quality_snapshot_identity" != "$live" ]]; then
     quality_stale_reason="reused"
     return 0
@@ -677,6 +733,7 @@ acquire_quality_lock() {
       # a bounded stall (worst case ~90s: the 60s pid-less age threshold plus one
       # 30s poll), which is the price of never deleting somebody else's lock.
       quality_lock_held=1
+      printf '%s\n' "$quality_lock_format" > "$quality_lock_dir/format"
       printf '%s\n' "$quality_lock_token" > "$quality_lock_dir/token"
       process_start_signature "$$" > "$quality_lock_dir/identity"
       echo "$$" > "$quality_lock_dir/pid"
@@ -693,7 +750,16 @@ acquire_quality_lock() {
     fi
     local holder
     holder="$(lock_field pid)"
-    echo "quality: another quality run (pid ${holder:-starting}) holds this machine — waiting 30s"
+    # The snapshot was refreshed by the staleness check just above. Say plainly
+    # when the machine is held by a shape this version cannot read — otherwise a
+    # wait that will never end on its own looks exactly like an ordinary queue.
+    if snapshot_format_is_unreadable; then
+      echo "quality: the machine lock was written by a NEWER quality.sh (lock format $quality_snapshot_format, this script speaks $quality_lock_format) — waiting 30s and judging nothing about it" >&2
+    elif [[ -z "$quality_snapshot_format" && -n "$holder" ]]; then
+      echo "quality: the machine lock was written by an OLDER quality.sh (no format marker) — waiting 30s; a live holder of such a lock is never reclaimed" >&2
+    else
+      echo "quality: another quality run (pid ${holder:-starting}) holds this machine — waiting 30s"
+    fi
     sleep 30
   done
 }

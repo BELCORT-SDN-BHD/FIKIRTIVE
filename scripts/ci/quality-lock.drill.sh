@@ -120,8 +120,8 @@ trap drill_cleanup EXIT
 # reported as a pass.
 # 3 (free machine) + 5 (pre-existing rules) + 3 (recycled pid) + 5 (attended)
 # + 7 (cancellation) + 4 (orphan cross-generation race) + 5 (dead-branch race)
-# + 3 (watchdog)
-expected_checks=35
+# + 7 (other versions' locks) + 3 (watchdog)
+expected_checks=42
 pass=0
 fail=0
 skip=0
@@ -235,6 +235,7 @@ ready="$2"
 . "$lib"
 while true; do
   if mkdir "$quality_lock_dir" 2>/dev/null; then
+    printf '%s\n' "$quality_lock_format" >"$quality_lock_dir/format"
     printf '%s\n' "$quality_lock_token" >"$quality_lock_dir/token"
     process_start_signature "$$" >"$quality_lock_dir/identity"
     echo $$ >"$quality_lock_dir/pid"
@@ -272,10 +273,12 @@ if [[ -d "$quality_lock_dir" && "$(lock_field pid)" == "$$" && -n "$quality_lock
 else
   bad "acquire did not take a free lock"
 fi
-if [[ "$(lock_field token)" == "$quality_lock_token" && "$(lock_field identity)" == "$(process_start_signature "$$")" ]]; then
-  ok "the lock carries this run's generation token and start signature"
+if [[ "$(lock_field format)" == "$quality_lock_format" &&
+  "$(lock_field token)" == "$quality_lock_token" &&
+  "$(lock_field identity)" == "$(process_start_signature "$$")" ]]; then
+  ok "the lock carries its format marker, this run's generation token and its start signature"
 else
-  bad "the lock is missing its identity"
+  bad "the lock is missing part of its identity"
 fi
 rm -rf "$quality_lock_dir"
 quality_lock_held=""
@@ -336,6 +339,9 @@ mkdir "$quality_lock_dir"
 bash -c 'sleep 100000' &
 stranger=$!
 record "$stranger"
+# Written by THIS version — the marker is what licenses the identity comparison
+# below. (Scene 8 covers what happens when the marker is absent or unknown.)
+printf '%s\n' "$quality_lock_format" >"$quality_lock_dir/format"
 printf '%s\n' "not-our-token" >"$quality_lock_dir/token"
 # A start time that cannot possibly be the live process's, paired with a pid that
 # is very much alive: exactly what pid recycling looks like from the outside.
@@ -565,9 +571,96 @@ else
 fi
 kill_process_tree "$holder_c" "" >/dev/null 2>&1 || true
 
-# ── 8. the drop watchdog ──────────────────────────────────────────────────────
+# ── 8. locks written by another version of quality.sh ─────────────────────────
+# A self-hosted runner keeps running jobs from older commits while a new one
+# lands, so during any rollout two versions share this machine and each will meet
+# the other's locks. The rule under test: a shape we cannot fully read is never a
+# corpse. What survives that rule is only what needs no field comparison — a pid
+# that is provably dead — because that verdict cannot harm anything alive.
 echo ""
-echo "8. the timeout that keeps cleanup moving"
+echo "8. a lock written by a different version of quality.sh"
+reset_lock
+bash -c 'sleep 100000' &
+legacy_holder=$!
+record "$legacy_holder"
+
+# (a) the shape that predates all of this: a pid file and nothing else.
+mkdir "$quality_lock_dir"
+echo "$legacy_holder" >"$quality_lock_dir/pid"
+backdate "$quality_lock_dir" 3600
+if current_lock_is_stale; then
+  bad "a marker-less lock with a LIVE holder was judged $quality_stale_reason"
+else
+  ok "a marker-less lock with a live holder is waited for, not judged"
+fi
+try_steal_stale_lock >/dev/null 2>&1 || true
+if [[ -d "$quality_lock_dir" ]] && ! process_is_gone "$legacy_holder"; then
+  ok "an explicit steal attempt leaves that lock and its holder alone"
+else
+  bad "the old-format lock or its holder did not survive a steal attempt"
+fi
+
+# (b) the shape this PR wrote before the format marker existed: token and
+#     identity present, but the identity was recorded under some other locale, so
+#     the two strings describe the same process and do not match. Without the
+#     marker this reads as a recycled pid — and a live lock gets reclaimed.
+foreign_identity="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 ps -p "$legacy_holder" -o lstart= 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' || true)"
+if [[ -z "$foreign_identity" || "$foreign_identity" == "$(process_start_signature "$legacy_holder")" ]]; then
+  # No German locale here. What is under test is "written under a rendering we
+  # cannot reproduce", not German, so hand-build one that is just as plausible.
+  foreign_identity="Di $(process_start_signature "$legacy_holder" | cut -d' ' -f2-)"
+fi
+reset_lock
+mkdir "$quality_lock_dir"
+printf '%s\n' "token-from-an-older-quality" >"$quality_lock_dir/token"
+printf '%s\n' "$foreign_identity" >"$quality_lock_dir/identity"
+echo "$legacy_holder" >"$quality_lock_dir/pid"
+backdate "$quality_lock_dir" 3600
+if current_lock_is_stale; then
+  bad "a marker-less lock whose identity is unreadable was judged $quality_stale_reason — that is a live lock"
+else
+  ok "an identity we cannot reproduce is unverifiable, not evidence of a recycled pid"
+fi
+
+# (c) the same old shape, but its holder really is dead. This verdict compares
+#     nothing and cannot hurt anyone, so it must still work — otherwise a crashed
+#     old-version run would hold the machine forever.
+kill_process_tree "$legacy_holder" "" >/dev/null 2>&1 || true
+wait_for_gone "$legacy_holder" 15 || true
+if current_lock_is_stale && [[ "$quality_stale_reason" == "dead" ]]; then
+  ok "an old-format lock whose holder is provably dead is still a corpse"
+else
+  bad "a dead old-format holder was judged ${quality_stale_reason:-not stale}"
+fi
+try_steal_stale_lock >/dev/null 2>&1 || true
+if [[ ! -d "$quality_lock_dir" ]]; then
+  ok "and it is still reclaimed, so a crashed old run cannot hold the machine forever"
+else
+  bad "the dead old-format lock was not reclaimed"
+fi
+
+# (d) a shape from the future: a newer quality.sh holds the machine. Nothing in
+#     it may be interpreted — not even a pid that looks dead.
+reset_lock
+mkdir "$quality_lock_dir"
+printf '%s\n' "999" >"$quality_lock_dir/format"
+echo "$legacy_holder" >"$quality_lock_dir/pid" # a pid that is definitely dead by now
+backdate "$quality_lock_dir" 3600
+if current_lock_is_stale; then
+  bad "a lock in an unknown future format was judged $quality_stale_reason"
+else
+  ok "an unknown future format yields no verdict at all, dead-looking pid or not"
+fi
+try_steal_stale_lock >/dev/null 2>&1 || true
+if [[ -d "$quality_lock_dir" ]]; then
+  ok "and a steal attempt leaves it exactly where it is"
+else
+  bad "a future-format lock was reclaimed"
+fi
+
+# ── 9. the drop watchdog ──────────────────────────────────────────────────────
+echo ""
+echo "9. the timeout that keeps cleanup moving"
 status=0
 run_with_timeout 30 bash -c 'exit 7' || status=$?
 if [[ "$status" == "7" ]]; then
