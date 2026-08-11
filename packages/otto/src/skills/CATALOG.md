@@ -44,6 +44,7 @@
 | readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the same owner-scoped action layer the merc |
 | readSpending | free | read | internal | ❌ | Read the workspace's credit balance and recent credit history — the same rows th |
 | readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, immutable revisions, Routine authorization |
+| recommendTemplates | free | read | internal | ❌ | Look up the built-in template library — ready-made one-tap scenarios written for |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
 | renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — never spends |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
