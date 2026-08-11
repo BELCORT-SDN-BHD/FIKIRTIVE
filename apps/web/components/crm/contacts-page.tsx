@@ -33,8 +33,14 @@ type ImportSuccess = Extract<ImportContactsResult, { ok: true }>;
  * r2 (判词 5232132441 P2②) — what the import actually did with the phone columns, counted from
  * the rows it is printed above. A file with no phone column says nothing about phones, because
  * "phone numbers were saved" would then be a sentence about something that never happened.
+ *
+ * r3 (r2 判词追加 P2) — the broadcast caveat is tied to `stored`, not to the sentence as a whole.
+ * In the all-conflict shape (nothing stored, everything skipped) this file created no unverified
+ * number at all, and the numbers it skipped live on other contacts where they may already be
+ * channel-verified and perfectly usable. "Saved numbers are not used for broadcasts" there is a
+ * claim about rows this import did not write, so it may only appear when something was written.
  */
-function importPhoneSummary(rows: ImportSuccess["rows"]): string {
+export function importPhoneSummary(rows: ImportSuccess["rows"]): string {
   const stored = rows.reduce((total, row) => total + row.storedPhoneCount, 0);
   const skipped = rows.reduce((total, row) => total + row.skippedPhoneCount, 0);
   const parts: string[] = [];
@@ -45,7 +51,8 @@ function importPhoneSummary(rows: ImportSuccess["rows"]): string {
     parts.push(`${skipped} skipped because ${skipped === 1 ? "it is" : "they are"} already saved on another contact`);
   }
   if (!parts.length) return "No phone numbers were stored from this file.";
-  return `${parts.join(" · ")}. Saved numbers are not used for broadcasts.`;
+  const caveat = stored ? " Saved numbers are not used for broadcasts." : "";
+  return `${parts.join(" · ")}.${caveat}`;
 }
 type CreateSuccess = Extract<Awaited<ReturnType<typeof createContact>>, { ok: true }>;
 type StageFilter = "all" | "New" | "Active" | "Dormant";
