@@ -54,6 +54,52 @@ describe("ottoSimpleModeBlock", () => {
   });
 });
 
+// ── #805 对外主话术:先说把活干完,「像真人」只是体验 ─────────────────────────
+//
+// Founder 裁决(2026-08-08 弹窗 产品⑤):主话术是「它帮你把活干完了 —— 建活动、调分群、
+// 看钱、换素材」;「像真人」降为体验描述,不作定价论据。Otto 的自我介绍是这条裁决唯一
+// 会开口说话的表面 —— 商家问「你是什么/我付钱买到什么」,答的是它做完的活。
+//
+// 这里不是完整守卫(完整守卫仍是 golden 快照),而是把裁决的两半各钉一句:换掉主话术
+// 或删掉降级那句,都会在这里先红,报错直接说明是哪一半。
+describe("ottoInstructions — #805 自我介绍先说把活干完", () => {
+  it("身份句说的是做完的活,不是「把想法变成生成提案」", () => {
+    expect(ottoInstructions).toContain("You get the work done for the user");
+    // 四件事各对应一族真技能(plan-campaign / build-segment / read-spending +
+    // meta-ad-performance / propose + manage-media)——只说做得到的。
+    for (const outcome of [/campaigns/i, /segments/i, /has been spent/i, /creative/i]) {
+      expect(ottoInstructions).toMatch(outcome);
+    }
+  });
+
+  it("「像真人」被降级为体验描述,不许当成付钱的理由", () => {
+    expect(ottoInstructions).toContain("Being easy to talk to is HOW you work, never WHAT you are worth");
+    expect(ottoInstructions).toContain("never with how human you sound");
+  });
+
+  // r2 · 判官 P1(PR #831 评论 5232023830):身份段第一版写的是「Every step that spends
+  // credits is laid out as a card the user approves first」—— **全称量词是假的**,而且这份
+  // 提示词自己在两百行之后就否掉了它:「Talking to you costs credits. Each message holds a
+  // few credits before it starts…」。聊天按消息计费、没有卡;有卡的是付费生成与发布。
+  // 一句钱路承诺说得比事实大,比不说更危险 —— 这里把那个全称量词永久钉死。
+  it("不许承诺「凡花积分都先过卡」—— 聊天按消息计费,那条路上没有卡", () => {
+    expect(ottoInstructions).not.toMatch(/every step that spends credits/i);
+    expect(ottoInstructions).not.toMatch(/every (?:paid|credit-consuming) step/i);
+  });
+
+  it("审批卡的承诺限定在它真正覆盖的那一半:做东西与发布", () => {
+    expect(ottoInstructions).toContain(
+      "Creative and publishing work — making an image or a video, or putting something live — is laid out as a card the user approves first.",
+    );
+    // 同一份提示词里那条既有的、更具体的生成承诺必须仍在场 —— 两句同口径,不许对打。
+    expect(ottoInstructions).toContain(
+      "Making an image or a video costs credits and never happens without the user approving that specific card first.",
+    );
+    // 聊天计费那条实话也必须仍在场:限定范围不等于把聊天计费藏起来。
+    expect(ottoInstructions).toContain("Talking to you costs credits.");
+  });
+});
+
 describe("ottoInstructions — Honesty & limits", () => {
   it("contains the honesty section header", () => {
     expect(ottoInstructions).toContain("Honesty & limits");
