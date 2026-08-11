@@ -22,17 +22,26 @@
  * 接法见 docs/ops/incident-visibility.md 与 docs/ops/worker-services.md。
  */
 import { prisma } from "@fikirtive/db";
-import { bestEffort, workersHealth } from "@/lib/health";
+import { bestEffort, singleFlight, workersHealth } from "@/lib/health";
 import { bootMigrationStatus } from "@/lib/boot-status";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * 心跳读取:**同一时刻只有一个在途查询**(#796 判官 r3 P2-1)。
+ *
+ * `bestEffort` 的超时只是放弃等待,底层查询还挂着占一条连接;库持续挂住时,每次探针都
+ * 多积一个永不结束的任务 —— 100 次探针 = 100 条被占住的连接。一个只读一行心跳的端点
+ * 反而把连接池压垮,这不能接受。加上 single-flight 之后:100 次探针共享 1 次查询。
+ */
+const readHeartbeats = singleFlight(() => prisma.workerHeartbeat.findMany());
 
 export async function GET(): Promise<Response> {
   const migrations = bootMigrationStatus(process.env);
   // #796 判官 r1 P2-2:拆分之后每个角色写自己的心跳行(`worker` / `worker-compute` /
   // `worker-wait`)。顶层 `worker` 字段含义不变(至少一班活着),按班真相在 `workers` 里。
   // bestEffort:失败和挂住是同一个结果 —— 不知道,但我还活着。
-  const rows = await bestEffort(() => prisma.workerHeartbeat.findMany());
+  const rows = await bestEffort(readHeartbeats);
   if (!rows) {
     return Response.json({ ok: true, db: "unknown", worker: "unknown", workers: {}, migrations }, { status: 200 });
   }

@@ -3,7 +3,7 @@
  * worker 心跳每 60s 一次;5 分钟无心跳 = stale(容忍部署重启窗口),无记录 = unknown。
  */
 import { describe, it, expect } from "vitest";
-import { bestEffort, workerStatus, workersHealth, WORKER_STALE_MS } from "../health";
+import { bestEffort, singleFlight, workerStatus, workersHealth, WORKER_STALE_MS } from "../health";
 
 describe("workerStatus", () => {
   const now = new Date("2026-07-04T12:00:00Z");
@@ -88,5 +88,63 @@ describe("bestEffort(存活探针的顺带读取)", () => {
       process.off("unhandledRejection", onRejection);
     }
     expect(seen).toEqual([]);
+  });
+});
+
+/**
+ * #796 判官 r3 P2-1 —— 超时只是放弃等待,底层查询还挂着占一条连接。
+ *
+ * 判官造的形状:库持续挂住时,100 次探针 = 100 个永不结束的任务,一个「只读一行心跳」的
+ * 端点反而把连接池压垮,顺手拖垮真正要用库的请求。single-flight 让这 100 次共享 1 次查询。
+ */
+describe("singleFlight(在途查询只许有一个)", () => {
+  it("100 次并发调用只发起 1 次底层查询", async () => {
+    let started = 0;
+    const shared = singleFlight(async () => {
+      started++;
+      await new Promise((r) => setTimeout(r, 20));
+      return "ok";
+    });
+    const results = await Promise.all(Array.from({ length: 100 }, () => shared()));
+    expect(started).toBe(1);
+    expect(results.every((r) => r === "ok")).toBe(true);
+  });
+
+  it("库挂住时也只积一个未结束的任务,不是一次探针一个", async () => {
+    let started = 0;
+    const shared = singleFlight(() => { started++; return new Promise<string>(() => {}); }); // 永不 settle
+    // 100 次「探针」,每次都放弃等待(bestEffort 的行为)
+    for (let i = 0; i < 100; i++) await bestEffort(shared, 1);
+    expect(started).toBe(1); // ← 判官那个形状:此前会是 100
+  });
+
+  it("一趟结束之后,下一次调用会重新发起 —— 库恢复后不需要任何额外动作", async () => {
+    let started = 0;
+    const shared = singleFlight(async () => { started++; return started; });
+    await shared();
+    await shared();
+    expect(started).toBe(2);
+  });
+
+  it("失败也算一趟结束:下一次会重试,而且不留下 unhandledRejection", async () => {
+    const seen: unknown[] = [];
+    const onRejection = (e: unknown) => seen.push(e);
+    process.on("unhandledRejection", onRejection);
+    try {
+      let started = 0;
+      const shared = singleFlight(async () => { started++; throw new Error(`boom ${started}`); });
+      await expect(bestEffort(shared, 50)).resolves.toBeNull();
+      await expect(bestEffort(shared, 50)).resolves.toBeNull();
+      expect(started).toBe(2);
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it("并发的调用者拿到的是同一个 promise(共享,不是各跑各的)", () => {
+    const shared = singleFlight(() => new Promise<void>(() => {}));
+    expect(shared()).toBe(shared());
   });
 });

@@ -19,6 +19,18 @@ import {
 } from "../../scripts/boot.mjs";
 import { MIGRATION_STATUS_ENV, bootMigrationStatus } from "../boot-status";
 
+/**
+ * 造一个测试用的 env。
+ *
+ * 必须带上 `NODE_ENV`:`next-env.d.ts` 把 `NodeJS.ProcessEnv` 增强成**必填** `NODE_ENV`,
+ * 所以 `{ …: "failed" } as NodeJS.ProcessEnv` 会被 TS2352 挡下(#796 判官 r3 P1-3 —— 这三处
+ * 让 `apps/web` 的全量 typecheck 变红,而分包 typecheck 看不见它)。
+ */
+const env = (status?: string): NodeJS.ProcessEnv => ({
+  NODE_ENV: "test",
+  ...(status === undefined ? {} : { [MIGRATION_STATUS_ENV]: status }),
+});
+
 describe("runMigrations", () => {
   it("一次就成 ⇒ applied,不多跑一次迁移", async () => {
     const calls: string[][] = [];
@@ -77,12 +89,12 @@ describe("启动脚本与 /api/health 之间的那一根信道", () => {
   });
 
   it("只有明确写了 failed 才报 failed", () => {
-    expect(bootMigrationStatus({} as NodeJS.ProcessEnv)).toBe("applied");
-    expect(bootMigrationStatus({ [MIGRATION_STATUS_ENV]: "applied" } as NodeJS.ProcessEnv)).toBe("applied");
-    expect(bootMigrationStatus({ [MIGRATION_STATUS_ENV]: "failed" } as NodeJS.ProcessEnv)).toBe("failed");
+    expect(bootMigrationStatus(env())).toBe("applied");
+    expect(bootMigrationStatus(env("applied"))).toBe("applied");
+    expect(bootMigrationStatus(env("failed"))).toBe("failed");
   });
 
   it("认不出的值按 applied 处理 —— 缺省不制造假警报", () => {
-    expect(bootMigrationStatus({ [MIGRATION_STATUS_ENV]: "maybe" } as NodeJS.ProcessEnv)).toBe("applied");
+    expect(bootMigrationStatus(env("maybe"))).toBe("applied");
   });
 });

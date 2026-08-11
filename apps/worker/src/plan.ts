@@ -277,18 +277,24 @@ export function dbPoolPlan(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.en
 /**
  * Prisma 这个进程**真正**会用的池上限。
  *
- * 判官 r2 P1-4:明账不许说谎。优先级必须跟 `packages/db/src/index.ts` 里那行
- * `Number(process.env.DB_POOL_MAX) || 10` **完全一致** —— 显式设过就是显式值(哪怕它比
- * 我们算的下限低,`dbPoolPlan` 也只警告不覆盖),没设才轮到角色下限,再没有才是包默认。
+ * 明账不许说谎(判官 r2 P1-4 / r3 P1-2),而「真正」只有一个定义:
+ * `packages/db/src/index.ts` 里那一行 —— `max: Number(process.env.DB_POOL_MAX) || 10`。
+ * 所以这里的算法就是**先算出客户端建起来那一刻 env 里会是什么,再原样套那行**:
  *
- * r2 的写法把下限排在 env 前面,于是运维显式设 30 时,Prisma 真的用 30(每副本 44),
- * 而日志报 38。一个报小了的明账比没有明账更糟:人是照着它去核 max_connections 的。
+ *   1. `dbPoolPlan` 决定 worker 会不会替运维把 `DB_POOL_MAX` 顶上去(只有抬了并发的角色会);
+ *   2. 把最终的那个字符串丢进 `Number(raw) || 10`。
+ *
+ * 两处曾经算错的地方,都在这一行里被消掉了:
+ *   - r2 把角色下限排在 env 前面 → 显式 30 被报成下限 24(真实 44 报成 38)。
+ *   - r3 又漏了另一半:显式 `0` 或垃圾值时 `dbPoolPlan` 只警告**不覆盖**,于是 env 里留着
+ *     那个坏值,Prisma 的 `|| 10` 把它变成 **10** —— 而当时的写法退回角色下限 24,wait 角色
+ *     的日志会报 38,真实只有 24。现在 0/垃圾值在**所有角色**下都落 10,与 db 逐字一致。
  */
 export function effectivePrismaPoolMax(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): number {
-  const explicit = Number((env.DB_POOL_MAX ?? "").trim());
-  // `|| 10` 的语义:0、空串、NaN 都落回默认 —— 这里逐条对齐,不自作主张。
-  if (Number.isFinite(explicit) && explicit > 0) return explicit;
-  return plan.dbPoolFloor ?? PRISMA_POOL_DEFAULT;
+  const decision = dbPoolPlan(plan, env);
+  // worker 会替它设默认值 ⇒ 客户端读到的就是那个默认值;否则读到运维留下的原样字符串。
+  const raw = decision.action === "default" ? String(decision.value) : env.DB_POOL_MAX;
+  return Number(raw) || PRISMA_POOL_DEFAULT; // ← packages/db 的那一行,逐字
 }
 
 /**

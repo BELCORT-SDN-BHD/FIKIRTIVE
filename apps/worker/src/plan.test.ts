@@ -236,12 +236,55 @@ describe("连接预算:Prisma 与 pg-boss 两个池都要进账(判官 P1-3)", (
       expect(effectivePrismaPoolMax(workerPlan({} as NodeJS.ProcessEnv), {} as NodeJS.ProcessEnv)).toBe(PRISMA_POOL_DEFAULT);
     });
 
-    it("0 / 空串 / 垃圾值的处理与 packages/db 的 `|| 10` 逐条对齐", () => {
-      // packages/db: Number(env) || 10 —— 0、""、NaN 全部落回默认。这里不许自作主张地不一样。
-      const allPlan = workerPlan({} as NodeJS.ProcessEnv);
-      for (const junk of ["0", "", "  ", "abc", "-3"]) {
-        expect(effectivePrismaPoolMax(allPlan, { DB_POOL_MAX: junk } as NodeJS.ProcessEnv)).toBe(PRISMA_POOL_DEFAULT);
+    /**
+     * 判官 r3 P1-2:r2 这条只测了 `all` 角色 —— 它的下限恰好也是 10,于是「退回下限」和
+     * 「退回包默认」两种错误写法给出同一个数,把 wait 路径的真 bug 盖住了。
+     *
+     * wait 路径才是要害:显式 `0` 或垃圾值时 `dbPoolPlan` 只警告**不覆盖**,env 里留着坏值,
+     * Prisma 的 `|| 10` 把它变成 10;而按下限报会写成 24(日志 38,真实 24)。
+     */
+    it("设了但是坏值(0 / 垃圾)在**每个角色**下都落 10 —— worker 不覆盖它,Prisma 的 `|| 10` 兜住它", () => {
+      // 这类值 dbPoolPlan 只警告不覆盖 ⇒ 坏值原样留在 env 里 ⇒ packages/db 的 `|| 10` 把它变成 10。
+      // r3 之前这里会退回角色下限,wait 就报成 24(合计 38),而真实只有 10(合计 24)。
+      const badValues = ["0", "abc", "NaN"];
+      const plans = {
+        all: workerPlan({} as NodeJS.ProcessEnv),                         // 下限 null —— 与默认同值,单测它会掩盖错误
+        compute: workerPlan({ WORKER_ROLE: "compute" } as NodeJS.ProcessEnv),
+        wait: waitPlan,                                                    // 下限 24 —— 只有这条能暴露 bug
+      };
+      for (const [role, plan] of Object.entries(plans)) {
+        for (const bad of badValues) {
+          const got = effectivePrismaPoolMax(plan, { DB_POOL_MAX: bad } as NodeJS.ProcessEnv);
+          expect(`${role}/${bad}=${got}`).toBe(`${role}/${bad}=${PRISMA_POOL_DEFAULT}`);
+        }
       }
+      // 合计行也必须跟着报 10,不是 24
+      expect(connectionBudgetLine(waitPlan, { DB_POOL_MAX: "0" } as NodeJS.ProcessEnv))
+        .toContain(`prisma ${PRISMA_POOL_DEFAULT} + pg-boss ${waitPlan.pgBossPoolMax} = ${PRISMA_POOL_DEFAULT + waitPlan.pgBossPoolMax!}`);
+    });
+
+    it("空串 / 全空白算「没设」—— worker 会替它设下限,所以报的是下限,不是 10", () => {
+      // 这一类和上一类必须分开:dbPoolPlan 把空串当没设并**真的写进 env**(index.ts 那一行),
+      // 所以 Prisma 读到的是下限。把两类混在一起测,就会把其中一类的真相测反。
+      for (const blank of ["", "  "]) {
+        expect(effectivePrismaPoolMax(waitPlan, { DB_POOL_MAX: blank } as NodeJS.ProcessEnv)).toBe(waitPlan.dbPoolFloor);
+        // 没抬并发的角色没有下限可写 ⇒ 落包默认
+        expect(effectivePrismaPoolMax(workerPlan({} as NodeJS.ProcessEnv), { DB_POOL_MAX: blank } as NodeJS.ProcessEnv))
+          .toBe(PRISMA_POOL_DEFAULT);
+      }
+    });
+
+    it("负数被原样报出来 —— `|| 10` 只兜住 falsy,-3 是 truthy,packages/db 真会拿它去建池", () => {
+      // 明账的职责是**说实话**,不是替配置擦屁股。-3 在日志里刺眼是好事:它旁边就站着
+      // dbPoolPlan 的警告。要修的是那个配置(或将来修 packages/db),不是这行报数。
+      expect(effectivePrismaPoolMax(waitPlan, { DB_POOL_MAX: "-3" } as NodeJS.ProcessEnv)).toBe(-3);
+      expect(dbPoolPlan(waitPlan, { DB_POOL_MAX: "-3" } as NodeJS.ProcessEnv).action).toBe("warn");
+    });
+
+    it("wait 角色的垃圾值:dbPoolPlan 仍然只警告不覆盖(所以坏值真的会留在 env 里)", () => {
+      // 这是上一条成立的前提。哪天 dbPoolPlan 改成覆盖坏值,这里会先红,提醒一起改明账。
+      expect(dbPoolPlan(waitPlan, { DB_POOL_MAX: "abc" } as NodeJS.ProcessEnv).action).toBe("warn");
+      expect(dbPoolPlan(waitPlan, { DB_POOL_MAX: "0" } as NodeJS.ProcessEnv).action).toBe("warn");
     });
 
     it("显式值也参与合计 —— 每副本总数跟着一起变", () => {

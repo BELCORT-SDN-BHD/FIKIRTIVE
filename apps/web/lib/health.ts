@@ -49,6 +49,12 @@ export function workersHealth(
 export const HEALTH_DOWNSTREAM_TIMEOUT_MS = 1_000;
 
 /**
+ * 就绪探针等数据库的上限。比存活那条宽:这里 DB 是**判断依据**,值得多给一点时间;
+ * 但仍然有界 —— 一个永远不回话的查询等同于「没准备好」,不该把探针一起拖到平台超时。
+ */
+export const READY_DATABASE_TIMEOUT_MS = 3_000;
+
+/**
  * 顺带读:成功返回值,失败或超时返回 null。**永不抛**。
  *
  * 为什么必须有这个:r2 的存活端点直接 `await` 了一次数据库查询,库不可达时它回 503。
@@ -67,4 +73,25 @@ export async function bestEffort<T>(work: () => Promise<T>, timeoutMs = HEALTH_D
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * 同一时刻只允许**一个**在途查询,后来的探针共享它(#796 判官 r3 P2-1)。
+ *
+ * 单有 `bestEffort` 不够:超时只是**放弃等待**,底层那次查询还挂在那儿占着一条连接。
+ * 库持续挂住时,每来一次探针就多积一个永不结束的任务 —— 100 次探针 = 100 条被占住的连接,
+ * 于是一个「只读一行心跳」的端点反而把连接池压垮,顺手把真正要用库的请求一起拖下水。
+ *
+ * 有了它:100 次探针只会有 1 次查询在途;那次查询一旦结束(成功或失败),下一次探针才会
+ * 重新发起 —— 所以库恢复之后不需要任何额外动作就能自己报回 up。
+ */
+export function singleFlight<T>(work: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | null = null;
+  return () => {
+    if (pending) return pending;
+    // `finally` 里清空:成功、失败都算「这一趟结束了」,下一次探针可以重新发起。
+    const attempt = work().finally(() => { if (pending === attempt) pending = null; });
+    pending = attempt;
+    return attempt;
+  };
 }

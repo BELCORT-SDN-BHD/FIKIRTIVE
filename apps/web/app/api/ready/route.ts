@@ -14,9 +14,22 @@
  * 免鉴权(proxy.ts matcher 已排除),与 /api/health 同样零敏感数据。
  */
 import { prisma } from "@fikirtive/db";
+import { READY_DATABASE_TIMEOUT_MS, bestEffort, singleFlight } from "@/lib/health";
 import { bootMigrationStatus } from "@/lib/boot-status";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * 就绪探针也必须**有界**且**不堆积**(#796 判官 r3 P2-1 的同一条道理)。
+ *
+ * 它跟存活探针不同的地方只有一处:这里 DB 查不通就是「没准备好」,该回 503。相同的地方是
+ * 两条 —— 不许无限期挂着(挂住 = 探针超时,平台照样判不就绪,但我们已经白占了一条连接),
+ * 也不许每来一次探针就多积一个永不结束的查询。所以同样是 single-flight + 有界等待。
+ */
+const pingDatabase = singleFlight(async () => {
+  await prisma.$queryRaw`SELECT 1`;
+  return true as const;
+});
 
 export async function GET(): Promise<Response> {
   const migrations = bootMigrationStatus(process.env);
@@ -27,11 +40,10 @@ export async function GET(): Promise<Response> {
       { status: 503 },
     );
   }
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    return Response.json({ ready: true, db: "up", migrations }, { status: 200 });
-  } catch {
-    // 连不上数据库的容器接了流量也只会回一堆 500 —— 同样不该被切过去。
+  // 连不上、或久到不回话的数据库:容器接了流量也只会回一堆 500 —— 同样不该被切过去。
+  const reachable = await bestEffort(pingDatabase, READY_DATABASE_TIMEOUT_MS);
+  if (!reachable) {
     return Response.json({ ready: false, reason: "database-unreachable", db: "down", migrations }, { status: 503 });
   }
+  return Response.json({ ready: true, db: "up", migrations }, { status: 200 });
 }
