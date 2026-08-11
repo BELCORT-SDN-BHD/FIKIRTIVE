@@ -26,6 +26,16 @@ describe("approvedToolCostInternal — the second leg of one approval", () => {
     expect(approvedToolCostInternal("generateReferences", { count: 6 })).toBe(60);
   });
 
+  it("BASE is single-image at the charging site, so a BASE ask never counts more than one", () => {
+    // startRefGen: effectiveCount = mode === "REFSHEET" ? count : 1. Counting 6 here would refuse
+    // approvals the ledger would have allowed — the one direction that is NOT safe.
+    const one = pricedRefgenCredits({ model: "seedream", count: 1 });
+    expect(approvedToolCostInternal("generateReferences", { count: 6, mode: "BASE" })).toBe(one);
+    // REFSHEET is the schema default, explicit or not.
+    expect(approvedToolCostInternal("generateReferences", { count: 6, mode: "REFSHEET" })).toBe(60);
+    expect(approvedToolCostInternal("generateReferences", { count: 6 })).toBe(60);
+  });
+
   it("a malformed or missing count reads as the schema default of 1 — the value the tool would run with", () => {
     const one = pricedRefgenCredits({ model: "seedream", count: 1 });
     for (const bad of [undefined, null, "6", 0, 7, 2.5, NaN]) {

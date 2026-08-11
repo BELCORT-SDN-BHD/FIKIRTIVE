@@ -61,11 +61,17 @@ export async function spendCapRefusal(
  *    approval the ledger would have allowed. Their own reserves still gate them.
  *
  * A malformed or missing count reads as the schema's default of 1 — the same value the tool would
- * actually run with, so this neither over- nor under-states that case.
+ * actually run with, so this neither over- nor under-states that case. `mode` matters for the same
+ * reason: `startRefGen` charges for ONE image unless the mode is REFSHEET (its `effectiveCount`),
+ * so honouring a count of 6 on a BASE ask would over-count by five images.
  */
 export function approvedToolCostInternal(toolName: string, args: Record<string, unknown>): number {
   if (toolName !== "generateReferences") return 0;
   const raw = args.count;
-  const count = typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 6 ? raw : 1;
+  const requested = typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 6 ? raw : 1;
+  // The schema's default mode is REFSHEET; anything else is single-image at the charging site.
+  const count = args.mode === undefined || args.mode === "REFSHEET" ? requested : 1;
+  // seedream is the only refgen model, and `startRefGen` resolves it server-side — the model is
+  // never caller-supplied. A second model would have to be reflected here.
   return pricedRefgenCredits({ model: "seedream", count });
 }
