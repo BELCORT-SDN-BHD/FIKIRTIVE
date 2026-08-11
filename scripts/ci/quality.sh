@@ -222,7 +222,8 @@ acquire_quality_lock() {
       # assignment leaves a flagless, pid-less lock that cleanup will not remove —
       # bash cannot fuse a syscall and a variable write into one atom. That corpse
       # is exactly what the >60s pid-less rule recovers, so the cost is a bounded
-      # one-minute stall, not a deadlock.
+      # stall (worst case ~90s: the 60s age threshold plus one 30s poll), not a
+      # deadlock.
       quality_lock_held=1
       echo "$$" > "$quality_lock_dir/pid"
       return 0
@@ -261,9 +262,10 @@ cleanup_quality_run() {
 # runners got a fresh dockerized Postgres per run. On a self-hosted runner that
 # assumption silently inverts: reusing one long-lived database across PRs loses the
 # fresh-database guarantee. One path, per-run database, force-dropped on exit.
-# Trap goes on BEFORE the lock so no exit path can leak it — a SIGTERM between
-# mkdir and anything later still runs cleanup (which no-ops on whatever was not
-# yet acquired). At this point local_database is still "" — cleanup only releases
+# Trap goes on BEFORE the lock so cleanup runs on every exit path (with the one
+# accepted residual noted at the mkdir site: a signal inside the mkdir→flag window
+# leaves a corpse for the >60s rule instead). Cleanup no-ops on whatever was not
+# yet acquired. At this point local_database is still "" — cleanup only releases
 # the lock. The name is validated BEFORE it is assigned to local_database, so the
 # FORCE-drop in cleanup can never see an unvalidated name (FIKIRTIVE_TEST_DB=
 # fikirtive must die at the validation, not reach DROP DATABASE — that is the dev
