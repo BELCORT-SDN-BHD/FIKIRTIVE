@@ -16,7 +16,13 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import type { EntityDTO } from "@/lib/types";
-import { type Template, buildTemplatePrompt, templateRunCredits } from "@/lib/templates";
+import {
+  type Template,
+  type TemplateCaptionLanguage,
+  TEMPLATE_RUN_IMAGE_COUNT,
+  buildTemplatePrompt,
+  templateRunCredits,
+} from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
 
 type Phase = "form" | "generating" | "done" | "cancelled" | "unknown";
@@ -97,6 +103,13 @@ export async function startTemplateJob(
     return { kind: "unknown" };
   }
 }
+
+/** What a caption's language tag is called on screen. */
+export const TEMPLATE_CAPTION_LANGUAGE_LABELS: Record<TemplateCaptionLanguage, string> = {
+  en: "English",
+  ms: "Bahasa Melayu",
+  zh: "Chinese",
+};
 
 type TemplateJobSnapshot = {
   status: string;
@@ -182,6 +195,21 @@ export default function TemplateModal({
   const { phase, message, resultUrl, resultGenId } = run;
   const [detailOpen, setDetailOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [copiedCaption, setCopiedCaption] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+
+  async function copyCaption(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCaption(text);
+    } catch {
+      setCopiedCaption(null);
+      return;
+    }
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopiedCaption(null), 1500);
+  }
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -246,8 +274,13 @@ export default function TemplateModal({
         kind: "image",
         sourceGenerationId: sourceGenId,
         prompt,
+        // 与 templateRunCredits() 报的价同源:两处各写一个 1,就是「报的」与「扣的」分家的第一步。
         model: image,
-        count: 1,
+        count: TEMPLATE_RUN_IMAGE_COUNT,
+        // A scenario is not just words: a marketplace main image is square and a story is tall
+        // (#783). Templates that don't care leave this off, and the shape is inherited from the
+        // uploaded photo exactly as before. One image either way — the price does not move.
+        ...(template.aspectRatio ? { aspectRatio: template.aspectRatio } : {}),
         idempotencyKey: templateRunKey(),
       });
       // Announce before branching: an "unknown" start is outcome-unknown, not proven-free
@@ -336,7 +369,10 @@ export default function TemplateModal({
     <>
       {/* leading-[1.5] — design-baseline body line-height (Analytics standard) */}
       <Dialog open onOpenChange={(isOpen: boolean) => { if (!isOpen) onClose(); }}>
-        <DialogContent className="gb leading-[1.5]">
+        {/* 判官 r1 P1:公共 dialog 没有最大高度,一张 9:16 结果图加两三张文案卡就把关闭键与
+            底部操作顶出视口。修在**本弹窗自己**身上(不动 components/ui/dialog.tsx,那是 #843 的地盘):
+            整体不超过视口,中间那一行(内容)自己滚,头尾两行永远在屏内。 */}
+        <DialogContent className="gb leading-[1.5] max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]">
           <DialogHeader>
             <DialogTitle>{template.name}</DialogTitle>
             {template.description && (
@@ -344,9 +380,44 @@ export default function TemplateModal({
             )}
           </DialogHeader>
 
+          <div className="min-h-0 overflow-y-auto">
           {phase === "done" && resultUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={resultUrl} alt="result" style={{ width: "100%", borderRadius: "14px", display: "block" }} />
+            <div className="flex flex-col gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={resultUrl}
+                alt="result"
+                style={{ maxWidth: "100%", maxHeight: "42vh", borderRadius: "14px", display: "block", margin: "0 auto" }}
+              />
+              {template.captions.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-[0.8125rem] text-muted-foreground">
+                    A ready caption. Everything in brackets is a blank — fill them in before you post.
+                  </span>
+                  {template.captions.map((c) => (
+                    <div
+                      key={`${c.language}:${c.text}`}
+                      className="flex items-start justify-between gap-2 rounded-[14px] border border-border bg-card p-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-[0.75rem] uppercase tracking-[0.4px] text-muted-foreground">
+                          {TEMPLATE_CAPTION_LANGUAGE_LABELS[c.language]}
+                        </div>
+                        <p className="m-0 mt-0.5 text-[0.8125rem] text-foreground">{c.text}</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => copyCaption(c.text)}
+                      >
+                        {copiedCaption === c.text ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
@@ -375,6 +446,7 @@ export default function TemplateModal({
               )}
             </div>
           )}
+          </div>
 
           <DialogFooter>{footer}</DialogFooter>
         </DialogContent>
