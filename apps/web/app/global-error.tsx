@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
+import { Button } from "@/components/ui/button";
 import { crashReportContext } from "@/lib/sentry-browser";
 import "./globals.css";
 
@@ -12,7 +13,8 @@ import "./globals.css";
  * 是一片白 —— 而我们这边一条信号都没有。global-error 是 Next.js 在那一刻唯一还会渲染
  * 的东西,所以它必须①自带 <html>/<body>(根 layout 已经不在了)②在这里把事件送出去。
  *
- * 它自己不能再崩:不引任何组件、不读任何数据,只用 token class + 一个原生 <button>。
+ * 它自己不能再崩:不读任何数据、不碰任何 provider。控件仍走 @/components/ui(#840 常令,
+ * 与同族的 app/error.tsx 一致)—— 那一层只是 cva + Slot,不是崩溃的来源。
  */
 export default function GlobalError({ error }: { error: Error & { digest?: string } }) {
   useEffect(() => {
@@ -33,13 +35,9 @@ export default function GlobalError({ error }: { error: Error & { digest?: strin
               Reference: <span className="font-mono">{error.digest}</span>
             </p>
           )}
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="inline-flex h-11 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-          >
+          <Button type="button" onClick={() => window.location.reload()}>
             Reload page
-          </button>
+          </Button>
         </main>
       </body>
     </html>
