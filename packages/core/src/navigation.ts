@@ -10,7 +10,7 @@
  * 纯数据、零依赖(没有 React、没有图标、没有 node/network),所以主 barrel 装得下,
  * Otto 的指令与浏览器端导轨可以读同一份。图标在 apps/web 按 key 配。
  *
- * 三条 Founder 裁决落在这份数据上:
+ * 四条 Founder 裁决落在这份数据上:
  *   ① **画布是 creation 旗舰面,不下线** —— 它有主导航第一格(见 CREATE_NAV_LABEL),
  *      沉浸式外壳原来的「六扇门」全部收编进这棵树,不再有第二套导航。
  *   ② **Otto 是助手,不是模块** —— 它不在 MERCHANT_NAV 里占板块位;它是
