@@ -40,6 +40,7 @@ import { manageEntitiesSkill } from "./skills/manage-entities.js";
 import { manageLibrarySkill } from "./skills/manage-library.js";
 import { manageBrandMemorySkill } from "./skills/manage-brand-memory.js";
 import { proposeIdeasSkill } from "./skills/propose-ideas.js";
+import { recommendTemplatesSkill } from "./skills/recommend-templates.js";
 import { manageMediaSkill } from "./skills/manage-media.js";
 import { renderVideoSkill } from "./skills/render-video.js";
 import { importMediaSkill } from "./skills/import-media.js";
@@ -98,6 +99,7 @@ export const allSkills: OttoSkill[] = [
   manageLibrarySkill,
   manageBrandMemorySkill,
   proposeIdeasSkill,
+  recommendTemplatesSkill,
   manageMediaSkill,
   renderVideoSkill,
   importMediaSkill,

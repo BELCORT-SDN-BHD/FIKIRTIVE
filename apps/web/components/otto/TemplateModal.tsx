@@ -16,7 +16,12 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import type { EntityDTO } from "@/lib/types";
-import { type Template, buildTemplatePrompt, templateRunCredits } from "@/lib/templates";
+import {
+  type Template,
+  type TemplateCaptionLanguage,
+  buildTemplatePrompt,
+  templateRunCredits,
+} from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
 
 type Phase = "form" | "generating" | "done" | "cancelled" | "unknown";
@@ -97,6 +102,13 @@ export async function startTemplateJob(
     return { kind: "unknown" };
   }
 }
+
+/** What a caption's language tag is called on screen. */
+export const TEMPLATE_CAPTION_LANGUAGE_LABELS: Record<TemplateCaptionLanguage, string> = {
+  en: "English",
+  ms: "Bahasa Melayu",
+  zh: "Chinese",
+};
 
 type TemplateJobSnapshot = {
   status: string;
@@ -182,6 +194,21 @@ export default function TemplateModal({
   const { phase, message, resultUrl, resultGenId } = run;
   const [detailOpen, setDetailOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [copiedCaption, setCopiedCaption] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+
+  async function copyCaption(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCaption(text);
+    } catch {
+      setCopiedCaption(null);
+      return;
+    }
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopiedCaption(null), 1500);
+  }
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -248,6 +275,10 @@ export default function TemplateModal({
         prompt,
         model: image,
         count: 1,
+        // A scenario is not just words: a marketplace main image is square and a story is tall
+        // (#783). Templates that don't care leave this off, and the shape is inherited from the
+        // uploaded photo exactly as before. One image either way — the price does not move.
+        ...(template.aspectRatio ? { aspectRatio: template.aspectRatio } : {}),
         idempotencyKey: templateRunKey(),
       });
       // Announce before branching: an "unknown" start is outcome-unknown, not proven-free
@@ -345,8 +376,38 @@ export default function TemplateModal({
           </DialogHeader>
 
           {phase === "done" && resultUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={resultUrl} alt="result" style={{ width: "100%", borderRadius: "14px", display: "block" }} />
+            <div className="flex flex-col gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={resultUrl} alt="result" style={{ width: "100%", borderRadius: "14px", display: "block" }} />
+              {template.captions.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-[0.8125rem] text-muted-foreground">
+                    A caption to go with it — swap the words in brackets for yours.
+                  </span>
+                  {template.captions.map((c) => (
+                    <div
+                      key={`${c.language}:${c.text}`}
+                      className="flex items-start justify-between gap-2 rounded-[14px] border border-border bg-card p-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-[0.75rem] uppercase tracking-[0.4px] text-muted-foreground">
+                          {TEMPLATE_CAPTION_LANGUAGE_LABELS[c.language]}
+                        </div>
+                        <p className="m-0 mt-0.5 text-[0.8125rem] text-foreground">{c.text}</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => copyCaption(c.text)}
+                      >
+                        {copiedCaption === c.text ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>

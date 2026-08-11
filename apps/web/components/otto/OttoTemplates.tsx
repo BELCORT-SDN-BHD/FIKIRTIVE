@@ -1,33 +1,82 @@
 "use client";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { EntityDTO } from "@/lib/types";
-import { TEMPLATES, type Template } from "@/lib/templates";
+import { TEMPLATES, filterTemplates, templateCategories, type Template } from "@/lib/templates";
 import TemplateModal from "./TemplateModal";
+
+const ALL = "All";
 
 export default function OttoTemplates({ projectId, entities = [] }: { projectId: string; entities?: EntityDTO[] }) {
   const [active, setActive] = useState<Template | null>(null);
+  const [category, setCategory] = useState<string>(ALL);
+  const [search, setSearch] = useState("");
+
+  const categories = useMemo(() => [ALL, ...templateCategories(TEMPLATES)], []);
+  const shown = useMemo(() => filterTemplates(TEMPLATES, { category, search }), [category, search]);
+
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "auto", padding: "1.25rem" }}>
-      <div style={{ marginBottom: "1rem" }}>
-        <h2 style={{ margin: 0, fontSize: "1.125rem", color: "var(--foreground)" }}>Templates</h2>
-        <p style={{ margin: "0.25rem 0 0", color: "var(--muted-foreground)", fontSize: "0.875rem" }}>
-          Pick a template, upload your product, get a polished image.
+    <div className="gb leading-[1.5] flex flex-1 flex-col overflow-auto p-5">
+      <div className="mb-4">
+        <h2 className="m-0 text-lg text-foreground">Templates</h2>
+        <p className="mt-1 mb-0 text-sm text-muted-foreground">
+          Pick a scene, add your product photo, get a polished image. Every one is written for Malaysian shops.
         </p>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "0.75rem" }}>
-        {TEMPLATES.map((t) => (
-          <button
-            key={t.id}
+
+      <div className="mb-3 max-w-sm">
+        <Input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search — raya, delivery, Shopee, before and after…"
+          aria-label="Search templates"
+        />
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {categories.map((c) => (
+          <Button
+            key={c}
             type="button"
-            onClick={() => setActive(t)}
-            style={{ textAlign: "left", cursor: "pointer", border: "1px solid var(--border)", background: "var(--card)", borderRadius: "14px", padding: "1rem", color: "var(--foreground)" }}
+            variant="ghost"
+            size="sm"
+            aria-pressed={category === c}
+            onClick={() => setCategory(c)}
+            className={category === c ? "bg-card" : ""}
           >
-            <div style={{ fontSize: "0.9375rem", fontWeight: 600 }}>{t.name}</div>
-            <div style={{ fontSize: "0.8125rem", color: "var(--muted-foreground)", marginTop: "0.25rem" }}>{t.description}</div>
-          </button>
+            {c}
+          </Button>
         ))}
       </div>
+
+      {shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nothing matches that. Try a shorter word, or clear the search.
+        </p>
+      ) : (
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
+          {shown.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActive(t)}
+              className="min-w-0 cursor-pointer rounded-[var(--radius-card)] border border-border bg-card p-4 text-left text-foreground transition-colors hover:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30"
+            >
+              <div className="text-[0.9375rem] font-semibold">{t.name}</div>
+              <div className="mt-1 text-[0.8125rem] text-muted-foreground">{t.description}</div>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <Badge variant="outline">{t.category}</Badge>
+                {t.rendersHeadline && <Badge variant="soft">Your headline on it</Badge>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
       {active && (
         <TemplateModal template={active} projectId={projectId} entities={entities} onClose={() => setActive(null)} />
       )}
