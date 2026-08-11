@@ -6,6 +6,13 @@
  * component recipes, and the prototype's layout CSS are kept pixel-faithful;
  * the only deliberate divergences are flagged A11Y (audited contrast fixes).
  * Entity hues are ours: functional wayfinding color, not chrome.
+ *
+ * LAYERS (#798). Everything that paints lives in `@layer base` (element defaults)
+ * or `@layer components` (recipes), so Tailwind utilities — `md:flex-col`,
+ * `lg:hidden`, all of them — win over this file. Unlayered CSS outranks EVERY
+ * layer, which is why responsive utilities used to fail silently next to these
+ * classes. Only the three token roots (:root, .gb, .gb.dark) stay unlayered;
+ * lib/__tests__/globals-css-layers.test.ts holds the line.
  */
 :root {
   /* base neutrals */
@@ -113,7 +120,10 @@
   --radius-xl: 28px;
 }
 
-/* ---------- base ---------- */
+/* ---------- base (@layer base) ----------
+   Element-level defaults. They must lose to both the component recipes below and to
+   any Tailwind utility — `text-lg` on an <h1> is the author speaking last. */
+@layer base {
 body {
   background: var(--bg-0);
   color: var(--fg-1);
@@ -127,8 +137,6 @@ body {
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.10); border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.18); background-clip: content-box; border: 2px solid transparent; }
 
-.ambient-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; background: var(--ambient); }
-
 h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: var(--tracking-tight); }
 
 :focus-visible {
@@ -138,9 +146,25 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: var(--ring-focus);
 }
 
+/* !important beats every normal declaration in any layer, so the reduced-motion
+   override keeps working exactly as it did unlayered. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+} /* @layer base */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * @layer components (#798) — every recipe below this line.
+ * Tailwind v4 declares `@layer theme, base, components, utilities`, so anything
+ * in `components` loses to every utility, responsive variant included. Before
+ * this file was layered, these recipes were UNLAYERED, and unlayered beats every
+ * layer: `md:flex-col` / `lg:hidden` written next to an `al-*` or `cv-*` class
+ * silently did nothing (proven in fd53e925 — the mobile ☰ leaked onto desktop and
+ * the sidebar would not collapse on phones). Keep new recipes inside a layer.
+ * ══════════════════════════════════════════════════════════════════════════ */
+@layer components {
+
+.ambient-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; background: var(--ambient); }
 
 /* ---------- DS glass recipes (radius built in, per prototype base.css) ---------- */
 .glass {
@@ -497,14 +521,12 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .nav-rail .sidenav-brand { padding-left: 10px; min-height: 30px; }
 @media (max-width: 1023px) { .app:has(> .nav-rail) { padding-left: 0; } }
 
-/* Responsive nav. Tailwind's responsive utilities (lg:/max-lg:) live in
-   @layer utilities and lose the cascade to this unlayered design system, so they
-   never applied — the desktop ☰ leaked onto desktop and the sidebar wouldn't
-   collapse on phones. These plain (unlayered) media queries do the collapse: the
-   sidebar rail hides below lg, the mobile ☰ + drawer hide at lg and up. */
-.nav-drawer { display: flex; }
-@media (max-width: 1023px) { .nav-rail { display: none; } }
-@media (min-width: 1024px) { .nav-burger, .nav-drawer { display: none; } }
+/* The `.nav-drawer` / `.nav-burger` collapse rules that used to sit here were the
+   workaround for the unlayered cascade, not a design decision: `lg:` / `max-lg:`
+   utilities were written in the markup, lost to this file, and were replaced by
+   hand-written media queries (fd53e925). The layer above removes the reason they
+   existed, and the shell they targeted is gone, so they are gone with it — the
+   next shell writes `lg:hidden` in the markup and it works. */
 
 /* ---------- OPT-6 admin shell (rail + content) ---------- */
 .admin-shell { position: relative; z-index: 1; display: flex; min-height: 100dvh; --font-sans: var(--font-geist, system-ui), sans-serif; }
@@ -515,11 +537,20 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .admin-nav-link.is-disabled:hover { background: transparent; color: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
 .admin-content { flex: 1; min-width: 0; overflow: auto; }
 
+} /* @layer components */
+
 /* ════════════════════════════════════════════════════════════════════════
  * Grok-bright — the NEW FIKIRTIVE system (strangler migration).
  * Scoped to `.gb` so it never overrides the legacy Vapor tokens above.
  * New screens wrap their root in className="gb". Coral = OTTO only;
  * semantic colour = state only. Geist comes from next/font (layout.tsx).
+ *
+ * UNLAYERED ON PURPOSE (one of the three token roots the #798 fence exempts —
+ * :root, .gb, .gb.dark). A token root declares variables; variables are read by
+ * whatever wins the cascade, so layering them would buy nothing. .gb also paints
+ * its own element (the last three declarations), and moving THOSE into a layer
+ * would hand five call sites to their `bg-card` utility — a repaint, not a
+ * cascade cleanup, so it is not smuggled into this ticket.
  * ════════════════════════════════════════════════════════════════════════ */
 .gb {
   --radius: 0.875rem;        /* 14px controls */
@@ -650,12 +681,16 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --radius-lg: var(--radius);
 }
 
+@layer components {
+
 /* Global focus ring — design-rules v3 §A2, verbatim. Two layers: 1px solid keyline
    (3.42:1) + 40% coral halo (the 40% halo alone composites to 1.64:1 — invisible to
    low vision). Supersedes the Vapor white --ring-focus (invisible on .gb light ground)
    and the per-component 35% color-mix scatter. :focus-visible only — mouse clicks
-   never ring. Must stay AFTER every same-specificity :focus-visible recipe above so
-   it wins the cascade under .gb. Bordered fields keep the §A2 field variant
+   never ring. Must stay AFTER every same-specificity :focus-visible recipe above,
+   and in the SAME layer as them (@layer components), so it wins the cascade under
+   .gb — a different layer would decide it regardless of source order. Bordered
+   fields keep the §A2 field variant
    (ring-coloured 1px border + 3px 40% halo — see .gb .al-input-wrap:focus-within). */
 .gb :focus-visible {
   outline: 2px solid transparent;   /* keeps the system indicator in forced-colors */
@@ -1349,3 +1384,5 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   .otto-prose[data-streaming="true"] > ul:last-child > li:last-child::after,
   .otto-prose[data-streaming="true"] > ol:last-child > li:last-child::after { animation: none; }
 }
+
+} /* @layer components */
