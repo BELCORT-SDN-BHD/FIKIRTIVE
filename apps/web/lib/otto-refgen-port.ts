@@ -7,13 +7,24 @@
  * on a missing/cross-owner id ("Element not found." / "Variant not found."). The ownerId parameter
  * scopes ONLY the port's own pre-gate read below.
  *
- * generate — the SPEND path (debt-68). A thin closure over startRefGen, the SOLE reference-generation
- * spend authority: it re-validates the request through the typed refGenRequest gate, derives the price
- * server-side (pricedRefgenCredits — the model can never set it), enforces the per-entity in-flight
- * guard + the RefGenJob_active_entity_variant_key race backstop, and reserves credits atomically with
- * the job insert. This port neither reserves credits, creates a RefGenJob, nor calls the provider — it
- * only forwards the request. The generateReferences skill that calls it is cost:"spend", so its
- * needsApproval is a machine-derived LITERAL true (the human approves before this runs).
+ * generate — the SPEND path (debt-68). A thin closure over startRefGen, the SOLE spend authority for
+ * BASE/REFSHEET reference generation: it re-validates the request through the typed refGenRequest gate,
+ * derives the price server-side (pricedRefgenCredits — the model can never set it), enforces the
+ * per-entity in-flight guard + the RefGenJob_active_entity_variant_key race backstop, and reserves
+ * credits atomically with the job insert. This port neither reserves credits, creates a RefGenJob, nor
+ * calls the provider — it only forwards the request. The generateReferences skill that calls it is
+ * cost:"spend", so its needsApproval is a machine-derived LITERAL true (the human approves before this
+ * runs).
+ *
+ * createVariant — the SPEND path for a styling variant (#781). A VARIANT generation cannot go through
+ * startRefGen: a variant needs an EntityVariant row to attach its output to, and startRefGen refuses
+ * mode=VARIANT precisely because a client-named variantId would be unvalidated (it would spend on a
+ * job whose output has nowhere correct to land). createVariant IS the variant spend authority — the
+ * same one the merchant's element dialog calls: it re-derives the owner (requireOwner), refuses while
+ * impersonating, validates that the element has a LIVE owned base to condition the image-to-image on
+ * BEFORE any spend, creates the variant row inside the partial-unique-handle guard, and dispatches one
+ * seedream image whose credits are reserved atomically with the job insert. This port adds nothing to
+ * that; it only forwards, so the human surface and Otto can never charge by two different rules.
  *
  * deleteVariant — the guarded $0 path (debt-69). deleteVariant soft-deletes a variant AND its tagged
  * reference images (paid outputs). The human UI deletes a variant from the element page; Otto has no
@@ -42,10 +53,15 @@
  * deleteVariant: the human UI's legitimate delete is untouched.
  *
  * NOT an action surface: no "use server", not *-actions — the parity scanner must not discover this
- * module (its capabilities are the manifest entries of the wrapped actions: startRefGen / deleteVariant).
+ * module (its capabilities are the manifest entries of the wrapped actions: startRefGen /
+ * createVariant / deleteVariant).
  */
 import { prisma } from "@fikirtive/db";
-import { startRefGen, deleteVariant as deleteVariantAction } from "./refgen-actions";
+import {
+  startRefGen,
+  createVariant as createVariantAction,
+  deleteVariant as deleteVariantAction,
+} from "./refgen-actions";
 
 export function makeOttoRefgenPort(ownerId: string) {
   return {
@@ -63,6 +79,18 @@ export function makeOttoRefgenPort(ownerId: string) {
         count: input.count ?? 1,
         mode: input.mode ?? "REFSHEET",
       }),
+
+    // #781 (SPEND): the styling-variant door. Forward to createVariant — the variant spend
+    // authority — with only the three fields the model may choose (element, variant name, what
+    // changes). No model, no count, no price crosses: a variant is always exactly one seedream
+    // image priced server-side, and the base it is conditioned on is resolved from the element,
+    // never named by the caller.
+    createVariant: (input: {
+      entityId: string;
+      name: string;
+      prompt: string;
+    }): Promise<{ variantId: string; jobId: string } | { error: string }> =>
+      createVariantAction(input.entityId, input.name, input.prompt),
 
     // debt-69: deterministic active-job pre-gate (see header), then delegate to the owner-scoped action.
     deleteVariant: async (variantId: string): Promise<{ ok: true } | { error: string }> => {

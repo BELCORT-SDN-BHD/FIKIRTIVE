@@ -45,10 +45,20 @@ export type RefgenApprovalMaterial = {
   prompt: string;
   count: number | null;
   mode: string | null;
+  /** #781 — the name a mode=VARIANT ask saves the look under. Material, not decoration: it is the
+   *  name the merchant will later ask for ("use the red dress one"), so a post-mint swap changes
+   *  what they consented to just as surely as swapping the prompt does. */
+  variantName: string | null;
 };
 
 /** Deterministic hash of the refgen consent object. Domain-tagged so it can never collide with a
- *  scheduled-post hash; canonical field order, JSON-encoded (mirrors computeApprovalContentHash). */
+ *  scheduled-post hash; canonical field order, JSON-encoded (mirrors computeApprovalContentHash).
+ *
+ *  #781 appended variantName to the material. That changes the hash of EVERY refgen ask, including
+ *  BASE/REFSHEET ones minted before the change — an approval card still pending across the deploy
+ *  recomputes to a different hash and is hard-refused ("that reference request changed — ask again").
+ *  That is the fail-closed direction (a stale consent is never laundered into a new spend), and the
+ *  window is one card TTL. */
 export function computeRefgenApprovalContentHash(m: RefgenApprovalMaterial): string {
   const canonical = JSON.stringify([
     "generateReferences",
@@ -56,6 +66,7 @@ export function computeRefgenApprovalContentHash(m: RefgenApprovalMaterial): str
     m.prompt,
     m.count ?? null,
     m.mode ?? null,
+    m.variantName ?? null,
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -78,6 +89,7 @@ export function refgenApprovalHashFromArgs(args: Record<string, unknown> | undef
     prompt: args.prompt,
     count: typeof args.count === "number" ? args.count : null,
     mode: typeof args.mode === "string" ? args.mode : null,
+    variantName: typeof args.variantName === "string" ? args.variantName : null,
   });
 }
 

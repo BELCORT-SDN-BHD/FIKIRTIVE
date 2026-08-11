@@ -364,8 +364,10 @@ export interface OttoContext {
    *  identity first, then the direction the merchant set for this one project. Absent
    *  (undefined) when the project has no brief; never an empty string. */
   projectBrief?: string;
-  /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools). */
-  availableRefs?: { id: string; name: string; type: string }[];
+  /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools).
+   *  `variants` (#781) are the element's saved styling looks that actually have an image — the
+   *  ids `variantSel` and deleteReferenceVariant need. Absent/empty = that element has none. */
+  availableRefs?: { id: string; name: string; type: string; variants?: { id: string; name: string }[] }[];
   /** When true, buildContextSystemMessage injects the Simple-mode plain-language block so
    *  Otto speaks to a beginner without jargon. NOT baked into the shared identity — injected
    *  only on the simple door path (via buildContextSystemMessage). */
@@ -904,7 +906,10 @@ export interface OttoContext {
    *  goes THROUGH startRefGen — the sole spend authority — which re-derives the owner (requireOwner),
    *  re-validates via the typed refGenRequest gate, derives the price server-side (pricedRefgenCredits,
    *  the model can't set it), guards per-entity double-spend, and reserves atomically with the job
-   *  insert. The generateReferences skill is cost:"spend" ⇒ needsApproval is a machine-derived LITERAL
+   *  insert. `createVariant` (#781) is the same discipline for a styling variant — the merchant's
+   *  element dialog and Otto call the one createVariant action, so "one element, many outfits" can
+   *  never mean two different charging rules.
+   *  The generateReferences skill is cost:"spend" ⇒ needsApproval is a machine-derived LITERAL
    *  true (anti-flip). `deleteVariant` is a $0 soft delete fronted by an Otto-only fail-closed active-job
    *  gate (see makeOttoRefgenPort — refuses while a paid job for that variant is in flight, #271
    *  deleteProject precedent). Skills reach it ONLY via ctx.refgen — never importing web actions, the
@@ -920,6 +925,17 @@ export interface OttoContext {
       count?: number;
       mode?: "BASE" | "REFSHEET";
     }): Promise<{ id: string } | { error: string }>;
+    /** #781 (SPEND): create a named styling variant of an OWNED element and generate its single
+     *  image from the element's locked base (image-to-image, so the same person/product comes back
+     *  restyled). Its own spend authority — startRefGen refuses mode=VARIANT because a variant needs
+     *  a validated variant row to attach to — with the same discipline: owner re-derived from the
+     *  session, live base required BEFORE any spend, server-owned price, credits reserved atomically
+     *  with the job insert. Same action the merchant's element dialog calls. */
+    createVariant(input: {
+      entityId: string;
+      name: string;
+      prompt: string;
+    }): Promise<{ variantId: string; jobId: string } | { error: string }>;
     /** debt-69 ($0, guarded): soft-delete an OWNED reference variant (+ its tagged reference images).
      *  The port hard-refuses (fail-closed) while a paid RefGenJob for that variant is still in flight,
      *  so a delete can't strand settled/settling paid work. Owner scope + not-found guard live INSIDE

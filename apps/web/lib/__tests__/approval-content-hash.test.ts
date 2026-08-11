@@ -22,6 +22,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeApprovalContentHash,
   computeRefgenApprovalContentHash,
+  refgenApprovalHashFromArgs,
   APPROVAL_CARD_TTL_MS,
   type ApprovalContentMaterial,
   type RefgenApprovalMaterial,
@@ -87,31 +88,55 @@ describe("refgen approval content hash — binds the EXACT parked args (debt-68 
     prompt: "a red cap on a wooden table",
     count: 3,
     mode: "REFSHEET",
+    variantName: null,
   };
 
   it("is deterministic: identical args → identical hash", () => {
     expect(computeRefgenApprovalContentHash(REFGEN_BASE)).toBe(computeRefgenApprovalContentHash({ ...REFGEN_BASE }));
   });
 
-  it("a change to ANY bound field changes the hash (entityId / prompt / count / mode)", () => {
+  it("a change to ANY bound field changes the hash (entityId / prompt / count / mode / variantName)", () => {
     const base = computeRefgenApprovalContentHash(REFGEN_BASE);
     expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, entityId: "ent-2" })).not.toBe(base);
     expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, prompt: "a BLUE cap" })).not.toBe(base);
     expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, count: 4 })).not.toBe(base);
     expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, mode: "BASE" })).not.toBe(base);
+    expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, variantName: "Red dress" })).not.toBe(base);
+  });
+
+  // #781 — a styling variant is saved under the name the user approved, and that name is what they
+  // will ask for later ("use the red dress one"). Swapping it after the card was minted changes what
+  // they consented to, so it is bound like every other material field.
+  it("the variant name is material: two VARIANT asks that differ only in name hash differently", () => {
+    const variantAsk = { ...REFGEN_BASE, count: 1, mode: "VARIANT" as const };
+    const red = computeRefgenApprovalContentHash({ ...variantAsk, variantName: "Red dress" });
+    const beach = computeRefgenApprovalContentHash({ ...variantAsk, variantName: "Beach look" });
+    expect(red).not.toBe(beach);
+    // and the same ask hashes the same every time (a re-park of one call reuses its card)
+    expect(computeRefgenApprovalContentHash({ ...variantAsk, variantName: "Red dress" })).toBe(red);
+  });
+
+  it("raw parked args carry the variant name into the hash (the single normalization sees it)", () => {
+    const args = { entityId: "ent-1", prompt: "in a red evening gown", count: 1, mode: "VARIANT" };
+    const named = refgenApprovalHashFromArgs({ ...args, variantName: "Red dress" });
+    const renamed = refgenApprovalHashFromArgs({ ...args, variantName: "Gold gown" });
+    const unnamed = refgenApprovalHashFromArgs(args);
+    expect(named).not.toBeNull();
+    expect(named).not.toBe(renamed);
+    expect(named).not.toBe(unnamed);
   });
 
   it("normalizes optional count/mode: keys ABSENT at runtime hash the same as explicit null (?? null)", () => {
-    const withNulls = computeRefgenApprovalContentHash({ entityId: "ent-1", prompt: "x", count: null, mode: null });
+    const withNulls = computeRefgenApprovalContentHash({ entityId: "ent-1", prompt: "x", count: null, mode: null, variantName: null });
     const missing = { entityId: "ent-1", prompt: "x" } as unknown as RefgenApprovalMaterial; // count/mode absent
     expect(computeRefgenApprovalContentHash(missing)).toBe(withNulls);
     // a set count/mode is still a real difference (a real change stays a real change)
-    expect(computeRefgenApprovalContentHash({ entityId: "ent-1", prompt: "x", count: 3, mode: "REFSHEET" })).not.toBe(withNulls);
+    expect(computeRefgenApprovalContentHash({ entityId: "ent-1", prompt: "x", count: 3, mode: "REFSHEET", variantName: null })).not.toBe(withNulls);
   });
 
   it("is domain-tagged: a refgen hash can never collide with a scheduled-post hash", () => {
     // Even with deliberately overlapping field values, the domain tag keeps the two hash spaces disjoint.
-    const refgen = computeRefgenApprovalContentHash({ entityId: "instagram", prompt: "launch day!", count: null, mode: null });
+    const refgen = computeRefgenApprovalContentHash({ entityId: "instagram", prompt: "launch day!", count: null, mode: null, variantName: null });
     const post = computeApprovalContentHash({
       channel: "instagram",
       scheduledAt: "launch day!",
