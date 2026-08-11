@@ -366,6 +366,17 @@ quality_lock_token="$$.$(date +%s).${RANDOM}${RANDOM}"
 # future version reading THIS lock will then take the same conservative path.
 quality_lock_format=1
 
+# The signature is written under a VERSIONED file name, and the un-versioned
+# `identity` name is never written at all. That is what makes the policy above
+# work in the other direction too: a marker-blind reader — any quality.sh from
+# before versioning existed, including the one on main today, which knows only
+# `pid` — sees a lock holding a pid plus some files it has no idea about, and
+# falls through to its own conservative path (a live pid is waited for). It
+# cannot mistake our signature for one of its own, because there is nothing at
+# the name it would look under. A future v2 signature goes to identity.v2 for
+# exactly the same reason.
+quality_lock_identity_file="identity.v1"
+
 # How long an ORPHANED holder may keep the machine before waiters treat its lock
 # as abandoned. See holder_is_abandoned_orphan for why orphan ≠ dead.
 quality_orphan_grace_seconds="${QUALITY_ORPHAN_GRACE_SECONDS:-120}"
@@ -428,8 +439,24 @@ lock_inode_number() {
   fi
 }
 
+# Prints the field, and reports failure ONLY when the field is present and will
+# not read.
+#
+# An absent file is information: an older lock simply had no such field, and the
+# rules know what to do with that. A file that is there and will not read is not
+# information — it is a question mark (a permission change, a full disk, a
+# truncated write), and a question mark must never be answered with a verdict.
+# Both cases print the same empty string, so the difference has to travel as the
+# exit status: every reader runs inside a command substitution, which is a
+# subshell, and a flag set in there would never reach the caller.
 lock_field() {
-  cat "$quality_lock_dir/$1" 2>/dev/null || true
+  local path="$quality_lock_dir/$1"
+  if [[ ! -e "$path" ]]; then
+    echo ""
+    return 0
+  fi
+  cat "$path" 2>/dev/null || return 1
+  return 0
 }
 
 # ── the candidate snapshot ────────────────────────────────────────────────────
@@ -455,6 +482,7 @@ quality_snapshot_pid=""
 quality_snapshot_identity=""
 quality_snapshot_mtime=""
 quality_snapshot_inode=""
+quality_snapshot_unreadable=""
 
 read_lock_snapshot() {
   quality_snapshot_present=""
@@ -464,13 +492,14 @@ read_lock_snapshot() {
   quality_snapshot_identity=""
   quality_snapshot_mtime=""
   quality_snapshot_inode=""
+  quality_snapshot_unreadable=""
   [[ -d "$quality_lock_dir" ]] || return 1
   quality_snapshot_inode="$(lock_inode_number "$quality_lock_dir")"
   quality_snapshot_mtime="$(lock_mtime_epoch "$quality_lock_dir")"
-  quality_snapshot_format="$(lock_field format)"
-  quality_snapshot_token="$(lock_field token)"
-  quality_snapshot_identity="$(lock_field identity)"
-  quality_snapshot_pid="$(lock_field pid)"
+  quality_snapshot_format="$(lock_field format)" || quality_snapshot_unreadable=1
+  quality_snapshot_token="$(lock_field token)" || quality_snapshot_unreadable=1
+  quality_snapshot_identity="$(lock_field "$quality_lock_identity_file")" || quality_snapshot_unreadable=1
+  quality_snapshot_pid="$(lock_field pid)" || quality_snapshot_unreadable=1
   quality_snapshot_present=1
   return 0
 }
@@ -492,14 +521,22 @@ snapshot_format_is_unreadable() {
 # second has the same mtime and, for the first microseconds of its life, the same
 # (empty) fields — but never the same inode.
 lock_matches_snapshot() {
+  local current
   [[ -n "$quality_snapshot_present" ]] || return 1
   [[ -d "$quality_lock_dir" ]] || return 1
   [[ "$(lock_inode_number "$quality_lock_dir")" == "$quality_snapshot_inode" ]] || return 1
   [[ "$(lock_mtime_epoch "$quality_lock_dir")" == "$quality_snapshot_mtime" ]] || return 1
-  [[ "$(lock_field format)" == "$quality_snapshot_format" ]] || return 1
-  [[ "$(lock_field token)" == "$quality_snapshot_token" ]] || return 1
-  [[ "$(lock_field pid)" == "$quality_snapshot_pid" ]] || return 1
-  [[ "$(lock_field identity)" == "$quality_snapshot_identity" ]]
+  # Each read either answers or refuses; a field that would not read makes the
+  # comparison meaningless, and a meaningless comparison must not authorise a
+  # reclaim. Hence `|| return 1` on the read itself, not only on the compare.
+  current="$(lock_field format)" || return 1
+  [[ "$current" == "$quality_snapshot_format" ]] || return 1
+  current="$(lock_field token)" || return 1
+  [[ "$current" == "$quality_snapshot_token" ]] || return 1
+  current="$(lock_field pid)" || return 1
+  [[ "$current" == "$quality_snapshot_pid" ]] || return 1
+  current="$(lock_field "$quality_lock_identity_file")" || return 1
+  [[ "$current" == "$quality_snapshot_identity" ]]
 }
 
 # The third staleness rule, and the only one that judges a LIVE process (#855).
@@ -561,8 +598,10 @@ snapshot_is_stale() {
 
   # A shape we cannot read is not a corpse. Not one verdict below — not even
   # "the pid is dead" — is safe here, because in an unknown layout we cannot be
-  # sure the file named `pid` holds the holder's pid at all.
-  if snapshot_format_is_unreadable; then
+  # sure the file named `pid` holds the holder's pid at all. A field that exists
+  # but would not read lands in the same bucket for the same reason: what we hold
+  # is not a reading of the lock, it is a partial guess at one.
+  if [[ -n "$quality_snapshot_unreadable" ]] || snapshot_format_is_unreadable; then
     return 1
   fi
 
@@ -735,7 +774,7 @@ acquire_quality_lock() {
       quality_lock_held=1
       printf '%s\n' "$quality_lock_format" > "$quality_lock_dir/format"
       printf '%s\n' "$quality_lock_token" > "$quality_lock_dir/token"
-      process_start_signature "$$" > "$quality_lock_dir/identity"
+      process_start_signature "$$" > "$quality_lock_dir/$quality_lock_identity_file"
       echo "$$" > "$quality_lock_dir/pid"
       return 0
     fi

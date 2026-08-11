@@ -118,10 +118,10 @@ trap drill_cleanup EXIT
 # that quietly performs fewer checks than it claims is worse than no drill, so the
 # tally is reconciled against expected_checks at the end and a skip can never be
 # reported as a pass.
-# 3 (free machine) + 5 (pre-existing rules) + 3 (recycled pid) + 5 (attended)
+# 4 (free machine) + 5 (pre-existing rules) + 3 (recycled pid) + 5 (attended)
 # + 7 (cancellation) + 4 (orphan cross-generation race) + 5 (dead-branch race)
-# + 7 (other versions' locks) + 3 (watchdog)
-expected_checks=42
+# + 9 (other versions' locks, unreadable fields) + 3 (watchdog)
+expected_checks=45
 pass=0
 fail=0
 skip=0
@@ -237,7 +237,7 @@ while true; do
   if mkdir "$quality_lock_dir" 2>/dev/null; then
     printf '%s\n' "$quality_lock_format" >"$quality_lock_dir/format"
     printf '%s\n' "$quality_lock_token" >"$quality_lock_dir/token"
-    process_start_signature "$$" >"$quality_lock_dir/identity"
+    process_start_signature "$$" >"$quality_lock_dir/$quality_lock_identity_file"
     echo $$ >"$quality_lock_dir/pid"
     break
   fi
@@ -275,10 +275,18 @@ else
 fi
 if [[ "$(lock_field format)" == "$quality_lock_format" &&
   "$(lock_field token)" == "$quality_lock_token" &&
-  "$(lock_field identity)" == "$(process_start_signature "$$")" ]]; then
+  "$(lock_field "$quality_lock_identity_file")" == "$(process_start_signature "$$")" ]]; then
   ok "the lock carries its format marker, this run's generation token and its start signature"
 else
   bad "the lock is missing part of its identity"
+fi
+# What a marker-blind reader sees. Any quality.sh from before versioning — the one
+# on main today included — knows only `pid`, so the signature must NOT sit at the
+# un-versioned `identity` name where such a reader might treat it as its own.
+if [[ ! -e "$quality_lock_dir/identity" && -e "$quality_lock_dir/$quality_lock_identity_file" ]]; then
+  ok "the signature lives at $quality_lock_identity_file, and nothing sits at the un-versioned 'identity' name"
+else
+  bad "an un-versioned 'identity' file exists — an older reader could misread it as its own field"
 fi
 rm -rf "$quality_lock_dir"
 quality_lock_held=""
@@ -345,7 +353,7 @@ printf '%s\n' "$quality_lock_format" >"$quality_lock_dir/format"
 printf '%s\n' "not-our-token" >"$quality_lock_dir/token"
 # A start time that cannot possibly be the live process's, paired with a pid that
 # is very much alive: exactly what pid recycling looks like from the outside.
-printf '%s\n' "Thu Jan  1 00:00:00 1970" >"$quality_lock_dir/identity"
+printf '%s\n' "Thu Jan  1 00:00:00 1970" >"$quality_lock_dir/$quality_lock_identity_file"
 echo "$stranger" >"$quality_lock_dir/pid"
 backdate "$quality_lock_dir" 300
 if current_lock_is_stale && [[ "$quality_stale_reason" == "reused" ]]; then
@@ -600,10 +608,12 @@ else
   bad "the old-format lock or its holder did not survive a steal attempt"
 fi
 
-# (b) the shape this PR wrote before the format marker existed: token and
-#     identity present, but the identity was recorded under some other locale, so
-#     the two strings describe the same process and do not match. Without the
-#     marker this reads as a recycled pid — and a live lock gets reclaimed.
+# (b) an older shape that DID record a signature, at the un-versioned name, under
+#     some other locale — the two strings describe the same process and do not
+#     match. Judged as if it were ours, this reads as a recycled pid and a live
+#     lock gets reclaimed. Two independent things now stop that: the missing
+#     format marker, and the fact that this version does not even look at the
+#     un-versioned name.
 foreign_identity="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 ps -p "$legacy_holder" -o lstart= 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' || true)"
 if [[ -z "$foreign_identity" || "$foreign_identity" == "$(process_start_signature "$legacy_holder")" ]]; then
   # No German locale here. What is under test is "written under a rendering we
@@ -657,6 +667,34 @@ if [[ -d "$quality_lock_dir" ]]; then
 else
   bad "a future-format lock was reclaimed"
 fi
+
+# (e) a lock in OUR format, with a provably dead holder — so every rule says
+#     "reclaim" — except that one of its fields exists and will not read. A
+#     partial reading is not a reading, and must not authorise anything.
+reset_lock
+acquire_quality_lock >/dev/null
+sleep 0 &
+dead_holder=$!
+wait "$dead_holder" 2>/dev/null || true
+echo "$dead_holder" >"$quality_lock_dir/pid"
+quality_lock_held=""
+chmod 000 "$quality_lock_dir/token" 2>/dev/null || true
+if cat "$quality_lock_dir/token" >/dev/null 2>&1; then
+  skipped 2 "this user reads a mode-000 file (running as root?), so an unreadable field cannot be staged here"
+else
+  if current_lock_is_stale; then
+    bad "a lock with an unreadable field was judged $quality_stale_reason"
+  else
+    ok "a field that exists but will not read yields no verdict, dead holder or not"
+  fi
+  try_steal_stale_lock >/dev/null 2>&1 || true
+  if [[ -d "$quality_lock_dir" ]]; then
+    ok "and a steal attempt leaves it alone until a human can look"
+  else
+    bad "a lock nobody could read was reclaimed anyway"
+  fi
+fi
+chmod 644 "$quality_lock_dir/token" 2>/dev/null || true
 
 # ── 9. the drop watchdog ──────────────────────────────────────────────────────
 echo ""
