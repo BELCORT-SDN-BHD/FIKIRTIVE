@@ -368,6 +368,10 @@ export type RenderJobData = z.infer<typeof renderJobData>;
 export const RENDER_QUEUE = "render";
 /** metadata probe queue (worker-owned; web dispatches best-effort) */
 export const INGEST_QUEUE = "ingest";
+/** The ingest dead-letter target. The worker has always created it from the same
+ *  `${INGEST_QUEUE}.dlq` expression inline; naming it here lets the dead-letter
+ *  census (#793) enumerate all seven DLQs from one place instead of a literal. */
+export const INGEST_DLQ = `${INGEST_QUEUE}.dlq`;
 export const RENDER_DLQ = `${RENDER_QUEUE}.dlq`;
 export const RENDER_RETRY_LIMIT = 2;
 /** Shared by BOTH sides (codex review): whoever boots first creates the queue

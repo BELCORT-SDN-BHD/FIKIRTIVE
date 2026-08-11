@@ -158,3 +158,24 @@ describe("proxy — the northstar prefix is back inside the login wall (#606)", 
     expect(matcherRuns("/api/better-auth/callback/google")).toBe(false);
   });
 });
+
+// #793: the dead-letter probe is pulled by an external uptime service, which has no session.
+// It answers clear/backed-up/unknown and nothing else, so it joins /api/health outside the wall —
+// and the exemption must not quietly become "everything under /api/ops is public".
+describe("proxy — dead-letter probe (/api/ops/dlq)", () => {
+  it("the matcher does NOT run the auth wall for /api/ops/dlq (the uptime probe has no session)", () => {
+    expect(matcherRuns("/api/ops/dlq")).toBe(false);
+  });
+
+  it("does not open /api/ops as a public prefix", () => {
+    expect(matcherRuns("/api/ops")).toBe(true);
+    expect(matcherRuns("/api/ops/queues")).toBe(true);
+    expect(matcherRuns("/api/ops/tenants")).toBe(true);
+  });
+
+  it("a session-less request to a sibling ops path still redirects to /login", async () => {
+    const res = await proxy(req("/api/ops/queues"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+});

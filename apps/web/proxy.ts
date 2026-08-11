@@ -60,6 +60,10 @@ export const config = {
   // walled → infinite redirect / total lockout. (NextAuth's api/auth route is retired.)
   // api/stripe excluded — the webhook is unauthenticated (Stripe calls it; the signature is its auth).
   // api/health excluded — external uptime monitors probe it; it returns only up/stale, no data.
+  // api/ops/dlq excluded (#793) — the SAME external uptime monitors probe it, and they have no
+  //   session. It answers clear/backed-up/unknown and nothing else: no counts, no queue names, no
+  //   merchant data. The exemption is scoped to exactly this path — there is no other route under
+  //   /api/ops, and any future one stays inside the wall unless it earns its own line here.
   // api/meta/data-deletion excluded — Meta calls it unauthenticated; the signed_request is its auth.
   // api/media/pub excluded — the ONLY caller is Meta's async media-fetch server (no session, ever).
   //   The route's HMAC token (signed by the publish worker over ownerId+key+expiry) is its SOLE
@@ -77,5 +81,5 @@ export const config = {
   // MUST render without a session — that is the whole point of them — so they join /login
   // outside the wall. They mutate nothing on their own; every action behind them goes through
   // Better Auth's own gates (pause switch, allowlist, verification, rate limit).
-  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/ops/dlq|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };
