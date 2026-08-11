@@ -38,6 +38,7 @@ import {
   navPointableNames,
 } from "@fikirtive/core";
 import { ottoInstructions } from "./instructions.js";
+import { skillCatalog } from "./registry.js";
 
 // ── 枚举源:Otto 可以说出口的名字,全部来自导航权威 ─────────────────────────
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -59,6 +60,27 @@ function linesNamingUnmappedPlaces(text: string): string[] {
   return text
     .split("\n")
     .filter((line) => stripAuthorizedNames(line).includes(NAV_PATH_SEPARATOR));
+}
+
+/**
+ * 第二种形状:**真名字 + 编出来的下一层**。
+ *
+ * read-spending 的技能描述原本写着「Billing & credits → Spend history」—— 前半是地图上真有
+ * 的入口,后半是页面里的一段,地图上没有。它不带路名分隔符,所以上面那把尺子量不到;而它
+ * 恰恰是最容易长出来的那一种(名字是真的,所以谁都不会起疑)。
+ *
+ * 检测器跑在**剥掉授权名单之后**的文本上:真路名早已被剥成 «nav»,剩下的「入口名 + 箭头」
+ * 就只可能是往真入口后面挂了一层地图外的东西。
+ */
+const ITEM_LABELS = [...everyNavDestination().map((item) => item.label)].sort(
+  (a, b) => b.length - a.length,
+);
+const INVENTED_SUBLEVEL = new RegExp(
+  `(?:${ITEM_LABELS.map(escapeRegex).join("|")})\\s*(?:→|${NAV_PATH_SEPARATOR}|>)\\s*[A-Za-z]`,
+);
+
+function namesInventedSublevel(text: string): boolean {
+  return INVENTED_SUBLEVEL.test(stripAuthorizedNames(text));
 }
 
 // 地图里的路径都写成 `(/…)`;提示词其余地方没有这个形状(反例见下面的自检)。
@@ -143,10 +165,54 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
     }
   });
 
+  it("没有在真入口后面挂一层地图上没有的东西", () => {
+    expect(namesInventedSublevel(ottoInstructions)).toBe(false);
+  });
+
+  it("这把尺子逮得住「真名字 + 编出来的下一层」,也放得过真路名", () => {
+    // read-spending 的原句,以及同一形状的几种写法。
+    expect(namesInventedSublevel("sees under Billing & credits → Spend history.")).toBe(true);
+    expect(namesInventedSublevel("open Connections → Instagram to reconnect")).toBe(true);
+    expect(namesInventedSublevel("Library > Favourites has it")).toBe(true);
+    // 真路名(整条都在名单上)必须放过。
+    expect(namesInventedSublevel(`Point them to ${navPath("billing")}.`)).toBe(false);
+    expect(namesInventedSublevel(`There is ONE calendar — ${navPath("schedule")}.`)).toBe(false);
+    // 与地方无关的箭头(提示词里到处都是这种)不许误伤。
+    expect(namesInventedSublevel('Image (kind:"image") → call seedreamPrompt first')).toBe(false);
+  });
+
   it("路径检测器同样逮得住编出来的路径,放得过真的", () => {
     expect(unmappedPaths("Open it at (/settings/connections).")).toEqual(["/settings/connections"]);
     expect(unmappedPaths("Open it at (/library).")).toEqual(["/library"]); // 已收敛的旧路由
     expect(unmappedPaths(`Open it at (${navLinkByKey("connections").href}).`)).toEqual([]);
+  });
+});
+
+describe("#802 ③ 技能描述也是描述面 —— 同一把尺子量到底", () => {
+  // Otto 读到的「地方在哪」不止提示词一处:每个技能的 description 都随工具表进模型。
+  // read-spending 原本在这里手打了「Billing & credits → Spend history」—— 一个真名字后面
+  // 挂了一个地图上没有的第二层。描述面漏一处,硬规则就少一处约束。
+  it("每个技能描述里写成路的地方,同样都在地图内", () => {
+    const offenders = skillCatalog.flatMap((skill) =>
+      linesNamingUnmappedPlaces(skill.description).map((line) => `${skill.name}: ${line}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("也没有技能在真入口后面挂一层编出来的下一层", () => {
+    const offenders = skillCatalog.filter((skill) => namesInventedSublevel(skill.description));
+    expect(offenders.map((skill) => skill.name)).toEqual([]);
+  });
+
+  it("技能描述里引的路径同样都是真路径", () => {
+    for (const skill of skillCatalog) {
+      expect(unmappedPaths(skill.description), skill.name).toEqual([]);
+    }
+  });
+
+  it("扫描面自检:技能表真的被扫到了", () => {
+    expect(skillCatalog.length).toBeGreaterThan(30);
+    expect(skillCatalog.some((skill) => skill.name === "readSpending")).toBe(true);
   });
 });
 
