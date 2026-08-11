@@ -29,6 +29,7 @@ const {
   mockChatMessageCreate,
   mockChatMessageDeleteMany,
   mockChatMessageUpdateMany,
+  mockOrganizationFindUnique,
   mockScheduledPostFindFirst,
   mockActionEventCreate,
   mockGenJobFindFirst,
@@ -170,6 +171,8 @@ const {
     mockChatMessageCreate: vi.fn(),
     mockChatMessageDeleteMany: vi.fn(),
     mockChatMessageUpdateMany: vi.fn(),
+    // #524 r2 — the spend-cap preflight reads Organization.settings before the card is consumed.
+    mockOrganizationFindUnique: vi.fn(),
     mockScheduledPostFindFirst: vi.fn(),
     mockActionEventCreate: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
@@ -306,6 +309,7 @@ vi.mock("@fikirtive/db", () => ({
       updateMany: mockGenJobUpdateMany,
     },
     scheduledPost: { findFirst: mockScheduledPostFindFirst },
+    organization: { findUnique: mockOrganizationFindUnique },
     actionEvent: { create: mockActionEventCreate },
     researchJob: { findFirst: mockResearchJobFindFirst, deleteMany: mockResearchJobDeleteMany },
     canvasNode: { updateMany: mockCanvasNodeUpdateMany },
@@ -383,6 +387,9 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
+// #524 r2: the REAL hold derivation (the @fikirtive/otto mock spreads the actual module), so the
+// expected number in the spend-cap cases comes from the same code the production path runs.
+const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime } = await import("@fikirtive/otto");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -408,7 +415,11 @@ const transactionTx = {
     findMany: mockChatMessageFindMany,
     create: mockChatMessageCreate,
     deleteMany: mockChatMessageDeleteMany,
+    // #524 r2: the approval CAS now commits inside the same transaction as the spend-cap read,
+    // so the tx double has to offer it — the same spy the assertions already use.
+    updateMany: mockChatMessageUpdateMany,
   },
+  organization: { findUnique: mockOrganizationFindUnique },
   genJob: {
     findFirst: mockGenJobFindFirst,
     updateMany: mockGenJobUpdateMany,
@@ -494,6 +505,9 @@ beforeEach(() => {
   mockGenJobFindFirst.mockResolvedValue(null);
   mockScheduledPostFindFirst.mockResolvedValue(null);
   mockChatMessageUpdateMany.mockResolvedValue({ count: 1 });
+  // #524 r2 default: a workspace that never set a spend cap (settings null → no ceiling), so
+  // every pre-existing approve case keeps its old behaviour.
+  mockOrganizationFindUnique.mockResolvedValue({ settings: null });
   mockActionEventCreate.mockResolvedValue({});
   mockListCrmSegments.mockResolvedValue({
     ok: true,
@@ -2874,6 +2888,159 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
     expect(res).toMatchObject({ error: expect.any(String) });
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  // ── #524 r2 (judge P1-2):上限拦住的批准,不许把商家的同意一起吃掉 ─────────────
+  //
+  // 原状:卡片是一次性同意,在恢复之前就被 CAS 消费;上限随后在 reserveCredits 里拒绝,
+  // 商家一分钱没花、什么也没拿到,同意却没了 —— 提高上限还不够,他必须把同一个动作
+  // 再批准一次。这一组钉的是:**上限拦下时卡片原封不动**,提高上限后同一张卡直接可用。
+  //
+  // 权威没有搬家:reserveCredits 仍然是唯一决定钱动不动的地方。这里加的只是一次只读
+  // 预判,让「早一行就知道的拒绝」不再吃掉同意。
+  describe("#524 r2 — a spend-cap refusal must not burn the approval", () => {
+    /** The EXACT hold this resume will reserve — computed from the same two functions the
+     *  production path uses, never a hand-written number (a copy would drift and the test
+     *  would stop proving the preflight and the reserve agree). */
+    const holdInternal = () =>
+      llmHoldInternal(
+        ottoBudgetArgsFor(ottoApprovalResumeRuntime, {
+          orgId: OWNER_ID,
+          refId: "otto-approve:probe",
+          input: "probe" as never,
+        }),
+      );
+
+    it("the fixture really does hold something (otherwise the cases below prove nothing)", () => {
+      expect(holdInternal()).toBeGreaterThan(0);
+    });
+
+    it("cap below the turn's hold → refused, card still pending, nothing approved, nothing run", async () => {
+      setupUniversalApprove();
+      // 1 displayed credit = 10 internal, comfortably under the turn hold.
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 1 } });
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ error: expect.stringContaining("Paused by your spend cap") });
+      expect((res as { error: string }).error).toContain("your cap is 1 credit per action");
+      // The consent is untouched — this is the whole fix.
+      expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+      // And nothing downstream ran: no parked item approved, no resume, no metering.
+      expect(mockApprove).not.toHaveBeenCalled();
+      expect(mockRun).not.toHaveBeenCalled();
+      expect(mockWithLlmBudget).not.toHaveBeenCalled();
+    });
+
+    it("raising the cap makes the SAME approval work — no re-approval needed", async () => {
+      setupUniversalApprove();
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 1 } });
+
+      const refused = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+      expect(refused).toMatchObject({ error: expect.stringContaining("spend cap") });
+      expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+
+      // The merchant raises the cap in Settings and presses the same button again. The card is
+      // still pending (nothing consumed it), so this is the ORIGINAL approval, not a new one.
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ ok: true, status: "done" });
+      expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: APPROVAL_CARD_MSG_ID,
+            AND: [{ payload: { path: ["status"], equals: "pending" } }],
+          }),
+          data: expect.objectContaining({ payload: expect.objectContaining({ status: "approved" }) }),
+        }),
+      );
+      expect(mockRun).toHaveBeenCalled();
+    });
+
+    it("a cap that cannot be read refuses too — fail closed, and still without eating the card", async () => {
+      setupUniversalApprove();
+      // The corrupted-value family (r1 judge P1-1): a stored string is not a readable ceiling.
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: "5" } });
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ error: expect.stringContaining("couldn't be read") });
+      expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+      expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it("a missing organization row refuses — never approve against a ceiling we cannot see", async () => {
+      setupUniversalApprove();
+      mockOrganizationFindUnique.mockResolvedValue(null);
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ error: expect.stringContaining("couldn't be read") });
+      expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("a cap the hold fits under changes nothing — the pre-#524 path, unchanged", async () => {
+      setupUniversalApprove();
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ ok: true, status: "done" });
+      expect(mockChatMessageUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenCalled();
+    });
+
+    // 判官点名的并发形状:检查与消费**同一笔事务**提交,所以「查过了」与「消费了」之间
+    // 没有让上限变化插进来的窗口。两种交错都不许留下「同意被吃掉但动作没跑」。
+    it("the cap read and the CAS commit in ONE transaction — no window between check and consume", async () => {
+      setupUniversalApprove();
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
+      const sameTx: unknown[] = [];
+      mockTransaction.mockImplementation(async (arg: unknown) => {
+        if (typeof arg !== "function") return runTransaction(arg);
+        return (arg as (tx: unknown) => Promise<unknown>)(
+          new Proxy(transactionTx as object, {
+            get(target, prop, receiver) {
+              if (prop === "organization" || prop === "chatMessage") sameTx.push(prop);
+              return Reflect.get(target, prop, receiver);
+            },
+          }),
+        );
+      });
+
+      await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      // Both the cap read and the card CAS were served by the SAME transaction client.
+      expect(sameTx).toContain("organization");
+      expect(sameTx).toContain("chatMessage");
+      expect(sameTx.indexOf("organization")).toBeLessThan(sameTx.lastIndexOf("chatMessage"));
+    });
+
+    // 交错形状:两次点击之间上限被改。检查与消费同一笔事务提交,所以每一次点击只可能落在
+    // 两个自洽结果之一 ——(被上限拒绝 + 卡片原封不动)或(消费 + 真的跑了)。
+    // 「同意被吃掉但动作没跑」这个状态不存在,这里逐次钉住。
+    it("a cap change between two clicks never leaves consent spent with nothing run", async () => {
+      setupUniversalApprove();
+      mockOrganizationFindUnique
+        .mockResolvedValueOnce({ settings: { spendCapCredits: 500 } }) // click 1: allowed
+        .mockResolvedValueOnce({ settings: { spendCapCredits: 1 } }); // click 2: merchant lowered it
+
+      const first = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+      const second = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      // Click 1: consent spent, and spent on work that actually ran.
+      expect(first).toMatchObject({ ok: true, status: "done" });
+      expect(mockChatMessageUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenCalledTimes(1);
+
+      // Click 2: refused by the cap — and it did not reach the CAS at all, so nothing more was
+      // consumed. One consumption, one resume; no orphaned consent in either outcome.
+      expect(second).toMatchObject({ error: expect.stringContaining("spend cap") });
+      expect(mockChatMessageUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("test ④ double-approve: a consumed (approved) card refuses benignly — no re-approve, no run, no write", async () => {

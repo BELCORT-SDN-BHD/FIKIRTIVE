@@ -99,6 +99,51 @@ export function actualCostInternal(
   return Number.isFinite(result) ? Math.max(0, result) : 0;
 }
 
+export type LlmBudgetArgs = {
+  orgId: string;
+  refId: string;
+  model: string;
+  paid: boolean;
+  margin?: number;
+  maxSteps?: number;
+  /** Price table for this call. When supplied it MUST come from the Otto model-runtime
+   *  manifest (runtime.ts ottoBudgetArgsFor — the single billing source, PH1-A1).
+   *  Omitted → llmPricesFor(model), the fail-closed lookup (unknown → sonnet, never free). */
+  prices?: LlmPrices;
+  /** #543 — an upper bound on the HOLD, in INTERNAL credits. Server-owned composition
+   *  data only (runtime.ts ottoBudgetArgsFor); never request/client supplied. It can only
+   *  LOWER the hold, never raise it, and a malformed value (0, negative, fractional,
+   *  NaN, Infinity) is ignored so the derived worst-case budget stays in force —
+   *  fail-closed in the direction that holds MORE. Reserve/settle/refund semantics are
+   *  unchanged: settleCredits still clamps the charge to the held amount. */
+  reserveCapInternal?: number;
+  usageOnError?: (e: unknown) => TokenUsage | null;
+};
+
+/**
+ * The EXACT number of internal credits `withLlmBudget` will hold for this call — extracted so
+ * there is one definition of it, and `withLlmBudget` below is its only in-tree consumer that
+ * spends (#524 r2).
+ *
+ * A caller may consult it READ-ONLY to answer "will the merchant's spend cap refuse this turn?"
+ * BEFORE doing something it cannot take back (ottoApprove consumes the approval card before the
+ * resume). That is a preflight, never an authority: the reserve inside `reserveCredits` remains
+ * the only thing that decides whether money moves, and a preflight that says yes changes nothing
+ * about its verdict. Deriving the number here rather than re-deriving it at the call site is the
+ * point — a second copy of "what a turn holds" would drift from what is actually reserved, and a
+ * preflight that guesses HIGH would refuse turns the ledger would have allowed.
+ *
+ * `paid: false` (fixture/mock runtimes) holds nothing at all — invariant #4.
+ */
+export function llmHoldInternal(args: LlmBudgetArgs): number {
+  if (!args.paid) return 0;
+  const prices = args.prices ?? llmPricesFor(args.model);
+  const margin = args.margin ?? ottoLlmMargin();
+  const worstCase = turnBudgetInternal(prices, margin, args.maxSteps ?? 1);
+  const cap = args.reserveCapInternal;
+  return typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
+}
+
 /**
  * Wrap a paid LLM call with the reserve→settle credit accounting.
  *
@@ -109,26 +154,7 @@ export function actualCostInternal(
  * @param fn         - async function that calls the LLM and returns { result, usage? }.
  */
 export async function withLlmBudget<T>(
-  args: {
-    orgId: string;
-    refId: string;
-    model: string;
-    paid: boolean;
-    margin?: number;
-    maxSteps?: number;
-    /** Price table for this call. When supplied it MUST come from the Otto model-runtime
-     *  manifest (runtime.ts ottoBudgetArgsFor — the single billing source, PH1-A1).
-     *  Omitted → llmPricesFor(model), the fail-closed lookup (unknown → sonnet, never free). */
-    prices?: LlmPrices;
-    /** #543 — an upper bound on the HOLD, in INTERNAL credits. Server-owned composition
-     *  data only (runtime.ts ottoBudgetArgsFor); never request/client supplied. It can only
-     *  LOWER the hold, never raise it, and a malformed value (0, negative, fractional,
-     *  NaN, Infinity) is ignored so the derived worst-case budget stays in force —
-     *  fail-closed in the direction that holds MORE. Reserve/settle/refund semantics are
-     *  unchanged: settleCredits still clamps the charge to the held amount. */
-    reserveCapInternal?: number;
-    usageOnError?: (e: unknown) => TokenUsage | null;
-  },
+  args: LlmBudgetArgs,
   fn: () => Promise<{ result: T; usage?: TokenUsage }>,
 ): Promise<T> {
   // Invariant #4: mock/free path — no metering at all.
@@ -150,16 +176,12 @@ export async function withLlmBudget<T>(
     throw new Error(`Manifest pricing for ${args.model} is below the registered fail-closed floor.`);
   }
   const margin = args.margin ?? ottoLlmMargin();
-  const maxSteps = args.maxSteps ?? 1;
 
-  // Reserve the worst-case budget BEFORE calling the model.
-  // turnBudgetInternal(prices, margin, 1) === oneStepFloorInternal(prices, margin).
-  const worstCase = turnBudgetInternal(prices, margin, maxSteps);
-  // #543: a composition-supplied cap may only LOWER the hold. Anything that is not a
-  // positive integer is ignored, so a malformed cap can never open a metering hole.
-  const cap = args.reserveCapInternal;
-  const reserve =
-    typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
+  // Reserve the worst-case budget BEFORE calling the model — the ONE definition of the hold
+  // (llmHoldInternal above), so a read-only preflight and the real reserve can never disagree.
+  // turnBudgetInternal(prices, margin, 1) === oneStepFloorInternal(prices, margin); #543's
+  // composition cap may only LOWER it, and a malformed cap is ignored.
+  const reserve = llmHoldInternal(args);
 
   // Invariant #1: reserve first. InsufficientCredits propagates; fn never called.
   await prisma.$transaction((tx) =>
