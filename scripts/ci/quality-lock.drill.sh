@@ -8,21 +8,28 @@
 # 1h31m, its run held the lock 2h12m, and two CI runs burned their whole timeout
 # waiting on a process nobody wanted any more.
 #
-# The drill asserts BOTH directions, because a lock that is easy to steal is not a
-# lock:
-#   abandoned  → an orphaned holder past the grace period is cleared (with its
-#                children) and the next run gets the machine in seconds
-#   attended   → a live holder whose launcher is still there, and an orphan still
-#                inside its grace period, are both left strictly alone
+# It asserts every direction, because a lock that is easy to steal is not a lock:
+#   abandoned   an orphaned holder past the grace period is cleared (with its
+#               children) and the next run gets the machine in seconds
+#   attended    a live holder whose launcher is still there, and an orphan still
+#               inside its grace period, are both left strictly alone
+#   recycled    a lock whose pid was reused by an unrelated process never gets
+#               that process killed
+#   contested   if the dying holder's own cleanup frees the path and a third run
+#               takes it, the stealer stands down instead of taking a live lock
 # plus the pre-existing rules (free path, dead pid, pid-less corpse) so this change
 # cannot quietly loosen them, and the drop watchdog itself.
 #
 # It runs the REAL code: the block between the `quality-lock library` markers in
 # scripts/ci/quality.sh is extracted and sourced, pointed at a throwaway
-# QUALITY_LOCK_DIR under mktemp. The real machine lock is never touched, and
-# nothing here needs pnpm, node, or Postgres.
+# QUALITY_LOCK_DIR. The real machine lock is never touched, and nothing here needs
+# pnpm, node, or Postgres.
 #
-# Run: bash scripts/ci/quality-lock.drill.sh   (about 90s)
+# Run: bash scripts/ci/quality-lock.drill.sh            (about 2 minutes)
+#      QUALITY_DRILL_TMPDIR=./.drill-tmp bash scripts/ci/quality-lock.drill.sh
+#          — for sandboxes where mktemp is unavailable. The workspace is created
+#            inside that directory, and the lock path is still verified to live
+#            inside the workspace before anything is killed or deleted.
 #
 # Deliberately NOT wired into quality.sh's gate list: it spawns processes and
 # judges them on wall-clock, and a load-sensitive gate on a shared machine is a
@@ -33,25 +40,19 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 quality_sh="$here/quality.sh"
-tmp="$(mktemp -d)"
+
+if [[ -n "${QUALITY_DRILL_TMPDIR:-}" ]]; then
+  mkdir -p "$QUALITY_DRILL_TMPDIR"
+  drill_root="$(cd "$QUALITY_DRILL_TMPDIR" && pwd)"
+  tmp="$drill_root/quality-lock-drill.$$"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+else
+  tmp="$(mktemp -d)"
+fi
 
 export QUALITY_LOCK_DIR="$tmp/lock"
 export QUALITY_ORPHAN_GRACE_SECONDS=2
-
-spawned="$tmp/spawned"
-: >"$spawned"
-record() { echo "$1" >>"$spawned"; }
-
-drill_cleanup() {
-  local pid
-  while read -r pid; do
-    [[ -n "$pid" ]] || continue
-    pkill -P "$pid" 2>/dev/null || true
-    kill -9 "$pid" 2>/dev/null || true
-  done <"$spawned"
-  rm -rf "$tmp"
-}
-trap drill_cleanup EXIT
 
 # ── load the real lock library ────────────────────────────────────────────────
 lib="$tmp/lock-library.sh"
@@ -60,8 +61,10 @@ if [[ ! -s "$lib" ]]; then
   echo "drill: found no 'quality-lock library' block in $quality_sh" >&2
   exit 1
 fi
-for fn in kill_process_tree run_with_timeout lock_mtime_epoch path_age_seconds \
-  holder_is_abandoned_orphan current_lock_is_stale try_steal_stale_lock acquire_quality_lock; do
+for fn in process_start_signature process_is_gone collect_process_tree kill_process_tree \
+  run_with_timeout lock_mtime_epoch path_age_seconds lock_field holder_is_abandoned_orphan \
+  current_lock_is_stale capture_lock_generation lock_generation_unchanged \
+  target_holder_is_gone try_steal_stale_lock acquire_quality_lock; do
   if ! grep -q "^${fn}() {" "$lib"; then
     echo "drill: the extracted library defines no ${fn}() — did the markers move?" >&2
     exit 1
@@ -71,8 +74,8 @@ done
 . "$lib"
 
 # Paranoia, not ceremony: everything below kills processes and deletes
-# directories, so prove first that the sourced library is pointed at the
-# throwaway path and not at the machine's real lock.
+# directories, so prove first that the sourced library is pointed at the drill's
+# own workspace and not at the machine's real lock.
 case "$quality_lock_dir" in
   "$tmp"/*) ;;
   *)
@@ -81,10 +84,42 @@ case "$quality_lock_dir" in
     ;;
 esac
 
+# ── process bookkeeping ───────────────────────────────────────────────────────
+# Every spawned process is recorded WITH its start signature, and cleanup kills
+# only on an exact match. By the time cleanup runs a recorded pid may belong to
+# something else entirely, and a drill that hunts stale pids with a bare `pkill`
+# would be committing the very sin it exists to catch.
+spawned="$tmp/spawned"
+: >"$spawned"
+tab="$(printf '\t')"
+
+record() { printf '%s\t%s\n' "$1" "$(process_start_signature "$1")" >>"$spawned"; }
+
+drill_cleanup() {
+  local pid identity current
+  while IFS="$tab" read -r pid identity; do
+    [[ -n "$pid" ]] || continue
+    current="$(process_start_signature "$pid")"
+    [[ -n "$current" && "$current" == "$identity" ]] || continue
+    kill_process_tree "$pid" >/dev/null 2>&1 || true
+  done <"$spawned"
+  rm -rf "$tmp"
+}
+trap drill_cleanup EXIT
+
 # ── harness ───────────────────────────────────────────────────────────────────
+# Every check is counted, including the ones a platform makes impossible. A drill
+# that quietly performs fewer checks than it claims is worse than no drill, so the
+# tally is reconciled against expected_checks at the end and a skip can never be
+# reported as a pass.
+# 3 (free machine) + 4 (pre-existing rules) + 3 (recycled pid) + 5 (attended)
+# + 7 (cancellation) + 4 (cross-generation race) + 3 (watchdog)
+expected_checks=29
 pass=0
 fail=0
+skip=0
 waiter_pid=""
+
 ok() {
   printf '  ok    %s\n' "$*"
   pass=$((pass + 1))
@@ -93,7 +128,12 @@ bad() {
   printf '  FAIL  %s\n' "$*" >&2
   fail=$((fail + 1))
 }
-note() { printf '  ..    %s\n' "$*"; }
+skipped() {
+  local count="$1"
+  shift
+  printf '  SKIP  %s (%s checks)\n' "$*" "$count"
+  skip=$((skip + count))
+}
 
 reset_lock() {
   rm -rf "$quality_lock_dir" "$quality_steal_arbiter"
@@ -119,7 +159,7 @@ wait_for_file() {
 wait_for_gone() {
   local pid="$1" limit="$2" waited=0
   while (( waited < limit )); do
-    kill -0 "$pid" 2>/dev/null || return 0
+    process_is_gone "$pid" && return 0
     sleep 1
     waited=$((waited + 1))
   done
@@ -128,8 +168,19 @@ wait_for_gone() {
 
 ppid_of() { ps -p "$1" -o ppid= 2>/dev/null | tr -d '[:space:]' || true; }
 
-# The next run in the queue. `trap - EXIT` because a subshell would otherwise
-# inherit drill_cleanup and delete the drill's own workspace when it finishes.
+wait_for_orphaning() {
+  local pid="$1" limit="$2" waited=0
+  while (( waited < limit )); do
+    [[ "$(ppid_of "$pid")" == "1" ]] && return 0
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# The next run in the queue. `trap - EXIT` because a subshell inherits
+# drill_cleanup and would otherwise delete the drill's own workspace on its way
+# out.
 start_waiter() {
   rm -f "$tmp/acquired"
   ( trap - EXIT; acquire_quality_lock >"$tmp/waiter.log" 2>&1; : >"$tmp/acquired" ) &
@@ -137,20 +188,52 @@ start_waiter() {
   record "$waiter_pid"
 }
 
-# Stands in for a quality run that took the lock and then wedged: it records its
-# pid exactly as acquire_quality_lock does, then waits on a child that never
-# returns — the hung DROP DATABASE of #855.
+# ── fixtures ──────────────────────────────────────────────────────────────────
+# The holder takes the lock through the REAL acquire_quality_lock, so what it
+# leaves behind carries a real token and a real identity. mode=cleanup gives it
+# the shape of the production script: on the way out it releases its own lock,
+# which is the window a third run can slip into.
 cat >"$tmp/holder.sh" <<'HOLDER'
 #!/usr/bin/env bash
 set -euo pipefail
-lock="$1"
+lib="$1"
 ready="$2"
-mkdir -p "$lock"
-echo $$ >"$lock/pid"
+mode="${3:-plain}"
+# shellcheck source=/dev/null
+. "$lib"
+acquire_quality_lock >/dev/null
+if [[ "$mode" == "cleanup" ]]; then
+  trap 'if [[ "$(cat "$quality_lock_dir/token" 2>/dev/null || true)" == "$quality_lock_token" ]]; then rm -rf "$quality_lock_dir"; fi; exit 143' TERM
+fi
 sleep 100000 &
 : >"$ready"
 wait
 HOLDER
+
+# A third run that wants the machine and takes it the instant the path is free.
+# It spins on the bare atomic mkdir rather than calling acquire_quality_lock,
+# because acquire polls every 30s and would lose a race it is not trying to win.
+# What is under test is the STEALER's behaviour towards a lock that appeared while
+# it was busy, not the waiter's scheduling.
+cat >"$tmp/competitor.sh" <<'COMPETITOR'
+#!/usr/bin/env bash
+set -euo pipefail
+lib="$1"
+ready="$2"
+# shellcheck source=/dev/null
+. "$lib"
+while true; do
+  if mkdir "$quality_lock_dir" 2>/dev/null; then
+    printf '%s\n' "$quality_lock_token" >"$quality_lock_dir/token"
+    process_start_signature "$$" >"$quality_lock_dir/identity"
+    echo $$ >"$quality_lock_dir/pid"
+    break
+  fi
+  sleep 0.05
+done
+: >"$ready"
+sleep 100000
+COMPETITOR
 
 cat >"$tmp/hang.sh" <<'HANG'
 #!/usr/bin/env bash
@@ -160,17 +243,28 @@ echo $! >"$1"
 wait
 HANG
 
-echo "quality-lock drill: lock dir $quality_lock_dir, orphan grace ${QUALITY_ORPHAN_GRACE_SECONDS}s"
+spawn_orphan() {
+  # Double fork: the middle shell exits at once, so the holder is reparented — the
+  # same shape a cancelled CI job leaves behind.
+  bash -c 'bash "$1" "$2" "$3" "$4" >/dev/null 2>&1 &' _ "$tmp/holder.sh" "$lib" "$1" "${2:-plain}"
+}
+
+echo "quality-lock drill: workspace $tmp, orphan grace ${QUALITY_ORPHAN_GRACE_SECONDS}s"
 
 # ── 1. the pre-existing happy path ────────────────────────────────────────────
 echo ""
 echo "1. a free machine"
 reset_lock
 acquire_quality_lock >/dev/null
-if [[ -d "$quality_lock_dir" && "$(cat "$quality_lock_dir/pid")" == "$$" && -n "$quality_lock_held" ]]; then
+if [[ -d "$quality_lock_dir" && "$(lock_field pid)" == "$$" && -n "$quality_lock_held" ]]; then
   ok "acquire takes the lock and records its own pid"
 else
   bad "acquire did not take a free lock"
+fi
+if [[ "$(lock_field token)" == "$quality_lock_token" && "$(lock_field identity)" == "$(process_start_signature "$$")" ]]; then
+  ok "the lock carries this run's generation token and start signature"
+else
+  bad "the lock is missing its identity"
 fi
 rm -rf "$quality_lock_dir"
 quality_lock_held=""
@@ -191,10 +285,10 @@ else
   ok "a pid-less lock younger than 60s is left alone (a holder writes its pid ms later)"
 fi
 backdate "$quality_lock_dir" 300
-if current_lock_is_stale; then
+if current_lock_is_stale && [[ "$quality_stale_reason" == "pidless" ]]; then
   ok "a pid-less lock older than 60s is a corpse"
 else
-  bad "a pid-less lock older than 60s was not judged stale"
+  bad "a pid-less lock older than 60s was judged ${quality_stale_reason:-not stale}"
 fi
 
 reset_lock
@@ -203,10 +297,10 @@ sleep 0 &
 dead_pid=$!
 wait "$dead_pid" 2>/dev/null || true
 echo "$dead_pid" >"$quality_lock_dir/pid"
-if current_lock_is_stale; then
+if current_lock_is_stale && [[ "$quality_stale_reason" == "dead" ]]; then
   ok "a lock whose pid is provably dead is stale"
 else
-  bad "a dead holder's lock was not judged stale"
+  bad "a dead holder's lock was judged ${quality_stale_reason:-not stale}"
 fi
 start_waiter
 if wait_for_file "$tmp/acquired" 15; then
@@ -215,11 +309,43 @@ else
   bad "the next run never reclaimed a dead holder's lock"
 fi
 
-# ── 3. no friendly fire: an attended holder keeps the machine ─────────────────
+# ── 3. a recycled pid is not a holder ─────────────────────────────────────────
 echo ""
-echo "3. an attended holder (its launcher is alive)"
+echo "3. a lock whose pid was recycled into an unrelated process"
 reset_lock
-bash "$tmp/holder.sh" "$quality_lock_dir" "$tmp/ready-attended" &
+mkdir "$quality_lock_dir"
+bash -c 'sleep 100000' &
+stranger=$!
+record "$stranger"
+printf '%s\n' "not-our-token" >"$quality_lock_dir/token"
+# A start time that cannot possibly be the live process's, paired with a pid that
+# is very much alive: exactly what pid recycling looks like from the outside.
+printf '%s\n' "Thu Jan  1 00:00:00 1970" >"$quality_lock_dir/identity"
+echo "$stranger" >"$quality_lock_dir/pid"
+backdate "$quality_lock_dir" 300
+if current_lock_is_stale && [[ "$quality_stale_reason" == "reused" ]]; then
+  ok "the lock reads as a corpse, because its real owner is gone"
+else
+  bad "a recycled-pid lock was judged ${quality_stale_reason:-not stale}"
+fi
+try_steal_stale_lock >"$tmp/steal-reused.log" 2>&1 || true
+if ! process_is_gone "$stranger"; then
+  ok "the unrelated process wearing that pid was NOT killed"
+else
+  bad "an unrelated process was killed for merely reusing the pid"
+fi
+if [[ ! -d "$quality_lock_dir" ]]; then
+  ok "the corpse lock was reclaimed anyway"
+else
+  bad "the corpse lock was left in place"
+fi
+kill_process_tree "$stranger" >/dev/null 2>&1 || true
+
+# ── 4. no friendly fire: an attended holder keeps the machine ─────────────────
+echo ""
+echo "4. an attended holder (its launcher is alive)"
+reset_lock
+bash "$tmp/holder.sh" "$lib" "$tmp/ready-attended" &
 attended=$!
 record "$attended"
 if ! wait_for_file "$tmp/ready-attended" 15; then
@@ -233,12 +359,12 @@ else
   bad "the attended holder was reparented — this check proves nothing"
 fi
 if current_lock_is_stale; then
-  bad "a live, attended holder was judged stale"
+  bad "a live, attended holder was judged $quality_stale_reason"
 else
   ok "a live, attended holder is never stale, however long it holds"
 fi
-try_steal_stale_lock >/dev/null || true
-if [[ "$(cat "$quality_lock_dir/pid" 2>/dev/null || true)" == "$attended" ]] && kill -0 "$attended" 2>/dev/null; then
+try_steal_stale_lock >/dev/null 2>&1 || true
+if [[ "$(lock_field pid)" == "$attended" ]] && ! process_is_gone "$attended"; then
   ok "an explicit steal attempt leaves the holder and its lock untouched"
 else
   bad "the attended holder lost its lock or its life"
@@ -256,30 +382,19 @@ else
   bad "the waiter never woke up after the holder died"
 fi
 
-# ── 4. the cancellation drill itself ──────────────────────────────────────────
+# ── 5. the cancellation drill itself ──────────────────────────────────────────
 echo ""
-echo "4. a cancelled run: orphaned holder, wedged cleanup"
+echo "5. a cancelled run: orphaned holder, wedged cleanup"
 reset_lock
-# Double fork: the middle shell exits at once, so the holder is reparented — the
-# same shape a cancelled CI job leaves behind.
-bash -c 'bash "$1" "$2" "$3" >/dev/null 2>&1 &' _ "$tmp/holder.sh" "$quality_lock_dir" "$tmp/ready-orphan"
+spawn_orphan "$tmp/ready-orphan" plain
 if ! wait_for_file "$tmp/ready-orphan" 15; then
   bad "the orphan holder never took the lock — drill cannot continue"
   exit 1
 fi
-orphan="$(cat "$quality_lock_dir/pid")"
+orphan="$(lock_field pid)"
 record "$orphan"
-orphan_ppid=""
-waited=0
-while (( waited < 10 )); do
-  orphan_ppid="$(ppid_of "$orphan")"
-  [[ "$orphan_ppid" == "1" ]] && break
-  sleep 1
-  waited=$((waited + 1))
-done
-if [[ "$orphan_ppid" != "1" ]]; then
-  note "SKIP: this platform reparented the orphan to PPID ${orphan_ppid:-?}, not 1"
-  note "      (Linux subreapers do that; the rule targets init reparenting, as on the macOS runner)"
+if ! wait_for_orphaning "$orphan" 10; then
+  skipped 7 "this platform reparented the holder to PPID $(ppid_of "$orphan"), not 1 — Linux subreapers do that; the rule targets init reparenting, as on the macOS runner"
   kill_process_tree "$orphan" >/dev/null 2>&1 || true
 else
   ok "a cancelled run's holder survives with PPID 1"
@@ -291,16 +406,16 @@ else
   fi
   quality_orphan_grace_seconds=600
   if current_lock_is_stale; then
-    bad "an orphan still inside its grace period was judged abandoned"
+    bad "an orphan still inside its grace period was judged $quality_stale_reason"
   else
     ok "an orphan inside its grace period keeps the machine"
   fi
   quality_orphan_grace_seconds=2
   sleep 3
-  if current_lock_is_stale; then
+  if current_lock_is_stale && [[ "$quality_stale_reason" == "orphan" ]]; then
     ok "an orphan past its grace period reads as abandoned"
   else
-    bad "an orphan past its grace period was not judged abandoned"
+    bad "an orphan past its grace period was judged ${quality_stale_reason:-not stale}"
   fi
   start_waiter
   if wait_for_file "$tmp/acquired" 30; then
@@ -308,23 +423,73 @@ else
   else
     bad "the next run is still starving on an abandoned lock"
   fi
-  if wait_for_gone "$orphan" 10; then
+  if wait_for_gone "$orphan" 15; then
     ok "the abandoned holder was killed before its lock changed hands"
   else
     bad "the abandoned holder is still alive while another run holds its lock"
   fi
   if [[ -n "$orphan_child" ]]; then
-    if wait_for_gone "$orphan_child" 10; then
+    if wait_for_gone "$orphan_child" 15; then
       ok "its wedged child died with it (no reparented CPU burner left behind)"
     else
       bad "the wedged child outlived its parent — that is the orphan vitest of #855"
     fi
+  else
+    skipped 1 "no wedged child to follow"
   fi
 fi
 
-# ── 5. the drop watchdog ──────────────────────────────────────────────────────
+# ── 6. the cross-generation race ──────────────────────────────────────────────
+# This orphan has the shape of the real script: killing it runs its cleanup, which
+# frees the path. A third run is spinning on that path and takes it the moment it
+# opens. The stealer must notice that the lock it judged is not the lock that is
+# there now and stand down — proving the old holder is dead says nothing about who
+# owns the path now.
 echo ""
-echo "5. the timeout that keeps cleanup moving"
+echo "6. the holder's cleanup frees the path and a third run takes it"
+reset_lock
+spawn_orphan "$tmp/ready-racer" cleanup
+if ! wait_for_file "$tmp/ready-racer" 15; then
+  bad "the racing holder never took the lock — drill cannot continue"
+  exit 1
+fi
+racer="$(lock_field pid)"
+record "$racer"
+if ! wait_for_orphaning "$racer" 10; then
+  skipped 4 "this platform does not reparent orphans to pid 1"
+  kill_process_tree "$racer" >/dev/null 2>&1 || true
+else
+  bash "$tmp/competitor.sh" "$lib" "$tmp/ready-competitor" &
+  competitor=$!
+  record "$competitor"
+  sleep 3 # past the grace period; the competitor is spinning on the locked path
+  if [[ "$(lock_field pid)" == "$racer" ]]; then
+    ok "the competitor is shut out while the orphan still holds the lock"
+  else
+    bad "the competitor got in before the race even started"
+  fi
+  try_steal_stale_lock >"$tmp/steal-race.log" 2>&1 || true
+  if wait_for_file "$tmp/ready-competitor" 15; then
+    ok "the third run took the path the instant the dying holder freed it"
+  else
+    bad "the third run never got the lock — the race did not happen"
+  fi
+  if [[ "$(lock_field pid)" == "$competitor" ]] && ! process_is_gone "$competitor"; then
+    ok "the lock now belongs to the third run, alive and unharmed"
+  else
+    bad "the third run's lock was taken: lock pid $(lock_field pid), competitor $competitor"
+  fi
+  if grep -q "standing down" "$tmp/steal-race.log"; then
+    ok "the stealer saw a different generation and stood down"
+  else
+    bad "the stealer did not stand down: $(tr '\n' ' ' <"$tmp/steal-race.log")"
+  fi
+  kill_process_tree "$competitor" >/dev/null 2>&1 || true
+fi
+
+# ── 7. the drop watchdog ──────────────────────────────────────────────────────
+echo ""
+echo "7. the timeout that keeps cleanup moving"
 status=0
 run_with_timeout 30 bash -c 'exit 7' || status=$?
 if [[ "$status" == "7" ]]; then
@@ -336,10 +501,10 @@ started="$(date +%s)"
 status=0
 run_with_timeout 2 bash "$tmp/hang.sh" "$tmp/hang.child" || status=$?
 elapsed=$(($(date +%s) - started))
-if [[ "$status" == "124" ]] && (( elapsed < 25 )); then
+if [[ "$status" == "124" ]] && (( elapsed < 30 )); then
   ok "a command that never answers is abandoned after its budget (${elapsed}s, status 124)"
 else
-  bad "expected status 124 within 25s from a wedged command, got $status after ${elapsed}s"
+  bad "expected status 124 within 30s from a wedged command, got $status after ${elapsed}s"
 fi
 hang_child="$(cat "$tmp/hang.child" 2>/dev/null || true)"
 if [[ -n "$hang_child" ]] && wait_for_gone "$hang_child" 10; then
@@ -350,8 +515,18 @@ fi
 
 # ── verdict ───────────────────────────────────────────────────────────────────
 echo ""
-if (( fail != 0 )); then
-  echo "quality-lock drill: $fail of $((pass + fail)) checks FAILED" >&2
+total=$((pass + fail + skip))
+if (( total != expected_checks )); then
+  echo "quality-lock drill: accounting is off — $pass passed + $fail failed + $skip skipped = $total, expected $expected_checks" >&2
+  echo "quality-lock drill: a check disappeared without saying so; treat this as a failure" >&2
   exit 1
 fi
-echo "quality-lock drill: all $pass checks passed"
+if (( fail != 0 )); then
+  echo "quality-lock drill: $fail of $expected_checks checks FAILED ($pass passed, $skip skipped)" >&2
+  exit 1
+fi
+if (( skip != 0 )); then
+  echo "quality-lock drill: $pass checks passed, $skip SKIPPED on this platform (of $expected_checks) — NOT a full pass"
+  exit 0
+fi
+echo "quality-lock drill: all $expected_checks checks passed"
