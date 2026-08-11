@@ -115,6 +115,10 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     // 变成一个要先展开的分组,等于给旗舰面多加一次点击。分组留给工具,直达留给旗舰。
     items: [
       { key: "library", label: "Library", href: "/otto?view=library", does: "Find every image and video you have already made." },
+      // #780 —— 剪辑台的门。拼接/字幕/配乐引擎一直在跑(见 packages/core/timeline.ts 与
+      // apps/worker),但自 #606 起没有任何入口通向它,商家拿不到「多条片接成一条」。
+      // 紧挨 Library:要剪的东西就在那里,两格之间不隔第三样。
+      { key: "edit", label: "Video editor", href: "/otto?view=edit", does: "Put your clips together into one video, add captions, and lay music under it." },
       { key: "brand", label: "Brand & products", href: "/otto?view=memory", does: "Keep what Otto should remember about your brand and the things you sell." },
       { key: "templates", label: "Templates", href: "/otto?view=templates", does: "Start from a ready-made setup: pick one, add your product, get a polished image." },
       { key: "discover", label: "Discover", href: "/otto?view=discover", does: "Browse ideas worth trying when you are not sure what to make next." },

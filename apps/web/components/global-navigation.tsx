@@ -7,6 +7,7 @@ import {
   BarChart3,
   BookOpen,
   ChevronDown,
+  Clapperboard,
   Coins,
   Compass,
   Contact,
@@ -72,6 +73,7 @@ const NAV_ICONS: Record<string, NavigationIcon> = {
   "crm-reports": BarChart3,
   // Workspace
   library: Library,
+  edit: Clapperboard,
   brand: BookOpen,
   templates: LayoutTemplate,
   discover: Compass,

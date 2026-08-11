@@ -61,6 +61,60 @@ describe("export — renders the SAVED cut", () => {
   });
 });
 
+// #780 — the building half. Otto asks for the same three things a merchant can do by hand
+// (join / captions / music), through the same actions; nothing here assembles a cut itself.
+describe("desk / join / music — the merchant's own moves, asked for in words", () => {
+  const cut = { clips: [{ src: "/files/a.mp4", kind: "video" as const, seconds: 4 }], seconds: 4, captionCount: 0, music: null };
+
+  it("desk reports what they have and what the video holds", async () => {
+    const desk = vi.fn(async () => ({ media: [{ src: "/files/a.mp4", kind: "video" as const, seconds: 4 }], cut }));
+    const res = (await executeRenderVideo({ action: "desk" }, { context: makeCtx({ desk }) })) as {
+      ok: boolean; media: unknown[]; cut: unknown;
+    };
+    expect(res.ok).toBe(true);
+    expect(res.media).toHaveLength(1);
+    expect(res.cut).toEqual(cut);
+  });
+
+  it("join needs the clips, and passes the ORDER through untouched", async () => {
+    const join = vi.fn(async () => ({ ok: true as const, cut }));
+    const ctx = makeCtx({ join });
+    const missing = (await executeRenderVideo({ action: "join" }, { context: ctx })) as { error: string };
+    expect(missing.error).toContain("srcs");
+    await executeRenderVideo({ action: "join", srcs: ["/files/b.mp4", "/files/a.mp4"] }, { context: ctx });
+    expect(join).toHaveBeenCalledWith(["/files/b.mp4", "/files/a.mp4"]);
+  });
+
+  it("music and add_captions each name one clip; both have an exit", async () => {
+    const music = vi.fn(async () => ({ ok: true as const, cut }));
+    const clearMusic = vi.fn(async () => ({ ok: true as const, cut }));
+    const addCaptions = vi.fn(async () => ({ ok: true as const, cut }));
+    const clearCaptions = vi.fn(async () => ({ ok: true as const, cut }));
+    const ctx = makeCtx({ music, clearMusic, addCaptions, clearCaptions });
+
+    expect(((await executeRenderVideo({ action: "music" }, { context: ctx })) as { error: string }).error).toContain("src");
+    expect(((await executeRenderVideo({ action: "add_captions" }, { context: ctx })) as { error: string }).error).toContain("src");
+
+    await executeRenderVideo({ action: "music", src: "/files/song.mp3" }, { context: ctx });
+    await executeRenderVideo({ action: "clear_music" }, { context: ctx });
+    await executeRenderVideo({ action: "add_captions", src: "/files/a.mp4" }, { context: ctx });
+    await executeRenderVideo({ action: "clear_captions" }, { context: ctx });
+    expect(music).toHaveBeenCalledWith("/files/song.mp3");
+    expect(clearMusic).toHaveBeenCalled();
+    expect(addCaptions).toHaveBeenCalledWith("/files/a.mp4");
+    expect(clearCaptions).toHaveBeenCalled();
+  });
+
+  it("a refusal from the action layer reaches the merchant unchanged — never re-worded here", async () => {
+    const join = vi.fn(async () => ({ error: "Music goes under the video, not in it — pick videos or images to join, then add music." }));
+    const res = (await executeRenderVideo({ action: "join", srcs: ["/files/song.mp3"] }, { context: makeCtx({ join }) })) as {
+      ok: boolean; error: string;
+    };
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("Music goes under the video");
+  });
+});
+
 describe("jobs / caption / caption_job / transcript", () => {
   it("jobs returns the render strip", async () => {
     const jobs = vi.fn(async () => [

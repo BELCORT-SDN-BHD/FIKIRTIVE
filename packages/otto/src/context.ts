@@ -815,8 +815,24 @@ export interface OttoContext {
   };
   /** Render/caption port (W-B3-B, $0) — injected by the web caller. export renders the SAVED cut
    *  (startRender, ffmpeg concat — "re-rendering is free"); caption dispatches whisper.cpp captions
-   *  (startCaption); the rest are reads. No gen job, no spend. Skills reach it ONLY via ctx.render. */
+   *  (startCaption); the rest are reads. No gen job, no spend. Skills reach it ONLY via ctx.render.
+   *
+   *  #780 adds the three BUILDING moves (desk/join/music/addCaptions and their exits) — the same
+   *  edit-desk actions the merchant's own desk calls, so the assistant and the merchant work on
+   *  ONE cut. Free-hand timeline JSON is deliberately still absent from this port. */
   render?: {
+    /** $0 read: this project's media plus the cut as it stands (getEditDesk). */
+    desk(): Promise<{ media: DeskClipView[]; cut: CutSummaryView } | { error: string }>;
+    /** $0 write: join these clips into ONE video, in this order (joinClipsIntoCut). */
+    join(srcs: string[]): Promise<{ ok: true; cut: CutSummaryView } | { error: string }>;
+    /** $0 write: lay one audio file under the whole video, ducked under voice (setCutMusic). */
+    music(src: string): Promise<{ ok: true; cut: CutSummaryView } | { error: string }>;
+    /** $0 write: take the music back off (clearCutMusic). */
+    clearMusic(): Promise<{ ok: true; cut: CutSummaryView } | { error: string }>;
+    /** $0 write: put one clip's transcribed words on screen (addCaptionsToClip). */
+    addCaptions(src: string): Promise<{ ok: true; cut: CutSummaryView } | { error: string }>;
+    /** $0 write: take every caption back off (clearCutCaptions). */
+    clearCaptions(): Promise<{ ok: true; cut: CutSummaryView } | { error: string }>;
     /** $0: export the project's SAVED cut to a video (startRender). No saved cut → honest error. */
     export(): Promise<{ id: string } | { error: string }>;
     /** $0 read: recent render jobs for this project (getRenderJobs). */
@@ -987,6 +1003,20 @@ export type CaptionJobView = { id: string; status: string; progress: number; err
 
 /** One transcript cue (getTranscript) — structural re-declaration of the core CaptionCue. */
 export type TranscriptCue = { startMs: number; lengthMs: number; text: string };
+
+/** One piece of the merchant's media as the edit desk offers it (#780) — structural
+ *  re-declaration of the web DeskMedia (same fence rule as CanvasNodeView). `label` is what
+ *  the merchant calls it, so Otto can say which clip it means instead of reading out a hash. */
+export type DeskClipView = { src: string; kind: "video" | "image" | "audio"; seconds: number; label: string };
+
+/** The saved cut in merchant terms (#780) — structural re-declaration of the web CutSummary.
+ *  No timeline JSON crosses this port: Otto reads what is in the video, never coordinates. */
+export type CutSummaryView = {
+  clips: { src: string; kind: "video" | "image"; seconds: number }[];
+  seconds: number;
+  captionCount: number;
+  music: string | null;
+};
 
 /** Entity kinds a skill may create (mirror of actions.ts ENTITY_TYPES / core RefEntityType). */
 export type EntityType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
