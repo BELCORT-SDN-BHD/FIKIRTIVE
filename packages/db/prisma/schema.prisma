@@ -2273,6 +2273,34 @@ model WorkerHeartbeat {
   at DateTime
 }
 
+// #794 备份可信化(工程评估债 #2)。此前「昨晚备份成功了吗」这个问题在系统里没有答案:
+// 备份成功只写进 worker 的 stdout,失败只进 Sentry,两者都不是可以被 /api/health 或
+// admin 读到的事实。备份是否新鲜必须是一行可查的记录,而不是一句日志。
+//
+// append-only:每次备份尝试落一行(成功与失败都落),永不 UPDATE、永不删。
+// 新鲜度 = 最近一条 status='succeeded' 行的 finishedAt(见 apps/web/lib/health.ts)。
+// 无租户数据(平台级 ops 记录),不进 tenant guard;写入方经 runAsSystem("db-backup") 立帧。
+model BackupRun {
+  id             String    @id @default(cuid())
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  // 'succeeded' | 'failed'(封闭集,迁移里有 CHECK 约束)
+  status         String
+  // 谁触发的:'cron'(Railway cron,#794 后的权威) | 'worker-timer'(旧的 5 分钟循环) | 'manual'
+  trigger        String
+  // 这次上传用的是哪一族 R2 凭据:'isolated'(backups/ 专用 token) | 'shared'(与内容同钥匙)。
+  // 记在行上而不是读 env:admin 要报的是「上一次真的用了什么」,不是「现在配了什么」。
+  credentialMode String
+  key            String?
+  sizeBytes      BigInt?
+  durationMs     Int?
+  // 已脱敏的失败摘要(sanitizeError 的输出)。连接串永不进这里。
+  error          String?
+
+  @@index([status, finishedAt])
+  @@index([startedAt])
+}
+
 // ─── L0 量测原语(第 0 大陆:所有环共用的水表)────────────────────────────────
 // docs/superpowers/specs/2026-07-10-l0-measurement-primitives.md。PR-L0a:六模型 + 迁移。
 // 六件一等公民由 5 个 owner-scoped 对象 + 1 张 placement 支撑表实现。全 $0(不走记账缝),

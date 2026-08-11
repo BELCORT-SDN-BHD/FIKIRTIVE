@@ -449,13 +449,17 @@ export class R2Storage implements Storage {
 /* ---------------- ops bucket (backups/ — OUTSIDE the u/ content scheme) ---------------- */
 
 /**
- * Ops-artifact surface over the SAME R2 bucket + credentials as R2Storage
- * (P0-1② nightly DB backups). Keys live under `backups/` — deliberately
- * OUTSIDE the u/<ownerId>/ content-addressed scheme: parseStorageKey rejects
- * them, and the web /files route serves only keys that pass keyOwnerMatches
- * (u/<owner>/…), so an ops object can never be reached from any browser-facing
- * path. This class is the only surface allowed to touch non-u/ keys, and it
- * refuses anything outside its own prefix.
+ * Ops-artifact surface for the `backups/` prefix (P0-1② nightly DB backups).
+ * Keys live under `backups/` — deliberately OUTSIDE the u/<ownerId>/
+ * content-addressed scheme: parseStorageKey rejects them, and the web /files
+ * route serves only keys that pass keyOwnerMatches (u/<owner>/…), so an ops
+ * object can never be reached from any browser-facing path. This class is the
+ * only surface allowed to touch non-u/ keys, and it refuses anything outside
+ * its own prefix.
+ *
+ * #794 — the CREDENTIALS are no longer necessarily the content bucket's. See
+ * {@link opsR2Config}: when the R2_BACKUP_* family is set, backups are written
+ * with a key that the app's content path does not hold.
  */
 export const OPS_PREFIX = "backups/";
 
@@ -467,8 +471,12 @@ export interface OpsObject {
 export class R2OpsBucket {
   private client: S3Client;
 
-  constructor(private cfg: R2Config) {
-    // same client settings as R2Storage — one R2 config, two key namespaces
+  constructor(
+    private cfg: R2Config,
+    /** #794 — which credential family this instance holds; recorded on every BackupRun row. */
+    readonly credentialMode: OpsCredentialMode = "shared",
+  ) {
+    // same client SETTINGS as R2Storage; the credentials may differ (#794, opsR2Config)
     this.client = new S3Client({
       region: "auto",
       endpoint: cfg.endpoint,
@@ -495,8 +503,13 @@ export class R2OpsBucket {
     }
   }
 
-  /** Stream a local file up (known length — no multipart machinery needed). */
-  async putFile(key: string, filePath: string, contentType: string): Promise<void> {
+  /**
+   * Stream a local file up (known length — no multipart machinery needed).
+   * Returns the uploaded byte count so the caller can record what it wrote
+   * (#794: a backup row that can't say how big the dump was cannot tell a
+   * 4 GB dump from a 200-byte truncated one).
+   */
+  async putFile(key: string, filePath: string, contentType: string): Promise<number> {
     this.checkKey(key);
     const { size } = await stat(filePath);
     await this.client.send(
@@ -508,6 +521,7 @@ export class R2OpsBucket {
         ContentType: contentType,
       }),
     );
+    return size;
   }
 
   async list(prefix: string): Promise<OpsObject[]> {
@@ -534,23 +548,77 @@ export class R2OpsBucket {
 }
 
 /**
- * Env-driven ops bucket — SAME env family as createStorage (no second R2
- * config). Returns null when the storage driver isn't r2 (local dev): there is
- * no backup target, and callers are expected to no-op.
+ * Which key family the backup writer is using.
+ *  - "isolated" — the R2_BACKUP_* family: a token minted separately from the
+ *    app's content key. Stealing the app's key does not let you erase backups.
+ *  - "shared"   — the content bucket's own key (the pre-#794 shape). Still
+ *    works; it just means one stolen credential reaches both the content and
+ *    the backups that exist to survive losing the content.
  */
-export function createOpsBucket(): R2OpsBucket | null {
-  if (process.env.STORAGE_DRIVER !== "r2") return null;
+export type OpsCredentialMode = "isolated" | "shared";
+
+export interface OpsR2Config extends R2Config {
+  mode: OpsCredentialMode;
+}
+
+/**
+ * #794 ④ — resolve the credentials the `backups/` prefix writes with.
+ *
+ * The isolated family is `R2_BACKUP_ACCESS_KEY_ID` + `R2_BACKUP_SECRET_ACCESS_KEY`
+ * (both, or neither). `R2_BACKUP_BUCKET` / `R2_BACKUP_ENDPOINT` are optional and
+ * default to the content bucket's — a scoped token against the SAME bucket is
+ * already the whole point; a second bucket is allowed but not required.
+ *
+ * HALF-SET IS A HARD ERROR, never a silent fall back to the shared key. The one
+ * failure this function exists to prevent is "we thought backups were isolated";
+ * a typo'd secret name that quietly reverts to the shared key would produce
+ * exactly that belief, and nothing would ever contradict it.
+ */
+export function opsR2Config(): OpsR2Config {
   const { R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET } = process.env;
   if (!R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET) {
     throw new Error("STORAGE_DRIVER=r2 but R2_ENDPOINT/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET are not all set");
   }
-  return new R2OpsBucket({
-    endpoint: R2_ENDPOINT,
-    accessKeyId: R2_ACCESS_KEY_ID,
-    secretAccessKey: R2_SECRET_ACCESS_KEY,
-    bucket: R2_BUCKET,
-    forcePathStyle: process.env.R2_FORCE_PATH_STYLE !== "false",
-  });
+  const backupKeyId = process.env.R2_BACKUP_ACCESS_KEY_ID;
+  const backupSecret = process.env.R2_BACKUP_SECRET_ACCESS_KEY;
+  if (Boolean(backupKeyId) !== Boolean(backupSecret)) {
+    throw new Error(
+      "R2_BACKUP_ACCESS_KEY_ID and R2_BACKUP_SECRET_ACCESS_KEY must be set together (an isolated backup credential is both halves or neither)",
+    );
+  }
+  const forcePathStyle = process.env.R2_FORCE_PATH_STYLE !== "false";
+  if (!backupKeyId || !backupSecret) {
+    return {
+      mode: "shared",
+      endpoint: R2_ENDPOINT,
+      accessKeyId: R2_ACCESS_KEY_ID,
+      secretAccessKey: R2_SECRET_ACCESS_KEY,
+      bucket: R2_BUCKET,
+      forcePathStyle,
+    };
+  }
+  return {
+    mode: "isolated",
+    endpoint: process.env.R2_BACKUP_ENDPOINT || R2_ENDPOINT,
+    accessKeyId: backupKeyId,
+    secretAccessKey: backupSecret,
+    bucket: process.env.R2_BACKUP_BUCKET || R2_BUCKET,
+    forcePathStyle,
+  };
+}
+
+/**
+ * Env-driven ops bucket. Returns null when the storage driver isn't r2 (local
+ * dev): there is no backup target, and callers are expected to no-op.
+ *
+ * The returned bucket carries `credentialMode` so the caller can RECORD which
+ * key family actually wrote tonight's backup (#794 ③) instead of re-reading env
+ * somewhere else and reporting a guess.
+ */
+export function createOpsBucket(): R2OpsBucket | null {
+  if (process.env.STORAGE_DRIVER !== "r2") return null;
+  const cfg = opsR2Config();
+  return new R2OpsBucket(cfg, cfg.mode);
 }
 
 /* ---------------- env factory ---------------- */

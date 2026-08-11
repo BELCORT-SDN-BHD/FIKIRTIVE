@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
-# Recovery drill for the nightly Postgres → R2 backup (P0-1②, verdict 7-1).
+# Recovery drill for the nightly Postgres → R2 backup (P0-1②, verdict 7-1; hardened #794①).
 # "没有恢复演练的备份不算备份" — this automates the runbook's manual restore into a
 # LOCAL throwaway DB and reconciles the money-truth row counts (CreditLedger /
 # CreditAccount) so a dump is proven restorable BEFORE anyone needs it for real.
+#
+# #794 made the drill a PASS/FAIL instead of a print:
+#   - it TIMES the restore and reports the number as RTO (recovery time objective),
+#   - --expect-ledger / --expect-accounts turn reconciliation into an assertion, so a
+#     dump that restores but comes back short EXITS NON-ZERO instead of printing a
+#     number nobody compares,
+#   - --json writes a machine-readable result (for CI, for pasting into a ticket).
+# Run it against ANY dump file: last night's R2 object, a staging dump, or the
+# synthetic one scripts/db-restore-drill-selftest.sh builds on a fresh database.
 #
 # SAFE BY DEFAULT:
 #   - DRY RUN unless --apply is passed (prints the exact commands, runs nothing).
@@ -14,17 +23,29 @@
 #   scripts/db-restore-drill.sh <dump-file[.gz]>                 # dry run (default)
 #   scripts/db-restore-drill.sh --apply <dump-file[.gz]> [target-url]
 #     target-url default: postgres://fikirtive:fikirtive@localhost:5432/restore_drill
+#   Options:
+#     --expect-ledger N     fail unless the restored CreditLedger has exactly N rows
+#     --expect-accounts N   fail unless the restored CreditAccount has exactly N rows
+#     --json <path>         write {rto_seconds, ledger_rows, account_rows, ...} to <path>
 set -euo pipefail
 
 APPLY=0
 DUMP=""
 TARGET_URL="postgres://fikirtive:fikirtive@localhost:5432/restore_drill"
-for arg in "$@"; do
-  case "$arg" in
+EXPECT_LEDGER=""
+EXPECT_ACCOUNTS=""
+JSON_OUT=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --apply) APPLY=1 ;;
     --help|-h) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) if [ -z "$DUMP" ]; then DUMP="$arg"; else TARGET_URL="$arg"; fi ;;
+    --expect-ledger) EXPECT_LEDGER="${2:-}"; shift ;;
+    --expect-accounts) EXPECT_ACCOUNTS="${2:-}"; shift ;;
+    --json) JSON_OUT="${2:-}"; shift ;;
+    *) if [ -z "$DUMP" ]; then DUMP="$1"; else TARGET_URL="$1"; fi ;;
   esac
+  shift
 done
 
 if [ -z "$DUMP" ]; then
@@ -89,12 +110,58 @@ for bin in psql pg_restore gunzip; do
   command -v "$bin" >/dev/null 2>&1 || { echo "[restore-drill] error: '$bin' not on PATH." >&2; exit 4; }
 done
 
+admin_url="postgres://fikirtive:fikirtive@$host:5432/postgres"
+
+# ── RTO clock ────────────────────────────────────────────────────────────────
+# Starts at "I have the dump file" and stops when the restored DB answers a query.
+# Deliberately EXCLUDES downloading the object from R2 (network-bound, and the
+# founder does that step by hand) — the runbook states the download separately so
+# the two numbers are never quietly added or quietly dropped.
+started_at="$(date +%s)"
+
 echo "[restore-drill] applying restore into LOCAL $dbname ..."
 if [ "$DUMP" != "$plain_dump" ]; then gunzip -kf "$DUMP"; fi
-psql "postgres://fikirtive:fikirtive@$host:5432/postgres" -c "DROP DATABASE IF EXISTS \"$dbname\";"
-psql "postgres://fikirtive:fikirtive@$host:5432/postgres" -c "CREATE DATABASE \"$dbname\";"
+psql "$admin_url" -q -c "DROP DATABASE IF EXISTS \"$dbname\";"
+psql "$admin_url" -q -c "CREATE DATABASE \"$dbname\";"
 pg_restore --no-owner --no-privileges -d "$TARGET_URL" "$plain_dump"
+
+count_of() {
+  psql "$TARGET_URL" -t -A -c "select count(*) from \"$1\";"
+}
+ledger_rows="$(count_of CreditLedger)"
+account_rows="$(count_of CreditAccount)"
+
+rto_seconds=$(($(date +%s) - started_at))
+
 echo "[restore-drill] reconcile (compare against prod's same-night counts):"
-psql "$TARGET_URL" -c 'select count(*) as credit_ledger_rows from "CreditLedger";'
-psql "$TARGET_URL" -c 'select count(*) as credit_account_rows from "CreditAccount";'
-echo "[restore-drill] drill complete. A restore that matches prod row counts = the backup is real."
+echo "[restore-drill]   CreditLedger  rows: $ledger_rows"
+echo "[restore-drill]   CreditAccount rows: $account_rows"
+echo "[restore-drill] RTO: ${rto_seconds}s (decompress + create + pg_restore + reconcile; excludes downloading the dump)"
+
+if [ -n "$JSON_OUT" ]; then
+  printf '{"dump":"%s","target_db":"%s","rto_seconds":%s,"ledger_rows":%s,"account_rows":%s,"finished_at":"%s"}\n' \
+    "$DUMP" "$dbname" "$rto_seconds" "$ledger_rows" "$account_rows" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$JSON_OUT"
+  echo "[restore-drill] wrote $JSON_OUT"
+fi
+
+# ── assertions: a drill that cannot fail proves nothing ──────────────────────
+fail=0
+if [ -n "$EXPECT_LEDGER" ] && [ "$ledger_rows" != "$EXPECT_LEDGER" ]; then
+  echo "[restore-drill] MISMATCH: CreditLedger restored $ledger_rows rows, expected $EXPECT_LEDGER" >&2
+  fail=1
+fi
+if [ -n "$EXPECT_ACCOUNTS" ] && [ "$account_rows" != "$EXPECT_ACCOUNTS" ]; then
+  echo "[restore-drill] MISMATCH: CreditAccount restored $account_rows rows, expected $EXPECT_ACCOUNTS" >&2
+  fail=1
+fi
+if [ "$fail" != 0 ]; then
+  echo "[restore-drill] DRILL FAILED — this dump does not restore to the expected money truth." >&2
+  exit 5
+fi
+
+if [ -z "$EXPECT_LEDGER" ] && [ -z "$EXPECT_ACCOUNTS" ]; then
+  echo "[restore-drill] drill complete (no --expect-* given, so nothing was ASSERTED —"
+  echo "[restore-drill] compare the counts above against prod's same-night numbers yourself)."
+else
+  echo "[restore-drill] drill PASSED: restored counts match the expected money truth."
+fi
