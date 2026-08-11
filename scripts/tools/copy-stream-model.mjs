@@ -40,19 +40,34 @@ function carriesCopy(node) {
   return found;
 }
 
-/** 一个分叉的两支;`&&` / `||` 的第二支是**空**(条件不成立,这段整个不出现)。 */
+/**
+ * 一个分叉的两支。三种运算符,三种呈现语义 —— **别把它们当成同一个形状**(#834 r7 P1):
+ *
+ *   · `a ? X : Y`     → [X, Y]        两支各是一条呈现路径。
+ *   · `cond && X`     → [X, 空]       条件成立出 X,不成立**整段不出现**;
+ *                                      「空」这一态是要害:它一走,前后两句就贴在一起。
+ *   · `a || b`        → [a, b]        左真取**左**、左假取右 —— 左操作数是可呈现的。
+ *   · `a ?? b`        → [a, b]        同上(左非 null/undefined 取左)。
+ *
+ * r6 把 `||` 也建成 [右支, 空],于是**左操作数整条丢了**。判官的反例:
+ *   `{(ready ? "Meet Otto." : "") || "Start."}`
+ * `ready=true` 时屏幕上是「Meet Otto.」,而模型只生成「Start.」与空两态 —— 违规看不见。
+ */
 function branchesOf(node, inRender) {
   if (!inRender) return null;
   if (ts.isConditionalExpression(node) && (carriesCopy(node.whenTrue) || carriesCopy(node.whenFalse))) {
     return [node.whenTrue, node.whenFalse];
   }
-  if (
-    ts.isBinaryExpression(node) &&
-    (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-      node.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
-    carriesCopy(node.right)
-  ) {
+  if (!ts.isBinaryExpression(node)) return null;
+  const operator = node.operatorToken.kind;
+  if (operator === ts.SyntaxKind.AmpersandAmpersandToken && carriesCopy(node.right)) {
     return [node.right, null];
+  }
+  if (
+    (operator === ts.SyntaxKind.BarBarToken || operator === ts.SyntaxKind.QuestionQuestionToken) &&
+    (carriesCopy(node.left) || carriesCopy(node.right))
+  ) {
+    return [node.left, node.right];
   }
   return null;
 }
@@ -159,4 +174,3 @@ export function copyVariants(source, file = "planted.tsx") {
   }
   return [...variants];
 }
-

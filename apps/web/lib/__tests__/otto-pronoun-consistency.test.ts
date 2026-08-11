@@ -153,6 +153,23 @@ function streamsOf(source: string, file = "planted.tsx"): string[] {
  * 上板的代价是明写的:这个文件只剩「整份源码」那一条流,**没有变体扫描**。
  * 所以它必须是「条件多到穷举没有意义」且「对客文案风险低」的地方,不能是 Otto 的面孔。
  */
+/**
+ * **Otto 的面孔** —— 商家真的会读到 Otto 说话的那些地方。这份名单只有一个用途:
+ * 它们**永远不许上超限豁免板**,再算不动也不行;算不动就去把那段拆简。
+ *
+ * r6 只写了 `components/otto/`,判官一句话点破:**登录页也是 Otto 面孔** ——
+ * 它正是 #682 票面三屏里的第一屏(「It researches your brand」那句就长在那儿)。
+ * 所以改成按真实面孔逐条清点,来源是本文件 ② 段那张「本轮治好的每一处」表
+ * (login / OttoMemory / ResearchCard / OttoSchedule / settings / OttoConnections /
+ * privacy 两页)再加上 Otto 自己的路由 `app/otto`,取它们的目录前缀。
+ */
+const OTTO_FACING_SURFACES = [
+  "apps/web/components/otto/",
+  "apps/web/app/otto/",
+  "apps/web/app/login/",
+  "apps/web/app/privacy/",
+] as const;
+
 const VARIANT_CAP_EXEMPTIONS = [
   {
     file: "apps/web/components/admin/AdminDashboardV2.tsx",
@@ -260,9 +277,15 @@ describe("#682 ① no third-person pronoun stands in for Otto anywhere in produc
       }
       expect(threw, `${entry.file} 已经不超限了 —— 把它从豁免板上删掉`).toBe(true);
     }
-    // 板上只准放对客文案风险低的地方。Otto 的面孔一个都不许上板。
+  });
+
+  // 两条独立的红线,所以分成两个 it:上一条问「它还超限吗」,这一条问「它够不够格上板」。
+  // 合在一个 it 里时,前一条先炸,后一条永远跑不到 —— 演练也就演不出来。
+  it("refuses an Otto face on the board no matter how uncomputable it is", () => {
     for (const entry of VARIANT_CAP_EXEMPTIONS) {
-      expect(entry.file, "Otto 的面孔不得上豁免板").not.toMatch(/components\/otto\//);
+      for (const face of OTTO_FACING_SURFACES) {
+        expect(entry.file.startsWith(face), `${entry.file} 是 Otto 面孔,不得上豁免板`).toBe(false);
+      }
       expect(entry.why.length, `${entry.file} 的理由太短`).toBeGreaterThan(40);
     }
   });
@@ -435,6 +458,27 @@ describe("#830 an expression container inside JSX text no longer throws the sent
     const variants = copyVariants(planted);
     expect(variants).toContain("Meet Otto. It researches your brand.");
     expect(variants).toContain("Meet Otto. Also, a note. It researches your brand.");
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  // 判官 2026-08-11 的反例(#834 r7 P1)。r6 把 `||` 当成 `&&` 建模成 [右支, 空],
+  // **左操作数整条丢了**:`ready=true` 时屏幕上明明是「Meet Otto.」,模型里却没有这一态。
+  it("keeps the left operand of || in the stream, not just the fallback", () => {
+    const planted = '<p>{(ready ? "Meet Otto." : "") || "Start."} It researches your brand.</p>';
+    expect(copyVariants(planted).sort()).toEqual([
+      "It researches your brand.",
+      "Meet Otto. It researches your brand.",
+      "Start. It researches your brand.",
+    ]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("keeps the left operand of ?? in the stream too", () => {
+    // `??` 与 `||` 同形:左边不是 null/undefined 就取左边,左边一样会上屏。
+    const planted = '<p>{(draft ? "Meet Otto." : null) ?? "Start."} It researches your brand.</p>';
+    const variants = copyVariants(planted);
+    expect(variants).toContain("Meet Otto. It researches your brand.");
+    expect(variants).toContain("Start. It researches your brand.");
     expect(rulesFor(planted)).toContain(RULE);
   });
 
