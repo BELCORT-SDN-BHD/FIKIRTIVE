@@ -229,10 +229,12 @@ export const auth = betterAuth({
     /**
      * #795 r2 — the `idToken` gap that `encryptOAuthTokens` does not cover.
      *
-     * MEASURED, not assumed (better-auth 1.6.20, read from node_modules):
-     *   · `setTokenUtil` (encrypt on write) appears at 12 call sites, and every one of them
-     *     passes `accessToken` or `refreshToken`. Never `idToken`.
-     *   · `decryptOAuthToken` (decrypt on read) appears at exactly 3 call sites, all in
+     * MEASURED, not assumed (better-auth 1.6.20, counted in the ESM bundle we actually load —
+     * the `.mjs` files under `dist` — with definition sites excluded):
+     *   · `setTokenUtil` (encrypt on write) has 19 call sites — `api/routes/callback.mjs`,
+     *     `api/routes/account.mjs`, `oauth2/link-account.mjs`, `plugins/generic-oauth/routes.mjs`
+     *     — and every one of them passes `accessToken` or `refreshToken`. Never `idToken`.
+     *   · `decryptOAuthToken` (decrypt on read) has exactly 3 call sites, all in
      *     `api/routes/account.mjs`, all on `accessToken` / `refreshToken`. Never `idToken`.
      *   · `db/schema.mjs` strips `idToken` from every account OUTPUT, so it never leaves the
      *     library toward a client either.
