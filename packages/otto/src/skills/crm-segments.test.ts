@@ -47,7 +47,10 @@ function ports() {
  */
 const APPROVED_OTTO_COPY = {
   readSegments:
-    "Read the user's CRM Segments through the same owner-scoped action layer as the CRM page. $0 " +
+    // #802 r4(判官 [P1]):「as the CRM page」是手写界面引用,改名必漂 —— 改写成不指界面的
+    // 说法。这份钉板是那次改写的复审对象:两处描述各只改了这半句,别的一个字未动。
+    "Read the user's CRM Segments through the same owner-scoped action layer the merchant's own " +
+    "screens use. $0 " +
     "read-only. operation=list returns saved segments with rules and live " +
     "matched/contactable/known-opt-out counts. operation=get needs an exact segmentId from list " +
     "and returns that Segment's rule and counts. operation=preview evaluates a STRUCTURED " +
@@ -59,8 +62,8 @@ const APPROVED_OTTO_COPY = {
     "excludedByReportedOptOutCount. It only ever removes people, and it does not change what the " +
     "consent record already decides.",
   buildSegment:
-    "Create or update one CRM Segment through the same validated, owner-scoped action layer as " +
-    "the CRM page. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
+    "Create or update one CRM Segment through the same validated, owner-scoped action layer the " +
+    "merchant's own screens use. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
     "or send free-form natural language inside this skill. create needs name + rules and uses a " +
     "server-issued id. update also needs the exact segmentId returned by readSegments. Unknown " +
     "consent stays in the audience; only known opt-out is excluded from the contactable estimate, " +
