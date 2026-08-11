@@ -233,7 +233,31 @@ export function validationIssueCopy(issue: ValidationIssue): string {
   return VALIDATION_ERROR_COPY[issue.code] ?? "This part of the rule is not valid.";
 }
 
+/**
+ * The ONE place a Routine's stop reason becomes something a merchant can read.
+ *
+ * Every key is a reason `customer-workflow-service` can record on a run or step, and
+ * `lib/__tests__/workflow-format.test.ts` pins this key set equal to
+ * workflowRunReasonCodes() in BOTH directions — the same pinboard #770 built for
+ * ERROR_COPY, which is the thing that was missing here (#811). Two send-gate reasons had
+ * been reachable with no sentence at all since before #807, so a merchant read
+ * "This workflow stopped with reason consentstop:consent unknown d5 eligible".
+ *
+ * Wording discipline is #768/#752's: a clause may state only what the consent ledger and the
+ * server-side classification can prove. No actor is guessed (R-010 fixes the legacy carrier
+ * at `legacy_unknown`), no earlier opt-in is presupposed, an unreadable record is described
+ * as unreadable and nothing more, and no internal document number ("D5") reaches the page.
+ *
+ * The axis-status keys this table used to carry ("doNotDisturb:block" and friends) are gone:
+ * `firstNonPass` writes `<axis>:<axis.reason>` and a non-pass axis can no longer be built
+ * without a reason at all, so those keys answered for a shape the evaluator cannot produce
+ * while the reasons it DOES produce had no copy. Removing them is what made the two sets
+ * comparable at all. `eligibility:unknown` went the same way in #834 r2 (P2): its only writer
+ * was a fallback reached when no axis blocks, and the one caller has already established that
+ * one does.
+ */
 const REASON_COPY: Record<string, string> = {
+  // Routine authority (ROUTINE_AUTHORITY_FAILURES).
   routine_authority_kill: "The Routine kill switch stopped this action.",
   routine_authority_status: "The Routine is not active, so this action was stopped.",
   routine_authority_expired: "The Routine authorization expired before this action could start.",
@@ -241,38 +265,78 @@ const REASON_COPY: Record<string, string> = {
     "The rule, dependencies, scope, or authorization no longer match what was approved.",
   routine_authority_budget_unavailable:
     "The approved budget could not be verified, so this action was stopped.",
+
+  // Stopped before anything was dispatched (WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS).
   workflow_dependency_unavailable:
     "A pinned rule dependency could not be verified. Nothing was sent.",
   workflow_target_unavailable:
     "The exact customer or channel identity could not be verified. Nothing was sent.",
+
+  // Named by the workflow service itself (SERVICE_STOP_REASONS).
   HUMAN_TAKEOVER_AUTOMATION_PAUSED:
     "A person took over this conversation, so related automation remains paused.",
   BUSINESS_HOURS_INSIDE:
     "The message arrived during business hours, so the outside-hours reply did not run.",
-  BUSINESS_HOURS_TIME_ZONE_UNAVAILABLE:
-    "The business-hours time zone could not be verified. No automatic reply was attempted.",
-  BUSINESS_HOURS_SCHEDULE_UNAVAILABLE:
-    "The business-hours schedule could not be interpreted. No automatic reply was attempted.",
   CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE:
     "The strict workflow messaging classification is not connected yet. No reply was sent.",
   BROADCAST_ONE_MEMBER_SUBMIT_SEAM_UNAVAILABLE:
     "The single-contact broadcast handoff is not connected yet. No message was sent.",
-  "consentStop:unknown": "Verified permission is missing, so this action was blocked.",
+
+  // Business hours could not be decided (BUSINESS_HOURS_UNAVAILABLE_REASONS). Each says which
+  // part of the pinned policy failed, because that is what the merchant can go and fix.
+  BUSINESS_HOURS_POLICY_UNAVAILABLE:
+    "The exact business-hours policy this rule was approved with could not be found. No automatic reply was attempted.",
+  BUSINESS_HOURS_TIME_ZONE_UNAVAILABLE:
+    "The business-hours time zone could not be verified. No automatic reply was attempted.",
+  BUSINESS_HOURS_SCHEDULE_UNAVAILABLE:
+    "The business-hours schedule could not be interpreted. No automatic reply was attempted.",
+  BUSINESS_HOURS_POLICY_CONTENT_DRIFT:
+    "The business-hours policy changed after this rule was approved, so it no longer matches. No automatic reply was attempted.",
+  BUSINESS_HOURS_CLOCK_UNAVAILABLE:
+    "The current local time could not be read, so business hours could not be checked. No automatic reply was attempted.",
+
+  // Consent / STOP axis (SEND_ELIGIBILITY_NON_PASS_REASONS.consentStop).
+  "consentStop:projection_unreadable":
+    "The consent record could not be read, so this action was blocked.",
   "consentStop:effective_revoke": "The customer has opted out, so this action was blocked.",
-  // #806 — a Routine reaches this table through `firstNonPass`, which writes `consentStop:<the
-  // axis reason>`. The send gate learned two new reasons, so both need a sentence here or the
-  // monitoring panel prints the raw code at the merchant. Same wording discipline as the
-  // broadcast formatter and CRM_PRE_LEDGER_OPT_OUT_NOTE: no actor is guessed, no earlier opt-in
-  // is presupposed, and an unreadable record is described as unreadable and nothing more.
+  // #806 — same wording discipline as the broadcast formatter and CRM_PRE_LEDGER_OPT_OUT_NOTE.
   "consentStop:unresolved_legacy_opt_out":
     "An opt-out was recorded for this contact before consent history began, so this action was blocked.",
   "consentStop:legacy_mirror_unreadable":
     "Part of the consent record could not be read, so this action was blocked.",
-  "doNotDisturb:block": "Do not disturb is on for this customer, so this action was blocked.",
-  "providerRefusal:block": "The messaging provider has refused this destination.",
-  "frequency:block": "The contact frequency limit blocked this action.",
-  "eligibility:unknown": "Customer messaging eligibility could not be verified.",
+  // #811 — the two reasons that had no sentence. Both state the ledger fact ("holds no
+  // answer") and the rule that follows from it, and neither presupposes an earlier opt-in.
+  "consentStop:consent_unknown_d5_eligible":
+    "The consent record holds no answer for this customer, and a send would need two independent human confirmations, which are unavailable here. This action was blocked.",
+  "consentStop:consent_unknown_unconfirmed_automatic_hard_block":
+    "The consent record holds no answer for this customer, and an automated action never sends on an unknown answer. This action was blocked.",
+
+  // Do not disturb axis (SEND_ELIGIBILITY_NON_PASS_REASONS.doNotDisturb).
+  "doNotDisturb:dnd_set": "Do not disturb is on for this customer, so this action was blocked.",
+  "doNotDisturb:contact_not_found_in_tenant":
+    "This contact record was not found in this workspace, so nothing was sent.",
+  "doNotDisturb:fold_unreadable":
+    "The do-not-disturb record could not be read, so this action was blocked.",
+
+  // Provider refusal axis (SEND_ELIGIBILITY_NON_PASS_REASONS.providerRefusal).
+  "providerRefusal:permanent_recipient_block":
+    "The messaging provider has permanently refused this destination, so this action was blocked.",
+  "providerRefusal:account_level_block":
+    "The messaging provider has suspended this channel account, so this action was blocked.",
+  "providerRefusal:state_unreadable":
+    "The provider refusal record could not be read, so this action was blocked.",
+
+  // Frequency axis (SEND_ELIGIBILITY_NON_PASS_REASONS.frequency).
+  "frequency:frequency_cap_reached":
+    "The contact frequency limit for this customer was already reached in the rolling window, so this action was blocked.",
+  "frequency:missing_channel_policy":
+    "No frequency limit is configured for this channel, so this action was blocked.",
+  "frequency:counter_unreadable":
+    "The frequency counter could not be read, so this action was blocked.",
 };
+
+/** Every reason code the table above answers for. Exported so its coverage is pinned, not assumed. */
+export const WORKFLOW_REASON_COPY_CODES: readonly string[] = Object.keys(REASON_COPY);
 
 export function reasonCodeCopy(code: string | null | undefined): string {
   if (!code) return "No reason was recorded.";

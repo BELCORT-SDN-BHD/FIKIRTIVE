@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma, recordConsentEvent, recordContactDndEvent } from "@fikirtive/db";
-import { newId } from "@fikirtive/core";
+import { newId, MERCHANT_UNVERIFIED_IDENTITY, CHANNEL_VERIFIED_IDENTITY } from "@fikirtive/core";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { requireOwner } from "@/lib/auth-guard";
 import {
@@ -25,6 +25,18 @@ export type CreateContactInput = {
 };
 
 export type ContactMutationResult = { ok: true } | { error: string };
+/**
+ * #803 — a stored number, returned with the id the edit/remove controls need.
+ *
+ * r2 (判词 5232132441 P2①): the grade travels back with the result. Adding a number the contact
+ * already holds is a success, but it is not necessarily "saved, not verified" — if a channel has
+ * already confirmed that number, saying so would demote a verified fact in the merchant's eyes.
+ * `alreadyStored` distinguishes "I just wrote this" from "this was already here", and
+ * `verificationStatus` is the grade of the row that now exists either way.
+ */
+export type ContactPhoneResult =
+  | { ok: true; identityId: string; phone: string; verificationStatus: string; alreadyStored: boolean }
+  | { error: string };
 export type CreateContactResult =
   | {
       ok: true;
@@ -42,6 +54,14 @@ export type ImportContactRowResult = {
   possibleDuplicates: ContactDuplicateSuggestion[];
   consentAssertion: "grant" | "revoke" | null;
   consentError?: string;
+  /**
+   * r2 (判词 5232132441 P2②) — what actually happened to this row's phone numbers. The import
+   * card used to announce "phone numbers were saved" for every file, including files with no
+   * phone column at all. The counts ride WITH the rows for the same reason the contact-list
+   * counts do (#742): a summary written from anything other than the rows can drift from them.
+   */
+  storedPhoneCount: number;
+  skippedPhoneCount: number;
   warnings: string[];
 };
 
@@ -59,7 +79,6 @@ type ParsedImportRow = {
   name: string;
   lifecycleStage: CrmLifecycleStage;
   identities: NormalizedContactIdentity[];
-  identityFields: string[];
   consentAction: "grant" | "revoke" | null;
 };
 
@@ -119,13 +138,26 @@ function refreshContactPaths(contactId?: string): void {
   if (contactId) revalidatePath(`/crm/contacts/${contactId}`);
 }
 
+type CreatedContactRecord =
+  | {
+      ok: true;
+      contactId: string;
+      created: true;
+      possibleDuplicates: ContactDuplicateSuggestion[];
+      /** Identities stored for this row, all at the merchant-entered grade (#803). */
+      storedIdentities: string[];
+      /** Identities the tenant already holds on another contact, skipped rather than moved. */
+      skippedIdentities: string[];
+    }
+  | { error: string };
+
 async function createContactRecord(input: {
   ownerId: string;
   name: string;
   source: string;
   lifecycleStage: CrmLifecycleStage;
   identities?: NormalizedContactIdentity[];
-}): Promise<CreateContactResult> {
+}): Promise<CreatedContactRecord> {
   const possibleDuplicates = await findContactDuplicateSuggestions({
     ownerId: input.ownerId,
     name: input.name,
@@ -133,6 +165,9 @@ async function createContactRecord(input: {
   });
   const contactId = newId();
   const now = new Date();
+  const requested = input.identities ?? [];
+  const storedIdentities: string[] = [];
+  const skippedIdentities: string[] = [];
   try {
     await prisma.$transaction(async (tx) => {
       await tx.contact.create({
@@ -146,19 +181,64 @@ async function createContactRecord(input: {
           lastSeenAt: now,
         },
       });
+      // #803 — an imported PHONE NUMBER is the merchant's own record, so it is stored as exactly
+      // that: merchant entered, unverified, and not audience material. A number this tenant
+      // already holds elsewhere is left where it is; an import may not silently move a customer's
+      // identity from one contact to another.
+      //
+      // Email stays a duplicate-suggestion signal, as before. This ticket gives phone numbers an
+      // entry, a correction and a removal surface; email has none of the three, and storing a
+      // value the merchant cannot then correct is the one-way container this product keeps having
+      // to undo (#710/#712). Email becomes storable when it gets those surfaces, not before.
+      for (const identity of requested.filter((candidate) => candidate.channel === "whatsapp")) {
+        const clash = await tx.contactIdentity.findFirst({
+          where: {
+            ownerId: input.ownerId,
+            channel: identity.channel,
+            externalId: identity.externalId,
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        if (clash) {
+          skippedIdentities.push(identity.externalId);
+          continue;
+        }
+        await tx.contactIdentity.create({
+          data: {
+            id: newId(),
+            ownerId: input.ownerId,
+            contactId,
+            channel: identity.channel,
+            externalId: identity.externalId,
+            handle: identity.handle,
+            label: identity.label,
+            verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+            verifiedAt: null,
+            verifiedSourceKind: null,
+          },
+        });
+        storedIdentities.push(identity.externalId);
+      }
       await tx.actionEvent.create({
         data: {
           id: newId(),
           ownerId: input.ownerId,
           type: "crm.contact.create",
-          payload: { contactId, source: input.source, identityWrite: false },
+          payload: {
+            contactId,
+            source: input.source,
+            identityWrite: storedIdentities.length > 0,
+            verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+            storedIdentityCount: storedIdentities.length,
+          },
         },
       });
     });
   } catch {
     return { error: "Couldn't save that contact — please try again." };
   }
-  return { ok: true, contactId, created: true, possibleDuplicates };
+  return { ok: true, contactId, created: true, possibleDuplicates, storedIdentities, skippedIdentities };
 }
 
 /** Creates a Contact only. Identity signals are deliberately not accepted by this write path. */
@@ -183,8 +263,15 @@ export async function createContact(raw: unknown): Promise<CreateContactResult> 
     source,
     lifecycleStage,
   });
-  if ("ok" in result) refreshContactPaths(result.contactId);
-  return result;
+  if (!("ok" in result)) return result;
+  refreshContactPaths(result.contactId);
+  // This path never attaches an identity, so the import-only bookkeeping stays out of its shape.
+  return {
+    ok: true,
+    contactId: result.contactId,
+    created: true,
+    possibleDuplicates: result.possibleDuplicates,
+  };
 }
 
 /** Records a merchant assertion in ConsentEvent; it does not create verified customer consent. */
@@ -340,6 +427,309 @@ export async function setContactDndFromOtto(raw: unknown): Promise<ContactMutati
   return writeDnd(raw, "otto_approved_action");
 }
 
+/* ── #803 merchant-entered phone numbers ──────────────────────────────────────────────────
+ *
+ * Founder ruling (2026-08-08): a merchant may store his customers' numbers himself, marked as
+ * what they are — merchant entered, not verified. Three things follow, and all three are here
+ * rather than in the two surfaces, because the human page and Otto must not be able to disagree:
+ *
+ *  1. The grade is written by the writer, never taken from the caller. There is no input by
+ *     which a form, an Otto turn, or a replayed request can store a number as verified.
+ *  2. Editing and removing are confined to what the merchant typed. A number a channel has
+ *     confirmed is evidence, not a text field, so this path refuses it instead of silently
+ *     downgrading it.
+ *  3. Consent is untouched. Storing a number is not permission to message it — the consent
+ *     ledger stays the one authority (#716/#726/#750), and an unverified number is not audience
+ *     material at all (see contactChannelFacts and the broadcast's send targets).
+ */
+
+type PhoneEntrySurface = "crm_ui" | "otto_approved_action";
+
+const PHONE_ALREADY_SAVED = "That number is already saved on another contact.";
+const PHONE_VERIFIED_LOCKED =
+  "This number was confirmed by a connected channel, so it can't be edited or removed here.";
+const PHONE_NOT_FOUND = "That number is no longer saved on this contact.";
+
+/** Normalizes to E.164 under the Malaysia default both entry surfaces state in their copy. */
+function phoneEntry(value: unknown): { phone: string } | { error: string } {
+  if (typeof value !== "string" || !value.trim()) return { error: "Add a phone number." };
+  const normalized = normalizeContactIdentity(
+    { channel: "whatsapp", externalId: value },
+    { assumeMalaysianPhone: true },
+  );
+  return "error" in normalized ? normalized : { phone: normalized.externalId };
+}
+
+async function phoneGate(
+  raw: unknown,
+): Promise<{ ownerId: string; contactId: string; input: Record<string, unknown> } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+
+  const input = (raw ?? {}) as Record<string, unknown>;
+  const contactId = text(input.contactId, 64);
+  if (!contactId) return { error: "Invalid request." };
+  // The tenant fence is on the read, and again on every write below.
+  const contact = await prisma.contact.findFirst({
+    where: { id: contactId, ownerId: gate.ownerId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!contact) return { error: "Contact not found." };
+  return { ownerId: gate.ownerId, contactId, input };
+}
+
+async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactPhoneResult> {
+  const gate = await phoneGate(raw);
+  if ("error" in gate) return gate;
+  const entry = phoneEntry(gate.input.phone);
+  if ("error" in entry) return entry;
+
+  const identityId = newId();
+  try {
+    const result = await prisma.$transaction(async (tx): Promise<ContactPhoneResult> => {
+      const existing = await tx.contactIdentity.findFirst({
+        where: {
+          ownerId: gate.ownerId,
+          channel: "whatsapp",
+          externalId: entry.phone,
+          deletedAt: null,
+        },
+        select: { id: true, contactId: true, verificationStatus: true },
+      });
+      // A retry after a lost response must not read as a failure: the same number on the same
+      // contact is already the requested state. Its GRADE comes back with it, because a number a
+      // channel has already confirmed must not be reported as newly stored and unverified.
+      if (existing) {
+        return existing.contactId === gate.contactId
+          ? {
+              ok: true,
+              identityId: existing.id,
+              phone: entry.phone,
+              verificationStatus: existing.verificationStatus,
+              alreadyStored: true,
+            }
+          : { error: PHONE_ALREADY_SAVED };
+      }
+      await tx.contactIdentity.create({
+        data: {
+          id: identityId,
+          ownerId: gate.ownerId,
+          contactId: gate.contactId,
+          channel: "whatsapp",
+          externalId: entry.phone,
+          // The grade and its (absent) evidence are stated, never defaulted into.
+          verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+          verifiedAt: null,
+          verifiedSourceKind: null,
+        },
+      });
+      await tx.actionEvent.create({
+        data: {
+          id: newId(),
+          ownerId: gate.ownerId,
+          type: "crm.contact.identity.add",
+          payload: {
+            contactId: gate.contactId,
+            identityId,
+            channel: "whatsapp",
+            verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+            entrySurface: surface,
+          },
+        },
+      });
+      return {
+        ok: true,
+        identityId,
+        phone: entry.phone,
+        verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+        alreadyStored: false,
+      };
+    });
+    if ("ok" in result) refreshContactPaths(gate.contactId);
+    return result;
+  } catch {
+    // The live partial unique index is the last word if two attempts race each other.
+    return { error: PHONE_ALREADY_SAVED };
+  }
+}
+
+async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactPhoneResult> {
+  const gate = await phoneGate(raw);
+  if ("error" in gate) return gate;
+  const identityId = text(gate.input.identityId, 64);
+  if (!identityId) return { error: "Invalid request." };
+  const entry = phoneEntry(gate.input.phone);
+  if ("error" in entry) return entry;
+
+  try {
+    const result = await prisma.$transaction(async (tx): Promise<ContactPhoneResult> => {
+      const current = await tx.contactIdentity.findFirst({
+        where: {
+          id: identityId,
+          ownerId: gate.ownerId,
+          contactId: gate.contactId,
+          channel: "whatsapp",
+          deletedAt: null,
+        },
+        select: { id: true, externalId: true, verificationStatus: true },
+      });
+      if (!current) return { error: PHONE_NOT_FOUND };
+      if (current.verificationStatus === CHANNEL_VERIFIED_IDENTITY) {
+        return { error: PHONE_VERIFIED_LOCKED };
+      }
+      if (current.externalId === entry.phone) {
+        return {
+          ok: true,
+          identityId: current.id,
+          phone: entry.phone,
+          verificationStatus: current.verificationStatus,
+          alreadyStored: true,
+        };
+      }
+      const clash = await tx.contactIdentity.findFirst({
+        where: {
+          ownerId: gate.ownerId,
+          channel: "whatsapp",
+          externalId: entry.phone,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (clash) return { error: PHONE_ALREADY_SAVED };
+
+      // Compare-and-set on the grade: a channel confirmation landing between the read and the
+      // write must win, not be overwritten by an edit that was decided before it existed.
+      const { count } = await tx.contactIdentity.updateMany({
+        where: {
+          id: identityId,
+          ownerId: gate.ownerId,
+          contactId: gate.contactId,
+          deletedAt: null,
+          verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+        },
+        data: { externalId: entry.phone },
+      });
+      if (!count) return { error: PHONE_VERIFIED_LOCKED };
+      await tx.actionEvent.create({
+        data: {
+          id: newId(),
+          ownerId: gate.ownerId,
+          type: "crm.contact.identity.update",
+          payload: {
+            contactId: gate.contactId,
+            identityId,
+            channel: "whatsapp",
+            from: current.externalId,
+            to: entry.phone,
+            entrySurface: surface,
+          },
+        },
+      });
+      // The CAS above only lets a merchant-entered row through, so the grade is unchanged.
+      return {
+        ok: true,
+        identityId,
+        phone: entry.phone,
+        verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+        alreadyStored: false,
+      };
+    });
+    if ("ok" in result) refreshContactPaths(gate.contactId);
+    return result;
+  } catch {
+    return { error: "Couldn't update that number — please try again." };
+  }
+}
+
+async function writeRemovePhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactMutationResult> {
+  const gate = await phoneGate(raw);
+  if ("error" in gate) return gate;
+  const identityId = text(gate.input.identityId, 64);
+  if (!identityId) return { error: "Invalid request." };
+
+  try {
+    const result = await prisma.$transaction(async (tx): Promise<ContactMutationResult> => {
+      const current = await tx.contactIdentity.findFirst({
+        where: {
+          id: identityId,
+          ownerId: gate.ownerId,
+          contactId: gate.contactId,
+          channel: "whatsapp",
+          deletedAt: null,
+        },
+        select: { id: true, externalId: true, verificationStatus: true },
+      });
+      if (!current) return { error: PHONE_NOT_FOUND };
+      if (current.verificationStatus === CHANNEL_VERIFIED_IDENTITY) {
+        return { error: PHONE_VERIFIED_LOCKED };
+      }
+      // Soft delete: the row stays readable as history, and the live partial unique index frees
+      // the number so the merchant can save it on the contact it actually belongs to.
+      const { count } = await tx.contactIdentity.updateMany({
+        where: {
+          id: identityId,
+          ownerId: gate.ownerId,
+          contactId: gate.contactId,
+          deletedAt: null,
+          verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+        },
+        data: { deletedAt: new Date() },
+      });
+      if (!count) return { error: PHONE_VERIFIED_LOCKED };
+      await tx.actionEvent.create({
+        data: {
+          id: newId(),
+          ownerId: gate.ownerId,
+          type: "crm.contact.identity.remove",
+          payload: {
+            contactId: gate.contactId,
+            identityId,
+            channel: "whatsapp",
+            removed: current.externalId,
+            entrySurface: surface,
+          },
+        },
+      });
+      return { ok: true };
+    });
+    if ("ok" in result) refreshContactPaths(gate.contactId);
+    return result;
+  } catch {
+    return { error: "Couldn't remove that number — please try again." };
+  }
+}
+
+/** Human CRM entry. Stores the number as merchant entered, never as verified. */
+export async function addContactPhone(raw: unknown): Promise<ContactPhoneResult> {
+  return writeAddPhone(raw, "crm_ui");
+}
+
+/** Otto parity: the same writer, the same grade, a different recorded entry surface. */
+export async function addContactPhoneFromOtto(raw: unknown): Promise<ContactPhoneResult> {
+  return writeAddPhone(raw, "otto_approved_action");
+}
+
+/** Corrects a typo in a merchant-entered number. Channel-confirmed numbers are refused. */
+export async function updateContactPhone(raw: unknown): Promise<ContactPhoneResult> {
+  return writeUpdatePhone(raw, "crm_ui");
+}
+
+/** Otto parity for the correction path. */
+export async function updateContactPhoneFromOtto(raw: unknown): Promise<ContactPhoneResult> {
+  return writeUpdatePhone(raw, "otto_approved_action");
+}
+
+/** Soft-removes a merchant-entered number. Channel-confirmed numbers are refused. */
+export async function removeContactPhone(raw: unknown): Promise<ContactMutationResult> {
+  return writeRemovePhone(raw, "crm_ui");
+}
+
+/** Otto parity for the removal path. */
+export async function removeContactPhoneFromOtto(raw: unknown): Promise<ContactMutationResult> {
+  return writeRemovePhone(raw, "otto_approved_action");
+}
+
 function parseCsv(csv: string): string[][] | { error: string } {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -437,16 +827,18 @@ function parsedImportRows(csv: string): ParsedImportRow[] | { error: string } {
     }
 
     const identityInputs = [
-      { field: "whatsapp", channel: "whatsapp", value: valueAt(values, "whatsapp") },
-      { field: "phone", channel: "whatsapp", value: valueAt(values, "phone") },
-      { field: "email", channel: "email", value: valueAt(values, "email") },
+      { channel: "whatsapp", value: valueAt(values, "whatsapp") },
+      { channel: "whatsapp", value: valueAt(values, "phone") },
+      { channel: "email", value: valueAt(values, "email") },
     ].filter((identity) => identity.value.trim().length > 0);
     const identities: NormalizedContactIdentity[] = [];
     for (const identityInput of identityInputs) {
-      const normalized = normalizeContactIdentity({
-        channel: identityInput.channel,
-        externalId: identityInput.value,
-      });
+      const normalized = normalizeContactIdentity(
+        { channel: identityInput.channel, externalId: identityInput.value },
+        // Same Malaysia default as the contact page's own phone field, stated in the same
+        // words on the import card. One rule for everything the merchant types.
+        { assumeMalaysianPhone: true },
+      );
       if ("error" in normalized) return { error: `Row ${rowNumber}: ${normalized.error}` };
       if (!identities.some((identity) =>
         identity.channel === normalized.channel && identity.externalId === normalized.externalId
@@ -459,7 +851,6 @@ function parsedImportRows(csv: string): ParsedImportRow[] | { error: string } {
       name,
       lifecycleStage,
       identities,
-      identityFields: identityInputs.map((identity) => identity.field),
       consentAction,
     });
   }
@@ -467,7 +858,11 @@ function parsedImportRows(csv: string): ParsedImportRow[] | { error: string } {
   return result;
 }
 
-/** CSV import creates Contact rows only; identity fields remain read-only suggestion signals. */
+/**
+ * CSV import creates Contact rows and stores the PHONE columns as merchant-entered identities
+ * (#803). The email column stays a duplicate-suggestion signal only, because email has no entry,
+ * correction, or removal surface yet. Every row reports what was stored and what was skipped.
+ */
 export async function importContacts(raw: unknown): Promise<ImportContactsResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -500,14 +895,22 @@ export async function importContacts(raw: unknown): Promise<ImportContactsResult
         contactId: null,
         possibleDuplicates: [],
         consentAssertion: null,
+        storedPhoneCount: 0,
+        skippedPhoneCount: 0,
         warnings: [created.error],
       });
       continue;
     }
 
-    const warnings = row.identityFields.length
-      ? ["Phone and email were checked for duplicates but not stored because identity editing is read-only."]
-      : [];
+    // A stored number is not a warning — the import card says once, for the whole file, that
+    // every number imported is merchant entered and unverified. Only what did NOT happen is a
+    // per-row surprise worth naming.
+    const warnings = created.skippedIdentities.map(
+      (skipped) => `${skipped} is already saved on another contact, so it was not added here.`,
+    );
+    if (row.identities.some((identity) => identity.channel === "email")) {
+      warnings.push("The email address was checked for duplicates but is not stored yet.");
+    }
     let consentError: string | undefined;
     if (row.consentAction) {
       try {
@@ -534,6 +937,8 @@ export async function importContacts(raw: unknown): Promise<ImportContactsResult
       possibleDuplicates: created.possibleDuplicates,
       consentAssertion: consentError ? null : row.consentAction,
       ...(consentError ? { consentError } : {}),
+      storedPhoneCount: created.storedIdentities.length,
+      skippedPhoneCount: created.skippedIdentities.length,
       warnings,
     });
   }

@@ -24,12 +24,22 @@ type Run = Extract<RunsResult, { ok: true }>["resource"]["items"][number];
 type JourneysResult = Awaited<ReturnType<typeof getContactJourneyStates>>;
 type Journey = Extract<JourneysResult, { ok: true }>["resource"]["items"][number];
 
+/**
+ * #834 r2 (P1) — this block used to print `Reason code: {code}` under the sentence.
+ *
+ * #770 already settled what a code is worth to a merchant: nothing they can act on. It pulled
+ * the printed error-code line out of ten failure blocks and left the raw value in
+ * `data-error-code`, where support and QA still read it in devtools. This one line survived
+ * that sweep, so every reason code #811 added —
+ * `consentStop:consent_unknown_unconfirmed_automatic_hard_block` and the rest — would have
+ * reached the merchant as a machine token anyway, one line below its own sentence.
+ * Same treatment: words on the page, the code in an attribute.
+ */
 function Reason({ code }: { code: string | null }) {
   if (!code) return null;
   return (
-    <div className="mt-3 rounded-lg border border-border bg-secondary/30 px-3 py-2">
+    <div className="mt-3 rounded-lg border border-border bg-secondary/30 px-3 py-2" data-reason-code={code}>
       <p className="text-xs leading-5 text-muted-foreground">{reasonCodeCopy(code)}</p>
-      <p className="mt-1 font-mono text-[11px] text-muted-foreground">Reason code: {code}</p>
     </div>
   );
 }

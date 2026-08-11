@@ -35,6 +35,8 @@ export {
 } from "./canvas-settlement.js";
 export * from "./consent-fold.js";
 export * from "./consent-runtime.js";
+// #803: the sole upgrade path from a merchant-entered identity to a channel-verified one.
+export * from "./contact-identity.js";
 export * from "./send-eligibility.js";
 
 function buildClient(): PrismaClient {
@@ -86,3 +88,4 @@ export * from "./workflow-compiler.js";
 export * from "./workflow-business-hours.js";
 export * from "./workflow-engine.js";
 export * from "./workflow-journey.js";
+export * from "./workflow-reason-codes.js";

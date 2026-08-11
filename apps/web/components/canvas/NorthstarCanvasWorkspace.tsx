@@ -16,6 +16,7 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
+import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { getMyAccount } from "@/lib/account-actions";
 import { cn } from "@/lib/utils";
 import type { EntityDTO } from "@/lib/types";
@@ -51,7 +52,7 @@ const SIDE_TABS: { id: SideTab; label: string }[] = [
 
 function canvasHref(projectId: string, threadId?: string): string {
   const thread = threadId ? `&thread=${encodeURIComponent(threadId)}` : "";
-  return `/northstar-immersive/create/canvas?project=${encodeURIComponent(projectId)}${thread}`;
+  return `${CANVAS_HREF}?project=${encodeURIComponent(projectId)}${thread}`;
 }
 
 export function NorthstarCanvasWorkspace({

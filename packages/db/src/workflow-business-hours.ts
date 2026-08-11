@@ -108,12 +108,21 @@ export type BusinessHoursEvaluationInput = {
   policy: BusinessHoursPolicyRecord | null | undefined;
 };
 
-export type BusinessHoursUnavailableReason =
-  | "POLICY_UNAVAILABLE"
-  | "TIME_ZONE_UNAVAILABLE"
-  | "SCHEDULE_UNAVAILABLE"
-  | "POLICY_CONTENT_DRIFT"
-  | "CLOCK_UNAVAILABLE";
+/**
+ * The closed set of reasons this evaluator can refuse to answer with. A VALUE, not just a
+ * type: the workflow dispatch turns each one into the step reason `BUSINESS_HOURS_<reason>`,
+ * and workflow-format's copy pinboard reads this list to prove every one of them has a
+ * merchant sentence (#811). Adding a reason without copy is a red test, not a silent code.
+ */
+export const BUSINESS_HOURS_UNAVAILABLE_REASONS = [
+  "POLICY_UNAVAILABLE",
+  "TIME_ZONE_UNAVAILABLE",
+  "SCHEDULE_UNAVAILABLE",
+  "POLICY_CONTENT_DRIFT",
+  "CLOCK_UNAVAILABLE",
+] as const;
+
+export type BusinessHoursUnavailableReason = (typeof BUSINESS_HOURS_UNAVAILABLE_REASONS)[number];
 
 export type BusinessHoursEvaluation =
   | {

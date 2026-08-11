@@ -1,5 +1,6 @@
 import {
   contactMatchesRules,
+  isChannelVerifiedIdentity,
   type SegmentContactFacts,
   type SegmentRuleGroup,
 } from "@fikirtive/core";
@@ -75,11 +76,22 @@ function normalizedChannel(value: string): string | null {
  * A rule fact describes the CONTACT. Which identities a run may actually send to is a separate
  * question, answered separately by each caller (the broadcast still targets — and still counts
  * over — only identities on its own channel).
+ *
+ * #803 — only CHANNEL-VERIFIED identities become channel facts. A merchant who types a customer's
+ * number into the contact page is recording an address book, not a delivery guarantee: nobody has
+ * confirmed that number reaches anyone, let alone on WhatsApp. If a typed number counted here,
+ * "channel is whatsapp" — a segment rule that says nothing about consent and needs no opt-in —
+ * would quietly sweep every hand-typed digit into a broadcast audience. That is the same shape
+ * #806 closed for consent, arriving through a different door, and it is exactly what the Founder
+ * ruling forbids: the lower grade is stored, shown, and searchable, never messaged.
  */
-export function contactChannelFacts(identities: readonly { channel: string }[]): string[] {
+export function contactChannelFacts(
+  identities: readonly { channel: string; verificationStatus: string }[],
+): string[] {
   return [
     ...new Set(
       identities
+        .filter(isChannelVerifiedIdentity)
         .map((identity) => normalizedChannel(identity.channel))
         .filter((channel): channel is string => channel !== null),
     ),

@@ -29,22 +29,65 @@ import {
   MAX_CAPTIONS,
   newId,
   storageKey,
+  TRANSCRIPT_GENERATION,
   type CaptionJobData,
   type CaptionCue,
 } from "@fikirtive/core";
 import { probeFile } from "./ingest.js";
 
-const WHISPER_MODEL_PATH = process.env.WHISPER_MODEL_PATH ?? "/opt/whisper/models/ggml-base.en.bin";
-const WHISPER_MODEL_NAME = "base.en"; // cache key dimension
+/**
+ * The transcription model baked into the worker image. It MUST be a multilingual build
+ * (never a `.en` one — that was #787) and the worker is its ONLY knower: nothing outside this
+ * package learns the engine's name, and the cached transcripts are tagged with
+ * TRANSCRIPT_GENERATION rather than with this.
+ *
+ * ── changing the model is a CODE change, in four places, together ─────────────────────────
+ *   1. this constant,
+ *   2. TRANSCRIPT_GENERATION in packages/core (bump it — cues from the old model are not what
+ *      this pipeline would now produce, and the bump is what retires them),
+ *   3. the Dockerfile's download + the ENV path (both spell the filename literally),
+ *   4. the Dockerfile's pinned sha256 for the new file.
+ * There is deliberately NO build arg or env var that can move the model on its own: a
+ * half-configurable model is how an image ends up either unrunnable or writing one engine's
+ * cues under another's tag. caption.test.ts asserts 1-4 agree, so a partial change fails loudly.
+ */
+export const WHISPER_MODEL_NAME = "small";
+
+/** Where the model FILE lives — the only thing deployment may relocate. The filename is always
+ *  derived from the constant above, so this can move the file but never change the model. */
+const WHISPER_MODEL_DIR = process.env.WHISPER_MODEL_DIR ?? "/opt/whisper/models";
+const WHISPER_MODEL_PATH = path.join(WHISPER_MODEL_DIR, `ggml-${WHISPER_MODEL_NAME}.bin`);
+
+/**
+ * Language policy (#787): DETECT, never pin, never translate.
+ *
+ * The Malaysian merchant we build for records in Malay, English, Mandarin — often mixed in
+ * one sentence. `auto` lets the model decide from the audio; pinning any single language
+ * would just move the breakage from one group of merchants to another (which is exactly
+ * what `-l en` did: it silently forced every non-English clip through an English decoder).
+ *
+ * We deliberately do NOT pass `--translate`: that flag rewrites the audio into English, and
+ * a merchant's Malay captions must stay Malay — those are their own words on their own video.
+ *
+ * Known limit, stated plainly rather than hidden: the language is decided ONCE, from the
+ * OPENING audio, and the whole clip is then transcribed as that language. There is no
+ * re-judgement and no notion of a dominant language — a clip that opens in English and
+ * continues in Malay is transcribed as English throughout.
+ */
+const WHISPER_LANGUAGE = "auto";
+
 const WHISPER_THREADS = Math.max(1, Math.min(8, Number(process.env.WHISPER_THREADS ?? 4)));
 const WHISPER_MAX_SECONDS = Math.max(1, Number(process.env.WHISPER_MAX_SECONDS ?? 600));
 const WHISPER_TIMEOUT_MS = 1000 * 60 * 10; // = render's ffmpeg magnitude; < expire (15m)
 const EXTRACT_TIMEOUT_MS = 60_000; // like probeFile
 const STALE_MS = 1000 * 60 * 13; // > whisper timeout, < expire (same invariant as render)
 
-/** whisper-cli -oj emits { transcription: [{ offsets: { from, to }, text }] }
- *  with offsets in MILLISECONDS. */
+/** whisper-cli -oj emits { result: { language }, transcription: [{ offsets: { from, to }, text }] }
+ *  with offsets in MILLISECONDS. `result.language` is the language the run actually used —
+ *  under `-l auto` that is the DETECTED one, which is the only place we can observe the
+ *  detection outcome (it is logged, not persisted: no schema change, no merchant surface). */
 interface WhisperJson {
+  result?: { language?: string };
   transcription?: Array<{ offsets?: { from?: number; to?: number }; text?: string }>;
 }
 
@@ -60,12 +103,14 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
 
   // #463: the payload carries only the job id — the tenant is knowable only after the row
   // load above. Note the Transcript cache below is reached by a tenant-free unique key
-  // (contentHash+model); the scope names the owner, it does not change that lookup.
+  // (contentHash + generation); the scope names the owner, it does not change that lookup.
   await runAsTenant(job.ownerId, async () => {
-    // CACHE SHORT-CIRCUIT: a re-request for the same audio bytes + model reuses the
-    // cached transcript for $0 + 0 CPU. Whisper is deterministic for fixed inputs.
+    // CACHE SHORT-CIRCUIT: a re-request for the same audio bytes at the same generation reuses
+    // the cached transcript for $0 + 0 CPU. Whisper is deterministic for fixed inputs.
+    // A row from an OLDER generation is not a hit — it is invisible here, which is what makes
+    // a merchant captioned before #787 get real captions instead of the stale English ones.
     const cached = await prisma.transcript.findUnique({
-      where: { contentHash_model: { contentHash: job.contentHash, model: WHISPER_MODEL_NAME } },
+      where: { contentHash_model: { contentHash: job.contentHash, model: TRANSCRIPT_GENERATION } },
     });
     if (cached) {
       await prisma.captionJob.update({
@@ -105,13 +150,13 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
       const probe = await probeFile(file);
       if (!probe.hasAudio) {
         await prisma.transcript.upsert({
-          where: { contentHash_model: { contentHash: job.contentHash, model: WHISPER_MODEL_NAME } },
+          where: { contentHash_model: { contentHash: job.contentHash, model: TRANSCRIPT_GENERATION } },
           update: { cuesJson: [] },
           create: {
             id: newId(),
             ownerId: job.ownerId,
             contentHash: job.contentHash,
-            model: WHISPER_MODEL_NAME,
+            model: TRANSCRIPT_GENERATION,
             cuesJson: [],
           },
         });
@@ -140,7 +185,7 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
         [
           "-m", WHISPER_MODEL_PATH,
           "-f", wav,
-          "-l", "en",
+          "-l", WHISPER_LANGUAGE,
           "-t", String(WHISPER_THREADS),
           "-d", String(Math.round(maxS * 1000)),
           "-ml", "1",
@@ -168,13 +213,13 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
 
       // upsert the cache (content-hash + model keyed → reused for $0 on re-render).
       await prisma.transcript.upsert({
-        where: { contentHash_model: { contentHash: job.contentHash, model: WHISPER_MODEL_NAME } },
+        where: { contentHash_model: { contentHash: job.contentHash, model: TRANSCRIPT_GENERATION } },
         update: { cuesJson: cues },
         create: {
           id: newId(),
           ownerId: job.ownerId,
           contentHash: job.contentHash,
-          model: WHISPER_MODEL_NAME,
+          model: TRANSCRIPT_GENERATION,
           cuesJson: cues,
         },
       });
@@ -183,7 +228,12 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
         where: { id: job.id, status: "RENDERING" },
         data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" },
       });
-      console.log(`[caption] ${job.id}: DONE → ${cues.length} cues cached (${job.contentHash.slice(0, 12)}…)`);
+      // the detected language is operational evidence for #787 ("did the Malay clip actually
+      // come back as Malay?") — a log line only: nothing is persisted and nothing reaches a merchant.
+      const detected = raw.result?.language ?? "unknown";
+      console.log(
+        `[caption] ${job.id}: DONE → ${cues.length} cues cached, language=${detected} (${job.contentHash.slice(0, 12)}…)`,
+      );
     } catch (err) {
       // PERSISTED error must never carry the whisper/ffmpeg argv (it contains the
       // presigned source URL + signature) — it surfaces verbatim in the admin UI.

@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
+// #801 两个日历择一为准:Calendar 这一格没了。它指的那一页只是把计划条目的日期与 hook
+// 摊平再编辑一次,而战役自己那一页本来就能改;真正会把东西发出去的日历只有 Workspace ›
+// Schedule 一本。旧链接照旧可用(那条路由现在重定向到排期),只是不再在这里开第二扇门。
 const items = [
   { href: "/campaign", label: "Campaigns", key: "list" },
   { href: "/campaign/workbench", label: "Workbench", key: "workbench" },
-  { href: "/campaign/calendar", label: "Calendar", key: "calendar" },
   { href: "/campaign/trends", label: "Trends", key: "trends" },
 ] as const;
 

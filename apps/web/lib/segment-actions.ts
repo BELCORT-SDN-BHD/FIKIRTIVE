@@ -71,7 +71,7 @@ type ContactRow = {
   totalOrdersMyr: unknown;
   doNotDisturb: boolean;
   marketingConsent: string;
-  identities: Array<{ channel: string }>;
+  identities: Array<{ channel: string; verificationStatus: string }>;
 };
 
 type SegmentRow = {
@@ -206,7 +206,8 @@ async function readContacts(ownerId: string): Promise<EvaluatedContact[]> {
         ...CONTACT_SELECT,
         identities: {
           where: { ownerId, deletedAt: null },
-          select: { channel: true },
+          // #803: the grade decides whether an identity is a channel fact at all.
+          select: { channel: true, verificationStatus: true },
         },
       },
     }),

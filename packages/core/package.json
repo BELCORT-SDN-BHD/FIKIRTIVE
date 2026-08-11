@@ -24,6 +24,10 @@
       "types": "./dist/canvas-settlement-plan.d.ts",
       "default": "./dist/canvas-settlement-plan.js"
     },
+    "./contact-identity-grade": {
+      "types": "./dist/contact-identity-grade.d.ts",
+      "default": "./dist/contact-identity-grade.js"
+    },
     "./cowork-directives": {
       "types": "./dist/cowork-directives.d.ts",
       "default": "./dist/cowork-directives.js"
@@ -39,6 +43,10 @@
     "./memory-sections": {
       "types": "./dist/memory-sections.d.ts",
       "default": "./dist/memory-sections.js"
+    },
+    "./navigation": {
+      "types": "./dist/navigation.d.ts",
+      "default": "./dist/navigation.js"
     },
     "./model-config": {
       "types": "./dist/model-config.d.ts",
