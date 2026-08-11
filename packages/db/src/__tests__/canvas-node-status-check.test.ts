@@ -212,16 +212,38 @@ describe("no writer can move a card backwards — driven through the real settle
  * database now says is deleted — and must change nothing.
  */
 describe("the settlement's own write refuses a card that was deleted after the board was read", () => {
-  /** Poll until some backend is parked on a lock — the settlement reaching the blocked read. */
+  /**
+   * Poll until the settlement is parked on THIS test's `ChatThread` lock.
+   *
+   * The whole race rests on this wait meaning one specific thing: the settlement has finished
+   * reading the board and has reached the thread lookup behind it. It used to be spelled as
+   * "some backend, somewhere, is waiting for some lock" — `pg_stat_activity` with no filter on
+   * the database, the relation or the process. Every developer machine and every CI runner
+   * shares one PostgreSQL server with other work, and any lock wait anywhere in the CLUSTER —
+   * another database entirely — satisfied that. When it did, the deletion below landed BEFORE
+   * the settlement's board read instead of after it, the projection saw a tombstone, and the
+   * settlement correctly answered `suppressed` for a case this test meant to force into the
+   * write. A green run then meant "the machine was quiet", and a red one meant nothing at all.
+   *
+   * So the wait now names the lock it is actually waiting for: a request for a lock on
+   * `ChatThread`, in THIS database, that has not been granted — which is the settlement's own
+   * read blocked behind the ACCESS EXCLUSIVE lock the blocker is holding, and nothing else. The
+   * blocker's own lock is granted, so it never counts itself.
+   */
   async function waitForLockWait(): Promise<void> {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const rows = await prisma.$queryRaw<{ n: bigint }[]>`
-        SELECT count(*)::bigint AS n FROM pg_stat_activity
-         WHERE wait_event_type = 'Lock' AND state = 'active'`;
+        SELECT count(*)::bigint AS n
+          FROM pg_locks l
+          JOIN pg_stat_activity a ON a.pid = l.pid
+         WHERE NOT l.granted
+           AND l.locktype = 'relation'
+           AND l.relation = to_regclass('"ChatThread"')
+           AND a.datname = current_database()`;
       if (Number(rows[0]!.n) > 0) return;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    throw new Error("the settlement never blocked on the table lock — the race was not forced");
+    throw new Error("the settlement never blocked on the ChatThread lock — the race was not forced");
   }
 
   it("changes zero rows, and the card stays deleted", async () => {
