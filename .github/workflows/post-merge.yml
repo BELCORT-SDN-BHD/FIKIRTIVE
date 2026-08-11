@@ -36,14 +36,15 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  # 连续几次合并只需要验证最后那个 main。取消在飞的旧的那次,是为了把这台跑手还给 PR。
-  group: post-merge-main
-  cancel-in-progress: true
-
 jobs:
   quality-on-main:
     name: quality-on-main
+    # 并发组挂在 job 上而不是 workflow 上:挂在 workflow 上时,一次手动烟测会取消正在跑的
+    # 那次门,而它们本来毫无关系。
+    concurrency:
+      # 连续几次合并只需要验证最后那个 main。取消在飞的旧的那次,是为了把这台跑手还给 PR。
+      group: post-merge-main
+      cancel-in-progress: true
     # 与 ci.yml 同一台自托管跑手,理由也相同:私有仓库的 GitHub 托管分钟数是计费的,
     # 2026-08 的一次账单失败冻结了全仓合并两天(#577,至今未关)。把这个 workflow 放到
     # 云端跑手上,等于把那条已经咬过我们一次的依赖重新引回来——而且它坏的时候不会红,
