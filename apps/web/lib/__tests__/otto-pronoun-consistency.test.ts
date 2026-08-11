@@ -33,6 +33,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -83,151 +84,52 @@ function sentencesOf(text: string): string[] {
  *   `<p>Meet Otto.</p><p>It researches…</p>` 不报错。
  *
  * 修法不是放宽规则(那会把正确文案判红),是把**句界**修对:把源码里给人读的那些段
- * 按出现顺序抽出来接成一条流。接起来之后句号后面就真的是空白,同一条规则原样命中。
+ * 按出现顺序抽出来接成一条流。接起来之后句号后面就真的是空白,同一套规则原样命中。
  *
- * 抽两类段,一次左到右扫完:
- *   · **JSX 文本节点** —— 一个标签闭合(`>`)之后、下一个标签打开(`<`)之前的纯文本。
- *   · **字符串字面量** —— 属性值、数组元素、返回值里的文案。
- * 顺序很重要:先吃 JSX 文本再看引号,`Otto doesn&apos;t ask` 这种正文里的撇号就不会被
- * 当成一个字符串的开头(它已经被 JSX 那一段整段吃掉了)。
+ * #834 r4 —— **换设计:手搓扫描整类退役,改用 TypeScript 编译器的 AST。**
  *
- * 这条流是**加**在原来那条(整份源码)之上的,不是换掉它:行尾注释只有原来那条看得见。
- * 两条流各扫一遍,同一句重复命中的按 (文件, 规则, 句子) 去重。
+ * 前三轮这里是一个自己写的字符扫描器,判官连着两轮从同一个方向抓到逃逸:
+ *   r2:`{condition && " It researches…"}` —— 非纯表达式被折成一个空格,内层整句丢失;
+ *   r3:同一个容器换成跨行写法 —— 外层的 `Meet Otto.` 反而丢失(容器判定失败即整段作废)。
+ * 两次都不是规则错了,是**「这段源码里哪些字符是给人读的」这个判断本身不该手写**:
+ * 括号配对、引号、模板、注释、JSX 文本边界,每一条都是语言语法,补丁只会补出下一个形状。
  *
- * #830 —— 表达式容器不是句号,它常常正是两句之间那个空格。
- *   第一版遇到 `{` 就把**当前整段 JSX 文本丢掉**,于是 Prettier 最常见的换行产物
- *   `<p>Meet Otto.{" "}It researches…</p>` 两句一起消失:文案流里什么都没有,整份源码那条
- *   流又因为句号后面紧跟 `{` 而不切句 —— 两条流一起放行。
- *   修法按容器的形状分两种,都不再丢弃整段:
- *     · **纯字符串字面量容器**(`{" "}`、`{"—"}`)按它的值拼接 —— `{" "}` 拼出来的就是
- *       句号后面那个空格,句界于是落在真句号上;
- *     · **其余表达式**(`{count}`、`{user.name}`)按一个空格处理:它的值机器读不到,但它
- *       在句子里占的位置是空白,不是句号。
- *   容器只在「单行、不含嵌套标签」时才这样吃掉;跨行或含 `<` 的(箭头函数体、`.map()`
- *   出来的 JSX)不是行内文案,这一段整体作废,并且**退回 `{` 前一格重扫**,里面的字符串
- *   字面量照样被下面那条分支收走 —— 丢弃永远只丢「这不是一段文案」的判断,不丢内容。
+ * 现在直接问编译器:`ts.createSourceFile` 解析,按源顺序走整棵树,收两类叶子 ——
+ *   · `JsxText`(标签之间给人读的文本);
+ *   · 一切字符串字面量与模板字面量的文本(属性值、数组元素、条件/三元的分支、模板片段)。
+ * 容器嵌几层、跨几行、条件还是三元,对 AST 都是同一件事:它们都是子节点,顺序天然正确。
+ * `typescript` 是仓库现成依赖(apps/web 5.9.3),零新增。
  */
-type JsxText = { text: string; end: number; closed: boolean };
-
-/**
- * `{…}` 的值。不是行内容器(跨行 / 含嵌套标签)则 null,整段作废。
- *
- * #834 r2(P1):r1 只把**纯**字符串字面量容器的值接进流,其余一律折成一个空格 ——
- * 于是条件文案整句消失。判官的反例:
- *   `<p>Meet Otto.{condition && " It researches…"}</p>` → `copyRuns` 得 `["Meet Otto."]`,
- * 「Otto 句后紧跟代词开头句」这条规则连第二句都看不到,#830 的漏报窗原样还在。
- * 条件渲染正是文案最爱藏的地方,把它折成空格等于给围栏开了一个专供条件文案的后门。
- *
- * 现在按容器里的**字符串字面量**分两种,都不再吞掉正文:
- *   · 只有一个字面量、别无他物(`{" "}`、`{"—"}`)—— 原样取它的值,`{" "}` 拼出来的就是
- *     句号后面那个空格,句界落回真句号;
- *   · 其余(`{cond && " It researches…"}`、`{a ? "Yes." : "No."}`、`{count}`)—— 表达式本身
- *     按空白处理,但里面每一段字符串字面量都进流,用空白隔开。机器读不到的是**取值逻辑**,
- *     不是那些字面量;把字面量一起丢掉是把能读的也扔了。
- */
-function readExpressionContainer(source: string, start: number): { value: string; end: number } | null {
-  let depth = 0;
-  let i = start;
-  const literals: string[] = [];
-  let sawAnythingElse = false;
-  while (i < source.length) {
-    const char = source[i]!;
-    if (char === "<" || char === "\n") return null;
-    if (char === "{") {
-      depth += 1;
-      i += 1;
-      continue;
-    }
-    if (char === "}") {
-      depth -= 1;
-      i += 1;
-      if (depth === 0) {
-        const pure = !sawAnythingElse && literals.length === 1;
-        return { value: pure ? literals[0]! : ` ${literals.join(" ")} `, end: i };
-      }
-      continue;
-    }
-    if (char === '"' || char === "'" || char === "`") {
-      const string = readStringLiteral(source, i);
-      literals.push(string.body);
-      i = string.end;
-      continue;
-    }
-    if (!/\s/.test(char)) sawAnythingElse = true;
-    i += 1;
-  }
-  return null;
+function scriptKindOf(file: string): ts.ScriptKind {
+  return file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
 
-function readStringLiteral(source: string, start: number): { body: string; end: number } {
-  const quote = source[start]!;
-  let body = "";
-  let i = start + 1;
-  while (i < source.length && source[i] !== quote) {
-    if (source[i] === "\\") {
-      body += source[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    body += source[i]!;
-    i += 1;
-  }
-  return { body, end: i + 1 };
-}
-
-/** 一个 `>` 之后的 JSX 文本节点。只有真的被下一个 `<` 关上,它才算一段文案。 */
-function readJsxText(source: string, start: number): JsxText {
-  let text = "";
-  let i = start;
-  while (i < source.length) {
-    const char = source[i]!;
-    if (char === "<") return { text, end: i, closed: true };
-    if (char === ">" || char === "}") return { text, end: i, closed: false };
-    if (char === "{") {
-      const container = readExpressionContainer(source, i);
-      if (!container) return { text, end: i, closed: false };
-      text += container.value;
-      i = container.end;
-      continue;
-    }
-    text += char;
-    i += 1;
-  }
-  return { text, end: i, closed: false };
-}
-
-function copyRuns(source: string): string[] {
+/** 按源顺序收「给人读的文本」。注释不是节点,天然不进流。 */
+function copyRuns(source: string, file = "planted.tsx"): string[] {
+  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, false, scriptKindOf(file));
   const runs: string[] = [];
-  let i = 0;
-  while (i < source.length) {
-    const char = source[i]!;
-    if (char === ">") {
-      const jsxText = readJsxText(source, i + 1);
-      if (jsxText.closed) {
-        runs.push(jsxText.text);
-        i = jsxText.end;
-      } else {
-        // 这一段不是 JSX 文本(`=>`、`a > b`、跨行容器…)。只前进一格,让它里面的
-        // 字符串字面量原样落进下面那条分支 —— 作废判断,不作废内容。
-        i += 1;
-      }
-      continue;
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxText(node)) runs.push(node.text);
+    else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) runs.push(node.text);
+    else if (ts.isTemplateExpression(node)) {
+      // 模板的文字片段按顺序进流;`${…}` 里的表达式由下面的 forEachChild 照常走到。
+      runs.push(node.head.text);
+      for (const span of node.templateSpans) runs.push(span.literal.text);
     }
-    if (char === '"' || char === "'" || char === "`") {
-      const string = readStringLiteral(source, i);
-      runs.push(string.body);
-      i = string.end;
-      continue;
-    }
-    i += 1;
-  }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(parsed, visit);
   return runs.map((run) => run.trim()).filter((run) => /[A-Za-z]/.test(run));
 }
 
-/** 两条流:整份源码(原样)+ 只有文案、句界落在真句号上的那一条(#816)。 */
-function streamsOf(source: string): string[] {
-  const stripped = stripComments(source);
-  return [stripped, copyRuns(stripped).join(" ")];
+/**
+ * 两条流:整份源码(剥掉整行注释)+ 只有文案、句界落在真句号上的那一条(#816)。
+ *
+ * 文案流喂的是**原始源码**,不是剥过注释的那份:注释在 AST 里本来就不是节点,而
+ * `stripComments` 是按行删的,删完可能不再是合法语法。让解析器读它本来的样子。
+ */
+function streamsOf(source: string, file = "planted.tsx"): string[] {
+  return [stripComments(source), copyRuns(source, file).join(" ")];
 }
 
 const MENTIONS_OTTO = /\bOtto\b/;
@@ -265,7 +167,8 @@ function scan(): Offence[] {
   const offences = new Map<string, Offence>();
   for (const relative of trackedSources()) {
     const source = readFileSync(path.join(REPO_ROOT, relative), "utf8");
-    for (const stream of streamsOf(source)) {
+    // 文件名带进去:`.ts` 与 `.tsx` 的解析方式不同(JSX 只在 .tsx 里合法)。
+    for (const stream of streamsOf(source, relative)) {
       // 两条流会重复命中同一句;去重后 offenders 才是「几处病」而不是「扫了几遍」。
       for (const offence of offencesIn(relative, stream)) {
         offences.set(`${offence.file} ${offence.rule} ${offence.sentence}`, offence);
@@ -386,8 +289,10 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   it("catches a pronoun that opens the next sentence after a {\" \"} join", () => {
     const planted = `<p>Meet Otto.{" "}It researches your brand.</p>`;
     expect(offencesIn("planted.tsx", stripComments(planted)), "the whole-source stream").toEqual([]);
+    // 两段都在流里,顺序不变 —— `{" "}` 本身是一段(纯空白,过滤掉)。
     expect(copyRuns(planted), "the old copy stream dropped both sentences").toEqual([
-      "Meet Otto. It researches your brand.",
+      "Meet Otto.",
+      "It researches your brand.",
     ]);
     expect(rulesFor(planted)).toContain(RULE);
   });
@@ -397,7 +302,16 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   it("catches a pronoun that opens a sentence hidden inside a conditional expression", () => {
     const planted = `<p>Meet Otto.{condition && " It researches your brand."}</p>`;
     expect(rulesFor(planted)).toContain(RULE);
-    expect(copyRuns(planted)).toEqual(["Meet Otto.  It researches your brand."]);
+    expect(copyRuns(planted)).toEqual(["Meet Otto.", "It researches your brand."]);
+  });
+
+  // 判官 2026-08-10 r3 的反例(#834 r4 P1)。同一个条件容器换成跨行写法,r3 的手搓
+  // 扫描器判定「不是行内容器」→ 整段作废 → 这次丢的是**外层**那句 Meet Otto.
+  // 一个形状修好,换行就换出下一个形状 —— 这正是不再打补丁、改问编译器的理由。
+  it("keeps both the outer and the inner sentence when the container spans lines", () => {
+    const planted = `<p>Meet Otto.{condition &&\n  " It researches your brand."}</p>`;
+    expect(copyRuns(planted)).toEqual(["Meet Otto.", "It researches your brand."]);
+    expect(rulesFor(planted)).toContain(RULE);
   });
 
   it("keeps every branch of a ternary in the stream, not just the first", () => {
@@ -406,17 +320,17 @@ describe("#830 an expression container inside JSX text no longer throws the sent
   });
 
   it("treats a value expression as the whitespace it occupies, not as a full stop", () => {
-    // `{count}` 的值机器读不到,但它不是句号 —— 前后仍是同一句话的两半。
-    // 空格多少不重要,它是空白就行 —— 重要的是句号还在句号的位置上。
+    // `{count}` 的值机器读不到,它把一段 JSX 文本切成两段 —— 但切开的两段接回流里
+    // 仍由空白隔开,句号还在句号的位置上,句界不受影响。
     expect(copyRuns(`<p>Otto drafted {count} posts. It is waiting.</p>`)).toEqual([
-      "Otto drafted    posts. It is waiting.",
+      "Otto drafted",
+      "posts. It is waiting.",
     ]);
     expect(rulesFor(`<p>Otto drafted {count} posts.</p><p>It is waiting.</p>`)).toContain(RULE);
   });
 
-  it("keeps the string literals inside a multi-line container it refuses to inline", () => {
-    // 跨行容器(箭头函数体、`.map()` 出来的 JSX)不是行内文案 —— 整段作废,但里面的
-    // 字符串字面量必须照样进流,否则「修盲区」会变成「换个地方新开一个盲区」。
+  it("reads copy out of a nested, multi-line, mapped JSX subtree", () => {
+    // 箭头函数体里 `.map()` 出来的 JSX:手搓扫描器在这里只能整段放弃,AST 照常往下走。
     const planted = `<div>\n  {items.map((item) => (\n    <p>{"Otto waited."}</p>\n  ))}\n</div>`;
     expect(copyRuns(planted)).toContain("Otto waited.");
   });

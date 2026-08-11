@@ -23,62 +23,46 @@ import { pathToFileURL } from "node:url";
 const webRoot = path.resolve(__dirname, "../..");
 
 /**
- * Comment stripping that knows what a comment is NOT (#834 r2, P1).
+ * The declared surface of a stylesheet — every selector, property, value and at-rule param,
+ * with comments structurally absent (#834 r4).
  *
- * The first version was two regexes, and the judge broke it in one line:
- * `background: url("//assets.example.com/swatch.png?tint=E5484D")` — the `//` inside the URL
- * opened a "line comment", the rest of the line vanished, and a retired colour sitting in live
- * CSS was forgiven as if it were a note. A fence that can be switched off by the text it is
- * scanning is not a fence.
+ * r2 stripped comments with two regexes; the judge broke it with `url("//assets…")`.
+ * r3 replaced that with a hand-written scanner; the judge broke it again with
+ * `url("https://…/a)//tail?tint=#E5484D")` — it counted to the first `)`, which was inside the
+ * quotes. Two rounds, one root cause: **deciding what is a comment is CSS parsing**, and every
+ * patch just moves the seam to the next punctuation mark.
  *
- * So: walk the text once. String bodies and `url(…)` contents are copied through verbatim —
- * a literal inside them is real, shipped value and must still be caught — and only outside
- * them does `/* … *\/` or `//` actually begin a comment.
+ * So it is parsed now. postcss hands back a tree in which a comment is its own node type, so
+ * "without comments" is not something this file has to compute — it is what walking the
+ * declarations gives you. Resolved through @tailwindcss/postcss, exactly as `compileGlobals`
+ * below already resolves @tailwindcss/node: no new dependency.
  */
-export function stripCommentsForScan(text: string): string {
-  let out = "";
-  let i = 0;
-  while (i < text.length) {
-    const char = text[i]!;
-    if (char === '"' || char === "'" || char === "`") {
-      let j = i + 1;
-      out += char;
-      while (j < text.length && text[j] !== char) {
-        if (text[j] === "\\") {
-          out += text.slice(j, j + 2);
-          j += 2;
-          continue;
-        }
-        out += text[j]!;
-        j += 1;
-      }
-      out += text[j] ?? "";
-      i = j + 1;
-      continue;
-    }
-    // CSS `url(...)` may hold an unquoted, protocol-relative address.
-    if (/^url\(/i.test(text.slice(i, i + 4))) {
-      const close = text.indexOf(")", i);
-      const end = close === -1 ? text.length : close + 1;
-      out += text.slice(i, end);
-      i = end;
-      continue;
-    }
-    if (text.startsWith("/*", i)) {
-      const close = text.indexOf("*/", i + 2);
-      out += " ";
-      i = close === -1 ? text.length : close + 2;
-      continue;
-    }
-    if (text.startsWith("//", i)) {
-      const newline = text.indexOf("\n", i);
-      i = newline === -1 ? text.length : newline;
-      continue;
-    }
-    out += char;
-    i += 1;
-  }
-  return out;
+/**
+ * The four node kinds walked below. Declared here rather than imported: postcss is a
+ * transitive dependency, so its types do not resolve from this package — and naming only the
+ * shape actually used keeps the fence honest about how little of postcss it relies on.
+ */
+type PostcssNode =
+  | { type: "decl"; prop: string; value: string }
+  | { type: "rule"; selector: string }
+  | { type: "atrule"; name: string; params: string }
+  | { type: "comment"; text: string };
+
+function declaredCss(css: string): string {
+  const req = createRequire(path.join(webRoot, "package.json"));
+  const reqFromPostcss = createRequire(req.resolve("@tailwindcss/postcss"));
+  const postcss = reqFromPostcss("postcss") as {
+    parse(css: string): { walk(callback: (node: PostcssNode) => void): void };
+  };
+
+  const parts: string[] = [];
+  postcss.parse(css).walk((node) => {
+    if (node.type === "decl") parts.push(`${node.prop}: ${node.value}`);
+    else if (node.type === "rule") parts.push(node.selector);
+    else if (node.type === "atrule") parts.push(`@${node.name} ${node.params}`);
+    // node.type === "comment" is deliberately not collected — that is the whole point.
+  });
+  return parts.join("\n");
 }
 
 function relativeLuminance(hex: string): number {
@@ -252,7 +236,7 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
           (entry) => entry.file === relative && entry.literal === literal,
         );
         // An exempt file is still scanned — only its comments are forgiven.
-        const body = exemption ? stripCommentsForScan(text) : text;
+        const body = exemption ? declaredCss(text) : text;
         if (body.toUpperCase().includes(literal)) {
           offenders.push(`${relative} — ${literal} (${why})`);
         }
@@ -260,19 +244,28 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     }
     expect(offenders).toEqual([]);
 
-    // 判官 2026-08-10 的反例(#834 r2 P1):字符串与 url() 里的 `//` 不是注释开头。
-    // 这几行钉住「豁免只赦免真注释」——赦免范围一旦被扫描内容自己撑开,围栏就等于关掉了。
-    const swatch = 'background: url("//assets.example.com/s.png?tint=#E5484D");';
-    expect(stripCommentsForScan(swatch), "a protocol-relative url() is not a comment")
+    // 判官两轮的全部反例(#834 r2/r3 P1)。豁免只赦免**真注释** —— 赦免范围一旦能被
+    // 扫描内容自己撑开,围栏就等于关掉了。这几行钉的是「谁来判定注释」这件事本身。
+    const protocolRelative = 'a { background: url("//assets.example.com/s.png?tint=#E5484D"); }';
+    expect(declaredCss(protocolRelative), "r2: a protocol-relative url() is not a comment")
       .toContain("#E5484D");
-    expect(stripCommentsForScan('const retired = "#E5484D"; // retired'), "a string body is shipped value")
+    const parenInsideQuotes = 'a { background: url("https://cdn.example.com/a)//tail?tint=#E5484D"); }';
+    expect(declaredCss(parenInsideQuotes), "r3: a ) inside the quotes does not end the url()")
       .toContain("#E5484D");
-    expect(stripCommentsForScan("/* --destructive #E5484D → #D02F35 */ --destructive: #D02F35;"))
+    expect(declaredCss("/* --destructive #E5484D → #D02F35 */ .gb { --destructive: #D02F35; }"))
       .not.toContain("#E5484D");
-    expect(stripCommentsForScan("// color: #E5484D\nconst x = 1;")).not.toContain("#E5484D");
+    // 注释在声明中间、值里带函数、以及多段注释,同样只留声明。
+    expect(declaredCss(".gb { --error: /* was #E5484D */ color-mix(in oklab, #D02F35 90%, white); }"))
+      .not.toContain("#E5484D");
+    expect(declaredCss(".gb { --error: #E5484D; /* keep */ }"), "a value is never a comment")
+      .toContain("#E5484D");
 
     // Every exemption must still be earning its place: a stale entry is a hole nobody sees.
     for (const exemption of COMMENT_ONLY_EXEMPTIONS) {
+      // Only a stylesheet can be forgiven this way — `declaredCss` reads CSS and nothing else.
+      // A `.ts`/`.tsx` entry here would silently forgive the whole file, so it is refused
+      // outright rather than approximated.
+      expect(exemption.file.endsWith(".css"), `${exemption.file} is not a stylesheet`).toBe(true);
       const text = await fs.readFile(path.join(webRoot, exemption.file), "utf8");
       expect(
         text.toUpperCase().includes(exemption.literal),
