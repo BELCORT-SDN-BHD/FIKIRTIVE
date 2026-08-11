@@ -30,6 +30,9 @@ const {
   mockChatMessageDeleteMany,
   mockChatMessageUpdateMany,
   mockOrganizationFindUnique,
+  mockReserveCredits,
+  mockRefundReservation,
+  mockSettleCredits,
   mockScheduledPostFindFirst,
   mockActionEventCreate,
   mockGenJobFindFirst,
@@ -173,6 +176,11 @@ const {
     mockChatMessageUpdateMany: vi.fn(),
     // #524 r2 — the spend-cap preflight reads Organization.settings before the card is consumed.
     mockOrganizationFindUnique: vi.fn(),
+    // #524 r3 — the judge asked for interleavings with the REAL reserve participating (not a
+    // mocked meter), so the ledger writers have to exist on the db double.
+    mockReserveCredits: vi.fn(),
+    mockRefundReservation: vi.fn(),
+    mockSettleCredits: vi.fn(),
     mockScheduledPostFindFirst: vi.fn(),
     mockActionEventCreate: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
@@ -328,6 +336,9 @@ vi.mock("@fikirtive/db", () => ({
   },
   InsufficientCredits: MockInsufficientCredits,
   SpendCapBlocked: MockSpendCapBlocked,
+  reserveCredits: mockReserveCredits,
+  refundReservation: mockRefundReservation,
+  settleCredits: mockSettleCredits,
 }));
 
 // Spread the REAL module so pure helpers (newId, coworkTurnRequest, OTTO_MAX_STEPS,
@@ -351,6 +362,9 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
   return {
     ...actual,
     otto: { name: "Otto" },
+    // #524 r3: keep a handle on the genuine metered path — the interleaving cases run it for real
+    // so the reserve→claim→run order is exercised end to end instead of asserted against a double.
+    __realWithLlmBudget: actual.withLlmBudget,
     withLlmBudget: mockWithLlmBudget,
     run: mockRun,
     RunState: MockRunState,
@@ -386,10 +400,15 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
 const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang } = await import("@/lib/otto-actions");
-const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
+const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 // #524 r2: the REAL hold derivation (the @fikirtive/otto mock spreads the actual module), so the
 // expected number in the spend-cap cases comes from the same code the production path runs.
-const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime } = await import("@fikirtive/otto");
+const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed } = await import("@fikirtive/otto");
+// The REAL withLlmBudget (see the @fikirtive/otto mock). Tests that need the true reserve→claim→run
+// order install it on mockWithLlmBudget; it runs against the mocked ledger writers above.
+const realWithLlmBudget = (await import("@fikirtive/otto")) as unknown as {
+  __realWithLlmBudget: typeof import("@fikirtive/otto").withLlmBudget;
+};
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -467,6 +486,33 @@ function makeMockResult({
   };
 }
 
+/**
+ * The metered double every ordinary test runs on: does the work, and honours the post-reserve
+ * claim window the real `withLlmBudget` opens (#524 r3). A double that ignored `afterReserve`
+ * would model a product where consent is never consumed — every CAS assertion in this file would
+ * then pass or fail for the wrong reason.
+ */
+function passthroughMeter() {
+  return async (args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+    const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
+    if (claim && !(await claim())) throw new ReservationNotClaimed();
+    const out = await fn();
+    return (out as { result: unknown }).result;
+  };
+}
+
+/** Install the genuine metered path on the double — the reserve→claim→run order for real, over
+ *  the mocked ledger writers. The cast only widens the double's deliberately loose `unknown` args
+ *  type; the function installed IS the production `withLlmBudget`. */
+function installRealMeter() {
+  mockWithLlmBudget.mockImplementation(
+    realWithLlmBudget.__realWithLlmBudget as unknown as (
+      args: unknown,
+      fn: () => Promise<{ result: unknown; usage?: unknown }>,
+    ) => Promise<unknown>,
+  );
+}
+
 function setupHappyPath() {
   mockRequireOwner.mockResolvedValue(GATE);
   mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
@@ -478,10 +524,7 @@ function setupHappyPath() {
   mockRun.mockResolvedValue(makeMockResult());
   mockTransaction.mockImplementation(runTransaction);
   // Re-establish withLlmBudget to call through (cleared by vi.clearAllMocks in beforeEach)
-  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
-    const out = await fn();
-    return (out as { result: unknown }).result;
-  });
+  mockWithLlmBudget.mockImplementation(passthroughMeter());
 }
 
 beforeEach(() => {
@@ -508,6 +551,10 @@ beforeEach(() => {
   // #524 r2 default: a workspace that never set a spend cap (settings null → no ceiling), so
   // every pre-existing approve case keeps its old behaviour.
   mockOrganizationFindUnique.mockResolvedValue({ settings: null });
+  // #524 r3 defaults: the ledger says yes and records nothing interesting.
+  mockReserveCredits.mockResolvedValue(undefined);
+  mockRefundReservation.mockResolvedValue(undefined);
+  mockSettleCredits.mockResolvedValue(undefined);
   mockActionEventCreate.mockResolvedValue({});
   mockListCrmSegments.mockResolvedValue({
     ok: true,
@@ -2754,6 +2801,34 @@ function pendingCardPayload(status = "pending", payloadOverrides: Record<string,
   };
 }
 
+// ── #524 r3: a generateReferences approval — the judge's 50/40/60 reproduction ──────────────
+// It is the second SPENDING leg of one approval: the resume turn holds for the LLM, and the tool
+// the merchant approved reserves again through its own authority (refgen-actions startRefGen).
+const REFGEN_ENTITY_ID = "ent_satay_1";
+const REFGEN_PROMPT = "studio pack shot of the satay box";
+function refgenArgs(count: number) {
+  return { entityId: REFGEN_ENTITY_ID, prompt: REFGEN_PROMPT, count, mode: "REFSHEET" };
+}
+function makeRefgenApprovalItem(count: number) {
+  const args = JSON.stringify(refgenArgs(count));
+  return {
+    type: "tool_approval_item" as const,
+    name: "generateReferences",
+    arguments: args,
+    rawItem: { name: "generateReferences", arguments: args },
+  };
+}
+function refgenCardPayload(count: number, status = "pending") {
+  return {
+    toolName: "generateReferences",
+    ref: REFGEN_ENTITY_ID,
+    status,
+    summary: null,
+    contentHash: refgenApprovalHashFromArgs(refgenArgs(count) as unknown as Record<string, unknown>)!,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  };
+}
+
 /** Harness for the universal branch: a paused thread whose state parks approveScheduledPost,
  *  an APPROVAL_CARD binding (toolName, ref, contentHash, expiresAt), and the matching post. */
 function setupUniversalApprove(
@@ -2782,11 +2857,45 @@ function setupUniversalApprove(
   mockChatMessageCreate.mockResolvedValue({});
   mockChatThreadUpdate.mockResolvedValue({});
   mockRun.mockResolvedValue(makeMockResult({ finalOutput: "Done — approved and queued." }));
-  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
-    const out = await fn();
-    return (out as { result: unknown }).result;
-  });
+  mockWithLlmBudget.mockImplementation(passthroughMeter());
   mockTransaction.mockImplementation(runTransaction);
+}
+
+/**
+ * The APPROVAL_CARD reads as a racing pair really sees them (#524 r3): every resolver starts by
+ * reading a card that is still `pending` — that is why it proceeds at all — and only the loser,
+ * re-reading after the CAS went against it, sees the winner's resolution.
+ *
+ * Scripting "already resolved" on the FIRST read instead would model a different case entirely
+ * (the double-approve short-circuit), and the reserve→claim→run order would never be exercised.
+ *
+ * Returns a reset so a test can play a second click from the top.
+ */
+function cardReadsPendingThenResolved(afterLoss: "approved" | "pending" | null = "approved") {
+  let approvalCardReads = 0;
+  mockChatMessageFindFirst.mockImplementation((args: { where?: { kind?: string } } | undefined) => {
+    if (args?.where?.kind !== "APPROVAL_CARD") return Promise.resolve({ seq: 5 });
+    approvalCardReads += 1;
+    if (approvalCardReads === 1) {
+      return Promise.resolve({ id: APPROVAL_CARD_MSG_ID, payload: pendingCardPayload("pending") });
+    }
+    if (afterLoss === null) return Promise.resolve(null); // row unreadable — nothing can be proven
+    return Promise.resolve({ id: APPROVAL_CARD_MSG_ID, payload: pendingCardPayload(afterLoss) });
+  });
+  return () => {
+    approvalCardReads = 0;
+  };
+}
+
+/** The same harness, but the parked ask (and the card) is a generateReferences spend. */
+function setupRefgenApprove(count: number) {
+  setupUniversalApprove("pending", [makeRefgenApprovalItem(count)]);
+  mockChatMessageFindFirst.mockImplementation((args: { where?: { kind?: string } } | undefined) => {
+    if (args?.where?.kind === "APPROVAL_CARD") {
+      return Promise.resolve({ id: APPROVAL_CARD_MSG_ID, payload: refgenCardPayload(count) });
+    }
+    return Promise.resolve({ seq: 5 });
+  });
 }
 
 describe("ottoApprove — universal branch (test ②: hash-verified approve → CAS consume → resume → same server action)", () => {
@@ -2867,17 +2976,30 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
     expect(mockRun).not.toHaveBeenCalled();
   });
 
-  it("AR1 处方2 CAS double-click: the losing resolver (count 0) refuses benignly — at most one resume per card, ZERO LLM reservation for the loser (AR2 处方2b)", async () => {
+  // #524 r3 CHANGES AR2 处方2b, deliberately. The loser used to never reach withLlmBudget because
+  // the card was consumed BEFORE metering — and that ordering is exactly what let a cap refusal
+  // eat a card (judge r2 P1-A). With reserve→claim→run, the loser DOES take a hold and then has it
+  // refunded in full. The invariant that matters is preserved and is now stated as money, not as
+  // call sites: the loser is charged NOTHING (reserve + refund net to zero), never runs the model,
+  // and the card is consumed exactly once — by the resolver that actually ran.
+  it("AR1 处方2 CAS double-click: the loser refuses benignly, runs nothing, and is charged nothing (reserve→refund nets zero)", async () => {
     setupUniversalApprove();
+    installRealMeter();
     mockChatMessageUpdateMany.mockResolvedValue({ count: 0 }); // a concurrent resolver won
+    // Pending when the loser starts (that is why it gets as far as reserving), resolved by the
+    // time it re-reads after losing the CAS.
+    cardReadsPendingThenResolved("approved");
 
     const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
-    expect(res).toMatchObject({ ok: true, alreadyResolved: true });
-    expect(mockApprove).not.toHaveBeenCalled();
-    expect(mockRun).not.toHaveBeenCalled();
-    // The loser never reaches withLlmBudget — same-card double-click cannot double-reserve LLM.
-    expect(mockWithLlmBudget).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ ok: true, alreadyResolved: true, resolution: "approved" });
+    expect(mockRun).not.toHaveBeenCalled(); // the model never ran for the loser
+    // Net zero on the ledger: exactly one hold, exactly one refund of the SAME refId, no settle.
+    expect(mockReserveCredits).toHaveBeenCalledTimes(1);
+    expect(mockRefundReservation).toHaveBeenCalledTimes(1);
+    const reservedRef = (mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId;
+    expect((mockRefundReservation.mock.calls[0]![1] as { refId: string }).refId).toBe(reservedRef);
+    expect(mockSettleCredits).not.toHaveBeenCalled();
   });
 
   it("ref mismatch: hash ok but no parked item for this ref (post not approved) → error, no consume of the pending card", async () => {
@@ -2890,18 +3012,21 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
     expect(mockRun).not.toHaveBeenCalled();
   });
 
-  // ── #524 r2 (judge P1-2):上限拦住的批准,不许把商家的同意一起吃掉 ─────────────
+  // ── #524 r3(判官 r2 P1-A / P1-B):顺序改成「先扣、再吃、后跑」 ─────────────────
   //
-  // 原状:卡片是一次性同意,在恢复之前就被 CAS 消费;上限随后在 reserveCredits 里拒绝,
-  // 商家一分钱没花、什么也没拿到,同意却没了 —— 提高上限还不够,他必须把同一个动作
-  // 再批准一次。这一组钉的是:**上限拦下时卡片原封不动**,提高上限后同一张卡直接可用。
+  // r2 是「先吃卡、再让权威闸决定」,中间垫一次只读预检。判官定性:预检永远关不死窗口 ——
+  // 卡片事务提交后,真 reserve 在**另一笔事务**里才发生,READ COMMITTED 下商家在中间调低
+  // 上限,卡就没了而模型没跑。所以 r2 那条「同一笔事务」测试证的是错的东西(而且 meter 是
+  // 假的,权威 reserve 根本没参与),这里整组重写。
   //
-  // 权威没有搬家:reserveCredits 仍然是唯一决定钱动不动的地方。这里加的只是一次只读
-  // 预判,让「早一行就知道的拒绝」不再吃掉同意。
-  describe("#524 r2 — a spend-cap refusal must not burn the approval", () => {
-    /** The EXACT hold this resume will reserve — computed from the same two functions the
-     *  production path uses, never a hand-written number (a copy would drift and the test
-     *  would stop proving the preflight and the reserve agree). */
+  // 新顺序:reserve(权威,cap 判在里面)→ claim 卡片(CAS)→ 跑模型。于是
+  // **「模型没跑 ⇒ 卡仍 pending」由构造成立**,不需要任何 approved→pending 反向通道。
+  // 下面每条都让**真 withLlmBudget** 参与,reserve/refund 是真调用序上的真调用。
+  describe("#524 r3 — reserve, then claim the consent, then run", () => {
+    /** Install the genuine metered path: real reserve→claim→run over the mocked ledger writers. */
+    const withRealMeter = installRealMeter;
+
+    /** The EXACT hold this resume reserves — from the same two functions production uses. */
     const holdInternal = () =>
       llmHoldInternal(
         ottoBudgetArgsFor(ottoApprovalResumeRuntime, {
@@ -2915,74 +3040,86 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       expect(holdInternal()).toBeGreaterThan(0);
     });
 
-    it("cap below the turn's hold → refused, card still pending, nothing approved, nothing run", async () => {
+    // ① 判官点名的交错:预检时上限还高,真 reserve 时已被调低。r2 会吃掉卡片;r3 里
+    //    reserve 在 claim 之前,所以拒绝落下时卡片一格没动。
+    it("cap lowered between the preflight and the AUTHORITATIVE reserve → card still pending, model never ran", async () => {
       setupUniversalApprove();
-      // 1 displayed credit = 10 internal, comfortably under the turn hold.
-      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 1 } });
+      withRealMeter();
+      // Preflight reads a generous cap…
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
+      // …and by the time the ledger looks, the merchant has lowered it: the authority refuses.
+      mockReserveCredits.mockRejectedValue(new MockSpendCapBlocked({ requiredInternal: 40, capInternal: 10 }));
 
       const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
-      expect(res).toMatchObject({ error: expect.stringContaining("Paused by your spend cap") });
-      expect((res as { error: string }).error).toContain("your cap is 1 credit per action");
-      // The consent is untouched — this is the whole fix.
+      expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
+      // THE invariant: the consent survived a refusal that r2 would have eaten it on.
       expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
-      // And nothing downstream ran: no parked item approved, no resume, no metering.
-      expect(mockApprove).not.toHaveBeenCalled();
       expect(mockRun).not.toHaveBeenCalled();
-      expect(mockWithLlmBudget).not.toHaveBeenCalled();
+      // Nothing held ⇒ nothing to refund.
+      expect(mockRefundReservation).not.toHaveBeenCalled();
+      expect(mockSettleCredits).not.toHaveBeenCalled();
     });
 
-    it("raising the cap makes the SAME approval work — no re-approval needed", async () => {
+    it("the same interleaving with a plain balance refusal — one order, every reserve refusal", async () => {
       setupUniversalApprove();
-      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 1 } });
+      withRealMeter();
+      mockReserveCredits.mockRejectedValue(new MockInsufficientCredits("Not enough credits."));
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ error: expect.any(String) });
+      expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+      expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it("raising the cap makes the SAME approval work — the card was never consumed", async () => {
+      setupUniversalApprove();
+      withRealMeter();
+      mockReserveCredits.mockRejectedValueOnce(new MockSpendCapBlocked({ requiredInternal: 40, capInternal: 10 }));
 
       const refused = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
       expect(refused).toMatchObject({ error: expect.stringContaining("spend cap") });
       expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
 
-      // The merchant raises the cap in Settings and presses the same button again. The card is
-      // still pending (nothing consumed it), so this is the ORIGINAL approval, not a new one.
-      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
-
+      // The merchant raises the cap and presses the same button. Same card, still pending.
       const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
       expect(res).toMatchObject({ ok: true, status: "done" });
       expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            id: APPROVAL_CARD_MSG_ID,
-            AND: [{ payload: { path: ["status"], equals: "pending" } }],
-          }),
+          where: expect.objectContaining({ AND: [{ payload: { path: ["status"], equals: "pending" } }] }),
           data: expect.objectContaining({ payload: expect.objectContaining({ status: "approved" }) }),
         }),
       );
       expect(mockRun).toHaveBeenCalled();
     });
 
-    it("a cap that cannot be read refuses too — fail closed, and still without eating the card", async () => {
-      setupUniversalApprove();
-      // The corrupted-value family (r1 judge P1-1): a stored string is not a readable ceiling.
-      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: "5" } });
+    // ② 判官的 50/40/60 全成本反例:hold 40 单独看得过 cap 50,但商家批的是 6 张参考图
+    //    (60cr)。只算 hold 会放行→吃卡→工具自己的权威闸再拒。全成本预检在任何东西被
+    //    冻结之前就说了实话。
+    it("full-cost repro (cap 50 / hold 40 / 6 refgens 60): refused before ANY hold is taken", async () => {
+      setupRefgenApprove(6);
+      withRealMeter();
+      // The stored cap is in DISPLAYED credits (1 displayed = 10 internal), so the judge's
+      // internal-credit ceiling of 50 is the merchant typing 5 into Settings.
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 5 } });
 
       const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
-      expect(res).toMatchObject({ error: expect.stringContaining("couldn't be read") });
+      expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
+      // Named the FULL approved cost (hold 40 + 6 refgens 60 = 100 internal = 10 displayed),
+      // not just the resume hold — the whole point of judge r2's P1-B.
+      expect((res as { error: string }).error).toContain("this needs 10 credits");
+      expect((res as { error: string }).error).toContain("your cap is 5 credits");
+      expect(mockReserveCredits).not.toHaveBeenCalled(); // nothing was even held
       expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
       expect(mockRun).not.toHaveBeenCalled();
     });
 
-    it("a missing organization row refuses — never approve against a ceiling we cannot see", async () => {
-      setupUniversalApprove();
-      mockOrganizationFindUnique.mockResolvedValue(null);
-
-      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
-
-      expect(res).toMatchObject({ error: expect.stringContaining("couldn't be read") });
-      expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
-    });
-
-    it("a cap the hold fits under changes nothing — the pre-#524 path, unchanged", async () => {
-      setupUniversalApprove();
+    it("the same approval under a cap that covers BOTH legs runs normally", async () => {
+      setupRefgenApprove(6);
+      withRealMeter();
       mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
 
       const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
@@ -2992,54 +3129,89 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       expect(mockRun).toHaveBeenCalled();
     });
 
-    // 判官点名的并发形状:检查与消费**同一笔事务**提交,所以「查过了」与「消费了」之间
-    // 没有让上限变化插进来的窗口。两种交错都不许留下「同意被吃掉但动作没跑」。
-    it("the cap read and the CAS commit in ONE transaction — no window between check and consume", async () => {
+    // ③/④ CAS 输家:hold 已经拿了,claim 输了 → 整笔退款、模型不跑、卡恰被吃一次。
+    it("reserve succeeded then the claim was LOST → hold refunded in full, model never ran", async () => {
       setupUniversalApprove();
-      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
-      const sameTx: unknown[] = [];
-      mockTransaction.mockImplementation(async (arg: unknown) => {
-        if (typeof arg !== "function") return runTransaction(arg);
-        return (arg as (tx: unknown) => Promise<unknown>)(
-          new Proxy(transactionTx as object, {
-            get(target, prop, receiver) {
-              if (prop === "organization" || prop === "chatMessage") sameTx.push(prop);
-              return Reflect.get(target, prop, receiver);
-            },
-          }),
-        );
-      });
+      withRealMeter();
+      mockChatMessageUpdateMany.mockResolvedValue({ count: 0 }); // another click won the CAS
+      cardReadsPendingThenResolved("approved");
 
-      await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
-      // Both the cap read and the card CAS were served by the SAME transaction client.
-      expect(sameTx).toContain("organization");
-      expect(sameTx).toContain("chatMessage");
-      expect(sameTx.indexOf("organization")).toBeLessThan(sameTx.lastIndexOf("chatMessage"));
+      expect(res).toMatchObject({ ok: true, alreadyResolved: true, resolution: "approved" });
+      expect(mockRun).not.toHaveBeenCalled();
+      expect(mockReserveCredits).toHaveBeenCalledTimes(1);
+      expect(mockRefundReservation).toHaveBeenCalledTimes(1);
+      expect(mockSettleCredits).not.toHaveBeenCalled();
+      // The refund clears the very hold that was taken — ledger net zero for the loser.
+      expect((mockRefundReservation.mock.calls[0]![1] as { refId: string }).refId).toBe(
+        (mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId,
+      );
     });
 
-    // 交错形状:两次点击之间上限被改。检查与消费同一笔事务提交,所以每一次点击只可能落在
-    // 两个自洽结果之一 ——(被上限拒绝 + 卡片原封不动)或(消费 + 真的跑了)。
-    // 「同意被吃掉但动作没跑」这个状态不存在,这里逐次钉住。
-    it("a cap change between two clicks never leaves consent spent with nothing run", async () => {
+    it("two clicks: exactly one runs, the card is consumed exactly once, the loser is made whole", async () => {
       setupUniversalApprove();
-      mockOrganizationFindUnique
-        .mockResolvedValueOnce({ settings: { spendCapCredits: 500 } }) // click 1: allowed
-        .mockResolvedValueOnce({ settings: { spendCapCredits: 1 } }); // click 2: merchant lowered it
+      withRealMeter();
+      // Both reach the claim; the CAS decides. Winner first, loser second.
+      mockChatMessageUpdateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValue({ count: 0 });
+      // Both clicks start from a card that still reads pending — that is the whole race.
+      const replayFromPending = cardReadsPendingThenResolved("approved");
 
       const first = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+      replayFromPending(); // the second click loaded its page before the winner committed
       const second = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
-      // Click 1: consent spent, and spent on work that actually ran.
       expect(first).toMatchObject({ ok: true, status: "done" });
-      expect(mockChatMessageUpdateMany).toHaveBeenCalledTimes(1);
-      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(second).toMatchObject({ ok: true, alreadyResolved: true, resolution: "approved" });
+      expect(mockRun).toHaveBeenCalledTimes(1); // the action happened exactly once
+      expect(mockChatMessageUpdateMany).toHaveBeenCalledTimes(2); // both tried, one won
+      expect(mockRefundReservation).toHaveBeenCalledTimes(1); // only the loser was refunded
+      expect(mockSettleCredits).toHaveBeenCalledTimes(1); // only the winner settled
+    });
 
-      // Click 2: refused by the cap — and it did not reach the CAS at all, so nothing more was
-      // consumed. One consumption, one resume; no orphaned consent in either outcome.
-      expect(second).toMatchObject({ error: expect.stringContaining("spend cap") });
+    // 判官 r2 P2:异常不许被折成「已批准」。
+    it("a claim that ERRORED is reported as a failure, never as a cheerful approved", async () => {
+      setupUniversalApprove();
+      withRealMeter();
+      mockChatMessageUpdateMany.mockRejectedValue(new Error("card write failed"));
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ error: expect.any(String) });
+      expect(res).not.toHaveProperty("alreadyResolved");
+      expect(res).not.toHaveProperty("resolution");
+      expect(mockRun).not.toHaveBeenCalled();
+      // The hold does not survive a failed claim.
+      expect(mockRefundReservation).toHaveBeenCalledTimes(1);
+    });
+
+    it("a lost claim whose card still reads pending is an honest error, not resolution:approved", async () => {
+      setupUniversalApprove();
+      withRealMeter();
+      mockChatMessageUpdateMany.mockResolvedValue({ count: 0 });
+      // The re-read cannot prove anything was resolved (row gone / still pending).
+      cardReadsPendingThenResolved(null);
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ error: expect.stringContaining("Couldn't confirm this approval") });
+      expect(res).not.toHaveProperty("resolution");
+      expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it("no cap set changes nothing — the ordinary approve still consumes once and runs", async () => {
+      setupUniversalApprove();
+      withRealMeter();
+      mockOrganizationFindUnique.mockResolvedValue({ settings: null });
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ ok: true, status: "done" });
       expect(mockChatMessageUpdateMany).toHaveBeenCalledTimes(1);
       expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockSettleCredits).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -3436,10 +3608,7 @@ function setupFactoryApprove(
   mockChatMessageCreate.mockResolvedValue({});
   mockChatThreadUpdate.mockResolvedValue({});
   mockRun.mockResolvedValue(makeMockResult({ finalOutput: "Batch started." }));
-  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
-    const out = await fn();
-    return (out as { result: unknown }).result;
-  });
+  mockWithLlmBudget.mockImplementation(passthroughMeter());
   mockTransaction.mockImplementation(runTransaction);
 }
 

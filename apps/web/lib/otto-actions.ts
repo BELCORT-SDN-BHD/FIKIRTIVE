@@ -48,6 +48,7 @@ import {
   withLlmBudget,
   llmHoldInternal,
   ottoBudgetArgsFor,
+  ReservationNotClaimed,
   run,
   MaxTurnsExceededError,
   ottoSimpleModeBlock,
@@ -67,7 +68,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
 // burned by a refusal knowable one line earlier. Never an authority; reserveCredits still decides.
-import { spendCapRefusal } from "@/lib/spend-cap-preflight";
+import { spendCapRefusal, approvedToolCostInternal } from "@/lib/spend-cap-preflight";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
@@ -1075,40 +1076,32 @@ async function consumeApprovalCard(
 }
 
 /**
- * Consume the card ONLY if the merchant's own spend cap will let the resumed turn's hold through
- * (#524 r2, judge P1-2).
+ * Claim the approval card as the LAST step before the model runs (#524 r3, judge P1-A).
  *
- * The bug this closes: the card is a one-shot consent, flipped pending→approved BEFORE the metered
- * resume. When the cap then refused inside `reserveCredits`, the merchant was charged nothing and
- * given nothing, yet their approval was gone — raising the cap was not enough, they had to approve
- * the very same action again. A refusal that was knowable before the flip must not cost consent.
+ * ORDER IS THE FIX. r2 consumed the card and then let `reserveCredits` decide, with a read-only
+ * preflight in between; under READ COMMITTED that preflight could read a cap the merchant lowered
+ * a moment later, so the card was eaten and the reserve then refused — consent gone, model never
+ * run. No preflight can close that window, because the two decisions live in two transactions.
  *
- * The cap read and the CAS commit in ONE transaction, so there is no window in which a cap change
- * lands between "we checked" and "we consumed": a blocked approve leaves the card exactly `pending`.
- * This does not weaken the consent invariant it sits inside — the CAS is unchanged, so of two
- * concurrent resolvers exactly one still wins, and a card is still consumed at most once. It also
- * grants no spend authority: `reserveCredits` re-decides in its own transaction and remains the only
- * thing that can move money. What it removes is a way to lose consent for free.
+ * So the consumption moved INSIDE the metered call, into `withLlmBudget`'s `afterReserve` claim
+ * window: the authoritative hold is taken FIRST, and only once the ledger has agreed does the
+ * consent get spent. Every reserve refusal — spend cap, balance, anything — now lands while the
+ * card is still `pending`, and the model has not run. Losing the CAS refunds the hold in full.
  *
- * `capRefusal` = the merchant's sentence, card untouched. `consumed:false` = the CAS was lost
- * (double click / replay) or the write failed — the pre-existing benign paths, unchanged.
+ * This needs NO approved→pending reverse channel: the card is never flipped on a path that can
+ * still fail into "nothing ran", so AR1 处方2's one-way consent survives intact. The CAS itself is
+ * byte-identical, so of two concurrent resolvers exactly one still wins.
+ *
+ * Errors are NOT swallowed (judge r2 P2): a write that failed is not "someone else won", and the
+ * caller must never turn it into a cheerful `resolution: "approved"`. It propagates, withLlmBudget
+ * refunds the hold, and the merchant is told the approve failed.
  */
-async function consumeApprovalCardWithinSpendCap(
+async function claimApprovalCard(
   cardId: string,
   ownerId: string,
   payload: ApprovalCardPayload,
-  holdInternal: number,
-): Promise<{ consumed: boolean } | { capRefusal: string }> {
-  try {
-    return await prisma.$transaction(async (tx) => {
-      const capRefusal = await spendCapRefusal(tx, ownerId, holdInternal);
-      if (capRefusal) return { capRefusal };
-      return { consumed: await casApprovalCard(tx, cardId, ownerId, payload, "approved") };
-    });
-  } catch (err) {
-    console.warn(`[approval-card] consume failed (cardId=${cardId}).`, err);
-    return { consumed: false };
-  }
+): Promise<boolean> {
+  return casApprovalCard(prisma, cardId, ownerId, payload, "approved");
 }
 
 /**
@@ -1537,6 +1530,10 @@ export async function ottoApprove(raw: unknown): Promise<
       const state = await tryRestoreRunStateWithContext(ottoApprovalResumeRuntime.agent, priorOttoState, ctx);
       if (!state) return { error: "This conversation's approval state couldn't be restored — please ask Otto to propose it again." };
 
+      // #524 r3: set only on the branch that holds a one-shot consent. It is invoked inside the
+      // metered call, after the hold and before the model — see claimApprovalCard.
+      let claimCard: (() => Promise<boolean>) | null = null;
+
       // The refId of the resume turn. Hoisted above the approval branch (#524 r2) because the
       // spend-cap preflight has to name the SAME turn the reserve will later hold against, and it
       // must run before the card is consumed. Pure string — moving it changes nothing else.
@@ -1668,35 +1665,28 @@ export async function ottoApprove(raw: unknown): Promise<
           if (cardPayload.toolName === "approveScheduledPost") {
             approvalConsent = { scheduledPostId: cardPayload.ref, expectedUpdatedAt: current.updatedAt };
           }
-          // ATOMIC consumption BEFORE the resume (AR1 处方2): exactly one resolver wins; a concurrent
-          // double-click loses the CAS and refuses benignly — the resume (and the tool) runs at most
-          // once per card. A consumed-but-failed resume is fail-closed: consent is spent, nothing
-          // published; the user asks Otto for a fresh request (never auto-retry a consent).
-          // #524 r2 (judge P1-2) — ask the merchant's own cap BEFORE burning their consent, using
-          // the EXACT hold this resume will reserve (llmHoldInternal over the same manifest args
-          // withLlmBudget is handed below), never a second estimate that could refuse a turn the
-          // ledger would have allowed. A refusal here leaves the card pending: raise the cap and
-          // this very approval works, no re-approval. The real gate is still reserveCredits.
+          // #524 r3 — the card is NOT consumed here any more. Consumption is the claim inside
+          // withLlmBudget's afterReserve window below, i.e. AFTER the authoritative hold: that is
+          // what makes "the model did not run ⇒ the card is still pending" true by construction
+          // instead of by a preflight racing the ledger (judge r2 P1-A). `claimCard` is set for
+          // this branch only; the plain-generate branch has no consent to spend.
+          claimCard = () => claimApprovalCard(cardMsg.id, ownerId, cardPayload);
+
+          // A FULL-COST courtesy check, before anything is held (judge r2 P1-B). It carries no
+          // correctness — the reserves decide, each in its own transaction — but it is the only
+          // place that can see BOTH legs of this approval at once: the resume turn's hold AND the
+          // deterministic charge of the tool the merchant actually approved. Counting only the
+          // hold is how a cap of 50 let a 40-credit hold through and then refused the 60-credit
+          // refgen it was approving. Under-counting merely falls through to the real gates;
+          // over-counting would refuse work the ledger would have allowed, so unknown tool costs
+          // count as 0 rather than being guessed.
           const holdInternal = llmHoldInternal(
             ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: ownerId, refId, input: state }),
           );
-          const consumeVerdict = await consumeApprovalCardWithinSpendCap(
-            cardMsg.id,
-            ownerId,
-            cardPayload,
-            holdInternal,
-          );
-          if ("capRefusal" in consumeVerdict) return { error: consumeVerdict.capRefusal };
-          const consumed = consumeVerdict.consumed;
-          if (!consumed) {
-            const fresh = await prisma.chatMessage.findFirst({
-              where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
-              select: { payload: true },
-            });
-            const freshPayload = fresh ? asApprovalCardPayload(fresh.payload) : null;
-            const resolution = freshPayload && freshPayload.status !== "pending" ? freshPayload.status : "approved";
-            return { ok: true, alreadyResolved: true, resolution };
-          }
+          const approvedCostInternal = holdInternal + approvedToolCostInternal(cardPayload.toolName, targetArgs);
+          const earlyCapRefusal = await spendCapRefusal(prisma, ownerId, approvedCostInternal);
+          if (earlyCapRefusal) return { error: earlyCapRefusal };
+
           if (cardPayload.toolName === "runFactoryBatch") factoryAttemptId = cardMsg.id;
           // Approve — mutates the rehydrated state; resume executes the tool → the SAME owner-scoped
           // server action the human button uses (via ctx.schedule.approve).
@@ -1740,9 +1730,33 @@ export async function ottoApprove(raw: unknown): Promise<
           { orgId: ownerId, refId, input: state },
           ctx,
           ottoApprovalResumeRuntime,
-          { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
+          {
+            // #524 r3 — reserve, THEN claim the consent, THEN run. The claim rides in
+            // withLlmBudget's afterReserve window, so a cap/balance refusal always lands with the
+            // card still pending, and a lost claim refunds the hold and never calls the model.
+            meter: claimCard
+              ? (budgetArgs, fn) => withLlmBudget({ ...budgetArgs, afterReserve: claimCard }, fn)
+              : withLlmBudget,
+            runAgent: run,
+            maxTurnsExceededError: MaxTurnsExceededError,
+          },
         );
       } catch (e) {
+        // #524 r3 — another resolver claimed this card first. The hold was refunded in full inside
+        // withLlmBudget and the model never ran, so this is the benign double-click answer. The
+        // resolution is READ, never assumed (judge r2 P2): a card that still reads `pending` means
+        // we cannot prove anything was resolved, and saying "approved" would be a lie.
+        if (e instanceof ReservationNotClaimed) {
+          const fresh = await prisma.chatMessage.findFirst({
+            where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
+            select: { payload: true },
+          });
+          const freshPayload = fresh ? asApprovalCardPayload(fresh.payload) : null;
+          if (!freshPayload || freshPayload.status === "pending") {
+            return { error: "Couldn't confirm this approval — nothing ran and nothing was charged. Try again." };
+          }
+          return { ok: true, alreadyResolved: true, resolution: freshPayload.status };
+        }
         if (e instanceof MaxTurnsExceededError) {
           const degradeText = "I got a bit tangled up — try asking again.";
           // Persist the degrade message so the user actually sees it (parity with ottoTurn),
