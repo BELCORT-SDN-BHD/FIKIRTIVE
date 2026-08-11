@@ -238,7 +238,7 @@ export function validationIssueCopy(issue: ValidationIssue): string {
  *
  * Every key is a reason `customer-workflow-service` can record on a run or step, and
  * `lib/__tests__/workflow-format.test.ts` pins this key set equal to
- * customerWorkflowReasonCodes() in BOTH directions — the same pinboard #770 built for
+ * workflowRunReasonCodes() in BOTH directions — the same pinboard #770 built for
  * ERROR_COPY, which is the thing that was missing here (#811). Two send-gate reasons had
  * been reachable with no sentence at all since before #807, so a merchant read
  * "This workflow stopped with reason consentstop:consent unknown d5 eligible".
@@ -248,10 +248,13 @@ export function validationIssueCopy(issue: ValidationIssue): string {
  * at `legacy_unknown`), no earlier opt-in is presupposed, an unreadable record is described
  * as unreadable and nothing more, and no internal document number ("D5") reaches the page.
  *
- * The three axis-status keys this table used to carry ("doNotDisturb:block" and friends) are
- * gone: `firstNonPass` writes `<axis>:<axis.reason>` and every non-pass axis carries a reason,
- * so those keys answered for a shape the evaluator cannot produce while the reasons it DOES
- * produce had no copy. Removing them is what made the two sets comparable at all.
+ * The axis-status keys this table used to carry ("doNotDisturb:block" and friends) are gone:
+ * `firstNonPass` writes `<axis>:<axis.reason>` and a non-pass axis can no longer be built
+ * without a reason at all, so those keys answered for a shape the evaluator cannot produce
+ * while the reasons it DOES produce had no copy. Removing them is what made the two sets
+ * comparable at all. `eligibility:unknown` went the same way in #834 r2 (P2): its only writer
+ * was a fallback reached when no axis blocks, and the one caller has already established that
+ * one does.
  */
 const REASON_COPY: Record<string, string> = {
   // Routine authority (ROUTINE_AUTHORITY_FAILURES).
@@ -330,8 +333,6 @@ const REASON_COPY: Record<string, string> = {
     "No frequency limit is configured for this channel, so this action was blocked.",
   "frequency:counter_unreadable":
     "The frequency counter could not be read, so this action was blocked.",
-
-  "eligibility:unknown": "Customer messaging eligibility could not be verified.",
 };
 
 /** Every reason code the table above answers for. Exported so its coverage is pinned, not assumed. */

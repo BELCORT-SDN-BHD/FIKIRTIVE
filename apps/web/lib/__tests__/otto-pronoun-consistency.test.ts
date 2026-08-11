@@ -109,11 +109,26 @@ function sentencesOf(text: string): string[] {
  */
 type JsxText = { text: string; end: number; closed: boolean };
 
-/** `{…}` 的值:纯字符串字面量取其值,其余取一个空格;不是行内容器则 null(整段作废)。 */
+/**
+ * `{…}` 的值。不是行内容器(跨行 / 含嵌套标签)则 null,整段作废。
+ *
+ * #834 r2(P1):r1 只把**纯**字符串字面量容器的值接进流,其余一律折成一个空格 ——
+ * 于是条件文案整句消失。判官的反例:
+ *   `<p>Meet Otto.{condition && " It researches…"}</p>` → `copyRuns` 得 `["Meet Otto."]`,
+ * 「Otto 句后紧跟代词开头句」这条规则连第二句都看不到,#830 的漏报窗原样还在。
+ * 条件渲染正是文案最爱藏的地方,把它折成空格等于给围栏开了一个专供条件文案的后门。
+ *
+ * 现在按容器里的**字符串字面量**分两种,都不再吞掉正文:
+ *   · 只有一个字面量、别无他物(`{" "}`、`{"—"}`)—— 原样取它的值,`{" "}` 拼出来的就是
+ *     句号后面那个空格,句界落回真句号;
+ *   · 其余(`{cond && " It researches…"}`、`{a ? "Yes." : "No."}`、`{count}`)—— 表达式本身
+ *     按空白处理,但里面每一段字符串字面量都进流,用空白隔开。机器读不到的是**取值逻辑**,
+ *     不是那些字面量;把字面量一起丢掉是把能读的也扔了。
+ */
 function readExpressionContainer(source: string, start: number): { value: string; end: number } | null {
   let depth = 0;
   let i = start;
-  let literal: string | null = null;
+  const literals: string[] = [];
   let sawAnythingElse = false;
   while (i < source.length) {
     const char = source[i]!;
@@ -127,14 +142,14 @@ function readExpressionContainer(source: string, start: number): { value: string
       depth -= 1;
       i += 1;
       if (depth === 0) {
-        return { value: literal !== null && !sawAnythingElse ? literal : " ", end: i };
+        const pure = !sawAnythingElse && literals.length === 1;
+        return { value: pure ? literals[0]! : ` ${literals.join(" ")} `, end: i };
       }
       continue;
     }
     if (char === '"' || char === "'" || char === "`") {
       const string = readStringLiteral(source, i);
-      if (literal === null && !sawAnythingElse) literal = string.body;
-      else sawAnythingElse = true;
+      literals.push(string.body);
       i = string.end;
       continue;
     }
@@ -377,10 +392,24 @@ describe("#830 an expression container inside JSX text no longer throws the sent
     expect(rulesFor(planted)).toContain(RULE);
   });
 
+  // 判官 2026-08-10 的反例(#834 r2 P1)。条件渲染是文案最爱藏的地方:表达式不纯,
+  // 但那一整句话就写在它里面。r1 把整个容器折成一个空格,第二句连进流的机会都没有。
+  it("catches a pronoun that opens a sentence hidden inside a conditional expression", () => {
+    const planted = `<p>Meet Otto.{condition && " It researches your brand."}</p>`;
+    expect(rulesFor(planted)).toContain(RULE);
+    expect(copyRuns(planted)).toEqual(["Meet Otto.  It researches your brand."]);
+  });
+
+  it("keeps every branch of a ternary in the stream, not just the first", () => {
+    const planted = `<p>{ready ? "Otto is ready." : "He is still reading."}</p>`;
+    expect(rulesFor(planted)).toContain("gendered pronoun in an Otto sentence");
+  });
+
   it("treats a value expression as the whitespace it occupies, not as a full stop", () => {
     // `{count}` 的值机器读不到,但它不是句号 —— 前后仍是同一句话的两半。
+    // 空格多少不重要,它是空白就行 —— 重要的是句号还在句号的位置上。
     expect(copyRuns(`<p>Otto drafted {count} posts. It is waiting.</p>`)).toEqual([
-      "Otto drafted   posts. It is waiting.",
+      "Otto drafted    posts. It is waiting.",
     ]);
     expect(rulesFor(`<p>Otto drafted {count} posts.</p><p>It is waiting.</p>`)).toContain(RULE);
   });

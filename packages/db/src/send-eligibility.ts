@@ -68,9 +68,10 @@ export const SEND_ELIGIBILITY_NON_PASS_REASONS = {
 /** Carried by an axis that PASSES — an honest empty state, never a refusal (§4.3). */
 const PASS_AXIS_REASONS = ["no_provider_connection", "not_proactive_not_counted"] as const;
 
-type EligibilityAxisReason =
-  | (typeof SEND_ELIGIBILITY_NON_PASS_REASONS)[keyof typeof SEND_ELIGIBILITY_NON_PASS_REASONS][number]
-  | (typeof PASS_AXIS_REASONS)[number];
+type PassAxisReason = (typeof PASS_AXIS_REASONS)[number];
+type NonPassAxisReason =
+  (typeof SEND_ELIGIBILITY_NON_PASS_REASONS)[keyof typeof SEND_ELIGIBILITY_NON_PASS_REASONS][number];
+type NonPassAxisStatus = Exclude<EligibilityAxisStatus, "pass">;
 
 export type EligibilityAxis = {
   status: EligibilityAxisStatus;
@@ -174,12 +175,33 @@ function validateInput(input: SendEligibilityInput): void {
   if (input.providerConnectionId !== null) requireText(input.providerConnectionId, "providerConnectionId");
 }
 
-/** `reason` is narrowed to the enumerations above so a new one cannot be invented inline. */
+/**
+ * `reason` is narrowed to the enumerations above so a new one cannot be invented inline, and a
+ * NON-PASS axis cannot be built without one at all (#834 r2, P1).
+ *
+ * Optional-for-everything was the hole: `axis("block", source, checkedAt)` compiled, and
+ * `firstNonPass` writes `${axisName}:${axis.reason ?? axis.status}` — so a reason-less block
+ * would put `doNotDisturb:block` back on the merchant's screen, the exact key the copy table
+ * dropped as unreachable, and the both-directions pinboard would stay green while it happened.
+ * A refusal now has to say what it refused on; only a PASS may stay silent.
+ */
+function axis(
+  status: "pass",
+  source: string,
+  checkedAt: string,
+  reason?: PassAxisReason,
+): EligibilityAxis;
+function axis(
+  status: NonPassAxisStatus,
+  source: string,
+  checkedAt: string,
+  reason: NonPassAxisReason,
+): EligibilityAxis;
 function axis(
   status: EligibilityAxisStatus,
   source: string,
   checkedAt: string,
-  reason?: EligibilityAxisReason,
+  reason?: PassAxisReason | NonPassAxisReason,
 ): EligibilityAxis {
   return reason === undefined ? { status, source, checkedAt } : { status, source, reason, checkedAt };
 }

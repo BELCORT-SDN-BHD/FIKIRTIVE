@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { ROUTINE_AUTHORITY_FAILURES } from "@fikirtive/db";
+import { createElement, type ComponentProps } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ROUTINE_AUTHORITY_FAILURES, workflowRunReasonCodes } from "@fikirtive/db";
 
+vi.mock("@/lib/customer-workflow-ui-actions", () => ({
+  getContactJourneyStates: vi.fn(),
+  listRoutineRuns: vi.fn(),
+}));
+
+import WorkflowMonitoring from "@/components/crm/workflows/workflow-monitoring";
 import {
   reasonCodeCopy,
   summarizeRuleSource,
@@ -10,10 +18,7 @@ import {
   WORKFLOW_ERROR_COPY_CODES,
   WORKFLOW_REASON_COPY_CODES,
 } from "@/components/crm/workflows/workflow-format";
-import {
-  CUSTOMER_WORKFLOW_ERROR_CODES,
-  customerWorkflowReasonCodes,
-} from "@/lib/customer-workflow-service";
+import { CUSTOMER_WORKFLOW_ERROR_CODES } from "@/lib/customer-workflow-service";
 import { routineLimitsSummary } from "@/lib/routine-authorization-facts";
 
 // Mirrors the reordering the compiler grammar allows (packages/db/src/workflow-compiler.test.ts,
@@ -108,7 +113,7 @@ describe("workflow failure copy (#753)", () => {
 });
 
 describe("workflow stop-reason copy (#811)", () => {
-  const reasonCodes = customerWorkflowReasonCodes();
+  const reasonCodes = workflowRunReasonCodes();
 
   it("covers exactly the reasons a Routine can stop with", () => {
     // TOTALITY, both directions — the pinboard #770 built for ERROR_COPY, which never covered
@@ -171,6 +176,89 @@ describe("workflow stop-reason copy (#811)", () => {
   it("turns an unmapped reason into words, and says something for no reason at all", () => {
     expect(reasonCodeCopy("SOME_FUTURE_STOP")).not.toContain("SOME_FUTURE_STOP");
     expect(reasonCodeCopy(null)).toBe("No reason was recorded.");
+  });
+});
+
+/**
+ * #834 r2 (P1) — the copy table having a sentence for every code proved nothing about the PAGE.
+ * The monitoring panel printed `Reason code: {code}` one line under that sentence, so every code
+ * reached the merchant as a machine token anyway. A table-level assertion cannot see that; only
+ * rendering the surface can. This fence reads what a merchant would actually see.
+ */
+describe("what the Routine monitoring page shows a merchant (#834 r2)", () => {
+  /** Everything outside a tag. `data-reason-code` lives in an attribute, so it drops out here. */
+  function visibleText(markup: string): string {
+    return markup.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+  }
+
+  /**
+   * Just the reason block. The rest of the page legitimately carries the merchant's OWN
+   * identifiers — the step key they wrote in their rule file, the run id — and #770 already
+   * ruled those stay (they are coordinates in the merchant's own file, not our vocabulary).
+   * The machine-shape rules therefore belong to the block that speaks for us.
+   */
+  function reasonBlockText(markup: string): string {
+    const block = markup.match(/<div[^>]*data-reason-code="[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+    return block === undefined ? "" : visibleText(block);
+  }
+
+  function monitoringMarkup(blockReason: string): string {
+    const props = {
+      workflowDefinitionId: "workflow-1",
+      initialRuns: {
+        ok: true,
+        resource: {
+          items: [{
+            id: "run-1",
+            status: "blocked",
+            triggerKind: "journey_due",
+            simulated: true,
+            currentStepKey: "reply_once",
+            blockReason,
+            errorCode: null,
+            summary: null,
+            createdAt: new Date("2026-08-09T00:00:00.000Z"),
+          }],
+          nextCursor: null,
+        },
+      },
+      initialJourneys: { ok: true, resource: { items: [], nextCursor: null } },
+    } as unknown as ComponentProps<typeof WorkflowMonitoring>;
+    return renderToStaticMarkup(createElement(WorkflowMonitoring, props));
+  }
+
+  const everyCode = [
+    ...workflowRunReasonCodes(),
+    ...ROUTINE_AUTHORITY_FAILURES.map((failure) => `delegated_then_routine_authority_${failure}`),
+  ];
+
+  it("prints the sentence and never the code, for every reason a run can carry", () => {
+    for (const code of everyCode) {
+      const markup = monitoringMarkup(code);
+      const page = visibleText(markup);
+      const block = reasonBlockText(markup);
+
+      expect(block, code).toContain(reasonCodeCopy(code));
+      // Nowhere on the page, not just outside the sentence — this is the line #834 caught.
+      expect(page, code).not.toContain(code);
+      expect(page, code).not.toContain("Reason code");
+      // The shapes a code comes in: camelCase axis, snake_case reason, SCREAMING_SNAKE family.
+      expect(block, code).not.toMatch(/\b[a-z]+[A-Z][a-z]/);
+      expect(block, code).not.toMatch(/\b[a-z]+_[a-z]+\b/);
+      expect(block, code).not.toMatch(/[A-Z]{2,}_[A-Z]/);
+    }
+  });
+
+  it("keeps the code reachable for support in the developer view, not on the page", () => {
+    // #770's bargain, applied here: words for the merchant, the identifier in an attribute.
+    const markup = monitoringMarkup("consentStop:dnd_set");
+    expect(markup).toContain('data-reason-code="consentStop:dnd_set"');
+    expect(visibleText(markup)).not.toContain("consentStop");
+  });
+
+  it("still says something when a run carries no reason at all", () => {
+    const markup = monitoringMarkup("");
+    expect(visibleText(markup)).not.toContain("Reason code");
   });
 });
 

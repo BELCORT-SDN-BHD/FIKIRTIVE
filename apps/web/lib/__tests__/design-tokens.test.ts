@@ -22,6 +22,65 @@ import { pathToFileURL } from "node:url";
 
 const webRoot = path.resolve(__dirname, "../..");
 
+/**
+ * Comment stripping that knows what a comment is NOT (#834 r2, P1).
+ *
+ * The first version was two regexes, and the judge broke it in one line:
+ * `background: url("//assets.example.com/swatch.png?tint=E5484D")` — the `//` inside the URL
+ * opened a "line comment", the rest of the line vanished, and a retired colour sitting in live
+ * CSS was forgiven as if it were a note. A fence that can be switched off by the text it is
+ * scanning is not a fence.
+ *
+ * So: walk the text once. String bodies and `url(…)` contents are copied through verbatim —
+ * a literal inside them is real, shipped value and must still be caught — and only outside
+ * them does `/* … *\/` or `//` actually begin a comment.
+ */
+export function stripCommentsForScan(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const char = text[i]!;
+    if (char === '"' || char === "'" || char === "`") {
+      let j = i + 1;
+      out += char;
+      while (j < text.length && text[j] !== char) {
+        if (text[j] === "\\") {
+          out += text.slice(j, j + 2);
+          j += 2;
+          continue;
+        }
+        out += text[j]!;
+        j += 1;
+      }
+      out += text[j] ?? "";
+      i = j + 1;
+      continue;
+    }
+    // CSS `url(...)` may hold an unquoted, protocol-relative address.
+    if (/^url\(/i.test(text.slice(i, i + 4))) {
+      const close = text.indexOf(")", i);
+      const end = close === -1 ? text.length : close + 1;
+      out += text.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (text.startsWith("/*", i)) {
+      const close = text.indexOf("*/", i + 2);
+      out += " ";
+      i = close === -1 ? text.length : close + 2;
+      continue;
+    }
+    if (text.startsWith("//", i)) {
+      const newline = text.indexOf("\n", i);
+      i = newline === -1 ? text.length : newline;
+      continue;
+    }
+    out += char;
+    i += 1;
+  }
+  return out;
+}
+
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((offset) => {
     const srgb = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -174,14 +233,6 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
       return nested.flat();
     }
 
-    // Block comments read the same in CSS and TS/TSX; the line-comment rule only bites in
-    // TS/TSX, and the `[^:]` guard keeps it off `https://` inside a url().
-    function stripComments(text: string): string {
-      return text
-        .replace(/\/\*[\s\S]*?\*\//g, " ")
-        .replace(/(^|[^:])\/\/.*$/gm, "$1");
-    }
-
     const files = [
       ...(await scannedFiles(path.join(webRoot, "app"))),
       ...(await scannedFiles(path.join(webRoot, "components"))),
@@ -201,13 +252,24 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
           (entry) => entry.file === relative && entry.literal === literal,
         );
         // An exempt file is still scanned — only its comments are forgiven.
-        const body = exemption ? stripComments(text) : text;
+        const body = exemption ? stripCommentsForScan(text) : text;
         if (body.toUpperCase().includes(literal)) {
           offenders.push(`${relative} — ${literal} (${why})`);
         }
       }
     }
     expect(offenders).toEqual([]);
+
+    // 判官 2026-08-10 的反例(#834 r2 P1):字符串与 url() 里的 `//` 不是注释开头。
+    // 这几行钉住「豁免只赦免真注释」——赦免范围一旦被扫描内容自己撑开,围栏就等于关掉了。
+    const swatch = 'background: url("//assets.example.com/s.png?tint=#E5484D");';
+    expect(stripCommentsForScan(swatch), "a protocol-relative url() is not a comment")
+      .toContain("#E5484D");
+    expect(stripCommentsForScan('const retired = "#E5484D"; // retired'), "a string body is shipped value")
+      .toContain("#E5484D");
+    expect(stripCommentsForScan("/* --destructive #E5484D → #D02F35 */ --destructive: #D02F35;"))
+      .not.toContain("#E5484D");
+    expect(stripCommentsForScan("// color: #E5484D\nconst x = 1;")).not.toContain("#E5484D");
 
     // Every exemption must still be earning its place: a stale entry is a hole nobody sees.
     for (const exemption of COMMENT_ONLY_EXEMPTIONS) {

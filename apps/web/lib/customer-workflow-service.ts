@@ -9,10 +9,7 @@ import {
 } from "@fikirtive/core";
 import { broadcastPurposeFromTemplateClassification } from "./customer-broadcast-purpose";
 import {
-  BUSINESS_HOURS_UNAVAILABLE_REASONS,
-  ROUTINE_AUTHORITY_FAILURES,
-  SEND_ELIGIBILITY_NON_PASS_REASONS,
-  WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS,
+  WORKFLOW_SERVICE_STOP_REASONS,
   canonicalHash,
   canonicalJson,
   canonicalizeBusinessHoursPolicy,
@@ -45,11 +42,13 @@ import {
   type PrismaClient,
   type RoutineAuthorizationMaterial,
   type RoutineRunRecord,
+  type SEND_ELIGIBILITY_NON_PASS_REASONS,
   type SendEligibilityResult,
   type SettleWorkflowStepInput,
   type TransitionRoutineRunInput,
   type WorkflowActionOccurrence,
   type WorkflowDependencyResolver,
+  type WorkflowRunReasonCode,
   type WorkflowTrigger,
 } from "@fikirtive/db";
 
@@ -78,61 +77,6 @@ export const CUSTOMER_WORKFLOW_ERROR_CODES = {
 
 export type CustomerWorkflowErrorCode =
   (typeof CUSTOMER_WORKFLOW_ERROR_CODES)[keyof typeof CUSTOMER_WORKFLOW_ERROR_CODES];
-
-/**
- * The four stop reasons this service names itself. Every other reason a merchant can read
- * comes from an enumeration owned elsewhere (see customerWorkflowReasonCodes below) —
- * these are the ones written here, so they are written ONCE, here, and referenced at the
- * settlement sites rather than retyped as literals.
- */
-const SERVICE_STOP_REASONS = {
-  humanTakeover: "HUMAN_TAKEOVER_AUTOMATION_PAUSED",
-  businessHoursInside: "BUSINESS_HOURS_INSIDE",
-  conversationStrictClassificationUnavailable: "CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE",
-  broadcastOneMemberSubmitSeamUnavailable: "BROADCAST_ONE_MEMBER_SUBMIT_SEAM_UNAVAILABLE",
-} as const;
-
-/** `firstNonPass` returns this only if it is asked for a blocking axis and finds none. */
-const NO_BLOCKING_AXIS_REASON = "eligibility:unknown";
-
-/**
- * TOTALITY: every stop reason a merchant can be shown on the Routine monitoring panel (#811).
- *
- * The panel renders `RoutineRun.blockReason ?? errorCode` through `reasonCodeCopy`, and each
- * value in this list must have a sentence there — `lib/__tests__/workflow-format.test.ts`
- * pins the two sets equal in BOTH directions, the same pinboard #770 built for ERROR_COPY.
- * That check is the fix for how this broke: the send gate learned
- * `consent_unknown_d5_eligible` and `consent_unknown_unconfirmed_automatic_hard_block`,
- * nothing required copy for them, and a Routine told the merchant
- * "This workflow stopped with reason consentstop:consent unknown d5 eligible".
- *
- * Every entry is DERIVED from the enumeration that owns it, never retyped:
- *   · authority failures        → workflow-engine's ROUTINE_AUTHORITY_FAILURES
- *   · pre-dispatch unavailable  → workflow-journey's WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS
- *   · business-hours refusals   → workflow-business-hours' BUSINESS_HOURS_UNAVAILABLE_REASONS
- *   · four-axis refusals        → send-eligibility's SEND_ELIGIBILITY_NON_PASS_REASONS
- * so a new reason in any of those files lands here on its own and the copy pinboard goes red.
- *
- * NOT here, on purpose: `delegated_then_routine_authority_*`. Those are one family answered by
- * one sentence (the hand-off already happened; delivery is unknown until receipts exist), so
- * `reasonCodeCopy` answers them by prefix. The pinboard covers that family separately.
- *
- * A function, not a module-level array: nothing in this service needs the assembled list at
- * import time, and reading four other modules' enumerations while this one is still being
- * evaluated would make importing the workflow gateway depend on all of them being loaded.
- */
-export function customerWorkflowReasonCodes(): readonly string[] {
-  return [
-    ...ROUTINE_AUTHORITY_FAILURES.map((failure) => `routine_authority_${failure}`),
-    ...WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS,
-    ...Object.values(SERVICE_STOP_REASONS),
-    ...BUSINESS_HOURS_UNAVAILABLE_REASONS.map((reason) => `BUSINESS_HOURS_${reason}`),
-    ...Object.entries(SEND_ELIGIBILITY_NON_PASS_REASONS).flatMap(([axisName, reasons]) =>
-      reasons.map((reason) => `${axisName}:${reason}`),
-    ),
-    NO_BLOCKING_AXIS_REASON,
-  ];
-}
 
 export class CustomerWorkflowError extends Error {
   constructor(public readonly code: CustomerWorkflowErrorCode) {
@@ -649,12 +593,25 @@ function allAxesPass(verdict: SendEligibilityResult): boolean {
   return AXES.every((name) => (verdict[name] as EligibilityAxis).status === "pass");
 }
 
-function firstNonPass(verdict: SendEligibilityResult): string {
+/**
+ * The blocking axis, as the merchant-visible code `<axis>:<that axis's reason>`.
+ *
+ * Only ever called under `!allAxesPass(verdict)`, so "no blocking axis" is not a state this
+ * can reach — #834 r2 (P2) removed the `eligibility:unknown` it used to return there, along
+ * with the copy key that answered for it. `axis.reason` is likewise no longer optional on a
+ * non-pass axis (send-eligibility's overloads), so the old `?? axis.status` fallback, which
+ * could write back the `<axis>:block` keys the copy table dropped, is gone too.
+ */
+function firstNonPass(verdict: SendEligibilityResult): WorkflowRunReasonCode {
   for (const name of AXES) {
     const axis = verdict[name] as EligibilityAxis;
-    if (axis.status !== "pass") return `${name}:${axis.reason ?? axis.status}`;
+    if (axis.status !== "pass" && axis.reason !== undefined) {
+      return `${name}:${axis.reason}` as WorkflowRunReasonCode;
+    }
   }
-  return NO_BLOCKING_AXIS_REASON;
+  // Unreachable by construction. Fail closed rather than invent a reason: an unnamed refusal
+  // is the one thing this whole pinboard exists to prevent reaching a merchant.
+  return fail("AUTHORITY_UNAVAILABLE");
 }
 
 function unavailableConversationEligibility(checkedAt: string): SendEligibilityResult {
@@ -2599,14 +2556,14 @@ export function workflowLifecycleService(
       if (conversationAutomationState === "paused_by_human") {
         settlement = {
           status: "blocked",
-          reasonCode: SERVICE_STOP_REASONS.humanTakeover,
+          reasonCode: WORKFLOW_SERVICE_STOP_REASONS.humanTakeover,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };
       } else if (businessHoursResult?.status === "inside") {
         settlement = {
           status: "blocked",
-          reasonCode: SERVICE_STOP_REASONS.businessHoursInside,
+          reasonCode: WORKFLOW_SERVICE_STOP_REASONS.businessHoursInside,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };
@@ -2622,7 +2579,7 @@ export function workflowLifecycleService(
           status: action.action.type === "conversation_reply" ? "unavailable" : "blocked",
           reasonCode:
             action.action.type === "conversation_reply"
-              ? SERVICE_STOP_REASONS.conversationStrictClassificationUnavailable
+              ? WORKFLOW_SERVICE_STOP_REASONS.conversationStrictClassificationUnavailable
               : firstNonPass(verdict),
           eligibilityInput,
           eligibilityVerdict: verdict,
@@ -2630,7 +2587,7 @@ export function workflowLifecycleService(
       } else {
         settlement = {
           status: "unavailable",
-          reasonCode: SERVICE_STOP_REASONS.broadcastOneMemberSubmitSeamUnavailable,
+          reasonCode: WORKFLOW_SERVICE_STOP_REASONS.broadcastOneMemberSubmitSeamUnavailable,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };
