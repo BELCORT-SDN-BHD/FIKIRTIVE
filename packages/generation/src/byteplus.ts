@@ -11,6 +11,17 @@ export const IMAGE_MODEL_MAP: Record<string, string> = { seedream: "seedream-5-0
  *  `arkcli models versions dreamina-seedance-2-0-mini` 只回这一个版本 260615。 */
 export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-mini": "dreamina-seedance-2-0-mini-260615" };
 
+/**
+ * How long this client keeps polling one video task before it gives up (F06 — the full
+ * reasoning lives at the poll loop below; do not change this number without reading it).
+ *
+ * Exported because it is the FIRST clock in the worker's chain: provider timeout <
+ * stale cutoff < queue expiry < reaper cutoff. apps/worker/src/jobs/clock-invariants.test.ts
+ * asserts that ordering against this exact constant, so the chain can no longer be broken by
+ * editing one end of it (#796).
+ */
+export const VIDEO_POLL_TIMEOUT_MS = 15 * 60_000;
+
 export class BytePlusProvider implements GenerationProvider {
   readonly name = "byteplus";
   constructor(private apiKey: string) {}
@@ -229,7 +240,7 @@ export class BytePlusProvider implements GenerationProvider {
     // was [15 min, 48h]. `execution_expires_after: 3600` (the minimum it accepts) shrinks it to
     // [15 min, 1h]: past one hour the engine terminates the task itself as `expired` — no output,
     // nothing billed — so an abandoned task can no longer quietly complete a day later.
-    const TIMEOUT_MS = 15 * 60_000;
+    const TIMEOUT_MS = VIDEO_POLL_TIMEOUT_MS;
     // eslint-disable-next-line no-constant-condition
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));

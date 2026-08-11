@@ -375,3 +375,7 @@ export function createGenerationProvider(): GenerationProvider {
   }
   return new MockProvider();
 }
+
+/** #796 — the first clock in the worker's stale/expire/reap chain. Re-exported here because
+ *  `.` is this package's only export path; the invariant test reads it from the real source. */
+export { VIDEO_POLL_TIMEOUT_MS } from "./byteplus.js";
