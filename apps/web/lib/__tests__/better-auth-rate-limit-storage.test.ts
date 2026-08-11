@@ -38,13 +38,15 @@ describe("#795 Better Auth 限流不再活在进程内存里", () => {
    */
   it("customRules 里没有任何窗口超过库自己清理截止时间的规则", async () => {
     const { auth } = await import("@/lib/better-auth/server");
-    const rules = Object.entries(auth.options.rateLimit?.customRules ?? {});
+    const rules: Array<[string, unknown]> = Object.entries(auth.options.rateLimit?.customRules ?? {});
     const PRUNE_CUTOFF_SECONDS = 60;
     for (const [path, rule] of rules) {
-      if (typeof rule !== "object" || rule === null) continue;
+      // 只有「静态规则对象」才有可核对的窗口;函数形式的规则在请求时才定,不在这条围栏的射程内。
+      const window = (rule as { window?: unknown } | null)?.window;
+      if (typeof window !== "number") continue;
       expect(
-        rule.window,
-        `${path} 的窗口是 ${rule.window}s,超过库的 ${PRUNE_CUTOFF_SECONDS}s 清理截止 —— 它执行不出这个数`,
+        window,
+        `${path} 的窗口是 ${window}s,超过库的 ${PRUNE_CUTOFF_SECONDS}s 清理截止 —— 它执行不出这个数`,
       ).toBeLessThanOrEqual(PRUNE_CUTOFF_SECONDS);
     }
   });
@@ -53,7 +55,8 @@ describe("#795 Better Auth 限流不再活在进程内存里", () => {
     // customRules 是「替换」不是「叠加」。密码门的每小时闸因此活在路由层
     // (app/api/better-auth/[...all]/route.ts),BA 自带的 10 秒 3 次留在原处。
     const { auth } = await import("@/lib/better-auth/server");
-    expect(auth.options.rateLimit?.customRules?.["/sign-in/email"]).toBeUndefined();
+    const rules = (auth.options.rateLimit?.customRules ?? {}) as Record<string, unknown>;
+    expect(rules["/sign-in/email"]).toBeUndefined();
   });
 });
 

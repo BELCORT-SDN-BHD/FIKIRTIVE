@@ -98,22 +98,34 @@ describe("the shared-egress bound", () => {
     expect(deliverable()).toHaveLength(1);
   });
 
-  it("falls back to x-real-ip, and shares one bucket when a request carries neither", async () => {
-    expect(
-      await acceptMagicLinkRequest({
-        email: "owner@shop.test",
-        callbackURL: "/",
-        requestHeaders: new Headers({ "x-real-ip": "192.0.2.5" }),
-      }),
-    ).toBe("accepted");
-    expect(
-      await acceptMagicLinkRequest({
-        email: "owner@shop.test",
-        callbackURL: "/",
-        requestHeaders: new Headers(),
-      }),
-    ).toBe("accepted");
-    expect(deliverable()).toHaveLength(2); // different buckets, both under budget
+  it("puts every unidentifiable caller in ONE bucket — never a fresh budget each (#795 r2)", async () => {
+    // r2 — this case used to assert an `x-real-ip` FALLBACK, and that fallback is gone on
+    // purpose: a second header nobody's proxy is known to write is a second header an anonymous
+    // caller can write for themselves, which is a fresh bucket for the asking. Now there is one
+    // trusted source, and anything else lands in the shared unknown bucket.
+    //
+    // Sharing is the conservative direction — the whole point is that an unidentifiable caller
+    // must never get a PRIVATE budget — so the assertion is that they share, and that the shared
+    // budget really does run out.
+    for (let i = 0; i < MAX_PER_CALLER_PER_ADDRESS; i++) {
+      expect(
+        await acceptMagicLinkRequest({
+          email: "owner@shop.test",
+          callbackURL: "/",
+          requestHeaders: new Headers({ "x-real-ip": "192.0.2.5" }),
+        }),
+      ).toBe("accepted");
+    }
+    expect(deliverable()).toHaveLength(MAX_PER_CALLER_PER_ADDRESS);
+
+    // A different unidentifiable shape — no headers at all — does NOT get its own five.
+    queued.length = 0;
+    await acceptMagicLinkRequest({
+      email: "owner@shop.test",
+      callbackURL: "/",
+      requestHeaders: new Headers(),
+    });
+    expect(deliverable()).toHaveLength(0);
   });
 });
 
