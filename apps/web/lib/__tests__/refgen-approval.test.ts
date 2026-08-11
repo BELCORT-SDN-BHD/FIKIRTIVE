@@ -39,6 +39,9 @@ const {
   mockRunStateFromString,
   mockRestoreWithContext,
   mockWithLlmBudget,
+  mockOrganizationFindUnique,
+  MockInsufficientCredits,
+  MockSpendCapBlocked,
   MockRunState,
   MockMaxTurnsExceededError,
   mockApprove,
@@ -61,7 +64,36 @@ const {
   class MockMaxTurnsExceededError extends Error {
     constructor(msg = "Max turns exceeded") { super(msg); this.name = "MaxTurnsExceededError"; }
   }
-  const mockWithLlmBudget = vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result);
+  // #524: the two typed money refusals `ottoFailureMessage` narrows on. They are only shapes
+  // here — nothing in this file throws one — but a `@fikirtive/db` mock that omits them makes
+  // every `instanceof` in the error-copy chain explode instead of returning false.
+  class MockInsufficientCredits extends Error {
+    readonly requiredInternal: number | null;
+    readonly balanceInternal: number | null;
+    constructor(message = "Not enough credits.", detail?: { requiredInternal?: number | null; balanceInternal?: number | null }) {
+      super(message);
+      this.name = "InsufficientCredits";
+      this.requiredInternal = detail?.requiredInternal ?? null;
+      this.balanceInternal = detail?.balanceInternal ?? null;
+    }
+  }
+  class MockSpendCapBlocked extends Error {
+    readonly requiredInternal: number;
+    readonly capInternal: number | null;
+    constructor(detail: { requiredInternal: number; capInternal: number | null }) {
+      super("Spend cap reached.");
+      this.name = "SpendCapBlocked";
+      this.requiredInternal = detail.requiredInternal;
+      this.capInternal = detail.capInternal;
+    }
+  }
+  // #524 r3: the approval card is claimed inside withLlmBudget's post-reserve window, so a double
+  // that ignored `afterReserve` would model a product where consent is never consumed.
+  const mockWithLlmBudget = vi.fn(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
+    const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
+    if (claim) await claim();
+    return (await fn()).result;
+  });
 
   return {
     mockRequireOwner: vi.fn(),
@@ -87,6 +119,9 @@ const {
     mockRunStateFromString,
     mockRestoreWithContext,
     mockWithLlmBudget,
+    mockOrganizationFindUnique: vi.fn(),
+    MockInsufficientCredits,
+    MockSpendCapBlocked,
     MockRunState,
     MockMaxTurnsExceededError,
     mockApprove,
@@ -124,7 +159,11 @@ vi.mock("@fikirtive/db", () => ({
     actionEvent: { create: mockActionEventCreate },
     $transaction: mockTransaction,
     $executeRaw: mockExecuteRaw,
+    // #524: ottoApprove reads the merchant's spend cap before it holds anything.
+    organization: { findUnique: mockOrganizationFindUnique },
   },
+  InsufficientCredits: MockInsufficientCredits,
+  SpendCapBlocked: MockSpendCapBlocked,
 }));
 
 // Real @fikirtive/core (newId, presets, etc.) — no search env keys in the test runner, so
@@ -220,10 +259,17 @@ beforeEach(() => {
   // #498 round-5: the tie-language fallback probes recent USER messages.
   mockChatMessageFindMany.mockResolvedValue([]);
   mockChatMessageUpdateMany.mockResolvedValue({ count: 1 });
+  // #524: no spend cap set for these fixtures — the ceiling is not what they are about.
+  mockOrganizationFindUnique.mockResolvedValue({ settings: null });
   mockActionEventCreate.mockResolvedValue({});
   mockExecuteRaw.mockResolvedValue(undefined);
   mockTransaction.mockImplementation(runTransaction);
-  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result);
+  mockWithLlmBudget.mockImplementation(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
+    // #524 r3: honour the post-reserve claim window — that is where the card is consumed now.
+    const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
+    if (claim) await claim();
+    return (await fn()).result;
+  });
 });
 
 // ── Mint (finalizeOttoRun) ──────────────────────────────────────────────────────
