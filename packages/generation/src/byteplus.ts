@@ -98,6 +98,12 @@ export class BytePlusProvider implements GenerationProvider {
     // back to the default square — never send a value the engine would reject. Price is
     // unaffected: this engine bills per image, not per size.
     const { width, height } = imageOutputSize(req.aspectRatio);
+    // #777 组图:整组一次请求出齐。分岔在这里,因为**下面那条路的每一条注释都建立在
+    // 「一次 POST = 一张图」上** —— 计费边界、并发闸的占位、短交判定,全部按那个前提写的。
+    // 把两种形状塞进同一个循环,只会让那些注释开始说谎。
+    if (req.coherentSet && req.count > 1) {
+      return this.#coherentSet(req, model, width, height);
+    }
     // one request per image (count <= MAX_GEN_COUNT); each is all-or-nothing.
     //
     // #796 判官 r1 P1-1 — THIS is where a "job" stops being one request. A single image job
@@ -162,6 +168,72 @@ export class BytePlusProvider implements GenerationProvider {
     const anyCharged = ok.length > 0 || rejections.some((e) => e instanceof Error && (e as { charged?: boolean }).charged);
     if (anyCharged) throw chargedError(`generation provider returned only ${ok.length}/${req.count} usable images`);
     throw rejections[0] instanceof Error ? rejections[0] : new Error(String(rejections[0]));
+  }
+
+  /**
+   * #777 —— **一次请求出一整组连贯的图**(同一个模特的多个角度、同一件产品的多个尺寸)。
+   *
+   * 与上面那条散图路的差别只有一处,但那一处是这张票的全部:count 张图从 count 次付费
+   * POST 变成 **一次** 付费 POST。于是
+   *   - 供应商侧账目形状变了:一次调用按张计费,而不是 N 次调用各计一次。**记账的钱数
+   *     没变**(仍是每张 $0.035,`genSpentUsd` 一行没改),变的是调用次数;
+   *   - 商家侧一格没变:仍是每张 1 显示 credit,`pricedGenCredits` 一行没改,
+   *     reserve == settle 照旧;
+   *   - 并发闸从占 count 格变成占 1 格 —— 这正是本票要的那个量级差(账户硬顶下,
+   *     一次请求换 N 张)。
+   *
+   * 计费边界与散图路**同一把尺**,一处都没有放松:
+   *   - POST 本身交给 `paidPost` 判定(4xx = 可证明没花钱 ⇒ PLAIN 可重投;
+   *     网络抛/5xx = 结果不明 ⇒ charged 终结);
+   *   - 2xx 之后的每一种死法都是 charged:回执读不出、URL 不齐、下载断流。
+   *     这条路上「已计费」的粒度更粗 —— 一次 2xx 就把整组都计了费,所以张数不齐
+   *     **必须**是 charged:重投会把整组再做一遍、再付一遍。
+   */
+  async #coherentSet(
+    req: GenerationRequest,
+    model: string,
+    width: number,
+    height: number,
+  ): Promise<GeneratedImage[]> {
+    const conditioned = req.inputImageUrls.length > 0;
+    // 一次调用只占一格并发(散图路是 count 格)。闸只围住 POST —— 后面的结果下载
+    // 不是一次生成 API 调用,与散图路同一条口径。
+    const res = await providerRequestGate().run(() => this.paidPost("image request", `${ARK_BASE}/images/generations`, model, {
+      model, prompt: req.prompt, size: `${width}x${height}`, response_format: "url",
+      watermark: false,
+      // 组图开关 + 这一组最多几张。`auto` 是引擎自己决定要不要成组、成几张,
+      // `max_images` 是上限 —— 所以**可能少给**,少给的处理见下面的张数校验。
+      sequential_image_generation: "auto",
+      sequential_image_generation_options: { max_images: req.count },
+      // 条件图与散图路逐字同形(单张用字符串、多张用数组)。引擎的硬约束是
+      // 输入+输出 ≤ 15;worker 侧参考图上限 MAX_CONDITIONING_IMAGES=10,
+      // 出图上限 MAX_GEN_COUNT=4 ⇒ 10+4 ≤ 15,永远撞不到。
+      ...(conditioned ? { image: req.inputImageUrls.length === 1 ? req.inputImageUrls[0] : req.inputImageUrls } : {}),
+    }));
+    // res.ok ⇒ 这一整组都已计费。往下每一种死法都必须 charged。
+    let urls: string[];
+    try {
+      const data = (await res.json()) as { data?: { url?: string }[] };
+      urls = (data.data ?? []).map((item) => item?.url).filter((url): url is string => typeof url === "string" && url.length > 0);
+    } catch (e) {
+      throw chargedError(`generation provider billed but the coherent set receipt was unreadable (${e instanceof Error ? e.message : String(e)})`);
+    }
+    // 短交(引擎只出了一部分)。这一票**不改结算语义**:与今日散图路的 F05 逐字一致 ——
+    // 整单失败、整单退款,商家一分钱不付,COGS 我们自己吃。charged ⇒ 不重投:
+    // 重投会把整组再做一遍再付一遍,而商家手上还是什么都没有。
+    if (urls.length !== req.count) {
+      throw chargedError(`generation provider returned only ${urls.length}/${req.count} images in the coherent set`);
+    }
+    try {
+      return await Promise.all(urls.map(async (url) => {
+        const r = await fetch(url);
+        if (!r.ok) throw chargedError(`image download → ${r.status}`);
+        return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "png" } as GeneratedImage;
+      }));
+    } catch (e) {
+      if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
+      throw chargedError(`generation provider billed but the coherent set was unusable (${e instanceof Error ? e.message : String(e)})`);
+    }
   }
   /**
    * #796 判官 r1 P1-1 — a video task holds ONE account slot for its WHOLE life (submit through

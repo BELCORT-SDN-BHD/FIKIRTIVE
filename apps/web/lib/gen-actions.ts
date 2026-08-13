@@ -370,7 +370,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const OWNED = { ownerId, deletedAt: null } as const;
     const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
     if (!parsed.success) return { error: "That generation request is out of bounds." };
-    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
+    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, coherentSet } = parsed.data;
     const parsedCanvasAction = parseCanvasActionKey(idempotencyKey);
     if (parsedCanvasAction && !trustedCanvasKey) {
       return { error: "That generation request is out of bounds." };
@@ -443,6 +443,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       aspectRatio: effectiveAspectRatio,
       fps,
       audio,
+      // #777:「这几张是一组要连贯的图」是商家授权内容的一部分 —— 批一组图之后再要
+      // 一堆散图是**另一个**动作,不是同一个动作的重试。所以它进材料、落快照
+      // (`GenJob.imageOptions`),worker 照着快照发请求。收费一格不动。
+      coherentSet,
     });
     const effectiveVariantSel = material.variantSel ?? undefined;
     const factoryAttempt = parseFactoryAttemptKey(idempotencyKey);

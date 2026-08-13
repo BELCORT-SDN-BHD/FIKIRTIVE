@@ -42,6 +42,9 @@ const genCellCore = z
     aspectRatio: z.string().max(12).nullish(),
     fps: z.number().int().min(1).max(120).nullish(),
     audio: z.boolean().nullish(),
+    /** #777:这一格的 count 张是一组要连贯的图。这里只放行形状;能不能真的组图
+     *  (image-only、模型须支持、至少两张)由 genRequest 在 startGen 里裁定。 */
+    coherentSet: z.boolean().nullish(),
   })
   .strict();
 
