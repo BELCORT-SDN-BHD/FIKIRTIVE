@@ -5,7 +5,15 @@
  * TDD cases from otto-task-1.3-brief.md.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import { prisma, reserveCredits, settleCredits, refundReservation, InsufficientCredits } from "./index.js";
+import {
+  prisma,
+  reserveCredits,
+  reserveCreditsUpTo,
+  settleCredits,
+  refundReservation,
+  InsufficientCredits,
+  HOLD_SHORTFALL_REASON_PREFIX,
+} from "./index.js";
 import { seedOrg } from "../test/setup.js";
 
 const ORG = "test-org-1";
@@ -124,6 +132,8 @@ describe("case 5 — clamp actual > reserved", () => {
     const settleRow = rows.find((r) => r.kind === "SETTLE");
     expect(settleRow!.balanceDelta).toBe(0);    // B - A = 1000 - 1000 = 0
     expect(settleRow!.reservedDelta).toBe(-1000);
+    // #898: the clamp is no longer silent — the 4000 the platform absorbed is on the row.
+    expect(settleRow!.reason).toBe(`${HOLD_SHORTFALL_REASON_PREFIX}4000`);
   });
 });
 
@@ -811,5 +821,295 @@ describe("case 21 — refundReservation names which finalizer won (#524 r8)", ()
     const rows = await ledger(ORG);
     expect(rows.find((r) => r.kind === "REFUND" && r.refId === REF)?.reason).toBe("a-sweep");
     expect(rows.find((r) => r.kind === "REFUND" && r.refId === "ref-bbb")?.reason).toBe("");
+  });
+});
+
+// ── #898: hold = min(cap, balance) — the chat-hold interim semantics ────────
+//
+// Founder 2026-08-13, formal correction to #543. Before this, the hold WAS the door: a fixed
+// 4-credit hold meant a merchant sitting on 3.9 credits could not send a message at all — they
+// could not even ask what their remaining credits were still good for — while the measured cost
+// of one message is 0.4–3.3 credits (#536). The hold now shrinks to fit the balance, and the
+// door drops to a 1-credit minimum.
+//
+// Everything below is asserted against real Postgres, because the claims are money claims:
+// balance never negative, never charged more than held, exactly-once unchanged.
+describe("#898 — reserveCreditsUpTo: the hold fits the balance", () => {
+  const CAP = 40;  // OTTO_CONVERSATION_TURN_RESERVE_INTERNAL — 4 displayed credits
+  const MIN = 10;  // OTTO_CHAT_MIN_START_INTERNAL — 1 displayed credit
+
+  it("① 3.9 credits sends a message: holds all 39, charges the real cost, returns the rest", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 39 } });
+
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CAP, minimumInternal: MIN }),
+    );
+    expect(held).toBe(39); // the whole balance, not the 40 cap — and NOT a refusal
+
+    const afterReserve = await account(ORG);
+    expect(afterReserve.balance).toBe(0);
+    expect(afterReserve.reserved).toBe(39);
+
+    // A typical message: 7 internal (0.7 displayed) — inside the measured 0.4–3.3 band.
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF, actualInternal: 7 }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(32); // 39 held - 7 charged = 32 returned
+    expect(acc.reserved).toBe(0);
+
+    const rows = await ledger(ORG);
+    const settleRow = rows.find((r) => r.kind === "SETTLE")!;
+    expect(settleRow.balanceDelta).toBe(32);
+    expect(settleRow.reason).toBe(""); // nothing was clamped — nothing to record
+    // Σ balanceDelta == the net change from the balance this test started at (the seed writes
+    // the account directly, so it is not itself a ledger row — same convention as case 3).
+    expect(sumBalance(rows)).toBe(acc.balance - 39);
+    expect(sumReserved(rows)).toBe(acc.reserved);
+  });
+
+  it("② 1.2 credits sends a message that costs 3.3: charged 1.2, the platform absorbs 2.1, balance lands on 0 — never below", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 12 } });
+
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CAP, minimumInternal: MIN }),
+    );
+    expect(held).toBe(12);
+
+    // 33 internal = 3.3 displayed = the measured production peak (#536), which is what a cold
+    // cache on an opening message costs. It exceeds the hold, so the hold is the ceiling.
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF, actualInternal: 33 }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);            // charged exactly what was held
+    expect(acc.balance).toBeGreaterThanOrEqual(0); // and the balance is never negative
+    expect(acc.reserved).toBe(0);
+
+    const rows = await ledger(ORG);
+    const settleRow = rows.find((r) => r.kind === "SETTLE")!;
+    expect(settleRow.balanceDelta).toBe(0);
+    // The absorbed difference is written down, not silent: 33 - 12 = 21 internal (2.1 displayed).
+    expect(settleRow.reason).toBe(`${HOLD_SHORTFALL_REASON_PREFIX}21`);
+    expect(sumBalance(rows)).toBe(acc.balance - 12);
+    expect(sumReserved(rows)).toBe(acc.reserved);
+  });
+
+  it("③ 0.8 credits is refused, and the refusal names the 1-credit minimum, not the 4-credit hold", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 8 } });
+
+    await expect(
+      prisma.$transaction((tx) =>
+        reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CAP, minimumInternal: MIN }),
+      ),
+    ).rejects.toBeInstanceOf(InsufficientCredits);
+
+    // Nothing moved, and no ledger row was written — the refusal rolled the transaction back.
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(8);
+    expect(acc.reserved).toBe(0);
+    expect(await ledger(ORG)).toHaveLength(0);
+
+    const err = await prisma
+      .$transaction((tx) => reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CAP, minimumInternal: MIN }))
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(InsufficientCredits);
+    expect((err as InsufficientCredits).requiredInternal).toBe(MIN); // the door, not the hold
+    expect((err as InsufficientCredits).balanceInternal).toBe(8);
+  });
+
+  it("④ a replayed settle never double-charges a balance-fitted hold", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 12 } });
+    await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CAP, minimumInternal: MIN }),
+    );
+
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF, actualInternal: 33 }));
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF, actualInternal: 33 }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(0);
+
+    const rows = await ledger(ORG);
+    expect(rows.filter((r) => r.kind === "SETTLE")).toHaveLength(1); // exactly-once, unchanged
+    expect(rows.filter((r) => r.reason.startsWith(HOLD_SHORTFALL_REASON_PREFIX))).toHaveLength(1);
+    expect(sumBalance(rows)).toBe(acc.balance - 12);
+    expect(sumReserved(rows)).toBe(acc.reserved);
+  });
+
+  it("⑤ a balance at or above the cap is held exactly as before — 4 credits, not the whole balance", async () => {
+    // The unchanged path: #898 only moves what happens BELOW the cap.
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CAP, minimumInternal: MIN }),
+    );
+    expect(held).toBe(CAP);
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000 - CAP);
+    expect(acc.reserved).toBe(CAP);
+  });
+
+  it("⑥ a failed message refunds the fitted hold in full — the merchant is left exactly where they started", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 12 } });
+    await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CAP, minimumInternal: MIN }),
+    );
+
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(12);
+    expect(acc.reserved).toBe(0);
+  });
+
+  it("⑦ a missing account is refused, not treated as an infinite balance", async () => {
+    await expect(
+      prisma.$transaction((tx) =>
+        reserveCreditsUpTo(tx, { orgId: "org-with-no-account", refId: REF, capInternal: CAP, minimumInternal: MIN }),
+      ),
+    ).rejects.toBeInstanceOf(InsufficientCredits);
+  });
+});
+
+// ── #524 × #898:上限只管新的花钱动作,不管进行中的对话 ────────────────────────────
+//
+// 两票单独看都对,合到一起会互相打脸:#898 让聊天冻结 hold = min(4 credits, 余额),而这笔
+// hold 若走 #524 装了闸的 reserveCredits,商家把上限设成 2 credits 就等于把自己踢出对话 ——
+// 而一句话实测只花 0.4–3.3 credits(#536),本来就在上限以内。
+//
+// Founder 裁决(2026-08-13,市调报告存档 issue #909):**上限只管新的花钱动作**(生成图、
+// 生成视频这类商家主动要的产出),**进行中的对话完全豁免**。于是 reserveCreditsUpTo 根本
+// 不读上限;对话的敞口由余额本身兜底,那是余额闸,不是 cap 闸。
+//
+// 豁免是结构性的,不是一个开关:reserveCreditsUpTo 走 reserveAgainstBalance,代码里没有
+// 通往上限判定的路。下面这一组两头都钉:聊天不受上限影响 **且** 生成照旧被上限拦。
+//
+//(撞顶之后对话入口该怎么办 —— 新对话的门、Otto 只说不做 —— 是另一张票,本 PR 不做。)
+describe("#524 × #898 — the spend cap governs new paid actions, never the conversation", () => {
+  const CHAT_CAP = 40; // OTTO_CONVERSATION_TURN_RESERVE_INTERNAL — 4 displayed credits
+  const CHAT_MIN = 10; // OTTO_CHAT_MIN_START_INTERNAL — 1 displayed credit
+
+  it("① cap 1 credit, balance 10 credits → the chat hold is the full 4 credits, untouched by the cap", async () => {
+    await setCap(ORG, 1);                                                    // 10 internal
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 100 } });
+
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(held).toBe(40);                                                   // min(40, 100) — no cap term
+    expect(held).toBeGreaterThan(10);                                        // …and it is OVER the cap
+
+    const afterReserve = await account(ORG);
+    expect(afterReserve.balance).toBe(60);
+    expect(afterReserve.reserved).toBe(40);
+
+    // Settle behaves exactly as it always has: charge the real cost, return the rest.
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF, actualInternal: 13 }));
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(87);
+    expect(acc.reserved).toBe(0);
+  });
+
+  it("① 同一个商家、同一个上限,**生成**动作照旧被拦 —— 所以上一条不是「闸坏了」", async () => {
+    // The counter-proof the exemption needs: the cap is still live on this org, on the same
+    // transaction shape, for the kind of action it is meant to govern.
+    await setCap(ORG, 1); // 10 internal
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "ref-a-video", cost: 60 })),
+    ).rejects.toBeInstanceOf(SpendCapBlocked);
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000);
+    expect(acc.reserved).toBe(0);
+  });
+
+  it("② a cap far below the entry minimum still lets the conversation run", async () => {
+    await setCap(ORG, 1); // 10 internal == the minimum; the hold it would have blocked is 40
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(held).toBe(25); // min(40, 25) — the BALANCE binds, which is the only ceiling here
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(25);
+  });
+
+  it("② an UNREADABLE cap does not fail the conversation closed — there is no cap read to fail", async () => {
+    // A corrupted setting refuses a generation (fail closed on the guardrail). A conversation has
+    // no guardrail to fail: it never opens the setting, so a broken value cannot silence Otto.
+    await setCap(ORG, "not-a-number");
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(held).toBe(40);
+    // …and the same corrupted value still refuses a generation.
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "ref-a-video", cost: 60 })),
+    ).rejects.toBeInstanceOf(SpendCapBlocked);
+  });
+
+  it("③ a merchant with NO cap is byte-for-byte unchanged — hold is still min(4 credits, balance)", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 39 } });
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(held).toBe(39);
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(39);
+  });
+
+  it("④ balance well above the hold, cap set or not, holds exactly 4 credits either way", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 500 } });
+    const withoutCap = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: "ref-nocap", capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    await setCap(ORG, 2); // 20 internal — half the hold
+    const withCap = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: "ref-withcap", capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(withoutCap).toBe(40);
+    expect(withCap).toBe(40); // the cap changed nothing at all
+  });
+
+  it("⑤ exactly-once and the never-negative balance survive the exemption", async () => {
+    await setCap(ORG, 2);
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 30 } });
+
+    const first = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(first).toBe(30);
+    // A duplicate hold on the same refId is refused on the unique key, not doubled.
+    await expect(
+      prisma.$transaction((tx) =>
+        reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+      ),
+    ).rejects.toMatchObject({ code: "P2002" });
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(30);
+    const rows = await ledger(ORG);
+    expect(rows.filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+    expect(sumBalance(rows)).toBe(-30);
+    expect(sumReserved(rows)).toBe(30);
+  });
+
+  it("⑤ concurrent turns under a cap: the account still never goes negative", async () => {
+    await setCap(ORG, 2);
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 30 } });
+
+    await Promise.allSettled([
+      prisma.$transaction((tx) =>
+        reserveCreditsUpTo(tx, { orgId: ORG, refId: "ref-c1", capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+      ),
+      prisma.$transaction((tx) =>
+        reserveCreditsUpTo(tx, { orgId: ORG, refId: "ref-c2", capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+      ),
+    ]);
+    const acc = await account(ORG);
+    expect(acc.balance).toBeGreaterThanOrEqual(0);
+    expect(acc.balance + acc.reserved).toBe(30);
   });
 });

@@ -65,22 +65,31 @@ export function spendCapBlockedMessage(quotedCredits: number, capCredits: number
   return `Paused by your spend cap — this needs ${creditsLabel(quotedCredits)} and your cap is ${creditsLabel(capCredits)} per action. Raise the cap in Settings to run it.`;
 }
 
-/** What a merchant is told when a CONVERSATION turn can't start (#791-7).
+/** What a merchant is told when a CONVERSATION turn can't start for lack of CREDITS (#791-7,
+ *  #898). A turn stopped by the merchant's own spend cap is a different sentence and a different
+ *  exit — see `spendCapBlockedMessage` above; sending them to Billing over a cap they set would
+ *  be untrue and would not unblock anything.
  *
  *  It replaced "You're out of credits." — a sentence that was usually not true. A turn HOLDS
- *  a fixed amount up front (OTTO_CONVERSATION_TURN_RESERVE_INTERNAL), so a merchant sitting on
- *  3.9 credits, who has spent nothing, was told they had none while their own balance was on
- *  screen saying otherwise. That reads as a broken product, not as a limit.
+ *  an amount up front, so a merchant sitting on 3.9 credits, who has spent nothing, was told
+ *  they had none while their own balance was on screen saying otherwise. That reads as a
+ *  broken product, not as a limit.
+ *
+ *  #898 moved the door itself: the hold now shrinks to fit the balance
+ *  (OTTO_CHAT_MIN_START_INTERNAL), so 3.9 credits sends a message like any other balance and
+ *  this sentence only appears below 1 credit. The number it names is therefore the MINIMUM to
+ *  start, not the hold — saying "holds 1 credit first" would be false the moment the merchant
+ *  tops up and the hold goes back to 4.
  *
  *  Names both real numbers: what they hold now, and what starting a message needs. Falls back
  *  to the shared out-of-credits line when the balance can't be read — better to say one true
  *  thing than to invent a number. Both are DISPLAYED credits. */
 export function chatHoldShortfallMessage(
   balanceCredits: number | null,
-  holdCredits: number,
+  minimumCredits: number,
 ): string {
-  if (balanceCredits === null) return outOfCreditsMessage(holdCredits);
-  return `You have ${creditsLabel(balanceCredits)} — starting a message with Otto holds ${creditsLabel(holdCredits)} first. Top up in Billing.`;
+  if (balanceCredits === null) return outOfCreditsMessage(minimumCredits);
+  return `You have ${creditsLabel(balanceCredits)} — starting a message with Otto needs at least ${creditsLabel(minimumCredits)}. Top up in Billing.`;
 }
 
 /** The early warning, shown BEFORE they try (#791-7): the balance is under what one video
@@ -120,6 +129,10 @@ export const CHAT_SPEND_NOTE =
  *  than what anyone guesses from a silent dip.
  *
  *  The number is DERIVED from the hold constant, never typed out — a hand-written "4" would
- *  become a lie the next time the hold is tuned. */
+ *  become a lie the next time the hold is tuned.
+ *
+ *  #898: "up to". The hold is now min(the constant, the balance) — a merchant with 1.2 credits
+ *  has 1.2 held, not 4 — so the flat "holds 4 credits" would be wrong for exactly the merchants
+ *  who read this line hardest. */
 export const CHAT_HOLD_NOTE =
-  `Each message holds ${creditsLabel(displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL))} up front, charges only what it uses, and returns the rest right away.`;
+  `Each message holds up to ${creditsLabel(displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL))} up front, charges only what it uses, and returns the rest right away.`;

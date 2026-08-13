@@ -18,6 +18,10 @@
  *     the Organization row locked FOR UPDATE (assertWithinSpendCap), so the widened verdict and
  *     `reserveCredits`' own per-charge verdict see the SAME ceiling and no cap change can land
  *     between them.
+ *  9. (#898 × #524) `reserveMinInternal` makes the hold fit the merchant instead of the other way
+ *     round: hold = min(worst case, #543 cap, balance, merchant's spend cap), refused only below
+ *     the minimum. Every bound can only make the hold SMALLER, so invariants 1–3 are untouched —
+ *     settle still charges min(actual, hold) and a failure still refunds the whole hold.
  */
 import {
   CREDITS_PER_USD,
@@ -29,6 +33,7 @@ import {
 import {
   prisma,
   reserveCredits,
+  reserveCreditsUpTo,
   settleCredits,
   refundReservation,
   assertWithinSpendCap,
@@ -129,6 +134,17 @@ export type LlmBudgetArgs = {
    *  fail-closed in the direction that holds MORE. Reserve/settle/refund semantics are
    *  unchanged: settleCredits still clamps the charge to the held amount. */
   reserveCapInternal?: number;
+  /** #898 — the minimum balance, in INTERNAL credits, that may START this call. When set (and
+   *  valid), the hold becomes min(worst case, reserveCapInternal, current balance) instead of a
+   *  fixed amount, and the call is refused only when the balance is below THIS number. Server-
+   *  owned composition data only (runtime.ts ottoBudgetArgsFor); never request/client supplied.
+   *  A malformed value (0, negative, fractional, NaN, Infinity) is ignored and the fixed hold
+   *  stays in force — fail-closed in the direction that holds MORE and admits FEWER callers.
+   *
+   *  #524 × #898: on this path the merchant's own spend cap is a THIRD bound on the hold rather
+   *  than a refusal — see reserveCreditsUpTo in @fikirtive/db for why a hold is clamped where a
+   *  charge is refused. The cap remains a hard ceiling; the hold can only come out smaller. */
+  reserveMinInternal?: number;
   usageOnError?: (e: unknown) => TokenUsage | null;
   /**
    * A claim on the work, run AFTER the hold is taken and BEFORE the model is called (#524 r3).
@@ -259,25 +275,43 @@ export async function withLlmBudget<T>(
   // (llmHoldInternal above), so a read-only preflight and the real reserve can never disagree.
   // turnBudgetInternal(prices, margin, 1) === oneStepFloorInternal(prices, margin); #543's
   // composition cap may only LOWER it, and a malformed cap is ignored.
-  const reserve = llmHoldInternal(args);
-
+  const capped = llmHoldInternal(args);
+  // #898: same validity rule as #543's cap — anything that is not a positive integer is ignored,
+  // so a malformed minimum falls back to the fixed hold rather than opening the door wider.
+  const min = args.reserveMinInternal;
+  const balanceAware = typeof min === "number" && Number.isInteger(min) && min >= 1;
   // #524 r5 (judge r4 P1-B): when this turn is one leg of a bigger approved action, the cap is
   // judged against the WHOLE action first — in this same transaction, so a cap the merchant moved
   // after the preflight is the one that decides. Only ever stricter: a value at or below the hold,
   // or a malformed one, is ignored and the reserve's own per-charge verdict stands alone.
   // #524 r6 (judge r5 P1-A②): "same transaction" is not by itself "same ceiling" — READ COMMITTED
   // gives each statement its own snapshot, so this verdict and reserveCredits' own could read a
-  // cap the merchant changed in between. assertWithinSpendCap now takes the Organization row
-  // FOR UPDATE, which makes the pair atomic: one ceiling, no window before the first credit moves.
+  // cap the merchant changed in between. assertWithinSpendCap takes the Organization row FOR
+  // UPDATE, which makes the pair atomic: one ceiling, no window before the first credit moves.
   const capCost = args.capCostInternal;
   const judgeWholeAction =
-    typeof capCost === "number" && Number.isFinite(capCost) && capCost > reserve;
+    typeof capCost === "number" && Number.isFinite(capCost) && capCost > capped;
 
   // Invariant #1: reserve first. InsufficientCredits (and #524's SpendCapBlocked) propagate;
   // fn is never called, and NOTHING the caller does after this line has happened yet.
+  // `reserve` is the amount ACTUALLY held — on the balance-aware path (#898) it can be less than
+  // `capped`, and the no-usage settle below must charge the real hold, not the intended one.
+  let reserve = capped;
   await prisma.$transaction(async (tx) => {
     if (judgeWholeAction) await assertWithinSpendCap(tx, args.orgId, capCost as number);
-    await reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve });
+    if (balanceAware) {
+      // #898 — the hold fits the balance. Founder 2026-08-13 also exempted this hold from the
+      // spend cap (see reserveCreditsUpTo in @fikirtive/db): the ceiling governs new paid actions,
+      // not a conversation already under way, so this leg reserves against the balance alone.
+      reserve = await reserveCreditsUpTo(tx, {
+        orgId: args.orgId,
+        refId: args.refId,
+        capInternal: capped,
+        minimumInternal: min,
+      });
+    } else {
+      await reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve });
+    }
   });
 
   // #524 r3 — the claim window. It sits HERE, between a successful hold and the model call, so a

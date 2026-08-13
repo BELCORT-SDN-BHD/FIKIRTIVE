@@ -3,7 +3,7 @@
 
 | skill | cost | effect | reach | needsApproval | description |
 |---|---|---|---|---|---|
-| approveScheduledPost | free | write | external | ✅ | Approve a DRAFT scheduled post so it can publish to Instagram/Facebook at its sc |
+| approveScheduledPost | free | write | external | ✅ | Approve a DRAFT scheduled post so it takes its slot on the user's schedule. Publ |
 | buildSegment | free | write | internal | ❌ | Create or update one CRM Segment through the same validated, owner-scoped action |
 | cancelScheduledPost | free | write | internal | ❌ | Cancel a scheduled post so it will not publish. $0 and reversible only by re-cre |
 | deleteReferenceVariant | free | write | internal | ❌ | Delete one of an element's reference variants (and its generated reference image |
@@ -17,7 +17,7 @@
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | listChannelScopes | free | read | internal | ❌ | List the workspace's connected messaging channel accounts (channel + scope key)  |
-| listPublishTargets | free | read | internal | ❌ | List the accounts the user can publish to (their connected Instagram business /  |
+| listPublishTargets | free | read | internal | ❌ | List the user's connected Instagram business / Facebook page accounts so you can |
 | listScheduledPosts | free | read | internal | ❌ | List the user's scheduled posts (drafts, queued, published, needs-attention) so  |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
 | manageBrandMemory | free | write | internal | ❌ | Remove or restore brand memory — $0, never generates or spends. delete_record: r |
@@ -46,7 +46,7 @@
 | readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, immutable revisions, Routine authorization |
 | recommendTemplates | free | read | internal | ❌ | Look up the built-in template library — ready-made one-tap scenarios written for |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
-| renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — never spends |
+| renderVideo | free | write | internal | ❌ | Build and export ONE video out of clips the merchant already has ($0 — never spe |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
 | runFactoryBatch | spend | write | internal | ✅ | Generate a BATCH of ads/images/videos in one go — either a variant fan-out (one  |
 | saveCustomerSegment | free | write | internal | ❌ | Save or update ONE customer-group NOTE CARD in the user's Brand memory (upsert b |

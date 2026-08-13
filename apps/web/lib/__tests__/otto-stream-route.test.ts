@@ -452,7 +452,7 @@ describe("POST /api/otto/stream", () => {
     expect(res.status).toBe(200);
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
     });
     expect(mocks.withLlmBudget).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -475,10 +475,10 @@ describe("POST /api/otto/stream", () => {
         data: expect.objectContaining({
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
+          text: "Not enough credits — this needs 1 credit. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
           }),
         }),
       }),
@@ -498,7 +498,7 @@ describe("POST /api/otto/stream", () => {
 
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
     });
     expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
     expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
@@ -507,22 +507,23 @@ describe("POST /api/otto/stream", () => {
           threadId: "thread_existing",
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
+          text: "Not enough credits — this needs 1 credit. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
           }),
         }),
       }),
     );
   });
 
-  // #791-7: "You're out of credits." was usually false — a turn HOLDS 4 credits up front, so a
-  // merchant with 3.9 who had spent nothing was told they had none, with their balance on
+  // #791-7: "You're out of credits." was usually false — a turn HELD a fixed amount up front, so
+  // a merchant with 3.9 who had spent nothing was told they had none, with their balance on
   // screen contradicting it. The refusal now carries the balance it was judged against.
-  it("names the merchant's REAL balance and the real hold when the reserve refuses", async () => {
+  // #898 moved the door: the hold fits the balance, so 3.9 sends. Only below 1 credit refuses.
+  it("names the merchant's REAL balance and the real minimum when the reserve refuses", async () => {
     mocks.withLlmBudget.mockRejectedValue(
-      new mocks.MockInsufficientCredits(undefined, { requiredInternal: 40, balanceInternal: 39 }),
+      new mocks.MockInsufficientCredits(undefined, { requiredInternal: 10, balanceInternal: 8 }),
     );
 
     const parts = (await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json()) as Array<{
@@ -532,7 +533,7 @@ describe("POST /api/otto/stream", () => {
 
     const error = parts.find((p) => p.type === "data-error");
     expect(error?.data?.text).toBe(
-      "You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.",
+      "You have 0.8 credits — starting a message with Otto needs at least 1 credit. Top up in Billing.",
     );
     expect(error?.data?.text).not.toMatch(/out of credits/i);
   });
@@ -722,6 +723,79 @@ describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
 
     expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
     expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "done")).toBe(true);
+  });
+});
+
+// ── #879 step 1: Otto foundation schema pinning — page-context pins ─────────
+//
+// Client can declare POSITION (surface/subjectRef/outletId); it can never declare IDENTITY
+// (actorId/visibility) — there is no field for those, and the shared zod schema is `.strict()`,
+// so a client that tries rejects the WHOLE request rather than having the extra keys silently
+// dropped.
+describe("POST /api/otto/stream — #879 step 1 page-context pins", () => {
+  it("writes surface/subjectRef/outletId onto the new USER message when the caller sends them", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Make a launch post",
+      surface: "campaign",
+      subjectRef: "campaign_123",
+      outletId: "outlet_abc",
+    }));
+
+    expect(res.status).toBe(200);
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        role: "USER",
+        surface: "campaign",
+        subjectRef: "campaign_123",
+        outletId: "outlet_abc",
+      }),
+    }));
+  });
+
+  it("leaves surface/subjectRef/outletId NULL on the new USER message when the caller omits them", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
+
+    expect(res.status).toBe(200);
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        role: "USER",
+        surface: null,
+        subjectRef: null,
+        outletId: null,
+      }),
+    }));
+  });
+
+  // Security boundary: actorId/visibility are identity columns with no client-facing field.
+  // The shared request schema is `.strict()`, so sending them rejects parsing entirely — the
+  // request never reaches persistence, and no thread/message is created at all.
+  it("rejects the whole request (and persists nothing) if the caller sends actorId", async () => {
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Make a launch post",
+      actorId: "user_someone_else",
+    }));
+
+    expect(res.status).toBe(400);
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects the whole request (and persists nothing) if the caller sends visibility", async () => {
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Make a launch post",
+      visibility: "private",
+    }));
+
+    expect(res.status).toBe(400);
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
   });
 });
 

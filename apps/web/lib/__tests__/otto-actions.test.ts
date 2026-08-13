@@ -31,6 +31,7 @@ const {
   mockChatMessageUpdateMany,
   mockOrganizationFindUnique,
   mockReserveCredits,
+  mockReserveCreditsUpTo,
   mockRefundReservation,
   mockSettleCredits,
   mockAssertWithinSpendCap,
@@ -180,6 +181,11 @@ const {
     // #524 r3 — the judge asked for interleavings with the REAL reserve participating (not a
     // mocked meter), so the ledger writers have to exist on the db double.
     mockReserveCredits: vi.fn(),
+    // #898 — since the conversation/resume budget carries a minimum, the real meter takes its hold
+    // through reserveCreditsUpTo. The double is deliberately the "plenty of balance, cap above the
+    // hold" case (see below), so every existing assertion about the hold still reads the intended
+    // amount; a test that wants the clamp overrides it.
+    mockReserveCreditsUpTo: vi.fn(),
     mockRefundReservation: vi.fn(),
     mockSettleCredits: vi.fn(),
     // #524 r5 (judge r4 P1-B): the real meter asks the ledger to judge the WHOLE approved action
@@ -356,6 +362,7 @@ vi.mock("@fikirtive/db", () => ({
   InsufficientCredits: MockInsufficientCredits,
   SpendCapBlocked: MockSpendCapBlocked,
   reserveCredits: mockReserveCredits,
+  reserveCreditsUpTo: mockReserveCreditsUpTo,
   refundReservation: mockRefundReservation,
   settleCredits: mockSettleCredits,
   assertWithinSpendCap: mockAssertWithinSpendCap,
@@ -516,6 +523,18 @@ function ledgerBackedReserve() {
     if (reservedRefIds.has(key)) throw new MockUniqueViolation("orgId,idempotencyKey");
     reservedRefIds.add(key);
   });
+  // #898 — the conversation/resume budget carries a minimum, so the real meter takes its hold
+  // through reserveCreditsUpTo. The double stands for "balance comfortably above the hold": it
+  // holds the full requested amount and delegates to the same ledger-backed reserve, so every
+  // existing assertion about what was held (and every duplicate-refId refusal) still reads true.
+  // It does NOT consult the spend cap, which is the point of the Founder 2026-08-13 exemption:
+  // the ceiling governs new paid actions, not a conversation already under way.
+  mockReserveCreditsUpTo.mockImplementation(
+    async (tx: unknown, args: { orgId: string; refId: string; capInternal: number }) => {
+      await mockReserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: args.capInternal });
+      return args.capInternal;
+    },
+  );
 }
 
 /**
@@ -2364,8 +2383,9 @@ describe("ottoTurn — injects brand context + refs as a system message", () => 
 
     // Brand context returns a memory entry
     mockGetBrandContextText.mockResolvedValue("voice: warm, family tone");
-    // Entity loader returns one entity
-    mockEntityFindMany.mockResolvedValue([{ id: "e1", name: "CocoCandy", type: "PRODUCT" }]);
+    // Entity loader returns one entity (#781: the loader also selects the element's styling
+    // variants, so the mocked row carries that key too — an element with no saved looks)
+    mockEntityFindMany.mockResolvedValue([{ id: "e1", name: "CocoCandy", type: "PRODUCT", variants: [] }]);
 
     mockRun.mockResolvedValue(makeMockResult());
     mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
@@ -4167,7 +4187,7 @@ describe("#791-1 项目 brief 进 Otto 每轮上下文", () => {
 // 以及每个入口都叫同一个名字。
 describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
   const insufficient = () =>
-    new MockInsufficientCredits("Not enough credits.", { requiredInternal: 40, balanceInternal: 39 });
+    new MockInsufficientCredits("Not enough credits.", { requiredInternal: 10, balanceInternal: 8 });
 
   it("ottoTurn:说出真实余额与门槛,而不是「Couldn't reach Otto」", async () => {
     mockRequireOwner.mockResolvedValue(GATE);
@@ -4182,7 +4202,7 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
       error?: string;
     };
 
-    expect(res.error).toBe("You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.");
+    expect(res.error).toBe("You have 0.8 credits — starting a message with Otto needs at least 1 credit. Top up in Billing.");
     expect(res.error).not.toMatch(/Couldn't reach Otto/);
   });
 
@@ -4204,7 +4224,7 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
 
     const res = (await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID })) as { error?: string };
 
-    expect(res.error).toBe("You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.");
+    expect(res.error).toBe("You have 0.8 credits — starting a message with Otto needs at least 1 credit. Top up in Billing.");
     expect(res.error).not.toMatch(/Couldn't approve/);
   });
 

@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 const mocks = vi.hoisted(() => {
   const reserveCredits = vi.fn();
+  const reserveCreditsUpTo = vi.fn();
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
   const assertWithinSpendCap = vi.fn();
@@ -38,12 +39,13 @@ const mocks = vi.hoisted(() => {
     }
   }
 
-  return { reserveCredits, settleCredits, refundReservation, assertWithinSpendCap, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
+  return { reserveCredits, reserveCreditsUpTo, settleCredits, refundReservation, assertWithinSpendCap, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
 });
 
 vi.mock("@fikirtive/db", () => ({
   prisma: { $transaction: mocks.$transaction },
   reserveCredits: mocks.reserveCredits,
+  reserveCreditsUpTo: mocks.reserveCreditsUpTo,
   settleCredits: mocks.settleCredits,
   refundReservation: mocks.refundReservation,
   assertWithinSpendCap: mocks.assertWithinSpendCap,
@@ -73,6 +75,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default: reserve/settle/refund succeed (resolve undefined)
   mocks.reserveCredits.mockResolvedValue(undefined);
+  // #898: default is "the whole cap was available" — tests that care set their own hold.
+  mocks.reserveCreditsUpTo.mockResolvedValue(40);
   mocks.settleCredits.mockResolvedValue(undefined);
   mocks.refundReservation.mockResolvedValue(undefined);
   // Reset $transaction to always run its callback
@@ -575,6 +579,105 @@ describe("Test #9 — reserveCapInternal (#543 conversation-turn hold cap)", () 
 });
 
 // ---------------------------------------------------------------------------
+// Test #10 (#898) — reserveMinInternal turns the hold from a fixed amount into
+// min(cap, balance), and moves the door down to the minimum. Founder 2026-08-13,
+// formal correction to #543.
+//
+// The cap alone was still a door: with a flat 4-credit hold, a merchant sitting on
+// 3.9 credits could not send a message at all — they could not even ask what their
+// remaining credits were still good for — while one message measures 0.4–3.3 (#536).
+// ---------------------------------------------------------------------------
+describe("Test #10 — reserveMinInternal (#898 chat hold fits the balance)", () => {
+  it("routes to reserveCreditsUpTo with the cap and the minimum, not to the fixed reserve", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(39);
+
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+
+    expect(mocks.reserveCreditsUpTo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: ORG, refId: REF, capInternal: 40, minimumInternal: 10 }),
+    );
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("the no-usage settle charges the hold that was ACTUALLY taken, not the one it asked for", async () => {
+    // The merchant only had 1.2 credits, so 12 internal is what the reserve took. Charging the
+    // 40 it hoped for would be charging money that was never held — settleCredits would clamp
+    // it, but the intent must be right at this layer too.
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(12);
+  });
+
+  it("a refused entry never calls the model — invariant #1 holds through the new path", async () => {
+    mocks.reserveCreditsUpTo.mockRejectedValue(new mocks.InsufficientCredits());
+    const fn = vi.fn();
+
+    await expect(
+      withLlmBudget(makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }), fn),
+    ).rejects.toBeInstanceOf(mocks.InsufficientCredits);
+
+    expect(fn).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("a throwing call still refunds the whole fitted hold (invariant #3 unchanged)", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+    const boom = new Error("model exploded");
+
+    await expect(
+      withLlmBudget(
+        makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }),
+        vi.fn().mockRejectedValue(boom),
+      ),
+    ).rejects.toBe(boom);
+
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a malformed minimum — 0, negative, fractional, NaN and Infinity keep the fixed hold", async () => {
+    // Fail-closed direction: ignoring a bad minimum holds MORE and admits FEWER callers.
+    for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      vi.clearAllMocks();
+      mocks.reserveCreditsUpTo.mockResolvedValue(12);
+      await withLlmBudget(
+        makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: bad }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+      );
+      expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+      expect(mocks.reserveCredits).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ cost: 40 }),
+      );
+    }
+  });
+
+  it("omitting the minimum leaves every existing caller on the fixed hold, byte for byte", async () => {
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cost: 40 }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #524 r3 — the afterReserve CLAIM window (judge r2 P1-A).
 //
 // 判官定性:任何「先消费一次性同意、再让权威闸决定」的顺序都关不死窗口 —— 两个决定在两笔
@@ -836,5 +939,97 @@ describe("#524 r5 — onRefundedFailure tells the caller this turn charged nothi
       ),
     ).rejects.toBe(boom);
     expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #524 × #898 合流:两票的两个「上限」在这一层碰头。
+//
+// #898 把聊天冻结改成 min(4 credits, 余额),#524 给 reserveCredits 装了商家自设上限的闸。
+// Founder 2026-08-13 裁决(市调报告存档 issue #909):上限只管新的花钱动作,进行中的对话
+// 完全豁免 —— 所以这一层的分流本身就是那条裁决:带 minimum 的回合走 reserveCreditsUpTo
+// (账本侧不读上限),不带的走 reserveCredits(照旧判上限)。
+//
+// 已批准动作的全成本判定(capCostInternal)一行未动:它判的是商家主动要的产出,正是上限
+// 该管的那一类。这里钉的是**两条路各走各的**,以及退款/结算在新路径上原样成立。
+// ---------------------------------------------------------------------------
+describe("#524 × #898 — the conversation hold and the capped charge take different doors", () => {
+  const HOLD = 4;   // reserveCapInternal, pinned below the derived worst case
+  const MIN = 1;    // reserveMinInternal — the entry minimum
+  const TOOL = 6;   // an approved tool's own deterministic charge
+
+  it("a turn WITH a minimum goes through the cap-free reserve; the capped one is never called", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(2);
+
+    await withLlmBudget(
+      makeArgs({ reserveCapInternal: HOLD, reserveMinInternal: MIN }),
+      async () => ({ result: "ok" }),
+    );
+
+    expect(mocks.reserveCreditsUpTo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ capInternal: HOLD, minimumInternal: MIN }),
+    );
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    // No action total ⇒ nothing widened. The conversation leg is judged by neither cap read.
+    expect(mocks.assertWithinSpendCap).not.toHaveBeenCalled();
+  });
+
+  it("a turn WITHOUT a minimum keeps the capped reserve, exactly as #524 shipped it", async () => {
+    await withLlmBudget(makeArgs({ reserveCapInternal: HOLD }), async () => ({ result: "ok" }));
+
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cost: HOLD }),
+    );
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+  });
+
+  it("the approved-action verdict still runs on the balance-aware path — it judges the CHARGE legs", async () => {
+    // The exemption is for the conversation hold, not for the generation the merchant approved.
+    // capCostInternal is the whole approval, so the widened verdict is unchanged by #898.
+    mocks.reserveCreditsUpTo.mockResolvedValue(2);
+
+    await withLlmBudget(
+      makeArgs({ reserveCapInternal: HOLD, reserveMinInternal: MIN, capCostInternal: HOLD + TOOL }),
+      async () => ({ result: "ok" }),
+    );
+
+    expect(mocks.assertWithinSpendCap).toHaveBeenCalledTimes(1);
+    expect(mocks.assertWithinSpendCap.mock.calls[0]![2]).toBe(HOLD + TOOL);
+    // …and it shares the reserve's transaction, so a refusal takes the hold down with it.
+    expect(mocks.assertWithinSpendCap.mock.calls[0]![0]).toBe(mocks.reserveCreditsUpTo.mock.calls[0]![0]);
+  });
+
+  it("settle and refund read the hold that was REALLY taken, not the one it asked for", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(2);
+    await withLlmBudget(
+      makeArgs({ reserveCapInternal: HOLD, reserveMinInternal: MIN }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(2);
+
+    vi.clearAllMocks();
+    mocks.reserveCreditsUpTo.mockResolvedValue(2);
+    const boom = new Error("model exploded");
+    await expect(
+      withLlmBudget(makeArgs({ reserveCapInternal: HOLD, reserveMinInternal: MIN }), vi.fn().mockRejectedValue(boom)),
+    ).rejects.toBe(boom);
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("a refusal from the cap-free reserve is a BALANCE refusal, and the model never runs", async () => {
+    mocks.reserveCreditsUpTo.mockRejectedValue(new mocks.InsufficientCredits());
+    const fn = vi.fn();
+
+    await expect(
+      withLlmBudget(makeArgs({ reserveCapInternal: HOLD, reserveMinInternal: MIN }), fn),
+    ).rejects.toBeInstanceOf(mocks.InsufficientCredits);
+
+    expect(fn).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
   });
 });

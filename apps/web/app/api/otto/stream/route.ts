@@ -125,7 +125,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<Response> => {
 
-    const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
+    const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId, surface, subjectRef, outletId } = parsed.data;
     const OWNED = { ownerId, deletedAt: null } as const;
 
     // Pre-stream setup (validation + USER persist) runs BEFORE the SSE opens so a bad
@@ -203,6 +203,12 @@ export async function POST(req: NextRequest): Promise<Response> {
           text,
           payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
           replyToMessageId: validReplyId,
+          // #879 step 1: page-context pins, written as-is when the caller sent them (else
+          // NULL). Identity columns (actorId, visibility) are never set from a request —
+          // there is no client-facing field for them.
+          surface: surface ?? null,
+          subjectRef: subjectRef ?? null,
+          outletId: outletId ?? null,
         },
       });
       seqAfterUser = seq;

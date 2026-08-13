@@ -3,7 +3,10 @@
  * The per-org credits ledger IS the hard spend ceiling (M1) — you cannot spend credits you
  * do not hold — and since #524 the merchant's OWN per-action cap is enforced on the same
  * line (see assertWithinSpendCap): the balance is what they have, the cap is what they are
- * willing to spend at once, and both refuse before any money moves. Charges are deterministic
+ * willing to spend at once, and both refuse before any money moves. The cap governs NEW PAID
+ * ACTIONS only: the conversation hold (reserveCreditsUpTo) is exempt by Founder ruling
+ * 2026-08-13 and reserves against the balance alone. Charges on the generation paths are
+ * deterministic
  * (pricedGenCredits/pricedRefgenCredits in @fikirtive/core), so RESERVE == SETTLE: there
  * is no variable actual-cost reconciliation. Every worker write is exactly-once via the
  * partial-unique (orgId, refId, kind) index — a resume/redelivery no-ops.
@@ -78,6 +81,12 @@ type Tx = Prisma.TransactionClient;
 const isP2002 = (e: unknown): boolean =>
   typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
 
+/** Marks a SETTLE row whose charge was cut down by the hold ceiling (#898). The suffix is the
+ *  INTERNAL credits the platform absorbed on that settle: `hold-shortfall:21` = 2.1 displayed
+ *  credits not charged. One prefix, so the admin ledger and any later cost report agree on how
+ *  to find them: `WHERE kind = 'SETTLE' AND reason LIKE 'hold-shortfall:%'`. */
+export const HOLD_SHORTFALL_REASON_PREFIX = "hold-shortfall:";
+
 /** The spend-cap verdict for ONE charge, read inside the caller's transaction (#524).
  *
  *  Read here and nowhere else: every paid action in the product reaches the ledger through
@@ -147,6 +156,24 @@ export async function reserveCredits(tx: Tx, args: { orgId: string; refId: strin
   const { orgId, refId, cost } = args;
   if (cost <= 0) return;
   await assertWithinSpendCap(tx, orgId, cost);
+  await reserveAgainstBalance(tx, args);
+}
+
+/** The BALANCE half of a reserve: the atomic conditional decrement plus its ledger row, with no
+ *  spend-cap verdict attached (#524 × #898 merge).
+ *
+ *  It exists because the two callers answer different questions. `reserveCredits` is a merchant
+ *  SPENDING on something — a generation — and the cap is a refusal it must obey. `reserveCreditsUpTo`
+ *  is the conversation hold, which the Founder exempted from the cap on 2026-08-13: the cap governs
+ *  new paid actions, not a conversation already under way. Splitting the balance half out is how
+ *  the exemption is expressed as code that CANNOT reach the cap, rather than as a flag someone has
+ *  to remember to pass.
+ *
+ *  Not exported: every caller outside this file goes through one of the two functions above, so
+ *  there is no way to spend on a generation while stepping around the ceiling. */
+async function reserveAgainstBalance(tx: Tx, args: { orgId: string; refId: string; cost: number }): Promise<void> {
+  const { orgId, refId, cost } = args;
+  if (cost <= 0) return;
   const { count } = await tx.creditAccount.updateMany({
     where: { orgId, balance: { gte: cost } },
     data: { balance: { decrement: cost }, reserved: { increment: cost } },
@@ -164,6 +191,59 @@ export async function reserveCredits(tx: Tx, args: { orgId: string; refId: strin
   await tx.creditLedger.create({
     data: { id: randomUUID(), orgId, balanceDelta: -cost, reservedDelta: cost, kind: "RESERVE", source: "SYSTEM", refId, idempotencyKey: `reserve:${refId}` },
   });
+}
+
+/** RESERVE up to `capInternal`, but never more than the balance actually holds — the #898
+ *  chat-hold semantics (Founder 2026-08-13, interim correction to #543).
+ *
+ *  hold = min(capInternal, balance), refused outright only when balance < minimumInternal.
+ *  Before #898 the hold WAS the door: a fixed 4-credit hold meant a merchant sitting on 3.9
+ *  credits could not send a message at all, while the measured cost of a message is 0.4–3.3
+ *  (#536). Now the door is `minimumInternal` (1 credit) and the hold shrinks to fit.
+ *
+ *  THE SPEND CAP DOES NOT APPLY HERE (#524 × #898 — Founder ruling 2026-08-13, market research
+ *  archived on issue #909). The ceiling in Settings governs NEW PAID ACTIONS — a generation the
+ *  merchant asks for — not a conversation already under way. Enforcing it on this hold would have
+ *  meant a merchant with a 2-credit cap could not send a message at all, while their own cap was
+ *  never the thing the message was going to breach: one message measures 0.4–3.3 credits. So this
+ *  path reserves against the BALANCE ONLY, through `reserveAgainstBalance`, and never reads the
+ *  cap. That exemption is structural, not a flag: this function has no way to reach the verdict.
+ *  The conversation's own exposure is bounded by the balance, which is a real ceiling of its own —
+ *  and by `minimumInternal`, below which the turn is refused.
+ *  (What happens to a merchant who hits their cap mid-conversation — a gate on STARTING new work,
+ *  Otto explaining instead of doing — is a separate ticket, deliberately not this PR.)
+ *
+ *  Money safety is unchanged, and deliberately so:
+ *   - The write is still the same atomic conditional decrement, so balance can never go negative.
+ *     The balance READ here only chooses how much to ask for; it is not what protects the account.
+ *     A concurrent spend between the read and the decrement makes the decrement affect 0 rows →
+ *     InsufficientCredits → the caller's transaction rolls back. Fail-closed: the race can only
+ *     refuse a turn, never over-hold or under-protect.
+ *   - The RESERVE ledger row still carries the exact held amount, so settle/refund keep
+ *     reading the truth from the row and stay exactly-once via the same unique indexes.
+ *   - `minimumInternal` is what stops a 0.0x balance from becoming free chat: the reserve
+ *     no-ops on cost <= 0, so a hold that rounded to nothing would meter nothing.
+ *
+ *  Returns the amount actually held, so the caller can settle against the real hold rather
+ *  than the amount it hoped for. */
+export async function reserveCreditsUpTo(
+  tx: Tx,
+  args: { orgId: string; refId: string; capInternal: number; minimumInternal: number },
+): Promise<number> {
+  const { orgId, refId, capInternal, minimumInternal } = args;
+  const account = await tx.creditAccount.findUnique({ where: { orgId }, select: { balance: true } });
+  const balance = account?.balance ?? 0;
+  if (balance < minimumInternal) {
+    // The door, not the hold: name the minimum to start, and the real balance it was judged
+    // against (#791-7 carries both into the merchant-facing sentence).
+    throw new InsufficientCredits(undefined, {
+      requiredInternal: minimumInternal,
+      balanceInternal: account?.balance ?? null,
+    });
+  }
+  const hold = Math.min(capInternal, balance);
+  await reserveAgainstBalance(tx, { orgId, refId, cost: hold });
+  return hold;
 }
 
 /** SETTLE the held charge for a successfully-committed job. MUST run in the worker's commit
@@ -191,13 +271,23 @@ export async function settleCredits(tx: Tx, args: { orgId: string; refId: string
   if (!reserve) return; // no reservation (historical/pre-credits job) → nothing to settle
   const B = reserve.reservedDelta; // the exact held amount (+cost)
   // A = actual charge; clamp to [0, B] so we never charge more than reserved and never go negative.
-  const A = actualInternal === undefined ? B : Math.min(Math.max(0, Math.trunc(actualInternal)), B);
+  const requested = actualInternal === undefined ? B : Math.max(0, Math.trunc(actualInternal));
+  const A = Math.min(requested, B);
+  // #898: when the clamp actually bites, the difference is money the platform absorbed. It used
+  // to be invisible — the hold was always above the measured peak, so the ceiling was never
+  // reached, and once #898 lets the hold shrink to a small balance it can be. Recording it on
+  // the SETTLE row itself (existing `reason` column, no schema change) makes it exactly-once for
+  // free: the row is already the idempotency guard, so a resume or a duplicate finalizer cannot
+  // double-count the absorption. Merchant-facing surfaces don't read `reason`; the founder admin
+  // ledger does.
+  const shortfall = requested - A;
+  const reason = shortfall > 0 ? `${HOLD_SHORTFALL_REASON_PREFIX}${shortfall}` : "";
   // createMany(skipDuplicates) = INSERT … ON CONFLICT DO NOTHING — NOT try/catch: a caught
   // unique-violation would still leave the WHOLE Postgres transaction aborted, silently rolling
   // back the caller's job-status write (e.g. the resume DONE update). count===0 ⇒ already settled
   // (resume) OR a REFUND won the finalizer race ⇒ no-op, no account change.
   const { count } = await tx.creditLedger.createMany({
-    data: [{ id: randomUUID(), orgId, balanceDelta: B - A, reservedDelta: -B, kind: "SETTLE", source: "SYSTEM", refId, idempotencyKey: `settle:${refId}` }],
+    data: [{ id: randomUUID(), orgId, balanceDelta: B - A, reservedDelta: -B, kind: "SETTLE", source: "SYSTEM", refId, reason, idempotencyKey: `settle:${refId}` }],
     skipDuplicates: true,
   });
   if (count === 0) return;

@@ -12,6 +12,7 @@
  * per-post — the batch drafts the valid posts instead of hard-failing on one bad entry.
  */
 import { navLabel } from "@fikirtive/core";
+import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
@@ -79,8 +80,10 @@ export const schedulePostsSkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Draft one or more Instagram/Facebook/X posts onto the user's schedule as DRAFTS for them to review — " +
-    "nothing is published until the user approves. $0. Use when the user asks you to plan/schedule content " +
+    "Draft one or more Instagram/Facebook/X posts onto the user's schedule as DRAFTS for them to review. " +
+    // #851 — the same sentence the Schedule screen and the approval card show, from one authority.
+    `${ottoPublishTruth()} ` +
+    "$0. Use when the user asks you to plan/schedule content " +
     "(e.g. 'post 3 times a week', 'draft next week's posts'). For each post give channel ('instagram', 'facebook', or 'x'), " +
     "a caption, scheduledAt (UTC/offset ISO-8601 instant, e.g. '2026-07-10T09:00:00Z'), and scheduledTz (the user's IANA time " +
     "zone, e.g. 'Asia/Kuala_Lumpur'). Optionally attach mediaGenerationIds — ids of ALREADY-generated media from the " +

@@ -141,9 +141,15 @@ export default function TermsPage() {
             us:
           </p>
           <ul className="list-disc space-y-1 pl-5">
+            {/* #851 — this said "Some post types can be published automatically" as a plain
+                statement of what happens today. Publishing is switched off, so nothing is sent
+                to any platform at all. The supported post types stay stated (they are what these
+                terms cover once publishing is on); what changed is that they are no longer
+                described as something happening now. */}
             <li>
-              Some post types can be published automatically — Instagram feed images and carousels, and Facebook feed
-              posts.
+              Publishing is switched off at the moment: a scheduled post is saved and kept in your schedule, and
+              nothing is sent to Instagram or Facebook. When publishing is switched on, some post types can be
+              published automatically — Instagram feed images and carousels, and Facebook feed posts.
             </li>
             <li>
               Instagram reels and stories are not supported today. An Instagram post has to be an image, and the product

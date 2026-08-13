@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { approvalCardView, approvalCardResolutionText, asApprovalCardPayload, type ApprovalCardPayload } from "@/lib/approval-card-view";
+import { approvalDoneLine } from "@fikirtive/core/schedule-draft";
 
 const PAYLOAD: ApprovalCardPayload = {
   toolName: "approveScheduledPost",
@@ -97,9 +98,24 @@ describe("approvalCardResolutionText — the failed card only claims a zero it c
   });
 
   it("the other resolutions are unchanged, and a pending card has no resolution sentence at all", () => {
-    expect(approvalCardResolutionText({ ...failed(), status: "approved" })).toBe("Approved — it will publish as scheduled.");
     expect(approvalCardResolutionText({ ...failed(), status: "rejected" })).toBe("Declined — nothing was published.");
     expect(approvalCardResolutionText({ ...failed(), status: "expired" })).toContain("expired");
     expect(approvalCardResolutionText({ ...failed(), status: "pending" })).toBeNull();
+  });
+
+  // ── #851 × #524 合流:「已批准」那句只有一个权威 ──────────────────────────────────
+  //
+  // #524 在这个 helper 里另写了一句 "Approved — it will publish as scheduled."，而 #851 同期把
+  // 同一句移到了 approvalDoneLine()，并让它跟着发布开关走。两份文案共存，卡面就会在详情行说
+  // 「nothing is sent」、在回执里说「会照排程发出去」——正是 #851 拆掉的那种自相矛盾。合流后
+  // 这个 helper 的 approved 分支改为读同一个视图，所以下面两条钉的是「同一句」，不是字面量。
+  it("已批准那句读自权威，发布卡与非发布卡各说各的（#851 × #524）", () => {
+    const publishCard: ApprovalCardPayload = { ...PAYLOAD, status: "approved" };
+    expect(approvalCardResolutionText(publishCard)).toBe(approvalDoneLine());
+    expect(approvalCardResolutionText(publishCard)).toBe(approvalCardView(publishCard).approvedLine);
+    // 非发布类的已批准动作，绝不能拿发布那句去回答。
+    const otherCard: ApprovalCardPayload = { ...failed(), status: "approved" };
+    expect(approvalCardResolutionText(otherCard)).toBe(approvalCardView(otherCard).approvedLine);
+    expect(approvalCardResolutionText(otherCard)).not.toContain("publish");
   });
 });
