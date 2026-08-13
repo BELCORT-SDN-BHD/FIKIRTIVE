@@ -172,7 +172,7 @@ export * from "./canvas-card-status.js";
 export { EXECUTED_SPEC, imageAspectHonoured } from "./executed-spec.js";
 // 付费卡上「这一趟真会做成什么样」的那几个词。与 EXECUTED_SPEC 同住 core,因为读者有两个:
 // Otto 细节卡与战役确认卡(#709)—— 规格文案抄成两份,就一定会有一份先烂掉。
-export { buildSpecChips, videoAspectChip, type SpecChipParams } from "./spec-chips.js";
+export { buildSpecChips, videoAspectChip, type SpecChipParams, type VideoReferenceChipInput } from "./spec-chips.js";
 // 「这一条是扣款、进账,还是还没结算的占用」只判一次:/billing、账务设置页与 Otto 的
 // readSpending 三个对客口径共用它,web 与 otto 不再各写一套(#684)。
 export { creditDirection, type CreditDirection } from "./credit-direction.js";

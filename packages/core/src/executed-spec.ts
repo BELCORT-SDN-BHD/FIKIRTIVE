@@ -37,6 +37,7 @@ export const EXECUTED_SPEC: {
     durationHonoured: boolean;
     resolutionHonoured: boolean;
     audioHonoured: boolean;
+    elementReferencesHonoured: boolean;
   };
 } = {
   image: {
@@ -68,6 +69,12 @@ export const EXECUTED_SPEC: {
      *  (`byteplus.test.ts` 整体断言逐字比对),所以卡面可以照实说 “With sound” /
      *  “No sound”。缺省 true = 引擎默认,也 = `videoDefaults()` 给这个模型的 audio。 */
     audioHonoured: true,
+    /** #785:@元素(产品图 / 代言人)的参考照现在真的进视频引擎 —— 现役适配器把它们发成
+     *  role:"reference_image" 部件(`byteplus.test.ts` 整体断言逐字比对),张数由
+     *  `referenceBudget` 一处算出、worker 侧等价测试对表。**只在纯文生视频那一档**成立
+     *  (`videoReferencesRide`):带首帧/末帧/整段参考视频的三个场景引擎当互斥处理,那些
+     *  档上元素照一张也不发,卡面也照实说 0。false ⇒ 卡面不得承诺元素照会上车。 */
+    elementReferencesHonoured: true,
   },
 };
 

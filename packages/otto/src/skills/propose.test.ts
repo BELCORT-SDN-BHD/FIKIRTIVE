@@ -525,10 +525,10 @@ describe("executePropose — mock DB", () => {
     expect(payload["downgradeNote"]).toBeUndefined();
   });
 
-  // 视频分支的 provider.generateVideo 根本不收 inputImageUrls
-  // (apps/worker/src/jobs/gen.ts:636-644),元素图一张都到不了视频引擎 ——
-  // 那就一个参考照数字都不许报,而不是报一个错的。
-  it("#619: a reference-video card never claims a reference-photo count (elements don't reach the video engine)", async () => {
+  // #785:元素参考照现在真的进视频引擎了 —— 但只在**纯文生视频**那一档。整段参考视频是
+  // 引擎的另一个场景,那一档一张元素照都带不了。#619 之前这里的规矩是「说不准就闭嘴」,
+  // 现在数字算得准了,规矩回到本来那一条:**不许静默**,零也要说出零。
+  it("#785: a reference-video card says none of the element photos ride along (instead of staying silent)", async () => {
     mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
     mockPrisma.referenceImage.count.mockResolvedValue(17);
 
@@ -539,7 +539,43 @@ describe("executePropose — mock DB", () => {
 
     const payload = persistedPayload();
     expect(payload["kind"]).toBe("video");
-    expect(String(payload["downgradeNote"] ?? "")).not.toContain("reference photos");
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("None of your 17 reference photos will be used for this clip.");
+    // 而且绝不能倒过来吹一个「用了 N 张」的规格条目。
+    expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
+  });
+
+  // #785 的正面:纯文生视频 + @元素 ⇒ 照片真的上车,卡面在批准前就说出张数。
+  it("#785: a text-to-video card with @elements says how many reference photos ride along", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(3);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "our product on a beach", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["kind"]).toBe("video");
+    // 3 张全部在 9 张名额之内 ⇒ 没有截断,不许编一句提醒。
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["specChips"] as string[]).toContain("Uses 3 of your reference photos");
+  });
+
+  // 名额压线:9 个 image_url 部件,纯文生视频没有帧占位 ⇒ 元素照上限就是 9。
+  it("#785: a text-to-video card truncates element photos at the engine's image ceiling", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(12);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "everything we sell", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("This run will use 9 of your 12 reference photos.");
+    expect(payload["specChips"] as string[]).toContain("Uses 9 of your reference photos");
   });
 
   it("#619: within the engine limit → no truncation sentence is invented", async () => {

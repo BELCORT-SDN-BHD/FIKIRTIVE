@@ -13,13 +13,16 @@
  *      元素饿死」张数照样是 10,却让商家 @ 到的那个元素**一张都没进引擎**——他为一个
  *      看不见的元素付了钱。所以这里钉死 A0,B0,A1…A8。
  *
- * 真相出处(main @ 6b6c537c,`apps/worker/src/jobs/gen.ts` —— 本票不改这个文件,
- * 它属于 E-6/T2 的范围):
- *   `:519-532` 元素参考照 round-robin,聚合上限 MAX_CONDITIONING_IMAGES(10);
- *   `:650-659` image 分支把编辑底图 unshift 到第 0 位 —— **在上限之外再加一张**。
+ * 真相出处(`apps/worker/src/jobs/gen.ts`):
+ *   元素参考照 round-robin,聚合上限 = `conditioningCap(...)`(core 与 worker 共用的
+ *     那一个函数;image 恒为 MAX_CONDITIONING_IMAGES=10);
+ *   image 分支把编辑底图 unshift 到第 0 位 —— **在上限之外再加一张**。
  *
  * worker 的选片规则一旦漂移(改上限、改成先放底图再截断、改 round-robin 为顺序装满),
  * 这里当场红,逼着 core 里那份副本跟着改,卡面于是自动开始说新话。
+ *
+ * #785 起,文件下半段把同一道闸装到了**视频**那一侧 —— 元素参考照不再是「算了就丢」,
+ * 它们真的进视频引擎,于是「说的张数 = 送的张数 = 送的次序」也必须钉住。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -70,7 +73,7 @@ vi.mock("../storage.js", () => ({ storage: m.storage }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
-import { referenceBudget, MAX_CONDITIONING_IMAGES } from "@fikirtive/core";
+import { referenceBudget, MAX_CONDITIONING_IMAGES, MAX_VIDEO_IMAGE_PARTS } from "@fikirtive/core";
 import { handleGen } from "./gen.js";
 
 const BASE_HASH = "b".repeat(64);
@@ -120,15 +123,15 @@ const BASE_URL = urlOf(BASE_HASH);
  * 刻意不复用 `referenceBudget`:那个函数只回张数,推不出次序,所以这里不存在
  * 「拿被测对象自己当答案」的循环论证。
  */
-function expectedRoundRobinUrls(perEntityLiveCounts: number[]): string[] {
+function expectedRoundRobinUrls(perEntityLiveCounts: number[], cap = MAX_CONDITIONING_IMAGES): string[] {
   const picked: string[] = [];
-  for (let round = 0; picked.length < MAX_CONDITIONING_IMAGES; round++) {
+  for (let round = 0; picked.length < cap; round++) {
     let progressed = false;
     for (let e = 0; e < perEntityLiveCounts.length; e++) {
       if (round >= perEntityLiveCounts[e]!) continue;
       picked.push(elementUrl(e, round));
       progressed = true;
-      if (picked.length >= MAX_CONDITIONING_IMAGES) break;
+      if (picked.length >= cap) break;
     }
     if (!progressed) break;
   }
@@ -231,25 +234,96 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
     expect(actual).toContain(elementUrl(1, 0));
   });
 
-  it("元素图一张都到不了视频引擎 —— 所以视频卡不许报参考照数字", async () => {
-    // 真相:handleGen 的 VIDEO 分支调 provider.generateVideo,它只吃 imageUrl /
-    // tailImageUrl / refVideoUrl(gen.ts:636-644),inputImageUrls 根本不在参数里。
-    m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 17));
+});
+
+// ---------------------------------------------------------------------------
+// #785 —— 视频侧的同一道等价闸。
+//
+// 在这一票之前,`inputImageUrls` 对 VIDEO 分支是**算了就丢**:商家 @ 的产品图与代言人
+// 一张都到不了视频引擎,卡面也就干脆一个数字都不报。现在它们真的上车了,所以同一条纪律
+// 必须跟过来 —— 卡面说的张数、worker 真送的张数、送出去的次序,三者由**同一条规则**派生
+// (`conditioningCap` 是 core 与 worker 共用的那一处),并在这里拿真 `handleGen` 对表。
+//
+// 场景判据(`videoReferencesRide`):首帧 / 首+末帧 / 整段参考视频是引擎的三个互斥场景,
+// 那三档一张元素照都不带;纯文生视频才带,名额 = MAX_VIDEO_IMAGE_PARTS(9)。
+// ---------------------------------------------------------------------------
+describe("#785 —— 视频卡说的张数 = worker 真正发给视频引擎的参考照", () => {
+  const videoJob = { ...imageJob, kind: "VIDEO", model: "seedance-2-mini" };
+
+  /** 真跑一次 handleGen,交回 provider.generateVideo 真正收到的 refImageUrls。 */
+  async function refImageUrlsFromRealWorker(job: Record<string, unknown>): Promise<string[]> {
     m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
-
-    m.genJobFindUnique.mockResolvedValue({
-      ...imageJob,
-      kind: "VIDEO",
-      model: "seedance-2-mini",
-      entityIds: ["e0"],
-      sourceGenerationId: "gen_src",
-    });
+    m.genJobFindUnique.mockResolvedValue(job);
     await handleGen({ genJobId: "g1" }, 0);
+    expect(m.generateVideo, "the paid call must have happened for this case to mean anything").toHaveBeenCalledTimes(1);
+    return (m.generateVideo.mock.calls[0]![0].refImageUrls as string[] | undefined) ?? [];
+  }
 
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
-    expect(m.generateVideo.mock.calls[0]![0]).not.toHaveProperty("inputImageUrls");
-    // 于是卡面对视频一个参考照数字都不报（used/total 皆 0，truncated 为 false）。
-    expect(referenceBudget({ kind: "video", perEntityLiveCounts: [17], hasBaseImage: true, attachedImageCount: 1 }))
-      .toEqual({ used: 0, total: 0, truncated: false });
+  function mockRefs(perEntityLiveCounts: number[]): string[] {
+    const entityIds = perEntityLiveCounts.map((_, i) => `e${i}`);
+    const byEntity = new Map(entityIds.map((id, i) => [id, refsFor(i, perEntityLiveCounts[i]!)]));
+    m.referenceImageFindMany.mockImplementation(async ({ where }: { where: { entityId: string } }) =>
+      byEntity.get(where.entityId) ?? [],
+    );
+    return entityIds;
+  }
+
+  it.each([
+    // [名字, 每个元素的活图数]
+    ["零元素", []],
+    ["两个元素,远未到名额", [3, 3]],
+    ["刚好压线(= 9 个 image_url 名额)", [5, 4]],
+    ["超限 17 → 9", [9, 8]],
+    ["一个元素独占很多图,另一个只有一张(round-robin 不许饿死后者)", [20, 1]],
+  ])("纯文生视频:%s", async (_label, perEntityLiveCounts) => {
+    const entityIds = mockRefs(perEntityLiveCounts);
+    const actual = await refImageUrlsFromRealWorker({ ...videoJob, entityIds });
+
+    const predicted = referenceBudget({ kind: "video", perEntityLiveCounts, hasBaseImage: false, attachedImageCount: 0 });
+
+    // ① 实发集与次序逐张对表 —— 次序就是编号,一张都不许变、不许重排。
+    expect(actual).toEqual(expectedRoundRobinUrls(perEntityLiveCounts, MAX_VIDEO_IMAGE_PARTS));
+    // ② 卡面说的张数 = 引擎真收到的张数。
+    expect(actual.length).toBe(predicted.used);
+    // ③ 商家一共给了几张,也不许说错。
+    const elementTotal = perEntityLiveCounts.reduce((s, n) => s + n, 0);
+    expect(predicted.total).toBe(elementTotal);
+    // ④ 截断这件事本身也不许说错。
+    expect(predicted.truncated).toBe(Math.min(elementTotal, MAX_VIDEO_IMAGE_PARTS) < elementTotal);
+  });
+
+  it.each([
+    ["首帧(i2v)", { sourceGenerationId: "gen_src" }],
+    ["首+末帧", { sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" }],
+    ["整段参考视频", { referenceVideoGenerationId: "gen_vid" }],
+  ])("%s 这一档一张元素照都不发 —— 而且卡面照实说 0", async (_label, shape) => {
+    const entityIds = mockRefs([17]);
+    // 整段参考视频那一档:worker 会去解析它,并按 Asset.durationS 复核窗口。
+    m.generationFindFirst.mockResolvedValue({
+      id: "gen_x",
+      asset: { ownerId: "o1", contentHash: BASE_HASH, ext: "referenceVideoGenerationId" in shape ? "mp4" : "png", durationS: 5 },
+    });
+
+    const actual = await refImageUrlsFromRealWorker({ ...videoJob, entityIds, ...shape });
+
+    expect(actual).toEqual([]);
+    const predicted = referenceBudget({
+      kind: "video",
+      perEntityLiveCounts: [17],
+      hasBaseImage: false,
+      attachedImageCount: 0,
+      hasVideoStartFrame: "sourceGenerationId" in shape,
+      hasVideoTailFrame: "tailGenerationId" in shape,
+      hasReferenceVideo: "referenceVideoGenerationId" in shape,
+    });
+    expect(predicted).toEqual({ used: 0, total: 17, truncated: true });
+  });
+
+  it("没有 @元素时,发给视频引擎的请求里根本没有 refImageUrls 这个字段(旧行为逐字不变)", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => []);
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.genJobFindUnique.mockResolvedValue({ ...videoJob, entityIds: [] });
+    await handleGen({ genJobId: "g1" }, 0);
+    expect(m.generateVideo.mock.calls[0]![0]).not.toHaveProperty("refImageUrls");
   });
 });

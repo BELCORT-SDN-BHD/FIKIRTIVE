@@ -17,6 +17,7 @@ import {
   buildProposeCard,
   buildReferenceBudgetNotes,
   withReferenceBudget,
+  withVideoReferenceChip,
   GenerationUnavailableError,
   type ProposeInput,
   type CardPayload,
@@ -88,22 +89,27 @@ export async function executePropose(
   // 那也正是 GenJob 会带走、worker 会照着取图的那一份。
   const usesAttachedImage = cardPayload.kind === "image" && !!cardPayload.sourceGenerationId;
   const attachedImageCount = ctx.sourceGenerationIds?.length ?? (ctx.sourceGenerationId ? 1 : 0);
-  const finalPayload = withReferenceBudget(
-    cardPayload,
-    buildReferenceBudgetNotes({
-      budget: referenceBudget({
-        kind: cardPayload.kind,
-        perEntityLiveCounts: await countLiveReferenceImagesPerEntity(
-          ctx.orgId,
-          cardPayload.entityIds,
-          cardPayload.variantSel,
-        ),
-        hasBaseImage: usesAttachedImage,
-        attachedImageCount,
-      }),
-      attachedImageCount,
-      usesAttachedImage,
-    }),
+  // #785：视频这一支的名额取决于这张卡自己的形状(有没有首帧 / 整段参考视频)——
+  // `referenceBudget` 与 worker 读的是同一个 `conditioningCap`,所以卡上说的张数与
+  // 引擎真收到的张数不可能分家。
+  const budget = referenceBudget({
+    kind: cardPayload.kind,
+    perEntityLiveCounts: await countLiveReferenceImagesPerEntity(
+      ctx.orgId,
+      cardPayload.entityIds,
+      cardPayload.variantSel,
+    ),
+    hasBaseImage: usesAttachedImage,
+    attachedImageCount,
+    hasVideoStartFrame: cardPayload.kind === "video" && !!cardPayload.sourceGenerationId,
+    hasReferenceVideo: !!cardPayload.referenceVideoGenerationId,
+  });
+  const finalPayload = withVideoReferenceChip(
+    withReferenceBudget(
+      cardPayload,
+      buildReferenceBudgetNotes({ budget, attachedImageCount, usesAttachedImage }),
+    ),
+    budget.used,
   );
 
   // Persist GEN_CARD (match coworkTurn row shape)

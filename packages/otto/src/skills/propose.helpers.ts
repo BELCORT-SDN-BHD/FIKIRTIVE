@@ -167,7 +167,12 @@ export function buildReferenceBudgetNotes(input: {
   const notes: string[] = [];
   if (input.budget.truncated) {
     notes.push(
-      `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
+      // #785：视频的三个带素材场景（首帧 / 首+末帧 / 整段参考视频）一张元素照都带不了，
+      // 所以这里 used 会是 0。「use 0 of your 17」既不像人话，也读着像出了故障 ——
+      // 零这一档单独说一句。仍然是**同一个数字**（budget），只是换了说法。
+      input.budget.used === 0
+        ? `None of your ${input.budget.total} reference photos will be used for this clip.`
+        : `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
@@ -176,6 +181,30 @@ export function buildReferenceBudgetNotes(input: {
     );
   }
   return notes;
+}
+
+/**
+ * #785 —— 视频卡上「这一趟真会用上你几张参考照」那一格。
+ *
+ * 为什么要在卡铸好之后补一次:张数要查库(每个 @元素当下有几张活图),而 `buildProposeCard`
+ * 是纯函数、不碰库。补的方式是**拿同一个 `buildSpecChips` 重算一遍**,不是在数组尾巴上
+ * 手工 push 一格 —— 后者就是第二套卡面逻辑,`EXECUTED_SPEC` 那道闸从此管不到它。
+ *
+ * 入参只有张数;`kind` / `params` / 有没有底图这些全部从卡面自己再读一次,所以重算出来的
+ * 前几格与第一次逐字相同(测试钉着)。纯展示:不改价、不改选型、不改任何付费字段。
+ */
+export function withVideoReferenceChip(payload: CardPayload, elementReferenceCount: number): CardPayload {
+  if (payload.kind !== "video" || elementReferenceCount <= 0) return payload;
+  return {
+    ...payload,
+    specChips: buildSpecChips(
+      payload.kind,
+      payload.params,
+      !!payload.sourceGenerationId,
+      false, // usesAttachedImage 是图片侧的概念(编辑底图),视频卡永远为 false
+      { elementReferenceCount },
+    ),
+  };
 }
 
 /**

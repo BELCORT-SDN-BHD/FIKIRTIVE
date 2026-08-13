@@ -24,6 +24,12 @@ export type SpecChipParams = {
   count: number;
 };
 
+/** #785 视频卡的一条附加事实:这一趟引擎真会收到几张 @元素参考照。
+ *  数字只可能来自 `referenceBudget(...).used` —— 卡面不自己数。 */
+export type VideoReferenceChipInput = {
+  elementReferenceCount: number;
+};
+
 /**
  * 片子形状那一格的卡面说法(#645 T4)。
  *
@@ -48,6 +54,7 @@ export function buildSpecChips(
   params: SpecChipParams,
   hasSourceImage: boolean,
   usesAttachedImage = false,
+  video?: VideoReferenceChipInput,
 ): string[] {
   const chips: string[] = [];
   if (kind === "video") {
@@ -61,6 +68,13 @@ export function buildSpecChips(
     // 声音：#646 T5 接通后这一条照实出现。判据仍然只有 EXECUTED_SPEC 一处 —— 哪天执行层
     // 又断了，改那一处，卡面立刻停止承诺。
     if (EXECUTED_SPEC.video.audioHonoured) chips.push(params.audio ? "With sound" : "No sound");
+    // #785：@元素的参考照现在真的进视频引擎，所以卡面在批准前就说出来 —— 与图片侧
+    // 「Uses your attached image」(#619) 同一条规矩：界面上出现的每一句都得是执行层真会
+    // 做的事。数字不在这里算(来自 `referenceBudget(...).used`)，为 0 时一个字都不说。
+    const refCount = video?.elementReferenceCount ?? 0;
+    if (EXECUTED_SPEC.video.elementReferencesHonoured && refCount > 0) {
+      chips.push(refCount === 1 ? "Uses 1 of your reference photos" : `Uses ${refCount} of your reference photos`);
+    }
   } else {
     // 图片：判据是**这一趟真正会跑的那个适配器**会不会兑现画幅(imageAspectHonoured),
     // 不是那个「现役适配器能不能」的静态标志 —— 选中不发规格的备用路时,卡面必须闭嘴
