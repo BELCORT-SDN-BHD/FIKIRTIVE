@@ -4,6 +4,7 @@ import { MAGIC_LINK_INVALID_EMAIL_MESSAGE } from "@/lib/better-auth/magic-link-c
 import { acceptMagicLinkRequest } from "@/lib/better-auth/magic-link-request";
 import { consumePasswordDoor, consumePublicAuthDoor } from "@/lib/rate-limit-gates";
 import { withCallerIdentityHeader } from "@/lib/caller-identity";
+import { HOURLY_PUBLIC_DOORS } from "@/lib/public-auth-doors";
 
 const handlers = toNextJsHandler(auth);
 
@@ -26,24 +27,6 @@ export const GET = forward.GET;
 
 const MAGIC_LINK_PATH = "/sign-in/magic-link";
 const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
-
-/**
- * #795 r2 — the three public doors whose HOURLY cap has to live here.
- *
- * They used to be `rateLimit.customRules` entries with a one-hour window. Better Auth's database
- * storage prunes its own rows on a 60-second cutoff that ignores the custom rule, so an hourly
- * budget of five silently became five per MINUTE the moment the counters moved to the database.
- * The full reasoning, and why raising Better Auth's global window is not the fix, is at
- * PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR.
- *
- * Better Auth's own short built-in rules still apply to all three underneath this — burst is its
- * job, the hour is ours.
- */
-export const HOURLY_PUBLIC_DOORS = [
-  "/sign-up/email",
-  "/request-password-reset",
-  "/send-verification-email",
-] as const;
 
 /** Better Auth's own 429, byte for byte (api/rate-limiter/index.ts), so a caller cannot tell
  *  which of the two caps refused it — and so the client plugin's error handling is unchanged. */

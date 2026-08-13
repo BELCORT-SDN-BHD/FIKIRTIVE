@@ -63,11 +63,19 @@ export const auth = betterAuth({
     // decrypt inside those paths: the library would hand a caller our ciphertext believing it was
     // a token, and the first future use of a Google token would fail somewhere far from here.
     //
-    // WHAT THE CIPHER ACTUALLY IS (r2 — the earlier note here said AES-256-GCM and that was
-    // simply wrong): XChaCha20-Poly1305 with a managed nonce, over a key derived as SHA-256 of
-    // the secret, hex-encoded behind a `$ba$<version>$` envelope
-    // (better-auth/dist/crypto/index.mjs, `rawEncrypt`). Still AEAD, still no new vendor, key =
-    // BETTER_AUTH_SECRET (already required and already ≥32 chars — see the guard above).
+    // WHAT THE CIPHER ACTUALLY IS — corrected twice, so it is spelled out with its source
+    // (`better-auth/dist/crypto/index.mjs`). r1 said AES-256-GCM: wrong. r2 fixed the algorithm
+    // but added a `$ba$<version>$` envelope that our configuration does not produce: also wrong,
+    // and that second error is exactly what made the cleanup script misread valid ciphertext as
+    // plaintext. The truth:
+    //   · algorithm — XChaCha20-Poly1305 with a managed nonce, key = SHA-256 of the secret,
+    //     output hex-encoded (`rawEncrypt`).
+    //   · ENVELOPE ONLY IN THE MULTI-KEY FORM. `symmetricEncrypt` returns `rawEncrypt(...)`
+    //     unchanged when the key is a STRING — which is our shape, one secret. The
+    //     `$ba$<version>$` prefix is added only for the keyed/rotation form. So our stored
+    //     ciphertext is BARE HEX, and "no `$ba$` prefix" does not mean "not encrypted".
+    // Still AEAD, still no new vendor, key = BETTER_AUTH_SECRET (already required and already
+    // ≥32 chars — see the guard above).
     //
     // WHAT THIS FLAG DOES **NOT** COVER — measured, not assumed. `setTokenUtil` (encrypt on
     // write) is applied to exactly two fields, `accessToken` and `refreshToken`, at all 19 of its

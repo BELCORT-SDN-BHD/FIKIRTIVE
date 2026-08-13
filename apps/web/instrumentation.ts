@@ -1,6 +1,11 @@
-// Next.js server instrumentation. No-op unless SENTRY_DSN is set, so local/dev and
-// any environment without a DSN are completely unaffected. (Closed-beta P0 — minimal
-// error monitoring before external users arrive.)
+// Next.js server instrumentation, run once per runtime at server start. Two things live here:
+//
+//   1. A BOOT CHECK on the caller-identity deployment shape (#795). This runs ALWAYS — the note
+//      that used to sit here, "no-op unless SENTRY_DSN is set, so any environment without a DSN
+//      is completely unaffected", stopped being true when the check landed, and a misconfigured
+//      CALLER_IP_SOURCE now stops the server from starting on purpose.
+//   2. Sentry, which really is a no-op without SENTRY_DSN. (Closed-beta P0 — minimal error
+//      monitoring before external users arrive.)
 export async function register() {
   // #795 r5 — the caller-identity shape is checked HERE, at boot, and not at the first request.
   //

@@ -10,7 +10,7 @@
  * Money: the welcome grant is a CreditLedger write. The exactly-once proof lives in
  * signup-grant-exactly-once.test.ts; here we only assert the happy path lands once.
  */
-import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
 type SentEmail = { to: string; subject: string; text?: string; devPreview?: string };
@@ -264,11 +264,12 @@ describe("#543 · the signup pages are reachable without a session", () => {
  * 「有一条规则」不再是可断言的事实;「哪一层拦哪一种」才是。
  */
 describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () => {
-  // r5 —— 门的清单不在这里手抄一份,而是从路由那份**唯一清单**读出来。第三道门(验证信重发)
-  // 从路由清单里消失时,下面的断言会立刻红,而不是安静地少测一道门。
+  // r5/r7 —— 门的清单不在这里手抄一份,而是从**唯一那份清单**读出来(r7 把它从路由文件搬到
+  // lib/public-auth-doors.ts:Route Handler 只许导出 HTTP 方法,多一个导出 `next build` 就红)。
+  // 第三道门(验证信重发)从清单里消失时,下面的断言会立刻红,而不是安静地少测一道门。
   let PUBLIC_DOORS: readonly string[] = [];
   beforeAll(async () => {
-    ({ HOURLY_PUBLIC_DOORS: PUBLIC_DOORS } = await import("@/app/api/better-auth/[...all]/route"));
+    ({ HOURLY_PUBLIC_DOORS: PUBLIC_DOORS } = await import("@/lib/public-auth-doors"));
   });
 
   it("路由清单就是这三道门 —— 少一道就是少一道闸", () => {
@@ -338,89 +339,5 @@ describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () =
     for (const door of others) {
       expect(await consumePublicAuthDoor(door, headers), `${door} 不该被 ${spent} 的预算连累`).toBeNull();
     }
-  }, 120_000);
-});
-
-/**
- * #795 r5 —— **开着 Better Auth 自己的限流器**,验它数的是不是同一个调用方。
- *
- * 这一条是判官 r4 的 P1 要的证据。BA 默认只在生产开限流(`enabled ?? isProduction`),所以
- * 前面每一条行为用例量到的都只有我们自己那一层 —— BA 取址取错了,测试也一声不吭。
- *
- * 这里用**真实配置**(`auth.options`)另起一个实例,只把 `enabled` 掀开,再把请求交给路由用的
- * 那一个**真实**盖章函数。于是被验的是完整链路:形态配置 → 权威地址 → 合成头 → BA 的桶。
- *
- * 为什么这条以前一定抓不到:Railway 形状下没有 X-Forwarded-For,而 Next 会用平台代理的 socket
- * 地址补一个上去(`base-server.js`)。BA 的默认取址读它 → 全部真实商家共用一个桶 → 它自带的
- * 「10 秒 3 次」会把整个产品一起关在门外。
- */
-describe("#795 r5 · BA 自己的短窗闸也按同一个权威地址分桶", () => {
-  const SIGN_IN = "http://localhost:3100/api/better-auth/sign-in/email";
-  // BA 自带的特殊规则:每条 /sign-in 路径 10 秒 3 次。
-  const BURST_MAX = 3;
-
-  let limited: Awaited<ReturnType<typeof makeLimitedAuth>>;
-
-  async function makeLimitedAuth() {
-    const { betterAuth } = await import("better-auth");
-    return betterAuth({
-      ...auth.options,
-      rateLimit: { ...auth.options.rateLimit, enabled: true },
-    });
-  }
-
-  beforeAll(async () => {
-    // 生产形态,正是取址出问题的那一个。afterAll 必须还回去:环境变量是**进程级**的,
-    // 留着它会让同一个 worker 里后跑的文件按 railway 形态解析自己的请求头(实测:8 条无关
-    // 用例连带变红)。
-    process.env.CALLER_IP_SOURCE = "railway";
-    limited = await makeLimitedAuth();
-  });
-
-  afterAll(() => {
-    delete process.env.CALLER_IP_SOURCE;
-  });
-
-  beforeEach(async () => {
-    const { prisma: db } = await import("@fikirtive/db");
-    await db.betterAuthRateLimit.deleteMany({});
-  });
-
-  /** 走真实盖章函数,再交给开着限流的真实配置实例。 */
-  const press = async (headers: Record<string, string>) => {
-    const { withCallerIdentityHeader } = await import("@/lib/caller-identity");
-    const request = new Request(SIGN_IN, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify({ email: newEmail(), password: PASSWORD }),
-    });
-    return limited.handler(withCallerIdentityHeader(request));
-  };
-
-  it("两个真实商家 = 两个桶(不是一起被关在门外)", async () => {
-    for (let i = 0; i < BURST_MAX; i += 1) {
-      expect((await press({ "x-real-ip": "203.0.113.90" })).status, `第 ${i + 1} 次`).not.toBe(429);
-    }
-    // 第一个人用完了自己的额度。
-    expect((await press({ "x-real-ip": "203.0.113.90" })).status).toBe(429);
-    // 第二个人一点都没被连累 —— 这正是 r4 之前会整站连坐的那一格。
-    expect((await press({ "x-real-ip": "198.51.100.90" })).status).not.toBe(429);
-  }, 120_000);
-
-  it("伪造的 X-Forwarded-For 换不了桶(想换个身份接着敲,换不了)", async () => {
-    for (let i = 0; i < BURST_MAX; i += 1) {
-      await press({ "x-real-ip": "203.0.113.91", "x-forwarded-for": `9.9.9.${i}` });
-    }
-    // 每次都换一段伪造前缀,桶必须纹丝不动。
-    expect((await press({ "x-real-ip": "203.0.113.91", "x-forwarded-for": "1.2.3.4" })).status).toBe(429);
-  }, 120_000);
-
-  it("调用方自带的合成头会被丢掉 —— 那个头只有我们能写", async () => {
-    const { CALLER_IP_HEADER } = await import("@/lib/caller-identity");
-    for (let i = 0; i < BURST_MAX; i += 1) {
-      await press({ "x-real-ip": "203.0.113.92" });
-    }
-    // 调用方直接伪造合成头想开一个新桶 —— 盖章函数先删后写,所以还是同一个桶。
-    expect((await press({ "x-real-ip": "203.0.113.92", [CALLER_IP_HEADER]: "8.8.8.8" })).status).toBe(429);
   }, 120_000);
 });

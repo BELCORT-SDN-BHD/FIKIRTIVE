@@ -42,6 +42,8 @@
  */
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const distUrl = pathToFileURL(path.join(root, "packages/db/dist/src/index.js")).href;
@@ -56,6 +58,49 @@ try {
 
 const confirmed = process.argv.includes("--confirm");
 const expiredIdTokensOnly = process.argv.includes("--expired-id-tokens");
+
+/**
+ * 这个脚本里有一条**抄来的**判定(下面的 `looksEncrypted`,抄的是 better-auth 的
+ * `isLikelyEncrypted`),抄来的东西会随着上游改版而过期 —— 而它一旦过期,`--confirm` 会
+ * **删掉好数据**(把有效密文当明文清掉)。仓库依赖写的是 `^1.6`,也就是同意上游在 1.x 内
+ * 自己往前走。所以真正要改数据之前,先看一眼装着的到底是哪个版本:不在核对过的清单里就拒绝
+ * 执行,并让人回去把判定重新核一遍。只数不改的 dry run 不受影响。
+ */
+const SUPPORTED_BETTER_AUTH_MINORS = ["1.6"];
+
+function installedBetterAuthVersion() {
+  try {
+    // 从 apps/web 解析:better-auth 是它的依赖,pnpm 下仓库根目录解析不到。
+    // 不能直接 resolve("better-auth/package.json") —— 这个子路径不在它的 exports 表里;
+    // 所以解析入口文件,再从路径里回退到包根。
+    const requireFromWeb = createRequire(pathToFileURL(path.join(root, "apps/web/package.json")).href);
+    const entry = requireFromWeb.resolve("better-auth");
+    const marker = `${path.sep}better-auth${path.sep}`;
+    const at = entry.lastIndexOf(marker);
+    if (at === -1) return null;
+    const manifest = path.join(entry.slice(0, at + marker.length), "package.json");
+    return JSON.parse(readFileSync(manifest, "utf8")).version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+if (confirmed) {
+  const version = installedBetterAuthVersion();
+  if (!version) {
+    console.error("[oauth-tokens] 读不到 better-auth 的版本,拒绝执行 —— 判定是否仍然成立无法确认。");
+    console.error('[oauth-tokens] 先跑一次 `pnpm install`,或者去掉 --confirm 只看 dry run。');
+    process.exit(1);
+  }
+  const minor = version.split(".").slice(0, 2).join(".");
+  if (!SUPPORTED_BETTER_AUTH_MINORS.includes(minor)) {
+    console.error(`[oauth-tokens] 装着的 better-auth 是 ${version},核对过的只有 ${SUPPORTED_BETTER_AUTH_MINORS.join(" / ")}.x。`);
+    console.error("[oauth-tokens] 拒绝执行:请先核对 oauth2/utils.mjs 的 isLikelyEncrypted 与 crypto/index.mjs 的");
+    console.error("[oauth-tokens] symmetricEncrypt 是否还是同一套格式,确认后把这个版本加进 SUPPORTED_BETTER_AUTH_MINORS。");
+    process.exit(1);
+  }
+  console.log(`[oauth-tokens] better-auth ${version}(在核对过的清单内)。`);
+}
 
 /** JWT 的 `exp`(秒)。解析不出来就返回 null —— 说不清的数据不删。令牌值不出现在任何输出里。 */
 function expiryOf(jwt) {
