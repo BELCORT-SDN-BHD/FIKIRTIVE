@@ -19,14 +19,17 @@ import {
   UNDERSTANDING_MAX_FACTS_PER_VIDEO,
   UNDERSTAND_QUEUE_POLICY,
   UNDERSTANDING_REQUEST_TIMEOUT_MS,
-  UNDERSTANDING_FREE_GRANT_TOKENS,
+  UNDERSTANDING_IMAGE_MAX_PIXELS,
+  UNDERSTANDING_IMAGE_MAX_BYTES,
+  UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS,
+  UNDERSTANDING_IMAGE_TOKENS_PER_MEGAPIXEL,
+  UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT,
   CHEAPEST_VIDEO_COGS_USD,
   understandingCostShare,
   understandingCostUsd,
   understandingWorstCaseUsd,
-  understandingRunsWithinFreeGrant,
-  understandingDailyCap,
-  understandingDailyCeilingUsdPerOwner,
+  understandingImageWithinPreflight,
+  understandingDailyBudgetUsd,
   assetUnderstandingEnabled,
   understandingKindForMime,
   isUnderstandingKind,
@@ -73,19 +76,45 @@ describe("产品承诺:一次理解 < 一条视频成本的 1%", () => {
   });
 });
 
-describe("先烧免费额度", () => {
-  it("一份免费额度够跑的趟数是个有意义的正整数", () => {
-    for (const kind of UNDERSTANDING_KINDS) {
-      const runs = understandingRunsWithinFreeGrant(kind);
-      expect(Number.isInteger(runs)).toBe(true);
-      expect(runs).toBeGreaterThan(0);
-      expect(runs * (UNDERSTANDING_CAPS[kind].maxInputTokens + UNDERSTANDING_CAPS[kind].maxOutputTokens))
-        .toBeLessThanOrEqual(UNDERSTANDING_FREE_GRANT_TOKENS);
+describe("图片的 pre-flight 闸(和视频时长闸对称)", () => {
+  it("图片那两档的输入上限确实由闸门像素数推出来,而不是另抄一个数", () => {
+    expect(UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS).toBe(
+      Math.ceil((UNDERSTANDING_IMAGE_MAX_PIXELS / 1_000_000) * UNDERSTANDING_IMAGE_TOKENS_PER_MEGAPIXEL),
+    );
+    expect(UNDERSTANDING_CAPS["image-caption"].maxInputTokens).toBe(UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS);
+    // doc-extract 读的是**同一张图**,所以输入闸门必须一样宽,不能各写各的
+    expect(UNDERSTANDING_CAPS["doc-extract"].maxInputTokens).toBe(UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS);
+  });
+
+  it("手机默认出片(12 MP)过得去 —— 闸不该挡住最常见的那张照片", () => {
+    expect(understandingImageWithinPreflight({ width: 4032, height: 3024 })).toBe(true);
+  });
+
+  it("超过闸门的图片被拦下(48 MP 全分辨率模式)", () => {
+    expect(understandingImageWithinPreflight({ width: 8064, height: 6048 })).toBe(false);
+  });
+
+  it("尺寸读不到就按字节判", () => {
+    expect(understandingImageWithinPreflight({ sizeBytes: 5 * 1024 * 1024 })).toBe(true);
+    expect(understandingImageWithinPreflight({ sizeBytes: UNDERSTANDING_IMAGE_MAX_BYTES + 1 })).toBe(false);
+    // BigInt 是 Asset.sizeBytes 的真实形态
+    expect(understandingImageWithinPreflight({ sizeBytes: BigInt(UNDERSTANDING_IMAGE_MAX_BYTES + 1) })).toBe(false);
+  });
+
+  it("尺寸和字节都读不到就放行 —— 没有证据不判死", () => {
+    expect(understandingImageWithinPreflight({})).toBe(true);
+    expect(understandingImageWithinPreflight({ width: null, height: null, sizeBytes: null })).toBe(true);
+  });
+
+  it("闸门以内的最坏一张图,两档都还在 1% 以下 —— 这就是闸门存在的理由", () => {
+    // 闸门放宽一点点,1% 就破:这条断言是那个「一点点」的守门人
+    for (const kind of ["image-caption", "doc-extract"] as const) {
+      expect(understandingCostShare(kind)).toBeLessThan(UNDERSTANDING_VIDEO_COST_SHARE_CEILING);
     }
   });
 });
 
-describe("总开关与每租户日额(真正兜住花费的两样)", () => {
+describe("总开关与平台日预算(真正兜住花费的两样)", () => {
   it("缺省是开的", () => {
     expect(assetUnderstandingEnabled({})).toBe(true);
   });
@@ -96,20 +125,22 @@ describe("总开关与每租户日额(真正兜住花费的两样)", () => {
     }
   });
 
-  it("日额可调,非法值退回默认(绝不静默变成无限)", () => {
-    expect(understandingDailyCap({ ASSET_UNDERSTANDING_DAILY_CAP: "5" })).toBe(5);
-    expect(understandingDailyCap({ ASSET_UNDERSTANDING_DAILY_CAP: "0" })).toBe(0); // 0 = 全停,合法
-    for (const bad of ["-1", "abc", "1.5", ""]) {
-      expect(understandingDailyCap({ ASSET_UNDERSTANDING_DAILY_CAP: bad })).toBe(understandingDailyCap({}));
+  it("预算可调,非法值退回默认(绝不静默变成无限)", () => {
+    expect(understandingDailyBudgetUsd({ ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "12.5" })).toBe(12.5);
+    expect(understandingDailyBudgetUsd({ ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "0" })).toBe(0); // 0 = 全停,合法
+    for (const bad of ["-1", "abc", ""]) {
+      expect(understandingDailyBudgetUsd({ ASSET_UNDERSTANDING_DAILY_BUDGET_USD: bad })).toBe(
+        UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT,
+      );
     }
   });
 
-  it("一个商家一天最多让我们花的钱是个可读的小数目", () => {
-    const ceiling = understandingDailyCeilingUsdPerOwner({});
-    expect(ceiling).toBeGreaterThan(0);
-    // 一整天吃满,也还不到一条视频的钱 —— 这就是「成本 < 视频的 1%」在日额上的样子
-    expect(ceiling).toBeLessThan(CHEAPEST_VIDEO_COGS_USD * understandingDailyCap({}));
-    expect(understandingDailyCeilingUsdPerOwner({ ASSET_UNDERSTANDING_DAILY_CAP: "0" })).toBe(0);
+  it("预算的单位是**美元**,不是行数 —— 它回答的是「一天最多被账单多少」", () => {
+    const budget = understandingDailyBudgetUsd({});
+    expect(budget).toBeGreaterThan(0);
+    // 一天的预算够读很多素材,但也就是几十条视频的钱 —— 一个人看得懂的量级
+    expect(budget / Math.max(...UNDERSTANDING_KINDS.map(understandingWorstCaseUsd))).toBeGreaterThan(1_000);
+    expect(budget).toBeLessThan(CHEAPEST_VIDEO_COGS_USD * 100);
   });
 });
 

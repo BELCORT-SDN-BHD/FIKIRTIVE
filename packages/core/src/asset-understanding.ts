@@ -15,9 +15,15 @@
  *  1. **商家永远不点「分析」按钮。** 理解在后台自动跑(worker 的 understand 队列),
  *     商家的体感是「Otto 好像认识我的店」。这个模块因此不导出任何「开始分析」的入参形状。
  *  2. **商家一分钱都不付。** 理解是平台成本,不进 CreditLedger,不 reserve/settle。
- *     真正兜住花费的是三样都在这个文件里的东西:总开关、每租户每日次数上限、每次调用的
- *     token 上限(以及 video 的时长闸门 —— 没有它,「每次 token 上限」只是许愿)。
+ *     真正兜住花费的是三样都在这个文件里的东西:总开关、**平台级的每日美元预算**、
+ *     每次调用的 token 上限(以及让 token 上限真正成立的两道 pre-flight 闸:视频按时长、
+ *     图片按像素/字节 —— 没有它们,「每次 token 上限」只是许愿)。
  *  3. **白标。** 这个文件里没有供应商名字;产物里也不许出现(worker 落盘走 redact)。
+ *
+ * ── 一条纪律:资源闸不许毁数据 ────────────────────────────────────────────────
+ * 「今天不跑」和「永远不跑」是两件事。开关关掉、平台预算见底、这个环境签不出 URL ——
+ * 都是**资源**原因,行退回 QUEUED,明天继续。只有真终局(素材没了、这份字节我们按预算
+ * 读不动)才落 SKIPPED。反过来做的代价不是多花钱,是商家的素材被永久地、静悄悄地忘掉。
  */
 
 import { SEEDANCE_COGS_USD_PER_SECOND, GEN_VIDEO_SECONDS } from "./gen.js";
@@ -35,7 +41,9 @@ export function isUnderstandingKind(v: string): v is UnderstandingKind {
 }
 
 /** 行状态。代码校验的 String(house style,不建 PG enum)。
- *  SKIPPED = 决定不跑(开关关、超日额、素材太长/已删)—— 与 FAILED 不同,它不是故障。 */
+ *  SKIPPED = **真终局**,永远不会再跑:素材已经没了,或者这份字节按我们的预算读不动
+ *  (视频超时长闸、图片超 pre-flight 闸)。资源原因(开关关、平台预算见底、这个环境
+ *  签不出 URL)一律**不落 SKIPPED** —— 那些行退回 QUEUED,下一轮继续。 */
 export const UNDERSTANDING_STATUSES = ["QUEUED", "RUNNING", "DONE", "FAILED", "SKIPPED"] as const;
 export type UnderstandingStatus = (typeof UNDERSTANDING_STATUSES)[number];
 
@@ -48,11 +56,6 @@ export const UNDERSTANDING_MODEL = "understand-mini";
 /** 理解模型牌价(USD / 1M token,票面给定)。 */
 export const UNDERSTANDING_USD_PER_MTOKEN_IN = 0.1;
 export const UNDERSTANDING_USD_PER_MTOKEN_OUT = 0.4;
-
-/** 每个模型未动用的免费额度(token)。票面:「先烧免费额度」。
- *  它不是一道闸(供应商侧的账我们读不到),而是 `understandingRunsWithinFreeGrant()`
- *  的分子 —— 开机日志报一次「这份免费额度够跑多少趟」,运维据此决定要不要动真钱。 */
-export const UNDERSTANDING_FREE_GRANT_TOKENS = 500_000;
 
 /**
  * 视频理解的采样口径 —— **这一组数字是「视频 token 上限」能成立的全部原因**。
@@ -73,6 +76,51 @@ export const UNDERSTANDING_VIDEO_MAX_INPUT_TOKENS = Math.ceil(
   UNDERSTANDING_VIDEO_MAX_SECONDS * UNDERSTANDING_VIDEO_SAMPLE_FPS * UNDERSTANDING_LOW_DETAIL_TOKENS_PER_FRAME,
 );
 
+/**
+ * 图片的 pre-flight 闸 —— **和视频那道时长闸一字不差的同一条推理**。
+ *
+ * 我们请求里带 `detail: "low"`,而那个参数在我们账户上还没实测过。万一它被忽略,输入
+ * token 就会跟像素数一起走:一张按 512px 切块计费的照片,每百万像素约 3.8 块。所以图片
+ * 侧的输入上限**由这道闸推出来**,不是另抄一个数 —— 闸在,`maxInputTokens` 才是一个上限;
+ * 闸不在,它只是一句请求(视频那一段的原话,对图片一字不差地成立)。
+ *
+ * 16 MP 的取值:手机默认出片是 12 MP(4032×3024),留了三分之一的余量;更大的只有
+ * 48 MP 全分辨率模式和 600dpi 扫描件。它们落 SKIPPED —— 与视频超时长同一个终局语义,
+ * 行上带得走原因,不是静悄悄地忘掉。
+ */
+export const UNDERSTANDING_IMAGE_MAX_PIXELS = 16_000_000;
+/** 每百万像素的输入 token 记账口径(512px 切块 × 每块 170 token ≈ 649,记高不记低)。 */
+export const UNDERSTANDING_IMAGE_TOKENS_PER_MEGAPIXEL = 700;
+/**
+ * 尺寸读不到时的粗口径兜底(ingest 的 ffprobe 还没跑过,或者那张图它读不出来)。
+ * 刻意放得很宽:16 MP 的 JPEG 约 5 MB、PNG 约 30 MB,40 MiB 只拦真正病态的文件。
+ */
+export const UNDERSTANDING_IMAGE_MAX_BYTES = 40 * 1024 * 1024;
+
+/** 图片理解**最坏情况**的输入 token = 闸门像素数 × 每百万像素 token。 */
+export const UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS = Math.ceil(
+  (UNDERSTANDING_IMAGE_MAX_PIXELS / 1_000_000) * UNDERSTANDING_IMAGE_TOKENS_PER_MEGAPIXEL,
+);
+
+/**
+ * 这张图跑不跑得起?**纯函数**,worker 在发请求之前问一次(问的时候一分钱还没花)。
+ * 尺寸拿得到就按像素判;拿不到就按字节判。两个都拿不到 = 放行(没有证据就不判死)。
+ */
+export function understandingImageWithinPreflight(meta: {
+  width?: number | null;
+  height?: number | null;
+  sizeBytes?: number | bigint | null;
+}): boolean {
+  const w = Number(meta.width ?? 0);
+  const h = Number(meta.height ?? 0);
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+    return w * h <= UNDERSTANDING_IMAGE_MAX_PIXELS;
+  }
+  const bytes = Number(meta.sizeBytes ?? 0);
+  if (Number.isFinite(bytes) && bytes > 0) return bytes <= UNDERSTANDING_IMAGE_MAX_BYTES;
+  return true;
+}
+
 export interface UnderstandingCaps {
   /** 一次调用最坏情况的输入 token(记账用;真正的闸门见各 kind 的 pre-flight)。 */
   maxInputTokens: number;
@@ -85,10 +133,11 @@ export interface UnderstandingCaps {
  * 而 1% 断言就在那个函数上 —— 这就是「集中配置」在这个票里的具体含义。
  */
 export const UNDERSTANDING_CAPS: Record<UnderstandingKind, UnderstandingCaps> = {
-  // 一张产品照 + 一段简短的结构化描述。
-  "image-caption": { maxInputTokens: 4_000, maxOutputTokens: 400 },
-  // 一张菜单/价目表要读满整页文字,并吐出一串产品行 —— 进出都比 caption 宽。
-  "doc-extract": { maxInputTokens: 8_000, maxOutputTokens: 1_200 },
+  // 一张产品照 + 一段简短的结构化描述。输入上限由图片 pre-flight 闸推出来(见上)。
+  "image-caption": { maxInputTokens: UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS, maxOutputTokens: 400 },
+  // 一张菜单/价目表要读满整页文字,并吐出一串产品行 —— **同一张图**,所以输入闸门一样,
+  // 只有输出比 caption 宽。
+  "doc-extract": { maxInputTokens: UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS, maxOutputTokens: 1_200 },
   // 抽帧后的门店视频 + 一段可读的店面理解。
   "video-qa": { maxInputTokens: UNDERSTANDING_VIDEO_MAX_INPUT_TOKENS, maxOutputTokens: 500 },
 };
@@ -124,38 +173,39 @@ export function understandingCostShare(kind: UnderstandingKind): number {
   return understandingWorstCaseUsd(kind) / CHEAPEST_VIDEO_COGS_USD;
 }
 
-/** 一份免费额度够跑多少趟这个 kind(向下取整)。开机日志报它。 */
-export function understandingRunsWithinFreeGrant(kind: UnderstandingKind): number {
-  const caps = UNDERSTANDING_CAPS[kind];
-  return Math.floor(UNDERSTANDING_FREE_GRANT_TOKENS / (caps.maxInputTokens + caps.maxOutputTokens));
-}
+// ── 开关与预算(真正兜住花费的三样东西之二、之三)──────────────────────────────
 
-// ── 开关与限额(真正兜住花费的三样东西之二、之三)──────────────────────────────
-
-/** 总开关。`ASSET_UNDERSTANDING=off` 关掉;缺省 = 开。关掉后新行落 SKIPPED,不排队、不花钱。 */
+/**
+ * 总开关。`ASSET_UNDERSTANDING=off` 关掉;缺省 = 开。
+ *
+ * **它是暂停键,不是销毁键。** 扫描器每一轮都读它:关着就这一轮不派新活,已经排在
+ * 队列里的行退回 QUEUED。开关打开,昨天那些素材照样会被读到。
+ */
 export const ASSET_UNDERSTANDING_ENV = "ASSET_UNDERSTANDING";
 export function assetUnderstandingEnabled(env?: Env): boolean {
   const raw = (getEnv(env)[ASSET_UNDERSTANDING_ENV] ?? "").trim().toLowerCase();
   return raw !== "off" && raw !== "0" && raw !== "false";
 }
 
-/** 每租户每日理解次数上限(默认 50)。这是**每个商家**的花费天花板:
- *  50 × 最贵 kind 的最坏情况 ≈ `understandingDailyCeilingUsdPerOwner()`。 */
-export const UNDERSTANDING_DAILY_CAP_DEFAULT = 50;
-export const UNDERSTANDING_DAILY_CAP_ENV = "ASSET_UNDERSTANDING_DAILY_CAP";
-export function understandingDailyCap(env?: Env): number {
+/**
+ * **平台**一天的理解预算(USD)。回答的是「我们一天最多被账单多少钱」——
+ * 那是一个 platform-wide 的问题,所以答案也必须是 platform-wide 的。
+ *
+ * 计量用的是**真实美元**,不是行数:`AssetUnderstanding` 上已经有 inputTokens /
+ * outputTokens 两列,`understandingCostUsd()` 是现成的算式。数行数会在两头都错 ——
+ * 一行失败但已经计费的读图数成 0,一行三次重试数成 1。
+ *
+ * 超线的动作是**暂缓**不是**丢弃**:那一轮不派新活,行留在 QUEUED,次日预算自然复位。
+ */
+export const UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT = 5;
+export const UNDERSTANDING_DAILY_BUDGET_ENV = "ASSET_UNDERSTANDING_DAILY_BUDGET_USD";
+export function understandingDailyBudgetUsd(env?: Env): number {
   // 空串/全空白算「没设」—— `Number("")` 是 0,而 0 在这里是「全停」这个合法意图。
   // 不先挑出来,一个空环境变量就会被读成 Founder 亲自把理解关了。
-  const raw = (getEnv(env)[UNDERSTANDING_DAILY_CAP_ENV] ?? "").trim();
-  if (raw === "") return UNDERSTANDING_DAILY_CAP_DEFAULT;
+  const raw = (getEnv(env)[UNDERSTANDING_DAILY_BUDGET_ENV] ?? "").trim();
+  if (raw === "") return UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT;
   const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 ? n : UNDERSTANDING_DAILY_CAP_DEFAULT;
-}
-
-/** 一个商家一天最多能让我们花多少钱(按最贵的 kind 全吃满算)。纯函数,供开机日志与测试。 */
-export function understandingDailyCeilingUsdPerOwner(env?: Env): number {
-  const worst = Math.max(...UNDERSTANDING_KINDS.map(understandingWorstCaseUsd));
-  return understandingDailyCap(env) * worst;
+  return Number.isFinite(n) && n >= 0 ? n : UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT;
 }
 
 // ── 素材 → kind 的路由 ────────────────────────────────────────────────────────

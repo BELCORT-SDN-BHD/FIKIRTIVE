@@ -53,11 +53,8 @@ import {
   UNDERSTAND_QUEUE,
   UNDERSTAND_DLQ,
   UNDERSTAND_QUEUE_POLICY,
-  UNDERSTANDING_KINDS,
   assetUnderstandingEnabled,
-  understandingDailyCap,
-  understandingDailyCeilingUsdPerOwner,
-  understandingRunsWithinFreeGrant,
+  understandingDailyBudgetUsd,
   type RenderJobData,
   type RefGenJobData,
   type GenJobData,
@@ -399,21 +396,19 @@ async function main(): Promise<void> {
     }
   };
   if (plan.supervises) {
-    if (assetUnderstandingEnabled(process.env)) {
-      // The cost account, printed once at boot so nobody has to derive it from the code:
-      // what one merchant can cost us in a day, and how far the untouched free grant goes.
-      const cap = understandingDailyCap(process.env);
-      const grantRuns = UNDERSTANDING_KINDS.map((k) => `${k} ×${understandingRunsWithinFreeGrant(k)}`).join(", ");
-      console.log(
-        `[worker] asset understanding ON — up to ${cap} file(s) per merchant per day ` +
-          `(ceiling $${understandingDailyCeilingUsdPerOwner(process.env).toFixed(4)} per merchant per day). ` +
-          `Free grant covers: ${grantRuns}. Merchants are never charged for this.`,
-      );
-      setInterval(() => void readNewFiles(), 60_000);
-      void readNewFiles(); // read anything that arrived while we were down
-    } else {
-      console.log("[worker] asset understanding OFF (ASSET_UNDERSTANDING) — no files will be read");
-    }
+    // The cost account, printed once at boot so nobody has to derive it from the code. It is a
+    // PLATFORM number in real dollars — "what can this cost us in a day" is a platform question,
+    // so a per-merchant row count was never an answer to it.
+    console.log(
+      `[worker] asset understanding — platform budget $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
+        `(${assetUnderstandingEnabled(process.env) ? "switch ON" : "switch OFF — paused, nothing is discarded"}). ` +
+        `Over budget or switched off, files stay queued and are read the next day. ` +
+        `Merchants are never charged for this.`,
+    );
+    // The interval is installed either way: the switch is re-read on EVERY scan, so flipping it
+    // off pauses the reading instead of destroying whatever arrives while it is off.
+    setInterval(() => void readNewFiles(), 60_000);
+    void readNewFiles(); // read anything that arrived while we were down
   }
 
   console.log(`[worker] started — ${planSummary(plan)}`);

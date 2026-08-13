@@ -49,6 +49,9 @@ export type SystemReason =
   | "understanding-scan"
   /** #784 — returns AssetUnderstanding rows a crashed worker left RUNNING to the queue. */
   | "understanding-reaper"
+  /** #784 — sums today's understanding token spend across every tenant against the PLATFORM
+   *  daily budget. "What can this cost us in a day" has no single tenant to scope it to. */
+  | "understanding-budget"
   /**
    * #733 — the founder admin console's platform-wide READ model.
    *
@@ -81,6 +84,9 @@ export type SystemReason =
  */
 export const READ_ONLY_SYSTEM_REASONS: ReadonlySet<SystemReason> = new Set<SystemReason>([
   "admin:platform-read",
+  // #784 — the platform understanding-budget read. It sums two token columns across every
+  // tenant and returns a number; enforcing that here beats trusting it to stay that way.
+  "understanding-budget",
 ]);
 
 /**
