@@ -24,7 +24,7 @@
 import { describe, it, expect } from "vitest";
 import { GEN_QUEUE_POLICY, REFGEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY, PUBLISH_QUEUE_POLICY, PUBLISH_EXECUTION_DEADLINE_MS } from "@fikirtive/core";
 import { VIDEO_POLL_TIMEOUT_MS } from "@fikirtive/generation";
-import { GEN_STALE_MS, GEN_REAP_MS, GEN_QUEUED_REAP_MS } from "./gen.js";
+import { GEN_STALE_MS, GEN_REAP_MS, GEN_QUEUED_REAP_MS, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
 import { REFGEN_STALE_MS, REFGEN_REAP_MS, REFGEN_QUEUED_REAP_MS } from "./refgen.js";
 
 const MINUTE = 60_000;
@@ -60,6 +60,16 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
     expect(genExpireMs).toBe(20 * MINUTE);
     expect(GEN_REAP_MS).toBe(25 * MINUTE);
     expect(GEN_QUEUED_REAP_MS).toBe(25 * MINUTE);
+  });
+
+  // #782 r13 —— 第五个数字,而且它**不属于**上面那条链。
+  it("DONE-零产出的宽限期是它自己的一条尺度,不受队列过期约束", () => {
+    // 上面每个窗口都在保护「一次可能还在跑的付费调用」,所以都必须站在队列过期之后。这一个
+    // 保护的东西不同:它盯的是一行**已经终态**的作业(generationIds 与结算同一笔事务、写在
+    // DONE 之前,所以 DONE 的那一刻产出就是最终值)。零本来就正确;十分钟只是不让巡检成为
+    // 第一个注意到一行的人,同时让一个真坏掉的行在商家的一次落座里就走到救援入口。
+    expect(GEN_DONE_EMPTY_GRACE_MS).toBe(10 * MINUTE);
+    expect(GEN_DONE_EMPTY_GRACE_MS).toBeLessThan(GEN_REAP_MS);
   });
 });
 

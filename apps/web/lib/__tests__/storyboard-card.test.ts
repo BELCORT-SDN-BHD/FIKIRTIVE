@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
   shotsNeedingMintedFirstFrame,
@@ -12,6 +9,7 @@ import {
   needsRefreshEntrance,
   parseStoryboardCardPayload,
   MAX_STORYBOARD_SHOTS,
+  type ShotMediaReport,
   type ShotMediaState,
   type ShotMediaStatus,
   type ShotMediaSyncReport,
@@ -336,48 +334,12 @@ describe("#782 r3 shotsNeedingMintedFirstFrame 并入卡死镜头 —— 恢复�
   });
 });
 
-// ---------------------------------------------------------------------------
-// #782 r2b(判官 r1 P1 之二)—— 卡面文案钉死:连续性不是绝对承诺,重出提示下游不变
-//
-// 老文案「Each shot picks up exactly where the one before it ends」是一句绝对承诺,而
-// 代码的真实行为(storyboard-gate1-actions.ts 闸③)是「只填空,永不覆盖」——重出更早的
-// 镜头不会更新已经存在的下游首帧。这里直接读源码钉死新文案,不靠猜测组件渲染出什么。
-// ---------------------------------------------------------------------------
-
-describe("#782 r2b 卡面文案钉死", () => {
-  const HERE = dirname(fileURLToPath(import.meta.url));
-  const CARD_SOURCE = readFileSync(resolve(HERE, "../../components/otto/StoryboardCard.tsx"), "utf8");
-
-  it("连续性说明不再许这句绝对承诺——「picks up exactly where the one before it ends」", () => {
-    expect(CARD_SOURCE).not.toContain("picks up exactly where the one before it ends");
-  });
-
-  it("连续性说明改说实话:接续只在首次生成时发生,重出更早的镜头不会动已有首帧的下游镜头", () => {
-    expect(CARD_SOURCE).toContain("As each shot is first made, it picks up from the one before it");
-    expect(CARD_SOURCE).toContain("Re-making an earlier");
-    expect(CARD_SOURCE).toContain("won&rsquo;t change a later shot&rsquo;s first frame once it already has one.");
-  });
-
-  it("重出视频的确认框加了一句下游不变的说明", () => {
-    expect(CARD_SOURCE).toContain("This won&rsquo;t change the first frame of any shot that already has one.");
-  });
-
-  /**
-   * #782 r3(判官 r2 P1-a 的卡面那一半)—— r2b 把「为什么接不上」这句解释藏在
-   * `isStuck && !framePending` 后面。于是一张**未消费**的准备卡(取消 / 启动失败 / 崩溃后
-   * 刷新)一出现,卡面就只剩一行 "Generating first frame…":既没有解释,也没有下一步。
-   * 两行答的是两个不同的问题 —— 这一行答**为什么**不接了(闸③ 已经判定的、关于那条片子的
-   * 永久事实),上面那行答**有没有**帧在路上。所以解释不再被进度挡住。
-   */
-  it("卡死的解释不再被 framePending 挡住(准备卡在,解释和入口也在)", () => {
-    expect(CARD_SOURCE).not.toContain("isStuck && !framePending");
-    expect(CARD_SOURCE).toContain("{isStuck && (");
-    // 「(below)」这个位置词被拿掉了:Generate all 在生成中是隐藏的,指过去会指空。
-    expect(CARD_SOURCE).toContain("this shot needs its own");
-    expect(CARD_SOURCE).not.toContain("first frame (below)");
-  });
-});
-
+// #782 r13(判官 r12 P3-F3)—— 这里原本还有一个 `#782 r2b 卡面文案钉死` describe:它
+// `readFileSync` 读 StoryboardCard.tsx 的源码字符串,断言里面有没有某几句话。那类断言证明的是
+// 「源文件里有这个子串」,不是「商家在屏幕上看得见这句话」——把 JSX 重构一次就假红,把文案搬进
+// 一个不渲染的分支就假绿。它测的那三件事(接续说明不再是绝对承诺、重出确认框的下游说明、卡死
+// 解释不再被进度挡住)已经改由**真渲染**钉在 storyboard-late-landing.test.ts 的
+// 「#782 r13 卡面文案:真渲染」里 —— 同样的三句话,读的是 DOM。
 
 describe("#782 r7 nextSyncPhase —— 「到顶」不等于「放弃」", () => {
   it("服务端说没有活作业了 → 收工(已终局的卡零轮询)", () => {
@@ -418,14 +380,6 @@ function shotOf(over: Record<string, unknown> = {}) {
   >[0]["shots"][number];
 }
 
-function reportOf(frame: ShotMediaStatus, video: ShotMediaStatus, previous?: { generationId: string; url?: string }): ShotMediaSyncReport {
-  return {
-    shotId: "s0",
-    frame: previous ? { status: frame, previous } : { status: frame },
-    video: previous ? { status: video, previous } : { status: video },
-  };
-}
-
 function one(args: {
   shot?: Record<string, unknown>;
   reports?: ShotMediaSyncReport[] | null;
@@ -438,70 +392,107 @@ function one(args: {
   })[0]!;
 }
 
-describe("#782 r11 deriveShotMediaStates —— 5 个服务端状态 × 替换 × 4 个相位,逐格遍历", () => {
-  const ALL: ShotMediaStatus[] = [
-    { kind: "absent" },
-    { kind: "queued" },
-    { kind: "generating" },
-    { kind: "done", generationId: "gen_0", url: "/m.png" },
-    { kind: "done", generationId: "gen_0" }, // 产出在,地址取不到
-    { kind: "dead" },
-  ];
-  const OLD = { generationId: "old_0", url: "/old.png" };
+/**
+ * #782 r13(判官 r12 P3-F3)—— 这一层的**完整**输入空间,逐格走一遍。
+ *
+ * r11 的标题声称「5 态 × 替换 × 4 相位」,遍历的却是「无替换 × 全部」加「有替换 × 三态之二、
+ * 而且只断言 video」。判官 r12 判得对:标题大于覆盖,而没被走到的那几格恰恰是替换语义所在。
+ *
+ * 空间本身也被收窄了一次。`previous` 的意思是「新作业还没有结果,旧的那一件仍然属于商家」,
+ * 所以它只在 queued / generating / dead 上讲得通;`ShotMediaReport` 现在由类型这么规定,
+ * absent / done 上的 `previous` 不再构造得出来(反向用例在下面)。于是这张表就是全集:
+ *
+ *   6 个服务端回答(absent / queued / generating / done+url / done 无 url / dead)
+ *   × previous 有 / 无(只在合法的三态上有「有」这一列)
+ *   × 4 个相位
+ *   × 两格媒体(frame 与 video 各断言一次)
+ */
+const SERVER_ANSWERS: ShotMediaStatus[] = [
+  { kind: "absent" },
+  { kind: "queued" },
+  { kind: "generating" },
+  { kind: "done", generationId: "gen_0", url: "/m.png" },
+  { kind: "done", generationId: "gen_0" }, // 产出在,地址取不到
+  { kind: "dead" },
+];
+const OLD = { generationId: "old_0", url: "/old.png" };
 
-  it("无替换 × 全部相位:状态一一对应,只有「在跑」会被 exhausted 降级", () => {
-    for (const status of ALL) {
-      for (const phase of PHASES) {
-        const s = one({ reports: [reportOf(status, status)], phase });
-        const expected =
-          status.kind === "absent"
-            ? { kind: "absent" }
-            : status.kind === "queued" || status.kind === "generating"
-              ? phase === "exhausted"
-                ? { kind: "stale-unknown", previous: undefined }
-                : { kind: "in-progress", previous: undefined }
-              : status.kind === "dead"
-                ? { kind: "dead", previous: undefined }
-                : status.url
-                  ? { kind: "landed", generationId: status.generationId, url: status.url }
-                  : { kind: "landed-unloaded", generationId: status.generationId };
-        expect(s.frame, `frame ${status.kind}/${phase}`).toEqual(expected);
-        expect(s.video, `video ${status.kind}/${phase}`).toEqual(expected);
+/** `previous` 在这个状态上讲得通吗 —— 与 ShotMediaReport 的类型规定同一条判据。 */
+function acceptsPrevious(status: ShotMediaStatus): boolean {
+  return status.kind === "queued" || status.kind === "generating" || status.kind === "dead";
+}
+
+/** 一格媒体的期望渲染态:服务端回答 × 相位 × 商家手上还有没有旧的那一件。 */
+function expectedState(status: ShotMediaStatus, phase: SyncPhase, previous?: typeof OLD): ShotMediaState {
+  switch (status.kind) {
+    case "absent":
+      return { kind: "absent" };
+    case "queued":
+    case "generating":
+      return phase === "exhausted"
+        ? { kind: "stale-unknown", previous }
+        : { kind: "in-progress", previous };
+    case "dead":
+      return { kind: "dead", previous };
+    case "done":
+      return status.url
+        ? { kind: "landed", generationId: status.generationId, url: status.url }
+        : { kind: "landed-unloaded", generationId: status.generationId };
+  }
+}
+
+function reportOf(frame: ShotMediaReport, video: ShotMediaReport): ShotMediaSyncReport {
+  return { shotId: "s0", frame, video };
+}
+
+/** 该状态上合法的 previous 取值,逐个走。 */
+function previousColumns(status: ShotMediaStatus): (typeof OLD | undefined)[] {
+  return acceptsPrevious(status) ? [undefined, OLD] : [undefined];
+}
+
+describe("#782 r13 deriveShotMediaStates —— 6 个服务端回答 × previous 有无 × 4 相位 × 两格,真逐格", () => {
+  it("每一格都对上:相位只降级「还在等」,dead / done / absent 是已确证的事实", () => {
+    let cells = 0;
+    for (const status of SERVER_ANSWERS) {
+      for (const previous of previousColumns(status)) {
+        for (const phase of PHASES) {
+          const slot = (previous ? { status, previous } : { status }) as ShotMediaReport;
+          const s = one({ reports: [reportOf(slot, slot)], phase });
+          const expected = expectedState(status, phase, previous);
+          const label = `${status.kind}${status.kind === "done" && !status.url ? "(no url)" : ""}/previous=${previous ? "yes" : "no"}/${phase}`;
+          expect(s.frame, `frame ${label}`).toEqual(expected);
+          expect(s.video, `video ${label}`).toEqual(expected);
+          // 「商家此刻拥有什么」是同一条真相的另一面,逐格一起钉:替换在途/替换死了的时候
+          // 旧的那一件仍然是他的,absent 的时候什么都没有。
+          expect(ownedMedia(s.video), `owned ${label}`).toEqual(
+            status.kind === "done" ? { generationId: status.generationId, ...(status.url ? { url: status.url } : {}) } : previous,
+          );
+          cells += 2;
+        }
       }
     }
+    // 6 个回答里 3 个带 previous 那一列 ⇒ (6 + 3) × 4 相位 × 2 格 = 72 格,一格不少。
+    expect(cells).toBe(72);
   });
 
-  it("替换在途 × 全部相位:状态说新作业,previous 说旧产出还在(判官 r10 P1 的那一格)", () => {
-    for (const status of [{ kind: "queued" } as const, { kind: "generating" } as const]) {
-      for (const phase of PHASES) {
-        const s = one({ reports: [reportOf(status, status, OLD)], phase });
-        const expected =
-          phase === "exhausted"
-            ? { kind: "stale-unknown", previous: OLD }
-            : { kind: "in-progress", previous: OLD };
-        expect(s.video, `${status.kind}/${phase}`).toEqual(expected);
-        // 商家仍然拥有旧的那一件 —— 卡面据此继续显示它。
-        expect(ownedMedia(s.video)).toEqual(OLD);
-      }
-    }
-  });
-
-  it("替换死了 → dead 带 previous:旧产出仍在,且相位不许覆盖这个已确证的事实", () => {
-    for (const phase of PHASES) {
-      const s = one({ reports: [reportOf({ kind: "dead" }, { kind: "dead" }, OLD)], phase });
-      expect(s.video).toEqual({ kind: "dead", previous: OLD });
-      expect(ownedMedia(s.video)).toEqual(OLD);
-    }
+  it("非法组合由类型禁止:absent / done 上挂不了 previous(反向用例)", () => {
+    // 这两行如果**能**编译,上面那张表就漏了一半空间 —— `@ts-expect-error` 会因此变成
+    // 「未使用的抑制」而让 typecheck 失败。类型是这条覆盖声明的执行者,不是注释。
+    // @ts-expect-error absent 表示「没有任何作业」,那件落地的产出本身就是答案(服务端回 done)
+    const illegalAbsent: ShotMediaReport = { status: { kind: "absent" }, previous: OLD };
+    // @ts-expect-error done 的产出就是答案,再挂一个「旧的」会让卡面在两件东西之间二选一
+    const illegalDone: ShotMediaReport = { status: { kind: "done", generationId: "g" }, previous: OLD };
+    expect([illegalAbsent, illegalDone]).toHaveLength(2);
   });
 
   it("exhausted 不覆盖 dead / done / absent(判官 r10 P2:判定次序)", () => {
     const s = one({
-      reports: [reportOf({ kind: "dead" }, { kind: "done", generationId: "vgen_0", url: "/v.mp4" })],
+      reports: [reportOf({ status: { kind: "dead" } }, { status: { kind: "done", generationId: "vgen_0", url: "/v.mp4" } })],
       phase: "exhausted",
     });
     expect(s.frame).toEqual({ kind: "dead", previous: undefined });
     expect(s.video).toEqual({ kind: "landed", generationId: "vgen_0", url: "/v.mp4" });
-    const gone = one({ reports: [reportOf({ kind: "absent" }, { kind: "absent" })], phase: "exhausted" });
+    const gone = one({ reports: [reportOf({ status: { kind: "absent" } }, { status: { kind: "absent" } })], phase: "exhausted" });
     expect(gone.frame).toEqual({ kind: "absent" });
     expect(gone.video).toEqual({ kind: "absent" });
   });
@@ -548,7 +539,7 @@ describe("#782 r11 deriveShotMediaStates —— 5 个服务端状态 × 替换 �
   });
 
   it("服务端说「这张子卡从来没启动过」→ absent,不是生成中(判官 r10 P2:准备→取消→重开)", () => {
-    const s = one({ shot: { firstFrameCardId: "c0", videoCardId: "v0" }, reports: [reportOf({ kind: "absent" }, { kind: "absent" })] });
+    const s = one({ shot: { firstFrameCardId: "c0", videoCardId: "v0" }, reports: [reportOf({ status: { kind: "absent" } }, { status: { kind: "absent" } })] });
     expect(s.frame).toEqual({ kind: "absent" });
     expect(s.video).toEqual({ kind: "absent" });
     // 而且没有任何东西值得继续轮询 —— 空转的轮询本身就是那条假 spinner 的动力来源。

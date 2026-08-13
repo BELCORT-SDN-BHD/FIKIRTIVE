@@ -109,6 +109,15 @@ function text(dom: HTMLElement): string {
   return (dom.textContent ?? "").replace(/\s+/g, " ");
 }
 
+/** Type into a CONTROLLED textarea. React tracks the last value it wrote on the DOM node, so a
+ *  plain `el.value = x` + input event is swallowed as "no change" — the native setter is what
+ *  makes React's onChange fire, exactly like a real keystroke does. */
+function setTextarea(el: HTMLTextAreaElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  setter?.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 const FRAME_TICK = 3000; // FRAME_SYNC_INTERVAL_MS
 const FRAME_CAP = 40; // FRAME_SYNC_MAX_TRIES
 const SLOW_TICK = 60000; // the second gear r7 adds
@@ -872,5 +881,207 @@ describe("#782 r11 (判官 r10 P2) 不再自动查询,也不许忘记服务端�
       findButton(dom, "Try this video again"),
       "不再自动查询就把死片的单镜救援按钮也一起藏了 —— 那条路服务端一直都在",
     ).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r13(判官 r12)—— 三条时序,真渲染 + 真时钟。
+//
+// P1-F1 的两种形状在**服务端**钉在 storyboard-gate1-actions.test.ts(sync 回什么、守卫放不放
+// 行)。这里钉的是它们在商家屏幕上的下场:那条不该存在的作业既不许变成一个永远转的圈,也不许
+// 长出一个能再收一次钱的入口 —— 而 worker 的自愈把它翻成 dead 之后,单镜救援必须自己回来。
+// ---------------------------------------------------------------------------
+
+describe("#782 r13 (判官 r12 P1-F1) 付费 DONE 却什么都没交出来:不许空白,不许再收一次钱", () => {
+  const shot = {
+    shotId: "s0",
+    index: 0,
+    title: "Hero",
+    firstFramePrompt: "ff-0",
+    videoPrompt: "v-0",
+    firstFrameCardId: "child_0",
+    firstFrameGenerationId: "gen_0",
+    videoCardId: "vchild_0", // 这张子卡的作业 DONE 了,却指不出任何产出
+    durationSeconds: 5,
+  };
+  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+
+  it("首次生成:诚实等待 + 有界观察 → 到顶说不再自动查询并留手动入口,全程零收费入口", async () => {
+    // 服务端对这一格回过渡态(见 mediaReport):它对钱不做任何主张。
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload,
+      shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: slot({ kind: "generating" }) }],
+    });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
+
+    // ① 不是一片空白 —— 空白正是判官 r12 钉的那个死循环的入口(商家按整包 → 全 spent → 回来轮询)。
+    expect(text(dom)).toContain("Generating video…");
+    // ② 观察窗是有界的:快轮 + 慢轮跑满。
+    for (let i = 0; i < VIDEO_CAP; i++) await tick(VIDEO_TICK);
+    for (let i = 0; i < SLOW_CAP; i++) await tick(SLOW_TICK);
+    // ③ 到顶之后说实话,并给一条自己问的路 —— 不是一个永远不会更新的 spinner。
+    expect(text(dom)).toContain("stopped checking");
+    expect(text(dom)).not.toContain("Generating video…");
+    expect(findButton(dom, "Check for updates")).toBeTruthy();
+    // ④ 全程没有任何一个「这会花掉真实积分」的入口,也没有真的花过钱。
+    expect(text(dom)).not.toContain("This will spend real credits");
+    expect(mocks.coworkGenerate).not.toHaveBeenCalled();
+  });
+
+  it("替换形状:旧片继续在屏幕上,重出按钮不回来(同一次替换不许收第二笔)", async () => {
+    const withClip = { ...shot, videoGenerationId: "vgen_0" };
+    const p = { storyboardTitle: "Raya launch", shots: [withClip] };
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload: p,
+      shots: [
+        {
+          shotId: "s0",
+          frame: done("gen_0", "/media/gen_0.png"),
+          // 新作业交不出东西,而旧片仍然属于商家 —— 两个事实各说各的,零折叠。
+          video: slot({ kind: "generating" }, { generationId: "vgen_0", url: "/media/vgen_0.mp4" }),
+        },
+      ],
+    });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: p, balanceUsd: 10 }));
+
+    expect(dom.querySelector("video")!.getAttribute("src")).toBe("/media/vgen_0.mp4");
+    expect(text(dom)).toContain("Replacing video…");
+    expect(
+      findButton(dom, "Remake video"),
+      "把重出按钮放回来 —— 商家按下去就是同一次替换的第二笔账",
+    ).toBeUndefined();
+    expect(text(dom)).not.toContain("This will spend real credits");
+  });
+
+  it("worker 自愈之后:同一格如实回 dead → 单镜救援按钮自己回来", async () => {
+    // 巡检把那一行翻成 FAILED + 退款,sync 于是回 dead(既有语义,一个字没改)。
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload,
+      shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: slot({ kind: "dead" }) }],
+    });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
+
+    expect(text(dom)).toContain("That video didn’t go through — you weren’t charged.");
+    expect(findButton(dom, "Try this video again"), "翻成 dead 之后救援入口没有接住").toBeTruthy();
+  });
+});
+
+describe("#782 r13 (判官 r12 P2-F2) 编辑成功之后,旧的 sync 回答不许再复活被删掉的东西", () => {
+  const shot = {
+    shotId: "s0",
+    index: 0,
+    title: "Hero",
+    firstFramePrompt: "ff-0",
+    videoPrompt: "v-0",
+    firstFrameCardId: "child_0",
+    firstFrameGenerationId: "gen_0",
+    videoCardId: "vchild_0",
+    videoGenerationId: "vgen_0",
+    durationSeconds: 5,
+  };
+  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+  /** 编辑视频提示词之后服务端 payload 的样子:视频两键被陈旧级联删掉(storyboard-edit.ts)。 */
+  const edited = {
+    storyboardTitle: "Raya launch",
+    shots: [{ shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0 (new)", firstFrameCardId: "child_0", firstFrameGenerationId: "gen_0", durationSeconds: 5 }],
+  };
+
+  it("改视频提示词 → 被删掉的旧片不再渲染,也不再挂着一个 Remake 按钮", async () => {
+    // 挂载那一次 sync:片子在,卡面渲染播放器。
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload,
+      shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") }],
+    });
+    mocks.editShotPrompt.mockImplementation(async () => {
+      // 编辑落地之后服务端不再有这一格 —— 连回答里都没有了。
+      mocks.syncStoryboardMedia.mockResolvedValue({
+        payload: edited,
+        shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: absent }],
+      });
+      return { payload: edited };
+    });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
+    expect(dom.querySelector("video")!.getAttribute("src")).toBe("/media/vgen_0.mp4");
+
+    // 打开这一镜的编辑、改一句视频提示词、保存。
+    await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
+    await act(async () => {
+      setTextarea(dom.querySelectorAll("textarea")[1] as HTMLTextAreaElement, "v-0 (new)");
+    });
+    await clickByText(dom, "Save");
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mocks.editShotPrompt).toHaveBeenCalledTimes(1);
+    expect(
+      dom.querySelector("video"),
+      "编辑删掉的片子被上一次 sync 的回答复活了 —— 而 landed 不触发任何刷新入口,这个假状态会一直留着",
+    ).toBeNull();
+    expect(findButton(dom, "Remake video"), "对着一件已经不存在的东西提供「重做」").toBeUndefined();
+    // 首帧没有被这次编辑作废,所以它照旧在屏幕上(清空回答之后重新问了一次的结果)。
+    expect(dom.querySelector("img")).toBeTruthy();
+  });
+});
+
+// #782 r13(判官 r12 P3-F3)—— 这三句文案原本钉在 storyboard-card.test.ts 的源码字符串 smoke 上
+// (readFileSync + toContain)。同样的三件事,改成读真渲染出来的 DOM:文案搬进一个不渲染的分支
+// 就会红,而重构 JSX 不会假红。
+describe("#782 r13 卡面文案:真渲染", () => {
+  const stuckPayload = {
+    storyboardTitle: "Raya launch",
+    continuity: true,
+    shots: [
+      { shotId: "s0", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0", firstFrameGenerationId: "gen_0", videoCardId: "vchild_0", videoGenerationId: "vgen_0", durationSeconds: 5 },
+      // 闸③ 已经判过:上一镜那张视频子卡交不出末帧 —— 这一镜卡住了,而且它自己有一张准备卡。
+      { shotId: "s1", index: 1, firstFramePrompt: "ff-1", videoPrompt: "v-1", firstFrameCardId: "child_1", inheritBlockedByVideoCardId: "vchild_0", durationSeconds: 5 },
+    ],
+  };
+
+  it("接续说明说实话:不是绝对承诺,重出更早的镜头不会动已有首帧的下游镜头", async () => {
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload: stuckPayload,
+      shots: [
+        { shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") },
+        { shotId: "s1", frame: absent, video: absent },
+      ],
+    });
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: stuckPayload, balanceUsd: 10 }));
+    const copy = text(dom);
+    expect(copy).not.toContain("picks up exactly where the one before it ends"); // 老的那句绝对承诺
+    expect(copy).toContain("As each shot is first made, it picks up from the one before it");
+    expect(copy).toContain("Re-making an earlier shot won’t change a later shot’s first frame once it already has one.");
+  });
+
+  it("卡死的解释不再被「有没有帧在路上」挡住:准备卡在,解释和入口也在", async () => {
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload: stuckPayload,
+      shots: [
+        { shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") },
+        // s1 的准备卡正在跑 —— 「为什么接不上」与「有没有帧在路上」是两个问题,两行都要在。
+        { shotId: "s1", frame: slot({ kind: "generating" }), video: absent },
+      ],
+    });
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: stuckPayload, balanceUsd: 10 }));
+    const copy = text(dom);
+    expect(copy).toContain("Generating first frame…");
+    expect(copy).toContain("this shot needs its own first frame");
+    expect(copy).not.toContain("first frame (below)"); // Generate all 在生成中是隐藏的,指过去会指空
+  });
+
+  it("重出视频的确认框带着一句下游不变的说明", async () => {
+    const p = { storyboardTitle: "Raya launch", shots: [{ shotId: "s0", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0", firstFrameGenerationId: "gen_0", videoCardId: "vchild_0", videoGenerationId: "vgen_0", durationSeconds: 5 }] };
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload: p,
+      shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") }],
+    });
+    mocks.regenShotVideoCard.mockResolvedValue({
+      child: { shotId: "s0", childCardId: "vchild_new", estimatedCredits: 20, structuredPrompt: "v-0", entityIds: [], spent: false },
+    });
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: p, balanceUsd: 10 }));
+    await clickByText(dom, "Remake video");
+    expect(text(dom)).toContain("This won’t change the first frame of any shot that already has one.");
   });
 });

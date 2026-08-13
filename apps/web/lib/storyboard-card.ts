@@ -198,12 +198,20 @@ export type ShotMediaStatus =
   | { kind: "dead" };
 
 /** 一格媒体的完整回答:**当前**子卡那条作业的状态,外加(替换形状下)商家此刻仍然拥有的
- *  旧产出。`previous` 只在「新作业在途 / 新作业死了,而旧产出还在」时出现 —— 卡面据此
- *  一边显示旧的、一边说新的在路上,零推断。 */
-export interface ShotMediaReport {
-  status: ShotMediaStatus;
-  previous?: MediaRef;
-}
+ *  旧产出。
+ *
+ *  #782 r13(判官 r12 P3-F3)—— `previous` 只在**三个**状态上讲得通,而类型现在这么说。
+ *  它的意思是「新作业还没有结果,而旧的那一件仍然属于商家」,所以:
+ *    • queued / generating / dead —— 讲得通,替换正是这三种形状。
+ *    • done —— 新产出就是答案,再挂一个「旧的」只会让卡面在两件东西之间二选一。
+ *    • absent —— 没有任何作业。这时那件落地的产出**就是**这一格的答案,服务端回的是 `done`
+ *      本身(见 mediaReport),不是「absent 外加一件旧的」。
+ *  r12 之前这两组也构造得出来,于是逐格测试要么遍历一批没有意义的格子,要么(实际发生的)
+ *  只遍历一半却在标题上声称遍历了全部。让类型说话之后,那半个空间不再存在 ——
+ *  storyboard-card.test.ts 里有一条 `@ts-expect-error` 反向用例钉住这件事。 */
+export type ShotMediaReport =
+  | { status: Extract<ShotMediaStatus, { kind: "absent" | "done" }>; previous?: never }
+  | { status: Extract<ShotMediaStatus, { kind: "queued" | "generating" | "dead" }>; previous?: MediaRef };
 
 /** sync 对一个镜头的两格回答。 */
 export interface ShotMediaSyncReport {

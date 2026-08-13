@@ -219,6 +219,19 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       // server-side (staleness cascade). Discard any prepared children so a confirm can't spend
       // a stale set; the user re-prepares against the fresh payload.
       resetPrepared();
+      // #782 r13 (judge r12 P2-F2): the last sync answer describes the world BEFORE this edit,
+      // and the composition layer prefers it over the payload — so an edit that DELETED a shot's
+      // video keys (packages/otto/src/storyboard-edit.ts drops them on any prompt/duration
+      // change) would keep re-rendering the deleted clip as `landed`, with a Remake button over
+      // it. Nothing would ever correct it either: `landed` is not an unfinished state, so no
+      // refresh entrance appears, and the mount sync runs once per mount. The answer is stale the
+      // moment the edit lands, so it is dropped the moment the edit lands.
+      setReports(null);
+      // …and re-asked, because the world it described just changed on the server. Same $0
+      // read-only call the mount reconcile and "Check for updates" use; it can only ever ADD
+      // information, and it keeps a frame the edit did NOT invalidate on screen instead of
+      // demoting it to "ready — loading it".
+      void reconcileOnce();
       setEditing(null);
       setDraftFf("");
       setDraftV("");

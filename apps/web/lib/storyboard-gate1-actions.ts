@@ -758,7 +758,17 @@ function isUnconsumedInFlight(job: ChildJob | null, producedGenerationId: string
   if (!job) return false;
   if (JOB_LIVE_STATUSES.has(job.status)) return true;
   if (job.status !== "DONE") return false;
-  return producedGenerationId !== null && producedGenerationId !== landedGenerationId;
+  // #782 r13(判官 r12 P1-F1)—— DONE 却指不出任何产出。
+  //
+  // r11 在这里读作 false = 「不在途」,于是守卫放行、铸新卡、商家再确认一次 = 同一件事收第二
+  // 笔钱。可这一格的意思恰恰相反:钱**已经**收了(结算与 generationIds 同一笔事务),而产出
+  // 不在 payload 上,所以它一定还没被任何人消费。这是四种情形里最不该开收费入口的那一种。
+  //
+  // 走到这里本身就说明有一行不该存在的数据(worker 的写入点已经让它不可能再产生),所以这条
+  // 分支的职责只有一件:在 reaper 把它翻成 FAILED 之前,一分钱都不许再动。翻成 FAILED 之后
+  // `isExhausted` 会照旧放行铸新卡 —— 单镜救援那条路一格没少。
+  if (producedGenerationId === null) return true;
+  return producedGenerationId !== landedGenerationId;
 }
 
 /** 首帧只能是图片。末帧本来就是 PNG,但「指过去的那一行到底是不是图」这件事不能靠推定 ——
@@ -1142,8 +1152,8 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
  *   • 子卡在、作业**根本不存在**(准备→取消→重开)→ `absent`,不是「生成中」(判官 r10 P2)。
  *   • 新子卡在途、旧产出还在 → 状态是**新作业**的,`previous` 明说旧的还在(判官 r10 P1:
  *     以前这一格回的是旧的 landed,替换全靠客户端一个枚举外的布尔集合记着)。
- *   • DONE 却指不出任何产出 → `absent`:既不能说「还在跑」(它已经到终点了),更不能说
- *     `dead` —— dead 在卡面上带着「你没有被扣钱」这句话,而 DONE 是收过钱的。
+ *   • DONE 却指不出任何产出 → **过渡态**,见下面那一段(判官 r12 P1-F1;r11 在这里答
+ *     `absent`/旧 `done`,两句都是关于钱的假话)。
  */
 function mediaReport(
   landedGenerationId: string | undefined,
@@ -1166,11 +1176,24 @@ function mediaReport(
   if (JOB_DEAD_STATUSES.has(current.status)) {
     return landed ? { status: { kind: "dead" }, previous: landed } : { status: { kind: "dead" } };
   }
-  // DONE。产出就在这一刻写进了 payload(见上面的 frameWrites/videoWrites),所以两者一致;
-  // 拿不到产出时不许假装还在跑,也不许说没扣钱 —— 如实回到「这一格没有东西」。
+  // DONE。产出就在这一刻写进了 payload(见上面的 frameWrites/videoWrites),所以两者一致。
   const produced = current.producedGenerationId;
   if (produced) return { status: { kind: "done", ...refOf(produced) } };
-  return landed ? { status: { kind: "done", ...landed } } : { status: { kind: "absent" } };
+  // #782 r13(判官 r12 P1-F1)—— DONE 却指不出任何产出。
+  //
+  // 这是一行**不该存在**的数据:`generationIds` 与结算是同一笔事务、写在 DONE 之前,所以
+  // 「说 DONE」本该蕴含「拿得出东西」(worker 的写入点从 r13 起把它变成不变量,见
+  // apps/worker/src/jobs/gen.ts 的零产出闸)。r11 把它折叠成 `absent` 或旧的 `done`,而这四个
+  // 词里没有一个能诚实描述它:
+  //   • `absent` 在类型里写着「从未启动、一分钱没花」—— 这一格恰恰是钱已经收了;
+  //   • 旧的 `done` 说的是「替换成功了」—— 替换其实什么都没交出来;
+  //   • `dead` 在卡面上带着「你没有被扣钱」那句话 —— 那是关于商家的钱的假话。
+  //
+  // 剩下唯一诚实的答复是**过渡态**:我们还没有这一格的答案。它对钱不做任何主张,让卡面继续
+  // 问(轮询本来就有上限,到顶会诚实降级成 stale-unknown 并给出手动入口),而 worker 的自愈
+  // 巡检会在宽限期内把这一行翻成 FAILED + 退款 —— 那之后这里回的就是如实的 `dead`,单镜救援
+  // 入口跟着回来。替换形状下 `previous` 照旧带上:商家此刻仍然拥有旧的那一件,那是真的。
+  return landed ? { status: { kind: "generating" }, previous: landed } : { status: { kind: "generating" } };
 }
 
 // ---------------------------------------------------------------------------

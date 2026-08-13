@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob } from "@fikirtive/db";
+import { prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob, type RefundOutcome } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   storageKey,
@@ -148,6 +148,26 @@ export const GEN_REAP_MS = 1000 * 60 * 25;
 // under the serial queue. Kept where it is: the F07 pg-boss liveness check below, not this
 // wall-clock number, is what actually protects a job that is merely waiting its turn.
 export const GEN_QUEUED_REAP_MS = 1000 * 60 * 25;
+// #782 r13 (judge r12 P1-F1) — how long a DONE row is allowed to point at nothing before the
+// reaper calls it what it is.
+//
+// Unlike every clock above, this one is NOT protecting a call that might still be running: a
+// job's `generationIds` is written in the same transaction that settles its charge and BEFORE
+// its DONE, so the instant a row says DONE its outputs are already final. Zero would be correct.
+// It is ten minutes because a sweep that fails jobs closed should never be the FIRST thing to
+// notice a row — if some other writer ever lands DONE ahead of its outputs, ten minutes lets it
+// finish and this scan sees nothing, while a genuinely broken row still reaches the merchant's
+// rescue path inside one sitting (the card's own fast watch is ~10 minutes wide).
+export const GEN_DONE_EMPTY_GRACE_MS = 1000 * 60 * 10;
+
+// Written onto the REFUND row so a later audit can tell THIS sweep's refunds from a merchant's
+// cancel or an ordinary terminal failure ("this reservation has a REFUND" says nothing about who
+// wrote it — see refundReservation's `reason` argument).
+const DONE_WITHOUT_OUTPUT_REFUND_REASON = "gen:done-without-output";
+
+// Thrown INSIDE the self-heal transaction to roll the FAILED flip back when the ledger says the
+// charge was already SETTLED. See the scan for why that case must not be flipped.
+const SETTLED_DONE_EMPTY = new Error("done-without-output-but-charge-settled");
 
 // Thrown INSIDE the commit transaction to roll it back (discarding the just-created,
 // user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
@@ -600,6 +620,81 @@ export async function reapStaleGenJobs(): Promise<number> {
       }
     }
 
+    // DONE-with-nothing self-heal (#782 r13, judge r12 P1-F1). A row that says DONE and cannot
+    // point at a single Generation is a state no surface has an honest word for: "absent" claims
+    // nothing was ever spent, the old result claims a replacement succeeded, and "dead" promises
+    // a refund. The merchant is left with a spinner nothing updates, or an entrance that bills
+    // them again.
+    //
+    // Going forward the shape is unreachable — handleGen's zero-output guard fails closed and
+    // refunds before anything is stored, so DONE ⟹ generationIds is non-empty by construction.
+    // This scan exists for rows that ALREADY carry it: the commit marker landed 2026-06-13
+    // (98f789e7) and the output-count check only on 2026-07-15 (#325, 1fae4dbc), so for a month
+    // a provider that returned nothing wrote exactly this row — marker with an empty array,
+    // charge settled beside it, DONE on top.
+    //
+    // THE FLIP IS CONDITIONAL ON THE MONEY, not merely on the row. FAILED and CANCELLED carry one
+    // promise everywhere they are read — "you weren't charged" — and it is true today only
+    // because every path to those two words releases the hold in the same transaction that writes
+    // them (the invariant `JOB_DEAD_STATUSES` states in apps/web/lib/storyboard-gate1-actions.ts).
+    // So we ask refundReservation what it actually DID (#858's four-state answer) and keep the
+    // flip only where the merchant is provably not out of pocket:
+    //   • refunded         — we released the hold. Flip, and say "you weren't charged".
+    //   • already-refunded — someone else released it first. Flip; the sentence is still true,
+    //                        and we take no credit for their refund.
+    //   • no-reservation   — nothing was ever held (a pre-credits row). Flip.
+    //   • already-settled  — THE CHARGE STANDS. Flipping would make every surface promise a
+    //                        refund that did not happen, so the flip is rolled back and the row
+    //                        is raised loudly instead. Putting that merchant right means moving
+    //                        money that was correctly taken, and a background sweep is not where
+    //                        that decision gets made.
+    const doneEmptyCutoff = new Date(Date.now() - GEN_DONE_EMPTY_GRACE_MS);
+    const doneEmpty = await prisma.genJob.findMany({
+      // finishedAt is written by BOTH DONE writers in the same update as the status, so a DONE
+      // row always has one — no row hides from this scan behind a null.
+      where: { ownerId: { not: "" }, status: "DONE", generationIds: { isEmpty: true }, finishedAt: { lt: doneEmptyCutoff } },
+      select: { id: true, ownerId: true, threadId: true, kind: true, model: true },
+    });
+    for (const job of doneEmpty) {
+      // Per-row try/catch, like the resume scan above: one bad row must not halt the sweep.
+      try {
+        let healed = false;
+        // #463 per-row phase: the scan above is cross-tenant, the refund and the message are not.
+        await runAsTenant(job.ownerId, async () => {
+          let outcome: RefundOutcome | null;
+          try {
+            outcome = await prisma.$transaction(async (tx) => {
+              // The conditional updateMany is the at-most-once claim, and it re-asserts every
+              // predicate: a concurrent resume that recorded outputs (or another instance's
+              // sweep) makes this match zero rows, and we then say nothing at all.
+              const { count } = await tx.genJob.updateMany({
+                where: { id: job.id, ownerId: job.ownerId, status: "DONE", generationIds: { isEmpty: true }, finishedAt: { lt: doneEmptyCutoff } },
+                data: { status: "FAILED", error: "DONE with no outputs recorded — nothing was ever delivered; reaped and refunded", finishedAt: new Date() },
+              });
+              if (count === 0) return null;
+              const o = await refundReservation(tx, { orgId: job.ownerId, refId: job.id, reason: DONE_WITHOUT_OUTPUT_REFUND_REASON });
+              if (o === "already-settled") throw SETTLED_DONE_EMPTY; // roll the flip back
+              return o;
+            });
+          } catch (e) {
+            if (e !== SETTLED_DONE_EMPTY) throw e;
+            console.error(`[gen] ${job.id}: DONE with no outputs AND the charge is settled — this merchant paid for nothing. Left untouched on purpose: FAILED would promise a refund that never happened. Needs a founder decision.`);
+            return;
+          }
+          if (outcome === null) return; // someone else ended this row — their truth stands
+          healed = true;
+          // Idempotent via the genJobId unique index; a GEN_RESULT that was somehow written for
+          // this empty job wins it, and this is best-effort exactly like every other call site.
+          await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+          await settleCanvasBoard(job);
+          console.log(`[gen] ${job.id}: DONE with no outputs → FAILED (${outcome})`);
+        });
+        if (healed) reaped++;
+      } catch (e) {
+        console.error(`[gen] reaper self-heal failed for ${job.id} (retries next sweep):`, e instanceof Error ? e.message : e);
+      }
+    }
+
     return reaped;
   });
 }
@@ -1010,6 +1105,27 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         outputs = await provider.generate({ prompt: withReferenceMap(job.prompt, refSlots), inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
+      // #782 r13 (judge r12 P1-F1) — THE WRITE-POINT INVARIANT: a DONE job can always point at
+      // something it produced.
+      //
+      // Everything downstream reads DONE as "the merchant paid AND the result is reachable",
+      // and it is entitled to: `generationIds` is written inside the very transaction that
+      // settles the charge (the commit marker below), so the two facts land together. A DONE row
+      // with an empty `generationIds` breaks that implication, and every reader then has to
+      // invent a meaning for it — the storyboard's sync invented "absent" (which its own type
+      // defines as "never started, never charged"), and the money guard read it as "not in
+      // flight" and happily minted a second, second-billed card.
+      //
+      // So zero outputs stops here, one line ABOVE the store/commit loop, and takes the ordinary
+      // terminal post-charge path: FAILED + `refundReservation` in one transaction, exactly like
+      // the seven fail-closed branches above. Nothing is stored, no marker is written, DONE is
+      // never reached. The count check right below already rejected this shape (job.count is
+      // ≥ 1 at enqueue — packages/core/src/gen.ts), but it rejected it as an arithmetic mismatch;
+      // stating the invariant in its own words is what stops the next person from "relaxing" the
+      // count rule and reopening the hole underneath it.
+      if (outputs.length === 0) {
+        throw new Error("the engine returned nothing to deliver — failing closed so the hold goes back (a DONE job must be able to point at what it made)");
+      }
       if (outputs.length !== job.count) {
         throw new Error(`provider returned ${outputs.length} outputs; expected ${job.count} outputs`);
       }
