@@ -130,6 +130,21 @@ export const REFERENCE_VIDEO_MODEL: GenVideoModel = "seedance-2-mini";
  *  composer AND server-side in the worker (via Asset.durationS from ingest's ffprobe). */
 export const REF_VIDEO_MIN_SECONDS = 2;
 export const REF_VIDEO_MAX_SECONDS = 6;
+/**
+ * #785 —— 一次视频任务里 `image_url` 部件的**总上限 9 张**(首帧/末帧也算在这 9 张里)。
+ *
+ * 出处与它的诚实度:Seedance 2.0 系列的多模态参考上限(9 图 / 3 视频 / 3 音频)在 fal 官方
+ * 模型仓库的入参 schema 与多份三方 API 文档上一致(2026-08-13 核)。第一方 Ark 文档页是
+ * JS 渲染的,抓不到正文,所以这个数**没有第一方逐字出处** —— 本文件的规矩是「没核过的
+ * 数字不许编」,这里守的是同一条规矩的另一面:**取三方一致的那个数,并且只往少了送**。
+ *
+ * 为什么可以带着这点不确定上路:上限估高的后果是 task-create 被 4xx 拒绝,而 4xx 是本仓库
+ * 唯一「可证明没花钱」的失败(见 byteplus.ts 的 paidPost)—— 退款 + 记零花费,不会有钱的
+ * 损失。真正不可接受的是**反过来**:把上限当无限,一次送十几张,那才是拿商家的钱赌。
+ *
+ * 上限**含首帧/末帧**,因为它们与参考照是同一种部件(`type: "image_url"`)。
+ */
+export const MAX_VIDEO_IMAGE_PARTS = 9;
 /** Image price is flat per image; video price is dynamic — see videoPriceUsd
  *  (scales with duration × resolution × audio × count). */
 /**

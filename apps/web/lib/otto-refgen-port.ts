@@ -7,19 +7,34 @@
  * on a missing/cross-owner id ("Element not found." / "Variant not found."). The ownerId parameter
  * scopes ONLY the port's own pre-gate read below.
  *
- * generate — the SPEND path (debt-68). A thin closure over startRefGen, the SOLE reference-generation
- * spend authority: it re-validates the request through the typed refGenRequest gate, derives the price
- * server-side (pricedRefgenCredits — the model can never set it), enforces the per-entity in-flight
- * guard + the RefGenJob_active_entity_variant_key race backstop, and reserves credits atomically with
- * the job insert. This port neither reserves credits, creates a RefGenJob, nor calls the provider — it
- * only forwards the request. The generateReferences skill that calls it is cost:"spend", so its
- * needsApproval is a machine-derived LITERAL true (the human approves before this runs).
+ * generate — the SPEND path (debt-68). A thin closure over startRefGen, the SOLE spend authority for
+ * BASE/REFSHEET reference generation: it re-validates the request through the typed refGenRequest gate,
+ * derives the price server-side (pricedRefgenCredits — the model can never set it), enforces the
+ * per-entity in-flight guard + the RefGenJob_active_entity_variant_key race backstop, and reserves
+ * credits atomically with the job insert. This port neither reserves credits, creates a RefGenJob, nor
+ * calls the provider — it only forwards the request. The generateReferences skill that calls it is
+ * cost:"spend", so its needsApproval is a machine-derived LITERAL true (the human approves before this
+ * runs).
+ *
+ * createVariant — the SPEND path for a styling variant (#781). A VARIANT generation cannot go through
+ * startRefGen: a variant needs an EntityVariant row to attach its output to, and startRefGen refuses
+ * mode=VARIANT precisely because a client-named variantId would be unvalidated (it would spend on a
+ * job whose output has nowhere correct to land). createVariant IS the variant spend authority — the
+ * same one the merchant's element dialog calls: it re-derives the owner (requireOwner), refuses while
+ * impersonating, validates that the element has a LIVE owned base to condition the image-to-image on
+ * BEFORE any spend, creates the variant row inside the partial-unique-handle guard, and dispatches one
+ * seedream image whose credits are reserved atomically with the job insert. This port adds nothing to
+ * that; it only forwards, so the human surface and Otto can never charge by two different rules.
  *
  * deleteVariant — the guarded $0 path (debt-69). deleteVariant soft-deletes a variant AND its tagged
- * reference images (paid outputs). The human UI deletes a variant from the element page; Otto has no
- * such surface, so the port fronts the delete with a deterministic, fail-closed active-job gate:
- * it refuses to delete a variant that still has ANY paid RefGenJob in flight (QUEUED/GENERATING) —
- * otherwise the running job would settle onto a tombstoned variant, wasting spend. There is NO
+ * reference images (paid outputs). The ACTIVE-JOB RULE NOW LIVES IN THE ACTION (#781 r2 P1): every
+ * caller — this port, the merchant's element dialog, anything added later — is refused while a paid
+ * RefGenJob for that variant is in flight, because a gate only one caller passes through is not a
+ * rule. What stays here is a pre-gate with the same criteria, kept because it answers Otto in Otto's
+ * words (what to do next, in a conversation) before the action is reached; it is a second telling of
+ * the rule, never the only fence. It refuses to delete a variant that still has ANY paid RefGenJob in
+ * flight (QUEUED/GENERATING) — otherwise the running job would settle onto a tombstoned variant,
+ * wasting spend. There is NO
  * staleness/abandonment window here (fail-closed): a 15-minute window would be SHORTER than the
  * worker's own liveness window (REFGEN_STALE_MS 18min / queue expiry ~20min / reaper 25min), so a
  * 15-18-minute-old job that is still genuinely alive would be misjudged abandoned and let through —
@@ -34,18 +49,23 @@
  * ~25min window + one 5min sweep. EXTREME cases can extend the blockage: a persistently failing
  * pg-boss liveness read makes hasLiveRefGenMessage assume "live" every sweep and skip the QUEUED
  * reap (fail-safe, refgen.ts:85-88), and a persistently failing committed-resume just retries
- * next sweep (refgen.ts:201-209). That prolonged refusal is an ACCEPTED fail-closed posture for
- * Otto: the human UI delete path is not fronted by this gate and stays available.
+ * next sweep (refgen.ts:201-209). That prolonged refusal is an ACCEPTED fail-closed posture on BOTH
+ * surfaces (#781 r2): the merchant's own delete refuses on the same terms, because letting the human
+ * path through was never an escape hatch — it was the paid image landing on a tombstone.
  * Fail-closed: if the count read fails, refuse (never "couldn't check, delete anyway").
  * Aligned with the makeOttoProjectsPort #271 precedent (destructive action touching paid work = Otto
- * deterministic hard-refuse, not model self-confirmation). The gate lives HERE, not inside
- * deleteVariant: the human UI's legitimate delete is untouched.
+ * deterministic hard-refuse, not model self-confirmation).
  *
  * NOT an action surface: no "use server", not *-actions — the parity scanner must not discover this
- * module (its capabilities are the manifest entries of the wrapped actions: startRefGen / deleteVariant).
+ * module (its capabilities are the manifest entries of the wrapped actions: startRefGen /
+ * createVariant / deleteVariant).
  */
 import { prisma } from "@fikirtive/db";
-import { startRefGen, deleteVariant as deleteVariantAction } from "./refgen-actions";
+import {
+  startRefGen,
+  createVariant as createVariantAction,
+  deleteVariant as deleteVariantAction,
+} from "./refgen-actions";
 
 export function makeOttoRefgenPort(ownerId: string) {
   return {
@@ -64,7 +84,20 @@ export function makeOttoRefgenPort(ownerId: string) {
         mode: input.mode ?? "REFSHEET",
       }),
 
-    // debt-69: deterministic active-job pre-gate (see header), then delegate to the owner-scoped action.
+    // #781 (SPEND): the styling-variant door. Forward to createVariant — the variant spend
+    // authority — with only the three fields the model may choose (element, variant name, what
+    // changes). No model, no count, no price crosses: a variant is always exactly one seedream
+    // image priced server-side, and the base it is conditioned on is resolved from the element,
+    // never named by the caller.
+    createVariant: (input: {
+      entityId: string;
+      name: string;
+      prompt: string;
+    }): Promise<{ variantId: string; jobId: string } | { error: string }> =>
+      createVariantAction(input.entityId, input.name, input.prompt),
+
+    // debt-69: deterministic active-job pre-gate (see header) — Otto's wording for a rule the action
+    // itself now enforces for every caller (#781 r2) — then delegate to the owner-scoped action.
     deleteVariant: async (variantId: string): Promise<{ ok: true } | { error: string }> => {
       let activeJobs: number;
       try {
@@ -75,15 +108,17 @@ export function makeOttoRefgenPort(ownerId: string) {
             // No updatedAt/staleness window: any active job hard-refuses regardless of age (see
             // header). A typical stuck job is released by the worker's reaper (reapStaleRefGenJobs,
             // apps/worker/src/jobs/refgen.ts:143) — never by us; extreme reaper failure modes can
-            // prolong the refusal (accepted fail-closed posture, human UI delete unaffected).
+            // prolong the refusal (accepted fail-closed posture on both surfaces, #781 r2).
             status: { in: ["QUEUED", "GENERATING"] },
           },
         });
       } catch {
         // Fail-closed: can't verify it's safe ⇒ refuse (never "couldn't check, delete anyway").
+        // No "delete it by hand instead" advice any more (#781 r2): the element page now applies the
+        // same rule, so pointing there would be sending the merchant to a door that answers the same.
         return {
           error:
-            "I couldn't verify that variant is safe to delete, so I won't remove it. Please try again in a moment, or delete it by hand on the element page.",
+            "I couldn't verify that variant is safe to delete, so I won't remove it. Please try again in a moment.",
         };
       }
       if (activeJobs > 0) {

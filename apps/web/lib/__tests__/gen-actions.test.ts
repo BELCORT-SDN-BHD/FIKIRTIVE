@@ -798,6 +798,135 @@ describe("startGen", () => {
     expect(db.reserveCredits).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * #785 判官 r2 P1-b —— 视频的变体选择必须落到那一单上。
+   *
+   * 这是「卡面披露 = 付费输入」这条链子的接缝:卡面按商家选的变体数照片,worker 也按
+   * `GenJob.variantSel` 去取那个变体的照片 —— 中间这一段(材料规范化 → 落库)一旦把它抹掉,
+   * 两头各查各的,卡上写「用你 2 张(红色款)」,引擎实收 5 张 base。
+   */
+  it("#785: a video job persists the @element variant the merchant picked (and the guardian sees it)", async () => {
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "our lipstick on a beach",
+      entityIds: ["entity-1"],
+      variantSel: { "entity-1": "var_red" },
+      count: 1,
+      kind: "video",
+      model: "seedance-2-mini",
+      idempotencyKey: "v785-variant-picked",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ kind: "VIDEO", variantSel: { "entity-1": "var_red" } }),
+    }));
+    // 花钱前的守卫看的也是这一份 —— 否则它会去核一个商家没选的形态。
+    expect(mockCheckCast).toHaveBeenCalledWith(expect.objectContaining({
+      variantSel: { "entity-1": "var_red" },
+    }));
+  });
+
+  it("#785: a video job with no variant picked still persists nothing (bare @mention unchanged)", async () => {
+    await startGen({
+      projectId: "p1",
+      prompt: "our lipstick on a beach",
+      entityIds: ["entity-1"],
+      variantSel: {},
+      count: 1,
+      kind: "video",
+      model: "seedance-2-mini",
+      idempotencyKey: "v785-variant-bare",
+    });
+
+    expect(db.genJobCreate.mock.calls[0]?.[0]?.data).not.toHaveProperty("variantSel");
+  });
+
+  /**
+   * #785 判官 r2 P1-a —— 商家真 @ 了元素,而这一趟要跑的适配器根本收不了元素照。
+   *
+   * 这一路的危险在于它**不会自己报错**:名额是 0 ⇒ worker 一张照片都不带 ⇒ 适配器看到的
+   * 只是一个普通的文生视频请求 ⇒ 付费请求照发。商家 @ 了产品和代言人、付了钱,拿回一支
+   * 跟他的东西毫无关系的片子,而全程没有一个字提过。所以在花钱之前停住,并给一句他能看懂、
+   * 能自己解决的话。
+   */
+  describe("#785: element photos the running adapter can't take are refused BEFORE any spend", () => {
+    const prevProvider = process.env.GENERATION_PROVIDER;
+    afterEach(() => {
+      if (prevProvider === undefined) delete process.env.GENERATION_PROVIDER;
+      else process.env.GENERATION_PROVIDER = prevProvider;
+    });
+
+    const videoReq = (over: Record<string, unknown> = {}) => ({
+      projectId: "p1",
+      prompt: "our lipstick on a beach",
+      count: 1,
+      kind: "video" as const,
+      model: "seedance-2-mini",
+      ...over,
+    });
+
+    it("备用适配器 + 带 @元素 ⇒ 拒绝,一分钱都不动、一单都不建", async () => {
+      process.env.GENERATION_PROVIDER = "fal";
+
+      const result = await startGen(videoReq({
+        entityIds: ["entity-1"],
+        idempotencyKey: "v785-fal-with-elements",
+      }));
+
+      expect(result).toEqual({
+        error: "We can't put your products or people into a clip right now — remove the @mentions to make this video, and nothing will be charged.",
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+      expect(mockBossSend).not.toHaveBeenCalled();
+    });
+
+    it("备用适配器 + 不带 @元素 ⇒ 照常出片(这道闸只挡那句做不到的承诺)", async () => {
+      process.env.GENERATION_PROVIDER = "fal";
+
+      const result = await startGen(videoReq({
+        entityIds: [],
+        idempotencyKey: "v785-fal-no-elements",
+      }));
+
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    });
+
+    it("备用适配器 + 图片带 @元素 ⇒ 一格未动:这道闸只管视频这一支", async () => {
+      process.env.GENERATION_PROVIDER = "fal";
+
+      const result = await startGen({
+        projectId: "p1",
+        prompt: "our lipstick on a marble table",
+        entityIds: ["entity-1"],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+        idempotencyKey: "v785-fal-image-elements",
+      });
+
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    });
+
+    it("现役适配器 + 带 @元素 ⇒ 零回归,照常建单预扣", async () => {
+      process.env.GENERATION_PROVIDER = "byteplus";
+
+      const result = await startGen(videoReq({
+        entityIds: ["entity-1"],
+        idempotencyKey: "v785-byteplus-with-elements",
+      }));
+
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ kind: "VIDEO", entityIds: ["entity-1"] }),
+      }));
+      expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("lets a NEW attempt start after the merchant cancelled the previous one (#602 T3)", async () => {
     // THE GUARD (#599 D4). A new attempt on the same logical cell may only be created once every
     // prior job for that cell has ENDED WITHOUT DELIVERING. That rule was spelled as
@@ -1464,6 +1593,23 @@ describe("generation read boundaries", () => {
     // t2v 默认与 i2v 默认是**两个**值,不许互相顶替。
     expect(models.videoDefaults.aspectRatio).toBe("16:9");
     expect(models.videoI2vDefaultAspect).toBe("adaptive");
+  });
+
+  // 判官 r2 P1-a —— 界面要不要说「Type @ to bring your products and people into the clip」,
+  // 由服务端这一格说了算。浏览器读不到 `GENERATION_PROVIDER`,自己编一个默认值就是替一条
+  // 做不到的路许诺。这里钉的是「服务端确实把这个事实带出去了,且它跟着执行路走」。
+  it("#785: the browser is told whether @element photos really reach the video engine", async () => {
+    const prev = process.env.GENERATION_PROVIDER;
+    try {
+      process.env.GENERATION_PROVIDER = "byteplus";
+      expect((await getActiveGenModels()).videoElementReferences).toBe(true);
+
+      process.env.GENERATION_PROVIDER = "fal";
+      expect((await getActiveGenModels()).videoElementReferences).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
+      else process.env.GENERATION_PROVIDER = prev;
+    }
   });
 
   it("resolves an opaque image capability before the unchanged create-and-reserve path", async () => {

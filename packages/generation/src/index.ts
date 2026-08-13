@@ -308,6 +308,10 @@ export class FalProvider implements GenerationProvider {
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
     if (req.refVideoUrl) throw new Error("generation provider does not support whole-clip reference video"); // pre-spend
+    // #785: this adapter's i2v/t2v routes have no multi-reference param. Refuse BEFORE the paid
+    // POST rather than silently drop the merchant's product/spokesperson photos and bill for a
+    // clip that never saw them (the same rule the reference-video line above keeps).
+    if (req.refImageUrls?.length) throw new Error("generation provider does not support element reference photos"); // pre-spend
     // Resolve the model's fal wiring. Unknown model → fail BEFORE the paid POST
     // (no spend); the contract already rejects it, this is defense in depth.
     const cfg = VIDEO_CFG[req.model as GenVideoModel];
@@ -404,3 +408,19 @@ export {
   PROVIDER_MAX_CONCURRENT_REQUESTS_ENV,
   __setProviderRequestGateForTests,
 } from "./provider-concurrency.js";
+
+/** #784 素材理解的端口 —— 与生成是**两个**端口(钱的形状不同,理由见 understanding.ts)。
+ *  同样只从 `.` 导出:这个包对外只有这一条路径。 */
+export {
+  ArkUnderstandingProvider,
+  MockUnderstandingProvider,
+  createUnderstandingProvider,
+  emptyUnderstandingResponseError,
+  isUnreadableMediaError,
+  understandingErrorUsage,
+  unreadableMediaError,
+  type UnderstandingProvider,
+  type UnderstandingRequest,
+  type UnderstandingResult,
+  type UnderstandingUsage,
+} from "./understanding.js";

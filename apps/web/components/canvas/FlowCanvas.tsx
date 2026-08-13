@@ -1053,6 +1053,21 @@ export default function FlowCanvas({
   // image cards own the explicit "Make video" image-to-video path.
   const [t2vOpen, setT2vOpen] = useState(false);
   const [t2vPrompt, setT2vPrompt] = useState("");
+  // #785 — the elements @mentioned in the video prompt. Their reference photos really do
+  // reach the video engine now, so this dialog gets the same @ input the image composer has:
+  // without it, only Otto could put a merchant's product or spokesperson into a clip.
+  const [t2vIds, setT2vIds] = useState<string[]>([]);
+  const [t2vVariantSel, setT2vVariantSel] = useState<Record<string, string>>({});
+  const [t2vKey, setT2vKey] = useState(0); // bump to re-seed MentionInput (cleared, or with a seeded prompt)
+  const [t2vSeedDoc, setT2vSeedDoc] = useState<unknown>(undefined);
+  const resetT2v = useCallback(() => {
+    setT2vOpen(false);
+    setT2vPrompt("");
+    setT2vIds([]);
+    setT2vVariantSel({});
+    setT2vSeedDoc(undefined);
+    setT2vKey((k) => k + 1);
+  }, []);
   const runT2v = useCallback(async (prompt: string): Promise<boolean> => {
     if (directToolsLocked || videoBusyRef.current) return false;
     if (!costQuote) {
@@ -1068,6 +1083,12 @@ export default function FlowCanvas({
       threadId: activeThreadId ?? null,
       kind: "video",
       prompt,
+      // #785：@ 到的元素真的进引擎，所以它们是商家授权内容的一部分 —— @ 了产品之后再 @
+      // 代言人是**另一个**动作，不是同一个动作的重试。与形状/规格同级进材料。
+      entityIds: t2vIds,
+      variantSel: Object.fromEntries(
+        Object.entries(t2vVariantSel).sort(([left], [right]) => left.localeCompare(right)),
+      ),
       spec,
     });
     if (videoActionRef.current?.material !== material) {
@@ -1080,7 +1101,11 @@ export default function FlowCanvas({
         spawnRect(),
         actionId,
         {},
-        { ...(spec ? { spec } : {}) },
+        {
+          ...(spec ? { spec } : {}),
+          ...(t2vIds.length ? { entityIds: t2vIds } : {}),
+          ...(Object.keys(t2vVariantSel).length ? { variantSel: t2vVariantSel } : {}),
+        },
       );
       if (
         accepted
@@ -1093,7 +1118,7 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect, t2vSpec, videoSpecMenu]);
+  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect, t2vIds, t2vSpec, t2vVariantSel, videoSpecMenu]);
 
   /** "More like this" / an edited prompt on a VIDEO card. Video always keeps its explicit
    *  cost confirm (founder rule), so this seeds the same dialog instead of spending. */
@@ -1104,6 +1129,13 @@ export default function FlowCanvas({
     closeComposer(false);
     setCostQuote(null);
     setT2vPrompt(prompt);
+    // #785：这个对话框现在是 @ 输入框，所以「照这条再来一次」必须把原提示词**种进**编辑器，
+    // 而不是塞进一个已经不存在的 textarea。种的是纯文本：卡上的提示词是执行层最终收到的
+    // 那一句，里面没有 @ 标记可还原 —— 不假装还原，商家看得见就能自己再 @ 一次。
+    setT2vIds([]);
+    setT2vVariantSel({});
+    setT2vSeedDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: prompt }] }] });
+    setT2vKey((k) => k + 1);
     setT2vOpen(true);
   }, [closeComposer]);
 
@@ -1120,8 +1152,7 @@ export default function FlowCanvas({
       setPendingDeleteId(null);
       setPendingBatchDeleteIds(null);
       setPendingAnimateId(null);
-      setT2vOpen(false);
-      setT2vPrompt("");
+      resetT2v();
     }
   }
 
@@ -1349,6 +1380,13 @@ export default function FlowCanvas({
   };
   const t2vCostLabel = specCostLabel(t2vSpec);
   const animateCostLabel = specCostLabel(animateSpec);
+  // #785 判官 r2 P1-a —— 出片框只在 @元素**真的会进引擎**时才提这件事。
+  //
+  // 承诺与执行必须同源:这个布尔值来自服务端解析的那一份(`getActiveGenModels`),而它读的
+  // 判据与选片名额、卡面规格条目是同一个函数。备用适配器那条路上元素照一张都上不了车,
+  // 界面于是一个字都不提 —— 替一条做不到的路许诺,商家会照着那句话去 @,然后付钱拿到一支
+  // 跟他的产品毫无关系的片子。菜单没取到(null)⇒ 同样闭嘴:没确认的事不许说。
+  const t2vElementsRide = videoSpecMenu?.elementReferences === true;
   // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
   // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
   // The composer's price follows the chosen number of images, from the same clamp the paid
@@ -2020,22 +2058,30 @@ export default function FlowCanvas({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={t2vOpen} onOpenChange={(open) => { if (!open && !videoSubmitting) { setT2vOpen(false); setT2vPrompt(""); } }}>
+      <Dialog open={t2vOpen} onOpenChange={(open) => { if (!open && !videoSubmitting) resetT2v(); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Make a video from a prompt</DialogTitle>
             <DialogDescription>
-              Describe the video you want — no source image needed. Cost: {t2vCostLabel}. No charge until you confirm.
+              Describe the video you want — no source image needed.
+              {t2vElementsRide && " Type @ to bring your products and people into the clip."}
+              {" "}Cost: {t2vCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
-          <textarea
-            // #739 (same root) — placeholder-only control; the dialog title is not its name.
-            aria-label="Describe the video you want"
-            value={t2vPrompt}
-            onChange={(e) => setT2vPrompt(e.target.value)}
-            placeholder="e.g. a coffee cup steaming on a wooden table, slow push-in"
-            rows={3}
-            className="resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+          {/* #785 — the same @ input the image composer has. The elements named here are the
+              ones whose photos the engine actually receives, so this is the merchant's own way
+              to put a product or a spokesperson in a clip, with no conversation required.
+              判官 r2 P1-a:那句承诺(以及这里的提示语)只在执行层真的收元素照时出现。
+              收不了却照样 @ 了的那一路,由服务端在花钱前拒绝并给一句人话 —— 界面不静默降级。 */}
+          <MentionInput
+            entities={entities}
+            docKey={`canvas-t2v-${t2vKey}`}
+            {...(t2vSeedDoc ? { initialDoc: t2vSeedDoc } : {})}
+            placeholder={t2vElementsRide
+              ? "Describe the video you want… (@ to reference your stuff)"
+              : "Describe the video you want…"}
+            disabled={videoSubmitting}
+            onChange={(t, ids, vsel) => { setT2vPrompt(t); setT2vIds(ids); setT2vVariantSel(vsel); }}
           />
           {/* #645 T4 — the spec this clip will be made in. No source image here, so the shape
               default is the model's own t2v default (16:9), not Adaptive. */}
@@ -2048,15 +2094,12 @@ export default function FlowCanvas({
             />
           )}
           <DialogFooter>
-            <Button variant="ghost" disabled={videoSubmitting} onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
+            <Button variant="ghost" disabled={videoSubmitting} onClick={resetT2v}>Cancel</Button>
             <Button
               disabled={!t2vPrompt.trim() || !costQuote || videoSubmitting}
               onClick={async () => {
                 const p = t2vPrompt.trim();
-                if (p && await runT2v(p)) {
-                  setT2vOpen(false);
-                  setT2vPrompt("");
-                }
+                if (p && await runT2v(p)) resetT2v();
               }}
             >
               {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}

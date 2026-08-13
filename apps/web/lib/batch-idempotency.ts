@@ -194,7 +194,18 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
     kind: input.kind === "video" ? "VIDEO" : "IMAGE",
     count: input.kind === "video" ? 1 : input.count,
     entityIds: input.entityIds ?? [],
-    variantSel: input.kind === "video" ? null : canonicalVariantSel(input.variantSel),
+    // #785 判官 r2 P1-b —— 视频的变体选择不再在这里被抹掉。
+    //
+    // 当初(#280)把它置 null 是有理由的,而那个理由现在不成立了:那时的视频只有 i2v 一条路,
+    // 条件全在首帧里,@元素的参考照一张都不进引擎,所以「选了哪个变体」对视频确实没有意义。
+    // #785 之后它们真的进引擎 —— 卡面按商家选的变体数照片(`countLiveReferenceImagesPerEntity`
+    // 读 `variantSel`),而 worker 拿到的却是 null、于是回落去查 base 照片。两边看的不是同一
+    // 组图:卡上写「用你 2 张」,付费请求实发的是另外 5 张 base ——「说的」与「做的」分家,
+    // 而且商家为一个他没选的形态付了钱。
+    //
+    // 现在两种 kind 走同一条规范化:空映射仍然收敛成 null(与 worker 的 `job.variantSel ?? {}`
+    // 同义),非空的原样留下,落进 GenJob.variantSel,worker 按它解析照片。
+    variantSel: canonicalVariantSel(input.variantSel),
     sourceGenerationId: input.sourceGenerationId ?? null,
     tailGenerationId: input.tailGenerationId ?? null,
     referenceVideoGenerationId: input.referenceVideoGenerationId ?? null,

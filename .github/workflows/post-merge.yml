@@ -1,0 +1,147 @@
+name: post-merge
+
+# 债 #6:CI 只在 PR 上跑。合进 main 之后,没有任何东西再验证过 main。
+#
+# 这不是理论问题。两个 PR 各自绿、各自合,合并后的 main 可以是红的——A 删了一个 B 刚开始
+# 用的导出,两边的 CI 都没见过对方的改动。今天这种 main 会一直红到下一个人开 PR 才被发现,
+# 而在那之前它已经被部署过了。
+#
+# 这个 workflow 就是那一步:main 每次前进,重跑一遍与 PR 上逐字相同的门。
+#
+# 刻意分成独立文件、绝不改 ci.yml:`quality` 是 protect-main ruleset 里的必需检查
+# (bypass_actors 为空,没人能绕开它合并)。在同一个 workflow 上加一个新触发器,等于让那个
+# 必需检查的形态与运行条件多一种可能——那一族错误的代价是整仓无法合并。所以这里是另一个
+# workflow、另一个 job 名,PR 上的 `quality` 一个字节都没动。
+on:
+  push:
+    branches: [main]
+    # 只改 docs/ 的合并没有任何门可跑。这里可以用 paths-ignore,而 ci.yml 不可以:被路径
+    # 过滤跳过的 workflow 不会汇报 check,对必需检查来说等于永远无法合并;而本 workflow
+    # 不是必需检查,跳过就是真的没事可做。
+    paths-ignore:
+      - "docs/**"
+  # 部署窗口用:人手填一个 URL 跑烟测。仓库里不存任何环境 URL(见下面 smoke job 的说明)。
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to smoke-test (e.g. https://staging.example.com). Leave empty to only re-run the gate."
+        required: false
+        type: string
+      require_worker:
+        description: "Also fail unless the worker heartbeat is fresh"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  quality-on-main:
+    name: quality-on-main
+    # 并发组挂在 job 上而不是 workflow 上:挂在 workflow 上时,一次手动烟测会取消正在跑的
+    # 那次门,而它们本来毫无关系。
+    concurrency:
+      # 组名必须同时带上事件与 ref,少任何一半都会把「取消过时运行」变成「取消别人的运行」。
+      #
+      # 固定组名(第一版就是)有一个非常具体的坏结果:workflow_dispatch 可以在**任意分支**上
+      # 手动发起,于是任何人在任意分支手动跑一次,就会取消 main 上正在跑的那次门,而顶上来的
+      # 那次检查的还是另一个 SHA。结果是 main 从没被验证过,但运行历史看起来一切正常。
+      #
+      # 带上 github.ref 之后,取消只可能发生在同一个 ref 上;再带上 github.event_name,
+      # 手动运行与 push 运行各自成组,手动入口永远碰不到 push 的那条线。剩下的语义正是
+      # 想要的那一条:同一个 ref、同一种触发,新的取消旧的——落后的那次即使跑绿,也证明
+      # 不了这个 ref 此刻的状态,还白占跑手分钟。
+      group: post-merge-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    # 与 ci.yml 同一种跑手,理由也相同(2026-08-11 Founder 修复账单后,#864 把 ci.yml 从
+    # 自托管切到云端):每次运行拿到一台独占的临时 VM,彼此并行、与开发机完全隔离,
+    # 共享机器那一族假红(job 超时被杀、vitest 负载超时、Postgres 饱和 #862)在这里
+    # 构造上不可能发生。
+    #
+    # 这一段的第一版写的是「留在自托管、不用云端」,理由是 #577 的账单失败曾冻结全仓合并
+    # 两天。那条理由今天已经失效,而且如果照那样合进去,后果恰好是本文档里最看重的那种:
+    # 自托管跑手的监听进程 2026-08-11 晚已停(注册保留,纯人工备援),排在它上面的 job
+    # 会永远排不到跑手——不是红,是不跑,那种「静默的绿」比红更贵。
+    runs-on: ubuntu-latest
+    # 与 ci.yml 同一个数字:独占 VM 上整趟约 12-20 分钟,45 留出诚实余量,又不让一次卡死的
+    # 运行占着一小时以上。
+    timeout-minutes: 45
+    services:
+      # quality.sh 需要一个维护连接来建/删它自己的 per-run `*_test` 库。与 ci.yml 同形。
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 与 ci.yml 相同的运行环境。`next build` 的 TypeScript 子进程在默认 ~2 GB 堆下会
+      # 随机 OOM,与改动无关。
+      NODE_OPTIONS: --max-old-space-size=6144
+      # 上面那个服务容器。quality.sh 只拿它当维护连接,真正的运行发生在它自己创建、
+      # 退出时强制删除的 per-run 库上。
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
+      BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
+      BETTER_AUTH_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
+      GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # 与 ci.yml 同一份缓存键族,于是刚合并的这次可以直接吃到该 PR 最后一次运行留下的
+      # 增量状态。
+      - name: Restore TypeScript / Next build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/web/.next/cache
+            apps/web/tsconfig.tsbuildinfo
+          key: build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
+            build-${{ runner.os }}-node22-
+
+      # 与 PR 上逐字相同的那一句。quality.sh 自己那把机器级互斥锁在这台一次性 VM 上瞬间
+      # 拿到、什么也不排队——它是给共享机器(开发机、备援的自托管跑手)用的,在这里无害。
+      - run: pnpm quality
+
+  # 部署后烟测(债 #6)。刻意与上面的门分开,也刻意不自动跑:
+  #
+  # 仓库里没有任何一个部署目标的 URL,也不应该有——把 URL 写死在 workflow 里,等于让
+  # 每一次合并都去打某个环境,而那个环境是什么、归谁、此刻是不是生产,仓库无从判断。
+  # 所以这是一个手动触发的 job:部署窗口里由人填 URL 跑一次。脚本本身只发 GET、不带凭据。
+  #
+  # 脚本的行为由 apps/web/lib/__tests__/smoke-script.test.ts 在每个 PR 上验证(喂给它
+  # 健康检查 503、数据库不通、匿名页 500、心跳过期,逐个断言退出码),所以「烟测脚本本身
+  # 是好的」不依赖任何一次真实部署。
+  smoke:
+    name: smoke (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.base_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # 输入经 env 传进来再引用,不做字符串拼接:直接把 ${{ }} 展开进 run: 的那一行,
+      # 输入里的引号或分号就会变成这台跑手上执行的命令。
+      - env:
+          BASE_URL: ${{ inputs.base_url }}
+          REQUIRE_WORKER: ${{ inputs.require_worker }}
+        run: |
+          set -euo pipefail
+          args=("$BASE_URL")
+          if [ "$REQUIRE_WORKER" = "true" ]; then args+=(--require-worker); fi
+          bash scripts/ops/smoke.sh "${args[@]}"

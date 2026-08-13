@@ -16,13 +16,19 @@ import { CHAT_HOLD_NOTE } from "@/lib/credit-format";
 const webRoot = path.resolve(__dirname, "../..");
 
 describe("#791-9 预扣这件事说出口", () => {
-  it("三件事一句说全:先冻结多少、按实际扣、剩下退回", async () => {
+  it("三件事一句说全:最多先冻结多少、按实际扣、剩下退回", async () => {
     const { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, displayCredits } = await import("@fikirtive/core");
     const hold = displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
     expect(CHAT_HOLD_NOTE).toContain(`${hold} credits`);
     expect(CHAT_HOLD_NOTE).toMatch(/holds/i);
     expect(CHAT_HOLD_NOTE).toMatch(/only what it uses/i);
     expect(CHAT_HOLD_NOTE).toMatch(/returns the rest/i);
+  });
+
+  // #898:冻结额改成 min(4, 余额)后,「holds 4 credits」对余额 1.2 的商家就是假话 ——
+  // 而这句话正是给这种商家看的。必须说「up to」。
+  it("#898 说的是上限,不是每次都冻这么多", () => {
+    expect(CHAT_HOLD_NOTE).toMatch(/holds up to/i);
   });
 
   it("数字是算出来的 —— 冻结额改了,这句话跟着改", () => {

@@ -10,7 +10,7 @@
  * package's barrel.
  */
 export * from "../generated/prisma/client.js";
-export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCreditsTx, InsufficientCredits, type CreditGrantSource } from "./credits.js";
+export { reserveCredits, reserveCreditsUpTo, settleCredits, refundReservation, grantCredits, grantCreditsTx, InsufficientCredits, HOLD_SHORTFALL_REASON_PREFIX, type CreditGrantSource } from "./credits.js";
 // #601: the server writes a finished job's canvas cards. Not a spend path — see the file header.
 export {
   settleCanvasCardsForGenJob,

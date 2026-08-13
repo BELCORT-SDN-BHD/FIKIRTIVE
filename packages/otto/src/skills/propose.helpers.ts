@@ -113,6 +113,19 @@ export type CardPayload = {
 export type ProposeCardResult = {
   cardPayload: CardPayload;
   shownPriceDisplay: number;
+  /**
+   * #785 判官 r1 P1 —— **披露要数的那一份**:商家这一轮真 @ 到、且确属他自己的元素,
+   * 取在任何场景清空**之前**。
+   *
+   * 为什么不能数 `cardPayload.entityIds`:首帧 i2v 那一档会把卡上的 @元素清空(引擎只认
+   * 首帧),而「你给的 N 张一张都不会用上」这句话要说的正是被清掉的那些。数清空后的卡,
+   * 数出来永远是 0 张里的 0 张 ⇒ 那句话永远不出现 ⇒ 静默,正是这条规矩要挡的东西。
+   *
+   * 只影响**披露**:卡上带走的仍然是 `cardPayload.entityIds`(worker 照它取图),
+   * 这一份不参与选型、报价、预扣。
+   */
+  mentionedEntityIds: string[];
+  mentionedVariantSel: Record<string, string>;
 };
 
 /**
@@ -180,7 +193,12 @@ export function buildReferenceBudgetNotes(input: {
   const notes: string[] = [];
   if (input.budget.truncated) {
     notes.push(
-      `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
+      // #785：视频的三个带素材场景（首帧 / 首+末帧 / 整段参考视频）一张元素照都带不了，
+      // 所以这里 used 会是 0。「use 0 of your 17」既不像人话，也读着像出了故障 ——
+      // 零这一档单独说一句。仍然是**同一个数字**（budget），只是换了说法。
+      input.budget.used === 0
+        ? `None of your ${input.budget.total} reference photos will be used for this clip.`
+        : `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
@@ -189,6 +207,30 @@ export function buildReferenceBudgetNotes(input: {
     );
   }
   return notes;
+}
+
+/**
+ * #785 —— 视频卡上「这一趟真会用上你几张参考照」那一格。
+ *
+ * 为什么要在卡铸好之后补一次:张数要查库(每个 @元素当下有几张活图),而 `buildProposeCard`
+ * 是纯函数、不碰库。补的方式是**拿同一个 `buildSpecChips` 重算一遍**,不是在数组尾巴上
+ * 手工 push 一格 —— 后者就是第二套卡面逻辑,`EXECUTED_SPEC` 那道闸从此管不到它。
+ *
+ * 入参只有张数;`kind` / `params` / 有没有底图这些全部从卡面自己再读一次,所以重算出来的
+ * 前几格与第一次逐字相同(测试钉着)。纯展示:不改价、不改选型、不改任何付费字段。
+ */
+export function withVideoReferenceChip(payload: CardPayload, elementReferenceCount: number): CardPayload {
+  if (payload.kind !== "video" || elementReferenceCount <= 0) return payload;
+  return {
+    ...payload,
+    specChips: buildSpecChips(
+      payload.kind,
+      payload.params,
+      !!payload.sourceGenerationId,
+      false, // usesAttachedImage 是图片侧的概念(编辑底图),视频卡永远为 false
+      { elementReferenceCount },
+    ),
+  };
 }
 
 /**
@@ -284,29 +326,33 @@ export function buildProposeCard(
   // `hasSourceImage` 仍然只说 i2v：它驱动选型与 @元素清空，那两件事对图片方案不变
   // （图片方案照旧保留商家 @ 的元素，参考图与元素图一起进引擎）。
   let kind = input.kind;
-  let entityIds = input.entityIds;
-  let variantSel = input.variantSel;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
   const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
   const hasSourceImage = isI2V;
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
 
+  // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently.
+  // #785 判官 r1 P1:归属过滤挪到了 i2v 清空**之前**(原本是「先清空、再跳过过滤」)。
+  // 卡面产物一个字节都没变(清空后的卡照旧是空的),换来的是下面那一份「商家真 @ 了谁」
+  // 还留着 —— 披露要数的是它,不是清空后的卡(见 ProposeCardResult.mentionedEntityIds)。
+  // #774:归属集从 `ownedEntities` 取 —— 与冻在卡上的名字**同一趟**读出来的那一份,
+  // 所以「谁算他的」与「他批的是哪个名字」不可能来自两次不同的读。
+  const ownedSet = new Set(ownedEntities.map((e) => e.id));
+  let entityIds = input.entityIds.filter((id) => ownedSet.has(id));
+  const ownedVarSel: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.variantSel)) {
+    if (ownedSet.has(k)) ownedVarSel[k] = v;
+  }
+  let variantSel: Record<string, string> = ownedVarSel;
+  /** 商家这一轮真 @ 到、且确属他自己的那一组 —— 只喂披露(张数要按这一份数)。 */
+  const mentionedEntityIds = entityIds;
+  const mentionedVariantSel = variantSel;
+
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
     entityIds = [];
     variantSel = {};
-  }
-
-  // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently
-  if (!hasSourceImage) {
-    const ownedSet = new Set(ownedEntities.map((e) => e.id));
-    entityIds = entityIds.filter((id) => ownedSet.has(id));
-    const filteredVarSel: Record<string, string> = {};
-    for (const [k, v] of Object.entries(variantSel)) {
-      if (ownedSet.has(k)) filteredVarSel[k] = v;
-    }
-    variantSel = filteredVarSel;
   }
 
   // Step 3: model selection.
@@ -469,5 +515,5 @@ export function buildProposeCard(
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).
   const shownPriceDisplay = estimatedCredits;
 
-  return { cardPayload, shownPriceDisplay };
+  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel };
 }

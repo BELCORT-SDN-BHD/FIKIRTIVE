@@ -27,6 +27,7 @@ import {
   videoDefaults,
   imageDefaults,
   merchantGenFailureMessage,
+  videoElementReferencesHonoured,
   approvedEntityDrift,
   parseApprovedEntities,
   type ApprovedEntity,
@@ -96,6 +97,15 @@ export type ActiveGenModels = {
    * 「显示的」与「收的」第二次分家的入口。24 档全表一次带回来,选择器直接查表。
    */
   videoCreditsBySpec: Record<string, number>;
+  /**
+   * #785 判官 r2 P1-a —— 这一趟真正会跑的那个适配器,收不收 @元素的参考照。
+   *
+   * 界面靠它决定**要不要开口承诺**「Type @ to bring your products and people into the clip」。
+   * 这句承诺不能由浏览器自己判断:判据住在服务端(`GENERATION_PROVIDER` 选中的那条路),
+   * 浏览器读不到,自己编一个默认值就是又一次「说的与做的失同步」。取不到 ⇒ 界面闭嘴。
+   * 与形状菜单、按档价目表同一条规矩:界面只渲染服务端解析出来的事实。
+   */
+  videoElementReferences: boolean;
   /** #643 T2 —— 图片形状菜单（default-first）。UI 只渲染这份列表，自己不写死任何一格。 */
   imageAspectRatios: string[];
   /** 商家没选形状时会交付的那一格。UI 的初始选中值取这里，所以「显示的」= 「会交付的」。 */
@@ -477,11 +487,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       };
     }
 
-    // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
-    // conditions on the source keyframe, not entity refs — the chosen variant is already
-    // baked into that keyframe — so it's not meaningful for video and the worker ignores
-    // it. The shared material normalizer drops video maps and canonicalizes an empty image
-    // map to absent, matching the worker's `job.variantSel ?? {}` semantics.
+    // variantSel picks WHICH reference photos of an @mentioned element this run conditions on
+    // (the chosen variant's, or the base ones). It used to be dropped for video, because video
+    // was i2v only: the condition lived entirely in the source keyframe and entity photos never
+    // rode along. #785 changed that premise — element photos really do reach the video engine —
+    // so the map is now kept for both kinds, and the same map feeds the card's disclosure, the
+    // guardian and the worker. The shared normalizer only canonicalizes an empty map to absent,
+    // matching the worker's `job.variantSel ?? {}` semantics.
     const material = normalizeFactoryMaterial({
       prompt,
       model,
@@ -579,6 +591,29 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const videoOptions = material.videoOptions ?? undefined;
     // …and the image shape (#642), from the same normalizer, persisted the same way.
     const imageOptions = material.imageOptions ?? undefined;
+
+    // #785 判官 r2 P1-a —— 商家真 @ 了元素,而这一趟要跑的适配器根本收不了元素照:
+    // 在花钱**之前**停住,并说一句他能看懂、能自己解决的话。
+    //
+    // 为什么必须在这里,而不是只靠适配器那道拒收闸:名额 `conditioningCap` 在这条路上是 0,
+    // 于是 worker 一张照片都不会带,适配器看到的是一个普普通通的文生视频请求 —— 它没有理由
+    // 拒收,付费请求照发。结果就是商家 @ 了产品与代言人、付了钱,拿回一支跟他的东西毫无关系
+    // 的片子,而全程没有一个字提过。适配器那道闸是纵深防御(挡「照片真送出去了」那一路),
+    // 挡不住这一路。
+    //
+    // 判据只有 `videoElementReferencesHonoured` 一处 —— 与界面的承诺、卡面的规格条目、
+    // 选片名额同源,所以三者不可能各说各话。
+    //
+    // 只管 provider 这一维:带首帧/末帧/整段参考视频的那三档名额同样是 0,但那是**场景**
+    // 使然,卡面在批准前已经照实说了「一张都不会用上」,商家是知情批准的 —— 那条路不动。
+    //
+    // 位置:排在所有重放快路之后(与守卫、机型开关同组)。已经受理过的那一单,重放时照旧
+    // 拿回它自己的 id —— 配置在中途换了,不该让同一次尝试的答案不再幂等。
+    if (kind === "video" && entityIds.length > 0 && !videoElementReferencesHonoured()) {
+      return {
+        error: "We can't put your products or people into a clip right now — remove the @mentions to make this video, and nothing will be charged.",
+      };
+    }
 
     // consistencyGuardian (Phase 2): block obvious money-wasters BEFORE the spend
     // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
@@ -822,8 +857,9 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             // "edit this image" inherits from it. Video jobs get null (normalizer drops it).
             ...(imageOptions ? { imageOptions } : {}),
             // Phase C: persist the @mention→variant bindings so the worker conditions on
-            // the right variant. Image-only (the shared material normalizer drops it for video).
-            // Omitted when empty → column stays null (old/bare/video gens unchanged).
+            // the right variant — for video too since #785, because its element photos now
+            // really reach the engine. Omitted when empty → column stays null (bare gens
+            // unchanged).
             ...(material.variantSel ? { variantSel: material.variantSel } : {}),
             // #774:批准那一刻冻结的元素身份。worker 认人只读这一列,不再重读活名称。
             // 不参与幂等材料 —— 改过名的重放不该被判成「换了内容」。空 → 列保持 null,
@@ -1006,6 +1042,9 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
       videoOptions: null,
     })),
     videoDefaults: defaults,
+    // #785 判官 r2 P1-a:界面承诺 @元素之前先问这一处 —— 与选片名额(`conditioningCap`)
+    // 和卡面规格条目读的是**同一个**函数,所以「界面说的」不可能比执行层多说一句。
+    videoElementReferences: videoElementReferencesHonoured(),
     videoAspectRatios: [...GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel].aspectRatios],
     imageAspectRatios: [...GEN_IMAGE_MODEL_OPTIONS[imageModel as GenModel].aspectRatios],
     imageDefaultAspect: imageDefaults(imageModel as GenModel).aspectRatio,

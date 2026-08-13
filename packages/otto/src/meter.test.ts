@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 const mocks = vi.hoisted(() => {
   const reserveCredits = vi.fn();
+  const reserveCreditsUpTo = vi.fn();
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
   const fakeTx = {};
@@ -27,12 +28,13 @@ const mocks = vi.hoisted(() => {
     constructor(msg = "Not enough credits.") { super(msg); this.name = "InsufficientCredits"; }
   }
 
-  return { reserveCredits, settleCredits, refundReservation, $transaction, InsufficientCredits };
+  return { reserveCredits, reserveCreditsUpTo, settleCredits, refundReservation, $transaction, InsufficientCredits };
 });
 
 vi.mock("@fikirtive/db", () => ({
   prisma: { $transaction: mocks.$transaction },
   reserveCredits: mocks.reserveCredits,
+  reserveCreditsUpTo: mocks.reserveCreditsUpTo,
   settleCredits: mocks.settleCredits,
   refundReservation: mocks.refundReservation,
   InsufficientCredits: mocks.InsufficientCredits,
@@ -60,6 +62,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default: reserve/settle/refund succeed (resolve undefined)
   mocks.reserveCredits.mockResolvedValue(undefined);
+  // #898: default is "the whole cap was available" — tests that care set their own hold.
+  mocks.reserveCreditsUpTo.mockResolvedValue(40);
   mocks.settleCredits.mockResolvedValue(undefined);
   mocks.refundReservation.mockResolvedValue(undefined);
   // Reset $transaction to always run its callback
@@ -558,5 +562,104 @@ describe("Test #9 — reserveCapInternal (#543 conversation-turn hold cap)", () 
     ).rejects.toBe(boom);
     expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
     expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #10 (#898) — reserveMinInternal turns the hold from a fixed amount into
+// min(cap, balance), and moves the door down to the minimum. Founder 2026-08-13,
+// formal correction to #543.
+//
+// The cap alone was still a door: with a flat 4-credit hold, a merchant sitting on
+// 3.9 credits could not send a message at all — they could not even ask what their
+// remaining credits were still good for — while one message measures 0.4–3.3 (#536).
+// ---------------------------------------------------------------------------
+describe("Test #10 — reserveMinInternal (#898 chat hold fits the balance)", () => {
+  it("routes to reserveCreditsUpTo with the cap and the minimum, not to the fixed reserve", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(39);
+
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+
+    expect(mocks.reserveCreditsUpTo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: ORG, refId: REF, capInternal: 40, minimumInternal: 10 }),
+    );
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("the no-usage settle charges the hold that was ACTUALLY taken, not the one it asked for", async () => {
+    // The merchant only had 1.2 credits, so 12 internal is what the reserve took. Charging the
+    // 40 it hoped for would be charging money that was never held — settleCredits would clamp
+    // it, but the intent must be right at this layer too.
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(12);
+  });
+
+  it("a refused entry never calls the model — invariant #1 holds through the new path", async () => {
+    mocks.reserveCreditsUpTo.mockRejectedValue(new mocks.InsufficientCredits());
+    const fn = vi.fn();
+
+    await expect(
+      withLlmBudget(makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }), fn),
+    ).rejects.toBeInstanceOf(mocks.InsufficientCredits);
+
+    expect(fn).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("a throwing call still refunds the whole fitted hold (invariant #3 unchanged)", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+    const boom = new Error("model exploded");
+
+    await expect(
+      withLlmBudget(
+        makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: 10 }),
+        vi.fn().mockRejectedValue(boom),
+      ),
+    ).rejects.toBe(boom);
+
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a malformed minimum — 0, negative, fractional, NaN and Infinity keep the fixed hold", async () => {
+    // Fail-closed direction: ignoring a bad minimum holds MORE and admits FEWER callers.
+    for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      vi.clearAllMocks();
+      mocks.reserveCreditsUpTo.mockResolvedValue(12);
+      await withLlmBudget(
+        makeArgs({ maxSteps: 10, reserveCapInternal: 40, reserveMinInternal: bad }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+      );
+      expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+      expect(mocks.reserveCredits).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ cost: 40 }),
+      );
+    }
+  });
+
+  it("omitting the minimum leaves every existing caller on the fixed hold, byte for byte", async () => {
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cost: 40 }),
+    );
   });
 });
