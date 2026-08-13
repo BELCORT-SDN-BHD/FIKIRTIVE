@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
 import { signIn, clearAuthRateLimitCounters } from "../support/auth.js";
 
-test("a stranger is walled out of every money surface, and told where to sign in", async ({ page }) => {
+test("A stranger is walled out of every money surface, and told where to sign in", async ({ page }) => {
   for (const surface of ["/otto", "/billing", "/crm/broadcasts"]) {
     await page.goto(surface);
     await expect(page).toHaveURL(/\/login/);
@@ -20,7 +20,7 @@ test("a stranger is walled out of every money surface, and told where to sign in
   }
 });
 
-test("a merchant signs in through the emailed link and lands where the link pointed", async ({ page }) => {
+test("A merchant signs in through the emailed link and lands where the link pointed", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "door",
     workspaceName: "Kaia Cafe",
@@ -34,7 +34,7 @@ test("a merchant signs in through the emailed link and lands where the link poin
   await expect(page.getByText("Your balance")).toBeVisible();
 });
 
-test("an unknown address cannot sign in with a link that was never minted for it", async ({ page }) => {
+test("An unknown address cannot sign in with a link that was never minted for it", async ({ page }) => {
   // A token that does not exist is the shape a forged or replayed link takes. The product must
   // refuse it — and the refusal must be visible, not a silent bounce that reads like a lost click.
   await clearAuthRateLimitCounters();

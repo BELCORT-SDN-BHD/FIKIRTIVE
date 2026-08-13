@@ -14,7 +14,7 @@ import { test, expect } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 
-test("an empty shelf says so and still offers a way through", async ({ page }) => {
+test("An empty shelf says so and still offers a way through", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "shelf",
     workspaceName: "Kaia Cafe",

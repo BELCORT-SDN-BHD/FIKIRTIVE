@@ -11,7 +11,7 @@ import { seedWorkspace, seedElement, seedSettledJob } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { spendHistory } from "../support/ui.js";
 
-test("a second merchant sees only their own balance, history and Library", async ({ page }) => {
+test("A second merchant sees only their own balance, history and Library", async ({ page }) => {
   const kaia = await seedWorkspace({
     slug: "iso-a",
     workspaceName: "Kaia Cafe",

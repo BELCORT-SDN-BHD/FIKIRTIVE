@@ -9,7 +9,7 @@ import { test, expect } from "@playwright/test";
 import { seedWorkspace, seedElement } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 
-test("an element deleted from the Library is gone, and is still gone after a reload", async ({ page }) => {
+test("An element deleted from the Library is gone, and is still gone after a reload", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "library",
     workspaceName: "Kaia Cafe",

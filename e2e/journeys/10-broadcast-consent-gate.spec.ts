@@ -15,7 +15,7 @@ import { test, expect } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 
-test("with no channel connected, a broadcast cannot be started and the reason is on screen", async ({ page }) => {
+test("With no channel connected, a broadcast cannot be started and the reason is on screen", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "broadcast",
     workspaceName: "Kaia Cafe",

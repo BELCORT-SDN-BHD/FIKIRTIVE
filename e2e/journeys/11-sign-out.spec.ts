@@ -9,7 +9,7 @@ import { seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { globalNav } from "../support/ui.js";
 
-test("after signing out, the money surface is walled again", async ({ page }) => {
+test("After signing out, the money surface is walled again", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "signout",
     workspaceName: "Kaia Cafe",

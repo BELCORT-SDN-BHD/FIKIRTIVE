@@ -11,7 +11,7 @@ import { signIn } from "../support/auth.js";
 import { spendHistory, globalNav } from "../support/ui.js";
 import { INTERNAL_PER_DISPLAY } from "../support/db.js";
 
-test("an open hold leaves the balance smaller and says so, instead of just going missing", async ({ page }) => {
+test("An open hold leaves the balance smaller and says so, instead of just going missing", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "hold",
     workspaceName: "Kaia Cafe",
@@ -38,7 +38,7 @@ test("an open hold leaves the balance smaller and says so, instead of just going
   ).toBeVisible();
 });
 
-test("the balance in the navigation rail is the same number Billing shows", async ({ page }) => {
+test("The balance in the navigation rail is the same number Billing shows", async ({ page }) => {
   // Two surfaces, one wallet. A rail that lags behind Billing is how a merchant comes to believe
   // the product cannot count.
   const ws = await seedWorkspace({

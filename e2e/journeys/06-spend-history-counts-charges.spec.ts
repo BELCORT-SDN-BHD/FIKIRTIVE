@@ -11,7 +11,7 @@ import { seedWorkspace, seedSettledJob, seedRefundedJob, seedOpenHold } from "..
 import { signIn } from "../support/auth.js";
 import { spendHistory } from "../support/ui.js";
 
-test("a workspace with nothing but its welcome grant is not told it has been charged", async ({ page }) => {
+test("A workspace with nothing but its welcome grant is not told it has been charged", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "fresh",
     workspaceName: "Kaia Cafe",
@@ -26,7 +26,7 @@ test("a workspace with nothing but its welcome grant is not told it has been cha
   await expect(page.getByText("+30", { exact: true })).toBeVisible();
 });
 
-test("only the entries that really took credits are counted as charges", async ({ page }) => {
+test("Only the entries that really took credits are counted as charges", async ({ page }) => {
   // Four entries: the grant (added), a delivered image (charge), a failed video refunded in full
   // (nothing moved), and a job still running (a hold, not a charge yet). Exactly one is a charge.
   const ws = await seedWorkspace({

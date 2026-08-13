@@ -41,21 +41,39 @@ export function e2eDatabaseUrl(): string {
 export const E2E_AUTH_SECRET = "fikirtive-e2e-only-session-secret-not-for-production";
 
 /**
- * Credentials that would let the app under test spend real money. NONE of them is set by
- * `appEnv()`, and `global-setup.ts` refuses to start if the ambient environment carries one:
- * a resident suite that generates for real would burn the merchant's credits every night.
+ * Every credential that would let the app under test REACH OFF THIS MACHINE — to spend, to send,
+ * or merely to report. NONE of them is set by `appEnv()`, and `global-setup.ts` refuses to start
+ * if the ambient environment carries one.
  *
- * With none of them present, `createGenerationProvider()` returns its mock ($0, offline) and the
- * Stripe shelf has no key to call — the fence is the absence of the credential, not a flag
+ * WHY THE LIST IS WIDER THAN "CAN SPEND". A resident suite runs unattended every night, so the
+ * question is not only "could this bill somebody" but "could this reach anyone at all". Both
+ * failures are silent from inside a green run:
+ *
+ *   · money — BYTEPLUS_API_KEY / FAL_KEY generate for real; STRIPE_SECRET_KEY reaches the payment
+ *     provider; OPENAI_API_KEY / ANTHROPIC_API_KEY / MODAL_LLM_KEY bill per token; and
+ *     TAVILY_API_KEY / BRAVE_SEARCH_API_KEY are metered web-search transports that are ACTIVELY
+ *     wired (apps/web/lib/otto-actions.ts, apps/worker/src/jobs/research.ts pick a provider from
+ *     whichever of the two keys is present — so one leaked key is nightly billed traffic).
+ *   · reach — RESEND_API_KEY sends real mail to whatever address a fixture happens to hold, and
+ *     SENTRY_DSN ships this suite's own deliberate failures to the production error stream, where
+ *     they are indistinguishable from a merchant's.
+ *
+ * With none of them present, `createGenerationProvider()` returns its mock ($0, offline), the
+ * research port is left unwired (its own "not configured" answer), Sentry stays a no-op and the
+ * Stripe shelf has no key to call — the fence is the ABSENCE of the credential, not a flag
  * somebody has to remember to pass.
  */
-export const PAID_PROVIDER_ENV_NAMES = [
+export const OFF_MACHINE_CREDENTIAL_NAMES = [
   "BYTEPLUS_API_KEY",
   "FAL_KEY",
   "STRIPE_SECRET_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  "MODAL_LLM_KEY",
+  "TAVILY_API_KEY",
+  "BRAVE_SEARCH_API_KEY",
   "RESEND_API_KEY",
+  "SENTRY_DSN",
 ] as const;
 
 /** The environment `next start` is given. Everything the app needs, and nothing that can spend. */
@@ -75,6 +93,6 @@ export function appEnv(): Record<string, string> {
     // serve. `warn` is the contract's own documented escape hatch (lib/env-boot.ts).
     FIKIRTIVE_ENV_CONTRACT: "warn",
     NEXT_TELEMETRY_DISABLED: "1",
-    // GENERATION_PROVIDER is deliberately absent — see PAID_PROVIDER_ENV_NAMES above.
+    // GENERATION_PROVIDER is deliberately absent — see OFF_MACHINE_CREDENTIAL_NAMES above.
   };
 }

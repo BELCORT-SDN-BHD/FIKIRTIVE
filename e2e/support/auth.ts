@@ -23,7 +23,15 @@ import { expect, type Page } from "@playwright/test";
 import { prisma } from "./db.js";
 import type { Workspace } from "./seed.js";
 
-/** Far enough ahead that no journey can outlive it; nothing here reads the clock for a verdict. */
+/**
+ * THE ONE PLACE IN THIS SUITE THAT READS THE WALL CLOCK, and the reason it is not a timing
+ * dependency: Better Auth stores an absolute `expiresAt` on the verification row, so the value
+ * has to be "now plus something". Thirty minutes is far wider than the whole suite's runtime
+ * (measured: ~15 s locally, ~32 s on the CI runner), the token is consumed within milliseconds of
+ * being minted, and no assertion anywhere compares against it — a journey cannot go red or green
+ * on account of this number. Every fixture timestamp that a journey DOES read is a fixed instant
+ * (support/seed.ts).
+ */
 const TOKEN_LIFETIME_MS = 30 * 60 * 1000;
 
 /**

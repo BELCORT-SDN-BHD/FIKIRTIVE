@@ -11,7 +11,7 @@ import { signIn } from "../support/auth.js";
 import { spendHistory } from "../support/ui.js";
 import { INTERNAL_PER_DISPLAY } from "../support/db.js";
 
-test("a delivered image is one charge for exactly what it cost", async ({ page }) => {
+test("A delivered image is one charge for exactly what it cost", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "charge",
     workspaceName: "Kaia Cafe",
@@ -35,7 +35,7 @@ test("a delivered image is one charge for exactly what it cost", async ({ page }
   await expect(page.getByText("-11", { exact: true })).toBeVisible();
 });
 
-test("a hold bigger than the work returns the difference, and says how much", async ({ page }) => {
+test("A hold bigger than the work returns the difference, and says how much", async ({ page }) => {
   // The conversation-turn shape: hold up front, charge what was used, give the rest back in the
   // same transaction. Merchants used to see the balance dip and partly come back with nothing
   // explaining either move.

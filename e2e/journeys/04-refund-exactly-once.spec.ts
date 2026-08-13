@@ -16,7 +16,7 @@ import { seedWorkspace, seedRefundedJob, readAccount, countLedgerRows } from "..
 import { signIn } from "../support/auth.js";
 import { prisma, refundReservation, INTERNAL_PER_DISPLAY } from "../support/db.js";
 
-test("a failed video gives the whole hold back, and a repeated refund cannot pay twice", async ({ page }) => {
+test("A failed video gives the whole hold back, and a repeated refund cannot pay twice", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "refund",
     workspaceName: "Kaia Cafe",

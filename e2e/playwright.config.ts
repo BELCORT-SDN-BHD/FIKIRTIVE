@@ -10,8 +10,12 @@
  * THE THREE RULES THAT KEEP IT HONEST, because a flaky resident suite is worse than none — it
  * trains everybody to ignore a red:
  *
- *   - NO WALL CLOCK. Every fixture timestamp is a fixed instant and every assertion is about rows
- *     the journey itself seeded. Nothing waits "long enough"; nothing asserts on "today".
+ *   - NO WALL CLOCK IN ANY VERDICT. Every fixture timestamp is a fixed instant, every assertion is
+ *     about rows the journey itself seeded, and nothing waits "long enough" or asserts on "today".
+ *     The clock IS read in exactly one place — the expiry stamped on a sign-in token
+ *     (support/auth.ts) — and that value is thirty minutes wide, is never compared against, and
+ *     no assertion can reach it. Stating the exception is the point: "no wall clock anywhere"
+ *     would be the kind of claim this suite exists to stop the product from making.
  *   - NO NETWORK. The app under test has no provider credential, no mail key and no Stripe key
  *     (support/env.ts, enforced in global-setup.ts), so there is nothing off-machine to be down.
  *   - NO RETRIES. `retries: 0` on purpose: a retry turns a flake into a green and hides exactly

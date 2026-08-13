@@ -12,7 +12,7 @@ import { seedWorkspace, readAccount } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { prisma, INTERNAL_PER_DISPLAY } from "../support/db.js";
 
-test("a merchant creates a project, lands in it, and is charged nothing for it", async ({ page }) => {
+test("A merchant creates a project, lands in it, and is charged nothing for it", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "project",
     workspaceName: "Kaia Cafe",
