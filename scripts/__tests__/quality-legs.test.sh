@@ -83,25 +83,55 @@
 # starts in an environment this workflow cannot pre-seed. 3d additionally refuses
 # `BASH_ENV` and `ENV` in EVERY env block the file has, at any depth.
 #
-# And the tripwire's OWN limit, stated with the honesty the last eight rounds earned:
-# r1-r8 each ended by falsifying the round before's absolute claim, and r8 falsified
-# the one that stood here — "a bypass has to touch the tripwire step or the lock".
-# It did not; a workflow-level `BASH_ENV` touched neither. What replaces it is
-# weaker, and structural instead of clever:
+# And the tripwire's OWN limit, stated with the honesty the last ten rounds earned:
+# every round has ended by falsifying the round before's absolute claim. r8 killed "a
+# bypass has to touch the tripwire step or the lock" (a workflow-level `BASH_ENV`
+# touched neither). r10 killed its replacement, "every bypass needs a diff to
+# .github/workflows/ci.yml", and killed it with a demonstration: ci.yml RUNS
+# `bash scripts/ci/pr-scope.sh` in the `scope` job, after the tripwire has passed. Edit
+# that one repository script to print `false` — no ci.yml diff, no lock diff — and all
+# five legs are `skipped` while the fan-in reads the whole set of skips as a docs-only
+# PR and goes green. What the workflow RUNS is a mutable surface too.
 #
-#     EVERY bypass needs a diff to .github/workflows/ci.yml. Env, container,
-#     defaults, shell, a swapped step, a poisoned startup file — none of it exists
-#     anywhere but in that file, and a diff to that file is in the PR's file list.
+# ── THE TRUSTED EXECUTION SET (the r11 contract, third version) ───────────────
+# So the claim no longer names one file. It names, exhaustively, the files that decide
+# WHETHER THE GATES RUN AT ALL — as opposed to the files that ARE the gates, where a
+# change makes a gate fail rather than disappear:
+#
+#     .github/workflows/ci.yml        every job, step, env and condition
+#     .github/ci-workflow.lock        the digest the tripwire compares ci.yml to
+#     scripts/ci/pr-scope.sh          run by `scope`; decides the docs-only skip
+#     scripts/ci/pr-scope.jq          the decision pr-scope.sh transports
+#     scripts/ci/quality.sh           what `pnpm quality --leg …` resolves to
+#     package.json                    the `quality` script that does the resolving
+#     scripts/ci/ci-workflow-lock.sh  writes the lock (the workflow never runs it)
+#
+#     THE CLAIM: a change to any member of that set is in the PR's file list, and
+#     nothing outside it can stop a gate from running.
+#
+# Each half is held by something in this file, and by different things:
+#   - ci.yml and the lock, by 3e and 3f;
+#   - quality.sh and package.json, by 1./2. and by the package.json literal in 3b —
+#     and by the legs themselves, which go RED rather than quiet when they stop
+#     running their gates;
+#   - the two pr-scope files, by 3g: since r11 the fan-in re-derives the docs-only
+#     answer in its OWN job, from the API, with a jq program written in ci.yml and no
+#     repository script involved. A lying pr-scope can still make the gates RUN when
+#     they need not have. It cannot buy a skip;
+#   - the completeness of the list itself, by 3h, which compares the `scripts/…` paths
+#     ci.yml actually names against the hand-written set. A contract that names files
+#     is worth exactly what its list's completeness is worth, so the list is checked
+#     rather than asserted.
 #
 # The lock is still regenerable (`bash scripts/ci/ci-workflow-lock.sh`), so an author
 # who means to hollow out CI can change ci.yml, regenerate the lock and the block in
-# 3e, and be green. That was always true and is now written as a drill case rather
-# than a promise. The floor under all of it is not a script — it is the `quality`
-# required check in the protect-main ruleset (bypass_actors empty), and the project
-# rule that a PR touching .github/workflows or scripts/ci goes through review, which
-# is what reads the ci.yml diff every bypass has to produce. This file and the
-# tripwire are instruments against unreviewed drift. They are not a wall against a
-# determined author, and nothing in this repository is.
+# 3e, and be green. That was always true and is written as a drill case rather than a
+# promise. The floor under all of it is not a script — it is the `quality` required
+# check in the protect-main ruleset (bypass_actors empty), and the project rule that a
+# PR touching .github/workflows or scripts/ci goes through review, which is what reads
+# the diff every member of the set is obliged to produce. This file, the tripwire and
+# the fan-in's second opinion are instruments against unreviewed drift. They are not a
+# wall against a determined author, and nothing in this repository is.
 #
 # Everything else about ci.yml below (the leg commands, expected_jobs, the env
 # tables, the forbidden keys) is kept as DIAGNOSTICS. They are strictly redundant
@@ -119,7 +149,10 @@
 #      a canonical literal written out there. This is the verdict; 3. below is its
 #      diagnostic layer. And (section 3f) the tripwire that has to hold when NONE of
 #      this runs: every job's step #2 is the lock check, byte for byte, and the lock
-#      it reads is current.
+#      it reads is current. And (3g) the fan-in's second opinion — the step that
+#      re-derives the docs-only answer without running a repository script — pinned
+#      the same way, by hand. And (3h) the completeness of the trusted set: the
+#      `scripts/…` paths ci.yml names, against the list written out here.
 #   1. THE GATE MAP — quality.sh runs exactly the gates named in expected_gates
 #      below, each on exactly the leg named there, no more and no fewer. Same for
 #      the leg list itself, against expected_legs.
@@ -358,7 +391,13 @@ expected_workflow_env=(
 # purpose — this table says which variables exist, 3b says each one answers for its own
 # job, and neither statement implies the other.
 #
-# This table is one of the DIAGNOSTICS (see the header): it names the two steps that
+# `quality|3|…` is the r11 recheck step's own API credentials, and `RECHECK_CODE` /
+# `RECHECK_REASON` on the verdict step are the only place in this workflow where one
+# step reads another step's output. That wiring is the whole r10 fix, so like the
+# LEG_RESULT_* lines it is stated twice: here, and against the step it must come from
+# in 3g.
+#
+# This table is one of the DIAGNOSTICS (see the header): it names the three steps that
 # may carry an `env:` and what is in it. It is not the coverage — `services.postgres.env`
 # is not listed here, and neither is `container.env`, which r5's review fired and which
 # no list of step and workflow blocks could have held. 3e covers both, and everything
@@ -368,13 +407,49 @@ expected_step_env=(
   'scope|3|REPOSITORY=${{ github.repository }}'
   'scope|3|PR_NUMBER=${{ github.event.pull_request.number }}'
   'scope|3|EVENT_NAME=${{ github.event_name }}'
-  'quality|3|SCOPE_RESULT=${{ needs.scope.result }}'
-  'quality|3|SCOPE_CODE=${{ needs.scope.outputs.code }}'
-  'quality|3|LEG_RESULT_TYPECHECK=${{ needs.typecheck.result }}'
-  'quality|3|LEG_RESULT_TESTS=${{ needs.tests.result }}'
-  'quality|3|LEG_RESULT_BUILD=${{ needs.build.result }}'
-  'quality|3|LEG_RESULT_LINT=${{ needs.lint.result }}'
-  'quality|3|LEG_RESULT_CHECKS=${{ needs.checks.result }}'
+  'quality|3|GH_TOKEN=${{ github.token }}'
+  'quality|3|REPOSITORY=${{ github.repository }}'
+  'quality|3|PR_NUMBER=${{ github.event.pull_request.number }}'
+  'quality|3|EVENT_NAME=${{ github.event_name }}'
+  'quality|4|SCOPE_RESULT=${{ needs.scope.result }}'
+  'quality|4|SCOPE_CODE=${{ needs.scope.outputs.code }}'
+  'quality|4|SCOPE_REASON=${{ needs.scope.outputs.reason }}'
+  'quality|4|SCOPE_LEGS=${{ needs.scope.outputs.legs }}'
+  'quality|4|RECHECK_CODE=${{ steps.recheck.outputs.code }}'
+  'quality|4|RECHECK_REASON=${{ steps.recheck.outputs.reason }}'
+  'quality|4|LEG_RESULT_TYPECHECK=${{ needs.typecheck.result }}'
+  'quality|4|LEG_RESULT_TESTS=${{ needs.tests.result }}'
+  'quality|4|LEG_RESULT_BUILD=${{ needs.build.result }}'
+  'quality|4|LEG_RESULT_LINT=${{ needs.lint.result }}'
+  'quality|4|LEG_RESULT_CHECKS=${{ needs.checks.result }}'
+)
+
+# ── the trusted execution set, named (see 3h) ────────────────────────────────
+# Every `scripts/…` path that appears in any `run:` script in ci.yml, written out by
+# hand. r10 is the reason it exists: the contract used to say "every bypass needs a diff
+# to ci.yml", and the counter-example was that ci.yml RUNS a repository script — edit
+# `scripts/ci/pr-scope.sh` to print `false` and every gate is skipped with no ci.yml
+# diff at all. A contract that names the trusted files is only worth having if the list
+# is complete, so the list is not prose: this is compared, both directions, against what
+# the workflow actually names. A call to a script nobody stated here is red.
+#
+# A scan of text cannot tell "executed" from "mentioned", and pretending otherwise is
+# how the last three contracts died — so each entry says which it is:
+#
+#   scripts/ci/pr-scope.sh          EXECUTED, by the scope job. This is r10's file.
+#   scripts/ci/pr-scope.jq          named in the fan-in's failure message; executed
+#                                   indirectly, by pr-scope.sh, which is why it belongs
+#                                   in the trusted set even though ci.yml never runs it.
+#   scripts/ci/ci-workflow-lock.sh  MENTIONED ONLY, in the tripwire's error text. The
+#                                   workflow never runs it; it writes the lock.
+#
+# `scripts/ci/quality.sh` is deliberately absent: ci.yml reaches it through
+# `pnpm quality`, which package.json resolves, and both halves of that are pinned
+# separately (the leg run scripts here, and the package.json literal in 3b).
+expected_workflow_scripts=(
+  scripts/ci/ci-workflow-lock.sh
+  scripts/ci/pr-scope.jq
+  scripts/ci/pr-scope.sh
 )
 
 # ── the tripwire, written out by hand (see 3f) ────────────────────────────────
@@ -414,6 +489,133 @@ got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
 echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
 QUALITY_LEGS_TRIPWIRE_EOF
 )"
+
+# ── the fan-in's second opinion, written out by hand (see 3g) ────────────────
+# The step r10 made necessary, and the reason it is pinned here rather than left to the
+# canonical comparison in 3e.
+#
+# WHAT r10 PROVED. The fan-in used to accept "all five legs skipped" on the say-so of
+# the `scope` job, and `scope` reaches its answer by running `bash
+# scripts/ci/pr-scope.sh` — a repository script, executed AFTER the tripwire has
+# already passed. A diff to that one file, printing `false`, skipped every gate in the
+# workflow with no ci.yml diff and no lock diff, and the fan-in called it a docs-only
+# PR. The contract "every bypass needs a ci.yml diff" was simply false: what the
+# workflow RUNS is a mutable surface too.
+#
+# So ci.yml's fan-in now re-derives the docs-only answer in its own job, from the API,
+# with a jq program written in ci.yml itself, running no repository script at all. A
+# lying pr-scope can still make the gates RUN when they need not have; it can no longer
+# buy a skip.
+#
+# AND WHY IT IS WRITTEN OUT HERE, BYTE FOR BYTE. Everything else this file knows about
+# ci.yml is derived from ci.yml, so it agrees with ci.yml by construction — including
+# when the recheck is quietly reduced to `emit false docs-only`. The canonical block in
+# 3e would go red on that, but 3e is regenerated by a switch, and a block regenerated by
+# reflex is this gate switched off by hand. This literal is the second, hand-written
+# statement: changing what the fan-in re-derives means changing these lines too, in the
+# same commit, where a reviewer reads both halves side by side. Same rule as the gate
+# map, the env tables and the tripwire.
+#
+# (`read -d ''` and not `$(cat <<…)`: bash 3.2, which macOS ships, mis-parses a
+# here-document nested inside a command substitution when the body holds an odd number
+# of quote characters — and this body holds a `jq` program full of them.)
+IFS= read -r -d '' expected_recheck_run <<'QUALITY_LEGS_RECHECK_EOF' || true
+set -euo pipefail
+emit() { # <code> <reason>
+  { echo "code=$1"; echo "reason=$2"; } >> "$GITHUB_OUTPUT"
+  echo "recheck: code=$1, reason=$2"
+}
+if [ -z "${PR_NUMBER:-}" ]; then
+  emit true no-pr-context
+  exit 0
+fi
+files_json="${RUNNER_TEMP:-/tmp}/recheck-files.json"
+pr_json="${RUNNER_TEMP:-/tmp}/recheck-pr.json"
+pr="repos/${REPOSITORY}/pulls/${PR_NUMBER}"
+# Three tries before giving up, which the scope job does not need and this
+# step does. There, an unreadable API means "run every gate" and the run is
+# merely slow; here it means the legs are already skipped and the only honest
+# answer left is RED. A transient blip should not be a red docs-only PR.
+fetch() { # <destination> <gh api arguments…>
+  dest="$1"
+  shift
+  n=1
+  while [ "$n" -le 3 ]; do
+    if gh api "$@" >"$dest" 2>/dev/null; then return 0; fi
+    n=$((n + 1))
+    if [ "$n" -le 3 ]; then sleep 2; fi
+  done
+  : >"$dest"
+}
+fetch "$files_json" --paginate --slurp "$pr/files"
+fetch "$pr_json" "$pr"
+if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
+  emit true api-unreadable
+  exit 0
+fi
+# Written to a file and read back with `jq -f`, not built with `$(cat <<…)`:
+# bash 3.2 (what macOS ships, and what the drill that lifts this program runs
+# under) mis-parses a here-document nested inside a command substitution when
+# the body holds an odd number of quote characters.
+filter="${RUNNER_TEMP:-/tmp}/recheck.jq"
+cat >"$filter" <<'RECHECK_JQ'
+# docs-only, proved from the API payloads, or one of the two ways of not
+# proving it. Never "tolerant": every branch that is not a proof lands on a
+# word that means the legs had to run.
+def known_status:
+  . == "added" or . == "removed" or . == "modified" or . == "renamed"
+  or . == "copied" or . == "changed" or . == "unchanged";
+def under_docs:
+  type == "string"
+  and startswith("docs/")
+  and (explode | any(. == 0) | not)
+  and (split("/") | all(length > 0 and . != "." and . != ".."));
+# A rename is two paths. Taking only `filename` is how a code file renames
+# itself into docs/ and takes every gate with it.
+def entry_is_docs_only:
+  (.filename | under_docs)
+  and (.status | known_status)
+  and (if .status == "renamed" or .status == "copied"
+       then (.previous_filename | under_docs)
+       elif has("previous_filename") and .previous_filename != null
+       then (.previous_filename | under_docs)
+       else true
+       end);
+(if ($files[0] | type) == "array" and ($files[0] | all(type == "array"))
+ then ($files[0] | add // [])
+ else null
+ end) as $entries
+| (if ($pr | length) == 1 and ($pr[0] | type) == "object"
+   then $pr[0].changed_files
+   else null
+   end) as $total
+| if $entries == null then "undecidable"
+  # An empty list means we never learned what changed, not that nothing did.
+  elif ($entries | length) == 0 then "undecidable"
+  elif ($entries | any(type != "object")) then "undecidable"
+  elif ($total | type) != "number" then "undecidable"
+  # As TEXT: jq keeps the fractional literal, so 1.0 and 1e-1 are visible here.
+  elif ($total | tostring | test("^(0|[1-9][0-9]*)$") | not) then "undecidable"
+  # GET .../files stops at 3,000 entries without saying so.
+  elif $total >= 3000 then "undecidable"
+  # Below that ceiling the count is what proves we read the whole PR — and it
+  # only proves it if the entries are distinct.
+  elif ($entries | length) != $total then "undecidable"
+  elif ($entries | map(.filename) | unique | length) != ($entries | length) then "undecidable"
+  elif ($entries | all(entry_is_docs_only)) then "docs-only"
+  else "outside-docs"
+  end
+RECHECK_JQ
+verdict="$(jq -r -n --slurpfile files "$files_json" --slurpfile pr "$pr_json" -f "$filter" 2>/dev/null)" || verdict=""
+case "$verdict" in
+  docs-only) emit false docs-only ;;
+  outside-docs) emit true outside-docs ;;
+  *) emit true undecidable ;;
+esac
+QUALITY_LEGS_RECHECK_EOF
+expected_recheck_run="${expected_recheck_run%$'\n'}"
+expected_recheck_name="Decide for ourselves whether this PR is docs-only"
+expected_recheck_id="recheck"
 
 # ── the legs quality.sh declares ──────────────────────────────────────────────
 declaration="$(grep -E '^quality_legs=\(.*\)$' "$quality_sh" || true)"
@@ -741,6 +943,82 @@ while IFS= read -r tripwire_job; do
 done < <(wf -r '.jobs | keys_unsorted[]')
 (( jobs_with_tripwire >= 1 )) \
   || fail "ci.yml parses to a workflow whose jobs could not be enumerated, so no tripwire was checked at all"
+
+# ── 3g. THE SECOND OPINION — the step that made r10's P0 unbuyable ───────────
+# The tripwire above proves the workflow that ran is the workflow that was reviewed. It
+# has nothing to say about the repository scripts that workflow then RUNS, and r10's P0
+# was exactly there: `scope` decides the docs-only skip by running
+# `bash scripts/ci/pr-scope.sh`, so a diff to that one file — no ci.yml, no lock — made
+# every leg `skipped` and the fan-in read the whole set of skips as a docs-only PR.
+#
+# The answer is in ci.yml: the fan-in job re-derives that decision itself, from the API,
+# with a jq program written in ci.yml and no repository script involved. This section
+# pins that step the way 3f pins the tripwire — by hand, so that changing what the
+# fan-in re-derives is a change somebody wrote down twice.
+#
+# WHAT THIS DOES NOT CLAIM. The recheck is itself part of the trusted execution set
+# (see 3h): it is lines in ci.yml, held by the lock, restated here. It is not a
+# self-closing loop, and an author who edits ci.yml, regenerates the lock and
+# regenerates both blocks here still gets a green run — that has been true since r6 and
+# is a drill case, not a promise. What r11 buys is narrower and real: the set of files
+# that can silently stop a gate from running no longer includes scripts/ci/pr-scope.sh
+# or scripts/ci/pr-scope.jq.
+fan_in_job="$(wf -r '.jobs | to_entries[] | select((.value.name // .key) == "quality") | .key')"
+[[ -n "$fan_in_job" ]] \
+  || fail "ci.yml has no job reporting as 'quality' — that string is the required check in the protect-main ruleset"
+
+recheck_keys="$(wf -r --arg j "$fan_in_job" '((.jobs[$j].steps // [])[2] // {}) | keys | sort | join(",")')"
+[[ "$recheck_keys" == "env,id,name,run" ]] \
+  || fail "ci.yml's fan-in must carry the scope recheck as its step #3, with exactly the keys 'env,id,name,run', found '${recheck_keys:-<none>}' — that step is the only thing in this workflow that decides the docs-only skip without running a repository script, and #874 r10 skipped every gate by editing one of those scripts"
+recheck_id="$(wf -r --arg j "$fan_in_job" '((.jobs[$j].steps // [])[2] // {}).id // ""')"
+[[ "$recheck_id" == "$expected_recheck_id" ]] \
+  || fail "ci.yml's fan-in step #3 has id '${recheck_id:-<none>}', this file expects '$expected_recheck_id' — the verdict step reads its answer as \${{ steps.$expected_recheck_id.outputs.code }}, and an id that does not match makes that an empty string"
+recheck_name="$(wf -r --arg j "$fan_in_job" '((.jobs[$j].steps // [])[2] // {}).name // ""')"
+[[ "$recheck_name" == "$expected_recheck_name" ]] \
+  || fail "ci.yml's fan-in step #3 is named '${recheck_name:-<none>}', this file expects '$expected_recheck_name'"
+recheck_run="$(wf -r --arg j "$fan_in_job" '((.jobs[$j].steps // [])[2] // {}).run // ""')"
+recheck_run="${recheck_run%$'\n'}"
+if [[ "$recheck_run" != "$expected_recheck_run" ]]; then
+  echo "quality-legs: ci.yml's fan-in step #3 is not the scope recheck this file pins" >&2
+  echo "  (- is expected_recheck_run in scripts/__tests__/quality-legs.test.sh, + is ci.yml)" >&2
+  diff <(printf '%s\n' "$expected_recheck_run") <(printf '%s\n' "$recheck_run") >&2 || true
+  fail "the fan-in's scope recheck has drifted from the one written out in this file. It is what stops a repository script from buying a skip (#874 r10), so a change to it is stated here, by hand, in the same commit — not regenerated"
+fi
+
+# And it must not have become a caller of the very scripts it exists to do without.
+# Written as its own check because the byte comparison above would also catch it, and
+# this is the one sentence that says WHY: a recheck that ran scripts/ci/pr-scope.sh
+# would agree with the scope job by construction, which is r10's finding restated.
+if printf '%s\n' "$recheck_run" | grep -q 'pr-scope'; then
+  fail "ci.yml's fan-in recheck names 'pr-scope' — it exists precisely to reach the docs-only answer without scripts/ci/pr-scope.sh or scripts/ci/pr-scope.jq, and a second opinion that asks the same script is not a second opinion"
+fi
+
+# ── 3h. THE TRUSTED EXECUTION SET — every repository script this workflow names ─
+# The contract this PR now rests on names the files that can stop a gate from running.
+# A named list is only worth having if it is complete, so it is compared rather than
+# asserted: every `scripts/…` path in every `run:` script of ci.yml, against the
+# hand-written expected_workflow_scripts above, both directions.
+#
+# Shell comments are stripped first, the same way the `--leg` scan below does it, so a
+# script named in a comment does not count as one this workflow calls.
+workflow_scripts="$(wf -r '
+  .jobs
+  | to_entries[]
+  | (.value.steps // [])[]
+  | (.run // empty)
+  | split("\n") | map(sub("(^|[ \t])#.*$"; "")) | join("\n")
+  | [scan("scripts/[A-Za-z0-9_./@-]+")]
+  | flatten
+  | .[]
+' | LC_ALL=C sort -u)"
+want_workflow_scripts="$(printf '%s\n' "${expected_workflow_scripts[@]}" | LC_ALL=C sort -u)"
+if [[ "$workflow_scripts" != "$want_workflow_scripts" ]]; then
+  echo "quality-legs: ci.yml names repository scripts this file does not expect (or stopped naming ones it does)" >&2
+  echo "  (- expected here but no longer in ci.yml, + in ci.yml but not expected here)" >&2
+  LC_ALL=C comm -23 <(printf '%s\n' "$want_workflow_scripts") <(printf '%s\n' "$workflow_scripts") | sed 's/^/    - /' >&2
+  LC_ALL=C comm -13 <(printf '%s\n' "$want_workflow_scripts") <(printf '%s\n' "$workflow_scripts") | sed 's/^/    + /' >&2
+  fail "ci.yml's 'scripts/…' calls and the expected_workflow_scripts list in this file disagree — #874 r10 skipped every gate in this workflow by editing one repository script that ci.yml runs, so the set of them is enumerated here and a change to it has to be stated in the same commit"
+fi
 
 # Every `quality.sh --leg X` this workflow actually runs, as `job<TAB>step index<TAB>leg`
 # records, read out of the parsed `run:` scripts. Shell comments inside those scripts
@@ -1097,13 +1375,23 @@ done
 # And the comparisons, in the fan-in's own shell script. Whole lines, anchored at
 # both ends: a `leg_is` inside a shell comment starts with `#` and does not match,
 # and a trailing comment on a real one breaks the match rather than adding to it.
-# Steps #1 and #2 of every job are the checkout and the tripwire, pinned in 3f; the
-# verdict is what the fan-in does BEYOND them, and there must be exactly one of it.
-fan_in_run_steps="$(wf -r --arg j "$fan_in" '[ (.jobs[$j].steps // []) | to_entries[] | select(.key >= 2) | .value | select(has("run")) ] | length')"
+# Steps #1 and #2 of every job are the checkout and the tripwire, pinned in 3f; step #3
+# of the fan-in is the scope recheck, pinned in 3g. The verdict is what the fan-in does
+# beyond those three, and there must be exactly one of it — one script, so that it can
+# be RUN here as one script (3c).
+fan_in_run_steps="$(wf -r --arg j "$fan_in" '[ (.jobs[$j].steps // []) | to_entries[] | select(.key >= 3) | .value | select(has("run")) ] | length')"
 [[ "$fan_in_run_steps" == "1" ]] \
-  || fail "past its checkout and its tripwire, the fan-in job '$fan_in' must be exactly one 'run:' step, found $fan_in_run_steps — the verdict is one script, so that it can be run here as one script"
-fan_in_run="$(wf -r --arg j "$fan_in" '[ (.jobs[$j].steps // []) | to_entries[] | select(.key >= 2) | .value | select(has("run")) ][0].run')"
+  || fail "past its checkout, its tripwire and its scope recheck, the fan-in job '$fan_in' must be exactly one 'run:' step, found $fan_in_run_steps — the verdict is one script, so that it can be run here as one script"
+fan_in_run="$(wf -r --arg j "$fan_in" '[ (.jobs[$j].steps // []) | to_entries[] | select(.key >= 3) | .value | select(has("run")) ][0].run')"
 [[ -n "$fan_in_run" ]] || fail "the fan-in job '$fan_in' runs no script at all"
+
+# The r10 fix, stated as a fact about the verdict script rather than left to the byte
+# comparison: the docs-only branch must be gated on THIS JOB's own answer. A verdict
+# that reads only SCOPE_CODE is the shape that let one repository script skip every
+# gate in the workflow.
+recheck_gate_lines="$(printf '%s\n' "$fan_in_run" | grep -cE '^[[:space:]]*if \[ "\$RECHECK_CODE" != "false" \]; then$' || true)"
+[[ "$recheck_gate_lines" == "1" ]] \
+  || fail "ci.yml's fan-in must refuse a docs-only skip its own recheck does not confirm, as exactly one 'if [ \"\$RECHECK_CODE\" != \"false\" ]; then' line, found $recheck_gate_lines — without it the five skips are taken on the word of scripts/ci/pr-scope.sh, which is #874 r10's P0"
 for leg in "${declared_legs[@]}"; do
   var="$(leg_result_var_for "$leg")"
   compared="$(printf '%s\n' "$fan_in_run" | grep -cE "^[[:space:]]*leg_is[[:space:]]+${leg}[[:space:]]+\"\\\$\{${var}:-\}\"[[:space:]]*$" || true)"
@@ -1131,18 +1419,36 @@ compared_total="$(printf '%s\n' "$fan_in_run" | grep -cE '^[[:space:]]*leg_is[[:
 # and `env -i` because the script enumerates its own environment by prefix
 # (`${!LEG_RESULT_@}`) — a stray LEG_RESULT_* inherited from this shell would be a
 # finding the fan-in reported about us, not about ci.yml.
-# fan_in_exit <scope result> <scope code> <leg>=<result>… [NAME=VALUE…] → exit status
+#
+# The recheck's answer is the third positional argument, because since r10 it is a
+# premise of every verdict this script reaches. SCOPE_REASON and SCOPE_LEGS are derived
+# from the scope code the same way the scope job derives them, so the ordinary cases
+# read as they always did; the cases that are ABOUT an inconsistent scope answer pass
+# `SCOPE_REASON=…`/`SCOPE_LEGS=…` explicitly at the end and the later assignment wins.
+# fan_in_exit <scope result> <scope code> <recheck code> <leg>=<result>… [NAME=VALUE…]
 fan_in_exit() {
-  local scope_result="$1" scope_code="$2"
-  shift 2
-  local env_args=(SCOPE_RESULT="$scope_result" SCOPE_CODE="$scope_code")
+  local scope_result="$1" scope_code="$2" recheck_code="$3"
+  shift 3
+  local scope_reason=outside-docs scope_legs=all recheck_reason=outside-docs
+  if [[ "$scope_code" == "false" ]]; then
+    scope_reason=docs-only
+    scope_legs=none
+  fi
+  if [[ "$recheck_code" == "false" ]]; then recheck_reason=docs-only; fi
+  local env_args=(
+    SCOPE_RESULT="$scope_result"
+    SCOPE_CODE="$scope_code"
+    SCOPE_REASON="$scope_reason"
+    SCOPE_LEGS="$scope_legs"
+    RECHECK_CODE="$recheck_code"
+    RECHECK_REASON="$recheck_reason"
+  )
   local pair
   for pair in "$@"; do
-    if [[ "$pair" == LEG_RESULT_* ]]; then
-      env_args+=("$pair")
-    else
-      env_args+=("$(leg_result_var_for "${pair%%=*}")=${pair#*=}")
-    fi
+    case "$pair" in
+      LEG_RESULT_*|SCOPE_*|RECHECK_*) env_args+=("$pair") ;;
+      *) env_args+=("$(leg_result_var_for "${pair%%=*}")=${pair#*=}") ;;
+    esac
   done
   local rc=0
   env -i PATH="$PATH" "${env_args[@]}" bash -e -c "$fan_in_run" >/dev/null 2>&1 || rc=$?
@@ -1159,10 +1465,10 @@ for leg in "${declared_legs[@]}"; do
 done
 
 # The one shape that passes, in each of the two worlds the scope job can describe.
-[[ "$(fan_in_exit success true "${every_leg_success[@]}")" == "0" ]] \
+[[ "$(fan_in_exit success true true "${every_leg_success[@]}")" == "0" ]] \
   || fail "ci.yml's fan-in FAILS a run where the scope found code and every leg succeeded — it would block every merge in the repository"
-[[ "$(fan_in_exit success false "${every_leg_skipped[@]}")" == "0" ]] \
-  || fail "ci.yml's fan-in FAILS a docs-only run where every leg was skipped — docs-only PRs would be unmergeable"
+[[ "$(fan_in_exit success false false "${every_leg_skipped[@]}")" == "0" ]] \
+  || fail "ci.yml's fan-in FAILS a docs-only run where every leg was skipped and its own recheck agreed — docs-only PRs would be unmergeable"
 
 # And every shape that must not. One leg at a time, so that a fan-in which judges
 # four legs and forgets the fifth is red on exactly the leg it forgot.
@@ -1172,7 +1478,7 @@ for broken in "${declared_legs[@]}"; do
     for leg in "${declared_legs[@]}"; do
       if [[ "$leg" == "$broken" ]]; then env_set+=("$leg=$bad_result"); else env_set+=("$leg=success"); fi
     done
-    [[ "$(fan_in_exit success true "${env_set[@]}")" != "0" ]] \
+    [[ "$(fan_in_exit success true true "${env_set[@]}")" != "0" ]] \
       || fail "ci.yml's fan-in PASSES a run in which leg '$broken' reported '${bad_result:-<no result>}' — that leg's gates did not pass, and 'quality' is the check that says they did"
   done
   # The mirror image: on a docs-only run, a leg that ran anyway means the legs and
@@ -1181,21 +1487,66 @@ for broken in "${declared_legs[@]}"; do
   for leg in "${declared_legs[@]}"; do
     if [[ "$leg" == "$broken" ]]; then env_set+=("$leg=success"); else env_set+=("$leg=skipped"); fi
   done
-  [[ "$(fan_in_exit success false "${env_set[@]}")" != "0" ]] \
+  [[ "$(fan_in_exit success false false "${env_set[@]}")" != "0" ]] \
     || fail "ci.yml's fan-in PASSES a docs-only run in which leg '$broken' ran anyway — the scope answer the legs read and the one this step read disagree"
 done
 
 # The scope job is the premise under both worlds; if it did not succeed, nothing
 # below it can be trusted, whatever the legs say.
 for bad_scope in failure cancelled skipped ''; do
-  [[ "$(fan_in_exit "$bad_scope" true "${every_leg_success[@]}")" != "0" ]] \
+  [[ "$(fan_in_exit "$bad_scope" true true "${every_leg_success[@]}")" != "0" ]] \
     || fail "ci.yml's fan-in PASSES a run in which the scope job reported '${bad_scope:-<no result>}' — the legs were gated on an answer that was never given"
+done
+
+# ── THE r10 P0, AS BEHAVIOUR ─────────────────────────────────────────────────
+# Everything above this point was already true in r9, and r9 still had the hole: the
+# five skips were accepted on the scope job's word, and that word is reached by running
+# `bash scripts/ci/pr-scope.sh`. Edit that one repository script to print `false` and
+# this is exactly the environment the fan-in is handed — scope: success, code false,
+# every leg skipped. It must now be REFUSED, because the recheck step in the fan-in's
+# own job asked GitHub directly and did not agree.
+[[ "$(fan_in_exit success false true "${every_leg_skipped[@]}")" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a run where the scope job called the PR docs-only, every leg was skipped, and this job's OWN recheck said otherwise — that is #874 r10's P0 exactly: one edit to scripts/ci/pr-scope.sh skips every gate in the workflow and 'quality' goes green"
+
+# The recheck is a premise, not a courtesy: no answer, or an answer nobody wrote, is a
+# recheck step that was deleted, skipped or broken — never a licence to fall back on
+# the scope job's word.
+for bad_recheck in '' undecidable skipped TRUE; do
+  [[ "$(fan_in_exit success false "$bad_recheck" "${every_leg_skipped[@]}")" != "0" ]] \
+    || fail "ci.yml's fan-in PASSES a docs-only skip while its own recheck answered '${bad_recheck:-<empty>}' — only the exact word 'false' from that step may buy a skip"
+  [[ "$(fan_in_exit success true "$bad_recheck" "${every_leg_success[@]}")" != "0" ]] \
+    || fail "ci.yml's fan-in PASSES a run whose recheck answered '${bad_recheck:-<empty>}' — a fan-in that will judge without that step is a fan-in the step can be deleted from"
+done
+
+# The safe direction, and it must stay green: the scope job's fail-closed paths answer
+# "run every gate" on any API trouble, and the legs then RUN. A fan-in that went red
+# whenever the two answers differed would turn every such blip into a blocked merge
+# while hiding no unrun gate at all.
+[[ "$(fan_in_exit success true false "${every_leg_success[@]}")" == "0" ]] \
+  || fail "ci.yml's fan-in FAILS a run where the scope job ran every gate, every leg passed, and only this job's recheck thought the PR was docs-only — the gates RAN, so there is nothing here to refuse, and refusing it would break the scope job's own fail-closed paths"
+
+# The scope job publishes code, reason and legs from one function, so only five triples
+# can come out of it. Anything else is a run this workflow did not produce.
+[[ "$(fan_in_exit success false false "${every_leg_skipped[@]}" SCOPE_REASON=api-unreadable)" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a run whose scope job reported code=false with reason 'api-unreadable' — that pair cannot come out of the scope job in this file"
+[[ "$(fan_in_exit success false false "${every_leg_skipped[@]}" SCOPE_LEGS=all)" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a run whose scope job reported code=false while saying it meant to run all five legs — the two describe different runs"
+[[ "$(fan_in_exit success true true "${every_leg_success[@]}" SCOPE_REASON=docs-only)" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a run whose scope job reported code=true with reason 'docs-only'"
+[[ "$(fan_in_exit success true true "${every_leg_success[@]}" SCOPE_REASON='')" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a run whose scope job published no reason at all — an older scope job, or none"
+
+# Every reason the scope job in this file can actually write must be accepted, or this
+# check would be a gate against the workflow itself.
+for good_reason in outside-docs no-pr-context api-unreadable scope-script-failed; do
+  [[ "$(fan_in_exit success true true "${every_leg_success[@]}" SCOPE_REASON="$good_reason")" == "0" ]] \
+    || fail "ci.yml's fan-in FAILS a run whose scope job reported code=true with reason '$good_reason' — that is one of the answers the scope step in this file writes, and every leg passed"
 done
 
 # And a result the fan-in was never told to judge must be rejected rather than
 # ignored: a sixth job wired into `needs` and into the variables, but not into the
 # comparisons, would be a gate whose outcome this step silently discards.
-[[ "$(fan_in_exit success true "${every_leg_success[@]}" LEG_RESULT_ROGUE=success)" != "0" ]] \
+[[ "$(fan_in_exit success true true "${every_leg_success[@]}" LEG_RESULT_ROGUE=success)" != "0" ]] \
   || fail "ci.yml's fan-in PASSES a run carrying a LEG_RESULT_* variable it does not judge — a leg wired in but never compared is a gate nobody reads"
 
 # ── 3e. THE VERDICT — the whole of ci.yml, byte for byte ─────────────────────
@@ -1428,16 +1779,31 @@ expected_jobs_canonical="$(
       },
       {
         "env": {
+          "EVENT_NAME": "${{ github.event_name }}",
+          "GH_TOKEN": "${{ github.token }}",
+          "PR_NUMBER": "${{ github.event.pull_request.number }}",
+          "REPOSITORY": "${{ github.repository }}"
+        },
+        "id": "recheck",
+        "name": "Decide for ourselves whether this PR is docs-only",
+        "run": "set -euo pipefail\nemit() { # <code> <reason>\n  { echo \"code=$1\"; echo \"reason=$2\"; } >> \"$GITHUB_OUTPUT\"\n  echo \"recheck: code=$1, reason=$2\"\n}\nif [ -z \"${PR_NUMBER:-}\" ]; then\n  emit true no-pr-context\n  exit 0\nfi\nfiles_json=\"${RUNNER_TEMP:-/tmp}/recheck-files.json\"\npr_json=\"${RUNNER_TEMP:-/tmp}/recheck-pr.json\"\npr=\"repos/${REPOSITORY}/pulls/${PR_NUMBER}\"\n# Three tries before giving up, which the scope job does not need and this\n# step does. There, an unreadable API means \"run every gate\" and the run is\n# merely slow; here it means the legs are already skipped and the only honest\n# answer left is RED. A transient blip should not be a red docs-only PR.\nfetch() { # <destination> <gh api arguments…>\n  dest=\"$1\"\n  shift\n  n=1\n  while [ \"$n\" -le 3 ]; do\n    if gh api \"$@\" >\"$dest\" 2>/dev/null; then return 0; fi\n    n=$((n + 1))\n    if [ \"$n\" -le 3 ]; then sleep 2; fi\n  done\n  : >\"$dest\"\n}\nfetch \"$files_json\" --paginate --slurp \"$pr/files\"\nfetch \"$pr_json\" \"$pr\"\nif [ ! -s \"$files_json\" ] || [ ! -s \"$pr_json\" ]; then\n  emit true api-unreadable\n  exit 0\nfi\n# Written to a file and read back with `jq -f`, not built with `$(cat <<…)`:\n# bash 3.2 (what macOS ships, and what the drill that lifts this program runs\n# under) mis-parses a here-document nested inside a command substitution when\n# the body holds an odd number of quote characters.\nfilter=\"${RUNNER_TEMP:-/tmp}/recheck.jq\"\ncat >\"$filter\" <<'RECHECK_JQ'\n# docs-only, proved from the API payloads, or one of the two ways of not\n# proving it. Never \"tolerant\": every branch that is not a proof lands on a\n# word that means the legs had to run.\ndef known_status:\n  . == \"added\" or . == \"removed\" or . == \"modified\" or . == \"renamed\"\n  or . == \"copied\" or . == \"changed\" or . == \"unchanged\";\ndef under_docs:\n  type == \"string\"\n  and startswith(\"docs/\")\n  and (explode | any(. == 0) | not)\n  and (split(\"/\") | all(length > 0 and . != \".\" and . != \"..\"));\n# A rename is two paths. Taking only `filename` is how a code file renames\n# itself into docs/ and takes every gate with it.\ndef entry_is_docs_only:\n  (.filename | under_docs)\n  and (.status | known_status)\n  and (if .status == \"renamed\" or .status == \"copied\"\n       then (.previous_filename | under_docs)\n       elif has(\"previous_filename\") and .previous_filename != null\n       then (.previous_filename | under_docs)\n       else true\n       end);\n(if ($files[0] | type) == \"array\" and ($files[0] | all(type == \"array\"))\n then ($files[0] | add // [])\n else null\n end) as $entries\n| (if ($pr | length) == 1 and ($pr[0] | type) == \"object\"\n   then $pr[0].changed_files\n   else null\n   end) as $total\n| if $entries == null then \"undecidable\"\n  # An empty list means we never learned what changed, not that nothing did.\n  elif ($entries | length) == 0 then \"undecidable\"\n  elif ($entries | any(type != \"object\")) then \"undecidable\"\n  elif ($total | type) != \"number\" then \"undecidable\"\n  # As TEXT: jq keeps the fractional literal, so 1.0 and 1e-1 are visible here.\n  elif ($total | tostring | test(\"^(0|[1-9][0-9]*)$\") | not) then \"undecidable\"\n  # GET .../files stops at 3,000 entries without saying so.\n  elif $total >= 3000 then \"undecidable\"\n  # Below that ceiling the count is what proves we read the whole PR — and it\n  # only proves it if the entries are distinct.\n  elif ($entries | length) != $total then \"undecidable\"\n  elif ($entries | map(.filename) | unique | length) != ($entries | length) then \"undecidable\"\n  elif ($entries | all(entry_is_docs_only)) then \"docs-only\"\n  else \"outside-docs\"\n  end\nRECHECK_JQ\nverdict=\"$(jq -r -n --slurpfile files \"$files_json\" --slurpfile pr \"$pr_json\" -f \"$filter\" 2>/dev/null)\" || verdict=\"\"\ncase \"$verdict\" in\n  docs-only) emit false docs-only ;;\n  outside-docs) emit true outside-docs ;;\n  *) emit true undecidable ;;\nesac\n"
+      },
+      {
+        "env": {
           "LEG_RESULT_BUILD": "${{ needs.build.result }}",
           "LEG_RESULT_CHECKS": "${{ needs.checks.result }}",
           "LEG_RESULT_LINT": "${{ needs.lint.result }}",
           "LEG_RESULT_TESTS": "${{ needs.tests.result }}",
           "LEG_RESULT_TYPECHECK": "${{ needs.typecheck.result }}",
+          "RECHECK_CODE": "${{ steps.recheck.outputs.code }}",
+          "RECHECK_REASON": "${{ steps.recheck.outputs.reason }}",
           "SCOPE_CODE": "${{ needs.scope.outputs.code }}",
+          "SCOPE_LEGS": "${{ needs.scope.outputs.legs }}",
+          "SCOPE_REASON": "${{ needs.scope.outputs.reason }}",
           "SCOPE_RESULT": "${{ needs.scope.result }}"
         },
-        "name": "Every leg must have passed — or been skipped for a provably docs-only PR",
-        "run": "set -euo pipefail\n\nif [ \"$SCOPE_RESULT\" != \"success\" ]; then\n  echo \"scope: $SCOPE_RESULT (expected success)\"\n  echo \"\"\n  echo \"quality: the scope job did not succeed, so nothing below can be trusted — failing closed.\"\n  exit 1\nfi\n\nif [ \"$SCOPE_CODE\" = \"false\" ]; then\n  expected=skipped\n  echo \"scope: docs/** only and provably complete — every leg must have been skipped\"\nelse\n  expected=success\n  echo \"scope: code=${SCOPE_CODE:-<empty>} — every leg must have passed\"\nfi\n\nverdict=0\n\n# One named leg, one named variable, one comparison. `${VAR:-}` and never\n# `$VAR`: a leg cut out of the `needs` list above expands to nothing, and\n# \"nothing\" must read as a missing result and fail — not abort the shell\n# before the other four have been reported.\nleg_is() {\n  if [ \"$2\" = \"$expected\" ]; then\n    echo \"  $1: $2\"\n  else\n    echo \"  $1: ${2:-<no result>} (expected $expected)\"\n    verdict=1\n  fi\n}\n\nleg_is typecheck \"${LEG_RESULT_TYPECHECK:-}\"\nleg_is tests     \"${LEG_RESULT_TESTS:-}\"\nleg_is build     \"${LEG_RESULT_BUILD:-}\"\nleg_is lint      \"${LEG_RESULT_LINT:-}\"\nleg_is checks    \"${LEG_RESULT_CHECKS:-}\"\n\n# The other direction, and the reason the five comparisons above are not\n# the whole story: they prove every declared leg was judged, not that\n# nothing ELSE was wired in. A sixth job added to `needs` and to the\n# variables above — but not to the comparisons — would be a gate whose\n# result this step silently discards. Bash enumerates the variables by\n# prefix, so nothing here has to know what the environment holds; the\n# case arm is the same five identities once more, and mis-stating it\n# fails closed — a leg left out of it flags that leg's own variable.\nfor leg_result_var in ${!LEG_RESULT_@}; do\n  case \"$leg_result_var\" in\n    LEG_RESULT_TYPECHECK|LEG_RESULT_TESTS|LEG_RESULT_BUILD|LEG_RESULT_LINT|LEG_RESULT_CHECKS) ;;\n    *)\n      echo \"  $leg_result_var: answers for no leg this step judges\"\n      verdict=1\n      ;;\n  esac\ndone\n\nif [ \"$verdict\" != \"0\" ]; then\n  echo \"\"\n  echo \"quality: at least one leg is not $expected — failing closed.\"\n  exit 1\nfi\necho \"\"\necho \"quality: typecheck, tests, build, lint and checks are all $expected.\"\n"
+        "name": "Every leg must have passed — or been skipped for a PR this job proved docs-only",
+        "run": "set -euo pipefail\n\nif [ \"$SCOPE_RESULT\" != \"success\" ]; then\n  echo \"scope: $SCOPE_RESULT (expected success)\"\n  echo \"\"\n  echo \"quality: the scope job did not succeed, so nothing below can be trusted — failing closed.\"\n  exit 1\nfi\n\n# The scope job describes itself in three outputs written by one function, so\n# only five triples can come out of it. Anything else means the run was not\n# produced by the scope job in this file, and there is nothing here that could\n# honestly interpret it.\ncase \"${SCOPE_CODE:-}|${SCOPE_REASON:-}|${SCOPE_LEGS:-}\" in\n  'false|docs-only|none') ;;\n  'true|outside-docs|all') ;;\n  'true|no-pr-context|all') ;;\n  'true|api-unreadable|all') ;;\n  'true|scope-script-failed|all') ;;\n  *)\n    echo \"scope published code=${SCOPE_CODE:-<empty>}, reason=${SCOPE_REASON:-<empty>}, legs=${SCOPE_LEGS:-<empty>}\"\n    echo \"\"\n    echo \"quality: that is not a combination the scope job in this workflow can publish — failing closed.\"\n    exit 1\n    ;;\nesac\n\n# And the second opinion has to BE one. A missing answer here is the step\n# above deleted, skipped or broken — never a licence to fall back on the\n# scope job's word, which is exactly what r10 exploited.\ncase \"${RECHECK_CODE:-}\" in\n  true|false) ;;\n  *)\n    echo \"this job's own scope decision came back as '${RECHECK_CODE:-<empty>}'\"\n    echo \"\"\n    echo \"quality: the step that re-derives this PR's scope did not answer — failing closed.\"\n    exit 1\n    ;;\nesac\n\nif [ \"$SCOPE_CODE\" = \"false\" ]; then\n  # THE r10 GATE. The legs are already skipped by the time this runs; the only\n  # question left is whether anything other than a repository script says they\n  # should have been.\n  if [ \"$RECHECK_CODE\" != \"false\" ]; then\n    echo \"scope: docs/** only (reason: $SCOPE_REASON) — the five legs were skipped on that answer\"\n    echo \"this job asked GitHub the same question and got: $RECHECK_CODE (reason: ${RECHECK_REASON:-<empty>})\"\n    echo \"\"\n    echo \"quality: the legs were skipped on a docs-only answer this job cannot reproduce.\"\n    echo \"  The scope job reaches that answer through scripts/ci/pr-scope.sh and\"\n    echo \"  scripts/ci/pr-scope.jq; this job does not use either. Check what those two\"\n    echo \"  files say in this PR's diff — failing closed.\"\n    exit 1\n  fi\n  expected=skipped\n  echo \"scope: docs/** only, and this job re-derived that answer for itself — every leg must have been skipped\"\nelse\n  expected=success\n  echo \"scope: code=$SCOPE_CODE (reason: $SCOPE_REASON) — every leg must have passed\"\n  if [ \"$RECHECK_CODE\" = \"false\" ]; then\n    # The safe direction, and it is reported rather than punished: the legs\n    # RAN. Making this red would only break the scope job's fail-closed paths,\n    # where answering \"run every gate\" is the correct behaviour.\n    echo \"  (this job's own answer was docs-only; the gates ran anyway, which is the safe direction)\"\n  fi\nfi\n\nverdict=0\n\n# One named leg, one named variable, one comparison. `${VAR:-}` and never\n# `$VAR`: a leg cut out of the `needs` list above expands to nothing, and\n# \"nothing\" must read as a missing result and fail — not abort the shell\n# before the other four have been reported.\nleg_is() {\n  if [ \"$2\" = \"$expected\" ]; then\n    echo \"  $1: $2\"\n  else\n    echo \"  $1: ${2:-<no result>} (expected $expected)\"\n    verdict=1\n  fi\n}\n\nleg_is typecheck \"${LEG_RESULT_TYPECHECK:-}\"\nleg_is tests     \"${LEG_RESULT_TESTS:-}\"\nleg_is build     \"${LEG_RESULT_BUILD:-}\"\nleg_is lint      \"${LEG_RESULT_LINT:-}\"\nleg_is checks    \"${LEG_RESULT_CHECKS:-}\"\n\n# The other direction, and the reason the five comparisons above are not\n# the whole story: they prove every declared leg was judged, not that\n# nothing ELSE was wired in. A sixth job added to `needs` and to the\n# variables above — but not to the comparisons — would be a gate whose\n# result this step silently discards. Bash enumerates the variables by\n# prefix, so nothing here has to know what the environment holds; the\n# case arm is the same five identities once more, and mis-stating it\n# fails closed — a leg left out of it flags that leg's own variable.\nfor leg_result_var in ${!LEG_RESULT_@}; do\n  case \"$leg_result_var\" in\n    LEG_RESULT_TYPECHECK|LEG_RESULT_TESTS|LEG_RESULT_BUILD|LEG_RESULT_LINT|LEG_RESULT_CHECKS) ;;\n    *)\n      echo \"  $leg_result_var: answers for no leg this step judges\"\n      verdict=1\n      ;;\n  esac\ndone\n\nif [ \"$verdict\" != \"0\" ]; then\n  echo \"\"\n  echo \"quality: at least one leg is not $expected — failing closed.\"\n  exit 1\nfi\necho \"\"\necho \"quality: typecheck, tests, build, lint and checks are all $expected.\"\n"
       }
     ],
     "timeout-minutes": 10
@@ -1446,7 +1812,9 @@ expected_jobs_canonical="$(
     "if": "github.event_name != 'pull_request' || github.event.pull_request.draft == false",
     "name": "scope",
     "outputs": {
-      "code": "${{ steps.scope.outputs.code }}"
+      "code": "${{ steps.scope.outputs.code }}",
+      "legs": "${{ steps.scope.outputs.legs }}",
+      "reason": "${{ steps.scope.outputs.reason }}"
     },
     "runs-on": "ubuntu-latest",
     "steps": [
@@ -1467,7 +1835,7 @@ expected_jobs_canonical="$(
         },
         "id": "scope",
         "name": "Scope — does this PR touch anything outside docs/?",
-        "run": "set -euo pipefail\nif [ -z \"${PR_NUMBER:-}\" ]; then\n  echo \"no pull request in this context (event: $EVENT_NAME) — running every gate\"\n  echo \"code=true\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\nfiles_json=\"${RUNNER_TEMP:-/tmp}/pr-files.json\"\npr_json=\"${RUNNER_TEMP:-/tmp}/pr-object.json\"\npr=\"repos/${REPOSITORY}/pulls/${PR_NUMBER}\"\ngh api --paginate --slurp \"$pr/files\" >\"$files_json\" 2>/dev/null || : >\"$files_json\"\ngh api \"$pr\" >\"$pr_json\" 2>/dev/null || : >\"$pr_json\"\nif [ ! -s \"$files_json\" ] || [ ! -s \"$pr_json\" ]; then\n  echo \"could not read the PR from the API — running every gate\"\nelse\n  echo \"changed paths (name, then previous name for renames):\"\n  jq -r '.[][] | \"  \" + (.filename|tojson) + (if .previous_filename == null then \"\" else \"  <- \" + (.previous_filename|tojson) end)' \\\n    \"$files_json\" 2>/dev/null || echo \"  (unparseable — pr-scope will fail closed)\"\nfi\ncode=\"$(bash scripts/ci/pr-scope.sh \"$files_json\" \"$pr_json\")\" || code=true\n[ \"$code\" = \"false\" ] || code=true\necho \"code=$code\" >> \"$GITHUB_OUTPUT\"\nif [ \"$code\" = \"false\" ]; then\n  echo \"docs/** only, and the file list is provably complete — every gate below is a no-op\"\nfi\n"
+        "run": "set -euo pipefail\n# One writer for all three outputs, so this job cannot publish a `code` its\n# `reason` contradicts, or a `legs` its `code` contradicts. The fan-in checks\n# the three against each other; that check is only worth making because they\n# are written here, together, once.\nemit() { # <code> <reason>\n  legs=all\n  if [ \"$1\" = \"false\" ]; then legs=none; fi\n  {\n    echo \"code=$1\"\n    echo \"reason=$2\"\n    echo \"legs=$legs\"\n  } >> \"$GITHUB_OUTPUT\"\n  echo \"scope: code=$1, legs=$legs, reason=$2\"\n}\nif [ -z \"${PR_NUMBER:-}\" ]; then\n  echo \"no pull request in this context (event: $EVENT_NAME) — running every gate\"\n  emit true no-pr-context\n  exit 0\nfi\nfiles_json=\"${RUNNER_TEMP:-/tmp}/pr-files.json\"\npr_json=\"${RUNNER_TEMP:-/tmp}/pr-object.json\"\npr=\"repos/${REPOSITORY}/pulls/${PR_NUMBER}\"\ngh api --paginate --slurp \"$pr/files\" >\"$files_json\" 2>/dev/null || : >\"$files_json\"\ngh api \"$pr\" >\"$pr_json\" 2>/dev/null || : >\"$pr_json\"\nif [ ! -s \"$files_json\" ] || [ ! -s \"$pr_json\" ]; then\n  echo \"could not read the PR from the API — running every gate\"\n  emit true api-unreadable\n  exit 0\nfi\necho \"changed paths (name, then previous name for renames):\"\njq -r '.[][] | \"  \" + (.filename|tojson) + (if .previous_filename == null then \"\" else \"  <- \" + (.previous_filename|tojson) end)' \\\n  \"$files_json\" 2>/dev/null || echo \"  (unparseable — pr-scope will fail closed)\"\n# Same polarity as ever: only the one string this script writes on purpose\n# buys a skip. A non-zero exit, an empty answer, or any word nobody\n# anticipated all land on \"run every gate\".\ncode=\"$(bash scripts/ci/pr-scope.sh \"$files_json\" \"$pr_json\")\" || code=nonzero-exit\ncase \"$code\" in\n  false)\n    echo \"docs/** only, and the file list is provably complete — every gate below is a no-op\"\n    emit false docs-only\n    ;;\n  true) emit true outside-docs ;;\n  *) emit true scope-script-failed ;;\nesac\n"
       }
     ],
     "timeout-minutes": 10
@@ -1633,4 +2001,4 @@ expect_router "test" "tests" skips
 expect_router "check" "tests,checks" skips
 expect_router "all" "typecheck" skips
 
-echo "quality-legs: OK — all $gate_count expected gates are in quality.sh on their expected legs, legs [${declared_legs[*]}] all covered there and all launched by ci.yml by a job that runs that leg's command and nothing else, the fan-in check 'quality' judges each leg by name exactly once (its own script run here against every way a leg can come back un-green), all $jobs_with_tripwire jobs open with the checkout and then the tripwire this file pins by hand (and $lock_rel is current: $workflow_digest), and ci.yml as a whole — every job, step, key and value of it — is byte for byte the workflow pinned in section 3e (read as YAML with ${#parser_labels[@]} parser(s) on this machine, all agreeing: ${parser_labels[*]}). What this does NOT prove is in the header: it all runs inside one leg, and the tripwire in ci.yml is what holds when that leg is switched off."
+echo "quality-legs: OK — all $gate_count expected gates are in quality.sh on their expected legs, legs [${declared_legs[*]}] all covered there and all launched by ci.yml by a job that runs that leg's command and nothing else, the fan-in check 'quality' judges each leg by name exactly once (its own script run here against every way a leg can come back un-green), all $jobs_with_tripwire jobs open with the checkout and then the tripwire this file pins by hand (and $lock_rel is current: $workflow_digest), the fan-in re-derives the docs-only answer for itself in the step this file also pins by hand and refuses a skip it cannot reproduce, ci.yml names exactly the ${#expected_workflow_scripts[@]} repository scripts written out here, and ci.yml as a whole — every job, step, key and value of it — is byte for byte the workflow pinned in section 3e (read as YAML with ${#parser_labels[@]} parser(s) on this machine, all agreeing: ${parser_labels[*]}). What this does NOT prove is in the header: it all runs inside one leg, and the tripwire in ci.yml is what holds when that leg is switched off."

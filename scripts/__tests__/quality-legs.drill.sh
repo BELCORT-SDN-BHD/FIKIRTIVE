@@ -41,6 +41,17 @@
 #       `sh` and under `bash`, with the poison in place. sh must refuse; bash must be
 #       fooled. The second half is the nail that keeps `shell: sh` from being tidied
 #       away as noise.
+#   r10 the one every case up to r9 misses because they all mutate ci.yml, and r10's
+#       bypass mutates a REPOSITORY SCRIPT THE WORKFLOW RUNS. `scope` decides the
+#       docs-only skip through `bash scripts/ci/pr-scope.sh`, after the tripwire has
+#       passed; make that print `false` and all five legs are `skipped` while the
+#       fan-in reads the skips as a docs-only PR — no ci.yml diff, no lock diff. Two
+#       groups again: one that does not use the self-test at all (it runs pr-scope.sh
+#       in three states against fixed API payloads, runs the fan-in's own recheck step
+#       LIFTED OUT OF ci.yml against the same payloads, and requires the lifted verdict
+#       to refuse every skip the recheck does not confirm), and three ci.yml shapes
+#       that switch that recheck off from inside the file, each refused by a
+#       hand-written expectation rather than by the regenerated block.
 #
 # The last cases are about the DOOR rather than the wall: an intended change to
 # ci.yml, with the canonical block regenerated, must pass (that is the workflow); an
@@ -65,7 +76,7 @@
 
 set -euo pipefail
 
-expected_cases=42
+expected_cases=54
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && cd .. && pwd)"
@@ -73,7 +84,7 @@ repo_root="$(cd "$here/.." && cd .. && pwd)"
 drill_root="${QUALITY_LEGS_DRILL_TMPDIR:-${TMPDIR:-/tmp}}"
 mkdir -p "$drill_root"
 sandbox="$(cd "$drill_root" && pwd)/quality-legs-drill.$$"
-trap 'rm -rf "$sandbox" "$sandbox.gate"' EXIT
+trap 'rm -rf "$sandbox" "$sandbox.gate" "$sandbox.flow"' EXIT
 
 ci_yml="$sandbox/.github/workflows/ci.yml"
 lock_file="$sandbox/.github/ci-workflow.lock"
@@ -480,7 +491,9 @@ patch_ci '      - run: pnpm quality --leg build' \
 expect_red "step-level env: on build's leg step"
 
 reset_sandbox
-patch_ci '          GH_TOKEN: ${{ github.token }}' \
+# Job-scoped since r11: the fan-in's recheck step carries the same four API variables
+# as the scope query, so `GH_TOKEN` is no longer a unique string in this file.
+patch_ci_job scope '          GH_TOKEN: ${{ github.token }}' \
 '          GH_TOKEN: ${{ secrets.SOMETHING_ELSE }}'
 expect_red "an existing step-level env value changed (scope's GH_TOKEN)"
 echo
@@ -680,6 +693,237 @@ expect_gate_fooled "$(run_gate bash BASH_ENV=scripts/ci/ci-workflow-lock.sh)" \
 setup_gate stale
 expect_gate_refuses "$(run_gate sh ENV=./poison-functions.sh)" \
   "sh + ENV naming the same poison — a non-interactive sh reads ENV no more than it reads BASH_ENV"
+echo
+
+echo "r10's review — the OTHER mutable surface: a repository script the workflow RUNS:"
+
+# Every case up to r9 mutated ci.yml and asked the self-test. r10's P0 could not be
+# asked that way at all, because it never touches ci.yml: the `scope` job decides the
+# docs-only skip by running `bash scripts/ci/pr-scope.sh`, AFTER the tripwire has
+# already passed. Edit that one repository script to print `false` and all five legs
+# are `skipped`, the fan-in reads the whole set of skips as a docs-only PR, and the
+# required `quality` check goes green over unrun gates — with no ci.yml diff and no
+# lock diff for anything above to notice.
+#
+# So this group does not use the self-test. It runs the two things that actually
+# decide a skip, on the same two API payloads:
+#   - `scripts/ci/pr-scope.sh`, in three states: as the repository has it, replaced by
+#     a one-line `echo false`, and left intact while pr-scope.jq's docs test is widened
+#     to accept everything (the subtler half — the transport is untouched);
+#   - the fan-in's OWN recheck step, LIFTED OUT OF ci.yml and run with a stub `gh` that
+#     serves the same payloads, so what answers here is the script CI runs and not a
+#     paraphrase of it;
+# and then the fan-in's verdict script, also lifted out of ci.yml, on the result. The
+# controls come first: without them "the poisoned run was refused" would also be the
+# score of a verdict that refuses everything.
+flow_root="$sandbox.flow"
+rm -rf "$flow_root"
+mkdir -p "$flow_root/bin" "$flow_root/fix" "$flow_root/scripts/ci"
+
+# The `run:` body of one named step, lifted out of the real ci.yml by its block-scalar
+# indentation. Text rather than a YAML parse on purpose: this file's other mutations
+# are text edits too, and a lift that agreed with a parser but not with the file would
+# be testing something the runner does not read.
+lift_run() { # <step name>
+  python3 -c '
+import re, sys
+path, name = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().split("\n")
+starts = [i for i, l in enumerate(lines) if l.strip() == "- name: " + name]
+if len(starts) != 1:
+    sys.exit("drill: found %d steps named %r in ci.yml" % (len(starts), name))
+run_i = None
+for i in range(starts[0] + 1, len(lines)):
+    m = re.match(r"^(\s*)run: \|$", lines[i])
+    if m:
+        run_i, key_indent = i, len(m.group(1))
+        break
+    if re.match(r"^      - ", lines[i]):
+        break
+if run_i is None:
+    sys.exit("drill: step %r has no run: | block" % name)
+body = []
+body_indent = None
+for l in lines[run_i + 1:]:
+    if l.strip() == "":
+        body.append("")
+        continue
+    indent = len(l) - len(l.lstrip(" "))
+    if indent <= key_indent:
+        break
+    if body_indent is None:
+        body_indent = indent
+    body.append(l[body_indent:])
+if body_indent is None:
+    sys.exit("drill: step %r has an empty run: block" % name)
+print("\n".join(body).rstrip("\n"))
+' "$repo_root/.github/workflows/ci.yml" "$1"
+}
+
+recheck_step="$(lift_run "Decide for ourselves whether this PR is docs-only")"
+[[ "$(printf '%s\n' "$recheck_step" | head -n 1)" == "set -euo pipefail" ]] \
+  || { echo "drill: could not lift the fan-in's recheck step out of ci.yml" >&2; exit 1; }
+verdict_step="$(lift_run "Every leg must have passed — or been skipped for a PR this job proved docs-only")"
+printf '%s\n' "$verdict_step" | grep -q 'RECHECK_CODE' \
+  || { echo "drill: the fan-in verdict lifted out of ci.yml does not mention RECHECK_CODE" >&2; exit 1; }
+
+# Two PRs, as the two API responses each would produce. `docs` is a genuine docs-only
+# change; `code` renames nothing and hides nothing — it plainly touches apps/.
+printf '%s\n' '[[{"filename":"docs/a.md","status":"modified"},{"filename":"docs/b/c.md","status":"added"}]]' >"$flow_root/fix/docs-files.json"
+printf '%s\n' '{"changed_files": 2}' >"$flow_root/fix/docs-pr.json"
+printf '%s\n' '[[{"filename":"docs/a.md","status":"modified"},{"filename":"apps/web/src/x.ts","status":"modified"}]]' >"$flow_root/fix/code-files.json"
+printf '%s\n' '{"changed_files": 2}' >"$flow_root/fix/code-pr.json"
+
+# The stub `gh`: the files endpoint or the PR object, from whichever fixture is named.
+printf '%s\n' '#!/bin/sh' 'for a in "$@"; do' '  case "$a" in */files) cat "$FIXDIR/$FIXTURE-files.json"; exit 0 ;; esac' 'done' 'cat "$FIXDIR/$FIXTURE-pr.json"' >"$flow_root/bin/gh"
+chmod +x "$flow_root/bin/gh"
+printf '%s\n' "$recheck_step" >"$flow_root/recheck.sh"
+printf '%s\n' "$verdict_step" >"$flow_root/verdict.sh"
+flow_log="$flow_root/last.log"
+
+setup_scope() { # <clean|poison-sh|poison-jq>
+  cp "$repo_root/scripts/ci/pr-scope.sh" "$flow_root/scripts/ci/pr-scope.sh"
+  cp "$repo_root/scripts/ci/pr-scope.jq" "$flow_root/scripts/ci/pr-scope.jq"
+  case "$1" in
+    clean) ;;
+    poison-sh)
+      # r10's own demonstration, in two lines: the transport stops transporting.
+      printf '%s\n' '#!/usr/bin/env bash' 'echo false' >"$flow_root/scripts/ci/pr-scope.sh"
+      ;;
+    poison-jq)
+      # The subtler half. pr-scope.sh is byte-identical to the repository's; the
+      # DECISION it carries is widened until every path counts as documentation.
+      python3 -c '
+import sys
+path = sys.argv[1]
+anchor = "def is_docs:\n  startswith(\"docs/\");"
+src = open(path, encoding="utf-8").read()
+if src.count(anchor) != 1:
+    sys.exit("drill: pr-scope.jq no longer defines is_docs the way this case widens")
+open(path, "w", encoding="utf-8").write(src.replace(anchor, "def is_docs:\n  true;"))
+' "$flow_root/scripts/ci/pr-scope.jq"
+      ;;
+    *) echo "drill: unknown pr-scope state '$1'" >&2; exit 1 ;;
+  esac
+}
+
+scope_answer() { # <fixture> — what the scope job would publish, via pr-scope.sh
+  ( cd "$flow_root" && bash scripts/ci/pr-scope.sh "fix/$1-files.json" "fix/$1-pr.json" 2>/dev/null ) || true
+}
+
+recheck_answer() { # <fixture> — what the fan-in's own step answers, run as CI runs it
+  local out="$flow_root/recheck-output"
+  : >"$out"
+  ( cd "$flow_root" && env -i PATH="$flow_root/bin:$PATH" \
+      FIXDIR="$flow_root/fix" FIXTURE="$1" GITHUB_OUTPUT="$out" RUNNER_TEMP="$flow_root" \
+      PR_NUMBER=874 REPOSITORY=owner/repo EVENT_NAME=pull_request \
+      bash -e ./recheck.sh ) >"$flow_log" 2>&1 || true
+  sed -n 's/^code=//p' "$out"
+}
+
+fan_in_verdict() { # <scope code> <recheck code> <leg result> — prints the exit code
+  local scope_code="$1" recheck_code="$2" leg="$3" rc=0
+  local scope_reason=outside-docs scope_legs=all
+  if [[ "$scope_code" == "false" ]]; then scope_reason=docs-only; scope_legs=none; fi
+  env -i PATH="$PATH" \
+    SCOPE_RESULT=success SCOPE_CODE="$scope_code" SCOPE_REASON="$scope_reason" SCOPE_LEGS="$scope_legs" \
+    RECHECK_CODE="$recheck_code" RECHECK_REASON=lifted-from-ci-yml \
+    LEG_RESULT_TYPECHECK="$leg" LEG_RESULT_TESTS="$leg" LEG_RESULT_BUILD="$leg" \
+    LEG_RESULT_LINT="$leg" LEG_RESULT_CHECKS="$leg" \
+    bash -e "$flow_root/verdict.sh" >"$flow_log" 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+
+expect_answer() { # <got> <want> <description>
+  local got="$1" want="$2" desc="$3"
+  total=$((total + 1))
+  if [[ "$got" == "$want" ]]; then
+    pass=$((pass + 1))
+    printf '  SAID %-13s %s\n' "$got" "$desc"
+  else
+    fail=$((fail + 1))
+    printf '  SAID %s, EXPECTED %s — %s\n' "${got:-<nothing>}" "$want" "$desc" >&2
+  fi
+}
+
+expect_fan_in_refuses() { # <rc> <description>
+  local rc="$1" desc="$2"
+  total=$((total + 1))
+  if [[ "$rc" != "0" ]]; then
+    pass=$((pass + 1))
+    printf '  RED   (rc=%s)  %s\n' "$rc" "$desc"
+  else
+    fail=$((fail + 1))
+    printf '  GREEN — WRONG-PASS  %s\n' "$desc" >&2
+    sed 's/^/      /' "$flow_log" >&2
+  fi
+}
+
+expect_fan_in_accepts() { # <rc> <description>
+  local rc="$1" desc="$2"
+  total=$((total + 1))
+  if [[ "$rc" == "0" ]]; then
+    pass=$((pass + 1))
+    printf '  GREEN         %s\n' "$desc"
+  else
+    fail=$((fail + 1))
+    printf '  RED (rc=%s) — FALSE ALARM  %s\n' "$rc" "$desc" >&2
+    sed 's/^/      /' "$flow_log" >&2
+  fi
+}
+
+setup_scope clean
+expect_answer "$(scope_answer code)" true \
+  "control: the repository's pr-scope.sh calls a PR that touches apps/web code"
+expect_answer "$(scope_answer docs)" false \
+  "control: and calls a genuine docs/** PR docs-only (it is not simply always-true)"
+expect_answer "$(recheck_answer code)" true \
+  "control: the fan-in's own step, lifted from ci.yml, calls the same code PR code"
+expect_answer "$(recheck_answer docs)" false \
+  "control: and the same docs PR docs-only (it is not simply always-red either)"
+
+setup_scope poison-sh
+expect_answer "$(scope_answer code)" false \
+  "pr-scope.sh replaced by 'echo false' — the scope job now publishes docs-only for a PR that touches apps/web (r10's P0: no ci.yml diff, no lock diff)"
+expect_fan_in_refuses "$(fan_in_verdict false "$(recheck_answer code)" skipped)" \
+  "and the fan-in REFUSES the five skips that buys — its own step never runs pr-scope.sh"
+
+setup_scope poison-jq
+expect_answer "$(scope_answer code)" false \
+  "pr-scope.jq's docs test widened to accept every path, pr-scope.sh untouched — same wrong answer, one file further in"
+expect_fan_in_refuses "$(fan_in_verdict false "$(recheck_answer code)" skipped)" \
+  "and the fan-in REFUSES that too — the recheck is a second IMPLEMENTATION, not a second call to the same filter"
+
+setup_scope clean
+expect_fan_in_accepts "$(fan_in_verdict false "$(recheck_answer docs)" skipped)" \
+  "and a real docs-only PR still skips all five legs and still goes green (this is the feature, not a hole)"
+echo
+
+echo "and the same finding as ci.yml shapes — the second opinion switched off in the file:"
+
+# The three ways to switch the r11 fix off from inside ci.yml. All three regenerate the
+# lock AND the canonical block, so 3e agrees and every other check nods; what refuses
+# them is the hand-written expectation — the recheck's script in 3g for the first two,
+# the verdict's `RECHECK_CODE` guard pinned in 3b for the third.
+reset_sandbox
+patch_ci_job quality '          if [ -z "${PR_NUMBER:-}" ]; then
+            emit true no-pr-context' \
+'          emit false docs-only
+          exit 0
+          if [ -z "${PR_NUMBER:-}" ]; then
+            emit true no-pr-context'
+regen_sandbox
+expect_red "the fan-in's recheck answers docs-only before it asks anything AND everything regenerated — 3g compares its script byte for byte"
+
+reset_sandbox
+patch_ci '            else "outside-docs"' '            else "docs-only"'
+regen_sandbox
+expect_red "the recheck's jq widened so its last branch also says docs-only AND everything regenerated — same hand-written literal refuses it"
+
+reset_sandbox
+patch_ci '            if [ "$RECHECK_CODE" != "false" ]; then' '            if false; then'
+regen_sandbox
+expect_red "the verdict stops consulting the recheck ('if false') AND everything regenerated — 3b pins that comparison by hand for exactly this shape"
 echo
 
 echo "the lock itself:"

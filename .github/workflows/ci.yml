@@ -53,24 +53,58 @@ name: CI
 # job, because the other six still hash the whole file.
 #
 # WHAT IT IS NOT, AND WE ARE NOT GOING TO PRETEND OTHERWISE: it is not a wall around
-# CI, and the specific claim that used to stand here — "a bypass has to touch this
-# step or the lock file" — was FALSE. r8 disproved it: a workflow-level `BASH_ENV`
-# reached the tripwire without touching either one. Every round of this review has
-# ended by falsifying the previous round's absolute, so the claim that replaces it is
-# deliberately weaker, and structural rather than clever:
+# CI, and every absolute claim that has stood here has been falsified by the next
+# round of review. r8 killed "a bypass has to touch this step or the lock file" (a
+# workflow-level `BASH_ENV` touched neither). r10 killed its replacement, "every
+# bypass needs a diff to THIS FILE", and killed it with a demonstration rather than an
+# argument: the `scope` job runs `bash scripts/ci/pr-scope.sh` AFTER the tripwire, so a
+# diff to that ONE REPOSITORY SCRIPT — no ci.yml, no lock — made it print `false`, all
+# five legs `skipped`, and the fan-in read the whole set of skips as a docs-only PR and
+# went green. The workflow is not the only mutable surface. What the workflow RUNS is
+# a mutable surface too.
 #
-#     EVERY bypass needs a diff to THIS FILE. There is no way to hollow these jobs
-#     out — env, container, defaults, shell, a swapped step, a poisoned startup
-#     file — that is not written down in .github/workflows/ci.yml. And a diff to
-#     .github/workflows/ci.yml cannot be quiet: it is in the PR's file list.
+# ── THE TRUSTED EXECUTION SET (the r11 contract, third version) ───────────────
+# So the claim is no longer about one file. It names, exhaustively, the files that
+# decide WHETHER THE GATES RUN AT ALL — as opposed to the files that ARE the gates,
+# where a change makes a gate fail rather than disappear:
 #
-# Which leaves the tripwire the narrow job that is genuinely its own: catching what
-# is NOT in this file's diff — a repository script that writes `$GITHUB_ENV`, a lock
-# nobody regenerated, a ci.yml on disk that is not the reviewed one. The floor under
-# all of it is not a script. It is the `quality` required check in the protect-main
-# ruleset (bypass_actors empty), plus the project rule that a PR touching
-# .github/workflows or scripts/ci goes through review — which is the thing that reads
-# the ci.yml diff every bypass is obliged to produce. See docs/runbooks/local-ci.md.
+#     .github/workflows/ci.yml        this file: every job, step, env and condition
+#     .github/ci-workflow.lock        the digest the tripwire compares this file to
+#     scripts/ci/pr-scope.sh          run by `scope` below; decides the docs-only skip
+#     scripts/ci/pr-scope.jq          the decision pr-scope.sh transports
+#     scripts/ci/quality.sh           what `pnpm quality --leg …` resolves to
+#     package.json                    the `quality` script that does the resolving
+#     scripts/ci/ci-workflow-lock.sh  writes the lock (this workflow never runs it)
+#
+# The `scripts/ci/…` half of that list is machine-checked, not asserted: the self-test
+# scans every `run:` script in this file for `scripts/…` paths and requires the set to
+# be exactly the one written out by hand there. Adding a call to a script nobody named
+# is red until somebody names it.
+#
+#     THE CLAIM: a change to any member of that set is in the PR's file list, and
+#     nothing outside it can stop a gate from running. Being wrong about a file OUTSIDE
+#     it costs a red gate; being wrong about one INSIDE it is a green `quality` over
+#     unrun gates, which is why the set is enumerated rather than described.
+#
+# The tripwire covers the first two members. The five legs cover `quality.sh` and
+# `package.json` (a leg that stops running its gates goes red, not quiet). The two
+# `pr-scope` files are the ones r10 fired, and they are covered by the fan-in's own
+# second opinion, described where it lives — in the `quality` job at the bottom of this
+# file. That step re-derives the docs-only answer HERE, from the API, with a filter
+# written in THIS file, so a `pr-scope` that lies can only ever cause the legs to RUN
+# when they need not have. It cannot buy a skip.
+#
+# AND THE HONEST LIMIT, STATED BEFORE r12 HAS TO STATE IT: that second opinion is
+# itself inside the trusted set — it is lines in this file, pinned by the lock and
+# written out a second time by hand in the self-test. It is not a self-closing loop and
+# nothing here claims one. What it buys is that the set STOPS GROWING: after r10 the
+# skip decision depended on two repository scripts that no other job re-derived; it now
+# depends only on files whose diff a reviewer is already required to read.
+#
+# The floor under all of it is not a script. It is the `quality` required check in the
+# protect-main ruleset (bypass_actors empty), plus the project rule that a PR touching
+# .github/workflows or scripts/ci goes through review — which is what reads the diff
+# that every member of the set is obliged to produce. See docs/runbooks/local-ci.md.
 
 on:
   pull_request:
@@ -130,8 +164,15 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Three outputs, not one. `code` is what the five legs are gated on and has not
+    # changed. `reason` and `legs` are what this job TELLS the fan-in about its own
+    # answer: which legs it means to run, and why. The fan-in refuses any combination
+    # of the three that the step below cannot produce — a run whose scope job describes
+    # itself in terms this workflow never writes is a run nobody here can explain.
     outputs:
       code: ${{ steps.scope.outputs.code }}
+      reason: ${{ steps.scope.outputs.reason }}
+      legs: ${{ steps.scope.outputs.legs }}
     steps:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
@@ -183,9 +224,23 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          # One writer for all three outputs, so this job cannot publish a `code` its
+          # `reason` contradicts, or a `legs` its `code` contradicts. The fan-in checks
+          # the three against each other; that check is only worth making because they
+          # are written here, together, once.
+          emit() { # <code> <reason>
+            legs=all
+            if [ "$1" = "false" ]; then legs=none; fi
+            {
+              echo "code=$1"
+              echo "reason=$2"
+              echo "legs=$legs"
+            } >> "$GITHUB_OUTPUT"
+            echo "scope: code=$1, legs=$legs, reason=$2"
+          }
           if [ -z "${PR_NUMBER:-}" ]; then
             echo "no pull request in this context (event: $EVENT_NAME) — running every gate"
-            echo "code=true" >> "$GITHUB_OUTPUT"
+            emit true no-pr-context
             exit 0
           fi
           files_json="${RUNNER_TEMP:-/tmp}/pr-files.json"
@@ -195,17 +250,24 @@ jobs:
           gh api "$pr" >"$pr_json" 2>/dev/null || : >"$pr_json"
           if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
             echo "could not read the PR from the API — running every gate"
-          else
-            echo "changed paths (name, then previous name for renames):"
-            jq -r '.[][] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
-              "$files_json" 2>/dev/null || echo "  (unparseable — pr-scope will fail closed)"
+            emit true api-unreadable
+            exit 0
           fi
-          code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json")" || code=true
-          [ "$code" = "false" ] || code=true
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" = "false" ]; then
-            echo "docs/** only, and the file list is provably complete — every gate below is a no-op"
-          fi
+          echo "changed paths (name, then previous name for renames):"
+          jq -r '.[][] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
+            "$files_json" 2>/dev/null || echo "  (unparseable — pr-scope will fail closed)"
+          # Same polarity as ever: only the one string this script writes on purpose
+          # buys a skip. A non-zero exit, an empty answer, or any word nobody
+          # anticipated all land on "run every gate".
+          code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json")" || code=nonzero-exit
+          case "$code" in
+            false)
+              echo "docs/** only, and the file list is provably complete — every gate below is a no-op"
+              emit false docs-only
+              ;;
+            true) emit true outside-docs ;;
+            *) emit true scope-script-failed ;;
+          esac
 
   # ── the five legs ────────────────────────────────────────────────────────────
   # Same `if:` on all five. Polarity is deliberate and identical to what the old
@@ -542,6 +604,150 @@ jobs:
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
           echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+
+      # ── THE SECOND OPINION (the r10 P0) ──────────────────────────────────────
+      # The verdict below used to accept "all five legs skipped" on the `scope` job's
+      # word alone. r10 showed what that word is worth: `scope` reaches its answer by
+      # running `bash scripts/ci/pr-scope.sh`, a REPOSITORY SCRIPT, after the tripwire
+      # has already passed. Edit that one file to print `false` — no ci.yml diff, no
+      # lock diff, nothing for the tripwire to notice — and every gate in this workflow
+      # is skipped while `quality` reports green.
+      #
+      # So the skip is no longer taken on trust. This step asks GitHub the same two
+      # questions the scope job asked, in ITS OWN job, and decides for itself with a
+      # filter written in THIS file, which the lock pins and the self-test writes out a
+      # second time by hand. It runs NO repository script: `gh` and `jq` are on the
+      # runner image, and that is the whole dependency list.
+      #
+      # The two answers are compared one-directionally, and that asymmetry is the
+      # design rather than an oversight:
+      #
+      #   scope says docs-only, this step disagrees  → RED. The legs were skipped on
+      #                                                an answer this job cannot
+      #                                                reproduce.
+      #   scope says run everything, this step says
+      #   docs-only                                  → green if the legs passed. The
+      #                                                legs RAN; there is no unrun gate
+      #                                                to hide. Failing here would only
+      #                                                punish the scope job's own
+      #                                                fail-closed paths (an API blip
+      #                                                makes it answer "run everything",
+      #                                                which is correct behaviour).
+      #
+      # Which is the honest statement of what this buys: a lying `pr-scope` can now only
+      # cost CI minutes. It cannot buy a skip. The two files it is checking are not
+      # thereby "verified" — they are demoted out of the decision.
+      #
+      # THIS FILTER IS A SECOND IMPLEMENTATION, NOT A SECOND CALL. Handing the same
+      # scripts/ci/pr-scope.jq the same bytes would agree with itself by construction,
+      # which is the shape r10 found and the shape this whole PR keeps re-learning. It
+      # is deliberately the SIMPLER of the two, because it answers a narrower question:
+      # pr-scope.jq must be right in both directions (a wrong `true` costs 13 minutes on
+      # every docs PR), while this one only has to be right about refusing — anything it
+      # cannot prove is `outside-docs`, and `outside-docs` merely means the legs had to
+      # run. Where the two disagree about a legal-but-odd payload, this one goes red and
+      # the answer is a re-run, not a merged gate.
+      - name: Decide for ourselves whether this PR is docs-only
+        id: recheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          emit() { # <code> <reason>
+            { echo "code=$1"; echo "reason=$2"; } >> "$GITHUB_OUTPUT"
+            echo "recheck: code=$1, reason=$2"
+          }
+          if [ -z "${PR_NUMBER:-}" ]; then
+            emit true no-pr-context
+            exit 0
+          fi
+          files_json="${RUNNER_TEMP:-/tmp}/recheck-files.json"
+          pr_json="${RUNNER_TEMP:-/tmp}/recheck-pr.json"
+          pr="repos/${REPOSITORY}/pulls/${PR_NUMBER}"
+          # Three tries before giving up, which the scope job does not need and this
+          # step does. There, an unreadable API means "run every gate" and the run is
+          # merely slow; here it means the legs are already skipped and the only honest
+          # answer left is RED. A transient blip should not be a red docs-only PR.
+          fetch() { # <destination> <gh api arguments…>
+            dest="$1"
+            shift
+            n=1
+            while [ "$n" -le 3 ]; do
+              if gh api "$@" >"$dest" 2>/dev/null; then return 0; fi
+              n=$((n + 1))
+              if [ "$n" -le 3 ]; then sleep 2; fi
+            done
+            : >"$dest"
+          }
+          fetch "$files_json" --paginate --slurp "$pr/files"
+          fetch "$pr_json" "$pr"
+          if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
+            emit true api-unreadable
+            exit 0
+          fi
+          # Written to a file and read back with `jq -f`, not built with `$(cat <<…)`:
+          # bash 3.2 (what macOS ships, and what the drill that lifts this program runs
+          # under) mis-parses a here-document nested inside a command substitution when
+          # the body holds an odd number of quote characters.
+          filter="${RUNNER_TEMP:-/tmp}/recheck.jq"
+          cat >"$filter" <<'RECHECK_JQ'
+          # docs-only, proved from the API payloads, or one of the two ways of not
+          # proving it. Never "tolerant": every branch that is not a proof lands on a
+          # word that means the legs had to run.
+          def known_status:
+            . == "added" or . == "removed" or . == "modified" or . == "renamed"
+            or . == "copied" or . == "changed" or . == "unchanged";
+          def under_docs:
+            type == "string"
+            and startswith("docs/")
+            and (explode | any(. == 0) | not)
+            and (split("/") | all(length > 0 and . != "." and . != ".."));
+          # A rename is two paths. Taking only `filename` is how a code file renames
+          # itself into docs/ and takes every gate with it.
+          def entry_is_docs_only:
+            (.filename | under_docs)
+            and (.status | known_status)
+            and (if .status == "renamed" or .status == "copied"
+                 then (.previous_filename | under_docs)
+                 elif has("previous_filename") and .previous_filename != null
+                 then (.previous_filename | under_docs)
+                 else true
+                 end);
+          (if ($files[0] | type) == "array" and ($files[0] | all(type == "array"))
+           then ($files[0] | add // [])
+           else null
+           end) as $entries
+          | (if ($pr | length) == 1 and ($pr[0] | type) == "object"
+             then $pr[0].changed_files
+             else null
+             end) as $total
+          | if $entries == null then "undecidable"
+            # An empty list means we never learned what changed, not that nothing did.
+            elif ($entries | length) == 0 then "undecidable"
+            elif ($entries | any(type != "object")) then "undecidable"
+            elif ($total | type) != "number" then "undecidable"
+            # As TEXT: jq keeps the fractional literal, so 1.0 and 1e-1 are visible here.
+            elif ($total | tostring | test("^(0|[1-9][0-9]*)$") | not) then "undecidable"
+            # GET .../files stops at 3,000 entries without saying so.
+            elif $total >= 3000 then "undecidable"
+            # Below that ceiling the count is what proves we read the whole PR — and it
+            # only proves it if the entries are distinct.
+            elif ($entries | length) != $total then "undecidable"
+            elif ($entries | map(.filename) | unique | length) != ($entries | length) then "undecidable"
+            elif ($entries | all(entry_is_docs_only)) then "docs-only"
+            else "outside-docs"
+            end
+          RECHECK_JQ
+          verdict="$(jq -r -n --slurpfile files "$files_json" --slurpfile pr "$pr_json" -f "$filter" 2>/dev/null)" || verdict=""
+          case "$verdict" in
+            docs-only) emit false docs-only ;;
+            outside-docs) emit true outside-docs ;;
+            *) emit true undecidable ;;
+          esac
+
       # Fail closed, stated positively: this step names the ONE outcome that passes and
       # rejects everything else, rather than listing the outcomes that fail. A status
       # nobody anticipated — a new GitHub result string, a leg that vanished from this
@@ -549,12 +755,20 @@ jobs:
       # value", which blocks the merge. Same polarity rule the scope check uses
       # (`!= 'false'`, never `== 'true'`), one level up.
       #
-      # The expected outcome depends on one thing only, the scope answer this run's legs
-      # were themselves gated on:
-      #   scope is anything but success  → fail, whatever the legs say
-      #   scope says code != 'false'     → every leg must be `success`
-      #   scope says code == 'false'     → every leg must be `skipped` (docs-only PR)
-      # Both directions are strict equality on purpose. The legs read the same output
+      # The expected outcome depends on the scope answer this run's legs were themselves
+      # gated on — and, since r10, on whether the step above could reproduce it:
+      #   scope is anything but success        → fail, whatever the legs say
+      #   scope's three outputs do not agree   → fail; that run is not one this
+      #                                          workflow's scope job can produce
+      #   the recheck did not answer           → fail; the second opinion is not optional
+      #   scope says code != 'false'           → every leg must be `success`
+      #   scope says code == 'false' AND the
+      #   recheck agrees                       → every leg must be `skipped`
+      #   scope says code == 'false' and the
+      #   recheck does NOT agree               → fail: the legs were skipped on an
+      #                                          answer derived by a repository script
+      #                                          that this job cannot reproduce
+      # Both leg directions are strict equality on purpose. The legs read the same output
       # from the same job as this step does, so a leg that ran while the scope said
       # docs-only (or the reverse) means the two sides disagree about what this run was —
       # and a run we cannot explain is not a run that may merge.
@@ -568,10 +782,16 @@ jobs:
       # all. Five fixed identities, each read from its own variable, cannot express
       # either: there is no line to add, and nothing except `checks` can ever answer
       # for `checks`. A count would now be redundant, and is gone.
-      - name: Every leg must have passed — or been skipped for a provably docs-only PR
+      - name: Every leg must have passed — or been skipped for a PR this job proved docs-only
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
           SCOPE_CODE: ${{ needs.scope.outputs.code }}
+          SCOPE_REASON: ${{ needs.scope.outputs.reason }}
+          SCOPE_LEGS: ${{ needs.scope.outputs.legs }}
+          # From the step above, in this job — not from `needs`. This is the answer no
+          # repository script had a hand in.
+          RECHECK_CODE: ${{ steps.recheck.outputs.code }}
+          RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
           # Exactly one variable per declared leg, named after that leg, fed by that
           # leg's own job — machine-checked, both directions, by
           # scripts/__tests__/quality-legs.test.sh: a leg with no variable, a
@@ -592,12 +812,62 @@ jobs:
             exit 1
           fi
 
+          # The scope job describes itself in three outputs written by one function, so
+          # only five triples can come out of it. Anything else means the run was not
+          # produced by the scope job in this file, and there is nothing here that could
+          # honestly interpret it.
+          case "${SCOPE_CODE:-}|${SCOPE_REASON:-}|${SCOPE_LEGS:-}" in
+            'false|docs-only|none') ;;
+            'true|outside-docs|all') ;;
+            'true|no-pr-context|all') ;;
+            'true|api-unreadable|all') ;;
+            'true|scope-script-failed|all') ;;
+            *)
+              echo "scope published code=${SCOPE_CODE:-<empty>}, reason=${SCOPE_REASON:-<empty>}, legs=${SCOPE_LEGS:-<empty>}"
+              echo ""
+              echo "quality: that is not a combination the scope job in this workflow can publish — failing closed."
+              exit 1
+              ;;
+          esac
+
+          # And the second opinion has to BE one. A missing answer here is the step
+          # above deleted, skipped or broken — never a licence to fall back on the
+          # scope job's word, which is exactly what r10 exploited.
+          case "${RECHECK_CODE:-}" in
+            true|false) ;;
+            *)
+              echo "this job's own scope decision came back as '${RECHECK_CODE:-<empty>}'"
+              echo ""
+              echo "quality: the step that re-derives this PR's scope did not answer — failing closed."
+              exit 1
+              ;;
+          esac
+
           if [ "$SCOPE_CODE" = "false" ]; then
+            # THE r10 GATE. The legs are already skipped by the time this runs; the only
+            # question left is whether anything other than a repository script says they
+            # should have been.
+            if [ "$RECHECK_CODE" != "false" ]; then
+              echo "scope: docs/** only (reason: $SCOPE_REASON) — the five legs were skipped on that answer"
+              echo "this job asked GitHub the same question and got: $RECHECK_CODE (reason: ${RECHECK_REASON:-<empty>})"
+              echo ""
+              echo "quality: the legs were skipped on a docs-only answer this job cannot reproduce."
+              echo "  The scope job reaches that answer through scripts/ci/pr-scope.sh and"
+              echo "  scripts/ci/pr-scope.jq; this job does not use either. Check what those two"
+              echo "  files say in this PR's diff — failing closed."
+              exit 1
+            fi
             expected=skipped
-            echo "scope: docs/** only and provably complete — every leg must have been skipped"
+            echo "scope: docs/** only, and this job re-derived that answer for itself — every leg must have been skipped"
           else
             expected=success
-            echo "scope: code=${SCOPE_CODE:-<empty>} — every leg must have passed"
+            echo "scope: code=$SCOPE_CODE (reason: $SCOPE_REASON) — every leg must have passed"
+            if [ "$RECHECK_CODE" = "false" ]; then
+              # The safe direction, and it is reported rather than punished: the legs
+              # RAN. Making this red would only break the scope job's fail-closed paths,
+              # where answering "run every gate" is the correct behaviour.
+              echo "  (this job's own answer was docs-only; the gates ran anyway, which is the safe direction)"
+            fi
           fi
 
           verdict=0
