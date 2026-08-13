@@ -480,10 +480,16 @@ export function OttoSchedule({
           </div>
           <div className="flex-1" />
           {/* OTTO auto-publish toggle. #791-2: this is now the switch the publish scheduler
-              actually reads (apps/worker scanDuePublishPosts) — off means approved posts wait. */}
+              actually reads (apps/worker scanDuePublishPosts) — off means approved posts wait.
+
+              #851 — the enabled branch asks the authority for the LIVE sentence on purpose. This
+              switch is only operable when THIS workspace's own connection can publish, so the
+              sentence describing what it does must be the one about a working connection; handing
+              it the product-wide state would describe the wrong thing on exactly the workspace
+              where the switch is usable. */}
           <label
             className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none"
-            title={autoPublishAvailable ? publishCopy.why : AUTO_PUBLISH_GATE_HINT}
+            title={autoPublishAvailable ? publishSurfaceCopy(true).why : AUTO_PUBLISH_GATE_HINT}
           >
             <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto || !autoPublishAvailable} aria-label="Otto auto-publish" />
             Auto-publish

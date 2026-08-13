@@ -3,7 +3,7 @@
 
 | skill | cost | effect | reach | needsApproval | description |
 |---|---|---|---|---|---|
-| approveScheduledPost | free | write | external | ✅ | Approve a DRAFT scheduled post so it can publish to Instagram/Facebook at its sc |
+| approveScheduledPost | free | write | external | ✅ | Approve a DRAFT scheduled post so it takes its slot on the user's schedule. Publ |
 | buildSegment | free | write | internal | ❌ | Create or update one CRM Segment through the same validated, owner-scoped action |
 | cancelScheduledPost | free | write | internal | ❌ | Cancel a scheduled post so it will not publish. $0 and reversible only by re-cre |
 | deleteReferenceVariant | free | write | internal | ❌ | Delete one of an element's reference variants (and its generated reference image |
