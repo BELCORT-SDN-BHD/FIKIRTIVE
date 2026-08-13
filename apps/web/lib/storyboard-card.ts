@@ -112,6 +112,28 @@ export function shotsStuckWithoutInheritedFrame<
   return stuck;
 }
 
+/**
+ * #782 r4(判官 r3 P3)—— 这一镜的首帧到底有没有东西在跑。
+ *
+ * r3 的卡面把「有 firstFrameCardId、还没有图」当成「正在生成」。指针在 ≠ 有东西在跑:一张
+ * 准备卡在商家按 Cancel、启动失败、或崩溃刷新之后照样留在 payload 里,一分钱没花、什么都
+ * 没在跑。卡面于是转着 "Generating first frame…"、轮询白转到上限(约两分钟)才自己消失,
+ * 而那一镜其实需要商家按一下 —— 一个转两分钟的假进度,比什么都不显示更伤。
+ *
+ * 真相只有服务端看得见,所以判据来自 sync 报回来的那份「真有活作业的镜头」
+ * (`liveFrameShotIds`,与闸③ 判词同源)。
+ *
+ * `live === null` = 还没问过服务端(首屏那一瞬)。这时只能按指针答,和 r3 一样 —— 但那个
+ * 误报最多活到第一次 sync 回来为止(挂载即发一次),不再是两分钟。反过来在这一瞬就藏起
+ * spinner 更糟:刚按下确认、钱已经花出去的那一秒,卡面会显得什么都没发生。
+ */
+export function isFrameInProgress<
+  T extends { shotId: string; firstFrameCardId?: string; firstFrameGenerationId?: string },
+>(shot: T, liveFrameShotIds: ReadonlySet<string> | null): boolean {
+  if (!shot.firstFrameCardId || shot.firstFrameGenerationId) return false;
+  return liveFrameShotIds === null || liveFrameShotIds.has(shot.shotId);
+}
+
 type RawShot = Partial<StoryboardCardPayload["shots"][number]>;
 
 export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView {

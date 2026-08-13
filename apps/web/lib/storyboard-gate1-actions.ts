@@ -661,12 +661,17 @@ export async function regenShotFirstFrameCard(
 // (frames AND videos), apply the frame-replace cascade, return frame + video urls
 // ---------------------------------------------------------------------------
 
-/** Read-only: the child card's finished GenJob, if any. Prefer the best-effort
+/** Read-only: the GenJob behind a child card, whatever state it is in. Prefer the best-effort
  *  `genJobId` link coworkGenerate stamped (cowork-actions.ts:614); fall back to the
  *  durable `cowork:<childId>` idempotency key (mirrors spentOf's read). Never writes.
  *  v6(R5③): reads via the caller's tx — the in-lock sampling truly runs inside the
- *  locked transaction. */
-async function doneJobFor(tx: PrismaTx, childCardId: string, ownerId: string): Promise<DoneJob | null> {
+ *  locked transaction.
+ *
+ *  #782 r4(判官 r3 P1-b/P3)—— 以前这里叫 doneJobFor,把「出完了」以外的**每一种**状态都
+ *  折叠成 null。于是「跑失败了」和「还在跑」和「根本没有作业」在调用点长得一模一样,而这
+ *  三件事对商家的意思完全不同(一个要恢复入口、一个要继续等、一个要按钮)。状态带回来,
+ *  折叠交给读它的人做。 */
+async function childJobFor(tx: PrismaTx, childCardId: string, ownerId: string): Promise<ChildJob | null> {
   const child = await tx.chatMessage.findFirst({
     where: { id: childCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
     select: { genJobId: true },
@@ -678,11 +683,14 @@ async function doneJobFor(tx: PrismaTx, childCardId: string, ownerId: string): P
   const job = child?.genJobId
     ? await tx.genJob.findFirst({ where: { id: child.genJobId, ownerId }, select })
     : await tx.genJob.findFirst({ where: { ownerId, idempotencyKey: `cowork:${childCardId}` }, select });
-  if (!job || job.status !== "DONE") return null; // missing/queued/generating/failed → leave the shot alone
-  return { id: job.id, lastFrameAssetId: job.lastFrameAssetId, projectId: job.projectId, threadId: job.threadId };
+  return job ?? null;
 }
 
-type DoneJob = { id: string; lastFrameAssetId: string | null; projectId: string; threadId: string | null };
+type ChildJob = { id: string; status: string; lastFrameAssetId: string | null; projectId: string; threadId: string | null };
+
+/** 作业**这一生结束了**的两种状态。到了这里就不会再有产出,也不会再有末帧 —— 与「还在跑」
+ *  必须分开对待:等一条已经死掉的作业,就是把商家永远钉在「等待中」。 */
+const JOB_DEAD_STATUSES = new Set(["FAILED", "CANCELLED"]);
 
 /** 首帧只能是图片。末帧本来就是 PNG,但「指过去的那一行到底是不是图」这件事不能靠推定 ——
  *  指错了下游就是拿一段视频当首帧去付费出片。 */
@@ -704,7 +712,7 @@ const FRAME_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
 async function inheritFrameFromClip(
   tx: PrismaTx,
   ownerId: string,
-  job: DoneJob,
+  job: ChildJob,
 ): Promise<string | null> {
   if (!job.lastFrameAssetId) return null;
   const asset = await tx.asset.findFirst({
@@ -765,20 +773,22 @@ async function resolveMediaUrls(ownerId: string, generationIds: string[]): Promi
   return byGenId;
 }
 
-export async function syncStoryboardMedia(
-  raw: unknown,
-): Promise<
-  { payload: StoryboardCardPayload; frames: Record<string, string>; videos: Record<string, string> } | Err
-> {
+/** sync 的返回形状。`liveFrameShotIds` 是 #782 r4 新增的**只读**一格,见下面赋值处。 */
+type SyncResult = {
+  payload: StoryboardCardPayload;
+  frames: Record<string, string>;
+  videos: Record<string, string>;
+  liveFrameShotIds: string[];
+};
+
+export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Err> {
   const parsed = syncInput.safeParse(raw);
   if (!parsed.success) return { error: "That request isn't valid." };
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, async (): Promise<
-    { payload: StoryboardCardPayload; frames: Record<string, string>; videos: Record<string, string> } | Err
-  > => {
+  return runAsUser(principal, async (): Promise<SyncResult | Err> => {
     const { ownerId } = gate;
 
     const card = await loadCard(parsed.data.cardId, ownerId);
@@ -792,6 +802,10 @@ export async function syncStoryboardMedia(
     // points at B. Post-lock derivation makes that impossible: sync only ever acts on the
     // children the FRESH pointers reference. A no-op sync stages nothing and writes nothing.
     // fresh 为 null（卡在锁前被删/变更）即 fail-closed 零写返回 "Card not found."，无 cur 回落（R3①）。
+    //
+    // #782 r4 (判官 r3 P3): 采样时顺手记下「哪些镜头的首帧子卡背后真有一条没死的作业」。
+    // 赋值(不是累加)—— 事务体重跑一次也只会得到那一次采样的结果,不会叠加出幽灵。
+    let liveFrameShotIds: string[] = [];
     const payload = await prisma.$transaction(async (tx) => {
       // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
       // racing a prepare/regen RMW could clobber a just-written — possibly already
@@ -837,11 +851,20 @@ export async function syncStoryboardMedia(
       // landed on an EARLIER sync stages no video write, but its job (and therefore its free
       // last frame) is still the thing the next shot inherits from — so the map is filled from
       // the resolve, not from the write.
-      const videoJobByShot = new Map<string, DoneJob>();
+      const videoJobByShot = new Map<string, ChildJob>();
+      // #782 r4 (判官 r3 P1-b): 上一镜那张视频子卡的作业**已经死了**(FAILED/CANCELLED)。
+      // 与 DONE-却交不出末帧同义:免费的帧不会来了 → 下一镜必须拿回它的恢复入口。
+      const videoJobDeadByShot = new Set<string>();
+      // #782 r4 (判官 r3 P3): 首帧子卡背后**真的有一条没死的作业**的那些镜头。只读、不进
+      // payload —— 它描述的是此刻,没有需要清理的过去。见函数末尾 liveFrameShotIds 的注释。
+      const liveFrames = new Set<string>();
       for (const shot of p.shots) {
         if (shot.firstFrameCardId) {
-          const job = await doneJobFor(tx, shot.firstFrameCardId, ownerId);
-          if (job) {
+          const job = await childJobFor(tx, shot.firstFrameCardId, ownerId);
+          // 「在跑」= 有作业且没死。DONE 也算:worker 先写 DONE、再写 GEN_RESULT,那一瞬
+          // 结果行还没落,此时判成「没在跑」会让卡面停掉轮询,那张图就再也不会被写回。
+          if (job && !JOB_DEAD_STATUSES.has(job.status)) liveFrames.add(shot.shotId);
+          if (job?.status === "DONE") {
             const genId = await firstGenerationIdOf(tx, job.id, ownerId);
             if (genId && genId !== shot.firstFrameGenerationId) {
               frameWrites[shot.shotId] = genId;
@@ -851,14 +874,16 @@ export async function syncStoryboardMedia(
           }
         }
         if (shot.videoCardId) {
-          const job = await doneJobFor(tx, shot.videoCardId, ownerId);
-          if (job) {
+          const job = await childJobFor(tx, shot.videoCardId, ownerId);
+          if (job && JOB_DEAD_STATUSES.has(job.status)) videoJobDeadByShot.add(shot.shotId);
+          if (job?.status === "DONE") {
             videoJobByShot.set(shot.shotId, job);
             const genId = await firstGenerationIdOf(tx, job.id, ownerId);
             if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
           }
         }
       }
+      liveFrameShotIds = [...liveFrames];
 
       // ── #782 闸③:接续。第 N 镜的片子出完 → 它真实停住的那一帧成为第 N+1 镜的首帧。──
       //
@@ -878,22 +903,37 @@ export async function syncStoryboardMedia(
           // 上一镜的片子必须**真的出完**(videoWrites 是这一轮刚落的,videoGenerationId 是
           // 之前落的;两者任一成立都算出完)。没出完就等下一轮,不猜。
           if (!videoWrites[from.shotId] && !from.videoGenerationId) continue;
-          // videoJobByShot 的键是**上一镜此刻的 videoCardId** 那一张子卡的 DONE 作业。上一镜
-          // 一重出,指针就换成了还在跑的新子卡,这里读不到 → 不接、也不判死:免费的末帧
-          // 正在路上,这时候开放付费首帧就是让商家为一张本该继承的帧多花钱(判官 r2 P1-b)。
+          // 下面三条分支答的是同一个问题:**这一镜还有没有免费的帧在路上?**
+          // videoJobByShot / videoJobDeadByShot 的键都是**上一镜此刻的 videoCardId** 那一张
+          // 子卡 —— 上一镜一重出,指针就换成新子卡,旧作业的结论自动失效。
           const job = videoJobByShot.get(from.shotId);
-          if (!job) continue;
-          const genId = await inheritFrameFromClip(tx, ownerId, job);
-          // first-ever frame write for that shot ⇒ 走既有写回路径,不进 cascadeShots。
-          if (genId) {
-            frameWrites[to.shotId] = genId;
+          if (job) {
+            // 片子出完了。它交不交得出末帧,这一刻就是最终答案 —— worker 的末帧指针写是
+            // 条件写(where.status = "GENERATING"),迟到的那一笔在 DONE 之后一律匹配零行。
+            // 所以「DONE 且 lastFrameAssetId 为空」是构造性的终局,不是一次抢跑的快照
+            // (判官 r3 P1-a;实现见 apps/worker/src/jobs/gen.ts 的 storeLastFrameBestEffort)。
+            const genId = await inheritFrameFromClip(tx, ownerId, job);
+            // first-ever frame write for that shot ⇒ 走既有写回路径,不进 cascadeShots。
+            if (genId) {
+              frameWrites[to.shotId] = genId;
+              continue;
+            }
+          } else if (!videoJobDeadByShot.has(from.shotId)) {
+            // 还在跑,或者根本看不到作业(比如刚换上一张还没启动的子卡)—— 免费的末帧可能
+            // 还在路上,这时候开放付费首帧就是让商家为一张本该继承的帧多花钱。
+            // 宁可多等,不可多花(判官 r2 P1-b)。
             continue;
           }
-          // ── 判词(#782 r3,判官 r2 P1-a/P1-b)──────────────────────────────────
-          // 走到这里是唯一一个「已经试过、并且确定接不上」的位置:那条片子真的出完了,
-          // 而它交不出可用的末帧(引擎没给 / worker 没存 / 那一行不是图)。同一条作业上
-          // 再 sync 一万次也是同样结果,所以把这个判断**写下来**,而不是让卡面和动作层
-          // 各自从指针形状去猜 —— 猜出来的两个答案正是判官 r2 的两条 P1。
+          // ── 判词(#782 r3/r4,判官 r2 与 r3 的 P1-b)────────────────────────────
+          // 走到这里只有两种可能,而它们对商家是同一件事 ——「这张视频子卡这一生结束了,
+          // 免费的帧不会来了」:
+          //   ① 片子真的出完了,但交不出可用的末帧(引擎没给 / worker 没存 / 那一行不是图);
+          //   ② 那条作业已经 FAILED / CANCELLED —— 它再也不会产出任何东西。
+          // r3 只认 ①,于是重出失败之后下一镜永远停在「等待中」,界面上连个自己出帧的入口
+          // 都没有(判官 r3 P1-b)。两种情形同一条出路,所以同一句判词。
+          //
+          // 把这个判断**写下来**,而不是让卡面和动作层各自从指针形状去猜 —— 猜出来的两个
+          // 答案正是判官 r2 的两条 P1。
           //
           // 记的是**哪一张视频子卡**得出的判词,这让它自清:上一镜一旦重出(videoCardId
           // 换新),判词不再匹配,这一镜自动回到「还在等」,零额外清理逻辑、零多余写入。
@@ -970,7 +1010,15 @@ export async function syncStoryboardMedia(
       if (url) videos[shotId] = url; // a deleted generation → omit, don't error
     }
 
-    return { payload, frames, videos };
+    // #782 r4 (判官 r3 P3) —— 「生成中」必须由一条真的作业撑着。
+    //
+    // 卡面原本靠 `firstFrameCardId` 这个指针判「正在生成」,但指针在 ≠ 有东西在跑:准备卡
+    // 在商家按 Cancel、启动失败、或崩溃刷新之后照样留在 payload 里,一分钱没花、什么都没
+    // 在跑。于是卡面转着 "Generating first frame…"、轮询白转两分钟,而那一镜其实需要商家
+    // 自己按一下。能看见作业真实状态的只有这里(与闸③ 判词同源),所以由这里如实报回。
+    //
+    // 刻意**不**进 payload:它描述的是此刻,不是一件需要被记住、被清理的事实。
+    return { payload, frames, videos, liveFrameShotIds };
   });
 }
 

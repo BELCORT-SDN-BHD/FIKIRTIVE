@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   shotsNeedingMintedFirstFrame,
   shotsStuckWithoutInheritedFrame,
+  isFrameInProgress,
   parseStoryboardCardPayload,
   MAX_STORYBOARD_SHOTS,
 } from "../storyboard-card";
@@ -366,5 +367,51 @@ describe("#782 r2b 卡面文案钉死", () => {
     // 「(below)」这个位置词被拿掉了:Generate all 在生成中是隐藏的,指过去会指空。
     expect(CARD_SOURCE).toContain("this shot needs its own");
     expect(CARD_SOURCE).not.toContain("first frame (below)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r4(判官 r3 P3)—— 「生成中」不是从指针推出来的
+// ---------------------------------------------------------------------------
+//
+// r3 的卡面把 `firstFrameCardId` 当成「正在生成」的证据。它不是:准备卡在商家按 Cancel、
+// 启动失败、或崩溃刷新之后照样留在 payload 里,一分钱没花、什么都没在跑。商家于是看着一个
+// 转了两分钟(轮询上限)才自己消失的假 spinner,而那一镜其实需要他按一下。
+//
+// 判据换成 sync 报回来的那份「真有活作业的镜头」——与闸③ 判词同源:能看见作业真实状态的
+// 只有服务端。首屏还没问过服务端时(null)只能按指针答,那一刻的误报最多持续一次往返。
+describe("#782 r4 isFrameInProgress —— spinner 必须有一条真作业撑着", () => {
+  const prepared = { shotId: "s1", firstFrameCardId: "child-1" }; // 准备卡在,还没有图
+
+  it("还没问过服务端(null)→ 只能按指针答(spinner 照旧,一次往返内会被纠正)", () => {
+    expect(isFrameInProgress(prepared, null)).toBe(true);
+  });
+
+  it("服务端说这一镜没有活作业 → 不显示生成中(崩溃刷新的假 spinner 断根)", () => {
+    expect(isFrameInProgress(prepared, new Set())).toBe(false);
+  });
+
+  it("服务端说这一镜有活作业 → 显示生成中", () => {
+    expect(isFrameInProgress(prepared, new Set(["s1"]))).toBe(true);
+  });
+
+  it("连准备卡都没有 → 任何情况下都不显示生成中", () => {
+    expect(isFrameInProgress({ shotId: "s1" }, null)).toBe(false);
+    expect(isFrameInProgress({ shotId: "s1" }, new Set(["s1"]))).toBe(false);
+  });
+
+  it("图已经出来了 → 不再是生成中(哪怕服务端那一份还没更新)", () => {
+    const done = { shotId: "s1", firstFrameCardId: "child-1", firstFrameGenerationId: "gen-1" };
+    expect(isFrameInProgress(done, new Set(["s1"]))).toBe(false);
+  });
+});
+
+describe("#782 r4 卡面钉死:spinner 与轮询都改读真作业", () => {
+  const HERE_R4 = dirname(fileURLToPath(import.meta.url));
+  const CARD_SOURCE_R4 = readFileSync(resolve(HERE_R4, "../../components/otto/StoryboardCard.tsx"), "utf8");
+
+  it("首帧的 pending 判据不再是那个只看指针的 isFramePending", () => {
+    expect(CARD_SOURCE_R4).not.toContain("function isFramePending");
+    expect(CARD_SOURCE_R4).toContain("isFrameInProgress");
   });
 });

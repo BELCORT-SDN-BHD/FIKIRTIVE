@@ -236,6 +236,100 @@ describe("#782 worker:引擎免费附送的末帧", () => {
 });
 
 // ---------------------------------------------------------------------------
+// #782 r4(判官 r3 P1-a)—— 作业一 DONE,末帧指针就冻结
+// ---------------------------------------------------------------------------
+//
+// r3 的超时只放弃**等待**,没有取消**工作**:输掉那一边的存储链继续跑,它最后那句
+// `genJob.updateMany` 可以在作业已经 DONE 之后才落库。而分镜闸③ 把「DONE 且末帧为 null」
+// 当成终局:它当场给下一镜写死判词,卡面随即把那一镜请进**付费**铸帧。判官的内存探针
+// 实证过这个窗口 —— 商家为一张几秒后就会免费到账的帧付了钱。
+//
+// 修法不是再加一个超时,是让**迟到的写入压根落不下去**:末帧指针那一句改成条件写
+// (`where.status = "GENERATING"`)。DONE 是同一行上的一次 UPDATE,两句在 Postgres 里靠行锁
+// 排队:抢在 DONE 前面就算数,落在 DONE 后面就匹配零行、原地作废。于是
+// **「作业 DONE 的那一刻,lastFrameAssetId 就是最终值」** 成为一条构造性事实 —— 闸③ 依赖的
+// 那个推断从此为真,而且不需要新列、不需要迁移、不需要动闸③ 一个字。
+//
+// 下面这两条用一个**有状态的假数据库行**来验:它像真库一样按 where 决定这一句写不写得进去。
+
+/** 一行会按 `where.status` 决定成败的假 GenJob —— 条件写的语义就在这三行里。 */
+function fakeGenJobRow() {
+  const row: { status: string; lastFrameAssetId: string | null } = { status: "QUEUED", lastFrameAssetId: null };
+  const matches = (where: unknown): boolean => {
+    const s = (where as { status?: unknown } | undefined)?.status;
+    if (s === undefined) return true; // 无条件写:什么状态都落得下去(r3 的写法)
+    if (typeof s === "string") return row.status === s;
+    const inList = (s as { in?: unknown }).in;
+    return Array.isArray(inList) ? inList.includes(row.status) : true;
+  };
+  m.genJobUpdateMany.mockImplementation(async (args: { where?: unknown; data?: object }) => {
+    if (!matches(args?.where)) return { count: 0 };
+    Object.assign(row, args?.data ?? {});
+    return { count: 1 };
+  });
+  m.genJobUpdate.mockImplementation(async (args: { data?: object }) => {
+    Object.assign(row, args?.data ?? {});
+    return {};
+  });
+  return row;
+}
+
+describe("#782 r4:末帧指针的写入窗口只到 DONE 为止", () => {
+  beforeEach(() => {
+    m.assetUpsert.mockImplementation(async (args: { create: { contentHash: string } }) =>
+      ({ id: args.create.contentHash === "d".repeat(64) ? "asset_tail" : "asset_clip" }));
+    m.genJobFindUnique.mockResolvedValue({ ...videoJob });
+  });
+
+  it("按时存完 → 指针照样落在作业行上(条件写没有把正常那条路一起关掉)", async () => {
+    const row = fakeGenJobRow();
+    m.storagePut.mockImplementation(async (_owner: string, bytes: Uint8Array) =>
+      ({ contentHash: (bytes.byteLength === TAIL.bytes.byteLength ? "d" : "c").repeat(64) }));
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(row.status).toBe("DONE");
+    expect(row.lastFrameAssetId).toBe("asset_tail");
+  });
+
+  it("超时之后才回来的存储链 → 它那一句写入落在 DONE 之后,必须原地作废", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = fakeGenJobRow();
+      // 末帧的 R2 put 拖到 12 秒才回话 —— 越过 8 秒预算,作业早已 DONE。
+      m.storagePut.mockImplementation((_owner: string, bytes: Uint8Array) => {
+        if (bytes.byteLength === TAIL.bytes.byteLength) {
+          return new Promise((resolve) => setTimeout(() => resolve({ contentHash: "d".repeat(64) }), 12_000));
+        }
+        return Promise.resolve({ contentHash: "c".repeat(64) });
+      });
+
+      const run = handleGen({ genJobId: "g1" }, 0);
+      await vi.advanceTimersByTimeAsync(8_001); // 超时赢下 race:片子交付,作业 DONE
+      await expect(run).resolves.toBeUndefined();
+      expect(row.status, "片子必须照常交付").toBe("DONE");
+      expect(row.lastFrameAssetId, "DONE 的那一刻末帧就该是 null").toBeNull();
+
+      // 输掉的那一边仍在跑。放它跑完,让它把那句写入真的发出去。
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // 它确实回来了、确实试着写了 —— 但那一句必须匹配零行。
+      const tailWrite = m.genJobUpdateMany.mock.calls.find(
+        (c) => (c[0] as { data?: { lastFrameAssetId?: string } }).data?.lastFrameAssetId !== undefined,
+      );
+      expect(tailWrite, "迟到的存储链本来就该走到写入这一步(否则这条测试什么都没验)").toBeDefined();
+      expect(
+        row.lastFrameAssetId,
+        "DONE 之后还能补上末帧 = 闸③ 的「DONE 且为 null = 终局」是假的,提前收费窗还开着",
+      ).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #782 r2 —— 「不加钱」不是一句话,是一组必须逐一相等的数
 // ---------------------------------------------------------------------------
 //
