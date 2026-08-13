@@ -403,7 +403,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       vision,
       runtimeProvider,
       knowledgeRows,
-      workerHeartbeat,
+      workerHeartbeats,
     ] = await Promise.all([
       listTenants(),
       prisma.creditAccount.findUnique({
@@ -560,9 +560,16 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         select: { key: true, valueJson: true },
       }),
       // #797 — the worker's own deploy identity, to compare against this web process's.
-      prisma.workerHeartbeat.findUnique({
-        where: { id: "worker" },
-        select: { commitSha: true, configFingerprint: true },
+      //
+      // EVERY row, not `id: "worker"` (#797 judge r3 P1). After the #796 split there is no single
+      // worker row: `compute` and `wait` each write their own, each carrying its own deploy
+      // identity, and a half-finished deploy can land on just one of them. Reading one hard-coded
+      // id let the frozen pre-split `"worker"` row — which still matched web — report In sync while
+      // the live `worker-wait` service was running different code. Same read as /api/health, so the
+      // two panels can never disagree about which roles exist. Staleness (not an id allowlist) is
+      // what retires that leftover row: see buildDeploySignal.
+      prisma.workerHeartbeat.findMany({
+        select: { id: true, at: true, commitSha: true, configFingerprint: true },
       }),
     ]);
 
@@ -758,12 +765,14 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       tone: bytePlusPack.tone,
     });
 
-    // #797 — is the worker the SAME deploy as this web process? A half-finished deploy, or two
-    // services holding different values of a shared secret, otherwise leaves both processes
-    // alive and only some business paths quietly broken.
+    // #797 — is EVERY live worker role the SAME deploy as this web process? A half-finished
+    // deploy, or two services holding different values of a shared secret, otherwise leaves both
+    // processes alive and only some business paths quietly broken. Since #796 that question has
+    // one answer per role, and the panel reports the worst of them.
     const deploy = buildDeploySignal(
       { commitSha: commitShaFrom(process.env), configFingerprint: configFingerprint(process.env) },
-      workerHeartbeat,
+      workerHeartbeats,
+      new Date(),
     );
     systemIncidents.push({
       id: "deploy-fingerprint",

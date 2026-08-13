@@ -33,7 +33,7 @@ import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
 import { assertWorkerEnv } from "./boot-env.js";
-import { beatOnce } from "./heartbeat.js";
+import { startHeartbeat } from "./heartbeat.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -239,12 +239,10 @@ async function main(): Promise<void> {
   //
   // #797: the same row now also carries this deploy's identity (commit sha + config fingerprint),
   // so admin can see when web and worker are NOT the same deploy — see ./heartbeat.ts.
-  const heartbeatId = plan.heartbeatId;
-  setInterval(() => {
-    console.log(`[worker] heartbeat ${heartbeatId} ${new Date().toISOString()}`);
-    void beatOnce(process.env, heartbeatId);
-  }, 60_000);
-  void beatOnce(process.env, heartbeatId); // flip /api/health to "up" immediately on boot, not after the first minute
+  //
+  // #797 judge r3 P2: the interval + boot beat live in startHeartbeat so they are actually TESTED.
+  // Inline here they were not: deleting the row id from either call kept both existing suites green.
+  startHeartbeat(plan);
 
   // Reaper: jobs the worker hung/crashed on (no redelivery → the on-claim stale path
   // never runs) would sit GENERATING forever, holding the credit reservation and spinning

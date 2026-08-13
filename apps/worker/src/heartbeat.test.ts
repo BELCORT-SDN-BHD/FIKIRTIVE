@@ -18,7 +18,8 @@ vi.mock("@fikirtive/db/principal", () => ({
   runAsSystem: (_reason: string, fn: () => Promise<unknown>) => fn(),
 }));
 
-import { beatOnce } from "./heartbeat.js";
+import { beatOnce, startHeartbeat, HEARTBEAT_INTERVAL_MS } from "./heartbeat.js";
+import { workerPlan } from "./plan.js";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -82,5 +83,73 @@ describe("beatOnce (#797)", () => {
   it("a failed write is swallowed — health degrading to \"stale\" IS the signal, a crashed worker is not", async () => {
     m.upsert.mockRejectedValue(new Error("connection terminated unexpectedly"));
     await expect(beatOnce(ENV)).resolves.not.toThrow();
+  });
+});
+
+/**
+ * 判官 r3 P2 —— 这一组测的是**真实接线**,不是零件。
+ *
+ * 在此之前:`beatOnce(ENV, "worker-compute")` 有测、`heartbeatIdFor` 的映射有测,唯独没有任何
+ * 用例走过「plan 的角色 id 真的被传进了那两次 beatOnce」这一步。把参数删掉,两班都写回旧的
+ * `"worker"` 行 —— 拆分部署的按班可见性当场失效,而两套测试全绿。所以下面每一条都从
+ * `workerPlan(env)` 出发,一路走到 upsert 的 `where.id`,中间不许有手写字面量。
+ */
+describe("startHeartbeat — the real wiring from plan to row id (#797 判官 r3 P2)", () => {
+  const withFakeTimers = async (run: () => Promise<void>) => {
+    vi.useFakeTimers();
+    try {
+      await run();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  const roleCases = [
+    { label: "compute", role: "compute", expectedId: "worker-compute" },
+    { label: "wait", role: "wait", expectedId: "worker-wait" },
+    // 不设 WORKER_ROLE = 今天的单服务,必须仍然写 `"worker"` 那一行(#796 判官 r1 P0)。
+    { label: "unset (the single service today)", role: undefined, expectedId: "worker" },
+  ] as const;
+
+  for (const c of roleCases) {
+    it(`role ${c.label} → both the boot beat and the interval beat write "${c.expectedId}"`, async () => {
+      m.upsert.mockResolvedValue({});
+      const env = { ...ENV, ...(c.role ? { WORKER_ROLE: c.role } : {}) } as NodeJS.ProcessEnv;
+      const plan = workerPlan(env);
+
+      await withFakeTimers(async () => {
+        const timer = startHeartbeat(plan, env);
+        try {
+          // 开机那一次:立刻写,不等满第一分钟。
+          await vi.advanceTimersByTimeAsync(0);
+          expect(m.upsert).toHaveBeenCalledTimes(1);
+          expect(m.upsert.mock.calls[0]?.[0].where).toEqual({ id: c.expectedId });
+
+          // 定时那一次:同一个 id,同样带部署身份两列。
+          await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+          expect(m.upsert).toHaveBeenCalledTimes(2);
+          expect(m.upsert.mock.calls[1]?.[0].where).toEqual({ id: c.expectedId });
+          expect(m.upsert.mock.calls[1]?.[0].create.id).toBe(c.expectedId);
+          expect(m.upsert.mock.calls[1]?.[0].update.configFingerprint).toBe(configFingerprint(env));
+        } finally {
+          clearInterval(timer);
+        }
+      });
+    });
+  }
+
+  it("the two split roles never write the same row — that is the whole point of per-role ids", async () => {
+    m.upsert.mockResolvedValue({});
+    const ids: string[] = [];
+    for (const role of ["compute", "wait"] as const) {
+      const env = { ...ENV, WORKER_ROLE: role } as NodeJS.ProcessEnv;
+      await withFakeTimers(async () => {
+        const timer = startHeartbeat(workerPlan(env), env);
+        await vi.advanceTimersByTimeAsync(0);
+        clearInterval(timer);
+      });
+      ids.push(m.upsert.mock.calls.at(-1)?.[0].where.id);
+    }
+    expect(new Set(ids).size).toBe(2);
   });
 });

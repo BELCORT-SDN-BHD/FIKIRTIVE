@@ -17,6 +17,7 @@
 import { prisma } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
 import { commitShaFrom, configFingerprint } from "@fikirtive/core/env-contract";
+import type { WorkerPlan } from "./plan.js";
 
 /**
  * 写一次心跳。#463:WorkerHeartbeat 是平台级单行表(没有 tenant),写入必须挂名系统身份。
@@ -38,4 +39,32 @@ export function beatOnce(env: NodeJS.ProcessEnv = process.env, id = "worker"): P
       })
       .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e)),
   );
+}
+
+/** 心跳间隔。5 分钟的 stale 窗口(apps/web/lib/health.ts)容得下一次部署重启。 */
+export const HEARTBEAT_INTERVAL_MS = 60_000;
+
+/**
+ * 启动这个进程的心跳 —— 判官 r3 P2:**这才是真实接线,所以它必须可测**。
+ *
+ * 以前这段在 apps/worker/src/index.ts 的 `main()` 里,而 `main()` 有 `process.exit`、pg-boss
+ * 连接和一堆顶层副作用,测试进不去。于是「`beatOnce` 会写角色行」和「角色 id 算得对」各自
+ * 有单测,唯独**把两者接起来的那一步**没有:把调用点的第二个参数删掉,两班都写回 `"worker"`
+ * 这一行、拆分部署的按班可见性当场失效,而两套测试照样全绿。
+ *
+ * 现在接线在这里,被下面这个函数的用例钉住;index.ts 只剩 `startHeartbeat(plan)` 一行,而
+ * `plan` 是必填参数 —— 同一个突变现在是编译错误,过不了 typecheck。
+ *
+ * 拿整个 `plan` 而不是一个字符串:调用点没有机会「自己挑一个 id」,角色到行 id 的映射只有
+ * `heartbeatIdFor` 一处权威。
+ */
+export function startHeartbeat(plan: WorkerPlan, env: NodeJS.ProcessEnv = process.env): NodeJS.Timeout {
+  const heartbeatId = plan.heartbeatId;
+  const timer = setInterval(() => {
+    console.log(`[worker] heartbeat ${heartbeatId} ${new Date().toISOString()}`);
+    void beatOnce(env, heartbeatId);
+  }, HEARTBEAT_INTERVAL_MS);
+  // 开机就写一次:让 /api/health 立刻翻成 "up",而不是等满第一分钟。
+  void beatOnce(env, heartbeatId);
+  return timer;
 }
