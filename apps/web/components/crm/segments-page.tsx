@@ -921,7 +921,15 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
   return (
     <div className="mt-4">
       <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold tabular-nums">
-        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} contactable · {preview.excludedByConsentCount} known opt-out excluded
+        {/*
+          #792 r4 — this number used to be labelled "contactable", which is a promise the count
+          does not make. It is `!isKnownOptOut(truth)` (segment-actions.ts) and nothing more: a
+          contact with do-not-disturb switched on is counted here, and whether anyone can
+          actually be messaged is decided later by the four send-eligibility axes. So the label
+          says exactly what was measured — and it now reads as the pair it always was with the
+          exclusion beside it.
+        */}
+        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} with no known opt-out · {preview.excludedByConsentCount} known opt-out excluded
         {preview.reportedOptOutCount > 0
           ? ` · ${preview.reportedOptOutCount} reported opt-out still included`
           : ""}
@@ -949,7 +957,30 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
         audience disagree with the page that promised it.
       */}
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        These counts cover every contact you have. A broadcast counts only the contacts it can reach on the channel it sends from, so its own numbers can be lower.
+        {/*
+          This sentence names the POPULATION the numbers above were reckoned over, so a merchant
+          comparing them with a broadcast's numbers knows why they differ. Two rounds got it
+          wrong, in opposite directions:
+
+          r6 said "with a confirmed identity … and no known opt-out". The consent clause is
+          false. `selectedIntoAudience` (consent-authority.ts) deliberately KEEPS known opt-outs
+          in when the merchant went looking for them — "everyone who opted out" is a real,
+          working segment — and a real-database test pins four opted-out contacts entering a
+          frozen audience (consent-single-authority.test.ts). Worse, the broadcast number this
+          sentence explains IS a count of excluded known opt-outs, so a population defined as
+          having none of them is self-contradicting.
+
+          Before that it said "the contacts it can reach", which promised delivery no number
+          here measures.
+
+          What actually narrows a broadcast's population is one line in
+          customer-broadcast-service.ts: `if (sendTargets.length === 0) continue`, where a send
+          target is an identity on the run's channel that the channel itself has confirmed
+          (#803 — a number the merchant typed is stored and searchable, not an address). That
+          is a targeting fact about the address book, not a consent decision and not a promise
+          of arrival, so that is all the sentence claims.
+        */}
+        These counts cover every contact you have. A broadcast counts only the contacts with a confirmed identity on the channel it sends from, so its own numbers can be lower.
       </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}

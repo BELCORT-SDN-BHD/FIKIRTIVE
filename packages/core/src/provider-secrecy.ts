@@ -46,9 +46,23 @@ const MAX_WORD = 20; // longest word allowed between "claude" and "api" ("claude
 const MAX_GAP = 4; // longest run of spaces/tabs inside one match
 const PROVIDER_NAME_RE = new RegExp(
   [
-    `\\b(?:seedance|seedream|byteplus|bytedance|jimeng)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
+    `\\b(?:seedance|seedream|byteplus|bytedance|jimeng|volcengine|volc|vmp|prometheus)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
     `\\bfal(?:provider|client|error|[./:_-][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b`,
     `即梦`,
+    // #779 judge r1, P2-1 — the OBSERVABILITY side of the same supplier. Its metrics workspace,
+    // its console and its metrics dialect all name it, and none of those names were here: an
+    // upstream string reading "Volcengine quota exceeded" passed through untouched.
+    //
+    // Split by the file's existing rule, not by convenience. `volcengine`, `volc`, `vmp` and
+    // `prometheus` are not words in any language a merchant writes to us in, so they match bare
+    // — `fal` above already settles that a three-letter bare token is acceptable here. `ark`
+    // IS an ordinary English word, so it gets the `whisper` treatment: technical shapes only,
+    // never bare, so a merchant selling an ark is left alone.
+    //
+    // This is the SECOND layer, not the defence. `apps/web/lib/queue-observability.ts` renders
+    // upstream text nowhere at all — it classifies into a closed vocabulary — precisely because
+    // a deny list is only as good as the last name someone remembered to add to it.
+    `\\bark(?:(?:provider|client|error|api|sdk|model)\\b|[-._/:][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}}\\b)`,
     // #787 — the CAPTION engine and its model files. A merchant buys "Subtitles", not an
     // engine name, so these belong here with the rest.
     //
@@ -84,15 +98,18 @@ const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "giu");
  * lookahead it consults plus the one character a trailing `\b` inspects. Bounded quantifiers
  * make this arithmetic, not a guess:
  *
- *   names        "bytedance"(9) + "[./:_-]x" + tail(20) = 22 + version/fast(4+4+15+4+4 = 31) → 62
+ *   names        "volcengine"(10) + "[./:_-]x" + tail(20) = 23 + version/fast(4+4+15+4+4 = 31) → 63
  *   fal          "fal"(3) + "[./:_-]" + tail(20) = 24, + `\b`                                → 25
+ *   ark          "ark"(3) + "[-._/:]x" + tail(20) = 25, + `\b`                               → 26
  *   whisper.cpp  "whisper"(7) + "-cpp"(4) = 11, + `\b`                                       → 12
  *   ggml         "ggml"(4) + "[-_.]x" + tail(20) = 26, + `\b`                                → 27
  *   claude-glued "anthropic"(9) + "[-_./0-9]" + tail(20) = 30, + `\b`                        → 31
  *   claude ahead "anthropic"(9) + gap(4) + word(20) + gap(4) + "provider"(8), + `\b`         → 46
  *   claude after "provider"(8) + gap(4) + word(20) + gap(4) + "anthropic"(9), + `\b`         → 46
  *
- * 62 < 64. The streaming filter holds back this much, so a match is never judged on text it
+ * 63 < 64 — the ceiling moved from 62 when #779 added "volcengine"/"prometheus" (10 chars,
+ * one longer than "bytedance") to the names group. The streaming filter holds back this much,
+ * so a match is never judged on text it
  * has not seen yet — the property tests in provider-secrecy.test.ts assert the consequence
  * (streamed output === whole-text output) rather than trusting the arithmetic alone.
  */
