@@ -1,7 +1,7 @@
 import "server-only";
-import { InsufficientCredits } from "@fikirtive/db";
-import { displayCredits, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core";
-import { chatHoldShortfallMessage } from "@/lib/credit-format";
+import { InsufficientCredits, SpendCapBlocked } from "@fikirtive/db";
+import { displayCredits, OTTO_CHAT_MIN_START_INTERNAL } from "@fikirtive/core";
+import { chatHoldShortfallMessage, spendCapBlockedMessage } from "@/lib/credit-format";
 
 /**
  * The ONE translation from a failed Otto turn into the sentence the merchant reads (#810 P2-2).
@@ -21,12 +21,22 @@ import { chatHoldShortfallMessage } from "@/lib/credit-format";
  * should still say which action failed.
  */
 export function ottoFailureMessage(error: unknown, fallback: string): string {
+  // #524 — the merchant's own spend cap refused the turn's hold. Not a shortfall and not a
+  // fault: naming it as either would send them to Billing for a limit that lives in Settings.
+  if (error instanceof SpendCapBlocked) {
+    return spendCapBlockedMessage(
+      displayCredits(error.requiredInternal),
+      error.capInternal === null ? null : displayCredits(error.capInternal),
+    );
+  }
   if (error instanceof InsufficientCredits) {
     // The balance travels on the error from inside the failing reserve, so it is the number the
     // refusal was actually judged against — never a second, possibly-moved read.
+    // #898: the fallback is the minimum to START a message, not the hold — the reserve now
+    // shrinks to fit the balance, so the hold is no longer a number a refusal can quote.
     return chatHoldShortfallMessage(
       error.balanceInternal === null ? null : displayCredits(error.balanceInternal),
-      displayCredits(error.requiredInternal ?? OTTO_CONVERSATION_TURN_RESERVE_INTERNAL),
+      displayCredits(error.requiredInternal ?? OTTO_CHAT_MIN_START_INTERNAL),
     );
   }
   return fallback;

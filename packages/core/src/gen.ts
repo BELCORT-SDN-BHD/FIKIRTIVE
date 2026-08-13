@@ -121,6 +121,8 @@ export function deriveMode(input: {
 export const MAX_GEN_COUNT = 4;
 export const MAX_GEN_PROMPT = 2000;
 export const MAX_GEN_ENTITIES = 8;
+/** 元素名的长度上限(与 Library 表单同一把尺)。只用来给传输层封顶,不做业务判断。 */
+export const MAX_ENTITY_NAME = 120;
 export const GEN_VIDEO_SECONDS = 5;
 export const REFERENCE_VIDEO_MODEL: GenVideoModel = "seedance-2-mini";
 /** Whole-clip reference video window: Seedance needs ≥2s; the upper bound protects COGS
@@ -128,6 +130,21 @@ export const REFERENCE_VIDEO_MODEL: GenVideoModel = "seedance-2-mini";
  *  composer AND server-side in the worker (via Asset.durationS from ingest's ffprobe). */
 export const REF_VIDEO_MIN_SECONDS = 2;
 export const REF_VIDEO_MAX_SECONDS = 6;
+/**
+ * #785 —— 一次视频任务里 `image_url` 部件的**总上限 9 张**(首帧/末帧也算在这 9 张里)。
+ *
+ * 出处与它的诚实度:Seedance 2.0 系列的多模态参考上限(9 图 / 3 视频 / 3 音频)在 fal 官方
+ * 模型仓库的入参 schema 与多份三方 API 文档上一致(2026-08-13 核)。第一方 Ark 文档页是
+ * JS 渲染的,抓不到正文,所以这个数**没有第一方逐字出处** —— 本文件的规矩是「没核过的
+ * 数字不许编」,这里守的是同一条规矩的另一面:**取三方一致的那个数,并且只往少了送**。
+ *
+ * 为什么可以带着这点不确定上路:上限估高的后果是 task-create 被 4xx 拒绝,而 4xx 是本仓库
+ * 唯一「可证明没花钱」的失败(见 byteplus.ts 的 paidPost)—— 退款 + 记零花费,不会有钱的
+ * 损失。真正不可接受的是**反过来**:把上限当无限,一次送十几张,那才是拿商家的钱赌。
+ *
+ * 上限**含首帧/末帧**,因为它们与参考照是同一种部件(`type: "image_url"`)。
+ */
+export const MAX_VIDEO_IMAGE_PARTS = 9;
 /** Image price is flat per image; video price is dynamic — see videoPriceUsd
  *  (scales with duration × resolution × audio × count). */
 /**
@@ -183,14 +200,40 @@ export const GEN_IMAGE_SIZES: Record<GenImageAspect, { width: number; height: nu
 };
 
 /** Per-model image controls — mirrors `VideoModelOptions`. Lists are default-first;
- *  `maxCount` = batch ceiling (the image engine takes one request per image). */
+ *  `maxCount` = batch ceiling (one request per image, unless the model can make a
+ *  coherent SET — see `coherentSet`). */
 export type ImageModelOptions = {
   aspectRatios: string[];
   maxCount: number;
+  /**
+   * #777 —— 这台引擎能不能**一次请求出一整组连贯的图**(同一个模特的五个角度、
+   * 同一件产品的五个尺寸,角色与风格从头到尾是同一个)。
+   *
+   * 它是**能力位**,不是价目:开着的时候,`count` 张图从「count 次调用」变成
+   * 「一次调用出 count 张」。商家的收费一格不动(仍是每张 1 显示 credit,
+   * `pricedGenCredits` 一行都没改),变的是供应商侧的调用形状 —— 这正是本票
+   * 「计费口径变化」的全部内容。
+   *
+   * 为什么必须是**每台引擎各自声明**而不是一个全局开关:参数面没有在本仓库的
+   * 账户上实测过(本工作区禁止真实供应商调用)。这一格就是唯一的开关 ——
+   * 部署窗口实测不通过,把它改成 false,组图这条路当场整条下线,菜单、契约、
+   * 材料绑定与卡面会一起跟着闭嘴,不需要再找第二处。
+   */
+  coherentSet: boolean;
 };
 export const GEN_IMAGE_MODEL_OPTIONS: Record<GenModel, ImageModelOptions> = {
-  "seedream": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT },
+  "seedream": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT, coherentSet: true },
 };
+
+/** 这台引擎能不能一次出一整组连贯图(#777)。菜单外的 id 一律 false —— 「不知道」
+ *  按「不能」处理,绝不让一个没在册的模型走上组图那条路。PURE,永不抛。 */
+export function supportsCoherentSet(model: string): boolean {
+  return GEN_IMAGE_MODEL_OPTIONS[model as GenModel]?.coherentSet === true;
+}
+
+/** 一组连贯图至少要两张 —— 一张图不成组,把 `coherentSet` 挂在 count=1 上只是
+ *  一个说了不算数的开关(而它会进材料绑定,让同一个请求莫名其妙判成换了内容)。 */
+export const COHERENT_SET_MIN_IMAGES = 2;
 
 /** A model's default image selections (first of each list) — mirrors `videoDefaults`.
  *  Never throws on an unknown id: an unmapped model falls back to the default aspect. */
@@ -499,6 +542,20 @@ export const genRequest = z
     // (backward-compat). Both key and value are bounded so a malformed id can
     // never reach the worker and silently spend on a degraded generation.
     variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).optional(),
+    // #774 判官 r2 P1:每个 @元素在**批准那一刻**的名字与类型。引擎认人那几句机器指令
+    // 里的名字只能来自这里 —— 它由铸卡侧写在卡上、商家批准前就看得见,由 `startGen` 落到
+    // `GenJob.approvedEntities`,worker 只读那一列,绝不在付费调用前重读活名称。缺席 =
+    // 这一趟没有获批的名字(旧卡、或非卡入口),worker 照旧编号,只是不写名字。
+    approvedEntities: z
+      .array(
+        z.object({
+          id: z.string().min(1).max(64),
+          type: z.enum(["CHARACTER", "LOCATION", "PRODUCT", "BRANDMARK"]),
+          name: z.string().min(1).max(MAX_ENTITY_NAME),
+        }),
+      )
+      .max(MAX_GEN_ENTITIES)
+      .optional(),
     count: z.number().int().min(1).max(MAX_GEN_COUNT),
     kind: z.enum(GEN_KINDS).default("image"),
     model: z.string().min(1).max(40).default("seedream"),
@@ -522,6 +579,17 @@ export const genRequest = z
     aspectRatio: z.string().max(12).nullish(),
     fps: z.number().int().min(1).max(120).nullish(),
     audio: z.boolean().nullish(),
+    /**
+     * #777 —— 「这 count 张是**一组**要连贯的图」。true ⇒ 执行层一次请求出齐整组
+     * (同模特多角度/同产品多尺寸,角色与风格连续);缺省/false ⇒ 各出各的,与今日
+     * 逐字一致。
+     *
+     * 钱:一格不动。收费仍是 `pricedGenCredits` 的每张 1 显示 credit,reserve == settle,
+     * 幂等键的家族与长度都没变。它进的是**材料**(`GenJob.imageOptions`),所以
+     * 「一组连贯图」与「N 张散图」在同一个 batchId 的同一格上是**不同内容** ——
+     * 复用/重放判据会照实拒,不会把商家批的一组图静默换成散图(反之亦然)。
+     */
+    coherentSet: z.boolean().nullish(),
   })
   .strict()
   // model must match the kind's menu — an unknown video model must never reach
@@ -534,6 +602,16 @@ export const genRequest = z
     if (v.variantSel) {
       for (const k of Object.keys(v.variantSel)) {
         if (!v.entityIds.includes(k)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["variantSel"], message: "variantSel references an entity that isn't @mentioned" });
+      }
+    }
+    // #774:审批身份只能覆盖这一趟真的 @ 到的元素。多出来的一条身份 = 一条没人 @ 过、
+    // 却会被写进模型指令的名字,所以在能落库之前拒掉(validate-before-spend)。
+    if (v.approvedEntities) {
+      const ids = new Set<string>();
+      for (const e of v.approvedEntities) {
+        if (!v.entityIds.includes(e.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["approvedEntities"], message: "approvedEntities references an entity that isn't @mentioned" });
+        if (ids.has(e.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["approvedEntities"], message: "approvedEntities carries two identities for the same entity" });
+        ids.add(e.id);
       }
     }
     const menu: readonly string[] = v.kind === "video" ? GEN_VIDEO_MODELS : GEN_MODELS;
@@ -582,6 +660,21 @@ export const genRequest = z
       }
       if (v.count > o.maxCount) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["count"], message: "too many images for this model" });
+      }
+    }
+    // #777 组图闸:**验证在花钱之前**,与画幅/档位同一条规矩。三种请求一律拒,
+    // 因为它们都会让「商家批的」与「执行层做的」分家:
+    //   - 视频要组图:视频端点没有这个能力,放行就是收了钱做不出承诺的东西;
+    //   - 引擎不支持:能力位是唯一的开关,菜单外的模型永远走不到这条路;
+    //   - 只要一张:一张图不成组,而它会进材料绑定 —— 一个说了不算数的开关
+    //     会让同一个请求在重放时判成「换了内容」,把商家的合法重试挡死。
+    if (v.coherentSet === true) {
+      if (v.kind !== "image") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["coherentSet"], message: "a coherent set is only available for images" });
+      } else if (!supportsCoherentSet(v.model)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["coherentSet"], message: "this model can't make one coherent set" });
+      } else if (v.count < COHERENT_SET_MIN_IMAGES) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["coherentSet"], message: `a coherent set needs at least ${COHERENT_SET_MIN_IMAGES} images` });
       }
     }
     if (v.referenceVideoGenerationId) {

@@ -43,6 +43,9 @@ export type OttoStatusData =
 /** Payload for the `data-error` stream part. */
 export type OttoErrorData =
   | { kind: "insufficient_credits"; text: string }
+  /** #524 — the merchant's own spend cap refused the turn. Its own kind because its exit is
+   *  Settings, not Billing: a top-up buys nothing when the limit is one they set. */
+  | { kind: "spend_cap"; text: string }
   | { kind: "error"; text: string };
 
 /** Payload for the `data-tool-propose` stream part (the propose tool's return value). */
@@ -206,7 +209,9 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   manageCanvas: "Working on your canvas",
   // W-B3-B (media-editor / asset-viewer $0):
   manageMedia: "Organizing your media",
-  renderVideo: "Exporting your video",
+  // #780 — the skill no longer only exports: it also puts clips together, captions them and
+  // lays music under them, so the line the merchant reads while it runs can't say "exporting".
+  renderVideo: "Working on your video",
   importMedia: "Importing media",
   // W-B3-D (home/ideas/library/brand debt):
   manageProjects: "Organizing your projects",

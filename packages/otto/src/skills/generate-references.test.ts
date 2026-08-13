@@ -27,6 +27,7 @@ function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
     disabledModels: [],
     refgen: {
       generate: vi.fn().mockResolvedValue({ id: "refjob-new" }),
+      createVariant: vi.fn().mockResolvedValue({ variantId: "var-new", jobId: "refjob-variant" }),
       deleteVariant: vi.fn().mockResolvedValue({ ok: true }),
     },
     ...overrides,
@@ -81,9 +82,13 @@ describe("Test 2 — input schema is bounded; server-owned fields stripped", () 
     expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "x", count: 4 }).success).toBe(true);
   });
 
-  it("rejects an out-of-set mode (VARIANT is not selectable — fail-closed upstream anyway)", () => {
-    expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "x", mode: "VARIANT" }).success).toBe(false);
+  // #781 opened VARIANT (it now routes to the createVariant authority — see Test 7). The set is
+  // still CLOSED: anything outside the three named modes is rejected by the typed gate.
+  it("rejects an out-of-set mode; the three real modes parse", () => {
+    expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "x", mode: "FREESTYLE" }).success).toBe(false);
     expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "x", mode: "REFSHEET" }).success).toBe(true);
+    expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "x", mode: "BASE" }).success).toBe(true);
+    expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "x", mode: "VARIANT" }).success).toBe(true);
   });
 });
 
@@ -150,5 +155,109 @@ describe("Test 6 — import audit: no direct spend bypass", () => {
     expect(src).not.toMatch(/from\s+['"][^'"]*refgen-actions/);
     // The ONLY spend path is the injected port.
     expect(src).toMatch(/ctx\.refgen/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 7 (#781) — the VARIANT door: "one element, several outfits".
+//
+// A styling variant is a DIFFERENT spend authority (createVariant): it must create the variant row
+// the paid image attaches to and prove the element has a live base to condition on. These tests pin
+// that the skill routes there and NEVER to startRefGen (which refuses mode=VARIANT on purpose), and
+// that a nameless variant is refused before any spend.
+// ---------------------------------------------------------------------------
+describe("Test 7 — mode VARIANT routes to the variant spend authority, never to startRefGen", () => {
+  it("VARIANT + variantName → ctx.refgen.createVariant with the element, name and change", async () => {
+    const ctx = makeCtx();
+    const res = await executeGenerateReferences(
+      { entityId: ENTITY_ID, prompt: "wearing an elegant red evening gown", mode: "VARIANT", variantName: "Red dress" },
+      { context: ctx },
+    );
+    expect(res).toEqual({ jobId: "refjob-variant", status: "queued" });
+    expect(ctx.refgen!.createVariant).toHaveBeenCalledWith({
+      entityId: ENTITY_ID,
+      name: "Red dress",
+      prompt: "wearing an elegant red evening gown",
+    });
+    // the BASE/REFSHEET authority is not a variant authority — it must not be reached
+    expect(ctx.refgen!.generate).not.toHaveBeenCalled();
+  });
+
+  it("VARIANT with a blank/absent name is refused BEFORE the port — nothing is created, nothing is spent", async () => {
+    const ctx = makeCtx();
+    const missing = await executeGenerateReferences(
+      { entityId: ENTITY_ID, prompt: "a red gown", mode: "VARIANT" },
+      { context: ctx },
+    );
+    expect(missing).toHaveProperty("error");
+    const blank = await executeGenerateReferences(
+      { entityId: ENTITY_ID, prompt: "a red gown", mode: "VARIANT", variantName: "   " },
+      { context: ctx },
+    );
+    expect(blank).toHaveProperty("error");
+    expect(ctx.refgen!.createVariant).not.toHaveBeenCalled();
+    expect(ctx.refgen!.generate).not.toHaveBeenCalled();
+  });
+
+  it("the variant name is trimmed before it becomes the saved look's name", async () => {
+    const ctx = makeCtx();
+    await executeGenerateReferences(
+      { entityId: ENTITY_ID, prompt: "on a beach", mode: "VARIANT", variantName: "  Beach look  " },
+      { context: ctx },
+    );
+    expect(ctx.refgen!.createVariant).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Beach look" }),
+    );
+  });
+
+  it("BASE and REFSHEET are untouched — they still go to startRefGen, and variantName never rides along", async () => {
+    const ctx = makeCtx();
+    await executeGenerateReferences({ entityId: ENTITY_ID, prompt: "p", mode: "BASE", variantName: "ignored" }, { context: ctx });
+    expect(ctx.refgen!.createVariant).not.toHaveBeenCalled();
+    const arg = (ctx.refgen!.generate as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg["mode"]).toBe("BASE");
+    expect(arg).not.toHaveProperty("variantName");
+  });
+
+  it("the authority's refusal (no base yet) reaches the user verbatim, with no jobId", async () => {
+    const ctx = makeCtx();
+    (ctx.refgen!.createVariant as ReturnType<typeof vi.fn>).mockResolvedValue({
+      error: "Set a base identity first — variants are generated from it.",
+    });
+    const res = await executeGenerateReferences(
+      { entityId: ENTITY_ID, prompt: "a red gown", mode: "VARIANT", variantName: "Red dress" },
+      { context: ctx },
+    );
+    expect(res).toEqual({ error: "Set a base identity first — variants are generated from it." });
+    expect(res).not.toHaveProperty("jobId");
+  });
+
+  it("VARIANT is still an approval-gated spend: the schema accepts it and needsApproval stays literal true", async () => {
+    expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "p", mode: "VARIANT", variantName: "Red dress" }).success).toBe(true);
+    expect(await (generateReferences.needsApproval as () => Promise<boolean>)()).toBe(true);
+  });
+});
+
+// A count on a VARIANT ask is refused rather than silently clamped to 1: a clamp would let Otto
+// promise three looks and deliver one, which is the exact "said one thing, did another" this repo
+// keeps paying for.
+describe("Test 8 — a look is one image, and Otto is told so rather than quietly given one", () => {
+  it("VARIANT with count > 1 is refused before any spend", async () => {
+    const ctx = makeCtx();
+    const res = await executeGenerateReferences(
+      { entityId: ENTITY_ID, prompt: "a red gown", mode: "VARIANT", variantName: "Red dress", count: 3 },
+      { context: ctx },
+    );
+    expect(res).toHaveProperty("error");
+    expect(ctx.refgen!.createVariant).not.toHaveBeenCalled();
+  });
+
+  it("VARIANT with an explicit count of 1 is fine (it is what a look already is)", async () => {
+    const ctx = makeCtx();
+    const res = await executeGenerateReferences(
+      { entityId: ENTITY_ID, prompt: "a red gown", mode: "VARIANT", variantName: "Red dress", count: 1 },
+      { context: ctx },
+    );
+    expect(res).toEqual({ jobId: "refjob-variant", status: "queued" });
   });
 });

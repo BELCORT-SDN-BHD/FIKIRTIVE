@@ -56,6 +56,7 @@ import { manageContactsSkill } from "./skills/manage-contacts.js";
 import { readWorkflowsSkill } from "./skills/read-workflows.js";
 import { readSpendingSkill } from "./skills/read-spending.js";
 import { draftWorkflowsSkill } from "./skills/draft-workflows.js";
+import { recallStoreKnowledgeSkill } from "./skills/recall-store-knowledge.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -115,6 +116,8 @@ export const allSkills: OttoSkill[] = [
   readWorkflowsSkill,
   draftWorkflowsSkill,
   readSpendingSkill,
+  // #784:后台读懂的素材的唯一取回口。read/free/internal ⇒ 不需要审批。
+  recallStoreKnowledgeSkill,
 ];
 
 export interface SkillMeta {

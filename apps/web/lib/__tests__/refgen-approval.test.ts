@@ -39,6 +39,10 @@ const {
   mockRunStateFromString,
   mockRestoreWithContext,
   mockWithLlmBudget,
+  realOtto,
+  mockOrganizationFindUnique,
+  MockInsufficientCredits,
+  MockSpendCapBlocked,
   MockRunState,
   MockMaxTurnsExceededError,
   mockApprove,
@@ -61,7 +65,45 @@ const {
   class MockMaxTurnsExceededError extends Error {
     constructor(msg = "Max turns exceeded") { super(msg); this.name = "MaxTurnsExceededError"; }
   }
-  const mockWithLlmBudget = vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result);
+  // #524: the two typed money refusals `ottoFailureMessage` narrows on. They are only shapes
+  // here — nothing in this file throws one — but a `@fikirtive/db` mock that omits them makes
+  // every `instanceof` in the error-copy chain explode instead of returning false.
+  class MockInsufficientCredits extends Error {
+    readonly requiredInternal: number | null;
+    readonly balanceInternal: number | null;
+    constructor(message = "Not enough credits.", detail?: { requiredInternal?: number | null; balanceInternal?: number | null }) {
+      super(message);
+      this.name = "InsufficientCredits";
+      this.requiredInternal = detail?.requiredInternal ?? null;
+      this.balanceInternal = detail?.balanceInternal ?? null;
+    }
+  }
+  class MockSpendCapBlocked extends Error {
+    readonly requiredInternal: number;
+    readonly capInternal: number | null;
+    constructor(detail: { requiredInternal: number; capInternal: number | null }) {
+      super("Spend cap reached.");
+      this.name = "SpendCapBlocked";
+      this.requiredInternal = detail.requiredInternal;
+      this.capInternal = detail.capInternal;
+    }
+  }
+  // #524 r3/r5: the approval card is claimed inside withLlmBudget's post-reserve window. A double
+  // that ignored `afterReserve` would model a product where consent is never consumed — and one
+  // that ignored a FALSE return would run the model for a resolver that LOST the CAS (judge r4 P2).
+  //
+  // #524 r6(判官 r5 P2):它抛的必须是**生产那一个类**。上一版抛的是这里的本地同名副本,
+  // 于是 ottoApprove 里 `e instanceof ReservationNotClaimed` 一律不命中 —— 模型确实没跑
+  // (行为看着对),但「输掉 CAS」那条真实错误路由从来没被这两份替身走过。
+  //
+  // `vi.hoisted` 在任何 import 之前跑,拿不到真类;所以留一个盒子,由下面
+  // `vi.mock("@fikirtive/otto")` 的工厂(它有 importOriginal)在注册时填进去。
+  const realOtto = { ReservationNotClaimed: null as unknown as new () => Error };
+  const mockWithLlmBudget = vi.fn(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
+    const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
+    if (claim && !(await claim())) throw new realOtto.ReservationNotClaimed();
+    return (await fn()).result;
+  });
 
   return {
     mockRequireOwner: vi.fn(),
@@ -87,6 +129,10 @@ const {
     mockRunStateFromString,
     mockRestoreWithContext,
     mockWithLlmBudget,
+    realOtto,
+    mockOrganizationFindUnique: vi.fn(),
+    MockInsufficientCredits,
+    MockSpendCapBlocked,
     MockRunState,
     MockMaxTurnsExceededError,
     mockApprove,
@@ -100,6 +146,20 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen, startCoworkGen: mockStartGen }));
 vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
+
+/**
+ * #524 r6 — the two READ-ONLY ledger questions ottoApprove asks (judge r5 P1-A'①/②).
+ *
+ *  - finalizedReservations: which per-attempt refIds the ledger has already finished with, so a
+ *    retry reserves under one it will still accept. Default: none — a fresh card.
+ *  - otherHoldsSince: whether anything besides this turn's own hold was taken for this org since
+ *    it was taken. Default "none" — these fixtures hold nothing else, so a failed approval really
+ *    did charge nothing, and the card may say so.
+ */
+const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
+  mockFinalizedReservations: vi.fn(async (_orgId: string, _refIds: readonly string[]) => new Set<string>()),
+  mockOtherHoldsSince: vi.fn(async (_orgId: string, _refId: string): Promise<"none" | "some" | "unknown"> => "none"),
+}));
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
@@ -124,7 +184,15 @@ vi.mock("@fikirtive/db", () => ({
     actionEvent: { create: mockActionEventCreate },
     $transaction: mockTransaction,
     $executeRaw: mockExecuteRaw,
+    // #524: ottoApprove reads the merchant's spend cap before it holds anything.
+    organization: { findUnique: mockOrganizationFindUnique },
   },
+  InsufficientCredits: MockInsufficientCredits,
+  SpendCapBlocked: MockSpendCapBlocked,
+  // #524 r6: ottoApprove asks the LEDGER which attempt is still free, and whether a failed
+  // approval may claim "nothing was charged". Read-only; defaults say "fresh" and "unknown".
+  finalizedReservations: mockFinalizedReservations,
+  otherHoldsSince: mockOtherHoldsSince,
 }));
 
 // Real @fikirtive/core (newId, presets, etc.) — no search env keys in the test runner, so
@@ -132,6 +200,8 @@ vi.mock("@fikirtive/db", () => ({
 // otto exports are mocked; approval-tools (approvalRefOf / collectApprovalInterruptions) stay REAL.
 vi.mock("@fikirtive/otto", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
+  // #524 r6(判官 r5 P2):把生产的 ReservationNotClaimed 交给上面的替身,让它抛真类。
+  realOtto.ReservationNotClaimed = actual.ReservationNotClaimed as new () => Error;
   return {
     ...actual,
     otto: { name: "Otto" },
@@ -173,6 +243,7 @@ const REFGEN_HASH = computeRefgenApprovalContentHash({
   prompt: REFGEN_ARGS.prompt,
   count: 3,
   mode: "REFSHEET",
+  variantName: null,
 });
 
 function makeRefgenApprovalItem(args: Record<string, unknown>) {
@@ -220,10 +291,18 @@ beforeEach(() => {
   // #498 round-5: the tie-language fallback probes recent USER messages.
   mockChatMessageFindMany.mockResolvedValue([]);
   mockChatMessageUpdateMany.mockResolvedValue({ count: 1 });
+  // #524: no spend cap set for these fixtures — the ceiling is not what they are about.
+  mockOrganizationFindUnique.mockResolvedValue({ settings: null });
   mockActionEventCreate.mockResolvedValue({});
   mockExecuteRaw.mockResolvedValue(undefined);
   mockTransaction.mockImplementation(runTransaction);
-  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result);
+  mockWithLlmBudget.mockImplementation(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
+    // #524 r3/r5: honour the post-reserve claim window — that is where the card is consumed — AND
+    // its false return, which means a concurrent resolver won and the model must NOT run.
+    const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
+    if (claim && !(await claim())) throw new realOtto.ReservationNotClaimed();
+    return (await fn()).result;
+  });
 });
 
 // ── Mint (finalizeOttoRun) ──────────────────────────────────────────────────────
@@ -340,8 +419,8 @@ describe("generateReferences approval — ottoApprove verifies the hash, consume
 describe("generateReferences approval — same-entity multi-park (P2 ref collision): each card binds ITS OWN parked call", () => {
   const ARGS_A = { entityId: ENTITY_ID, prompt: "prompt A — a red cap", count: 2, mode: "REFSHEET" };
   const ARGS_B = { entityId: ENTITY_ID, prompt: "prompt B — a blue scarf", count: 1, mode: "BASE" };
-  const HASH_A = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_A.prompt, count: 2, mode: "REFSHEET" });
-  const HASH_B = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_B.prompt, count: 1, mode: "BASE" });
+  const HASH_A = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_A.prompt, count: 2, mode: "REFSHEET", variantName: null });
+  const HASH_B = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_B.prompt, count: 1, mode: "BASE", variantName: null });
 
   it("mint: two same-entity parks with different prompts mint TWO cards (dedup discriminates by contentHash, not just ref)", async () => {
     mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) =>
@@ -406,5 +485,52 @@ describe("generateReferences approval — same-entity multi-park (P2 ref collisi
     const approvedItem = mockApprove.mock.calls[0]![0] as { arguments: string };
     expect(approvedItem.arguments).toContain("prompt B");
     expect(approvedItem.arguments).not.toContain("prompt A");
+  });
+});
+
+// ── #524 r6(判官 r5 P2):输掉 CAS 的那条**真实错误路由** ────────────────────────────
+//
+// 上一版的替身抛的是本地同名副本,生产里的 `e instanceof ReservationNotClaimed` 一律不命中,
+// 于是这条分支从来没被这份测试走过 —— 模型确实没跑(行为看着对),但「输家怎么被回答」这件事
+// 一个断言都没有。现在替身抛的是真类,下面两条钉的正是那条路由的出口。
+describe("generateReferences approval — a LOST claim routes through the production branch (#524 r6)", () => {
+  function setupLostClaim(afterLoss: "approved" | "pending") {
+    mockChatThreadFindFirst.mockResolvedValue({ id: REFGEN_THREAD_ID, projectId: PROJECT_ID, ottoState: '{"paused":"state"}' });
+    mockRunStateFromString.mockResolvedValue(new MockRunState());
+    mockGetInterruptions.mockReturnValue([makeRefgenApprovalItem(REFGEN_ARGS)]);
+    mockRun.mockResolvedValue(makeMockResult({ finalOutput: "should never run" }));
+    // Every resolver starts on a card that still reads pending — that is why it reserves at all.
+    let approvalReads = 0;
+    mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) => {
+      if (a?.where?.kind !== "APPROVAL_CARD") return Promise.resolve({ seq: 5 });
+      approvalReads += 1;
+      return Promise.resolve({
+        id: REFGEN_CARD_ID,
+        payload: refgenCardPayload(approvalReads === 1 ? {} : { status: afterLoss }),
+      });
+    });
+    // The CAS goes against this resolver: someone else already consumed the consent.
+    mockChatMessageUpdateMany.mockResolvedValue({ count: 0 });
+  }
+
+  it("the winner's resolution is REPORTED (never invented), and the model never ran", async () => {
+    setupLostClaim("approved");
+
+    const res = await ottoApprove({ threadId: REFGEN_THREAD_ID, cardId: REFGEN_CARD_ID });
+
+    // Only the `instanceof ReservationNotClaimed` branch produces this shape; a look-alike class
+    // would have fallen through to the generic "Couldn't approve" catch instead.
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "approved" });
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("a loss it cannot PROVE is an honest error, never a cheerful approved", async () => {
+    setupLostClaim("pending");
+
+    const res = await ottoApprove({ threadId: REFGEN_THREAD_ID, cardId: REFGEN_CARD_ID });
+
+    expect(res).toMatchObject({ error: expect.stringContaining("Couldn't confirm this approval") });
+    expect(res).not.toHaveProperty("resolution");
+    expect(mockRun).not.toHaveBeenCalled();
   });
 });

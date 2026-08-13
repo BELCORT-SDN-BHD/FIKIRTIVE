@@ -26,7 +26,7 @@
  */
 import { NextRequest } from "next/server";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
-import { prisma, InsufficientCredits } from "@fikirtive/db";
+import { prisma, InsufficientCredits, SpendCapBlocked } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
@@ -125,7 +125,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<Response> => {
 
-    const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
+    const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId, surface, subjectRef, outletId } = parsed.data;
     const OWNED = { ownerId, deletedAt: null } as const;
 
     // Pre-stream setup (validation + USER persist) runs BEFORE the SSE opens so a bad
@@ -203,6 +203,12 @@ export async function POST(req: NextRequest): Promise<Response> {
           text,
           payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
           replyToMessageId: validReplyId,
+          // #879 step 1: page-context pins, written as-is when the caller sent them (else
+          // NULL). Identity columns (actorId, visibility) are never set from a request —
+          // there is no client-facing field for them.
+          surface: surface ?? null,
+          subjectRef: subjectRef ?? null,
+          outletId: outletId ?? null,
         },
       });
       seqAfterUser = seq;
@@ -350,9 +356,10 @@ export async function POST(req: NextRequest): Promise<Response> {
             { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
           );
         } catch (e) {
-          // Reserve failed (InsufficientCredits): fn NEVER ran → ZERO spend. Persist the
-          // exact typed failure so first-turn navigation/remount and refresh stay honest.
-          if (e instanceof InsufficientCredits) {
+          // Reserve failed (InsufficientCredits, or #524 SpendCapBlocked): fn NEVER ran →
+          // ZERO spend. Persist the exact typed failure so first-turn navigation/remount and
+          // refresh stay honest.
+          if (e instanceof InsufficientCredits || e instanceof SpendCapBlocked) {
             closeOpenParts();
             // #791-7: name the two real numbers. "You're out of credits" was usually false —
             // a turn HOLDS a fixed amount up front, so a merchant
@@ -360,7 +367,10 @@ export async function POST(req: NextRequest): Promise<Response> {
             // balance on screen contradicting it. The balance travels on the error from
             // inside the failing reserve, so it is the number the refusal was judged against.
             const error = {
-              kind: "insufficient_credits",
+              // #524 — two refusals, two exits. Out of credits → Billing; over the merchant's
+              // own spend cap → Settings. One kind for both would put a Top-up link under a
+              // sentence that says the limit is theirs to move.
+              kind: e instanceof SpendCapBlocked ? "spend_cap" : "insufficient_credits",
               // #810 P2-2: the sentence itself now comes from the shared mapper, which
               // ottoTurn/ottoApprove call too — one refusal, one wording, every entry.
               // (The fallback is unreachable inside this `instanceof` branch; it is here so

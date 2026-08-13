@@ -6,6 +6,7 @@ import {
   canvasBatchRects,
   canvasBatchSlotOffset,
   canvasRectsOverlap,
+  freeCanvasRect,
   nearestFreeCanvasSlot,
   nextCanvasSpawnOrigin,
 } from "../canvas-batch-layout";
@@ -172,5 +173,109 @@ describe("nearestFreeCanvasSlot", () => {
     }
 
     expect(nearestFreeCanvasSlot(board, SOURCE, CARD, { rings: 2 })).toBeNull();
+  });
+});
+
+/**
+ * #549 — the rule that runs at the moment a card is written, for every writer at once.
+ * The functions above answer "where should this go?" for a caller who can see the board;
+ * this one answers "may this go here?" for callers who cannot.
+ */
+describe("freeCanvasRect", () => {
+  const OCCUPIED = { x: 80, y: 80, ...CARD };
+
+  it("keeps a requested spot that is genuinely free", () => {
+    const beside = { x: 420, y: 80, ...CARD };
+
+    expect(freeCanvasRect([OCCUPIED], beside)).toEqual(beside);
+  });
+
+  it("keeps the spot on an empty board", () => {
+    expect(freeCanvasRect([], OCCUPIED)).toEqual(OCCUPIED);
+  });
+
+  it("moves a card that would cover an existing one, and lands it beside instead", () => {
+    const spot = freeCanvasRect([OCCUPIED], { ...OCCUPIED });
+
+    expect(canvasRectsOverlap(spot, OCCUPIED)).toBe(false);
+    expect(spot).toMatchObject(CARD);
+    // Nearest-first: the free neighbour, not the far end of the board.
+    expect(spot).toEqual({ x: 420, y: 80, ...CARD });
+  });
+
+  it("never returns a rectangle that touches anything, however crowded the board", () => {
+    const board = [];
+    for (let column = 0; column < 5; column += 1) {
+      for (let row = 0; row < 5; row += 1) {
+        board.push({ x: 80 + column * 340, y: 80 + row * 340, ...CARD });
+      }
+    }
+
+    const spot = freeCanvasRect(board, { x: 80, y: 80, ...CARD });
+
+    expect(board.some((rect) => canvasRectsOverlap(spot, rect))).toBe(false);
+  });
+
+  it("keeps a card of a different size clear of the ones already there", () => {
+    const text = { x: 80, y: 80, w: 240, h: 120 };
+
+    const spot = freeCanvasRect([OCCUPIED], text);
+
+    expect(canvasRectsOverlap(spot, OCCUPIED)).toBe(false);
+    expect(spot).toMatchObject({ w: 240, h: 120 });
+  });
+
+  it("hands back a rectangle it cannot reason about, untouched", () => {
+    const nonsense = { x: 0, y: 0, w: 0, h: 0 };
+
+    expect(freeCanvasRect([OCCUPIED], nonsense)).toEqual(nonsense);
+  });
+
+  /**
+   * #549 r2 judge P2-1. Both searches give up on shapes this big — the neighbourhood scan and
+   * then the board scan — and what the board scan USED to answer when it gave up was "one column
+   * past the end of the grid I just walked", which is a point inside that grid. One rectangle
+   * wider than the grid contains it, so the card landed on top of the very thing being avoided.
+   */
+  it("stays clear of a single occupied rectangle far larger than the whole scanned grid", () => {
+    const huge = { x: -2000, y: -2000, w: 16000, h: 16000 };
+
+    const spot = freeCanvasRect([huge], { x: 80, y: 80, ...CARD });
+
+    expect(canvasRectsOverlap(spot, huge)).toBe(false);
+    expect(spot).toMatchObject(CARD);
+  });
+
+  it("clears every rectangle when several oversized ones cover the grid", () => {
+    const board = [
+      { x: -5000, y: -5000, w: 20000, h: 9000 },
+      { x: -5000, y: 4000, w: 20000, h: 3000 },
+      { x: 0, y: 7000, w: 900, h: 900 },
+    ];
+
+    const spot = freeCanvasRect(board, { x: 80, y: 80, ...CARD });
+
+    for (const rect of board) expect(canvasRectsOverlap(spot, rect)).toBe(false);
+  });
+
+  it("gives the board scan itself a free answer when its whole grid is full", () => {
+    const huge = { x: -2000, y: -2000, w: 16000, h: 16000 };
+
+    const origin = nextCanvasSpawnOrigin([huge], CARD);
+
+    expect(canvasRectsOverlap({ ...origin, ...CARD }, huge)).toBe(false);
+  });
+
+  it("is not pushed around by rectangles with no usable position", () => {
+    const board = [
+      { x: 80, y: 80, ...CARD },
+      { x: Number.NaN, y: Number.NaN, w: Number.NaN, h: Number.NaN },
+      { x: 0, y: Number.POSITIVE_INFINITY, w: 320, h: 320 },
+    ];
+
+    const spot = freeCanvasRect(board, { x: 80, y: 80, ...CARD });
+
+    expect(Number.isFinite(spot.x) && Number.isFinite(spot.y)).toBe(true);
+    for (const rect of board) expect(canvasRectsOverlap(spot, rect)).toBe(false);
   });
 });

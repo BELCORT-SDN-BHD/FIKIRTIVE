@@ -5,6 +5,10 @@ import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { CreditPackShelf } from "@/lib/billing-actions";
 import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
+// #851 — the gate hint used to be typed out here as well as in the module. Two copies of one
+// sentence is exactly the drift this repo keeps paying for, and the sentence now changes with the
+// publish authority; assert against the module's value so the two can never disagree again.
+import { AUTO_PUBLISH_GATE_HINT, autoPublishHint } from "@/lib/auto-publish-gate";
 import type { SettingsField, SettingsSection } from "@/components/otto/settings/types";
 
 const mocks = vi.hoisted(() => ({
@@ -88,7 +92,7 @@ describe("account settings honesty", () => {
       kind: "toggle",
       value: false,
       disabled: true,
-      hint: "Connect Instagram or Facebook first — auto-publish unlocks once Meta approves publishing.",
+      hint: AUTO_PUBLISH_GATE_HINT,
     });
   });
 
@@ -119,7 +123,7 @@ describe("account settings honesty", () => {
       kind: "toggle",
       value: false,
       disabled: true,
-      hint: "Connect Instagram or Facebook first — auto-publish unlocks once Meta approves publishing.",
+      hint: AUTO_PUBLISH_GATE_HINT,
     });
   });
 
@@ -133,7 +137,11 @@ describe("account settings honesty", () => {
       kind: "toggle",
       value: true,
       disabled: false,
-      hint: "Publish approved posts automatically at their time",
+      // #851 — 开关的可操作性没变(这一票不关任何能力),但那句解释归权威管了:一家真的
+      // 连着、也被批准过的商家,在发布没通电时读到的是「发不出去」那句实话,而不是以前
+      // 手抄在设置页里的「会自动替你发」。写成 autoPublishHint(true) 而不是抄一份文本,
+      // 通电那天这一条会跟着改口,不必有人回来改测试。
+      hint: autoPublishHint(true),
     });
     if (autoPublish.kind !== "toggle") throw new Error("Expected auto-publish toggle");
     await autoPublish.onToggle(false);
@@ -157,6 +165,19 @@ describe("spend cap honesty (decision ①)", () => {
     expect(markup).toContain("No cap set");
     expect(markup).toContain("Set a cap");
     expect(markup).not.toMatch(/<input[^>]*value="0"/);
+  });
+
+  // #524 — the hint is a promise about the charging path, so it is pinned here. It said
+  // "Otto pauses a task over this many credits" while nothing read the setting; #487's honest
+  // pass had to retract that; the cap is enforced in reserveCredits now, so it says so again.
+  // The one thing it must never do is drift back to describing a feature that does not exist.
+  it("tells the truth about what the cap does — a refusal, per action, nothing charged", () => {
+    const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 500 }), "otto", "cap");
+    if (cap.kind !== "number") throw new Error("Expected the spend cap number field");
+    expect(cap.hint).toBe(
+      "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)",
+    );
+    expect(cap.hint).not.toMatch(/doesn't|budget target|yet/i);
   });
 
   it("renders a saved positive cap as an editable input with Save disabled until it changes", () => {

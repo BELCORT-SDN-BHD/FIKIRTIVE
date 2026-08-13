@@ -34,6 +34,8 @@ export type SystemReason =
   | "stripe-webhook"
   | "meta-data-deletion"
   | "worker-heartbeat"
+  /** #794 — appends a BackupRun row (platform-level ops record, no tenant to scope). */
+  | "db-backup"
   | "worker-job-dispatch"
   | "worker-reaper-tick"
   | "gen-reaper"
@@ -43,6 +45,15 @@ export type SystemReason =
   | "publish-reaper"
   | "ingest-redispatch"
   | "publish-scheduler"
+  /** #784 — the cross-tenant sweep that finds files nobody has read yet and claims each one by
+   *  creating its AssetUnderstanding row. Genuinely platform-wide (it spans every tenant's new
+   *  uploads); each per-row write re-enters under that row's own tenant. */
+  | "understanding-scan"
+  /** #784 — returns AssetUnderstanding rows a crashed worker left RUNNING to the queue. */
+  | "understanding-reaper"
+  /** #784 — sums today's understanding token spend across every tenant against the PLATFORM
+   *  daily budget. "What can this cost us in a day" has no single tenant to scope it to. */
+  | "understanding-budget"
   /**
    * #733 — the founder admin console's platform-wide READ model.
    *
@@ -75,6 +86,9 @@ export type SystemReason =
  */
 export const READ_ONLY_SYSTEM_REASONS: ReadonlySet<SystemReason> = new Set<SystemReason>([
   "admin:platform-read",
+  // #784 — the platform understanding-budget read. It sums two token columns across every
+  // tenant and returns a number; enforcing that here beats trusting it to stay that way.
+  "understanding-budget",
 ]);
 
 /**

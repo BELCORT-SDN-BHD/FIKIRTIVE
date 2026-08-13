@@ -190,11 +190,53 @@ model Asset {
 
   referenceImages ReferenceImage[]
   generations     Generation[]
+  understandings  AssetUnderstanding[]
 
   @@unique([id, ownerId])
   @@unique([ownerId, contentHash])
   @@index([ownerId, deletedAt])
   @@index([deletedAt]) // 跨 owner 的 30 天清扫扫描
+}
+
+// #784 素材理解:一件素材被读懂之后留下的那一行。
+//
+// 商家永远不点「分析」——这些行由 worker 的扫描器自己建、自己排队,商家的体感只是
+// 「Otto 好像认识我的店」。行本身就是**幂等键**:(ownerId, assetId, kind) 唯一,所以
+// 无论扫描器重跑、pg-boss 重投还是两个副本同时看到同一件素材,同一件事只会被读一次。
+//
+// 不进 CreditLedger:理解是平台成本,商家一分钱不付(见 @fikirtive/core
+// asset-understanding.ts 的铁律 2)。inputTokens/outputTokens 是**记账**,用来事后核对
+// 「真的没超预算」,绝不参与任何扣费判定。
+//
+// kind/status 是代码校验的 String(house style,不建 PG enum)。
+model AssetUnderstanding {
+  id           String   @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  assetId      String
+  kind         String   // 'image-caption' | 'doc-extract' | 'video-qa'
+  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED
+  /// 商家读得到的那一句(Otto 取回时说的就是它)。白标,落盘前过 redact。
+  summary      String   @default("")
+  /// 该 kind 的结构化产物(ImageCaptionData / DocExtractData / VideoQaData)。
+  data         Json?
+  /// 记账口径,不参与扣费。null = 还没跑过 / 跑了但供应商没回用量。
+  inputTokens  Int?
+  outputTokens Int?
+  /// SKIPPED 的原因,或 FAILED 的白标措辞。
+  error        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  asset Asset @relation(fields: [assetId, ownerId], references: [id, ownerId])
+
+  // 幂等键。同一件素材的同一种理解,全状态只允许一行 —— 重跑不重算,也不会重复落
+  // BrandRecord 产品行或品牌记忆。
+  @@unique([ownerId, assetId, kind])
+  // Otto 取回:某租户最近读懂了什么。
+  @@index([ownerId, status, createdAt])
+  // 清道夫:滞留 RUNNING 的行。
+  @@index([status, updatedAt])
 }
 
 model Shot {
@@ -259,6 +301,11 @@ model Generation {
   assetId        String
   source         AssetSource
   promptText     String      @default("")
+  /// #776 生成回执:引擎自报**它真正跑的那句提示词**(服务端改写/加固之后的版本)。
+  /// 商家可见 —— 「每个东西都要有迹可循」:商家写的那句在 promptText,引擎实际跑的那句在这里。
+  /// null = 引擎没报(或迁移前的历史行)= **未知**,读取端必须如实说不知道,不得回落成
+  /// promptText 冒充引擎的话。展示前过 redactProviderNames(白标)。
+  finalPromptText String?
   // 模板/模型标识（阶段一=模板 slug@version；阶段二=模型注册表条目）
   modelRef       String      @default("")
   params         Json?
@@ -466,6 +513,12 @@ model GenJob {
   // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
   // null/absent = base refs for all mentions (backward-compat with old rows)
   variantSel         Json?
+  /// #774:审批那一刻冻结的元素身份 —— [{ id, type, name }],次序 = entityIds 次序。
+  /// 引擎认人那几句机器指令里的名字**只能**来自这里:元素名是商家随时可改的自由文本,
+  /// worker 若在付费调用前现读,改一次名就能把没过审批的指令送进已经批准的那次付费调用。
+  /// null = 旧行 / 这一趟没有获批的名字 → worker 照旧编号,只是不写名字(降级方向是
+  /// 少一个名字,不是多一条没批准的指令)。不参与幂等材料。
+  approvedEntities   Json?
   // 双提交幂等：shot 绑定生成的稳定键（"frame:<shotId>:<slot>" / "animate:<shotId>"）。
   // startGen 命中同键的在途(QUEUED/GENERATING)任务则复用，重载再点不二次扣费。
   idempotencyKey     String?
@@ -497,6 +550,13 @@ model GenJob {
   /// videoPriceUsd，image=GEN_PRICE_USD_PER_IMAGE*count），冻结如 Generation.entitySnapshot。
   /// null = 没扣过费。绝不参与任何 spend 判定。
   spentUsd           Float?
+  /// #776 生成回执(纯记录):这一单**引擎自报的真实计费量**,按它自己的计量单位,
+  /// 在 commit tx 里与 spentUsd 并排冻结 —— 于是「我们按公式估的成本」与「引擎真收的量」
+  /// 同一行可比,毛利公式第一次可以反查而不是只能估。
+  /// null = 未知,三种情形同一个语义:引擎没报、这一单还没扣过费、或者这一单只有部分产出
+  /// 报了量(部分求和会低估成本,比空着更危险)。绝不参与任何 spend 判定。
+  /// 内部成本口径,不上商家面。
+  billedUnits        Int?
   error              String    @default("")
   queueJobId         String    @default("")
   attempts           Int       @default(0)
@@ -631,6 +691,7 @@ model Organization {
   entityVariants          EntityVariant[]
   referenceImages         ReferenceImage[]
   assets                  Asset[]
+  assetUnderstandings     AssetUnderstanding[]
   shots                   Shot[]
   shotEntityRefs          ShotEntityRef[]
   generations             Generation[]
@@ -938,6 +999,14 @@ model ChatThread {
   rollingSummary String?
   // otto: serialized RunState (JSON string) for multi-turn continuation. Nullable — existing threads have none.
   ottoState String?
+  // #879 step 1: schema pinning for the Otto foundation redesign — nullable, unwritten this
+  // round. Semantics land in #879 step 2 (context assembler). See ChatMessage below for the
+  // per-column meaning; these mirror them at the thread level.
+  surface    String?
+  subjectRef String?
+  actorId    String?
+  visibility String?
+  outletId   String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   pinnedAt  DateTime?
@@ -964,6 +1033,18 @@ model ChatMessage {
   genJobId           String?
   sourceGenerationId String?
   replyToMessageId   String?
+  // #879 step 1 — Otto foundation schema pinning (issue #879, Founder-approved plan A,
+  // self-built foundation). Five nullable columns pinned NOW, before public sign-up makes
+  // backfilling every historical row impossible; semantics land in #879 step 2. Client-declarable
+  // (position-only): surface (which product surface the turn came from), subjectRef (the
+  // record/entity the turn was about), outletId (which outlet/channel context). Server-only
+  // (identity — NEVER client input): actorId, visibility — left null this round; will be filled
+  // from the authenticated principal once #879 step 2 defines their semantics.
+  surface    String?
+  subjectRef String?
+  actorId    String?
+  visibility String?
+  outletId   String?
   createdAt          DateTime        @default(now())
   deletedAt          DateTime?
 
@@ -1129,6 +1210,39 @@ model BetterAuthVerification {
   updatedAt  DateTime @updatedAt
   @@index([identifier])
   @@map("ba_verification")
+}
+
+/// #795 —— Better Auth 自己的限流台账。
+///
+/// 它此前跑在**进程内存**里。开第二个实例的那一刻,每个实例各有一份计数,同一个 IP 的
+/// 预算就凭空翻倍;每次部署重启又把计数清零。也就是说:闸门看起来在,数字是假的。
+/// 挪到这张表之后,几个实例共用同一份计数,重启不清零。
+///
+/// 形状由 Better Auth 定(key/count/lastRequest,lastRequest 是 epoch 毫秒的 bigint),
+/// 我们只负责让它落在自己的表里。**不要**把它和 RateLimitCounter 合并:那张是我们自己
+/// 那几道闸的表,两边的算法与语义不同,合表等于把两套规则绑在一次 schema 变更上。
+model BetterAuthRateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+  @@map("ba_rate_limit")
+}
+
+/// #795 —— 我们自己那几道闸的跨实例计数器(登录链接门、密码门、生成、上传、外链)。
+///
+/// 固定窗口:一个 key 一行,`count` 是本窗口内已经**放行**过多少次,`expiresAt` 是本窗口
+/// 什么时候结束(epoch 毫秒)。用 bigint 存毫秒而不是 timestamp,是为了让比较是纯整数运算
+/// —— 时区、精度、会话 TZ 这些东西一个都不必参与判断「还有没有额度」。
+///
+/// 被拒的一次**不加计数**(见 rate-limit.ts):这是 #757 已经买过一次教训的性质 —— 让拒绝
+/// 也推窗口,窗口就永远不结束,一个人的重试循环会把同一出口后面所有人一起锁死。
+model RateLimitCounter {
+  key       String @id
+  count     Int
+  expiresAt BigInt
+  @@index([expiresAt])
+  @@map("rate_limit_counter")
 }
 
 model CanvasNode {
@@ -2268,9 +2382,49 @@ model PublishAttempt {
 
 // 2026-07-04 盲区修复(可观测性):worker 活性心跳,单行(id="worker"),worker 每 60s
 // upsert;/api/health 读它给外部监控服务判活。无租户数据(平台级),不进 tenant guard。
+//
+// #797:再加两列部署身份。「worker 活着」答不了「web 与 worker 是不是同一个部署」——
+// 半成功的部署会留下一新一旧,或者两边代码同版但共享密钥不同(#569 的形状)。两列都可空:
+// 平台没注入 sha 时写 null,绝不假造一个。configFingerprint 是 8 位摘要,原始密钥不进库。
 model WorkerHeartbeat {
-  id String   @id
-  at DateTime
+  id                String   @id
+  at                DateTime
+  commitSha         String?
+  configFingerprint String?
+}
+
+// #794 备份可信化(工程评估债 #2)。此前「昨晚备份成功了吗」这个问题在系统里没有答案:
+// 备份成功只写进 worker 的 stdout,失败只进 Sentry,两者都不是可以被 /api/health 或
+// admin 读到的事实。备份是否新鲜必须是一行可查的记录,而不是一句日志。
+//
+// append-only:每次备份尝试落一行(成功与失败都落),**UPDATE 与 DELETE 都被行级触发器
+// 硬拦**(Prisma 建模不了触发器,故只在迁移里)。改写能伪造新鲜度,删除同样能——删掉
+// 「成功之后的那条失败」会让 admin 那一格从 retry failed 变回全绿。清库用 TRUNCATE
+// (表级,不触发行级触发器)。新鲜度 = 最近一条 status='succeeded' 行的 finishedAt
+// (见 apps/web/lib/health.ts)。无租户数据(平台级 ops 记录),不进 tenant guard;
+// 写入方经 runAsSystem("db-backup") 立帧。
+//
+// 三个封闭集(status / credentialMode / trigger)与「succeeded 必须带 finishedAt+key」用 CHECK
+// 约束守着,同样只在迁移里(Prisma 建模不了 CHECK)——见 migrations/20260811100000_backup_run。
+model BackupRun {
+  id             String    @id @default(cuid())
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  // 'succeeded' | 'failed'(封闭集,迁移里有 CHECK 约束)
+  status         String
+  // 谁触发的:'cron'(Railway cron,#794 后的权威) | 'worker-timer'(旧的 5 分钟循环) | 'manual'
+  trigger        String
+  // 这次上传用的是哪一族 R2 凭据:'isolated'(backups/ 专用 token) | 'shared'(与内容同钥匙)。
+  // 记在行上而不是读 env:admin 要报的是「上一次真的用了什么」,不是「现在配了什么」。
+  credentialMode String
+  key            String?
+  sizeBytes      BigInt?
+  durationMs     Int?
+  // 已脱敏的失败摘要(sanitizeError 的输出)。连接串永不进这里。
+  error          String?
+
+  @@index([status, finishedAt])
+  @@index([startedAt])
 }
 
 // ─── L0 量测原语(第 0 大陆:所有环共用的水表)────────────────────────────────

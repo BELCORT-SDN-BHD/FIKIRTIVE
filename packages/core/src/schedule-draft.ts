@@ -110,6 +110,134 @@ export function classifyPagesRead(read: Record<string, unknown>): PagesReadState
   return "pages" in read ? "ok" : classifyConnectionFailure(read);
 }
 
+// ── Can a post actually reach a social account today? (#851) ─────────────────────────────────
+//
+// Right now: no. Facebook Login is switched off at the app level (#554), so NO merchant can
+// connect Instagram or Facebook at all — a post written here has nowhere to go, however carefully
+// it is written or approved. Founder's beta ruling (#850 ②) says the same thing from the product
+// side: beta stops at "planned and saved", never "sent".
+//
+// The schedule itself is NOT a preview, and that boundary is the whole point of this section. The
+// posts, their dates and times, and every approval are real rows the merchant owns and will find
+// exactly as they left them. "The calendar is real, the sending is not" is ONE sentence, said
+// once, by every surface a merchant could mistake for a send button: the Schedule screen, the
+// approval card Otto mints, and Otto's own publishing skills.
+//
+// Turning publishing back on is ONE line — PUBLISHING_AVAILABLE below. Every surface reads its
+// words through publishSurfaceCopy() / approvalOutcomeLine() / ottoPublishTruth(), so flipping
+// that line changes what merchants read and hear with no second wording to hunt down. That is the
+// reason the copy lives in core rather than on each screen: this product's oldest failure mode is
+// a promise that outlives the thing it was promising.
+
+/**
+ * Can a post actually reach Instagram or Facebook right now?
+ *
+ * Annotated `boolean` on purpose. Left to infer, it would have the literal type `false`, and
+ * TypeScript would then treat the "publishing is on" half of every branch below as dead code —
+ * so the day we flip this line would begin with a compiler error instead of a working product.
+ */
+export const PUBLISHING_AVAILABLE: boolean = false;
+
+/** The one word a publish surface wears while publishing is off. */
+export const PUBLISH_PREVIEW_BADGE = "Preview";
+
+/**
+ * What every publish surface says, in four parts so a cramped surface can take just the first one
+ * and a roomy one can say the whole thing — without anybody writing a shorter version by hand.
+ */
+export type PublishSurfaceCopy = {
+  /** ① The plain fact about what does or does not happen. Short enough to stand alone. */
+  readonly fact: string;
+  /** ② Why that is so. */
+  readonly why: string;
+  /** ③ The boundary — what IS real and stays real. */
+  readonly real: string;
+  /** ④ What comes next. Never a date: a date is a promise we are not in a position to make. */
+  readonly next: string;
+};
+
+/** While publishing is off. Read the four sentences in order — they are meant to be read that way. */
+export const PUBLISH_PREVIEW_COPY: PublishSurfaceCopy = {
+  fact: "Publishing is not switched on yet — nothing here goes out to Instagram or Facebook.",
+  why: "No Instagram or Facebook account can be connected at the moment, so a post has nowhere to go.",
+  real: "Your schedule is real: the posts you write, the dates and times you pick, and every approval are saved, and they stay exactly as you left them.",
+  next: "Switching publishing on is what we are doing next, and we are not putting a date on it here.",
+};
+
+/** Once publishing is on. The same four slots, so no surface needs a second layout. */
+export const PUBLISH_LIVE_COPY: PublishSurfaceCopy = {
+  fact: "Approved posts go out to the account you picked, at the time you picked.",
+  why: "Auto-publish sends them without you watching; with it off, an approved post waits here for you.",
+  real: "Nothing leaves this workspace until you approve it.",
+  next: "You can change or cancel a post any time before its slot.",
+};
+
+/**
+ * The words for a given state. The parameter defaults to the current state, so a surface calls it
+ * with no argument — and a fence can pin BOTH halves of the switch without flipping a global.
+ */
+export function publishSurfaceCopy(available: boolean = PUBLISHING_AVAILABLE): PublishSurfaceCopy {
+  return available ? PUBLISH_LIVE_COPY : PUBLISH_PREVIEW_COPY;
+}
+
+/** The same four sentences in reading order, for a surface that renders them as a block. */
+export function publishSurfaceLines(available: boolean = PUBLISHING_AVAILABLE): readonly string[] {
+  const copy = publishSurfaceCopy(available);
+  return [copy.fact, copy.why, copy.real, copy.next];
+}
+
+/** The badge a publish surface wears, or null once there is nothing to warn about. */
+export function publishPreviewBadge(available: boolean = PUBLISHING_AVAILABLE): string | null {
+  return available ? null : PUBLISH_PREVIEW_BADGE;
+}
+
+/**
+ * One line naming what approving does to THIS post, on the channel it is written for. The approval
+ * card shows it as its first detail line — the line a merchant reads while deciding to press a
+ * button that used to claim it published.
+ */
+export function approvalOutcomeLine(
+  channelLabel: string,
+  available: boolean = PUBLISHING_AVAILABLE,
+): string {
+  return available
+    ? `Publishes to ${channelLabel}`
+    : `Booked for ${channelLabel} — publishing is not switched on, so nothing is sent`;
+}
+
+/** The title of that card. It must not name an outcome the product cannot deliver. */
+export function approvalCardTitleLine(available: boolean = PUBLISHING_AVAILABLE): string {
+  return available ? "Approve this post for publishing" : "Approve this post for its slot";
+}
+
+/**
+ * What that same card says AFTER the merchant presses Approve.
+ *
+ * The card's own "what am I consenting to" lines already came from here, but its success state did
+ * not: it said "Approved — it will publish as scheduled." one line under a detail line that says
+ * nothing is sent. One card, two answers, and the contradicting half was the one a merchant reads
+ * having just acted. A resolved state is still a publish surface, so it reads from the same switch
+ * as the unresolved one.
+ */
+export function approvalDoneLine(available: boolean = PUBLISHING_AVAILABLE): string {
+  return available
+    ? "Approved — it will publish as scheduled."
+    : "Approved — the slot is booked. Publishing is not switched on yet, so nothing is sent.";
+}
+
+/**
+ * What Otto is told about publishing, wherever a skill of its could imply a post goes out.
+ *
+ * Same authority as the screens, so the assistant and the buttons cannot tell a merchant two
+ * different stories about the same act (#851 ③ — Otto must never send anyone off to connect a
+ * channel that cannot be connected).
+ */
+export function ottoPublishTruth(available: boolean = PUBLISHING_AVAILABLE): string {
+  return available
+    ? "Approving is consent to a real, irreversible publish to the user's own Instagram or Facebook account at the post's scheduled time."
+    : "Publishing is NOT switched on: approving a post books its slot and saves it, and it sends nothing to Instagram or Facebook. No account can be connected either, so never tell the user that connecting one will make a post go out. Say this plainly whenever a post's fate comes up, never suggest a post leaves the workspace, and give no date for when publishing returns.";
+}
+
 export type ScheduleApproveInput = {
   channel: string;
   /** The post's stored account id — null/empty when nobody has picked one yet. */

@@ -73,6 +73,14 @@ export const coworkTurnRequest = z.object({
   goalKey: z.enum(["sell-product", "announce-sale", "get-followers", "make-video"]).optional(),
   // Simple mode — inject plain-language voice block (Task 6). Absent → legacy/pro behavior.
   simple: z.boolean().optional(),
+  // #879 step 1: optional page-context pins for the Otto foundation schema (semantics land in
+  // #879 step 2). POSITION-ONLY — the client may declare where it is, never who it is. Identity
+  // columns (actorId, visibility) have no client-facing field and can only ever be filled
+  // server-side from the authenticated principal; `.strict()` above already rejects any attempt
+  // to send them.
+  surface: z.string().min(1).max(64).optional(),
+  subjectRef: z.string().min(1).max(64).optional(),
+  outletId: z.string().min(1).max(64).optional(),
 }).strict();
 export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
 

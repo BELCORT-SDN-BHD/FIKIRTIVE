@@ -6,7 +6,7 @@
  * calls the provider, and attaches generated ReferenceImages to the entity.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@fikirtive/db";
+import { prisma, reserveCredits, refundReservation, InsufficientCredits, SpendCapBlocked } from "@fikirtive/db";
 import {
   refGenRequest,
   newId,
@@ -23,11 +23,23 @@ import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
-import { outOfCreditsMessage } from "./credit-format";
+import { outOfCreditsMessage, spendCapBlockedMessage } from "./credit-format";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
 // (worker died mid-run) so a new generation isn't blocked forever.
 const STALE_MS = 15 * 60 * 1000;
+
+/** #781 r3 P1 — the two halves of the variant/delete race, as errors that never leave their action.
+ *
+ *  "Is anything running for this variant?" and "is this variant still there?" used to be READS taken
+ *  outside the write that depended on them, so the two actions could interleave: delete counts zero,
+ *  regenerate creates a paid job, delete tombstones anyway — and the worker then settles a charge
+ *  onto a variant the merchant can never see. Both actions now CLAIM the same EntityVariant row with
+ *  an UPDATE at the top of their transaction, which takes that row's write lock until commit, so one
+ *  of them always waits for the other and then sees the committed truth. Whoever loses throws one of
+ *  these, and its transaction rolls back whole — no tombstone, or no paid job and no reserve. */
+class VariantStillRunning extends Error {}
+class VariantGone extends Error {}
 
 export async function startRefGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
@@ -102,6 +114,16 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
         return created;
       });
     } catch (e) {
+      // #524 — the merchant's own cap refused this action inside the reserve: nothing was
+      // created, reserved or queued. More specific than the out-of-credits arm below.
+      if (e instanceof SpendCapBlocked) {
+        return {
+          error: spendCapBlockedMessage(
+            displayCredits(cost),
+            e.capInternal === null ? null : displayCredits(e.capInternal),
+          ),
+        };
+      }
       if (e instanceof InsufficientCredits) {
         return { error: outOfCreditsMessage(displayCredits(cost)) };
       }
@@ -211,6 +233,18 @@ async function dispatchVariantJob(ownerId: string, entityId: string, variantId: 
   try {
     // RESERVE atomically with the insert (rolls back on over-balance → out-of-credits).
     job = await prisma.$transaction(async (tx) => {
+      // #781 r3 P1 — CLAIM THE VARIANT ROW BEFORE SPENDING ON IT. This UPDATE is not cosmetic: it
+      // takes the EntityVariant row's write lock and holds it until this transaction commits, and
+      // deleteVariant claims the same row before it tombstones. So either we get here first (the
+      // delete then waits, and its own check sees this job committed → it refuses), or the delete
+      // got here first (our WHERE is re-evaluated against its committed row, `deletedAt IS NULL`
+      // no longer matches, count is 0 → we spend nothing). Touching updatedAt is also true: work
+      // was just dispatched for this variant.
+      const claimed = await tx.entityVariant.updateMany({
+        where: { id: variantId, ownerId, deletedAt: null },
+        data: { updatedAt: new Date() },
+      });
+      if (claimed.count === 0) throw new VariantGone();
       const created = await tx.refGenJob.create({
         data: { id: newId(), ownerId, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
         select: { id: true },
@@ -219,6 +253,19 @@ async function dispatchVariantJob(ownerId: string, entityId: string, variantId: 
       return created;
     });
   } catch (e) {
+    if (e instanceof VariantGone) {
+      // The whole transaction rolled back: no job, no reserve, nothing to refund.
+      return { error: "That variant was deleted while this was starting, so nothing was generated and you weren't charged." };
+    }
+    // #524 — same cap refusal on the variant path (see startRefGen above).
+    if (e instanceof SpendCapBlocked) {
+      return {
+        error: spendCapBlockedMessage(
+          displayCredits(cost),
+          e.capInternal === null ? null : displayCredits(e.capInternal),
+        ),
+      };
+    }
     if (e instanceof InsufficientCredits) {
       return { error: outOfCreditsMessage(displayCredits(cost)) };
     }
@@ -265,6 +312,57 @@ async function dispatchVariantJob(ownerId: string, entityId: string, variantId: 
     console.warn(`dispatchVariantJob: refgen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
   }
   return { jobId: job.id };
+}
+
+/** Take back the EntityVariant row a REFUSED dispatch left behind, and make a failure to take it
+ *  back visible (#781 r3 P2).
+ *
+ *  The soft-delete IS the cleanup. When it throws there is nothing further this request can
+ *  reliably write to that row — the marker would have to go on the very row whose write just failed
+ *  — so the leftover is handed off instead of swallowed at warn level:
+ *    1. one retry, because the usual cause is a transient blip and a retry that works leaves
+ *       nothing to clean up at all;
+ *    2. a console.error carrying owner/element/variant, so the orphan is greppable in the server
+ *       log rather than filed under "non-fatal";
+ *    3. an ActionEvent — a DIFFERENT row, which may well commit when that one would not. It is the
+ *       durable, queryable record ("variant.rollback_failed") a sweep can find the orphan by, and
+ *       the same audit trail every other variant write already lands in.
+ *
+ *  Returns whether the variant is really gone. The merchant hears the ORIGINAL refusal either way:
+ *  a failed cleanup must not become a second, misleading error on top of the real one. */
+async function rollbackUndispatchedVariant(ownerId: string, entityId: string, variantId: string): Promise<boolean> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await prisma.entityVariant.updateMany({
+        where: { id: variantId, ownerId, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      return true;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  console.error(
+    `createVariant: ROLLBACK FAILED — empty variant ${variantId} (entity ${entityId}, owner ${ownerId}) was left behind by a refused dispatch and needs cleaning up:`,
+    lastError instanceof Error ? lastError.message : lastError,
+  );
+  try {
+    await prisma.actionEvent.create({
+      data: {
+        id: newId(),
+        ownerId,
+        type: "variant.rollback_failed",
+        payload: { entityId, variantId, reason: "dispatch refused, but the empty variant could not be soft-deleted" },
+      },
+    });
+  } catch (e) {
+    console.error(
+      `createVariant: could not even record stranded variant ${variantId} for cleanup:`,
+      e instanceof Error ? e.message : e,
+    );
+  }
+  return false;
 }
 
 /** Derive a unique live handle for a variant (the partial unique index on
@@ -346,7 +444,21 @@ export async function createVariant(entityId: string, name: string, prompt: stri
     if (!variantId) return { error: "Couldn't find a free name for that variant — try a different name." };
 
     const dispatched = await dispatchVariantJob(ownerId, entityId, variantId, cleanPrompt);
-    if ("error" in dispatched) return dispatched;
+    if ("error" in dispatched) {
+      // #781 r2 P2 — ROLL THE VARIANT BACK. Every refusal dispatchVariantJob returns is a
+      // before-or-instead-of-spend one (image generation turned off, not enough credits — reserved
+      // in the same tx, so it rolled back — or the queue unreachable, which terminal-fails and
+      // refunds). Nothing is running, and nothing ever will be: leaving the row behind strands an
+      // empty variant that says "Making this look…" forever, and pushes the retry (after topping
+      // up) onto a suffixed name the merchant never chose. Soft-delete, so the handle the merchant
+      // picked is free again (the unique index is partial on deletedAt IS NULL) and the refusal —
+      // not a stray leftover — is what they see.
+      //
+      // #781 r3 P2 — and if that rollback cannot be written, it is reported, not swallowed: see
+      // rollbackUndispatchedVariant. Either way the merchant hears the original refusal.
+      await rollbackUndispatchedVariant(ownerId, entityId, variantId);
+      return dispatched;
+    }
     // BEST-EFFORT: the paid variant job is already created + queued (dispatchVariantJob),
     // so an audit-write failure must NOT throw past here — else the caller returns an
     // error and a retry could create a second suffixed variant + enqueue another paid
@@ -406,7 +518,30 @@ export async function renameVariant(variantId: string, name: string): Promise<{ 
 }
 
 /** Soft-delete a variant AND its tagged reference images (D21; onDelete:Restrict
- *  blocks a hard delete, so the app owns the cascade). */
+ *  blocks a hard delete, so the app owns the cascade).
+ *
+ *  #781 r2 P1 — IN-FLIGHT PAID WORK IS PROTECTED HERE, for every caller. The worker re-checks the
+ *  variant before it spends, but a delete landing AFTER that check still lets the paid image settle
+ *  onto a tombstoned variant: the merchant is charged for a look that no longer exists anywhere they
+ *  can see it. Otto's port has refused this since debt-69 — but a gate that only one caller passes
+ *  through is not a rule, and the merchant's own Delete button called this action directly. So the
+ *  rule lives in the action both surfaces share.
+ *
+ *  Same semantics as the port's gate, deliberately: ANY QUEUED/GENERATING job for this variant
+ *  blocks, with NO staleness window. A 15-minute abandonment window would be SHORTER than the
+ *  worker's own liveness window (REFGEN_STALE_MS 18min / reaper 25min), so a job that was still
+ *  genuinely running would be misjudged abandoned and let through — the exact hole this closes. A
+ *  count read that fails refuses too (never "couldn't check, delete anyway"). A truly stuck job is
+ *  released by the worker's reaper (reapStaleRefGenJobs — FAILED + refunded, ~25min + one 5min
+ *  sweep); after that the delete goes through, so nothing is undeletable forever.
+ *
+ *  #781 r3 P1 — AND THE CHECK IS ATOMIC WITH THE DELETE. A count taken outside the write it guards
+ *  is only a guess about the moment the write lands: delete counts zero, a re-run is dispatched and
+ *  paid for, delete tombstones anyway. So the tombstone is written FIRST — that UPDATE takes the
+ *  variant row's write lock, which dispatchVariantJob must also take before it may insert a paid job
+ *  — and the count runs after it, inside the same transaction. A job that appears anyway rolls the
+ *  tombstone back with it; a dispatch that was mid-flight finds the row tombstoned and spends
+ *  nothing. Neither order can produce a paid job attached to a deleted variant. */
 export async function deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -416,10 +551,29 @@ export async function deleteVariant(variantId: string): Promise<{ ok: true } | {
     const variant = await prisma.entityVariant.findFirst({ where: { id: variantId, ...OWNED }, select: { id: true, entityId: true } });
     if (!variant) return { error: "Variant not found." };
     const now = new Date();
-    await prisma.$transaction([
-      prisma.referenceImage.updateMany({ where: { variantId, ownerId, deletedAt: null }, data: { deletedAt: now } }),
-      prisma.entityVariant.updateMany({ where: { id: variantId, ...OWNED }, data: { deletedAt: now } }),
-    ]);
+    let claimed: boolean;
+    try {
+      claimed = await prisma.$transaction(async (tx) => {
+        // Claim the row first (see header): the lock this takes is what a concurrent dispatch has
+        // to queue behind, and it is what makes the count below a decision instead of a guess.
+        const tombstoned = await tx.entityVariant.updateMany({ where: { id: variantId, ...OWNED }, data: { deletedAt: now } });
+        if (tombstoned.count === 0) return false; // deleted by someone else in the meantime
+        const activeJobs = await tx.refGenJob.count({
+          where: { variantId, ownerId, status: { in: ["QUEUED", "GENERATING"] } },
+        });
+        if (activeJobs > 0) throw new VariantStillRunning();
+        await tx.referenceImage.updateMany({ where: { variantId, ownerId, deletedAt: null }, data: { deletedAt: now } });
+        return true;
+      });
+    } catch (e) {
+      if (e instanceof VariantStillRunning) {
+        return { error: "That variant is still being made — wait for it to finish before deleting it, so you don't lose an image you paid for." };
+      }
+      // Fail-closed, and now provably so: the transaction rolled back, so the tombstone it wrote
+      // before the failing check is gone with it.
+      return { error: "Couldn't check whether that variant is still being made, so nothing was deleted. Please try again in a moment." };
+    }
+    if (!claimed) return { error: "Variant not found." };
     await prisma.actionEvent.create({ data: { id: newId(), ownerId, type: "variant.delete", payload: { entityId: variant.entityId, variantId } } });
     revalidatePath("/", "layout");
     return { ok: true };
@@ -444,6 +598,11 @@ export async function getRefGenJobs(entityId: string, variantId?: string | null)
       progress: j.progress,
       count: j.count,
       produced: j.outputAssetIds.length,
+      // #781 r3 — WHICH assets, not only how many. A poller cannot tell a job that finished
+      // BEFORE its page snapshot from one that finished after; both just say DONE. Comparing these
+      // ids against the images already on screen answers it exactly (see lib/variant-progress).
+      // Owner-scoped read, and the same ids the element's own reference images already carry.
+      outputAssetIds: j.outputAssetIds,
       error: sanitizeUserError(j.error),
       createdAt: j.createdAt.toISOString(),
     }));

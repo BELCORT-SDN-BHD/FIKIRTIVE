@@ -51,13 +51,14 @@ export function SignupForm() {
         </p>
         <p className="mt-3 text-[12.5px] text-muted-foreground">
           Nothing in your inbox? Check spam, or{" "}
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={() => { setSentTo(null); setPassword(""); }}
-            className="font-semibold underline underline-offset-4 hover:text-foreground"
+            className="h-auto w-auto p-0 align-baseline text-[12.5px] font-semibold text-muted-foreground underline hover:text-foreground"
           >
             try a different email
-          </button>
+          </Button>
           .
         </p>
       </div>
@@ -123,11 +124,13 @@ export function SignupForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={() => setShowPw((v) => !v)}
             aria-label={showPw ? "Hide password" : "Show password"}
-            className="absolute right-1.5 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            className="absolute right-1.5 top-1/2 size-9 -translate-y-1/2 rounded-[10px] text-muted-foreground hover:bg-transparent hover:text-foreground"
           >
             {showPw ? (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
@@ -139,7 +142,7 @@ export function SignupForm() {
                 <circle cx="12" cy="12" r="3" />
               </svg>
             )}
-          </button>
+          </Button>
         </div>
       </div>
 

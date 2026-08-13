@@ -72,7 +72,7 @@ const imageJob = {
   variantSel: null,
   count: 1,
   videoOptions: null,
-  imageOptions: null as { aspectRatio: string } | null,
+  imageOptions: null as { aspectRatio: string; coherentSet?: true } | null,
   generationIds: [] as string[],
   spentUsd: null,
   sourceGenerationId: null as string | null,
@@ -102,7 +102,7 @@ async function imageRequestFromRealWorker(job: Record<string, unknown>) {
   m.genJobFindUnique.mockResolvedValue(job);
   await handleGen({ genJobId: "g1" }, 0);
   expect(m.generateImages, "付费调用必须真的发生过,这条断言才有意义").toHaveBeenCalledTimes(1);
-  return m.generateImages.mock.calls[0]![0] as { aspectRatio?: string; count: number; model: string };
+  return m.generateImages.mock.calls[0]![0] as { aspectRatio?: string; count: number; model: string; coherentSet?: boolean };
 }
 
 describe("#642 worker 透传图片规格", () => {
@@ -145,5 +145,62 @@ describe("#642 worker 透传图片规格", () => {
     const vreq = m.generateVideo.mock.calls[0]![0] as Record<string, unknown>;
     expect(vreq.aspectRatio).toBe("16:9");
     expect(m.generateImages).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #777 —— 组图那一格同样是**冻在作业行上**的规格,worker 只负责原样透传。
+ *
+ * 为什么必须在这里钉:少传这一站,商家批的「一组连贯图」到了适配器就变成 N 张散图,
+ * 而钱照收、卡面照说「一组」—— 一次完整的静默降级,而且链路上任何一处单独看都是对的。
+ */
+describe("#777 worker 透传「这几张是一组」", () => {
+  beforeEach(() => {
+    m.generateImages.mockResolvedValue([
+      { bytes: new Uint8Array([1]), ext: "png" },
+      { bytes: new Uint8Array([2]), ext: "png" },
+      { bytes: new Uint8Array([3]), ext: "png" },
+    ]);
+  });
+
+  it("快照说这是一组 ⇒ 适配器收到 coherentSet:true(与张数、画幅同一份快照)", async () => {
+    const req = await imageRequestFromRealWorker({
+      ...imageJob, count: 3, imageOptions: { aspectRatio: "9:16", coherentSet: true },
+    });
+    expect(req).toEqual(expect.objectContaining({ count: 3, aspectRatio: "9:16", coherentSet: true }));
+  });
+
+  it("快照里没有这一格(既有行/散图行)⇒ false,与今日逐字一致", async () => {
+    const req = await imageRequestFromRealWorker({ ...imageJob, count: 3, imageOptions: { aspectRatio: "9:16" } });
+    expect(req.coherentSet).toBe(false);
+  });
+
+  it("快照整个是 null(迁移前的历史行)⇒ 同样是 false", async () => {
+    const req = await imageRequestFromRealWorker({ ...imageJob, count: 3, imageOptions: null });
+    expect(req.coherentSet).toBe(false);
+  });
+
+  it("快照里那一格是垃圾值 ⇒ 只认写死的 true,其余一律 false(绝不把「大概是一组」当成一组)", async () => {
+    for (const junk of ["true", 1, {}, "yes"] as unknown[]) {
+      const req = await imageRequestFromRealWorker({
+        ...imageJob, count: 3, imageOptions: { aspectRatio: "1:1", coherentSet: junk },
+      });
+      expect(req.coherentSet, String(junk)).toBe(false);
+      vi.clearAllMocks();
+      m.projectFindFirst.mockResolvedValue({ id: "p1" });
+      m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+      m.chatMessageFindFirst.mockResolvedValue({ seq: 1 });
+      m.chatMessageCreate.mockResolvedValue({ id: "msg1" });
+      m.creditLedgerFindFirst.mockResolvedValue(null);
+      m.assetUpsert.mockResolvedValue({ id: "asset1" });
+      m.generationCreate.mockResolvedValue({ id: "gen_out1" });
+      m.storagePut.mockResolvedValue({ contentHash: "c".repeat(64) });
+      m.storagePresignedGet.mockImplementation(async (key: string) => `url:${key}`);
+      m.generateImages.mockResolvedValue([
+        { bytes: new Uint8Array([1]), ext: "png" },
+        { bytes: new Uint8Array([2]), ext: "png" },
+        { bytes: new Uint8Array([3]), ext: "png" },
+      ]);
+    }
   });
 });

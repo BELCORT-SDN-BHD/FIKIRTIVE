@@ -9,10 +9,17 @@
  * pg-boss v12 rules honored here: explicit createQueue() before work(),
  * own `pgboss` schema (excluded from Prisma migrations), generous
  * expireInSeconds for multi-GB jobs, idempotent handlers (content-hash keys).
+ *
+ * #796 — ONE image, TWO services. `WORKER_ROLE` decides which queues this process
+ * consumes (see ./plan.ts): `compute` = ffmpeg/whisper work, `wait` = provider awaits,
+ * `all` (the default, and today's single service) = both. Every queue is still CREATED
+ * by every role — creation is idempotent and shares one policy object with apps/web, so
+ * boot order can never leave two definitions of the same queue.
  */
 import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { QUEUES } from "./queues.js";
+import { connectionBudgetLine, dbPoolPlan, planSummary, providerBudgetLine, providerBudgetWarning, workerPlan } from "./plan.js";
 import { handleIngest, redispatchLostIngest, type IngestJobData } from "./jobs/ingest.js";
 import { handleRender } from "./jobs/render.js";
 import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
@@ -22,9 +29,12 @@ import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
+import { handleUnderstand, reapStaleUnderstanding, scanAssetsNeedingUnderstanding } from "./jobs/understand.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
+import { assertWorkerEnv } from "./boot-env.js";
+import { startHeartbeat } from "./heartbeat.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -42,15 +52,27 @@ import {
   PUBLISH_QUEUE,
   PUBLISH_DLQ,
   PUBLISH_QUEUE_POLICY,
+  UNDERSTAND_QUEUE,
+  UNDERSTAND_DLQ,
+  UNDERSTAND_QUEUE_POLICY,
+  assetUnderstandingEnabled,
+  understandingDailyBudgetUsd,
   type RenderJobData,
   type RefGenJobData,
   type GenJobData,
   type CaptionJobData,
   type ResearchJobData,
   type PublishJobData,
+  type UnderstandJobData,
 } from "@fikirtive/core";
-import { prisma } from "@fikirtive/db";
+import { pruneRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { runAsSystem } from "@fikirtive/db/principal";
+
+// #797 env contract, fail-FAST: a production worker whose required configuration is missing, or
+// whose values are the wrong shape, exits here instead of running jobs that will fail in odd
+// places later. Outside production it only warns. (The fail-SOFT publish-chain check below asks
+// a different question and stays.)
+assertWorkerEnv();
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
 // from PgBouncer and the direct path avoids pooler quirks (audit P3).
@@ -58,6 +80,36 @@ const connectionString = process.env.DATABASE_URL || process.env.DATABASE_URL_PO
 if (!connectionString) {
   console.error("[worker] DATABASE_URL is not set — exiting");
   process.exit(1);
+}
+
+// #796 — which queues this process consumes, and at what concurrency. Computed BEFORE
+// anything touches Prisma: `dbPoolPlan` may set DB_POOL_MAX, and packages/db reads that
+// env var when it lazily builds the client on FIRST PROPERTY ACCESS (the lazy Proxy in
+// packages/db/src/index.ts). Importing @fikirtive/db above does not build anything, so
+// this block still lands first. Keep it that way.
+const plan = (() => {
+  try {
+    return workerPlan(process.env);
+  } catch (err) {
+    // An unrecognised WORKER_ROLE is a deploy typo, and every wrong guess is silent: guess
+    // "all" and two services double-consume every queue; guess "compute" and generation stops
+    // platform-wide with nothing in the logs. Exit loudly instead.
+    console.error(`[worker] ${err instanceof Error ? err.message : err} — exiting`);
+    process.exit(1);
+  }
+})();
+console.log(`[worker] ${planSummary(plan)}`);
+{
+  const budget = providerBudgetLine(plan, process.env);
+  if (budget) console.log(budget);
+  const warning = providerBudgetWarning(plan, process.env);
+  if (warning) console.warn(warning);
+  // Only a role that RAISED concurrency touches the pools; `all` (unset WORKER_ROLE) leaves both
+  // exactly where merge-base left them (判官 r1 P0).
+  const pool = dbPoolPlan(plan, process.env);
+  if (pool.action === "default") { process.env.DB_POOL_MAX = String(pool.value); console.log(pool.message); }
+  else if (pool.action === "warn") console.warn(pool.message);
+  console.log(connectionBudgetLine(plan, process.env));
 }
 
 // L1 publish-chain contract (spec §四), fail-SOFT: a half-configured chain (some secrets set, one
@@ -98,6 +150,12 @@ async function runHandler<T>(fn: () => Promise<T>): Promise<T> {
 const boss = new PgBoss({
   connectionString,
   schema: "pgboss",
+  // #796 判官 r1 P1-3 — pg-boss opens its OWN pg.Pool (default max 10), entirely separate from
+  // Prisma's. At `localConcurrency: N` this process runs N independent pollers, each fetching,
+  // completing and maintaining on its own clock, so the default sits right at the edge. Sized
+  // only for a role that raised concurrency; `all` and `compute` keep pg-boss's own default so
+  // an unset WORKER_ROLE changes no connection count at all.
+  ...(plan.pgBossPoolMax === null ? {} : { max: plan.pgBossPoolMax }),
 });
 
 boss.on("error", (err) => { console.error("[worker] pg-boss error:", err); captureError(err); });
@@ -129,103 +187,86 @@ async function main(): Promise<void> {
   // energize slice; for now the queue exists but nothing produces to it (fail-closed, inert).
   await boss.createQueue(PUBLISH_DLQ);
   await boss.createQueue(PUBLISH_QUEUE, { ...PUBLISH_QUEUE_POLICY });
+  // #784 素材理解:队列的**唯一**生产者是下面 supervise 里的扫描器 —— 商家永远不点「分析」。
+  await boss.createQueue(UNDERSTAND_DLQ);
+  await boss.createQueue(UNDERSTAND_QUEUE, { ...UNDERSTAND_QUEUE_POLICY });
 
-  await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
-    if (!job) return;
-    console.log(`[worker] ingest job ${job.id} start`, job.data);
-    await runHandler(() => handleIngest(job.data));
-    console.log(`[worker] ingest job ${job.id} done`);
-  });
+  /**
+   * Register ONE queue's consumer — but only if this role owns the queue (#796). The plan is
+   * the single source of that decision: a queue missing from `plan.concurrency` gets no
+   * consumer in this process, which is exactly how `compute` never touches a money queue and
+   * `wait` never touches ffmpeg.
+   *
+   * `localConcurrency: n` (pg-boss 12.18.2) spawns n INDEPENDENT pollers for the queue, each
+   * fetching and finishing one job on its own clock. That is the shape #760 needs: merchant B's
+   * 20-second image is fetched, run and completed by its own poller while merchant A's 15-minute
+   * video is still in flight. (`batchSize: n` + Promise.all — the shape the ticket sketched —
+   * would also run n at once, but pg-boss does not fetch the NEXT batch until the whole current
+   * batch resolves, so one long video would still hold the queue closed behind it for 15 minutes.
+   * Same goal, and this is the version without the head-of-line trap.)
+   *
+   * includeMetadata: retryCount drives the FAILED-vs-requeue status decision in every handler.
+   */
+  const consume = async <T>(queue: string, run: (data: T, retryCount: number) => Promise<void>): Promise<void> => {
+    const concurrency = plan.concurrency[queue];
+    if (!concurrency) return; // not this role's queue
+    await boss.work<T>(
+      queue,
+      { batchSize: 1, includeMetadata: true, localConcurrency: concurrency },
+      async ([job]) => {
+        if (!job) return;
+        console.log(`[worker] ${queue} job ${job.id} start (try ${job.retryCount + 1})`, job.data);
+        await runHandler(() => run(job.data, job.retryCount));
+        console.log(`[worker] ${queue} job ${job.id} done`);
+      },
+    );
+  };
 
-  // includeMetadata: retryCount drives the FAILED-vs-requeue status decision
-  await boss.work<RenderJobData>(
-    QUEUES.render,
-    { batchSize: 1, includeMetadata: true },
-    async ([job]) => {
-      if (!job) return;
-      console.log(`[worker] render job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await runHandler(() => handleRender(job.data, job.retryCount));
-      console.log(`[worker] render job ${job.id} done`);
-    },
-  );
-
-  await boss.work<RefGenJobData>(
-    REFGEN_QUEUE,
-    { batchSize: 1, includeMetadata: true },
-    async ([job]) => {
-      if (!job) return;
-      console.log(`[worker] refgen job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await runHandler(() => handleRefGen(job.data, job.retryCount));
-      console.log(`[worker] refgen job ${job.id} done`);
-    },
-  );
-
-  await boss.work<GenJobData>(
-    GEN_QUEUE,
-    { batchSize: 1, includeMetadata: true },
-    async ([job]) => {
-      if (!job) return;
-      console.log(`[worker] gen job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await runHandler(() => handleGen(job.data, job.retryCount));
-      console.log(`[worker] gen job ${job.id} done`);
-    },
-  );
-
+  await consume<IngestJobData>(QUEUES.ingest, (data) => handleIngest(data));
+  await consume<RenderJobData>(QUEUES.render, handleRender);
+  await consume<RefGenJobData>(REFGEN_QUEUE, handleRefGen);
+  await consume<GenJobData>(GEN_QUEUE, handleGen);
   // $0 caption job ($0 — whisper.cpp only, NEVER fal): SEPARATE queue from render
   // so a slow transcribe never blocks a render.
-  await boss.work<CaptionJobData>(
-    QUEUES.caption,
-    { batchSize: 1, includeMetadata: true },
-    async ([job]) => {
-      if (!job) return;
-      console.log(`[worker] caption job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await runHandler(() => handleCaption(job.data, job.retryCount));
-      console.log(`[worker] caption job ${job.id} done`);
-    },
-  );
-
+  await consume<CaptionJobData>(QUEUES.caption, handleCaption);
   // Otto deep research (research S3, the MONEY CORE): bounded search→read→synthesize agent,
   // metered by ONE withLlmBudget. retryLimit:0 (RESEARCH_QUEUE_POLICY) + a status CAS in
   // handleResearch make any redelivery a no-op — a failed run does NOT auto-retry into the spend.
-  await boss.work<{ jobId: string }>(
-    RESEARCH_QUEUE,
-    { batchSize: 1, includeMetadata: true },
-    async ([job]) => {
-      if (!job) return;
-      console.log(`[worker] research job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await runHandler(() => handleResearch(job.data as ResearchJobData, job.retryCount));
-      console.log(`[worker] research job ${job.id} done`);
-    },
-  );
-
+  await consume<ResearchJobData>(RESEARCH_QUEUE, handleResearch);
   // L1 organic publish (spec §四A). One due, approved ScheduledPost per job → drives the shared
   // adapter orchestration. Fail-closed by construction: the scheduler below only enqueues posts
   // whose connection can publish RIGHT NOW, and the handler re-checks + triple-locks idempotency.
-  await boss.work<PublishJobData>(
-    PUBLISH_QUEUE,
-    { batchSize: 1, includeMetadata: true },
-    async ([job]) => {
-      if (!job) return;
-      console.log(`[worker] publish job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await runHandler(() => handlePublish(job.data, job.retryCount));
-      console.log(`[worker] publish job ${job.id} done`);
-    },
-  );
+  await consume<PublishJobData>(PUBLISH_QUEUE, handlePublish);
+  // #784 素材理解三件套。**不碰商家余额**(理解是平台成本),所以它和钱路队列的形状不同:
+  // 允许正常重试,防重靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS。
+  //
+  // 返回值 = 要立刻接着跑的那一行(caption 认出这张图是菜单之后建出来的 doc-extract 行)。
+  // 在这里发,而不是等下一轮扫描 —— 差别是商家的十分钟。send 失败也不丢:行还是 QUEUED,
+  // 扫描器的重投窗口照样兜住它。
+  await consume<UnderstandJobData>(UNDERSTAND_QUEUE, async (data, retryCount) => {
+    const followUp = await handleUnderstand(data, retryCount);
+    if (!followUp) return;
+    await boss.send(UNDERSTAND_QUEUE, { understandingId: followUp } satisfies UnderstandJobData, {
+      singletonKey: `understand:${followUp}`,
+    });
+  });
 
   // Heartbeat: the status panel's "worker alive" signal (appendix A) + the durable
   // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
   // logged but never crashes the worker — health degrades to "stale", which is the signal.
   // #463: platform-level row (WorkerHeartbeat has no tenant), written under a named system identity.
-  const beat = () =>
-    runAsSystem("worker-heartbeat", () =>
-      prisma.workerHeartbeat
-        .upsert({ where: { id: "worker" }, create: { id: "worker", at: new Date() }, update: { at: new Date() } })
-        .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e)));
-  setInterval(() => {
-    console.log(`[worker] heartbeat ${new Date().toISOString()}`);
-    void beat();
-  }, 60_000);
-  void beat(); // flip /api/health to "up" immediately on boot, not after the first minute
+  //
+  // #796 判官 r1 P2-2: the row id is PER ROLE. Two split services sharing one `"worker"` row would
+  // let either one die invisibly — the survivor keeps the row fresh and /api/health keeps saying
+  // "up" while half the platform's work has stopped. `all` still writes `"worker"`, so the unsplit
+  // deployment (and everything reading that row today) is untouched.
+  //
+  // #797: the same row now also carries this deploy's identity (commit sha + config fingerprint),
+  // so admin can see when web and worker are NOT the same deploy — see ./heartbeat.ts.
+  //
+  // #797 judge r3 P2: the interval + boot beat live in startHeartbeat so they are actually TESTED.
+  // Inline here they were not: deleting the row id from either call kept both existing suites green.
+  startHeartbeat(plan);
 
   // Reaper: jobs the worker hung/crashed on (no redelivery → the on-claim stale path
   // never runs) would sit GENERATING forever, holding the credit reservation and spinning
@@ -254,6 +295,13 @@ async function main(): Promise<void> {
         // lapse, and nothing used to delete them either, so the table only ever grew.
         const vn = await reapExpiredAuthVerifications();
         if (vn) console.log(`[worker] reaped ${vn} expired auth verification row(s)`);
+        // #795: the same shape one table over. The rate-limit counters hold one row per (door ×
+        // counted party × live window), and the public doors let an anonymous caller choose how
+        // many of those exist — so without a sweep the table grows by one row per address anyone
+        // has ever probed and never gives one back. Rides this tick because it is exactly the
+        // same job: delete what is provably finished. (Better Auth prunes its own table.)
+        const rl = await pruneRateLimitCounters();
+        if (rl) console.log(`[worker] pruned ${rl} expired rate-limit counter(s)`);
         // Research: a worker SIGKILL'd mid-run (retryLimit:0 → no redelivery) strands the card
         // "Researching…" forever. Credits are already recovered by reapStaleLlmReservations above;
         // this flips the stranded RUNNING job → FAILED + its card → failed (pure UX, $0).
@@ -269,6 +317,11 @@ async function main(): Promise<void> {
           boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
         );
         if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
+        // #784: understanding rows a crashed worker left RUNNING. $0 and credit-free by
+        // construction — this chain never reserves — so the sweep just returns them to QUEUED
+        // and the scanner below re-delivers. A file half-read should be finished, not abandoned.
+        const un = await reapStaleUnderstanding();
+        if (un) console.log(`[worker] returned ${un} interrupted understanding row(s) to the queue`);
       });
     } catch (e) {
       console.error("[worker] reaper error:", e);
@@ -282,9 +335,17 @@ async function main(): Promise<void> {
   // (KL >= 03:00 + key-not-in-R2) makes every extra call a cheap no-op.
   // #463: intentionally NOT wrapped in a principal frame — db-backup.ts makes zero Prisma
   // calls (pg_dump → R2). Do not flag it as a missing system context.
-  setInterval(() => { void reap(); void maybeRunNightlyBackup(); }, 5 * 60_000);
-  void reap(); // also sweep once on startup (clears anything stranded by a prior crash)
-  void maybeRunNightlyBackup(); // startup check too — a worker restart must not skip a missed night
+  //
+  // #796: supervision runs in ONE role, never both. Everything it sweeps is a wait-type money
+  // row (gen/refgen/research/publish holds, LLM reservations) so it rides the wait service; the
+  // compute service only heartbeats. Two services both reaping would not corrupt anything — every
+  // reaper write is a conditional CAS — but it would double the scan load and split the logs, and
+  // "which service refunded this merchant" should have one answer.
+  if (plan.supervises) {
+    setInterval(() => { void reap(); void maybeRunNightlyBackup(); }, 5 * 60_000);
+    void reap(); // also sweep once on startup (clears anything stranded by a prior crash)
+    void maybeRunNightlyBackup(); // startup check too — a worker restart must not skip a missed night
+  }
 
   // L1 publish scheduler (spec §四A): IG has no native scheduling, so we poll for due, approved
   // posts and enqueue them. The scan is canPublish-gated → before App Review it returns nothing,
@@ -311,10 +372,57 @@ async function main(): Promise<void> {
       scheduling = false;
     }
   };
-  setInterval(() => void schedule(), 60_000);
-  void schedule(); // sweep due posts once on startup too
+  if (plan.supervises) {
+    setInterval(() => void schedule(), 60_000);
+    void schedule(); // sweep due posts once on startup too
+  }
 
-  console.log("[worker] started — queues:", Object.values(QUEUES).join(", "));
+  // #784 asset understanding — the ONLY producer on UNDERSTAND_QUEUE, and deliberately so:
+  // the merchant never presses "Analyse". This scan finds files nobody has read yet, claims
+  // each one by CREATING its AssetUnderstanding row (the (ownerId, assetId, kind) unique index
+  // IS the claim, so two replicas scanning at once can't double-read), and enqueues the claims.
+  // A send that fails leaves the row QUEUED; the next scan past the redispatch window re-sends it.
+  //
+  // Rides the same supervision flag as the publish scheduler: one service produces, or the same
+  // file gets claimed twice as often as it needs to be.
+  let understanding = false;
+  const readNewFiles = async () => {
+    if (understanding) return;
+    understanding = true;
+    try {
+      // #463: the scan spans every authorized tenant by design — the function opens its own named
+      // system identity, and each row write inside it re-enters with that row's tenant.
+      const ids = await scanAssetsNeedingUnderstanding();
+      for (const understandingId of ids) {
+        await boss.send(UNDERSTAND_QUEUE, { understandingId } satisfies UnderstandJobData, {
+          singletonKey: `understand:${understandingId}`,
+        });
+      }
+      if (ids.length) console.log(`[worker] queued ${ids.length} file(s) for understanding`);
+    } catch (e) {
+      console.error("[worker] understanding scan error:", e);
+      captureError(e);
+    } finally {
+      understanding = false;
+    }
+  };
+  if (plan.supervises) {
+    // The cost account, printed once at boot so nobody has to derive it from the code. It is a
+    // PLATFORM number in real dollars — "what can this cost us in a day" is a platform question,
+    // so a per-merchant row count was never an answer to it.
+    console.log(
+      `[worker] asset understanding — platform budget $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
+        `(${assetUnderstandingEnabled(process.env) ? "switch ON" : "switch OFF — paused, nothing is discarded"}). ` +
+        `Over budget or switched off, files stay queued and are read the next day. ` +
+        `Merchants are never charged for this.`,
+    );
+    // The interval is installed either way: the switch is re-read on EVERY scan, so flipping it
+    // off pauses the reading instead of destroying whatever arrives while it is off.
+    setInterval(() => void readNewFiles(), 60_000);
+    void readNewFiles(); // read anything that arrived while we were down
+  }
+
+  console.log(`[worker] started — ${planSummary(plan)}`);
 }
 
 // Graceful shutdown: finish in-flight work, then release pg connections.
