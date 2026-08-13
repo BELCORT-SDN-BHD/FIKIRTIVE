@@ -20,9 +20,14 @@
  * 回执里。悬浮态发现,不占位、不打断高频操作。
  */
 
-/** #914:静态能力说明,白标(不出现供应商名),视频这条产品线目前唯一的事实。 */
+/**
+ * #914 r2(orchestrator 裁定,判官同一条原则贯彻到底):只许主张可证明的**回报行为**
+ * （官方契约:视频响应结构可能带 revised_prompt),不许主张「引擎改了才回报」这类内部
+ * 触发条件——那是我们证明不了的因果关系,原来的「when it changes what you wrote」正是
+ * 这个不可证明的断言(而且与 manage-library.ts 的措辞矛盾:回报了不等于真的改了)。
+ */
 export const VIDEO_ENGINE_PROMPT_CAPABILITY_NOTE =
-  "This engine may report back a rewritten version of your prompt when it changes what you wrote.";
+  "This engine may report the prompt it runs.";
 
 /**
  * 形状那一格的人话。

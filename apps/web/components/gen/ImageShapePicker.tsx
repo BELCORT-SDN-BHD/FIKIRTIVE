@@ -17,9 +17,13 @@
  * 不打断高频操作。
  */
 
-/** #914：静态能力说明，白标（不出现供应商名），图片这条产品线目前唯一的事实。 */
+/**
+ * #914 r2(orchestrator 裁定,判官同一条原则贯彻到底):只许主张可证明的**回报行为**
+ * （官方契约：图片响应结构没有 revised_prompt），不许主张引擎内部「原样执行 / 不改写」——
+ * 那件事我们证明不了，此前的措辞正是这个不可证明的断言。
+ */
 export const IMAGE_ENGINE_PROMPT_CAPABILITY_NOTE =
-  "This engine sends your prompt through unchanged and does not report back a rewritten version.";
+  "This engine does not report the prompt it runs.";
 
 export function ImageShapePicker({
   value,
