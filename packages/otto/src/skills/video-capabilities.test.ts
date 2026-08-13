@@ -7,6 +7,7 @@ import {
   videoAction,
   actionNeedsClip,
   openingForTeaching,
+  videoActionFromPrompt,
   VIDEO_CLIP_TOKEN,
   type VideoAction,
 } from "./video-capabilities.js";
@@ -91,6 +92,47 @@ describe("官方句式与禁词 —— 剪辑/续写这两件事的全部要害"
   it("没有官方句式的动作,教学面也没有", () => {
     expect(openingForTeaching("guideFromClip")).toBeNull();
     expect(openingForTeaching("fromText")).toBeNull();
+  });
+});
+
+describe("从提示词认动作 —— 认的是官方开头,不是关键词", () => {
+  it("两个官方开头互不吃掉", () => {
+    expect(videoActionFromPrompt(`${videoAction("editClip").opening} the shirt.`)).toBe("editClip");
+    expect(videoActionFromPrompt(`${videoAction("extendClip").opening} forward, he waves.`)).toBe("extendClip");
+  });
+
+  it("前面有空白照样认(装配层不产,但认的这一端不该因此变脆)", () => {
+    expect(videoActionFromPrompt(`\n  ${videoAction("editClip").opening} the shirt.`)).toBe("editClip");
+  });
+
+  it("普通提示词一律回 null —— 不猜", () => {
+    for (const plain of [
+      "cinematic quality, natural motion, film-grade color, sharp focus",
+      "a jar of sambal turns slowly on a marble counter",
+      "",
+      "   ",
+    ]) {
+      expect(videoActionFromPrompt(plain)).toBeNull();
+    }
+  });
+
+  it("**只在开头**才算 —— 句中提到那几个词不构成一个动作", () => {
+    for (const nearMiss of [
+      "The client asked me to strictly edit <Video_1>, and modify the shirt.",
+      "Later we will extend <Video_1> forward.",
+      "Extend the clip forward, he waves.", // 没有编号 = 不是官方句式
+      "Strictly edit the clip, and modify the shirt.", // 同上(这是**教学面**的写法)
+    ]) {
+      expect(videoActionFromPrompt(nearMiss)).toBeNull();
+    }
+  });
+
+  it("没有官方句式的那几个动作,永远不会被认出来 —— 它们本来就没有开头可认", () => {
+    for (const id of VIDEO_ACTION_IDS) {
+      if (videoAction(id).opening === null) {
+        expect(VIDEO_ACTIONS.filter((c) => c.id === id && c.opening !== null)).toEqual([]);
+      }
+    }
   });
 });
 
