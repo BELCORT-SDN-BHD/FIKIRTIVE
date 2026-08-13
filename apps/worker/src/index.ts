@@ -33,6 +33,8 @@ import { handleUnderstand, reapStaleUnderstanding, scanAssetsNeedingUnderstandin
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
+import { assertWorkerEnv } from "./boot-env.js";
+import { startHeartbeat } from "./heartbeat.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -63,9 +65,14 @@ import {
   type PublishJobData,
   type UnderstandJobData,
 } from "@fikirtive/core";
-import { prisma } from "@fikirtive/db";
 import { pruneRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { runAsSystem } from "@fikirtive/db/principal";
+
+// #797 env contract, fail-FAST: a production worker whose required configuration is missing, or
+// whose values are the wrong shape, exits here instead of running jobs that will fail in odd
+// places later. Outside production it only warns. (The fail-SOFT publish-chain check below asks
+// a different question and stays.)
+assertWorkerEnv();
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
 // from PgBouncer and the direct path avoids pooler quirks (audit P3).
@@ -253,17 +260,13 @@ async function main(): Promise<void> {
   // let either one die invisibly — the survivor keeps the row fresh and /api/health keeps saying
   // "up" while half the platform's work has stopped. `all` still writes `"worker"`, so the unsplit
   // deployment (and everything reading that row today) is untouched.
-  const heartbeatId = plan.heartbeatId;
-  const beat = () =>
-    runAsSystem("worker-heartbeat", () =>
-      prisma.workerHeartbeat
-        .upsert({ where: { id: heartbeatId }, create: { id: heartbeatId, at: new Date() }, update: { at: new Date() } })
-        .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e)));
-  setInterval(() => {
-    console.log(`[worker] heartbeat ${heartbeatId} ${new Date().toISOString()}`);
-    void beat();
-  }, 60_000);
-  void beat(); // flip /api/health to "up" immediately on boot, not after the first minute
+  //
+  // #797: the same row now also carries this deploy's identity (commit sha + config fingerprint),
+  // so admin can see when web and worker are NOT the same deploy — see ./heartbeat.ts.
+  //
+  // #797 judge r3 P2: the interval + boot beat live in startHeartbeat so they are actually TESTED.
+  // Inline here they were not: deleting the row id from either call kept both existing suites green.
+  startHeartbeat(plan);
 
   // Reaper: jobs the worker hung/crashed on (no redelivery → the on-claim stale path
   // never runs) would sit GENERATING forever, holding the credit reservation and spinning
