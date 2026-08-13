@@ -78,9 +78,15 @@ commit 里改那份手写清单。
 对。原因是那些清单都按「面」枚举，而 #874 前五轮每一轮都被找出一个清单没枚举到的新
 面——r5 那两个是：安装步用 `>> $GITHUB_ENV` 把 `npm_config_script_shell` 交给下一步
 （腿自己的命令一个字没改），以及 job 上的 `container: { image, env }`（job 级 `env:`
-刚被禁掉，换个键照样进到该 job 每一个 step 里）。整体比对不看面，所以不存在「没枚举
-到的面」：`container`、`uses` 的版本、`with`、`services.postgres.env`、多一个 step、
-两个 step 对调、任何一段 `run` 改一个字符，都是不同的字节。
+刚被禁掉，换个键照样进到该 job 每一个 step 里）。整体比对不按「面」工作，所以也不会被
+「谁都没想到的那个面」绕过：`container`、`uses` 的版本、`with`、`services.postgres.env`、
+多一个 step、两个 step 对调、任何一段 `run` 改一个字符，都是不同的字节。
+
+有一个例外值得写下来，因为 r6 复审就是从这里进来的：YAML 1.1 会把顶层 `on:` 这个**键**
+读成布尔 true，所以比对前有一次归一化。复审把 `on:` 换成 `"true":`，三个解析器读出来
+一模一样、规范化字节也没变，而 GitHub 只认 `on`。归一化天然分不出这两者——「把它们合成
+一个」正是归一化的定义。所以现在**先看原始字节**：顶层必须正好有一行 `on:`，并且不许有
+别的拼成 YAML 1.1 布尔值的顶层键。
 
 代价是：**改 ci.yml 就一定红，直到在同一个 commit 里重新生成那段字面量**——这正是设
 计意图，让每一次 workflow 改动都变成一份人能读、评审能签的 diff。重新生成：
@@ -93,13 +99,65 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh
 检查跑完，永远不能拿它绕过比对）。**贴之前先看 diff**：闭着眼睛重新生成，等于亲手把这
 道闸关掉。
 
-这道闸自己也有演习：`bash scripts/__tests__/quality-legs.drill.sh`（约 5 分钟）在临时
-目录里复制一份仓库，逐个把 ci.yml 改坏——上面每一种形状都在内——要求自测每一次都红；
-再验三件事：合法现状必须绿、「改了 ci.yml 并重新生成字面量」必须绿、「改了并重新生成
-但没同步手写清单」必须仍然红。
-
 扇入 job 的脚本不只被读，还会被自测**真跑一遍**：把它从 ci.yml 里解析出来，用五条腿
 各种非绿组合喂进去，验证它确实判失败。只读文件只能证明比较写在那里，跑一遍才能证明
 比较被执行到。
+
+## 这道闸自己会不会被关掉
+
+会。而且这不是「再补一道检查」能堵上的洞，所以把边界写清楚比多写一道检查有用。
+
+上面所有检查都跑在 `pnpm quality --leg typecheck` 里面——七个 job 中的一个，而且排在那
+个 job 的安装步之后。r6 复审给出的做法是：在 typecheck 的**安装步**里写一行
+`npm_config_script_shell=/bin/echo >> $GITHUB_ENV`，下一步的 `pnpm quality` 就只把自己
+那条命令回显一遍、退出 0——自测根本没启动，逐字节比对没有意见（因为它没跑），扇入收到
+`typecheck: success`。**判官装在它要检查的那台机器里，就能跟那台机器一起被关掉**，这是
+自测这种东西的结构性事实，不是多写一条检查能修的缺陷。
+
+所以接住这一手的东西不在自测里，在 ci.yml 里：**每个 job 的第 2 步**——checkout 之后、
+任何 setup / install / `$GITHUB_ENV` 写入之前——重新算一遍 ci.yml 的 sha256，跟仓库里
+committed 的 `.github/ci-workflow.lock` 比。它只用 `cut` 和 `sha256sum`，不碰 pnpm、
+node、python，所以后面的步骤往环境里塞什么都够不着它；`container.env` 确实能进到该 job
+的每一个 step，但写 `container:` 本身就是改 ci.yml，也就是改了指纹。
+
+**它买到的，准确说只有这一条**：任何没有同步重算锁文件的 ci.yml 改动，七个 job 会在第
+一时间全部红——包括把某一个 job 里的这一步删掉或改废，因为另外六个 job 照样算整份文件
+的指纹。
+
+**它买不到的，同样写清楚**：锁文件是可以重算的（`bash scripts/ci/ci-workflow-lock.sh`）。
+真要掏空 CI 的人，可以在同一个 commit 里改 ci.yml 再把锁重算一遍，这道绊线就放行了。他
+做不到的是**不留痕迹**：绕过的动作从「一行看起来完全正常的 `env:`」变成「动了绊线那一步，
+或者动了 `.github/ci-workflow.lock` 这个除此以外没有任何用处的文件」。真正的机器地板不是
+脚本，是 protect-main ruleset 里那个名叫 `quality` 的 required check（bypass_actors 为
+空），加上「改 `.github/workflows` 或 `scripts/ci` 的 PR 必须过复审」这条项目规矩。
+**这道闸是防未经复审的漂移的绊线，不是防铁了心的作者的墙——这个仓库里没有那种墙。**
+
+改了 ci.yml 之后，同一个 commit 里要做两件事，顺序如下：
+
+```bash
+bash scripts/ci/ci-workflow-lock.sh                                        # 1. 重算锁
+QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh # 2. 重生成字面量
+```
+
+`pnpm quality` 在本机也会验锁是不是当前的，所以忘了第 1 步会在本地就红，不用等 push。
+
+## 演习
+
+`bash scripts/__tests__/quality-legs.drill.sh`（实测约 8 分钟）在临时目录里复制一份仓库，逐个
+把 ci.yml 改坏——上面每一种形状都在内，**每次改坏都顺手把锁重算**，这样红的原因就一定是被
+测的那道检查而不是锁过期——要求自测每一次都红。共 30 个 case，其中：
+
+- r4/r5/r6 复审找出的每一种形状（不跑的 step、吃掉失败的 step、六种环境注入、
+  `$GITHUB_ENV`、`container`、版本/`with`/加 step/换顺序/`services.postgres.env`）；
+- **判官关自己那一组**：同样的注入打在 **typecheck** 腿上（此前每个 case 都打在自测不在
+  的腿上，自测总是跑得成）、把绊线从 typecheck 删掉、把七个 job 的绊线一起改废——验证锁
+  和手写期望各自都能接住；
+- 锁本身：ci.yml 改了而锁没重算、锁被清空；
+- 门：普通的合法改动（`pnpm/action-setup` 升版）+ 重新生成必须绿；改了并重新生成但没同步
+  手写清单必须仍然红——job 级 `env:` 是一例，`actions/checkout` 升版是另一例（r7 起「第 1
+  步必须是 checkout」也是手写钉死的一项，所以它要在两处各说一遍）；
+- 最后一个 case 是**故意绿的**：typecheck 被注入 + 锁重算 + 字面量重生成，自测和绊线都会
+  放行。它要求的不是「红」，而是「不可能安静地发生」——`.github/ci-workflow.lock` 必须出现
+  在 diff 里。把这一条写成 case 而不是写成一段话，是为了让它一直是真的。
 
 不要把重复执行同一批闸的 job 或第二套本地命令再加回来。

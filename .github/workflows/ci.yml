@@ -16,6 +16,37 @@ name: CI
 #     is still called `quality`, byte for byte
 # The third invariant lives in the fan-in job below: it fails closed on anything
 # that is not an explicit, expected success.
+#
+# ── THE TRIPWIRE, AND WHAT IT IS HONESTLY FOR ────────────────────────────────
+# Everything above runs INSIDE `pnpm quality --leg typecheck`. Review of #874 r6
+# pointed out the hole that makes it: put `npm_config_script_shell=/bin/echo` into
+# `$GITHUB_ENV` from the typecheck job's INSTALL step and `pnpm quality` prints its
+# own command and exits 0 — the self-test never starts, the fan-in is handed
+# `typecheck: success`, and nothing in the repository noticed. A checker that lives
+# inside the thing it checks can always be switched off by switching that thing off.
+#
+# So every job below runs ONE step before anything else can touch its environment:
+# right after `actions/checkout` (there is nothing to read before the checkout), and
+# before any setup, install or `$GITHUB_ENV` write. It compares this file, byte for
+# byte, against the sha256 committed in `.github/ci-workflow.lock`. It uses no pnpm,
+# no node, no python — `cut` and `sha256sum` — so nothing a later step exports can
+# reach it, and `container.env` (which does reach every step of a job) is a change to
+# THIS FILE and therefore a changed digest.
+#
+# WHAT IT BUYS, EXACTLY: any edit to ci.yml that does not come with a regenerated
+# lock file turns all seven jobs red, immediately, before a single gate would have
+# run — including edits that delete or neuter this very step in one job, because the
+# other six still hash the whole file.
+#
+# WHAT IT DOES NOT BUY, AND WE ARE NOT GOING TO PRETEND OTHERWISE: the lock is
+# regenerable (`bash scripts/ci/ci-workflow-lock.sh`). Someone who means to hollow
+# out CI can edit this file and regenerate the lock in the same commit, and the
+# tripwire will pass. What they cannot do is make it look like nothing happened: the
+# bypass is no longer an innocent-looking `env:` line, it is a diff that touches this
+# step or `.github/ci-workflow.lock`, a file that exists for nothing else. The floor
+# under that is not a script — it is the `quality` required check in the protect-main
+# ruleset (bypass_actors empty) plus the project rule that a PR touching
+# .github/workflows or scripts/ci goes through review. See docs/runbooks/local-ci.md.
 
 on:
   pull_request:
@@ -79,6 +110,17 @@ jobs:
       code: ${{ steps.scope.outputs.code }}
     steps:
       - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
 
       # This step does no interpretation at all: it saves both API responses verbatim
       # and forwards the answer.
@@ -204,6 +246,17 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -259,6 +312,17 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -289,6 +353,17 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -331,6 +406,17 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -361,6 +447,17 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -388,6 +485,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
       # Fail closed, stated positively: this step names the ONE outcome that passes and
       # rejects everything else, rather than listing the outcomes that fail. A status
       # nobody anticipated — a new GitHub result string, a leg that vanished from this

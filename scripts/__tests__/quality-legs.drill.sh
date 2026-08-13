@@ -23,21 +23,35 @@
 #       a different key that lands in the same place)
 #   and the faces no list had reached at all: an action version bumped, a `with:`
 #       injected, a step added, two steps swapped, `services.postgres.env` changed
+#   r7  the one r6's review named that all of the above miss BY CONSTRUCTION: every
+#       case up to r6 mutated a leg the self-test does not live in, so the self-test
+#       always ran. Aim the same mutations at the TYPECHECK leg and the self-test is
+#       the thing being switched off — it cannot report on its own absence. Those
+#       cases are the group below headed "the judge's own off switch", and what
+#       catches them is the tripwire in ci.yml (every job's step #2), reproduced
+#       here by leaving `.github/ci-workflow.lock` pinning the OLD file.
 #
-# The last two cases are about the DOOR rather than the wall: an intended change to
-# ci.yml, with the canonical block regenerated, must pass (that is the workflow), and
-# an intended change whose diagnostics were NOT restated must still fail (that is why
-# the diagnostics are kept).
+# The last cases are about the DOOR rather than the wall: an intended change to
+# ci.yml, with the canonical block regenerated, must pass (that is the workflow); an
+# intended change whose diagnostics were NOT restated must still fail (that is why
+# the diagnostics are kept); and one case where the self-test goes GREEN on purpose,
+# because the bypass it models is real — the drill's requirement there is that the
+# bypass could not be quiet, i.e. that it necessarily edits `.github/ci-workflow.lock`.
+#
+# EVERY MUTATION REGENERATES THE LOCK unless the case is about the lock itself. That
+# is not politeness: it keeps each case proving what it says it proves. Without it,
+# the stale-lock check would be the first thing to fire on all 20 older cases and
+# they would stop being evidence about the canonical comparison at all.
 #
 # Nothing here touches the real repository: every case runs against a fresh copy of
-# the four files the self-test reads.
+# the files the self-test reads.
 #
-# Run: bash scripts/__tests__/quality-legs.drill.sh          (about a minute)
+# Run: bash scripts/__tests__/quality-legs.drill.sh          (~8 min, measured)
 #      QUALITY_LEGS_DRILL_TMPDIR=./.drill-tmp bash scripts/__tests__/quality-legs.drill.sh
 
 set -euo pipefail
 
-expected_cases=21
+expected_cases=30
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && cd .. && pwd)"
@@ -48,6 +62,7 @@ sandbox="$(cd "$drill_root" && pwd)/quality-legs-drill.$$"
 trap 'rm -rf "$sandbox"' EXIT
 
 ci_yml="$sandbox/.github/workflows/ci.yml"
+lock_file="$sandbox/.github/ci-workflow.lock"
 test_sh="$sandbox/scripts/__tests__/quality-legs.test.sh"
 log="$sandbox/last.log"
 
@@ -59,15 +74,44 @@ reset_sandbox() {
   rm -rf "$sandbox"
   mkdir -p "$sandbox/.github/workflows" "$sandbox/scripts/ci" "$sandbox/scripts/__tests__"
   cp "$repo_root/.github/workflows/ci.yml" "$ci_yml"
+  cp "$repo_root/.github/ci-workflow.lock" "$lock_file"
   cp "$repo_root/scripts/ci/quality.sh" "$sandbox/scripts/ci/quality.sh"
+  cp "$repo_root/scripts/ci/ci-workflow-lock.sh" "$sandbox/scripts/ci/ci-workflow-lock.sh"
   cp "$repo_root/scripts/__tests__/quality-legs.test.sh" "$test_sh"
   cp "$repo_root/package.json" "$sandbox/package.json"
+}
+
+# The tripwire exactly as ci.yml carries it, for the cases that remove or neuter it.
+# It is written out here rather than read back out of ci.yml so that the drill cannot
+# quietly "mutate" nothing; the occurrence count patch_ci insists on is what says the
+# copy is still current.
+# (`read -d ''` and not `$(cat <<…)`: bash 3.2, which is what macOS ships, mis-parses
+# a here-document nested inside a command substitution when the body contains an odd
+# number of quote characters — and this body is a YAML comment written in English.)
+IFS= read -r -d '' tripwire_block <<'DRILL_TRIPWIRE_EOF' || true
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it.
+      - name: ci.yml is the reviewed one
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+DRILL_TRIPWIRE_EOF
+
+# What an author does after an intended ci.yml change, and what CI tells them to do
+# when they forget: rewrite the lock from the (mutated) file.
+relock_sandbox() {
+  bash "$sandbox/scripts/ci/ci-workflow-lock.sh" >/dev/null
 }
 
 # An anchored text edit on the sandbox's ci.yml. The anchor must appear EXACTLY the
 # number of times stated, or the drill stops: a mutation that silently did not apply
 # is a case that "passed" without ever being run.
-patch_ci() { # <anchor> <replacement> [<expected occurrences, default 1>]
+patch_ci_text() { # <anchor> <replacement> [<expected occurrences, default 1>]
   python3 -c '
 import sys
 path, anchor, repl, want = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
@@ -78,6 +122,43 @@ if got != want:
 open(path, "w", encoding="utf-8").write(src.replace(anchor, repl))
 ' "$ci_yml" "$1" "$2" "${3:-1}"
 }
+
+# The same edit, but confined to one job's block, for the cases that have to name a
+# job whose steps are byte-identical to five others' (every job now opens with the
+# same checkout and the same tripwire, so "lint's checkout" is not a unique string).
+patch_ci_in_job() { # <job> <anchor> <replacement> [<expected occurrences, default 1>]
+  python3 -c '
+import re, sys
+path, job, anchor, repl, want = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
+lines = open(path, encoding="utf-8").read().split("\n")
+starts = [i for i, l in enumerate(lines) if l == "  %s:" % job]
+if len(starts) != 1:
+    sys.exit("drill: found %d job blocks called %r" % (len(starts), job))
+start = starts[0]
+end = len(lines)
+for i in range(start + 1, len(lines)):
+    if re.match(r"^  [A-Za-z_][A-Za-z0-9_-]*:", lines[i]):
+        end = i
+        break
+block = "\n".join(lines[start:end])
+got = block.count(anchor)
+if got != want:
+    sys.exit("drill: anchor found %d time(s) inside job %r, expected %d: %r" % (got, job, want, anchor[:70]))
+patched = block.replace(anchor, repl)
+open(path, "w", encoding="utf-8").write("\n".join(lines[:start] + patched.split("\n") + lines[end:]))
+' "$ci_yml" "$1" "$2" "$3" "${4:-1}"
+}
+
+# The default: mutate, then regenerate the lock, so that the stale-lock check is
+# never what makes the case red and every case still proves what it claims.
+patch_ci() { patch_ci_text "$@"; relock_sandbox; }
+patch_ci_job() { patch_ci_in_job "$@"; relock_sandbox; }
+# And the deliberate opposite, for the cases that ARE about the lock: mutate ci.yml
+# and leave the lock pinning the file as it was. That is what CI sees when someone
+# edits the workflow and does not say so — in ci.yml it is caught by every job's
+# step #2, before any leg starts; here it is caught by 3f.
+patch_ci_stale() { patch_ci_text "$@"; }
+patch_ci_job_stale() { patch_ci_in_job "$@"; }
 
 # Regenerate the sandbox self-test's canonical blocks from the sandbox's (mutated)
 # ci.yml — exactly what a human does after an intended workflow change, through the
@@ -142,6 +223,35 @@ expect_green() { # <description>
     fail=$((fail + 1))
     printf '  RED (rc=%s) — FALSE ALARM  %s\n' "$rc" "$desc" >&2
     sed 's/^/      /' "$log" >&2
+  fi
+}
+
+# The one case that is allowed to pass, and the only one whose requirement is about
+# the DIFF rather than about an exit status. Some bypasses are real: an author who
+# edits ci.yml and regenerates the lock in the same commit gets a green self-test and
+# a green tripwire, and pretending otherwise is how r1-r6 each shipped a claim the
+# next round falsified. What is required instead is that the bypass cannot be quiet —
+# that it necessarily shows up as an edit to files whose only job is to be looked at.
+expect_green_only_by_visible_edit() { # <description> <file that must have changed>…
+  local desc="$1"
+  shift
+  local rc unchanged=() f
+  rc="$(run_self_test)"
+  total=$((total + 1))
+  for f in "$@"; do
+    if cmp -s "$sandbox/$f" "$repo_root/$f"; then unchanged+=("$f"); fi
+  done
+  if [[ "$rc" == "0" && "${#unchanged[@]}" == "0" ]]; then
+    pass=$((pass + 1))
+    printf '  GREEN, and it had to touch %s   %s\n' "$*" "$desc"
+  elif [[ "$rc" != "0" ]]; then
+    # Not a wrong-PASS, but the case no longer models what it says it models.
+    fail=$((fail + 1))
+    printf '  RED (rc=%s) — this case is supposed to model a real bypass  %s\n' "$rc" "$desc" >&2
+    sed 's/^/      /' "$log" >&2
+  else
+    fail=$((fail + 1))
+    printf '  GREEN AND SILENT — WRONG-PASS  %s (unchanged: %s)\n' "$desc" "${unchanged[*]}" >&2
   fi
 }
 
@@ -240,29 +350,16 @@ echo
 echo "and the faces no list had reached at all:"
 
 reset_sandbox
-patch_ci '      - uses: actions/checkout@v4' '      - uses: actions/checkout@v3' 6
+patch_ci '      - uses: actions/checkout@v4' '      - uses: actions/checkout@v3' 7
 expect_red "actions/checkout pinned to another version"
 
 reset_sandbox
-patch_ci '      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm quality --leg lint' \
-'      - uses: actions/checkout@v4
+patch_ci_job lint '      - uses: actions/checkout@v4
+' '      - uses: actions/checkout@v4
         with:
           repository: someone-else/fikirtive
           ref: main
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm quality --leg lint'
+'
 expect_red "a with: block injected into lint's checkout (another repository, another ref)"
 
 reset_sandbox
@@ -296,12 +393,77 @@ patch_ci '  checks:
 expect_red "container: on checks as a bare image string"
 echo
 
-echo "the door: an intended change, stated in the same commit — and one that was not:"
+echo "r6's review — the judge's own off switch (every case above left the typecheck leg running):"
+
+# The r6 P0, aimed where it was meant to be aimed. Up to r6 every case mutated a leg
+# the self-test does not live in, so the self-test always ran and could always report.
+# Put the same poison in the TYPECHECK job and the self-test is the thing being turned
+# off: `pnpm quality --leg typecheck` prints its own command and exits 0, so nothing
+# below this line would have run in CI at all. What is left is the tripwire, in this
+# job and in six others, and it fires on the lock — which is why these cases leave the
+# lock pinning the file as it was.
+reset_sandbox
+patch_ci_job_stale typecheck '      - run: pnpm install --frozen-lockfile' \
+'      - run: |
+          echo "npm_config_script_shell=/bin/echo" >> "$GITHUB_ENV"
+          pnpm install --frozen-lockfile'
+expect_red "TYPECHECK's install step exports npm_config_script_shell (this is the leg that runs the self-test)"
 
 reset_sandbox
-patch_ci '      - uses: actions/checkout@v4' '      - uses: actions/checkout@v5' 6
+patch_ci_stale '  typecheck:
+    name: typecheck' \
+'  typecheck:
+    name: typecheck
+    container:
+      image: node:22
+      env:
+        npm_config_script_shell: /bin/echo'
+expect_red "container: { image, env } on TYPECHECK (reaches every step of the leg that runs the self-test)"
+
+reset_sandbox
+patch_ci_job_stale typecheck "$tripwire_block" ''
+expect_red "the tripwire deleted from typecheck, lock left alone (the other six jobs still hash the whole file)"
+
+reset_sandbox
+patch_ci_job typecheck "$tripwire_block" ''
 regen_sandbox
-expect_green "checkout bumped AND the canonical block regenerated (this is the workflow)"
+expect_red "the tripwire deleted from typecheck AND lock and canonical block both regenerated — the hand-written expectation in 3f still refuses it"
+
+reset_sandbox
+patch_ci '          set -eu
+          want=' \
+'          set -eu
+          exit 0
+          want=' 7
+regen_sandbox
+expect_red "the tripwire neutered in ALL SEVEN jobs (exit 0 first) AND everything regenerated — 3f compares its script byte for byte"
+echo
+
+echo "the lock itself:"
+
+reset_sandbox
+patch_ci_stale '  merge_group:' '  merge_group:
+  # a comment nobody stated'
+expect_red "ci.yml edited and .github/ci-workflow.lock left pinning the old file"
+
+reset_sandbox
+: >"$lock_file"
+expect_red "an empty .github/ci-workflow.lock"
+echo
+
+echo "the door: an intended change, stated in the same commit — and one that was not:"
+
+# The action bumped here is `pnpm/action-setup`, NOT `actions/checkout`, and the
+# difference is the point. Since r7 the checkout is one of the things 3f states by
+# hand (it has to be step #1, or the tripwire has nothing to hash yet), so bumping it
+# is red until that line is restated too — the same "say it twice" rule the gate map
+# and the env tables have always had. `pnpm/action-setup` is stated nowhere by hand,
+# so it is the honest test of the DOOR: an ordinary intended change, regenerated in
+# the same commit, must go green.
+reset_sandbox
+patch_ci '      - uses: pnpm/action-setup@v4' '      - uses: pnpm/action-setup@v5' 5
+regen_sandbox
+expect_green "pnpm/action-setup bumped AND the canonical block regenerated (this is the workflow)"
 
 reset_sandbox
 patch_ci '  lint:
@@ -312,6 +474,32 @@ patch_ci '  lint:
       npm_config_script_shell: /bin/echo'
 regen_sandbox
 expect_red "job-level env: added AND the canonical block regenerated — the diagnostics still refuse it"
+
+reset_sandbox
+patch_ci '      - uses: actions/checkout@v4' '      - uses: actions/checkout@v5' 7
+regen_sandbox
+expect_red "actions/checkout bumped AND the canonical block regenerated — 3f pins step #1 by hand, so this one has to be said twice"
+echo
+
+echo "and the bypass that is REAL — the requirement here is that it cannot be quiet:"
+
+# This is the honest end of the recursion, and it is stated as a case rather than as
+# a paragraph so that it stays true. An author who poisons the typecheck leg AND
+# regenerates the lock AND regenerates the canonical block gets a green self-test and
+# a green tripwire: a checker that ships in the same tree as the thing it checks can
+# always be re-blessed by whoever edits the tree. What is left, and what is required
+# here, is that doing it necessarily edits .github/ci-workflow.lock — a file that
+# exists for nothing else, in a PR that already has to pass review to touch
+# .github/workflows at all.
+reset_sandbox
+patch_ci_job typecheck '      - run: pnpm install --frozen-lockfile' \
+'      - run: |
+          echo "npm_config_script_shell=/bin/echo" >> "$GITHUB_ENV"
+          pnpm install --frozen-lockfile'
+regen_sandbox
+expect_green_only_by_visible_edit \
+  "typecheck poisoned AND lock AND canonical both regenerated — the machine says yes, the diff says what happened" \
+  .github/ci-workflow.lock .github/workflows/ci.yml
 echo
 
 echo "and the workflow as it is, once more, after all of that:"
