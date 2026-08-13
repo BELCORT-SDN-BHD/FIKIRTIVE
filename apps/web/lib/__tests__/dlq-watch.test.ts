@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEAD_LETTER_QUEUES } from "@fikirtive/core";
 import { checkDeadLetters, DEAD_LETTER_CACHE_MS } from "@/lib/dlq-watch";
+import { READY_DATABASE_TIMEOUT_MS } from "@/lib/health";
 
 /**
  * 巡检的缓存 / 上报 / 判定行为。
@@ -36,6 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.useRealTimers(); // 部分用例(超时形状)会临时切到假计时器;别让它漏到下一条用例
 });
 
 describe("checkDeadLetters", () => {
@@ -91,16 +93,78 @@ describe("checkDeadLetters", () => {
     expect(queryRaw).toHaveBeenCalledTimes(2);
   });
 
-  it("propagates a database failure instead of reporting a clean bill of health", async () => {
-    queryRaw.mockRejectedValue(new Error("connect ECONNREFUSED"));
-    await expect(checkDeadLetters(clock)).rejects.toThrow(/ECONNREFUSED/);
+  // r3(判官 r2 P1):缓存直到查询完成后才写入,冷启动/缓存到期那一刻,N 个并发请求
+  // 各自看见「没有可用缓存」,以前会各发一条 SELECT——免鉴权路由因此能把 N 条请求放大成
+  // N 条打到 Prisma 连接池的查询。现在并发请求共享同一趟在途 promise(single-flight,
+  // 与 /api/health、/api/ready 同一模式)。
+  it("shares one query across concurrent requests on a cold cache (single-flight)", async () => {
+    const results = await Promise.all(Array.from({ length: 8 }, () => checkDeadLetters(clock)));
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(results.every((census) => census.status === "clear")).toBe(true);
   });
 
-  it("does not cache a failed read", async () => {
-    queryRaw.mockRejectedValueOnce(new Error("down"));
-    await expect(checkDeadLetters(clock)).rejects.toThrow();
+  // r3(判官 r2 P1):这两条推翻了 r2「查询失败不缓存」的规定(即上面被删掉的
+  // "does not cache a failed read")。那条规定当时是为了防止一次失败被误判成 clear、
+  // 还被当真相缓存下来——但现在失败根本不再是「误判成 clear」,它诚实地变成
+  // `unknown`(fail closed,和缺席的队列走同一个分支)。诚实的结果缓存起来没有风险;
+  // 不缓存才是问题所在:免鉴权路由 + 库故障期间不缓存 = 每一个未鉴权请求都再打一次库,
+  // 这正是本轮 P1 要堵的洞。缓存窗口因此**同时是**成功读和失败读共用的负缓存 TTL。
+  it("answers unknown — fail closed — instead of throwing when the query fails", async () => {
+    queryRaw.mockRejectedValue(new Error("connect ECONNREFUSED"));
     const census = await checkDeadLetters(clock);
-    expect(census.status).toBe("clear");
+    expect(census.status).toBe("unknown");
+    expect(census.missing).toEqual([...DEAD_LETTER_QUEUES]);
+  });
+
+  it("caches a failed read too, so a database outage is not hammered once per request", async () => {
+    queryRaw.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const first = await checkDeadLetters(clock);
+    expect(first.status).toBe("unknown");
+
+    // 仍在负缓存窗口内的第二、第三次请求复用第一次的失败结果,不再次打库。
+    const second = await checkDeadLetters(clock + 1);
+    const third = await checkDeadLetters(clock + DEAD_LETTER_CACHE_MS - 1);
+    expect(second.status).toBe("unknown");
+    expect(third.status).toBe("unknown");
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  // 故障期的并发请求同样只打一次库(single-flight 与负缓存叠加,不是二选一)。
+  it("also single-flights concurrent requests during an outage", async () => {
+    queryRaw.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const results = await Promise.all(Array.from({ length: 8 }, () => checkDeadLetters(clock)));
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(results.every((census) => census.status === "unknown")).toBe(true);
+  });
+
+  it("re-queries once the negative-cache window has passed, and recovers once the database answers again", async () => {
+    queryRaw.mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
+    const first = await checkDeadLetters(clock);
+    expect(first.status).toBe("unknown");
+
+    queryRaw.mockResolvedValueOnce(emptyRows());
+    const second = await checkDeadLetters(clock + DEAD_LETTER_CACHE_MS);
+    expect(second.status).toBe("clear");
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  // r3(判官 r2 P1):查询带有界等待,与 /api/ready 同量级预算——一条卡住很久的查询
+  // (连接卡死的形状)不许把探针一起挂住,超时后仍然要如实答 unknown。
+  it("does not hang when the query is stuck — resolves unknown within the DB timeout budget", async () => {
+    vi.useFakeTimers();
+    // 用「迟到很久」而不是真正永不 settle 的 Promise:底层查询共享一个模块级单例
+    // (`queryJobTable` 的 single-flight,和 /api/health·/api/ready 同一份实现),一条
+    // 真正永远不 settle 的 Promise 会把它焊死,污染同一文件里排在后面的用例。
+    const late = new Promise((resolve) => setTimeout(() => resolve(emptyRows()), 10 * READY_DATABASE_TIMEOUT_MS));
+    queryRaw.mockReturnValue(late);
+
+    const resultPromise = checkDeadLetters(clock);
+    await vi.advanceTimersByTimeAsync(READY_DATABASE_TIMEOUT_MS);
+    await expect(resultPromise).resolves.toMatchObject({ status: "unknown", missing: [...DEAD_LETTER_QUEUES] });
+
+    // 让那条迟到的查询真正落地,清空底层 single-flight,不留状态给下一条用例。
+    await vi.advanceTimersByTimeAsync(9 * READY_DATABASE_TIMEOUT_MS);
+    await late;
   });
 });
 
@@ -136,6 +200,24 @@ describe("dead-letter reporting", () => {
 
     await checkDeadLetters(clock + DEAD_LETTER_CACHE_MS);
     expect(captureMessage).toHaveBeenCalledTimes(2);
+  });
+
+  // r3(判官 r2 P1):single-flight 收敛了大半重复上报——N 个并发请求共享同一趟
+  // 「查询 + 写缓存 + 上报」,而不是各自算出同一份 census 后各报一次 Sentry。
+  it("reports at most once to Sentry even when requests race on the same cold window", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://key@o1.ingest.example/2");
+    queryRaw.mockResolvedValue(backedUp());
+    await Promise.all(Array.from({ length: 8 }, () => checkDeadLetters(clock)));
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+  });
+
+  // 同一条道理,但触发面是数据库故障(unknown),不是死信有货(backed-up):库挂的那
+  // 一瞬间往往是流量最集中的时候,一波并发请求不该各报各的事件。
+  it("reports at most once to Sentry when a database outage causes a wave of concurrent unknown reads", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://key@o1.ingest.example/2");
+    queryRaw.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    await Promise.all(Array.from({ length: 8 }, () => checkDeadLetters(clock)));
+    expect(captureMessage).toHaveBeenCalledTimes(1);
   });
 
   // r2:一个探针查不到自己要看的队列,以前是彻底静音的 —— 503 只有拉探针的人看得到。

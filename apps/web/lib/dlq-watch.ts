@@ -8,6 +8,7 @@ import {
   type DeadLetterCensus,
   type DeadLetterQueueRow,
 } from "@fikirtive/core";
+import { READY_DATABASE_TIMEOUT_MS, bestEffort, singleFlight } from "@/lib/health";
 
 /**
  * 死信巡检(#793 — 上线债#1).
@@ -22,13 +23,30 @@ import {
  * 生产残留清单,由 Founder 在窗口内接上。
  */
 
-/** 探针可能被人每秒拉一次;两次真查之间至少隔这么久,免得一个免鉴权路由变成 DB 压力源。 */
+/**
+ * 探针可能被人每秒拉一次;两次真查之间至少隔这么久,免得一个免鉴权路由变成 DB 压力源。
+ *
+ * r3(判官 r2 P1):同一条窗口也是**失败读**的负缓存 TTL —— 库故障期间,一次挂住或
+ * 拒绝的查询不该让下一个请求立刻再发一条。查得到和查不到共用同一份缓存,`checkDeadLetters`
+ * 不需要认识第二套节流规则。
+ */
 export const DEAD_LETTER_CACHE_MS = 30_000;
 
 let cached: { at: number; census: DeadLetterCensus } | undefined;
+/** 同一时刻至多一趟「查询 + 写缓存 + 上报」在途;见 `checkDeadLetters`。 */
+let pending: Promise<DeadLetterCensus> | undefined;
 
 /**
- * 直接查 job 表(r2 — 判官 r1 P1-2)。
+ * 一条队列都读不到时的答案。与「查到了,但缺一条」共用同一个 `unknown` 分支
+ * (`censusDeadLetters([])`:七条队列全部落进 `missing`)—— 调用方只需要认得一种
+ * 失败形状,免鉴权路由也就不用把 DB 的原始报错吐出去。
+ */
+const UNREADABLE_CENSUS: DeadLetterCensus = censusDeadLetters([]);
+
+/**
+ * 直接查 job 表(r2 — 判官 r1 P1-2)。同一时刻只允许一个在途查询(r3 — 判官 r2 P1,
+ * 与 `/api/health`·`/api/ready` 的 `singleFlight` 同一模式,见 lib/health.ts):冷启动
+ * 或缓存到期时,N 个并发请求共享这一次查询,而不是各发一条 SELECT 把连接池堆满。
  *
  * 原先走的是 `PgBoss.getQueues()`,那读的是 `pgboss.queue` 表里的**缓存计数**
  * (`queued_count` / `deferred_count` / `active_count`),而刷新那份缓存的是 pg-boss 的
@@ -45,8 +63,8 @@ let cached: { at: number; census: DeadLetterCensus } | undefined;
  * queued = 该跑还没跑,deferred = 还没到点,active = 正在跑。死信队列没有消费者,实际
  * 永远落在 queued,另外两个留着是为了「有货」这件事不会因为形态不同而漏报。
  */
-async function readDeadLetterCensus(): Promise<DeadLetterCensus> {
-  const rows = await prisma.$queryRaw<DeadLetterQueueRow[]>`
+const queryJobTable = singleFlight(async (): Promise<DeadLetterQueueRow[]> => {
+  return prisma.$queryRaw<DeadLetterQueueRow[]>`
     SELECT q.name,
            (count(j.id) FILTER (WHERE j.state < 'active' AND j.start_after <= now()))::int AS "queuedCount",
            (count(j.id) FILTER (WHERE j.state < 'active' AND j.start_after > now()))::int AS "deferredCount",
@@ -55,7 +73,17 @@ async function readDeadLetterCensus(): Promise<DeadLetterCensus> {
       LEFT JOIN pgboss.job j ON j.name = q.name AND j.state <= 'active'
      WHERE q.name = ANY(${[...DEAD_LETTER_QUEUES]}::text[])
      GROUP BY q.name`;
-  return censusDeadLetters(rows);
+});
+
+/**
+ * 查询带有界等待(r3 — 判官 r2 P1,预算与 `/api/ready` 同量级:`READY_DATABASE_TIMEOUT_MS`)。
+ * 一条挂住的查询不该把探针一起拖住,也不该在库故障期把每个请求都拖到平台超时。超时与
+ * 失败是同一个答案 —— fail closed 不变:答不出「查到了」,那就是 `unknown`,从不假装
+ * 看见了自己没看见的东西。
+ */
+async function readDeadLetterCensus(): Promise<DeadLetterCensus> {
+  const rows = await bestEffort(queryJobTable, READY_DATABASE_TIMEOUT_MS);
+  return rows ? censusDeadLetters(rows) : UNREADABLE_CENSUS;
 }
 
 /**
@@ -81,11 +109,25 @@ function report(census: DeadLetterCensus): void {
  * 巡检一次(带缓存)。**不是 `clear` 就上报一次** —— 队列读不到和队列有货都要有人知道
  * (r2:原先只有「有货」出声,缺席的队列悄无声息)。缓存窗口同时是上报节流窗口,所以一个
  * 一直堵着的死信队列不会把 Sentry 刷爆。
+ *
+ * r3(判官 r2 P1):查询、写缓存、决定要不要上报,三件事绑在同一趟在途 promise 里 ——
+ * 冷启动或缓存到期时,并发到达的请求共享这一趟,而不是各跑各的、各报各的 Sentry。
+ * `queryJobTable` 那层 `singleFlight` 只管底层 SELECT;这里再包一层,是因为「写缓存」
+ * 和「上报」也必须只发生一次 —— 否则 N 个并发请求会各自算出同一份 census、各自调用一次
+ * `report()`,Sentry 照样被并发请求刷屏,即使底层只查了一次库。
  */
 export async function checkDeadLetters(now: number = Date.now()): Promise<DeadLetterCensus> {
   if (cached && now - cached.at < DEAD_LETTER_CACHE_MS && now >= cached.at) return cached.census;
-  const census = await readDeadLetterCensus();
-  cached = { at: now, census };
-  if (census.status !== "clear") report(census);
-  return census;
+  if (pending) return pending;
+  const attempt = readDeadLetterCensus()
+    .then((census) => {
+      cached = { at: now, census };
+      if (census.status !== "clear") report(census);
+      return census;
+    })
+    .finally(() => {
+      if (pending === attempt) pending = undefined;
+    });
+  pending = attempt;
+  return attempt;
 }
