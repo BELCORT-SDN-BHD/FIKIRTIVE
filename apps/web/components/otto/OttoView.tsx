@@ -12,6 +12,7 @@ import { OttoChatStream } from "./OttoChatStream";
 import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
+import { EditDesk } from "./edit/EditDesk";
 import { OttoAnalytics } from "./OttoAnalytics";
 import { OttoSchedule } from "./OttoSchedule";
 import type { AnalyticsData } from "@/lib/analytics-actions";
@@ -182,6 +183,13 @@ export function OttoView({
           onOpenThread={onOpenThread}
           onRetryWithOtto={onUseInOtto}
         />
+      </div>
+    );
+  }
+  if (view === "edit") {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <EditDesk projectId={projectId} />
       </div>
     );
   }

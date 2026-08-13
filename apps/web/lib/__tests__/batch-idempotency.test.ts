@@ -405,3 +405,68 @@ describe("#769 换引擎之后的内容指纹语义(同 key 重放 ≠ 内容漂
       .toEqual({ seconds: 5, resolution: "720p", aspectRatio: "adaptive", fps: 0, audio: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// #777 —— 「这几张是一组连贯的图」进材料绑定。
+//
+// 这一节守的是本票**唯一**的钱路风险面:一次调用出多张,若这件事不进材料,同一个键上
+// 「一组连贯图」与「N 张散图」就成了同一份材料 —— 商家批了一组,系统可以合法地交一堆
+// 散图(反之亦然),而钱一分不少地照收。加进去之后,互换会被判成内容冲突并照实拒。
+//
+// 另一半同样重要:**散图行一格都不能变形**。写一个恒 false 进去,库里既有的每一条图片
+// 任务都会与新材料对不上,商家的合法重放当场被判成「换了内容」—— 一次幂等回归。
+// ---------------------------------------------------------------------------
+describe("#777 组图进材料绑定(imageOptions.coherentSet)", () => {
+  const base = { prompt: "one model, four angles", model: "seedream", kind: "image" as const, count: 4, entityIds: [] };
+
+  it("组图只在真成组时落进快照,而且与画幅同住一份快照", () => {
+    expect(normalizeFactoryMaterial({ ...base, coherentSet: true }).imageOptions)
+      .toEqual({ aspectRatio: "1:1", coherentSet: true });
+    expect(normalizeFactoryMaterial({ ...base, aspectRatio: "9:16", coherentSet: true }).imageOptions)
+      .toEqual({ aspectRatio: "9:16", coherentSet: true });
+  });
+
+  it("散图快照逐字不变:缺省 / 显式 false / 只要一张,三种都只有画幅那一格", () => {
+    expect(normalizeFactoryMaterial(base).imageOptions).toEqual({ aspectRatio: "1:1" });
+    expect(normalizeFactoryMaterial({ ...base, coherentSet: false }).imageOptions).toEqual({ aspectRatio: "1:1" });
+    expect(normalizeFactoryMaterial({ ...base, coherentSet: null }).imageOptions).toEqual({ aspectRatio: "1:1" });
+    // 一张图不成组 —— 一个说了不算数的开关绝不许进材料。
+    expect(normalizeFactoryMaterial({ ...base, count: 1, coherentSet: true }).imageOptions)
+      .toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("视频不落这一格(两条路互不串台)", () => {
+    const v = normalizeFactoryMaterial({ prompt: "clip", model: "seedance-2-mini", kind: "video", count: 1, coherentSet: true });
+    expect(v.imageOptions).toBeNull();
+  });
+
+  it("同键互换组图/散图 = 材料冲突,不是静默复用(两个方向都要成立)", () => {
+    const set = normalizeFactoryMaterial({ ...base, coherentSet: true });
+    const spread = normalizeFactoryMaterial(base);
+    expect(factoryMaterialMatches({ id: "job-1", ...set }, set)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...spread }, spread)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...set }, spread)).toBe(false);
+    expect(factoryMaterialMatches({ id: "job-1", ...spread }, set)).toBe(false);
+  });
+
+  it("迁移前的历史行照旧命中复用 —— 组图这一格没有让既有幂等行为回归", () => {
+    const spread = normalizeFactoryMaterial(base);
+    expect(factoryMaterialMatches({ id: "job-1", ...spread, imageOptions: null }, spread)).toBe(true);
+    const { imageOptions: _drop, ...legacyRow } = { id: "job-1", ...spread };
+    expect(factoryMaterialMatches(legacyRow as StoredFactoryMaterial, spread)).toBe(true);
+    // 但老行绝不等于「一组连贯图」—— 它当年出的就是各出各的。
+    expect(factoryMaterialMatches({ id: "job-1", ...spread, imageOptions: null },
+      normalizeFactoryMaterial({ ...base, coherentSet: true }))).toBe(false);
+  });
+
+  it("契约面同源:genRequest 收下的组图请求,材料里就有这一格(两侧不许各写各的)", () => {
+    const parsed = genRequest.parse({
+      projectId: "p1", prompt: "one model, four angles", count: 4, kind: "image",
+      model: "seedream", idempotencyKey: "k1", coherentSet: true,
+    });
+    expect(normalizeFactoryMaterial({
+      prompt: parsed.prompt, model: parsed.model, kind: parsed.kind, count: parsed.count,
+      entityIds: parsed.entityIds, coherentSet: parsed.coherentSet,
+    }).imageOptions).toEqual({ aspectRatio: "1:1", coherentSet: true });
+  });
+});
