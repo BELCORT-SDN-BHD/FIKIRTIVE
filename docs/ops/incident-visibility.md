@@ -17,7 +17,12 @@
 - worker 心跳超过代码阈值会显示 `stale`;它是诊断信号,不是自动修复或通知保证。
   拆成算力/等待两班之后,每班一行(`worker-compute` / `worker-wait`,未拆时仍是 `worker`);
   顶层 `worker` 字段的含义是「至少一班活着」,按班真相在 `workers` 里。
-- web/worker 含 Sentry instrumentation,但只有 live environment 配置生效后才会记录。
+- `GET /api/ops/dlq` 免登录巡检七条死信队列(#793):HTTP 200 = 七条**全部查得到且一条不剩**,
+  503 = 有死信(`backed-up`),或有队列查不到 / 计数读不懂 / 库读不到(`unknown`)。
+  只答 clear/backed-up/unknown,不给条数或队列名;计数直接查 job 表,所以 worker 死透了它
+  照样出声。接线与生产侧残留清单见 `docs/ops/dashboards.md`。
+- web/worker 含 Sentry instrumentation(server 侧 + 浏览器侧),但只有 live environment
+  配置生效后才会记录。
 - 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
   在当前部署和权限下验证。
 - `/admin/queue`(#779)只读生成队列指标库,回答「队列堵没堵」。未配置 `QUEUE_METRICS_QUERY_URL`
