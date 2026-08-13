@@ -300,6 +300,20 @@ vi.mock("@/lib/meta-performance", () => ({
   MAX_ADS: 25,
 }));
 
+/**
+ * #524 r6 — the two READ-ONLY ledger questions ottoApprove asks (judge r5 P1-A'①/②).
+ *
+ *  - finalizedReservations: which per-attempt refIds the ledger has already finished with, so a
+ *    retry reserves under one it will still accept. Default: none — a fresh card.
+ *  - otherHoldsSince: whether anything besides this turn's own hold was taken for this org since
+ *    it was taken. Default "none" — these fixtures hold nothing else, so a failed approval really
+ *    did charge nothing, and the card may say so.
+ */
+const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
+  mockFinalizedReservations: vi.fn(async (_orgId: string, _refIds: readonly string[]) => new Set<string>()),
+  mockOtherHoldsSince: vi.fn(async (_orgId: string, _refId: string): Promise<"none" | "some" | "unknown"> => "none"),
+}));
+
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     project: { findFirst: mockProjectFindFirst },
@@ -345,6 +359,10 @@ vi.mock("@fikirtive/db", () => ({
   refundReservation: mockRefundReservation,
   settleCredits: mockSettleCredits,
   assertWithinSpendCap: mockAssertWithinSpendCap,
+  // #524 r6: ottoApprove asks the LEDGER which attempt is still free, and whether a failed
+  // approval may claim "nothing was charged". Read-only; defaults say "fresh" and "unknown".
+  finalizedReservations: mockFinalizedReservations,
+  otherHoldsSince: mockOtherHoldsSince,
 }));
 
 // Spread the REAL module so pure helpers (newId, coworkTurnRequest, OTTO_MAX_STEPS,
@@ -407,6 +425,8 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
+// #524 r6: the second leg of a plain generate approval, priced by the same chain startGen charges with.
+const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight");
 // #524 r2: the REAL hold derivation (the @fikirtive/otto mock spreads the actual module), so the
 // expected number in the spend-cap cases comes from the same code the production path runs.
 const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed } = await import("@fikirtive/otto");
@@ -4227,5 +4247,311 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
     expect(res.error).toBe("Couldn't reach Otto — please try again.");
     // 内部细节不外露。
     expect(res.error).not.toContain("upstream exploded");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// #524 r6 — 判官 r5 的三条 P1,逐条钉死
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+// ── P1-A①:普通 generate 也是两条腿,cap 必须判整动作 ────────────────────────────────
+//
+// r5 把这条分支标成「exactly one leg」,于是恢复轮的 hold 单独过闸、`startGen` 的 60 又单独
+// 过闸 —— 商家设的 70,一次动作花掉 100,**不需要任何并发**就能复现。
+describe("#524 r6 — a plain generate approval is judged as ONE action (judge r5 P1-A①)", () => {
+  const GEN_CARD_ID = "card_r6_video";
+  /** 一张真卡:seedance-2-mini / 480p / 5s —— 判官反例里那 60 内部 credits 的那一格。 */
+  const videoCardPayload = {
+    kind: "video",
+    structuredPrompt: "a satay box on a wooden table",
+    entityIds: [],
+    variantSel: {},
+    model: "seedance-2-mini",
+    params: { resolution: "480p", durationSeconds: 5, aspectRatio: "16:9" },
+  };
+
+  /** The hold this resume really takes — from the same two functions production uses. */
+  const holdInternal = () =>
+    llmHoldInternal(
+      ottoBudgetArgsFor(ottoApprovalResumeRuntime, {
+        orgId: OWNER_ID,
+        refId: "otto-approve:probe",
+        input: "probe" as never,
+      }),
+    );
+
+  function setupGenerateApprove(cardPayload: unknown = videoCardPayload) {
+    setupApproveHappyPath(makeApprovalItem(GEN_CARD_ID));
+    installRealMeter();
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID });
+    // vi.clearAllMocks() does not drop implementations, so a neighbour's scripted cap must be
+    // wiped here or these cases inherit a ceiling they never set.
+    mockAssertWithinSpendCap.mockImplementation(async () => {});
+    mockChatMessageFindFirst.mockImplementation((args: { where?: { kind?: string } } | undefined) =>
+      Promise.resolve(args?.where?.kind === "GEN_CARD" ? { payload: cardPayload } : { seq: 5 }),
+    );
+    mockTransaction.mockImplementation(runTransaction);
+  }
+
+  it("the fixture prices the judge's second leg at exactly 60 internal credits", () => {
+    // 前提自检:若这一格不是 60,下面两条就证不到判官那个反例。
+    expect(
+      approvedGenerateCostInternal({
+        cardPayload: videoCardPayload,
+        projectId: PROJECT_ID,
+        threadId: APPROVE_THREAD_ID,
+        cardId: GEN_CARD_ID,
+      }),
+    ).toBe(60);
+    expect(holdInternal()).toBeGreaterThan(0);
+  });
+
+  it("judges hold + generation as one number, so a cap of 70 refuses the 100-credit action", async () => {
+    setupGenerateApprove();
+    // 上限 7 displayed = 70 internal:hold 单独看得过,60 单独看也得过。
+    mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 7 } });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: GEN_CARD_ID });
+
+    expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
+    // 前提成立:两条腿各自都在天花板以内 —— 只有合起来才越界。
+    expect(holdInternal()).toBeLessThanOrEqual(70);
+    expect(60).toBeLessThanOrEqual(70);
+    expect(holdInternal() + 60).toBeGreaterThan(70);
+    // 一格没动:没冻结、没批准、没跑。
+    expect(mockReserveCredits).not.toHaveBeenCalled();
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("hands the SAME total to the authority inside the reserve's transaction, not only to the preflight", async () => {
+    setupGenerateApprove();
+    // 预检读到的上限还够(总额 100 ≤ 500),商家随后调低 —— 权威闸拿到的必须仍是整动作。
+    mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 50 } });
+    mockAssertWithinSpendCap.mockImplementation(async (_tx: unknown, _orgId: string, cost: number) => {
+      if (cost > 70) throw new MockSpendCapBlocked({ requiredInternal: cost, capInternal: 70 });
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: GEN_CARD_ID });
+
+    expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
+    expect(mockAssertWithinSpendCap.mock.calls[0]![2]).toBe(holdInternal() + 60);
+    // Nothing left the process: no hold, no run, and the paused state was never rewritten.
+    // (`state.approve` DID run — it only mutates the in-memory RunState, which is discarded.)
+    expect(mockReserveCredits).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockChatThreadUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("a cap that covers the WHOLE action runs it normally", async () => {
+    setupGenerateApprove();
+    mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 50 } });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: GEN_CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect(mockApprove).toHaveBeenCalledWith(expect.objectContaining({ name: "generate" }), undefined);
+    expect(mockRun).toHaveBeenCalled();
+    // 判的是整动作,不是单腿。
+    expect(mockAssertWithinSpendCap).toHaveBeenCalledWith(expect.anything(), OWNER_ID, holdInternal() + 60);
+  });
+
+  it("a card that ALREADY has its job counts nothing — a re-approve charges nothing and must not be refused", async () => {
+    setupGenerateApprove();
+    mockGenJobFindFirst.mockResolvedValue({ id: "job_existing", status: "QUEUED" });
+    // 天花板恰好挡得住 hold+60,却挡不住单独的 hold。
+    mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 7 } });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: GEN_CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect(mockRun).toHaveBeenCalled();
+  });
+
+  it("an unpriceable card counts zero and never over-refuses — its own gates still refuse it", async () => {
+    setupGenerateApprove({ kind: "video" }); // no prompt/model ⇒ buildGenRequestFromCard says no
+    mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 7 } });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: GEN_CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+  });
+});
+
+// ── P1-A'①:重试用哪个 refId,由**账本**说了算 ─────────────────────────────────────────
+//
+// r5 把它写在卡上,而那次写发生在退款**之后**、还是 best-effort —— 中间崩溃、写失败、或者
+// 一张 r5 之前铸的旧卡(payload 里根本没有 attempt 这个键,JSON-path 匹配不到),都会留下
+// 一张「Try again」按下去必撞 P2002 的死卡。r6 改成问账本。
+describe("#524 r6 — which attempt a retry reserves under comes from the LEDGER (judge r5 P1-A'①)", () => {
+  const spentThrough = (n: number) =>
+    mockFinalizedReservations.mockImplementation(async (_orgId: string, refIds: string[]) =>
+      new Set(refIds.filter((r) => {
+        const m = /:a(\d+)$/.exec(r);
+        return m ? Number(m[1]) <= n : false;
+      })),
+    );
+
+  it("a card that never got its bump (crash / failed write) still retries for real", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    // The card still says attempt 1 — the bump never landed — but the ledger has finished with a1.
+    installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+    spentThrough(1);
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    const refId = (mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId;
+    expect(refId).toContain(":a2"); // NOT the spent a1 the card still points at
+    expect(mockRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("an OLD card with no attempt field at all is not a dead card", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    const legacy = pendingCardPayload("pending");
+    delete (legacy as Record<string, unknown>).attempt; // minted before the field existed
+    installCardRow(legacy);
+    spentThrough(2); // it has already burned a1 and a2 in earlier tries
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect((mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId).toContain(":a3");
+  });
+
+  it("an attempt that is HELD but not finished is reused, so a duplicate click still loses on the unique key", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+    mockFinalizedReservations.mockResolvedValue(new Set()); // a1 is open, not finished
+
+    await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect((mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId).toContain(":a1");
+  });
+
+  // 判官 r5 点名的坏格(旧 otto-actions.test.ts:3443):替身让**所有**卡片写失败,日志里明明
+  // 出现 `attempt retire failed`,测试却接受了那句「Try again」。r6 把它改成钉正确行为 ——
+  // 卡片写全灭,下一次点击照样拿到一个账本会接受的新 refId。
+  it("even when EVERY card write fails, 'Try again' is a promise the ledger will honour", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    mockChatMessageUpdateMany.mockRejectedValue(new Error("card write failed"));
+    let burned = 0;
+    mockFinalizedReservations.mockImplementation(async (_orgId: string, refIds: string[]) =>
+      new Set(refIds.filter((r) => {
+        const m = /:a(\d+)$/.exec(r);
+        return m ? Number(m[1]) <= burned : false;
+      })),
+    );
+
+    const first = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+    expect(first).toMatchObject({ error: expect.stringContaining("Try again") });
+    const firstRefId = (mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId;
+    expect(firstRefId).toContain(":a1");
+    // That attempt is now spent on the ledger — and NOTHING was written to the card.
+    burned = 1;
+
+    const second = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    const secondRefId = (mockReserveCredits.mock.calls[1]![1] as { refId: string }).refId;
+    expect(secondRefId).toContain(":a2");
+    expect(secondRefId).not.toBe(firstRefId); // the retry really reaches the ledger
+    expect(second).toMatchObject({ error: expect.any(String) }); // the card write still fails, honestly
+  });
+
+  it("the plain-generate branch has no card to mark, and retries anyway", async () => {
+    setupApproveHappyPath(makeApprovalItem(CARD_ID));
+    installRealMeter();
+    mockChatMessageFindFirst.mockImplementation((args: { where?: { kind?: string } } | undefined) =>
+      Promise.resolve(args?.where?.kind === "GEN_CARD" ? null : { seq: 5 }),
+    );
+    mockTransaction.mockImplementation(runTransaction);
+    spentThrough(1); // a previous approve reserved and refunded
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect((mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId).toContain(":a2");
+  });
+
+  it("a ledger read that fails falls back to the card's own attempt — never to a refId that could double-charge", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    installCardRow(pendingCardPayload("pending", { attempt: 3 }));
+    mockFinalizedReservations.mockRejectedValue(new Error("ledger unreadable"));
+
+    await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect((mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId).toContain(":a3");
+  });
+});
+
+// ── P1-A'②:「什么都没扣」是**证出来的**,不是猜的 ────────────────────────────────────
+//
+// r5 只要 LLM hold 被全额退了就往卡上写「nothing was charged」。可 SDK 恢复是**先执行已批准
+// 的工具、再进下一次模型调用** —— 工具完全可能已经建了并付了一单参考图,然后模型才抛错。
+describe("#524 r6 — a failed card only claims zero when the ledger PROVED it (judge r5 P1-A'②)", () => {
+  it("nothing else was held ⇒ the honest zero is kept, on the card and in the thread", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    const row = installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+    mockRun.mockRejectedValue(new Error("upstream exploded"));
+    mockOtherHoldsSince.mockResolvedValue("none");
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect((res as { error: string }).error).toContain("nothing was charged");
+    expect(row.payload.status).toBe("failed");
+    expect(row.payload.chargeVerdict).toBe("zero");
+  });
+
+  it("the approved tool already held credits ⇒ the card STOPS claiming zero and says what is true", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    const row = installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+    mockRun.mockRejectedValue(new Error("model died after the tool ran"));
+    mockOtherHoldsSince.mockResolvedValue("some"); // the refgen/generation leg reserved
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    const error = (res as { error: string }).error;
+    expect(error).not.toContain("nothing was charged");
+    expect(error).toContain("may already have been charged");
+    expect(error).toContain("Billing");
+    expect(row.payload.status).toBe("failed");
+    expect(row.payload.chargeVerdict).toBe("unknown");
+    // 线程里那句话与卡面、与返回值是同一句 —— 三处不许各说各话。
+    const note = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data?: { text?: string } }).data?.text ?? "")
+      .find((t) => t.includes("couldn't finish"));
+    expect(note).toBe(error);
+  });
+
+  it("a ledger read that fails claims nothing either — unknown is the fail-closed arm", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    const row = installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+    mockRun.mockRejectedValue(new Error("upstream exploded"));
+    mockOtherHoldsSince.mockRejectedValue(new Error("ledger unreadable"));
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect((res as { error: string }).error).not.toContain("nothing was charged");
+    expect(row.payload.chargeVerdict).toBe("unknown");
+  });
+
+  it("the proof is asked about THIS turn's own reservation, not about the org in general", async () => {
+    setupUniversalApprove();
+    installRealMeter();
+    installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+    mockRun.mockRejectedValue(new Error("upstream exploded"));
+
+    await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    const reservedRefId = (mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId;
+    expect(mockOtherHoldsSince).toHaveBeenCalledWith(OWNER_ID, reservedRefId);
   });
 });

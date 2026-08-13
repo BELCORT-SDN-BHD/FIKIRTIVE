@@ -592,3 +592,139 @@ describe("case 18 — spend cap under concurrency and across tenants (#524)", ()
     ).rejects.toThrow(SpendCapBlocked);
   });
 });
+
+// ── Case 19: 判 cap 与扣款是**一个无窗原子点**(#524 r6,判官 r5 P1-A②) ────────────
+//
+// r5 把「整动作总额」的判定放进 reserve 的同一笔事务,判官指出那还不够:PostgreSQL 默认
+// READ COMMITTED 下,同一笔事务里的两条 SELECT 各拿各的快照 —— 总额判 100、单腿判 70,
+// 一次动作用了两个天花板,而钱在第二个上面动。r6 把这行读改成 `FOR UPDATE`:第一次读就
+// 锁住 Organization 行,商家在中间提交的新上限只能等我们提交或回滚之后才落地。
+//
+// 这一组跑在**真库**上,因为要证的正是隔离级别与行锁的真实行为 —— mock 的事务句柄证不了。
+import { assertWithinSpendCap, finalizedReservations, otherHoldsSince } from "./index.js";
+
+describe("case 19 — the cap cannot move under a transaction that is judging it (#524 r6)", () => {
+  it("a cap lowered mid-transaction does NOT change the verdict that transaction already made", async () => {
+    await setCap(ORG, 10); // 100 internal — covers the whole action below
+
+    let lowering: Promise<void> | null = null;
+    await prisma.$transaction(async (tx) => {
+      // Verdict #1 — the WHOLE approved action (what withLlmBudget asserts).
+      await assertWithinSpendCap(tx, ORG, 100);
+      // The merchant lowers their cap RIGHT NOW, on another connection. Under READ COMMITTED
+      // without the row lock this commits immediately and the next read sees 70.
+      lowering = setCap(ORG, 7); // 70 internal
+      await new Promise((resolve) => setTimeout(resolve, 150)); // every chance to land
+      // Verdict #2 — the individual charge, inside reserveCredits. It MUST still be judged
+      // against the ceiling verdict #1 was made against, or the pair is not one decision.
+      await assertWithinSpendCap(tx, ORG, 100);
+      await reserveCredits(tx, { orgId: ORG, refId: "cap-lock-1", cost: 40 });
+    });
+
+    // The lowering was blocked on our row lock and lands only now — which is the proof.
+    await lowering!;
+    const acc = await account(ORG);
+    expect(acc.reserved).toBe(40);
+    expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+    // And the new ceiling is in force for everything AFTER: the next action is judged at 70.
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "cap-lock-2", cost: 100 })),
+    ).rejects.toThrow(SpendCapBlocked);
+  });
+
+  it("a cap lowered BEFORE the transaction is the one that decides — the lock never freezes an old answer", async () => {
+    await setCap(ORG, 10);
+    await setCap(ORG, 3); // 30 internal
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await assertWithinSpendCap(tx, ORG, 100);
+        await reserveCredits(tx, { orgId: ORG, refId: "cap-lock-3", cost: 40 });
+      }),
+    ).rejects.toThrow(SpendCapBlocked);
+    expect((await account(ORG)).balance).toBe(1000);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("two concurrent actions each judge the cap once, and neither sees the other's half-written state", async () => {
+    // The lock serializes them; the ceiling is 70 and each action asks for 100.
+    await setCap(ORG, 7);
+    const results = await Promise.allSettled([
+      prisma.$transaction(async (tx) => {
+        await assertWithinSpendCap(tx, ORG, 100);
+        await reserveCredits(tx, { orgId: ORG, refId: "cap-lock-race-a", cost: 40 });
+      }),
+      prisma.$transaction(async (tx) => {
+        await assertWithinSpendCap(tx, ORG, 100);
+        await reserveCredits(tx, { orgId: ORG, refId: "cap-lock-race-b", cost: 40 });
+      }),
+    ]);
+    expect(results.every((r) => r.status === "rejected")).toBe(true);
+    for (const r of results) expect((r as PromiseRejectedResult).reason).toBeInstanceOf(SpendCapBlocked);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+});
+
+// ── Case 20: 重试用哪个 refId、以及「什么都没扣」凭什么敢说 ────────────────────────
+describe("case 20 — the ledger answers what a retry may reuse, and what it may claim (#524 r6)", () => {
+  const A1 = "otto-approve:thread-1:card-1:a1";
+  const A2 = "otto-approve:thread-1:card-1:a2";
+  const A3 = "otto-approve:thread-1:card-1:a3";
+
+  it("finalizedReservations names exactly the attempts the ledger will refuse again", async () => {
+    // a1: held then refunded — the RESERVE row survives the refund, so this refId is spent forever.
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: A1, cost: 10 }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: A1 }));
+    // a2: held and still open — a click in flight. Reusing it is how a duplicate is refused.
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: A2, cost: 10 }));
+    // a3: never touched.
+
+    expect(await finalizedReservations(ORG, [A1, A2, A3])).toEqual(new Set([A1]));
+
+    // WHY it must be skipped: the ledger really does refuse it, forever.
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: A1, cost: 10 })),
+    ).rejects.toMatchObject({ code: "P2002" });
+    // …and the attempt it points at instead reserves for real.
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: A3, cost: 10 }));
+    expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE" && r.refId === A3)).toHaveLength(1);
+  });
+
+  it("a SETTLED attempt is finished too — both finalizers close a refId", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: A1, cost: 10 }));
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: A1, actualInternal: 4 }));
+    expect(await finalizedReservations(ORG, [A1, A2])).toEqual(new Set([A1]));
+  });
+
+  it("one merchant's attempts never answer for another's", async () => {
+    const ORG_B = "test-org-9";
+    await seedOrg(ORG_B, 1000);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG_B, refId: A1, cost: 10 }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG_B, refId: A1 }));
+    expect(await finalizedReservations(ORG, [A1])).toEqual(new Set());
+    expect(await finalizedReservations(ORG_B, [A1])).toEqual(new Set([A1]));
+  });
+
+  it("otherHoldsSince: 'nothing was charged' is only sayable when nothing else was held", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: A1, cost: 10 }));
+    // Only this turn's own hold exists — the whole action really was free.
+    expect(await otherHoldsSince(ORG, A1)).toBe("none");
+    // Its own refund does not count as somebody else's charge.
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: A1 }));
+    expect(await otherHoldsSince(ORG, A1)).toBe("none");
+    // The approved tool then held credits of its own: nothing may claim a zero any more.
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "refgen-job-1", cost: 60 }));
+    expect(await otherHoldsSince(ORG, A1)).toBe("some");
+  });
+
+  it("otherHoldsSince fails closed when the reservation cannot be read at all", async () => {
+    expect(await otherHoldsSince(ORG, "otto-approve:never:reserved:a1")).toBe("unknown");
+  });
+
+  it("otherHoldsSince never counts a NEIGHBOUR tenant's spend against this merchant", async () => {
+    const ORG_B = "test-org-10";
+    await seedOrg(ORG_B, 1000);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: A1, cost: 10 }));
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG_B, refId: "other-tenant-job", cost: 60 }));
+    expect(await otherHoldsSince(ORG, A1)).toBe("none");
+  });
+});

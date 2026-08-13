@@ -14,7 +14,10 @@
  *     signal, fired after the refund; it cannot change any amount and its throw is swallowed.
  *  8. (#524 r5) `capCostInternal` widens the SPEND-CAP verdict to the whole action this turn is a
  *     leg of, inside the reserve's own transaction. It can only refuse; the held amount, the
- *     settle and the refund are all unchanged by it.
+ *     settle and the refund are all unchanged by it. (#524 r6) That transaction reads the cap with
+ *     the Organization row locked FOR UPDATE (assertWithinSpendCap), so the widened verdict and
+ *     `reserveCredits`' own per-charge verdict see the SAME ceiling and no cap change can land
+ *     between them.
  */
 import {
   CREDITS_PER_USD,
@@ -262,6 +265,10 @@ export async function withLlmBudget<T>(
   // judged against the WHOLE action first — in this same transaction, so a cap the merchant moved
   // after the preflight is the one that decides. Only ever stricter: a value at or below the hold,
   // or a malformed one, is ignored and the reserve's own per-charge verdict stands alone.
+  // #524 r6 (judge r5 P1-A②): "same transaction" is not by itself "same ceiling" — READ COMMITTED
+  // gives each statement its own snapshot, so this verdict and reserveCredits' own could read a
+  // cap the merchant changed in between. assertWithinSpendCap now takes the Organization row
+  // FOR UPDATE, which makes the pair atomic: one ceiling, no window before the first credit moves.
   const capCost = args.capCostInternal;
   const judgeWholeAction =
     typeof capCost === "number" && Number.isFinite(capCost) && capCost > reserve;

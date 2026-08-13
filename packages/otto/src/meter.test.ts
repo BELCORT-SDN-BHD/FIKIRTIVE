@@ -739,8 +739,29 @@ describe("#524 r5 — capCostInternal judges both legs of one action at the auth
     expect(mocks.$transaction).toHaveBeenCalledTimes(2); // reserve tx + settle tx
     const capTx = mocks.assertWithinSpendCap.mock.calls[0]![0];
     const reserveTx = mocks.reserveCredits.mock.calls[0]![0];
-    expect(capTx).toBe(reserveTx); // one transaction, not two reads of a moving cap
+    expect(capTx).toBe(reserveTx);
     expect(mocks.assertWithinSpendCap).toHaveBeenCalledWith(reserveTx, ORG, ACTION_TOTAL);
+  });
+
+  // #524 r6(判官 r5 P2):上一版这里写着「一次事务,不是两次读一个会动的 cap」—— 与生产
+  // 相反。生产里 cap 确实被读**两次**:这一次判整动作,`reserveCredits` 内部再判这一笔。
+  // 而且这份替身把 `reserveCredits` mock 掉了,第二次读根本不会发生,所以那句断言证不了
+  // 任何关于原子性的事,是一格假绿。
+  //
+  // 这里如实钉住这份替身**能**证的东西:同一个事务句柄一路传下去。真正的原子性
+  // (`SELECT … FOR UPDATE`,以及「事务中途调低 cap 不改变本次判定」)由 packages/db 的
+  // 真库演练证明 —— credits.test.ts case 19。两条断言各就各位,谁也不冒充谁。
+  it("hands the SAME transaction on to reserveCredits, whose own cap read is the second one", async () => {
+    const reserveTxs: unknown[] = [];
+    mocks.reserveCredits.mockImplementation(async (tx: unknown) => { reserveTxs.push(tx); });
+
+    await withLlmBudget(approvalArgs(), async () => ({ result: "ok" }));
+
+    // This double stops at reserveCredits' door, so exactly ONE cap read is visible from here.
+    // Production reads it again inside reserveCredits — under a row lock taken by this first
+    // read, which is what makes the pair one verdict (packages/db credits.test.ts case 19).
+    expect(mocks.assertWithinSpendCap).toHaveBeenCalledTimes(1);
+    expect(reserveTxs[0]).toBe(mocks.assertWithinSpendCap.mock.calls[0]![0]);
   });
 
   it("changes NO amount — the hold is still exactly llmHoldInternal", async () => {

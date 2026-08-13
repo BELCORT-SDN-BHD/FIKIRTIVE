@@ -25,7 +25,7 @@
  */
 import "server-only";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@fikirtive/db";
+import { prisma, finalizedReservations, otherHoldsSince } from "@fikirtive/db";
 import type { Prisma } from "@fikirtive/db";
 import {
   newId,
@@ -69,7 +69,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
 // burned by a refusal knowable one line earlier. Never an authority; reserveCredits still decides.
-import { spendCapRefusal, approvedToolCostInternal } from "@/lib/spend-cap-preflight";
+import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal } from "@/lib/spend-cap-preflight";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
@@ -87,7 +87,7 @@ import {
   sharePostPreview,
   revokeSharePreview,
 } from "./schedule-actions";
-import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardResolution, type ApprovalCardSummary } from "./approval-card-view";
+import { asApprovalCardPayload, approvalCardResolutionText, type ApprovalCardPayload, type ApprovalCardResolution, type ApprovalCardSummary } from "./approval-card-view";
 import { computeApprovalContentHash, refgenApprovalHashFromArgs, factoryBatchApprovalHashFromArgs, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
@@ -1114,18 +1114,58 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 /**
- * Retire the attempt this try burned, so the merchant's next click reserves under a FRESH refId
- * (#524 r5, judge r4 P1-A'①).
+ * The refId this try will reserve under — chosen from the LEDGER, not from a marker (#524 r6,
+ * judge r5 P1-A'①).
  *
- * Called only on a failure that left the card `pending` after a reservation had already been
- * taken and refunded. `reserve:<refId>` is globally unique and a REFUND does not delete the
- * RESERVE row, so without this the card's own "Try again" was a promise the ledger would refuse
- * forever with P2002.
+ * `reserve:<refId>` is globally unique and a REFUND does not delete the RESERVE row, so an attempt
+ * that reserved and was then refunded is spent forever: reserving under it again can only hit
+ * P2002. r5 handled that by writing the next attempt onto the card after each burned try — but
+ * that write was best-effort and happened AFTER the refund committed, so a crash in between, a
+ * failed write, or a card minted before the field existed all left a card whose own "Try again"
+ * the ledger would refuse forever. A promise the product cannot keep is worse than no button.
  *
- * The update is conditional on BOTH the still-pending status and the exact attempt we used, so
- * two failures racing bump it once, and it can never touch a card someone else has resolved.
- * Best-effort: a failed bump is logged, never surfaced — the merchant is already being told the
- * approve failed, and inventing a second error would only bury the first.
+ * So the attempt is DERIVED instead: ask the ledger which of this card's attempts it has already
+ * finished with, and take the first one it has not. That answer cannot be stale, cannot be lost to
+ * a crash, and needs nothing to have been written correctly beforehand — the ledger is the thing
+ * that would refuse, so the ledger is the thing that is asked.
+ *
+ * An attempt that is HELD but not yet finalized is deliberately not skipped: it is a click still in
+ * flight, and reusing its refId is exactly how a duplicate click loses on the unique key and is
+ * answered benignly instead of running a second time.
+ *
+ * The card's own `attempt` is the starting point (a fast path past attempts already known to be
+ * burned) and the fallback if the ledger cannot be read — failing to a refId that may collide is
+ * strictly better than failing to one that could double-charge.
+ */
+const APPROVE_ATTEMPT_PROBE = 8;
+
+async function chooseApproveAttempt(
+  ownerId: string,
+  refIdFor: (attempt: number) => string,
+  fromAttempt: number,
+): Promise<number> {
+  const candidates = Array.from({ length: APPROVE_ATTEMPT_PROBE }, (_, i) => fromAttempt + i);
+  try {
+    const spent = await finalizedReservations(ownerId, candidates.map(refIdFor));
+    const free = candidates.find((n) => !spent.has(refIdFor(n)));
+    // Every probed attempt already finished: keep walking forward rather than reusing a spent one.
+    return free ?? fromAttempt + APPROVE_ATTEMPT_PROBE;
+  } catch (err) {
+    console.warn(`[approval-card] attempt lookup failed (ownerId=${ownerId}).`, err);
+    return fromAttempt;
+  }
+}
+
+/**
+ * Record on the card that this try burned its attempt, so the next click skips it without asking
+ * the ledger (#524 r5; demoted to a fast path in r6).
+ *
+ * Correctness no longer depends on it — `chooseApproveAttempt` derives the real answer from the
+ * ledger — which is why the write can stay best-effort AND why it no longer pins the attempt in
+ * its WHERE. Pinning `payload.attempt` was itself a bug: a card minted before the field existed
+ * has no `attempt` key at all, so the JSON path matched nothing and the bump silently did not
+ * happen. Pinning `status: "pending"` is what actually matters — it is what keeps this from ever
+ * touching a card someone else has resolved. Two failures racing write the same value.
  */
 async function retireApprovalAttempt(
   cardId: string,
@@ -1139,10 +1179,7 @@ async function retireApprovalAttempt(
         id: cardId,
         ownerId,
         kind: "APPROVAL_CARD",
-        AND: [
-          { payload: { path: ["status"], equals: "pending" } },
-          { payload: { path: ["attempt"], equals: usedAttempt } },
-        ],
+        AND: [{ payload: { path: ["status"], equals: "pending" } }],
       },
       data: {
         payload: { ...payload, status: "pending", attempt: usedAttempt + 1 } as unknown as Prisma.InputJsonObject,
@@ -1154,23 +1191,29 @@ async function retireApprovalAttempt(
 }
 
 /**
- * Move a card the run consumed but never acted on to the terminal `failed` state (#524 r5,
+ * Move a card the run consumed but never delivered to the terminal `failed` state (#524 r5,
  * judge r4 P1-A'②).
  *
- * The hole this closes: the CAS won (consent spent), the resume then threw before producing any
- * usage, so withLlmBudget refunded the whole hold — money net zero — and the card sat there
- * reading "Approved", which was simply untrue. Nothing published, nothing charged, and the
- * merchant had no way to see it.
+ * The hole this closes: the CAS won (consent spent), the resume then threw, and the card sat there
+ * reading "Approved", which was simply untrue. Nothing was published and the merchant had no way
+ * to see it.
  *
  * `approved → failed` is FORWARD-only: the card never becomes consumable again, so AR1 处方2's
  * one-way consent is untouched and no reverse channel is introduced. The merchant re-initiates by
  * asking Otto, which mints a fresh card — the same route a rejected or expired card takes.
  * The CAS pins `status="approved"` so it can only ever rewrite the card THIS run consumed.
+ *
+ * #524 r6 (judge r5 P1-A'②): `chargeVerdict` rides along because `failed` alone says nothing about
+ * money. A refunded LLM hold proves only that THIS turn was free; the approved tool runs BEFORE the
+ * model call that threw, so it may already have created and paid for a generation. Only a caller
+ * that PROVED the whole action was free passes `"zero"` — everything else, including "we could not
+ * check", is `"unknown"` and gets the sentence that promises less.
  */
 async function markApprovalFailed(
   cardId: string,
   ownerId: string,
   payload: ApprovalCardPayload,
+  chargeVerdict: "zero" | "unknown",
 ): Promise<void> {
   try {
     await prisma.chatMessage.updateMany({
@@ -1180,7 +1223,7 @@ async function markApprovalFailed(
         kind: "APPROVAL_CARD",
         AND: [{ payload: { path: ["status"], equals: "approved" } }],
       },
-      data: { payload: { ...payload, status: "failed" } as unknown as Prisma.InputJsonObject },
+      data: { payload: { ...payload, status: "failed", chargeVerdict } as unknown as Prisma.InputJsonObject },
     });
   } catch (err) {
     console.warn(`[approval-card] failure mark failed (cardId=${cardId}).`, err);
@@ -1644,17 +1687,23 @@ export async function ottoApprove(raw: unknown): Promise<
       // The FULL cost of the approval as one action — this resume's LLM hold PLUS the
       // deterministic charge of the tool being approved. Handed to the meter so the spend cap is
       // judged against the whole thing inside the reserve's transaction (#524 r5, judge r4 P1-B).
-      // Null on the plain-generate branch, which has exactly one leg.
+      // #524 r6 (judge r5 P1-A①): EVERY branch names the whole approved action, not just the
+      // branch that holds a card. A plain generate is two reserves too — this resume's LLM hold
+      // and the card's own deterministic charge — and leaving it null was the 70/40/60 hole.
       let approvedActionCostInternal: number | null = null;
 
       // The refId of the resume turn. Hoisted above the approval branch (#524 r2) because the
       // spend-cap preflight has to name the SAME turn the reserve will later hold against, and it
       // must run before the card is consumed.
       //
-      // #524 r5 (judge r4 P1-A'①): it carries the card's ATTEMPT. `reserve:<refId>` is globally
+      // #524 r5 (judge r4 P1-A'①): it carries the try's ATTEMPT. `reserve:<refId>` is globally
       // unique, and a refund does NOT remove the RESERVE row — so a fixed per-card refId made
       // every retry after a burned attempt collide (P2002) forever, while the card said "Try
-      // again". One refId per attempt; a burned attempt bumps the card so the next click is free.
+      // again". One refId per attempt.
+      // #524 r6 (judge r5 P1-A'①): which attempt is free is DERIVED from the ledger
+      // (chooseApproveAttempt), not read off a best-effort marker — so a crash between the refund
+      // and the marker's write, a failed write, an old card without the field, and the
+      // plain-generate branch (which has no card to mark at all) all still retry for real.
       let approveAttempt = 1;
       const refIdFor = (attempt: number) => `otto-approve:${threadId}:${cardId}:a${attempt}`;
       let refId = refIdFor(approveAttempt);
@@ -1696,9 +1745,10 @@ export async function ottoApprove(raw: unknown): Promise<
           if (cardPayload.status !== "pending") {
             return { ok: true, alreadyResolved: true, resolution: cardPayload.status };
           }
-          // #524 r5: bind this resume's reservation to the card's CURRENT attempt, before the
-          // hold is computed and long before anything is charged.
-          approveAttempt = cardPayload.attempt ?? 1;
+          // #524 r5/r6: bind this resume's reservation to an attempt the LEDGER will still accept,
+          // before the hold is computed and long before anything is charged. The card's own
+          // attempt is where the search starts; the ledger decides where it lands.
+          approveAttempt = await chooseApproveAttempt(ownerId, refIdFor, cardPayload.attempt ?? 1);
           refId = refIdFor(approveAttempt);
           cardPayloadForRetry = cardPayload;
           // TTL (AR1 处方2): an expired ASK is no longer confirmable — consume to "expired" and say so.
@@ -1841,6 +1891,55 @@ export async function ottoApprove(raw: unknown): Promise<
           return { error: "That card isn't awaiting approval." };
         }
       } else {
+        // ── The plain-generate branch: also TWO reserves, not one (#524 r6, judge r5 P1-A①) ──
+        //
+        // r5 called this branch "exactly one leg" and sent no action total, so the cap judged the
+        // resume's LLM hold on its own and then judged the generation on its own. The judge's
+        // reproduction needs no concurrency at all: a 40-credit hold and a 60-credit 480p/5s video
+        // both clear a cap of 70, and one action the merchant capped at 70 spends 100.
+        //
+        // The card is the same GEN_CARD the `generate` skill will read, so the second leg is priced
+        // from that row through the very functions that will charge it (approvedGenerateCostInternal).
+        // An unreadable/unpriceable card counts 0 — it cannot generate either.
+        //
+        // A card that ALREADY has its job (a re-approve the SDK let through) is about to charge
+        // nothing: `executeGenerate` returns the existing job on the `cowork:<cardId>` key. Counting
+        // its price anyway would refuse a free action, so the existing job is checked first — the
+        // same read, and the same key, the double-approve path above uses.
+        //
+        // This branch has no APPROVAL_CARD to carry an attempt, so before r6 its refId was always
+        // `…:a1` — a resume that reserved and refunded made every later click collide on the unique
+        // key forever, with no marker anywhere to move it on. The ledger answers that too.
+        approveAttempt = await chooseApproveAttempt(ownerId, refIdFor, 1);
+        refId = refIdFor(approveAttempt);
+
+        const genCard = await prisma.chatMessage.findFirst({
+          where: { id: cardId, threadId, ownerId, kind: "GEN_CARD", deletedAt: null },
+          select: { payload: true },
+        });
+        const alreadyGenerated = await prisma.genJob.findFirst({
+          where: { ownerId, idempotencyKey: `cowork:${cardId}` },
+          select: { id: true },
+        });
+        const generateLegInternal =
+          genCard && !alreadyGenerated
+            ? approvedGenerateCostInternal({
+                cardPayload: genCard.payload,
+                projectId: thread.projectId,
+                threadId,
+                cardId,
+              })
+            : 0;
+        const holdInternal = llmHoldInternal(
+          ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: ownerId, refId, input: state }),
+        );
+        // The number that DECIDES — asserted against the cap inside the reserve's own transaction.
+        approvedActionCostInternal = holdInternal + generateLegInternal;
+        // …and the courtesy version of the same verdict, one read earlier, so the merchant hears it
+        // before anything moves. It carries no correctness; the one above re-decides regardless.
+        const earlyGenCapRefusal = await spendCapRefusal(prisma, ownerId, approvedActionCostInternal);
+        if (earlyGenCapRefusal) return { error: earlyGenCapRefusal };
+
         // Approve — mutates the rehydrated state in place; resume will execute the tool
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         state.approve(matchingInterruption as any);
@@ -1870,26 +1969,29 @@ export async function ottoApprove(raw: unknown): Promise<
             // #524 r3 — reserve, THEN claim the consent, THEN run. The claim rides in
             // withLlmBudget's afterReserve window, so a cap/balance refusal always lands with the
             // card still pending, and a lost claim refunds the hold and never calls the model.
-            meter: claimCard
-              ? (budgetArgs, fn) =>
-                  withLlmBudget(
-                    {
-                      ...budgetArgs,
-                      afterReserve: claimCard,
-                      // #524 r5 (judge r4 P1-B): the cap is judged against BOTH legs of this
-                      // approval, in the reserve's transaction, before the hold and before the
-                      // card is consumed. Over the ceiling ⇒ SpendCapBlocked, nothing held,
-                      // nothing consumed, and the merchant is told which limit stopped them.
-                      capCostInternal: approvedActionCostInternal ?? undefined,
-                      // #524 r5: only this tells us "the run died AND the merchant paid nothing",
-                      // which is the one case where a consumed card must stop saying "approved".
-                      onRefundedFailure: () => {
-                        chargedNothing = true;
-                      },
-                    },
-                    fn,
-                  )
-              : withLlmBudget,
+            //
+            // #524 r6 (judge r5 P1-A①): ONE wrapper for every branch. r5 wrapped only the branch
+            // that had a consent to claim, so the plain-generate branch reached the meter bare and
+            // its action total was never judged — the 70/40/60 hole. `afterReserve` is what varies
+            // (only a card can be claimed); the cap verdict is not.
+            meter: (budgetArgs, fn) =>
+              withLlmBudget(
+                {
+                  ...budgetArgs,
+                  ...(claimCard ? { afterReserve: claimCard } : {}),
+                  // #524 r5 (judge r4 P1-B): the cap is judged against EVERY leg of this approval,
+                  // in the reserve's transaction, before the hold and before any card is consumed.
+                  // Over the ceiling ⇒ SpendCapBlocked, nothing held, nothing consumed, and the
+                  // merchant is told which limit stopped them.
+                  capCostInternal: approvedActionCostInternal ?? undefined,
+                  // #524 r5: only this tells us "the run died AND this turn paid nothing", the
+                  // starting point for whether a consumed card may stop saying "approved".
+                  onRefundedFailure: () => {
+                    chargedNothing = true;
+                  },
+                },
+                fn,
+              ),
             runAgent: run,
             maxTurnsExceededError: MaxTurnsExceededError,
           },
@@ -1984,21 +2086,28 @@ export async function ottoApprove(raw: unknown): Promise<
           return { ok: true, status: "degraded" };
         }
 
-        // 5. The CAS won, so the consent is gone — and then the run died WITHOUT charging anything
-        //    (withLlmBudget refunded the whole hold and said so). Money is net zero, but a card
-        //    reading "approved" over a thing that never happened is a lie the merchant cannot see
-        //    through. Say it on the card AND in the thread. Deliberately NOT reached when the turn
-        //    was settled against real usage — then the merchant WAS charged, and "nothing was
-        //    charged" would be the new lie.
+        // 5. The CAS won, so the consent is gone — and then the run died. A card reading "approved"
+        //    over a thing that was never delivered is a lie the merchant cannot see through, so it
+        //    moves to `failed` and the thread says so. Deliberately NOT reached when the turn was
+        //    settled against real usage — the card is then honestly "approved and charged".
+        //
+        //    #524 r6 (judge r5 P1-A'②): what it says about MONEY is a separate question, and r5 got
+        //    it wrong by answering it from `chargedNothing` alone. That flag proves only that THIS
+        //    turn's hold was refunded; a resume runs the approved tool FIRST and can then fail in
+        //    the next model call, having already created and paid for a generation. So the zero is
+        //    PROVEN, not assumed: the ledger is asked whether anything else was held for this org
+        //    from the moment this hold was taken (otherHoldsSince). No — the whole action really was
+        //    free. Anything else, including a read that failed, gets the sentence that promises
+        //    less. One helper writes both sentences (approvalCardResolutionText), so the card, this
+        //    response and the thread note cannot drift into three different claims.
         if (claimedPayload && chargedNothing) {
-          await markApprovalFailed(cardId, ownerId, claimedPayload);
-          await persistAgentNote(
-            threadId,
-            ownerId,
-            "That approval was confirmed but the action couldn't run — nothing was charged. Ask Otto to set it up again.",
-          );
+          const holds = await otherHoldsSince(ownerId, refId).catch(() => "unknown" as const);
+          const chargeVerdict = holds === "none" ? "zero" : "unknown";
+          await markApprovalFailed(cardId, ownerId, claimedPayload, chargeVerdict);
+          const sentence = approvalCardResolutionText({ ...claimedPayload, status: "failed", chargeVerdict })!;
+          await persistAgentNote(threadId, ownerId, sentence);
           revalidatePath("/", "layout");
-          return { error: "Approved, but it couldn't run — nothing was charged. Ask Otto to set it up again." };
+          return { error: sentence };
         }
         throw e;
       }

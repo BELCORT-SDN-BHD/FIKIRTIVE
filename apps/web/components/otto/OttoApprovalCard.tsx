@@ -15,7 +15,12 @@ import { ShieldCheck, CheckCircle2, Loader2, CalendarCheck } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { ottoApprove, ottoReject } from "@/lib/otto-client-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { asApprovalCardPayload, approvalCardView, type ApprovalCardResolution } from "@/lib/approval-card-view";
+import {
+  asApprovalCardPayload,
+  approvalCardView,
+  approvalCardResolutionText,
+  type ApprovalCardResolution,
+} from "@/lib/approval-card-view";
 import { chainedApprovalOf } from "./approval-chain";
 
 /** What a resolved approval hands up: the EXACT card, what it resolved to, and the
@@ -142,21 +147,23 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
         {resolved === "approved" ? (
           <div className="flex items-center gap-2 text-[0.875rem] text-[var(--success-soft-foreground)]">
             <CheckCircle2 size={16} />
-            <span>Approved — it will publish as scheduled.</span>
+            <span>{approvalCardResolutionText({ ...parsed, status: "approved" })}</span>
           </div>
         ) : resolved === "rejected" ? (
           <div className="text-[0.875rem] text-muted-foreground">
-            Declined — nothing was published.
+            {approvalCardResolutionText({ ...parsed, status: "rejected" })}
           </div>
         ) : resolved === "expired" ? (
           <div className="text-[0.875rem] text-muted-foreground">
-            This request expired — ask Otto to request approval again.
+            {approvalCardResolutionText({ ...parsed, status: "expired" })}
           </div>
         ) : resolved === "failed" ? (
           // #524 r5: the consent was spent and the run then died. Saying "Approved" here would be
-          // a lie about something the merchant cannot otherwise see.
+          // a lie about something the merchant cannot otherwise see. #524 r6: which failure
+          // sentence it is depends on what the ledger PROVED (payload.chargeVerdict) — this card
+          // never claims "nothing was charged" on its own guess.
           <div className="text-[0.875rem] text-[var(--error-soft-foreground)]">
-            Approved, but it couldn&apos;t run — nothing was charged. Ask Otto to set it up again.
+            {approvalCardResolutionText({ ...parsed, status: "failed" })}
           </div>
         ) : (
           <div className="flex gap-3">

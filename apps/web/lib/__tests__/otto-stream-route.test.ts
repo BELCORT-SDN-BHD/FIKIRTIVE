@@ -81,6 +81,20 @@ vi.mock("@/lib/otto-actions", () => ({
 vi.mock("@/lib/otto-generation-validate", () => ({
   validateOwnedGenerationExt: mocks.validateOwnedGenerationExt,
 }));
+/**
+ * #524 r6 — the two READ-ONLY ledger questions ottoApprove asks (judge r5 P1-A'①/②).
+ *
+ *  - finalizedReservations: which per-attempt refIds the ledger has already finished with, so a
+ *    retry reserves under one it will still accept. Default: none — a fresh card.
+ *  - otherHoldsSince: whether anything besides this turn's own hold was taken for this org since
+ *    it was taken. Default "none" — these fixtures hold nothing else, so a failed approval really
+ *    did charge nothing, and the card may say so.
+ */
+const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
+  mockFinalizedReservations: vi.fn(async (_orgId: string, _refIds: readonly string[]) => new Set<string>()),
+  mockOtherHoldsSince: vi.fn(async (_orgId: string, _refId: string): Promise<"none" | "some" | "unknown"> => "none"),
+}));
+
 vi.mock("@fikirtive/db", () => ({
   InsufficientCredits: mocks.MockInsufficientCredits,
   SpendCapBlocked: mocks.MockSpendCapBlocked,
@@ -101,6 +115,10 @@ vi.mock("@fikirtive/db", () => ({
     entity: { findMany: mocks.entityFindMany },
     memory: { findMany: mocks.memoryFindMany },
   },
+  // #524 r6: ottoApprove asks the LEDGER which attempt is still free, and whether a failed
+  // approval may claim "nothing was charged". Read-only; defaults say "fresh" and "unknown".
+  finalizedReservations: mockFinalizedReservations,
+  otherHoldsSince: mockOtherHoldsSince,
 }));
 vi.mock("@fikirtive/otto", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
