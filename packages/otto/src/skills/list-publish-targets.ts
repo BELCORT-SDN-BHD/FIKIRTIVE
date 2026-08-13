@@ -11,6 +11,7 @@
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { CONNECTION_BLOCKER_COPY, SCHEDULE_CHANNELS, type ChannelReadState } from "@fikirtive/core";
+import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -59,9 +60,15 @@ export const listPublishTargetsSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "List the accounts the user can publish to (their connected Instagram business / Facebook pages) " +
-    "so you can choose a valid target when drafting or editing a post. $0 read-only. An empty list means " +
-    "they have not connected a publishable account yet — tell them to connect one. If the result carries " +
+    // #851 r2 — "the accounts the user can publish to" is a send promise in another word form; it
+    // sat one line above the authority sentence saying nothing is sent. What the list IS — the
+    // connected accounts a post can be aimed at — is true in both states.
+    "List the user's connected Instagram business / Facebook page accounts " +
+    "so you can choose a valid target when drafting or editing a post. $0 read-only. " +
+    // #851 — an empty list used to be answered with "tell them to connect one". While publishing is
+    // off that sends the user at a door that does not open, so the authority answers it instead.
+    `${ottoPublishTruth()} ` +
+    "An empty list means they have no publishable account on record. If the result carries " +
     "`incomplete`, the list is NOT the whole picture: those channels could not be checked or are connected " +
     "but unusable, so never tell the user they have no account there — repeat the reason given and offer " +
     "to check again.",
