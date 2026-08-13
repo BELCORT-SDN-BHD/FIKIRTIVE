@@ -179,3 +179,7 @@ export { creditDirection, type CreditDirection } from "./credit-direction.js";
 // 商家主导航的唯一权威源(#801)。三个读者共用:左侧导轨画它、Otto 照它指路、围栏照它核对。
 // 纯数据(无 React、无图标、无 node/network),所以主 barrel 装得下。
 export * from "./navigation.js";
+
+// 消息渠道状态的唯一措辞(#792 r2)。导轨、预览页、Otto 指令与 listChannelScopes 技能描述
+// 共读一份 —— 从前它们各说各话,其中两处还在劝商家去连一条连不了的渠道。
+export * from "./messaging-status.js";

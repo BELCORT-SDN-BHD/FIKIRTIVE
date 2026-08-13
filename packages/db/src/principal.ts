@@ -34,6 +34,8 @@ export type SystemReason =
   | "stripe-webhook"
   | "meta-data-deletion"
   | "worker-heartbeat"
+  /** #794 — appends a BackupRun row (platform-level ops record, no tenant to scope). */
+  | "db-backup"
   | "worker-job-dispatch"
   | "worker-reaper-tick"
   | "gen-reaper"

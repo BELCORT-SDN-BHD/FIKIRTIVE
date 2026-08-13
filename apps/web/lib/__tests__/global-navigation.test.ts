@@ -5,7 +5,7 @@ import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import {
   MerchantShellContent,
   SectionTabs,
-  nextCrmDisclosureOpen,
+  nextDisclosureOpenForGroup,
 } from "@/components/global-navigation";
 
 vi.mock("next/navigation", () => ({
@@ -37,7 +37,7 @@ describe("MerchantShellContent", () => {
     expect(markup).toContain('aria-label="Global navigation"');
     expect(markup).toContain('href="/otto"');
     expect(markup).toContain('href="/campaign"');
-    expect(markup).toContain('href="/crm/inbox"');
+    expect(markup).toContain('href="/crm"');
     expect(markup).toContain('href="/billing"');
     expect(markup).toContain("overflow-y-auto");
   });
@@ -52,20 +52,14 @@ describe("MerchantShellContent", () => {
     },
   );
 
-  it("marks the current CRM page with aria-current", () => {
-    const markup = renderShell("/crm/reports/report-1");
-
-    expect(markup).toContain('<details class="group" open="">');
-    expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/reports"/);
-  });
-
-  it("still lights up Inbox on its own Templates sub-route (no CRM_ITEMS entry there yet)", () => {
-    // /crm/inbox/templates is a legacy sub-route with no registry entry of its own, so
-    // /crm/inbox — its longest matching ancestor — is the item that lights up.
-    const markup = renderShell("/crm/inbox/templates");
-
-    expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/inbox"/);
-  });
+  // #792 — CRM is one door now (the Customers preview), so every page under /crm lights
+  // up that one door, however deep the route goes.
+  it.each(["/crm", "/crm/reports/report-1", "/crm/inbox/templates"])(
+    "marks the Customers door current on %s",
+    (pathname) => {
+      expect(renderShell(pathname)).toMatch(/aria-current="page"[^>]*href="\/crm"/);
+    },
+  );
 
   it("replaces the old Account box with a real avatar menu offering Profile and Sign out", () => {
     const markup = renderShell("/billing");
@@ -243,33 +237,40 @@ describe("MerchantShellContent", () => {
   });
 });
 
-describe("nextCrmDisclosureOpen", () => {
-  it("opens when navigating into CRM", () => {
-    expect(
-      nextCrmDisclosureOpen({ type: "navigation", pathname: "/crm/inbox" }),
-    ).toBe(true);
+// #792 — this used to drive the CRM group, which no longer exists (seven doors folded into
+// one Customers link). The disclosure logic is unchanged and still live for the two groups
+// that remain, so the fence moved to Settings rather than being deleted.
+describe("nextDisclosureOpenForGroup", () => {
+  const settings = (update: Parameters<typeof nextDisclosureOpenForGroup>[1]) =>
+    nextDisclosureOpenForGroup("settings", update);
+
+  it("opens when navigating into the group", () => {
+    expect(settings({ type: "navigation", pathname: "/billing" })).toBe(true);
   });
 
-  it("reopens after a manual collapse and a navigation within CRM", () => {
-    let open = nextCrmDisclosureOpen({ type: "toggle", open: false });
+  it("reopens after a manual collapse and a navigation within the group", () => {
+    let open = settings({ type: "toggle", open: false });
     expect(open).toBe(false);
 
-    open = nextCrmDisclosureOpen({ type: "navigation", pathname: "/crm/contacts" });
+    open = settings({ type: "navigation", pathname: "/otto?view=connections" });
     expect(open).toBe(true);
   });
 
-  it("closes when navigating away from CRM", () => {
-    expect(
-      nextCrmDisclosureOpen({ type: "navigation", pathname: "/campaign" }),
-    ).toBe(false);
+  it("closes when navigating away from the group", () => {
+    expect(settings({ type: "navigation", pathname: "/campaign" })).toBe(false);
   });
 
-  it("preserves a manual open outside CRM until the next navigation", () => {
-    let open = nextCrmDisclosureOpen({ type: "toggle", open: true });
+  it("preserves a manual open outside the group until the next navigation", () => {
+    let open = settings({ type: "toggle", open: true });
     expect(open).toBe(true);
 
-    open = nextCrmDisclosureOpen({ type: "navigation", pathname: "/billing" });
+    open = settings({ type: "navigation", pathname: "/campaign" });
     expect(open).toBe(false);
+  });
+
+  it("an unknown group key keeps a manual toggle and never claims to be on a page", () => {
+    expect(nextDisclosureOpenForGroup("nope", { type: "toggle", open: true })).toBe(true);
+    expect(nextDisclosureOpenForGroup("nope", { type: "navigation", pathname: "/billing" })).toBe(false);
   });
 });
 
@@ -284,15 +285,10 @@ describe("SectionTabs", () => {
   it("renders nothing outside a grouped section", () => {
     expect(renderTabs("/campaign")).toBe("");
     expect(renderTabs("/northstar-immersive")).toBe("");
-  });
-
-  it("renders the CRM group's tabs on a CRM page", () => {
-    const markup = renderTabs("/crm/segments");
-
-    expect(markup).toContain('role="tablist"');
-    expect(markup).toContain('href="/crm/contacts"');
-    expect(markup).toContain('href="/crm/workflows"');
-    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/crm\/segments"/);
+    // #792 — Customers is a single link now, not a group, so it has no tabs of its own.
+    // Where its pages go is the preview page's job, not a second bar above them.
+    expect(renderTabs("/crm")).toBe("");
+    expect(renderTabs("/crm/segments")).toBe("");
   });
 
   it("renders the Settings group's tabs on Billing", () => {

@@ -92,7 +92,7 @@ describe("创作是主导航的第一格", () => {
   });
 });
 
-describe("六扇门都有门,且 375px 抽屉里到得了", () => {
+describe("每一个目的地都有门,且 375px 抽屉里到得了", () => {
   /**
    * 期望侧**独立于权威表**(判官 r1 P2)。
    *
@@ -107,13 +107,7 @@ describe("六扇门都有门,且 375px 抽屉里到得了", () => {
     "/otto",                    // 助手
     "/northstar-immersive",     // Create(画布的家)
     "/campaign",
-    "/crm/inbox",
-    "/crm/contacts",
-    "/crm/segments",
-    "/crm/templates",
-    "/crm/broadcasts",
-    "/crm/workflows",
-    "/crm/reports",
+    "/crm",                     // Customers(#792:七扇 CRM 门收成这一扇预览门)
     "/otto?view=library",
     "/otto?view=memory",        // Brand & products
     "/otto?view=templates",
@@ -171,7 +165,7 @@ describe("Otto 是助手,不是板块", () => {
   });
 
   it("每一个商家表面都够得着它(导轨常驻,创作面上也在)", () => {
-    for (const surface of ["/campaign", "/crm/inbox", "/billing", CREATE_NAV_HREF, CANVAS_HREF]) {
+    for (const surface of ["/campaign", "/crm", "/crm/inbox", "/billing", CREATE_NAV_HREF, CANVAS_HREF]) {
       expect(renderShell(surface), surface).toContain(`href="${OTTO_ASSISTANT.href}"`);
     }
   });
