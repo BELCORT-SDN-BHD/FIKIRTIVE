@@ -77,7 +77,7 @@ export function persistedStreamErrorOf(payload: unknown, fallbackText: string): 
       const kind = (error as { kind?: unknown }).kind;
       const text = (error as { text?: unknown }).text;
       if (
-        (kind === "insufficient_credits" || kind === "error")
+        (kind === "insufficient_credits" || kind === "spend_cap" || kind === "error")
         && typeof text === "string"
       ) {
         return { kind, text };

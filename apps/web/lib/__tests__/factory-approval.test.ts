@@ -51,6 +51,10 @@ const {
   mockRunStateFromString,
   mockRestoreWithContext,
   mockWithLlmBudget,
+  realOtto,
+  mockOrganizationFindUnique,
+  MockInsufficientCredits,
+  MockSpendCapBlocked,
   MockRunState,
   MockMaxTurnsExceededError,
   mockApprove,
@@ -73,7 +77,45 @@ const {
   class MockMaxTurnsExceededError extends Error {
     constructor(msg = "Max turns exceeded") { super(msg); this.name = "MaxTurnsExceededError"; }
   }
-  const mockWithLlmBudget = vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result);
+  // #524: the two typed money refusals `ottoFailureMessage` narrows on. They are only shapes
+  // here — nothing in this file throws one — but a `@fikirtive/db` mock that omits them makes
+  // every `instanceof` in the error-copy chain explode instead of returning false.
+  class MockInsufficientCredits extends Error {
+    readonly requiredInternal: number | null;
+    readonly balanceInternal: number | null;
+    constructor(message = "Not enough credits.", detail?: { requiredInternal?: number | null; balanceInternal?: number | null }) {
+      super(message);
+      this.name = "InsufficientCredits";
+      this.requiredInternal = detail?.requiredInternal ?? null;
+      this.balanceInternal = detail?.balanceInternal ?? null;
+    }
+  }
+  class MockSpendCapBlocked extends Error {
+    readonly requiredInternal: number;
+    readonly capInternal: number | null;
+    constructor(detail: { requiredInternal: number; capInternal: number | null }) {
+      super("Spend cap reached.");
+      this.name = "SpendCapBlocked";
+      this.requiredInternal = detail.requiredInternal;
+      this.capInternal = detail.capInternal;
+    }
+  }
+  // #524 r3/r5: the approval card is claimed inside withLlmBudget's post-reserve window. A double
+  // that ignored `afterReserve` would model a product where consent is never consumed — and one
+  // that ignored a FALSE return would run the model for a resolver that LOST the CAS (judge r4 P2).
+  //
+  // #524 r6(判官 r5 P2):它抛的必须是**生产那一个类**。上一版抛的是这里的本地同名副本,
+  // 于是 ottoApprove 里 `e instanceof ReservationNotClaimed` 一律不命中 —— 模型确实没跑
+  // (行为看着对),但「输掉 CAS」那条真实错误路由从来没被这两份替身走过。
+  //
+  // `vi.hoisted` 在任何 import 之前跑,拿不到真类;所以留一个盒子,由下面
+  // `vi.mock("@fikirtive/otto")` 的工厂(它有 importOriginal)在注册时填进去。
+  const realOtto = { ReservationNotClaimed: null as unknown as new () => Error };
+  const mockWithLlmBudget = vi.fn(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
+    const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
+    if (claim && !(await claim())) throw new realOtto.ReservationNotClaimed();
+    return (await fn()).result;
+  });
 
   return {
     mockRequireOwner: vi.fn(),
@@ -104,6 +146,10 @@ const {
     mockRunStateFromString,
     mockRestoreWithContext,
     mockWithLlmBudget,
+    realOtto,
+    mockOrganizationFindUnique: vi.fn(),
+    MockInsufficientCredits,
+    MockSpendCapBlocked,
     MockRunState,
     MockMaxTurnsExceededError,
     mockApprove,
@@ -117,6 +163,20 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen, startCoworkGen: mockStartGen }));
 vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
+
+/**
+ * #524 r6 — the two READ-ONLY ledger questions ottoApprove asks (judge r5 P1-A'①/②).
+ *
+ *  - finalizedReservations: which per-attempt refIds the ledger has already finished with, so a
+ *    retry reserves under one it will still accept. Default: none — a fresh card.
+ *  - otherHoldsSince: whether anything besides this turn's own hold was taken for this org since
+ *    it was taken. Default "none" — these fixtures hold nothing else, so a failed approval really
+ *    did charge nothing, and the card may say so.
+ */
+const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
+  mockFinalizedReservations: vi.fn(async (_orgId: string, _refIds: readonly string[]) => new Set<string>()),
+  mockOtherHoldsSince: vi.fn(async (_orgId: string, _refId: string): Promise<"none" | "some" | "unknown"> => "none"),
+}));
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
@@ -140,7 +200,15 @@ vi.mock("@fikirtive/db", () => ({
     actionEvent: { create: mockActionEventCreate },
     $transaction: mockTransaction,
     $executeRaw: mockExecuteRaw,
+    // #524: ottoApprove reads the merchant's spend cap before it holds anything.
+    organization: { findUnique: mockOrganizationFindUnique },
   },
+  InsufficientCredits: MockInsufficientCredits,
+  SpendCapBlocked: MockSpendCapBlocked,
+  // #524 r6: ottoApprove asks the LEDGER which attempt is still free, and whether a failed
+  // approval may claim "nothing was charged". Read-only; defaults say "fresh" and "unknown".
+  finalizedReservations: mockFinalizedReservations,
+  otherHoldsSince: mockOtherHoldsSince,
 }));
 
 // Real @fikirtive/core; only the heavy/non-deterministic otto exports are mocked —
@@ -148,6 +216,8 @@ vi.mock("@fikirtive/db", () => ({
 // branch and APPROVAL_TOOL_NAMES membership are exercised for real.
 vi.mock("@fikirtive/otto", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
+  // #524 r6(判官 r5 P2):把生产的 ReservationNotClaimed 交给上面的替身,让它抛真类。
+  realOtto.ReservationNotClaimed = actual.ReservationNotClaimed as new () => Error;
   return {
     ...actual,
     otto: { name: "Otto" },
@@ -257,12 +327,20 @@ beforeEach(() => {
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
   mockChatMessageCreate.mockResolvedValue({});
   mockChatMessageUpdateMany.mockResolvedValue({ count: 1 });
+  // #524: no spend cap set for these fixtures — the ceiling is not what they are about.
+  mockOrganizationFindUnique.mockResolvedValue({ settings: null });
   // #498 round-5: the tie-language fallback probes recent USER messages.
   mockChatMessageFindMany.mockResolvedValue([]);
   mockActionEventCreate.mockResolvedValue({});
   mockExecuteRaw.mockResolvedValue(undefined);
   mockTransaction.mockImplementation(runTransaction);
-  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result);
+  mockWithLlmBudget.mockImplementation(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
+    // #524 r3/r5: honour the post-reserve claim window — that is where the card is consumed — AND
+    // its false return, which means a concurrent resolver won and the model must NOT run.
+    const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
+    if (claim && !(await claim())) throw new realOtto.ReservationNotClaimed();
+    return (await fn()).result;
+  });
 });
 
 // ── Seam unit truths (real approval-tools + real hash normalizer) ───────────────
@@ -629,5 +707,48 @@ describe("runFactoryBatch approval — same-batchId re-park dedup (hash-pinned c
     const approvedItem = mockApprove.mock.calls[0]![0] as { arguments: string };
     expect(approvedItem.arguments).toContain("DIFFERENT second ask");
     expect(approvedItem.arguments).not.toContain("hook B");
+  });
+});
+
+// ── #524 r6(判官 r5 P2):输掉 CAS 的那条**真实错误路由** ────────────────────────────
+//
+// 同 refgen 那份:替身以前抛本地同名类,生产的 `instanceof` 不命中,这条分支从未被走过。
+describe("runFactoryBatch approval — a LOST claim routes through the production branch (#524 r6)", () => {
+  function setupLostClaim(afterLoss: "approved" | "pending") {
+    mockChatThreadFindFirst.mockResolvedValue({ id: APPROVE_THREAD_ID, projectId: PROJECT_ID, ottoState: '{"paused":"state"}' });
+    mockRunStateFromString.mockResolvedValue(new MockRunState());
+    mockGetInterruptions.mockReturnValue([makeFactoryApprovalItem(FACTORY_ARGS)]);
+    mockRun.mockResolvedValue(makeMockResult({ finalOutput: "should never run" }));
+    let approvalReads = 0;
+    mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) => {
+      if (a?.where?.kind !== "APPROVAL_CARD") return Promise.resolve({ seq: 5 });
+      approvalReads += 1;
+      return Promise.resolve({
+        id: FACTORY_CARD_ID,
+        payload: factoryCardPayload(approvalReads === 1 ? {} : { status: afterLoss }),
+      });
+    });
+    mockChatMessageUpdateMany.mockResolvedValue({ count: 0 });
+  }
+
+  it("the winner's resolution is REPORTED (never invented), and neither the model nor a cell ran", async () => {
+    setupLostClaim("approved");
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: FACTORY_CARD_ID });
+
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "approved" });
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockStartGen).not.toHaveBeenCalled(); // no cell was dispatched, so nothing was charged
+  });
+
+  it("a loss it cannot PROVE is an honest error, never a cheerful approved", async () => {
+    setupLostClaim("pending");
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: FACTORY_CARD_ID });
+
+    expect(res).toMatchObject({ error: expect.stringContaining("Couldn't confirm this approval") });
+    expect(res).not.toHaveProperty("resolution");
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockStartGen).not.toHaveBeenCalled();
   });
 });

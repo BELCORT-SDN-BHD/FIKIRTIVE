@@ -4,7 +4,8 @@
  * rendering source for OttoApprovalCard, so these assertions ARE the card-content contract.
  */
 import { describe, it, expect } from "vitest";
-import { approvalCardView, asApprovalCardPayload, type ApprovalCardPayload } from "@/lib/approval-card-view";
+import { approvalCardView, approvalCardResolutionText, asApprovalCardPayload, type ApprovalCardPayload } from "@/lib/approval-card-view";
+import { approvalDoneLine } from "@fikirtive/core/schedule-draft";
 
 const PAYLOAD: ApprovalCardPayload = {
   toolName: "approveScheduledPost",
@@ -57,5 +58,64 @@ describe("asApprovalCardPayload", () => {
   it("rejects non-approval payloads", () => {
     expect(asApprovalCardPayload({ prompt: "a GEN_CARD payload" })).toBeNull();
     expect(asApprovalCardPayload(null)).toBeNull();
+  });
+});
+
+// ── #524 r6(判官 r5 P1-A'②):`failed` 有两句话,不是一句 ────────────────────────────
+//
+// r5 的卡面对每一张 failed 卡都写「nothing was charged」。可 SDK 恢复是**先跑已批准的工具、
+// 再进下一次模型调用** —— 工具完全可能已经建了并付了一单,然后模型才抛错。那句话于是成了
+// 一句商家看不穿的假话。哪一句能说,由账本证出来的 `chargeVerdict` 决定。
+describe("approvalCardResolutionText — the failed card only claims a zero it can prove (#524 r6)", () => {
+  const failed = (chargeVerdict?: "zero" | "unknown"): ApprovalCardPayload => ({
+    toolName: "generateReferences",
+    ref: "ent_1",
+    status: "failed",
+    summary: null,
+    ...(chargeVerdict ? { chargeVerdict } : {}),
+  });
+
+  it("proven zero says so, in the merchant's own words", () => {
+    const text = approvalCardResolutionText(failed("zero"))!;
+    expect(text).toContain("nothing was charged");
+    expect(text).toContain("Ask Otto to set it up again");
+  });
+
+  it("unproven NEVER claims a zero — it says what is true and where to look", () => {
+    const text = approvalCardResolutionText(failed("unknown"))!;
+    expect(text).not.toContain("nothing was charged");
+    expect(text).toContain("may already have been charged");
+    expect(text).toContain("Billing");
+  });
+
+  it("an absent verdict reads as unproven — the fail-closed arm is the sentence that promises less", () => {
+    expect(approvalCardResolutionText(failed())).toBe(approvalCardResolutionText(failed("unknown")));
+    // …and asApprovalCardPayload is where that default is applied, so a card written before the
+    // field existed can never be rendered as a proven zero.
+    expect(asApprovalCardPayload({ toolName: "x", ref: "r", status: "failed" })!.chargeVerdict).toBe("unknown");
+    expect(asApprovalCardPayload({ toolName: "x", ref: "r", status: "failed", chargeVerdict: "zero" })!.chargeVerdict).toBe("zero");
+    expect(asApprovalCardPayload({ toolName: "x", ref: "r", status: "failed", chargeVerdict: "nonsense" })!.chargeVerdict).toBe("unknown");
+  });
+
+  it("the other resolutions are unchanged, and a pending card has no resolution sentence at all", () => {
+    expect(approvalCardResolutionText({ ...failed(), status: "rejected" })).toBe("Declined — nothing was published.");
+    expect(approvalCardResolutionText({ ...failed(), status: "expired" })).toContain("expired");
+    expect(approvalCardResolutionText({ ...failed(), status: "pending" })).toBeNull();
+  });
+
+  // ── #851 × #524 合流:「已批准」那句只有一个权威 ──────────────────────────────────
+  //
+  // #524 在这个 helper 里另写了一句 "Approved — it will publish as scheduled."，而 #851 同期把
+  // 同一句移到了 approvalDoneLine()，并让它跟着发布开关走。两份文案共存，卡面就会在详情行说
+  // 「nothing is sent」、在回执里说「会照排程发出去」——正是 #851 拆掉的那种自相矛盾。合流后
+  // 这个 helper 的 approved 分支改为读同一个视图，所以下面两条钉的是「同一句」，不是字面量。
+  it("已批准那句读自权威，发布卡与非发布卡各说各的（#851 × #524）", () => {
+    const publishCard: ApprovalCardPayload = { ...PAYLOAD, status: "approved" };
+    expect(approvalCardResolutionText(publishCard)).toBe(approvalDoneLine());
+    expect(approvalCardResolutionText(publishCard)).toBe(approvalCardView(publishCard).approvedLine);
+    // 非发布类的已批准动作，绝不能拿发布那句去回答。
+    const otherCard: ApprovalCardPayload = { ...failed(), status: "approved" };
+    expect(approvalCardResolutionText(otherCard)).toBe(approvalCardView(otherCard).approvedLine);
+    expect(approvalCardResolutionText(otherCard)).not.toContain("publish");
   });
 });

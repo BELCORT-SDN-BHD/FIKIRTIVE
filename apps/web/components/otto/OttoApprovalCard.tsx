@@ -15,7 +15,12 @@ import { ShieldCheck, CheckCircle2, Loader2, CalendarCheck } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { ottoApprove, ottoReject } from "@/lib/otto-client-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { asApprovalCardPayload, approvalCardView } from "@/lib/approval-card-view";
+import {
+  asApprovalCardPayload,
+  approvalCardView,
+  approvalCardResolutionText,
+  type ApprovalCardResolution,
+} from "@/lib/approval-card-view";
 import { chainedApprovalOf } from "./approval-chain";
 
 /** What a resolved approval hands up: the EXACT card, what it resolved to, and the
@@ -24,7 +29,7 @@ import { chainedApprovalOf } from "./approval-chain";
  *  "waiting for your go-ahead" panel forever (#580 复审 r1 P1-4). */
 export interface ApprovalResolvedOutcome {
   cardId: string;
-  resolution: "approved" | "rejected" | "expired";
+  resolution: ApprovalCardResolution;
   /** The server's COMPLETE still-pending set when the resume parked again; null when
    *  the response carried no set information. */
   pendingCardIds: string[] | null;
@@ -39,7 +44,7 @@ export interface OttoApprovalCardProps {
   onResolved?: (outcome: ApprovalResolvedOutcome) => void | Promise<void>;
 }
 
-type LocalState = "idle" | "approving" | "declining" | "approved" | "rejected" | "expired";
+type LocalState = "idle" | "approving" | "declining" | "approved" | "rejected" | "expired" | "failed";
 
 export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: OttoApprovalCardProps) {
   const parsed = asApprovalCardPayload(payload);
@@ -51,7 +56,7 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
 
   // Durable payload status wins on reload; local state gives instant feedback in-session.
   const resolved =
-    local === "approved" || local === "rejected" || local === "expired"
+    local === "approved" || local === "rejected" || local === "expired" || local === "failed"
       ? local
       : parsed.status !== "pending"
         ? parsed.status
@@ -145,16 +150,26 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
             {/* #851 — from the same authority as the card's title and outcome line. Hardcoded here,
                 this sentence contradicted the detail line directly above it: one card said nothing
                 is sent, and then, one line down, that the post goes out at its slot. The
-                contradicting half was the one a merchant read having just acted. */}
+                contradicting half was the one a merchant read having just acted. #524 renders the
+                other three resolutions through approvalCardResolutionText, whose own "approved"
+                arm now reads from this same line — one claim, whichever surface asks. */}
             <span>{view.approvedLine}</span>
           </div>
         ) : resolved === "rejected" ? (
           <div className="text-[0.875rem] text-muted-foreground">
-            Declined — nothing was published.
+            {approvalCardResolutionText({ ...parsed, status: "rejected" })}
           </div>
         ) : resolved === "expired" ? (
           <div className="text-[0.875rem] text-muted-foreground">
-            This request expired — ask Otto to request approval again.
+            {approvalCardResolutionText({ ...parsed, status: "expired" })}
+          </div>
+        ) : resolved === "failed" ? (
+          // #524 r5: the consent was spent and the run then died. Saying "Approved" here would be
+          // a lie about something the merchant cannot otherwise see. #524 r6: which failure
+          // sentence it is depends on what the ledger PROVED (payload.chargeVerdict) — this card
+          // never claims "nothing was charged" on its own guess.
+          <div className="text-[0.875rem] text-[var(--error-soft-foreground)]">
+            {approvalCardResolutionText({ ...parsed, status: "failed" })}
           </div>
         ) : (
           <div className="flex gap-3">
