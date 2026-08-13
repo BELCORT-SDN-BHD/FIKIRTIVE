@@ -6,6 +6,8 @@ import {
   fikirtiveEdit,
   captionCue,
   editDuration,
+  foreignEditSrcs,
+  FOREIGN_MEDIA_MESSAGE,
   newId,
   parseStorageKey,
   keyOwnerMatches,
@@ -998,7 +1000,16 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
  *  (Prisma auto-bumps it on every write) — a concurrent save from another
  *  tab/device bumps it, our conditional update matches 0 rows, and we report
  *  `conflict` instead of silently overwriting that work. Omitting baseUpdatedAt
- *  keeps the old bare write (back-compat: resetToBoard's deliberate replace). */
+ *  keeps the old bare write (back-compat: resetToBoard's deliberate replace).
+ *
+ *  TENANT CHAIN (#780 r2b). This is a server action, i.e. a POST endpoint, and its
+ *  whole payload is client-authored timeline JSON — the one place in the product where
+ *  the caller names the files we will later read. The contract checks each `src` is a
+ *  well-FORMED /files/u/<owner>/<hash> URL and says nothing about whose owner segment
+ *  it is, so a cut naming another org's key parsed clean, persisted, and was rendered
+ *  and copied out as this org's own output. Every src is now checked against the
+ *  AUTHENTICATED owner before anything is written, and one foreign src refuses the whole
+ *  document rather than quietly dropping the clip. */
 export async function saveProjectEdit(projectId: string, editJsonString: string, baseUpdatedAt?: string): Promise<{ ok: true; updatedAt: string | undefined } | { error: string; conflict?: true }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -1013,6 +1024,7 @@ export async function saveProjectEdit(projectId: string, editJsonString: string,
     } catch {
       return { error: "That cut is out of contract — fix the flagged clip first." };
     }
+    if (foreignEditSrcs(edit, ownerId).length > 0) return { error: FOREIGN_MEDIA_MESSAGE };
     if (baseUpdatedAt) {
       const res = await prisma.project.updateMany({ where: { id: projectId, ownerId, updatedAt: new Date(baseUpdatedAt) }, data: { editJson: edit } });
       if (res.count === 0) return { error: "This cut changed in another tab or device — reload before saving so you don't overwrite that work.", conflict: true as const };
@@ -1082,6 +1094,11 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
       track0.clips.push({ asset: { type: "video", src }, start: end, length: seconds, ...(tr ? { transition: tr } : {}) });
       const parsed = fikirtiveEdit.safeParse(base); // canonicalize before persisting (saveProjectEdit discipline)
       if (!parsed.success) return { error: "Adding that segment would put the cut out of contract." };
+      // The segment we append is resolved from an OWNED Generation, but `base` came off the
+      // row — and a row written before the saveProjectEdit guard existed can carry someone
+      // else's key. Checked on the RESULT, not the base, so a cut that drops the foreign clip
+      // still saves and the merchant is never walled into a project they can't repair.
+      if (foreignEditSrcs(parsed.data, ownerId).length > 0) return { error: FOREIGN_MEDIA_MESSAGE };
 
       const res = await prisma.project.updateMany({ where: { id: project.id, ownerId, updatedAt: project.updatedAt }, data: { editJson: parsed.data } });
       if (res.count === 1) {
@@ -1112,6 +1129,12 @@ export async function startRender(projectId: string, editJsonString: string): Pr
     } catch {
       return { error: "That cut is out of contract — fix the flagged clip first." };
     }
+    // Tenant chain, second link (#780 r2b): the write path above is now guarded, but this
+    // is a server action of its own and it is where the merchant's cut becomes a job the
+    // worker will FETCH FILES for. Rows written before that guard existed, or by any future
+    // path that forgets it, must still be stopped here — before a RenderJob exists and
+    // before anything is queued.
+    if (foreignEditSrcs(edit, ownerId).length > 0) return { error: FOREIGN_MEDIA_MESSAGE };
     // server-side in-flight guard (codex review): double-clicks and duplicate
     // tabs must not stack identical renders
     const active = await prisma.renderJob.findFirst({

@@ -537,7 +537,8 @@ describe("#726 the two pages count different populations, and each one says whic
     // is one of the opt-outs it reports excluding, even though neither has a WhatsApp identity.
     expect(preview.contactableCount).toBe(13);
     expect(preview.excludedByConsentCount).toBe(5);
-    // The broadcast can only count the people it can reach, so both numbers are one lower.
+    // The broadcast counts only the people holding an identity on its own channel, so both
+    // numbers are one lower.
     const delivered = new Set(frozen.members.map((member) => member.contactId));
     expect(delivered.size).toBe(12);
     expect(delivered.has(farid)).toBe(false);
@@ -552,10 +553,27 @@ describe("#726 the two pages count different populations, and each one says whic
 
     const page = renderToStaticMarkup(createElement(ContactPreview, { preview }));
     expect(page).toContain("These counts cover every contact you have");
-    expect(page).toContain("A broadcast counts only the contacts it can reach");
+    // #792 r8 — what this test is for has never changed: each number must print WHICH population
+    // it counted. Two attempts at naming that population were wrong, and this is the third:
+    //   "the contacts it can reach"  — promised delivery no number here measures;
+    //   "… and no known opt-out"     — false, and false twice: `selectedIntoAudience` keeps known
+    //                                  opt-outs in a segment that went looking for them (the test
+    //                                  below freezes four of them), and the broadcast number this
+    //                                  sentence explains IS a count of known opt-outs.
+    // The population is narrowed by exactly one line of customer-broadcast-service.ts —
+    // `if (sendTargets.length === 0) continue` — so that is all the sentence claims.
+    expect(page).toContain(
+      "A broadcast counts only the contacts with a confirmed identity on the channel it sends from, so its own numbers can be lower.",
+    );
 
     const note = renderToStaticMarkup(createElement(ConsentExclusionNote, { consent: frozen.consent }));
-    expect(note).toContain("This count covers the contacts this broadcast can reach on its channel");
+    expect(note).toContain(
+      "This count covers the contacts with a confirmed identity on the channel this broadcast sends from, so it can be lower than the count on the segments page",
+    );
+    // The population sentence may not borrow a consent word — that is the r7 defect, in the one
+    // place it would come back.
+    expect(page).not.toContain("sends from and no known opt-out");
+    expect(note).not.toContain("sends from and no known opt-out");
     // The freeze must not claim to have excluded the very same people the segment did.
     expect(note).not.toContain("the same contacts the segment left out");
   });

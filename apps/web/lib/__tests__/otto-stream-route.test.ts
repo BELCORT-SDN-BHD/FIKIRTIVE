@@ -692,6 +692,79 @@ describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
   });
 });
 
+// ── #879 step 1: Otto foundation schema pinning — page-context pins ─────────
+//
+// Client can declare POSITION (surface/subjectRef/outletId); it can never declare IDENTITY
+// (actorId/visibility) — there is no field for those, and the shared zod schema is `.strict()`,
+// so a client that tries rejects the WHOLE request rather than having the extra keys silently
+// dropped.
+describe("POST /api/otto/stream — #879 step 1 page-context pins", () => {
+  it("writes surface/subjectRef/outletId onto the new USER message when the caller sends them", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Make a launch post",
+      surface: "campaign",
+      subjectRef: "campaign_123",
+      outletId: "outlet_abc",
+    }));
+
+    expect(res.status).toBe(200);
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        role: "USER",
+        surface: "campaign",
+        subjectRef: "campaign_123",
+        outletId: "outlet_abc",
+      }),
+    }));
+  });
+
+  it("leaves surface/subjectRef/outletId NULL on the new USER message when the caller omits them", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
+
+    expect(res.status).toBe(200);
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        role: "USER",
+        surface: null,
+        subjectRef: null,
+        outletId: null,
+      }),
+    }));
+  });
+
+  // Security boundary: actorId/visibility are identity columns with no client-facing field.
+  // The shared request schema is `.strict()`, so sending them rejects parsing entirely — the
+  // request never reaches persistence, and no thread/message is created at all.
+  it("rejects the whole request (and persists nothing) if the caller sends actorId", async () => {
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Make a launch post",
+      actorId: "user_someone_else",
+    }));
+
+    expect(res.status).toBe(400);
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects the whole request (and persists nothing) if the caller sends visibility", async () => {
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Make a launch post",
+      visibility: "private",
+    }));
+
+    expect(res.status).toBe(400);
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+  });
+});
+
 // ── #791-6 白标铁律:流式那一条也拦得住 ────────────────────────────────────
 //
 // 只洗持久化的那一份是不够的:商家会亲眼看着引擎名一个字一个字流进来,然后刷新
