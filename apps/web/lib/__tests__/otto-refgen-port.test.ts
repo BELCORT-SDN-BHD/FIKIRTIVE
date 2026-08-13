@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // W-B3-G-P (debt-68/69): the ctx.refgen port wraps the SAME owner-gated refgen server actions the human
 // element UI uses. generate forwards to startRefGen — the SOLE spend authority (own requireOwner +
-// refGenRequest gate + server-priced reserve). deleteVariant carries an Otto-only fail-closed active-job
-// gate: any paid RefGenJob still in flight for that variant ⇒ deterministic refusal (the running job
-// would settle onto a tombstoned variant, wasting spend); fail-closed on a failing count read. The gate
-// lives in the port, NOT in deleteVariant — the human UI's legitimate delete is untouched (#271 precedent).
+// refGenRequest gate + server-priced reserve). deleteVariant carries a fail-closed active-job pre-gate:
+// any paid RefGenJob still in flight for that variant ⇒ deterministic refusal (the running job would
+// settle onto a tombstoned variant, wasting spend); fail-closed on a failing count read.
+//
+// #781 r2/r3 CORRECTION — this pre-gate is no longer the rule, only Otto's WORDING of it. The rule
+// itself moved into deleteVariant, where every caller meets it (the merchant's own Delete button
+// called the action directly and used to pass straight through), and r3 made it atomic with the
+// delete. What is asserted below is that Otto refuses in its own words BEFORE delegating; the action
+// underneath refuses again regardless, so a port that ever drifted would still not lose paid work.
 
 const { mockRefGenJobCount, mockStartRefGen, mockCreateVariant, mockDeleteVariant } = vi.hoisted(() => ({
   mockRefGenJobCount: vi.fn(),
