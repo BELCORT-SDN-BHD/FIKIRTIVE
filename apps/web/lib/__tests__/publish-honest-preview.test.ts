@@ -380,6 +380,10 @@ describe("#851 ② 排程面看得见的那一层如实", () => {
   //
   // 修法是让产品级那道闸压过 workspace 那道 —— 发布没通电时,这颗开关的**任何**位置都不该被
   // 描述成「会送出去」。下面两条把两个分支各钉一遍,第三条做反面自证。
+  //
+  // ⚠️ 通电那天:下面**前两条**属于预览门的寿命(它们断言的是「两个分支说同一句话」,那只在
+  // 发布没通电时成立),翻 PUBLISHING_AVAILABLE 时要跟着删 —— 与文件顶上
+  // `expect(PUBLISHING_AVAILABLE).toBe(false)` 那条一起。第三条(反面自证)与开关无关,照常留着。
   it("发布没通电时,auto-publish 开关的两个分支都说不出「会替你发」", () => {
     for (const workspaceCanAutoPublish of [true, false]) {
       const hint = autoPublishHint(workspaceCanAutoPublish);
