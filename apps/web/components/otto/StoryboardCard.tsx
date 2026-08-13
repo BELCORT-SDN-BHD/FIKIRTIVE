@@ -493,7 +493,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const videoBlockedCount = shots.filter((s) => !s.firstFrameGenerationId).length;
   // In continuous mode those shots are not blocked ON THE MERCHANT — they are waiting for the
   // clip before them to finish, which then hands them its closing frame. Say that instead.
-  const videoWaitingCount = shots.filter((s) => inheritingShotIds.has(s.shotId)).length;
+  const videoWaitingCount = inheritingShotIds.size;
   const showMakeVideos = videoEligibleCount > 0 && idleForAffordance;
 
   return (
