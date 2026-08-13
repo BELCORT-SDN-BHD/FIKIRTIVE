@@ -124,22 +124,21 @@ function imageShapePicker(): HTMLSelectElement {
   return found!;
 }
 
+/** 按钮上现在带着价（「Regenerate · 8 credits」），所以按前缀找。 */
 function buttonsLabelled(text: string): HTMLButtonElement[] {
-  return [...container!.querySelectorAll("button")].filter((b) => b.textContent?.trim() === text);
+  return [...container!.querySelectorAll("button")].filter((b) => b.textContent?.trim().startsWith(text) ?? false);
 }
 
-/** 走一次确认对话框：先按面板上的按钮，再按对话框里的确认按钮。 */
-async function confirmAction(trigger: string, confirmLabel: string): Promise<void> {
-  await act(async () => { buttonsLabelled(trigger)[0]!.click(); });
+/** #896（Founder 2026-08-13）：详情面板的付费动作对齐画布 —— 按钮自己带价，**按下去就是批准**，
+ *  中间没有确认弹窗。这个助手就是那条语义：一击,而且这一击之前不许有任何付费调用。 */
+async function pressPaidAction(label: string): Promise<void> {
+  const button = buttonsLabelled(label)[0];
+  expect(button, `行动栏上应该有「${label}」`).toBeDefined();
+  expect(button!.textContent, `「${label}」必须把它要收的价写在按钮上`).toMatch(/\d+ credits?/);
+  expect(mocks.startAssetGen, "还没按就已经花钱了").not.toHaveBeenCalled();
+  await act(async () => { button!.click(); });
   await act(async () => { await Promise.resolve(); });
-  // 只在对话框里找确认按钮：面板上那个按钮的名字可能与确认按钮相同（Regenerate），
-  // 在整篇文档里找会先命中面板那个，于是「确认」变成了又一次打开对话框。
-  const dialog = document.querySelector('[role="dialog"]');
-  expect(dialog, "应该弹出确认对话框").not.toBeNull();
-  const confirm = [...dialog!.querySelectorAll("button")].filter((b) => b.textContent?.trim() === confirmLabel);
-  expect(confirm[0], `应该出现「${confirmLabel}」确认按钮`).toBeDefined();
-  await act(async () => { confirm[0]!.click(); });
-  await act(async () => { await Promise.resolve(); });
+  expect(document.querySelector('[role="dialog"]'), "付费动作不该再弹确认框").toBeNull();
 }
 
 function startGenArg(): Record<string, unknown> {
@@ -164,7 +163,7 @@ describe("资产详情：图片形状(#643 T2)", () => {
 
   it("Regenerate 带的是屏幕上那一格 —— 重做一张不会悄悄换掉形状", async () => {
     await renderPanel("9:16");
-    await confirmAction("Regenerate", "Regenerate");
+    await pressPaidAction("Regenerate");
     expect(startGenArg()).toMatchObject({ kind: "image", aspectRatio: "9:16" });
   });
 
@@ -175,7 +174,7 @@ describe("资产详情：图片形状(#643 T2)", () => {
       picker.value = "21:9";
       picker.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await confirmAction("Regenerate", "Regenerate");
+    await pressPaidAction("Regenerate");
     expect(startGenArg()).toMatchObject({ aspectRatio: "21:9" });
   });
 
@@ -187,7 +186,7 @@ describe("资产详情：图片形状(#643 T2)", () => {
       setter?.call(input, "make the mug red");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await confirmAction("Send", "Generate edit");
+    await pressPaidAction("Generate edit");
     expect(startGenArg()).toMatchObject({
       kind: "image",
       aspectRatio: "4:3",
@@ -234,24 +233,12 @@ describe("#645 T4:资产详情的付费请求带着屏幕上那个价", () => {
     return mocks.startAssetGen.mock.calls[0]![0] as Record<string, unknown>;
   }
 
-  /** 面板上的付费动作是两步:先按行动栏那个按钮开确认框,再在框里确认。两步都点。 */
-  async function confirmAction(label: string): Promise<void> {
-    const findAll = () => [...document.querySelectorAll<HTMLButtonElement>("button")]
-      .filter((b) => (b.textContent ?? "").trim() === label);
-    const rail = findAll();
-    expect(rail.length, `行动栏上应该有「${label}」`).toBeGreaterThan(0);
-    await act(async () => { rail[0]!.click(); });
-    await act(async () => { await Promise.resolve(); });
-    // 确认框里那个同名按钮 —— 它才是真正花钱的那一下。
-    const after = findAll();
-    const confirm = after[after.length - 1]!;
-    await act(async () => { confirm.click(); });
-    await act(async () => { await Promise.resolve(); });
-  }
+  // #896:付费动作是**一步** —— 行动栏那颗按钮自己带价,按下去就是批准。
+  // 「屏幕上那个价 = 请求里那个价」这条绑定因此更直白了:断言读的就是同一颗按钮。
 
   it("Animate 带上面板显示的视频价(而不是让服务端自己决定收多少)", async () => {
     await renderPanel("1:1");
-    await confirmAction("Animate");
+    await pressPaidAction("Animate");
     const arg = assetGenArg();
     expect(arg.kind).toBe("video");
     // 面板显示的是默认档 720p/5s = 11 credits,带出去的必须是同一个数。
@@ -265,7 +252,7 @@ describe("#645 T4:资产详情的付费请求带着屏幕上那个价", () => {
       length.value = "12";
       length.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await confirmAction("Animate");
+    await pressPaidAction("Animate");
     const arg = assetGenArg();
     expect(arg.durationSeconds).toBe(12);
     expect(arg.expectedCredits).toBe(27);
@@ -273,7 +260,7 @@ describe("#645 T4:资产详情的付费请求带着屏幕上那个价", () => {
 
   it("Regenerate 同样带着面板显示的图片价", async () => {
     await renderPanel("1:1");
-    await confirmAction("Regenerate");
+    await pressPaidAction("Regenerate");
     const arg = assetGenArg();
     expect(arg.kind).toBe("image");
     expect(arg.expectedCredits).toBe(8);
@@ -281,7 +268,7 @@ describe("#645 T4:资产详情的付费请求带着屏幕上那个价", () => {
 
   it("付费路径不再走没有价格绑定的 startGen", async () => {
     await renderPanel("1:1");
-    await confirmAction("Animate");
+    await pressPaidAction("Animate");
     expect(mocks.startGen).not.toHaveBeenCalled();
   });
 });

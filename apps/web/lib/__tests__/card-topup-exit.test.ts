@@ -182,9 +182,8 @@ describe("#786 PackCard's second way out", () => {
     );
 
     // The named option must exist as a real control — and spend through the SAME per-card
-    // server action the batch loop uses, behind the same confirm step.
+    // server action the batch loop uses. #896: one press, with the item's price on it.
     await clickByText(dom, "Make this");
-    await clickByText(dom, "Confirm — make this");
     await act(async () => {
       await Promise.resolve();
     });
@@ -197,7 +196,7 @@ describe("#786 PackCard's second way out", () => {
     expect(onApproved, "the parent never learned this item started").toHaveBeenCalled();
   });
 
-  it("spends nothing until the merchant confirms", async () => {
+  it("spends nothing until the merchant presses it — and the press is the approval (#896)", async () => {
     mocks.ottoApprove.mockResolvedValue({ status: "done" });
 
     const dom = await mount(
@@ -209,9 +208,25 @@ describe("#786 PackCard's second way out", () => {
       }),
     );
 
-    await clickByText(dom, "Make this");
+    // Rendering a pack full of priced rows spends nothing on its own.
+    expect(mocks.ottoApprove, "rendering the pack already spent real credits").not.toHaveBeenCalled();
 
-    expect(mocks.ottoApprove, "opening the confirm step already spent real credits").not.toHaveBeenCalled();
+    // The price is on the control the merchant presses, so that press IS the approval —
+    // the same guarantee the removed second click used to carry.
+    const perItem = Array.from(dom.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").trim().startsWith("Make this"),
+    );
+    expect(perItem?.textContent, "the per-item approve must name the price it charges").toContain("5 credits");
+
+    await clickByText(dom, "Make this");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.ottoApprove, "the merchant's press did not reach the metered action").toHaveBeenCalledWith({
+      threadId: "thr_1",
+      cardId: "c1",
+    });
   });
 
   it("names no second way out when not even one item is within reach", async () => {
@@ -262,13 +277,14 @@ describe("#707 ResearchCard", () => {
   it("links to Billing when the server refuses at confirm time", async () => {
     mocks.approveResearch.mockResolvedValue({ error: "no", code: "insufficient_credits" });
 
-    // Balance covers the estimate, so the merchant gets all the way to Confirm — this is
-    // the race the alert exists for (another spend landed between render and approve).
+    // Balance covers the estimate, so the merchant gets all the way to the approve press —
+    // this is the race the alert exists for (another spend landed between render and approve).
     const dom = await mount(
       createElement(ResearchCard, { cardId: "card_1", payload, balanceUsd: 10 }),
     );
-    await clickByText(dom, "Review cost");
-    await clickByText(dom, "Confirm");
+    // #896: one press, with the estimate on it — that press IS the approval.
+    expect(mocks.approveResearch, "rendering the card already approved it").not.toHaveBeenCalled();
+    await clickByText(dom, "Run research");
     await act(async () => {
       await Promise.resolve();
     });

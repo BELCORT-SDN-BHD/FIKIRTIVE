@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import { useState } from "react";
 import { ClipboardList, Film, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
@@ -52,13 +52,10 @@ export interface PackCardProps {
  *  SEQUENTIALLY for each card via the same per-card paths (coworkGenerate /
  *  ottoApprove) as OttoPlanCard — no new server action.
  *
- *  Money path: unchanged. The confirm step and the insufficient-balance guard
- *  fulfil the "confirm before spending real money" rule. */
+ *  Money path: unchanged. The priced button and the insufficient-balance guard
+ *  fulfil the "the merchant approves the spend, knowing the price" rule — since #896
+ *  in ONE press rather than two (the old second step re-showed the same number). */
 export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardProps) {
-  const [confirming, setConfirming] = useState(false);
-  /** The ONE row whose per-item confirm step is open (#786). Same shape as `confirming`
-   *  above, one level down: nothing spends until the merchant confirms. */
-  const [confirmingCardId, setConfirmingCardId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   /** The card the loop is firing right now. Held by id, not by index into idleCards:
    *  a per-item run fires a SUBSET, so an index would point at the wrong row (#786). */
@@ -115,8 +112,6 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     // Fail closed on the SAME gate the rows render from: a card we couldn't read, couldn't
     // price, or couldn't read in full may not start a spend, whatever path got here.
     if (targets.some((c) => !c.approvable || c.credits === null)) return;
-    setConfirming(false);
-    setConfirmingCardId(null);
     setRunning(true);
     setError(null);
 
@@ -216,81 +211,53 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             const canMakeThis = offerIndividual && affordableIdleCards.some((a) => a.cardId === c.cardId);
 
             return (
-              <React.Fragment key={c.cardId}>
-                <div
-                  className="flex items-center gap-3 rounded-[14px] bg-card px-3 py-2.5"
-                  style={{ opacity: isFailed || isCancelled ? 0.6 : 1 }}
-                >
-                  {/* Icon bubble: --brand-soft in .fk.gb-skin = neutral gray #ECECEA = .gb --accent */}
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-accent text-foreground">
-                    {isVideo ? <Film size={17} /> : <ImageIcon size={17} />}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] font-semibold text-foreground">
-                      {desc}
-                    </div>
-                    <div className="text-[0.75rem] text-muted-foreground">
-                      {c.credits === null ? PACK_UNPRICED_ROW : creditsLabel(c.credits)}
-                    </div>
+              <div
+                key={c.cardId}
+                className="flex items-center gap-3 rounded-[14px] bg-card px-3 py-2.5"
+                style={{ opacity: isFailed || isCancelled ? 0.6 : 1 }}
+              >
+                {/* Icon bubble: --brand-soft in .fk.gb-skin = neutral gray #ECECEA = .gb --accent */}
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-accent text-foreground">
+                  {isVideo ? <Film size={17} /> : <ImageIcon size={17} />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] font-semibold text-foreground">
+                    {desc}
                   </div>
-                  <div className="shrink-0 text-[0.75rem]">
-                    {isCancelled ? (
-                      <span className="text-muted-foreground">cancelled</span>
-                    ) : isFailed ? (
-                      <span className="text-[var(--error-soft-foreground)]">failed</span>
-                    ) : isDone ? (
-                      <span className="text-[var(--success)]">✓</span>
-                    ) : isGenerating ? (
-                      <span className="text-muted-foreground">starting…</span>
-                    ) : canMakeThis ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="rounded-[11px]"
-                        disabled={running}
-                        onClick={() => setConfirmingCardId(c.cardId)}
-                      >
-                        Make this
-                      </Button>
-                    ) : (
-                      <span className="text-muted-foreground/70">queued</span>
-                    )}
-                  </div>
-                  <div className="shrink-0 text-[0.75rem] text-muted-foreground">
-                    #{idx + 1}
+                  <div className="text-[0.75rem] text-muted-foreground">
+                    {c.credits === null ? PACK_UNPRICED_ROW : creditsLabel(c.credits)}
                   </div>
                 </div>
-
-                {/* The per-item confirm step — the same "say the price, then spend" shape the
-                    batch and the single plan card both use. */}
-                {confirmingCardId === c.cardId && c.credits !== null && (
-                  <div className="rounded-[14px] bg-card px-3 py-2.5">
-                    <div className="mb-3 text-[0.875rem] text-foreground">
-                      Make item {idx + 1} for {creditsLabel(c.credits)}? This will spend real credits.
-                    </div>
-                    <div className="flex gap-3">
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="rounded-[11px]"
-                        disabled={running}
-                        onClick={() => void runCards([c])}
-                      >
-                        {running ? "Starting…" : "Confirm — make this"}
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="rounded-[11px]"
-                        disabled={running}
-                        onClick={() => setConfirmingCardId(null)}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </React.Fragment>
+                <div className="shrink-0 text-[0.75rem]">
+                  {isCancelled ? (
+                    <span className="text-muted-foreground">cancelled</span>
+                  ) : isFailed ? (
+                    <span className="text-[var(--error-soft-foreground)]">failed</span>
+                  ) : isDone ? (
+                    <span className="text-[var(--success)]">✓</span>
+                  ) : isGenerating ? (
+                    <span className="text-muted-foreground">starting…</span>
+                  ) : canMakeThis && c.credits !== null ? (
+                    // #896: one press, price on it. `c.credits !== null` is what
+                    // `affordableIdleCards` already guarantees — spelled out so the label
+                    // can name the number without a `!`.
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="rounded-[11px]"
+                      disabled={running}
+                      onClick={() => void runCards([c])}
+                    >
+                      {running ? "Starting…" : `Make this · ${creditsLabel(c.credits)}`}
+                    </Button>
+                  ) : (
+                    <span className="text-muted-foreground/70">queued</span>
+                  )}
+                </div>
+                <div className="shrink-0 text-[0.75rem] text-muted-foreground">
+                  #{idx + 1}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -323,30 +290,16 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                 </div>
               )}
 
-              {confirming ? (
-                <div>
-                  <div className="mb-3 text-[0.875rem] text-foreground">
-                    Make all {idleCards.length} {idleCards.length === 1 ? "item" : "items"} for {creditsLabel(totalCredits)}? This will spend real credits.
-                  </div>
-                  <div className="flex gap-3">
-                    <Button variant="default" size="default" disabled={running} onClick={() => void makeAll()}>
-                      {running ? "Starting…" : "Confirm — make all"}
-                    </Button>
-                    <Button variant="secondary" size="default" disabled={running} onClick={() => setConfirming(false)}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  variant="default"
-                  size="default"
-                  disabled={!canAfford || running}
-                  onClick={() => setConfirming(true)}
-                >
-                  Make all ({idleCards.length} · {creditsLabel(totalCredits)})
-                </Button>
-              )}
+              {/* #896: the batch button already carried the count and the total, so the
+                  second screen only re-read them back. One press. */}
+              <Button
+                variant="default"
+                size="default"
+                disabled={!canAfford || running}
+                onClick={() => void makeAll()}
+              >
+                {running ? "Starting…" : `Make all (${idleCards.length} · ${creditsLabel(totalCredits)})`}
+              </Button>
             </>
           )}
 
