@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import {
   parseStoryboardCardPayload,
   shotsNeedingMintedFirstFrame,
+  shotsStuckWithoutInheritedFrame,
   MAX_STORYBOARD_SHOTS,
   type StoryboardCardView,
   type StoryboardShotView,
@@ -472,11 +473,16 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   // shots on that is the first shot alone; the rest inherit the frame the previous clip
   // ended on, for free.
   const missingCount = shotsNeedingMintedFirstFrame(shots, view.continuity).length;
+  // #782 r2b (判官 r1 P1): shots whose upstream hand-off already ran (the shot before them
+  // finished its clip) and still came up empty are STUCK, not waiting — they're part of
+  // `missingCount` above (shotsNeedingMintedFirstFrame includes them) and get their own
+  // honest per-shot message below instead of the "nothing to make here" one.
+  const stuckShotIds = new Set(shotsStuckWithoutInheritedFrame(shots, view.continuity).map((s) => s.shotId));
   // Shots with no frame that are WAITING for the shot before them (continuous mode) rather
   // than missing something the merchant has to make.
   const inheritingShotIds = new Set(
     view.continuity
-      ? shots.filter((s, i) => i > 0 && !s.firstFrameGenerationId).map((s) => s.shotId)
+      ? shots.filter((s, i) => i > 0 && !s.firstFrameGenerationId && !stuckShotIds.has(s.shotId)).map((s) => s.shotId)
       : [],
   );
   const bal = balanceUsd ?? 0;
@@ -524,8 +530,13 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
           </div>
           {view.continuity && (
             <div className="text-[0.75rem] text-muted-foreground">
-              Each shot picks up exactly where the one before it ends, so you only make the first
-              frame — and the shots are made one after another.
+              {/* #782 r2b (判官 r1 P1): "exactly where it ends" was an absolute promise the
+                  code doesn't keep — re-making an earlier shot never updates a later shot's
+                  first frame once that frame already exists. Say what's actually true: the
+                  hand-off only happens as each shot is FIRST made, one after another. */}
+              As each shot is first made, it picks up from the one before it — so you only make
+              the first frame, and the shots are made one after another. Re-making an earlier
+              shot won&rsquo;t change a later shot&rsquo;s first frame once it already has one.
             </div>
           )}
         </div>
@@ -546,6 +557,10 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               const isReplacingVideo = replacingVideoShotIds.has(shot.shotId);
               // #782: waiting for the previous shot's clip to hand over its closing frame.
               const isInheriting = inheritingShotIds.has(shot.shotId);
+              // #782 r2b (判官 r1 P1): the hand-off already ran and came up empty — this shot
+              // needs its OWN first frame (via Generate all below), it won't continue from
+              // the shot before it.
+              const isStuck = stuckShotIds.has(shot.shotId);
               // Any per-shot confirm currently open (either gate) suppresses the OTHER shots'
               // action buttons — clone gate①'s "only one regen at a time" rule, extended to videos.
               const anyRegenOpen = regenShotId !== null || regenVideoShotId !== null;
@@ -630,6 +645,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                       {isInheriting && !framePending && (
                         <div className="text-[0.75rem] text-muted-foreground">
                           Opens where shot {shot.index} ends — nothing to make here.
+                        </div>
+                      )}
+                      {/* #782 r2b (判官 r1 P1): shot {shot.index}'s clip is done but its closing
+                          frame didn't come through — honest recovery, no dead end: this shot
+                          needs its own first frame, made below with the others (Generate all). */}
+                      {isStuck && !framePending && (
+                        <div className="text-[0.75rem] text-muted-foreground">
+                          Shot {shot.index}&rsquo;s ending frame didn&rsquo;t come through — this shot needs its own
+                          first frame (below); it won&rsquo;t continue from shot {shot.index}.
                         </div>
                       )}
                       {/* Confirmed frame regen in flight: old thumbnail stays; hint while the new frame lands. */}
@@ -718,6 +742,12 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                               <div className="mt-1 flex flex-col gap-2">
                                 <div className="text-[0.75rem] text-foreground">
                                   Replace this video — {creditsLabel(regenVideoChild.estimatedCredits)}? This will spend real credits.
+                                </div>
+                                {/* #782 r2b (判官 r1 P1): honest downstream note — sync only ever
+                                    FILLS an empty first frame, it never overwrites one that's
+                                    already set, so a later shot's frame stays exactly as it is. */}
+                                <div className="text-[0.75rem] text-muted-foreground">
+                                  This won&rsquo;t change the first frame of any shot that already has one.
                                 </div>
                                 <div className="flex gap-2">
                                   <Button variant="default" disabled={generating} onClick={() => void confirmVideoRegen()}>

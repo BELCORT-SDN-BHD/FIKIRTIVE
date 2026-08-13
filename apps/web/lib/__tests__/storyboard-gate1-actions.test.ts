@@ -2570,3 +2570,60 @@ describe("#782 验收句:第 N+1 镜头的输入包含第 N 镜头末帧", () =>
     expect(mockChatCreate.mock.calls[0][0].data.payload.sourceGenerationId).toBe(INHERITED);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #782 r2b —— 判官 r1 剩下的两个 P1
+// ---------------------------------------------------------------------------
+
+describe("#782 r2b P1 之一 —— 末帧缺失时,卡死的镜头并入闸① 的恢复入口", () => {
+  it("上一镜片子已出完、这一镜仍无帧无子卡(卡死)→ 闸① 照普通首帧路径为它铸卡、真花钱", async () => {
+    const p = chainPayload();
+    // s0 的片子已经出完(供应商键猜错 / 旧 worker 没存末帧 / 下载失败,均是这个形状):
+    // videoGenerationId 已写回,但 s1 依旧没有 firstFrameGenerationId 也没有 firstFrameCardId。
+    p.shots[0].videoGenerationId = "vid-A";
+    wireLoads(card(p));
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // s0 已有帧 → 不铸;s1 卡死 → 铸;s2 的上一镜(s1)还没出片,真的在等 → 不铸。
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.shotId).toBe("s1");
+    expect(res.children.map((c) => c.shotId)).toEqual(["s1"]);
+    expect(res.totalCredits).toBeGreaterThan(0); // 真花钱 —— 不是接续那条 $0 免费路径
+
+    // s2 一格不动:仍在等 s1,不是被这次修复误当成卡死。
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[2].firstFrameCardId).toBeUndefined();
+  });
+
+  it("上一镜片子还没出完 → 仍是「还在等」,闸① 不为它铸卡(不是死路修复引入的误杀)", async () => {
+    const p = chainPayload(); // s0 无 videoGenerationId = 片子未出完
+    wireLoads(card(p));
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    expect(res.children).toEqual([]); // s0 已有帧,s1/s2 都在真的等,一张都不铸
+  });
+});
+
+describe("#782 r2b P1 之二 —— 重出某镜的视频,绝不改动下游已经写好的首帧", () => {
+  it("重出 s0 的视频 → s1 已经接上的首帧一格不动(闸③ 只填空,永不覆盖,重出也不例外)", async () => {
+    mockVideoProposeCard();
+    const p = chainPayload();
+    p.shots[0].videoGenerationId = "vid-A"; // s0 的片子已出完
+    p.shots[1].firstFrameGenerationId = "inherited-from-old-tail"; // s1 已经接上了(闸③ 早先填的)
+    wireLoads(card(p));
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s0" });
+    if (!("child" in res)) throw new Error("expected child");
+
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // 铸了一张新视频子卡替换
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).toBeTruthy();
+    expect(updShots[0].videoGenerationId).toBe("vid-A"); // 旧视频原样保留到新片子落地(I1 语义)
+    // 下游一个字没变 —— 这正是文案现在如实说的那句话("won't change a later shot's first frame")。
+    expect(updShots[1].firstFrameGenerationId).toBe("inherited-from-old-tail");
+    expect(updShots[1]).toEqual(p.shots[1]);
+  });
+});

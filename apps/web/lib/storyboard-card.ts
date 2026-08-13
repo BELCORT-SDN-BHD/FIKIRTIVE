@@ -43,14 +43,56 @@ export interface StoryboardCardView {
  * 那是显式动作,不受这条规则影响 —— 能力一格没少。
  *
  * 泛型 + 按 index 排序:服务端拿 payload 的镜头、卡面拿视图镜头,两边形状不同但语义同一条。
+ *
+ * #782 r2b(判官 r1 P1 之一)—— 接续开着时,「等上一镜交棒」和「上一镜已经交棒过、但没交上、
+ * 永远不会再交」是两件不同的事,以前混成一句。后者(见 `shotsStuckWithoutInheritedFrame`)
+ * 一样算「需要铸首帧」——不然供应商键猜错 / 旧 worker 没存末帧 / 下载失败,这一镜就卡进一个
+ * 界面上连按钮都没有的死路:Generate all 数不到它、也没有单镜按钮。诚实的出路是让它和普通
+ * 缺帧镜头一样,走「花钱铸一张自己的首帧」那条路——不再接上一镜的画面,但至少能往前走。
  */
 export function shotsNeedingMintedFirstFrame<
-  T extends { index: number; firstFrameGenerationId?: string },
+  T extends {
+    index: number;
+    firstFrameGenerationId?: string;
+    firstFrameCardId?: string;
+    videoGenerationId?: string;
+  },
 >(shots: readonly T[], continuity: boolean): T[] {
   const missing = [...shots].sort((a, b) => a.index - b.index).filter((s) => !s.firstFrameGenerationId);
   if (!continuity) return missing;
   const first = [...shots].sort((a, b) => a.index - b.index)[0];
-  return first && !first.firstFrameGenerationId ? [first] : [];
+  const eligible = first && !first.firstFrameGenerationId ? [first] : [];
+  for (const shot of shotsStuckWithoutInheritedFrame(shots, continuity)) eligible.push(shot);
+  return eligible.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * #782 r2b(判官 r1 P1 之一)—— 哪些镜头「卡死」了:接续开着,上一镜的片子已经真的出完了
+ * (`videoGenerationId` 已写回),闸③ 在那次 sync 里已经试过把它的末帧接过来给这一镜,可这一镜
+ * 此刻依旧没有首帧、也没有正在铸的首帧子卡。接力已经跑过一次且没有留下痕迹——供应商键猜错 /
+ * 旧 worker 没存末帧 / 下载失败,这些是那一条作业上定死的事实,再等下一轮 sync 不会有不同结果。
+ *
+ * 与「还在等」的区分只看这一条铁事实(上一镜的视频是否真出完),不猜测、不设超时。
+ */
+export function shotsStuckWithoutInheritedFrame<
+  T extends {
+    index: number;
+    firstFrameGenerationId?: string;
+    firstFrameCardId?: string;
+    videoGenerationId?: string;
+  },
+>(shots: readonly T[], continuity: boolean): T[] {
+  if (!continuity) return [];
+  const ordered = [...shots].sort((a, b) => a.index - b.index);
+  const stuck: T[] = [];
+  for (let i = 1; i < ordered.length; i++) {
+    const cur = ordered[i]!;
+    // 已经有首帧,或已经有一张首帧子卡在铸/在跑 → 不是卡死,是别的状态(有帧 / framePending)。
+    if (cur.firstFrameGenerationId || cur.firstFrameCardId) continue;
+    const prev = ordered[i - 1]!;
+    if (prev.videoGenerationId) stuck.push(cur);
+  }
+  return stuck;
 }
 
 type RawShot = Partial<StoryboardCardPayload["shots"][number]>;
