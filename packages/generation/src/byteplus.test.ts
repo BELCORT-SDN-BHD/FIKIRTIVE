@@ -602,6 +602,90 @@ describe("generateVideo (Seedance, async)", () => {
     expect(vp!.role).toBe("reference_video");
     expect(vp!.video_url!.url).toBe("https://x/ref.mp4");
   });
+
+  // -------------------------------------------------------------------------
+  // #785 —— 多素材参考:@元素(产品图 / 代言人)的参考照真的进视频引擎。
+  //
+  // 这一组钉的是「送出去的那份 JSON」本身,而不是某个中间变量 —— 与 #646 T5 给声音开关
+  // 立的规矩同一条:适配器改了形状,这里当场红,`EXECUTED_SPEC` 与卡面于是被逼着一起改。
+  // -------------------------------------------------------------------------
+  it("#785 t2v: element reference photos ride as role:reference_image, in the exact order given", async () => {
+    let submitBody: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+        submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-refimg" });
+      }
+      if (url.includes("/tasks/cgt-refimg")) return jsonRes({ status: "succeeded", content: { video_url: "https://x/v.mp4" } });
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({
+      prompt: "our product on a beach", imageUrl: "",
+      refImageUrls: ["https://r2/product.png", "https://r2/face.png", "https://r2/logo.png"],
+      durationSeconds: 5, model: "seedance-2-mini",
+    });
+    await vi.runAllTimersAsync();
+    await promise;
+    // 整体断言:部件数组逐字就是「三张参考照(原序)+ 提示词」。
+    // **顺序即编号** —— 第 N 张送的就是 worker 选片的第 N 张,中间没有第二次排序。
+    expect(submitBody.content).toEqual([
+      { type: "image_url", image_url: { url: "https://r2/product.png" }, role: "reference_image" },
+      { type: "image_url", image_url: { url: "https://r2/face.png" }, role: "reference_image" },
+      { type: "image_url", image_url: { url: "https://r2/logo.png" }, role: "reference_image" },
+      { type: "text", text: "our product on a beach" },
+    ]);
+  });
+
+  it("#785: no element photos ⇒ the request body is byte-identical to before (t2v)", async () => {
+    const bodies: any[] = [];
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+        bodies.push(JSON.parse(init.body)); return jsonRes({ id: `cgt-same-${bodies.length}` });
+      }
+      if (url.includes("/tasks/cgt-same")) return jsonRes({ status: "succeeded", content: { video_url: "https://x/v.mp4" } });
+      return bytesRes();
+    });
+    const p = new BytePlusProvider("ark-test");
+    const base = { prompt: "a clip", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" } as const;
+    const a = p.generateVideo(base);
+    await vi.runAllTimersAsync();
+    await a;
+    const b = p.generateVideo({ ...base, refImageUrls: [] });
+    await vi.runAllTimersAsync();
+    await b;
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(bodies[0].content).toEqual([{ type: "text", text: "a clip" }]);
+  });
+
+  // 场景互斥闸 —— 三条都必须在**付费提交之前**拒绝(fetch 一次都不许发出去)。
+  for (const [name, extra] of [
+    ["a start frame", { imageUrl: "https://r2/frame.png" }],
+    ["an end frame", { imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png" }],
+    ["a reference video", { imageUrl: "", refVideoUrl: "https://x/ref.mp4" }],
+  ] as const) {
+    it(`#785: element photos combined with ${name} are refused BEFORE the paid submit`, async () => {
+      const calls: string[] = [];
+      stubFetch((url) => { calls.push(url); return jsonRes({ id: "never" }); });
+      await expect(new BytePlusProvider("ark-test").generateVideo({
+        prompt: "mix", durationSeconds: 5, model: "seedance-2-mini",
+        refImageUrls: ["https://r2/a.png"], tailImageUrl: undefined, refVideoUrl: undefined, ...extra,
+      })).rejects.toThrow(/element reference photos/);
+      expect(calls).toEqual([]); // 没花钱
+    });
+  }
+
+  it("#785: more image parts than the engine takes is refused BEFORE the paid submit", async () => {
+    const calls: string[] = [];
+    stubFetch((url) => { calls.push(url); return jsonRes({ id: "never" }); });
+    await expect(new BytePlusProvider("ark-test").generateVideo({
+      prompt: "too many", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini",
+      refImageUrls: Array.from({ length: 10 }, (_, i) => `https://r2/${i}.png`),
+    })).rejects.toThrow(/at most 9 images/);
+    expect(calls).toEqual([]); // 没花钱
+  });
+
+  it("#785: EXECUTED_SPEC declares what this adapter actually does with element photos", () => {
+    expect(EXECUTED_SPEC.video.elementReferencesHonoured).toBe(true);
+  });
 });
 
 describe("generate (Seedream image, sync)", () => {

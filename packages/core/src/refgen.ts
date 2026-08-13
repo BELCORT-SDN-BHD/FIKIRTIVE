@@ -151,6 +151,18 @@ export interface VideoRequest {
   /** optional whole-clip reference video — a short-lived presigned GET the provider
    *  passes to Seedance as role:"reference_video". BytePlus 2.0 only; Fal rejects it. */
   refVideoUrl?: string;
+  /**
+   * #785 —— @元素(产品图 / 代言人)的参考照,短命 presigned GET,适配器按顺序发成
+   * role:"reference_image" 的 image_url 部件。
+   *
+   * **顺序即编号**:这个数组的次序就是引擎收到的次序,也就是卡面数出来的那几张。
+   * 上游只有一处决定它(worker 的 round-robin 选片),`referenceBudget` 只数同一条规则的
+   * 张数 —— 编号与发送计划因此不可能长成两套(#785 派工纪律,#882 判官 P1 的同一根)。
+   *
+   * 只在**纯文生视频**(没有首帧、没有整段参考视频)那一档成立;别的档由适配器在付费前
+   * 拒绝(见 byteplus.ts 的场景互斥闸)。BytePlus 2.0 only;Fal 适配器一律拒。
+   */
+  refImageUrls?: string[];
   durationSeconds: number;
   model: string;
   // per-model controls (resolved from the job; the provider maps each to the

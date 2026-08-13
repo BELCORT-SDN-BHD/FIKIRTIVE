@@ -83,6 +83,31 @@ describe("genRequest.variantSel", () => {
   });
 });
 
+// #774 —— 传输层对审批身份的封顶。谁可以**给**这个字段是执行层的事(只有服务端读出的
+// 那张卡,见 gen-actions 的 startCoworkGen);这里钉的是「就算给了,形状也得站得住」:
+// 一条指向没 @ 到的元素的身份、或同一个元素两份身份,都在能落库之前就落不了地。
+describe("genRequest.approvedEntities", () => {
+  const base = { projectId: "p1", prompt: "hi", entityIds: ["e1"], kind: "image", model: "seedream", count: 1, idempotencyKey: "k1" };
+  const APPROVED = { id: "e1", type: "PRODUCT", name: "Bottle" };
+  it("absent by default; a well-formed identity for an @mentioned entity parses", () => {
+    expect(genRequest.parse(base).approvedEntities).toBeUndefined();
+    expect(genRequest.parse({ ...base, approvedEntities: [APPROVED] }).approvedEntities).toEqual([APPROVED]);
+  });
+  it("rejects an identity for an entity that isn't @mentioned", () => {
+    expect(genRequest.safeParse({ ...base, approvedEntities: [{ ...APPROVED, id: "e9" }] }).success).toBe(false);
+  });
+  it("rejects two identities for the same entity (which one was approved?)", () => {
+    expect(genRequest.safeParse({
+      ...base,
+      approvedEntities: [APPROVED, { ...APPROVED, name: "Bottle 2" }],
+    }).success).toBe(false);
+  });
+  it("rejects an unknown type and an over-long name (a bad identity never reaches the worker)", () => {
+    expect(genRequest.safeParse({ ...base, approvedEntities: [{ ...APPROVED, type: "NOPE" }] }).success).toBe(false);
+    expect(genRequest.safeParse({ ...base, approvedEntities: [{ ...APPROVED, name: "x".repeat(121) }] }).success).toBe(false);
+  });
+});
+
 describe("genRequest.threadId", () => {
   it("genRequest accepts an optional threadId (cowork tag) and rejects an over-long one", () => {
     const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };

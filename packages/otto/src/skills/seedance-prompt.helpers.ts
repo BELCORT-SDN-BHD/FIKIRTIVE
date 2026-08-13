@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { promptRef, identityLockClause } from "./prompt-vocab.js";
+import {
+  promptRef,
+  identityLockClause,
+  soundNotation,
+  externalizeEmotion,
+  imperativeConstraints,
+  isPortraitAspect,
+  VIDEO_QUALITY,
+  PORTRAIT_CAPTION_BAN,
+  PORTRAIT_CAPTION_BAN_KEEPING_LOGO,
+} from "./prompt-vocab.js";
 
 export const seedanceShot = z.object({
   subject: z.string().min(1),
@@ -8,7 +18,14 @@ export const seedanceShot = z.object({
   shotFraming: z.string().optional(),
   sceneLight: z.string().optional(),
   mood: z.string().optional(),
+  /** 自由文本声音描述（沿用）。结构化的三项在下面，两者可并存。 */
   audio: z.string().optional(),
+  /** #774 U3 声音符号规范 —— 音乐 `（）`、音效 `<>`、台词 `{}`。字幕 `【】` 只作为禁令存在。 */
+  music: z.string().optional(),
+  sfx: z.string().optional(),
+  dialogue: z.string().optional(),
+  /** #774 U3 情绪外化 —— 传情绪词，装配时换成镜头看得见的身体信号。 */
+  emotion: z.string().optional(),
 });
 
 export const seedancePromptInput = z.object({
@@ -19,41 +36,75 @@ export const seedancePromptInput = z.object({
   references: z.array(promptRef).max(8).default([]),
   cleanFootage: z.boolean().default(true),
   constraints: z.string().optional(),
+  /** #774 U4：这条片子会以什么画幅交付。竖版加重 caption-free 约束 —— 官方明言竖版
+   *  出现烧录字幕的概率显著更高。传的必须是**同一趟** propose 的 `desiredAspect`；
+   *  认不出来一律当非竖版（**不猜**）。 */
+  aspect: z.string().optional(),
 });
 export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
 
-/** 纯：结构化意图 → Seedance 创作 prompt（英文，无技术 flag —— 时长/清晰度/画幅/声音都由
- *  provider 作为严格顶层字段发送，#646 T5 起 prompt 文本里一个 flag 都不再有）。 */
+/**
+ * 纯：结构化意图 → Seedance 创作 prompt（英文，无技术 flag —— 时长/清晰度/画幅/声音都由
+ *  provider 作为严格顶层字段发送，#646 T5 起 prompt 文本里一个 flag 都不再有）。
+ *
+ * #774 U3 三件要件，逐条落在这里：
+ *   ① 画质段 —— 第一行给质感基调，再进分镜；
+ *   ② 约束词表 —— `constraints` 逐条规整成祈使句（官方要求约束是命令，不是形容词堆）；
+ *   ③ 声音符号规范 + 情绪外化 —— `music/sfx/dialogue` 走官方符号；`emotion` 换成镜头
+ *      拍得到的身体信号，而不是一个感受词。
+ *
+ * #774 U2 刻意**不**在这里编号参考图：元素参考照根本到不了视频引擎
+ * （`apps/worker/src/jobs/gen.ts:636-644` 的 `generateVideo` 只吃 `imageUrl` /
+ * `tailImageUrl` / `refVideoUrl`，`packages/core/src/reference-budget.ts` 对同一件事
+ * 记了同样一笔）。给一条根本没收到 `<Image_2>` 的请求写 `<Image_2>`，是把编号从
+ * 「有用」变成「说谎」—— 视频侧照旧只用措辞锁身份，身份的真凭据是首帧。
+ */
 export function assembleSeedance(i: SeedancePromptInput): string {
   const lines: string[] = [];
-  if (i.style) lines.push(i.style);
+  // ① 画质段：商家给了风格就带上，后面永远接一句质感基调。
+  lines.push([i.style, VIDEO_QUALITY].filter(Boolean).join(", "));
   const single = i.shots.length === 1;
   i.shots.forEach((s, idx) => {
+    // ③ 情绪外化：表里查得到就写身体信号；查不到不猜，原样带上那个词。
+    const emotion = s.emotion ? (externalizeEmotion(s.emotion) ?? s.emotion) : undefined;
     const seg = [
       // #782:这里原本还有一条 `continuesFromPrev` 分支,写出 "continuing from the previous
-      // frame," —— 一句**文字暗示**。它暗示的那件事在执行层从来没有发生过:上一条片子的
+      // frame" —— 一句**文字暗示**。它暗示的那件事在执行层从来没有发生过:上一条片子的
       // 末帧根本没有被送进这一条,引擎手上只有一张与前一镜无关的首帧图,所以镜头之间接不上,
       // 而 prompt 里却写着「接着上一帧」。接续现在由真东西完成 —— 上一镜的**真实末帧**被灌
       // 进这一镜的首帧(分镜闸③),于是这一镜本来就是 i2v,下面这句「从给定的首帧起步」对
       // 接续与不接续同样为真。旧的暗示句因此退役,而不是与新机制并存:两条同名而不同真伪的
       // 路留在一起,迟早有人再问一次「到底哪一条在起作用」。
-      idx === 0 && i.mode === "i2v" && "starting from the given first frame,",
+      // 合并 origin/main(#774)时保留了它那一笔:尾逗号由 join 负责 —— 自己再带一个就成了
+      // "first frame,, a cat"。
+      idx === 0 && i.mode === "i2v" && "starting from the given first frame",
       s.shotFraming,
       s.subject,
       s.action,
+      emotion,
       s.camera,
       s.sceneLight,
       s.mood,
     ].filter(Boolean).join(", ");
     lines.push(single ? seg : `Shot ${idx + 1}: ${seg}`);
-    if (s.audio) lines.push(`Audio: ${s.audio}`);
+    // ③ 声音符号规范：结构化三项在前（官方符号），自由文本描述在后。
+    const audio = [soundNotation(s), s.audio?.trim()].filter(Boolean).join(" ");
+    if (audio) lines.push(`Audio: ${audio}`);
   });
   if (i.mode === "i2v") lines.push("keep the subject consistent with the source frame");
   const locks = identityLockClause(i.references);
   if (locks) lines.push(locks);
   if (i.pacing) lines.push(i.pacing);
   const hasLockedBrandmark = i.references.some((r) => r.role === "brandmark" && r.lock);
-  if (i.cleanFootage && !hasLockedBrandmark) lines.push("no on-screen text, watermark, or logo");
-  if (i.constraints) lines.push(i.constraints);
+  if (i.cleanFootage) {
+    if (!hasLockedBrandmark) lines.push("no on-screen text, watermark, or logo");
+    // ④ 竖版防字幕：竖版再说一次，并点名 `【】` 这个符号。商家锁了品牌标识时，
+    //   禁的是字幕，不是那枚 logo。
+    if (isPortraitAspect(i.aspect)) {
+      lines.push(hasLockedBrandmark ? PORTRAIT_CAPTION_BAN_KEEPING_LOGO : PORTRAIT_CAPTION_BAN);
+    }
+  }
+  // ② 约束词表：逐条祈使句，一句一行。
+  lines.push(...imperativeConstraints(i.constraints));
   return lines.join("\n");
 }

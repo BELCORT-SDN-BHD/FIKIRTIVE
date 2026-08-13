@@ -17,7 +17,7 @@
  */
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
-import { newId } from "@fikirtive/core";
+import { newId, type ApprovedEntity } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import { proposeInput, buildProposeCard, GenerationUnavailableError, type ProposeInput, type CardPayload } from "./propose.helpers.js";
@@ -53,13 +53,13 @@ export async function executeProposePack(
   // Collect all entityIds referenced across all items (de-duped) for a single ownership check.
   const allEntityIds = [...new Set(input.items.flatMap((item) => item.entityIds))];
 
-  let ownedEntityIds: string[] = [];
+  // #774 判官 r2 P1:名字与类型跟归属同一趟读出来 —— 卡上冻结的就是这一刻的身份。
+  let ownedEntities: ApprovedEntity[] = [];
   if (allEntityIds.length > 0) {
-    const owned = await prisma.entity.findMany({
+    ownedEntities = await prisma.entity.findMany({
       where: { id: { in: allEntityIds }, ownerId: ctx.orgId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, type: true, name: true },
     });
-    ownedEntityIds = owned.map((e) => e.id);
   }
 
   // One shared packId groups all cards in the UI.
@@ -72,9 +72,9 @@ export async function executeProposePack(
   const payloads: CardPayload[] = [];
   try {
     for (const item of input.items) {
-      // Ownership guard: filter ownedEntityIds to those referenced by this item.
-      const itemOwnedEntityIds = ownedEntityIds.filter((id) => item.entityIds.includes(id));
-      payloads.push(buildProposeCard(item as ProposeInput, ctx, itemOwnedEntityIds).cardPayload);
+      // Ownership guard: filter the owned entities to those referenced by this item.
+      const itemOwnedEntities = ownedEntities.filter((e) => item.entityIds.includes(e.id));
+      payloads.push(buildProposeCard(item as ProposeInput, ctx, itemOwnedEntities).cardPayload);
     }
   } catch (e) {
     if (e instanceof GenerationUnavailableError) return { error: e.message };

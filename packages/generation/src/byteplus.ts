@@ -1,5 +1,11 @@
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenerationReceipt } from "@fikirtive/core";
-import { imageOutputSize, REFERENCE_IMAGE_PERSON_REJECTED, referenceImagePersonRejected } from "@fikirtive/core";
+import {
+  imageOutputSize,
+  MAX_VIDEO_IMAGE_PARTS,
+  REFERENCE_IMAGE_PERSON_REJECTED,
+  referenceImagePersonRejected,
+  videoReferencesRide,
+} from "@fikirtive/core";
 import { chargedError, permanentInputError, extFromUrl } from "./index.js";
 import { providerRequestGate } from "./provider-concurrency.js";
 
@@ -404,6 +410,25 @@ export class BytePlusProvider implements GenerationProvider {
     // Video is always count=1 (startGen hardcodes it); the charge is flat per resolution.
     if (req.tailImageUrl && req.refVideoUrl) throw new Error("generation provider can't combine an end frame with a reference video"); // pre-spend
     const i2v = req.imageUrl.length > 0;
+    // #785 —— @元素参考照是**第四个**场景(reference-to-video:一段文字 + 一组参考素材),
+    // 与上面三个同样互斥。判据不在这里手写,读的是 core 的 `videoReferencesRide` —— 卡面
+    // (批准前说几张)、worker(真送几张)、这道闸(付费前拒绝)三处必须同一句话。
+    // pre-spend:走到这里还没有任何一个 POST 发出去。
+    const refImageUrls = req.refImageUrls ?? [];
+    if (refImageUrls.length > 0 && !videoReferencesRide({
+      hasVideoStartFrame: i2v,
+      hasVideoTailFrame: !!req.tailImageUrl,
+      hasReferenceVideo: !!req.refVideoUrl,
+    })) {
+      throw new Error("generation provider can't combine element reference photos with a start frame, an end frame, or a reference video"); // pre-spend
+    }
+    // 部件总数的硬闸:首帧/末帧与参考照是同一种部件,共用 `MAX_VIDEO_IMAGE_PARTS` 个名额。
+    // 上游(worker 的 round-robin,上限来自同一个 core 函数)本来就不会超,这是纵深防御 ——
+    // 超了宁可在花钱之前自己拒绝,也不要让引擎在计费之后拒。
+    const imagePartCount = (i2v ? 1 : 0) + (req.tailImageUrl ? 1 : 0) + refImageUrls.length;
+    if (imagePartCount > MAX_VIDEO_IMAGE_PARTS) {
+      throw new Error(`generation provider takes at most ${MAX_VIDEO_IMAGE_PARTS} images per clip (this request has ${imagePartCount})`); // pre-spend
+    }
     // An end frame with no start frame isn't a scenario the engine has — and silently dropping it
     // would deliver (and bill for) a clip the merchant never asked for. Same guard the fallback
     // adapter keeps. Unreachable from the worker (it only resolves a tail alongside a source), so
@@ -419,6 +444,12 @@ export class BytePlusProvider implements GenerationProvider {
     } else if (i2v) {
       // single source frame — role may be omitted (the engine reads it as the first frame).
       content.push({ type: "image_url", image_url: { url: req.imageUrl } });
+    }
+    // #785 —— @元素(产品图 / 代言人)的参考照。**数组顺序即引擎收到的顺序即编号**:
+    // 这里逐个 push,不排序、不去重、不重排,所以「送了哪几张、第几张是谁」只有一个来源
+    // (worker 的 round-robin 选片),不存在第二套编号逻辑。
+    for (const url of refImageUrls) {
+      content.push({ type: "image_url", image_url: { url }, role: "reference_image" });
     }
     if (req.refVideoUrl) content.push({ type: "video_url", video_url: { url: req.refVideoUrl }, role: "reference_video" });
     // The text part is the merchant's prompt ONLY — every control is a top-level field below.

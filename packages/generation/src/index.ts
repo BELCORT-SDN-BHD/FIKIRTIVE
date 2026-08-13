@@ -316,6 +316,10 @@ export class FalProvider implements GenerationProvider {
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
     if (req.refVideoUrl) throw new Error("generation provider does not support whole-clip reference video"); // pre-spend
+    // #785: this adapter's i2v/t2v routes have no multi-reference param. Refuse BEFORE the paid
+    // POST rather than silently drop the merchant's product/spokesperson photos and bill for a
+    // clip that never saw them (the same rule the reference-video line above keeps).
+    if (req.refImageUrls?.length) throw new Error("generation provider does not support element reference photos"); // pre-spend
     // Resolve the model's fal wiring. Unknown model → fail BEFORE the paid POST
     // (no spend); the contract already rejects it, this is defense in depth.
     const cfg = VIDEO_CFG[req.model as GenVideoModel];

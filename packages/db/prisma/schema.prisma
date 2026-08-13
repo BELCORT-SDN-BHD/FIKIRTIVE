@@ -513,6 +513,12 @@ model GenJob {
   // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
   // null/absent = base refs for all mentions (backward-compat with old rows)
   variantSel         Json?
+  /// #774:审批那一刻冻结的元素身份 —— [{ id, type, name }],次序 = entityIds 次序。
+  /// 引擎认人那几句机器指令里的名字**只能**来自这里:元素名是商家随时可改的自由文本,
+  /// worker 若在付费调用前现读,改一次名就能把没过审批的指令送进已经批准的那次付费调用。
+  /// null = 旧行 / 这一趟没有获批的名字 → worker 照旧编号,只是不写名字(降级方向是
+  /// 少一个名字,不是多一条没批准的指令)。不参与幂等材料。
+  approvedEntities   Json?
   // 双提交幂等：shot 绑定生成的稳定键（"frame:<shotId>:<slot>" / "animate:<shotId>"）。
   // startGen 命中同键的在途(QUEUED/GENERATING)任务则复用，重载再点不二次扣费。
   idempotencyKey     String?
@@ -2381,9 +2387,15 @@ model PublishAttempt {
 
 // 2026-07-04 盲区修复(可观测性):worker 活性心跳,单行(id="worker"),worker 每 60s
 // upsert;/api/health 读它给外部监控服务判活。无租户数据(平台级),不进 tenant guard。
+//
+// #797:再加两列部署身份。「worker 活着」答不了「web 与 worker 是不是同一个部署」——
+// 半成功的部署会留下一新一旧,或者两边代码同版但共享密钥不同(#569 的形状)。两列都可空:
+// 平台没注入 sha 时写 null,绝不假造一个。configFingerprint 是 8 位摘要,原始密钥不进库。
 model WorkerHeartbeat {
-  id String   @id
-  at DateTime
+  id                String   @id
+  at                DateTime
+  commitSha         String?
+  configFingerprint String?
 }
 
 // #794 备份可信化(工程评估债 #2)。此前「昨晚备份成功了吗」这个问题在系统里没有答案:
