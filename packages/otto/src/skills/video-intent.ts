@@ -87,6 +87,17 @@ export function decideVideoAction(input: { text: string; shape: VideoInputShape 
   const text = input.text.toLowerCase();
   const available = videoActionsFor(input.shape);
 
+  // 形状本身讲不通(比如只有末帧、没有首帧 —— 契约在别处已经拒过它,这里是纵深防御):
+  // 能力表一个动作都开不出来。**回一个问题**,不回一个动作 —— 这条路上唯一的错法是
+  // 从空集合里取一个不存在的动作,让下游拿着 undefined 往付费方向走。
+  if (available.length === 0) {
+    return {
+      kind: "ask",
+      question: "I'm not sure what you'd like me to make — tell me, or attach the picture or clip you want to start from.",
+      options: [],
+    };
+  }
+
   // ② 先看**错配**:他说的那件事,这个形状根本做不到。
   // 这一步排在打分前面,因为「说要改片子却没挂片子」如果先去打分,会得到一个语法上合法、
   // 语义上完全不是他要的动作(比如 fromText),而商家永远不会知道自己被换了个动作。

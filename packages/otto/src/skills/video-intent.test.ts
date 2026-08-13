@@ -111,11 +111,29 @@ describe("信号表本身", () => {
   });
 
   it("政策是能力表,不是硬拦截 —— 任何一句话都拿得到一个动作或一个问题,永不拒绝", () => {
-    for (const shape of [NOTHING, STILL, CLIP]) {
-      for (const text of ["", "???", "做点什么", "asdfgh", "生成"]) {
-        const d = decideVideoAction({ text, shape });
-        expect(["action", "ask"]).toContain(d.kind);
+    // 八种形状全枚举(三个布尔),含讲不通的那几种 —— 每一种都必须有出口,
+    // 而且拿到的 action 一定是能力表上真有的那几个,绝不是 undefined。
+    for (const hasStill of [false, true]) {
+      for (const hasEndStill of [false, true]) {
+        for (const hasClip of [false, true]) {
+          for (const text of ["", "???", "做点什么", "asdfgh", "生成", "change this clip"]) {
+            const d = decideVideoAction({ text, shape: { hasStill, hasEndStill, hasClip } });
+            expect(["action", "ask"]).toContain(d.kind);
+            if (d.kind === "action") expect(VIDEO_ACTION_IDS).toContain(d.action);
+          }
+        }
       }
     }
+  });
+
+  it("形状讲不通(只有末帧、没有首帧)⇒ 问一句,不从空集合里取一个不存在的动作", () => {
+    const d = decideVideoAction({
+      text: "animate this",
+      shape: { hasStill: false, hasEndStill: true, hasClip: false },
+    });
+    expect(d.kind).toBe("ask");
+    if (d.kind !== "ask") throw new Error("unreachable");
+    expect(d.options).toEqual([]);
+    expect(d.question.length).toBeGreaterThan(0);
   });
 });
