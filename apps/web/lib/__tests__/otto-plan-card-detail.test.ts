@@ -93,6 +93,8 @@ const SERVER_PAYLOAD_KEYS = {
   downgradeNote: true,
   structuredPrompt: true,
   entityIds: true,
+  // #774 判官 r2 P1:引擎认人的那几个名字,在卡上冻结、卡面照实披露。
+  approvedEntities: true,
   variantSel: true,
   estimatedPriceUsd: true,
   estimatedCredits: true,
@@ -112,6 +114,8 @@ const CARD_PAYLOAD_KEYS = {
   downgradeNote: true,
   structuredPrompt: true,
   entityIds: true,
+  // #774 判官 r2 P1:引擎认人的那几个名字,在卡上冻结、卡面照实披露。
+  approvedEntities: true,
   variantSel: true,
   estimatedPriceUsd: true,
   estimatedCredits: true,
@@ -142,15 +146,16 @@ describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
     }
     // The branch coverage above must actually reach the optional fields, or this
     // assertion would pass by simply never exercising them.
-    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote"]) {
+    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote", "approvedEntities"]) {
       expect(emitted.has(key)).toBe(true);
     }
     expect([...emitted].filter((k) => !(k in CARD_PAYLOAD_KEYS))).toEqual([]);
   });
 });
 
-/** Six real cards straight from the live server builder: plain video, downgraded video,
- *  image ad pack, two-step image, i2v, reference video. */
+/** Seven real cards straight from the live server builder: plain video, downgraded video,
+ *  image ad pack, two-step image, i2v, reference video, and an image that @mentions an
+ *  element (#774 —— 只有它会带出 `approvedEntities`,少了它上面那条覆盖断言会空过去)。 */
 async function builtCards(): Promise<ServerCardPayload[]> {
   const { buildProposeCard } = await import("@fikirtive/otto");
   const ctx = {
@@ -171,6 +176,11 @@ async function builtCards(): Promise<ServerCardPayload[]> {
     buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), referenceVideoGenerationId: "gen_vid" } as never, []),
+    buildProposeCard(
+      { kind: "image", ...base, entityIds: ["e1"] },
+      ctx,
+      [{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }],
+    ),
   ].map((r) => r.cardPayload);
 }
 
