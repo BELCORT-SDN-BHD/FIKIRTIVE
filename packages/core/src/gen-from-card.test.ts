@@ -349,6 +349,8 @@ describe("buildGenRequestFromCard — error cases", () => {
   });
 });
 
+// #775 判官 r3 P1-1 —— 这一组的「byte-identical」基准里,`prompt` 那一格已经**换了权威**:
+// 从调用方送来的那段,换成卡上冻结的那段。其余每一格逐字未变。
 describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
   it("produces exact request shape matching what coworkGenerate assembles today", () => {
     // Mirror a real coworkGenerate call:
@@ -391,7 +393,10 @@ describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
     const expected = {
       projectId: "proj_001",
       threadId: "thr_002",
-      prompt: "final prompt after composition",
+      // #775 判官 r3 P1-1:这一格从「调用方送来的那段」改成**卡上冻结的那段**。
+      // 旧期望("final prompt after composition")记录的正是判官逮到的那条路 ——
+      // `coworkGenerate` 是公开 Server Action,那段字来自客户端。
+      prompt: "a sunny day",
       entityIds: ["ent_1"],
       variantSel: { ent_1: "var_a" },
       sourceGenerationId: "gen_abc",
@@ -432,7 +437,8 @@ describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
     const expected = {
       projectId: "proj_v",
       threadId: "thr_v",
-      prompt: "composed video prompt",
+      // #775 判官 r3 P1-1:同上 —— 权威换成卡上冻结的那段。
+      prompt: "a cinematic shot",
       entityIds: [],
       count: 1,
       kind: "video",

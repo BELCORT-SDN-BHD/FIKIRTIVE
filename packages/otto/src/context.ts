@@ -334,6 +334,18 @@ export interface OttoContext {
   /** All server-validated whole-clip reference videos attached to this turn. The first
    *  one remains `referenceVideoGenerationId` for the current single-primary spend path. */
   referenceVideoGenerationIds?: string[];
+  /**
+   * #775 判官 r3 P1-2 —— 商家**这一轮自己打的那句话**,由服务端从入站请求原样带进来。
+   *
+   * 只有一个用途:铸视频卡之前,拿它跟模型自选的动作对一次表(`decideVideoAction` 的
+   * 措辞分支)。模型选错档时,r3 之前没有任何一处会发现 —— 商家说「sambung」(接下去),
+   * 模型写了一条严格编辑的提示词,系统就忠实地把「改他的片子」做完了。
+   *
+   * 它**不是**权威,只是第二个证人:对不上就停下来问,绝不拿关键词去推翻模型
+   * (模型看得见整段对话,这里只看得见这一句)。缺席 = 没有第二个证人,一切照旧。
+   * 永远来自服务端,绝不来自模型的入参。
+   */
+  turnText?: string;
   /** Reference images shown to Otto THIS turn (the dropped reference → vision). Bounded +
    *  best-effort (gathered by the web caller). Appended as input_image parts to the CURRENT
    *  user turn only; never persisted into RunState history (stripHistoryImages drops them). */

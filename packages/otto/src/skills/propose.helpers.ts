@@ -390,6 +390,35 @@ export function buildProposeCard(
   if (decided?.kind === "ask") throw new VideoActionUnavailableError(decided.question);
   const cardAction = decided?.kind === "action" ? decided.action : null;
 
+  /**
+   * #775 判官 r3 P1-2 —— **第二个证人:商家这一轮自己打的那句话**。
+   *
+   * r3 之前,模型选错档没有任何一处会发现:商家说「sambung」(接下去),模型写了一条严格
+   * 编辑的提示词,系统就忠实地把「改他的片子」做完了 —— 而那是一次不可撤销的付费运行,
+   * 动的还是商家自己的东西。
+   *
+   * 这道对表刻意**很窄**,因为它拿的是关键词,而模型看得见整段对话:
+   *   · 只在锚定那两档之间(`editClip` ↔ `extendClip`)对表 —— 那是唯一「做错了会动到
+   *     商家原件」的分岔;
+   *   · 只在措辞侧给出**明确单一结论**时才算数(含糊、零信号一律没有意见);
+   *   · 对不上时**不改判、不纠正**,而是停下来问 —— 拿关键词去推翻模型就是另一种预判商家。
+   * 一分钱都还没花,所以停下来问的代价只有一句话。
+   */
+  if (cardAction && ctx.turnText && (cardAction === "editClip" || cardAction === "extendClip")) {
+    const fromWords = decideVideoAction({ text: ctx.turnText, shape: videoShape });
+    if (
+      fromWords.kind === "action" &&
+      (fromWords.action === "editClip" || fromWords.action === "extendClip") &&
+      fromWords.action !== cardAction
+    ) {
+      throw new VideoActionUnavailableError(
+        fromWords.action === "extendClip"
+          ? "It sounds like you want that clip carried on rather than changed — tell me which, and I'll set it up."
+          : "It sounds like you want something in that clip changed rather than carried on — tell me which, and I'll set it up.",
+      );
+    }
+  }
+
   // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently.
   // #785 判官 r1 P1:归属过滤挪到了 i2v 清空**之前**(原本是「先清空、再跳过过滤」)。
   // 卡面产物一个字节都没变(清空后的卡照旧是空的),换来的是下面那一份「商家真 @ 了谁」

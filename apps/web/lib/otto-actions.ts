@@ -532,6 +532,7 @@ export async function buildOttoContext({
   sourceGenerationIds,
   referenceVideoGenerationId,
   referenceVideoGenerationIds,
+  turnText,
   simpleMode,
   approvalConsent,
   factoryAttemptId,
@@ -543,6 +544,9 @@ export async function buildOttoContext({
   sourceGenerationIds?: string[] | null;
   referenceVideoGenerationId?: string | null;
   referenceVideoGenerationIds?: string[] | null;
+  /** #775 判官 r3 P1-2:商家这一轮自己打的那句话,服务端原样带进 ctx。只用于铸视频卡前
+   *  与模型自选的动作对一次表(见 OttoContext.turnText)。绝不来自模型入参。 */
+  turnText?: string;
   simpleMode?: boolean;
   /** AR2 处方1: set ONLY by ottoApprove's universal branch — the hash-time updatedAt snapshot. */
   approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
@@ -608,6 +612,9 @@ export async function buildOttoContext({
     sourceGenerationIds: imageRefIds,
     referenceVideoGenerationId: videoRefIds[0] ?? null,
     referenceVideoGenerationIds: videoRefIds,
+    // #775 判官 r3 P1-2:商家这一轮的原话。铸视频卡前拿它跟模型自选的动作对一次表 ——
+    // 这是「模型选错档」唯一可能被逮住的时刻,而且那一刻还没花一分钱。
+    ...(turnText ? { turnText } : {}),
     images,
     startGen: startCoworkGen,
     // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions. The model
@@ -1555,6 +1562,7 @@ export async function ottoTurn(raw: unknown): Promise<
         threadId,
         sourceGenerationIds: refs.sourceGenerationIds,
         referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+        turnText: text,
         simpleMode: parsed.data.simple,
       });
 

@@ -110,7 +110,9 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
     });
     const directive =
       family && !familyHasPromptSkill(family) ? await getEnhanceDirective(family, mode) : undefined;
-    const composedPrompt = composePrompt({ prompt, directive, maxLen: MAX_GEN_PROMPT });
+    // #775 判官 r3 P1-1:**不再在这里先拼好**。拼在这里 = 拼的是客户端送来的那段字,
+    // 于是「批准的」与「执行的」可以分家(判官探针:执行时把它换成 `Strictly edit …`)。
+    // 现在把 directive 原样交给构造器,由它追加在**卡上冻结的那一段**后面。
 
     // Build the request via the pure core builder (same logic, extracted for reuse by the Otto
     // generate tool). The builder re-derives proposal/model/params/sourceGenerationId from
@@ -121,7 +123,9 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
       projectId: card.thread.projectId,
       threadId: card.threadId,
       cardId,
-      prompt: composedPrompt,
+      // 收下但不作数(构造器只认卡上那段)—— 留着是为了让签名与既有调用点一致。
+      prompt,
+      directive,
       entityIds,
       variantSel,
       overrides: {

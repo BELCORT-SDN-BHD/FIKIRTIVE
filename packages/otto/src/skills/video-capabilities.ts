@@ -18,6 +18,16 @@
  * 要么来自本仓自己送得出去的那个请求形状 —— 两者都可复核,catalog 一格都不参与。
  */
 
+// #775 判官 r3:官方开头与「这段字要做哪件事」的判据住在 `@fikirtive/core`
+// (`video-actions.ts`)—— 付费 schema 与卡→请求构造器也要按同一句话把关,而它们在 core。
+// 这里只**用**那一份,绝不另抄:抄一份,铸卡侧与执行侧就会在某一天开始各说各话。
+import {
+  VIDEO_CLIP_TOKEN as CORE_VIDEO_CLIP_TOKEN,
+  VIDEO_EDIT_OPENING,
+  VIDEO_EXTEND_OPENING,
+  anchoredVideoAction,
+} from "@fikirtive/core";
+
 // ---------------------------------------------------------------------------
 // ① 动作表
 // ---------------------------------------------------------------------------
@@ -48,7 +58,7 @@ export type VideoInputShape = {
  * 这不是一个我们选的常量,是那个字段的形状决定的。哪天真能送第二条片子,
  * `packages/generation/src/byteplus.test.ts` 里那条「只送得出一条片子」的断言会先红。
  */
-export const VIDEO_CLIP_TOKEN = "<Video_1>";
+export const VIDEO_CLIP_TOKEN = CORE_VIDEO_CLIP_TOKEN;
 
 export type VideoCapability = {
   id: VideoAction;
@@ -98,14 +108,14 @@ export const VIDEO_ACTIONS: readonly VideoCapability[] = [
     meaning: "change something inside a clip the merchant already has, and leave the rest alone",
     needs: (s) => s.hasClip,
     // 官方严格编辑句。后面接的是「改什么」,由装配层补上。
-    opening: `Strictly edit ${VIDEO_CLIP_TOKEN}, and modify`,
+    opening: VIDEO_EDIT_OPENING,
     bannedWords: EDIT_BANNED_WORDS,
   },
   {
     id: "extendClip",
     meaning: "carry a clip the merchant already has further — what happens next (or what came before)",
     needs: (s) => s.hasClip,
-    opening: `Extend ${VIDEO_CLIP_TOKEN}`,
+    opening: VIDEO_EXTEND_OPENING,
     bannedWords: EDIT_BANNED_WORDS,
   },
   {
@@ -159,11 +169,9 @@ export function actionNeedsClip(id: VideoAction): boolean {
  * 所以「怎么写」和「怎么认」永远同源。认不出来回 null(不猜)。
  */
 export function videoActionFromPrompt(prompt: string): VideoAction | null {
-  const head = prompt.trimStart();
-  for (const cap of VIDEO_ACTIONS) {
-    if (cap.opening !== null && head.startsWith(cap.opening)) return cap.id;
-  }
-  return null;
+  // 判据不在这里 —— 它在 core,因为付费 schema 与卡→请求构造器读的是同一份
+  // (判官 r3 P2 的结束边界也长在那里:开头之后必须紧跟装配器真会写出来的那个空格)。
+  return anchoredVideoAction(prompt);
 }
 
 /**
