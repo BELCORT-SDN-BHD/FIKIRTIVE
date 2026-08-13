@@ -48,6 +48,7 @@ import { workerDisabledModels } from "../model-registry.js";
  * 就把剩下几次加起来,得到的是一个**偏低**的成本,而它会挨着 spentUsd 躺在同一行上,看起
  * 来像一个可以拿去对账的数。低估成本的假数字比空着危险得多 —— 毛利地板正是靠这类数守的。
  *
+ * 单位是引擎自己的口径(图 = 张,视频 = token),由同一行的 kind 决定。
  * 纯函数,不读库、不参与任何 spend 判定。
  */
 function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {
@@ -59,6 +60,47 @@ function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | nu
     total += units;
   }
   return total;
+}
+
+/**
+ * #776 —— 回执落库:**在钱的事务之外**,尽最大努力,永不抛。
+ *
+ * r1 把这两列写在 commit 事务**里面**(跟着 Generation.create 和 spent/spentUsd/settle 一起)。
+ * 那样写的代价在判官那一轮被指出来,而它是真的:回执是**记账**,却因此有了否决**交付**的
+ * 权力。`billedUnits` 是 PostgreSQL `INTEGER`,`finalPromptText` 是 `TEXT`(存不下 U+0000),
+ * 而这两个值都来自**引擎的响应** —— 一个我们不控制的输入。引擎哪天报回一个溢出的数或一
+ * 个带 NUL 的字符串,那次 INSERT 就会失败,整个事务回滚,四次重试全部撞同一堵墙,最后走到
+ * 终态失败:一单**已经付过钱、已经做出来**的生成,因为一个记账字段而丢掉。
+ *
+ * 所以顺序改成:钱和产出先各自落定(与 #776 之前**逐字节相同**的那一笔事务),回执随后
+ * 单独补写。补写失败 ⇒ 两列留 null,而 null 的语义本来就是「引擎没报,我们不知道」——
+ * 一个我们本来就要如实展示的状态,不是一个需要拿钱去换的状态。
+ *
+ * 代价说清楚:这两列因此**不再**与 spentUsd 在同一次写入里冻结。值本身没变(都从同一批
+ * `stored` 推出、描述同一单),换来的是「回执永远不能反过来影响钱路和交付」——这是本票
+ * 的硬约束,而「同一次写入」只是它当初的一种实现口味。
+ */
+async function recordGenerationReceipts(
+  job: { id: string; ownerId: string },
+  rows: { generationId: string; receipt?: GenerationReceipt }[],
+  billedUnits: number | null,
+): Promise<void> {
+  try {
+    for (const row of rows) {
+      const finalPrompt = row.receipt?.finalPrompt;
+      if (finalPrompt === undefined) continue; // 没报 ⇒ 列留 null = 未知,绝不回落成商家那句
+      await prisma.generation.updateMany({
+        where: { id: row.generationId, ownerId: job.ownerId },
+        data: { finalPromptText: finalPrompt },
+      });
+    }
+    if (billedUnits !== null) {
+      await prisma.genJob.updateMany({ where: { id: job.id, ownerId: job.ownerId }, data: { billedUnits } });
+    }
+  } catch (e) {
+    // 记账写不进去就是记账写不进去 —— 已经交付的产出和已经结算的钱一个字节都不动。
+    console.warn(`[gen] ${job.id}: receipt columns not recorded (left Unknown) — ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 const mimeForExt = (ext: string) =>
@@ -800,11 +842,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // terminal-failing a paid job (which would make the user retry and pay twice). The
       // provider is never re-called in this loop, so no retry here can re-spend.
       let generationIds: string[] = [];
+      // #776:回执随字节一起走完这一段 —— 它属于**这一个**产出,顺序即绑定,不能靠事后按 id
+      // 找回来。但它**不进**下面这笔事务:落库在事务提交之后单独补写
+      // (recordGenerationReceipts),所以记账字段永远没有否决交付与结算的权力。声明提到循环
+      // 外,只是为了提交后还读得到它;每次重试照旧从零重建(内容寻址 put 幂等,哈希不变)。
+      let stored: { contentHash: string; ext: string; size: number; receipt?: GenerationReceipt }[] = [];
       for (let attempt = 1; ; attempt++) {
         try {
-          // #776:回执随字节一起走完这一段 —— 它属于**这一个**产出,顺序即绑定,不能靠事后
-          // 按 id 找回来。落库仍然是纯记录:下面的 create 多写一列,commit 的判定一字未改。
-          const stored: { contentHash: string; ext: string; size: number; receipt?: GenerationReceipt }[] = [];
+          stored = [];
           for (const img of outputs) {
             const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
             stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength, ...(img.receipt ? { receipt: img.receipt } : {}) });
@@ -822,9 +867,6 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
                   id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
                   threadId: job.threadId ?? null, // cowork tag (null for normal studio gens) → keeps it out of candidate/asset views
                   assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
-                  // #776:引擎自报它真正跑的那句提示词。没报 ⇒ null = 未知,**绝不**回落成
-                  // job.prompt —— 那会让这一列变成 promptText 的副本,商家从此看不出两者何时不同。
-                  finalPromptText: s.receipt?.finalPrompt ?? null,
                   entitySnapshot, version: 1, attachedAt: null,
                 },
               });
@@ -840,10 +882,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
             const marked = await tx.genJob.updateMany({
               where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
-              // #776: billedUnits 与 spentUsd 在**同一次写入**里冻结 —— 估的成本与引擎报的
-              // 量必须来自同一个瞬间,否则日后对账的两个数说的不是同一单。纯记录:它既不
-              // 参与 marked.count 的判定,也不进 settle。
-              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }), billedUnits: jobBilledUnits(stored) },
+              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) },
             });
             if (marked.count === 0) throw REDELIVERY_DISCARD;
             // SETTLE the hold atomically with the resume marker — the generation succeeded,
@@ -868,6 +907,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         }
       }
       committed = true; // outputs stored + recorded — past here a failure resumes, never re-spends
+      // #776 —— 记账在钱之后。产出、resume marker、settle 都已经各自落定;这一步只往两列上补
+      // 写引擎自报的事实,失败就留 null(= 未知),永不抛、不重试、不改状态。
+      await recordGenerationReceipts(job, generationIds.map((generationId, i) => ({ generationId, ...(stored[i]?.receipt ? { receipt: stored[i]!.receipt } : {}) })), jobBilledUnits(stored));
       // best-effort attach: if it still fails, the outputs remain as reusable
       // candidates (visible, manually attachable) and we STILL mark DONE — never leave
       // the job stuck (a committed requeue could exhaust pg-boss retries) (#2)

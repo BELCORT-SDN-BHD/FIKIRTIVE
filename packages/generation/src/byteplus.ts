@@ -8,7 +8,7 @@ import { chargedError, permanentInputError, extFromUrl } from "./index.js";
 const MAX_FINAL_PROMPT_CHARS = 4_000;
 
 /** 正整数才是计费量。0 / 负数 / 小数 / NaN / Infinity 都不是引擎在报数,是我们读错了 —— 一律当没读到。 */
-function billedUnitsOf(v: unknown): number | undefined {
+function positiveInt(v: unknown): number | undefined {
   return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined;
 }
 
@@ -19,37 +19,74 @@ function finalPromptOf(v: unknown): string | undefined {
 }
 
 /**
- * #776 —— 从引擎的响应里读**回执**:真实计费量(`usage.total_tokens`)与它真正跑的那句
- * 提示词(`revised_prompt`)。
+ * #776 —— 从引擎的响应里读**回执**。两条产品线的响应形状**不同**,所以这里是两个函数,
+ * 各自只读自己那份官方契约里真实存在的字段。
  *
- * 三条纪律,缺一条这个函数就会变成一个新的花钱风险:
+ * 三条纪律,缺一条这两个函数就会变成一个新的花钱风险:
  *
- *   ① **永不抛**。它在付费边界的**内侧**被调用 —— 图片路径上 `res.ok` 之后的每一次抛出
+ *   ① **永不抛**。它们在付费边界的**内侧**被调用 —— 图片路径上 `res.ok` 之后的每一次抛出
  *      都会被那圈 catch 翻译成 chargedError 并终态失败。一个记账字段读崩了就把一单已经
  *      成功的生成判成失败,是拿商家的钱赔我们的好奇心。所以整段包在 try 里,任何异常都
  *      退化成「没读到」。
  *   ② **不发明**。字段缺席、类型不对、数值不合理,一律回 undefined,让 worker 落 null =
  *      未知。这两个数会被拿去反查毛利和向商家解释结果,编出来的比空着危险得多。
  *   ③ **只读**。不改请求体、不影响 status 判定、不参与 charged/permanent 的分类。
- *
- * `revised_prompt` 在两个位置都找过:图片响应把它挂在 `data[i]` 上(逐张不同),视频任务
- * 把它挂在任务对象上。官方档案里现役这两个端点**未必**总带这个字段 —— 带就记,不带就
- * 诚实地空着,绝不拿商家自己那句话冒充引擎跑的那句(那会让整个字段失去意义)。
  */
-export function readReceipt(payload: unknown, item?: unknown): GenerationReceipt | undefined {
+
+/**
+ * 图片响应(`POST /images/generations`,同步)。
+ *
+ * 官方契约(两处独立取证一致):
+ *   · 本仓自己的**付费实测**留档 —— `docs/superpowers/specs/2026-06-29-phase2-byteplus-migration-design.md:27`
+ *     `{ model, created, data:[{url,size}], usage:{output_tokens,total_tokens,generated_images} }`;
+ *   · 官方 SDK 类型 —— `Image{Url,B64Json,Size}` / `GenerateImagesUsage{GeneratedImages,OutputTokens,TotalTokens}`。
+ *
+ * 于是两件事被钉死:
+ *   · **计费量是 `generated_images`(张),不是 `total_tokens`**。后者是像素数换算
+ *     (2048² = 16,384),跟这一单收多少钱没有关系 —— 本仓的账单核实也写明图按**张**计费
+ *     $0.035。把 16,384 记成计费量,毛利对账会当场差四个数量级,而这一列存在的全部理由
+ *     就是让毛利可反查;
+ *   · 图片响应里**没有** `revised_prompt` —— 官方 `Image` 结构只有 url / b64_json / size。
+ *     所以图片这条路上「引擎真正跑的那句提示词」是**未知**,如实空着,绝不去 `data[i]` 上
+ *     捞一个契约里不存在的字段来撑场面。
+ */
+export function readImageReceipt(payload: unknown): GenerationReceipt | undefined {
+  try {
+    const usage = ((payload as Record<string, unknown> | null)?.usage ?? {}) as Record<string, unknown>;
+    const billedUnits = positiveInt(usage.generated_images);
+    return billedUnits === undefined ? undefined : { billedUnits };
+  } catch {
+    return undefined; // 回执读不回来,绝不许反过来影响这一单的结果或扣费
+  }
+}
+
+/**
+ * 视频任务响应(`GET /contents/generations/tasks/{id}`,轮询到 succeeded 的那一份)。
+ *
+ * 官方契约(同样两处取证):本仓付费实测留档 `…migration-design.md:40`
+ * `{ status, content:{video_url}, usage:{total_tokens}, resolution, ratio, duration, framespersecond, seed }`,
+ * 官方 SDK `GetContentGenerationTaskResponse` 另有 `revised_prompt`(顶层,可空)。
+ *
+ * 于是:
+ *   · **视频按 token 计费**(5s/720p 实测 108,900),所以这条路上的计费量就是
+ *     `usage.total_tokens` —— 和图片那条路的单位**不同**,而这是引擎自己的口径,不是我们的
+ *     选择;`GenJob.kind` 已经把两者分开,读的人不会混;
+ *   · `revised_prompt` 在这里是**真实字段**,即引擎服务端改写后真正跑的那句话。它可空,空
+ *     就是未知。
+ */
+export function readVideoReceipt(payload: unknown): GenerationReceipt | undefined {
   try {
     const p = (payload ?? {}) as Record<string, unknown>;
-    const it = (item ?? {}) as Record<string, unknown>;
     const usage = (p.usage ?? {}) as Record<string, unknown>;
-    const billedUnits = billedUnitsOf(usage.total_tokens);
-    const finalPrompt = finalPromptOf(it.revised_prompt) ?? finalPromptOf(p.revised_prompt);
+    const billedUnits = positiveInt(usage.total_tokens);
+    const finalPrompt = finalPromptOf(p.revised_prompt);
     if (billedUnits === undefined && finalPrompt === undefined) return undefined;
     return {
       ...(finalPrompt !== undefined ? { finalPrompt } : {}),
       ...(billedUnits !== undefined ? { billedUnits } : {}),
     };
   } catch {
-    return undefined; // 回执读不回来,绝不许反过来影响这一单的结果或扣费
+    return undefined; // 同上
   }
 }
 
@@ -163,12 +200,12 @@ export class BytePlusProvider implements GenerationProvider {
         // An unmarked escape here reads to the batch logic below as a pre-charge failure and
         // gets retried — re-billing an image we already paid for.
         try {
-          const data = (await res.json()) as { data?: { url: string }[] };
+          const data = (await res.json()) as { data?: { url: string }[]; usage?: unknown };
           const url = data.data?.[0]?.url;
           if (!url) throw chargedError("generation provider image response had no result URL");
           // #776:回执在下载**之前**读 —— 它读的是这份已经到手的响应,和字节能不能拿到无关。
-          // readReceipt 永不抛,所以这一行不会把一单成功的生成推进 charged 分支。
-          const receipt = readReceipt(data, data.data?.[0]);
+          // readImageReceipt 永不抛,所以这一行不会把一单成功的生成推进 charged 分支。
+          const receipt = readImageReceipt(data);
           const r = await fetch(url);
           if (!r.ok) throw chargedError(`image download → ${r.status}`);
           return {
@@ -316,9 +353,9 @@ export class BytePlusProvider implements GenerationProvider {
         const url = t.content?.video_url;
         if (!url) throw chargedError("generation provider video response had no result URL");
         // #776:回执来自这条**成功任务**自己的响应(计费量与它真正跑的提示词都在这一份里),
-        // 读在下载之前 —— 拿不拿得到字节与引擎报了什么无关。readReceipt 永不抛,所以这一行
-        // 不会把一条已经做出来、已经计费的片子推进 charged 分支。
-        const receipt = readReceipt(t);
+        // 读在下载之前 —— 拿不拿得到字节与引擎报了什么无关。readVideoReceipt 永不抛,所以这
+        // 一行不会把一条已经做出来、已经计费的片子推进 charged 分支。
+        const receipt = readVideoReceipt(t);
         try {
           const r = await fetch(url);
           if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
