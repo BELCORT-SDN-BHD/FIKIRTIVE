@@ -96,3 +96,56 @@ describe("runFactoryBatch skill — routing through the owner-scoped port", () =
     expect(res).toHaveProperty("error");
   });
 });
+
+describe("#777 runFactoryBatch — Otto 判断「这是一组要连贯的图」", () => {
+  it("组图那一格随 cell 原样送进 owner-scoped 动作层(模型只说要做什么)", async () => {
+    const ctx = makeCtx();
+    await executeRunFactoryBatch(
+      { mode: "grid", batchId: "B", cells: [{ type: "gen", prompt: "one model, four angles", count: 4, coherentSet: true }] },
+      { context: ctx },
+    );
+    expect(ctx.runFactoryBatch!.bulk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cells: [{ type: "gen", prompt: "one model, four angles", count: 4, coherentSet: true }],
+      }),
+    );
+  });
+
+  it("variant 模式:base 上开一次,整批变体都成组", async () => {
+    const ctx = makeCtx();
+    await executeRunFactoryBatch(
+      { mode: "variant", batchId: "B", base: { prompt: "one model", count: 3, coherentSet: true }, variants: [{}, {}] },
+      { context: ctx },
+    );
+    expect(ctx.runFactoryBatch!.variant).toHaveBeenCalledWith(
+      expect.objectContaining({ base: { prompt: "one model", count: 3, coherentSet: true } }),
+    );
+  });
+
+  it("缺省时这一格根本不出现 —— 既有批次的形状逐字不变", async () => {
+    const ctx = makeCtx();
+    await executeRunFactoryBatch(
+      { mode: "grid", batchId: "B", cells: [{ type: "gen", prompt: "four hooks", count: 4 }] },
+      { context: ctx },
+    );
+    const sent = (ctx.runFactoryBatch!.bulk as unknown as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[0]![0];
+    expect("coherentSet" in ((sent.cells as Record<string, unknown>[])[0]!)).toBe(false);
+  });
+
+  it("技能说明里真的教了这件事 —— 模型看不到的能力等于没有这个能力", () => {
+    // 这一格是**模型自己判断**要不要用的,所以「什么时候用」必须写在它读得到的地方。
+    expect(runFactoryBatchSkill.description).toContain("ONE SET");
+    expect(runFactoryBatchSkill.description).toContain("coherentSet");
+    // 而且必须说清价格不变 —— 否则模型会把它当成一个更贵的选项而回避。
+    expect(runFactoryBatchSkill.description).toMatch(/same price per image/i);
+  });
+
+  it("契约面:仍然是布尔,且不接受模型塞进来的任何身份字段(这一格没有开新口子)", () => {
+    expect(runFactoryBatchInput.safeParse({
+      mode: "grid", batchId: "B", cells: [{ type: "gen", prompt: "a", coherentSet: "yes" }],
+    }).success).toBe(false);
+    expect(runFactoryBatchInput.safeParse({
+      mode: "grid", batchId: "B", cells: [{ type: "gen", prompt: "a", coherentSet: true }],
+    }).success).toBe(true);
+  });
+});

@@ -377,19 +377,41 @@ function errSummary(e: unknown): string {
 // loadAvailableRefsForAgent — owner-scoped entity loader for the agent context
 // ---------------------------------------------------------------------------
 
-/** Returns the slim { id, name, type } shape the agent context needs.
+/** Returns the slim { id, name, type, variants } shape the agent context needs.
  *  Best-effort: returns [] on any error so context injection never fails the turn. */
-async function loadAvailableRefsForAgent(ownerId: string): Promise<{ id: string; name: string; type: string }[]> {
+async function loadAvailableRefsForAgent(
+  ownerId: string,
+): Promise<{ id: string; name: string; type: string; variants: { id: string; name: string }[] }[]> {
   try {
     const entities = await prisma.entity.findMany({
       // Only surface entities Otto can actually USE as a visual reference: one with no
       // reference image can't meaningfully be @-mentioned (nothing to condition on). This
       // also keeps ref-less test/junk entities out of Otto's @-suggestions (audit STUFF-7).
       where: { ownerId, deletedAt: null, referenceImages: { some: { deletedAt: null } } },
-      select: { id: true, name: true, type: true },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        // #781 — the element's saved styling variants (same identity, different look). Same rule
+        // as the elements themselves: only ones that HAVE an image are listed. A variant with no
+        // image conditions nothing, and the generation worker fails closed on it, so naming an
+        // empty one to Otto would only invite a pick that can't be honoured. This is what makes
+        // "use the red dress one" answerable — and what gives deleteReferenceVariant a real id
+        // instead of a guessed one.
+        variants: {
+          where: { deletedAt: null, referenceImages: { some: { deletedAt: null } } },
+          select: { id: true, name: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
       orderBy: [{ type: "asc" }, { name: "asc" }],
     });
-    return entities.map((e) => ({ id: e.id, name: e.name, type: e.type }));
+    return entities.map((e) => ({
+      id: e.id,
+      name: e.name,
+      type: e.type,
+      variants: e.variants.map((v) => ({ id: v.id, name: v.name })),
+    }));
   } catch {
     return [];
   }
@@ -412,8 +434,26 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
   }
   if (ctx.availableRefs?.length) {
     parts.push(
-      `Reusable items you can @-reference (use the id with tools): ${ctx.availableRefs.map((r) => `@${r.name} [${r.type}, id=${r.id}]`).join(", ")}`,
+      `Reusable items you can @-reference (use the id with tools): ${ctx.availableRefs
+        .map((r) => {
+          // #781 — an element's saved looks, named beside it. Without this line the styling
+          // variants exist but are invisible to Otto: it cannot pick one for a generation
+          // (variantSel) and cannot name one to delete, so the merchant's "use the red dress
+          // one" has no answer.
+          const looks = r.variants?.length
+            ? ` looks: ${r.variants.map((v) => `${v.name} (variantId=${v.id})`).join("; ")}`
+            : "";
+          return `@${r.name} [${r.type}, id=${r.id}]${looks}`;
+        })
+        .join(", ")}`,
     );
+    if (ctx.availableRefs.some((r) => r.variants?.length)) {
+      parts.push(
+        "A look is the SAME element restyled (a different outfit or setting). When the user asks for " +
+          "one by name, put its variantId in variantSel on the proposal ({ elementId: variantId }); " +
+          "otherwise the element's base look is used.",
+      );
+    }
   }
   if (ctx.simpleMode) parts.push(ottoSimpleModeBlock);
   if (ctx.activeJob) {

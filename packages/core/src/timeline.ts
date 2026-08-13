@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { keyOwnerMatches } from "./storage-key.js";
 
 /**
  * Editor contract (dev-process step 1: contract-first).
@@ -368,6 +369,10 @@ export type RenderJobData = z.infer<typeof renderJobData>;
 export const RENDER_QUEUE = "render";
 /** metadata probe queue (worker-owned; web dispatches best-effort) */
 export const INGEST_QUEUE = "ingest";
+/** The ingest dead-letter target. The worker has always created it from the same
+ *  `${INGEST_QUEUE}.dlq` expression inline; naming it here lets the dead-letter
+ *  census (#793) enumerate all seven DLQs from one place instead of a literal. */
+export const INGEST_DLQ = `${INGEST_QUEUE}.dlq`;
 export const RENDER_DLQ = `${RENDER_QUEUE}.dlq`;
 export const RENDER_RETRY_LIMIT = 2;
 /** Shared by BOTH sides (codex review): whoever boots first creates the queue
@@ -453,6 +458,40 @@ export function srcToStorageKey(src: string): string {
 export function storageKeyToSrc(key: string): string {
   return `/files/${key}`;
 }
+
+/**
+ * The srcs in this edit that address ANOTHER tenant's storage namespace.
+ *
+ * An edit is the ONLY place in the product where a merchant hands us a list of files to read
+ * by name. The contract above checks that each `src` is a well-FORMED `/files/u/<owner>/<hash>`
+ * URL; it deliberately says nothing about WHOSE owner segment that is, because the schema is
+ * shared by both ends and neither end's owner is knowable at parse time. So the owner check is
+ * a second, explicit step, taken by every caller that either persists an edit or acts on one —
+ * against the owner IT authenticated (the session's org on the web, `RenderJob.ownerId` in the
+ * worker), never against anything inside the document.
+ *
+ * Empty result = every file this edit would read lives in `ownerId`'s own storage. A non-empty
+ * result is a cross-tenant reach and the caller must refuse the WHOLE document: silently
+ * dropping the offending clips would hand back a different video than the one asked for, and
+ * silence is exactly how a forged edit would have gone unnoticed.
+ */
+export function foreignEditSrcs(edit: FikirtiveEdit, ownerId: string): string[] {
+  return edit.timeline.tracks
+    .flatMap((t) => t.clips.map((c) => c.asset.src))
+    .filter((src) => !keyOwnerMatches(srcToStorageKey(src), ownerId));
+}
+
+/**
+ * The one sentence every refusal above says — on saving, on exporting, and on the render
+ * itself, so a merchant who hits this reads the same thing wherever they are standing.
+ *
+ * It names no key, no path and no owner: the merchant who triggered this is either using a
+ * broken client or probing someone else's storage, and neither one is owed the address they
+ * guessed at. What it does say is the part they can act on — the cut wasn't saved or rendered,
+ * so nothing of theirs was lost.
+ */
+export const FOREIGN_MEDIA_MESSAGE =
+  "This cut points at files that aren't in your media library, so we haven't saved or rendered it. Remove those clips and try again.";
 
 /** total timeline duration in seconds (max end across tracks) */
 export function editDuration(edit: FikirtiveEdit): number {

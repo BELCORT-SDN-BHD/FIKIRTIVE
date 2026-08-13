@@ -26,6 +26,9 @@ import { listConversations } from "@/lib/conversation-admin";
 import { listTenants } from "@/lib/tenant-admin";
 import { resolveVisionConfig } from "@/lib/runtime-config";
 import { buildBytePlusPackSignal } from "@/lib/byteplus-pack-alert";
+import { buildDeploySignal } from "@/lib/deploy-fingerprint";
+import { commitShaFrom, configFingerprint } from "@fikirtive/core/env-contract";
+import { buildBackupSignal } from "@/lib/backup-signal";
 import { sanitizeUserError } from "@/lib/provider-secrecy";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -197,6 +200,18 @@ export type MoneyJobRow = {
   count: number;
   status: string;
   spentUsd: number;
+  /**
+   * #776 —— 引擎**自报**的真实计费量,或 null = 未知(引擎没报 / 这条路还没有这一列 /
+   * 回执落库之前的老行)。
+   *
+   * 它存在的理由就是让 `spentUsd` 可反查:后者是我们按自己的价目表冻结的**估算**,前者是
+   * 引擎说它真收了多少。两个数并排,毛利第一次可以对账而不是只能估。null 一律显示 Unknown
+   * —— 空着是事实,补一个推算值就是把猜测伪装成账单。
+   */
+  billedUnits: number | null;
+  /** 上面那个数的单位,引擎自己的口径:图片 = "images"(张),视频 = "tokens"。
+   *  两条产品线单位不同是引擎的定价方式,不是我们的选择;null = 没有可报的量。 */
+  billedUnitLabel: "images" | "tokens" | null;
   finishedAt: string;
 };
 
@@ -401,6 +416,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       vision,
       runtimeProvider,
       knowledgeRows,
+      workerHeartbeats,
+      lastBackupSuccess,
+      lastBackupFailure,
     ] = await Promise.all([
       listTenants(),
       prisma.creditAccount.findUnique({
@@ -432,6 +450,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
           count: true,
           status: true,
           spentUsd: true,
+          // #776 —— 引擎自报的真实计费量。选上它,Cost & usage 才第一次能把「我们估的成本」
+          // 和「引擎说它收的量」放在一起看;不选,这一列就只是个写了没人读的字段。
+          billedUnits: true,
           finishedAt: true,
           updatedAt: true,
         },
@@ -556,6 +577,31 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         where: { key: { in: ["planner_system", "brief_default", "description_template"] } },
         select: { key: true, valueJson: true },
       }),
+      // #797 — the worker's own deploy identity, to compare against this web process's.
+      //
+      // EVERY row, not `id: "worker"` (#797 judge r3 P1). After the #796 split there is no single
+      // worker row: `compute` and `wait` each write their own, each carrying its own deploy
+      // identity, and a half-finished deploy can land on just one of them. Reading one hard-coded
+      // id let the frozen pre-split `"worker"` row — which still matched web — report In sync while
+      // the live `worker-wait` service was running different code. Same read as /api/health, so the
+      // two panels can never disagree about which roles exist. Staleness (not an id allowlist) is
+      // what retires that leftover row: see buildDeploySignal.
+      prisma.workerHeartbeat.findMany({
+        select: { id: true, at: true, commitSha: true, configFingerprint: true },
+      }),
+      // #794 ③ — 备份新鲜度。两条:最近一次成功(新鲜度的唯一依据)与最近一次失败
+      // (只有当它发生在那次成功之后才会被展示)。分两条查而不是查一条最新行:一次失败
+      // 绝不能把「上一次成功在什么时候」这个事实从面板上抹掉。
+      prisma.backupRun.findFirst({
+        where: { status: "succeeded" },
+        orderBy: { finishedAt: "desc" },
+        select: { finishedAt: true, key: true, sizeBytes: true, durationMs: true, trigger: true, credentialMode: true },
+      }),
+      prisma.backupRun.findFirst({
+        where: { status: "failed" },
+        orderBy: { finishedAt: "desc" },
+        select: { finishedAt: true, error: true },
+      }),
     ]);
 
     const ownerByOrg = new Map(
@@ -593,6 +639,10 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         count: job.count,
         status: job.status,
         spentUsd: job.spentUsd ?? 0,
+        // #776 —— 引擎自报的量。单位是引擎自己的:图按张、视频按 token(5s/720p 实测 108,900)。
+        // 没报就是 null,界面显示 Unknown —— 不补 0,0 会被当成「这一单没花钱」。
+        billedUnits: job.billedUnits,
+        billedUnitLabel: job.billedUnits === null ? null : job.kind === "VIDEO" ? ("tokens" as const) : ("images" as const),
         finishedAt: formatDateForSort(job.finishedAt ?? job.updatedAt),
       })),
       ...refGenJobs.map((job) => ({
@@ -604,6 +654,10 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         count: job.count,
         status: job.status,
         spentUsd: job.spentUsd ?? 0,
+        // 参考图那条路还没有回执列(#776 只落在 GenJob/Generation 上),所以对它永远是「未知」
+        // —— 如实说不知道,而不是把它算成 0 拉低对账口径。
+        billedUnits: null,
+        billedUnitLabel: null,
         finishedAt: formatDateForSort(job.finishedAt ?? job.updatedAt),
       })),
     ].sort((a, b) => b.finishedAt.localeCompare(a.finishedAt));
@@ -748,6 +802,51 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       detail: bytePlusPack.detail,
       updatedAt: new Date().toISOString(),
       tone: bytePlusPack.tone,
+    });
+
+    // #797 — is EVERY live worker role the SAME deploy as this web process? A half-finished
+    // deploy, or two services holding different values of a shared secret, otherwise leaves both
+    // processes alive and only some business paths quietly broken. Since #796 that question has
+    // one answer per role, and the panel reports the worst of them.
+    const deploy = buildDeploySignal(
+      { commitSha: commitShaFrom(process.env), configFingerprint: configFingerprint(process.env) },
+      workerHeartbeats,
+      new Date(),
+    );
+    systemIncidents.push({
+      id: "deploy-fingerprint",
+      area: "Deploy identity",
+      status: deploy.status,
+      count: 0,
+      detail: deploy.detail,
+      updatedAt: new Date().toISOString(),
+      tone: deploy.tone,
+    });
+
+    // #794 ③ — "did last night's backup succeed?" now has a place on this page.
+    const backupSignal = buildBackupSignal({
+      lastSuccess: lastBackupSuccess
+        ? {
+            finishedAt: lastBackupSuccess.finishedAt,
+            key: lastBackupSuccess.key,
+            // BigInt → number: a dump would have to exceed 9 petabytes to lose precision here.
+            sizeBytes: lastBackupSuccess.sizeBytes === null ? null : Number(lastBackupSuccess.sizeBytes),
+            durationMs: lastBackupSuccess.durationMs,
+            trigger: lastBackupSuccess.trigger,
+            credentialMode: lastBackupSuccess.credentialMode,
+          }
+        : null,
+      lastFailure: lastBackupFailure,
+      now: new Date(),
+    });
+    systemIncidents.push({
+      id: "backup-freshness",
+      area: "Database backup",
+      status: backupSignal.status,
+      count: backupSignal.count,
+      detail: backupSignal.detail,
+      updatedAt: backupSignal.updatedAt,
+      tone: backupSignal.tone,
     });
 
     const cases: CaseRow[] = [
@@ -923,6 +1022,18 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
           value: String(queueFailureCount),
           detail: `${activeQueue} active queue items across generation, reference, and render jobs.`,
           tone: queueFailureCount > 0 ? "danger" : "success",
+          href: "/admin/system",
+        },
+        {
+          // #794 — belongs on the home page, not only on /admin/system. A backup that
+          // stopped running is the one failure whose cost is unbounded, and it is also the
+          // quietest: nothing else in the product behaves any differently until the day
+          // it matters.
+          id: "backup-freshness",
+          label: "Database backup",
+          value: backupSignal.freshness === "missing" ? "never" : `${backupSignal.count}h ago`,
+          detail: backupSignal.detail,
+          tone: backupSignal.tone,
           href: "/admin/system",
         },
       ],

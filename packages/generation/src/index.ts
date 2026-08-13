@@ -80,7 +80,10 @@ export class MockProvider implements GenerationProvider {
   async generate(req: GenerationRequest): Promise<GeneratedImage[]> {
     // deterministic per (prompt, conditioning, index) so a re-run is stable;
     // distinct seeds → distinct bytes → distinct content hashes
-    const base = hashSeed(req.prompt + "|" + req.inputImageUrls.join(","));
+    // #777:组图与散图是**不同的产出**(整组连贯 vs 各出各的),所以离线路的
+    // 字节也必须不同 —— 种子相同会让两条路产出同一份内容哈希,测试与画布就再也
+    // 分不出商家买的是哪一种。
+    const base = hashSeed(req.prompt + "|" + req.inputImageUrls.join(",") + (req.coherentSet ? "|set" : ""));
     const real = imageOutputSize(req.aspectRatio);
     const ratio = reducedRatio(real.width, real.height);
     const w = ratio.width * MOCK_RATIO_SCALE;
@@ -249,6 +252,12 @@ export class FalProvider implements GenerationProvider {
   async generate(req: GenerationRequest): Promise<GeneratedImage[]> {
     const ids = FAL_MODELS[req.model];
     if (!ids) throw new Error("generation provider has no image model mapping");
+    // #777 —— 这条备用路**做不到**一次出一整组连贯的图:它只有 `num_images`,
+    // 出来的是 N 张互不相干的图。放行就是收了「一组」的钱、交一堆散图,而且没人说过
+    // 一句话 —— 本仓库反复重学的那类静默降级。付费之前停住(零 fetch、零计费),
+    // 与 `EXECUTED_SPEC.image.fallbackAdapterCoherentSetHonoured = false` 是同一件事的
+    // 声明面与行为面。
+    if (req.coherentSet && req.count > 1) throw new Error("generation provider can't make one coherent set"); // pre-spend
     const conditioned = req.inputImageUrls.length > 0;
     const modelId = conditioned ? ids.edit : ids.t2i;
 
@@ -299,6 +308,10 @@ export class FalProvider implements GenerationProvider {
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
     if (req.refVideoUrl) throw new Error("generation provider does not support whole-clip reference video"); // pre-spend
+    // #785: this adapter's i2v/t2v routes have no multi-reference param. Refuse BEFORE the paid
+    // POST rather than silently drop the merchant's product/spokesperson photos and bill for a
+    // clip that never saw them (the same rule the reference-video line above keeps).
+    if (req.refImageUrls?.length) throw new Error("generation provider does not support element reference photos"); // pre-spend
     // Resolve the model's fal wiring. Unknown model → fail BEFORE the paid POST
     // (no spend); the contract already rejects it, this is defense in depth.
     const cfg = VIDEO_CFG[req.model as GenVideoModel];
@@ -395,3 +408,19 @@ export {
   PROVIDER_MAX_CONCURRENT_REQUESTS_ENV,
   __setProviderRequestGateForTests,
 } from "./provider-concurrency.js";
+
+/** #784 素材理解的端口 —— 与生成是**两个**端口(钱的形状不同,理由见 understanding.ts)。
+ *  同样只从 `.` 导出:这个包对外只有这一条路径。 */
+export {
+  ArkUnderstandingProvider,
+  MockUnderstandingProvider,
+  createUnderstandingProvider,
+  emptyUnderstandingResponseError,
+  isUnreadableMediaError,
+  understandingErrorUsage,
+  unreadableMediaError,
+  type UnderstandingProvider,
+  type UnderstandingRequest,
+  type UnderstandingResult,
+  type UnderstandingUsage,
+} from "./understanding.js";

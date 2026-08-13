@@ -27,6 +27,7 @@ import {
   EXECUTED_SPEC,
   type GenVideoModel,
   type ReferenceBudget,
+  type ApprovedEntity,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
@@ -82,6 +83,18 @@ export type CardPayload = {
   downgradeNote?: string;
   structuredPrompt: string;
   entityIds: string[];
+  /**
+   * #774 判官 r2 P1 —— 这几个 @元素在**铸卡那一刻**叫什么、是什么类型,冻结在卡上。
+   *
+   * 引擎认人那几句机器指令(`Define the product in <Image_2> as <Subject_2>: 名字.`)
+   * 里的名字只能来自这里。元素名是商家随时能改的自由文本(`updateEntity` 只 trim),
+   * 名字若由 worker 在付费调用前现读,批准之后改一次名就能把没过审批的指令送进那次
+   * 已经批准的付费调用。冻结在卡上 = 商家在按下按钮之前就看得见这份映射
+   * (`approvedEntitiesNote`),按下之后谁也改不动它(卡 payload 不可变)。
+   *
+   * 次序 = `entityIds` 的次序。老卡没有这个字段 → 编号照旧,只是不写名字。
+   */
+  approvedEntities?: ApprovedEntity[];
   variantSel: Record<string, string>;
   estimatedPriceUsd: number;
   /** The DISPLAYED charge in credits — the same pricedGenCredits value startGen reserves,
@@ -100,6 +113,19 @@ export type CardPayload = {
 export type ProposeCardResult = {
   cardPayload: CardPayload;
   shownPriceDisplay: number;
+  /**
+   * #785 判官 r1 P1 —— **披露要数的那一份**:商家这一轮真 @ 到、且确属他自己的元素,
+   * 取在任何场景清空**之前**。
+   *
+   * 为什么不能数 `cardPayload.entityIds`:首帧 i2v 那一档会把卡上的 @元素清空(引擎只认
+   * 首帧),而「你给的 N 张一张都不会用上」这句话要说的正是被清掉的那些。数清空后的卡,
+   * 数出来永远是 0 张里的 0 张 ⇒ 那句话永远不出现 ⇒ 静默,正是这条规矩要挡的东西。
+   *
+   * 只影响**披露**:卡上带走的仍然是 `cardPayload.entityIds`(worker 照它取图),
+   * 这一份不参与选型、报价、预扣。
+   */
+  mentionedEntityIds: string[];
+  mentionedVariantSel: Record<string, string>;
 };
 
 /**
@@ -167,7 +193,12 @@ export function buildReferenceBudgetNotes(input: {
   const notes: string[] = [];
   if (input.budget.truncated) {
     notes.push(
-      `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
+      // #785：视频的三个带素材场景（首帧 / 首+末帧 / 整段参考视频）一张元素照都带不了，
+      // 所以这里 used 会是 0。「use 0 of your 17」既不像人话，也读着像出了故障 ——
+      // 零这一档单独说一句。仍然是**同一个数字**（budget），只是换了说法。
+      input.budget.used === 0
+        ? `None of your ${input.budget.total} reference photos will be used for this clip.`
+        : `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
@@ -176,6 +207,30 @@ export function buildReferenceBudgetNotes(input: {
     );
   }
   return notes;
+}
+
+/**
+ * #785 —— 视频卡上「这一趟真会用上你几张参考照」那一格。
+ *
+ * 为什么要在卡铸好之后补一次:张数要查库(每个 @元素当下有几张活图),而 `buildProposeCard`
+ * 是纯函数、不碰库。补的方式是**拿同一个 `buildSpecChips` 重算一遍**,不是在数组尾巴上
+ * 手工 push 一格 —— 后者就是第二套卡面逻辑,`EXECUTED_SPEC` 那道闸从此管不到它。
+ *
+ * 入参只有张数;`kind` / `params` / 有没有底图这些全部从卡面自己再读一次,所以重算出来的
+ * 前几格与第一次逐字相同(测试钉着)。纯展示:不改价、不改选型、不改任何付费字段。
+ */
+export function withVideoReferenceChip(payload: CardPayload, elementReferenceCount: number): CardPayload {
+  if (payload.kind !== "video" || elementReferenceCount <= 0) return payload;
+  return {
+    ...payload,
+    specChips: buildSpecChips(
+      payload.kind,
+      payload.params,
+      !!payload.sourceGenerationId,
+      false, // usesAttachedImage 是图片侧的概念(编辑底图),视频卡永远为 false
+      { elementReferenceCount },
+    ),
+  };
 }
 
 /**
@@ -251,14 +306,17 @@ export function buildDowngradeNote(
  * Pure helper: compute the GEN_CARD payload from validated inputs.
  * No prisma, no SDK imports — all DB interactions live in executePropose().
  *
- * @param input          - Raw LLM input (already zod-parsed by the SDK)
- * @param ctx            - OttoContext from the run (identity never comes from input)
- * @param ownedEntityIds - Entity ids confirmed owned by ctx.orgId (DB lookup done by caller)
+ * @param input         - Raw LLM input (already zod-parsed by the SDK)
+ * @param ctx           - OttoContext from the run (identity never comes from input)
+ * @param ownedEntities - Entities confirmed owned by ctx.orgId, **with their current name and
+ *                        type** (DB lookup done by caller). The names are what gets frozen onto
+ *                        the card as `approvedEntities` — the caller must read them in the same
+ *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
   input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
   ctx: OttoContext,
-  ownedEntityIds: string[],
+  ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
   // Step 1: kind is the PLANNER'S decision — an attached reference no longer forces video.
   // A reference (ctx.sourceGenerationId) becomes an i2v start-frame for a video plan; for an
@@ -268,29 +326,33 @@ export function buildProposeCard(
   // `hasSourceImage` 仍然只说 i2v：它驱动选型与 @元素清空，那两件事对图片方案不变
   // （图片方案照旧保留商家 @ 的元素，参考图与元素图一起进引擎）。
   let kind = input.kind;
-  let entityIds = input.entityIds;
-  let variantSel = input.variantSel;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
   const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
   const hasSourceImage = isI2V;
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
 
+  // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently.
+  // #785 判官 r1 P1:归属过滤挪到了 i2v 清空**之前**(原本是「先清空、再跳过过滤」)。
+  // 卡面产物一个字节都没变(清空后的卡照旧是空的),换来的是下面那一份「商家真 @ 了谁」
+  // 还留着 —— 披露要数的是它,不是清空后的卡(见 ProposeCardResult.mentionedEntityIds)。
+  // #774:归属集从 `ownedEntities` 取 —— 与冻在卡上的名字**同一趟**读出来的那一份,
+  // 所以「谁算他的」与「他批的是哪个名字」不可能来自两次不同的读。
+  const ownedSet = new Set(ownedEntities.map((e) => e.id));
+  let entityIds = input.entityIds.filter((id) => ownedSet.has(id));
+  const ownedVarSel: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.variantSel)) {
+    if (ownedSet.has(k)) ownedVarSel[k] = v;
+  }
+  let variantSel: Record<string, string> = ownedVarSel;
+  /** 商家这一轮真 @ 到、且确属他自己的那一组 —— 只喂披露(张数要按这一份数)。 */
+  const mentionedEntityIds = entityIds;
+  const mentionedVariantSel = variantSel;
+
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
     entityIds = [];
     variantSel = {};
-  }
-
-  // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently
-  if (!hasSourceImage) {
-    const ownedSet = new Set(ownedEntityIds);
-    entityIds = entityIds.filter((id) => ownedSet.has(id));
-    const filteredVarSel: Record<string, string> = {};
-    for (const [k, v] of Object.entries(variantSel)) {
-      if (ownedSet.has(k)) filteredVarSel[k] = v;
-    }
-    variantSel = filteredVarSel;
   }
 
   // Step 3: model selection.
@@ -414,6 +476,14 @@ export function buildProposeCard(
   };
   const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured;
 
+  // Step 4.8: 审批身份快照 —— 这张卡最终留下的每个 @元素,配上它**此刻**的名字与类型。
+  // 只认 ownedEntities 里那一份(归属查询同一趟读出来的),`entityIds` 里找不到身份的
+  // 元素宁可不进快照:少一个名字是安全的降级,编一个名字不是。
+  const ownedById = new Map(ownedEntities.map((e) => [e.id, e]));
+  const approvedEntities = entityIds
+    .map((id) => ownedById.get(id))
+    .filter((e): e is ApprovedEntity => !!e);
+
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
     kind,
@@ -427,6 +497,10 @@ export function buildProposeCard(
       : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,
+    // #774 判官 r2 P1:名字与类型在这里一起冻结,次序跟着 entityIds 走。只收这张卡真的
+    // 留下的那些元素 —— i2v 清空、归属过滤之后剩下谁,快照里就只有谁。空的就不写这个
+    // 字段(老卡的形状),下游一律按「没有获批的名字」处理。
+    ...(approvedEntities.length ? { approvedEntities } : {}),
     variantSel,
     estimatedPriceUsd: price,
     estimatedCredits,
@@ -441,5 +515,5 @@ export function buildProposeCard(
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).
   const shownPriceDisplay = estimatedCredits;
 
-  return { cardPayload, shownPriceDisplay };
+  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel };
 }

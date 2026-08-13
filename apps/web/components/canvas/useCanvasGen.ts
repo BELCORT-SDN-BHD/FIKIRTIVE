@@ -55,6 +55,14 @@ export type CanvasImageGenOptions = {
    * 一定带着它 —— 「显示的」与「发出去的」不许有第二个来源。
    */
   aspectRatio?: string;
+  /**
+   * #777 —— 这几张是**一组要连贯的图**(一次出齐,同一个模特/同一件产品从头到尾一致)。
+   *
+   * 与形状同一条规矩:界面上开着的时候一定带着它发出去,关着就不发。它**不改价**
+   * (仍按张收),但它改交付物 —— 所以它是商家授权内容的一部分,要跟着回执一起
+   * 重放,刷新之后重放的必须还是「一组」,不是一堆散图。
+   */
+  coherentSet?: boolean;
   /** Exact accepted request material used only when resuming a browser receipt. */
   resumeModel?: string;
   resumeThreadId?: string | null;
@@ -76,6 +84,18 @@ type CanvasVideoResumeOptions = {
  */
 export type CanvasVideoGenOptions = {
   spec?: VideoSpec;
+  /**
+   * #785 —— 商家在文生视频的提示词里 @ 到的元素(产品图 / 代言人)。
+   *
+   * 它们的参考照真的会进视频引擎(worker 把选中的那几张发成 reference_image 部件),
+   * 所以它们是**商家授权内容的一部分** —— 与张数、形状、规格同级:@ 了产品之后再 @ 代言人
+   * 是**另一个**动作,不是同一个动作的重试。因此调用方必须把它们写进 action material,
+   * 刷新后的重放也必须原样带回来(回执里已有 entityIds / variantSel 两格)。
+   *
+   * 不改价:参考照不在引擎的计费公式里,`pricedGenCredits` 也不看它们。
+   */
+  entityIds?: string[];
+  variantSel?: Record<string, string>;
 };
 
 function isConfirmedCreditQuote(value: unknown): value is number {
@@ -95,6 +115,14 @@ export type CanvasVideoSpecs = {
   i2vDefault: VideoSpec;
   /** 按档查价(显示 credits);表上没有这一档 ⇒ null。 */
   creditsFor: (spec: VideoSpec) => number | null;
+  /**
+   * #785 判官 r2 P1-a —— @元素的参考照这一趟真的会进视频引擎吗。
+   *
+   * 出片框靠它决定要不要说那句 “Type @ to bring your products and people into the clip”。
+   * 服务端解析(`getActiveGenModels().videoElementReferences`,与选片名额同一个判据),
+   * 界面自己不判断 —— 判断不了:判据是服务端选中的那条执行路,浏览器读不到。
+   */
+  elementReferences: boolean;
 };
 
 /** 回执里记着的那一档规格;回执早于 #645(没记规格)⇒ null,按服务端默认档走。 */
@@ -150,6 +178,8 @@ export type StoredCanvasActionReceipt = {
   sourceNodeId?: string;
   /** #643 T2：形状是商家授权内容的一部分，所以刷新后重放的必须是同一个形状。 */
   aspectRatio?: string;
+  /** #777:「一组连贯的图」同理 —— 它不改价,但它改交付物,所以重放的必须还是一组。 */
+  coherentSet?: true;
   /** #645 T4：视频规格同理 —— 而且它**会改价**，所以重放必须连规格带价格一起原样重发，
    *  否则刷新后重放的可能是一档更贵/更便宜的片子，与商家当时按下去的那一档不是同一件事。 */
   videoSeconds?: number;
@@ -577,7 +607,10 @@ export function useCanvasGen(
         !Array.isArray((response as { videoResolutions?: unknown }).videoResolutions) ||
         (response as { videoResolutions: unknown[] }).videoResolutions.length === 0 ||
         (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec === null ||
-        typeof (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec !== "object"
+        typeof (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec !== "object" ||
+        // #785 判官 r2 P1-a：@元素能不能真的进视频引擎，同样必须由服务端说。少了这一格，
+        // 出片框只能自己编一个默认值去决定要不要承诺 —— 编成 true 就是替一条做不到的路许诺。
+        typeof (response as { videoElementReferences?: unknown }).videoElementReferences !== "boolean"
       ) {
         throw new Error("Unexpected generation model response");
       }
@@ -601,6 +634,7 @@ export function useCanvasGen(
       t2vDefault: defaultVideoSpec(models),
       i2vDefault: defaultVideoSpec(models, { hasSourceImage: true }),
       creditsFor: (spec) => videoSpecCredits(models, spec),
+      elementReferences: models.videoElementReferences,
     };
   }, [ensureModels]);
   // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,
@@ -657,6 +691,9 @@ export function useCanvasGen(
     const requestThreadId = options.resumeThreadId !== undefined
       ? options.resumeThreadId
       : activeThreadId ?? null;
+    // #777:一张图不成组。界面在只出一张时不显示这个开关,这里再把口径钉一次 ——
+    // 送一个 count=1 的 coherentSet 上去只会被服务端契约闸拒掉,白白让商家的动作失败。
+    const coherentSet = options.coherentSet === true && safeCount > 1;
     const req = {
       actionId,
       expectedCredits: approvedCredits,
@@ -669,6 +706,7 @@ export function useCanvasGen(
       ...(vsel && { variantSel: vsel }),
       ...(options.sourceGenerationId && { sourceGenerationId: options.sourceGenerationId }),
       ...(options.aspectRatio && { aspectRatio: options.aspectRatio }),
+      ...(coherentSet && { coherentSet: true }),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -687,6 +725,7 @@ export function useCanvasGen(
       ...(options.sourceGenerationId ? { sourceGenerationId: options.sourceGenerationId } : {}),
       ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
       ...(options.aspectRatio ? { aspectRatio: options.aspectRatio } : {}),
+      ...(coherentSet ? { coherentSet: true as const } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -978,6 +1017,10 @@ export function useCanvasGen(
     const requestThreadId = resume.threadId !== undefined
       ? resume.threadId
       : activeThreadId ?? null;
+    // #785：@ 到的元素。重放时用回执里记着的那一组，不是刷新后空掉的输入框 —— 与规格、
+    // 形状同一条规矩：商家按下去的是哪一份授权，重放的就必须是哪一份。
+    const entityIds = options.entityIds ?? [];
+    const variantSel = options.variantSel ?? {};
     const req = {
       actionId: stableActionId,
       expectedCredits: approvedCredits,
@@ -986,6 +1029,8 @@ export function useCanvasGen(
       count: 1,
       kind: "video" as const,
       model: video,
+      ...(entityIds.length ? { entityIds } : {}),
+      ...(Object.keys(variantSel).length ? { variantSel } : {}),
       ...(spec ? { durationSeconds: spec.seconds, resolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
@@ -999,6 +1044,8 @@ export function useCanvasGen(
       model: video,
       approvedCredits,
       threadId: requestThreadId,
+      ...(entityIds.length ? { entityIds } : {}),
+      ...(Object.keys(variantSel).length ? { variantSel } : {}),
       ...(spec ? { videoSeconds: spec.seconds, videoResolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
@@ -1091,6 +1138,8 @@ export function useCanvasGen(
               ...(receipt.sourceNodeId ? { sourceNodeId: receipt.sourceNodeId } : {}),
               // #643 T2：重放的必须是商家当时看着按下去的那个形状，不是刷新后的默认值。
               ...(receipt.aspectRatio ? { aspectRatio: receipt.aspectRatio } : {}),
+              // #777:同理 —— 商家按下去的是「一组连贯的图」,重放的就必须还是一组。
+              ...(receipt.coherentSet ? { coherentSet: true } : {}),
             },
           );
           continue;
@@ -1117,7 +1166,12 @@ export function useCanvasGen(
           receipt.pos,
           receipt.actionId,
           { model: receipt.model, threadId: receipt.threadId, approvedCredits: receipt.approvedCredits },
-          { ...(receiptVideoSpec(receipt) ? { spec: receiptVideoSpec(receipt)! } : {}) },
+          {
+            ...(receiptVideoSpec(receipt) ? { spec: receiptVideoSpec(receipt)! } : {}),
+            // #785：重放的必须是商家当时 @ 的那一组元素，不是刷新后空掉的输入框。
+            ...(receipt.entityIds ? { entityIds: receipt.entityIds } : {}),
+            ...(receipt.variantSel ? { variantSel: receipt.variantSel } : {}),
+          },
         );
       }
     })();

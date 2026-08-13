@@ -93,6 +93,8 @@ const SERVER_PAYLOAD_KEYS = {
   downgradeNote: true,
   structuredPrompt: true,
   entityIds: true,
+  // #774 判官 r2 P1:引擎认人的那几个名字,在卡上冻结、卡面照实披露。
+  approvedEntities: true,
   variantSel: true,
   estimatedPriceUsd: true,
   estimatedCredits: true,
@@ -112,6 +114,8 @@ const CARD_PAYLOAD_KEYS = {
   downgradeNote: true,
   structuredPrompt: true,
   entityIds: true,
+  // #774 判官 r2 P1:引擎认人的那几个名字,在卡上冻结、卡面照实披露。
+  approvedEntities: true,
   variantSel: true,
   estimatedPriceUsd: true,
   estimatedCredits: true,
@@ -142,15 +146,16 @@ describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
     }
     // The branch coverage above must actually reach the optional fields, or this
     // assertion would pass by simply never exercising them.
-    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote"]) {
+    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote", "approvedEntities"]) {
       expect(emitted.has(key)).toBe(true);
     }
     expect([...emitted].filter((k) => !(k in CARD_PAYLOAD_KEYS))).toEqual([]);
   });
 });
 
-/** Six real cards straight from the live server builder: plain video, downgraded video,
- *  image ad pack, two-step image, i2v, reference video. */
+/** Seven real cards straight from the live server builder: plain video, downgraded video,
+ *  image ad pack, two-step image, i2v, reference video, and an image that @mentions an
+ *  element (#774 —— 只有它会带出 `approvedEntities`,少了它上面那条覆盖断言会空过去)。 */
 async function builtCards(): Promise<ServerCardPayload[]> {
   const { buildProposeCard } = await import("@fikirtive/otto");
   const ctx = {
@@ -171,6 +176,11 @@ async function builtCards(): Promise<ServerCardPayload[]> {
     buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), referenceVideoGenerationId: "gen_vid" } as never, []),
+    buildProposeCard(
+      { kind: "image", ...base, entityIds: ["e1"] },
+      ctx,
+      [{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }],
+    ),
   ].map((r) => r.cardPayload);
 }
 
@@ -242,6 +252,12 @@ describe("#580 P1-1 DTO 边界的运行时解析", () => {
 // ---------------------------------------------------------------------------
 
 const ENGINE_WORDS = /seedance|seedream|byteplus|veo|kling|ltx|pixverse|grok imagine|hailuo/i;
+
+/** #896 — the approve control is ONE priced button now ("Generate · 8 credits"), not a
+ *  "Review cost" step followed by a "Confirm generate" step. Its presence still means
+ *  exactly what it meant before: this card may be paid for. Its ABSENCE is what the
+ *  fail-closed assertions below are really about, and that meaning is unchanged. */
+const APPROVE_BUTTON = "Generate ·";
 
 function renderCard(payload: unknown, over: { cardState?: "idle" | "working" | "done" | "failed" } = {}): string {
   const markup = renderToStaticMarkup(
@@ -327,6 +343,58 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     expect(markup).toContain("You asked for 5:7 — this will be a square 2048 × 2048 image.");
   });
 
+  // ── #774 判官 r2 P1 —— 引擎认人的名字,商家在花钱之前就看得见 ──────────────
+  // 「批准前看得见」是这条修复的一半:另一半(worker 只认这一份)在
+  // apps/worker/src/jobs/gen-reference-budget.test.ts。两边说的必须是同几个字。
+  describe("#774 判官 r2 P1 卡面披露引擎会被告知的那几个名字", () => {
+    const withNames = (approvedEntities: unknown) => ({
+      kind: "image",
+      model: "seedream",
+      params: { count: 1, aspectRatio: "1:1" },
+      specChips: ["2048 × 2048", "1:1"],
+      structuredPrompt: "A hero shot of the bottle",
+      entityIds: ["e1", "e2"],
+      variantSel: {},
+      downgraded: false,
+      estimatedPriceUsd: 0.04,
+      estimatedCredits: 1,
+      reason: "seedream",
+      approvedEntities,
+    });
+
+    it("卡上逐字写出付费提示词里那几个名字", () => {
+      const markup = renderCard(withNames([
+        { id: "e1", type: "PRODUCT", name: "the AeroBottle" },
+        { id: "e2", type: "CHARACTER", name: "Mia" },
+      ]));
+      expect(markup).toContain("Reference names sent to the engine: the AeroBottle (product), Mia (person).");
+    });
+
+    it("老卡没有这份快照 → 不显示这行(不猜一个)", () => {
+      const markup = renderCard(withNames(undefined));
+      expect(markup).not.toContain("Reference names sent to the engine");
+    });
+
+    it("快照读不懂 → 记进畸形字段,这张卡连批准按钮都没有", () => {
+      const gate = planCardGate(withNames([{ id: "e1", type: "NOPE", name: "x" }]));
+      expect(gate.malformedFields).toContain("approvedEntities");
+      expect(gate.approvable).toBe(false);
+      expect(renderCard(withNames([{ id: "e1", type: "NOPE", name: "x" }])))
+        .not.toContain("Reference names sent to the engine");
+    });
+
+    it("真 builder 造的卡:卡上那行 = 卡上冻结的那一份", async () => {
+      const { buildProposeCard } = await import("@fikirtive/otto");
+      const { cardPayload } = buildProposeCard(
+        { kind: "image", structuredPrompt: "a hero shot", entityIds: ["e1"], variantSel: {} },
+        { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+        [{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }],
+      );
+      expect(cardPayload.approvedEntities).toEqual([{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }]);
+      expect(renderCard(cardPayload)).toContain("Reference names sent to the engine: the AeroBottle (product).");
+    });
+  });
+
   it("never renders the engine name, even though the payload carries it", () => {
     expect(renderCard(VIDEO_PAYLOAD)).not.toMatch(ENGINE_WORDS);
   });
@@ -357,21 +425,21 @@ describe("#580 P1-1 读不懂的方案不许当方案渲染", () => {
   it("payload 根本读不出来 → 明说读不懂,且没有付费按钮", () => {
     const markup = renderCard("not a card");
     expect(markup).toContain(UNREADABLE_PLAN_NOTE);
-    expect(markup).not.toContain("Review cost");
+    expect(markup).not.toContain(APPROVE_BUTTON);
   });
 
   it("读得出来但没有价格 → 同样不给付费按钮,不许编一个 1 credit 出来", () => {
     const markup = renderCard({ kind: "image", structuredPrompt: "a poster" });
     expect(markup).toContain(UNREADABLE_PLAN_NOTE);
-    expect(markup).not.toContain("Review cost");
+    expect(markup).not.toContain(APPROVE_BUTTON);
   });
 
   it("部分字段畸形 → 卡面显式说明它不完整,而且不给批准按钮", () => {
     const markup = renderCard({ ...VIDEO_PAYLOAD, params: "16:9" });
     expect(markup).toContain(PARTIAL_PLAN_NOTE);
-    // r2 P1-2:读不全的卡不许批准。上一轮这里断言的是「照样出 Review cost」——
+    // r2 P1-2:读不全的卡不许批准。上一轮这里断言的是「照样出批准按钮」——
     // 那正是把一张自己都承认读不全的卡送去花钱。
-    expect(markup).not.toContain("Review cost");
+    expect(markup).not.toContain(APPROVE_BUTTON);
   });
 
   it("畸形的规格数组整条丢掉 —— 半条规格比没有规格更危险", () => {
@@ -555,14 +623,20 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
     });
   }
 
+  /** #896 — ONE press. The button carries the price, so pressing it IS the approval:
+   *  this single click is what must reach the metered server action, and nothing may
+   *  spend without it. (Before, the same guarantee was spread over two clicks, the first
+   *  of which only re-displayed the price already printed on it.) */
   async function approveThroughTheUi(host: HTMLElement): Promise<void> {
-    clickButton(host, "Review cost");
-    const confirm = [...host.querySelectorAll("button")].find((b) =>
-      (b.textContent ?? "").includes("Confirm generate"),
+    const approve = [...host.querySelectorAll("button")].find((b) =>
+      (b.textContent ?? "").includes(APPROVE_BUTTON),
     );
-    expect(confirm, "confirming must offer a real confirm button").toBeTruthy();
+    expect(approve, "the card must offer one priced approve button").toBeTruthy();
+    // 「点击 = 批准」:这一下之前,付费动作一次都不许被调用。
+    expect(coworkGenerateMock).not.toHaveBeenCalled();
+    expect(ottoApproveMock).not.toHaveBeenCalled();
     await act(async () => {
-      confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      approve!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   }
 
@@ -651,7 +725,7 @@ describe("#580 r2 P1-1 渲染门与批准门是同一道门", () => {
   it("只有 USD、没有 credits 的老卡:不猜价,也不给批准按钮", () => {
     const markup = renderCard({ ...VIDEO_PAYLOAD, estimatedCredits: undefined });
     expect(markup).toContain(UNREADABLE_PLAN_NOTE);
-    expect(markup).not.toContain("Review cost");
+    expect(markup).not.toContain(APPROVE_BUTTON);
     expect(markup).not.toContain("4 credits");
   });
 
@@ -659,14 +733,16 @@ describe("#580 r2 P1-1 渲染门与批准门是同一道门", () => {
     it(`estimatedCredits=${bad} 不是可担保价格 → 当读不懂处理`, () => {
       const markup = renderCard({ ...VIDEO_PAYLOAD, estimatedCredits: bad });
       expect(markup).toContain(UNREADABLE_PLAN_NOTE);
-      expect(markup).not.toContain("Review cost");
+      expect(markup).not.toContain(APPROVE_BUTTON);
     });
   }
 
   it("价格担保得住 → 照旧显示这一个数字并给批准按钮", () => {
     const markup = renderCard(VIDEO_PAYLOAD);
-    expect(markup).toContain("Review cost");
-    expect(markup).toContain("8 credits");
+    // #896:价就写在批准按钮上,一击到位 —— 不再有一颗只把同一个数再念一遍的中间键。
+    expect(markup).toContain("Generate · 8 credits");
+    expect(markup).not.toContain("Review cost");
+    expect(markup).not.toContain("Confirm generate");
   });
 
   it("两步计划的第二步价格同样受门管 —— 担保不住就不承诺", () => {
@@ -683,8 +759,7 @@ describe("#580 r2 P1-2 畸形字段 = 不许批准", () => {
   it("畸形卡照旧显式披露,但批准按钮整条不存在", () => {
     const markup = renderCard({ ...VIDEO_PAYLOAD, params: "16:9" });
     expect(markup).toContain(PARTIAL_PLAN_NOTE);
-    expect(markup).not.toContain("Review cost");
-    expect(markup).not.toContain("Confirm generate");
+    expect(markup).not.toContain(APPROVE_BUTTON);
   });
 
   it("畸形卡上点得到的每一个按钮都不会启动花费", async () => {
@@ -752,7 +827,9 @@ describe("#580 r2 P1-3 PackCard 与单卡共用契约与价格门", () => {
   it("每张卡都有可担保价格 → 正常出总价与 Make all", () => {
     const markup = renderPack([PRICED, { ...PRICED, estimatedCredits: 6 }]);
     expect(markup).toContain("Total 10 credits");
-    expect(markup).toContain("Make all");
+    // #896:整包也是一击 —— 数量与总价都在按钮上,后面没有第二块确认屏。
+    expect(markup).toContain("Make all (2 · 10 credits)");
+    expect(markup).not.toContain("Confirm — make all");
   });
 
   it("包里混进一张只有 USD 的卡 → 总价与 Make all 一起消失", () => {
@@ -786,6 +863,80 @@ describe("#580 r2 P1-3 PackCard 与单卡共用契约与价格门", () => {
       const gate = planCardGate(payload);
       expect(packTotalCredits([{ payload }])).toBe(gate.approvable ? gate.credits : null);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9b. PackCard 半跑完的那一包(#896 r2 P1)—— 价签 / 余额门 / 执行目标同一组卡
+//
+// 「Make all」只会启动**还没跑**的卡,可是总价、余额门与那句提示以前都按**全部**卡算。
+// 一张已经跑过、一张还没跑,各 5 credits:按钮写着「Make all (1 · 10 credits)」却只启动
+// 5 —— 数量说的是剩余、价说的是全包,同一颗按钮上两个口径。更贵的一半是余额门:钱包里
+// 有 5 credits 的商家,明明付得起剩下那一张,却被一个虚高的 10 挡在门外。
+// ---------------------------------------------------------------------------
+
+describe("#896 r2 P1 PackCard 的价签跟着它真正会跑的那组卡走", () => {
+  const PRICED_5 = { kind: "image", structuredPrompt: "a poster", estimatedCredits: 5 };
+
+  function renderStates(
+    states: ("idle" | "done" | "working" | "failed" | "cancelled")[],
+    balanceUsd = 100,
+    payloads?: unknown[],
+  ): string {
+    return renderToStaticMarkup(
+      createElement(PackCard, {
+        packTitle: "Raya set",
+        cards: states.map((cardState, i) => ({
+          cardId: `card_${i}`,
+          payload: payloads?.[i] ?? PRICED_5,
+          threadId: "thread_1",
+          genJobId: null,
+          cardState,
+          pendingApproval: false,
+        })),
+        balanceUsd,
+        onApproved: vi.fn(),
+      }),
+    ).replaceAll("&#x27;", "'").replaceAll("&#39;", "'");
+  }
+
+  it("一张已跑一张待跑 → 按钮上的价是剩下那一张的价,不是整包的", () => {
+    const markup = renderStates(["done", "idle"]);
+    expect(markup).toContain("Make all (1 · 5 credits)");
+    expect(markup, "把已经付过钱的那张又算进了价签").not.toContain("10 credits");
+    expect(markup).toContain("Total 5 credits");
+  });
+
+  it("余额门也按剩下那一组判 —— 付得起的批准不再被虚高的总价挡住", () => {
+    // 钱包里 5 credits($0.50)。剩下要跑的只有一张,5 credits ⇒ 付得起。
+    const markup = renderStates(["done", "idle"], 0.5);
+    expect(markup, "把付得起的批准挡在了一个不会发生的总价后面").not.toContain("Not enough credits");
+    expect(markup).toContain("Make all (1 · 5 credits)");
+  });
+
+  it("全都跑过了 ⇒ 没有价签也没有整包按钮,只剩收条", () => {
+    const markup = renderStates(["done", "done"]);
+    expect(markup).not.toContain("Make all");
+    expect(markup).not.toContain("Total");
+    expect(markup).toContain("All 2");
+  });
+
+  it("报不出价的那张已经跑完 ⇒ 不再拖累剩下那张的整包批准", () => {
+    const markup = renderStates(["done", "idle"], 100, [
+      { kind: "image", estimatedPriceUsd: 0.39 }, // 只有记账用的 USD:担保不住的价
+      PRICED_5,
+    ]);
+    expect(markup).toContain("Make all (1 · 5 credits)");
+    expect(markup).not.toContain(PACK_UNPRICED_NOTE);
+  });
+
+  it("还没跑的那张报不出价 ⇒ 整包批准照旧收起(这道门没有被放松)", () => {
+    const markup = renderStates(["done", "idle"], 100, [
+      PRICED_5,
+      { kind: "image", estimatedPriceUsd: 0.39 },
+    ]);
+    expect(markup).not.toContain("Make all");
+    expect(markup).toContain(PACK_UNPRICED_NOTE);
   });
 });
 

@@ -4,7 +4,10 @@
  */
 import { defineOttoSkill } from "../skill.js";
 import { seedancePromptInput, assembleSeedance } from "./seedance-prompt.helpers.js";
-import { CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly } from "./prompt-vocab.js";
+import {
+  CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly,
+  VIDEO_CONSTRAINTS, EMOTION_CUES, referenceAdvice,
+} from "./prompt-vocab.js";
 
 export const seedancePromptSkill = defineOttoSkill({
   name: "seedancePrompt",
@@ -22,11 +25,30 @@ export const seedancePromptSkill = defineOttoSkill({
     "a shot that follows a prior clip. List @-referenced entities in `references` to lock identity. cleanFootage " +
     "defaults true (bans on-screen text/watermark/logo) — set false only when text or a logo should appear in " +
     "the video. " +
+    // #774 U3 ③ —— 情绪外化：给镜头看得见的东西，不是一个感受词。
+    "Never write a feeling word alone — pass `emotion` and the prompt turns it into what the camera can " +
+    `actually see (e.g. happy → ${EMOTION_CUES.happy}). Known emotions: ${Object.keys(EMOTION_CUES).join(", ")}. ` +
+    // #774 U3 ③ —— 声音符号规范。
+    "Sound: pass `music`, `sfx`, and `dialogue` as SEPARATE fields (the prompt writes each in the notation " +
+    "the engine expects); keep spoken lines in the language the user asked for. Never ask for subtitles. " +
+    // #774 U3 ② —— 约束词表（祈使式）。
+    "`constraints`: write each one as a COMMAND and separate them with a semicolon, e.g.: " +
+    `${VIDEO_CONSTRAINTS.join(" ")} ` +
+    // #774 U4 —— 画幅接线。
+    "Pass `aspect` with the SAME shape you will pass to propose's desiredAspect — a vertical clip gets an " +
+    "extra caption-free instruction, because vertical output is by far the most likely to grow burned-in " +
+    "captions nobody asked for. " +
+    // #774 U8 —— 只提醒，不设限。
+    "If the skill returns `notes`, tell the user those points in your own plain words and let them decide — " +
+    "they are advice, never a limit: never refuse, cap, or silently drop references the user gave you. " +
     `Camera — use ONE per shot from: ${enOnly(CAMERA_MOVES).join(", ")}. ` +
     `Shot framing from: ${enOnly(SHOT_SCALES).join(", ")}. ` +
     `Lighting — always give direction + color temperature, e.g.: ${enOnly(LIGHTING).join(", ")}.`,
   parameters: seedancePromptInput,
-  execute: async (i) => ({ prompt: assembleSeedance(i) }),
+  execute: async (i) => {
+    const notes = referenceAdvice(i.references);
+    return { prompt: assembleSeedance(i), ...(notes.length > 0 ? { notes } : {}) };
+  },
 });
 
 export const seedancePrompt = seedancePromptSkill.tool;

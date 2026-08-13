@@ -34,6 +34,15 @@ const skillGenCell = z.object({
   aspectRatio: z.string().max(12).optional(),
   resolution: z.string().max(12).optional(),
   durationSeconds: z.number().int().min(1).max(60).optional(),
+  coherentSet: z.boolean().optional().describe(
+    "IMAGES ONLY, and only with count >= 2. Set true when the user's ask is ONE SET that must hang " +
+      "together — the same model shot from several angles, the same product in several sizes, one " +
+      "character across several scenes. The whole set is then made in one go so the subject, wardrobe, " +
+      "lighting and style stay the same across every image. Leave it off when the images are meant to " +
+      "be independent alternatives to choose between (different hooks, different concepts) — a set " +
+      "would make them all look alike. It does NOT change the price: the user is charged per image " +
+      "either way.",
+  ),
 });
 
 const skillTextCell = z.object({ type: z.literal("text"), text: z.string().min(1).max(2000) });
@@ -106,6 +115,9 @@ export const runFactoryBatchSkill = defineOttoSkill({
     "the SAME cells; the server derives a fresh attempt from the new approval, completed/in-flight " +
     "cells stay reused, and failed cells can be dispatched once. Request replays of one approval are " +
     "always reused at zero new charge. Use a fresh unique id for a genuinely new batch. " +
+    "When a cell's images are meant to be ONE SET that hangs together (same model from several angles, " +
+    "same product in several sizes), set that cell's count and coherentSet:true so the whole set is " +
+    "made in one go and stays consistent — same price per image either way. " +
     "Scope (project) comes from the current context; you supply only what to make.",
   parameters: runFactoryBatchInput,
   execute: executeRunFactoryBatch,

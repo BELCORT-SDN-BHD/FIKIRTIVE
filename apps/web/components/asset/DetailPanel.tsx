@@ -42,9 +42,12 @@ type GenDTO = {
   projectId: string;
   url: string;
   urls: string[];
-  variants: { id: string; url: string; favorite: boolean }[]; // aligned to urls; carries each variant's own id/state (F08)
+  // aligned to urls; carries each variant's own id/state (F08) and its OWN engine receipt (#776 r2)
+  variants: { id: string; url: string; favorite: boolean; finalPrompt: string | null }[];
   kind: string;
   prompt: string;
+  /** #776：被请求的那一行自己的「引擎真正跑的那句」。切换缩略图后要读 `variants[i].finalPrompt`。 */
+  finalPrompt: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
@@ -52,7 +55,11 @@ type GenDTO = {
 };
 
 type PanelState = "loading" | "ready" | "error";
-type ConfirmAction = "regen" | "animate" | "edit" | "delete" | null;
+/** #896 — the only thing left that asks twice is DELETE. The three paid actions
+ *  (Regenerate / Animate / Generate edit) now follow the canvas rule: the price is on the
+ *  button, the press does it, and a button whose quote hasn't landed is off. Deleting is a
+ *  different kind of act — it is irreversible and it isn't a purchase — so V16's confirm stays. */
+type ConfirmAction = "delete" | null;
 
 /** Render the cropped area of an image to a canvas and return a data URL. */
 async function getCroppedDataUrl(
@@ -233,8 +240,16 @@ export default function DetailPanel({
   const videoCost = activeModels
     ? (videoSpec ? videoSpecCredits(activeModels, videoSpec) : activeModels.videoCredits)
     : null;
-  const imageCostLabel = imageCost == null ? "checking exact cost" : creditsLabel(imageCost);
-  const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
+
+  // #896 r2 P0-a —— 每条付费路一道闸,**控件与动作读同一个布尔值**。
+  // 之前闸只装在按钮的 disabled 上:编辑框的 Shift/Cmd/Ctrl+Enter 直接进 handleEditSubmit,
+  // 报价还没回来也照跑 —— 它自己 await 一次 ensureModels() 再发付费请求,于是商家在屏幕上
+  // 从没见过那个价就被扣了钱。按钮变灰是**提示**,不是闸;闸必须在动作入口,这样按钮、
+  // 快捷键、以及以后任何新入口都同样 fail closed(关类不补例)。
+  const regenBlocked = assetSpendControlDisabled(regenStatus, readOnly) || imageCost == null;
+  const animateBlocked = assetSpendControlDisabled(animStatus, readOnly) || videoCost == null;
+  const editBlocked =
+    assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim() || imageCost == null;
 
   const handleFavorite = useCallback(async () => {
     if (readOnly) return;
@@ -298,7 +313,7 @@ export default function DetailPanel({
   }, []);
 
   const handleRegen = useCallback(async () => {
-    if (readOnly) return;
+    if (regenBlocked) return;
     if (!gen || regenBusyRef.current) return;
     regenBusyRef.current = true;
     try {
@@ -342,10 +357,10 @@ export default function DetailPanel({
     } finally {
       regenBusyRef.current = false;
     }
-  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly, chosenImageAspect]);
+  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, regenBlocked, chosenImageAspect]);
 
   const handleAnimate = useCallback(async () => {
-    if (readOnly) return;
+    if (animateBlocked) return;
     if (!gen || animBusyRef.current) return;
     animBusyRef.current = true;
     try {
@@ -393,7 +408,7 @@ export default function DetailPanel({
     } finally {
       animBusyRef.current = false;
     }
-  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, readOnly]);
+  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, animateBlocked]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -413,53 +428,14 @@ export default function DetailPanel({
     onClose();
   }, [selectedGenId, onClose, readOnly]);
 
-  const requestSpendConfirm = useCallback((action: Exclude<ConfirmAction, "delete" | null>) => {
-    if (readOnly) return;
-    setConfirmAction(action);
-    void ensureModels();
-  }, [readOnly]);
-
-  const requestEditSubmit = useCallback(() => {
-    if (readOnly) return;
-    if (!editPrompt.trim() || editStatus === "running") return;
-    setConfirmAction("edit");
-    void ensureModels();
-  }, [editPrompt, editStatus, readOnly]);
-
-  const confirmDetails = (() => {
-    switch (confirmAction) {
-      case "regen":
-        return {
-          title: "Regenerate this image?",
-          description: `Creates one new image version from the same prompt. Cost: ${imageCostLabel}. No charge until you confirm.`,
-          confirmLabel: imageCost == null ? "Checking cost..." : "Regenerate",
-          disabled: readOnly || imageCost == null || regenStatus === "running",
-        };
-      case "animate":
-        return {
-          title: "Animate this image?",
-          description: `Creates one video from the selected image. Cost: ${videoCostLabel}. No charge until you confirm.`,
-          confirmLabel: videoCost == null ? "Checking cost..." : "Animate",
-          disabled: readOnly || videoCost == null || animStatus === "running",
-        };
-      case "edit":
-        return {
-          title: "Generate this edit?",
-          description: `Uses the current image as the source for your edit. Cost: ${imageCostLabel}. No charge until you confirm.`,
-          confirmLabel: imageCost == null ? "Checking cost..." : "Generate edit",
-          disabled: readOnly || imageCost == null || editStatus === "running" || !editPrompt.trim(),
-        };
-      case "delete":
-        return {
-          title: "Delete this asset?",
-          description: "This removes the selected generation from your library. A canvas card that uses it stays where it is and reads 'Preview missing'. This cannot be undone.",
-          confirmLabel: "Delete",
-          disabled: readOnly,
-        };
-      default:
-        return null;
-    }
-  })();
+  const confirmDetails = confirmAction === "delete"
+    ? {
+        title: "Delete this asset?",
+        description: "This removes the selected generation from your library. A canvas card that uses it stays where it is and reads 'Preview missing'. This cannot be undone.",
+        confirmLabel: "Delete",
+        disabled: readOnly,
+      }
+    : null;
 
   // Variant switcher: switch displayed url + persist pick
   const handleVariantPick = useCallback((idx: number) => {
@@ -471,8 +447,11 @@ export default function DetailPanel({
 
   // Edit @composer: submit an edit generation
   const handleEditSubmit = useCallback(async () => {
-    if (readOnly) return;
-    if (!gen || !editPrompt.trim() || editStatus === "running" || editBusyRef.current) return;
+    // The gate, not the button. This handler is reachable from the composer's
+    // Shift/Cmd/Ctrl+Enter as well as from the priced button beside it, and both ways in
+    // must refuse on exactly the same terms — no quote on screen, no spend (#896 r2 P0-a).
+    if (editBlocked) return;
+    if (!gen || editBusyRef.current) return;
     editBusyRef.current = true;
     try {
       setEditStatus("running");
@@ -515,17 +494,13 @@ export default function DetailPanel({
     } finally {
       editBusyRef.current = false;
     }
-  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly, chosenImageAspect]);
+  }, [gen, editPrompt, editIds, editBlocked, targetProjectId, pollJob, reloadFromJob, selectedGenId, chosenImageAspect]);
 
   const runConfirmedAction = useCallback(() => {
-    const action = confirmAction;
     setConfirmAction(null);
     if (readOnly) return;
-    if (action === "regen") void handleRegen();
-    if (action === "animate") void handleAnimate();
-    if (action === "edit") void handleEditSubmit();
-    if (action === "delete") void handleDelete();
-  }, [confirmAction, handleAnimate, handleDelete, handleEditSubmit, handleRegen, readOnly]);
+    void handleDelete();
+  }, [handleDelete, readOnly]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {
@@ -690,6 +665,46 @@ export default function DetailPanel({
               <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
 
+            {/* #776 生成回执 —— 引擎自报「它真正跑的那句话」。
+                上面那句是商家写的，这一句是引擎实际执行的；两者常常不同（引擎会在服务端
+                改写、加固、补细节），而在此之前这条链在交付那一步就断了：商家看得到结果，
+                看不到结果是按什么做出来的。
+
+                r2 改了两件事，都是判官指出的：
+                  · **未知也要说出口**。r1 在 null 时整块隐藏，于是「引擎没报」和「这条链
+                    不存在」在屏幕上长得一模一样。现在如实写 “Not reported by the engine.”
+                    —— 不知道要长得像不知道；
+                  · **读这一张自己的那句**。一单多图 = 多次付费调用，每张可以有各自的改写；
+                    读 `variants[selectedIdx]`，切换缩略图时跟着换。读主图那一份的话，第二张
+                    会被第一张的话解释——那比空着更糟。
+                两条不变的纪律：一模一样就只说「就是你写的那句」，不把同一段文字贴两遍；
+                供应商指纹词已在服务端一处（asset-actions.merchantFinalPrompt）滤掉，这里
+                拿到的就是可以直接上屏的白标文本。
+                样式沿用本面板既有的内联写法；这一面的 shadcn 化属于 #840 的界面族拆分。 */}
+            {(() => {
+              // 回退只在「这一张根本不在列表里」时发生（与 displayUrl 同一套），**不是**在
+              // 「这一张的值是 null」时发生 —— 后者正是要显示的答案。写成 `?.finalPrompt ??`
+              // 的话，第二张没报就会悄悄继承第一张那一句，也就是判官点的那个串台。
+              const selectedVariant = gen.variants[selectedIdx];
+              // `?? null`：读不到这个字段（老的调用点、老的 DTO）与「引擎没报」是同一件事 ——
+              // 未知。归一成 null，下面只需要判一种「不知道」。
+              const shownFinalPrompt = (selectedVariant ? selectedVariant.finalPrompt : gen.finalPrompt) ?? null;
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                    What the engine ran
+                  </span>
+                  <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, ...(shownFinalPrompt ? {} : { fontStyle: "italic" }) }}>
+                    {shownFinalPrompt === null
+                      ? "Not reported by the engine."
+                      : shownFinalPrompt.trim() === gen.prompt.trim()
+                        ? "Your prompt, exactly as you wrote it."
+                        : shownFinalPrompt}
+                  </p>
+                </div>
+              );
+            })()}
+
             {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
                 Seeded from the shape this image was made in, so neither one silently reshapes it.
                 Same cost in every shape. */}
@@ -740,13 +755,14 @@ export default function DetailPanel({
                 {favorite ? "♥ Saved" : "♡ Save"}
               </Button>
 
-              {/* Regenerate */}
+              {/* Regenerate — #896: the canvas rule. The price is on the button, the press
+                  does it, and until the server quote lands the button says so and is off. */}
               {gen.kind === "image" && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => requestSpendConfirm("regen")}
-                  disabled={assetSpendControlDisabled(regenStatus, readOnly)}
+                  onClick={() => void handleRegen()}
+                  disabled={regenBlocked}
                   title={readOnlyReason}
                 >
                   <RotateCcwIcon />
@@ -760,17 +776,20 @@ export default function DetailPanel({
                     ? "Cancelled"
                     : regenStatus === "failed"
                     ? "Failed — retry?"
-                    : "Regenerate"}
+                    : imageCost == null
+                    ? "Checking cost…"
+                    : `Regenerate · ${creditsLabel(imageCost)}`}
                 </Button>
               )}
 
-              {/* Animate (image → video) */}
+              {/* Animate (image → video) — priced from the spec chosen above, so the number on
+                  the button follows the picker rather than a stale default tier (#645 T4). */}
               {gen.kind === "image" && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => requestSpendConfirm("animate")}
-                  disabled={assetSpendControlDisabled(animStatus, readOnly)}
+                  onClick={() => void handleAnimate()}
+                  disabled={animateBlocked}
                   title={readOnlyReason}
                 >
                   <PlayIcon />
@@ -784,7 +803,9 @@ export default function DetailPanel({
                     ? "Cancelled"
                     : animStatus === "failed"
                     ? "Failed — retry?"
-                    : "Animate"}
+                    : videoCost == null
+                    ? "Checking cost…"
+                    : `Animate · ${creditsLabel(videoCost)}`}
                 </Button>
               )}
 
@@ -838,14 +859,14 @@ export default function DetailPanel({
                         setEditPrompt(text);
                         setEditIds(ids);
                       }}
-                      onSubmit={requestEditSubmit}
+                      onSubmit={() => void handleEditSubmit()}
                     />
                   </div>
                   <Button
                     variant="default"
                     size="sm"
-                    onClick={requestEditSubmit}
-                    disabled={assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim()}
+                    onClick={() => void handleEditSubmit()}
+                    disabled={editBlocked}
                     title={readOnlyReason}
                   >
                     {editStatus === "running"
@@ -858,7 +879,9 @@ export default function DetailPanel({
                       ? "Cancelled"
                       : editStatus === "failed"
                       ? "Failed"
-                      : "Send"}
+                      : imageCost == null
+                      ? "Checking cost…"
+                      : `Generate edit · ${creditsLabel(imageCost)}`}
                   </Button>
                 </div>
               </div>

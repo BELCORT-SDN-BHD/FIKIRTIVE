@@ -4,6 +4,7 @@ import {
   genJobEndedWithoutDelivering,
   imageDefaults,
   videoDefaults,
+  COHERENT_SET_MIN_IMAGES,
   type GenModel,
   type GenVideoModel,
 } from "@fikirtive/core";
@@ -30,8 +31,19 @@ export interface FactoryVideoOptions extends Record<string, string | number | bo
 }
 
 /** #642: the image shape frozen at enqueue — mirrors FactoryVideoOptions. */
-export interface FactoryImageOptions extends Record<string, string> {
+export interface FactoryImageOptions extends Record<string, string | boolean | undefined> {
   aspectRatio: string;
+  /**
+   * #777:这一单是不是**一组要连贯的图**(一次调用出齐整组)。
+   *
+   * **只在 true 时出现**,这一点是钱路安全的,不是洁癖:写一格 `coherentSet: false`
+   * 进去,库里每一条既有的图片任务(它们的快照只有 aspectRatio)就都会与新算出来的
+   * 材料对不上 —— 商家的合法重放当场被判成「换了内容」,一次幂等回归。
+   *
+   * 它进材料 = 「一组连贯图」与「N 张散图」是**不同内容**:同一个 batchId 的同一格
+   * 想把已批的一组换成散图(或反过来),复用判据会照实拒,而不是静默交付另一样东西。
+   */
+  coherentSet?: true;
 }
 
 export interface FactoryMaterial {
@@ -67,6 +79,8 @@ export interface FactoryMaterialInput {
   aspectRatio?: string | null;
   fps?: number | null;
   audio?: boolean | null;
+  /** #777:这 `count` 张是一组要连贯的图。image-only(视频侧没有这个能力)。 */
+  coherentSet?: boolean | null;
 }
 
 export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "imageOptions" | "variantSel" | "threadId"> & {
@@ -164,8 +178,14 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
   // #642: the image shape, resolved once here so the persisted snapshot, the money
   // material binding, and the worker's provider call all read the same value. Absent →
   // the model's default (1:1), which is byte-for-byte what image jobs produced before.
+  //
+  // #777:组图那一格**只在 true 时写进去**(见 FactoryImageOptions 的注释)。
+  // 一张图不成组,所以 count < 2 时它一律不落 —— 材料里不许出现一个说了不算数的开关。
   const imageOptions: FactoryImageOptions | null = input.kind === "image"
-    ? { aspectRatio: input.aspectRatio ?? imageDefaults(input.model as GenModel).aspectRatio }
+    ? {
+        aspectRatio: input.aspectRatio ?? imageDefaults(input.model as GenModel).aspectRatio,
+        ...(input.coherentSet === true && input.count >= COHERENT_SET_MIN_IMAGES ? { coherentSet: true as const } : {}),
+      }
     : null;
 
   return {
@@ -174,7 +194,18 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
     kind: input.kind === "video" ? "VIDEO" : "IMAGE",
     count: input.kind === "video" ? 1 : input.count,
     entityIds: input.entityIds ?? [],
-    variantSel: input.kind === "video" ? null : canonicalVariantSel(input.variantSel),
+    // #785 判官 r2 P1-b —— 视频的变体选择不再在这里被抹掉。
+    //
+    // 当初(#280)把它置 null 是有理由的,而那个理由现在不成立了:那时的视频只有 i2v 一条路,
+    // 条件全在首帧里,@元素的参考照一张都不进引擎,所以「选了哪个变体」对视频确实没有意义。
+    // #785 之后它们真的进引擎 —— 卡面按商家选的变体数照片(`countLiveReferenceImagesPerEntity`
+    // 读 `variantSel`),而 worker 拿到的却是 null、于是回落去查 base 照片。两边看的不是同一
+    // 组图:卡上写「用你 2 张」,付费请求实发的是另外 5 张 base ——「说的」与「做的」分家,
+    // 而且商家为一个他没选的形态付了钱。
+    //
+    // 现在两种 kind 走同一条规范化:空映射仍然收敛成 null(与 worker 的 `job.variantSel ?? {}`
+    // 同义),非空的原样留下,落进 GenJob.variantSel,worker 按它解析照片。
+    variantSel: canonicalVariantSel(input.variantSel),
     sourceGenerationId: input.sourceGenerationId ?? null,
     tailGenerationId: input.tailGenerationId ?? null,
     referenceVideoGenerationId: input.referenceVideoGenerationId ?? null,

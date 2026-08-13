@@ -142,7 +142,11 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
         {resolved === "approved" ? (
           <div className="flex items-center gap-2 text-[0.875rem] text-[var(--success-soft-foreground)]">
             <CheckCircle2 size={16} />
-            <span>Approved — it will publish as scheduled.</span>
+            {/* #851 — from the same authority as the card's title and outcome line. Hardcoded here,
+                this sentence contradicted the detail line directly above it: one card said nothing
+                is sent, and then, one line down, that the post goes out at its slot. The
+                contradicting half was the one a merchant read having just acted. */}
+            <span>{view.approvedLine}</span>
           </div>
         ) : resolved === "rejected" ? (
           <div className="text-[0.875rem] text-muted-foreground">

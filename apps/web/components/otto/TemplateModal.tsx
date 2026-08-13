@@ -194,7 +194,6 @@ export default function TemplateModal({
   const [run, dispatchRun] = useReducer(templateRunReducer, initialTemplateRunState());
   const { phase, message, resultUrl, resultGenId } = run;
   const [detailOpen, setDetailOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [copiedCaption, setCopiedCaption] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
@@ -226,7 +225,6 @@ export default function TemplateModal({
       } else {
         setSourceGenId(res.generationIds[0]);
         setThumbUrl(URL.createObjectURL(file));
-        setConfirming(false);
       }
     } catch {
       dispatchRun({ type: "explicit-error", message: "Upload failed — please try again." });
@@ -251,10 +249,12 @@ export default function TemplateModal({
     return idempotencyKeyRef.current;
   }
 
+  /** ONE press (#896, Founder 2026-08-13): the button carries the price, so pressing it is
+   *  the approval. The spend path below — idempotency key, in-flight lock, the paid-confirm
+   *  availability gate — is exactly what it was behind the old second click. */
   async function onGenerate() {
     if (!sourceGenId || !isTemplatePaidConfirmAvailable(run) || inFlightRef.current) return;
     inFlightRef.current = true;
-    setConfirming(false);
     dispatchRun({ type: "start" });
     try {
       let image: string;
@@ -334,23 +334,9 @@ export default function TemplateModal({
       </div>
     ) : phase === "unknown" ? (
       <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
-    ) : confirming ? (
-      <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="m-0 text-[0.8125rem] text-muted-foreground">
-          Cost: {costLabel}. No charge until you confirm.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-            Back
-          </Button>
-          <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={onGenerate}>
-            Confirm generate · {costLabel}
-          </Button>
-        </div>
-      </div>
     ) : (
-      <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={() => setConfirming(true)}>
-        Review cost · {costLabel}
+      <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={onGenerate}>
+        Generate · {costLabel}
       </Button>
     );
 
@@ -433,7 +419,7 @@ export default function TemplateModal({
               {template.question && (
                 <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                   <span className="text-[0.8125rem] text-muted-foreground">{template.question.label}</span>
-                  <Input value={answer} onChange={(e) => { setAnswer(e.target.value); setConfirming(false); }} placeholder={template.question.placeholder} />
+                  <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={template.question.placeholder} />
                 </label>
               )}
               {message && (
