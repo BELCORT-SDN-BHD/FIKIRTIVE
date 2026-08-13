@@ -75,13 +75,18 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      - run: pnpm --filter "./packages/*" build
+      - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
+
       # 套件自己的类型检查。刻意在这里跑而不是挂进 `pnpm -r typecheck`:e2e/ 不是 pnpm workspace
       # 项目(见 e2e/package.json 的说明),把它加进去就等于把这些文件塞进 `quality` 的 tests /
       # typecheck 两条腿,而本票不动那道门。
+      #
+      # 位置在 packages build **之后**,而且必须如此:套件按路径引用 packages/*/dist 里的类型
+      # (e2e/support/db.ts 说明了为什么按路径),dist 不存在时这一步报的是「找不到模块」,
+      # 而不是任何关于套件本身的话。第一次上云就是这么红的。
       - run: pnpm exec tsc -p e2e/tsconfig.json
 
-      - run: pnpm --filter "./packages/*" build
-      - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
       - run: pnpm --filter @fikirtive/web build
 
       # 只装 chromium:套件只跑这一个 project,装三个引擎是三倍下载换零覆盖。
