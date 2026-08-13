@@ -1,11 +1,36 @@
 @import "tailwindcss";
 
 /*
+ * DARK MODE — wire ② of the §K3 activation contract (#804).
+ *
+ * Tailwind v4's stock `dark:` variant compiles to `@media (prefers-color-scheme: dark)`,
+ * i.e. it reads the OPERATING SYSTEM and knows nothing about the theme the merchant
+ * picked. Class-based theming (next-themes writes `.dark` on <html>) and an OS media
+ * query disagree the moment those two differ, and the disagreement is silent — which is
+ * exactly the bug already shipping today: an OS-dark merchant gets `dark:bg-input/30`
+ * grey washes on every <Select> and <Textarea> while the rest of the page is still light
+ * (components/ui/select.tsx, textarea.tsx, switch.tsx — the only three `dark:` call
+ * sites in the tree). Re-pointing the variant at the class fixes those three at the root
+ * instead of one component at a time.
+ *
+ * `&:where(…)` keeps the variant at zero added specificity, so `dark:` utilities still
+ * lose to nothing they used to win against.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
  * Vapor design system — ported verbatim from the founder's Claude Design
  * handoff (claude.ai/design, "Fikirtive Studio" prototype). Tokens, the al-*
  * component recipes, and the prototype's layout CSS are kept pixel-faithful;
  * the only deliberate divergences are flagged A11Y (audited contrast fixes).
  * Entity hues are ours: functional wayfinding color, not chrome.
+ *
+ * LAYERS (#798). Everything that paints lives in `@layer base` (element defaults)
+ * or `@layer components` (recipes), so Tailwind utilities — `md:flex-col`,
+ * `lg:hidden`, all of them — win over this file. Unlayered CSS outranks EVERY
+ * layer, which is why responsive utilities used to fail silently next to these
+ * classes. Only the three token roots (:root, .gb, and the .gb dark root) stay unlayered;
+ * lib/__tests__/globals-css-layers.test.ts holds the line.
  */
 :root {
   /* base neutrals */
@@ -113,7 +138,10 @@
   --radius-xl: 28px;
 }
 
-/* ---------- base ---------- */
+/* ---------- base (@layer base) ----------
+   Element-level defaults. They must lose to both the component recipes below and to
+   any Tailwind utility — `text-lg` on an <h1> is the author speaking last. */
+@layer base {
 body {
   background: var(--bg-0);
   color: var(--fg-1);
@@ -127,8 +155,6 @@ body {
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.10); border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.18); background-clip: content-box; border: 2px solid transparent; }
 
-.ambient-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; background: var(--ambient); }
-
 h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: var(--tracking-tight); }
 
 :focus-visible {
@@ -138,9 +164,25 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: var(--ring-focus);
 }
 
+/* !important beats every normal declaration in any layer, so the reduced-motion
+   override keeps working exactly as it did unlayered. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+} /* @layer base */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * @layer components (#798) — every recipe below this line.
+ * Tailwind v4 declares `@layer theme, base, components, utilities`, so anything
+ * in `components` loses to every utility, responsive variant included. Before
+ * this file was layered, these recipes were UNLAYERED, and unlayered beats every
+ * layer: `md:flex-col` / `lg:hidden` written next to an `al-*` or `cv-*` class
+ * silently did nothing (proven in fd53e925 — the mobile ☰ leaked onto desktop and
+ * the sidebar would not collapse on phones). Keep new recipes inside a layer.
+ * ══════════════════════════════════════════════════════════════════════════ */
+@layer components {
+
+.ambient-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; background: var(--ambient); }
 
 /* ---------- DS glass recipes (radius built in, per prototype base.css) ---------- */
 .glass {
@@ -174,14 +216,12 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   color: var(--fg-3);
 }
 
-/* ---------- AL component recipes (verbatim from the DS bundle) ---------- */
-.al-badge{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-family:var(--font-sans);font-weight:500;font-size:11.5px;letter-spacing:0.01em;padding:4px 10px;border-radius:var(--radius-pill);border:1px solid var(--line-2);background:var(--glass-flat);color:var(--fg-2);}
-.al-badge-dot{width:5px;height:5px;border-radius:99px;background:currentColor;flex:none;}
-.al-badge-positive{color:var(--positive);border-color:rgba(126,226,168,.25);background:rgba(126,226,168,.08);}
-.al-badge-warning{color:var(--warning);border-color:rgba(255,210,126,.25);background:rgba(255,210,126,.08);}
-.al-badge-danger{color:var(--danger);border-color:rgba(255,144,144,.25);background:rgba(255,144,144,.08);}
-.al-badge-accent{color:var(--fg-1);border-color:var(--line-1);background:var(--glass-2);}
-.al-badge-mono{font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;}
+/* ---------- AL component recipes (verbatim from the DS bundle) ----------
+   #840: components/ds.tsx retired (shadcn/ui is the only component base from now on),
+   so the recipes only IT rendered are gone — badge, chip, dialog, field/affix,
+   segmented control, mediacard, the button icon slot, empty-hero/stack-art and
+   fade-rise. What is left below is still rendered by hand-written markup on the
+   canvas, the asset panel and MentionInput, and retires with those screens. */
 
 .al-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-family:var(--font-sans);font-weight:600;letter-spacing:-0.01em;border:1px solid transparent;border-radius:var(--radius-md);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);}
 .al-btn:focus-visible{outline:none;box-shadow:var(--ring-focus);}
@@ -198,28 +238,20 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .al-btn-ghost:hover:not(:disabled){background:var(--glass-hover);color:var(--fg-1);}
 .al-btn-danger{background:rgba(255,144,144,.09);border-color:rgba(255,144,144,.25);color:var(--danger);}
 .al-btn-danger:hover:not(:disabled){background:rgba(255,144,144,.16);}
-.al-btn-full{width:100%;}
-.al-btn-iconslot{display:inline-flex;}
-.al-btn-iconslot svg{width:1.1em;height:1.1em;}
 
-/* ds AL.* primitives under .gb (light). The base al-* recipes are Vapor (dark);
-   admin (and any .gb surface) renders ds Button/Badge, so re-point them to .gb
-   light tokens. Scoped to .gb only — the legacy dark Studio (not under .gb) is
-   unaffected. Added with the S2 admin dark→light migration. */
+/* al-* primitives under .gb (light). The base al-* recipes are Vapor (dark);
+   the canvas and the asset panel render them on a .gb surface, so re-point them
+   to .gb light tokens. Scoped to .gb only — the legacy dark Studio (not under
+   .gb) is unaffected. Added with the S2 admin dark→light migration. */
 .gb .al-btn{transition:background var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out);}
 .gb .al-btn-primary{background:var(--primary);color:var(--primary-foreground);box-shadow:none;}
-.gb .al-btn-primary:hover:not(:disabled){background:#1A1A18;box-shadow:none;}
+.gb .al-btn-primary:hover:not(:disabled){background:color-mix(in oklab, var(--primary) 90%, var(--background));box-shadow:none;}
 .gb .al-btn-glass{background:var(--card);border-color:var(--border);color:var(--foreground);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:var(--shadow-sm);}
 .gb .al-btn-glass:hover:not(:disabled){background:var(--secondary);}
 .gb .al-btn-ghost{background:transparent;color:var(--muted-foreground);}
 .gb .al-btn-ghost:hover:not(:disabled){background:var(--accent);color:var(--foreground);}
 .gb .al-btn-danger{background:color-mix(in oklab,var(--error) 9%,transparent);border-color:color-mix(in oklab,var(--error) 25%,transparent);color:var(--error);}
 .gb .al-btn-danger:hover:not(:disabled){background:color-mix(in oklab,var(--error) 16%,transparent);}
-.gb .al-badge{border-color:var(--border);background:var(--secondary);color:var(--muted-foreground);}
-.gb .al-badge-accent{color:var(--foreground);border-color:var(--border);background:var(--accent);}
-.gb .al-badge-positive{color:var(--success);border-color:color-mix(in oklab,var(--success) 28%,transparent);background:color-mix(in oklab,var(--success) 9%,transparent);}
-.gb .al-badge-warning{color:var(--warning);border-color:color-mix(in oklab,var(--warning) 28%,transparent);background:color-mix(in oklab,var(--warning) 9%,transparent);}
-.gb .al-badge-danger{color:var(--error);border-color:color-mix(in oklab,var(--error) 28%,transparent);background:color-mix(in oklab,var(--error) 9%,transparent);}
 .gb .al-panel{background:var(--card);border-color:var(--border);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:none;backdrop-filter:none;}
 .gb .al-panel-raised{background:var(--card);box-shadow:var(--shadow-md);}
 .gb .al-panel-flat{background:var(--secondary);box-shadow:none;}
@@ -227,26 +259,11 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .al-iconbtn:hover:not(:disabled){background:var(--accent);color:var(--foreground);}
 .gb .al-btn-secondary{background:var(--secondary);border-color:var(--border);color:var(--foreground);}
 .gb .al-btn-secondary:hover:not(:disabled){background:var(--accent);}
-.gb .al-field-label{color:var(--foreground);}
-.gb .al-field-hint{color:var(--muted-foreground);}
 .gb .al-input-wrap{background:var(--card);border-color:var(--border);}
 .gb .al-input-wrap:hover{background:var(--card);}
 .gb .al-input-wrap:focus-within{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklab,var(--ring) 40%,transparent);background:var(--card);}
 .gb .al-input-wrap input{color:var(--foreground);}
 .gb .al-input-wrap input::placeholder{color:var(--muted-foreground);}
-.gb .al-input-affix{color:var(--muted-foreground);}
-.gb .al-seg{background:var(--secondary);border-color:var(--border);-webkit-backdrop-filter:none;backdrop-filter:none;}
-.gb .al-seg-item{color:var(--muted-foreground);}
-.gb .al-seg-item-active{background:var(--card);color:var(--foreground);box-shadow:var(--shadow-sm);}
-
-.al-chip{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-family:var(--font-sans);font-weight:500;font-size:12.5px;padding:7px 14px;border-radius:var(--radius-pill);border:1px solid var(--line-1);background:var(--glass-flat);-webkit-backdrop-filter:var(--backdrop-glass-light);backdrop-filter:var(--backdrop-glass-light);color:var(--fg-2);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out);}
-.al-chip:hover{background:var(--glass-hover);color:var(--fg-1);}
-.al-chip:focus-visible{outline:none;box-shadow:var(--ring-focus);}
-.al-chip-selected{background:var(--glass-2);border-color:rgba(255,255,255,.32);color:var(--fg-1);box-shadow:var(--inset-light);}
-.al-chip-mono{font-family:var(--font-mono);font-size:11.5px;letter-spacing:0.04em;}
-.al-chip-static{cursor:default;}
-.al-chip-static:hover{background:var(--glass-flat);color:var(--fg-2);}
-.al-chip svg{width:14px;height:14px;}
 
 .al-panel{background:var(--glass-1);-webkit-backdrop-filter:var(--backdrop-glass);backdrop-filter:var(--backdrop-glass);border:1px solid var(--line-1);border-radius:var(--radius-lg);box-shadow:var(--shadow-glass),var(--inset-light);}
 .al-panel-raised{background:var(--glass-2);border-radius:var(--radius-xl);box-shadow:var(--shadow-pop),var(--inset-light);}
@@ -262,52 +279,12 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .al-iconbtn-md{width:36px;height:36px;border-radius:var(--radius-md);}
 .al-iconbtn-md svg{width:17px;height:17px;}
 
-.al-dialog-scrim{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(6,8,11,.6);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);animation:al-dlg-fade var(--dur-base) var(--ease-out);}
-.al-dialog{width:min(440px,calc(100vw - 48px));background:var(--glass-2);-webkit-backdrop-filter:var(--backdrop-glass);backdrop-filter:var(--backdrop-glass);border:1px solid var(--line-1);border-radius:var(--radius-xl);box-shadow:var(--shadow-pop),var(--inset-light);padding:24px;font-family:var(--font-sans);animation:al-dlg-rise var(--dur-base) var(--ease-out);}
-.al-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;}
-.al-dialog-title{font-size:18px;font-weight:600;letter-spacing:-0.02em;color:var(--fg-1);line-height:1.25;}
-.al-dialog-close{flex:none;border:none;background:transparent;color:var(--fg-3);width:30px;height:30px;border-radius:var(--radius-sm);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);}
-.al-dialog-close:hover{background:var(--glass-hover);color:var(--fg-1);}
-.al-dialog-body{font-size:13.5px;line-height:1.55;color:var(--fg-2);}
-.al-dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px;}
-@keyframes al-dlg-fade{from{opacity:0;}to{opacity:1;}}
-@keyframes al-dlg-rise{from{opacity:0;transform:translateY(10px) scale(.985);}to{opacity:1;transform:none;}}
-@media (prefers-reduced-motion: reduce){.al-dialog-scrim,.al-dialog{animation:none;}}
-
-.al-field{display:flex;flex-direction:column;gap:7px;font-family:var(--font-sans);}
-.al-field-label{font-size:12.5px;font-weight:500;color:var(--fg-2);}
-.al-field-hint{font-size:11.5px;color:var(--fg-3);}
 .al-input-wrap{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.05);border:1px solid var(--line-2);border-radius:var(--radius-md);padding:0 14px;transition:border-color var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),background var(--dur-fast) var(--ease-out);}
 .al-input-wrap:hover{background:rgba(255,255,255,.065);}
 .al-input-wrap:focus-within{border-color:var(--line-1);box-shadow:var(--ring-focus);background:rgba(255,255,255,.07);}
 .al-input-wrap input{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--fg-1);font-family:var(--font-sans);font-size:13.5px;padding:10px 0;}
 .al-input-wrap input::placeholder{color:var(--fg-3);}
 .al-input-wrap input:focus-visible{box-shadow:none;}
-.al-input-affix{display:inline-flex;align-items:center;color:var(--fg-3);font-size:12.5px;flex:none;}
-.al-input-affix svg{width:15px;height:15px;}
-
-.al-seg{display:inline-flex;gap:3px;padding:3px;background:rgba(255,255,255,.05);border:1px solid var(--line-2);border-radius:var(--radius-md);-webkit-backdrop-filter:var(--backdrop-glass-light);backdrop-filter:var(--backdrop-glass-light);font-family:var(--font-sans);}
-.al-seg-item{border:none;background:transparent;color:var(--fg-3);font-family:var(--font-sans);font-size:12.5px;font-weight:600;padding:6px 14px;border-radius:calc(var(--radius-md) - 4px);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);white-space:nowrap;}
-.al-seg-item:hover{color:var(--fg-2);}
-.al-seg-item:focus-visible{outline:none;box-shadow:var(--ring-focus);}
-.al-seg-item-active{background:var(--glass-2);color:var(--fg-1);box-shadow:var(--inset-light),0 2px 8px rgba(0,0,0,.35);}
-.al-seg-full{display:flex;width:100%;}
-.al-seg-full .al-seg-item{flex:1;}
-
-.al-mediacard{position:relative;display:flex;flex-direction:column;border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-1);border:1px solid var(--line-2);cursor:pointer;transition:transform var(--dur-base) var(--ease-out),border-color var(--dur-base) var(--ease-out),box-shadow var(--dur-base) var(--ease-out);font-family:var(--font-sans);}
-.al-mediacard:hover{transform:translateY(-2px);border-color:var(--line-1);box-shadow:var(--shadow-glass);}
-.al-mediacard-sel{border-color:rgba(255,255,255,.45);box-shadow:var(--inset-light),0 0 0 1px rgba(255,255,255,.2);}
-.al-mediacard-media{position:relative;width:100%;aspect-ratio:16/9;background:linear-gradient(120deg,#1A1E26 0%,#0C0E13 50%,#181C23 100%);}
-.al-mediacard-media img,.al-mediacard-media video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
-.al-mediacard-9x16 .al-mediacard-media{aspect-ratio:9/16;}
-.al-mediacard-1x1 .al-mediacard-media{aspect-ratio:1/1;}
-.al-mediacard-glow{position:absolute;inset:0;background:radial-gradient(60% 60% at 50% 38%,rgba(205,218,238,.16),transparent 70%);}
-.al-mediacard-chip{position:absolute;top:10px;left:10px;display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;color:rgba(255,255,255,.85);background:var(--glass-flat);-webkit-backdrop-filter:var(--backdrop-glass-light);backdrop-filter:var(--backdrop-glass-light);border:1px solid var(--line-1);border-radius:var(--radius-pill);padding:4px 9px;}
-.al-mediacard-duration{position:absolute;right:10px;bottom:10px;top:auto;left:auto;}
-.al-mediacard-body{display:flex;flex-direction:column;gap:4px;padding:12px 14px 13px;}
-.al-mediacard-title{font-size:13px;font-weight:600;color:var(--fg-1);letter-spacing:-0.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.al-mediacard-meta{font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.05em;color:var(--fg-3);}
-.al-mediacard-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;}
 
 .al-promptbar{display:flex;flex-direction:column;gap:12px;background:var(--glass-1);-webkit-backdrop-filter:var(--backdrop-glass);backdrop-filter:var(--backdrop-glass);border:1px solid var(--line-1);border-radius:var(--radius-lg);box-shadow:var(--shadow-glass),var(--inset-light);padding:16px;font-family:var(--font-sans);transition:border-color var(--dur-base) var(--ease-out);}
 .al-promptbar:focus-within{border-color:rgba(255,255,255,.28);}
@@ -358,12 +335,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .pop-item-desc { font: var(--text-small); color: var(--muted-foreground, #6E6E68); margin-top: 1px; }
 .pop-item-check { flex: none; color: var(--foreground, #0A0A0A); width: 16px; }
 
-.empty-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; }
-.empty-hero h1 { font: var(--text-display); letter-spacing: var(--tracking-display); margin: 0; color: var(--fg-1); text-wrap: pretty; }
-.empty-hero p { font: var(--text-body); color: var(--fg-2); margin: 0 0 10px; }
-.stack-art { position: relative; width: 200px; height: 124px; margin-bottom: 18px; }
-.stack-art .media-ph { position: absolute; }
-
 .scene-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
 .filters-row { display: flex; align-items: center; gap: 10px; margin: 6px 0 22px; flex-wrap: wrap; }
@@ -376,10 +347,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 .composer-dock { flex: none; padding: 14px 28px 22px; display: flex; justify-content: center; }
 .composer-wrap { position: relative; width: 100%; max-width: 880px; }
-
-.fade-rise { animation: fade-rise var(--dur-base) var(--ease-out); }
-@keyframes fade-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .fade-rise { animation: none; } }
 
 /* ---------- Fikirtive-specific: Tiptap inside the prompt bar ---------- */
 .al-promptbar .tiptap {
@@ -497,14 +464,12 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .nav-rail .sidenav-brand { padding-left: 10px; min-height: 30px; }
 @media (max-width: 1023px) { .app:has(> .nav-rail) { padding-left: 0; } }
 
-/* Responsive nav. Tailwind's responsive utilities (lg:/max-lg:) live in
-   @layer utilities and lose the cascade to this unlayered design system, so they
-   never applied — the desktop ☰ leaked onto desktop and the sidebar wouldn't
-   collapse on phones. These plain (unlayered) media queries do the collapse: the
-   sidebar rail hides below lg, the mobile ☰ + drawer hide at lg and up. */
-.nav-drawer { display: flex; }
-@media (max-width: 1023px) { .nav-rail { display: none; } }
-@media (min-width: 1024px) { .nav-burger, .nav-drawer { display: none; } }
+/* The `.nav-drawer` / `.nav-burger` collapse rules that used to sit here were the
+   workaround for the unlayered cascade, not a design decision: `lg:` / `max-lg:`
+   utilities were written in the markup, lost to this file, and were replaced by
+   hand-written media queries (fd53e925). The layer above removes the reason they
+   existed, and the shell they targeted is gone, so they are gone with it — the
+   next shell writes `lg:hidden` in the markup and it works. */
 
 /* ---------- OPT-6 admin shell (rail + content) ---------- */
 .admin-shell { position: relative; z-index: 1; display: flex; min-height: 100dvh; --font-sans: var(--font-geist, system-ui), sans-serif; }
@@ -515,11 +480,20 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .admin-nav-link.is-disabled:hover { background: transparent; color: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
 .admin-content { flex: 1; min-width: 0; overflow: auto; }
 
+} /* @layer components */
+
 /* ════════════════════════════════════════════════════════════════════════
  * Grok-bright — the NEW FIKIRTIVE system (strangler migration).
  * Scoped to `.gb` so it never overrides the legacy Vapor tokens above.
  * New screens wrap their root in className="gb". Coral = OTTO only;
  * semantic colour = state only. Geist comes from next/font (layout.tsx).
+ *
+ * UNLAYERED ON PURPOSE (one of the three token roots the #798 fence exempts —
+ * :root, .gb, .gb.dark). A token root declares variables; variables are read by
+ * whatever wins the cascade, so layering them would buy nothing. .gb also paints
+ * its own element (the last three declarations), and moving THOSE into a layer
+ * would hand five call sites to their `bg-card` utility — a repaint, not a
+ * cascade cleanup, so it is not smuggled into this ticket.
  * ════════════════════════════════════════════════════════════════════════ */
 .gb {
   --radius: 0.875rem;        /* 14px controls */
@@ -588,8 +562,23 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist, system-ui), sans-serif;
+  /* §K2.7 / wire ③ (#804). `color-scheme` is what the BROWSER reads to paint the parts of
+     the page CSS cannot reach: the date picker's calendar, a <select>'s dropdown list, the
+     "Choose file" chrome, autofill, scrollbars. It inherits, so declaring it on the theme
+     root covers every native control underneath. Absent, the browser followed the OS, and
+     an OS-dark merchant got black native controls sitting inside our white cards — 10
+     `type="date"` + 1 `datetime-local`, 19 `<select>` and 4 `type="file"` call sites. */
+  color-scheme: light;
 }
-.gb.dark, .gb[data-theme="dark"] {
+/* `.dark .gb` is the selector next-themes actually reaches. §K3 describes `.dark` landing
+   "next to .gb", but next-themes writes its class on <html> and nothing else, while `gb`
+   lives on <body> and on ~10 nested roots (/profile, /signup, /admin, /privacy, …). A
+   same-element `.gb.dark` would therefore never match — and worse, each nested `.gb` would
+   re-declare the LIGHT values inside a dark page. Matching the ancestor covers <body> and
+   every nested root in one rule. The two same-element forms stay for surfaces that set the
+   theme locally (skin previews, embedded shots). Specificity is 0,2,0 either way, so both
+   beat the `.gb` light root. */
+.gb.dark, .gb[data-theme="dark"], .dark .gb {
   --background:#0B0B0C; --foreground:#FAFAFA; --card:#131315; --card-foreground:#FAFAFA;
   --popover:#18181B; --popover-foreground:#FAFAFA; --primary:#FAFAFA; --primary-foreground:#0B0B0C;
   --secondary:#1C1C1F; --secondary-foreground:#FAFAFA; --muted:#161619; --muted-foreground:#A1A1A8;
@@ -610,7 +599,46 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --shadow-lg: 0 14px 34px rgba(0 0 0 / 0.55);
   --shadow-xl: 0 26px 60px rgba(0 0 0 / 0.60), 0 8px 20px rgba(0 0 0 / 0.45);
   --shadow-brand: 0 8px 22px rgba(242 106 60 / 0.20);
+  /* The dark half of wire ③ — native controls flip with the theme, not with the OS. */
+  color-scheme: dark;
 }
+
+/*
+ * THE 13 SITES (#804) — 18 literal occurrences across 13 call sites. Turning dark mode on
+ * turns every hardcoded colour inside a `.gb`-scoped recipe into a lie, because a literal
+ * cannot follow a token. §K4 already bans them ("raw hex inside .gb-scoped rules → only the
+ * two token blocks may hit"); until this ticket nothing rendered the ban's consequence, so
+ * these survived. The two counts differ because several sites paint with a pair (the pill is
+ * ink + white type; the danger button is border + colour; each white chip has a hover twin) —
+ * the × figures in the inventory below are OCCURRENCES, and they sum to 18. Each one was
+ * re-queried against the current file (§K3's dated paragraph is explicit that its v3 list is
+ * not a fix-on-touch queue) and replaced with the token it was always standing in for:
+ *
+ *   3 × #1A1A18      the ink-button hover (promptbar, detail panel, base .al-btn-primary) →
+ *                    color-mix(--primary 90%, --background). §K2.8: hover on inverted primary
+ *                    goes DOWN, and never through a hardcoded hex. Dark's --primary is #FAFAFA,
+ *                    so the literal was a near-black hover on a white button.
+ *   1 × #1C1B17 + #fff  the canvas node-label pill (ink pill, white type) → --primary /
+ *                    --primary-foreground, so the pill inverts with the theme instead of
+ *                    vanishing into the dark board.
+ *   1 × rgba(255 255 255 / .22)  the count badge riding inside that pill → 22% of
+ *                    --primary-foreground, so it stays legible after the pill inverts.
+ *   3 × rgba(255 255 255 / .92) + 3 × #fff   the white node buttons and the canvas play
+ *                    button, hover included → --card at the same 92%. Light is byte-identical
+ *                    (--card is #FFFFFF); dark stops painting white chips on dark cards.
+ *   1 × rgba(20 20 24 / .04)  the drop-zone tint → 4% of --foreground. Ink at 4% is invisible
+ *                    on an ink page; the drop zone is the affordance, so it has to survive.
+ *   1 × #fff         the settings switch knob → --card. The dark ON track is #FAFAFA, so a
+ *                    white knob on it was an invisible switch — the one state that matters.
+ *   2 × #B4321E + 2 × #E7B7AE  the Danger-zone red (nav link, card border, button) →
+ *                    --error-soft-foreground and a --destructive/--border mix. §A1.5: danger
+ *                    TEXT rides the -soft-foreground pair, which is the pair that themes.
+ *
+ * Light rendering is unchanged to the eye by design — every replacement resolves to the same
+ * value (or within one step of it) under the light token block. Raw box-shadows in this file
+ * are deliberately NOT in this list: a weak shadow on dark is the behaviour §K2.2 asks for
+ * (dark grounds with shadow, defines edges with the 1px border), not an inversion.
+ */
 
 /* Register the shadcn utilities the new components use (names Vapor doesn't map,
    except --color-accent which Vapor already maps to var(--accent) — contextual). */
@@ -650,12 +678,16 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --radius-lg: var(--radius);
 }
 
+@layer components {
+
 /* Global focus ring — design-rules v3 §A2, verbatim. Two layers: 1px solid keyline
    (3.42:1) + 40% coral halo (the 40% halo alone composites to 1.64:1 — invisible to
    low vision). Supersedes the Vapor white --ring-focus (invisible on .gb light ground)
    and the per-component 35% color-mix scatter. :focus-visible only — mouse clicks
-   never ring. Must stay AFTER every same-specificity :focus-visible recipe above so
-   it wins the cascade under .gb. Bordered fields keep the §A2 field variant
+   never ring. Must stay AFTER every same-specificity :focus-visible recipe above,
+   and in the SAME layer as them (@layer components), so it wins the cascade under
+   .gb — a different layer would decide it regardless of source order. Bordered
+   fields keep the §A2 field variant
    (ring-coloured 1px border + 3px 40% halo — see .gb .al-input-wrap:focus-within). */
 .gb :focus-visible {
   outline: 2px solid transparent;   /* keeps the system indicator in forced-colors */
@@ -687,7 +719,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: none;
 }
 .gb .al-promptbar .al-btn-primary:hover:not(:disabled) {
-  background: #1A1A18;
+  background: color-mix(in oklab, var(--primary) 90%, var(--background));
   box-shadow: none;
 }
 .gb .al-promptbar .al-btn:not(.al-btn-primary) {
@@ -809,7 +841,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   z-index: 6;
   border: 2px dashed var(--border);
   border-radius: 16px;
-  background: rgba(20, 20, 24, 0.04);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -847,7 +879,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 .gb .cv-detail .al-btn:hover:not(:disabled) { background: var(--muted); }
 .gb .cv-detail .al-btn-primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
-.gb .cv-detail .al-btn-primary:hover:not(:disabled) { background: #1A1A18; }
+.gb .cv-detail .al-btn-primary:hover:not(:disabled) { background: color-mix(in oklab, var(--primary) 90%, var(--background)); }
 .gb .cv-detail .al-btn-ghost { background: transparent; }
 .gb .cv-detail .al-iconbtn { background: var(--muted); border: 1px solid var(--border); color: var(--foreground); }
 .gb .cv-detail .al-iconbtn:hover { background: var(--card); }
@@ -884,8 +916,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   font-size: 11px;
   font-weight: 600;
   letter-spacing: normal;
-  color: #fff;
-  background: #1C1B17;
+  color: var(--primary-foreground);
+  background: var(--primary);
   padding: 3px 9px;
   border-radius: 999px;
   white-space: nowrap;
@@ -893,23 +925,23 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 .gb .react-flow__node .cv-nodelabel svg { width: 13px; height: 13px; }
 .gb .react-flow__node .al-btn-glass {
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
   border-color: var(--border);
   color: var(--foreground);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: var(--shadow-sm);
 }
-.gb .react-flow__node .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.gb .react-flow__node .al-btn-glass:hover:not(:disabled) { background: var(--card); }
 .gb .cv-node-toolbar .al-btn-glass {
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
   border-color: var(--border);
   color: var(--foreground);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: var(--shadow-sm);
 }
-.gb .cv-node-toolbar .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.gb .cv-node-toolbar .al-btn-glass:hover:not(:disabled) { background: var(--card); }
 .gb .react-flow__node textarea { color: var(--foreground); }
 .gb .react-flow__node textarea::placeholder { color: var(--muted-foreground); }
 
@@ -926,7 +958,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   margin-left: 2px;
   padding: 0 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: color-mix(in oklab, var(--primary-foreground) 22%, transparent);
   font: 600 10px/15px var(--font-mono, ui-monospace, monospace);
   letter-spacing: 0.02em;
 }
@@ -1154,7 +1186,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   height: 30px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
   color: var(--foreground);
   box-shadow: var(--shadow-sm);
   display: flex;
@@ -1162,7 +1194,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   justify-content: center;
   cursor: pointer;
 }
-.gb .react-flow__node .cv-play:hover { background: #fff; }
+.gb .react-flow__node .cv-play:hover { background: var(--card); }
 
 /* Reduced motion: respect user preference */
 @media (prefers-reduced-motion: reduce) {
@@ -1175,7 +1207,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 /* ── Settings toggle (no shadcn switch exists; gb-styled). */
 .gb .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border); position: relative; cursor: pointer; transition: background var(--dur-2) var(--ease-out); }
-.gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left var(--dur-2) var(--ease-out); }
+.gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: var(--card); box-shadow: var(--shadow-sm); transition: left var(--dur-2) var(--ease-out); }
 .gb .cv-switch.on { background: var(--primary); }
 .gb .cv-switch.on::after { left: 20px; }
 .gb .cv-switch:disabled { cursor: not-allowed; opacity: 1; background: var(--border); }
@@ -1195,13 +1227,13 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; }
 .gb .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
 .gb .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
-.gb .cv-settings-nav a.danger { color: #B4321E; }
+.gb .cv-settings-nav a.danger { color: var(--error-soft-foreground); }
 .gb .cv-settings-body { flex: 1; min-width: 0; overflow: auto; padding: clamp(20px, 4cqi, 36px) clamp(20px, 4cqi, 44px); max-width: 760px; }
 .gb .cv-set-sec { margin-bottom: 34px; scroll-margin-top: 24px; }
 .gb .cv-set-sec h2 { font-size: 12px; font-weight: 600; }
 .gb .cv-set-sub { font-size: 12px; color: var(--muted-foreground); margin: 2px 0 12px; }
 .gb .cv-set-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 4px 18px; }
-.gb .cv-set-card.danger { border-color: #E7B7AE; }
+.gb .cv-set-card.danger { border-color: color-mix(in oklab, var(--destructive) 30%, var(--border)); }
 .gb .cv-set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-top: 1px solid var(--border); }
 .gb .cv-set-row:first-child { border-top: none; }
 .gb .cv-set-lbl { display: flex; flex-direction: column; gap: 2px; font-size: 14px; font-weight: 500; }
@@ -1210,7 +1242,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-set-input-num { width: 90px; }
 .gb .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; flex-wrap: wrap; }
 .gb .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
-.gb .cv-set-btn.danger { border-color: #E7B7AE; color: #B4321E; }
+.gb .cv-set-btn.danger { border-color: color-mix(in oklab, var(--destructive) 30%, var(--border)); color: var(--error-soft-foreground); }
 /* The spend cap's Save/Remove-cap button is the first disabled use of .cv-set-btn — make
    "can't save this" visibly obvious (decision ①), not just non-clickable. */
 .gb .cv-set-btn:disabled { opacity: 0.45; cursor: default; }
@@ -1349,3 +1381,5 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   .otto-prose[data-streaming="true"] > ul:last-child > li:last-child::after,
   .otto-prose[data-streaming="true"] > ol:last-child > li:last-child::after { animation: none; }
 }
+
+} /* @layer components */

@@ -135,7 +135,7 @@ export const planCampaignSkill = defineOttoSkill({
   description:
     "Create a Campaign container; propose, update, remove, or mark approved a structured CAMPAIGN_CARD plan entry; " +
     "group existing owned Projects, Scheduled Posts, or Generations; or save one source-labelled Trend conclusion. " +
-    "$0 internal planning writes through the same owner-scoped actions as the Campaign UI. Inputs are structured only. " +
+    "$0 internal planning writes through the same owner-scoped actions the merchant's own screens use. Inputs are structured only. " +
     "Approval records entry-level planning status only: it NEVER dispatches generation, credits, scheduling, sending, " +
     "publishing, provider calls, or standing outbound authorization. estCredits is display-only. Never invent ids; read " +
     "them with readCampaigns first. Campaign does not own editable UTM data.",

@@ -20,7 +20,7 @@ describe("the auth-email queue", () => {
     const { __resetAuthEmailCapsForTests, __configureAuthEmailQueueForTests } = await import(
       "@/lib/better-auth/sender"
     );
-    __resetAuthEmailCapsForTests();
+    await __resetAuthEmailCapsForTests();
     // These cases are about the per-address budget's KEY and its operator log, and they read the
     // dev transport's single-file output — so they run the queue serially with no jitter, which
     // keeps the assertions about CONTENT rather than about scheduling. The executor's own

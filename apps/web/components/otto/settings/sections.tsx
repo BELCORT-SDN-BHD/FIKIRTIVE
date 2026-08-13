@@ -11,6 +11,7 @@ import type { CreditPackShelf } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
 import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export type ChannelState = {
   id: string;
@@ -247,6 +248,17 @@ export function buildSettingsSections(args: {
           readOnly: true,
         },
       ],
+    },
+    // #804 — the home of the dark-mode choice. Preferences is where "how this workspace
+    // behaves for me" already lives (spend cap, posting defaults), and appearance is a
+    // preference, not an identity fact — /profile is deliberately "who you are, nothing
+    // more". The control renders itself: a theme is a device preference read from
+    // localStorage on the client, so there is no server value for this file to pass in.
+    {
+      id: "appearance",
+      title: "Appearance",
+      subtitle: "How Fikirtive looks on this device.",
+      fields: [{ kind: "custom", id: "theme", render: () => <ThemeToggle /> }],
     },
     {
       id: "danger",

@@ -34,6 +34,10 @@ vi.mock("@fikirtive/db", () => {
         async (callback: (client: typeof tx) => unknown) => callback(tx),
       ),
     },
+    // #549: the board-wide placement lock. Real string, mocked module — the key's shape is the
+    // thing every placement writer must agree on, so it is not re-invented here.
+    canvasBoardPlacementLockKey: (ownerId: string, projectId: string) =>
+      `canvas-board-placement:${ownerId}:${projectId}`,
   };
 });
 

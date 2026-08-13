@@ -6,12 +6,9 @@
  *   - runtime  → DATABASE_URL_POOLED (Neon -pooler endpoint) falling back to DATABASE_URL
  *   - migrate  → DATABASE_URL (direct), used by prisma.config.ts / CLI only
  *
- * Singleton via globalThis so Next.js dev hot-reload doesn't leak pools.
+ * The client itself lives in ./client.ts (#795) and is re-exported below; this file is the
+ * package's barrel.
  */
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../generated/prisma/client.js";
-import { withTenantGuard } from "./tenant-guard.js";
-
 export * from "../generated/prisma/client.js";
 export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCreditsTx, assertWithinSpendCap, finalizedReservations, otherHoldsSince, InsufficientCredits, SpendCapBlocked, type CreditGrantSource } from "./credits.js";
 // #601: the server writes a finished job's canvas cards. Not a spend path — see the file header.
@@ -21,6 +18,7 @@ export {
   noteCanvasRepairFailure,
   clearCanvasRepairRecord,
   canvasJobPlacementLockKey,
+  canvasBoardPlacementLockKey,
   canvasRepairLockKey,
   canvasRepairWaitMs,
   CANVAS_REPAIR_JSON_KEY,
@@ -38,50 +36,17 @@ export * from "./consent-runtime.js";
 // #803: the sole upgrade path from a merchant-entered identity to a channel-verified one.
 export * from "./contact-identity.js";
 export * from "./send-eligibility.js";
+// #795 — the cross-instance rate limiter is DELIBERATELY NOT re-exported here. It lives behind
+// its own entry point (`@fikirtive/db/rate-limit`) so a gate imports counting and nothing else:
+// this barrel pulls in the whole Prisma client surface, and dozens of test files replace it
+// wholesale — a limiter reached through it would break in every one of them for a reason that has
+// nothing to do with what those tests are about.
 
-function buildClient(): PrismaClient {
-  // `||` not `??`: empty-string env vars (common in .env templates) must fall through.
-  const url = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL (or DATABASE_URL_POOLED) is not set");
-  const adapter = new PrismaPg(
-    // Explicit pool ceiling per process. node-postgres defaults Pool.max to 10; with N
-    // horizontally-scaled web/worker replicas that is N×10 connections against Neon's
-    // budget. Tune DB_POOL_MAX per (replica-count × max) ≤ Neon pooled limit. Going
-    // through the Neon -pooler (PgBouncer) endpoint multiplexes, so this app-side max is
-    // the real cap to size. (scale audit 2026-06-20)
-    { connectionString: url, max: Number(process.env.DB_POOL_MAX) || 10 },
-    // pg-boss owns its own schema; Prisma stays on public (eng review D9)
-    { schema: "public" },
-  );
-  // P3: tenant-guard backstop — warns (prod) / throws (test) on a tenant read with no
-  // ownerId filter. Additive; never alters results. The explicit per-site filters + the
-  // 2-org isolation test remain the primary guarantee.
-  return withTenantGuard(new PrismaClient({ adapter }));
-}
-
-const globalForPrisma = globalThis as unknown as { __fikirtivePrisma?: PrismaClient };
-
-let moduleClient: PrismaClient | undefined;
-
-// globalThis cache only in development — the hot-reload pool leak this guards
-// against only exists under `next dev`; caching under NODE_ENV=test would leak
-// pools across vitest worker threads.
-function getClient(): PrismaClient {
-  if (process.env.NODE_ENV === "development") {
-    return (globalForPrisma.__fikirtivePrisma ??= buildClient());
-  }
-  return (moduleClient ??= buildClient());
-}
-
-// Lazy proxy: `next build` imports this module while collecting page data with
-// no DATABASE_URL present — the connection must not be built until first use.
-export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
-  get(_target, prop) {
-    const client = getClient();
-    const value = Reflect.get(client, prop, client);
-    return typeof value === "function" ? (value as () => unknown).bind(client) : value;
-  },
-});
+// THE client. Built in ./client.js so that ONE module — the rate-limit counter — can reach the
+// database through a path this barrel's test doubles do not sit on (#795; the reason is written
+// out in that file). Re-exported here unchanged: same object, same pool, same singleton, and every
+// existing importer of `prisma` from "@fikirtive/db" is untouched.
+export { prisma } from "./client.js";
 
 export * from "./message-delivery-reconciliation.js";
 export * from "./workflow-compiler.js";
