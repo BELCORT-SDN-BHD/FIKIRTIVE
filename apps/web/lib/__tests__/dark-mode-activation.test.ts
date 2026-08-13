@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * #804 — the §K3 activation contract, asserted wire by wire.
  *
@@ -15,8 +16,19 @@
  *                  `--background` literals, not a hand-typed near-miss.
  *   ⑤ shadows    — the six dark shadow tokens land in the dark block (§K1).
  *
- * Plus the two things that make the wires worth having: the dark block is actually REACHED
- * by the selector next-themes produces, and every dark text pair clears WCAG AA.
+ * Plus the two things that make the wires worth having: every `.gb` token root — the global
+ * one AND every route-scoped compound root — is actually REACHED by the selector next-themes
+ * produces, and every dark text pair clears WCAG AA.
+ *
+ * r2 note on that first one. The original check asked whether the GLOBAL dark selector string
+ * contained `.dark .gb`, which it did, so sixteen cases went green while
+ * `.gb.ns-immersive` (app/northstar-immersive/immersive-tokens.css) shipped a dark mirror
+ * that matched nothing: its two branches were both same-element (`.gb.ns-immersive.dark`),
+ * next-themes writes `.dark` on <html>, and the light root tied `.dark .gb` on specificity
+ * (0,2,0) and won on load order. Dark rendered #F5F6F8 ground under #FAFAFA type — 1.04:1 on
+ * a live customer route. A check that reads one hand-named selector cannot see that. So the
+ * reachability tests below ENUMERATE every rule in every shipped stylesheet that declares a
+ * custom property, and decide each one by matching and specificity rather than by string.
  */
 import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
@@ -73,6 +85,179 @@ function relativeLuminance(hex: string): number {
 function contrastRatio(left: string, right: string): number {
   const [lighter, darker] = [relativeLuminance(left), relativeLuminance(right)].sort((a, b) => b - a);
   return (lighter + 0.05) / (darker + 0.05);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * TOKEN-ROOT MACHINERY (r2). Everything below reads the shipped stylesheets and decides
+ * reachability structurally — no selector is named by hand, so a token root added in a new
+ * route file is audited the day it lands instead of the day someone remembers it.
+ * ═════════════════════════════════════════════════════════════════════════════════════ */
+
+type PostcssNode = { type: string; prop?: string; value?: string; selector?: string };
+type PostcssRule = {
+  selector: string;
+  source?: { start?: { line: number } };
+  each(callback: (node: PostcssNode) => void): void;
+};
+type PostcssModule = {
+  parse(css: string): {
+    walk(callback: (node: PostcssNode) => void): void;
+    walkRules(callback: (rule: PostcssRule) => void): void;
+  };
+  list: { comma(value: string): string[] };
+};
+
+/** postcss reached the same way the compiler tests reach it: through the real build dep. */
+function loadPostcss(): PostcssModule {
+  const req = createRequire(path.join(webRoot, "package.json"));
+  const reqFromPostcss = createRequire(req.resolve("@tailwindcss/postcss"));
+  return reqFromPostcss("postcss") as PostcssModule;
+}
+
+/**
+ * Every stylesheet the app ships, in the order the browser gets them: globals.css comes from
+ * the root layout, so it lands first; a route-group token layer (imported by a nested
+ * layout) lands after. That order is the whole reason a specificity TIE is a defect and not
+ * a detail — the later sheet wins ties, and the later sheet is the scoped light root.
+ */
+async function shippedStylesheets(): Promise<{ file: string; css: string }[]> {
+  const found: { file: string; css: string }[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return; // directory absent — nothing to audit there
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.name.endsWith(".css")) found.push({ file: path.relative(webRoot, full), css: await fs.readFile(full, "utf8") });
+    }
+  };
+  await walk(path.join(webRoot, "app"));
+  await walk(path.join(webRoot, "components"));
+  const globals = "app/globals.css";
+  return found.sort((a, b) =>
+    a.file === globals ? -1 : b.file === globals ? 1 : a.file.localeCompare(b.file),
+  );
+}
+
+/** One selector of one rule that declares custom properties. `.a, .b { --x }` yields two. */
+type TokenRoot = { file: string; line: number; selector: string; props: Map<string, string> };
+
+function parseTokenRoots(sheets: { file: string; css: string }[]): TokenRoot[] {
+  const postcss = loadPostcss();
+  const roots: TokenRoot[] = [];
+  for (const { file, css } of sheets) {
+    postcss.parse(css).walkRules((rule) => {
+      const props = new Map<string, string>();
+      rule.each((node) => {
+        if (node.type === "decl" && node.prop?.startsWith("--")) props.set(node.prop, (node.value ?? "").trim());
+      });
+      if (props.size === 0) return;
+      for (const selector of postcss.list.comma(rule.selector)) {
+        roots.push({ file, line: rule.source?.start?.line ?? 0, selector: selector.replace(/\s+/g, " ").trim(), props });
+      }
+    });
+  }
+  return roots;
+}
+
+const isGbRoot = (selector: string) => /(^|[\s>+~])\.gb(\.|\[|$|[\s>+~])/.test(selector) || selector.includes(".gb.");
+const isDarkRoot = (selector: string) => /\.dark(\.|\[|$|[\s>+~])/.test(selector) || /\[data-theme=["']?dark/.test(selector);
+
+/**
+ * CSS specificity, [ids, classes+attributes+pseudo-classes, elements+pseudo-elements].
+ * Deliberately simple: it is only ever applied to token-root selectors, and
+ * `assertCalculableSelectors` below refuses to let a shape it cannot count (`:where()`,
+ * `:not()`, `:is()`) reach it silently.
+ */
+function specificity(selector: string): [number, number, number] {
+  let ids = 0;
+  let classes = 0;
+  let elements = 0;
+  const stripped = selector
+    .replace(/\[[^\]]*\]/g, () => { classes += 1; return " "; })
+    .replace(/::[a-zA-Z-]+/g, () => { elements += 1; return " "; })
+    .replace(/:[a-zA-Z-]+(\([^()]*\))?/g, () => { classes += 1; return " "; })
+    .replace(/#[\w-]+/g, () => { ids += 1; return " "; })
+    .replace(/\.[\w-]+/g, () => { classes += 1; return " "; });
+  for (const token of stripped.split(/[\s>+~]+/)) {
+    if (/^[a-zA-Z][\w-]*$/.test(token)) elements += 1;
+  }
+  return [ids, classes, elements];
+}
+
+function compareRank(left: number[], right: number[]): number {
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const delta = (left[i] ?? 0) - (right[i] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
+}
+
+const outranks = (left: string, right: string) =>
+  compareRank(specificity(left), specificity(right)) > 0;
+
+/** Only classes, attributes, descendant combinators — the shapes `specificity` counts exactly. */
+function assertCalculableSelectors(roots: TokenRoot[]): void {
+  for (const root of roots) {
+    expect(root.selector, `${root.file}:${root.line} uses a selector shape the specificity calculator cannot count`)
+      .toMatch(/^[\w.\-\s[\]"'=]+$/);
+  }
+}
+
+/**
+ * The DOM next-themes actually produces: the class on <html>, `gb` on <body>, and the root
+ * under test as a nested element carrying its own compound. This is the shape the P1 hid in.
+ * A fresh document rather than the ambient one so the fixture cannot pick up anything a
+ * neighbouring test left on the page.
+ */
+function darkDocument(): Document {
+  const page = document.implementation.createHTMLDocument("dark page");
+  page.documentElement.className = "dark";
+  page.body.className = "gb";
+  return page;
+}
+
+/** Build the element a light root claims, and hang it under <body class="gb"> in a dark page. */
+function subjectFor(selector: string, document: Document): Element {
+  const compound = selector.split(/[\s>+~]+/).filter(Boolean).pop() ?? selector;
+  const element = document.createElement("div");
+  for (const [, className] of compound.matchAll(/\.([\w-]+)/g)) element.classList.add(className);
+  for (const [, name, value] of compound.matchAll(/\[([\w-]+)(?:=["']?([^\]"']*)["']?)?\]/g)) {
+    element.setAttribute(name, value ?? "");
+  }
+  document.body.appendChild(element);
+  return element;
+}
+
+/**
+ * Resolve one custom property the way the cascade does: on each element from the subject
+ * upwards, the matching declaration with the highest (specificity, source order) wins; if no
+ * rule declares it on that element, inheritance carries the search to the parent. Inheritance
+ * is not a nicety here — it is exactly how a half-fixed root produces an unreadable page: the
+ * scoped light root re-declared `--background` while `--foreground` kept inheriting the dark
+ * value from <body>.
+ */
+function resolveVar(subject: Element, property: string, roots: TokenRoot[]): string | undefined {
+  for (let node: Element | null = subject; node; node = node.parentElement) {
+    let winner: string | undefined;
+    let winnerRank: number[] | undefined;
+    roots.forEach((root, order) => {
+      const value = root.props.get(property);
+      if (value === undefined || !node!.matches(root.selector)) return;
+      const rank = [...specificity(root.selector), order];
+      if (!winnerRank || compareRank(rank, winnerRank) > 0) {
+        winnerRank = rank;
+        winner = value;
+      }
+    });
+    if (winner !== undefined) return winner;
+  }
+  return undefined;
 }
 
 describe("#804 wire ① — the provider is mounted", () => {
@@ -180,20 +365,98 @@ describe("#804 wire ⑤ — the six dark shadow tokens (§K1)", () => {
   });
 });
 
-describe("#804 — the dark block is actually reachable", () => {
+describe("#804 — EVERY .gb token root is actually reachable in dark", () => {
   /**
    * §K3 describes `.dark` landing "next to .gb" on <body>. next-themes cannot do that: it
    * writes its class on <html> and nothing else. A same-element selector would therefore
    * have compiled, shipped, and matched nothing — the same shape of silent failure the
-   * ticket exists to end.
+   * ticket exists to end. The r1 version of this file checked that ONE global selector
+   * string, which is why `.gb.ns-immersive` slipped past it; these enumerate instead.
    */
-  it("the selector covers the ancestor form next-themes produces", async () => {
-    const css = await readGlobals();
-    const selector = css.match(/\n(\.gb\.dark[^{]*)\{/)?.[1]?.trim();
-    expect(selector).toContain(".dark .gb");
+  it("the specificity calculator is right — it is what decides every verdict below", () => {
+    expect(specificity(".gb")).toEqual([0, 1, 0]);
+    expect(specificity(".dark .gb")).toEqual([0, 2, 0]);
+    expect(specificity(".gb.ns-immersive")).toEqual([0, 2, 0]);
+    expect(specificity('.gb[data-theme="dark"]')).toEqual([0, 2, 0]);
+    expect(specificity(".dark .gb.ns-immersive")).toEqual([0, 3, 0]);
+    expect(specificity("html body.gb::after")).toEqual([0, 1, 3]);
+    // A tie is NOT a win: ties go to load order, and the route layer loads last.
+    expect(outranks(".dark .gb", ".gb.ns-immersive")).toBe(false);
+    expect(outranks(".dark .gb.ns-immersive", ".gb.ns-immersive")).toBe(true);
   });
 
-  it("`gb` is on <body> while the theme class is on <html> — the reason for the above", async () => {
+  it("each light .gb root has a dark mirror that both matches it under html.dark and outranks it", async () => {
+    const roots = parseTokenRoots(await shippedStylesheets()).filter((root) => isGbRoot(root.selector));
+    assertCalculableSelectors(roots);
+
+    const light = roots.filter((root) => !isDarkRoot(root.selector));
+    const dark = roots.filter((root) => isDarkRoot(root.selector));
+    // An empty walk is the failure mode this whole rewrite exists to end: it would report
+    // "no unreachable roots" and mean "I read nothing".
+    expect(light.map((root) => root.selector), "the walker found no .gb light token root").toContain(".gb");
+    expect(dark.length, "the walker found no .gb dark token root").toBeGreaterThan(0);
+
+    const document = darkDocument();
+    const unreachable = light
+      .filter((root) => {
+        const subject = subjectFor(root.selector, document);
+        return !dark.some((mirror) => subject.matches(mirror.selector) && outranks(mirror.selector, root.selector));
+      })
+      .map((root) => `${root.file}:${root.line}  ${root.selector}  (${specificity(root.selector).join(",")})`);
+
+    expect(unreachable, "these token roots keep their LIGHT values on a dark page").toEqual([]);
+  });
+
+  it("no light root declares a hex token its reachable dark mirror forgets", async () => {
+    const roots = parseTokenRoots(await shippedStylesheets()).filter((root) => isGbRoot(root.selector));
+    const dark = roots.filter((root) => isDarkRoot(root.selector));
+    const document = darkDocument();
+
+    const orphans: string[] = [];
+    for (const root of roots.filter((candidate) => !isDarkRoot(candidate.selector))) {
+      const subject = subjectFor(root.selector, document);
+      const mirrors = dark.filter((mirror) => subject.matches(mirror.selector) && outranks(mirror.selector, root.selector));
+      for (const [property, value] of root.props) {
+        // Only literals: `--font-sans`, `--radius`, the easings and durations are meant to be
+        // inherited by the dark page, and the shadow tokens have their own wire (⑤).
+        if (!/#[0-9a-f]{3,8}\b/i.test(value)) continue;
+        if (!mirrors.some((mirror) => mirror.props.has(property))) {
+          orphans.push(`${root.file}:${root.line}  ${root.selector} { ${property}: ${value} }`);
+        }
+      }
+    }
+    expect(orphans, "these tokens stay at their light literal on a dark page").toEqual([]);
+  });
+
+  /**
+   * The r1 defect, pinned as its own shape rather than as its selector: an ancestor carries
+   * `.dark`, and a token root that loads LATER re-declares `--background` without
+   * `--foreground`. Before the fix this resolved to #FAFAFA type on a #F5F6F8 ground —
+   * 1.04:1 — on /northstar-immersive, a route that is live to customers. Both load orders
+   * are checked because the whole failure was a specificity tie broken by order: a fix that
+   * only works because the sheets happen to load in one order is not a fix.
+   */
+  it("no .gb root resolves to an unreadable ground/type pair in dark, in either load order", async () => {
+    const sheets = await shippedStylesheets();
+    for (const [label, ordered] of [
+      ["root layout first, route layer second (what ships)", sheets],
+      ["reversed", [...sheets].reverse()],
+    ] as const) {
+      const all = parseTokenRoots(ordered);
+      const document = darkDocument();
+      for (const root of all.filter((candidate) => isGbRoot(candidate.selector) && !isDarkRoot(candidate.selector))) {
+        const subject = subjectFor(root.selector, document);
+        const ground = resolveVar(subject, "--background", all);
+        const type = resolveVar(subject, "--foreground", all);
+        const where = `${label} — ${root.file}:${root.line} ${root.selector}`;
+        expect(ground, where).toMatch(/^#[0-9A-Fa-f]{6}$/);
+        expect(type, where).toMatch(/^#[0-9A-Fa-f]{6}$/);
+        expect(contrastRatio(type!, ground!), where).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it("`gb` is on <body> while the theme class is on <html> — the reason for all of the above", async () => {
     expect(await readLayout()).toContain('<body className="gb');
   });
 
@@ -201,13 +464,7 @@ describe("#804 — the dark block is actually reachable", () => {
     const css = await readGlobals();
     // Comments carry the retirement record (which literal was replaced by which token), so
     // they are stripped structurally before the fence reads the file.
-    const req = createRequire(path.join(webRoot, "package.json"));
-    const reqFromPostcss = createRequire(req.resolve("@tailwindcss/postcss"));
-    const postcss = reqFromPostcss("postcss") as {
-      parse(css: string): {
-        walk(cb: (n: { type: string; selector?: string; prop?: string; value?: string }) => void): void;
-      };
-    };
+    const postcss = loadPostcss();
 
     const offenders: string[] = [];
     let selector = "";

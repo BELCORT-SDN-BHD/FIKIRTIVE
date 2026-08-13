@@ -604,10 +604,13 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 
 /*
- * THE THIRTEEN LITERALS (#804). Turning dark mode on turns every hardcoded colour inside a
- * `.gb`-scoped recipe into a lie, because a literal cannot follow a token. §K4 already bans
- * them ("raw hex inside .gb-scoped rules → only the two token blocks may hit"); until this
- * ticket nothing rendered the ban's consequence, so thirteen survived. Each one below was
+ * THE 13 SITES (#804) — 18 literal occurrences across 13 call sites. Turning dark mode on
+ * turns every hardcoded colour inside a `.gb`-scoped recipe into a lie, because a literal
+ * cannot follow a token. §K4 already bans them ("raw hex inside .gb-scoped rules → only the
+ * two token blocks may hit"); until this ticket nothing rendered the ban's consequence, so
+ * these survived. The two counts differ because several sites paint with a pair (the pill is
+ * ink + white type; the danger button is border + colour; each white chip has a hover twin) —
+ * the × figures in the inventory below are OCCURRENCES, and they sum to 18. Each one was
  * re-queried against the current file (§K3's dated paragraph is explicit that its v3 list is
  * not a fix-on-touch queue) and replaced with the token it was always standing in for:
  *
