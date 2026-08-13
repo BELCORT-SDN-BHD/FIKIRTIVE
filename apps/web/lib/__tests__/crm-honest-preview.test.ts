@@ -751,8 +751,18 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
    *   · 同文件内 `const 名字 = 字面量` 收进一张表,标识符按表展开(**只认 const,只认本文件**)。
    * 组合数封顶,超了就**抛错**而不是截断 —— 截断本身会变成新的藏身处。
    *
+   * r9(r8 判词)—— 上面那版在自己声明的能力范围内还漏三处,判官各给了可复现的样本:
+   *   ① 常量表按名字只留**最后一次**绑定:同文件稍后一个同名局部 `const label = "Account"`
+   *      就把前面 `aria-label={label}` 那句 "Reachable contacts" 盖掉,返回空集。现在同名的
+   *      **每一次绑定都展开取并集** —— 不解析词法作用域,而是让围栏的错误方向只能是「多报」;
+   *   ② `const label = "Reachable contacts" as const`(以及 `satisfies`)拆不开壳,读不到里头
+   *      的字面量。现在 `as` / `satisfies` 一律拆包再读;
+   *   ③ 上限只在笛卡尔积那条路上查,纯嵌套三元靠**并集**长到 258 支也一声不响地全返回。
+   *      现在并集与笛卡尔积认同一把尺,并且**并集不去重** —— 去重会把上限架空。
+   *
    * ── 这把尺子的能力边界(如实写明,不假装盖满)────────────────────────────────
-   * 覆盖:字面量、模板串、`+` 拼接、三元(含嵌套)、同文件 const 字符串、以上任意嵌套组合。
+   * 覆盖:字面量、模板串、`+` 拼接、三元(含嵌套)、同文件 const 字符串(同名多绑定取并集)、
+   * `as const` / `satisfies` 壳、以上任意嵌套组合。
    * **不覆盖**(判官 r7 已裁定超出本次声明边界,不在本轮修法内):
    *   · `String.fromCharCode(...)` 之类的**逐字符构造**;
    *   · 数组 `.join("")` / `.map().join()` 之类的**集合拼装**;
@@ -773,8 +783,12 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
     /**
      * 同文件内 `const 名字 = <拼得出字面量的表达式>`。只收 const:let/var 会被改写,
      * 「这个名字在这里是什么字」就不再是单文件能回答的问题了。
+     *
+     * r9(r8 判词 P1)—— 同一个名字在同一文件里可以绑好几次(不同作用域)。原先按名字只留
+     * **最后一次**绑定,于是后出现的同名局部 const 会把前面那句实话盖掉。这里不解析词法
+     * 作用域,而是把同名的**每一次绑定都收下**、展开时取并集:围栏允许多报,不允许漏报。
      */
-    const constants = new Map<string, ts.Expression>();
+    const constants = new Map<string, ts.Expression[]>();
     (function collect(node: ts.Node): void {
       if (
         ts.isVariableStatement(node) &&
@@ -782,22 +796,39 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
       ) {
         for (const declaration of node.declarationList.declarations) {
           if (ts.isIdentifier(declaration.name) && declaration.initializer) {
-            constants.set(declaration.name.text, declaration.initializer);
+            const bound = constants.get(declaration.name.text);
+            if (bound) bound.push(declaration.initializer);
+            else constants.set(declaration.name.text, [declaration.initializer]);
           }
         }
       }
       ts.forEachChild(node, collect);
     })(tree);
 
-    /** 笛卡尔积:左边每一种 × 右边每一种。 */
-    function product(left: string[], right: string[]): string[] {
-      if (left.length * right.length > MAX_EXPANSIONS) {
+    /**
+     * 组合数封顶。r9(r8 判词 P2)—— 原先只有笛卡尔积那条路查上限,纯嵌套三元是**并集**
+     * 增长,258 支照样一声不响地全返回。两条路现在认同一把尺。
+     */
+    function guardSize(size: number): void {
+      if (size > MAX_EXPANSIONS) {
         throw new Error(
           `${fileName}: 一个表达式的分支组合超过 ${MAX_EXPANSIONS} 种,围栏无法逐一核对。` +
             `把它拆开写 —— 围栏宁可红,也不截断(截断等于给下一句过度承诺留了藏身处)。`,
         );
       }
+    }
+
+    /** 笛卡尔积:左边每一种 × 右边每一种。 */
+    function product(left: string[], right: string[]): string[] {
+      guardSize(left.length * right.length);
       return left.flatMap((prefix) => right.map((suffix) => prefix + suffix));
+    }
+
+    /** 并集:每一支都可能显示出来,各自独立过词族。**不去重** —— 去重会把上限架空。 */
+    function union(branches: string[][]): string[] {
+      const all = branches.flat();
+      guardSize(all.length);
+      return all;
     }
 
     /** 这个表达式**所有可能显示出来**的字面量组合。取不出字面量的部分当空串。 */
@@ -814,14 +845,18 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
         return product(expand(node.left, seen), expand(node.right, seen));
       }
       if (ts.isParenthesizedExpression(node)) return expand(node.expression, seen);
+      // `as const` / `satisfies X` 只是类型层的壳,里头还是同一句字(r8 判词 P1)。
+      if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) return expand(node.expression, seen);
       // 三元:两支都可能显示出来,所以是**并集**,各自独立过词族。嵌套靠递归。
       if (ts.isConditionalExpression(node)) {
-        return [...expand(node.whenTrue, seen), ...expand(node.whenFalse, seen)];
+        return union([expand(node.whenTrue, seen), expand(node.whenFalse, seen)]);
       }
       if (ts.isJsxExpression(node)) return node.expression ? expand(node.expression, seen) : [""];
-      // 同文件 const:按表展开一次。`seen` 防自引用死循环。
+      // 同文件 const:同名的**每一次绑定**都展开取并集(不解析作用域,宁可多报)。
+      // `seen` 防自引用死循环。
       if (ts.isIdentifier(node) && constants.has(node.text) && !seen.has(node.text)) {
-        return expand(constants.get(node.text)!, new Set([...seen, node.text]));
+        const next = new Set([...seen, node.text]);
+        return union(constants.get(node.text)!.map((binding) => expand(binding, next)));
       }
       // 属性访问、调用、导入来的名字 —— 取不出字面量,当它没有字(见上面的能力边界)。
       return [""];
@@ -929,10 +964,60 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
     ).toEqual(["Reachable contacts"]);
   });
 
+  it("尺子自检:同名 const 后来居上,盖不掉前面那句实话(r8 判词 P1)", () => {
+    // 常量表按名字只存**最后一次**绑定,同文件稍后一个同名局部 `const label = "Account"`
+    // 就把前面那句实话覆盖掉,整句过度承诺一声不响地过关(判官复现:aria-label 实际是
+    // "Reachable contacts",围栏读成 "Account",结果返回空集)。
+    // 改法取保守语义:同名的**每一次绑定都展开,取并集**。宁可多报一句,也不因为没解析
+    // 词法作用域而漏掉一句 —— 围栏的错误方向只能是「多报」。
+    const laterOverride = [
+      'const label = "Reachable contacts";',
+      "<button aria-label={label} />",
+      "function Toolbar() {",
+      '  const label = "Account";',
+      "  return <span>{label}</span>;",
+      "}",
+    ].join("\n");
+    expect(overpromisingLines(laterOverride), "同名 const 覆盖不该让这句溜过去").toContain(
+      "Reachable contacts",
+    );
+
+    // 反过来也一样:先声明的是机器值,后声明的才是那句实话。
+    const earlierMachineValue = [
+      'const label = "contactable";',
+      '<SelectItem value={label}>Not known opt-out</SelectItem>',
+      "function Toolbar() {",
+      '  const label = "Reachable contacts";',
+      "  return <button aria-label={label} />;",
+      "}",
+    ].join("\n");
+    expect(overpromisingLines(earlierMachineValue)).toContain("Reachable contacts");
+  });
+
+  it("尺子自检:`as const` / `satisfies` 只是类型层的壳,里头还是同一句字(r8 判词 P1)", () => {
+    expect(
+      overpromisingLines('const label = "Reachable contacts" as const;\n<button aria-label={label} />'),
+    ).toEqual(["Reachable contacts"]);
+    expect(
+      overpromisingLines(
+        'const label = "Reachable contacts" satisfies string;\n<button aria-label={label} />',
+      ),
+    ).toEqual(["Reachable contacts"]);
+    // 壳也可能直接套在 JSX 里的表达式上,或者套在拼接的一支上。
+    expect(overpromisingLines('<p>{"contactable" as const}</p>')).toEqual(["contactable"]);
+    expect(overpromisingLines('<p>{("contact" as const) + "able"}</p>')).toEqual(["contactable"]);
+  });
+
   it("尺子自检:分支炸开时宁可红,也不悄悄截断", () => {
     // 截断本身会变成藏身处:留一个「组合太多就只看前 N 种」的口子,第 N+1 种就是下一次绕过。
     const manyBranches = `<p>{\`${"${a?'x':'y'}".repeat(9)}\`}</p>`;
     expect(() => overpromisingLines(manyBranches)).toThrow(/围栏无法逐一核对/);
+
+    // r8 判词 P2 —— 上限原先只在笛卡尔积那条路上查,纯嵌套三元是**并集**增长,258 支照样
+    // 一声不响地全返回。两条路得认同一把尺:超了就抛错,不截断也不静默。
+    let nested = '"y"';
+    for (let index = 0; index < 257; index += 1) nested = `(a ? "x" : ${nested})`;
+    expect(() => overpromisingLines(`<p>{${nested}}</p>`)).toThrow(/围栏无法逐一核对/);
   });
 
   it("尺子自检:can reach 一族(r6 判官点名的两处实词形状)", () => {
