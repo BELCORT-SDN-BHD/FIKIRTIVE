@@ -381,3 +381,221 @@ describe("#782 r7 (判官 r6 P1-B) 死掉的片子有一个单镜的入口,和�
     expect(findButton(dom, "Confirm — replace")).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #782 r9(判官 r8)—— 卡面状态收敛成一条纯推导之后,**每一个终态**都要么有内容、
+// 要么有一个商家自己走得出去的入口。判官 r8 的三个真渲染探针原样变成用例。
+//
+// 本段同样只 import 卡面本身(零 r9 新导出),所以它在 r8 的 head(0f85dcea)上如实变红:
+// 红的是断言,不是模块解析。
+// ---------------------------------------------------------------------------
+
+const VIDEO_TICK = 5000; // VIDEO_SYNC_INTERVAL_MS
+const VIDEO_CAP = 120; // VIDEO_SYNC_MAX_TRIES
+const SLOW_CAP = 30; // SLOW_SYNC_MAX_TRIES
+
+describe("#782 r9 (判官 r8 P1-①) 慢轮打满之后,不许还在说「视频生成中」", () => {
+  const shot = {
+    shotId: "s0",
+    index: 0,
+    title: "Hero",
+    firstFramePrompt: "ff-0",
+    videoPrompt: "v-0",
+    firstFrameCardId: "child_0",
+    firstFrameGenerationId: "gen_0",
+    videoCardId: "vchild_0", // 花过钱了:片子在跑,一直没结果也一直没被判死
+    durationSeconds: 5,
+  };
+  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+
+  beforeEach(() => {
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload,
+      frames: { s0: "/media/gen_0.png" },
+      videos: {},
+      liveFrameShotIds: [],
+      deadVideoShotIds: [], // 服务端从不判它死 —— 于是卡面永远等得到「还在跑」这个答案
+    });
+  });
+
+  it("151 次之后定时器停了 → 视频不许再转,必须说不再自动查询并留一个手动入口", async () => {
+    const dom = await mount(
+      createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }),
+    );
+
+    // 挂载 1 次 + 快轮 120 次 + 慢轮 30 次 = 151 次,正是判官探针里的那个数。
+    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(1);
+    expect(text(dom)).toContain("Generating video…");
+    for (let i = 0; i < VIDEO_CAP; i++) await tick(VIDEO_TICK);
+    for (let i = 0; i < SLOW_CAP; i++) await tick(SLOW_TICK);
+    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(1 + VIDEO_CAP + SLOW_CAP);
+
+    // 定时器确实停了(判官探针 activeTimers=0):再走十分钟,一次都不问。
+    await tick(10 * 60 * 1000);
+    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(1 + VIDEO_CAP + SLOW_CAP);
+
+    // 不再问 → 不许再说生成中(判官探针 generatingVideo=true 的那一格)。
+    expect(
+      text(dom),
+      "已经不问了,卡面还在说视频生成中 —— 一个永远不会更新的 spinner",
+    ).not.toContain("Generating video…");
+    // 而且必须说清楚为什么,并给出自己再查一次的入口。
+    expect(text(dom)).toContain("stopped checking");
+    const refresh = findButton(dom, "Check for updates");
+    expect(refresh, "停了自动查询却没有手动入口 —— 商家彻底走不出去").toBeTruthy();
+
+    // 那个入口真的会再问一次(复用同一条 sync,不是装饰)。
+    await act(async () => { refresh!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(2 + VIDEO_CAP + SLOW_CAP);
+  });
+});
+
+describe("#782 r9 (判官 r8 P1-②) 已经落地的视频,重开页面必须看得见", () => {
+  const shot = {
+    shotId: "s0",
+    index: 0,
+    title: "Hero",
+    firstFramePrompt: "ff-0",
+    videoPrompt: "v-0",
+    firstFrameCardId: "child_0",
+    firstFrameGenerationId: "gen_0",
+    videoCardId: "vchild_0",
+    videoGenerationId: "vgen_0", // 已经出片了,商家付过钱
+    durationSeconds: 5,
+  };
+  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+
+  it("payload 有 videoGenerationId、本地还没装载 → 挂载就去装载,播放器出现", async () => {
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload,
+      frames: { s0: "/media/gen_0.png" },
+      videos: { s0: "/media/vgen_0.mp4" },
+      liveFrameShotIds: [],
+      deadVideoShotIds: [],
+    });
+
+    const dom = await mount(
+      createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }),
+    );
+
+    expect(
+      mocks.syncStoryboardMedia,
+      "已落地的媒体一次都不去装载 —— 商家付了钱,重开页面什么都看不到",
+    ).toHaveBeenCalledTimes(1);
+    const video = dom.querySelector("video");
+    expect(video, "已落地的视频没有渲染播放器").toBeTruthy();
+    expect(video!.getAttribute("src")).toBe("/media/vgen_0.mp4");
+    const img = dom.querySelector("img");
+    expect(img, "已落地的首帧也没有渲染").toBeTruthy();
+    // 有内容就该有下一步:重出入口回来了。
+    expect(findButton(dom, "Remake video"), "已落地的视频没有重出入口").toBeTruthy();
+    expect(findButton(dom, "Regenerate frame"), "已落地的首帧没有重出入口").toBeTruthy();
+  });
+});
+
+describe("#782 r9 (判官 r8 P2) 空的 prepare 结果不许变成一个 0 张图的死确认框", () => {
+  const shot = {
+    shotId: "s0",
+    index: 0,
+    title: "Hero",
+    firstFramePrompt: "ff-0",
+    videoPrompt: "v-0",
+    firstFrameCardId: "child_0", // 子卡在,图还没写回来
+  };
+  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+
+  it("并发落帧使 prepare 返回空 children → 回去等结果,不端出 Generate 0", async () => {
+    const state = { landed: false };
+    mocks.syncStoryboardMedia.mockImplementation(async () =>
+      state.landed
+        ? {
+            payload: { ...payload, shots: [{ ...shot, firstFrameGenerationId: "gen_0" }] },
+            frames: { s0: "/media/gen_0.png" },
+            videos: {},
+            liveFrameShotIds: [],
+            deadVideoShotIds: [],
+          }
+        : { payload, frames: {}, videos: {}, liveFrameShotIds: [], deadVideoShotIds: [] },
+    );
+    // 服务端这一刻认为没有任何镜头需要铸新的首帧子卡(那一张刚刚落地)。
+    mocks.prepareStoryboardFirstFrames.mockResolvedValue({ children: [], totalCredits: 0 });
+
+    const dom = await mount(
+      createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }),
+    );
+    await clickByText(dom, "Generate all first frames");
+
+    expect(text(dom), "端出了一个 0 张图的确认框").not.toContain("Generate 0 ");
+    expect(findButton(dom, "Confirm — 0"), "确认按钮承诺 0 张图 —— 按下去什么都不会发生").toBeUndefined();
+    expect(mocks.coworkGenerate).not.toHaveBeenCalled();
+
+    // 而且回到了等待:帧一落地就自己出现。
+    state.landed = true;
+    await tick(FRAME_TICK);
+    expect(dom.querySelector("img"), "点完之后卡面没有回去等结果").toBeTruthy();
+  });
+});
+
+describe("#782 r9 铁律:每个终态要么有内容,要么有救援入口", () => {
+  const base = {
+    shotId: "s0",
+    index: 0,
+    title: "Hero",
+    firstFramePrompt: "ff-0",
+    videoPrompt: "v-0",
+    firstFrameCardId: "child_0",
+    firstFrameGenerationId: "gen_0",
+    durationSeconds: 5,
+  };
+
+  /** 一个终态一行:卡面上必须找得到「内容」或者「入口」,不存在第三种结局。 */
+  const cases: {
+    name: string;
+    shot: Record<string, unknown>;
+    sync: { frames: Record<string, string>; videos: Record<string, string>; deadVideoShotIds: string[] };
+    expect: (dom: HTMLElement) => void;
+  }[] = [
+    {
+      name: "video landed → 播放器(内容)",
+      shot: { ...base, videoCardId: "vchild_0", videoGenerationId: "vgen_0" },
+      sync: { frames: { s0: "/media/gen_0.png" }, videos: { s0: "/media/vgen_0.mp4" }, deadVideoShotIds: [] },
+      expect: (dom) => expect(dom.querySelector("video")).toBeTruthy(),
+    },
+    {
+      name: "video dead → 单镜重试(入口)",
+      shot: { ...base, videoCardId: "vchild_0" },
+      sync: { frames: { s0: "/media/gen_0.png" }, videos: {}, deadVideoShotIds: ["s0"] },
+      expect: (dom) => expect(findButton(dom, "Try this video again")).toBeTruthy(),
+    },
+    {
+      name: "video 有 generationId 却装载不出来 → 手动刷新(入口)",
+      shot: { ...base, videoCardId: "vchild_0", videoGenerationId: "vgen_0" },
+      sync: { frames: { s0: "/media/gen_0.png" }, videos: {}, deadVideoShotIds: [] },
+      expect: (dom) => expect(findButton(dom, "Check for updates")).toBeTruthy(),
+    },
+    {
+      name: "frame 有 generationId 却装载不出来 → 手动刷新(入口)",
+      shot: { ...base, videoCardId: "vchild_0", videoGenerationId: "vgen_0" },
+      sync: { frames: {}, videos: { s0: "/media/vgen_0.mp4" }, deadVideoShotIds: [] },
+      expect: (dom) => expect(findButton(dom, "Check for updates")).toBeTruthy(),
+    },
+  ];
+
+  for (const c of cases) {
+    it(c.name, async () => {
+      const payload = { storyboardTitle: "Raya launch", shots: [c.shot] };
+      mocks.syncStoryboardMedia.mockResolvedValue({
+        payload,
+        frames: c.sync.frames,
+        videos: c.sync.videos,
+        liveFrameShotIds: [],
+        deadVideoShotIds: c.sync.deadVideoShotIds,
+      });
+      const dom = await mount(
+        createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }),
+      );
+      c.expect(dom);
+    });
+  }
+});

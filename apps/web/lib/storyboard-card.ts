@@ -173,9 +173,15 @@ export function isVideoDead<
   return deadVideoShotIds !== null && deadVideoShotIds.has(shot.shotId);
 }
 
-/** 卡面 sync 轮询的三个档位。"off" = 不再发问;"fast" = 刚花完钱、盯着结果;
- *  "slow" = 快轮的额度用完了,但服务端说还有活作业 —— 降频接着问。 */
-export type SyncPhase = "off" | "fast" | "slow";
+/** 卡面 sync 轮询的四个档位。"off" = 不再发问,而且没有留下没答完的问题;
+ *  "fast" = 刚花完钱、盯着结果;"slow" = 快轮的额度用完了,但服务端说还有活作业 —— 降频接着问;
+ *  "exhausted"(r9,判官 r8)= **问到额度用尽都没等到答案,我们停了**。
+ *
+ *  "off" 与 "exhausted" 在定时器上是同一件事(都不再发问),对商家却是两件事:前者是「结束了」,
+ *  后者是「我们不知道了」。r8 之前两者共用 "off",于是卡面在停止发问之后还照着最后一次答案
+ *  渲染 "Generating video…" —— 一个永远不会更新的 spinner。分成两个档位之后,「不再问」这件事
+ *  本身进入推导(见 deriveShotMediaStates),诚实降级不再需要任何一处额外的记账。 */
+export type SyncPhase = "off" | "fast" | "slow" | "exhausted";
 
 /**
  * #782 r7(判官 r6 P1-A)—— **「到顶」不等于「放弃」**。
@@ -192,7 +198,10 @@ export type SyncPhase = "off" | "fast" | "slow";
  *   • 快轮到顶 → **降频再问**("slow"),不是放弃;慢轮也到顶才真的停。
  *
  * 慢轮同样有上限,所以不存在一个永远跑下去的定时器:整段观察窗是有界的,而窗口关掉之后
- * 商家任何一次交互(Generate all / 单镜重出)都会把它重新打开(见卡面 startPolling 的调用点)。
+ * 商家任何一次交互(Generate all / 单镜重出 / 手动刷新)都会把它重新打开。
+ *
+ * r9(判官 r8):慢轮到顶时回的是 "exhausted" 而不是 "off" —— 定时器一样停,但卡面从此
+ * 知道「我们是**放弃**了,不是**结束**了」。见 SyncPhase 与 deriveShotMediaStates。
  */
 export function nextSyncPhase(args: {
   phase: "fast" | "slow";
@@ -202,7 +211,121 @@ export function nextSyncPhase(args: {
 }): SyncPhase {
   if (!args.stillPending) return "off";
   if (args.triesUsed < args.maxTries) return args.phase;
-  return args.phase === "fast" ? "slow" : "off";
+  return args.phase === "fast" ? "slow" : "exhausted";
+}
+
+// ---------------------------------------------------------------------------
+// #782 r9(判官 r8 的两条 P1 + 一条 P2)—— 卡面状态的**唯一**推导
+// ---------------------------------------------------------------------------
+//
+// r4 到 r8 每一轮都在修同一个类的缺陷,而不是同一个缺陷:卡面每一处显示各自用一小撮布尔
+// 把状态拼出来(有没有指针、有没有 url、服务端有没有点名、轮询停没停),于是每补上一处,
+// 相邻那处的组合就露出一个没人写过的洞 —— 判官 r8 又抓到两个:慢轮停了视频还在转、已经
+// 落地的视频重挂载后既没有播放器也没有任何按钮。
+//
+// 这一轮不再补洞,改掉产生洞的方式:每个镜头的首帧与视频各收敛成**一个枚举值**,由这一条
+// 纯函数从(服务端 payload + 最近一次 sync 的答复 + 轮询相位)推出来。渲染与按钮只读这个
+// 枚举,switch 必须穷尽(见卡面的 assertNever)—— 少写一个态,TypeScript 就不让编译,
+// 「某个组合没人想过」这件事在类型层面不再可能发生。
+//
+// 两条铁律直接编进枚举:
+//   ① 每个**没有内容**的终态(dead / landed-unloaded / stale-unknown)在卡面上必须配一个
+//      商家自己走得出去的入口。不存在「无内容且无入口」的输出。
+//   ② 一旦不再自动查询(phase="exhausted"),所有「进行中」一律降级为诚实态 stale-unknown:
+//      说明不再自动查询 + 手动刷新入口(见 needsRefreshEntrance)。
+
+/** 一个镜头**一类媒体**(首帧或视频)此刻的全部可能状态,穷举无遗漏。 */
+export type ShotMediaState =
+  /** 没有开始过:没有子卡,也没有产出。入口是整包按钮(接续模式下也可能是「等上一镜」)。 */
+  | { kind: "none" }
+  /** 服务端确认有一条活作业撑着 —— 只有这个态可以转 spinner。 */
+  | { kind: "in-progress" }
+  /** 产出已经落地,而且拿到了可以显示的地址。唯一「有内容」的态。 */
+  | { kind: "landed"; url: string }
+  /** 产出已经落地(payload 有 generationId),但本地还没有地址:重开页面的第一瞬,或者
+   *  那条 generation 已经取不到。必须去装载一次,并留一个手动入口(判官 r8 P1-②)。 */
+  | { kind: "landed-unloaded" }
+  /** 这条作业这一生结束了、什么都没交出来(只有服务端能确证)。入口 = 单镜重来。 */
+  | { kind: "dead" }
+  /** 我们不再问了,而这一格当时还没有答案。不许再说「生成中」(判官 r8 P1-①)。 */
+  | { kind: "stale-unknown" };
+
+export interface ShotMediaStates {
+  shotId: string;
+  frame: ShotMediaState;
+  video: ShotMediaState;
+}
+
+/** 少写一个枚举分支就编译不过。 */
+export function assertNever(x: never): never {
+  throw new Error(`Unhandled shot media state: ${JSON.stringify(x)}`);
+}
+
+export function deriveShotMediaStates(args: {
+  shots: readonly StoryboardShotView[];
+  /** shotId → 首帧地址(sync 装载,挂载那一瞬是空的)。 */
+  frames: Readonly<Record<string, string>>;
+  /** shotId → 视频地址(同上)。 */
+  videos: Readonly<Record<string, string>>;
+  /** 最近一次 sync 报回来的「首帧真有活作业」的镜头;null = 还没问过服务端。 */
+  liveFrameShotIds: ReadonlySet<string> | null;
+  /** 最近一次 sync 报回来的「片子已经死了」的镜头;null = 还没问过服务端。 */
+  deadVideoShotIds: ReadonlySet<string> | null;
+  phase: SyncPhase;
+}): ShotMediaStates[] {
+  return args.shots.map((shot) => ({
+    shotId: shot.shotId,
+    frame: deriveFrameState(shot, args.frames[shot.shotId], args.liveFrameShotIds, args.phase),
+    video: deriveVideoState(shot, args.videos[shot.shotId], args.deadVideoShotIds, args.phase),
+  }));
+}
+
+function deriveFrameState(
+  shot: StoryboardShotView,
+  url: string | undefined,
+  live: ReadonlySet<string> | null,
+  phase: SyncPhase,
+): ShotMediaState {
+  // 落地优先于一切:图已经是商家的了,轮询停没停都不影响它该显示。
+  if (shot.firstFrameGenerationId) return url ? { kind: "landed", url } : { kind: "landed-unloaded" };
+  if (!shot.firstFrameCardId) return { kind: "none" };
+  // 铁律②:不再问了就不再声称在跑(r5 靠「把 live 集合清空」表达同一件事,那是往一格
+  // 服务端事实里塞一个我们自己的判断;相位是它本来的位置)。
+  if (phase === "exhausted") return { kind: "stale-unknown" };
+  return isFrameInProgress(shot, live) ? { kind: "in-progress" } : { kind: "none" };
+}
+
+function deriveVideoState(
+  shot: StoryboardShotView,
+  url: string | undefined,
+  dead: ReadonlySet<string> | null,
+  phase: SyncPhase,
+): ShotMediaState {
+  if (shot.videoGenerationId) return url ? { kind: "landed", url } : { kind: "landed-unloaded" };
+  if (!shot.videoCardId) return { kind: "none" };
+  if (phase === "exhausted") return { kind: "stale-unknown" };
+  if (isVideoDead(shot, dead)) return { kind: "dead" };
+  return isVideoInProgress(shot, dead) ? { kind: "in-progress" } : { kind: "none" };
+}
+
+/** 还有事情值得等 —— 轮询要不要继续的唯一判据。
+ *  刻意**不**含 landed-unloaded:刚问过服务端还是拿不到地址,那不是「在路上」,再问一万次
+ *  也一样;它的出路是手动入口,不是无限轮询。 */
+export function hasPendingMedia(states: readonly ShotMediaStates[]): boolean {
+  return states.some((s) => s.frame.kind === "in-progress" || s.video.kind === "in-progress");
+}
+
+/**
+ * 要不要给商家一个「自己再查一次」的入口(铁律②)。同一条判据也回答挂载那一问:
+ * **有没有什么值得问服务端的**(那时 polling=false、本地一格媒体都没有)。
+ *
+ * 三种情形:不再问了却还没有答案(stale-unknown)、已经落地却装载不出来(landed-unloaded)、
+ * 以及说着「进行中」但**没有人在问**(轮询没开着 —— 比如挂载那一次 sync 出错)。
+ */
+export function needsRefreshEntrance(states: readonly ShotMediaStates[], polling: boolean): boolean {
+  const needs = (s: ShotMediaState): boolean =>
+    s.kind === "stale-unknown" || s.kind === "landed-unloaded" || (!polling && s.kind === "in-progress");
+  return states.some((s) => needs(s.frame) || needs(s.video));
 }
 
 type RawShot = Partial<StoryboardCardPayload["shots"][number]>;
