@@ -963,8 +963,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
                   // enqueue; the reference-map lines are our own bounded text), never an
                   // engine-controlled response — nothing about it can make this insert fail, so
                   // it rides in the SAME commit as promptText rather than the post-commit
-                  // best-effort receipt write. Always written on a new row: null in this column
-                  // therefore means exactly one thing — the row predates the column.
+                  // best-effort receipt write. Always written on a row THIS handler creates, so a
+                  // null in this column means the row is not the product of an engine call:
+                  // it predates the column, or it came from an ingest path that never calls one
+                  // (upload-actions, asset-actions.saveCroppedGeneration).
                   sentPromptText: sentPrompt,
                   entitySnapshot, version: 1, attachedAt: null,
                 },

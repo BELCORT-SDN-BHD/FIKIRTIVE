@@ -50,7 +50,8 @@ type GenDTO = {
   finalPrompt: string | null;
   /**
    * #914 r4：平台**实际交给引擎**的那一句（worker 在发送那一刻记的）。比对已在服务端做完
-   * （asset-actions.sentPromptReceipt）：null = 这一行早于这一列 ⇒ 整块不渲染，一个字不说。
+   * （asset-actions.sentPromptReceipt）：null = 这一行不是一次引擎调用的产物（历史生成，
+   * 或上传/裁剪这类没调过引擎的行）⇒ 整块不渲染，一个字不说。
    */
   sentPrompt: null | { verbatim: true } | { verbatim: false; text: string };
   favorite: boolean;
@@ -715,7 +716,8 @@ export default function DetailPanel({
                 r2/r3 的病根:记录点在 web 层 —— 记下的永远不是真正送出去的全文，于是
                 「原样送出」这句话在模板一键成片这类必带底图的单上必然是谎。r4 把记录点
                 搬到真实发送层，这里只负责显示服务端已经比完的结论:
-                  · null（历史生成，那时还没有这一列）⇒ **整块不渲染**，一个字都不说；
+                  · null（这一行不是引擎产的：历史生成，或上传/裁剪这类 $0 摄取行）⇒
+                    **整块不渲染**，一个字都不说；
                   · 逐字相同 ⇒ 一句 "Sent exactly as you wrote it."；
                   · 不同     ⇒ 把实际送出的全文亮出来（已过白标）。 */}
             {/* `!= null` 而不是 `!== null`:字段整个读不到(老的调用点 / 老的 DTO)与「没有

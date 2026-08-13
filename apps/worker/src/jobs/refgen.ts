@@ -380,8 +380,17 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       }
 
       // THE paid call — happens exactly once per job (claimed above)
+      //
+      // #914 r6(判官 r5 P1-1)—— 这是**第三个**付费发送点。回执的记录纪律与 gen.ts 的
+      // 那两个逐字相同:交给 provider 的**那一个变量**随产出一起落库(下面 commit 那一笔),
+      // 中间不许有第二个可以漂移的表达式。
+      //
+      // 这条产品线上 worker 不做任何拼装(没有 #774 的参考图编号句那一步),所以送出的
+      // 恒等于 `job.prompt` —— 但「恒等」是**测试钉住的事实**,不是省掉记录的理由:少一个
+      // 发送点的记录,「回执覆盖全部付费发送点」这句话就不成立(判官 r5 原话)。
+      const sentPrompt = job.prompt;
       const images = await provider.generate({
-        prompt: job.prompt,
+        prompt: sentPrompt,
         inputImageUrls,
         count: job.count,
         model: job.model as RefGenModel,
@@ -424,7 +433,10 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       const committedRefgen = await prisma.$transaction(async (tx) => {
         const marked = await tx.refGenJob.updateMany({
           where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
-          data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) },
+          // #914 r6:回执与产出、与结算同一笔提交 —— 交付成立的那一刻,「我们送出的是这一句」
+          // 也就成立。它是我们自己的数据(`refGenRequest` 入队时已校长度,同一张表的
+          // `prompt` 就装着同一段文字),不是引擎能撑爆的输入,所以进这笔事务不新增失败面。
+          data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }), sentPromptText: sentPrompt },
         });
         if (marked.count === 0) return false;
         await settleCredits(tx, { orgId: job.ownerId, refId: job.id });

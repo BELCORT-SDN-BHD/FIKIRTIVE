@@ -25,7 +25,9 @@
  * 那一刻,所以图片这条路上也答得出来。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, relative } from "node:path";
 
 const m = vi.hoisted(() => {
   const genJobFindUnique = vi.fn();
@@ -320,7 +322,7 @@ describe("#914 r4(判官 r3)实际送出的那一整句落库,五类入口同一
     expect(stored).toEqual([sent, sent]);
   });
 
-  it("这一列**永远**写(新行的 null 只可能来自「这一行早于这一列」)—— 读取端据此整行不显示才站得住", async () => {
+  it("这一列**永远**写(这个 handler 建的行绝不留 null)—— 读取端据此「没有记录就整行不显示」才站得住", async () => {
     const { rows } = await sentVsStored({ ...imageJob });
     expect(rows[0]).toHaveProperty("sentPromptText");
     expect(typeof rows[0]!.sentPromptText).toBe("string");
@@ -335,27 +337,65 @@ describe("#914 r4(判官 r3)实际送出的那一整句落库,五类入口同一
 });
 
 /**
- * 源码闸 —— 「只有一个发送点」这条结构性主张。
+ * 源码闸 —— 「每一个付费发送点都有记录」这条结构性主张(#914 r6,判官 r5 P1-1)。
  *
- * 上面每一条用例都只能证明「这一种任务形状记对了」;而「五类入口天然全覆盖」这句话真正
- * 依赖的是:worker 里把提示词交给引擎的地方**只有那两处**(图片一处、视频一处),而且两处
- * 交出去的与落库的是同一个变量。这条主张没法用行为测试证,所以用词法钉:有人将来在别处
- * 再开一个发送点、或者把落库那一行改成重算一遍表达式,这里当场红。
+ * 上面每一条用例都只能证明「这一种任务形状记对了」;而「回执覆盖全部付费发送点」这句话
+ * 真正依赖的是:worker 里把提示词交给引擎的地方**一个都没落下**,而且每一处交出去的与
+ * 落库的是同一个变量。这条主张没法用行为测试证,所以用词法钉。
+ *
+ * r4 的版本只读 `gen.ts` —— 于是 `refgen.ts`(元素参考照,**同样收费**)这个第三个发送点
+ * 在闸眼里根本不存在,判官 r5 据此判 FAIL:一道只看自己家门的闸,证明不了整条街。r6 把
+ * 作用域扩到 `apps/worker/src/**` 全目录:将来任何文件里新开一个付费发送点,不接上记录
+ * 就当场红。
  */
-describe("#914 r4 —— 发送点唯一,且「送出的」与「落库的」是同一个变量", () => {
-  const SRC = readFileSync(new URL("./gen.ts", import.meta.url), "utf8");
+describe("#914 r6 —— **整个 worker** 里的付费发送点全部有记录,且送出的与落库的是同一个变量", () => {
+  /** apps/worker/src 下的全部生产源码(测试文件除外)—— 闸的作用域就是这一片。 */
+  function workerSources(): { file: string; src: string }[] {
+    const root = fileURLToPath(new URL("../", import.meta.url)); // apps/worker/src/
+    const out: { file: string; src: string }[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!entry.name.endsWith(".ts") || entry.name.includes(".test.")) continue;
+        out.push({ file: relative(root, full), src: readFileSync(full, "utf8") });
+      }
+    };
+    walk(root);
+    return out;
+  }
 
-  it("gen.ts 里交给引擎的 prompt 只有 `prompt: sentPrompt` 这一种写法", () => {
-    const promptArgs = [...SRC.matchAll(/provider\.(generate|generateVideo)\(\{\s*prompt:\s*([A-Za-z0-9_.()]+)/g)];
-    expect(promptArgs.length, "图片一处 + 视频一处").toBe(2);
-    for (const [, , arg] of promptArgs) expect(arg).toBe("sentPrompt");
+  /** 一个付费发送点 = 一处 `provider.generate*({ prompt: <表达式>` 。 */
+  function sendSites(): { file: string; arg: string }[] {
+    return workerSources().flatMap(({ file, src }) =>
+      [...src.matchAll(/provider\.(?:generate|generateVideo)\(\{\s*(?:\/\/[^\n]*\n\s*)*prompt:\s*([A-Za-z0-9_.()]+)/g)]
+        .map((match) => ({ file, arg: match[1]! })),
+    );
+  }
+
+  // r5 判官 P1-1 就死在这条上:r4 的闸只读 gen.ts,于是 refgen.ts 这个**同样收费**的
+  // 第三个发送点在闸眼里根本不存在,「回执覆盖全部付费发送点」是一句没人验的话。
+  it("发送点逐个枚举:今天是 gen.ts 图片/视频 + refgen.ts 元素参考照,共三处", () => {
+    expect(sendSites().map((s) => s.file).sort()).toEqual(["jobs/gen.ts", "jobs/gen.ts", "jobs/refgen.ts"]);
   });
 
-  it("落库的那一列写的就是同一个变量,不是就地重算一遍", () => {
-    expect(SRC).toContain("sentPromptText: sentPrompt,");
-    // `withReferenceMap(` 在 gen.ts 里只许出现一次(赋给 sentPrompt 的那一处):出现第二次
-    // 就意味着有人又算了一遍,而两遍迟早会不一样。
-    expect(SRC.match(/withReferenceMap\(/g)).toHaveLength(1);
+  it("每一处交给引擎的都是变量 `sentPrompt` —— 不是就地现算的表达式", () => {
+    for (const site of sendSites()) {
+      expect(site.arg, `${site.file} 的付费发送点必须交出被落库的那个变量`).toBe("sentPrompt");
+    }
+  });
+
+  it("每一个有发送点的文件都把那个变量落了库", () => {
+    const files = new Set(sendSites().map((s) => s.file));
+    for (const { file, src } of workerSources()) {
+      if (!files.has(file)) continue;
+      expect(src, `${file} 送了却没记`).toMatch(/sentPromptText: sentPrompt\b/);
+    }
+  });
+
+  it("`withReferenceMap(` 在 gen.ts 里只出现一次 —— 算两遍迟早会不一样", () => {
+    const gen = workerSources().find((s) => s.file === "jobs/gen.ts")!;
+    expect(gen.src.match(/withReferenceMap\(/g)).toHaveLength(1);
   });
 });
 

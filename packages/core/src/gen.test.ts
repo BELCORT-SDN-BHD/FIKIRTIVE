@@ -83,20 +83,24 @@ describe("genRequest.variantSel", () => {
   });
 });
 
-describe("genRequest.requestedPrompt —— 商家原话那一列 (#914)", () => {
+/**
+ * #914 r6(判官 r5 P2)—— 「商家原话」不是这张 schema 的字段,而且**必须不是**。
+ *
+ * 它曾经是一个可选字段。可是解析这张 schema 的每一个入口都是浏览器能直接调用的 Server
+ * Action:收下它,等于让任何调用者往一条商家日后会当成证据看的记录里写任意一句话
+ * (#882 approvedEntities 的同一课,只是这次伪造的是出处而不是指令)。因为这张 schema 是
+ * `.strict()`,把字段拿掉本身就是那道闸:带上它的请求在花钱之前整单被拒。
+ */
+describe("genRequest —— 商家原话不进请求体 (#914 r6)", () => {
   const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };
-  it("is optional — absent (every spend surface but coworkGenerate's directive branch) parses fine", () => {
+  it("不带它:照常通过(每一条花钱路都是这样)", () => {
     expect(genRequest.safeParse(base).success).toBe(true);
-    expect(genRequest.parse(base).requestedPrompt).toBeUndefined();
   });
-  it("accepts a string when supplied and rejects one over the shared prompt length cap", () => {
-    expect(genRequest.safeParse({ ...base, requestedPrompt: "a cat, close-up" }).success).toBe(true);
-    expect(genRequest.safeParse({ ...base, requestedPrompt: "x".repeat(2001) }).success).toBe(false);
+  it("带上它:整单被拒 —— 不是悄悄剥掉,而是当场失败(多这个字段说明调用方在试图写这条记录)", () => {
+    expect(genRequest.safeParse({ ...base, requestedPrompt: "a sentence I made up" }).success).toBe(false);
   });
-  it("never feeds .superRefine or any spend-affecting validation — a request that's otherwise valid stays valid with it present", () => {
-    const withIt = genRequest.safeParse({ ...base, requestedPrompt: "a cat, close-up" });
-    const withoutIt = genRequest.safeParse(base);
-    expect(withIt.success).toBe(withoutIt.success);
+  it("解析结果里根本没有这个键 —— 下游想读也读不到,只能走服务端那条通道", () => {
+    expect(genRequest.parse(base)).not.toHaveProperty("requestedPrompt");
   });
 });
 

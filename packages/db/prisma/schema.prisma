@@ -306,9 +306,12 @@ model Generation {
   /// 视频是 job.prompt;两处都是传给 provider 的那**同一个变量**,不是事后重算的复制品)。
   /// 所有花钱入口(画布 / 工厂 / 战役 / 模板 / 详情页编辑 / Otto)都汇到那一个发送点,
   /// 所以这一列天然全覆盖 —— 记录点不在任何一个入口上,漏不掉新入口。
-  /// null 只有一种含义:这一行早于本列存在(历史生成)。读取端据此**整行不显示**,不作
-  /// 任何声明 —— 不回落成 promptText 冒充「送出的那句」(#914 Founder 裁定:有则显示、
-  /// 无则整行不出现)。永不回填:回填只会把推断值写成看起来像事实的东西。
+  /// null = **这一行不是一次引擎调用的产物**,两种来路语义相同:①这一行早于本列存在
+  /// (历史生成);②这一行根本不是引擎产的 —— 上传(upload-actions)、裁剪
+  /// (asset-actions.saveCroppedGeneration)等 $0 摄取路径同样建 Generation 行,它们从来
+  /// 没有「送给引擎的那一句」。两种都不显示这一行:没有送出过,就没有可说的
+  /// (#914 Founder 裁定:有则显示、无则整行不出现),而不是回落成 promptText 冒充。
+  /// 永不回填:回填只会把推断值写成看起来像事实的东西。
   sentPromptText String?
   /// #776 生成回执:引擎自报**它真正跑的那句提示词**(服务端改写/加固之后的版本)。
   /// 商家可见 —— 「每个东西都要有迹可循」:商家写的那句在 promptText,引擎实际跑的那句在这里。
@@ -481,6 +484,14 @@ model RefGenJob {
   /// 钱真相（OPT-6 P3a，纯记录）：付费 provider 调用提交时由 worker 在同一写入里快照
   /// （= REFGEN_PRICE_USD_PER_IMAGE * count）。null = 没扣过费。绝不参与任何 spend 判定。
   spentUsd       Float?
+  /// #914 r6 生成回执:**平台真正交给引擎的那一整句**,由 worker 在调用 provider 那一刻
+  /// 原样记下(apps/worker/src/jobs/refgen.ts),与 outputAssetIds/spentUsd/settle 同一笔
+  /// 提交事务落库 —— 与 Generation.sentPromptText 同一条纪律,只是这条产品线的产出是
+  /// ReferenceImage(元素参考照)。这条路上 worker 不再拼装,所以它今天恒等于 prompt;
+  /// 「恒等」是被测试钉住的事实,不是省掉记录的理由:少一个付费发送点的记录,「回执覆盖
+  /// 全部付费发送点」这句话就不成立(判官 r5 P1-1)。
+  /// null = 这一行早于这一列,或这一单从没走到付费调用(排队中 / 花钱前就失败)。永不回填。
+  sentPromptText String?
   error          String     @default("")
   queueJobId     String     @default("")
   attempts       Int        @default(0)

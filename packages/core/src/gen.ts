@@ -536,15 +536,19 @@ export const genRequest = z
     // owner+project+video-ext, like sourceGenerationId. Only used by video plans.
     referenceVideoGenerationId: z.string().min(1).max(64).nullish(),
     prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
-    // #914 — THE MERCHANT'S OWN WORDS: what this request held BEFORE coworkGenerate's own
-    // composePrompt step (the family×mode directive append) changed it, ONLY when that step
-    // actually changed something. It is the left-hand side of the generation receipt, whose
-    // right-hand side (Generation.sentPromptText) is recorded by the worker at the moment it
-    // hands the string to the engine. Purely informational: it rides along with the request like
-    // idempotencyKey does, never feeds `.superRefine`, pricing, or factoryMaterialMatches replay.
-    // Absent on every other spend surface (canvas/asset composer, the Otto-chat `generate`
-    // skill) — none of them compose a prompt, so there is nothing for them to diverge from.
-    requestedPrompt: z.string().trim().max(MAX_GEN_PROMPT).optional(),
+    // #914 r6 (判官 r5 P2) — THE MERCHANT'S OWN WORDS ARE **NOT** A FIELD HERE, deliberately.
+    //
+    // The receipt's left-hand side ("what you wrote", GenJob.requestedPrompt) used to ride in
+    // this schema. Every entry point that parses this object is a Server Action the browser can
+    // call directly, so accepting it here let any caller write an arbitrary sentence into a record
+    // the merchant is later shown as evidence — the #882 approvedEntities lesson ("approved A,
+    // ran B") applied to provenance instead of instructions. Because this schema is `.strict()`,
+    // leaving the field OUT means a request carrying it is rejected outright, before any spend.
+    //
+    // The one place that can honestly produce this fact is the one place that composes
+    // (coworkGenerate): it holds the before and after in the same breath. It hands the value to
+    // startCoworkGen over an in-process channel that cannot survive serialization —
+    // apps/web/lib/merchant-prompt-provenance.ts — and startGen writes it from there alone.
     entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
     // Phase C: { [entityId]: variantId } — which named variant each @mention
     // selected. Absent → all mentions condition on the entity's base refs

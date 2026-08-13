@@ -11,11 +11,17 @@
 --     五类花钱入口(画布 / 工厂 / 战役 / 模板 / 详情页编辑 / Otto)全都汇到这一个发送点,
 --     所以覆盖是结构性的,不靠逐个入口去接线,新入口也漏不掉。
 --
+--   · "RefGenJob"."sentPromptText" —— 同一条纪律套在**第三个**付费发送点上(元素参考照,
+--     apps/worker/src/jobs/refgen.ts)。判官 r5 P1-1:少这一个记录点,「回执覆盖全部付费
+--     发送点」这句话就不成立。它与 outputAssetIds/spentUsd/settle 同一笔提交事务落库。
+--
 --   · "GenJob"."requestedPrompt" —— **商家自己写的那一句**,只在入队前我们自己的
 --     composePrompt 拼装步骤真的动过手时才写(apps/web/lib/cowork-actions.ts 的
 --     coworkGenerate,给未配专属提示词技能的模型家族追加家族×模式指令词)。没写 = 这一单
 --     的 "GenJob"."prompt" 本身就是商家写的那句。回执比对的商家那一列 =
 --     COALESCE("GenJob"."requestedPrompt", "GenJob"."prompt"),商家原话全线只有这一个出处。
+--     判官 r5 P2 之后,这一列**只由服务端写**:它不再是 genRequest 的字段(公开 Server
+--     Action 交这个字段一律被 .strict() 拒收),只经 startCoworkGen 的进程内可信通道到达。
 --
 -- reserve / settle / refund 的权威、幂等键、以及 CreditLedger 一个字节都没动;这两列也绝不
 -- 参与任何 spend 判定或 factoryMaterialMatches 重放比对。
@@ -29,3 +35,4 @@
 
 ALTER TABLE "GenJob" ADD COLUMN "requestedPrompt" TEXT;
 ALTER TABLE "Generation" ADD COLUMN "sentPromptText" TEXT;
+ALTER TABLE "RefGenJob" ADD COLUMN "sentPromptText" TEXT;
