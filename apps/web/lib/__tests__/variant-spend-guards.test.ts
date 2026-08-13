@@ -61,6 +61,16 @@ vi.mock("../model-registry", () => ({ resolveDisabledModels: h.resolveDisabledMo
 vi.mock("../queue", () => ({ getBoss: h.getBoss }));
 vi.mock("@fikirtive/db", () => {
   class InsufficientCredits extends Error {}
+  // #524 — the variant dispatch path now tells the merchant's OWN spend cap apart from an empty
+  // balance (Settings vs Billing), so the double has to carry that class too: `instanceof` against
+  // an undefined export throws before any of this file's assertions get to run.
+  class SpendCapBlocked extends Error {
+    constructor(readonly detail: { requiredInternal: number; capInternal: number | null }) {
+      super("Paused by your spend cap — raise it in Settings to run this.");
+      this.name = "SpendCapBlocked";
+    }
+    get capInternal() { return this.detail.capInternal; }
+  }
   const prisma = {
     entity: { findFirst: h.entityFindFirst },
     asset: { findFirst: h.assetFindFirst },
@@ -90,7 +100,7 @@ vi.mock("@fikirtive/db", () => {
       }
     },
   };
-  return { prisma, reserveCredits: h.reserveCredits, refundReservation: h.refundReservation, InsufficientCredits };
+  return { prisma, reserveCredits: h.reserveCredits, refundReservation: h.refundReservation, InsufficientCredits, SpendCapBlocked };
 });
 
 import { createVariant, deleteVariant, regenerateVariant } from "../refgen-actions";
