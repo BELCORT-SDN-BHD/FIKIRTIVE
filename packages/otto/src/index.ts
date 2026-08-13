@@ -59,9 +59,26 @@ export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";
 // storyboard-edit — the PURE storyboard edit transforms (no DB/SDK), the single edit-semantics
 // authority shared by the human server actions (apps/web/lib/storyboard-actions.ts via the
 // re-export shim apps/web/lib/storyboard-edit.ts) and the editStoryboard skill (W-B3-C).
-export { applyEditShotPrompt, applyAddShot, applyDeleteShot, applyReorderShots } from "./storyboard-edit.js";
-export type { ShotPromptPatch, NewShotInput } from "./storyboard-edit.js";
+export { applyEditShotPrompt, applyAddShot, applyDeleteShot, applyReorderShots, applySetContinuity } from "./storyboard-edit.js";
+export { editStaleness } from "./storyboard-edit.js";
+export type { ShotPromptPatch, NewShotInput, EditStaleness } from "./storyboard-edit.js";
 export { editStoryboard, editStoryboardSkill } from "./skills/edit-storyboard.js";
+// storyboard-child-job — 「一张子卡背后那条作业此刻算不算在途」的**唯一**判定(#782 r15,
+// 判官 r14 P1)。与上面的纯变换同一条理由住在这里:编辑有三个执行器(人工 server action、
+// editStoryboard skill、闸① 的 prepare/regen),而判定只能有一份。读库,不花钱。
+export {
+  lockCardTx,
+  childJobFor,
+  firstGenerationIdOf,
+  isExhausted,
+  isUnconsumedInFlight,
+  inFlightPointerBlock,
+  JOB_DEAD_STATUSES,
+  JOB_LIVE_STATUSES,
+  VIDEO_IN_FLIGHT_EDIT_BLOCK,
+  FRAME_IN_FLIGHT_EDIT_BLOCK,
+} from "./storyboard-child-job.js";
+export type { ChildJob, PrismaTx } from "./storyboard-child-job.js";
 export { proposeResearch, proposeResearchSkill } from "./skills/propose-research.js";
 export type { ResearchCardPayload, ResearchCardInput } from "./skills/propose-research.helpers.js";
 export { RESEARCH_TIERS, researchTierEstimate, researchTierBudgetInternal } from "./skills/propose-research.helpers.js";

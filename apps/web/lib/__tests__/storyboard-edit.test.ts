@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  editStaleness,
   applyEditShotPrompt,
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
+  applySetContinuity,
 } from "../storyboard-edit";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 
@@ -145,5 +147,79 @@ describe("applyReorderShots", () => {
     expect(moved.videoCardId).toBe("vc0");
     expect(moved.videoGenerationId).toBe("vg0");
     expect(moved.firstFrameGenerationId).toBe("gen0");
+  });
+});
+
+describe("#782 applySetContinuity —— 只改开关,一件已生成的东西都不动", () => {
+  it("开 → 落 continuity:true,镜头逐字不变(含已付费的帧/片键)", () => {
+    const p = base();
+    const next = applySetContinuity(p, true);
+    expect(next.continuity).toBe(true);
+    expect(next.shots).toEqual(p.shots);
+    expect(p.continuity).toBeUndefined(); // 不 mutate 入参
+  });
+
+  it("关 → 不落键(与从没开过逐字节同形),镜头同样不动", () => {
+    const p = { ...base(), continuity: true };
+    const next = applySetContinuity(p, false);
+    expect("continuity" in next).toBe(false);
+    expect(next.shots).toEqual(p.shots);
+  });
+
+  it("反复开关不会累积任何副作用", () => {
+    const p = base();
+    const back = applySetContinuity(applySetContinuity(applySetContinuity(p, true), false), true);
+    expect(back.continuity).toBe(true);
+    expect(back.shots).toEqual(p.shots);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r17(判官 r16 P1-1)—— 「传了这个字段」≠「商家改了这句话」
+// ---------------------------------------------------------------------------
+//
+// 真实 UI 保存时两句 prompt 无条件同发(StoryboardCard.saveEdit,草稿由当前值 seed)。
+// 旧判据 `patch.firstFramePrompt !== undefined` 因此把「只改视频文字」读成「帧文字改了」,
+// 把一张已付费已消费的首帧两键删掉 → 对这一镜不可达 → prepare 铸新卡新 cowork: 域 → 可再收费。
+describe("#782 r17 editStaleness —— 陈旧只由「真的不同」产生", () => {
+  const shot = { firstFramePrompt: "ff0", videoPrompt: "v0", durationSeconds: 5 };
+
+  it("原样回发(UI 的实际形状)→ 什么都不过期", () => {
+    expect(editStaleness(shot, { firstFramePrompt: "ff0", videoPrompt: "v0" }))
+      .toEqual({ frame: false, video: false });
+  });
+
+  it("只有视频文字真的变了 → 只有视频过期,帧不动", () => {
+    expect(editStaleness(shot, { firstFramePrompt: "ff0", videoPrompt: "v0 (new)" }))
+      .toEqual({ frame: false, video: true });
+  });
+
+  it("帧文字真的变了 → 帧过期,并级联到视频(视频以首帧为源)", () => {
+    expect(editStaleness(shot, { firstFramePrompt: "NEW", videoPrompt: "v0" }))
+      .toEqual({ frame: true, video: true });
+  });
+
+  it("时长真的变了 → 只有视频过期;时长原样回发 → 不过期", () => {
+    expect(editStaleness(shot, { durationSeconds: 10 })).toEqual({ frame: false, video: true });
+    expect(editStaleness(shot, { durationSeconds: 5 })).toEqual({ frame: false, video: false });
+  });
+
+  it("字段缺席与「值相同」同义 —— 两条路必须给出同一个答案", () => {
+    expect(editStaleness(shot, {})).toEqual(editStaleness(shot, { firstFramePrompt: "ff0", videoPrompt: "v0", durationSeconds: 5 }));
+  });
+});
+
+describe("#782 r17 applyEditShotPrompt —— 级联读的就是那份答案", () => {
+  it("两句同发、帧文字原样 → 已付费的帧两键必须留下(判官 r16 P1-1 的钱)", () => {
+    const r = applyEditShotPrompt(base(), 0, { firstFramePrompt: "ff0", videoPrompt: "NEWV" });
+    expect(r.shots[0].firstFrameCardId).toBe("fc0");
+    expect(r.shots[0].firstFrameGenerationId).toBe("gen0");
+    expect("videoCardId" in r.shots[0]).toBe(false); // 视频真的变了 → 照旧作废
+  });
+
+  it("原样保存(什么都没改)→ 四个键一个都不动", () => {
+    const b = base();
+    const r = applyEditShotPrompt(b, 0, { firstFramePrompt: "ff0", videoPrompt: "v0", durationSeconds: 5 });
+    expect(r.shots[0]).toEqual(b.shots[0]);
   });
 });

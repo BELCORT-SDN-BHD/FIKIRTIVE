@@ -153,3 +153,28 @@ describe("proposeStoryboardSkill gate", () => {
     expect(proposeStoryboardSkill.requires.map((r) => r.field)).toContain("goal");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #782 接续:Otto 起草时就能定「这条片子是不是一镜接一镜」
+// ---------------------------------------------------------------------------
+
+describe("#782 continuity", () => {
+  const okShot = { firstFramePrompt: "a cat on a sofa", videoPrompt: "the cat stretches" };
+
+  it("是可选入参,缺省 = 不落键(老卡与新卡逐字节同形)", () => {
+    expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [okShot], continuity: true }).success).toBe(true);
+    const p = buildStoryboardPayload(storyboardCardInput.parse({ storyboardTitle: "x", shots: [okShot] }));
+    expect("continuity" in p).toBe(false);
+  });
+
+  it("true → 落 continuity:true;false 同样不落键(与「没说」是同一件事)", () => {
+    const on = buildStoryboardPayload(storyboardCardInput.parse({ storyboardTitle: "x", shots: [okShot], continuity: true }));
+    expect(on.continuity).toBe(true);
+    const off = buildStoryboardPayload(storyboardCardInput.parse({ storyboardTitle: "x", shots: [okShot], continuity: false }));
+    expect("continuity" in off).toBe(false);
+  });
+
+  it("skill 说明里讲清什么时候该开(Otto 是靠这段话判断的)", () => {
+    expect(proposeStoryboardSkill.description).toContain("continuity:true");
+  });
+});

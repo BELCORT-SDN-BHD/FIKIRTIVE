@@ -5,9 +5,11 @@
  * 编辑语义(含 G 闸② 陈旧级联),不可能漂移。本文件保住 web 侧原导入路径与测试,零改动。
  */
 export {
+  editStaleness,
   applyEditShotPrompt,
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
+  applySetContinuity,
 } from "@fikirtive/otto";
-export type { ShotPromptPatch, NewShotInput } from "@fikirtive/otto";
+export type { ShotPromptPatch, NewShotInput, EditStaleness } from "@fikirtive/otto";

@@ -241,7 +241,13 @@ export const VIDEO_CRAFT: readonly VideoCraft[] = [
   { field: "clip:shots", does: "up to four beats inside ONE continuous clip (separate clips are a storyboard)" },
   { field: "clip:style", does: "the overall look" },
   { field: "clip:pacing", does: "how the clip moves through time (slow motion, hard cuts, one continuous take)" },
-  { field: "clip:continuesFromPrev", does: "this clip picks up where the previous one left off" },
+  // #782:这里原本有一行 `clip:continuesFromPrev`(「这条片子接着上一条」)。#921 写这张表时
+  // 照的是当时的 schema,而 #782 已经把那个入参**退役**了 —— 它当年只是往 prompt 里加一句
+  // 「continuing from the previous frame」的**文字暗示**,而暗示的那件事在执行层从来没有发生
+  // 过:上一条片子的末帧根本没被送进这一条。接续现在由真东西完成(分镜闸③ 把上一镜的真实
+  // 末帧灌成这一镜的首帧),于是这一镜本来就是 i2v —— 商家能要到的那件事,如实落在
+  // `clip:mode` 那一格里(engine 自己的「接着演下去」则是 `clip:extendDirection`)。
+  // 所以这里不是改指向,是那一格的真身已经不存在:表跟着真相走,一格不多。
   { field: "clip:references", does: "lock a named element's identity by wording (the photos ride via propose's entityIds)" },
   { field: "clip:cleanFootage", does: "ban on-screen text, watermarks, and logos — on by default" },
   { field: "clip:constraints", does: "hard do/don't, each written as a command" },

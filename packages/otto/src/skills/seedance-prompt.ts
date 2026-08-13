@@ -37,8 +37,8 @@ export const seedancePromptSkill = defineOttoSkill({
     "instead of touching theirs. " +
     "Our users don't know cinematography — YOU fill " +
     "it: give each shot a clear action, and add exactly ONE camera move, a shot framing, and scene lighting even " +
-    "if unmentioned. One shot = one beat; use up to 4 shots for a multi-beat clip. Set continuesFromPrev:true for " +
-    "a shot that follows a prior clip. List @-referenced entities in `references` to lock identity. cleanFootage " +
+    "if unmentioned. One shot = one beat; use up to 4 shots for a multi-beat clip. " +
+    "List @-referenced entities in `references` to lock identity. cleanFootage " +
     "defaults true (bans on-screen text/watermark/logo) — set false only when text or a logo should appear in " +
     "the video. " +
     // #774 U3 ③ —— 情绪外化：给镜头看得见的东西，不是一个感受词。

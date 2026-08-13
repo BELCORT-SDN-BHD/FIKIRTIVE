@@ -49,6 +49,13 @@ beforeEach(() => {
   m.creditLedgerFindFirst.mockResolvedValue(null);
   // Default: pg-boss has no live message for the job → the QUEUED reap may proceed.
   m.queryRaw.mockResolvedValue([]);
+  // Default for EVERY scan the sweep runs (each test overrides the ones it cares about with
+  // mockResolvedValueOnce): nothing to reap. #782 r13 added a fourth scan, and a scan whose mock
+  // falls off the end of the `Once` chain would return undefined and blow up the sweep.
+  m.genJobFindMany.mockResolvedValue([]);
+  // #782 r13: the self-heal reads refundReservation's four-state answer (#858) to decide whether
+  // its FAILED flip may stand. Default = the ordinary case: we released the hold.
+  m.refundReservation.mockResolvedValue("refunded");
 });
 
 describe("reapStaleGenJobs — GENERATING branch", () => {
@@ -228,5 +235,118 @@ describe("reapStaleGenJobs — committed-but-stuck resume scan (Codex 2026-07-03
     expect(m.refundReservation).not.toHaveBeenCalled(); // already refunded — never refund twice
     const kinds = m.chatMessageCreate.mock.calls.map((c) => c[0].data.kind);
     expect(kinds).not.toContain("GEN_RESULT"); // the user must never see a result they weren't charged for
+  });
+});
+
+describe("reapStaleGenJobs — DONE-with-nothing self-heal (#782 r13, judge r12 P1-F1)", () => {
+  // A row that says DONE and cannot point at a single Generation. No merchant surface has an
+  // honest word for it: "nothing started" is a lie about the money, the old result is a lie about
+  // the replacement, and "you weren't charged" is a lie unless the hold really came back. The
+  // sweep's job is to turn it into a state that IS honest — and only when the money says it may.
+  const doneEmpty = { id: "g9", ownerId: "o9", threadId: "t9", kind: "VIDEO", model: "seedance-2-mini" };
+
+  /** Only the 4th scan returns rows. */
+  function onlyDoneEmptyScan(rows: unknown[] = [doneEmpty]) {
+    m.genJobFindMany
+      .mockResolvedValueOnce([]) // stale GENERATING
+      .mockResolvedValueOnce([]) // stuck QUEUED
+      .mockResolvedValueOnce([]) // committed-but-stuck
+      .mockResolvedValueOnce(rows);
+  }
+
+  it("scans exactly the DONE-with-nothing population, past a grace window", async () => {
+    onlyDoneEmptyScan();
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+    await reapStaleGenJobs();
+    const scan = m.genJobFindMany.mock.calls[3]![0];
+    expect(scan.where.status).toBe("DONE");
+    expect(scan.where.generationIds).toEqual({ isEmpty: true });
+    expect(scan.where.finishedAt.lt).toBeInstanceOf(Date);
+  });
+
+  it("flips it to FAILED + refunds + posts an honest terminal message", async () => {
+    onlyDoneEmptyScan();
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+    const n = await reapStaleGenJobs();
+    expect(n).toBe(1);
+    const failed = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(failed).toBeTruthy();
+    // The claim re-asserts every predicate — a concurrent resume that recorded outputs, or
+    // another instance's sweep, makes it match zero rows.
+    expect(failed![0].where).toMatchObject({ id: "g9", ownerId: "o9", status: "DONE", generationIds: { isEmpty: true } });
+    // Labelled refund (#858 `reason`): "this reservation has a REFUND" says nothing about WHO
+    // wrote it, so the sweep signs its own.
+    expect(m.refundReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      { orgId: "o9", refId: "g9", reason: "gen:done-without-output" },
+    );
+    expect(m.chatMessageCreate).toHaveBeenCalledTimes(1);
+    const msg = m.chatMessageCreate.mock.calls[0]![0].data;
+    expect(msg).toMatchObject({ kind: "TURN_ERROR", genJobId: "g9", threadId: "t9" });
+    expect(msg.text).toContain("You weren't charged.");
+  });
+
+  for (const outcome of ["already-refunded", "no-reservation"] as const) {
+    it(`keeps the flip when the ledger says "${outcome}" — the merchant is provably not out of pocket`, async () => {
+      onlyDoneEmptyScan();
+      m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+      m.refundReservation.mockResolvedValue(outcome);
+      const n = await reapStaleGenJobs();
+      expect(n).toBe(1);
+      expect(m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED")).toBeTruthy();
+      expect(m.chatMessageCreate).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it('ROLLS THE FLIP BACK when the ledger says "already-settled" — FAILED must never promise a refund that did not happen', async () => {
+    // The one case where the merchant really is out of pocket. FAILED/CANCELLED carry
+    // "you weren't charged" on every surface that reads them, and that promise is true only
+    // because every path to those words releases the hold in the same transaction. Writing this
+    // row FAILED would be the first exception — so the transaction is thrown away and a human is
+    // asked instead. Putting the merchant right means moving money that was correctly taken.
+    onlyDoneEmptyScan();
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+    m.refundReservation.mockResolvedValue("already-settled");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const n = await reapStaleGenJobs();
+      expect(n).toBe(0); // nothing healed
+      expect(m.chatMessageCreate, "told the merchant they weren't charged over money that was taken").not.toHaveBeenCalled();
+      expect(spy.mock.calls.flat().join(" ")).toContain("paid for nothing");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("says nothing at all when it loses the claim (a concurrent resume recorded outputs first)", async () => {
+    onlyDoneEmptyScan();
+    m.genJobUpdateMany.mockResolvedValue({ count: 0 });
+    const n = await reapStaleGenJobs();
+    expect(n).toBe(0);
+    expect(m.refundReservation).not.toHaveBeenCalled();
+    expect(m.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("one bad row doesn't halt the sweep — the next one still heals", async () => {
+    const other = { ...doneEmpty, id: "g10", ownerId: "o10", threadId: "t10" };
+    onlyDoneEmptyScan([doneEmpty, other]);
+    m.genJobUpdateMany.mockRejectedValueOnce(new Error("db blip")).mockResolvedValue({ count: 1 });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const n = await reapStaleGenJobs();
+      expect(n).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("counts alongside the other three scans in the sweep's return value", async () => {
+    m.genJobFindMany
+      .mockResolvedValueOnce([stuckJob])
+      .mockResolvedValueOnce([stuckQueuedJob])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([doneEmpty]);
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+    expect(await reapStaleGenJobs()).toBe(3);
   });
 });

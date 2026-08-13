@@ -4,20 +4,28 @@ import { executeProposeStoryboard } from "./propose-storyboard.js";
 import { MAX_STORYBOARD_SHOTS, type StoryboardCardPayload } from "./propose-storyboard.helpers.js";
 import type { OttoContext } from "../context.js";
 
-const { mockFindFirst, mockUpdate, mockCreate, mockGenJobCreate } = vi.hoisted(() => ({
+const { mockFindFirst, mockUpdate, mockCreate, mockGenJobCreate, mockGenJobFindFirst, mockExecuteRaw } = vi.hoisted(() => ({
   mockFindFirst: vi.fn(),
   mockUpdate: vi.fn(),
   mockCreate: vi.fn(),
   mockGenJobCreate: vi.fn(), // must NEVER be called — this skill is $0
+  mockGenJobFindFirst: vi.fn(),
+  mockExecuteRaw: vi.fn(),
 }));
 
-vi.mock("@fikirtive/db", () => ({
-  prisma: {
+// #782 r15:editShot 变成「卡锁 + 锁内重读 + 在途闸 + 写」的一笔事务,所以替身多了
+// $transaction / $executeRaw / genJob.findFirst。tx 与顶层共用同一组 mock。
+vi.mock("@fikirtive/db", () => {
+  const client = {
     chatMessage: { findFirst: mockFindFirst, update: mockUpdate, create: mockCreate },
-    genJob: { create: mockGenJobCreate },
-  },
-  Prisma: {},
-}));
+    genJob: { create: mockGenJobCreate, findFirst: mockGenJobFindFirst },
+    $executeRaw: mockExecuteRaw,
+  };
+  return {
+    prisma: { ...client, $transaction: (fn: (tx: unknown) => unknown) => fn(client) },
+    Prisma: {},
+  };
+});
 // addShot mints a shotId via newId — deterministic stub (partial mock keeps the real core exports).
 vi.mock("@fikirtive/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fikirtive/core")>()),
@@ -52,6 +60,8 @@ function payload3(): StoryboardCardPayload {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUpdate.mockResolvedValue({});
+  mockExecuteRaw.mockResolvedValue(1);
+  mockGenJobFindFirst.mockResolvedValue(null); // 默认:子卡背后没有任何作业
 });
 
 describe("editStoryboardInput schema", () => {
@@ -260,5 +270,239 @@ describe("S1 $0 sub-journey: draft → edit script → save (never spends)", () 
 
     // $0 全链断言:分镜起草/编辑绝不建 GenJob(Make all 付费管线在批2 W-B3-H,不在此)
     expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 接续开关的 Otto 那一面 —— 与人工动作层共用同一条纯变换
+// ---------------------------------------------------------------------------
+
+describe("#782 op=setContinuity", () => {
+  beforeEach(() => {
+    mockFindFirst.mockResolvedValue(card(payload3()));
+    mockUpdate.mockResolvedValue({});
+  });
+
+  it("开 → 回写 continuity:true,镜头一格不动(不碰任何已生成的帧/片键)", async () => {
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setContinuity", continuity: true },
+      { context: makeCtx() },
+    );
+    expect(res).toEqual({ cardId: "card-1", shotCount: 3 });
+    const written = mockUpdate.mock.calls[0]![0].data.payload as StoryboardCardPayload;
+    expect(written.continuity).toBe(true);
+    expect(written.shots).toEqual(payload3().shots);
+  });
+
+  it("关 → 不落键", async () => {
+    mockFindFirst.mockResolvedValue(card({ ...payload3(), continuity: true }));
+    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: false }, { context: makeCtx() });
+    const written = mockUpdate.mock.calls[0]![0].data.payload as StoryboardCardPayload;
+    expect("continuity" in written).toBe(false);
+  });
+
+  it("没说开还是关 → 拒绝,零写入(绝不替商家猜一个方向)", async () => {
+    const res = await executeEditStoryboard({ cardId: "card-1", op: "setContinuity" }, { context: makeCtx() });
+    expect(res).toEqual({ error: "setContinuity needs continuity true or false." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("跨租户的卡照旧进不来", async () => {
+    mockFindFirst.mockResolvedValue(null);
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setContinuity", continuity: true },
+      { context: makeCtx({ orgId: "someone-else" }) },
+    );
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("$0:这条路同样不建 GenJob", async () => {
+    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: true }, { context: makeCtx() });
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+    expect(editStoryboardInput.safeParse({ cardId: "c", op: "setContinuity", continuity: true }).success).toBe(true);
+    expect(editStoryboardSkill.cost).toBe("free");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r15(判官 r14 P1)—— Otto 那一面也必须让路
+// ---------------------------------------------------------------------------
+//
+// 双面产品哲学:同一个业务动作,人工与 Otto 走同一条规矩。这道闸只装在人工那一面,等于
+// 商家换个入口就能把同一笔钱的产出变成孤儿 —— 只关一扇门等于没关。判定与话术都从
+// ../storyboard-child-job.js 来,两面不可能漂移。
+describe("#782 r15 editShot —— 在途付费作业面前,Otto 的编辑同样让路", () => {
+  const VIDEO_BUSY = "That video is still being made — wait for it to finish, then edit this shot.";
+  const FRAME_BUSY = "That first frame is still being made — wait for it to finish, then edit this shot.";
+
+  function paid(): StoryboardCardPayload {
+    return {
+      storyboardTitle: "Ad",
+      shots: [
+        { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", firstFrameCardId: "fc0", firstFrameGenerationId: "fg0", videoCardId: "vc0" },
+        { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1" },
+      ],
+    };
+  }
+
+  function route(p: StoryboardCardPayload) {
+    mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+      const w = args.where;
+      if (w.kind === "STORYBOARD_CARD") return card(p);
+      if (w.kind === "GEN_CARD") return { genJobId: null };
+      return null; // GEN_RESULT 缺席 → 回落到作业行自己的 generationIds
+    });
+  }
+
+  it("视频作业还在跑 → 拒绝、零写入(指针留着,产出回得来,第二个幂等域铸不出来)", async () => {
+    route(paid());
+    mockGenJobFindFirst.mockResolvedValue({ id: "j1", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, videoPrompt: "NEW" },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ error: VIDEO_BUSY });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
+  it("视频作业 DONE 但产出还没落到 payload → 同样拒绝(钱已收、产出未消费)", async () => {
+    route(paid());
+    mockGenJobFindFirst.mockResolvedValue({ id: "j1", status: "DONE", generationIds: ["g9"], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, durationSeconds: 10 },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ error: VIDEO_BUSY });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("首帧作业在途 + 改 firstFramePrompt → 拒绝;同一状态下只改 videoPrompt → 放行", async () => {
+    const p = paid();
+    delete p.shots[0]!.videoCardId; // 只剩帧指针
+    route(p);
+    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "QUEUED", generationIds: [], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+
+    expect(await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, firstFramePrompt: "NEW" },
+      { context: makeCtx() },
+    )).toEqual({ error: FRAME_BUSY });
+    expect(mockUpdate).not.toHaveBeenCalled();
+
+    // 帧两键这次不会被删 → 别人的在途不挡这一次编辑。
+    const ok = await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, videoPrompt: "NEW" },
+      { context: makeCtx() },
+    );
+    expect(ok).toEqual({ cardId: "card-1", shotCount: 2 });
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("死作业 / 产出已消费 / 根本没作业 → 一律放行,三条既有路一格没少", async () => {
+    for (const job of [
+      { id: "j", status: "FAILED", generationIds: [], lastFrameAssetId: null, projectId: "p", threadId: "t-1" },
+      null,
+    ]) {
+      vi.clearAllMocks();
+      mockUpdate.mockResolvedValue({});
+      mockExecuteRaw.mockResolvedValue(1);
+      route(paid());
+      mockGenJobFindFirst.mockResolvedValue(job);
+      const res = await executeEditStoryboard(
+        { cardId: "card-1", op: "editShot", index: 0, videoPrompt: "NEW" },
+        { context: makeCtx() },
+      );
+      expect(res).toEqual({ cardId: "card-1", shotCount: 2 });
+    }
+
+    // 产出已经落在 payload 上 = 商家看着成品说「再做一个」。
+    vi.clearAllMocks();
+    mockUpdate.mockResolvedValue({});
+    mockExecuteRaw.mockResolvedValue(1);
+    const consumed = paid();
+    consumed.shots[0]!.videoGenerationId = "g9";
+    route(consumed);
+    mockGenJobFindFirst.mockResolvedValue({ id: "j", status: "DONE", generationIds: ["g9"], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+    expect(await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, videoPrompt: "NEW" },
+      { context: makeCtx() },
+    )).toEqual({ cardId: "card-1", shotCount: 2 });
+  });
+
+  it("先取卡锁、锁内重读父卡才判断 —— 不是 check-then-act", async () => {
+    route(paid());
+    mockGenJobFindFirst.mockResolvedValue(null);
+
+    await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, videoPrompt: "NEW" },
+      { context: makeCtx() },
+    );
+
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    const reads = mockFindFirst.mock.calls.filter(
+      (c) => (c[0] as { where: Record<string, unknown> }).where.kind === "STORYBOARD_CARD",
+    );
+    expect(reads.length).toBe(2); // 锁前存在性 + 锁内权威
+  });
+
+  it("其余四个 op 一格不变:仍是不取锁的 last-write-wins 写回", async () => {
+    route(paid());
+    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: true }, { context: makeCtx() });
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #782 r17(判官 r16 P1-1)—— Otto 那一面同样以「真的不同」为准
+describe("#782 r17 editShot —— 帧判定不看键在不在", () => {
+  function paidFrame(): StoryboardCardPayload {
+    return {
+      storyboardTitle: "Ad",
+      shots: [
+        { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", durationSeconds: 5, firstFrameCardId: "fc0", firstFrameGenerationId: "gen0" },
+        { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1" },
+      ],
+    };
+  }
+  function route(p: StoryboardCardPayload) {
+    mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+      const w = args.where;
+      if (w.kind === "STORYBOARD_CARD") return card(p);
+      if (w.kind === "GEN_CARD") return { genJobId: null };
+      return null;
+    });
+  }
+
+  it("帧文字原样回发 + 只改视频文字 → 已付费的帧留在这一镜上,且帧的在途不挡路", async () => {
+    route(paidFrame());
+    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0 (new)" },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ cardId: "card-1", shotCount: 2 });
+    const written = mockUpdate.mock.calls[0]![0] as { data: { payload: StoryboardCardPayload } };
+    expect(written.data.payload.shots[0]!.firstFrameCardId).toBe("fc0");
+    expect(written.data.payload.shots[0]!.firstFrameGenerationId).toBe("gen0");
+  });
+
+  it("帧文字真的改了 + 帧作业在途 → 照旧拒绝", async () => {
+    route(paidFrame());
+    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, firstFramePrompt: "NEW", videoPrompt: "v0" },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ error: "That first frame is still being made — wait for it to finish, then edit this shot." });
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

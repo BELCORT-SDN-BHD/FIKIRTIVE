@@ -22,6 +22,10 @@ export const storyboardCardInput = z.object({
   storyboardTitle: z.string().trim().min(1).max(120),
   goal: z.string().optional(),
   shots: z.array(storyboardShot).min(1).max(MAX_STORYBOARD_SHOTS),
+  /** #782 接续模式:这条片子的镜头是不是**一镜接一镜**的同一段动作/同一个空间。
+   *  true ⇒ 每个镜头的起点 = 上一个镜头**真实停住的那一帧**(引擎免费附送的末帧),
+   *  而不是另外画一张首帧图。默认 false = 各镜头彼此独立(可并行、各画各的首帧)。 */
+  continuity: z.boolean().optional(),
 });
 export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
 
@@ -31,6 +35,10 @@ export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
 export type StoryboardCardPayload = {
   storyboardTitle: string;
   goal?: string;
+  /** #782 接续模式(整条分镜一个开关,缺省 = false = 老行为)。
+   *  开着时:只有第一个镜头需要生成首帧图;其后每个镜头的首帧由上一个镜头出片时
+   *  引擎免费附送的**末帧**填上(闸③),所以镜头之间是真的接得上,而不是靠提示词暗示。 */
+  continuity?: boolean;
   shots: {
     shotId: string;
     index: number;
@@ -47,6 +55,18 @@ export type StoryboardCardPayload = {
     videoCardId?: string;
     /** 视频生成完写回(闸②,服务端字段)——同 firstFrameGenerationId 语义。 */
     videoGenerationId?: string;
+    /**
+     * #782 r3 —— 闸③ 的判词(服务端字段,只有 sync 会写)。
+     *
+     * 值 = **上一镜的那一张视频子卡 id**,含义是「那条片子已经走完一生,交不出可用的末帧,
+     * 这一镜再等下去也等不到免费的帧」。只有闸③ 看得见视频作业的真实状态,所以这条判断
+     * 只能在那里做一次、记下来,而不是让卡面和动作层各自从指针形状去猜(r2b 猜错了两次:
+     * 有 firstFrameCardId 不等于在生成,有旧 videoGenerationId 不等于交棒已经结束)。
+     *
+     * 点名子卡 id 是这条判词的自清机制:上一镜一旦重出(videoCardId 换成新的一张),旧判词
+     * 自动不再匹配 —— 新片还在跑的窗口里,没有人会被请去为一张本该继承的帧多花钱。
+     */
+    inheritBlockedByVideoCardId?: string;
   }[];
 };
 
@@ -59,6 +79,9 @@ export function buildStoryboardPayload(
   return {
     storyboardTitle: input.storyboardTitle,
     ...(input.goal ? { goal: input.goal } : {}),
+    // 只有 true 才落键 —— false 与「没说」在读取端是同一件事(默认独立),多存一个
+    // false 只会让老卡与新卡看起来不同,却没有任何行为差别。
+    ...(input.continuity ? { continuity: true } : {}),
     shots: input.shots.map((s, index) => ({
       shotId: mintId(),
       index,

@@ -184,7 +184,9 @@ describe("backfillCanvasBoards carries the row tenant through every per-board op
 
 describe("reapStaleGenJobs carries a two-phase principal", () => {
   beforeEach(() => {
-    // scan 1 = one stuck GENERATING job for org o1; scans 2 and 3 empty.
+    // scan 1 = one stuck GENERATING job for org o1; scans 2–4 empty.
+    // (#782 r13 added scan 4, the DONE-with-nothing self-heal — it must carry the same
+    // tenant-less scan identity as the other three, which is what these cases assert.)
     let call = 0;
     db.genJobFindMany.mockImplementation(
       lazyImpl("genJob.findMany", () => {
@@ -197,7 +199,7 @@ describe("reapStaleGenJobs carries a two-phase principal", () => {
   it("scans under the named system identity with NO tenant", async () => {
     await reapStaleGenJobs();
     const scans = all("genJob.findMany");
-    expect(scans).toHaveLength(3);
+    expect(scans).toHaveLength(4);
     for (const p of scans) {
       expect(p).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false });
     }
@@ -214,8 +216,9 @@ describe("reapStaleGenJobs carries a two-phase principal", () => {
   it("returns to the tenant-less scan scope after each row and leaves nothing behind", async () => {
     expect(getPrincipal()).toBeUndefined();
     await reapStaleGenJobs();
-    // scans 2 and 3 run AFTER the per-row write phase — they must be tenant-less again
+    // scans 2–4 run AFTER the per-row write phase — they must be tenant-less again
     expect(all("genJob.findMany").slice(1)).toEqual([
+      { kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false },
       { kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false },
       { kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false },
     ]);

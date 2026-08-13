@@ -143,6 +143,19 @@ export const ARK_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
  */
 export const VIDEO_POLL_TIMEOUT_MS = 15 * 60_000;
 
+/**
+ * #782 r2 — how long the FREE last frame may hold the paid clip hostage.
+ *
+ * The clip is already downloaded and already billed by the time this runs; the still is a
+ * by-product. "Best-effort" therefore has to cover the slow case as well as the failing one:
+ * an unbounded `await` on a stalled TOS connection would keep the job GENERATING for as long
+ * as the socket stayed open, and every minute of that is a minute closer to the queue expiry
+ * that would REDELIVER a clip we already paid for. Eight seconds is far past a real 1–2 MB
+ * PNG fetch and far short of any of the worker's clocks, so it can only ever fire on a hang.
+ * On timeout we drop the still and return the clip — the pre-#782 outcome.
+ */
+export const LAST_FRAME_FETCH_TIMEOUT_MS = 8_000;
+
 export class BytePlusProvider implements GenerationProvider {
   readonly name = "byteplus";
   constructor(private apiKey: string) {}
@@ -464,6 +477,13 @@ export class BytePlusProvider implements GenerationProvider {
       // the merchant's sound choice, finally wired. Default true = the engine default and
       // videoDefaults()'s audio for this model, so an unset toggle changes nothing.
       generate_audio: req.audio ?? true,
+      // #782 — ask for the clip's LAST FRAME as a still, so shot N+1 can literally start
+      // where shot N ended. FREE: the engine bills the clip (token formula above: output
+      // seconds × pixels × fps), and the still is a by-product of a render already paid
+      // for — no new price tier, no new charge, nothing added to the merchant's quote.
+      // Sent ONLY when the caller asked, so a plain Gen-space clip's request body is
+      // byte-identical to what it was before this ticket.
+      ...(req.returnLastFrame ? { return_last_frame: true } : {}),
       // F40 (same rule as the image path): paying merchants must not receive watermarked
       // output. Video defaults to false today; declare it so a default drift can't undo that.
       watermark: false,
@@ -504,7 +524,7 @@ export class BytePlusProvider implements GenerationProvider {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));
-      let t: { status?: string; content?: { video_url?: string } };
+      let t: { status?: string; content?: { video_url?: string; last_frame_url?: string } };
       try {
         // #795 — a poll that hangs stops the 15-minute clock below from ever being consulted:
         // the loop is parked inside `await fetch`, so neither the timeout check nor the worker's
@@ -519,7 +539,7 @@ export class BytePlusProvider implements GenerationProvider {
           if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`generation provider video poll returned ${st.status} after timeout`);
           continue; // transient non-2xx — retry
         }
-        t = (await st.json()) as { status?: string; content?: { video_url?: string }; usage?: unknown; revised_prompt?: unknown };
+        t = (await st.json()) as { status?: string; content?: { video_url?: string; last_frame_url?: string }; usage?: unknown; revised_prompt?: unknown };
       } catch (e) {
         // A chargedError thrown above must propagate (terminal); any other exception (network reset,
         // malformed body) is a transient poll failure — the task was already submitted and may still
@@ -535,6 +555,7 @@ export class BytePlusProvider implements GenerationProvider {
         // (`arrayBuffer()` throwing). PLAIN here would requeue and generate a SECOND paid clip.
         const url = t.content?.video_url;
         if (!url) throw chargedError("generation provider video response had no result URL");
+        let video: GeneratedVideo;
         // #776:回执来自这条**成功任务**自己的响应(计费量与它真正跑的提示词都在这一份里),
         // 读在下载之前 —— 拿不拿得到字节与引擎报了什么无关。readVideoReceipt 永不抛,所以这
         // 一行不会把一条已经做出来、已经计费的片子推进 charged 分支。
@@ -544,7 +565,7 @@ export class BytePlusProvider implements GenerationProvider {
           // abort is a charged failure, never a plain retry that would generate a second one.
           const r = await fetch(url, { signal: AbortSignal.timeout(ARK_DOWNLOAD_TIMEOUT_MS) });
           if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
-          return {
+          video = {
             bytes: new Uint8Array(await r.arrayBuffer()),
             ext: extFromUrl(url) ?? "mp4",
             ...(receipt ? { receipt } : {}),
@@ -553,6 +574,56 @@ export class BytePlusProvider implements GenerationProvider {
           if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
           throw chargedError(`generation provider video download failed (${e instanceof Error ? e.message : String(e)})`);
         }
+        // #782 — the clip's last frame, and why it is the ONLY thing in this method that
+        // cannot fail the job. The paid product is the CLIP, and it is already in hand and
+        // already billed. The still is a free by-product used to start the next shot; if it
+        // is missing or won't download, the correct outcome is "no automatic continuation
+        // this time", never a charged failure on a clip we successfully produced. So every
+        // failure here is swallowed, deliberately, and the video returns exactly as it did
+        // before this ticket.
+        //
+        // UNVERIFIED RESPONSE KEY (#782, stated rather than hidden): the REQUEST field
+        // `return_last_frame` was measured against this model on 2026-08-08 (accepted and
+        // effective, alongside resolution/duration/ratio/generate_audio/priority). The
+        // RESPONSE key was NOT — `last_frame_url` is read as the symmetric sibling of
+        // `video_url`. If the engine spells it differently, this reads undefined and the
+        // feature degrades to today's behaviour (shot N+1 simply has no inherited frame and
+        // the merchant generates one as before) — it does not break, mis-bill, or lie. The
+        // warning below prints the key NAMES the receipt actually carried (names only — a
+        // value would be a signed URL), so the first production clip settles the question
+        // instead of another round of guessing.
+        if (req.returnLastFrame) {
+          const tailUrl = t.content?.last_frame_url;
+          if (!tailUrl) {
+            console.warn("generation provider returned no last frame for a clip that asked for one:", {
+              model, contentKeys: Object.keys(t.content ?? {}),
+            });
+          } else {
+            // BOUNDED, and by an abort rather than a bare race: aborting the request also
+            // errors its body stream, so the budget covers `arrayBuffer()` (a body that stops
+            // mid-transfer) and not just a connect that never answers.
+            const ctl = new AbortController();
+            const stop = setTimeout(() => ctl.abort(), LAST_FRAME_FETCH_TIMEOUT_MS);
+            try {
+              const r = await fetch(tailUrl, { signal: ctl.signal });
+              if (r.ok) video.lastFrame = { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(tailUrl) ?? "png" };
+              else console.warn(`generation provider last-frame download failed (${r.status}); clip delivered without it`);
+            } catch (e) {
+              // NAME ONLY — never the message. `tailUrl` is a signed URL carrying a live
+              // X-Amz-Signature, and Node hands the input straight back to you inside the
+              // failure text: a malformed URL rejects with a TypeError whose message quotes
+              // the whole thing, signature and all. Printing it would put a working download
+              // credential for merchant media into the worker log. The class name is all this
+              // branch can act on anyway — the outcome is identical either way (no automatic
+              // continuation this time), and the open question about #782 (what the engine
+              // actually calls the key) is answered by the names-only warning above, not here.
+              console.warn(`generation provider last-frame download failed (${e instanceof Error ? e.name : typeof e}); clip delivered without it`);
+            } finally {
+              clearTimeout(stop);
+            }
+          }
+        }
+        return video;
       }
       // #661 — the three terminal statuses in which the ENGINE ITSELF reports that no video was
       // produced. Official pricing page (docs.byteplus.com/en/docs/ModelArk/1544106, last updated

@@ -93,10 +93,18 @@ export class MockProvider implements GenerationProvider {
       ext: "png",
     }));
   }
-  async generateVideo(_req: VideoRequest): Promise<GeneratedVideo> {
+  async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
     // a real, decodable 1s mp4 — content is the same for every mock i2v
     // (dedup is fine for tests; real fal returns distinct clips)
-    return { bytes: new Uint8Array(Buffer.from(MOCK_MP4_B64, "base64")), ext: "mp4" };
+    const video: GeneratedVideo = { bytes: new Uint8Array(Buffer.from(MOCK_MP4_B64, "base64")), ext: "mp4" };
+    // #782: the offline stand-in for the engine's free last frame. Seeded from the prompt +
+    // source frame so each mock clip's tail is a DISTINCT picture (distinct content hash) —
+    // otherwise every shot in a chained storyboard would inherit the same deduped asset and
+    // the tests would pass on an artefact of the mock instead of on the wiring.
+    if (req.returnLastFrame) {
+      video.lastFrame = { bytes: solidPng(hashSeed(`tail|${req.prompt}|${req.imageUrl}`) + 1, 8, 8), ext: "png" };
+    }
+    return video;
   }
 }
 

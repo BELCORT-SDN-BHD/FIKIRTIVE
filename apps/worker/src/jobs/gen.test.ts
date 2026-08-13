@@ -140,9 +140,14 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     await handleGen({ genJobId: "g1" }, 0);
 
     expect(m.generateVideo).not.toHaveBeenCalled();
-    // failClosedWithRefund: a GUARDED FAILED write (#602 r2) + refund + TURN_ERROR
+    // failClosedWithRefund: a GUARDED FAILED write (#602 r2) + refund + TURN_ERROR.
+    // #782 r17(判官 r16 P1-2):守卫多了一条 —— `generationIds` 必须为空。提交事务把产出与
+    // SETTLE 一起落库,所以「有产出」⟺「钱已经收了、东西已经交了」,那样的行永远不是这条
+    // 前置闸该终结的对象(它会让每个界面对一个付过钱的商家说「你没有被扣钱」)。
     expect(m.genJobUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "g1", ownerId: "o1", status: { in: ["QUEUED", "GENERATING"] } } }),
+      expect.objectContaining({
+        where: { id: "g1", ownerId: "o1", status: { in: ["QUEUED", "GENERATING"] }, generationIds: { isEmpty: true } },
+      }),
     );
     const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(updateCall).toBeTruthy();
@@ -539,25 +544,30 @@ describe("handleGen — count 2-4 exactly-count guard (D-035 / issue #311)", () 
     expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeTruthy();
   });
 
+  // #782 r13: the EMPTY row is now caught one line earlier, by the zero-output write-point
+  // invariant (DONE must be able to point at what it made) rather than by the count arithmetic.
+  // Every behaviour this case asserts is unchanged — fail closed, refund, nothing stored, no
+  // DONE; only the sentence it fails with is the invariant's own. The count rule still owns the
+  // short/over rows, so both statements stay pinned separately.
   it.each([
-    ["empty", []],
+    ["empty", [], /returned nothing to deliver/],
     ["short", [
       { bytes: new Uint8Array([1]), ext: "png" },
       { bytes: new Uint8Array([2]), ext: "png" },
       { bytes: new Uint8Array([3]), ext: "png" },
-    ]],
+    ], /expected 4 outputs/],
     ["over", [
       { bytes: new Uint8Array([1]), ext: "png" },
       { bytes: new Uint8Array([2]), ext: "png" },
       { bytes: new Uint8Array([3]), ext: "png" },
       { bytes: new Uint8Array([4]), ext: "png" },
       { bytes: new Uint8Array([5]), ext: "png" },
-    ]],
-  ])("R-EP-02b regression: a silent %s return terminal-fails before storage or DB output commit", async (_label, outputs) => {
+    ], /expected 4 outputs/],
+  ])("R-EP-02b regression: a silent %s return terminal-fails before storage or DB output commit", async (_label, outputs, message) => {
     m.genJobFindUnique.mockResolvedValue(countJob);
     m.generateImages.mockResolvedValue(outputs);
 
-    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow(/expected 4 outputs/);
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow(message);
 
     expect(m.generateImages).toHaveBeenCalledTimes(1); // paid provider is never retried
     expect(m.storagePut).not.toHaveBeenCalled();

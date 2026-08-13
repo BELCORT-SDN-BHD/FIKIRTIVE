@@ -171,12 +171,23 @@ export interface VideoRequest {
   aspectRatio?: string;
   fps?: number;
   audio?: boolean;
+  /** #782 — ask the engine to hand back this clip's LAST FRAME as a still.
+   *  Free: the Ark video endpoint bills the clip, not the extra picture, so this
+   *  flag never adds a charge and never changes what the merchant is quoted.
+   *  A provider that has no such mechanism simply ignores it and returns no
+   *  `lastFrame` — never an error, because nothing was promised or billed. */
+  returnLastFrame?: boolean;
 }
 
 /** One generated clip, already downloaded by the provider. */
 export interface GeneratedVideo {
   bytes: Uint8Array;
   ext: string;
+  /** #782 — the clip's last frame, present ONLY when `returnLastFrame` was asked
+   *  for AND the engine returned a usable still. Absent is the normal, safe
+   *  outcome: the clip itself is unaffected, so a missing tail must never fail
+   *  (or re-charge) a generation that already succeeded. */
+  lastFrame?: { bytes: Uint8Array; ext: string };
   /** #776:这一条片子的回执。语义同 GeneratedImage.receipt。 */
   receipt?: GenerationReceipt;
 }
