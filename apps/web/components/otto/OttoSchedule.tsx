@@ -4,6 +4,9 @@ import { Plus, X, Check, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -442,39 +445,42 @@ export function OttoSchedule({
                 </span>
               ))}
             {!isConnected && canOfferConnect(accounts) ? (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => onNavigate("connections")}
-                className="inline-flex items-center gap-1.5 h-[28px] rounded-full border border-dashed border-border bg-card px-3 text-[12px] font-semibold text-muted-foreground hover:text-foreground"
+                className="h-[28px] gap-1.5 rounded-full border-dashed border-border bg-card px-3 text-[12px] font-semibold text-muted-foreground hover:bg-card hover:text-foreground"
               >
                 <Plus size={13} />
                 Connect a channel
-              </button>
+              </Button>
             ) : accountsUnreadable(accounts) ? (
               // The read came back empty-handed. Say so, and give the merchant the one action that
               // can change it — a silent retry loop they cannot see or trigger is not an answer.
               <span role="status" className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
                 {ACCOUNTS_CHECK_FAILED}
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => void refresh()}
-                  className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
+                  className="h-[28px] rounded-full border-border bg-card px-3 font-semibold text-foreground hover:bg-card"
                 >
                   Retry
-                </button>
+                </Button>
               </span>
             ) : headerBlocker ? (
               // Connected, but not usable. Stated on the screen itself so a merchant with an empty
               // schedule still learns it — and pointed at the flow that actually fixes it.
               <span role="status" className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
                 {connectionBlockerStatus(headerBlocker)}
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => onNavigate("connections")}
-                  className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
+                  className="h-[28px] rounded-full border-border bg-card px-3 font-semibold text-foreground hover:bg-card"
                 >
                   Reconnect
-                </button>
+                </Button>
               </span>
             ) : null}
           </div>
@@ -496,16 +502,17 @@ export function OttoSchedule({
           {/* View switcher */}
           <div className="inline-flex rounded-[10px] border border-border bg-card p-0.5">
             {(["plan", "calendar", "queue"] as ViewKey[]).map((v) => (
-              <button
+              <Button
                 key={v}
                 type="button"
+                variant="ghost"
                 onClick={() => setView(v)}
                 className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
-                  view === v ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
+                  view === v ? "bg-secondary text-foreground hover:bg-secondary" : "bg-transparent text-muted-foreground hover:bg-transparent"
                 }`}
               >
                 {v === "plan" ? "Plan" : v === "calendar" ? "Calendar" : "Queue"}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -593,16 +600,17 @@ function ChannelFilterBar({
   return (
     <div className="inline-flex gap-1.5">
       {opts.map((o) => (
-        <button
+        <Button
           key={o.key}
           type="button"
+          variant="outline"
           onClick={() => onChange(o.key)}
-          className={`h-[28px] rounded-full px-3 text-[12px] font-semibold border ${
-            value === o.key ? "border-foreground bg-secondary text-foreground" : "border-border bg-card text-muted-foreground"
+          className={`h-[28px] rounded-full px-3 text-[12px] font-semibold ${
+            value === o.key ? "border-foreground bg-secondary text-foreground hover:bg-secondary" : "border-border bg-card text-muted-foreground hover:bg-card"
           }`}
         >
           {o.label}
-        </button>
+        </Button>
       ))}
     </div>
   );
@@ -634,11 +642,12 @@ function QueueList({
               const pill = statusPill(post.status);
               const firstMedia = post.media[0] ? mediaLookup.get(post.media[0].generationId) : undefined;
               return (
-                <button
+                <Button
                   key={post.id}
                   type="button"
+                  variant="outline"
                   onClick={() => onEdit(post)}
-                  className="flex items-center gap-3 rounded-[12px] border border-border bg-card px-3 py-2.5 text-left hover:bg-secondary/60 transition-colors"
+                  className="h-auto w-full justify-start gap-3 rounded-[12px] border-border bg-card px-3 py-2.5 text-left font-normal hover:bg-secondary/60"
                 >
                   <Thumb item={firstMedia} />
                   <span className="inline-flex items-center justify-center w-6 h-6 rounded-[7px] bg-accent text-foreground shrink-0">
@@ -649,7 +658,7 @@ function QueueList({
                     {post.caption || <span className="text-muted-foreground/70">No caption yet</span>}
                   </span>
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${tonePill(pill.tone)}`}>{pill.label}</span>
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -905,16 +914,17 @@ function CalendarView({
       <div className="flex items-center gap-3 flex-wrap mb-4">
         <div className="inline-flex rounded-[10px] border border-border bg-card p-0.5">
           {GRANULARITIES.map(({ id, label }) => (
-            <button
+            <Button
               key={id}
               type="button"
+              variant="ghost"
               onClick={() => setGran(id)}
               className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
-                gran === id ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
+                gran === id ? "bg-secondary text-foreground hover:bg-secondary" : "bg-transparent text-muted-foreground hover:bg-transparent"
               }`}
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="inline-flex items-center gap-1">
@@ -991,16 +1001,21 @@ function MonthGrid({
               {shown.map((post) => {
                 const pill = statusPill(post.status);
                 return (
-                  <button
+                  // variant="link" — the only primitive with no hover:bg-* of its own,
+                  // so the status tint (tonePill) is never covered on hover. Tailwind's
+                  // JIT scanner needs each class as a literal token, so the hover cancel
+                  // is spelled out (hover:no-underline) rather than built from a variable.
+                  <Button
                     key={post.id}
                     type="button"
+                    variant="link"
                     onClick={() => onEdit(post)}
                     title={post.caption}
-                    className={`flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-[10.5px] font-medium ${tonePill(pill.tone)} truncate`}
+                    className={`h-auto w-full justify-start gap-1 truncate rounded-[6px] px-1.5 py-1 text-[10.5px] font-medium no-underline hover:no-underline ${tonePill(pill.tone)}`}
                   >
                     <ChannelIcon channel={post.channel} size={11} />
                     <span className="truncate">{post.caption || "Post"}</span>
-                  </button>
+                  </Button>
                 );
               })}
               {overflow > 0 && <div className="text-[10.5px] font-semibold text-muted-foreground pl-1">+{overflow} more</div>}
@@ -1055,11 +1070,12 @@ function WeekColumns({
               const pill = statusPill(post.status);
               const firstMedia = post.media[0] ? mediaLookup.get(post.media[0].generationId) : undefined;
               return (
-                <button
+                <Button
                   key={post.id}
                   type="button"
+                  variant="outline"
                   onClick={() => onEdit(post)}
-                  className="flex flex-col gap-1 rounded-[9px] border border-border bg-secondary/40 p-1.5 text-left hover:bg-secondary transition-colors"
+                  className="h-auto w-full flex-col items-start justify-start gap-1 rounded-[9px] border-border bg-secondary/40 p-1.5 text-left font-normal hover:bg-secondary"
                 >
                   <Thumb item={firstMedia} size={32} />
                   <div className="flex items-center gap-1 text-[10.5px] font-semibold text-muted-foreground">
@@ -1067,7 +1083,7 @@ function WeekColumns({
                   </div>
                   <div className="text-[11px] text-foreground line-clamp-2">{post.caption || "Post"}</div>
                   <span className={`self-start rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold ${tonePill(pill.tone)}`}>{pill.label}</span>
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -1122,11 +1138,16 @@ function DayTimeline({
                 const pill = statusPill(post.status);
                 const firstMedia = post.media[0] ? mediaLookup.get(post.media[0].generationId) : undefined;
                 return (
-                  <button
+                  <Button
                     key={post.id}
                     type="button"
+                    variant="outline"
                     onClick={() => onEdit(post)}
-                    className="flex items-center gap-2 rounded-[9px] border border-border bg-secondary/40 px-2 py-1.5 text-left hover:bg-secondary transition-colors max-w-full"
+                    // #920 判官 r1 P2 — the parent is `flex flex-wrap` (multiple posts share
+                    // an hour row, side by side), not `flex-col`; `w-full` here forced every
+                    // entry onto its own line. Dropped — max-w-full (from the original bare
+                    // button) is enough to keep a long caption from overflowing the row.
+                    className="h-auto max-w-full justify-start gap-2 rounded-[9px] border-border bg-secondary/40 px-2 py-1.5 text-left font-normal hover:bg-secondary"
                   >
                     <Thumb item={firstMedia} size={28} />
                     <span className="inline-flex items-center justify-center w-5 h-5 rounded-[6px] bg-accent text-foreground shrink-0">
@@ -1135,7 +1156,7 @@ function DayTimeline({
                     <span className="text-[11px] font-semibold text-muted-foreground shrink-0">{formatTime(p)}</span>
                     <span className="text-[12px] text-foreground truncate max-w-[220px]">{post.caption || "Post"}</span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${tonePill(pill.tone)}`}>{pill.label}</span>
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -1407,17 +1428,18 @@ function Composer({
           <Field label="Channel">
             <div className="flex gap-1.5">
               {shownChannels.map((c) => (
-                <button
+                <Button
                   key={c}
                   type="button"
+                  variant="outline"
                   disabled={!editable || !isConnectableChannel(c)}
                   onClick={() => changeChannel(c)}
-                  className={`inline-flex items-center gap-1.5 h-9 rounded-[10px] border px-3 text-[13px] font-semibold ${
-                    channel === c ? "border-foreground bg-secondary text-foreground" : "border-border bg-card text-muted-foreground"
-                  } disabled:opacity-50`}
+                  className={`h-9 gap-1.5 rounded-[10px] px-3 text-[13px] font-semibold disabled:opacity-50 ${
+                    channel === c ? "border-foreground bg-secondary text-foreground hover:bg-secondary" : "border-border bg-card text-muted-foreground hover:bg-card"
+                  }`}
                 >
                   <ChannelIcon channel={c} size={14} /> {channelMeta(c)?.label ?? c}
-                </button>
+                </Button>
               ))}
             </div>
             {channelNote && (
@@ -1470,6 +1492,16 @@ function Composer({
                   </Button>
                 </div>
               ) : (
+                // #840 — left as a bare select element, NOT the shadcn Select used two
+                // fields down for time zone. Three money-adjacent test suites (schedule-
+                // connect-honesty, schedule-media-key, publish-honest-preview) drive account
+                // selection by dispatching a native "change" event on this exact element —
+                // Radix's Select renders a trigger button plus a Portal-rendered listbox,
+                // nothing dispatches a "change" the same way, and this codebase's own
+                // convention for that gap (campaign-confirm-requote-race.test.ts) is to mock
+                // SelectTrigger out entirely, which would have cost those three suites their
+                // real coverage of the schedule approval gate. Left on the fence's exempt
+                // board with that reasoning; not a case of "forgot to migrate it".
                 <select
                   value={metaTargetId ?? ""}
                   disabled={!editable}
@@ -1502,12 +1534,13 @@ function Composer({
                   const idx = media.indexOf(m.generationId);
                   const selected = idx >= 0;
                   return (
-                    <button
+                    <Button
                       key={m.id}
                       type="button"
+                      variant="outline"
                       disabled={!editable}
                       onClick={() => toggleMedia(m.generationId)}
-                      className={`relative aspect-square rounded-[9px] overflow-hidden border-2 ${selected ? "border-brand" : "border-border"} disabled:opacity-50`}
+                      className={`relative aspect-square h-auto w-full overflow-hidden rounded-[9px] border-2 p-0 disabled:opacity-50 ${selected ? "border-brand" : "border-border"}`}
                     >
                       {m.mediaKind === "video" ? (
                         <video src={m.url ?? undefined} muted preload="metadata" className="w-full h-full object-cover" />
@@ -1518,7 +1551,7 @@ function Composer({
                       {selected && (
                         <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-brand-strong text-brand-foreground text-[9px] font-bold">{idx + 1}</span>
                       )}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -1528,33 +1561,37 @@ function Composer({
 
           {/* Caption */}
           <Field label="Caption">
-            <textarea
+            <Textarea
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               disabled={!editable}
               rows={4}
               placeholder="Write your caption…"
-              className="w-full rounded-[10px] border border-border bg-card px-3 py-2 text-[13px] resize-none disabled:opacity-60"
+              // #920 判官 r1 P2 — the caption box has a fixed row count; field-sizing-fixed
+              // stops ui/textarea's default field-sizing-content from growing it as the
+              // merchant types.
+              className="field-sizing-fixed min-h-0 w-full resize-none rounded-[10px] border-border bg-card px-3 py-2 text-[13px] shadow-none"
             />
-            <button
+            <Button
               type="button"
+              variant="ghost"
               disabled
               title="Coming soon — Otto will draft this from your brand memory."
-              className="mt-1 inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground opacity-60 cursor-default"
+              className="mt-1 h-auto w-auto gap-1.5 p-0 text-[12px] font-semibold text-muted-foreground opacity-60 hover:bg-transparent disabled:cursor-default disabled:opacity-60"
             >
               <CoralCloud size={16} /> Ask Otto to write it
-            </button>
+            </Button>
           </Field>
 
           {/* First comment (channel-gated) */}
           {supportsFirstComment && (
             <Field label="First comment (optional)">
-              <input
+              <Input
                 value={firstComment}
                 onChange={(e) => setFirstComment(e.target.value)}
                 disabled={!editable}
                 placeholder="Hashtags or a link…"
-                className="w-full h-9 rounded-[10px] border border-border bg-card px-3 text-[13px] disabled:opacity-60"
+                className="h-9 w-full rounded-[10px] border-border bg-card px-3 text-[13px]"
               />
             </Field>
           )}
@@ -1562,15 +1599,20 @@ function Composer({
           {/* Date / time / tz */}
           <div className="grid grid-cols-3 gap-2">
             <Field label="Date">
-              <input type="date" value={dateKey} disabled={!editable} onChange={(e) => setDateKey(e.target.value)} className="w-full h-9 rounded-[10px] border border-border bg-card px-2.5 text-[13px] disabled:opacity-60" />
+              <Input type="date" value={dateKey} disabled={!editable} onChange={(e) => setDateKey(e.target.value)} className="h-9 w-full rounded-[10px] border-border bg-card px-2.5 text-[13px]" />
             </Field>
             <Field label="Time">
-              <input type="time" value={time} disabled={!editable} onChange={(e) => setTime(e.target.value)} className="w-full h-9 rounded-[10px] border border-border bg-card px-2.5 text-[13px] disabled:opacity-60" />
+              <Input type="time" value={time} disabled={!editable} onChange={(e) => setTime(e.target.value)} className="h-9 w-full rounded-[10px] border-border bg-card px-2.5 text-[13px]" />
             </Field>
             <Field label="Time zone">
-              <select value={tz} disabled={!editable} onChange={(e) => setTz(e.target.value)} className="w-full h-9 rounded-[10px] border border-border bg-card px-2 text-[13px] font-semibold disabled:opacity-60">
-                {SCHEDULE_TZS.map((z) => <option key={z} value={z}>{z}</option>)}
-              </select>
+              <Select value={tz} disabled={!editable} onValueChange={setTz}>
+                <SelectTrigger className="h-9 w-full rounded-[10px] border-border bg-card px-2 text-[13px] font-semibold">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHEDULE_TZS.map((z) => <SelectItem key={z} value={z}>{z}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </Field>
           </div>
         </div>

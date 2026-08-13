@@ -313,17 +313,19 @@ export function OttoPlanCard({
             {/* Expand/collapse + copy row — only when there's a real prompt */}
             {p.structuredPrompt && (
               <div className="mt-1 flex items-center gap-3">
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   onClick={() => setExpanded((v) => !v)}
-                  className="cursor-pointer border-none bg-transparent p-0 text-[0.75rem] text-muted-foreground/70 underline"
+                  className="h-auto w-auto p-0 text-[0.75rem] text-muted-foreground/70 underline"
                 >
                   {expanded ? "show less" : "show more"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="link"
                   onClick={handleCopy}
-                  className={`cursor-pointer border-none bg-transparent p-0 text-[0.75rem] underline ${
+                  className={`h-auto w-auto p-0 text-[0.75rem] underline ${
                     copyState === "copied" ? "text-[var(--success-soft-foreground)]" : "text-muted-foreground/70"
                   }`}
                 >
@@ -332,7 +334,7 @@ export function OttoPlanCard({
                     : copyState === "no-api"
                     ? "Long-press to copy"
                     : "Copy"}
-                </button>
+                </Button>
               </div>
             )}
           </div>

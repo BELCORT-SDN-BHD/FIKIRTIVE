@@ -70,13 +70,14 @@ function Media({
         <span className="text-[0.875rem] text-muted-foreground">
           Couldn&apos;t load this
         </span>
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
-          className="text-[0.875rem] text-brand-strong bg-transparent border-none cursor-pointer p-0 underline"
+          className="h-auto w-auto p-0 text-[0.875rem] text-brand-strong underline"
         >
           Reload
-        </button>
+        </Button>
       </div>
     );
   }
@@ -132,15 +133,17 @@ function ResultNudge({ onTweak }: { onTweak?: () => void }) {
       <span className="text-[0.875rem] text-muted-foreground">
         Done — happy with it, or want a tweak?
       </span>
-      <button
+      <Button
         type="button"
+        variant="secondary"
         onClick={() => setDismissed(true)}
-        className="text-[0.875rem] text-muted-foreground bg-card border border-border rounded-[14px] px-3 py-1 cursor-pointer"
+        className="h-auto rounded-[14px] px-3 py-1 text-[0.875rem] font-normal text-muted-foreground shadow-none"
       >
         Looks great
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="secondary"
         onClick={() => {
           setDismissed(true);
           if (onTweak) {
@@ -150,10 +153,10 @@ function ResultNudge({ onTweak }: { onTweak?: () => void }) {
             if (el) (el as HTMLElement).focus();
           }
         }}
-        className="text-[0.875rem] text-muted-foreground bg-card border border-border rounded-[14px] px-3 py-1 cursor-pointer"
+        className="h-auto rounded-[14px] px-3 py-1 text-[0.875rem] font-normal text-muted-foreground shadow-none"
       >
         Tweak it
-      </button>
+      </Button>
     </div>
   );
 }
@@ -258,18 +261,19 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3, 0.75rem)" }}>
             {urls.map((u, i) => (
               // Fix #4 — accessible label on chooser buttons
-              <button
+              <Button
                 key={i}
                 type="button"
+                variant="outline"
                 aria-label={`Option ${i + 1}`}
                 onClick={() => pick(i)}
-                className="relative p-0 border-2 border-border rounded-[14px] overflow-hidden cursor-pointer bg-card transition"
+                className="relative h-auto w-full overflow-hidden rounded-[14px] border-2 border-border bg-card p-0 shadow-none"
               >
                 <Media url={u} alt={prompt ? `Generated image: ${prompt}` : `Option ${i + 1}`} rounded={false} />
                 {/* No "Otto's pick" badge: there is no real curation signal from the backend
                     (all variants are equal outputs of one prompt). Don't claim a pick we
                     didn't make — add it back only when GEN_RESULT carries a real pick index. */}
-              </button>
+              </Button>
             ))}
           </div>
         </Card>
@@ -303,13 +307,14 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
               >
                 Open asset
               </a>
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={() => copyLink(url)}
-                className="border-0 bg-transparent p-0 font-semibold text-brand-strong underline underline-offset-2 cursor-pointer"
+                className="h-auto w-auto p-0 text-brand-strong underline underline-offset-2"
               >
                 Try again
-              </button>
+              </Button>
             </div>
           ) : (
             <Button
