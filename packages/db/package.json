@@ -15,6 +15,14 @@
     "./consent-fold": {
       "types": "./dist/src/consent-fold.d.ts",
       "default": "./dist/src/consent-fold.js"
+    },
+    "./rate-limit": {
+      "types": "./dist/src/rate-limit.d.ts",
+      "default": "./dist/src/rate-limit.js"
+    },
+    "./client": {
+      "types": "./dist/src/client.d.ts",
+      "default": "./dist/src/client.js"
     }
   },
   "scripts": {

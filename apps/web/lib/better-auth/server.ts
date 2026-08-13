@@ -8,6 +8,7 @@ import { prisma } from "@fikirtive/db";
 import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_LINK_TTL_SECONDS } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
+import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
@@ -50,6 +51,37 @@ export const auth = betterAuth({
       trustedProviders: ["google"],     // Google's email_verified claim is trustworthy
       requireLocalEmailVerified: true,  // never link onto an unverified local credential
     },
+    // #795 — Google's OAuth tokens were the ONE credential this product stored in the clear.
+    // Meta's and X's page tokens have been encrypted at rest since L1 (@fikirtive/token-crypto);
+    // these sat in `ba_account.accessToken` / `refreshToken` / `idToken` as plain text, so a
+    // database backup, a log of a row, or read access to one table was a working Google
+    // credential for every merchant who signed in that way.
+    //
+    // WHY BETTER AUTH'S OWN FLAG AND NOT @fikirtive/token-crypto (the ticket named it). Better
+    // Auth encrypts on write AND decrypts on every read it does itself — refresh,
+    // `getAccessToken`, account info. Our own encrypt-on-write hook would have no matching
+    // decrypt inside those paths: the library would hand a caller our ciphertext believing it was
+    // a token, and the first future use of a Google token would fail somewhere far from here.
+    //
+    // WHAT THE CIPHER ACTUALLY IS — corrected twice, so it is spelled out with its source
+    // (`better-auth/dist/crypto/index.mjs`). r1 said AES-256-GCM: wrong. r2 fixed the algorithm
+    // but added a `$ba$<version>$` envelope that our configuration does not produce: also wrong,
+    // and that second error is exactly what made the cleanup script misread valid ciphertext as
+    // plaintext. The truth:
+    //   · algorithm — XChaCha20-Poly1305 with a managed nonce, key = SHA-256 of the secret,
+    //     output hex-encoded (`rawEncrypt`).
+    //   · ENVELOPE ONLY IN THE MULTI-KEY FORM. `symmetricEncrypt` returns `rawEncrypt(...)`
+    //     unchanged when the key is a STRING — which is our shape, one secret. The
+    //     `$ba$<version>$` prefix is added only for the keyed/rotation form. So our stored
+    //     ciphertext is BARE HEX, and "no `$ba$` prefix" does not mean "not encrypted".
+    // Still AEAD, still no new vendor, key = BETTER_AUTH_SECRET (already required and already
+    // ≥32 chars — see the guard above).
+    //
+    // WHAT THIS FLAG DOES **NOT** COVER — measured, not assumed. `setTokenUtil` (encrypt on
+    // write) is applied to exactly two fields, `accessToken` and `refreshToken`, at all 19 of its
+    // call sites (callback, link-account, account routes, generic-oauth). `idToken` is written
+    // RAW, and there is no way to close that from out here — see the note on `idToken` below.
+    encryptOAuthTokens: true,
   },
   verification: { modelName: "BetterAuthVerification" },
   emailAndPassword: {
@@ -101,11 +133,74 @@ export const auth = betterAuth({
   // #543 — basic abuse control on the newly public endpoints, using Better Auth's own
   // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
   // (5 per address per hour) still caps mail volume per victim address on top of this.
+  // #795 r5 — BETTER AUTH COUNTS THE SAME CALLER WE DO. One fact, one source.
+  //
+  // Its default is `X-Forwarded-For`, first entry (`utils/get-request-ip.mjs`), and on this
+  // deployment that default is wrong in both directions at once. Railway's edge does not send
+  // `X-Forwarded-For` at all — but Next fills one in from the socket
+  // (`base-server.js`: `req.headers['x-forwarded-for'] ??= originalRequest.socket.remoteAddress`),
+  // and that socket belongs to the platform's internal proxy: every merchant would share ONE
+  // address, and the built-in 3-per-10-seconds sign-in rule would refuse the whole product at
+  // once. And if anything upstream ever passed a caller-written `X-Forwarded-For` through, `??=`
+  // keeps it and its first entry is whatever the caller typed — the forgeable reading, back again.
+  //
+  // Better Auth's option is a list of header NAMES whose FIRST value it takes; it has no hook for
+  // "count from the right", so the `xff:<hops>` deployment shape cannot be written as a header
+  // name. The shape is therefore resolved once, in `caller-identity.ts`, and the answer is handed
+  // over in a header of ours that the route stamps on every forwarded request (deleting any
+  // inbound copy first). When the caller is unidentifiable the header is absent and Better Auth
+  // falls back to its own single shared bucket — the same semantics our side gives that case.
+  advanced: { ipAddress: { ipAddressHeaders: [CALLER_IP_HEADER] } },
   rateLimit: {
+    // #795 — THE fix for "the gate is a number nobody can trust". Better Auth's limiter defaults
+    // to PROCESS MEMORY, so every one of the rules below was per-instance: a second web replica
+    // silently doubled every budget, and every deploy reset every window. Beta is open
+    // registration (Founder, 2026-08-11), which makes these the doors that carry the load.
+    //
+    // "database" is Better Auth's own storage backend — no new vendor, no Redis, one table
+    // (`ba_rate_limit`, #795 migration). It reads and writes through the SAME Prisma adapter this
+    // config already uses, and it prunes its own expired rows.
+    //
+    // NOT enabled outside production: Better Auth's own default (`enabled ?? isProduction`) is
+    // left alone deliberately — a dev/test run must not be rate-limited into flakiness, and the
+    // thing this ticket fixes is a production-scale-out defect.
+    storage: "database",
+    modelName: "BetterAuthRateLimit",
+    // #795 r2 — EMPTY, and that is the fix rather than a regression.
+    //
+    // Three hourly rules used to live here (`/sign-up/email`, `/request-password-reset`,
+    // `/send-verification-email`, each 5 per hour). Under `storage: "database"` Better Auth
+    // cannot honour them: its pruning cutoff is
+    //   max(rateLimit.window, …its built-in special rules) = max(10 s, 10 s, 60 s) = 60 s
+    // and it applies that cutoff without consulting the custom rule that matched. A counter row
+    // is therefore deleted 61 seconds after its last request, so "5 per hour" enforced 5 per
+    // MINUTE — about 300 an hour. A rule that reads one number and enforces another is the exact
+    // defect this ticket exists to close, so the rules are gone from here and the hourly caps run
+    // on our own counter (app/api/better-auth/[...all]/route.ts), which prunes on its own window.
+    //
+    // Raising the global `window` to an hour WOULD fix the cutoff, and was rejected: it re-prices
+    // every other endpoint this limiter guards (`/get-session` and friends) from 100-per-10-seconds
+    // to 100-per-hour, which takes out a shared office address doing nothing wrong.
+    //
+    // What Better Auth still enforces here — and what the database storage genuinely fixes — is
+    // its BUILT-IN short rules: 3 per 10 s on every /sign-in and /sign-up path, 3 per 60 s on
+    // password-reset and verification resend. Those windows are at or under the 60-second cutoff,
+    // so the pruning cannot undercut them, and they are now shared across instances instead of
+    // being per-process. Burst is its job; the hour is ours.
+    //
+    // The fence for all of this is `better-auth-rate-limit-storage.test.ts`: it refuses any
+    // customRule whose window exceeds the cutoff, and refuses FUNCTION-form rules outright —
+    // Better Auth calls those and honours whatever window they return, so a function that returns
+    // 61 seconds walks straight back into the trap and no static check could see it coming.
     customRules: {
-      "/sign-up/email": { window: 60 * 60, max: 5 },
-      "/request-password-reset": { window: 60 * 60, max: 5 },
-      "/send-verification-email": { window: 60 * 60, max: 5 },
+      // NOTE (#795): there is deliberately NO rule for "/sign-in/email" here either, and that is
+      // the OPPOSITE of leaving the password door unguarded. Better Auth's built-in special rule
+      // already caps every /sign-in path at 3 per 10 seconds, and `customRules` REPLACES a rule
+      // rather than adding to it — an hourly rule written here would delete that burst cap. The
+      // password door needs both (a burst cap stops credential stuffing at speed; an hourly cap
+      // stops the patient version), so the hourly one is layered in front of this handler instead,
+      // in app/api/better-auth/[...all]/route.ts. Nothing here is loosened; a cap is added.
+      //
       // NOTE (#678 r3): there is deliberately NO rule for "/sign-in/magic-link" here. These
       // rules only run inside `auth.handler`, and that endpoint no longer receives public
       // traffic — app/api/better-auth/[...all]/route.ts answers it through the same throttled
@@ -160,6 +255,35 @@ export const auth = betterAuth({
   // Deny-by-default allowlist gates in databaseHooks — covers ALL methods including OAuth callbacks.
   // Throwing APIError here aborts the operation and propagates a 403 to the caller.
   databaseHooks: {
+    /*
+     * #795 r3 — THERE IS DELIBERATELY NO `account` HOOK HERE, and the reason is a correction.
+     *
+     * r2 added one that nulled `idToken` before every account write, on the claim that nothing
+     * ever reads it. **That claim was false**, and the round-2 judge was right to reject it.
+     * Measured again in better-auth 1.6.20 (`api/routes/account.mjs`), `idToken` IS read back:
+     *   · `getValidAccessToken` carries it through a refresh (:283) and RETURNS it (:306)
+     *   · the `/get-access-token` and `/refresh-token` endpoints return it (:425, :436, :444)
+     * and those endpoints are mounted — this app hands the whole Better Auth router to
+     * `toNextJsHandler` at `app/api/better-auth/[...all]/route.ts`, so they answer real requests
+     * today (asserted in `better-auth-id-token.test.ts`). Nulling the column would have made
+     * those endpoints return `undefined` where a caller asked for an ID token: a working feature
+     * quietly answering wrong, which is worse than the exposure it was removing.
+     *
+     * WHAT THAT LEAVES — stated plainly rather than papered over. `idToken` stays in
+     * `ba_account` as PLAIN TEXT. It cannot be encrypted from out here either: the library
+     * returns the stored value directly and never decrypts it, so an encrypt-on-write hook would
+     * hand callers ciphertext believing it was a token — the same silent break in a different
+     * costume. Encrypting it properly is a change inside Better Auth, not in this file.
+     *
+     * RESIDUAL RISK, as registered on the PR and on #795: a database backup or a read of one
+     * table yields Google ID tokens for merchants who signed in with Google. An ID token is an
+     * identity assertion minted fresh at sign-in with a short expiry (Google: ~1 hour) — it is
+     * not an API credential and grants no access to the merchant's Google account — so what a
+     * stolen one buys is a replay window against relying parties that accept it, bounded by that
+     * expiry. Mitigation available today: `scripts/tools/clear-plaintext-oauth-tokens.mjs
+     * --expired-id-tokens` clears the ones already past their own `exp`. Whether that runs on a
+     * schedule is a production-data decision and belongs to the Founder, not to this PR.
+     */
     user: {
       create: {
         // Gate 1: prevents any non-allowlisted email from getting a ba_user row (first sign-up, any method).

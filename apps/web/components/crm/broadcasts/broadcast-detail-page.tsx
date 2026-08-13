@@ -144,7 +144,23 @@ export function ConsentExclusionNote({ consent }: { consent: AudienceConsentSumm
       {consent.unresolvedLegacyOptOut > 0
         ? ` ${consent.unresolvedLegacyOptOut} of them opted out before consent history was kept, so they stay out until the customer opts in again.`
         : ""}
-      {" This count covers the contacts this broadcast can reach on its channel, so it can be lower than the count on the segments page, which covers every contact you have."}
+      {/*
+        The population `excludedByConsent` was reckoned over — the twin of the sentence on the
+        segments page, and wrong in the same two ways before this round.
+
+        "no known opt-out" (r6) was false twice over: this very number is a count of known
+        opt-outs, and `selectedIntoAudience` keeps known opt-outs in a segment that went looking
+        for them (four of them enter a frozen audience in consent-single-authority.test.ts).
+        "can reach" (before r6) promised delivery — nothing here can send at all yet.
+
+        The population is exactly the one `customer-broadcast-service.ts` builds before calling
+        `countExcludedByConsent`: contacts holding at least one channel-confirmed identity on
+        this run's channel. Consent decides who is EXCLUDED, never who is in the population.
+
+        Worded without a possessive on purpose (r6b): the #726 fence pins this sentence against
+        raw markup, where an apostrophe arrives escaped.
+      */}
+      {" This count covers the contacts with a confirmed identity on the channel this broadcast sends from, so it can be lower than the count on the segments page, which covers every contact you have."}
       {consent.reportedOptOutKept > 0
         ? ` ${consent.reportedOptOutKept} ${consent.reportedOptOutKept === 1 ? "contact is" : "contacts are"} in this audience with an opt-out you recorded yourself, which is not verified — open the contact to see its consent history.`
         : ""}

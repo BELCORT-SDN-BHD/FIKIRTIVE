@@ -1,25 +1,17 @@
-// Analytics platform registry (pure constant). Meta reads live data via the
-// existing getAnalytics Server Action; the rest are "soon" placeholders that
-// render a coming-soon panel until a real channels/ adapter lands. Adding a
-// platform is one row here — flip status to "live" once its adapter is wired.
-// No I/O, no spend paths — a total function of its inputs so it unit-tests.
+/**
+ * Analytics 读的那**一个**平台(#792,Founder 裁决 2026-08-08)。
+ *
+ * 这里原来是一张五行的注册表:Meta 标 `live`,TikTok / Shopee / Google / WhatsApp 各占一行
+ * 标 `soon`,商家在 Analytics 顶上得到一个能选出四个空格子的下拉框。四个格子后面没有任何
+ * 东西 —— 没有适配器、没有一行数据、也没有工期。一个选得动的选择器是在说「这些你也有,
+ * 只是还没到」;真相是「这些我们还没开始」。裁决:收起来。
+ *
+ * 所以现在只有一个名字。要加平台,得先有真的读得到数的适配器 —— 那一天再加一个常量,而
+ * 不是先摆一个空格子。这一层为什么还在:Analytics 顶上那行字与围栏读的是同一处,页面自己
+ * 不再手写平台名。
+ *
+ * 纯常量:无 I/O,无 spend。
+ */
 
-export type PlatformStatus = "live" | "soon";
-
-export type AnalyticsPlatform = {
-  id: string;
-  label: string;
-  status: PlatformStatus;
-};
-
-export const ANALYTICS_PLATFORMS: AnalyticsPlatform[] = [
-  { id: "meta", label: "Meta (IG + FB)", status: "live" },
-  { id: "tiktok", label: "TikTok", status: "soon" },
-  { id: "shopee", label: "Shopee", status: "soon" },
-  { id: "google", label: "Google", status: "soon" },
-  { id: "whatsapp", label: "WhatsApp", status: "soon" },
-];
-
-export function platformById(id: string): AnalyticsPlatform | undefined {
-  return ANALYTICS_PLATFORMS.find((p) => p.id === id);
-}
+/** Analytics 读的平台。整份产品只有这一个,别的平台一律不列。 */
+export const ANALYTICS_PLATFORM_LABEL = "Meta (IG + FB)";
