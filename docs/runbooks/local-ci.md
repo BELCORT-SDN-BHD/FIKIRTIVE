@@ -36,6 +36,12 @@ quality.sh --leg typecheck | --leg tests | --leg build | --leg lint | --leg chec
 腿全绿它才绿，任何一条失败、被取消或状态不明，它一律判失败。墙钟因此从「所有闸相加」
 变成「最慢的一条腿」。
 
+「五条腿全绿它才绿」有一个既有的例外，而且只有这一个：**可证明只改了 `docs/**` 的
+PR**。那种 PR 上五条腿全部 `skipped`，扇入按 `skipped` 判合法通过（`ci.yml` 的
+「scope 说 code=false → 每条腿都必须是 skipped」那一支）。这一支同样是严格相等：
+真是 docs-only 却有一条腿跑了，照样判失败——腿和扇入对「这次运行是什么」没谈拢，
+说不清的运行不许合。
+
 本地不需要分腿：不带参数的 `pnpm quality` 依旧按上面的顺序跑完全部闸，一个不少。要
 在本地复现某一条腿（例如 CI 只有 `tests` 红），可以跑 `pnpm quality --leg tests`。
 
@@ -53,8 +59,19 @@ ruby / yq / js-yaml 任一），注释里的腿名和接线一律不算数——
 `bash scripts/ci/quality.sh`（`pnpm quality` 最终跑的是它）；每个 job 的 `if:` 必须
 和自测里手写的条件逐字相同（job 没跑报的是 `skipped`，不是 `failure`）；任何 step
 都不许带 `if`、`continue-on-error`、`shell`、`working-directory`，任何 job 都不许带
-`continue-on-error`、`strategy`、`defaults`。所以在 ci.yml 里新增 job、改 job 的
-`if:`，同样要在同一个 commit 里改那份手写清单。
+`continue-on-error`、`strategy`、`defaults`。
+
+腿**运行时的环境变量**也逐字钉死，而且是白名单：workflow 级 `env:` 的键值集必须与
+自测里手写的那份一模一样（多一个、少一个、改一个值，都红），job 级 `env:` 一律不许
+有，step 级 `env:` 只许是自测里列出的那几条。它挡的是「命令一个字没改，却什么都没
+跑」——在 workflow `env:` 里加一行 `npm_config_script_shell: /bin/echo`，
+`pnpm quality --leg lint` 就只把自己那条命令回显一遍然后退出 0，五条腿全绿、
+required check 也绿，而一道闸都没跑。写成白名单而不是「坏名字清单」，是因为
+`PATH`、`BASH_ENV`、`NODE_OPTIONS` 的 `--require`、以及 `npm_config_*` / `PNPM_*`
+两族都能做同一件事，pnpm、node、bash 下一个版本还可能再加一个没人听说过的。
+
+所以在 ci.yml 里新增 job、改 job 的 `if:`、动任何一个环境变量，同样要在同一个
+commit 里改那份手写清单。
 
 扇入 job 的脚本不只被读，还会被自测**真跑一遍**：把它从 ci.yml 里解析出来，用五条腿
 各种非绿组合喂进去，验证它确实判失败。只读文件只能证明比较写在那里，跑一遍才能证明

@@ -69,6 +69,23 @@
 #      that decide whether a command runs at all and whether its failure reaches the
 #      job — nor may any job carry `continue-on-error`, `strategy` or `defaults`.
 #
+#      AND THE ENVIRONMENT THOSE SCRIPTS ARE HANDED — because `pnpm quality --leg
+#      tests` is not self-contained. pnpm reads npm's `npm_config_*` variables out of
+#      the environment, and one of them, `npm_config_script_shell`, replaces the
+#      interpreter every `pnpm run` script is given. Review of #874 r4 proved it on
+#      this repo: with `npm_config_script_shell: /bin/echo` added to ci.yml's
+#      workflow-level `env:`, `pnpm quality --leg lint` PRINTS its own command and
+#      exits 0 having run no gate at all — while every check above still passes, byte
+#      for byte. Five green legs, a green required check, nothing checked, bought with
+#      one line of YAML. So the environment is a WHITELIST here (expected_workflow_env
+#      and expected_step_env below): every variable the legs run with is written out
+#      by hand, key and value, job-level `env:` is refused outright, and anything else
+#      is red whether or not anyone has heard of it. A list of BAD names could not do
+#      this — `PATH`, `BASH_ENV`, `NODE_OPTIONS`'s own `--require`, and the rest of the
+#      `npm_config_*` and `PNPM_*` families all reach inside a command without altering
+#      one character of it, and the next release of pnpm, node or bash may add another
+#      this file has never heard of.
+#
 #      The fan-in's own script is not only read, it is RUN, against a synthetic
 #      environment, once for every way each leg can come back un-green. It is the
 #      same three shapes one level up: a fan-in step that is skipped, or excused, or
@@ -201,6 +218,56 @@ forbidden_step_keys=(if continue-on-error shell working-directory)
 # The same question at job level. `defaults` carries `run.shell`, which replaces the
 # interpreter and the flags every `run:` below it is executed with.
 forbidden_job_keys=(continue-on-error strategy defaults)
+
+# Every environment variable ci.yml hands the five legs, written out by hand — the
+# whole set, key AND value. Hand-written for the reason the gate map is, and read as a
+# WHITELIST for a reason of its own: the damage here is not done by a name we could
+# list. `npm_config_script_shell` is only the one #874's review happened to fire
+# (`/bin/echo`, and `pnpm quality --leg lint` printed its own command and exited 0);
+# `PATH`, `BASH_ENV`, `NODE_OPTIONS`'s `--require`, and the rest of the `npm_config_*`
+# and `PNPM_*` families do the same job, and the next release of pnpm, node or bash
+# may add one nobody here has heard of. A deny list has to be right about every one of
+# them, forever. An allow list has to be right about six. So: these six variables and
+# no others, at these exact values — a variable added, removed, or given a new value
+# is red until somebody says here, in the same commit, that it was meant.
+expected_workflow_env=(
+  'NODE_OPTIONS=--max-old-space-size=6144'
+  'DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fikirtive_test'
+  'BETTER_AUTH_SECRET=fikirtive-ci-only-session-secret-not-for-production'
+  'BETTER_AUTH_URL=http://localhost:3000'
+  'GOOGLE_CLIENT_ID=fikirtive-ci-only-google-client'
+  'GOOGLE_CLIENT_SECRET=fikirtive-ci-only-google-secret'
+)
+
+# The same whitelist one level down, as `<job>|<step number>|NAME=value`. A step's own
+# `env:` reaches the command exactly the way the workflow block does, and it is the
+# quieter place to put it — it sits inside one job instead of at the top of the file.
+# Two steps legitimately carry one (the scope query, and the fan-in verdict); every
+# other step in this workflow must carry none, and job-level `env:` is refused outright
+# below rather than listed here, because one block at the top is what keeps the five
+# legs from drifting apart in the first place.
+#
+# The fan-in's LEG_RESULT_* lines appear here AND are pinned again, one at a time and
+# against the leg they must be fed by, in 3b. That is two edits to add a leg, on
+# purpose — this table says which variables exist, 3b says each one answers for its own
+# job, and neither statement implies the other.
+#
+# Not covered here, and deliberately: `services.postgres.env`. Those variables are set
+# inside the Postgres container, not in the shell the leg runs in; changing one breaks
+# the connection and turns the leg RED, which is the direction that needs no gate.
+expected_step_env=(
+  'scope|2|GH_TOKEN=${{ github.token }}'
+  'scope|2|REPOSITORY=${{ github.repository }}'
+  'scope|2|PR_NUMBER=${{ github.event.pull_request.number }}'
+  'scope|2|EVENT_NAME=${{ github.event_name }}'
+  'quality|1|SCOPE_RESULT=${{ needs.scope.result }}'
+  'quality|1|SCOPE_CODE=${{ needs.scope.outputs.code }}'
+  'quality|1|LEG_RESULT_TYPECHECK=${{ needs.typecheck.result }}'
+  'quality|1|LEG_RESULT_TESTS=${{ needs.tests.result }}'
+  'quality|1|LEG_RESULT_BUILD=${{ needs.build.result }}'
+  'quality|1|LEG_RESULT_LINT=${{ needs.lint.result }}'
+  'quality|1|LEG_RESULT_CHECKS=${{ needs.checks.result }}'
+)
 
 # ── the legs quality.sh declares ──────────────────────────────────────────────
 declaration="$(grep -E '^quality_legs=\(.*\)$' "$quality_sh" || true)"
@@ -510,6 +577,89 @@ for pair in "${expected_jobs[@]}"; do
     || fail "ci.yml job '$job' has step(s) $bad_step_timeouts with a 'timeout-minutes' that is not a positive number of minutes"
 done
 
+# ── 3d. and the environment those scripts are handed ─────────────────────────
+# The command is exactly right, it runs, and its failure arrives. One thing is still
+# able to hollow out all five legs without touching any of that: what they run WITH.
+#
+# `pnpm quality --leg tests` is not self-contained. pnpm reads npm's `npm_config_*`
+# variables out of the environment, and `npm_config_script_shell` replaces the
+# interpreter every `pnpm run` script is handed. Measured on this repo during #874 r4:
+#
+#     $ npm_config_script_shell=/bin/echo pnpm quality --leg lint
+#     > bash scripts/ci/quality.sh "--leg" "lint"
+#     -c bash scripts/ci/quality.sh "--leg" "lint"
+#     $ echo $?
+#     0
+#
+# The leg prints its own command and exits 0 without running one gate. Everything
+# above this line still passes, unchanged: the run script is byte-for-byte
+# `pnpm quality --leg lint`, no step carries `if:` or `continue-on-error:`, the
+# package.json chain is intact, and the fan-in is handed five honest `success`
+# results. Five green legs, a green `quality`, and not a gate run — from one line
+# added to a workflow-level `env:` block that has every right to be there (it is where
+# DATABASE_URL and the heap ceiling live) and that, until this check, nothing in the
+# repository compared against anything.
+#
+# So: an allow list, both directions, of the whole environment. See
+# expected_workflow_env / expected_step_env above for why it is an allow list and not
+# a list of dangerous names.
+env_diff_report() {
+  local want="$1" got="$2" missing extra
+  missing="$(LC_ALL=C comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "$got") | sed 's/^/    - /')"
+  extra="$(LC_ALL=C comm -13 <(printf '%s\n' "$want") <(printf '%s\n' "$got") | sed 's/^/    + /')"
+  if [[ -n "$missing" ]]; then
+    echo "  expected here but NOT in ci.yml (a variable was removed, or its value changed):" >&2
+    echo "$missing" >&2
+  fi
+  if [[ -n "$extra" ]]; then
+    echo "  in ci.yml but not expected here (a variable was added, or its value changed):" >&2
+    echo "$extra" >&2
+  fi
+}
+
+# The workflow-level block: the environment ALL five legs are run with. Compared as a
+# whole set, so there is no such thing as an addition this check does not look at. An
+# absent `env:`, or a jq that failed, both leave an empty answer, and empty does not
+# equal a six-line expectation — the mismatch is the failure, so this cannot fail open.
+actual_workflow_env="$(wf -r '(.env // {}) | to_entries[] | "\(.key)=\(.value)"' | LC_ALL=C sort)"
+want_workflow_env="$(printf '%s\n' "${expected_workflow_env[@]}" | LC_ALL=C sort)"
+if [[ "$actual_workflow_env" != "$want_workflow_env" ]]; then
+  echo "quality-legs: ci.yml's workflow-level 'env:' is not the environment this file expects" >&2
+  echo "  (each line is 'NAME=value'; every leg's script runs with all of them)" >&2
+  env_diff_report "$want_workflow_env" "$actual_workflow_env"
+  fail "ci.yml's workflow-level env and the expected_workflow_env list in this file disagree — a variable there reaches inside 'pnpm quality --leg …' without changing one character of it, and npm_config_script_shell replaces the interpreter outright, so a change to that block has to be stated in expected_workflow_env here, in the same commit"
+fi
+
+# Job level: refused outright. Every variable the legs need is workflow-level, which is
+# what stops one leg from silently running in a different environment than its four
+# siblings — and a per-job block is exactly where such a difference would live. The job
+# list this walks was pinned in both directions above, so this covers every job the file
+# has.
+for job in "${expected_job_names[@]}"; do
+  [[ "$(wf -r --arg j "$job" '.jobs[$j] | has("env")')" == "false" ]] \
+    || fail "ci.yml job '$job' sets a job-level 'env:' — the environment the legs run in belongs in the one workflow-level block this file pins, so that all five legs provably share it; a per-job block is a leg running with something its siblings do not have, and it is where an interpreter swap would sit unread"
+done
+
+# Step level: the same allow list, addressed down to the step. `<job>|<step number>|
+# NAME=value`, every step of every job, compared as one set — so a step that gains an
+# `env:`, a step that loses one, and a value that changes are each red.
+actual_step_env="$(wf -r '
+  .jobs
+  | to_entries[]
+  | .key as $job
+  | (.value.steps // []) | to_entries[]
+  | .key as $index
+  | (.value.env // {}) | to_entries[]
+  | "\($job)|\($index + 1)|\(.key)=\(.value)"
+' | LC_ALL=C sort)"
+want_step_env="$(printf '%s\n' "${expected_step_env[@]}" | LC_ALL=C sort)"
+if [[ "$actual_step_env" != "$want_step_env" ]]; then
+  echo "quality-legs: ci.yml's step-level 'env:' blocks are not the ones this file expects" >&2
+  echo "  (each line is '<job>|<step number>|NAME=value')" >&2
+  env_diff_report "$want_step_env" "$actual_step_env"
+  fail "ci.yml's step-level env and the expected_step_env list in this file disagree — a step's own env reaches its command the same way the workflow block does, and it is quieter, so any change to one has to be stated in expected_step_env here, in the same commit"
+fi
+
 # The required status check, from the parsed file. A job's check name is its
 # `name:`, or its id when it has none, so both are folded before counting: nothing
 # else in this workflow may claim the string the ruleset requires.
@@ -715,4 +865,4 @@ expect_router "test" "tests" skips
 expect_router "check" "tests,checks" skips
 expect_router "all" "typecheck" skips
 
-echo "quality-legs: OK — all $gate_count expected gates are in quality.sh on their expected legs, legs [${declared_legs[*]}] all covered there and all launched by ci.yml (read as YAML with $yaml_parser) by a job that runs that leg's command and nothing else, under the conditions expected here and with no step allowed to skip it or excuse its failure, and the fan-in check 'quality' judges each leg by name exactly once — its own script run here against every way a leg can come back un-green"
+echo "quality-legs: OK — all $gate_count expected gates are in quality.sh on their expected legs, legs [${declared_legs[*]}] all covered there and all launched by ci.yml (read as YAML with $yaml_parser) by a job that runs that leg's command and nothing else, under the conditions expected here, with no step allowed to skip it or excuse its failure and no variable in its environment that is not written out here, and the fan-in check 'quality' judges each leg by name exactly once — its own script run here against every way a leg can come back un-green"
