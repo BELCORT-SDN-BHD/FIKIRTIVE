@@ -6,6 +6,7 @@ import {
   shotsNeedingMintedFirstFrame,
   shotsStuckWithoutInheritedFrame,
   isFrameInProgress,
+  isVideoInProgress,
   parseStoryboardCardPayload,
   MAX_STORYBOARD_SHOTS,
 } from "../storyboard-card";
@@ -413,5 +414,59 @@ describe("#782 r4 卡面钉死:spinner 与轮询都改读真作业", () => {
   it("首帧的 pending 判据不再是那个只看指针的 isFramePending", () => {
     expect(CARD_SOURCE_R4).not.toContain("function isFramePending");
     expect(CARD_SOURCE_R4).toContain("isFrameInProgress");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r5(判官 r4 P1-②)—— 死掉的片子不许继续转
+// ---------------------------------------------------------------------------
+//
+// 视频那一侧还停在 r3 的判据上:`videoCardId 在 && 没有 videoGenerationId` = 生成中。
+// 那是「有没有指针」,不是「有没有东西在跑」——片子第一次就失败时,商家看到的是一个永远
+// 转下去的 "Generating video…"。他因此永远不会去按那个真正能救他的按钮(Make all videos),
+// 于是「入口存在」在实际使用里等于不存在。判据同样改读服务端那份真作业状态。
+describe("#782 r5 isVideoInProgress —— 片子的 spinner 也必须有一条活作业撑着", () => {
+  const pending = { shotId: "s0", videoCardId: "vchild-0" }; // 子卡在,还没有片子
+
+  it("还没问过服务端(null)→ 只能按指针答(与首帧同一条规矩)", () => {
+    expect(isVideoInProgress(pending, null)).toBe(true);
+  });
+
+  it("服务端没说它死了 → 显示生成中", () => {
+    expect(isVideoInProgress(pending, new Set())).toBe(true);
+  });
+
+  it("服务端说这条片子已经死了 → 不显示生成中(假 spinner 断根)", () => {
+    expect(isVideoInProgress(pending, new Set(["s0"]))).toBe(false);
+  });
+
+  it("片子已经出来了 → 不再是生成中", () => {
+    const done = { shotId: "s0", videoCardId: "vchild-0", videoGenerationId: "vid-1" };
+    expect(isVideoInProgress(done, new Set())).toBe(false);
+  });
+
+  it("连视频子卡都没有 → 任何情况下都不显示生成中", () => {
+    expect(isVideoInProgress({ shotId: "s0" }, null)).toBe(false);
+  });
+});
+
+describe("#782 r5 卡面钉死:失败有交代、轮询收工不留假 spinner", () => {
+  const HERE_R5 = dirname(fileURLToPath(import.meta.url));
+  const CARD_SOURCE_R5 = readFileSync(resolve(HERE_R5, "../../components/otto/StoryboardCard.tsx"), "utf8");
+
+  it("视频的 pending 判据改读服务端那份真作业状态", () => {
+    expect(CARD_SOURCE_R5).toContain("isVideoInProgress");
+    expect(CARD_SOURCE_R5).toContain("deadVideoShotIds");
+  });
+
+  it("片子失败了要说人话,并指向再出一次的入口", () => {
+    expect(CARD_SOURCE_R5).toContain("That video didn&rsquo;t go through");
+  });
+
+  it("轮询打到上限收工时,不留一个再也不会更新的 spinner", () => {
+    // 上限逼停 = 我们不再问了。既然不再问,就不能继续按最后一次的答案显示「生成中」——
+    // 那正是判官 r4 时序里 spinner 永远挂着的最后一环。
+    expect(CARD_SOURCE_R5).toContain("setLiveFrameShotIds(new Set())");
+    expect(CARD_SOURCE_R5).toContain("setDeadVideoShotIds");
   });
 });

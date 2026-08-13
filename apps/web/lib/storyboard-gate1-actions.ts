@@ -474,20 +474,25 @@ export async function prepareStoryboardFirstFrames(
           });
           if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
             // Fresh → REUSE, do not mint. Compute spent (genJobId OR idempotency job).
-            const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
-            const p = (existing.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; estimatedCredits?: number };
-            children.push({
-              shotId: shot.shotId,
-              childCardId: existing.id,
-              estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
-              structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : shot.firstFramePrompt,
-              entityIds: Array.isArray(p.entityIds) ? p.entityIds : (shot.entityIds ?? []),
-              spent,
-            });
-            nextShots.push(shot);
-            continue;
+            // #782 r5 (判官 r4 P1-② 的同类缺口): 这张卡背后的作业死了 = 这张卡用完了
+            // (`isExhausted`)。复用一张用完的卡等于把这一镜永久钉死 —— 落下去往 mint。
+            const job = await childJobFor(tx, existing.id, ownerId);
+            if (!isExhausted(job)) {
+              const spent = existing.genJobId != null || job !== null;
+              const p = (existing.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; estimatedCredits?: number };
+              children.push({
+                shotId: shot.shotId,
+                childCardId: existing.id,
+                estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
+                structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : shot.firstFramePrompt,
+                entityIds: Array.isArray(p.entityIds) ? p.entityIds : (shot.entityIds ?? []),
+                spent,
+              });
+              nextShots.push(shot);
+              continue;
+            }
           }
-          // Missing, or stale in prompt or in shape → mint a replacement.
+          // Missing, stale in prompt or in shape, or EXHAUSTED (r5) → mint a replacement.
         }
 
         // Mint a fresh child for this shot.
@@ -679,18 +684,50 @@ async function childJobFor(tx: PrismaTx, childCardId: string, ownerId: string): 
   // #782: three more READ-ONLY columns come back — the clip's free last-frame asset and the
   // project/thread it belongs to. They are what gate③ needs to hand that frame to the next
   // shot; nothing here writes, and a job without a tail simply reports null.
-  const select = { id: true, status: true, lastFrameAssetId: true, projectId: true, threadId: true } as const;
+  //
+  // #782 r5(判官 r4 P1-①):再加 `generationIds` —— 这一列是**商家付了钱换到什么**的权威
+  // 记录,它在结算事务里与 settle 一起落库(apps/worker/src/jobs/gen.ts 的 commit marker),
+  // 早于 DONE。见 firstGenerationIdOf。
+  const select = { id: true, status: true, generationIds: true, lastFrameAssetId: true, projectId: true, threadId: true } as const;
   const job = child?.genJobId
     ? await tx.genJob.findFirst({ where: { id: child.genJobId, ownerId }, select })
     : await tx.genJob.findFirst({ where: { ownerId, idempotencyKey: `cowork:${childCardId}` }, select });
   return job ?? null;
 }
 
-type ChildJob = { id: string; status: string; lastFrameAssetId: string | null; projectId: string; threadId: string | null };
+type ChildJob = { id: string; status: string; generationIds: string[]; lastFrameAssetId: string | null; projectId: string; threadId: string | null };
 
-/** 作业**这一生结束了**的两种状态。到了这里就不会再有产出,也不会再有末帧 —— 与「还在跑」
- *  必须分开对待:等一条已经死掉的作业,就是把商家永远钉在「等待中」。 */
+/** 作业**这一生结束了、而且什么都没交付**的两种状态。到了这里就不会再有产出,也不会再有
+ *  末帧 —— 与「还在跑」必须分开对待:等一条已经死掉的作业,就是把商家永远钉在「等待中」。
+ *
+ *  钱的事实(r5 实查,见 `isExhausted`):GenJob 走到这两个状态的每一条路,都在写状态的
+ *  **同一个事务里**释放了预扣。所以「死作业」永远等于「商家一分钱没花、也什么都没拿到」。 */
 const JOB_DEAD_STATUSES = new Set(["FAILED", "CANCELLED"]);
+
+/** 作业**还在路上**的两种状态。DONE 不在其中:#782 r5 起,一条 DONE 的作业该交的东西这一刻
+ *  就已经交得出来(generationIds 在 DONE 之前落库,见 firstGenerationIdOf),所以「出完了」
+ *  是终点,不是「还在跑」。以前把 DONE 也算成在跑,是为了兜住「DONE 已写、GEN_RESULT 还没写」
+ *  那一瞬 —— 那个兜底现在由权威回退接手,而它兜得住的是**永远**没写成的情况,不只是一瞬。 */
+const JOB_LIVE_STATUSES = new Set(["QUEUED", "GENERATING"]);
+
+/**
+ * #782 r5(判官 r4 P1-②)—— 这张子卡**这一生用完了**。
+ *
+ * 子卡是钱路的幂等域:每张 GEN_CARD 恰好对应一把 `cowork:<cardId>` 的 once-EVER 键
+ * (cowork-actions.ts 的 re-spend guard + DB 唯一索引)。作业一旦落到终态,那把键就烧掉了 ——
+ * 再对同一张卡按一次生成,拿回的只会是那条死作业的 id,一次新的出片永远不会发生。
+ *
+ * 所以「已经花过钱」(spent)不足以描述这张卡:它答的是「这张卡还能不能再启动一次」,而
+ * 商家问的是「这一镜还能不能再出一次」。作业死了、预扣退了、这一镜什么都没拿到 —— 那就是
+ * 能,而且必须能。出路是**换一张卡**(新的幂等域),正是单镜重出按钮走了很久的那条路;
+ * 不发明第二套机制,也一格不动 exactly-once:同一张卡依旧只能启动一次。
+ *
+ * 反过来,「还没结束」(QUEUED/GENERATING/DONE)一律不算用完 —— 那种情形下重铸就是同一镜
+ * 付两次钱,是 P1 kill-shot 当初修掉的那条,这里一个字都不许动。
+ */
+function isExhausted(job: ChildJob | null): boolean {
+  return job !== null && JOB_DEAD_STATUSES.has(job.status);
+}
 
 /** 首帧只能是图片。末帧本来就是 PNG,但「指过去的那一行到底是不是图」这件事不能靠推定 ——
  *  指错了下游就是拿一段视频当首帧去付费出片。 */
@@ -741,16 +778,35 @@ async function inheritFrameFromClip(
   return gen.id;
 }
 
-/** Read-only: the first Generation id this DONE job produced, via its durable GEN_RESULT
- *  message (owner-scoped). Returns null if the result isn't written yet or is malformed. */
-async function firstGenerationIdOf(tx: PrismaTx, genJobId: string, ownerId: string): Promise<string | null> {
+/**
+ * Read-only: the first Generation id this DONE job produced. Returns null when the job truly
+ * produced nothing this side can point at.
+ *
+ * #782 r5(判官 r4 P1-①)—— **权威是作业行,不是那条聊天消息**。
+ *
+ * 判官钉出的时序:worker 在结算事务里写下 generationIds(与 settle 原子,所以
+ * 「有 generationIds」⟺「钱已经收了」)→ 写 DONE → 才 best-effort 追加 GEN_RESULT。最后
+ * 那一步是投递,不是记账:它吞掉任何持久化错误(gen.ts 的 appendCoworkResult),而之后的
+ * 任何一次重投看到 DONE 会直接返回,没有补写后盾。于是一条消息写失败,分镜就永远读不到
+ * 那张图 —— 商家付了钱、Generation 行就在库里、firstFrameGenerationId 永远不写、卡面
+ * 转到轮询上限为止。整条接续链断在这里,而这一切没有任何一处出错日志会被商家看见。
+ *
+ * 所以先读投递(它是商家在对话里真的看见的那一条,两处若不一致以它为准),读不到就回到
+ * 作业自己落库的那一行。「付过钱的事实」因此永远可达:投递丢失只影响时延,不影响终局。
+ *
+ * 调用点已经确认 `job.status === "DONE"` —— 只有到了终点才谈得上「它交出了什么」。
+ */
+async function firstGenerationIdOf(tx: PrismaTx, job: ChildJob, ownerId: string): Promise<string | null> {
   const result = await tx.chatMessage.findFirst({
-    where: { genJobId, ownerId, kind: "GEN_RESULT", deletedAt: null },
+    where: { genJobId: job.id, ownerId, kind: "GEN_RESULT", deletedAt: null },
     select: { payload: true },
   });
   const ids = (result?.payload as { generationIds?: unknown } | null)?.generationIds;
-  const first = Array.isArray(ids) ? ids[0] : undefined;
-  return typeof first === "string" && first.length > 0 ? first : null;
+  const delivered = Array.isArray(ids) ? ids[0] : undefined;
+  if (typeof delivered === "string" && delivered.length > 0) return delivered;
+  // 投递缺席 → 结算时落库的那一行。owner-scoped:这条作业行本身就是按 ownerId 读出来的。
+  const committed = Array.isArray(job.generationIds) ? job.generationIds[0] : undefined;
+  return typeof committed === "string" && committed.length > 0 ? committed : null;
 }
 
 /** Owner-scoped Generation id → media URL (mirrors data.ts getGenerationThumbs /
@@ -773,12 +829,14 @@ async function resolveMediaUrls(ownerId: string, generationIds: string[]): Promi
   return byGenId;
 }
 
-/** sync 的返回形状。`liveFrameShotIds` 是 #782 r4 新增的**只读**一格,见下面赋值处。 */
+/** sync 的返回形状。`liveFrameShotIds`(r4)与 `deadVideoShotIds`(r5)是两格**只读**的
+ *  现况报告:它们描述此刻,不进 payload,没有需要清理的过去。见下面各自的赋值处。 */
 type SyncResult = {
   payload: StoryboardCardPayload;
   frames: Record<string, string>;
   videos: Record<string, string>;
   liveFrameShotIds: string[];
+  deadVideoShotIds: string[];
 };
 
 export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Err> {
@@ -806,6 +864,9 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
     // #782 r4 (判官 r3 P3): 采样时顺手记下「哪些镜头的首帧子卡背后真有一条没死的作业」。
     // 赋值(不是累加)—— 事务体重跑一次也只会得到那一次采样的结果,不会叠加出幽灵。
     let liveFrameShotIds: string[] = [];
+    // #782 r5 (判官 r4 P1-②): 同一手法的另一格 —— 「哪些镜头的片子已经死了」。卡面据此
+    // 停掉一个永远不会有结果的 "Generating video…",并说出商家的下一步。
+    let deadVideoShotIds: string[] = [];
     const payload = await prisma.$transaction(async (tx) => {
       // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
       // racing a prepare/regen RMW could clobber a just-written — possibly already
@@ -861,11 +922,13 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
       for (const shot of p.shots) {
         if (shot.firstFrameCardId) {
           const job = await childJobFor(tx, shot.firstFrameCardId, ownerId);
-          // 「在跑」= 有作业且没死。DONE 也算:worker 先写 DONE、再写 GEN_RESULT,那一瞬
-          // 结果行还没落,此时判成「没在跑」会让卡面停掉轮询,那张图就再也不会被写回。
-          if (job && !JOB_DEAD_STATUSES.has(job.status)) liveFrames.add(shot.shotId);
+          // 「在跑」= 作业还没走到终点。r4 把 DONE 也算在跑,是为了兜住「DONE 已写、
+          // GEN_RESULT 还没写」那一瞬;r5 起那件事由 firstGenerationIdOf 的权威回退兜住 ——
+          // 而且兜的是**永远**没写成的情况,不只是一瞬。所以 DONE 如实归终态:它要么在
+          // 这一轮就把图写回去(下面),要么它本来就交不出东西,转下去也不会有。
+          if (job && JOB_LIVE_STATUSES.has(job.status)) liveFrames.add(shot.shotId);
           if (job?.status === "DONE") {
-            const genId = await firstGenerationIdOf(tx, job.id, ownerId);
+            const genId = await firstGenerationIdOf(tx, job, ownerId);
             if (genId && genId !== shot.firstFrameGenerationId) {
               frameWrites[shot.shotId] = genId;
               // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
@@ -878,12 +941,13 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
           if (job && JOB_DEAD_STATUSES.has(job.status)) videoJobDeadByShot.add(shot.shotId);
           if (job?.status === "DONE") {
             videoJobByShot.set(shot.shotId, job);
-            const genId = await firstGenerationIdOf(tx, job.id, ownerId);
+            const genId = await firstGenerationIdOf(tx, job, ownerId);
             if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
           }
         }
       }
       liveFrameShotIds = [...liveFrames];
+      deadVideoShotIds = [...videoJobDeadByShot];
 
       // ── #782 闸③:接续。第 N 镜的片子出完 → 它真实停住的那一帧成为第 N+1 镜的首帧。──
       //
@@ -1018,7 +1082,7 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
     // 自己按一下。能看见作业真实状态的只有这里(与闸③ 判词同源),所以由这里如实报回。
     //
     // 刻意**不**进 payload:它描述的是此刻,不是一件需要被记住、被清理的事实。
-    return { payload, frames, videos, liveFrameShotIds };
+    return { payload, frames, videos, liveFrameShotIds, deadVideoShotIds };
   });
 }
 
@@ -1149,20 +1213,31 @@ export async function prepareStoryboardVideos(
           // and DO NOT mint, DO NOT swap the pointer, DO NOT write the parent for this shot. This
           // makes aggregate-prepare idempotent under double-click / mid-flight re-entry. We mint a
           // fresh replacement ONLY when there is no child or the match fails (genuinely stale inputs).
+          //
+          // #782 r5 (判官 r4 P1-②) —— 但**用完了的卡不许复用**。走到这里的镜头一定没有片子
+          // (上面的资格闸:`shot.videoGenerationId` 存在就跳过了),所以「作业死了」在这里
+          // 的完整含义是:商家为这一镜发起过一次,那一次什么都没交付,预扣也已经退回。把这
+          // 张卡当「已交付」端回去,客户端会把它过滤掉、一次生成都不会发;真发了也只会拿回
+          // 那条死作业的 id。于是上一镜永远没有片子,下一镜按守卫永远等下去 —— 判官 r4 的
+          // 第二条 P1。出路是往下走去铸一张新卡(新幂等域),与单镜重出按钮同一条路。
           if (existing && videoChildMatches(ep, wouldBe)) {
-            const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
-            children.push({
-              shotId: shot.shotId,
-              childCardId: existing.id,
-              estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
-              structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
-              entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
-              spent,
-            });
-            nextShots.push(shot);
-            continue;
+            const job = await childJobFor(tx, existing.id, ownerId);
+            if (!isExhausted(job)) {
+              const spent = existing.genJobId != null || job !== null;
+              children.push({
+                shotId: shot.shotId,
+                childCardId: existing.id,
+                estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
+                structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
+                entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
+                spent,
+              });
+              nextShots.push(shot);
+              continue;
+            }
           }
-          // Missing or any mismatch (genuinely stale inputs) → mint a replacement (pointer swap below).
+          // Missing, any mismatch (genuinely stale inputs), or EXHAUSTED (r5) → mint a
+          // replacement (pointer swap below).
         }
 
         // Mint a fresh video child for this shot (no child, or a real mismatch).

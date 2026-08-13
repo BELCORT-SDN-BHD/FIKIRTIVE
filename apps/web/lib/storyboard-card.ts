@@ -134,6 +134,26 @@ export function isFrameInProgress<
   return liveFrameShotIds === null || liveFrameShotIds.has(shot.shotId);
 }
 
+/**
+ * #782 r5(判官 r4 P1-②)—— 这一镜的片子到底还在不在路上。
+ *
+ * 视频那一侧一直停在「有 videoCardId、还没有 videoGenerationId = 生成中」。那答的是有没有
+ * 指针,不是有没有东西在跑。片子第一次就失败时,商家看到的是一个永远转下去的
+ * "Generating video…" —— 他因此永远不会去按那个真正能救他的按钮,而下一镜在接续链上会一直
+ * 等着这一镜。「有入口」于是在实际使用里等于没有入口。
+ *
+ * 判据与首帧同源:sync 报回来的那份「哪些镜头的片子已经死了」(`deadVideoShotIds`)。
+ * 这里取的是**否定**式(没被点名 = 还在路上),因为「死」是一件服务端能确证的事,而
+ * 「活」在首屏那一瞬本来就无从确证 —— `dead === null`(还没问过服务端)因此照旧按指针答,
+ * 与 `isFrameInProgress` 同一条规矩:刚花完钱的那一秒,卡面不该显得什么都没发生。
+ */
+export function isVideoInProgress<
+  T extends { shotId: string; videoCardId?: string; videoGenerationId?: string },
+>(shot: T, deadVideoShotIds: ReadonlySet<string> | null): boolean {
+  if (!shot.videoCardId || shot.videoGenerationId) return false;
+  return deadVideoShotIds === null || !deadVideoShotIds.has(shot.shotId);
+}
+
 type RawShot = Partial<StoryboardCardPayload["shots"][number]>;
 
 export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView {

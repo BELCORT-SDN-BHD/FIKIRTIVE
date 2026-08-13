@@ -297,6 +297,16 @@ async function storeLastFrameBestEffort(
 // `committed`, never re-spend, never delay DONE. Exactly-once is the partial-unique index
 // ChatMessage(genJobId) WHERE kind IN (GEN_RESULT,TURN_ERROR) — a resume/redelivery re-attempt
 // hits P2002 and is swallowed.
+//
+// #782 r5 (judge r4 P1-①) — WHAT "BEST-EFFORT" IS ALLOWED TO COST. This swallows persistence
+// failures on purpose, and nothing downstream retries it (a redelivery sees DONE and returns).
+// That is only acceptable while this message is a DELIVERY of the outcome and never the RECORD
+// of it: the record is GenJob.generationIds, written inside the commit transaction that settles
+// the charge — so it exists before DONE and outlives any failure here. The storyboard's sync
+// reads that column when this message is missing (apps/web/lib/storyboard-gate1-actions.ts,
+// firstGenerationIdOf); before r5 it read only this message, and one swallowed error meant a
+// paid frame could never reach the storyboard again. Anything else that starts depending on
+// this row must read the job row the same way, or give this write a real backstop.
 async function appendCoworkResult(
   job: { id: string; threadId: string | null; ownerId: string; kind: string; model: string },
   kind: "GEN_RESULT" | "TURN_ERROR",
