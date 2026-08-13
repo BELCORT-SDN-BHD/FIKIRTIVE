@@ -295,7 +295,12 @@ expect_green_only_by_visible_edit() { # <description> <file that must have chang
 # So these cases take the gate body out of ci.yml, put it in a directory with a lock
 # that DOES NOT MATCH, and start it the two ways GitHub starts a `run:` step:
 #   `shell: sh` (what ci.yml now declares) → `sh -e <file>`
-#   the default (what it used to get)     → `bash --noprofile --norc -eo pipefail <file>`
+#   bash (what it used to get)             → `bash --noprofile --norc -eo pipefail <file>`
+# The bash form here is the STRICTER of the two GitHub uses, and that is on purpose.
+# The runner's default with no `shell:` key is plain `bash -e {0}` (visible in this
+# PR's own job logs); `--noprofile --norc -eo pipefail` is what an explicit
+# `shell: bash` gives. Measured, both read $BASH_ENV — so proving it against the
+# locked-down form proves it a fortiori against the default nobody had declared.
 # The requirement is not symmetric, and deliberately so: sh must REFUSE, and bash
 # must be FOOLED. The bash half is the nail — it is what makes `shell: sh` a check
 # rather than a decoration somebody tidies away in six months. If a future bash stops

@@ -125,8 +125,10 @@ node、python。
 
 因为 r8 复审证明：**正文再干净也没用，如果它还没开始跑就已经输了**。
 
-GitHub 的 `run:` 默认交给 bash。bash 启动时会先 source 环境变量 `BASH_ENV` 指的那个
-文件，**早于正文第一行**。于是在 workflow 级 `env:` 里加一行 `BASH_ENV: <路径>` 就够了：
+GitHub 的 `run:` 默认交给 bash（没写 `shell:` 时是 `bash -e {0}`，写 `shell: bash` 时是
+`bash --noprofile --norc -eo pipefail {0}`）。bash 启动时会先 source 环境变量 `BASH_ENV`
+指的那个文件，**早于正文第一行**——两种形态都读，实测过。于是在 workflow 级 `env:` 里加一
+行 `BASH_ENV: <路径>` 就够了：
 那个文件可以直接把 `.github/ci-workflow.lock` 重写成当前 ci.yml 的指纹（仓库自带的
 `scripts/ci/ci-workflow-lock.sh` 正好就干这件事），也可以定义两个叫 `cut` 和 `sha256sum`
 的函数，让比对结果等于任何想要的值。绊线的 diff 一个字没动，锁文件一个字没动。
@@ -194,7 +196,8 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh # 2. 
     任何白名单里，字面量又已经重生成——其余每一条检查都会点头；
   - **真的把绊线正文跑起来那一组**（9 个 case，不经过自测）：把绊线脚本从 ci.yml 里取
     出来，配一份**不匹配**的锁，按 runner 的两种起法启动——`sh -e`（现在 ci.yml 声明的）
-    和 `bash --noprofile --norc -eo pipefail`（以前默认拿到的）——分别喂三种毒：定义
+    和 `bash --noprofile --norc -eo pipefail`（bash 两种形态里更严的那一种；更松的
+    `bash -e` 正是以前默认拿到的，同样中招）——分别喂三种毒：定义
     `cut`/`sha256sum` 的文件、同样内容走 `/dev/stdin`（磁盘上不留任何痕迹）、以及直接把
     `BASH_ENV` 指向仓库自己的 `scripts/ci/ci-workflow-lock.sh`（source 它就等于重写锁）。
     要求是**不对称**的：`sh` 必须拒绝，`bash` 必须被骗过。外加两个对照 case（干净环境下，

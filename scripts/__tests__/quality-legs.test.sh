@@ -719,10 +719,12 @@ while IFS= read -r tripwire_job; do
     || fail "ci.yml job '$tripwire_job' step #2 is named '${second_name:-<none>}', this file expects '$expected_tripwire_name'"
   # The interpreter, not just the script. Everything else in this workflow is refused
   # a `shell:` outright (3b); the tripwire is required to carry one, at this value,
-  # because the value is a check in its own right. Under `bash` (the GitHub default
-  # for a `run:` step) a workflow-level `BASH_ENV` is sourced before the body's first
-  # line and can define `cut`/`sha256sum` or rewrite the lock; under non-interactive
-  # `sh` neither `BASH_ENV` nor `ENV` is read. Deleting this one word is the whole
+  # because the value is a check in its own right. Under bash — either form GitHub
+  # uses, the `bash -e {0}` a step gets with no `shell:` key at all or the
+  # `bash --noprofile --norc -eo pipefail {0}` of an explicit `shell: bash`; both were
+  # measured — a workflow-level `BASH_ENV` is sourced before the body's first line and
+  # can define `cut`/`sha256sum` or rewrite the lock. Under non-interactive `sh`
+  # neither `BASH_ENV` nor `ENV` is read at all. Deleting this one word is the whole
   # r8 bypass, so deleting it is red here.
   second_shell="$(wf -r --arg j "$tripwire_job" '((.jobs[$j].steps // [])[1] // {}).shell // ""')"
   [[ "$second_shell" == "$expected_tripwire_shell" ]] \
