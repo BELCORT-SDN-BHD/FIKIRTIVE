@@ -72,8 +72,16 @@ describe("Better Auth enumeration-safe responses", () => {
     // merchant's email arrival cannot be read as an answer about another merchant's address.
     // This file is about the RESET gate; those delays have their own file
     // (auth-email-queue-executor), so it takes them out.
-    const { __configureAuthEmailQueueForTests } = await import("@/lib/better-auth/sender");
+    const { __configureAuthEmailQueueForTests, __resetAuthEmailCapsForTests } = await import(
+      "@/lib/better-auth/sender"
+    );
     __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
+    // #795 — the per-address outbound cap is a SHARED counter now, not a process-local Map, so it
+    // survives the process this test runs in: without this reset the fifth run of this file (or
+    // any earlier file that mailed the same address) would suppress the send and the failure would
+    // read as "the reset gate is broken". Same reason every other file that mails an address
+    // resets it.
+    await __resetAuthEmailCapsForTests();
     mockAllowedEmailFindUnique.mockReset();
     mockSend.mockReset();
     mockSend.mockResolvedValue(undefined);

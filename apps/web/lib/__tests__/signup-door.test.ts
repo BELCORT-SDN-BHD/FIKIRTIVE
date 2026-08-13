@@ -10,7 +10,7 @@
  * Money: the welcome grant is a CreditLedger write. The exactly-once proof lives in
  * signup-grant-exactly-once.test.ts; here we only assert the happy path lands once.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
 type SentEmail = { to: string; subject: string; text?: string; devPreview?: string };
@@ -252,14 +252,93 @@ describe("#543 · the signup pages are reachable without a session", () => {
   });
 });
 
+/**
+ * #543 + #795 r3 —— 三道公开门的限流,现在是**两层**,这个 describe 断言的是各自的真实位置。
+ *
+ * 这里原本断言三道门在 Better Auth 的 `customRules` 里各有一条每小时规则。#795 把那三条撤了,
+ * 原因是库执行不出来:`storage: "database"` 时它按 `max(全局 window, 自带特殊规则窗口)` = 60 秒
+ * 清理计数行,而且清理时不看命中的是哪条 customRule —— 写着「5 次/小时」,执行出来的是
+ * 「5 次/分钟」。所以每小时闸搬到了我们自己的计数器上(它按自己的 expiresAt 清理),BA 那一层
+ * 留下的是它自带的短窗突发规则。
+ *
+ * 「有一条规则」不再是可断言的事实;「哪一层拦哪一种」才是。
+ */
 describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () => {
-  it("signup, password-reset and verification-email requests all have a bounded per-window rule", async () => {
-    const ctx = await auth.$context;
-    const rules = (ctx.options.rateLimit?.customRules ?? {}) as Record<string, { window: number; max: number } | undefined>;
-    for (const path of ["/sign-up/email", "/request-password-reset", "/send-verification-email"]) {
-      const rule = rules[path];
-      expect(rule?.window).toBeGreaterThan(0);
-      expect(rule?.max).toBeGreaterThan(0);
-    }
+  // r5/r7 —— 门的清单不在这里手抄一份,而是从**唯一那份清单**读出来。r7 把它从路由文件搬到
+  // lib/public-auth-doors.ts:路由是请求入口,不是别处读数据的地方(搬家的完整理由,以及
+  // 「多一个导出会炸 next build」这个说法为什么在本 app 上不成立,都写在那个文件里)。
+  // 第三道门(验证信重发)从清单里消失时,下面的断言会立刻红,而不是安静地少测一道门。
+  let PUBLIC_DOORS: readonly string[] = [];
+  beforeAll(async () => {
+    ({ HOURLY_PUBLIC_DOORS: PUBLIC_DOORS } = await import("@/lib/public-auth-doors"));
   });
+
+  it("路由清单就是这三道门 —— 少一道就是少一道闸", () => {
+    expect([...PUBLIC_DOORS].sort()).toEqual(
+      ["/request-password-reset", "/send-verification-email", "/sign-up/email"].sort(),
+    );
+  });
+
+  beforeEach(async () => {
+    const { prisma: db } = await import("@fikirtive/db");
+    await db.rateLimitCounter.deleteMany({});
+  });
+
+  it("每小时闸在我们自己的计数器上,不再在 BA 的 customRules 里", async () => {
+    const ctx = await auth.$context;
+    const rules = (ctx.options.rateLimit?.customRules ?? {}) as Record<string, unknown>;
+    for (const path of PUBLIC_DOORS) {
+      // 一条库执行不出来的规则比没有规则更糟:它让人以为门是关着的。
+      expect(rules[path], `${path} 又回到了 customRules —— 那里的每小时窗口执行不出来`).toBeUndefined();
+    }
+    const { PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR } = await import("@/lib/rate-limit-gates");
+    expect(PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR).toBeGreaterThan(0);
+  });
+
+  it("BA 这一层的计数落库,所以它自带的突发规则跨实例共享(而不是每个实例一份)", async () => {
+    const ctx = await auth.$context;
+    expect(ctx.options.rateLimit?.storage).toBe("database");
+    expect(ctx.options.rateLimit?.modelName).toBe("BetterAuthRateLimit");
+  });
+
+  it("行为上:同一个出口地址把每小时闸打满之后,公开门回 429", async () => {
+    // 走的是真实请求路径(路由包装层),不是配置断言。用密码重置这道门:它不建账号、不发信
+    // (地址不在名单上),所以这条用例只花计数,不留下别的痕迹。
+    // 注:BA 自己的限流器在测试环境是关的(它默认只在生产开),所以这里量到的就是我们这一层。
+    const { POST } = await import("@/app/api/better-auth/[...all]/route");
+    const { PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR } = await import("@/lib/rate-limit-gates");
+    const press = () =>
+      POST(
+        new Request("http://localhost:3100/api/better-auth/request-password-reset", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.77" },
+          body: JSON.stringify({ email: newEmail(), redirectTo: "/" }),
+        }),
+      );
+
+    for (let i = 0; i < PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR; i += 1) {
+      expect((await press()).status, `第 ${i + 1} 次不该被闸拦`).not.toBe(429);
+    }
+    const refused = await press();
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get("X-Retry-After"))).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("每道门各有各的桶 —— 打满其中一道,另外每一道都还是满额(逐门实测)", async () => {
+    const { consumePublicAuthDoor, PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR } = await import("@/lib/rate-limit-gates");
+    const headers = new Headers({ "x-forwarded-for": "203.0.113.78" });
+
+    // 打满第一道。
+    const [spent, ...others] = PUBLIC_DOORS;
+    for (let i = 0; i < PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR; i += 1) {
+      expect(await consumePublicAuthDoor(spent!, headers)).toBeNull();
+    }
+    expect(await consumePublicAuthDoor(spent!, headers)).toBeGreaterThan(0);
+
+    // 其余每一道都必须还是满额 —— r5:上一版只验了一道,第三道门(验证信重发)没人看着。
+    expect(others.length).toBeGreaterThan(1);
+    for (const door of others) {
+      expect(await consumePublicAuthDoor(door, headers), `${door} 不该被 ${spent} 的预算连累`).toBeNull();
+    }
+  }, 120_000);
 });
