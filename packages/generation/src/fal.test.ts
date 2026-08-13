@@ -184,3 +184,21 @@ describe("FalProvider.generate(图片)— 同一把尺子", () => {
     expect(err.charged).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #785 —— 备用适配器没有多素材参考那条路,所以它必须在**付费 POST 之前**拒绝,
+// 而不是把商家的产品图/代言人照片悄悄丢掉、照样做一支没有它们的片子并计费。
+// 这与旁边那行「整段参考视频」守的是同一条规矩(#644 起就在)。
+// ---------------------------------------------------------------------------
+describe("FalProvider — #785 元素参考照", () => {
+  it("带元素参考照 ⇒ 付费 POST 之前拒绝(fetch 一次都没发)", async () => {
+    const calls: string[] = [];
+    stubFetch((url: string) => { calls.push(url); return { ok: true, status: 200, json: async () => ({ video: { url: "https://cdn/out.mp4" } }) }; });
+    await expect(new FalProvider("k").generateVideo({
+      prompt: "our product on a beach", imageUrl: "",
+      refImageUrls: ["https://r2/product.png"],
+      durationSeconds: 5, model: "seedance-2-mini",
+    })).rejects.toThrow(/does not support element reference photos/);
+    expect(calls).toEqual([]);
+  });
+});

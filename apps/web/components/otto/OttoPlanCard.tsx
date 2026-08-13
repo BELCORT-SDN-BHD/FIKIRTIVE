@@ -14,6 +14,10 @@ import type { CardState } from "@/lib/otto-inject-helpers";
 // The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
 // gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
 import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
+// #774 判官 r2 P1 —— 卡上那行「引擎会被告知这些照片是谁」的措辞,与真正送出去的名字
+// 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。走**子路径**而不是包根:
+// `@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
+import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 
 /** What a successful approve hands up. Carries the EXACT card it happened on plus the
  *  SERVER's own result — the parent never has to infer either from a closure or from a
@@ -91,7 +95,6 @@ export function OttoPlanCard({
   const [elapsed, setElapsed] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
-  const [confirming, setConfirming] = useState(false);
   /** #498: set when THIS approve's resume parked again on more approvals (chained
    *  needs_approval) — the story didn't end with this card, and hiding that is the
    *  same silent death one click deeper. Holds the SERVER's localized receipt
@@ -110,10 +113,6 @@ export function OttoPlanCard({
     return () => clearInterval(t);
   }, [cardState]);
 
-  useEffect(() => {
-    if (cardState !== "idle") queueMicrotask(() => setConfirming(false));
-  }, [cardState]);
-
   const isVideo = p.kind === "video";
   // The one number the merchant decides on — the real charge in CREDITS (= what startGen
   // reserves). There is no USD→credits fallback any more: the record-only fal cost divided
@@ -130,6 +129,7 @@ export function OttoPlanCard({
   // derivations of one fact is exactly how the card came to promise things the
   // generator never received (#580 复审 r1 P1-2).
   const specChips = p.specChips ?? [];
+  const referenceNamesNote = approvedEntitiesNote(p.approvedEntities ?? []);
   // The card's honest run state. `working` maps to "queued": the card knows a job was
   // created, not that it started — so it must not say "making this now" (P1-3).
   const runState = runStateOfCard(cardState);
@@ -184,6 +184,10 @@ export function OttoPlanCard({
     }
   }
 
+  /** The merchant's approval, in ONE press (#896). The button carries the price, so the
+   *  press IS the approval — there is no second "are you sure" screen showing the same
+   *  number a second time. Everything money-shaped below is untouched: same approval
+   *  chain, same idempotency, same server actions, same fail-closed gate. */
   async function approve() {
     // Fail closed on the SAME gate the render used: a plan we couldn't read, couldn't
     // price, or couldn't read in full renders no approve button — and may not start a
@@ -208,7 +212,6 @@ export function OttoPlanCard({
         setError(res.error);
         return;
       }
-      setConfirming(false);
       // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
       // approval(s). Surface the server's localized receipt here, and hand the
       // chained card ids UP via onApproved so the parent marks them
@@ -252,7 +255,6 @@ export function OttoPlanCard({
   }
 
   function handleChangeSomething() {
-    setConfirming(false);
     onChangeSomething(p.structuredPrompt ?? "");
   }
 
@@ -353,6 +355,16 @@ export function OttoPlanCard({
           </div>
         )}
 
+        {/* #774 —— 引擎认人用的那几个名字,商家在花钱之前就看得见。卡上写的这几个字
+            就是付费提示词里那几个字:名字冻结在这张卡上,批准之后谁也改不动它,worker
+            只认这一份(改名不会偷偷换掉已经批准的指令)。老卡没有这份快照 → 不显示这行,
+            而不是猜一个。 */}
+        {referenceNamesNote && (
+          <div className="mt-[9px] text-[0.75rem] text-muted-foreground">
+            {referenceNamesNote}
+          </div>
+        )}
+
         {/* A payload that carried malformed fields is disclosed, not quietly patched —
             and, since r2 P1-2, not approvable either (see the button block below). */}
         {gate.malformedFields.length > 0 && (
@@ -449,24 +461,13 @@ export function OttoPlanCard({
               Ask again
             </Button>
           </div>
-        ) : confirming ? (
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="text-[0.875rem] text-foreground">
-              Generate this {isVideo ? "video" : "image"} for {creditsLabel(credits)}? This will spend real credits.
-            </div>
-            <div className="flex gap-3">
-              <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
-                {busy ? "Starting…" : `Confirm generate · ${creditsLabel(credits)}`}
-              </Button>
-              <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={() => setConfirming(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
         ) : (
+          // ONE press (#896, Founder 2026-08-13). The price is on the button, so pressing it
+          // IS the approval — the old "Review cost" step showed this same number again and
+          // charged nothing, which is a click that buys the merchant nothing.
           <div className="mt-4 flex gap-3">
-            <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={() => setConfirming(true)}>
-              Review cost · {creditsLabel(credits)}
+            <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
+              {busy ? "Starting…" : `Generate · ${creditsLabel(credits)}`}
             </Button>
             <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
               Change something

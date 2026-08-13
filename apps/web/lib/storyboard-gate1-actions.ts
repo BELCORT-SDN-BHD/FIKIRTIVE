@@ -26,13 +26,13 @@
  * guard 复核 —— fresh 查询带 live-thread 关系过滤,thread 在等锁期间失活=与卡消失同形
  * fail-closed,v6/R5①)、zod 入参、只读预检(其拒绝路径零写)。
  *
- * 锁后读经 tx(v6, R5③):spentOf / ownedEntityIdsFor / doneJobFor / firstGenerationIdOf
+ * 锁后读经 tx(v6, R5③):spentOf / ownedEntitiesFor / doneJobFor / firstGenerationIdOf
  * 均接收调用方的 tx,锁内读真正跑在被锁事务里。resolveDisabledModels 是跨文件的全局
  * 配置读(非卡状态,不受卡锁覆盖)——按锁后时点调用,连接归属与其一致性无关,如实陈述。
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
 import { buildProposeCard } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
@@ -70,13 +70,14 @@ async function loadCard(cardId: string, ownerId: string) {
 
 /** 该 owner 拥有的 entity id(对齐 buildOttoContext / propose-pack 的取法)。空输入不查库。
  *  v6(R5③):经调用方 tx 读,锁内调用真正跑在被锁事务里。 */
-async function ownedEntityIdsFor(tx: PrismaTx, ownerId: string, entityIds: string[]): Promise<string[]> {
+async function ownedEntitiesFor(tx: PrismaTx, ownerId: string, entityIds: string[]): Promise<ApprovedEntity[]> {
   if (entityIds.length === 0) return [];
-  const owned = await tx.entity.findMany({
+  // #774 判官 r2 P1:名字与类型跟归属**同一趟**读出来 —— 子卡上冻结的就是这一刻的身份,
+  // 引擎认人那几句机器指令以后只认它,不会在付费调用前再读一次活名称。
+  return tx.entity.findMany({
     where: { id: { in: entityIds }, ownerId, deletedAt: null },
-    select: { id: true },
+    select: { id: true, type: true, name: true },
   });
-  return owned.map((e) => e.id);
 }
 
 /** buildProposeCard 需要的最小 OttoContext(它只读 orgId/threadId/disabledModels 及两个 source 字段)。
@@ -260,7 +261,7 @@ async function mintChild(
   shot: Shot,
   ownerId: string,
   ctx: OttoContext,
-  ownedIds: string[],
+  ownedEntities: ApprovedEntity[],
 ): Promise<ChildFrameCard> {
   const { cardPayload } = buildProposeCard(
     {
@@ -273,7 +274,7 @@ async function mintChild(
       desiredAspect: firstFrameAspect(ctx.disabledModels),
     },
     ctx,
-    ownedIds,
+    ownedEntities,
   );
 
   const payload = { ...cardPayload, storyboardCardId: parent.id, shotId: shot.shotId };
@@ -419,7 +420,7 @@ export async function prepareStoryboardFirstFrames(
       unavailable = unavailableFor("image", disabledModels);
       if (unavailable) return;
       const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
-      const ownedIds = await ownedEntityIdsFor(tx, ownerId, allEntityIds);
+      const ownedEntities = await ownedEntitiesFor(tx, ownerId, allEntityIds);
       const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
       const parent = { id: card.id, threadId: fresh.threadId };
 
@@ -438,7 +439,7 @@ export async function prepareStoryboardFirstFrames(
         // call minting uses (mintChild), so the reuse comparison is against what a fresh mint
         // would really produce (prompt AND the frozen shape). buildProposeCard is pure ($0) —
         // this adds no I/O.
-        const shotOwnedIds = ownedIds.filter((id) => (shot.entityIds ?? []).includes(id));
+        const shotOwned = ownedEntities.filter((e) => (shot.entityIds ?? []).includes(e.id));
         const { cardPayload: wouldBe } = buildProposeCard(
           {
             kind: "image",
@@ -449,7 +450,7 @@ export async function prepareStoryboardFirstFrames(
             desiredAspect: firstFrameAspect(ctx.disabledModels),
           },
           ctx,
-          shotOwnedIds,
+          shotOwned,
         );
 
         // Already points at a child → try to reuse it.
@@ -477,7 +478,7 @@ export async function prepareStoryboardFirstFrames(
         }
 
         // Mint a fresh child for this shot.
-        const child = await mintChild(tx, parent, shot, ownerId, ctx, shotOwnedIds);
+        const child = await mintChild(tx, parent, shot, ownerId, ctx, shotOwned);
         children.push(child);
         nextShots.push({ ...shot, firstFrameCardId: child.childCardId });
         changed = true;
@@ -572,7 +573,7 @@ export async function regenShotFirstFrameCard(
       // The WOULD-BE-MINTED card — the SAME pure buildProposeCard call minting uses (mintChild),
       // built on the SAME in-lock owned-entity read. Single source of truth for the reuse
       // comparison: prompt AND the frozen shape (#656 P2).
-      const ownedAll = await ownedEntityIdsFor(tx, ownerId, target.entityIds ?? []);
+      const ownedAll = await ownedEntitiesFor(tx, ownerId, target.entityIds ?? []);
       const { cardPayload: wouldBe } = buildProposeCard(
         {
           kind: "image",

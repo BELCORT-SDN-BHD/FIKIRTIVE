@@ -4,6 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { storage, kindOf, extFromFilename } from "./storage";
+import { redactProviderNames } from "./provider-secrecy";
 
 export type GenerationDTO = {
   id: string;
@@ -14,9 +15,28 @@ export type GenerationDTO = {
   // The panel must
   // act on the SELECTED variant's id — not the primary `id` — for animate/delete/favorite/edit,
   // or it spends on / mutates the wrong image when a sibling variant is displayed.
-  variants: { id: string; url: string; favorite: boolean }[];
+  //
+  // #776 r2：`finalPrompt` 同样是**逐张**的。一单多图 = 多次付费调用，引擎可以对每一张改写出
+  // 不同的一句，worker 也确实逐行落库；只带主图那一句，切到第二张时面板会拿第一张的话去解释
+  // 第二张 —— 一个比「不知道」更糟的答案。所以它跟 id/url/favorite 一样，绑在**这一张**上。
+  variants: { id: string; url: string; favorite: boolean; finalPrompt: string | null }[];
   kind: string;
   prompt: string;
+  /**
+   * #776 —— 引擎自报**它真正跑的那句提示词**,商家可见。
+   *
+   * 被请求的那一行自己的那句(多图时每张各有各的,见 `variants[].finalPrompt`)。
+   *
+   * null 有两种情形,语义是同一个:引擎没报,或者这是回执落库之前的历史行。两种都叫
+   * **未知**,而面板会把「未知」**说出来**(“Not reported by the engine.”)—— 不知道要
+   * 长得像不知道,既不能悄悄消失(看起来像这个东西不存在),更不能回落成 `prompt` 冒充
+   * 引擎的话(那样这个字段就变成一句永远为真的废话,商家再也看不出两句何时真的不同)。
+   *
+   * 白标在这里(服务端一处)完成:引擎改写出来的句子可能带供应商指纹词,过
+   * `redactProviderNames` 之后才越过这道边界。原文按原样留在库里 —— 那是记账真相,
+   * 过滤是展示层的事。
+   */
+  finalPrompt: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /**
@@ -40,6 +60,7 @@ export async function getGeneration(
       id: true,
       projectId: true,
       promptText: true,
+      finalPromptText: true,
       favorite: true,
       asset: { select: { ownerId: true, contentHash: true, ext: true } },
     },
@@ -59,23 +80,30 @@ export async function getGeneration(
   // Resolve sibling variants (id + url) from the producing GenJob's generationIds array
   // (owner-scoped). Kept as an aligned {id, url}[] so the panel can act on the SELECTED
   // variant's own generation id, not just show its url (F08).
-  let variants: { id: string; url: string; favorite: boolean }[] = [{ id: gen.id, url, favorite: gen.favorite }];
+  const primaryVariant = { id: gen.id, url, favorite: gen.favorite, finalPrompt: merchantFinalPrompt(gen.finalPromptText) };
+  let variants: { id: string; url: string; favorite: boolean; finalPrompt: string | null }[] = [primaryVariant];
   if (job && job.generationIds.length > 1) {
     const siblingIds = job.generationIds.filter((id) => id !== generationId);
     const siblings = await prisma.generation.findMany({
       where: { id: { in: siblingIds }, ownerId, deletedAt: null },
-      select: { id: true, favorite: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+      // #776 r2：兄弟行也要读回执那一列，否则切换缩略图时面板只能拿主图那一句凑数。
+      select: { id: true, favorite: true, finalPromptText: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
     });
     const siblingMap = new Map(siblings.map((s) => [s.id, s]));
     // Preserve the original generationIds order; each entry carries its own id (a missing
     // sibling — soft-deleted — is dropped as a whole {id,url} pair, so id/url never misalign).
     variants = job.generationIds.flatMap((id) => {
-      if (id === generationId) return [{ id, url, favorite: gen.favorite }];
+      if (id === generationId) return [primaryVariant];
       const sib = siblingMap.get(id);
       if (!sib) return [];
-      return [{ id, url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)), favorite: sib.favorite }];
+      return [{
+        id,
+        url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)),
+        favorite: sib.favorite,
+        finalPrompt: merchantFinalPrompt(sib.finalPromptText),
+      }];
     });
-    if (!variants.some((v) => v.id === generationId)) variants = [{ id: gen.id, url, favorite: gen.favorite }, ...variants];
+    if (!variants.some((v) => v.id === generationId)) variants = [primaryVariant, ...variants];
   }
 
   return {
@@ -86,10 +114,26 @@ export async function getGeneration(
     variants,
     kind: kindOf(asset.ext),
     prompt: gen.promptText,
+    // 这一条是**被请求的那一行**自己的那句(= variants 里 id === generationId 的那一条)。
+    finalPrompt: primaryVariant.finalPrompt,
     favorite: gen.favorite,
     sourceGenerationId: job?.sourceGenerationId ?? null,
     imageAspect: snapshotImageAspect(job?.imageOptions),
   };
+}
+
+/**
+ * #776 —— 引擎自报的那句提示词跨过商家边界时的**唯一**出口。
+ *
+ * 两件事在这一处做完,所以别处不必各做一遍:
+ *   ① 白标 —— 过 `redactProviderNames`,引擎改写时带出来的供应商指纹词到不了商家眼前;
+ *   ② 空即未知 —— null / 空串 / 过滤后只剩空白,一律回 null。面板对 null 什么也不说。
+ *      「不知道」必须长得像不知道,不能长得像一个空白的答案。
+ */
+function merchantFinalPrompt(stored: string | null): string | null {
+  if (!stored) return null;
+  const shown = redactProviderNames(stored).trim();
+  return shown.length > 0 ? shown : null;
 }
 
 /** 快照里的形状，且必须仍在今天的菜单上 —— 一个已下线的旧形状不得靠这条路回到付费请求里。 */

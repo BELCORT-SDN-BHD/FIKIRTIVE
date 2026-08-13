@@ -27,6 +27,10 @@ import {
   videoDefaults,
   imageDefaults,
   merchantGenFailureMessage,
+  videoElementReferencesHonoured,
+  approvedEntityDrift,
+  parseApprovedEntities,
+  type ApprovedEntity,
   type GenModel,
   type GenVideoModel,
   type GenJobData,
@@ -93,6 +97,15 @@ export type ActiveGenModels = {
    * 「显示的」与「收的」第二次分家的入口。24 档全表一次带回来,选择器直接查表。
    */
   videoCreditsBySpec: Record<string, number>;
+  /**
+   * #785 判官 r2 P1-a —— 这一趟真正会跑的那个适配器,收不收 @元素的参考照。
+   *
+   * 界面靠它决定**要不要开口承诺**「Type @ to bring your products and people into the clip」。
+   * 这句承诺不能由浏览器自己判断:判据住在服务端(`GENERATION_PROVIDER` 选中的那条路),
+   * 浏览器读不到,自己编一个默认值就是又一次「说的与做的失同步」。取不到 ⇒ 界面闭嘴。
+   * 与形状菜单、按档价目表同一条规矩:界面只渲染服务端解析出来的事实。
+   */
+  videoElementReferences: boolean;
   /** #643 T2 —— 图片形状菜单（default-first）。UI 只渲染这份列表，自己不写死任何一格。 */
   imageAspectRatios: string[];
   /** 商家没选形状时会交付的那一格。UI 的初始选中值取这里，所以「显示的」= 「会交付的」。 */
@@ -236,8 +249,18 @@ type TrustedCoworkRequest = {
   projectId: string;
   threadId: string;
   expectedCredits: number | null;
+  /** #774 判官 r4 P1 —— 审批身份的**唯一**来源:服务端刚读出来的那张持久化卡。
+   *  与 `expectedCredits` 同一条纪律:商家批准的那份东西由卡说了算,不由调用方说了算。 */
+  approvedEntities: ApprovedEntity[];
 };
 const TRUSTED_COWORK_REQUESTS = new WeakMap<object, TrustedCoworkRequest>();
+
+/** #774 判官 r4 P1 —— 「这一份审批身份就是卡上那一份」的机器判据(逐项逐字,含次序)。
+ *  写成函数而不是注释,是因为它是 startGen 唯一放行这个字段的条件。 */
+function sameApprovedEntities(a: ApprovedEntity[], b: ApprovedEntity[]): boolean {
+  return a.length === b.length
+    && a.every((x, i) => x.id === b[i]!.id && x.type === b[i]!.type && x.name === b[i]!.name);
+}
 
 /** Canvas's paid entrypoint. The browser supplies a stable logical actionId, never an
  * idempotency key; the reserved durable key is derived here on the server. */
@@ -329,13 +352,33 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
   const expectedCredits = typeof quote === "number" && Number.isSafeInteger(quote) && quote > 0
     ? quote
     : null;
-  const trustedRequest = { ...parsed.data };
+
+  // #774 判官 r4 P1 —— 审批身份与报价同一条纪律:**只从上面这张服务端读出来的卡取**,
+  // 调用方随请求提交的同名字段在这里被原样覆盖掉(下面 `startGen` 再核一次身份)。
+  //
+  // 为什么不能信调用方那一份:这是一个可直接调用的 Server Action。卡上批的是 A,商家
+  // 把活行改名成 B,然后直接调这个 Action 交一份写着 B 的「审批快照」—— 漂移闸拿 B 比
+  // 活名 B,一路通过,冻进任务行的是 B,worker 照 B 造指令、送去付费引擎,而卡面自始至终
+  // 写着 A。「批 A 做 B」就这么经一份伪造快照到达了。卡是商家批准前看过、批准后不可变的
+  // 那一份,所以名字只能从它来。
+  //
+  // 只留这一趟真的 @ 到的那些元素(与 `buildGenRequestFromCard` 同一条口径):卡上有、
+  // 这一趟没 @ 的元素不许把名字带进付费提示词。卡上没有这一份(老卡、跨部署)→ 空表 →
+  // 字段整个缺席,按既有降级走:worker 照旧编号,只是不写名字。
+  const mentioned = new Set(parsed.data.entityIds);
+  const cardApprovedEntities = parseApprovedEntities(payload.approvedEntities)
+    .filter((e) => mentioned.has(e.id));
+  const trustedRequest = {
+    ...parsed.data,
+    approvedEntities: cardApprovedEntities.length ? cardApprovedEntities : undefined,
+  };
   TRUSTED_COWORK_REQUESTS.set(trustedRequest, {
     ownerId: gate.ownerId,
     cardId,
     projectId,
     threadId,
     expectedCredits,
+    approvedEntities: cardApprovedEntities,
   });
   return startGen(trustedRequest);
 }
@@ -383,7 +426,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const OWNED = { ownerId, deletedAt: null } as const;
     const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
     if (!parsed.success) return { error: "That generation request is out of bounds." };
-    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, coherentSet } = parsed.data;
+    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, approvedEntities, coherentSet } = parsed.data;
     const parsedCanvasAction = parseCanvasActionKey(idempotencyKey);
     if (parsedCanvasAction && !trustedCanvasKey) {
       return { error: "That generation request is out of bounds." };
@@ -411,6 +454,16 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       return { error: "That generation request is out of bounds." };
     }
 
+    // #774 判官 r4 P1 —— 审批身份只有一个来源:服务端读出的那张持久化卡。
+    // `startCoworkGen` 在把请求交到这里之前,已经用卡上那一份覆盖了调用方提交的字段,
+    // 所以走到这里只剩两种合法形状:与卡上那一份逐字相同,或者根本没有这个字段。
+    // 剩下的那一种 —— 调用方自带一份没有卡背书的「审批快照」—— 是伪造的审批记录:
+    // 画布、资产详情、工厂、Campaign 这些入口没有卡可以背书它,直接调 startGen 更没有。
+    // 一律拒,$0(create/reserve/enqueue 都在后面)。
+    if (!sameApprovedEntities(approvedEntities ?? [], trustedCoworkRequest?.approvedEntities ?? [])) {
+      return { error: "That generation request is out of bounds." };
+    }
+
     const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
     if (!project) return { error: "Project not found." };
 
@@ -434,11 +487,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       };
     }
 
-    // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
-    // conditions on the source keyframe, not entity refs — the chosen variant is already
-    // baked into that keyframe — so it's not meaningful for video and the worker ignores
-    // it. The shared material normalizer drops video maps and canonicalizes an empty image
-    // map to absent, matching the worker's `job.variantSel ?? {}` semantics.
+    // variantSel picks WHICH reference photos of an @mentioned element this run conditions on
+    // (the chosen variant's, or the base ones). It used to be dropped for video, because video
+    // was i2v only: the condition lived entirely in the source keyframe and entity photos never
+    // rode along. #785 changed that premise — element photos really do reach the video engine —
+    // so the map is now kept for both kinds, and the same map feeds the card's disclosure, the
+    // guardian and the worker. The shared normalizer only canonicalizes an empty map to absent,
+    // matching the worker's `job.variantSel ?? {}` semantics.
     const material = normalizeFactoryMaterial({
       prompt,
       model,
@@ -537,6 +592,29 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // …and the image shape (#642), from the same normalizer, persisted the same way.
     const imageOptions = material.imageOptions ?? undefined;
 
+    // #785 判官 r2 P1-a —— 商家真 @ 了元素,而这一趟要跑的适配器根本收不了元素照:
+    // 在花钱**之前**停住,并说一句他能看懂、能自己解决的话。
+    //
+    // 为什么必须在这里,而不是只靠适配器那道拒收闸:名额 `conditioningCap` 在这条路上是 0,
+    // 于是 worker 一张照片都不会带,适配器看到的是一个普普通通的文生视频请求 —— 它没有理由
+    // 拒收,付费请求照发。结果就是商家 @ 了产品与代言人、付了钱,拿回一支跟他的东西毫无关系
+    // 的片子,而全程没有一个字提过。适配器那道闸是纵深防御(挡「照片真送出去了」那一路),
+    // 挡不住这一路。
+    //
+    // 判据只有 `videoElementReferencesHonoured` 一处 —— 与界面的承诺、卡面的规格条目、
+    // 选片名额同源,所以三者不可能各说各话。
+    //
+    // 只管 provider 这一维:带首帧/末帧/整段参考视频的那三档名额同样是 0,但那是**场景**
+    // 使然,卡面在批准前已经照实说了「一张都不会用上」,商家是知情批准的 —— 那条路不动。
+    //
+    // 位置:排在所有重放快路之后(与守卫、机型开关同组)。已经受理过的那一单,重放时照旧
+    // 拿回它自己的 id —— 配置在中途换了,不该让同一次尝试的答案不再幂等。
+    if (kind === "video" && entityIds.length > 0 && !videoElementReferencesHonoured()) {
+      return {
+        error: "We can't put your products or people into a clip right now — remove the @mentions to make this video, and nothing will be charged.",
+      };
+    }
+
     // consistencyGuardian (Phase 2): block obvious money-wasters BEFORE the spend
     // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
     // frame). Fail-OPEN — checkCast returns null on its own faults — and additive
@@ -547,6 +625,37 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });
       } catch { /* audit best-effort — a log hiccup must not swallow the block */ }
       return { error: sanitizeUserError(block.error) };
+    }
+
+    // #774 判官 r3 P0 —— 引擎认人那几句机器指令里的名字,只能是商家批准时看到的那个,
+    // 而「批准那一刻」永远发生在**这一步之前**。所以这一步一个活名称都不读。
+    //
+    // 元素名是商家随时能改的自由文本(`updateEntity` 只 trim,不拦句号、换行或整句指令)。
+    // 名字若在付费调用前才现读,批准之后改一次名,就能把没过审批的指令送进那次**已经批准
+    // 的付费调用** ——「批 A 做 B」。
+    //
+    // 名字只有一个来源:那张卡上的审批快照(铸卡侧在批准那一刻写在卡上,商家批之前就
+    // 看得见;由 `startCoworkGen` 服务端读出、上面那道闸核过身份 —— 走到这里的这一份
+    // 不可能是调用方自带的)。这里只做一件事 —— 拿它跟活行**核对**:对不上说明这张卡
+    // 承诺的东西已经不是它会做出来的东西,按既有「内容漂移 = 重新批准」语义拒掉,$0
+    // (create/reserve 都在后面)。没有快照要核对时,连这一次读都不发生。
+    //
+    // 没有快照的请求(#774 之前铸的老卡、跨部署、以及不带卡的入口)= 这一趟没有获批的
+    // 名字。列保持空,worker 照旧编号、只是不写名字
+    // (`Define the product in <Image_1> as <Subject_1>.`)。降级方向是**少一个名字**,
+    // 绝不是执行时补一个没人批准过的名字 —— 与 `genRequest.approvedEntities` 的契约
+    // (packages/core/src/gen.ts)逐字一致。
+    let frozenEntities: ApprovedEntity[] = [];
+    if (approvedEntities?.length) {
+      const live = await prisma.entity.findMany({
+        where: { id: { in: entityIds }, ...OWNED },
+        select: { id: true, type: true, name: true },
+      });
+      const drifted = approvedEntityDrift(approvedEntities, live);
+      if (drifted.length > 0) {
+        return { error: "One of these elements was renamed since this plan — ask for it again to get a fresh one." };
+      }
+      frozenEntities = approvedEntities;
     }
 
     // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
@@ -748,9 +857,14 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             // "edit this image" inherits from it. Video jobs get null (normalizer drops it).
             ...(imageOptions ? { imageOptions } : {}),
             // Phase C: persist the @mention→variant bindings so the worker conditions on
-            // the right variant. Image-only (the shared material normalizer drops it for video).
-            // Omitted when empty → column stays null (old/bare/video gens unchanged).
+            // the right variant — for video too since #785, because its element photos now
+            // really reach the engine. Omitted when empty → column stays null (bare gens
+            // unchanged).
             ...(material.variantSel ? { variantSel: material.variantSel } : {}),
+            // #774:批准那一刻冻结的元素身份。worker 认人只读这一列,不再重读活名称。
+            // 不参与幂等材料 —— 改过名的重放不该被判成「换了内容」。空 → 列保持 null,
+            // worker 照旧编号,只是不写名字。
+            ...(frozenEntities.length ? { approvedEntities: frozenEntities } : {}),
           },
           select: { id: true },
         });
@@ -939,6 +1053,9 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
       videoOptions: null,
     })),
     videoDefaults: defaults,
+    // #785 判官 r2 P1-a:界面承诺 @元素之前先问这一处 —— 与选片名额(`conditioningCap`)
+    // 和卡面规格条目读的是**同一个**函数,所以「界面说的」不可能比执行层多说一句。
+    videoElementReferences: videoElementReferencesHonoured(),
     videoAspectRatios: [...GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel].aspectRatios],
     imageAspectRatios: [...GEN_IMAGE_MODEL_OPTIONS[imageModel as GenModel].aspectRatios],
     imageDefaultAspect: imageDefaults(imageModel as GenModel).aspectRatio,

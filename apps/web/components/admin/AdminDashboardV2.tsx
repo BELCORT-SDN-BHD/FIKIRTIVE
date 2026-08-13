@@ -32,6 +32,7 @@ import type {
   AuditPreview,
   CaseRow,
   LargeGrantRow,
+  MoneyJobRow,
   MoneyLedgerRow,
   PendingInviteRow,
   StaffRowV2,
@@ -559,6 +560,8 @@ function MoneySection({ data }: { data: AdminV2Data }) {
         </Panel>
       </div>
 
+      <ReconciliationPanel jobs={data.money.jobs} />
+
       <Panel
         title="Ledger"
         subtitle="Append-only credit movement. Select a row to inspect metadata."
@@ -596,6 +599,65 @@ function MoneySection({ data }: { data: AdminV2Data }) {
         </div>
       </Panel>
     </div>
+  );
+}
+
+/**
+ * #776 —— 引擎实报 vs 我们估算,并排放。
+ *
+ * 在此之前 Cost & usage 只有一个数:`spentUsd` —— 我们按自己的价目表冻结的**估算**。它对不
+ * 对,平台侧没有任何一处可以反查,毛利只能靠信。回执落库之后,引擎自己报的量就在同一行上,
+ * 于是这张表第一次有两个可比的数。
+ *
+ * 三条口径写在渲染里:
+ *   · 未知就说 Unknown。引擎没报、或者这条路(参考图)还没有这一列 —— 都不补 0、不按价目
+ *     表反推一个「应该是多少」。补出来的数会挨着真数躺着,下一个人分不出哪个是账单;
+ *   · 单位跟着引擎走。图按**张**、视频按 **token**,这是它的定价方式不是我们的选择,所以
+ *     数字后面永远带单位,免得两条产品线的数被加到一起;
+ *   · 张数对不上就明说。图片一单 = count 次付费调用,正常时实报张数 = 我们计价的张数;不
+ *     等就是我们的估算建立在错误的数量上 —— 这正是这张表要抓的那一类错。
+ *
+ * 内部成本口径,只在 admin 面;商家看不到这一列(白标边界见 provider-secrecy)。
+ */
+function ReconciliationPanel({ jobs }: { jobs: MoneyJobRow[] }) {
+  const rows = jobs.slice(0, 40);
+  const reported = jobs.filter((job) => job.billedUnits !== null).length;
+  return (
+    <Panel
+      title="Engine-reported vs estimated"
+      subtitle="What the engine says it billed, next to the cost we froze from our own price table. Unknown means the engine did not report it — nothing is inferred."
+      action={<Badge variant="outline">{reported} of {jobs.length} reported</Badge>}
+    >
+      <div className="grid gap-2">
+        {rows.length === 0 ? <EmptyState label="No paid jobs in the sampled window." /> : null}
+        {rows.map((job) => {
+          // 只有图片可比:实报单位与我们计价的单位都是「张」。视频实报 token、我们按秒计价,
+          // 两个单位不能相减 —— 那就只并排显示,不假装能算出一个差。
+          const mismatch = job.billedUnitLabel === "images" && job.billedUnits !== job.count;
+          return (
+            <div key={`${job.source}:${job.id}`} className="grid gap-2 rounded-xl border border-border bg-background p-3 lg:grid-cols-[110px_1fr_150px_170px] lg:items-center">
+              <Badge variant={job.status === "FAILED" ? "destructive" : "outline"}>{job.label}</Badge>
+              <p className="truncate font-mono text-xs text-muted-foreground">{job.id}</p>
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">Our estimate</dt>
+                <dd className="text-sm font-semibold text-foreground">{usd(job.spentUsd)} <span className="font-normal text-muted-foreground">· costed {job.count}</span></dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">Engine reported</dt>
+                {job.billedUnits === null ? (
+                  <dd className="text-sm italic text-muted-foreground">Unknown</dd>
+                ) : (
+                  <dd className={cn("text-sm font-semibold", mismatch ? "text-destructive" : "text-foreground")}>
+                    {job.billedUnits.toLocaleString()} {job.billedUnitLabel}
+                    {mismatch ? <span className="ml-2 font-normal">· does not match what we costed</span> : null}
+                  </dd>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
   );
 }
 
