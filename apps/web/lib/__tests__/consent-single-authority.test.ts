@@ -553,18 +553,27 @@ describe("#726 the two pages count different populations, and each one says whic
 
     const page = renderToStaticMarkup(createElement(ContactPreview, { preview }));
     expect(page).toContain("These counts cover every contact you have");
-    // #792 r6b — both pages used to name the broadcast's population as "the contacts it can
-    // reach", which promised delivery neither number measures. What each one still has to do —
-    // and what this test is here for — is print WHICH population it counted next to the number;
-    // the population is now named by what the run actually selects on.
+    // #792 r8 — what this test is for has never changed: each number must print WHICH population
+    // it counted. Two attempts at naming that population were wrong, and this is the third:
+    //   "the contacts it can reach"  — promised delivery no number here measures;
+    //   "… and no known opt-out"     — false, and false twice: `selectedIntoAudience` keeps known
+    //                                  opt-outs in a segment that went looking for them (the test
+    //                                  below freezes four of them), and the broadcast number this
+    //                                  sentence explains IS a count of known opt-outs.
+    // The population is narrowed by exactly one line of customer-broadcast-service.ts —
+    // `if (sendTargets.length === 0) continue` — so that is all the sentence claims.
     expect(page).toContain(
-      "A broadcast counts only the contacts with a confirmed identity on the channel it sends from and no known opt-out",
+      "A broadcast counts only the contacts with a confirmed identity on the channel it sends from, so its own numbers can be lower.",
     );
 
     const note = renderToStaticMarkup(createElement(ConsentExclusionNote, { consent: frozen.consent }));
     expect(note).toContain(
-      "This count covers the contacts with a confirmed identity on the channel this broadcast sends from and no known opt-out",
+      "This count covers the contacts with a confirmed identity on the channel this broadcast sends from, so it can be lower than the count on the segments page",
     );
+    // The population sentence may not borrow a consent word — that is the r7 defect, in the one
+    // place it would come back.
+    expect(page).not.toContain("sends from and no known opt-out");
+    expect(note).not.toContain("sends from and no known opt-out");
     // The freeze must not claim to have excluded the very same people the segment did.
     expect(note).not.toContain("the same contacts the segment left out");
   });

@@ -734,31 +734,97 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
    *   · 会被朗读或悬停读到的属性:aria-label / aria-description / aria-describedby 的文本 /
    *     title / placeholder / alt;
    *   · **非 hidden input 上的 `value=`**(`<input type="hidden">` 才是机器值);
-   *   · 以及以上任意一处的 **JSX 表达式内字面量拼接**(`{"a" + "b"}`、模板串)——
-   *     AST 把拼接式的每个字面量取出来按序拼回,① 就藏不住了。
+   *   · 以及以上任意一处**拼得出字面量的表达式**。
    * 变量名、props 键名、`value` 在 hidden input 上、类型里的字符串联合,都不在此列。
+   *
+   * r8(r7 判词 P1-2)—— r6 把表达式拍成**一条**字符串,这在声明的能力范围内仍有两种绕过,
+   * 判官各给了可复现的样本:
+   *   ① 模板串里的三元:``{`${ready ? "reach" : "email"}able contacts`}`` ——
+   *      页面真显示 "reachable contacts",而 r6 把两支拍成 "reach\nemail" 再接后缀,
+   *      拼出来的是 "reach\nemailable contacts",词族一个都碰不到。嵌套三元同理。
+   *   ② 同文件里的 const:`const label = "Reachable contacts"; <button aria-label={label} />`
+   *      —— 标识符取不出字面量,整句直接丢掉。
+   *
+   * 修法是把「一条字符串」换成「**所有可能的字符串**」:
+   *   · `expand()` 返回一个数组,三元取**两支的并集**,拼接与模板串做**笛卡尔积**,
+   *     所以每一种真正会显示出来的组合都被单独拿去过词族(嵌套靠递归自然覆盖);
+   *   · 同文件内 `const 名字 = 字面量` 收进一张表,标识符按表展开(**只认 const,只认本文件**)。
+   * 组合数封顶,超了就**抛错**而不是截断 —— 截断本身会变成新的藏身处。
+   *
+   * ── 这把尺子的能力边界(如实写明,不假装盖满)────────────────────────────────
+   * 覆盖:字面量、模板串、`+` 拼接、三元(含嵌套)、同文件 const 字符串、以上任意嵌套组合。
+   * **不覆盖**(判官 r7 已裁定超出本次声明边界,不在本轮修法内):
+   *   · `String.fromCharCode(...)` 之类的**逐字符构造**;
+   *   · 数组 `.join("")` / `.map().join()` 之类的**集合拼装**;
+   *   · 跨文件导入的常量、函数返回值、i18n 查表 —— 值不在本文件里,单文件解析看不见。
+   * 这三类都能把一句过度承诺送到页面上而本围栏不响。写在这里是为了让下一个人知道
+   * 「绿」代表什么、不代表什么;真要盖,得换成类型检查器级别的常量求值,不是再加一条正则。
    *
    * 做法沿用 #848 已经合并的先例(instructions-nav-map.test.ts 的 `ts.createSourceFile`):
    * 手搓状态机数不清嵌套模板串,AST 数得清。
    */
+  /** 一个表达式的组合数上限。超了宁可抛错也不截断 —— 截断会变成新的藏身处。 */
+  const MAX_EXPANSIONS = 256;
+
   function merchantVisibleStrings(fileSource: string, fileName = "surface.tsx"): string[] {
     const tree = ts.createSourceFile(fileName, fileSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     const spoken: string[] = [];
 
-    /** 一个表达式里所有字面量按源码顺序拼回一条字符串(拼接与模板串都算)。 */
-    function flatten(node: ts.Node): string {
-      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    /**
+     * 同文件内 `const 名字 = <拼得出字面量的表达式>`。只收 const:let/var 会被改写,
+     * 「这个名字在这里是什么字」就不再是单文件能回答的问题了。
+     */
+    const constants = new Map<string, ts.Expression>();
+    (function collect(node: ts.Node): void {
+      if (
+        ts.isVariableStatement(node) &&
+        (node.declarationList.flags & ts.NodeFlags.Const) !== 0
+      ) {
+        for (const declaration of node.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+            constants.set(declaration.name.text, declaration.initializer);
+          }
+        }
+      }
+      ts.forEachChild(node, collect);
+    })(tree);
+
+    /** 笛卡尔积:左边每一种 × 右边每一种。 */
+    function product(left: string[], right: string[]): string[] {
+      if (left.length * right.length > MAX_EXPANSIONS) {
+        throw new Error(
+          `${fileName}: 一个表达式的分支组合超过 ${MAX_EXPANSIONS} 种,围栏无法逐一核对。` +
+            `把它拆开写 —— 围栏宁可红,也不截断(截断等于给下一句过度承诺留了藏身处)。`,
+        );
+      }
+      return left.flatMap((prefix) => right.map((suffix) => prefix + suffix));
+    }
+
+    /** 这个表达式**所有可能显示出来**的字面量组合。取不出字面量的部分当空串。 */
+    function expand(node: ts.Node, seen: ReadonlySet<string> = new Set()): string[] {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return [node.text];
       if (ts.isTemplateExpression(node)) {
-        return node.head.text + node.templateSpans.map((span) => flatten(span.expression) + span.literal.text).join("");
+        let out = [node.head.text];
+        for (const span of node.templateSpans) {
+          out = product(product(out, expand(span.expression, seen)), [span.literal.text]);
+        }
+        return out;
       }
       if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-        return flatten(node.left) + flatten(node.right);
+        return product(expand(node.left, seen), expand(node.right, seen));
       }
-      if (ts.isParenthesizedExpression(node)) return flatten(node.expression);
-      if (ts.isConditionalExpression(node)) return `${flatten(node.whenTrue)}\n${flatten(node.whenFalse)}`;
-      if (ts.isJsxExpression(node) && node.expression) return flatten(node.expression);
-      // 标识符、属性访问、调用 —— 机器读的,取不出字面量就当它没有字。
-      return "";
+      if (ts.isParenthesizedExpression(node)) return expand(node.expression, seen);
+      // 三元:两支都可能显示出来,所以是**并集**,各自独立过词族。嵌套靠递归。
+      if (ts.isConditionalExpression(node)) {
+        return [...expand(node.whenTrue, seen), ...expand(node.whenFalse, seen)];
+      }
+      if (ts.isJsxExpression(node)) return node.expression ? expand(node.expression, seen) : [""];
+      // 同文件 const:按表展开一次。`seen` 防自引用死循环。
+      if (ts.isIdentifier(node) && constants.has(node.text) && !seen.has(node.text)) {
+        return expand(constants.get(node.text)!, new Set([...seen, node.text]));
+      }
+      // 属性访问、调用、导入来的名字 —— 取不出字面量,当它没有字(见上面的能力边界)。
+      return [""];
     }
 
     /** 这个属性名是「读给商家听的」还是「给机器的值」。 */
@@ -773,9 +839,17 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
         (property): property is ts.JsxAttribute =>
           ts.isJsxAttribute(property) && property.name.getText() === "type",
       );
-      const typeValue = type?.initializer ? flatten(type.initializer) : "";
-      return typeValue !== "hidden";
+      if (!type?.initializer) return true;
+      // `type={x ? "hidden" : "text"}`:只要**有可能**不是 hidden,就按看得见处理(fail closed)。
+      return !expand(type.initializer).every((value) => value === "hidden");
     }
+
+    const push = (values: string[]): void => {
+      for (const value of values) {
+        const text = value.trim();
+        if (text) spoken.push(text);
+      }
+    };
 
     function visit(node: ts.Node): void {
       if (ts.isJsxText(node)) {
@@ -783,17 +857,13 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
         if (text) spoken.push(text);
       } else if (ts.isJsxExpression(node) && node.expression && node.parent && !ts.isJsxAttribute(node.parent)) {
         // JSX 里的表达式:只有拼得出字面量的才是字(`{count}` 拼不出,自然不算)。
-        const text = flatten(node.expression).trim();
-        if (text) spoken.push(text);
+        push(expand(node.expression));
       } else if (ts.isJsxAttribute(node) && node.initializer) {
         const owner = node.parent;
         const element = ts.isJsxSelfClosingElement(owner.parent) || ts.isJsxOpeningElement(owner.parent)
           ? owner.parent.tagName
           : undefined;
-        if (element && spokenAttribute(node, element, owner)) {
-          const text = flatten(node.initializer).trim();
-          if (text) spoken.push(text);
-        }
+        if (element && spokenAttribute(node, element, owner)) push(expand(node.initializer));
       }
       ts.forEachChild(node, visit);
     }
@@ -830,6 +900,41 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
     expect(overpromisingLines('<input placeholder="Search contactable people" />')).toHaveLength(1);
   });
 
+  it("尺子自检:逮得住 r7 判官点名的两种绕过(模板串里的三元 · 同文件 const)", () => {
+    // ① 模板串里的三元 —— 页面真显示 "reachable contacts",r6 那把尺子看到的是
+    //    "reach\nemailable contacts",一个词族都碰不到。
+    expect(overpromisingLines('<p>{`${ready ? "reach" : "email"}able contacts`}</p>')).toEqual([
+      "reachable contacts",
+    ]);
+    // 嵌套三元:每一支都得独立成句去过词族。
+    expect(
+      overpromisingLines('<p>{`${a ? (b ? "reach" : "mail") : "call"}able today`}</p>'),
+    ).toEqual(["reachable today"]);
+    // 三元在 `+` 拼接里、以及三元的另一支才是违规的形状,都逮得住。
+    expect(overpromisingLines('<p>{(ok ? "contact" : "mail") + "able"}</p>')).toEqual(["contactable"]);
+    expect(overpromisingLines('<p>{`${ok ? "email" : "reach"}able contacts`}</p>')).toEqual([
+      "reachable contacts",
+    ]);
+
+    // ② 同文件 const 传给 JSX 属性 —— r6 直接把标识符丢掉。
+    expect(
+      overpromisingLines('const label = "Reachable contacts";\n<button aria-label={label} />'),
+    ).toEqual(["Reachable contacts"]);
+    // const 指向 const,以及 const 里本身就藏着三元。
+    expect(
+      overpromisingLines('const word = "contactable";\nconst label = word;\n<p>{label}</p>'),
+    ).toEqual(["contactable"]);
+    expect(
+      overpromisingLines('const label = ok ? "Reachable contacts" : "Everyone";\n<p>{label}</p>'),
+    ).toEqual(["Reachable contacts"]);
+  });
+
+  it("尺子自检:分支炸开时宁可红,也不悄悄截断", () => {
+    // 截断本身会变成藏身处:留一个「组合太多就只看前 N 种」的口子,第 N+1 种就是下一次绕过。
+    const manyBranches = `<p>{\`${"${a?'x':'y'}".repeat(9)}\`}</p>`;
+    expect(() => overpromisingLines(manyBranches)).toThrow(/围栏无法逐一核对/);
+  });
+
   it("尺子自检:can reach 一族(r6 判官点名的两处实词形状)", () => {
     for (const line of [
       "<p>A broadcast counts only the contacts it can reach on the channel it sends from.</p>",
@@ -851,6 +956,15 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
       "function f({ contactableCount }: { contactableCount: number }) { return null; }",
       'type Rule = { kind: "contactability"; value: "contactable" | "not_contactable" };',
       "<Badge data-state=\"contactable\">Included</Badge>",
+      // r8 —— 新展开能力自带的两类误伤风险,各誊一个形状钉住:
+      // 同文件 const 是**机器值**,而且送去的是机器读的位置(不是 aria/title/可见 value)。
+      'const RULE = "contactable";\n<SelectItem value={RULE}>Not known opt-out</SelectItem>',
+      'const STATE = "contactable";\n<input type="hidden" value={STATE} />',
+      'const CONTACTABLE_KEY = "contactable";\nconst counts = { [CONTACTABLE_KEY]: 4 };',
+      // 三元两支都是机器值,展开出来的每一种也都还是机器值。
+      '<input type="hidden" value={ok ? "contactable" : "not_contactable"} />',
+      // 同名的 const 只是个数字/函数,展开取不出字面量,不该凭名字定罪。
+      "const contactableCount = matched.length;\n<p>{contactableCount}</p>",
     ];
     for (const line of machineOnly) {
       expect(overpromisingLines(line), `「${line}」不该被逮`).toEqual([]);
@@ -876,8 +990,35 @@ describe("每一句卡点都绑着实现里的证据(r2 判词 P2)", () => {
 
     expect(
       offenders,
-      "这些字对商家承诺了「联系得上 / 送得到」,而产品只知道「渠道已确认的身份 + 不是已知退订」",
+      "这些字对商家承诺了「联系得上 / 送得到」。产品知道的只有:这条渠道上有没有一个" +
+        "**渠道已确认的身份**(customer-broadcast-service.ts),以及同意台账怎么判——" +
+        "而这个纪元根本发不出去,所以「送得到」没有任何一处能兑现。",
     ).toEqual([]);
+  });
+
+  it("人群那句只描述人群 —— 同意口径决定谁被排除,不决定谁在人群里(r7 判词 P1-1)", () => {
+    // 服务真身:广播的人群只被**一个**条件收窄,而且是渠道身份,不是同意。
+    const service = source("lib/customer-broadcast-service.ts");
+    expect(service).toContain("if (sendTargets.length === 0) continue;");
+    expect(service).toContain("countExcludedByConsent(reachable, validated.value, evaluatedAt)");
+
+    // 而同意是**门**不是筛子:商家专门去找退订者时,已知退订者留在选择里。
+    // 所以「人群里没有已知退订」这句话,对冻结人群和对这个计数都不成立
+    // ——这个计数本身正是从已知退订者里数出来的。
+    expect(source("lib/consent-authority.ts")).toContain('return optedOut ? !matchesAs("opt_in") : true;');
+
+    // 于是两个面的人群句子里,一个同意口径的词都不许有。
+    const populationSentences = [
+      ["components/crm/segments-page.tsx", /A broadcast counts only the contacts[^.]*\./],
+      ["components/crm/broadcasts/broadcast-detail-page.tsx", /This count covers the contacts[^.]*\./],
+    ] as const;
+    for (const [file, pattern] of populationSentences) {
+      const found = source(file).match(pattern);
+      expect(found, `${file} 里找不到那句人群句`).toBeTruthy();
+      expect(found![0], `${file} 的人群句把同意口径写进了人群`).not.toMatch(
+        /opt-?out|consent|contactabl/i,
+      );
+    }
   });
 
   it("那个计数改口之后,说的正是它数的东西", () => {

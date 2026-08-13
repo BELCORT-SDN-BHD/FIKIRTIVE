@@ -225,9 +225,9 @@ const APPROVED_UNIVERSAL_SENTENCES: ReadonlyArray<{
   },
   {
     sentence:
-      "This count covers the contacts with a confirmed identity on the channel this broadcast sends from and no known opt-out, so it can be lower than the count on the segments page, which covers every contact you have.",
+      "This count covers the contacts with a confirmed identity on the channel this broadcast sends from, so it can be lower than the count on the segments page, which covers every contact you have.",
     surface: "noteTightened",
-    why: "#726's twin sentence on the broadcast side, provable the same way — the run counts only contacts holding an identity on its own channel. #792 r6 replaced 'the contacts this broadcast can reach' with the two conditions the run actually selects on, because reachability was a promise the count never made (do-not-disturb is not in the reckoning, and nothing sends yet). The universal claim being approved here is unchanged: 'every contact you have', describing the OTHER page's population. Found by extending layer 2 to the broadcast note, a surface nothing scanned before r4.",
+    why: "#726's twin sentence on the broadcast side, provable the same way — `customer-broadcast-service.ts` drops every contact without a channel-confirmed identity on this run's channel (`if (sendTargets.length === 0) continue`) BEFORE counting, so that identity is the whole of what narrows the population. #792 r6 tried 'the contacts this broadcast can reach' → '… and no known opt-out'; r8 removed the consent half because it is false (a segment may deliberately select known opt-outs, and this very number counts known opt-outs). The universal claim being approved here is unchanged throughout: 'every contact you have', describing the OTHER page's population. Found by extending layer 2 to the broadcast note, a surface nothing scanned before r4.",
   },
   {
     sentence:
@@ -788,15 +788,24 @@ const FIXTURE_AUTHORED = ["Reachable audience", "Reachable audience, minus my ow
  *     `!isKnownOptOut(truth)` — one consent fact, nothing about whether a message could arrive —
  *     so the label now says what was counted. Three board strings move; the counts themselves are
  *     unchanged, which is the proof that only the wording moved.
- *  3. PR #849 (#792 r6, judge round 5): the sentence naming the broadcast's population stopped
- *     saying "the contacts it can reach" and started naming the two conditions the run actually
- *     selects on — a confirmed identity on its channel, and no known opt-out. Reachability was a
- *     promise the count never made: `customer-broadcast-service.ts` pins do-not-disturb to false
- *     there, and this era cannot send at all. Six board strings and both host boards move; every
- *     one of them moves in the SAME sentence, and nothing else on either surface changes. What
- *     #758 guards is untouched — the reported-opt-out sentences ("This segment also leaves out
- *     opt-outs you recorded yourself…", "You chose to exclude the opt-outs you recorded
- *     yourself…") are byte-identical on both surfaces.
+ *  3. PR #849 (#792 r6 → r8, judge rounds 5 and 7): the sentence naming the broadcast's
+ *     population. It took two goes, and the first was wrong — recorded here rather than tidied
+ *     away, because a board whose history hides a correction teaches nothing.
+ *       · r6 replaced "the contacts it can reach" (a delivery promise no number measures) with
+ *         "a confirmed identity on its channel AND no known opt-out".
+ *       · r7's judge showed the consent half is false. `selectedIntoAudience`
+ *         (consent-authority.ts) deliberately keeps known opt-outs IN when the merchant went
+ *         looking for them, and `consent-single-authority.test.ts` freezes four opted-out
+ *         contacts into a real audience. Worse, the broadcast number the sentence explains is
+ *         itself a count of known opt-outs, so a population defined as having none of them
+ *         contradicts the number standing next to it.
+ *       · r8 is what the code actually does: the population is narrowed by ONE line,
+ *         `if (sendTargets.length === 0) continue` — a channel-confirmed identity on the run's
+ *         channel. Consent decides who is EXCLUDED, never who is in the population.
+ *     Six board strings and both host boards move; every one of them moves in the SAME sentence,
+ *     and nothing else on either surface changes. What #758 guards is untouched — the
+ *     reported-opt-out sentences ("This segment also leaves out opt-outs you recorded yourself…",
+ *     "You chose to exclude the opt-outs you recorded yourself…") are byte-identical throughout.
  *
  * The two panels are pinned separately from the pages that host them because no INITIAL page
  * render can reach them: the live preview arrives from an effect, and the freeze note from a
@@ -850,8 +859,8 @@ const APPROVED_SURFACES: Record<SurfaceName, string> = {
     "consent history was kept, so they stay out until the customer opts in again. You chose to " +
     "exclude the opt-outs you recorded yourself, so this segment leaves them out here and in " +
     "every broadcast built from it. These counts cover every contact you have. A broadcast counts " +
-    "only the contacts with a confirmed identity on the channel it sends from and no known " +
-    "opt-out, so its own numbers can be lower. Evaluated 2026-08-09 00:00:00 UTC Amira Salleh " +
+    "only the contacts with a confirmed identity on the channel it sends from, so its own " +
+    "numbers can be lower. Evaluated 2026-08-09 00:00:00 UTC Amira Salleh " +
     "whatsapp Included",
   previewUntightened:
     "4 of 6 contacts matched · 2 with no known opt-out · 2 known opt-out excluded · 1 reported " +
@@ -862,7 +871,7 @@ const APPROVED_SURFACES: Record<SurfaceName, string> = {
     "checked at send time and does not filter this segment. 1 of them opted out before consent " +
     "history was kept, so they stay out until the customer opts in again. These counts cover " +
     "every contact you have. A broadcast counts only the contacts with a confirmed identity on " +
-    "the channel it sends from and no known opt-out, so its own numbers can be lower. Evaluated " +
+    "the channel it sends from, so its own numbers can be lower. Evaluated " +
     "2026-08-09 00:00:00 UTC Amira Salleh " +
     "whatsapp Included Bakri Idris whatsapp · email Included · reported opt-out Chong Wei No live " +
     "identity Included · known opt-out Dina Aziz whatsapp Included · opted out before consent " +
@@ -870,29 +879,29 @@ const APPROVED_SURFACES: Record<SurfaceName, string> = {
   noteTightened:
     "2 contacts were excluded for opting out. 1 of them opted out before consent history was " +
     "kept, so they stay out until the customer opts in again. This count covers the contacts " +
-    "with a confirmed identity on the channel this broadcast sends from and no known opt-out, so " +
-    "it can be lower than the count on the segments page, which covers every contact you have. " +
+    "with a confirmed identity on the channel this broadcast sends from, so it can be lower " +
+    "than the count on the segments page, which covers every contact you have. " +
     "This segment also leaves out opt-outs you recorded yourself, so 2 more contacts are not in " +
     "this audience.",
   noteUntightened:
     "2 contacts were excluded for opting out. 1 of them opted out before consent history was " +
     "kept, so they stay out until the customer opts in again. This count covers the contacts " +
-    "with a confirmed identity on the channel this broadcast sends from and no known opt-out, so " +
-    "it can be lower than the count on the segments page, which covers every contact you have. " +
+    "with a confirmed identity on the channel this broadcast sends from, so it can be lower " +
+    "than the count on the segments page, which covers every contact you have. " +
     "2 contacts are in this audience with an opt-out you recorded yourself, which is not " +
     "verified — open the contact to see its consent history.",
   noteSingular:
     "1 contact was excluded for opting out. 1 of them opted out before consent history was kept, " +
     "so they stay out until the customer opts in again. This count covers the contacts with a " +
-    "confirmed identity on the channel this broadcast sends from and no known opt-out, so it can " +
-    "be lower than the count on the segments page, which covers every contact you have. 1 " +
+    "confirmed identity on the channel this broadcast sends from, so it can be lower than the " +
+    "count on the segments page, which covers every contact you have. 1 " +
     "contact is in this audience with an opt-out you recorded yourself, which is not verified — " +
     "open the contact to see its consent history. This segment also leaves out opt-outs you " +
     "recorded yourself, so 1 more contact is not in this audience.",
   noteNothingExcluded:
     "No contact was excluded for opting out. This count covers the contacts with a confirmed " +
-    "identity on the channel this broadcast sends from and no known opt-out, so it can be lower " +
-    "than the count on the segments page, which covers every contact you have.",
+    "identity on the channel this broadcast sends from, so it can be lower than the count on " +
+    "the segments page, which covers every contact you have.",
 };
 const SURFACE_NAMES = Object.keys(APPROVED_SURFACES) as SurfaceName[];
 
@@ -907,8 +916,8 @@ const APPROVED_HOSTS = {
     "the contact to see its consent history. Do not disturb is checked at send time and does not " +
     "filter this segment. 1 of them opted out before consent history was kept, so they stay out " +
     "until the customer opts in again. These counts cover every contact you have. A broadcast " +
-    "counts only the contacts with a confirmed identity on the channel it sends from and no " +
-    "known opt-out, so its own numbers can be lower. Evaluated <instant> Amira Salleh email · " +
+    "counts only the contacts with a confirmed identity on the channel it sends from, so its own " +
+    "numbers can be lower. Evaluated <instant> Amira Salleh email · " +
     "whatsapp Included Bakri Idris email · " +
     "whatsapp Included · reported opt-out Evelyn Ng email · whatsapp Included · reported opt-out " +
     "Faiz Rahim No live identity Included · reported opt-out",
@@ -917,8 +926,8 @@ const APPROVED_HOSTS = {
     "and are flagged — the estimate never drops them. Select a segment… Reachable audience Freeze " +
     "audience 2 contacts were excluded for opting out. 1 of them opted out before consent history " +
     "was kept, so they stay out until the customer opts in again. This count covers the contacts " +
-    "with a confirmed identity on the channel this broadcast sends from and no known opt-out, so " +
-    "it can be lower than the count on the segments page, which covers every contact you have. " +
+    "with a confirmed identity on the channel this broadcast sends from, so it can be lower " +
+    "than the count on the segments page, which covers every contact you have. " +
     "This segment also leaves out opt-outs you recorded yourself, so 2 more contacts are not in " +
     "this audience.",
 };

@@ -958,13 +958,29 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
       */}
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
         {/*
-          #792 r6 — "the contacts it can reach" was a promise this count does not make.
-          customer-broadcast-service.ts counts a contact when it has a channel-confirmed identity
-          on that channel and is not a known opt-out; do-not-disturb is deliberately not part of
-          that reckoning (it is enforced later, at send eligibility), and nothing can actually be
-          sent yet at all. So the sentence says what was counted, not what would arrive.
+          This sentence names the POPULATION the numbers above were reckoned over, so a merchant
+          comparing them with a broadcast's numbers knows why they differ. Two rounds got it
+          wrong, in opposite directions:
+
+          r6 said "with a confirmed identity … and no known opt-out". The consent clause is
+          false. `selectedIntoAudience` (consent-authority.ts) deliberately KEEPS known opt-outs
+          in when the merchant went looking for them — "everyone who opted out" is a real,
+          working segment — and a real-database test pins four opted-out contacts entering a
+          frozen audience (consent-single-authority.test.ts). Worse, the broadcast number this
+          sentence explains IS a count of excluded known opt-outs, so a population defined as
+          having none of them is self-contradicting.
+
+          Before that it said "the contacts it can reach", which promised delivery no number
+          here measures.
+
+          What actually narrows a broadcast's population is one line in
+          customer-broadcast-service.ts: `if (sendTargets.length === 0) continue`, where a send
+          target is an identity on the run's channel that the channel itself has confirmed
+          (#803 — a number the merchant typed is stored and searchable, not an address). That
+          is a targeting fact about the address book, not a consent decision and not a promise
+          of arrival, so that is all the sentence claims.
         */}
-        These counts cover every contact you have. A broadcast counts only the contacts with a confirmed identity on the channel it sends from and no known opt-out, so its own numbers can be lower.
+        These counts cover every contact you have. A broadcast counts only the contacts with a confirmed identity on the channel it sends from, so its own numbers can be lower.
       </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}
