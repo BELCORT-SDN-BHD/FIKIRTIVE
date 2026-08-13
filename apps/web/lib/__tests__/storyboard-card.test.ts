@@ -5,15 +5,17 @@ import { describe, it, expect } from "vitest";
 import {
   shotsNeedingMintedFirstFrame,
   shotsStuckWithoutInheritedFrame,
-  isFrameInProgress,
-  isVideoInProgress,
-  isVideoDead,
   nextSyncPhase,
   deriveShotMediaStates,
+  ownedMedia,
+  hasPendingMedia,
   needsRefreshEntrance,
   parseStoryboardCardPayload,
   MAX_STORYBOARD_SHOTS,
   type ShotMediaState,
+  type ShotMediaStatus,
+  type ShotMediaSyncReport,
+  type SyncPhase,
 } from "../storyboard-card";
 import { MAX_STORYBOARD_SHOTS as MAX_STORYBOARD_SHOTS_OTTO } from "@fikirtive/otto";
 
@@ -376,161 +378,6 @@ describe("#782 r2b 卡面文案钉死", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// #782 r4(判官 r3 P3)—— 「生成中」不是从指针推出来的
-// ---------------------------------------------------------------------------
-//
-// r3 的卡面把 `firstFrameCardId` 当成「正在生成」的证据。它不是:准备卡在商家按 Cancel、
-// 启动失败、或崩溃刷新之后照样留在 payload 里,一分钱没花、什么都没在跑。商家于是看着一个
-// 转了两分钟(轮询上限)才自己消失的假 spinner,而那一镜其实需要他按一下。
-//
-// 判据换成 sync 报回来的那份「真有活作业的镜头」——与闸③ 判词同源:能看见作业真实状态的
-// 只有服务端。首屏还没问过服务端时(null)只能按指针答,那一刻的误报最多持续一次往返。
-describe("#782 r4 isFrameInProgress —— spinner 必须有一条真作业撑着", () => {
-  const prepared = { shotId: "s1", firstFrameCardId: "child-1" }; // 准备卡在,还没有图
-
-  it("还没问过服务端(null)→ 只能按指针答(spinner 照旧,一次往返内会被纠正)", () => {
-    expect(isFrameInProgress(prepared, null)).toBe(true);
-  });
-
-  it("服务端说这一镜没有活作业 → 不显示生成中(崩溃刷新的假 spinner 断根)", () => {
-    expect(isFrameInProgress(prepared, new Set())).toBe(false);
-  });
-
-  it("服务端说这一镜有活作业 → 显示生成中", () => {
-    expect(isFrameInProgress(prepared, new Set(["s1"]))).toBe(true);
-  });
-
-  it("连准备卡都没有 → 任何情况下都不显示生成中", () => {
-    expect(isFrameInProgress({ shotId: "s1" }, null)).toBe(false);
-    expect(isFrameInProgress({ shotId: "s1" }, new Set(["s1"]))).toBe(false);
-  });
-
-  it("图已经出来了 → 不再是生成中(哪怕服务端那一份还没更新)", () => {
-    const done = { shotId: "s1", firstFrameCardId: "child-1", firstFrameGenerationId: "gen-1" };
-    expect(isFrameInProgress(done, new Set(["s1"]))).toBe(false);
-  });
-});
-
-describe("#782 r4 卡面钉死:spinner 与轮询都改读真作业", () => {
-  const HERE_R4 = dirname(fileURLToPath(import.meta.url));
-  const CARD_SOURCE_R4 = readFileSync(resolve(HERE_R4, "../../components/otto/StoryboardCard.tsx"), "utf8");
-
-  it("首帧的 pending 判据不再是那个只看指针的 isFramePending", () => {
-    expect(CARD_SOURCE_R4).not.toContain("function isFramePending");
-    // r9 起判据不再由卡面自己组合:isFrameInProgress 收进了那条唯一的推导里
-    // (deriveShotMediaStates),卡面只读它的输出。行为断言在 storyboard-late-landing.test.ts。
-    expect(CARD_SOURCE_R4).toContain("deriveShotMediaStates");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// #782 r5(判官 r4 P1-②)—— 死掉的片子不许继续转
-// ---------------------------------------------------------------------------
-//
-// 视频那一侧还停在 r3 的判据上:`videoCardId 在 && 没有 videoGenerationId` = 生成中。
-// 那是「有没有指针」,不是「有没有东西在跑」——片子第一次就失败时,商家看到的是一个永远
-// 转下去的 "Generating video…"。他因此永远不会去按那个真正能救他的按钮(Make all videos),
-// 于是「入口存在」在实际使用里等于不存在。判据同样改读服务端那份真作业状态。
-describe("#782 r5 isVideoInProgress —— 片子的 spinner 也必须有一条活作业撑着", () => {
-  const pending = { shotId: "s0", videoCardId: "vchild-0" }; // 子卡在,还没有片子
-
-  it("还没问过服务端(null)→ 只能按指针答(与首帧同一条规矩)", () => {
-    expect(isVideoInProgress(pending, null)).toBe(true);
-  });
-
-  it("服务端没说它死了 → 显示生成中", () => {
-    expect(isVideoInProgress(pending, new Set())).toBe(true);
-  });
-
-  it("服务端说这条片子已经死了 → 不显示生成中(假 spinner 断根)", () => {
-    expect(isVideoInProgress(pending, new Set(["s0"]))).toBe(false);
-  });
-
-  it("片子已经出来了 → 不再是生成中", () => {
-    const done = { shotId: "s0", videoCardId: "vchild-0", videoGenerationId: "vid-1" };
-    expect(isVideoInProgress(done, new Set())).toBe(false);
-  });
-
-  it("连视频子卡都没有 → 任何情况下都不显示生成中", () => {
-    expect(isVideoInProgress({ shotId: "s0" }, null)).toBe(false);
-  });
-});
-
-describe("#782 r5 卡面钉死:失败有交代、轮询收工不留假 spinner", () => {
-  const HERE_R5 = dirname(fileURLToPath(import.meta.url));
-  const CARD_SOURCE_R5 = readFileSync(resolve(HERE_R5, "../../components/otto/StoryboardCard.tsx"), "utf8");
-
-  it("视频的 pending 判据改读服务端那份真作业状态", () => {
-    // r9:同样收进唯一推导。服务端那格答复仍然是判据的输入。
-    expect(CARD_SOURCE_R5).toContain("deriveShotMediaStates");
-    expect(CARD_SOURCE_R5).toContain("deadVideoShotIds");
-  });
-
-  it("片子失败了要说人话,并指向再出一次的入口", () => {
-    expect(CARD_SOURCE_R5).toContain("That video didn&rsquo;t go through");
-  });
-
-  // 「轮询到顶不留假 spinner」这条规矩本身没变,但**验法**变了(判官 r8 P2):
-  // r7 版用的是「源码里出现 setLiveFrameShotIds(new Set())」这种字符串存在性检查,它对
-  // 「首帧清了、视频没清」这类相邻漏态完全无感 —— 判官正是在那里抓到 151 次 sync 之后
-  // 视频还在转。r9 把它换成真渲染 + 真时钟的行为断言,见
-  // storyboard-late-landing.test.ts「慢轮打满之后,不许还在说『视频生成中』」。
-  // 这里只保留状态层的那一半:相位一旦是 exhausted,两类媒体一律降级为诚实态。
-  it("不再问了 → 两类媒体一起降级为诚实态(不是只清首帧那一格)", () => {
-    const states = deriveShotMediaStates({
-      shots: [
-        {
-          shotId: "s0",
-          index: 0,
-          firstFramePrompt: "",
-          videoPrompt: "",
-          firstFrameCardId: "child_0",
-          videoCardId: "vchild_0",
-        },
-      ],
-      frames: {},
-      videos: {},
-      liveFrameShotIds: new Set(["s0"]),
-      deadVideoShotIds: new Set(),
-      phase: "exhausted",
-    });
-    expect(states[0]!.frame.kind).toBe("stale-unknown");
-    expect(states[0]!.video.kind).toBe("stale-unknown");
-    expect(needsRefreshEntrance(states, false)).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// #782 r7(判官 r6 的两条 P1)—— 两条新规则的单元断言。
-// 两条时序本身钉在 storyboard-late-landing.test.ts(真渲染 + 真时钟)。
-// ---------------------------------------------------------------------------
-describe("#782 r7 isVideoDead —— 死片必须能被点名,否则救援入口无从渲染", () => {
-  const pending = { shotId: "s0", videoCardId: "vchild-0" };
-
-  it("服务端点名它死了 → 判死", () => {
-    expect(isVideoDead(pending, new Set(["s0"]))).toBe(true);
-  });
-
-  it("服务端没点名 → 不判死(片子可能还在路上,不许诬告一次没花的钱)", () => {
-    expect(isVideoDead(pending, new Set())).toBe(false);
-  });
-
-  it("还没问过服务端(null)→ 不判死(与 isVideoInProgress 同一条规矩:首屏不猜死)", () => {
-    expect(isVideoDead(pending, null)).toBe(false);
-  });
-
-  it("片子已经出来了 / 连子卡都没有 → 都谈不上死", () => {
-    expect(isVideoDead({ shotId: "s0", videoCardId: "vchild-0", videoGenerationId: "v1" }, new Set(["s0"]))).toBe(false);
-    expect(isVideoDead({ shotId: "s0" }, new Set(["s0"]))).toBe(false);
-  });
-
-  it("服务端答过话之后,「在路上」与「已经死了」严格互补 —— 不存在既不转圈也没入口的第三态", () => {
-    for (const dead of [new Set<string>(), new Set(["s0"])]) {
-      expect(isVideoInProgress(pending, dead)).toBe(!isVideoDead(pending, dead));
-    }
-  });
-});
 
 describe("#782 r7 nextSyncPhase —— 「到顶」不等于「放弃」", () => {
   it("服务端说没有活作业了 → 收工(已终局的卡零轮询)", () => {
@@ -555,86 +402,171 @@ describe("#782 r7 nextSyncPhase —— 「到顶」不等于「放弃」", () =>
 });
 
 // ---------------------------------------------------------------------------
-// #782 r9(判官 r8)—— 卡面状态的唯一推导:六个态,零空洞
+// #782 r11(判官 r10)—— 合成层:服务端状态 × 轮询相位,**逐格穷举**
 //
-// 判官 r4→r8 抓到的每一条都是同一类:各处显示各自用一小撮布尔拼状态,补一处、相邻那处的
-// 组合就露一个洞。这里逐格钉死那张真值表;两条时序本身钉在 storyboard-late-landing.test.ts
-// (真渲染 + 真时钟)。
+// r10 的 64 格穷举抓到的是同一个类:客户端拿有损信号去猜服务端的真相。r11 把「猜」删掉了,
+// 于是这一层的输入空间也变了 —— 现在是 5 个服务端状态 × 有没有旧产出(替换) × 4 个相位,
+// 外加「还没问过服务端」这一轴。下面**逐格遍历**这个空间(标题不再声称超出遍历范围的覆盖),
+// 时序本身钉在 storyboard-late-landing.test.ts(真渲染 + 真时钟)。
 // ---------------------------------------------------------------------------
-describe("#782 r9 deriveShotMediaStates —— 每种输入组合都落进一个具名的态", () => {
-  const shot = (over: Partial<Parameters<typeof deriveShotMediaStates>[0]["shots"][number]> = {}) => ({
+
+const PHASES: SyncPhase[] = ["off", "fast", "slow", "exhausted"];
+
+function shotOf(over: Record<string, unknown> = {}) {
+  return { shotId: "s0", index: 0, firstFramePrompt: "", videoPrompt: "", ...over } as Parameters<
+    typeof deriveShotMediaStates
+  >[0]["shots"][number];
+}
+
+function reportOf(frame: ShotMediaStatus, video: ShotMediaStatus, previous?: { generationId: string; url?: string }): ShotMediaSyncReport {
+  return {
     shotId: "s0",
-    index: 0,
-    firstFramePrompt: "",
-    videoPrompt: "",
-    ...over,
-  });
-  const derive = (args: {
-    s: ReturnType<typeof shot>;
-    frames?: Record<string, string>;
-    videos?: Record<string, string>;
-    live?: ReadonlySet<string> | null;
-    dead?: ReadonlySet<string> | null;
-    phase?: "off" | "fast" | "slow" | "exhausted";
-  }) =>
-    deriveShotMediaStates({
-      shots: [args.s],
-      frames: args.frames ?? {},
-      videos: args.videos ?? {},
-      liveFrameShotIds: args.live ?? null,
-      deadVideoShotIds: args.dead ?? null,
-      phase: args.phase ?? "fast",
-    })[0]!;
+    frame: previous ? { status: frame, previous } : { status: frame },
+    video: previous ? { status: video, previous } : { status: video },
+  };
+}
 
-  it("什么都没开始 → none(两类都是)", () => {
-    const s = derive({ s: shot() });
-    expect(s.frame).toEqual({ kind: "none" });
-    expect(s.video).toEqual({ kind: "none" });
-  });
+function one(args: {
+  shot?: Record<string, unknown>;
+  reports?: ShotMediaSyncReport[] | null;
+  phase?: SyncPhase;
+}) {
+  return deriveShotMediaStates({
+    shots: [shotOf(args.shot)],
+    reports: args.reports ?? null,
+    phase: args.phase ?? "fast",
+  })[0]!;
+}
 
-  it("落地且装载得到 → landed 带地址(唯一「有内容」的态)", () => {
-    const s = derive({
-      s: shot({ firstFrameGenerationId: "gen_0", videoGenerationId: "vgen_0" }),
-      frames: { s0: "/f.png" },
-      videos: { s0: "/v.mp4" },
-    });
-    expect(s.frame).toEqual({ kind: "landed", url: "/f.png" });
-    expect(s.video).toEqual({ kind: "landed", url: "/v.mp4" });
-  });
+describe("#782 r11 deriveShotMediaStates —— 5 个服务端状态 × 替换 × 4 个相位,逐格遍历", () => {
+  const ALL: ShotMediaStatus[] = [
+    { kind: "absent" },
+    { kind: "queued" },
+    { kind: "generating" },
+    { kind: "done", generationId: "gen_0", url: "/m.png" },
+    { kind: "done", generationId: "gen_0" }, // 产出在,地址取不到
+    { kind: "dead" },
+  ];
+  const OLD = { generationId: "old_0", url: "/old.png" };
 
-  it("落地但本地没有地址 → landed-unloaded(判官 r8 P1-②:重开页面那一瞬就是这一格)", () => {
-    const s = derive({ s: shot({ firstFrameGenerationId: "gen_0", videoGenerationId: "vgen_0" }) });
-    expect(s.frame).toEqual({ kind: "landed-unloaded" });
-    expect(s.video).toEqual({ kind: "landed-unloaded" });
-  });
-
-  it("服务端说有活作业 / 没判死 → in-progress", () => {
-    const s = derive({
-      s: shot({ firstFrameCardId: "c0", videoCardId: "v0" }),
-      live: new Set(["s0"]),
-      dead: new Set(),
-    });
-    expect(s.frame).toEqual({ kind: "in-progress" });
-    expect(s.video).toEqual({ kind: "in-progress" });
+  it("无替换 × 全部相位:状态一一对应,只有「在跑」会被 exhausted 降级", () => {
+    for (const status of ALL) {
+      for (const phase of PHASES) {
+        const s = one({ reports: [reportOf(status, status)], phase });
+        const expected =
+          status.kind === "absent"
+            ? { kind: "absent" }
+            : status.kind === "queued" || status.kind === "generating"
+              ? phase === "exhausted"
+                ? { kind: "stale-unknown", previous: undefined }
+                : { kind: "in-progress", previous: undefined }
+              : status.kind === "dead"
+                ? { kind: "dead", previous: undefined }
+                : status.url
+                  ? { kind: "landed", generationId: status.generationId, url: status.url }
+                  : { kind: "landed-unloaded", generationId: status.generationId };
+        expect(s.frame, `frame ${status.kind}/${phase}`).toEqual(expected);
+        expect(s.video, `video ${status.kind}/${phase}`).toEqual(expected);
+      }
+    }
   });
 
-  it("服务端说首帧没有活作业 → none(准备卡不是进度);说片子死了 → dead", () => {
-    const s = derive({
-      s: shot({ firstFrameCardId: "c0", videoCardId: "v0" }),
-      live: new Set(),
-      dead: new Set(["s0"]),
-    });
-    expect(s.frame).toEqual({ kind: "none" });
-    expect(s.video).toEqual({ kind: "dead" });
+  it("替换在途 × 全部相位:状态说新作业,previous 说旧产出还在(判官 r10 P1 的那一格)", () => {
+    for (const status of [{ kind: "queued" } as const, { kind: "generating" } as const]) {
+      for (const phase of PHASES) {
+        const s = one({ reports: [reportOf(status, status, OLD)], phase });
+        const expected =
+          phase === "exhausted"
+            ? { kind: "stale-unknown", previous: OLD }
+            : { kind: "in-progress", previous: OLD };
+        expect(s.video, `${status.kind}/${phase}`).toEqual(expected);
+        // 商家仍然拥有旧的那一件 —— 卡面据此继续显示它。
+        expect(ownedMedia(s.video)).toEqual(OLD);
+      }
+    }
   });
 
-  it("落地压过相位:不再问了也照样显示已经属于商家的东西", () => {
-    const s = derive({
-      s: shot({ firstFrameGenerationId: "gen_0" }),
-      frames: { s0: "/f.png" },
+  it("替换死了 → dead 带 previous:旧产出仍在,且相位不许覆盖这个已确证的事实", () => {
+    for (const phase of PHASES) {
+      const s = one({ reports: [reportOf({ kind: "dead" }, { kind: "dead" }, OLD)], phase });
+      expect(s.video).toEqual({ kind: "dead", previous: OLD });
+      expect(ownedMedia(s.video)).toEqual(OLD);
+    }
+  });
+
+  it("exhausted 不覆盖 dead / done / absent(判官 r10 P2:判定次序)", () => {
+    const s = one({
+      reports: [reportOf({ kind: "dead" }, { kind: "done", generationId: "vgen_0", url: "/v.mp4" })],
       phase: "exhausted",
     });
-    expect(s.frame).toEqual({ kind: "landed", url: "/f.png" });
+    expect(s.frame).toEqual({ kind: "dead", previous: undefined });
+    expect(s.video).toEqual({ kind: "landed", generationId: "vgen_0", url: "/v.mp4" });
+    const gone = one({ reports: [reportOf({ kind: "absent" }, { kind: "absent" })], phase: "exhausted" });
+    expect(gone.frame).toEqual({ kind: "absent" });
+    expect(gone.video).toEqual({ kind: "absent" });
+  });
+
+  it("多镜头:每一镜各读自己那份回答,一镜的相位不牵连另一镜", () => {
+    const states = deriveShotMediaStates({
+      shots: [
+        shotOf({ shotId: "a", firstFrameCardId: "ca", videoCardId: "va" }),
+        shotOf({ shotId: "b", index: 1, firstFrameCardId: "cb", videoCardId: "vb" }),
+      ],
+      reports: [
+        { shotId: "a", frame: { status: { kind: "generating" } }, video: { status: { kind: "generating" } } },
+        { shotId: "b", frame: { status: { kind: "done", generationId: "g", url: "/f.png" } }, video: { status: { kind: "dead" } } },
+      ],
+      phase: "exhausted",
+    });
+    expect(states[0]!.video.kind).toBe("stale-unknown"); // A 还在等 → 诚实降级
+    expect(states[1]!.video).toEqual({ kind: "dead", previous: undefined }); // B 已确证 → 一格不动
+    expect(states[1]!.frame.kind).toBe("landed");
+  });
+
+  it("sync 缺席这一轴:回答里没有这一镜 → 回到 payload 开场态,不假装在跑", () => {
+    // 服务端答了,但答的是别的镜头(重排 / 删除之后的一瞬)。
+    const s = one({
+      shot: { firstFrameCardId: "c0", videoCardId: "v0" },
+      reports: [{ shotId: "other", frame: { status: { kind: "absent" } }, video: { status: { kind: "absent" } } }],
+    });
+    expect(s.frame.kind).toBe("in-progress"); // 开场态:钱可能刚花出去
+    expect(s.video.kind).toBe("in-progress");
+  });
+
+  it("还没问过服务端(reports=null)→ 有产出去装载、有子卡先说在跑、都没有就是没开始", () => {
+    expect(one({ shot: { firstFrameGenerationId: "gen_0", videoGenerationId: "vgen_0" } })).toEqual({
+      shotId: "s0",
+      frame: { kind: "landed-unloaded", generationId: "gen_0" },
+      video: { kind: "landed-unloaded", generationId: "vgen_0" },
+    });
+    expect(one({ shot: { firstFrameCardId: "c0", videoCardId: "v0" } })).toEqual({
+      shotId: "s0",
+      frame: { kind: "in-progress" },
+      video: { kind: "in-progress" },
+    });
+    expect(one({})).toEqual({ shotId: "s0", frame: { kind: "absent" }, video: { kind: "absent" } });
+  });
+
+  it("服务端说「这张子卡从来没启动过」→ absent,不是生成中(判官 r10 P2:准备→取消→重开)", () => {
+    const s = one({ shot: { firstFrameCardId: "c0", videoCardId: "v0" }, reports: [reportOf({ kind: "absent" }, { kind: "absent" })] });
+    expect(s.frame).toEqual({ kind: "absent" });
+    expect(s.video).toEqual({ kind: "absent" });
+    // 而且没有任何东西值得继续轮询 —— 空转的轮询本身就是那条假 spinner 的动力来源。
+    expect(hasPendingMedia([s])).toBe(false);
+  });
+});
+
+describe("#782 r11 hasPendingMedia —— 轮询继续与否,只问服务端还有没有活作业", () => {
+  const st = (frame: ShotMediaState, video: ShotMediaState) => [{ shotId: "s0", frame, video }];
+
+  it("在跑(含替换在途)→ 继续", () => {
+    expect(hasPendingMedia(st({ kind: "in-progress" }, { kind: "absent" }))).toBe(true);
+    expect(hasPendingMedia(st({ kind: "absent" }, { kind: "in-progress", previous: { generationId: "old" } }))).toBe(true);
+  });
+
+  it("落地 / 死了 / 没开始 / 装载不出来 → 停(再问一万次也一样)", () => {
+    expect(hasPendingMedia(st({ kind: "landed", generationId: "g", url: "/f" }, { kind: "dead" }))).toBe(false);
+    expect(hasPendingMedia(st({ kind: "landed-unloaded", generationId: "g" }, { kind: "absent" }))).toBe(false);
   });
 });
 
@@ -642,19 +574,19 @@ describe("#782 r9 needsRefreshEntrance —— 铁律②:不再问了就必须给
   const states = (frame: ShotMediaState, video: ShotMediaState) => [{ shotId: "s0", frame, video }];
 
   it("stale-unknown / landed-unloaded → 要入口", () => {
-    expect(needsRefreshEntrance(states({ kind: "stale-unknown" }, { kind: "none" }), false)).toBe(true);
-    expect(needsRefreshEntrance(states({ kind: "none" }, { kind: "landed-unloaded" }), true)).toBe(true);
+    expect(needsRefreshEntrance(states({ kind: "stale-unknown" }, { kind: "absent" }), false)).toBe(true);
+    expect(needsRefreshEntrance(states({ kind: "absent" }, { kind: "landed-unloaded", generationId: "g" }), true)).toBe(true);
   });
 
   it("轮询开着的进行中 → 不要入口(卡面正在替商家问)", () => {
-    expect(needsRefreshEntrance(states({ kind: "in-progress" }, { kind: "none" }), true)).toBe(false);
+    expect(needsRefreshEntrance(states({ kind: "in-progress" }, { kind: "absent" }), true)).toBe(false);
   });
 
   it("没人在问却还说着进行中 → 要入口(挂载那一次 sync 出错也走这条)", () => {
-    expect(needsRefreshEntrance(states({ kind: "in-progress" }, { kind: "none" }), false)).toBe(true);
+    expect(needsRefreshEntrance(states({ kind: "in-progress" }, { kind: "absent" }), false)).toBe(true);
   });
 
   it("有内容 / 有单镜入口的终态 → 不需要这条通用入口", () => {
-    expect(needsRefreshEntrance(states({ kind: "landed", url: "/f.png" }, { kind: "dead" }), false)).toBe(false);
+    expect(needsRefreshEntrance(states({ kind: "landed", generationId: "g", url: "/f.png" }, { kind: "dead" }), false)).toBe(false);
   });
 });
