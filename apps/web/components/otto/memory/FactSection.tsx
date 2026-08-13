@@ -37,8 +37,8 @@ export function FactSection({ label, rows, freshIds, onSave, onDelete, onAdd }: 
                 <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                   {r.source === "otto" ? "✦ Otto learned" : "You added"}
                 </span>
-                <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => { setEditingId(r.id); setText(r.content); }}>✎</button>
-                <button type="button" aria-label="Delete" className="text-muted-foreground hover:text-foreground" onClick={() => void onDelete(r.id)}>🗑</button>
+                <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setEditingId(r.id); setText(r.content); }}>✎</Button>
+                <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onDelete(r.id)}>🗑</Button>
               </div>
             )}
           </div>
@@ -53,7 +53,7 @@ export function FactSection({ label, rows, freshIds, onSave, onDelete, onAdd }: 
               </div>
             </div>
           ) : (
-            <button type="button" className="text-[0.8125rem] text-muted-foreground hover:text-foreground" onClick={() => setAdding(true)}>+ Add a fact</button>
+            <Button type="button" variant="ghost" className="h-auto w-auto p-0 text-[0.8125rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setAdding(true)}>+ Add a fact</Button>
           )}
         </div>
       </div>

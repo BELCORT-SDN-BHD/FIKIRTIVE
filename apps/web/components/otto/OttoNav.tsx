@@ -4,6 +4,7 @@ import { ArrowUpRight, MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } 
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
+import { Button } from "@/components/ui/button";
 import { useGlobalNavigationOpen, useOpenGlobalNavigation } from "@/components/global-navigation";
 import { buildOttoNavEntries, type OttoNavEntry } from "./otto-nav-model";
 import { getOttoNavCollapseAction, getOttoNavCollapseLabel } from "./otto-nav-collapse";
@@ -284,39 +285,44 @@ export function OttoNav({
     const pinned = Boolean(thread.pinnedAt);
     return (
       <div key={thread.id} className="otto-recent-row relative flex items-center mb-0.5">
-        <button
+        <Button
+          variant="ghost"
           onClick={() => handleNavAction(() => {
             if (isActiveProject) onSelectThread(thread.id);
             else onSwitchProject(project.id, thread.id);
           })}
           onDoubleClick={() => onRenameThread(thread.id)}
           title={thread.title}
-          className={`flex items-center gap-2 flex-1 min-w-0 border-0 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${nested ? "text-[0.75rem] py-[5px] pr-[54px]" : "text-[0.8125rem] py-[7px] pr-[54px]"} ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+          className={`h-auto min-w-0 flex-1 justify-start gap-2 rounded-[10px] text-left ${nested ? "text-[0.75rem] py-[5px] pr-[54px]" : "text-[0.8125rem] py-[7px] pr-[54px]"} ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
           style={{ paddingLeft: nested ? 28 : 12 }}
         >
           {pinned && (<Pin size={11} className="shrink-0" fill="currentColor" aria-hidden />)}
           {dotColor && (<span className="inline-block shrink-0 w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />)}
           <span className="truncate min-w-0">{thread.title}</span>
-        </button>
+        </Button>
         <div className={`otto-row-actions absolute right-1 flex items-center gap-0.5 ${pinned ? "otto-row-actions--pinned" : ""}`}>
-          <button
+          <Button
             type="button"
-            className="otto-icon-control"
+            variant="ghost"
+            size="icon"
+            className="size-[22px] rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label={pinned ? `Unpin ${thread.title}` : `Pin ${thread.title}`}
             title={pinned ? "Unpin conversation" : "Pin conversation"}
             onClick={(e) => { e.stopPropagation(); onSetThreadPinned(thread.id, !pinned); }}
           >
             <Pin size={13} fill={pinned ? "currentColor" : "none"} aria-hidden />
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="otto-icon-control otto-icon-control--danger"
+            variant="ghost"
+            size="icon"
+            className="size-[22px] rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             aria-label={`Delete ${thread.title}`}
             title="Delete conversation"
             onClick={(e) => { e.stopPropagation(); onDeleteThread(thread.id); }}
           >
             <Trash2 size={13} aria-hidden />
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -381,32 +387,34 @@ export function OttoNav({
       {/* Collapse toggle — the FIKIRTIVE brand mark lives once, in the persistent
           global nav; this rail no longer repeats it (#513 三.1, "双壳合一"). */}
       <div className="flex items-center justify-end gap-2 pr-3 pb-4 pl-4 border-b border-border">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={handleCollapseAction}
           title={collapseLabel}
           aria-label={collapseLabel}
-          className="otto-nav-collapse flex shrink-0 items-center justify-center w-7 h-7 rounded-[10px] border-0 bg-transparent text-muted-foreground/70 cursor-pointer"
+          className="size-7 shrink-0 rounded-[10px] text-muted-foreground/70 hover:bg-accent hover:text-foreground"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
             <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" />
           </svg>
-        </button>
+        </Button>
       </div>
 
       {/* Primary creation action. Creates the project immediately and opens it —
           no naming step. It's auto-titled from its first conversation (#546: it builds
           a Project, so it says project — never "New campaign"). */}
       <div className="pt-4 px-3 pb-3">
-        <button
+        <Button
           onClick={handleNewProjectClick}
           disabled={newProjectPending}
           aria-busy={newProjectPending}
-          className={`flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)] disabled:pointer-events-none disabled:opacity-60${newProjectPending ? " cursor-wait" : ""}`}
+          className={`h-[38px] w-full gap-[7px] rounded-[12px] px-3 text-[0.875rem] shadow-[0_4px_12px_rgba(236,88,40,0.18)] disabled:opacity-60${newProjectPending ? " cursor-wait" : ""}`}
         >
           <IconPlus />
           New project
-        </button>
+        </Button>
       </div>
 
       {/* Projects + History */}
@@ -437,41 +445,47 @@ export function OttoNav({
                   {/* project row — chevron toggles conversations; right controls match Codex density. */}
                   <div className="otto-recent-row relative flex items-center" data-menu-open={projectMenuOpen ? "true" : "false"}>
                     {canExpand ? (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
                         aria-label={isCollapsed ? "Expand project" : "Collapse project"}
                         aria-expanded={!isCollapsed}
                         onClick={(e) => { e.stopPropagation(); toggleProjectCollapse(p.id); }}
-                        className="flex items-center justify-center w-[18px] h-[26px] border-0 bg-transparent text-muted-foreground/70 p-0 shrink-0 cursor-pointer"
+                        className="h-[26px] w-[18px] shrink-0 rounded-none p-0 text-muted-foreground/70 hover:bg-transparent hover:text-foreground"
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: isCollapsed ? "rotate(-90deg)" : "none" }}><path d="m6 9 6 6 6-6" /></svg>
-                      </button>
+                      </Button>
                     ) : (
                       <span className="w-[18px] h-[26px] shrink-0" aria-hidden />
                     )}
-                    <button
+                    <Button
+                      variant="ghost"
                       onClick={() => handleNavAction(() => openProjectEntry(entry))}
                       onDoubleClick={() => onRenameProject(p.id)}
                       title={p.name}
-                      className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.875rem] font-semibold text-foreground py-1.5 pr-[62px] pl-2 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActiveProject ? "bg-secondary" : "bg-transparent"}`}
+                      className={`h-auto min-w-0 flex-1 justify-start gap-2 rounded-[10px] py-1.5 pr-[62px] pl-2 text-left text-[0.875rem] font-semibold text-foreground ${isActiveProject ? "bg-secondary" : "bg-transparent"}`}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden className="shrink-0"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
                       {projectPinned && <Pin size={12} className="shrink-0" fill="currentColor" aria-hidden />}
                       <span className="truncate min-w-0 flex-1">{p.name}</span>
-                    </button>
+                    </Button>
                     <div className={`otto-row-actions absolute right-1 flex items-center gap-0.5 ${(projectPinned || projectMenuOpen) ? "otto-row-actions--pinned" : ""}`}>
-                      <button
+                      <Button
                         type="button"
-                        className="otto-icon-control"
+                        variant="ghost"
+                        size="icon"
+                        className="size-[22px] rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
                         aria-label={`New conversation in ${p.name}`}
                         title="New conversation"
                         onClick={(e) => { e.stopPropagation(); handleNavAction(() => onNewChat(p.id)); }}
                       >
                         <MessageSquarePlus size={14} aria-hidden />
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className="otto-icon-control"
+                        variant="ghost"
+                        size="icon"
+                        className="size-[22px] rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
                         aria-label={`${p.name} controls`}
                         aria-haspopup="menu"
                         aria-expanded={projectMenuOpen}
@@ -479,35 +493,40 @@ export function OttoNav({
                         onClick={(e) => { e.stopPropagation(); setOpenMenu(projectMenuOpen ? null : projectMenuKey); }}
                       >
                         <MoreHorizontal size={15} aria-hidden />
-                      </button>
+                      </Button>
                     </div>
                     {projectMenuOpen && (
                       <div className="otto-row-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
                           role="menuitem"
+                          className="justify-start font-normal"
                           onClick={() => { setOpenMenu(null); onSetProjectPinned(p.id, !projectPinned); }}
                         >
                           <Pin size={14} fill={projectPinned ? "currentColor" : "none"} aria-hidden />
                           {projectPinned ? "Unpin project" : "Pin project"}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="ghost"
                           role="menuitem"
+                          className="justify-start font-normal"
                           onClick={() => { setOpenMenu(null); onRenameProject(p.id); }}
                         >
                           <Pencil size={14} aria-hidden />
                           Rename project
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="ghost"
                           role="menuitem"
-                          className="otto-row-menu-danger"
+                          className="otto-row-menu-danger justify-start font-normal"
                           onClick={() => { setOpenMenu(null); onDeleteProject(p.id); }}
                         >
                           <Trash2 size={14} aria-hidden />
                           Delete project
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -534,27 +553,6 @@ export function OttoNav({
             .otto-row-actions--pinned {
               opacity: 1;
               pointer-events: auto;
-            }
-            .otto-icon-control {
-              display: inline-flex;
-              align-items: center;
-              justify-content: center;
-              width: 22px;
-              height: 22px;
-              border: 0;
-              border-radius: 8px;
-              background: transparent;
-              color: var(--muted-foreground);
-              cursor: pointer;
-              padding: 0;
-            }
-            .otto-icon-control:hover {
-              background: var(--surface-hover, rgba(0,0,0,0.07));
-              color: var(--foreground);
-            }
-            .otto-icon-control--danger:hover {
-              color: #b42318;
-              background: rgba(180,35,24,0.08);
             }
             .otto-row-menu {
               position: absolute;
@@ -603,29 +601,32 @@ export function OttoNav({
           </>
           )}
           <div className={`${navEntries.length > 0 ? "mt-4 pt-3 border-t border-border" : "mt-0"} flex flex-col gap-[1px]`}>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => setToolsOpen((v) => !v)}
               aria-expanded={showTools}
-              className={`flex items-center gap-[9px] w-full border-0 text-[0.8125rem] px-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${toolsActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+              className={`h-auto w-full justify-start gap-[9px] rounded-[9px] px-[9px] py-[7px] text-left text-[0.8125rem] ${toolsActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
             >
               <IconLibrary />
               <span className="flex-1">Workspace</span>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: showTools ? "none" : "rotate(-90deg)" }}><path d="m6 9 6 6 6-6" /></svg>
-            </button>
+            </Button>
             {showTools && (
               <div className="flex flex-col gap-[1px] pt-1">
                 {TOOL_ITEMS.map((item) => {
                   const active = view === item.key;
                   return (
-                    <button
+                    <Button
                       key={item.key}
+                      type="button"
+                      variant="ghost"
                       onClick={() => handleNavAction(() => onViewChange(item.key))}
-                      className={`flex items-center gap-[9px] w-full border-0 text-[0.75rem] pl-8 pr-[9px] py-[6px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+                      className={`h-auto w-full justify-start gap-[9px] rounded-[9px] pl-8 pr-[9px] py-[6px] text-left text-[0.75rem] ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
                     >
                       {item.icon}
                       {item.label}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -645,19 +646,20 @@ export function OttoNav({
           reachable and stay defined in exactly one place. */}
       {openGlobalNavigation && (
         <div className="mt-2 border-t border-border px-3 pt-3 lg:hidden">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={handleOpenGlobalNavigation}
             // #801 — this tooltip used to LIST the sections ("Campaign, CRM, billing, and
             // account"). A list here is a second copy of the navigation tree: it went stale the
             // moment a section was added, and it had already dropped one. The fix is not a
             // longer list, it is not having one — the drawer it opens shows the real tree.
             title="Open navigation"
-            className="flex items-center gap-[9px] w-full border-0 bg-transparent text-muted-foreground font-normal text-[0.8125rem] px-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 hover:bg-secondary/60 hover:text-foreground"
+            className="h-auto w-full justify-start gap-[9px] rounded-[9px] bg-transparent px-[9px] py-[7px] text-left text-[0.8125rem] font-normal text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
           >
             <ArrowUpRight size={18} className="shrink-0" aria-hidden />
             <span className="flex-1">Go to…</span>
-          </button>
+          </Button>
         </div>
       )}
 

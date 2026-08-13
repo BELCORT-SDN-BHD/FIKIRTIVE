@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import type { ChatThreadDTO } from "@/lib/types";
+import { Button } from "@/components/ui/button";
 import { convoColor, convoTabModel } from "@/lib/convo-canvas";
 
 interface ConvoTabsProps {
@@ -48,27 +49,25 @@ export function ConvoTabs({ threads, activeThreadId, activity, onSelect, onNew, 
               style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: "var(--brand)" }}
             />
           )}
-          <button
+          <Button
             type="button"
+            variant="ghost"
             aria-label="Delete conversation"
             onClick={(e) => { e.stopPropagation(); onDelete(t.id); }}
-            style={{ border: "none", background: "transparent", color: "var(--muted-foreground)", cursor: "pointer", padding: 0, lineHeight: 1 }}
+            className="h-auto w-auto rounded-none p-0 leading-none text-muted-foreground hover:bg-transparent hover:text-foreground"
           >
             ×
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button
         type="button"
+        variant="outline"
         onClick={onNew}
-        style={{
-          marginLeft: "auto", flexShrink: 0, border: "1px solid var(--border)",
-          background: "transparent", color: "var(--foreground)", cursor: "pointer",
-          padding: "4px 10px", borderRadius: "14px", fontSize: 13,
-        }}
+        className="ml-auto h-auto shrink-0 rounded-[14px] px-[10px] py-[4px] text-[13px] font-normal text-foreground"
       >
         + New convo
-      </button>
+      </Button>
     </div>
   );
 }

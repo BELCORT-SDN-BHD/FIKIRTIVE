@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { OttoViewKey } from "./OttoApp";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
@@ -302,15 +303,17 @@ export function OttoView({
       )}
       {/* Show-OTTO button — visible only while the OTTO pane is collapsed */}
       {chatCollapsed && (
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="icon"
           onClick={onToggleChat}
           title="Show Otto"
           aria-label="Show Otto"
-          style={{ position: "absolute", top: 54, left: "0.75rem", zIndex: 40, width: 34, height: 34, borderRadius: "10px", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "var(--shadow-sm)" }}
+          className="absolute left-3 top-[54px] z-40 size-[34px] rounded-[10px] text-muted-foreground shadow-sm [&_svg]:size-[17px]"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden><path d="M13 5l7 7-7 7" /><path d="M4 5v14" /></svg>
-        </button>
+        </Button>
       )}
       {/* Left pane: agent entry / chat (collapsible) */}
       <div
@@ -399,16 +402,17 @@ export function OttoView({
       <div className="otto-canvas-pane" style={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
         {/* Collapse handle on the OTTO↔canvas border */}
         {!chatCollapsed && (
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="icon"
             onClick={onToggleChat}
             title="Collapse Otto panel"
             aria-label="Collapse Otto panel"
-            className="otto-chat-collapse-handle"
-            style={{ position: "absolute", left: -13, top: 60, zIndex: 30, width: 26, height: 26, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+            className="otto-chat-collapse-handle absolute left-[-13px] top-[60px] z-30 size-[26px] rounded-full text-muted-foreground shadow-sm [&_svg]:size-[14px]"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
-          </button>
+          </Button>
         )}
         {/* Canvas-first (Grok): the canvas is usable immediately — you can generate directly
             on it without starting a chat first (directToolsLocked={false}); the front door

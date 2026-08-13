@@ -277,14 +277,15 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
           {/* Chips */}
           <div className="flex flex-wrap gap-2 mb-3">
             {CHIPS.map((c) => (
-              <button
+              <Button
                 key={c.label}
                 type="button"
+                variant="outline"
                 onClick={() => setInput(c.prompt)}
-                className="rounded-full border border-border bg-secondary px-3 py-1.5 text-[0.8125rem] hover:bg-accent"
+                className="h-auto rounded-full border-border bg-secondary px-3 py-1.5 text-[0.8125rem] font-normal hover:bg-accent"
               >
                 {c.label}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -376,12 +377,12 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
                 : s.key === "offers" ? recordsFor("offer").length : 0;
               const on = activeTab === s.key;
               return (
-                <button key={s.key} role="tab" aria-selected={on} onClick={() => setTab(s.key)}
-                  className={`flex items-center gap-2 rounded-[10px] px-4 py-2 text-[0.8125rem] ${on ? "bg-card font-semibold text-foreground shadow-sm" : "text-muted-foreground"}`}>
+                <Button key={s.key} type="button" variant="ghost" role="tab" aria-selected={on} onClick={() => setTab(s.key)}
+                  className={`h-auto gap-2 rounded-[10px] px-4 py-2 text-[0.8125rem] font-normal ${on ? "bg-card font-semibold text-foreground shadow-sm hover:bg-card" : "bg-transparent text-muted-foreground hover:bg-transparent"}`}>
                   {s.label}
                   {count > 0 && <span className="text-[0.6875rem] text-muted-foreground/70">{count}</span>}
                   {touchedTabs.has(s.key) && <span className="h-[6px] w-[6px] rounded-full bg-brand" aria-label="Otto updated this" />}
-                </button>
+                </Button>
               );
             })}
           </div>

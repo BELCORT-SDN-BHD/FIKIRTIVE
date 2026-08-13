@@ -2,6 +2,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault, setProjectPinned } from "@/lib/actions";
+import { Button } from "@/components/ui/button";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
 import { OttoConfirmDialog, OttoRenameDialog } from "./OttoPromptDialog";
@@ -597,34 +598,19 @@ export function OttoApp({
           again with the layers swapped. The predicate, not the breakpoint, is what keeps
           that true through a resize. */}
       {navCollapsed && !globalNavigationOpen && (
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="icon"
           onClick={() => setNavCollapsed(false)}
           title="Show sidebar"
           aria-label="Show sidebar"
-          className="otto-show-sidebar-btn"
-          style={{
-            position: "absolute",
-            top: "0.75rem",
-            left: "0.75rem",
-            zIndex: 50,
-            width: 34,
-            height: 34,
-            borderRadius: "10px",
-            border: "1px solid var(--border)",
-            background: "var(--card)",
-            color: "var(--muted-foreground)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            boxShadow: "var(--shadow-sm)",
-          }}
+          className="otto-show-sidebar-btn absolute left-3 top-3 z-50 size-[34px] rounded-[10px] text-muted-foreground shadow-sm [&_svg]:size-[17px]"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
             <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m13 9 3 3-3 3" />
           </svg>
-        </button>
+        </Button>
       )}
 
       {/* Left nav */}
@@ -669,26 +655,16 @@ export function OttoApp({
             background: "var(--card)",
           }}
         >
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             aria-label="Open menu"
             onClick={() => setDrawerOpen(true)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 44,
-              height: 44,
-              border: "none",
-              background: "transparent",
-              color: "var(--foreground)",
-              cursor: "pointer",
-              borderRadius: "14px",
-              flexShrink: 0,
-            }}
+            className="shrink-0 rounded-[14px] text-foreground [&_svg]:size-[22px]"
           >
             <IconMenu />
-          </button>
+          </Button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/logo-wordmark.svg" alt="Fikirtive" height={22} style={{ display: "block" }} />
         </div>
@@ -754,22 +730,14 @@ export function OttoApp({
           }}
         >
           <span style={{ fontSize: "0.875rem", lineHeight: 1.4 }}>{actionError}</span>
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={() => setActionError(null)}
-            style={{
-              border: "1px solid var(--border)",
-              borderRadius: 9,
-              background: "transparent",
-              color: "var(--foreground)",
-              padding: "0.35rem 0.55rem",
-              fontSize: "0.8125rem",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
+            className="h-auto shrink-0 rounded-[9px] px-[0.55rem] py-[0.35rem] text-[0.8125rem] font-normal text-foreground"
           >
             Dismiss
-          </button>
+          </Button>
         </div>
       )}
 

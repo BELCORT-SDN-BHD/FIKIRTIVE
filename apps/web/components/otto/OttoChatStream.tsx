@@ -6,6 +6,8 @@ import { DefaultChatTransport } from "ai";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { ImageIcon, MessageSquarePlus } from "lucide-react";
@@ -762,16 +764,17 @@ export function OttoChatStream({
           {thread.title}
         </div>
         {onNewConversation && (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={onNewConversation}
             title="Start a new conversation in this project"
             aria-label="New conversation"
-            className="inline-flex shrink-0 items-center gap-[6px] rounded-[9px] border border-border bg-transparent px-[10px] py-[6px] text-[0.8125rem] font-medium text-foreground cursor-pointer transition-colors hover:bg-secondary"
+            className="h-auto shrink-0 gap-[6px] rounded-[9px] px-[10px] py-[6px] text-[0.8125rem] font-medium text-foreground"
           >
             <MessageSquarePlus size={14} aria-hidden />
             New conversation
-          </button>
+          </Button>
         )}
       </div>
 
@@ -1256,17 +1259,18 @@ export function OttoChatStream({
               <OttoAvatar size={26} state="idle" />
               <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
                 This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   onClick={() => {
                     setPollRound("retry");
                     setPollGaveUp(false);
                     void pollAndInjectResults();
                   }}
-                  className="border-0 bg-transparent p-0 text-primary font-semibold cursor-pointer underline"
+                  className="h-auto w-auto p-0 text-primary underline"
                 >
                   Check again
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -1309,14 +1313,15 @@ export function OttoChatStream({
 
         {!isAtBottom && (
           <div className="sticky bottom-4 flex justify-center pointer-events-none">
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() => void scrollToBottom()}
               aria-label="Scroll to bottom"
-              className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-2 shadow-sm text-[0.875rem] text-foreground cursor-pointer"
+              className="pointer-events-auto h-auto gap-1 rounded-full px-3 py-2 text-[0.875rem] font-normal shadow-sm"
             >
               ↓ Scroll to bottom
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -1332,21 +1337,23 @@ export function OttoChatStream({
               className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[14px] border border-border bg-card shadow-lg z-50"
             >
               {mentionSuggestions.map((e, i) => (
-                <button
+                <Button
                   key={e.id}
+                  type="button"
+                  variant="ghost"
                   role="option"
                   aria-selected={i === mentionHighlight}
                   onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
-                  className="block w-full cursor-pointer border-none bg-transparent px-3 py-2 text-left text-[0.875rem] text-foreground"
+                  className="h-auto w-full justify-start rounded-none px-3 py-2 text-left text-[0.875rem] font-normal text-foreground hover:bg-transparent"
                   style={{ background: i === mentionHighlight ? "var(--accent)" : "transparent" }}
                 >
                   @{e.name}
-                </button>
+                </Button>
               ))}
             </div>
           )}
           {/* Hidden file input — triggered by the attach button below */}
-          <input
+          <Input
             ref={fileInputRef}
             type="file"
             aria-label="Attach a file"
@@ -1372,7 +1379,7 @@ export function OttoChatStream({
               />
               <canvas ref={canvasRef} className="mb-2 max-h-40 w-full rounded-[10px] object-contain" />
               {videoPick.duration > 0 && (
-                <input
+                <Input
                   type="range"
                   min={0}
                   max={videoPick.duration}
@@ -1380,7 +1387,7 @@ export function OttoChatStream({
                   value={frameTime}
                   onChange={handleScrub}
                   aria-label="Pick a video frame"
-                  className="w-full"
+                  className="h-auto w-full border-0 bg-transparent p-0 shadow-none"
                 />
               )}
               {videoPick.duration > 0 && !isRefVideoDurationOk(videoPick.duration) && (
@@ -1429,18 +1436,19 @@ export function OttoChatStream({
                   <span className="max-w-[110px] truncate text-[0.8125rem] font-medium text-muted-foreground">
                     {ref.label}
                   </span>
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     aria-label={`Remove ${ref.label}`}
                     onClick={() => {
                       revokeAttachedPreview(ref);
                       setAttachedRefs((current) => removeComposerReference(current, ref.generationId));
                       setAttachError(null);
                     }}
-                    className="border-0 bg-transparent p-0 text-[0.875rem] text-muted-foreground cursor-pointer leading-none"
+                    className="h-auto w-auto rounded-none p-0 text-[0.875rem] leading-none text-muted-foreground hover:bg-transparent hover:text-foreground"
                   >
                     ×
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
@@ -1454,7 +1462,7 @@ export function OttoChatStream({
           )}
 
           <div className="overflow-hidden rounded-[14px] border-[1.5px] border-border bg-background shadow-sm">
-            <textarea
+            <Textarea
               id="otto-composer"
               // #739 — the placeholder changes with the attached references and vanishes on
               // the first keystroke; the name stays put.
@@ -1465,20 +1473,25 @@ export function OttoChatStream({
               disabled={isBusy}
               placeholder={composerReferencesPlaceholder(attachedRefs)}
               rows={2}
-              className="w-full resize-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground outline-none leading-normal"
+              // #920 判官 r1 P2 — ui/textarea's own field-sizing-content would grow this
+              // fixed-chrome composer box taller with every line typed; field-sizing-fixed
+              // restores the original rows-locked height.
+              className="field-sizing-fixed min-h-0 w-full resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground shadow-none outline-none"
             />
             <div className="flex items-center justify-between border-t border-border px-3 py-2">
               {/* Attach image button */}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 aria-label="Attach reference image"
                 disabled={isBusy || uploading || !!videoPick}
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center border-0 bg-transparent p-1 cursor-pointer disabled:cursor-default disabled:opacity-50"
+                className="h-auto w-auto p-1 hover:bg-transparent disabled:opacity-50"
                 style={{ color: attachedRefs.length ? "var(--primary)" : undefined }}
               >
                 <ImageIcon size={18} className={attachedRefs.length ? "text-primary" : "text-muted-foreground"} />
-              </button>
+              </Button>
               <div className="flex items-center gap-2">
                 <span
                   className="otto-send-hint text-[0.75rem] text-muted-foreground"
