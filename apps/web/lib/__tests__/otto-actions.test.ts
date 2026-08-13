@@ -2204,8 +2204,9 @@ describe("ottoTurn — injects brand context + refs as a system message", () => 
 
     // Brand context returns a memory entry
     mockGetBrandContextText.mockResolvedValue("voice: warm, family tone");
-    // Entity loader returns one entity
-    mockEntityFindMany.mockResolvedValue([{ id: "e1", name: "CocoCandy", type: "PRODUCT" }]);
+    // Entity loader returns one entity (#781: the loader also selects the element's styling
+    // variants, so the mocked row carries that key too — an element with no saved looks)
+    mockEntityFindMany.mockResolvedValue([{ id: "e1", name: "CocoCandy", type: "PRODUCT", variants: [] }]);
 
     mockRun.mockResolvedValue(makeMockResult());
     mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
