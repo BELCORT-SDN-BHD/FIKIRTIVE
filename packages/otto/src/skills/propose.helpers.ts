@@ -30,6 +30,7 @@ import {
   type ApprovedEntity,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
+import { VIDEO_ACTION_IDS } from "./video-capabilities.js";
 
 // ---------------------------------------------------------------------------
 // Input schema (what the LLM provides) — re-exported for propose.ts
@@ -50,6 +51,17 @@ export const proposeInput = z.object({
   forVideo: z.boolean().optional(),
   // 创作意图/目的 —— requires 资讯门要求它非空。琐碎请求可由 Otto 从上下文推断填入。
   goal: z.string().optional(),
+  /**
+   * #775 —— 这张视频卡是能力表上的哪一个动作。
+   *
+   * 只在商家**这一轮挂了一整条片子**时才有后果(见 `buildProposeCard` 的形状强制),
+   * 别的形状下它一个字节都不改变今天的卡。缺席 = 今天的行为,老调用一个字不用改。
+   *
+   * 刻意**不**落进 `GenJob`:动作已经写在商家批准的那段 prompt 里了(官方句式就是动作
+   * 本身),再存一份就是同一件事的第二个真相来源。这里它只做一件事 —— 决定卡上冻的
+   * 形状,而形状是付费参数,所以判据必须在批准**之前**落定。
+   */
+  videoAction: z.enum(VIDEO_ACTION_IDS).optional(),
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
@@ -314,7 +326,7 @@ export function buildDowngradeNote(
  *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo" | "videoAction">,
   ctx: OttoContext,
   ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
@@ -369,13 +381,31 @@ export function buildProposeCard(
   });
   if (!sm) throw new GenerationUnavailableError(kind);
 
+  /**
+   * #775 —— 改这条片子 / 把这条片子接下去,形状**只能**跟着商家那条片子走。
+   *
+   * 官方陷阱:在这两种任务上再指定一个比例,请求会**先被收下、事后才异步失败** ——
+   * 商家看到的是一次批准之后石沉大海,而不是一句「这个选项在这里用不上」。所以判据必须
+   * 落在批准**之前**的卡上,不能指望引擎替我们把关。
+   *
+   * `adaptive` 不是一个我们发明的值:它本来就在这台引擎的档位表里,且正是首帧那一档
+   * (`i2vAspectRatio`)每天在用的那个值 —— 含义就是「跟着你给的东西走」,与这两个动作
+   * 要的事情逐字相同。
+   *
+   * 判据里的 `isRefVideo` 不可省:一条没挂片子的请求就算报了 editClip 也不是剪辑
+   * (能力表的 `needs` 说了同一句话),不许因为一个模型报上来的字段就换掉商家的形状。
+   */
+  const anchoredToClip = isRefVideo && (input.videoAction === "editClip" || input.videoAction === "extendClip");
+
   if (isRefVideo) {
     const opts = GEN_VIDEO_MODEL_OPTIONS[REFERENCE_VIDEO_MODEL];
     const d = videoDefaults(REFERENCE_VIDEO_MODEL);
     sm.model = REFERENCE_VIDEO_MODEL;
     sm.params.durationSeconds = GEN_VIDEO_SECONDS;
     sm.params.resolution = d.resolution;
-    sm.params.aspectRatio = input.desiredAspect && opts.aspectRatios.includes(input.desiredAspect) ? input.desiredAspect : d.aspectRatio;
+    sm.params.aspectRatio = anchoredToClip
+      ? VIDEO_ASPECT_ADAPTIVE
+      : input.desiredAspect && opts.aspectRatios.includes(input.desiredAspect) ? input.desiredAspect : d.aspectRatio;
     sm.params.audio = typeof input.desiredAudio === "boolean" ? input.desiredAudio : d.audio;
     sm.params.count = 1;
     // #769:引擎名从事实表取,不再手抄。手抄的那一份在换引擎(fast→mini)时不会跟着变,
@@ -469,12 +499,28 @@ export function buildProposeCard(
     (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio);
   const audioNotHonoured =
     kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
+  // #775 —— 剪辑/续写把商家点的形状换成了 adaptive,这同样是降级,必须**说出来**。
+  // 商家没点形状时不算降级:他什么都没被换掉,那句披露只会变成噪音。
+  const clipAspectForced =
+    anchoredToClip && !!input.desiredAspect && input.desiredAspect !== VIDEO_ASPECT_ADAPTIVE;
   const requested: RequestedSpec = {
     ...sm.requested,
-    ...(imageAspectDropped ? { aspect: input.desiredAspect } : {}),
+    ...(imageAspectDropped || clipAspectForced ? { aspect: input.desiredAspect } : {}),
     ...(audioNotHonoured ? { audio: input.desiredAudio } : {}),
   };
-  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured;
+  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured || clipAspectForced;
+  /**
+   * #775 —— 卡面/披露文案这一层,「商家给了一个引擎会照着定形状的东西」为真。
+   *
+   * 这个布尔**只**喂给两个纯展示函数(`buildSpecChips` / `buildDowngradeNote`),
+   * 它们的作用是把 `adaptive` 说成人话。整段参考视频与首帧在这一点上是同一件事 ——
+   * 形状跟着商家给的东西走 —— 所以卡上说「Same shape as your reference」而不是
+   * 「Shape picked to fit」(后者听起来像我们替他挑的)。
+   *
+   * 刻意不动 `hasSourceImage` 本身:那个变量驱动**选型**与 @元素清空,而整段参考视频
+   * 不是首帧,把它混进去会改掉付费行为。
+   */
+  const shapeFollowsWhatTheyGave = hasSourceImage || anchoredToClip;
 
   // Step 4.8: 审批身份快照 —— 这张卡最终留下的每个 @元素,配上它**此刻**的名字与类型。
   // 只认 ownedEntities 里那一份(归属查询同一趟读出来的),`entityIds` 里找不到身份的
@@ -490,10 +536,10 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    specChips: buildSpecChips(kind, sm.params, hasSourceImage, usesAttachedImage),
+    specChips: buildSpecChips(kind, sm.params, shapeFollowsWhatTheyGave, usesAttachedImage),
     downgraded,
     ...(downgraded
-      ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, hasSourceImage) }
+      ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, shapeFollowsWhatTheyGave) }
       : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,

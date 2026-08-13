@@ -435,6 +435,11 @@ describe("generateVideo (Seedance, async)", () => {
     expect(vp).toBeTruthy();
     expect(vp!.role).toBe("reference_video");
     expect(vp!.video_url!.url).toBe("https://x/ref.mp4");
+    // #775 —— 一趟请求送得出的片子**恒为一条**。Otto 侧「改这条片子 / 把这条片子接下去」
+    // 的官方句式里那个编号(`VIDEO_CLIP_TOKEN` = `<Video_1>`)不是一个我们挑的数字,是这条
+    // 断言说的这件事决定的:承载整段片子的入参是单值(`VideoRequest.refVideoUrl`),适配器
+    // 也只 push 一个 `video_url` 部件。哪天真送得出第二条,这里先红,提示词那边跟着改。
+    expect(parts.filter((c) => c.type === "video_url")).toHaveLength(1);
   });
 
   // -------------------------------------------------------------------------
