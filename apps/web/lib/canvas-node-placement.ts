@@ -1,7 +1,8 @@
 import "server-only";
 
-import { prisma } from "@fikirtive/db";
+import { prisma, canvasBoardPlacementLockKey, type Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
+import { freeCanvasRect, type CanvasRect } from "@fikirtive/core/canvas-layout";
 
 export type CanvasJobPlacementInput = {
   ownerId: string;
@@ -65,6 +66,42 @@ const NODE_SELECT = {
 /** Every writer for one paid job shares this lock, regardless of pending/primary/sibling role. */
 export function canvasJobPlacementLockKey(ownerId: string, projectId: string, genJobId: string): string {
   return `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`;
+}
+
+/**
+ * WHERE A NEW CARD ACTUALLY LANDS (#549). Call this in the transaction that creates it.
+ *
+ * Until this existed, "don't land on a card that is already there" was a rule exactly one
+ * writer kept — the board component, against its own tab's snapshot of the board — and the
+ * durable write took whatever coordinate it was handed. So the rule was silently absent for
+ * everyone else: Otto placed every card it was asked to place at the board origin (80, 80),
+ * straight on top of the merchant's first paid picture; a second press inside the seconds a
+ * generation takes to be accepted got the same "free" slot as the first; a second tab, or a
+ * phone, never saw the other's cards at all. A buried card cannot be clicked, and keyboard
+ * focus still stops on it while the eye sees the card on top — so the merchant acts on the
+ * wrong picture. The rule now lives at the write, where every writer passes and where the whole
+ * board is visible.
+ *
+ * The requested spot is kept whenever it is free, so "beside the card it was made from" still
+ * means exactly that. Only a spot that would COVER something moves, and only to the nearest
+ * free one. Moving a card the merchant has already placed is a different act and is untouched:
+ * dragging one card onto another is an arrangement they chose.
+ */
+export async function freeCanvasRectForNewNode(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+  projectId: string,
+  requested: CanvasRect,
+): Promise<CanvasRect> {
+  const lockKey = canvasBoardPlacementLockKey(ownerId, projectId);
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+  // Tombstones are not on the board, so their rectangles are free again — a card the merchant
+  // removed must not keep reserving the space it used to hold.
+  const board = await tx.canvasNode.findMany({
+    where: { ownerId, projectId, status: { not: "deleted" } },
+    select: { x: true, y: true, w: true, h: true },
+  });
+  return freeCanvasRect(board, requested);
 }
 
 /**
@@ -262,16 +299,24 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
       return { inserted: false, node: existing };
     }
 
+    // Only a card being put down for the FIRST time is placed. An existing card returns above
+    // with the spot it already has — a paid card never moves because something else settled.
+    const rect = await freeCanvasRectForNewNode(tx, input.ownerId, input.projectId, {
+      x: input.x,
+      y: input.y,
+      w: input.w,
+      h: input.h,
+    });
     const node = await tx.canvasNode.create({
       data: {
         id: newId(),
         ownerId: input.ownerId,
         projectId: input.projectId,
         type: input.type,
-        x: input.x,
-        y: input.y,
-        w: input.w,
-        h: input.h,
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
         text: input.text ?? null,
         prompt: input.prompt ?? null,
         generationId,
