@@ -159,6 +159,10 @@ describe("identityLockSentences", () => {
   it("empty refs → no sentences", () => {
     expect(identityLockSentences([])).toEqual([]);
   });
+  it("the entity's name is quoted verbatim —成句只动我们自己写的那部分", () => {
+    expect(identityLockSentences([{ role: "product", name: "Nasi  Lemak\tCo", lock: true }]))
+      .toEqual(["Feature Nasi  Lemak\tCo exactly as in the reference, same shape, color, and label."]);
+  });
   it("NEVER writes an image number — numbering belongs to the code that sends the images", () => {
     const out = identityLockSentences(
       (["character", "product", "location", "brandmark"] as const).map((role) => ({ role, name: "Nasi Lemak Co", lock: true })),

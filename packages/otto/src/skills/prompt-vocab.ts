@@ -185,7 +185,12 @@ export const PORTRAIT_IMAGE_CAPTION_BAN =
  * 说的是同一件事，且都不可能错位。
  */
 export function identityLockSentences(refs: PromptRef[]): string[] {
-  return refs.map((r) => sentence(refPhrase(r)));
+  // 刻意不过 `sentence()`：这句里嵌着商家给元素起的名字，而 `sentence()` 会把内部空白
+  // 归一。成句只需要首字母大写 + 句号，这两件都只动我们自己写的那部分。
+  return refs.map((r) => {
+    const p = refPhrase(r); // 名字非空（promptRef 的 min(1)），且短语从不自带句末标点
+    return `${p[0]!.toUpperCase()}${p.slice(1)}.`;
+  });
 }
 
 /**
