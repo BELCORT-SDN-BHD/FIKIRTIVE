@@ -419,7 +419,7 @@ describe("POST /api/otto/stream", () => {
     expect(res.status).toBe(200);
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
     });
     expect(mocks.withLlmBudget).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -442,10 +442,10 @@ describe("POST /api/otto/stream", () => {
         data: expect.objectContaining({
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
+          text: "Not enough credits — this needs 1 credit. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
           }),
         }),
       }),
@@ -465,7 +465,7 @@ describe("POST /api/otto/stream", () => {
 
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
     });
     expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
     expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
@@ -474,22 +474,23 @@ describe("POST /api/otto/stream", () => {
           threadId: "thread_existing",
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
+          text: "Not enough credits — this needs 1 credit. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 1 credit. Top up in Billing." },
           }),
         }),
       }),
     );
   });
 
-  // #791-7: "You're out of credits." was usually false — a turn HOLDS 4 credits up front, so a
-  // merchant with 3.9 who had spent nothing was told they had none, with their balance on
+  // #791-7: "You're out of credits." was usually false — a turn HELD a fixed amount up front, so
+  // a merchant with 3.9 who had spent nothing was told they had none, with their balance on
   // screen contradicting it. The refusal now carries the balance it was judged against.
-  it("names the merchant's REAL balance and the real hold when the reserve refuses", async () => {
+  // #898 moved the door: the hold fits the balance, so 3.9 sends. Only below 1 credit refuses.
+  it("names the merchant's REAL balance and the real minimum when the reserve refuses", async () => {
     mocks.withLlmBudget.mockRejectedValue(
-      new mocks.MockInsufficientCredits(undefined, { requiredInternal: 40, balanceInternal: 39 }),
+      new mocks.MockInsufficientCredits(undefined, { requiredInternal: 10, balanceInternal: 8 }),
     );
 
     const parts = (await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json()) as Array<{
@@ -499,7 +500,7 @@ describe("POST /api/otto/stream", () => {
 
     const error = parts.find((p) => p.type === "data-error");
     expect(error?.data?.text).toBe(
-      "You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.",
+      "You have 0.8 credits — starting a message with Otto needs at least 1 credit. Top up in Billing.",
     );
     expect(error?.data?.text).not.toMatch(/out of credits/i);
   });

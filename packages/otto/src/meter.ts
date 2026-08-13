@@ -18,6 +18,7 @@ import {
 import {
   prisma,
   reserveCredits,
+  reserveCreditsUpTo,
   settleCredits,
   refundReservation,
 } from "@fikirtive/db";
@@ -127,6 +128,13 @@ export async function withLlmBudget<T>(
      *  fail-closed in the direction that holds MORE. Reserve/settle/refund semantics are
      *  unchanged: settleCredits still clamps the charge to the held amount. */
     reserveCapInternal?: number;
+    /** #898 — the minimum balance, in INTERNAL credits, that may START this call. When set (and
+     *  valid), the hold becomes min(worst case, reserveCapInternal, current balance) instead of a
+     *  fixed amount, and the call is refused only when the balance is below THIS number. Server-
+     *  owned composition data only (runtime.ts ottoBudgetArgsFor); never request/client supplied.
+     *  A malformed value (0, negative, fractional, NaN, Infinity) is ignored and the fixed hold
+     *  stays in force — fail-closed in the direction that holds MORE and admits FEWER callers. */
+    reserveMinInternal?: number;
     usageOnError?: (e: unknown) => TokenUsage | null;
   },
   fn: () => Promise<{ result: T; usage?: TokenUsage }>,
@@ -158,13 +166,31 @@ export async function withLlmBudget<T>(
   // #543: a composition-supplied cap may only LOWER the hold. Anything that is not a
   // positive integer is ignored, so a malformed cap can never open a metering hole.
   const cap = args.reserveCapInternal;
-  const reserve =
+  const capped =
     typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
+  // #898: same validity rule as the cap — anything that is not a positive integer is ignored, so a
+  // malformed minimum falls back to the fixed hold rather than opening the door wider.
+  const min = args.reserveMinInternal;
+  const balanceAware = typeof min === "number" && Number.isInteger(min) && min >= 1;
 
   // Invariant #1: reserve first. InsufficientCredits propagates; fn never called.
-  await prisma.$transaction((tx) =>
-    reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve }),
-  );
+  // `reserve` is the amount ACTUALLY held — with the balance-aware path it can be less than
+  // `capped`, and the no-usage settle below must charge the real hold, not the intended one.
+  let reserve = capped;
+  if (balanceAware) {
+    reserve = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, {
+        orgId: args.orgId,
+        refId: args.refId,
+        capInternal: capped,
+        minimumInternal: min,
+      }),
+    );
+  } else {
+    await prisma.$transaction((tx) =>
+      reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve }),
+    );
+  }
 
   // Invariant #3: refund the whole reservation if fn throws (unless usageOnError yields actual usage).
   let out: { result: T; usage?: TokenUsage };

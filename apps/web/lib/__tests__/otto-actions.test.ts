@@ -3505,7 +3505,7 @@ describe("#791-1 项目 brief 进 Otto 每轮上下文", () => {
 // 以及每个入口都叫同一个名字。
 describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
   const insufficient = () =>
-    new MockInsufficientCredits("Not enough credits.", { requiredInternal: 40, balanceInternal: 39 });
+    new MockInsufficientCredits("Not enough credits.", { requiredInternal: 10, balanceInternal: 8 });
 
   it("ottoTurn:说出真实余额与门槛,而不是「Couldn't reach Otto」", async () => {
     mockRequireOwner.mockResolvedValue(GATE);
@@ -3520,7 +3520,7 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
       error?: string;
     };
 
-    expect(res.error).toBe("You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.");
+    expect(res.error).toBe("You have 0.8 credits — starting a message with Otto needs at least 1 credit. Top up in Billing.");
     expect(res.error).not.toMatch(/Couldn't reach Otto/);
   });
 
@@ -3542,7 +3542,7 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
 
     const res = (await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID })) as { error?: string };
 
-    expect(res.error).toBe("You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.");
+    expect(res.error).toBe("You have 0.8 credits — starting a message with Otto needs at least 1 credit. Top up in Billing.");
     expect(res.error).not.toMatch(/Couldn't approve/);
   });
 
