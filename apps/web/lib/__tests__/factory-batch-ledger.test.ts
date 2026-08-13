@@ -569,3 +569,260 @@ describe("W-B3-F-P ledger — video replay after DONE reuses (full-field compare
     expect(acct.balance).toBe(1000 - VID10); // charged once, never twice
   });
 });
+
+// ---------------------------------------------------------------------------
+// #777 组图接工厂批量 —— **钱路复审重点全在这一节**。
+//
+// 供应商侧的形状变了(count 张从 count 次调用变成一次调用),所以这一节要证明的正好是
+// 「什么**没有**变」:
+//   1. 报价 == 预扣 == 结算,与散图逐字相同(count 是唯一的乘数,组图一格没碰它);
+//   2. 一次调用出 N 张仍然 exactly-once —— 重放不新建任务、不新预扣(靠的仍是
+//      GenJob 的 (ownerId, projectId, idempotencyKey) 唯一约束 + CreditLedger 的
+//      (orgId, refId, kind) 唯一约束,本票一条约束都没加、没改);
+//   3. 「一组连贯图」与「N 张散图」是**不同内容**:同一格上互换会被照实拒,
+//      而不是静默交付另一样东西;
+//   4. 中途失败仍是**逐格**退款,组图那一格整格退(它就是一个任务),
+//      与今日一格不差。
+// ---------------------------------------------------------------------------
+describe("#777 组图 — 报价/预扣/结算与散图逐字相同(收费口径没有第二套)", () => {
+  it("一组四张 == 四张散图:同一个数被报价、被预扣、被结算", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+
+    const setBatch = `bat_${randomUUID()}`;
+    const set = await runBulkGrid({
+      batchId: setBatch, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "the same model, four angles", count: 4, coherentSet: true }],
+    });
+    if ("error" in set) throw new Error(set.error);
+    expect(set.totalCredits).toBe(4 * IMG);
+    expect((await account(ownerId)).reserved).toBe(4 * IMG);
+
+    const spreadBatch = `bat_${randomUUID()}`;
+    const spread = await runBulkGrid({
+      batchId: spreadBatch, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "four different hooks", count: 4 }],
+    });
+    if ("error" in spread) throw new Error(spread.error);
+    // 这一行就是「商家积分口径不变」:组图与散图报的是同一个数。
+    expect(set.totalCredits).toBe(spread.totalCredits);
+    expect((await account(ownerId)).reserved).toBe(8 * IMG);
+
+    // 结算:预扣多少就结多少,组图那一单一格不差。
+    await workerSettle(ownerId, set.cells[0].jobId!);
+    await workerSettle(ownerId, spread.cells[0].jobId!);
+    const acct = await account(ownerId);
+    expect(acct.reserved).toBe(0);
+    expect(acct.balance).toBe(1000 - 8 * IMG);
+    const settles = (await ledger(ownerId)).filter((row) => row.kind === "SETTLE");
+    expect(settles).toHaveLength(2);
+    expect(settles.every((row) => row.reservedDelta === -4 * IMG)).toBe(true);
+  });
+
+  it("组图的规格真的落进了任务快照(worker 照着它发一次请求,而不是发四次)", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+
+    const res = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "same product, three sizes", count: 3, aspectRatio: "9:16", coherentSet: true }],
+    });
+    if ("error" in res) throw new Error(res.error);
+    const job = await prisma.genJob.findFirstOrThrow({ where: { id: res.cells[0].jobId!, ownerId }, select: { count: true, imageOptions: true } });
+    expect(job.count).toBe(3);
+    expect(job.imageOptions).toEqual({ aspectRatio: "9:16", coherentSet: true });
+  });
+
+  it("散图任务的快照里**没有**这一格 —— 既有行与新散图行逐字同形(幂等不回归)", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+
+    const res = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [
+        { type: "gen", prompt: "plain", count: 2 },
+        { type: "gen", prompt: "explicit off", count: 2, coherentSet: false },
+        { type: "gen", prompt: "one image can't be a set", count: 1, coherentSet: true },
+      ],
+    });
+    if ("error" in res) throw new Error(res.error);
+    for (const cell of res.cells) {
+      const job = await prisma.genJob.findFirstOrThrow({ where: { id: cell.jobId!, ownerId }, select: { imageOptions: true } });
+      expect(job.imageOptions).toEqual({ aspectRatio: "1:1" });
+    }
+  });
+});
+
+describe("#777 组图 — exactly-once:一次调用出 N 张,重放照旧只收一次", () => {
+  it("同一张批准卡重放:不新建任务、不新预扣、指回同一个任务", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+    const cells = [{ type: "gen" as const, prompt: "one model, four angles", count: 4, coherentSet: true }];
+
+    const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
+    if ("error" in first) throw new Error(first.error);
+    expect(first.totalCredits).toBe(4 * IMG);
+
+    const second = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
+    if ("error" in second) throw new Error(second.error);
+    expect(second.cells[0]).toMatchObject({ status: "reused", jobId: first.cells[0].jobId, credits: 0 });
+    expect(second.totalCredits).toBe(0);
+
+    expect(await jobsFor(ownerId, projectId)).toHaveLength(1);
+    expect((await ledger(ownerId)).filter((row) => row.kind === "RESERVE")).toHaveLength(1);
+    expect((await account(ownerId)).reserved).toBe(4 * IMG); // 不是 8×
+  });
+
+  it("做完之后再重放同样是复用(DONE 也不许被重收一次)", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+    const cells = [{ type: "gen" as const, prompt: "one model, three angles", count: 3, coherentSet: true }];
+
+    const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
+    if ("error" in first) throw new Error(first.error);
+    await workerSettle(ownerId, first.cells[0].jobId!);
+
+    const second = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
+    if ("error" in second) throw new Error(second.error);
+    expect(second.cells[0]).toMatchObject({ status: "reused", credits: 0 });
+    const acct = await account(ownerId);
+    expect(acct.reserved).toBe(0);
+    expect(acct.balance).toBe(1000 - 3 * IMG); // 收过一次,再也不收第二次
+  });
+});
+
+describe("#777 组图 — 「一组连贯图」与「N 张散图」是不同内容(不许静默互换)", () => {
+  it("已批一组图的那一格改成散图 ⇒ 照实拒,零新预扣", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+
+    const first = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "one model, four angles", count: 4, coherentSet: true }],
+    });
+    if ("error" in first) throw new Error(first.error);
+
+    const swapped = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "one model, four angles", count: 4 }], // 同 prompt 同张数,只是不再成组
+    });
+    if ("error" in swapped) throw new Error(swapped.error);
+    expect(swapped.cells[0]).toMatchObject({ status: "error", credits: 0 });
+    expect(swapped.cells[0].error).toMatch(/already in use for different content/);
+
+    expect(await jobsFor(ownerId, projectId)).toHaveLength(1);
+    expect((await ledger(ownerId)).filter((row) => row.kind === "RESERVE")).toHaveLength(1);
+    expect((await account(ownerId)).reserved).toBe(4 * IMG);
+  });
+
+  it("反向:已批散图的那一格改成组图 ⇒ 同样照实拒", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+
+    const first = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "four hooks", count: 4 }],
+    });
+    if ("error" in first) throw new Error(first.error);
+
+    const swapped = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "four hooks", count: 4, coherentSet: true }],
+    });
+    if ("error" in swapped) throw new Error(swapped.error);
+    expect(swapped.cells[0]).toMatchObject({ status: "error", credits: 0 });
+    expect((await ledger(ownerId)).filter((row) => row.kind === "RESERVE")).toHaveLength(1);
+  });
+});
+
+describe("#777 组图 — 批量中途失败:逐格结算/退款,组图那一格整格退", () => {
+  it("三格里组图那一格失败 ⇒ 只退它,另两格照结(没有批级回滚)", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+
+    const res = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [
+        { type: "gen", prompt: "hero", count: 1 },
+        { type: "gen", prompt: "one model, four angles", count: 4, coherentSet: true },
+        { type: "gen", prompt: "detail", count: 1 },
+      ],
+    });
+    if ("error" in res) throw new Error(res.error);
+    expect(res.totalCredits).toBe(IMG + 4 * IMG + IMG);
+    expect((await account(ownerId)).reserved).toBe(6 * IMG);
+
+    const [hero, set, detail] = res.cells.map((cell) => cell.jobId!);
+    await workerSettle(ownerId, hero);
+    // 组图短交 = 整单失败(适配器把它标成 charged,worker 终结并退款)—— 退的是**整格**
+    // 四张的预扣,不是三张:商家一张都没拿到,就一分钱都不该付。
+    await workerRefund(ownerId, set);
+    await workerSettle(ownerId, detail);
+
+    const acct = await account(ownerId);
+    expect(acct.reserved).toBe(0);
+    expect(acct.balance).toBe(1000 - 2 * IMG); // 只为交付了的两格付钱
+
+    const rows = await ledger(ownerId);
+    const refunds = rows.filter((row) => row.kind === "REFUND");
+    expect(refunds).toHaveLength(1);
+    expect(refunds[0]!.refId).toBe(set);
+    expect(refunds[0]!.balanceDelta).toBe(4 * IMG); // 整组四张一起退
+    expect(rows.filter((row) => row.kind === "SETTLE")).toHaveLength(2);
+  });
+
+  it("组图那一格退款是幂等的:worker 重投也不会退第二次", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+
+    const res = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "one model, two angles", count: 2, coherentSet: true }],
+    });
+    if ("error" in res) throw new Error(res.error);
+    const jobId = res.cells[0].jobId!;
+
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ownerId, refId: jobId }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ownerId, refId: jobId })); // 重投
+
+    const acct = await account(ownerId);
+    expect(acct.balance).toBe(1000); // 退回原样,绝不多退
+    expect(acct.reserved).toBe(0);
+    expect((await ledger(ownerId)).filter((row) => row.kind === "REFUND")).toHaveLength(1);
+  });
+
+  it("余额只够一格时,组图那一格照旧 fail closed —— 不建任务、不预扣", async () => {
+    const ownerId = await seedOrg(2 * IMG); // 只够两张
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+
+    const res = await runBulkGrid({
+      batchId, projectId, attemptId: ATTEMPT_A,
+      cells: [{ type: "gen", prompt: "one model, four angles", count: 4, coherentSet: true }],
+    });
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 });
+    expect(await jobsFor(ownerId, projectId)).toHaveLength(0);
+    const acct = await account(ownerId);
+    expect(acct.balance).toBe(2 * IMG);
+    expect(acct.reserved).toBe(0);
+  });
+});
