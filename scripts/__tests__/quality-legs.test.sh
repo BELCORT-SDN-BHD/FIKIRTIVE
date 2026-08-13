@@ -38,11 +38,13 @@
 #      list; no leg is an empty green job.
 #   3. WIRING — .github/workflows/ci.yml launches exactly the legs quality.sh
 #      declares, no more and no fewer; the job that runs a leg IS that leg, because
-#      the fan-in judges it as `needs.<leg>.result`; the fan-in reads exactly one
-#      result variable per leg, each fed by that leg's own job; and the fan-in job
-#      is still called `quality`, byte for byte, because that string is the required
-#      check in the protect-main ruleset (bypass_actors empty) and a rename freezes
-#      all merges.
+#      the fan-in judges it as `needs.<leg>.result`; each leg's command is exactly
+#      `pnpm quality --leg <leg>` and nothing else, because anything sharing that
+#      line can swallow the leg's exit status; the fan-in waits on every leg, reads
+#      exactly one result variable per leg, each fed by that leg's own job; and the
+#      fan-in job is still called `quality`, byte for byte, because that string is
+#      the required check in the protect-main ruleset (bypass_actors empty) and a
+#      rename freezes all merges.
 #
 #      ci.yml is PARSED AS YAML here, never scanned as text. Review of #874 showed
 #      what the difference is worth: a text `grep` for `--leg` over the whole file
