@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { Switch as UiSwitch } from "@/components/ui/switch";
 export function Switch({ checked, onChange, disabled, "aria-label": label }: {
   checked: boolean;
   onChange: (v: boolean) => void | Promise<unknown>;
@@ -7,9 +8,9 @@ export function Switch({ checked, onChange, disabled, "aria-label": label }: {
   "aria-label": string;
 }) {
   const [on, setOn] = useState(checked);
-  const toggle = async () => {
-    if (disabled) return;
-    const next = !on;
+  // Radix hands back the value it is about to become (it already knows `disabled`
+  // means no interaction, same guard the old `if (disabled) return;` gave manually).
+  const toggle = async (next: boolean) => {
     setOn(next); // optimistic
     try {
       const res = await onChange(next);
@@ -19,7 +20,6 @@ export function Switch({ checked, onChange, disabled, "aria-label": label }: {
     }
   };
   return (
-    <button type="button" role="switch" aria-checked={on} aria-label={label}
-      className={on ? "cv-switch on" : "cv-switch"} onClick={toggle} disabled={disabled} />
+    <UiSwitch checked={on} onCheckedChange={toggle} disabled={disabled} aria-label={label} />
   );
 }

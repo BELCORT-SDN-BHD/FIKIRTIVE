@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { ottoTurn, createEmptyCoworkThread } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -323,18 +324,20 @@ export function OttoFrontDoor({
               style={{ boxShadow: "0 18px 40px rgba(20 18 14 / 0.10), 0 6px 14px rgba(20 18 14 / 0.07)" }}
             >
               {mentionSuggestions.map((e, i) => (
-                <button
+                <Button
                   key={e.id}
+                  type="button"
+                  variant="ghost"
                   role="option"
                   aria-selected={i === mentionHighlight}
                   onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
-                  className="block w-full cursor-pointer border-none px-3 py-2 text-left text-[0.875rem] text-foreground"
+                  className="h-auto w-full justify-start rounded-none px-3 py-2 text-left text-[0.875rem] font-normal text-foreground hover:bg-transparent"
                   style={{
                     background: i === mentionHighlight ? "var(--muted)" : "transparent",
                   }}
                 >
                   @{e.name}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -342,7 +345,7 @@ export function OttoFrontDoor({
             className="w-full overflow-hidden rounded-[14px] border border-border bg-card"
             style={{ borderWidth: "1.5px", boxShadow: "0 8px 20px rgba(20 18 14 / 0.08), 0 2px 6px rgba(20 18 14 / 0.06)" }}
           >
-          <textarea
+          <Textarea
             ref={textareaRef}
             // #739 (same root as the Otto composer) — placeholder-only, so no name once typing starts.
             aria-label="Describe what you want to make"
@@ -352,7 +355,8 @@ export function OttoFrontDoor({
             disabled={busy}
             placeholder="Describe what you want to make…"
             rows={3}
-            className="w-full resize-none border-none bg-transparent px-5 py-4 text-[0.90625rem] text-foreground outline-none leading-[1.5]"
+            // #920 判官 r1 P2 — same fixed-height guard as the Otto composers.
+            className="field-sizing-fixed min-h-0 w-full resize-none rounded-none border-none bg-transparent px-5 py-4 text-[0.90625rem] text-foreground shadow-none outline-none leading-[1.5]"
           />
           <div className="flex items-center justify-end border-t border-border px-4 py-3">
             <Button
@@ -386,11 +390,13 @@ export function OttoFrontDoor({
             style={{ gridTemplateColumns: "1fr 1fr" }}
           >
             {GOAL_TILES.map((goal) => (
-              <button
+              <Button
                 key={goal.goalKey}
+                type="button"
+                variant="outline"
                 disabled={busy}
                 onClick={() => start({ goalKey: goal.goalKey })}
-                className="flex flex-col items-start gap-[11px] rounded-[13px] border border-border bg-card py-[11px] px-[13px] text-left shadow-sm transition-colors duration-150"
+                className="h-auto w-full flex-col items-start justify-start gap-[11px] rounded-[13px] border-border bg-card px-[13px] py-[11px] text-left font-normal shadow-sm"
                 style={{
                   cursor: busy ? "not-allowed" : "pointer",
                   opacity: busy ? 0.6 : 1,
@@ -410,7 +416,7 @@ export function OttoFrontDoor({
                     {goal.hint}
                   </div>
                 </div>
-              </button>
+              </Button>
             ))}
           </div>
         </div>

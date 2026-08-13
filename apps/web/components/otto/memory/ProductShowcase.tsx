@@ -340,16 +340,17 @@ export function ProductShowcase({
                 return next;
               });
             const chip = (active: boolean, onClick: () => void, label: string, key: string) => (
-              <button
+              <Button
                 key={key}
                 type="button"
+                variant="ghost"
                 onClick={onClick}
-                className={`whitespace-nowrap rounded-[10px] px-3 py-1.5 text-[0.8125rem] transition-colors ${
-                  active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                className={`h-auto whitespace-nowrap rounded-[10px] px-3 py-1.5 text-[0.8125rem] font-normal ${
+                  active ? "bg-card text-foreground shadow-sm hover:bg-card" : "bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
                 }`}
               >
                 {label}
-              </button>
+              </Button>
             );
             return (
               <>
@@ -415,13 +416,14 @@ export function ProductShowcase({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={imgUrl} alt={f.name} className="h-[150px] w-full object-cover" />
                 ) : (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={() => onOpenPicker(r)}
-                    className="flex h-[150px] w-full items-center justify-center bg-accent/50 text-[0.8125rem] text-muted-foreground hover:text-foreground"
+                    className="h-[150px] w-full rounded-none bg-accent/50 text-[0.8125rem] font-normal text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   >
                     Add image · from Library
-                  </button>
+                  </Button>
                 )}
                 {r.pinned && (
                   <span className="absolute left-2 top-2 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand-strong">
@@ -458,29 +460,32 @@ export function ProductShowcase({
                 {/* Row 2: actions as small ghost buttons (comfortable tap targets). */}
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1">
                   {imgUrl && (
-                    <button
+                    <Button
                       type="button"
-                      className="-ml-2 first:ml-0 rounded-[8px] px-2 py-1 text-[0.8125rem] text-muted-foreground hover:bg-accent hover:text-foreground"
+                      variant="ghost"
+                      className="-ml-2 h-auto rounded-[8px] px-2 py-1 text-[0.8125rem] font-normal text-muted-foreground first:ml-0"
                       onClick={() => void onSetImage(r, null)}
                     >
                       Remove image
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     aria-label="Edit"
-                    className="-ml-2 first:ml-0 rounded-[8px] px-2 py-1 text-[0.8125rem] text-muted-foreground hover:bg-accent hover:text-foreground"
+                    className="-ml-2 h-auto rounded-[8px] px-2 py-1 text-[0.8125rem] font-normal text-muted-foreground first:ml-0"
                     onClick={() => setEditingId(r.id)}
                   >
                     ✎ Edit
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="-ml-2 first:ml-0 rounded-[8px] px-2 py-1 text-[0.8125rem] text-muted-foreground hover:bg-accent hover:text-foreground"
+                    variant="ghost"
+                    className="-ml-2 h-auto rounded-[8px] px-2 py-1 text-[0.8125rem] font-normal text-muted-foreground first:ml-0"
                     onClick={() => void onArchive(r.id, d, archived ? "active" : "archived")}
                   >
                     {archived ? "Unarchive" : "Archive"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -498,13 +503,14 @@ export function ProductShowcase({
             />
           </div>
         ) : (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={() => setAdding(true)}
-            className="flex min-h-[150px] items-center justify-center rounded-[16px] border border-dashed border-border bg-card text-[0.8125rem] text-muted-foreground hover:text-foreground"
+            className="h-auto min-h-[150px] rounded-[16px] border-dashed border-border bg-card text-[0.8125rem] font-normal text-muted-foreground hover:bg-card"
           >
             + Add product
-          </button>
+          </Button>
         )}
       </div>
 
@@ -533,8 +539,8 @@ export function ProductShowcase({
                   <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                     {n.source === "otto" ? "✦ Otto learned" : "You added"}
                   </span>
-                  <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</button>
-                  <button type="button" aria-label="Delete" className="text-muted-foreground hover:text-foreground" onClick={() => void onNoteDelete(n.id)}>🗑</button>
+                  <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</Button>
+                  <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onNoteDelete(n.id)}>🗑</Button>
                 </div>
               )}
             </div>

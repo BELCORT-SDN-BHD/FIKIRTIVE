@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import type { ReasoningUIPart } from "ai";
+import { Button } from "@/components/ui/button";
 
 export interface ReasoningPartProps {
   /** The reasoning part from the UIMessage parts array. */
@@ -39,10 +40,12 @@ export function ReasoningPart({ part }: ReasoningPartProps) {
           maxWidth: "80%",
         }}
       >
-        <button
+        <Button
           type="button"
+          variant="ghost"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
+          className="h-auto w-auto"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -70,7 +73,7 @@ export function ReasoningPart({ part }: ReasoningPartProps) {
             ▶
           </span>
           Otto&apos;s thinking
-        </button>
+        </Button>
 
         {open && (
           <div
