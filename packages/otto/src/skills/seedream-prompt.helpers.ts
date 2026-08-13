@@ -40,6 +40,11 @@ export type SeedreamPromptInput = z.infer<typeof seedreamPromptInput>;
 export function assembleSeedream(i: SeedreamPromptInput): string {
   const refClauses = identityLockSentences(i.references);
   const portrait = isPortraitAspect(i.aspect);
+  // 商家自己要了画面上的字，就不该再禁字。这个判据两条装配分支共用 —— #774 判官 r2 P2:
+  // 上一版把它算在 t2i 分支里面，于是竖版 i2i 从 `return` 提前离场、拿不到那道防线，
+  // 而技能描述对商家承诺的是「竖版都加」。竖版长鬼字幕跟这张图是新造的还是改出来的无关。
+  const wantsText = !!i.textContent?.trim();
+  const captionBan = portrait && !wantsText ? PORTRAIT_IMAGE_CAPTION_BAN : "";
 
   if (i.mode === "i2i") {
     const edit = [
@@ -48,6 +53,7 @@ export function assembleSeedream(i: SeedreamPromptInput): string {
       i.lighting && sentence(`the light is ${i.lighting}`),
       ...refClauses,
       sentence(i.preserve ?? "keep everything else unchanged, and maintain the same composition and lighting"),
+      captionBan,
     ];
     return edit.filter(Boolean).join(" ");
   }
@@ -59,7 +65,6 @@ export function assembleSeedream(i: SeedreamPromptInput): string {
     i.colorPalette && `the color palette is ${i.colorPalette}`,
   ].filter(Boolean).join(", ");
 
-  const wantsText = !!i.textContent?.trim();
   const sentences = [
     sentence(`${i.subject}${i.actionPose ? `, ${i.actionPose}` : ""}`),
     i.environment && sentence(`the setting is ${i.environment}`),
@@ -73,8 +78,7 @@ export function assembleSeedream(i: SeedreamPromptInput): string {
     // 因为它会把内部空白归一（`BUY\nNOW` → `BUY NOW`）。改我们的措辞可以，改商家
     // 要求渲染的字面内容不行。
     wantsText && `Render the text "${i.textContent}" in bold sans-serif, placed prominently.`,
-    // 商家自己要了画面上的字，就不该再禁字 —— 只有没要字的竖版才加这道防线。
-    portrait && !wantsText && PORTRAIT_IMAGE_CAPTION_BAN,
+    captionBan,
   ];
   return sentences.filter(Boolean).join(" ");
 }

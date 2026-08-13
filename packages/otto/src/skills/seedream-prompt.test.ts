@@ -164,6 +164,42 @@ describe("assembleSeedream", () => {
       expect(out).toContain('Render the text "50% OFF"');
       expect(out).not.toContain("Keep the frame free of subtitles");
     });
+
+    // 判官 r2 P2 —— 竖版 i2i 从 `return` 提前离场，拿不到这道防线，而描述承诺的是
+    // 「竖版都加」。竖版长鬼字幕跟这张图是新造的还是改出来的无关，所以两条分支同一条规则。
+    describe("i2i is vertical too — the edit branch gets the same guard", () => {
+      const edit = (extra: Record<string, unknown> = {}) =>
+        assembleSeedream(seedreamPromptInput.parse({
+          mode: "i2i", subject: "the source image",
+          editVerb: "Replace", editTarget: "the background with a beach sunset",
+          ...extra,
+        }));
+      it("9:16 i2i adds it", () => {
+        expect(edit({ aspect: "9:16" })).toContain("Keep the frame free of subtitles, captions, and watermarks.");
+      });
+      it("'portrait' / 'vertical' / '9x16' i2i are the same shape", () => {
+        for (const a of ["portrait", "vertical", "9x16", "9 : 16"]) {
+          expect(edit({ aspect: a })).toContain("Keep the frame free of subtitles");
+        }
+      });
+      it("16:9 / 1:1 / no aspect i2i do not", () => {
+        for (const a of ["16:9", "1:1", undefined]) {
+          expect(edit(a ? { aspect: a } : {})).not.toContain("Keep the frame free of subtitles");
+        }
+      });
+      it("the guard lands last, after what to preserve", () => {
+        const out = edit({ aspect: "9:16" });
+        expect(out.trim().endsWith("Keep the frame free of subtitles, captions, and watermarks.")).toBe(true);
+        expect(out.indexOf("keep everything else unchanged"))
+          .toBeLessThan(out.indexOf("Keep the frame free"));
+      });
+      it("the user asked for on-image text → no ban here either", () => {
+        expect(edit({ aspect: "9:16", textContent: "50% OFF" })).not.toContain("Keep the frame free of subtitles");
+      });
+      it("the edit instruction itself is untouched", () => {
+        expect(edit({ aspect: "9:16" }).startsWith("Replace the background with a beach sunset.")).toBe(true);
+      });
+    });
   });
 });
 
@@ -206,6 +242,12 @@ describe("seedreamPromptSkill gate", () => {
   // #774 U4 —— 同一个形状要同时传给 propose 和这里，否则竖版防线不会被触发。
   it("description ties `aspect` to propose's desiredAspect", () => {
     expect(seedreamPromptSkill.description).toContain("SAME shape you will pass to propose's desiredAspect");
+  });
+  // 判官 r2 P2 —— 描述说的必须是行为真做的：两条分支都加，唯一例外是商家自己要了字。
+  it("description states the guard covers both branches, and names its one exception", () => {
+    const d = seedreamPromptSkill.description;
+    expect(d).toContain("extra caption-free instruction in BOTH t2i and i2i");
+    expect(d).toContain("the only exception is when you asked for on-image text yourself via textContent");
   });
   // #774 U8 —— 官方素材建议只提醒不强收（商家的 data 商家的权利）。
   it("advisory notes are returned, never enforced", async () => {

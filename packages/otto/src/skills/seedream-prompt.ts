@@ -27,8 +27,9 @@ export const seedreamPromptSkill = defineOttoSkill({
     "entityIds, and the system numbers them for the engine at send time — never write image numbers yourself. " +
     // #774 U4 —— 画幅接线。同一个形状必须同时传给这里和 propose。
     "Pass `aspect` with the SAME shape you will pass to propose's desiredAspect — a vertical image gets an " +
-    "extra caption-free instruction, because vertical output is the shape most likely to grow captions " +
-    "nobody asked for. " +
+    "extra caption-free instruction in BOTH t2i and i2i, because vertical output is the shape most likely " +
+    "to grow captions nobody asked for; the only exception is when you asked for on-image text yourself " +
+    "via textContent. " +
     // #774 U8 —— 只提醒，不设限（商家的 data 商家的权利）。
     "If the skill returns `notes`, tell the user those points in your own plain words and let them decide — " +
     "they are advice, never a limit: never refuse, cap, or silently drop references the user gave you. " +
