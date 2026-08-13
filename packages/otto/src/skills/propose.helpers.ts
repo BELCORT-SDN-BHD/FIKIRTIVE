@@ -30,6 +30,7 @@ import {
   type ApprovedEntity,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
+import { decideVideoAction } from "./video-intent.js";
 
 // ---------------------------------------------------------------------------
 // Input schema (what the LLM provides) — re-exported for propose.ts
@@ -50,6 +51,17 @@ export const proposeInput = z.object({
   forVideo: z.boolean().optional(),
   // 创作意图/目的 —— requires 资讯门要求它非空。琐碎请求可由 Otto 从上下文推断填入。
   goal: z.string().optional(),
+  /**
+   * #775 判官 r1 P1-2 —— 这里**刻意没有** `videoAction` 之类的动作声明字段。
+   *
+   * r1 有过一个,后果正是判官指出的那两条:模型漏传它,一条严格编辑的提示词就带着 16:9
+   * 上卡;模型传错它,卡说的和引擎会做的就不是一件事。一个可以漏传的旁路参数不可能成为
+   * 单一真相来源。
+   *
+   * 现在动作从 `structuredPrompt` 自己认出来(`videoActionFromPrompt`)—— 那段字是卡上
+   * 冻结、批准后原样送到引擎的同一份,引擎也正是从它读任务类型的。判据与执行同源,
+   * 中间没有第二次转述,所以对不上这件事在结构上不存在。
+   */
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
@@ -137,11 +149,39 @@ export type ProposeCardResult = {
  *
  * `message` 就是给商家看的那句话(English sentence case,不出现任何引擎/供应商名)。
  */
-export class GenerationUnavailableError extends Error {
+/**
+ * 铸卡这一侧的**拒绝**族:造不出一张诚实的卡时抛它,入口把 `message` 原样交回对话,
+ * 一张 GEN_CARD 都不落库。
+ *
+ * 为什么有一个共同基类:入口(`propose` / `proposePack`)只该认识「这是一次拒绝」这件事,
+ * 不该逐个列举拒绝的理由 —— 每加一种拒绝就得回去改两个 catch,漏改一次就是一个没人接的
+ * 崩溃。`message` 就是给商家看的那句话(English sentence case,不出现任何引擎/供应商名)。
+ */
+export class ProposeRefusal extends Error {}
+
+export class GenerationUnavailableError extends ProposeRefusal {
   constructor(readonly kind: "image" | "video") {
     // 措辞的单一来源在 @fikirtive/core —— 四个铸卡入口共用一份(#647 T6 修复轮 P1-1)。
     super(generationUnavailableMessage(kind));
     this.name = "GenerationUnavailableError";
+  }
+}
+
+/**
+ * #775 判官 r1 P1-1 —— 这段提示词要做的那件事,**这一趟的形状撑不起来**。
+ *
+ * 典型:一条以「Strictly edit <Video_1>…」开头的提示词,而商家这一轮一条片子都没挂。
+ * r1 在这里铸出了一张普通视频卡 —— 那张卡是一个点得下去的付费承诺,商家批准之后拿到的
+ * 是一条与他要求毫无关系的片子。降级成别的动作同样不行:那段提示词本身就是为「改这条
+ * 片子」写的,换个动作只是换一种失望。
+ *
+ * 所以这里 fail closed —— 一张卡都不铸,把缺什么、怎么办交回给商家。措辞取自
+ * `decideVideoAction` 的反问,与对话里那句话是同一句,不另写一份。
+ */
+export class VideoActionUnavailableError extends ProposeRefusal {
+  constructor(message: string) {
+    super(message);
+    this.name = "VideoActionUnavailableError";
   }
 }
 
@@ -332,6 +372,53 @@ export function buildProposeCard(
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
 
+  /**
+   * #775 判官 r1 P1-1 / P1-2 —— **这张卡是能力表上的哪一个动作**,在这里定,一次。
+   *
+   * 两个入参都不经过模型的第二次转述:
+   *   · 形状 —— 服务端自己数出来的(片子/首帧都来自 `ctx`,由 D19 信任边界解析);
+   *     末帧不是 propose 的概念(`suggestModel` 固定 `hasTail: false`),所以恒为 false;
+   *   · 动作 —— 从 `structuredPrompt` 的官方开头认出来。那段字是卡上冻结、批准后原样送到
+   *     引擎的同一份,引擎也正是从它读任务类型 —— 判据与执行同源。
+   *
+   * `decideVideoAction` 内部走的是能力表的 `needs(shape)`,所以「这个形状做不到这件事」
+   * 只有一处判定,对话侧与铸卡侧共用。回 `ask` = 撑不起来 ⇒ 一张卡都不铸。
+   */
+  const videoShape = { hasStill: isI2V, hasEndStill: false, hasClip: isRefVideo };
+  const decided =
+    kind === "video" ? decideVideoAction({ prompt: input.structuredPrompt, shape: videoShape }) : null;
+  if (decided?.kind === "ask") throw new VideoActionUnavailableError(decided.question);
+  const cardAction = decided?.kind === "action" ? decided.action : null;
+
+  /**
+   * #775 判官 r3 P1-2 —— **第二个证人:商家这一轮自己打的那句话**。
+   *
+   * r3 之前,模型选错档没有任何一处会发现:商家说「sambung」(接下去),模型写了一条严格
+   * 编辑的提示词,系统就忠实地把「改他的片子」做完了 —— 而那是一次不可撤销的付费运行,
+   * 动的还是商家自己的东西。
+   *
+   * 这道对表刻意**很窄**,因为它拿的是关键词,而模型看得见整段对话:
+   *   · 只在锚定那两档之间(`editClip` ↔ `extendClip`)对表 —— 那是唯一「做错了会动到
+   *     商家原件」的分岔;
+   *   · 只在措辞侧给出**明确单一结论**时才算数(含糊、零信号一律没有意见);
+   *   · 对不上时**不改判、不纠正**,而是停下来问 —— 拿关键词去推翻模型就是另一种预判商家。
+   * 一分钱都还没花,所以停下来问的代价只有一句话。
+   */
+  if (cardAction && ctx.turnText && (cardAction === "editClip" || cardAction === "extendClip")) {
+    const fromWords = decideVideoAction({ text: ctx.turnText, shape: videoShape });
+    if (
+      fromWords.kind === "action" &&
+      (fromWords.action === "editClip" || fromWords.action === "extendClip") &&
+      fromWords.action !== cardAction
+    ) {
+      throw new VideoActionUnavailableError(
+        fromWords.action === "extendClip"
+          ? "It sounds like you want that clip carried on rather than changed — tell me which, and I'll set it up."
+          : "It sounds like you want something in that clip changed rather than carried on — tell me which, and I'll set it up.",
+      );
+    }
+  }
+
   // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently.
   // #785 判官 r1 P1:归属过滤挪到了 i2v 清空**之前**(原本是「先清空、再跳过过滤」)。
   // 卡面产物一个字节都没变(清空后的卡照旧是空的),换来的是下面那一份「商家真 @ 了谁」
@@ -369,13 +456,31 @@ export function buildProposeCard(
   });
   if (!sm) throw new GenerationUnavailableError(kind);
 
+  /**
+   * #775 —— 改这条片子 / 把这条片子接下去,形状**只能**跟着商家那条片子走。
+   *
+   * 官方陷阱:在这两种任务上再指定一个比例,请求会**先被收下、事后才异步失败** ——
+   * 商家看到的是一次批准之后石沉大海,而不是一句「这个选项在这里用不上」。所以判据必须
+   * 落在批准**之前**的卡上,不能指望引擎替我们把关。
+   *
+   * `adaptive` 不是一个我们发明的值:它本来就在这台引擎的档位表里,且正是首帧那一档
+   * (`i2vAspectRatio`)每天在用的那个值 —— 含义就是「跟着你给的东西走」,与这两个动作
+   * 要的事情逐字相同。
+   *
+   * `cardAction` 来自上面那一次判定,而它已经过了能力表的 `needs(shape)` —— 所以走到
+   * 这里的 editClip/extendClip **一定**真的有一条片子,不必也不该再判一次形状。
+   */
+  const anchoredToClip = cardAction === "editClip" || cardAction === "extendClip";
+
   if (isRefVideo) {
     const opts = GEN_VIDEO_MODEL_OPTIONS[REFERENCE_VIDEO_MODEL];
     const d = videoDefaults(REFERENCE_VIDEO_MODEL);
     sm.model = REFERENCE_VIDEO_MODEL;
     sm.params.durationSeconds = GEN_VIDEO_SECONDS;
     sm.params.resolution = d.resolution;
-    sm.params.aspectRatio = input.desiredAspect && opts.aspectRatios.includes(input.desiredAspect) ? input.desiredAspect : d.aspectRatio;
+    sm.params.aspectRatio = anchoredToClip
+      ? VIDEO_ASPECT_ADAPTIVE
+      : input.desiredAspect && opts.aspectRatios.includes(input.desiredAspect) ? input.desiredAspect : d.aspectRatio;
     sm.params.audio = typeof input.desiredAudio === "boolean" ? input.desiredAudio : d.audio;
     sm.params.count = 1;
     // #769:引擎名从事实表取,不再手抄。手抄的那一份在换引擎(fast→mini)时不会跟着变,
@@ -469,12 +574,28 @@ export function buildProposeCard(
     (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio);
   const audioNotHonoured =
     kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
+  // #775 —— 剪辑/续写把商家点的形状换成了 adaptive,这同样是降级,必须**说出来**。
+  // 商家没点形状时不算降级:他什么都没被换掉,那句披露只会变成噪音。
+  const clipAspectForced =
+    anchoredToClip && !!input.desiredAspect && input.desiredAspect !== VIDEO_ASPECT_ADAPTIVE;
   const requested: RequestedSpec = {
     ...sm.requested,
-    ...(imageAspectDropped ? { aspect: input.desiredAspect } : {}),
+    ...(imageAspectDropped || clipAspectForced ? { aspect: input.desiredAspect } : {}),
     ...(audioNotHonoured ? { audio: input.desiredAudio } : {}),
   };
-  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured;
+  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured || clipAspectForced;
+  /**
+   * #775 —— 卡面/披露文案这一层,「商家给了一个引擎会照着定形状的东西」为真。
+   *
+   * 这个布尔**只**喂给两个纯展示函数(`buildSpecChips` / `buildDowngradeNote`),
+   * 它们的作用是把 `adaptive` 说成人话。整段参考视频与首帧在这一点上是同一件事 ——
+   * 形状跟着商家给的东西走 —— 所以卡上说「Same shape as your reference」而不是
+   * 「Shape picked to fit」(后者听起来像我们替他挑的)。
+   *
+   * 刻意不动 `hasSourceImage` 本身:那个变量驱动**选型**与 @元素清空,而整段参考视频
+   * 不是首帧,把它混进去会改掉付费行为。
+   */
+  const shapeFollowsWhatTheyGave = hasSourceImage || anchoredToClip;
 
   // Step 4.8: 审批身份快照 —— 这张卡最终留下的每个 @元素,配上它**此刻**的名字与类型。
   // 只认 ownedEntities 里那一份(归属查询同一趟读出来的),`entityIds` 里找不到身份的
@@ -490,10 +611,10 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    specChips: buildSpecChips(kind, sm.params, hasSourceImage, usesAttachedImage),
+    specChips: buildSpecChips(kind, sm.params, shapeFollowsWhatTheyGave, usesAttachedImage),
     downgraded,
     ...(downgraded
-      ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, hasSourceImage) }
+      ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, shapeFollowsWhatTheyGave) }
       : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,

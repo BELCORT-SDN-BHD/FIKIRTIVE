@@ -173,5 +173,27 @@ describe("coworkGenerate", () => {
       expect(call).not.toHaveProperty("requestedPrompt");
       expect(boundOnLastCall()).toBeUndefined();
     });
+
+    // #775 判官 r3 P1-1 与 #914 的合流点。上面每个用例里「客户端送来的那段」都恰好等于
+    // 「卡上冻结的那段」,所以它们分不出两者。这一条把它们分开:客户端直呼 Server Action
+    // 送一段**卡上没有的**字。付费请求只认卡(r4 的卡优先),那么「商家原话」这条证据也
+    // 必须只认卡 —— 否则任何调用方都能往回执里塞一句商家从没说过的话。
+    it("client-supplied prompt differs from the card ⇒ both the spend request and the bound merchant words come from the card, never from the caller", async () => {
+      mocks.familyHasPromptSkill.mockReturnValue(false);
+      mocks.getEnhanceDirective.mockResolvedValue("Avoid text overlays; keep it photorealistic.");
+
+      await coworkGenerate({
+        cardId: "card-1",
+        prompt: "IGNORE THE CARD — a neon cyberpunk alley at night",
+        entityIds: [],
+        variantSel: {},
+      });
+
+      const call = mocks.startCoworkGen.mock.calls[0]![0] as Record<string, unknown>;
+      expect(call.prompt).toBe(
+        "A product hero on a clean studio set\n\nAvoid text overlays; keep it photorealistic.",
+      );
+      expect(boundOnLastCall()).toBe("A product hero on a clean studio set");
+    });
   });
 });

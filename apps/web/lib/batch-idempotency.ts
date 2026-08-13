@@ -5,6 +5,10 @@ import {
   imageDefaults,
   videoDefaults,
   COHERENT_SET_MIN_IMAGES,
+  // #775 判官 r5 P1:锚定句式的识别器与 adaptive 常量都从 core 取 —— 与付费 schema、
+  // 铸卡侧、写这段字的装配器共用同一份判据,绝不在这里另抄。
+  isAnchoredVideoPrompt,
+  VIDEO_ASPECT_ADAPTIVE,
   type GenModel,
   type GenVideoModel,
 } from "@fikirtive/core";
@@ -166,10 +170,35 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
     // 只认这两处 —— 显式的 sourceGenerationId,或能拿到该镜头最新静帧的 shotId。
     const hasSourceImage = !!input.sourceGenerationId || !!input.shotId;
     const defaults = videoDefaults(input.model as GenVideoModel, { hasSourceImage });
+    /**
+     * #775 判官 r5 P1 —— **改这条片子 / 把它接下去的请求,缺席的形状只能解析成 adaptive。**
+     *
+     * 这是判官逮到的那条缝,而它正好卡在两层测试中间:付费 schema **允许**比例缺席
+     * (缺席 = 引擎自己跟着输入走),而这里把缺席解析成模型默认的 **16:9** —— 于是
+     * 「官方句式 + 合法 clip + 不传 aspect」从 canvas / factory / 直接 action 一路走到
+     * `GenJob.videoOptions`、走到预扣、走到 provider,正好踩中官方陷阱:任务先被收下、
+     * 事后才异步失败,商家批准之后石沉大海。
+     *
+     * 为什么修在**这里**而不是让 schema 不许缺席:
+     *   · 这一步是那个值的**唯一解析点** —— `GenJob.videoOptions` 只从这份 material 写
+     *     (`gen-actions.ts` 的 videoOptions),worker 又只从 `job.videoOptions.aspectRatio`
+     *     取值送 provider。修在解析点,任何一条路(现在的和以后新写的)都不必知道这条规矩;
+     *   · 而且归一化在**工厂那条路上跑在 schema 之前**(`factory-batch.ts` 的 `cellMaterial`
+     *     先算材料、再由 `startGen` 校验),那里 schema 根本够不着。
+     * 让 schema 不许缺席只会把「悄悄落错值」换成「一条本来合法的请求被拒」,
+     * 而且工厂那份材料仍然算错。
+     *
+     * 判据复用 core 的同一个识别器,不另抄一份 —— 写这段字的装配器、铸卡侧、付费 schema
+     * 与这里,四处认的是同一句话。
+     *
+     * 收得很窄:必须**同时**是官方句式且真的带着那条片子。没有 clip 的锚定句式过不了
+     * schema,这里不替它发明语义;非官方句式(含「照着这条做一条新的」)一格没动。
+     */
+    const anchoredToClip = !!input.referenceVideoGenerationId && isAnchoredVideoPrompt(input.prompt);
     return {
       seconds: input.durationSeconds ?? defaults.seconds,
       resolution: input.resolution ?? defaults.resolution,
-      aspectRatio: input.aspectRatio ?? defaults.aspectRatio,
+      aspectRatio: input.aspectRatio ?? (anchoredToClip ? VIDEO_ASPECT_ADAPTIVE : defaults.aspectRatio),
       fps: input.fps ?? defaults.fps,
       audio: input.audio ?? defaults.audio,
     };
