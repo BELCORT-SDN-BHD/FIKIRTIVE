@@ -86,6 +86,16 @@ export interface GenCell {
   aspectRatio?: string | null;
   fps?: number | null;
   audio?: boolean | null;
+  /**
+   * #777 —— 这一格的 `count` 张是**一组要连贯的图**(同一个模特的多个角度、同一件
+   * 产品的多个尺寸),执行层一次请求出齐。
+   *
+   * 这一层照旧一分钱都不碰:它只是把这个字段原样交给 startGen,由 genRequest 决定
+   * 收不收(image-only、模型须支持、至少两张)。报价也不用改 —— `quoteCell` 走的是
+   * `pricedGenCredits`,而组图的收费口径与散图**逐字相同**(每张 1 显示 credit),
+   * 所以 quote == reserve == settle 这条等式一格没动。
+   */
+  coherentSet?: boolean | null;
   /** Server-derived durable domain id for order-independent logical-cell identity. */
   idempotencyId?: string;
 }
@@ -191,6 +201,7 @@ function cellMaterial(cell: GenCell, threadId?: string | null): FactoryMaterial 
     aspectRatio: cell.aspectRatio,
     fps: cell.fps,
     audio: cell.audio,
+    coherentSet: cell.coherentSet,
   });
 }
 
@@ -272,6 +283,14 @@ export interface CellResolvedSpec {
   durationSeconds?: number;
   fps?: number;
   audio?: boolean;
+  /**
+   * #777:这一格是不是**一组连贯的图**(只有图片、且真会组图时才出现)。
+   *
+   * 它必须在这份「整份规格」里,理由与 #709 修复轮 P1-2 让 audio 进来的理由逐字相同:
+   * 承诺面被整份哈希,漏掉一项,同模型同价下把「一组连贯图」换成「N 张散图」的旧指纹
+   * 照样通过 —— 交付的就不是卡上那个东西了。
+   */
+  coherentSet?: true;
 }
 
 /** 这个格解析之后真会跑的整份规格。PURE。 */
@@ -289,9 +308,11 @@ export function cellResolvedSpec(cell: GenCell): CellResolvedSpec {
     };
   }
   // 图片:`normalizeFactoryMaterial` 对 IMAGE 一定给得出 imageOptions(缺省 = 模型默认方图)。
+  // 组图那一格读的是**解析之后**的快照,不是 cell 上那个可能为空的字段 —— 与画幅同一条规矩。
   return {
     aspectRatio: material.imageOptions?.aspectRatio ?? imageDefaults(material.model as GenModel).aspectRatio,
     count: material.count,
+    ...(material.imageOptions?.coherentSet === true ? { coherentSet: true as const } : {}),
   };
 }
 
@@ -516,6 +537,9 @@ function cellGenRequest(
   if (cell.aspectRatio != null) req.aspectRatio = cell.aspectRatio;
   if (cell.fps != null) req.fps = cell.fps;
   if (cell.audio != null) req.audio = cell.audio;
+  // #777:只在真要组图时发。缺省不发 = 与今日逐字一致的散图行为,而且请求体不会
+  // 因为一个恒 false 的字段变形(genRequest 是 .strict(),形状变化是会被看见的)。
+  if (cell.coherentSet === true) req.coherentSet = true;
   return req;
 }
 

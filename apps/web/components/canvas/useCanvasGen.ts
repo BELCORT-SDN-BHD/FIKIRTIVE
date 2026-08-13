@@ -55,6 +55,14 @@ export type CanvasImageGenOptions = {
    * 一定带着它 —— 「显示的」与「发出去的」不许有第二个来源。
    */
   aspectRatio?: string;
+  /**
+   * #777 —— 这几张是**一组要连贯的图**(一次出齐,同一个模特/同一件产品从头到尾一致)。
+   *
+   * 与形状同一条规矩:界面上开着的时候一定带着它发出去,关着就不发。它**不改价**
+   * (仍按张收),但它改交付物 —— 所以它是商家授权内容的一部分,要跟着回执一起
+   * 重放,刷新之后重放的必须还是「一组」,不是一堆散图。
+   */
+  coherentSet?: boolean;
   /** Exact accepted request material used only when resuming a browser receipt. */
   resumeModel?: string;
   resumeThreadId?: string | null;
@@ -150,6 +158,8 @@ export type StoredCanvasActionReceipt = {
   sourceNodeId?: string;
   /** #643 T2：形状是商家授权内容的一部分，所以刷新后重放的必须是同一个形状。 */
   aspectRatio?: string;
+  /** #777:「一组连贯的图」同理 —— 它不改价,但它改交付物,所以重放的必须还是一组。 */
+  coherentSet?: true;
   /** #645 T4：视频规格同理 —— 而且它**会改价**，所以重放必须连规格带价格一起原样重发，
    *  否则刷新后重放的可能是一档更贵/更便宜的片子，与商家当时按下去的那一档不是同一件事。 */
   videoSeconds?: number;
@@ -657,6 +667,9 @@ export function useCanvasGen(
     const requestThreadId = options.resumeThreadId !== undefined
       ? options.resumeThreadId
       : activeThreadId ?? null;
+    // #777:一张图不成组。界面在只出一张时不显示这个开关,这里再把口径钉一次 ——
+    // 送一个 count=1 的 coherentSet 上去只会被服务端契约闸拒掉,白白让商家的动作失败。
+    const coherentSet = options.coherentSet === true && safeCount > 1;
     const req = {
       actionId,
       expectedCredits: approvedCredits,
@@ -669,6 +682,7 @@ export function useCanvasGen(
       ...(vsel && { variantSel: vsel }),
       ...(options.sourceGenerationId && { sourceGenerationId: options.sourceGenerationId }),
       ...(options.aspectRatio && { aspectRatio: options.aspectRatio }),
+      ...(coherentSet && { coherentSet: true }),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -687,6 +701,7 @@ export function useCanvasGen(
       ...(options.sourceGenerationId ? { sourceGenerationId: options.sourceGenerationId } : {}),
       ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
       ...(options.aspectRatio ? { aspectRatio: options.aspectRatio } : {}),
+      ...(coherentSet ? { coherentSet: true as const } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -1091,6 +1106,8 @@ export function useCanvasGen(
               ...(receipt.sourceNodeId ? { sourceNodeId: receipt.sourceNodeId } : {}),
               // #643 T2：重放的必须是商家当时看着按下去的那个形状，不是刷新后的默认值。
               ...(receipt.aspectRatio ? { aspectRatio: receipt.aspectRatio } : {}),
+              // #777:同理 —— 商家按下去的是「一组连贯的图」,重放的就必须还是一组。
+              ...(receipt.coherentSet ? { coherentSet: true } : {}),
             },
           );
           continue;
