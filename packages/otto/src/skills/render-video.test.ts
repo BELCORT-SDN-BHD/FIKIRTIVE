@@ -70,6 +70,7 @@ describe("desk / join / music — the merchant's own moves, asked for in words",
     const desk = vi.fn(async () => ({
       media: [{ src: "/files/a.mp4", kind: "video" as const, seconds: 4, label: "our new sauce" }],
       cut,
+      unreadable: false,
     }));
     const res = (await executeRenderVideo({ action: "desk" }, { context: makeCtx({ desk }) })) as {
       ok: boolean; media: { label: string }[]; cut: unknown;
@@ -78,6 +79,35 @@ describe("desk / join / music — the merchant's own moves, asked for in words",
     // Otto must be able to SAY which clip it means; a content hash is not a name
     expect(res.media.map((m) => m.label)).toEqual(["our new sauce"]);
     expect(res.cut).toEqual(cut);
+  });
+
+  it("a cut that IS saved but can't be read is handed over as unknown, never as an empty video", async () => {
+    // The failure this pins is the assistant confidently saying "there's nothing in your video
+    // yet, shall I start?" over an hour of the merchant's work it simply could not parse.
+    const desk = vi.fn(async () => ({
+      media: [{ src: "/files/a.mp4", kind: "video" as const, seconds: 4, label: "our new sauce" }],
+      cut: { clips: [], seconds: 0, captionCount: 0, music: null },
+      unreadable: true,
+    }));
+    const res = (await executeRenderVideo({ action: "desk" }, { context: makeCtx({ desk }) })) as {
+      ok: boolean; unreadable?: boolean; note?: string;
+    };
+    expect(res.ok).toBe(true);
+    expect(res.unreadable).toBe(true);
+    expect(res.note).toMatch(/can't be read/i);
+    expect(res.note).toMatch(/nothing has been changed/i);
+  });
+
+  it("a clip whose length has never been read is passed on as unknown, not as a number", async () => {
+    const desk = vi.fn(async () => ({
+      media: [{ src: "/files/song.mp3", kind: "audio" as const, seconds: null, label: "raya jingle" }],
+      cut,
+      unreadable: false,
+    }));
+    const res = (await executeRenderVideo({ action: "desk" }, { context: makeCtx({ desk }) })) as {
+      media: { seconds: number | null }[];
+    };
+    expect(res.media[0]!.seconds).toBeNull();
   });
 
   it("join needs the clips, and passes the ORDER through untouched", async () => {

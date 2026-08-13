@@ -821,8 +821,9 @@ export interface OttoContext {
    *  edit-desk actions the merchant's own desk calls, so the assistant and the merchant work on
    *  ONE cut. Free-hand timeline JSON is deliberately still absent from this port. */
   render?: {
-    /** $0 read: this project's media plus the cut as it stands (getEditDesk). */
-    desk(): Promise<{ media: DeskClipView[]; cut: CutSummaryView } | { error: string }>;
+    /** $0 read: this project's media plus the cut as it stands (getEditDesk). `unreadable` = a cut
+     *  IS saved and could not be read — Otto must say so, never report it as an empty video. */
+    desk(): Promise<{ media: DeskClipView[]; cut: CutSummaryView; unreadable: boolean } | { error: string }>;
     /** $0 write: join these clips into ONE video, in this order (joinClipsIntoCut). */
     join(srcs: string[]): Promise<{ ok: true; cut: CutSummaryView } | { error: string }>;
     /** $0 write: lay one audio file under the whole video, ducked under voice (setCutMusic). */
@@ -1007,7 +1008,13 @@ export type TranscriptCue = { startMs: number; lengthMs: number; text: string };
 /** One piece of the merchant's media as the edit desk offers it (#780) — structural
  *  re-declaration of the web DeskMedia (same fence rule as CanvasNodeView). `label` is what
  *  the merchant calls it, so Otto can say which clip it means instead of reading out a hash. */
-export type DeskClipView = { src: string; kind: "video" | "image" | "audio"; seconds: number; label: string };
+export type DeskClipView = {
+  src: string;
+  kind: "video" | "image" | "audio";
+  /** null = the file's own length has not been read yet — say so, never guess at it. */
+  seconds: number | null;
+  label: string;
+};
 
 /** The saved cut in merchant terms (#780) — structural re-declaration of the web CutSummary.
  *  No timeline JSON crosses this port: Otto reads what is in the video, never coordinates. */

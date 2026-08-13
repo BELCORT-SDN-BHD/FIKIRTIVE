@@ -37,6 +37,12 @@ function clock(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
+/** How long a piece of media is, or the truth when nobody has read its length yet. A number we
+ *  made up would be the one thing on this screen the merchant cannot check. */
+function lengthLabel(seconds: number | null): string {
+  return seconds === null ? "Length still unknown" : clock(seconds);
+}
+
 export function EditDesk({ projectId }: { projectId: string }) {
   const [media, setMedia] = useState<DeskMedia[]>([]);
   const [cut, setCut] = useState<CutSummary>({ clips: [], seconds: 0, captionCount: 0, music: null });
@@ -45,26 +51,88 @@ export function EditDesk({ projectId }: { projectId: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
+  const [unreadable, setUnreadable] = useState(false);
+  const [openFailed, setOpenFailed] = useState(false);
   const [exportState, setExportState] = useState<{ status: string; progress: number; url: string | null } | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
+  /** Open (or re-open) the desk. Every ending is accounted for: the server's own refusal, a
+   *  rejected call (database down, network gone), and success. Without the catch/finally a
+   *  rejected first load left the spinner up for ever — "Opening your video…" is a promise, and
+   *  a page that can never keep it has to say so and offer the way out instead. */
   const refresh = useCallback(async () => {
-    const res = await getEditDesk(projectId);
-    if (!alive.current) return;
-    if ("error" in res) {
-      setError(res.error);
-    } else {
-      setMedia(res.media);
-      setCut(res.cut);
+    try {
+      const res = await getEditDesk(projectId);
+      if (!alive.current) return;
+      if ("error" in res) {
+        setError(res.error);
+        setOpenFailed(true);
+      } else {
+        setMedia(res.media);
+        setCut(res.cut);
+        setUnreadable(res.unreadable);
+        setOpenFailed(false);
+      }
+    } catch {
+      if (alive.current) {
+        setError("We couldn't open your video just now — try again.");
+        setOpenFailed(true);
+      }
+    } finally {
+      if (alive.current) setLoading(false);
     }
-    setLoading(false);
   }, [projectId]);
+
+  /** Follow one export to its end, wherever it was started from. */
+  const watchRender = useCallback(async (jobId: string) => {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      if (!alive.current) return;
+      const jobs = await getRenderJobs(projectId);
+      const job = jobs.find((j) => j.id === jobId);
+      if (!job) return;
+      setExportState({ status: job.status, progress: job.progress, url: job.url });
+      if (job.status === "DONE" || job.status === "FAILED") {
+        if (job.status === "FAILED") setError(job.error ?? "That export didn't come through — try again.");
+        return;
+      }
+    }
+  }, [projectId]);
+
+  /** An export outlives this page: the merchant can close the desk while ffmpeg is still
+   *  running, and Otto can start one they never watched. So the desk adopts this project's
+   *  newest export on open — otherwise re-opening showed a blank slate while a render was
+   *  running, and a finished video had nowhere to be opened from. */
+  const adoptRender = useCallback(async () => {
+    try {
+      const jobs = await getRenderJobs(projectId);
+      if (!alive.current) return;
+      const job = jobs[0]; // newest first
+      if (!job) return;
+      setExportState({ status: job.status, progress: job.progress, url: job.url });
+      if (job.status === "QUEUED" || job.status === "RENDERING") await watchRender(job.id);
+    } catch {
+      // Deliberately quiet: the desk itself is open and usable, and the export strip has
+      // nothing to say rather than something wrong. refresh() owns the visible failure.
+    }
+  }, [projectId, watchRender]);
 
   // Deferred with queueMicrotask for the same reason OttoConnections' load() is: setting
   // state synchronously in an effect body trips react-hooks/set-state-in-effect.
   useEffect(() => {
+    queueMicrotask(() => {
+      void refresh();
+      void adoptRender();
+    });
+  }, [refresh, adoptRender]);
+
+  /** The way out of a failed open: try the whole thing again, spinner and all. */
+  const retryOpen = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    setOpenFailed(false);
     queueMicrotask(() => void refresh());
   }, [refresh]);
 
@@ -147,18 +215,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
         if (alive.current) setError(started.error);
         return;
       }
-      for (;;) {
-        await new Promise((r) => setTimeout(r, POLL_MS));
-        if (!alive.current) return;
-        const jobs = await getRenderJobs(projectId);
-        const job = jobs.find((j) => j.id === started.id);
-        if (!job) return;
-        setExportState({ status: job.status, progress: job.progress, url: job.url });
-        if (job.status === "DONE" || job.status === "FAILED") {
-          if (job.status === "FAILED") setError(job.error ?? "That export didn't come through — try again.");
-          return;
-        }
-      }
+      await watchRender(started.id);
     } catch {
       if (alive.current) setError("That export didn't come through — try again.");
     } finally {
@@ -226,6 +283,13 @@ export function EditDesk({ projectId }: { projectId: string }) {
         <div className="flex items-center gap-2 text-[0.875rem] text-muted-foreground">
           <LoaderCircle size={15} className="animate-spin" /> Opening your video…
         </div>
+      ) : openFailed ? (
+        <div className="flex flex-wrap items-center gap-2 text-[0.875rem] text-muted-foreground">
+          <span>We couldn&apos;t open your video. Nothing has been changed.</span>
+          <Button type="button" size="sm" variant="secondary" onClick={retryOpen}>
+            Try again
+          </Button>
+        </div>
       ) : (
         <div className="flex flex-col gap-4">
           {/* ---- the video as it stands ---- */}
@@ -233,11 +297,23 @@ export function EditDesk({ projectId }: { projectId: string }) {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="m-0 text-[0.9375rem] text-foreground">Your video</h3>
               <span className="text-[0.8125rem] text-muted-foreground">
-                {cut.clips.length === 0
-                  ? "Nothing in it yet"
-                  : `${cut.clips.length} clip${cut.clips.length === 1 ? "" : "s"} · ${clock(cut.seconds)}`}
+                {unreadable
+                  ? "We can't read what's saved here"
+                  : cut.clips.length === 0
+                    ? "Nothing in it yet"
+                    : `${cut.clips.length} clip${cut.clips.length === 1 ? "" : "s"} · ${clock(cut.seconds)}`}
               </span>
             </div>
+
+            {/* A cut we can't read is NOT an empty one. Saying "Nothing in it yet" over saved work
+                is the lie this line exists to prevent — and every button that would write is off,
+                because the safe thing to do with work we can't read is leave it alone. */}
+            {unreadable && (
+              <p className="mt-2 mb-0 text-[0.8125rem] text-muted-foreground">
+                Something is saved for this video, but we can&apos;t read it — so nothing here can be
+                changed and nothing has been thrown away. Ask us to take a look at it.
+              </p>
+            )}
 
             {cut.clips.length > 0 && (
               <ol className="mt-3 mb-0 flex list-none flex-col gap-1.5 p-0">
@@ -259,7 +335,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
                         size="sm"
                         variant="ghost"
                         className="ml-auto h-7 px-2 text-[0.75rem]"
-                        disabled={working}
+                        disabled={working || unreadable}
                         onClick={() => void captionClip(clip.src)}
                       >
                         {busy === `caption:${clip.src}` ? <LoaderCircle size={13} className="animate-spin" /> : <Captions size={13} />}
@@ -279,7 +355,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
                   size="sm"
                   variant="ghost"
                   className="h-7 px-2 text-[0.75rem]"
-                  disabled={working}
+                  disabled={working || unreadable}
                   onClick={() => void run("clear-captions", () => clearCutCaptions(projectId), "Captions are off.")}
                 >
                   <Trash2 size={13} /> Take captions off
@@ -288,7 +364,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button type="button" variant="brand" size="sm" disabled={working || cut.clips.length === 0} onClick={() => void exportVideo()}>
+              <Button type="button" variant="brand" size="sm" disabled={working || unreadable || cut.clips.length === 0} onClick={() => void exportVideo()}>
                 {busy === "export" ? <LoaderCircle size={14} className="animate-spin" /> : null}
                 Export video
               </Button>
@@ -335,7 +411,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
                         {order >= 0 ? `${order + 1}. ` : ""}
                         {clip.label}
                       </span>
-                      <span className="text-muted-foreground">{clock(clip.seconds)}</span>
+                      <span className="text-muted-foreground">{lengthLabel(clip.seconds)}</span>
                     </Button>
                   );
                 })}
@@ -345,7 +421,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
               <Button
                 type="button"
                 size="sm"
-                disabled={working || picked.length === 0}
+                disabled={working || unreadable || picked.length === 0}
                 onClick={() =>
                   void run("join", () => joinClipsIntoCut(projectId, picked), "Those clips are one video now.")
                 }
@@ -380,11 +456,11 @@ export function EditDesk({ projectId }: { projectId: string }) {
                     type="button"
                     size="sm"
                     variant={cut.music === track.src ? "soft" : "secondary"}
-                    disabled={working || cut.clips.length === 0}
+                    disabled={working || unreadable || cut.clips.length === 0}
                     onClick={() => void run(`music:${track.src}`, () => setCutMusic(projectId, track.src), "That music is under your video.")}
                   >
                     {busy === `music:${track.src}` ? <LoaderCircle size={13} className="animate-spin" /> : <Music size={13} />}
-                    {track.label} · {clock(track.seconds)}
+                    {track.label} · {lengthLabel(track.seconds)}
                   </Button>
                 ))}
               </div>
@@ -407,7 +483,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
                   type="button"
                   size="sm"
                   variant="ghost"
-                  disabled={working}
+                  disabled={working || unreadable}
                   onClick={() => void run("clear-music", () => clearCutMusic(projectId), "The music is off.")}
                 >
                   <Trash2 size={13} /> Take music off

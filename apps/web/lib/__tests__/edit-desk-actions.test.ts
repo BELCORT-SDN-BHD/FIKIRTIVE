@@ -169,6 +169,9 @@ describe("joinClipsIntoCut", () => {
     mockGenFindFirst.mockResolvedValue(gen(1));
     mockProjectUpdateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
     mockProjectFindFirst
+      // a join reads the row once BEFORE the write loop, to find the music bed it may have to
+      // lay back out under a longer video; the two after it are the loop's own attempts
+      .mockResolvedValueOnce({ id: PROJECT, updatedAt: new Date("2026-08-12T00:00:00Z"), editJson: null })
       .mockResolvedValueOnce({ id: PROJECT, updatedAt: new Date("2026-08-12T00:00:00Z"), editJson: null })
       .mockResolvedValueOnce({ id: PROJECT, updatedAt: new Date("2026-08-12T00:05:00Z"), editJson: null });
     const res = await joinClipsIntoCut(PROJECT, [src(1)]);
@@ -291,5 +294,137 @@ describe("getEditDesk — what the desk opens with", () => {
   it("a project that isn't this owner's is simply not found", async () => {
     mockProjectFindFirst.mockResolvedValue(null);
     expect(await getEditDesk(PROJECT)).toEqual({ error: "Project not found." });
+  });
+});
+
+/** A row that IS saved and cannot be parsed — a version we don't understand, a half-written
+ *  write, anything. What matters is that it is NOT null. */
+const DAMAGED_CUT = { timeline: { tracks: [{ clips: [{ asset: { type: "hologram" }, start: 0 }] }] } };
+
+describe("a saved cut we can't read is a known unknown — never an empty video", () => {
+  beforeEach(() => {
+    mockProjectFindFirst.mockResolvedValue({
+      id: PROJECT,
+      updatedAt: new Date("2026-08-12T00:00:00Z"),
+      editJson: DAMAGED_CUT,
+    });
+  });
+
+  it("the desk is told 'unreadable', not 'nothing in it yet'", async () => {
+    mockGenFindMany.mockResolvedValue([gen(1)]);
+    const res = await getEditDesk(PROJECT);
+    expect("error" in res).toBe(false);
+    if ("error" in res) return;
+    expect(res.unreadable).toBe(true);
+    // and it is still an honest empty summary — the desk must not invent clips it can't read
+    expect(res.cut.clips).toEqual([]);
+  });
+
+  it("join REFUSES and leaves the row exactly as it is", async () => {
+    mockGenFindFirst.mockResolvedValue(gen(1));
+    const res = (await joinClipsIntoCut(PROJECT, [src(1)])) as { error: string };
+    // this is the data-loss case: on the old code the damaged JSON was read as `null`, so this
+    // join would have written a fresh cut straight over work nobody could read
+    expect(mockProjectUpdateMany).not.toHaveBeenCalled();
+    expect(res.error).toContain("can't read");
+    expect(mockEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("music, clearing music and captions all refuse the same way, and write nothing", async () => {
+    mockGenFindFirst.mockResolvedValue(gen(9, "mp3", 90));
+    mockGetTranscript.mockResolvedValue([{ startMs: 0, lengthMs: 900, text: "hello" }]);
+    for (const attempt of [
+      () => setCutMusic(PROJECT, src(9, "mp3")),
+      () => clearCutMusic(PROJECT),
+      () => addCaptionsToClip(PROJECT, src(1)),
+    ]) {
+      const res = (await attempt()) as { error: string };
+      expect(res.error).toContain("can't read");
+    }
+    expect(mockProjectUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("export refuses too, rather than handing an unknown document to the renderer", async () => {
+    const res = (await exportSavedCut(PROJECT)) as { error: string };
+    expect(res.error).toContain("can't read");
+    expect(mockStartRender).not.toHaveBeenCalled();
+  });
+});
+
+describe("music is laid under the WHOLE video, and never given a made-up length", () => {
+  /** A saved cut: `videoSeconds` of picture with `bedSeconds` of music under it. */
+  function cutWithMusic(videoSeconds: number, bedSeconds: number) {
+    const base = savedCut([{ n: 1, start: 0, length: videoSeconds }]);
+    return {
+      ...base,
+      timeline: {
+        ...base.timeline,
+        tracks: [
+          ...base.timeline.tracks,
+          { clips: [{ asset: { type: "audio", src: src(9, "mp3") }, start: 0, length: bedSeconds }], audioRole: "music" },
+        ],
+      },
+    };
+  }
+
+  it("a join that makes the video longer lays MORE of the song, up to the song's own length", async () => {
+    // The judge's probe: a 10-second video with a 10-second bed, joined up to 20 seconds, kept
+    // 10 seconds of music under a 20-second video while both surfaces promised "the whole video".
+    mockProjectFindFirst.mockResolvedValue({
+      id: PROJECT,
+      updatedAt: new Date("2026-08-12T00:00:00Z"),
+      editJson: cutWithMusic(10, 10),
+    });
+    mockGenFindFirst.mockImplementation(async ({ where }: { where: { asset: { contentHash: string } } }) => {
+      if (where.asset.contentHash === hash(9)) return gen(9, "mp3", 90); // the song is 90s long
+      return gen(where.asset.contentHash === hash(1) ? 1 : 2, "mp4", 10);
+    });
+
+    const res = await joinClipsIntoCut(PROJECT, [src(1), src(2)]);
+    expect(res).toEqual({ ok: true, cut: expect.objectContaining({ seconds: 20, music: src(9, "mp3") }) });
+
+    const bed = written().timeline.tracks.find((t: { audioRole?: string }) => t.audioRole === "music");
+    expect(bed.clips[0].length, "the bed was left at its old trimmed length").toBe(20);
+  });
+
+  it("a join that makes the video SHORTER still can't leave music hanging past the last frame", async () => {
+    mockProjectFindFirst.mockResolvedValue({
+      id: PROJECT,
+      updatedAt: new Date("2026-08-12T00:00:00Z"),
+      editJson: cutWithMusic(20, 20),
+    });
+    mockGenFindFirst.mockImplementation(async ({ where }: { where: { asset: { contentHash: string } } }) => {
+      if (where.asset.contentHash === hash(9)) return gen(9, "mp3", 90);
+      return gen(1, "mp4", 6);
+    });
+
+    const res = await joinClipsIntoCut(PROJECT, [src(1)]);
+    expect(res).toEqual({ ok: true, cut: expect.objectContaining({ seconds: 6 }) });
+    const bed = written().timeline.tracks.find((t: { audioRole?: string }) => t.audioRole === "music");
+    expect(bed.clips[0].length).toBe(6);
+  });
+
+  it("music whose length nobody has read yet is refused — not written down as five seconds", async () => {
+    // An upload's length arrives from the probe a moment later. Guessing here is permanent:
+    // the guess is what gets saved, and the merchant's song plays for five seconds for ever.
+    mockGenFindFirst.mockResolvedValue(gen(9, "mp3", null));
+    mockProjectFindFirst.mockResolvedValue({
+      id: PROJECT,
+      updatedAt: new Date("2026-08-12T00:00:00Z"),
+      editJson: savedCut([{ n: 1, start: 0, length: 180 }]),
+    });
+
+    const res = (await setCutMusic(PROJECT, src(9, "mp3"))) as { error: string };
+    expect(res.error).toContain("still working out how long that music is");
+    expect(mockProjectUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("the picker says a length is unknown instead of showing one we made up", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT, updatedAt: new Date("2026-08-12T00:00:00Z"), editJson: null });
+    mockGenFindMany.mockResolvedValue([gen(9, "mp3", null), gen(1, "mp4", 8)]);
+    const res = await getEditDesk(PROJECT);
+    if ("error" in res) throw new Error(res.error);
+    expect(res.media.find((m) => m.kind === "audio")!.seconds).toBeNull();
+    expect(res.media.find((m) => m.kind === "video")!.seconds).toBe(8);
   });
 });

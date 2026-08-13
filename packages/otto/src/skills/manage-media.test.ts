@@ -165,7 +165,7 @@ describe("M1 $0 sub-journey: import a frame → new version lands → visible �
     };
     const emptyCut = { clips: [], seconds: 0, captionCount: 0, music: null };
     const render: NonNullable<OttoContext["render"]> = {
-      desk: async () => ({ media: [], cut: emptyCut }),
+      desk: async () => ({ media: [], cut: emptyCut, unreadable: false }),
       join: async () => ({ ok: true, cut: emptyCut }),
       music: async () => ({ ok: true, cut: emptyCut }),
       clearMusic: async () => ({ ok: true, cut: emptyCut }),

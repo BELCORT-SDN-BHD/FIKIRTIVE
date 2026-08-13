@@ -70,7 +70,18 @@ export async function executeRenderVideo(
   switch (input.action) {
     case "desk": {
       const r = await render.desk();
-      return "error" in r ? { ok: false, error: r.error } : { ok: true, media: r.media, cut: r.cut };
+      if ("error" in r) return { ok: false, error: r.error };
+      // A cut that IS saved but can't be read must not be handed over as an empty video: Otto
+      // would then cheerfully offer to start again and overwrite the merchant's own work.
+      return r.unreadable
+        ? {
+            ok: true,
+            media: r.media,
+            cut: r.cut,
+            unreadable: true,
+            note: "Something is saved for this video but can't be read. Nothing has been changed, and building on it is blocked until someone looks at it — tell the merchant plainly and don't offer to start over.",
+          }
+        : { ok: true, media: r.media, cut: r.cut };
     }
     case "join": {
       if (!input.srcs || input.srcs.length === 0) {

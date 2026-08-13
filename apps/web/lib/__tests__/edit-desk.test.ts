@@ -18,6 +18,7 @@ import {
   deskClipLabel,
   deskClipSeconds,
   joinClips,
+  readSavedCut,
   summarizeCut,
   withCaptionsForClip,
   withMusic,
@@ -225,10 +226,19 @@ describe("kind + length come off the contract's own allow-list", () => {
     expect(deskClipKind("pdf")).toBeNull();
   });
 
-  it("a still has a fixed hold; an unmeasured clip gets the editor's fallback", () => {
+  it("a still has a fixed hold; unmeasured PICTURE gets the app's standing fallback", () => {
     expect(deskClipSeconds("image", 999)).toBe(STILL_SECONDS);
     expect(deskClipSeconds("video", null)).toBe(UNKNOWN_CLIP_SECONDS);
     expect(deskClipSeconds("video", 12)).toBe(12);
+  });
+
+  it("unmeasured MUSIC comes back unknown — a guess would be written under the video for good", () => {
+    // The bed is promised under the whole video. Calling an unmeasured song five seconds long
+    // lays five seconds of it under a three-minute video and keeps it that way, which is why
+    // this one case refuses to answer instead of answering wrongly.
+    expect(deskClipSeconds("audio", null)).toBeNull();
+    expect(deskClipSeconds("audio", 0)).toBeNull();
+    expect(deskClipSeconds("audio", 92)).toBe(92);
   });
 
   it("a clip is named by what the merchant asked for, never by its hash", () => {
@@ -237,5 +247,35 @@ describe("kind + length come off the contract's own allow-list", () => {
     expect(deskClipLabel("", "image")).toBe("Still");
     expect(deskClipLabel("", "audio")).toBe("Music");
     expect(deskClipLabel("x".repeat(200), "video")).toHaveLength(48); // 47 + the ellipsis
+  });
+});
+
+describe("readSavedCut — three states, because two would lose work", () => {
+  const legal = ok(joinClips(null, [vid(1, 4)]));
+
+  it("nothing saved is 'empty'", () => {
+    expect(readSavedCut(null)).toEqual({ state: "empty" });
+    expect(readSavedCut(undefined)).toEqual({ state: "empty" });
+  });
+
+  it("a legal saved document comes back parsed, ready to build on", () => {
+    const read = readSavedCut(JSON.parse(JSON.stringify(legal)));
+    expect(read.state).toBe("cut");
+    if (read.state !== "cut") return;
+    expect(editDuration(read.edit)).toBe(4);
+  });
+
+  it("saved-but-unreadable is its OWN state, never folded into 'empty'", () => {
+    // Every shape a row can take that we cannot read: a version we don't understand, a
+    // half-written object, and something that isn't an edit at all.
+    for (const damaged of [
+      { timeline: { tracks: [{ clips: [{ asset: { type: "hologram", src: "/files/u/o/a.mp4" }, start: 0, length: 4 }] }] } },
+      { timeline: { background: "#000000", tracks: [] }, output: { format: "mp4" } },
+      { note: "someone stored the wrong thing here" },
+      "not even an object",
+      42,
+    ]) {
+      expect(readSavedCut(damaged), JSON.stringify(damaged)).toEqual({ state: "unreadable" });
+    }
   });
 });

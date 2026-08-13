@@ -29,15 +29,24 @@ import {
   type FikirtiveEdit,
 } from "@fikirtive/core";
 
-/** A piece of the merchant's own media, as the desk hands it around. */
+/** A piece of the merchant's own media, as the desk hands it around.
+ *  `seconds` is a length we actually know — a clip whose length is still unread never becomes
+ *  a DeskClip (the action refuses it), so nothing downstream has to guess. */
 export type DeskClip = {
   src: string;
   kind: "video" | "image" | "audio";
   seconds: number;
 };
 
-/** The same clip, offered for picking — with a name a person can tell apart from the next one. */
-export type DeskMedia = DeskClip & { label: string };
+/** The same clip, offered for picking — with a name a person can tell apart from the next one.
+ *  `seconds` is null while we still don't know how long the file is: the picker says so out
+ *  loud instead of showing a number we made up. */
+export type DeskMedia = {
+  src: string;
+  kind: DeskClip["kind"];
+  seconds: number | null;
+  label: string;
+};
 
 /** What to call this clip on screen.
  *
@@ -53,7 +62,13 @@ export function deskClipLabel(promptText: string, kind: DeskClip["kind"]): strin
 
 /** A still has no length of its own — this is how long one is held on screen. */
 export const STILL_SECONDS = 3;
-/** Length for a clip ingested before the duration probe ran (same fallback as the editor's). */
+/** How long a piece of footage is held when its own length has never been read.
+ *
+ *  This is the app's standing assumption for picture (actions.ts `addSegmentToCut` and the
+ *  editor media list use the same 5), NOT a decision this file makes — a generated clip is
+ *  created without a probe, so picture would otherwise be unusable in the desk at all.
+ *  MUSIC is deliberately excluded: a bed is promised under the WHOLE video, and guessing five
+ *  seconds there silently cuts a three-minute song down to five and then keeps it that way. */
 export const UNKNOWN_CLIP_SECONDS = 5;
 
 /** Which of the three kinds a file extension is, or null when it can't be in a video.
@@ -66,11 +81,39 @@ export function deskClipKind(ext: string): DeskClip["kind"] | null {
   return null;
 }
 
-/** How long this clip runs on the timeline. */
-export function deskClipSeconds(kind: DeskClip["kind"], durationS: number | null): number {
+/** How long this clip runs on the timeline, or null when nobody has read its length yet.
+ *  Only music can come back null — see UNKNOWN_CLIP_SECONDS for why the two differ. */
+export function deskClipSeconds(kind: DeskClip["kind"], durationS: number | null): number | null {
   if (kind === "image") return STILL_SECONDS;
-  return durationS && durationS > 0 ? durationS : UNKNOWN_CLIP_SECONDS;
+  if (durationS && durationS > 0) return durationS;
+  return kind === "audio" ? null : UNKNOWN_CLIP_SECONDS;
 }
+
+/**
+ * What is actually saved on this project, told apart into THREE states — never two.
+ *
+ * "Nothing saved" and "something is saved that we cannot read" look identical if a failed parse
+ * is folded into null, and that single missing distinction is a data-loss bug rather than a
+ * cosmetic one: the desk would say "Nothing in it yet" over a video the merchant spent an hour
+ * on, and the next join would build on `null` and overwrite the JSON we could not read. An
+ * unreadable cut is a state of its own, so both surfaces can say so and every write can refuse.
+ */
+export type SavedCut =
+  | { state: "empty" }
+  | { state: "cut"; edit: FikirtiveEdit }
+  | { state: "unreadable" };
+
+/** Read `Project.editJson` into one of those three states. Pure: the row comes from the caller. */
+export function readSavedCut(editJson: unknown): SavedCut {
+  if (editJson === null || editJson === undefined) return { state: "empty" };
+  const parsed = fikirtiveEdit.safeParse(editJson);
+  return parsed.success ? { state: "cut", edit: parsed.data } : { state: "unreadable" };
+}
+
+/** The one sentence both surfaces say about an unreadable cut — and the reason every write
+ *  refuses: what is on the row stays exactly as it is until a person can look at it. */
+export const UNREADABLE_CUT_MESSAGE =
+  "We can't read what's saved for this video, so we've left it exactly as it is — nothing has been changed or thrown away. Ask us to take a look before you edit it.";
 
 /** What the desk (and Otto) reads back about the saved cut — no JSON in sight. */
 export type CutSummary = {
