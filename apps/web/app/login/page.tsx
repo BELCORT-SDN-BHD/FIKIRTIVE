@@ -25,8 +25,16 @@ export default async function LoginPage({
 
   return (
     <main className="gb flex min-h-[100dvh] w-full">
-      {/* LEFT — the confident half (hidden on small screens) */}
-      <section className="relative hidden flex-[1.15] flex-col overflow-hidden bg-[#F7F5F2] p-12 lg:flex">
+      {/* LEFT — the confident half (hidden on small screens).
+          #804: this panel used to be a fixed cream (#F7F5F2) carrying four hand-mixed
+          greys, while the wordmark, the Otto badge and the tick circles beside it read
+          their colours from the theme. That was invisible until dark mode turned on —
+          then the wordmark went white on the still-cream panel (1.03:1) and the soft
+          pills went dark on it. One surface cannot be half-themed, so the panel now
+          rides --secondary and the type rides the foreground/muted pair. In light it is
+          the same panel to the eye; the footer line even gains contrast (3.37 → 4.66,
+          it was failing AA). */}
+      <section className="relative hidden flex-[1.15] flex-col overflow-hidden bg-secondary p-12 lg:flex">
         <div
           aria-hidden
           className="pointer-events-none absolute -right-16 -top-20 h-[520px] w-[520px]"
@@ -54,13 +62,13 @@ export default async function LoginPage({
               sells what comes back finished. The four outcomes below are the four things Otto
               actually has skills for (plan-campaign, build-segment, read-spending +
               meta-ad-performance, propose/generate + manage-media) — nothing aspirational. */}
-          <h1 className="text-[42px] font-extrabold leading-[1.08] tracking-[-0.025em] text-[#141412]">
+          <h1 className="text-[42px] font-extrabold leading-[1.08] tracking-[-0.025em] text-foreground">
             Otto gets the <span className="text-brand">work done</span> — you just approve.
           </h1>
           {/* #682 still binds: Otto is called by name, never by a pronoun. "…and it runs the
               job" would put a third-person pronoun back on the very screen #682 cured — and
               the lexical fence cannot catch a mid-sentence "it", so it is on the writer. */}
-          <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-[#5A5A56]">
+          <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-muted-foreground">
             Build the campaign, adjust the customer segment, see where the money went, swap in
             fresh creative. Say what you want in your own words — Otto runs the job end to end,
             and nothing gets made or published until you approve it.
@@ -74,7 +82,7 @@ export default async function LoginPage({
               // thing missing is Meta's approval, which is what this now says.
               "Schedules and publishes to Instagram and Facebook once Meta approves your connection",
             ].map((t) => (
-              <li key={t} className="flex items-center gap-[11px] text-[14.5px] font-medium text-[#3A3A38]">
+              <li key={t} className="flex items-center gap-[11px] text-[14.5px] font-medium text-foreground">
                 <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-success-soft text-success-soft-foreground">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="size-[13px]">
                     <path d="M20 6 9 17l-5-5" />
@@ -89,7 +97,7 @@ export default async function LoginPage({
         {/* #805 honesty boundary — "Trusted by small brands" was social proof we cannot show:
             there is no public customer to point at. Say who it is BUILT for, which is true
             the day it ships. */}
-        <p className="relative z-10 text-[13.5px] text-[#86867F]">
+        <p className="relative z-10 text-[13.5px] text-muted-foreground">
           Built for small brands that run their own marketing.
         </p>
       </section>
