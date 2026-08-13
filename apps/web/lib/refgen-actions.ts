@@ -346,7 +346,24 @@ export async function createVariant(entityId: string, name: string, prompt: stri
     if (!variantId) return { error: "Couldn't find a free name for that variant — try a different name." };
 
     const dispatched = await dispatchVariantJob(ownerId, entityId, variantId, cleanPrompt);
-    if ("error" in dispatched) return dispatched;
+    if ("error" in dispatched) {
+      // #781 r2 P2 — ROLL THE VARIANT BACK. Every refusal dispatchVariantJob returns is a
+      // before-or-instead-of-spend one (image generation turned off, not enough credits — reserved
+      // in the same tx, so it rolled back — or the queue unreachable, which terminal-fails and
+      // refunds). Nothing is running, and nothing ever will be: leaving the row behind strands an
+      // empty variant that says "Making this look…" forever, and pushes the retry (after topping
+      // up) onto a suffixed name the merchant never chose. Soft-delete, so the handle the merchant
+      // picked is free again (the unique index is partial on deletedAt IS NULL) and the refusal —
+      // not a stray leftover — is what they see.
+      try {
+        await prisma.entityVariant.updateMany({ where: { id: variantId, ...OWNED }, data: { deletedAt: new Date() } });
+      } catch (e) {
+        // The refusal is the merchant's answer either way; a failed rollback must not become a
+        // second, misleading error on top of it.
+        console.warn(`createVariant: rollback of undispatched variant ${variantId} failed (non-fatal):`, e instanceof Error ? e.message : e);
+      }
+      return dispatched;
+    }
     // BEST-EFFORT: the paid variant job is already created + queued (dispatchVariantJob),
     // so an audit-write failure must NOT throw past here — else the caller returns an
     // error and a retry could create a second suffixed variant + enqueue another paid
@@ -406,7 +423,22 @@ export async function renameVariant(variantId: string, name: string): Promise<{ 
 }
 
 /** Soft-delete a variant AND its tagged reference images (D21; onDelete:Restrict
- *  blocks a hard delete, so the app owns the cascade). */
+ *  blocks a hard delete, so the app owns the cascade).
+ *
+ *  #781 r2 P1 — IN-FLIGHT PAID WORK IS PROTECTED HERE, for every caller. The worker re-checks the
+ *  variant before it spends, but a delete landing AFTER that check still lets the paid image settle
+ *  onto a tombstoned variant: the merchant is charged for a look that no longer exists anywhere they
+ *  can see it. Otto's port has refused this since debt-69 — but a gate that only one caller passes
+ *  through is not a rule, and the merchant's own Delete button called this action directly. So the
+ *  rule lives in the action both surfaces share.
+ *
+ *  Same semantics as the port's gate, deliberately: ANY QUEUED/GENERATING job for this variant
+ *  blocks, with NO staleness window. A 15-minute abandonment window would be SHORTER than the
+ *  worker's own liveness window (REFGEN_STALE_MS 18min / reaper 25min), so a job that was still
+ *  genuinely running would be misjudged abandoned and let through — the exact hole this closes. A
+ *  count read that fails refuses too (never "couldn't check, delete anyway"). A truly stuck job is
+ *  released by the worker's reaper (reapStaleRefGenJobs — FAILED + refunded, ~25min + one 5min
+ *  sweep); after that the delete goes through, so nothing is undeletable forever. */
 export async function deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -415,6 +447,17 @@ export async function deleteVariant(variantId: string): Promise<{ ok: true } | {
     const OWNED = { ownerId, deletedAt: null } as const;
     const variant = await prisma.entityVariant.findFirst({ where: { id: variantId, ...OWNED }, select: { id: true, entityId: true } });
     if (!variant) return { error: "Variant not found." };
+    let activeJobs: number;
+    try {
+      activeJobs = await prisma.refGenJob.count({
+        where: { variantId, ownerId, status: { in: ["QUEUED", "GENERATING"] } },
+      });
+    } catch {
+      return { error: "Couldn't check whether that variant is still being made, so nothing was deleted. Please try again in a moment." };
+    }
+    if (activeJobs > 0) {
+      return { error: "That variant is still being made — wait for it to finish before deleting it, so you don't lose an image you paid for." };
+    }
     const now = new Date();
     await prisma.$transaction([
       prisma.referenceImage.updateMany({ where: { variantId, ownerId, deletedAt: null }, data: { deletedAt: now } }),

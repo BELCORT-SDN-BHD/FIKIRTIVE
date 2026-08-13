@@ -19,6 +19,7 @@
  * pure-function level (the piece that had no direct test).
  */
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import {
   computeApprovalContentHash,
   computeRefgenApprovalContentHash,
@@ -114,6 +115,27 @@ describe("refgen approval content hash — binds the EXACT parked args (debt-68 
     expect(red).not.toBe(beach);
     // and the same ask hashes the same every time (a re-park of one call reuses its card)
     expect(computeRefgenApprovalContentHash({ ...variantAsk, variantName: "Red dress" })).toBe(red);
+  });
+
+  // #781 r2 P2 — a card minted BEFORE the variant name existed must still be approvable after the
+  // deploy. The approve path finds the parked call BY hash, so a re-hashed old card matches nothing
+  // and the merchant is told "That card isn't awaiting approval." while the card sits there looking
+  // pending — a sentence about a card that IS pending, and one they can do nothing about. The name is
+  // appended only when there is one, so an unnamed ask serializes exactly as it did before #781.
+  it("an unnamed ask hashes exactly as it did before the variant name existed (old cards survive the deploy)", () => {
+    const legacy = (m: { entityId: string; prompt: string; count: number | null; mode: string | null }) =>
+      createHash("sha256")
+        .update(JSON.stringify(["generateReferences", m.entityId, m.prompt, m.count, m.mode]), "utf8")
+        .digest("hex");
+    const refsheet = { entityId: "ent-1", prompt: "a red cap on a wooden table", count: 3, mode: "REFSHEET" };
+    expect(computeRefgenApprovalContentHash({ ...refsheet, variantName: null })).toBe(legacy(refsheet));
+    // …including the shapes that carry no count/mode at all
+    const bare = { entityId: "ent-1", prompt: "x", count: null, mode: null };
+    expect(computeRefgenApprovalContentHash({ ...bare, variantName: null })).toBe(legacy(bare));
+    // and a NAMED ask is still its own consent object — anti-flip is untouched by the compatibility
+    expect(computeRefgenApprovalContentHash({ ...refsheet, count: 1, mode: "VARIANT", variantName: "Red dress" })).not.toBe(
+      legacy({ ...refsheet, count: 1, mode: "VARIANT" }),
+    );
   });
 
   it("raw parked args carry the variant name into the hash (the single normalization sees it)", () => {

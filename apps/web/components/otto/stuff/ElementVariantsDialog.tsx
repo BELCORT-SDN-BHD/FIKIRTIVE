@@ -44,22 +44,19 @@ import {
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
-import type { EntityDTO, VariantDTO } from "@/lib/types";
+import {
+  isVariantRunning,
+  latestVariantRef,
+  variantJustFinished,
+  variantsToWatch,
+  type VariantJobs,
+  type VariantJobStatus,
+} from "@/lib/variant-progress";
+import type { EntityDTO } from "@/lib/types";
 
 /** How often an in-flight variant generation is re-checked. Same cadence as the other
  *  generation pollers on this surface — slow enough to be cheap, fast enough to feel live. */
 const POLL_MS = 2500;
-
-/** One variant's live generation state, as this dialog knows it. */
-type VariantJobState = { status: "failed"; error: string };
-
-/** The variants still waiting on an image. Derived from server truth (a variant with no
- *  reference image has not produced one yet) rather than tracked in state, so a refresh —
- *  or reopening the dialog tomorrow on a generation that stalled overnight — picks up exactly
- *  the same set with nothing to keep in sync. A variant we already saw fail is not re-polled. */
-function pendingVariantIds(variants: VariantDTO[], failed: Record<string, VariantJobState>): string[] {
-  return variants.filter((v) => v.refs.length === 0 && !failed[v.id]).map((v) => v.id);
-}
 
 export function ElementVariantsDialog({
   entity,
@@ -80,7 +77,11 @@ export function ElementVariantsDialog({
   const [error, setError] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [failed, setFailed] = useState<Record<string, VariantJobState>>({});
+  // What the server last said about each variant's NEWEST generation job (see lib/variant-progress).
+  const [jobs, setJobs] = useState<VariantJobs>({});
+  // The same map, readable inside the poll without making it a dependency — the poll compares what
+  // it just heard against what it knew, and a "just finished" is that comparison.
+  const jobsRef = useRef<VariantJobs>({});
   // Every paid button is guarded synchronously: `busy` is state and lands a render too late to
   // stop a fast double-click, and a second click here would be a second charge.
   const submittingRef = useRef(false);
@@ -91,39 +92,58 @@ export function ElementVariantsDialog({
   const hasBase = !!baseRef;
   const variantCost = creditsLabel(displayCredits(pricedRefgenCredits({ model: "seedream", count: 1 })));
 
-  // A stable key for the pending set, so the poll restarts only when that set actually changes
-  // (the parent hands a fresh array on every refresh; its contents are what matter).
-  const pendingKey = pendingVariantIds(variants, failed).join(",");
-
-  // Poll the variants that have no image yet. getRefGenJobs is owner-gated server-side and
-  // scoped to (entity, variant), so this reads only this merchant's own jobs.
   useEffect(() => {
-    if (!open || !entityId || pendingKey === "") return;
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  /** Closing forgets what the server said, so opening again asks fresh — a generation started
+   *  meanwhile (by Otto, or in another tab) is picked up instead of hidden behind a remembered
+   *  "that one finished". Entries are keyed by variant id, so anything left over from another
+   *  element is simply never looked up. */
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) setJobs({});
+      onOpenChange(next);
+    },
+    [onOpenChange],
+  );
+
+  // A stable key for the watched set, so the poll restarts only when that set actually changes
+  // (the parent hands a fresh array on every refresh; its contents are what matter).
+  const watchKey = variantsToWatch(variants, jobs).join(",");
+
+  // Ask the server about every variant whose generation is (or might be) running. getRefGenJobs is
+  // owner-gated server-side and scoped to (entity, variant), so this reads only this merchant's own
+  // jobs. The set narrows itself: after the opening sweep only genuinely running variants stay in it.
+  useEffect(() => {
+    if (!open || !entityId || watchKey === "") return;
     let cancelled = false;
     const tick = async () => {
-      let anyDone = false;
-      for (const variantId of pendingKey.split(",")) {
+      const heard: Array<{ id: string; view: { status: VariantJobStatus; error: string } }> = [];
+      for (const variantId of watchKey.split(",")) {
         try {
           const rows = await getRefGenJobs(entityId, variantId);
           const latest = rows[0];
-          if (!latest || cancelled) continue;
-          if (latest.status === "DONE") anyDone = true;
-          else if (latest.status === "FAILED") {
-            setFailed((cur) => ({
-              ...cur,
-              [variantId]: {
-                status: "failed",
-                error: latest.error || "That variant didn't finish. You weren't charged for it.",
-              },
-            }));
-          }
+          heard.push({
+            id: variantId,
+            view: latest
+              ? { status: latest.status as VariantJobStatus, error: latest.error || "" }
+              : { status: "NONE", error: "" },
+          });
         } catch {
-          // A failed poll is not a failed generation — leave the variant pending and retry.
+          // A failed poll is not a failed generation — keep what we knew and try again next tick.
         }
       }
-      if (anyDone && !cancelled) {
+      if (cancelled || heard.length === 0) return;
+      const finished = heard.some(({ id, view }) => variantJustFinished(jobsRef.current[id], view));
+      setJobs((cur) => {
+        const next = { ...cur };
+        for (const { id, view } of heard) next[id] = view;
+        return next;
+      });
+      if (finished) {
         // The finished image lives on the server; ask the caller to re-read rather than
-        // guessing at it here. The re-read is what drops it out of the pending set.
+        // guessing at it here. The re-read is what puts the newly paid-for image on the tile.
         notifyBalanceRefresh();
         onChanged();
       }
@@ -134,11 +154,18 @@ export function ElementVariantsDialog({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [open, entityId, pendingKey, onChanged]);
+  }, [open, entityId, watchKey, onChanged]);
+
+  /** A paid generation was just accepted for this variant — the action returned a job, so it is
+   *  queued. Recording that immediately is what makes the finish visible: the poll only calls a
+   *  DONE it can see arriving a finish, and only a running variant is polled at all. */
+  const markRunning = useCallback((variantId: string) => {
+    setJobs((cur) => ({ ...cur, [variantId]: { status: "QUEUED", error: "" } }));
+  }, []);
 
   /** Run one paid variant action: guard the double-click, surface the refusal in the merchant's
-   *  own words, and re-read server truth either way. The re-read is what starts (or ends) the
-   *  poll — a fresh variant arrives with no image, which IS the pending state. */
+   *  own words, and re-read server truth either way. The action itself says what happened to the
+   *  money; what the merchant then WATCHES is the variant marked running above. */
   const runPaid = useCallback(
     async (work: () => Promise<{ error: string } | { ok: true }>) => {
       if (submittingRef.current) return;
@@ -180,6 +207,7 @@ export function ElementVariantsDialog({
     await runPaid(async () => {
       const res = await createVariant(entityId, cleanName, cleanPrompt);
       if ("error" in res) return res;
+      markRunning(res.variantId);
       setName("");
       setPrompt("");
       return { ok: true };
@@ -190,13 +218,10 @@ export function ElementVariantsDialog({
     await runPaid(async () => {
       const res = await regenerateVariant(variantId);
       if ("error" in res) return res;
-      // A re-run replaces the look, so its old image stops being the truth about it: clearing the
-      // remembered failure (if any) puts it back in the pending set the poll watches.
-      setFailed((cur) => {
-        const next = { ...cur };
-        delete next[variantId];
-        return next;
-      });
+      // The merchant just paid for a new image of a variant that already has one. Nothing on the
+      // tile would change on its own — the old image stays until the new one is attached — so the
+      // variant goes back on the watch list, and stays on it until the server says DONE.
+      markRunning(variantId);
       return { ok: true };
     });
   }
@@ -238,7 +263,7 @@ export function ElementVariantsDialog({
   if (!entity) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>{entity.name}</DialogTitle>
@@ -308,8 +333,12 @@ export function ElementVariantsDialog({
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {variants.map((variant) => {
-                const problem = failed[variant.id];
-                const thumb = variant.refs[0];
+                const job = jobs[variant.id];
+                const problem = job?.status === "FAILED" ? job : null;
+                const running = isVariantRunning(variant, jobs);
+                // The NEWEST image, not the first one: a re-run appends, so `refs[0]` would keep
+                // showing the picture the merchant paid to replace (see lib/variant-progress).
+                const thumb = latestVariantRef(variant);
                 return (
                   <div
                     key={variant.id}
@@ -321,7 +350,15 @@ export function ElementVariantsDialog({
                         <img src={thumb.url} alt={variant.name} className="h-full w-full object-cover" />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center px-2 text-center text-[0.75rem] text-muted-foreground">
-                          {problem ? "Didn't finish" : "Making this look…"}
+                          {running ? "Making this look…" : problem ? "Didn't finish" : "No image yet"}
+                        </div>
+                      )}
+                      {/* A re-run keeps the old image on screen while it works, so say so — otherwise
+                          paying for "Make it again" looks like nothing happened, and the obvious next
+                          move is to pay again. */}
+                      {thumb && running && (
+                        <div className="absolute inset-x-0 bottom-0 bg-black/50 px-2 py-1 text-center text-[0.75rem] text-white">
+                          Making it again…
                         </div>
                       )}
                       <div className="absolute right-1 top-1">
@@ -402,7 +439,9 @@ export function ElementVariantsDialog({
                         </>
                       )}
                       {problem && (
-                        <span className="text-[0.75rem] text-muted-foreground">{problem.error}</span>
+                        <span className="text-[0.75rem] text-muted-foreground">
+                          {problem.error || "That variant didn't finish. You weren't charged for it."}
+                        </span>
                       )}
                     </div>
                   </div>

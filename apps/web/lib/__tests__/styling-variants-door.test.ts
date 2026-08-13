@@ -82,6 +82,25 @@ describe("#781 — the merchant can actually get in", () => {
     // `busy` state lands a render too late to stop the second click; the ref is what actually stops it.
     expect(src).toMatch(/submittingRef\.current/);
   });
+
+  // #781 r2 P1 — what a merchant BUYS with "Make it again" has to become visible. The rules are
+  // unit-tested in variant-progress.test.ts; what can only be checked here is that the dialog uses
+  // them instead of the two shortcuts that made the paid result invisible.
+  it("the tile shows the newest image, never the one the merchant paid to replace", () => {
+    const src = read(DIALOG);
+    expect(src).toMatch(/latestVariantRef\(/);
+    // the regression, stated as source: a re-run APPENDS, so refs[0] is the old picture forever
+    expect(src).not.toMatch(/variant\.refs\[0\]/);
+  });
+
+  it("a paid re-run is watched until the server says it finished", () => {
+    const src = read(DIALOG);
+    // "no image yet" is not what makes a variant pending — a running job is (a re-run has an image)
+    expect(src).toMatch(/isVariantRunning\(/);
+    expect(src).toMatch(/variantsToWatch\(/);
+    // and the re-run marks itself running the moment the paid action returns a job
+    expect(src).toMatch(/regenerateVariant\([\s\S]{0,400}markRunning\(/);
+  });
 });
 
 describe("#781 — Otto reaches the same door, through the port", () => {

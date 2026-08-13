@@ -54,11 +54,14 @@ export type RefgenApprovalMaterial = {
 /** Deterministic hash of the refgen consent object. Domain-tagged so it can never collide with a
  *  scheduled-post hash; canonical field order, JSON-encoded (mirrors computeApprovalContentHash).
  *
- *  #781 appended variantName to the material. That changes the hash of EVERY refgen ask, including
- *  BASE/REFSHEET ones minted before the change — an approval card still pending across the deploy
- *  recomputes to a different hash and is hard-refused ("that reference request changed — ask again").
- *  That is the fail-closed direction (a stale consent is never laundered into a new spend), and the
- *  window is one card TTL. */
+ *  #781 added variantName to the material — APPENDED ONLY WHEN THERE IS ONE. An unnamed ask (every
+ *  BASE/REFSHEET one, and every ask minted before #781) serializes to exactly the pre-#781 canonical
+ *  form, so a card still pending across the deploy keeps its hash and stays approvable. Appending an
+ *  unconditional `null` instead would have re-hashed every old card, and the merchant would NOT have
+ *  been told their request changed: the approve path looks the parked call up BY hash first, so a
+ *  re-hashed card matches nothing and answers "That card isn't awaiting approval." while the card sits
+ *  there looking pending. Anti-flip is untouched — a variantName appearing, disappearing or changing
+ *  all change the serialized array, so a post-mint swap still hard-refuses. */
 export function computeRefgenApprovalContentHash(m: RefgenApprovalMaterial): string {
   const canonical = JSON.stringify([
     "generateReferences",
@@ -66,7 +69,8 @@ export function computeRefgenApprovalContentHash(m: RefgenApprovalMaterial): str
     m.prompt,
     m.count ?? null,
     m.mode ?? null,
-    m.variantName ?? null,
+    // conditional tail (see above): present ⇒ bound; absent ⇒ the pre-#781 serialization, byte for byte
+    ...(m.variantName != null ? [m.variantName] : []),
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }

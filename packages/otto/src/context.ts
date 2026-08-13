@@ -910,9 +910,11 @@ export interface OttoContext {
    *  element dialog and Otto call the one createVariant action, so "one element, many outfits" can
    *  never mean two different charging rules.
    *  The generateReferences skill is cost:"spend" ⇒ needsApproval is a machine-derived LITERAL
-   *  true (anti-flip). `deleteVariant` is a $0 soft delete fronted by an Otto-only fail-closed active-job
-   *  gate (see makeOttoRefgenPort — refuses while a paid job for that variant is in flight, #271
-   *  deleteProject precedent). Skills reach it ONLY via ctx.refgen — never importing web actions, the
+   *  true (anti-flip). `deleteVariant` is a $0 soft delete guarded by a fail-closed active-job rule that
+   *  the shared action enforces for every caller (#781 r2 — the merchant's element dialog is refused on
+   *  the same terms), with makeOttoRefgenPort re-stating it in Otto's words before the action is even
+   *  reached (refuses while a paid job for that variant is in flight, #271 deleteProject precedent).
+   *  Skills reach it ONLY via ctx.refgen — never importing web actions, the
    *  provider, or Prisma (CI fence rule). Absent in the minimal worker verdict ctx; the skills degrade
    *  gracefully when it is not injected. */
   refgen?: {
@@ -937,9 +939,10 @@ export interface OttoContext {
       prompt: string;
     }): Promise<{ variantId: string; jobId: string } | { error: string }>;
     /** debt-69 ($0, guarded): soft-delete an OWNED reference variant (+ its tagged reference images).
-     *  The port hard-refuses (fail-closed) while a paid RefGenJob for that variant is still in flight,
-     *  so a delete can't strand settled/settling paid work. Owner scope + not-found guard live INSIDE
-     *  the deleteVariant action (requireOwner). */
+     *  Hard-refused (fail-closed) while a paid RefGenJob for that variant is still in flight, so a
+     *  delete can't strand settled/settling paid work — the deleteVariant action itself refuses, so
+     *  the rule holds for the merchant's own delete button too, and the port re-states it for Otto.
+     *  Owner scope + not-found guard live INSIDE the deleteVariant action (requireOwner). */
     deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }>;
   };
 }
