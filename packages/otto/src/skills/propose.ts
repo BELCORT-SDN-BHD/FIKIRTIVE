@@ -19,6 +19,7 @@ import {
   withReferenceBudget,
   withVideoReferenceChip,
   GenerationUnavailableError,
+  ProposeRefusal,
   type ProposeInput,
   type CardPayload,
   type ProposeCardResult,
@@ -26,7 +27,7 @@ import {
 
 // Re-export types + pure helper so consumers can import from either file
 export type { CardPayload, ProposeCardResult };
-export { buildProposeCard, GenerationUnavailableError };
+export { buildProposeCard, GenerationUnavailableError, ProposeRefusal };
 
 /**
  * #619 E-5：**逐个** @元素有多少张活参考照，顺序 = 商家 @ 到它们的顺序（也就是卡上
@@ -74,14 +75,16 @@ export async function executePropose(
     });
   }
 
-  // #647 T6:唯一那台引擎被后台关掉时,`buildProposeCard` 抛 GenerationUnavailableError。
-  // 接住它、把它的 message 原样交回对话 —— 一张 GEN_CARD 都不落库(下面的 create 根本
-  // 走不到)。别的异常照旧上抛:那是真故障,不该被翻译成一句「关掉了」。
+  // #647 T6 / #775:造不出一张诚实的卡时,`buildProposeCard` 抛 `ProposeRefusal`
+  // (引擎被后台关掉 / 这一趟的形状撑不起这段提示词要做的事)。接住它、把 message 原样
+  // 交回对话 —— 一张 GEN_CARD 都不落库(下面的 create 根本走不到)。
+  // 认的是**基类**,不是逐个理由:再加一种拒绝时这里不用改,也就不会漏掉一种。
+  // 别的异常照旧上抛:那是真故障,不该被翻译成一句给商家看的话。
   let built: ProposeCardResult;
   try {
     built = buildProposeCard(input, ctx, ownedEntities);
   } catch (e) {
-    if (e instanceof GenerationUnavailableError) return { error: e.message };
+    if (e instanceof ProposeRefusal) return { error: e.message };
     throw e;
   }
   const { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel } = built;

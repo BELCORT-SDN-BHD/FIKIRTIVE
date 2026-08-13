@@ -53,10 +53,9 @@ describe("剪辑(edit)—— 官方句式", () => {
     expect(out).not.toContain("Mia");
   });
 
-  it("声音、约束、竖版防字幕照旧接线", () => {
+  it("声音与约束照旧接线", () => {
     const out = assembleSeedance(
       edit({
-        aspect: "9:16",
         constraints: "Keep the camera steady; Avoid sudden cuts",
         shots: [{ subject: "the shirt", action: "turns red", music: "soft guitar", sfx: "cloth rustle" }],
       }),
@@ -64,7 +63,53 @@ describe("剪辑(edit)—— 官方句式", () => {
     expect(out).toContain("Audio: （soft guitar） <cloth rustle>");
     expect(out).toContain("Keep the camera steady.");
     expect(out).toContain("Avoid sudden cuts.");
-    expect(out).toContain("do not burn in any subtitles or captions");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 判官 r1 P1-3 —— 清底片的指令与「其余完全不变」自相矛盾
+// ---------------------------------------------------------------------------
+
+describe("锚在商家自己那条片子上时,不下任何「清掉画面上的东西」的指令", () => {
+  it("剪辑:不含 no on-screen text / watermark / logo 那一行", () => {
+    const out = assembleSeedance(edit());
+    expect(out).not.toContain("no on-screen text, watermark, or logo");
+    // 「其余完全不变」那句话仍在 —— 它才是这一档真正的边界。
+    expect(out).toContain("Keep every other part of the clip exactly as it is.");
+  });
+
+  it("剪辑:cleanFootage 显式为 true 也不下 —— 默认值不是这条规矩的判据", () => {
+    expect(assembleSeedance(edit({ cleanFootage: true }))).not.toContain("no on-screen text");
+  });
+
+  it("续写:同一条规矩", () => {
+    expect(assembleSeedance(extend())).not.toContain("no on-screen text, watermark, or logo");
+  });
+
+  it("竖版防字幕这一档同样不下 —— 它同样是一条「别让画面上有那个东西」的指令", () => {
+    const out = assembleSeedance(edit({ aspect: "9:16" }));
+    expect(out).not.toContain("do not burn in any subtitles or captions");
+    expect(out).not.toContain("【】");
+  });
+
+  it("商家片子里的 logo 是商家的东西:改衬衫颜色的请求里,一个字都不提 logo", () => {
+    const out = assembleSeedance(
+      edit({ shots: [{ subject: "the shirt on the man", action: "is deep red instead of white" }] }),
+    );
+    expect(out.toLowerCase()).not.toContain("logo");
+    expect(out.toLowerCase()).not.toContain("watermark");
+  });
+
+  it("从零生成那两档一个字没变 —— 清底片与竖版防字幕照旧", () => {
+    const t2v = assembleSeedance(
+      seedancePromptInput.parse({
+        mode: "t2v",
+        aspect: "9:16",
+        shots: [{ subject: "the jar", action: "turns slowly" }],
+      }),
+    );
+    expect(t2v).toContain("no on-screen text, watermark, or logo");
+    expect(t2v).toContain("do not burn in any subtitles or captions");
   });
 });
 
@@ -150,6 +195,25 @@ describe("禁词只提醒,不改写商家的话", () => {
 
   it("照着做一条新的那一档不禁这个词", () => {
     expect(videoPromptWarnings("guideFromClip", "match the reference clip's pacing")).toEqual([]);
+  });
+
+  // 判官 r1 P3 —— 子串匹配把「preference」当成「reference」误报。
+  it("只认整个词,不认碰巧含着它的别的词", () => {
+    for (const clean of [
+      "Strictly edit <Video_1>, and modify the customer's preference badge.",
+      "Strictly edit <Video_1>, and modify the preferences panel.",
+      "Strictly edit <Video_1>, and modify the dereferenced label.",
+    ]) {
+      expect(videoPromptWarnings("editClip", clean)).toEqual([]);
+    }
+  });
+
+  it("复数照样逮 —— 「use the references」误导得一模一样", () => {
+    expect(videoPromptWarnings("editClip", "Strictly edit <Video_1>, and modify using the references.")).toHaveLength(1);
+  });
+
+  it("大小写、标点贴着都逮得住", () => {
+    expect(videoPromptWarnings("editClip", "Strictly edit <Video_1>, and modify the Reference.")).toHaveLength(1);
   });
 });
 

@@ -20,7 +20,7 @@ import type { RunContext } from "@openai/agents";
 import { newId, type ApprovedEntity } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
-import { proposeInput, buildProposeCard, GenerationUnavailableError, type ProposeInput, type CardPayload } from "./propose.helpers.js";
+import { proposeInput, buildProposeCard, ProposeRefusal, type ProposeInput, type CardPayload } from "./propose.helpers.js";
 import { VARIANT_AXES, checkVariantSet } from "./variant-policy.js";
 import { z } from "zod";
 
@@ -84,7 +84,9 @@ export async function executeProposePack(
       payloads.push(buildProposeCard(item as ProposeInput, ctx, itemOwnedEntities).cardPayload);
     }
   } catch (e) {
-    if (e instanceof GenerationUnavailableError) return { error: e.message };
+    // #775:认拒绝的**基类** —— 引擎被关掉、形状撑不起这段提示词,对整包来说都是同一件事:
+    // 半截包里每一张都是点得下去的付费卡,所以一张都不落库,把那句话交回给商家。
+    if (e instanceof ProposeRefusal) return { error: e.message };
     throw e;
   }
 

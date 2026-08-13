@@ -15,6 +15,8 @@
  * 权重)。信号表本身也被测试逐条核:同一个词不许属于两个动作,否则永远打平。
  */
 import {
+  videoAction as capability,
+  videoActionFromPrompt,
   videoActionsFor,
   type VideoAction,
   type VideoInputShape,
@@ -23,6 +25,19 @@ import {
 export type VideoIntentDecision =
   | { kind: "action"; action: VideoAction; matched: string[] }
   | { kind: "ask"; question: string; options: VideoAction[] };
+
+/**
+ * 判据来源,按**证据强弱**排:
+ *   · `prompt` —— 真正会送到引擎的那段字。铸卡时一定有,且它就是引擎读任务类型的地方,
+ *     所以它是最强的一份证据,压过商家的措辞(措辞可能含糊,那段字不会)。
+ *   · `text` —— 商家的原话。对话里有,铸卡时没有。
+ *   · 两者都没有 ⇒ 形状的中性默认。
+ */
+export type VideoIntentInput = {
+  text?: string;
+  prompt?: string;
+  shape: VideoInputShape;
+};
 
 /**
  * 只给**需要辨认**的动作建格。
@@ -83,8 +98,8 @@ function matchedSignals(action: VideoAction, text: string): string[] {
   return [...hit];
 }
 
-export function decideVideoAction(input: { text: string; shape: VideoInputShape }): VideoIntentDecision {
-  const text = input.text.toLowerCase();
+export function decideVideoAction(input: VideoIntentInput): VideoIntentDecision {
+  const text = (input.text ?? "").toLowerCase();
   const available = videoActionsFor(input.shape);
 
   // 形状本身讲不通(比如只有末帧、没有首帧 —— 契约在别处已经拒过它,这里是纵深防御):
@@ -95,6 +110,28 @@ export function decideVideoAction(input: { text: string; shape: VideoInputShape 
       kind: "ask",
       question: "I'm not sure what you'd like me to make — tell me, or attach the picture or clip you want to start from.",
       options: [],
+    };
+  }
+
+  // ⓪ **提示词优先**(判官 r1 P1-1/P1-2 的修根点)。
+  //
+  // 这段字就是引擎会收到的东西,任务类型由它决定。所以只要它带着官方开头,那就是这张卡
+  // 的动作 —— 商家的措辞、以及任何一个跟在旁边的声明字段,都不再有发言权。铸卡那一侧
+  // 正是走这条分支进来的(`buildProposeCard` 只给 `prompt` 与它自己数出来的 shape),
+  // 于是「漏传声明」「声明与提示词对不上」这两种失败在结构上消失。
+  //
+  // 形状撑不起它 ⇒ 回**问题**,不回一个退而求其次的动作:一条以
+  // 「Strictly edit <Video_1>…」开头的提示词,送进一条根本没有 Video_1 的请求里,
+  // 无论换成哪个动作都是一次注定让商家失望的付费运行。
+  const fromPrompt = input.prompt ? videoActionFromPrompt(input.prompt) : null;
+  if (fromPrompt) {
+    if (capability(fromPrompt).needs(input.shape)) {
+      return { kind: "action", action: fromPrompt, matched: [] };
+    }
+    return {
+      kind: "ask",
+      question: `${QUESTIONS[fromPrompt]} I don't have that clip in front of me — attach it and I'll go ahead.`,
+      options: [fromPrompt],
     };
   }
 

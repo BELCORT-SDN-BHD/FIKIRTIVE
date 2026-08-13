@@ -30,7 +30,7 @@ import {
   type ApprovedEntity,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
-import { VIDEO_ACTION_IDS } from "./video-capabilities.js";
+import { decideVideoAction } from "./video-intent.js";
 
 // ---------------------------------------------------------------------------
 // Input schema (what the LLM provides) — re-exported for propose.ts
@@ -52,16 +52,16 @@ export const proposeInput = z.object({
   // 创作意图/目的 —— requires 资讯门要求它非空。琐碎请求可由 Otto 从上下文推断填入。
   goal: z.string().optional(),
   /**
-   * #775 —— 这张视频卡是能力表上的哪一个动作。
+   * #775 判官 r1 P1-2 —— 这里**刻意没有** `videoAction` 之类的动作声明字段。
    *
-   * 只在商家**这一轮挂了一整条片子**时才有后果(见 `buildProposeCard` 的形状强制),
-   * 别的形状下它一个字节都不改变今天的卡。缺席 = 今天的行为,老调用一个字不用改。
+   * r1 有过一个,后果正是判官指出的那两条:模型漏传它,一条严格编辑的提示词就带着 16:9
+   * 上卡;模型传错它,卡说的和引擎会做的就不是一件事。一个可以漏传的旁路参数不可能成为
+   * 单一真相来源。
    *
-   * 刻意**不**落进 `GenJob`:动作已经写在商家批准的那段 prompt 里了(官方句式就是动作
-   * 本身),再存一份就是同一件事的第二个真相来源。这里它只做一件事 —— 决定卡上冻的
-   * 形状,而形状是付费参数,所以判据必须在批准**之前**落定。
+   * 现在动作从 `structuredPrompt` 自己认出来(`videoActionFromPrompt`)—— 那段字是卡上
+   * 冻结、批准后原样送到引擎的同一份,引擎也正是从它读任务类型的。判据与执行同源,
+   * 中间没有第二次转述,所以对不上这件事在结构上不存在。
    */
-  videoAction: z.enum(VIDEO_ACTION_IDS).optional(),
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
@@ -149,11 +149,39 @@ export type ProposeCardResult = {
  *
  * `message` 就是给商家看的那句话(English sentence case,不出现任何引擎/供应商名)。
  */
-export class GenerationUnavailableError extends Error {
+/**
+ * 铸卡这一侧的**拒绝**族:造不出一张诚实的卡时抛它,入口把 `message` 原样交回对话,
+ * 一张 GEN_CARD 都不落库。
+ *
+ * 为什么有一个共同基类:入口(`propose` / `proposePack`)只该认识「这是一次拒绝」这件事,
+ * 不该逐个列举拒绝的理由 —— 每加一种拒绝就得回去改两个 catch,漏改一次就是一个没人接的
+ * 崩溃。`message` 就是给商家看的那句话(English sentence case,不出现任何引擎/供应商名)。
+ */
+export class ProposeRefusal extends Error {}
+
+export class GenerationUnavailableError extends ProposeRefusal {
   constructor(readonly kind: "image" | "video") {
     // 措辞的单一来源在 @fikirtive/core —— 四个铸卡入口共用一份(#647 T6 修复轮 P1-1)。
     super(generationUnavailableMessage(kind));
     this.name = "GenerationUnavailableError";
+  }
+}
+
+/**
+ * #775 判官 r1 P1-1 —— 这段提示词要做的那件事,**这一趟的形状撑不起来**。
+ *
+ * 典型:一条以「Strictly edit <Video_1>…」开头的提示词,而商家这一轮一条片子都没挂。
+ * r1 在这里铸出了一张普通视频卡 —— 那张卡是一个点得下去的付费承诺,商家批准之后拿到的
+ * 是一条与他要求毫无关系的片子。降级成别的动作同样不行:那段提示词本身就是为「改这条
+ * 片子」写的,换个动作只是换一种失望。
+ *
+ * 所以这里 fail closed —— 一张卡都不铸,把缺什么、怎么办交回给商家。措辞取自
+ * `decideVideoAction` 的反问,与对话里那句话是同一句,不另写一份。
+ */
+export class VideoActionUnavailableError extends ProposeRefusal {
+  constructor(message: string) {
+    super(message);
+    this.name = "VideoActionUnavailableError";
   }
 }
 
@@ -326,7 +354,7 @@ export function buildDowngradeNote(
  *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo" | "videoAction">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
   ctx: OttoContext,
   ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
@@ -343,6 +371,24 @@ export function buildProposeCard(
   const hasSourceImage = isI2V;
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
+
+  /**
+   * #775 判官 r1 P1-1 / P1-2 —— **这张卡是能力表上的哪一个动作**,在这里定,一次。
+   *
+   * 两个入参都不经过模型的第二次转述:
+   *   · 形状 —— 服务端自己数出来的(片子/首帧都来自 `ctx`,由 D19 信任边界解析);
+   *     末帧不是 propose 的概念(`suggestModel` 固定 `hasTail: false`),所以恒为 false;
+   *   · 动作 —— 从 `structuredPrompt` 的官方开头认出来。那段字是卡上冻结、批准后原样送到
+   *     引擎的同一份,引擎也正是从它读任务类型 —— 判据与执行同源。
+   *
+   * `decideVideoAction` 内部走的是能力表的 `needs(shape)`,所以「这个形状做不到这件事」
+   * 只有一处判定,对话侧与铸卡侧共用。回 `ask` = 撑不起来 ⇒ 一张卡都不铸。
+   */
+  const videoShape = { hasStill: isI2V, hasEndStill: false, hasClip: isRefVideo };
+  const decided =
+    kind === "video" ? decideVideoAction({ prompt: input.structuredPrompt, shape: videoShape }) : null;
+  if (decided?.kind === "ask") throw new VideoActionUnavailableError(decided.question);
+  const cardAction = decided?.kind === "action" ? decided.action : null;
 
   // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently.
   // #785 判官 r1 P1:归属过滤挪到了 i2v 清空**之前**(原本是「先清空、再跳过过滤」)。
@@ -392,10 +438,10 @@ export function buildProposeCard(
    * (`i2vAspectRatio`)每天在用的那个值 —— 含义就是「跟着你给的东西走」,与这两个动作
    * 要的事情逐字相同。
    *
-   * 判据里的 `isRefVideo` 不可省:一条没挂片子的请求就算报了 editClip 也不是剪辑
-   * (能力表的 `needs` 说了同一句话),不许因为一个模型报上来的字段就换掉商家的形状。
+   * `cardAction` 来自上面那一次判定,而它已经过了能力表的 `needs(shape)` —— 所以走到
+   * 这里的 editClip/extendClip **一定**真的有一条片子,不必也不该再判一次形状。
    */
-  const anchoredToClip = isRefVideo && (input.videoAction === "editClip" || input.videoAction === "extendClip");
+  const anchoredToClip = cardAction === "editClip" || cardAction === "extendClip";
 
   if (isRefVideo) {
     const opts = GEN_VIDEO_MODEL_OPTIONS[REFERENCE_VIDEO_MODEL];

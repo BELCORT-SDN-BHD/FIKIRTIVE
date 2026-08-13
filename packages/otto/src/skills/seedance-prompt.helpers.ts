@@ -156,7 +156,19 @@ export function assembleSeedance(i: SeedancePromptInput): string {
   if (locks) lines.push(locks);
   if (i.pacing) lines.push(i.pacing);
   const hasLockedBrandmark = i.references.some((r) => r.role === "brandmark" && r.lock);
-  if (i.cleanFootage) {
+  // #775 判官 r1 P1-3 —— 锚在商家自己那条片子上时,**一条「别让画面上有那个东西」的指令
+  // 都不下**(清底片那一行、竖版防字幕那一行,两条都是)。
+  //
+  // 它们与这两档的边界句直接打架:上面刚说完「其余完全不变」,下面又要求画面上不许有
+  // 文字、水印或 logo —— 商家只想把衬衫改成红色,却可能连自家片头的 logo 一起被抹掉。
+  // 而那枚 logo 是**商家自己的东西**(Founder 原则:商家的 data 商家的权利),我们没有
+  // 立场替他决定它该不该留在自己的片子里。
+  //
+  // 判据是 `anchored`,不是 `cleanFootage` 的取值 —— 这条规矩不该由一个默认值来兜底:
+  // 商家(或 Otto)显式把 cleanFootage 设成 true,同样不下。
+  // 清底片的指令只属于**从零生成**那两档:那里画面上的每一样东西都是我们造出来的,
+  // 说「别造字幕」才有对象。
+  if (i.cleanFootage && !anchored) {
     if (!hasLockedBrandmark) lines.push("no on-screen text, watermark, or logo");
     // ④ 竖版防字幕：竖版再说一次，并点名 `【】` 这个符号。商家锁了品牌标识时，
     //   禁的是字幕，不是那枚 logo。

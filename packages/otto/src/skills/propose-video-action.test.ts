@@ -1,13 +1,23 @@
 /**
- * #775 —— 剪辑/续写这两个动作在**铸卡**那一侧的唯一硬后果:形状必须跟着商家那条片子走。
+ * #775 判官 r1 P1-1 / P1-2 —— 铸卡这一侧的**生产边界**。
  *
- * 官方陷阱:改片子/接片子的任务上再指定一个比例,任务会**先被收下、事后才异步失败** ——
- * 商家看到的是一次批准之后石沉大海。所以判据必须落在批准**之前**的卡上,而不是指望
- * 引擎替我们把关。
+ * r1 的洞:动作是 Otto 手上一个**可以漏传**的可选参数,而能力表的 `needs(shape)` 在生产
+ * 路径上一个调用者都没有。于是两件事同时成立:「无 clip + editClip」照样铸出一张普通视频卡,
+ * 「有 clip 但漏传 videoAction」照样把 16:9 钉上一张严格编辑的卡。
+ *
+ * r2 的修法是换判据,不是加校验:动作从**真正会送到引擎的那段提示词**里认出来
+ * (`structuredPrompt` 是卡上冻结、批准后原样上路的那一段),形状由服务端自己数。
+ * 两者都不经过模型的第二次转述,所以「漏传」这个失败模式在结构上不存在了。
  */
 import { describe, it, expect } from "vitest";
 import { VIDEO_ASPECT_ADAPTIVE } from "@fikirtive/core";
-import { buildProposeCard, proposeInput } from "./propose.helpers.js";
+import {
+  buildProposeCard,
+  proposeInput,
+  VideoActionUnavailableError,
+  ProposeRefusal,
+} from "./propose.helpers.js";
+import { assembleSeedance, seedancePromptInput } from "./seedance-prompt.helpers.js";
 import type { OttoContext } from "../context.js";
 
 function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
@@ -23,44 +33,61 @@ function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
 }
 
 const clipCtx = () => makeCtx({ referenceVideoGenerationId: "gen_vid" });
-const base = { kind: "video" as const, structuredPrompt: "…", entityIds: [], variantSel: {} };
 
-describe("剪辑/续写:比例强制跟着商家那条片子", () => {
-  for (const videoAction of ["editClip", "extendClip"] as const) {
-    it(`${videoAction}:商家点了 16:9 也不送 16:9,卡上落 adaptive`, () => {
-      const { cardPayload } = buildProposeCard(
-        { ...base, desiredAspect: "16:9", videoAction },
-        clipCtx(),
-        [],
-      );
+/** 与生产一致:提示词由装配层产出,不是手打的字符串。 */
+const editPrompt = () =>
+  assembleSeedance(
+    seedancePromptInput.parse({
+      mode: "edit",
+      shots: [{ subject: "the shirt on the man", action: "is deep red instead of white" }],
+    }),
+  );
+const extendPrompt = () =>
+  assembleSeedance(
+    seedancePromptInput.parse({
+      mode: "extend",
+      shots: [{ subject: "the man", action: "walks out of the shop and waves" }],
+    }),
+  );
+const plainPrompt = () =>
+  assembleSeedance(
+    seedancePromptInput.parse({ mode: "t2v", shots: [{ subject: "the jar", action: "turns slowly" }] }),
+  );
+
+const card = (prompt: string, ctx: OttoContext, over: Record<string, unknown> = {}) =>
+  buildProposeCard({ kind: "video", structuredPrompt: prompt, entityIds: [], variantSel: {}, ...over }, ctx, []);
+
+// ---------------------------------------------------------------------------
+// P1-2 —— 形状钉板与提示词同源,漏传这个失败模式不存在了
+// ---------------------------------------------------------------------------
+
+describe("剪辑/续写:形状跟着商家那条片子,判据来自那段提示词本身", () => {
+  for (const [name, prompt] of [["剪辑", editPrompt], ["续写", extendPrompt]] as const) {
+    it(`${name}:商家点了 16:9 也不送 16:9,卡上落 adaptive —— 没有任何一个可以漏传的声明`, () => {
+      const { cardPayload } = card(prompt(), clipCtx(), { desiredAspect: "16:9" });
       expect(cardPayload.params.aspectRatio).toBe(VIDEO_ASPECT_ADAPTIVE);
     });
 
-    it(`${videoAction}:换掉的形状必须**说出来**,不许静默降级`, () => {
-      const { cardPayload } = buildProposeCard(
-        { ...base, desiredAspect: "16:9", videoAction },
-        clipCtx(),
-        [],
-      );
+    it(`${name}:换掉的形状必须说出来,不许静默降级`, () => {
+      const { cardPayload } = card(prompt(), clipCtx(), { desiredAspect: "16:9" });
       expect(cardPayload.downgraded).toBe(true);
       expect(cardPayload.downgradeNote).toContain("16:9");
     });
 
-    it(`${videoAction}:商家没点形状 → 照样 adaptive,而且不算降级(他没被换掉任何东西)`, () => {
-      const { cardPayload } = buildProposeCard({ ...base, videoAction }, clipCtx(), []);
+    it(`${name}:商家没点形状 → 照样 adaptive,而且不算降级`, () => {
+      const { cardPayload } = card(prompt(), clipCtx());
       expect(cardPayload.params.aspectRatio).toBe(VIDEO_ASPECT_ADAPTIVE);
       expect(cardPayload.downgraded).toBe(false);
     });
 
-    it(`${videoAction}:商家在批准之前就在卡上读到形状跟着他的片子走(双面里的商家面)`, () => {
-      const { cardPayload } = buildProposeCard({ ...base, videoAction }, clipCtx(), []);
+    it(`${name}:商家在批准之前就读到形状跟着他的片子走(双面里的商家面)`, () => {
+      const { cardPayload } = card(prompt(), clipCtx());
       expect(cardPayload.specChips).toContain("Same shape as your reference");
-      // 卡面永远不许带出引擎名(既有纪律,这条新路上同样成立)。
       for (const chip of cardPayload.specChips) expect(chip.toLowerCase()).not.toContain("seedance");
     });
 
-    it(`${videoAction}:钱一格没动 —— 仍是整段参考片那一档的固定价与固定 5 秒`, () => {
-      const { cardPayload, shownPriceDisplay } = buildProposeCard({ ...base, videoAction }, clipCtx(), []);
+    it(`${name}:钱一格没动 —— 仍是整段参考片那一档的固定价与固定 5 秒`, () => {
+      const { cardPayload, shownPriceDisplay } = card(prompt(), clipCtx());
       expect(cardPayload.estimatedCredits).toBe(16);
       expect(shownPriceDisplay).toBe(16);
       expect(cardPayload.params.durationSeconds).toBe(5);
@@ -68,38 +95,71 @@ describe("剪辑/续写:比例强制跟着商家那条片子", () => {
     });
   }
 
-  it("照着做一条新的(guideFromClip):今日行为一个字不变 —— 商家选的形状照旧送出去", () => {
-    const { cardPayload } = buildProposeCard(
-      { ...base, desiredAspect: "16:9", videoAction: "guideFromClip" },
-      clipCtx(),
-      [],
-    );
+  it("挂了片子、提示词没有官方开头 ⇒ 确定语义:照着做一条新的,形状照旧是商家选的", () => {
+    const { cardPayload } = card(plainPrompt(), clipCtx(), { desiredAspect: "16:9" });
     expect(cardPayload.params.aspectRatio).toBe("16:9");
-  });
-
-  it("没有传 videoAction:今日行为一个字不变", () => {
-    const { cardPayload } = buildProposeCard({ ...base, desiredAspect: "16:9" }, clipCtx(), []);
-    expect(cardPayload.params.aspectRatio).toBe("16:9");
-  });
-
-  it("手上没有片子却报了 editClip:不许把一条普通视频卡悄悄当成剪辑 —— 形状照旧", () => {
-    const { cardPayload } = buildProposeCard(
-      { ...base, desiredAspect: "16:9", videoAction: "editClip" },
-      makeCtx(),
-      [],
-    );
-    expect(cardPayload.params.aspectRatio).toBe("16:9");
-    expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBeUndefined();
+    expect(cardPayload.downgraded).toBe(false);
   });
 });
 
+// ---------------------------------------------------------------------------
+// P1-1 —— 形状撑不起这个动作时,一张卡都不铸(fail closed)
+// ---------------------------------------------------------------------------
+
+describe("形状撑不起这个动作 ⇒ 一张卡都不铸", () => {
+  it("严格编辑的提示词、手上一条片子都没有 ⇒ 抛拒绝,**不**铸一张普通视频卡", () => {
+    expect(() => card(editPrompt(), makeCtx())).toThrow(VideoActionUnavailableError);
+  });
+
+  it("续写的提示词、手上一条片子都没有 ⇒ 同样拒绝", () => {
+    expect(() => card(extendPrompt(), makeCtx())).toThrow(VideoActionUnavailableError);
+  });
+
+  it("挂的是一张图(首帧)而不是片子 ⇒ 剪辑同样不成立", () => {
+    expect(() => card(editPrompt(), makeCtx({ sourceGenerationId: "gen_img" }))).toThrow(
+      VideoActionUnavailableError,
+    );
+  });
+
+  it("拒绝是入口接得住的那一类,和「引擎被关掉」同一族 —— 不会变成一个没人接的崩溃", () => {
+    try {
+      card(editPrompt(), makeCtx());
+      throw new Error("should have refused");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProposeRefusal);
+      // 给商家看的那句话:说清缺什么、怎么办;不带引擎名。
+      expect((e as Error).message.toLowerCase()).toContain("clip");
+      expect((e as Error).message.toLowerCase()).not.toContain("seedance");
+    }
+  });
+
+  it("图片卡不受影响 —— 这条闸只看视频", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: editPrompt(), entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.kind).toBe("image");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 契约
+// ---------------------------------------------------------------------------
+
 describe("proposeInput 契约", () => {
-  it("videoAction 是可选的,老调用一个字不用改", () => {
+  it("老调用一个字不用改", () => {
     expect(proposeInput.safeParse({ kind: "video", structuredPrompt: "x" }).success).toBe(true);
   });
 
-  it("只收能力表里真有的动作", () => {
-    expect(proposeInput.safeParse({ kind: "video", structuredPrompt: "x", videoAction: "editClip" }).success).toBe(true);
-    expect(proposeInput.safeParse({ kind: "video", structuredPrompt: "x", videoAction: "trimClip" }).success).toBe(false);
+  it("没有 videoAction 这个旁路参数了 —— 传了也不会被采信", () => {
+    const parsed = proposeInput.parse({ kind: "video", structuredPrompt: "x", videoAction: "editClip" });
+    expect((parsed as Record<string, unknown>)["videoAction"]).toBeUndefined();
+  });
+
+  it("一条没有官方开头的普通视频卡照旧,一个字节都没变", () => {
+    const { cardPayload } = card(plainPrompt(), makeCtx(), { desiredAspect: "9:16" });
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    expect(cardPayload.kind).toBe("video");
   });
 });

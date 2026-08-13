@@ -146,6 +146,27 @@ export function actionNeedsClip(id: VideoAction): boolean {
 }
 
 /**
+ * #775 判官 r1 P1-2 —— 从**真正会送到引擎的那段提示词**认出这是哪一个动作。
+ *
+ * 为什么判据必须是提示词,而不是一个跟在旁边的声明字段:
+ * 引擎读到的就是这段字,任务类型是它自己从这段字里读出来的。一个平行的声明字段
+ * (r1 的 `videoAction`)有两个失败模式,而且都真的会发生 —— 模型**漏传**它(于是一条
+ * 严格编辑的提示词带着 16:9 上卡),或者**传错**它(于是卡说的和引擎会做的不是一件事)。
+ * 判据换成提示词本身之后,这两种失败在结构上不存在:卡上冻的那段字与引擎收到的那段字
+ * 是同一份,中间没有第二次转述。
+ *
+ * 认的是**官方开头**,不是关键词。开头由 `VIDEO_ACTIONS` 声明,装配层用同一份常量产出,
+ * 所以「怎么写」和「怎么认」永远同源。认不出来回 null(不猜)。
+ */
+export function videoActionFromPrompt(prompt: string): VideoAction | null {
+  const head = prompt.trimStart();
+  for (const cap of VIDEO_ACTIONS) {
+    if (cap.opening !== null && head.startsWith(cap.opening)) return cap.id;
+  }
+  return null;
+}
+
+/**
  * 教学面上的那句官方句式 —— 与装配层用的是**同一份**声明,只是把片子的编号换成一个词。
  *
  * 为什么不能把 `<Video_1>` 原样写进 skill description:那是给模型读的教材,写上去等于
@@ -165,9 +186,14 @@ export function openingForTeaching(id: VideoAction): string | null {
  * 是商家的事 —— 与 #774 U8 的 `notes` 同一条规矩。
  */
 export function videoPromptWarnings(id: VideoAction, prompt: string): string[] {
-  const lower = prompt.toLowerCase();
+  // 判官 r1 P3 —— 按**整个词**认,不按子串:`preference` / `dereferenced` 里都含着
+  // "reference",子串匹配会在一条完全干净的提示词上报警。误报的代价不是零 —— Otto 会把
+  // 这句提醒用人话转述给商家,商家于是被要求去改一句本来没问题的话,几次之后他学会
+  // 忽略这类提醒,真的那一条也跟着被忽略。
+  // 复数照收(`references` 误导得一模一样);切词按「非字母即分隔」,所以标点贴着也逮得住。
+  const words = new Set(prompt.toLowerCase().split(/[^a-z]+/u).filter(Boolean));
   return videoAction(id)
-    .bannedWords.filter((w) => lower.includes(w))
+    .bannedWords.filter((w) => words.has(w) || words.has(`${w}s`))
     .map(
       (w) =>
         `This prompt still contains the word "${w}" — on a change-this-clip or carry-this-clip request that word makes the engine start a brand-new clip instead. Say what to change in plain words.`,

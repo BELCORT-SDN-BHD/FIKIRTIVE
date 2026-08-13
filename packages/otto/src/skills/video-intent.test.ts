@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { decideVideoAction, VIDEO_INTENT_SIGNALS } from "./video-intent.js";
 import { VIDEO_ACTION_IDS } from "./video-capabilities.js";
+import { assembleSeedance, seedancePromptInput } from "./seedance-prompt.helpers.js";
 
 const NOTHING = { hasStill: false, hasEndStill: false, hasClip: false };
 const STILL = { hasStill: true, hasEndStill: false, hasClip: false };
@@ -83,6 +84,55 @@ describe("含糊与错配 —— 宁可问一句,绝不静默做错那件事", (
   it("反问最多一句 —— 选项不超过两个(含糊 ≤2 问)", () => {
     const d = decideVideoAction({ text: "change the ending and keep it going and make one like this", shape: CLIP });
     if (d.kind === "ask") expect(d.options.length).toBeLessThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 判官 r1 P1-1 —— 这个模块的**生产入口**:按提示词判,而不是按一个可以漏传的声明
+// ---------------------------------------------------------------------------
+
+const promptOf = (mode: "edit" | "extend" | "t2v" | "i2v") =>
+  assembleSeedance(
+    seedancePromptInput.parse({ mode, shots: [{ subject: "the jar", action: "turns slowly" }] }),
+  );
+
+describe("提示词是最强证据 —— 它就是引擎真会收到的那段字", () => {
+  it("严格编辑的开头 + 手上有片子 ⇒ 剪辑,商家一个字都没说也一样", () => {
+    const d = decideVideoAction({ prompt: promptOf("edit"), shape: CLIP });
+    expect(d.kind).toBe("action");
+    if (d.kind !== "action") throw new Error("unreachable");
+    expect(d.action).toBe("editClip");
+  });
+
+  it("延长的开头 + 手上有片子 ⇒ 续写", () => {
+    const d = decideVideoAction({ prompt: promptOf("extend"), shape: CLIP });
+    if (d.kind !== "action") throw new Error("expected an action");
+    expect(d.action).toBe("extendClip");
+  });
+
+  it("严格编辑的开头、手上一条片子都没有 ⇒ 问一句,绝不落到别的动作上", () => {
+    const d = decideVideoAction({ prompt: promptOf("edit"), shape: NOTHING });
+    expect(d.kind).toBe("ask");
+    if (d.kind !== "ask") throw new Error("unreachable");
+    expect(d.options).toEqual(["editClip"]);
+  });
+
+  it("提示词与商家的话对不上时,**提示词说了算** —— 它才是引擎收到的东西", () => {
+    const d = decideVideoAction({ text: "make one like this", prompt: promptOf("edit"), shape: CLIP });
+    if (d.kind !== "action") throw new Error("expected an action");
+    expect(d.action).toBe("editClip");
+  });
+
+  it("没有官方开头的提示词 + 有片子 ⇒ 确定语义:照着做一条新的", () => {
+    for (const mode of ["t2v", "i2v"] as const) {
+      const d = decideVideoAction({ prompt: promptOf(mode), shape: CLIP });
+      if (d.kind !== "action") throw new Error("expected an action");
+      expect(d.action).toBe("guideFromClip");
+    }
+  });
+
+  it("没给提示词时,老的按话判一个字没变", () => {
+    expect(actionOf("把这条片子接下去")).toBe("extendClip");
   });
 });
 
