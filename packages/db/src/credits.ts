@@ -88,8 +88,20 @@ const isP2002 = (e: unknown): boolean =>
  *  A missing organization row is `unreadable`, not "no cap": we refuse rather than spend
  *  against a ceiling we cannot see. (A CreditAccount cannot outlive its Organization — the
  *  FK cascades — so in a healthy database this arm is unreachable; it is the machine-checked
- *  form of "fail closed", not a guess about likelihood.) */
-async function assertWithinSpendCap(tx: Tx, orgId: string, cost: number): Promise<void> {
+ *  form of "fail closed", not a guess about likelihood.)
+ *
+ *  #524 r5 — exported for ONE narrow, additive purpose (judge r4 P1-B): an action the product
+ *  itself defines as a single approval but pays for in TWO reserves (an Otto resume turn's LLM
+ *  hold plus the deterministic charge of the tool the merchant approved). Each reserve alone is
+ *  under the ceiling while their SUM is over it, so a per-reserve verdict lets the pair through.
+ *  The caller asserts the SUM in the SAME transaction as the first reserve, so the whole action
+ *  is judged once, before any of it is held.
+ *
+ *  It is an ADDITIONAL check, never a SUBSTITUTE: it moves nothing, writes nothing, and reserves
+ *  nothing. `reserveCredits` remains the only thing that decides whether money moves, and it
+ *  still runs its own per-charge verdict underneath. Calling this instead of reserving is not a
+ *  spend guard — it is a read. */
+export async function assertWithinSpendCap(tx: Tx, orgId: string, cost: number): Promise<void> {
   const org = await tx.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
   if (!org) throw new SpendCapBlocked({ requiredInternal: cost, capInternal: null });
   const cap = readSpendCap(org.settings);

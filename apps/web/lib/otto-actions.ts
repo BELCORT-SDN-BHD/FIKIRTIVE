@@ -1641,6 +1641,11 @@ export async function ottoApprove(raw: unknown): Promise<
       // Set by withLlmBudget when a thrown run was refunded in FULL — the only state in which
       // "nothing was charged" is a true sentence to put in front of the merchant (#524 r5).
       let chargedNothing = false;
+      // The FULL cost of the approval as one action — this resume's LLM hold PLUS the
+      // deterministic charge of the tool being approved. Handed to the meter so the spend cap is
+      // judged against the whole thing inside the reserve's transaction (#524 r5, judge r4 P1-B).
+      // Null on the plain-generate branch, which has exactly one leg.
+      let approvedActionCostInternal: number | null = null;
 
       // The refId of the resume turn. Hoisted above the approval branch (#524 r2) because the
       // spend-cap preflight has to name the SAME turn the reserve will later hold against, and it
@@ -1798,18 +1803,23 @@ export async function ottoApprove(raw: unknown): Promise<
             return won;
           };
 
-          // A FULL-COST courtesy check, before anything is held (judge r2 P1-B). It carries no
-          // correctness — the reserves decide, each in its own transaction — but it is the only
-          // place that can see BOTH legs of this approval at once: the resume turn's hold AND the
+          // BOTH legs of this approval, as one number: the resume turn's hold AND the
           // deterministic charge of the tool the merchant actually approved. Counting only the
-          // hold is how a cap of 50 let a 40-credit hold through and then refused the 60-credit
-          // refgen it was approving. Under-counting merely falls through to the real gates;
-          // over-counting would refuse work the ledger would have allowed, so unknown tool costs
-          // count as 0 rather than being guessed.
+          // hold is how a cap of 5 credits let a 4-credit hold through and then refused the
+          // 6-credit reference generation it was approving. Under-counting merely falls through to
+          // the real gates; over-counting would refuse work the ledger would have allowed, so
+          // unknown tool costs count as 0 rather than being guessed.
           const holdInternal = llmHoldInternal(
             ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: ownerId, refId, input: state }),
           );
           const approvedCostInternal = holdInternal + approvedToolCostInternal(cardPayload.toolName, targetArgs);
+          // #524 r5 (judge r4 P1-B) — the number that DECIDES. It rides into the meter and is
+          // asserted against the cap inside the reserve's own transaction, so the whole action is
+          // judged once, before any of it is held, against the cap as it reads AT THAT MOMENT.
+          // The line below is the courtesy version of the same verdict: same total, same words,
+          // one read earlier, so the merchant hears it before anything moves. It carries no
+          // correctness (different transaction) and the one above re-decides regardless.
+          approvedActionCostInternal = approvedCostInternal;
           const earlyCapRefusal = await spendCapRefusal(prisma, ownerId, approvedCostInternal);
           if (earlyCapRefusal) return { error: earlyCapRefusal };
 
@@ -1866,6 +1876,11 @@ export async function ottoApprove(raw: unknown): Promise<
                     {
                       ...budgetArgs,
                       afterReserve: claimCard,
+                      // #524 r5 (judge r4 P1-B): the cap is judged against BOTH legs of this
+                      // approval, in the reserve's transaction, before the hold and before the
+                      // card is consumed. Over the ceiling ⇒ SpendCapBlocked, nothing held,
+                      // nothing consumed, and the merchant is told which limit stopped them.
+                      capCostInternal: approvedActionCostInternal ?? undefined,
                       // #524 r5: only this tells us "the run died AND the merchant paid nothing",
                       // which is the one case where a consumed card must stop saying "approved".
                       onRefundedFailure: () => {

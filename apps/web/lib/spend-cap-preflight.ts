@@ -14,11 +14,18 @@ import type { Prisma } from "@fikirtive/db";
  * protected by ORDER instead — consumed inside `withLlmBudget`'s post-reserve claim window — and
  * this is what remains: an early, honest sentence so the merchant hears it before anything moves.
  *
- * WHY IT IS STILL WORTH HAVING. It is the only place that can see EVERY leg of one approval at
- * once. A resumed Otto turn holds for the LLM and then its approved tool reserves again through
- * its own authority; each gate sees only its own leg, so a cap of 50 waves through a 40-credit
- * hold and then refuses the 60-credit refgen the merchant was actually approving (judge r2 P1-B).
- * Summing the legs here catches that before the first credit is held.
+ * WHY IT IS STILL WORTH HAVING. A resumed Otto turn holds for the LLM and then its approved tool
+ * reserves again through its own authority, so a per-charge cap verdict sees only one leg at a
+ * time: a cap of 5 credits waves through a 4-credit hold and then refuses the 6-credit reference
+ * generation the merchant was actually approving (judge r2 P1-B). Summing the legs and saying so
+ * BEFORE the first credit is held is what this is for — the merchant hears the real number, in
+ * their own words, one read earlier than the ledger would say it.
+ *
+ * It is no longer the only place that sums them, and r5 is where that changed: the same total now
+ * rides into `withLlmBudget` as `capCostInternal` and is asserted inside the reserve's own
+ * transaction (judge r4 P1-B), which is what actually refuses. This function stayed because a
+ * refusal the merchant reads before anything moves is worth having, not because anything depends
+ * on it.
  *
  * Direction of error matters: UNDER-counting is safe (it falls through to the real gates, which
  * refuse correctly), OVER-counting would refuse work the ledger would have allowed. So unknown

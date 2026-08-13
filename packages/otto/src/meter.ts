@@ -12,6 +12,9 @@
  *     raise, lower or redirect a charge — reserve/settle/refund are byte-identical to before.
  *  7. (#524 r5) `onRefundedFailure` reports "this turn charged nothing" to the caller. Read-only
  *     signal, fired after the refund; it cannot change any amount and its throw is swallowed.
+ *  8. (#524 r5) `capCostInternal` widens the SPEND-CAP verdict to the whole action this turn is a
+ *     leg of, inside the reserve's own transaction. It can only refuse; the held amount, the
+ *     settle and the refund are all unchanged by it.
  */
 import {
   CREDITS_PER_USD,
@@ -25,6 +28,7 @@ import {
   reserveCredits,
   settleCredits,
   refundReservation,
+  assertWithinSpendCap,
 } from "@fikirtive/db";
 
 export type TokenUsage = {
@@ -149,6 +153,25 @@ export type LlmBudgetArgs = {
    * then the merchant WAS charged for what the call used and "nothing was charged" would be a lie.
    */
   onRefundedFailure?: () => void;
+  /**
+   * The FULL internal-credit cost of the merchant-visible action this turn is one leg of — the
+   * amount the spend cap must be judged against (#524 r5, judge r4 P1-B).
+   *
+   * Why it exists. An Otto approval resume is ONE action to the merchant but TWO reserves to the
+   * ledger: this turn's LLM hold, and the deterministic charge of the tool they approved, which
+   * reserves later through its own authority. Each reserve judged alone passes a ceiling their
+   * SUM would break — a cap of 7 credits waving through a 4-credit hold and then a 6-credit
+   * reference generation, for a 10-credit action the merchant capped at 7. Summing it in a
+   * preflight cannot fix that: the preflight and the reserve run in different transactions, so a
+   * cap lowered in between is simply not seen. Here it is, in the reserve's own transaction.
+   *
+   * Semantics. It changes NO amount: the hold is still `llmHoldInternal(args)` and settle/refund
+   * are untouched. It only widens what the cap verdict is taken against, so it can refuse, never
+   * spend more. Values at or below the hold are ignored (the reserve's own verdict already covers
+   * them), as are malformed ones — the direction that would loosen the ceiling is never taken from
+   * this field. Server-derived only; never request- or model-supplied.
+   */
+  capCostInternal?: number;
 };
 
 /** Thrown when `afterReserve` itself FAILED (#524 r5, judge r4 P1-A'①). The hold was taken and
@@ -235,11 +258,20 @@ export async function withLlmBudget<T>(
   // composition cap may only LOWER it, and a malformed cap is ignored.
   const reserve = llmHoldInternal(args);
 
+  // #524 r5 (judge r4 P1-B): when this turn is one leg of a bigger approved action, the cap is
+  // judged against the WHOLE action first — in this same transaction, so a cap the merchant moved
+  // after the preflight is the one that decides. Only ever stricter: a value at or below the hold,
+  // or a malformed one, is ignored and the reserve's own per-charge verdict stands alone.
+  const capCost = args.capCostInternal;
+  const judgeWholeAction =
+    typeof capCost === "number" && Number.isFinite(capCost) && capCost > reserve;
+
   // Invariant #1: reserve first. InsufficientCredits (and #524's SpendCapBlocked) propagate;
   // fn is never called, and NOTHING the caller does after this line has happened yet.
-  await prisma.$transaction((tx) =>
-    reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve }),
-  );
+  await prisma.$transaction(async (tx) => {
+    if (judgeWholeAction) await assertWithinSpendCap(tx, args.orgId, capCost as number);
+    await reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve });
+  });
 
   // #524 r3 — the claim window. It sits HERE, between a successful hold and the model call, so a
   // caller consuming a one-shot consent does it only once the ledger has already agreed to pay.

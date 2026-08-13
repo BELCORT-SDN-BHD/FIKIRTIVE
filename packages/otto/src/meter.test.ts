@@ -20,14 +20,25 @@ const mocks = vi.hoisted(() => {
   const reserveCredits = vi.fn();
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
+  const assertWithinSpendCap = vi.fn();
   const fakeTx = {};
   const $transaction = vi.fn((cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx));
 
   class InsufficientCredits extends Error {
     constructor(msg = "Not enough credits.") { super(msg); this.name = "InsufficientCredits"; }
   }
+  class SpendCapBlocked extends Error {
+    readonly requiredInternal: number;
+    readonly capInternal: number | null;
+    constructor(detail: { requiredInternal: number; capInternal: number | null }) {
+      super("Paused by your spend cap — raise it in Settings to run this.");
+      this.name = "SpendCapBlocked";
+      this.requiredInternal = detail.requiredInternal;
+      this.capInternal = detail.capInternal;
+    }
+  }
 
-  return { reserveCredits, settleCredits, refundReservation, $transaction, InsufficientCredits };
+  return { reserveCredits, settleCredits, refundReservation, assertWithinSpendCap, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
 });
 
 vi.mock("@fikirtive/db", () => ({
@@ -35,7 +46,9 @@ vi.mock("@fikirtive/db", () => ({
   reserveCredits: mocks.reserveCredits,
   settleCredits: mocks.settleCredits,
   refundReservation: mocks.refundReservation,
+  assertWithinSpendCap: mocks.assertWithinSpendCap,
   InsufficientCredits: mocks.InsufficientCredits,
+  SpendCapBlocked: mocks.SpendCapBlocked,
 }));
 
 // ---------------------------------------------------------------------------
@@ -669,5 +682,138 @@ describe("#524 r3 — afterReserve claims the work between the hold and the mode
       refId: REF,
       cost: llmHoldInternal(args),
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #524 r5 — judge r4 P1-B: the spend cap is judged against the WHOLE approved
+// action, inside the reserve's own transaction.
+// ---------------------------------------------------------------------------
+describe("#524 r5 — capCostInternal judges both legs of one action at the authority", () => {
+  // The judge's counterexample, in the units the reserve actually deals in: a cap of 7, a 4-credit
+  // LLM hold, a 6-credit reference generation. Each leg alone is under the ceiling; the action the
+  // merchant clicked costs 10 and is over it. HOLD is pinned through reserveCapInternal so the
+  // hold is exactly 4 no matter what the price table says.
+  const HOLD = 4;
+  const TOOL = 6;
+  const ACTION_TOTAL = HOLD + TOOL; // 10 — the one approval, both legs
+  const CAP = 7;
+  const approvalArgs = (extra?: Record<string, unknown>) =>
+    makeArgs({ reserveCapInternal: HOLD, capCostInternal: ACTION_TOTAL, ...extra });
+
+  it("refuses the judge's cap-7 / hold-4 / refgen-6 counterexample: each leg under, the sum over", async () => {
+    // The exact shape that got through before r5: two authorities each waving through their own
+    // leg while the action the merchant approved sails past the ceiling they set.
+    mocks.assertWithinSpendCap.mockImplementation(async (_tx: unknown, _orgId: string, cost: number) => {
+      if (cost > CAP) throw new mocks.SpendCapBlocked({ requiredInternal: cost, capInternal: CAP });
+    });
+    const claim = vi.fn(async () => true);
+    const fn = vi.fn();
+
+    const thrown = await withLlmBudget(approvalArgs({ afterReserve: claim }), fn).catch((e: unknown) => e);
+
+    expect(thrown).toBeInstanceOf(mocks.SpendCapBlocked);
+    // The number the merchant is told is the WHOLE action, not one leg of it.
+    expect((thrown as InstanceType<typeof mocks.SpendCapBlocked>).requiredInternal).toBe(ACTION_TOTAL);
+    // Sanity on the premise: each leg on its own WOULD have passed this cap.
+    expect(HOLD).toBeLessThanOrEqual(CAP);
+    expect(TOOL).toBeLessThanOrEqual(CAP);
+    // Nothing held, nothing consumed, nothing ran: the refusal lands before all of it.
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    expect(fn).not.toHaveBeenCalled();
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("judges the action total in the SAME transaction as the reserve, before it", async () => {
+    // Same transaction is the whole point: a preflight in another one cannot see a cap the
+    // merchant moved after it read. Assert both the ordering and the shared tx handle.
+    const order: string[] = [];
+    mocks.assertWithinSpendCap.mockImplementation(async () => { order.push("cap"); });
+    mocks.reserveCredits.mockImplementation(async () => { order.push("reserve"); });
+
+    await withLlmBudget(approvalArgs(), async () => ({ result: "ok" }));
+
+    expect(order).toEqual(["cap", "reserve"]);
+    expect(mocks.$transaction).toHaveBeenCalledTimes(2); // reserve tx + settle tx
+    const capTx = mocks.assertWithinSpendCap.mock.calls[0]![0];
+    const reserveTx = mocks.reserveCredits.mock.calls[0]![0];
+    expect(capTx).toBe(reserveTx); // one transaction, not two reads of a moving cap
+    expect(mocks.assertWithinSpendCap).toHaveBeenCalledWith(reserveTx, ORG, ACTION_TOTAL);
+  });
+
+  it("changes NO amount — the hold is still exactly llmHoldInternal", async () => {
+    // It widens the cap verdict and nothing else: never reserve more, never settle more.
+    const args = approvalArgs();
+    await withLlmBudget(args, async () => ({ result: "ok" }));
+    expect(llmHoldInternal(args)).toBe(HOLD);
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(expect.anything(), { orgId: ORG, refId: REF, cost: HOLD });
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBeLessThanOrEqual(HOLD);
+  });
+
+  it("ignores a total at or below the hold, and malformed values — it can only ever be stricter", async () => {
+    // A looser ceiling must never come from this field: the reserve's own per-charge verdict
+    // stands alone whenever the action total says nothing new (or says nothing sane).
+    for (const capCostInternal of [undefined, 0, -5, HOLD, Number.NaN, Number.POSITIVE_INFINITY]) {
+      vi.clearAllMocks();
+      await withLlmBudget(makeArgs({ reserveCapInternal: HOLD, capCostInternal }), async () => ({ result: "ok" }));
+      expect(mocks.assertWithinSpendCap, `capCostInternal=${String(capCostInternal)}`).not.toHaveBeenCalled();
+      expect(mocks.reserveCredits).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("paid:false holds nothing, so there is no action total to judge", async () => {
+    await withLlmBudget(makeArgs({ paid: false, capCostInternal: ACTION_TOTAL }), async () => ({ result: "free" }));
+    expect(mocks.assertWithinSpendCap).not.toHaveBeenCalled();
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #524 r5 — judge r4 P1-A'②: "nothing was charged" is reported, never guessed.
+// ---------------------------------------------------------------------------
+describe("#524 r5 — onRefundedFailure tells the caller this turn charged nothing", () => {
+  it("fires after a full refund, so a spent one-shot consent can stop claiming success", async () => {
+    const onRefundedFailure = vi.fn();
+    const boom = new Error("resume died");
+
+    await expect(
+      withLlmBudget(makeArgs({ onRefundedFailure }), async () => { throw boom; }),
+    ).rejects.toBe(boom);
+
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(onRefundedFailure).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire when usageOnError settled a real charge — the merchant WAS charged", async () => {
+    // The distinction the card's sentence depends on: "nothing was charged" must be true when
+    // said. A failed call that still burned tokens is settled, not refunded.
+    const onRefundedFailure = vi.fn();
+    const boom = new Error("died mid-stream");
+
+    await expect(
+      withLlmBudget(
+        makeArgs({ onRefundedFailure, usageOnError: () => ({ inputTokens: 1000, outputTokens: 500 }) }),
+        async () => { throw boom; },
+      ),
+    ).rejects.toBe(boom);
+
+    expect(mocks.settleCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+    expect(onRefundedFailure).not.toHaveBeenCalled();
+  });
+
+  it("a throwing hook never masks the real failure", async () => {
+    const boom = new Error("resume died");
+    await expect(
+      withLlmBudget(
+        makeArgs({ onRefundedFailure: () => { throw new Error("hook exploded"); } }),
+        async () => { throw boom; },
+      ),
+    ).rejects.toBe(boom);
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
   });
 });
