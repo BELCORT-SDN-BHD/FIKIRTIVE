@@ -56,11 +56,14 @@ vi.mock("sonner", () => ({
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }));
 // 真输入框换成一个受控的小替身：composer 的提交路径需要一段真 prompt 才走得下去。
+// #785：替身也认 `@id` —— 真的 MentionInput 把 @ 出来的元素当第二个回调参数交出去，
+// 出片框里那一组元素是要真的进引擎的，所以替身必须能表达它，否则那条路测不到。
 vi.mock("@/components/MentionInput", () => ({
   MentionInput: ({ onChange }: { onChange?: (t: string, ids: string[], vsel: Record<string, string>) => void }) =>
     createElement("textarea", {
       "data-testid": "mention",
-      onChange: (e: { target: { value: string } }) => onChange?.(e.target.value, [], {}),
+      onChange: (e: { target: { value: string } }) =>
+        onChange?.(e.target.value, [...e.target.value.matchAll(/@([\w-]+)/g)].map((m) => m[1]!), {}),
     }),
 }));
 
@@ -308,6 +311,55 @@ describe("#645 T4 画布出片：规格从界面一路到付费请求", () => {
     expect(mocks.generateVideoFromText).toHaveBeenCalledTimes(1);
     const options = mocks.generateVideoFromText.mock.calls[0]![4] as { spec?: unknown };
     expect(options.spec).toEqual({ seconds: 12, resolution: "480p", aspectRatio: "9:16" });
+  });
+
+  // -------------------------------------------------------------------------
+  // #785 —— 出片框现在也能 @ 元素,而 @ 到的元素**真的进引擎**(worker 把它们的参考照
+  // 发成 reference_image 部件)。所以这里守两件事:
+  //   ① 屏幕上 @ 的那一组,就是发出去的那一组(与规格同一条「说的=做的」);
+  //   ② @ 换了人 ⇒ 换一个动作身份 —— @ 了产品之后再 @ 代言人不是同一个动作的重试,
+  //      把它当重试会让商家按下的第二次授权被吞掉。
+  // -------------------------------------------------------------------------
+  it("#785: 出片框 @ 到的元素跟着付费请求一起走", async () => {
+    await renderBoard();
+    await openT2v();
+    const textarea = document.querySelector<HTMLTextAreaElement>("textarea")!;
+    typeInto(textarea, "our @prod-1 held by @face-2 on a beach");
+    await act(async () => { await Promise.resolve(); });
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => (b.textContent ?? "").includes("Make video"));
+    await act(async () => { confirm!.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mocks.generateVideoFromText).toHaveBeenCalledTimes(1);
+    const options = mocks.generateVideoFromText.mock.calls[0]![4] as { entityIds?: string[] };
+    expect(options.entityIds).toEqual(["prod-1", "face-2"]);
+  });
+
+  it("#785: 换了 @ 的元素 ⇒ 换一个动作身份(不是同一个动作的重试)", async () => {
+    await renderBoard();
+    await openT2v();
+    const textarea = document.querySelector<HTMLTextAreaElement>("textarea")!;
+    const confirm = () => [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => (b.textContent ?? "").includes("Make video"))!;
+
+    typeInto(textarea, "our @prod-1 on a beach");
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { confirm().click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 第二次:重新开框(与商家真实的第二次操作一致),只把 @ 的人换掉,提示词其余不变。
+    await openT2v();
+    const textarea2 = document.querySelector<HTMLTextAreaElement>("textarea")!;
+    typeInto(textarea2, "our @face-2 on a beach");
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { confirm().click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mocks.generateVideoFromText).toHaveBeenCalledTimes(2);
+    const first = mocks.generateVideoFromText.mock.calls[0]![2] as string;
+    const second = mocks.generateVideoFromText.mock.calls[1]![2] as string;
+    expect(second).not.toBe(first);
   });
 
   it("Founder 已裁的全表:每一档在卡面上报的价 = 那张表上的数", async () => {

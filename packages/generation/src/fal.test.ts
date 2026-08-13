@@ -193,7 +193,7 @@ describe("FalProvider.generate(图片)— 同一把尺子", () => {
 describe("FalProvider — #785 元素参考照", () => {
   it("带元素参考照 ⇒ 付费 POST 之前拒绝(fetch 一次都没发)", async () => {
     const calls: string[] = [];
-    stubFetch((url: string) => { calls.push(url); return okPost; });
+    stubFetch((url: string) => { calls.push(url); return { ok: true, status: 200, json: async () => ({ video: { url: "https://cdn/out.mp4" } }) }; });
     await expect(new FalProvider("k").generateVideo({
       prompt: "our product on a beach", imageUrl: "",
       refImageUrls: ["https://r2/product.png"],

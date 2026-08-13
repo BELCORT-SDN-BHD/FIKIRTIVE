@@ -500,8 +500,8 @@ describe("generateVideo (Seedance, async)", () => {
       const calls: string[] = [];
       stubFetch((url) => { calls.push(url); return jsonRes({ id: "never" }); });
       await expect(new BytePlusProvider("ark-test").generateVideo({
-        prompt: "mix", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini",
-        refImageUrls: ["https://r2/a.png"], ...extra,
+        prompt: "mix", durationSeconds: 5, model: "seedance-2-mini",
+        refImageUrls: ["https://r2/a.png"], tailImageUrl: undefined, refVideoUrl: undefined, ...extra,
       })).rejects.toThrow(/element reference photos/);
       expect(calls).toEqual([]); // 没花钱
     });
