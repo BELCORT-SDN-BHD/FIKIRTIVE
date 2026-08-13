@@ -49,7 +49,7 @@ import {
   publishSurfaceLines,
 } from "@fikirtive/core/schedule-draft";
 import { approvalCardView, type ApprovalCardPayload } from "@/lib/approval-card-view";
-import { AUTO_PUBLISH_GATE_HINT } from "@/lib/auto-publish-gate";
+import { AUTO_PUBLISH_GATE_HINT, autoPublishHint } from "@/lib/auto-publish-gate";
 import { buildStuffItems } from "../stuff-items";
 import type { ScheduledPostRow } from "../schedule-actions";
 
@@ -131,6 +131,9 @@ const WILL_REALLY_SEND = [
   /\bautomatically at (?:its|their) (?:scheduled )?time\b/i,
   /\bonce Meta approves\b/i,
   /\breview pending\b/i,
+  // 「sends them / sends it」= 宣称帖子真的被送走。刻意只认宾语是帖子的写法:诚实那几句里
+  // 的「sends nothing」「Nothing sends until you say go」都不该响 —— 下面的不误伤断言钉着。
+  /\bsends? (?:them|it|your posts?|the posts?)\b/i,
 ];
 const PROMISES_A_DATE = [
   /\bcoming soon\b/i,
@@ -204,6 +207,12 @@ function visibleText(): string {
 
 const SCHEDULE_SRC = readFileSync(
   path.resolve(__dirname, "../../components/otto/OttoSchedule.tsx"),
+  "utf8",
+);
+// 设置页是同一个 auto-publish 开关的**第二块屏**。它自己手写过一句 live 文案,所以它和排程屏
+// 一样要被源码级钉一遍 —— 只钉排程屏,等于放着另一处继续替产品说大话(#851 ③)。
+const SETTINGS_SECTIONS_SRC = readFileSync(
+  path.resolve(__dirname, "../../components/otto/settings/sections.tsx"),
   "utf8",
 );
 
@@ -352,6 +361,40 @@ describe("#851 ② 排程面看得见的那一层如实", () => {
     expect(overPromises(AUTO_PUBLISH_GATE_HINT)).toEqual([]);
     expect(AUTO_PUBLISH_GATE_HINT).toContain(publishSurfaceCopy().fact);
   });
+
+  // ── auto-publish 开关的两道闸 ──────────────────────────────────────────────
+  //
+  // 这颗开关**有两道闸**,而以前只说得出其中一道:`autoPublishAllowed` 问的是「这家商家自己
+  // 连上了吗」,`PUBLISHING_AVAILABLE` 问的是「产品发得出去吗」。两块屏(排程屏的 title、设置
+  // 页可见的 hint)都只问了前一道,于是**一个真的连着账号的 workspace**会在「什么都发不出去」
+  // 的横幅正下方,读到一句「auto-publish 会替你发」。这不是理论上的:`autoPublishAllowed` 为
+  // true 是 schedule-connections.test.ts 钉过的既有状态。
+  //
+  // 修法是让产品级那道闸压过 workspace 那道 —— 发布没通电时,这颗开关的**任何**位置都不该被
+  // 描述成「会送出去」。下面两条把两个分支各钉一遍,第三条做反面自证。
+  it("发布没通电时,auto-publish 开关的两个分支都说不出「会替你发」", () => {
+    for (const workspaceCanAutoPublish of [true, false]) {
+      const hint = autoPublishHint(workspaceCanAutoPublish);
+      expect(
+        overPromises(hint),
+        `workspaceCanAutoPublish=${workspaceCanAutoPublish} 这一支出现了「会真发」类承诺`,
+      ).toEqual([]);
+    }
+  });
+
+  it("连着账号的 workspace 读到的,和连不上的那家是同一句实话", () => {
+    // 「一个开关」的真正含义:产品发不出去时,商家自己的连接状态改变不了这句话。
+    expect(autoPublishHint(true)).toBe(autoPublishHint(false));
+    expect(autoPublishHint(true)).toBe(AUTO_PUBLISH_GATE_HINT);
+    expect(autoPublishHint(true)).not.toContain(publishSurfaceCopy(true).why);
+  });
+
+  it("live 那句本身确实会被词族逮住 —— 上面两条不是在检一张空网", () => {
+    // 反面自证:如果 live 的 why 一条都不命中,前两条就只是在重复「空字符串没有承诺」。
+    expect(overPromises(publishSurfaceCopy(true).why, WILL_REALLY_SEND)).not.toEqual([]);
+    // 同时自证不误伤:诚实那几句里也有 "sends",不该响。
+    expect(overPromises(ottoPublishTruth(false))).toEqual([]);
+  });
 });
 
 // ── ③ 反向断言:句子确实是从权威走到屏幕上的 ──────────────────────────────────
@@ -369,6 +412,17 @@ describe("#851 ③ 那四句话不住在屏幕里", () => {
     expect(SCHEDULE_SRC).not.toContain("Meta review pending");
     expect(SCHEDULE_SRC).not.toContain("Meta&rsquo;s approval to publish");
     expect(SCHEDULE_SRC).not.toContain("Publish approved posts automatically at their time");
+  });
+
+  it("设置页那块屏也不留一份手抄的 live 文案", () => {
+    // 这一句原来就手写在设置页里,而且 hint 是**可见文字**(SettingsPage 把它渲染成
+    // .cv-set-hint),不是 title 属性 —— 所以它是商家真读得到的第二个权威。
+    expect(SETTINGS_SECTIONS_SRC).not.toContain("Publish approved posts automatically at their time");
+    // 两块屏必须走同一个派生函数,而不是各自 `? :` 一份。
+    expect(SETTINGS_SECTIONS_SRC).toContain("autoPublishHint(");
+    expect(SCHEDULE_SRC).toContain("autoPublishHint(");
+    // 四句实话同样不许被抄进设置页。
+    for (const line of publishSurfaceLines()) expect(SETTINGS_SECTIONS_SRC).not.toContain(line);
   });
 });
 

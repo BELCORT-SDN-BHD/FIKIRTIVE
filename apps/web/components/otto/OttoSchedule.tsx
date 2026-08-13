@@ -25,7 +25,7 @@ import {
 } from "@/lib/schedule-actions";
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
-import { AUTO_PUBLISH_GATE_HINT } from "@/lib/auto-publish-gate";
+import { autoPublishHint } from "@/lib/auto-publish-gate";
 // Whether a post can actually reach a social account today, and the ONE set of words for saying so
 // (#851). This screen is the surface a merchant is most likely to read as "send" — so it states the
 // answer itself rather than hoping the merchant infers it from a greyed-out switch.
@@ -482,14 +482,13 @@ export function OttoSchedule({
           {/* OTTO auto-publish toggle. #791-2: this is now the switch the publish scheduler
               actually reads (apps/worker scanDuePublishPosts) — off means approved posts wait.
 
-              #851 — the enabled branch asks the authority for the LIVE sentence on purpose. This
-              switch is only operable when THIS workspace's own connection can publish, so the
-              sentence describing what it does must be the one about a working connection; handing
-              it the product-wide state would describe the wrong thing on exactly the workspace
-              where the switch is usable. */}
+              #851 — the sentence comes from autoPublishHint, which weighs BOTH gates: this
+              workspace's own connection AND whether the product can send at all. Asking only the
+              first one is how the enabled branch came to promise a working send on the very same
+              screen whose banner says nothing goes out. */}
           <label
             className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none"
-            title={autoPublishAvailable ? publishSurfaceCopy(true).why : AUTO_PUBLISH_GATE_HINT}
+            title={autoPublishHint(autoPublishAvailable)}
           >
             <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto || !autoPublishAvailable} aria-label="Otto auto-publish" />
             Auto-publish

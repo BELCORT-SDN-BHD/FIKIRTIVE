@@ -8,7 +8,7 @@ import { creditsLabel, formatCredits } from "@/lib/credit-format";
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 import type { CreditPackShelf } from "@/lib/billing-actions";
-import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
+import { autoPublishHint, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
 import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
 
@@ -200,9 +200,10 @@ export function buildSettingsSections(args: {
           kind: "toggle",
           id: "autopub",
           label: "Auto-publish posts",
-          hint: autoPublishAvailable
-            ? "Publish approved posts automatically at their time"
-            : AUTO_PUBLISH_GATE_HINT,
+          // #851 — the same authority the Schedule screen reads. This hand-written "publishes
+          // automatically" line used to survive here whatever the product could actually do, so a
+          // connected workspace kept reading a promise the Schedule screen had already withdrawn.
+          hint: autoPublishHint(autoPublishAvailable),
           value: settings.autoPublish,
           disabled: !autoPublishAvailable,
           onToggle: toggle("autoPublish"),

@@ -14,6 +14,29 @@ export const AUTO_PUBLISH_GATE_HINT = PUBLISHING_AVAILABLE
   ? "Connect Instagram or Facebook first — auto-publish unlocks once Meta approves publishing."
   : `${publishSurfaceCopy().fact} ${publishSurfaceCopy().real}`;
 
+/**
+ * What the auto-publish switch says about itself — on BOTH sides of its own gate.
+ *
+ * #851: this switch has two gates and only one of them was ever spoken. `workspaceCanAutoPublish`
+ * is about THIS merchant's own connection; `PUBLISHING_AVAILABLE` is about whether the product can
+ * send at all. Every surface used to describe the enabled branch as a working send unconditionally
+ * ("Publish approved posts automatically at their time" / "Auto-publish sends them without you
+ * watching"), because the only question asked was the workspace one. A workspace that did have a
+ * connected account would therefore read a send promise on the same screen whose banner says
+ * nothing goes out — the exact contradiction this ticket exists to remove.
+ *
+ * The product-wide fact outranks the workspace one: while publishing is off there is no position
+ * of this switch that can honestly be described as sending, so both branches fall back to the
+ * preview truth. The day PUBLISHING_AVAILABLE is flipped, the enabled branch speaks again — from
+ * the same authority as the Schedule screen, the approval card and Otto, with no second wording
+ * anywhere to find and edit.
+ */
+export function autoPublishHint(workspaceCanAutoPublish: boolean): string {
+  return PUBLISHING_AVAILABLE && workspaceCanAutoPublish
+    ? publishSurfaceCopy(true).why
+    : AUTO_PUBLISH_GATE_HINT;
+}
+
 const META_PUBLISH_CHANNEL_IDS = new Set(["instagram", "facebook"]);
 
 export function canAutoPublish(
