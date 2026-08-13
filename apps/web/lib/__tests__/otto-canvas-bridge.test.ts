@@ -12,6 +12,7 @@ const {
   mockQueryRaw,
   mockGetGenerationThumbs,
   mockPlaceCanvasJobNode,
+  mockFreeCanvasRect,
   mockNewId,
   mockGenerationFindMany,
   mockLedgerFindMany,
@@ -29,6 +30,7 @@ const {
   mockQueryRaw: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
   mockPlaceCanvasJobNode: vi.fn(),
+  mockFreeCanvasRect: vi.fn(),
   mockNewId: vi.fn(),
   mockGenerationFindMany: vi.fn(),
   mockLedgerFindMany: vi.fn(),
@@ -44,6 +46,11 @@ vi.mock("../canvas-node-placement", () => ({
   canvasJobPlacementLockKey: (ownerId: string, projectId: string, genJobId: string) =>
     `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`,
   placeCanvasJobNode: mockPlaceCanvasJobNode,
+  // #549 r2: the bridge now asks the SHARED placement rule where its in-flight card goes, instead
+  // of counting rows. Stubbed to the identity here — this file is about the bridge's own statement
+  // structure and project scoping. That the rule really keeps this card off a paid one is proved
+  // against a real database in canvas-overlap-placement.test.ts.
+  freeCanvasRectForNewNode: mockFreeCanvasRect,
 }));
 // Only newId is stubbed — the credit conversion the lineage read uses stays REAL (#547 B4).
 vi.mock("@fikirtive/core", async (importOriginal) => ({
@@ -97,6 +104,12 @@ beforeEach(() => {
   mockSettleCanvasCards.mockResolvedValue({ status: "settled", nodeIds: [], created: 0, updated: 0 });
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
+  mockFreeCanvasRect.mockImplementation(async (
+    _tx: unknown,
+    _ownerId: string,
+    _projectId: string,
+    requested: { x: number; y: number; w: number; h: number },
+  ) => requested);
   mockPlaceCanvasJobNode.mockImplementation(async (input: {
     type: string; x: number; y: number; w: number; h: number; prompt?: string | null;
     generationId?: string | null; genJobId: string; status?: string;

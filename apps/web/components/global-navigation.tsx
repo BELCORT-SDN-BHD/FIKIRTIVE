@@ -10,24 +10,18 @@ import {
   Clapperboard,
   Coins,
   Compass,
-  Contact,
   CreditCard,
-  FileText,
   Frame,
-  Inbox,
   LayoutTemplate,
   Library,
   LogOut,
   Megaphone,
   Menu,
   Plug,
-  Send,
   Settings,
-  Sparkles,
   SlidersHorizontal,
   User,
   Users,
-  UsersRound,
   CalendarDays,
   X,
 } from "lucide-react";
@@ -42,6 +36,7 @@ import {
 } from "@fikirtive/core/navigation";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
@@ -53,24 +48,19 @@ type NavigationIcon = ComponentType<{ className?: string; "aria-hidden"?: boolea
  * #801 — 这个文件不再自己写一份导航树。树在 `@fikirtive/core` 的 MERCHANT_NAV 里,
  * 这里只负责把它画出来:一条 key → 图标的对照表,加上壳的行为(高亮、折叠、抽屉)。
  *
- * 后面的票(#792 CRM 折叠成诚实预览、#802 Otto 界面地图)因此只改 core 里的数据,
- * 不必再动这层壳 —— 「说的」与「做的」从此共用同一份声明。
+ * #792 是第一次验收这条分工,结果是**基本成立但不是零改动**:CRM 七扇门收成一扇预览门,
+ * 树的形状全在 core 里改;这层壳只学会了一种新的**画法** —— 目的地带 `preview` 时多画一枚
+ * Preview 徽章(见 NavigationLink)。徽章的文字与 title 全部来自权威源,壳没有新增任何
+ * 声明。所以准确的说法不是「后面的票都不必动壳」,而是:**改的是数据,壳只在需要一种新
+ * 画法时才动,而且不得自带内容**。
  */
 const NAV_ICONS: Record<string, NavigationIcon> = {
   // 板块
   create: Frame,
   campaign: Megaphone,
-  crm: Users,
+  customers: Users,
   workspace: Library,
   settings: Settings,
-  // CRM
-  "crm-inbox": Inbox,
-  "crm-contacts": Contact,
-  "crm-segments": UsersRound,
-  "crm-templates": FileText,
-  "crm-broadcasts": Send,
-  "crm-workflows": Sparkles,
-  "crm-reports": BarChart3,
   // Workspace
   library: Library,
   edit: Clapperboard,
@@ -92,7 +82,6 @@ type RailLink = MerchantNavLink & { readonly icon: NavigationIcon };
 type RailGroup = {
   readonly key: string;
   readonly label: string;
-  readonly rootPath?: string;
   readonly icon: NavigationIcon;
   readonly items: readonly RailLink[];
 };
@@ -111,7 +100,6 @@ const RAIL_TREE: readonly RailNode[] = MERCHANT_NAV.map((node): RailNode =>
     ? {
         key: node.key,
         label: node.label,
-        rootPath: node.rootPath,
         icon: NAV_ICONS[node.key] ?? Frame,
         items: node.items.map(withIcon),
       }
@@ -183,12 +171,10 @@ function nextDisclosureOpenFor(matches: (pathname: string) => boolean, update: D
   return update.type === "toggle" ? update.open : matches(update.pathname);
 }
 
-/** A group is "on" when the current location is one of its own destinations — or, for a
- *  group that owns a whole path prefix, anywhere under that prefix (so an unlisted
- *  sub-route like /crm/inbox/templates still lights its group up). The prefix comes from
- *  the registry, never from a literal written here. */
+/** A group is "on" when the current location is one of its own destinations. `pathMatches`
+ *  is already prefix-aware, so an unlisted sub-route under one of those destinations still
+ *  lights its group up. */
 function groupMatches(group: RailGroup, pathname: string): boolean {
-  if (group.rootPath && pathMatches(pathname, group.rootPath)) return true;
   return activeItemHref(pathname, group.items) !== null;
 }
 
@@ -196,12 +182,12 @@ export function nextGroupDisclosureOpen(group: RailGroup, update: DisclosureUpda
   return nextDisclosureOpenFor((p) => groupMatches(group, p), update);
 }
 
-/** Kept for the existing CRM fence — it is `nextGroupDisclosureOpen` for the CRM group,
- *  named. The group is looked up by key, so the route prefix stays in the registry. */
-export function nextCrmDisclosureOpen(update: DisclosureUpdate): boolean {
-  const crm = NAV_GROUPS.find((group) => group.key === "crm");
-  if (!crm) return update.type === "toggle" ? update.open : false;
-  return nextGroupDisclosureOpen(crm, update);
+/** `nextGroupDisclosureOpen` for a group named by its registry key — the shape the fence
+ *  drives, without handing it a RailGroup object it would have to build itself. */
+export function nextDisclosureOpenForGroup(groupKey: string, update: DisclosureUpdate): boolean {
+  const group = NAV_GROUPS.find((node) => node.key === groupKey);
+  if (!group) return update.type === "toggle" ? update.open : false;
+  return nextGroupDisclosureOpen(group, update);
 }
 
 /** Every path prefix the merchant shell owns. Derived from the registry, so a new
@@ -289,7 +275,13 @@ function NavigationLink({
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
-      title={item.label}
+      // #792 r3 (判词 P1-1) — a preview row carries its truth in its NAME, at every width.
+      // The badge below can only be drawn where there is a label to qualify; between 1024 and
+      // 1279 the rail is 64px of bare icon, which is the most common laptop width and was
+      // exactly where "honest before the click" stopped being true. The accessible name and
+      // the tooltip do not depend on room, so they carry it everywhere.
+      title={item.preview ? `${item.label} — Preview. ${item.preview}` : item.label}
+      aria-label={item.preview ? `${item.label} (preview)` : undefined}
       className={cn(
         navigationLinkClass,
         nested && "pl-10",
@@ -298,8 +290,30 @@ function NavigationLink({
           : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
-      <Icon className="size-4 shrink-0" aria-hidden />
+      <span className="relative shrink-0">
+        <Icon className="size-4" aria-hidden />
+        {/* The icon-only tier's visible mark. A dot cannot spell "preview" on its own — the
+            accessible name above does that — but it stops the row from looking like every
+            finished section, which is what sends a merchant clicking. */}
+        {item.preview ? (
+          <span
+            aria-hidden
+            data-preview-dot
+            className="absolute -right-1 -top-1 hidden size-1.5 rounded-full bg-warning lg:block xl:hidden"
+          />
+        ) : null}
+      </span>
       <span className="lg:hidden xl:inline">{item.label}</span>
+      {/* #792 — a destination whose ability is not finished yet says so BEFORE it is
+          clicked. The badge is drawn from the registry's `preview` field, so a rail row can
+          never claim more than the authority source does, and the preview page repeats the
+          sentence in full. It follows the label's own visibility rule; the dot above covers
+          the tier where there is no label. */}
+      {item.preview ? (
+        <Badge variant="outline" className="ml-auto shrink-0 lg:hidden xl:inline-flex">
+          Preview
+        </Badge>
+      ) : null}
     </Link>
   );
 }

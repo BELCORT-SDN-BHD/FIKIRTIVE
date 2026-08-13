@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyMediaToken } from "@fikirtive/token-crypto";
 import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { storage, mimeOf } from "@/lib/storage";
+import { consumeMediaProxyGate } from "@/lib/rate-limit-gates";
 
 /**
  * Signed media proxy (L1 spec §四C, Plan B). IG only fetches media from a PUBLIC URL, but our
@@ -16,12 +17,13 @@ import { storage, mimeOf } from "@/lib/storage";
  *
  * Node runtime (the default for a route touching @/lib/storage + node:crypto) — never edge.
  *
- * #463: intentionally no principal frame — no DB. This handler reaches storage only (the signed
- * token already carries the ownerId it checks against), so there is nothing for a principal to
- * scope. Left unwrapped on purpose; do not flag it as a missing system context.
+ * #463: intentionally no principal frame. This handler reaches storage and (since #795) one
+ * tenant-less counter row; the signed token already carries the ownerId it checks against, so
+ * there is nothing for a principal to scope. Left unwrapped on purpose; do not flag it as a
+ * missing system context.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ token: string }> },
 ): Promise<NextResponse> {
   const { token } = await ctx.params; // Next 16: params are async
@@ -35,6 +37,23 @@ export async function GET(
   //    ever be minted for u/<ownerId>/… by the worker, but re-check so a signing bug can't cross tenants.
   if (!keyOwnerMatches(claims.key, claims.ownerId)) {
     return new NextResponse("Not found", { status: 404 });
+  }
+
+  // 3) #795 — the external-link gate, per calling address. A public, session-less route with no
+  //    cap lets anyone holding ONE valid signed URL pull it as fast as the network allows.
+  //
+  //    ORDER IS DELIBERATE: it runs AFTER the HMAC checks, so a forged or expired token is still
+  //    refused by pure crypto with zero database work — putting the counter first would have
+  //    turned an unauthenticated GET into a database write and built a cheaper attack than the
+  //    one it was closing.
+  //
+  //    Generous by design (see MEDIA_PROXY_PER_CALLER_PER_10_MIN: the intended caller is a
+  //    platform's media-fetch fleet), and OPEN when the counter is unreachable — this is the one
+  //    route that otherwise needs no database, so a database blip must not become the reason a
+  //    publish the merchant already paid for fails. 429, not 404: "too fast" is an honest answer
+  //    to a caller who already proved the link is theirs.
+  if (!(await consumeMediaProxyGate(req.headers))) {
+    return new NextResponse("Too many requests", { status: 429 });
   }
 
   try {

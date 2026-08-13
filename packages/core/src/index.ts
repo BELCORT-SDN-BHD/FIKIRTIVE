@@ -174,7 +174,7 @@ export * from "./gen-failure.js";
 export * from "./canvas-card-status.js";
 // 执行层真会做什么 —— 卡面文案(otto)与现役适配器请求体断言(generation)钉在同一份声明上。
 // 纯数据,无 node/network 依赖,可留在主 barrel。
-export { EXECUTED_SPEC, imageAspectHonoured } from "./executed-spec.js";
+export { EXECUTED_SPEC, imageAspectHonoured, imageCoherentSetHonoured } from "./executed-spec.js";
 // 付费卡上「这一趟真会做成什么样」的那几个词。与 EXECUTED_SPEC 同住 core,因为读者有两个:
 // Otto 细节卡与战役确认卡(#709)—— 规格文案抄成两份,就一定会有一份先烂掉。
 export { buildSpecChips, videoAspectChip, type SpecChipParams } from "./spec-chips.js";
@@ -184,3 +184,7 @@ export { creditDirection, type CreditDirection } from "./credit-direction.js";
 // 商家主导航的唯一权威源(#801)。三个读者共用:左侧导轨画它、Otto 照它指路、围栏照它核对。
 // 纯数据(无 React、无图标、无 node/network),所以主 barrel 装得下。
 export * from "./navigation.js";
+
+// 消息渠道状态的唯一措辞(#792 r2)。导轨、预览页、Otto 指令与 listChannelScopes 技能描述
+// 共读一份 —— 从前它们各说各话,其中两处还在劝商家去连一条连不了的渠道。
+export * from "./messaging-status.js";

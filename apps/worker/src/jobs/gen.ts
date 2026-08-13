@@ -49,13 +49,23 @@ const mimeForExt = (ext: string) =>
 // the message was redelivered past queue expiry). Kept ABOVE the realistic fal call
 // time and BELOW the GEN/REFGEN queue expiry (20m), so an actively-running gen is
 // never failed closed by a duplicate delivery, but a truly stuck one eventually is.
-const GEN_STALE_MS = 1000 * 60 * 18;
+//
+// #796/#760 — WHY CONCURRENCY DOES NOT MOVE THIS NUMBER. Every clock below is measured from
+// a single job's OWN timestamp (startedAt / createdAt), and under `localConcurrency` each
+// poller fetches, runs and finishes one job on its own clock. So a job's active window is its
+// own duration, exactly as it was when the queue ran one job at a time — N in flight does not
+// stretch any of these windows. (Under the `batchSize: N` + Promise.all shape it WOULD: a
+// fast job stays `active` until the slowest job in its batch resolves, so the queue expiry
+// would have to cover max(batch) instead of max(job). That is a second reason not to use it.)
+// The invariants are pinned by clock-invariants.test.ts — change a number there too, or the
+// suite fails, which is the point.
+export const GEN_STALE_MS = 1000 * 60 * 18;
 // The PROACTIVE reaper (reapStaleGenJobs) runs on its OWN timer, independent of pg-boss
 // redelivery — so its cutoff must exceed the gen-queue expiry (GEN_QUEUE_POLICY.expireInSeconds
 // = 20m). Otherwise it could fail-close a long (18–20m) fal call that pg-boss still considers
 // alive, refunding the merchant + eating the founder's fal cost. The on-redelivery stale path
 // keeps GEN_STALE_MS (a redelivery already implies the 20m expiry has passed).
-const GEN_REAP_MS = 1000 * 60 * 25;
+export const GEN_REAP_MS = 1000 * 60 * 25;
 // A job that has sat in QUEUED this long was never claimed by a worker (worker down / message
 // lost). Fail it closed and refund — the credit hold would otherwise leak forever and the
 // cowork chat spins on a stuck "making this…" indefinitely (audit GEN-6 / P0-11).
@@ -65,7 +75,12 @@ const GEN_REAP_MS = 1000 * 60 * 25;
 // or while a recoverable pre-charge retry is rescheduled (status reset to QUEUED, original
 // createdAt kept). At 10m we fail-closed + refunded jobs pg-boss would still deliver — a false
 // "you weren't charged" that pushes the user to resubmit a duplicate paid job. 25m clears that.
-const GEN_QUEUED_REAP_MS = 1000 * 60 * 25;
+//
+// #796: concurrency makes this cutoff SAFER, never tighter — the queue drains N times faster,
+// so a job that is still QUEUED at 25 minutes is even more certainly a lost message than it was
+// under the serial queue. Kept where it is: the F07 pg-boss liveness check below, not this
+// wall-clock number, is what actually protects a job that is merely waiting its turn.
+export const GEN_QUEUED_REAP_MS = 1000 * 60 * 25;
 
 // Thrown INSIDE the commit transaction to roll it back (discarding the just-created,
 // user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
@@ -755,11 +770,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
         // (or a malformed snapshot) has none → the model's default square, which is exactly
         // what those runs produced before the column existed.
-        const io = job.imageOptions as { aspectRatio?: unknown } | null;
+        const io = job.imageOptions as { aspectRatio?: unknown; coherentSet?: unknown } | null;
         const aspectRatio = typeof io?.aspectRatio === "string"
           ? io.aspectRatio
           : imageDefaults(job.model as GenModel).aspectRatio;
-        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio });
+        // #777:「这几张是一组连贯的图」同样是**冻在任务上**的那份规格,不是这里现算的。
+        // 只认写死的 true —— 快照里没有这一格(既有行、散图行)就是散图,与今日逐字一致。
+        const coherentSet = io?.coherentSet === true;
+        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {

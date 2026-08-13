@@ -42,7 +42,10 @@ const globalsPath = path.join(webRoot, "app/globals.css");
 const UNLAYERED_TOKEN_ROOTS: Record<string, string> = {
   ":root": "Vapor token root — custom properties only",
   ".gb": "Grok-bright token root (+ the theme surface paint it owns)",
-  '.gb.dark, .gb[data-theme="dark"]': "Grok-bright dark token root",
+  // #804 grew this selector by one form, `.dark .gb`, and did not add a rule: next-themes
+  // writes `.dark` on <html> while `gb` lives on <body>, so the same-element `.gb.dark` it
+  // replaces could never have matched in production. Still one unlayered token root.
+  '.gb.dark, .gb[data-theme="dark"], .dark .gb': "Grok-bright dark token root",
 };
 
 /** At-rules that are Tailwind directives rather than rules of our own. */
