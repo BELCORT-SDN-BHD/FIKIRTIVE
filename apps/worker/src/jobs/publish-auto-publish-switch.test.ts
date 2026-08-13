@@ -43,6 +43,12 @@ const m = vi.hoisted(() => {
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma }));
 vi.mock("@fikirtive/token-crypto", () => ({ decryptToken: () => "user-token", signMediaToken: () => "sig" }));
+// #851 —— 本文件测的是**商家自己那道开关**:它得在「产品发得出去」的前提下才有对象可测。
+// 产品级发布闸(PUBLISHING_AVAILABLE)今天是关的,关着时 handlePublish 在任何认领之前就返回,
+// 下面每一条「开着就该发」都会变成假红。所以这里把那道闸显式置成通电,让本文件测的东西保持
+// 原意;闸本身由 publish-preview-gate.test.ts 钉着(闸关时零外呼、零认领、零入队),那个文件
+// 读的是产品闸的真实值,不 mock。通电那天,这三行连同注释一起删。
+vi.mock("@fikirtive/core/schedule-draft", () => ({ PUBLISHING_AVAILABLE: true }));
 
 import { publishWithdrawn } from "@fikirtive/core/server";
 import { handlePublish, scanDuePublishPosts } from "./publish.js";
