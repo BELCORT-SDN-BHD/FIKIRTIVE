@@ -4,6 +4,7 @@ import {
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
+  applySetContinuity,
 } from "../storyboard-edit";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 
@@ -145,5 +146,29 @@ describe("applyReorderShots", () => {
     expect(moved.videoCardId).toBe("vc0");
     expect(moved.videoGenerationId).toBe("vg0");
     expect(moved.firstFrameGenerationId).toBe("gen0");
+  });
+});
+
+describe("#782 applySetContinuity —— 只改开关,一件已生成的东西都不动", () => {
+  it("开 → 落 continuity:true,镜头逐字不变(含已付费的帧/片键)", () => {
+    const p = base();
+    const next = applySetContinuity(p, true);
+    expect(next.continuity).toBe(true);
+    expect(next.shots).toEqual(p.shots);
+    expect(p.continuity).toBeUndefined(); // 不 mutate 入参
+  });
+
+  it("关 → 不落键(与从没开过逐字节同形),镜头同样不动", () => {
+    const p = { ...base(), continuity: true };
+    const next = applySetContinuity(p, false);
+    expect("continuity" in next).toBe(false);
+    expect(next.shots).toEqual(p.shots);
+  });
+
+  it("反复开关不会累积任何副作用", () => {
+    const p = base();
+    const back = applySetContinuity(applySetContinuity(applySetContinuity(p, true), false), true);
+    expect(back.continuity).toBe(true);
+    expect(back.shots).toEqual(p.shots);
   });
 });

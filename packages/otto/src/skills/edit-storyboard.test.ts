@@ -262,3 +262,55 @@ describe("S1 $0 sub-journey: draft → edit script → save (never spends)", () 
     expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #782 接续开关的 Otto 那一面 —— 与人工动作层共用同一条纯变换
+// ---------------------------------------------------------------------------
+
+describe("#782 op=setContinuity", () => {
+  beforeEach(() => {
+    mockFindFirst.mockResolvedValue(card(payload3()));
+    mockUpdate.mockResolvedValue({});
+  });
+
+  it("开 → 回写 continuity:true,镜头一格不动(不碰任何已生成的帧/片键)", async () => {
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setContinuity", continuity: true },
+      { context: makeCtx() },
+    );
+    expect(res).toEqual({ cardId: "card-1", shotCount: 3 });
+    const written = mockUpdate.mock.calls[0]![0].data.payload as StoryboardCardPayload;
+    expect(written.continuity).toBe(true);
+    expect(written.shots).toEqual(payload3().shots);
+  });
+
+  it("关 → 不落键", async () => {
+    mockFindFirst.mockResolvedValue(card({ ...payload3(), continuity: true }));
+    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: false }, { context: makeCtx() });
+    const written = mockUpdate.mock.calls[0]![0].data.payload as StoryboardCardPayload;
+    expect("continuity" in written).toBe(false);
+  });
+
+  it("没说开还是关 → 拒绝,零写入(绝不替商家猜一个方向)", async () => {
+    const res = await executeEditStoryboard({ cardId: "card-1", op: "setContinuity" }, { context: makeCtx() });
+    expect(res).toEqual({ error: "setContinuity needs continuity true or false." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("跨租户的卡照旧进不来", async () => {
+    mockFindFirst.mockResolvedValue(null);
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setContinuity", continuity: true },
+      { context: makeCtx({ orgId: "someone-else" }) },
+    );
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("$0:这条路同样不建 GenJob", async () => {
+    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: true }, { context: makeCtx() });
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+    expect(editStoryboardInput.safeParse({ cardId: "c", op: "setContinuity", continuity: true }).success).toBe(true);
+    expect(editStoryboardSkill.cost).toBe("free");
+  });
+});

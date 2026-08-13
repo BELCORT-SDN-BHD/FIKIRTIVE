@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseStoryboardCardPayload, MAX_STORYBOARD_SHOTS } from "../storyboard-card";
+import { shotsNeedingMintedFirstFrame, parseStoryboardCardPayload, MAX_STORYBOARD_SHOTS } from "../storyboard-card";
 import { MAX_STORYBOARD_SHOTS as MAX_STORYBOARD_SHOTS_OTTO } from "@fikirtive/otto";
 
 describe("MAX_STORYBOARD_SHOTS (client-safe copy)", () => {
@@ -107,5 +107,49 @@ describe("parseStoryboardCardPayload", () => {
     expect(r.shots[0].durationSeconds).toBeUndefined();
     expect("durationSeconds" in r.shots[0]).toBe(false);
     expect(r.shots[0].videoCardId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 接续:卡面读到的开关,以及「闸① 会为哪些镜头花钱」那条共享规则
+// ---------------------------------------------------------------------------
+
+describe("#782 continuity 解析", () => {
+  it("只有明写 true 才算开 —— 老卡与垃圾值一律关", () => {
+    expect(parseStoryboardCardPayload({ continuity: true }).continuity).toBe(true);
+    expect(parseStoryboardCardPayload({ continuity: false }).continuity).toBe(false);
+    expect(parseStoryboardCardPayload({ continuity: "yes" }).continuity).toBe(false);
+    expect(parseStoryboardCardPayload({}).continuity).toBe(false);
+  });
+});
+
+describe("#782 shotsNeedingMintedFirstFrame —— 卡面与服务端共读的同一条规则", () => {
+  const shots = [
+    { index: 1, shotId: "s1" },
+    { index: 0, shotId: "s0" },
+    { index: 2, shotId: "s2", firstFrameGenerationId: "have" },
+  ];
+
+  it("接续关:每个缺帧的镜头都要出一张(老行为)", () => {
+    expect(shotsNeedingMintedFirstFrame(shots, false).map((s) => s.shotId)).toEqual(["s0", "s1"]);
+  });
+
+  it("接续开:只有第一镜要出图,其余等上一镜交棒(真省钱)", () => {
+    expect(shotsNeedingMintedFirstFrame(shots, true).map((s) => s.shotId)).toEqual(["s0"]);
+  });
+
+  it("接续开且第一镜已有帧 → 一张都不用出", () => {
+    const withFirst = [{ index: 0, shotId: "s0", firstFrameGenerationId: "have" }, { index: 1, shotId: "s1" }];
+    expect(shotsNeedingMintedFirstFrame(withFirst, true)).toEqual([]);
+  });
+
+  it("按 index 判「第一镜」,不按数组顺序(重排后仍成立)", () => {
+    const shuffled = [{ index: 2, shotId: "s2" }, { index: 0, shotId: "s0" }, { index: 1, shotId: "s1" }];
+    expect(shotsNeedingMintedFirstFrame(shuffled, true).map((s) => s.shotId)).toEqual(["s0"]);
+  });
+
+  it("空分镜 → 空集合(不抛)", () => {
+    expect(shotsNeedingMintedFirstFrame([], true)).toEqual([]);
+    expect(shotsNeedingMintedFirstFrame([], false)).toEqual([]);
   });
 });

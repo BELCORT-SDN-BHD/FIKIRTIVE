@@ -199,6 +199,81 @@ describe("generateVideo (Seedance, async)", () => {
       .rejects.toThrow(/needs a start image/);
     expect(calls).toHaveLength(0); // pre-spend
   });
+  // ── #782 分镜自动接续:引擎免费附送的末帧 ───────────────────────────────
+  //
+  // 这一组钉三件事:要了才发这个字段(没要的作业请求体逐字不变)、真回来了就下载、
+  // 以及**它绝不许弄坏那条已经付过钱的片子**。
+  it("#782 要末帧时才发 return_last_frame;不要就一个字段都不多发", async () => {
+    const bodies: any[] = [];
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+        bodies.push(JSON.parse(init.body)); return jsonRes({ id: "cgt-lf" });
+      }
+      if (url.includes("/tasks/cgt-lf")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+      return bytesRes();
+    });
+    const base = { prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini" } as const;
+    const p1 = new BytePlusProvider("ark-test").generateVideo({ ...base, returnLastFrame: true });
+    await vi.runAllTimersAsync();
+    await p1;
+    const p2 = new BytePlusProvider("ark-test").generateVideo({ ...base });
+    await vi.runAllTimersAsync();
+    await p2;
+    expect(bodies[0].return_last_frame).toBe(true);
+    // 没要的那一单:字段**不存在**,而不是 false —— 老作业的请求体与 #782 之前逐字节同形。
+    expect("return_last_frame" in bodies[1]).toBe(false);
+  });
+  it("#782 末帧真回来了就下载,跟着片子一起交给 worker", async () => {
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") return jsonRes({ id: "cgt-lf2" });
+      if (url.includes("/tasks/cgt-lf2")) {
+        return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4", last_frame_url: "https://tos/tail.png" } });
+      }
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({
+      prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
+    });
+    await vi.runAllTimersAsync();
+    const out = await promise;
+    expect(out.ext).toBe("mp4");
+    expect(out.lastFrame?.ext).toBe("png");
+    expect(out.lastFrame?.bytes.byteLength).toBeGreaterThan(0);
+  });
+  it("#782 末帧下载失败绝不弄坏那条已经付过钱的片子", async () => {
+    // 付费产物是**片子**,而且它已经到手、已经计费。末帧是免费附件:拿不到就是「这一环
+    // 这次接不上」,不是一次 charged failure。这条测试就是这句话的机器版本。
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") return jsonRes({ id: "cgt-lf3" });
+      if (url.includes("/tasks/cgt-lf3")) {
+        return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4", last_frame_url: "https://tos/tail.png" } });
+      }
+      if (url.includes("tail.png")) return { ok: false, status: 500, arrayBuffer: async () => new ArrayBuffer(0) };
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({
+      prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
+    });
+    await vi.runAllTimersAsync();
+    const out = await promise;
+    expect(out.ext).toBe("mp4");
+    expect(out.bytes.byteLength).toBeGreaterThan(0);
+    expect(out.lastFrame).toBeUndefined();
+  });
+  it("#782 引擎没给末帧同样只是「这次没得接」,片子照常交付", async () => {
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") return jsonRes({ id: "cgt-lf4" });
+      if (url.includes("/tasks/cgt-lf4")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({
+      prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
+    });
+    await vi.runAllTimersAsync();
+    const out = await promise;
+    expect(out.ext).toBe("mp4");
+    expect(out.lastFrame).toBeUndefined();
+  });
   it("an expired task is a PLAIN failure (terminated before any output ⇒ nothing billed, safe to retry)", async () => {
     stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
       ? jsonRes({ status: "expired" })

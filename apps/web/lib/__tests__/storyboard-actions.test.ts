@@ -22,7 +22,7 @@ vi.mock("@fikirtive/core", async (importOriginal) => ({
   newId: () => "new-shot-id",
 }));
 
-import { editShotPrompt, addShot, deleteShot, reorderShots } from "../storyboard-actions";
+import { editShotPrompt, addShot, deleteShot, reorderShots, setStoryboardContinuity } from "../storyboard-actions";
 
 const OWNER = "owner-1";
 function card(payload: StoryboardCardPayload) {
@@ -174,6 +174,39 @@ describe("reorderShots", () => {
     mockFindFirst.mockResolvedValue(null);
     const res = await reorderShots({ cardId: "card-1", order: [2, 0, 1] });
     expect("error" in res).toBe(true);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("#782 setStoryboardContinuity —— 人工那一面的接续开关($0)", () => {
+  it("开 → 回写 continuity:true,镜头一格不动", async () => {
+    mockFindFirst.mockResolvedValue(card(payload3()));
+    const res = await setStoryboardContinuity({ cardId: "card-1", continuity: true });
+    if (!("payload" in res)) throw new Error("expected payload");
+    expect(res.payload.continuity).toBe(true);
+    expect(res.payload.shots).toEqual(payload3().shots);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(mockUpdate.mock.calls[0][0].where).toEqual({ id: "card-1" });
+  });
+
+  it("关 → 不落键", async () => {
+    mockFindFirst.mockResolvedValue(card({ ...payload3(), continuity: true }));
+    const res = await setStoryboardContinuity({ cardId: "card-1", continuity: false });
+    if (!("payload" in res)) throw new Error("expected payload");
+    expect("continuity" in res.payload).toBe(false);
+  });
+
+  it("入参不合法 / 卡不在 → 零写入", async () => {
+    expect(await setStoryboardContinuity({ cardId: "card-1" })).toEqual({ error: "That change isn't valid." });
+    mockFindFirst.mockResolvedValue(null);
+    expect(await setStoryboardContinuity({ cardId: "card-1", continuity: true })).toEqual({ error: "Card not found." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("未登录 → 原样回 gate 的错,不读卡不写卡", async () => {
+    mockOwner.mockResolvedValue({ error: "unauthorized" });
+    expect(await setStoryboardContinuity({ cardId: "card-1", continuity: true })).toEqual({ error: "unauthorized" });
+    expect(mockFindFirst).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
