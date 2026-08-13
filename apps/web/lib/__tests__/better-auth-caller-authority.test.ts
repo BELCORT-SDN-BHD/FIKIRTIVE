@@ -14,8 +14,18 @@
  *      照样绿。所以这里改成 mock 掉 `@/lib/better-auth/server` 的 `auth`(换成开着限流的同一
  *      份配置),然后驱动**真实的 route 导出** —— 盖章接线被删,下面立刻红。
  *
- * 红演习(r7 实跑):把 route.ts 里 `forward.POST` 的 `withCallerIdentityHeader(...)` 换成
- * 原样透传,前两条用例当场转红;还原后全绿。
+ * ── 红演习(r7 实跑,两处接线各删一次,数字是量出来的不是估的)────────────────────────────
+ *
+ *   演习 A —— 删掉**路由这一端**的盖章(route.ts 的 `forward` 里 GET/POST 都换成原样透传):
+ *             4 条里红 2 条 —— ①「两个真实商家 = 两个桶」(expected 429 not to be 429)
+ *             与 ③「自带的合成头会被丢掉」(expected 401 to be 429)。
+ *   演习 B —— 删掉**配置这一端**的取址(server.ts 的 `advanced.ipAddress.ipAddressHeaders`):
+ *             4 条里红 3 条(①②④)。
+ *   两次都还原后:4/4 全绿。
+ *
+ * 为什么每次都有用例留在绿的:接线一断,BA 取不到任何它认的头,于是**所有**请求一起掉进它自己
+ * 那个共用桶(`NO_TRUSTED_IP_KEY`)。「共用一个桶」正是 ②④ 想看到的现象,所以它们会因为坏掉的
+ * 原因而碰巧变绿。真正把「分桶」钉死的是 ①③ —— 也就是每次演习都转红的那几条。
  */
 import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";

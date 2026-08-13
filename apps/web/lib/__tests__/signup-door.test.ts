@@ -264,8 +264,9 @@ describe("#543 · the signup pages are reachable without a session", () => {
  * 「有一条规则」不再是可断言的事实;「哪一层拦哪一种」才是。
  */
 describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () => {
-  // r5/r7 —— 门的清单不在这里手抄一份,而是从**唯一那份清单**读出来(r7 把它从路由文件搬到
-  // lib/public-auth-doors.ts:Route Handler 只许导出 HTTP 方法,多一个导出 `next build` 就红)。
+  // r5/r7 —— 门的清单不在这里手抄一份,而是从**唯一那份清单**读出来。r7 把它从路由文件搬到
+  // lib/public-auth-doors.ts:路由是请求入口,不是别处读数据的地方(搬家的完整理由,以及
+  // 「多一个导出会炸 next build」这个说法为什么在本 app 上不成立,都写在那个文件里)。
   // 第三道门(验证信重发)从清单里消失时,下面的断言会立刻红,而不是安静地少测一道门。
   let PUBLIC_DOORS: readonly string[] = [];
   beforeAll(async () => {
