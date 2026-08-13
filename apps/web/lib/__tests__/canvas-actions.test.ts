@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockSettleCanvasCards, mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockGenerationFindMany, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockLedgerFindMany, mockOrganizationFindFirst, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
+const { mockSettleCanvasCards, mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockGenerationFindMany, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockLedgerFindMany, mockOrganizationFindFirst, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode, mockTransaction, mockFreeCanvasRect } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
+  mockTransaction: vi.fn(),
+  mockFreeCanvasRect: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
   mockUpdateMany: vi.fn(),
@@ -27,9 +29,14 @@ vi.mock("../data", () => ({ getGenerationThumbs: mockGetGenerationThumbs }));
 vi.mock("../canvas-node-placement", () => ({
   placeCanvasJobNode: mockPlaceCanvasJobNode,
   tombstoneCanvasNode: mockTombstoneCanvasNode,
+  // #549: every new card asks the board for a spot that is free. Stubbed to the identity here
+  // so these cases keep testing attribution; the rule itself is proved in
+  // canvas-node-placement.test.ts and canvas-overlap-placement.test.ts.
+  freeCanvasRectForNewNode: mockFreeCanvasRect,
 }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
+    $transaction: mockTransaction,
     canvasNode: { findMany: mockFindMany, create: mockCreate, updateMany: mockUpdateMany, deleteMany: mockDeleteMany, findFirst: mockCanvasNodeFindFirst },
     project: { findFirst: mockProjectFindFirst },
     chatThread: { findFirst: mockThreadFindFirst },
@@ -75,6 +82,15 @@ beforeEach(() => {
   mockSettleCanvasCards.mockResolvedValue({ status: "settled", nodeIds: [], created: 0, updated: 0 });
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
+  mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback({
+    canvasNode: { findMany: mockFindMany, create: mockCreate },
+  }));
+  mockFreeCanvasRect.mockImplementation(async (
+    _tx: unknown,
+    _ownerId: string,
+    _projectId: string,
+    requested: { x: number; y: number; w: number; h: number },
+  ) => requested);
   mockPlaceCanvasJobNode.mockImplementation(async (input: {
     type: string; x: number; y: number; w: number; h: number; prompt?: string | null;
     generationId?: string | null; genJobId: string; status?: string;

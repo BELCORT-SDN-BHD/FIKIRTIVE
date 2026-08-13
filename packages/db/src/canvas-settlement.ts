@@ -95,6 +95,19 @@ export function canvasJobPlacementLockKey(ownerId: string, projectId: string, ge
   return `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`;
 }
 
+/**
+ * Every writer that PUTS A NEW CARD DOWN on one board shares this lock (#549).
+ *
+ * The job lock above answers "is this job's card already placed?". It cannot answer "is that
+ * spot free?", because the spot belongs to the BOARD, not to one job — two different jobs
+ * settling at the same moment each read a board without the other's card on it and both chose
+ * the same free slot. Held only while a placement reads the board and writes its rows, and
+ * always taken AFTER the job lock, so the two can never be waited on in a circle.
+ */
+export function canvasBoardPlacementLockKey(ownerId: string, projectId: string): string {
+  return `canvas-board-placement:${ownerId}:${projectId}`;
+}
+
 /** Repair bookkeeping serializes with itself without queuing behind a slow card placement. */
 export function canvasRepairLockKey(ownerId: string, projectId: string, genJobId: string): string {
   return `canvas-repair:${ownerId}:${projectId}:${genJobId}`;
@@ -138,6 +151,11 @@ export async function settleCanvasCardsForGenJob(
     // that ownerId) — using the authenticated one keeps the rule un-arguable at every line.
     const lockKey = canvasJobPlacementLockKey(ownerId, job.projectId, job.id);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+    // …and the BOARD lock behind it (#549). This settlement may place cards nobody has placed
+    // yet, and it picks their spot by reading which rectangles are free — a read that means
+    // nothing unless no other placement can write between it and this transaction's own writes.
+    const boardLockKey = canvasBoardPlacementLockKey(ownerId, job.projectId);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${boardLockKey}, 0::bigint))`;
 
     // Read the board INSIDE the lock: the job's own cards (tombstones included — deletion is a
     // durable instruction the projection must see) plus every live rectangle, so a batch nobody

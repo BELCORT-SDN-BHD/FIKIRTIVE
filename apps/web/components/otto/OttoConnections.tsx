@@ -32,8 +32,10 @@ type ChannelsState =
   | { phase: "loaded"; channels: ChannelState[] };
 
 // Messaging channels never come from lib/channels/registry.ts — none has an adapter yet.
-// Listed here, statically, with the same "soon" honesty as lib/analytics-platforms.ts:
-// no fake Connect button, just an accurate label.
+// Listed here, statically, with no fake Connect button — just an accurate label. This row is
+// the product fact that #792's Customers preview is written against: while it reads
+// "Not available yet", the Customers door carries its `preview` sentence
+// (packages/core/src/navigation.ts). Connect one for real and both change together.
 const MESSAGING_CHANNELS: { id: string; label: string }[] = [
   { id: "whatsapp", label: "WhatsApp" },
 ];

@@ -16,16 +16,18 @@ import { acceptMagicLinkRequest } from "@/lib/better-auth/magic-link-request";
  * side, where its cost cannot be timed from outside.
  *
  * There is deliberately no try/catch and no failure branch left here. Nothing on this path can
- * throw for a reason that varies with the address: the format check is pure string work and the
- * throttle is a Map lookup. Re-introducing a branch — for the throttle, for a delivery fault, for
- * anything the background learns — re-opens the account-existence oracle this ticket closed three
- * times over.
+ * throw for a reason that varies with the address: the format check is pure string work, and the
+ * throttle (#795: now a shared counter in Postgres rather than a per-process Map) is one
+ * statement over keys that were normalised before they were hashed — and it swallows its own
+ * storage faults into a refusal rather than an exception. Re-introducing a branch — for the
+ * throttle, for a delivery fault, for anything the background learns — re-opens the
+ * account-existence oracle this ticket closed three times over.
  */
 export async function requestMagicLink(input: {
   email: string;
   callbackURL: string;
 }): Promise<MagicLinkRequestResult> {
-  const outcome = acceptMagicLinkRequest({
+  const outcome = await acceptMagicLinkRequest({
     email: input.email,
     callbackURL: input.callbackURL,
     requestHeaders: await headers(),

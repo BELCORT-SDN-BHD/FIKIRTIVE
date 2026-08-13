@@ -7,10 +7,12 @@
 import { describe, expect, it } from "vitest";
 import {
   backupKeyFor,
+  backupTriggerMode,
   isBackupWindow,
   klDateString,
   klHour,
   pgEnvFromUrl,
+  pgSpawnEnv,
   selectExpiredBackups,
 } from "./db-backup.js";
 
@@ -59,6 +61,29 @@ describe("isBackupWindow (trigger decision table: KL time >= 03:00)", () => {
       expect(isBackupWindow(new Date(utc))).toBe(expected);
     });
   }
+});
+
+describe("backupTriggerMode (#794② — exactly one trigger owns the backup)", () => {
+  it("defaults to the worker timer when BACKUP_TRIGGER is unset", () => {
+    expect(backupTriggerMode({})).toBe("worker-timer");
+  });
+
+  it("hands the trigger to cron on BACKUP_TRIGGER=cron", () => {
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "cron" })).toBe("cron");
+  });
+
+  it("tolerates the shapes a Railway variable actually arrives in", () => {
+    expect(backupTriggerMode({ BACKUP_TRIGGER: " CRON " })).toBe("cron");
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "Cron" })).toBe("cron");
+  });
+
+  it("falls back to the timer for any other value — the backup never has ZERO triggers", () => {
+    // The failure worth designing against is "nobody runs it". A typo'd value must land
+    // on the shape that still fires, not on silence.
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "" })).toBe("worker-timer");
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "railway" })).toBe("worker-timer");
+    expect(backupTriggerMode({ BACKUP_TRIGGER: "true" })).toBe("worker-timer");
+  });
 });
 
 describe("selectExpiredBackups (30-day retention, dates parsed from keys)", () => {
@@ -124,5 +149,75 @@ describe("pgEnvFromUrl (connection via env, NEVER argv)", () => {
   it("omits absent parts instead of emitting empty strings", () => {
     const env = pgEnvFromUrl("postgres://localhost/db");
     expect(env).toEqual({ PGHOST: "localhost", PGDATABASE: "db" });
+  });
+});
+
+/**
+ * #794 judge r2 P1 — the dump subprocess must not inherit the ambient PG* family.
+ * libpq reads PGHOSTADDR (which OUTRANKS PGHOST for the real TCP connection) and
+ * PGSERVICE (a service-file stanza supplying host/port/dbname), so an inherited
+ * environment could send pg_dump to a server the connection URL never named while every
+ * string we inspected still read correctly.
+ */
+describe("pgSpawnEnv (the COMPLETE child environment — no inherited PG*)", () => {
+  const URL_ = "postgres://user:pw@localhost:5432/fikirtive_test";
+
+  it("drops every ambient PG* that could move the connection", () => {
+    const env = pgSpawnEnv(URL_, {
+      PATH: "/usr/bin",
+      PGHOSTADDR: "10.0.0.1",
+      PGSERVICE: "prod",
+      PGSERVICEFILE: "/tmp/evil.conf",
+      PGPASSFILE: "/tmp/evil.pass",
+      PGHOST: "prod.example",
+      PGDATABASE: "production",
+      PGPORT: "6543",
+      PGSSLMODE: "prefer",
+    });
+    // nothing from the ambient PG* family survives...
+    expect(env.PGHOSTADDR).toBeUndefined();
+    expect(env.PGSERVICE).toBeUndefined();
+    expect(env.PGSERVICEFILE).toBeUndefined();
+    expect(env.PGPASSFILE).toBeUndefined();
+    expect(env.PGSSLMODE).toBeUndefined(); // not in the URL, so not in the child
+    // ...and the ones we DO set come from the URL, not the environment
+    expect(env.PGHOST).toBe("localhost");
+    expect(env.PGDATABASE).toBe("fikirtive_test");
+    expect(env.PGPORT).toBe("5432");
+  });
+
+  it("keeps only the minimal non-PG passthrough the binary needs", () => {
+    const env = pgSpawnEnv(URL_, {
+      PATH: "/usr/bin",
+      HOME: "/root",
+      LANG: "en_US.UTF-8",
+      TMPDIR: "/tmp",
+      AWS_SECRET_ACCESS_KEY: "should-not-leak",
+      DATABASE_URL: "should-not-leak",
+      SENTRY_DSN: "should-not-leak",
+    });
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.HOME).toBe("/root");
+    expect(env.LANG).toBe("en_US.UTF-8");
+    expect(env.TMPDIR).toBe("/tmp");
+    // the child is built from scratch, so unrelated secrets never reach pg_dump either
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.SENTRY_DSN).toBeUndefined();
+  });
+
+  it("carries the password via PG* env (never argv) — the pre-existing guarantee holds", () => {
+    const env = pgSpawnEnv(URL_, { PATH: "/usr/bin" });
+    expect(env.PGPASSWORD).toBe("pw");
+    expect(env.PGUSER).toBe("user");
+  });
+
+  it("passes through the URL's own sslmode/channel_binding (Neon), not the ambient one", () => {
+    const env = pgSpawnEnv("postgres://u:p@h.neon.tech/db?sslmode=require&channel_binding=require", {
+      PATH: "/usr/bin",
+      PGSSLMODE: "disable",
+    });
+    expect(env.PGSSLMODE).toBe("require");
+    expect(env.PGCHANNELBINDING).toBe("require");
   });
 });

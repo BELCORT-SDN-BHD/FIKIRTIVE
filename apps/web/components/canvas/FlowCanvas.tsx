@@ -20,6 +20,8 @@ import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
@@ -55,7 +57,12 @@ import { CanvasLineagePanel } from "./CanvasLineagePanel";
 import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
 import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
-import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
+import {
+  CANVAS_OTTO_CHAT_REQUIRED,
+  canvasComposerReferenceForNode,
+  canvasSendToOttoTitle,
+  type OttoComposerReference,
+} from "@/lib/canvas-chat-reference";
 import {
   canvasMediaNodeSize,
   DEFAULT_CANVAS_MEDIA_NODE_SIDE,
@@ -255,6 +262,10 @@ export default function FlowCanvas({
   // How many images one Generate makes. Founder default is still 1; the merchant can ask
   // for up to the cap and the price shown next to Generate follows the choice (#547 A2).
   const [imageCount, setImageCount] = useState<number>(CANVAS_IMAGE_DEFAULT_COUNT);
+  // #777:这几张要不要当**一组连贯的图**来做(同一个模特的几个角度、同一件产品的几个
+  // 尺寸)。默认关 —— 多张图今日的含义是「几个不同的选择」,默认打开会把那个含义悄悄
+  // 换掉。开关只在 >1 张时出现,而且**不改价**(仍按张收),所以它旁边不需要第二个价钱。
+  const [imageCoherentSet, setImageCoherentSet] = useState(false);
   // #643 T2：这次出图的形状。菜单与默认值都来自服务端（`imageShapes`）—— 界面一格都不写死，
   // 所以商家看见的每一格都是引擎真给得了的，且选中的那一格就是会交付的那一格。
   const [imageShapeMenu, setImageShapeMenu] = useState<CanvasImageShapes | null>(null);
@@ -587,9 +598,10 @@ export default function FlowCanvas({
       return;
     }
     // No conversation open is not a mistake the merchant made — it is a next step. Said plainly,
-    // in a plain note rather than an error (#604).
+    // in a plain note rather than an error (#604) — and, since #548, said in the control's own
+    // title BEFORE this press too, out of the one constant below.
     if (!referenceHandlerRef.current) {
-      toast.message("Start a conversation with Otto first, then send these over.");
+      toast.message(CANVAS_OTTO_CHAT_REQUIRED);
       return;
     }
     referenceHandlerRef.current(refs);
@@ -821,6 +833,9 @@ export default function FlowCanvas({
       // #643 T2：形状和张数一样，是商家授权内容的一部分 —— 要竖版之后再要方图是**另一个**
       // 动作，不是同一个动作的重试。所以它进材料。
       const aspectRatio = imageShapeMenu ? imageShape : null;
+      // #777:「一组连贯的图」不改价,但它改的是**交付物** —— 要一组之后再要一堆散图
+      // 是另一个动作,不是同一个动作的重试。所以它和张数、形状一样进材料。
+      const coherentSet = count > 1 && imageCoherentSet;
       const material = JSON.stringify({
         projectId,
         threadId: activeThreadId ?? null,
@@ -832,6 +847,7 @@ export default function FlowCanvas({
         ),
         count,
         aspectRatio,
+        coherentSet,
       });
       if (imageActionRef.current?.material !== material) {
         imageActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -845,6 +861,7 @@ export default function FlowCanvas({
         {
           actionId: imageActionRef.current.actionId,
           ...(aspectRatio ? { aspectRatio } : {}),
+          ...(coherentSet ? { coherentSet: true } : {}),
         },
       );
       if (accepted) {
@@ -860,7 +877,7 @@ export default function FlowCanvas({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCount, imageShape, imageShapeMenu, projectId, prompt, promptIds, spawnRect, variantSel]);
+  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCoherentSet, imageCount, imageShape, imageShapeMenu, projectId, prompt, promptIds, spawnRect, variantSel]);
 
   /**
    * "More like this" / the edited prompt on a selected image card (#547 A3 · A4).
@@ -1352,6 +1369,10 @@ export default function FlowCanvas({
   // landed on top of each other and there was no telling which card a button would act on
   // (#604 r2 P2②). For a multi-card pick the batch bar below is the one place to act.
   const selectedCount = nodesOnBoard.filter((n) => n.selected === true).length;
+  // #548: handing cards to Otto is the ONE canvas action that still needs a conversation, and the
+  // card says so before it is pressed instead of only afterwards. Resolved once, here, so a card's
+  // toolbar and the batch bar cannot end up telling the merchant two different things.
+  const sendToOttoTitle = canvasSendToOttoTitle({ chatOpen: !!onReferenceInChat, many: selectedCount > 1 });
   const visibleNodes: CanvasFlowNode[] = nodesOnBoard.map((n) => ({
     ...n,
     // React Flow already puts every card in the tab order and picks it up on Enter, but with
@@ -1362,6 +1383,7 @@ export default function FlowCanvas({
       ? {
           ...withNodeActionLock(n.data),
           selectedCount,
+          sendToOttoTitle,
           onEvolve: handleEvolve,
           onVariant: handleVariant,
           evolveCostHint,
@@ -1373,7 +1395,7 @@ export default function FlowCanvas({
           imageShapeOptions: imageShapeMenu?.options,
         }
       : n.type === "video"
-        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
+        ? { ...withNodeActionLock(n.data), selectedCount, sendToOttoTitle, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
         : withNodeActionLock(n.data),
   }));
   // T6: the four recorded columns, read off the board exactly once, for everything that talks
@@ -1674,6 +1696,25 @@ export default function FlowCanvas({
                     title="The shape these images will be made in — same cost in every shape"
                   />
                 )}
+                {/* #777: one coherent set vs several independent options. Only meaningful for
+                    more than one image, so it only exists then. It costs the same either way —
+                    the label says so, because a toggle beside a price that doesn't move it is
+                    a question the merchant would otherwise have to guess the answer to. */}
+                {imageCount > 1 && (
+                  <div
+                    className="flex items-center gap-2"
+                    title="Make these as one set — the same subject, wardrobe and style across every image. Same cost either way."
+                  >
+                    <Checkbox
+                      id="canvas-coherent-set"
+                      checked={imageCoherentSet}
+                      onCheckedChange={(checked) => setImageCoherentSet(checked === true)}
+                    />
+                    <Label htmlFor="canvas-coherent-set" className="text-[0.75rem] font-normal text-muted-foreground">
+                      Keep as one set
+                    </Label>
+                  </div>
+                )}
               </div>
               <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
@@ -1716,7 +1757,7 @@ export default function FlowCanvas({
               <button
                 type="button"
                 className="al-btn al-btn-sm"
-                title="Hand these to Otto as references"
+                title={sendToOttoTitle}
                 onClick={sendSelectionToOtto}
               >
                 Send to Otto

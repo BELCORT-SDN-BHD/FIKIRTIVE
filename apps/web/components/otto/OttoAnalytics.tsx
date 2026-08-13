@@ -2,7 +2,7 @@
 import React, { useState, useTransition } from "react";
 import { getAnalytics, type AnalyticsData } from "@/lib/analytics-actions";
 import { RANGES, buildCurrencyNotes, type RangeKey } from "@/lib/analytics-view";
-import { ANALYTICS_PLATFORMS, platformById } from "@/lib/analytics-platforms";
+import { ANALYTICS_PLATFORM_LABEL } from "@/lib/analytics-platforms";
 import type { OttoViewKey } from "./OttoApp";
 import { PerAdPerformance } from "./PerAdPerformance";
 
@@ -23,10 +23,6 @@ export function OttoAnalytics({
 }) {
   const [data, setData] = useState<AnalyticsData>(initial);
   const [pending, startTransition] = useTransition();
-  // Which analytics platform is selected. Purely in-page: switching platform
-  // fires NO server action (soon platforms have no data; returning to meta
-  // reuses the already-loaded `data`). Only range changes re-fetch.
-  const [platform, setPlatform] = useState("meta");
 
   function onRangeChange(range: RangeKey) {
     startTransition(async () => {
@@ -35,43 +31,28 @@ export function OttoAnalytics({
     });
   }
 
-  const selected = platformById(platform);
-  const isMeta = platform === "meta";
-
-  // Header platform select — same styling as the date-range select. "(soon)"
-  // suffix on placeholder platforms; · read-only muted tag trails it.
-  const platformSelect = (
+  // #792 — the platform picker is gone. It could select four platforms that have no
+  // adapter, no data and no date, and a control that moves is a promise; the four
+  // "(soon)" rows were the product claiming reach it does not have. What is left is a
+  // statement of fact: this screen reads one platform, read-only.
+  const source = (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <select
-        aria-label="Platform"
-        value={platform}
-        onChange={(e) => setPlatform(e.target.value)}
-        className="h-[34px] max-w-full rounded-[10px] border border-border bg-card px-[13px] text-[13px] font-semibold"
-      >
-        {ANALYTICS_PLATFORMS.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.label}
-            {p.status === "soon" ? " (soon)" : ""}
-          </option>
-        ))}
-      </select>
+      <span className="text-[13px] font-semibold">{ANALYTICS_PLATFORM_LABEL}</span>
       <span className="whitespace-nowrap text-[12px] text-muted-foreground">· read-only</span>
     </div>
   );
 
-  // Header always renders (h1 + platform switcher + · read-only), so a user
-  // whose Meta is disconnected can still switch to another platform — the
-  // connect/reconnect wall lives in the BODY, never as a full-page return.
-  // The date-range select only appears on the meta+ready path (no range to
-  // pick for soon platforms or connect/reconnect states).
-  const isReady = isMeta && data.state === "ready";
+  // The header always renders (h1 + what this reads + · read-only), so a user whose Meta
+  // is disconnected still gets the page's own frame — the connect/reconnect wall lives in
+  // the BODY, never as a full-page return. The date-range select only appears on the ready
+  // path (there is no range to pick in a connect/reconnect state).
+  const isReady = data.state === "ready";
   // Only what the numbers establish (#692 r3) — computed from the same KPI lines on screen.
   const currencyNotes =
     data.state === "ready"
       ? buildCurrencyNotes(data.kpis)
       : { multipleCurrencies: null, unreportedCurrency: null };
   const rangeLabel = isReady ? RANGES.find((r) => r.key === data.range)?.label ?? "" : "";
-  const label = selected?.label ?? platform;
 
   return (
     <div className="flex-1 overflow-auto">
@@ -79,7 +60,7 @@ export function OttoAnalytics({
         {/* Header */}
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Analytics</h1>
-          {platformSelect}
+          {source}
           <div className="hidden flex-1 sm:block" />
           {isReady && (
             <select
@@ -97,31 +78,16 @@ export function OttoAnalytics({
           )}
         </div>
 
-        {/* "Soon" platform: coming-soon panel (mirrors ConnectPanel's card
-            layout). Never touches Meta's connection state — switching platform
-            fires no server action, so `data` is untouched here. */}
-        {!isMeta && (
-          <div className="rounded-[16px] border border-border bg-card p-[18px] text-center flex flex-col items-center gap-3 py-14">
-            <CoralCloud size={40} />
-            <div className="text-[1.5rem] font-bold tracking-[-0.02em]">
-              {label} analytics is coming soon
-            </div>
-            <div className="text-[13px] text-muted-foreground" style={{ maxWidth: 360 }}>
-              We&apos;ll light this up here once {label} is connected — same place, same view.
-            </div>
-          </div>
-        )}
-
-        {/* Meta connect/reconnect walls live in the body so the header (and its
-            platform switcher) stays visible — the user can switch away. */}
-        {isMeta && data.state === "notConnected" && (
+        {/* Connect/reconnect walls live in the body so the header stays visible — the page
+            keeps its own frame instead of becoming a full-page return. */}
+        {data.state === "notConnected" && (
           <ConnectPanel kind="connect" onNavigate={onNavigate} />
         )}
-        {isMeta && data.state === "needsReconnect" && (
+        {data.state === "needsReconnect" && (
           <ConnectPanel kind="reconnect" onNavigate={onNavigate} />
         )}
         {/* F37: transient Graph failure — the token is fine, so offer a retry, never a reconnect. */}
-        {isMeta && data.state === "transientError" && (
+        {data.state === "transientError" && (
           <div className="rounded-[16px] border border-border bg-card p-[18px] text-center flex flex-col items-center gap-3 py-14">
             <div className="text-[1.5rem] font-bold tracking-[-0.02em]">
               Couldn&apos;t reach Meta just now
