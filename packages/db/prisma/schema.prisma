@@ -190,11 +190,53 @@ model Asset {
 
   referenceImages ReferenceImage[]
   generations     Generation[]
+  understandings  AssetUnderstanding[]
 
   @@unique([id, ownerId])
   @@unique([ownerId, contentHash])
   @@index([ownerId, deletedAt])
   @@index([deletedAt]) // 跨 owner 的 30 天清扫扫描
+}
+
+// #784 素材理解:一件素材被读懂之后留下的那一行。
+//
+// 商家永远不点「分析」——这些行由 worker 的扫描器自己建、自己排队,商家的体感只是
+// 「Otto 好像认识我的店」。行本身就是**幂等键**:(ownerId, assetId, kind) 唯一,所以
+// 无论扫描器重跑、pg-boss 重投还是两个副本同时看到同一件素材,同一件事只会被读一次。
+//
+// 不进 CreditLedger:理解是平台成本,商家一分钱不付(见 @fikirtive/core
+// asset-understanding.ts 的铁律 2)。inputTokens/outputTokens 是**记账**,用来事后核对
+// 「真的没超预算」,绝不参与任何扣费判定。
+//
+// kind/status 是代码校验的 String(house style,不建 PG enum)。
+model AssetUnderstanding {
+  id           String   @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  assetId      String
+  kind         String   // 'image-caption' | 'doc-extract' | 'video-qa'
+  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED
+  /// 商家读得到的那一句(Otto 取回时说的就是它)。白标,落盘前过 redact。
+  summary      String   @default("")
+  /// 该 kind 的结构化产物(ImageCaptionData / DocExtractData / VideoQaData)。
+  data         Json?
+  /// 记账口径,不参与扣费。null = 还没跑过 / 跑了但供应商没回用量。
+  inputTokens  Int?
+  outputTokens Int?
+  /// SKIPPED 的原因,或 FAILED 的白标措辞。
+  error        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  asset Asset @relation(fields: [assetId, ownerId], references: [id, ownerId])
+
+  // 幂等键。同一件素材的同一种理解,全状态只允许一行 —— 重跑不重算,也不会重复落
+  // BrandRecord 产品行或品牌记忆。
+  @@unique([ownerId, assetId, kind])
+  // Otto 取回:某租户最近读懂了什么。
+  @@index([ownerId, status, createdAt])
+  // 清道夫:滞留 RUNNING 的行。
+  @@index([status, updatedAt])
 }
 
 model Shot {
@@ -631,6 +673,7 @@ model Organization {
   entityVariants          EntityVariant[]
   referenceImages         ReferenceImage[]
   assets                  Asset[]
+  assetUnderstandings     AssetUnderstanding[]
   shots                   Shot[]
   shotEntityRefs          ShotEntityRef[]
   generations             Generation[]
