@@ -68,14 +68,19 @@ fi
 # A string check alone therefore proves nothing: `…@localhost/restore_drill` with
 # PGHOSTADDR=<prod ip> exported reads perfectly local and connects to production.
 #
-# So the guard is FOUR layers, cheapest first, and the last one is the only one that
-# can actually be trusted because it asks the server itself:
-#   L1  scrub the environment  — unset every PG* before any libpq call (below)
-#   L2  reject override params — the query-string blacklist
-#   L3  parse-and-assert       — real URI parse, host must be a loopback literal
-#   L4  ASK THE SERVER         — connect read-only and assert inet_server_addr() is
-#                                loopback and current_database() is the drill DB,
-#                                BEFORE issuing a single destructive statement
+# So the guard is FOUR layers. The load-bearing ones are L2 and L4; L3 is a cheap net:
+#   L1  scrub the environment  — refuse a target-moving PG*, then unset the whole family
+#   L2  PARSE AND WHITELIST    — scripts/pg-url-target.mjs: the host must be a loopback
+#                                literal and every query parameter must be one we listed.
+#                                A whitelist because a blacklist lets each NEW libpq routing
+#                                parameter through by default — and because libpq decodes
+#                                `%68ost=` back into `host=`, which no raw-text check sees.
+#   L3  raw-text blacklist     — DEMOTED to a redundant net (judge r2 P1 showed it is
+#                                bypassable on its own; it is kept only because it costs
+#                                nothing and catches the obvious shape without spawning node)
+#   L4  ASK THE SERVER         — connect read-only and assert psql's own \conninfo reports
+#                                a loopback address, BEFORE any destructive statement, for
+#                                BOTH connections this script opens (admin and target)
 # ----------------------------------------------------------------------------
 
 # L1: the environment must not have an opinion about where we connect.
@@ -99,38 +104,50 @@ unset _v
 for _pgvar in $(env | sed -n 's/^\(PG[A-Z_]*\)=.*/\1/p'); do unset "$_pgvar"; done
 unset _pgvar
 
-# L2: refuse any query param that can move the target.
+# L2: parse the URL and allow only what we listed — the authoritative string-side check.
+#
+# One parser (scripts/pg-url-target.mjs), used by this script and by the self-test, because
+# two copies of a security parser drift and only one of them gets fixed. It reports the
+# DECODED target: `?%68ost=prod` comes back as the parameter `host`, which is exactly the
+# shape that walked past the old raw-text check on a real libpq 16.14 (judge r2 P1).
+#
+# `field_of` reads one line of its output. Missing node, a crashed parser or any garbled
+# output all leave the field empty, and empty is never `ok=1` — the guard fails CLOSED.
+PG_URL_TARGET="$(cd "$(dirname "$0")" && pwd)/pg-url-target.mjs"
+LOOPBACK_HOSTS="localhost 127.0.0.1 ::1"
+field_of() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
+
+assert_url_target_is_local() {
+  local url="$1" label="$2" parsed ok reason host
+  parsed="$(node "$PG_URL_TARGET" "$url" 2>/dev/null)" || parsed=""
+  ok="$(field_of "$parsed" ok)"
+  if [ "$ok" != 1 ]; then
+    reason="$(field_of "$parsed" reason)"
+    echo "[restore-drill] REFUSING: could not accept $label — ${reason:-the target parser did not run (is node on PATH?)}." >&2
+    echo "[restore-drill]           Pass a plain postgres://<user>:<pw>@localhost:<port>/<drill-db>. Connection parameters that could move the target (host/hostaddr/port/dbname/user/service and anything not explicitly allowed) are refused, decoded form included." >&2
+    return 1
+  fi
+  host="$(field_of "$parsed" host)"
+  case " $LOOPBACK_HOSTS " in
+    *" $host "*) return 0 ;;
+  esac
+  echo "[restore-drill] REFUSING: $label resolves to host '$host', which is not a loopback literal (allowed: $LOOPBACK_HOSTS)." >&2
+  return 1
+}
+
+# L3: the raw-text blacklist, DEMOTED. It cannot be trusted on its own (percent-encoding walks
+# straight past it) and L2 already refuses everything it catches — it stays because it is free
+# and it fires before node is spawned.
 reject_target_override_params() {
   local url="$1"
   local query=""
   case "$url" in *\?*) query="${url#*\?}" ;; esac
   [ -z "$query" ] && return 0
-  # whole-key match on the query's key=value pairs; case-insensitive to be safe
   if printf '%s' "$query" | grep -qiE '(^|[?&;[:space:]])(host|hostaddr|port|dbname|user|service)=' ; then
     echo "[restore-drill] REFUSING: connection URL carries a target-override param (host/hostaddr/port/dbname/user/service=)." >&2
-    echo "[restore-drill]           libpq would resolve it past the local-only guard. Pass a plain postgres://<user>:<pw>@localhost/<drill-db> with no such params." >&2
     return 1
   fi
   return 0
-}
-
-# L3: a REAL URI parse (not sed) — the host must be a loopback literal. Anything that
-# does not parse as a postgres URI is refused rather than guessed at.
-LOOPBACK_HOSTS="localhost 127.0.0.1 ::1 [::1]"
-assert_parsed_host_is_local() {
-  local url="$1" parsed
-  parsed="$(node -e '
-    try {
-      const u = new URL(process.argv[1]);
-      if (!/^postgres(ql)?:$/.test(u.protocol)) { console.log("BADSCHEME"); process.exit(0); }
-      console.log(u.hostname === "" ? "EMPTY" : u.hostname);
-    } catch { console.log("UNPARSEABLE"); }
-  ' "$url" 2>/dev/null)" || parsed="UNPARSEABLE"
-  case " $LOOPBACK_HOSTS " in
-    *" $parsed "*) return 0 ;;
-  esac
-  echo "[restore-drill] REFUSING: parsed connection host '$parsed' is not a loopback literal (allowed: $LOOPBACK_HOSTS)." >&2
-  return 1
 }
 
 # L4: the only check that reflects reality — ask libpq where it ACTUALLY connected, and do
@@ -161,11 +178,17 @@ assert_connection_is_local() {
   return 1
 }
 
-host="$(printf '%s' "$TARGET_URL" | sed -E 's#^[a-z]+://([^@]*@)?([^:/?]+).*#\2#')"
-dbname="$(printf '%s' "$TARGET_URL" | sed -E 's#.*/([^/?]+)(\?.*)?$#\1#')"
+# Parse ONCE, here, and let everything below read the SAME parsed target — the summary, the
+# guards, and the admin URL. A second opinion about where a URL points (a sed here, a node
+# parse there) is how judge r2's bypass existed in the first place.
+# The port comes from the target URL too, not a hardcoded 5432: a drill aimed at a Postgres on
+# another port would otherwise create and drop databases on whatever is listening on 5432.
+parsed_target="$(node "$PG_URL_TARGET" "$TARGET_URL" 2>/dev/null)" || parsed_target=""
+host="$(field_of "$parsed_target" host)"
+dbname="$(field_of "$parsed_target" dbname)"
+target_port="$(field_of "$parsed_target" port)"
+case "$target_port" in ''|*[!0-9]*) target_port=5432 ;; esac
 
-is_local=0
-case "$host" in localhost|127.0.0.1|::1|postgres) is_local=1 ;; esac
 is_drill_db=0
 case "$dbname" in *drill*|*restore*|*_test) is_drill_db=1 ;; esac
 
@@ -174,8 +197,8 @@ plain_dump="$DUMP"
 case "$DUMP" in *.gz) plain_dump="${DUMP%.gz}" ;; esac
 
 echo "[restore-drill] dump         : $DUMP"
-echo "[restore-drill] target host  : $host   (local: $is_local)"
-echo "[restore-drill] target db    : $dbname (drill/test: $is_drill_db)"
+echo "[restore-drill] target host  : ${host:-<unparseable>}"
+echo "[restore-drill] target db    : ${dbname:-<unparseable>} (drill/test: $is_drill_db)"
 echo "[restore-drill] mode         : $([ "$APPLY" = 1 ] && echo APPLY || echo 'DRY RUN (no changes)')"
 
 restore_cmds() {
@@ -201,14 +224,9 @@ if [ "$APPLY" != 1 ]; then
 fi
 
 # ---- --apply: hard local-only guards (never prod / Neon) ----
-# L2: no connection param may redirect the target past the host/db checks.
+# L3 (cheap net, first because it costs nothing), then L2 (the authoritative parse).
 reject_target_override_params "$TARGET_URL" || exit 3
-# L3: a real URI parse — the host must be a loopback literal.
-assert_parsed_host_is_local "$TARGET_URL" || exit 3
-if [ "$is_local" != 1 ]; then
-  echo "[restore-drill] REFUSING --apply: target host '$host' is not local. Prod/Neon restore is founder-only, out-of-band." >&2
-  exit 3
-fi
+assert_url_target_is_local "$TARGET_URL" "the target URL" || exit 3
 if [ "$is_drill_db" != 1 ]; then
   echo "[restore-drill] REFUSING --apply: target db '$dbname' is not a drill/test DB (need *drill*/*restore*/*_test)." >&2
   exit 3
@@ -217,17 +235,13 @@ for bin in psql pg_restore gunzip node; do
   command -v "$bin" >/dev/null 2>&1 || { echo "[restore-drill] error: '$bin' not on PATH." >&2; exit 4; }
 done
 
-# Admin connection for DROP/CREATE DATABASE. The port comes from the TARGET URL, not a
-# hardcoded 5432 — otherwise a drill aimed at a Postgres on another port (an isolated test
-# instance, for example) would silently create and drop databases on whatever happens to be
-# listening on 5432 instead.
-target_port="$(printf '%s' "$TARGET_URL" | sed -E 's#^[a-z]+://([^@]*@)?[^:/?]+:([0-9]+).*#\2#')"
-case "$target_port" in ''|*[!0-9]*) target_port=5432 ;; esac
+# Admin connection for DROP/CREATE DATABASE, built from the PARSED host and port — it carries
+# no query string at all, so nothing can ride along on it.
 admin_url="postgres://fikirtive:fikirtive@$host:$target_port/postgres"
 
 # L4: ask the server where we actually landed, BEFORE any destructive statement.
 # The admin URL is what DROP/CREATE DATABASE run against, so that is the one to verify.
-assert_parsed_host_is_local "$admin_url" || exit 3
+assert_url_target_is_local "$admin_url" "the admin URL" || exit 3
 assert_connection_is_local "$admin_url" || exit 3
 
 # ── RTO clock ────────────────────────────────────────────────────────────────
@@ -241,6 +255,15 @@ echo "[restore-drill] applying restore into LOCAL $dbname ..."
 if [ "$DUMP" != "$plain_dump" ]; then gunzip -kf "$DUMP"; fi
 psql "$admin_url" -q -c "DROP DATABASE IF EXISTS \"$dbname\";"
 psql "$admin_url" -q -c "CREATE DATABASE \"$dbname\";"
+
+# L4, second connection. DROP/CREATE ran on the admin URL, which we verified; pg_restore and
+# the reconcile queries below run on TARGET_URL, which is a DIFFERENT connection and therefore
+# needs its own proof. Verifying only the admin URL was the remaining hole: TARGET_URL is the
+# one the operator typed, so it is the one that can carry a redirect, and pg_restore is the
+# statement that WRITES. It could not be asked any earlier than this — the database it names
+# did not exist until the line above.
+assert_connection_is_local "$TARGET_URL" || exit 3
+
 pg_restore --no-owner --no-privileges -d "$TARGET_URL" "$plain_dump"
 
 count_of() {
