@@ -1,6 +1,24 @@
 @import "tailwindcss";
 
 /*
+ * DARK MODE — wire ② of the §K3 activation contract (#804).
+ *
+ * Tailwind v4's stock `dark:` variant compiles to `@media (prefers-color-scheme: dark)`,
+ * i.e. it reads the OPERATING SYSTEM and knows nothing about the theme the merchant
+ * picked. Class-based theming (next-themes writes `.dark` on <html>) and an OS media
+ * query disagree the moment those two differ, and the disagreement is silent — which is
+ * exactly the bug already shipping today: an OS-dark merchant gets `dark:bg-input/30`
+ * grey washes on every <Select> and <Textarea> while the rest of the page is still light
+ * (components/ui/select.tsx, textarea.tsx, switch.tsx — the only three `dark:` call
+ * sites in the tree). Re-pointing the variant at the class fixes those three at the root
+ * instead of one component at a time.
+ *
+ * `&:where(…)` keeps the variant at zero added specificity, so `dark:` utilities still
+ * lose to nothing they used to win against.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
  * Vapor design system — ported verbatim from the founder's Claude Design
  * handoff (claude.ai/design, "Fikirtive Studio" prototype). Tokens, the al-*
  * component recipes, and the prototype's layout CSS are kept pixel-faithful;
@@ -11,7 +29,7 @@
  * or `@layer components` (recipes), so Tailwind utilities — `md:flex-col`,
  * `lg:hidden`, all of them — win over this file. Unlayered CSS outranks EVERY
  * layer, which is why responsive utilities used to fail silently next to these
- * classes. Only the three token roots (:root, .gb, .gb.dark) stay unlayered;
+ * classes. Only the three token roots (:root, .gb, and the .gb dark root) stay unlayered;
  * lib/__tests__/globals-css-layers.test.ts holds the line.
  */
 :root {
@@ -227,7 +245,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    .gb) is unaffected. Added with the S2 admin dark→light migration. */
 .gb .al-btn{transition:background var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out);}
 .gb .al-btn-primary{background:var(--primary);color:var(--primary-foreground);box-shadow:none;}
-.gb .al-btn-primary:hover:not(:disabled){background:#1A1A18;box-shadow:none;}
+.gb .al-btn-primary:hover:not(:disabled){background:color-mix(in oklab, var(--primary) 90%, var(--background));box-shadow:none;}
 .gb .al-btn-glass{background:var(--card);border-color:var(--border);color:var(--foreground);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:var(--shadow-sm);}
 .gb .al-btn-glass:hover:not(:disabled){background:var(--secondary);}
 .gb .al-btn-ghost{background:transparent;color:var(--muted-foreground);}
@@ -544,8 +562,23 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist, system-ui), sans-serif;
+  /* §K2.7 / wire ③ (#804). `color-scheme` is what the BROWSER reads to paint the parts of
+     the page CSS cannot reach: the date picker's calendar, a <select>'s dropdown list, the
+     "Choose file" chrome, autofill, scrollbars. It inherits, so declaring it on the theme
+     root covers every native control underneath. Absent, the browser followed the OS, and
+     an OS-dark merchant got black native controls sitting inside our white cards — 10
+     `type="date"` + 1 `datetime-local`, 19 `<select>` and 4 `type="file"` call sites. */
+  color-scheme: light;
 }
-.gb.dark, .gb[data-theme="dark"] {
+/* `.dark .gb` is the selector next-themes actually reaches. §K3 describes `.dark` landing
+   "next to .gb", but next-themes writes its class on <html> and nothing else, while `gb`
+   lives on <body> and on ~10 nested roots (/profile, /signup, /admin, /privacy, …). A
+   same-element `.gb.dark` would therefore never match — and worse, each nested `.gb` would
+   re-declare the LIGHT values inside a dark page. Matching the ancestor covers <body> and
+   every nested root in one rule. The two same-element forms stay for surfaces that set the
+   theme locally (skin previews, embedded shots). Specificity is 0,2,0 either way, so both
+   beat the `.gb` light root. */
+.gb.dark, .gb[data-theme="dark"], .dark .gb {
   --background:#0B0B0C; --foreground:#FAFAFA; --card:#131315; --card-foreground:#FAFAFA;
   --popover:#18181B; --popover-foreground:#FAFAFA; --primary:#FAFAFA; --primary-foreground:#0B0B0C;
   --secondary:#1C1C1F; --secondary-foreground:#FAFAFA; --muted:#161619; --muted-foreground:#A1A1A8;
@@ -566,7 +599,43 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --shadow-lg: 0 14px 34px rgba(0 0 0 / 0.55);
   --shadow-xl: 0 26px 60px rgba(0 0 0 / 0.60), 0 8px 20px rgba(0 0 0 / 0.45);
   --shadow-brand: 0 8px 22px rgba(242 106 60 / 0.20);
+  /* The dark half of wire ③ — native controls flip with the theme, not with the OS. */
+  color-scheme: dark;
 }
+
+/*
+ * THE THIRTEEN LITERALS (#804). Turning dark mode on turns every hardcoded colour inside a
+ * `.gb`-scoped recipe into a lie, because a literal cannot follow a token. §K4 already bans
+ * them ("raw hex inside .gb-scoped rules → only the two token blocks may hit"); until this
+ * ticket nothing rendered the ban's consequence, so thirteen survived. Each one below was
+ * re-queried against the current file (§K3's dated paragraph is explicit that its v3 list is
+ * not a fix-on-touch queue) and replaced with the token it was always standing in for:
+ *
+ *   3 × #1A1A18      the ink-button hover (promptbar, detail panel, base .al-btn-primary) →
+ *                    color-mix(--primary 90%, --background). §K2.8: hover on inverted primary
+ *                    goes DOWN, and never through a hardcoded hex. Dark's --primary is #FAFAFA,
+ *                    so the literal was a near-black hover on a white button.
+ *   1 × #1C1B17 + #fff  the canvas node-label pill (ink pill, white type) → --primary /
+ *                    --primary-foreground, so the pill inverts with the theme instead of
+ *                    vanishing into the dark board.
+ *   1 × rgba(255 255 255 / .22)  the count badge riding inside that pill → 22% of
+ *                    --primary-foreground, so it stays legible after the pill inverts.
+ *   3 × rgba(255 255 255 / .92) + 3 × #fff   the white node buttons and the canvas play
+ *                    button, hover included → --card at the same 92%. Light is byte-identical
+ *                    (--card is #FFFFFF); dark stops painting white chips on dark cards.
+ *   1 × rgba(20 20 24 / .04)  the drop-zone tint → 4% of --foreground. Ink at 4% is invisible
+ *                    on an ink page; the drop zone is the affordance, so it has to survive.
+ *   1 × #fff         the settings switch knob → --card. The dark ON track is #FAFAFA, so a
+ *                    white knob on it was an invisible switch — the one state that matters.
+ *   2 × #B4321E + 2 × #E7B7AE  the Danger-zone red (nav link, card border, button) →
+ *                    --error-soft-foreground and a --destructive/--border mix. §A1.5: danger
+ *                    TEXT rides the -soft-foreground pair, which is the pair that themes.
+ *
+ * Light rendering is unchanged to the eye by design — every replacement resolves to the same
+ * value (or within one step of it) under the light token block. Raw box-shadows in this file
+ * are deliberately NOT in this list: a weak shadow on dark is the behaviour §K2.2 asks for
+ * (dark grounds with shadow, defines edges with the 1px border), not an inversion.
+ */
 
 /* Register the shadcn utilities the new components use (names Vapor doesn't map,
    except --color-accent which Vapor already maps to var(--accent) — contextual). */
@@ -647,7 +716,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: none;
 }
 .gb .al-promptbar .al-btn-primary:hover:not(:disabled) {
-  background: #1A1A18;
+  background: color-mix(in oklab, var(--primary) 90%, var(--background));
   box-shadow: none;
 }
 .gb .al-promptbar .al-btn:not(.al-btn-primary) {
@@ -769,7 +838,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   z-index: 6;
   border: 2px dashed var(--border);
   border-radius: 16px;
-  background: rgba(20, 20, 24, 0.04);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -807,7 +876,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 .gb .cv-detail .al-btn:hover:not(:disabled) { background: var(--muted); }
 .gb .cv-detail .al-btn-primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
-.gb .cv-detail .al-btn-primary:hover:not(:disabled) { background: #1A1A18; }
+.gb .cv-detail .al-btn-primary:hover:not(:disabled) { background: color-mix(in oklab, var(--primary) 90%, var(--background)); }
 .gb .cv-detail .al-btn-ghost { background: transparent; }
 .gb .cv-detail .al-iconbtn { background: var(--muted); border: 1px solid var(--border); color: var(--foreground); }
 .gb .cv-detail .al-iconbtn:hover { background: var(--card); }
@@ -844,8 +913,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   font-size: 11px;
   font-weight: 600;
   letter-spacing: normal;
-  color: #fff;
-  background: #1C1B17;
+  color: var(--primary-foreground);
+  background: var(--primary);
   padding: 3px 9px;
   border-radius: 999px;
   white-space: nowrap;
@@ -853,23 +922,23 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 .gb .react-flow__node .cv-nodelabel svg { width: 13px; height: 13px; }
 .gb .react-flow__node .al-btn-glass {
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
   border-color: var(--border);
   color: var(--foreground);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: var(--shadow-sm);
 }
-.gb .react-flow__node .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.gb .react-flow__node .al-btn-glass:hover:not(:disabled) { background: var(--card); }
 .gb .cv-node-toolbar .al-btn-glass {
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
   border-color: var(--border);
   color: var(--foreground);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: var(--shadow-sm);
 }
-.gb .cv-node-toolbar .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.gb .cv-node-toolbar .al-btn-glass:hover:not(:disabled) { background: var(--card); }
 .gb .react-flow__node textarea { color: var(--foreground); }
 .gb .react-flow__node textarea::placeholder { color: var(--muted-foreground); }
 
@@ -886,7 +955,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   margin-left: 2px;
   padding: 0 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: color-mix(in oklab, var(--primary-foreground) 22%, transparent);
   font: 600 10px/15px var(--font-mono, ui-monospace, monospace);
   letter-spacing: 0.02em;
 }
@@ -1114,7 +1183,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   height: 30px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
   color: var(--foreground);
   box-shadow: var(--shadow-sm);
   display: flex;
@@ -1122,7 +1191,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   justify-content: center;
   cursor: pointer;
 }
-.gb .react-flow__node .cv-play:hover { background: #fff; }
+.gb .react-flow__node .cv-play:hover { background: var(--card); }
 
 /* Reduced motion: respect user preference */
 @media (prefers-reduced-motion: reduce) {
@@ -1135,7 +1204,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 /* ── Settings toggle (no shadcn switch exists; gb-styled). */
 .gb .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border); position: relative; cursor: pointer; transition: background var(--dur-2) var(--ease-out); }
-.gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left var(--dur-2) var(--ease-out); }
+.gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: var(--card); box-shadow: var(--shadow-sm); transition: left var(--dur-2) var(--ease-out); }
 .gb .cv-switch.on { background: var(--primary); }
 .gb .cv-switch.on::after { left: 20px; }
 .gb .cv-switch:disabled { cursor: not-allowed; opacity: 1; background: var(--border); }
@@ -1155,13 +1224,13 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; }
 .gb .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
 .gb .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
-.gb .cv-settings-nav a.danger { color: #B4321E; }
+.gb .cv-settings-nav a.danger { color: var(--error-soft-foreground); }
 .gb .cv-settings-body { flex: 1; min-width: 0; overflow: auto; padding: clamp(20px, 4cqi, 36px) clamp(20px, 4cqi, 44px); max-width: 760px; }
 .gb .cv-set-sec { margin-bottom: 34px; scroll-margin-top: 24px; }
 .gb .cv-set-sec h2 { font-size: 12px; font-weight: 600; }
 .gb .cv-set-sub { font-size: 12px; color: var(--muted-foreground); margin: 2px 0 12px; }
 .gb .cv-set-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 4px 18px; }
-.gb .cv-set-card.danger { border-color: #E7B7AE; }
+.gb .cv-set-card.danger { border-color: color-mix(in oklab, var(--destructive) 30%, var(--border)); }
 .gb .cv-set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-top: 1px solid var(--border); }
 .gb .cv-set-row:first-child { border-top: none; }
 .gb .cv-set-lbl { display: flex; flex-direction: column; gap: 2px; font-size: 14px; font-weight: 500; }
@@ -1170,7 +1239,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-set-input-num { width: 90px; }
 .gb .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; flex-wrap: wrap; }
 .gb .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
-.gb .cv-set-btn.danger { border-color: #E7B7AE; color: #B4321E; }
+.gb .cv-set-btn.danger { border-color: color-mix(in oklab, var(--destructive) 30%, var(--border)); color: var(--error-soft-foreground); }
 /* The spend cap's Save/Remove-cap button is the first disabled use of .cv-set-btn — make
    "can't save this" visibly obvious (decision ①), not just non-clickable. */
 .gb .cv-set-btn:disabled { opacity: 0.45; cursor: default; }
