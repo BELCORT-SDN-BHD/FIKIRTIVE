@@ -4385,7 +4385,7 @@ describe("#524 r6 — a plain generate approval is judged as ONE action (judge r
 // 一张「Try again」按下去必撞 P2002 的死卡。r6 改成问账本。
 describe("#524 r6 — which attempt a retry reserves under comes from the LEDGER (judge r5 P1-A'①)", () => {
   const spentThrough = (n: number) =>
-    mockFinalizedReservations.mockImplementation(async (_orgId: string, refIds: string[]) =>
+    mockFinalizedReservations.mockImplementation(async (_orgId: string, refIds: readonly string[]) =>
       new Set(refIds.filter((r) => {
         const m = /:a(\d+)$/.exec(r);
         return m ? Number(m[1]) <= n : false;
@@ -4440,7 +4440,7 @@ describe("#524 r6 — which attempt a retry reserves under comes from the LEDGER
     installRealMeter();
     mockChatMessageUpdateMany.mockRejectedValue(new Error("card write failed"));
     let burned = 0;
-    mockFinalizedReservations.mockImplementation(async (_orgId: string, refIds: string[]) =>
+    mockFinalizedReservations.mockImplementation(async (_orgId: string, refIds: readonly string[]) =>
       new Set(refIds.filter((r) => {
         const m = /:a(\d+)$/.exec(r);
         return m ? Number(m[1]) <= burned : false;

@@ -2101,10 +2101,13 @@ export async function ottoApprove(raw: unknown): Promise<
         //    less. One helper writes both sentences (approvalCardResolutionText), so the card, this
         //    response and the thread note cannot drift into three different claims.
         if (claimedPayload && chargedNothing) {
+          // Pinned before the ledger read: `claimedPayload` is assigned inside the claim closure,
+          // so TypeScript drops the guard's narrowing across the intervening await.
+          const spentCard: ApprovalCardPayload = claimedPayload;
           const holds = await otherHoldsSince(ownerId, refId).catch(() => "unknown" as const);
           const chargeVerdict = holds === "none" ? "zero" : "unknown";
-          await markApprovalFailed(cardId, ownerId, claimedPayload, chargeVerdict);
-          const sentence = approvalCardResolutionText({ ...claimedPayload, status: "failed", chargeVerdict })!;
+          await markApprovalFailed(cardId, ownerId, spentCard, chargeVerdict);
+          const sentence = approvalCardResolutionText({ ...spentCard, status: "failed", chargeVerdict })!;
           await persistAgentNote(threadId, ownerId, sentence);
           revalidatePath("/", "layout");
           return { error: sentence };
