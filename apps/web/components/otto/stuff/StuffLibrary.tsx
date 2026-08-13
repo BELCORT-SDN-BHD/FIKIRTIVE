@@ -149,11 +149,12 @@ export function StuffLibrary({
         ) : (
           <div className={grid}>
             {pickable.map((item) => (
-              <button
+              <Button
                 key={item.id}
                 type="button"
+                variant="ghost"
                 onClick={() => item.assetId && onPick?.(item.assetId)}
-                className="group relative overflow-hidden rounded-[16px] border border-border bg-card text-left transition hover:border-foreground/30 focus-visible:outline-2 focus-visible:outline-brand"
+                className="group relative h-auto w-full flex-col items-stretch justify-start gap-0 overflow-hidden rounded-[16px] border border-border bg-card p-0 text-left transition hover:border-foreground/30 hover:bg-card hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
               >
                 <div className="relative aspect-square bg-muted">
                   <Thumb item={item} />
@@ -162,7 +163,7 @@ export function StuffLibrary({
                 <div className="truncate px-2 py-1.5 text-[0.8125rem] font-medium text-foreground">
                   {item.label}
                 </div>
-              </button>
+              </Button>
             ))}
           </div>
         )}
@@ -175,19 +176,20 @@ export function StuffLibrary({
       {/* Filter pills */}
       <div className="flex flex-wrap gap-1 rounded-[14px] bg-muted p-1">
         {FILTERS.map((f) => (
-          <button
+          <Button
             key={f.value}
             type="button"
+            variant="ghost"
             onClick={() => setFilter(f.value)}
-            className={`rounded-[10px] px-3 py-1.5 text-[0.8125rem] font-semibold ${
+            className={`h-auto rounded-[10px] px-3 py-1.5 text-[0.8125rem] font-semibold ${
               filter === f.value
-                ? "bg-card text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
+                ? "bg-card text-foreground shadow-xs hover:bg-card"
+                : "bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
             }`}
           >
             {f.label}
             <span className="ml-1 text-muted-foreground/70">{counts[f.value]}</span>
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -243,15 +245,16 @@ export function StuffLibrary({
               >
                 <div className="relative aspect-square bg-muted">
                   {canOpen ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       aria-label={`Open ${item.label}`}
                       onClick={openItem}
-                      className="absolute inset-0 block h-full w-full border-0 bg-transparent p-0 text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-brand"
+                      className="absolute inset-0 h-full w-full rounded-none border-0 bg-transparent p-0 text-left hover:bg-transparent focus-visible:outline-2 focus-visible:outline-brand"
                     >
                       <Thumb item={item} />
                       <TileChrome item={item} />
-                    </button>
+                    </Button>
                   ) : (
                     <>
                       <Thumb item={item} />
@@ -303,13 +306,14 @@ export function StuffLibrary({
                   </div>
                 </div>
                 {canOpen ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={openItem}
-                    className="block w-full truncate border-0 bg-transparent px-2 py-1.5 text-left text-[0.8125rem] font-medium text-foreground cursor-pointer hover:text-brand-strong focus-visible:outline-2 focus-visible:outline-brand"
+                    className="h-auto w-full min-w-0 justify-start truncate rounded-none bg-transparent px-2 py-1.5 text-left text-[0.8125rem] font-medium text-foreground hover:bg-transparent hover:text-brand-strong focus-visible:outline-2 focus-visible:outline-brand"
                   >
                     {item.label}
-                  </button>
+                  </Button>
                 ) : (
                   <div className="truncate px-2 py-1.5 text-[0.8125rem] font-medium text-foreground">
                     {item.label}

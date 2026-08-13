@@ -112,15 +112,16 @@ const EXEMPT: Family[] = [
       "components/otto/OttoDiscover.tsx": 1,
     },
   },
-  {
-    family: "otto-stuff",
-    why: "素材库与上传弹窗:文件输入与对话框,迁移要连带 Dialog 的焦点行为一起验。",
-    files: {
-      "components/otto/stuff/StuffLibrary.tsx": 4,
-      "components/otto/stuff/AddAssetDialog.tsx": 5,
-      "components/otto/OttoStuff.tsx": 1,
-    },
-  },
+  // otto-stuff is gone from this board — #840 第 3 步第三车 migrated all three files to
+  // @/components/ui in full: components/otto/stuff/StuffLibrary.tsx (picker tiles, filter
+  // pills, open-item overlay, label row), components/otto/stuff/AddAssetDialog.tsx (close key,
+  // Upload/Generate segment toggle, the file <input> now wraps @/components/ui/input with its
+  // file: classes preserved, format-picker cards), components/otto/OttoStuff.tsx (product-pick
+  // list rows). The hand-rolled `<div role="dialog">` overlay in both files is untouched — it
+  // is not a native <dialog> element, so it was never on this board. Sweeps to 0 now. Their
+  // rows stay in FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot
+  // and never shrinks — but the live board only lists what is still owed, same as
+  // auth/navigation's departure above.
   {
     family: "analytics",
     why: "Analytics:#792 已裁定收敛到只留 Meta,四个 soon 空格收起 —— 等那票落地后再迁,免得迁掉马上要拆的格子。",
@@ -157,18 +158,26 @@ const EXEMPT: Family[] = [
   // components/northstar/immersive/immersive-shell.tsx all sweep to 0 now). Their rows stay in
   // FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and never shrinks —
   // but the live board only lists what is still owed, same as immersive-nav.tsx's departure above.
+  // asset is gone from this board — #840 第 3 步第三车 migrated it in full:
+  // components/asset/DetailPanel.tsx's close button (al-iconbtn al-iconbtn-md) and variant
+  // thumbnail switcher both now wrap @/components/ui/button. Sweeps to 0 now. Its row stays in
+  // FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and never
+  // shrinks — but the live board only lists what is still owed, same as auth/navigation's
+  // departure above.
   {
     family: "gen-pickers",
-    why: "生成参数选择器(视频规格/图片形状):裸 <select> 花钱前最后一屏,迁 Select 时要连带 #643 的形状快照行为一起验。",
+    why: "生成参数选择器(视频规格/图片形状):#840 第三车核实过 —— 这 4 处裸 <select> 全部由" +
+      "money-adjacent 测试套件(canvas-video-spec-ui.test.ts、asset-detail-image-shape.test.ts)" +
+      "直接派发原生 change 事件驱动,且有断言读 HTMLSelectElement 专属的 .options / 拼接后的 " +
+      ".textContent —— 与 otto-schedule 那一处刻意保留的账号选择器同一个坑:Radix Select 没有" +
+      "对应的原生 <select> 元素(trigger 按钮 + Portal 渲染的 listbox)。本仓库唯一已知的绕法" +
+      "(campaign-confirm-requote-race.test.ts 把 SelectTrigger 整个 mock 掉)会让这两个套件" +
+      "失去对出片报价从界面到付费请求这条路的真实覆盖 —— 那正是 #645 T4 刚补上的钱路断言。" +
+      "第三车因此原样保留,不是漏迁。",
     files: {
       "components/gen/VideoSpecPicker.tsx": 3,
       "components/gen/ImageShapePicker.tsx": 1,
     },
-  },
-  {
-    family: "asset",
-    why: "资产详情面:#840 本 PR 已把 ds.tsx 的 9 颗按钮迁到 ui/Button,剩下两颗裸 <button> 是 al-iconbtn 关闭键(606)与变体缩略图切换键(659),连同 al-iconbtn 配方一起在这一族收尾。",
-    files: { "components/asset/DetailPanel.tsx": 2 },
   },
 ];
 
