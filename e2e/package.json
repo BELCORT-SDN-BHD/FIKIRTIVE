@@ -1,0 +1,4 @@
+{
+  "//": "Not a pnpm workspace project — pnpm-workspace.yaml lists only apps/* and packages/*, and it must stay that way: adding e2e/ there would put these files inside `pnpm -r test` and `pnpm -r typecheck`, i.e. inside the required `quality` check, which #799 deliberately does not touch. This file exists for exactly one reason: it tells Node (and Playwright's loader) that everything under e2e/ is ESM, which is what lets these files import the built @fikirtive/db by path.",
+  "type": "module"
+}

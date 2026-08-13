@@ -12,6 +12,10 @@ build/
 coverage/
 playwright-report/
 test-results/
+
+# resident E2E run output (#799) — traces, screenshots and the HTML report of one run
+e2e/.artifacts/
+e2e/.report/
 .turbo/
 
 # local dev storage (LocalDiskStorage adapter)

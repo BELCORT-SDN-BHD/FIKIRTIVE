@@ -24,11 +24,14 @@
     "backup:plan": "corepack pnpm --filter \"./packages/*\" build && corepack pnpm --filter @fikirtive/worker build && node scripts/db-backup-plan.mjs",
     "test": "pnpm -r test",
     "quality": "bash scripts/ci/quality.sh",
+    "e2e": "playwright test -c e2e/playwright.config.ts",
     "db:generate": "pnpm --filter @fikirtive/db generate",
     "db:migrate": "pnpm --filter @fikirtive/db migrate:dev"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "playwright": "^1.60.0"
+    "playwright": "^1.60.0",
+    "@types/node": "^22",
+    "typescript": "^5.9.0"
   }
 }
