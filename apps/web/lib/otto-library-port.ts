@@ -44,11 +44,15 @@ export function makeOttoLibraryPort() {
     detail: async (generationId: string): Promise<LibraryItemView | { error: string }> => {
       const res = await getGeneration(generationId);
       if ("error" in res) return { error: res.error };
-      // #776:回执里的「引擎真正跑的那句」只在 detail 上有(history 不查这一列)。null =
-      // 未知,就**不带这个键** —— 让「不知道」在类型上也是缺席,而不是一个空字符串。
+      // #776 r2:回执里的「引擎真正跑的那句」只在 detail 上有(history 不查这一列),所以
+      // detail **总是**带这个键,与商家面板同一口径:
+      //   · 字符串 = 引擎报的那句;
+      //   · null   = 引擎没报(或回执落库前的老行)= **未知**,Otto 据此明说不知道。
+      // r1 在 null 时把键删掉,于是「引擎没报」和「这条产品链不存在」在 Otto 眼里长得一模
+      // 一样 —— 键缺席的语义留给 history(我们**根本没查**这一列),两种「没有」不能混。
       return {
         id: res.id, projectId: res.projectId, kind: res.kind, prompt: res.prompt,
-        ...(res.finalPrompt !== null ? { finalPrompt: res.finalPrompt } : {}),
+        finalPrompt: res.finalPrompt,
         favorite: res.favorite,
       };
     },

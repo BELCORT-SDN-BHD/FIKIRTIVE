@@ -211,6 +211,46 @@ describe("getGeneration", () => {
       mockGenFindFirst.mockResolvedValue(rowWith("   "));
       expect(await finalPromptOf()).toBeNull();
     });
+
+    // r2：判官 P1 —— 一单多图时，每张图有自己那句改写，面板必须拿到**这一张**的。
+    describe("多图：每张变体带自己那一句", () => {
+      beforeEach(() => {
+        mockGenFindFirst.mockResolvedValue(rowWith("first rewrite"));
+        mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1", "g2"], imageOptions: null });
+        mockGenFindMany.mockResolvedValue([
+          { id: "g2", favorite: false, finalPromptText: "second rewrite", asset: { ownerId: "u1", contentHash: "def", ext: "png" } },
+        ]);
+      });
+
+      it("兄弟行各自的那句都回来，且与 id/url 同序对齐", async () => {
+        const result = await getGeneration("g1") as { variants: { id: string; finalPrompt: string | null }[] };
+        expect(result.variants.map((v) => [v.id, v.finalPrompt])).toEqual([
+          ["g1", "first rewrite"],
+          ["g2", "second rewrite"],
+        ]);
+      });
+
+      it("兄弟查询真的选了那一列 —— 不选，第二张就只能拿第一张的话解释自己", async () => {
+        await getGeneration("g1");
+        expect(mockGenFindMany.mock.calls[0]![0].select).toMatchObject({ finalPromptText: true });
+      });
+
+      it("兄弟没报 ⇒ 那一张是 null（未知），不继承主图那一句", async () => {
+        mockGenFindMany.mockResolvedValue([
+          { id: "g2", favorite: false, finalPromptText: null, asset: { ownerId: "u1", contentHash: "def", ext: "png" } },
+        ]);
+        const result = await getGeneration("g1") as { variants: { id: string; finalPrompt: string | null }[] };
+        expect(result.variants[1]).toMatchObject({ id: "g2", finalPrompt: null });
+      });
+
+      it("白标同样逐张过滤 —— 兄弟那一句也不许带出供应商名字", async () => {
+        mockGenFindMany.mockResolvedValue([
+          { id: "g2", favorite: false, finalPromptText: "made with seedream: a bright poster", asset: { ownerId: "u1", contentHash: "def", ext: "png" } },
+        ]);
+        const result = await getGeneration("g1") as { variants: { finalPrompt: string | null }[] };
+        expect(result.variants[1]!.finalPrompt).not.toMatch(/seedream/iu);
+      });
+    });
   });
 
   it("returns { error } when generation is not owned by caller", async () => {

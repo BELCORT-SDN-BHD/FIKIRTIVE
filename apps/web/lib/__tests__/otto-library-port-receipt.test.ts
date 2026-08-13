@@ -36,12 +36,16 @@ describe("#776 ctx.library.detail 把「引擎真正跑的那句」交给 Otto",
     expect(item).toMatchObject({ prompt: "a poster for the weekend sale", finalPrompt: "a bright poster, weekend sale, bold type" });
   });
 
-  it("null(未知)⇒ 这个键**根本不出现**,而不是一个空串", async () => {
+  it("null(未知)⇒ 键**在**,值是 null —— 与商家面板同一口径", async () => {
     mockGetGeneration.mockResolvedValue(detailRow(null));
     const item = await makeOttoLibraryPort().detail("g1");
-    expect("finalPrompt" in (item as object)).toBe(false);
+    // r2:r1 在这里把键删掉,于是「引擎没报」和「这条产品链不存在」在 Otto 眼里长得一模一样。
+    // 键缺席的语义留给 history(我们根本没查这一列),两种「没有」不能混。
+    expect("finalPrompt" in (item as object)).toBe(true);
+    expect((item as { finalPrompt: string | null }).finalPrompt).toBeNull();
     // 未知绝不许在传递途中被商家自己那句话顶上 —— 那样 Otto 会把商家的话当成引擎的话去解释结果。
     expect((item as { prompt: string }).prompt).toBe("a poster for the weekend sale");
+    expect((item as { finalPrompt: string | null }).finalPrompt).not.toBe("a poster for the weekend sale");
   });
 
   it("读不到那条 generation 时照旧只回 error", async () => {

@@ -15,8 +15,12 @@
  *   ③ 正常那一路,两列**确实**落库(否则「不影响钱路」可以靠什么都不写来通过)。
  *
  * 失败怎么注入:临时给 `GenJob."billedUnits"` / `Generation."finalPromptText"` 加一条
- * `CHECK (… IS NULL)` 约束,于是任何回执写入都会被数据库真实拒绝(Prisma 抛 P2010/P2034 一族)。
- * 用完在 finally 里删掉。它只作用于本用例、本测试库,不碰迁移、不碰生产 schema。
+ * `CHECK (… IS NULL)` 约束,于是任何回执写入都会被数据库真实拒绝。用完在 finally 里删掉;
+ * 加之前也先 DROP IF EXISTS —— 上一轮如果被超时打断,残留的约束不该让下一轮报一个与被测
+ * 行为无关的错。它只作用于本用例、本测试库,不碰迁移、不碰生产 schema。
+ *
+ * 超时给足 60s:这里每条用例都要建租户、真预扣、跑完整条 handleGen(含画布结算的顾问锁),
+ * 在跑满的机器上会远超 vitest 默认的 5s。默认值是给纯函数用例定的,不是给这一类用的。
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -41,6 +45,7 @@ if (!dbName.endsWith("_test")) {
   throw new Error(`refusing to run against a non-*_test database — got "${dbName}"`);
 }
 
+const DB_CASE_TIMEOUT_MS = 60_000;
 const HOLD = 1_000; // 这一单预扣的内部信用点,金额本身不重要,**扣了几次**才重要
 
 let orgId: string;
@@ -49,7 +54,7 @@ let jobId: string;
 
 beforeAll(async () => {
   await prisma.$queryRaw`SELECT 1`; // 先把连接池和 query engine 的冷启动付掉
-});
+}, DB_CASE_TIMEOUT_MS);
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -68,7 +73,7 @@ beforeEach(async () => {
   });
   // 真的预扣 —— 没有 RESERVE 行,settleCredits 会直接返回,那样「只结算一次」就成了空话。
   await prisma.$transaction((tx) => reserveCredits(tx, { orgId, refId: jobId, cost: HOLD }));
-});
+}, DB_CASE_TIMEOUT_MS);
 
 afterAll(async () => {
   await prisma.$disconnect();
@@ -89,6 +94,8 @@ async function jobRow() {
  *  `NOT VALID` = 不回头检查既有行(别的用例留下的回执行不该让这一条挂掉),但**新写入照查**
  *  —— 我们要注入的正是新写入的失败。 */
 async function withReceiptWritesFailing(fn: () => Promise<void>) {
+  await prisma.$executeRawUnsafe(`ALTER TABLE "GenJob" DROP CONSTRAINT IF EXISTS p776_billed_units_fault`);
+  await prisma.$executeRawUnsafe(`ALTER TABLE "Generation" DROP CONSTRAINT IF EXISTS p776_final_prompt_fault`);
   await prisma.$executeRawUnsafe(`ALTER TABLE "GenJob" ADD CONSTRAINT p776_billed_units_fault CHECK ("billedUnits" IS NULL) NOT VALID`);
   await prisma.$executeRawUnsafe(`ALTER TABLE "Generation" ADD CONSTRAINT p776_final_prompt_fault CHECK ("finalPromptText" IS NULL) NOT VALID`);
   try {
@@ -118,7 +125,7 @@ describe("#776 回执写失败,钱路与交付不受影响(真库,真失败)", (
     expect(money.kinds).toEqual(["RESERVE", "SETTLE"]); // 一预扣一结算,没有第三笔
     expect(money.reserved).toBe(0);
     expect(money.balance).toBe(100_000 - HOLD);
-  });
+  }, DB_CASE_TIMEOUT_MS);
 
   it("回执列写入被数据库拒绝 ⇒ 生成照常交付、只结算一次、两列如实留 null", async () => {
     m.generateImages.mockResolvedValue([
@@ -145,7 +152,7 @@ describe("#776 回执写失败,钱路与交付不受影响(真库,真失败)", (
     expect(money.kinds).toEqual(["RESERVE", "SETTLE"]); // 没有第二次 SETTLE,也没有 REFUND
     expect(money.reserved).toBe(0);
     expect(money.balance).toBe(100_000 - HOLD);
-  });
+  }, DB_CASE_TIMEOUT_MS);
 
   it("引擎报回一个 INTEGER 存不下的计费量 ⇒ 同样只是未知,不是一单丢掉的生成", async () => {
     // 2^31 —— 比 PostgreSQL INTEGER 的上限大 1。这两个值来自引擎的响应,是我们不控制的输入;
@@ -167,7 +174,7 @@ describe("#776 回执写失败,钱路与交付不受影响(真库,真失败)", (
     const money = await moneyTrail();
     expect(money.kinds).toEqual(["RESERVE", "SETTLE"]);
     expect(money.balance).toBe(100_000 - HOLD);
-  });
+  }, DB_CASE_TIMEOUT_MS);
 
   it("多张图里只有一张报了量 ⇒ 整单未知,而每张自己那句提示词各归各行", async () => {
     await prisma.genJob.updateMany({ where: { id: jobId, ownerId: orgId }, data: { count: 2 } });
@@ -187,5 +194,5 @@ describe("#776 回执写失败,钱路与交付不受影响(真库,真失败)", (
     expect(job.generationIds.map((id) => byId.get(id))).toEqual(["first rewrite", "second rewrite"]);
     const money = await moneyTrail();
     expect(money.kinds).toEqual(["RESERVE", "SETTLE"]);
-  });
+  }, DB_CASE_TIMEOUT_MS);
 });

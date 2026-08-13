@@ -44,9 +44,10 @@ function toModelItem(i: LibraryItemView) {
     projectId: i.projectId,
     kind: i.kind,
     prompt: i.prompt,
-    // #776:引擎自报「它真正跑的那句」——只有 detail 带得回来。缺席 = 未知,那就**不出现**
-    // 在给模型的对象里,而不是给它一个空串让它当成「引擎什么都没跑」去解释上一轮结果。
-    ...(i.finalPrompt ? { finalPrompt: i.finalPrompt } : {}),
+    // #776 r2:引擎自报「它真正跑的那句」。detail **总是**带这个键(null = 引擎没报 = 未知),
+    // history 根本不查这一列所以键缺席。两种「没有」原样透传,不合并成一种 —— 模型据此说
+    // 「引擎没告诉我」还是「我没查」,而不是拿商家自己那句话去解释上一轮结果。
+    ...("finalPrompt" in i ? { finalPrompt: i.finalPrompt ?? null } : {}),
     favorite: i.favorite,
     ...(i.createdAt ? { createdAt: i.createdAt } : {}),
   };
@@ -105,7 +106,7 @@ export const manageLibrarySkill = defineOttoSkill({
     "history: a page of their generation history, newest first (optional search text, favoriteOnly, and a cursor to page). " +
     "detail: one generation's prompt/kind/favorite, plus finalPrompt — what the engine actually ran, " +
     "which is often not word-for-word what the user asked for and is the honest way to explain a result " +
-    "(absent means the engine didn't report it: say you don't know, never quote `prompt` in its place). " +
+    "(null means the engine didn't report it: say you don't know, never quote `prompt` in its place). " +
     "Needs generationId. " +
     "set_favorite: star or unstar a generation (needs generationId + favorite). " +
     "To CREATE a new image/video, use generate instead — this only looks at what already exists.",
