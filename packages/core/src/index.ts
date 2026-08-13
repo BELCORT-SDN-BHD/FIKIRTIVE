@@ -179,3 +179,6 @@ export { creditDirection, type CreditDirection } from "./credit-direction.js";
 // 商家主导航的唯一权威源(#801)。三个读者共用:左侧导轨画它、Otto 照它指路、围栏照它核对。
 // 纯数据(无 React、无图标、无 node/network),所以主 barrel 装得下。
 export * from "./navigation.js";
+// 素材理解三件套(#784)的唯一配置源:token 上限、单价、开关、日额、队列与产物形状。
+// 「成本 < 一条视频的 1%」由这个模块算出来并由它的测试钉住 —— 纯数据 + 纯函数,主 barrel 装得下。
+export * from "./asset-understanding.js";
