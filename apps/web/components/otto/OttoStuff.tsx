@@ -13,6 +13,7 @@ import { ExitLink } from "@/components/exits/Exits";
 import { BRAND_MEMORY_HREF } from "@/lib/exits";
 import { StuffLibrary } from "./stuff/StuffLibrary";
 import { AddAssetDialog } from "./stuff/AddAssetDialog";
+import { ElementVariantsDialog } from "./stuff/ElementVariantsDialog";
 import { useRouter } from "next/navigation";
 import DetailPanel from "@/components/asset/DetailPanel";
 
@@ -121,6 +122,8 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
     setEntityList(entities);
   }
   const [addOpen, setAddOpen] = useState(false);
+  // #781 — which saved element the merchant opened (base look + styling variants).
+  const [openEntityId, setOpenEntityId] = useState<string | null>(null);
   const [chooseProductFor, setChooseProductFor] = useState<string | null>(null);
   const [detailFor, setDetailFor] = useState<{ generationId: string; projectId: string } | null>(null);
   const [generationHistory, setGenerationHistory] = useState<HistoryThumb[]>(history);
@@ -131,6 +134,10 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
   const historyRequestRef = useRef(0);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [hiddenFailedJobs, setHiddenFailedJobs] = useState<Set<string>>(new Set());
+
+  // Stable across renders: the element dialog polls a running variant generation and takes this
+  // as a dependency — a new function identity every render would restart that poll each tick.
+  const refreshServerData = useCallback(() => router.refresh(), [router]);
 
   const fetchGenerationHistory = useCallback(async (cursor: string | null, replace: boolean) => {
     const requestId = ++historyRequestRef.current;
@@ -250,6 +257,7 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
           onDelete={handleDelete}
           onSetProductImage={(assetId) => setChooseProductFor(assetId)}
           onOpenGeneration={(generationId, itemProjectId) => setDetailFor({ generationId, projectId: itemProjectId })}
+          onOpenEntity={(id) => setOpenEntityId(id)}
         />
         <div className="mt-4 flex items-center gap-3">
           {historyHasMore && (
@@ -295,6 +303,16 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onDone={() => router.refresh()}
+      />
+
+      <ElementVariantsDialog
+        // keyed by element: opening a different one starts from a clean form instead of
+        // inheriting the last element's half-typed variant
+        key={openEntityId ?? "none"}
+        entity={entityList.find((e) => e.id === openEntityId) ?? null}
+        open={!!openEntityId}
+        onOpenChange={(next) => { if (!next) setOpenEntityId(null); }}
+        onChanged={refreshServerData}
       />
 
       {chooseProductFor && (

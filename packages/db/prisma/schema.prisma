@@ -938,6 +938,14 @@ model ChatThread {
   rollingSummary String?
   // otto: serialized RunState (JSON string) for multi-turn continuation. Nullable — existing threads have none.
   ottoState String?
+  // #879 step 1: schema pinning for the Otto foundation redesign — nullable, unwritten this
+  // round. Semantics land in #879 step 2 (context assembler). See ChatMessage below for the
+  // per-column meaning; these mirror them at the thread level.
+  surface    String?
+  subjectRef String?
+  actorId    String?
+  visibility String?
+  outletId   String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   pinnedAt  DateTime?
@@ -964,6 +972,18 @@ model ChatMessage {
   genJobId           String?
   sourceGenerationId String?
   replyToMessageId   String?
+  // #879 step 1 — Otto foundation schema pinning (issue #879, Founder-approved plan A,
+  // self-built foundation). Five nullable columns pinned NOW, before public sign-up makes
+  // backfilling every historical row impossible; semantics land in #879 step 2. Client-declarable
+  // (position-only): surface (which product surface the turn came from), subjectRef (the
+  // record/entity the turn was about), outletId (which outlet/channel context). Server-only
+  // (identity — NEVER client input): actorId, visibility — left null this round; will be filled
+  // from the authenticated principal once #879 step 2 defines their semantics.
+  surface    String?
+  subjectRef String?
+  actorId    String?
+  visibility String?
+  outletId   String?
   createdAt          DateTime        @default(now())
   deletedAt          DateTime?
 
