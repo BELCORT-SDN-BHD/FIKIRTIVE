@@ -65,21 +65,43 @@
 # So the check that catches THAT lives outside this file, in ci.yml itself: every
 # job's step #2, straight after `actions/checkout` and before any setup, install or
 # `$GITHUB_ENV` write, re-derives the sha256 of ci.yml and compares it against
-# `.github/ci-workflow.lock`. It runs `cut` and `sha256sum` and nothing else, so no
-# later step can reach it. Section 3f below pins that step — one hand-written copy of
-# its script, required in every job, at that position — and checks the lock itself is
-# current, so a stale lock is caught on a laptop too.
+# `.github/ci-workflow.lock`. It runs `cut` and `sha256sum` and nothing else, under
+# `shell: sh`. Section 3f below pins that step — one hand-written copy of its script,
+# its `shell:` field, required in every job, at that position — and checks the lock
+# itself is current, so a stale lock is caught on a laptop too.
 #
-# And the tripwire's OWN limit, stated with the same honesty: the lock is
-# regenerable (`bash scripts/ci/ci-workflow-lock.sh`). An author who means to hollow
-# out CI can change ci.yml and regenerate the lock in one commit and both this file
-# and the tripwire will pass. What that costs them is invisibility: the bypass is no
-# longer a plausible-looking `env:` line, it is a diff that touches the tripwire step
-# or `.github/ci-workflow.lock`, a file with no other purpose. The floor under all of
-# it is not a script — it is the `quality` required check in the protect-main ruleset
-# (bypass_actors empty), and the project rule that a PR touching .github/workflows or
-# scripts/ci goes through review. This file is a tripwire against unreviewed drift.
-# It is not a wall against a determined author, and nothing in this repository is.
+# WHY `shell: sh` IS PART OF WHAT 3f PINS. r8's review got past the tripwire without
+# touching it, and the lesson generalises past the one trick. The step's BODY was
+# minimal; the step's SHELL was not. `BASH_ENV: <path>` in a workflow-level `env:`
+# block is sourced by bash before the first line of any `run:` — early enough to
+# rewrite `.github/ci-workflow.lock` on disk, or to define shell functions named
+# `cut` and `sha256sum` that return a digest matching whatever the lock says. Nothing
+# in the body could have stopped that, because the body had not started. Under a
+# non-interactive `sh` neither `BASH_ENV` nor `ENV` is read at all (dash on the
+# runner, bash-as-sh on a laptop; both measured, with a `dash -i` control proving the
+# poison file itself was live — evidence in the r9 comment on #874), so the body now
+# starts in an environment this workflow cannot pre-seed. 3d additionally refuses
+# `BASH_ENV` and `ENV` in EVERY env block the file has, at any depth.
+#
+# And the tripwire's OWN limit, stated with the honesty the last eight rounds earned:
+# r1-r8 each ended by falsifying the round before's absolute claim, and r8 falsified
+# the one that stood here — "a bypass has to touch the tripwire step or the lock".
+# It did not; a workflow-level `BASH_ENV` touched neither. What replaces it is
+# weaker, and structural instead of clever:
+#
+#     EVERY bypass needs a diff to .github/workflows/ci.yml. Env, container,
+#     defaults, shell, a swapped step, a poisoned startup file — none of it exists
+#     anywhere but in that file, and a diff to that file is in the PR's file list.
+#
+# The lock is still regenerable (`bash scripts/ci/ci-workflow-lock.sh`), so an author
+# who means to hollow out CI can change ci.yml, regenerate the lock and the block in
+# 3e, and be green. That was always true and is now written as a drill case rather
+# than a promise. The floor under all of it is not a script — it is the `quality`
+# required check in the protect-main ruleset (bypass_actors empty), and the project
+# rule that a PR touching .github/workflows or scripts/ci goes through review, which
+# is what reads the ci.yml diff every bypass has to produce. This file and the
+# tripwire are instruments against unreviewed drift. They are not a wall against a
+# determined author, and nothing in this repository is.
 #
 # Everything else about ci.yml below (the leg commands, expected_jobs, the env
 # tables, the forbidden keys) is kept as DIAGNOSTICS. They are strictly redundant
@@ -371,8 +393,17 @@ expected_step_env=(
 # It uses `cut` and `sha256sum` on purpose. `pnpm`, `node` and `python3` all read
 # configuration out of the environment that an earlier step can write through
 # `$GITHUB_ENV` — which is exactly the r6 finding this step exists to answer.
+#
+# And it declares `shell: sh` on purpose, which is the r8 finding. A minimal body is
+# no defence against a shell that has already sourced a file named in its own
+# environment: `BASH_ENV` at workflow level runs before the body's first line, and a
+# `cut`/`sha256sum` defined there answers with any digest it likes. Non-interactive
+# `sh` reads neither `BASH_ENV` nor `ENV`. `shell:` is otherwise refused on every
+# step in this workflow (forbidden_step_keys, 3b) — the tripwire is the one place it
+# is required, at one exact value, so both the presence and the value are pinned.
 expected_first_step_uses="actions/checkout@v4"
 expected_tripwire_name="ci.yml is the reviewed one"
+expected_tripwire_shell="sh"
 expected_tripwire_run="$(
   cat <<'QUALITY_LEGS_TRIPWIRE_EOF'
 set -eu
@@ -668,7 +699,7 @@ actual_lock="$(cat "$lock_file")"
   || fail "$lock_rel does not pin the current ci.yml.
     it says:      ${actual_lock:-<empty>}
     it must say:  $expected_lock_line
-  Every job's step #2 makes this same comparison before anything else runs, so this is CI red on all seven jobs, not a warning. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"
+  Every job's step #2 makes this same comparison before anything else runs, so this is not a warning: 'scope' fails on it first, the five legs are left 'skipped' by their 'needs: scope', and the required 'quality' check is RED — the PR cannot merge. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"
 
 jobs_with_tripwire=0
 while IFS= read -r tripwire_job; do
@@ -681,11 +712,21 @@ while IFS= read -r tripwire_job; do
     || fail "ci.yml job '$tripwire_job' opens with 'uses: ${first_uses:-<none>}', this file expects '$expected_first_step_uses' — the tripwire has nothing to hash until the repository is on disk, so the checkout is step #1 in every job"
 
   second_keys="$(wf -r --arg j "$tripwire_job" '((.jobs[$j].steps // [])[1] // {}) | keys | join(",")')"
-  [[ "$second_keys" == "name,run" ]] \
-    || fail "ci.yml job '$tripwire_job' has no tripwire as its step #2 (its keys are '${second_keys:-<none>}', expected exactly 'name,run') — that step is the only check in CI that still runs when 'pnpm quality' itself has been made a no-op, and it has to be in every job"
+  [[ "$second_keys" == "name,run,shell" ]] \
+    || fail "ci.yml job '$tripwire_job' has no tripwire as its step #2 (its keys are '${second_keys:-<none>}', expected exactly 'name,run,shell') — that step is the only check in CI that still runs when 'pnpm quality' itself has been made a no-op, and it has to be in every job"
   second_name="$(wf -r --arg j "$tripwire_job" '((.jobs[$j].steps // [])[1] // {}).name // ""')"
   [[ "$second_name" == "$expected_tripwire_name" ]] \
     || fail "ci.yml job '$tripwire_job' step #2 is named '${second_name:-<none>}', this file expects '$expected_tripwire_name'"
+  # The interpreter, not just the script. Everything else in this workflow is refused
+  # a `shell:` outright (3b); the tripwire is required to carry one, at this value,
+  # because the value is a check in its own right. Under `bash` (the GitHub default
+  # for a `run:` step) a workflow-level `BASH_ENV` is sourced before the body's first
+  # line and can define `cut`/`sha256sum` or rewrite the lock; under non-interactive
+  # `sh` neither `BASH_ENV` nor `ENV` is read. Deleting this one word is the whole
+  # r8 bypass, so deleting it is red here.
+  second_shell="$(wf -r --arg j "$tripwire_job" '((.jobs[$j].steps // [])[1] // {}).shell // ""')"
+  [[ "$second_shell" == "$expected_tripwire_shell" ]] \
+    || fail "ci.yml job '$tripwire_job' step #2 runs under 'shell: ${second_shell:-<none>}', this file requires 'shell: $expected_tripwire_shell' — a bash-started step sources whatever \$BASH_ENV names before its first line, which is how #874 r8 forged this comparison without touching the step or the lock"
   second_run="$(wf -r --arg j "$tripwire_job" '((.jobs[$j].steps // [])[1] // {}).run // ""')"
   second_run="${second_run%$'\n'}"
   if [[ "$second_run" != "$expected_tripwire_run" ]]; then
@@ -850,12 +891,19 @@ for pair in "${expected_jobs[@]}"; do
   # has to produce — `none` — and the step list is what replaces it. A jq error
   # produces neither, and neither is `none`.
   for key in "${forbidden_step_keys[@]}"; do
-    offenders="$(wf -r --arg j "$job" --arg k "$key" '
-      [ (.jobs[$j].steps // []) | to_entries[] | select(.value | has($k)) | "#\(.key + 1)" ]
+    # One exemption, and it is a requirement rather than a hole: step #2, the
+    # tripwire, MUST carry `shell: sh` (r8 — a bash-started step sources whatever
+    # `$BASH_ENV` names before its own first line). 3f pins that step's entire key
+    # set to `name,run,shell` and its shell to exactly `sh`, so the exemption cannot
+    # be widened into "a step may choose its interpreter": any other step carrying
+    # `shell:`, and step #2 carrying anything but `sh`, are both still red.
+    if [[ "$key" == "shell" ]]; then exempt_index=1; else exempt_index=-1; fi
+    offenders="$(wf -r --arg j "$job" --arg k "$key" --argjson x "$exempt_index" '
+      [ (.jobs[$j].steps // []) | to_entries[] | select(.key != $x) | select(.value | has($k)) | "#\(.key + 1)" ]
       | if length == 0 then "none" else join(", ") end
     ')"
     [[ "$offenders" == "none" ]] \
-      || fail "ci.yml job '$job' has step(s) $offenders carrying '$key:' — that key decides whether the step's command is executed and whether its failure reaches the job, so no step in this workflow may carry it"
+      || fail "ci.yml job '$job' has step(s) $offenders carrying '$key:' — that key decides whether the step's command is executed and whether its failure reaches the job, so no step in this workflow may carry it (the one exception is the tripwire's own 'shell: sh' at step #2, pinned in 3f)"
   done
 
   # A zero or negative timeout is a step or job that is killed before it can run.
@@ -955,6 +1003,33 @@ if [[ "$actual_step_env" != "$want_step_env" ]]; then
   env_diff_report "$want_step_env" "$actual_step_env"
   fail "ci.yml's step-level env and the expected_step_env list in this file disagree — a step's own env reaches its command the same way the workflow block does, and it is quieter, so any change to one has to be stated in expected_step_env here, in the same commit"
 fi
+
+# THE TWO NAMES THAT ARE READ BEFORE A SCRIPT STARTS — refused everywhere in this
+# file, at any depth. This is a DENY list where everything above is an allow list,
+# and the reason is that it is answering a different question. The allow lists say
+# what the legs run WITH; this says what the SHELL does before the first line of a
+# `run:` exists. `BASH_ENV` names a file bash sources on startup for a non-interactive
+# shell, `ENV` is the same idea for shells that read it — so either one turns "the
+# step's script" into "whatever that file says, and then the step's script". #874 r8
+# fired exactly this: `BASH_ENV: scripts/ci/ci-workflow-lock.sh` at workflow level
+# had the tripwire's own lock rewritten before the tripwire read it, and a `BASH_ENV`
+# that defines `cut` and `sha256sum` as functions makes the digest comparison agree
+# with anything. The fix that matters is `shell: sh` on the tripwire (3f) — sh reads
+# neither name. This check is the second statement of the same fact, and it is worth
+# having separately because it reaches where the allow lists say they do not:
+# `..` walks EVERY object in the parsed workflow, so `container.env` and
+# `services.<name>.env` are covered here even though no table above lists them.
+#
+# Fail-closed like the rest: the clean answer is the word `none`, which the query has
+# to produce. A jq error produces nothing, and nothing is not `none`.
+startup_env_offenders="$(wf -r '
+  [ .. | objects | select(has("env")) | .env | objects | to_entries[]
+    | select(.key == "BASH_ENV" or .key == "ENV")
+    | .key ]
+  | if length == 0 then "none" else (unique | join(", ")) end
+')"
+[[ "$startup_env_offenders" == "none" ]] \
+  || fail "ci.yml sets '$startup_env_offenders' in an 'env:' block — those name a file the shell SOURCES before a step's script runs, so they can replace the tripwire's own 'cut' and 'sha256sum', or rewrite .github/ci-workflow.lock, without one character of any step changing. No env block in this workflow, at any level, may carry them"
 
 # The required status check, from the parsed file. A job's check name is its
 # `name:`, or its id when it has none, so both are folded before counting: nothing
@@ -1203,7 +1278,8 @@ expected_jobs_canonical="$(
       },
       {
         "name": "ci.yml is the reviewed one",
-        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n"
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n",
+        "shell": "sh"
       },
       {
         "uses": "pnpm/action-setup@v4"
@@ -1258,7 +1334,8 @@ expected_jobs_canonical="$(
       },
       {
         "name": "ci.yml is the reviewed one",
-        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n"
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n",
+        "shell": "sh"
       },
       {
         "uses": "pnpm/action-setup@v4"
@@ -1304,7 +1381,8 @@ expected_jobs_canonical="$(
       },
       {
         "name": "ci.yml is the reviewed one",
-        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n"
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n",
+        "shell": "sh"
       },
       {
         "uses": "pnpm/action-setup@v4"
@@ -1343,7 +1421,8 @@ expected_jobs_canonical="$(
       },
       {
         "name": "ci.yml is the reviewed one",
-        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n"
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n",
+        "shell": "sh"
       },
       {
         "env": {
@@ -1374,7 +1453,8 @@ expected_jobs_canonical="$(
       },
       {
         "name": "ci.yml is the reviewed one",
-        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n"
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n",
+        "shell": "sh"
       },
       {
         "env": {
@@ -1415,7 +1495,8 @@ expected_jobs_canonical="$(
       },
       {
         "name": "ci.yml is the reviewed one",
-        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n"
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n",
+        "shell": "sh"
       },
       {
         "uses": "pnpm/action-setup@v4"
@@ -1461,7 +1542,8 @@ expected_jobs_canonical="$(
       },
       {
         "name": "ci.yml is the reviewed one",
-        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n"
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got)\"\n",
+        "shell": "sh"
       },
       {
         "uses": "pnpm/action-setup@v4"

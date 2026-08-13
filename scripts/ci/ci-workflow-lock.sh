@@ -4,9 +4,14 @@
 #
 # The lock is one line — `<sha256>  .github/workflows/ci.yml` — and every job in
 # ci.yml re-derives that digest as its own step #2, before any setup, install or
-# `$GITHUB_ENV` write can reach it. A ci.yml edit without this regeneration turns
-# all seven jobs red; a ci.yml edit WITH it is a diff that touches this file, which
-# exists for nothing else. See the tripwire note at the top of ci.yml.
+# `$GITHUB_ENV` write can reach it. A ci.yml edit without this regeneration fails
+# that step in `scope` first, which leaves the five legs `skipped` and the required
+# `quality` check RED — not mergeable. (Not "seven red jobs": the legs carry
+# `needs: scope`, and a job that never starts reports `skipped`, not `failure`.)
+#
+# What regenerating the lock does NOT do is bless the change. Every bypass of these
+# gates needs a diff to .github/workflows/ci.yml, and that diff is what review reads.
+# See the tripwire note at the top of ci.yml.
 #
 # Run after any intended change to ci.yml, in the same commit:
 #     bash scripts/ci/ci-workflow-lock.sh

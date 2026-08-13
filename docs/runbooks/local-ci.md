@@ -59,7 +59,9 @@ ruby / yq / js-yaml 任一），注释里的腿名和接线一律不算数——
 `bash scripts/ci/quality.sh`（`pnpm quality` 最终跑的是它）；每个 job 的 `if:` 必须
 和自测里手写的条件逐字相同（job 没跑报的是 `skipped`，不是 `failure`）；任何 step
 都不许带 `if`、`continue-on-error`、`shell`、`working-directory`，任何 job 都不许带
-`continue-on-error`、`strategy`、`defaults`。
+`continue-on-error`、`strategy`、`defaults`。（`shell` 只有一个例外，而且它是**要求**
+不是缺口：每个 job 第 2 步那道绊线必须写 `shell: sh`，理由见下面「为什么这一步写着
+`shell: sh`」。别的 step 带 `shell:`、或者绊线写成别的值，照样红。）
 
 腿**运行时的环境变量**也逐字钉死，而且是白名单：workflow 级 `env:` 的键值集必须与
 自测里手写的那份一模一样（多一个、少一个、改一个值，都红），job 级 `env:` 一律不许
@@ -117,20 +119,48 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh
 所以接住这一手的东西不在自测里，在 ci.yml 里：**每个 job 的第 2 步**——checkout 之后、
 任何 setup / install / `$GITHUB_ENV` 写入之前——重新算一遍 ci.yml 的 sha256，跟仓库里
 committed 的 `.github/ci-workflow.lock` 比。它只用 `cut` 和 `sha256sum`，不碰 pnpm、
-node、python，所以后面的步骤往环境里塞什么都够不着它；`container.env` 确实能进到该 job
-的每一个 step，但写 `container:` 本身就是改 ci.yml，也就是改了指纹。
+node、python。
 
-**它买到的，准确说只有这一条**：任何没有同步重算锁文件的 ci.yml 改动，七个 job 会在第
-一时间全部红——包括把某一个 job 里的这一步删掉或改废，因为另外六个 job 照样算整份文件
-的指纹。
+### 为什么这一步写着 `shell: sh`
 
-**它买不到的，同样写清楚**：锁文件是可以重算的（`bash scripts/ci/ci-workflow-lock.sh`）。
-真要掏空 CI 的人，可以在同一个 commit 里改 ci.yml 再把锁重算一遍，这道绊线就放行了。他
-做不到的是**不留痕迹**：绕过的动作从「一行看起来完全正常的 `env:`」变成「动了绊线那一步，
-或者动了 `.github/ci-workflow.lock` 这个除此以外没有任何用处的文件」。真正的机器地板不是
-脚本，是 protect-main ruleset 里那个名叫 `quality` 的 required check（bypass_actors 为
-空），加上「改 `.github/workflows` 或 `scripts/ci` 的 PR 必须过复审」这条项目规矩。
-**这道闸是防未经复审的漂移的绊线，不是防铁了心的作者的墙——这个仓库里没有那种墙。**
+因为 r8 复审证明：**正文再干净也没用，如果它还没开始跑就已经输了**。
+
+GitHub 的 `run:` 默认交给 bash。bash 启动时会先 source 环境变量 `BASH_ENV` 指的那个
+文件，**早于正文第一行**。于是在 workflow 级 `env:` 里加一行 `BASH_ENV: <路径>` 就够了：
+那个文件可以直接把 `.github/ci-workflow.lock` 重写成当前 ci.yml 的指纹（仓库自带的
+`scripts/ci/ci-workflow-lock.sh` 正好就干这件事），也可以定义两个叫 `cut` 和 `sha256sum`
+的函数，让比对结果等于任何想要的值。绊线的 diff 一个字没动，锁文件一个字没动。
+
+非交互的 `sh` **既不读 `BASH_ENV` 也不读 `ENV`**（runner 上是 dash，本机是 bash 的 sh
+模式，两边都实测过）。所以这一步显式声明 `shell: sh`，正文就跑在一个这份文件毒不到的
+启动环境里。自测把两件事都钉死：绊线那一步的 `shell:` 字段必须正好是 `sh`；**整份
+workflow 的任何一层 `env:`（含 `container.env`、`services.*.env`）都不许出现
+`BASH_ENV` 或 `ENV`**。演习里还有一组用例是**真的把绊线正文跑起来**——同一段脚本、同一份
+不匹配的锁，`sh` 必须拒绝、`bash` 必须被骗过。后半句不是 bug，是**钉子**：它保证将来没人
+把 `shell: sh` 当噪音顺手删掉。
+
+### 它买到什么，买不到什么
+
+**它买到的**：让「真正跑起来的那份 workflow」可证明地等于「被复审过的那份」。只要 ci.yml
+不是 `.github/ci-workflow.lock` 钉的那一份，每个 job 的第 2 步都会红——`scope` 先红，五条
+腿因为 `needs: scope` 变成 skipped，**required 的 `quality` 检查红，PR 合不进去**。（不要
+写成「七个 job 全红」：没启动的 job 报的是 `skipped` 不是 `failure`。）把某个 job 里的这
+一步删掉或改废也在覆盖内，因为另外六个 job 照样算整份文件的指纹。
+
+**它买不到的，写清楚**：它不是墙。而且这里原本写着的那句绝对话——「绕过必然会动绊线那一
+步或者动锁文件」——**是错的，r8 已经证伪**：workflow 级的 `BASH_ENV` 两样都没动。r1–r8
+每一轮都是上一轮的绝对说法被下一轮推翻，所以换成一句更弱、但是结构性的：
+
+> **任何绕过都需要一个改 `.github/workflows/ci.yml` 的 diff。** env、container、
+> defaults、shell、换步骤顺序、毒化启动文件——没有一样能写在这份文件之外，而改这份文件
+> 的 diff 藏不住：它就在 PR 的文件列表里。
+
+锁文件依然是可以重算的（`bash scripts/ci/ci-workflow-lock.sh`），所以铁了心的作者可以改
+ci.yml、重算锁、重生成字面量，然后一路绿。这一直都是真的，现在它是演习里的一个用例而不
+是一句承诺。真正的机器地板不是脚本，是 protect-main ruleset 里那个名叫 `quality` 的
+required check（bypass_actors 为空），加上「改 `.github/workflows` 或 `scripts/ci` 的 PR
+必须过复审」这条项目规矩——而复审读的，正是每一次绕过都必须交出来的那个 ci.yml diff。
+**这道闸是防未经复审的漂移的仪器，不是防铁了心的作者的墙——这个仓库里没有那种墙。**
 
 改了 ci.yml 之后，同一个 commit 里要做两件事，顺序如下：
 
@@ -143,9 +173,9 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh # 2. 
 
 ## 演习
 
-`bash scripts/__tests__/quality-legs.drill.sh`（实测约 8 分钟）在临时目录里复制一份仓库，逐个
+`bash scripts/__tests__/quality-legs.drill.sh`（实测约 10 分钟）在临时目录里复制一份仓库，逐个
 把 ci.yml 改坏——上面每一种形状都在内，**每次改坏都顺手把锁重算**，这样红的原因就一定是被
-测的那道检查而不是锁过期——要求自测每一次都红。共 30 个 case，其中：
+测的那道检查而不是锁过期——要求自测每一次都红。共 42 个 case，其中：
 
 - r4/r5/r6 复审找出的每一种形状（不跑的 step、吃掉失败的 step、六种环境注入、
   `$GITHUB_ENV`、`container`、版本/`with`/加 step/换顺序/`services.postgres.env`）；
@@ -156,8 +186,24 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh # 2. 
 - 门：普通的合法改动（`pnpm/action-setup` 升版）+ 重新生成必须绿；改了并重新生成但没同步
   手写清单必须仍然红——job 级 `env:` 是一例，`actions/checkout` 升版是另一例（r7 起「第 1
   步必须是 checkout」也是手写钉死的一项，所以它要在两处各说一遍）；
+- **r8 启动环境那两组**：
+  - 写在 ci.yml 里的三种形状——workflow 级加 `BASH_ENV`、把七处 `shell: sh` 一起删掉、
+    把 `BASH_ENV` 藏进 `container.env`——改坏之后连锁带字面量全部重生成，仍然必须红
+    （分别由 3d 的 `BASH_ENV`/`ENV` 拒绝清单和 3f 钉死的 `shell:` 字段接住）。第三个
+    是**只有拒绝清单接得住的那一个**：`container:` 不在禁用键里，`container.env` 也不在
+    任何白名单里，字面量又已经重生成——其余每一条检查都会点头；
+  - **真的把绊线正文跑起来那一组**（9 个 case，不经过自测）：把绊线脚本从 ci.yml 里取
+    出来，配一份**不匹配**的锁，按 runner 的两种起法启动——`sh -e`（现在 ci.yml 声明的）
+    和 `bash --noprofile --norc -eo pipefail`（以前默认拿到的）——分别喂三种毒：定义
+    `cut`/`sha256sum` 的文件、同样内容走 `/dev/stdin`（磁盘上不留任何痕迹）、以及直接把
+    `BASH_ENV` 指向仓库自己的 `scripts/ci/ci-workflow-lock.sh`（source 它就等于重写锁）。
+    要求是**不对称**的：`sh` 必须拒绝，`bash` 必须被骗过。外加两个对照 case（干净环境下，
+    锁不匹配必须红、锁匹配必须绿），否则「sh 拒绝了」什么也证明不了——一道永远红的闸也能
+    拿满分。
 - 最后一个 case 是**故意绿的**：typecheck 被注入 + 锁重算 + 字面量重生成，自测和绊线都会
-  放行。它要求的不是「红」，而是「不可能安静地发生」——`.github/ci-workflow.lock` 必须出现
-  在 diff 里。把这一条写成 case 而不是写成一段话，是为了让它一直是真的。
+  放行。它要求的不是「红」，而是**「必须留下 `.github/workflows/ci.yml` 的 diff」**。把这
+  一条写成 case 而不是写成一段话，是为了让它一直是真的。（r8 之前它还要求「锁文件也必须
+  变」——r8 的绕过一个锁字节都没动，所以那条要求本身就是假的，已经删掉：这个 case 只许断
+  言每一种绕过都做得到的那一件事。）
 
 不要把重复执行同一批闸的 job 或第二套本地命令再加回来。

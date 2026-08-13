@@ -28,25 +28,49 @@ name: CI
 # So every job below runs ONE step before anything else can touch its environment:
 # right after `actions/checkout` (there is nothing to read before the checkout), and
 # before any setup, install or `$GITHUB_ENV` write. It compares this file, byte for
-# byte, against the sha256 committed in `.github/ci-workflow.lock`. It uses no pnpm,
-# no node, no python — `cut` and `sha256sum` — so nothing a later step exports can
-# reach it, and `container.env` (which does reach every step of a job) is a change to
-# THIS FILE and therefore a changed digest.
+# byte, against the sha256 committed in `.github/ci-workflow.lock`, with `cut` and
+# `sha256sum` and nothing else — no pnpm, no node, no python, all three of which
+# read configuration out of an environment an earlier step is free to write.
 #
-# WHAT IT BUYS, EXACTLY: any edit to ci.yml that does not come with a regenerated
-# lock file turns all seven jobs red, immediately, before a single gate would have
-# run — including edits that delete or neuter this very step in one job, because the
-# other six still hash the whole file.
+# IT RUNS UNDER `shell: sh`, AND THAT FIELD IS LOAD-BEARING. r8's review found the
+# step was still being STARTED by a shell that reads a startup file named in its own
+# environment: with `BASH_ENV: <path>` at workflow level, bash sources that path
+# before the first line of `run:` — early enough to rewrite the lock on disk, or to
+# define functions called `cut` and `sha256sum` that agree with whatever it is
+# handed. The body being minimal never protected it; the body had not started yet.
+# A non-interactive `sh` reads NEITHER `BASH_ENV` NOR `ENV` — dash on the runner,
+# bash-as-sh on a laptop, both measured against a poison file that a `dash -i`
+# control proves is readable (evidence in the r9 comment on #874). So the body below
+# starts in an environment nothing in this file can pre-seed, and the self-test pins
+# both the `shell: sh` field and the absence of `BASH_ENV`/`ENV` from every env block
+# this workflow has.
 #
-# WHAT IT DOES NOT BUY, AND WE ARE NOT GOING TO PRETEND OTHERWISE: the lock is
-# regenerable (`bash scripts/ci/ci-workflow-lock.sh`). Someone who means to hollow
-# out CI can edit this file and regenerate the lock in the same commit, and the
-# tripwire will pass. What they cannot do is make it look like nothing happened: the
-# bypass is no longer an innocent-looking `env:` line, it is a diff that touches this
-# step or `.github/ci-workflow.lock`, a file that exists for nothing else. The floor
-# under that is not a script — it is the `quality` required check in the protect-main
-# ruleset (bypass_actors empty) plus the project rule that a PR touching
-# .github/workflows or scripts/ci goes through review. See docs/runbooks/local-ci.md.
+# WHAT IT BUYS, EXACTLY: it makes "the workflow that ran" provably "the workflow that
+# was reviewed". A ci.yml that is not the one `.github/ci-workflow.lock` pins fails
+# this step in EVERY job, before a single gate, install or repository script has run.
+# `scope` fails first, which leaves the five legs `skipped` and the required `quality`
+# check RED — not mergeable. That covers deleting or neutering this very step in one
+# job, because the other six still hash the whole file.
+#
+# WHAT IT IS NOT, AND WE ARE NOT GOING TO PRETEND OTHERWISE: it is not a wall around
+# CI, and the specific claim that used to stand here — "a bypass has to touch this
+# step or the lock file" — was FALSE. r8 disproved it: a workflow-level `BASH_ENV`
+# reached the tripwire without touching either one. Every round of this review has
+# ended by falsifying the previous round's absolute, so the claim that replaces it is
+# deliberately weaker, and structural rather than clever:
+#
+#     EVERY bypass needs a diff to THIS FILE. There is no way to hollow these jobs
+#     out — env, container, defaults, shell, a swapped step, a poisoned startup
+#     file — that is not written down in .github/workflows/ci.yml. And a diff to
+#     .github/workflows/ci.yml cannot be quiet: it is in the PR's file list.
+#
+# Which leaves the tripwire the narrow job that is genuinely its own: catching what
+# is NOT in this file's diff — a repository script that writes `$GITHUB_ENV`, a lock
+# nobody regenerated, a ci.yml on disk that is not the reviewed one. The floor under
+# all of it is not a script. It is the `quality` required check in the protect-main
+# ruleset (bypass_actors empty), plus the project rule that a PR touching
+# .github/workflows or scripts/ci goes through review — which is the thing that reads
+# the ci.yml diff every bypass is obliged to produce. See docs/runbooks/local-ci.md.
 
 on:
   pull_request:
@@ -112,8 +136,11 @@ jobs:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
       # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
-      # copy of these lines and requires every job's step #2 to be exactly it.
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
       - name: ci.yml is the reviewed one
+        shell: sh
         run: |
           set -eu
           want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
@@ -248,8 +275,11 @@ jobs:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
       # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
-      # copy of these lines and requires every job's step #2 to be exactly it.
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
       - name: ci.yml is the reviewed one
+        shell: sh
         run: |
           set -eu
           want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
@@ -314,8 +344,11 @@ jobs:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
       # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
-      # copy of these lines and requires every job's step #2 to be exactly it.
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
       - name: ci.yml is the reviewed one
+        shell: sh
         run: |
           set -eu
           want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
@@ -355,8 +388,11 @@ jobs:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
       # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
-      # copy of these lines and requires every job's step #2 to be exactly it.
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
       - name: ci.yml is the reviewed one
+        shell: sh
         run: |
           set -eu
           want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
@@ -408,8 +444,11 @@ jobs:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
       # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
-      # copy of these lines and requires every job's step #2 to be exactly it.
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
       - name: ci.yml is the reviewed one
+        shell: sh
         run: |
           set -eu
           want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
@@ -449,8 +488,11 @@ jobs:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
       # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
-      # copy of these lines and requires every job's step #2 to be exactly it.
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
       - name: ci.yml is the reviewed one
+        shell: sh
         run: |
           set -eu
           want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
@@ -488,8 +530,11 @@ jobs:
       - uses: actions/checkout@v4
       # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
       # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
-      # copy of these lines and requires every job's step #2 to be exactly it.
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
       - name: ci.yml is the reviewed one
+        shell: sh
         run: |
           set -eu
           want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
