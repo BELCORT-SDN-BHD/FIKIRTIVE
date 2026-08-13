@@ -9,9 +9,13 @@
 # `quality` check RED — not mergeable. (Not "seven red jobs": the legs carry
 # `needs: scope`, and a job that never starts reports `skipped`, not `failure`.)
 #
-# What regenerating the lock does NOT do is bless the change. Every bypass of these
-# gates needs a diff to .github/workflows/ci.yml, and that diff is what review reads.
-# See the tripwire note at the top of ci.yml.
+# What regenerating the lock does NOT do is bless the change. The digest says the
+# workflow that ran is the workflow that was committed; it says nothing about whether
+# the committed one still runs the gates. #874 r10 skipped every gate by editing one
+# repository script this workflow RUNS, and r12 did it with a project `.npmrc` that no
+# file here mentions — both with a green lock. So this comment no longer claims that a
+# bypass has to touch ci.yml; what a bypass has to do is appear in the PR's diff, and
+# review is what reads it. See the tripwire note at the top of ci.yml.
 #
 # Run after any intended change to ci.yml, in the same commit:
 #     bash scripts/ci/ci-workflow-lock.sh

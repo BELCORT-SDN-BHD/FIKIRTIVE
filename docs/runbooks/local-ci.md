@@ -61,7 +61,7 @@ PR**。那种 PR 上五条腿全部 `skipped`，扇入按 `skipped` 判合法通
 闸」，把这一行判红等于让每一次 API 抖动都堵死合并，而它一个闸都没少跑。
 
 一句话：**`pr-scope.sh` / `pr-scope.jq` 撒谎，现在最多只能让 CI 白跑 13 分钟，买不到
-一次跳过。** 扇入那段重判逻辑本身也在受信集里（见下节），这里不声称它是自闭环。
+一次跳过。** 扇入那段重判逻辑本身也是 ci.yml 里的几十行（见下节），这里不声称它是自闭环。
 
 本地不需要分腿：不带参数的 `pnpm quality` 依旧按上面的顺序跑完全部闸，一个不少。要
 在本地复现某一条腿（例如 CI 只有 `tests` 红），可以跑 `pnpm quality --leg tests`。
@@ -130,7 +130,9 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh
 
 扇入那一步重判本身，也像绊线一样在自测里**手写复述一遍**（3g）：整段脚本逐字节、`id`、
 步骤位置都钉死，还额外要求它**不许提到 `pr-scope`**——再调一次同一个脚本就不叫第二意见。
-另外 3h 会核对「ci.yml 点名的 `scripts/…` 路径」= 手写的受信集名单（见上）。
+另外 3h 会核对「ci.yml 点名的 `scripts/…` 路径」= 自测里手写的那份名单（见下面「改 CI 的
+diff，先读这几个文件」）——它证明的是「这份 workflow 会跑的仓库脚本」这一个集合完整，
+不是「能拦住闸的文件」都在名单上。
 
 ## 这道闸自己会不会被关掉
 
@@ -145,8 +147,15 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh
 
 所以接住这一手的东西不在自测里，在 ci.yml 里：**每个 job 的第 2 步**——checkout 之后、
 任何 setup / install / `$GITHUB_ENV` 写入之前——重新算一遍 ci.yml 的 sha256，跟仓库里
-committed 的 `.github/ci-workflow.lock` 比。它只用 `cut` 和 `sha256sum`，不碰 pnpm、
-node、python。
+committed 的 `.github/ci-workflow.lock` 比。它只用 `cut`、`sha256sum` 和 shell 内建，
+不碰 pnpm、node、python。
+
+同一步还按文件名拒绝两个文件：`.npmrc` 与 `.pnpmfile.cjs`（r13 新增，起因是 r12 的实测
+——项目级 `.npmrc` 里一行 `script-shell=/bin/echo` 就能让五条腿全部空跑）。它写在**绊线**
+里而不是写在自测里，理由正是本节这条递归：那个 `.npmrc` 一旦存在，`pnpm quality` 压根不会
+启动，自测也就没机会说话；绊线跑在 pnpm 被调用之前。这是**棘轮不是边界**——它关掉一个已被
+演示的载体，并且让将来合法引入 `.npmrc` 这件事没法悄悄发生（作者要么在同一个 commit 里改
+绊线和自测里那份手写副本，要么让七个 job 全红）。
 
 ### 为什么这一步写着 `shell: sh`
 
@@ -176,20 +185,50 @@ workflow 的任何一层 `env:`（含 `container.env`、`services.*.env`）都�
 写成「七个 job 全红」：没启动的 job 报的是 `skipped` 不是 `failure`。）把某个 job 里的这
 一步删掉或改废也在覆盖内，因为另外六个 job 照样算整份文件的指纹。
 
-**它买不到的，写清楚**：它不是墙。这里前后写过两句绝对话，两句都被下一轮实测推翻：
+**它买不到的，写清楚**：它不是墙。这里前后写过三句「点名一个集合就够了」的话，三句都被
+下一轮实测推翻，而且每次的反例都落在**上一轮那份名单之外**：
 
 - r8 推翻了「绕过必然会动绊线那一步或者动锁文件」——workflow 级的 `BASH_ENV` 两样都没动；
 - r10 推翻了它的替补「任何绕过都需要一个改 `.github/workflows/ci.yml` 的 diff」——而且是
   用实测推翻的：ci.yml **会跑仓库里的脚本**（`scope` 跑 `scripts/ci/pr-scope.sh`，而且是
   在绊线通过之后跑），改那一个脚本就能跳掉全部五条腿，ci.yml 与锁都不用碰。
   **workflow 不是唯一的可变面，workflow「跑的东西」也是。**
+- r12 推翻了再下一个替补「改动必然落在这七个文件里」——**项目级 `.npmrc` 写一行
+  `script-shell=/bin/echo`**，七个文件一个字没动，五条腿全部只打印自己的命令然后 exit 0，
+  五个 success 喂给扇入，required 的 `quality` 变绿而一道闸都没跑。**pnpm 自己会读的东西，
+  ci.yml 里根本没提过。**
 
-### 受信执行集（r11 合同，第三版）
+### 绊线能证明什么，什么是这个仓库证明不了的
 
-所以现在的说法不再指一份文件，而是**逐一点名**那些能决定「闸到底跑不跑」的文件——区别于
-「闸本身」，改那些只会让闸变红，不会让闸消失：
+**能证明的（每次运行都由机器验）：**
 
-| 文件 | 谁在守 |
+1. **跑起来的那份 ci.yml 就是提交的那份**——每个 job 第 2 步的指纹比对，在任何 setup /
+   install / `$GITHUB_ENV` 写入之前；
+2. **已发现载体上的具名棘轮**：整份 workflow 任何一层 `env:` 都不许有 `BASH_ENV`/`ENV`
+   （自测 3d）、绊线自己的 `shell: sh`（3f）、以及 r13 新增的
+   **checkout 里不许存在 `.npmrc` 与 `.pnpmfile.cjs`**（绊线正文按文件名拒绝）；
+3. 每条腿跑的正好是 `pnpm quality --leg <腿名>`，`package.json` 把它解析成
+   `bash scripts/ci/quality.sh`，而 `quality.sh` 的「闸 → 腿」映射被自测里**手写**的清单
+   双向比对（删闸、改名、换腿都红）；
+4. docs-only 那个跳过结论由**扇入自己**用 API 重判一次，所以说谎的 `pr-scope` 只能让闸
+   **多跑**，买不到一次跳过。
+
+**证明不了的，而且是这个仓库里没有机制能证明的**：*「仓库里不存在其它能改变检查执行路径
+的文件」*。`BASH_ENV`、`pr-scope.sh`、`.npmrc` 三次都在当时那份名单之外；载体是**开集**，
+凡是宣称「集合之外拦不住任何一道闸」的句子，都已经被下一轮实测打过脸。
+
+**所以，真正拦住「悄悄弱化 CI」的防线是且只是两条，两条都不是这个仓库里的脚本：**
+
+1. protect-main ruleset 里那个名叫 `quality` 的 **required check**（bypass_actors 为空）；
+2. **人审 PR diff**——上面每一种载体，以及还没被谁点过名的下一种载体，本质都是「改了一个
+   文件」，而改文件必然出现在 diff 里。这是唯一一条不依赖「名单猜对了」的性质。
+
+### 改 CI 的 diff，先读这几个文件
+
+**这是复审的阅读顺序，不是边界，也不声称完整。**它们的共同点是：改它们会让闸**不跑**
+（安静），而改闸本身只会让闸**变红**（吵闹）。右栏写的是改了之后什么会红：
+
+| 文件 | 改了之后什么会红 |
 | --- | --- |
 | `.github/workflows/ci.yml` | 绊线（每个 job 第 2 步）+ 自测 3e 逐字节 |
 | `.github/ci-workflow.lock` | 绊线 + 自测 3f 验锁是当前的 |
@@ -197,31 +236,29 @@ workflow 的任何一层 `env:`（含 `container.env`、`services.*.env`）都�
 | `scripts/ci/pr-scope.jq` | 同上 |
 | `scripts/ci/quality.sh` | 自测 1./2. 手写的「闸 → 腿」清单（删闸、改名、换腿都红）※ |
 | `package.json` | 自测 3b 把 `quality` 那条 script 逐字钉死 |
-| `scripts/ci/ci-workflow-lock.sh` | 只被绊线的报错文案提到，workflow 不跑它；它写锁 |
+| `scripts/ci/ci-workflow-lock.sh` | **什么都不红**；workflow 不跑它，它只写锁 |
+| `.npmrc`、`.pnpmfile.cjs` | 今天不存在；一出现，七个 job 的绊线全红，本机 `pnpm quality` 也在 3f(c) 红 |
 
-> **合同**：改这个集合里的任何一个文件，都会出现在 PR 的文件列表里；集合之外的东西，
-> 拦不住任何一道闸开跑。
+※ 一个必须写明的例外，ci.yml 头部与自测头部都写了同一句（r12 抓到这三处以前互相矛盾）：
+自测本身就是 `quality.sh` 里的一条 gate，所以**把那一行 gate 从 `quality.sh` 里删掉，就等
+于把判官删掉**——绊线也接不住（它算的是 ci.yml 的指纹，不是 `quality.sh` 的），**CI 里没有
+任何东西接得住**。接住它的只有 `quality.sh` 的 diff。
 
-※ 一个必须写明的例外，而且它是本文下节那条自测递归、不是新洞：自测本身就是 `quality.sh`
-里的一条 gate，所以**把那一行 gate 从 `quality.sh` 里删掉，就等于把判官删掉**——绊线也接
-不住（它算的是 ci.yml 的指纹，不是 `quality.sh` 的）。接住它的只有 diff，而 `quality.sh`
-就在这张名单上。
+自测 3h 会把 ci.yml 里每一段 `run:` 提到的 `scripts/…` 路径扫出来，跟手写名单双向比对——
+ci.yml 里多调一个没人点过名的脚本，这道闸就红。**读清楚它说的是什么**：它说的是「这份
+workflow 会跑的仓库脚本」这个集合是完整的；它对「pnpm、node、runner 自己会去读什么」
+一个字也没说，而 r12 的 `.npmrc` 正是从那儿来的。
 
-「点名」只有在名单是**完整的**时候才值钱，所以名单不是散文：自测 3h 会把 ci.yml 里每一段
-`run:` 提到的 `scripts/…` 路径扫出来，跟手写名单双向比对——ci.yml 里多调一个没人点过名的
-脚本，这道闸就红。
+`.npmrc` / `.pnpmfile.cjs` 那条是**棘轮，不是边界**：它关掉的是一个**已经被演示过**的载体
+（r12），并且让将来**合法**引入 `.npmrc` 这件事没法悄悄发生——作者必须在同一个 commit 里改
+ci.yml 的绊线（七份）和自测里那份手写副本，复审于是同时看到两半。它**不构成**「载体已经数
+全了」的证据。
 
 锁文件依然是可以重算的（`bash scripts/ci/ci-workflow-lock.sh`），所以铁了心的作者可以改
 ci.yml、重算锁、重生成字面量，然后一路绿。这一直都是真的，现在它是演习里的一个用例而不
-是一句承诺。扇入那段重判逻辑本身也在受信集里（它就是 ci.yml 里的几十行，被锁钉住、被自测
-3g 手写复述一遍）——**这里不声称它是自闭环**。r11 买到的东西比那窄，也比那实在：**能悄悄让
-一道闸不跑的文件集合不再包含 `scripts/ci/pr-scope.sh` 和 `scripts/ci/pr-scope.jq`**，剩下
-的每一个成员，复审本来就必须读它的 diff。
-
-真正的机器地板不是脚本，是 protect-main ruleset 里那个名叫 `quality` 的
-required check（bypass_actors 为空），加上「改 `.github/workflows` 或 `scripts/ci` 的 PR
-必须过复审」这条项目规矩——而复审读的，正是受信集每一个成员都必须交出来的那个 diff。
-**这道闸是防未经复审的漂移的仪器，不是防铁了心的作者的墙——这个仓库里没有那种墙。**
+是一句承诺。扇入那段重判逻辑本身也是 ci.yml 里的几十行（被锁钉住、被自测 3g 手写复述一
+遍）——**这里不声称它是自闭环**。
+**这些东西是防未经复审的漂移的仪器，不是防铁了心的作者的墙——这个仓库里没有那种墙。**
 
 改了 ci.yml 之后，同一个 commit 里要做两件事，顺序如下：
 

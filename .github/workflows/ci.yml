@@ -28,9 +28,23 @@ name: CI
 # So every job below runs ONE step before anything else can touch its environment:
 # right after `actions/checkout` (there is nothing to read before the checkout), and
 # before any setup, install or `$GITHUB_ENV` write. It compares this file, byte for
-# byte, against the sha256 committed in `.github/ci-workflow.lock`, with `cut` and
-# `sha256sum` and nothing else — no pnpm, no node, no python, all three of which
+# byte, against the sha256 committed in `.github/ci-workflow.lock`, using `cut`,
+# `sha256sum` and shell builtins — no pnpm, no node, no python, all three of which
 # read configuration out of an environment an earlier step is free to write.
+#
+# THE SAME STEP ALSO REFUSES TWO FILENAMES, AND IT IS A RATCHET RATHER THAN A BOUNDARY.
+# Review of #874 r12 found that a project `.npmrc` holding `script-shell=/bin/echo`
+# makes every `pnpm quality --leg …` print its own command and exit 0 — five green legs
+# over zero gates, with no diff to this file, to the lock, or to any repository script.
+# `.pnpmfile.cjs` is the same family: JavaScript that pnpm executes during install.
+# Neither file exists in this repository today, so the tripwire refuses both by name, in
+# a step that runs BEFORE pnpm is ever invoked.
+#
+# What that buys and what it does not: it closes ONE carrier that was demonstrated, and
+# it leaves an author who adds either file exactly two options — edit this step and its
+# hand-written copy in the self-test, in the same commit, which is a diff a reviewer
+# reads; or leave all seven jobs red, which is not mergeable. It is not evidence that
+# the carriers have been enumerated. They have not been; see below.
 #
 # IT RUNS UNDER `shell: sh`, AND THAT FIELD IS LOAD-BEARING. r8's review found the
 # step was still being STARTED by a shell that reads a startup file named in its own
@@ -53,20 +67,68 @@ name: CI
 # job, because the other six still hash the whole file.
 #
 # WHAT IT IS NOT, AND WE ARE NOT GOING TO PRETEND OTHERWISE: it is not a wall around
-# CI, and every absolute claim that has stood here has been falsified by the next
-# round of review. r8 killed "a bypass has to touch this step or the lock file" (a
-# workflow-level `BASH_ENV` touched neither). r10 killed its replacement, "every
-# bypass needs a diff to THIS FILE", and killed it with a demonstration rather than an
-# argument: the `scope` job runs `bash scripts/ci/pr-scope.sh` AFTER the tripwire, so a
-# diff to that ONE REPOSITORY SCRIPT — no ci.yml, no lock — made it print `false`, all
-# five legs `skipped`, and the fan-in read the whole set of skips as a docs-only PR and
-# went green. The workflow is not the only mutable surface. What the workflow RUNS is
-# a mutable surface too.
+# CI. Three rounds of review each falsified the round before's enumeration, and the
+# PATTERN is what matters here, not the three individual holes:
 #
-# ── THE TRUSTED EXECUTION SET (the r11 contract, third version) ───────────────
-# So the claim is no longer about one file. It names, exhaustively, the files that
-# decide WHETHER THE GATES RUN AT ALL — as opposed to the files that ARE the gates,
-# where a change makes a gate fail rather than disappear:
+#   r8   killed "a bypass has to touch this step or the lock file". A workflow-level
+#        `BASH_ENV` touched neither: bash sources that file before the step's first
+#        line, so it can rewrite the lock, or define `cut` and `sha256sum`.
+#   r10  killed its replacement, "every bypass needs a diff to THIS FILE", with a
+#        demonstration rather than an argument: the `scope` job runs
+#        `bash scripts/ci/pr-scope.sh` AFTER the tripwire, so a diff to that ONE
+#        REPOSITORY SCRIPT — no ci.yml, no lock — made it print `false`, all five legs
+#        `skipped`, and the fan-in read the skips as a docs-only PR and went green.
+#   r12  killed the one after that, "a diff to one of these seven files". A project
+#        `.npmrc` holding `script-shell=/bin/echo` is none of the seven and changes no
+#        line of any of them; every `pnpm quality --leg …` then prints its own command
+#        and exits 0. Five green legs, a green `quality`, not one gate run.
+#
+# Three enumerations, three counter-examples, each one found OUTSIDE the enumeration it
+# broke. The next carrier is not going to announce itself either, so THIS FILE NO LONGER
+# MAKES AN ENUMERATION CLAIM.
+#
+# ── WHAT THE TRIPWIRE PROVES, AND WHAT NOTHING HERE PROVES ───────────────────
+# PROVED, by machine, on every run:
+#   - the ci.yml that RAN is the ci.yml that was committed — the digest comparison
+#     above, in every job, before any setup, install or `$GITHUB_ENV` write;
+#   - the named ratchets on the carriers review has actually found: `BASH_ENV` and
+#     `ENV` appear in no `env:` block of this file at any depth (3d), the tripwire's
+#     own `shell: sh` (3f), and — r12's carrier — no `.npmrc` and no `.pnpmfile.cjs`
+#     in the checkout, refused by name in the tripwire body itself;
+#   - each leg runs exactly `pnpm quality --leg <leg>`, package.json resolves that to
+#     `bash scripts/ci/quality.sh`, and quality.sh's gate→leg map is compared against a
+#     list written out by hand in the self-test (a deleted, renamed or relegged gate is
+#     red there);
+#   - the docs-only skip is re-derived by the fan-in itself, from the API, with a
+#     filter written in THIS file, so a `pr-scope` that lies can make the legs RUN when
+#     they need not have but cannot buy a skip.
+#
+# ONE ATTRIBUTION THAT USED TO BE STATED WRONG HERE, corrected in r13 because #874 r12
+# caught the two halves of this repository contradicting each other: the self-test is
+# itself one of quality.sh's gates, so DELETING THAT GATE LINE FROM quality.sh DELETES
+# THE CHECKER, and the tripwire does not catch it — the tripwire hashes ci.yml, not
+# quality.sh. The legs go green over a gate list nobody compared. What catches that is
+# the diff to quality.sh, and nothing else. The self-test says the same thing in its own
+# header, and docs/runbooks/local-ci.md says it a third time.
+#
+# NOT PROVED, and not provable from inside this repository: that no OTHER file in it
+# can change how these checks execute. `BASH_ENV`, `pr-scope.sh` and `.npmrc` were each
+# outside the list that preceded them; the carriers are an open set, and every sentence
+# that has claimed otherwise here was falsified by the next round.
+#
+# SO WHAT ACTUALLY STOPS CI FROM BEING WEAKENED SILENTLY IS TWO THINGS, AND NEITHER IS
+# A SCRIPT IN THIS REPOSITORY:
+#   1. the `quality` required check in the protect-main ruleset, bypass_actors empty —
+#      no run reports green without producing it;
+#   2. human review of the PR diff. Every carrier above, and every carrier nobody has
+#      named yet, is a CHANGE TO A FILE, and a change to a file is in the diff by
+#      construction. That is the one property that does not depend on having guessed
+#      the list right.
+#
+# ── FILES TO READ FIRST IN A DIFF THAT TOUCHES CI ────────────────────────────
+# A reviewer's reading order, NOT a boundary and NOT a complete list. What these have
+# in common is that changing them turns gates OFF, where changing a gate's own code
+# makes it FAIL — quiet versus loud:
 #
 #     .github/workflows/ci.yml        this file: every job, step, env and condition
 #     .github/ci-workflow.lock        the digest the tripwire compares this file to
@@ -75,36 +137,14 @@ name: CI
 #     scripts/ci/quality.sh           what `pnpm quality --leg …` resolves to
 #     package.json                    the `quality` script that does the resolving
 #     scripts/ci/ci-workflow-lock.sh  writes the lock (this workflow never runs it)
+#     .npmrc, .pnpmfile.cjs           absent today; the tripwire is red if either appears
 #
-# The `scripts/ci/…` half of that list is machine-checked, not asserted: the self-test
-# scans every `run:` script in this file for `scripts/…` paths and requires the set to
-# be exactly the one written out by hand there. Adding a call to a script nobody named
-# is red until somebody names it.
-#
-#     THE CLAIM: a change to any member of that set is in the PR's file list, and
-#     nothing outside it can stop a gate from running. Being wrong about a file OUTSIDE
-#     it costs a red gate; being wrong about one INSIDE it is a green `quality` over
-#     unrun gates, which is why the set is enumerated rather than described.
-#
-# The tripwire covers the first two members. The five legs cover `quality.sh` and
-# `package.json` (a leg that stops running its gates goes red, not quiet). The two
-# `pr-scope` files are the ones r10 fired, and they are covered by the fan-in's own
-# second opinion, described where it lives — in the `quality` job at the bottom of this
-# file. That step re-derives the docs-only answer HERE, from the API, with a filter
-# written in THIS file, so a `pr-scope` that lies can only ever cause the legs to RUN
-# when they need not have. It cannot buy a skip.
-#
-# AND THE HONEST LIMIT, STATED BEFORE r12 HAS TO STATE IT: that second opinion is
-# itself inside the trusted set — it is lines in this file, pinned by the lock and
-# written out a second time by hand in the self-test. It is not a self-closing loop and
-# nothing here claims one. What it buys is that the set STOPS GROWING: after r10 the
-# skip decision depended on two repository scripts that no other job re-derived; it now
-# depends only on files whose diff a reviewer is already required to read.
-#
-# The floor under all of it is not a script. It is the `quality` required check in the
-# protect-main ruleset (bypass_actors empty), plus the project rule that a PR touching
-# .github/workflows or scripts/ci goes through review — which is what reads the diff
-# that every member of the set is obliged to produce. See docs/runbooks/local-ci.md.
+# The `scripts/ci/…` rows are machine-checked rather than asserted: the self-test scans
+# every `run:` script in this file for `scripts/…` paths and requires the set to be
+# exactly the one written out by hand there, so a call to a script nobody named is red.
+# Read what that check does and does not say: it says the list covers what THIS FILE
+# RUNS. It says nothing about what pnpm, node or the runner read on their own — which
+# is exactly where r12's `.npmrc` came from. See docs/runbooks/local-ci.md.
 
 on:
   pull_request:
@@ -180,6 +220,7 @@ jobs:
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -188,7 +229,10 @@ jobs:
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
 
       # This step does no interpretation at all: it saves both API responses verbatim
       # and forwards the answer.
@@ -340,6 +384,7 @@ jobs:
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -348,7 +393,10 @@ jobs:
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -409,6 +457,7 @@ jobs:
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -417,7 +466,10 @@ jobs:
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -453,6 +505,7 @@ jobs:
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -461,7 +514,10 @@ jobs:
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -509,6 +565,7 @@ jobs:
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -517,7 +574,10 @@ jobs:
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -553,6 +613,7 @@ jobs:
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -561,7 +622,10 @@ jobs:
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -595,6 +659,7 @@ jobs:
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -603,7 +668,10 @@ jobs:
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
 
       # ── THE SECOND OPINION (the r10 P0) ──────────────────────────────────────
       # The verdict below used to accept "all five legs skipped" on the `scope` job's

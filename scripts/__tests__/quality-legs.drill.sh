@@ -41,6 +41,14 @@
 #       `sh` and under `bash`, with the poison in place. sh must refuse; bash must be
 #       fooled. The second half is the nail that keeps `shell: sh` from being tidied
 #       away as noise.
+#   r12 the one every case up to r11 misses because they all mutate a file this
+#       repository writes. r12's carrier is a file pnpm READS ON ITS OWN and ci.yml
+#       never mentions: a project `.npmrc` holding `script-shell=/bin/echo` turns every
+#       `pnpm quality --leg …` into an echo that exits 0. Two groups again: the gate
+#       STARTED with that file present (r13 answers the carrier in the tripwire, which
+#       is the only layer that still runs when pnpm has been switched off — a check
+#       written in the self-test would be switched off along with it), and the self-test
+#       shapes that remove the ratchet or meet the file on a laptop.
 #   r10 the one every case up to r9 misses because they all mutate ci.yml, and r10's
 #       bypass mutates a REPOSITORY SCRIPT THE WORKFLOW RUNS. `scope` decides the
 #       docs-only skip through `bash scripts/ci/pr-scope.sh`, after the tripwire has
@@ -76,7 +84,7 @@
 
 set -euo pipefail
 
-expected_cases=54
+expected_cases=59
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && cd .. && pwd)"
@@ -119,6 +127,7 @@ IFS= read -r -d '' tripwire_block <<'DRILL_TRIPWIRE_EOF' || true
       # copy of these lines and requires every job's step #2 to be exactly it —
       # `shell: sh` included, because that field is what stops a startup file named
       # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
       - name: ci.yml is the reviewed one
         shell: sh
         run: |
@@ -127,8 +136,21 @@ IFS= read -r -d '' tripwire_block <<'DRILL_TRIPWIRE_EOF' || true
           got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
           [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
           [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
-          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got)"
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
 DRILL_TRIPWIRE_EOF
+
+# The three lines of that block that are r13's ratchet, on their own, for the case that
+# deletes just them. Same reason for writing them out rather than slicing them off
+# `$tripwire_block`: an anchor the drill built out of the file it is mutating cannot
+# report that the file moved on without it. patch_ci insists on finding it seven times.
+IFS= read -r -d '' ratchet_block <<'DRILL_RATCHET_EOF' || true
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+DRILL_RATCHET_EOF
 
 # What an author does after an intended ci.yml change, and what CI tells them to do
 # when they forget: rewrite the lock from the (mutated) file.
@@ -700,6 +722,68 @@ expect_gate_fooled "$(run_gate bash BASH_ENV=scripts/ci/ci-workflow-lock.sh)" \
 setup_gate stale
 expect_gate_refuses "$(run_gate sh ENV=./poison-functions.sh)" \
   "sh + ENV naming the same poison — a non-interactive sh reads ENV no more than it reads BASH_ENV"
+echo
+
+echo "r12's review — the carrier pnpm reads on its own, and the ratchet that answers it:"
+
+# r12's P0 touched NOTHING this drill had a case for. A project `.npmrc` holding
+# `script-shell=/bin/echo` is not ci.yml, not the lock, and not a repository script the
+# workflow names — and every `pnpm quality --leg …` then prints its own command and
+# exits 0, so five legs report success over zero gates. Measured on this repository with
+# the pnpm package.json pins (10.0.0):
+#
+#     $ printf 'script-shell=/bin/echo\n' > .npmrc
+#     $ pnpm quality --leg lint
+#     -c bash scripts/ci/quality.sh "--leg" "lint"   ← the gate never started
+#     $ echo $?
+#     0
+#
+# The answer had to go in the TRIPWIRE rather than in the self-test, and these cases are
+# what says so: under that `.npmrc`, `pnpm quality` never starts, so the self-test never
+# runs, so a check written in the self-test would have no opinion in the one case it was
+# written for. The tripwire runs before pnpm is invoked at all — so it is asked here,
+# with the CURRENT lock, which isolates the new refusal from the digest comparison.
+#
+# Read what these two cases claim: ONE demonstrated carrier is closed. They are not
+# evidence that the carriers are enumerated — three enumerations have been falsified
+# already, and the headers now say so instead of claiming a set.
+setup_gate current
+printf 'script-shell=/bin/echo\n' >"$gate_root/.npmrc"
+expect_gate_refuses "$(run_gate sh)" \
+  "sh, matching lock, but a project .npmrc carrying script-shell=/bin/echo (r12's P0, reproduced) — the tripwire refuses the filename before pnpm is ever invoked"
+
+setup_gate current
+printf 'module.exports = { hooks: {} };\n' >"$gate_root/.pnpmfile.cjs"
+expect_gate_refuses "$(run_gate sh)" \
+  "sh, matching lock, but a .pnpmfile.cjs — JavaScript pnpm executes during install, refused by the same loop"
+
+# And the control that keeps the two above from being a gate that refuses everything:
+# with neither file present, the same lock and the same body still accept. (The earlier
+# `setup_gate current` control covers this too; it is repeated here because these cases
+# add a second reason to refuse, and a control that predates the reason proves less.)
+setup_gate current
+expect_gate_accepts "$(run_gate sh)" \
+  "sh, matching lock, no .npmrc and no .pnpmfile.cjs — the new refusal is conditional, not unconditional"
+echo
+
+echo "and the same ratchet from the self-test's side — it is pinned by hand, so removing it is red:"
+
+# The tripwire's new loop is written out by hand in the self-test's expected_tripwire_run
+# (3f), like every other line of that step. So deleting it from all seven jobs and
+# regenerating everything the workflow knows how to regenerate is still red — that is
+# what makes "edit the ratchet and the reviewer sees it" true rather than hoped for.
+reset_sandbox
+patch_ci "$ratchet_block" '' 7
+regen_sandbox
+expect_red "the .npmrc/.pnpmfile.cjs loop deleted from ALL SEVEN tripwires AND everything regenerated — 3f compares the tripwire script byte for byte against the copy written out by hand"
+
+# The laptop-side half, 3f(c). It is the courtesy half and it is labelled as such in the
+# self-test: it tells an author who adds `.npmrc` on purpose, on their machine, instead
+# of letting them discover it as seven red jobs. It is NOT what catches a hostile
+# `.npmrc` — that one stops the self-test from running at all, which is the case above.
+reset_sandbox
+printf 'script-shell=/bin/echo\n' >"$sandbox/.npmrc"
+expect_red "a project .npmrc appears and the tripwire is untouched — 3f(c) says on a laptop what CI would say in seven jobs"
 echo
 
 echo "r10's review — the OTHER mutable surface: a repository script the workflow RUNS:"
