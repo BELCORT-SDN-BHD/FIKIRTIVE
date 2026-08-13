@@ -210,6 +210,7 @@ export type MoneyJobRow = {
   /** 上面那个数的单位,引擎自己的口径:图片 = "images"(张),视频 = "tokens"。
    *  两条产品线单位不同是引擎的定价方式,不是我们的选择;null = 没有可报的量。 */
   billedUnitLabel: "images" | "tokens" | null;
+  finishedAt: string;
 };
 
 export type MoneyLedgerRow = {
