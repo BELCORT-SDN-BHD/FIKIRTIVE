@@ -6,6 +6,18 @@ import { requireOwner } from "./auth-guard";
 import { storage, kindOf, extFromFilename } from "./storage";
 import { redactProviderNames } from "./provider-secrecy";
 
+/**
+ * #914 r4 —— 「平台实际送给引擎的那一句」跨过商家边界时的形状。
+ *
+ * 刻意不是 `string | null` 两态:那样面板就得自己再比一次「是不是跟商家写的一样」,而
+ * 比对的另一半(商家原话可能藏在 `GenJob.requestedPrompt` 里)本来就只有服务端知道 ——
+ * 两处各比各的正是本票被判两次 FAIL 的那类病。比对在这里做完,面板只负责显示。
+ */
+export type SentPromptReceipt =
+  | null
+  | { verbatim: true }
+  | { verbatim: false; text: string };
+
 export type GenerationDTO = {
   id: string;
   projectId: string;
@@ -27,16 +39,43 @@ export type GenerationDTO = {
    *
    * 被请求的那一行自己的那句(多图时每张各有各的,见 `variants[].finalPrompt`)。
    *
-   * null 有两种情形,语义是同一个:引擎没报,或者这是回执落库之前的历史行。两种都叫
-   * **未知**,而面板会把「未知」**说出来**(“Not reported by the engine.”)—— 不知道要
-   * 长得像不知道,既不能悄悄消失(看起来像这个东西不存在),更不能回落成 `prompt` 冒充
-   * 引擎的话(那样这个字段就变成一句永远为真的废话,商家再也看不出两句何时真的不同)。
+   * #914:这一列的 null 语义**按 kind 分家**——
+   *   · kind:"video" —— null 有两种情形,语义是同一个:引擎没报,或者这是回执落库之前的
+   *     历史行。两种都叫**未知**,面板把「未知」**说出来**("Not reported by the engine.")
+   *     —— 不知道要长得像不知道,既不能悄悄消失,更不能回落成 `prompt` 冒充引擎的话。
+   *   · kind:"image" —— null **恒为真**,不是「这次没报」:图片引擎的官方响应结构上就没有
+   *     revised_prompt 这个字段(packages/core/src/refgen.ts 的 GenerationReceipt 注释),
+   *     面板据此**整行不渲染**,不再念 "Not reported by the engine." 这句占位话(Founder
+   *     裁决,#914,市调见 #909:通行做法是有则显示、无则整行消失)。图片这条路自己的
+   *     回执事实改走 `sentPrompt`(下面)—— 那是**我们**的记录,不问引擎要。
    *
    * 白标在这里(服务端一处)完成:引擎改写出来的句子可能带供应商指纹词,过
    * `redactProviderNames` 之后才越过这道边界。原文按原样留在库里 —— 那是记账真相,
    * 过滤是展示层的事。
    */
   finalPrompt: string | null;
+  /**
+   * #914 r4(判官 r3)—— **平台实际交给引擎的那一句**。
+   *
+   * 事实由 worker 在调用引擎那一刻记下(`Generation.sentPromptText`,见
+   * apps/worker/src/jobs/gen.ts):那里是所有花钱入口唯一的汇合点,而且提示词到那时才
+   * 拼完(#774 的参考图编号句由 worker 现产)—— r2/r3 记在 web 层的版本记的永远不是
+   * 真正送出去的全文,判官据此判 FAIL。
+   *
+   * 三种形状,读取端**已经比完**,面板不再自己推:
+   *   · `null`                      = 这一行**不是一次引擎调用的产物**:要么早于这一列
+   *     (历史生成),要么它本来就不是引擎产的(上传、裁剪等 $0 摄取路径同样建 Generation
+   *     行)。两种都没有「送出的那一句」可说 → 面板**整行不出现**,一句话都不说
+   *     (#914 Founder 裁定:有则显示、无则整行不出现);
+   *   · `{ verbatim: true }`        = 与商家写的那句**逐字**相同(严格 `===`,不 trim ——
+   *     一个尾随空行也是「不同」,宁可多显示一次全文,也不替引擎抹掉差异);
+   *   · `{ verbatim: false, text }` = 不同 → `text` 是实际送出的全文(已过白标)。
+   *
+   * 「商家写的那句」= `GenJob.requestedPrompt ?? Generation.promptText`:入队前我们自己
+   * 的 composePrompt 拼装步骤动过手的那些单(coworkGenerate)把商家原话留在
+   * `GenJob.requestedPrompt`,其余单的 `promptText` 本身就是商家原话。
+   */
+  sentPrompt: SentPromptReceipt;
   favorite: boolean;
   sourceGenerationId: string | null;
   /**
@@ -61,6 +100,7 @@ export async function getGeneration(
       projectId: true,
       promptText: true,
       finalPromptText: true,
+      sentPromptText: true,
       favorite: true,
       asset: { select: { ownerId: true, contentHash: true, ext: true } },
     },
@@ -71,7 +111,10 @@ export async function getGeneration(
   // generation and carried a sourceGenerationId (i.e., this was an i2v result).
   const job = await prisma.genJob.findFirst({
     where: { generationIds: { has: generationId }, ownerId },
-    select: { sourceGenerationId: true, generationIds: true, imageOptions: true },
+    // #914 r4:`requestedPrompt` = 商家原话(入队前 composePrompt 动过手的那些单才有),
+    // 是回执比对的另一半;它住在任务上而不是产出行上,因为拼装发生在整单唯一的那一个
+    // prompt 字段上,不是逐张的。
+    select: { sourceGenerationId: true, generationIds: true, imageOptions: true, requestedPrompt: true },
   });
 
   const { asset } = gen;
@@ -116,6 +159,10 @@ export async function getGeneration(
     prompt: gen.promptText,
     // 这一条是**被请求的那一行**自己的那句(= variants 里 id === generationId 的那一条)。
     finalPrompt: primaryVariant.finalPrompt,
+    // #914 r4 —— 读**这一张自己**那一列(不是从兄弟行借的)。一单多图是**一次**付费调用,
+    // 同一个字符串发出去,所以每张的这一列同值 —— 与逐张各有各的 `finalPrompt` 不同,
+    // 这里不需要绑到 variants,切缩略图也不该让这一行变脸。
+    sentPrompt: sentPromptReceipt(gen.sentPromptText, job?.requestedPrompt ?? gen.promptText),
     favorite: gen.favorite,
     sourceGenerationId: job?.sourceGenerationId ?? null,
     imageAspect: snapshotImageAspect(job?.imageOptions),
@@ -127,13 +174,39 @@ export async function getGeneration(
  *
  * 两件事在这一处做完,所以别处不必各做一遍:
  *   ① 白标 —— 过 `redactProviderNames`,引擎改写时带出来的供应商指纹词到不了商家眼前;
- *   ② 空即未知 —— null / 空串 / 过滤后只剩空白,一律回 null。面板对 null 什么也不说。
- *      「不知道」必须长得像不知道,不能长得像一个空白的答案。
+ *   ② 空即未知 —— null / 空串 / 过滤后只剩空白,一律回 null:「不知道」必须长得像不知道,
+ *      不能长得像一个空白的答案。
+ *
+ * null 到了面板上怎么处置,#914 起**按 kind 分家**(这里只负责归一,不负责措辞):
+ * kind:"video" 把未知**说出口**("Not reported by the engine.");kind:"image" 整行不渲染
+ * —— 图片契约结构上就没有这个字段,念一句「这次没报」等于每张图都编一句假的未知。
  */
 function merchantFinalPrompt(stored: string | null): string | null {
   if (!stored) return null;
   const shown = redactProviderNames(stored).trim();
   return shown.length > 0 ? shown : null;
+}
+
+/**
+ * #914 r4 —— 「我们实际送出的那句」跨过商家边界时的**唯一**出口。
+ *
+ * 三条纪律在这一处做完:
+ *   ① **手上没有这条记录 ⇒ 整块消失** —— `null` = 这一行不是一次引擎调用的产物(早于这
+ *      一列的历史生成,或上传/裁剪这类根本没调过引擎的 $0 摄取行),`undefined` = 调用点
+ *      根本没查这一列。全都叫「我们没有这条记录」,返回 null,面板据此整块不渲染,一个字
+ *      都不说。刻意用 `== null` 而**不是** falsy:空串是一个真实
+ *      的值,不是「没记」,把它归进这一档会让一次真实的空提示词冒充成「这条产品线不存在」;
+ *   ② **严格逐字比对** —— `===`,不 trim、不归一空白。差一个尾随空行也算不同,于是商家
+ *      看到的是全文而不是一句「原样送出」。宁可多显示一次,也不替谁抹平差异(r3 判官点名
+ *      的第 ③ 条:trim 放宽了比对);
+ *   ③ **白标** —— 只有真的要显示全文时才过 `redactProviderNames`。比对用**原文**做,
+ *      过滤只作用在展示上:否则商家自己在提示词里写了供应商名,会被这道过滤反过来判成
+ *      「我们改了你的话」。
+ */
+function sentPromptReceipt(stored: string | null | undefined, written: string): SentPromptReceipt {
+  if (stored == null) return null;
+  if (stored === written) return { verbatim: true };
+  return { verbatim: false, text: redactProviderNames(stored) };
 }
 
 /** 快照里的形状，且必须仍在今天的菜单上 —— 一个已下线的旧形状不得靠这条路回到付费请求里。 */

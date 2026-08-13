@@ -48,6 +48,12 @@ type GenDTO = {
   prompt: string;
   /** #776：被请求的那一行自己的「引擎真正跑的那句」。切换缩略图后要读 `variants[i].finalPrompt`。 */
   finalPrompt: string | null;
+  /**
+   * #914 r4：平台**实际交给引擎**的那一句（worker 在发送那一刻记的）。比对已在服务端做完
+   * （asset-actions.sentPromptReceipt）：null = 这一行不是一次引擎调用的产物（历史生成，
+   * 或上传/裁剪这类没调过引擎的行）⇒ 整块不渲染，一个字不说。
+   */
+  sentPrompt: null | { verbatim: true } | { verbatim: false; text: string };
   favorite: boolean;
   sourceGenerationId: string | null;
   /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
@@ -665,23 +671,20 @@ export default function DetailPanel({
               <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
 
-            {/* #776 生成回执 —— 引擎自报「它真正跑的那句话」。
-                上面那句是商家写的，这一句是引擎实际执行的；两者常常不同（引擎会在服务端
-                改写、加固、补细节），而在此之前这条链在交付那一步就断了：商家看得到结果，
-                看不到结果是按什么做出来的。
+            {/* #776/#914 生成回执 —— 引擎自报「它真正跑的那句话」，只有视频契约会给这个字段
+                （官方 Image 响应结构没有 revised_prompt，参见 packages/core/src/refgen.ts 的
+                GenerationReceipt 注释）；图片这条路上它恒为未知，不是「这次没报」。
 
-                r2 改了两件事，都是判官指出的：
-                  · **未知也要说出口**。r1 在 null 时整块隐藏，于是「引擎没报」和「这条链
-                    不存在」在屏幕上长得一模一样。现在如实写 “Not reported by the engine.”
-                    —— 不知道要长得像不知道；
-                  · **读这一张自己的那句**。一单多图 = 多次付费调用，每张可以有各自的改写；
-                    读 `variants[selectedIdx]`，切换缩略图时跟着换。读主图那一份的话，第二张
-                    会被第一张的话解释——那比空着更糟。
-                两条不变的纪律：一模一样就只说「就是你写的那句」，不把同一段文字贴两遍；
-                供应商指纹词已在服务端一处（asset-actions.merchantFinalPrompt）滤掉，这里
-                拿到的就是可以直接上屏的白标文本。
+                #914（Founder 裁决 2026-08-13，市调见 #909）：图片这一整行**永不出现**，不分
+                「有 / 无」两种形状 —— 旧版 "Not reported by the engine." 曾经在图片这条路上
+                永远显示，那不是诚实报告未知，是一个字段模板在填不上时自己编的句子（通行做法：
+                有则显示、无则整行不出现，Ideogram / Adobe 同款）。商家想知道「这台引擎会不会
+                自己改写我的话」，去选引擎的位置（ImageShapePicker / VideoSpecPicker）看一次
+                静态能力说明就够了，不必每张图重复念一遍。视频这条路上这一行**行为不变**，r2
+                判官的五条纪律原样保留：未知也要说出口、读这一张自己的那句、一模一样就只说
+                一句、供应商指纹词已在服务端滤掉。
                 样式沿用本面板既有的内联写法；这一面的 shadcn 化属于 #840 的界面族拆分。 */}
-            {(() => {
+            {gen.kind === "video" && (() => {
               // 回退只在「这一张根本不在列表里」时发生（与 displayUrl 同一套），**不是**在
               // 「这一张的值是 null」时发生 —— 后者正是要显示的答案。写成 `?.finalPrompt ??`
               // 的话，第二张没报就会悄悄继承第一张那一句，也就是判官点的那个串台。
@@ -704,6 +707,32 @@ export default function DetailPanel({
                 </div>
               );
             })()}
+
+            {/* #914 r4(判官 r3)图片回执:**我们自己**把哪一句交给了引擎 —— 不问引擎要,
+                所以图片这条路上也答得出来。事实由 worker 在调用引擎那一刻记下(所有花钱
+                入口唯一的汇合点，而且提示词到那时才拼完:#774 的参考图编号句是 worker 现
+                产的)，比对在服务端一次做完（asset-actions.sentPromptReceipt）。
+
+                r2/r3 的病根:记录点在 web 层 —— 记下的永远不是真正送出去的全文，于是
+                「原样送出」这句话在模板一键成片这类必带底图的单上必然是谎。r4 把记录点
+                搬到真实发送层，这里只负责显示服务端已经比完的结论:
+                  · null（这一行不是引擎产的：历史生成，或上传/裁剪这类 $0 摄取行）⇒
+                    **整块不渲染**，一个字都不说；
+                  · 逐字相同 ⇒ 一句 "Sent exactly as you wrote it."；
+                  · 不同     ⇒ 把实际送出的全文亮出来（已过白标）。 */}
+            {/* `!= null` 而不是 `!== null`:字段整个读不到(老的调用点 / 老的 DTO)与「没有
+                这条记录」是同一件事 —— 两种都往「什么都不说」那一边倒,与服务端
+                sentPromptReceipt 的同一条纪律对齐。 */}
+            {gen.kind === "image" && gen.sentPrompt != null && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                  What we sent to the engine
+                </span>
+                <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                  {gen.sentPrompt.verbatim ? "Sent exactly as you wrote it." : gen.sentPrompt.text}
+                </p>
+              </div>
+            )}
 
             {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
                 Seeded from the shape this image was made in, so neither one silently reshapes it.

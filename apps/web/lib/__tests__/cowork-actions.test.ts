@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   genJobFindFirst: vi.fn(),
   startCoworkGen: vi.fn(),
   resolveDisabledModels: vi.fn(),
+  getEnhanceDirective: vi.fn(),
+  familyHasPromptSkill: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", async () => ({
@@ -16,8 +18,8 @@ vi.mock("@/lib/auth-guard", async () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../gen-actions", () => ({ startCoworkGen: mocks.startCoworkGen }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mocks.resolveDisabledModels }));
-vi.mock("../cowork-knowledge", () => ({ getEnhanceDirective: vi.fn() }));
-vi.mock("@fikirtive/otto", () => ({ familyHasPromptSkill: () => true }));
+vi.mock("../cowork-knowledge", () => ({ getEnhanceDirective: mocks.getEnhanceDirective }));
+vi.mock("@fikirtive/otto", () => ({ familyHasPromptSkill: mocks.familyHasPromptSkill }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     chatMessage: {
@@ -31,6 +33,7 @@ vi.mock("@fikirtive/db", () => ({
 }));
 
 const { coworkGenerate } = await import("../cowork-actions");
+const { readMerchantPrompt } = await import("../merchant-prompt-provenance");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -55,6 +58,11 @@ beforeEach(() => {
   mocks.resolveDisabledModels.mockResolvedValue({ disabled: new Set<string>() });
   mocks.startCoworkGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.chatMessageUpdate.mockResolvedValue({});
+  // Default: a skilled family (the pre-existing behavior every other test in this file
+  // relies on) — composePrompt's directive branch never runs, so requestedPrompt never
+  // gets attached. The #914 r2 tests below override this per-case.
+  mocks.familyHasPromptSkill.mockReturnValue(true);
+  mocks.getEnhanceDirective.mockResolvedValue(undefined);
 });
 
 describe("coworkGenerate", () => {
@@ -96,5 +104,74 @@ describe("coworkGenerate", () => {
 
     expect(result).toEqual({ error: "The approved price changed." });
     expect(mocks.chatMessageUpdate).not.toHaveBeenCalled();
+  });
+
+  // #914 — composePrompt's directive append is the ONE place a prompt is rewritten BEFORE the
+  // job is queued, so it is the one place where the merchant's own words and GenJob.prompt part
+  // company. requestedPrompt keeps the merchant's words; the receipt compares them against what
+  // the worker actually handed the engine (Generation.sentPromptText). Two columns, and neither
+  // one is ever allowed to stand in for the other.
+  // r6(判官 r5 P2):它**不再是请求体上的一个字段** —— 那样任何人直接调 Server Action 都能
+  // 伪造一句「商家原话」。它走进程内的出处通道(merchant-prompt-provenance),所以下面断言
+  // 的是「交给 startCoworkGen 的那个对象上绑着什么」,而不是「那个对象里多了一个键」。
+  describe("#914 — requestedPrompt = the merchant's own words", () => {
+    /** startCoworkGen 真正收到的那个对象上绑着的商家原话(读法与 gen-actions 一致)。 */
+    const boundOnLastCall = () => readMerchantPrompt(mocks.startCoworkGen.mock.calls[0]![0]);
+
+    it("un-skilled family + an enabled directive ⇒ startCoworkGen gets the composed prompt, and the pre-compose text rides the provenance channel", async () => {
+      mocks.familyHasPromptSkill.mockReturnValue(false);
+      mocks.getEnhanceDirective.mockResolvedValue("Avoid text overlays; keep it photorealistic.");
+
+      await coworkGenerate({
+        cardId: "card-1",
+        prompt: "A product hero on a clean studio set",
+        entityIds: [],
+        variantSel: {},
+      });
+
+      // 请求体逐字保持原样 —— 商家原话**不在**里面(schema 现在会拒收它)。
+      expect(mocks.startCoworkGen).toHaveBeenCalledWith({
+        projectId: "project-1",
+        threadId: "thread-1",
+        prompt: "A product hero on a clean studio set\n\nAvoid text overlays; keep it photorealistic.",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+        idempotencyKey: "cowork:card-1",
+      });
+      expect(boundOnLastCall()).toBe("A product hero on a clean studio set");
+    });
+
+    it("un-skilled family but no directive cell ⇒ composePrompt no-ops, nothing bound (nothing to diverge from)", async () => {
+      mocks.familyHasPromptSkill.mockReturnValue(false);
+      mocks.getEnhanceDirective.mockResolvedValue(undefined);
+
+      await coworkGenerate({
+        cardId: "card-1",
+        prompt: "A product hero on a clean studio set",
+        entityIds: [],
+        variantSel: {},
+      });
+
+      const call = mocks.startCoworkGen.mock.calls[0]![0] as Record<string, unknown>;
+      expect(call.prompt).toBe("A product hero on a clean studio set");
+      expect(call).not.toHaveProperty("requestedPrompt");
+      expect(boundOnLastCall()).toBeUndefined();
+    });
+
+    it("skilled family ⇒ composePrompt is skipped entirely, nothing bound (matches the every-other-test default)", async () => {
+      await coworkGenerate({
+        cardId: "card-1",
+        prompt: "A product hero on a clean studio set",
+        entityIds: [],
+        variantSel: {},
+      });
+
+      expect(mocks.getEnhanceDirective).not.toHaveBeenCalled();
+      const call = mocks.startCoworkGen.mock.calls[0]![0] as Record<string, unknown>;
+      expect(call).not.toHaveProperty("requestedPrompt");
+      expect(boundOnLastCall()).toBeUndefined();
+    });
   });
 });

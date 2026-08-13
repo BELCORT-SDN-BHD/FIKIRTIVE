@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { X, Users, Sparkles, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface OnboardingTile {
   icon: React.ReactNode;
@@ -75,14 +76,16 @@ export function OttoOnboarding({
               : "Two quick things before your first project"}
           </div>
         </div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={onDismiss}
           aria-label="Dismiss getting started"
-          className="inline-flex items-center justify-center w-7 h-7 rounded-[14px] border-0 bg-transparent text-muted-foreground/70 cursor-pointer shrink-0"
+          className="size-7 shrink-0 rounded-[14px] text-muted-foreground/70 hover:bg-accent hover:text-foreground"
         >
           <X size={16} />
-        </button>
+        </Button>
       </div>
 
       {/* Tiles row */}
@@ -91,12 +94,13 @@ export function OttoOnboarding({
         style={{ background: "var(--border)" }}
       >
         {tiles.map((tile) => (
-          <button
+          <Button
             key={tile.label}
             type="button"
+            variant="ghost"
             onClick={tile.onClick}
             aria-label={tile.done ? `${tile.label} — done` : tile.label}
-            className="flex items-start gap-3 px-5 py-4 bg-card border-0 cursor-pointer text-left transition-colors duration-150 hover:bg-accent"
+            className="h-auto items-start justify-start gap-3 rounded-none bg-card px-5 py-4 text-left font-normal"
           >
             <div className={`shrink-0 mt-[2px] ${tile.done ? "text-muted-foreground" : "text-foreground"}`}>
               {tile.done ? <Check size={20} aria-hidden /> : tile.icon}
@@ -113,7 +117,7 @@ export function OttoOnboarding({
                 {tile.done ? "Done" : tile.hint}
               </div>
             </div>
-          </button>
+          </Button>
         ))}
       </div>
     </div>

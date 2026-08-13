@@ -21,6 +21,7 @@ import {
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
+import { bindMerchantPrompt } from "./merchant-prompt-provenance";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { familyHasPromptSkill } from "@fikirtive/otto";
@@ -134,7 +135,21 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
       },
     });
     if (!built.ok) return { error: built.error };
-    const req = built.req;
+    // #914 — WHAT THE MERCHANT ACTUALLY WROTE. This is the one spend surface that rewrites the
+    // prompt before it is queued (the directive above), so this is the one place where the
+    // merchant's own words and GenJob.prompt part company: record the pre-compose text here, and
+    // the receipt's comparison (against Generation.sentPromptText, recorded by the worker at the
+    // moment it calls the engine) has an honest left-hand side. Only set when the directive
+    // really appended something — every other spend surface (direct composer, the Otto-chat
+    // `generate` skill, canvas/factory/campaign/template) never composes, so their jobs carry no
+    // requestedPrompt and `prompt` IS the merchant's own words. Absence means exactly that; it is
+    // never "unknown".
+    //
+    // r6 (判官 r5 P2): it travels on the in-process provenance channel, NOT as a request field.
+    // Both halves of this fact are produced right here, in one breath — that pairing is the whole
+    // value of the record, and a field on a browser-callable Server Action could never carry it
+    // (any caller could have supplied any sentence). See merchant-prompt-provenance.ts.
+    const req = composedPrompt === prompt ? built.req : bindMerchantPrompt(built.req, prompt);
 
     const res = await startCoworkGen(req); // binds the persisted card quote before the shared startGen spend authority
     if ("error" in res) return res;

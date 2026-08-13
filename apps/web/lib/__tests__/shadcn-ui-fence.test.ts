@@ -78,42 +78,28 @@ const EXEMPT: Family[] = [
       "components/canvas/NorthstarHome.tsx": 1,
     },
   },
+  // otto-chat, otto-shell, and otto-memory are gone from this board — #840 第 3 步第二车
+  // migrated all three families to @/components/ui in full: OttoChatStream, OttoConversation,
+  // OttoFrontDoor, OttoResult, OttoPlanCard, parts/ReasoningPart (otto-chat); OttoNav, OttoApp,
+  // OttoView, ConvoTabs, OttoOnboarding, settings/SettingsPage, settings/Switch (otto-shell —
+  // Switch.tsx now wraps @/components/ui/switch instead of a hand-rolled
+  // `<button role="switch">`); memory/ProductShowcase, memory/SegmentCards, memory/OfferList,
+  // memory/FactSection, memory/UndoBar, OttoMemory (otto-memory). All sweep to 0 now. Their rows
+  // stay in FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and never
+  // shrinks — but the live board only lists what is still owed, same as auth/navigation's
+  // departure above. otto-schedule shrank from 19 to 1 (see its own row below) rather than
+  // leaving the board entirely.
   {
-    family: "otto-chat",
-    why: "Otto 对话流与卡片:composer、附件、卡片动作;这一族同时是 #802 界面地图技能的落点,迁移要与那票对齐。",
-    files: {
-      "components/otto/OttoChatStream.tsx": 9,
-      "components/otto/OttoConversation.tsx": 3,
-      "components/otto/OttoFrontDoor.tsx": 3,
-      "components/otto/OttoResult.tsx": 5,
-      "components/otto/OttoPlanCard.tsx": 2,
-      "components/otto/parts/ReasoningPart.tsx": 1,
-    },
-  },
-  {
-    family: "otto-shell",
-    why: "Otto 外壳:侧边导航(手搓抽屉 + role=\"menu\")、会话页签、设置页、自绘 Switch;底座包的 sheet / tabs / dropdown-menu 就是为这一族补的。",
-    files: {
-      "components/otto/OttoNav.tsx": 15,
-      "components/otto/OttoApp.tsx": 3,
-      "components/otto/OttoView.tsx": 2,
-      "components/otto/ConvoTabs.tsx": 2,
-      "components/otto/OttoOnboarding.tsx": 2,
-      "components/otto/settings/SettingsPage.tsx": 7,
-      "components/otto/settings/Switch.tsx": 1,
-    },
-  },
-  {
-    family: "otto-memory",
-    why: "店铺资料(产品/分群/优惠/事实):清一色列表卡 + 行内动作,一族一次迁完最省。",
-    files: {
-      "components/otto/memory/ProductShowcase.tsx": 8,
-      "components/otto/memory/SegmentCards.tsx": 6,
-      "components/otto/memory/OfferList.tsx": 4,
-      "components/otto/memory/FactSection.tsx": 3,
-      "components/otto/memory/UndoBar.tsx": 1,
-      "components/otto/OttoMemory.tsx": 2,
-    },
+    family: "otto-schedule",
+    why: "日历:18 of 19 迁完(月/周/日切换、日期与时间输入、条目编辑、时区 Select)。The one holdout is " +
+      "the account/target picker — three money-adjacent suites (schedule-connect-honesty, " +
+      "schedule-media-key, publish-honest-preview) drive it by dispatching a native \"change\" " +
+      "event on a real <select>; Radix's Select has no such element (trigger button + " +
+      "Portal-rendered listbox), and this repo's own precedent for that gap " +
+      "(campaign-confirm-requote-race.test.ts mocking SelectTrigger to null) would have cost " +
+      "those suites their real coverage of the schedule approval gate. Left native on purpose, " +
+      "not a miss.",
+    files: { "components/otto/OttoSchedule.tsx": 1 },
   },
   {
     family: "otto-creation",
@@ -134,11 +120,6 @@ const EXEMPT: Family[] = [
       "components/otto/stuff/AddAssetDialog.tsx": 5,
       "components/otto/OttoStuff.tsx": 1,
     },
-  },
-  {
-    family: "otto-schedule",
-    why: "日历:单文件 19 处(月/周/日切换、日期与时间输入、条目编辑),自成一族。",
-    files: { "components/otto/OttoSchedule.tsx": 19 },
   },
   {
     family: "analytics",

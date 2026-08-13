@@ -124,11 +124,11 @@ function OfferRow({ r, now, fresh, past, onEdit, onDelete, onDuplicate }: {
           {typeof d.code === "string" && d.code && <div className="text-[0.8125rem] font-mono text-muted-foreground">{d.code}</div>}
         </div>
         {past ? (
-          <button type="button" className="text-[0.75rem] text-muted-foreground hover:text-foreground whitespace-nowrap" onClick={onDuplicate}>Duplicate</button>
+          <Button type="button" variant="ghost" className="h-auto w-auto whitespace-nowrap p-0 text-[0.75rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={onDuplicate}>Duplicate</Button>
         ) : (
           <>
-            <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={onEdit}>✎</button>
-            <button type="button" aria-label="Delete" className="text-muted-foreground hover:text-foreground" onClick={onDelete}>🗑</button>
+            <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={onEdit}>✎</Button>
+            <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={onDelete}>🗑</Button>
           </>
         )}
       </div>
@@ -198,7 +198,7 @@ export function OfferList({ records, freshIds, onSave, onDelete }: {
               onSubmit={(data, dates) => onSave(undefined, data, dates).then(() => { setAdding(false); setPrefill(EMPTY); })}
             />
           ) : (
-            <button type="button" className="text-[0.8125rem] text-muted-foreground hover:text-foreground" onClick={() => { setPrefill(EMPTY); setAdding(true); }}>+ Add an offer</button>
+            <Button type="button" variant="ghost" className="h-auto w-auto p-0 text-[0.8125rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setPrefill(EMPTY); setAdding(true); }}>+ Add an offer</Button>
           )}
         </div>
       </div>

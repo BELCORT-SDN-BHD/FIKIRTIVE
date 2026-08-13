@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
@@ -365,17 +366,18 @@ export function OttoConversation({
               <OttoAvatar size={32} state="idle" />
               <div className="px-4 py-3 bg-card border border-border rounded-[0_20px_20px_20px] text-[0.875rem] text-foreground">
                 This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   onClick={() => {
                     setPollRound("retry");
                     setPollGaveUp(false);
                     void refreshAndUpdate();
                   }}
-                  className="bg-transparent border-0 p-0 text-primary font-semibold cursor-pointer underline"
+                  className="h-auto w-auto p-0 text-primary underline"
                 >
                   Check again
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -414,20 +416,22 @@ export function OttoConversation({
               className="absolute bottom-full left-0 mb-1 w-64 rounded-[14px] border border-border bg-card shadow-lg z-50 overflow-hidden"
             >
               {mentionSuggestions.map((e, i) => (
-                <button
+                <Button
                   key={e.id}
+                  type="button"
+                  variant="ghost"
                   role="option"
                   aria-selected={i === mentionHighlight}
                   onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
-                  className={`block w-full text-left px-3 py-2 text-[0.875rem] border-0 cursor-pointer text-foreground ${i === mentionHighlight ? "bg-muted" : "bg-transparent"}`}
+                  className={`h-auto w-full justify-start rounded-none px-3 py-2 text-left text-[0.875rem] font-normal text-foreground ${i === mentionHighlight ? "bg-muted hover:bg-muted" : "bg-transparent"}`}
                 >
                   @{e.name}
-                </button>
+                </Button>
               ))}
             </div>
           )}
           <div className="bg-background rounded-[14px] border-[1.5px] border-border overflow-hidden shadow-sm">
-            <textarea
+            <Textarea
               id="otto-composer"
               // #739 — a placeholder is not a name: it disappears on the first keystroke,
               // so the product's main input must carry its own accessible name.
@@ -438,7 +442,8 @@ export function OttoConversation({
               disabled={busy}
               placeholder="Reply to Otto…"
               rows={2}
-              className="w-full border-0 outline-none resize-none px-4 py-3 text-[0.90625rem] text-foreground bg-transparent leading-normal"
+              // #920 判官 r1 P2 — same fixed-height guard as OttoChatStream's composer.
+              className="field-sizing-fixed min-h-0 w-full resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground shadow-none outline-none"
             />
             <div className="flex justify-end px-3 py-2 border-t border-border">
               <Button
