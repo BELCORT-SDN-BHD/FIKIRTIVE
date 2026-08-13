@@ -57,8 +57,15 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
     setStatus(parseResearchCardPayload(payload).status);
   }, [payload]);
 
-  const estimate = view.estimatedCredits; // DISPLAYED credits (derived from the worker's reserve)
-  const affordable = canAffordPack(estimate, balanceUsd ?? 0);
+  // DISPLAYED credits (derived from the worker's reserve), or null when this durable card
+  // carries no quote we can vouch for. #896 r2 P0-b: a missing/malformed estimate used to read
+  // as 0, which then passed the afford gate and put an enabled "Run research · 0 credits" in
+  // front of the merchant while the server ran the tier's real, positive budget.
+  const estimate = view.estimatedCredits;
+  const affordable = estimate !== null && canAffordPack(estimate, balanceUsd ?? 0);
+  // ONE gate, read by both the button and the action below — a disabled button is a hint,
+  // the gate is what actually refuses.
+  const approveBlocked = estimate === null || !affordable;
 
   // --- Poll the card status ($0 read) until it leaves "running" -----------------------
   const pollOnce = useCallback(async (): Promise<boolean> => {
@@ -105,7 +112,7 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
    *  is the approval. The afford gate, the server pre-check and the worker's own budget
    *  guard are all unchanged — only the second screen that re-read the same number is gone. */
   async function confirmApprove() {
-    if (approving) return;
+    if (approving || approveBlocked) return;
     setApproving(true);
     setError(null);
     setInsufficient(false);
@@ -165,10 +172,11 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
           </div>
         )}
 
-        {/* Estimated credits */}
+        {/* Estimated credits — a card with no guaranteed quote says so rather than
+            printing a number nobody stands behind. */}
         <div className="pt-3 border-t border-border mb-4">
           <span className="text-[0.75rem] text-muted-foreground">
-            Estimated {creditsLabel(estimate)}
+            {estimate === null ? "Checking cost…" : `Estimated ${creditsLabel(estimate)}`}
           </span>
         </div>
 
@@ -180,17 +188,21 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
                 used to be written out twice, both times as text with nowhere to click.
                 The two states never overlap: approving clears `insufficient` first, and a
                 merchant who cannot afford it never reaches the button. */}
-            {(insufficient || !affordable) && (
+            {/* An unpriced card is not a short balance — saying "top up" there would send the
+                merchant to Billing for a problem money cannot fix (#896 r2 P0-b). */}
+            {(insufficient || (estimate !== null && !affordable)) && (
               <TopUpNotice need="run this research" />
             )}
-            {/* #896: one press, with the estimate on it. */}
+            {/* #896: one press, with the estimate on it. No estimate ⇒ nothing to approve. */}
             <Button
               variant="default"
-              disabled={approving || !affordable}
+              disabled={approving || approveBlocked}
               onClick={() => void confirmApprove()}
             >
               {approving
                 ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+                : estimate === null
+                ? "Checking cost…"
                 : `Run research · ${creditsLabel(estimate)}`}
             </Button>
           </div>

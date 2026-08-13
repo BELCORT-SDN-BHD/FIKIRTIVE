@@ -238,6 +238,16 @@ export default function DetailPanel({
     ? (videoSpec ? videoSpecCredits(activeModels, videoSpec) : activeModels.videoCredits)
     : null;
 
+  // #896 r2 P0-a —— 每条付费路一道闸,**控件与动作读同一个布尔值**。
+  // 之前闸只装在按钮的 disabled 上:编辑框的 Shift/Cmd/Ctrl+Enter 直接进 handleEditSubmit,
+  // 报价还没回来也照跑 —— 它自己 await 一次 ensureModels() 再发付费请求,于是商家在屏幕上
+  // 从没见过那个价就被扣了钱。按钮变灰是**提示**,不是闸;闸必须在动作入口,这样按钮、
+  // 快捷键、以及以后任何新入口都同样 fail closed(关类不补例)。
+  const regenBlocked = assetSpendControlDisabled(regenStatus, readOnly) || imageCost == null;
+  const animateBlocked = assetSpendControlDisabled(animStatus, readOnly) || videoCost == null;
+  const editBlocked =
+    assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim() || imageCost == null;
+
   const handleFavorite = useCallback(async () => {
     if (readOnly) return;
     if (!gen) return;
@@ -300,7 +310,7 @@ export default function DetailPanel({
   }, []);
 
   const handleRegen = useCallback(async () => {
-    if (readOnly) return;
+    if (regenBlocked) return;
     if (!gen || regenBusyRef.current) return;
     regenBusyRef.current = true;
     try {
@@ -344,10 +354,10 @@ export default function DetailPanel({
     } finally {
       regenBusyRef.current = false;
     }
-  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly, chosenImageAspect]);
+  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, regenBlocked, chosenImageAspect]);
 
   const handleAnimate = useCallback(async () => {
-    if (readOnly) return;
+    if (animateBlocked) return;
     if (!gen || animBusyRef.current) return;
     animBusyRef.current = true;
     try {
@@ -395,7 +405,7 @@ export default function DetailPanel({
     } finally {
       animBusyRef.current = false;
     }
-  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, readOnly]);
+  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, animateBlocked]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -434,8 +444,11 @@ export default function DetailPanel({
 
   // Edit @composer: submit an edit generation
   const handleEditSubmit = useCallback(async () => {
-    if (readOnly) return;
-    if (!gen || !editPrompt.trim() || editStatus === "running" || editBusyRef.current) return;
+    // The gate, not the button. This handler is reachable from the composer's
+    // Shift/Cmd/Ctrl+Enter as well as from the priced button beside it, and both ways in
+    // must refuse on exactly the same terms — no quote on screen, no spend (#896 r2 P0-a).
+    if (editBlocked) return;
+    if (!gen || editBusyRef.current) return;
     editBusyRef.current = true;
     try {
       setEditStatus("running");
@@ -478,7 +491,7 @@ export default function DetailPanel({
     } finally {
       editBusyRef.current = false;
     }
-  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly, chosenImageAspect]);
+  }, [gen, editPrompt, editIds, editBlocked, targetProjectId, pollJob, reloadFromJob, selectedGenId, chosenImageAspect]);
 
   const runConfirmedAction = useCallback(() => {
     setConfirmAction(null);
@@ -706,7 +719,7 @@ export default function DetailPanel({
                   variant="ghost"
                   size="sm"
                   onClick={() => void handleRegen()}
-                  disabled={assetSpendControlDisabled(regenStatus, readOnly) || imageCost == null}
+                  disabled={regenBlocked}
                   title={readOnlyReason}
                 >
                   <RotateCcwIcon />
@@ -733,7 +746,7 @@ export default function DetailPanel({
                   variant="ghost"
                   size="sm"
                   onClick={() => void handleAnimate()}
-                  disabled={assetSpendControlDisabled(animStatus, readOnly) || videoCost == null}
+                  disabled={animateBlocked}
                   title={readOnlyReason}
                 >
                   <PlayIcon />
@@ -810,7 +823,7 @@ export default function DetailPanel({
                     variant="default"
                     size="sm"
                     onClick={() => void handleEditSubmit()}
-                    disabled={assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim() || imageCost == null}
+                    disabled={editBlocked}
                     title={readOnlyReason}
                   >
                     {editStatus === "running"

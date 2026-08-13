@@ -295,6 +295,81 @@ describe("#707 ResearchCard", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ResearchCard — a card that carries NO price (#896 r2 P0-b)
+//
+// Same family as #707, one step earlier: #707 was a card that told the truth about money
+// with nowhere to click. This is a card that could not tell the truth about money at all
+// and offered the spend anyway — a missing/malformed estimate parsed as 0, `canAffordPack(0)`
+// is true for any balance, so the merchant got an enabled "Run research · 0 credits" while
+// the server ran the tier's real, positive budget. "Not enough credits" is also the WRONG
+// exit here: topping up fixes nothing when the card has no price on it.
+// ---------------------------------------------------------------------------
+describe("#896 r2 ResearchCard with no guaranteed price", () => {
+  const unpriced = (over: Record<string, unknown> = {}) => ({
+    topic: "Raya gifting trends",
+    questions: [],
+    tier: "quick",
+    status: "planned",
+    ...over,
+  });
+
+  function runButton(dom: HTMLElement): HTMLButtonElement | undefined {
+    return Array.from(dom.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").trim().startsWith("Run research"),
+    );
+  }
+
+  const UNPRICED_CASES: [string, unknown][] = [
+    ["missing", unpriced()],
+    ["not a number", unpriced({ estimatedCredits: "4" })],
+    ["zero", unpriced({ estimatedCredits: 0 })],
+    ["negative", unpriced({ estimatedCredits: -4 })],
+    ["fractional", unpriced({ estimatedCredits: 4.5 })],
+  ];
+
+  it.each(UNPRICED_CASES)("estimate %s → no priced button, and nothing spendable", async (_label, payload) => {
+    const dom = await mount(
+      createElement(ResearchCard, { cardId: "card_1", payload, balanceUsd: 10 }),
+    );
+
+    expect(runButton(dom), "offered a priced approve for a card that has no price").toBeUndefined();
+
+    const checking = Array.from(dom.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").trim().startsWith("Checking cost"),
+    );
+    expect(checking, "the approve control must say the cost isn't known yet").toBeTruthy();
+    expect(checking!.disabled, "an unpriced approve must be off, not merely relabelled").toBe(true);
+
+    // Pressing it anyway (the button is the only entrance, but the gate is in the action)
+    // must still reach nothing.
+    await act(async () => checking!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.approveResearch, "an unpriced card reached the spend action").not.toHaveBeenCalled();
+
+    // And it must NOT be dressed up as a short balance — the wallet is not the problem.
+    expect(
+      dom.querySelector('[role="alert"]')?.textContent ?? "",
+      "sent the merchant to Billing for a problem money cannot fix",
+    ).not.toContain("Not enough credits");
+  });
+
+  it("a real positive quote still renders the one priced press", async () => {
+    const dom = await mount(
+      createElement(ResearchCard, {
+        cardId: "card_1",
+        payload: unpriced({ estimatedCredits: 4 }),
+        balanceUsd: 10,
+      }),
+    );
+    const run = runButton(dom);
+    expect(run?.textContent, "the priced one-press approve must survive the fix").toContain("4 credits");
+    expect(run!.disabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // StoryboardCard — both spend gates
 // ---------------------------------------------------------------------------
 describe("#707 StoryboardCard", () => {

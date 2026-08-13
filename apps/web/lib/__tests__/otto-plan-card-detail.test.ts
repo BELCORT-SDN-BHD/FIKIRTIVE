@@ -805,6 +805,80 @@ describe("#580 r2 P1-3 PackCard 与单卡共用契约与价格门", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 9b. PackCard 半跑完的那一包(#896 r2 P1)—— 价签 / 余额门 / 执行目标同一组卡
+//
+// 「Make all」只会启动**还没跑**的卡,可是总价、余额门与那句提示以前都按**全部**卡算。
+// 一张已经跑过、一张还没跑,各 5 credits:按钮写着「Make all (1 · 10 credits)」却只启动
+// 5 —— 数量说的是剩余、价说的是全包,同一颗按钮上两个口径。更贵的一半是余额门:钱包里
+// 有 5 credits 的商家,明明付得起剩下那一张,却被一个虚高的 10 挡在门外。
+// ---------------------------------------------------------------------------
+
+describe("#896 r2 P1 PackCard 的价签跟着它真正会跑的那组卡走", () => {
+  const PRICED_5 = { kind: "image", structuredPrompt: "a poster", estimatedCredits: 5 };
+
+  function renderStates(
+    states: ("idle" | "done" | "working" | "failed" | "cancelled")[],
+    balanceUsd = 100,
+    payloads?: unknown[],
+  ): string {
+    return renderToStaticMarkup(
+      createElement(PackCard, {
+        packTitle: "Raya set",
+        cards: states.map((cardState, i) => ({
+          cardId: `card_${i}`,
+          payload: payloads?.[i] ?? PRICED_5,
+          threadId: "thread_1",
+          genJobId: null,
+          cardState,
+          pendingApproval: false,
+        })),
+        balanceUsd,
+        onApproved: vi.fn(),
+      }),
+    ).replaceAll("&#x27;", "'").replaceAll("&#39;", "'");
+  }
+
+  it("一张已跑一张待跑 → 按钮上的价是剩下那一张的价,不是整包的", () => {
+    const markup = renderStates(["done", "idle"]);
+    expect(markup).toContain("Make all (1 · 5 credits)");
+    expect(markup, "把已经付过钱的那张又算进了价签").not.toContain("10 credits");
+    expect(markup).toContain("Total 5 credits");
+  });
+
+  it("余额门也按剩下那一组判 —— 付得起的批准不再被虚高的总价挡住", () => {
+    // 钱包里 5 credits($0.50)。剩下要跑的只有一张,5 credits ⇒ 付得起。
+    const markup = renderStates(["done", "idle"], 0.5);
+    expect(markup, "把付得起的批准挡在了一个不会发生的总价后面").not.toContain("Not enough credits");
+    expect(markup).toContain("Make all (1 · 5 credits)");
+  });
+
+  it("全都跑过了 ⇒ 没有价签也没有整包按钮,只剩收条", () => {
+    const markup = renderStates(["done", "done"]);
+    expect(markup).not.toContain("Make all");
+    expect(markup).not.toContain("Total");
+    expect(markup).toContain("All 2");
+  });
+
+  it("报不出价的那张已经跑完 ⇒ 不再拖累剩下那张的整包批准", () => {
+    const markup = renderStates(["done", "idle"], 100, [
+      { kind: "image", estimatedPriceUsd: 0.39 }, // 只有记账用的 USD:担保不住的价
+      PRICED_5,
+    ]);
+    expect(markup).toContain("Make all (1 · 5 credits)");
+    expect(markup).not.toContain(PACK_UNPRICED_NOTE);
+  });
+
+  it("还没跑的那张报不出价 ⇒ 整包批准照旧收起(这道门没有被放松)", () => {
+    const markup = renderStates(["done", "idle"], 100, [
+      PRICED_5,
+      { kind: "image", estimatedPriceUsd: 0.39 },
+    ]);
+    expect(markup).not.toContain("Make all");
+    expect(markup).toContain(PACK_UNPRICED_NOTE);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 10. 生产接线 —— 挂起面板判定
 // ---------------------------------------------------------------------------
 

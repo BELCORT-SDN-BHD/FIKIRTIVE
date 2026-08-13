@@ -37,11 +37,18 @@ vi.mock("@/lib/gen-actions", () => ({
 }));
 vi.mock("@/lib/balance-refresh", () => ({ notifyBalanceRefresh: vi.fn() }));
 vi.mock("react-easy-crop", () => ({ default: () => null }));
+// The stand-in must carry EVERY entrance the real composer has. #896 r2 P2: this mock used
+// to wire only `onChange`, so the real MentionInput's Shift/Cmd/Ctrl+Enter submit
+// (MentionInput.tsx's editorProps.handleKeyDown → onSubmit) was invisible to every test here
+// — and that invisible entrance was exactly the one that could spend without a price on screen.
 vi.mock("@/components/MentionInput", () => ({
-  MentionInput: ({ onChange }: { onChange?: (t: string, ids: string[]) => void }) =>
+  MentionInput: ({ onChange, onSubmit }: { onChange?: (t: string, ids: string[]) => void; onSubmit?: () => void }) =>
     createElement("textarea", {
       "data-testid": "edit-input",
       onChange: (e: { target: { value: string } }) => onChange?.(e.target.value, []),
+      onKeyDown: (e: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => {
+        if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) onSubmit?.();
+      },
     }),
 }));
 
@@ -67,27 +74,30 @@ const generation = (imageAspect: string | null) => ({
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-beforeEach(() => {
-  mocks.getActiveGenModels.mockResolvedValue({
-    image: "capability-image-1",
-    video: "capability-video-1",
-    imageCredits: 8,
-    videoCredits: 80,
-    videoDefaults: { seconds: 5, resolution: "720p", aspectRatio: "16:9", fps: 0, audio: true },
-    videoAspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"],
-    // #645 T4：视频规格菜单 + 按档价目表（服务端解析的那一份）。
-    videoDurations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-    videoResolutions: ["720p", "480p"],
-    videoI2vDefaultAspect: "adaptive",
-    videoCreditsBySpec: Object.fromEntries(
-      ["720p", "480p"].flatMap((r) =>
-        [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((s) =>
-          [`${r}:${s}`, Math.ceil((s * (r === "480p" ? 11 : 22)) / 10)] as const),
-      ),
+/** The server-resolved quote contract the panel prices everything from. */
+const MODELS = {
+  image: "capability-image-1",
+  video: "capability-video-1",
+  imageCredits: 8,
+  videoCredits: 80,
+  videoDefaults: { seconds: 5, resolution: "720p", aspectRatio: "16:9", fps: 0, audio: true },
+  videoAspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"],
+  // #645 T4：视频规格菜单 + 按档价目表（服务端解析的那一份）。
+  videoDurations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  videoResolutions: ["720p", "480p"],
+  videoI2vDefaultAspect: "adaptive",
+  videoCreditsBySpec: Object.fromEntries(
+    ["720p", "480p"].flatMap((r) =>
+      [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((s) =>
+        [`${r}:${s}`, Math.ceil((s * (r === "480p" ? 11 : 22)) / 10)] as const),
     ),
-    imageAspectRatios: MENU,
-    imageDefaultAspect: "1:1",
-  });
+  ),
+  imageAspectRatios: MENU,
+  imageDefaultAspect: "1:1",
+};
+
+beforeEach(() => {
+  mocks.getActiveGenModels.mockResolvedValue(MODELS);
   mocks.startGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.startAssetGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.getGenJob.mockResolvedValue({ status: "DONE", generationIds: [] });
@@ -270,5 +280,100 @@ describe("#645 T4:资产详情的付费请求带着屏幕上那个价", () => {
     await renderPanel("1:1");
     await pressPaidAction("Animate");
     expect(mocks.startGen).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #896 r2 P0-a —— 编辑框的快捷键是**第二个入口**,它必须和按钮同一道闸
+//
+// 编辑框支持 Shift/Cmd/Ctrl+Enter 提交(MentionInput 的 handleKeyDown → onSubmit)。
+// 闸只装在按钮的 disabled 上时,这条路是敞开的:报价还没回来,按钮写着「Checking cost…」
+// 且是灰的,快捷键却直接进 handleEditSubmit —— 它自己 await 一次 ensureModels() 把报价取
+// 回来,然后照发付费请求。商家在屏幕上从没见过那个价,钱已经花掉了。
+//
+// 关键在于报价**迟到**而不是永远不来:永远不来的话请求本来就发不出去,证明不了什么。
+// 下面这个 deferred 就是那段真实的时间差。
+// ---------------------------------------------------------------------------
+describe("#896 r2 P0-a:报价没到位时,每一种触发方式都花不出钱", () => {
+  /** 一个我们说了算什么时候落地的报价 —— 那段网络往返的时间差。 */
+  function deferQuote(): (models: unknown) => Promise<void> {
+    let land: (v: unknown) => void = () => {};
+    mocks.getActiveGenModels.mockReturnValue(new Promise((resolve) => { land = resolve; }));
+    return async (models: unknown) => {
+      land(models);
+      await act(async () => { await Promise.resolve(); });
+      await act(async () => { await Promise.resolve(); });
+    };
+  }
+
+  async function typeEdit(text: string): Promise<HTMLTextAreaElement> {
+    const input = container!.querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+      setter?.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    return input;
+  }
+
+  async function pressSubmitShortcut(
+    input: HTMLTextAreaElement,
+    modifier: "shiftKey" | "metaKey" | "ctrlKey",
+  ): Promise<void> {
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", [modifier]: true, bubbles: true }));
+    });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it.each(["shiftKey", "metaKey", "ctrlKey"] as const)(
+    "报价迟到时按 %s+Enter ⇒ 一个积分都花不出去(按钮灰着不算闸)",
+    async (modifier) => {
+      const landQuote = deferQuote();
+      await renderPanel("1:1");
+
+      // 屏幕上此刻没有价可看 —— 按钮如实这么写,而且是关着的。
+      const editButton = buttonsLabelled("Checking cost…").at(-1);
+      expect(editButton, "报价没到时,编辑按钮应该说它还不知道价").toBeDefined();
+      expect(editButton!.disabled).toBe(true);
+
+      const input = await typeEdit("make the mug red");
+      await pressSubmitShortcut(input, modifier);
+
+      // 报价现在才落地。修好之前,这一刻正是那次「无价支付」发出去的时刻。
+      await landQuote(MODELS);
+
+      expect(
+        mocks.startAssetGen,
+        "快捷键绕过了价签:商家没看过价,钱已经花了",
+      ).not.toHaveBeenCalled();
+      expect(mocks.startGen).not.toHaveBeenCalled();
+    },
+  );
+
+  it("报价到位之后,同一个快捷键照旧一击成事(闸没有把功能关死)", async () => {
+    await renderPanel("1:1");
+    const input = await typeEdit("make the mug red");
+
+    // 价已经在按钮上了 —— 这一击就是那次带价的批准。
+    const editButton = buttonsLabelled("Generate edit")[0];
+    expect(editButton!.textContent).toContain("8 credits");
+    expect(editButton!.disabled).toBe(false);
+
+    await pressSubmitShortcut(input, "metaKey");
+
+    expect(mocks.startAssetGen).toHaveBeenCalledTimes(1);
+    expect(mocks.startAssetGen.mock.calls[0]![0]).toMatchObject({
+      kind: "image",
+      expectedCredits: 8,
+      sourceGenerationId: "g1",
+    });
+  });
+
+  it("编辑框是空的 ⇒ 快捷键同样什么都不做(和按钮判的是同一件事)", async () => {
+    await renderPanel("1:1");
+    const input = container!.querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
+    await pressSubmitShortcut(input, "metaKey");
+    expect(mocks.startAssetGen).not.toHaveBeenCalled();
   });
 });

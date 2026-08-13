@@ -29,9 +29,10 @@ export interface PackCardItem {
 /** Shown in a row whose card carries no price we can vouch for — never a guessed number. */
 export const PACK_UNPRICED_ROW = "price unavailable";
 
-/** Shown instead of the pack total + "Make all" when any card in the pack has no
- *  guaranteed price (or didn't read in full). Batch approval is all-or-nothing, so one
- *  unpriceable card takes the whole batch button with it. */
+/** Shown instead of the pack total + "Make all" when any card the batch would still RUN has
+ *  no guaranteed price (or didn't read in full). Batch approval is all-or-nothing, so one
+ *  unpriceable card takes the whole batch button with it. Cards that already ran are out of
+ *  the batch, so they no longer take it down with them (#896 r2 P1). */
 export const PACK_UNPRICED_NOTE =
   "I can't put a firm price on every item here, so I won't run them as a batch — ask me to put this together again and I'll make a fresh set.";
 
@@ -76,13 +77,16 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     return { ...c, p: gate.value, credits: gate.credits, approvable: gate.approvable };
   });
 
-  // null ⇒ at least one card has no price we can vouch for, so this pack has no total
-  // and no batch approval (see the footer).
-  const totalCredits = packTotalCredits(cards);
-  const canAfford = totalCredits !== null && canAffordPack(totalCredits, balanceUsd);
-
   // Only idle (not yet submitted / not already working/done) cards need firing.
   const idleCards = parsedCards.filter((c) => c.cardState === "idle");
+
+  // #896 r2 P1 —— 价签、余额门、执行目标读的是**同一组卡**:还没跑的那些。
+  // 之前总价按包里全部卡算,而按下去只跑 idle 的那些:一张已经跑过、一张还没跑,各 5 credits,
+  // 按钮就写着「Make all (1 · 10 credits)」却只启动 5 —— 商家看到的价和实际发生的事是两件事,
+  // 而且余额门也按那个虚高的 10 判,把一次真的付得起的批准挡在外面。
+  // null ⇒ 剩下的卡里有一张报不出价,所以这一包没有可展示的总价、也没有整包批准(见页脚)。
+  const totalCredits = packTotalCredits(idleCards);
+  const canAfford = totalCredits !== null && canAffordPack(totalCredits, balanceUsd);
 
   // The items this merchant could still start ONE AT A TIME (#786). Each is judged by its
   // OWN gate — readable, priced, no malformed field — and its own price against the wallet.
@@ -284,7 +288,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                 // alternative unless there really is one", and this is that rule being kept.
                 <div className="mb-3">
                   <TopUpNotice
-                    need={`make all ${cards.length}`}
+                    need={`make all ${idleCards.length}`}
                     alternative={offerIndividual ? "approve them individually" : undefined}
                   />
                 </div>
