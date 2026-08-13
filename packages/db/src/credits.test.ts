@@ -604,25 +604,46 @@ describe("case 18 — spend cap under concurrency and across tenants (#524)", ()
 import { assertWithinSpendCap, finalizedReservations, otherHoldsSince } from "./index.js";
 
 describe("case 19 — the cap cannot move under a transaction that is judging it (#524 r6)", () => {
+  /** Is some OTHER backend right now waiting on a lock to write this org's row?
+   *  Read from a different connection than the transaction under test, so it never lies. */
+  async function someoneIsBlockedOnTheOrgRow(): Promise<boolean> {
+    const rows = await prisma.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND wait_event_type = 'Lock'
+        AND query ILIKE '%"Organization"%'`;
+    return Number(rows[0]?.n ?? 0) > 0;
+  }
+
   it("a cap lowered mid-transaction does NOT change the verdict that transaction already made", async () => {
     await setCap(ORG, 10); // 100 internal — covers the whole action below
 
+    // 这一格必须**确定性**地红/绿,不能靠 sleep 赌时序:去掉 FOR UPDATE 之后,下面的
+    // `expect(lowered).toBe(false)` 会立刻失败(实测:降档在毫秒级提交,第二次读到 7)。
+    let lowered = false;
     let lowering: Promise<void> | null = null;
     await prisma.$transaction(async (tx) => {
       // Verdict #1 — the WHOLE approved action (what withLlmBudget asserts).
       await assertWithinSpendCap(tx, ORG, 100);
-      // The merchant lowers their cap RIGHT NOW, on another connection. Under READ COMMITTED
-      // without the row lock this commits immediately and the next read sees 70.
-      lowering = setCap(ORG, 7); // 70 internal
-      await new Promise((resolve) => setTimeout(resolve, 150)); // every chance to land
-      // Verdict #2 — the individual charge, inside reserveCredits. It MUST still be judged
-      // against the ceiling verdict #1 was made against, or the pair is not one decision.
+      // The merchant lowers their cap RIGHT NOW, on another connection. Without the row lock
+      // this commits immediately and the next read in THIS transaction sees 70.
+      lowering = setCap(ORG, 7).then(() => { lowered = true; }); // 70 internal
+      // Wait until that write has either committed or is provably parked on our lock.
+      const deadline = Date.now() + 5000;
+      while (!lowered && !(await someoneIsBlockedOnTheOrgRow()) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      // THE PROOF: it could not commit. The row is ours until this transaction ends.
+      expect(lowered).toBe(false);
+      // Verdict #2 — the individual charge, inside reserveCredits. Judged against the SAME
+      // ceiling verdict #1 was, because no other value could land in between.
       await assertWithinSpendCap(tx, ORG, 100);
       await reserveCredits(tx, { orgId: ORG, refId: "cap-lock-1", cost: 40 });
-    });
+    }, { timeout: 20000 });
 
-    // The lowering was blocked on our row lock and lands only now — which is the proof.
+    // The lowering was queued behind us and lands only now.
     await lowering!;
+    expect(lowered).toBe(true);
     const acc = await account(ORG);
     expect(acc.reserved).toBe(40);
     expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
@@ -630,7 +651,9 @@ describe("case 19 — the cap cannot move under a transaction that is judging it
     await expect(
       prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "cap-lock-2", cost: 100 })),
     ).rejects.toThrow(SpendCapBlocked);
-  });
+    // Explicit timeout: this case DELIBERATELY parks a writer on a lock, so it must not inherit
+    // the 5s default that every other case in this file is sized for.
+  }, 30_000);
 
   it("a cap lowered BEFORE the transaction is the one that decides — the lock never freezes an old answer", async () => {
     await setCap(ORG, 10);
