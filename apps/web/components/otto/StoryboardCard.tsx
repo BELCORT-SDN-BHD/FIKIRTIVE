@@ -10,9 +10,12 @@ import {
   shotsStuckWithoutInheritedFrame,
   isFrameInProgress,
   isVideoInProgress,
+  isVideoDead,
+  nextSyncPhase,
   MAX_STORYBOARD_SHOTS,
   type StoryboardCardView,
   type StoryboardShotView,
+  type SyncPhase,
 } from "@/lib/storyboard-card";
 import { editShotPrompt, addShot, deleteShot, reorderShots, setStoryboardContinuity } from "@/lib/storyboard-actions";
 import {
@@ -44,6 +47,12 @@ const FRAME_SYNC_INTERVAL_MS = 3000;
 const FRAME_SYNC_MAX_TRIES = 40;
 const VIDEO_SYNC_INTERVAL_MS = 5000;
 const VIDEO_SYNC_MAX_TRIES = 120;
+// #782 r7 (判官 r6 P1-A): the SECOND gear. When the fast watch runs out of tries and the
+// server still reports a live job, we keep asking — just rarely. See nextSyncPhase for why
+// "we stopped watching closely" must never mean "we stopped listening": the paid output is
+// already reachable server-side, the card was simply the one that stopped asking.
+const SLOW_SYNC_INTERVAL_MS = 60000;
+const SLOW_SYNC_MAX_TRIES = 30;
 
 /** A shot's frame child EXISTS and hasn't produced an image yet. #782 r4 (judge r3 P3): that is
  *  the question "is there a child?", NOT "is anything running?" — a prepared-but-unspent card
@@ -97,7 +106,10 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const [generating, setGenerating] = useState(false); // spend loop OR sync poll running
   const [frames, setFrames] = useState<Record<string, string>>({});
   const [videos, setVideos] = useState<Record<string, string>>({});
-  const [polling, setPolling] = useState(false);
+  // #782 r7 (判官 r6 P1-A): was a boolean ("are we polling?"). A boolean could only answer
+  // "keep going" or "give up", and the cap therefore meant give up. The phase adds the third
+  // answer the timeline needed: keep asking, slower. See nextSyncPhase.
+  const [syncPhase, setSyncPhase] = useState<SyncPhase>("off");
   // #782 r4 (judge r3 P3): the shots whose first-frame child actually has a live job, as of the
   // last sync. null = we haven't asked the server yet — see isFrameInProgress for what that means.
   const [liveFrameShotIds, setLiveFrameShotIds] = useState<Set<string> | null>(null);
@@ -265,44 +277,54 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   }, [cardId]);
 
   // Poll cadence: videos take minutes → slow interval + high cap when any video is pending;
-  // a frames-only wait keeps the fast/short cadence.
+  // a frames-only wait keeps the fast/short cadence. The SLOW phase overrides both — it is a
+  // background reconcile, not a watch, so the media class no longer sets its pace.
   const anyVideoPending =
     view.shots.some((s) => isVideoInProgress(s, deadVideoShotIds)) || replacingVideoShotIds.size > 0;
-  const syncIntervalMs = anyVideoPending ? VIDEO_SYNC_INTERVAL_MS : FRAME_SYNC_INTERVAL_MS;
-  const syncMaxTries = anyVideoPending ? VIDEO_SYNC_MAX_TRIES : FRAME_SYNC_MAX_TRIES;
+  const syncIntervalMs =
+    syncPhase === "slow" ? SLOW_SYNC_INTERVAL_MS : anyVideoPending ? VIDEO_SYNC_INTERVAL_MS : FRAME_SYNC_INTERVAL_MS;
+  const syncMaxTries =
+    syncPhase === "slow" ? SLOW_SYNC_MAX_TRIES : anyVideoPending ? VIDEO_SYNC_MAX_TRIES : FRAME_SYNC_MAX_TRIES;
 
   useEffect(() => {
-    if (!polling) return;
+    if (syncPhase === "off") return;
+    const phase = syncPhase; // narrowed to "fast" | "slow" for the rule below
     let cancelled = false;
     const timer = setInterval(async () => {
       if (cancelled) return;
       pollTriesRef.current += 1;
       const stillPending = await runSyncOnce();
       if (cancelled) return;
-      if (!stillPending || pollTriesRef.current >= syncMaxTries) {
-        setPolling(false);
-        setGenerating(false);
-        // Poll gave up (or finished): clear any lingering "Replacing…" hints so a stuck shot
-        // doesn't show the spinner forever (fixes F4's logged M1).
-        if (replacingShotIdsRef.current.size > 0) setReplacingShotIds(new Set());
-        if (replacingVideoShotIdsRef.current.size > 0) setReplacingVideoShotIds(new Set());
-        // #782 r5 (judge r4 P1-①, the last link in that timeline): the cap forced us to STOP
-        // ASKING while a FRAME was still reported live. Frames land in seconds and this cap is
-        // two minutes, so a frame still unresolved here is past any honest expectation — and
-        // leaving its spinner up hides the very entrance the merchant needs ("Generate all
-        // first frames"), forever, because nothing will ever update it again. Same house rule
-        // as the two lines above. Money-safe if we're wrong and the job does deliver: prepare
-        // reports that child spent:true (its job exists), so it is excluded from the quote and
-        // cannot be charged twice — and the next sync writes the frame in either case.
-        //
-        // Deliberately NOT done for clips: a video legitimately runs for minutes, so hitting
-        // ITS cap is not evidence of anything. Saying "that video didn't go through" there
-        // would be a false statement about the merchant's money. The next sync settles it.
-        if (stillPending) setLiveFrameShotIds(new Set());
-      }
+      // #782 r7 (判官 r6 P1-A): the ONE rule for what the cap means — see nextSyncPhase.
+      // Same phase back = nothing changed; keep the interval and the counter running.
+      const next = nextSyncPhase({ phase, triesUsed: pollTriesRef.current, maxTries: syncMaxTries, stillPending });
+      if (next === phase) return;
+
+      // Leaving the fast watch ends THIS spend interaction: stop locking edits, stop saying
+      // "Working…", and clear any lingering "Replacing…" hints so a stuck shot doesn't show
+      // that spinner forever (fixes F4's logged M1).
+      setGenerating(false);
+      if (replacingShotIdsRef.current.size > 0) setReplacingShotIds(new Set());
+      if (replacingVideoShotIdsRef.current.size > 0) setReplacingVideoShotIds(new Set());
+      if (next === "slow") pollTriesRef.current = 0; // the slow gear gets its own budget
+
+      // #782 r5 (judge r4 P1-①) — kept verbatim in meaning, moved to the moment it describes.
+      // The rule is "when we stop ASKING, we stop CLAIMING": leaving a frame's spinner up
+      // after the last question hides the very entrance the merchant needs ("Generate all
+      // first frames") forever, because nothing will ever update it again. r5 applied it at
+      // the fast cap because the fast cap WAS the last question. It no longer is (r7): the
+      // slow gear keeps asking, so the honest place for this line is the slow cap — the real
+      // end of the conversation. Money-safe as before: prepare reports such a child spent:true
+      // (its job exists), so it is excluded from the quote and cannot be charged twice.
+      //
+      // Deliberately NOT done for clips: a video legitimately runs for minutes, so a cap is
+      // not evidence about it. Saying "that video didn't go through" there would be a false
+      // statement about the merchant's money; only the server's dead-job answer may say that.
+      if (next === "off" && stillPending) setLiveFrameShotIds(new Set());
+      setSyncPhase(next);
     }, syncIntervalMs);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [polling, runSyncOnce, syncIntervalMs, syncMaxTries]);
+  }, [syncPhase, runSyncOnce, syncIntervalMs, syncMaxTries]);
 
   // Reload-mid-generation recovery: on mount, if any shot has a frame/video child but no media,
   // sync ONCE and start polling if still pending. Never spends — read-only reconcile.
@@ -318,14 +340,17 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     if (!view.shots.some(hasUnfinishedFrameChild) && !view.shots.some(hasUnfinishedVideoChild)) return;
     void (async () => {
       const stillPending = await runSyncOnce();
-      if (stillPending) { pollTriesRef.current = 0; setGenerating(true); setPolling(true); }
+      if (stillPending) { setGenerating(true); startPolling(); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Start (or restart) the close watch. Every path that could have produced a result the
+   *  card hasn't seen yet goes through here — a confirmed spend, and (r7) any prepare that
+   *  came back saying the work is already paid for. */
   function startPolling() {
     pollTriesRef.current = 0;
-    setPolling(true);
+    setSyncPhase("fast");
   }
 
   // --- Gate① spend: "Generate all first frames" --------------------------
@@ -336,6 +361,18 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     try {
       const res = await prepareStoryboardFirstFrames({ cardId });
       if ("error" in res) { setError(res.error); return; }
+      // #782 r7 (判官 r6 P1-A): every child came back already paid for. There is nothing to
+      // BUY here — only something to WAIT for. r6 opened a confirm reading "Generate 0 frames
+      // for 0 credits", and confirming it started nothing and watched nothing: the merchant's
+      // one visible way back from a late-landing frame was a button that did nothing. Go
+      // straight back to watching instead — the results are already paid for and reachable.
+      if (res.children.length > 0 && res.children.every((c) => c.spent)) {
+        setChildren(null);
+        setConfirming(false);
+        setGenerating(true);
+        startPolling();
+        return;
+      }
       setChildren(res.children);
       setTotalCredits(res.totalCredits);
       setConfirming(true);
@@ -350,6 +387,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   async function confirmGenerateAll() {
     if (generating || !children) return;
     const toSpend = children.filter((c) => !c.spent);
+    // #782 r7 (判官 r6 P1-A): children this confirm may NOT charge again, because they were
+    // charged already. They are still work in flight — so they still have to be watched.
+    const alreadySpent = children.length - toSpend.length;
     setConfirming(false);
     setGenerating(true);
     setError(null);
@@ -369,10 +409,10 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     // Consumed: force a re-prepare before any further spend.
     setChildren(null);
     onBalanceRefresh?.();
-    if (anyStarted) {
+    if (anyStarted || alreadySpent > 0) {
       startPolling();
     } else {
-      setGenerating(false); // nothing started → no work to poll for
+      setGenerating(false); // nothing started and nothing already paid for → nothing to watch
     }
   }
 
@@ -430,6 +470,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     try {
       const res = await prepareStoryboardVideos({ cardId });
       if ("error" in res) { setError(res.error); return; }
+      // #782 r7 (判官 r6 P1-A): same rule as the frames gate — an all-paid-for result is a
+      // reason to watch, never a 0-credit confirm that starts nothing.
+      if (res.children.length > 0 && res.children.every((c) => c.spent)) {
+        setVideoChildren(null);
+        setVideoConfirming(false);
+        setGenerating(true);
+        startPolling();
+        return;
+      }
       setVideoChildren(res.children);
       setVideoTotalCredits(res.totalCredits);
       setVideoConfirming(true);
@@ -444,6 +493,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   async function confirmGenerateAllVideos() {
     if (generating || !videoChildren) return;
     const toSpend = videoChildren.filter((c) => !c.spent);
+    const alreadySpent = videoChildren.length - toSpend.length; // r7: paid for → still watched
     setVideoConfirming(false);
     setGenerating(true);
     setError(null);
@@ -462,7 +512,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
 
     setVideoChildren(null);
     onBalanceRefresh?.();
-    if (anyStarted) {
+    if (anyStarted || alreadySpent > 0) {
       startPolling();
     } else {
       setGenerating(false);
@@ -603,10 +653,10 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               const isReplacing = replacingShotIds.has(shot.shotId);
               const videoPending = isVideoInProgress(shot, deadVideoShotIds);
               // #782 r5 (judge r4 P1-②): this shot's clip is over and produced nothing. The
-              // hold was released when the job ended, so the merchant paid nothing — and the
-              // way back is the same "Make all videos" button below, which now stages a fresh
-              // card for exactly this shot.
-              const videoDead = !!shot.videoCardId && !shot.videoGenerationId && !!deadVideoShotIds?.has(shot.shotId);
+              // hold was released when the job ended, so the merchant paid nothing.
+              // #782 r7 (judge r6 P1-B): and the way back is THIS shot's own retry below —
+              // not the package. See the video action block for why that matters.
+              const videoDead = isVideoDead(shot, deadVideoShotIds);
               const isVideoRegenConfirm = regenVideoShotId === shot.shotId;
               const isReplacingVideo = replacingVideoShotIds.has(shot.shotId);
               // #782: waiting for the previous shot's clip to hand over its closing frame.
@@ -784,7 +834,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                               style={{ maxWidth: 240 }}
                             />
                           )}
-                          {videoPending && !videoUrl && (
+                          {/* r7: the confirmed-remake hint below already says a clip is on its
+                              way; two spinners for one job is the card talking over itself. */}
+                          {videoPending && !videoUrl && !isReplacingVideo && (
                             <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
                               <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Generating video…
                             </div>
@@ -793,25 +845,39 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                               show for it. Before this, the card kept spinning on a job that had
                               already ended — so the merchant never went looking for the button
                               that starts it again, and every shot after this one waited for a
-                              hand-off that was never coming. */}
-                          {videoDead && !videoUrl && (
+                              hand-off that was never coming.
+                              r7: it no longer sends the merchant to the package button — this
+                              shot has its own retry right below. And it goes quiet the moment a
+                              retry is in flight: "that didn't go through" while a fresh clip is
+                              being made is simply untrue. */}
+                          {videoDead && !videoUrl && !isReplacingVideo && (
                             <div className="text-[0.75rem] text-muted-foreground">
-                              That video didn&rsquo;t go through — you weren&rsquo;t charged. Make all videos to try
-                              this shot again.
+                              That video didn&rsquo;t go through — you weren&rsquo;t charged.
                             </div>
                           )}
                           {isReplacingVideo && (
                             <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
-                              <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Replacing video…
+                              <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />{" "}
+                              {videoUrl ? "Replacing video…" : "Making video…"}
                             </div>
                           )}
 
-                          {/* Per-shot remake video (only when this shot already HAS a video) */}
-                          {videoUrl && !generating && editing === null && (
+                          {/* Per-shot video action — remake the clip this shot HAS, or retry the
+                              one that died.
+                              #782 r7 (judge r6 P1-B): this used to hang off `videoUrl` alone, and
+                              a dead clip never has one — so the only way back was "Make all
+                              videos", which quotes every shot at once. With one dead clip and one
+                              unmade shot, a merchant holding enough credits for exactly one clip
+                              had the package confirm greyed out and no other control on the card:
+                              the rescue existed in the server action (regenShotVideoCard only
+                              needs this shot's FIRST FRAME, and mints a fresh card for a dead job)
+                              and was unreachable in the interface. One shot, one price, its own
+                              button — the package and the single shot stop blocking each other. */}
+                          {(videoUrl || videoDead) && !generating && editing === null && (
                             isVideoRegenConfirm && regenVideoChild ? (
                               <div className="mt-1 flex flex-col gap-2">
                                 <div className="text-[0.75rem] text-foreground">
-                                  Replace this video — {creditsLabel(regenVideoChild.estimatedCredits)}? This will spend real credits.
+                                  {videoUrl ? "Replace this video" : "Make this video"} — {creditsLabel(regenVideoChild.estimatedCredits)}? This will spend real credits.
                                 </div>
                                 {/* #782 r2b (判官 r1 P1): honest downstream note — sync only ever
                                     FILLS an empty first frame, it never overwrites one that's
@@ -821,7 +887,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                                 </div>
                                 <div className="flex gap-2">
                                   <Button variant="default" disabled={generating} onClick={() => void confirmVideoRegen()}>
-                                    Confirm — replace
+                                    {videoUrl ? "Confirm — replace" : "Confirm — make video"}
                                   </Button>
                                   <Button variant="secondary" disabled={generating} onClick={() => { setRegenVideoShotId(null); setRegenVideoChild(null); }}>
                                     Cancel
@@ -832,7 +898,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                               !anyRegenOpen && (
                                 <div className="mt-1">
                                   <Button variant="secondary" disabled={busy} onClick={() => void prepareVideoRegen(shot.shotId)}>
-                                    <span className="flex items-center gap-1"><RotateCw size={13} /> Remake video</span>
+                                    <span className="flex items-center gap-1">
+                                      <RotateCw size={13} /> {videoUrl ? "Remake video" : "Try this video again"}
+                                    </span>
                                   </Button>
                                 </div>
                               )

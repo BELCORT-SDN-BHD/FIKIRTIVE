@@ -154,6 +154,57 @@ export function isVideoInProgress<
   return deadVideoShotIds === null || !deadVideoShotIds.has(shot.shotId);
 }
 
+/**
+ * #782 r7(判官 r6 P1-B)—— 这一镜的片子**这一生结束了、什么都没交出来**。
+ *
+ * 与 `isVideoInProgress` 在「有子卡、还没有片子」这个域上严格互补:服务端答过话之后,
+ * 两者恰有一个成立。分成两条命名规则,是因为卡面要拿它们做**两件不同的事** —— 一条决定
+ * 转不转 spinner,另一条决定**给不给这一镜一个自己再来一次的入口**。
+ *
+ * r5 只做了前者:片子死了就停止转圈、并写一句「你没有被扣钱」。但那一镜的重出按钮当时挂在
+ * `videoUrl` 上 —— 而一条死掉的片子从来不会有 url,所以按钮永远不渲染。商家于是只剩「Make
+ * all videos」这一条整包的路:两镜一起报价,余额只够救那一镜时,整包确认是灰的。能力在
+ * 代码里存在(regenShotVideoCard 只要求这一镜有首帧,死作业照样铸新卡),在界面上不可达。
+ */
+export function isVideoDead<
+  T extends { shotId: string; videoCardId?: string; videoGenerationId?: string },
+>(shot: T, deadVideoShotIds: ReadonlySet<string> | null): boolean {
+  if (!shot.videoCardId || shot.videoGenerationId) return false;
+  return deadVideoShotIds !== null && deadVideoShotIds.has(shot.shotId);
+}
+
+/** 卡面 sync 轮询的三个档位。"off" = 不再发问;"fast" = 刚花完钱、盯着结果;
+ *  "slow" = 快轮的额度用完了,但服务端说还有活作业 —— 降频接着问。 */
+export type SyncPhase = "off" | "fast" | "slow";
+
+/**
+ * #782 r7(判官 r6 P1-A)—— **「到顶」不等于「放弃」**。
+ *
+ * 判官钉出的时序:快轮 40×3s 打满之后卡面直接收工,而那一刻服务端可能还有一条活作业。
+ * 挂载时那次 sync 是一次性的,Generate all 复用一张已花钱的子卡会得到空的待发起集合、
+ * 同样不重启轮询 —— 于是「引擎晚一步交货」这件小事,变成「商家付了钱、产出躺在库里、
+ * 卡面永远不显示」,只有重开页面才解得开。服务端的权威回退(firstGenerationIdOf 读作业行
+ * 自己落的 generationIds)已经保证那笔产出**可达**;缺的只是再问一次的路径。
+ *
+ * 这条规则就是那条路径,三句话说完:
+ *   • 服务端说没有活作业了 → 收工("off")。已终局的卡(帧落地 / 判死)一次都不轮询。
+ *   • 本档还有额度 → 原速接着问。
+ *   • 快轮到顶 → **降频再问**("slow"),不是放弃;慢轮也到顶才真的停。
+ *
+ * 慢轮同样有上限,所以不存在一个永远跑下去的定时器:整段观察窗是有界的,而窗口关掉之后
+ * 商家任何一次交互(Generate all / 单镜重出)都会把它重新打开(见卡面 startPolling 的调用点)。
+ */
+export function nextSyncPhase(args: {
+  phase: "fast" | "slow";
+  triesUsed: number;
+  maxTries: number;
+  stillPending: boolean;
+}): SyncPhase {
+  if (!args.stillPending) return "off";
+  if (args.triesUsed < args.maxTries) return args.phase;
+  return args.phase === "fast" ? "slow" : "off";
+}
+
 type RawShot = Partial<StoryboardCardPayload["shots"][number]>;
 
 export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView {

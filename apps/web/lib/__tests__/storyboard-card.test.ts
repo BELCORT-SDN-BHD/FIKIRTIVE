@@ -7,6 +7,8 @@ import {
   shotsStuckWithoutInheritedFrame,
   isFrameInProgress,
   isVideoInProgress,
+  isVideoDead,
+  nextSyncPhase,
   parseStoryboardCardPayload,
   MAX_STORYBOARD_SHOTS,
 } from "../storyboard-card";
@@ -466,7 +468,59 @@ describe("#782 r5 卡面钉死:失败有交代、轮询收工不留假 spinner",
   it("轮询打到上限收工时,不留一个再也不会更新的 spinner", () => {
     // 上限逼停 = 我们不再问了。既然不再问,就不能继续按最后一次的答案显示「生成中」——
     // 那正是判官 r4 时序里 spinner 永远挂着的最后一环。
+    // r7 起「不再问」的那一刻从快轮上限移到慢轮上限(见 nextSyncPhase),规矩逐字不变。
     expect(CARD_SOURCE_R5).toContain("setLiveFrameShotIds(new Set())");
     expect(CARD_SOURCE_R5).toContain("setDeadVideoShotIds");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r7(判官 r6 的两条 P1)—— 两条新规则的单元断言。
+// 两条时序本身钉在 storyboard-late-landing.test.ts(真渲染 + 真时钟)。
+// ---------------------------------------------------------------------------
+describe("#782 r7 isVideoDead —— 死片必须能被点名,否则救援入口无从渲染", () => {
+  const pending = { shotId: "s0", videoCardId: "vchild-0" };
+
+  it("服务端点名它死了 → 判死", () => {
+    expect(isVideoDead(pending, new Set(["s0"]))).toBe(true);
+  });
+
+  it("服务端没点名 → 不判死(片子可能还在路上,不许诬告一次没花的钱)", () => {
+    expect(isVideoDead(pending, new Set())).toBe(false);
+  });
+
+  it("还没问过服务端(null)→ 不判死(与 isVideoInProgress 同一条规矩:首屏不猜死)", () => {
+    expect(isVideoDead(pending, null)).toBe(false);
+  });
+
+  it("片子已经出来了 / 连子卡都没有 → 都谈不上死", () => {
+    expect(isVideoDead({ shotId: "s0", videoCardId: "vchild-0", videoGenerationId: "v1" }, new Set(["s0"]))).toBe(false);
+    expect(isVideoDead({ shotId: "s0" }, new Set(["s0"]))).toBe(false);
+  });
+
+  it("服务端答过话之后,「在路上」与「已经死了」严格互补 —— 不存在既不转圈也没入口的第三态", () => {
+    for (const dead of [new Set<string>(), new Set(["s0"])]) {
+      expect(isVideoInProgress(pending, dead)).toBe(!isVideoDead(pending, dead));
+    }
+  });
+});
+
+describe("#782 r7 nextSyncPhase —— 「到顶」不等于「放弃」", () => {
+  it("服务端说没有活作业了 → 收工(已终局的卡零轮询)", () => {
+    expect(nextSyncPhase({ phase: "fast", triesUsed: 1, maxTries: 40, stillPending: false })).toBe("off");
+    expect(nextSyncPhase({ phase: "slow", triesUsed: 1, maxTries: 30, stillPending: false })).toBe("off");
+  });
+
+  it("本档还有额度 → 原速接着问", () => {
+    expect(nextSyncPhase({ phase: "fast", triesUsed: 39, maxTries: 40, stillPending: true })).toBe("fast");
+    expect(nextSyncPhase({ phase: "slow", triesUsed: 29, maxTries: 30, stillPending: true })).toBe("slow");
+  });
+
+  it("快轮到顶而作业还活着 → 降频再问,不是收工(判官 r6 P1-A 的断点)", () => {
+    expect(nextSyncPhase({ phase: "fast", triesUsed: 40, maxTries: 40, stillPending: true })).toBe("slow");
+  });
+
+  it("慢轮也到顶 → 才真的停(所以不存在一个永远跑下去的定时器)", () => {
+    expect(nextSyncPhase({ phase: "slow", triesUsed: 30, maxTries: 30, stillPending: true })).toBe("off");
   });
 });
