@@ -71,6 +71,9 @@ export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
 // #774 U2 —— 参考图编号(官方句式 `Define … in <Image_N> as <Subject_N>`)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** @元素的四种类型(= `Entity.type` 枚举)。四选一,没有写入口能改它。 */
+export type ReferenceSlotType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
+
 /**
  * 引擎输入数组里的**一个槽位** —— 与 `inputImageUrls` 的下标一一对应,
  * 第 i 项就是 `<Image_{i+1}>`。
@@ -78,8 +81,6 @@ export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
  * 这个类型是编号的**唯一入口**:调用方只能交出「引擎真收到的那个数组」,
  * 没有第二条路可以凭猜测编号。
  */
-export type ReferenceSlotType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
-
 export type ReferenceSlot =
   | { kind: "baseImage" }
   | {
