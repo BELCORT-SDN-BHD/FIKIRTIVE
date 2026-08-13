@@ -104,10 +104,14 @@ export const manageLibrarySkill = defineOttoSkill({
   description:
     `Browse the user's ${navLabel("library")} — every image/video they've made — $0, never generates or spends. ` +
     "history: a page of their generation history, newest first (optional search text, favoriteOnly, and a cursor to page). " +
-    "detail: one generation's prompt/kind/favorite, plus finalPrompt — what the engine actually ran, " +
-    "which is often not word-for-word what the user asked for and is the honest way to explain a result " +
-    "(null means the engine didn't report it: say you don't know, never quote `prompt` in its place). " +
-    "Needs generationId. " +
+    "detail: one generation's prompt/kind/favorite, plus finalPrompt — the engine's rewritten version of the " +
+    "prompt, when its contract reports one. This is kind-dependent (#914): for kind:\"video\", finalPrompt " +
+    "is a real per-generation fact — non-null means the engine changed what the user wrote (often not " +
+    "word-for-word, and the honest way to explain a result), null means the engine genuinely didn't report " +
+    "one this time (say you don't know, never quote `prompt` in its place). For kind:\"image\", finalPrompt " +
+    "is ALWAYS null — that's a fixed capability of the image engine, not a one-off failure to report, so " +
+    "never say \"I don't know\" or \"it wasn't reported\" for an image: say the image engine doesn't report " +
+    "rewritten prompts, or just don't mention it. Needs generationId. " +
     "set_favorite: star or unstar a generation (needs generationId + favorite). " +
     "To CREATE a new image/video, use generate instead — this only looks at what already exists.",
   parameters: params,

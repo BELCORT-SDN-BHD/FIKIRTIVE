@@ -10,7 +10,16 @@
  *
  * 不做动画：这是每次生成都要经过的控件（Emil 的判据：高频操作不加动画），原生 select
  * 还顺带拿到键盘操作与移动端系统选择器。
+ *
+ * #914：「这台引擎会不会自己改写我的提示词」是一个模型能力属性，不是每次生成的动态结果
+ * （Founder 裁决，市调见 #909）。图片这条产品线一律不回传改写后的提示词，说一次就够了 ——
+ * 放在这里（花钱之前、选形状的同一处），不放进每一张图各自的回执里。悬浮态发现，不占位、
+ * 不打断高频操作。
  */
+
+/** #914：静态能力说明，白标（不出现供应商名），图片这条产品线目前唯一的事实。 */
+export const IMAGE_ENGINE_PROMPT_CAPABILITY_NOTE =
+  "This engine sends your prompt through unchanged and does not report back a rewritten version.";
 
 export function ImageShapePicker({
   value,
@@ -48,11 +57,22 @@ export function ImageShapePicker({
       ))}
     </select>
   );
-  if (compact) return select;
+  // #914：一个小图标，悬浮才说话——高频控件旁边不铺一整句常驻文案。
+  const promptCapabilityNote = (
+    <span
+      aria-label="How this engine handles your prompt"
+      title={IMAGE_ENGINE_PROMPT_CAPABILITY_NOTE}
+      style={{ fontSize: 12, lineHeight: 1, color: "var(--muted-foreground)", cursor: "help", flex: "none" }}
+    >
+      ⓘ
+    </span>
+  );
+  if (compact) return <>{select}{promptCapabilityNote}</>;
   return (
     <label className="flex items-center gap-2 text-[0.75rem] text-muted-foreground">
       <span className="font-semibold text-foreground">{label}</span>
       {select}
+      {promptCapabilityNote}
     </label>
   );
 }
