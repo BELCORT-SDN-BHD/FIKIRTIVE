@@ -19,6 +19,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
+import { skillCatalog } from "../registry.js";
 import { approveScheduledPostSkill } from "./approve-scheduled-post.js";
 import { schedulePostsSkill } from "./schedule-posts.js";
 import { listPublishTargetsSkill } from "./list-publish-targets.js";
@@ -98,5 +99,42 @@ describe("#851 Otto 的发布口径", () => {
     expect(approveScheduledPostSkill.effect).toBe("write");
     expect(approveScheduledPostSkill.reach).toBe("external");
     expect(approveScheduledPostSkill.description).toMatch(/approval card/i);
+  });
+});
+
+// ── 全册扫描:承诺不许从任何一条技能长回来 ────────────────────────────────────
+//
+// 上面那几条钉的是**我们已经改过的三条**技能。可承诺回潮最自然的样子不是有人回去改这三条,
+// 而是**下个月新加一条**技能,描述里顺手写一句「will publish at its scheduled time」——
+// 那条新技能不在 PUBLISH_SKILLS 里,上面每一条都照常绿。
+//
+// 所以这一组扫的是注册表**全册**:今天 56 条,以后有多少扫多少,新技能自动进网。这是「防回潮」
+// 这四个字唯一站得住的实现方式。
+//
+// 词族边界(与上面同一套,如实声明):它是**词法**的,换一种没见过的英语说法逮不到;而且刻意
+// 不含 apps/web 那条 `sends them/it` 规则 —— 仓库里三条正当描述会命中它
+// (editScheduledPost「sends it back to DRAFT」、manageMedia「send it back to the candidate
+// zone」、sharePostPreview「send it for external review」),那三处说的都不是送去社交账号。
+// 与其为了塞进一条规则去改三条无关技能的措辞,不如把这条规则留在它不误伤的那一面。
+describe("#851 全册技能描述:没有第二处在替产品说大话", () => {
+  it("注册表不是空的 —— 空册会让下面那条白白通过", () => {
+    expect(skillCatalog.length).toBeGreaterThan(20);
+    const names = skillCatalog.map((m) => m.name);
+    for (const [name] of PUBLISH_SKILLS) expect(names).toContain(name);
+  });
+
+  it("全册没有一条技能描述宣称帖子会真的发出去,或给了工期", () => {
+    const offenders = skillCatalog
+      .map((m) => ({ name: m.name, hits: overPromises(m.description) }))
+      .filter((r) => r.hits.length > 0)
+      .map((r) => `${r.name} → ${r.hits.join(" ; ")}`);
+    expect(offenders, "这些技能描述替产品许了一个此刻做不到的结果").toEqual([]);
+  });
+
+  it("这张网确实拦得住新长出来的承诺 —— 反面自证", () => {
+    // 把一条真实形状的违规描述喂进同一个判定:它必须响。否则上一条只是在遍历一个
+    // 对什么都不响的空网。
+    const planted = "Draft a post and it will publish to Instagram automatically at its scheduled time.";
+    expect(overPromises(planted)).not.toEqual([]);
   });
 });

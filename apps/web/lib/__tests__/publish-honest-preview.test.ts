@@ -131,9 +131,13 @@ const WILL_REALLY_SEND = [
   /\bautomatically at (?:its|their) (?:scheduled )?time\b/i,
   /\bonce Meta approves\b/i,
   /\breview pending\b/i,
-  // 「sends them / sends it」= 宣称帖子真的被送走。刻意只认宾语是帖子的写法:诚实那几句里
-  // 的「sends nothing」「Nothing sends until you say go」都不该响 —— 下面的不误伤断言钉着。
-  /\bsends? (?:them|it|your posts?|the posts?)\b/i,
+  // 「sends them / sends it」= 宣称帖子真的被送走。两处收窄都是实测逼出来的,不是预防性写法:
+  //   · 只认宾语是帖子的写法 —— 「sends nothing」「Nothing sends until you say go」不该响。
+  //   · 排除「send … back」—— 仓库里真有两条正当用法命中过裸版本:editScheduledPost 的
+  //     「sends it back to DRAFT」与 manageMedia 的「send it back to the candidate zone」,
+  //     两者都是状态回退,不是送去社交账号。
+  // 两类都在下面的不误伤断言里钉着。
+  /\bsends? (?:them|it|your posts?|the posts?)\b(?! back\b)/i,
 ];
 const PROMISES_A_DATE = [
   /\bcoming soon\b/i,
@@ -265,6 +269,10 @@ describe("#851 ① 发布口径的唯一权威(两态都钉,不翻任何全局)"
     expect(overPromises("Otto planned 5 posts this week")).toEqual([]);
     expect(overPromises("Nothing sends until you say go — review, tweak, then approve.")).toEqual([]);
     expect(overPromises("Cancel a scheduled post so it will not publish.")).toEqual([]);
+    // 「send … back」是状态回退,不是送去社交账号。这两句是仓库里真实存在的技能描述
+    // (editScheduledPost / manageMedia),裸版本的 sends 规则曾真的把它们判红。
+    expect(overPromises("a material edit to an already-approved post sends it back to DRAFT")).toEqual([]);
+    expect(overPromises("detach: send it back to the candidate zone.")).toEqual([]);
   });
 
   it("preview 与 live 是两套词,四个槽位一个都不重合", () => {
