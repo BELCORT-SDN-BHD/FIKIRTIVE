@@ -118,13 +118,14 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
           If <span className="font-medium text-foreground">{email.trim()}</span> has access, a
           sign-in link is on its way — check your inbox.
         </p>
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={useDifferentEmail}
-          className="mt-3.5 text-[13.5px] font-semibold text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          className="mt-3.5 h-auto w-auto p-0 text-[13.5px] font-semibold text-muted-foreground underline hover:text-foreground"
         >
           Use a different email
-        </button>
+        </Button>
       </div>
     );
   }
@@ -161,13 +162,14 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
             <label htmlFor="password" className="text-[13px] font-semibold text-foreground/85">
               Password
             </label>
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={() => sendMagicLink()}
-              className="text-[12.5px] font-semibold text-muted-foreground hover:text-foreground"
+              className="h-auto w-auto p-0 text-[12.5px] font-semibold text-muted-foreground hover:text-foreground hover:no-underline"
             >
               Email me a sign-in link
-            </button>
+            </Button>
           </div>
           <div className="relative">
             <Input
@@ -180,11 +182,13 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => setShowPw((v) => !v)}
               aria-label={showPw ? "Hide password" : "Show password"}
-              className="absolute right-1.5 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:text-foreground"
+              className="absolute right-1.5 top-1/2 size-9 -translate-y-1/2 rounded-[10px] text-muted-foreground hover:bg-transparent hover:text-foreground"
             >
               {showPw ? (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
@@ -196,7 +200,7 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
                   <circle cx="12" cy="12" r="3" />
                 </svg>
               )}
-            </button>
+            </Button>
           </div>
         </div>
 

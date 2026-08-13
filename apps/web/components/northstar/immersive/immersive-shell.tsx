@@ -23,6 +23,7 @@ import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { CANVAS_HREF, CREATE_NAV_HREF, OTTO_ASSISTANT } from "@fikirtive/core/navigation";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { Button } from "@/components/ui/button";
 import {
   useGlobalNavigationOpen,
   useOpenGlobalNavigation,
@@ -73,14 +74,16 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
           抽屉开着时整条收起(#747 r2):抽屉贴同一条左边缘,顶栏留在原地就会压在它上面。 */}
       {openGlobalNavigation && !globalNavigationOpen && (
         <div className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-2 lg:hidden">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={openGlobalNavigation}
             aria-label="Open navigation"
-            className="flex size-9 items-center justify-center rounded-[10px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
+            className="size-9 rounded-[10px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
           >
             <Menu className="size-5" strokeWidth={2} />
-          </button>
+          </Button>
           <Link href={CREATE_NAV_HREF} className="flex min-w-0 items-center gap-2" aria-label="FIKIRTIVE home">
             <OttoAvatar size={24} mood="idle" />
             <span className="truncate text-[16px] font-bold tracking-[-0.01em] text-foreground">FIKIRTIVE</span>
