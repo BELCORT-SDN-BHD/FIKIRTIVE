@@ -26,7 +26,8 @@ export interface ResearchCardView {
   goal?: string;
   tier: ResearchTierView;
   questions: string[];
-  estimatedCredits: number;
+  /** null ⇒ 这张卡没有一个担保得住的报价。缺价的卡不许显示价、不许批准(#896 r2 P0-b)。 */
+  estimatedCredits: number | null;
   status: ResearchStatusView;
 }
 
@@ -41,7 +42,15 @@ export function parseResearchCardPayload(payload: unknown): ResearchCardView {
   const questions = Array.isArray(p.questions)
     ? p.questions.filter((q): q is string => typeof q === "string")
     : [];
-  const estimatedCredits = typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0;
+  // #896 r2 P0-b:报价只认**正的安全整数**;缺失 / 非数字 / 0 / 负数 / 小数 → null。
+  // 之前这里兜底成 0,而 0 一路装成一个真报价:canAffordPack(0, 任何余额) 恒真,按钮
+  // 因此是启用的、写着「Run research · 0 credits」,商家按下去,服务端却按 tier 的正数
+  // 预算真跑起来 —— 屏幕上的价和实际扣的钱是两个数。与 GEN_CARD 的 guaranteedCredits 同一条口径。
+  const rawCredits: unknown = p.estimatedCredits;
+  const estimatedCredits =
+    typeof rawCredits === "number" && Number.isSafeInteger(rawCredits) && rawCredits > 0
+      ? rawCredits
+      : null;
   const rawStatus = typeof p.status === "string" ? p.status : "";
   const status: ResearchStatusView = KNOWN_STATUS.has(rawStatus) ? (rawStatus as ResearchStatusView) : "planned";
   return {

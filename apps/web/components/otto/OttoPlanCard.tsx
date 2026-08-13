@@ -91,7 +91,6 @@ export function OttoPlanCard({
   const [elapsed, setElapsed] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
-  const [confirming, setConfirming] = useState(false);
   /** #498: set when THIS approve's resume parked again on more approvals (chained
    *  needs_approval) — the story didn't end with this card, and hiding that is the
    *  same silent death one click deeper. Holds the SERVER's localized receipt
@@ -108,10 +107,6 @@ export function OttoPlanCard({
     const start = Date.now();
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(t);
-  }, [cardState]);
-
-  useEffect(() => {
-    if (cardState !== "idle") queueMicrotask(() => setConfirming(false));
   }, [cardState]);
 
   const isVideo = p.kind === "video";
@@ -184,6 +179,10 @@ export function OttoPlanCard({
     }
   }
 
+  /** The merchant's approval, in ONE press (#896). The button carries the price, so the
+   *  press IS the approval — there is no second "are you sure" screen showing the same
+   *  number a second time. Everything money-shaped below is untouched: same approval
+   *  chain, same idempotency, same server actions, same fail-closed gate. */
   async function approve() {
     // Fail closed on the SAME gate the render used: a plan we couldn't read, couldn't
     // price, or couldn't read in full renders no approve button — and may not start a
@@ -208,7 +207,6 @@ export function OttoPlanCard({
         setError(res.error);
         return;
       }
-      setConfirming(false);
       // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
       // approval(s). Surface the server's localized receipt here, and hand the
       // chained card ids UP via onApproved so the parent marks them
@@ -252,7 +250,6 @@ export function OttoPlanCard({
   }
 
   function handleChangeSomething() {
-    setConfirming(false);
     onChangeSomething(p.structuredPrompt ?? "");
   }
 
@@ -449,24 +446,13 @@ export function OttoPlanCard({
               Ask again
             </Button>
           </div>
-        ) : confirming ? (
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="text-[0.875rem] text-foreground">
-              Generate this {isVideo ? "video" : "image"} for {creditsLabel(credits)}? This will spend real credits.
-            </div>
-            <div className="flex gap-3">
-              <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
-                {busy ? "Starting…" : `Confirm generate · ${creditsLabel(credits)}`}
-              </Button>
-              <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={() => setConfirming(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
         ) : (
+          // ONE press (#896, Founder 2026-08-13). The price is on the button, so pressing it
+          // IS the approval — the old "Review cost" step showed this same number again and
+          // charged nothing, which is a click that buys the merchant nothing.
           <div className="mt-4 flex gap-3">
-            <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={() => setConfirming(true)}>
-              Review cost · {creditsLabel(credits)}
+            <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
+              {busy ? "Starting…" : `Generate · ${creditsLabel(credits)}`}
             </Button>
             <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
               Change something

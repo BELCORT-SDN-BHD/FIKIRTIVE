@@ -28,7 +28,7 @@ const POLL_INTERVAL_MS = 3000;
 const POLL_MAX_TRIES = 40;
 
 /** Otto 的深度研究计划卡(RESEARCH_CARD)。样式镜像审批卡外观。
- *  planned:「Approve & run」确认后调 approveResearch(客户端唯一花钱触发点 —— approve 本身 $0,
+ *  planned:一颗带价按钮,按下即调 approveResearch(客户端唯一花钱触发点 —— approve 本身 $0,
  *  真扣在 worker 的 withLlmBudget)→ 本地转 running + 轮询卡 status。
  *  running:每 3s 读 getResearchCard($0 只读)看 status;done → 「Report ready below」(REPORT 另渲,S4)+
  *  onRefresh 让报告行冒出来;failed → 失败提示 +「重试 = 让 Otto 再出一张新卡」(不复用旧卡,refId 已 settle)。 */
@@ -40,7 +40,6 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
   // done/failed off the server. Seeded from the payload and RE-SEEDED when the parent re-injects a
   // fresh payload (thread refetch), so history renders authoritative.
   const [status, setStatus] = useState<ResearchStatusView>(view.status);
-  const [confirming, setConfirming] = useState(false);
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [insufficient, setInsufficient] = useState(false);
@@ -58,8 +57,15 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
     setStatus(parseResearchCardPayload(payload).status);
   }, [payload]);
 
-  const estimate = view.estimatedCredits; // DISPLAYED credits (derived from the worker's reserve)
-  const affordable = canAffordPack(estimate, balanceUsd ?? 0);
+  // DISPLAYED credits (derived from the worker's reserve), or null when this durable card
+  // carries no quote we can vouch for. #896 r2 P0-b: a missing/malformed estimate used to read
+  // as 0, which then passed the afford gate and put an enabled "Run research · 0 credits" in
+  // front of the merchant while the server ran the tier's real, positive budget.
+  const estimate = view.estimatedCredits;
+  const affordable = estimate !== null && canAffordPack(estimate, balanceUsd ?? 0);
+  // ONE gate, read by both the button and the action below — a disabled button is a hint,
+  // the gate is what actually refuses.
+  const approveBlocked = estimate === null || !affordable;
 
   // --- Poll the card status ($0 read) until it leaves "running" -----------------------
   const pollOnce = useCallback(async (): Promise<boolean> => {
@@ -102,8 +108,11 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
   }, [polling, pollOnce]);
 
   // --- The ONLY spend trigger in this component (approve itself is $0 server-side) -----
+  /** ONE press (#896, Founder 2026-08-13): the button carries the estimate, so pressing it
+   *  is the approval. The afford gate, the server pre-check and the worker's own budget
+   *  guard are all unchanged — only the second screen that re-read the same number is gone. */
   async function confirmApprove() {
-    if (approving) return;
+    if (approving || approveBlocked) return;
     setApproving(true);
     setError(null);
     setInsufficient(false);
@@ -112,18 +121,15 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
       if ("error" in res) {
         if (res.code === "insufficient_credits") setInsufficient(true);
         else setError(res.error);
-        setConfirming(false);
         return;
       }
       // jobId returned → the worker will start spending. Flip to running + poll.
       localAdvancedRef.current = true;
       setStatus("running");
-      setConfirming(false);
       pollTriesRef.current = 0;
       setPolling(true);
     } catch {
       setError("Couldn't start research — please try again.");
-      setConfirming(false);
     } finally {
       setApproving(false);
       onBalanceRefresh?.();
@@ -166,10 +172,11 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
           </div>
         )}
 
-        {/* Estimated credits */}
+        {/* Estimated credits — a card with no guaranteed quote says so rather than
+            printing a number nobody stands behind. */}
         <div className="pt-3 border-t border-border mb-4">
           <span className="text-[0.75rem] text-muted-foreground">
-            Estimated {creditsLabel(estimate)}
+            {estimate === null ? "Checking cost…" : `Estimated ${creditsLabel(estimate)}`}
           </span>
         </div>
 
@@ -180,33 +187,24 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
                 (`!affordable`) or the server refused at confirm time (`insufficient`). It
                 used to be written out twice, both times as text with nowhere to click.
                 The two states never overlap: approving clears `insufficient` first, and a
-                merchant who cannot afford it never reaches Confirm. */}
-            {(insufficient || !affordable) && !confirming && (
+                merchant who cannot afford it never reaches the button. */}
+            {/* An unpriced card is not a short balance — saying "top up" there would send the
+                merchant to Billing for a problem money cannot fix (#896 r2 P0-b). */}
+            {(insufficient || (estimate !== null && !affordable)) && (
               <TopUpNotice need="run this research" />
             )}
-            {confirming ? (
-              <>
-                <div className="text-[0.875rem] text-foreground">
-                  Run research for {creditsLabel(estimate)}? This will spend real credits.
-                </div>
-                <div className="flex gap-3">
-                  <Button variant="default" disabled={approving || !affordable} onClick={() => void confirmApprove()}>
-                    {approving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : `Confirm - run research (${creditsLabel(estimate)})`}
-                  </Button>
-                  <Button variant="secondary" disabled={approving} onClick={() => setConfirming(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <Button
-                variant="default"
-                disabled={!affordable}
-                onClick={() => { setInsufficient(false); setError(null); setConfirming(true); }}
-              >
-                Review cost - {creditsLabel(estimate)}
-              </Button>
-            )}
+            {/* #896: one press, with the estimate on it. No estimate ⇒ nothing to approve. */}
+            <Button
+              variant="default"
+              disabled={approving || approveBlocked}
+              onClick={() => void confirmApprove()}
+            >
+              {approving
+                ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+                : estimate === null
+                ? "Checking cost…"
+                : `Run research · ${creditsLabel(estimate)}`}
+            </Button>
           </div>
         ) : status === "running" ? (
           <div className="flex items-center gap-2 text-[0.875rem] text-muted-foreground">

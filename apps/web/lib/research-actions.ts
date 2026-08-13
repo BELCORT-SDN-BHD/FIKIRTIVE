@@ -114,6 +114,15 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
       return { error: "This research is already running or done." };
     }
 
+    // #896 r2 P0-b(第二层):这张卡必须带着一个担保得住的报价 —— 正的安全整数 credits。
+    // 缺失 / 畸形 / 0 / 负数 / 小数 都不是报价:那种卡在商家屏幕上写不出任何价格,所以按下去
+    // 也不构成一次「知情的批准」。前端那道闸挡的是误按,这一道挡的是绕过界面直接打进来的
+    // 请求 —— 钱路上的判断从不只放在客户端。
+    const quotedCredits: unknown = payload.estimatedCredits;
+    if (typeof quotedCredits !== "number" || !Number.isSafeInteger(quotedCredits) || quotedCredits <= 0) {
+      return { error: "This research plan has no price on it. Ask Otto to plan it again." };
+    }
+
     const tier = payload.tier;
     // INTERNAL budget for this tier — the EXACT reserve the worker's withLlmBudget will take for
     // tier.maxSteps. CreditAccount.balance is also INTERNAL, so this compares like-for-like. (The
