@@ -301,6 +301,18 @@ model Generation {
   assetId        String
   source         AssetSource
   promptText     String      @default("")
+  /// #914 r4 生成回执:**平台真正交给引擎的那一整句**,由发送那一刻的代码原样记下
+  /// (apps/worker/src/jobs/gen.ts —— 图片是 withReferenceMap(job.prompt, refSlots) 的结果,
+  /// 视频是 job.prompt;两处都是传给 provider 的那**同一个变量**,不是事后重算的复制品)。
+  /// 所有花钱入口(画布 / 工厂 / 战役 / 模板 / 详情页编辑 / Otto)都汇到那一个发送点,
+  /// 所以这一列天然全覆盖 —— 记录点不在任何一个入口上,漏不掉新入口。
+  /// null = **这一行不是一次引擎调用的产物**,两种来路语义相同:①这一行早于本列存在
+  /// (历史生成);②这一行根本不是引擎产的 —— 上传(upload-actions)、裁剪
+  /// (asset-actions.saveCroppedGeneration)等 $0 摄取路径同样建 Generation 行,它们从来
+  /// 没有「送给引擎的那一句」。两种都不显示这一行:没有送出过,就没有可说的
+  /// (#914 Founder 裁定:有则显示、无则整行不出现),而不是回落成 promptText 冒充。
+  /// 永不回填:回填只会把推断值写成看起来像事实的东西。
+  sentPromptText String?
   /// #776 生成回执:引擎自报**它真正跑的那句提示词**(服务端改写/加固之后的版本)。
   /// 商家可见 —— 「每个东西都要有迹可循」:商家写的那句在 promptText,引擎实际跑的那句在这里。
   /// null = 引擎没报(或迁移前的历史行)= **未知**,读取端必须如实说不知道,不得回落成
@@ -472,6 +484,14 @@ model RefGenJob {
   /// 钱真相（OPT-6 P3a，纯记录）：付费 provider 调用提交时由 worker 在同一写入里快照
   /// （= REFGEN_PRICE_USD_PER_IMAGE * count）。null = 没扣过费。绝不参与任何 spend 判定。
   spentUsd       Float?
+  /// #914 r6 生成回执:**平台真正交给引擎的那一整句**,由 worker 在调用 provider 那一刻
+  /// 原样记下(apps/worker/src/jobs/refgen.ts),与 outputAssetIds/spentUsd/settle 同一笔
+  /// 提交事务落库 —— 与 Generation.sentPromptText 同一条纪律,只是这条产品线的产出是
+  /// ReferenceImage(元素参考照)。这条路上 worker 不再拼装,所以它今天恒等于 prompt;
+  /// 「恒等」是被测试钉住的事实,不是省掉记录的理由:少一个付费发送点的记录,「回执覆盖
+  /// 全部付费发送点」这句话就不成立(判官 r5 P1-1)。
+  /// null = 这一行早于这一列,或这一单从没走到付费调用(排队中 / 花钱前就失败)。永不回填。
+  sentPromptText String?
   error          String     @default("")
   queueJobId     String     @default("")
   attempts       Int        @default(0)
@@ -509,6 +529,14 @@ model GenJob {
   tailGenerationId   String?
   referenceVideoGenerationId String?
   prompt             String
+  /// #914:**商家自己写的那一句** —— 只有当这一单在入队之前被我们自己的 composePrompt
+  /// 拼装步骤动过手时才写(coworkGenerate 这一条路会给未配专属提示词技能的模型家族追加
+  /// 家族×模式指令词,追加之后的结果坐进上面的 `prompt`)。那一步没跑、或跑了没变化时
+  /// 留 null,含义不是「未知」而是「这一单里 `prompt` 本身就是商家写的那句」。
+  /// 回执比对(`Generation.sentPromptText` vs 商家原话)读的商家那一列就是
+  /// `requestedPrompt ?? prompt` —— 商家原话在整条产品线上只有这一个出处。
+  /// 纯记录,不参与 `.superRefine`、定价或重放材料比对(`factoryMaterialMatches` 不读它)。
+  requestedPrompt    String?
   entityIds          String[]  @default([])
   // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
   // null/absent = base refs for all mentions (backward-compat with old rows)

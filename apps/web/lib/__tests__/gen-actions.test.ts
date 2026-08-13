@@ -99,6 +99,7 @@ const {
   startGen,
 } = await import("../gen-actions");
 const { canvasActionKey } = await import("../batch-idempotency");
+const { bindMerchantPrompt } = await import("../merchant-prompt-provenance");
 const {
   attachCampaignApprovalGate,
   CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
@@ -215,6 +216,70 @@ describe("startGen", () => {
     expect(result).toEqual({ error: "That generation request is out of bounds." });
     expect(db.genJobCreate).not.toHaveBeenCalled();
     expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #914 r6(判官 r5 P2)—— 「商家原话」是一条**证据**,不能由调用方自己填。
+   *
+   * 它曾经是 `genRequest` 的一个字段,而 startGen / startCoworkGen 都是浏览器可以直接调用的
+   * Server Action:任何调用者都能提交一句与实际输入无关的话,把回执写成一份看起来像证据的
+   * 假账(与 #882 approvedEntities 同一课)。修法:字段从 schema 里拿掉 —— schema 是
+   * `.strict()`,所以带上它的请求在花钱之前整单被拒;真正的值只经进程内通道到达。
+   */
+  describe("#914 r6 —— requestedPrompt 不收客户端值", () => {
+    const coworkBody = {
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "approved card",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-1",
+    } as const;
+
+    it("直接调 startGen 带上这个字段 ⇒ 整单被拒,不建任务、不预扣", async () => {
+      const result = await startGen({ ...coworkBody, idempotencyKey: "asset-1", requestedPrompt: "a sentence I made up" });
+      expect(result).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    it("直接调 startCoworkGen 带上这个字段 ⇒ 同样整单被拒(卡是真的也没用)", async () => {
+      const result = await startCoworkGen({ ...coworkBody, requestedPrompt: "a sentence I made up" });
+      expect(result).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    it("cowork 内部路径照常:拼装那一步在进程内绑上来的那句,原样落库", async () => {
+      // coworkGenerate 做的就是这一件事:composePrompt 之后,把**拼装前**那句绑在它交给
+      // startCoworkGen 的那个对象上。这里逐字复现那一步。
+      const request = bindMerchantPrompt({ ...coworkBody }, "what the merchant actually typed");
+      const result = await startCoworkGen(request);
+
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          prompt: "approved card", // 拼装之后,worker 会送出去的那句
+          requestedPrompt: "what the merchant actually typed", // 拼装之前,商家自己写的那句
+        }),
+      }));
+    });
+
+    it("没绑过的 cowork 单 ⇒ 那一列不写(这一单的 prompt 本身就是商家写的那句)", async () => {
+      await startCoworkGen({ ...coworkBody });
+      const data = db.genJobCreate.mock.calls[0]![0].data as Record<string, unknown>;
+      expect(data).not.toHaveProperty("requestedPrompt");
+    });
+
+    it("绑定跟着**对象身份**走 —— 换一个形状相同的对象就带不出来(序列化过来的调用因此永远拿不到)", async () => {
+      const bound = bindMerchantPrompt({ ...coworkBody }, "what the merchant actually typed");
+      // 浏览器提交的 JSON 反序列化出来的就是这样一个「长得一样但不是同一个」的对象。
+      await startCoworkGen({ ...bound });
+      const data = db.genJobCreate.mock.calls[0]![0].data as Record<string, unknown>;
+      expect(data).not.toHaveProperty("requestedPrompt");
+    });
   });
 
   it("binds a persisted GEN_CARD's exact displayed quote before create + reserve", async () => {

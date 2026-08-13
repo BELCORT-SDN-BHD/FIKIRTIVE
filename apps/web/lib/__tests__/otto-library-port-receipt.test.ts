@@ -18,12 +18,15 @@ vi.mock("../library-actions", () => ({ getGenerationHistory: mockGetGenerationHi
 
 import { makeOttoLibraryPort } from "../otto-library-port";
 
-const detailRow = (finalPrompt: string | null) => ({
+type SentReceipt = null | { verbatim: true } | { verbatim: false; text: string };
+
+const detailRow = (finalPrompt: string | null, sentPrompt: SentReceipt = { verbatim: true }) => ({
   id: "g1",
   projectId: "p1",
   kind: "video",
   prompt: "a poster for the weekend sale",
   finalPrompt,
+  sentPrompt,
   favorite: false,
 });
 
@@ -51,5 +54,35 @@ describe("#776 ctx.library.detail 把「引擎真正跑的那句」交给 Otto",
   it("读不到那条 generation 时照旧只回 error", async () => {
     mockGetGeneration.mockResolvedValue({ error: "Not found." });
     expect(await makeOttoLibraryPort().detail("g-nope")).toEqual({ error: "Not found." });
+  });
+});
+
+/**
+ * #914 r4 双面同源 —— 商家在面板上看到的那条「我们实际送出的那句」,Otto 必须读**同一条**
+ * 记录、**同一次**比对的结论。端口在这里只做一件事:原样递过去。
+ *
+ * 为什么这件事值得钉:两边各自去比一次,就是本票被判两次 FAIL 的那类病(面板说「原样」、
+ * Otto 说「加过料」,商家两边都听过一遍)。这里的断言形状因此是「端口给出的 === 动作给出
+ * 的」,而不是把结论在测试里重写一遍。
+ */
+describe("#914 r4 ctx.library.detail 把「我们实际送出的那句」交给 Otto", () => {
+  it("逐字相同 ⇒ 原样递过去", async () => {
+    mockGetGeneration.mockResolvedValue(detailRow(null, { verbatim: true }));
+    expect(await makeOttoLibraryPort().detail("g1")).toMatchObject({ sentPrompt: { verbatim: true } });
+  });
+
+  it("不同 ⇒ 全文原样递过去,途中不被摘要、不被改写", async () => {
+    const sent = "<Image_1> is the image being edited.\na poster for the weekend sale";
+    mockGetGeneration.mockResolvedValue(detailRow(null, { verbatim: false, text: sent }));
+    expect(await makeOttoLibraryPort().detail("g1")).toMatchObject({ sentPrompt: { verbatim: false, text: sent } });
+  });
+
+  it("历史行(没有这条记录)⇒ 键**在**、值是 null —— Otto 据此什么都别说,而不是当成「原样送出」", async () => {
+    mockGetGeneration.mockResolvedValue(detailRow(null, null));
+    const item = await makeOttoLibraryPort().detail("g1");
+    expect("sentPrompt" in (item as object)).toBe(true);
+    expect((item as { sentPrompt: SentReceipt }).sentPrompt).toBeNull();
+    // 绝不许在传递途中被商家自己那句话顶上 —— 那样 Otto 会把一个我们没有的记录说成事实。
+    expect((item as { prompt: string }).prompt).toBe("a poster for the weekend sale");
   });
 });

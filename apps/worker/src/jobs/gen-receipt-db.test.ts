@@ -117,10 +117,13 @@ describe("#776 回执写失败,钱路与交付不受影响(真库,真失败)", (
     const job = await jobRow();
     expect(job.status).toBe("DONE");
     expect(job.billedUnits).toBe(1); // 图片按**张**:一张 = 1(不是 16,384 个像素 token)
-    const gens = await prisma.generation.findMany({ where: { id: { in: job.generationIds }, ownerId: orgId }, select: { promptText: true, finalPromptText: true } });
+    const gens = await prisma.generation.findMany({ where: { id: { in: job.generationIds }, ownerId: orgId }, select: { promptText: true, finalPromptText: true, sentPromptText: true } });
     expect(gens).toHaveLength(1);
     expect(gens[0]!.finalPromptText).toBe("a bright poster, weekend sale, bold type");
     expect(gens[0]!.promptText).toBe("a poster for the weekend sale"); // 商家自己那句原封不动
+    // #914 r4:我们实际交给引擎的那一句,在**真库**上确实落进了同一行 —— 断言的是
+    // 「引擎真正收到的那个字符串」,不是测试自己重算的期望值。
+    expect(gens[0]!.sentPromptText).toBe((m.generateImages.mock.calls[0]![0] as { prompt: string }).prompt);
     const money = await moneyTrail();
     expect(money.kinds).toEqual(["RESERVE", "SETTLE"]); // 一预扣一结算,没有第三笔
     expect(money.reserved).toBe(0);
