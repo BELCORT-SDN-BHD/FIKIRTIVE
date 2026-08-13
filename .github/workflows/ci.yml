@@ -1,80 +1,247 @@
 name: CI
 
+# THE SHAPE OF THIS FILE, IN ONE PARAGRAPH. `quality` used to be one job that ran
+# five kinds of check one after another, so its wall clock was their SUM (~18 min).
+# It is now five jobs that run the same checks at the same time on five ephemeral
+# VMs, plus a fan-in job — still named `quality`, still the required check — that
+# passes only when every leg passed. The wall clock is the SLOWEST leg, not the
+# sum. Nothing about what is checked changed: the legs are `scripts/ci/quality.sh
+# --leg <name>`, the same script, and its default (no --leg) still runs every gate
+# in the same order, which is what `pnpm quality` on a laptop does.
+#
+# Two invariants hold the whole thing up, and both are machine-checked by
+# scripts/__tests__/quality-legs.test.sh (which runs inside the `typecheck` leg):
+#   - the union of the legs is the entire gate list, so nothing stopped running
+#   - this file launches exactly the legs quality.sh declares, and the fan-in job
+#     is still called `quality`, byte for byte
+# The third invariant lives in the fan-in job below: it fails closed on anything
+# that is not an explicit, expected success.
+#
+# ── THE TRIPWIRE, AND WHAT IT IS HONESTLY FOR ────────────────────────────────
+# Everything above runs INSIDE `pnpm quality --leg typecheck`. Review of #874 r6
+# pointed out the hole that makes it: put `npm_config_script_shell=/bin/echo` into
+# `$GITHUB_ENV` from the typecheck job's INSTALL step and `pnpm quality` prints its
+# own command and exits 0 — the self-test never starts, the fan-in is handed
+# `typecheck: success`, and nothing in the repository noticed. A checker that lives
+# inside the thing it checks can always be switched off by switching that thing off.
+#
+# So every job below runs ONE step before anything else can touch its environment:
+# right after `actions/checkout` (there is nothing to read before the checkout), and
+# before any setup, install or `$GITHUB_ENV` write. It compares this file, byte for
+# byte, against the sha256 committed in `.github/ci-workflow.lock`, using `cut`,
+# `sha256sum` and shell builtins — no pnpm, no node, no python, all three of which
+# read configuration out of an environment an earlier step is free to write.
+#
+# THE SAME STEP ALSO REFUSES TWO FILENAMES, AND IT IS A RATCHET RATHER THAN A BOUNDARY.
+# Review of #874 r12 found that a project `.npmrc` holding `script-shell=/bin/echo`
+# makes every `pnpm quality --leg …` print its own command and exit 0 — five green legs
+# over zero gates, with no diff to this file, to the lock, or to any repository script.
+# `.pnpmfile.cjs` is the same family: JavaScript that pnpm executes during install.
+# Neither file exists in this repository today, so the tripwire refuses both by name, in
+# a step that runs BEFORE pnpm is ever invoked.
+#
+# What that buys and what it does not: it closes ONE carrier that was demonstrated, and
+# it leaves an author who adds either file exactly two options — edit this step and its
+# hand-written copy in the self-test, in the same commit, which is a diff a reviewer
+# reads; or leave all seven jobs red, which is not mergeable. It is not evidence that
+# the carriers have been enumerated. They have not been; see below.
+#
+# AND SAY THE DEPENDENCY PRECISELY, because "this step needs nothing" would be false:
+# THE REFUSAL LOOP ITSELF uses only shell builtins (`for`, `[`, `echo`). THE STEP AS A
+# WHOLE still runs two external commands, `cut` and `sha256sum`, for the digest half. If
+# either is missing or shadowed on PATH, `set -eu` ends the step non-zero and the job is
+# red — fail-closed, not a silent pass — which is the property worth claiming here.
+#
+# IT RUNS UNDER `shell: sh`, AND THAT FIELD IS LOAD-BEARING. r8's review found the
+# step was still being STARTED by a shell that reads a startup file named in its own
+# environment: with `BASH_ENV: <path>` at workflow level, bash sources that path
+# before the first line of `run:` — early enough to rewrite the lock on disk, or to
+# define functions called `cut` and `sha256sum` that agree with whatever it is
+# handed. The body being minimal never protected it; the body had not started yet.
+# A non-interactive `sh` reads NEITHER `BASH_ENV` NOR `ENV` — dash on the runner,
+# bash-as-sh on a laptop, both measured against a poison file that a `dash -i`
+# control proves is readable (evidence in the r9 comment on #874). So the body below
+# starts in an environment nothing in this file can pre-seed, and the self-test pins
+# both the `shell: sh` field and the absence of `BASH_ENV`/`ENV` from every env block
+# this workflow has.
+#
+# WHAT IT BUYS, EXACTLY: it makes "the workflow that ran" provably "the workflow that
+# was reviewed". A ci.yml that is not the one `.github/ci-workflow.lock` pins fails
+# this step in EVERY job, before a single gate, install or repository script has run.
+# `scope` fails first, which leaves the five legs `skipped` and the required `quality`
+# check RED — not mergeable. That covers deleting or neutering this very step in one
+# job, because the other six still hash the whole file.
+#
+# WHAT IT IS NOT, AND WE ARE NOT GOING TO PRETEND OTHERWISE: it is not a wall around
+# CI. Three rounds of review each falsified the round before's enumeration, and the
+# PATTERN is what matters here, not the three individual holes:
+#
+#   r8   killed "a bypass has to touch this step or the lock file". A workflow-level
+#        `BASH_ENV` touched neither: bash sources that file before the step's first
+#        line, so it can rewrite the lock, or define `cut` and `sha256sum`.
+#   r10  killed its replacement, "every bypass needs a diff to THIS FILE", with a
+#        demonstration rather than an argument: the `scope` job runs
+#        `bash scripts/ci/pr-scope.sh` AFTER the tripwire, so a diff to that ONE
+#        REPOSITORY SCRIPT — no ci.yml, no lock — made it print `false`, all five legs
+#        `skipped`, and the fan-in read the skips as a docs-only PR and went green.
+#   r12  killed the one after that, "a diff to one of these seven files". A project
+#        `.npmrc` holding `script-shell=/bin/echo` is none of the seven and changes no
+#        line of any of them; every `pnpm quality --leg …` then prints its own command
+#        and exits 0. Five green legs, a green `quality`, not one gate run.
+#
+# Three enumerations, three counter-examples, each one found OUTSIDE the enumeration it
+# broke. The next carrier is not going to announce itself either, so THIS FILE NO LONGER
+# MAKES AN ENUMERATION CLAIM.
+#
+# ── WHAT THE TRIPWIRE PROVES, AND WHAT NOTHING HERE PROVES ───────────────────
+# PROVED, by machine, on every run:
+#   - the ci.yml that RAN is the ci.yml that was committed — the digest comparison
+#     above, in every job, before any setup, install or `$GITHUB_ENV` write;
+#   - the named ratchets on the carriers review has actually found: `BASH_ENV` and
+#     `ENV` appear in no `env:` block of this file at any depth (3d), the tripwire's
+#     own `shell: sh` (3f), and — r12's carrier — no `.npmrc` and no `.pnpmfile.cjs`
+#     in the checkout, refused by name in the tripwire body itself;
+#   - each leg runs exactly `pnpm quality --leg <leg>`, package.json resolves that to
+#     `bash scripts/ci/quality.sh`, and quality.sh's gate→leg map is compared against a
+#     list written out by hand in the self-test (a deleted, renamed or relegged gate is
+#     red there);
+#   - the docs-only skip is re-derived by the fan-in itself, from the API, with a
+#     filter written in THIS file, so a `pr-scope` that lies can make the legs RUN when
+#     they need not have but cannot buy a skip.
+#
+# ONE ATTRIBUTION THAT USED TO BE STATED WRONG HERE, corrected in r13 because #874 r12
+# caught the two halves of this repository contradicting each other: the self-test is
+# itself one of quality.sh's gates, so DELETING THAT GATE LINE FROM quality.sh DELETES
+# THE CHECKER, and the tripwire does not catch it — the tripwire hashes ci.yml, not
+# quality.sh. The legs go green over a gate list nobody compared. What catches that is
+# the diff to quality.sh, and nothing else. The self-test says the same thing in its own
+# header, and docs/runbooks/local-ci.md says it a third time.
+#
+# NOT PROVED, and not provable from inside this repository: that no OTHER file in it
+# can change how these checks execute. `BASH_ENV`, `pr-scope.sh` and `.npmrc` were each
+# outside the list that preceded them; the carriers are an open set, and every sentence
+# that has claimed otherwise here was falsified by the next round.
+#
+# SO WHAT ACTUALLY STOPS CI FROM BEING WEAKENED SILENTLY IS TWO THINGS, AND NEITHER IS
+# A SCRIPT IN THIS REPOSITORY:
+#   1. the `quality` required check in the protect-main ruleset, bypass_actors empty —
+#      no run reports green without producing it;
+#   2. human review of the PR diff. Every carrier above, and every carrier nobody has
+#      named yet, is a CHANGE TO A FILE, and a change to a file is in the diff by
+#      construction. That is the one property that does not depend on having guessed
+#      the list right.
+#
+# ── FILES TO READ FIRST IN A DIFF THAT TOUCHES CI ────────────────────────────
+# A reviewer's reading order, NOT a boundary and NOT a complete list. What these have
+# in common is that changing them turns gates OFF, where changing a gate's own code
+# makes it FAIL — quiet versus loud:
+#
+#     .github/workflows/ci.yml        this file: every job, step, env and condition
+#     .github/ci-workflow.lock        the digest the tripwire compares this file to
+#     scripts/ci/pr-scope.sh          run by `scope` below; decides the docs-only skip
+#     scripts/ci/pr-scope.jq          the decision pr-scope.sh transports
+#     scripts/ci/quality.sh           what `pnpm quality --leg …` resolves to
+#     package.json                    the `quality` script that does the resolving
+#     scripts/ci/ci-workflow-lock.sh  writes the lock (this workflow never runs it)
+#     .npmrc, .pnpmfile.cjs           absent today; the tripwire is red if either appears
+#
+# The `scripts/ci/…` rows are machine-checked rather than asserted: the self-test scans
+# every `run:` script in this file for `scripts/…` paths and requires the set to be
+# exactly the one written out by hand there, so a call to a script nobody named is red.
+# Read what that check does and does not say: it says the list covers what THIS FILE
+# RUNS. It says nothing about what pnpm, node or the runner read on their own — which
+# is exactly where r12's `.npmrc` came from. See docs/runbooks/local-ci.md.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  # Pre-wiring for a merge queue, which is the natural next step once `quality`
+  # finishes in minutes: GitHub runs the queued batch under `merge_group`, and a
+  # required check that never fires on that event would deadlock the queue. There
+  # is no PR in a merge-group context, so the scope job cannot ask which files
+  # changed — it runs every gate. Fail-safe by construction: the only thing lost
+  # is the docs-only short-circuit, on an event nobody has enabled yet.
+  merge_group:
 
 # `pull-requests: read` is for the docs-only scope check below (it lists the PR's files).
 permissions:
   contents: read
   pull-requests: read
 
+# `github.ref` is the fallback for merge_group, where there is no PR number: without
+# it every merge-group run would share one concurrency group and cancel the others.
 concurrency:
-  group: quality-${{ github.event.pull_request.number }}
+  group: quality-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Workflow-level, so the five legs cannot drift apart. A leg quietly running with a
+# different DATABASE_URL or a different heap ceiling than its siblings would be a
+# gate checking something other than what it claims.
+env:
+  # `next build` re-runs a TypeScript pass in a child worker, and that worker had grown to
+  # the ~2 GB default heap: it now OOMs on a coin flip, independently of what a PR changed
+  # (measured: 11 MB added to a 1,088 MB `tsc` run — under 1%). Raising the ceiling weakens
+  # no gate; the check still runs, and `pnpm -r typecheck` runs before it.
+  NODE_OPTIONS: --max-old-space-size=6144
+  # The service container each leg declares. quality.sh only uses this as the
+  # maintenance connection; the run itself happens on a per-run database it creates
+  # and force-drops (name ends in _test, enforced there). Every leg gets its own
+  # Postgres and its own database, so no leg can see another's rows.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
+  BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
+  BETTER_AUTH_URL: http://localhost:3000
+  GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
+  GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
+
 jobs:
-  quality:
-    # The `quality` context is the required status check in the protect-main ruleset
-    # (bypass_actors is empty — nobody can merge around it). Renaming this job, or letting
-    # it be skipped, freezes every merge in the repository. Speed work goes INSIDE the job.
-    name: quality
-    if: github.event.pull_request.draft == false
-    # GitHub-hosted runner (2026-08-11, Founder-approved after fixing the billing method
-    # that froze merges in #577): PR runs get a dedicated ephemeral VM each, so they run in
-    # PARALLEL and are fully isolated from the dev machine — the shared-machine false-red
-    # families (job-timeout kills, vitest load timeouts, Postgres saturation: #862) cannot
-    # occur here by construction. The self-hosted runner (fikirtive-mac) stays registered
-    # as a manual fallback: if billing ever fails again, one PR flips `runs-on` back.
-    # Postgres is a service container (same shape this workflow used before #838);
-    # quality.sh still creates a unique per-run `*_test` database and force-drops it on
-    # exit — its machine-wide mutex now trivially acquires on a fresh VM and guards nothing
-    # away. The `quality` check name and its gates are byte-identical — only the floor moved.
+  # ── the docs-only decision, unchanged (#809) ─────────────────────────────────
+  # Docs-only PRs have nothing for these gates to check. This is deliberately NOT a
+  # workflow-level `paths-ignore`: a workflow skipped by a path filter never posts its
+  # check, and `quality` is required — a docs-only PR would sit unmergeable forever.
+  # Deciding inside the workflow means `quality` still reports on every PR, it just
+  # finishes in seconds. Fail-safe: anything unexpected (API error, empty list, no PR
+  # in context) runs the full gate.
+  #
+  # It is its own job now only because five legs have to read one answer. The step
+  # inside it is the same step, and the decision still lives in scripts/ci/pr-scope.jq,
+  # covered by scripts/__tests__/pr-scope.test.sh, which the `typecheck` leg runs.
+  scope:
+    name: scope
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    # Dedicated VM: the run itself is ~12-20 min; 45 leaves honest headroom without letting
-    # a wedged run camp for over an hour (the 75 on the shared machine covered lock waits
-    # and host contention that no longer exist here).
-    timeout-minutes: 45
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: fikirtive_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      # `next build` re-runs a TypeScript pass in a child worker, and that worker had grown to
-      # the ~2 GB default heap: it now OOMs on a coin flip, independently of what a PR changed
-      # (measured: this PR's own diff adds 11 MB to a 1,088 MB `tsc` run — under 1%). Raising the
-      # ceiling weakens no gate; the check still runs, and `pnpm -r typecheck` runs before it.
-      NODE_OPTIONS: --max-old-space-size=6144
-      # The service container above. quality.sh only uses this as the maintenance
-      # connection; the run itself happens on a per-run database it creates and
-      # force-drops (name ends in _test, enforced there).
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
-      BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
-      BETTER_AUTH_URL: http://localhost:3000
-      GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
-      GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
+    timeout-minutes: 10
+    # Three outputs, not one. `code` is what the five legs are gated on and has not
+    # changed. `reason` and `legs` are what this job TELLS the fan-in about its own
+    # answer: which legs it means to run, and why. The fan-in refuses any combination
+    # of the three that the step below cannot produce — a run whose scope job describes
+    # itself in terms this workflow never writes is a run nobody here can explain.
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+      reason: ${{ steps.scope.outputs.reason }}
+      legs: ${{ steps.scope.outputs.legs }}
     steps:
       - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
 
-      # Docs-only PRs have nothing for these gates to check. This is deliberately NOT a
-      # workflow-level `paths-ignore`: a workflow skipped by a path filter never posts its
-      # check, and `quality` is required — a docs-only PR would sit unmergeable forever.
-      # Deciding inside the job means `quality` still reports on every PR, it just finishes
-      # in seconds. Fail-safe: anything unexpected (API error, empty list) runs the full gate.
-      #
-      # The decision lives in scripts/ci/pr-scope.jq and is covered by
-      # scripts/__tests__/pr-scope.test.sh, which `quality` runs. This step does no
-      # interpretation at all: it saves both API responses verbatim and forwards the answer.
+      # This step does no interpretation at all: it saves both API responses verbatim
+      # and forwards the answer.
       #
       # Saving them verbatim is the point. Four review rounds of #809 each found another
       # input that survived a text projection and came out the other side as a WRONG
@@ -91,74 +258,744 @@ jobs:
       # itself — and turn each into "run every gate". `set -e` covers everything we did not
       # predict, and above all the write to $GITHUB_OUTPUT: without it, a failed write left
       # the step green with no `code` output at all, which the old `== 'true'` conditions
-      # downstream read as "skip". Now that write failing fails the step, and a failed step
-      # fails the job — merge blocked, which is the safe direction.
+      # downstream read as "skip". Now that write failing fails the step, a failed step
+      # fails this job, and the fan-in below turns a failed scope job into a failed
+      # `quality`. Merge blocked, which is the safe direction.
+      #
+      # The PR number arrives as an environment variable rather than a `${{ }}` splice into
+      # the script body, because on `merge_group` there is no PR and the empty case has to
+      # be a value this script can test, not a hole in its source text.
       - name: Scope — does this PR touch anything outside docs/?
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          # One writer for all three outputs, so this job cannot publish a `code` its
+          # `reason` contradicts, or a `legs` its `code` contradicts. The fan-in checks
+          # the three against each other; that check is only worth making because they
+          # are written here, together, once.
+          emit() { # <code> <reason>
+            legs=all
+            if [ "$1" = "false" ]; then legs=none; fi
+            {
+              echo "code=$1"
+              echo "reason=$2"
+              echo "legs=$legs"
+            } >> "$GITHUB_OUTPUT"
+            echo "scope: code=$1, legs=$legs, reason=$2"
+          }
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "no pull request in this context (event: $EVENT_NAME) — running every gate"
+            emit true no-pr-context
+            exit 0
+          fi
           files_json="${RUNNER_TEMP:-/tmp}/pr-files.json"
           pr_json="${RUNNER_TEMP:-/tmp}/pr-object.json"
-          pr="repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}"
+          pr="repos/${REPOSITORY}/pulls/${PR_NUMBER}"
           gh api --paginate --slurp "$pr/files" >"$files_json" 2>/dev/null || : >"$files_json"
           gh api "$pr" >"$pr_json" 2>/dev/null || : >"$pr_json"
           if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
             echo "could not read the PR from the API — running every gate"
-          else
-            echo "changed paths (name, then previous name for renames):"
-            jq -r '.[][] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
-              "$files_json" 2>/dev/null || echo "  (unparseable — pr-scope will fail closed)"
+            emit true api-unreadable
+            exit 0
           fi
-          code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json")" || code=true
-          [ "$code" = "false" ] || code=true
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" = "false" ]; then
-            echo "docs/** only, and the file list is provably complete — every gate below is a no-op"
-          fi
+          echo "changed paths (name, then previous name for renames):"
+          jq -r '.[][] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
+            "$files_json" 2>/dev/null || echo "  (unparseable — pr-scope will fail closed)"
+          # Same polarity as ever: only the one string this script writes on purpose
+          # buys a skip. A non-zero exit, an empty answer, or any word nobody
+          # anticipated all land on "run every gate".
+          code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json")" || code=nonzero-exit
+          case "$code" in
+            false)
+              echo "docs/** only, and the file list is provably complete — every gate below is a no-op"
+              emit false docs-only
+              ;;
+            true) emit true outside-docs ;;
+            *) emit true scope-script-failed ;;
+          esac
 
-      # Polarity is deliberate: `!= 'false'` and never `== 'true'`. Only the one string the
-      # step writes on purpose buys a skip; a missing output, an empty output, a skipped or
-      # failed scope step, or any value nobody anticipated all land on "run the gate".
+  # ── the five legs ────────────────────────────────────────────────────────────
+  # Same `if:` on all five. Polarity is deliberate and identical to what the old
+  # single job used: `!= 'false'` and never `== 'true'`. Only the one string the scope
+  # step writes on purpose buys a skip; a missing output, an empty output, or any value
+  # nobody anticipated all land on "run the gate". A scope job that FAILS skips the legs
+  # entirely — and the fan-in treats that as a failure, not as a pass.
+  #
+  # Why these five. The fan-in waits for the SLOWEST leg, so the split is worth exactly
+  # what its longest leg costs — legs under that floor are free, legs over it are the
+  # whole bill. Every green run of this split so far, not the best one:
+  #
+  #                  31513415188  31514708207  31519940167  31659224453
+  #   tests                 500s         454s         746s         475s   ← THE FLOOR
+  #   build                 220s         190s         191s         207s
+  #   typecheck             206s         162s         163s         154s
+  #   lint                  149s         142s         147s         151s
+  #   checks                116s         104s         100s         108s
+  #   scope                   7s           7s          11s           9s
+  #   WALL CLOCK            519s         472s         767s         495s
+  #
+  # So: about 8 to 13 minutes, and PLAN FOR 13 — the old single job was ~18-20 min, so
+  # the split is worth having even on its worst run, but quoting the 8-minute one as
+  # "the number" would be quoting a coin flip. All of the spread is `tests`: it ranged
+  # 454-746s (+64%) across runs of the same branch, while every other leg stayed inside
+  # ±15%. `pnpm -r test` is ONE gate and cannot be divided without changing what a gate
+  # is, so nothing here gets faster — or steadier — than that suite does. It has a leg
+  # to itself so that when it swings, it swings alone.
+  #
+  # Each leg's number already includes the packages build it pays for itself
+  # (`packages/*/dist` + the generated Prisma client are the prerequisite for everything
+  # downstream) — that duplication is why five legs cost more RUNNER time (1,064-1,362s
+  # measured) than one job while costing far less WALL time, and runner time on per-PR
+  # ephemeral VMs is the cheap axis.
+  #
+  # The slack under the floor is also the answer to "why not ten legs": with `tests` at
+  # 450-750s, a sixth leg carved out of the other four would shave nothing off the wall
+  # clock and would pay another packages build.
+  #
+  # Every leg declares Postgres even where its gates never query it. quality.sh takes one
+  # path — machine lock, per-run database, force-drop on exit — for local runs and for CI
+  # alike, and a leg that quietly skipped part of that preamble would be a second path to
+  # keep honest. A container that starts and is never used costs seconds on a leg that is
+  # not the critical path; it buys one code path.
 
-      - if: steps.scope.outputs.code != 'false'
-        uses: pnpm/action-setup@v4
-      - if: steps.scope.outputs.code != 'false'
-        uses: actions/setup-node@v4
+  typecheck:
+    name: typecheck
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - if: steps.scope.outputs.code != 'false'
-        run: pnpm install --frozen-lockfile
-
-      # TypeScript's incremental state, for both TS passes `quality` runs over apps/web:
-      # `tsc --noEmit` (apps/web/tsconfig.tsbuildinfo) and the one inside `next build`
-      # (.next/cache/.tsbuildinfo). tsc re-checks any file whose hash moved plus everything
-      # downstream of it, so a cache restored from another commit weakens nothing — it only
-      # skips re-deriving types for files that did not change. ~1 MB, so the restore is
-      # nearly free. The `github.sha` suffix makes every run save a fresh entry; the
-      # restore-keys are what actually load one.
+      - run: pnpm install --frozen-lockfile
+      # TypeScript's incremental state for `tsc --noEmit` over apps/web. tsc re-checks
+      # any file whose hash moved plus everything downstream of it, so a cache restored
+      # from another commit weakens nothing — it only skips re-deriving types for files
+      # that did not change. ~1 MB, so the restore is nearly free. The `github.sha`
+      # suffix makes every run save a fresh entry; the restore-keys load one.
       #
-      # Measured on this PR, so nobody has to guess: the saving tracks how much of the diff
-      # the restored state still covers. Restoring across a large diff bought nothing
-      # (typecheck 86s → 86s); restoring across a one-comment diff cut typecheck 86s → 49s.
-      # `next build` did not move either way (98s both). So expect real savings on push-after-
-      # push of the same branch, and none on the first run of a fresh branch.
-      - name: Restore TypeScript / Next build cache
-        if: steps.scope.outputs.code != 'false'
+      # Measured, so nobody has to guess: the saving tracks how much of the diff the
+      # restored state still covers. Restoring across a large diff bought nothing
+      # (typecheck 86s → 86s); across a one-comment diff it cut typecheck 86s → 49s. So
+      # expect real savings on push-after-push of the same branch, none on a fresh one.
+      #
+      # Separate from the `build` leg's cache on purpose: two parallel jobs writing one
+      # cache key means one loses the race and warns, and neither leg produces the
+      # other's artifact anyway.
+      - name: Restore the tsc incremental state
         uses: actions/cache@v4
         with:
-          path: |
-            apps/web/.next/cache
-            apps/web/tsconfig.tsbuildinfo
-          key: build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          path: apps/web/tsconfig.tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
-            build-${{ runner.os }}-node22-
+            tsbuildinfo-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
+            tsbuildinfo-${{ runner.os }}-node22-
+      # quality.sh's machine-wide mutex still runs on every leg; on an ephemeral VM it
+      # acquires instantly and serializes nothing — it exists for shared machines (dev
+      # laptops, the fallback self-hosted runner) and is harmless here.
+      - run: pnpm quality --leg typecheck
 
-      # quality.sh's machine-wide mutex still runs; on this ephemeral VM it acquires
-      # instantly and serializes nothing — it exists for shared machines (dev laptops,
-      # the fallback self-hosted runner) and is harmless here.
-      - if: steps.scope.outputs.code != 'false'
-        run: pnpm quality
+  tests:
+    name: tests
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality --leg tests
+
+  build:
+    name: build
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `next build`'s own cache, including the TypeScript pass it runs in a child
+      # worker (.next/cache/.tsbuildinfo). Measured on the old single job: `next build`
+      # did not move either way with or without it (98s both), so this is kept for the
+      # rest of Next's cache rather than for the type pass.
+      - name: Restore the Next build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: nextcache-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nextcache-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
+            nextcache-${{ runner.os }}-node22-
+      - run: pnpm quality --leg build
+
+  lint:
+    name: lint
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality --leg lint
+
+  checks:
+    name: checks
+    needs: scope
+    if: needs.scope.outputs.code != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fikirtive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality --leg checks
+
+  # ── the fan-in ───────────────────────────────────────────────────────────────
+  # The `quality` context is the required status check in the protect-main ruleset
+  # (bypass_actors is empty — nobody can merge around it). Renaming this job, or letting
+  # it be skipped when it should not be, freezes every merge in the repository. The name
+  # is byte-identical to what it always was; only what stands behind it changed, from one
+  # job running five kinds of check to five jobs running them at once.
+  #
+  # It runs under `always()` because its whole purpose is to have an opinion about legs
+  # that did NOT succeed — without it, a failed leg would simply skip this job and
+  # `quality` would never report at all, which reads as "still running", not "failed".
+  # `always()` also means it must re-derive the draft condition for itself; every other
+  # job inherits that through `needs`.
+  quality:
+    name: quality
+    needs: [scope, typecheck, tests, build, lint, checks]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
+
+      # ── THE SECOND OPINION (the r10 P0) ──────────────────────────────────────
+      # The verdict below used to accept "all five legs skipped" on the `scope` job's
+      # word alone. r10 showed what that word is worth: `scope` reaches its answer by
+      # running `bash scripts/ci/pr-scope.sh`, a REPOSITORY SCRIPT, after the tripwire
+      # has already passed. Edit that one file to print `false` — no ci.yml diff, no
+      # lock diff, nothing for the tripwire to notice — and every gate in this workflow
+      # is skipped while `quality` reports green.
+      #
+      # So the skip is no longer taken on trust. This step asks GitHub the same two
+      # questions the scope job asked, in ITS OWN job, and decides for itself with a
+      # filter written in THIS file, which the lock pins and the self-test writes out a
+      # second time by hand. It runs NO repository script: `gh` and `jq` are on the
+      # runner image, and that is the whole dependency list.
+      #
+      # The two answers are compared one-directionally, and that asymmetry is the
+      # design rather than an oversight:
+      #
+      #   scope says docs-only, this step disagrees  → RED. The legs were skipped on
+      #                                                an answer this job cannot
+      #                                                reproduce.
+      #   scope says run everything, this step says
+      #   docs-only                                  → green if the legs passed. The
+      #                                                legs RAN; there is no unrun gate
+      #                                                to hide. Failing here would only
+      #                                                punish the scope job's own
+      #                                                fail-closed paths (an API blip
+      #                                                makes it answer "run everything",
+      #                                                which is correct behaviour).
+      #
+      # Which is the honest statement of what this buys: a lying `pr-scope` can now only
+      # cost CI minutes. It cannot buy a skip. The two files it is checking are not
+      # thereby "verified" — they are demoted out of the decision.
+      #
+      # AND IT IS DELIBERATELY STEP #3. This job has no setup and no install: its steps
+      # are the checkout, the tripwire (`shell: sh`, writes nothing), this, and the
+      # verdict. So nothing in the repository has had an opportunity to write
+      # `$GITHUB_ENV` or `$GITHUB_PATH` before this step's shell starts — which is the
+      # r6 hole, and it is closed here by there being no step that could open it rather
+      # than by a check. The position is pinned by hand in
+      # scripts/__tests__/quality-legs.test.sh (3g), because "step #3" is the whole of
+      # that argument.
+      #
+      # THIS FILTER IS A SECOND IMPLEMENTATION, NOT A SECOND CALL. Handing the same
+      # scripts/ci/pr-scope.jq the same bytes would agree with itself by construction,
+      # which is the shape r10 found and the shape this whole PR keeps re-learning. It
+      # is deliberately the SIMPLER of the two, because it answers a narrower question:
+      # pr-scope.jq must be right in both directions (a wrong `true` costs 13 minutes on
+      # every docs PR), while this one only has to be right about refusing — anything it
+      # cannot prove is `outside-docs`, and `outside-docs` merely means the legs had to
+      # run. Where the two disagree about a legal-but-odd payload, this one goes red and
+      # the answer is a re-run, not a merged gate.
+      - name: Decide for ourselves whether this PR is docs-only
+        id: recheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          emit() { # <code> <reason>
+            { echo "code=$1"; echo "reason=$2"; } >> "$GITHUB_OUTPUT"
+            echo "recheck: code=$1, reason=$2"
+          }
+          if [ -z "${PR_NUMBER:-}" ]; then
+            emit true no-pr-context
+            exit 0
+          fi
+          files_json="${RUNNER_TEMP:-/tmp}/recheck-files.json"
+          pr_json="${RUNNER_TEMP:-/tmp}/recheck-pr.json"
+          pr="repos/${REPOSITORY}/pulls/${PR_NUMBER}"
+          # Three tries before giving up, which the scope job does not need and this
+          # step does. There, an unreadable API means "run every gate" and the run is
+          # merely slow; here it means the legs are already skipped and the only honest
+          # answer left is RED. A transient blip should not be a red docs-only PR.
+          fetch() { # <destination> <gh api arguments…>
+            dest="$1"
+            shift
+            n=1
+            while [ "$n" -le 3 ]; do
+              if gh api "$@" >"$dest" 2>/dev/null; then return 0; fi
+              n=$((n + 1))
+              if [ "$n" -le 3 ]; then sleep 2; fi
+            done
+            : >"$dest"
+          }
+          fetch "$files_json" --paginate --slurp "$pr/files"
+          fetch "$pr_json" "$pr"
+          if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
+            emit true api-unreadable
+            exit 0
+          fi
+          # Written to a file and read back with `jq -f`, not built with `$(cat <<…)`:
+          # bash 3.2 (what macOS ships, and what the drill that lifts this program runs
+          # under) mis-parses a here-document nested inside a command substitution when
+          # the body holds an odd number of quote characters.
+          filter="${RUNNER_TEMP:-/tmp}/recheck.jq"
+          cat >"$filter" <<'RECHECK_JQ'
+          # docs-only, proved from the API payloads, or one of the two ways of not
+          # proving it. Never "tolerant": every branch that is not a proof lands on a
+          # word that means the legs had to run.
+          def known_status:
+            . == "added" or . == "removed" or . == "modified" or . == "renamed"
+            or . == "copied" or . == "changed" or . == "unchanged";
+          def under_docs:
+            type == "string"
+            and startswith("docs/")
+            and (explode | any(. == 0) | not)
+            and (split("/") | all(length > 0 and . != "." and . != ".."));
+          # A rename is two paths. Taking only `filename` is how a code file renames
+          # itself into docs/ and takes every gate with it.
+          def entry_is_docs_only:
+            (.filename | under_docs)
+            and (.status | known_status)
+            and (if .status == "renamed" or .status == "copied"
+                 then (.previous_filename | under_docs)
+                 elif has("previous_filename") and .previous_filename != null
+                 then (.previous_filename | under_docs)
+                 else true
+                 end);
+          (if ($files[0] | type) == "array" and ($files[0] | all(type == "array"))
+           then ($files[0] | add // [])
+           else null
+           end) as $entries
+          | (if ($pr | length) == 1 and ($pr[0] | type) == "object"
+             then $pr[0].changed_files
+             else null
+             end) as $total
+          | if $entries == null then "undecidable"
+            # An empty list means we never learned what changed, not that nothing did.
+            elif ($entries | length) == 0 then "undecidable"
+            elif ($entries | any(type != "object")) then "undecidable"
+            elif ($total | type) != "number" then "undecidable"
+            # As TEXT: jq keeps the fractional literal, so 1.0 and 1e-1 are visible here.
+            elif ($total | tostring | test("^(0|[1-9][0-9]*)$") | not) then "undecidable"
+            # GET .../files stops at 3,000 entries without saying so.
+            elif $total >= 3000 then "undecidable"
+            # Below that ceiling the count is what proves we read the whole PR — and it
+            # only proves it if the entries are distinct.
+            elif ($entries | length) != $total then "undecidable"
+            elif ($entries | map(.filename) | unique | length) != ($entries | length) then "undecidable"
+            elif ($entries | all(entry_is_docs_only)) then "docs-only"
+            else "outside-docs"
+            end
+          RECHECK_JQ
+          verdict="$(jq -r -n --slurpfile files "$files_json" --slurpfile pr "$pr_json" -f "$filter" 2>/dev/null)" || verdict=""
+          case "$verdict" in
+            docs-only) emit false docs-only ;;
+            outside-docs) emit true outside-docs ;;
+            *) emit true undecidable ;;
+          esac
+
+      # Fail closed, stated positively: this step names the ONE outcome that passes and
+      # rejects everything else, rather than listing the outcomes that fail. A status
+      # nobody anticipated — a new GitHub result string, a leg that vanished from this
+      # file, an infrastructure abort, a cancellation — lands on "not the expected
+      # value", which blocks the merge. Same polarity rule the scope check uses
+      # (`!= 'false'`, never `== 'true'`), one level up.
+      #
+      # The expected outcome depends on the scope answer this run's legs were themselves
+      # gated on — and, since r10, on whether the step above could reproduce it:
+      #   scope is anything but success        → fail, whatever the legs say
+      #   scope's three outputs do not agree   → fail; that run is not one this
+      #                                          workflow's scope job can produce
+      #   the recheck did not answer           → fail; the second opinion is not optional
+      #   scope says code != 'false'           → every leg must be `success`
+      #   scope says code == 'false' AND the
+      #   recheck agrees                       → every leg must be `skipped`
+      #   scope says code == 'false' and the
+      #   recheck does NOT agree               → fail: the legs were skipped on an
+      #                                          answer derived by a repository script
+      #                                          that this job cannot reproduce
+      # Both leg directions are strict equality on purpose. The legs read the same output
+      # from the same job as this step does, so a leg that ran while the scope said
+      # docs-only (or the reverse) means the two sides disagree about what this run was —
+      # and a run we cannot explain is not a run that may merge.
+      #
+      # WHAT IS CHECKED IS AN IDENTITY, NOT A COUNT. The first version of this step
+      # folded the five results into one blob of "name result" lines, counted the
+      # lines, and passed on "five lines, all success". Review (#874) showed two
+      # wrong PASSes that shape makes expressible: a rogue job standing in for a
+      # missing `checks`, and `lint` wired in twice while `checks` was absent — in
+      # both, the required `quality` check goes green while a gate never reported at
+      # all. Five fixed identities, each read from its own variable, cannot express
+      # either: there is no line to add, and nothing except `checks` can ever answer
+      # for `checks`. A count would now be redundant, and is gone.
+      - name: Every leg must have passed — or been skipped for a PR this job proved docs-only
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          SCOPE_CODE: ${{ needs.scope.outputs.code }}
+          SCOPE_REASON: ${{ needs.scope.outputs.reason }}
+          SCOPE_LEGS: ${{ needs.scope.outputs.legs }}
+          # From the step above, in this job — not from `needs`. This is the answer no
+          # repository script had a hand in.
+          RECHECK_CODE: ${{ steps.recheck.outputs.code }}
+          RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
+          # Exactly one variable per declared leg, named after that leg, fed by that
+          # leg's own job — machine-checked, both directions, by
+          # scripts/__tests__/quality-legs.test.sh: a leg with no variable, a
+          # variable with no leg, a duplicate, or a variable wired to the wrong job
+          # all fail that gate.
+          LEG_RESULT_TYPECHECK: ${{ needs.typecheck.result }}
+          LEG_RESULT_TESTS: ${{ needs.tests.result }}
+          LEG_RESULT_BUILD: ${{ needs.build.result }}
+          LEG_RESULT_LINT: ${{ needs.lint.result }}
+          LEG_RESULT_CHECKS: ${{ needs.checks.result }}
+        run: |
+          set -euo pipefail
+
+          if [ "$SCOPE_RESULT" != "success" ]; then
+            echo "scope: $SCOPE_RESULT (expected success)"
+            echo ""
+            echo "quality: the scope job did not succeed, so nothing below can be trusted — failing closed."
+            exit 1
+          fi
+
+          # The scope job describes itself in three outputs written by one function, so
+          # only five triples can come out of it. Anything else means the run was not
+          # produced by the scope job in this file, and there is nothing here that could
+          # honestly interpret it.
+          case "${SCOPE_CODE:-}|${SCOPE_REASON:-}|${SCOPE_LEGS:-}" in
+            'false|docs-only|none') ;;
+            'true|outside-docs|all') ;;
+            'true|no-pr-context|all') ;;
+            'true|api-unreadable|all') ;;
+            'true|scope-script-failed|all') ;;
+            *)
+              echo "scope published code=${SCOPE_CODE:-<empty>}, reason=${SCOPE_REASON:-<empty>}, legs=${SCOPE_LEGS:-<empty>}"
+              echo ""
+              echo "quality: that is not a combination the scope job in this workflow can publish — failing closed."
+              exit 1
+              ;;
+          esac
+
+          # And the second opinion has to BE one. A missing answer here is the step
+          # above deleted, skipped or broken — never a licence to fall back on the
+          # scope job's word, which is exactly what r10 exploited.
+          case "${RECHECK_CODE:-}" in
+            true|false) ;;
+            *)
+              echo "this job's own scope decision came back as '${RECHECK_CODE:-<empty>}'"
+              echo ""
+              echo "quality: the step that re-derives this PR's scope did not answer — failing closed."
+              exit 1
+              ;;
+          esac
+
+          if [ "$SCOPE_CODE" = "false" ]; then
+            # THE r10 GATE. The legs are already skipped by the time this runs; the only
+            # question left is whether anything other than a repository script says they
+            # should have been.
+            if [ "$RECHECK_CODE" != "false" ]; then
+              echo "scope: docs/** only (reason: $SCOPE_REASON) — the five legs were skipped on that answer"
+              echo "this job asked GitHub the same question and got: $RECHECK_CODE (reason: ${RECHECK_REASON:-<empty>})"
+              echo ""
+              echo "quality: the legs were skipped on a docs-only answer this job cannot reproduce."
+              echo "  The scope job reaches that answer through scripts/ci/pr-scope.sh and"
+              echo "  scripts/ci/pr-scope.jq; this job does not use either. Check what those two"
+              echo "  files say in this PR's diff — failing closed."
+              exit 1
+            fi
+            expected=skipped
+            echo "scope: docs/** only, and this job re-derived that answer for itself — every leg must have been skipped"
+          else
+            expected=success
+            echo "scope: code=$SCOPE_CODE (reason: $SCOPE_REASON) — every leg must have passed"
+            if [ "$RECHECK_CODE" = "false" ]; then
+              # The safe direction, and it is reported rather than punished: the legs
+              # RAN. Making this red would only break the scope job's fail-closed paths,
+              # where answering "run every gate" is the correct behaviour.
+              echo "  (this job's own answer was docs-only; the gates ran anyway, which is the safe direction)"
+            fi
+          fi
+
+          verdict=0
+
+          # One named leg, one named variable, one comparison. `${VAR:-}` and never
+          # `$VAR`: a leg cut out of the `needs` list above expands to nothing, and
+          # "nothing" must read as a missing result and fail — not abort the shell
+          # before the other four have been reported.
+          leg_is() {
+            if [ "$2" = "$expected" ]; then
+              echo "  $1: $2"
+            else
+              echo "  $1: ${2:-<no result>} (expected $expected)"
+              verdict=1
+            fi
+          }
+
+          leg_is typecheck "${LEG_RESULT_TYPECHECK:-}"
+          leg_is tests     "${LEG_RESULT_TESTS:-}"
+          leg_is build     "${LEG_RESULT_BUILD:-}"
+          leg_is lint      "${LEG_RESULT_LINT:-}"
+          leg_is checks    "${LEG_RESULT_CHECKS:-}"
+
+          # The other direction, and the reason the five comparisons above are not
+          # the whole story: they prove every declared leg was judged, not that
+          # nothing ELSE was wired in. A sixth job added to `needs` and to the
+          # variables above — but not to the comparisons — would be a gate whose
+          # result this step silently discards. Bash enumerates the variables by
+          # prefix, so nothing here has to know what the environment holds; the
+          # case arm is the same five identities once more, and mis-stating it
+          # fails closed — a leg left out of it flags that leg's own variable.
+          for leg_result_var in ${!LEG_RESULT_@}; do
+            case "$leg_result_var" in
+              LEG_RESULT_TYPECHECK|LEG_RESULT_TESTS|LEG_RESULT_BUILD|LEG_RESULT_LINT|LEG_RESULT_CHECKS) ;;
+              *)
+                echo "  $leg_result_var: answers for no leg this step judges"
+                verdict=1
+                ;;
+            esac
+          done
+
+          if [ "$verdict" != "0" ]; then
+            echo ""
+            echo "quality: at least one leg is not $expected — failing closed."
+            exit 1
+          fi
+          echo ""
+          echo "quality: typecheck, tests, build, lint and checks are all $expected."
