@@ -327,6 +327,58 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     expect(markup).toContain("You asked for 5:7 — this will be a square 2048 × 2048 image.");
   });
 
+  // ── #774 判官 r2 P1 —— 引擎认人的名字,商家在花钱之前就看得见 ──────────────
+  // 「批准前看得见」是这条修复的一半:另一半(worker 只认这一份)在
+  // apps/worker/src/jobs/gen-reference-budget.test.ts。两边说的必须是同几个字。
+  describe("#774 判官 r2 P1 卡面披露引擎会被告知的那几个名字", () => {
+    const withNames = (approvedEntities: unknown) => ({
+      kind: "image",
+      model: "seedream",
+      params: { count: 1, aspectRatio: "1:1" },
+      specChips: ["2048 × 2048", "1:1"],
+      structuredPrompt: "A hero shot of the bottle",
+      entityIds: ["e1", "e2"],
+      variantSel: {},
+      downgraded: false,
+      estimatedPriceUsd: 0.04,
+      estimatedCredits: 1,
+      reason: "seedream",
+      approvedEntities,
+    });
+
+    it("卡上逐字写出付费提示词里那几个名字", () => {
+      const markup = renderCard(withNames([
+        { id: "e1", type: "PRODUCT", name: "the AeroBottle" },
+        { id: "e2", type: "CHARACTER", name: "Mia" },
+      ]));
+      expect(markup).toContain("Reference names sent to the engine: the AeroBottle (product), Mia (person).");
+    });
+
+    it("老卡没有这份快照 → 不显示这行(不猜一个)", () => {
+      const markup = renderCard(withNames(undefined));
+      expect(markup).not.toContain("Reference names sent to the engine");
+    });
+
+    it("快照读不懂 → 记进畸形字段,这张卡连批准按钮都没有", () => {
+      const gate = planCardGate(withNames([{ id: "e1", type: "NOPE", name: "x" }]));
+      expect(gate.malformedFields).toContain("approvedEntities");
+      expect(gate.approvable).toBe(false);
+      expect(renderCard(withNames([{ id: "e1", type: "NOPE", name: "x" }])))
+        .not.toContain("Reference names sent to the engine");
+    });
+
+    it("真 builder 造的卡:卡上那行 = 卡上冻结的那一份", async () => {
+      const { buildProposeCard } = await import("@fikirtive/otto");
+      const { cardPayload } = buildProposeCard(
+        { kind: "image", structuredPrompt: "a hero shot", entityIds: ["e1"], variantSel: {} },
+        { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+        [{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }],
+      );
+      expect(cardPayload.approvedEntities).toEqual([{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }]);
+      expect(renderCard(cardPayload)).toContain("Reference names sent to the engine: the AeroBottle (product).");
+    });
+  });
+
   it("never renders the engine name, even though the payload carries it", () => {
     expect(renderCard(VIDEO_PAYLOAD)).not.toMatch(ENGINE_WORDS);
   });

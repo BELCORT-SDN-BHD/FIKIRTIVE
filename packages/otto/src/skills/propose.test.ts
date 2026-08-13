@@ -358,6 +358,82 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.variantSel).toEqual({ "owned1": "var-a" });
     expect((cardPayload.variantSel as Record<string, string>)["foreign2"]).toBeUndefined();
   });
+
+  // ── #774 判官 r2 P1 —— 卡上冻结引擎会被告知的那几个名字 ────────────────────
+  // 引擎认人那几句机器指令里的名字必须是**商家批准时看到的**那个。所以名字在铸卡这一刻
+  // 就冻结在卡上,批准之后谁也改不动它(卡 payload 不可变),worker 只认这一份。
+  describe("#774 判官 r2 P1 — the card freezes the names the engine will be told", () => {
+    const ctx = () => makeCtx();
+    const base = { kind: "image" as const, structuredPrompt: "A hero shot", variantSel: {} };
+
+    it("freezes id + type + name, in entityIds order", () => {
+      const { cardPayload } = buildProposeCard(
+        { ...base, entityIds: ["e2", "e1"] },
+        ctx(),
+        [
+          { id: "e1", type: "CHARACTER", name: "Mia" },
+          { id: "e2", type: "PRODUCT", name: "the AeroBottle" },
+        ],
+      );
+      expect(cardPayload.approvedEntities).toEqual([
+        { id: "e2", type: "PRODUCT", name: "the AeroBottle" },
+        { id: "e1", type: "CHARACTER", name: "Mia" },
+      ]);
+    });
+
+    it("a foreign id never gets an identity on the card", () => {
+      const { cardPayload } = buildProposeCard(
+        { ...base, entityIds: ["owned1", "foreign2"] },
+        ctx(),
+        [{ id: "owned1", type: "PRODUCT", name: "Owned one" }],
+      );
+      expect(cardPayload.approvedEntities).toEqual([{ id: "owned1", type: "PRODUCT", name: "Owned one" }]);
+    });
+
+    it("an i2v plan drops its elements → no identities to approve", () => {
+      const { cardPayload } = buildProposeCard(
+        { ...base, kind: "video", entityIds: ["e1"] },
+        makeCtx({ sourceGenerationId: "gen-abc123" }),
+        [{ id: "e1", type: "CHARACTER", name: "Mia" }],
+      );
+      expect(cardPayload.entityIds).toEqual([]);
+      expect(cardPayload.approvedEntities).toBeUndefined();
+    });
+
+    it("no elements → the field is absent, not an empty array (old-card shape)", () => {
+      const { cardPayload } = buildProposeCard({ ...base, entityIds: [] }, ctx(), []);
+      expect(cardPayload.approvedEntities).toBeUndefined();
+      expect("approvedEntities" in cardPayload).toBe(false);
+    });
+
+    it("the name is frozen VERBATIM — the card never rewrites what the merchant typed", () => {
+      const odd = "  Kopi  O   \n kaw ";
+      const { cardPayload } = buildProposeCard(
+        { ...base, entityIds: ["e1"] },
+        ctx(),
+        [{ id: "e1", type: "PRODUCT", name: odd }],
+      );
+      expect(cardPayload.approvedEntities?.[0]!.name).toBe(odd);
+    });
+
+    // 卡上冻结的这一份,就是付费请求会带走的那一份 —— 真的 buildGenRequestFromCard。
+    it("the frozen identities are what the paid request carries (card-trusted)", () => {
+      const { cardPayload } = buildProposeCard(
+        { ...base, entityIds: ["e1"] },
+        ctx(),
+        [{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }],
+      );
+      const built = buildGenRequestFromCard({
+        cardPayload,
+        projectId: "p1", threadId: "t1", cardId: "c1",
+        prompt: cardPayload.structuredPrompt,
+        entityIds: cardPayload.entityIds,
+        variantSel: {},
+      });
+      expect((built as { ok: true; req: Record<string, unknown> }).req["approvedEntities"])
+        .toEqual([{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }]);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

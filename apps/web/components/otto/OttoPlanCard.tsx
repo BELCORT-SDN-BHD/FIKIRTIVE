@@ -15,8 +15,9 @@ import type { CardState } from "@/lib/otto-inject-helpers";
 // gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
 import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
 // #774 判官 r2 P1 —— 卡上那行「引擎会被告知这些照片是谁」的措辞,与真正送出去的名字
-// 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。
-import { approvedEntitiesNote } from "@fikirtive/core";
+// 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。走**子路径**而不是包根:
+// `@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
+import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 
 /** What a successful approve hands up. Carries the EXACT card it happened on plus the
  *  SERVER's own result — the parent never has to infer either from a closure or from a

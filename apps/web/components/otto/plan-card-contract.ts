@@ -17,7 +17,9 @@
 // The authoritative card contract, straight from the server package. Type-only, so it
 // is erased at build time and drags no server code into the client bundle.
 import type { CardPayload as ServerCardPayload } from "@fikirtive/otto";
-import { parseApprovedEntities } from "@fikirtive/core";
+// #774:审批身份的解析口径,与付费请求、worker 共用同一个纯函数。走**子路径**而不是包
+// 根:`@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
+import { parseApprovedEntities } from "@fikirtive/core/reference-budget";
 
 /**
  * The GEN_CARD payload as the card reads it — **derived from the server contract, not
