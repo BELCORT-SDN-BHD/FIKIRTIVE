@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { SettingsSection, SettingsField } from "./types";
 import { Switch } from "./Switch";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type NumberFieldData = Extract<SettingsField, { kind: "number" }>;
 
@@ -77,13 +79,14 @@ function NumberField({ field }: { field: NumberFieldData }) {
     return (
       <span className="cv-set-num">
         <strong>No cap set</strong>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           className="cv-set-btn"
           onClick={() => { setDraft(""); setEditing(true); setStatus(null); }}
         >
           Set a cap
-        </button>
+        </Button>
       </span>
     );
   }
@@ -94,12 +97,12 @@ function NumberField({ field }: { field: NumberFieldData }) {
     return (
       <span className="cv-set-num cv-set-num-confirm">
         <span className="text-error">Remove the spend cap? There will be no budget target set.</span>
-        <button type="button" className="cv-set-btn danger" disabled={status === "saving"} onClick={() => void commit(0)}>
+        <Button type="button" variant="ghost" className="cv-set-btn danger" disabled={status === "saving"} onClick={() => void commit(0)}>
           {status === "saving" ? "Removing…" : "Remove cap"}
-        </button>
-        <button type="button" className="cv-set-btn" disabled={status === "saving"} onClick={() => setConfirmRemove(false)}>
+        </Button>
+        <Button type="button" variant="ghost" className="cv-set-btn" disabled={status === "saving"} onClick={() => setConfirmRemove(false)}>
           Cancel
-        </button>
+        </Button>
       </span>
     );
   }
@@ -111,8 +114,8 @@ function NumberField({ field }: { field: NumberFieldData }) {
 
   return (
     <span className="cv-set-num">
-      <input
-        className="cv-set-input cv-set-input-num"
+      <Input
+        className="cv-set-input cv-set-input-num h-auto"
         type="number"
         min={0}
         step={1}
@@ -121,8 +124,9 @@ function NumberField({ field }: { field: NumberFieldData }) {
         onChange={(event) => setDraft(event.target.value)}
       />
       {field.unit ? <em>{field.unit}</em> : null}
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className="cv-set-btn"
         disabled={!dirty || !isValid || status === "saving"}
         onClick={() => {
@@ -131,7 +135,7 @@ function NumberField({ field }: { field: NumberFieldData }) {
         }}
       >
         {status === "saving" ? "Saving…" : removesCap ? "Remove cap" : "Save"}
-      </button>
+      </Button>
       {dirty && !isValid ? (
         <span className="text-error">Whole numbers only, 0 or more.</span>
       ) : status === "saved" ? (
@@ -148,10 +152,10 @@ function FieldRow({ f }: { f: SettingsField }) {
   return (
     <div className="cv-set-row">
       <div className="cv-set-lbl"><span>{f.label}</span>{"hint" in f && f.hint ? <span className="cv-set-hint">{f.hint}</span> : null}</div>
-      {f.kind === "text" && <input className="cv-set-input" aria-label={f.label} defaultValue={f.value} readOnly={f.readOnly} />}
+      {f.kind === "text" && <Input className="cv-set-input h-auto" aria-label={f.label} defaultValue={f.value} readOnly={f.readOnly} />}
       {f.kind === "toggle" && <Switch checked={f.value} onChange={f.onToggle} disabled={f.disabled} aria-label={f.label} />}
       {f.kind === "number" && <NumberField field={f} />}
-      {f.kind === "action" && <button className={f.tone === "danger" ? "cv-set-btn danger" : "cv-set-btn"} onClick={f.onClick}>{f.button}</button>}
+      {f.kind === "action" && <Button type="button" variant="ghost" className={f.tone === "danger" ? "cv-set-btn danger" : "cv-set-btn"} onClick={f.onClick}>{f.button}</Button>}
     </div>
   );
 }

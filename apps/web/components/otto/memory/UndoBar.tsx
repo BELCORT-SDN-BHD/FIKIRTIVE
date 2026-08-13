@@ -11,7 +11,7 @@ export function UndoBar({ summary, busy, onUndo, onDismiss }: {
         <span className="text-brand-strong font-semibold">✦ Otto</span> updated your brand memory — {summary}.
       </span>
       <Button variant="outline" size="sm" disabled={busy} onClick={onUndo}>{busy ? "Undoing…" : "Undo"}</Button>
-      <button type="button" aria-label="Dismiss" className="text-muted-foreground hover:text-foreground text-[0.875rem]" onClick={onDismiss}>✕</button>
+      <Button type="button" variant="ghost" aria-label="Dismiss" className="h-auto w-auto p-0 text-[0.875rem] text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={onDismiss}>✕</Button>
     </div>
   );
 }

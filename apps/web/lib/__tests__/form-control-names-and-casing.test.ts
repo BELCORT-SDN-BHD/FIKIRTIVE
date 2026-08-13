@@ -195,7 +195,9 @@ describe("#739 — every form control carries a name, not just a placeholder", (
 
   it("names the product's main input the same way the merchant sees it", () => {
     for (const file of ["components/otto/OttoConversation.tsx", "components/otto/OttoChatStream.tsx"]) {
-      const composer = source(file).match(/<textarea[\s\S]*?id="otto-composer"[\s\S]*?\/>/)?.[0];
+      // #840 — both composers now render the design-system <Textarea>, not a bare
+      // <textarea>; match either spelling, same union the sweep itself polices.
+      const composer = source(file).match(/<[Tt]extarea[\s\S]*?id="otto-composer"[\s\S]*?\/>/)?.[0];
       expect(composer, file).toBeDefined();
       expect(composer, file).toContain('aria-label="Reply to Otto"');
     }
