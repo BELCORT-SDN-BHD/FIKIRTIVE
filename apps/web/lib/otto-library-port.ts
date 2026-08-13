@@ -45,14 +45,22 @@ export function makeOttoLibraryPort() {
       const res = await getGeneration(generationId);
       if ("error" in res) return { error: res.error };
       // #776 r2:回执里的「引擎真正跑的那句」只在 detail 上有(history 不查这一列),所以
-      // detail **总是**带这个键,与商家面板同一口径:
-      //   · 字符串 = 引擎报的那句;
-      //   · null   = 引擎没报(或回执落库前的老行)= **未知**,Otto 据此明说不知道。
+      // detail **总是**带这个键,与商家面板同一口径,而 #914 之后这个口径**按 kind 分家**:
+      //   · kind:"video" —— 字符串 = 引擎报的那句;null = 引擎没报(或回执落库前的老行)=
+      //     **未知**,Otto 据此明说不知道。
+      //   · kind:"image" —— null **恒为真**,是图片引擎结构上就没有这个字段的能力限制,
+      //     不是「这次没报」;Otto 不该说「不知道」,manage-library.ts 的工具描述里已经
+      //     把这句话讲给模型听(#914 r2)。
       // r1 在 null 时把键删掉,于是「引擎没报」和「这条产品链不存在」在 Otto 眼里长得一模
       // 一样 —— 键缺席的语义留给 history(我们**根本没查**这一列),两种「没有」不能混。
+      //
+      // #914 r4 双面同源:`sentPrompt`(我们实际送出的那句)与商家面板读的是**同一条**
+      // 记录、**同一次**比对(asset-actions 已经比完),原样递过去 —— Otto 说的与面板显示
+      // 的不可能各说各话。
       return {
         id: res.id, projectId: res.projectId, kind: res.kind, prompt: res.prompt,
         finalPrompt: res.finalPrompt,
+        sentPrompt: res.sentPrompt,
         favorite: res.favorite,
       };
     },

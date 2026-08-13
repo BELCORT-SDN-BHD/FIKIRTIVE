@@ -76,6 +76,57 @@ describe("detail / set_favorite (debt-29/30)", () => {
     expect(res.item.favorite).toBe(true);
     expect(detail).toHaveBeenCalledWith("g-x");
   });
+  /**
+   * #914 r6(判官 r5 P1-2)—— **裁剪层**也得把回执带上。
+   *
+   * r4 把「我们实际送出的那句」一路接到了端口(`otto-library-port`),却漏了这一层:
+   * `toModelItem` 把它裁掉了,于是工具描述里写着「detail 带 sentPrompt」,模型手上却从来
+   * 没有这个键 —— 说的与做的失同步,而模型只会照着描述去回答商家。所以这里断言的是
+   * **模型真正收到的那个对象**,不是端口的返回值。
+   */
+  describe("#914 r6 sentPrompt —— 模型手上真的拿得到,三态原样", () => {
+    const detailItem = async (over: Partial<LibraryItemView>) => {
+      const detail = vi.fn(async () => item(over));
+      const res = (await executeManageLibrary(
+        { action: "detail", generationId: "g-x" },
+        { context: makeCtx({ detail }) },
+      )) as { item: Record<string, unknown> };
+      return res.item;
+    };
+
+    it("逐字相同 ⇒ 结论原样递给模型", async () => {
+      expect(await detailItem({ sentPrompt: { verbatim: true } })).toMatchObject({ sentPrompt: { verbatim: true } });
+    });
+
+    it("不同 ⇒ 全文原样递给模型(裁剪层不摘要、不改写)", async () => {
+      const text = "<Image_1> is the image being edited.\na latte";
+      expect(await detailItem({ sentPrompt: { verbatim: false, text } })).toMatchObject({
+        sentPrompt: { verbatim: false, text },
+      });
+    });
+
+    it("没有这条记录(上传/裁剪/历史行)⇒ 键**在**、值是 null:模型据此什么都别说", async () => {
+      const shown = await detailItem({ sentPrompt: null });
+      expect("sentPrompt" in shown).toBe(true);
+      expect(shown.sentPrompt).toBeNull();
+      // 绝不许在裁剪途中被商家自己那句话顶上。
+      expect(shown.prompt).toBe("a latte");
+    });
+
+    it("history 那条路根本没查这一列 ⇒ 键**缺席**,与「查了但没有」不合并", async () => {
+      const history = vi.fn(async () => ({ items: [item()], nextCursor: null, hasMore: false }));
+      const res = (await executeManageLibrary({ action: "history" }, { context: makeCtx({ history }) })) as {
+        items: Record<string, unknown>[];
+      };
+      expect("sentPrompt" in res.items[0]!).toBe(false);
+    });
+
+    it("工具描述里对这个键的承诺,与实际返回的形状对得上", () => {
+      expect(manageLibrarySkill.description).toContain("sentPrompt");
+      expect(manageLibrarySkill.description).toContain("verbatim");
+    });
+  });
+
   it("set_favorite needs generationId + favorite; false is honored (debt-30)", async () => {
     const setFavorite = vi.fn(async () => ({ favorite: false }));
     const ctx = makeCtx({ setFavorite });

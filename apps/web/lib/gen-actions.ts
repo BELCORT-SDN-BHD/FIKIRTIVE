@@ -42,6 +42,7 @@ import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
+import { readMerchantPrompt } from "./merchant-prompt-provenance";
 import { outOfCreditsMessage, spendCapBlockedMessage } from "./credit-format";
 import { consumeGenerationGate } from "./rate-limit-gates";
 // #744 判官 r2 P1 —— 撤销与扣费共用的那把 campaign 锁。它必须由**提交扣费的这笔事务**持有,
@@ -252,6 +253,10 @@ type TrustedCoworkRequest = {
   /** #774 判官 r4 P1 —— 审批身份的**唯一**来源:服务端刚读出来的那张持久化卡。
    *  与 `expectedCredits` 同一条纪律:商家批准的那份东西由卡说了算,不由调用方说了算。 */
   approvedEntities: ApprovedEntity[];
+  /** #914 r6 判官 r5 P2 —— 「商家原话」的**唯一**来源:拼装那一步在进程内绑上来的那句
+   *  (merchant-prompt-provenance)。null = 这一单没有可分家的两句话。它不是 `genRequest`
+   *  的字段:公开入口交这个字段一律被 `.strict()` 拒收,伪造面因此不存在。 */
+  merchantPrompt: string | null;
 };
 const TRUSTED_COWORK_REQUESTS = new WeakMap<object, TrustedCoworkRequest>();
 
@@ -379,6 +384,10 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
     threadId,
     expectedCredits,
     approvedEntities: cardApprovedEntities,
+    // #914 r6(判官 r5 P2)—— 商家原话与报价、审批身份走**同一条**可信通道:值只可能来自
+    // 进程内那一次绑定(coworkGenerate 拼装那一步),浏览器序列化过来的 `raw` 永远进不了
+    // 那张 WeakMap。取不到就是 null,读取端据此把 `prompt` 本身当成商家写的那句。
+    merchantPrompt: readMerchantPrompt(raw) ?? null,
   });
   return startGen(trustedRequest);
 }
@@ -427,6 +436,9 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
     if (!parsed.success) return { error: "That generation request is out of bounds." };
     const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, approvedEntities, coherentSet } = parsed.data;
+    // #914 r6(判官 r5 P2)—— 「商家原话」**只**从可信记录取,永远不从 `parsed.data` 取:
+    // 它已经不是 genRequest 的字段了,任何请求带上它都在上面那次 `.strict()` 校验里整单被拒。
+    const requestedPrompt = trustedCoworkRequest?.merchantPrompt ?? null;
     const parsedCanvasAction = parseCanvasActionKey(idempotencyKey);
     if (parsedCanvasAction && !trustedCanvasKey) {
       return { error: "That generation request is out of bounds." };
@@ -852,6 +864,12 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             idempotencyKey: idempotencyKey ?? null,
             threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
             queueJobId,
+            // #914 — the merchant's own words. Set ONLY when coworkGenerate's composePrompt step
+            // actually rewrote something, and reachable ONLY through the in-process provenance
+            // channel (never from the request body — see the trusted record above). Absent for
+            // every other spend surface, where `prompt` above IS the merchant's own words.
+            // Pure record: never read by pricing, idempotency, or material/replay matching.
+            ...(requestedPrompt ? { requestedPrompt } : {}),
             ...(videoOptions ? { videoOptions } : {}),
             // #642: the frozen image shape — the worker reads it back, and a later
             // "edit this image" inherits from it. Video jobs get null (normalizer drops it).

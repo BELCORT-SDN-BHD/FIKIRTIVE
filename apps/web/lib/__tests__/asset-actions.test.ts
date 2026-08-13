@@ -253,6 +253,84 @@ describe("getGeneration", () => {
     });
   });
 
+  // ---- #914 r4：我们**实际交给引擎**的那一句,以及它跟商家原话到底一不一样 --------
+  //
+  // 判官 r3 判 FAIL 的三条全在这一段收口:
+  //   ① 记录来自真实发送层(worker),读取端只负责比对与白标 —— 所以历史行的 null
+  //      只有一种含义,面板据此整行不显示;
+  //   ② 商家原话那一列要认 `GenJob.requestedPrompt`(入队前平台自己拼装过的那些单),
+  //      不能一律拿 promptText 顶上去 —— 否则 cowork 那条路上「原样送出」恒为谎;
+  //   ③ 比对严格 `===`,不 trim:差一个尾随空行也要把全文亮出来。
+  describe("sentPrompt（#914 r4：平台实际送出的那一句）", () => {
+    type Receipt = null | { verbatim: true } | { verbatim: false; text: string };
+    const MERCHANT = "a poster for the weekend sale";
+    const rowWith = (sentPromptText: string | null, promptText = MERCHANT) => ({
+      id: "g1",
+      promptText,
+      finalPromptText: null,
+      sentPromptText,
+      favorite: false,
+      asset: { ownerId: "u1", contentHash: "abc", ext: "png" },
+    });
+    const sentPromptOf = async () => (await getGeneration("g1") as { sentPrompt: Receipt }).sentPrompt;
+
+    it("那一列真的被查出来了 —— 不查,这条产品线就只剩猜", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith(MERCHANT));
+      await getGeneration("g1");
+      expect(mockGenFindFirst.mock.calls[0]![0].select).toMatchObject({ sentPromptText: true });
+    });
+
+    it("历史行(这一列还不存在时产的图)⇒ null:读取端不作任何声明,面板整行不出现", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith(null));
+      expect(await sentPromptOf()).toBeNull();
+    });
+
+    it("与商家写的逐字相同 ⇒ verbatim,不把同一段文字再贴一遍", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith(MERCHANT));
+      expect(await sentPromptOf()).toEqual({ verbatim: true });
+    });
+
+    it("worker 在发送前加过料(#774 的参考图编号句)⇒ 把**实际送出的全文**交给面板", async () => {
+      const sent = `<Image_1> is the image being edited.\n${MERCHANT}`;
+      mockGenFindFirst.mockResolvedValue(rowWith(sent));
+      expect(await sentPromptOf()).toEqual({ verbatim: false, text: sent });
+    });
+
+    it("只差一个尾随换行也算不同 —— 严格 `===`,不 trim(判官 r3 ③)", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith(`${MERCHANT}\n`));
+      expect(await sentPromptOf()).toEqual({ verbatim: false, text: `${MERCHANT}\n` });
+    });
+
+    it("入队前平台自己拼装过的单(cowork):商家原话取自 GenJob.requestedPrompt,不是 promptText", async () => {
+      const composed = `${MERCHANT} — bold type, high contrast`;
+      // promptText = 拼装之后的那句(worker 就是拿它去发的),requestedPrompt = 商家原话。
+      mockGenFindFirst.mockResolvedValue(rowWith(composed, composed));
+      mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1"], imageOptions: null, requestedPrompt: MERCHANT });
+      // 拿 promptText 当商家原话的话,这里会说「原样送出」—— 那正是 r1 判官抓到的谎。
+      expect(await sentPromptOf()).toEqual({ verbatim: false, text: composed });
+    });
+
+    it("没拼装过的单(画布 / 工厂 / 战役 / 模板 / 详情页编辑):promptText 本身就是商家原话", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith(MERCHANT));
+      mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1"], imageOptions: null, requestedPrompt: null });
+      expect(await sentPromptOf()).toEqual({ verbatim: true });
+    });
+
+    it("白标:要亮全文时才过滤供应商指纹词", async () => {
+      mockGenFindFirst.mockResolvedValue(rowWith(`seedream style guide.\n${MERCHANT}`));
+      const receipt = await sentPromptOf() as { verbatim: false; text: string };
+      expect(receipt.verbatim).toBe(false);
+      expect(receipt.text).not.toMatch(/seedream/iu);
+      expect(receipt.text).toContain(MERCHANT); // 滤掉的是名字,不是整句话
+    });
+
+    it("比对用**原文**做:商家自己在提示词里写了供应商名,不会被过滤反过来判成「我们改了你的话」", async () => {
+      const merchantWrote = "a poster in seedream style";
+      mockGenFindFirst.mockResolvedValue(rowWith(merchantWrote, merchantWrote));
+      expect(await sentPromptOf()).toEqual({ verbatim: true });
+    });
+  });
+
   it("returns { error } when generation is not owned by caller", async () => {
     mockGenFindFirst.mockResolvedValue(null);
     expect(await getGeneration("other-g")).toEqual({ error: "Not found." });
