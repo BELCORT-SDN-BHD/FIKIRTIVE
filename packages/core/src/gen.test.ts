@@ -83,6 +83,27 @@ describe("genRequest.variantSel", () => {
   });
 });
 
+/**
+ * #914 r6(判官 r5 P2)—— 「商家原话」不是这张 schema 的字段,而且**必须不是**。
+ *
+ * 它曾经是一个可选字段。可是解析这张 schema 的每一个入口都是浏览器能直接调用的 Server
+ * Action:收下它,等于让任何调用者往一条商家日后会当成证据看的记录里写任意一句话
+ * (#882 approvedEntities 的同一课,只是这次伪造的是出处而不是指令)。因为这张 schema 是
+ * `.strict()`,把字段拿掉本身就是那道闸:带上它的请求在花钱之前整单被拒。
+ */
+describe("genRequest —— 商家原话不进请求体 (#914 r6)", () => {
+  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };
+  it("不带它:照常通过(每一条花钱路都是这样)", () => {
+    expect(genRequest.safeParse(base).success).toBe(true);
+  });
+  it("带上它:整单被拒 —— 不是悄悄剥掉,而是当场失败(多这个字段说明调用方在试图写这条记录)", () => {
+    expect(genRequest.safeParse({ ...base, requestedPrompt: "a sentence I made up" }).success).toBe(false);
+  });
+  it("解析结果里根本没有这个键 —— 下游想读也读不到,只能走服务端那条通道", () => {
+    expect(genRequest.parse(base)).not.toHaveProperty("requestedPrompt");
+  });
+});
+
 // #774 —— 传输层对审批身份的封顶。谁可以**给**这个字段是执行层的事(只有服务端读出的
 // 那张卡,见 gen-actions 的 startCoworkGen);这里钉的是「就算给了,形状也得站得住」:
 // 一条指向没 @ 到的元素的身份、或同一个元素两份身份,都在能落库之前就落不了地。
