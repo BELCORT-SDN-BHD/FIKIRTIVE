@@ -151,18 +151,54 @@ beforeEach(() => {
   // 每个 asset 一个可辨认的 URL —— 底图是否真的在第 0 位,靠它证明。
   m.storagePresignedGet.mockImplementation(async (key: string) => `url:${key}`);
   // 元素一律用 PRODUCT:CHARACTER 无 base 图会被 worker 提前拒付,那是另一条规则。
-  m.entityFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id, type: "PRODUCT" }));
+  // 名字按 id 铸成可辨认的 `Ent-e0` —— #774 的编号句要说出「<Image_2> 是谁」,靠它对表。
+  m.entityFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id, type: "PRODUCT", name: `Ent-${where.id}` }));
   m.entityVariantFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
   // 编辑底图(sourceGenerationId)解析。
   m.generationFindFirst.mockResolvedValue({ id: "gen_src", asset: { ownerId: "o1", contentHash: BASE_HASH, ext: "png" } });
 });
 
-/** 真跑一次 handleGen,交回 provider 真正收到的 inputImageUrls。 */
-async function inputImageUrlsFromRealWorker(job: Record<string, unknown>): Promise<string[]> {
+/** 真跑一次 handleGen,交回 provider 真正收到的那一整个参数。 */
+async function paidImageCallFromRealWorker(job: Record<string, unknown>): Promise<{ inputImageUrls: string[]; prompt: string }> {
   m.genJobFindUnique.mockResolvedValue(job);
   await handleGen({ genJobId: "g1" }, 0);
   expect(m.generateImages, "the paid call must have happened for this case to mean anything").toHaveBeenCalledTimes(1);
-  return m.generateImages.mock.calls[0]![0].inputImageUrls as string[];
+  const call = m.generateImages.mock.calls[0]![0] as { inputImageUrls: string[]; prompt: string };
+  return { inputImageUrls: call.inputImageUrls, prompt: call.prompt };
+}
+
+/** 真跑一次 handleGen,交回 provider 真正收到的 inputImageUrls。 */
+async function inputImageUrlsFromRealWorker(job: Record<string, unknown>): Promise<string[]> {
+  return (await paidImageCallFromRealWorker(job)).inputImageUrls;
+}
+
+/**
+ * 编号句住在 prompt 的第一行(商家那段原文在换行之后)。这里只把它拆成两个可对表的序列,
+ * **不**在测试里重写一遍措辞 —— 措辞由下面那条字面量断言单独钉住。
+ */
+function referenceMapOf(prompt: string): { line: string; slots: string[]; names: string[] } {
+  const line = prompt.split("\n")[0]!;
+  return {
+    line,
+    slots: line.match(/<Image_\d+>/g) ?? [],
+    names: line.match(/Ent-e\d+/g) ?? [],
+  };
+}
+
+/** 期望的槽位归属 —— 与 `expectedRoundRobinUrls` 同一把尺,独立于被测代码推一遍。 */
+function expectedRoundRobinOwners(perEntityLiveCounts: number[]): string[] {
+  const picked: string[] = [];
+  for (let round = 0; picked.length < MAX_CONDITIONING_IMAGES; round++) {
+    let progressed = false;
+    for (let e = 0; e < perEntityLiveCounts.length; e++) {
+      if (round >= perEntityLiveCounts[e]!) continue;
+      picked.push(`Ent-e${e}`);
+      progressed = true;
+      if (picked.length >= MAX_CONDITIONING_IMAGES) break;
+    }
+    if (!progressed) break;
+  }
+  return picked;
 }
 
 describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张数", () => {
@@ -229,6 +265,88 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
     ]);
     // 那唯一一张属于第二个元素的图,确实在车上。
     expect(actual).toContain(elementUrl(1, 0));
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // #774 U2 —— 编号 ↔ 真实发送次序
+  //
+  // `<Image_2>` 是模型用来认人的指令:它一旦指的不是引擎收到的第 2 张,串脸串产品就
+  // 从「可能」变成「必然」,而这条错指令一路走到商家批准后的**付费**调用。
+  //
+  // 所以编号不由写提示词的一端推算(那时谁有几张活图、挂没挂底图、镜头以后会被改成
+  // 哪个元素,统统还不知道),而是由**装 `inputImageUrls` 的那同一趟循环**顺手产出。
+  // 下面跑的是**真的 `handleGen`**,拿它真正交给 `provider.generate` 的 prompt 与
+  // inputImageUrls 逐位对表 —— 两者一旦各说各话,这里当场红。
+  // ════════════════════════════════════════════════════════════════════════
+  describe("#774 U2 —— prompt 里的编号 = 引擎真收到的那个次序", () => {
+    it.each([
+      ["零元素、零挂图 → 一个编号都不写", [], false],
+      ["零元素 + 底图 → 只有 Image_1", [], true],
+      ["挂图 + 元素未到上限", [3, 3], true],
+      ["元素超限 17 → 10", [9, 8], false],
+      ["挂图 + 元素超限 → 10 + 1", [9, 8], true],
+      ["偏斜 [20, 1] —— round-robin 决定谁是 Image_2", [20, 1], false],
+      ["零参考图的元素不占槽位,也不许把后面的挤歪", [0, 2, 0, 1], false],
+      ["零参考图元素 + 底图", [0, 2], true],
+    ])("%s", async (_label, perEntityLiveCounts, hasBaseImage) => {
+      const entityIds = perEntityLiveCounts.map((_, i) => `e${i}`);
+      const byEntity = new Map(entityIds.map((id, i) => [id, refsFor(i, perEntityLiveCounts[i]!)]));
+      m.referenceImageFindMany.mockImplementation(async ({ where }: { where: { entityId: string } }) =>
+        byEntity.get(where.entityId) ?? [],
+      );
+
+      const { inputImageUrls, prompt } = await paidImageCallFromRealWorker({
+        ...imageJob,
+        entityIds,
+        ...(hasBaseImage ? { sourceGenerationId: "gen_src" } : {}),
+      });
+      const map = referenceMapOf(prompt);
+
+      // ① 一张图一个编号,一个不多一个不少,而且从 1 连号到 N。
+      expect(map.slots).toEqual(inputImageUrls.map((_, i) => `<Image_${i + 1}>`));
+      // ② 每个编号说的是谁 —— 与独立推出来的 round-robin 归属逐位相同(底图不带名字)。
+      expect(map.names).toEqual(expectedRoundRobinOwners(perEntityLiveCounts as number[]));
+      // ③ 底图在不在第 0 位,编号句和 URL 必须同时承认。
+      expect(map.line.includes("is the image being edited")).toBe(hasBaseImage);
+      expect(inputImageUrls[0] === BASE_URL).toBe(hasBaseImage);
+      // ④ 商家那段原文一个字都没被动过,编号只加在它**前面**。
+      expect(prompt.endsWith(imageJob.prompt)).toBe(true);
+      // ⑤ 没有图就没有编号 —— 那时 prompt 必须与商家批准的那段一模一样。
+      if (inputImageUrls.length === 0) expect(prompt).toBe(imageJob.prompt);
+    });
+
+    // 措辞单独钉一遍字面量:上面的期望值是推出来的,这里是**写死**的,
+    // 所以「推导器和被测行为一起漂移」也逃不掉。
+    it("底图 + 两个元素 + 一张重复照 —— 官方句式逐字", async () => {
+      const byEntity = new Map([["e0", refsFor(0, 2)], ["e1", refsFor(1, 1)]]);
+      m.referenceImageFindMany.mockImplementation(async ({ where }: { where: { entityId: string } }) =>
+        byEntity.get(where.entityId) ?? [],
+      );
+
+      const { prompt } = await paidImageCallFromRealWorker({
+        ...imageJob, entityIds: ["e0", "e1"], sourceGenerationId: "gen_src",
+      });
+
+      expect(prompt).toBe(
+        "<Image_1> is the image being edited. " +
+        "Define the product in <Image_2> as <Subject_2>: Ent-e0. " +
+        "Define the product in <Image_3> as <Subject_3>: Ent-e1. " +
+        "<Image_4> is another photo of <Subject_2> (Ent-e0).\n" +
+        imageJob.prompt,
+      );
+    });
+
+    it("视频 prompt 一个编号都不加 —— 元素参考照根本到不了视频引擎", async () => {
+      m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 3));
+      m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+
+      m.genJobFindUnique.mockResolvedValue({
+        ...imageJob, kind: "VIDEO", model: "seedance-2-mini", entityIds: ["e0"], sourceGenerationId: "gen_src",
+      });
+      await handleGen({ genJobId: "g1" }, 0);
+
+      expect(m.generateVideo.mock.calls[0]![0].prompt).toBe(imageJob.prompt);
+    });
   });
 
   it("元素图一张都到不了视频引擎 —— 所以视频卡不许报参考照数字", async () => {

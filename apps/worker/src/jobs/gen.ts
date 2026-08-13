@@ -23,6 +23,8 @@ import {
   videoDefaults,
   imageDefaults,
   MAX_CONDITIONING_IMAGES,
+  withReferenceMap,
+  type ReferenceSlot,
   REF_VIDEO_MIN_SECONDS,
   REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
@@ -558,13 +560,16 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // backstop for refs deleted between that check and now.)
       const variantSel = (job.variantSel as Record<string, string> | null) ?? {};
       const perEntity: { asset: { ownerId: string; contentHash: string; ext: string } }[][] = [];
+      // #774 U2:编号要说出「<Image_2> 是谁」,所以这里顺手记下每个 @元素的身份。
+      // 顺序 = job.entityIds 顺序 = perEntity 顺序 —— 三者共用同一趟循环。
+      const entityMeta: { id: string; type: "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK"; name: string }[] = [];
       for (const entityId of job.entityIds) {
         const variantId = variantSel[entityId] ?? null;
         // the parent entity must still be live + owned. softDeleteEntity doesn't cascade to
         // refs, so an entity deleted AFTER the guardian check would otherwise leave live refs
         // the worker would spend on. (Guardian blocks a deleted entity pre-spend; this is the
         // race backstop.)
-        const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true, type: true } });
+        const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true, type: true, name: true } });
         if (!liveEntity) {
           await failClosedWithRefund(job,"an @mentioned element was deleted — remove it and try again");
           return;
@@ -599,27 +604,36 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           return;
         }
         perEntity.push(found);
+        entityMeta.push({ id: liveEntity.id, type: liveEntity.type, name: liveEntity.name });
       }
       // cap the aggregate at the model's input limit, ROUND-ROBIN across entities so an
       // early entity with many base refs can't starve a later @mentioned variant of its
       // conditioning (which would spend without the requested variant). MAX_GEN_ENTITIES(8)
       // ≤ the cap(10), so round 0 always seats ≥1 ref for every mention that has one.
-      const cappedRefs: { asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
+      // #774 U2:每张上车的图连它属于哪个 @元素一起记 —— 编号(`<Image_N>`)就是从这里
+      // 长出来的,与 `inputImageUrls` 同一趟循环、同一个下标,所以两者不可能各说各话。
+      const cappedRefs: { entity: number; asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
       for (let round = 0; cappedRefs.length < MAX_CONDITIONING_IMAGES; round++) {
         let progressed = false;
-        for (const refsForEntity of perEntity) {
+        for (const [entity, refsForEntity] of perEntity.entries()) {
           const ref = refsForEntity[round];
           if (!ref) continue;
-          cappedRefs.push(ref);
+          cappedRefs.push({ entity, asset: ref.asset });
           progressed = true;
           if (cappedRefs.length >= MAX_CONDITIONING_IMAGES) break;
         }
         if (!progressed) break;
       }
       const inputImageUrls: string[] = [];
+      /** 与 `inputImageUrls` 逐项同步的槽位身份(编辑底图 unshift 时一起 unshift)。 */
+      const refSlots: ReferenceSlot[] = [];
       for (const ref of cappedRefs) {
         const signed = await storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext), 3600);
-        if (signed) inputImageUrls.push(signed);
+        if (signed) {
+          inputImageUrls.push(signed);
+          const meta = entityMeta[ref.entity]!;
+          refSlots.push({ kind: "entity", entityId: meta.id, type: meta.type, name: meta.name });
+        }
       }
       const isMock = provider.name === "mock";
       if (!isMock && cappedRefs.length > 0 && inputImageUrls.length < cappedRefs.length) {
@@ -750,7 +764,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) in this project"); return; }
           const srcUrl = (await storage.presignedGet(storageKey(src.asset.ownerId, src.asset.contentHash, src.asset.ext), 3600)) ?? "";
           if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
-          if (srcUrl) inputImageUrls.unshift(srcUrl);
+          if (srcUrl) {
+            inputImageUrls.unshift(srcUrl);
+            refSlots.unshift({ kind: "baseImage" }); // 底图坐第 0 位 → 它就是 <Image_1>
+          }
         }
         // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
         // (or a malformed snapshot) has none → the model's default square, which is exactly
@@ -759,7 +776,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         const aspectRatio = typeof io?.aspectRatio === "string"
           ? io.aspectRatio
           : imageDefaults(job.model as GenModel).aspectRatio;
-        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio });
+        // #774 U2:官方编号句由**这里**产出 —— `refSlots` 与 `inputImageUrls` 是同一趟
+        // 循环装的同一个次序,所以 `<Image_2>` 说的一定就是引擎收到的第 2 张。写提示词
+        // 的那一端反而编不了:那时谁有几张活图、商家挂没挂底图、镜头后来被改成了别的
+        // 元素,统统还不知道。零参考图 → 零编号句 → prompt 原样。
+        outputs = await provider.generate({ prompt: withReferenceMap(job.prompt, refSlots), inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {

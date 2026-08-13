@@ -29,7 +29,7 @@ describe("assembleSeedream", () => {
       subject: "a hero shot",
       references: [{ role: "product", name: "the AeroBottle" }],
     }));
-    expect(out).toContain("feature the AeroBottle exactly as in that reference");
+    expect(out).toContain("Feature the AeroBottle exactly as in the reference");
   });
   it("i2i mode builds an edit instruction, not a fresh scene", () => {
     const out = assembleSeedream(seedreamPromptInput.parse({
@@ -75,51 +75,63 @@ describe("assembleSeedream", () => {
     });
   });
 
-  // ── #774 U2 参考图编号 ────────────────────────────────────────────────────
-  // 编号必须与真实发送顺序一致；错位比不编号更糟，所以这里逐位钉死。
-  describe("#774 U2 — <Image_N> numbering follows the real send order", () => {
+  // ── #774 U2 r2 参考图身份 ─────────────────────────────────────────────────
+  // 编号(<Image_N>)不在这一端产出 —— 写提示词时既不知道谁有几张活参考照，也不知道
+  // 商家挂没挂底图，编出来就是碰运气，而这条错指令会一路走到付费调用。
+  // 编号由真正装 `inputImageUrls` 的那段代码顺手产出，对表在
+  // `apps/worker/src/jobs/gen-reference-budget.test.ts`（跑真的 handleGen）。
+  // 这一端只负责名字这一层锁定，且**一个数字都不许写**。
+  describe("#774 U2 — identity is locked by name here; numbers come from the sender", () => {
     const threeRefs = [
       { role: "character" as const, name: "Mia" },
       { role: "product" as const, name: "the AeroBottle" },
       { role: "brandmark" as const, name: "AeroCo" },
     ];
-    it("no base image → references start at <Image_1>, in array order", () => {
+    it("every reference gets its own naming sentence", () => {
       const out = assembleSeedream(seedreamPromptInput.parse({ subject: "a hero shot", references: threeRefs }));
-      expect(out).toContain("Define the person in <Image_1> as <Subject_1>: keep Mia identical to that reference");
-      expect(out).toContain("Define the product in <Image_2> as <Subject_2>: feature the AeroBottle exactly");
-      expect(out).toContain("Define the logo in <Image_3> as <Subject_3>: reproduce the AeroCo logo exactly");
-      expect(out).not.toContain("<Image_4>");
+      expect(out).toContain("Keep Mia identical to the reference, same face, hairstyle, and build.");
+      expect(out).toContain("Feature the AeroBottle exactly as in the reference, same shape, color, and label.");
+      expect(out).toContain("Reproduce the AeroCo logo exactly as in the reference, unaltered.");
     });
-    it("baseImage:true → the edited image is <Image_1> and references shift to <Image_2>…", () => {
-      const out = assembleSeedream(seedreamPromptInput.parse({
-        subject: "a hero shot", baseImage: true, references: threeRefs,
-      }));
-      expect(out).toContain("<Image_1> is the image being edited.");
-      expect(out).toContain("Define the person in <Image_2> as <Subject_2>: keep Mia identical");
-      expect(out).toContain("Define the product in <Image_3> as <Subject_3>");
-      expect(out).toContain("Define the logo in <Image_4> as <Subject_4>");
-    });
-    it("every numbered clause also names the entity — a misnumber degrades, it does not lie", () => {
-      const out = assembleSeedream(seedreamPromptInput.parse({ subject: "x", references: threeRefs }));
-      for (const name of ["Mia", "the AeroBottle", "AeroCo"]) expect(out).toContain(name);
-    });
-    it("lock:false numbers the slot but asks only for style, not identity", () => {
+    it("lock:false asks only for style, not identity", () => {
       const out = assembleSeedream(seedreamPromptInput.parse({
         subject: "a hero shot",
         references: [{ role: "location", name: "the loft", lock: false }],
       }));
-      expect(out).toContain("Draw stylistic inspiration from <Image_1> (the loft); do not copy its subject.");
+      expect(out).toContain("Draw stylistic inspiration from the loft.");
     });
-    it("no references → no numbering at all", () => {
-      expect(assembleSeedream(seedreamPromptInput.parse({ subject: "a red apple" }))).not.toContain("<Image_");
+    it("NEVER writes an image number — not in t2i, not in i2i, not with many references", () => {
+      for (const input of [
+        { subject: "a hero shot", references: threeRefs },
+        { subject: "a red apple" },
+        { mode: "i2i", subject: "s", editVerb: "Add", editTarget: "the bottle to the table", references: threeRefs },
+      ]) {
+        const out = assembleSeedream(seedreamPromptInput.parse(input));
+        expect(out).not.toMatch(/Image_\d/);
+        expect(out).not.toMatch(/Subject_\d/);
+      }
     });
-    it("i2i numbers its references too", () => {
-      const out = assembleSeedream(seedreamPromptInput.parse({
-        mode: "i2i", subject: "s", editVerb: "Add", editTarget: "the bottle to the table",
-        baseImage: true, references: [{ role: "product", name: "the AeroBottle" }],
-      }));
-      expect(out).toContain("<Image_1> is the image being edited.");
-      expect(out).toContain("<Image_2>");
+  });
+
+  // ── #774 r2 P2 —— 商家要求印在画面上的字，逐字保留 ──────────────────────────
+  // U1 的成句归一(`sentence()` 会把内部空白压成一个空格)改的必须只是**我们的措辞**。
+  // 商家写 `BUY\nNOW`，画面上就该是他写的那两行，不是我们替他改成的 `BUY NOW`。
+  describe("#774 r2 — the merchant's literal on-image text is never rewritten", () => {
+    it("keeps a line break inside the requested text", () => {
+      const out = assembleSeedream(seedreamPromptInput.parse({ subject: "a poster", textContent: "BUY\nNOW" }));
+      expect(out).toContain('Render the text "BUY\nNOW"');
+      expect(out).not.toContain('Render the text "BUY NOW"');
+    });
+    it("keeps double spaces, tabs and unusual casing exactly as given", () => {
+      for (const literal of ["50%  OFF", "OPEN\tDAILY", "nasi lemak  •  RM5"]) {
+        const out = assembleSeedream(seedreamPromptInput.parse({ subject: "a poster", textContent: literal }));
+        expect(out).toContain(`Render the text "${literal}"`);
+      }
+    });
+    it("whitespace-only text is dropped, and then the vertical caption ban still applies", () => {
+      const out = assembleSeedream(seedreamPromptInput.parse({ subject: "a poster", aspect: "9:16", textContent: "   " }));
+      expect(out).not.toContain("Render the text");
+      expect(out).toContain("Keep the frame free of subtitles");
     });
   });
 
@@ -172,21 +184,23 @@ describe("seedreamPromptSkill gate", () => {
     expect(seedreamPromptSkill.description).toContain("cinematic");
     expect(seedreamPromptSkill.description).not.toContain("推镜头");
   });
-  it("description gates i2i on an @-entity source (guards spend on bare priors)", () => {
-    expect(seedreamPromptSkill.description).toContain(
-      "Use mode:'i2i' ONLY when an @-referenced entity supplies the source image (pass its id via propose's entityIds); to change a prior generation with no entity, use t2i instead."
-    );
-  });
-  // #774 U2 —— 编号的两条前提必须逐字写给 Otto，否则编号就是碰运气。
-  it("description states the reference-order contract in words Otto can follow", () => {
+  // #774 r2 —— mode 的口径按实际行为统一：仓库总指令明确「商家挂的那张图就是引擎要改的
+  // 底图」，旧描述却说只有 @实体供图才算 i2i，两句互相打架，Otto 照前者选 t2i 就绕过了
+  // 整条编辑装配分支。现在只按一件事分流：这段提示词是在改一张已有的图，还是从零造一张。
+  it("description picks i2i by what the prompt DOES, not by where the image came from", () => {
     const d = seedreamPromptSkill.description;
-    expect(d).toContain("SAME order as the ids you pass to propose's entityIds");
-    expect(d).toContain("ONLY entities that actually have reference images");
-    expect(d).toContain("a wrong order is worse");
-    expect(d).toContain("than no numbering");
-    expect(d).toContain("baseImage:true");
-    // #802 地图硬规则：`>` 是导航路径分隔符族的一员，教学文案里写尖括号会被判成
-    // 一条不存在的路。编号本身在装配结果里照写，描述面只用 `Image_1` 这种写法。
+    expect(d).toContain("Use mode:'i2i' whenever this prompt CHANGES an image that already exists");
+    expect(d).toContain("the image the user attached, the one they are viewing and editing");
+    expect(d).toContain("use t2i only when the picture is made from nothing");
+    expect(d).not.toContain("ONLY when an @-referenced entity supplies the source image");
+  });
+  // #774 r2 —— 编号不再是 Otto 的活，描述面必须把这件事说死。
+  it("description tells Otto never to number images itself", () => {
+    const d = seedreamPromptSkill.description;
+    expect(d).toContain("their identity is locked BY NAME");
+    expect(d).toContain("the system numbers them for the engine at send time — never write image numbers yourself");
+    expect(d).not.toContain("baseImage");
+    // #802 地图硬规则：`>` 是导航路径分隔符族的一员，教学文案里写尖括号会被判成一条不存在的路。
     expect(d).not.toContain("<Image_");
   });
   // #774 U4 —— 同一个形状要同时传给 propose 和这里，否则竖版防线不会被触发。
@@ -201,7 +215,6 @@ describe("seedreamPromptSkill gate", () => {
     expect(out.notes?.length).toBeGreaterThan(0);
     // 提醒归提醒：六个参考一个不少地进了 prompt。
     for (let n = 0; n < 6; n++) expect(out.prompt).toContain(`P${n}`);
-    expect(out.prompt).toContain("<Image_6>");
     expect(seedreamPromptSkill.description).toContain("they are advice, never a limit");
   });
   it("no advisory notes for an ordinary reference set", async () => {

@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { MAX_CONDITIONING_IMAGES, MAX_GEN_ENTITIES } from "@fikirtive/core";
 import {
   identityLockClause, promptRef, CAMERA_MOVES, enOnly,
   sentence, imperativeConstraints, soundNotation, SOUND_MARKS,
   externalizeEmotion, EMOTION_CUES, isPortraitAspect,
-  numberedReferenceClauses, referenceAdvice,
+  identityLockSentences, referenceAdvice,
 } from "./prompt-vocab.js";
 
 describe("identityLockClause", () => {
@@ -135,69 +134,37 @@ describe("isPortraitAspect", () => {
   });
 });
 
-// ── 编号与真实发送顺序的对表 ────────────────────────────────────────────────
+// ── 参考图身份：这一层只锁名字，编号那一层不在这里 ──────────────────────────
 //
-// 这一段是 #774 U2 的承重点：编号错位比不编号更糟，所以「第 k 个 reference 就是
-// 第 k 个槽位」这条前提必须自己有测试，而不是靠注释保证。
-//
-// 下面的 `roundRobinFirstSeats` 是 worker 选片算法的**逐条镜像**
-// （`apps/worker/src/jobs/gen.ts:607-618`）：第 0 轮给每个元素各坐一张，坐满
-// `MAX_CONDITIONING_IMAGES` 为止。它在这里的唯一作用是证明第 0 轮真的坐得下每个元素 ——
-// 那正是编号敢按数组下标走的原因。
-function roundRobinFirstSeats(perEntityLiveCounts: number[]): (number | null)[] {
-  const seats: number[] = [];
-  for (let round = 0; seats.length < MAX_CONDITIONING_IMAGES; round++) {
-    let progressed = false;
-    for (const [entity, live] of perEntityLiveCounts.entries()) {
-      if (round >= live) continue;
-      seats.push(entity);
-      progressed = true;
-      if (seats.length >= MAX_CONDITIONING_IMAGES) break;
-    }
-    if (!progressed) break;
-  }
-  return perEntityLiveCounts.map((_, entity) => {
-    const at = seats.indexOf(entity);
-    return at === -1 ? null : at;
-  });
-}
-
-describe("numberedReferenceClauses — slots match the order the system really sends", () => {
-  it("round 0 seats every entity in order, so entity k is slot k", () => {
-    for (const counts of [[1, 1, 1], [3, 1, 2], [1, 5, 1, 1], [2, 2, 2, 2, 2, 2, 2, 2]]) {
-      expect(roundRobinFirstSeats(counts)).toEqual(counts.map((_, k) => k));
-    }
-  });
-  it("the entity cap fits inside the conditioning cap — that is why round 0 always seats everyone", () => {
-    expect(MAX_GEN_ENTITIES).toBeLessThanOrEqual(MAX_CONDITIONING_IMAGES);
-    expect(roundRobinFirstSeats(Array.from({ length: MAX_GEN_ENTITIES }, () => 4)))
-      .toEqual(Array.from({ length: MAX_GEN_ENTITIES }, (_, k) => k));
-  });
-  it("clause numbers follow that same 1-based order", () => {
-    const out = numberedReferenceClauses([
+// #774 r2：编号(`<Image_N>`)由真正装 `inputImageUrls` 的那段代码产出
+// （`apps/worker/src/jobs/gen.ts` + `@fikirtive/core` 的 `referenceMapLines`），
+// 「编号 ↔ 真实发送次序」的对表在 `apps/worker/src/jobs/gen-reference-budget.test.ts`
+// ——那条测试跑的是**真的 `handleGen`**，不是本文件里重建的副本。所以这里只钉一件事：
+// 写提示词这一端一个编号都不许写出来。
+describe("identityLockSentences", () => {
+  it("one sentence per reference, each naming the entity", () => {
+    const out = identityLockSentences([
       { role: "character", name: "Mia", lock: true },
       { role: "product", name: "the AeroBottle", lock: true },
-      { role: "location", name: "the loft", lock: true },
     ]);
-    expect(out[0]).toContain("<Image_1> as <Subject_1>");
-    expect(out[1]).toContain("<Image_2> as <Subject_2>");
-    expect(out[2]).toContain("<Image_3> as <Subject_3>");
+    expect(out).toEqual([
+      "Keep Mia identical to the reference, same face, hairstyle, and build.",
+      "Feature the AeroBottle exactly as in the reference, same shape, color, and label.",
+    ]);
   });
-  it("a base image takes slot 1 (the worker unshifts it), pushing references to slot 2", () => {
-    const out = numberedReferenceClauses([{ role: "product", name: "the AeroBottle", lock: true }], { baseImage: true });
-    expect(out[0]).toBe("<Image_1> is the image being edited.");
-    expect(out[1]).toContain("<Image_2> as <Subject_2>");
+  it("lock:false keeps the stylistic-inspiration wording", () => {
+    expect(identityLockSentences([{ role: "location", name: "the loft", lock: false }]))
+      .toEqual(["Draw stylistic inspiration from the loft."]);
   });
-  it("no references → no clauses at all", () => {
-    expect(numberedReferenceClauses([])).toEqual([]);
-    expect(numberedReferenceClauses([], { baseImage: true })).toEqual(["<Image_1> is the image being edited."]);
+  it("empty refs → no sentences", () => {
+    expect(identityLockSentences([])).toEqual([]);
   });
-  it("every clause carries the entity name too, so a misnumber degrades instead of lying", () => {
-    for (const role of ["character", "product", "location", "brandmark"] as const) {
-      const [clause] = numberedReferenceClauses([{ role, name: "Nasi Lemak Co", lock: true }]);
-      expect(clause).toContain("Nasi Lemak Co");
-      expect(clause).toContain("<Image_1>");
-    }
+  it("NEVER writes an image number — numbering belongs to the code that sends the images", () => {
+    const out = identityLockSentences(
+      (["character", "product", "location", "brandmark"] as const).map((role) => ({ role, name: "Nasi Lemak Co", lock: true })),
+    ).join(" ");
+    expect(out).not.toMatch(/Image_\d/);
+    expect(out).not.toMatch(/Subject_\d/);
   });
 });
 

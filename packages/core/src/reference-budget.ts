@@ -66,3 +66,61 @@ export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
     truncated: taken < elementTotal,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #774 U2 —— 参考图编号(官方句式 `Define … in <Image_N> as <Subject_N>`)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 引擎输入数组里的**一个槽位** —— 与 `inputImageUrls` 的下标一一对应,
+ * 第 i 项就是 `<Image_{i+1}>`。
+ *
+ * 这个类型是编号的**唯一入口**:调用方只能交出「引擎真收到的那个数组」,
+ * 没有第二条路可以凭猜测编号。
+ */
+export type ReferenceSlot =
+  | { kind: "baseImage" }
+  | { kind: "entity"; entityId: string; type: "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK"; name: string };
+
+/** 元素类型 → 官方句式里那个名词(商家看不到这句,它是给引擎的)。 */
+const SLOT_NOUN: Record<Extract<ReferenceSlot, { kind: "entity" }>["type"], string> = {
+  CHARACTER: "the person",
+  LOCATION: "the setting",
+  PRODUCT: "the product",
+  BRANDMARK: "the logo",
+};
+
+/**
+ * 纯:把「引擎这一趟真收到的那个数组」翻成官方编号句。
+ *
+ * ── 为什么编号只能长在这里 ────────────────────────────────────────────────
+ * 编错位比不编号更糟:模型会照着编号去认人,`<Image_2>` 一旦指的不是它以为的那张,
+ * 串脸串产品就从「可能」变成「必然」,而这条错指令一路走到商家批准后的付费调用。
+ *
+ * 所以编号**不由**写提示词的一方推算 —— 写提示词的时候,谁有几张活参考照、商家挂没挂
+ * 底图、镜头后来被改成了别的元素,统统还不知道。编号只由**真正装那个数组的那段代码**
+ * 顺手产出(`apps/worker/src/jobs/gen.ts`,与 `inputImageUrls` 同一个循环),两者
+ * 结构上不可能漂移。`apps/worker/src/jobs/gen-reference-budget.test.ts` 跑真的
+ * `handleGen`,逐例把这些句子和真发出去的 URL 次序对表。
+ *
+ * 同一个元素的第二张往后的照片不再重复定义,只挂回它自己的 `<Subject_N>`。
+ */
+export function referenceMapLines(slots: ReferenceSlot[]): string[] {
+  const firstSlotOf = new Map<string, number>();
+  return slots.map((slot, idx) => {
+    const n = idx + 1;
+    if (slot.kind === "baseImage") return `<Image_${n}> is the image being edited.`;
+    const first = firstSlotOf.get(slot.entityId);
+    if (first === undefined) {
+      firstSlotOf.set(slot.entityId, n);
+      return `Define ${SLOT_NOUN[slot.type]} in <Image_${n}> as <Subject_${n}>: ${slot.name}.`;
+    }
+    return `<Image_${n}> is another photo of <Subject_${first}> (${slot.name}).`;
+  });
+}
+
+/** 纯:把编号句放在商家那段提示词**之前**(官方要求先定义再描述)。空槽位 → 原样返回。 */
+export function withReferenceMap(prompt: string, slots: ReferenceSlot[]): string {
+  const lines = referenceMapLines(slots);
+  return lines.length === 0 ? prompt : `${lines.join(" ")}\n${prompt}`;
+}

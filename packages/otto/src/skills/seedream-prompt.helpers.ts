@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   promptRef,
   sentence,
-  numberedReferenceClauses,
+  identityLockSentences,
   isPortraitAspect,
   PORTRAIT_IMAGE_CAPTION_BAN,
 } from "./prompt-vocab.js";
@@ -27,10 +27,6 @@ export const seedreamPromptInput = z.object({
   /** #774 U4：这张图会以什么画幅交付。竖版另加一句 caption-free —— 竖版长鬼字幕的概率
    *  明显更高。传的必须是**同一趟** propose 的 `desiredAspect`；认不出来一律当非竖版。 */
   aspect: z.string().optional(),
-  /** #774 U2：这一趟带着一张编辑底图吗（商家挂的图 / 详情页正在改的那张）。
-   *  worker 把它 unshift 到第 0 位（`apps/worker/src/jobs/gen.ts:753`），所以它是
-   *  `<Image_1>`，`references` 从 `<Image_2>` 起算。 */
-  baseImage: z.boolean().default(false),
 });
 export type SeedreamPromptInput = z.infer<typeof seedreamPromptInput>;
 
@@ -42,7 +38,7 @@ export type SeedreamPromptInput = z.infer<typeof seedreamPromptInput>;
  * 不是内容 —— 字段、先后次序、取舍规则一条没动。
  */
 export function assembleSeedream(i: SeedreamPromptInput): string {
-  const refClauses = numberedReferenceClauses(i.references, { baseImage: i.baseImage });
+  const refClauses = identityLockSentences(i.references);
   const portrait = isPortraitAspect(i.aspect);
 
   if (i.mode === "i2i") {
@@ -63,6 +59,7 @@ export function assembleSeedream(i: SeedreamPromptInput): string {
     i.colorPalette && `the color palette is ${i.colorPalette}`,
   ].filter(Boolean).join(", ");
 
+  const wantsText = !!i.textContent?.trim();
   const sentences = [
     sentence(`${i.subject}${i.actionPose ? `, ${i.actionPose}` : ""}`),
     i.environment && sentence(`the setting is ${i.environment}`),
@@ -72,9 +69,12 @@ export function assembleSeedream(i: SeedreamPromptInput): string {
     i.detail && sentence(i.detail),
     i.forVideo && "Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction.",
     ...refClauses,
-    i.textContent && sentence(`render the text "${i.textContent}" in bold sans-serif, placed prominently`),
+    // 商家指定要**印在画面上的那几个字**，逐字保留：这一句刻意不过 `sentence()`，
+    // 因为它会把内部空白归一（`BUY\nNOW` → `BUY NOW`）。改我们的措辞可以，改商家
+    // 要求渲染的字面内容不行。
+    wantsText && `Render the text "${i.textContent}" in bold sans-serif, placed prominently.`,
     // 商家自己要了画面上的字，就不该再禁字 —— 只有没要字的竖版才加这道防线。
-    portrait && !i.textContent && PORTRAIT_IMAGE_CAPTION_BAN,
+    portrait && !wantsText && PORTRAIT_IMAGE_CAPTION_BAN,
   ];
   return sentences.filter(Boolean).join(" ");
 }

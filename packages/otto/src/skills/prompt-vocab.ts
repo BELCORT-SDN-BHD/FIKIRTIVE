@@ -34,17 +34,21 @@ export const promptRef = z.object({
 export type PromptRef = z.infer<typeof promptRef>;
 type Role = PromptRef["role"];
 
+const LOCK_PHRASE: Record<Role, (n: string) => string> = {
+  character: (n) => `keep ${n} identical to the reference, same face, hairstyle, and build`,
+  product: (n) => `feature ${n} exactly as in the reference, same shape, color, and label`,
+  location: (n) => `match the setting of ${n} to the reference environment`,
+  brandmark: (n) => `reproduce the ${n} logo exactly as in the reference, unaltered`,
+};
+const stylePhrase = (n: string) => `draw stylistic inspiration from ${n}`;
+
+/** 纯：一个 reference → 一句英文身份锁定/风格借鉴短语（不带句号，供两个装配器共用）。 */
+const refPhrase = (r: PromptRef): string => (r.lock ? LOCK_PHRASE[r.role] : stylePhrase)(r.name);
+
 /** 纯：把每个 reference 织成一句英文身份锁定/风格借鉴短语，用 "; " 连接。空 refs → ""。 */
 export function identityLockClause(refs: PromptRef[]): string {
   if (refs.length === 0) return "";
-  const lock: Record<Role, (n: string) => string> = {
-    character: (n) => `keep ${n} identical to the reference, same face, hairstyle, and build`,
-    product: (n) => `feature ${n} exactly as in the reference, same shape, color, and label`,
-    location: (n) => `match the setting of ${n} to the reference environment`,
-    brandmark: (n) => `reproduce the ${n} logo exactly as in the reference, unaltered`,
-  };
-  const style = (n: string) => `draw stylistic inspiration from ${n}`;
-  return refs.map((r) => (r.lock ? lock[r.role] : style)(r.name)).join("; ");
+  return refs.map(refPhrase).join("; ");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -159,52 +163,29 @@ export const PORTRAIT_IMAGE_CAPTION_BAN =
   "Keep the frame free of subtitles, captions, and watermarks.";
 
 /**
- * 参考图编号（官方句式 `Define … in <Image_N> as <Subject_N>`）。
+ * 参考图身份锁定 —— 逐条成句（U1 要的是成句，不是一串逗号关键词）。
  *
- * ── 为什么编号必须与**真实发送顺序**一致 ──────────────────────────────────
- * 编错位比不编号更糟：模型会照着编号去认人，一旦 `<Image_2>` 指的不是它以为的那张，
- * 串脸串产品就从「可能」变成「必然」。所以这里的槽位不是随手编的，而是逐条对着
- * worker 真正发出去的那个数组来的（`apps/worker/src/jobs/gen.ts`）：
+ * ── 这里**不编号**，编号在别处长 ──────────────────────────────────────────
+ * 官方句式是 `Define … in <Image_N> as <Subject_N>`，而编错位比不编号更糟：模型会照着
+ * 编号去认人，`<Image_2>` 一旦指的不是它以为的那张，串脸串产品就从「可能」变成「必然」，
+ * 而这条错指令一路走到商家批准后的**付费**调用。
  *
- *   1. `:607-618` 元素参考照按 **round-robin** 装进 `cappedRefs` —— 第 0 轮给每个
- *      @到的元素各坐一张，因此第 k 个元素的第一张图就是第 k 个槽位。上限
- *      `MAX_CONDITIONING_IMAGES` 是 10，而元素上限是 8（`references` 的 `.max(8)`
- *      与 `MAX_GEN_ENTITIES` 一致），所以第 0 轮**一定**坐得下每一个元素。
- *   2. `:753` 编辑底图（商家挂的那张图 / 详情页在改的那张）走 `unshift`，插到第 0 位
- *      —— 所以有底图时它就是 `<Image_1>`，元素从 `<Image_2>` 起算。
+ * 写提示词的这一端**没有**编号所需的事实，一个都没有：
+ *   · 哪个元素这一趟真有活参考照 —— 产品/地点/品牌标识允许零张图，零张图在 worker
+ *     那边不占槽位，后面所有编号整体前移；
+ *   · 商家这一趟到底挂没挂编辑底图 —— 那是 `GenJob.sourceGenerationId`，由服务端从
+ *     商家自己的东西解析，不是模型能声明的；
+ *   · 这段提示词以后还会被挂到哪个镜头上 —— `editStoryboard` 改得了 `firstFramePrompt`，
+ *     改不到那个镜头的 `entityIds`，于是写死的编号当场过期。
  *
- * ── 调用方必须守的两条契约（description 里逐字写给 Otto）──────────────────
- *   · `references` 的顺序 = 传给 propose 的 `entityIds` 顺序；
- *   · 只列**确实有参考图**的元素 —— 一个零张图的元素在 worker 那边不占槽位，把它
- *     写进来会让它后面所有编号整体错一位。
- *
- * ── 万一还是错位了会怎样 ──────────────────────────────────────────────────
- * 每一句都**同时**带着编号和名字（`… <Image_2> … feature the AeroBottle …`），所以
- * 编号错位时模型手里仍有名字→角色这一层映射，退化成今天这版没编号的措辞，而不是
- * 得到一条自信的错指令。这是刻意的兜底，不是编号可以不准的借口。
+ * 所以编号只由**真正装那个数组的那段代码**顺手产出：`apps/worker/src/jobs/gen.ts` 与
+ * `inputImageUrls` 同一趟循环，纯函数在 `@fikirtive/core` 的 `referenceMapLines`，
+ * `apps/worker/src/jobs/gen-reference-budget.test.ts` 跑真的 `handleGen` 逐例对表。
+ * 这里只负责**名字**这一层映射（"keep Mia identical…"），编号那一层由机器补上，两层
+ * 说的是同一件事，且都不可能错位。
  */
-export function numberedReferenceClauses(
-  refs: PromptRef[],
-  opts: { baseImage?: boolean } = {},
-): string[] {
-  const clauses: string[] = [];
-  if (opts.baseImage) clauses.push("<Image_1> is the image being edited.");
-  const offset = opts.baseImage ? 2 : 1;
-  const lock: Record<Role, (n: string, s: string) => string> = {
-    character: (n, s) => `Define the person in <Image_${s}> as <Subject_${s}>: keep ${n} identical to that reference — same face, hairstyle, and build.`,
-    product: (n, s) => `Define the product in <Image_${s}> as <Subject_${s}>: feature ${n} exactly as in that reference — same shape, color, and label.`,
-    location: (n, s) => `Define the setting in <Image_${s}> as <Subject_${s}>: match the environment to ${n} as in that reference.`,
-    brandmark: (n, s) => `Define the logo in <Image_${s}> as <Subject_${s}>: reproduce the ${n} logo exactly as in that reference, unaltered.`,
-  };
-  refs.forEach((r, idx) => {
-    const slot = String(idx + offset);
-    clauses.push(
-      r.lock
-        ? lock[r.role](r.name, slot)
-        : `Draw stylistic inspiration from <Image_${slot}> (${r.name}); do not copy its subject.`,
-    );
-  });
-  return clauses;
+export function identityLockSentences(refs: PromptRef[]): string[] {
+  return refs.map((r) => sentence(refPhrase(r)));
 }
 
 /**
