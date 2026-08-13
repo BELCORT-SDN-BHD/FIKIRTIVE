@@ -12,6 +12,7 @@ import {
   klDateString,
   klHour,
   pgEnvFromUrl,
+  pgSpawnEnv,
   selectExpiredBackups,
 } from "./db-backup.js";
 
@@ -148,5 +149,75 @@ describe("pgEnvFromUrl (connection via env, NEVER argv)", () => {
   it("omits absent parts instead of emitting empty strings", () => {
     const env = pgEnvFromUrl("postgres://localhost/db");
     expect(env).toEqual({ PGHOST: "localhost", PGDATABASE: "db" });
+  });
+});
+
+/**
+ * #794 judge r2 P1 — the dump subprocess must not inherit the ambient PG* family.
+ * libpq reads PGHOSTADDR (which OUTRANKS PGHOST for the real TCP connection) and
+ * PGSERVICE (a service-file stanza supplying host/port/dbname), so an inherited
+ * environment could send pg_dump to a server the connection URL never named while every
+ * string we inspected still read correctly.
+ */
+describe("pgSpawnEnv (the COMPLETE child environment — no inherited PG*)", () => {
+  const URL_ = "postgres://user:pw@localhost:5432/fikirtive_test";
+
+  it("drops every ambient PG* that could move the connection", () => {
+    const env = pgSpawnEnv(URL_, {
+      PATH: "/usr/bin",
+      PGHOSTADDR: "10.0.0.1",
+      PGSERVICE: "prod",
+      PGSERVICEFILE: "/tmp/evil.conf",
+      PGPASSFILE: "/tmp/evil.pass",
+      PGHOST: "prod.example",
+      PGDATABASE: "production",
+      PGPORT: "6543",
+      PGSSLMODE: "prefer",
+    });
+    // nothing from the ambient PG* family survives...
+    expect(env.PGHOSTADDR).toBeUndefined();
+    expect(env.PGSERVICE).toBeUndefined();
+    expect(env.PGSERVICEFILE).toBeUndefined();
+    expect(env.PGPASSFILE).toBeUndefined();
+    expect(env.PGSSLMODE).toBeUndefined(); // not in the URL, so not in the child
+    // ...and the ones we DO set come from the URL, not the environment
+    expect(env.PGHOST).toBe("localhost");
+    expect(env.PGDATABASE).toBe("fikirtive_test");
+    expect(env.PGPORT).toBe("5432");
+  });
+
+  it("keeps only the minimal non-PG passthrough the binary needs", () => {
+    const env = pgSpawnEnv(URL_, {
+      PATH: "/usr/bin",
+      HOME: "/root",
+      LANG: "en_US.UTF-8",
+      TMPDIR: "/tmp",
+      AWS_SECRET_ACCESS_KEY: "should-not-leak",
+      DATABASE_URL: "should-not-leak",
+      SENTRY_DSN: "should-not-leak",
+    });
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.HOME).toBe("/root");
+    expect(env.LANG).toBe("en_US.UTF-8");
+    expect(env.TMPDIR).toBe("/tmp");
+    // the child is built from scratch, so unrelated secrets never reach pg_dump either
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.SENTRY_DSN).toBeUndefined();
+  });
+
+  it("carries the password via PG* env (never argv) — the pre-existing guarantee holds", () => {
+    const env = pgSpawnEnv(URL_, { PATH: "/usr/bin" });
+    expect(env.PGPASSWORD).toBe("pw");
+    expect(env.PGUSER).toBe("user");
+  });
+
+  it("passes through the URL's own sslmode/channel_binding (Neon), not the ambient one", () => {
+    const env = pgSpawnEnv("postgres://u:p@h.neon.tech/db?sslmode=require&channel_binding=require", {
+      PATH: "/usr/bin",
+      PGSSLMODE: "disable",
+    });
+    expect(env.PGSSLMODE).toBe("require");
+    expect(env.PGCHANNELBINDING).toBe("require");
   });
 });

@@ -2277,10 +2277,12 @@ model WorkerHeartbeat {
 // 备份成功只写进 worker 的 stdout,失败只进 Sentry,两者都不是可以被 /api/health 或
 // admin 读到的事实。备份是否新鲜必须是一行可查的记录,而不是一句日志。
 //
-// append-only:每次备份尝试落一行(成功与失败都落),永不 UPDATE(由迁移里的 BEFORE UPDATE
-// 触发器硬拦;Prisma 建模不了触发器,故只在迁移里)。新鲜度 = 最近一条 status='succeeded'
-// 行的 finishedAt(见 apps/web/lib/health.ts)。无租户数据(平台级 ops 记录),不进 tenant
-// guard;写入方经 runAsSystem("db-backup") 立帧。
+// append-only:每次备份尝试落一行(成功与失败都落),**UPDATE 与 DELETE 都被行级触发器
+// 硬拦**(Prisma 建模不了触发器,故只在迁移里)。改写能伪造新鲜度,删除同样能——删掉
+// 「成功之后的那条失败」会让 admin 那一格从 retry failed 变回全绿。清库用 TRUNCATE
+// (表级,不触发行级触发器)。新鲜度 = 最近一条 status='succeeded' 行的 finishedAt
+// (见 apps/web/lib/health.ts)。无租户数据(平台级 ops 记录),不进 tenant guard;
+// 写入方经 runAsSystem("db-backup") 立帧。
 //
 // 三个封闭集(status / credentialMode / trigger)与「succeeded 必须带 finishedAt+key」用 CHECK
 // 约束守着,同样只在迁移里(Prisma 建模不了 CHECK)——见 migrations/20260811100000_backup_run。

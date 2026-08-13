@@ -17,7 +17,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await prisma.backupRun.deleteMany({});
+  // TRUNCATE, not deleteMany: the append-only trigger rejects row-level DELETE
+  // (judge r2 P2). TRUNCATE is a table-level operation and does not fire it.
+  await prisma.$executeRawUnsafe('TRUNCATE "BackupRun"');
 });
 
 const succeeded = {
@@ -88,10 +90,31 @@ describe("BackupRun — the database enforces what a backup record may say", () 
     expect(after?.error).toBeNull();
   });
 
-  it("allows DELETE (ops metadata: test cleanup / retention delete a whole row, never rewrite one)", async () => {
+  it("is append-only: DELETE is rejected too (judge r2 P2)", async () => {
+    // 删除一样能伪造新鲜度:admin 只在「最近一次失败发生在最近一次成功之后」时把那一格
+    // 降成 retry failed,所以删掉那条失败行,面板就变回一片绿。
     const row = await prisma.backupRun.create({ data: succeeded });
-    await expect(prisma.backupRun.delete({ where: { id: row.id } })).resolves.toBeTruthy();
-    expect(await prisma.backupRun.findUnique({ where: { id: row.id } })).toBeNull();
+    await expect(prisma.backupRun.delete({ where: { id: row.id } })).rejects.toThrow(/append-only|not permitted/i);
+    await expect(prisma.backupRun.deleteMany({})).rejects.toThrow(/append-only|not permitted/i);
+    expect(await prisma.backupRun.findUnique({ where: { id: row.id } })).not.toBeNull();
+  });
+
+  it("a post-success failure row cannot be erased — the exact panel-forging move (judge r2 P2)", async () => {
+    const successAt = new Date(Date.now() - 9 * 3_600_000);
+    await prisma.backupRun.create({ data: { ...succeeded, id: "s1", finishedAt: successAt } });
+    const failure = await prisma.backupRun.create({
+      data: { id: "f1", status: "failed", trigger: "cron", credentialMode: "isolated", finishedAt: new Date(), error: "R2 PutObject 403" },
+    });
+    // 这一条正是把面板从 "retry failed" 变回 "fresh/green" 的那一步 —— 数据库拒绝它。
+    await expect(prisma.backupRun.delete({ where: { id: failure.id } })).rejects.toThrow(/append-only|not permitted/i);
+    const stillThere = await prisma.backupRun.findFirst({ where: { status: "failed" }, orderBy: { finishedAt: "desc" } });
+    expect(stillThere?.error).toBe("R2 PutObject 403");
+  });
+
+  it("TRUNCATE still works — the cleanup path tests use (table-level, no row trigger)", async () => {
+    await prisma.backupRun.create({ data: succeeded });
+    await expect(prisma.$executeRawUnsafe('TRUNCATE "BackupRun"')).resolves.toBeDefined();
+    expect(await prisma.backupRun.findFirst({})).toBeNull();
   });
 
   it("the freshness query reads the last SUCCESS, never the last row", async () => {

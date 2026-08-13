@@ -74,28 +74,53 @@ describe("opsR2Config — which key writes the backups", () => {
     expect(cfg.endpoint).toBe("https://other.r2.cloudflarestorage.com");
   });
 
-  // The one belief this whole item exists to prevent: "we isolated the backups" when a
-  // typo'd or lone variable means we did not. Every partial R2_BACKUP_* combination must
-  // throw, never silently fall back to shared (judge r1 P1-5).
-  it.each([
-    ["only access key", { R2_BACKUP_ACCESS_KEY_ID: "k" }],
-    ["only secret", { R2_BACKUP_SECRET_ACCESS_KEY: "s" }],
-    ["only bucket (lone routing var, no credential)", { R2_BACKUP_BUCKET: "b" }],
-    ["only endpoint (lone routing var, no credential)", { R2_BACKUP_ENDPOINT: "https://e" }],
-    ["bucket + endpoint but no credential", { R2_BACKUP_BUCKET: "b", R2_BACKUP_ENDPOINT: "https://e" }],
-    ["access + bucket but no secret", { R2_BACKUP_ACCESS_KEY_ID: "k", R2_BACKUP_BUCKET: "b" }],
-    ["secret + endpoint but no access", { R2_BACKUP_SECRET_ACCESS_KEY: "s", R2_BACKUP_ENDPOINT: "https://e" }],
-  ])("REFUSES a partial R2_BACKUP_* config: %s", (_label, vars) => {
-    Object.assign(process.env, vars);
-    expect(() => opsR2Config()).toThrow(/partially set/);
+  // EXHAUSTIVE truth table over the four R2_BACKUP_* variables (judge r1 P1-5, r2 P3).
+  // All 2^4 = 16 combinations, generated rather than hand-listed so none can be missed:
+  //   - none set                       → shared (the pre-#794 shape, still supported)
+  //   - credential PAIR present        → isolated (bucket/endpoint optional)
+  //   - anything else (any partial)    → throw, NEVER a silent fall back to the shared key
+  // The belief this prevents is "we isolated the backups" when a typo'd or lone variable
+  // means we did not.
+  const VARS = ["R2_BACKUP_ACCESS_KEY_ID", "R2_BACKUP_SECRET_ACCESS_KEY", "R2_BACKUP_BUCKET", "R2_BACKUP_ENDPOINT"] as const;
+  const VALUE: Record<(typeof VARS)[number], string> = {
+    R2_BACKUP_ACCESS_KEY_ID: "backup-key",
+    R2_BACKUP_SECRET_ACCESS_KEY: "backup-secret",
+    R2_BACKUP_BUCKET: "fikirtive-backups",
+    R2_BACKUP_ENDPOINT: "https://backup.r2.cloudflarestorage.com",
+  };
+
+  const combos = Array.from({ length: 16 }, (_, mask) => {
+    const set = VARS.filter((_v, i) => mask & (1 << i));
+    const bits = VARS.map((_v, i) => ((mask & (1 << i)) ? "1" : "0")).join("");
+    const hasCredential = set.includes("R2_BACKUP_ACCESS_KEY_ID") && set.includes("R2_BACKUP_SECRET_ACCESS_KEY");
+    const expected = set.length === 0 ? "shared" : hasCredential ? "isolated" : "throw";
+    return { bits, set, expected, label: `${bits} [${set.join(",") || "none"}] → ${expected}` };
   });
 
-  it("accepts the full credential even with a lone extra routing var", () => {
-    // Once the credential PAIR is present, bucket/endpoint are legitimately optional.
-    process.env.R2_BACKUP_ACCESS_KEY_ID = "backup-key";
-    process.env.R2_BACKUP_SECRET_ACCESS_KEY = "backup-secret";
-    process.env.R2_BACKUP_BUCKET = "fikirtive-backups";
-    expect(opsR2Config().mode).toBe("isolated");
+  it("covers all 16 combinations (guard against a silently shrinking truth table)", () => {
+    expect(combos).toHaveLength(16);
+    expect(combos.filter((c) => c.expected === "throw")).toHaveLength(11);
+    expect(combos.filter((c) => c.expected === "isolated")).toHaveLength(4);
+    expect(combos.filter((c) => c.expected === "shared")).toHaveLength(1);
+  });
+
+  it.each(combos.map((c) => [c.label, c] as const))("R2_BACKUP_* truth table: %s", (_label, combo) => {
+    for (const name of combo.set) process.env[name] = VALUE[name];
+    if (combo.expected === "throw") {
+      expect(() => opsR2Config()).toThrow(/partially set/);
+      return;
+    }
+    const cfg = opsR2Config();
+    expect(cfg.mode).toBe(combo.expected);
+    if (combo.expected === "isolated") {
+      expect(cfg.accessKeyId).toBe(VALUE.R2_BACKUP_ACCESS_KEY_ID);
+      expect(cfg.secretAccessKey).toBe(VALUE.R2_BACKUP_SECRET_ACCESS_KEY);
+      // routing vars are optional and fall back to the content bucket's when absent
+      expect(cfg.bucket).toBe(combo.set.includes("R2_BACKUP_BUCKET") ? VALUE.R2_BACKUP_BUCKET : "fikirtive");
+      expect(cfg.endpoint).toBe(
+        combo.set.includes("R2_BACKUP_ENDPOINT") ? VALUE.R2_BACKUP_ENDPOINT : "https://acct.r2.cloudflarestorage.com",
+      );
+    }
   });
 
   it("still refuses an incomplete BASE r2 config (pre-existing guard, unchanged)", () => {

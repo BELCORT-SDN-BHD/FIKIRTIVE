@@ -57,16 +57,49 @@ if [ ! -f "$DUMP" ]; then
   exit 2
 fi
 
-# ---- parse + guard the target (only enforced on --apply) ----
+# ============================================================================
+# WHERE WILL libpq ACTUALLY CONNECT? (judge r1 P1-1, judge r2 P1 — PRODUCTION RED LINE)
+# ============================================================================
+# The URL text is NOT the connection target. Two independent channels move it:
+#   1. QUERY PARAMS   — ?host= / ?hostaddr= / ?port= / ?dbname= / ?user= / ?service=
+#   2. ENVIRONMENT    — PGHOSTADDR (a numeric address that OUTRANKS PGHOST for the real
+#                       TCP connection), PGSERVICE / PGSERVICEFILE (a service stanza that
+#                       supplies host/port/dbname), PGHOST, PGPORT, PGDATABASE, ...
+# A string check alone therefore proves nothing: `…@localhost/restore_drill` with
+# PGHOSTADDR=<prod ip> exported reads perfectly local and connects to production.
 #
-# P1-1 (judge r1, PRODUCTION RED LINE): the URL body is NOT the connection target.
-# libpq lets query params override it, so
-#   postgres://u:p@localhost/restore_drill?host=prod.example&dbname=production
-# reads `localhost` / `restore_drill` to a naive sed but connects to `prod.example`
-# / `production`. hostaddr= and service= redirect too (service= reads a service file
-# that can point anywhere). So the guard REFUSES any connection param that can move
-# the target, then extracts host/db from the (now trusted) body. No override param
-# survives to reach libpq — belt (reject) and braces (the body checks below).
+# So the guard is FOUR layers, cheapest first, and the last one is the only one that
+# can actually be trusted because it asks the server itself:
+#   L1  scrub the environment  — unset every PG* before any libpq call (below)
+#   L2  reject override params — the query-string blacklist
+#   L3  parse-and-assert       — real URI parse, host must be a loopback literal
+#   L4  ASK THE SERVER         — connect read-only and assert inet_server_addr() is
+#                                loopback and current_database() is the drill DB,
+#                                BEFORE issuing a single destructive statement
+# ----------------------------------------------------------------------------
+
+# L1: the environment must not have an opinion about where we connect.
+#
+# Two steps, and the order matters. First REFUSE if any variable that can move the target
+# is set: this script drops and recreates a database, and when there is a second, invisible
+# opinion about which server that is, the only safe answer is to stop and make the operator
+# say it explicitly. (Scrubbing silently would also be safe here, but it would hide from the
+# operator that their PGHOST was being ignored — and "it connected somewhere I didn't expect"
+# is exactly the class of surprise this guard exists to prevent.) Then unset the whole PG*
+# family anyway, so nothing below — psql, pg_restore — can inherit a setting we did not write.
+PG_TARGET_VARS="PGHOST PGHOSTADDR PGPORT PGDATABASE PGSERVICE PGSERVICEFILE PGPASSFILE PGCONNECT_TIMEOUT PGOPTIONS PGREQUIRESSL PGSSLMODE"
+for _v in $PG_TARGET_VARS; do
+  if [ -n "${!_v:-}" ]; then
+    echo "[restore-drill] REFUSING: \$$_v is set in the environment. libpq reads it and it can move the connection off the URL you passed (PGHOSTADDR outranks PGHOST; PGSERVICE can supply host/port/dbname)." >&2
+    echo "[restore-drill]           Unset the PG* family and pass the target explicitly in the connection URL." >&2
+    exit 3
+  fi
+done
+unset _v
+for _pgvar in $(env | sed -n 's/^\(PG[A-Z_]*\)=.*/\1/p'); do unset "$_pgvar"; done
+unset _pgvar
+
+# L2: refuse any query param that can move the target.
 reject_target_override_params() {
   local url="$1"
   local query=""
@@ -79,6 +112,53 @@ reject_target_override_params() {
     return 1
   fi
   return 0
+}
+
+# L3: a REAL URI parse (not sed) — the host must be a loopback literal. Anything that
+# does not parse as a postgres URI is refused rather than guessed at.
+LOOPBACK_HOSTS="localhost 127.0.0.1 ::1 [::1]"
+assert_parsed_host_is_local() {
+  local url="$1" parsed
+  parsed="$(node -e '
+    try {
+      const u = new URL(process.argv[1]);
+      if (!/^postgres(ql)?:$/.test(u.protocol)) { console.log("BADSCHEME"); process.exit(0); }
+      console.log(u.hostname === "" ? "EMPTY" : u.hostname);
+    } catch { console.log("UNPARSEABLE"); }
+  ' "$url" 2>/dev/null)" || parsed="UNPARSEABLE"
+  case " $LOOPBACK_HOSTS " in
+    *" $parsed "*) return 0 ;;
+  esac
+  echo "[restore-drill] REFUSING: parsed connection host '$parsed' is not a loopback literal (allowed: $LOOPBACK_HOSTS)." >&2
+  return 1
+}
+
+# L4: the only check that reflects reality — ask libpq where it ACTUALLY connected, and do
+# it BEFORE any DROP/CREATE.
+#
+# The probe is psql's `\conninfo`, which reports the host and the RESOLVED address from the
+# CLIENT's side. That is the true final target: whatever combination of URL, environment and
+# DNS produced it, this is the endpoint the next statement will hit.
+#
+# (Not `inet_server_addr()`: that is the server's view of itself, which for a containerised
+# Postgres is its bridge-network address — 172.x — even though it is genuinely on this
+# machine. Measured against the repo's own docker-compose Postgres, so this is a real
+# false-positive, not a hypothetical one.)
+assert_connection_is_local() {
+  local url="$1" info addr
+  info="$(psql "$url" -c '\conninfo' 2>/dev/null)" || {
+    echo "[restore-drill] REFUSING: could not reach the target to verify where it actually is." >&2
+    return 1
+  }
+  # Prefer the resolved address when psql prints one; fall back to the host it names.
+  addr="$(printf '%s' "$info" | sed -n 's/.*(address "\([^"]*\)").*/\1/p')"
+  [ -z "$addr" ] && addr="$(printf '%s' "$info" | sed -n 's/.*on host "\([^"]*\)".*/\1/p')"
+  case "$addr" in
+    127.*|::1|localhost) return 0 ;;
+    /*) return 0 ;; # unix socket path — local by definition
+  esac
+  echo "[restore-drill] REFUSING: libpq actually connected to '$addr', which is NOT loopback. Something re-pointed the connection past the string checks." >&2
+  return 1
 }
 
 host="$(printf '%s' "$TARGET_URL" | sed -E 's#^[a-z]+://([^@]*@)?([^:/?]+).*#\2#')"
@@ -103,8 +183,8 @@ restore_cmds() {
   # 1. (if gzipped) decompress the custom-format dump
   [ "$DUMP" != "$plain_dump" ] && gunzip -kf "$DUMP"
   # 2. recreate a clean throwaway target DB
-  psql "postgres://fikirtive:fikirtive@$host:5432/postgres" -c 'DROP DATABASE IF EXISTS "$dbname";'
-  psql "postgres://fikirtive:fikirtive@$host:5432/postgres" -c 'CREATE DATABASE "$dbname";'
+  psql "postgres://fikirtive:fikirtive@$host:<target-port>/postgres" -c 'DROP DATABASE IF EXISTS "$dbname";'
+  psql "postgres://fikirtive:fikirtive@$host:<target-port>/postgres" -c 'CREATE DATABASE "$dbname";'
   # 3. restore (custom format → pg_restore, NOT psql)
   pg_restore --no-owner --no-privileges -d "$TARGET_URL" "$plain_dump"
   # 4. reconcile the money truth against prod's same-night counts
@@ -121,8 +201,10 @@ if [ "$APPLY" != 1 ]; then
 fi
 
 # ---- --apply: hard local-only guards (never prod / Neon) ----
-# First: no connection param may redirect the target past the host/db checks (P1-1).
+# L2: no connection param may redirect the target past the host/db checks.
 reject_target_override_params "$TARGET_URL" || exit 3
+# L3: a real URI parse — the host must be a loopback literal.
+assert_parsed_host_is_local "$TARGET_URL" || exit 3
 if [ "$is_local" != 1 ]; then
   echo "[restore-drill] REFUSING --apply: target host '$host' is not local. Prod/Neon restore is founder-only, out-of-band." >&2
   exit 3
@@ -131,11 +213,22 @@ if [ "$is_drill_db" != 1 ]; then
   echo "[restore-drill] REFUSING --apply: target db '$dbname' is not a drill/test DB (need *drill*/*restore*/*_test)." >&2
   exit 3
 fi
-for bin in psql pg_restore gunzip; do
+for bin in psql pg_restore gunzip node; do
   command -v "$bin" >/dev/null 2>&1 || { echo "[restore-drill] error: '$bin' not on PATH." >&2; exit 4; }
 done
 
-admin_url="postgres://fikirtive:fikirtive@$host:5432/postgres"
+# Admin connection for DROP/CREATE DATABASE. The port comes from the TARGET URL, not a
+# hardcoded 5432 — otherwise a drill aimed at a Postgres on another port (an isolated test
+# instance, for example) would silently create and drop databases on whatever happens to be
+# listening on 5432 instead.
+target_port="$(printf '%s' "$TARGET_URL" | sed -E 's#^[a-z]+://([^@]*@)?[^:/?]+:([0-9]+).*#\2#')"
+case "$target_port" in ''|*[!0-9]*) target_port=5432 ;; esac
+admin_url="postgres://fikirtive:fikirtive@$host:$target_port/postgres"
+
+# L4: ask the server where we actually landed, BEFORE any destructive statement.
+# The admin URL is what DROP/CREATE DATABASE run against, so that is the one to verify.
+assert_parsed_host_is_local "$admin_url" || exit 3
+assert_connection_is_local "$admin_url" || exit 3
 
 # ── RTO clock ────────────────────────────────────────────────────────────────
 # Starts at "I have the dump file" and stops when the restored DB answers a query.

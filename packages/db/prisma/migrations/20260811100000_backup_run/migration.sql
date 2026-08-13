@@ -17,12 +17,15 @@
 --    写错的词写不进来。succeeded 必须带 finishedAt 与 key —— 「成功了但说不出成功的是
 --    哪个对象/什么时候」正是这张票要消灭的形状,所以它也是约束。
 --
--- ④ append-only 不再只是调用方约定(判官 r1 P2):一个 BEFORE UPDATE 触发器**拒绝**
---    任何 UPDATE。新鲜度读的是「最近一条 succeeded 行」,只有当一条 failed 行永远不能
---    被就地改写成 succeeded、一条成功行的 finishedAt 永远不能被挪动时,这个读法才可信。
---    DELETE 不拦:BackupRun 是平台级 ops 元数据(不是钱的真相),测试清库与将来的保留
---    裁剪都需要删行;而删一条历史记录不会**伪造**新鲜度(顶多让面板少看到一条),
---    改写一条才会。所以拦改写,不拦删除。
+-- ④ append-only 不再只是调用方约定(判官 r1 P2、r2 P2):行级触发器**同时拒绝 UPDATE
+--    与 DELETE**。
+--    - 拦 UPDATE:一条 failed 行不能被就地改写成 succeeded,一条成功行的 finishedAt
+--      不能被挪动。
+--    - 拦 DELETE:r1 时曾放行,是错的。admin 面板会查「最近一次失败」,并且只在它发生在
+--      最近一次成功**之后**时把那一格从 success 降成 retry failed(backup-signal.ts)。
+--      于是删掉那条失败行,面板就从「重试失败了」变回一片绿 —— 删除一样能伪造新鲜度。
+--    清库怎么办:TRUNCATE 不触发行级触发器,测试用 TRUNCATE(见 __tests__/backup-run.test.ts)。
+--    将来若要做保留裁剪,同样走 TRUNCATE / 分区,或另开一条带 DESTRUCTIVE-OK 的迁移显式放行。
 --
 -- 上线后自查(founder 可直接跑,期望第二个数字为 0):
 --   SELECT status, count(*) FROM "BackupRun" GROUP BY 1;
@@ -62,17 +65,22 @@ ALTER TABLE "BackupRun"
     "status" <> 'succeeded' OR ("finishedAt" IS NOT NULL AND "key" IS NOT NULL)
   );
 
--- append-only:拒绝任何 UPDATE(判官 r1 P2)。改写一条记录才能伪造新鲜度,所以拦改写。
--- 删除不拦(见迁移头 ④)。
-CREATE OR REPLACE FUNCTION "backuprun_reject_update"() RETURNS trigger AS $$
+-- append-only:拒绝 UPDATE 与 DELETE(判官 r1 P2、r2 P2)。改写能伪造新鲜度;删除同样能
+-- (删掉「成功之后的那条失败」会让面板从 retry failed 变回全绿),所以两个都拦。
+-- TRUNCATE 不触发行级触发器,测试清库走 TRUNCATE。
+CREATE OR REPLACE FUNCTION "backuprun_reject_mutation"() RETURNS trigger AS $$
 BEGIN
-  RAISE EXCEPTION 'BackupRun is append-only: UPDATE is not permitted';
+  RAISE EXCEPTION 'BackupRun is append-only: % is not permitted', TG_OP;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "BackupRun_no_update"
   BEFORE UPDATE ON "BackupRun"
-  FOR EACH ROW EXECUTE FUNCTION "backuprun_reject_update"();
+  FOR EACH ROW EXECUTE FUNCTION "backuprun_reject_mutation"();
+
+CREATE TRIGGER "BackupRun_no_delete"
+  BEFORE DELETE ON "BackupRun"
+  FOR EACH ROW EXECUTE FUNCTION "backuprun_reject_mutation"();
 
 -- 新鲜度查询走这条:最近一条 succeeded 行。
 CREATE INDEX "BackupRun_status_finishedAt_idx" ON "BackupRun"("status", "finishedAt");

@@ -8,7 +8,8 @@ import { GET } from "../route";
 
 beforeEach(async () => {
   await prisma.workerHeartbeat.deleteMany({});
-  await prisma.backupRun.deleteMany({});
+  // TRUNCATE: BackupRun is append-only — the trigger rejects row-level DELETE (#794 judge r2 P2).
+  await prisma.$executeRawUnsafe('TRUNCATE "BackupRun"');
 });
 
 async function recordBackup(over: { status: "succeeded" | "failed"; finishedAt: Date }) {

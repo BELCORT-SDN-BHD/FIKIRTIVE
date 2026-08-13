@@ -24,7 +24,8 @@ const { getAdminV2Data } = await import("@/lib/admin-v2");
 const HOUR = 3_600_000;
 
 beforeEach(async () => {
-  await prisma.backupRun.deleteMany({});
+  // TRUNCATE: BackupRun is append-only — the trigger rejects row-level DELETE (#794 judge r2 P2).
+  await prisma.$executeRawUnsafe('TRUNCATE "BackupRun"');
 });
 
 async function record(over: {
