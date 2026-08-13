@@ -169,36 +169,43 @@ export function AddAssetDialog({
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="m-0 text-[1.125rem] font-semibold text-foreground">Add to Library</h2>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             aria-label="Close"
-            className="text-muted-foreground hover:text-foreground"
+            className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
             onClick={close}
           >
             ✕
-          </button>
+          </Button>
         </div>
 
         {/* Segmented Upload / Generate. */}
         <div className="mb-5 flex gap-1 rounded-[14px] bg-muted p-1">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => { setMode("upload"); setError(null); }}
-            className={`flex-1 rounded-[10px] px-3 py-2 text-[0.875rem] font-semibold ${
-              mode === "upload" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground"
+            className={`h-auto flex-1 rounded-[10px] px-3 py-2 text-[0.875rem] font-semibold ${
+              mode === "upload"
+                ? "bg-card text-foreground shadow-xs hover:bg-card"
+                : "bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
             }`}
           >
             Upload
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => { setMode("generate"); setError(null); }}
-            className={`flex-1 rounded-[10px] px-3 py-2 text-[0.875rem] font-semibold ${
-              mode === "generate" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground"
+            className={`h-auto flex-1 rounded-[10px] px-3 py-2 text-[0.875rem] font-semibold ${
+              mode === "generate"
+                ? "bg-card text-foreground shadow-xs hover:bg-card"
+                : "bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
             }`}
           >
             Generate reference
-          </button>
+          </Button>
         </div>
 
         {mode === "upload" && (
@@ -231,12 +238,12 @@ export function AddAssetDialog({
 
             <label className="flex flex-col gap-1">
               <span className="text-[0.75rem] text-muted-foreground">Images</span>
-              <input
+              <Input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
                 multiple
                 onChange={(e) => setFiles(e.target.files)}
-                className="text-[0.8125rem] text-muted-foreground file:mr-3 file:rounded-[10px] file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-[0.8125rem] file:font-medium file:text-foreground"
+                className="h-auto w-full min-w-0 rounded-none border-0 bg-transparent p-0 text-[0.8125rem] text-muted-foreground shadow-none file:mr-3 file:rounded-[10px] file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-[0.8125rem] file:font-medium file:text-foreground"
               />
             </label>
 
@@ -272,17 +279,20 @@ export function AddAssetDialog({
               {/* Format picker */}
               <div className="grid grid-cols-2 gap-2">
                 {REFERENCE_FORMATS.map((f) => (
-                  <button
+                  <Button
                     key={f.key}
                     type="button"
+                    variant="ghost"
                     onClick={() => { setFmtKey(f.key); setError(null); }}
-                    className={`rounded-[12px] border p-3 text-left transition ${
-                      fmtKey === f.key ? "border-brand bg-brand/5" : "border-border hover:border-foreground/30"
+                    className={`h-auto flex-col items-start justify-start gap-0 whitespace-normal rounded-[12px] border p-3 text-left font-normal transition ${
+                      fmtKey === f.key
+                        ? "border-brand bg-brand/5 hover:bg-brand/5"
+                        : "border-border bg-transparent hover:border-foreground/30 hover:bg-transparent"
                     }`}
                   >
                     <div className="text-[0.875rem] font-semibold text-foreground">{f.label}</div>
                     <div className="mt-0.5 text-[0.75rem] leading-[1.35] text-muted-foreground">{FORMAT_HINT[f.key]}</div>
-                  </button>
+                  </Button>
                 ))}
               </div>
 
