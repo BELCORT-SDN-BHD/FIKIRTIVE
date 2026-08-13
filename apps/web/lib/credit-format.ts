@@ -47,7 +47,28 @@ export function outOfCreditsMessage(quotedCredits: number): string {
   return `Not enough credits — this needs ${creditsLabel(quotedCredits)}. Top up in Billing.`;
 }
 
-/** What a merchant is told when a CONVERSATION turn can't start (#791-7, #898).
+/** The ONE thing a merchant is told when THEIR OWN spend cap stopped an action (#524).
+ *
+ *  Deliberately not the out-of-credits line: they are not out of credits, and sending them to
+ *  Billing to top up would not unblock anything. The limit is theirs, it lives in Settings,
+ *  and it is the only thing that moves. Both numbers are named for the same reason the
+ *  out-of-credits line names its own — a refusal that hides the number it was judged against
+ *  reads as a fault in the product.
+ *
+ *  `capCredits === null` is the fail-closed arm: the cap could not be read, so the action was
+ *  refused rather than run against an unknown ceiling. Saying that plainly beats inventing a
+ *  number or blaming the merchant's balance. Both amounts are DISPLAYED credits. */
+export function spendCapBlockedMessage(quotedCredits: number, capCredits: number | null): string {
+  if (capCredits === null) {
+    return "Paused — your spend cap couldn't be read, so nothing was charged. Try again in a moment.";
+  }
+  return `Paused by your spend cap — this needs ${creditsLabel(quotedCredits)} and your cap is ${creditsLabel(capCredits)} per action. Raise the cap in Settings to run it.`;
+}
+
+/** What a merchant is told when a CONVERSATION turn can't start for lack of CREDITS (#791-7,
+ *  #898). A turn stopped by the merchant's own spend cap is a different sentence and a different
+ *  exit — see `spendCapBlockedMessage` above; sending them to Billing over a cap they set would
+ *  be untrue and would not unblock anything.
  *
  *  It replaced "You're out of credits." — a sentence that was usually not true. A turn HOLDS
  *  an amount up front, so a merchant sitting on 3.9 credits, who has spent nothing, was told

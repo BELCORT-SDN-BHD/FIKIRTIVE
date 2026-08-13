@@ -38,7 +38,7 @@ export type { OttoContext, EntityType, LibraryItemView, LibraryHistoryView } fro
 export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState, tryRestoreRunStateWithContext } from "./run-input.js";
 export type { RefImage } from "./run-input.js";
 export { extractText } from "./run-output.js";
-export { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";
+export { withLlmBudget, llmHoldInternal, actualCostInternal, mapOttoUsage, ReservationNotClaimed, ClaimFailed, type LlmBudgetArgs } from "./meter.js";
 export type { TokenUsage } from "./meter.js";
 // Re-export SDK primitives needed by web callers (Task 1.8 / streaming)
 export { run, RunState, MaxTurnsExceededError } from "@openai/agents";

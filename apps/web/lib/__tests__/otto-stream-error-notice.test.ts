@@ -12,10 +12,11 @@ import { OttoStreamErrorNotice } from "@/components/otto/OttoStreamErrorNotice";
 import { toChatMessageDTO } from "@/lib/dto";
 import { persistedStreamErrorOf } from "@/lib/otto-status-helpers";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
+import type { OttoErrorData } from "@/lib/otto-stream-bridge";
 import type { ChatThreadDTO } from "@/lib/types";
 
 function renderNotice(
-  error: { kind: "insufficient_credits" | "error"; text: string },
+  error: OttoErrorData,
   retryDraft?: string,
 ): string {
   return renderToStaticMarkup(createElement(OttoStreamErrorNotice, {
@@ -89,6 +90,58 @@ describe("OttoStreamErrorNotice", () => {
     const markup = renderNotice(durableError);
     expect(markup).toContain('href="/billing"');
     expect(markup).toContain("Top up");
+  });
+
+  // #524 — the spend cap is a real refusal now, so its notice must point at the limit the
+  // merchant can actually move. A Top-up link here would send them to buy credits they
+  // already have, for an action their own setting stopped.
+  it("points a spend-cap refusal at Settings, never at Billing", () => {
+    const markup = renderNotice({
+      kind: "spend_cap",
+      text: "Paused by your spend cap — this needs 11 credits and your cap is 5 credits per action. Raise the cap in Settings to run it.",
+    });
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Paused by your spend cap");
+    expect(markup).toContain('href="/otto?view=account"');
+    expect(markup).toContain("Open settings");
+    expect(markup).not.toContain("Top up");
+    expect(markup).not.toContain('href="/billing"');
+  });
+
+  // The durable TURN_ERROR row must carry the spend-cap kind through a reload, or a refresh
+  // silently downgrades the refusal to a generic error and the exit disappears.
+  it("rehydrates a persisted spend-cap refusal with its own kind", () => {
+    const createdAt = new Date("2026-08-11T00:00:00.000Z");
+    const failureMessage = toChatMessageDTO({
+      id: "error_2",
+      role: "AGENT",
+      kind: "TURN_ERROR",
+      seq: 2,
+      text: "Paused by your spend cap.",
+      payload: {
+        kind: "stream_run_error",
+        userMessageId: "user_1",
+        error: { kind: "spend_cap", text: "Paused by your spend cap." },
+      },
+      genJobId: null,
+      createdAt,
+    } as never, new Map());
+    const thread: ChatThreadDTO = {
+      id: "thread_2",
+      projectId: "project_1",
+      title: "Launch post",
+      updatedAt: "2026-08-11T00:00:00.000Z",
+      messages: [failureMessage],
+    };
+
+    const durableError = persistedStreamErrorOf(
+      threadToUiMessages(thread)[0].metadata?.payload,
+      "fallback must not replace server copy",
+    );
+
+    expect(durableError).toEqual({ kind: "spend_cap", text: "Paused by your spend cap." });
+    expect(renderNotice(durableError)).toContain('href="/otto?view=account"');
   });
 
   it("keeps the existing generic reply failure presentation and retry action", () => {
