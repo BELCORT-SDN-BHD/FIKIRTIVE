@@ -95,7 +95,16 @@
 # from the real file, the same way quality-lock.drill.sh exercises the real lock
 # library): a correct map routed by a broken router checks nothing either.
 #
-# Run: bash scripts/__tests__/quality-legs.test.sh    (well under a second)
+# EVERY check below is written to fail closed: each one names the answer that passes
+# and treats anything else — including the empty string a failed `jq` leaves behind —
+# as a failure. Nothing here may take the shape "collect the problems, pass if the
+# list came back empty", because then one broken query is a silent all-clear. That
+# shape was written during #874 r4 and reverted: a single jq error made nine of these
+# checks pass at once, and the file's own mutation drill is what caught it.
+#
+# Run: bash scripts/__tests__/quality-legs.test.sh
+# (a few seconds — a couple of hundred short-lived jq and bash processes, most of
+# them the fan-in drill in 3c, which runs the real verdict script 32 times)
 
 set -euo pipefail
 
@@ -429,8 +438,11 @@ done
 [[ "$(wf -r 'has("defaults")')" == "false" ]] \
   || fail "ci.yml sets a workflow-level 'defaults:' — its 'run.shell' replaces the interpreter and the exit-status flags every script in this file is run with, including the five legs' and the fan-in's"
 
-# The job list itself, both directions, against the hand-written expectation.
+# The job list itself, both directions, against the hand-written expectation. The
+# emptiness check is not decoration: this direction is a loop over what jq returned,
+# so a query that returned nothing would "find no unexpected jobs" and pass.
 declared_jobs="$(wf -r '.jobs | keys_unsorted[]')"
+[[ -n "$declared_jobs" ]] || fail "ci.yml parses to a workflow with no jobs at all"
 expected_job_names=()
 for pair in "${expected_jobs[@]}"; do expected_job_names+=("${pair%%|*}"); done
 while IFS= read -r job; do
@@ -453,6 +465,13 @@ for pair in "${expected_jobs[@]}"; do
   [[ "$got_if" == "$want_if" ]] \
     || fail "ci.yml job '$job' runs under 'if: ${got_if:-<none>}', this file expects 'if: ${want_if:-<none>}' — a job's condition decides whether its gates run at all, so a change to it has to be stated in expected_jobs here, in the same commit"
 
+  # One query per question, and every one of them phrased so that the ANSWER has to
+  # arrive for the check to pass. `[[ "$(wf …)" == "false" ]] || fail` fails closed:
+  # if jq errors, or the query is malformed, the substitution is empty, empty is not
+  # "false", and the gate goes red. Batching these into a single query that emits a
+  # list of violations was tried and reverted — it reads "no output means nothing is
+  # wrong", so ONE jq error silently passes every job in this loop. That is the exact
+  # shape this file exists to catch, and a self-test may not be built out of it.
   for key in "${forbidden_job_keys[@]}"; do
     [[ "$(wf -r --arg j "$job" --arg k "$key" '.jobs[$j] | has($k)')" == "false" ]] \
       || fail "ci.yml job '$job' sets '$key:' — that key decides whether this job's commands run, or whether their failure is reported, and no job in this workflow may carry it"
@@ -460,15 +479,14 @@ for pair in "${expected_jobs[@]}"; do
 
   # A job with no steps runs nothing and reports success.
   steps_len="$(wf -r --arg j "$job" '(.jobs[$j].steps // []) | length')"
-  (( steps_len > 0 )) \
+  [[ "$steps_len" =~ ^[0-9]+$ ]] && (( steps_len > 0 )) \
     || fail "ci.yml job '$job' has no steps — it would report success without running anything"
 
   for key in "${forbidden_step_keys[@]}"; do
-    offenders="$(wf -r --arg j "$job" --arg k "$key" '
-      [ (.jobs[$j].steps // []) | to_entries[] | select(.value | has($k)) | "#\(.key + 1)" ] | join(", ")
-    ')"
-    [[ -z "$offenders" ]] \
-      || fail "ci.yml job '$job' has step(s) $offenders carrying '$key:' — that key decides whether the step's command is executed and whether its failure reaches the job, so no step in this workflow may carry it"
+    [[ "$(wf -r --arg j "$job" --arg k "$key" '
+      [ (.jobs[$j].steps // [])[] | select(has($k)) ] | length == 0
+    ')" == "true" ]] \
+      || fail "ci.yml job '$job' has a step carrying '$key:' — that key decides whether the step's command is executed and whether its failure reaches the job, so no step in this workflow may carry it"
   done
 
   # A zero or negative timeout is a step or job that is killed before it can run.
@@ -476,13 +494,10 @@ for pair in "${expected_jobs[@]}"; do
   # jq query.)
   [[ "$(wf -r --arg j "$job" '(.jobs[$j]["timeout-minutes"] // 1) | (type == "number" and . >= 1)')" == "true" ]] \
     || fail "ci.yml job '$job' sets a 'timeout-minutes' that is not a positive number of minutes"
-  bad_step_timeouts="$(wf -r --arg j "$job" '
-    [ (.jobs[$j].steps // []) | to_entries[]
-      | select((.value["timeout-minutes"] // 1) | (type != "number" or . < 1))
-      | "#\(.key + 1)" ] | join(", ")
-  ')"
-  [[ -z "$bad_step_timeouts" ]] \
-    || fail "ci.yml job '$job' has step(s) $bad_step_timeouts with a 'timeout-minutes' that is not a positive number of minutes"
+  [[ "$(wf -r --arg j "$job" '
+    [ (.jobs[$j].steps // [])[] | select((.["timeout-minutes"] // 1) | (type != "number" or . < 1)) ] | length == 0
+  ')" == "true" ]] \
+    || fail "ci.yml job '$job' has a step with a 'timeout-minutes' that is not a positive number of minutes"
 done
 
 # The required status check, from the parsed file. A job's check name is its
