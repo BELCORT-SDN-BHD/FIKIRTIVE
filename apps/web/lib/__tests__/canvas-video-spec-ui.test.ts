@@ -170,6 +170,8 @@ beforeEach(() => {
     i2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "adaptive" },
     creditsFor: ({ seconds, resolution }: { seconds: number; resolution: string }) =>
       Math.ceil((seconds * (resolution === "480p" ? 11 : 22)) / 10),
+    // #785：服务端解析的「@元素这一趟真的会进引擎吗」。现役路(生产)为 true。
+    elementReferences: true,
   });
   mocks.generateImage.mockResolvedValue(true);
   mocks.animate.mockResolvedValue(true);
@@ -360,6 +362,42 @@ describe("#645 T4 画布出片：规格从界面一路到付费请求", () => {
     const first = mocks.generateVideoFromText.mock.calls[0]![2] as string;
     const second = mocks.generateVideoFromText.mock.calls[1]![2] as string;
     expect(second).not.toBe(first);
+  });
+
+  // -------------------------------------------------------------------------
+  // 判官 r2 P1-a —— 那句 “Type @ to bring your products and people into the clip” 是一句
+  // **承诺**。执行层收不了元素照的那条路上,它就是替一件做不到的事许诺:商家照着它去 @,
+  // 付了钱,拿回一支跟他的产品毫无关系的片子。所以承诺跟着服务端解析的那个事实走。
+  // -------------------------------------------------------------------------
+  const T2V_PROMISE = "Type @ to bring your products and people into the clip";
+
+  it("#785: 执行层真收元素照 ⇒ 出片框才说那句 @ 的承诺", async () => {
+    await renderBoard();
+    await openT2v();
+    expect(document.body.textContent).toContain(T2V_PROMISE);
+    expect(document.querySelector<HTMLTextAreaElement>("textarea")).not.toBeNull();
+  });
+
+  it("#785: 执行层收不了元素照 ⇒ 出片框一个字都不提 @(不替它许诺)", async () => {
+    mocks.videoSpecs.mockResolvedValue({
+      menu: { durations: DURATIONS, resolutions: RESOLUTIONS, aspectRatios: ASPECTS },
+      t2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
+      i2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "adaptive" },
+      creditsFor: () => 11,
+      elementReferences: false,
+    });
+    await renderBoard();
+    await openT2v();
+    expect(document.body.textContent).not.toContain(T2V_PROMISE);
+    // 出片这件事本身照旧做得了 —— 少的只有那句承诺。
+    expect(document.body.textContent).toContain("Describe the video you want");
+  });
+
+  it("#785: 规格菜单根本没取到 ⇒ 同样不许说那句承诺(没确认的事不许说)", async () => {
+    mocks.videoSpecs.mockRejectedValue(new Error("menu unavailable"));
+    await renderBoard();
+    await openT2v();
+    expect(document.body.textContent).not.toContain(T2V_PROMISE);
   });
 
   it("Founder 已裁的全表:每一档在卡面上报的价 = 那张表上的数", async () => {

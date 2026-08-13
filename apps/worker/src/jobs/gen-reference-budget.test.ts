@@ -111,11 +111,22 @@ function refsFor(entityIndex: number, n: number) {
   }));
 }
 
+/** 同一个元素**某个变体**下的 `n` 张活参考照 —— 刻意与它的 base 照片不同号,
+ *  所以「引擎收到的是哪一组」一眼可辨(#785 判官 r2 P1-b)。 */
+function variantRefsFor(entityIndex: number, n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    asset: { ownerId: "o1", contentHash: hexHash((entityIndex + 1) * 1000 + 500 + i), ext: "png" },
+  }));
+}
+
 /** 每张图在 `inputImageUrls` 里长什么样(presignedGet 替身返回 `url:<storageKey>`)。 */
 const urlOf = (contentHash: string) => `url:u/o1/${contentHash}.png`;
 /** 第 `entityIndex` 个元素的第 `refIndex` 张图 —— 与 refsFor 同一把尺。 */
 const elementUrl = (entityIndex: number, refIndex: number) =>
   urlOf(hexHash((entityIndex + 1) * 1000 + refIndex));
+/** 第 `entityIndex` 个元素**变体**下的第 `refIndex` 张图 —— 与 variantRefsFor 同一把尺。 */
+const variantElementUrl = (entityIndex: number, refIndex: number) =>
+  urlOf(hexHash((entityIndex + 1) * 1000 + 500 + refIndex));
 const BASE_URL = urlOf(BASE_HASH);
 
 /**
@@ -344,5 +355,59 @@ describe("#785 —— 视频卡说的张数 = worker 真正发给视频引擎的
     m.genJobFindUnique.mockResolvedValue({ ...videoJob, entityIds: [] });
     await handleGen({ genJobId: "g1" }, 0);
     expect(m.generateVideo.mock.calls[0]![0]).not.toHaveProperty("refImageUrls");
+  });
+
+  // -------------------------------------------------------------------------
+  // 判官 r2 P1-b —— **变体形状**下的同一道等价闸。
+  //
+  // 商家 @ 一个元素时可以顺手指定「用红色那一款」。卡面照那个变体数照片(Otto 的
+  // `countLiveReferenceImagesPerEntity` 查的是 `variantId: variantSel[id] ?? null`),
+  // 所以引擎收到的也必须是那个变体的照片 —— 否则卡上写「用你 2 张」,付费请求实发的是
+  // 另外 5 张 base:披露说谎,而且商家为一个他没选的形态付了钱。
+  //
+  // 这里钉的是**集合**不是张数:base 5 张、变体 2 张,只钉张数的话 `[2]` 与 base 里
+  // 随便挑 2 张也能通过。
+  // -------------------------------------------------------------------------
+  it("商家选了变体:引擎收到的是那个变体的照片,不是 base 的", async () => {
+    // e0:base 5 张,变体 var_red 2 张。
+    m.referenceImageFindMany.mockImplementation(async (
+      { where }: { where: { entityId: string; variantId: string | null } },
+    ) => (where.variantId === "var_red" ? variantRefsFor(0, 2) : refsFor(0, 5)));
+
+    const actual = await refImageUrlsFromRealWorker({
+      ...videoJob,
+      entityIds: ["e0"],
+      variantSel: { e0: "var_red" },
+    });
+
+    // ① worker 真的按商家选的变体去查图(而不是把选择丢掉、回落 base)。
+    expect(m.referenceImageFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ entityId: "e0", variantId: "var_red" }),
+    }));
+    // ② 实发集 = 那个变体的两张,一张 base 都没混进来。
+    expect(actual).toEqual([variantElementUrl(0, 0), variantElementUrl(0, 1)]);
+    expect(actual).not.toContain(elementUrl(0, 0));
+    // ③ 卡面按同一个变体数出来的张数 = 引擎真收到的张数(卡面数的是 2,不是 base 的 5)。
+    const disclosed = referenceBudget({
+      kind: "video",
+      perEntityLiveCounts: [2],
+      hasBaseImage: false,
+      attachedImageCount: 0,
+    });
+    expect(actual.length).toBe(disclosed.used);
+    expect(disclosed).toEqual({ used: 2, total: 2, truncated: false });
+  });
+
+  it("没选变体时照旧查 base —— 变体这条路不许改动裸 @ 的行为", async () => {
+    m.referenceImageFindMany.mockImplementation(async (
+      { where }: { where: { entityId: string; variantId: string | null } },
+    ) => (where.variantId === "var_red" ? variantRefsFor(0, 2) : refsFor(0, 5)));
+
+    const actual = await refImageUrlsFromRealWorker({ ...videoJob, entityIds: ["e0"] });
+
+    expect(m.referenceImageFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ entityId: "e0", variantId: null }),
+    }));
+    expect(actual).toEqual([0, 1, 2, 3, 4].map((i) => elementUrl(0, i)));
   });
 });

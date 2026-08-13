@@ -107,6 +107,14 @@ export type CanvasVideoSpecs = {
   i2vDefault: VideoSpec;
   /** 按档查价(显示 credits);表上没有这一档 ⇒ null。 */
   creditsFor: (spec: VideoSpec) => number | null;
+  /**
+   * #785 判官 r2 P1-a —— @元素的参考照这一趟真的会进视频引擎吗。
+   *
+   * 出片框靠它决定要不要说那句 “Type @ to bring your products and people into the clip”。
+   * 服务端解析(`getActiveGenModels().videoElementReferences`,与选片名额同一个判据),
+   * 界面自己不判断 —— 判断不了:判据是服务端选中的那条执行路,浏览器读不到。
+   */
+  elementReferences: boolean;
 };
 
 /** 回执里记着的那一档规格;回执早于 #645(没记规格)⇒ null,按服务端默认档走。 */
@@ -589,7 +597,10 @@ export function useCanvasGen(
         !Array.isArray((response as { videoResolutions?: unknown }).videoResolutions) ||
         (response as { videoResolutions: unknown[] }).videoResolutions.length === 0 ||
         (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec === null ||
-        typeof (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec !== "object"
+        typeof (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec !== "object" ||
+        // #785 判官 r2 P1-a：@元素能不能真的进视频引擎，同样必须由服务端说。少了这一格，
+        // 出片框只能自己编一个默认值去决定要不要承诺 —— 编成 true 就是替一条做不到的路许诺。
+        typeof (response as { videoElementReferences?: unknown }).videoElementReferences !== "boolean"
       ) {
         throw new Error("Unexpected generation model response");
       }
@@ -613,6 +624,7 @@ export function useCanvasGen(
       t2vDefault: defaultVideoSpec(models),
       i2vDefault: defaultVideoSpec(models, { hasSourceImage: true }),
       creditsFor: (spec) => videoSpecCredits(models, spec),
+      elementReferences: models.videoElementReferences,
     };
   }, [ensureModels]);
   // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,

@@ -614,6 +614,28 @@ describe("executePropose — mock DB", () => {
     expect(payload["specChips"] as string[]).toContain("Uses 3 of your reference photos");
   });
 
+  // 判官 r2 P1-b —— 商家指定了「红色那一款」时,卡面数的是**那个变体**的照片,而付费请求
+  // 也带着同一个变体走(`GenJob.variantSel`,由 startGen 落库、worker 按它取图)。卡上这个
+  // 数字与引擎实收的那一组照片必须同源,否则商家为一个他没选的形态付了钱。
+  it("#785: a text-to-video card counts the picked variant's photos, and carries that pick to the paid request", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(2);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "our lipstick on a beach", entityIds: ["e1"], variantSel: { e1: "var_red" } },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+
+    // 数的是变体那一组,不是 base(worker 查的是同一个 `variantId`)。
+    expect(mockPrisma.referenceImage.count).toHaveBeenCalledWith({
+      where: { entityId: "e1", variantId: "var_red", ownerId: "org-cap", deletedAt: null },
+    });
+    const payload = persistedPayload();
+    expect(payload["specChips"] as string[]).toContain("Uses 2 of your reference photos");
+    // 这张卡按下去时带走的就是这个变体 —— 卡面与付费输入同源。
+    expect(payload["variantSel"]).toEqual({ e1: "var_red" });
+  });
+
   // 判官 r1 P1(provider 这一维)—— 备用适配器根本收不了元素照(付费前直接拒),所以
   // 同一张纯文生视频卡在那条路上必须说另一句话:承诺「Uses 3 of your reference photos」
   // 就是替一条做不到的路许诺。判据与选片名额是同一个(`videoElementReferencesHonoured`)。

@@ -1369,6 +1369,13 @@ export default function FlowCanvas({
   };
   const t2vCostLabel = specCostLabel(t2vSpec);
   const animateCostLabel = specCostLabel(animateSpec);
+  // #785 判官 r2 P1-a —— 出片框只在 @元素**真的会进引擎**时才提这件事。
+  //
+  // 承诺与执行必须同源:这个布尔值来自服务端解析的那一份(`getActiveGenModels`),而它读的
+  // 判据与选片名额、卡面规格条目是同一个函数。备用适配器那条路上元素照一张都上不了车,
+  // 界面于是一个字都不提 —— 替一条做不到的路许诺,商家会照着那句话去 @,然后付钱拿到一支
+  // 跟他的产品毫无关系的片子。菜单没取到(null)⇒ 同样闭嘴:没确认的事不许说。
+  const t2vElementsRide = videoSpecMenu?.elementReferences === true;
   // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
   // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
   // The composer's price follows the chosen number of images, from the same clamp the paid
@@ -2026,18 +2033,23 @@ export default function FlowCanvas({
           <DialogHeader>
             <DialogTitle>Make a video from a prompt</DialogTitle>
             <DialogDescription>
-              Describe the video you want — no source image needed. Type @ to bring your products
-              and people into the clip. Cost: {t2vCostLabel}. No charge until you confirm.
+              Describe the video you want — no source image needed.
+              {t2vElementsRide && " Type @ to bring your products and people into the clip."}
+              {" "}Cost: {t2vCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           {/* #785 — the same @ input the image composer has. The elements named here are the
               ones whose photos the engine actually receives, so this is the merchant's own way
-              to put a product or a spokesperson in a clip, with no conversation required. */}
+              to put a product or a spokesperson in a clip, with no conversation required.
+              判官 r2 P1-a:那句承诺(以及这里的提示语)只在执行层真的收元素照时出现。
+              收不了却照样 @ 了的那一路,由服务端在花钱前拒绝并给一句人话 —— 界面不静默降级。 */}
           <MentionInput
             entities={entities}
             docKey={`canvas-t2v-${t2vKey}`}
             {...(t2vSeedDoc ? { initialDoc: t2vSeedDoc } : {})}
-            placeholder="Describe the video you want… (@ to reference your stuff)"
+            placeholder={t2vElementsRide
+              ? "Describe the video you want… (@ to reference your stuff)"
+              : "Describe the video you want…"}
             disabled={videoSubmitting}
             onChange={(t, ids, vsel) => { setT2vPrompt(t); setT2vIds(ids); setT2vVariantSel(vsel); }}
           />

@@ -266,6 +266,57 @@ describe("#642 图片规格快照(imageOptions)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// #785 判官 r2 P1-b —— 视频的变体选择必须活着走到付费请求里
+// ---------------------------------------------------------------------------
+//
+// 这一份规范化是通用 startGen 与工厂逐格**共用**的那一处,所以它把视频的 variantSel 抹成
+// null,等于每一条带 @元素的片子都被改成「用 base 照片」——而卡面数的是商家选的那个变体
+// 的照片。卡上写「用你 2 张(红色款)」,付费请求实发 5 张 base:披露说谎,而且商家为一个
+// 他没选的形态付了钱。判官的探针形状是 `{"entityIds":["e1"],"variantSel":null}`。
+describe("#785:视频的 @元素变体选择,规范化之后仍在", () => {
+  const videoWithVariant = () => normalizeFactoryMaterial({
+    prompt: "our lipstick on a beach",
+    model: "seedance-2-mini",
+    kind: "video" as const,
+    count: 1,
+    entityIds: ["e1"],
+    variantSel: { e1: "var_red" },
+  });
+
+  it("商家选了变体 ⇒ 材料里还是那个变体(不是 null)", () => {
+    expect(videoWithVariant().variantSel).toEqual({ e1: "var_red" });
+  });
+
+  it("空映射照旧收敛成 null —— 与 worker 的 `job.variantSel ?? {}` 同义,图片侧一格未动", () => {
+    const bare = normalizeFactoryMaterial({
+      prompt: "our lipstick on a beach",
+      model: "seedance-2-mini",
+      kind: "video" as const,
+      count: 1,
+      entityIds: ["e1"],
+      variantSel: {},
+    });
+    expect(bare.variantSel).toBeNull();
+  });
+
+  it("换一个变体 = 换一份材料 —— 幂等比对不许把两者当同一件事", () => {
+    const red = videoWithVariant();
+    const blue = normalizeFactoryMaterial({
+      prompt: "our lipstick on a beach",
+      model: "seedance-2-mini",
+      kind: "video" as const,
+      count: 1,
+      entityIds: ["e1"],
+      variantSel: { e1: "var_blue" },
+    });
+    expect(factoryMaterialMatches({ id: "job-1", ...red }, red)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...red }, blue)).toBe(false);
+    // 「选了红色」与「什么都没选(用 base)」也是两份材料 —— 引擎收到的照片不是同一组。
+    expect(factoryMaterialMatches({ id: "job-1", ...red, variantSel: null }, red)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #645 T4(判官 r1 P1-1)—— i2v 的形状缺省
 // ---------------------------------------------------------------------------
 //
