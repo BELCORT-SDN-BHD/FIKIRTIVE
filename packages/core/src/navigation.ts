@@ -183,11 +183,105 @@ export function everyNavDestination(): readonly MerchantNavLink[] {
   return [OTTO_ASSISTANT, ...merchantNavLinks()];
 }
 
+/** 分组名与组内项之间的那一格 —— 商家跟着走的那条路只有这一种写法。 */
+export const NAV_PATH_SEPARATOR = "›";
+
+/**
+ * 会被当成「路的那一格」读的字符族 —— 归一化用。
+ *
+ * 为什么要列出来:#802 判官 r1 [P2] 用同形字穿透过围栏 —— `Workspace 〉 Insights`(U+3009)
+ * 与 `Workspace > Insights`(ASCII)在商家眼里就是一条路,在只认 U+203A 的围栏眼里却什么
+ * 都不是。围栏先把这一族归一成 NAV_PATH_SEPARATOR 再对账。
+ *
+ * **这份名单不是围栏的封闭性所在**(判官 r3 [P2-2] 又补了 `∕`、`：`、`⇒` 三个):字符表
+ * 永远数不完。围栏真正的封闭手段是 packages/otto 那道「合法名 + 任意标点 + 大写词」的形状
+ * 判定 —— 不认字符,认形状。这份名单只负责把常见写法折成一个字符,让报错更好读。
+ * 标签侧的封闭手段同理:navigation.test.ts 钉的是**字符白名单**(标签只能由字母/数字/空格/
+ * `&`/`-`/`'` 组成),而不是逐个禁这份名单。
+ */
+export const NAV_PATH_SEPARATOR_FAMILY = [
+  NAV_PATH_SEPARATOR, // U+203A,权威写法
+  "〉", // U+3009
+  "》", // U+300B
+  "»", // U+00BB
+  "＞", // U+FF1E 全角
+  ">", // ASCII
+  "⟩", // U+27E9
+  "⟫", // U+27EB
+  "❯", // U+276F
+] as const;
+
+// 刻意**不**收进这一族:`→`、`⇒`、`/`、`∕`、`／`、`：`。它们在正当英语里到处都是
+// (`image/video`、`kind:"image" → call seedreamPrompt`),归一化会把它们变成假路径而制造
+// 满屏误伤。判官 r3 [P2-2] 点名的正是这三个字符 —— 它们由 packages/otto 那把**形状**尺子
+// 兜住(合法名 + 任意连接符 + 大写词),不靠字符表。
+
+/**
+ * 标签里允许出现的字符 —— **白名单**,不是黑名单。
+ *
+ * 判官 r3 [P2-2]:禁一族字符永远追不上同形字。反过来规定「标签只能长这样」就封闭了:
+ * 字母、数字、空格、`&`(Brand & products)、`-`、`'`。任何标点/箭头/斜线/冒号都进不来,
+ * 于是一个标签**不可能**自己伪造出一层不存在的下级。
+ */
+export const NAV_LABEL_ALLOWED_CHARS = /^[A-Za-z0-9 &'-]+$/;
+
+/**
+ * 一条目的地在商家眼里的**完整路名**:组内的写成「Workspace › Schedule」,顶层的就是它
+ * 自己的名字。
+ *
+ * #802:Otto 说出口的每一个地名都从这里取,提示词里不再手打第二份。名字改一个字,Otto 的
+ * 指路话与导轨同时改口 —— 这正是 #801 把导航收成一棵树要买的东西。
+ */
+export function navPath(key: string): string {
+  if (key === OTTO_ASSISTANT.key) return OTTO_ASSISTANT.label;
+  for (const node of MERCHANT_NAV) {
+    if (!isNavGroup(node)) {
+      if (node.key === key) return node.label;
+      continue;
+    }
+    const item = node.items.find((child) => child.key === key);
+    if (item) return `${node.label} ${NAV_PATH_SEPARATOR} ${item.label}`;
+  }
+  throw new Error(`navPath: no navigation destination with key "${key}"`);
+}
+
+/**
+ * 一条目的地在导轨上的**那个词**(不带分组前缀)。
+ *
+ * 句子里顺口提到一个地方时用它(「look through the user's Library」),需要指路时用
+ * navPath()。两者都不许手打 —— #802 判官 r1 [P1-1] 逮到的就是一处手打的裸地名:地图和
+ * navPath() 会跟着改名,那句话不会。
+ */
+export function navLabel(key: string): string {
+  if (key === OTTO_ASSISTANT.key) return OTTO_ASSISTANT.label;
+  const found = merchantNavLinks().find((item) => item.key === key);
+  if (found) return found.label;
+  const group = MERCHANT_NAV.find((node) => isNavGroup(node) && node.key === key);
+  if (group) return group.label;
+  throw new Error(`navLabel: no navigation destination or group with key "${key}"`);
+}
+
+/**
+ * Otto 可以说出口的**全部**地名:助手、顶层板块、分组名,以及组内每一条的完整路名。
+ *
+ * 围栏的枚举源(#802):Otto 描述面里凡是写成路的地方,都必须落在这份名单内 —— 名单外的
+ * 名字一律视为编造。
+ */
+export function navPointableNames(): readonly string[] {
+  const names: string[] = [OTTO_ASSISTANT.label];
+  for (const node of MERCHANT_NAV) {
+    names.push(node.label);
+    if (!isNavGroup(node)) continue;
+    for (const item of node.items) names.push(navPath(item.key));
+  }
+  return names;
+}
+
 /**
  * 给 Otto 读的界面地图。
  *
- * 它从同一棵树生成,所以 Otto 说的路与导轨画的路不可能对不上。#802 会在这份地图上做更细
- * 的技能;在那之前,这一段已经足够让 Otto 把商家送到对的地方。
+ * 它从同一棵树生成,所以 Otto 说的路与导轨画的路不可能对不上。路名走 navPath(),因此地图
+ * 里的写法与提示词其他段落里的写法必然是同一种。
  */
 export function merchantNavMap(): string {
   const lines: string[] = [];
@@ -199,7 +293,7 @@ export function merchantNavMap(): string {
     }
     lines.push(`- ${node.label}`);
     for (const item of node.items) {
-      lines.push(`  - ${node.label} › ${item.label} (${item.href}) — ${item.does}`);
+      lines.push(`  - ${navPath(item.key)} (${item.href}) — ${item.does}`);
     }
   }
   return lines.join("\n");

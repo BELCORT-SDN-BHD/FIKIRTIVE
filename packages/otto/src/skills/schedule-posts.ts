@@ -11,6 +11,7 @@
  * A post the shared path rejects (bad datetime, foreign media, channel-cap violation) is reported
  * per-post — the batch drafts the valid posts instead of hard-failing on one bad entry.
  */
+import { navLabel } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
@@ -83,7 +84,7 @@ export const schedulePostsSkill = defineOttoSkill({
     "(e.g. 'post 3 times a week', 'draft next week's posts'). For each post give channel ('instagram', 'facebook', or 'x'), " +
     "a caption, scheduledAt (UTC/offset ISO-8601 instant, e.g. '2026-07-10T09:00:00Z'), and scheduledTz (the user's IANA time " +
     "zone, e.g. 'Asia/Kuala_Lumpur'). Optionally attach mediaGenerationIds — ids of ALREADY-generated media from the " +
-    "user's canvas / Library, in carousel order (never generate new media here; Facebook takes a single item). " +
+    `user's canvas / ${navLabel("library")}, in carousel order (never generate new media here; Facebook takes a single item). ` +
     "Optionally add a firstComment (Instagram only). Base captions on brand memory / the user's input; if you lack " +
     "something, ask — do not invent it. Any post the schedule rejects (bad time, media that isn't the user's) comes " +
     "back in `failures` with a reason; relay it and offer to fix.",

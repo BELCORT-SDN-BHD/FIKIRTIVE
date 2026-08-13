@@ -45,14 +45,14 @@ const MAX_EDIT_INPUT_PLUS_OUTPUT = 15;
 // A GENERATING row older than this is treated as crashed/stale (mirrors gen.ts GEN_STALE_MS):
 // kept above the realistic provider call time and below the queue expiry, so an actively-
 // running gen is never failed-closed by a duplicate delivery, but a truly stuck one is.
-const REFGEN_STALE_MS = 1000 * 60 * 18;
+export const REFGEN_STALE_MS = 1000 * 60 * 18;
 
 // The proactive reaper's windows (mirror gen.ts GEN_REAP_MS / GEN_QUEUED_REAP_MS). Both sit
 // ABOVE the 20-min queue expiry so the reaper never races a delivery pg-boss will still
 // redeliver — it only sweeps jobs whose message is truly lost/dead-lettered (REFGEN_DLQ has
 // no consumer), whose RESERVE hold would otherwise leak forever.
-const REFGEN_REAP_MS = 1000 * 60 * 25;
-const REFGEN_QUEUED_REAP_MS = 1000 * 60 * 25;
+export const REFGEN_REAP_MS = 1000 * 60 * 25;
+export const REFGEN_QUEUED_REAP_MS = 1000 * 60 * 25;
 
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";

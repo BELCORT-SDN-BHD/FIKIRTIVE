@@ -45,6 +45,23 @@ describe("beatOnce (#797)", () => {
     expect(args.update.configFingerprint).toBe(configFingerprint(ENV));
   });
 
+  /**
+   * 合并 origin/main(#796 worker 拆分)时,per-role 行 id 与本票的部署身份两列撞在同一段代码上。
+   * 两者都必须活下来:丢了 id,拆开的两班共用一行,活着的那半替死掉的那半刷新 /api/health;
+   * 丢了那两列,admin 的部署身份永远是空的。这条用例把合并结果本身钉住。
+   */
+  it("writes the role's own row id — a split deployment must not share one row (#796)", async () => {
+    m.upsert.mockResolvedValue({});
+    await beatOnce(ENV, "worker-compute");
+
+    const args = m.upsert.mock.calls[0]?.[0];
+    expect(args.where).toEqual({ id: "worker-compute" });
+    expect(args.create.id).toBe("worker-compute");
+    // 而且部署身份仍然跟着写 —— 两个改动不是二选一。
+    expect(args.create.commitSha).toBe("1234567890abcdef");
+    expect(args.update.configFingerprint).toBe(configFingerprint(ENV));
+  });
+
   it("writes null for the commit sha when the platform injected none — never a fabricated one", async () => {
     m.upsert.mockResolvedValue({});
     await beatOnce({} as NodeJS.ProcessEnv);

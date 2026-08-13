@@ -20,16 +20,20 @@ import { commitShaFrom, configFingerprint } from "@fikirtive/core/env-contract";
 
 /**
  * 写一次心跳。#463:WorkerHeartbeat 是平台级单行表(没有 tenant),写入必须挂名系统身份。
+ *
+ * `id` 来自 #796 的角色计划(`plan.heartbeatId`):未拆分的 `all` 仍写 `"worker"`,拆开的两班
+ * 各写各的行,否则活着的那半会替死掉的那半把行刷新,/api/health 继续说 "up"。默认值保持
+ * `"worker"`,让「单进程」这个今天的现实不必在调用点重复声明。
  */
-export function beatOnce(env: NodeJS.ProcessEnv = process.env): Promise<unknown> {
+export function beatOnce(env: NodeJS.ProcessEnv = process.env, id = "worker"): Promise<unknown> {
   const at = new Date();
   const commitSha = commitShaFrom(env);
   const fingerprint = configFingerprint(env);
   return runAsSystem("worker-heartbeat", () =>
     prisma.workerHeartbeat
       .upsert({
-        where: { id: "worker" },
-        create: { id: "worker", at, commitSha, configFingerprint: fingerprint },
+        where: { id },
+        create: { id, at, commitSha, configFingerprint: fingerprint },
         update: { at, commitSha, configFingerprint: fingerprint },
       })
       .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e)),
