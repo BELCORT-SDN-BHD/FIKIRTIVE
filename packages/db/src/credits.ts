@@ -205,26 +205,65 @@ export async function settleCredits(tx: Tx, args: { orgId: string; refId: string
   await tx.creditAccount.update({ where: { orgId }, data: { balance: { increment: B - A }, reserved: { decrement: B } } });
 }
 
+/**
+ * What the ledger DID with a refund request (#524 r8, judge r7 P1).
+ *
+ * The money outcomes were always distinguishable in the database and were thrown away at the
+ * function boundary: `count === 0` means "already refunded" OR "a SETTLE won the finalizer race",
+ * and a `void` return let every caller treat those two as the same thing. They are opposites —
+ * one is a failed action whose hold came back, the other is a SUCCEEDED action that was charged —
+ * and a caller that then "cleans up" after a success turns a merchant's finished work into a
+ * failure on screen. Anything a caller does AFTER a refund has to be able to ask which happened.
+ *
+ * `"no-reservation"` is its own answer for the same reason: nothing was found, so nothing is
+ * proven, and it must not be read as either finalizer.
+ */
+export type RefundOutcome = "refunded" | "already-settled" | "already-refunded" | "no-reservation";
+
 /** REFUND a reservation on terminal failure: full release (balance restored, hold cleared)
  *  so a merchant is never charged for a generation they didn't receive (founder absorbs any
  *  real fal cost on paid-but-undelivered). MUST run in the same tx as the FAILED status
  *  write. The amount is read FROM THE RESERVE ROW (never recomputed). Mutual exclusion with
  *  SETTLE + double-refund idempotency are DB-enforced (see settleCredits): a settled job's
- *  refund insert hits the finalizer unique index → P2002 → no-op before any account change. */
-export async function refundReservation(tx: Tx, args: { orgId: string; refId: string }): Promise<void> {
-  const { orgId, refId } = args;
+ *  refund insert hits the finalizer unique index → P2002 → no-op before any account change.
+ *
+ *  #524 r8: returns {@link RefundOutcome} instead of `void`. The money path is byte-identical —
+ *  the same read, the same conditional insert, the same account update, in the same order. The
+ *  only addition is one READ on the no-op arm, to name which finalizer is already there.
+ *
+ *  `reason` is an optional label written onto the REFUND row (default `""` = exactly the row
+ *  every existing caller writes today). It exists so a background sweep can recognise ITS OWN
+ *  refunds later: "this reservation has a REFUND" is not evidence of who wrote it, and a live
+ *  turn that runs out of model turns refunds its hold too. */
+export async function refundReservation(
+  tx: Tx,
+  args: { orgId: string; refId: string; reason?: string },
+): Promise<RefundOutcome> {
+  const { orgId, refId, reason = "" } = args;
   const reserve = await tx.creditLedger.findFirst({ where: { orgId, refId, kind: "RESERVE" }, select: { reservedDelta: true } });
-  if (!reserve) return; // no reservation → nothing to refund
+  if (!reserve) return "no-reservation"; // no reservation → nothing to refund
   const amount = reserve.reservedDelta;
   // createMany(skipDuplicates) = ON CONFLICT DO NOTHING — see settleCredits: a caught P2002
   // would abort the caller's whole tx (the FAILED status write would roll back, then the worker
   // could retry and re-spend). count===0 ⇒ already refunded OR a SETTLE won the finalizer race.
   const { count } = await tx.creditLedger.createMany({
-    data: [{ id: randomUUID(), orgId, balanceDelta: amount, reservedDelta: -amount, kind: "REFUND", source: "SYSTEM", refId, idempotencyKey: `refund:${refId}` }],
+    data: [{ id: randomUUID(), orgId, balanceDelta: amount, reservedDelta: -amount, kind: "REFUND", source: "SYSTEM", reason, refId, idempotencyKey: `refund:${refId}` }],
     skipDuplicates: true,
   });
-  if (count === 0) return;
+  if (count === 0) {
+    // Which finalizer is already there? The finalizer unique index allows at most ONE row per
+    // (orgId, refId), and the insert above only conflicts against a COMMITTED row (an uncommitted
+    // one would have blocked us until it committed or rolled back), so this read always finds it.
+    const finalizer = await tx.creditLedger.findFirst({
+      where: { orgId, refId, kind: { in: ["SETTLE", "REFUND"] } },
+      select: { kind: true },
+    });
+    // A missing row here would mean the index that makes this function exactly-once is gone. Read
+    // it as the arm that touches nothing: never invite a caller to clean up after a live action.
+    return finalizer?.kind === "REFUND" ? "already-refunded" : "already-settled";
+  }
   await tx.creditAccount.update({ where: { orgId }, data: { balance: { increment: amount }, reserved: { decrement: amount } } });
+  return "refunded";
 }
 
 /**

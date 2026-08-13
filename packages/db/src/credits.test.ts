@@ -751,3 +751,65 @@ describe("case 20 — the ledger answers what a retry may reuse, and what it may
     expect(await otherHoldsSince(ORG, A1)).toBe("none");
   });
 });
+
+// ── Case 21: 退款必须给出**可判定的终态**,不能只返回 void(#524 r8,判官 r7 P1) ──────
+// `count === 0` 同时代表「已退款」和「并发 SETTLE 赢了」——一个是失败,一个是成功且已收费。
+// r7 把两者一起丢成 void,清道夫因此在退款变成 no-op 之后照样把成功那张卡 CAS 成 failed。
+// 钱路一行没动:同样的读、同样的条件插入、同样的账户更新、同样的顺序;只多了 no-op 那条
+// 分支上的一次只读查询,用来说出到底是谁赢了。
+describe("case 21 — refundReservation names which finalizer won (#524 r8)", () => {
+  it("says `refunded` only when this call is the one that moved the money", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 400 }));
+    const first = await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+    expect(first).toBe("refunded");
+    expect(await account(ORG)).toMatchObject({ balance: 1000, reserved: 0 });
+  });
+
+  it("says `already-refunded` on a replay — a second caller must not act as if it refunded", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 400 }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+    const second = await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+    expect(second).toBe("already-refunded");
+    expect(await account(ORG)).toMatchObject({ balance: 1000, reserved: 0 }); // restored once
+  });
+
+  it("says `already-settled` when a settle won the race — the action SUCCEEDED and was charged", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 400 }));
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF }));
+    const late = await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+    expect(late).toBe("already-settled");
+    expect(await account(ORG)).toMatchObject({ balance: 600, reserved: 0 }); // the charge stays
+  });
+
+  it("says `no-reservation` when there is nothing to answer for — proves neither finalizer", async () => {
+    const answer = await prisma.$transaction((tx) =>
+      refundReservation(tx, { orgId: ORG, refId: "never-reserved" }),
+    );
+    expect(answer).toBe("no-reservation");
+  });
+
+  it("the answer agrees with the ledger row that actually won a concurrent race", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 400 }));
+    const [, refund] = await Promise.all([
+      prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF })),
+      prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF })),
+    ]);
+    const rows = await ledger(ORG);
+    const winner = rows.find((r) => r.kind === "SETTLE" || r.kind === "REFUND");
+    expect(rows.filter((r) => r.kind === "SETTLE" || r.kind === "REFUND")).toHaveLength(1);
+    expect(refund).toBe(winner?.kind === "SETTLE" ? "already-settled" : "refunded");
+  });
+
+  it("labels the REFUND row on request, and writes today's blank row when not asked", async () => {
+    // The label is how a background sweep recognises its OWN refunds later; every existing
+    // caller keeps writing exactly the row it writes today.
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 400 }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF, reason: "a-sweep" }));
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "ref-bbb", cost: 400 }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: "ref-bbb" }));
+
+    const rows = await ledger(ORG);
+    expect(rows.find((r) => r.kind === "REFUND" && r.refId === REF)?.reason).toBe("a-sweep");
+    expect(rows.find((r) => r.kind === "REFUND" && r.refId === "ref-bbb")?.reason).toBe("");
+  });
+});
