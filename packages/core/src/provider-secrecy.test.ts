@@ -48,6 +48,35 @@ describe("redactProviderNames", () => {
       expect(redactProviderNames(innocent)).toBe(innocent);
     }
   });
+
+  // #779 判官 r1 P2-1:同一家供应商的**可观测面**名字以前一个都不在表里 —— 上游错误串
+  // 「Volcengine quota exceeded」原样上了页面。补齐的是名字,不是防线:真正的防线在
+  // apps/web/lib/queue-observability.ts,那里上游文字一个字都不渲染。
+  it("供应商的可观测面名字也换成 generation provider", () => {
+    for (const s of [
+      "Volcengine quota exceeded",
+      "VMP query refused",
+      "volc endpoint timeout",
+      "prometheus remote write failed",
+      "ark-api-key rejected",
+      "arkapi returned 401",
+    ]) {
+      const out = redactProviderNames(s);
+      expect(out).toContain("generation provider");
+      expect(out.toLowerCase()).not.toMatch(/volcengine|\bvmp\b|\bvolc\b|prometheus|ark[-._/:]|arkapi/);
+    }
+  });
+
+  // ark 是普通英文词(方舟),按 whisper 同一条规矩收窄:只认技术形状,裸词不动。
+  it("商家自己的 ark 不许被洗掉", () => {
+    for (const innocent of [
+      "Noah's ark is our bestseller",
+      "Ark Encounter tickets, RM120",
+      "the ark of the covenant",
+    ]) {
+      expect(redactProviderNames(innocent)).toBe(innocent);
+    }
+  });
 });
 
 describe("createProviderNameFilter — 流式也拦得住", () => {
