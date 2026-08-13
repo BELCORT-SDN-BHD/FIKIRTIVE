@@ -684,6 +684,74 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Caption job duration ceiling.",
   },
 
+  // ── worker 拆分(#796)────────────────────────────────────────────────────
+  // 同一个镜像按角色分成两种服务。全组都是 optional:不设 = `all` = 今天这个单服务,
+  // 逐字节不变——拆分必须是一次明确的动作,不能是部署的副作用。
+  //
+  // shared: false 是有意的。这一组正是 web 与 worker **本来就该不同**的东西(web 根本
+  // 不读它们),所以它们不进部署指纹;把它们算进去,只会让每次调并发都误报成「两边配置不一致」。
+  {
+    name: "WORKER_ROLE",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "enum",
+    values: ["compute", "wait", "all"],
+    secret: false,
+    shared: false,
+    summary: "Which half of the worker this service runs. Unset = all = today's single service. An unrecognised value exits at boot.",
+  },
+  {
+    name: "GEN_CONCURRENCY",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "integer",
+    secret: false,
+    shared: false,
+    summary: "Job slots for the gen queue. Only takes effect when WORKER_ROLE=wait.",
+  },
+  {
+    name: "REFGEN_CONCURRENCY",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "integer",
+    secret: false,
+    shared: false,
+    summary: "Job slots for the refgen queue. Only takes effect when WORKER_ROLE=wait.",
+  },
+  {
+    name: "RESEARCH_CONCURRENCY",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "integer",
+    secret: false,
+    shared: false,
+    summary: "Job slots for the research queue. Only takes effect when WORKER_ROLE=wait.",
+  },
+  {
+    name: "PUBLISH_CONCURRENCY",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "integer",
+    secret: false,
+    shared: false,
+    summary: "Job slots for the publish queue. Only takes effect when WORKER_ROLE=wait.",
+  },
+  {
+    name: "PROVIDER_MAX_CONCURRENT_REQUESTS",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "integer",
+    secret: false,
+    shared: false,
+    summary: "Process-wide ceiling on concurrent PAID provider requests, shared by gen and refgen. Not the job slots — one image job fans out one request per image.",
+  },
+
   // ── 运维可见性 ────────────────────────────────────────────────────────────
   {
     name: "SENTRY_DSN",
