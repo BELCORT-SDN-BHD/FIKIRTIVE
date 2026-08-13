@@ -153,7 +153,18 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
     // Both halves of this fact are produced right here, in one breath — that pairing is the whole
     // value of the record, and a field on a browser-callable Server Action could never carry it
     // (any caller could have supplied any sentence). See merchant-prompt-provenance.ts.
-    const req = composedPrompt === prompt ? built.req : bindMerchantPrompt(built.req, prompt);
+    //
+    // #775 判官 r3 P1-1 与本条的**合流点**(r6 merge):#914 原本拿「客户端送来的那段」
+    // 当左手边。那正是同一课的另一半 —— `coworkGenerate` 是浏览器可直呼的 Server Action,
+    // 客户端送来的那段字既然连付费请求都进不去(构造器只认卡),就更不该被写成一条
+    // 「商家原话」的证据。所以左手边取**卡上冻结的那一段**:它是商家批准前看过、批准后
+    // 不可变的那一份,也正是构造器拿去拼装的那一份。
+    // 拼装现在发生在构造器里,所以「有没有真的追加过」的判据就是「出来的那段是不是还等于
+    // 卡上那段」—— 两边读的都是同一个来源,不存在第三个说法。
+    const cardPrompt = typeof (card.payload as { structuredPrompt?: unknown } | null)?.structuredPrompt === "string"
+      ? ((card.payload as { structuredPrompt: string }).structuredPrompt)
+      : "";
+    const req = built.req.prompt === cardPrompt ? built.req : bindMerchantPrompt(built.req, cardPrompt);
 
     const res = await startCoworkGen(req); // binds the persisted card quote before the shared startGen spend authority
     if ("error" in res) return res;
