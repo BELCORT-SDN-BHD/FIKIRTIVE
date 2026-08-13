@@ -418,7 +418,11 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
       expect(prompt).not.toContain("Ignore the approved brief");
     });
 
-    it("快照缺席的旧任务行 → 编号照写,名字一个不写(不回头读活行)", async () => {
+    // #774 判官 r3 P0 —— 这是「老卡 → 无名编号句」那条链的**下半段**。
+    // 上半段(`startGen` 收到一张没有快照的老卡时,这一列保持空、且根本不查活名称)钉在
+    // `apps/web/lib/__tests__/gen-actions.test.ts` 的「快照缺席…根本不查活名称」。
+    // 两段合起来才是完整的跨部署兼容口径:老卡 → 空列 → 无名编号句 + 零活名称查询。
+    it("快照缺席的旧任务行 → 编号照写,名字一个不写,而且连问都不问活名称", async () => {
       for (const approvedEntities of [null, undefined, [], "not-an-array", [{ id: "e0" }]]) {
         vi.clearAllMocks();
         m.projectFindFirst.mockResolvedValue({ id: "p1" });
@@ -445,6 +449,12 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
           `Define the product in <Image_1> as <Subject_1>.\n${imageJob.prompt}`,
         );
         expect(prompt).not.toContain("Ignore the approved brief");
+        // 「零活名称查询」:元素存活检查只取 id/type —— worker 连名字这一列都不 select,
+        // 所以没有任何一条代码路径能在付费调用前拿到改过的活名称。
+        expect(m.entityFindFirst).toHaveBeenCalled();
+        for (const call of m.entityFindFirst.mock.calls) {
+          expect((call[0] as { select: Record<string, unknown> }).select).not.toHaveProperty("name");
+        }
       }
     });
 

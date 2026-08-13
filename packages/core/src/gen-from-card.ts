@@ -66,6 +66,13 @@ export function buildGenRequestFromCard(args: {
   // 看过、批准后不可变的那一份。所以它不从 `args` 收(调用方给的 `entityIds` 可以变,
   // 名字不可以),而且只保留 `entityIds` 里真的还在的那些 —— 卡上有、这一趟没 @ 的元素
   // 不许把名字带进付费提示词。
+  //
+  // #774 判官 r3 P0 —— 卡上没有这一份时的降级方向,写死在这里:
+  // #774 之前铸的老卡、跨部署铸的卡,payload 里根本没有 `approvedEntities`(或整段读不懂)
+  // ⇒ 空表 ⇒ 下面那个展开把这个字段整个留在请求之外。执行侧(`startGen`)看到字段缺席
+  // **不会**替它现读活名称补上 —— 它就此成为「这一趟没有获批的名字」,worker 照旧编号、
+  // 只是不写名字(`Define the product in <Image_1> as <Subject_1>.`)。
+  // 降级是「少一个名字」;「执行时读一个没人批准过的名字」不是降级,是「批 A 做 B」。
   const entityIdSet = new Set(entityIds);
   const approvedEntities = parseApprovedEntities(p.approvedEntities).filter((e) => entityIdSet.has(e.id));
 

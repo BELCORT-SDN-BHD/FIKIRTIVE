@@ -534,36 +534,34 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       return { error: sanitizeUserError(block.error) };
     }
 
-    // #774 判官 r2 P1 —— 引擎认人那几句机器指令里的名字,只能是商家批准时看到的那个。
+    // #774 判官 r3 P0 —— 引擎认人那几句机器指令里的名字,只能是商家批准时看到的那个,
+    // 而「批准那一刻」永远发生在**这一步之前**。所以这一步一个活名称都不读。
     //
     // 元素名是商家随时能改的自由文本(`updateEntity` 只 trim,不拦句号、换行或整句指令)。
     // 名字若在付费调用前才现读,批准之后改一次名,就能把没过审批的指令送进那次**已经批准
-    // 的付费调用**。所以名字在这里定死一次,写进任务行,worker 只读那一份。
+    // 的付费调用** ——「批 A 做 B」。
     //
-    // 两种入口,两种「批准那一刻」:
-    //   · 带卡的(Otto 方案卡):名字在铸卡时就冻结、印在卡上,随请求原样送到这里。
-    //     此刻再跟活行对一次 —— 对不上说明这张卡承诺的东西已经不是它会做出来的东西,
-    //     按既有「内容漂移 = 重新批准」语义拒掉,$0(create/reserve 都在后面)。
-    //   · 不带卡的(Studio 直接生成、战役、画布):点下去那一刻就是批准那一刻,
-    //     于是在这里读一次活名称冻结上去 —— 冻结之后 worker 再也不会重读。
-    // 读不到名字的元素不进快照:少一个名字是安全的降级(编号照旧,只是不写名字),
-    // 编一个名字不是。
+    // 名字只有一个来源:随请求送来的审批快照(铸卡侧在批准那一刻写在卡上,商家批之前
+    // 就看得见)。这里只做一件事 —— 拿它跟活行**核对**:对不上说明这张卡承诺的东西已经
+    // 不是它会做出来的东西,按既有「内容漂移 = 重新批准」语义拒掉,$0(create/reserve
+    // 都在后面)。没有快照要核对时,连这一次读都不发生。
+    //
+    // 没有快照的请求(#774 之前铸的老卡、跨部署、以及不带卡的入口)= 这一趟没有获批的
+    // 名字。列保持空,worker 照旧编号、只是不写名字
+    // (`Define the product in <Image_1> as <Subject_1>.`)。降级方向是**少一个名字**,
+    // 绝不是执行时补一个没人批准过的名字 —— 与 `genRequest.approvedEntities` 的契约
+    // (packages/core/src/gen.ts)逐字一致。
     let frozenEntities: ApprovedEntity[] = [];
-    if (entityIds.length > 0) {
+    if (approvedEntities?.length) {
       const live = await prisma.entity.findMany({
         where: { id: { in: entityIds }, ...OWNED },
         select: { id: true, type: true, name: true },
       });
-      if (approvedEntities?.length) {
-        const drifted = approvedEntityDrift(approvedEntities, live);
-        if (drifted.length > 0) {
-          return { error: "One of these elements was renamed since this plan — ask for it again to get a fresh one." };
-        }
-        frozenEntities = approvedEntities;
-      } else {
-        const byId = new Map(live.map((e) => [e.id, e]));
-        frozenEntities = entityIds.map((id) => byId.get(id)).filter((e): e is ApprovedEntity => !!e);
+      const drifted = approvedEntityDrift(approvedEntities, live);
+      if (drifted.length > 0) {
+        return { error: "One of these elements was renamed since this plan — ask for it again to get a fresh one." };
       }
+      frozenEntities = approvedEntities;
     }
 
     // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is

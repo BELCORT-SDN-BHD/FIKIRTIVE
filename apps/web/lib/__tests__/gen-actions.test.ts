@@ -1799,22 +1799,31 @@ describe("startGen —— 审批身份在花钱之前定死", () => {
     expect(db.reserveCredits).not.toHaveBeenCalled();
   });
 
-  it("不带卡的入口(点下去就是批准那一刻)→ 在这里读一次活名称冻结上去", async () => {
-    db.entityFindMany.mockResolvedValue([{ id: "e1", type: "PRODUCT", name: "Bottle" }]);
-    await startGen({ ...base, idempotencyKey: "approved-4" });
-    expect(createdData().approvedEntities).toEqual([{ id: "e1", type: "PRODUCT", name: "Bottle" }]);
+  // #774 判官 r3 P0 —— 快照缺席时的降级方向。
+  // 老卡(#774 之前铸的)、跨部署、以及任何不带快照的入口,走到这里都**没有获批的名字**。
+  // 此时若回头读一次活名称,「批 A 做 B」在这条路上就仍然可达:商家批的是 A 名,执行时
+  // 拿到的是改名后的 B 名。所以这里一个活名称都不读 —— worker 照旧编号,只是不写名字。
+  it("快照缺席(老卡/跨部署/非卡入口)→ 名字一个不写,而且根本不查活名称", async () => {
+    // 活行此刻已经被改成一段指令。它一个字都不该有机会进付费请求。
+    db.entityFindMany.mockResolvedValue([{ id: "e1", type: "PRODUCT", name: INJECTION }]);
+    const r = await startGen({ ...base, idempotencyKey: "approved-4" });
+    expect(r).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(createdData()).not.toHaveProperty("approvedEntities");
+    // 「零活名称查询」:没有快照要核对,就没有理由去问名字。
+    expect(db.entityFindMany).not.toHaveBeenCalled();
   });
 
-  it("冻结的次序 = entityIds 的次序(编号句照这个次序说话)", async () => {
+  it("多元素带卡:冻结进作业行的就是卡上那一份,逐字不变", async () => {
+    const approved = [
+      { id: "e1", type: "PRODUCT" as const, name: "Bottle" },
+      { id: "e2", type: "CHARACTER" as const, name: "Mia" },
+    ];
     db.entityFindMany.mockResolvedValue([
       { id: "e2", type: "CHARACTER", name: "Mia" },
       { id: "e1", type: "PRODUCT", name: "Bottle" },
     ]);
-    await startGen({ ...base, entityIds: ["e1", "e2"], idempotencyKey: "approved-5" });
-    expect(createdData().approvedEntities).toEqual([
-      { id: "e1", type: "PRODUCT", name: "Bottle" },
-      { id: "e2", type: "CHARACTER", name: "Mia" },
-    ]);
+    await startGen({ ...base, entityIds: ["e1", "e2"], approvedEntities: approved, idempotencyKey: "approved-5" });
+    expect(createdData().approvedEntities).toEqual(approved);
   });
 
   it("零元素 → 这一列保持 null(老行/裸生成的形状不变)", async () => {

@@ -293,7 +293,11 @@ describe("buildGenRequestFromCard — anti-flip", () => {
     expect(result.req).not.toHaveProperty("approvedEntities");
   });
 
-  it("an old card with no snapshot leaves the field off entirely", () => {
+  // #774 判官 r3 P0 —— 老卡/跨部署的降级链第一段:字段整个缺席。
+  // 第二段(`startGen` 看到字段缺席时不补活名称、连查都不查)钉在
+  // `apps/web/lib/__tests__/gen-actions.test.ts`;第三段(worker 只写编号不写名字)钉在
+  // `apps/worker/src/jobs/gen-reference-budget.test.ts`。
+  it("an old card with no snapshot leaves the field off entirely (degrades to unnamed slots)", () => {
     const result = buildGenRequestFromCard({ ...BASE_ARGS, cardPayload: imageCardPayload(), variantSel: {} });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
