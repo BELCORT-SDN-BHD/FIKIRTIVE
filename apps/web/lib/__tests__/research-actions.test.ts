@@ -289,6 +289,42 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
     expect((res as { code?: string }).code).toBe("insufficient_credits");
     expect(mockResearchCreate).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------------
+  // #896 r2 P0-b（第二层）—— 卡上没有担保得住的报价 ⇒ 服务端也不接
+  //
+  // 卡面那一层挡的是误按;这一层挡的是绕过界面直接打进来的请求。缺价/畸形的卡在商家屏幕上
+  // 写不出任何价格,所以按下去不构成一次「知情的批准」—— 而 tier 的正数预算照样会被真的花掉。
+  // 钱路上的判断从不只放在客户端。
+  // -------------------------------------------------------------------------
+  const UNPRICED_CASES: [string, unknown][] = [
+    ["缺失", undefined],
+    ["非数字", "22"],
+    ["0", 0],
+    ["负数", -22],
+    ["小数", 4.5],
+    ["NaN", Number.NaN],
+  ];
+
+  it.each(UNPRICED_CASES)("卡上的 estimatedCredits %s → 拒批,不建 job / 不 enqueue / 不读余额", async (_label, bad) => {
+    const c = card();
+    (c.payload as Record<string, unknown>).estimatedCredits = bad;
+    wireCard(c);
+    const res = await approveResearch({ cardId: "card-1" });
+    expect(res).toEqual({ error: "This research plan has no price on it. Ask Otto to plan it again." });
+    expect(mockResearchCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+    // 拒得比余额预检还早 —— 没有报价的请求根本不该走到花钱那一段。
+    expect(mockCreditFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("卡上带着正的安全整数报价 → 照旧放行(这道闸没有挡住正常的卡)", async () => {
+    wireCard(card());
+    const res = await approveResearch({ cardId: "card-1" });
+    expect(res).toEqual({ jobId: "job-new-1" });
+    expect(mockResearchCreate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("approveResearch — owner-scope / 入参", () => {

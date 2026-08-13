@@ -310,20 +310,43 @@ describe("⑤ 取消之后,详情面板的付费按钮是关的", () => {
     expect(assetSpendControlDisabled("idle", true)).toBe(true);
   });
 
-  it("三颗花钱按钮问的是同一个谓词,没有各自为政的副本", () => {
+  // #896 r2 P0-a —— 这道网的形状跟着修法走了一步,守的还是同一件事。
+  //
+  // 从前三颗按钮各自在 JSX 里把谓词拼一遍(`disabled={assetSpendControlDisabled(...) || ...}`),
+  // 这道网数的就是那三处拼装。但「拼在 disabled 上」正是缺陷本身:它只挡按钮,挡不住编辑框的
+  // Shift/Cmd/Ctrl+Enter —— 快捷键直接进 handleEditSubmit,报价还没到也照发付费请求。
+  // 现在每条付费路收敛成一个具名闸,控件的 disabled 与处理函数的入口读同一个值。
+  // 所以这道网改判三件事:闸必须由共享谓词导出、每一处 disabled 只能是闸本身、闸必须真的
+  // 挡在动作入口上。比原来严:原来只要求「按钮问过谓词」,现在要求「每一种进入方式都问过」。
+  it("三颗花钱按钮问的是同一个谓词,而且那道闸挡在动作上,不只挡在按钮上", () => {
     const source = readFileSync(resolve(WEB_ROOT, "components/asset/DetailPanel.tsx"), "utf8");
     // Regenerate / Animate / Edit —— 一颗不多一颗不少。
     expect((source.match(/assetSpendControlDisabled\(/g) ?? []).length).toBe(3);
-    // 每一个 <Button ... disabled={...}> 要么问这个谓词,要么与花钱无关。
-    // 三颗按钮读的是 regen/anim/edit 三个**生成**状态;它们的每一处 disabled 都必须走谓词。
-    const generationPredicates = [...source.matchAll(/disabled=\{([^}]*(?:regenStatus|animStatus|editStatus)[^}]*)\}/g)]
-      .map((m) => m[1]!);
+
+    const GATES = ["regenBlocked", "animateBlocked", "editBlocked"] as const;
+    for (const gate of GATES) {
+      // 闸只能从共享谓词导出,不许自己拼一个等价物出来。
+      expect(
+        new RegExp(`const ${gate} =[\\s\\S]{0,200}?assetSpendControlDisabled\\(`).test(source),
+        `${gate} 必须由 assetSpendControlDisabled 导出`,
+      ).toBe(true);
+      // 而且闸挡在动作入口 —— 这是 P0-a 的本体:按钮变灰是提示,这一行才是闸。
+      expect(
+        new RegExp(`if \\(${gate}\\) return;`).test(source),
+        `${gate} 没有挡在动作入口:快捷键之类的第二个入口会绕过它`,
+      ).toBe(true);
+    }
+
+    // 每一处带生成状态的 disabled,要么就是那三个闸之一,要么与花钱无关。
+    const generationPredicates = [
+      ...source.matchAll(/disabled=\{([^}]*(?:regenStatus|animStatus|editStatus|Blocked)[^}]*)\}/g),
+    ].map((m) => m[1]!);
     for (const predicate of generationPredicates) {
-      const isSpendControl = /assetSpendControlDisabled/.test(predicate);
+      const isSpendGate = GATES.some((g) => predicate.trim() === g);
       // 输入框那一条是故意不同的:跑的时候不让改字,但**取消之后照样可以打字** ——
       // 商家想重新描述一次编辑是自由的,不该被自己的取消锁住;它花不出一分钱。
       const isTypingLock = /^readOnly \|\| editStatus === "running"$/.test(predicate);
-      expect(isSpendControl || isTypingLock, `未归口的状态谓词:${predicate}`).toBe(true);
+      expect(isSpendGate || isTypingLock, `未归口的状态谓词:${predicate}`).toBe(true);
     }
     expect(generationPredicates.length).toBe(4); // 三颗按钮 + 那一个输入框
   });
