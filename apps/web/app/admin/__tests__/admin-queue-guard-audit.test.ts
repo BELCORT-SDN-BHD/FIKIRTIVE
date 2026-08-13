@@ -55,6 +55,12 @@ beforeAll(async () => {
   });
   // "moderator" holds content.* and nothing else — so `system.read` is a genuine refusal by the
   // real capability matrix, not by an absent user row.
+  //
+  // `User.role: "super-admin"` is DELIBERATE, not a typo. That column is the pre-#734 compat
+  // field, and `requireRole` stopped reading it precisely so it could not grant anything; the
+  // fixture sets it to the most privileged value it can hold so the refusal below proves the
+  // gate decides on `UserRole` alone. If someone ever wires the compat column back into the
+  // gate, this test goes red instead of quietly re-opening every admin page.
   const user = await prisma.user.create({ data: { email: DENIED, name: TAG, role: "super-admin" }, select: { id: true } });
   await prisma.userRole.create({ data: { userId: user.id, role: "moderator" } });
 });

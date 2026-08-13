@@ -77,6 +77,21 @@ describe("redactProviderNames", () => {
       expect(redactProviderNames(innocent)).toBe(innocent);
     }
   });
+
+  // 上面几个新 token 是**裸词**匹配,所以它们的近音词就是新增的误伤面。洗掉商家自己的
+  // 商品名比说出引擎名更糟(#810 栽过一次),所以这些形状逐个钉住:`volc` 后面必须断词,
+  // `vmp`、`ark` 同理。
+  it("新增 token 的近音词不许被误伤", () => {
+    for (const innocent of [
+      "Volcano Hot Pot, Penang",
+      "volcanic ash face mask",
+      "our VMPro blender",
+      "Arkitek Studio, Johor",
+      "markup is 30%",
+    ]) {
+      expect(redactProviderNames(innocent)).toBe(innocent);
+    }
+  });
 });
 
 describe("createProviderNameFilter — 流式也拦得住", () => {
