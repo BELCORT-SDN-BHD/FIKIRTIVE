@@ -12,8 +12,10 @@ import "server-only";
  * $0 by construction: nothing here touches startGen / reserveCredits / the provider.
  *  - media:  list/organize already-produced generations (attach/detach to shots, delete or
  *            discard, cancel a still-QUEUED job — which only ever REFUNDS, never charges).
- *  - render: export the SAVED cut (ffmpeg concat, "re-rendering is free") and $0 captions
- *            (whisper.cpp) — no gen job, no spend.
+ *  - render: build and export the cut — join clips into one video, put a clip's words on
+ *            screen, lay music under it (edit-desk-actions.ts, the SAME functions the
+ *            merchant's own edit desk calls), plus export (ffmpeg concat, "re-rendering is
+ *            free") and $0 captions (whisper.cpp). No gen job, no spend.
  *  - mediaImport: bring an image/video into the project FROM A URL — the server-side analogue
  *            of the browser direct-upload chain (direct-upload.ts): SSRF-guarded fetch →
  *            storage.put → the SAME finalizeCandidateUploads authority the human upload lands
@@ -33,12 +35,20 @@ import {
   detachGeneration,
   deleteGeneration,
   softDeleteGeneration,
-  startRender,
   getRenderJobs,
   startCaption,
   getCaptionJob,
   getTranscript,
 } from "./actions";
+import {
+  getEditDesk,
+  joinClipsIntoCut,
+  setCutMusic,
+  clearCutMusic,
+  addCaptionsToClip,
+  clearCutCaptions,
+  exportSavedCut,
+} from "./edit-desk-actions";
 import { finalizeCandidateUploads } from "./upload-actions";
 import { cancelGenJob } from "./cowork-actions";
 
@@ -83,21 +93,30 @@ export function makeOttoMediaPort(ownerId: string, projectId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// ctx.render — media-editor export + $0 captions
+// ctx.render — build the cut, export it, $0 captions
 // ---------------------------------------------------------------------------
-export function makeOttoRenderPort(ownerId: string, projectId: string) {
+/** `ownerId` is intentionally still in the signature (and unused): every function below is an
+ *  owner-gated action that resolves the owner from the SESSION, never from an argument — a port
+ *  that passed an owner in would be a second, weaker answer to "whose video is this?". Kept so
+ *  the three port factories are called identically at the one wiring site (otto-actions.ts). */
+export function makeOttoRenderPort(_ownerId: string, projectId: string) {
   return {
-    export: async () => {
-      // Otto renders the SAVED cut (Project.editJson). Authoring the timeline is VISUAL
-      // (saveProjectEdit/addSegmentToCut are exempt); Otto exports what the user built.
-      const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId, deletedAt: null },
-        select: { editJson: true },
-      });
-      if (!project) return { error: "Project not found." };
-      if (!project.editJson) return { error: "There's no saved cut to export yet — build one in the editor first." };
-      return startRender(projectId, JSON.stringify(project.editJson));
-    },
+    // #780 — the three merchant-sized moves the engine always supported and nobody could
+    // reach: join, captions, music. They are THE SAME functions the merchant's own edit desk
+    // calls (edit-desk-actions.ts), pre-bound to this owner+project, so "Otto, join these
+    // three and caption them" and doing it by hand produce one cut, not two rival ones.
+    // Free-hand timeline JSON (saveProjectEdit) stays out of Otto's reach — that is authoring
+    // by coordinates, which belongs to the visual desk.
+    desk: () => getEditDesk(projectId),
+    join: (srcs: string[]) => joinClipsIntoCut(projectId, srcs),
+    music: (src: string) => setCutMusic(projectId, src),
+    clearMusic: () => clearCutMusic(projectId),
+    addCaptions: (src: string) => addCaptionsToClip(projectId, src),
+    clearCaptions: () => clearCutCaptions(projectId),
+    // Otto exports the SAVED cut — whatever the desk and `join` above have agreed on. The read
+    // of that cut lives in the action (exportSavedCut), not here, so the merchant's Export
+    // button and Otto's export cannot drift into rendering two different things.
+    export: () => exportSavedCut(projectId),
     jobs: () => getRenderJobs(projectId),
     caption: (src: string) => startCaption(projectId, src),
     captionJob: (jobId: string) => getCaptionJob(jobId),
