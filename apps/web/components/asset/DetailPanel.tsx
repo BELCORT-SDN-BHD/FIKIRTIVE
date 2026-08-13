@@ -584,14 +584,16 @@ export default function DetailPanel({
         }}
       >
         {/* Close button */}
-        <button
+        <Button
           onClick={onClose}
           aria-label="Close detail panel"
-          className="al-iconbtn al-iconbtn-md"
+          variant="ghost"
+          size="icon"
+          className="size-9 rounded-[14px]"
           style={{ position: "absolute", top: 12, right: 12 }}
         >
           <XIcon size={17} />
-        </button>
+        </Button>
 
         {/* Content */}
         {state === "loading" && (
@@ -637,11 +639,13 @@ export default function DetailPanel({
                 style={{ display: "flex", gap: 9, overflowX: "auto", paddingBottom: 2 }}
               >
                 {gen.urls.map((u, i) => (
-                  <button
+                  <Button
                     key={u}
                     role="option"
                     aria-selected={i === selectedIdx}
                     onClick={() => handleVariantPick(i)}
+                    variant="ghost"
+                    className="h-auto"
                     style={{
                       flex: "none",
                       width: 62,
@@ -661,7 +665,7 @@ export default function DetailPanel({
                       alt={`Variant ${i + 1}`}
                       style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                     />
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}

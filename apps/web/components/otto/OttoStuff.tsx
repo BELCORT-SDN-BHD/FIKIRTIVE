@@ -341,14 +341,15 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
                 {activeProducts.map((rec) => {
                   const name = (rec.data as { name?: unknown }).name;
                   return (
-                    <button
+                    <Button
                       key={rec.id}
                       type="button"
+                      variant="ghost"
                       onClick={() => void linkProductImage(rec, chooseProductFor)}
-                      className="rounded-[10px] px-3 py-2 text-left text-[0.9375rem] text-foreground hover:bg-accent"
+                      className="h-auto w-full justify-start rounded-[10px] px-3 py-2 text-left text-[0.9375rem] font-normal text-foreground hover:bg-accent"
                     >
                       {typeof name === "string" && name ? name : "Untitled product"}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
