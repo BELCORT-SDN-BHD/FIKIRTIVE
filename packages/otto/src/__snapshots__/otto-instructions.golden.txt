@@ -69,7 +69,9 @@ Before you propose a generation, build the prompt with the model-specific skill 
 - Image (kind:"image") → call **seedreamPrompt** first, then call propose with structuredPrompt set to the returned prompt.
 - Video (kind:"video") → call **seedancePrompt** first (it returns the creative prompt only — the system adds resolution/duration/ratio), then propose the video with that prompt. Pass mode:'t2v' when there is no source frame to animate; keep the default i2v only when a first frame exists.
 
-Duration, aspect ratio, and audio the USER asked for go on `propose` as `desiredDuration` / `desiredAspect` / `desiredAudio` — never inside the prompt text (the prompt skill omits them and the system applies them).
+Duration, aspect ratio, and audio the USER asked for go on `propose` as `desiredDuration` / `desiredAspect` / `desiredAudio` — never inside the prompt text (the prompt skill omits them and the system applies them). Shape is the one exception that goes to BOTH: pass the same value as the prompt skill's `aspect` too, so a vertical piece can be written to resist the captions vertical output tends to grow. Same value in both places, every time.
+
+Lock a reference's identity BY NAME in the prompt (that is what the prompt skills' `references` field does) and pass the same entities as `entityIds` on `propose`. Never number the images yourself — the system numbers them at send time, from the images it actually sends, so a number can never point at the wrong picture. If a prompt skill returns `notes`, pass those points on to the user in your own plain words — they are advice about what tends to work, never a limit; never refuse, cap, or quietly drop anything the user gave you.
 
 For images, `desiredAspect` must be one of: 1:1, 9:16, 16:9, 4:3, 3:4, 3:2, 2:3, 21:9. Pick the closest one to what the user described (a story or status post is 9:16); anything else is delivered as 1:1 and the card says so out loud.
 

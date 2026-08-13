@@ -93,6 +93,8 @@ const SERVER_PAYLOAD_KEYS = {
   downgradeNote: true,
   structuredPrompt: true,
   entityIds: true,
+  // #774 判官 r2 P1:引擎认人的那几个名字,在卡上冻结、卡面照实披露。
+  approvedEntities: true,
   variantSel: true,
   estimatedPriceUsd: true,
   estimatedCredits: true,
@@ -112,6 +114,8 @@ const CARD_PAYLOAD_KEYS = {
   downgradeNote: true,
   structuredPrompt: true,
   entityIds: true,
+  // #774 判官 r2 P1:引擎认人的那几个名字,在卡上冻结、卡面照实披露。
+  approvedEntities: true,
   variantSel: true,
   estimatedPriceUsd: true,
   estimatedCredits: true,
@@ -142,15 +146,16 @@ describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
     }
     // The branch coverage above must actually reach the optional fields, or this
     // assertion would pass by simply never exercising them.
-    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote"]) {
+    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote", "approvedEntities"]) {
       expect(emitted.has(key)).toBe(true);
     }
     expect([...emitted].filter((k) => !(k in CARD_PAYLOAD_KEYS))).toEqual([]);
   });
 });
 
-/** Six real cards straight from the live server builder: plain video, downgraded video,
- *  image ad pack, two-step image, i2v, reference video. */
+/** Seven real cards straight from the live server builder: plain video, downgraded video,
+ *  image ad pack, two-step image, i2v, reference video, and an image that @mentions an
+ *  element (#774 —— 只有它会带出 `approvedEntities`,少了它上面那条覆盖断言会空过去)。 */
 async function builtCards(): Promise<ServerCardPayload[]> {
   const { buildProposeCard } = await import("@fikirtive/otto");
   const ctx = {
@@ -171,6 +176,11 @@ async function builtCards(): Promise<ServerCardPayload[]> {
     buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), referenceVideoGenerationId: "gen_vid" } as never, []),
+    buildProposeCard(
+      { kind: "image", ...base, entityIds: ["e1"] },
+      ctx,
+      [{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }],
+    ),
   ].map((r) => r.cardPayload);
 }
 
@@ -331,6 +341,58 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     expect(cardPayload.specChips).toEqual(["2048 × 2048", "1:1", "3 images"]);
     expect(cardPayload.specChips).not.toContain("5:7");
     expect(markup).toContain("You asked for 5:7 — this will be a square 2048 × 2048 image.");
+  });
+
+  // ── #774 判官 r2 P1 —— 引擎认人的名字,商家在花钱之前就看得见 ──────────────
+  // 「批准前看得见」是这条修复的一半:另一半(worker 只认这一份)在
+  // apps/worker/src/jobs/gen-reference-budget.test.ts。两边说的必须是同几个字。
+  describe("#774 判官 r2 P1 卡面披露引擎会被告知的那几个名字", () => {
+    const withNames = (approvedEntities: unknown) => ({
+      kind: "image",
+      model: "seedream",
+      params: { count: 1, aspectRatio: "1:1" },
+      specChips: ["2048 × 2048", "1:1"],
+      structuredPrompt: "A hero shot of the bottle",
+      entityIds: ["e1", "e2"],
+      variantSel: {},
+      downgraded: false,
+      estimatedPriceUsd: 0.04,
+      estimatedCredits: 1,
+      reason: "seedream",
+      approvedEntities,
+    });
+
+    it("卡上逐字写出付费提示词里那几个名字", () => {
+      const markup = renderCard(withNames([
+        { id: "e1", type: "PRODUCT", name: "the AeroBottle" },
+        { id: "e2", type: "CHARACTER", name: "Mia" },
+      ]));
+      expect(markup).toContain("Reference names sent to the engine: the AeroBottle (product), Mia (person).");
+    });
+
+    it("老卡没有这份快照 → 不显示这行(不猜一个)", () => {
+      const markup = renderCard(withNames(undefined));
+      expect(markup).not.toContain("Reference names sent to the engine");
+    });
+
+    it("快照读不懂 → 记进畸形字段,这张卡连批准按钮都没有", () => {
+      const gate = planCardGate(withNames([{ id: "e1", type: "NOPE", name: "x" }]));
+      expect(gate.malformedFields).toContain("approvedEntities");
+      expect(gate.approvable).toBe(false);
+      expect(renderCard(withNames([{ id: "e1", type: "NOPE", name: "x" }])))
+        .not.toContain("Reference names sent to the engine");
+    });
+
+    it("真 builder 造的卡:卡上那行 = 卡上冻结的那一份", async () => {
+      const { buildProposeCard } = await import("@fikirtive/otto");
+      const { cardPayload } = buildProposeCard(
+        { kind: "image", structuredPrompt: "a hero shot", entityIds: ["e1"], variantSel: {} },
+        { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+        [{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }],
+      );
+      expect(cardPayload.approvedEntities).toEqual([{ id: "e1", type: "PRODUCT", name: "the AeroBottle" }]);
+      expect(renderCard(cardPayload)).toContain("Reference names sent to the engine: the AeroBottle (product).");
+    });
   });
 
   it("never renders the engine name, even though the payload carries it", () => {
