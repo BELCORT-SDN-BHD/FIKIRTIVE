@@ -41,6 +41,9 @@ quality.sh --leg typecheck | --leg tests | --leg build | --leg lint | --leg chec
 
 哪个闸属于哪条腿，写在 `scripts/ci/quality.sh` 每个 `gate` 的第一个参数上；
 `scripts/__tests__/quality-legs.test.sh` 会机器校验「所有腿的并集 = 全部闸」与
-「ci.yml 跑的腿名 = quality.sh 声明的腿名」，它本身也是一道闸。
+「ci.yml 跑的腿名 = quality.sh 声明的腿名」，它本身也是一道闸。它手写一份独立的
+「闸 → 腿」清单当真值：增删闸、改闸名、把闸挪到别的腿，都必须在同一个 commit 里
+改那份清单，否则这道闸红。它读 ci.yml 时按 YAML 语义解析（用本机已有的 PyYAML /
+ruby / yq / js-yaml 任一），注释里的腿名和接线一律不算数——被注释掉的闸不会跑。
 
 不要把重复执行同一批闸的 job 或第二套本地命令再加回来。
