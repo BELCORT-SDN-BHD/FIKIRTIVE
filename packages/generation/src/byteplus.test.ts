@@ -274,6 +274,64 @@ describe("generateVideo (Seedance, async)", () => {
     expect(out.ext).toBe("mp4");
     expect(out.lastFrame).toBeUndefined();
   });
+  // ── #782 r2 判官两条:签名 URL 不许进日志、卡住不许拖着片子 ────────────────
+  it("#782 r2 末帧那一路炸了也绝不把签名 URL 写进日志(只记错误类别)", async () => {
+    // 末帧的地址是一条**带签名的**下载链接。Node 自己抛的错会把收到的整条 URL 原样塞回
+    // message 里 —— 于是 `console.warn(e.message)` 就等于把一把还能用的下载钥匙印进日志。
+    // 这条测试就是那把钥匙的必拒断言:日志里出现签名 = 红。
+    const SIGNED = "https://tos/tail.png?X-Amz-Credential=AK&X-Amz-Signature=deadbeefcafe1234";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") return jsonRes({ id: "cgt-lf5" });
+      if (url.includes("/tasks/cgt-lf5")) {
+        return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4", last_frame_url: SIGNED } });
+      }
+      // 复刻 Node 的真实形状:message 逐字包含收到的 URL(判官的探针实证过这一点)。
+      if (url.includes("tail.png")) throw new TypeError(`Failed to parse URL from ${url}`);
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({
+      prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
+    });
+    await vi.runAllTimersAsync();
+    const out = await promise;
+
+    const logged = warn.mock.calls.map((c) => c.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")).join("\n");
+    expect(logged).not.toContain("X-Amz-Signature");
+    expect(logged).not.toContain("deadbeefcafe1234");
+    expect(logged).not.toContain("X-Amz-Credential");
+    expect(logged).not.toContain("tail.png");
+    expect(logged).toContain("TypeError"); // 记的是错误**类别** —— 排障够用,泄露不够。
+    expect(out.lastFrame).toBeUndefined(); // 片子照常交付
+    warn.mockRestore();
+  });
+  it("#782 r2 末帧下载卡住不许拖着那条已经付过钱的片子(超时放弃,片子照常交付)", async () => {
+    // 「best-effort」必须同时覆盖**炸了**和**不回话**。一条不回话的连接会把作业按在
+    // GENERATING 上,一路逼近队列超时 —— 那头等着的是一条我们已经付过钱的片子被重投。
+    let aborted = false;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") return jsonRes({ id: "cgt-lf6" });
+      if (url.includes("/tasks/cgt-lf6")) {
+        return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4", last_frame_url: "https://tos/tail.png" } });
+      }
+      // 永不回话:只有 abort 叫得停它。
+      if (url.includes("tail.png")) {
+        return new Promise((_, reject) => {
+          init.signal.addEventListener("abort", () => { aborted = true; reject(new Error("The operation was aborted.")); });
+        });
+      }
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({
+      prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
+    });
+    await vi.runAllTimersAsync(); // 走到预算尽头,自己把那条连接掐掉
+    const out = await promise;
+    expect(aborted).toBe(true);
+    expect(out.ext).toBe("mp4");
+    expect(out.bytes.byteLength).toBeGreaterThan(0);
+    expect(out.lastFrame).toBeUndefined();
+  });
   it("an expired task is a PLAIN failure (terminated before any output ⇒ nothing billed, safe to retry)", async () => {
     stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
       ? jsonRes({ status: "expired" })

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_VIDEO_MODEL_OPTIONS } from "@fikirtive/core";
+import { GEN_VIDEO_MODEL_OPTIONS, pricedGenCredits, displayCredits } from "@fikirtive/core";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 
 // ---------------------------------------------------------------------------
@@ -2362,6 +2362,50 @@ function doneVideoJob(lastFrameAssetId: string | null) {
   return { id: "vjob-0", status: "DONE", lastFrameAssetId, projectId: "proj-1", threadId: "t-1" };
 }
 
+/**
+ * #782 r2(判官 r1 P2)—— 省钱这句话必须用**真价**说。
+ *
+ * 这个文件的通用夹具把每张首帧固定 mock 成 5 credits(纯粹为了让别处的加法好算),于是
+ * 「四镜 20cr → 5cr」看着惊人,却是一个不存在的价目表里的数。中央定价的商家口径是
+ * **每张图 1 credit**(`pricedGenCredits({kind:"IMAGE",count:1})`),真实的省钱是 4cr → 1cr。
+ *
+ * 所以这一组不写数字:价钱从中央配置**算**出来,断言写成「N 张 × 真价」与「1 张 × 真价」。
+ * 哪天 Founder 改图片单价,这里跟着变,不会再有一条测试替产品说一个假价。
+ */
+const FIRST_FRAME_CREDITS = displayCredits(
+  pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null }),
+);
+
+/** 把铸卡报价换成**真价**(真 buildProposeCard 走的就是这一条 displayCredits∘pricedGenCredits)。 */
+function useRealFirstFramePricing() {
+  mockBuildProposeCard.mockImplementation((input: { structuredPrompt: string; entityIds: string[] }) => ({
+    cardPayload: {
+      kind: "image",
+      model: "seedream",
+      params: { count: 1 },
+      structuredPrompt: input.structuredPrompt,
+      entityIds: input.entityIds,
+      estimatedCredits: FIRST_FRAME_CREDITS,
+      estimatedPriceUsd: 0.2,
+      reason: "",
+      downgraded: false,
+      variantSel: {},
+    },
+    shownPriceDisplay: FIRST_FRAME_CREDITS,
+  }));
+}
+
+/** 四镜全缺帧 —— PR 正文那句省钱的原型(接续关 4 张,接续开 1 张)。 */
+function fourShotsNoFrames(continuity: boolean): StoryboardCardPayload {
+  return {
+    storyboardTitle: "One take",
+    ...(continuity ? { continuity: true } : {}),
+    shots: [0, 1, 2, 3].map((i) => ({
+      shotId: `s${i}`, index: i, firstFramePrompt: `ff${i}`, videoPrompt: `vp${i}`,
+    })),
+  };
+}
+
 describe("#782 闸①:接续开着时,只有第一镜要花钱出首帧", () => {
   it("接续开 → 只铸第一镜的首帧子卡,其余镜头零子卡零 credits", async () => {
     const p = chainPayload();
@@ -2375,8 +2419,6 @@ describe("#782 闸①:接续开着时,只有第一镜要花钱出首帧", () => 
     expect(mockChatCreate).toHaveBeenCalledTimes(1);
     expect(mockChatCreate.mock.calls[0][0].data.payload.shotId).toBe("s0");
     expect(res.children.map((c) => c.shotId)).toEqual(["s0"]);
-    // 省下的是真钱:三镜同样的卡,接续关要 15 credits,开着只要 5。
-    expect(res.totalCredits).toBe(5);
   });
 
   it("接续关 → 老行为逐字不变(三镜三张)", async () => {
@@ -2389,7 +2431,28 @@ describe("#782 闸①:接续开着时,只有第一镜要花钱出首帧", () => 
     const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
     if (!("children" in res)) throw new Error("expected children");
     expect(mockChatCreate).toHaveBeenCalledTimes(3);
-    expect(res.totalCredits).toBe(15);
+  });
+
+  it("省下的是真钱:四镜按**中央定价**从 4×真价 降到 1×真价(不是夹具里那个 5)", async () => {
+    useRealFirstFramePricing();
+
+    wireLoads(card(fourShotsNoFrames(false)));
+    const off = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in off)) throw new Error("expected children");
+    expect(off.children).toHaveLength(4);
+    expect(off.totalCredits).toBe(4 * FIRST_FRAME_CREDITS);
+
+    vi.clearAllMocks();
+    mockResolvedDefaults();
+    useRealFirstFramePricing();
+    wireLoads(card(fourShotsNoFrames(true)));
+    const on = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in on)) throw new Error("expected children");
+    expect(on.children).toHaveLength(1);
+    expect(on.totalCredits).toBe(FIRST_FRAME_CREDITS);
+
+    // 省下的正是「多出来的那三张图」的真实价钱 —— 这句话现在由定价配置自己说了算。
+    expect(off.totalCredits - on.totalCredits).toBe(3 * FIRST_FRAME_CREDITS);
   });
 });
 

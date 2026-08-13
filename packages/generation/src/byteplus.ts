@@ -23,6 +23,19 @@ export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-mini": "dre
  */
 export const VIDEO_POLL_TIMEOUT_MS = 15 * 60_000;
 
+/**
+ * #782 r2 — how long the FREE last frame may hold the paid clip hostage.
+ *
+ * The clip is already downloaded and already billed by the time this runs; the still is a
+ * by-product. "Best-effort" therefore has to cover the slow case as well as the failing one:
+ * an unbounded `await` on a stalled TOS connection would keep the job GENERATING for as long
+ * as the socket stayed open, and every minute of that is a minute closer to the queue expiry
+ * that would REDELIVER a clip we already paid for. Eight seconds is far past a real 1–2 MB
+ * PNG fetch and far short of any of the worker's clocks, so it can only ever fire on a hang.
+ * On timeout we drop the still and return the clip — the pre-#782 outcome.
+ */
+export const LAST_FRAME_FETCH_TIMEOUT_MS = 8_000;
+
 export class BytePlusProvider implements GenerationProvider {
   readonly name = "byteplus";
   constructor(private apiKey: string) {}
@@ -333,12 +346,27 @@ export class BytePlusProvider implements GenerationProvider {
               model, contentKeys: Object.keys(t.content ?? {}),
             });
           } else {
+            // BOUNDED, and by an abort rather than a bare race: aborting the request also
+            // errors its body stream, so the budget covers `arrayBuffer()` (a body that stops
+            // mid-transfer) and not just a connect that never answers.
+            const ctl = new AbortController();
+            const stop = setTimeout(() => ctl.abort(), LAST_FRAME_FETCH_TIMEOUT_MS);
             try {
-              const r = await fetch(tailUrl);
+              const r = await fetch(tailUrl, { signal: ctl.signal });
               if (r.ok) video.lastFrame = { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(tailUrl) ?? "png" };
               else console.warn(`generation provider last-frame download failed (${r.status}); clip delivered without it`);
             } catch (e) {
-              console.warn(`generation provider last-frame download failed (${e instanceof Error ? e.message : String(e)}); clip delivered without it`);
+              // NAME ONLY — never the message. `tailUrl` is a signed URL carrying a live
+              // X-Amz-Signature, and Node hands the input straight back to you inside the
+              // failure text: a malformed URL rejects with a TypeError whose message quotes
+              // the whole thing, signature and all. Printing it would put a working download
+              // credential for merchant media into the worker log. The class name is all this
+              // branch can act on anyway — the outcome is identical either way (no automatic
+              // continuation this time), and the open question about #782 (what the engine
+              // actually calls the key) is answered by the names-only warning above, not here.
+              console.warn(`generation provider last-frame download failed (${e instanceof Error ? e.name : typeof e}); clip delivered without it`);
+            } finally {
+              clearTimeout(stop);
             }
           }
         }
