@@ -6,9 +6,17 @@
 
 ## 仓库当前可验证的能力
 
-- `GET /api/health` 免登录返回非敏感健康摘要:DB 可达时 HTTP 200 +
-  `{ ok:true, db:"up", worker:"up|stale|unknown" }`;DB 不可达且 web 仍能响应时 HTTP 503。
+- `GET /api/health` 免登录返回非敏感**存活**摘要,**HTTP 恒为 200**(#796 起):
+  `{ ok:true, db:"up|unknown", worker:"up|stale|unknown", workers:{…}, migrations:"applied|failed" }`。
+  心跳读取是顺带的(1 秒不回就放弃),读不到只把 `db`/`worker` 写成 `unknown`,**不改状态码** ——
+  它回答的是「这个 Web 进程还答不答得出话」,不是「系统健康吗」。
+  (#796 之前它在 DB 不可达时回 503;那个行为被移到 `/api/ready`,因为平台的**重启**探针指着
+  这个端点,库故障回 503 会把还活着的 Web 重启掉、并让启动迁移一轮轮重试。)
+- `GET /api/ready` 免登录返回**就绪**判断:迁移未就位或 DB 不可达 → HTTP 503(平台据此不把流量
+  切给这个容器,旧部署继续承载);都正常 → 200。平台的**部署 / 负载**探针指这里。
 - worker 心跳超过代码阈值会显示 `stale`;它是诊断信号,不是自动修复或通知保证。
+  拆成算力/等待两班之后,每班一行(`worker-compute` / `worker-wait`,未拆时仍是 `worker`);
+  顶层 `worker` 字段的含义是「至少一班活着」,按班真相在 `workers` 里。
 - `GET /api/ops/dlq` 免登录巡检七条死信队列(#793):HTTP 200 = 一条不剩,503 = 有死信或
   队列查不到。只答 clear/backed-up/unknown,不给条数或队列名。接线与生产侧残留清单见
   `docs/ops/dashboards.md`。
@@ -22,7 +30,8 @@
 在 incident issue/记录中写下查询时间和证据,不要回写到本页成为新快照:
 
 1. production 的实际域名、web/worker service 与部署 commit。
-2. `/api/health` 的 HTTP 状态和完整非敏感 body;超时与 503 分开记录。
+2. `/api/health` 与 `/api/ready` 各自的 HTTP 状态和完整非敏感 body;超时与 503 分开记录。
+   (`/api/health` 恒 200,所以那一头要看 body 的 `db`/`worker`/`migrations`;判「该不该接流量」看 `/api/ready`。)
 3. Railway 最近 deployment、restart 与日志时间线。
 4. 外部 uptime monitor 是否存在、探测哪个域名、最后成功/失败时间、通知渠道是否已验证。
 5. Sentry 是否实际收到同时间窗事件、alert rule 是否存在。
@@ -34,9 +43,13 @@
 ## 诊断顺序
 
 1. **Web 无响应/超时:**先看 Railway web deployment 与 logs;此时 `/api/health` 无法替 web 自证。
-2. **HTTP 503 / `db:"down"`:**核对 DB 平台状态、连接与变更时间线;未经恢复授权不执行迁移或 restore。
-3. **HTTP 200 + `worker:"stale|unknown"`:**查 worker deployment/logs、heartbeat 和 queue;不要把 web 200 报成系统健康。
-4. **HTTP 200 + worker up:**按用户操作时间追 Sentry、应用日志、审计记录和相关外部 provider 回执。
+2. **`/api/ready` 503 `database-unreachable`(或 health body 里 `db:"unknown"`):**核对 DB 平台状态、
+   连接与变更时间线;未经恢复授权不执行迁移或 restore。
+2b. **`/api/ready` 503 `migrations-not-applied`:**新部署的迁移没跑成,站点正跑在旧结构上,
+   旧部署仍在承载流量(#796)。先修迁移,别强推;`/api/health` 此时仍是 200,别据此判断已恢复。
+3. **health 200 + `worker:"stale|unknown"`:**查 worker deployment/logs、heartbeat 和 queue;不要把 web 200 报成系统健康。
+   拆班之后先看 body 里 `workers` 的哪一行 stale —— 算力班和等待班坏掉的表现完全不同。
+4. **health 200 + worker up:**按用户操作时间追 Sentry、应用日志、审计记录和相关外部 provider 回执。
 5. 固定最小复现与影响范围后再提出修复/rollback 选项;执行权限仍由当前 incident task 与项目法决定。
 
 ## 通知闭环验收
