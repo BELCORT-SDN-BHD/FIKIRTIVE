@@ -15,10 +15,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  CHANNEL_CONNECT_UNAVAILABLE_NOTE,
   channelConnectionFromAccounts,
   channelConnectionHeadline,
 } from "@/lib/crm-channel-connection";
+import { MESSAGING_STATUS_CANNOT_CONNECT } from "@fikirtive/core/messaging-status";
 import { channelAccountLabel, channelLabel, templateStateLabel } from "@/lib/crm-labels";
 import { dateTimeLabel, errorMessage, isDenialErrorCode } from "./inbox-format";
 
@@ -220,7 +220,7 @@ function TemplatesWorkspace({
                 <p className="mt-3 text-sm font-semibold">{channelConnectionHeadline(channelConnectionFromAccounts(scopes))}</p>
                 {/* #541 — no CTA into Connections: Messaging has no connect button there yet. */}
                 <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-                  {CHANNEL_CONNECT_UNAVAILABLE_NOTE} Templates open up once a channel can be connected.
+                  {MESSAGING_STATUS_CANNOT_CONNECT} Templates open up once a channel can be connected.
                 </p>
               </div>
             </CardContent>

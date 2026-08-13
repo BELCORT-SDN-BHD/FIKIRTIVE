@@ -28,24 +28,43 @@ const trace: string[] = [];
 
 const { mockSend } = vi.hoisted(() => ({ mockSend: vi.fn() }));
 
-vi.mock("@fikirtive/db", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@fikirtive/db")>();
+/**
+ * THE RECORDER, installed ONCE at the client both paths share (#795 r2).
+ *
+ * The client lives in its own module (`@fikirtive/db/client`) so the limiter can reach the
+ * database even in the many suites that replace the `@fikirtive/db` barrel wholesale. That same
+ * split used to make this file blind: tracing the barrel recorded the allowlist query and missed
+ * every statement the limiter ran, so a query branching on the EMAIL could have been added inside
+ * the limiter and this fence would still have been green. A step this file cannot see is a step
+ * the defect can hide in — which is the one thing it exists to prevent.
+ *
+ * So the recorder goes on the client, and the barrel below simply re-exports it. Every database
+ * call on the request path — allowlist, counter, transaction control — lands in `trace`, exactly
+ * once, in dispatch order.
+ *
+ * TOP-LEVEL `$allOperations`, not `$allModels`: the model-scoped hook never fires for raw SQL
+ * (a raw operation arrives with `model === undefined`), and the counter is raw SQL.
+ */
+vi.mock("@fikirtive/db/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fikirtive/db/client")>();
   return {
     ...actual,
     // Records at DISPATCH time (Prisma promises are lazy), which is exactly when the request
     // would start paying for the query.
     prisma: actual.prisma.$extends({
       query: {
-        $allModels: {
-          async $allOperations({ model, operation, args, query }) {
-            trace.push(`db:${model}.${operation}`);
-            return query(args);
-          },
+        async $allOperations({ model, operation, args, query }) {
+          trace.push(`db:${model ?? "raw"}.${operation}`);
+          return query(args);
         },
       },
     }),
   };
 });
+
+// The barrel is left alone on purpose: it re-exports the very client mocked above, so extending
+// it a second time here would record every call twice and the sequences would stop meaning
+// "one entry per database call".
 
 vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
@@ -142,23 +161,39 @@ beforeAll(async () => {
   });
 });
 
-beforeEach(() => {
-  trace.length = 0;
+beforeEach(async () => {
   mockSend.mockReset();
   mockSend.mockResolvedValue(undefined);
   mockHeaders.mockReset();
   mockHeaders.mockReturnValue(CALLER);
-  // Both budgets are process memory with an hour-long window. Reset them so each case starts
-  // from a known state — this file is about the SHAPE of the path, and the two files that own
-  // the budgets (better-auth-sender / magic-link-throttle) test them without any reset.
-  __resetMagicLinkThrottleForTests();
-  __resetAuthEmailCapsForTests();
+  // #795 — both budgets are shared rows with an hour-long window. Reset them so each case
+  // starts from a known state; this file is about the SHAPE of the path, and the two files that
+  // own the budgets (better-auth-sender / magic-link-throttle) test them without any reset.
+  await __resetMagicLinkThrottleForTests();
+  await __resetAuthEmailCapsForTests();
   // This file is about the REQUEST path, whose whole claim is that it waits on none of this.
   // The executor's per-job jitter and its slot floor would only add real seconds to every case
   // here; both have their own file (auth-email-queue-executor) where they are the thing being
   // asserted.
   __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
+  // LAST, on purpose: the two resets above are themselves database calls, and the tracer records
+  // every one. Clearing before them would leave their rows in the first case's trace.
+  trace.length = 0;
 });
+
+/**
+ * THE WHOLE REQUEST PATH, as a sequence. Named once so every case below asserts the same list and
+ * a change to the path has to be made deliberately, in one place, rather than absorbed test by
+ * test. #795 added the middle items: the throttle's counter used to be a process-local Map, which
+ * made the published cap a fiction as soon as a second instance existed.
+ *
+ * Those two entries ARE that counter's transaction — one statement that locks every bucket and
+ * reads it, one that writes every bucket back. Both are keyed on strings normalised before they
+ * were hashed, so both cost the same for an address with an account, one on a list, and one
+ * nobody has ever heard of; and both are RECORDED, so a query added inside the limiter that
+ * branched on the address would change this list and fail every case below.
+ */
+const REQUEST_PATH = ["headers", "db:raw.$queryRaw", "db:raw.$executeRaw", "enqueue"] as const;
 
 // ── ① the request path is blind to what kind of address it was handed ────────────────────────
 describe("#678 r3 ① — the request performs identical work for every kind of address", () => {
@@ -179,9 +214,14 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     expect(db.recorded).toEqual(env.recorded);
     expect(unknown.recorded).toEqual(env.recorded);
 
-    // And what that sequence IS: read the caller, hand over an opaque job. No allowlist lookup,
-    // no database call, no send — none of the work whose cost depends on the answer.
-    expect(env.recorded).toEqual(["headers", "enqueue"]);
+    // And what that sequence IS: read the caller, consult ONE shared counter, hand over an opaque
+    // job. No allowlist lookup, no token mint, no send — none of the work whose cost depends on
+    // the answer.
+    //
+    // #795 — consulting the shared counter is the only storage this path touches, and it is
+    // address-blind by construction. That its statements appear in ALL THREE traces, in the same
+    // positions, is the assertion above.
+    expect(env.recorded).toEqual([...REQUEST_PATH]);
 
     // The answers are the same too, which was round 1's claim and is still required.
     expect(env.answer).toEqual(NEUTRAL);
@@ -205,7 +245,7 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
 
     // RED before r4: the over-budget presses recorded ["headers"] — no "enqueue" at all.
     for (const recorded of [...inBudget, ...overBudget]) {
-      expect(recorded).toEqual(["headers", "enqueue"]);
+      expect(recorded).toEqual([...REQUEST_PATH]);
     }
     // …and the throttle really did bite, so the sameness is not vacuous: the address budget is
     // 5, so exactly five of the eight presses put mail in flight.
@@ -261,7 +301,7 @@ describe("#678 r3 ③ — the request answers while the email is still in flight
     const result = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
     expect(result).toEqual(NEUTRAL);
     // Nothing about the job had even STARTED at that point — the queue drains on a macrotask.
-    expect(trace).toEqual(["headers", "enqueue"]);
+    expect(trace).toEqual([...REQUEST_PATH]);
 
     await sendStarted;
     let settled = false;
@@ -334,10 +374,11 @@ describe("#678 r3 — Better Auth's own endpoint answers every address identical
     expect(known.status).toBe(200);
     expect(stranger.status).toBe(known.status);
     expect(await stranger.json()).toEqual(await known.json());
-    // The endpoint takes the same four steps the login page does — no `headers()` here, because
-    // the caller's headers arrived on the Request itself.
+    // The endpoint takes the same four steps the login page does — minus `headers()`, because the
+    // caller's headers arrived on the Request itself. Derived from REQUEST_PATH rather than
+    // restated, so a change to the path cannot leave the two doors describing different shapes.
     expect(strangerTrace).toEqual(knownTrace);
-    expect(knownTrace).toEqual(["enqueue"]);
+    expect(knownTrace).toEqual(REQUEST_PATH.filter((step) => step !== "headers"));
   });
 });
 

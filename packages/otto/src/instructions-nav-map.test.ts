@@ -26,8 +26,8 @@
  *       所以这把尺子不认字符,认**形状**:名字后面凡是「非字母非数字非空白」的连接符
  *       (句末标点 `.,;!?` 除外)再接一个大写词,一律算拼路。归一化字符族只用来让报错
  *       好读,不再承担封闭性。
- *   (d) **两个合法单段名只隔空白相邻** = 不写符号也能拼(`CRM Library`)。地图上真实存在
- *       的组合(`CRM Segments` = `CRM › Segments`)放行,其余变红。
+ *   (d) **两个合法单段名只隔空白相邻** = 不写符号也能拼(`Customers Library`)。地图上真实
+ *       存在的组合(`Workspace Library` = `Workspace › Library`)放行,其余变红。
  *
  * ③ 的做法:用 **TypeScript AST**(`ts.createSourceFile`)取出每一条**模型看得见**的字符串
  * 字面量,再扫导航标签。r2 的手搓状态机被 r3 判官 [P2-1] 判死:嵌套模板串里插值内的
@@ -35,7 +35,7 @@
  * 是节点,照样被看见。
  *
  * ④ 的界线(r3 判官 [P1] 划定,已核真):`Create a Campaign container` 是**正当业务句**,
- * 不动;`CRM page` / `Campaign UI` / `Contacts pages` 是**界面引用**,改名必漂 —— 必须走权威
+ * 不动;`Customers page` / `Campaign UI` / `Contacts pages` 是**界面引用**,改名必漂 —— 必须走权威
  * 或改写成不指界面的说法。所以尺子是「**导航标签 + UI/page(s)/screen/tab(s)**」这个形状,
  * 不是「出现了标签就红」。
  *
@@ -46,7 +46,7 @@
  *   逮不到。这是为了不误伤 `the user's Library — it is $0` 这类正当英语。
  * · ②只查右延伸,不查左延伸(`My Settings › Connections`):左边多一个词构不成一个新地方。
  * · ③的扫描面是 `instructions.ts` 与 `connection-copy.ts`(它们每一次出现都是在指地方);
- *   技能文件里 `Create`/`Campaign`/`CRM` 同时是业务名词,一刀切会误伤,技能侧由 ②④ 覆盖。
+ *   技能文件里 `Create`/`Campaign`/`Customers` 同时是业务名词,一刀切会误伤,技能侧由 ②④ 覆盖。
  * · 标签自身不可能伪造出一层:core 侧钉的是**字符白名单**(navigation.test.ts)。
  */
 import { readFileSync, readdirSync } from "node:fs";
@@ -127,12 +127,12 @@ const SPLICED_ONTO_BARE_LABEL = new RegExp(
   "u",
 );
 /**
- * (d) 两个**单段**合法名只隔空白相邻 —— 不写任何符号的拼路(判官 r3 [P2-2]②:`CRM Library`)。
+ * (d) 两个**单段**合法名只隔空白相邻 —— 不写任何符号的拼路(判官 r3 [P2-2]②:`Customers Library`)。
  *
  * 注意这里认的是**单段名**(分组名 + 组内项名 + 顶层名 + 助手名),不是 navPointableNames()
  * ——「Library」自己不在可指名单里(可指的是 `Workspace › Library`),正是因此它才会在残留里
- * 留下来给人拼。判定标准由判官指定:拼起来是地图上真有的那条路就放行(`CRM Segments` =
- * `CRM › Segments`,同时也是技能描述里的正当业务说法),否则红。
+ * 留下来给人拼。判定标准由判官指定:拼起来是地图上真有的那条路就放行(`Workspace Library`
+ * = `Workspace › Library`),否则红。
  */
 const SINGLE_SEGMENT_NAMES = new RegExp(
   `(?<![A-Za-z])(?:${[...EVERY_LABEL].sort((a, b) => b.length - a.length).map(escapeRegex).join("|")})(?![A-Za-z])`,
@@ -287,7 +287,7 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
       "Settings › Schedule", // 子项真,组错了
       "Workspace › Schedules", // 差一个字母
       "Dashboard › Overview", // 整条都是编的
-      "CRM › Inbox › Templates", // 编出来的第三层
+      "Workspace › Schedule › Templates", // 编出来的第三层
     ];
     for (const place of invented) {
       expect(
@@ -342,13 +342,14 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
 
   // r3 判官 [P2-2]②:不写任何符号,靠两个合法单段名相邻也能拼出一条不存在的路。
   it("不写符号的拼路同样逮得住,地图上真有的组合放行", () => {
-    for (const spliced of ["CRM Library", "Settings Analytics", "Workspace Connections", "CRM Discover"]) {
+    // #792 起 CRM 组已折叠成 Customers 这一格,所以拼路样本改用当下树上的真名字。
+    for (const spliced of ["Customers Library", "Settings Analytics", "Workspace Connections", "Customers Discover"]) {
       expect(splicedPairs(`Point them to ${spliced}.`), `拼路「${spliced}」必须被逮住`).not.toEqual([]);
       expect(linesNamingUnmappedPlaces(`Point them to ${spliced}.`)).toHaveLength(1);
     }
-    // 地图上真实存在的组合 = 白名单(判官指定):`CRM Segments` 就是 `CRM › Segments`,
-    // 而它同时是技能描述里的正当业务说法,不许误伤。
-    for (const real of ["CRM Segments", "CRM Broadcasts", "Workspace Analytics", "Settings Preferences"]) {
+    // 地图上真实存在的组合 = 白名单(判官指定):`Workspace Library` 就是 `Workspace › Library`,
+    // 拼起来正是地图上那条路,不许误伤。
+    for (const real of ["Workspace Library", "Settings Connections", "Workspace Analytics", "Settings Preferences"]) {
       expect(splicedPairs(`Read the user's ${real} here.`), `真组合「${real}」不该被逮`).toEqual([]);
     }
   });
@@ -377,7 +378,7 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
     );
     // 判官核真过的正当业务句:业务名词跟在板块名后面,不是拼路。
     expect(linesNamingUnmappedPlaces("Create a Campaign container; propose, update, remove")).toEqual([]);
-    expect(linesNamingUnmappedPlaces("update only: exact CRM Segment id returned by readSegments")).toEqual(
+    expect(linesNamingUnmappedPlaces("update only: exact Customers Segment id returned by readSegments")).toEqual(
       [],
     );
   });
@@ -444,7 +445,8 @@ describe("#802 ③ 源码里一个地名都不许手打(判官 r1 [P1-1] / r3 [P
 
 describe("#802 ④ 没有人指着某个界面说话(r3 判官 [P1])", () => {
   // 判官 AST 扫出来六处:`CRM page`、`CRM UI`、`Campaign UI`、`Campaign pages`、
-  // `Contacts pages`、`CRM page`。它们是**模型看得见**的手写界面引用,改名必漂 —— 与 r1 的
+  // `Contacts pages`、`CRM page`(#792 折叠后 `CRM`/`Contacts` 不再是导航标签,样本改用
+  // 当下的标签,钉的形状不变)。它们是**模型看得见**的手写界面引用,改名必漂 —— 与 r1 的
   // `Campaign plan dates` 同根。②那几把尺子只认分隔符/连接符/路径,看不见它们。
   //
   // 界线由判官划定并已核真:`Create a Campaign container` 是正当业务句,不动;
@@ -473,12 +475,14 @@ describe("#802 ④ 没有人指着某个界面说话(r3 判官 [P1])", () => {
   it("尺子逮得住判官点名的六处原文,放得过正当业务句", () => {
     // 判官 r3 [P1] 的六处,逐条验红。
     for (const reference of [
-      "through the same validated, owner-scoped action layer as the CRM page.",
-      "through the same authenticated actions as the CRM UI.",
+      "through the same validated, owner-scoped action layer as the Customers page.",
+      "through the same authenticated actions as the Customers UI.",
       "$0 internal planning writes through the same owner-scoped actions as the Campaign UI.",
       "through the same owner-scoped actions as the Campaign pages.",
-      "through the same owner-scoped actions as the Contacts pages.",
-      "through the same owner-scoped action layer as the CRM page.",
+      // #792:`Contacts` 折叠后不再是导航标签,所以这一处判官原文换成当下的标签,
+      // 保住它钉的那个**形状**(标签 + 复数 pages)。
+      "through the same owner-scoped actions as the Customers pages.",
+      "through the same owner-scoped action layer as the Customers page.",
       // 同族的其它写法:
       "open the Schedule screen",
       "the Library tab",
@@ -488,7 +492,7 @@ describe("#802 ④ 没有人指着某个界面说话(r3 判官 [P1])", () => {
     // 判官核真过的正当业务句,以及与我们界面无关的第三方名词,一律不许误伤。
     for (const legit of [
       "Create a Campaign container; propose, update, remove, or mark approved a plan entry",
-      "Read the user's CRM Segments through the same owner-scoped action layer",
+      "Read the user's Customers Segments through the same owner-scoped action layer",
       "Lists the owner's connected Facebook Pages so Otto can pick one when building an ad",
       "use only ids returned by list-meta-pages; never invent a pageId",
       "the same owner-scoped actions the merchant's own screens use",
@@ -530,7 +534,9 @@ describe("#802 双面:商家问路,地图里真有一条能答的入口", () => 
     { ask: "Where did my video go?", key: "library", cue: /video/i },
     { ask: "When is this going out?", key: "schedule", cue: /posted/i },
     { ask: "How many credits do I have left?", key: "billing", cue: /credits/i },
-    { ask: "Where do I answer a customer?", key: "crm-inbox", cue: /reply/i },
+    // #792:消息渠道没通电,Inbox 那扇门已折进 Customers 预览页 —— 所以这里问的是
+    // 折叠之后 Otto 真答得出的那件事:客户档案在哪。
+    { ask: "Where do I keep what I know about a customer?", key: "customers", cue: /record/i },
     { ask: "What do you remember about my shop?", key: "brand", cue: /remember/i },
   ];
 

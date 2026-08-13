@@ -20,12 +20,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
-  CHANNEL_CONNECT_UNAVAILABLE_NOTE,
   channelConnectionFrom,
   channelConnectionHeadline,
   channelConnectionIsConfirmedAbsent,
   type ChannelAccountsResult,
 } from "@/lib/crm-channel-connection";
+import { MESSAGING_STATUS_CANNOT_CONNECT } from "@fikirtive/core/messaging-status";
 import { channelLabel } from "@/lib/crm-labels";
 import {
   attentionPresentation,
@@ -207,7 +207,7 @@ function InboxWorkspace({
           <Unplug className="mt-0.5 size-4 shrink-0" />
           <span>
             {channelConnectionHeadline(connection)} Conversations shown here are internal records — none reflect live customer traffic.
-            {channelConnectionIsConfirmedAbsent(connection) ? ` ${CHANNEL_CONNECT_UNAVAILABLE_NOTE}` : ""}
+            {channelConnectionIsConfirmedAbsent(connection) ? ` ${MESSAGING_STATUS_CANNOT_CONNECT}` : ""}
           </span>
         </div>
 

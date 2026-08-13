@@ -36,6 +36,8 @@ const SURFACES = [
   { ticket: "#685", path: "/campaign", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685", path: "/campaign/trends", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685", path: "/campaign/workbench", topAnchor: "a:has-text('Return to Otto')" },
+  // #792 —— CRM 折叠之后,商家进 CRM 先落在这一页,所以它也进 375px 名单。
+  { ticket: "#792", path: "/crm", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685/#730", path: "/crm/inbox", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685/#730", path: "/crm/broadcasts", topAnchor: "a:has-text('Return to Otto')" },
   { ticket: "#685", path: "/crm/templates", topAnchor: "a:has-text('Return to Otto')" },
