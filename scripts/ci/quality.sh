@@ -964,10 +964,10 @@ echo "quality: using isolated database $local_database"
 # what a gate is, so the `tests` leg is the wall-clock floor until that suite itself
 # gets faster.
 #
-# Per-leg wall time across all three runs of the split so far (CI, 2026-08-11, one
-# ephemeral VM each): tests 454-746s ← the floor, and the only leg that moves; build
-# 190-220s, typecheck 162-206s, lint 142-149s, checks 100-116s. 472-767s of wall clock
-# — plan for ~13 min, not for the best run — against ~18-20 min for the old single job.
+# Per-leg wall time across every green run of the split so far (CI, one ephemeral VM
+# each): tests 454-746s ← the floor, and the only leg that moves; build 190-220s,
+# typecheck 154-206s, lint 142-151s, checks 100-116s. 472-767s of wall clock — plan
+# for ~13 min, not for the best run — against ~18-20 min for the old single job.
 # Per-gate, from `pnpm quality` on a dev laptop: packages build 82s — every leg pays
 # it, it is the prerequisite — typecheck 212s, lint 78s, PR-scope self-test 16s,
 # prisma migrate deploy 16s, otto catalog 7s, schema drift 6s, fences and margin

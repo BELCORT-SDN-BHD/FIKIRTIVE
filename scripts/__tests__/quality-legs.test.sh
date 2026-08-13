@@ -261,11 +261,13 @@ try_parser "node + js-yaml" \
 
 wf() { printf '%s' "$workflow_json" | jq "$@"; }
 
-# Every `quality.sh --leg X` this workflow actually runs, as `job<TAB>leg` lines,
-# read out of the parsed `run:` scripts. Shell comments inside those scripts are
-# stripped first, for the same reason YAML comments never reach here: a leg named
-# in a comment is a leg nobody runs. (Stripping from an unquoted `#` can only ever
-# hide an invocation, never invent one — worst case it fails loud.)
+# Every `quality.sh --leg X` this workflow actually runs, as `job<TAB>leg<TAB>line`
+# lines, read out of the parsed `run:` scripts. Shell comments inside those scripts
+# are stripped first, for the same reason YAML comments never reach here: a leg
+# named in a comment is a leg nobody runs. (Stripping from an unquoted `#` can only
+# ever hide an invocation, never invent one — worst case it fails loud.) The line
+# itself is carried along, whitespace-normalised, because WHAT ELSE is on it
+# decides whether the leg's verdict survives the shell.
 leg_invocations="$(wf -r '
   .jobs
   | to_entries[]
@@ -274,9 +276,11 @@ leg_invocations="$(wf -r '
   | (.run // empty)
   | split("\n")[]
   | sub("(^|[ \t])#.*$"; "")
-  | [scan("--leg[ \t]+([A-Za-z][A-Za-z0-9_-]*)")]
+  | gsub("[ \t]+"; " ") | gsub("^ | $"; "")
+  | . as $line
+  | [scan("--leg ([A-Za-z][A-Za-z0-9_-]*)")]
   | flatten[]
-  | "\($job)\t\(.)"
+  | "\($job)\t\(.)\t\($line)"
 ')"
 [[ -n "$leg_invocations" ]] || fail "ci.yml runs no legs at all — every gate would be skipped"
 
@@ -284,7 +288,9 @@ invoked_legs=()
 while IFS= read -r invocation; do
   [[ -n "$invocation" ]] || continue
   job="${invocation%%$'\t'*}"
-  leg="${invocation##*$'\t'}"
+  rest="${invocation#*$'\t'}"
+  leg="${rest%%$'\t'*}"
+  line="${rest#*$'\t'}"
   # The fan-in judges each leg as `needs.<leg>.result`, so the job that runs a leg
   # has to BE that leg. A job called `checks` running `--leg lint` reports lint's
   # outcome under the name `checks`, and the checks gates never run at all.
@@ -292,6 +298,12 @@ while IFS= read -r invocation; do
     || fail "ci.yml job '$job' runs 'quality.sh --leg $leg' — the fan-in reads needs.$job.result, so it would report the '$leg' gates under the name '$job' while leg '$job' never ran"
   contains "$leg" "${declared_legs[@]}" \
     || fail "ci.yml runs 'quality.sh --leg $leg', which quality.sh does not declare — that job would die on an unknown leg"
+  # Nothing may share the line. `pnpm quality --leg tests || true` launches the leg,
+  # runs every gate, prints every failure — and hands the job a zero exit, so the
+  # leg is green, the fan-in is satisfied and `quality` merges the break. A parser
+  # sees that line perfectly well; only comparing the whole command notices it.
+  [[ "$line" == "pnpm quality --leg $leg" ]] \
+    || fail "ci.yml's '$leg' leg must run exactly 'pnpm quality --leg $leg', found '$line' — anything else on that line can swallow the leg's exit status, and a leg that cannot fail is not a gate"
   invoked_legs+=("$leg")
 done < <(printf '%s\n' "$leg_invocations")
 
