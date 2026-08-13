@@ -44,8 +44,20 @@ quality.sh --leg typecheck | --leg tests | --leg build | --leg lint | --leg chec
 「ci.yml 跑的腿名 = quality.sh 声明的腿名」，它本身也是一道闸。它手写一份独立的
 「闸 → 腿」清单当真值：增删闸、改闸名、把闸挪到别的腿，都必须在同一个 commit 里
 改那份清单，否则这道闸红。它读 ci.yml 时按 YAML 语义解析（用本机已有的 PyYAML /
-ruby / yq / js-yaml 任一），注释里的腿名和接线一律不算数——被注释掉的闸不会跑。每条
-腿的命令还必须一字不差是 `pnpm quality --leg <腿名>`：同一行多出一个 `|| true`，这
-条腿就再也红不起来了。
+ruby / yq / js-yaml 任一），注释里的腿名和接线一律不算数——被注释掉的闸不会跑。
+
+它还校验「这条腿真的会跑，而且跑挂了会传出去」，因为「文件里写着这条命令」不等于
+「这条命令执行了」：每条腿的 `run` **整段脚本**必须一字不差是
+`pnpm quality --leg <腿名>`（多一个 `|| true`、或者被 `if false; then … fi` 包起来，
+这条腿就再也红不起来）；`package.json` 里 `quality` 这条 script 也必须一字不差是
+`bash scripts/ci/quality.sh`（`pnpm quality` 最终跑的是它）；每个 job 的 `if:` 必须
+和自测里手写的条件逐字相同（job 没跑报的是 `skipped`，不是 `failure`）；任何 step
+都不许带 `if`、`continue-on-error`、`shell`、`working-directory`，任何 job 都不许带
+`continue-on-error`、`strategy`、`defaults`。所以在 ci.yml 里新增 job、改 job 的
+`if:`，同样要在同一个 commit 里改那份手写清单。
+
+扇入 job 的脚本不只被读，还会被自测**真跑一遍**：把它从 ci.yml 里解析出来，用五条腿
+各种非绿组合喂进去，验证它确实判失败。只读文件只能证明比较写在那里，跑一遍才能证明
+比较被执行到。
 
 不要把重复执行同一批闸的 job 或第二套本地命令再加回来。

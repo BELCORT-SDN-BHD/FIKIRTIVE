@@ -38,13 +38,44 @@
 #      list; no leg is an empty green job.
 #   3. WIRING — .github/workflows/ci.yml launches exactly the legs quality.sh
 #      declares, no more and no fewer; the job that runs a leg IS that leg, because
-#      the fan-in judges it as `needs.<leg>.result`; each leg's command is exactly
-#      `pnpm quality --leg <leg>` and nothing else, because anything sharing that
-#      line can swallow the leg's exit status; the fan-in waits on every leg, reads
-#      exactly one result variable per leg, each fed by that leg's own job; and the
-#      fan-in job is still called `quality`, byte for byte, because that string is
-#      the required check in the protect-main ruleset (bypass_actors empty) and a
+#      the fan-in judges it as `needs.<leg>.result`; each leg's job runs exactly the
+#      script `pnpm quality --leg <leg>` and nothing else, because anything sharing
+#      that script can swallow the leg's exit status; the fan-in waits on every leg,
+#      reads exactly one result variable per leg, each fed by that leg's own job; and
+#      the fan-in job is still called `quality`, byte for byte, because that string
+#      is the required check in the protect-main ruleset (bypass_actors empty) and a
 #      rename freezes all merges.
+#
+#      AND THE SHAPE OF THE JOB AROUND THAT SCRIPT — because a command that is
+#      present in the file is not a command that runs. Review of #874 found three
+#      more wrong-PASSes of exactly that kind, and not one of them alters the leg's
+#      command by a single character:
+#
+#        - `if: ${{ false }}` on the step — the command never executes, and a job
+#          all of whose steps succeeded (because none of them ran anything) is a
+#          green job;
+#        - `continue-on-error: true` on the step — the leg fails, loudly, in the log,
+#          and the job still reports success;
+#        - the command wrapped in `if false; then … fi` inside the script — never
+#          executed, and under the Bash semantics Actions runs `run:` with, a script
+#          whose last thing was a false `if` exits 0.
+#
+#      Each of the three leaves `needs.<leg>.result` at `success`, and the fan-in —
+#      which can read nothing but that result — has nothing to object to. So the
+#      WHOLE run script is compared against what a leg is supposed to run, not a line
+#      found inside it; every job's `if:` is compared against a hand-written
+#      condition (expected_jobs below); and no step of any job in this workflow may
+#      carry `if`, `continue-on-error`, `shell` or `working-directory` — the four keys
+#      that decide whether a command runs at all and whether its failure reaches the
+#      job — nor may any job carry `continue-on-error`, `strategy` or `defaults`.
+#
+#      The fan-in's own script is not only read, it is RUN, against a synthetic
+#      environment, once for every way each leg can come back un-green. It is the
+#      same three shapes one level up: a fan-in step that is skipped, or excused, or
+#      whose comparisons sit inside a branch nothing takes, reports success while
+#      judging nothing — and `quality` is the required check, so that is a green
+#      merge button over a red repository. Reading the file says the comparison is
+#      written. Only running it says the comparison is reached.
 #
 #      ci.yml is PARSED AS YAML here, never scanned as text. Review of #874 showed
 #      what the difference is worth: a text `grep` for `--leg` over the whole file
@@ -107,6 +138,12 @@ normalize_legs() {
   printf '%s\n' "${1//,/ }" | tr ' ' '\n' | grep -v '^$' | LC_ALL=C sort | paste -sd, -
 }
 
+# The environment variable the fan-in reads a leg's result from. One definition, used
+# everywhere the name is needed — three copies of this would be three chances to drift.
+leg_result_var_for() {
+  printf 'LEG_RESULT_%s' "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -- '-' '_')"
+}
+
 # ── the hand-written truth (see 1. in the header) ─────────────────────────────
 # The legs, and every gate with the leg it runs on. Order is irrelevant — both
 # comparisons sort — but names and legs are not.
@@ -128,6 +165,33 @@ expected_gates=(
   "tests|tests"
   "build|web build"
 )
+
+# Every job ci.yml may contain, with the exact `if:` it must carry — hand-written
+# for the same reason the gate map is, and for a sharper one. `if:` is the single
+# key that decides whether a job's commands run AT ALL, and a job that does not run
+# reports `skipped`, never `failure`. So a drifted condition is not a broken build,
+# it is a gate that quietly stopped being one. Both directions are compared: a job
+# that vanishes from ci.yml and a job that appears in it are each red until someone
+# states the change here, in the same commit.
+#
+# `<job>|` with nothing after the bar means "this job must carry no `if:` at all".
+expected_jobs=(
+  "scope|github.event_name != 'pull_request' || github.event.pull_request.draft == false"
+  "typecheck|needs.scope.outputs.code != 'false'"
+  "tests|needs.scope.outputs.code != 'false'"
+  "build|needs.scope.outputs.code != 'false'"
+  "lint|needs.scope.outputs.code != 'false'"
+  "checks|needs.scope.outputs.code != 'false'"
+  "quality|always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)"
+)
+
+# Keys that decide whether a step's command is executed, and whether its failure is
+# allowed to reach the job. None of them belongs anywhere in this workflow; each of
+# them, on the one step that runs a leg, is a silent wrong-PASS.
+forbidden_step_keys=(if continue-on-error shell working-directory)
+# The same question at job level. `defaults` carries `run.shell`, which replaces the
+# interpreter and the flags every `run:` below it is executed with.
+forbidden_job_keys=(continue-on-error strategy defaults)
 
 # ── the legs quality.sh declares ──────────────────────────────────────────────
 declaration="$(grep -E '^quality_legs=\(.*\)$' "$quality_sh" || true)"
@@ -263,26 +327,26 @@ try_parser "node + js-yaml" \
 
 wf() { printf '%s' "$workflow_json" | jq "$@"; }
 
-# Every `quality.sh --leg X` this workflow actually runs, as `job<TAB>leg<TAB>line`
-# lines, read out of the parsed `run:` scripts. Shell comments inside those scripts
-# are stripped first, for the same reason YAML comments never reach here: a leg
-# named in a comment is a leg nobody runs. (Stripping from an unquoted `#` can only
-# ever hide an invocation, never invent one — worst case it fails loud.) The line
-# itself is carried along, whitespace-normalised, because WHAT ELSE is on it
-# decides whether the leg's verdict survives the shell.
+# Every `quality.sh --leg X` this workflow actually runs, as `job<TAB>step index<TAB>leg`
+# records, read out of the parsed `run:` scripts. Shell comments inside those scripts
+# are stripped BEFORE the search, for the same reason YAML comments never reach here:
+# a leg named in a comment is a leg nobody runs. (Stripping from an unquoted `#` can
+# only ever hide an invocation, never invent one — worst case it fails loud.) What
+# is carried forward is the step's ADDRESS, not the matching line, because the line
+# is not what the runner executes: the whole script is, and the rest of it decides
+# whether the leg's verdict survives.
 leg_invocations="$(wf -r '
   .jobs
   | to_entries[]
   | .key as $job
-  | (.value.steps // [])[]
-  | (.run // empty)
-  | split("\n")[]
-  | sub("(^|[ \t])#.*$"; "")
-  | gsub("[ \t]+"; " ") | gsub("^ | $"; "")
-  | . as $line
+  | (.value.steps // []) | to_entries[]
+  | .key as $index
+  | (.value.run // empty)
+  | split("\n") | map(sub("(^|[ \t])#.*$"; "")) | join("\n")
   | [scan("--leg ([A-Za-z][A-Za-z0-9_-]*)")]
-  | flatten[]
-  | "\($job)\t\(.)\t\($line)"
+  | flatten
+  | unique[]
+  | "\($job)\t\($index)\t\(.)"
 ')"
 [[ -n "$leg_invocations" ]] || fail "ci.yml runs no legs at all — every gate would be skipped"
 
@@ -291,8 +355,8 @@ while IFS= read -r invocation; do
   [[ -n "$invocation" ]] || continue
   job="${invocation%%$'\t'*}"
   rest="${invocation#*$'\t'}"
-  leg="${rest%%$'\t'*}"
-  line="${rest#*$'\t'}"
+  index="${rest%%$'\t'*}"
+  leg="${rest#*$'\t'}"
   # The fan-in judges each leg as `needs.<leg>.result`, so the job that runs a leg
   # has to BE that leg. A job called `checks` running `--leg lint` reports lint's
   # outcome under the name `checks`, and the checks gates never run at all.
@@ -300,12 +364,26 @@ while IFS= read -r invocation; do
     || fail "ci.yml job '$job' runs 'quality.sh --leg $leg' — the fan-in reads needs.$job.result, so it would report the '$leg' gates under the name '$job' while leg '$job' never ran"
   contains "$leg" "${declared_legs[@]}" \
     || fail "ci.yml runs 'quality.sh --leg $leg', which quality.sh does not declare — that job would die on an unknown leg"
-  # Nothing may share the line. `pnpm quality --leg tests || true` launches the leg,
-  # runs every gate, prints every failure — and hands the job a zero exit, so the
-  # leg is green, the fan-in is satisfied and `quality` merges the break. A parser
-  # sees that line perfectly well; only comparing the whole command notices it.
-  [[ "$line" == "pnpm quality --leg $leg" ]] \
-    || fail "ci.yml's '$leg' leg must run exactly 'pnpm quality --leg $leg', found '$line' — anything else on that line can swallow the leg's exit status, and a leg that cannot fail is not a gate"
+  # THE WHOLE SCRIPT, byte for byte, against the one command a leg is supposed to be.
+  # Not the line the leg name was found on — the script around that line is shell, and
+  # shell decides both whether the line is reached and what the step's exit status ends
+  # up being. `pnpm quality --leg tests || true` launches the leg, runs every gate,
+  # prints every failure, and hands the job a zero exit. `if false; then pnpm quality
+  # --leg tests; fi` never launches it at all and also exits zero. Both leave a line
+  # that reads perfectly; only the whole script tells them from the real thing.
+  #
+  # The expectation is a literal written here, built from a hand-written leg name —
+  # nothing about it is read back out of ci.yml, so agreeing with ci.yml is not
+  # something it can do by construction.
+  run_script="$(wf -r --arg j "$job" --argjson i "$index" '.jobs[$j].steps[$i].run')"
+  expected_run="pnpm quality --leg $leg"
+  if [[ "$run_script" != "$expected_run" ]]; then
+    echo "quality-legs: ci.yml's '$leg' leg must run exactly this script, and nothing else:" >&2
+    printf '    %s\n' "$expected_run" >&2
+    echo "  what step #$((index + 1)) of job '$job' actually runs:" >&2
+    printf '%s\n' "$run_script" | sed 's/^/    /' >&2
+    fail "the '$leg' leg's run script is not exactly 'pnpm quality --leg $leg' — anything else in that script can stop the leg from running, or stop its failure from reaching the job, and a leg that cannot fail is not a gate"
+  fi
   invoked_legs+=("$leg")
 done < <(printf '%s\n' "$leg_invocations")
 
@@ -313,6 +391,98 @@ for leg in "${expected_legs[@]}"; do
   launched="$(count_of "$leg" ${invoked_legs[@]+"${invoked_legs[@]}"})"
   [[ "$launched" == "1" ]] \
     || fail "ci.yml must run 'quality.sh --leg $leg' exactly once, found $launched — a leg CI stops launching is a set of gates that stops running while 'quality' stays green"
+done
+
+# The last link in the chain ci.yml starts. `pnpm quality` is a NAME; what it
+# resolves to lives in package.json, and everything above this line would be just as
+# green if that line said `true`. `bash scripts/ci/quality.sh || true` there greens
+# all five legs at once — every leg's script still byte-perfect, every condition
+# still holding, the fan-in still handed five honest `success` results. It is the
+# same wrong-PASS as `|| true` in ci.yml, one file further along, so it is pinned in
+# the same way: a literal, written here.
+package_json="$repo_root/package.json"
+[[ -r "$package_json" ]] || fail "cannot read $package_json"
+quality_script="$(jq -r '.scripts.quality // ""' "$package_json")"
+[[ "$quality_script" == "bash scripts/ci/quality.sh" ]] \
+  || fail "package.json's 'quality' script must be exactly 'bash scripts/ci/quality.sh', found '${quality_script:-<missing>}' — that is what every 'pnpm quality --leg …' in ci.yml resolves to, so anything else there is five legs running something that is not the gates"
+for hook in prequality postquality; do
+  [[ "$(jq -r --arg h "$hook" '(.scripts // {}) | has($h)' "$package_json")" == "false" ]] \
+    || fail "package.json defines a '$hook' script — a leg must run the gates and nothing else"
+done
+
+# ── 3b. and nothing may stop those scripts running, or eat their failure ──────
+# The command is right. Now: does it run, and does its failure arrive? Three keys
+# answer that, and all three are invisible in the command itself — `if:` (the step
+# or the job is skipped, and skipped is not failed), `continue-on-error:` (it failed
+# and the job says success anyway), and the shell the script is handed to (`shell:`
+# on a step, `defaults.run.shell` on a job or on the workflow, either of which
+# replaces both the interpreter and the flags it runs with). `working-directory:`
+# rides along with them, because a script that runs somewhere else is not the script
+# this file believes it is; `strategy:` because a matrix turns one job into several
+# under other names, and `needs.<leg>.result` then answers for none of them
+# individually.
+#
+# The rule is the whole workflow, not just the five legs, and that is not
+# thoroughness for its own sake: `quality` itself is a job whose step can be skipped
+# or excused, and `scope` is the job whose answer both the legs and the fan-in are
+# gated on.
+[[ "$(wf -r 'has("defaults")')" == "false" ]] \
+  || fail "ci.yml sets a workflow-level 'defaults:' — its 'run.shell' replaces the interpreter and the exit-status flags every script in this file is run with, including the five legs' and the fan-in's"
+
+# The job list itself, both directions, against the hand-written expectation.
+declared_jobs="$(wf -r '.jobs | keys_unsorted[]')"
+expected_job_names=()
+for pair in "${expected_jobs[@]}"; do expected_job_names+=("${pair%%|*}"); done
+while IFS= read -r job; do
+  [[ -n "$job" ]] || continue
+  contains "$job" "${expected_job_names[@]}" \
+    || fail "ci.yml has a job '$job' that this file does not expect — a new job in this workflow has to be stated in expected_jobs here, in the same commit, with the exact condition it runs under"
+done < <(printf '%s\n' "$declared_jobs")
+
+for pair in "${expected_jobs[@]}"; do
+  job="${pair%%|*}"
+  want_if="${pair#*|}"
+  wf -e --arg j "$job" '.jobs | has($j)' >/dev/null \
+    || fail "ci.yml no longer has a job '$job' — if removing it was intended, say so by editing expected_jobs in this file, in the same commit"
+
+  # The condition, byte for byte. A job that does not run is reported as `skipped`,
+  # and `skipped` is a result the fan-in can be made to accept (it is exactly what a
+  # docs-only PR looks like) — so a drifted `if:` is not a red build, it is a gate
+  # that stops being a gate without saying anything.
+  got_if="$(wf -r --arg j "$job" '.jobs[$j]["if"] // ""')"
+  [[ "$got_if" == "$want_if" ]] \
+    || fail "ci.yml job '$job' runs under 'if: ${got_if:-<none>}', this file expects 'if: ${want_if:-<none>}' — a job's condition decides whether its gates run at all, so a change to it has to be stated in expected_jobs here, in the same commit"
+
+  for key in "${forbidden_job_keys[@]}"; do
+    [[ "$(wf -r --arg j "$job" --arg k "$key" '.jobs[$j] | has($k)')" == "false" ]] \
+      || fail "ci.yml job '$job' sets '$key:' — that key decides whether this job's commands run, or whether their failure is reported, and no job in this workflow may carry it"
+  done
+
+  # A job with no steps runs nothing and reports success.
+  steps_len="$(wf -r --arg j "$job" '(.jobs[$j].steps // []) | length')"
+  (( steps_len > 0 )) \
+    || fail "ci.yml job '$job' has no steps — it would report success without running anything"
+
+  for key in "${forbidden_step_keys[@]}"; do
+    offenders="$(wf -r --arg j "$job" --arg k "$key" '
+      [ (.jobs[$j].steps // []) | to_entries[] | select(.value | has($k)) | "#\(.key + 1)" ] | join(", ")
+    ')"
+    [[ -z "$offenders" ]] \
+      || fail "ci.yml job '$job' has step(s) $offenders carrying '$key:' — that key decides whether the step's command is executed and whether its failure reaches the job, so no step in this workflow may carry it"
+  done
+
+  # A zero or negative timeout is a step or job that is killed before it can run.
+  # (It fails closed rather than passing, but it is the same family, and it is one
+  # jq query.)
+  [[ "$(wf -r --arg j "$job" '(.jobs[$j]["timeout-minutes"] // 1) | (type == "number" and . >= 1)')" == "true" ]] \
+    || fail "ci.yml job '$job' sets a 'timeout-minutes' that is not a positive number of minutes"
+  bad_step_timeouts="$(wf -r --arg j "$job" '
+    [ (.jobs[$j].steps // []) | to_entries[]
+      | select((.value["timeout-minutes"] // 1) | (type != "number" or . < 1))
+      | "#\(.key + 1)" ] | join(", ")
+  ')"
+  [[ -z "$bad_step_timeouts" ]] \
+    || fail "ci.yml job '$job' has step(s) $bad_step_timeouts with a 'timeout-minutes' that is not a positive number of minutes"
 done
 
 # The required status check, from the parsed file. A job's check name is its
@@ -363,7 +533,7 @@ while IFS= read -r pair; do
 done < <(printf '%s\n' "$leg_result_env")
 
 for leg in "${declared_legs[@]}"; do
-  var="LEG_RESULT_$(printf '%s' "$leg" | tr '[:lower:]' '[:upper:]' | tr -- '-' '_')"
+  var="$(leg_result_var_for "$leg")"
   wired="$(count_of "$var" ${env_keys[@]+"${env_keys[@]}"})"
   [[ "$wired" == "1" ]] \
     || fail "ci.yml's fan-in must set '$var' exactly once, found $wired — a leg whose result variable is missing or duplicated is a leg the fan-in cannot honestly judge"
@@ -379,10 +549,13 @@ done
 # And the comparisons, in the fan-in's own shell script. Whole lines, anchored at
 # both ends: a `leg_is` inside a shell comment starts with `#` and does not match,
 # and a trailing comment on a real one breaks the match rather than adding to it.
-fan_in_run="$(wf -r --arg j "$fan_in" '(.jobs[$j].steps // [])[] | .run // empty')"
+fan_in_run_steps="$(wf -r --arg j "$fan_in" '[ (.jobs[$j].steps // [])[] | select(has("run")) ] | length')"
+[[ "$fan_in_run_steps" == "1" ]] \
+  || fail "the fan-in job '$fan_in' must be exactly one 'run:' step, found $fan_in_run_steps — the verdict is one script, so that it can be run here as one script"
+fan_in_run="$(wf -r --arg j "$fan_in" '[ (.jobs[$j].steps // [])[] | select(has("run")) ][0].run')"
 [[ -n "$fan_in_run" ]] || fail "the fan-in job '$fan_in' runs no script at all"
 for leg in "${declared_legs[@]}"; do
-  var="LEG_RESULT_$(printf '%s' "$leg" | tr '[:lower:]' '[:upper:]' | tr -- '-' '_')"
+  var="$(leg_result_var_for "$leg")"
   compared="$(printf '%s\n' "$fan_in_run" | grep -cE "^[[:space:]]*leg_is[[:space:]]+${leg}[[:space:]]+\"\\\$\{${var}:-\}\"[[:space:]]*$" || true)"
   [[ "$compared" == "1" ]] \
     || fail "ci.yml's fan-in must compare leg '$leg' exactly once, as 'leg_is $leg \"\${${var}:-}\"', found $compared"
@@ -390,6 +563,90 @@ done
 compared_total="$(printf '%s\n' "$fan_in_run" | grep -cE '^[[:space:]]*leg_is[[:space:]]' || true)"
 [[ "$compared_total" == "${#declared_legs[@]}" ]] \
   || fail "ci.yml's fan-in makes $compared_total leg comparisons but quality.sh declares ${#declared_legs[@]} legs"
+
+# ── 3c. the fan-in's verdict, RUN ─────────────────────────────────────────────
+# Everything above this line reads the fan-in. Reading proves the comparisons are
+# written; it cannot prove they are REACHED. Put the same five comparisons inside
+# `if false; then … fi` and every grep above still matches, line for line, while the
+# step exits 0 having judged nothing — and `quality` is the required check, so that
+# is a green merge button over a red repository.
+#
+# So the real script, taken out of the parsed workflow, is executed here against a
+# synthetic environment: once for the run that must pass, and once for every way
+# each leg can come back un-green. It is cheap (echoes and string compares, no
+# network, no repo), and it is the only thing in this file that tests behaviour
+# rather than text.
+#
+# `bash -e` because that is what Actions hands a `run:` script on Linux by default,
+# and `env -i` because the script enumerates its own environment by prefix
+# (`${!LEG_RESULT_@}`) — a stray LEG_RESULT_* inherited from this shell would be a
+# finding the fan-in reported about us, not about ci.yml.
+# fan_in_exit <scope result> <scope code> <leg>=<result>… [NAME=VALUE…] → exit status
+fan_in_exit() {
+  local scope_result="$1" scope_code="$2"
+  shift 2
+  local env_args=(SCOPE_RESULT="$scope_result" SCOPE_CODE="$scope_code")
+  local pair
+  for pair in "$@"; do
+    if [[ "$pair" == LEG_RESULT_* ]]; then
+      env_args+=("$pair")
+    else
+      env_args+=("$(leg_result_var_for "${pair%%=*}")=${pair#*=}")
+    fi
+  done
+  local rc=0
+  env -i PATH="$PATH" "${env_args[@]}" bash -e -c "$fan_in_run" >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+
+# The environments a run can arrive in, built from the declared legs so that adding
+# a leg extends the drill instead of leaving a hole in it.
+every_leg_success=()
+every_leg_skipped=()
+for leg in "${declared_legs[@]}"; do
+  every_leg_success+=("$leg=success")
+  every_leg_skipped+=("$leg=skipped")
+done
+
+# The one shape that passes, in each of the two worlds the scope job can describe.
+[[ "$(fan_in_exit success true "${every_leg_success[@]}")" == "0" ]] \
+  || fail "ci.yml's fan-in FAILS a run where the scope found code and every leg succeeded — it would block every merge in the repository"
+[[ "$(fan_in_exit success false "${every_leg_skipped[@]}")" == "0" ]] \
+  || fail "ci.yml's fan-in FAILS a docs-only run where every leg was skipped — docs-only PRs would be unmergeable"
+
+# And every shape that must not. One leg at a time, so that a fan-in which judges
+# four legs and forgets the fifth is red on exactly the leg it forgot.
+for broken in "${declared_legs[@]}"; do
+  for bad_result in failure cancelled skipped ''; do
+    env_set=()
+    for leg in "${declared_legs[@]}"; do
+      if [[ "$leg" == "$broken" ]]; then env_set+=("$leg=$bad_result"); else env_set+=("$leg=success"); fi
+    done
+    [[ "$(fan_in_exit success true "${env_set[@]}")" != "0" ]] \
+      || fail "ci.yml's fan-in PASSES a run in which leg '$broken' reported '${bad_result:-<no result>}' — that leg's gates did not pass, and 'quality' is the check that says they did"
+  done
+  # The mirror image: on a docs-only run, a leg that ran anyway means the legs and
+  # the fan-in disagree about what this run was, and an unexplained run may not merge.
+  env_set=()
+  for leg in "${declared_legs[@]}"; do
+    if [[ "$leg" == "$broken" ]]; then env_set+=("$leg=success"); else env_set+=("$leg=skipped"); fi
+  done
+  [[ "$(fan_in_exit success false "${env_set[@]}")" != "0" ]] \
+    || fail "ci.yml's fan-in PASSES a docs-only run in which leg '$broken' ran anyway — the scope answer the legs read and the one this step read disagree"
+done
+
+# The scope job is the premise under both worlds; if it did not succeed, nothing
+# below it can be trusted, whatever the legs say.
+for bad_scope in failure cancelled skipped ''; do
+  [[ "$(fan_in_exit "$bad_scope" true "${every_leg_success[@]}")" != "0" ]] \
+    || fail "ci.yml's fan-in PASSES a run in which the scope job reported '${bad_scope:-<no result>}' — the legs were gated on an answer that was never given"
+done
+
+# And a result the fan-in was never told to judge must be rejected rather than
+# ignored: a sixth job wired into `needs` and into the variables, but not into the
+# comparisons, would be a gate whose outcome this step silently discards.
+[[ "$(fan_in_exit success true "${every_leg_success[@]}" LEG_RESULT_ROGUE=success)" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a run carrying a LEG_RESULT_* variable it does not judge — a leg wired in but never compared is a gate nobody reads"
 
 # ── 4. the router ─────────────────────────────────────────────────────────────
 # The real function, extracted from the real file — a copy in this test would
@@ -433,4 +690,4 @@ expect_router "test" "tests" skips
 expect_router "check" "tests,checks" skips
 expect_router "all" "typecheck" skips
 
-echo "quality-legs: OK — all $gate_count expected gates are in quality.sh on their expected legs, legs [${declared_legs[*]}] all covered there and all launched by ci.yml (read as YAML with $yaml_parser), fan-in check 'quality' judges each leg by name exactly once"
+echo "quality-legs: OK — all $gate_count expected gates are in quality.sh on their expected legs, legs [${declared_legs[*]}] all covered there and all launched by ci.yml (read as YAML with $yaml_parser) by a job that runs that leg's command and nothing else, under the conditions expected here and with no step allowed to skip it or excuse its failure, and the fan-in check 'quality' judges each leg by name exactly once — its own script run here against every way a leg can come back un-green"
