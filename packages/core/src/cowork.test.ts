@@ -56,3 +56,58 @@ describe("coworkTurnRequest referenceVideoGenerationIds", () => {
     expect(r.success).toBe(false);
   });
 });
+
+// #879 step 1 — Otto foundation schema pinning: position-only page-context fields.
+describe("coworkTurnRequest surface / subjectRef / outletId (#879 step 1)", () => {
+  const base = { projectId: "p1", text: "hi" };
+
+  it("are all optional (a normal turn omits them)", () => {
+    const r = coworkTurnRequest.safeParse(base);
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.surface).toBeUndefined();
+    expect(r.success && r.data.subjectRef).toBeUndefined();
+    expect(r.success && r.data.outletId).toBeUndefined();
+  });
+
+  it("accepts bounded values for all three", () => {
+    const r = coworkTurnRequest.safeParse({
+      ...base,
+      surface: "campaign",
+      subjectRef: "campaign_123",
+      outletId: "outlet_abc",
+    });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.surface).toBe("campaign");
+    expect(r.success && r.data.subjectRef).toBe("campaign_123");
+    expect(r.success && r.data.outletId).toBe("outlet_abc");
+  });
+
+  it("rejects an over-long surface", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, surface: "x".repeat(65) });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects an over-long subjectRef", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, subjectRef: "x".repeat(65) });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects an over-long outletId", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, outletId: "x".repeat(65) });
+    expect(r.success).toBe(false);
+  });
+
+  // Security boundary: actorId and visibility are IDENTITY columns — there is no
+  // client-facing field for them. `.strict()` on the object schema means the whole
+  // request is rejected (not silently stripped) if a caller sends them, so an
+  // over-claiming client cannot smuggle identity through this door at all.
+  it("rejects the whole request if the client tries to smuggle actorId", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, actorId: "user_someone_else" });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects the whole request if the client tries to smuggle visibility", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, visibility: "private" });
+    expect(r.success).toBe(false);
+  });
+});

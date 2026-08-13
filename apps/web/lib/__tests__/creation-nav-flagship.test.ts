@@ -109,6 +109,7 @@ describe("每一个目的地都有门,且 375px 抽屉里到得了", () => {
     "/campaign",
     "/crm",                     // Customers(#792:七扇 CRM 门收成这一扇预览门)
     "/otto?view=library",
+    "/otto?view=edit",          // #780 剪辑台:拼接/字幕/配乐的门
     "/otto?view=memory",        // Brand & products
     "/otto?view=templates",
     "/otto?view=discover",
