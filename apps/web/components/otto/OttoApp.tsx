@@ -123,9 +123,9 @@ export interface OttoAppProps {
   onboardingDismissed?: boolean;
 }
 
-export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections" | "schedule" | "analytics";
+export type OttoViewKey = "otto" | "stuff" | "library" | "edit" | "templates" | "discover" | "memory" | "account" | "connections" | "schedule" | "analytics";
 
-const OTTO_VIEW_KEYS = new Set<OttoViewKey>(["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"]);
+const OTTO_VIEW_KEYS = new Set<OttoViewKey>(["otto", "stuff", "library", "edit", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"]);
 
 function parseViewParam(raw: string | null): OttoViewKey {
   if (raw === "stuff") return "library";
