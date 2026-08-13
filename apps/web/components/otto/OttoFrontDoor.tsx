@@ -355,7 +355,8 @@ export function OttoFrontDoor({
             disabled={busy}
             placeholder="Describe what you want to make…"
             rows={3}
-            className="min-h-0 w-full resize-none rounded-none border-none bg-transparent px-5 py-4 text-[0.90625rem] text-foreground shadow-none outline-none leading-[1.5]"
+            // #920 判官 r1 P2 — same fixed-height guard as the Otto composers.
+            className="field-sizing-fixed min-h-0 w-full resize-none rounded-none border-none bg-transparent px-5 py-4 text-[0.90625rem] text-foreground shadow-none outline-none leading-[1.5]"
           />
           <div className="flex items-center justify-end border-t border-border px-4 py-3">
             <Button

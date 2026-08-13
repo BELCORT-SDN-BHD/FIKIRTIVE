@@ -1143,7 +1143,11 @@ function DayTimeline({
                     type="button"
                     variant="outline"
                     onClick={() => onEdit(post)}
-                    className="h-auto w-full max-w-full justify-start gap-2 rounded-[9px] border-border bg-secondary/40 px-2 py-1.5 text-left font-normal hover:bg-secondary"
+                    // #920 判官 r1 P2 — the parent is `flex flex-wrap` (multiple posts share
+                    // an hour row, side by side), not `flex-col`; `w-full` here forced every
+                    // entry onto its own line. Dropped — max-w-full (from the original bare
+                    // button) is enough to keep a long caption from overflowing the row.
+                    className="h-auto max-w-full justify-start gap-2 rounded-[9px] border-border bg-secondary/40 px-2 py-1.5 text-left font-normal hover:bg-secondary"
                   >
                     <Thumb item={firstMedia} size={28} />
                     <span className="inline-flex items-center justify-center w-5 h-5 rounded-[6px] bg-accent text-foreground shrink-0">
@@ -1563,7 +1567,10 @@ function Composer({
               disabled={!editable}
               rows={4}
               placeholder="Write your caption…"
-              className="min-h-0 w-full resize-none rounded-[10px] border-border bg-card px-3 py-2 text-[13px] shadow-none"
+              // #920 判官 r1 P2 — the caption box has a fixed row count; field-sizing-fixed
+              // stops ui/textarea's default field-sizing-content from growing it as the
+              // merchant types.
+              className="field-sizing-fixed min-h-0 w-full resize-none rounded-[10px] border-border bg-card px-3 py-2 text-[13px] shadow-none"
             />
             <Button
               type="button"

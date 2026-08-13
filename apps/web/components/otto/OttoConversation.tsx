@@ -442,7 +442,8 @@ export function OttoConversation({
               disabled={busy}
               placeholder="Reply to Otto…"
               rows={2}
-              className="min-h-0 w-full resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground shadow-none outline-none"
+              // #920 判官 r1 P2 — same fixed-height guard as OttoChatStream's composer.
+              className="field-sizing-fixed min-h-0 w-full resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground shadow-none outline-none"
             />
             <div className="flex justify-end px-3 py-2 border-t border-border">
               <Button
