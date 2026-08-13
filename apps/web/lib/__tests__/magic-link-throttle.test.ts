@@ -10,8 +10,20 @@
  *   · it says nothing about the address — INCLUDING through how much work it does when it
  *     refuses (r4: skipping the hand-over for an over-budget request was itself a timing
  *     difference, the same defect rebuilt inside its own fix),
- *   · and its own bookkeeping cannot be turned into a weapon: an attacker picks the keys, so the
- *     map must be bounded, and nothing may traverse it on the request thread.
+ *   · and its own bookkeeping cannot be turned into a weapon.
+ *
+ * #795 — WHAT MOVED, AND WHAT THIS FILE NOW OWNS.
+ *
+ * The buckets were a `Map` in this process, which made the published cap a fiction as soon as a
+ * second instance existed (two maps, twice the budget) and reset it on every deploy. They are
+ * rows in Postgres now, and this file runs against the REAL counter — no double, no stub — so
+ * every case below is the door's behaviour end to end.
+ *
+ * The cases that went away with the map are the ones that were ABOUT the map: its LRU ceiling,
+ * its hourly sweep, and the exact ring/sink layout of one bucket. Their properties did not
+ * disappear, they changed owner — `packages/db/src/rate-limit.test.ts` asserts, against the same
+ * real database, that a refusal charges nothing, that a refused request charges no bucket at all,
+ * that both verdicts write, and that expired rows are pruned.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -23,14 +35,8 @@ vi.mock("@/lib/better-auth/sender", () => ({
   },
 }));
 
-const {
-  acceptMagicLinkRequest,
-  __resetMagicLinkThrottleForTests,
-  __sweepMagicLinkThrottleForTests,
-  __magicLinkThrottleSizeForTests,
-  __magicLinkThrottleBucketForTests,
-  MAX_TRACKED_BUCKETS,
-} = await import("@/lib/better-auth/magic-link-request");
+const { acceptMagicLinkRequest, __resetMagicLinkThrottleForTests, MAX_PER_CALLER, MAX_PER_CALLER_PER_ADDRESS } =
+  await import("@/lib/better-auth/magic-link-request");
 
 /** The throttle's window. Not exported from the module — a test that wants to step over it has
  *  to name it, and naming it here keeps the cases readable. */
@@ -42,18 +48,18 @@ const press = (email: string, ip = "203.0.113.10", callbackURL = "/") =>
 /** Jobs the background will actually act on — the rest are handed over and dropped there. */
 const deliverable = () => queued.filter((j) => j.overBudget === false);
 
-beforeEach(() => {
+beforeEach(async () => {
   queued.length = 0;
-  __resetMagicLinkThrottleForTests();
+  await __resetMagicLinkThrottleForTests();
 });
 
 describe("the caller-and-address budget", () => {
-  it("marks five presses for one address deliverable, and the rest over budget", () => {
-    for (let i = 0; i < 6; i++) expect(press("owner@shop.test")).toBe("accepted");
-    expect(deliverable()).toHaveLength(5);
+  it("marks five presses for one address deliverable, and the rest over budget", async () => {
+    for (let i = 0; i < 6; i++) expect(await press("owner@shop.test")).toBe("accepted");
+    expect(deliverable()).toHaveLength(MAX_PER_CALLER_PER_ADDRESS);
   });
 
-  it("gives every case and whitespace variant of one address the SAME budget", () => {
+  it("gives every case and whitespace variant of one address the SAME budget", async () => {
     const variants = [
       "owner@shop.test",
       "OWNER@shop.test",
@@ -62,62 +68,64 @@ describe("the caller-and-address budget", () => {
       "  owner@shop.test  ",
       "OWNER@SHOP.TEST",
     ];
-    for (const email of variants) expect(press(email)).toBe("accepted");
+    for (const email of variants) expect(await press(email)).toBe("accepted");
     // RED without normalisation: six keys, six deliverable jobs.
     expect(deliverable()).toHaveLength(5);
     expect(new Set(queued.map((j) => j.email))).toEqual(new Set(["owner@shop.test"]));
   });
 
-  it("does not let one exhausted address lock the same caller out of another", () => {
-    for (let i = 0; i < 6; i++) press("first@shop.test");
+  it("does not let one exhausted address lock the same caller out of another", async () => {
+    for (let i = 0; i < 6; i++) await press("first@shop.test");
     queued.length = 0;
     // The second merchant on the same cafe wifi is unaffected by the first one's retrying.
-    expect(press("second@shop.test")).toBe("accepted");
+    expect(await press("second@shop.test")).toBe("accepted");
     expect(deliverable()).toHaveLength(1);
   });
 });
 
 describe("the shared-egress bound", () => {
-  it("lets sixty distinct addresses through one egress address in an hour, and stops the next", () => {
-    for (let i = 0; i < 60; i++) press(`merchant-${i}@shop.test`);
-    expect(deliverable()).toHaveLength(60);
-    expect(press("merchant-60@shop.test")).toBe("accepted");
-    expect(deliverable()).toHaveLength(60); // bounded — this is the anti-enumeration half
+  it("lets sixty distinct addresses through one egress address in an hour, and stops the next", async () => {
+    for (let i = 0; i < MAX_PER_CALLER; i++) await press(`merchant-${i}@shop.test`);
+    expect(deliverable()).toHaveLength(MAX_PER_CALLER);
+    expect(await press("merchant-60@shop.test")).toBe("accepted");
+    expect(deliverable()).toHaveLength(MAX_PER_CALLER); // bounded — this is the anti-enumeration half
   });
 
-  it("keeps one caller's spending off another caller's budget", () => {
-    for (let i = 0; i < 6; i++) press("owner@shop.test", "203.0.113.10");
+  it("keeps one caller's spending off another caller's budget", async () => {
+    for (let i = 0; i < 6; i++) await press("owner@shop.test", "203.0.113.10");
     queued.length = 0;
-    expect(press("owner@shop.test", "198.51.100.7")).toBe("accepted");
+    expect(await press("owner@shop.test", "198.51.100.7")).toBe("accepted");
     expect(deliverable()).toHaveLength(1);
   });
 
-  it("falls back to x-real-ip, and shares one bucket when a request carries neither", () => {
-    expect(
-      acceptMagicLinkRequest({
-        email: "owner@shop.test",
-        callbackURL: "/",
-        requestHeaders: new Headers({ "x-real-ip": "192.0.2.5" }),
-      }),
-    ).toBe("accepted");
-    expect(
-      acceptMagicLinkRequest({
-        email: "owner@shop.test",
-        callbackURL: "/",
-        requestHeaders: new Headers(),
-      }),
-    ).toBe("accepted");
-    expect(deliverable()).toHaveLength(2); // different buckets, both under budget
+  it("puts every unidentifiable caller in ONE bucket — never a fresh budget each (#795 r3)", async () => {
+    // WHICH header is trusted is a property of the deployment (`CALLER_IP_SOURCE`, see
+    // caller-identity.ts) and is asserted shape by shape in caller-identity.test.ts. What this
+    // case asserts is the part that must hold in EVERY shape: a request the shape cannot
+    // identify shares one bucket with every other such request, and that shared budget really
+    // does run out. An unidentifiable caller must never be handed a PRIVATE budget — that is
+    // what a per-request fallback would do, and it would make the cap decorative.
+    const unidentifiable = () =>
+      acceptMagicLinkRequest({ email: "owner@shop.test", callbackURL: "/", requestHeaders: new Headers() });
+
+    for (let i = 0; i < MAX_PER_CALLER_PER_ADDRESS; i++) expect(await unidentifiable()).toBe("accepted");
+    expect(deliverable()).toHaveLength(MAX_PER_CALLER_PER_ADDRESS);
+
+    // A second unidentifiable request does NOT get its own five — same bucket, already spent.
+    queued.length = 0;
+    await unidentifiable();
+    expect(deliverable()).toHaveLength(0);
   });
 });
 
 // ── r4 P1-1: refusing costs exactly what accepting costs ─────────────────────────────────────
 describe("#678 r4 — an over-budget request does the SAME work as one inside its budget", () => {
-  it("hands over a job every single time, in the same shape", () => {
+  it("hands over a job every single time, in the same shape", async () => {
     // RED before r4: the enqueue was inside `if (roomForCaller && roomForPair)`, so an
     // over-budget press skipped the sanitise, the job construction, the push and the timer —
     // strictly less work, same answer, and therefore a clock again.
-    const answers = Array.from({ length: 8 }, () => press("owner@shop.test", "203.0.113.99", "/x"));
+    const answers: string[] = [];
+    for (let i = 0; i < 8; i++) answers.push(await press("owner@shop.test", "203.0.113.99", "/x"));
 
     expect(new Set(answers)).toEqual(new Set(["accepted"]));
     expect(queued).toHaveLength(8);
@@ -132,39 +140,6 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
     expect(queued.map((j) => j.overBudget)).toEqual([
       false, false, false, false, false, true, true, true,
     ]);
-  });
-
-  it("does the same bookkeeping when it refuses as when it grants", () => {
-    // r5 — "same call sequence" was not enough: a full bucket used to SKIP the write a fresh one
-    // performed, and its scan cost grew with how much budget the caller had spent. So the bucket
-    // is a fixed-size ring now: scanned `max` times and written once, every time.
-    const ip = "203.0.113.120";
-    const key = `${ip}|owner@shop.test`;
-
-    press("owner@shop.test", ip);
-    const first = __magicLinkThrottleBucketForTests(key);
-    // Fixed width from the very first press — the scan cannot get more expensive later.
-    expect(first?.stamps).toHaveLength(5);
-
-    for (let i = 0; i < 4; i++) press("owner@shop.test", ip);
-    const full = __magicLinkThrottleBucketForTests(key);
-    expect(full?.stamps).toHaveLength(5);
-    expect(full?.stamps.every((t) => t > 0)).toBe(true);
-
-    // The sixth press is refused — and still writes. RED before r5: the write was skipped, so a
-    // refusal cost strictly less than a grant.
-    const beforeRefusal = __magicLinkThrottleBucketForTests(key);
-    const slot = beforeRefusal?.next ?? 0;
-    const pressedAt = Date.now();
-    press("owner@shop.test", ip);
-    const afterRefusal = __magicLinkThrottleBucketForTests(key);
-    expect(afterRefusal?.stamps).toHaveLength(5);
-    // #757 — the write lands in the SINK, not in the ring. Same one array write a granted press
-    // performs, so the cost parity r5 asked for is untouched; but the ring's oldest timestamp
-    // survives, so a refusal cannot push the window forward (see the case below).
-    expect(afterRefusal?.sink).toBeGreaterThanOrEqual(pressedAt);
-    expect(afterRefusal?.next).toBe(slot);
-    expect(afterRefusal?.stamps).toEqual(beforeRefusal?.stamps);
   });
 
   /**
@@ -191,26 +166,26 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
       vi.useRealTimers();
     });
 
-    it("gives one address its next link an hour after the fifth GRANT, not an hour after the last try", () => {
+    it("gives one address its next link an hour after the fifth GRANT, not an hour after the last try", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       const start = new Date("2026-08-09T00:00:00Z");
       vi.setSystemTime(start);
       const ip = "203.0.113.130";
 
-      for (let i = 0; i < 5; i++) press("owner@shop.test", ip);
+      for (let i = 0; i < 5; i++) await press("owner@shop.test", ip);
       expect(deliverable()).toHaveLength(5);
 
       // The merchant keeps pressing every ten minutes for the rest of the hour — the ordinary
       // behaviour of somebody whose link has not arrived. Every one of these is refused.
       for (let minute = 10; minute <= 50; minute += 10) {
         vi.setSystemTime(new Date(start.getTime() + minute * 60_000));
-        press("owner@shop.test", ip);
+        await press("owner@shop.test", ip);
       }
       expect(deliverable()).toHaveLength(5);
 
       // One hour and a moment after the FIRST grant, a slot is genuinely free again.
       vi.setSystemTime(new Date(start.getTime() + HOUR + 1));
-      press("owner@shop.test", ip);
+      await press("owner@shop.test", ip);
       // RED before #757: the refusals had overwritten the ring, so its oldest entry was 10
       // minutes old and this press was refused too — and would be, forever, while they kept
       // trying.
@@ -218,16 +193,16 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
     });
 
     /**
-     * r2 — THE COMBINATION STATE, which the sink alone did not cover.
+     * r2 — THE COMBINATION STATE.
      *
      * Each bucket used to decide and write on its OWN verdict, so a press could be refused as a
      * REQUEST while still counting as a grant in one of the two buckets. The sixth press for one
-     * address is exactly that shape: the address bucket is full (roomForPair = false) but the
-     * shared caller bucket still has room (roomForCaller = true), so the request is refused —
-     * `overBudget: true`, no link sent — and a fresh timestamp lands in the shared ring anyway.
+     * address is exactly that shape: the address bucket is full but the shared caller bucket
+     * still has room, so the request is refused — no link sent — and a fresh grant lands in the
+     * shared bucket anyway.
      *
      * Which rebuilds the very defect this ticket exists to remove, one bucket over: one merchant
-     * retrying one address walks the shared sixty-slot ring round and round, and everybody else
+     * retrying one address walks the shared sixty-slot budget round and round, and everybody else
      * behind that egress address stops receiving sign-in links. Nothing they can see explains it,
      * and the retrying merchant is not doing anything abusive — they are pressing a button that
      * told them a link was on its way.
@@ -235,153 +210,127 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
      * So the two buckets must be decided TOGETHER and written TOGETHER: nothing is charged unless
      * the request as a whole was granted.
      */
-    it("does not let one address's refused retries eat the shared egress budget", () => {
+    it("does not let one address's refused retries eat the shared egress budget", async () => {
       const cafe = "198.51.100.55";
       // One merchant spends their five, then keeps pressing — far more times than the shared
-      // ring has slots, so if refusals charged it at all it would be full several times over.
-      for (let i = 0; i < 5; i++) press("victim@shop.test", cafe);
-      for (let i = 0; i < 200; i++) press("victim@shop.test", cafe);
+      // budget has room for, so if refusals charged it at all it would be full several times over.
+      for (let i = 0; i < 5; i++) await press("victim@shop.test", cafe);
+      for (let i = 0; i < 100; i++) await press("victim@shop.test", cafe);
       queued.length = 0;
 
       // The merchant at the next table, who has never pressed anything.
-      expect(press("neighbour@shop.test", cafe)).toBe("accepted");
-      // RED before r2: the 200 refused retries had rotated the shared ring, so the neighbour was
+      expect(await press("neighbour@shop.test", cafe)).toBe("accepted");
+      // RED before r2: the 100 refused retries had spent the shared budget, so the neighbour was
       // silently over budget — accepted words, no link.
       expect(deliverable()).toHaveLength(1);
-    });
+    }, 60_000);
 
-    it("leaves the shared caller ring untouched when only the address bucket refuses", () => {
-      const ip = "203.0.113.140";
-      for (let i = 0; i < 5; i++) press("owner@shop.test", ip);
-      const before = __magicLinkThrottleBucketForTests(ip);
-      const pressedAt = Date.now();
-
-      press("owner@shop.test", ip); // address bucket full, caller bucket still has room
-
-      const after = __magicLinkThrottleBucketForTests(ip);
-      // RED before r2: `next` had advanced and a stamp had been overwritten.
-      expect(after?.next).toBe(before?.next);
-      expect(after?.stamps).toEqual(before?.stamps);
-      // …and the write still happened, into the sink — the cost parity is untouched by this.
-      expect(after?.sink).toBeGreaterThanOrEqual(pressedAt);
-    });
-
-    it("charges neither bucket when the SHARED egress is the one that refuses", () => {
+    it("charges neither bucket when the SHARED egress is the one that refuses", async () => {
       // The mirror image, so the rule is "a refused request charges nothing" rather than a patch
       // aimed at one of the two orders. A brand-new address behind a spent egress must not have
       // its own five quietly docked for a request that was never granted.
       const cafe = "198.51.100.66";
-      for (let i = 0; i < 60; i++) press(`merchant-${i}@shop.test`, cafe);
-      const pressedAt = Date.now();
+      for (let i = 0; i < MAX_PER_CALLER; i++) await press(`merchant-${i}@shop.test`, cafe);
 
-      press("late@shop.test", cafe); // caller bucket full, address bucket brand new
+      await press("late@shop.test", cafe); // caller bucket full, address bucket brand new
+      queued.length = 0;
 
-      const pair = __magicLinkThrottleBucketForTests(`${cafe}|late@shop.test`);
-      // RED before r2: its first slot had been charged for a link that was never sent.
-      expect(pair?.stamps).toEqual([0, 0, 0, 0, 0]);
-      expect(pair?.next).toBe(0);
-      expect(pair?.sink).toBeGreaterThanOrEqual(pressedAt);
-    });
+      // An hour later the shared budget is free again — and the late address must still have all
+      // five of its own. RED before r2: its first slot had been charged for a link never sent.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(Date.now() + HOUR + 1));
+      for (let i = 0; i < 5; i++) await press("late@shop.test", cafe);
+      expect(deliverable()).toHaveLength(5);
+    }, 60_000);
 
-    it("lets the rest of a shared wifi back in an hour after the flooder's last GRANT", () => {
+    it("lets the rest of a shared wifi back in an hour after the flooder's last GRANT", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       const start = new Date("2026-08-09T00:00:00Z");
       vi.setSystemTime(start);
       const cafe = "198.51.100.44";
 
       // One person on the cafe wifi burns the whole shared budget…
-      for (let i = 0; i < 60; i++) press(`probe-${i}@shop.test`, cafe);
-      expect(deliverable()).toHaveLength(60);
-      // …and then keeps pressing every half minute for the rest of the hour, which is more than
-      // enough to refresh all sixty ring slots before the first of them ages out.
-      for (let second = 30; second < 3_600; second += 30) {
-        vi.setSystemTime(new Date(start.getTime() + second * 1_000));
-        press(`probe-late-${second}@shop.test`, cafe);
+      for (let i = 0; i < MAX_PER_CALLER; i++) await press(`probe-${i}@shop.test`, cafe);
+      expect(deliverable()).toHaveLength(MAX_PER_CALLER);
+      // …and then keeps pressing for the rest of the hour, well past the point where a
+      // refusal-charging window would have renewed itself.
+      for (let minute = 1; minute < 60; minute += 1) {
+        vi.setSystemTime(new Date(start.getTime() + minute * 60_000));
+        await press(`probe-late-${minute}@shop.test`, cafe);
       }
       queued.length = 0;
 
       // An hour after the sixtieth grant, the merchant at the next table presses their own
       // button for the first time.
       vi.setSystemTime(new Date(start.getTime() + HOUR + 1));
-      expect(press("neighbour@shop.test", cafe)).toBe("accepted");
-      // RED before #757: the flooder's refusals kept the shared ring full, so the neighbour was
+      expect(await press("neighbour@shop.test", cafe)).toBe("accepted");
+      // RED before #757: the flooder's refusals kept the shared budget full, so the neighbour was
       // silently refused for as long as the flooder kept going.
       expect(deliverable()).toHaveLength(1);
-    });
+    }, 60_000);
   });
 
-  it("sanitises the callback on the over-budget path too", () => {
-    for (let i = 0; i < 5; i++) press("owner@shop.test", "203.0.113.98", "/ok");
+  it("sanitises the callback on the over-budget path too", async () => {
+    for (let i = 0; i < 5; i++) await press("owner@shop.test", "203.0.113.98", "/ok");
     queued.length = 0;
-    press("owner@shop.test", "203.0.113.98", "//evil.example.com");
+    await press("owner@shop.test", "203.0.113.98", "//evil.example.com");
     expect(queued).toEqual([
       { purpose: "sign-in-link", email: "owner@shop.test", callbackURL: "/", overBudget: true },
     ]);
   });
 });
 
-// ── r4 P1-3: the bookkeeping itself cannot be turned into a weapon ───────────────────────────
-describe("#678 r4 — the bucket map is bounded and never walked on the request thread", () => {
-  it("never grows past its ceiling, however many addresses one caller invents", () => {
-    // One caller, past its own budget after 60, inventing a fresh address every time — so every
-    // press mints a brand-new `caller|address` key. RED before r4: one entry per press, forever.
-    const presses = MAX_TRACKED_BUCKETS + 5_000;
-    for (let i = 0; i < presses; i++) press(`victim-${i}@shop.test`, "203.0.113.200");
-    expect(__magicLinkThrottleSizeForTests()).toBeLessThanOrEqual(MAX_TRACKED_BUCKETS);
-    // …and it is genuinely full rather than accidentally empty.
-    expect(__magicLinkThrottleSizeForTests()).toBe(MAX_TRACKED_BUCKETS);
-  });
-
-  it("leaves expired buckets alone on the request thread, and drops them on the sweep", () => {
-    // Only the calendar is faked. Faking the timer wheel too would also stop the module's own
-    // hourly sweep timer, which would make the "nothing swept it" half of this case true for
-    // the wrong reason.
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const start = new Date("2026-08-08T00:00:00Z");
-    vi.setSystemTime(start);
-
-    // 50 callers × 1 address = 100 buckets.
-    for (let i = 0; i < 50; i++) press("owner@shop.test", `198.51.100.${i}`);
-    expect(__magicLinkThrottleSizeForTests()).toBe(100);
-
-    // Two hours later every one of those timestamps has aged out.
-    vi.setSystemTime(new Date(start.getTime() + 2 * 60 * 60 * 1000));
-    press("owner@shop.test", "203.0.113.77");
-
-    // RED before r4: `acceptMagicLinkRequest` began with a full traversal, so this one press
-    // walked and pruned all 100 entries — an event-loop stall an attacker could aim, sized by a
-    // map the attacker also filled. It must now cost the same as any other press.
-    expect(__magicLinkThrottleSizeForTests()).toBe(102);
-
-    // The pruning still happens — on its own timer, off the request thread.
-    __sweepMagicLinkThrottleForTests(Date.now());
-    expect(__magicLinkThrottleSizeForTests()).toBe(2);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-});
-
 describe("what the caller is allowed to learn", () => {
-  it("answers a throttled press exactly like an accepted one", () => {
-    const answers = Array.from({ length: 8 }, () => press("owner@shop.test"));
+  it("answers a throttled press exactly like an accepted one", async () => {
+    const answers: string[] = [];
+    for (let i = 0; i < 8; i++) answers.push(await press("owner@shop.test"));
     expect(new Set(answers)).toEqual(new Set(["accepted"]));
     expect(deliverable()).toHaveLength(5);
   });
 
-  it("refuses a malformed address before it touches a budget at all", () => {
-    expect(press("not-an-email")).toBe("invalid_email");
+  it("refuses a malformed address before it touches a budget at all", async () => {
+    expect(await press("not-an-email")).toBe("invalid_email");
     expect(queued).toHaveLength(0);
     // The malformed press did not spend anything: five real ones still get through.
-    for (let i = 0; i < 5; i++) press("owner@shop.test");
+    for (let i = 0; i < 5; i++) await press("owner@shop.test");
     expect(deliverable()).toHaveLength(5);
   });
 
-  it("hands the background a normalised address and a same-origin callback only", () => {
-    press("  Owner@Shop.Test ", "203.0.113.10", "//evil.example.com");
+  it("hands the background a normalised address and a same-origin callback only", async () => {
+    await press("  Owner@Shop.Test ", "203.0.113.10", "//evil.example.com");
     expect(queued).toEqual([
       { purpose: "sign-in-link", email: "owner@shop.test", callbackURL: "/", overBudget: false },
     ]);
   });
+});
+
+// ── #795: the counter is shared, and that is the whole point ─────────────────────────────────
+describe("#795 — the budget is one budget, not one per process", () => {
+  it("keeps counting across a fresh import of the module", async () => {
+    const ip = "203.0.113.180";
+    for (let i = 0; i < 5; i++) await press("shared@shop.test", ip);
+    expect(deliverable()).toHaveLength(5);
+
+    // A SECOND module instance stands in for a second web instance: same code, same database,
+    // its own module-level state. RED before #795, when the buckets were a Map: this import got
+    // an empty map and handed the same address five more deliverable links.
+    vi.resetModules();
+    const second = await import("@/lib/better-auth/magic-link-request");
+    queued.length = 0;
+    expect(
+      await second.acceptMagicLinkRequest({
+        email: "shared@shop.test",
+        callbackURL: "/",
+        requestHeaders: from(ip),
+      }),
+    ).toBe("accepted");
+    expect(deliverable()).toHaveLength(0);
+    vi.resetModules();
+  });
+
+  // WHERE FAIL-CLOSED IS ASSERTED: `packages/db/src/rate-limit.test.ts` takes the counter table
+  // away underneath a live call and checks the verdict is a refusal. The door's half of that
+  // contract — a refusal is handed over as an over-budget job and answered identically — is the
+  // "hands over a job every single time" case above; the two together are the claim that a
+  // database outage cannot be used to remove every cap at once.
 });

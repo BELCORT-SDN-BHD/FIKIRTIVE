@@ -240,6 +240,19 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Emergency stop for new self-service signups. Any value other than 0/false/off/no pauses them.",
   },
   {
+    // #795 —— 谁被限流器计数。取值空间是开放的(railway | xff:<hops> | dev),不是定值枚举,
+    // 所以格式是 free;取值合法性由 apps/web/lib/caller-identity.ts 在开机时自己判(不认识的值
+    // 拒绝启动,生产上的 "dev" 也拒绝)。契约不复述那条规则,只登记这个变量存在、谁读。
+    name: "CALLER_IP_SOURCE",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: false,
+    shared: false,
+    summary: "Which header carries a trustworthy caller address: railway | xff:<hops> | dev. Unset = railway in production, dev elsewhere. Checked at boot — an unrecognised value refuses to start.",
+  },
+  {
     name: "RESEND_API_KEY",
     surface: "web",
     readBy: "code",
@@ -500,6 +513,64 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     secret: false,
     shared: false,
     summary: "Worker local storage root when the driver is local disk.",
+  },
+
+  // ── 夜间备份:触发权与隔离凭据(#794)──────────────────────────────────────
+  // 全组 optional,理由与 #796 那组相同:不设 = 今天这个形状(worker 自己的 5 分钟定时器 +
+  // 与内容同一把 R2 钥匙),逐字节不变。改变触发权或换钥匙必须是一次明确的动作。
+  //
+  // R2_BACKUP_* 的「要么全设要么全不设」由 packages/storage 的 opsR2Config 硬拦(半配抛错,
+  // 永不静默回落到共享凭据)。契约在这里只负责登记这四个名字存在、谁读、是不是密钥——把同一条
+  // 组规则再写一遍,只会制造第二份可能与代码走散的真相。
+  {
+    name: "BACKUP_TRIGGER",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: false,
+    shared: false,
+    summary: "\"cron\" hands the nightly backup to the Railway cron service; anything else (incl. unset) keeps the worker's own 5-minute timer. Set the same value on both services so exactly one runs it.",
+  },
+  {
+    name: "R2_BACKUP_ACCESS_KEY_ID",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: true,
+    shared: false,
+    summary: "Backup-scoped R2 token id. Unset = backups reuse the content credential. Both halves of the credential or neither — a half-set family is a hard startup error.",
+  },
+  {
+    name: "R2_BACKUP_SECRET_ACCESS_KEY",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: true,
+    shared: false,
+    summary: "Backup-scoped R2 token secret. Paired with R2_BACKUP_ACCESS_KEY_ID.",
+  },
+  {
+    name: "R2_BACKUP_BUCKET",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: false,
+    shared: false,
+    summary: "Bucket the backups are written to. Defaults to R2_BUCKET (same bucket, different key prefix).",
+  },
+  {
+    name: "R2_BACKUP_ENDPOINT",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    format: "url",
+    secret: false,
+    shared: false,
+    summary: "Endpoint the backup credential talks to. Defaults to R2_ENDPOINT.",
   },
 
   // ── 计费 ──────────────────────────────────────────────────────────────────
@@ -792,6 +863,49 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     secret: false,
     shared: false,
     summary: "Remaining-capacity percentage at or below which the admin panel warns.",
+  },
+
+  // ── 生成队列指标(admin Queue health,#779)────────────────────────────────
+  // 只读、全组 optional。不设 = /admin/queue 说「Not connected」什么都不读,零成本。
+  {
+    name: "QUEUE_METRICS_QUERY_URL",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "url",
+    secret: false,
+    shared: false,
+    summary: "Prometheus-compatible query base, workspace path included. Unset switches the whole page off.",
+  },
+  {
+    name: "QUEUE_METRICS_BASIC_AUTH",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: true,
+    shared: false,
+    summary: "\"user:password\" for the metrics endpoint. Omit when it needs no basic auth.",
+  },
+  {
+    name: "QUEUE_METRICS_PREFIX",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: false,
+    shared: false,
+    summary: "Namespace in front of each metric name, when the store uses one.",
+  },
+  {
+    name: "QUEUE_METRICS_TIMEOUT_MS",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "integer",
+    secret: false,
+    shared: false,
+    summary: "Per-request timeout. A slow store degrades the page, never blocks it.",
   },
   {
     name: "FIKIRTIVE_ENV_CONTRACT",

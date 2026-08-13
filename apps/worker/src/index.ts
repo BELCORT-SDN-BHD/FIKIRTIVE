@@ -58,6 +58,7 @@ import {
   type ResearchJobData,
   type PublishJobData,
 } from "@fikirtive/core";
+import { pruneRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { runAsSystem } from "@fikirtive/db/principal";
 
 // #797 env contract, fail-FAST: a production worker whose required configuration is missing, or
@@ -271,6 +272,13 @@ async function main(): Promise<void> {
         // lapse, and nothing used to delete them either, so the table only ever grew.
         const vn = await reapExpiredAuthVerifications();
         if (vn) console.log(`[worker] reaped ${vn} expired auth verification row(s)`);
+        // #795: the same shape one table over. The rate-limit counters hold one row per (door ×
+        // counted party × live window), and the public doors let an anonymous caller choose how
+        // many of those exist — so without a sweep the table grows by one row per address anyone
+        // has ever probed and never gives one back. Rides this tick because it is exactly the
+        // same job: delete what is provably finished. (Better Auth prunes its own table.)
+        const rl = await pruneRateLimitCounters();
+        if (rl) console.log(`[worker] pruned ${rl} expired rate-limit counter(s)`);
         // Research: a worker SIGKILL'd mid-run (retryLimit:0 → no redelivery) strands the card
         // "Researching…" forever. Credits are already recovered by reapStaleLlmReservations above;
         // this flips the stranded RUNNING job → FAILED + its card → failed (pure UX, $0).
