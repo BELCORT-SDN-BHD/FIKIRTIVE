@@ -132,7 +132,7 @@ describe("不重复读(幂等)", () => {
 
   it("行不存在就丢掉,不炸", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(null);
-    await expect(handleUnderstand({ understandingId: "nope" }, 0, port)).resolves.toBeUndefined();
+    await expect(handleUnderstand({ understandingId: "nope" }, 0, port)).resolves.toBeNull();
     expect(mocks.understand).not.toHaveBeenCalled();
   });
 });
@@ -211,22 +211,33 @@ describe("image-caption", () => {
     expect(done.data.outputTokens).toBe(60);
   });
 
-  it("看起来是一整页字 ⇒ 建 doc-extract 那一行(三件套之间那条线)", async () => {
+  it("看起来是一整页字 ⇒ 建 doc-extract 那一行,并把它的 id 交回去立刻排队(三件套之间那条线)", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockResolvedValue({
       text: JSON.stringify({ summary: "A printed menu", isDocument: true }),
       usage: { inputTokens: 800, outputTokens: 40 },
     });
-    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    const followUp = await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.assetUnderstanding.create).toHaveBeenCalledTimes(1);
-    expect(mocks.assetUnderstanding.create.mock.calls[0]![0].data).toMatchObject({
-      ownerId: OWNER, assetId: ASSET, kind: "doc-extract", status: "QUEUED",
+    const created = mocks.assetUnderstanding.create.mock.calls[0]![0].data;
+    expect(created).toMatchObject({ ownerId: OWNER, assetId: ASSET, kind: "doc-extract", status: "QUEUED" });
+    // 商家不该为一张菜单等十分钟 —— id 回给调用方,由它当场发进队列
+    expect(followUp).toBe(created.id);
+  });
+
+  it("已经有 doc-extract 行(重投/并发)⇒ 不返回第二条,也不重复读", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.assetUnderstanding.create.mockRejectedValue(new Error("unique violation"));
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ summary: "A printed menu", isDocument: true }),
+      usage: { inputTokens: 800, outputTokens: 40 },
     });
+    expect(await handleUnderstand({ understandingId: "u-1" }, 0, port)).toBeNull();
   });
 
   it("普通产品照**不**触发第二次花费", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
-    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(await handleUnderstand({ understandingId: "u-1" }, 0, port)).toBeNull();
     expect(mocks.assetUnderstanding.create).not.toHaveBeenCalled();
   });
 
@@ -337,7 +348,7 @@ describe("失败分类", () => {
   it("读不了这份字节 ⇒ 终止 FAILED,不抛(不占重试预算)", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockRejectedValue(unreadableMediaError("rejected the file (415)"));
-    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).resolves.toBeUndefined();
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).resolves.toBeNull();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
     expect(last.data.status).toBe("FAILED");
   });
@@ -353,14 +364,14 @@ describe("失败分类", () => {
   it("重试额度用完 ⇒ 落 FAILED,不再抛", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockRejectedValue(new Error("understanding request failed (503)"));
-    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeUndefined();
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
     expect(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.status).toBe("FAILED");
   });
 
   it("落库的失败措辞里没有 presigned URL、没有供应商名", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockRejectedValue(new Error("seedream failed reading https://r2.example/obj?sig=SECRET"));
-    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeUndefined();
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
     const persisted = String(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.error).toLowerCase();
     expect(persisted).not.toContain("seedream");
     expect(persisted).not.toContain("sig=secret");

@@ -144,7 +144,13 @@ async function queueDocExtract(ownerId: string, assetId: string): Promise<string
   }
 }
 
-/** 今天这个租户已经真的花过几次(DONE + 还在跑的)。SKIPPED/FAILED 不计入 —— 它们没花钱。 */
+/**
+ * 今天这个租户已经真的花过几次(DONE + 还在跑的)。SKIPPED/FAILED 不计入 —— 它们没花钱。
+ *
+ * 「今天」按 UTC 切。故意不引进商家所在时区:这是一道**成本**闸,不是一个对商家展示的数字,
+ * 而 UTC 切等于每天吉隆坡时间早上八点重置一次 —— 对一道谁都看不见的限额来说,这个精度够了。
+ * 需要「商家的一天」时,那是另一件事(计费口径),不该由这里悄悄定义。
+ */
 async function spentTodayCount(ownerId: string, now: Date): Promise<number> {
   const startOfDay = new Date(now);
   startOfDay.setUTCHours(0, 0, 0, 0);
@@ -257,6 +263,12 @@ async function rememberVideoFacts(ownerId: string, facts: string[]): Promise<num
 /**
  * 主处理器。
  *
+ * **返回值**是一条要立刻接着跑的理解行的 id(今天只有一种:caption 判定这张图是菜单之后建出来
+ * 的 doc-extract 行)。为什么不在这里自己发队列:这个模块不认识 pg-boss,而 index.ts 才是持有
+ * boss 的地方 —— 让它去发,这一份代码就不必为了排一条消息去依赖整个队列层。
+ * 返回而不是等下一轮扫描,是因为差别是商家的十分钟:菜单应该在几秒内被读成产品行。
+ * 万一那次 send 失败,行仍然是 QUEUED,扫描器的重投窗口照样兜住它。
+ *
  * `provider` 参数存在的唯一理由是测试:生产调用不传,拿到 env 决定的端口(未配 key = mock,
  * 和 createGenerationProvider 同一条安全默认)。**测试一律传 mock,绝不真调。**
  */
@@ -264,7 +276,7 @@ export async function handleUnderstand(
   data: { understandingId: string },
   retryCount = 0,
   provider?: UnderstandingProvider,
-): Promise<void> {
+): Promise<string | null> {
   // #463:载荷里只有行 id,所以这一次读必须在具名系统身份下做 —— 和 gen/refgen/caption/render
   // 四个 handler 一字不差的两段式开头(`worker-job-dispatch`)。
   const row = await runAsSystem("worker-job-dispatch", async () =>
@@ -272,11 +284,11 @@ export async function handleUnderstand(
   );
   if (!row) {
     console.warn(`[understand] row ${data.understandingId} not found — dropping`);
-    return;
+    return null;
   }
 
   // #463:载荷里只有行 id,租户只有读到行之后才知道。作用域从这里开始,在第一次写之前。
-  await runAsTenant(row.ownerId, async () => {
+  return runAsTenant(row.ownerId, async (): Promise<string | null> => {
     // 幂等 ②:QUEUED→RUNNING 的 CAS。重投/并发时 count===0 —— 在打供应商之前就返回。
     const { count } = await prisma.assetUnderstanding.updateMany({
       where: { id: row.id, ownerId: row.ownerId, status: "QUEUED" },
@@ -284,13 +296,13 @@ export async function handleUnderstand(
     });
     if (count === 0) {
       console.log(`[understand] ${row.id}: not QUEUED (already handled/redelivery) — no-op`);
-      return;
+      return null;
     }
 
     // 总开关。关掉之后已经排进来的行落 SKIPPED —— 不是失败,不重试,不花钱。
     if (!assetUnderstandingEnabled()) {
       await skip(row, "understanding is switched off");
-      return;
+      return null;
     }
 
     const kind = row.kind as UnderstandingKind;
@@ -301,7 +313,7 @@ export async function handleUnderstand(
     const spent = await spentTodayCount(row.ownerId, new Date());
     if (spent > cap) {
       await skip(row, "daily understanding limit reached");
-      return;
+      return null;
     }
 
     const asset = await prisma.asset.findFirst({
@@ -310,14 +322,14 @@ export async function handleUnderstand(
     });
     if (!asset || asset.deletedAt) {
       await skip(row, "the file is no longer there");
-      return;
+      return null;
     }
 
     // 视频的时长闸 —— 少了它,「每次 token 上限」只是一句请求而不是一个上限
     // (整段长视频的输入 token 会把「不到一条视频 1%」直接顶破)。
     if (kind === "video-qa" && (asset.durationS ?? 0) > UNDERSTANDING_VIDEO_MAX_SECONDS) {
       await skip(row, "the clip is longer than the understanding budget covers");
-      return;
+      return null;
     }
 
     const mediaUrl = await storage.presignedGet(
@@ -327,7 +339,7 @@ export async function handleUnderstand(
     if (!mediaUrl) {
       // 本地磁盘驱动(开发)签不出 URL —— 这不是故障,是这个环境跑不了理解。
       await skip(row, "this environment can't hand the file to the reader");
-      return;
+      return null;
     }
 
     const port = provider ?? createUnderstandingProvider();
@@ -338,7 +350,7 @@ export async function handleUnderstand(
       // 读不了这份字节 ⇒ 重试永远同一个答案 ⇒ 终止,不占重试预算。
       if (isUnreadableMediaError(e)) {
         await fail(row, UNDERSTANDING_UNREADABLE);
-        return;
+        return null;
       }
       const message = sanitizeError(e);
       console.warn(`[understand] ${row.id} (${kind}) failed:`, message);
@@ -352,7 +364,7 @@ export async function handleUnderstand(
         throw e; // pg-boss 记账 + 退避重投
       }
       await fail(row, message);
-      return;
+      return null;
     }
 
     const parsedJson = parseUnderstandingJson(result.text);
@@ -371,18 +383,18 @@ export async function handleUnderstand(
       const caption = parseImageCaption(parsedJson);
       if (!caption) {
         await fail(row, UNDERSTANDING_UNREADABLE);
-        return;
+        return null;
       }
       await prisma.assetUnderstanding.updateMany({
         where: { id: row.id, ownerId: row.ownerId },
         data: { status: "DONE", summary: caption.summary, data: caption as never, error: null, ...tokens },
       });
       // 三件套之间那条线:这张图基本上是一整页字 ⇒ 值得再花一次去读它的产品行。
-      if (caption.isDocument) {
-        const queued = await queueDocExtract(row.ownerId, row.assetId);
-        if (queued) console.log(`[understand] ${row.id}: looks like a document — queued doc-extract ${queued}`);
-      }
-      return;
+      // 建好的行 id 原样返回给 index.ts 去发队列(见函数头:差别是商家的十分钟)。
+      if (!caption.isDocument) return null;
+      const queued = await queueDocExtract(row.ownerId, row.assetId);
+      if (queued) console.log(`[understand] ${row.id}: looks like a document — queued doc-extract ${queued}`);
+      return queued;
     }
 
     if (kind === "doc-extract") {
@@ -391,7 +403,7 @@ export async function handleUnderstand(
       // 半份产品目录比没有产品目录糟得多 —— 商家会以为 Otto 已经认识他的菜单了。
       if (!doc) {
         await fail(row, UNDERSTANDING_UNREADABLE);
-        return;
+        return null;
       }
       let saved = 0;
       for (const product of doc.products) {
@@ -404,14 +416,14 @@ export async function handleUnderstand(
         data: { status: "DONE", summary, data: { ...doc, saved } as never, error: null, ...tokens },
       });
       console.log(`[understand] ${row.id}: doc-extract saved ${saved}/${doc.products.length} product row(s)`);
-      return;
+      return null;
     }
 
     // video-qa
     const video = parseVideoQa(parsedJson);
     if (!video) {
       await fail(row, UNDERSTANDING_UNREADABLE);
-      return;
+      return null;
     }
     const remembered = await rememberVideoFacts(row.ownerId, video.facts);
     await prisma.assetUnderstanding.updateMany({
@@ -419,6 +431,7 @@ export async function handleUnderstand(
       data: { status: "DONE", summary: video.summary, data: { ...video, remembered } as never, error: null, ...tokens },
     });
     console.log(`[understand] ${row.id}: video-qa remembered ${remembered} new brand fact(s)`);
+    return null;
   });
 }
 

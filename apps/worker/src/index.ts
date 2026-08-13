@@ -234,7 +234,17 @@ async function main(): Promise<void> {
   await consume<PublishJobData>(PUBLISH_QUEUE, handlePublish);
   // #784 素材理解三件套。**不碰商家余额**(理解是平台成本),所以它和钱路队列的形状不同:
   // 允许正常重试,防重靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS。
-  await consume<UnderstandJobData>(UNDERSTAND_QUEUE, (data, retryCount) => handleUnderstand(data, retryCount));
+  //
+  // 返回值 = 要立刻接着跑的那一行(caption 认出这张图是菜单之后建出来的 doc-extract 行)。
+  // 在这里发,而不是等下一轮扫描 —— 差别是商家的十分钟。send 失败也不丢:行还是 QUEUED,
+  // 扫描器的重投窗口照样兜住它。
+  await consume<UnderstandJobData>(UNDERSTAND_QUEUE, async (data, retryCount) => {
+    const followUp = await handleUnderstand(data, retryCount);
+    if (!followUp) return;
+    await boss.send(UNDERSTAND_QUEUE, { understandingId: followUp } satisfies UnderstandJobData, {
+      singletonKey: `understand:${followUp}`,
+    });
+  });
 
   // Heartbeat: the status panel's "worker alive" signal (appendix A) + the durable
   // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
