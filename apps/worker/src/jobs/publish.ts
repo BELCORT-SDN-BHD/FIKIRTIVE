@@ -581,6 +581,23 @@ export async function handlePublish(
         data: { status: "SCHEDULED" },
       });
 
+    // Lock 0 (#851) — the PRODUCT-level switch, ahead of every per-merchant gate. Every publish
+    // surface tells the merchant that nothing is sent while publishing is off; before this lock
+    // existed that was true of the words only. A workspace whose connection was authorized and
+    // whose own switch was on would still have had its post posted, under a screen saying it
+    // would not be. Copy and behaviour now read the SAME line, so no wording can outlive the
+    // capability it describes.
+    //
+    // Its own branch rather than a silent `false` out of autoPublishStillOn: a merchant who never
+    // touched their own switch must not be told in the log that they turned something off.
+    if (!PUBLISHING_AVAILABLE) {
+      if (post.status === "PUBLISHING") await handBackToWaiting();
+      console.warn(
+        `[publish] ${post.id}: publishing is not switched on for this product — nothing is sent (no claim, no external call). The post keeps its slot.`,
+      );
+      return;
+    }
+
     // Lock 5 (#810 P1-1) — the merchant's own switch, re-read HERE, one step before anything
     // external can happen. scanDuePublishPosts checks it too, but the job payload carries only
     // the post id, so the scan's answer is as old as the queue: switch ON → enqueued → merchant
@@ -592,22 +609,6 @@ export async function handlePublish(
     // A withdrawal is not a failure: nothing is marked FAILED or NEEDS_ATTENTION and nothing is
     // retried. The post simply goes back to waiting, which is what it does when the switch is
     // off in the first place — flip it back on and the next scan picks it up unchanged.
-    // Lock 0 (#851) — the PRODUCT-level switch, ahead of every per-merchant gate. Every publish
-    // surface tells the merchant that nothing is sent while publishing is off; before this lock
-    // existed that was true of the words only. A workspace whose connection was authorized and
-    // whose own switch was on would still have had its post posted, under a screen saying it
-    // would not be. Copy and behaviour now read the SAME line, so no wording can outlive the
-    // capability it describes.
-    //
-    // Its own branch rather than a silent `false` from autoPublishStillOn: a merchant who never
-    // touched their switch must not be told in the log that they turned something off.
-    if (!PUBLISHING_AVAILABLE) {
-      if (post.status === "PUBLISHING") await handBackToWaiting();
-      console.warn(
-        `[publish] ${post.id}: publishing is not switched on for this product — nothing is sent (no claim, no external call). The post keeps its slot.`,
-      );
-      return;
-    }
     if (!(await autoPublishStillOn())) {
       // A redelivery/retry left the row in PUBLISHING; hand it back rather than let it sit there
       // claiming to be mid-publish forever.

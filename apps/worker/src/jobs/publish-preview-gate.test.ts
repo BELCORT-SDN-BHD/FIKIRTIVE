@@ -128,6 +128,9 @@ describe("#851 反面自证:这套替身在通电时确实会发", () => {
     vi.resetModules();
   });
 
+  // 显式给足超时:这一条要 `vi.resetModules()` 之后重新装载 publish.js 的整张依赖图(冷装载
+  // 实测 ~2.3s)。默认 5s 在本机就已经贴边,CI 上多套件并行时会变成一条与代码无关的假红 ——
+  // 而它偏偏是这个文件里最不能丢的一条。
   it("同一套 prisma 替身 + 同一个 handlePublish,闸通电后立刻发 —— 上面三条不是在检一个坏掉的台子", async () => {
     vi.resetModules();
     vi.doMock("@fikirtive/core/schedule-draft", () => ({ PUBLISHING_AVAILABLE: true }));
@@ -139,5 +142,5 @@ describe("#851 反面自证:这套替身在通电时确实会发", () => {
 
     expect(exec).toHaveBeenCalledTimes(1);
     expect(m.publishAttemptCreate).toHaveBeenCalledTimes(1);
-  });
+  }, 30_000);
 });
