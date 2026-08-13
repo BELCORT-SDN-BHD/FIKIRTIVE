@@ -5,7 +5,7 @@ import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
-import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
+import { freeCanvasRectForNewNode, placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import { censusCanvasJobCards, displayGenerationIdForCard } from "./otto-canvas-bridge-core";
 import { canvasCardState, isCanvasCardRowStatus, OVERWRITABLE_CARD_STATUSES, type CanvasCardFace } from "./canvas-card-status";
@@ -195,18 +195,28 @@ export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedC
       };
   }
 
+  // The unpaid placements — a text card, and Otto putting an existing generation on the board.
+  // They go through the same "never cover a card that is already there" rule as a paid job's
+  // card (#549): Otto's place tool has no board of its own to look at, so its default spot is
+  // the board ORIGIN, which on any board that is not empty is the merchant's first picture.
   const id = newId();
-  await prisma.canvasNode.create({
-    data: {
-      id, ownerId: gate.ownerId, projectId: input.projectId, type: input.type,
+  const rect = await prisma.$transaction(async (tx) => {
+    const free = await freeCanvasRectForNewNode(tx, gate.ownerId, input.projectId, {
       x: input.x, y: input.y, w: input.w, h: input.h,
-      text: input.text ?? null, prompt: input.prompt ?? null,
-      generationId, genJobId,
-      status: input.status ?? "done",
-      threadId,
-    },
+    });
+    await tx.canvasNode.create({
+      data: {
+        id, ownerId: gate.ownerId, projectId: input.projectId, type: input.type,
+        x: free.x, y: free.y, w: free.w, h: free.h,
+        text: input.text ?? null, prompt: input.prompt ?? null,
+        generationId, genJobId,
+        status: input.status ?? "done",
+        threadId,
+      },
+    });
+    return free;
   });
-  return { id, x: input.x, y: input.y, w: input.w, h: input.h };
+  return { id, x: rect.x, y: rect.y, w: rect.w, h: rect.h };
 }
 
 export async function moveCanvasNode(projectId: string, id: string, pos: { x: number; y: number; w: number; h: number }) {
