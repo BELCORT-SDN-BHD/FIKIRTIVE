@@ -187,8 +187,24 @@ describe("#782 worker:引擎免费附送的末帧", () => {
     expect(tailWrite).toBeUndefined();
   });
 
-  it("末帧那一路**卡住**同样不许拖着 DONE(判官 r2:best-effort 必须覆盖不回话,不只覆盖炸了)", async () => {
-    // 上一条钉的是「炸了」。这一条钉「不回话」—— R2/Postgres 不总是大声失败,有时就是不
+  /**
+   * #782 r3(判官 r2 P2)—— 尺子不能是被量的那个东西。
+   *
+   * 这条测试原来用生产常量自己去推进假时钟(`LAST_FRAME_STORE_TIMEOUT_MS + 1_000`)。于是
+   * 有人把预算改成 24 小时,它照样绿:被验的数同时也是验它的那把尺,量什么都刚刚好。而这个
+   * 数守的是一件很具体的事 —— 一个**免费**附件能把一条**已经付过钱**的片子的 DONE 押多久。
+   *
+   * 所以尺子写死在测试自己这里,并且钉的是一条边界:预算之内绝不放弃、越过预算必定放弃。
+   * 哪天常量漂了,下面两条一起红。
+   */
+  const EXPECTED_STORE_BUDGET_MS = 8_000;
+
+  it("末帧存这一路的预算就是 8 秒整(常量漂移即红)", () => {
+    expect(LAST_FRAME_STORE_TIMEOUT_MS).toBe(EXPECTED_STORE_BUDGET_MS);
+  });
+
+  it("末帧那一路**卡住**同样不许拖着 DONE,而且恰好卡在那 8 秒的两侧", async () => {
+    // 上面那条钉的是「炸了」。这一条钉「不回话」—— R2/Postgres 不总是大声失败,有时就是不
     // 应答。这三个 await 夹在**已结算的钱**和商家的 DONE 之间:不设预算,一条僵住的连接
     // 就能把作业按在 GENERATING 上直到队列超时重投一条我们已经付过钱的片子。
     vi.useFakeTimers();
@@ -200,10 +216,15 @@ describe("#782 worker:引擎免费附送的末帧", () => {
       m.genJobFindUnique.mockResolvedValue({ ...videoJob });
 
       const run = handleGen({ genJobId: "g1" }, 0);
-      await vi.advanceTimersByTimeAsync(LAST_FRAME_STORE_TIMEOUT_MS + 1_000);
-      await expect(run).resolves.toBeUndefined();
 
-      expect(jobWentDone()).toBe(true); // 片子照常交付
+      // ① 预算之内(8s − ε):还没到点,不许提前放弃 —— 免费附件本来就该有它的那几秒。
+      await vi.advanceTimersByTimeAsync(EXPECTED_STORE_BUDGET_MS - 1);
+      expect(jobWentDone(), "预算之内就放弃 = 那几秒被悄悄改短了").toBe(false);
+
+      // ② 越过预算(+2ms):必须当场放弃**等待**,片子照常交付。
+      await vi.advanceTimersByTimeAsync(2);
+      expect(jobWentDone(), "越过预算还不放弃 = 免费附件能把已付费的片子按到队列超时重投").toBe(true);
+      await expect(run).resolves.toBeUndefined();
       const tailWrite = m.genJobUpdateMany.mock.calls.find(
         (c) => (c[0] as { data?: Record<string, unknown> }).data?.lastFrameAssetId !== undefined,
       );

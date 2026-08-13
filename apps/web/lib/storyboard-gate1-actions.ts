@@ -829,6 +829,10 @@ export async function syncStoryboardMedia(
       // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
       // first-ever frame write (no prior genId) does NOT cascade.
       const cascadeShots = new Set<string>();
+      // #782 r3 (判官 r2 P1-a/P1-b): 闸③ 的判词。shotId → 上一镜那一张**确定交不出末帧**的
+      // 视频子卡 id。见下面闸③ 的写入点,以及 storyboard-card.ts 的
+      // `shotsStuckWithoutInheritedFrame`(唯一的读取点)。
+      const inheritBlockWrites: Record<string, string> = {};
       // #782: the DONE video job behind each shot, kept for gate③ below. A shot whose clip
       // landed on an EARLIER sync stages no video write, but its job (and therefore its free
       // last frame) is still the thing the next shot inherits from — so the map is filled from
@@ -874,11 +878,29 @@ export async function syncStoryboardMedia(
           // 上一镜的片子必须**真的出完**(videoWrites 是这一轮刚落的,videoGenerationId 是
           // 之前落的;两者任一成立都算出完)。没出完就等下一轮,不猜。
           if (!videoWrites[from.shotId] && !from.videoGenerationId) continue;
+          // videoJobByShot 的键是**上一镜此刻的 videoCardId** 那一张子卡的 DONE 作业。上一镜
+          // 一重出,指针就换成了还在跑的新子卡,这里读不到 → 不接、也不判死:免费的末帧
+          // 正在路上,这时候开放付费首帧就是让商家为一张本该继承的帧多花钱(判官 r2 P1-b)。
           const job = videoJobByShot.get(from.shotId);
           if (!job) continue;
           const genId = await inheritFrameFromClip(tx, ownerId, job);
           // first-ever frame write for that shot ⇒ 走既有写回路径,不进 cascadeShots。
-          if (genId) frameWrites[to.shotId] = genId;
+          if (genId) {
+            frameWrites[to.shotId] = genId;
+            continue;
+          }
+          // ── 判词(#782 r3,判官 r2 P1-a/P1-b)──────────────────────────────────
+          // 走到这里是唯一一个「已经试过、并且确定接不上」的位置:那条片子真的出完了,
+          // 而它交不出可用的末帧(引擎没给 / worker 没存 / 那一行不是图)。同一条作业上
+          // 再 sync 一万次也是同样结果,所以把这个判断**写下来**,而不是让卡面和动作层
+          // 各自从指针形状去猜 —— 猜出来的两个答案正是判官 r2 的两条 P1。
+          //
+          // 记的是**哪一张视频子卡**得出的判词,这让它自清:上一镜一旦重出(videoCardId
+          // 换新),判词不再匹配,这一镜自动回到「还在等」,零额外清理逻辑、零多余写入。
+          const blocker = from.videoCardId;
+          if (blocker && to.inheritBlockedByVideoCardId !== blocker) {
+            inheritBlockWrites[to.shotId] = blocker; // 值没变就不写:no-op sync 依旧零写入
+          }
         }
       }
 
@@ -886,13 +908,17 @@ export async function syncStoryboardMedia(
       const hasStaged =
         Object.keys(frameWrites).length > 0 ||
         Object.keys(videoWrites).length > 0 ||
+        Object.keys(inheritBlockWrites).length > 0 ||
         cascadeShots.size > 0;
       if (!hasStaged) return p;
 
       const nextShots = p.shots.map((s) => {
         const frameGen = frameWrites[s.shotId];
         const videoGen = videoWrites[s.shotId];
-        if (!frameGen && !videoGen) return s;
+        // 判词只可能落在**没有首帧、也没有本轮首帧写入**的镜头上(见上面的写入点),所以它
+        // 与 cascade(帧被替换才触发)在同一轮里互斥,不需要额外的优先级规则。
+        const blocker = inheritBlockWrites[s.shotId];
+        if (!frameGen && !videoGen && !blocker) return s;
         // CASCADE PRECEDENCE (spec §3c): when a shot's frame is REPLACED, drop its video keys —
         // and this WINS over any video write staged for the SAME shot in this pass. A video that
         // just landed for the OLD source frame is dropped too: it was built off the outdated
@@ -907,6 +933,7 @@ export async function syncStoryboardMedia(
         const next = { ...s };
         if (frameGen) next.firstFrameGenerationId = frameGen;
         if (videoGen) next.videoGenerationId = videoGen;
+        if (blocker) next.inheritBlockedByVideoCardId = blocker;
         return next;
       });
       const next = { ...p, shots: nextShots };

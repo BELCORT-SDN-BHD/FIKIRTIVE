@@ -23,6 +23,8 @@ export interface StoryboardShotView {
   firstFrameGenerationId?: string;
   videoCardId?: string;
   videoGenerationId?: string;
+  /** #782 r3 闸③ 判词:上一镜的哪一张视频子卡已经确定交不出末帧(见 shotsStuckWithoutInheritedFrame)。 */
+  inheritBlockedByVideoCardId?: string;
 }
 
 export interface StoryboardCardView {
@@ -44,18 +46,19 @@ export interface StoryboardCardView {
  *
  * 泛型 + 按 index 排序:服务端拿 payload 的镜头、卡面拿视图镜头,两边形状不同但语义同一条。
  *
- * #782 r2b(判官 r1 P1 之一)—— 接续开着时,「等上一镜交棒」和「上一镜已经交棒过、但没交上、
+ * #782 r2b(判官 r1 P1 之一)—— 接续开着时,「等上一镜交棒」和「上一镜交过棒了、但交不出、
  * 永远不会再交」是两件不同的事,以前混成一句。后者(见 `shotsStuckWithoutInheritedFrame`)
  * 一样算「需要铸首帧」——不然供应商键猜错 / 旧 worker 没存末帧 / 下载失败,这一镜就卡进一个
  * 界面上连按钮都没有的死路:Generate all 数不到它、也没有单镜按钮。诚实的出路是让它和普通
  * 缺帧镜头一样,走「花钱铸一张自己的首帧」那条路——不再接上一镜的画面,但至少能往前走。
+ * r3(判官 r2)只改了**怎么认定后者**:改读闸③ 的判词,不再从指针形状去猜。
  */
 export function shotsNeedingMintedFirstFrame<
   T extends {
     index: number;
     firstFrameGenerationId?: string;
-    firstFrameCardId?: string;
-    videoGenerationId?: string;
+    videoCardId?: string;
+    inheritBlockedByVideoCardId?: string;
   },
 >(shots: readonly T[], continuity: boolean): T[] {
   const missing = [...shots].sort((a, b) => a.index - b.index).filter((s) => !s.firstFrameGenerationId);
@@ -67,19 +70,31 @@ export function shotsNeedingMintedFirstFrame<
 }
 
 /**
- * #782 r2b(判官 r1 P1 之一)—— 哪些镜头「卡死」了:接续开着,上一镜的片子已经真的出完了
- * (`videoGenerationId` 已写回),闸③ 在那次 sync 里已经试过把它的末帧接过来给这一镜,可这一镜
- * 此刻依旧没有首帧、也没有正在铸的首帧子卡。接力已经跑过一次且没有留下痕迹——供应商键猜错 /
- * 旧 worker 没存末帧 / 下载失败,这些是那一条作业上定死的事实,再等下一轮 sync 不会有不同结果。
+ * #782 r3(判官 r2 的两条 P1)—— 哪些镜头「卡死」了。
  *
- * 与「还在等」的区分只看这一条铁事实(上一镜的视频是否真出完),不猜测、不设超时。
+ * 这条判据只回答一个问题:**这一镜还有没有免费的帧在路上?** 有 → 什么都别做(等着);
+ * 没有 → 商家必须看得见一个自己出一张的入口,否则就是死路。
+ *
+ * r2b 用两个**指针存不存在**回答它,两处都答错了(判官 r2):
+ *   • `firstFrameCardId` 在 ≠ 正在生成。准备卡在商家按 Cancel、启动失败、或刷新崩溃之后
+ *     照样留在 payload 里 —— 一分钱没花,什么都没在跑。把它当在途,恢复入口就凭空消失。
+ *   • `prev.videoGenerationId` 在 ≠ 交棒已经结束。重出视频换上新的 `videoCardId` 而**故意
+ *     保留**旧的 `videoGenerationId`;新片还在跑,免费的末帧正在路上,却已经把这一镜开成
+ *     付费首帧 —— 商家为一张本该继承的帧多花钱。
+ *
+ * 唯一看得见视频作业真实状态的是闸③(sync)。所以这条判断在那里做一次、写进 payload,
+ * 这里只**读判词**:`inheritBlockedByVideoCardId` = 上一镜的那一张视频子卡已经走完一生、
+ * 交不出可用的末帧。判词点名是哪一张子卡,于是上一镜一重出(`videoCardId` 换新),旧判词
+ * 自动不再匹配 —— 新片在跑的窗口里,一分钱都不会被提前请出去。
+ *
+ * 不猜测、不设超时、不看首帧子卡指针:一张准备卡的存在从来不是「免费的帧在路上」的证据。
  */
 export function shotsStuckWithoutInheritedFrame<
   T extends {
     index: number;
     firstFrameGenerationId?: string;
-    firstFrameCardId?: string;
-    videoGenerationId?: string;
+    videoCardId?: string;
+    inheritBlockedByVideoCardId?: string;
   },
 >(shots: readonly T[], continuity: boolean): T[] {
   if (!continuity) return [];
@@ -87,10 +102,12 @@ export function shotsStuckWithoutInheritedFrame<
   const stuck: T[] = [];
   for (let i = 1; i < ordered.length; i++) {
     const cur = ordered[i]!;
-    // 已经有首帧,或已经有一张首帧子卡在铸/在跑 → 不是卡死,是别的状态(有帧 / framePending)。
-    if (cur.firstFrameGenerationId || cur.firstFrameCardId) continue;
+    if (cur.firstFrameGenerationId) continue; // 已经有帧(自己出的 / 接上的)→ 不是卡死
     const prev = ordered[i - 1]!;
-    if (prev.videoGenerationId) stuck.push(cur);
+    const verdict = cur.inheritBlockedByVideoCardId;
+    // 判词必须点着上一镜**现在**这一张视频子卡才算数:点着别的(上一镜重出了)或无从匹配
+    // (上一镜还没做视频)一律当「还在等」——宁可多等,不可多花。
+    if (verdict && prev.videoCardId && verdict === prev.videoCardId) stuck.push(cur);
   }
   return stuck;
 }
@@ -129,6 +146,9 @@ export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView
           : {}),
         ...(typeof shot.videoGenerationId === "string"
           ? { videoGenerationId: shot.videoGenerationId }
+          : {}),
+        ...(typeof shot.inheritBlockedByVideoCardId === "string"
+          ? { inheritBlockedByVideoCardId: shot.inheritBlockedByVideoCardId }
           : {}),
       };
     })

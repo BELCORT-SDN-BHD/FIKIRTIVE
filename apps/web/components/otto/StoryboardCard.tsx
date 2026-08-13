@@ -473,10 +473,12 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   // shots on that is the first shot alone; the rest inherit the frame the previous clip
   // ended on, for free.
   const missingCount = shotsNeedingMintedFirstFrame(shots, view.continuity).length;
-  // #782 r2b (判官 r1 P1): shots whose upstream hand-off already ran (the shot before them
-  // finished its clip) and still came up empty are STUCK, not waiting — they're part of
-  // `missingCount` above (shotsNeedingMintedFirstFrame includes them) and get their own
-  // honest per-shot message below instead of the "nothing to make here" one.
+  // #782 r3 (判官 r2 P1-a/P1-b): shots gate③ has RULED cannot inherit (it tried on the shot
+  // before them and that clip has no usable closing frame) are STUCK, not waiting — they're
+  // part of `missingCount` above and get their own honest per-shot message below. The ruling
+  // lives in the payload precisely so this count never has to guess from pointer shapes: a
+  // prepared-but-unspent child is not "in flight" (the entrance must stay), and an upstream
+  // remake still running is not "over" (no paid frame may be opened while a free one is coming).
   const stuckShotIds = new Set(shotsStuckWithoutInheritedFrame(shots, view.continuity).map((s) => s.shotId));
   // Shots with no frame that are WAITING for the shot before them (continuous mode) rather
   // than missing something the merchant has to make.
@@ -647,13 +649,18 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           Opens where shot {shot.index} ends — nothing to make here.
                         </div>
                       )}
-                      {/* #782 r2b (判官 r1 P1): shot {shot.index}'s clip is done but its closing
-                          frame didn't come through — honest recovery, no dead end: this shot
-                          needs its own first frame, made below with the others (Generate all). */}
-                      {isStuck && !framePending && (
+                      {/* #782 r3 (判官 r2 P1-a): gate③ has ruled that shot {shot.index}'s clip
+                          cannot hand a closing frame over — an honest, permanent fact about that
+                          clip. It is shown WHENEVER the shot is stuck, including while a prepared
+                          (or running) child of its own exists: r2b hid it behind !framePending,
+                          and a prepared-but-unspent child then left the card saying only
+                          "Generating first frame…" with no explanation and no way forward. The
+                          two lines answer different questions — this one WHY the hand-off is off,
+                          the spinner above WHETHER a frame is on its way. */}
+                      {isStuck && (
                         <div className="text-[0.75rem] text-muted-foreground">
                           Shot {shot.index}&rsquo;s ending frame didn&rsquo;t come through — this shot needs its own
-                          first frame (below); it won&rsquo;t continue from shot {shot.index}.
+                          first frame; it won&rsquo;t continue from shot {shot.index}.
                         </div>
                       )}
                       {/* Confirmed frame regen in flight: old thumbnail stays; hint while the new frame lands. */}

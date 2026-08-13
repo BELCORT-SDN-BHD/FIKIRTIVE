@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { EXECUTED_SPEC, REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
-import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP } from "./byteplus.js";
+import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP, LAST_FRAME_FETCH_TIMEOUT_MS } from "./byteplus.js";
 
 describe("BytePlusProvider — wiring", () => {
   it("maps internal model ids to Ark ids", () => {
@@ -305,6 +305,17 @@ describe("generateVideo (Seedance, async)", () => {
     expect(out.lastFrame).toBeUndefined(); // 片子照常交付
     warn.mockRestore();
   });
+  /**
+   * #782 r3(判官 r2 P2)—— 尺子不能是被量的那个东西。
+   *
+   * 这条测试原来用 `runAllTimersAsync()`「走到预算尽头」:所有定时器都会跑完,预算是 8 秒
+   * 还是 24 小时都一样绿。真正要钉的是一条**边界** —— 预算之内绝不掐、越过预算必定掐 ——
+   * 而尺子必须是测试自己写死的一个数。这个数守的是一件很具体的事:一个**免费**末帧能把一条
+   * **已经付过钱**的片子按在 GENERATING 上多久(按太久,队列超时会重投一条已付费的片子)。
+   */
+  const EXPECTED_TAIL_BUDGET_MS = 8_000;
+  const POLL_TICK_MS = 5_000; // 轮询的第一拍(byteplus.ts 里 `setTimeout(r, 5_000)`)
+
   it("#782 r2 末帧下载卡住不许拖着那条已经付过钱的片子(超时放弃,片子照常交付)", async () => {
     // 「best-effort」必须同时覆盖**炸了**和**不回话**。一条不回话的连接会把作业按在
     // GENERATING 上,一路逼近队列超时 —— 那头等着的是一条我们已经付过钱的片子被重投。
@@ -325,12 +336,27 @@ describe("generateVideo (Seedance, async)", () => {
     const promise = new BytePlusProvider("ark-test").generateVideo({
       prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
     });
-    await vi.runAllTimersAsync(); // 走到预算尽头,自己把那条连接掐掉
+
+    // ① 轮询走到 succeeded,片子下完,末帧那一路开始 —— 预算从这一刻起算。
+    await vi.advanceTimersByTimeAsync(POLL_TICK_MS);
+    expect(aborted, "末帧那一路还没开始就被掐 = 预算根本没生效").toBe(false);
+
+    // ② 预算之内(8s − ε):不许提前掐 —— 一张 1–2 MB 的 PNG 本来就该有它的那几秒。
+    await vi.advanceTimersByTimeAsync(EXPECTED_TAIL_BUDGET_MS - 1);
+    expect(aborted, "预算之内就掐 = 那几秒被悄悄改短了").toBe(false);
+
+    // ③ 越过预算(+2ms):必须自己把那条连接掐掉,片子照常交付。
+    await vi.advanceTimersByTimeAsync(2);
+    expect(aborted, "越过预算还不掐 = 免费附件能把已付费的片子按到队列超时").toBe(true);
+
     const out = await promise;
-    expect(aborted).toBe(true);
     expect(out.ext).toBe("mp4");
     expect(out.bytes.byteLength).toBeGreaterThan(0);
     expect(out.lastFrame).toBeUndefined();
+  });
+
+  it("#782 r3 末帧下载的预算就是 8 秒整(常量漂移即红)", () => {
+    expect(LAST_FRAME_FETCH_TIMEOUT_MS).toBe(EXPECTED_TAIL_BUDGET_MS);
   });
   it("an expired task is a PLAIN failure (terminated before any output ⇒ nothing billed, safe to retry)", async () => {
     stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")

@@ -55,6 +55,18 @@ export type StoryboardCardPayload = {
     videoCardId?: string;
     /** 视频生成完写回(闸②,服务端字段)——同 firstFrameGenerationId 语义。 */
     videoGenerationId?: string;
+    /**
+     * #782 r3 —— 闸③ 的判词(服务端字段,只有 sync 会写)。
+     *
+     * 值 = **上一镜的那一张视频子卡 id**,含义是「那条片子已经走完一生,交不出可用的末帧,
+     * 这一镜再等下去也等不到免费的帧」。只有闸③ 看得见视频作业的真实状态,所以这条判断
+     * 只能在那里做一次、记下来,而不是让卡面和动作层各自从指针形状去猜(r2b 猜错了两次:
+     * 有 firstFrameCardId 不等于在生成,有旧 videoGenerationId 不等于交棒已经结束)。
+     *
+     * 点名子卡 id 是这条判词的自清机制:上一镜一旦重出(videoCardId 换成新的一张),旧判词
+     * 自动不再匹配 —— 新片还在跑的窗口里,没有人会被请去为一张本该继承的帧多花钱。
+     */
+    inheritBlockedByVideoCardId?: string;
   }[];
 };
 
