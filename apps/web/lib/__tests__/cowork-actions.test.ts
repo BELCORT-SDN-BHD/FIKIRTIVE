@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   genJobFindFirst: vi.fn(),
   startCoworkGen: vi.fn(),
   resolveDisabledModels: vi.fn(),
+  getEnhanceDirective: vi.fn(),
+  familyHasPromptSkill: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", async () => ({
@@ -16,8 +18,8 @@ vi.mock("@/lib/auth-guard", async () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../gen-actions", () => ({ startCoworkGen: mocks.startCoworkGen }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mocks.resolveDisabledModels }));
-vi.mock("../cowork-knowledge", () => ({ getEnhanceDirective: vi.fn() }));
-vi.mock("@fikirtive/otto", () => ({ familyHasPromptSkill: () => true }));
+vi.mock("../cowork-knowledge", () => ({ getEnhanceDirective: mocks.getEnhanceDirective }));
+vi.mock("@fikirtive/otto", () => ({ familyHasPromptSkill: mocks.familyHasPromptSkill }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     chatMessage: {
@@ -55,6 +57,11 @@ beforeEach(() => {
   mocks.resolveDisabledModels.mockResolvedValue({ disabled: new Set<string>() });
   mocks.startCoworkGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.chatMessageUpdate.mockResolvedValue({});
+  // Default: a skilled family (the pre-existing behavior every other test in this file
+  // relies on) — composePrompt's directive branch never runs, so requestedPrompt never
+  // gets attached. The #914 r2 tests below override this per-case.
+  mocks.familyHasPromptSkill.mockReturnValue(true);
+  mocks.getEnhanceDirective.mockResolvedValue(undefined);
 });
 
 describe("coworkGenerate", () => {
@@ -96,5 +103,63 @@ describe("coworkGenerate", () => {
 
     expect(result).toEqual({ error: "The approved price changed." });
     expect(mocks.chatMessageUpdate).not.toHaveBeenCalled();
+  });
+
+  // #914 r2(判官 r1 P1)— composePrompt's directive append is the ONE place an image prompt
+  // actually gets processed before it reaches the engine. requestedPrompt is the receipt fact
+  // the asset detail panel / Otto compare against what was actually sent.
+  describe("#914 r2 — requestedPrompt receipt", () => {
+    it("un-skilled family + an enabled directive ⇒ startCoworkGen gets the composed prompt AND requestedPrompt (the pre-compose text)", async () => {
+      mocks.familyHasPromptSkill.mockReturnValue(false);
+      mocks.getEnhanceDirective.mockResolvedValue("Avoid text overlays; keep it photorealistic.");
+
+      await coworkGenerate({
+        cardId: "card-1",
+        prompt: "A product hero on a clean studio set",
+        entityIds: [],
+        variantSel: {},
+      });
+
+      expect(mocks.startCoworkGen).toHaveBeenCalledWith({
+        projectId: "project-1",
+        threadId: "thread-1",
+        prompt: "A product hero on a clean studio set\n\nAvoid text overlays; keep it photorealistic.",
+        requestedPrompt: "A product hero on a clean studio set",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+        idempotencyKey: "cowork:card-1",
+      });
+    });
+
+    it("un-skilled family but no directive cell ⇒ composePrompt no-ops, no requestedPrompt attached (nothing to diverge from)", async () => {
+      mocks.familyHasPromptSkill.mockReturnValue(false);
+      mocks.getEnhanceDirective.mockResolvedValue(undefined);
+
+      await coworkGenerate({
+        cardId: "card-1",
+        prompt: "A product hero on a clean studio set",
+        entityIds: [],
+        variantSel: {},
+      });
+
+      const call = mocks.startCoworkGen.mock.calls[0]![0] as Record<string, unknown>;
+      expect(call.prompt).toBe("A product hero on a clean studio set");
+      expect(call).not.toHaveProperty("requestedPrompt");
+    });
+
+    it("skilled family ⇒ composePrompt is skipped entirely, no requestedPrompt attached (matches the every-other-test default)", async () => {
+      await coworkGenerate({
+        cardId: "card-1",
+        prompt: "A product hero on a clean studio set",
+        entityIds: [],
+        variantSel: {},
+      });
+
+      expect(mocks.getEnhanceDirective).not.toHaveBeenCalled();
+      const call = mocks.startCoworkGen.mock.calls[0]![0] as Record<string, unknown>;
+      expect(call).not.toHaveProperty("requestedPrompt");
+    });
   });
 });

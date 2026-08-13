@@ -83,6 +83,23 @@ describe("genRequest.variantSel", () => {
   });
 });
 
+describe("genRequest.requestedPrompt (#914 r2)", () => {
+  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };
+  it("is optional — absent (every spend surface but coworkGenerate's directive branch) parses fine", () => {
+    expect(genRequest.safeParse(base).success).toBe(true);
+    expect(genRequest.parse(base).requestedPrompt).toBeUndefined();
+  });
+  it("accepts a string when supplied and rejects one over the shared prompt length cap", () => {
+    expect(genRequest.safeParse({ ...base, requestedPrompt: "a cat, close-up" }).success).toBe(true);
+    expect(genRequest.safeParse({ ...base, requestedPrompt: "x".repeat(2001) }).success).toBe(false);
+  });
+  it("never feeds .superRefine or any spend-affecting validation — a request that's otherwise valid stays valid with it present", () => {
+    const withIt = genRequest.safeParse({ ...base, requestedPrompt: "a cat, close-up" });
+    const withoutIt = genRequest.safeParse(base);
+    expect(withIt.success).toBe(withoutIt.success);
+  });
+});
+
 describe("genRequest.threadId", () => {
   it("genRequest accepts an optional threadId (cowork tag) and rejects an over-long one", () => {
     const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };

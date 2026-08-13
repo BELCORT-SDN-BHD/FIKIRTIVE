@@ -27,16 +27,35 @@ export type GenerationDTO = {
    *
    * 被请求的那一行自己的那句(多图时每张各有各的,见 `variants[].finalPrompt`)。
    *
-   * null 有两种情形,语义是同一个:引擎没报,或者这是回执落库之前的历史行。两种都叫
-   * **未知**,而面板会把「未知」**说出来**(“Not reported by the engine.”)—— 不知道要
-   * 长得像不知道,既不能悄悄消失(看起来像这个东西不存在),更不能回落成 `prompt` 冒充
-   * 引擎的话(那样这个字段就变成一句永远为真的废话,商家再也看不出两句何时真的不同)。
+   * #914:这一列的 null 语义**按 kind 分家**——
+   *   · kind:"video" —— null 有两种情形,语义是同一个:引擎没报,或者这是回执落库之前的
+   *     历史行。两种都叫**未知**,面板把「未知」**说出来**("Not reported by the engine.")
+   *     —— 不知道要长得像不知道,既不能悄悄消失,更不能回落成 `prompt` 冒充引擎的话。
+   *   · kind:"image" —— null **恒为真**,不是「这次没报」:图片引擎的官方响应结构上就没有
+   *     revised_prompt 这个字段(packages/core/src/refgen.ts 的 GenerationReceipt 注释),
+   *     面板据此**整行不渲染**,不再念 "Not reported by the engine." 这句占位话(Founder
+   *     裁决,#914,市调见 #909:通行做法是有则显示、无则整行消失)。图片这条路自己的
+   *     回执事实改走 `requestedPrompt`(下面)。
    *
    * 白标在这里(服务端一处)完成:引擎改写出来的句子可能带供应商指纹词,过
    * `redactProviderNames` 之后才越过这道边界。原文按原样留在库里 —— 那是记账真相,
    * 过滤是展示层的事。
    */
   finalPrompt: string | null;
+  /**
+   * #914 r2(判官 r1 P1)—— 这一张在**我们自己的**拼装步骤(coworkGenerate 的
+   * composePrompt,给未配专属提示词技能的模型家族追加家族×模式指令词)之前长什么样,
+   * 只在那一步真的改了什么的时候才有值。image-only 的面板用它跟 `prompt`(平台实际送出
+   * 的那句)逐字比对:相同就说「原样送出」,不同就把 `prompt` 整句亮出来 —— 恒定的
+   * "Sent exactly as you wrote it." 与事实冲突,已被判官指出。
+   *
+   * null 不是「未知」:是「这一单没有可分家的两句话」—— 直接走 composer 的单、走 Otto
+   * 对话 generate 技能的单、拼装本来就没变化的单,都落 null,读取端把它当 `prompt` 本身
+   * 用即可。这条事实两端都是我们自己的数据(不靠引擎回不回执),所以不必像 `finalPrompt`
+   * 那样把「未知」说出口。video 侧不读这一列(视频回执走 `finalPrompt` 那条老路,行为
+   * 不变)。
+   */
+  requestedPrompt: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /**
@@ -61,6 +80,7 @@ export async function getGeneration(
       projectId: true,
       promptText: true,
       finalPromptText: true,
+      requestedPromptText: true,
       favorite: true,
       asset: { select: { ownerId: true, contentHash: true, ext: true } },
     },
@@ -116,6 +136,10 @@ export async function getGeneration(
     prompt: gen.promptText,
     // 这一条是**被请求的那一行**自己的那句(= variants 里 id === generationId 的那一条)。
     finalPrompt: primaryVariant.finalPrompt,
+    // #914 r2 — 一单里每张图共用同一个 GenJob.requestedPrompt(拼装发生在这单**唯一**的
+    // prompt 字段上,不是逐张的),所以不必像 finalPrompt 那样绑到 variants —— 读这一张
+    // 自己的列就够,兄弟图会是同一个值。
+    requestedPrompt: gen.requestedPromptText ?? null,
     favorite: gen.favorite,
     sourceGenerationId: job?.sourceGenerationId ?? null,
     imageAspect: snapshotImageAspect(job?.imageOptions),

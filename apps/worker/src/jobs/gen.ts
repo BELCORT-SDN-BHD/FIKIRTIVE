@@ -885,6 +885,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
                   id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
                   threadId: job.threadId ?? null, // cowork tag (null for normal studio gens) → keeps it out of candidate/asset views
                   assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
+                  // #914 r2 — unlike finalPromptText/billedUnits below, this is OUR OWN data
+                  // (already length-bounded by genRequest's schema when the job was created), not
+                  // an engine-controlled response — nothing about it can make this insert fail, so
+                  // it rides in the SAME commit as promptText rather than the post-commit
+                  // best-effort receipt write.
+                  ...(job.requestedPrompt ? { requestedPromptText: job.requestedPrompt } : {}),
                   entitySnapshot, version: 1, attachedAt: null,
                 },
               });

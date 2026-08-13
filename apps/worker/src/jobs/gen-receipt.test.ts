@@ -176,6 +176,42 @@ describe("#776 引擎自报的提示词落在产出行上", () => {
   });
 });
 
+describe("#914 r2(判官 r1 P1)requestedPrompt 落在产出行上,而且在 commit 事务里", () => {
+  it("GenJob 带 requestedPrompt(coworkGenerate 的拼装步骤真的改了什么)⇒ 原样落到 Generation.requestedPromptText,与 promptText 同一次写入", async () => {
+    m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
+    const { generationRows } = await runWorker({ ...imageJob, requestedPrompt: "a poster for the weekend sale, moody lighting" });
+    expect(generationRows).toHaveLength(1);
+    expect(generationRows[0]!.promptText).toBe("a poster for the weekend sale"); // 拼装之后,实际送出的那句
+    expect(generationRows[0]!.requestedPromptText).toBe("a poster for the weekend sale, moody lighting"); // 拼装之前
+  });
+
+  it("GenJob 没有 requestedPrompt(直接走 composer / Otto 对话 generate 技能 / 拼装无变化)⇒ 那一列不写,不是「未知」而是「没有可分家的两句话」", async () => {
+    m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
+    const { generationRows } = await runWorker({ ...imageJob });
+    expect(generationRows[0]).not.toHaveProperty("requestedPromptText");
+  });
+
+  it("多张图:GenJob 一份 requestedPrompt,每一张产出行都抄同一份(拼装发生在整单唯一的 prompt 字段上,不是逐张的)", async () => {
+    m.generateImages.mockResolvedValue([
+      { bytes: new Uint8Array([1]), ext: "png" },
+      { bytes: new Uint8Array([2]), ext: "png" },
+    ]);
+    const { generationRows } = await runWorker({ ...imageJob, count: 2, requestedPrompt: "a poster for the weekend sale, moody lighting" });
+    expect(generationRows.map((r) => r.requestedPromptText)).toEqual([
+      "a poster for the weekend sale, moody lighting",
+      "a poster for the weekend sale, moody lighting",
+    ]);
+  });
+
+  it("不像 finalPromptText/billedUnits 那样搬到事务外 —— 它是我们自己已校验过长度的数据,不是引擎能撑爆的输入", async () => {
+    m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
+    const { generationRows, receiptPrompts } = await runWorker({ ...imageJob, requestedPrompt: "a poster for the weekend sale, moody lighting" });
+    // 落在 generationCreate 的 data 里(commit tx 内),不是 generationUpdateMany(事务外的补写)。
+    expect(generationRows[0]!.requestedPromptText).toBe("a poster for the weekend sale, moody lighting");
+    expect(receiptPrompts.every((u) => !("requestedPromptText" in u.data))).toBe(true);
+  });
+});
+
 describe("#776 真实计费量:全报才求和", () => {
   it("全部产出都报了量 ⇒ 落总和(图片按张:两张 = 2)", async () => {
     m.generateImages.mockResolvedValue([

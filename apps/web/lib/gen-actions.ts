@@ -383,7 +383,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const OWNED = { ownerId, deletedAt: null } as const;
     const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
     if (!parsed.success) return { error: "That generation request is out of bounds." };
-    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, coherentSet } = parsed.data;
+    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, requestedPrompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, coherentSet } = parsed.data;
     const parsedCanvasAction = parseCanvasActionKey(idempotencyKey);
     if (parsedCanvasAction && !trustedCanvasKey) {
       return { error: "That generation request is out of bounds." };
@@ -743,6 +743,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             idempotencyKey: idempotencyKey ?? null,
             threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
             queueJobId,
+            // #914 r2 — only coworkGenerate ever sets this (its composePrompt step actually
+            // changed something); absent for every other spend surface. Rides straight through
+            // like idempotencyKey — never read by material/replay matching.
+            ...(requestedPrompt ? { requestedPrompt } : {}),
             ...(videoOptions ? { videoOptions } : {}),
             // #642: the frozen image shape — the worker reads it back, and a later
             // "edit this image" inherits from it. Video jobs get null (normalizer drops it).

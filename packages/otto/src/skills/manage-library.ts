@@ -104,11 +104,12 @@ export const manageLibrarySkill = defineOttoSkill({
   description:
     `Browse the user's ${navLabel("library")} — every image/video they've made — $0, never generates or spends. ` +
     "history: a page of their generation history, newest first (optional search text, favoriteOnly, and a cursor to page). " +
-    "detail: one generation's prompt/kind/favorite, plus finalPrompt — the engine's rewritten version of the " +
-    "prompt, when its contract reports one. This is kind-dependent (#914): for kind:\"video\", finalPrompt " +
-    "is a real per-generation fact — non-null means the engine changed what the user wrote (often not " +
-    "word-for-word, and the honest way to explain a result), null means the engine genuinely didn't report " +
-    "one this time (say you don't know, never quote `prompt` in its place). For kind:\"image\", finalPrompt " +
+    "detail: one generation's prompt/kind/favorite, plus finalPrompt — the text the engine reports it " +
+    "actually executed, when its contract reports one. This is kind-dependent (#914): for kind:\"video\", " +
+    "finalPrompt is a real per-generation fact — non-null means the engine REPORTED the text it ran, which " +
+    "may or may not match what the user wrote (compare it to `prompt` yourself before calling it a rewrite " +
+    "— don't assume non-null means changed), null means the engine genuinely didn't report one this time " +
+    "(say you don't know, never quote `prompt` in its place). For kind:\"image\", finalPrompt " +
     "is ALWAYS null — that's a fixed capability of the image engine, not a one-off failure to report, so " +
     "never say \"I don't know\" or \"it wasn't reported\" for an image: say the image engine doesn't report " +
     "rewritten prompts, or just don't mention it. Needs generationId. " +

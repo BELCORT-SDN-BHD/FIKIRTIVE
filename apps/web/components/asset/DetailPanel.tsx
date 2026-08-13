@@ -48,6 +48,8 @@ type GenDTO = {
   prompt: string;
   /** #776：被请求的那一行自己的「引擎真正跑的那句」。切换缩略图后要读 `variants[i].finalPrompt`。 */
   finalPrompt: string | null;
+  /** #914 r2：这一单在我们自己拼装步骤之前长什么样（image-only）；null = 与 `prompt` 无分家。 */
+  requestedPrompt: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
@@ -730,20 +732,29 @@ export default function DetailPanel({
               );
             })()}
 
-            {/* #914 图片回执:平台送出前对提示词做过的加工 —— 这是我们自己的数据，必然可知，
-                不依赖引擎回不回执。这条产品线目前不会改写商家的话（@mention 只解析成参考图，
-                文字原样送出），所以这里恒定显示同一句；哪天平台真的开始加工提示词，改这一句
-                就够了，不必回来重写这段渲染逻辑或补一个「未知」分支。 */}
-            {gen.kind === "image" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
-                  Sent to the engine
-                </span>
-                <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
-                  Sent exactly as you wrote it.
-                </p>
-              </div>
-            )}
+            {/* #914 r2(判官 r1 P1)图片回执:平台送出前对提示词做过的加工 —— 这是我们自己的
+                数据，两端必然可知，不依赖引擎回不回执。r1 在这里恒定声明 "Sent exactly as you
+                wrote it." —— 判官指出这不实:官方契约只证明「引擎不回报改写」，不证明「引擎
+                不改写」，而且我们自己的拼装管线（coworkGenerate 的 composePrompt，给未配专属
+                提示词技能的模型家族追加家族×模式指令词）确实会加工图片提示词。修法=按真实
+                比对条件化：`gen.requestedPrompt`（拼装前，null = 与 `prompt` 无分家，见
+                asset-actions.ts 的字段注释）与 `gen.prompt`（拼装后，平台真正送出的那句）
+                逐字相同才说「原样」，不同就把 `gen.prompt` 整句亮出来 —— 商家看得到自己批的
+                是哪一句、平台实际送出的又是哪一句。 */}
+            {gen.kind === "image" && (() => {
+              const requested = gen.requestedPrompt ?? gen.prompt;
+              const sentAsIs = requested.trim() === gen.prompt.trim();
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                    What we sent to the engine
+                  </span>
+                  <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+                    {sentAsIs ? "Sent exactly as you wrote it." : gen.prompt}
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
                 Seeded from the shape this image was made in, so neither one silently reshapes it.

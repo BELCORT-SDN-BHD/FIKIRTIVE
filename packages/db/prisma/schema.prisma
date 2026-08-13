@@ -301,6 +301,14 @@ model Generation {
   assetId        String
   source         AssetSource
   promptText     String      @default("")
+  /// #914 r2 生成回执:这一单在**我们自己的** composePrompt 拼装步骤(GenJob.requestedPrompt
+  /// 的注释)之前长什么样 —— 只有商家点「Approve」经 coworkGenerate 落地、且那一步真的追加了
+  /// 家族×模式指令词的图片单才有值,worker 从同一个 GenJob 原样抄过来。
+  /// null 不是「未知」:是「这一单没有可分家的两句话」(直接走 composer 的单、走 Otto 对话
+  /// generate 技能的单、拼装无变化的单——都落 null),读取端据此把 promptText 当成商家看到
+  /// 并批准的那一句,判「逐字相同」时把 null 当 promptText 本身用。这条产品线两端都是我们
+  /// 自己的数据,不靠引擎回不回执,所以不必像 finalPromptText 那样把「未知」说出口。
+  requestedPromptText String?
   /// #776 生成回执:引擎自报**它真正跑的那句提示词**(服务端改写/加固之后的版本)。
   /// 商家可见 —— 「每个东西都要有迹可循」:商家写的那句在 promptText,引擎实际跑的那句在这里。
   /// null = 引擎没报(或迁移前的历史行)= **未知**,读取端必须如实说不知道,不得回落成
@@ -509,6 +517,12 @@ model GenJob {
   tailGenerationId   String?
   referenceVideoGenerationId String?
   prompt             String
+  /// #914 r2:这一单在花钱**之前**、我们自己的 composePrompt 拼装步骤把家族×模式指令词
+  /// 追加上去之前,原本是什么样子 —— 只有 coworkGenerate 这一条路会跑这一步,且只在真的
+  /// 追加了什么的时候才写这一列(未拼装 / 拼装无变化都留 null)。null 的语义不是「未知」——
+  /// 是「这一单没有可分家的两句话」,读取端据此把 prompt 本身当成商家看到并批准的那一句。
+  /// 纯记录,不参与 `.superRefine`、定价或重放材料比对(`factoryMaterialMatches` 不读它)。
+  requestedPrompt    String?
   entityIds          String[]  @default([])
   // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
   // null/absent = base refs for all mentions (backward-compat with old rows)

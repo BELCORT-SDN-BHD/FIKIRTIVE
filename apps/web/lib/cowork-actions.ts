@@ -134,7 +134,14 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
       },
     });
     if (!built.ok) return { error: built.error };
-    const req = built.req;
+    // #914 r2 (判官 r1 P1) — the receipt fact the asset detail panel / Otto compare against what
+    // actually went out (composedPrompt, now sitting in built.req.prompt): only differs from it
+    // when the directive above actually appended something. Every other spend surface (direct
+    // composer, the Otto-chat `generate` skill) never composes, so their jobs carry no
+    // requestedPrompt at all — the reader treats that absence as "nothing to diverge from",
+    // never as "unknown" (unlike the engine-reported finalPromptText, both ends of this fact are
+    // our own data).
+    const req = composedPrompt === prompt ? built.req : { ...built.req, requestedPrompt: prompt };
 
     const res = await startCoworkGen(req); // binds the persisted card quote before the shared startGen spend authority
     if ("error" in res) return res;

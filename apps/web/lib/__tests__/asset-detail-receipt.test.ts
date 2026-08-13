@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * #776 r2 → #914 —— 资产详情面板上的生成回执:「引擎真正跑的那句话」。
+ * #776 r2 → #914 → #914 r2 —— 资产详情面板上的生成回执:「引擎真正跑的那句话」。
  *
  * #914(Founder 裁决 2026-08-13,市调见 #909):图片引擎按官方契约永不回报改写后的提示词
  * (packages/core/src/refgen.ts 的 GenerationReceipt 注释:图片响应结构上没有 revised_prompt),
@@ -8,8 +8,13 @@
  * 未知,是一个字段模板在填不上时自己编的句子。这一票把它改成通行做法:有则显示、无则整行
  * 不出现,而且图片这条路上**不分「有/无」两种形状**,因为它结构上恒为未知,不是「这次没报」。
  * 视频回执行为不变(r2 判官的五条纪律原样保留,下移到本文件的「视频回执」describe 块)。
- * 图片这条路新增一条**恒定为真**的事实(不依赖引擎回执):平台送出前有没有加工过这句话 ——
- * 目前这条产品线不加工,所以恒定显示 "Sent exactly as you wrote it."。
+ *
+ * #914 r2(判官 r1 P1 FAIL):图片这条路新增的那条事实原本恒定显示 "Sent exactly as you
+ * wrote it." —— 判官指出这不实:官方契约只证明「引擎不回报改写」,不证明「引擎不改写」,
+ * 而我们自己的拼装管线(coworkGenerate 的 composePrompt)确实会给部分图片模型家族加工提示
+ * 词。这一票把它改成按真实比对条件化:`requestedPrompt`(拼装前,我们自己的数据,null =
+ * 与 `prompt` 无分家)与 `prompt`(拼装后,平台真正送出的那句)逐字相同才说「原样」,不同
+ * 就把 `prompt` 整句亮出来 —— 断言覆盖两个分支,而不是像 r1 那样只有恒真一种形状。
  *
  * 真组件 + 真 React;只有服务端动作是假件,所以一个积分都花不出去。断言的是**屏幕上的字**,
  * 不是源码里的标识符 —— 前者才是商家看到的东西。
@@ -55,7 +60,10 @@ const MERCHANT_PROMPT = "a poster for the weekend sale";
 
 type Variant = { id: string; url: string; favorite: boolean; finalPrompt: string | null };
 
-const generation = (variants: Variant[], kind: "image" | "video" = "image") => ({
+// #914 r2:requestedPrompt is a per-JOB fact (composePrompt runs once on the whole job's
+// prompt, before any output image exists), not per-variant like finalPrompt — so it's a
+// plain third argument here, not a field on each Variant.
+const generation = (variants: Variant[], kind: "image" | "video" = "image", requestedPrompt: string | null = null) => ({
   id: variants[0]!.id,
   projectId: "p1",
   url: variants[0]!.url,
@@ -64,6 +72,7 @@ const generation = (variants: Variant[], kind: "image" | "video" = "image") => (
   kind,
   prompt: MERCHANT_PROMPT,
   finalPrompt: variants[0]!.finalPrompt,
+  requestedPrompt,
   favorite: false,
   sourceGenerationId: null,
   imageAspect: "1:1",
@@ -107,8 +116,8 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function renderPanel(variants: Variant[], kind: "image" | "video" = "image"): Promise<void> {
-  mocks.getGeneration.mockResolvedValue(generation(variants, kind));
+async function renderPanel(variants: Variant[], kind: "image" | "video" = "image", requestedPrompt: string | null = null): Promise<void> {
+  mocks.getGeneration.mockResolvedValue(generation(variants, kind, requestedPrompt));
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -135,10 +144,10 @@ function hasEngineRanRow(): boolean {
   return [...container!.querySelectorAll("span")].some((s) => s.textContent?.trim() === "What the engine ran");
 }
 
-/** #914:「Sent to the engine」那一块底下的那句话 —— 图片回执的平台加工事实。 */
+/** #914 r2:「What we sent to the engine」那一块底下的那句话 —— 图片回执的平台加工事实。 */
 function sentToEngineText(): string {
-  const labels = [...container!.querySelectorAll("span")].filter((s) => s.textContent?.trim() === "Sent to the engine");
-  expect(labels[0], "图片回执应该有「Sent to the engine」这一块").toBeDefined();
+  const labels = [...container!.querySelectorAll("span")].filter((s) => s.textContent?.trim() === "What we sent to the engine");
+  expect(labels[0], "图片回执应该有「What we sent to the engine」这一块").toBeDefined();
   const body = labels[0]!.parentElement!.querySelector("p");
   expect(body, "这一块底下应该有一句话").not.toBeNull();
   return body!.textContent!.trim();
@@ -171,15 +180,40 @@ describe("#914 图片回执:「引擎实际提示词」整行永不出现", () =
   });
 });
 
-describe("#914 图片回执:平台加工展示路径", () => {
-  it("没有加工 ⇒ 明写「按原文送出」,不是空着或占位句", async () => {
-    await renderPanel(one(null), "image");
+describe("#914 r2(判官 r1 P1)图片回执:平台加工展示路径,按真实比对条件化", () => {
+  it("requestedPrompt 缺省(null)⇒ 没有可分家的两句话,明写「按原文送出」", async () => {
+    await renderPanel(one(null), "image", null);
     expect(sentToEngineText()).toBe("Sent exactly as you wrote it.");
   });
 
-  it("这一行是恒定事实,不依赖引擎回执 —— 即便这一张带着(结构上不可能出现的)finalPrompt 值也一样", async () => {
-    await renderPanel(one("a bright poster, weekend sale, bold type"), "image");
+  it("requestedPrompt 与实际送出的 prompt 逐字相同(显式传入,不是靠 null 缺省)⇒ 仍说原样", async () => {
+    await renderPanel(one(null), "image", MERCHANT_PROMPT);
     expect(sentToEngineText()).toBe("Sent exactly as you wrote it.");
+  });
+
+  it("requestedPrompt 与实际送出的 prompt 不同(拼装管线真的加工过)⇒ 展示平台实际送出的提示词全文", async () => {
+    const requested = "a poster, weekend sale"; // 商家批的那句 —— 拼装之前
+    await renderPanel(one(null), "image", requested);
+    // MERCHANT_PROMPT 是 fixture 里 gen.prompt 的值 —— 平台真正送出的那一句。
+    expect(sentToEngineText()).toBe(MERCHANT_PROMPT);
+    expect(sentToEngineText()).not.toBe("Sent exactly as you wrote it.");
+  });
+
+  it("这一行不受(结构上不可能出现的)finalPrompt 影响 —— 只比 requestedPrompt vs prompt,不看引擎回执", async () => {
+    await renderPanel(one("a bright poster, weekend sale, bold type"), "image", null);
+    expect(sentToEngineText()).toBe("Sent exactly as you wrote it.");
+  });
+
+  it("多图:requestedPrompt 是整单一份事实,不随缩略图切换而变", async () => {
+    const requested = "a poster, weekend sale"; // 不同于 MERCHANT_PROMPT,应该显示 gen.prompt
+    await renderPanel([
+      { id: "g1", url: "https://cdn.test/g1.png", favorite: false, finalPrompt: null },
+      { id: "g2", url: "https://cdn.test/g2.png", favorite: false, finalPrompt: null },
+    ], "image", requested);
+    expect(sentToEngineText()).toBe(MERCHANT_PROMPT);
+    const thumbs = [...container!.querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
+    await act(async () => { thumbs[1]!.click(); });
+    expect(sentToEngineText()).toBe(MERCHANT_PROMPT);
   });
 });
 
@@ -225,8 +259,8 @@ describe("#776 r2 → #914:视频回执行为不变", () => {
     expect(engineRanText()).toBe("Not reported by the engine.");
   });
 
-  it("视频回执不显示图片专属的「Sent to the engine」平台加工行", async () => {
+  it("视频回执不显示图片专属的「What we sent to the engine」平台加工行", async () => {
     await renderPanel(one("a bright poster, weekend sale, bold type"), "video");
-    expect(container!.textContent).not.toContain("Sent to the engine");
+    expect(container!.textContent).not.toContain("What we sent to the engine");
   });
 });
