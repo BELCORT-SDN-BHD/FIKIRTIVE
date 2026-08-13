@@ -354,15 +354,17 @@ describe("连接预算:Prisma 与 pg-boss 两个池都要进账(判官 P1-3)", (
 
       it("总数只用 effective 求和 —— 不再出现 r4 那个 11", () => {
         const budget = connectionBudget(waitPlan, negEnv);
-        // r4:-3 + 14 = 11(假)。现在:0 + 14 = 14(真)。
+        // r4:-3 + pg-boss 那个数 = 一个假总数。现在:0 + pg-boss = pg-boss(真)。
+        // #784 把 understand 加进等待型队列之后 pgBossPoolMax 从 14 变成 16 —— 这条用例要断言的
+        // 是「负数那一项按 0 计入总和」,不是那个具体的数,所以字面量跟着队列表走,别写死。
         expect(budget.effectiveTotal).toBe(waitPlan.pgBossPoolMax);
-        expect(budget.effectiveTotal).toBe(14);
-        expect(budget.effectiveTotal).not.toBe(11);
+        expect(budget.effectiveTotal).toBe(16);
+        expect(budget.effectiveTotal).not.toBe(13); // -3 + 16,r4 那个假算术
 
         const line = connectionBudgetLine(waitPlan, negEnv);
-        expect(line).not.toContain("= 11 per replica");
+        expect(line).not.toContain("= 13 per replica");
         expect(line).not.toContain("prisma -3 + pg-boss");
-        expect(line).toContain("= 14 per replica");
+        expect(line).toContain(`= ${waitPlan.pgBossPoolMax} per replica`);
         expect(line).toContain("configured -3"); // raw 照报
         expect(line).toContain("opens no connection"); // 而且说明白后果
         expect(line).toContain("WARNING");

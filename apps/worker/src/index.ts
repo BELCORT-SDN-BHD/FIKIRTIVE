@@ -29,6 +29,7 @@ import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
+import { handleUnderstand, reapStaleUnderstanding, scanAssetsNeedingUnderstanding } from "./jobs/understand.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
@@ -49,12 +50,21 @@ import {
   PUBLISH_QUEUE,
   PUBLISH_DLQ,
   PUBLISH_QUEUE_POLICY,
+  UNDERSTAND_QUEUE,
+  UNDERSTAND_DLQ,
+  UNDERSTAND_QUEUE_POLICY,
+  UNDERSTANDING_KINDS,
+  assetUnderstandingEnabled,
+  understandingDailyCap,
+  understandingDailyCeilingUsdPerOwner,
+  understandingRunsWithinFreeGrant,
   type RenderJobData,
   type RefGenJobData,
   type GenJobData,
   type CaptionJobData,
   type ResearchJobData,
   type PublishJobData,
+  type UnderstandJobData,
 } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
@@ -172,6 +182,9 @@ async function main(): Promise<void> {
   // energize slice; for now the queue exists but nothing produces to it (fail-closed, inert).
   await boss.createQueue(PUBLISH_DLQ);
   await boss.createQueue(PUBLISH_QUEUE, { ...PUBLISH_QUEUE_POLICY });
+  // #784 素材理解:队列的**唯一**生产者是下面 supervise 里的扫描器 —— 商家永远不点「分析」。
+  await boss.createQueue(UNDERSTAND_DLQ);
+  await boss.createQueue(UNDERSTAND_QUEUE, { ...UNDERSTAND_QUEUE_POLICY });
 
   /**
    * Register ONE queue's consumer — but only if this role owns the queue (#796). The plan is
@@ -219,6 +232,9 @@ async function main(): Promise<void> {
   // adapter orchestration. Fail-closed by construction: the scheduler below only enqueues posts
   // whose connection can publish RIGHT NOW, and the handler re-checks + triple-locks idempotency.
   await consume<PublishJobData>(PUBLISH_QUEUE, handlePublish);
+  // #784 素材理解三件套。**不碰商家余额**(理解是平台成本),所以它和钱路队列的形状不同:
+  // 允许正常重试,防重靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS。
+  await consume<UnderstandJobData>(UNDERSTAND_QUEUE, (data, retryCount) => handleUnderstand(data, retryCount));
 
   // Heartbeat: the status panel's "worker alive" signal (appendix A) + the durable
   // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
@@ -283,6 +299,11 @@ async function main(): Promise<void> {
           boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
         );
         if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
+        // #784: understanding rows a crashed worker left RUNNING. $0 and credit-free by
+        // construction — this chain never reserves — so the sweep just returns them to QUEUED
+        // and the scanner below re-delivers. A file half-read should be finished, not abandoned.
+        const un = await reapStaleUnderstanding();
+        if (un) console.log(`[worker] returned ${un} interrupted understanding row(s) to the queue`);
       });
     } catch (e) {
       console.error("[worker] reaper error:", e);
@@ -336,6 +357,53 @@ async function main(): Promise<void> {
   if (plan.supervises) {
     setInterval(() => void schedule(), 60_000);
     void schedule(); // sweep due posts once on startup too
+  }
+
+  // #784 asset understanding — the ONLY producer on UNDERSTAND_QUEUE, and deliberately so:
+  // the merchant never presses "Analyse". This scan finds files nobody has read yet, claims
+  // each one by CREATING its AssetUnderstanding row (the (ownerId, assetId, kind) unique index
+  // IS the claim, so two replicas scanning at once can't double-read), and enqueues the claims.
+  // A send that fails leaves the row QUEUED; the next scan past the redispatch window re-sends it.
+  //
+  // Rides the same supervision flag as the publish scheduler: one service produces, or the same
+  // file gets claimed twice as often as it needs to be.
+  let understanding = false;
+  const readNewFiles = async () => {
+    if (understanding) return;
+    understanding = true;
+    try {
+      // #463: the scan spans every authorized tenant by design — the function opens its own named
+      // system identity, and each row write inside it re-enters with that row's tenant.
+      const ids = await scanAssetsNeedingUnderstanding();
+      for (const understandingId of ids) {
+        await boss.send(UNDERSTAND_QUEUE, { understandingId } satisfies UnderstandJobData, {
+          singletonKey: `understand:${understandingId}`,
+        });
+      }
+      if (ids.length) console.log(`[worker] queued ${ids.length} file(s) for understanding`);
+    } catch (e) {
+      console.error("[worker] understanding scan error:", e);
+      captureError(e);
+    } finally {
+      understanding = false;
+    }
+  };
+  if (plan.supervises) {
+    if (assetUnderstandingEnabled(process.env)) {
+      // The cost account, printed once at boot so nobody has to derive it from the code:
+      // what one merchant can cost us in a day, and how far the untouched free grant goes.
+      const cap = understandingDailyCap(process.env);
+      const grantRuns = UNDERSTANDING_KINDS.map((k) => `${k} ×${understandingRunsWithinFreeGrant(k)}`).join(", ");
+      console.log(
+        `[worker] asset understanding ON — up to ${cap} file(s) per merchant per day ` +
+          `(ceiling $${understandingDailyCeilingUsdPerOwner(process.env).toFixed(4)} per merchant per day). ` +
+          `Free grant covers: ${grantRuns}. Merchants are never charged for this.`,
+      );
+      setInterval(() => void readNewFiles(), 60_000);
+      void readNewFiles(); // read anything that arrived while we were down
+    } else {
+      console.log("[worker] asset understanding OFF (ASSET_UNDERSTANDING) — no files will be read");
+    }
   }
 
   console.log(`[worker] started — ${planSummary(plan)}`);

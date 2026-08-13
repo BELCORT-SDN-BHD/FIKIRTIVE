@@ -43,6 +43,12 @@ export type SystemReason =
   | "publish-reaper"
   | "ingest-redispatch"
   | "publish-scheduler"
+  /** #784 — the cross-tenant sweep that finds files nobody has read yet and claims each one by
+   *  creating its AssetUnderstanding row. Genuinely platform-wide (it spans every tenant's new
+   *  uploads); each per-row write re-enters under that row's own tenant. */
+  | "understanding-scan"
+  /** #784 — returns AssetUnderstanding rows a crashed worker left RUNNING to the queue. */
+  | "understanding-reaper"
   /**
    * #733 — the founder admin console's platform-wide READ model.
    *
