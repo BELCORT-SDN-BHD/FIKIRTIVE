@@ -4,6 +4,7 @@ import {
   AUDIO_ROLES,
   betweenClipTransition,
   editDuration,
+  foreignEditSrcs,
   renderDuration,
   renderJobData,
   srcToStorageKey,
@@ -345,5 +346,45 @@ describe("track.audioRole (ducking opt-in)", () => {
     e.output = { format: "mp4", resolution: "1080", aspectRatio: "9:16", fps: 30 };
     const parsed = fikirtiveEdit.parse(e);
     expect(parsed.output).toEqual({ format: "mp4", resolution: "1080", aspectRatio: "9:16", fps: 30 });
+  });
+});
+
+/**
+ * #780 r2b — the owner check the CONTRACT deliberately does not make.
+ *
+ * `mediaSrc` pins the SHAPE of a src and says nothing about whose owner segment it carries,
+ * because this schema is parsed at both ends and neither end's owner is knowable here. That
+ * gap is real and it was exploitable: a hand-written cut naming another org's key parsed
+ * clean, saved, and rendered. `foreignEditSrcs` is the second, explicit step every caller
+ * that persists or acts on an edit now takes — against the owner IT authenticated.
+ */
+describe("foreignEditSrcs (cross-tenant guard for a whole edit)", () => {
+  it("says nothing is foreign when every clip lives in that owner's namespace", () => {
+    expect(foreignEditSrcs(fikirtiveEdit.parse(validEdit), "founder")).toEqual([]);
+  });
+
+  it("catches a foreign VISUAL clip", () => {
+    const e = cloneEdit();
+    e.timeline.tracks[0].clips[1].asset.src = `/files/u/neighbour/${HASH}.mp4`;
+    expect(foreignEditSrcs(fikirtiveEdit.parse(e), "founder")).toEqual([`/files/u/neighbour/${HASH}.mp4`]);
+  });
+
+  it("catches a foreign MUSIC bed — an audio track is a file we fetch too", () => {
+    const e = cloneEdit();
+    e.timeline.tracks[1].clips[0].asset.src = `/files/u/neighbour/${HASH}.mp3`;
+    expect(foreignEditSrcs(fikirtiveEdit.parse(e), "founder")).toHaveLength(1);
+  });
+
+  it("is not fooled by an owner segment that merely STARTS with the real one", () => {
+    const e = cloneEdit();
+    e.timeline.tracks[0].clips[0].asset.src = `/files/u/founder-two/${HASH}.mp4`;
+    expect(foreignEditSrcs(fikirtiveEdit.parse(e), "founder")).toHaveLength(1);
+  });
+
+  it("reports every foreign src, not just the first — the caller refuses the whole document", () => {
+    const e = cloneEdit();
+    e.timeline.tracks[0].clips[0].asset.src = `/files/u/neighbour/${HASH}.mp4`;
+    e.timeline.tracks[1].clips[0].asset.src = `/files/u/neighbour/${HASH}.mp3`;
+    expect(foreignEditSrcs(fikirtiveEdit.parse(e), "founder")).toHaveLength(2);
   });
 });

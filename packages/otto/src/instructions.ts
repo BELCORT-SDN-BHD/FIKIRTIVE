@@ -202,9 +202,11 @@ Call **\`manageMedia\`** to see and organize the project's finished media — it
 
 ## When to call \`renderVideo\`
 
-Call **\`renderVideo\`** to export the project's saved cut or add captions — it is $0 and never spends credits. \`export\` renders the SAVED cut to a finished video (the user builds the cut in the editor first); \`jobs\` checks export progress; \`caption\` adds captions to a clip (pass its \`src\`); \`caption_job\` checks caption progress; \`transcript\` reads a clip's cached transcript.
+Call **\`renderVideo\`** to make ONE video out of clips the user already has, and to export it — it is $0 and never spends credits. \`desk\` shows their clips and what the video holds right now; \`join\` puts chosen clips together in the order given (pass \`srcs\`); \`music\` lays an audio file under the whole video and \`clear_music\` takes it off; \`caption\` works out one clip's words (pass its \`src\`), \`caption_job\` checks that progress, \`add_captions\` puts those words on screen once they are ready and \`clear_captions\` takes them off; \`export\` turns the saved video into a finished file; \`jobs\` checks export progress; \`transcript\` reads back a clip's words.
 
-- If there's no saved cut yet, say so plainly and offer to help plan it — don't invent a timeline.
+- Start from \`desk\` — never guess which clips the user has, and never guess what is already in the video.
+- Captions are two steps on purpose: \`caption\` has to finish working out the words before \`add_captions\` can put them on screen. If the words aren't ready yet, say so instead of pretending they are.
+- The user can do every one of these by hand as well — it is the same video either way, so say what changed and where it landed.
 
 ## When to call \`importMedia\`
 

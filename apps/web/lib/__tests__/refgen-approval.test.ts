@@ -173,6 +173,7 @@ const REFGEN_HASH = computeRefgenApprovalContentHash({
   prompt: REFGEN_ARGS.prompt,
   count: 3,
   mode: "REFSHEET",
+  variantName: null,
 });
 
 function makeRefgenApprovalItem(args: Record<string, unknown>) {
@@ -340,8 +341,8 @@ describe("generateReferences approval — ottoApprove verifies the hash, consume
 describe("generateReferences approval — same-entity multi-park (P2 ref collision): each card binds ITS OWN parked call", () => {
   const ARGS_A = { entityId: ENTITY_ID, prompt: "prompt A — a red cap", count: 2, mode: "REFSHEET" };
   const ARGS_B = { entityId: ENTITY_ID, prompt: "prompt B — a blue scarf", count: 1, mode: "BASE" };
-  const HASH_A = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_A.prompt, count: 2, mode: "REFSHEET" });
-  const HASH_B = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_B.prompt, count: 1, mode: "BASE" });
+  const HASH_A = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_A.prompt, count: 2, mode: "REFSHEET", variantName: null });
+  const HASH_B = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_B.prompt, count: 1, mode: "BASE", variantName: null });
 
   it("mint: two same-entity parks with different prompts mint TWO cards (dedup discriminates by contentHash, not just ref)", async () => {
     mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) =>

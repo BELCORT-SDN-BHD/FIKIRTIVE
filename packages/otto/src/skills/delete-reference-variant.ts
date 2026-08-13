@@ -7,10 +7,11 @@
  * never touches Prisma, the provider, or web action files directly (CI fence rule).
  *
  * $0, but destructive: deleteVariant soft-deletes the variant AND its tagged reference images (paid
- * outputs). The human deletes from the element page; Otto has no such surface, so the port fronts the
- * delete with a deterministic, fail-closed active-job gate — it refuses while a paid RefGenJob for that
- * variant is still in flight, so a delete can't strand settling paid work (makeOttoRefgenPort, the #271
- * deleteProject precedent). That refusal surfaces here verbatim; there is no override parameter. The
+ * outputs). A deterministic, fail-closed active-job gate refuses while a paid RefGenJob for that variant
+ * is still in flight, so a delete can't strand settling paid work — enforced by the deleteVariant action
+ * for every caller (#781 r2: the merchant's element page is refused on the same terms) and re-stated in
+ * Otto's words by the port (makeOttoRefgenPort, the #271 deleteProject precedent). That refusal surfaces
+ * here verbatim; there is no override parameter. The
  * model must ALSO never invent an id — owner scope + not-found fail closed on a fabricated variantId.
  */
 import { z } from "zod";

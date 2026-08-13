@@ -25,6 +25,7 @@ import {
   REFGEN_QUEUE,
   RESEARCH_QUEUE,
   PUBLISH_QUEUE,
+  UNDERSTAND_QUEUE,
 } from "@fikirtive/core";
 // 请求级上限的**唯一**来源:真正拦住请求的就是这个闸门,启动日志必须报它,而不是另算一份。
 import { PROVIDER_MAX_CONCURRENT_REQUESTS_ENV, providerRequestLimit } from "@fikirtive/generation";
@@ -39,8 +40,10 @@ export type WorkerRole = (typeof WORKER_ROLES)[number];
 
 /** CPU 型队列:ffmpeg / ffprobe / whisper。靠副本扩容,进程内恒为 1。 */
 export const COMPUTE_QUEUES = [INGEST_QUEUE, RENDER_QUEUE, CAPTION_QUEUE] as const;
-/** 等待型队列:绝大部分时间 await 外部供应商。靠进程内并发扩容。 */
-export const WAIT_QUEUES = [GEN_QUEUE, REFGEN_QUEUE, RESEARCH_QUEUE, PUBLISH_QUEUE] as const;
+/** 等待型队列:绝大部分时间 await 外部供应商。靠进程内并发扩容。
+ *  understand(#784)进这一族:它整趟都在 await 一次读图/读片的请求,CPU 基本闲着 ——
+ *  和 ffmpeg 那族没有半点相似。 */
+export const WAIT_QUEUES = [GEN_QUEUE, REFGEN_QUEUE, RESEARCH_QUEUE, PUBLISH_QUEUE, UNDERSTAND_QUEUE] as const;
 
 /**
  * 供应商官方并发额度(2026-08-08 arkcli 实测:三个视频模型都是
@@ -65,6 +68,10 @@ const WAIT_DEFAULTS: Record<string, number> = {
   [REFGEN_QUEUE]: 2,
   [RESEARCH_QUEUE]: 2,
   [PUBLISH_QUEUE]: 2,
+  // understand(#784):后台理解,商家不等它。2 是「一个商家的一批素材不挡下一个商家」的最小值,
+  // 再高没有意义 —— 它跟付费生成抢的是同一个账户的请求额度(providerRequestGate),
+  // 而那边的活儿是商家正盯着的。
+  [UNDERSTAND_QUEUE]: 2,
 };
 
 /** merge-base(#796 之前)的行为:每条队列并发 1,连接池两边都不碰。`all` 必须与它一字不差。 */
@@ -75,6 +82,7 @@ const CONCURRENCY_ENV: Record<string, string> = {
   [REFGEN_QUEUE]: "REFGEN_CONCURRENCY",
   [RESEARCH_QUEUE]: "RESEARCH_CONCURRENCY",
   [PUBLISH_QUEUE]: "PUBLISH_CONCURRENCY",
+  [UNDERSTAND_QUEUE]: "UNDERSTAND_CONCURRENCY",
 };
 
 export type WorkerPlan = {
@@ -196,7 +204,13 @@ export const HEARTBEAT_IDS = ["worker", "worker-compute", "worker-wait"] as cons
  * 扇出 count 个请求,所以它从来就不是请求上限。真正的上限是 `providerRequestLimit()`。
  */
 export function touchesProvider(plan: WorkerPlan): boolean {
-  return (plan.concurrency[GEN_QUEUE] ?? 0) > 0 || (plan.concurrency[REFGEN_QUEUE] ?? 0) > 0;
+  // #784:understand 也打同一个账户(它的请求走同一个 `providerRequestGate`),所以它也算。
+  // 漏掉它,明账就会在一个真的在发请求的角色上说「这行不用报」。
+  return (
+    (plan.concurrency[GEN_QUEUE] ?? 0) > 0 ||
+    (plan.concurrency[REFGEN_QUEUE] ?? 0) > 0 ||
+    (plan.concurrency[UNDERSTAND_QUEUE] ?? 0) > 0
+  );
 }
 
 export function providerBudgetUsable(): number {
