@@ -172,8 +172,12 @@ export async function getGeneration(
  *
  * 两件事在这一处做完,所以别处不必各做一遍:
  *   ① 白标 —— 过 `redactProviderNames`,引擎改写时带出来的供应商指纹词到不了商家眼前;
- *   ② 空即未知 —— null / 空串 / 过滤后只剩空白,一律回 null。面板对 null 什么也不说。
- *      「不知道」必须长得像不知道,不能长得像一个空白的答案。
+ *   ② 空即未知 —— null / 空串 / 过滤后只剩空白,一律回 null:「不知道」必须长得像不知道,
+ *      不能长得像一个空白的答案。
+ *
+ * null 到了面板上怎么处置,#914 起**按 kind 分家**(这里只负责归一,不负责措辞):
+ * kind:"video" 把未知**说出口**("Not reported by the engine.");kind:"image" 整行不渲染
+ * —— 图片契约结构上就没有这个字段,念一句「这次没报」等于每张图都编一句假的未知。
  */
 function merchantFinalPrompt(stored: string | null): string | null {
   if (!stored) return null;
