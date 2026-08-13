@@ -8,7 +8,8 @@ import {
 import { CANVAS_IN_FLIGHT_JOB_STATUSES, newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
-import { canvasJobPlacementLockKey } from "./canvas-node-placement";
+import { canvasJobPlacementLockKey, freeCanvasRectForNewNode } from "./canvas-node-placement";
+import { CANVAS_SPAWN_ORIGIN } from "@fikirtive/core/canvas-layout";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
 import { censusCanvasJobCards, displayGenerationIdForCard, planPendingJobNodes } from "./otto-canvas-bridge-core";
@@ -17,7 +18,9 @@ import { canvasCardState } from "./canvas-card-status";
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
 
-const NODE = { w: 320, h: 320, step: 340, y: 80 } as const;
+/** How big an in-flight card is. WHERE it goes is the shared placement rule's answer, not a
+ *  step and a row of its own — `step`/`y` went with the counting rule that produced them. */
+const NODE = { w: 320, h: 320 } as const;
 
 function canvasNodeOrigin(idempotencyKey: string | null | undefined): "otto" | null {
   return idempotencyKey?.startsWith("cowork:") ? "otto" : null;
@@ -69,6 +72,19 @@ async function createPendingCanvasNodeOnce(input: {
       // previous holder committed. The same is now true of the status test — a job that finished
       // while we queued is visible, so the read→write window r2 had to document is closed too.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+      // WHERE THIS CARD GOES — the same one rule as every other writer (#549 r2, judge P1-1).
+      //
+      // This path used to keep its own: `80 + (how many rows are on the board) * 340`. That is the
+      // counting rule the rest of the canvas dropped, and it is wrong the moment the board stops
+      // being a tidy row built left to right — it counts tombstones as if they still took up room,
+      // and it knows nothing about where the cards actually ARE. One card dragged to the second
+      // slot and the next in-flight card is written straight on top of it; the settlement then
+      // keeps the anchor's coordinates and only binds the output to it, so that overlap is
+      // permanent, over a picture the merchant paid for. Same board lock, same free-slot rule,
+      // resolved inside this transaction after the lock, exactly like the other writers.
+      const rect = await freeCanvasRectForNewNode(tx, input.ownerId, input.projectId, {
+        x: input.x, y: input.y, w: input.w, h: input.h,
+      });
       const inserted = await tx.$executeRaw`
         INSERT INTO "CanvasNode" (
           "id", "ownerId", "projectId", "type", "x", "y", "w", "h",
@@ -77,7 +93,7 @@ async function createPendingCanvasNodeOnce(input: {
         )
         SELECT
           ${id}, ${input.ownerId}, ${input.projectId}, ${input.type},
-          ${input.x}, ${input.y}, ${input.w}, ${input.h},
+          ${rect.x}, ${rect.y}, ${rect.w}, ${rect.h},
           NULL, ${input.prompt}, NULL, ${input.genJobId}, 'pending',
           ${input.threadId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         -- Still running. The planner decides this from rows it read moments earlier; deciding it
@@ -191,7 +207,6 @@ export async function syncOttoCanvasNodes(
     select: { generationId: true, genJobId: true, status: true },
   });
 
-  let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
   const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
   const haveJobs = new Set(existing.map((n) => n.genJobId).filter((id): id is string => !!id));
   for (const thread of threads) {
@@ -203,19 +218,22 @@ export async function syncOttoCanvasNodes(
       haveJobs.add(node.genJobId);
       // Pending card for a paid GenJob that already exists. This is a canvas
       // placement only; the spend happened earlier in startGen.
-      const inserted = await createPendingCanvasNodeOnce({
+      // The board's own origin is the spot ASKED FOR; the placement rule inside answers with a
+      // spot that is actually free, reading the board under its lock. Nothing here counts cards
+      // any more — a count cannot see where cards sit, and it counts removed ones as if they
+      // still took up room (#549 r2, judge P1-1).
+      await createPendingCanvasNodeOnce({
         ownerId,
         projectId,
         type: node.kind,
-        x: 80 + placed * NODE.step,
-        y: NODE.y,
+        x: CANVAS_SPAWN_ORIGIN.x,
+        y: CANVAS_SPAWN_ORIGIN.y,
         w: NODE.w,
         h: NODE.h,
         genJobId: node.genJobId,
         threadId: thread.id,
         prompt: node.prompt,
       });
-      if (inserted) placed += 1;
     }
   }
 
