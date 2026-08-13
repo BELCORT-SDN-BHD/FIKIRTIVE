@@ -199,7 +199,7 @@ describe("/otto mobile navigation entry", () => {
     // It opens the real thing, not a copy: credits, Profile and Sign out come with it.
     expect(dom.querySelector('a[href="/profile"]')).not.toBeNull();
     expect(dom.querySelector('a[href="/campaign"]')).not.toBeNull();
-    expect(dom.querySelector('a[href="/crm/inbox"]')).not.toBeNull();
+    expect(dom.querySelector('a[href="/crm"]')).not.toBeNull();
   });
 
   it("withdraws Otto's rail while the drawer is up, whichever way it was open", async () => {

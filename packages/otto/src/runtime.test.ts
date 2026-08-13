@@ -21,11 +21,13 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 const meterMocks = vi.hoisted(() => {
   const transaction = vi.fn();
   const reserveCredits = vi.fn();
+  const reserveCreditsUpTo = vi.fn();
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
   return {
     transaction,
     reserveCredits,
+    reserveCreditsUpTo,
     settleCredits,
     refundReservation,
     prisma: { $transaction: transaction },
@@ -36,6 +38,7 @@ vi.mock("@fikirtive/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fikirtive/db")>()),
   prisma: meterMocks.prisma,
   reserveCredits: meterMocks.reserveCredits,
+  reserveCreditsUpTo: meterMocks.reserveCreditsUpTo,
   settleCredits: meterMocks.settleCredits,
   refundReservation: meterMocks.refundReservation,
 }));
@@ -47,6 +50,7 @@ import {
   OTTO_MAX_STEPS,
   OTTO_OUTPUT_CAP_TOKENS,
   OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
+  OTTO_CHAT_MIN_START_INTERNAL,
   llmPricesFor,
   ottoLlmMargin,
   turnBudgetInternal,
@@ -86,6 +90,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   meterMocks.transaction.mockImplementation(async (fn: (tx: Record<string, never>) => Promise<unknown>) => fn({}));
   meterMocks.reserveCredits.mockResolvedValue(undefined);
+  // #898: the conversation turn reserves through reserveCreditsUpTo; resolve the hold it took.
+  meterMocks.reserveCreditsUpTo.mockResolvedValue(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
   meterMocks.settleCredits.mockResolvedValue(undefined);
   meterMocks.refundReservation.mockResolvedValue(undefined);
 });
@@ -293,6 +299,19 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
   });
 
+  it("#898: the conversation turn also carries the 1-credit entry minimum, so the hold can fit a small balance", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
+    expect(args.reserveMinInternal).toBe(OTTO_CHAT_MIN_START_INTERNAL);
+    expect(args.reserveMinInternal).toBe(10);
+    // The pair is what makes 3.9 credits sendable: gate at 10, hold at min(40, 39).
+    expect(args.reserveMinInternal).toBeLessThan(args.reserveCapInternal!);
+  });
+
+  it("#898: the approval-resume turn carries the same minimum (same conversation, same door)", () => {
+    const args = ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: "o", refId: "otto-turn:m2", input: "x" });
+    expect(args.reserveMinInternal).toBe(OTTO_CHAT_MIN_START_INTERNAL);
+  });
+
   it("fixture-no-charge manifest → paid:false (the ONLY way to a no-charge run is the manifest itself)", () => {
     const rt = createOttoRuntime(
       { modelRuntime: fixtureModelRuntime(fakeTextModel("x")), skills: [], traceSink: noopTraceSink },
@@ -384,14 +403,17 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
       runtime,
     )).rejects.toThrow("client stream failed");
 
-    expect(meterMocks.reserveCredits).toHaveBeenCalledOnce();
+    // #898: the conversation turn reserves through reserveCreditsUpTo (hold = min(cap, balance)).
+    // The claim is unchanged — exactly one reservation, then a full refund.
+    expect(meterMocks.reserveCreditsUpTo).toHaveBeenCalledOnce();
+    expect(meterMocks.reserveCredits).not.toHaveBeenCalled();
     expect(meterMocks.refundReservation).toHaveBeenCalledOnce();
     expect(meterMocks.refundReservation).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ orgId: "org_t", refId: "paid:stream-error" }),
     );
     expect(meterMocks.settleCredits).not.toHaveBeenCalled();
-    expect(meterMocks.reserveCredits.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(meterMocks.reserveCreditsUpTo.mock.invocationCallOrder[0]).toBeLessThan(
       meterMocks.refundReservation.mock.invocationCallOrder[0]!,
     );
   });
@@ -786,17 +808,22 @@ describe("#566 — resume carries the live context", () => {
     restored.approve(restored.getInterruptions()[0]!);
 
     // Control: on this very runtime a fresh run DOES reserve — so the assertion below is real.
+    // #898: a conversation turn reserves through reserveCreditsUpTo, so that is the live seam.
     meterMocks.reserveCredits.mockClear();
+    meterMocks.reserveCreditsUpTo.mockClear();
     await runOttoTurn({ orgId: "org_t", refId: "fixture:566-control", input: "hi" }, liveCtx(), paidResume);
-    expect(meterMocks.reserveCredits).toHaveBeenCalled();
+    expect(meterMocks.reserveCreditsUpTo).toHaveBeenCalled();
 
     meterMocks.reserveCredits.mockClear();
+    meterMocks.reserveCreditsUpTo.mockClear();
     await expect(
       runOttoTurn({ orgId: "org_t", refId: "fixture:566-guard", input: restored }, liveCtx(), paidResume),
     ).rejects.toThrow(/tryRestoreRunStateWithContext/);
 
     expect(log).toEqual([]);
-    expect(meterMocks.reserveCredits).not.toHaveBeenCalled(); // refused before any spend or model call
+    // Refused before any spend or model call — neither reserve seam fired.
+    expect(meterMocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    expect(meterMocks.reserveCredits).not.toHaveBeenCalled();
   });
 
   // #566 R2 review: the first version of the guard only compared identity when `_context.context`
@@ -806,6 +833,7 @@ describe("#566 — resume carries the live context", () => {
   it("refuses a resume-shaped input that exposes NO comparable context, instead of waving it into billing", async () => {
     const paidResume = paidResumeRuntime([]);
     meterMocks.reserveCredits.mockClear();
+    meterMocks.reserveCreditsUpTo.mockClear();
 
     const outcomes: string[] = [];
     for (const shapeless of [{}, { _context: null }, { _context: {} }, { _context: { context: undefined } }]) {
@@ -821,6 +849,8 @@ describe("#566 — resume carries the live context", () => {
 
     // The load-bearing consequence of failing OPEN is that billing is entered at all — assert that
     // first, so a regression reads as a money finding rather than a message mismatch.
+    // #898: both reserve seams, so a future route change can't quietly move past this guard.
+    expect(meterMocks.reserveCreditsUpTo).not.toHaveBeenCalled();
     expect(meterMocks.reserveCredits).not.toHaveBeenCalled();
     for (const outcome of outcomes) expect(outcome).toMatch(/exposes no comparable RunState context/);
   });

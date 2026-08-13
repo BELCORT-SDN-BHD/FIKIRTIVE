@@ -4,6 +4,7 @@ import {
   turnBudgetInternal,
   OTTO_MAX_STEPS,
   OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
+  OTTO_CHAT_MIN_START_INTERNAL,
 } from "./otto-budget.js";
 import { displayCredits, SIGNUP_GRANT_CREDITS } from "./spend.js";
 import { llmPricesFor, OTTO_LLM_MARGIN_DEFAULT } from "./llm-prices.js";
@@ -59,5 +60,40 @@ describe("OTTO_CONVERSATION_TURN_RESERVE_INTERNAL (#543 conversation-turn hold c
     expect(
       Math.floor(SIGNUP_GRANT_CREDITS / OTTO_CONVERSATION_TURN_RESERVE_INTERNAL),
     ).toBeGreaterThanOrEqual(5);
+  });
+});
+
+// #898 (Founder 2026-08-13, formal correction to #543) — the hold stopped being the door.
+describe("OTTO_CHAT_MIN_START_INTERNAL (#898 chat entry gate)", () => {
+  it("is 10 internal credits = 1 displayed credit", () => {
+    expect(OTTO_CHAT_MIN_START_INTERNAL).toBe(10);
+    expect(displayCredits(OTTO_CHAT_MIN_START_INTERNAL)).toBe(1);
+  });
+
+  it("lets a merchant on 3.9 credits start a message — the case #898 was opened for", () => {
+    // The old gate was the hold itself, so 39 internal < 40 internal meant "no". The gate is
+    // now the minimum, and the hold shrinks to whatever the balance can cover.
+    const balance = 39;
+    expect(balance).toBeGreaterThanOrEqual(OTTO_CHAT_MIN_START_INTERNAL);
+    expect(balance).toBeLessThan(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
+    expect(Math.min(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, balance)).toBe(39);
+  });
+
+  it("is a real floor, not zero — a 0.0x balance must not become free chat", () => {
+    // reserveCredits no-ops on cost <= 0: a hold that rounded to nothing would meter nothing.
+    expect(OTTO_CHAT_MIN_START_INTERNAL).toBeGreaterThan(0);
+    expect(Math.min(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL)).toBeGreaterThan(0);
+  });
+
+  it("never exceeds the hold ceiling — the gate can only be at or below what is held", () => {
+    expect(OTTO_CHAT_MIN_START_INTERNAL).toBeLessThanOrEqual(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
+  });
+
+  it("bounds the platform's per-message exposure to the measured peak minus the gate", () => {
+    // Worst realistic case: a merchant at exactly the gate sends the cold-cache opening
+    // message, measured at 33 internal (#536). The clamp absorbs 33 - 10 = 23 internal
+    // (2.3 displayed) — bounded, and recorded on the SETTLE row.
+    const MEASURED_PEAK_INTERNAL = 33;
+    expect(MEASURED_PEAK_INTERNAL - OTTO_CHAT_MIN_START_INTERNAL).toBeLessThanOrEqual(23);
   });
 });

@@ -206,7 +206,9 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   manageCanvas: "Working on your canvas",
   // W-B3-B (media-editor / asset-viewer $0):
   manageMedia: "Organizing your media",
-  renderVideo: "Exporting your video",
+  // #780 — the skill no longer only exports: it also puts clips together, captions them and
+  // lays music under them, so the line the merchant reads while it runs can't say "exporting".
+  renderVideo: "Working on your video",
   importMedia: "Importing media",
   // W-B3-D (home/ideas/library/brand debt):
   manageProjects: "Organizing your projects",

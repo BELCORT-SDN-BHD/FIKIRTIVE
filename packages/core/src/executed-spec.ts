@@ -31,6 +31,8 @@ export const EXECUTED_SPEC: {
     aspectHonoured: boolean;
     sourceAspectInheritedFromSnapshot: boolean;
     fallbackAdapterAspectHonoured: boolean;
+    coherentSetHonoured: boolean;
+    fallbackAdapterCoherentSetHonoured: boolean;
   };
   video: {
     aspectHonoured: boolean;
@@ -60,6 +62,13 @@ export const EXECUTED_SPEC: {
      *  这么在 #646 T5 接通的。false ⇒ 这条路上画幅不成立,不得假装它成立。
      *  现役生产路径不走这条。 */
     fallbackAdapterAspectHonoured: false,
+    /** #777:现役适配器把「一组连贯图」作为**一次请求**发出去(整组一次出齐),
+     *  `byteplus.test.ts` 对请求体整体断言。true ⇒ 卡面可以照实说「一组连贯的图」。 */
+    coherentSetHonoured: true,
+    /** 备用(legacy fallback)适配器**做不到**一次出一整组:它只有 `num_images`,
+     *  出来的是 N 张互不相干的图。false ⇒ 这条路上组图不成立,而且适配器会在
+     *  付费之前拒绝 —— 不许收了「一组」的钱交一堆散图。 */
+    fallbackAdapterCoherentSetHonoured: false,
   },
   video: {
     aspectHonoured: true,
@@ -126,4 +135,20 @@ export function videoElementReferencesHonoured(env?: Record<string, string | und
   if (!EXECUTED_SPEC.video.elementReferencesHonoured) return false;
   const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
   return provider !== "fal";
+}
+
+/**
+ * 这一趟**真正会跑**的那个适配器,会不会兑现「一组连贯图」(#777)。
+ *
+ * 与 `imageAspectHonoured` 同一条判据、同一个环境变量:静态能力位先说话,再按
+ * 选中的适配器分支。备用路做不到,所以那条路上必须如实回 false —— 而适配器本身
+ * 也会在付费之前拒掉组图请求,声明与行为两头对齐(`index.test.ts` 钉着)。
+ *
+ * 纯函数:不选型、不报价、不发请求。
+ */
+export function imageCoherentSetHonoured(env?: Record<string, string | undefined>): boolean {
+  if (!EXECUTED_SPEC.image.coherentSetHonoured) return false;
+  const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
+  if (provider === "fal") return EXECUTED_SPEC.image.fallbackAdapterCoherentSetHonoured;
+  return true;
 }

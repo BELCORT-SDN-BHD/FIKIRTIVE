@@ -1205,3 +1205,39 @@ describe("#647 T6 唯一引擎被关掉 ⇒ 诚实空态,绝不落一张付费�
     expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("#777 卡面:一组连贯的图 vs 几张散图", () => {
+  it("现役路 + 真成组 ⇒ 卡面照实说「一组」", () => {
+    const prev = process.env.GENERATION_PROVIDER;
+    process.env.GENERATION_PROVIDER = "byteplus";
+    try {
+      expect(buildSpecChips("image", { aspectRatio: "9:16", count: 4, coherentSet: true }, false))
+        .toEqual(["1620 × 2880", "9:16", "4 images in one set"]);
+    } finally {
+      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
+      else process.env.GENERATION_PROVIDER = prev;
+    }
+  });
+
+  it("散图照旧说「N 张」—— 这一格没有改变既有卡面的任何一个字", () => {
+    expect(buildSpecChips("image", { aspectRatio: "9:16", count: 4 }, false))
+      .toEqual(["1620 × 2880", "9:16", "4 images"]);
+    expect(buildSpecChips("image", { aspectRatio: "9:16", count: 4, coherentSet: false }, false))
+      .toEqual(["1620 × 2880", "9:16", "4 images"]);
+    // 一张图不成组:即便调用方硬塞 true,卡面也不许说「一组」。
+    expect(buildSpecChips("image", { aspectRatio: "9:16", count: 1, coherentSet: true }, false))
+      .toEqual(["1620 × 2880", "9:16", "1 image"]);
+  });
+
+  it("反向锁:选中做不到组图的备用适配器时,卡面必须闭嘴(绝不承诺执行层做不到的事)", () => {
+    const prev = process.env.GENERATION_PROVIDER;
+    process.env.GENERATION_PROVIDER = "fal";
+    try {
+      expect(buildSpecChips("image", { count: 4, coherentSet: true }, false))
+        .toEqual(["2048 × 2048", "4 images"]);
+    } finally {
+      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
+      else process.env.GENERATION_PROVIDER = prev;
+    }
+  });
+});

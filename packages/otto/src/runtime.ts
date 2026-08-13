@@ -29,7 +29,7 @@
  */
 import { Agent, run, MaxTurnsExceededError } from "@openai/agents";
 import type { AgentInputItem, Model, RunStreamEvent, RunState } from "@openai/agents";
-import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core";
+import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL } from "@fikirtive/core";
 import type { LlmPrices } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import type { OttoSkill } from "./skill.js";
@@ -220,6 +220,10 @@ export function ottoBudgetArgsFor(
     // #543 — cap the conversation-turn HOLD (not the charge) so a small balance stays
     // spendable to the last credit. Composition-time constant; see otto-budget.ts.
     reserveCapInternal: OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
+    // #898 — the cap alone was still a door: a balance under it could not open a turn at all.
+    // With a minimum the hold shrinks to fit the balance instead, so the last credit is
+    // spendable. Composition-time constant; see otto-budget.ts.
+    reserveMinInternal: OTTO_CHAT_MIN_START_INTERNAL,
     prices: mr.pricing(mr.billableModelId),
     usageOnError: (e: unknown) =>
       e instanceof MaxTurnsError && (e as { state?: { usage?: unknown } }).state?.usage

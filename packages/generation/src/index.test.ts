@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   EXECUTED_SPEC, GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, GEN_VIDEO_MODELS, imageAspectHonoured,
-  buildSpecChips, conditioningCap, videoElementReferencesHonoured, type GenVideoModel,
+  imageCoherentSetHonoured, buildSpecChips, conditioningCap, videoElementReferencesHonoured,
+  type GenVideoModel,
 } from "@fikirtive/core";
 import { createGenerationProvider, FalProvider, MockProvider } from "./index.js";
 
@@ -358,5 +359,60 @@ describe("#647 T6 fal 视频接线只剩真的那一格", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #777 —— 备用适配器**做不到**一次出一整组连贯的图,所以它必须在付费之前停住。
+//
+// 这一节是「声明」与「行为」两头对齐的那把锁:`fallbackAdapterCoherentSetHonoured=false`
+// 是嘴上说的,拒绝 + 零 fetch 是手上做的。若哪天有人把这个拒绝拿掉,备用路就会安静地
+// 收「一组」的钱、交一堆互不相干的图 —— 而且没有任何一句话说过。
+// ---------------------------------------------------------------------------
+describe("#777 备用适配器的组图事实(如实声明 + 付费前拒绝)", () => {
+  it("EXECUTED_SPEC 明说备用适配器做不到组图", () => {
+    expect(EXECUTED_SPEC.image.coherentSetHonoured).toBe(true); // 现役路做得到
+    expect(EXECUTED_SPEC.image.fallbackAdapterCoherentSetHonoured).toBe(false); // 备用路做不到
+  });
+
+  it("披露判据按真正会跑的那条路给答案(现役 true / 备用 false / 离线 true)", () => {
+    expect(imageCoherentSetHonoured({ GENERATION_PROVIDER: "byteplus" })).toBe(true);
+    expect(imageCoherentSetHonoured({ GENERATION_PROVIDER: "fal" })).toBe(false);
+    expect(imageCoherentSetHonoured({})).toBe(true); // 离线 mock 按组图产出(见下)
+  });
+
+  it("备用适配器收到组图请求 ⇒ 付费之前拒绝,零 fetch(绝不静默降级成 N 张散图)", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      await expect(new FalProvider("fal-test").generate({
+        prompt: "the same model, three angles", inputImageUrls: [], count: 3, model: "seedream", coherentSet: true,
+      })).rejects.toThrow(/coherent set/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("备用适配器的散图请求不受影响(这道闸只关组图那一扇门)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: any) => {
+      if (String(url).includes("fal.run")) {
+        return { ok: true, status: 200, json: async (): Promise<unknown> => ({ images: [{ url: "https://fal/x.png", content_type: "image/png" }] }), text: async (): Promise<string> => "" };
+      }
+      return { ok: true, status: 200, arrayBuffer: async (): Promise<ArrayBuffer> => new Uint8Array([1]).buffer, text: async (): Promise<string> => "" };
+    }));
+    try {
+      const out = await new FalProvider("fal-test").generate({ prompt: "p", inputImageUrls: [], count: 1, model: "seedream" });
+      expect(out).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("离线 mock:组图与散图的字节不同 —— 两条路的产出不许撞成同一份内容", async () => {
+    const set = await new MockProvider().generate({ prompt: "p", inputImageUrls: [], count: 2, model: "seedream", coherentSet: true });
+    const spread = await new MockProvider().generate({ prompt: "p", inputImageUrls: [], count: 2, model: "seedream" });
+    expect(set).toHaveLength(2);
+    expect(Array.from(set[0]!.bytes)).not.toEqual(Array.from(spread[0]!.bytes));
   });
 });

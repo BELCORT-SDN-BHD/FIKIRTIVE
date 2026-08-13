@@ -793,11 +793,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
         // (or a malformed snapshot) has none → the model's default square, which is exactly
         // what those runs produced before the column existed.
-        const io = job.imageOptions as { aspectRatio?: unknown } | null;
+        const io = job.imageOptions as { aspectRatio?: unknown; coherentSet?: unknown } | null;
         const aspectRatio = typeof io?.aspectRatio === "string"
           ? io.aspectRatio
           : imageDefaults(job.model as GenModel).aspectRatio;
-        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio });
+        // #777:「这几张是一组连贯的图」同样是**冻在任务上**的那份规格,不是这里现算的。
+        // 只认写死的 true —— 快照里没有这一格(既有行、散图行)就是散图,与今日逐字一致。
+        const coherentSet = io?.coherentSet === true;
+        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {
