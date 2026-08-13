@@ -10,6 +10,8 @@
  *  6. (#524 r3) An optional `afterReserve` claim runs between the hold and the model call. It can
  *     only STOP the call: a lost/failed claim refunds the whole hold and fn never runs. It cannot
  *     raise, lower or redirect a charge — reserve/settle/refund are byte-identical to before.
+ *  7. (#524 r5) `onRefundedFailure` reports "this turn charged nothing" to the caller. Read-only
+ *     signal, fired after the refund; it cannot change any amount and its throw is swallowed.
  */
 import {
   CREDITS_PER_USD,
@@ -136,7 +138,29 @@ export type LlmBudgetArgs = {
    * way, then re-thrown — a claim that errored must not leave a hold standing.
    */
   afterReserve?: () => Promise<boolean>;
+  /**
+   * Called after `fn` threw and the WHOLE hold was refunded — i.e. this turn cost the merchant
+   * exactly nothing (#524 r5, judge r4 P1-A'②).
+   *
+   * Purely informational and deliberately not async-critical: it cannot change what was charged,
+   * it only lets a caller holding a spent one-shot consent say the true thing out loud ("approved,
+   * but it couldn't run — nothing was charged") instead of leaving a card reading "approved" over
+   * a thing that never happened. It does NOT fire when `usageOnError` yielded real usage, because
+   * then the merchant WAS charged for what the call used and "nothing was charged" would be a lie.
+   */
+  onRefundedFailure?: () => void;
 };
+
+/** Thrown when `afterReserve` itself FAILED (#524 r5, judge r4 P1-A'①). The hold was taken and
+ *  then fully refunded, and `fn` was never called — but unlike ReservationNotClaimed nobody else
+ *  won either, so the caller's one-shot consent is still unspent and the caller must be told the
+ *  attempt burned its reservation. The original failure rides on `cause`. */
+export class ClaimFailed extends Error {
+  constructor(readonly cause: unknown) {
+    super("The reserved work could not be claimed; the hold was refunded.");
+    this.name = "ClaimFailed";
+  }
+}
 
 /** Thrown when `afterReserve` did not claim the work: the hold was taken and then fully refunded,
  *  and `fn` was never called. Nothing ran, nothing was charged. Callers map it to their own benign
@@ -228,7 +252,10 @@ export async function withLlmBudget<T>(
       await prisma.$transaction((tx) =>
         refundReservation(tx, { orgId: args.orgId, refId: args.refId }),
       );
-      throw e;
+      // Wrapped, not re-thrown bare: "the claim blew up after we had already reserved" is a
+      // different fact from "the work refused before anything was held", and the caller has to
+      // tell them apart to know whether this refId is now spent (#524 r5).
+      throw new ClaimFailed(e);
     }
     if (!claimed) {
       await prisma.$transaction((tx) =>
@@ -253,6 +280,13 @@ export async function withLlmBudget<T>(
       await prisma.$transaction((tx) =>
         refundReservation(tx, { orgId: args.orgId, refId: args.refId }),
       );
+      // Nothing was charged. Tell the caller so it can be honest about it (#524 r5); a throw here
+      // must never mask the real failure, so it is swallowed and logged.
+      try {
+        args.onRefundedFailure?.();
+      } catch (hookErr) {
+        console.warn("[withLlmBudget] onRefundedFailure hook threw; ignoring.", hookErr);
+      }
     }
     throw e;
   }

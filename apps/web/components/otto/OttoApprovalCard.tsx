@@ -39,7 +39,7 @@ export interface OttoApprovalCardProps {
   onResolved?: (outcome: ApprovalResolvedOutcome) => void | Promise<void>;
 }
 
-type LocalState = "idle" | "approving" | "declining" | "approved" | "rejected" | "expired";
+type LocalState = "idle" | "approving" | "declining" | "approved" | "rejected" | "expired" | "failed";
 
 export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: OttoApprovalCardProps) {
   const parsed = asApprovalCardPayload(payload);
@@ -51,7 +51,7 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
 
   // Durable payload status wins on reload; local state gives instant feedback in-session.
   const resolved =
-    local === "approved" || local === "rejected" || local === "expired"
+    local === "approved" || local === "rejected" || local === "expired" || local === "failed"
       ? local
       : parsed.status !== "pending"
         ? parsed.status
@@ -151,6 +151,12 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
         ) : resolved === "expired" ? (
           <div className="text-[0.875rem] text-muted-foreground">
             This request expired — ask Otto to request approval again.
+          </div>
+        ) : resolved === "failed" ? (
+          // #524 r5: the consent was spent and the run then died. Saying "Approved" here would be
+          // a lie about something the merchant cannot otherwise see.
+          <div className="text-[0.875rem] text-[var(--error-soft-foreground)]">
+            Approved, but it couldn&apos;t run — nothing was charged. Ask Otto to set it up again.
           </div>
         ) : (
           <div className="flex gap-3">

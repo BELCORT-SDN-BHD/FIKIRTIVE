@@ -13,7 +13,16 @@
 import { labelForTool } from "./otto-stream-bridge";
 import { socialPlatformLabel } from "./social-labels";
 
-export type ApprovalCardStatus = "pending" | "approved" | "rejected" | "expired";
+/**
+ * Card lifecycle. `pending` is the only consumable state; everything else is TERMINAL and a card
+ * never returns to `pending` (AR1 处方2 — consent is one-way).
+ *
+ * `failed` (#524 r5, judge r4 P1-A'②) is a terminal state reached only from `approved`: the consent
+ * was spent, the run then died before it could do anything, and the hold was refunded in full. It
+ * exists because "approved" alone is a lie in that case — the merchant is looking at a card that
+ * says yes while nothing happened and nothing was charged. Forward-only, so the one-way rule holds.
+ */
+export type ApprovalCardStatus = "pending" | "approved" | "rejected" | "expired" | "failed";
 
 /** What the user is consenting to (enriched server-side at park time, owner-scoped read). */
 export type ApprovalCardSummary = {
@@ -34,6 +43,19 @@ export type ApprovalCardPayload = {
   contentHash?: string | null;
   /** ISO instant after which the ASK is no longer confirmable (APPROVAL_CARD_TTL_MS). */
   expiresAt?: string | null;
+  /**
+   * Which try at approving this card we are on — 1-based, server-generated, absent = 1 (#524 r5,
+   * judge r4 P1-A'①).
+   *
+   * The resume turn's reservation is keyed by it (`…:a<attempt>`), and the ledger's
+   * `reserve:<refId>` idempotency key is globally unique. Before this field, every try at one card
+   * reused ONE refId: an attempt that reserved, refunded, and left the card pending made the next
+   * try collide (P2002) forever — the card said "Try again" and the ledger made that impossible.
+   * A try that burned its refId bumps this, so the merchant's next click reserves under a fresh
+   * one. Two clicks INSIDE one attempt still share a refId and stay idempotent: the second one's
+   * reserve loses on that unique key and is answered benignly, having moved nothing.
+   */
+  attempt?: number;
 };
 
 /** Structural parse of an unknown durable payload — null when it isn't an approval card. */
@@ -42,7 +64,9 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
   const p = v as Record<string, unknown>;
   if (typeof p.toolName !== "string" || typeof p.ref !== "string") return null;
   const status =
-    p.status === "approved" || p.status === "rejected" || p.status === "expired" ? p.status : "pending";
+    p.status === "approved" || p.status === "rejected" || p.status === "expired" || p.status === "failed"
+      ? p.status
+      : "pending";
   let summary: ApprovalCardSummary | null = null;
   const s = p.summary as Record<string, unknown> | null | undefined;
   if (s && typeof s === "object" && typeof s.channel === "string" && typeof s.caption === "string") {
@@ -61,6 +85,9 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
     summary,
     contentHash: typeof p.contentHash === "string" ? p.contentHash : null,
     expiresAt: typeof p.expiresAt === "string" ? p.expiresAt : null,
+    // A missing / malformed attempt reads as 1 — every card minted before #524 r5 is on its first
+    // try, and a corrupt value must not be able to invent a refId nobody can reason about.
+    attempt: Number.isInteger(p.attempt) && (p.attempt as number) >= 1 ? (p.attempt as number) : 1,
   };
 }
 

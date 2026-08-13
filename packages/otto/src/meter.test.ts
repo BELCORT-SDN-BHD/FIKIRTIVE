@@ -41,7 +41,7 @@ vi.mock("@fikirtive/db", () => ({
 // ---------------------------------------------------------------------------
 // Now import the module under test (after mock is registered)
 // ---------------------------------------------------------------------------
-import { withLlmBudget, actualCostInternal, mapOttoUsage, llmHoldInternal, ReservationNotClaimed } from "./meter.js";
+import { withLlmBudget, actualCostInternal, mapOttoUsage, llmHoldInternal, ReservationNotClaimed, ClaimFailed } from "./meter.js";
 import { llmPricesFor, CREDITS_PER_USD, turnBudgetInternal } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
@@ -613,16 +613,20 @@ describe("#524 r3 — afterReserve claims the work between the hold and the mode
     expect(mocks.settleCredits).not.toHaveBeenCalled();
   });
 
-  it("a THROWING claim refunds the hold too, then re-throws the original error", async () => {
+  it("a THROWING claim refunds the hold too, then reports it as ClaimFailed carrying the cause", async () => {
     // A claim that errored is not "someone else won" — it must not leave a hold standing, and it
     // must not be laundered into a benign answer either (judge r2 P2 is the caller-side half).
+    // #524 r5: it is WRAPPED, because the caller has to tell "this attempt burned its refId" from
+    // "the work refused before anything was held" — those need different answers (judge r4 P1-A'①).
     const boom = new Error("card write failed");
     const fn = vi.fn();
 
-    await expect(
-      withLlmBudget(makeArgs({ afterReserve: async () => { throw boom; } }), fn),
-    ).rejects.toBe(boom);
+    const thrown = await withLlmBudget(makeArgs({ afterReserve: async () => { throw boom; } }), fn).catch(
+      (e: unknown) => e,
+    );
 
+    expect(thrown).toBeInstanceOf(ClaimFailed);
+    expect((thrown as ClaimFailed).cause).toBe(boom); // the original failure is never lost
     expect(fn).not.toHaveBeenCalled();
     expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
     expect(mocks.settleCredits).not.toHaveBeenCalled();

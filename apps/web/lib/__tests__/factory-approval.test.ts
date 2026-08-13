@@ -51,6 +51,7 @@ const {
   mockRunStateFromString,
   mockRestoreWithContext,
   mockWithLlmBudget,
+  MockReservationNotClaimed: MockReservationNotClaimedRef,
   mockOrganizationFindUnique,
   MockInsufficientCredits,
   MockSpendCapBlocked,
@@ -99,11 +100,15 @@ const {
       this.capInternal = detail.capInternal;
     }
   }
-  // #524 r3: the approval card is claimed inside withLlmBudget's post-reserve window, so a double
-  // that ignored `afterReserve` would model a product where consent is never consumed.
+  // #524 r3/r5: the approval card is claimed inside withLlmBudget's post-reserve window. A double
+  // that ignored `afterReserve` would model a product where consent is never consumed — and one
+  // that ignored a FALSE return would run the model for a resolver that LOST the CAS (judge r4 P2).
+  class MockReservationNotClaimed extends Error {
+    constructor() { super("The reserved work was already claimed elsewhere; the hold was refunded."); this.name = "ReservationNotClaimed"; }
+  }
   const mockWithLlmBudget = vi.fn(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
     const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
-    if (claim) await claim();
+    if (claim && !(await claim())) throw new MockReservationNotClaimed();
     return (await fn()).result;
   });
 
@@ -136,6 +141,7 @@ const {
     mockRunStateFromString,
     mockRestoreWithContext,
     mockWithLlmBudget,
+    MockReservationNotClaimed,
     mockOrganizationFindUnique: vi.fn(),
     MockInsufficientCredits,
     MockSpendCapBlocked,
@@ -304,9 +310,10 @@ beforeEach(() => {
   mockExecuteRaw.mockResolvedValue(undefined);
   mockTransaction.mockImplementation(runTransaction);
   mockWithLlmBudget.mockImplementation(async (args: unknown, fn: () => Promise<{ result: unknown }>) => {
-    // #524 r3: honour the post-reserve claim window — that is where the card is consumed now.
+    // #524 r3/r5: honour the post-reserve claim window — that is where the card is consumed — AND
+    // its false return, which means a concurrent resolver won and the model must NOT run.
     const claim = (args as { afterReserve?: () => Promise<boolean> }).afterReserve;
-    if (claim) await claim();
+    if (claim && !(await claim())) throw new MockReservationNotClaimedRef();
     return (await fn()).result;
   });
 });

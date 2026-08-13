@@ -24,11 +24,17 @@ import type { Prisma } from "@fikirtive/db";
  * refuse correctly), OVER-counting would refuse work the ledger would have allowed. So unknown
  * costs count as zero and are never guessed.
  *
- * It reads the cap through `readSpendCap` — the same single reading the ledger writer uses — so it
- * can never answer the cap question differently from the gate, and it fails closed the same way.
+ * It reads the cap through `readSpendCap` — the same single reading the ledger writer uses — and
+ * fails closed the same way, so the two agree ON THE VALUE THEY EACH READ.
  *
- * Returns the merchant-facing sentence when the cap WILL refuse — deliberately the same words the
- * authority produces — or `null` when the action may proceed to the real gates.
+ * They can still reach different verdicts, and nothing here pretends otherwise (judge r4 P3): this
+ * read and the authority's run in DIFFERENT transactions, so a merchant who moves their cap in
+ * between gets the newer answer from the gate, which is the one that decides. That is why this
+ * function carries no correctness — it is an early, plain-language heads-up, and every refusal it
+ * describes is re-decided by `reserveCredits`.
+ *
+ * Returns the merchant-facing sentence when the cap WOULD refuse as of this read — deliberately
+ * the same words the authority produces — or `null` when the action may proceed to the real gates.
  */
 export async function spendCapRefusal(
   db: Pick<Prisma.TransactionClient, "organization">,
