@@ -91,6 +91,14 @@ export * from "./cowork-guardian.js";
 export * from "./cowork-route.js";
 export { COWORK_PLANNER_SYSTEM, buildPlannerMessages, parseCoworkTurn, mockPlannerReply } from "./cowork-planner.js";
 export { buildGenRequestFromCard, type GenRequestInput } from "./gen-from-card.js";
+export {
+  VIDEO_CLIP_TOKEN,
+  VIDEO_EDIT_OPENING,
+  VIDEO_EXTEND_OPENING,
+  anchoredVideoAction,
+  isAnchoredVideoPrompt,
+  type AnchoredVideoAction,
+} from "./video-actions.js";
 export * from "./otto-budget.js";
 export * from "./llm-prices.js";
 export { GOAL_PRESETS, isGoalKey, type GoalKey } from "./goals.js";

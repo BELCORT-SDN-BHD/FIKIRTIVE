@@ -220,6 +220,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         threadId,
         sourceGenerationIds: refs.sourceGenerationIds,
         referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+        turnText: text,
         simpleMode: parsed.data.simple,
       });
 

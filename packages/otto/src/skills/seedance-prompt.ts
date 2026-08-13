@@ -8,6 +8,7 @@ import {
   CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly,
   VIDEO_CONSTRAINTS, EMOTION_CUES, referenceAdvice,
 } from "./prompt-vocab.js";
+import { openingForTeaching, videoPromptWarnings } from "./video-capabilities.js";
 
 export const seedancePromptSkill = defineOttoSkill({
   name: "seedancePrompt",
@@ -19,7 +20,22 @@ export const seedancePromptSkill = defineOttoSkill({
     "resolution/duration/ratio (the system appends those). Call this FIRST before proposing a video, then use " +
     "the returned `prompt`. Primary mode i2v: describe the MOTION relative to the first frame (what moves, how), " +
     "not the static scene. Use mode:'t2v' when there is NO source frame to animate (a from-scratch video) — " +
-    "otherwise the prompt would wrongly reference a first frame. Our users don't know cinematography — YOU fill " +
+    "otherwise the prompt would wrongly reference a first frame. " +
+    // #775 —— 两个新动作。只有商家**这一轮挂了一整条片子**时才成立。
+    "Two more modes exist, and BOTH require the user to have attached a whole clip this turn. " +
+    "mode:'edit' — they want something INSIDE that clip changed and everything else left alone " +
+    `("make the shirt red", "fix the ending"); the prompt opens with the engine's strict-edit sentence ` +
+    `("${openingForTeaching("editClip")} …") and adds the line that protects the rest. ` +
+    "mode:'extend' — they want that clip carried on (\"keep it going\", \"what happens next\"); the prompt opens " +
+    `with the engine's carry-on sentence ("${openingForTeaching("extendClip")} forward, …"), so pass ` +
+    "`extendDirection` 'forward' (default) or 'backward'. The sentence names their clip for you — never write " +
+    "that name yourself, exactly as with image numbering. Both modes take EXACTLY ONE shot — an edit or an " +
+    "extension is one change, not a sequence — and neither takes a style or quality direction: re-styling " +
+    "fights the whole point of anchoring to a clip they already have. When they attached a clip but want a " +
+    "NEW clip that merely follows its feel, that is not these modes — use t2v and describe the feel. " +
+    "Never write the word \"reference\" in an edit or extend prompt: it makes the engine start a fresh clip " +
+    "instead of touching theirs. " +
+    "Our users don't know cinematography — YOU fill " +
     "it: give each shot a clear action, and add exactly ONE camera move, a shot framing, and scene lighting even " +
     "if unmentioned. One shot = one beat; use up to 4 shots for a multi-beat clip. Set continuesFromPrev:true for " +
     "a shot that follows a prior clip. List @-referenced entities in `references` to lock identity. cleanFootage " +
@@ -46,8 +62,15 @@ export const seedancePromptSkill = defineOttoSkill({
     `Lighting — always give direction + color temperature, e.g.: ${enOnly(LIGHTING).join(", ")}.`,
   parameters: seedancePromptInput,
   execute: async (i) => {
-    const notes = referenceAdvice(i.references);
-    return { prompt: assembleSeedance(i), ...(notes.length > 0 ? { notes } : {}) };
+    const prompt = assembleSeedance(i);
+    // #775 —— 禁词只**提醒**,绝不改写:提示词里每个字都是商家要的东西,机器动手改一次,
+    // 商家批准的与引擎收到的就分家了。与 U8 的素材建议走同一条 `notes` 出口。
+    const banned =
+      i.mode === "edit" || i.mode === "extend"
+        ? videoPromptWarnings(i.mode === "edit" ? "editClip" : "extendClip", prompt)
+        : [];
+    const notes = [...referenceAdvice(i.references), ...banned];
+    return { prompt, ...(notes.length > 0 ? { notes } : {}) };
   },
 });
 

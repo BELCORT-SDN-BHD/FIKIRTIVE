@@ -7,8 +7,10 @@
  * spread/conditional patterns, same fallback chain.
  */
 import { coworkProposalSchema } from "./cowork.js";
-import { GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
+import { composePrompt } from "./cowork-compose.js";
+import { GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, MAX_GEN_PROMPT, VIDEO_ASPECT_ADAPTIVE, type GenVideoModel } from "./gen.js";
 import { parseApprovedEntities } from "./reference-budget.js";
+import { isAnchoredVideoPrompt } from "./video-actions.js";
 
 /** The assembled genRequest object that `buildGenRequestFromCard` returns on success.
  *  Exported for use in OttoContext.startGen (packages/otto cannot import apps/*). */
@@ -19,7 +21,25 @@ export function buildGenRequestFromCard(args: {
   projectId: string;
   threadId: string;
   cardId: string;
-  prompt: string;
+  /**
+   * #775 判官 r3 P1-1 —— **收下,但不作数**。
+   *
+   * 付费请求带走的那段提示词只能来自**卡**(`p.structuredPrompt`),因为卡才是商家批准前
+   * 看过、批准后不可变的那一份。这个参数留着只是为了让既有调用点不必同步改签名 ——
+   * 它的值一个字节都不会进付费请求。
+   *
+   * 为什么不能信它:`coworkGenerate` 是一个**公开 Server Action**,这段字来自客户端。
+   * 判官 r3 的探针就是把它换成 `Strictly edit …` —— 卡上是一张普通视频卡,送去花钱的
+   * 却是一条要改商家片子的指令。与 #882 把 `approvedEntities` 钉成卡专属是同一条口径:
+   * **执行只认持久化卡。**
+   */
+  prompt?: string;
+  /**
+   * 未接 prompt skill 的引擎家族才有的增强指令(`getEnhanceDirective`)。它是**服务端**
+   * 查出来的,所以可以信;但它只能追加在**卡上那段**后面,composePrompt 在这里做,
+   * 不再由调用方先拼好再送进来 —— 先拼好就等于又给了客户端一次改写的机会。
+   */
+  directive?: string;
   entityIds: string[];
   variantSel: Record<string, string>;
   overrides?: {
@@ -31,7 +51,8 @@ export function buildGenRequestFromCard(args: {
     audio?: boolean | null;
   };
 }): { ok: true; req: Record<string, unknown> } | { ok: false; error: string } {
-  const { cardPayload, projectId, threadId, cardId, prompt, entityIds, variantSel, overrides } = args;
+  const { cardPayload, projectId, threadId, cardId, directive, entityIds, variantSel, overrides } = args;
+  // `args.prompt` 刻意**没有**解构进来 —— 见上面那段:它收下但不作数。
 
   // Step 1: re-validate the persisted proposal subset (mirrors coworkGenerate line 501–502).
   const p = (cardPayload ?? {}) as Record<string, unknown>;
@@ -76,6 +97,12 @@ export function buildGenRequestFromCard(args: {
   const entityIdSet = new Set(entityIds);
   const approvedEntities = parseApprovedEntities(p.approvedEntities).filter((e) => entityIdSet.has(e.id));
 
+  // Step 3.6 (#775 判官 r3 P1-1):付费请求带走的那段提示词 = **卡上冻结的那一段**,
+  // 服务端查到的增强指令追加在它后面。客户端送来的 `args.prompt` 到此为止。
+  const prompt = composePrompt({ prompt: proposal.data.structuredPrompt, directive, maxLen: MAX_GEN_PROMPT });
+  /** 这张卡要动的是商家自己那条片子吗 —— 判据只有一处,与付费 schema 同一个函数。 */
+  const anchoredToClip = proposal.data.kind === "video" && !!referenceVideoGenerationId && isAnchoredVideoPrompt(prompt);
+
   // Step 4: chosen model (mirrors coworkGenerate line 517).
   const chosenModel = overrides?.model ?? model;
 
@@ -107,7 +134,12 @@ export function buildGenRequestFromCard(args: {
       ? {
           durationSeconds: ov?.durationSeconds ?? params.durationSeconds ?? null,
           resolution: ov?.resolution ?? params.resolution ?? null,
-          aspectRatio: ov?.aspectRatio ?? params.aspectRatio ?? null,
+          // #775 判官 r3 P1-1 探针② —— 锚在片子上时,形状**只认卡**:客户端的比例覆盖
+          // 到此为止(卡上写的是 adaptive,商家批准前读到的也是「跟着你的片子走」)。
+          // 其余形状一格没动:普通视频卡、图片卡的覆盖照旧生效,画布那条路的语义不受影响。
+          aspectRatio: anchoredToClip
+            ? params.aspectRatio ?? VIDEO_ASPECT_ADAPTIVE
+            : ov?.aspectRatio ?? params.aspectRatio ?? null,
           ...(audioToggle ? { audio: ov?.audio ?? params.audio ?? null } : {}),
         }
       // #643 T2：图片卡上冻结的形状必须原样进付费请求。这条分支原本什么都不带，所以

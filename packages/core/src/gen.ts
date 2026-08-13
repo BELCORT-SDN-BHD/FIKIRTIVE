@@ -11,6 +11,7 @@
  * Video (i2v) lands as a follow-up slice on this same skeleton.
  */
 import { z } from "zod";
+import { isAnchoredVideoPrompt } from "./video-actions.js";
 
 export const GEN_MODELS = ["seedream"] as const;
 export type GenModel = (typeof GEN_MODELS)[number];
@@ -695,6 +696,42 @@ export const genRequest = z
       if (v.model !== REFERENCE_VIDEO_MODEL) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "reference video requires Seedance 2.0 mini" });
       if (v.durationSeconds != null && v.durationSeconds !== GEN_VIDEO_SECONDS) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["durationSeconds"], message: "reference video output is fixed at 5 seconds" });
+      }
+    }
+    /**
+     * #775 判官 r3 P1-1 —— **锚在商家自己那条片子上的请求,两条硬形状**。
+     *
+     * 这道闸长在付费 schema 上,而不是只长在铸卡侧,理由就是判官的两个探针:它们都发生在
+     * **执行时**。铸卡侧管得再好,只要执行侧没问同一个问题,一个公开 Server Action 就能把
+     * 「商家批准的那张卡」和「真正送去花钱的那份请求」拆成两件事(与 #882 的
+     * `approvedEntities` 同一类病)。
+     *
+     * ① 官方句式说要改/接**那条片子**,那这条请求就必须真的带着一条片子。带不上却照发,
+     *    引擎收到的是一句指着 `<Video_1>` 的指令而请求里根本没有 Video_1 —— 一次注定
+     *    让商家失望的付费运行。
+     * ② 输出形状只能跟着那条片子(`adaptive`)或干脆不说。官方陷阱:这两种任务上再指定一个
+     *    比例,请求会**先被收下、事后才异步失败** —— 商家看到的是批准之后石沉大海。
+     *    缺席也放行:不说 = 引擎自己跟着输入走,与 adaptive 同义,而我们绝不发明一个值。
+     *
+     * 判据只有一处(`anchoredVideoAction`,与铸卡侧、与写这段字的装配器同一份),
+     * 且**只对官方句式那两档收紧** —— 普通文生视频、首帧动画、以及「照着这条做一条新的」
+     * (同样带参考视频、但提示词不是官方句式)一个字节都不受影响,画布那条路的合法画幅
+     * 语义原样保留。
+     */
+    if (v.kind === "video" && isAnchoredVideoPrompt(v.prompt)) {
+      if (!v.referenceVideoGenerationId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["referenceVideoGenerationId"],
+          message: "this prompt edits or continues a clip, so it needs that clip attached",
+        });
+      }
+      if (v.aspectRatio != null && v.aspectRatio !== VIDEO_ASPECT_ADAPTIVE) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["aspectRatio"],
+          message: "editing or continuing a clip keeps the clip's own shape",
+        });
       }
     }
   });
