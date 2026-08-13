@@ -87,7 +87,7 @@ export const readSegmentsSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "Read the user's CRM Segments through the same owner-scoped action layer as the CRM page. $0 read-only. " +
+    "Read the user's CRM Segments through the same owner-scoped action layer the merchant's own screens use. $0 read-only. " +
     "operation=list returns saved segments with rules and live matched/contactable/known-opt-out counts. " +
     "operation=get needs an exact segmentId from list and returns that Segment's rule and counts. " +
     "operation=preview evaluates a STRUCTURED one-level rule object without saving. Never send free-form natural " +

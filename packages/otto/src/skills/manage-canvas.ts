@@ -29,6 +29,7 @@
  */
 import { z } from "zod";
 import { canvasCardIsInFlightPaid } from "@fikirtive/core/canvas-card-status";
+import { navLabel } from "@fikirtive/core";
 import { merchantGenFailureExplanation } from "@fikirtive/core/gen-failure";
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
@@ -190,7 +191,7 @@ export async function executeManageCanvas(
         return {
           ok: false,
           error:
-            "That node's generation is still in flight, so I can't remove it — removing it wouldn't refund or stop the job. Please confirm the removal by hand on the canvas; the finished output will still land in your Library.",
+            `That node's generation is still in flight, so I can't remove it — removing it wouldn't refund or stop the job. Please confirm the removal by hand on the canvas; the finished output will still land in your ${navLabel("library")}.`,
         };
       }
       const r = await canvas.remove(input.nodeId);

@@ -8,14 +8,24 @@
  *
  * The classification comes from @fikirtive/core (shared with the web channel adapters) and the
  * label from CONNECTION_BLOCKER_COPY, so Otto and the human screens cannot describe the same
- * connection differently. Each skill keeps its OWN "never connected" and "couldn't reach Meta"
- * copy — those are contextual ("…so I can't read your per-ad performance") and were never wrong.
+ * connection differently.
+ *
+ * #802 — the merchant's first hurdle is Meta, and every one of these answers ends by sending them
+ * somewhere. Seven skills each hand-typed that destination as the bare word "Connections"; the
+ * navigation authority calls it `${navPath("connections")}` and could rename it tomorrow. So the
+ * "never connected" half moved here too (`metaNotConnectedMessage`), and the route in all of them
+ * now comes from @fikirtive/core. Each skill still supplies its OWN contextual clause ("…so I
+ * can't read your per-ad performance") — that half was never wrong and stays where the context is.
  */
 import {
   CONNECTION_BLOCKER_COPY,
   classifyConnectionFailure,
+  navPath,
   type ConnectionBlocker,
 } from "@fikirtive/core";
+
+/** Where a merchant goes to connect or reconnect — named by the navigation authority, never typed. */
+const CONNECTIONS = navPath("connections");
 
 // The wording deliberately avoids spelling out the false claim, even to forbid it: a message
 // containing "…they have not connected Meta" reads as that assertion to anything scanning the
@@ -24,7 +34,7 @@ import {
 const BLOCKED_MESSAGE: Record<ConnectionBlocker, string> = {
   needs_reconnect:
     `${CONNECTION_BLOCKER_COPY.needs_reconnect.status} — Meta IS connected, its access just expired. ` +
-    "Ask the user to open Connections and reconnect, then try again. Describe it as an expired connection, never as a missing one.",
+    `Ask the user to open ${CONNECTIONS} and reconnect, then try again. Describe it as an expired connection, never as a missing one.`,
   needs_page_permission:
     `${CONNECTION_BLOCKER_COPY.needs_page_permission.status} — Meta IS connected, but it cannot see their Pages. ` +
     "Ask the user to reconnect and allow Page access, then try again. Describe it as a missing permission, never as a missing connection.",
@@ -47,4 +57,20 @@ export function isConnectionBlocked(
 export function ottoConnectionBlockedAnswer(read: object): { blocked: ConnectionBlocker; message: string } {
   const blocked = classifyConnectionFailure(read as Record<string, unknown>) as ConnectionBlocker;
   return { blocked, message: BLOCKED_MESSAGE[blocked] };
+}
+
+/**
+ * Otto's answer when Meta was genuinely never connected — the merchant's very first hurdle.
+ *
+ * `why` is the calling skill's own half-sentence saying what that makes impossible right now
+ * (e.g. "so I can't read your per-ad performance"); omit it when the skill has nothing to add.
+ * The destination is never typed here — it is whatever the navigation authority currently calls
+ * that section, so this answer cannot outlive a rename.
+ */
+export function metaNotConnectedMessage(why?: string): string {
+  const because = why ? `, ${why}` : "";
+  return (
+    `Meta isn't connected yet${because}. ` +
+    `Ask the user to open ${CONNECTIONS} and connect Instagram or Facebook, then try again.`
+  );
 }

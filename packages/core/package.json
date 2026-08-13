@@ -80,6 +80,10 @@
       "types": "./dist/spend.d.ts",
       "default": "./dist/spend.js"
     },
+    "./templates": {
+      "types": "./dist/templates.d.ts",
+      "default": "./dist/templates.js"
+    },
     "./upload": {
       "types": "./dist/upload.d.ts",
       "default": "./dist/upload.js"
