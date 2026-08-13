@@ -91,6 +91,15 @@ const SLOT_NOUN: Record<Extract<ReferenceSlot, { kind: "entity" }>["type"], stri
 };
 
 /**
+ * 编号句里名字的长度上限。元素名商家最长可以取 120 字,槽位最多 11 个(10 张元素图 +
+ * 编辑底图),不封顶的话这段机器加的前缀最坏能顶到 ~2KB —— 而商家自己那段提示词本来
+ * 就有 `MAX_GEN_PROMPT` 的额度。编号句只是**认人**用的,名字全称照旧在商家自己那几句
+ * 锁身份的话里,所以这里截断不丢信息。
+ */
+const SLOT_NAME_MAX = 60;
+const slotName = (n: string) => (n.length > SLOT_NAME_MAX ? n.slice(0, SLOT_NAME_MAX) : n);
+
+/**
  * 纯:把「引擎这一趟真收到的那个数组」翻成官方编号句。
  *
  * ── 为什么编号只能长在这里 ────────────────────────────────────────────────
@@ -113,9 +122,9 @@ export function referenceMapLines(slots: ReferenceSlot[]): string[] {
     const first = firstSlotOf.get(slot.entityId);
     if (first === undefined) {
       firstSlotOf.set(slot.entityId, n);
-      return `Define ${SLOT_NOUN[slot.type]} in <Image_${n}> as <Subject_${n}>: ${slot.name}.`;
+      return `Define ${SLOT_NOUN[slot.type]} in <Image_${n}> as <Subject_${n}>: ${slotName(slot.name)}.`;
     }
-    return `<Image_${n}> is another photo of <Subject_${first}> (${slot.name}).`;
+    return `<Image_${n}> is another photo of <Subject_${first}> (${slotName(slot.name)}).`;
   });
 }
 
