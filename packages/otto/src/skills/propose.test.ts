@@ -545,6 +545,58 @@ describe("executePropose — mock DB", () => {
     expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
   });
 
+  // 判官 r1 P1 —— 首帧 i2v 是**同一档**的另一个场景(引擎只认首帧),照片同样一张都不带,
+  // 可这一档此前卡面完全沉默:铸卡时 @元素先被清空,披露再去数清空后的卡,数到的是
+  // 0 张里的 0 张 ⇒ 那句「一张都不会用上」永远不出现。分母必须来自商家真 @ 的那一份。
+  it("#785: an i2v card says none of the @element photos ride along (the start frame takes those slots)", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(4);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "make her walk toward the camera", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen_img" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["kind"]).toBe("video");
+    // 卡上照旧不带 @元素(worker 那一档也不会去取图)—— 变的只有「不再沉默」。
+    expect(payload["entityIds"]).toEqual([]);
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("None of your 4 reference photos will be used for this clip.");
+    // 而且绝不能倒过来吹一个「用了 N 张」的规格条目。
+    expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
+  });
+
+  // 归属过滤仍然排在披露前面:别人的元素不许进这句话的分母(也不许被数)。
+  it("#785: the i2v sentence counts only the merchant's own @elements", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]); // "foreign" 不属于这个 org
+    mockPrisma.referenceImage.count.mockResolvedValue(4);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "make her walk", entityIds: ["e1", "foreign"], variantSel: { foreign: "var-x" } },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen_img" }) },
+    );
+
+    expect(mockPrisma.referenceImage.count).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.referenceImage.count).toHaveBeenCalledWith({
+      where: { entityId: "e1", variantId: null, ownerId: "org-cap", deletedAt: null },
+    });
+    expect(persistedPayload()["downgradeNote"]).toContain("None of your 4 reference photos will be used for this clip.");
+  });
+
+  // 反面:i2v 但商家一个元素都没 @ ⇒ 没有什么可披露的,不许编一句提醒。
+  it("#785: an i2v card with no @elements stays quiet (nothing was dropped)", async () => {
+    await executePropose(
+      { kind: "video", structuredPrompt: "make it move", entityIds: [], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen_img" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
+    expect(mockPrisma.referenceImage.count).not.toHaveBeenCalled();
+  });
+
   // #785 的正面:纯文生视频 + @元素 ⇒ 照片真的上车,卡面在批准前就说出张数。
   it("#785: a text-to-video card with @elements says how many reference photos ride along", async () => {
     mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
@@ -560,6 +612,31 @@ describe("executePropose — mock DB", () => {
     // 3 张全部在 9 张名额之内 ⇒ 没有截断,不许编一句提醒。
     expect(payload["downgraded"]).toBe(false);
     expect(payload["specChips"] as string[]).toContain("Uses 3 of your reference photos");
+  });
+
+  // 判官 r1 P1(provider 这一维)—— 备用适配器根本收不了元素照(付费前直接拒),所以
+  // 同一张纯文生视频卡在那条路上必须说另一句话:承诺「Uses 3 of your reference photos」
+  // 就是替一条做不到的路许诺。判据与选片名额是同一个(`videoElementReferencesHonoured`)。
+  it("#785: on the fallback adapter the same card says none will be used — and promises nothing", async () => {
+    const prev = process.env["GENERATION_PROVIDER"];
+    process.env["GENERATION_PROVIDER"] = "fal";
+    try {
+      mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+      mockPrisma.referenceImage.count.mockResolvedValue(3);
+
+      await executePropose(
+        { kind: "video", structuredPrompt: "our product on a beach", entityIds: ["e1"], variantSel: {} },
+        { context: makeCtx({ orgId: "org-cap" }) },
+      );
+
+      const payload = persistedPayload();
+      expect(payload["downgraded"]).toBe(true);
+      expect(payload["downgradeNote"]).toContain("None of your 3 reference photos will be used for this clip.");
+      expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
+    } finally {
+      if (prev === undefined) delete process.env["GENERATION_PROVIDER"];
+      else process.env["GENERATION_PROVIDER"] = prev;
+    }
   });
 
   // 名额压线:9 个 image_url 部件,纯文生视频没有帧占位 ⇒ 元素照上限就是 9。

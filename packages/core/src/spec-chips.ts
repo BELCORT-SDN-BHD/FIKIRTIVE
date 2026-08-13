@@ -12,7 +12,7 @@
  * 纯函数:不选型、不报价、不预扣、不发请求。每一条都只可能来自 `EXECUTED_SPEC` 认定
  * 执行层真会采纳的控制项,且结构上不可能带出引擎名(只读 params,从不读 model/reason)。
  */
-import { EXECUTED_SPEC, imageAspectHonoured } from "./executed-spec.js";
+import { EXECUTED_SPEC, imageAspectHonoured, videoElementReferencesHonoured } from "./executed-spec.js";
 import { imageOutputSize, VIDEO_ASPECT_ADAPTIVE } from "./gen.js";
 
 /** 卡面规格取值的来源 —— 一张付费卡冻下来的那份 params。 */
@@ -71,8 +71,12 @@ export function buildSpecChips(
     // #785：@元素的参考照现在真的进视频引擎，所以卡面在批准前就说出来 —— 与图片侧
     // 「Uses your attached image」(#619) 同一条规矩：界面上出现的每一句都得是执行层真会
     // 做的事。数字不在这里算(来自 `referenceBudget(...).used`)，为 0 时一个字都不说。
+    // 判据是**这一趟真正会跑的那个适配器**收不收元素照(`videoElementReferencesHonoured`),
+    // 不是那个「现役适配器能不能」的静态标志 —— 备用路(fal)在付费前就拒收元素照,卡面
+    // 绝不能替它承诺「Uses 3 of your reference photos」(判官 r1 P1)。与图片画幅那一条
+    // (`imageAspectHonoured`)同一个形状,而且与选片名额读的是同一个函数。
     const refCount = video?.elementReferenceCount ?? 0;
-    if (EXECUTED_SPEC.video.elementReferencesHonoured && refCount > 0) {
+    if (videoElementReferencesHonoured() && refCount > 0) {
       chips.push(refCount === 1 ? "Uses 1 of your reference photos" : `Uses ${refCount} of your reference photos`);
     }
   } else {

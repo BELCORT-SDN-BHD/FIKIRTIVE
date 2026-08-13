@@ -19,6 +19,7 @@
  */
 import { MAX_CONDITIONING_IMAGES } from "./refgen.js";
 import { MAX_VIDEO_IMAGE_PARTS } from "./gen.js";
+import { videoElementReferencesHonoured } from "./executed-spec.js";
 
 export type ReferenceBudget = {
   /** 引擎这一趟**真会收到**的参考图张数(截断后的元素图 + 编辑底图)。 */
@@ -75,9 +76,15 @@ export function videoReferencesRide(shape: VideoReferenceShape): boolean {
  *   占的是同一批名额 —— 所以元素照的名额是「9 减去这一单要用的帧数」。带帧的档现在一张
  *   元素照都不带(`videoReferencesRide` 为 false ⇒ 0),减法照写不省:哪天场景组合被官方
  *   核实成可混,只改 `videoReferencesRide` 一处,名额自动对得上。
+ *
+ * 名额的第一问是 provider(#785 判官 r1 P1):**这一趟真正会跑的适配器**收不收元素照。
+ * 备用路(fal)没有多素材参考那条路,名额于是是 0 —— 卡面照实说「一张都不会用上」,
+ * worker 也确实一张都不送。判据只有 `videoElementReferencesHonoured` 一处,所以「说的」
+ * 与「送的」在 provider 这一维上不可能分家。
  */
 export function conditioningCap(input: VideoReferenceShape & { kind: "image" | "video" }): number {
   if (input.kind !== "video") return MAX_CONDITIONING_IMAGES;
+  if (!videoElementReferencesHonoured()) return 0;
   if (!videoReferencesRide(input)) return 0;
   const frames = (input.hasVideoStartFrame ? 1 : 0) + (input.hasVideoTailFrame ? 1 : 0);
   return Math.max(0, MAX_VIDEO_IMAGE_PARTS - frames);

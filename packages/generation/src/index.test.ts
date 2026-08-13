@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { EXECUTED_SPEC, GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, GEN_VIDEO_MODELS, imageAspectHonoured, type GenVideoModel } from "@fikirtive/core";
+import {
+  EXECUTED_SPEC, GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, GEN_VIDEO_MODELS, imageAspectHonoured,
+  buildSpecChips, conditioningCap, videoElementReferencesHonoured, type GenVideoModel,
+} from "@fikirtive/core";
 import { createGenerationProvider, FalProvider, MockProvider } from "./index.js";
 
 /** Read a PNG's IHDR width/height — the only way to prove the mock really produced
@@ -175,6 +178,127 @@ describe("#642 imageAspectHonoured() ↔ 适配器实际发出去的东西", () 
       if (prev === undefined) delete process.env.GENERATION_PROVIDER;
       else process.env.GENERATION_PROVIDER = prev;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #785 判官 r1 P1 —— 元素照的披露判据 ↔ 每个真适配器对元素照的实际处置(跨包 lockstep)
+//
+// 与上面那组画幅 lockstep 同一个病、同一把尺子。卡面此前问的是
+// `EXECUTED_SPEC.video.elementReferencesHonoured`(**现役**适配器的静态事实),可这一单
+// 由谁执行取决于 GENERATION_PROVIDER —— 备用路(fal)在付费之前就把带元素照的请求拒掉,
+// 卡面却照旧承诺「Uses 3 of your reference photos」。判据现在是
+// `videoElementReferencesHonoured()`,而且它同时喂**选片名额**(`conditioningCap`)——
+// 「说几张」与「送几张」于是共用一个开关,不可能分家。
+//
+// 矩阵:两条真花钱的路 × 有 / 没有元素照。(mock 不入矩阵:它不花钱、不对商家交付,
+// 每一格规格对它都同样不成立 —— 这里要挡的是两条真路之间的漂移。)
+// ---------------------------------------------------------------------------
+describe("#785 videoElementReferencesHonoured() ↔ 适配器对元素照的实际处置", () => {
+  const PHOTOS = ["https://r2/product.png", "https://r2/face.png", "https://r2/logo.png"];
+  const VIDEO_PARAMS = { aspectRatio: "16:9", resolution: "720p", durationSeconds: 5, audio: false, count: 1 };
+
+  /** 真跑一次这一趟会跑的那个适配器,回答两件事:它拒了吗、它真把几张编进请求体了。 */
+  async function sendPlan(refImageUrls: string[]): Promise<{ refused: boolean; carried: number }> {
+    let body: unknown;
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const u = String(url);
+      // byteplus:提交(POST)→ 轮询 → 下载
+      if (u.includes("/contents/generations/tasks") && init?.method === "POST") {
+        body = JSON.parse(init.body!);
+        return { ok: true, status: 200, json: async (): Promise<unknown> => ({ id: "cgt-785" }), text: async (): Promise<string> => "" };
+      }
+      if (u.includes("/contents/generations/tasks/")) {
+        return { ok: true, status: 200, json: async (): Promise<unknown> => ({ status: "succeeded", content: { video_url: "https://x/v.mp4" } }), text: async (): Promise<string> => "" };
+      }
+      // fal:同步端点,POST 本身就是计费事件
+      if (u.includes("fal.run")) {
+        body = JSON.parse(init!.body!);
+        return { ok: true, status: 200, json: async (): Promise<unknown> => ({ video: { url: "https://x/v.mp4" } }), text: async (): Promise<string> => "" };
+      }
+      return { ok: true, status: 200, arrayBuffer: async (): Promise<ArrayBuffer> => new Uint8Array([1]).buffer, text: async (): Promise<string> => "" };
+    }));
+    // 拒绝的那一格拒得很早(付费前),所以捕获必须**当场**挂上 —— 先 runAllTimersAsync
+    // 再 await,那个 reject 会先变成一条 unhandled rejection。
+    let refused = false;
+    try {
+      const promise = createGenerationProvider().generateVideo({
+        prompt: "our product on a beach", imageUrl: "", durationSeconds: 5,
+        model: "seedance-2-mini" as GenVideoModel,
+        ...(refImageUrls.length ? { refImageUrls } : {}),
+      }).catch(() => { refused = true; });
+      await vi.runAllTimersAsync();
+      await promise;
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+    if (refused) return { refused: true, carried: 0 }; // 这条路上元素照一张也上不了车
+    const sent = JSON.stringify(body ?? {});
+    return { refused: false, carried: PHOTOS.filter((u) => sent.includes(u)).length };
+  }
+
+  /** 这一格用的那个 provider 装上,跑完再原样放回。 */
+  async function withProvider<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const prev = process.env.GENERATION_PROVIDER;
+    process.env.GENERATION_PROVIDER = name;
+    if (name === "byteplus") process.env.BYTEPLUS_API_KEY = "ark-test";
+    if (name === "fal") process.env.FAL_KEY = "fal-test";
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
+      else process.env.GENERATION_PROVIDER = prev;
+      delete process.env.BYTEPLUS_API_KEY;
+      delete process.env.FAL_KEY;
+    }
+  }
+
+  it.each(["byteplus", "fal"])(
+    "%s:带元素照时,卡面承诺、选片名额与适配器的实际处置三者一致",
+    async (providerName) => {
+      await withProvider(providerName, async () => {
+        const claimed = videoElementReferencesHonoured();
+        const sent = await sendPlan(PHOTOS);
+
+        if (claimed) {
+          // 承诺得起 ⇒ 这条路真的把每一张都编进了请求体。
+          expect(sent.refused, `${providerName}: 披露说会用,适配器却拒了`).toBe(false);
+          expect(sent.carried).toBe(PHOTOS.length);
+        } else {
+          // 承诺不起 ⇒ 这条路连送都送不出去(付费之前就拒)。
+          expect(sent.refused, `${providerName}: 披露说用不了,适配器却收下了`).toBe(true);
+          expect(sent.carried).toBe(0);
+        }
+        // 名额与卡面读的是同一个判据 —— 不许一边说三张、一边送零张。
+        expect(conditioningCap({ kind: "video" }) > 0).toBe(claimed);
+        const chips = buildSpecChips("video", VIDEO_PARAMS, false, false, { elementReferenceCount: 3 });
+        expect(chips.some((c) => c.includes("reference photos"))).toBe(claimed);
+      });
+    },
+  );
+
+  it.each(["byteplus", "fal"])(
+    "%s:没有元素照时,两条路都照常出片,卡面一个字都不说",
+    async (providerName) => {
+      await withProvider(providerName, async () => {
+        const sent = await sendPlan([]);
+        expect(sent.refused).toBe(false);
+        expect(sent.carried).toBe(0);
+        const chips = buildSpecChips("video", VIDEO_PARAMS, false, false, { elementReferenceCount: 0 });
+        expect(chips.some((c) => c.includes("reference photos"))).toBe(false);
+      });
+    },
+  );
+
+  it("备用路被选中时,判据必须回 false(不许替一条拒收元素照的路承诺)", async () => {
+    await withProvider("fal", async () => {
+      expect(videoElementReferencesHonoured()).toBe(false);
+      expect(conditioningCap({ kind: "video" })).toBe(0);
+      // 图片侧的名额不受影响 —— 备用路的图片编辑照旧收参考图。
+      expect(conditioningCap({ kind: "image" })).toBeGreaterThan(0);
+    });
   });
 });
 

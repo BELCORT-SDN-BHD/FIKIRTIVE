@@ -29,7 +29,8 @@ export type { CardPayload, ProposeCardResult };
 export { buildProposeCard, GenerationUnavailableError };
 
 /**
- * #619 E-5：**逐个** @元素有多少张活参考照，顺序 = 卡上的 `entityIds` 顺序。
+ * #619 E-5：**逐个** @元素有多少张活参考照，顺序 = 商家 @ 到它们的顺序（也就是卡上
+ * `entityIds` 的顺序；首帧 i2v 那一档卡上被清空，数的仍是商家 @ 的那一份 —— #785 判官 r1 P1）。
  *
  * 口径逐字照抄 worker 的选片查询（`apps/worker/src/jobs/gen.ts:497-501`）：被 @ 的变体
  * 数该变体的图，否则数 base 图（`variantSel[id] ?? null`）。返回的是**数组**而不是总数 ——
@@ -82,11 +83,15 @@ export async function executePropose(
     if (e instanceof GenerationUnavailableError) return { error: e.message };
     throw e;
   }
-  const { cardPayload, shownPriceDisplay } = built;
+  const { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel } = built;
 
   // #619 E-5：截断与「只用第一张挂图」都必须在**批准前**出现在卡面上，不是事后在
-  // 详情页解释。数的是卡上最终留下的元素（buildProposeCard 已做归属过滤与 i2v 清空）——
-  // 那也正是 GenJob 会带走、worker 会照着取图的那一份。
+  // 详情页解释。
+  //
+  // #785 判官 r1 P1:数的是**商家真 @ 了谁**(`mentionedEntityIds`,归属过滤后、场景清空前),
+  // 不是卡上最终留下的那一份。首帧 i2v 会把卡上的 @元素清空,数清空后的卡就得到 0 张里的
+  // 0 张 —— 于是「你那 N 张一张都不会用上」永远不出现,商家批准前什么都不知道。分母来自
+  // 商家给的东西,分子(真会上车几张)照旧只来自 `referenceBudget`。
   const usesAttachedImage = cardPayload.kind === "image" && !!cardPayload.sourceGenerationId;
   const attachedImageCount = ctx.sourceGenerationIds?.length ?? (ctx.sourceGenerationId ? 1 : 0);
   // #785：视频这一支的名额取决于这张卡自己的形状(有没有首帧 / 整段参考视频)——
@@ -96,8 +101,8 @@ export async function executePropose(
     kind: cardPayload.kind,
     perEntityLiveCounts: await countLiveReferenceImagesPerEntity(
       ctx.orgId,
-      cardPayload.entityIds,
-      cardPayload.variantSel,
+      mentionedEntityIds,
+      mentionedVariantSel,
     ),
     hasBaseImage: usesAttachedImage,
     attachedImageCount,

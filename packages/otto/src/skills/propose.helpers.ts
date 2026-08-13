@@ -100,6 +100,19 @@ export type CardPayload = {
 export type ProposeCardResult = {
   cardPayload: CardPayload;
   shownPriceDisplay: number;
+  /**
+   * #785 判官 r1 P1 —— **披露要数的那一份**:商家这一轮真 @ 到、且确属他自己的元素,
+   * 取在任何场景清空**之前**。
+   *
+   * 为什么不能数 `cardPayload.entityIds`:首帧 i2v 那一档会把卡上的 @元素清空(引擎只认
+   * 首帧),而「你给的 N 张一张都不会用上」这句话要说的正是被清掉的那些。数清空后的卡,
+   * 数出来永远是 0 张里的 0 张 ⇒ 那句话永远不出现 ⇒ 静默,正是这条规矩要挡的东西。
+   *
+   * 只影响**披露**:卡上带走的仍然是 `cardPayload.entityIds`(worker 照它取图),
+   * 这一份不参与选型、报价、预扣。
+   */
+  mentionedEntityIds: string[];
+  mentionedVariantSel: Record<string, string>;
 };
 
 /**
@@ -297,29 +310,31 @@ export function buildProposeCard(
   // `hasSourceImage` 仍然只说 i2v：它驱动选型与 @元素清空，那两件事对图片方案不变
   // （图片方案照旧保留商家 @ 的元素，参考图与元素图一起进引擎）。
   let kind = input.kind;
-  let entityIds = input.entityIds;
-  let variantSel = input.variantSel;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
   const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
   const hasSourceImage = isI2V;
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
 
+  // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently.
+  // #785 判官 r1 P1:归属过滤挪到了 i2v 清空**之前**(原本是「先清空、再跳过过滤」)。
+  // 卡面产物一个字节都没变(清空后的卡照旧是空的),换来的是下面那一份「商家真 @ 了谁」
+  // 还留着 —— 披露要数的是它,不是清空后的卡(见 ProposeCardResult.mentionedEntityIds)。
+  const ownedSet = new Set(ownedEntityIds);
+  let entityIds = input.entityIds.filter((id) => ownedSet.has(id));
+  const ownedVarSel: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.variantSel)) {
+    if (ownedSet.has(k)) ownedVarSel[k] = v;
+  }
+  let variantSel: Record<string, string> = ownedVarSel;
+  /** 商家这一轮真 @ 到、且确属他自己的那一组 —— 只喂披露(张数要按这一份数)。 */
+  const mentionedEntityIds = entityIds;
+  const mentionedVariantSel = variantSel;
+
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
     entityIds = [];
     variantSel = {};
-  }
-
-  // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently
-  if (!hasSourceImage) {
-    const ownedSet = new Set(ownedEntityIds);
-    entityIds = entityIds.filter((id) => ownedSet.has(id));
-    const filteredVarSel: Record<string, string> = {};
-    for (const [k, v] of Object.entries(variantSel)) {
-      if (ownedSet.has(k)) filteredVarSel[k] = v;
-    }
-    variantSel = filteredVarSel;
   }
 
   // Step 3: model selection.
@@ -470,5 +485,5 @@ export function buildProposeCard(
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).
   const shownPriceDisplay = estimatedCredits;
 
-  return { cardPayload, shownPriceDisplay };
+  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel };
 }
