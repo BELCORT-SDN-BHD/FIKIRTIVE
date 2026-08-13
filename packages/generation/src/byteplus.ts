@@ -13,6 +13,32 @@ export const IMAGE_MODEL_MAP: Record<string, string> = { seedream: "seedream-5-0
 export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-mini": "dreamina-seedance-2-0-mini-260615" };
 
 /**
+ * #795 — every call out to the engine gets a deadline, because a socket that never answers is
+ * not a slow generation, it is a WORKER SEAT held open forever.
+ *
+ * `fetch` has no default timeout. Node's undici will wait on a half-open connection until the
+ * OS gives up — minutes to never. There is exactly one generation seat today (#760 is the
+ * ticket that widens it), so one hung socket is the whole product's generation capacity, and
+ * nothing in the retry machinery below can fire because nothing has failed yet: the request is
+ * still "in flight". The deadline is what turns "hung forever, silently" into "failed, and the
+ * charge boundary above decides what that costs".
+ *
+ * TWO SIZES, because two different things are being waited for:
+ *   · CONTROL (submit, poll) — a request the engine answers from its own queue state. 60s is
+ *     already ~20× the measured p99; past it the connection is not slow, it is gone.
+ *   · TRANSFER (image/video download) — bytes over the wire from object storage. A 15-minute
+ *     720p clip is tens of megabytes, so this one has to tolerate a genuinely slow pipe; 5 min
+ *     is generous for that and still far inside the worker's own 20-minute message expiry.
+ *
+ * WHAT A TIMEOUT COSTS. Aborting is a network failure, so it lands on the SAME classification
+ * the charge boundary already applies to "no response at all": outcome unknown ⇒ treated as
+ * billed (a plain retry would POST a second time and pay twice). Timing out therefore never
+ * loosens the money rule — it only stops the seat being held.
+ */
+export const ARK_CONTROL_TIMEOUT_MS = 60_000;
+export const ARK_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+
+/**
  * How long this client keeps polling one video task before it gives up (F06 — the full
  * reasoning lives at the poll loop below; do not change this number without reading it).
  *
@@ -43,7 +69,15 @@ export class BytePlusProvider implements GenerationProvider {
    *  one yardstick serves both. Callers must not re-inspect the status: the
    *  classification lives here and nowhere else. */
   private async paidPost(what: "image request" | "video submit", url: string, model: string, body: unknown): Promise<Response> {
-    const res = await fetch(url, { method: "POST", headers: this.headers(), body: JSON.stringify(body) }).catch((e: unknown) => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      // #795 — a submit that never answers holds the only generation seat open. An abort
+      // surfaces here as a rejected fetch, which is already the "outcome unknown ⇒ billed"
+      // branch below: the deadline changes how long we wait, never who pays.
+      signal: AbortSignal.timeout(ARK_CONTROL_TIMEOUT_MS),
+    }).catch((e: unknown) => {
       // No response at all (connection reset, DNS, socket closed mid-flight). The
       // request may already have reached the engine — and been billed (image) or
       // turned into a task (video) — with only the reply lost. Outcome unknown ⇒
@@ -142,7 +176,9 @@ export class BytePlusProvider implements GenerationProvider {
           const data = (await res.json()) as { data?: { url: string }[] };
           const url = data.data?.[0]?.url;
           if (!url) throw chargedError("generation provider image response had no result URL");
-          const r = await fetch(url);
+          // #795 — a stalled download is still a held seat. Past the deadline the abort lands in
+          // the catch below, which already marks the failure charged (the image IS billed).
+          const r = await fetch(url, { signal: AbortSignal.timeout(ARK_DOWNLOAD_TIMEOUT_MS) });
           if (!r.ok) throw chargedError(`image download → ${r.status}`);
           return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "png" } as GeneratedImage;
         } catch (e) {
@@ -226,7 +262,9 @@ export class BytePlusProvider implements GenerationProvider {
     }
     try {
       return await Promise.all(urls.map(async (url) => {
-        const r = await fetch(url);
+        // #795 —— 与散图路的结果下载同一条截止时间。这一组已经计了费,超时中止落进
+        // 下面的 catch,照旧标 charged;deadline 改的只是「等多久」,不改谁付钱。
+        const r = await fetch(url, { signal: AbortSignal.timeout(ARK_DOWNLOAD_TIMEOUT_MS) });
         if (!r.ok) throw chargedError(`image download → ${r.status}`);
         return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "png" } as GeneratedImage;
       }));
@@ -342,7 +380,14 @@ export class BytePlusProvider implements GenerationProvider {
       await new Promise((r) => setTimeout(r, 5_000));
       let t: { status?: string; content?: { video_url?: string } };
       try {
-        const st = await fetch(`${ARK_BASE}/contents/generations/tasks/${taskId}`, { headers: this.headers() });
+        // #795 — a poll that hangs stops the 15-minute clock below from ever being consulted:
+        // the loop is parked inside `await fetch`, so neither the timeout check nor the worker's
+        // own message expiry can reach it. With a deadline the abort lands in the catch, which
+        // treats it as a transient poll failure and polls again — until TIMEOUT_MS decides.
+        const st = await fetch(`${ARK_BASE}/contents/generations/tasks/${taskId}`, {
+          headers: this.headers(),
+          signal: AbortSignal.timeout(ARK_CONTROL_TIMEOUT_MS),
+        });
         if (!st.ok) {
           // Non-2xx: if timed out, surface as chargedError (task may still complete on BytePlus = COGS already committed)
           if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`generation provider video poll returned ${st.status} after timeout`);
@@ -365,7 +410,9 @@ export class BytePlusProvider implements GenerationProvider {
         const url = t.content?.video_url;
         if (!url) throw chargedError("generation provider video response had no result URL");
         try {
-          const r = await fetch(url);
+          // #795 — same deadline as the image download, same landing: the clip IS billed, so an
+          // abort is a charged failure, never a plain retry that would generate a second one.
+          const r = await fetch(url, { signal: AbortSignal.timeout(ARK_DOWNLOAD_TIMEOUT_MS) });
           if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
           return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
         } catch (e) {

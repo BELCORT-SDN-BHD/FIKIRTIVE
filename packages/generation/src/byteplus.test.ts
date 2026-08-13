@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { EXECUTED_SPEC, REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
-import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP } from "./byteplus.js";
+import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP, ARK_CONTROL_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS } from "./byteplus.js";
 
 describe("BytePlusProvider — wiring", () => {
   it("maps internal model ids to Ark ids", () => {
@@ -1001,5 +1001,74 @@ describe("#777 组图:一次调用出齐一整组连贯的图", () => {
     await expect(new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 2, model: "nope" as any, coherentSet: true }))
       .rejects.toThrow(/no image model/);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #795 —— 每一次出网调用都必须带截止时间
+//
+// `fetch` 本身没有超时。挂死的 socket 不是「慢」,是**唯一那个生成工位被永久占住**:
+// 循环停在 `await fetch` 里,15 分钟的自查时钟根本轮不到执行,worker 的消息过期也
+// 够不着它。这一族断言钉的是形状,不是某一次网络的运气:四个出网点(提交、轮询、
+// 图片下载、视频下载)一个都不许裸奔。
+// ---------------------------------------------------------------------------
+describe("#795 出网截止时间", () => {
+  /** 每次 fetch 的 signal;undefined 表示这一次调用是裸奔的。 */
+  function recordSignals(handler: (url: string, init?: any) => any) {
+    const seen: Array<{ url: string; signal: AbortSignal | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: any) => {
+      seen.push({ url: String(url), signal: init?.signal });
+      return handler(String(url), init);
+    }));
+    return seen;
+  }
+
+  it("图片:付费 POST 与结果下载都带 signal", async () => {
+    const seen = recordSignals((url) =>
+      url.endsWith("/images/generations") ? jsonRes({ data: [{ url: "https://tos/i.png" }] }) : bytesRes(),
+    );
+    await new BytePlusProvider("ark-test").generate({ prompt: "p", model: "seedream", count: 1, inputImageUrls: [] } as never);
+    expect(seen).toHaveLength(2);
+    for (const call of seen) expect(call.signal, `${call.url} 没带 signal`).toBeInstanceOf(AbortSignal);
+  });
+
+  it("视频:提交、轮询、下载三处都带 signal", async () => {
+    vi.useFakeTimers();
+    try {
+      const seen = recordSignals((url, init) => {
+        if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") return jsonRes({ id: "cgt-9" });
+        if (url.includes("/contents/generations/tasks/cgt-9")) {
+          return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+        }
+        return bytesRes();
+      });
+      const promise = new BytePlusProvider("ark-test").generateVideo({
+        prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini",
+      } as never);
+      await vi.runAllTimersAsync();
+      await promise;
+      expect(seen).toHaveLength(3);
+      for (const call of seen) expect(call.signal, `${call.url} 没带 signal`).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("控制面 60s / 传输面 5min —— 两个尺寸各就各位,且下载明确比控制宽", () => {
+    expect(ARK_CONTROL_TIMEOUT_MS).toBe(60_000);
+    expect(ARK_DOWNLOAD_TIMEOUT_MS).toBe(5 * 60_000);
+    expect(ARK_DOWNLOAD_TIMEOUT_MS).toBeGreaterThan(ARK_CONTROL_TIMEOUT_MS);
+  });
+
+  it("超时中止 = 「结果未知,按已计费处理」,不是可重试的普通失败", async () => {
+    // 中止在 fetch 层表现为 reject —— 与「连接被重置」同一条路。这条路必须落在 charged 上:
+    // 普通失败会被 worker 重投,而重投意味着对同一个商家请求再 POST 一次、再付一次钱。
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    }));
+    const err = await new BytePlusProvider("ark-test")
+      .generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" } as never)
+      .catch((e: unknown) => e);
+    expect((err as { charged?: unknown }).charged).toBe(true);
   });
 });
