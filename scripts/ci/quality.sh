@@ -35,10 +35,12 @@ fi
 #
 # What makes five partial runs add up to one whole run is coverage: the union of
 # the legs must be the entire gate list, and CI must run exactly these leg names.
-# Neither is left to a comment. scripts/__tests__/quality-legs.test.sh derives
-# both facts from this file and from .github/workflows/ci.yml, and it runs as a
-# gate itself — so a gate that falls out of every leg, or a leg CI stops running,
-# fails the run instead of quietly checking nothing.
+# Neither is left to a comment. scripts/__tests__/quality-legs.test.sh keeps its
+# own hand-written leg → gate list, compares it both ways against this file and
+# against .github/workflows/ci.yml — which it reads AS YAML, so a leg named only
+# in a comment counts for nothing — and it runs as a gate itself. A gate that
+# falls out of every leg, a gate that quietly changes leg, or a leg CI stops
+# running fails the run instead of quietly checking nothing.
 quality_legs=(typecheck tests build lint checks)
 quality_leg="${QUALITY_LEG:-}"
 
@@ -947,11 +949,14 @@ echo "quality: using isolated database $local_database"
 #
 # The first argument of each `gate` is the legs it belongs to (`all` = every leg).
 # Read the column downwards and it is the leg map; read it across and it is the
-# same gate list as before. Two rules govern it, both machine-checked by
+# same gate list as before. Three rules govern it, all machine-checked by
 # scripts/__tests__/quality-legs.test.sh:
 #   - every gate names at least one leg (a gate in no leg would stop running in CI)
 #   - every leg is named by at least one gate (an empty leg would be a green job
 #     that checked nothing)
+#   - this whole column matches the hand-written leg → gate list in that test, so
+#     deleting, renaming or RE-LEGGING a gate here is red until it is stated there
+#     too, in the same commit
 # Balance, not tidiness, decides which leg a gate lands in: the fan-in waits for
 # the SLOWEST leg, so the two long poles named above (the full test suite and
 # `next build`) get legs of their own, and the cheap gates ride along with whatever
