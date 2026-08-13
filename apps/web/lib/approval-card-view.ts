@@ -24,6 +24,11 @@ import { socialPlatformLabel } from "./social-labels";
  */
 export type ApprovalCardStatus = "pending" | "approved" | "rejected" | "expired" | "failed";
 
+/** Every state a card can be READ BACK in once it is no longer awaiting the merchant. Derived, so
+ *  a new terminal state can never be added to the lifecycle above without every surface that
+ *  reports one having to acknowledge it (#524 r5). */
+export type ApprovalCardResolution = Exclude<ApprovalCardStatus, "pending">;
+
 /** What the user is consenting to (enriched server-side at park time, owner-scoped read). */
 export type ApprovalCardSummary = {
   channel: string;

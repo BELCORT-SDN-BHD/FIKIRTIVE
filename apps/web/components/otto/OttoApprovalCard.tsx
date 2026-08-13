@@ -15,7 +15,7 @@ import { ShieldCheck, CheckCircle2, Loader2, CalendarCheck } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { ottoApprove, ottoReject } from "@/lib/otto-client-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { asApprovalCardPayload, approvalCardView } from "@/lib/approval-card-view";
+import { asApprovalCardPayload, approvalCardView, type ApprovalCardResolution } from "@/lib/approval-card-view";
 import { chainedApprovalOf } from "./approval-chain";
 
 /** What a resolved approval hands up: the EXACT card, what it resolved to, and the
@@ -24,7 +24,7 @@ import { chainedApprovalOf } from "./approval-chain";
  *  "waiting for your go-ahead" panel forever (#580 复审 r1 P1-4). */
 export interface ApprovalResolvedOutcome {
   cardId: string;
-  resolution: "approved" | "rejected" | "expired";
+  resolution: ApprovalCardResolution;
   /** The server's COMPLETE still-pending set when the resume parked again; null when
    *  the response carried no set information. */
   pendingCardIds: string[] | null;

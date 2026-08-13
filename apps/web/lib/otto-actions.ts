@@ -87,7 +87,7 @@ import {
   sharePostPreview,
   revokeSharePreview,
 } from "./schedule-actions";
-import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
+import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardResolution, type ApprovalCardSummary } from "./approval-card-view";
 import { computeApprovalContentHash, refgenApprovalHashFromArgs, factoryBatchApprovalHashFromArgs, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
@@ -1567,7 +1567,7 @@ export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
-  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" } // consumed/expired card: idempotent refusal
+  | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
   | { error: string }
 > {
   // Inline validation (no zod dep in apps/web) — mirror brief schema
@@ -1595,7 +1595,7 @@ export async function ottoApprove(raw: unknown): Promise<
     | { ok: true; status: "degraded" }
     | { ok: true; status: "stale" }
     | { ok: true; genJobId: string; status: string } // double-approve: existing job
-    | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" } // consumed/expired card: idempotent refusal
+    | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
     | { error: string }
   > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
@@ -1897,11 +1897,16 @@ export async function ottoApprove(raw: unknown): Promise<
       } catch (e) {
         // ── #524 r5 — every way out of the metered resume, each with an honest terminal state ──
         //
-        // The three below are ordered by what they say about the CONSENT, because that is what the
-        // merchant's next click depends on:
-        //   1. spent, and the run died      → the card must stop saying "approved" (P1-A'②)
-        //   2. lost to a concurrent resolver → benign; report the state we can READ
-        //   3. burned its reservation       → consent intact, but the refId is spent (P1-A'①)
+        // Ordered by what each says about the CONSENT and the REFID, because those two facts are
+        // what the merchant's next click depends on:
+        //   1. lost the claim to another resolver → benign; report the state we can READ
+        //   2. the claim itself threw             → consent intact, this refId is spent (P1-A'①)
+        //   3. the reserve lost its unique key    → nothing moved; answer from the card
+        //   4. ran, but ran out of turns          → the model DID run; graceful degrade, unchanged
+        //   5. consent spent and the run died     → the card must stop saying "approved" (P1-A'②)
+        //
+        // 4 sits before 5 on purpose: "it couldn't run" would be false about a run that used up
+        // its turns, and the merchant already gets the degrade sentence in the thread.
         // Anything else falls through to the outer catch unchanged.
 
         // 1. Another resolver claimed this card first. The hold was refunded in full inside
@@ -1945,6 +1950,9 @@ export async function ottoApprove(raw: unknown): Promise<
           }
           return { error: "This approval is already being confirmed — give it a moment." };
         }
+        // 4. The model ran and ran out of turns. Unchanged behaviour, and deliberately ahead of 5:
+        //    the run DID happen, so the card reading "approved" is true and the merchant already
+        //    hears what went wrong in the thread.
         if (e instanceof MaxTurnsExceededError) {
           const degradeText = "I got a bit tangled up — try asking again.";
           // Persist the degrade message so the user actually sees it (parity with ottoTurn),
@@ -1976,7 +1984,7 @@ export async function ottoApprove(raw: unknown): Promise<
           return { ok: true, status: "degraded" };
         }
 
-        // 4. The CAS won, so the consent is gone — and then the run died WITHOUT charging anything
+        // 5. The CAS won, so the consent is gone — and then the run died WITHOUT charging anything
         //    (withLlmBudget refunded the whole hold and said so). Money is net zero, but a card
         //    reading "approved" over a thing that never happened is a lie the merchant cannot see
         //    through. Say it on the card AND in the thread. Deliberately NOT reached when the turn
@@ -2159,7 +2167,7 @@ const DECLINE_CONFIRMATION_TEXT =
  */
 export async function ottoReject(raw: unknown): Promise<
   | { ok: true; status: "done"; reply: string }
-  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" }
+  | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution }
   | { error: string }
 > {
   if (
@@ -2181,7 +2189,7 @@ export async function ottoReject(raw: unknown): Promise<
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
     | { ok: true; status: "done"; reply: string }
-    | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" }
+    | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution }
     | { error: string }
   > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };

@@ -3415,7 +3415,7 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       mockSettleCredits.mockResolvedValue(undefined);
       // Force the settled arm: usage IS recoverable from this error.
       const originalMeter = mockWithLlmBudget.getMockImplementation()!;
-      mockWithLlmBudget.mockImplementation((args: unknown, fn: never) =>
+      mockWithLlmBudget.mockImplementation((args, fn) =>
         originalMeter({ ...(args as object), usageOnError: () => ({ inputTokens: 10, outputTokens: 5 }) }, fn),
       );
 
