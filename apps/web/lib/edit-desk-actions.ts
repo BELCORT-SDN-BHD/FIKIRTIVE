@@ -17,6 +17,13 @@
  * the caller passed. A clip is addressed only by its content-addressed `src`, so a forged
  * src is resolved against THIS owner + THIS project and simply isn't found.
  *
+ * That covers what the DESK writes. It does NOT by itself cover what is already ON the row:
+ * this file is not the only writer of Project.editJson (actions.ts `saveProjectEdit` takes
+ * client-authored timeline JSON), so "the cut only contains this tenant's keys" is asserted
+ * again on the way out — see mutateCut, and `startRender` + the render worker behind
+ * exportSavedCut. The desk's own resolution is the first link in that chain, not the whole
+ * of it (#780 r2b).
+ *
  * Concurrency: writes go through an optimistic-concurrency loop pinned on Project.updatedAt
  * (the same discipline addSegmentToCut uses) — two tabs, or the merchant and Otto at once,
  * can't silently overwrite each other's cut.
@@ -24,6 +31,8 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
 import {
+  foreignEditSrcs,
+  FOREIGN_MEDIA_MESSAGE,
   keyOwnerMatches,
   newId,
   parseStorageKey,
@@ -122,6 +131,12 @@ async function mutateCut(
     if (saved.state === "unreadable") return { error: UNREADABLE_CUT_MESSAGE };
     const next = mutate(saved.state === "cut" ? saved.edit : null);
     if ("error" in next) return next;
+    // Every clip the desk ADDS is resolved against this owner's own media (resolveDeskClips),
+    // but the base is whatever is on the row — and a join keeps the audio tracks, so a music
+    // bed pointing at another org's file (put there by a client writing editJson directly,
+    // before that path was guarded) would ride through every desk edit and out the export.
+    // Checked on the RESULT: taking the foreign bed off still saves, so the way out stays open.
+    if (foreignEditSrcs(next, ownerId).length > 0) return { error: FOREIGN_MEDIA_MESSAGE };
     const res = await prisma.project.updateMany({
       where: { id: project.id, ownerId, updatedAt: project.updatedAt },
       data: { editJson: next },

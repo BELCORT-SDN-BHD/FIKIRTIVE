@@ -25,6 +25,8 @@ import {
   fikirtiveEdit,
   editDuration,
   renderDuration,
+  foreignEditSrcs,
+  FOREIGN_MEDIA_MESSAGE,
   newId,
   srcToStorageKey,
   RENDER_RETRY_LIMIT,
@@ -381,6 +383,19 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     try {
       // contract police: the worker NEVER trusts stored JSON blindly
       const edit = fikirtiveEdit.parse(job.editJson);
+      // Tenant chain, last link (#780 r2b). The contract says each src is a well-FORMED
+      // /files/u/<owner>/<hash> URL and nothing about WHOSE owner segment it is — but this is
+      // the process that turns those srcs into actual reads (storage.ffmpegInput, below), and
+      // then writes the result back as an asset owned by job.ownerId. An edit naming another
+      // org's key would therefore have been fetched and copied out as this org's own video.
+      // The job row is the only trustworthy statement of who this render is for, so every src
+      // is checked against job.ownerId BEFORE a single input is opened. The count is logged,
+      // never the key: the persisted error is merchant-visible and owes no address.
+      const foreign = foreignEditSrcs(edit, job.ownerId);
+      if (foreign.length > 0) {
+        console.error(`[render] ${job.id}: refusing — ${foreign.length} src(s) outside owner ${job.ownerId}'s storage`);
+        throw new Error(FOREIGN_MEDIA_MESSAGE);
+      }
       const totalSeconds = editDuration(edit);
       const visualTrack = edit.timeline.tracks.find((t) => t.clips.some((c) => c.asset.type !== "audio"));
       if (!visualTrack) throw new Error("no visual track in edit");

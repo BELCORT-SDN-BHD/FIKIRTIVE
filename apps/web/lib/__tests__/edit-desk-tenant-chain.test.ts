@@ -30,13 +30,15 @@ vi.mock("@/lib/queue", () => ({ getBoss: async () => ({ send: mockSend }) }));
 
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma, Prisma } = await import("@fikirtive/db");
-const { storageKey, storageKeyToSrc } = await import("@fikirtive/core");
+const { storageKey, storageKeyToSrc, FOREIGN_MEDIA_MESSAGE } = await import("@fikirtive/core");
 const {
   getEditDesk,
   joinClipsIntoCut,
   setCutMusic,
+  clearCutMusic,
   exportSavedCut,
 } = await import("@/lib/edit-desk-actions");
+const { saveProjectEdit } = await import("@/lib/actions");
 const { GET: filesGET } = await import("@/app/files/[...key]/route");
 
 const MERCHANT = `desk-merchant-${randomUUID()}@fikirtive.test`;
@@ -50,6 +52,7 @@ let clipA: string; // merchant's 6s video
 let clipB: string; // merchant's 9s video
 let song: string; // merchant's music, length unknown at first
 let foreignClip: string; // the neighbour's video
+let foreignSong: string; // the neighbour's music
 
 async function signIn(email: string): Promise<string> {
   mockAuth.mockResolvedValue({ user: { email } });
@@ -119,6 +122,7 @@ beforeAll(async () => {
   clipB = await seedMedia(merchantOrg, merchantProject, { ext: "mp4", durationS: 9, label: "the shopfront" });
   song = await seedMedia(merchantOrg, merchantProject, { ext: "mp3", durationS: null, label: "raya jingle" });
   foreignClip = await seedMedia(neighbourOrg, neighbourProject, { ext: "mp4", durationS: 5, label: "not yours" });
+  foreignSong = await seedMedia(neighbourOrg, neighbourProject, { ext: "mp3", durationS: 120, label: "their jingle" });
 });
 
 beforeEach(async () => {
@@ -216,6 +220,117 @@ describe("the neighbour is nowhere in this chain", () => {
       params: Promise.resolve({ key }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+/**
+ * 判官 r1 的 P0(r2b 收口):**绕过剪辑台**直接写 editJson 的那条路。
+ *
+ * r2 只钉住了「经剪辑台入库的 cut 只含本租户 key」。但 `saveProjectEdit` 是一个 server action ——
+ * 也就是一个 POST 端点 —— 它整个入参就是客户端手写的 timeline JSON;契约只校验 src 的**形状**
+ * (`/files/u/<owner>/<hash>`),从不问那个 owner 段是谁。于是邻居的 key 能被写进我的 cut、被导出、
+ * 被 worker 取件,最后以我的名义存成我的成片:**跨租户素材泄露**。
+ *
+ * 下面按那条链的三个环节各钉一颗:写入口、执行口(startRender)、worker 执行前。全部断言在**行**上,
+ * 并且额外证明「拒绝不等于把商家关死」—— 把外来素材去掉的那次编辑照样存得进去。
+ */
+describe("another tenant's key cannot get into a cut, however it is written", () => {
+  /** A cut that PARSES clean — the contract has no opinion on whose owner segment a src carries. */
+  function cutOf(visual: string, seconds: number, music?: { src: string; seconds: number }) {
+    return {
+      timeline: {
+        background: "#000000",
+        tracks: [
+          { clips: [{ asset: { type: "video", src: visual }, start: 0, length: seconds }] },
+          ...(music
+            ? [{ clips: [{ asset: { type: "audio", src: music.src }, start: 0, length: music.seconds }], audioRole: "music" }]
+            : []),
+        ],
+      },
+      output: { format: "mp4", resolution: "hd", aspectRatio: "16:9", fps: 25 },
+    };
+  }
+
+  /** Write straight to the row, past every action — the state a bypass (or a pre-guard row) leaves. */
+  async function plant(editJson: object) {
+    await prisma.project.updateMany({ where: { id: merchantProject, ownerId: merchantOrg }, data: { editJson } });
+  }
+
+  it("the contract itself lets the foreign cut through — which is why the owner check has to exist", async () => {
+    // Not a guard, a premise: if this ever starts throwing, the tests below stop proving anything.
+    const { fikirtiveEdit } = await import("@fikirtive/core");
+    expect(() => fikirtiveEdit.parse(cutOf(foreignClip, 5))).not.toThrow();
+  });
+
+  it("saving a hand-written cut that names the neighbour's clip is refused, and the row is untouched", async () => {
+    await joinClipsIntoCut(merchantProject, [clipA]);
+    const before = await savedRow(merchantProject);
+
+    const res = (await saveProjectEdit(merchantProject, JSON.stringify(cutOf(foreignClip, 5)))) as { error: string };
+
+    expect(res.error).toBe(FOREIGN_MEDIA_MESSAGE);
+    expect(res.error).not.toContain(neighbourOrg); // the guessed address is not handed back
+    expect((await savedRow(merchantProject)).editJson).toEqual(before.editJson);
+    expect(srcsIn((await savedRow(merchantProject)).editJson)).toEqual([clipA]);
+  });
+
+  it("the same refusal when only the MUSIC bed is theirs — the whole document is rejected, not trimmed", async () => {
+    await joinClipsIntoCut(merchantProject, [clipA]);
+    const before = await savedRow(merchantProject);
+
+    const res = (await saveProjectEdit(
+      merchantProject,
+      JSON.stringify(cutOf(clipA, 6, { src: foreignSong, seconds: 6 })),
+    )) as { error: string };
+
+    expect(res.error).toBe(FOREIGN_MEDIA_MESSAGE);
+    // NOT "saved without the bed": a silently different video is how this went unnoticed
+    expect((await savedRow(merchantProject)).editJson).toEqual(before.editJson);
+  });
+
+  it("a foreign cut already ON the row is never exported: no job row, nothing queued", async () => {
+    await plant(cutOf(foreignClip, 5));
+
+    const res = (await exportSavedCut(merchantProject)) as { error: string };
+
+    expect(res.error).toBe(FOREIGN_MEDIA_MESSAGE);
+    expect(await prisma.renderJob.count({ where: { ownerId: merchantOrg, projectId: merchantProject } })).toBe(0);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("nor when only the bed is foreign — a job the worker would have fetched their file for", async () => {
+    await plant(cutOf(clipA, 6, { src: foreignSong, seconds: 6 }));
+
+    const res = (await exportSavedCut(merchantProject)) as { error: string };
+
+    expect(res.error).toBe(FOREIGN_MEDIA_MESSAGE);
+    expect(await prisma.renderJob.count({ where: { ownerId: merchantOrg, projectId: merchantProject } })).toBe(0);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("a desk edit that would CARRY the foreign bed forward is refused too (a join keeps the music)", async () => {
+    await plant(cutOf(clipA, 6, { src: foreignSong, seconds: 6 }));
+    const before = await savedRow(merchantProject);
+
+    const res = (await joinClipsIntoCut(merchantProject, [clipA, clipB])) as { error: string };
+
+    expect(res.error).toBe(FOREIGN_MEDIA_MESSAGE);
+    expect((await savedRow(merchantProject)).editJson).toEqual(before.editJson);
+  });
+
+  it("but the merchant is not walled in: taking that bed off saves, and then the export runs", async () => {
+    await plant(cutOf(clipA, 6, { src: foreignSong, seconds: 6 }));
+
+    // the edit whose RESULT is clean is the way out — fail closed must not mean fail stuck
+    expect(await clearCutMusic(merchantProject)).toMatchObject({ ok: true });
+    const cleaned = await savedRow(merchantProject);
+    expect(srcsIn(cleaned.editJson)).toEqual([clipA]);
+
+    const started = await exportSavedCut(merchantProject);
+    expect(started).toMatchObject({ id: expect.any(String) });
+    if ("error" in started) return;
+    const job = await prisma.renderJob.findFirstOrThrow({ where: { id: started.id, ownerId: { not: "" } } });
+    for (const s of srcsIn(job.editJson)) expect(s.startsWith(`/files/u/${merchantOrg}/`)).toBe(true);
   });
 });
 

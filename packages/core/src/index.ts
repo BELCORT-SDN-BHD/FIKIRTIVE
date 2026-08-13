@@ -22,6 +22,8 @@ export {
   renderJobData,
   editDuration,
   renderDuration,
+  foreignEditSrcs,
+  FOREIGN_MEDIA_MESSAGE,
   srcToStorageKey,
   storageKeyToSrc,
   TRANSITION_DEFAULT_SECONDS,
