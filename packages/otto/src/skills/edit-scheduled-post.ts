@@ -66,8 +66,11 @@ export const editScheduledPostSkill = defineOttoSkill({
     "Edit a DRAFT or queued scheduled post — change its caption, scheduled time (UTC/offset ISO-8601 " +
     "instant + IANA timezone), channel, attached media (mediaGenerationIds, already-generated ids in " +
     "carousel order), first comment, or target account. $0. Only send the fields you want to change. " +
+    // #851 r2 — "before it can publish again" is the same promise as "will publish" in another word
+    // form, and it slipped the fence because the fence only knew the "will" form. The fact it needs
+    // to carry is the re-approval, not a send.
     "NOTE: a material edit to an already-approved post sends it back to DRAFT and it must be re-approved " +
-    "before it can publish again — tell the user when that happens.",
+    "before it holds its slot again — tell the user when that happens.",
   parameters: params,
   execute: executeEditScheduledPost,
 });

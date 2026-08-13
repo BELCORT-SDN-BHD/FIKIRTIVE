@@ -31,6 +31,15 @@ const WILL_REALLY_SEND = [
   /\bgoes? live\b/i,
   /\bpublish(?:es|ed)? automatically\b/i,
   /\birreversible\s+(?:external\s+)?publish\b/i,
+  // 「can publish」形(r2 判官)。「will publish」被逮住之后,同一个承诺换个助动词就照常进
+  // 模型上下文 —— 而且不是理论上的:注册表里真有两条这么写(editScheduledPost 的
+  // 「before it can publish again」、listPublishTargets 的「accounts the user can publish to」),
+  // 上面五条规则一条都没响。
+  //
+  // 前置否定要放行:「cannot publish」「can't publish」自带词形,`can publish` 根本匹配不到;
+  // 但「no account can publish」这类**分开写**的诚实否定会被裸规则误伤,所以看它前面 30 字符
+  // 内(不跨句号)有没有否定词。两侧都在下面的自证断言里钉着。
+  /(?<!\b(?:no|not|never|nothing|cannot|can['’]t|won['’]t)\b[^.]{0,30})\bcan (?:be )?publish(?:ed)?\b/i,
 ];
 /** 工期承诺(#768 文案纪律)。 */
 const PROMISES_A_DATE = [
@@ -57,9 +66,19 @@ describe("#851 Otto 的发布口径", () => {
     expect(overPromises("Approving is consent to a real, irreversible external publish.")).not.toEqual([]);
     expect(overPromises("The post will publish at its scheduled time.")).not.toEqual([]);
     expect(overPromises("Channels are coming soon.")).not.toEqual([]);
+    // 「can publish」形 —— 这两句是 r2 判官在注册表里找到的**原句**,不是我编的样本。
+    expect(overPromises("it must be re-approved before it can publish again")).not.toEqual([]);
+    expect(overPromises("List the accounts the user can publish to")).not.toEqual([]);
+    expect(overPromises("A saved revision can be published.")).not.toEqual([]);
     // 不误伤:诚实地说「不会发」、以及取消技能那句「so it will not publish」。
     expect(overPromises("Cancel a scheduled post so it will not publish.")).toEqual([]);
     expect(overPromises(ottoPublishTruth(false))).toEqual([]);
+    // 不误伤:诚实否定的三种写法。前两种自带词形(can publish 匹配不到),第三种是分开写的
+    // 否定 —— 前置否定词那条前瞻就是为它加的,少了它这三句会被判成承诺。
+    expect(overPromises("This connection cannot publish right now.")).toEqual([]);
+    expect(overPromises("Publishing is not switched on, so nothing can publish.")).toEqual([]);
+    expect(overPromises("No account can publish while publishing is off.")).toEqual([]);
+    expect(overPromises("Publishing is not available, and no post can be published.")).toEqual([]);
   });
 
   it("权威两态各说各的,preview 那套不许留一句承诺", () => {

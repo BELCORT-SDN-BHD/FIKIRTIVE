@@ -54,6 +54,11 @@ const m = vi.hoisted(() => {
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma }));
 vi.mock("@fikirtive/token-crypto", () => ({ decryptToken: () => "user-token", signMediaToken: () => "sig" }));
+// #851 —— 本文件测的是「发布真的发生时」的那套机制:三重幂等、六状态、认领与交还。产品级
+// 发布闸(PUBLISHING_AVAILABLE)今天是关的,关着时 handlePublish 在任何认领之前就返回,下面
+// 这些机制一条也走不到。所以这里把那道闸显式置成「通电」,让本文件测的东西仍然有对象 ——
+// 闸本身由 publish-auto-publish-switch.test.ts 的 #851 那一组钉着(闸关时零外呼、零认领)。
+vi.mock("@fikirtive/core/schedule-draft", () => ({ PUBLISHING_AVAILABLE: true }));
 // A real JPEG's magic bytes, so the byte contract passes on the genuine classifier and pass 2 needs
 // NO ffmpeg (a jpeg asset is published as-is).
 vi.mock("@fikirtive/storage", () => ({ readBoundedPrefix: async () => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]) }));

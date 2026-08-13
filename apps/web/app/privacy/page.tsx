@@ -236,10 +236,14 @@ export default function PrivacyPage() {
           </ul>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">What we use it for</h2>
+          {/* #851 — "publish what you schedule" read as something the product does today; publishing
+              is switched off, so nothing is sent anywhere. The purpose itself stays listed (that is
+              what this section is for — the uses your data may be put to), qualified by when it
+              applies. No obligation stated elsewhere in this policy changes. */}
           <p>
             To sign you in, scope your data to your own workspace, meter and settle credits, run Otto, produce and store
-            generated media, publish what you schedule, show you your own generation history and results, and keep the
-            service running and debug it.
+            generated media, keep the schedule you write, publish what you schedule once publishing is switched on, show
+            you your own generation history and results, and keep the service running and debug it.
           </p>
           <p>
             If a scheduled post runs into a problem, we store the reason on that post. A problem that might still be

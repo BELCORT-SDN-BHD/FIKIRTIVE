@@ -17,7 +17,7 @@
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | listChannelScopes | free | read | internal | ❌ | List the workspace's connected messaging channel accounts (channel + scope key)  |
-| listPublishTargets | free | read | internal | ❌ | List the accounts the user can publish to (their connected Instagram business /  |
+| listPublishTargets | free | read | internal | ❌ | List the user's connected Instagram business / Facebook page accounts so you can |
 | listScheduledPosts | free | read | internal | ❌ | List the user's scheduled posts (drafts, queued, published, needs-attention) so  |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
 | manageBrandMemory | free | write | internal | ❌ | Remove or restore brand memory — $0, never generates or spends. delete_record: r |

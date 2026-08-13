@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { PUBLISHING_AVAILABLE } from "@fikirtive/core/schedule-draft";
 import { auth } from "@/lib/better-auth/compat";
 import { googleSignInConfigured } from "@/lib/better-auth/social-config";
 import { LoginForm } from "./LoginForm";
@@ -69,10 +70,16 @@ export default async function LoginPage({
             {[
               "From idea to a ready-to-post ad pack in minutes",
               "You only pay when a generation finishes, never on errors",
-              // #791-5: this used to say "direct publish is coming soon". The publisher is
-              // built and has been for months — six states, idempotent, reconciled. The one
-              // thing missing is Meta's approval, which is what this now says.
-              "Schedules and publishes to Instagram and Facebook once Meta approves your connection",
+              // #851: the first thing a merchant reads about this product may not promise the one
+              // thing it cannot do today. #791-5 replaced "direct publish is coming soon" with
+              // "…once Meta approves your connection" — true about the publisher, which is built
+              // and waiting, but read as a promise that posts written here go out. Nobody can
+              // connect an account at all (#554), so that sentence sells a send that cannot happen.
+              // Same switch as every other publish surface: flip PUBLISHING_AVAILABLE and the
+              // stronger sentence comes back on its own.
+              PUBLISHING_AVAILABLE
+                ? "Schedules and publishes to Instagram and Facebook once Meta approves your connection"
+                : "Plans and schedules your Instagram and Facebook posts — publishing is not switched on yet",
             ].map((t) => (
               <li key={t} className="flex items-center gap-[11px] text-[14.5px] font-medium text-[#3A3A38]">
                 <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-success-soft text-success-soft-foreground">

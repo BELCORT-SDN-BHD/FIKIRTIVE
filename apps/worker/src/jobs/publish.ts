@@ -50,6 +50,10 @@ import {
   type CanonicalImageMime,
   type PublishJobData,
 } from "@fikirtive/core";
+// #851 — the product-level publish switch. Same line the Schedule screen, the approval card and
+// Otto read their words from, so "what the screens say" and "what the worker does" cannot drift:
+// while it is off, every surface says nothing is sent, and this file makes that true.
+import { PUBLISHING_AVAILABLE } from "@fikirtive/core/schedule-draft";
 import { readBoundedPrefix } from "@fikirtive/storage";
 import { execa } from "execa";
 import { storage } from "../storage.js";
@@ -551,6 +555,10 @@ export async function handlePublish(
     // into two answers; fail-closed on an unreadable/absent org, because "we could not tell" is
     // not "yes".
     const autoPublishStillOn = async (): Promise<boolean> => {
+      // #851 — the PRODUCT switch outranks the merchant's. It is asked inside this closure, not
+      // only at the early return below, because this closure is what the channel adapters ask one
+      // instant before their own final call: a gate that only guards the entrance is not a gate.
+      if (!PUBLISHING_AVAILABLE) return false;
       const org = await prisma.organization.findUnique({
         where: { id: post.ownerId },
         select: { settings: true },
@@ -584,6 +592,22 @@ export async function handlePublish(
     // A withdrawal is not a failure: nothing is marked FAILED or NEEDS_ATTENTION and nothing is
     // retried. The post simply goes back to waiting, which is what it does when the switch is
     // off in the first place — flip it back on and the next scan picks it up unchanged.
+    // Lock 0 (#851) — the PRODUCT-level switch, ahead of every per-merchant gate. Every publish
+    // surface tells the merchant that nothing is sent while publishing is off; before this lock
+    // existed that was true of the words only. A workspace whose connection was authorized and
+    // whose own switch was on would still have had its post posted, under a screen saying it
+    // would not be. Copy and behaviour now read the SAME line, so no wording can outlive the
+    // capability it describes.
+    //
+    // Its own branch rather than a silent `false` from autoPublishStillOn: a merchant who never
+    // touched their switch must not be told in the log that they turned something off.
+    if (!PUBLISHING_AVAILABLE) {
+      if (post.status === "PUBLISHING") await handBackToWaiting();
+      console.warn(
+        `[publish] ${post.id}: publishing is not switched on for this product — nothing is sent (no claim, no external call). The post keeps its slot.`,
+      );
+      return;
+    }
     if (!(await autoPublishStillOn())) {
       // A redelivery/retry left the row in PUBLISHING; hand it back rather than let it sit there
       // claiming to be mid-publish forever.
@@ -957,9 +981,12 @@ export async function reapStalePublishAttempts(): Promise<number> {
 
 /* ── scheduler: which approved posts are due AND currently authorized to publish ── */
 
-/** Due, approved posts whose connection can publish RIGHT NOW (canPublish + !paused) AND
- *  whose owner turned Auto-publish ON. Two independent gates, both fail-closed:
+/** Due, approved posts whose connection is authorized RIGHT NOW (canPublish + !paused) AND
+ *  whose owner turned Auto-publish ON. Three independent gates, all fail-closed:
  *
+ *   0. The product itself (#851). Publishing is switched off product-wide, and every screen says
+ *      so; a scan that still enqueued would make those screens lie. Checked first because it is
+ *      the cheapest and the least owner-specific — nothing gets queued at all.
  *   1. Meta authorization (canPublish + !paused + active) — before App Review no connection
  *      is authorized → [] → nothing enqueued → SCHEDULED posts sit untouched.
  *   2. The merchant's own switch (#791-2). Settings has shown an "Auto-publish posts" toggle
@@ -970,6 +997,7 @@ export async function reapStalePublishAttempts(): Promise<number> {
  *
  *  Returns the ids for the scheduler to enqueue. */
 export async function scanDuePublishPosts(now: Date = new Date(), limit = 50): Promise<string[]> {
+  if (!PUBLISHING_AVAILABLE) return [];
   const authorizedOwners = await prisma.metaConnection.findMany({
     where: { canPublish: true, organicPublishPaused: false, status: "active" },
     select: { ownerId: true },

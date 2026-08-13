@@ -211,6 +211,21 @@ export function approvalCardTitleLine(available: boolean = PUBLISHING_AVAILABLE)
 }
 
 /**
+ * What that same card says AFTER the merchant presses Approve.
+ *
+ * The card's own "what am I consenting to" lines already came from here, but its success state did
+ * not: it said "Approved — it will publish as scheduled." one line under a detail line that says
+ * nothing is sent. One card, two answers, and the contradicting half was the one a merchant reads
+ * having just acted. A resolved state is still a publish surface, so it reads from the same switch
+ * as the unresolved one.
+ */
+export function approvalDoneLine(available: boolean = PUBLISHING_AVAILABLE): string {
+  return available
+    ? "Approved — it will publish as scheduled."
+    : "Approved — the slot is booked. Publishing is not switched on yet, so nothing is sent.";
+}
+
+/**
  * What Otto is told about publishing, wherever a skill of its could imply a post goes out.
  *
  * Same authority as the screens, so the assistant and the buttons cannot tell a merchant two

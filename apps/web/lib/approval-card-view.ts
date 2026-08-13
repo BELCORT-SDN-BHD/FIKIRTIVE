@@ -10,7 +10,7 @@
  * the client renders it through approvalCardView. Skill human names come from TOOL_STEP_LABELS
  * (labelForTool, B9 契约4) so the card and the step trace speak the same language.
  */
-import { approvalCardTitleLine, approvalOutcomeLine } from "@fikirtive/core/schedule-draft";
+import { approvalCardTitleLine, approvalDoneLine, approvalOutcomeLine } from "@fikirtive/core/schedule-draft";
 import { labelForTool } from "./otto-stream-bridge";
 import { socialPlatformLabel } from "./social-labels";
 
@@ -91,6 +91,10 @@ export type ApprovalCardView = {
   captionExcerpt: string | null;
   /** True when the details couldn't be loaded (post deleted etc.) — the card says so honestly. */
   summaryMissing: boolean;
+  /** #851 — what the card says once the merchant has approved. It lives here, next to the title
+   *  and the outcome line, because it is the same claim about the same act: the component used to
+   *  hardcode "it will publish as scheduled" and contradict the line right above it. */
+  approvedLine: string;
 };
 
 /** PURE view model for the card body. R1: consent object, never a bare id. */
@@ -111,7 +115,13 @@ export function approvalCardView(payload: ApprovalCardPayload): ApprovalCardView
     ];
     const captionExcerpt =
       s.caption.length > CAPTION_EXCERPT_MAX ? `${s.caption.slice(0, CAPTION_EXCERPT_MAX)}…` : s.caption;
-    return { title: approvalCardTitleLine(), detailLines, captionExcerpt, summaryMissing: false };
+    return {
+      title: approvalCardTitleLine(),
+      detailLines,
+      captionExcerpt,
+      summaryMissing: false,
+      approvedLine: approvalDoneLine(),
+    };
   }
   if (payload.toolName === "approveScheduledPost") {
     return {
@@ -119,13 +129,17 @@ export function approvalCardView(payload: ApprovalCardPayload): ApprovalCardView
       detailLines: ["This post's details couldn't be loaded — it may have been deleted. Review your schedule before approving."],
       captionExcerpt: null,
       summaryMissing: true,
+      approvedLine: approvalDoneLine(),
     };
   }
   // Future gated skills: name the action (TOOL_STEP_LABELS human name); never render just the ref.
+  // Its approved line is deliberately NOT the publish one — a card for some other gated action was
+  // being answered with "it will publish as scheduled", which is the wrong fact about a different act.
   return {
     title: "Otto is asking for your approval",
     detailLines: [`Action: ${labelForTool(payload.toolName) ?? payload.toolName}`],
     captionExcerpt: null,
     summaryMissing: payload.summary === null,
+    approvedLine: "Approved — Otto is carrying on.",
   };
 }

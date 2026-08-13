@@ -319,8 +319,12 @@ export default function OttoConnections() {
       <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: "1.75rem" }}>
         <div>
           <h1 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h1>
+          {/* #851 — found by the repo-wide sweep, same class as the login bullet: "channels Otto
+              can post to" is a capability claim, and no post leaves the workspace while publishing
+              is off. What this page actually is — the inventory of what you have connected — is
+              true either way. */}
           <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 0" }}>
-            Every channel Otto can post to or hear from your customers on, in one place.
+            Every channel you connect, and everywhere your customers reach you, in one place.
           </p>
         </div>
 

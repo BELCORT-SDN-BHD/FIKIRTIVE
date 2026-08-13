@@ -42,6 +42,7 @@ import {
   PUBLISHING_AVAILABLE,
   PUBLISH_PREVIEW_BADGE,
   approvalCardTitleLine,
+  approvalDoneLine,
   approvalOutcomeLine,
   ottoPublishTruth,
   publishPreviewBadge,
@@ -78,10 +79,17 @@ vi.mock("@/lib/owner-settings-actions", () => ({
   getOwnerSettings: mocks.getOwnerSettings,
   setOwnerSetting: mocks.setOwnerSetting,
 }));
+// 批准卡按下去会调 "use server" 包装(它 import "server-only"),在 jsdom 里进不来 —— 只有这
+// 两个入口需要替身。卡面文字本身没有任何一个字来自它们。
+vi.mock("@/lib/otto-client-actions", () => ({
+  ottoApprove: vi.fn(async () => ({ ok: true })),
+  ottoReject: vi.fn(async () => ({ ok: true })),
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { OttoSchedule } = await import("@/components/otto/OttoSchedule");
+const { OttoApprovalCard } = await import("@/components/otto/OttoApprovalCard");
 
 const IMG_SRC = "https://cdn.test/kopi.png";
 const STUFF_ITEMS = buildStuffItems({
@@ -138,6 +146,12 @@ const WILL_REALLY_SEND = [
   //     两者都是状态回退,不是送去社交账号。
   // 两类都在下面的不误伤断言里钉着。
   /\bsends? (?:them|it|your posts?|the posts?)\b(?! back\b)/i,
+  // 「can publish」形(r2 判官)。它与「will publish」是同一个承诺换了个助动词,而 Otto 那一侧
+  // 的注册表里真有两条这么写着(见 packages/otto 的 publish-truth-fence.test.ts)。两面共用一套
+  // 词族的意义就在这里:一面被实测逼出来的形,另一面立刻也补上。
+  // 前置否定放行:「cannot publish」自带词形匹配不到;「no account can publish」这种分开写的
+  // 诚实否定要靠前瞻放行 —— 两侧都在下面的不误伤断言里钉着。
+  /(?<!\b(?:no|not|never|nothing|cannot|can['’]t|won['’]t)\b[^.]{0,30})\bcan (?:be )?publish(?:ed)?\b/i,
 ];
 const PROMISES_A_DATE = [
   /\bcoming soon\b/i,
@@ -209,6 +223,19 @@ function visibleText(): string {
   return document.body.textContent ?? "";
 }
 
+/** 把真的 OttoApprovalCard 渲染出来。纯函数绿不代表商家读到的那张卡是干净的 —— r1 就是这样
+ *  漏掉的:视图模型每一行都从权威取词,组件却在成功态自己另写了一句。 */
+async function renderApprovalCard(payload: ApprovalCardPayload) {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => {
+    root!.render(
+      createElement(OttoApprovalCard, { cardId: "card-1", threadId: "thread-1", payload }),
+    );
+  });
+}
+
 const SCHEDULE_SRC = readFileSync(
   path.resolve(__dirname, "../../components/otto/OttoSchedule.tsx"),
   "utf8",
@@ -217,6 +244,10 @@ const SCHEDULE_SRC = readFileSync(
 // 一样要被源码级钉一遍 —— 只钉排程屏,等于放着另一处继续替产品说大话(#851 ③)。
 const SETTINGS_SECTIONS_SRC = readFileSync(
   path.resolve(__dirname, "../../components/otto/settings/sections.tsx"),
+  "utf8",
+);
+const APPROVAL_CARD_SRC = readFileSync(
+  path.resolve(__dirname, "../../components/otto/OttoApprovalCard.tsx"),
   "utf8",
 );
 
@@ -269,6 +300,12 @@ describe("#851 ① 发布口径的唯一权威(两态都钉,不翻任何全局)"
     expect(overPromises("Otto planned 5 posts this week")).toEqual([]);
     expect(overPromises("Nothing sends until you say go — review, tweak, then approve.")).toEqual([]);
     expect(overPromises("Cancel a scheduled post so it will not publish.")).toEqual([]);
+    // 「can publish」形:响,但诚实否定不响(与 Otto 那一侧同一套样本)。
+    expect(overPromises("it must be re-approved before it can publish again")).not.toEqual([]);
+    expect(overPromises("List the accounts the user can publish to")).not.toEqual([]);
+    expect(overPromises("This connection cannot publish right now.")).toEqual([]);
+    expect(overPromises("No account can publish while publishing is off.")).toEqual([]);
+    expect(overPromises("Publishing is not available, and no post can be published.")).toEqual([]);
     // 「send … back」是状态回退,不是送去社交账号。这两句是仓库里真实存在的技能描述
     // (editScheduledPost / manageMedia),裸版本的 sends 规则曾真的把它们判红。
     expect(overPromises("a material edit to an already-approved post sends it back to DRAFT")).toEqual([]);
@@ -532,5 +569,71 @@ describe("#851 ⑤ Otto 的批准卡与按钮说同一句话", () => {
     const view = approvalCardView({ ...PAYLOAD, summary: null });
     expect(view.title).toBe(approvalCardTitleLine());
     expect(overPromises([view.title, ...view.detailLines].join("\n"))).toEqual([]);
+  });
+
+  // ── 真组件渲染:上面三条测的是视图模型,不是商家看到的那张卡 ────────────────────
+  //
+  // r1 判官在这里抓到一条 P1,而 13 门测试全绿:视图模型的每一行都从权威取词,组件却在
+  // **成功态**自己另写了一句 "Approved — it will publish as scheduled."。于是同一张卡上,
+  // 详情行说「booked … nothing is sent」,商家按下按钮之后读到的却是「会照排程发出去」——
+  // 而后者正是他刚刚做完那件事的回执。测复制出来的视图模型,测不到这种事。
+  //
+  // 所以下面这两条渲染**真的** OttoApprovalCard,扫它的 textContent。
+  it("按下批准之后的真卡片:整张卡没有一句「会真发」,回执说的就是权威那句", async () => {
+    await renderApprovalCard({ ...PAYLOAD, status: "approved" });
+    const text = visibleText();
+    expect(text).toContain(approvalDoneLine());
+    expect(overPromises(text), "批准回执与同卡详情行自相矛盾").toEqual([]);
+    // 旧那句的原文,钉死在这里 —— 有人抄回去,这一条立刻红。
+    expect(text).not.toContain("will publish as scheduled");
+  });
+
+  it("还没按下时的真卡片同样干净,而且照旧能按(诚实没有顺手把批准关掉)", async () => {
+    await renderApprovalCard(PAYLOAD);
+    const text = visibleText();
+    expect(text).toContain(approvalOutcomeLine("Instagram"));
+    expect(overPromises(text)).toEqual([]);
+    expect(buttonByText("Approve").disabled).toBe(false);
+  });
+
+  it("回执两态各说各的 —— 不是一条永远为真的断言", () => {
+    expect(approvalDoneLine(true)).not.toBe(approvalDoneLine(false));
+    // 反面自证:通电那套确实会被词族逮住,所以上一条不是在检一张空网。
+    expect(overPromises(approvalDoneLine(true), WILL_REALLY_SEND)).not.toEqual([]);
+    expect(overPromises(approvalDoneLine(false))).toEqual([]);
+    // preview 那套必须把「排期是真的」和「没发出去」两件事都说到。
+    expect(approvalDoneLine(false)).toMatch(/booked/i);
+    expect(approvalDoneLine(false)).toMatch(/nothing is sent/i);
+  });
+
+  it("那句回执不住在组件里 —— 抄一份进 OttoApprovalCard.tsx,这一条立刻红", () => {
+    expect(APPROVAL_CARD_SRC, "把回执抄进组件,就等于又开了第二个权威").not.toContain(approvalDoneLine(false));
+    expect(APPROVAL_CARD_SRC).not.toContain("will publish as scheduled");
+  });
+});
+
+// ── ⑥ 登录页:商家读到的第一句话 ──────────────────────────────────────────────
+//
+// r1 判官 P1:登录页的卖点第三条写着「Schedules and publishes to Instagram and Facebook once
+// Meta approves your connection」。产品内每一处都改口说发不出去,而**没登录就能看到**的那一屏
+// 还在卖这件事 —— 而且 #554 之后没有人连得上,「once Meta approves」这个条件本身也不成立。
+//
+// 这里只钉登录页,不钉 terms / privacy:那两页是法务面,它们的句子带条件从句(「once
+// publishing is switched on」),而词族是词法的、看不见条件 —— 用词族去守法务文本,会逼着
+// 法律条款为了绕开一条正则而改写。那两页这一轮的改动记在 PR 评论里,凭全仓 grep 复核。
+describe("#851 ⑥ 登录页不卖一个此刻做不到的结果", () => {
+  const LOGIN_SRC = readFileSync(path.resolve(__dirname, "../../app/login/page.tsx"), "utf8");
+
+  it("那条卖点跟着同一个开关走,不是手写死的", () => {
+    // 与设置页那条同一个做法:屏幕上的话必须能被开关改掉,否则通电那天又要满仓找措辞。
+    expect(LOGIN_SRC).toContain("PUBLISHING_AVAILABLE");
+  });
+
+  it("发不出去这段时期,登录页不留一句「会发到 Instagram / Facebook」", () => {
+    // 原句逐字钉住:它只允许活在 PUBLISHING_AVAILABLE 为真的那一支里,不能再是无条件的。
+    const old = "Schedules and publishes to Instagram and Facebook once Meta approves your connection";
+    const idx = LOGIN_SRC.indexOf(old);
+    expect(idx, "登录页的旧承诺必须还在,但只作为通电那一支").toBeGreaterThan(-1);
+    expect(LOGIN_SRC.slice(Math.max(0, idx - 200), idx)).toContain("PUBLISHING_AVAILABLE");
   });
 });
