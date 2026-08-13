@@ -36,6 +36,19 @@ export function OttoStreamErrorNotice({
           </a>
         </>
       )}
+      {/* #524 — the merchant's own spend cap stopped this turn. The only thing that moves is
+          the cap, so the exit is Settings; a Top-up link here would buy them nothing. */}
+      {error.kind === "spend_cap" && (
+        <>
+          {" "}
+          <a
+            href="/otto?view=account"
+            className="font-semibold text-[var(--error-soft-foreground)] underline"
+          >
+            Open settings
+          </a>
+        </>
+      )}
       {error.kind === "error" && retryDraft && onRetry && (
         <div className="mt-2">
           <Button
