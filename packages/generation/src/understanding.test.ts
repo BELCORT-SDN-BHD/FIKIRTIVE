@@ -15,12 +15,17 @@ import {
   MockUnderstandingProvider,
   createUnderstandingProvider,
   isUnreadableMediaError,
+  understandingErrorUsage,
 } from "./understanding.js";
 import { RequestGate, __setProviderRequestGateForTests } from "./provider-concurrency.js";
 
-const IMAGE_REQ = { kind: "image-caption" as const, mediaUrl: "https://store.example/x.jpg?sig=SECRET", mime: "image/jpeg" };
-const VIDEO_REQ = { kind: "video-qa" as const, mediaUrl: "https://store.example/x.mp4?sig=SECRET", mime: "video/mp4" };
-const DOC_REQ = { kind: "doc-extract" as const, mediaUrl: "https://store.example/menu.jpg?sig=SECRET", mime: "image/jpeg" };
+/** 闸门以内的一张普通手机照 / 一段 12 秒的片 —— 每个请求都必须带上素材元数据(见 belt)。 */
+const OK_IMAGE_MEDIA = { width: 4032, height: 3024, sizeBytes: 3_500_000, durationS: null };
+const OK_VIDEO_MEDIA = { width: 1920, height: 1080, sizeBytes: 8_000_000, durationS: 12 };
+
+const IMAGE_REQ = { kind: "image-caption" as const, mediaUrl: "https://store.example/x.jpg?sig=SECRET", mime: "image/jpeg", media: OK_IMAGE_MEDIA };
+const VIDEO_REQ = { kind: "video-qa" as const, mediaUrl: "https://store.example/x.mp4?sig=SECRET", mime: "video/mp4", media: OK_VIDEO_MEDIA };
+const DOC_REQ = { kind: "doc-extract" as const, mediaUrl: "https://store.example/menu.jpg?sig=SECRET", mime: "image/jpeg", media: OK_IMAGE_MEDIA };
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -134,9 +139,20 @@ describe("失败分类", () => {
     }
   });
 
-  it("空回复算失败,不会落一条空理解", async () => {
-    fetchMock.mockResolvedValue(okResponse("   "));
-    await expect(new ArkUnderstandingProvider("k").understand(IMAGE_REQ)).rejects.toThrow();
+  it("空回复算失败,不会落一条空理解 —— 而且**用量跟着错误走**(那一趟钱已经花了)", async () => {
+    fetchMock.mockResolvedValue(okResponse("   ", { prompt_tokens: 2_100, completion_tokens: 4 }));
+    const err = await new ArkUnderstandingProvider("k").understand(IMAGE_REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    // 丢掉用量 ⇒ 平台日预算对这一整类失败是瞎的,连续空响应可以无限计费而账面为零
+    expect(understandingErrorUsage(err)).toEqual({ inputTokens: 2_100, outputTokens: 4 });
+    // 重试同一份字节不会变出正文,而每一次重试都要再付一次 —— 终止,不排队
+    expect(isUnreadableMediaError(err)).toBe(true);
+  });
+
+  it("真的没花钱的那些错误不会凭空长出用量", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, text: async () => "later" });
+    const err = await new ArkUnderstandingProvider("k").understand(IMAGE_REQ).catch((e: unknown) => e);
+    expect(understandingErrorUsage(err)).toBeNull();
   });
 
   it("错误信息里没有 presigned URL、没有 key、没有供应商名", async () => {
@@ -146,6 +162,36 @@ describe("失败分类", () => {
     expect(msg).not.toContain("secret");
     expect(msg).not.toContain("seedream");
     expect(msg).not.toContain("store.example");
+  });
+});
+
+describe("输入侧的硬闸(belt:请求体里只有输出 max_tokens,输入上限只能靠不发)", () => {
+  it("尺寸还不知道 ⇒ 一个请求都不发(fail closed,不是「没有证据就放行」)", async () => {
+    const p = new ArkUnderstandingProvider("k");
+    await expect(
+      p.understand({ ...IMAGE_REQ, media: { width: null, height: null, sizeBytes: 6 * 1024 * 1024, durationS: null } }),
+    ).rejects.toThrow(/unknown/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("超闸门的图片 ⇒ 一个请求都不发", async () => {
+    const p = new ArkUnderstandingProvider("k");
+    await expect(
+      p.understand({ ...DOC_REQ, media: { width: 8064, height: 6048, sizeBytes: 20_000_000, durationS: null } }),
+    ).rejects.toThrow(/too-large/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("时长还不知道的视频 ⇒ 一个请求都不发(null 曾被当成 0 秒)", async () => {
+    const p = new ArkUnderstandingProvider("k");
+    await expect(p.understand({ ...VIDEO_REQ, media: { ...OK_VIDEO_MEDIA, durationS: null } })).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("闸门以内照发 —— belt 不该拦住最常见的那张照片", async () => {
+    fetchMock.mockResolvedValue(okResponse('{"summary":"x","isDocument":false}'));
+    await new ArkUnderstandingProvider("k").understand(IMAGE_REQ);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

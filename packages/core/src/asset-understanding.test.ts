@@ -28,7 +28,9 @@ import {
   understandingCostShare,
   understandingCostUsd,
   understandingWorstCaseUsd,
-  understandingImageWithinPreflight,
+  understandingImagePreflight,
+  understandingVideoPreflight,
+  understandingPreflight,
   understandingDailyBudgetUsd,
   assetUnderstandingEnabled,
   understandingKindForMime,
@@ -87,23 +89,53 @@ describe("图片的 pre-flight 闸(和视频时长闸对称)", () => {
   });
 
   it("手机默认出片(12 MP)过得去 —— 闸不该挡住最常见的那张照片", () => {
-    expect(understandingImageWithinPreflight({ width: 4032, height: 3024 })).toBe(true);
+    expect(understandingImagePreflight({ width: 4032, height: 3024 })).toBe("ok");
   });
 
   it("超过闸门的图片被拦下(48 MP 全分辨率模式)", () => {
-    expect(understandingImageWithinPreflight({ width: 8064, height: 6048 })).toBe(false);
+    expect(understandingImagePreflight({ width: 8064, height: 6048 })).toBe("too-large");
   });
 
-  it("尺寸读不到就按字节判", () => {
-    expect(understandingImageWithinPreflight({ sizeBytes: 5 * 1024 * 1024 })).toBe(true);
-    expect(understandingImageWithinPreflight({ sizeBytes: UNDERSTANDING_IMAGE_MAX_BYTES + 1 })).toBe(false);
+  it("像素合格但字节病态的文件也拦 —— 字节是第二道上限,不是尺寸的替身", () => {
+    expect(understandingImagePreflight({ width: 4032, height: 3024, sizeBytes: 5 * 1024 * 1024 })).toBe("ok");
+    expect(
+      understandingImagePreflight({ width: 4032, height: 3024, sizeBytes: UNDERSTANDING_IMAGE_MAX_BYTES + 1 }),
+    ).toBe("too-large");
     // BigInt 是 Asset.sizeBytes 的真实形态
-    expect(understandingImageWithinPreflight({ sizeBytes: BigInt(UNDERSTANDING_IMAGE_MAX_BYTES + 1) })).toBe(false);
+    expect(
+      understandingImagePreflight({ width: 4032, height: 3024, sizeBytes: BigInt(UNDERSTANDING_IMAGE_MAX_BYTES + 1) }),
+    ).toBe("too-large");
   });
 
-  it("尺寸和字节都读不到就放行 —— 没有证据不判死", () => {
-    expect(understandingImageWithinPreflight({})).toBe(true);
-    expect(understandingImageWithinPreflight({ width: null, height: null, sizeBytes: null })).toBe(true);
+  it("**尺寸读不到 = unknown,不是放行**(r2 的闸穿透:直接上传的宽高是 ingest 之后才有的)", () => {
+    expect(understandingImagePreflight({})).toBe("unknown");
+    expect(understandingImagePreflight({ width: null, height: null, sizeBytes: null })).toBe("unknown");
+    // 这一张就是穿透的那一张:48.77 MP,但字节数远低于 40 MiB 的旧兜底
+    expect(understandingImagePreflight({ width: null, height: null, sizeBytes: 6 * 1024 * 1024 })).toBe("unknown");
+    expect(understandingImagePreflight({ width: 0, height: 0, sizeBytes: 6 * 1024 * 1024 })).toBe("unknown");
+  });
+
+  it("那张穿透过闸的 48.77 MP 图,真跑起来会破 1% —— 这就是必须 fail closed 的理由", () => {
+    const inputTokens = 48.77 * UNDERSTANDING_IMAGE_TOKENS_PER_MEGAPIXEL;
+    const share =
+      understandingCostUsd({ inputTokens, outputTokens: UNDERSTANDING_CAPS["doc-extract"].maxOutputTokens }) /
+      CHEAPEST_VIDEO_COGS_USD;
+    expect(share).toBeGreaterThan(UNDERSTANDING_VIDEO_COST_SHARE_CEILING);
+  });
+
+  it("视频:时长读不到 = unknown(null 曾被当成 0 秒 ⇒ 任意长度的片都过闸)", () => {
+    expect(understandingVideoPreflight({ durationS: 12 })).toBe("ok");
+    expect(understandingVideoPreflight({ durationS: UNDERSTANDING_VIDEO_MAX_SECONDS + 1 })).toBe("too-large");
+    expect(understandingVideoPreflight({})).toBe("unknown");
+    expect(understandingVideoPreflight({ durationS: null })).toBe("unknown");
+    expect(understandingVideoPreflight({ durationS: 0 })).toBe("unknown");
+  });
+
+  it("按 kind 分派:doc-extract 读的是图,所以它走图片那道闸", () => {
+    const bigPicture = { width: 8064, height: 6048, durationS: null };
+    expect(understandingPreflight("image-caption", bigPicture)).toBe("too-large");
+    expect(understandingPreflight("doc-extract", bigPicture)).toBe("too-large");
+    expect(understandingPreflight("video-qa", { durationS: 12, width: null, height: null })).toBe("ok");
   });
 
   it("闸门以内的最坏一张图,两档都还在 1% 以下 —— 这就是闸门存在的理由", () => {

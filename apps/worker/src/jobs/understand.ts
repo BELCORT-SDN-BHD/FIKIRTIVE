@@ -14,12 +14,16 @@
  * 少了那两道 pre-flight,「token 上限」只是一句请求)。
  *
  * ── 暂缓 ≠ 丢弃(这条链路最贵的一条纪律)──────────────────────────────────────
- * 不跑的原因分两类,终态**必须**跟着分:
- *   · **资源**(开关关、平台预算见底、这个环境签不出 URL)⇒ 行退回 QUEUED,下一轮继续。
- *     这类事情明天就不成立了,把它写成终态等于让商家的素材被永久忘掉 —— 而扫描器第 ① 段
- *     只找「完全没有理解行」的素材,一行终态就是一道再也开不了的门,连重传都救不回来
- *     (Asset 按 (ownerId, contentHash) 复用,重传拿到的是同一行)。
- *   · **真终局**(素材没了、这份字节按预算读不动)⇒ SKIPPED。它明天也不会变。
+ * 扫描器第 ① 段只找**完全没有理解行**的素材,所以任何一行终态都是一道再也开不了的门。
+ * 不跑的原因因此必须分三类,终态跟着分:
+ *   · **资源 / 还不知道**(开关关、平台预算见底、这个环境签不出 URL、宽高时长还没探测出来)
+ *     ⇒ 行退回 QUEUED,下一轮继续。这类事情明天就不成立了,写成终态等于让商家的素材被
+ *     永久忘掉。
+ *   · **真终局**(这份字节按预算读不动:视频超时长、图片超像素闸)⇒ SKIPPED。它明天也不会变。
+ *   · **素材没了**(软删)⇒ **删行**,连 SKIPPED 都不写。软删是可逆的 —— 重传会把同一个
+ *     Asset 复活(upsert 清 deletedAt),而 Asset 按 (ownerId, contentHash) 复用,所以
+ *     一行删除类的终态会让「删掉再重传」这条商家唯一的自救路径也失效。删行是自愈的:
+ *     素材还软删着就没人捞它,真复活了它就是一件「没有理解行」的素材,下一轮正常排上。
  *
  * ── 不重复读 ─────────────────────────────────────────────────────────────────
  * 钱不进商家账本,但**重复的产物一样是缺陷**:同一张菜单读两次会让商家的产品目录里
@@ -38,9 +42,14 @@ import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   UNDERSTAND_QUEUE,
   UNDERSTAND_RETRY_LIMIT,
+  UNDERSTANDING_BUDGET_REACHED,
+  UNDERSTANDING_CLIP_TOO_LONG,
+  UNDERSTANDING_IMAGE_TOO_LARGE,
   UNDERSTANDING_INTERRUPTED,
+  UNDERSTANDING_METADATA_PENDING,
+  UNDERSTANDING_NO_MEDIA_URL,
+  UNDERSTANDING_PAUSED,
   UNDERSTANDING_UNREADABLE,
-  UNDERSTANDING_VIDEO_MAX_SECONDS,
   assetUnderstandingEnabled,
   newId,
   normalizeNameKey,
@@ -52,12 +61,17 @@ import {
   storageKey,
   understandingCostUsd,
   understandingDailyBudgetUsd,
-  understandingImageWithinPreflight,
   understandingKindForMime,
+  understandingPreflight,
   understandingWorstCaseUsd,
   type UnderstandingKind,
 } from "@fikirtive/core";
-import { createUnderstandingProvider, isUnreadableMediaError, type UnderstandingProvider } from "@fikirtive/generation";
+import {
+  createUnderstandingProvider,
+  isUnreadableMediaError,
+  understandingErrorUsage,
+  type UnderstandingProvider,
+} from "@fikirtive/generation";
 import { storage } from "../storage.js";
 import { sanitizeError } from "../redact.js";
 
@@ -110,6 +124,30 @@ export async function understandingSpentTodayUsd(now: Date = new Date()): Promis
   });
 }
 
+/**
+ * 「这件素材的元数据齐了吗」——**扫描器**那一侧的问法(Prisma where 片段)。
+ *
+ * 和 `understandingPreflight` 是同一条判断的两面:那个是纯函数,回答手上这一行;
+ * 这个是查询条件,回答「这一轮该不该把它捞出来」。元数据不齐的素材**根本不进这一轮** ——
+ * 不建行、不写任何终态,ingest 的 ffprobe 补上宽高/时长之后的下一轮自然就捞得到。
+ * (拦在 handler 里也行,但那要先建一行、再把它退回 QUEUED,每分钟空转一次;
+ * 不捞进来是同一个 fail-closed,代价是零。)
+ *
+ * 已知的饿死口,写明处置:直接上传的元数据由 `redispatchLostIngest` 补投,而那个补投窗口
+ * 是 15 分钟到 24 小时(`INGEST_REDISPATCH_MIN/MAX_AGE_MS`)。ffprobe 对某份字节始终失败、
+ * 或者 24 小时之内一次都没成功的素材,宽高会永远是 null,于是**永远不会被理解**。
+ * 这是刻意选的那一边:那份素材本身完好、商家的任何其它功能都不受影响,损失只是 Otto 不认识
+ * 这一件;反过来放行,损失是每一件这样的素材都可能是一次破 1% 的账单,而且我们事前不知道。
+ * 要根治得让 ingest 把「探测过但读不出尺寸」和「还没探测过」分开记(Asset 上多一列),
+ * 那是 ingest 那一侧的票,不在本票范围内。
+ */
+const METADATA_READY_FOR_UNDERSTANDING = [
+  // 图片:像素闸要宽 × 高。ingest 之前两列都是 null —— 那正是 r2 让 48 MP 图过闸的窗口。
+  { mime: { startsWith: "image/" }, width: { not: null }, height: { not: null } },
+  // 视频:时长闸要 durationS。null 曾被读成 0 秒,于是任意长度的片都过闸。
+  { mime: { startsWith: "video/" }, durationS: { not: null } },
+] as const;
+
 /** 上一次报出来的暂缓原因。只在状态**变化**时打日志 —— 每分钟一行同样的话不是可观测性。 */
 let pauseNotice: string | null = null;
 function noticePause(reason: string | null): void {
@@ -125,10 +163,13 @@ function noticePause(reason: string | null): void {
  * 建行**就是**认领:唯一约束让「两个副本同时扫到同一件素材」只可能有一个赢家,输的那个
  * 拿到 P2002 并跳过。所以这个函数返回的行 id 可以直接发进队列,不必再去重。
  *
- * **两道暂缓闸在这一层,而不是在 handler 里**:handler 拦到的行已经被认领过了,把它拦下来
- * 只能写状态;扫描器拦下来的是「还没派出去的活」,行原样留着,下一轮照旧。总开关每轮读一次
- * (不是启动时读一次)—— 不然「暂停」就是「销毁」:关掉开关那一小时进来的素材会被逐一
- * 写死,再打开也回不来。
+ * **两道暂缓闸在这一层**:扫描器拦下来的是「还没派出去的活」,行原样留着,下一轮照旧,
+ * 连认领都不必发生。总开关每轮读一次(不是启动时读一次)—— 不然「暂停」就是「销毁」:
+ * 关掉开关那一小时进来的素材会被逐一写死,再打开也回不来。
+ *
+ * 但这一层**不是唯一一层**:这里拦不住已经排在队列里的那一批。预算在半路见底时,积压的
+ * 消息会继续一条条消费掉,所以 handler 在每一次付费调用之前**再查一次** SUM。两处都要,
+ * 少哪一处都有一整类超支跑掉。
  *
  * 跨租户扫描 —— 具名系统身份;逐行的写入各自带自己的租户(两段式,同 #463 其它清道夫)。
  */
@@ -162,7 +203,10 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
         understandings: { none: {} },
         // 只捞我们真的会读的类型。少了这一条,配乐会把队头堵死:音频建不出行,于是它永远
         // 留在候选集里,某个租户最新的 25 件都是音频时,比它们旧的图片一轮都排不上。
-        OR: [{ mime: { startsWith: "image/" } }, { mime: { startsWith: "video/" } }],
+        //
+        // 同一个 OR 还兼着**闸门的前半段**:元数据没齐的素材这一轮根本不捞
+        // (见 METADATA_READY_FOR_UNDERSTANDING —— 那里也写明了已知的饿死口与处置)。
+        OR: [...METADATA_READY_FOR_UNDERSTANDING],
       },
       select: { id: true, ownerId: true, mime: true },
       orderBy: { createdAt: "desc" }, // 新传的先认识 —— 商家刚放进来的东西是他此刻在想的
@@ -200,23 +244,6 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
   });
 }
 
-/**
- * caption 刚建出来的 doc-extract 行要立刻能跑,不必等到下一轮 redispatch 窗口。
- * 单独一个函数是因为它跑在**已经**属于某个租户的调用栈里(handleUnderstand 内),
- * 而上面那个扫描是跨租户的。
- */
-async function queueDocExtract(ownerId: string, assetId: string): Promise<string | null> {
-  const id = newId();
-  try {
-    await prisma.assetUnderstanding.create({
-      data: { id, ownerId, assetId, kind: "doc-extract" satisfies UnderstandingKind, status: "QUEUED" },
-    });
-    return id;
-  } catch {
-    return null; // 已经有了(重投/并发)——本来就不该有第二行
-  }
-}
-
 type Row = {
   id: string;
   ownerId: string;
@@ -225,9 +252,11 @@ type Row = {
 };
 
 /**
- * 落一个**真终局**:这份素材我们永远不会再读。只有两种情况配得上它 ——
- * 素材已经没了,或者这份字节按我们的预算读不动(视频超时长、图片超 pre-flight)。
- * 两个条件明天都不会变,所以写死它不丢任何东西。
+ * 落一个**真终局**:这份素材我们永远不会再读。只有一种情况配得上它 ——
+ * 这份字节按我们的预算读不动(视频超时长、图片超像素闸)。这个条件是**内容**的属性,
+ * 明天不会变、重传同样的字节也不会变,所以写死它不丢任何东西。
+ *
+ * 「素材没了」不走这里(它可逆,见 {@link drop});「我们还不知道」也不走这里(见 {@link hold})。
  */
 async function skip(row: Row, reason: string): Promise<void> {
   await prisma.assetUnderstanding.updateMany({
@@ -237,14 +266,35 @@ async function skip(row: Row, reason: string): Promise<void> {
 }
 
 /**
- * **暂缓**:这一趟不跑,行退回 QUEUED,下一轮继续。资源类原因专用(开关关、这个环境
- * 签不出 URL)。写终态才是缺陷 —— 见文件头「暂缓 ≠ 丢弃」。
+ * **暂缓**:这一趟不跑,行退回 QUEUED,下一轮继续。资源类原因专用(开关关、平台预算见底、
+ * 这个环境签不出 URL、元数据还没补齐)。写终态才是缺陷 —— 见文件头「暂缓 ≠ 丢弃」。
  */
 async function hold(row: Row, reason: string): Promise<void> {
   await prisma.assetUnderstanding.updateMany({
     where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
     data: { status: "QUEUED", error: reason },
   });
+}
+
+/**
+ * **把这一行删掉** —— 素材已经不在了(软删)。
+ *
+ * 为什么不是 SKIPPED(r2 就是这么写的,这是一个数据丢失缺陷):Asset 按
+ * `(ownerId, contentHash)` 复用,而 upload 的 upsert 在重传时会把 `deletedAt` 清掉
+ * **复活同一行**(apps/web/lib/upload-actions.ts)。一行删除类的 SKIPPED 会一直占着
+ * `(ownerId, assetId, kind)` 那个唯一键,而扫描器第 ① 段找的是「完全没有理解行」的素材 ——
+ * 于是商家删掉再重传,那件素材**永远**不会被读到,而且他看不见、修不了、申诉不了。
+ *
+ * 删掉行反过来是自愈的:素材还是软删的时候扫描器不捞它(`deletedAt: null`),所以不会
+ * 立刻重建;真被重传复活了,它就是一件「完全没有理解行」的素材,下一轮正常排上。
+ * 复活那一侧因此**不需要**任何补偿性清理代码。
+ *
+ * 只删自己刚 CAS 认领的这一行:DONE 的行不经过这里(handler 只处理 QUEUED→RUNNING 赢家),
+ * 所以一件素材已经读懂的产物不会被这条路径碰到。
+ */
+async function drop(row: Row, why: string): Promise<void> {
+  await prisma.assetUnderstanding.deleteMany({ where: { id: row.id, ownerId: row.ownerId } });
+  console.log(`[understand] ${row.id}: ${why} — row removed (re-upload will be read normally)`);
 }
 
 /**
@@ -378,9 +428,8 @@ export async function handleUnderstand(
     }
 
     // 总开关。**暂停键,不是销毁键** —— 已经排进来的行退回 QUEUED,开关打开就继续。
-    // (平台日预算那道闸在扫描器一层:它拦的是还没派出去的活,连认领都不必发生。)
     if (!assetUnderstandingEnabled()) {
-      await hold(row, "reading is paused right now");
+      await hold(row, UNDERSTANDING_PAUSED);
       return null;
     }
 
@@ -399,23 +448,44 @@ export async function handleUnderstand(
         deletedAt: true,
       },
     });
+    // 素材没了 ⇒ **删行**,不写终态。软删是可逆的(重传会复活同一个 Asset),
+    // 而一行终态会把那件素材永久挡在扫描器外面 —— 见 {@link drop}。
     if (!asset || asset.deletedAt) {
-      await skip(row, "the file is no longer there");
+      await drop(row, "the file is no longer there");
       return null;
     }
 
-    // 视频的时长闸 —— 少了它,「每次 token 上限」只是一句请求而不是一个上限
-    // (整段长视频的输入 token 会把「不到一条视频 1%」直接顶破)。
-    if (kind === "video-qa" && (asset.durationS ?? 0) > UNDERSTANDING_VIDEO_MAX_SECONDS) {
-      await skip(row, "the clip is longer than the understanding budget covers");
+    // pre-flight 闸。**三种答案要分三条路走**,这是 r2 最贵的一处错:
+    //   · too-large ⇒ 真终局(这份字节明天也读不动)⇒ SKIPPED;
+    //   · unknown  ⇒ 元数据还没补齐(ingest 的 ffprobe 还没跑到这一件)⇒ **暂缓**,
+    //     退回 QUEUED。写成 SKIPPED 等于因为「我们还不知道」而永久忘掉商家的素材;
+    //     放行则等于没有闸 —— 一张宽高为 null 的 48.77 MP 图一次 doc-extract 就是
+    //     一条视频的 2.2%,「不到 1%」当场破。
+    // 判在**签 URL 之前**:一分钱没花,一个请求没发。
+    const verdict = understandingPreflight(kind, asset);
+    if (verdict === "too-large") {
+      await skip(row, kind === "video-qa" ? UNDERSTANDING_CLIP_TOO_LONG : UNDERSTANDING_IMAGE_TOO_LARGE);
+      return null;
+    }
+    if (verdict === "unknown") {
+      // 正常情况下扫描器就不会把它捞出来(METADATA_READY_FOR_UNDERSTANDING);走到这里
+      // 说明是一行躺着的旧 QUEUED,或者素材在两次之间被换过 —— 同样暂缓,不判死。
+      await hold(row, UNDERSTANDING_METADATA_PENDING);
       return null;
     }
 
-    // 图片的 pre-flight 闸 —— 上面那句话对图片一字不差地成立。我们请求里带 `detail: "low"`,
-    // 而那个参数还没实测过;万一它被忽略,输入 token 就跟着像素数走。判在**签 URL 之前**:
-    // 一分钱没花,一个请求没发。
-    if (kind !== "video-qa" && !understandingImageWithinPreflight(asset)) {
-      await skip(row, "the picture is larger than the understanding budget covers");
+    // 平台日预算 —— **付费调用之前再查一次**。扫描器那一道拦的是「还没派出去的活」,
+    // 拦不住已经排在队列里的那一批:预算在半路见底时,积压的消息会继续一条条消费掉,
+    // 最坏情况超支远不止一轮(队列里可能躺着上一轮建的、还没跑的全部行)。
+    // 这一查是每次付费调用一次的全表 SUM;这条队列一分钟至多 25 件,那点读的代价
+    // 换的是「日预算真的是一天的上限」。
+    const budget = understandingDailyBudgetUsd();
+    const spentSoFar = await understandingSpentTodayUsd();
+    if (spentSoFar >= budget) {
+      await hold(row, UNDERSTANDING_BUDGET_REACHED);
+      console.log(
+        `[understand] ${row.id}: platform budget reached ($${spentSoFar.toFixed(4)} of $${budget.toFixed(2)}) — held for tomorrow`,
+      );
       return null;
     }
 
@@ -426,18 +496,20 @@ export async function handleUnderstand(
     if (!mediaUrl) {
       // 本地磁盘驱动(开发)签不出 URL,或者存储抖了一下 —— 这是**环境**不是素材:
       // 行退回 QUEUED,换个环境/下一轮照样读得到。
-      await hold(row, "this environment can't hand the file to the reader yet");
+      await hold(row, UNDERSTANDING_NO_MEDIA_URL);
       return null;
     }
 
     const port = provider ?? createUnderstandingProvider();
     let result;
     try {
-      result = await port.understand({ kind, mediaUrl, mime: asset.mime });
+      // `media` 让端口在发请求之前用**同一个** pre-flight 再判一次(belt)。
+      result = await port.understand({ kind, mediaUrl, mime: asset.mime, media: asset });
     } catch (e) {
       // 读不了这份字节 ⇒ 重试永远同一个答案 ⇒ 终止,不占重试预算。
+      // 用量跟着错误走时(200 + 空正文:钱已经花了)一并落库,不然日预算对那一类是瞎的。
       if (isUnreadableMediaError(e)) {
-        await fail(row, UNDERSTANDING_UNREADABLE);
+        await fail(row, UNDERSTANDING_UNREADABLE, understandingErrorUsage(e) ?? undefined);
         return null;
       }
       const message = sanitizeError(e);
@@ -475,14 +547,40 @@ export async function handleUnderstand(
         await fail(row, UNDERSTANDING_UNREADABLE, tokens);
         return null;
       }
-      await prisma.assetUnderstanding.updateMany({
-        where: { id: row.id, ownerId: row.ownerId },
-        data: { status: "DONE", summary: caption.summary, data: caption as never, error: null, ...tokens },
-      });
       // 三件套之间那条线:这张图基本上是一整页字 ⇒ 值得再花一次去读它的产品行。
+      //
+      // **caption 落 DONE 与 doc-extract 建行在同一个事务里。** 分成两步写(r2)有一个
+      // 永久丢数据的窗口:两步之间进程被杀、或者第二步撞上一个普通 DB 错误,结果就是
+      // 「caption 已 DONE + 零 doc 行」—— 而扫描器第 ① 段只找**完全没有理解行**的素材,
+      // 那张菜单于是永远不会被读成产品目录,连重传都救不回来。同一个事务里,第二步没成
+      // 就连 DONE 都不落,下一轮从头再来。
+      //
+      // `createMany({ skipDuplicates: true })` 而不是 create+catch:在一个交互式事务里
+      // 捕获 P2002 是**假的**保护 —— 唯一冲突已经让 Postgres 把整个事务标成 aborted,
+      // 之后什么都提交不了。ON CONFLICT DO NOTHING 让「已经有这一行」不产生错误,
+      // 而其它任何 DB 错误照常抛出去回滚 + 让队列重试(r2 那个 `catch {}` 把它们全吞了)。
+      const followUpId = caption.isDocument ? newId() : null;
+      const queued = await prisma.$transaction(async (tx) => {
+        await tx.assetUnderstanding.updateMany({
+          where: { id: row.id, ownerId: row.ownerId },
+          data: { status: "DONE", summary: caption.summary, data: caption as never, error: null, ...tokens },
+        });
+        if (!followUpId) return null;
+        const { count } = await tx.assetUnderstanding.createMany({
+          data: [
+            {
+              id: followUpId,
+              ownerId: row.ownerId,
+              assetId: row.assetId,
+              kind: "doc-extract" satisfies UnderstandingKind,
+              status: "QUEUED",
+            },
+          ],
+          skipDuplicates: true, // 已经有了(重投/并发)—— 本来就不该有第二行
+        });
+        return count === 1 ? followUpId : null;
+      });
       // 建好的行 id 原样返回给 index.ts 去发队列(见函数头:差别是商家的十分钟)。
-      if (!caption.isDocument) return null;
-      const queued = await queueDocExtract(row.ownerId, row.assetId);
       if (queued) console.log(`[understand] ${row.id}: looks like a document — queued doc-extract ${queued}`);
       return queued;
     }

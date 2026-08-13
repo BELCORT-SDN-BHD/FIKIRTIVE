@@ -24,7 +24,9 @@ import {
   UNDERSTANDING_PROMPTS,
   UNDERSTANDING_REQUEST_TIMEOUT_MS,
   UNDERSTANDING_VIDEO_SAMPLE_FPS,
+  understandingPreflight,
   type UnderstandingKind,
+  type UnderstandingMedia,
 } from "@fikirtive/core";
 import { ARK_BASE } from "./byteplus.js";
 import { providerRequestGate } from "./provider-concurrency.js";
@@ -38,6 +40,12 @@ export interface UnderstandingRequest {
   mediaUrl: string;
   /** 素材真实 mime(Asset.mime,ingest 已按字节校正过)。决定发图还是发视频。 */
   mime: string;
+  /**
+   * 素材的尺寸/时长/字节(Asset 的那几列)。**必填** —— 端口在发请求之前拿它再问一次
+   * pre-flight(见 {@link ArkUnderstandingProvider.understand} 的 belt 段)。选填就等于
+   * 「忘了传 = 静默放行」,而那正是这道 belt 存在的原因。
+   */
+  media: UnderstandingMedia;
 }
 
 export interface UnderstandingUsage {
@@ -63,6 +71,30 @@ export function unreadableMediaError(message: string): Error {
 
 export function isUnreadableMediaError(e: unknown): boolean {
   return e instanceof Error && (e as { unreadable?: boolean }).unreadable === true;
+}
+
+/**
+ * 供应商回了 200、报了用量,但正文是空的 —— **这一趟钱已经花了**。
+ *
+ * 上一版在这里抛一个普通 Error,用量随栈一起丢掉:worker 落一行没有 token 的 FAILED,
+ * 平台日预算的 SUM 因此对这一整类失败视而不见。连续的空响应可以一直计费而账面永远是零。
+ * 所以用量必须跟着错误走出这个函数 —— worker 拿它落库,再按失败处理。
+ */
+export function emptyUnderstandingResponseError(usage: UnderstandingUsage): Error {
+  return Object.assign(new Error("understanding response had no text"), {
+    unreadable: true as const,
+    understandingUsage: usage,
+  });
+}
+
+/** 错误上挂着的、**已经计费**的用量。没有就返回 null(那一趟真的没花钱)。 */
+export function understandingErrorUsage(e: unknown): UnderstandingUsage | null {
+  if (!(e instanceof Error)) return null;
+  const usage = (e as { understandingUsage?: UnderstandingUsage }).understandingUsage;
+  if (!usage || typeof usage !== "object") return null;
+  const inputTokens = Number(usage.inputTokens) || 0;
+  const outputTokens = Number(usage.outputTokens) || 0;
+  return { inputTokens, outputTokens };
 }
 
 /* ---------------- mock(离线、确定性、$0)---------------- */
@@ -119,6 +151,17 @@ export class ArkUnderstandingProvider implements UnderstandingProvider {
     if (!model) throw new Error("understanding provider has no model mapping");
     const caps = UNDERSTANDING_CAPS[req.kind];
     const schema = UNDERSTANDING_JSON_SCHEMAS[req.kind];
+
+    // ── 输入侧的硬闸(belt)────────────────────────────────────────────────────
+    // 下面的请求体里只有 `max_tokens`,而那是**输出**上限:这个 API 没有任何「输入最多
+    // 多少 token」的参数,所以输入侧唯一能设的闸就是「这份素材根本不发出去」。
+    // worker 已经在签 URL 之前问过同一道闸;这里是第二道,用的是**同一个函数、同一组常量**
+    // (@fikirtive/core `understandingPreflight`),不另抄一份数字。
+    // 两道都在 fetch 之前 —— 拦住的时候一分钱没花、一个请求没发。
+    const verdict = understandingPreflight(req.kind, req.media);
+    if (verdict !== "ok") {
+      throw new Error(`understanding refused this file before sending it (${verdict})`);
+    }
 
     const body = {
       model,
@@ -185,14 +228,13 @@ export class ArkUnderstandingProvider implements UnderstandingProvider {
               .map((p) => (p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string" ? (p as { text: string }).text : ""))
               .join("")
           : "";
-    if (!text.trim()) throw new Error("understanding response had no text");
-    return {
-      text,
-      usage: {
-        inputTokens: Number(data.usage?.prompt_tokens) || 0,
-        outputTokens: Number(data.usage?.completion_tokens) || 0,
-      },
+    const usage: UnderstandingUsage = {
+      inputTokens: Number(data.usage?.prompt_tokens) || 0,
+      outputTokens: Number(data.usage?.completion_tokens) || 0,
     };
+    // 200 + 空正文:失败,但**带着用量**失败(见 emptyUnderstandingResponseError)。
+    if (!text.trim()) throw emptyUnderstandingResponseError(usage);
+    return { text, usage };
   }
 }
 

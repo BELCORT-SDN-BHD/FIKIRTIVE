@@ -21,9 +21,13 @@
  *  3. **白标。** 这个文件里没有供应商名字;产物里也不许出现(worker 落盘走 redact)。
  *
  * ── 一条纪律:资源闸不许毁数据 ────────────────────────────────────────────────
- * 「今天不跑」和「永远不跑」是两件事。开关关掉、平台预算见底、这个环境签不出 URL ——
- * 都是**资源**原因,行退回 QUEUED,明天继续。只有真终局(素材没了、这份字节我们按预算
- * 读不动)才落 SKIPPED。反过来做的代价不是多花钱,是商家的素材被永久地、静悄悄地忘掉。
+ * 「今天不跑」「我们还不知道」和「永远不跑」是三件事。开关关掉、平台预算见底、这个环境
+ * 签不出 URL、宽高/时长还没探测出来 —— 都不是终局,行退回 QUEUED,明天继续。只有
+ * 「这份字节我们按预算读不动」才落 SKIPPED(素材被软删则连 SKIPPED 都不写,直接删行)。
+ * 反过来做的代价不是多花钱,是商家的素材被永久地、静悄悄地忘掉。
+ *
+ * 同一条纪律的另一半在闸门本身:**该知道而不知道 = 不放行**。宽高读不到时按字节兜底
+ * 是一道假闸(字节推不出像素),而放行则是没有闸 —— 两者都在 r2 上被实证破掉了 1%。
  */
 
 import { SEEDANCE_COGS_USD_PER_SECOND, GEN_VIDEO_SECONDS } from "./gen.js";
@@ -41,9 +45,11 @@ export function isUnderstandingKind(v: string): v is UnderstandingKind {
 }
 
 /** 行状态。代码校验的 String(house style,不建 PG enum)。
- *  SKIPPED = **真终局**,永远不会再跑:素材已经没了,或者这份字节按我们的预算读不动
- *  (视频超时长闸、图片超 pre-flight 闸)。资源原因(开关关、平台预算见底、这个环境
- *  签不出 URL)一律**不落 SKIPPED** —— 那些行退回 QUEUED,下一轮继续。 */
+ *  SKIPPED = **真终局**,永远不会再跑:这份字节按我们的预算读不动(视频超时长闸、
+ *  图片超像素闸)—— 那是**内容**的属性,重传同样的字节也一样。资源原因(开关关、
+ *  平台预算见底、这个环境签不出 URL、宽高/时长还没探测出来)一律**不落 SKIPPED**:
+ *  那些行退回 QUEUED,下一轮继续。素材被软删也不落 SKIPPED —— 那一行直接删掉,
+ *  否则商家「删掉再重传」这条唯一的自救路径也会失效(worker 的 `drop`)。 */
 export const UNDERSTANDING_STATUSES = ["QUEUED", "RUNNING", "DONE", "FAILED", "SKIPPED"] as const;
 export type UnderstandingStatus = (typeof UNDERSTANDING_STATUSES)[number];
 
@@ -92,7 +98,8 @@ export const UNDERSTANDING_IMAGE_MAX_PIXELS = 16_000_000;
 /** 每百万像素的输入 token 记账口径(512px 切块 × 每块 170 token ≈ 649,记高不记低)。 */
 export const UNDERSTANDING_IMAGE_TOKENS_PER_MEGAPIXEL = 700;
 /**
- * 尺寸读不到时的粗口径兜底(ingest 的 ffprobe 还没跑过,或者那张图它读不出来)。
+ * 像素闸之外的第二道上限。**不是**尺寸读不到时的替代品 —— 字节数推不出像素数,
+ * 一张 48 MP 的高压缩 JPEG 可以只有几 MB(那正是 r2 那道兜底破掉的方式)。
  * 刻意放得很宽:16 MP 的 JPEG 约 5 MB、PNG 约 30 MB,40 MiB 只拦真正病态的文件。
  */
 export const UNDERSTANDING_IMAGE_MAX_BYTES = 40 * 1024 * 1024;
@@ -103,22 +110,63 @@ export const UNDERSTANDING_IMAGE_MAX_INPUT_TOKENS = Math.ceil(
 );
 
 /**
- * 这张图跑不跑得起?**纯函数**,worker 在发请求之前问一次(问的时候一分钱还没花)。
- * 尺寸拿得到就按像素判;拿不到就按字节判。两个都拿不到 = 放行(没有证据就不判死)。
+ * pre-flight 的三种答案。
+ *
+ * `unknown` 是闸门**自己的**答案,不是一个「还没判」的中间态:该知道而不知道 ⇒ 不放行。
+ * 上一版是反过来的(尺寸读不到就按 40 MiB 的字节兜底,两个都读不到就放行),而直接上传的
+ * Asset 的宽高是 ingest 之后才补上的 —— 一张 48.77 MP 的照片在宽高还是 null 的窗口里
+ * 只要字节数低于 40 MiB 就被放行,一次 doc-extract $0.003894 = **一条视频的 2.215%**,
+ * 「不到 1%」当场破。字节数根本推不出像素数(JPEG 压缩比差一个量级),所以它不是一道弱一点
+ * 的闸,它不是闸。
+ *
+ * 调用方**必须**把三种答案分开处理:`too-large` 是真终局(这份字节明天也读不动),
+ * `unknown` 是资源类暂缓(元数据补齐之后就知道了),两者混在一起写终态就是把商家的素材
+ * 永久忘掉 —— 见文件头「资源闸不许毁数据」。
  */
-export function understandingImageWithinPreflight(meta: {
+export type UnderstandingPreflight = "ok" | "unknown" | "too-large";
+
+/** pre-flight 读的那几列(Asset 的子集)。 */
+export interface UnderstandingMedia {
   width?: number | null;
   height?: number | null;
   sizeBytes?: number | bigint | null;
-}): boolean {
-  const w = Number(meta.width ?? 0);
-  const h = Number(meta.height ?? 0);
-  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-    return w * h <= UNDERSTANDING_IMAGE_MAX_PIXELS;
-  }
-  const bytes = Number(meta.sizeBytes ?? 0);
-  if (Number.isFinite(bytes) && bytes > 0) return bytes <= UNDERSTANDING_IMAGE_MAX_BYTES;
-  return true;
+  durationS?: number | null;
+}
+
+/**
+ * 这张图跑不跑得起?**纯函数**,worker 在签 URL 之前问一次(问的时候一分钱还没花),
+ * 供应商端口在发请求之前再问一次(同一个常量源,belt)。
+ *
+ * 尺寸读不到 = `unknown`。字节数**不再**是尺寸的替代品(见 {@link UnderstandingPreflight}),
+ * 它只是尺寸之外的第二道上限:一张像素数合格但字节数病态的文件同样拦下。
+ */
+export function understandingImagePreflight(meta: UnderstandingMedia): UnderstandingPreflight {
+  const w = Number(meta.width ?? Number.NaN);
+  const h = Number(meta.height ?? Number.NaN);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return "unknown";
+  if (w * h > UNDERSTANDING_IMAGE_MAX_PIXELS) return "too-large";
+  const bytes = Number(meta.sizeBytes ?? Number.NaN);
+  if (Number.isFinite(bytes) && bytes > UNDERSTANDING_IMAGE_MAX_BYTES) return "too-large";
+  return "ok";
+}
+
+/**
+ * 这段视频跑不跑得起?时长由 ingest 的 ffprobe 补上,所以它和图片的宽高一样会有一段
+ * 「还不知道」的窗口 —— 上一版把 null 当 0 秒读,于是**任意长度**的视频都过闸。
+ */
+export function understandingVideoPreflight(meta: UnderstandingMedia): UnderstandingPreflight {
+  const seconds = Number(meta.durationS ?? Number.NaN);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "unknown";
+  if (seconds > UNDERSTANDING_VIDEO_MAX_SECONDS) return "too-large";
+  return "ok";
+}
+
+/** 按 kind 分派到对应的那道闸。worker 与供应商端口共用这一个入口(同一常量源)。 */
+export function understandingPreflight(
+  kind: UnderstandingKind,
+  meta: UnderstandingMedia,
+): UnderstandingPreflight {
+  return kind === "video-qa" ? understandingVideoPreflight(meta) : understandingImagePreflight(meta);
 }
 
 export interface UnderstandingCaps {
@@ -474,6 +522,21 @@ export function parseUnderstandingJson(text: string): unknown | null {
   }
 }
 
-/** 商家读得到的失败措辞。白标,不带任何供应商/技术细节。 */
+/**
+ * 商家读得到的措辞。白标,不带任何供应商/技术细节,English sentence case。
+ *
+ * 全部住在这里而不是散在 worker 里,是因为它们有**两个**读者:落进 `AssetUnderstanding.error`
+ * 的那一次,和 Otto 把「这几件我没读」讲给商家听的那一次(recallStoreKnowledge)。
+ * 两边各写一份,迟早有一边说的是另一回事。
+ */
 export const UNDERSTANDING_UNREADABLE = "That file couldn't be read clearly enough to use.";
 export const UNDERSTANDING_INTERRUPTED = "That file wasn't finished being read — it will be picked up again.";
+/** 真终局:这份字节按我们的预算读不动。明天也不会变,所以它配得上一个终态。 */
+export const UNDERSTANDING_CLIP_TOO_LONG = "That clip is longer than the reading budget covers, so it was left unread.";
+export const UNDERSTANDING_IMAGE_TOO_LARGE =
+  "That picture is larger than the reading budget covers, so it was left unread.";
+/** 资源类暂缓的措辞 —— 行退回 QUEUED,下一轮继续(不是终态)。 */
+export const UNDERSTANDING_PAUSED = "Reading is paused right now.";
+export const UNDERSTANDING_NO_MEDIA_URL = "This environment can't hand the file to the reader yet.";
+export const UNDERSTANDING_METADATA_PENDING = "That file's dimensions aren't known yet — it will be read once they are.";
+export const UNDERSTANDING_BUDGET_REACHED = "Today's reading budget is used up — this file is read tomorrow.";

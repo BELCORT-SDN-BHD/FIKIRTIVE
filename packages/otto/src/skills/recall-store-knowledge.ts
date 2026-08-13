@@ -42,10 +42,28 @@ export interface RecalledUnderstanding {
   readAt: string;
 }
 
+/**
+ * 一件**没能读成**的素材,带上商家读得懂的原因。
+ *
+ * 为什么它必须在返回值里:上一版只查 `status: "DONE"`,于是一件落了终态(SKIPPED/FAILED)
+ * 的素材在 Otto 眼里和「还没轮到」长得一模一样 —— 商家会听到「稍后会自动读」,而那件素材
+ * 已经永远不会再被读了。那是一句**说谎**,而且是商家没有办法自己发现的那一种。
+ * 现在原因如实带出来:措辞在 @fikirtive/core 那一侧就是白标 + 商家可懂的英文。
+ */
+export interface UnreadFile {
+  assetId: string;
+  kind: string;
+  /** 白标、商家读得懂的一句(UNDERSTANDING_* 那几条)。 */
+  reason: string;
+}
+
+/** 终态里「读不成」的那两个。它们不会自己重来 —— 所以不许对商家说「稍后会自动读」。 */
+const NOT_READ_STATUSES = ["SKIPPED", "FAILED"] as const;
+
 export async function executeRecallStoreKnowledge(
   input: RecallInput,
   runContext: Pick<RunContext<OttoContext>, "context">,
-): Promise<{ understood: RecalledUnderstanding[]; note?: string }> {
+): Promise<{ understood: RecalledUnderstanding[]; notRead?: UnreadFile[]; note?: string }> {
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
   const limit = input.limit ?? 6;
@@ -53,13 +71,13 @@ export async function executeRecallStoreKnowledge(
   const rows = await prisma.assetUnderstanding.findMany({
     where: {
       ownerId: ctx.orgId,
-      status: "DONE",
+      status: { in: ["DONE", ...NOT_READ_STATUSES] },
       ...(input.kind ? { kind: input.kind } : {}),
     },
     orderBy: { createdAt: "desc" },
     // 先多取一些再在应用层做子串匹配 —— 和 lookupProducts 同一条既有做法(catalog 设计边界)。
     take: input.query ? 200 : limit,
-    select: { assetId: true, kind: true, summary: true, data: true, createdAt: true },
+    select: { assetId: true, kind: true, status: true, summary: true, data: true, error: true, createdAt: true },
   });
 
   const q = input.query?.trim().toLowerCase();
@@ -67,25 +85,56 @@ export async function executeRecallStoreKnowledge(
     ? rows.filter((r) => `${r.summary} ${JSON.stringify(r.data ?? {})}`.toLowerCase().includes(q))
     : rows;
 
-  const understood = matched.slice(0, limit).map((r) => ({
-    assetId: r.assetId,
-    kind: r.kind,
-    // 白标兜底:落盘那一侧已经不放供应商名,这里再过一次 —— 这段文字会直接进 Otto 的嘴。
-    summary: redactProviderNames(r.summary),
-    details: r.data ?? null,
-    readAt: r.createdAt.toISOString(),
-  }));
+  const understood = matched
+    .filter((r) => r.status === "DONE")
+    .slice(0, limit)
+    .map((r) => ({
+      assetId: r.assetId,
+      kind: r.kind,
+      // 白标兜底:落盘那一侧已经不放供应商名,这里再过一次 —— 这段文字会直接进 Otto 的嘴。
+      summary: redactProviderNames(r.summary),
+      details: r.data ?? null,
+      readAt: r.createdAt.toISOString(),
+    }));
+
+  // 读不成的那些也带上 —— 哪怕同时有读成的(混着的时候把失败藏起来是同一句谎话的弱化版)。
+  const notRead = matched
+    .filter((r) => (NOT_READ_STATUSES as readonly string[]).includes(r.status))
+    .slice(0, limit)
+    .map((r) => ({
+      assetId: r.assetId,
+      kind: r.kind,
+      reason: redactProviderNames(r.error ?? "That file couldn't be read."),
+    }));
 
   if (understood.length === 0) {
     return {
       understood: [],
+      ...(notRead.length > 0 ? { notRead } : {}),
       note:
-        "Nothing has been read from this account's files yet. New photos and clips are read automatically " +
-        "in the background shortly after they arrive — there is no button for the user to press, so never " +
-        "offer to start one or tell the user to run an analysis.",
+        notRead.length > 0
+          ? "Nothing has been read successfully from this account's files. The files under `notRead` were " +
+            "each tried and could not be used — the reason on each one is safe to tell the user in their own " +
+            "words. Those will NOT be retried on their own, so do not promise the user they will be read " +
+            "later. There is no analyse button anywhere, so never offer to start an analysis either; if the " +
+            "user wants one of those files used, the honest suggestion is to upload a clearer or smaller " +
+            "version of it."
+          : "Nothing has been read from this account's files yet. New photos and clips are read automatically " +
+            "in the background shortly after they arrive — there is no button for the user to press, so never " +
+            "offer to start one or tell the user to run an analysis.",
     };
   }
-  return { understood };
+  return {
+    understood,
+    ...(notRead.length > 0 ? { notRead } : {}),
+    ...(notRead.length > 0
+      ? {
+          note:
+            "The files under `notRead` were tried and could not be used. They will NOT be retried on their " +
+            "own — never tell the user those are still being read or will be read later.",
+        }
+      : {}),
+  };
 }
 
 export const recallStoreKnowledgeSkill = defineOttoSkill({
@@ -100,6 +149,9 @@ export const recallStoreKnowledgeSkill = defineOttoSkill({
     "Use it BEFORE writing copy, naming a product or describing the business, so what you say matches what the " +
     "user actually sells and how their place actually looks. " +
     "Pass `query` to filter by the user's own words (e.g. 'menu', 'mug', 'shopfront'); `kind` narrows to one type. " +
+    "It also returns `notRead`: files that were tried and could not be used, each with a plain-language reason. " +
+    "Those are finished — they will NOT be retried on their own, so never say one is still being read or will be " +
+    "read later; say what went wrong if the user asks about that file. " +
     "IMPORTANT: this reading happens automatically in the background — there is no analyse button anywhere. " +
     "Never offer to analyse a file, never ask the user to start one, and never say a file is 'being analysed'. " +
     "If nothing is here yet, simply work from what the user tells you.",

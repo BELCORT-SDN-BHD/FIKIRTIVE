@@ -16,11 +16,25 @@ function stored(over: Record<string, unknown> = {}) {
   return {
     assetId: "a-1",
     kind: "image-caption",
+    status: "DONE",
     summary: "A ceramic mug on a linen cloth.",
     data: { category: "homeware", colors: ["warm neutral"] },
+    error: null,
     createdAt: new Date("2026-08-13T00:00:00Z"),
     ...over,
   };
+}
+
+/** 一件试过但读不成的素材(终态 —— 它不会自己重来)。 */
+function unread(over: Record<string, unknown> = {}) {
+  return stored({
+    assetId: "a-huge",
+    status: "SKIPPED",
+    summary: "",
+    data: null,
+    error: "That picture is larger than the reading budget covers, so it was left unread.",
+    ...over,
+  });
 }
 
 beforeEach(() => {
@@ -29,9 +43,14 @@ beforeEach(() => {
 });
 
 describe("租户", () => {
-  it("查询永远带 ctx 的 orgId,而且只取已经读完的行", async () => {
+  it("查询永远带 ctx 的 orgId,而且只取已经有结论的行(读成的 + 读不成的)", async () => {
     await executeRecallStoreKnowledge({}, ctx);
-    expect(mocks.findMany.mock.calls[0]![0].where).toMatchObject({ ownerId: "owner-1", status: "DONE" });
+    const where = mocks.findMany.mock.calls[0]![0].where;
+    expect(where.ownerId).toBe("owner-1");
+    // 还在排队/在跑的行不进来 —— 它们既不是知识,也还没有结论
+    expect(where.status.in).toEqual(expect.arrayContaining(["DONE", "SKIPPED", "FAILED"]));
+    expect(where.status.in).not.toContain("QUEUED");
+    expect(where.status.in).not.toContain("RUNNING");
   });
 
   it("参数里没有任何身份字段(defineOttoSkill 会拒,这里再钉一次)", () => {
@@ -78,6 +97,46 @@ describe("产物", () => {
     mocks.findMany.mockResolvedValue([stored({ summary: "seedream saw a mug" })]);
     const out = await executeRecallStoreKnowledge({}, ctx);
     expect(out.understood[0]!.summary.toLowerCase()).not.toContain("seedream");
+  });
+});
+
+describe("读不成的素材要如实说(不许说「稍后会自动读」)", () => {
+  it("只有读不成的素材时,原因如实带出来,并且**不**承诺以后会读", async () => {
+    mocks.findMany.mockResolvedValue([unread()]);
+    const out = await executeRecallStoreKnowledge({}, ctx);
+    expect(out.understood).toEqual([]);
+    expect(out.notRead).toEqual([
+      {
+        assetId: "a-huge",
+        kind: "image-caption",
+        reason: "That picture is larger than the reading budget covers, so it was left unread.",
+      },
+    ]);
+    const note = out.note!.toLowerCase();
+    // 这一条就是 r2 的谎:一件永远不会再被读的素材,商家听到的是「稍后会自动读」
+    expect(note).not.toMatch(/read automatically|shortly after they arrive/);
+    expect(note).toMatch(/not be retried|do not promise/);
+    expect(note).toMatch(/never offer/); // 铁律照旧
+  });
+
+  it("读成的和读不成的混在一起时,读不成的**不许被隐去**", async () => {
+    mocks.findMany.mockResolvedValue([stored(), unread({ status: "FAILED", error: "That file couldn't be read clearly enough to use." })]);
+    const out = await executeRecallStoreKnowledge({}, ctx);
+    expect(out.understood.map((u) => u.assetId)).toEqual(["a-1"]);
+    expect(out.notRead?.map((u) => u.assetId)).toEqual(["a-huge"]);
+    expect(out.note?.toLowerCase()).toMatch(/not be retried/);
+  });
+
+  it("读不成的那一句也过白标兜底", async () => {
+    mocks.findMany.mockResolvedValue([unread({ error: "seedream rejected the file" })]);
+    const out = await executeRecallStoreKnowledge({}, ctx);
+    expect(out.notRead![0]!.reason.toLowerCase()).not.toContain("seedream");
+  });
+
+  it("全都读成时不多出一个空的 notRead 字段", async () => {
+    const out = await executeRecallStoreKnowledge({}, ctx);
+    expect(out.notRead).toBeUndefined();
+    expect(out.note).toBeUndefined();
   });
 });
 
