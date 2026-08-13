@@ -6,6 +6,14 @@ import {
   scheduleApproveBlockers,
   classifyConnectionFailure,
   classifyPagesRead,
+  PUBLISHING_AVAILABLE,
+  PUBLISH_PREVIEW_BADGE,
+  approvalCardTitleLine,
+  approvalOutcomeLine,
+  ottoPublishTruth,
+  publishPreviewBadge,
+  publishSurfaceCopy,
+  publishSurfaceLines,
 } from "./schedule-draft.js";
 
 const BASE = {
@@ -220,5 +228,63 @@ describe("#741 r5 connection failure classification is exhaustive and fail-safe"
     expect(classifyPagesRead({ pages: [] })).toBe("ok");
     expect(classifyPagesRead({ needsBusinessVerification: true })).toBe("unreadable");
     expect(classifyPagesRead({ notConnected: true })).toBe("not_connected");
+  });
+});
+
+// #851 —— 发布口径的开关本身:一行翻过去,四个槽位和三句派生话术一起改口,没有第二处要找。
+//
+// 这一组刻意**不读** PUBLISHING_AVAILABLE 的当前值来决定期望什么:每个选择器都接受一个显式
+// 的状态参数,两态各钉一遍。所以翻开关不会让这一组变成一条永远为真的断言,也不需要在这里
+// 改任何一个字 —— 那正是「零改口」这句话的机器版本。
+describe("#851 publish availability — one switch, two honest states", () => {
+  it("默认参数就是此刻的状态,不必让每个调用点自己去问开关", () => {
+    expect(publishSurfaceCopy()).toEqual(publishSurfaceCopy(PUBLISHING_AVAILABLE));
+    expect(publishPreviewBadge()).toBe(publishPreviewBadge(PUBLISHING_AVAILABLE));
+    expect(approvalCardTitleLine()).toBe(approvalCardTitleLine(PUBLISHING_AVAILABLE));
+    expect(ottoPublishTruth()).toBe(ottoPublishTruth(PUBLISHING_AVAILABLE));
+  });
+
+  it("两态四个槽位都有话可说,而且不是同一句", () => {
+    for (const key of ["fact", "why", "real", "next"] as const) {
+      expect(publishSurfaceCopy(false)[key]).not.toBe(publishSurfaceCopy(true)[key]);
+      expect(publishSurfaceCopy(false)[key].length).toBeGreaterThan(20);
+      expect(publishSurfaceCopy(true)[key].length).toBeGreaterThan(20);
+    }
+    // 整段的顺序就是读的顺序,四句一句不少。
+    expect(publishSurfaceLines(false)).toEqual([
+      publishSurfaceCopy(false).fact,
+      publishSurfaceCopy(false).why,
+      publishSurfaceCopy(false).real,
+      publishSurfaceCopy(false).next,
+    ]);
+    expect(publishSurfaceLines(true)).toHaveLength(4);
+  });
+
+  it("徽章只在发不出去的时候戴", () => {
+    expect(publishPreviewBadge(false)).toBe(PUBLISH_PREVIEW_BADGE);
+    expect(publishPreviewBadge(true)).toBeNull();
+  });
+
+  it("批准的结果句两态都点名渠道,但只有真发得出去时才敢说 publish", () => {
+    expect(approvalOutcomeLine("Instagram", true)).toBe("Publishes to Instagram");
+    expect(approvalOutcomeLine("Instagram", false)).toContain("Instagram");
+    expect(approvalOutcomeLine("Instagram", false)).toMatch(/nothing is sent/i);
+    expect(approvalCardTitleLine(true)).toMatch(/publishing/i);
+    expect(approvalCardTitleLine(false)).not.toMatch(/publishing/i);
+  });
+
+  it("给 Otto 的那句话:发不出去时把三件事都说到,并且不给日期", () => {
+    const preview = ottoPublishTruth(false);
+    expect(preview).toMatch(/sends nothing/i);          // ① 不会发
+    expect(preview).toMatch(/no account can be connected/i); // ② 也连不上,别指路去连
+    expect(preview).toMatch(/no date/i);                // ③ 不写工期
+    expect(ottoPublishTruth(true)).toMatch(/irreversible/i);
+  });
+
+  it("preview 那四句里没有月份、季度或「coming soon」", () => {
+    const text = publishSurfaceLines(false).join(" ");
+    expect(text).not.toMatch(/coming soon/i);
+    expect(text).not.toMatch(/january|february|march|april|june|july|august|september|october|november|december/i);
+    expect(text).not.toMatch(/\bQ[1-4]\b/);
   });
 });

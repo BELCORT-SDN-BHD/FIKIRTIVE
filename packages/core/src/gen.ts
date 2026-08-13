@@ -185,14 +185,40 @@ export const GEN_IMAGE_SIZES: Record<GenImageAspect, { width: number; height: nu
 };
 
 /** Per-model image controls — mirrors `VideoModelOptions`. Lists are default-first;
- *  `maxCount` = batch ceiling (the image engine takes one request per image). */
+ *  `maxCount` = batch ceiling (one request per image, unless the model can make a
+ *  coherent SET — see `coherentSet`). */
 export type ImageModelOptions = {
   aspectRatios: string[];
   maxCount: number;
+  /**
+   * #777 —— 这台引擎能不能**一次请求出一整组连贯的图**(同一个模特的五个角度、
+   * 同一件产品的五个尺寸,角色与风格从头到尾是同一个)。
+   *
+   * 它是**能力位**,不是价目:开着的时候,`count` 张图从「count 次调用」变成
+   * 「一次调用出 count 张」。商家的收费一格不动(仍是每张 1 显示 credit,
+   * `pricedGenCredits` 一行都没改),变的是供应商侧的调用形状 —— 这正是本票
+   * 「计费口径变化」的全部内容。
+   *
+   * 为什么必须是**每台引擎各自声明**而不是一个全局开关:参数面没有在本仓库的
+   * 账户上实测过(本工作区禁止真实供应商调用)。这一格就是唯一的开关 ——
+   * 部署窗口实测不通过,把它改成 false,组图这条路当场整条下线,菜单、契约、
+   * 材料绑定与卡面会一起跟着闭嘴,不需要再找第二处。
+   */
+  coherentSet: boolean;
 };
 export const GEN_IMAGE_MODEL_OPTIONS: Record<GenModel, ImageModelOptions> = {
-  "seedream": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT },
+  "seedream": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT, coherentSet: true },
 };
+
+/** 这台引擎能不能一次出一整组连贯图(#777)。菜单外的 id 一律 false —— 「不知道」
+ *  按「不能」处理,绝不让一个没在册的模型走上组图那条路。PURE,永不抛。 */
+export function supportsCoherentSet(model: string): boolean {
+  return GEN_IMAGE_MODEL_OPTIONS[model as GenModel]?.coherentSet === true;
+}
+
+/** 一组连贯图至少要两张 —— 一张图不成组,把 `coherentSet` 挂在 count=1 上只是
+ *  一个说了不算数的开关(而它会进材料绑定,让同一个请求莫名其妙判成换了内容)。 */
+export const COHERENT_SET_MIN_IMAGES = 2;
 
 /** A model's default image selections (first of each list) — mirrors `videoDefaults`.
  *  Never throws on an unknown id: an unmapped model falls back to the default aspect. */
@@ -538,6 +564,17 @@ export const genRequest = z
     aspectRatio: z.string().max(12).nullish(),
     fps: z.number().int().min(1).max(120).nullish(),
     audio: z.boolean().nullish(),
+    /**
+     * #777 —— 「这 count 张是**一组**要连贯的图」。true ⇒ 执行层一次请求出齐整组
+     * (同模特多角度/同产品多尺寸,角色与风格连续);缺省/false ⇒ 各出各的,与今日
+     * 逐字一致。
+     *
+     * 钱:一格不动。收费仍是 `pricedGenCredits` 的每张 1 显示 credit,reserve == settle,
+     * 幂等键的家族与长度都没变。它进的是**材料**(`GenJob.imageOptions`),所以
+     * 「一组连贯图」与「N 张散图」在同一个 batchId 的同一格上是**不同内容** ——
+     * 复用/重放判据会照实拒,不会把商家批的一组图静默换成散图(反之亦然)。
+     */
+    coherentSet: z.boolean().nullish(),
   })
   .strict()
   // model must match the kind's menu — an unknown video model must never reach
@@ -608,6 +645,21 @@ export const genRequest = z
       }
       if (v.count > o.maxCount) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["count"], message: "too many images for this model" });
+      }
+    }
+    // #777 组图闸:**验证在花钱之前**,与画幅/档位同一条规矩。三种请求一律拒,
+    // 因为它们都会让「商家批的」与「执行层做的」分家:
+    //   - 视频要组图:视频端点没有这个能力,放行就是收了钱做不出承诺的东西;
+    //   - 引擎不支持:能力位是唯一的开关,菜单外的模型永远走不到这条路;
+    //   - 只要一张:一张图不成组,而它会进材料绑定 —— 一个说了不算数的开关
+    //     会让同一个请求在重放时判成「换了内容」,把商家的合法重试挡死。
+    if (v.coherentSet === true) {
+      if (v.kind !== "image") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["coherentSet"], message: "a coherent set is only available for images" });
+      } else if (!supportsCoherentSet(v.model)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["coherentSet"], message: "this model can't make one coherent set" });
+      } else if (v.count < COHERENT_SET_MIN_IMAGES) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["coherentSet"], message: `a coherent set needs at least ${COHERENT_SET_MIN_IMAGES} images` });
       }
     }
     if (v.referenceVideoGenerationId) {
