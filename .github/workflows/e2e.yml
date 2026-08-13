@@ -1,0 +1,101 @@
+name: e2e
+
+# 债 #9 降级版(#799):常驻 Playwright 工程,首批钱与出口主干旅程。
+#
+# 刻意分成独立 workflow、**一个字节都不碰 ci.yml**,理由与 post-merge.yml 完全相同,并且这里
+# 更重要:`quality` 是 protect-main ruleset 里的必需检查(bypass_actors 为空,没人能绕开它合并),
+# 而 ci.yml 现在由 scripts/__tests__/quality-legs.test.sh 逐字节钉死 —— 往那个文件里加一条腿,
+# 等于让整仓的合并门多一种形态,并且每次改动都要重新生成那份 canonical 字面量。本票不需要那个
+# 代价:E2E 首批要的是「有一份常驻的、每天都跑的证据」,不是「再多一道挡合并的闸」。
+#
+# 于是这里的取舍写明白:
+#   - 本 workflow **不是** required check。它红了不会冻结任何 PR。它的作用是把商家手碰的那一层
+#     的回归**变得可见**,而不是把它变成一道新的门。
+#   - 什么时候变成门,由 Founder 决定(票 #799 写的是「上线门=首批主干」)。真要挡门时,做法是
+#     在 protect-main ruleset 里把 `e2e` 加进必需检查——一次仓库设置,零代码改动,ci.yml 依旧不动。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # 只改 docs/ 的 PR 没有任何旅程可跑。这里可以用 paths-ignore 而 ci.yml 不可以:被路径过滤
+    # 跳过的 workflow 不汇报 check,对必需检查等于永远无法合并;本 workflow 不是必需检查。
+    paths-ignore:
+      - "docs/**"
+  schedule:
+    # 每天吉隆坡时间早上 8 点(UTC 00:00)。夜间跑一遍是这票「常驻」两个字的实体:
+    # 没有人打开 PR 的日子,main 上的这一层也仍然每天被走一遍。
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # 事件与 ref 都带上:少任何一半,手动或定时的一次运行就会取消 PR 上正在跑的那次。
+  group: e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    # 构建 + 17 条旅程,实测本机 build ~2 分钟、旅程 ~15 秒。30 留出诚实余量,又不让一次卡死的
+    # 运行占着跑手不放。
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          # 名字必须以 _test 结尾:这套件开跑前会 TRUNCATE 每一张表,而 e2e/support/env.ts 的
+          # 名字校验是「打错一个 URL」与「别人的真数据」之间唯一的东西。
+          POSTGRES_DB: fikirtive_e2e_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 与 ci.yml 同一个数字:`next build` 的 TypeScript 子进程在默认 ~2 GB 堆下会随机 OOM。
+      NODE_OPTIONS: --max-old-space-size=6144
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_e2e_test
+      NEXT_TELEMETRY_DISABLED: "1"
+      # 这里**没有**任何一个能花钱、能发信的凭据,而且不是靠自觉:e2e/global-setup.ts 在开浏览器
+      # 之前会检查环境里有没有 BYTEPLUS_API_KEY / FAL_KEY / STRIPE_SECRET_KEY / RESEND_API_KEY …,
+      # 有就直接失败。一个每天自动跑的套件如果能真出片,那是每天在烧商家的余额。
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # 套件自己的类型检查。刻意在这里跑而不是挂进 `pnpm -r typecheck`:e2e/ 不是 pnpm workspace
+      # 项目(见 e2e/package.json 的说明),把它加进去就等于把这些文件塞进 `quality` 的 tests /
+      # typecheck 两条腿,而本票不动那道门。
+      - run: pnpm exec tsc -p e2e/tsconfig.json
+
+      - run: pnpm --filter "./packages/*" build
+      - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
+      - run: pnpm --filter @fikirtive/web build
+
+      # 只装 chromium:套件只跑这一个 project,装三个引擎是三倍下载换零覆盖。
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - run: pnpm e2e
+
+      # 失败时把证据带出来。夜里跑红的那一次没有人能附上调试器,trace 就是唯一的现场。
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          path: |
+            e2e/.report
+            e2e/.artifacts
+          retention-days: 7
+          if-no-files-found: ignore
