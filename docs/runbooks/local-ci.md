@@ -195,12 +195,17 @@ workflow 的任何一层 `env:`（含 `container.env`、`services.*.env`）都�
 | `.github/ci-workflow.lock` | 绊线 + 自测 3f 验锁是当前的 |
 | `scripts/ci/pr-scope.sh` | **扇入自己重判**（3g 手写钉死那一步） |
 | `scripts/ci/pr-scope.jq` | 同上 |
-| `scripts/ci/quality.sh` | 五条腿本身（闸不跑就是红，不是静默）+ 自测 1./2. |
+| `scripts/ci/quality.sh` | 自测 1./2. 手写的「闸 → 腿」清单（删闸、改名、换腿都红）※ |
 | `package.json` | 自测 3b 把 `quality` 那条 script 逐字钉死 |
 | `scripts/ci/ci-workflow-lock.sh` | 只被绊线的报错文案提到，workflow 不跑它；它写锁 |
 
 > **合同**：改这个集合里的任何一个文件，都会出现在 PR 的文件列表里；集合之外的东西，
 > 拦不住任何一道闸开跑。
+
+※ 一个必须写明的例外，而且它是本文下节那条自测递归、不是新洞：自测本身就是 `quality.sh`
+里的一条 gate，所以**把那一行 gate 从 `quality.sh` 里删掉，就等于把判官删掉**——绊线也接
+不住（它算的是 ci.yml 的指纹，不是 `quality.sh` 的）。接住它的只有 diff，而 `quality.sh`
+就在这张名单上。
 
 「点名」只有在名单是**完整的**时候才值钱，所以名单不是散文：自测 3h 会把 ci.yml 里每一段
 `run:` 提到的 `scripts/…` 路径扫出来，跟手写名单双向比对——ci.yml 里多调一个没人点过名的

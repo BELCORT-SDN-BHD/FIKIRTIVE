@@ -111,9 +111,14 @@
 #
 # Each half is held by something in this file, and by different things:
 #   - ci.yml and the lock, by 3e and 3f;
-#   - quality.sh and package.json, by 1./2. and by the package.json literal in 3b —
-#     and by the legs themselves, which go RED rather than quiet when they stop
-#     running their gates;
+#   - quality.sh and package.json, by the hand-written gate map in 1./2. (a gate
+#     deleted, renamed or moved to another leg is red there, because that list is
+#     written by hand and does not follow quality.sh around) and by the package.json
+#     literal in 3b. WITH ONE STANDING EXCEPTION, and it is the recursion stated
+#     above rather than a new hole: this file runs as one of quality.sh's own gates,
+#     so deleting THAT gate line is deleting the checker. The tripwire does not catch
+#     it either — it hashes ci.yml, not quality.sh. What catches it is the diff, in a
+#     file that is on this list;
 #   - the two pr-scope files, by 3g: since r11 the fan-in re-derives the docs-only
 #     answer in its OWN job, from the API, with a jq program written in ci.yml and no
 #     repository script involved. A lying pr-scope can still make the gates RUN when
