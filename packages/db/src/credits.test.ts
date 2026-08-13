@@ -1072,15 +1072,17 @@ describe("#524 × #898 — the spend cap governs new paid actions, never the con
     expect(withCap).toBe(40); // the cap changed nothing at all
   });
 
-  it("⑤ exactly-once and the never-negative balance survive the exemption", async () => {
+  it("⑤ exactly-once survives the exemption — a duplicate hold hits the unique key, not a second reserve", async () => {
     await setCap(ORG, 2);
-    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 30 } });
+    // Balance deliberately left well above the hold, so the SECOND attempt gets past the entry
+    // minimum and reaches the ledger — otherwise it would be refused for lack of credits and this
+    // would prove nothing about the unique key.
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 100 } });
 
     const first = await prisma.$transaction((tx) =>
       reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
     );
-    expect(first).toBe(30);
-    // A duplicate hold on the same refId is refused on the unique key, not doubled.
+    expect(first).toBe(40);
     await expect(
       prisma.$transaction((tx) =>
         reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
@@ -1088,12 +1090,24 @@ describe("#524 × #898 — the spend cap governs new paid actions, never the con
     ).rejects.toMatchObject({ code: "P2002" });
 
     const acc = await account(ORG);
-    expect(acc.balance).toBe(0);
-    expect(acc.reserved).toBe(30);
+    expect(acc.balance).toBe(60);
+    expect(acc.reserved).toBe(40);
     const rows = await ledger(ORG);
     expect(rows.filter((r) => r.kind === "RESERVE")).toHaveLength(1);
-    expect(sumBalance(rows)).toBe(-30);
-    expect(sumReserved(rows)).toBe(30);
+    expect(sumBalance(rows)).toBe(-40);
+    expect(sumReserved(rows)).toBe(40);
+  });
+
+  it("⑤ the balance can never go negative, cap set or not", async () => {
+    await setCap(ORG, 2);
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 30 } });
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(held).toBe(30); // the whole balance, and not one credit more
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(30);
   });
 
   it("⑤ concurrent turns under a cap: the account still never goes negative", async () => {
