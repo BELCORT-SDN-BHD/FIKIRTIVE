@@ -56,6 +56,10 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
      *  the picture itself (#604 · spec #599 D6). */
     onSendToOtto?: () => void;
+    /** What that press will do RIGHT NOW, resolved by FlowCanvas from the one place that knows
+     *  whether a conversation is open (#548). Handing cards over is the single canvas action that
+     *  still needs one, and the card says so before it is pressed — never only afterwards. */
+    sendToOttoTitle?: string;
     /** How many cards are picked on the board right now (#604 r2 P2②). Supplied by FlowCanvas. */
     selectedCount?: number;
     onRefresh?: () => void;
@@ -159,7 +163,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             type="button"
             aria-label="Send the picked cards to Otto"
             className="al-btn al-btn-glass al-btn-sm nodrag nopan"
-            title="Hand this to Otto as a reference"
+            title={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
           >

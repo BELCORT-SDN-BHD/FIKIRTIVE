@@ -22,6 +22,7 @@ export {
   canvasBatchFootprint,
   canvasBatchRects,
   canvasRectsOverlap,
+  freeCanvasRect,
   nextCanvasSpawnOrigin,
   nearestFreeCanvasSlot,
   type CanvasRect,
