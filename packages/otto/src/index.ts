@@ -60,7 +60,8 @@ export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";
 // authority shared by the human server actions (apps/web/lib/storyboard-actions.ts via the
 // re-export shim apps/web/lib/storyboard-edit.ts) and the editStoryboard skill (W-B3-C).
 export { applyEditShotPrompt, applyAddShot, applyDeleteShot, applyReorderShots, applySetContinuity } from "./storyboard-edit.js";
-export type { ShotPromptPatch, NewShotInput } from "./storyboard-edit.js";
+export { editStaleness } from "./storyboard-edit.js";
+export type { ShotPromptPatch, NewShotInput, EditStaleness } from "./storyboard-edit.js";
 export { editStoryboard, editStoryboardSkill } from "./skills/edit-storyboard.js";
 // storyboard-child-job — 「一张子卡背后那条作业此刻算不算在途」的**唯一**判定(#782 r15,
 // 判官 r14 P1)。与上面的纯变换同一条理由住在这里:编辑有三个执行器(人工 server action、

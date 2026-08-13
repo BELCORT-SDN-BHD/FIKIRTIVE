@@ -237,3 +237,131 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
     expect((await moneyTrail()).kinds).toEqual(["RESERVE", "REFUND"]);
   }, DB_CASE_TIMEOUT_MS);
 });
+
+// ---------------------------------------------------------------------------
+// ③ #782 r17(判官 r16 P1-2)—— 已经结算的作业不许被暂写成 FAILED
+// ---------------------------------------------------------------------------
+//
+// 判官钉出的五步时序:
+//   1. 原 worker 跑完提交事务 —— generationIds 落库、SETTLE 与它同一笔,钱已经收了;
+//   2. 但 DONE 还没写(提交与 DONE 之间隔着末帧落库、回执、attach 三个 await),行仍是 GENERATING;
+//   3. 一条**迟到的重投**进来。它在第 1 步之前就把行读进了内存,所以它手上的快照
+//      generationIds 还是空的 —— resume 那条路认不出这是一条已经交付的作业,于是它一路走到
+//      前置闸(项目没了 / 镜头没了);
+//   4. failClosedWithRefund 只看状态,不看产出,更不看 refundReservation 到底做了什么:
+//      它把行写成 **FAILED**,拿到 already-settled 也照样往下走,还发一句「你没有被扣钱」;
+//   5. 原 worker 随后无条件写回 DONE。
+//
+// 窗内那一段 FAILED 是**真的**:分镜的编辑闸读到 FAILED 就当这条作业死了(预扣已退、什么都
+// 没交付),于是放行删指针;而第 5 步的 DONE 不取卡锁,r15 的串行化管不到它。除此之外,窗内
+// 每一个界面都在对一个**钱已经收了**的商家说「你没有被扣钱」。
+//
+// 修法与 r13 第 4 扫逐字同形:翻转以 RefundOutcome 为条件。已结算 → 回滚翻转 + 大声报错;
+// refunded / already-refunded / no-reservation → 照翻。
+describe("#782 r17 已结算的作业:迟到的重投不许把它暂写成 FAILED", () => {
+  // 这一组要断言「那句话发没发」,所以必须有一条真的会话 —— 没有 threadId 的作业
+  // appendCoworkResult 直接返回,断言就成了空转。
+  let threadId: string;
+
+  /** 在前置闸问「项目还在吗」的**那一刻**插一段剧情,然后回「不在」。
+   *  Prisma 的委托返回的是自带 `.organization` 等属性的 thenable,替身只给 Promise 就够用,
+   *  所以这里把实现按调用签名收窄一次(唯一的 cast,收在这一个 helper 里)。 */
+  function stubProjectGoneOnce(before?: () => Promise<void>) {
+    return vi.spyOn(prisma.project, "findFirst").mockImplementationOnce((async () => {
+      if (before) await before();
+      return null;
+    }) as unknown as typeof prisma.project.findFirst);
+  }
+
+  beforeEach(async () => {
+    threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "Shot continuation" } });
+  }, DB_CASE_TIMEOUT_MS);
+
+  /**
+   * 第 1–3 步,逐拍照做。行以「重投手上那份快照」的样子起步(GENERATING、零产出),
+   * 而**原 worker 的提交事务**恰好落在重投读完行、还没走到前置闸的那一瞬 —— 用项目查询
+   * 这个前置闸自己的时刻把它插进去,时序因此是确定的,不靠赛跑。
+   */
+  async function seedLateRedeliveryOntoCommit(opts: { settle: boolean }) {
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId: orgId, projectId, threadId, prompt: "a clip", kind: "VIDEO", model: "seedance-2-mini", count: 1,
+        status: "GENERATING", generationIds: [], progress: 90, startedAt: new Date(),
+      },
+    });
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId, refId: jobId, cost: HOLD }));
+    // ← 第 1–2 步就发生在前置闸那一刻:提交事务把产出与结算一起落库,DONE 还没写。
+    return stubProjectGoneOnce(async () => {
+      if (!opts.settle) return;
+      await prisma.$transaction(async (tx) => {
+        await tx.genJob.updateMany({ where: { id: jobId, ownerId: orgId }, data: { generationIds: ["gen_committed"], spent: true } });
+        await settleCredits(tx, { orgId, refId: jobId });
+      });
+    });
+  }
+
+  it("提交事务已落 + 结算已收 → 迟到的重投绝不许写 FAILED(编辑闸会把 FAILED 当死作业)", async () => {
+    const spy = await seedLateRedeliveryOntoCommit({ settle: true });
+    try {
+      await handleGen({ genJobId: jobId }, 0); // 第 3–4 步
+    } finally {
+      spy.mockRestore();
+    }
+
+    const job = await jobRow();
+    expect(job.status, "已结算的作业被暂写成 FAILED —— 分镜编辑闸会把它读成死作业并放行删指针").not.toBe("FAILED");
+    const money = await moneyTrail();
+    expect(money.kinds, "钱被动了第二次").toEqual(["RESERVE", "SETTLE"]);
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("那一刻不许对商家说「你没有被扣钱」—— 因为扣了", async () => {
+    const spy = await seedLateRedeliveryOntoCommit({ settle: true });
+    try {
+      await handleGen({ genJobId: jobId }, 0);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const lies = await prisma.chatMessage.findMany({
+      where: { ownerId: orgId, genJobId: jobId, kind: "TURN_ERROR" },
+      select: { text: true },
+    });
+    expect(lies, "对一个已经付过钱的商家说了「你没有被扣钱」").toEqual([]);
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("反向锚:预扣还开着(钱真的退得掉)→ 前置闸照旧 FAILED + 退款 + 那句话,一格没松", async () => {
+    const spy = await seedLateRedeliveryOntoCommit({ settle: false });
+    try {
+      await handleGen({ genJobId: jobId }, 0);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect((await jobRow()).status).toBe("FAILED");
+    const money = await moneyTrail();
+    expect(money.kinds).toEqual(["RESERVE", "REFUND"]);
+    expect(money.balance).toBe(START);
+    expect(money.reserved).toBe(0);
+    const told = await prisma.chatMessage.count({ where: { ownerId: orgId, genJobId: jobId, kind: "TURN_ERROR" } });
+    expect(told, "钱真的退了,那句「你没有被扣钱」就该照发").toBe(1);
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("反向锚:从来没有预扣的历史行 → 照旧 FAILED(no-reservation 不是「已收钱」)", async () => {
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId: orgId, projectId, threadId, prompt: "a clip", kind: "VIDEO", model: "seedance-2-mini", count: 1,
+        status: "QUEUED", generationIds: [], progress: 0,
+      },
+    });
+    const spy = stubProjectGoneOnce();
+    try {
+      await handleGen({ genJobId: jobId }, 0);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect((await jobRow()).status).toBe("FAILED");
+    expect((await moneyTrail()).kinds).toEqual([]);
+  }, DB_CASE_TIMEOUT_MS);
+});

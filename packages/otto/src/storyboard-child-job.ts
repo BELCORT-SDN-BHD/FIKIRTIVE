@@ -18,6 +18,8 @@
  */
 import { Prisma } from "@fikirtive/db";
 import type { StoryboardCardPayload } from "./skills/propose-storyboard.helpers.js";
+// #782 r17(判官 r16 P1-1):「这次编辑真的作废了什么」只有一份答案 —— 闸与陈旧级联共用它。
+import { editStaleness, type ShotPromptPatch } from "./storyboard-edit.js";
 
 export type PrismaTx = Prisma.TransactionClient;
 
@@ -194,24 +196,28 @@ export const FRAME_IN_FLIGHT_EDIT_BLOCK =
  * 还没落到 payload 上(含 DONE-却指不出任何产出)也在途;FAILED/CANCELLED(预扣已退、什么都
  * 没交付)与产出已消费一律放行 —— 单镜救援、以及「看着成品说再做一个」两条路一格没少。
  *
- * 两格媒体各按**这次真的会被删的键**来问:视频两键每次编辑都删,所以每次都问;帧两键只在改
- * firstFramePrompt 时才删,所以只有那时才问 —— 别人的在途不该挡住一次与它无关的编辑。
+ * 两格媒体各按**这次真的会被删的键**来问 —— 而「真的会被删」这件事由 `editStaleness` 一家说了
+ * 算(#782 r17,判官 r16 P1-1)。这一点是承重的:真实 UI 保存时两句 prompt 无条件同发,若把
+ * 「字段出现」当「改了」,一次只改视频文字的编辑会去检查、并删掉一张与它无关的付费首帧。
+ * 闸问的那一格,必须与级联删的那一格逐字节是同一格 —— 所以两边读同一个函数,不各判各的。
  *
  * 调用方纪律:必须在**同一笔事务**里先取 `lockCardTx`、锁内重读父卡、再调它,最后写。判定与
- * 删指针分成两步跑,就等于给「作业在两步之间落账」留一个窗口。
+ * 删指针分成两步跑,就等于给「作业在两步之间落账」留一个窗口。传进来的 shot 必须是**锁内重读**
+ * 的那一份 —— 「改没改」是拿父卡当前值比出来的,比错了对象就等于没比。
  */
 export async function inFlightPointerBlock(
   tx: PrismaTx,
   ownerId: string,
   shot: StoryboardCardPayload["shots"][number],
-  frameStale: boolean,
+  patch: ShotPromptPatch,
 ): Promise<string | null> {
-  if (shot.videoCardId) {
+  const stale = editStaleness(shot, patch);
+  if (stale.video && shot.videoCardId) {
     const job = await childJobFor(tx, shot.videoCardId, ownerId);
     const produced = job?.status === "DONE" ? await firstGenerationIdOf(tx, job, ownerId) : null;
     if (isUnconsumedInFlight(job, produced, shot.videoGenerationId)) return VIDEO_IN_FLIGHT_EDIT_BLOCK;
   }
-  if (frameStale && shot.firstFrameCardId) {
+  if (stale.frame && shot.firstFrameCardId) {
     const job = await childJobFor(tx, shot.firstFrameCardId, ownerId);
     const produced = job?.status === "DONE" ? await firstGenerationIdOf(tx, job, ownerId) : null;
     if (isUnconsumedInFlight(job, produced, shot.firstFrameGenerationId)) return FRAME_IN_FLIGHT_EDIT_BLOCK;

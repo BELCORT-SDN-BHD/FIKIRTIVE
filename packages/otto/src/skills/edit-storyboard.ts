@@ -101,7 +101,11 @@ export async function executeEditStoryboard(
       if (!fresh?.payload) { out = { error: "Card not found." }; return; }
       const locked = fresh.payload as unknown as StoryboardCardPayload;
       if (index >= locked.shots.length) { out = { error: "That shot no longer exists." }; return; }
-      const blocked = await inFlightPointerBlock(tx, ctx.orgId, locked.shots[index]!, input.firstFramePrompt !== undefined);
+      const blocked = await inFlightPointerBlock(tx, ctx.orgId, locked.shots[index]!, {
+        firstFramePrompt: input.firstFramePrompt,
+        videoPrompt: input.videoPrompt,
+        durationSeconds: input.durationSeconds,
+      });
       if (blocked) { out = { error: blocked }; return; }
       const edited = applyEditShotPrompt(locked, index, {
         firstFramePrompt: input.firstFramePrompt,

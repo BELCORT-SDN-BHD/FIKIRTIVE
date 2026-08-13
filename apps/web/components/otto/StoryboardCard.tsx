@@ -209,6 +209,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   // a sync request already in the air has to see the new value the instant it changes, not on the
   // next render. Read only by runSyncOnce, through resolveSyncAnswer.
   const viewEpochRef = useRef(0);
+  // #782 r17 (judge r16 P2-1): the epoch answers "did the world change?", which says nothing about
+  // two syncs issued INSIDE one world — the timer, the mount reconcile and the merchant's own
+  // "Check for updates" overlap freely, and those overlapping requests share an epoch. This is the
+  // ticket each question takes on its way out; only the LAST one issued is allowed to answer.
+  const syncSeqRef = useRef(0);
 
   // Any structural edit + the spend flow are mutually exclusive (RMW race window).
   const editLocked = generating;
@@ -321,6 +326,8 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     // time; an edit that lands meanwhile makes the answer a description of a world that no
     // longer exists. resolveSyncAnswer is the one rule for whether it may still be applied.
     const askedAtEpoch = viewEpochRef.current;
+    syncSeqRef.current += 1;
+    const requestSeq = syncSeqRef.current;
     try {
       const res = await syncStoryboardMedia({ cardId });
       if ("error" in res) return false; // give up quietly on a sync error
@@ -331,7 +338,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       const derivedPending = hasPendingMedia(
         deriveShotMediaStates({ shots: nextView.shots, reports: res.shots, phase: "fast" }),
       );
-      const answer = resolveSyncAnswer({ askedAtEpoch, currentEpoch: viewEpochRef.current, derivedPending });
+      const answer = resolveSyncAnswer({
+        askedAtEpoch, currentEpoch: viewEpochRef.current,
+        requestSeq, latestSeq: syncSeqRef.current,
+        derivedPending,
+      });
       if (!answer.apply) return answer.stillPending; // stale → apply nothing, conclude nothing
       setView(nextView);
       setReports(res.shots);

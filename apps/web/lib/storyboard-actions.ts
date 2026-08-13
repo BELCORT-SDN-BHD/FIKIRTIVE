@@ -99,7 +99,7 @@ export async function editShotPrompt(raw: unknown): Promise<Ok | Err> {
       if (!fresh?.payload) { out = { error: "Card not found." }; return; }
       const cur = fresh.payload as unknown as StoryboardCardPayload;
       if (index >= cur.shots.length) { out = { error: "That shot no longer exists." }; return; }
-      const blocked = await inFlightPointerBlock(tx, ownerId, cur.shots[index]!, firstFramePrompt !== undefined);
+      const blocked = await inFlightPointerBlock(tx, ownerId, cur.shots[index]!, { firstFramePrompt, videoPrompt, durationSeconds });
       if (blocked) { out = { error: blocked }; return; }
       const next = applyEditShotPrompt(cur, index, { firstFramePrompt, videoPrompt, durationSeconds });
       await tx.chatMessage.update({

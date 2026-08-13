@@ -400,3 +400,166 @@ describe("#782 r15 editShotPrompt —— 在途付费作业面前,编辑必须�
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #782 r17(判官 r16 P1-1)—— 「传了这个字段」不等于「商家改了这句话」
+// ---------------------------------------------------------------------------
+//
+// 真实 UI 的形状(StoryboardCard.saveEdit):startEdit 把**当前**首帧文字装进 draftFf,保存时
+// 两句 prompt **无条件同发**。所以商家只改视频文字,服务端收到的 firstFramePrompt 也在 ——
+// 而 r15 的闸与陈旧级联都用「字段出现」当「帧文字改了」。后果分两级:
+//   • 帧作业在途 → 闸误拦一次与它无关的编辑(烦,但安全);
+//   • 帧**已付费已消费** → 级联把 firstFrameCardId / firstFrameGenerationId 删掉,那张付过钱
+//     的首帧对这一镜不可达,prepare 随后铸新子卡 = 新的 cowork: 幂等域 = **可以再收一次钱**。
+//
+// 修法:服务端自己比。客户端爱发什么发什么,「改没改」只以父卡当前值为准。
+describe("#782 r17 editShotPrompt —— 帧判定以「真的不同」为准,不以「字段在不在」为准", () => {
+  const VIDEO_BUSY = "That video is still being made — wait for it to finish, then edit this shot.";
+  const FRAME_BUSY = "That first frame is still being made — wait for it to finish, then edit this shot.";
+
+  /** s0:一张**已付费已消费**的首帧 + 一句视频文字。判官时序的起点。 */
+  function paidFrame(): StoryboardCardPayload {
+    return {
+      storyboardTitle: "Ad",
+      shots: [
+        {
+          shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", durationSeconds: 5,
+          firstFrameCardId: "fc0", firstFrameGenerationId: "gen0",
+        },
+        { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1" },
+      ],
+    };
+  }
+
+  function routeChatMessage(p: StoryboardCardPayload) {
+    mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+      const w = args.where;
+      if (w.kind === "STORYBOARD_CARD") return card(p);
+      if (w.kind === "GEN_CARD") return { genJobId: null };
+      return null;
+    });
+  }
+
+  /** 按 `cowork:<childCardId>` 分派作业行 —— 帧与视频各自的状态必须能分开摆。 */
+  function routeJobs(byChildCardId: Record<string, { status: string; generationIds: string[] } | null>) {
+    mockGenJobFindFirst.mockImplementation(async (args: { where: { idempotencyKey?: string } }) => {
+      const childId = (args.where.idempotencyKey ?? "").replace(/^cowork:/, "");
+      const j = byChildCardId[childId];
+      return j ? { id: `job-${childId}`, lastFrameAssetId: null, projectId: "p1", threadId: "t-1", ...j } : null;
+    });
+  }
+
+  it("真实 UI 形状(两句同发、帧文字原样)→ 已付费已消费的首帧必须留在这一镜上", async () => {
+    // 这是**钱**的那一条:帧的钱已经花了、产出已经落在 payload 上。商家只改了视频文字,
+    // 却把那张图的两个键一起删掉 = 它对这一镜永久不可达,prepare 会当作「这一镜没有首帧」
+    // 重新铸一张可扣费的子卡。
+    routeChatMessage(paidFrame());
+    mockGenJobFindFirst.mockResolvedValue(null);
+
+    const res = await editShotPrompt({
+      cardId: "card-1", index: 0,
+      firstFramePrompt: "ff0",      // 原样回发 —— UI 就是这么发的
+      videoPrompt: "v0 (new)",      // 真正改的只有这一句
+    });
+
+    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
+    expect(res.payload.shots[0].firstFrameCardId).toBe("fc0");
+    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen0");
+    // 视频那一格照旧作废(视频文字真的变了)。
+    expect(res.payload.shots[0].videoPrompt).toBe("v0 (new)");
+  });
+
+  it("真实 UI 形状 + 帧作业在途 → 不许误拦(这次编辑根本不碰帧两键)", async () => {
+    routeChatMessage(paidFrame());
+    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
+
+    const res = await editShotPrompt({
+      cardId: "card-1", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0 (new)",
+    });
+
+    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
+    expect(res.payload.shots[0].firstFrameCardId).toBe("fc0");
+  });
+
+  it("帧文字**真的**改了 + 帧作业在途 → 照旧拒绝(r15 的闸一格没松)", async () => {
+    routeChatMessage(paidFrame());
+    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
+
+    const res = await editShotPrompt({
+      cardId: "card-1", index: 0, firstFramePrompt: "ff0 (new)", videoPrompt: "v0",
+    });
+
+    expect(res).toEqual({ error: FRAME_BUSY });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("帧文字真的改了 → 帧两键与视频两键照旧一起作废(G 闸② 级联未变)", async () => {
+    const p = paidFrame();
+    p.shots[0].videoCardId = "vc0";
+    p.shots[0].videoGenerationId = "vg0";
+    routeChatMessage(p);
+    // 两条作业都已交付且产出都已落在 payload 上 → 都不在途,闸放行,只看级联。
+    routeJobs({ fc0: { status: "DONE", generationIds: ["gen0"] }, vc0: { status: "DONE", generationIds: ["vg0"] } });
+
+    const res = await editShotPrompt({
+      cardId: "card-1", index: 0, firstFramePrompt: "ff0 (new)", videoPrompt: "v0",
+    });
+
+    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
+    expect("firstFrameCardId" in res.payload.shots[0]).toBe(false);
+    expect("firstFrameGenerationId" in res.payload.shots[0]).toBe(false);
+    expect("videoCardId" in res.payload.shots[0]).toBe(false);
+    expect("videoGenerationId" in res.payload.shots[0]).toBe(false);
+  });
+
+  it("两句都原样回发(商家开了编辑又原样保存)→ 什么都不作废,什么都不拦", async () => {
+    const p = paidFrame();
+    p.shots[0].videoCardId = "vc0";
+    p.shots[0].videoGenerationId = "vg0";
+    routeChatMessage(p);
+    // 帧与视频两条作业都在途:真的会删的键一个都没有,所以一格都不该拦。
+    mockGenJobFindFirst.mockResolvedValue({ id: "j", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
+
+    const res = await editShotPrompt({
+      cardId: "card-1", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0",
+    });
+
+    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
+    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen0");
+    expect(res.payload.shots[0].videoCardId).toBe("vc0");
+    expect(res.payload.shots[0].videoGenerationId).toBe("vg0");
+  });
+
+  it("时长真的改了 → 只作废视频那一格;时长原样回发 → 一格不动", async () => {
+    const p = paidFrame();
+    p.shots[0].videoCardId = "vc0";
+    p.shots[0].videoGenerationId = "vg0";
+    routeChatMessage(p);
+    mockGenJobFindFirst.mockResolvedValue(null);
+
+    const changed = await editShotPrompt({ cardId: "card-1", index: 0, durationSeconds: 10 });
+    if (!("payload" in changed)) throw new Error("expected payload");
+    expect("videoCardId" in changed.payload.shots[0]).toBe(false);
+    expect(changed.payload.shots[0].firstFrameGenerationId).toBe("gen0");
+
+    routeChatMessage(p);
+    const same = await editShotPrompt({ cardId: "card-1", index: 0, durationSeconds: 5 });
+    if (!("payload" in same)) throw new Error("expected payload");
+    expect(same.payload.shots[0].videoCardId).toBe("vc0");
+    expect(same.payload.shots[0].videoGenerationId).toBe("vg0");
+  });
+
+  it("视频作业在途 + 视频文字真的改了 → 照旧拒绝(r15 的闸一格没松)", async () => {
+    const p = paidFrame();
+    p.shots[0].videoCardId = "vc0";
+    routeChatMessage(p);
+    mockGenJobFindFirst.mockResolvedValue({ id: "jv", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
+
+    const res = await editShotPrompt({
+      cardId: "card-1", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0 (new)",
+    });
+
+    expect(res).toEqual({ error: VIDEO_BUSY });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+});

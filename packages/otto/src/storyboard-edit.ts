@@ -33,8 +33,43 @@ function restamp(shots: Shot[]): Shot[] {
   return shots.map((s, index) => ({ ...s, index }));
 }
 
+/** 这次编辑**真的作废了什么**。 */
+export interface EditStaleness {
+  /** 首帧文字真的变了 → 已生成的首帧图过期。 */
+  frame: boolean;
+  /** 帧过期,或视频文字/时长真的变了 → 已生成的片子过期。 */
+  video: boolean;
+}
+
+/**
+ * #782 r17(判官 r16 P1-1)—— 判的是「**变了没有**」,不是「传了没有」。
+ *
+ * 判官钉出的形状:真实 UI(StoryboardCard.saveEdit)保存时把两句 prompt **无条件同发**,
+ * 而 startEdit 把当前首帧文字原样装进草稿。所以「商家只改了视频文字」这件事,到服务端长成
+ * 「firstFramePrompt 也在 patch 里」——旧写法 `patch.firstFramePrompt !== undefined` 于是把
+ * 它读成「帧文字改了」,把一张**已付费已消费**的首帧两键一起删掉。那张图从此对这一镜不可达,
+ * prepare 见「这一镜没有首帧」就铸一张新的可扣费子卡 = 新的 `cowork:` 幂等域 = 可以再收一次钱。
+ *
+ * 客户端爱发什么发什么;「改没改」只能由服务端拿**父卡当前值**自己比。这个函数就是那个比较,
+ * 而且是**唯一**的那个:陈旧级联(下面的 applyEditShotPrompt)与在途闸
+ * (storyboard-child-job.ts 的 inFlightPointerBlock)读的是同一份答案,不可能各判各的。
+ *
+ * 同一条规矩顺带治了视频那一格的同族问题:视频两键过去是「任何一次编辑都删」,于是一次原样
+ * 保存也会作废一条已付费的片子。现在它同样只在**真的**有东西变了时才过期。
+ */
+export function editStaleness(
+  shot: Pick<Shot, "firstFramePrompt" | "videoPrompt" | "durationSeconds">,
+  patch: ShotPromptPatch,
+): EditStaleness {
+  const frame = patch.firstFramePrompt !== undefined && patch.firstFramePrompt !== shot.firstFramePrompt;
+  const videoText = patch.videoPrompt !== undefined && patch.videoPrompt !== shot.videoPrompt;
+  const duration = patch.durationSeconds !== undefined && patch.durationSeconds !== shot.durationSeconds;
+  return { frame, video: frame || videoText || duration }; // 帧过期 ⇒ 视频过期(视频以首帧为源)
+}
+
 /** 改某镜头文字/时长 + 陈旧级联(视频以首帧为源)。越界 index → 原样返回。
  *  G 闸② 对 F3 无条件删帧行为的语义修正:改帧文字才作废首帧图;改视频文字/时长只作废视频。
+ *  #782 r17:「改」= 与父卡现值真的不同(见 editStaleness),不是「patch 里有这个键」。
  *  一律解构剔除键(不设 undefined),不 mutate 入参。 */
 export function applyEditShotPrompt(
   payload: StoryboardCardPayload,
@@ -42,18 +77,18 @@ export function applyEditShotPrompt(
   patch: ShotPromptPatch,
 ): StoryboardCardPayload {
   if (index < 0 || index >= payload.shots.length) return payload;
-  const frameStale = patch.firstFramePrompt !== undefined; // 帧过期 ⇒ 视频过期
+  const stale = editStaleness(payload.shots[index]!, patch);
   const shots = payload.shots.map((s, i) => {
     if (i !== index) return s;
-    // 视频两键始终作废(改帧/改视频文字/改时长都令旧视频过期)。
-    // 帧两键仅在 frameStale 时作废——editing video text/duration must not invalidate the paid frame.
-    const noVideo = { ...s };
-    delete noVideo.videoCardId;
-    delete noVideo.videoGenerationId;
-    const noFrame = { ...noVideo };
-    delete noFrame.firstFrameCardId;
-    delete noFrame.firstFrameGenerationId;
-    const rest = frameStale ? noFrame : noVideo;
+    const rest = { ...s };
+    if (stale.video) {
+      delete rest.videoCardId;
+      delete rest.videoGenerationId;
+    }
+    if (stale.frame) {
+      delete rest.firstFrameCardId;
+      delete rest.firstFrameGenerationId;
+    }
     return {
       ...rest,
       ...(patch.firstFramePrompt !== undefined ? { firstFramePrompt: patch.firstFramePrompt } : {}),

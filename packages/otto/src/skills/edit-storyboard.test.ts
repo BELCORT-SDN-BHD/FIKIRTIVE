@@ -457,3 +457,52 @@ describe("#782 r15 editShot —— 在途付费作业面前,Otto 的编辑同样
     expect(mockUpdate).toHaveBeenCalledTimes(1);
   });
 });
+
+// #782 r17(判官 r16 P1-1)—— Otto 那一面同样以「真的不同」为准
+describe("#782 r17 editShot —— 帧判定不看键在不在", () => {
+  function paidFrame(): StoryboardCardPayload {
+    return {
+      storyboardTitle: "Ad",
+      shots: [
+        { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", durationSeconds: 5, firstFrameCardId: "fc0", firstFrameGenerationId: "gen0" },
+        { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1" },
+      ],
+    };
+  }
+  function route(p: StoryboardCardPayload) {
+    mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+      const w = args.where;
+      if (w.kind === "STORYBOARD_CARD") return card(p);
+      if (w.kind === "GEN_CARD") return { genJobId: null };
+      return null;
+    });
+  }
+
+  it("帧文字原样回发 + 只改视频文字 → 已付费的帧留在这一镜上,且帧的在途不挡路", async () => {
+    route(paidFrame());
+    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0 (new)" },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ cardId: "card-1", shotCount: 2 });
+    const written = mockUpdate.mock.calls[0]![0] as { data: { payload: StoryboardCardPayload } };
+    expect(written.data.payload.shots[0]!.firstFrameCardId).toBe("fc0");
+    expect(written.data.payload.shots[0]!.firstFrameGenerationId).toBe("gen0");
+  });
+
+  it("帧文字真的改了 + 帧作业在途 → 照旧拒绝", async () => {
+    route(paidFrame());
+    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p", threadId: "t-1" });
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 0, firstFramePrompt: "NEW", videoPrompt: "v0" },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ error: "That first frame is still being made — wait for it to finish, then edit this shot." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+});

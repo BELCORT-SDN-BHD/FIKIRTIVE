@@ -588,25 +588,49 @@ describe("#782 r9 needsRefreshEntrance —— 铁律②:不再问了就必须给
 // ---------------------------------------------------------------------------
 describe("#782 r15 resolveSyncAnswer —— 迟到的旧答案", () => {
   it("问的时候和现在是同一个世界 → 套用,并按答案本身决定还要不要继续等", () => {
-    expect(resolveSyncAnswer({ askedAtEpoch: 3, currentEpoch: 3, derivedPending: true }))
+    expect(resolveSyncAnswer({ askedAtEpoch: 3, currentEpoch: 3, requestSeq: 7, latestSeq: 7, derivedPending: true }))
       .toEqual({ apply: true, stillPending: true });
-    expect(resolveSyncAnswer({ askedAtEpoch: 3, currentEpoch: 3, derivedPending: false }))
+    expect(resolveSyncAnswer({ askedAtEpoch: 3, currentEpoch: 3, requestSeq: 7, latestSeq: 7, derivedPending: false }))
       .toEqual({ apply: true, stillPending: false });
   });
 
   it("等答案期间落了一次编辑 → 整份丢掉(判官 r14 的乱序时序)", () => {
     // 时序:epoch 0 时发出 sync → 商家保存编辑,epoch 变 1 → 旧答复此刻才回来。
     // 它描述的是编辑之前那个世界,套用就是把商家刚改的字盖回旧值。
-    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 1, derivedPending: false }).apply).toBe(false);
+    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 1, requestSeq: 1, latestSeq: 1, derivedPending: false }).apply).toBe(false);
   });
 
   it("丢掉的答案不许用来下「没有事情在跑」的结论 —— 不知道要让看守继续", () => {
     // 旧答复说「都做完了」。若据它收工,新世界里真正在跑的那条作业就再也没人问了。
-    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 2, derivedPending: false }))
+    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 2, requestSeq: 1, latestSeq: 1, derivedPending: false }))
       .toEqual({ apply: false, stillPending: true });
   });
 
   it("版本号只要不相等就算旧(不假设单调、不做大小比较)", () => {
-    expect(resolveSyncAnswer({ askedAtEpoch: 5, currentEpoch: 4, derivedPending: true }).apply).toBe(false);
+    expect(resolveSyncAnswer({ askedAtEpoch: 5, currentEpoch: 4, requestSeq: 1, latestSeq: 1, derivedPending: true }).apply).toBe(false);
+  });
+});
+
+describe("#782 r17 resolveSyncAnswer —— 同一个世界里问了两次", () => {
+  it("这是最后发出的那一问 → 算数", () => {
+    expect(resolveSyncAnswer({ askedAtEpoch: 2, currentEpoch: 2, requestSeq: 9, latestSeq: 9, derivedPending: true }))
+      .toEqual({ apply: true, stillPending: true });
+  });
+
+  it("后面又问过了(先发后回)→ 整份丢掉,哪怕世界一格没变(判官 r16 P2-1)", () => {
+    // 判官钉的时序:定时轮询与手动刷新重叠,两问共用一个 epoch;第 2 问先回来落了地,
+    // 第 1 问才回来 —— 旧答案会把新状态盖回去。
+    expect(resolveSyncAnswer({ askedAtEpoch: 2, currentEpoch: 2, requestSeq: 1, latestSeq: 2, derivedPending: false }))
+      .toEqual({ apply: false, stillPending: true });
+  });
+
+  it("被后来者作废的答案同样不许用来收工 —— 由那份算数的答复收口", () => {
+    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 0, requestSeq: 4, latestSeq: 6, derivedPending: false }).stillPending).toBe(true);
+  });
+
+  it("两道核对是**并列**的:世界变了、或者不是最后一问,任一成立即作废", () => {
+    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 1, requestSeq: 3, latestSeq: 3, derivedPending: true }).apply).toBe(false);
+    expect(resolveSyncAnswer({ askedAtEpoch: 1, currentEpoch: 1, requestSeq: 2, latestSeq: 3, derivedPending: true }).apply).toBe(false);
+    expect(resolveSyncAnswer({ askedAtEpoch: 1, currentEpoch: 1, requestSeq: 3, latestSeq: 3, derivedPending: true }).apply).toBe(true);
   });
 });

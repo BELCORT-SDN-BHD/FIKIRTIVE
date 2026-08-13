@@ -460,26 +460,63 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
 
 /** Terminal-fail a job that NEVER delivered AND release its credit hold, atomically.
  *  Used by every pre-commit fail-closed branch (no outputs recorded) so a merchant is
- *  never charged for a generation they didn't receive. refundReservation is idempotent
- *  and no-ops when there's no open reservation (a historical/pre-credits job) or the
- *  job was already settled — so this is always safe to call.
+ *  never charged for a generation they didn't receive.
  *
  *  CONDITIONAL: `count === 0` means someone else already ended this job (a cancel, the reaper, a
  *  concurrent delivery). They wrote the truth and did their own money and messaging; this path
  *  says nothing further — but it still settles the board, so the card learns whatever ending did
- *  land. */
+ *  land.
+ *
+ *  #782 r17(判官 r16 P1-2)—— **翻转以钱为条件**,与第 4 扫的自愈逐字同形。
+ *
+ *  每个调用点都是「花钱之前」的闸,所以它们全都相信「这一单还什么都没交付」。那个前提是
+ *  **调用方内存里那份快照**说的,不是这一刻的库说的:一条迟到的重投可以在提交事务落库之前
+ *  把行读进内存(generationIds 还是空的,于是 resume 那条路认不出它),然后一路走到这里 ——
+ *  而此时原 worker 的提交事务已经落定(产出 + SETTLE 同一笔),DONE 却还没写,行仍是
+ *  GENERATING。旧写法只看状态:它把一条**已经收了钱、也已经交付了**的作业写成 FAILED,
+ *  拿到 already-settled 也照走,还发一句「你没有被扣钱」。原 worker 随后把 DONE 写回去。
+ *
+ *  那一段 FAILED 不是无害的中间态:FAILED 与 CANCELLED 在整个产品里只承诺一件事 ——
+ *  「你没有被扣钱」(不变量见 apps/web/lib/storyboard-gate1-actions.ts 的 JOB_DEAD_STATUSES)。
+ *  分镜的编辑闸就是照这句话放行的:读到 FAILED 即视作「预扣已退、什么都没交付」,于是删掉
+ *  指针 —— 而第 5 步那个写回 DONE 的 update 不取卡锁,#782 r15 的串行化管不到它。
+ *
+ *  所以这里问 refundReservation **到底做了什么**(#858 的四态答复),只在商家确实没有出钱时
+ *  才保留翻转:
+ *    • refunded / already-refunded / no-reservation —— 那句话是真的,照翻。
+ *    • already-settled —— 钱**收了**。翻转整笔回滚(行留在 GENERATING,让原 worker 的 DONE
+ *      按它本来的样子落地),一个字都不对商家说,并大声报错。这里不是决定「要不要把钱还
+ *      回去」的地方 —— 那是一笔已经正确收下的钱。
+ *
+ *  产出那一格也一并复核:`generationIds` 非空 ⟺ 提交事务落过(它与 SETTLE 同一笔),这样的
+ *  行永远不是「什么都没交付」。谓词写进 where,于是「已交付的作业不许被这条路终结」不再靠
+ *  调用点自觉,而是条件写自己保证。 */
+const SETTLED_PRE_SPEND_FAIL = new Error("pre-spend fail-close but the charge is already settled");
+
 async function failClosedWithRefund(
   job: { id: string; ownerId: string; threadId: string | null; kind: string; model: string },
   error: string,
 ): Promise<void> {
-  const ended = await prisma.$transaction(async (tx) => {
-    const { count } = await tx.genJob.updateMany({
-      where: { id: job.id, ownerId: job.ownerId, status: { in: [...GEN_IN_FLIGHT_STATUSES] } },
-      data: { status: "FAILED", error, finishedAt: new Date() },
+  let ended = false;
+  try {
+    ended = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.genJob.updateMany({
+        where: {
+          id: job.id, ownerId: job.ownerId, status: { in: [...GEN_IN_FLIGHT_STATUSES] },
+          // committed ⟹ delivered-and-settled — never terminable by a pre-spend gate.
+          generationIds: { isEmpty: true },
+        },
+        data: { status: "FAILED", error, finishedAt: new Date() },
+      });
+      if (count === 0) return false;
+      const outcome = await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
+      if (outcome === "already-settled") throw SETTLED_PRE_SPEND_FAIL; // roll the flip back
+      return true;
     });
-    if (count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
-    return count > 0;
-  });
+  } catch (e) {
+    if (e !== SETTLED_PRE_SPEND_FAIL) throw e;
+    console.error(`[gen] ${job.id}: a pre-spend gate wanted to fail this job closed, but the charge is already SETTLED — the delivery beat us to it. Left in flight on purpose: FAILED would promise a refund that never happened, and the storyboard edit gate reads FAILED as "dead, safe to unlink". Reason was: ${error}`);
+  }
   // Tell the cowork UI the turn is over (idempotent via the genJobId unique index).
   // Without a terminal message the client polls forever on a stuck "making this…".
   // Generic, reassuring text; the specific reason stays in GenJob.error for ops.

@@ -19,6 +19,8 @@
  * head(4ded10a4)上并如实变红,红的是断言,不是模块解析。
  */
 import { createElement, act, type ReactElement } from "react";
+// #782 r17(判官 r16 P1-1):编辑替身必须跑**真的**编辑语义,不能凭空造一个 payload。
+import { applyEditShotPrompt, type StoryboardCardPayload } from "@fikirtive/otto";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -995,13 +997,25 @@ describe("#782 r13 (判官 r12 P2-F2) 编辑成功之后,旧的 sync 回答不�
       payload,
       shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") }],
     });
-    mocks.editShotPrompt.mockImplementation(async () => {
+    // #782 r17(判官 r16 P1-1)—— 这个替身过去**凭空**返回一个手写的 payload,只断言「调用了
+    // 一次」。于是「真实 UI 到底发了什么」从来没有人看:它两句 prompt 无条件同发,而当时的
+    // 服务端把「firstFramePrompt 出现」读成「帧文字改了」,会把一张已付费的首帧一起作废 ——
+    // 这份测试对此完全看不见。现在替身**拿真的参数跑真的纯变换**:UI 发错了什么、服务端因此
+    // 会作废什么,都会如实塌在这里。
+    let sentArgs: Record<string, unknown> | null = null;
+    mocks.editShotPrompt.mockImplementation(async (args: { index: number; firstFramePrompt?: string; videoPrompt?: string; durationSeconds?: number }) => {
+      sentArgs = args as unknown as Record<string, unknown>;
+      const next = applyEditShotPrompt(payload as StoryboardCardPayload, args.index, {
+        firstFramePrompt: args.firstFramePrompt,
+        videoPrompt: args.videoPrompt,
+        durationSeconds: args.durationSeconds,
+      });
       // 编辑落地之后服务端不再有这一格 —— 连回答里都没有了。
       mocks.syncStoryboardMedia.mockResolvedValue({
-        payload: edited,
+        payload: next,
         shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: absent }],
       });
-      return { payload: edited };
+      return { payload: next };
     });
 
     const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
@@ -1016,6 +1030,10 @@ describe("#782 r13 (判官 r12 P2-F2) 编辑成功之后,旧的 sync 回答不�
     await act(async () => { await Promise.resolve(); });
 
     expect(mocks.editShotPrompt).toHaveBeenCalledTimes(1);
+    // 真实参数(判官 r16 P1-1):卡面两句 prompt 同发,而首帧那一句是**原样**回发的。
+    expect(sentArgs).toEqual({ cardId: "sb_1", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0 (new)" });
+    // 服务端对这组参数的真实答复:视频作废(真的改了),已付费的首帧原封不动(根本没改)。
+    await expect(mocks.editShotPrompt.mock.results[0]!.value).resolves.toEqual({ payload: edited });
     expect(
       dom.querySelector("video"),
       "编辑删掉的片子被上一次 sync 的回答复活了 —— 而 landed 不触发任何刷新入口,这个假状态会一直留着",
@@ -1083,5 +1101,64 @@ describe("#782 r13 卡面文案:真渲染", () => {
     const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: p, balanceUsd: 10 }));
     await clickByText(dom, "Remake video");
     expect(text(dom)).toContain("This won’t change the first frame of any shot that already has one.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r17(判官 r16 P2-1)—— 同一个 epoch 里的两次 sync,也必须只有最新那一份算数
+// ---------------------------------------------------------------------------
+//
+// r15 的 epoch 只在**本地落定一次写**(编辑成功、父卡换 payload)时 +1。可两次 sync 之间根本
+// 没有写:定时轮询、挂载 reconcile、商家点「Check for updates」三条路会重叠,重叠的两次请求
+// 拿到的是**同一个** epoch。于是先发后回的那一份照样通过版本核对,把后发先回的新答案盖掉 ——
+// 商家看到刚刚出现的片子又消失,或者一个已经死掉的作业重新转起来。
+//
+// 修法:每次发问带一个递增的请求号,只有**最新发出**的那一问的答复算数。
+describe("#782 r17 (判官 r16 P2-1) 同 epoch 的两次 sync:后发先回之后,先发的旧答复不许生效", () => {
+  const shot = {
+    shotId: "s0",
+    index: 0,
+    title: "Hero",
+    firstFramePrompt: "ff-0",
+    videoPrompt: "v-0",
+    firstFrameCardId: "child_0",
+    firstFrameGenerationId: "gen_0",
+    videoCardId: "vchild_0",
+  };
+  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+  const landedPayload = { ...payload, shots: [{ ...shot, videoGenerationId: "vgen_0" }] };
+
+  it("旧答复(片子还在跑)迟到 → 不许盖掉新答复(片子已经落地)", async () => {
+    // 两次问答的信号灯:第一问停在门口,第二问直接放行 —— 于是「后发先回」是确定的,不靠赛跑。
+    let releaseFirst: (() => void) | null = null;
+    let call = 0;
+    mocks.syncStoryboardMedia.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) {
+        // 挂载那一问:服务端此刻的真话是「还在跑」。它会被卡在路上。
+        await new Promise<void>((resolve) => { releaseFirst = resolve; });
+        return { payload, shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: slot({ kind: "generating" }) }] };
+      }
+      // 第二问:片子这一刻落地了。它先回来。
+      return { payload: landedPayload, shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") }] };
+    });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
+    expect(call, "挂载没有发出第一问 —— 这条时序需要它").toBe(1);
+
+    // 商家自己按了「Check for updates」:第二问发出、并且先回来。
+    await clickByText(dom, "Check for updates");
+    expect(call).toBe(2);
+    expect(dom.querySelector("video")?.getAttribute("src"), "第二问的新答案没有落到屏幕上").toBe("/media/vgen_0.mp4");
+
+    // 现在第一问才回来。它描述的是**更早**的世界。
+    await act(async () => { releaseFirst!(); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(
+      dom.querySelector("video"),
+      "迟到的旧答复把已经落地的片子盖回「生成中」—— 商家眼睁睁看着刚出来的东西又不见了",
+    ).toBeTruthy();
+    expect(text(dom)).not.toContain("Generating video");
   });
 });

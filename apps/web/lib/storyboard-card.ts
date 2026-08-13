@@ -349,16 +349,29 @@ export function hasPendingMedia(states: readonly ShotMediaStates[]): boolean {
  * epoch 就是「世界的版本号」:每次本地落定一次写(编辑成功、父卡换 payload)就 +1。问之前
  * 记下当时的版本,答复回来先对一次版本号,不一致就整份丢掉。
  *
- * 第二条同样重要:丢掉的那一份**不许拿来下结论**。「还有没有事情在跑」是轮询要不要继续的
- * 唯一判据,而我们此刻并没有一份属于当前世界的答案 —— 「不知道」必须让看守继续问,而不是
- * 让它关掉。所以 stale 一律回 stillPending:true,由下一次(问的是新世界的)答复来收口。
+ * #782 r17(判官 r16 P2-1)—— 版本号只管「世界变了」,管不住「同一个世界里问了两次」。
+ * 两次 sync 之间根本没有任何写:定时轮询、挂载 reconcile、商家点「Check for updates」这三条
+ * 路会重叠,重叠的两问拿到的是**同一个** epoch。于是先发后回的那一份照样通过版本核对,把
+ * 后发先回的新答案盖掉 —— 商家看着刚落地的片子又变回「生成中」。
+ *
+ * 所以再带一个**请求号**:每发一问 +1,只有**最新发出**的那一问的答复算数。它与版本号答的
+ * 是两个不同的问题(「世界还是那个世界吗」/「这还是我最后问的那一句吗」),两个都必须成立。
+ *
+ * 第三条同样重要:丢掉的那一份**不许拿来下结论**。「还有没有事情在跑」是轮询要不要继续的
+ * 唯一判据,而我们此刻并没有一份算数的答案 —— 「不知道」必须让看守继续问,而不是让它关掉。
+ * 所以两种作废一律回 stillPending:true,由那份算数的答复来收口。
  */
 export function resolveSyncAnswer(args: {
   askedAtEpoch: number;
   currentEpoch: number;
+  /** 这一问发出时领到的号。 */
+  requestSeq: number;
+  /** 此刻**最后**发出的那一问的号。 */
+  latestSeq: number;
   derivedPending: boolean;
 }): { apply: boolean; stillPending: boolean } {
   if (args.askedAtEpoch !== args.currentEpoch) return { apply: false, stillPending: true };
+  if (args.requestSeq !== args.latestSeq) return { apply: false, stillPending: true };
   return { apply: true, stillPending: args.derivedPending };
 }
 
