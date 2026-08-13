@@ -39,6 +39,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
 import { outOfCreditsMessage } from "./credit-format";
+import { consumeGenerationGate } from "./rate-limit-gates";
 // #744 判官 r2 P1 —— 撤销与扣费共用的那把 campaign 锁。它必须由**提交扣费的这笔事务**持有,
 // 所以它进到下面的 money transaction 里,而不是包在 startGen 外面(包在外面的话,外层超时先
 // 放锁、内层稍后才提交,撤销就能插进中间,落成「已撤销且已扣费」)。
@@ -365,6 +366,18 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
+  // #795 — the generation gate, per tenant, per hour. It sits HERE on purpose: after the caller
+  // is known (so it counts a tenant and not a shared office address) and before anything is
+  // created, reserved or dispatched (so a refusal costs nothing and charges nothing).
+  //
+  // It is NOT a spend cap — credits are, and they stay the money authority. What credits do not
+  // bound is how many jobs, rows and queue messages a stuck client loop can create on its way to
+  // running out. See GENERATION_PER_TENANT_PER_HOUR for why the number is what it is.
+  if (!(await consumeGenerationGate(ownerId))) {
+    // Honest about the wait: the window is an hour, so "a few minutes" would be a promise this
+    // cannot keep. It says what happened and that it clears on its own.
+    return { error: "You've started a lot of generations in the last hour. Try again a little later." };
+  }
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<StartGenResult> => {
     const OWNED = { ownerId, deletedAt: null } as const;
