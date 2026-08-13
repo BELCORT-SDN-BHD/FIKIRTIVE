@@ -339,6 +339,30 @@ export function hasPendingMedia(states: readonly ShotMediaStates[]): boolean {
 }
 
 /**
+ * #782 r15(判官 r14 P2-N1)—— 一次 sync 的答案,只对**它被问的时候**那个世界有效。
+ *
+ * syncStoryboardMedia 在事务外解析媒体地址,所以一次请求可以在网络上待很久;卡面拿回来时
+ * 无条件套用。判官钉出的时序:慢的那一次 sync 还在路上,商家保存了一次编辑(payload 变了、
+ * 上一份答复被主动丢弃),然后那份**描述编辑之前那个世界**的旧答复回来,把编辑后的状态整个
+ * 盖回去 —— 商家看见自己刚改的字又变回了旧的。
+ *
+ * epoch 就是「世界的版本号」:每次本地落定一次写(编辑成功、父卡换 payload)就 +1。问之前
+ * 记下当时的版本,答复回来先对一次版本号,不一致就整份丢掉。
+ *
+ * 第二条同样重要:丢掉的那一份**不许拿来下结论**。「还有没有事情在跑」是轮询要不要继续的
+ * 唯一判据,而我们此刻并没有一份属于当前世界的答案 —— 「不知道」必须让看守继续问,而不是
+ * 让它关掉。所以 stale 一律回 stillPending:true,由下一次(问的是新世界的)答复来收口。
+ */
+export function resolveSyncAnswer(args: {
+  askedAtEpoch: number;
+  currentEpoch: number;
+  derivedPending: boolean;
+}): { apply: boolean; stillPending: boolean } {
+  if (args.askedAtEpoch !== args.currentEpoch) return { apply: false, stillPending: true };
+  return { apply: true, stillPending: args.derivedPending };
+}
+
+/**
  * 要不要给商家一个「自己再查一次」的入口(铁律②)。同一条判据也回答挂载那一问:
  * **有没有什么值得问服务端的**(那时 polling=false、本地一格答复都没有)。
  *

@@ -11,6 +11,7 @@ import {
   deriveShotMediaStates,
   ownedMedia,
   hasPendingMedia,
+  resolveSyncAnswer,
   needsRefreshEntrance,
   assertNever,
   nextSyncPhase,
@@ -203,6 +204,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const [reports, setReports] = useState<ShotMediaSyncReport[] | null>(null);
 
   const pollTriesRef = useRef(0);
+  // #782 r15 (judge r14 P2-N1): the version of the world this card is showing. Bumped the moment
+  // a local write lands (a saved edit, a wholesale payload injection) — a ref, not state, because
+  // a sync request already in the air has to see the new value the instant it changes, not on the
+  // next render. Read only by runSyncOnce, through resolveSyncAnswer.
+  const viewEpochRef = useRef(0);
 
   // Any structural edit + the spend flow are mutually exclusive (RMW race window).
   const editLocked = generating;
@@ -214,6 +220,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     try {
       const res = await fn();
       if ("error" in res) { setError(res.error); return false; }
+      // #782 r15 (judge r14 P2-N1): the world changed HERE. Bump before the new state goes in, so
+      // any sync already in the air is stale from this instant on and cannot paint over it.
+      viewEpochRef.current += 1;
       setView(parseStoryboardCardPayload(res.payload));
       // A structural or prompt/duration edit shifts indices AND may clear a shot's frame/video
       // server-side (staleness cascade). Discard any prepared children so a confirm can't spend
@@ -293,6 +302,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   useEffect(() => {
     if (prevPayloadRef.current === payload) return;
     prevPayloadRef.current = payload;
+    // #782 r15 (judge r14 P2-N1): a wholesale payload swap is a world change too — an answer
+    // asked against the old one describes different shots, so it must not be applied either.
+    viewEpochRef.current += 1;
     resetPrepared();
     // #782 r4: a wholesale payload swap can bring different shots — what the server told us
     // describes the old set. Back to "haven't asked yet", not a guess.
@@ -303,18 +315,27 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     // returns true if the SERVER says something is still queued or generating — the one rule
     // for whether the watch goes on. A replacement in flight IS a live job, so it keeps the
     // watch alive by itself; r10's P1 was that it did not, because it lived outside this answer.
+    //
+    // #782 r15 (judge r14 P2-N1): note WHICH world we are asking about, before we ask. sync
+    // resolves media urls outside its transaction, so a request can stay in the air for a long
+    // time; an edit that lands meanwhile makes the answer a description of a world that no
+    // longer exists. resolveSyncAnswer is the one rule for whether it may still be applied.
+    const askedAtEpoch = viewEpochRef.current;
     try {
       const res = await syncStoryboardMedia({ cardId });
       if ("error" in res) return false; // give up quietly on a sync error
       const nextView = parseStoryboardCardPayload(res.payload);
-      setView(nextView);
-      setReports(res.shots);
       // The answer we just got is FRESH, so pendingness is derived at phase "fast" no matter what
       // gear (or none) we were in when we asked — a manual refresh out of "exhausted" must be able
       // to find live work and restart the watch.
-      return hasPendingMedia(
+      const derivedPending = hasPendingMedia(
         deriveShotMediaStates({ shots: nextView.shots, reports: res.shots, phase: "fast" }),
       );
+      const answer = resolveSyncAnswer({ askedAtEpoch, currentEpoch: viewEpochRef.current, derivedPending });
+      if (!answer.apply) return answer.stillPending; // stale → apply nothing, conclude nothing
+      setView(nextView);
+      setReports(res.shots);
+      return answer.stillPending;
     } catch {
       return false;
     }

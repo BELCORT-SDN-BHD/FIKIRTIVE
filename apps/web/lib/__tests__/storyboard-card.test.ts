@@ -7,6 +7,7 @@ import {
   ownedMedia,
   hasPendingMedia,
   needsRefreshEntrance,
+  resolveSyncAnswer,
   parseStoryboardCardPayload,
   MAX_STORYBOARD_SHOTS,
   type ShotMediaReport,
@@ -579,5 +580,33 @@ describe("#782 r9 needsRefreshEntrance —— 铁律②:不再问了就必须给
 
   it("有内容 / 有单镜入口的终态 → 不需要这条通用入口", () => {
     expect(needsRefreshEntrance(states({ kind: "landed", generationId: "g", url: "/f.png" }, { kind: "dead" }), false)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #782 r15(判官 r14 P2-N1)—— 乱序返回不许盖掉编辑后的状态
+// ---------------------------------------------------------------------------
+describe("#782 r15 resolveSyncAnswer —— 迟到的旧答案", () => {
+  it("问的时候和现在是同一个世界 → 套用,并按答案本身决定还要不要继续等", () => {
+    expect(resolveSyncAnswer({ askedAtEpoch: 3, currentEpoch: 3, derivedPending: true }))
+      .toEqual({ apply: true, stillPending: true });
+    expect(resolveSyncAnswer({ askedAtEpoch: 3, currentEpoch: 3, derivedPending: false }))
+      .toEqual({ apply: true, stillPending: false });
+  });
+
+  it("等答案期间落了一次编辑 → 整份丢掉(判官 r14 的乱序时序)", () => {
+    // 时序:epoch 0 时发出 sync → 商家保存编辑,epoch 变 1 → 旧答复此刻才回来。
+    // 它描述的是编辑之前那个世界,套用就是把商家刚改的字盖回旧值。
+    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 1, derivedPending: false }).apply).toBe(false);
+  });
+
+  it("丢掉的答案不许用来下「没有事情在跑」的结论 —— 不知道要让看守继续", () => {
+    // 旧答复说「都做完了」。若据它收工,新世界里真正在跑的那条作业就再也没人问了。
+    expect(resolveSyncAnswer({ askedAtEpoch: 0, currentEpoch: 2, derivedPending: false }))
+      .toEqual({ apply: false, stillPending: true });
+  });
+
+  it("版本号只要不相等就算旧(不假设单调、不做大小比较)", () => {
+    expect(resolveSyncAnswer({ askedAtEpoch: 5, currentEpoch: 4, derivedPending: true }).apply).toBe(false);
   });
 });
