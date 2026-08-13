@@ -835,6 +835,21 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Error monitoring. Everything is a no-op when unset.",
   },
   {
+    name: "NEXT_PUBLIC_SENTRY_DSN",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "url",
+    // 不是密钥——Sentry DSN 本来就设计成公开值,而且 Next 会在构建时把它逐字内联进
+    // 浏览器包,写进 dist 里任何人都能看见。这与它同族的 SENTRY_DSN(服务端,secret: false)
+    // 口径一致,只是多一层「本来就打算公开」的性质。
+    secret: false,
+    // 刻意 NOT shared:这条只喂 apps/web/instrumentation-client.ts,浏览器专用,worker
+    // 从不读它;算进指纹只会制造一条两边永远对不上的假警报。
+    shared: false,
+    summary: "Browser-side error monitoring. Next.js inlines this literally into the client bundle at build time, so it is not a secret. No-op (Sentry.init never runs) when unset, same convention as SENTRY_DSN.",
+  },
+  {
     name: "BYTEPLUS_RESOURCE_PACK_USD",
     surface: "web",
     readBy: "code",
