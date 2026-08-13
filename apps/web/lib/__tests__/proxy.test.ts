@@ -158,3 +158,48 @@ describe("proxy — the northstar prefix is back inside the login wall (#606)", 
     expect(matcherRuns("/api/better-auth/callback/google")).toBe(false);
   });
 });
+
+// #793: the dead-letter probe is pulled by an external uptime service, which has no session.
+// It answers clear/backed-up/unknown and nothing else, so it joins /api/health outside the wall —
+// and the exemption must not quietly become "everything under /api/ops is public".
+describe("proxy — dead-letter probe (/api/ops/dlq)", () => {
+  it("the matcher does NOT run the auth wall for /api/ops/dlq (the uptime probe has no session)", () => {
+    expect(matcherRuns("/api/ops/dlq")).toBe(false);
+    // Next normalizes the trailing slash away, but a monitor URL may still carry one.
+    expect(matcherRuns("/api/ops/dlq/")).toBe(false);
+  });
+
+  it("does not open /api/ops as a public prefix", () => {
+    expect(matcherRuns("/api/ops")).toBe(true);
+    expect(matcherRuns("/api/ops/queues")).toBe(true);
+    expect(matcherRuns("/api/ops/tenants")).toBe(true);
+  });
+
+  /**
+   * r2 (judge r1 P1): the exemption used to be an UNBOUNDED PREFIX. `/api/ops/dlqx`,
+   * `/api/ops/dlq-admin` and `/api/ops/dlq/tenants` all skipped the wall — they 404 today,
+   * so nothing leaked, but the next route whose name merely starts the same way would have
+   * shipped public with no one deciding that. The exemption is now the exact path.
+   */
+  it.each([
+    "/api/ops/dlqx",
+    "/api/ops/dlq-admin",
+    "/api/ops/dlq2",
+    "/api/ops/dlq/tenants",
+    "/api/ops/dlq/purge",
+  ])("runs the auth wall for %s — the exemption is one path, not a prefix", (path) => {
+    expect(matcherRuns(path)).toBe(true);
+  });
+
+  it("a session-less request to a same-prefix path still redirects to /login", async () => {
+    const res = await proxy(req("/api/ops/dlq-admin"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+
+  it("a session-less request to a sibling ops path still redirects to /login", async () => {
+    const res = await proxy(req("/api/ops/queues"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+});

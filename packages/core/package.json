@@ -32,6 +32,10 @@
       "types": "./dist/cowork-directives.d.ts",
       "default": "./dist/cowork-directives.js"
     },
+    "./env-contract": {
+      "types": "./dist/env-contract.d.ts",
+      "default": "./dist/env-contract.js"
+    },
     "./gen": {
       "types": "./dist/gen.d.ts",
       "default": "./dist/gen.js"
@@ -39,6 +43,10 @@
     "./gen-failure": {
       "types": "./dist/gen-failure.d.ts",
       "default": "./dist/gen-failure.js"
+    },
+    "./messaging-status": {
+      "types": "./dist/messaging-status.d.ts",
+      "default": "./dist/messaging-status.js"
     },
     "./memory-sections": {
       "types": "./dist/memory-sections.d.ts",

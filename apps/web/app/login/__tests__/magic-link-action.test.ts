@@ -31,9 +31,9 @@ const INVALID = {
   message: "Enter a valid email address.",
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   queued.length = 0;
-  __resetMagicLinkThrottleForTests();
+  await __resetMagicLinkThrottleForTests();
   mockHeaders.mockReset();
   mockHeaders.mockResolvedValue(new Headers({ "x-forwarded-for": "203.0.113.10" }));
 });

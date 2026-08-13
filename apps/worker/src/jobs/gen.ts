@@ -33,12 +33,75 @@ import {
   type GenJobData,
   type GenModel,
   type GenVideoModel,
+  type GenerationReceipt,
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
+
+/**
+ * #776 —— 这一单**引擎自报的真实计费量**,或者 null = 未知。
+ *
+ * 全报了才求和。**少一个就整单未知**,这是刻意的:图片一单是 count 次付费调用,一次没报
+ * 就把剩下几次加起来,得到的是一个**偏低**的成本,而它会挨着 spentUsd 躺在同一行上,看起
+ * 来像一个可以拿去对账的数。低估成本的假数字比空着危险得多 —— 毛利地板正是靠这类数守的。
+ *
+ * 单位是引擎自己的口径(图 = 张,视频 = token),由同一行的 kind 决定。
+ * 纯函数,不读库、不参与任何 spend 判定。
+ */
+function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {
+  if (outputs.length === 0) return null;
+  let total = 0;
+  for (const o of outputs) {
+    const units = o.receipt?.billedUnits;
+    if (typeof units !== "number") return null; // 有一个没报 ⇒ 整单未知
+    total += units;
+  }
+  return total;
+}
+
+/**
+ * #776 —— 回执落库:**在钱的事务之外**,尽最大努力,永不抛。
+ *
+ * r1 把这两列写在 commit 事务**里面**(跟着 Generation.create 和 spent/spentUsd/settle 一起)。
+ * 那样写的代价在判官那一轮被指出来,而它是真的:回执是**记账**,却因此有了否决**交付**的
+ * 权力。`billedUnits` 是 PostgreSQL `INTEGER`,`finalPromptText` 是 `TEXT`(存不下 U+0000),
+ * 而这两个值都来自**引擎的响应** —— 一个我们不控制的输入。引擎哪天报回一个溢出的数或一
+ * 个带 NUL 的字符串,那次 INSERT 就会失败,整个事务回滚,四次重试全部撞同一堵墙,最后走到
+ * 终态失败:一单**已经付过钱、已经做出来**的生成,因为一个记账字段而丢掉。
+ *
+ * 所以顺序改成:钱和产出先各自落定(与 #776 之前**逐字节相同**的那一笔事务),回执随后
+ * 单独补写。补写失败 ⇒ 两列留 null,而 null 的语义本来就是「引擎没报,我们不知道」——
+ * 一个我们本来就要如实展示的状态,不是一个需要拿钱去换的状态。
+ *
+ * 代价说清楚:这两列因此**不再**与 spentUsd 在同一次写入里冻结。值本身没变(都从同一批
+ * `stored` 推出、描述同一单),换来的是「回执永远不能反过来影响钱路和交付」——这是本票
+ * 的硬约束,而「同一次写入」只是它当初的一种实现口味。
+ */
+async function recordGenerationReceipts(
+  job: { id: string; ownerId: string },
+  rows: { generationId: string; receipt?: GenerationReceipt }[],
+  billedUnits: number | null,
+): Promise<void> {
+  try {
+    for (const row of rows) {
+      const finalPrompt = row.receipt?.finalPrompt;
+      if (finalPrompt === undefined) continue; // 没报 ⇒ 列留 null = 未知,绝不回落成商家那句
+      await prisma.generation.updateMany({
+        where: { id: row.generationId, ownerId: job.ownerId },
+        data: { finalPromptText: finalPrompt },
+      });
+    }
+    if (billedUnits !== null) {
+      await prisma.genJob.updateMany({ where: { id: job.id, ownerId: job.ownerId }, data: { billedUnits } });
+    }
+  } catch (e) {
+    // 记账写不进去就是记账写不进去 —— 已经交付的产出和已经结算的钱一个字节都不动。
+    console.warn(`[gen] ${job.id}: receipt columns not recorded (left Unknown) — ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp"
@@ -658,7 +721,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
 
       // THE paid call — exactly once per job. Image: t2i/edit. Video (i2v):
       // animate the shot's latest IMAGE generation into a clip.
-      let outputs: { bytes: Uint8Array; ext: string }[];
+      let outputs: { bytes: Uint8Array; ext: string; receipt?: GenerationReceipt }[];
       if (job.kind === "VIDEO") {
         // i2v source priority: an explicit owned still (Gen space upload→animate)
         // → the shot's latest still (Storyboard Animate) → none (text-to-video).
@@ -770,11 +833,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
         // (or a malformed snapshot) has none → the model's default square, which is exactly
         // what those runs produced before the column existed.
-        const io = job.imageOptions as { aspectRatio?: unknown } | null;
+        const io = job.imageOptions as { aspectRatio?: unknown; coherentSet?: unknown } | null;
         const aspectRatio = typeof io?.aspectRatio === "string"
           ? io.aspectRatio
           : imageDefaults(job.model as GenModel).aspectRatio;
-        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio });
+        // #777:「这几张是一组连贯的图」同样是**冻在任务上**的那份规格,不是这里现算的。
+        // 只认写死的 true —— 快照里没有这一格(既有行、散图行)就是散图,与今日逐字一致。
+        const coherentSet = io?.coherentSet === true;
+        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {
@@ -794,12 +860,17 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // terminal-failing a paid job (which would make the user retry and pay twice). The
       // provider is never re-called in this loop, so no retry here can re-spend.
       let generationIds: string[] = [];
+      // #776:回执随字节一起走完这一段 —— 它属于**这一个**产出,顺序即绑定,不能靠事后按 id
+      // 找回来。但它**不进**下面这笔事务:落库在事务提交之后单独补写
+      // (recordGenerationReceipts),所以记账字段永远没有否决交付与结算的权力。声明提到循环
+      // 外,只是为了提交后还读得到它;每次重试照旧从零重建(内容寻址 put 幂等,哈希不变)。
+      let stored: { contentHash: string; ext: string; size: number; receipt?: GenerationReceipt }[] = [];
       for (let attempt = 1; ; attempt++) {
         try {
-          const stored: { contentHash: string; ext: string; size: number }[] = [];
+          stored = [];
           for (const img of outputs) {
             const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
-            stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength });
+            stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength, ...(img.receipt ? { receipt: img.receipt } : {}) });
           }
           generationIds = await prisma.$transaction(async (tx) => {
             const ids: string[] = [];
@@ -854,6 +925,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         }
       }
       committed = true; // outputs stored + recorded — past here a failure resumes, never re-spends
+      // #776 —— 记账在钱之后。产出、resume marker、settle 都已经各自落定;这一步只往两列上补
+      // 写引擎自报的事实,失败就留 null(= 未知),永不抛、不重试、不改状态。
+      await recordGenerationReceipts(job, generationIds.map((generationId, i) => ({ generationId, ...(stored[i]?.receipt ? { receipt: stored[i]!.receipt } : {}) })), jobBilledUnits(stored));
       // best-effort attach: if it still fails, the outputs remain as reusable
       // candidates (visible, manually attachable) and we STILL mark DONE — never leave
       // the job stuck (a committed requeue could exhaust pg-boss retries) (#2)

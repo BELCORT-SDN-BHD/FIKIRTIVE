@@ -17,9 +17,32 @@
 - worker 心跳超过代码阈值会显示 `stale`;它是诊断信号,不是自动修复或通知保证。
   拆成算力/等待两班之后,每班一行(`worker-compute` / `worker-wait`,未拆时仍是 `worker`);
   顶层 `worker` 字段的含义是「至少一班活着」,按班真相在 `workers` 里。
-- web/worker 含 Sentry instrumentation,但只有 live environment 配置生效后才会记录。
+- `GET /api/ops/dlq` 免登录巡检七条死信队列(#793):HTTP 200 = 七条**全部查得到且一条不剩**,
+  503 = 有死信(`backed-up`),或有队列查不到 / 计数读不懂 / 库读不到(`unknown`)。
+  只答 clear/backed-up/unknown,不给条数或队列名;计数直接查 job 表,所以 worker 死透了它
+  照样出声。接线与生产侧残留清单见 `docs/ops/dashboards.md`。
+- web/worker 含 Sentry instrumentation(server 侧 + 浏览器侧),但只有 live environment
+  配置生效后才会记录。
 - 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
   在当前部署和权限下验证。
+- `/admin/queue`(#779)只读生成队列指标库,回答「队列堵没堵」。未配置 `QUEUE_METRICS_QUERY_URL`
+  时页面显示 "Not connected" 且一次外呼都不发;能否读到必须现场验证,不能从本页推断。
+
+## 两套监控并存,互不替代(#779 stack 声明)
+
+- **供应商侧队列指标库**(`/admin/queue`):只观测生成队列本身——等待条数、排队时长、并发、
+  成功率、失败原因、取消/过期、时长、回调速率。
+- **应用侧监控**(Railway、`/api/health`、worker 心跳、Sentry):观测我们自己的进程。
+- 两者 coexist:队列指标库看不见我们的 web/worker 是否活着,应用侧监控也看不见供应商队列排了
+  多长。任一侧「绿」都不能代表另一侧健康,汇报时必须分开说。
+- 计费按上报量;我们对**指标库**只查询、从不写入,未配置即零成本。接线后第一周须核对一次真实账单。
+- **对我们自己的数据库,口径要说准**(#779 判官 r1 P2-3):指标层(`queue-observability.ts`)
+  一个字都不碰数据库;但页面的 `requireRole` 会读 `UserRole`,**拒绝时**按平台既有安全审计写一行
+  `ActionEvent`(`rbac.deny`)。那是全部受控管理面共用的既有行为,本票不改它,只是不再说成
+  「零数据库访问」。事故时按 `rbac.deny` 查谁被挡在门外,和查这一页一样管用。
+- `PublicQueryBandwidth` / `PublicWriteBandwidth` 为 null(平台默认额度),且我们的服务不在
+  供应商内网、走公网端点——生产量级前须查清额度,量大再议。以上三项均为 external state,
+  查不到写 `Unknown`。
 
 ## 事故开始时先固定 live facts
 

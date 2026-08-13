@@ -48,9 +48,25 @@
   --info-soft-foreground: var(--muted-foreground);
 }
 
-/* ── 双声部 token 覆盖(dark 镜像;原型层暂不开 dark,先备好保证入 dark 不塌)────────── */
+/* ── 双声部 token 覆盖(dark 镜像)────────────────────────────────────────────────
+   #804 起 dark 是真开的,这一组不再是「备着」。三个分支对应全局 globals.css 里
+   `.gb.dark, .gb[data-theme="dark"], .dark .gb` 的三种开法,一一对齐:
+
+     .gb.ns-immersive.dark / [data-theme="dark"]   本元素自己声明主题(皮肤预览、内嵌截图)
+     .dark .gb.ns-immersive                        next-themes 的开法 —— 类写在 <html> 上
+
+   第三支是承重的那支,少了就塌:next-themes 只往 <html> 写 `.dark`,壳根
+   `.gb.ns-immersive` 在 <div> 上(components/northstar/immersive/immersive-shell.tsx),
+   两个 class 永远不同元素,前两支一个也匹配不到。而 globals 的 `.dark .gb` 会匹配到这个
+   壳根(它也带 .gb),比重 (0,2,0) 与上面那条亮色根 `.gb.ns-immersive` 打平 —— 嵌套路由
+   CSS 后载,亮色值胜出。结果是 --background 停在 #F5F6F8、--foreground 从 <body> 继承到
+   #FAFAFA,实算对比度 1.04:1,这条正式对客路由在深色下整页不可读。
+   `.dark .gb.ns-immersive` 比重 (0,3,0),同时压过亮色根与 `.dark .gb`,与加载顺序无关。
+   机械回归在 lib/__tests__/dark-mode-activation.test.ts(枚举全部 .gb token 根 + 复现
+   「祖先 html.dark + 后载亮色根」这一故障形状)。 */
 .gb.ns-immersive.dark,
-.gb.ns-immersive[data-theme="dark"] {
+.gb.ns-immersive[data-theme="dark"],
+.dark .gb.ns-immersive {
   --background: #0B0C0E;
   --ns-canvas: #0B0C0E;
   --human: #3B82F6;

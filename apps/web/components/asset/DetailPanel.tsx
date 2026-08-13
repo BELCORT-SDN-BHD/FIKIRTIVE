@@ -42,9 +42,12 @@ type GenDTO = {
   projectId: string;
   url: string;
   urls: string[];
-  variants: { id: string; url: string; favorite: boolean }[]; // aligned to urls; carries each variant's own id/state (F08)
+  // aligned to urls; carries each variant's own id/state (F08) and its OWN engine receipt (#776 r2)
+  variants: { id: string; url: string; favorite: boolean; finalPrompt: string | null }[];
   kind: string;
   prompt: string;
+  /** #776：被请求的那一行自己的「引擎真正跑的那句」。切换缩略图后要读 `variants[i].finalPrompt`。 */
+  finalPrompt: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
@@ -661,6 +664,46 @@ export default function DetailPanel({
             {gen.prompt && (
               <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
+
+            {/* #776 生成回执 —— 引擎自报「它真正跑的那句话」。
+                上面那句是商家写的，这一句是引擎实际执行的；两者常常不同（引擎会在服务端
+                改写、加固、补细节），而在此之前这条链在交付那一步就断了：商家看得到结果，
+                看不到结果是按什么做出来的。
+
+                r2 改了两件事，都是判官指出的：
+                  · **未知也要说出口**。r1 在 null 时整块隐藏，于是「引擎没报」和「这条链
+                    不存在」在屏幕上长得一模一样。现在如实写 “Not reported by the engine.”
+                    —— 不知道要长得像不知道；
+                  · **读这一张自己的那句**。一单多图 = 多次付费调用，每张可以有各自的改写；
+                    读 `variants[selectedIdx]`，切换缩略图时跟着换。读主图那一份的话，第二张
+                    会被第一张的话解释——那比空着更糟。
+                两条不变的纪律：一模一样就只说「就是你写的那句」，不把同一段文字贴两遍；
+                供应商指纹词已在服务端一处（asset-actions.merchantFinalPrompt）滤掉，这里
+                拿到的就是可以直接上屏的白标文本。
+                样式沿用本面板既有的内联写法；这一面的 shadcn 化属于 #840 的界面族拆分。 */}
+            {(() => {
+              // 回退只在「这一张根本不在列表里」时发生（与 displayUrl 同一套），**不是**在
+              // 「这一张的值是 null」时发生 —— 后者正是要显示的答案。写成 `?.finalPrompt ??`
+              // 的话，第二张没报就会悄悄继承第一张那一句，也就是判官点的那个串台。
+              const selectedVariant = gen.variants[selectedIdx];
+              // `?? null`：读不到这个字段（老的调用点、老的 DTO）与「引擎没报」是同一件事 ——
+              // 未知。归一成 null，下面只需要判一种「不知道」。
+              const shownFinalPrompt = (selectedVariant ? selectedVariant.finalPrompt : gen.finalPrompt) ?? null;
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                    What the engine ran
+                  </span>
+                  <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, ...(shownFinalPrompt ? {} : { fontStyle: "italic" }) }}>
+                    {shownFinalPrompt === null
+                      ? "Not reported by the engine."
+                      : shownFinalPrompt.trim() === gen.prompt.trim()
+                        ? "Your prompt, exactly as you wrote it."
+                        : shownFinalPrompt}
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
                 Seeded from the shape this image was made in, so neither one silently reshapes it.

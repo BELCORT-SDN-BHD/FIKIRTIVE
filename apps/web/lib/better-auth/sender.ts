@@ -1,12 +1,12 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { emailPort } from "@/lib/email";
 import { isAllowedEmail } from "@/lib/allowlist";
 
 const WINDOW_MS = 60 * 60 * 1000;
 const MAX_PER_ADDRESS_PER_WINDOW = 5;
-const addressAttempts = new Map<string, number[]>();
 
 /** #678 — the per-address bucket key is NORMALISED (trim + lowercase).
  *
@@ -15,37 +15,33 @@ const addressAttempts = new Map<string, number[]>();
  *  and `owner@shop.test` are one merchant everywhere EXCEPT here — where they used to be two
  *  independent hourly budgets. Flipping one letter's case bought a fresh five. */
 function addressKey(email: string): string {
-  return email.trim().toLowerCase();
+  return `authmail:${email.trim().toLowerCase()}`;
 }
 
-/** Drop addresses nobody has written to for a window. `/send-verification-email` is a public
- *  endpoint, so without this the map grows one entry per address anyone ever submits and never
- *  gives one back. Runs at most once per window, and only on this background side. */
-let lastSweep = 0;
-function sweepAddressCaps(now: number): void {
-  if (now - lastSweep < WINDOW_MS) return;
-  lastSweep = now;
-  for (const [key, stamps] of addressAttempts) {
-    const live = stamps.filter((t) => now - t < WINDOW_MS);
-    if (live.length === 0) addressAttempts.delete(key);
-    else addressAttempts.set(key, live);
-  }
-}
-
-/** Per-address outbound cap — UNCHANGED at 5 auth emails per address per hour. It runs on the
- *  BACKGROUND side so that not even a branch on it exists in the request path. */
-function consumeAddressCap(email: string): boolean {
-  const key = addressKey(email);
-  const now = Date.now();
-  sweepAddressCaps(now);
-  const recent = (addressAttempts.get(key) ?? []).filter((t) => now - t < WINDOW_MS);
-  if (recent.length >= MAX_PER_ADDRESS_PER_WINDOW) {
-    addressAttempts.set(key, recent);
-    return false;
-  }
-  recent.push(now);
-  addressAttempts.set(key, recent);
-  return true;
+/**
+ * Per-address outbound cap — UNCHANGED at 5 auth emails per address per hour. It runs on the
+ * BACKGROUND side so that not even a branch on it exists in the request path.
+ *
+ * #795 — the counter moved from a process-local Map to Postgres. This cap is the LAST thing
+ * between a victim's inbox and the mail provider, and in memory it was one budget PER INSTANCE:
+ * scaling to two web instances meant ten auth emails an hour to the same address, with the code
+ * still saying five. It is also the cap most worth getting right on an open-registration beta,
+ * because it is the one that bounds mail sent to an address whose owner never asked for it.
+ *
+ * Two things the shared counter fixes for free: the window survives a deploy (the old map reset
+ * on every restart), and there is no local map to sweep — the previous hourly traversal existed
+ * only because `/send-verification-email` is public, so the map grew one entry per address anyone
+ * ever submitted. Postgres prunes with `pruneRateLimitCounters`.
+ *
+ * FAIL CLOSED: if the counter cannot be reached, `consumeRateLimit` refuses, so the email is
+ * suppressed. That is the right direction for an outbound cap — the failure mode is a link that
+ * does not arrive (recoverable: press again), not unbounded mail to somebody's inbox.
+ */
+async function consumeAddressCap(email: string): Promise<boolean> {
+  const verdict = await consumeRateLimit([
+    { key: addressKey(email), max: MAX_PER_ADDRESS_PER_WINDOW, windowMs: WINDOW_MS },
+  ]);
+  return verdict.granted;
 }
 
 /**
@@ -431,14 +427,32 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
   await sleep(Math.max(0, slotFloorMs - (Date.now() - workStartedAt)));
 }
 
+/**
+ * #795 r2 — THE SAME WORK FOR EVERY ADDRESS, on this side too.
+ *
+ * Both questions are asked for every address, and only then is anything decided. The obvious
+ * shape — `if (!allowed) return;` before consulting the cap — makes an address WITHOUT access
+ * cost one query while an address WITH access costs two, and since the counter moved out of
+ * process memory (#795) that second query is a database round trip rather than a Map lookup.
+ * The slot floor in front of this exists to hide exactly this kind of branch difference, and
+ * widening the floor's tolerance to cover a difference we chose to create would be treating the
+ * measurement as the problem. So the difference is removed instead: same two questions, same two
+ * round trips, whatever the answer.
+ *
+ * CHARGING THE CAP FOR AN ADDRESS WITHOUT ACCESS COSTS NOTHING. That address is never sent mail
+ * on any branch, so its "budget" is a counter nobody spends; and the caller who could burn it is
+ * already bounded by the throttle on the door in front (magic-link-request.ts).
+ *
+ * WHAT IS UNCHANGED: an address without access still never reaches Better Auth, so it still
+ * never causes a verification row to be written. The refusal moved AFTER the cap read, not after
+ * the mint.
+ */
 async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
   if (job.purpose === "sign-in-link") {
-    // ORDER MATTERS. Access first, minting second: an address without access never reaches
-    // Better Auth, so it never writes a verification row. That is what closes "an anonymous
-    // caller can write unbounded verification rows" — the row is a consequence of being
-    // allowed in, not of having asked.
-    if (!(await isAllowedEmail(job.email))) return;
-    if (!consumeAddressCap(job.email)) {
+    const allowed = await isAllowedEmail(job.email);
+    const withinCap = await consumeAddressCap(job.email);
+    if (!allowed) return;
+    if (!withinCap) {
       console.warn("[better-auth] auth email suppressed: per-address hourly cap reached");
       return;
     }
@@ -453,9 +467,13 @@ async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
   }
 
   // Password reset re-checks access; verification email is the ONE path a brand-new
-  // self-service account walks before it is on any list (#543), so it does not.
-  if (job.purpose === "password-reset" && !(await isAllowedEmail(job.email))) return;
-  if (!consumeAddressCap(job.email)) {
+  // self-service account walks before it is on any list (#543), so it does not. That difference
+  // is between PURPOSES, which the caller states openly — it says nothing about the address, so
+  // it is not an oracle. Within a purpose the work is identical, for the reason above.
+  const allowed = job.purpose === "password-reset" ? await isAllowedEmail(job.email) : true;
+  const withinCap = await consumeAddressCap(job.email);
+  if (!allowed) return;
+  if (!withinCap) {
     console.warn("[better-auth] auth email suppressed: per-address hourly cap reached");
     return;
   }
@@ -541,11 +559,11 @@ export async function sendAuthEmail(message: {
   }
 }
 
-/** TEST ONLY. The per-address budgets are process memory with an hour-long window; a test that
- *  needs a fresh one cannot wait an hour out. */
-export function __resetAuthEmailCapsForTests(): void {
-  addressAttempts.clear();
-  lastSweep = 0;
+/** TEST ONLY. The per-address budgets have an hour-long window; a test that needs a fresh one
+ *  cannot wait an hour out. #795 — they live in Postgres now, so clearing them is a delete and
+ *  this returns a promise. */
+export async function __resetAuthEmailCapsForTests(): Promise<void> {
+  await clearRateLimitCounters("authmail:");
   droppedSinceLastLog = 0;
   lastDropLog = 0;
   if (dropLogTimer) clearTimeout(dropLogTimer);

@@ -103,6 +103,33 @@ export interface GenerationRequest {
   /** 商家要的画幅(`GEN_IMAGE_ASPECTS` 之一)。缺省 ⇒ 适配器按默认画幅(方图)出图。
    *  参考图(refgen)不设画幅,始终走默认 —— 参考图是给引擎看的素材,不是交付物。 */
   aspectRatio?: string;
+  /** #777:这 `count` 张是**一组要连贯的图**(同模特多角度/同产品多尺寸)。
+   *  true ⇒ 适配器**一次请求**出齐整组;缺省 ⇒ 一张一次请求,与今日逐字一致。
+   *  做不到这件事的适配器必须在**付费之前**拒绝,不得静默降级成 N 张散图 ——
+   *  商家批的是「一组」,收了钱交一堆互不相干的图就是一次没说出口的降级。 */
+  coherentSet?: boolean;
+}
+
+/**
+ * #776 —— 一次付费产出的**回执**:引擎自己报回来的事实,产出之后才读,只用来记账。
+ *
+ * 这是**记录**,不是计费。reserve / settle / refund 的权威、幂等键、以及每一条
+ * charged / permanent 的判定,都不读这里一个字段;回执读不回来也绝不允许反过来
+ * 影响这一单的结果或扣费(适配器里读回执的那几行永不抛)。
+ *
+ * 两个字段都**可缺席**,缺席的语义是「引擎没报,我们不知道」——**不是零、不是空串**。
+ * 编一个看起来像事实的数字,比承认不知道更糟:毛利对账会拿它当真,商家也会。
+ */
+export interface GenerationReceipt {
+  /** 引擎自报**真正跑的那句提示词**(它在服务端改写/加固之后的版本)。缺席 = 未知。
+   *  现役契约里只有**视频**任务响应带这个字段(顶层 `revised_prompt`);图片响应没有,
+   *  所以图片这条路上它恒为未知 —— 如实空着,不去别处捞一个替身。 */
+  finalPrompt?: string;
+  /** 引擎自报的**真实计费量**,单位是**引擎自己**的计量单位,两条产品线不同:
+   *  图片 = **张**(`usage.generated_images`),视频 = **token**(`usage.total_tokens`)。
+   *  哪一种由同一行的 `GenJob.kind` 决定,读的人据此说话。缺席 = 未知。
+   *  内部成本口径,不上商家面 —— 那是我们的 COGS,不是商家买的东西。 */
+  billedUnits?: number;
 }
 
 /** One generated image, already downloaded by the provider — the worker
@@ -110,6 +137,8 @@ export interface GenerationRequest {
 export interface GeneratedImage {
   bytes: Uint8Array;
   ext: string;
+  /** #776:这一张的回执。适配器读不到就不带 —— 缺席 = 未知,worker 如实落 null。 */
+  receipt?: GenerationReceipt;
 }
 
 /** What the worker hands a provider to animate an image into a clip (i2v).
@@ -136,6 +165,8 @@ export interface VideoRequest {
 export interface GeneratedVideo {
   bytes: Uint8Array;
   ext: string;
+  /** #776:这一条片子的回执。语义同 GeneratedImage.receipt。 */
+  receipt?: GenerationReceipt;
 }
 
 export interface GenerationProvider {

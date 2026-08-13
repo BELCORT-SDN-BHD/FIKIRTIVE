@@ -89,6 +89,7 @@ export function StuffLibrary({
   onDelete,
   onSetProductImage,
   onOpenGeneration,
+  onOpenEntity,
 }: {
   items: StuffItem[];
   mode: "library" | "picker";
@@ -97,6 +98,9 @@ export function StuffLibrary({
   onDelete?: (entityId: string) => void;
   onSetProductImage?: (assetId: string) => void;
   onOpenGeneration?: (generationId: string, projectId: string) => void;
+  /** #781 — open a saved element (cast/product/location/brand mark) so its base look and
+   *  styling variants are reachable. Without this the variant pathway had no door at all. */
+  onOpenEntity?: (entityId: string) => void;
 }) {
   const [filter, setFilter] = useState<StuffFilter>(mode === "picker" ? "images" : "all");
   const [search, setSearch] = useState("");
@@ -223,17 +227,26 @@ export function StuffLibrary({
             const isEntity = item.source === "entity" && !!item.entityId;
             const canSetProduct = !!item.assetId && item.mediaKind === "image";
             const canOpenGeneration = !!item.generationId && !!item.projectId;
+            // #781 — an element tile opens the element (base look + styling variants); a
+            // generation tile opens the generation. One control, two destinations, so the
+            // merchant's "click the thing to see it" habit works on both.
+            const canOpenEntityTile = isEntity && !!onOpenEntity;
+            const canOpen = canOpenGeneration || canOpenEntityTile;
+            const openItem = () => {
+              if (canOpenGeneration) onOpenGeneration?.(item.generationId!, item.projectId!);
+              else if (canOpenEntityTile) onOpenEntity?.(item.entityId!);
+            };
             return (
               <div
                 key={item.id}
                 className="group relative overflow-hidden rounded-[16px] border border-border bg-card"
               >
                 <div className="relative aspect-square bg-muted">
-                  {canOpenGeneration ? (
+                  {canOpen ? (
                     <button
                       type="button"
                       aria-label={`Open ${item.label}`}
-                      onClick={() => onOpenGeneration?.(item.generationId!, item.projectId!)}
+                      onClick={openItem}
                       className="absolute inset-0 block h-full w-full border-0 bg-transparent p-0 text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-brand"
                     >
                       <Thumb item={item} />
@@ -289,10 +302,10 @@ export function StuffLibrary({
                     )}
                   </div>
                 </div>
-                {canOpenGeneration ? (
+                {canOpen ? (
                   <button
                     type="button"
-                    onClick={() => onOpenGeneration?.(item.generationId!, item.projectId!)}
+                    onClick={openItem}
                     className="block w-full truncate border-0 bg-transparent px-2 py-1.5 text-left text-[0.8125rem] font-medium text-foreground cursor-pointer hover:text-brand-strong focus-visible:outline-2 focus-visible:outline-brand"
                   >
                     {item.label}

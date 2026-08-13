@@ -51,6 +51,10 @@ export const TENANT_MODELS = new Set([
   // C7-M1 (2026-07-22): additive-only workflows/lifecycle storage carriers.
   "WorkflowDefinition", "WorkflowRevision", "Routine", "RoutineRun",
   "ContactJourneyState", "WorkflowStepExecution", "BusinessHoursPolicy",
+  // #784 (2026-08-13): 素材理解产物。GUARDED,不 EXEMPT —— 这张表装的是「Otto 知道这个商家
+  // 什么」,越租户读一行就是把 A 家的菜单讲给 B 家听。worker 走的是标准两段式(具名系统身份
+  // 扫描 + runAsTenant 逐行写),Otto 取回那一侧全程带 ctx.orgId,所以它不需要豁免。
+  "AssetUnderstanding",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
