@@ -1054,6 +1054,20 @@ export type LibraryItemView = {
   projectId: string;
   kind: string; // "image" | "video"
   prompt: string;
+  /**
+   * #776 —— 引擎自报**它真正跑的那句提示词**。
+   *
+   * Otto 解释「上次为什么长这样」时需要的正是这一句 —— 商家写的那句在 `prompt`,引擎
+   * 实际执行的那句在这里,两者常常不同,而差别往往就是答案。
+   *
+   * 三种状态,**互不相同**,别混:
+   *   · 字符串 = 引擎报的那句(已在 web 侧一处过白标过滤,可以直接说出口);
+   *   · `null` = 引擎**没报**(或回执落库前的历史行)= 未知 → 明说不知道,不得拿 `prompt`
+   *     冒充它;
+   *   · 键**缺席** = 这条路根本没查这一列(history 分页就是如此)→ 同样只能说不知道,但
+   *     原因不是引擎沉默,而是我们没看。
+   */
+  finalPrompt?: string | null;
   favorite: boolean;
   createdAt?: string; // ISO instant (history rows carry it; a single detail read may not)
 };
