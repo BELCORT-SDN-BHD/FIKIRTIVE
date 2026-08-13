@@ -83,7 +83,7 @@ describe("genRequest.variantSel", () => {
   });
 });
 
-describe("genRequest.requestedPrompt (#914 r2)", () => {
+describe("genRequest.requestedPrompt —— 商家原话那一列 (#914)", () => {
   const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };
   it("is optional — absent (every spend surface but coworkGenerate's directive branch) parses fine", () => {
     expect(genRequest.safeParse(base).success).toBe(true);

@@ -536,10 +536,12 @@ export const genRequest = z
     // owner+project+video-ext, like sourceGenerationId. Only used by video plans.
     referenceVideoGenerationId: z.string().min(1).max(64).nullish(),
     prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
-    // #914 r2 — what this request held BEFORE coworkGenerate's own composePrompt step
-    // (the family×mode directive append) changed it, ONLY when that step actually changed
-    // something. Purely informational: it rides along with the request like idempotencyKey
-    // does, never feeds `.superRefine`, pricing, or factoryMaterialMatches replay identity.
+    // #914 — THE MERCHANT'S OWN WORDS: what this request held BEFORE coworkGenerate's own
+    // composePrompt step (the family×mode directive append) changed it, ONLY when that step
+    // actually changed something. It is the left-hand side of the generation receipt, whose
+    // right-hand side (Generation.sentPromptText) is recorded by the worker at the moment it
+    // hands the string to the engine. Purely informational: it rides along with the request like
+    // idempotencyKey does, never feeds `.superRefine`, pricing, or factoryMaterialMatches replay.
     // Absent on every other spend surface (canvas/asset composer, the Otto-chat `generate`
     // skill) — none of them compose a prompt, so there is nothing for them to diverge from.
     requestedPrompt: z.string().trim().max(MAX_GEN_PROMPT).optional(),

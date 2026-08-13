@@ -105,10 +105,12 @@ describe("coworkGenerate", () => {
     expect(mocks.chatMessageUpdate).not.toHaveBeenCalled();
   });
 
-  // #914 r2(判官 r1 P1)— composePrompt's directive append is the ONE place an image prompt
-  // actually gets processed before it reaches the engine. requestedPrompt is the receipt fact
-  // the asset detail panel / Otto compare against what was actually sent.
-  describe("#914 r2 — requestedPrompt receipt", () => {
+  // #914 — composePrompt's directive append is the ONE place a prompt is rewritten BEFORE the
+  // job is queued, so it is the one place where the merchant's own words and GenJob.prompt part
+  // company. requestedPrompt keeps the merchant's words; the receipt compares them against what
+  // the worker actually handed the engine (Generation.sentPromptText). Two columns, and neither
+  // one is ever allowed to stand in for the other.
+  describe("#914 — requestedPrompt = the merchant's own words", () => {
     it("un-skilled family + an enabled directive ⇒ startCoworkGen gets the composed prompt AND requestedPrompt (the pre-compose text)", async () => {
       mocks.familyHasPromptSkill.mockReturnValue(false);
       mocks.getEnhanceDirective.mockResolvedValue("Avoid text overlays; keep it photorealistic.");

@@ -53,9 +53,14 @@ export function makeOttoLibraryPort() {
       //     把这句话讲给模型听(#914 r2)。
       // r1 在 null 时把键删掉,于是「引擎没报」和「这条产品链不存在」在 Otto 眼里长得一模
       // 一样 —— 键缺席的语义留给 history(我们**根本没查**这一列),两种「没有」不能混。
+      //
+      // #914 r4 双面同源:`sentPrompt`(我们实际送出的那句)与商家面板读的是**同一条**
+      // 记录、**同一次**比对(asset-actions 已经比完),原样递过去 —— Otto 说的与面板显示
+      // 的不可能各说各话。
       return {
         id: res.id, projectId: res.projectId, kind: res.kind, prompt: res.prompt,
         finalPrompt: res.finalPrompt,
+        sentPrompt: res.sentPrompt,
         favorite: res.favorite,
       };
     },

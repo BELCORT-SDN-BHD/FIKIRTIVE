@@ -112,7 +112,13 @@ export const manageLibrarySkill = defineOttoSkill({
     "(say you don't know, never quote `prompt` in its place). For kind:\"image\", finalPrompt " +
     "is ALWAYS null — that's a fixed capability of the image engine, not a one-off failure to report, so " +
     "never say \"I don't know\" or \"it wasn't reported\" for an image: say the image engine doesn't report " +
-    "rewritten prompts, or just don't mention it. Needs generationId. " +
+    "rewritten prompts, or just don't mention it. " +
+    "detail also carries sentPrompt (#914) — what WE handed the engine, our own record, so it is answerable " +
+    "for images too: {verbatim:true} means we sent exactly what the user wrote, {verbatim:false,text} means we " +
+    "sent something else and `text` IS that full text (quote it, don't paraphrase), and null means this " +
+    "generation is older than the record — say nothing about it either way, never guess. Note `prompt` is the " +
+    "text the job carried, which for some cards was already assembled by us before it was queued — so when the " +
+    "user asks what was actually sent, answer from sentPrompt, not from `prompt`. Needs generationId. " +
     "set_favorite: star or unstar a generation (needs generationId + favorite). " +
     "To CREATE a new image/video, use generate instead — this only looks at what already exists.",
   parameters: params,

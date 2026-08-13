@@ -762,6 +762,17 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // THE paid call — exactly once per job. Image: t2i/edit. Video (i2v):
       // animate the shot's latest IMAGE generation into a clip.
       let outputs: { bytes: Uint8Array; ext: string; receipt?: GenerationReceipt }[];
+      // #914 r4 —— 生成回执「平台到底把哪一句交给了引擎」的**唯一**记录点。
+      //
+      // 为什么在这里而不在写提示词的那一端(判官 r3 定案):web 层记不到真话 —— 到这里
+      // 之前提示词还会再被拼一次(#774 的参考图编号句就是下面那趟循环现产的),入队时
+      // 那几句根本还不存在。而五类花钱入口(画布 / 工厂 / 战役 / 模板 / 详情页编辑 /
+      // Otto)全都汇到这一个发送点,所以记在这里是**结构性**的全覆盖:覆盖不靠逐个入口
+      // 接线,将来多一个入口也漏不掉。
+      //
+      // 纪律:下面两个分支都把**这一个变量**交给 provider(不是各自现算一遍再抄一份),
+      // 落库落的也是它 —— 记录与实发之间没有第二个可以漂移的表达式。
+      let sentPrompt = job.prompt;
       if (job.kind === "VIDEO") {
         // i2v source priority: an explicit owned still (Gen space upload→animate)
         // → the shot's latest still (Storyboard Animate) → none (text-to-video).
@@ -856,7 +867,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // 花钱安全:上面那道 presign 完整性闸(`inputImageUrls.length < cappedRefs.length`
         // 就抛)已经保证「少一张就不花钱」,所以到这里要么全都在,要么根本没走到这一行。
         const video = await provider.generateVideo({
-          prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
+          prompt: sentPrompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
           refVideoUrl: refVideoUrl || undefined,
           ...(inputImageUrls.length > 0 ? { refImageUrls: inputImageUrls } : {}),
           durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
@@ -898,7 +909,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // #777:「这几张是一组连贯的图」同样是**冻在任务上**的那份规格,不是这里现算的。
         // 只认写死的 true —— 快照里没有这一格(既有行、散图行)就是散图,与今日逐字一致。
         const coherentSet = io?.coherentSet === true;
-        outputs = await provider.generate({ prompt: withReferenceMap(job.prompt, refSlots), inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
+        // #914 r4:编号句在这一行才长出来 —— 所以「实际送出的那一整句」也只有在这一行
+        // 之后才存在。落库落的就是这个变量本身(见 sentPromptText 的写入)。
+        sentPrompt = withReferenceMap(job.prompt, refSlots);
+        outputs = await provider.generate({ prompt: sentPrompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {
@@ -943,12 +957,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
                   id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
                   threadId: job.threadId ?? null, // cowork tag (null for normal studio gens) → keeps it out of candidate/asset views
                   assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
-                  // #914 r2 — unlike finalPromptText/billedUnits below, this is OUR OWN data
-                  // (already length-bounded by genRequest's schema when the job was created), not
-                  // an engine-controlled response — nothing about it can make this insert fail, so
+                  // #914 r4 — the string we ACTUALLY handed the engine, taken from the very
+                  // variable the paid call above was given. Unlike finalPromptText/billedUnits
+                  // below, this is OUR OWN data (job.prompt was length-bounded by genRequest at
+                  // enqueue; the reference-map lines are our own bounded text), never an
+                  // engine-controlled response — nothing about it can make this insert fail, so
                   // it rides in the SAME commit as promptText rather than the post-commit
-                  // best-effort receipt write.
-                  ...(job.requestedPrompt ? { requestedPromptText: job.requestedPrompt } : {}),
+                  // best-effort receipt write. Always written on a new row: null in this column
+                  // therefore means exactly one thing — the row predates the column.
+                  sentPromptText: sentPrompt,
                   entitySnapshot, version: 1, attachedAt: null,
                 },
               });

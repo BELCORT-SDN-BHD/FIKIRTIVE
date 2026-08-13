@@ -18,8 +18,14 @@
  *      可对账的数 —— 低估成本比空着危险;
  *   ⑤ 回执写在钱的事务**之外**:commit 那一笔(generationIds / spent / spentUsd / settle)与
  *      #776 之前逐字节相同,回执一列都不在里面。
+ *
+ * #914 r4 起,本文件还多钉一件事实(见文件下半段):**我们自己**交给引擎的那一整句
+ * (`Generation.sentPromptText`)。它与上面五条的分工是「引擎说的 vs 我们送的」——
+ * `finalPromptText` 来自引擎回执(图片契约上恒为空),`sentPromptText` 来自我们自己的发送
+ * 那一刻,所以图片这条路上也答得出来。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 
 const m = vi.hoisted(() => {
   const genJobFindUnique = vi.fn();
@@ -40,15 +46,22 @@ const m = vi.hoisted(() => {
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storage = { presignedGet: storagePresignedGet, put: storagePut };
+  // #914 r4:带 @元素 / 带底图的入口(工厂·战役 / 模板 / 详情页编辑)要走到参考图这一段,
+  // 所以这三个替身也得能被用例配置。
+  const entityFindFirst = vi.fn();
+  const entityVariantFindFirst = vi.fn();
+  const referenceImageFindMany = vi.fn(
+    async (): Promise<{ asset: { ownerId: string; contentHash: string; ext: string } }[]> => [],
+  );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prisma: any = {
     genJob: { findUnique: genJobFindUnique, update: genJobUpdate, updateMany: genJobUpdateMany },
     project: { findFirst: projectFindFirst },
     generation: { findFirst: generationFindFirst, create: generationCreate, updateMany: generationUpdateMany },
     asset: { upsert: assetUpsert },
-    entity: { findFirst: vi.fn(), findMany: vi.fn(async () => []) },
-    entityVariant: { findFirst: vi.fn() },
-    referenceImage: { findMany: vi.fn(async () => []) },
+    entity: { findFirst: entityFindFirst, findMany: vi.fn(async () => []) },
+    entityVariant: { findFirst: entityVariantFindFirst },
+    referenceImage: { findMany: referenceImageFindMany },
     chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
     creditLedger: { findFirst: creditLedgerFindFirst },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
@@ -57,6 +70,7 @@ const m = vi.hoisted(() => {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     generationCreate, generationUpdateMany, chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert,
     refundReservation, settleCredits, generateImages, generateVideo, storagePresignedGet, storagePut, storage,
+    entityFindFirst, entityVariantFindFirst, referenceImageFindMany,
   };
 });
 
@@ -176,39 +190,172 @@ describe("#776 引擎自报的提示词落在产出行上", () => {
   });
 });
 
-describe("#914 r2(判官 r1 P1)requestedPrompt 落在产出行上,而且在 commit 事务里", () => {
-  it("GenJob 带 requestedPrompt(coworkGenerate 的拼装步骤真的改了什么)⇒ 原样落到 Generation.requestedPromptText,与 promptText 同一次写入", async () => {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * #914 r4(判官 r3)—— 落库的必须是**实际交给引擎的那一整句**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * r2/r3 把这件事记在 web 层,判官判 FAIL 的根因是:提示词到 worker 才拼完(#774 的参考图
+ * 编号句由装 `inputImageUrls` 的那趟循环现产),web 层记下的永远不是真正送出去的全文 ——
+ * 模板一键成片必带底图,必然命中,于是回执上「原样送出」那句话在那条路上恒为谎。
+ *
+ * 所以这里的断言形状只有一种,别的写法都不算数:
+ *
+ *     落进 Generation.sentPromptText 的字符串  ===  provider 这一次真正收到的 prompt
+ *
+ * 两边都从**同一次真跑的 handleGen** 里取(左边取 generationCreate 的 data,右边取
+ * provider mock 的入参),中间没有任何一个可以由测试自己重算的表达式 —— 换句话说,这个
+ * 文件里没有一处「照着实现抄一遍期望值」。
+ *
+ * 覆盖为什么是全的:五类花钱入口(画布 / 工厂·战役 / 模板 / 详情页编辑 / Otto·cowork)
+ * 都只会造出一个 GenJob,再由**这一个** worker 发送点交给引擎。所以下面按「各入口造出来
+ * 的任务形状」逐条跑,而「只有这一个发送点」这一条本身由文末的源码闸钉住。
+ */
+describe("#914 r4(判官 r3)实际送出的那一整句落库,五类入口同一个发送点", () => {
+  /** 真跑一次 handleGen,把「引擎真正收到的那句」和「落进产出行那一列的那句」并排交回。 */
+  async function sentVsStored(job: Record<string, unknown>) {
+    const out = await runWorker(job);
+    const imageCall = m.generateImages.mock.calls[0]?.[0] as { prompt: string } | undefined;
+    const videoCall = m.generateVideo.mock.calls[0]?.[0] as { prompt: string } | undefined;
+    const call = imageCall ?? videoCall;
+    expect(call, "这一条用例要有意义,付费调用必须真的发生过").toBeDefined();
+    return {
+      sent: call!.prompt,
+      stored: out.generationRows.map((r) => r.sentPromptText as string | undefined),
+      rows: out.generationRows,
+      receiptPrompts: out.receiptPrompts,
+    };
+  }
+
+  beforeEach(() => {
+    // 元素解析的默认替身(带 @元素 的入口才会用到)。名字刻意与审批快照不同,以免某条
+    // 用例悄悄依赖活行名称。
+    m.entityFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id, type: "PRODUCT", name: `LIVE-${where.id}` }));
+    m.entityVariantFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
+    m.referenceImageFindMany.mockImplementation(async () => []);
+    // 底图(sourceGenerationId)解析 —— 模板与详情页编辑都靠它。
+    m.generationFindFirst.mockResolvedValue({ id: "gen_src", asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "png" } });
     m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
-    const { generationRows } = await runWorker({ ...imageJob, requestedPrompt: "a poster for the weekend sale, moody lighting" });
-    expect(generationRows).toHaveLength(1);
-    expect(generationRows[0]!.promptText).toBe("a poster for the weekend sale"); // 拼装之后,实际送出的那句
-    expect(generationRows[0]!.requestedPromptText).toBe("a poster for the weekend sale, moody lighting"); // 拼装之前
   });
 
-  it("GenJob 没有 requestedPrompt(直接走 composer / Otto 对话 generate 技能 / 拼装无变化)⇒ 那一列不写,不是「未知」而是「没有可分家的两句话」", async () => {
-    m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
-    const { generationRows } = await runWorker({ ...imageJob });
-    expect(generationRows[0]).not.toHaveProperty("requestedPromptText");
+  it("① 画布(逐格生成,无参考图)—— 送出的就是任务上那句,而且落库的与送出的是同一个字符串", async () => {
+    const { sent, stored } = await sentVsStored({ ...imageJob, idempotencyKey: "canvas:node1" });
+    expect(stored).toEqual([sent]);
+    expect(sent).toBe(imageJob.prompt); // 没有参考图 ⇒ 没有编号句 ⇒ 与商家那句逐字相同
   });
 
-  it("多张图:GenJob 一份 requestedPrompt,每一张产出行都抄同一份(拼装发生在整单唯一的 prompt 字段上,不是逐张的)", async () => {
+  it("② 工厂 / 战役批量(一格一单,带 @元素)—— 编号句进了实际送出的那句,也就进了落库的那一列", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => [{ asset: { ownerId: "o1", contentHash: "b".repeat(64), ext: "png" } }]);
+    const { sent, stored } = await sentVsStored({
+      ...imageJob,
+      idempotencyKey: "factory:camp1:cell1",
+      entityIds: ["e0"],
+      approvedEntities: [{ id: "e0", type: "PRODUCT", name: "Bottle" }],
+    });
+    expect(stored).toEqual([sent]);
+    // 编号句是 worker 现产的 —— web 层记不到,这正是 r3 判 FAIL 的那一条。
+    expect(sent).toContain("<Image_1>");
+    expect(sent.endsWith(imageJob.prompt)).toBe(true);
+  });
+
+  it("③ 模板一键成片(必带底图)—— #774 的编号句在记录里,不是记了一句商家原话就算数", async () => {
+    const { sent, stored } = await sentVsStored({
+      ...imageJob,
+      idempotencyKey: "template:run1",
+      sourceGenerationId: "gen_src", // TemplateModal 恒定带上商家上传的那张照片
+    });
+    expect(stored).toEqual([sent]);
+    // 判官点名的那一句,逐字钉死在**落库的那一列**上。
+    expect(stored[0]).toContain("<Image_1> is the image being edited.");
+    expect(stored[0]).toBe(`<Image_1> is the image being edited.\n${imageJob.prompt}`);
+    // 而商家自己那句仍旧原样在 promptText —— 两列分明,谁也不冒充谁。
+    expect(stored[0]).not.toBe(imageJob.prompt);
+  });
+
+  it("④ 详情页编辑 @composer(底图 + @元素)—— 底图坐第 1 位、元素第 2 位,记录里逐字对得上", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => [{ asset: { ownerId: "o1", contentHash: "c".repeat(64), ext: "png" } }]);
+    const { sent, stored } = await sentVsStored({
+      ...imageJob,
+      sourceGenerationId: "gen_src",
+      entityIds: ["e0"],
+      approvedEntities: [{ id: "e0", type: "PRODUCT", name: "Bottle" }],
+    });
+    expect(stored).toEqual([sent]);
+    expect(stored[0]).toBe(
+      "<Image_1> is the image being edited. " +
+      "Define the product in <Image_2> as <Subject_2>: Bottle.\n" +
+      imageJob.prompt,
+    );
+  });
+
+  it("⑤ Otto / cowork(入队前平台自己拼装过)—— 落的是**送出去的那句**,不是商家原话;商家原话留在任务上", async () => {
+    const merchantWrote = "a poster for the weekend sale";
+    const composed = "a poster for the weekend sale — bold type, high contrast";
+    const { sent, stored } = await sentVsStored({
+      ...imageJob,
+      threadId: "t1",
+      prompt: composed,           // coworkGenerate 拼装之后的结果就坐在 GenJob.prompt 上
+      requestedPrompt: merchantWrote, // 商家原话在任务上(读取端比对的左边那一列)
+    });
+    expect(stored).toEqual([sent]);
+    expect(stored[0]).toBe(composed);
+    expect(stored[0]).not.toBe(merchantWrote);
+    // 商家原话**不**再抄进产出行:它只有一个出处(GenJob.requestedPrompt),不留两套真相。
+    expect(m.generationCreate.mock.calls[0]![0].data).not.toHaveProperty("requestedPromptText");
+  });
+
+  it("⑥ 视频零回归 —— 视频分支照旧送 job.prompt(一个编号句都不加),而且同样落库", async () => {
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    const { sent, stored } = await sentVsStored({ ...videoJob });
+    expect(stored).toEqual([sent]);
+    expect(sent).toBe(videoJob.prompt);
+  });
+
+  it("多张图:一次付费调用一个字符串,每一张产出行都记同一句(不逐张各记各的)", async () => {
     m.generateImages.mockResolvedValue([
       { bytes: new Uint8Array([1]), ext: "png" },
       { bytes: new Uint8Array([2]), ext: "png" },
     ]);
-    const { generationRows } = await runWorker({ ...imageJob, count: 2, requestedPrompt: "a poster for the weekend sale, moody lighting" });
-    expect(generationRows.map((r) => r.requestedPromptText)).toEqual([
-      "a poster for the weekend sale, moody lighting",
-      "a poster for the weekend sale, moody lighting",
-    ]);
+    const { sent, stored } = await sentVsStored({ ...imageJob, count: 2, sourceGenerationId: "gen_src" });
+    expect(stored).toEqual([sent, sent]);
   });
 
-  it("不像 finalPromptText/billedUnits 那样搬到事务外 —— 它是我们自己已校验过长度的数据,不是引擎能撑爆的输入", async () => {
-    m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
-    const { generationRows, receiptPrompts } = await runWorker({ ...imageJob, requestedPrompt: "a poster for the weekend sale, moody lighting" });
-    // 落在 generationCreate 的 data 里(commit tx 内),不是 generationUpdateMany(事务外的补写)。
-    expect(generationRows[0]!.requestedPromptText).toBe("a poster for the weekend sale, moody lighting");
-    expect(receiptPrompts.every((u) => !("requestedPromptText" in u.data))).toBe(true);
+  it("这一列**永远**写(新行的 null 只可能来自「这一行早于这一列」)—— 读取端据此整行不显示才站得住", async () => {
+    const { rows } = await sentVsStored({ ...imageJob });
+    expect(rows[0]).toHaveProperty("sentPromptText");
+    expect(typeof rows[0]!.sentPromptText).toBe("string");
+  });
+
+  it("落在 commit 那一笔事务里(与 promptText 同一次写入),不是事务外的补写", async () => {
+    const { receiptPrompts } = await sentVsStored({ ...imageJob });
+    // 它是我们自己已校验过长度的数据,不是引擎能撑爆的输入 —— 所以不必像 finalPromptText
+    // 那样躲到事务外;但反过来,它也绝不许出现在事务外那几笔补写里。
+    expect(receiptPrompts.every((u) => !("sentPromptText" in u.data))).toBe(true);
+  });
+});
+
+/**
+ * 源码闸 —— 「只有一个发送点」这条结构性主张。
+ *
+ * 上面每一条用例都只能证明「这一种任务形状记对了」;而「五类入口天然全覆盖」这句话真正
+ * 依赖的是:worker 里把提示词交给引擎的地方**只有那两处**(图片一处、视频一处),而且两处
+ * 交出去的与落库的是同一个变量。这条主张没法用行为测试证,所以用词法钉:有人将来在别处
+ * 再开一个发送点、或者把落库那一行改成重算一遍表达式,这里当场红。
+ */
+describe("#914 r4 —— 发送点唯一,且「送出的」与「落库的」是同一个变量", () => {
+  const SRC = readFileSync(new URL("./gen.ts", import.meta.url), "utf8");
+
+  it("gen.ts 里交给引擎的 prompt 只有 `prompt: sentPrompt` 这一种写法", () => {
+    const promptArgs = [...SRC.matchAll(/provider\.(generate|generateVideo)\(\{\s*prompt:\s*([A-Za-z0-9_.()]+)/g)];
+    expect(promptArgs.length, "图片一处 + 视频一处").toBe(2);
+    for (const [, , arg] of promptArgs) expect(arg).toBe("sentPrompt");
+  });
+
+  it("落库的那一列写的就是同一个变量,不是就地重算一遍", () => {
+    expect(SRC).toContain("sentPromptText: sentPrompt,");
+    // `withReferenceMap(` 在 gen.ts 里只许出现一次(赋给 sentPrompt 的那一处):出现第二次
+    // 就意味着有人又算了一遍,而两遍迟早会不一样。
+    expect(SRC.match(/withReferenceMap\(/g)).toHaveLength(1);
   });
 });
 

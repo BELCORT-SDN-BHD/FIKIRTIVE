@@ -1,0 +1,31 @@
+-- 图片回执补根(#914 r4,判官 r3)。两列,都可空,无默认值,无约束,无索引,无回填。零破坏。
+--
+-- 判官 r3 的定案:回执要回答的问题是「平台到底把哪一句交给了引擎」,而这句话在 web 层
+-- **记不到** —— worker 在真正调用引擎之前还会再拼一次(#774 的参考图编号句由
+-- apps/worker/src/jobs/gen.ts 在装 inputImageUrls 的那趟循环里产出)。所以记录点搬到
+-- 真实发送层:
+--
+--   · "Generation"."sentPromptText" —— worker 在把字符串交给 provider 的那一刻,把**那个
+--     同一个变量**随产出一起落库,和 promptText/generationIds 同一笔事务提交。
+--     图片 = withReferenceMap(job.prompt, refSlots);视频 = job.prompt。
+--     五类花钱入口(画布 / 工厂 / 战役 / 模板 / 详情页编辑 / Otto)全都汇到这一个发送点,
+--     所以覆盖是结构性的,不靠逐个入口去接线,新入口也漏不掉。
+--
+--   · "GenJob"."requestedPrompt" —— **商家自己写的那一句**,只在入队前我们自己的
+--     composePrompt 拼装步骤真的动过手时才写(apps/web/lib/cowork-actions.ts 的
+--     coworkGenerate,给未配专属提示词技能的模型家族追加家族×模式指令词)。没写 = 这一单
+--     的 "GenJob"."prompt" 本身就是商家写的那句。回执比对的商家那一列 =
+--     COALESCE("GenJob"."requestedPrompt", "GenJob"."prompt"),商家原话全线只有这一个出处。
+--
+-- reserve / settle / refund 的权威、幂等键、以及 CreditLedger 一个字节都没动;这两列也绝不
+-- 参与任何 spend 判定或 factoryMaterialMatches 重放比对。
+--
+-- 为什么零破坏:
+--   ① ADD COLUMN ... NULL(无默认值)不重写既有行、不长时间持锁;
+--   ② 现有行保持 NULL,而 NULL 在读取端的含义**只有一种**:这一行早于本列存在。面板据此
+--      整行不显示、不作任何声明(#914 Founder 裁定:有则显示、无则整行不出现)。所以不需要
+--      回填,也**不许**回填 —— 回填只会把一个推断值写成看起来像事实的东西;
+--   ③ 不删列、不改列型、不加约束、不加索引 —— 没有任何数据丢失级 DDL。
+
+ALTER TABLE "GenJob" ADD COLUMN "requestedPrompt" TEXT;
+ALTER TABLE "Generation" ADD COLUMN "sentPromptText" TEXT;

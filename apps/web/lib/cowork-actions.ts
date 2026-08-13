@@ -134,13 +134,15 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
       },
     });
     if (!built.ok) return { error: built.error };
-    // #914 r2 (判官 r1 P1) — the receipt fact the asset detail panel / Otto compare against what
-    // actually went out (composedPrompt, now sitting in built.req.prompt): only differs from it
-    // when the directive above actually appended something. Every other spend surface (direct
-    // composer, the Otto-chat `generate` skill) never composes, so their jobs carry no
-    // requestedPrompt at all — the reader treats that absence as "nothing to diverge from",
-    // never as "unknown" (unlike the engine-reported finalPromptText, both ends of this fact are
-    // our own data).
+    // #914 — WHAT THE MERCHANT ACTUALLY WROTE. This is the one spend surface that rewrites the
+    // prompt before it is queued (the directive above), so this is the one place where the
+    // merchant's own words and GenJob.prompt part company: keep the pre-compose text here, and
+    // the receipt's comparison (against Generation.sentPromptText, recorded by the worker at the
+    // moment it calls the engine) has an honest left-hand side. Only set when the directive
+    // really appended something — every other spend surface (direct composer, the Otto-chat
+    // `generate` skill, canvas/factory/campaign/template) never composes, so their jobs carry no
+    // requestedPrompt and `prompt` IS the merchant's own words. Absence means exactly that; it is
+    // never "unknown".
     const req = composedPrompt === prompt ? built.req : { ...built.req, requestedPrompt: prompt };
 
     const res = await startCoworkGen(req); // binds the persisted card quote before the shared startGen spend authority

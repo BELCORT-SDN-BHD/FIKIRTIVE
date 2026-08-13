@@ -9,12 +9,12 @@
  * 不出现,而且图片这条路上**不分「有/无」两种形状**,因为它结构上恒为未知,不是「这次没报」。
  * 视频回执行为不变(r2 判官的五条纪律原样保留,下移到本文件的「视频回执」describe 块)。
  *
- * #914 r2(判官 r1 P1 FAIL):图片这条路新增的那条事实原本恒定显示 "Sent exactly as you
- * wrote it." —— 判官指出这不实:官方契约只证明「引擎不回报改写」,不证明「引擎不改写」,
- * 而我们自己的拼装管线(coworkGenerate 的 composePrompt)确实会给部分图片模型家族加工提示
- * 词。这一票把它改成按真实比对条件化:`requestedPrompt`(拼装前,我们自己的数据,null =
- * 与 `prompt` 无分家)与 `prompt`(拼装后,平台真正送出的那句)逐字相同才说「原样」,不同
- * 就把 `prompt` 整句亮出来 —— 断言覆盖两个分支,而不是像 r1 那样只有恒真一种形状。
+ * #914 r4(判官 r3 FAIL):图片这条路新增的那条事实,r2/r3 记在 web 层 —— 而 worker 在真正
+ * 发送前还会再拼一次(#774 的参考图编号句),所以记下的永远不是送出去的全文,「原样送出」
+ * 在模板一键成片这类必带底图的单上恒为谎;更糟的是当时的测试把历史行(我们根本没有记录的
+ * 那些图)也锁成了「原样送出」的绿色契约。r4 把记录点搬到真实发送层,比对在服务端一次做完
+ * (asset-actions.sentPromptReceipt),面板只显示三种结论:没有记录 ⇒ **整块不出现**;
+ * 逐字相同 ⇒ 一句话;不同 ⇒ 实际送出的全文。
  *
  * 真组件 + 真 React;只有服务端动作是假件,所以一个积分都花不出去。断言的是**屏幕上的字**,
  * 不是源码里的标识符 —— 前者才是商家看到的东西。
@@ -59,11 +59,13 @@ const { default: DetailPanel } = await import("@/components/asset/DetailPanel");
 const MERCHANT_PROMPT = "a poster for the weekend sale";
 
 type Variant = { id: string; url: string; favorite: boolean; finalPrompt: string | null };
+/** #914 r4:服务端已经比完的结论(asset-actions.sentPromptReceipt),面板只负责显示。 */
+type SentReceipt = null | { verbatim: true } | { verbatim: false; text: string };
 
-// #914 r2:requestedPrompt is a per-JOB fact (composePrompt runs once on the whole job's
-// prompt, before any output image exists), not per-variant like finalPrompt — so it's a
-// plain third argument here, not a field on each Variant.
-const generation = (variants: Variant[], kind: "image" | "video" = "image", requestedPrompt: string | null = null) => ({
+// #914 r4:sentPrompt is a per-JOB fact — one paid call per job sends ONE string, so every
+// output row carries the same one (unlike finalPrompt, which the engine reports per output).
+// Hence a plain third argument here, not a field on each Variant.
+const generation = (variants: Variant[], kind: "image" | "video" = "image", sentPrompt: SentReceipt = { verbatim: true }) => ({
   id: variants[0]!.id,
   projectId: "p1",
   url: variants[0]!.url,
@@ -72,7 +74,7 @@ const generation = (variants: Variant[], kind: "image" | "video" = "image", requ
   kind,
   prompt: MERCHANT_PROMPT,
   finalPrompt: variants[0]!.finalPrompt,
-  requestedPrompt,
+  sentPrompt,
   favorite: false,
   sourceGenerationId: null,
   imageAspect: "1:1",
@@ -116,8 +118,8 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function renderPanel(variants: Variant[], kind: "image" | "video" = "image", requestedPrompt: string | null = null): Promise<void> {
-  mocks.getGeneration.mockResolvedValue(generation(variants, kind, requestedPrompt));
+async function renderPanel(variants: Variant[], kind: "image" | "video" = "image", sentPrompt: SentReceipt = { verbatim: true }): Promise<void> {
+  mocks.getGeneration.mockResolvedValue(generation(variants, kind, sentPrompt));
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -144,7 +146,12 @@ function hasEngineRanRow(): boolean {
   return [...container!.querySelectorAll("span")].some((s) => s.textContent?.trim() === "What the engine ran");
 }
 
-/** #914 r2:「What we sent to the engine」那一块底下的那句话 —— 图片回执的平台加工事实。 */
+/** #914 r4:「What we sent to the engine」这一块存不存在 —— 历史行的核心断言。 */
+function hasSentToEngineRow(): boolean {
+  return [...container!.querySelectorAll("span")].some((s) => s.textContent?.trim() === "What we sent to the engine");
+}
+
+/** #914 r4:「What we sent to the engine」那一块底下的那句话 —— 我们实际送出的事实。 */
 function sentToEngineText(): string {
   const labels = [...container!.querySelectorAll("span")].filter((s) => s.textContent?.trim() === "What we sent to the engine");
   expect(labels[0], "图片回执应该有「What we sent to the engine」这一块").toBeDefined();
@@ -180,40 +187,42 @@ describe("#914 图片回执:「引擎实际提示词」整行永不出现", () =
   });
 });
 
-describe("#914 r2(判官 r1 P1)图片回执:平台加工展示路径,按真实比对条件化", () => {
-  it("requestedPrompt 缺省(null)⇒ 没有可分家的两句话,明写「按原文送出」", async () => {
+describe("#914 r4(判官 r3)图片回执:我们实际送出的那一句", () => {
+  // r2/r3 的病在这里:那时这一块**恒定**存在,历史行也照样宣布「原样送出」—— 一个我们
+  // 根本没有记录的事实被说成了确定的事实,而且当时的测试还把这个谎锁成了绿色契约。
+  it("历史生成(worker 记这一列之前产的图)⇒ 整块不渲染,一个字都不说", async () => {
     await renderPanel(one(null), "image", null);
+    expect(hasSentToEngineRow()).toBe(false);
+    expect(container!.textContent).not.toContain("Sent exactly as you wrote it.");
+  });
+
+  it("逐字相同 ⇒ 一句「原样送出」,不把同一段文字再贴一遍", async () => {
+    await renderPanel(one(null), "image", { verbatim: true });
     expect(sentToEngineText()).toBe("Sent exactly as you wrote it.");
   });
 
-  it("requestedPrompt 与实际送出的 prompt 逐字相同(显式传入,不是靠 null 缺省)⇒ 仍说原样", async () => {
-    await renderPanel(one(null), "image", MERCHANT_PROMPT);
-    expect(sentToEngineText()).toBe("Sent exactly as you wrote it.");
-  });
-
-  it("requestedPrompt 与实际送出的 prompt 不同(拼装管线真的加工过)⇒ 展示平台实际送出的提示词全文", async () => {
-    const requested = "a poster, weekend sale"; // 商家批的那句 —— 拼装之前
-    await renderPanel(one(null), "image", requested);
-    // MERCHANT_PROMPT 是 fixture 里 gen.prompt 的值 —— 平台真正送出的那一句。
-    expect(sentToEngineText()).toBe(MERCHANT_PROMPT);
+  it("不同(worker 在发送前加了 #774 的参考图编号句)⇒ 亮出实际送出的全文", async () => {
+    const sent = `<Image_1> is the image being edited.\n${MERCHANT_PROMPT}`;
+    await renderPanel(one(null), "image", { verbatim: false, text: sent });
+    expect(sentToEngineText()).toBe(sent);
     expect(sentToEngineText()).not.toBe("Sent exactly as you wrote it.");
   });
 
-  it("这一行不受(结构上不可能出现的)finalPrompt 影响 —— 只比 requestedPrompt vs prompt,不看引擎回执", async () => {
-    await renderPanel(one("a bright poster, weekend sale, bold type"), "image", null);
+  it("这一行不受(结构上不可能出现的)finalPrompt 影响 —— 它是我们自己的记录,不问引擎要", async () => {
+    await renderPanel(one("a bright poster, weekend sale, bold type"), "image", { verbatim: true });
     expect(sentToEngineText()).toBe("Sent exactly as you wrote it.");
   });
 
-  it("多图:requestedPrompt 是整单一份事实,不随缩略图切换而变", async () => {
-    const requested = "a poster, weekend sale"; // 不同于 MERCHANT_PROMPT,应该显示 gen.prompt
+  it("多图:一次付费调用一个字符串,切缩略图这一行不变脸", async () => {
+    const sent = `<Image_1> is the image being edited.\n${MERCHANT_PROMPT}`;
     await renderPanel([
       { id: "g1", url: "https://cdn.test/g1.png", favorite: false, finalPrompt: null },
       { id: "g2", url: "https://cdn.test/g2.png", favorite: false, finalPrompt: null },
-    ], "image", requested);
-    expect(sentToEngineText()).toBe(MERCHANT_PROMPT);
+    ], "image", { verbatim: false, text: sent });
+    expect(sentToEngineText()).toBe(sent);
     const thumbs = [...container!.querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
     await act(async () => { thumbs[1]!.click(); });
-    expect(sentToEngineText()).toBe(MERCHANT_PROMPT);
+    expect(sentToEngineText()).toBe(sent);
   });
 });
 
@@ -259,8 +268,10 @@ describe("#776 r2 → #914:视频回执行为不变", () => {
     expect(engineRanText()).toBe("Not reported by the engine.");
   });
 
-  it("视频回执不显示图片专属的「What we sent to the engine」平台加工行", async () => {
-    await renderPanel(one("a bright poster, weekend sale, bold type"), "video");
+  // 记录本身对视频也在落(同一个发送点),但视频这一面的展示**一个字都没动**:
+  // 它照旧只说「引擎跑的那句」。fixture 这里刻意带着一份非空的 sentPrompt。
+  it("视频回执不显示图片专属的「What we sent to the engine」这一行", async () => {
+    await renderPanel(one("a bright poster, weekend sale, bold type"), "video", { verbatim: true });
     expect(container!.textContent).not.toContain("What we sent to the engine");
   });
 });

@@ -852,8 +852,9 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             idempotencyKey: idempotencyKey ?? null,
             threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
             queueJobId,
-            // #914 r2 — only coworkGenerate ever sets this (its composePrompt step actually
-            // changed something); absent for every other spend surface. Rides straight through
+            // #914 — the merchant's own words, set ONLY by coworkGenerate (and only when its
+            // composePrompt step actually changed something); absent for every other spend
+            // surface, where `prompt` above IS the merchant's own words. Rides straight through
             // like idempotencyKey — never read by material/replay matching.
             ...(requestedPrompt ? { requestedPrompt } : {}),
             ...(videoOptions ? { videoOptions } : {}),
