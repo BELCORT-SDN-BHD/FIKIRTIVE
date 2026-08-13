@@ -264,13 +264,20 @@ expect_green() { # <description>
 # WHAT THIS CASE MAY REQUIRE, AND WHAT IT MAY NOT. r8 refused the earlier version of
 # this requirement, and was right to: it demanded that the bypass touch
 # `.github/ci-workflow.lock`, and r8's own `BASH_ENV` bypass touched no such thing —
-# it edited one `env:` entry in ci.yml and nothing else. So the only file this case
-# is entitled to insist on is `.github/workflows/ci.yml`. That is the claim the whole
-# design now rests on, and it is deliberately the weaker one: not "a bypass has to
-# disturb the lock", but "a bypass has to be written down in the workflow file, where
-# the diff is". Do not add files back to this call to make it feel stronger — a
-# requirement this case cannot meet for every bypass is a requirement that will be
-# falsified in r10.
+# it edited one `env:` entry in ci.yml and nothing else. So the only file THIS case is
+# entitled to insist on is `.github/workflows/ci.yml`, because a ci.yml edit is what
+# THIS case's mutation actually is. Do not add files back to this call to make it feel
+# stronger — a requirement a case cannot meet for the bypass it models is a
+# requirement the next round falsifies.
+#
+# AND THE CLAIM AROUND IT HAS MOVED, WHICH IS r10's DOING. This case used to be
+# described here as proving the whole design's claim, "every bypass needs a ci.yml
+# diff". It never proved that — one case cannot — and r10 disproved the claim outright
+# by editing `scripts/ci/pr-scope.sh` instead. The claim is now about a NAMED SET of
+# files (see the header of scripts/__tests__/quality-legs.test.sh), of which ci.yml is
+# one member; the r10 group above is what covers the members this case does not touch.
+# So this case's job is narrower than it used to be advertised as: it shows that the
+# ONE bypass it models — re-blessing a poisoned tree — cannot be quiet.
 expect_green_only_by_visible_edit() { # <description> <file that must have changed>…
   local desc="$1"
   shift

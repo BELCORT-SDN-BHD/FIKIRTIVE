@@ -638,6 +638,15 @@ jobs:
       # cost CI minutes. It cannot buy a skip. The two files it is checking are not
       # thereby "verified" — they are demoted out of the decision.
       #
+      # AND IT IS DELIBERATELY STEP #3. This job has no setup and no install: its steps
+      # are the checkout, the tripwire (`shell: sh`, writes nothing), this, and the
+      # verdict. So nothing in the repository has had an opportunity to write
+      # `$GITHUB_ENV` or `$GITHUB_PATH` before this step's shell starts — which is the
+      # r6 hole, and it is closed here by there being no step that could open it rather
+      # than by a check. The position is pinned by hand in
+      # scripts/__tests__/quality-legs.test.sh (3g), because "step #3" is the whole of
+      # that argument.
+      #
       # THIS FILTER IS A SECOND IMPLEMENTATION, NOT A SECOND CALL. Handing the same
       # scripts/ci/pr-scope.jq the same bytes would agree with itself by construction,
       # which is the shape r10 found and the shape this whole PR keeps re-learning. It
