@@ -62,8 +62,11 @@ export const config = {
   // api/health excluded — external uptime monitors probe it; it returns only up/stale, no data.
   // api/ops/dlq excluded (#793) — the SAME external uptime monitors probe it, and they have no
   //   session. It answers clear/backed-up/unknown and nothing else: no counts, no queue names, no
-  //   merchant data. The exemption is scoped to exactly this path — there is no other route under
-  //   /api/ops, and any future one stays inside the wall unless it earns its own line here.
+  //   merchant data. The exemption is BOUNDED to exactly this path (`api/ops/dlq/?$`): a bare
+  //   prefix would also have opened /api/ops/dlqx, /api/ops/dlq-admin and /api/ops/dlq/anything,
+  //   so a future route whose name merely starts the same way would have shipped public by
+  //   accident (r2 — judge r1 P1). Any future ops route stays inside the wall unless it earns
+  //   its own line here. Pinned by the boundary shapes in lib/__tests__/proxy.test.ts.
   // api/ready excluded (#796) — the PLATFORM's own deploy/load probe calls it with no session, and
   //   it must answer before a container is allowed to take traffic. Same zero-data contract as
   //   api/health: ready true/false + a reason word, nothing about any merchant.
@@ -84,5 +87,5 @@ export const config = {
   // MUST render without a session — that is the whole point of them — so they join /login
   // outside the wall. They mutate nothing on their own; every action behind them goes through
   // Better Auth's own gates (pause switch, allowlist, verification, rate limit).
-  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/ops/dlq|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };

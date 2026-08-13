@@ -48,18 +48,19 @@ describe("DEAD_LETTER_QUEUES", () => {
 });
 
 describe("censusDeadLetters", () => {
-  it("is healthy when all seven queues exist and are empty", () => {
+  it("is clear only when all seven queues exist and are empty", () => {
     expect(censusDeadLetters(all())).toEqual({
-      healthy: true,
+      status: "clear",
       total: 0,
       offenders: [],
       missing: [],
+      malformed: [],
     });
   });
 
   it("counts queued, deferred and active jobs as depth", () => {
     const census = censusDeadLetters(all({ "gen.dlq": { queuedCount: 2, deferredCount: 1, activeCount: 3 } }));
-    expect(census.healthy).toBe(false);
+    expect(census.status).toBe("backed-up");
     expect(census.total).toBe(6);
     expect(census.offenders).toEqual([{ queue: "gen.dlq", count: 6 }]);
   });
@@ -79,17 +80,37 @@ describe("censusDeadLetters", () => {
     ]);
   });
 
-  it("reports a queue pg-boss did not return as missing, and stays healthy", () => {
-    const rows = all().filter((r) => r.name !== INGEST_DLQ);
-    const census = censusDeadLetters(rows);
+  /**
+   * r2 反转(判官 r1 P1-1)。这条以前钉的是「少一条队列仍然 healthy」—— 一个查不到
+   * `ingest.dlq` 的探针照样回 200 clear,而 ingest.dlq 装的正是商家刚上传的素材。
+   * 「我看不到」不是「我看到了,是空的」。
+   */
+  it("cannot claim clear when a queue is missing — it answers unknown", () => {
+    const census = censusDeadLetters(all().filter((r) => r.name !== INGEST_DLQ));
     expect(census.missing).toEqual([INGEST_DLQ]);
-    expect(census.healthy).toBe(true);
+    expect(census.status).toBe("unknown");
+    expect(census.total).toBe(0);
+  });
+
+  it("answers unknown when the whole query came back empty", () => {
+    const census = censusDeadLetters([]);
+    expect(census.status).toBe("unknown");
+    expect(census.missing).toEqual([...DEAD_LETTER_QUEUES]);
+  });
+
+  // 已经确知有活被放弃时,那句话要指向「去看那些活」,而不是「去看队列在不在」。
+  it("prefers backed-up over unknown when something is definitely stuck", () => {
+    const census = censusDeadLetters(
+      all({ "gen.dlq": { queuedCount: 1 } }).filter((r) => r.name !== INGEST_DLQ),
+    );
+    expect(census.status).toBe("backed-up");
+    expect(census.missing).toEqual([INGEST_DLQ]);
   });
 
   it("ignores queues outside the dead-letter list", () => {
     const census = censusDeadLetters([...all(), row("gen", { queuedCount: 900 })]);
     expect(census.total).toBe(0);
-    expect(census.healthy).toBe(true);
+    expect(census.status).toBe("clear");
   });
 
   it("ignores a duplicated row instead of double counting it", () => {
@@ -97,11 +118,29 @@ describe("censusDeadLetters", () => {
     expect(census.total).toBe(4);
   });
 
-  it("treats malformed counts as zero rather than throwing", () => {
-    const census = censusDeadLetters([
-      row("gen.dlq", { queuedCount: Number.NaN, deferredCount: -3, activeCount: 2.7 }),
-    ]);
+  /**
+   * r2:畸形计数从前被折成 0,「读到了垃圾」和「读到了 0」于是变成同一句话。
+   * 读不懂就说读不懂 —— 它是 unknown,不是 clear。
+   */
+  it.each<[string, Partial<DeadLetterQueueRow>]>([
+    ["NaN", { queuedCount: Number.NaN }],
+    ["negative", { deferredCount: -3 }],
+    ["fractional", { activeCount: 2.7 }],
+    ["Infinity", { queuedCount: Number.POSITIVE_INFINITY }],
+  ])("treats a %s count as unreadable, not as zero", (_label, over) => {
+    const census = censusDeadLetters(all({ "gen.dlq": over }));
+    expect(census.malformed).toEqual(["gen.dlq"]);
+    expect(census.status).toBe("unknown");
+    expect(census.offenders).toEqual([]);
+  });
+
+  it("keeps counting the queues it could read while one is unreadable", () => {
+    const census = censusDeadLetters(
+      all({ "gen.dlq": { queuedCount: Number.NaN }, "render.dlq": { queuedCount: 2 } }),
+    );
     expect(census.total).toBe(2);
+    expect(census.malformed).toEqual(["gen.dlq"]);
+    expect(census.status).toBe("backed-up");
   });
 });
 
@@ -117,5 +156,14 @@ describe("deadLetterAlertTitle", () => {
   it("lists every offending queue", () => {
     const census = censusDeadLetters(all({ "gen.dlq": { queuedCount: 2 }, "render.dlq": { queuedCount: 9 } }));
     expect(deadLetterAlertTitle(census)).toBe("Dead-letter queues are not empty: render.dlq, gen.dlq");
+  });
+
+  // 两句标题要人做的事不同:有货 = 去看那些活;读不到 = 去看队列本身。
+  it("says something different when the queues could not be read at all", () => {
+    const missing = censusDeadLetters(all().filter((r) => r.name !== INGEST_DLQ));
+    expect(deadLetterAlertTitle(missing)).toBe("Dead-letter queues could not be read: ingest.dlq");
+
+    const malformed = censusDeadLetters(all({ "gen.dlq": { queuedCount: Number.NaN } }));
+    expect(deadLetterAlertTitle(malformed)).toBe("Dead-letter queues could not be read: gen.dlq");
   });
 });

@@ -7,8 +7,13 @@
  * 公开的 worker up/stale 同一量级。真正的明细走 Sentry(已鉴权)。
  *
  * 约定(状态码即告警,任何免费探针零配置就能用):
- *   200 = 七条死信队列一条不剩
- *   503 = 有死信,或队列本身查不到(web 连不上队列本身就是故障,fail loud)
+ *   200 = 七条死信队列**全部查得到,且一条不剩**
+ *   503 = 有死信(backed-up),或有队列查不到 / 计数不可信 / 库读不到(unknown)
+ *
+ * 只有「查得到且是空的」才配 200:一个证明不了自己看得见的探针报平安,比没有探针更坏
+ * (r2 — 判官 r1 P1-1)。
+ *
+ * 这条路径是**只读**的:一次 SELECT,不建队列、不写任何一行(r2 — 见 lib/dlq-watch.ts)。
  *
  * 接法与生产残留清单见 docs/ops/dashboards.md。
  */
@@ -19,9 +24,10 @@ export const dynamic = "force-dynamic";
 export async function GET(): Promise<Response> {
   try {
     const census = await checkDeadLetters();
+    const clear = census.status === "clear";
     return Response.json(
-      { ok: census.healthy, deadLetters: census.healthy ? "clear" : "backed-up" },
-      { status: census.healthy ? 200 : 503 },
+      { ok: clear, deadLetters: census.status },
+      { status: clear ? 200 : 503 },
     );
   } catch {
     // 队列句柄拿不到(DB 不可达、pooler 重启、句柄冷却中)。不把原因回给外面 —— 免鉴权
