@@ -21,6 +21,69 @@ if [[ "$actual_pnpm" != "$expected_pnpm" ]]; then
   exit 1
 fi
 
+# ── legs ───────────────────────────────────────────────────────────────────────
+# A whole run, or one fifth of one. CI starts this script five times in parallel —
+# one leg per ephemeral VM — and a fan-in job named `quality` (the required status
+# check) refuses to pass unless every leg passed. The wall clock drops from the
+# SUM of the gates to the SLOWEST one. Not a gate is dropped, weakened, reordered
+# within its leg, or moved anywhere it stops being required.
+#
+# The default is unchanged and must stay that way: with no --leg and no
+# QUALITY_LEG, every gate below runs, in this order, exactly as before. A leg can
+# only ever REMOVE gates from one run — it can never change what a gate does or
+# how it is judged. `pnpm quality` on a laptop is the run it always was.
+#
+# What makes five partial runs add up to one whole run is coverage: the union of
+# the legs must be the entire gate list, and CI must run exactly these leg names.
+# Neither is left to a comment. scripts/__tests__/quality-legs.test.sh keeps its
+# own hand-written leg → gate list, compares it both ways against this file and
+# against .github/workflows/ci.yml — which it reads AS YAML, so a leg named only
+# in a comment counts for nothing — and it runs as a gate itself. A gate that
+# falls out of every leg, a gate that quietly changes leg, or a leg CI stops
+# running fails the run instead of quietly checking nothing.
+quality_legs=(typecheck tests build lint checks)
+quality_leg="${QUALITY_LEG:-}"
+
+while (( $# > 0 )); do
+  case "$1" in
+    --leg=*)
+      quality_leg="${1#--leg=}"
+      ;;
+    --leg)
+      if (( $# < 2 )); then
+        echo "quality: --leg needs a value (one of: ${quality_legs[*]})" >&2
+        exit 1
+      fi
+      quality_leg="$2"
+      shift
+      ;;
+    --)
+      # `pnpm quality -- --leg tests` forwards the separator itself (measured on
+      # pnpm 10.0.0). CI uses the plain form, but a human reaching for the usual
+      # idiom should not get "unknown argument '--'".
+      ;;
+    *)
+      echo "quality: unknown argument '$1' — usage: quality.sh [--leg <${quality_legs[*]}>]" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# An unknown leg is a typo in CI config, and a typo that quietly ran nothing would
+# be a green `quality` over gates that never executed. It dies here instead.
+if [[ -n "$quality_leg" ]]; then
+  quality_leg_known=""
+  for quality_leg_candidate in "${quality_legs[@]}"; do
+    if [[ "$quality_leg_candidate" == "$quality_leg" ]]; then quality_leg_known=1; fi
+  done
+  if [[ -z "$quality_leg_known" ]]; then
+    echo "quality: unknown leg '$quality_leg' (known legs: ${quality_legs[*]})" >&2
+    exit 1
+  fi
+  echo "quality: running the '$quality_leg' leg only — the fan-in job named 'quality' is what proves the other four ran"
+fi
+
 # ── gate timing ────────────────────────────────────────────────────────────────
 # Every gate below runs through `gate`, which prints its own wall time and appends
 # it to a summary printed at the end. Without per-gate numbers, "quality is slow"
@@ -28,9 +91,26 @@ fi
 gate_timings=()
 quality_started_at="$(date +%s)"
 
+# Does this gate belong to the leg being run? `all` is for the one gate everything
+# downstream needs (the packages build), which therefore runs on every leg. With
+# no leg selected the answer is always yes — that is the local/default path.
+gate_runs_here() {
+  local legs="$1" candidate
+  [[ -n "$quality_leg" ]] || return 0
+  [[ "$legs" != "all" ]] || return 0
+  local IFS=,
+  for candidate in $legs; do
+    if [[ "$candidate" == "$quality_leg" ]]; then return 0; fi
+  done
+  return 1
+}
+
 gate() {
-  local name="$1"
-  shift
+  local legs="$1" name="$2"
+  shift 2
+  if ! gate_runs_here "$legs"; then
+    return 0
+  fi
   local started
   started="$(date +%s)"
   echo "quality: ▶ $name"
@@ -43,7 +123,7 @@ gate() {
 print_gate_summary() {
   local total=$(($(date +%s) - quality_started_at))
   echo ""
-  echo "quality: gate timings (slowest gate is the next thing worth fixing)"
+  echo "quality: gate timings${quality_leg:+ — leg '$quality_leg'} (slowest gate is the next thing worth fixing)"
   local row
   # `${a[@]+...}`: bash 3.2 (macOS default) treats an empty array as unset under `set -u`.
   for row in ${gate_timings[@]+"${gate_timings[@]}"}; do
@@ -866,41 +946,75 @@ echo "quality: using isolated database $local_database"
 # (the full test suite, `next build`) last. Constraint: everything after the packages
 # build needs `packages/*/dist` and the generated Prisma client, so that build cannot
 # move.
+#
+# The first argument of each `gate` is the legs it belongs to (`all` = every leg).
+# Read the column downwards and it is the leg map; read it across and it is the
+# same gate list as before. Three rules govern it, all machine-checked by
+# scripts/__tests__/quality-legs.test.sh:
+#   - every gate names at least one leg (a gate in no leg would stop running in CI)
+#   - every leg is named by at least one gate (an empty leg would be a green job
+#     that checked nothing)
+#   - this whole column matches the hand-written leg → gate list in that test, so
+#     deleting, renaming or RE-LEGGING a gate here is red until it is stated there
+#     too, in the same commit
+# Balance, not tidiness, decides which leg a gate lands in: the fan-in waits for
+# the SLOWEST leg, so the two long poles named above (the full test suite and
+# `next build`) get legs of their own, and the cheap gates ride along with whatever
+# leg has room. `pnpm -r test` is ONE gate and cannot be divided without changing
+# what a gate is, so the `tests` leg is the wall-clock floor until that suite itself
+# gets faster.
+#
+# Per-leg wall time across every green run of the split so far (CI, one ephemeral VM
+# each): tests 454-746s ← the floor, and the only leg that moves; build 190-220s,
+# typecheck 154-206s, lint 142-151s, checks 100-116s. 472-767s of wall clock — plan
+# for ~13 min, not for the best run — against ~18-20 min for the old single job.
+# Per-gate, from `pnpm quality` on a dev laptop: packages build 82s — every leg pays
+# it, it is the prerequisite — typecheck 212s, lint 78s, PR-scope self-test 16s,
+# prisma migrate deploy 16s, otto catalog 7s, schema drift 6s, fences and margin
+# gates under 1s each.
 
 # 1. Pure text fences — grep only, no build, ~1s. Nothing should ever run before these.
-gate "skill-import fence" bash scripts/check-skill-imports.sh
-gate "destructive-migration fence" bash scripts/check-destructive-migrations.sh
+gate typecheck "skill-import fence" bash scripts/check-skill-imports.sh
+gate typecheck "destructive-migration fence" bash scripts/check-destructive-migrations.sh
 # The gate that decides whether the gates run. Its own self-test therefore goes first
 # among the things that can be checked without a build (#809).
-gate "PR-scope gate self-test" bash scripts/__tests__/pr-scope.test.sh
+gate typecheck "PR-scope gate self-test" bash scripts/__tests__/pr-scope.test.sh
+# The gate that decides which gates run WHERE. Same reasoning one level up: the leg
+# split is only as trustworthy as the proof that its union is still the whole list.
+gate typecheck "quality-leg coverage self-test" bash scripts/__tests__/quality-legs.test.sh
 
-# 2. The one unavoidable prerequisite: dist + generated Prisma client.
-gate "packages build" pnpm --filter "./packages/*" build
+# 2. The one unavoidable prerequisite: dist + generated Prisma client. Every leg
+#    pays for it; it is why a leg costs its own time plus 82s and not zero.
+gate all "packages build" pnpm --filter "./packages/*" build
 
 # 3. Static analysis over the whole workspace — fast relative to tests, catches most breaks.
-gate "typecheck" pnpm -r typecheck
-gate "lint" pnpm lint
+gate typecheck "typecheck" pnpm -r typecheck
+gate lint "lint" pnpm lint
 
 # 4. Small node checks that only need packages/* built.
-gate "otto CATALOG.md freshness" pnpm --filter @fikirtive/otto catalog:check
-gate "margin-floor gate self-test" node scripts/__tests__/check-margin-floor.test.mjs
-gate "margin floor" node scripts/check-margin-floor.mjs
+gate checks "otto CATALOG.md freshness" pnpm --filter @fikirtive/otto catalog:check
+gate checks "margin-floor gate self-test" node scripts/__tests__/check-margin-floor.test.mjs
+gate checks "margin floor" node scripts/check-margin-floor.mjs
 
 # 5. Schema truth: the migrations must deploy and must fully describe schema.prisma.
-gate "prisma migrate deploy" pnpm --filter @fikirtive/db exec prisma migrate deploy
-gate "prisma schema drift" pnpm --filter @fikirtive/db exec prisma migrate diff \
+#    The deploy is on two legs on purpose: it is a gate on `checks` (a migration that
+#    will not apply must fail something) and a PREREQUISITE on `tests`, whose suites
+#    query a migrated database. Running it twice, on two isolated per-run databases,
+#    is only ever stricter.
+gate tests,checks "prisma migrate deploy" pnpm --filter @fikirtive/db exec prisma migrate deploy
+gate checks "prisma schema drift" pnpm --filter @fikirtive/db exec prisma migrate diff \
   --from-config-datasource \
   --to-schema prisma/schema.prisma \
   --exit-code
 
 # 6. Long pole #1 — the full suite.
-gate "tests" pnpm -r test
+gate tests "tests" pnpm -r test
 
 # 7. Long pole #2 — `next build`. Last on purpose: it is the only gate that needs a
 #    healthy heap ceiling (see NODE_OPTIONS in ci.yml) and it re-runs a TypeScript pass,
 #    so anything it would catch on its own is already covered above except the
 #    build-only failures (e.g. the `"use server"` re-export trap, #741) — which is
 #    exactly why it still runs on every commit.
-gate "web build" pnpm --filter @fikirtive/web build
+gate build "web build" pnpm --filter @fikirtive/web build
 
 print_gate_summary
