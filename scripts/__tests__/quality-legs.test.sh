@@ -482,11 +482,17 @@ for pair in "${expected_jobs[@]}"; do
   [[ "$steps_len" =~ ^[0-9]+$ ]] && (( steps_len > 0 )) \
     || fail "ci.yml job '$job' has no steps — it would report success without running anything"
 
+  # The offending step numbers are useful in the message, but "an empty list means
+  # all clear" is the fail-open shape again. So the clean answer is a WORD the query
+  # has to produce — `none` — and the step list is what replaces it. A jq error
+  # produces neither, and neither is `none`.
   for key in "${forbidden_step_keys[@]}"; do
-    [[ "$(wf -r --arg j "$job" --arg k "$key" '
-      [ (.jobs[$j].steps // [])[] | select(has($k)) ] | length == 0
-    ')" == "true" ]] \
-      || fail "ci.yml job '$job' has a step carrying '$key:' — that key decides whether the step's command is executed and whether its failure reaches the job, so no step in this workflow may carry it"
+    offenders="$(wf -r --arg j "$job" --arg k "$key" '
+      [ (.jobs[$j].steps // []) | to_entries[] | select(.value | has($k)) | "#\(.key + 1)" ]
+      | if length == 0 then "none" else join(", ") end
+    ')"
+    [[ "$offenders" == "none" ]] \
+      || fail "ci.yml job '$job' has step(s) $offenders carrying '$key:' — that key decides whether the step's command is executed and whether its failure reaches the job, so no step in this workflow may carry it"
   done
 
   # A zero or negative timeout is a step or job that is killed before it can run.
@@ -494,10 +500,14 @@ for pair in "${expected_jobs[@]}"; do
   # jq query.)
   [[ "$(wf -r --arg j "$job" '(.jobs[$j]["timeout-minutes"] // 1) | (type == "number" and . >= 1)')" == "true" ]] \
     || fail "ci.yml job '$job' sets a 'timeout-minutes' that is not a positive number of minutes"
-  [[ "$(wf -r --arg j "$job" '
-    [ (.jobs[$j].steps // [])[] | select((.["timeout-minutes"] // 1) | (type != "number" or . < 1)) ] | length == 0
-  ')" == "true" ]] \
-    || fail "ci.yml job '$job' has a step with a 'timeout-minutes' that is not a positive number of minutes"
+  bad_step_timeouts="$(wf -r --arg j "$job" '
+    [ (.jobs[$j].steps // []) | to_entries[]
+      | select((.value["timeout-minutes"] // 1) | (type != "number" or . < 1))
+      | "#\(.key + 1)" ]
+    | if length == 0 then "none" else join(", ") end
+  ')"
+  [[ "$bad_step_timeouts" == "none" ]] \
+    || fail "ci.yml job '$job' has step(s) $bad_step_timeouts with a 'timeout-minutes' that is not a positive number of minutes"
 done
 
 # The required status check, from the parsed file. A job's check name is its
