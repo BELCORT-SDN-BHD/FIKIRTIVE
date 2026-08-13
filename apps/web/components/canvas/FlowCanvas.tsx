@@ -20,6 +20,8 @@ import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
@@ -1699,17 +1701,19 @@ export default function FlowCanvas({
                     the label says so, because a toggle beside a price that doesn't move it is
                     a question the merchant would otherwise have to guess the answer to. */}
                 {imageCount > 1 && (
-                  <label
-                    className="flex items-center gap-1.5 text-[0.75rem] text-muted-foreground"
+                  <div
+                    className="flex items-center gap-2"
                     title="Make these as one set — the same subject, wardrobe and style across every image. Same cost either way."
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
+                      id="canvas-coherent-set"
                       checked={imageCoherentSet}
-                      onChange={(event) => setImageCoherentSet(event.target.checked)}
+                      onCheckedChange={(checked) => setImageCoherentSet(checked === true)}
                     />
-                    <span>Keep as one set</span>
-                  </label>
+                    <Label htmlFor="canvas-coherent-set" className="text-[0.75rem] font-normal text-muted-foreground">
+                      Keep as one set
+                    </Label>
+                  </div>
                 )}
               </div>
               <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
