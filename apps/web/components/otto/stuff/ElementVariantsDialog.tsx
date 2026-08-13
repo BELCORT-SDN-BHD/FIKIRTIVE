@@ -47,10 +47,11 @@ import { creditsLabel } from "@/lib/credit-format";
 import {
   isVariantRunning,
   latestVariantRef,
-  variantJustFinished,
+  variantNeedsReread,
   variantsToWatch,
   type VariantJobs,
   type VariantJobStatus,
+  type VariantJobView,
 } from "@/lib/variant-progress";
 import type { EntityDTO } from "@/lib/types";
 
@@ -79,9 +80,6 @@ export function ElementVariantsDialog({
   const [renameValue, setRenameValue] = useState("");
   // What the server last said about each variant's NEWEST generation job (see lib/variant-progress).
   const [jobs, setJobs] = useState<VariantJobs>({});
-  // The same map, readable inside the poll without making it a dependency — the poll compares what
-  // it just heard against what it knew, and a "just finished" is that comparison.
-  const jobsRef = useRef<VariantJobs>({});
   // Every paid button is guarded synchronously: `busy` is state and lands a render too late to
   // stop a fast double-click, and a second click here would be a second charge.
   const submittingRef = useRef(false);
@@ -92,9 +90,14 @@ export function ElementVariantsDialog({
   const hasBase = !!baseRef;
   const variantCost = creditsLabel(displayCredits(pricedRefgenCredits({ model: "seedream", count: 1 })));
 
+  // The variants as CURRENTLY rendered, readable inside the poll without making the poll restart on
+  // every parent render. This is what "the images the merchant can see" means, and it is what a
+  // finished job's output is compared against — reading a stale copy would ask for the same re-read
+  // again after the fresh data had already landed.
+  const variantsRef = useRef(variants);
   useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
+    variantsRef.current = variants;
+  });
 
   /** Closing forgets what the server said, so opening again asks fresh — a generation started
    *  meanwhile (by Otto, or in another tab) is picked up instead of hidden behind a remembered
@@ -119,7 +122,7 @@ export function ElementVariantsDialog({
     if (!open || !entityId || watchKey === "") return;
     let cancelled = false;
     const tick = async () => {
-      const heard: Array<{ id: string; view: { status: VariantJobStatus; error: string } }> = [];
+      const heard: Array<{ id: string; view: VariantJobView }> = [];
       for (const variantId of watchKey.split(",")) {
         try {
           const rows = await getRefGenJobs(entityId, variantId);
@@ -127,7 +130,11 @@ export function ElementVariantsDialog({
           heard.push({
             id: variantId,
             view: latest
-              ? { status: latest.status as VariantJobStatus, error: latest.error || "" }
+              ? {
+                  status: latest.status as VariantJobStatus,
+                  error: latest.error || "",
+                  outputAssetIds: latest.outputAssetIds,
+                }
               : { status: "NONE", error: "" },
           });
         } catch {
@@ -135,13 +142,19 @@ export function ElementVariantsDialog({
         }
       }
       if (cancelled || heard.length === 0) return;
-      const finished = heard.some(({ id, view }) => variantJustFinished(jobsRef.current[id], view));
+      // A finished job whose image is NOT among the ones on screen means this page's data predates
+      // it — which is the normal case both for a generation we watched finish and for one that
+      // finished between the page snapshot and this very first poll.
+      const stale = heard.some(({ id, view }) => {
+        const variant = variantsRef.current.find((v) => v.id === id);
+        return !!variant && variantNeedsReread(variant, view);
+      });
       setJobs((cur) => {
         const next = { ...cur };
         for (const { id, view } of heard) next[id] = view;
         return next;
       });
-      if (finished) {
+      if (stale) {
         // The finished image lives on the server; ask the caller to re-read rather than
         // guessing at it here. The re-read is what puts the newly paid-for image on the tile.
         notifyBalanceRefresh();
@@ -157,8 +170,8 @@ export function ElementVariantsDialog({
   }, [open, entityId, watchKey, onChanged]);
 
   /** A paid generation was just accepted for this variant — the action returned a job, so it is
-   *  queued. Recording that immediately is what makes the finish visible: the poll only calls a
-   *  DONE it can see arriving a finish, and only a running variant is polled at all. */
+   *  queued. Recording that immediately is what keeps the variant on the watch list (and puts
+   *  "Making it again…" on a tile that still shows the old image) until the server says otherwise. */
   const markRunning = useCallback((variantId: string) => {
     setJobs((cur) => ({ ...cur, [variantId]: { status: "QUEUED", error: "" } }));
   }, []);

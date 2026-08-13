@@ -7,18 +7,25 @@
  *   - a tile that shows refs[0] shows the picture the merchant paid to move on from, permanently,
  *     no matter how many times they pay;
  *   - a poller that only watches image-less variants never notices the new image arriving, so the
- *     screen never changes after a paid click — and the obvious next move is to pay again.
+ *     screen never changes after a paid click — and the obvious next move is to pay again;
+ *   - and (#781 r3) a poller that calls a finish "news" only when it watched the job go from
+ *     running to done is blind to the one window it can never watch: the page snapshot is ALWAYS
+ *     older than the poll, so a job that finishes in between reports DONE on the very first tick,
+ *     with nothing before it to compare against. The tile then keeps the old image until a full
+ *     page reload — the same money-visibility bug by a different route.
  *
- * Both are decided by the pure rules in lib/variant-progress, which is why they can be tested for
- * real here (apps/web's vitest include list covers lib/, not components/).
+ * All three are decided by the pure rules in lib/variant-progress, which is why they can be tested
+ * for real here (apps/web's vitest include list covers lib/, not components/).
  */
 import { describe, it, expect } from "vitest";
 import {
   isVariantRunning,
   latestVariantRef,
-  variantJustFinished,
+  variantNeedsReread,
+  variantShowsJobResult,
   variantsToWatch,
   type VariantJobs,
+  type VariantJobView,
 } from "../variant-progress";
 
 const ref = (id: string) => ({ id, url: `https://example.test/${id}.png` });
@@ -73,19 +80,53 @@ describe("a paid generation is watched until the server says it finished", () =>
   });
 });
 
-describe("only a finish we watched happen is news", () => {
-  it("running → DONE is a finish (this is what re-reads the element and shows the new image)", () => {
-    expect(variantJustFinished({ status: "GENERATING", error: "" }, { status: "DONE", error: "" })).toBe(true);
-    expect(variantJustFinished({ status: "QUEUED", error: "" }, { status: "DONE", error: "" })).toBe(true);
+describe("a paid result is news until it is on the merchant's screen (#781 r3)", () => {
+  // what the page snapshot is showing, and what the worker attached — the two things the old rule
+  // never compared. RefImageDTO already carries the asset id; the job now reports the same ids.
+  const oldImage = { assetId: "ast-old" };
+  const newImage = { assetId: "ast-new" };
+  const done = (outputAssetIds: string[]): VariantJobView => ({ status: "DONE", error: "", outputAssetIds });
+
+  it("THE WINDOW THAT WAS OPEN: a first-seen DONE whose image the page never had must re-read", () => {
+    // The page rendered [old]; the worker then finished and attached [new]; the FIRST poll of this
+    // dialog already says DONE, with no running state in front of it. Under the old rule this was
+    // filed as history and the merchant kept looking at the image they had just paid to replace.
+    expect(variantNeedsReread({ refs: [oldImage] }, done(["ast-new"]))).toBe(true);
   });
 
-  it("a DONE seen for the FIRST time is history, not news — no refresh on every dialog open", () => {
-    expect(variantJustFinished(undefined, { status: "DONE", error: "" })).toBe(false);
+  it("a DONE whose image IS already on the tile is history — opening the dialog stays free", () => {
+    expect(variantNeedsReread({ refs: [oldImage, newImage] }, done(["ast-new"]))).toBe(false);
   });
 
-  it("nothing else is a finish: DONE→DONE, running→FAILED, running→still running", () => {
-    expect(variantJustFinished({ status: "DONE", error: "" }, { status: "DONE", error: "" })).toBe(false);
-    expect(variantJustFinished({ status: "GENERATING", error: "" }, { status: "FAILED", error: "x" })).toBe(false);
-    expect(variantJustFinished({ status: "QUEUED", error: "" }, { status: "GENERATING", error: "" })).toBe(false);
+  it("a finish the dialog watched happen still re-reads (the new image is never in the old data)", () => {
+    expect(variantNeedsReread({ refs: [oldImage] }, done(["ast-new"]))).toBe(true);
+  });
+
+  it("nothing unfinished asks for a re-read: queued, generating, failed, no job at all", () => {
+    const snapshot = { refs: [oldImage] };
+    expect(variantNeedsReread(snapshot, { status: "QUEUED", error: "" })).toBe(false);
+    expect(variantNeedsReread(snapshot, { status: "GENERATING", error: "" })).toBe(false);
+    expect(variantNeedsReread(snapshot, { status: "FAILED", error: "the provider refused" })).toBe(false);
+    expect(variantNeedsReread(snapshot, { status: "NONE", error: "" })).toBe(false);
+  });
+
+  it("a DONE the server told us nothing about re-reads: unproven is not the same as fine", () => {
+    // fail-safe direction — a wasted re-read costs a round trip, a missed one costs a paid image
+    expect(variantNeedsReread({ refs: [oldImage] }, { status: "DONE", error: "" })).toBe(true);
+    expect(variantNeedsReread({ refs: [oldImage] }, done([]))).toBe(true);
+  });
+});
+
+describe("'the paid result is on screen' is answered by the assets, not the status", () => {
+  it("every produced asset must be present — a partial arrival is not an arrival", () => {
+    const job: VariantJobView = { status: "DONE", error: "", outputAssetIds: ["a1", "a2"] };
+    expect(variantShowsJobResult({ refs: [{ assetId: "a1" }, { assetId: "a2" }] }, job)).toBe(true);
+    expect(variantShowsJobResult({ refs: [{ assetId: "a1" }] }, job)).toBe(false);
+    expect(variantShowsJobResult({ refs: [] }, job)).toBe(false);
+  });
+
+  it("an empty or unreported output list proves nothing", () => {
+    expect(variantShowsJobResult({ refs: [{ assetId: "a1" }] }, { status: "DONE", error: "", outputAssetIds: [] })).toBe(false);
+    expect(variantShowsJobResult({ refs: [{ assetId: "a1" }] }, { status: "DONE", error: "" })).toBe(false);
   });
 });
