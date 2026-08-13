@@ -58,6 +58,30 @@ export function composerReferencesPlaceholder(refs: { kind: OttoComposerReferenc
   return `Tell Otto what to do with these ${refs.length} references…`;
 }
 
+/**
+ * WHAT THE CANVAS SAYS ABOUT NEEDING A CONVERSATION (#548).
+ *
+ * Every paid action on the board works without an Otto chat — generate an image, make a video
+ * from a prompt, make a video from a picture, make another take of one. Exactly one action still
+ * needs a conversation, because a reference has nowhere to go without one: handing cards to Otto.
+ *
+ * The walkthrough found the board with three different answers to the same question. Two paid
+ * actions charged and delivered; two others answered with a red error ("Open an Otto chat
+ * first."); the video tool said nothing at all. Three shapes of the same fact, none of them
+ * offered before the merchant pressed anything. The paid actions and the dead key were fixed at
+ * the root (a canvas generation no longer takes a thread at all, and the video tool opens its own
+ * composer); this is the last piece — the one remaining dependency, said BEFORE the press, in the
+ * same words it is said after it. One sentence, one source: a control whose tooltip and whose
+ * answer disagree is the same defect wearing different clothes.
+ */
+export const CANVAS_OTTO_CHAT_REQUIRED = "Start a conversation with Otto first, then send these over.";
+
+/** The title the "Send to Otto" control carries right now — its own state, before any press. */
+export function canvasSendToOttoTitle(input: { chatOpen: boolean; many: boolean }): string {
+  if (!input.chatOpen) return CANVAS_OTTO_CHAT_REQUIRED;
+  return input.many ? "Hand these to Otto as references" : "Hand this to Otto as a reference";
+}
+
 export function canvasComposerReferenceForNode(input: {
   type: string | null | undefined;
   generationId: string | null | undefined;

@@ -55,7 +55,12 @@ import { CanvasLineagePanel } from "./CanvasLineagePanel";
 import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
 import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
-import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
+import {
+  CANVAS_OTTO_CHAT_REQUIRED,
+  canvasComposerReferenceForNode,
+  canvasSendToOttoTitle,
+  type OttoComposerReference,
+} from "@/lib/canvas-chat-reference";
 import {
   canvasMediaNodeSize,
   DEFAULT_CANVAS_MEDIA_NODE_SIDE,
@@ -587,9 +592,10 @@ export default function FlowCanvas({
       return;
     }
     // No conversation open is not a mistake the merchant made — it is a next step. Said plainly,
-    // in a plain note rather than an error (#604).
+    // in a plain note rather than an error (#604) — and, since #548, said in the control's own
+    // title BEFORE this press too, out of the one constant below.
     if (!referenceHandlerRef.current) {
-      toast.message("Start a conversation with Otto first, then send these over.");
+      toast.message(CANVAS_OTTO_CHAT_REQUIRED);
       return;
     }
     referenceHandlerRef.current(refs);
@@ -1352,6 +1358,10 @@ export default function FlowCanvas({
   // landed on top of each other and there was no telling which card a button would act on
   // (#604 r2 P2②). For a multi-card pick the batch bar below is the one place to act.
   const selectedCount = nodesOnBoard.filter((n) => n.selected === true).length;
+  // #548: handing cards to Otto is the ONE canvas action that still needs a conversation, and the
+  // card says so before it is pressed instead of only afterwards. Resolved once, here, so a card's
+  // toolbar and the batch bar cannot end up telling the merchant two different things.
+  const sendToOttoTitle = canvasSendToOttoTitle({ chatOpen: !!onReferenceInChat, many: selectedCount > 1 });
   const visibleNodes: CanvasFlowNode[] = nodesOnBoard.map((n) => ({
     ...n,
     // React Flow already puts every card in the tab order and picks it up on Enter, but with
@@ -1362,6 +1372,7 @@ export default function FlowCanvas({
       ? {
           ...withNodeActionLock(n.data),
           selectedCount,
+          sendToOttoTitle,
           onEvolve: handleEvolve,
           onVariant: handleVariant,
           evolveCostHint,
@@ -1373,7 +1384,7 @@ export default function FlowCanvas({
           imageShapeOptions: imageShapeMenu?.options,
         }
       : n.type === "video"
-        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
+        ? { ...withNodeActionLock(n.data), selectedCount, sendToOttoTitle, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
         : withNodeActionLock(n.data),
   }));
   // T6: the four recorded columns, read off the board exactly once, for everything that talks
@@ -1716,7 +1727,7 @@ export default function FlowCanvas({
               <button
                 type="button"
                 className="al-btn al-btn-sm"
-                title="Hand these to Otto as references"
+                title={sendToOttoTitle}
                 onClick={sendSelectionToOtto}
               >
                 Send to Otto

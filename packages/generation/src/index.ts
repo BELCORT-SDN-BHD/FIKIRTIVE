@@ -12,6 +12,7 @@ import { deflateSync, crc32 } from "node:zlib";
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenVideoModel } from "@fikirtive/core";
 import { imageOutputSize } from "@fikirtive/core";
 import { BytePlusProvider } from "./byteplus.js";
+import { providerRequestGate } from "./provider-concurrency.js";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
  *  for ffprobe/the editor, no network. */
@@ -151,11 +152,15 @@ export function permanentInputError(message: string): Error {
  *  PLAIN (retryable) is reachable only via 4xx. Callers must not re-inspect the
  *  status: the classification lives here. */
 async function falPaidPost(kind: "image" | "video", modelId: string, apiKey: string, body: unknown): Promise<Response> {
-  const res = await fetch(`https://fal.run/${modelId}`, {
+  // #796 判官 r1 P1-1: every paid provider request in this process passes the same gate. This
+  // legacy adapter already sends ONE request per job (`num_images: count` rather than a POST per
+  // image), so its job slots alone would bound it — but "which adapter happens to fan out" is not
+  // something the concurrency budget should have to know. One gate, every paid call.
+  const res = await providerRequestGate().run(() => fetch(`https://fal.run/${modelId}`, {
     method: "POST",
     headers: { Authorization: `Key ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }).catch((e: unknown) => {
+  })).catch((e: unknown) => {
     // No response at all (connection reset, DNS, socket closed mid-flight). On a
     // SYNC endpoint the request may already have reached the engine and run — we
     // simply lost the reply. Outcome unknown ⇒ billed. Same yardstick as byteplus's
@@ -375,3 +380,18 @@ export function createGenerationProvider(): GenerationProvider {
   }
   return new MockProvider();
 }
+
+/** #796 — the first clock in the worker's stale/expire/reap chain. Re-exported here because
+ *  `.` is this package's only export path; the invariant test reads it from the real source. */
+export { VIDEO_POLL_TIMEOUT_MS } from "./byteplus.js";
+
+/** #796 判官 r1 P1-1 — the REQUEST-level ceiling every paid provider call passes through, and the
+ *  numbers the worker prints in its boot log. Exported through `.` for the same reason. */
+export {
+  RequestGate,
+  providerRequestGate,
+  providerRequestLimit,
+  PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT,
+  PROVIDER_MAX_CONCURRENT_REQUESTS_ENV,
+  __setProviderRequestGateForTests,
+} from "./provider-concurrency.js";

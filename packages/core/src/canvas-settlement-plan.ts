@@ -15,7 +15,7 @@
  * terminal, so a board whose tab was closed stops spinning without a browser having to come back
  * and tell it. Only a job that is still in flight (QUEUED / GENERATING) projects nothing.
  */
-import { canvasBatchFootprint, canvasBatchSlotOffset, nextCanvasSpawnOrigin, type CanvasRect } from "./canvas-layout.js";
+import { canvasBatchFootprint, canvasBatchSlotOffset, freeCanvasRect, nextCanvasSpawnOrigin, type CanvasRect } from "./canvas-layout.js";
 
 /** Default card size — what the canvas promptbar and the chat→canvas bridge both place. */
 export const CANVAS_SETTLEMENT_CARD = { w: 320, h: 320 } as const;
@@ -648,6 +648,14 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
   for (const card of live) if (card.generationId) accountedFor.add(card.generationId);
   accountedFor.add(anchorGenerationId);
 
+  // Every rectangle a sibling must not land on (#549): what is already on the board, plus the
+  // anchor when this pass is the one putting it down, plus each sibling as it is planned. The
+  // grid slots below are free in the ordinary case — the press that reserved the anchor's spot
+  // reserved the whole batch's — so this changes nothing then. It matters when the board has
+  // moved on underneath: a slot measured off the anchor is a guess about the REST of the board,
+  // and a wrong guess buries a card the merchant paid for.
+  const takenRects: CanvasRect[] = anchorId === null ? [...occupied, anchorRect] : [...occupied];
+
   for (let index = 0; index < outputs.length; index += 1) {
     const generationId = outputs[index]!;
     if (suppressedGenerationIds.has(generationId) || generationId === anchorGenerationId) continue;
@@ -663,16 +671,20 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     if (accountedFor.has(generationId)) continue; // the same output twice in one job's list
     accountedFor.add(generationId);
     const slot = canvasBatchSlotOffset(index, anchorRect);
+    const rect = freeCanvasRect(takenRects, {
+      x: anchorRect.x + slot.dx - anchorSlot.dx,
+      y: anchorRect.y + slot.dy - anchorSlot.dy,
+      w: anchorRect.w,
+      h: anchorRect.h,
+    });
+    takenRects.push(rect);
     planned.push({
       action: "create",
       role: "sibling",
       batchIndex: index,
       generationId,
       type,
-      x: anchorRect.x + slot.dx - anchorSlot.dx,
-      y: anchorRect.y + slot.dy - anchorSlot.dy,
-      w: anchorRect.w,
-      h: anchorRect.h,
+      ...rect,
       prompt: anchorPrompt,
       // The batch's ANCHOR, for layout — not a parent, and no longer smuggled through the card
       // the JOB was made from. It used to be `anchorSourceNodeId ?? anchorId`: when the anchor
