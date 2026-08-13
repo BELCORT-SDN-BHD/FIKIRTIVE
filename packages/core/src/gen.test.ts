@@ -3,6 +3,7 @@ import {
   GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
   GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_MAX_PIXELS, GEN_IMAGE_MIN_PIXELS,
   GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, normalizeImageAspect,
+  supportsCoherentSet, COHERENT_SET_MIN_IMAGES,
   type GenImageAspect,
 } from "./gen.js";
 
@@ -306,5 +307,48 @@ describe("genRequest 图片画幅校验(照视频侧 superRefine)", () => {
     expect(genRequest.safeParse({ ...v, aspectRatio: "16:9" }).success).toBe(true);
     // 3:2 在图片菜单里,但视频模型不支持 —— 按 kind 分别校验
     expect(genRequest.safeParse({ ...v, aspectRatio: "3:2" }).success).toBe(false);
+  });
+});
+
+describe("#777 组图(一次出齐一整组连贯的图)的契约闸", () => {
+  const base = { projectId: "p1", prompt: "the same model, four angles", kind: "image", model: "seedream", idempotencyKey: "k1" };
+
+  it("能力位:在册引擎声明得出组图,菜单外的 id 一律 false(「不知道」按「不能」处理)", () => {
+    expect(GEN_IMAGE_MODEL_OPTIONS.seedream.coherentSet).toBe(true);
+    expect(supportsCoherentSet("seedream")).toBe(true);
+    expect(supportsCoherentSet("seedance-2-mini")).toBe(false);
+    expect(supportsCoherentSet("nope-not-a-model")).toBe(false);
+  });
+
+  it("接受:图片 + 在册引擎 + 至少两张", () => {
+    for (let count = COHERENT_SET_MIN_IMAGES; count <= GEN_IMAGE_MODEL_OPTIONS.seedream.maxCount; count++) {
+      expect(genRequest.safeParse({ ...base, count, coherentSet: true }).success, `count=${count}`).toBe(true);
+    }
+  });
+
+  it("缺省 / false 仍然合法,且与今日逐字一致(散图)", () => {
+    expect(genRequest.safeParse({ ...base, count: 4 }).success).toBe(true);
+    expect(genRequest.safeParse({ ...base, count: 4, coherentSet: false }).success).toBe(true);
+    expect(genRequest.safeParse({ ...base, count: 1, coherentSet: false }).success).toBe(true);
+  });
+
+  it("拒绝:只要一张 —— 一张图不成组,而它会进材料绑定,一个说了不算数的开关会把合法重试判成换了内容", () => {
+    expect(genRequest.safeParse({ ...base, count: 1, coherentSet: true }).success).toBe(false);
+  });
+
+  it("拒绝:视频 —— 视频端点没有这个能力,放行就是收了钱做不出承诺的东西", () => {
+    const v = { projectId: "p1", prompt: "a clip", count: 1, kind: "video", model: "seedance-2-mini", idempotencyKey: "k1" };
+    expect(genRequest.safeParse({ ...v, coherentSet: true }).success).toBe(false);
+  });
+
+  it("拒绝:不在册的图片引擎(能力位是唯一的开关)", () => {
+    expect(genRequest.safeParse({ ...base, count: 2, model: "made-up-engine", coherentSet: true }).success).toBe(false);
+  });
+
+  it("组图与散图共用同一张价目:count 不变,价就不变(收费口径没有第二套)", () => {
+    // 这里只钉契约面:请求形状变了,但 count 是价格的唯一乘数,而组图一格都没碰它。
+    const set = genRequest.parse({ ...base, count: 4, coherentSet: true });
+    const spread = genRequest.parse({ ...base, count: 4 });
+    expect(set.count).toBe(spread.count);
   });
 });

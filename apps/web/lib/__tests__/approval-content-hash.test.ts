@@ -24,6 +24,7 @@ import {
   computeApprovalContentHash,
   computeRefgenApprovalContentHash,
   refgenApprovalHashFromArgs,
+  factoryBatchApprovalHashFromArgs,
   APPROVAL_CARD_TTL_MS,
   type ApprovalContentMaterial,
   type RefgenApprovalMaterial,
@@ -168,5 +169,43 @@ describe("refgen approval content hash — binds the EXACT parked args (debt-68 
       mediaGenerationIds: [],
     });
     expect(refgen).not.toBe(post);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #777 —— 批准面:商家批的是「一组连贯的图」,那就不能被当成「N 张散图」执行。
+//
+// 批准卡的内容指纹绑的是**停泊下来的那份 tool 参数**。组图开关是参数的一部分,所以
+// 它必须真的改变指纹 —— 否则一张为「一组」签下的卡,可以在恢复执行时被换成散图,
+// 而钱一分不少地照扣。这是 P2「同一个 ref 两次停泊」纪律在这张票上的具体形态。
+// ---------------------------------------------------------------------------
+describe("#777 批准绑定:组图开关是消费同意的一部分", () => {
+  const grid = (cell: Record<string, unknown>) => ({
+    mode: "grid",
+    batchId: "bat-1",
+    cells: [{ type: "gen", prompt: "one model, four angles", count: 4, ...cell }],
+  });
+
+  it("同一份参数 → 同一个指纹(卡是稳定的)", () => {
+    expect(factoryBatchApprovalHashFromArgs(grid({ coherentSet: true })))
+      .toBe(factoryBatchApprovalHashFromArgs(grid({ coherentSet: true })));
+  });
+
+  it("开关一动,指纹就变 —— 批一组图不可能被当成批散图(两个方向都要成立)", () => {
+    const set = factoryBatchApprovalHashFromArgs(grid({ coherentSet: true }));
+    const spread = factoryBatchApprovalHashFromArgs(grid({}));
+    const explicitOff = factoryBatchApprovalHashFromArgs(grid({ coherentSet: false }));
+    expect(set).not.toBe(spread);
+    expect(set).not.toBe(explicitOff);
+  });
+
+  it("variant 模式同理:base 上的开关照样进指纹", () => {
+    const args = (coherentSet?: boolean) => ({
+      mode: "variant",
+      batchId: "bat-1",
+      base: { prompt: "one model", count: 3, ...(coherentSet === undefined ? {} : { coherentSet }) },
+      variants: [{}, {}],
+    });
+    expect(factoryBatchApprovalHashFromArgs(args(true))).not.toBe(factoryBatchApprovalHashFromArgs(args()));
   });
 });

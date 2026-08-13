@@ -29,7 +29,8 @@
    任一引用指向 production 或无法证明隔离时停止。
 5. **花费边界:**确认 generation provider、Stripe mode 及所有可能产生外部效果的 connector。
    不打印、复制或粘贴 secret 值;只记录经脱敏的存在性/模式结论。
-6. **入口:**从 live query 得到域名后调用 `/api/health`;不要使用文档里保存的旧 URL。
+6. **入口:**从 live query 得到域名后调用 `/api/ready`(就绪)与 `/api/health`(存活);
+   不要使用文档里保存的旧 URL。
 
 ## 不可越过的安全规则
 
@@ -49,7 +50,11 @@
 ## 验证顺序
 
 1. **静态门:**当前 head 的 required CI 或获准 fallback 结果完整。
-2. **健康门:**live 域名的 `/api/health` 返回预期 HTTP;`db` 与 `worker` 字段按响应如实记录。
+2. **健康门:**live 域名的 **`/api/ready` 返回 200** 才算这个环境可以接流量(迁移已就位 +
+   数据库可达);再读 `/api/health` 的 body,把 `db` / `worker` / `workers` / `migrations`
+   逐字段如实记录。
+   ⚠️ `/api/health` 自 #796 起**恒为 200 且不依赖数据库** —— 它只证明 web 进程活着,
+   **不能**用它当数据库就绪门槛。就绪判断一律看 `/api/ready`。
 3. **mock 门(`staging`):**只跑确定性 $0 用例,并用结果证明没有外部 provider effect。
 4. **真实门(`staging-live`):**先写清单次预计花费/目的并获得 Founder 批准,再运行一个最小用例;
    记录实际结果和可审计回执,不承诺未验证的质量或渠道状态。
@@ -63,8 +68,10 @@
   不能因为旧 runbook 曾给过 SQL 就默认执行。
 - 日志通过当前 environment/service 的 Railway live view/CLI 查询;先确认 target,再读取。贴到
   GitHub 前脱敏 URL query、authorization header、email、cookie、token 与 provider payload。
-- `/api/health` 200 只证明 web 能访问 DB;worker 的 `up|stale|unknown` 仍须逐字段解释。
-  503 或超时先按 `docs/ops/incident-visibility.md` 诊断,不要盲目 redeploy。
+- `/api/health` 200 **只证明 web 进程活着**,不证明数据库可达(#796 起它对下游一律 best-effort,
+  读不到就把 `db` 写成 `unknown`)。数据库可达与否看 `/api/ready`;worker 的
+  `up|stale|unknown` 仍须逐字段解释,拆班之后还要看 `workers` 里具体哪一班 stale。
+  `/api/ready` 的 503 或任何超时,先按 `docs/ops/incident-visibility.md` 诊断,不要盲目 redeploy。
 - Rollback、redeploy、变量修改、数据库恢复和外部 connector 写入各自需要当前任务授权;本手册
   只给 preflight/stop 条件,不把操作按钮当权限。
 

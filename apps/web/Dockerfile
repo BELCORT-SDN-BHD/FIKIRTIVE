@@ -35,7 +35,15 @@ WORKDIR /repo
 COPY --from=build /repo ./
 # Runs as root (not USER node): the Railway volume at /repo/.data is mounted
 # root-owned, and LocalDiskStorage must write there until T4 moves files to R2.
-# Apply pending DB migrations on every boot BEFORE serving (idempotent — `migrate
-# deploy` only runs un-applied migrations), so a deploy can never serve against an
-# un-migrated schema. The image carries the prisma CLI + the migrations folder.
-CMD ["sh", "-c", "pnpm --filter @fikirtive/db migrate:deploy && pnpm --filter @fikirtive/web start"]
+#
+# Apply pending DB migrations on every boot BEFORE serving (idempotent — `migrate deploy`
+# only runs un-applied migrations), so a deploy can never serve against an un-migrated
+# schema. The image carries the prisma CLI + the migrations folder.
+#
+# #796: this used to be `migrate:deploy && start`, where `&&` was the entire error policy —
+# a failed migration exited the container, Railway restarted it, and the WHOLE SITE sat in a
+# crash loop hammering the database with one migration per restart. boot.mjs bounds the
+# retries and, if they are exhausted, still starts the server (an old-schema site beats no
+# site) while shouting about it in the logs, in Sentry, and in /api/health. Read the file's
+# header before changing this line — the tradeoff it accepts is spelled out there.
+CMD ["node", "apps/web/scripts/boot.mjs"]

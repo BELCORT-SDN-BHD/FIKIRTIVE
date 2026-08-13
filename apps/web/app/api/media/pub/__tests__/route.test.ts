@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { signMediaToken } from "@fikirtive/token-crypto";
+import { prisma } from "@fikirtive/db";
+import { MEDIA_PROXY_PER_CALLER_PER_10_MIN } from "@/lib/rate-limit-gates";
 
 // The proxy streams real bytes (no session — Meta's servers call it). Mock storage only.
 const mockGet = vi.fn();
@@ -15,15 +17,22 @@ const SECRET = "media-secret-xyz";
 const HASH = "a".repeat(64);
 const KEY = `u/orgA/${HASH}.jpg`;
 
-function req(): NextRequest {
-  return { url: "http://x/api/media/pub" } as unknown as NextRequest;
+// #795 — the handler now reads the calling address for its rate-limit gate, so the stand-in
+// request carries headers. One address per case keeps the (generous) gate out of the way of
+// everything that is not about the gate.
+function req(ip = "198.51.100.1"): NextRequest {
+  return {
+    url: "http://x/api/media/pub",
+    headers: new Headers({ "x-forwarded-for": ip }),
+  } as unknown as NextRequest;
 }
-const call = (token: string) => GET(req(), { params: Promise.resolve({ token }) });
+const call = (token: string, ip?: string) => GET(req(ip), { params: Promise.resolve({ token }) });
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   process.env.MEDIA_PROXY_SECRET = SECRET;
   mockGet.mockResolvedValue(new Uint8Array([255, 216, 255])); // JPEG SOI-ish
+  await prisma.rateLimitCounter.deleteMany({});
 });
 
 describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
@@ -81,5 +90,41 @@ describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
     const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET);
     const res = await call(token);
     expect(res.status).toBe(404);
+  });
+});
+
+/**
+ * #795 —— 外链闸。这条路是公开的、无会话的:谁手上有一条有效签名 URL,就能用网络允许的最快
+ * 速度一直拉。闸的位置比闸本身更要紧 —— 它必须排在 HMAC 校验**之后**,否则一个未授权的
+ * GET 就变成了一次数据库写入,等于用一道闸开出一条更便宜的攻击路。
+ */
+describe("#795 —— 签名媒体代理的外链闸", () => {
+  it("伪造的 token 一行计数都不产生 —— 闸排在密码学之后", async () => {
+    const res = await call("garbage.sig", "198.51.100.77");
+    expect(res.status).toBe(404);
+    expect(await prisma.rateLimitCounter.count()).toBe(0);
+  });
+
+  it("验过身份的调用才计数,按出口地址", async () => {
+    const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET);
+    expect((await call(token, "198.51.100.78")).status).toBe(200);
+    const rows = await prisma.rateLimitCounter.findMany({ select: { key: true, count: true } });
+    expect(rows).toEqual([{ key: "media:198.51.100.78", count: 1 }]);
+  });
+
+  it("超过额度回 429(不是 404)—— 已经证明这条链接是他的,「太快了」才是诚实的答案", async () => {
+    const ip = "198.51.100.79";
+    // 直接把这个出口地址的计数顶到上限,免得为了一条断言真跑几百次。
+    await prisma.rateLimitCounter.create({
+      data: {
+        key: `media:${ip}`,
+        count: MEDIA_PROXY_PER_CALLER_PER_10_MIN,
+        expiresAt: BigInt(Date.now() + 10 * 60_000),
+      },
+    });
+    const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET);
+    const res = await call(token, ip);
+    expect(res.status).toBe(429);
+    expect(mockGet).not.toHaveBeenCalled();
   });
 });
