@@ -29,6 +29,17 @@ describe("#791-5 登录页不再低估自己的发布器", () => {
     expect(login).toMatch(/Instagram and Facebook/);
     expect(login).toMatch(/Meta approves/);
   });
+
+  // #851:上面那句「once Meta approves」现在只属于**通电**那一支。发布整条通道没通电,商家
+  // 也连不上任何账号,所以没登录就能读到的那一屏不能再无条件地卖它。这一条钉的正是这件事 ——
+  // 本文件读的是源码,两支都在源码里,所以上面两条照常绿,却不再说明屏幕上写着什么。
+  // 屏幕上那一支由 publish-honest-preview.test.ts ⑥ 钉;通电那天两处一起回来。
+  it("#851 那句只活在开关的通电支里,不是无条件写在屏幕上", () => {
+    expect(login).toMatch(/PUBLISHING_AVAILABLE/);
+    const idx = login.indexOf("Schedules and publishes to Instagram and Facebook");
+    expect(idx).toBeGreaterThan(-1);
+    expect(login.slice(Math.max(0, idx - 200), idx)).toMatch(/PUBLISHING_AVAILABLE/);
+  });
 });
 
 // ── #791-8 对外不称 beta(Founder 裁决 2026-08-08 裁决④)──────────────────

@@ -8,9 +8,10 @@ import { creditsLabel, formatCredits } from "@/lib/credit-format";
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 import type { CreditPackShelf } from "@/lib/billing-actions";
-import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
+import { autoPublishHint, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
 import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export type ChannelState = {
   id: string;
@@ -200,9 +201,10 @@ export function buildSettingsSections(args: {
           kind: "toggle",
           id: "autopub",
           label: "Auto-publish posts",
-          hint: autoPublishAvailable
-            ? "Publish approved posts automatically at their time"
-            : AUTO_PUBLISH_GATE_HINT,
+          // #851 — the same authority the Schedule screen reads. This hand-written "publishes
+          // automatically" line used to survive here whatever the product could actually do, so a
+          // connected workspace kept reading a promise the Schedule screen had already withdrawn.
+          hint: autoPublishHint(autoPublishAvailable),
           value: settings.autoPublish,
           disabled: !autoPublishAvailable,
           onToggle: toggle("autoPublish"),
@@ -242,6 +244,17 @@ export function buildSettingsSections(args: {
           readOnly: true,
         },
       ],
+    },
+    // #804 — the home of the dark-mode choice. Preferences is where "how this workspace
+    // behaves for me" already lives (spend cap, posting defaults), and appearance is a
+    // preference, not an identity fact — /profile is deliberately "who you are, nothing
+    // more". The control renders itself: a theme is a device preference read from
+    // localStorage on the client, so there is no server value for this file to pass in.
+    {
+      id: "appearance",
+      title: "Appearance",
+      subtitle: "How Fikirtive looks on this device.",
+      fields: [{ kind: "custom", id: "theme", render: () => <ThemeToggle /> }],
     },
     {
       id: "danger",

@@ -1,6 +1,6 @@
 import "server-only";
 import { InsufficientCredits } from "@fikirtive/db";
-import { displayCredits, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core";
+import { displayCredits, OTTO_CHAT_MIN_START_INTERNAL } from "@fikirtive/core";
 import { chatHoldShortfallMessage } from "@/lib/credit-format";
 
 /**
@@ -24,9 +24,11 @@ export function ottoFailureMessage(error: unknown, fallback: string): string {
   if (error instanceof InsufficientCredits) {
     // The balance travels on the error from inside the failing reserve, so it is the number the
     // refusal was actually judged against — never a second, possibly-moved read.
+    // #898: the fallback is the minimum to START a message, not the hold — the reserve now
+    // shrinks to fit the balance, so the hold is no longer a number a refusal can quote.
     return chatHoldShortfallMessage(
       error.balanceInternal === null ? null : displayCredits(error.balanceInternal),
-      displayCredits(error.requiredInternal ?? OTTO_CONVERSATION_TURN_RESERVE_INTERNAL),
+      displayCredits(error.requiredInternal ?? OTTO_CHAT_MIN_START_INTERNAL),
     );
   }
   return fallback;

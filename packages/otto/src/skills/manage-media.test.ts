@@ -163,7 +163,14 @@ describe("M1 $0 sub-journey: import a frame → new version lands → visible �
       },
       cancelJob: async () => ({ refunded: true }),
     };
+    const emptyCut = { clips: [], seconds: 0, captionCount: 0, music: null };
     const render: NonNullable<OttoContext["render"]> = {
+      desk: async () => ({ media: [], cut: emptyCut, unreadable: false }),
+      join: async () => ({ ok: true, cut: emptyCut }),
+      music: async () => ({ ok: true, cut: emptyCut }),
+      clearMusic: async () => ({ ok: true, cut: emptyCut }),
+      addCaptions: async () => ({ ok: true, cut: emptyCut }),
+      clearCaptions: async () => ({ ok: true, cut: emptyCut }),
       export: async () => ({ id: "render-1" }),
       jobs: async () => [],
       caption: async () => ({ id: "cap-1" }),
