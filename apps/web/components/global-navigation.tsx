@@ -37,6 +37,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
@@ -540,14 +541,16 @@ export function GlobalNavigation({
           `fixed` that makes it free of layout is what let it land on top of Otto's own
           hamburger (#747). Reservation and trigger now answer to one predicate. */}
       {showMobileTrigger && (
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="icon"
           onClick={() => onMobileOpenChange(true)}
           aria-label="Open navigation"
-          className="fixed left-3 top-3 z-30 flex size-10 items-center justify-center rounded-[10px] border border-border bg-card text-foreground shadow-sm lg:hidden"
+          className="fixed left-3 top-3 z-30 size-10 rounded-[10px] shadow-sm lg:hidden"
         >
           <Menu className="size-5" aria-hidden />
-        </button>
+        </Button>
       )}
 
       <div
@@ -572,14 +575,16 @@ export function GlobalNavigation({
             <span className="lg:hidden xl:inline">FIKIRTIVE</span>
             <span className="hidden lg:inline xl:hidden">F</span>
           </Link>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={() => onMobileOpenChange(false)}
             aria-label="Close navigation"
-            className="flex size-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground lg:hidden"
+            className="size-8 shrink-0 rounded-[10px] text-muted-foreground lg:hidden"
           >
             <X className="size-5" aria-hidden />
-          </button>
+          </Button>
         </div>
 
         <nav
@@ -649,15 +654,16 @@ export function GlobalNavigation({
                   <span className="lg:hidden xl:inline">Profile</span>
                 </Link>
                 <form action={signOutAction}>
-                  <button
+                  <Button
                     role="menuitem"
                     type="submit"
+                    variant="ghost"
                     title="Sign out"
-                    className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-sm text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                    className="h-9 w-full justify-start gap-2 rounded-lg px-2 text-sm font-normal text-foreground hover:bg-accent"
                   >
                     <LogOut className="size-4 shrink-0" aria-hidden />
                     <span className="lg:hidden xl:inline">Sign out</span>
-                  </button>
+                  </Button>
                 </form>
               </div>
             </details>
