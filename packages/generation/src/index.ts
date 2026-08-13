@@ -412,3 +412,19 @@ export {
   PROVIDER_MAX_CONCURRENT_REQUESTS_ENV,
   __setProviderRequestGateForTests,
 } from "./provider-concurrency.js";
+
+/** #784 素材理解的端口 —— 与生成是**两个**端口(钱的形状不同,理由见 understanding.ts)。
+ *  同样只从 `.` 导出:这个包对外只有这一条路径。 */
+export {
+  ArkUnderstandingProvider,
+  MockUnderstandingProvider,
+  createUnderstandingProvider,
+  emptyUnderstandingResponseError,
+  isUnreadableMediaError,
+  understandingErrorUsage,
+  unreadableMediaError,
+  type UnderstandingProvider,
+  type UnderstandingRequest,
+  type UnderstandingResult,
+  type UnderstandingUsage,
+} from "./understanding.js";

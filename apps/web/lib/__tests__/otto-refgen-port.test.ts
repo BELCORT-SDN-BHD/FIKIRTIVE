@@ -2,14 +2,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // W-B3-G-P (debt-68/69): the ctx.refgen port wraps the SAME owner-gated refgen server actions the human
 // element UI uses. generate forwards to startRefGen — the SOLE spend authority (own requireOwner +
-// refGenRequest gate + server-priced reserve). deleteVariant carries an Otto-only fail-closed active-job
-// gate: any paid RefGenJob still in flight for that variant ⇒ deterministic refusal (the running job
-// would settle onto a tombstoned variant, wasting spend); fail-closed on a failing count read. The gate
-// lives in the port, NOT in deleteVariant — the human UI's legitimate delete is untouched (#271 precedent).
+// refGenRequest gate + server-priced reserve). deleteVariant carries a fail-closed active-job pre-gate:
+// any paid RefGenJob still in flight for that variant ⇒ deterministic refusal (the running job would
+// settle onto a tombstoned variant, wasting spend); fail-closed on a failing count read.
+//
+// #781 r2/r3 CORRECTION — this pre-gate is no longer the rule, only Otto's WORDING of it. The rule
+// itself moved into deleteVariant, where every caller meets it (the merchant's own Delete button
+// called the action directly and used to pass straight through), and r3 made it atomic with the
+// delete. What is asserted below is that Otto refuses in its own words BEFORE delegating; the action
+// underneath refuses again regardless, so a port that ever drifted would still not lose paid work.
 
-const { mockRefGenJobCount, mockStartRefGen, mockDeleteVariant } = vi.hoisted(() => ({
+const { mockRefGenJobCount, mockStartRefGen, mockCreateVariant, mockDeleteVariant } = vi.hoisted(() => ({
   mockRefGenJobCount: vi.fn(),
   mockStartRefGen: vi.fn(),
+  mockCreateVariant: vi.fn(),
   mockDeleteVariant: vi.fn(),
 }));
 
@@ -20,6 +26,7 @@ vi.mock("@fikirtive/db", () => ({
 }));
 vi.mock("../refgen-actions", () => ({
   startRefGen: mockStartRefGen,
+  createVariant: mockCreateVariant,
   deleteVariant: mockDeleteVariant,
 }));
 
@@ -70,6 +77,43 @@ describe("generate — forwards to the sole spend authority (startRefGen)", () =
     expect(Object.keys(arg).sort()).toEqual(["count", "entityId", "mode", "prompt"]);
     expect(arg["model"]).toBeUndefined();
     expect(arg["price"]).toBeUndefined();
+  });
+});
+
+// #781 — the styling-variant door. createVariant is the variant SPEND authority (startRefGen refuses
+// mode=VARIANT because a client-named variantId is unvalidated); the port only forwards the three
+// merchant-chosen fields, so Otto and the element dialog charge by exactly one rule.
+describe("createVariant — forwards to the variant spend authority (createVariant action)", () => {
+  it("passes element + name + change through and returns the variant and job ids", async () => {
+    mockCreateVariant.mockResolvedValue({ variantId: "var-1", jobId: "refjob-v1" });
+    const res = await port().createVariant({ entityId: "ent-1", name: "Red dress", prompt: "in a red evening gown" });
+    expect(res).toEqual({ variantId: "var-1", jobId: "refjob-v1" });
+    expect(mockCreateVariant).toHaveBeenCalledTimes(1);
+    expect(mockCreateVariant).toHaveBeenCalledWith("ent-1", "Red dress", "in a red evening gown");
+  });
+
+  it("never reaches startRefGen — a variant is NOT a second refgen spend path bolted onto the first", async () => {
+    mockCreateVariant.mockResolvedValue({ variantId: "var-2", jobId: "refjob-v2" });
+    await port().createVariant({ entityId: "ent-2", name: "Beach look", prompt: "on a beach at golden hour" });
+    expect(mockStartRefGen).not.toHaveBeenCalled();
+  });
+
+  it("no model, count or price ever crosses — only the three merchant-chosen fields", async () => {
+    mockCreateVariant.mockResolvedValue({ variantId: "var-3", jobId: "refjob-v3" });
+    await port().createVariant({ entityId: "ent-3", name: "Gold lid", prompt: "the tin with a gold lid", model: "expensive", count: 6 } as never);
+    expect(mockCreateVariant).toHaveBeenCalledWith("ent-3", "Gold lid", "the tin with a gold lid");
+    expect(mockCreateVariant.mock.calls[0]).toHaveLength(3);
+  });
+
+  it("surfaces the authority's refusals verbatim (no base yet / cross-tenant element)", async () => {
+    mockCreateVariant.mockResolvedValue({ error: "Set a base identity first — variants are generated from it." });
+    expect(await port().createVariant({ entityId: "ent-4", name: "X", prompt: "y" })).toEqual({
+      error: "Set a base identity first — variants are generated from it.",
+    });
+    mockCreateVariant.mockResolvedValue({ error: "Element not found." });
+    expect(await port().createVariant({ entityId: "ent-OTHER", name: "X", prompt: "y" })).toEqual({
+      error: "Element not found.",
+    });
   });
 });
 

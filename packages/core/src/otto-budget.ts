@@ -65,5 +65,38 @@ export function turnBudgetInternal(
  * moves is the direction of the residual on a pathological turn: instead of over-holding,
  * a turn whose ACTUAL cost exceeds the cap is charged the cap — a bounded, per-turn
  * under-charge (never an over-charge, never a merchant-visible loss).
+ *
+ * #898 (Founder 2026-08-13, formal correction to #543): this constant is now the CEILING of
+ * the hold, not the hold itself. A conversation turn holds min(this, current balance) — see
+ * OTTO_CHAT_MIN_START_INTERNAL. A merchant with a balance at or above 4 credits is held
+ * exactly as before; only a merchant who cannot afford the full hold sees a smaller one.
  */
 export const OTTO_CONVERSATION_TURN_RESERVE_INTERNAL = 40;
+
+/**
+ * The minimum balance a merchant needs to START a conversation turn, in INTERNAL credits.
+ * 10 internal = 1 displayed credit.
+ *
+ * #898 Founder decision (2026-08-13) — the interim correction to #543. The hold was also the
+ * door: a merchant holding 3.9 credits could not send a message at all, so they could not even
+ * ask what their remaining credits were still good for. Measured single-message cost is
+ * 0.4–3.3 credits (#536), so at 3.9 credits nearly every message was in fact affordable.
+ *
+ * The new semantics, in three lines:
+ *   entry gate  = balance >= OTTO_CHAT_MIN_START_INTERNAL     (was: >= the full hold)
+ *   hold        = min(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, balance)
+ *   charge      = min(actual cost, hold)                      (settleCredits, unchanged)
+ *
+ * Why a floor at all: reserveCredits no-ops on cost <= 0, so without a minimum a balance of
+ * 0.0x credits would become an unlimited free chat. 1 credit is above the measured typical
+ * message (0.4–1.3) and is the smallest number the product can state honestly.
+ *
+ * The bounded exposure this opens: when the actual cost of a message exceeds the (smaller)
+ * hold, settleCredits charges the hold and the platform absorbs the difference — at most
+ * ~2.3 credits on the cold-cache opening message of a merchant sitting under 1 credit of
+ * headroom. Every such clamp writes a queryable ledger reason (HOLD_SHORTFALL_REASON_PREFIX
+ * in @fikirtive/db) so the absorption is visible instead of silent. It disappears on its own
+ * once the assembler (#879 step 2) lands. Merchants are never over-charged and the balance
+ * can never go negative — reserve/settle/refund and their exactly-once indexes are untouched.
+ */
+export const OTTO_CHAT_MIN_START_INTERNAL = 10;

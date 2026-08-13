@@ -24,6 +24,7 @@ function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
     disabledModels: [],
     refgen: {
       generate: vi.fn().mockResolvedValue({ id: "refjob-x" }),
+      createVariant: vi.fn().mockResolvedValue({ variantId: "var-x", jobId: "refjob-var-x" }),
       deleteVariant: vi.fn().mockResolvedValue({ ok: true }),
     },
     ...overrides,

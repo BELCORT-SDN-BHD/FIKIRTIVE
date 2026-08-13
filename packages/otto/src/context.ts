@@ -364,8 +364,10 @@ export interface OttoContext {
    *  identity first, then the direction the merchant set for this one project. Absent
    *  (undefined) when the project has no brief; never an empty string. */
   projectBrief?: string;
-  /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools). */
-  availableRefs?: { id: string; name: string; type: string }[];
+  /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools).
+   *  `variants` (#781) are the element's saved styling looks that actually have an image — the
+   *  ids `variantSel` and deleteReferenceVariant need. Absent/empty = that element has none. */
+  availableRefs?: { id: string; name: string; type: string; variants?: { id: string; name: string }[] }[];
   /** When true, buildContextSystemMessage injects the Simple-mode plain-language block so
    *  Otto speaks to a beginner without jargon. NOT baked into the shared identity — injected
    *  only on the simple door path (via buildContextSystemMessage). */
@@ -921,10 +923,15 @@ export interface OttoContext {
    *  goes THROUGH startRefGen — the sole spend authority — which re-derives the owner (requireOwner),
    *  re-validates via the typed refGenRequest gate, derives the price server-side (pricedRefgenCredits,
    *  the model can't set it), guards per-entity double-spend, and reserves atomically with the job
-   *  insert. The generateReferences skill is cost:"spend" ⇒ needsApproval is a machine-derived LITERAL
-   *  true (anti-flip). `deleteVariant` is a $0 soft delete fronted by an Otto-only fail-closed active-job
-   *  gate (see makeOttoRefgenPort — refuses while a paid job for that variant is in flight, #271
-   *  deleteProject precedent). Skills reach it ONLY via ctx.refgen — never importing web actions, the
+   *  insert. `createVariant` (#781) is the same discipline for a styling variant — the merchant's
+   *  element dialog and Otto call the one createVariant action, so "one element, many outfits" can
+   *  never mean two different charging rules.
+   *  The generateReferences skill is cost:"spend" ⇒ needsApproval is a machine-derived LITERAL
+   *  true (anti-flip). `deleteVariant` is a $0 soft delete guarded by a fail-closed active-job rule that
+   *  the shared action enforces for every caller (#781 r2 — the merchant's element dialog is refused on
+   *  the same terms), with makeOttoRefgenPort re-stating it in Otto's words before the action is even
+   *  reached (refuses while a paid job for that variant is in flight, #271 deleteProject precedent).
+   *  Skills reach it ONLY via ctx.refgen — never importing web actions, the
    *  provider, or Prisma (CI fence rule). Absent in the minimal worker verdict ctx; the skills degrade
    *  gracefully when it is not injected. */
   refgen?: {
@@ -937,10 +944,22 @@ export interface OttoContext {
       count?: number;
       mode?: "BASE" | "REFSHEET";
     }): Promise<{ id: string } | { error: string }>;
+    /** #781 (SPEND): create a named styling variant of an OWNED element and generate its single
+     *  image from the element's locked base (image-to-image, so the same person/product comes back
+     *  restyled). Its own spend authority — startRefGen refuses mode=VARIANT because a variant needs
+     *  a validated variant row to attach to — with the same discipline: owner re-derived from the
+     *  session, live base required BEFORE any spend, server-owned price, credits reserved atomically
+     *  with the job insert. Same action the merchant's element dialog calls. */
+    createVariant(input: {
+      entityId: string;
+      name: string;
+      prompt: string;
+    }): Promise<{ variantId: string; jobId: string } | { error: string }>;
     /** debt-69 ($0, guarded): soft-delete an OWNED reference variant (+ its tagged reference images).
-     *  The port hard-refuses (fail-closed) while a paid RefGenJob for that variant is still in flight,
-     *  so a delete can't strand settled/settling paid work. Owner scope + not-found guard live INSIDE
-     *  the deleteVariant action (requireOwner). */
+     *  Hard-refused (fail-closed) while a paid RefGenJob for that variant is still in flight, so a
+     *  delete can't strand settled/settling paid work — the deleteVariant action itself refuses, so
+     *  the rule holds for the merchant's own delete button too, and the port re-states it for Otto.
+     *  Owner scope + not-found guard live INSIDE the deleteVariant action (requireOwner). */
     deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }>;
   };
 }
@@ -1035,6 +1054,20 @@ export type LibraryItemView = {
   projectId: string;
   kind: string; // "image" | "video"
   prompt: string;
+  /**
+   * #776 —— 引擎自报**它真正跑的那句提示词**。
+   *
+   * Otto 解释「上次为什么长这样」时需要的正是这一句 —— 商家写的那句在 `prompt`,引擎
+   * 实际执行的那句在这里,两者常常不同,而差别往往就是答案。
+   *
+   * 三种状态,**互不相同**,别混:
+   *   · 字符串 = 引擎报的那句(已在 web 侧一处过白标过滤,可以直接说出口);
+   *   · `null` = 引擎**没报**(或回执落库前的历史行)= 未知 → 明说不知道,不得拿 `prompt`
+   *     冒充它;
+   *   · 键**缺席** = 这条路根本没查这一列(history 分页就是如此)→ 同样只能说不知道,但
+   *     原因不是引擎沉默,而是我们没看。
+   */
+  finalPrompt?: string | null;
   favorite: boolean;
   createdAt?: string; // ISO instant (history rows carry it; a single detail read may not)
 };

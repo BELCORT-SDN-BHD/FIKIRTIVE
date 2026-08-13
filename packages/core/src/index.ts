@@ -42,6 +42,7 @@ export {
   OVERLAY_POSITIONS,
   RENDER_QUEUE,
   INGEST_QUEUE,
+  INGEST_DLQ,
   RENDER_DLQ,
   RENDER_RETRY_LIMIT,
   RENDER_QUEUE_POLICY,
@@ -184,6 +185,12 @@ export { creditDirection, type CreditDirection } from "./credit-direction.js";
 // 商家主导航的唯一权威源(#801)。三个读者共用:左侧导轨画它、Otto 照它指路、围栏照它核对。
 // 纯数据(无 React、无图标、无 node/network),所以主 barrel 装得下。
 export * from "./navigation.js";
+// 素材理解三件套(#784)的唯一配置源:token 上限、单价、开关、日额、队列与产物形状。
+// 「成本 < 一条视频的 1%」由这个模块算出来并由它的测试钉住 —— 纯数据 + 纯函数,主 barrel 装得下。
+export * from "./asset-understanding.js";
+// 七条死信队列的单一名单 + 「有没有活被系统放弃掉」的纯判据(#793)。读者有两个:探针
+// 路由(要不要叫人)与 runbook 校验测试(文档有没有跟上代码),名单抄成两份必烂一份。
+export * from "./dead-letters.js";
 
 // 消息渠道状态的唯一措辞(#792 r2)。导轨、预览页、Otto 指令与 listChannelScopes 技能描述
 // 共读一份 —— 从前它们各说各话,其中两处还在劝商家去连一条连不了的渠道。
