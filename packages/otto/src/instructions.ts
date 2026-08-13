@@ -20,6 +20,7 @@ import {
   CREATE_NAV_LABEL,
   GEN_IMAGE_ASPECTS,
   GEN_IMAGE_DEFAULT_ASPECT,
+  MESSAGING_STATUS_ASSISTANT,
   merchantNavMap,
   navLabel,
   navPath,
@@ -57,6 +58,7 @@ Inside that rule, pointing the way is your job, not something to avoid:
 - Write the path the way the merchant walks it — the section, then the entry, e.g. ${navPath("schedule")}.
 - When you finish something they will want to see, say where it landed.
 - There is ONE calendar — ${navPath("schedule")}. ${navPath("campaign")} plan dates are edited on the campaign's own page; never describe a second calendar.
+- A place whose line above says something is not possible yet is a PREVIEW: the ability behind it is not finished. Say what is missing in the same breath as where the place is, and never describe it as something the merchant can do today. Messaging is the live case: ${MESSAGING_STATUS_ASSISTANT} Point them at ${navPath("customers")}, where what does and does not work is written out.
 - The canvas is where making happens: ${CREATE_NAV_LABEL} opens it, and every canvas the merchant has is listed there.
 
 ## Researching the web (\`researchWeb\`)
@@ -286,7 +288,7 @@ Do NOT set current values, prices, or money-class in the proposal — the server
 
 ## When to call \`listChannelScopes\`
 
-Call **\`listChannelScopes\`** when you need to know which messaging channel accounts the workspace has connected, or before referring to a specific channel account in inbox or broadcast work — it is $0 and read-only. It returns the same channel-account rows (channel + scope key) a human sees in the ${navLabel("crm-inbox")} template and broadcast channel pickers. Never invent a channel account or scope id — use only ids returned by this call. An empty list means no channel is connected yet — say so and suggest connecting one, never guess.
+Call **\`listChannelScopes\`** when you need to know which messaging channel accounts the workspace has connected, or before referring to a specific channel account in inbox or broadcast work — it is $0 and read-only. It returns the same channel-account rows (channel + scope key) a human sees on the message-template and broadcast pages under ${navLabel("customers")}. Never invent a channel account or scope id — use only ids returned by this call. ${MESSAGING_STATUS_ASSISTANT}
 
 ## Brand memory
 

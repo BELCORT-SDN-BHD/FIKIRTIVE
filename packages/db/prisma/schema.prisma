@@ -1143,6 +1143,39 @@ model BetterAuthVerification {
   @@map("ba_verification")
 }
 
+/// #795 —— Better Auth 自己的限流台账。
+///
+/// 它此前跑在**进程内存**里。开第二个实例的那一刻,每个实例各有一份计数,同一个 IP 的
+/// 预算就凭空翻倍;每次部署重启又把计数清零。也就是说:闸门看起来在,数字是假的。
+/// 挪到这张表之后,几个实例共用同一份计数,重启不清零。
+///
+/// 形状由 Better Auth 定(key/count/lastRequest,lastRequest 是 epoch 毫秒的 bigint),
+/// 我们只负责让它落在自己的表里。**不要**把它和 RateLimitCounter 合并:那张是我们自己
+/// 那几道闸的表,两边的算法与语义不同,合表等于把两套规则绑在一次 schema 变更上。
+model BetterAuthRateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+  @@map("ba_rate_limit")
+}
+
+/// #795 —— 我们自己那几道闸的跨实例计数器(登录链接门、密码门、生成、上传、外链)。
+///
+/// 固定窗口:一个 key 一行,`count` 是本窗口内已经**放行**过多少次,`expiresAt` 是本窗口
+/// 什么时候结束(epoch 毫秒)。用 bigint 存毫秒而不是 timestamp,是为了让比较是纯整数运算
+/// —— 时区、精度、会话 TZ 这些东西一个都不必参与判断「还有没有额度」。
+///
+/// 被拒的一次**不加计数**(见 rate-limit.ts):这是 #757 已经买过一次教训的性质 —— 让拒绝
+/// 也推窗口,窗口就永远不结束,一个人的重试循环会把同一出口后面所有人一起锁死。
+model RateLimitCounter {
+  key       String @id
+  count     Int
+  expiresAt BigInt
+  @@index([expiresAt])
+  @@map("rate_limit_counter")
+}
+
 model CanvasNode {
   id           String    @id
   ownerId      String
@@ -2283,6 +2316,40 @@ model PublishAttempt {
 model WorkerHeartbeat {
   id String   @id
   at DateTime
+}
+
+// #794 备份可信化(工程评估债 #2)。此前「昨晚备份成功了吗」这个问题在系统里没有答案:
+// 备份成功只写进 worker 的 stdout,失败只进 Sentry,两者都不是可以被 /api/health 或
+// admin 读到的事实。备份是否新鲜必须是一行可查的记录,而不是一句日志。
+//
+// append-only:每次备份尝试落一行(成功与失败都落),**UPDATE 与 DELETE 都被行级触发器
+// 硬拦**(Prisma 建模不了触发器,故只在迁移里)。改写能伪造新鲜度,删除同样能——删掉
+// 「成功之后的那条失败」会让 admin 那一格从 retry failed 变回全绿。清库用 TRUNCATE
+// (表级,不触发行级触发器)。新鲜度 = 最近一条 status='succeeded' 行的 finishedAt
+// (见 apps/web/lib/health.ts)。无租户数据(平台级 ops 记录),不进 tenant guard;
+// 写入方经 runAsSystem("db-backup") 立帧。
+//
+// 三个封闭集(status / credentialMode / trigger)与「succeeded 必须带 finishedAt+key」用 CHECK
+// 约束守着,同样只在迁移里(Prisma 建模不了 CHECK)——见 migrations/20260811100000_backup_run。
+model BackupRun {
+  id             String    @id @default(cuid())
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  // 'succeeded' | 'failed'(封闭集,迁移里有 CHECK 约束)
+  status         String
+  // 谁触发的:'cron'(Railway cron,#794 后的权威) | 'worker-timer'(旧的 5 分钟循环) | 'manual'
+  trigger        String
+  // 这次上传用的是哪一族 R2 凭据:'isolated'(backups/ 专用 token) | 'shared'(与内容同钥匙)。
+  // 记在行上而不是读 env:admin 要报的是「上一次真的用了什么」,不是「现在配了什么」。
+  credentialMode String
+  key            String?
+  sizeBytes      BigInt?
+  durationMs     Int?
+  // 已脱敏的失败摘要(sanitizeError 的输出)。连接串永不进这里。
+  error          String?
+
+  @@index([status, finishedAt])
+  @@index([startedAt])
 }
 
 // ─── L0 量测原语(第 0 大陆:所有环共用的水表)────────────────────────────────

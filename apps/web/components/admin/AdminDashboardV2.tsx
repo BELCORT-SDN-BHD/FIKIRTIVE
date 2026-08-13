@@ -420,7 +420,9 @@ function CaseRowView({ row, onOpen }: { row: CaseRow; onOpen: (row: CaseRow) => 
 
 function SystemPanel({ rows }: { rows: SystemIncident[] }) {
   return (
-    <Panel title="System health" subtitle="Queue and spend indicators.">
+    // #794 — the panel now also carries recovery (database backup freshness), so the
+    // subtitle can no longer claim it is only queue and spend.
+    <Panel title="System health" subtitle="Queue, spend, and recovery indicators.">
       <div className="grid gap-2">
         {rows.map((row) => (
           <div key={row.id} className="rounded-xl border border-border bg-background p-3">

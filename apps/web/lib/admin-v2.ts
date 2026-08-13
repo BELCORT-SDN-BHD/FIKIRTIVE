@@ -26,6 +26,7 @@ import { listConversations } from "@/lib/conversation-admin";
 import { listTenants } from "@/lib/tenant-admin";
 import { resolveVisionConfig } from "@/lib/runtime-config";
 import { buildBytePlusPackSignal } from "@/lib/byteplus-pack-alert";
+import { buildBackupSignal } from "@/lib/backup-signal";
 import { sanitizeUserError } from "@/lib/provider-secrecy";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -412,6 +413,8 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       vision,
       runtimeProvider,
       knowledgeRows,
+      lastBackupSuccess,
+      lastBackupFailure,
     ] = await Promise.all([
       listTenants(),
       prisma.creditAccount.findUnique({
@@ -569,6 +572,19 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       prisma.runtimeConfig.findMany({
         where: { key: { in: ["planner_system", "brief_default", "description_template"] } },
         select: { key: true, valueJson: true },
+      }),
+      // #794 ③ — 备份新鲜度。两条:最近一次成功(新鲜度的唯一依据)与最近一次失败
+      // (只有当它发生在那次成功之后才会被展示)。分两条查而不是查一条最新行:一次失败
+      // 绝不能把「上一次成功在什么时候」这个事实从面板上抹掉。
+      prisma.backupRun.findFirst({
+        where: { status: "succeeded" },
+        orderBy: { finishedAt: "desc" },
+        select: { finishedAt: true, key: true, sizeBytes: true, durationMs: true, trigger: true, credentialMode: true },
+      }),
+      prisma.backupRun.findFirst({
+        where: { status: "failed" },
+        orderBy: { finishedAt: "desc" },
+        select: { finishedAt: true, error: true },
       }),
     ]);
 
@@ -772,6 +788,32 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       tone: bytePlusPack.tone,
     });
 
+    // #794 ③ — "did last night's backup succeed?" now has a place on this page.
+    const backupSignal = buildBackupSignal({
+      lastSuccess: lastBackupSuccess
+        ? {
+            finishedAt: lastBackupSuccess.finishedAt,
+            key: lastBackupSuccess.key,
+            // BigInt → number: a dump would have to exceed 9 petabytes to lose precision here.
+            sizeBytes: lastBackupSuccess.sizeBytes === null ? null : Number(lastBackupSuccess.sizeBytes),
+            durationMs: lastBackupSuccess.durationMs,
+            trigger: lastBackupSuccess.trigger,
+            credentialMode: lastBackupSuccess.credentialMode,
+          }
+        : null,
+      lastFailure: lastBackupFailure,
+      now: new Date(),
+    });
+    systemIncidents.push({
+      id: "backup-freshness",
+      area: "Database backup",
+      status: backupSignal.status,
+      count: backupSignal.count,
+      detail: backupSignal.detail,
+      updatedAt: backupSignal.updatedAt,
+      tone: backupSignal.tone,
+    });
+
     const cases: CaseRow[] = [
       ...guardianBlocks.map((row) => {
         const owner = ownerName(ownerByOrg, row.ownerId);
@@ -945,6 +987,18 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
           value: String(queueFailureCount),
           detail: `${activeQueue} active queue items across generation, reference, and render jobs.`,
           tone: queueFailureCount > 0 ? "danger" : "success",
+          href: "/admin/system",
+        },
+        {
+          // #794 — belongs on the home page, not only on /admin/system. A backup that
+          // stopped running is the one failure whose cost is unbounded, and it is also the
+          // quietest: nothing else in the product behaves any differently until the day
+          // it matters.
+          id: "backup-freshness",
+          label: "Database backup",
+          value: backupSignal.freshness === "missing" ? "never" : `${backupSignal.count}h ago`,
+          detail: backupSignal.detail,
+          tone: backupSignal.tone,
           href: "/admin/system",
         },
       ],

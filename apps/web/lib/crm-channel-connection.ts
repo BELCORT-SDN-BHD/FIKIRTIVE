@@ -19,6 +19,7 @@
  * Pure presentation over a value the caller already fetched: no data access, no tenant logic.
  */
 
+import { MESSAGING_STATUS_CANNOT_CONNECT } from "@fikirtive/core/messaging-status";
 import { channelAccountLabel } from "./crm-labels";
 
 /**
@@ -51,13 +52,17 @@ export type ChannelConnection =
   | { kind: "unreadable" };
 
 /**
- * The only sentence in the product about connecting a channel. It is a product fact, not a
- * workspace fact: no screen anywhere can connect a messaging channel yet (#541), which is why
- * no page offers a CTA into Connections. It belongs only to the `none` branch — telling a
- * merchant who already has a channel that channels cannot be connected is the same lie in
- * reverse.
+ * The one sentence about connecting a channel used to be declared here (#727). #792 r3 moved it
+ * to `@fikirtive/core/messaging-status`, because a second constant carrying the same product
+ * fact had appeared there — and the Customers preview page rendered both of them, one after the
+ * other. Two authorities for one fact is the very drift this file exists to prevent, so the
+ * declaration moved out and every surface (Inbox, Templates, the preview page) reads that one.
+ *
+ * What has not changed: it is a product fact, not a workspace fact — no screen anywhere can
+ * connect a messaging channel yet (#541), which is why no page offers a CTA into Connections.
+ * It still belongs only to the `none` branch: telling a merchant who already has a channel that
+ * channels cannot be connected is the same lie in reverse.
  */
-export const CHANNEL_CONNECT_UNAVAILABLE_NOTE = "Messaging channels are not available to connect yet.";
 
 /** Derive the connection state from a gateway read. An absent read is `unreadable`: a page that
  *  was not given the authority does not get to guess at it. */
@@ -121,5 +126,5 @@ export function channelConnectionIsConfirmedAbsent(connection: ChannelConnection
 /** The zero-channel explanation shared by every surface that would otherwise offer an action a
  *  merchant cannot finish. `lead` is the surface's own reason the channel matters. */
 export function channelUnavailableCopy(lead: string): string {
-  return `${lead} ${CHANNEL_CONNECT_UNAVAILABLE_NOTE}`;
+  return `${lead} ${MESSAGING_STATUS_CANNOT_CONNECT}`;
 }

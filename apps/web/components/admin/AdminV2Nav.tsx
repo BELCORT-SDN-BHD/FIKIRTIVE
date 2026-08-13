@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Gauge,
   LayoutDashboard,
+  ListOrdered,
   ShieldCheck,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
@@ -24,6 +25,7 @@ const NAV = [
   { href: "/admin/otto", label: "Otto Ops", icon: Bot },
   { href: "/admin/audit", label: "Audit", icon: Activity },
   { href: "/admin/system", label: "System Health", icon: Gauge },
+  { href: "/admin/queue", label: "Queue health", icon: ListOrdered },
 ] as const;
 
 function activeHref(pathname: string) {
