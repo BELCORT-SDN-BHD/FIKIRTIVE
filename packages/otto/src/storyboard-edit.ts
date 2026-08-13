@@ -88,6 +88,24 @@ export function applyDeleteShot(
   return { ...payload, shots: restamp(payload.shots.filter((_, i) => i !== index)) };
 }
 
+/**
+ * #782 接续开关(整条分镜一个)。开 = 每个镜头从上一个镜头真实停住的那一帧起步。
+ *
+ * **只改这一个键,一件已生成的东西都不动**。这一条是刻意的:接续影响的是「下一个镜头的
+ * 首帧从哪来」,而关掉它并不会让任何**已经存在**的帧或片子变得不对 —— 那些帧本来就是这条
+ * 片子真实走过的样子。所以这里没有陈旧级联;商家想换掉某一帧,走的是那一帧自己的重出路径
+ * (闸① 的 per-shot regen),而不是被一个开关连坐清掉付过钱的东西。
+ */
+export function applySetContinuity(
+  payload: StoryboardCardPayload,
+  on: boolean,
+): StoryboardCardPayload {
+  if (on) return { ...payload, continuity: true };
+  const rest = { ...payload };
+  delete rest.continuity; // 关 = 不落键(与「从没开过」逐字节同形)
+  return rest;
+}
+
 /** 按 order(当前 index 的一个排列)重排 + 重编 index。
  *  order 不是 [0..n-1] 的合法排列(缺项/越界/重复)→ 原样返回。 */
 export function applyReorderShots(

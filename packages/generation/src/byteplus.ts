@@ -228,6 +228,13 @@ export class BytePlusProvider implements GenerationProvider {
       // the merchant's sound choice, finally wired. Default true = the engine default and
       // videoDefaults()'s audio for this model, so an unset toggle changes nothing.
       generate_audio: req.audio ?? true,
+      // #782 — ask for the clip's LAST FRAME as a still, so shot N+1 can literally start
+      // where shot N ended. FREE: the engine bills the clip (token formula above: output
+      // seconds × pixels × fps), and the still is a by-product of a render already paid
+      // for — no new price tier, no new charge, nothing added to the merchant's quote.
+      // Sent ONLY when the caller asked, so a plain Gen-space clip's request body is
+      // byte-identical to what it was before this ticket.
+      ...(req.returnLastFrame ? { return_last_frame: true } : {}),
       // F40 (same rule as the image path): paying merchants must not receive watermarked
       // output. Video defaults to false today; declare it so a default drift can't undo that.
       watermark: false,
@@ -268,7 +275,7 @@ export class BytePlusProvider implements GenerationProvider {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));
-      let t: { status?: string; content?: { video_url?: string } };
+      let t: { status?: string; content?: { video_url?: string; last_frame_url?: string } };
       try {
         const st = await fetch(`${ARK_BASE}/contents/generations/tasks/${taskId}`, { headers: this.headers() });
         if (!st.ok) {
@@ -276,7 +283,7 @@ export class BytePlusProvider implements GenerationProvider {
           if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`generation provider video poll returned ${st.status} after timeout`);
           continue; // transient non-2xx — retry
         }
-        t = (await st.json()) as { status?: string; content?: { video_url?: string } };
+        t = (await st.json()) as { status?: string; content?: { video_url?: string; last_frame_url?: string } };
       } catch (e) {
         // A chargedError thrown above must propagate (terminal); any other exception (network reset,
         // malformed body) is a transient poll failure — the task was already submitted and may still
@@ -292,14 +299,50 @@ export class BytePlusProvider implements GenerationProvider {
         // (`arrayBuffer()` throwing). PLAIN here would requeue and generate a SECOND paid clip.
         const url = t.content?.video_url;
         if (!url) throw chargedError("generation provider video response had no result URL");
+        let video: GeneratedVideo;
         try {
           const r = await fetch(url);
           if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
-          return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
+          video = { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
         } catch (e) {
           if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
           throw chargedError(`generation provider video download failed (${e instanceof Error ? e.message : String(e)})`);
         }
+        // #782 — the clip's last frame, and why it is the ONLY thing in this method that
+        // cannot fail the job. The paid product is the CLIP, and it is already in hand and
+        // already billed. The still is a free by-product used to start the next shot; if it
+        // is missing or won't download, the correct outcome is "no automatic continuation
+        // this time", never a charged failure on a clip we successfully produced. So every
+        // failure here is swallowed, deliberately, and the video returns exactly as it did
+        // before this ticket.
+        //
+        // UNVERIFIED RESPONSE KEY (#782, stated rather than hidden): the REQUEST field
+        // `return_last_frame` was measured against this model on 2026-08-08 (accepted and
+        // effective, alongside resolution/duration/ratio/generate_audio/priority). The
+        // RESPONSE key was NOT — `last_frame_url` is read as the symmetric sibling of
+        // `video_url`. If the engine spells it differently, this reads undefined and the
+        // feature degrades to today's behaviour (shot N+1 simply has no inherited frame and
+        // the merchant generates one as before) — it does not break, mis-bill, or lie. The
+        // warning below prints the key NAMES the receipt actually carried (names only — a
+        // value would be a signed URL), so the first production clip settles the question
+        // instead of another round of guessing.
+        if (req.returnLastFrame) {
+          const tailUrl = t.content?.last_frame_url;
+          if (!tailUrl) {
+            console.warn("generation provider returned no last frame for a clip that asked for one:", {
+              model, contentKeys: Object.keys(t.content ?? {}),
+            });
+          } else {
+            try {
+              const r = await fetch(tailUrl);
+              if (r.ok) video.lastFrame = { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(tailUrl) ?? "png" };
+              else console.warn(`generation provider last-frame download failed (${r.status}); clip delivered without it`);
+            } catch (e) {
+              console.warn(`generation provider last-frame download failed (${e instanceof Error ? e.message : String(e)}); clip delivered without it`);
+            }
+          }
+        }
+        return video;
       }
       // #661 — the three terminal statuses in which the ENGINE ITSELF reports that no video was
       // produced. Official pricing page (docs.byteplus.com/en/docs/ModelArk/1544106, last updated

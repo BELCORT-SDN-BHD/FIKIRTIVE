@@ -59,7 +59,7 @@ export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";
 // storyboard-edit — the PURE storyboard edit transforms (no DB/SDK), the single edit-semantics
 // authority shared by the human server actions (apps/web/lib/storyboard-actions.ts via the
 // re-export shim apps/web/lib/storyboard-edit.ts) and the editStoryboard skill (W-B3-C).
-export { applyEditShotPrompt, applyAddShot, applyDeleteShot, applyReorderShots } from "./storyboard-edit.js";
+export { applyEditShotPrompt, applyAddShot, applyDeleteShot, applyReorderShots, applySetContinuity } from "./storyboard-edit.js";
 export type { ShotPromptPatch, NewShotInput } from "./storyboard-edit.js";
 export { editStoryboard, editStoryboardSkill } from "./skills/edit-storyboard.js";
 export { proposeResearch, proposeResearchSkill } from "./skills/propose-research.js";

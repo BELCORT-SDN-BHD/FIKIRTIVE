@@ -2,8 +2,16 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Loader2, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { parseStoryboardCardPayload, MAX_STORYBOARD_SHOTS, type StoryboardCardView, type StoryboardShotView } from "@/lib/storyboard-card";
-import { editShotPrompt, addShot, deleteShot, reorderShots } from "@/lib/storyboard-actions";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import {
+  parseStoryboardCardPayload,
+  shotsNeedingMintedFirstFrame,
+  MAX_STORYBOARD_SHOTS,
+  type StoryboardCardView,
+  type StoryboardShotView,
+} from "@/lib/storyboard-card";
+import { editShotPrompt, addShot, deleteShot, reorderShots, setStoryboardContinuity } from "@/lib/storyboard-actions";
 import {
   prepareStoryboardFirstFrames,
   regenShotFirstFrameCard,
@@ -459,7 +467,18 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   }
 
   const shots = view.shots;
-  const missingCount = shots.filter((s) => !s.firstFrameGenerationId).length;
+  // #782: how many first frames gate① would actually MAKE (and charge for) — the one shared
+  // rule, so the button never promises a number the server wouldn't mint. With continuous
+  // shots on that is the first shot alone; the rest inherit the frame the previous clip
+  // ended on, for free.
+  const missingCount = shotsNeedingMintedFirstFrame(shots, view.continuity).length;
+  // Shots with no frame that are WAITING for the shot before them (continuous mode) rather
+  // than missing something the merchant has to make.
+  const inheritingShotIds = new Set(
+    view.continuity
+      ? shots.filter((s, i) => i > 0 && !s.firstFrameGenerationId).map((s) => s.shotId)
+      : [],
+  );
   const bal = balanceUsd ?? 0;
   const affordAll = canAffordPack(totalCredits, bal);
   const affordAllVideos = canAffordPack(videoTotalCredits, bal);
@@ -472,17 +491,43 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const videoEligibleCount = shots.filter((s) => s.firstFrameGenerationId && !s.videoGenerationId).length;
   // Shots with a first frame still missing (would need one before their video can be made).
   const videoBlockedCount = shots.filter((s) => !s.firstFrameGenerationId).length;
+  // In continuous mode those shots are not blocked ON THE MERCHANT — they are waiting for the
+  // clip before them to finish, which then hands them its closing frame. Say that instead.
+  const videoWaitingCount = shots.filter((s) => inheritingShotIds.has(s.shotId)).length;
   const showMakeVideos = videoEligibleCount > 0 && idleForAffordance;
 
   return (
     <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
       <div className="rounded-[18px] border border-border bg-secondary p-6">
         {/* Header */}
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-2">
           <Film size={20} className="text-foreground" />
           <span className="font-bold text-[1rem] text-foreground">
             {view.storyboardTitle || "Storyboard"}
           </span>
+        </div>
+
+        {/* #782 continuous shots — $0, and it changes what gate① will make. `run` clears any
+            prepared-but-unspent children on success, so a confirm can never spend a set that
+            was staged under the other setting. */}
+        <div className="mb-4 flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`continuity-${cardId}`}
+              checked={view.continuity}
+              disabled={busy || editLocked}
+              onCheckedChange={(on) => void run(() => setStoryboardContinuity({ cardId, continuity: on }))}
+            />
+            <Label htmlFor={`continuity-${cardId}`} className="text-[0.8125rem] text-foreground">
+              Shots continue from each other
+            </Label>
+          </div>
+          {view.continuity && (
+            <div className="text-[0.75rem] text-muted-foreground">
+              Each shot picks up exactly where the one before it ends, so you only make the first
+              frame — and the shots are made one after another.
+            </div>
+          )}
         </div>
 
         {/* Shots */}
@@ -499,6 +544,8 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               const videoPending = isVideoPending(shot);
               const isVideoRegenConfirm = regenVideoShotId === shot.shotId;
               const isReplacingVideo = replacingVideoShotIds.has(shot.shotId);
+              // #782: waiting for the previous shot's clip to hand over its closing frame.
+              const isInheriting = inheritingShotIds.has(shot.shotId);
               // Any per-shot confirm currently open (either gate) suppresses the OTHER shots'
               // action buttons — clone gate①'s "only one regen at a time" rule, extended to videos.
               const anyRegenOpen = regenShotId !== null || regenVideoShotId !== null;
@@ -576,6 +623,13 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                       {framePending && !hasFrame && !frameUrl && (
                         <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
                           <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Generating first frame…
+                        </div>
+                      )}
+                      {/* #782: this shot has nothing to make — it opens on the closing moment of
+                          the shot before it, once that one is done. */}
+                      {isInheriting && !framePending && (
+                        <div className="text-[0.75rem] text-muted-foreground">
+                          Opens where shot {shot.index} ends — nothing to make here.
                         </div>
                       )}
                       {/* Confirmed frame regen in flight: old thumbnail stays; hint while the new frame lands. */}
@@ -751,11 +805,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                 <Button variant="default" disabled={busy} onClick={() => void prepareVideos()}>
                   {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : `Make all videos (${videoEligibleCount} ${videoEligibleCount === 1 ? "clip" : "clips"})`}
                 </Button>
-                {videoBlockedCount > 0 && (
+                {videoWaitingCount > 0 ? (
+                  <div className="text-[0.75rem] text-muted-foreground">
+                    {videoWaitingCount} {videoWaitingCount === 1 ? "shot follows on" : "shots follow on"} — each one starts once the shot before it is made.
+                  </div>
+                ) : videoBlockedCount > 0 ? (
                   <div className="text-[0.75rem] text-muted-foreground">
                     {videoBlockedCount} {videoBlockedCount === 1 ? "shot needs" : "shots need"} a first frame first.
                   </div>
-                )}
+                ) : null}
               </div>
             )}
           </div>

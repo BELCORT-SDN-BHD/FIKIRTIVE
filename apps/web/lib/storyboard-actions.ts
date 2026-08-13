@@ -17,6 +17,7 @@ import {
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
+  applySetContinuity,
 } from "./storyboard-edit";
 
 type Ok = { payload: StoryboardCardPayload };
@@ -114,6 +115,24 @@ export async function deleteShot(raw: unknown): Promise<Ok | Err> {
     if (index >= cur.shots.length) return { error: "That shot no longer exists." };
     if (cur.shots.length <= 1) return { error: "A storyboard needs at least one shot." };
     return persist(cardId, applyDeleteShot(cur, index));
+  });
+}
+
+const continuityInput = z.object({ cardId: cardIdSchema, continuity: z.boolean() });
+
+/** #782 接续开关(人工那一面)——$0,与 Otto 的 `editStoryboard op=setContinuity`
+ *  共用同一条纯变换,两面不可能对同一个开关有两种语义。不碰任何已生成的帧/片。 */
+export async function setStoryboardContinuity(raw: unknown): Promise<Ok | Err> {
+  const parsed = continuityInput.safeParse(raw);
+  if (!parsed.success) return { error: "That change isn't valid." };
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<Ok | Err> => {
+    const { cardId, continuity } = parsed.data;
+    const card = await loadCard(cardId, gate.ownerId);
+    if (!card) return { error: "Card not found." };
+    const cur = (card.payload ?? {}) as StoryboardCardPayload;
+    return persist(cardId, applySetContinuity(cur, continuity));
   });
 }
 

@@ -502,6 +502,11 @@ model GenJob {
   attempts           Int       @default(0)
   startedAt          DateTime?
   finishedAt         DateTime?
+  /// #782 分镜自动接续:这条片子的**末帧**图片 Asset(引擎免费附送的静帧,不是产出物)。
+  /// null = 没有(图片作业、老作业、引擎没给、或下载失败)—— 全部是正常情况,读取端一律
+  /// 当「这次没得接」处理。刻意存 Asset 而不是 Generation:Generation 会出现在候选区/素材
+  /// 面前,而末帧只有在真的被下一镜头**用上**时才该成为一件作品(那一刻由分镜闸③铸行)。
+  lastFrameAssetId   String?
   /// At-most-once Otto verdict claim: set atomically by the worker after gen DONE.
   /// null = not yet claimed; non-null = claimed (or redelivery — skip).
   ottoVerdictAt      DateTime?

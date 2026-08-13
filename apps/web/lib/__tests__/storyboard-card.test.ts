@@ -13,14 +13,15 @@ describe("MAX_STORYBOARD_SHOTS (client-safe copy)", () => {
 
 describe("parseStoryboardCardPayload", () => {
   it("empty / undefined payload → 空标题 + 空 shots", () => {
-    expect(parseStoryboardCardPayload(undefined)).toEqual({ storyboardTitle: "", shots: [] });
-    expect(parseStoryboardCardPayload(null)).toEqual({ storyboardTitle: "", shots: [] });
-    expect(parseStoryboardCardPayload({})).toEqual({ storyboardTitle: "", shots: [] });
+    // #782:多了一格 continuity —— 缺省一律 false(老卡没有这个键,行为与从前逐字一致)。
+    expect(parseStoryboardCardPayload(undefined)).toEqual({ storyboardTitle: "", continuity: false, shots: [] });
+    expect(parseStoryboardCardPayload(null)).toEqual({ storyboardTitle: "", continuity: false, shots: [] });
+    expect(parseStoryboardCardPayload({})).toEqual({ storyboardTitle: "", continuity: false, shots: [] });
   });
 
   it("shots 不是数组 → shots 归空,标题仍解析", () => {
     const r = parseStoryboardCardPayload({ storyboardTitle: "T", shots: "nope" });
-    expect(r).toEqual({ storyboardTitle: "T", shots: [] });
+    expect(r).toEqual({ storyboardTitle: "T", continuity: false, shots: [] });
   });
 
   it("合法 payload → 映射 title + 双 prompt + shotId,按 index 排序", () => {

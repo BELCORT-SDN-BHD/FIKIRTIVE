@@ -38,6 +38,7 @@ import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
+import { shotsNeedingMintedFirstFrame } from "./storyboard-card";
 
 export type ChildFrameCard = {
   shotId: string;
@@ -427,9 +428,22 @@ export async function prepareStoryboardFirstFrames(
       const nextShots: Shot[] = [];
       let changed = false;
 
+      // #782 — WHICH shots this gate is allowed to mint (= charge) a first frame for, read
+      // from the ONE shared rule (`shotsNeedingMintedFirstFrame`) the card face reads too.
+      // With continuity on that is the FIRST shot alone: every later shot inherits the frame
+      // the previous clip really ended on, so minting one would charge the merchant for a
+      // picture the storyboard is about to throw away. Derived from the FRESH in-lock payload,
+      // like everything else that drives a write here (R4①).
+      const mintable = new Set(
+        shotsNeedingMintedFirstFrame(payload.shots, payload.continuity === true).map((s) => s.shotId),
+      );
+
       for (const shot of payload.shots) {
         // Has an image already → skip entirely (no mint, no change).
-        if (shot.firstFrameGenerationId) {
+        // Or (continuity) this shot's frame comes from the previous shot's clip → the same
+        // treatment: no child, no charge, no payload change. It is not "missing"; it is
+        // waiting for the shot before it.
+        if (shot.firstFrameGenerationId || !mintable.has(shot.shotId)) {
           nextShots.push(shot);
           continue;
         }
@@ -652,19 +666,71 @@ export async function regenShotFirstFrameCard(
  *  durable `cowork:<childId>` idempotency key (mirrors spentOf's read). Never writes.
  *  v6(R5③): reads via the caller's tx — the in-lock sampling truly runs inside the
  *  locked transaction. */
-async function doneJobFor(tx: PrismaTx, childCardId: string, ownerId: string): Promise<{ id: string } | null> {
+async function doneJobFor(tx: PrismaTx, childCardId: string, ownerId: string): Promise<DoneJob | null> {
   const child = await tx.chatMessage.findFirst({
     where: { id: childCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
     select: { genJobId: true },
   });
+  // #782: three more READ-ONLY columns come back — the clip's free last-frame asset and the
+  // project/thread it belongs to. They are what gate③ needs to hand that frame to the next
+  // shot; nothing here writes, and a job without a tail simply reports null.
+  const select = { id: true, status: true, lastFrameAssetId: true, projectId: true, threadId: true } as const;
   const job = child?.genJobId
-    ? await tx.genJob.findFirst({ where: { id: child.genJobId, ownerId }, select: { id: true, status: true } })
-    : await tx.genJob.findFirst({
-        where: { ownerId, idempotencyKey: `cowork:${childCardId}` },
-        select: { id: true, status: true },
-      });
+    ? await tx.genJob.findFirst({ where: { id: child.genJobId, ownerId }, select })
+    : await tx.genJob.findFirst({ where: { ownerId, idempotencyKey: `cowork:${childCardId}` }, select });
   if (!job || job.status !== "DONE") return null; // missing/queued/generating/failed → leave the shot alone
-  return { id: job.id };
+  return { id: job.id, lastFrameAssetId: job.lastFrameAssetId, projectId: job.projectId, threadId: job.threadId };
+}
+
+type DoneJob = { id: string; lastFrameAssetId: string | null; projectId: string; threadId: string | null };
+
+/** 首帧只能是图片。末帧本来就是 PNG,但「指过去的那一行到底是不是图」这件事不能靠推定 ——
+ *  指错了下游就是拿一段视频当首帧去付费出片。 */
+const FRAME_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
+
+/**
+ * #782 闸③ —— 把第 N 镜真实停住的那一帧,变成第 N+1 镜的首帧。
+ *
+ * 这是 $0 的:那张图是引擎出片时免费附送的,worker 早已把它接住存进 R2(GenJob
+ * .lastFrameAssetId)。这里做的只是「让它成为一件作品」——在真的要用它的这一刻才铸
+ * Generation 行,所以商家的候选区不会因为出了几条片就平白多出几张没人要过的静图。
+ *
+ * 只填空,永不覆盖:调用点已经确认下一镜没有首帧。已经有首帧的镜头(商家自己出过、或
+ * 上一轮已接续过)一律不动 —— 自动接续绝不越过商家已经看见并认可的东西。
+ *
+ * 返回新 Generation 的 id;拿不到末帧 / 末帧行不见了 / 不是图片 → null,调用方当作
+ * 「这一环这次接不上」,与 #782 之前的行为一模一样(商家自己出一张首帧即可)。
+ */
+async function inheritFrameFromClip(
+  tx: PrismaTx,
+  ownerId: string,
+  job: DoneJob,
+): Promise<string | null> {
+  if (!job.lastFrameAssetId) return null;
+  const asset = await tx.asset.findFirst({
+    where: { id: job.lastFrameAssetId, ownerId, deletedAt: null },
+    select: { id: true, ext: true },
+  });
+  if (!asset || !FRAME_IMAGE_EXTS.has(asset.ext.toLowerCase())) return null;
+  const gen = await tx.generation.create({
+    data: {
+      id: newId(),
+      ownerId,
+      // 与那条片子同一个 project:闸② 之后会把这个 id 当 i2v 起始帧送进 worker,而 worker
+      // 按 (owner, project) 复核源图 —— 跨 project 会在花钱前被挡下,那才是真正的缺陷。
+      projectId: job.projectId,
+      shotId: null,
+      // 与那条片子同一条对话:cowork 产物本来就不进候选区/素材面,末帧跟着它走,
+      // 不会在商家的素材库里冒出来。
+      threadId: job.threadId,
+      assetId: asset.id,
+      source: "GENERATED",
+      promptText: "",
+      modelRef: "",
+      entitySnapshot: { entities: [] },
+    },
+  });
+  return gen.id;
 }
 
 /** Read-only: the first Generation id this DONE job produced, via its durable GEN_RESULT
@@ -763,6 +829,11 @@ export async function syncStoryboardMedia(
       // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
       // first-ever frame write (no prior genId) does NOT cascade.
       const cascadeShots = new Set<string>();
+      // #782: the DONE video job behind each shot, kept for gate③ below. A shot whose clip
+      // landed on an EARLIER sync stages no video write, but its job (and therefore its free
+      // last frame) is still the thing the next shot inherits from — so the map is filled from
+      // the resolve, not from the write.
+      const videoJobByShot = new Map<string, DoneJob>();
       for (const shot of p.shots) {
         if (shot.firstFrameCardId) {
           const job = await doneJobFor(tx, shot.firstFrameCardId, ownerId);
@@ -778,9 +849,36 @@ export async function syncStoryboardMedia(
         if (shot.videoCardId) {
           const job = await doneJobFor(tx, shot.videoCardId, ownerId);
           if (job) {
+            videoJobByShot.set(shot.shotId, job);
             const genId = await firstGenerationIdOf(tx, job.id, ownerId);
             if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
           }
+        }
+      }
+
+      // ── #782 闸③:接续。第 N 镜的片子出完 → 它真实停住的那一帧成为第 N+1 镜的首帧。──
+      //
+      // 只在接续模式下跑,而且只**填空**:下一镜已经有首帧(商家自己出过、或上一轮已接上)
+      // 就一格不动。所以它既不会覆盖商家付过钱看过的东西,也不会在重复 sync 时反复铸行。
+      // 一次 sync 只推进能推进的那些环;链条靠 UI 的轮询一环一环走完,与「视频要几分钟」
+      // 这件事天然对齐。
+      //
+      // 级联无涉:下一镜此前没有 firstFrameGenerationId,按上面既有规则(只有**替换**旧
+      // genId 才级联)这是一次 first-ever 写 —— 不会去动任何已付费的视频键。
+      if (p.continuity === true) {
+        const ordered = [...p.shots].sort((a, b) => a.index - b.index);
+        for (let i = 0; i < ordered.length - 1; i++) {
+          const from = ordered[i]!;
+          const to = ordered[i + 1]!;
+          if (to.firstFrameGenerationId || frameWrites[to.shotId]) continue; // 已有首帧 → 绝不覆盖
+          // 上一镜的片子必须**真的出完**(videoWrites 是这一轮刚落的,videoGenerationId 是
+          // 之前落的;两者任一成立都算出完)。没出完就等下一轮,不猜。
+          if (!videoWrites[from.shotId] && !from.videoGenerationId) continue;
+          const job = videoJobByShot.get(from.shotId);
+          if (!job) continue;
+          const genId = await inheritFrameFromClip(tx, ownerId, job);
+          // first-ever frame write for that shot ⇒ 走既有写回路径,不进 cascadeShots。
+          if (genId) frameWrites[to.shotId] = genId;
         }
       }
 

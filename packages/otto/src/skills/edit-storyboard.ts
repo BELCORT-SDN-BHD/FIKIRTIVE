@@ -26,11 +26,12 @@ import {
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
+  applySetContinuity,
 } from "../storyboard-edit.js";
 
 export const editStoryboardInput = z.object({
   cardId: z.string().min(1).describe("The STORYBOARD_CARD id being edited (from the storyboard card in this conversation)."),
-  op: z.enum(["editShot", "addShot", "deleteShot", "reorderShots"]),
+  op: z.enum(["editShot", "addShot", "deleteShot", "reorderShots", "setContinuity"]),
   /** editShot / deleteShot:0-based shot index(卡片镜头列表里的当前位置). */
   index: z.number().int().min(0).optional(),
   /** editShot(至少给一项)/ addShot(必给):镜头文字与时长. */
@@ -41,6 +42,8 @@ export const editStoryboardInput = z.object({
   title: z.string().trim().max(120).optional(),
   /** reorderShots:当前 0-based index 的一个完整排列,如 [2,0,1]. */
   order: z.array(z.number().int().min(0)).optional(),
+  /** setContinuity(#782):镜头是否一镜接一镜(下一镜从上一镜真实停住的那一帧起步). */
+  continuity: z.boolean().optional(),
 });
 
 export type EditStoryboardInput = z.infer<typeof editStoryboardInput>;
@@ -112,6 +115,13 @@ export async function executeEditStoryboard(
       if (next === cur) return { error: "That reorder isn't valid." }; // 非合法排列 → 纯函数原样返回
       break;
     }
+    case "setContinuity": {
+      // #782:接续开关走**同一套**纯变换(applySetContinuity),与人工动作层
+      // setStoryboardContinuity 逐字同源 —— 两个执行器不可能对同一个开关有两种语义。
+      if (input.continuity === undefined) return { error: "setContinuity needs continuity true or false." };
+      next = applySetContinuity(cur, input.continuity);
+      break;
+    }
   }
 
   // 回写新 payload(只改 payload,绝不动 genJobId)。并发模型同动作层:
@@ -131,7 +141,9 @@ export const editStoryboardSkill = defineOttoSkill({
   description:
     "Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts or duration (op=editShot), " +
     "add a shot (op=addShot, build its prompts via seedreamPrompt/seedancePrompt first), remove a shot (op=deleteShot), " +
-    "or reorder shots (op=reorderShots with the full new order, e.g. [2,0,1]). " +
+    "reorder shots (op=reorderShots with the full new order, e.g. [2,0,1]), " +
+    "or turn continuous shots on/off (op=setContinuity with continuity true/false) when the user says the shots " +
+    "should flow as one unbroken take, or should be separate moments instead. " +
     "$0: this only rewrites the draft storyboard; it never generates or re-generates any image/video.",
   parameters: editStoryboardInput,
   execute: executeEditStoryboard,

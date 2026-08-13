@@ -22,6 +22,10 @@ export const storyboardCardInput = z.object({
   storyboardTitle: z.string().trim().min(1).max(120),
   goal: z.string().optional(),
   shots: z.array(storyboardShot).min(1).max(MAX_STORYBOARD_SHOTS),
+  /** #782 接续模式:这条片子的镜头是不是**一镜接一镜**的同一段动作/同一个空间。
+   *  true ⇒ 每个镜头的起点 = 上一个镜头**真实停住的那一帧**(引擎免费附送的末帧),
+   *  而不是另外画一张首帧图。默认 false = 各镜头彼此独立(可并行、各画各的首帧)。 */
+  continuity: z.boolean().optional(),
 });
 export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
 
@@ -31,6 +35,10 @@ export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
 export type StoryboardCardPayload = {
   storyboardTitle: string;
   goal?: string;
+  /** #782 接续模式(整条分镜一个开关,缺省 = false = 老行为)。
+   *  开着时:只有第一个镜头需要生成首帧图;其后每个镜头的首帧由上一个镜头出片时
+   *  引擎免费附送的**末帧**填上(闸③),所以镜头之间是真的接得上,而不是靠提示词暗示。 */
+  continuity?: boolean;
   shots: {
     shotId: string;
     index: number;
@@ -59,6 +67,9 @@ export function buildStoryboardPayload(
   return {
     storyboardTitle: input.storyboardTitle,
     ...(input.goal ? { goal: input.goal } : {}),
+    // 只有 true 才落键 —— false 与「没说」在读取端是同一件事(默认独立),多存一个
+    // false 只会让老卡与新卡看起来不同,却没有任何行为差别。
+    ...(input.continuity ? { continuity: true } : {}),
     shots: input.shots.map((s, index) => ({
       shotId: mintId(),
       index,

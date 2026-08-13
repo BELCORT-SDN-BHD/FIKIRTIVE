@@ -27,7 +27,30 @@ export interface StoryboardShotView {
 
 export interface StoryboardCardView {
   storyboardTitle: string;
+  /** #782 接续模式:镜头一镜接一镜(下一镜从上一镜真实停住的那一帧起步)。 */
+  continuity: boolean;
   shots: StoryboardShotView[];
+}
+
+/**
+ * #782 —— 闸① 到底会为**哪些**镜头铸(要花钱的)首帧图子卡。**唯一权威**,服务端动作层与
+ * 卡面同读这一条,所以「卡上说要出几张」和「服务端真的会出几张」不可能分家。
+ *
+ * 接续关(老行为):每个还没有首帧图的镜头各出一张。
+ * 接续开:**只有第一个镜头**要出图。其后每个镜头的首帧 = 上一个镜头出片时引擎免费附送的
+ * 末帧(闸③ 写回),所以那些镜头一分钱都不该花在首帧上 —— 真替商家省下的钱,不是话术。
+ * 商家想给中间某个镜头换一张自己的首帧:走那个镜头自己的重出按钮(per-shot regen),
+ * 那是显式动作,不受这条规则影响 —— 能力一格没少。
+ *
+ * 泛型 + 按 index 排序:服务端拿 payload 的镜头、卡面拿视图镜头,两边形状不同但语义同一条。
+ */
+export function shotsNeedingMintedFirstFrame<
+  T extends { index: number; firstFrameGenerationId?: string },
+>(shots: readonly T[], continuity: boolean): T[] {
+  const missing = [...shots].sort((a, b) => a.index - b.index).filter((s) => !s.firstFrameGenerationId);
+  if (!continuity) return missing;
+  const first = [...shots].sort((a, b) => a.index - b.index)[0];
+  return first && !first.firstFrameGenerationId ? [first] : [];
 }
 
 type RawShot = Partial<StoryboardCardPayload["shots"][number]>;
@@ -68,5 +91,6 @@ export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView
       };
     })
     .sort((a, b) => a.index - b.index);
-  return { storyboardTitle, shots };
+  // 只有明写 true 才算开(老卡没有这个键 = 关 = 老行为,逐字节同形)。
+  return { storyboardTitle, continuity: p.continuity === true, shots };
 }

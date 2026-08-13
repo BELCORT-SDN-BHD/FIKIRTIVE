@@ -16,7 +16,6 @@ export const seedancePromptInput = z.object({
   style: z.string().optional(),
   pacing: z.string().optional(),
   shots: z.array(seedanceShot).min(1).max(4),
-  continuesFromPrev: z.boolean().default(false),
   references: z.array(promptRef).max(8).default([]),
   cleanFootage: z.boolean().default(true),
   constraints: z.string().optional(),
@@ -31,8 +30,14 @@ export function assembleSeedance(i: SeedancePromptInput): string {
   const single = i.shots.length === 1;
   i.shots.forEach((s, idx) => {
     const seg = [
-      idx === 0 && i.continuesFromPrev && "continuing from the previous frame,",
-      idx === 0 && !i.continuesFromPrev && i.mode === "i2v" && "starting from the given first frame,",
+      // #782:这里原本还有一条 `continuesFromPrev` 分支,写出 "continuing from the previous
+      // frame," —— 一句**文字暗示**。它暗示的那件事在执行层从来没有发生过:上一条片子的
+      // 末帧根本没有被送进这一条,引擎手上只有一张与前一镜无关的首帧图,所以镜头之间接不上,
+      // 而 prompt 里却写着「接着上一帧」。接续现在由真东西完成 —— 上一镜的**真实末帧**被灌
+      // 进这一镜的首帧(分镜闸③),于是这一镜本来就是 i2v,下面这句「从给定的首帧起步」对
+      // 接续与不接续同样为真。旧的暗示句因此退役,而不是与新机制并存:两条同名而不同真伪的
+      // 路留在一起,迟早有人再问一次「到底哪一条在起作用」。
+      idx === 0 && i.mode === "i2v" && "starting from the given first frame,",
       s.shotFraming,
       s.subject,
       s.action,

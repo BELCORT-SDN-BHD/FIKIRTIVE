@@ -53,12 +53,19 @@ describe("assembleSeedance", () => {
     expect(out).toContain("Shot 1:");
     expect(out).toContain("Shot 2:");
   });
-  it("continuesFromPrev opens with the handoff phrase", () => {
+  // #782 旧路径退役:接续曾经只是 prompt 里的一句 "continuing from the previous frame,",
+  // 而执行层从没把上一镜的末帧送进来 —— 一句说了但没做的话。真接续由分镜闸③ 完成(上一镜
+  // 的真实末帧成为这一镜的首帧),所以这一镜本就是 i2v,开口句只剩「从给定首帧起步」这一条
+  // 真话。这条测试钉的就是那句暗示**再也不会**出现在任何 prompt 里。
+  it("退役的接续暗示句一个字都不再产出", () => {
     const out = assembleSeedance(seedancePromptInput.parse({
-      continuesFromPrev: true, shots: [{ subject: "the swordsman", action: "raises the blade" }],
+      shots: [{ subject: "the swordsman", action: "raises the blade" }],
     }));
-    expect(out).toContain("continuing from the previous frame,");
-    expect(out).not.toContain("starting from the given first frame,");
+    expect(out).not.toContain("continuing from the previous frame,");
+    expect(out).toContain("starting from the given first frame,");
+  });
+  it("接续开关不再是这个 skill 的入参(输入契约里已无此格)", () => {
+    expect("continuesFromPrev" in seedancePromptInput.shape).toBe(false);
   });
   it("references append an identity-lock clause", () => {
     const out = assembleSeedance(oneShot({}));
