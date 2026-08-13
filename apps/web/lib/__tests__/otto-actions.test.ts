@@ -33,6 +33,7 @@ const {
   mockReserveCredits,
   mockRefundReservation,
   mockSettleCredits,
+  mockAssertWithinSpendCap,
   mockScheduledPostFindFirst,
   mockActionEventCreate,
   mockGenJobFindFirst,
@@ -181,6 +182,10 @@ const {
     mockReserveCredits: vi.fn(),
     mockRefundReservation: vi.fn(),
     mockSettleCredits: vi.fn(),
+    // #524 r5 (judge r4 P1-B): the real meter asks the ledger to judge the WHOLE approved action
+    // against the cap, inside the reserve transaction. Exported by the @fikirtive/db mock below so
+    // installRealMeter() exercises that call instead of blowing up on an undefined import.
+    mockAssertWithinSpendCap: vi.fn(),
     mockScheduledPostFindFirst: vi.fn(),
     mockActionEventCreate: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
@@ -339,6 +344,7 @@ vi.mock("@fikirtive/db", () => ({
   reserveCredits: mockReserveCredits,
   refundReservation: mockRefundReservation,
   settleCredits: mockSettleCredits,
+  assertWithinSpendCap: mockAssertWithinSpendCap,
 }));
 
 // Spread the REAL module so pure helpers (newId, coworkTurnRequest, OTTO_MAX_STEPS,
@@ -3185,6 +3191,54 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       expect(mockRun).toHaveBeenCalled();
     });
 
+    // ── #524 r5(判官 r4 P1-B):全成本必须在**权威事务里**判,不能只在预检里判 ──────────
+    //
+    // 判官的反例:预检读到的上限还够(总额 100 ≤ 100),商家随后把上限调到 70,然后两条腿各自
+    // 过闸——hold 40 ≤ 70 放行并吃卡,refgen 60 ≤ 70 也放行,同一次批准花掉 100 却穿过了 70。
+    // r5 把总额送进 reserve 所在的那个事务里判一次,所以调低之后的上限就是拍板的那个。
+    it("P1-B: the cap is judged against BOTH legs INSIDE the reserve's transaction, not only in the preflight", async () => {
+      setupRefgenApprove(6);
+      withRealMeter();
+      // The preflight reads a cap that still covers the whole action…
+      mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
+      // …and by the time the ledger looks, the merchant has lowered it to a ceiling that each leg
+      // would clear on its own but the ACTION would not. This is the authority speaking.
+      const LOWERED_CAP = 70;
+      mockAssertWithinSpendCap.mockImplementation(async (_tx: unknown, _orgId: string, cost: number) => {
+        if (cost > LOWERED_CAP) throw new MockSpendCapBlocked({ requiredInternal: cost, capInternal: LOWERED_CAP });
+      });
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
+      // What it was asked to judge: the WHOLE approval — this resume's hold plus 6 reference
+      // images — and each of those legs alone is under the lowered ceiling.
+      const judged = mockAssertWithinSpendCap.mock.calls[0]![2] as number;
+      expect(judged).toBe(holdInternal() + 60);
+      expect(holdInternal()).toBeLessThanOrEqual(LOWERED_CAP);
+      expect(60).toBeLessThanOrEqual(LOWERED_CAP);
+      expect(judged).toBeGreaterThan(LOWERED_CAP);
+      // Fail closed, and closed early: nothing held, consent untouched, model never ran.
+      expect(mockReserveCredits).not.toHaveBeenCalled();
+      expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+      expect(mockRun).not.toHaveBeenCalled();
+      expect(mockRefundReservation).not.toHaveBeenCalled();
+      expect(mockSettleCredits).not.toHaveBeenCalled();
+    });
+
+    it("P1-B: a one-leg approval asks for no widened verdict — the reserve's own cap check stands alone", async () => {
+      // approveScheduledPost costs nothing of its own, so the action total IS the hold and there
+      // is nothing extra to judge. Over-reaching here would refuse work the ledger would allow.
+      setupUniversalApprove();
+      withRealMeter();
+
+      const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+      expect(res).toMatchObject({ ok: true, status: "done" });
+      expect(mockAssertWithinSpendCap).not.toHaveBeenCalled();
+      expect(mockReserveCredits).toHaveBeenCalledTimes(1);
+    });
+
     // ③/④ CAS 输家:hold 已经拿了,claim 输了 → 整笔退款、模型不跑、卡恰被吃一次。
     it("reserve succeeded then the claim was LOST → hold refunded in full, model never ran", async () => {
       setupUniversalApprove();
@@ -3208,10 +3262,18 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
     // 判官 r4:上一版「两并发点击」先 await 了第一击,是顺序不是并发,而且 mock 允许同一个 refId
     // reserve 两次,把真正会发生的 P2002 藏掉了。这版用 Promise.all 真并发,跑在**同一行卡片**
     // 上(读与 CAS 共享一行),且 reserve 受模型化的唯一键约束。
-    it("TRULY concurrent clicks (Promise.all, one shared card row, ledger unique key enforced)", async () => {
+    //
+    // 判官在这一格还说对了一件更根本的事:同一张卡的同一次 attempt 用同一个 refId,所以第二击
+    // 在 `reserve:<refId>` 就回滚了,**根本到不了 CAS**。这个测试如实断言那个顺序,不再假装
+    // 两击都进了认领窗口。
+    it("TRULY concurrent clicks: the ledger's unique key serializes them BEFORE the claim window", async () => {
       setupUniversalApprove();
       withRealMeter();
-      installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+      const row = installCardRow(pendingCardPayload("pending", { attempt: 1 }));
+      // Each concurrent call restores its OWN RunState, exactly as two web requests do. Sharing
+      // one instance made the second click fail the #566 context guard instead of racing — the
+      // test then passed for a reason that had nothing to do with money.
+      mockRunStateFromString.mockImplementation(async () => new MockRunState());
 
       const [a, b] = await Promise.all([
         ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID }),
@@ -3221,15 +3283,22 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       // The action happened exactly once, and the consent was spent exactly once.
       expect(mockRun).toHaveBeenCalledTimes(1);
       expect(mockSettleCredits).toHaveBeenCalledTimes(1);
-      // Exactly one caller was told it ran; the other got a benign, non-approved-sounding answer.
-      const okRuns = [a, b].filter((r) => "ok" in r && r.ok && "status" in r && r.status === "done");
-      expect(okRuns).toHaveLength(1);
-      const other = [a, b].find((r) => r !== okRuns[0])!;
-      expect(other).not.toMatchObject({ status: "done" });
-      // Money exactly-once: at most one hold survived, and any second hold was refunded in full.
-      expect(mockReserveCredits.mock.calls.length - mockRefundReservation.mock.calls.length).toBe(1);
-      // Whatever the loser was, it never claimed a settle of its own.
-      expect(mockSettleCredits).toHaveBeenCalledTimes(1);
+      expect(row.payload.status).toBe("approved");
+      // Exactly one caller was told it ran; the other never said "approved" on its own authority.
+      const done = [a, b].filter((r) => "ok" in r && r.ok && "status" in r && r.status === "done");
+      expect(done).toHaveLength(1);
+      const loser = [a, b].find((r) => r !== done[0])!;
+      expect(loser).not.toMatchObject({ status: "done" });
+      // BOTH reached the ledger under the SAME refId — that is what makes them concurrent — and
+      // the unique key refused the second one.
+      expect(mockReserveCredits).toHaveBeenCalledTimes(2);
+      const refIds = mockReserveCredits.mock.calls.map((c) => (c[1] as { refId: string }).refId);
+      expect(new Set(refIds).size).toBe(1);
+      // Money exactly-once: the loser's reserve ROLLED BACK, so there is nothing to refund and
+      // exactly one hold ever existed. (A refund here would mean it had really held credits.)
+      expect(mockRefundReservation).not.toHaveBeenCalled();
+      // And it never reached the claim: exactly one CAS write happened, the winner's.
+      expect(mockChatMessageUpdateMany).toHaveBeenCalledTimes(1);
     });
 
     // A replay of the SAME attempt (a retried request, a stale tab) reserves under the same refId.
