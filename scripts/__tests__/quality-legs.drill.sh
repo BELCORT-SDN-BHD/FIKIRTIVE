@@ -292,14 +292,18 @@ expect_green() { # <description>
 # stronger — a requirement a case cannot meet for the bypass it models is a
 # requirement the next round falsifies.
 #
-# AND THE CLAIM AROUND IT HAS MOVED, WHICH IS r10's DOING. This case used to be
+# AND THE CLAIM AROUND IT HAS BEEN WITHDRAWN, NOT REPLACED. This case used to be
 # described here as proving the whole design's claim, "every bypass needs a ci.yml
 # diff". It never proved that — one case cannot — and r10 disproved the claim outright
-# by editing `scripts/ci/pr-scope.sh` instead. The claim is now about a NAMED SET of
-# files (see the header of scripts/__tests__/quality-legs.test.sh), of which ci.yml is
-# one member; the r10 group above is what covers the members this case does not touch.
-# So this case's job is narrower than it used to be advertised as: it shows that the
-# ONE bypass it models — re-blessing a poisoned tree — cannot be quiet.
+# by editing `scripts/ci/pr-scope.sh` instead. The replacement, "a diff to one of these
+# named files", lasted until r12 killed it with a project `.npmrc` that is none of them.
+# So there is no set claim here any more, in any tense: the carriers are not enumerated,
+# which is what this file says at the r12 group below and what the headers of ci.yml,
+# quality-legs.test.sh and docs/runbooks/local-ci.md now say too.
+#
+# This case's job is therefore exactly as narrow as it sounds: the ONE bypass it models
+# — re-blessing a poisoned tree — cannot be quiet, because that mutation IS a ci.yml
+# edit. It says nothing about any bypass it does not model.
 expect_green_only_by_visible_edit() { # <description> <file that must have changed>…
   local desc="$1"
   shift

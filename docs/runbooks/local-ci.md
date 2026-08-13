@@ -157,6 +157,11 @@ committed 的 `.github/ci-workflow.lock` 比。它只用 `cut`、`sha256sum` 和
 演示的载体，并且让将来合法引入 `.npmrc` 这件事没法悄悄发生（作者要么在同一个 commit 里改
 绊线和自测里那份手写副本，要么让七个 job 全红）。
 
+**依赖要说准**（不能写成「这一步什么都不依赖」）：新增的这个**文件拒绝循环只用 shell 内建**
+（`for`、`[`、`echo`）；但**绊线整步**仍然要用 `cut` 与 `sha256sum` 这两个外部命令来算指纹。
+它们缺失、或者被 PATH 换掉时，`set -eu` 让这一步直接非零退出、job 变红——**fail-closed**，
+不会静默放行。可以主张的是 fail-closed，不是「零外部命令」。
+
 ### 为什么这一步写着 `shell: sh`
 
 因为 r8 复审证明：**正文再干净也没用，如果它还没开始跑就已经输了**。
@@ -273,7 +278,7 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh # 2. 
 
 `bash scripts/__tests__/quality-legs.drill.sh`（实测约 10 分钟）在临时目录里复制一份仓库，逐个
 把 ci.yml 改坏——上面每一种形状都在内，**每次改坏都顺手把锁重算**，这样红的原因就一定是被
-测的那道检查而不是锁过期——要求自测每一次都红。共 54 个 case，其中：
+测的那道检查而不是锁过期——要求自测每一次都红。共 59 个 case，其中：
 
 - r4/r5/r6 复审找出的每一种形状（不跑的 step、吃掉失败的 step、六种环境注入、
   `$GITHUB_ENV`、`container`、版本/`with`/加 step/换顺序/`services.postgres.env`）；
@@ -299,6 +304,11 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh # 2. 
     要求是**不对称**的：`sh` 必须拒绝，`bash` 必须被骗过。外加两个对照 case（干净环境下，
     锁不匹配必须红、锁匹配必须绿），否则「sh 拒绝了」什么也证明不了——一道永远红的闸也能
     拿满分。
+- **r12「pnpm 自己会读的东西」那一组**（5 个 case，r13 加）：三个不经过自测——绊线正文
+  配**匹配**的锁跑起来，分别放一个 `.npmrc`、一个 `.pnpmfile.cjs`，都必须拒绝；两个都不
+  放时必须仍然接受（证明这条新拒绝是**有条件**的，不是「一律红」）。两个经过自测——把棘轮
+  从七处绊线一起删掉 + 连锁带字面量全部重生成，3f 逐字节仍然必须红；本机 working tree 里
+  出现 `.npmrc` 而绊线没动，3f(c) 必须红；
 - **r10「另一个可变面」那两组**（12 个 case）：
   - **端到端那一组（9 个，同样不经过自测）**：把 `pr-scope.sh` 放进三种状态（仓库原样 /
     换成一行 `echo false` / `pr-scope.sh` 原封不动而把 `pr-scope.jq` 的 docs 判定放宽到
@@ -314,7 +324,10 @@ QUALITY_LEGS_PRINT_CANONICAL=1 bash scripts/__tests__/quality-legs.test.sh # 2. 
 - 最后一个 case 是**故意绿的**：typecheck 被注入 + 锁重算 + 字面量重生成，自测和绊线都会
   放行。它要求的不是「红」，而是**「必须留下 `.github/workflows/ci.yml` 的 diff」**。把这
   一条写成 case 而不是写成一段话，是为了让它一直是真的。（r8 之前它还要求「锁文件也必须
-  变」——r8 的绕过一个锁字节都没动，所以那条要求本身就是假的，已经删掉：这个 case 只许断
-  言每一种绕过都做得到的那一件事。）
+  变」——r8 的绕过一个锁字节都没动，所以那条要求本身就是假的，已经删掉。）
+  **它断言的范围就是它模拟的那一种绕过**：这个 case 的改动本身就是改 ci.yml，所以留下
+  ci.yml diff 是它做得到的事。它**不**代表「每一种绕过都会留下 ci.yml diff」——那句话
+  r10 已经用 `pr-scope.sh`、r12 已经用 `.npmrc` 各推翻过一次。「一切绕过都在 diff 里」
+  这条仍然成立，但成立的理由是**改文件就会出现在 diff 里**，而不是因为改的是哪个文件。
 
 不要把重复执行同一批闸的 job 或第二套本地命令再加回来。

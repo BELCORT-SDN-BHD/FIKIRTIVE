@@ -524,6 +524,12 @@ expected_workflow_scripts=(
 # any statement about carriers nobody has named. Three enumerations have been falsified
 # already; this is a named ratchet on a demonstrated hole, and that is all it is.
 #
+# THE DEPENDENCY, STATED PRECISELY (r14 asked for this, and "the step needs nothing"
+# would have been false): the REFUSAL LOOP uses only shell builtins — `for`, `[`, `echo`.
+# The STEP AS A WHOLE still runs `cut` and `sha256sum` for the digest half, and if either
+# is missing or shadowed the `set -eu` body ends non-zero and the job is red. Fail-closed
+# is the claim; zero external commands is not.
+#
 # And it declares `shell: sh` on purpose, which is the r8 finding. A minimal body is
 # no defence against a shell that has already sourced a file named in its own
 # environment: `BASH_ENV` at workflow level runs before the body's first line, and a

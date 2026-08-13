@@ -46,6 +46,12 @@ name: CI
 # reads; or leave all seven jobs red, which is not mergeable. It is not evidence that
 # the carriers have been enumerated. They have not been; see below.
 #
+# AND SAY THE DEPENDENCY PRECISELY, because "this step needs nothing" would be false:
+# THE REFUSAL LOOP ITSELF uses only shell builtins (`for`, `[`, `echo`). THE STEP AS A
+# WHOLE still runs two external commands, `cut` and `sha256sum`, for the digest half. If
+# either is missing or shadowed on PATH, `set -eu` ends the step non-zero and the job is
+# red — fail-closed, not a silent pass — which is the property worth claiming here.
+#
 # IT RUNS UNDER `shell: sh`, AND THAT FIELD IS LOAD-BEARING. r8's review found the
 # step was still being STARTED by a shell that reads a startup file named in its own
 # environment: with `BASH_ENV: <path>` at workflow level, bash sources that path
