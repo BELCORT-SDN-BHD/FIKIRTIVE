@@ -179,8 +179,15 @@ describe("MerchantShellContent", () => {
     it("keeps the reserved height and the trigger's own geometry in step", () => {
       const markup = renderShell("/billing");
 
-      expect(markup).toContain('aria-label="Open navigation"');
-      expect(markup).toMatch(/aria-label="Open navigation"[^>]*class="fixed left-3 top-3 [^"]*size-10/);
+      // #840 — the trigger is now the shared Button primitive, whose own props
+      // (data-slot, class) are always written before the caller's ...props, so
+      // aria-label no longer precedes class in the rendered tag. Extract the whole
+      // opening tag and assert on its class list directly instead of relying on
+      // attribute order, which was never a claim this test meant to make.
+      const trigger = markup.match(/<button[^>]*aria-label="Open navigation"[^>]*>/)?.[0];
+      expect(trigger).toBeDefined();
+      expect(trigger).toContain("fixed left-3 top-3");
+      expect(trigger).toContain("size-10");
     });
 
     // #747 — reserving nothing was only half of Otto's exemption, and the missing half is
