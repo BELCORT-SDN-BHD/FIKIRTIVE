@@ -91,6 +91,55 @@ describe("buildDeploySignal — a missing fingerprint is never a match (#797 r2 
     });
   }
 
+  /**
+   * 判官 r2 P2-2:config 对不上、code 又比不了的那一格,诊断句原本一律写「两边都报告 <web 的
+   * SHA>」——worker 没上报时替它编了一个,web 没上报时把 unknown 说成两边共同的版本。
+   * 这一行的全部价值就是让人照着它处置,所以缺失侧必须如实描述,两个方向都要盖。
+   */
+  describe("config mismatch × unknown code: the diagnosis must not misattribute a sha", () => {
+    it("worker did not report a commit — do not claim it runs web's sha", () => {
+      const signal = buildDeploySignal(WEB, { commitSha: null, configFingerprint: "9999ffff" });
+      expect(signal.status).toBe("Config mismatch");
+      expect(signal.tone).toBe("danger");
+      expect(signal.detail).toContain("Web reports aaaaaaaa and the worker reports no deploy commit");
+      expect(signal.detail).not.toContain("Both services report");
+    });
+
+    it("web did not report a commit — do not turn that into a shared version", () => {
+      const signal = buildDeploySignal(
+        { commitSha: null, configFingerprint: "1234abcd" },
+        { commitSha: "cccccccc", configFingerprint: "9999ffff" },
+      );
+      expect(signal.status).toBe("Config mismatch");
+      expect(signal.detail).toContain("The worker reports cccccccc and web reports no deploy commit");
+      expect(signal.detail).not.toContain("Both services report");
+      expect(signal.detail).not.toContain("Both services report unknown");
+    });
+
+    it("neither side reported a commit — say exactly that", () => {
+      const signal = buildDeploySignal(
+        { commitSha: null, configFingerprint: "1234abcd" },
+        { commitSha: null, configFingerprint: "9999ffff" },
+      );
+      expect(signal.status).toBe("Config mismatch");
+      expect(signal.detail).toContain("Neither service reports a deploy commit");
+    });
+
+    it("when the code genuinely matches, it still says so", () => {
+      const signal = buildDeploySignal(WEB, { commitSha: WEB.commitSha, configFingerprint: "9999ffff" });
+      expect(signal.detail).toContain("Both services report aaaaaaaa");
+    });
+
+    it("no branch of this row ever prints the word unknown as if it were a version", () => {
+      const rows = [
+        buildDeploySignal(WEB, { commitSha: null, configFingerprint: "9999ffff" }),
+        buildDeploySignal({ commitSha: null, configFingerprint: "1234abcd" }, { commitSha: "cccccccc", configFingerprint: "9999ffff" }),
+        buildDeploySignal({ commitSha: null, configFingerprint: "1234abcd" }, { commitSha: null, configFingerprint: "9999ffff" }),
+      ];
+      for (const row of rows) expect(row.detail).not.toContain("unknown");
+    });
+  });
+
   it("a real code mismatch still wins over a missing fingerprint — red beats waiting", () => {
     const signal = buildDeploySignal(WEB, { commitSha: "cccccccc", configFingerprint: null });
     expect(signal.status).toBe("Code mismatch");

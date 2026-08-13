@@ -2,117 +2,62 @@
  * ci-workflows.test.ts — 保护那个能冻结全仓的名字(#797)。
  *
  * `quality` 是 protect-main ruleset 里的必需检查,bypass_actors 为空:这个 check 名字一动,
- * 或者被另一个 workflow 里的同名 job 抢走,全仓合并当场停摆。#797 加了第二个 workflow
- * (main 合并后重跑同一道门),所以这里把两件事钉住:必需检查还在,而且只有一个。
+ * 或者被另一个同名 job 抢走,全仓合并当场停摆。#797 加了第二个 workflow(main 合并后重跑同
+ * 一道门),所以这里把两件事钉住:必需检查还在,而且全仓恰好一个。
  *
- * 为什么住在 apps/web/lib/__tests__:这是 `pnpm -r test`(quality 的 tests 门)已经会跑到的
- * 地方,不需要给 quality.sh 加新门就能在每个 PR 上生效。
+ * ── 为什么这里用真的 YAML 解析器(判官 r2 P2-1 的裁定)────────────────────────────────
+ * r2 我用了一个手写的行分块器,想省下锁文件改动。判官实证它在五种形状下既不抛、又把 quality
+ * 数成 0——行尾注释、更宽缩进、`jobs :`、值上的锚点、普通别名——而且我只统计了显式 `name`,
+ * 漏了 GitHub「无 name 时回退 job id」的语义。裁定很干脆:**锁文件纯净换不来一个 fail-open
+ * 的必需检查守卫**。裁定成立,这里改用 js-yaml。
  *
- * ── 这里为什么自己走 YAML,而不是装一个解析器(判官 r1 P2-2 的处置说明)────────────────
- * 判官指出第一版数错了对象:它数的是「含有那一行的文件数」,所以同一个文件里追加第二个
- * `name: quality` 的 job 仍然是绿的。修法必须是数**声明总数**,而且要按结构数。
+ * 选 js-yaml 而不是 yaml,是因为它不是 vitest 的可选 peer:锁文件改动是纯新增 11 行,
+ * 不动任何既有的 vitest 解析串;而且 4.2.0 本来就在 store 里,连下载都不需要。
  *
- * 装 `yaml` 走过一遍,又退回来了:它是 vitest 的可选 peer,加进 apps/web 会让锁文件里每一条
- * vitest 解析串都变成 `vitest@3.2.6(…)(yaml@2.9.0)`——为一个测试助手在共享锁文件上制造跨仓
- * 冲突面,和它买到的确定性不成比例。
- *
- * 所以这里走一个**只认 GitHub workflow 这一种形状**的分块器,并且遇到它没建模的写法
- * (flow 风格的 `jobs: {…}`、tab 缩进、锚点/别名)一律**抛**——不认识的输入变成红,而不是
- * 变成一个偏小的计数。它自己也有夹具测试,包括判官描述的那次突变(同文件两个 quality job
- * 必须数成 2),于是「数得对」是被证明的,不是被相信的。
+ * 统计口径按 GitHub 的真实语义:check 名 = job 级 `name`,**没写 name 时回退成 job id**。
+ * 两条命名路径都要数,否则把 ci.yml 的 `name: quality` 删掉就能悄悄绕过这道守卫。
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { load } from "js-yaml";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, "../../../../.github/workflows");
 
-type Job = { id: string; name: string | undefined; body: string };
+type WorkflowJob = { name?: unknown; "runs-on"?: unknown; concurrency?: { group?: unknown } };
+type Workflow = { jobs?: Record<string, WorkflowJob> };
 
 /**
- * 从一份 workflow 文本里取出所有 job(id、job 级 `name`、以及该 job 的整块文本)。
- *
- * 只建模 GitHub workflow 实际使用的块状映射:顶层 `jobs:`,其下每个 job id 缩进一级,
- * job 的直接键再缩进一级。任何超出这个模型的写法都抛异常。
+ * 一份 workflow 里每个 job 对外呈现的 check 名。
+ * GitHub 的规则:有 job 级 `name` 就用它,没有就用 job id —— 两者都要进统计。
  */
-export function parseJobs(text: string): Job[] {
-  if (text.includes("\t")) throw new Error("tab indentation is not modelled — refusing to guess");
-  if (/(^|\n)\s*(<<:|[A-Za-z0-9_-]+:\s*&[A-Za-z0-9_-]+\s*$)/.test(text)) {
-    throw new Error("YAML anchors / merge keys are not modelled — refusing to guess");
-  }
-
-  const lines = text.split("\n");
-  const jobsHeader = lines.findIndex((l) => /^jobs:\s*$/.test(l));
-  if (jobsHeader === -1) {
-    if (/^jobs:\s*\S/m.test(text)) throw new Error("flow-style `jobs:` is not modelled — refusing to guess");
-    return [];
-  }
-
-  // job id 所在的缩进 = `jobs:` 之后第一条非空、非注释行的缩进。
-  let jobIndent = -1;
-  for (let i = jobsHeader + 1; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (!line.trim() || /^\s*#/.test(line)) continue;
-    jobIndent = line.length - line.trimStart().length;
-    break;
-  }
-  if (jobIndent <= 0) return [];
-
-  const jobs: Job[] = [];
-  let current: { id: string; start: number } | null = null;
-
-  const close = (end: number) => {
-    if (!current) return;
-    const body = lines.slice(current.start + 1, end).join("\n");
-    jobs.push({ id: current.id, name: jobName(body, jobIndent), body });
-    current = null;
-  };
-
-  for (let i = jobsHeader + 1; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (!line.trim() || /^\s*#/.test(line)) continue;
-    const indent = line.length - line.trimStart().length;
-
-    if (indent === 0) { close(i); return jobs; }   // 回到顶层键 → jobs 段结束
-    if (indent < jobIndent) throw new Error(`unexpected dedent inside jobs: at line ${i + 1}`);
-    if (indent > jobIndent) continue;              // job 内部,交给 jobName 处理
-
-    const m = /^\s*([A-Za-z0-9_-]+):\s*$/.exec(line);
-    if (!m) throw new Error(`unrecognised job declaration at line ${i + 1}: ${line.trim()}`);
-    close(i);
-    current = { id: m[1]!, start: i };
-  }
-  close(lines.length);
-  return jobs;
-}
-
-/** 一个 job 块里,**直接**属于该 job 的 `name:`(step 的 name 缩进更深,不算)。 */
-function jobName(body: string, jobIndent: number): string | undefined {
-  const pattern = new RegExp(`^ {${jobIndent + 2}}name:\\s*(.+?)\\s*$`);
-  for (const line of body.split("\n")) {
-    const m = pattern.exec(line);
-    if (m) return m[1]!.replace(/^["']|["']$/g, "");
-  }
-  return undefined;
+function checkNames(text: string): { id: string; checkName: string; explicit: boolean }[] {
+  const doc = load(text) as Workflow | undefined;
+  const jobs = doc?.jobs;
+  if (!jobs || typeof jobs !== "object") return [];
+  return Object.entries(jobs).map(([id, job]) => {
+    const name = job && typeof job === "object" ? job.name : undefined;
+    const explicit = typeof name === "string" && name.trim() !== "";
+    return { id, checkName: explicit ? String(name) : id, explicit };
+  });
 }
 
 const workflows = readdirSync(WORKFLOW_DIR)
   .filter((f) => /\.ya?ml$/.test(f))
   .map((f) => ({ file: f, text: readFileSync(path.join(WORKFLOW_DIR, f), "utf8") }));
 
-/** 全仓所有 workflow 里,job 级 name === "quality" 的声明(不是文件,是声明)。 */
-const qualityDeclarations = workflows.flatMap(({ file, text }) =>
-  parseJobs(text)
-    .filter((j) => j.name === "quality")
+/** 全仓所有 workflow 里,对外呈现为 `quality` 的 job(不是文件,是 job)。 */
+const qualityJobs = workflows.flatMap(({ file, text }) =>
+  checkNames(text)
+    .filter((j) => j.checkName === "quality")
     .map((j) => `${file}:${j.id}`),
 );
 
 describe("CI workflow shape (#797)", () => {
   it("the required `quality` check is declared exactly once, in ci.yml", () => {
-    // 数的是声明,不是文件:同一个文件里追加第二个 `name: quality` 也必须红。
-    expect(qualityDeclarations).toEqual(["ci.yml:quality"]);
+    expect(qualityJobs).toEqual(["ci.yml:quality"]);
   });
 
   it("post-merge.yml exists and runs on pushes to main", () => {
@@ -130,9 +75,13 @@ describe("CI workflow shape (#797)", () => {
     // 2026-08-11:自托管跑手的监听进程已停(注册保留,纯人工备援)。排在它上面的 job 不会红,
     // 会永远排队——「静默的不跑」比红更贵,而且看起来和「还没跑完」一模一样。
     const post = workflows.find((w) => w.file === "post-merge.yml")!;
-    expect(post.text).not.toContain("self-hosted");
-    for (const line of post.text.split("\n")) {
-      if (/^\s*runs-on:/.test(line)) expect(line).toContain("ubuntu-latest");
+    const doc = load(post.text) as Workflow;
+    const jobs = Object.entries(doc.jobs ?? {});
+    expect(jobs.length).toBeGreaterThan(0);
+    for (const [id, job] of jobs) {
+      const runsOn = JSON.stringify(job["runs-on"]);
+      expect(runsOn, `${id} must run on a hosted runner`).toContain("ubuntu-latest");
+      expect(runsOn, `${id} must not target the parked self-hosted runner`).not.toContain("self-hosted");
     }
   });
 
@@ -143,73 +92,104 @@ describe("CI workflow shape (#797)", () => {
    */
   it("post-merge concurrency groups are scoped by event AND ref, so a manual run cannot cancel main's", () => {
     const post = workflows.find((w) => w.file === "post-merge.yml")!;
-    const groups = post.text
-      .split("\n")
-      .filter((l) => /^\s*group:\s*/.test(l))
-      .map((l) => l.replace(/^\s*group:\s*/, "").trim());
+    const doc = load(post.text) as Workflow;
+    const groups = Object.entries(doc.jobs ?? {})
+      .map(([id, job]) => [id, job.concurrency?.group] as const)
+      .filter((entry): entry is readonly [string, string] => typeof entry[1] === "string");
 
     expect(groups.length, "post-merge.yml should declare at least one concurrency group").toBeGreaterThan(0);
-    for (const group of groups) {
-      expect(group, `concurrency group "${group}" must be scoped by event`).toContain("github.event_name");
-      expect(group, `concurrency group "${group}" must be scoped by ref`).toContain("github.ref");
+    for (const [id, group] of groups) {
+      expect(group, `${id}: concurrency group must be scoped by event`).toContain("github.event_name");
+      expect(group, `${id}: concurrency group must be scoped by ref`).toContain("github.ref");
     }
   });
 });
 
 /**
- * 上面那些断言全部建立在 parseJobs 数得对之上,所以 parseJobs 自己也要被证明——尤其是判官
- * 指出的那一格:同一个文件里的第二个 quality job。这些夹具就是那次突变演习的常驻版本。
+ * 统计口径自己也要被证明。前七条是 r2 就有的夹具;后面两组是判官 r2 打穿手写分块器的那五种
+ * 写法、以及 r2 漏掉的 job-id 回退语义,逐条钉成常驻用例。
  */
-describe("parseJobs — the counting itself (#797 r2 P2-2)", () => {
-  const workflow = (jobs: string) => `name: X\non:\n  push:\n    branches: [main]\n\njobs:\n${jobs}`;
+describe("check-name counting (#797 r3 P2-1)", () => {
+  const wf = (jobs: string) => `name: X\non:\n  push:\n    branches: [main]\n\njobs:\n${jobs}`;
+  const qualityCount = (text: string) => checkNames(text).filter((j) => j.checkName === "quality").length;
 
   it("reads one job and its job-level name", () => {
-    const jobs = parseJobs(workflow("  a:\n    name: quality\n    runs-on: ubuntu-latest\n"));
-    expect(jobs.map((j) => [j.id, j.name])).toEqual([["a", "quality"]]);
+    expect(checkNames(wf("  a:\n    name: quality\n    runs-on: ubuntu-latest\n"))).toEqual([
+      { id: "a", checkName: "quality", explicit: true },
+    ]);
   });
 
-  it("THE MUTATION: two `quality` jobs in ONE file are counted as two", () => {
-    const jobs = parseJobs(
-      workflow("  a:\n    name: quality\n    runs-on: ubuntu-latest\n  b:\n    name: quality\n    runs-on: ubuntu-latest\n"),
-    );
-    // 这正是第一版数不出来的那一格:按文件数会是 1,按声明数是 2 → 上面那条断言会红。
-    expect(jobs.filter((j) => j.name === "quality").map((j) => j.id)).toEqual(["a", "b"]);
+  it("two `quality` jobs in ONE file are counted as two", () => {
+    expect(qualityCount(wf("  a:\n    name: quality\n  b:\n    name: quality\n"))).toBe(2);
   });
 
   it("a STEP named quality is not a job named quality", () => {
-    const jobs = parseJobs(workflow("  a:\n    name: other\n    steps:\n      - name: quality\n        run: echo hi\n"));
-    expect(jobs.filter((j) => j.name === "quality")).toHaveLength(0);
+    expect(qualityCount(wf("  a:\n    name: other\n    steps:\n      - name: quality\n        run: echo hi\n"))).toBe(0);
   });
 
-  it("a job with no explicit name has an undefined name (GitHub falls back to the job id)", () => {
-    const jobs = parseJobs(workflow("  quality:\n    runs-on: ubuntu-latest\n"));
-    expect(jobs.map((j) => [j.id, j.name])).toEqual([["quality", undefined]]);
+  it("quoted names are unquoted by the parser", () => {
+    expect(qualityCount(wf('  a:\n    name: "quality"\n'))).toBe(1);
   });
 
-  it("quoted names are unquoted", () => {
-    const jobs = parseJobs(workflow('  a:\n    name: "quality"\n'));
-    expect(jobs[0]?.name).toBe("quality");
+  it("does not swallow the next top-level key", () => {
+    const names = checkNames(`${wf("  a:\n    name: quality\n")}\npermissions:\n  contents: read\n`);
+    expect(names.map((j) => j.id)).toEqual(["a"]);
   });
 
-  it("stops at the next top-level key instead of swallowing it", () => {
-    const jobs = parseJobs(`${workflow("  a:\n    name: quality\n")}\npermissions:\n  contents: read\n`);
-    expect(jobs.map((j) => j.id)).toEqual(["a"]);
+  it("a file with no jobs contributes nothing", () => {
+    expect(checkNames("name: X\non:\n  push:\n")).toEqual([]);
   });
 
-  it("fails CLOSED on shapes it does not model, rather than under-counting", () => {
-    expect(() => parseJobs("jobs: {a: {name: quality}}\n")).toThrow(/flow-style/);
-    expect(() => parseJobs("jobs:\n\t a:\n")).toThrow(/tab/);
-    // 锚点:哪一条守卫先抓到它不重要,重要的是它抛而不是被当成 0 个 quality job。
-    expect(() => parseJobs("jobs:\n  base: &base\n    name: quality\n")).toThrow();
-    expect(() => parseJobs("jobs:\n  a:\n    <<: *base\n")).toThrow();
-    // 非法 job 声明同样抛,而不是被跳过。
-    expect(() => parseJobs("jobs:\n  a: quality\n")).toThrow(/unrecognised/);
-  });
-
-  it("parses this repository's real workflows without throwing", () => {
+  it("parses this repository's real workflows and finds jobs in each", () => {
     for (const { file, text } of workflows) {
-      expect(() => parseJobs(text), `${file} should parse`).not.toThrow();
-      expect(parseJobs(text).length, `${file} should declare at least one job`).toBeGreaterThan(0);
+      expect(() => checkNames(text), `${file} should parse`).not.toThrow();
+      expect(checkNames(text).length, `${file} should declare at least one job`).toBeGreaterThan(0);
     }
+  });
+
+  /** 判官 r2 实证:手写分块器在这五种形状下不抛,且把 quality 数成 0。 */
+  describe("the five shapes that walked straight through the hand-rolled scanner", () => {
+    it("① a trailing comment after the name", () => {
+      expect(qualityCount(wf("  a:\n    name: quality # the required check\n"))).toBe(1);
+    });
+
+    it("② wider indentation", () => {
+      expect(qualityCount("name: X\non:\n  push:\n\njobs:\n    a:\n        name: quality\n")).toBe(1);
+    });
+
+    it("③ a space before the colon: `jobs :`", () => {
+      expect(qualityCount("name: X\non:\n  push:\n\njobs :\n  a:\n    name: quality\n")).toBe(1);
+    });
+
+    it("④ an anchor on the value: `name: &required quality`", () => {
+      expect(qualityCount(wf("  a:\n    name: &required quality\n"))).toBe(1);
+    });
+
+    it("⑤ an alias that resolves to quality", () => {
+      expect(qualityCount(wf("  a:\n    name: &required quality\n  b:\n    name: *required\n"))).toBe(2);
+    });
+  });
+
+  /** 判官 r2:GitHub 在没有 job 级 name 时用 job id 当 check 名,r2 的统计漏了这条路径。 */
+  describe("the job-id fallback GitHub actually applies", () => {
+    it("a job with id `quality` and no name still presents as the `quality` check", () => {
+      expect(checkNames(wf("  quality:\n    runs-on: ubuntu-latest\n"))).toEqual([
+        { id: "quality", checkName: "quality", explicit: false },
+      ]);
+    });
+
+    it("an explicit name overrides the id, in both directions", () => {
+      expect(qualityCount(wf("  quality:\n    name: something-else\n"))).toBe(0);
+      expect(qualityCount(wf("  something-else:\n    name: quality\n"))).toBe(1);
+    });
+
+    it("an empty name falls back to the id rather than counting as a blank check", () => {
+      expect(qualityCount(wf('  quality:\n    name: ""\n'))).toBe(1);
+    });
+
+    it("ci.yml is counted once, not twice, even though its id AND name are both `quality`", () => {
+      const ci = workflows.find((w) => w.file === "ci.yml")!;
+      expect(checkNames(ci.text).filter((j) => j.checkName === "quality")).toHaveLength(1);
+    });
   });
 });

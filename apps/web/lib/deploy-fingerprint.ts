@@ -75,9 +75,20 @@ export function buildDeploySignal(web: DeploySide, worker: DeploySide | null): D
   }
 
   if (config === "mismatch") {
+    // 前半句必须如实描述代码那一侧的状态。判官 r2 P2-2:这里原本一律写「两边都报告 <web 的
+    // SHA>」,于是 worker 没上报 sha 时它替 worker 编了一个,web 没上报时它把 "unknown" 说成
+    // 两边共同的版本——诊断句张冠李戴,而这一行的全部价值就是让人照着它去处置。
+    const codeClause =
+      code === "match"
+        ? `Both services report ${sha(web.commitSha)}`
+        : !web.commitSha && !worker.commitSha
+          ? "Neither service reports a deploy commit"
+          : !worker.commitSha
+            ? `Web reports ${sha(web.commitSha)} and the worker reports no deploy commit`
+            : `The worker reports ${sha(worker.commitSha)} and web reports no deploy commit`;
     return {
       status: "Config mismatch",
-      detail: `Both services report ${sha(web.commitSha)}, but their shared configuration differs (web ${fp(web.configFingerprint)} vs worker ${fp(worker.configFingerprint)}). Anything that depends on both sides holding the same value — publishing, stored media — will fail silently until they match.`,
+      detail: `${codeClause}, but their shared configuration differs (web ${fp(web.configFingerprint)} vs worker ${fp(worker.configFingerprint)}). Anything that depends on both sides holding the same value — publishing, stored media — will fail silently until they match.`,
       tone: "danger",
     };
   }

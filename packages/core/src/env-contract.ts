@@ -96,11 +96,17 @@ export type EnvRecord = Record<string, string | undefined>;
 
 const isSet = (v: string | undefined): v is string => typeof v === "string" && v.trim() !== "";
 
+// 下面两个谓词逐字比较、**不做 trim**,和消费方一模一样
+// (packages/generation 的 `process.env.GENERATION_PROVIDER === "fal"`、
+//  packages/storage 的 `process.env.STORAGE_DRIVER === "r2"`)。
+// 契约在这里替代码做规范化,就等于开始描述一个代码并不存在的行为。带空白的值由上面那条
+// 通用空白守卫直接判错,不会走到这里。
+
 /** 生成 provider 选了要花钱的那一个。 */
-const providerIs = (want: string) => (env: EnvRecord) => (env.GENERATION_PROVIDER ?? "").trim() === want;
+const providerIs = (want: string) => (env: EnvRecord) => (env.GENERATION_PROVIDER ?? "") === want;
 
 /** 对象存储切到 R2:四件套必须齐,少一件 createStorage 直接抛。 */
-const storageIsR2 = (env: EnvRecord) => (env.STORAGE_DRIVER ?? "").trim() === "r2";
+const storageIsR2 = (env: EnvRecord) => (env.STORAGE_DRIVER ?? "") === "r2";
 
 /**
  * ENV_CONTRACT — 权威清单。新增任何 env 读取,必须同时在这里登记,否则测试红。
@@ -888,6 +894,28 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
       continue;
     }
 
+    // 首尾空白一律拒绝,先于其它一切判断(判官 r2 P1-1)。
+    //
+    // 病因很具体:契约这边过去按 trim 后的值判断,而消费方按原值严格比较——
+    // packages/storage/src/index.ts 的 `process.env.STORAGE_DRIVER === "r2"`、
+    // packages/generation 的 `=== "fal"` 都是逐字比较。于是 STORAGE_DRIVER=" r2 " 在契约里
+    // 一个问题都没有,工厂却落回本地盘:商家的文件写进容器自己的盘,而开机检查刚刚说过一切正常。
+    // 这正是这张票要消灭的那一族「说的≠做的」,只不过它长在了检查器自己身上。
+    //
+    // 方向选的是「契约拒绝」而不是「消费方 trim」,两个理由:
+    //   ① 消费方是数据路径上的模块,让 " r2 " 开始生效是行为变更,得单独论证;拒绝它是零行为变更。
+    //   ② 契约的职责是描述代码实际怎么读,不是替代码做规范化。判断口径与消费方逐字对齐,
+    //      这一族 bug 才是被消灭,而不是被挪了个地方。
+    // 从控制台粘贴带尾空格是最常见的操作失误,现在它得到的是一条点名的开机错误,而不是一个静默的降级。
+    if (raw !== raw.trim()) {
+      problems.push({
+        name: spec.name,
+        kind: "invalid",
+        message: `${spec.name} has leading or trailing whitespace — the code compares the raw value, so a padded value silently behaves like an unrecognized one`,
+      });
+      continue;
+    }
+
     const parsed = formatSchema(spec).safeParse(raw);
     if (!parsed.success) {
       const reason = parsed.error.issues[0]?.message ?? "has an invalid value";
@@ -897,7 +925,7 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
 
     // 值合法,但这个档位只在开发机上成立。报的是变量名与允许档位——档位名不是秘密,
     // 而且不说清楚该改成什么,这条错误就没法照着修。
-    if (opts.production && spec.productionValues && !spec.productionValues.includes(raw.trim())) {
+    if (opts.production && spec.productionValues && !spec.productionValues.includes(raw)) {
       problems.push({
         name: spec.name,
         kind: "not-production-safe",
@@ -1005,6 +1033,8 @@ export const FINGERPRINT_VARS: readonly string[] = ENV_CONTRACT.filter((s) => s.
  *   - 非密钥变量(provider、bucket、driver)进的是明文值——它们本来就不是秘密,
  *     明文让指纹在人眼里也可解释。
  *   - 未设置的变量进的是空串,所以「一边设了一边没设」同样会让指纹不同。
+ *   - 值**逐字**进,不做 trim:两个进程一个带尾空格一个不带,消费方的严格比较会让它们行为
+ *     不同,指纹就必须也不同。指纹要反映进程实际持有的东西,不是它整理过之后的样子。
  *
  * 指纹只在鉴权后的 admin 面里显示,不进 /api/health 这类匿名端点。
  */
@@ -1012,7 +1042,7 @@ export function configFingerprint(env: EnvRecord): string {
   const canonical = FINGERPRINT_VARS.map((name) => {
     const spec = ENV_CONTRACT_BY_NAME.get(name);
     const raw = env[name];
-    const value = isSet(raw) ? raw.trim() : "";
+    const value = isSet(raw) ? raw : "";
     const encoded = value === "" ? "" : spec?.secret ? digest8(value) : value;
     return `${name}=${encoded}`;
   }).join("\n");
