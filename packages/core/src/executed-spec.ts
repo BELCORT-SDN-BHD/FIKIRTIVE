@@ -39,6 +39,7 @@ export const EXECUTED_SPEC: {
     durationHonoured: boolean;
     resolutionHonoured: boolean;
     audioHonoured: boolean;
+    elementReferencesHonoured: boolean;
   };
 } = {
   image: {
@@ -77,6 +78,12 @@ export const EXECUTED_SPEC: {
      *  (`byteplus.test.ts` 整体断言逐字比对),所以卡面可以照实说 “With sound” /
      *  “No sound”。缺省 true = 引擎默认,也 = `videoDefaults()` 给这个模型的 audio。 */
     audioHonoured: true,
+    /** #785:@元素(产品图 / 代言人)的参考照现在真的进视频引擎 —— 现役适配器把它们发成
+     *  role:"reference_image" 部件(`byteplus.test.ts` 整体断言逐字比对),张数由
+     *  `referenceBudget` 一处算出、worker 侧等价测试对表。**只在纯文生视频那一档**成立
+     *  (`videoReferencesRide`):带首帧/末帧/整段参考视频的三个场景引擎当互斥处理,那些
+     *  档上元素照一张也不发,卡面也照实说 0。false ⇒ 卡面不得承诺元素照会上车。 */
+    elementReferencesHonoured: true,
   },
 };
 
@@ -102,6 +109,32 @@ export function imageAspectHonoured(env?: Record<string, string | undefined>): b
   if (provider === "fal") return EXECUTED_SPEC.image.fallbackAdapterAspectHonoured;
   // 现役路(byteplus)发确切 WxH;离线 mock 按同一张表出精确同比例的图。两者都兑现。
   return true;
+}
+
+/**
+ * 这一趟**真正会跑**的那个适配器,会不会把 @元素参考照送进视频引擎(#785 判官 r1 P1)。
+ *
+ * 与上面那条画幅判据同一个形状,理由也同一个:`EXECUTED_SPEC.video.elementReferencesHonoured`
+ * 是**现役**适配器的静态事实,可这一单由谁执行取决于 `GENERATION_PROVIDER`。备用适配器
+ * (fal)的 t2v/i2v 路由根本没有多素材参考这个入参 —— 它在付费之前就把带元素照的请求拒掉
+ * (`packages/generation/src/index.ts` 的 `generateVideo`)。只问那个静态标志,卡面就会在
+ * 那条路上承诺「Uses 3 of your reference photos」,而那 3 张永远上不了车 —— 正是本仓库
+ * 反复重学的「说的与做的失同步」。
+ *
+ * 这个函数不只喂卡面:选片名额 `conditioningCap`(worker 与卡面共用的那一个)也读它。
+ * 所以在 provider 这一维上,「说几张」与「送几张」结构上不可能分家 —— 备用路上名额是 0,
+ * 卡面照实说「你那 N 张一张都不会用上」,worker 也确实一张都不送。
+ *
+ * 离线 mock 回 true:它不花钱、不对商家交付(每一格规格对它都同样不成立),这里要挡的是
+ * 两条真花钱的路之间的漂移。
+ *
+ * 纯函数:不选型、不报价、不发请求。
+ */
+export function videoElementReferencesHonoured(env?: Record<string, string | undefined>): boolean {
+  // 现役适配器都做不到,就没有下文了。
+  if (!EXECUTED_SPEC.video.elementReferencesHonoured) return false;
+  const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
+  return provider !== "fal";
 }
 
 /**

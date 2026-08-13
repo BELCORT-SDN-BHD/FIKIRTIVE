@@ -156,6 +156,51 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
     expect(acct.reserved).toBe(0);
     expect(acct.balance).toBe(1000 - quote); // settle == reserve == quote
   });
+
+  /**
+   * #785 —— 多素材参考**不改一格钱**,在真库上证一遍。
+   *
+   * 为什么这条值得单开一个案例:这一票让商家 @ 的产品图/代言人照片真的进了视频引擎,
+   * 而「多送了素材」听上去就像该多收钱。它不该 —— 引擎的计费公式是
+   * `(参考视频秒数 + 出片秒数) × 像素 × 帧率`(见 `byteplusVideoCogsUsd`),**参考图不在
+   * 公式里**;收费那一侧(`pricedGenCredits`)同样只看引擎/时长/分辨率/张数。
+   *
+   * 所以这里钉的是同一档视频**带 @元素**与**不带**的三个数完全相同:报价、预扣、结算。
+   * 哪天有人把参考照数量接进价格,这条当场红 —— 而那正是必须先经 Founder 裁价的改动。
+   */
+  it("#785: @elements on a video job change nothing about the money — quote, reserve and settle are identical", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+
+    const quote = pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, referenceVideoGenerationId: null, videoOptions: { seconds: 5, resolution: "720p" } });
+
+    const base = {
+      projectId, prompt: "our product on a beach", count: 1,
+      kind: "video" as const, model: "seedance-2-mini", durationSeconds: 5, resolution: "720p",
+    };
+    const bare = idOf(await startGen({ ...base, entityIds: [], idempotencyKey: `v785-bare-${randomUUID().slice(0, 8)}` }));
+    const withElements = idOf(await startGen({
+      ...base,
+      entityIds: ["ent_product", "ent_face", "ent_logo"],
+      idempotencyKey: `v785-elem-${randomUUID().slice(0, 8)}`,
+    }));
+
+    const rows = await ledger(ownerId);
+    const reserveOf = (id: string) => rows.find((r) => r.kind === "RESERVE" && r.refId === id)!;
+    expect(reserveOf(bare.id).reservedDelta).toBe(quote);
+    expect(reserveOf(withElements.id).reservedDelta).toBe(quote); // 带素材 ⇒ 同一格价钱
+
+    // 元素真的落在了那一单上(否则上面那句「同价」就是拿两个空单在比)。
+    const elemJob = await prisma.genJob.findFirstOrThrow({ where: { id: withElements.id, ownerId }, select: { entityIds: true } });
+    expect(elemJob.entityIds).toEqual(["ent_product", "ent_face", "ent_logo"]);
+
+    await workerSettle(ownerId, bare.id);
+    await workerSettle(ownerId, withElements.id);
+    const acct = await account(ownerId);
+    expect(acct.reserved).toBe(0);
+    expect(acct.balance).toBe(1000 - quote * 2); // 两单各扣一格价钱,一分不多
+  });
 });
 
 describe("W-B3-E-P ledger — EP-A5(在途面): same-key replay while the first job is ACTIVE never double-charges", () => {

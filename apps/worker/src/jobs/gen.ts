@@ -22,7 +22,11 @@ import {
   GEN_QUEUE,
   videoDefaults,
   imageDefaults,
-  MAX_CONDITIONING_IMAGES,
+  conditioningCap,
+  withReferenceMap,
+  approvedEntityMap,
+  type ReferenceSlot,
+  type ReferenceSlotType,
   REF_VIDEO_MIN_SECONDS,
   REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
@@ -636,6 +640,17 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // backstop for refs deleted between that check and now.)
       const variantSel = (job.variantSel as Record<string, string> | null) ?? {};
       const perEntity: { asset: { ownerId: string; contentHash: string; ext: string } }[][] = [];
+      // #774 U2:编号要说出「<Image_2> 是谁」,所以这里顺手记下每个 @元素的身份。
+      // 顺序 = job.entityIds 顺序 = perEntity 顺序 —— 三者共用同一趟循环。
+      //
+      // #774 判官 r2 P1 —— **名字只来自审批快照**(`job.approvedEntities`,由 startGen 在
+      // 批准那一刻冻结),绝不来自这里现读的活行。元素名是商家随时能改的自由文本,现读
+      // 等于:批准之后改一次名,就能把没过审批的指令送进这次已经批准的付费调用。
+      // 快照里没有的元素 → `name: null` → 编号句照写,只是不写名字(降级方向是少一个
+      // 名字,不是多一条没批准的指令)。类型可以来自活行:它是四选一的枚举、建好之后
+      // 没有写入口,结构上写不进指令。
+      const approvedById = approvedEntityMap(job.approvedEntities);
+      const entityMeta: { id: string; type: ReferenceSlotType; name: string | null }[] = [];
       for (const entityId of job.entityIds) {
         const variantId = variantSel[entityId] ?? null;
         // the parent entity must still be live + owned. softDeleteEntity doesn't cascade to
@@ -677,27 +692,52 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           return;
         }
         perEntity.push(found);
+        const approved = approvedById.get(liveEntity.id);
+        entityMeta.push({ id: liveEntity.id, type: approved?.type ?? liveEntity.type, name: approved?.name ?? null });
       }
       // cap the aggregate at the model's input limit, ROUND-ROBIN across entities so an
       // early entity with many base refs can't starve a later @mentioned variant of its
-      // conditioning (which would spend without the requested variant). MAX_GEN_ENTITIES(8)
-      // ≤ the cap(10), so round 0 always seats ≥1 ref for every mention that has one.
-      const cappedRefs: { asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
-      for (let round = 0; cappedRefs.length < MAX_CONDITIONING_IMAGES; round++) {
+      // conditioning (which would spend without the requested variant). On the image side
+      // MAX_GEN_ENTITIES(8) ≤ the cap(10), so round 0 always seats ≥1 ref for every mention
+      // that has one; on the video side the cap can be smaller, and whatever gets left behind
+      // is disclosed on the card BEFORE approval (referenceBudget.truncated).
+      //
+      // #785 — the cap is NOT a local literal any more: `conditioningCap` (@fikirtive/core) is
+      // the ONE place that knows it, and `referenceBudget` (what the card counts) reads the same
+      // function. A video job's ceiling depends on how many image_url slots its frames take, so
+      // it is derived from the job's OWN shape — the same shape the card had at approval time.
+      const refCap = conditioningCap({
+        kind: job.kind === "VIDEO" ? "video" : "image",
+        hasVideoStartFrame: !!(job.sourceGenerationId || job.shotId),
+        hasVideoTailFrame: !!job.tailGenerationId,
+        hasReferenceVideo: !!job.referenceVideoGenerationId,
+      });
+      // #774 U2:每张上车的图连它属于哪个 @元素一起记 —— 编号(`<Image_N>`)就是从这里
+      // 长出来的,与 `inputImageUrls` 同一趟循环、同一个下标,所以两者不可能各说各话。
+      // 名额被 `refCap` 截掉的那些图从来没上过车,所以也永远拿不到编号 —— 「说的几张」
+      // 「送的几张」「第几张是谁」在被截断的那一档同样只有这一份答案。
+      const cappedRefs: { entity: number; asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
+      for (let round = 0; cappedRefs.length < refCap; round++) {
         let progressed = false;
-        for (const refsForEntity of perEntity) {
+        for (const [entity, refsForEntity] of perEntity.entries()) {
           const ref = refsForEntity[round];
           if (!ref) continue;
-          cappedRefs.push(ref);
+          cappedRefs.push({ entity, asset: ref.asset });
           progressed = true;
-          if (cappedRefs.length >= MAX_CONDITIONING_IMAGES) break;
+          if (cappedRefs.length >= refCap) break;
         }
         if (!progressed) break;
       }
       const inputImageUrls: string[] = [];
+      /** 与 `inputImageUrls` 逐项同步的槽位身份(编辑底图 unshift 时一起 unshift)。 */
+      const refSlots: ReferenceSlot[] = [];
       for (const ref of cappedRefs) {
         const signed = await storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext), 3600);
-        if (signed) inputImageUrls.push(signed);
+        if (signed) {
+          inputImageUrls.push(signed);
+          const meta = entityMeta[ref.entity]!;
+          refSlots.push({ kind: "entity", entityId: meta.id, type: meta.type, name: meta.name });
+        }
       }
       const isMock = provider.name === "mock";
       if (!isMock && cappedRefs.length > 0 && inputImageUrls.length < cappedRefs.length) {
@@ -806,9 +846,19 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // per-model controls chosen in the composer (resolved + stored at enqueue);
         // fall back to the legacy fixed duration if an older job has none.
         const vo = job.videoOptions as { seconds?: number; resolution?: string; aspectRatio?: string; fps?: number; audio?: boolean } | null;
+        // #785 —— @元素(产品图 / 代言人)的参考照真的进视频引擎。
+        //
+        // `inputImageUrls` 就是上面 round-robin 选出来、逐张 presign 成功的那一批(选片上限
+        // 已由 `conditioningCap` 按这一单的场景算好:带首帧/末帧/参考视频的档上限为 0,
+        // 所以那些档这里天然是空数组,与卡面说的 0 张一致)。数组**顺序即引擎收到的顺序**,
+        // 没有第二次挑选、第二次排序 —— 「说的几张」「送的几张」「第几张是谁」共用这一份。
+        //
+        // 花钱安全:上面那道 presign 完整性闸(`inputImageUrls.length < cappedRefs.length`
+        // 就抛)已经保证「少一张就不花钱」,所以到这里要么全都在,要么根本没走到这一行。
         const video = await provider.generateVideo({
           prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
           refVideoUrl: refVideoUrl || undefined,
+          ...(inputImageUrls.length > 0 ? { refImageUrls: inputImageUrls } : {}),
           durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
           resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
           model: job.model,
@@ -828,7 +878,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) in this project"); return; }
           const srcUrl = (await storage.presignedGet(storageKey(src.asset.ownerId, src.asset.contentHash, src.asset.ext), 3600)) ?? "";
           if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
-          if (srcUrl) inputImageUrls.unshift(srcUrl);
+          if (srcUrl) {
+            inputImageUrls.unshift(srcUrl);
+            refSlots.unshift({ kind: "baseImage" }); // 底图坐第 0 位 → 它就是 <Image_1>
+          }
         }
         // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
         // (or a malformed snapshot) has none → the model's default square, which is exactly
@@ -837,10 +890,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         const aspectRatio = typeof io?.aspectRatio === "string"
           ? io.aspectRatio
           : imageDefaults(job.model as GenModel).aspectRatio;
+        // #774 U2:官方编号句由**这里**产出 —— `refSlots` 与 `inputImageUrls` 是同一趟
+        // 循环装的同一个次序,所以 `<Image_2>` 说的一定就是引擎收到的第 2 张。写提示词
+        // 的那一端反而编不了:那时谁有几张活图、商家挂没挂底图、镜头后来被改成了别的
+        // 元素,统统还不知道。零参考图 → 零编号句 → prompt 原样。
+        //
         // #777:「这几张是一组连贯的图」同样是**冻在任务上**的那份规格,不是这里现算的。
         // 只认写死的 true —— 快照里没有这一格(既有行、散图行)就是散图,与今日逐字一致。
         const coherentSet = io?.coherentSet === true;
-        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
+        outputs = await provider.generate({ prompt: withReferenceMap(job.prompt, refSlots), inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {

@@ -57,7 +57,11 @@ type GenDTO = {
 };
 
 type PanelState = "loading" | "ready" | "error";
-type ConfirmAction = "regen" | "animate" | "edit" | "delete" | null;
+/** #896 — the only thing left that asks twice is DELETE. The three paid actions
+ *  (Regenerate / Animate / Generate edit) now follow the canvas rule: the price is on the
+ *  button, the press does it, and a button whose quote hasn't landed is off. Deleting is a
+ *  different kind of act — it is irreversible and it isn't a purchase — so V16's confirm stays. */
+type ConfirmAction = "delete" | null;
 
 /** Render the cropped area of an image to a canvas and return a data URL. */
 async function getCroppedDataUrl(
@@ -238,8 +242,16 @@ export default function DetailPanel({
   const videoCost = activeModels
     ? (videoSpec ? videoSpecCredits(activeModels, videoSpec) : activeModels.videoCredits)
     : null;
-  const imageCostLabel = imageCost == null ? "checking exact cost" : creditsLabel(imageCost);
-  const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
+
+  // #896 r2 P0-a —— 每条付费路一道闸,**控件与动作读同一个布尔值**。
+  // 之前闸只装在按钮的 disabled 上:编辑框的 Shift/Cmd/Ctrl+Enter 直接进 handleEditSubmit,
+  // 报价还没回来也照跑 —— 它自己 await 一次 ensureModels() 再发付费请求,于是商家在屏幕上
+  // 从没见过那个价就被扣了钱。按钮变灰是**提示**,不是闸;闸必须在动作入口,这样按钮、
+  // 快捷键、以及以后任何新入口都同样 fail closed(关类不补例)。
+  const regenBlocked = assetSpendControlDisabled(regenStatus, readOnly) || imageCost == null;
+  const animateBlocked = assetSpendControlDisabled(animStatus, readOnly) || videoCost == null;
+  const editBlocked =
+    assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim() || imageCost == null;
 
   const handleFavorite = useCallback(async () => {
     if (readOnly) return;
@@ -303,7 +315,7 @@ export default function DetailPanel({
   }, []);
 
   const handleRegen = useCallback(async () => {
-    if (readOnly) return;
+    if (regenBlocked) return;
     if (!gen || regenBusyRef.current) return;
     regenBusyRef.current = true;
     try {
@@ -347,10 +359,10 @@ export default function DetailPanel({
     } finally {
       regenBusyRef.current = false;
     }
-  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly, chosenImageAspect]);
+  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, regenBlocked, chosenImageAspect]);
 
   const handleAnimate = useCallback(async () => {
-    if (readOnly) return;
+    if (animateBlocked) return;
     if (!gen || animBusyRef.current) return;
     animBusyRef.current = true;
     try {
@@ -398,7 +410,7 @@ export default function DetailPanel({
     } finally {
       animBusyRef.current = false;
     }
-  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, readOnly]);
+  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, animateBlocked]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -418,53 +430,14 @@ export default function DetailPanel({
     onClose();
   }, [selectedGenId, onClose, readOnly]);
 
-  const requestSpendConfirm = useCallback((action: Exclude<ConfirmAction, "delete" | null>) => {
-    if (readOnly) return;
-    setConfirmAction(action);
-    void ensureModels();
-  }, [readOnly]);
-
-  const requestEditSubmit = useCallback(() => {
-    if (readOnly) return;
-    if (!editPrompt.trim() || editStatus === "running") return;
-    setConfirmAction("edit");
-    void ensureModels();
-  }, [editPrompt, editStatus, readOnly]);
-
-  const confirmDetails = (() => {
-    switch (confirmAction) {
-      case "regen":
-        return {
-          title: "Regenerate this image?",
-          description: `Creates one new image version from the same prompt. Cost: ${imageCostLabel}. No charge until you confirm.`,
-          confirmLabel: imageCost == null ? "Checking cost..." : "Regenerate",
-          disabled: readOnly || imageCost == null || regenStatus === "running",
-        };
-      case "animate":
-        return {
-          title: "Animate this image?",
-          description: `Creates one video from the selected image. Cost: ${videoCostLabel}. No charge until you confirm.`,
-          confirmLabel: videoCost == null ? "Checking cost..." : "Animate",
-          disabled: readOnly || videoCost == null || animStatus === "running",
-        };
-      case "edit":
-        return {
-          title: "Generate this edit?",
-          description: `Uses the current image as the source for your edit. Cost: ${imageCostLabel}. No charge until you confirm.`,
-          confirmLabel: imageCost == null ? "Checking cost..." : "Generate edit",
-          disabled: readOnly || imageCost == null || editStatus === "running" || !editPrompt.trim(),
-        };
-      case "delete":
-        return {
-          title: "Delete this asset?",
-          description: "This removes the selected generation from your library. A canvas card that uses it stays where it is and reads 'Preview missing'. This cannot be undone.",
-          confirmLabel: "Delete",
-          disabled: readOnly,
-        };
-      default:
-        return null;
-    }
-  })();
+  const confirmDetails = confirmAction === "delete"
+    ? {
+        title: "Delete this asset?",
+        description: "This removes the selected generation from your library. A canvas card that uses it stays where it is and reads 'Preview missing'. This cannot be undone.",
+        confirmLabel: "Delete",
+        disabled: readOnly,
+      }
+    : null;
 
   // Variant switcher: switch displayed url + persist pick
   const handleVariantPick = useCallback((idx: number) => {
@@ -476,8 +449,11 @@ export default function DetailPanel({
 
   // Edit @composer: submit an edit generation
   const handleEditSubmit = useCallback(async () => {
-    if (readOnly) return;
-    if (!gen || !editPrompt.trim() || editStatus === "running" || editBusyRef.current) return;
+    // The gate, not the button. This handler is reachable from the composer's
+    // Shift/Cmd/Ctrl+Enter as well as from the priced button beside it, and both ways in
+    // must refuse on exactly the same terms — no quote on screen, no spend (#896 r2 P0-a).
+    if (editBlocked) return;
+    if (!gen || editBusyRef.current) return;
     editBusyRef.current = true;
     try {
       setEditStatus("running");
@@ -520,17 +496,13 @@ export default function DetailPanel({
     } finally {
       editBusyRef.current = false;
     }
-  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly, chosenImageAspect]);
+  }, [gen, editPrompt, editIds, editBlocked, targetProjectId, pollJob, reloadFromJob, selectedGenId, chosenImageAspect]);
 
   const runConfirmedAction = useCallback(() => {
-    const action = confirmAction;
     setConfirmAction(null);
     if (readOnly) return;
-    if (action === "regen") void handleRegen();
-    if (action === "animate") void handleAnimate();
-    if (action === "edit") void handleEditSubmit();
-    if (action === "delete") void handleDelete();
-  }, [confirmAction, handleAnimate, handleDelete, handleEditSubmit, handleRegen, readOnly]);
+    void handleDelete();
+  }, [handleDelete, readOnly]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {
@@ -806,13 +778,14 @@ export default function DetailPanel({
                 {favorite ? "♥ Saved" : "♡ Save"}
               </Button>
 
-              {/* Regenerate */}
+              {/* Regenerate — #896: the canvas rule. The price is on the button, the press
+                  does it, and until the server quote lands the button says so and is off. */}
               {gen.kind === "image" && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => requestSpendConfirm("regen")}
-                  disabled={assetSpendControlDisabled(regenStatus, readOnly)}
+                  onClick={() => void handleRegen()}
+                  disabled={regenBlocked}
                   title={readOnlyReason}
                 >
                   <RotateCcwIcon />
@@ -826,17 +799,20 @@ export default function DetailPanel({
                     ? "Cancelled"
                     : regenStatus === "failed"
                     ? "Failed — retry?"
-                    : "Regenerate"}
+                    : imageCost == null
+                    ? "Checking cost…"
+                    : `Regenerate · ${creditsLabel(imageCost)}`}
                 </Button>
               )}
 
-              {/* Animate (image → video) */}
+              {/* Animate (image → video) — priced from the spec chosen above, so the number on
+                  the button follows the picker rather than a stale default tier (#645 T4). */}
               {gen.kind === "image" && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => requestSpendConfirm("animate")}
-                  disabled={assetSpendControlDisabled(animStatus, readOnly)}
+                  onClick={() => void handleAnimate()}
+                  disabled={animateBlocked}
                   title={readOnlyReason}
                 >
                   <PlayIcon />
@@ -850,7 +826,9 @@ export default function DetailPanel({
                     ? "Cancelled"
                     : animStatus === "failed"
                     ? "Failed — retry?"
-                    : "Animate"}
+                    : videoCost == null
+                    ? "Checking cost…"
+                    : `Animate · ${creditsLabel(videoCost)}`}
                 </Button>
               )}
 
@@ -904,14 +882,14 @@ export default function DetailPanel({
                         setEditPrompt(text);
                         setEditIds(ids);
                       }}
-                      onSubmit={requestEditSubmit}
+                      onSubmit={() => void handleEditSubmit()}
                     />
                   </div>
                   <Button
                     variant="default"
                     size="sm"
-                    onClick={requestEditSubmit}
-                    disabled={assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim()}
+                    onClick={() => void handleEditSubmit()}
+                    disabled={editBlocked}
                     title={readOnlyReason}
                   >
                     {editStatus === "running"
@@ -924,7 +902,9 @@ export default function DetailPanel({
                       ? "Cancelled"
                       : editStatus === "failed"
                       ? "Failed"
-                      : "Send"}
+                      : imageCost == null
+                      ? "Checking cost…"
+                      : `Generate edit · ${creditsLabel(imageCost)}`}
                   </Button>
                 </div>
               </div>

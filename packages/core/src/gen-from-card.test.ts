@@ -251,6 +251,58 @@ describe("buildGenRequestFromCard — anti-flip", () => {
     if (!result.ok) return;
     expect(result.req.kind).toBe("video");
   });
+
+  // ── #774 判官 r2 P1 —— 审批身份也是 CARD-trusted ─────────────────────────
+  // 引擎认人那几句机器指令里的名字只能来自**卡**:卡是商家批准前看过、批准后不可变的
+  // 那一份。调用方给的 entityIds 可以变(卡是可编辑的),名字不可以。
+  const APPROVED = [{ id: "ent_1", type: "PRODUCT", name: "the AeroBottle" }];
+
+  it("approvedEntities comes from the card and rides into the paid request", () => {
+    const result = buildGenRequestFromCard({
+      ...BASE_ARGS,
+      cardPayload: imageCardPayload({ approvedEntities: APPROVED }),
+      variantSel: {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req.approvedEntities).toEqual(APPROVED);
+  });
+
+  it("an identity for an element this run did NOT @mention is dropped", () => {
+    const result = buildGenRequestFromCard({
+      ...BASE_ARGS,
+      entityIds: ["ent_1"],
+      cardPayload: imageCardPayload({
+        approvedEntities: [...APPROVED, { id: "ent_9", type: "CHARACTER", name: "not mentioned" }],
+      }),
+      variantSel: {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req.approvedEntities).toEqual(APPROVED);
+  });
+
+  it("a malformed identity is dropped, never guessed", () => {
+    const result = buildGenRequestFromCard({
+      ...BASE_ARGS,
+      cardPayload: imageCardPayload({ approvedEntities: [{ id: "ent_1", type: "NOPE", name: "x" }] }),
+      variantSel: {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req).not.toHaveProperty("approvedEntities");
+  });
+
+  // #774 判官 r3 P0 —— 老卡/跨部署的降级链第一段:字段整个缺席。
+  // 第二段(`startGen` 看到字段缺席时不补活名称、连查都不查)钉在
+  // `apps/web/lib/__tests__/gen-actions.test.ts`;第三段(worker 只写编号不写名字)钉在
+  // `apps/worker/src/jobs/gen-reference-budget.test.ts`。
+  it("an old card with no snapshot leaves the field off entirely (degrades to unnamed slots)", () => {
+    const result = buildGenRequestFromCard({ ...BASE_ARGS, cardPayload: imageCardPayload(), variantSel: {} });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req).not.toHaveProperty("approvedEntities");
+  });
 });
 
 describe("buildGenRequestFromCard — error cases", () => {

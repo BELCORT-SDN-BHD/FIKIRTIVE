@@ -15,7 +15,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { browserSentryOptions } from "@/lib/sentry-browser";
 
-// process.env.NEXT_PUBLIC_* 必须在这里字面出现,Next 才会在构建时把值内联进浏览器包。
+// process.env. 后面接的 NEXT_PUBLIC_* 名字必须在这里字面出现,Next 才会在构建时把值内联进浏览器包。
 const options = browserSentryOptions(process.env.NEXT_PUBLIC_SENTRY_DSN, process.env.NODE_ENV);
 if (options) Sentry.init(options);
 

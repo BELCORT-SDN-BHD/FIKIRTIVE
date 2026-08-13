@@ -35,10 +35,16 @@ describe("TemplateModal spend safety", () => {
 
   it("uses the safe alert treatment and a neutral Close action for an unknown outcome", () => {
     const src = fs.readFileSync(TEMPLATE_MODAL, "utf8");
-    const unknownBranch = src.match(/phase === "unknown" \? \(([\s\S]*?)\) : confirming/)?.[1] ?? "";
+    // #896 collapsed the two-step confirm, so the branch after "unknown" is now the ONE
+    // priced Generate button rather than a `confirming ?` fork.
+    const unknownBranch = src.match(/phase === "unknown" \? \(([\s\S]*?)\) : \(/)?.[1] ?? "";
 
     expect(unknownBranch).toContain('variant="secondary"');
     expect(unknownBranch).not.toContain('variant="brand"');
+    // …and the paid press that follows it is ONE button carrying the price (#896).
+    expect(src).toContain("Generate · {costLabel}");
+    expect(src).not.toContain("Review cost");
+    expect(src).not.toContain("Confirm generate");
     expect(src).toContain('role="alert"');
     expect(src).toContain("bg-error-soft");
     expect(src).toContain("text-[13px]");

@@ -170,27 +170,12 @@ const EXEMPT: Family[] = [
       "components/admin/ImpersonationBanner.tsx": 1,
     },
   },
-  {
-    family: "auth",
-    why: "登录/注册:#840 点名的挡门高频面之一(登录),密码显隐与「换个邮箱」都是裸 button。",
-    files: {
-      "app/login/LoginForm.tsx": 3,
-      "app/signup/SignupForm.tsx": 2,
-    },
-  },
-  {
-    family: "navigation",
-    why: "主导航与沉浸壳:#840 点名的挡门高频面(主导航),手搓汉堡抽屉与页签,底座包的 sheet / tabs 对位。",
-    files: {
-      "components/global-navigation.tsx": 3,
-      "components/northstar/immersive/immersive-shell.tsx": 2,
-      // immersive-nav.tsx was on this board at freeze time and was then deleted
-      // whole by #839 (nav single-source) — the stale-account gate caught the
-      // leftover row when main merged in. The row leaves the BOARD; the frozen
-      // baseline keeps it, because that table is the 2026-08-11 historical
-      // snapshot and board ⊆ frozen stays true when the board shrinks.
-    },
-  },
+  // auth (login/signup) and navigation (global-navigation / immersive shell) are gone
+  // from this board — #840 第 3 步第一车 migrated both families to @/components/ui in
+  // full (app/login/LoginForm.tsx, app/signup/SignupForm.tsx, components/global-navigation.tsx,
+  // components/northstar/immersive/immersive-shell.tsx all sweep to 0 now). Their rows stay in
+  // FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and never shrinks —
+  // but the live board only lists what is still owed, same as immersive-nav.tsx's departure above.
   {
     family: "gen-pickers",
     why: "生成参数选择器(视频规格/图片形状):裸 <select> 花钱前最后一屏,迁 Select 时要连带 #643 的形状快照行为一起验。",
