@@ -28,6 +28,7 @@ import {
   imageDefaults,
   merchantGenFailureMessage,
   approvedEntityDrift,
+  parseApprovedEntities,
   type ApprovedEntity,
   type GenModel,
   type GenVideoModel,
@@ -238,8 +239,18 @@ type TrustedCoworkRequest = {
   projectId: string;
   threadId: string;
   expectedCredits: number | null;
+  /** #774 判官 r4 P1 —— 审批身份的**唯一**来源:服务端刚读出来的那张持久化卡。
+   *  与 `expectedCredits` 同一条纪律:商家批准的那份东西由卡说了算,不由调用方说了算。 */
+  approvedEntities: ApprovedEntity[];
 };
 const TRUSTED_COWORK_REQUESTS = new WeakMap<object, TrustedCoworkRequest>();
+
+/** #774 判官 r4 P1 —— 「这一份审批身份就是卡上那一份」的机器判据(逐项逐字,含次序)。
+ *  写成函数而不是注释,是因为它是 startGen 唯一放行这个字段的条件。 */
+function sameApprovedEntities(a: ApprovedEntity[], b: ApprovedEntity[]): boolean {
+  return a.length === b.length
+    && a.every((x, i) => x.id === b[i]!.id && x.type === b[i]!.type && x.name === b[i]!.name);
+}
 
 /** Canvas's paid entrypoint. The browser supplies a stable logical actionId, never an
  * idempotency key; the reserved durable key is derived here on the server. */
@@ -331,13 +342,33 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
   const expectedCredits = typeof quote === "number" && Number.isSafeInteger(quote) && quote > 0
     ? quote
     : null;
-  const trustedRequest = { ...parsed.data };
+
+  // #774 判官 r4 P1 —— 审批身份与报价同一条纪律:**只从上面这张服务端读出来的卡取**,
+  // 调用方随请求提交的同名字段在这里被原样覆盖掉(下面 `startGen` 再核一次身份)。
+  //
+  // 为什么不能信调用方那一份:这是一个可直接调用的 Server Action。卡上批的是 A,商家
+  // 把活行改名成 B,然后直接调这个 Action 交一份写着 B 的「审批快照」—— 漂移闸拿 B 比
+  // 活名 B,一路通过,冻进任务行的是 B,worker 照 B 造指令、送去付费引擎,而卡面自始至终
+  // 写着 A。「批 A 做 B」就这么经一份伪造快照到达了。卡是商家批准前看过、批准后不可变的
+  // 那一份,所以名字只能从它来。
+  //
+  // 只留这一趟真的 @ 到的那些元素(与 `buildGenRequestFromCard` 同一条口径):卡上有、
+  // 这一趟没 @ 的元素不许把名字带进付费提示词。卡上没有这一份(老卡、跨部署)→ 空表 →
+  // 字段整个缺席,按既有降级走:worker 照旧编号,只是不写名字。
+  const mentioned = new Set(parsed.data.entityIds);
+  const cardApprovedEntities = parseApprovedEntities(payload.approvedEntities)
+    .filter((e) => mentioned.has(e.id));
+  const trustedRequest = {
+    ...parsed.data,
+    approvedEntities: cardApprovedEntities.length ? cardApprovedEntities : undefined,
+  };
   TRUSTED_COWORK_REQUESTS.set(trustedRequest, {
     ownerId: gate.ownerId,
     cardId,
     projectId,
     threadId,
     expectedCredits,
+    approvedEntities: cardApprovedEntities,
   });
   return startGen(trustedRequest);
 }
@@ -410,6 +441,16 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         threadId !== trustedCoworkRequest.threadId
       )
     ) {
+      return { error: "That generation request is out of bounds." };
+    }
+
+    // #774 判官 r4 P1 —— 审批身份只有一个来源:服务端读出的那张持久化卡。
+    // `startCoworkGen` 在把请求交到这里之前,已经用卡上那一份覆盖了调用方提交的字段,
+    // 所以走到这里只剩两种合法形状:与卡上那一份逐字相同,或者根本没有这个字段。
+    // 剩下的那一种 —— 调用方自带一份没有卡背书的「审批快照」—— 是伪造的审批记录:
+    // 画布、资产详情、工厂、Campaign 这些入口没有卡可以背书它,直接调 startGen 更没有。
+    // 一律拒,$0(create/reserve/enqueue 都在后面)。
+    if (!sameApprovedEntities(approvedEntities ?? [], trustedCoworkRequest?.approvedEntities ?? [])) {
       return { error: "That generation request is out of bounds." };
     }
 
@@ -558,10 +599,11 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // 名字若在付费调用前才现读,批准之后改一次名,就能把没过审批的指令送进那次**已经批准
     // 的付费调用** ——「批 A 做 B」。
     //
-    // 名字只有一个来源:随请求送来的审批快照(铸卡侧在批准那一刻写在卡上,商家批之前
-    // 就看得见)。这里只做一件事 —— 拿它跟活行**核对**:对不上说明这张卡承诺的东西已经
-    // 不是它会做出来的东西,按既有「内容漂移 = 重新批准」语义拒掉,$0(create/reserve
-    // 都在后面)。没有快照要核对时,连这一次读都不发生。
+    // 名字只有一个来源:那张卡上的审批快照(铸卡侧在批准那一刻写在卡上,商家批之前就
+    // 看得见;由 `startCoworkGen` 服务端读出、上面那道闸核过身份 —— 走到这里的这一份
+    // 不可能是调用方自带的)。这里只做一件事 —— 拿它跟活行**核对**:对不上说明这张卡
+    // 承诺的东西已经不是它会做出来的东西,按既有「内容漂移 = 重新批准」语义拒掉,$0
+    // (create/reserve 都在后面)。没有快照要核对时,连这一次读都不发生。
     //
     // 没有快照的请求(#774 之前铸的老卡、跨部署、以及不带卡的入口)= 这一趟没有获批的
     // 名字。列保持空,worker 照旧编号、只是不写名字
