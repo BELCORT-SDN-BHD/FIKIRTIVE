@@ -27,6 +27,8 @@ import {
   videoDefaults,
   imageDefaults,
   merchantGenFailureMessage,
+  approvedEntityDrift,
+  type ApprovedEntity,
   type GenModel,
   type GenVideoModel,
   type GenJobData,
@@ -370,7 +372,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const OWNED = { ownerId, deletedAt: null } as const;
     const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
     if (!parsed.success) return { error: "That generation request is out of bounds." };
-    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
+    const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, approvedEntities } = parsed.data;
     const parsedCanvasAction = parseCanvasActionKey(idempotencyKey);
     if (parsedCanvasAction && !trustedCanvasKey) {
       return { error: "That generation request is out of bounds." };
@@ -530,6 +532,38 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });
       } catch { /* audit best-effort — a log hiccup must not swallow the block */ }
       return { error: sanitizeUserError(block.error) };
+    }
+
+    // #774 判官 r2 P1 —— 引擎认人那几句机器指令里的名字,只能是商家批准时看到的那个。
+    //
+    // 元素名是商家随时能改的自由文本(`updateEntity` 只 trim,不拦句号、换行或整句指令)。
+    // 名字若在付费调用前才现读,批准之后改一次名,就能把没过审批的指令送进那次**已经批准
+    // 的付费调用**。所以名字在这里定死一次,写进任务行,worker 只读那一份。
+    //
+    // 两种入口,两种「批准那一刻」:
+    //   · 带卡的(Otto 方案卡):名字在铸卡时就冻结、印在卡上,随请求原样送到这里。
+    //     此刻再跟活行对一次 —— 对不上说明这张卡承诺的东西已经不是它会做出来的东西,
+    //     按既有「内容漂移 = 重新批准」语义拒掉,$0(create/reserve 都在后面)。
+    //   · 不带卡的(Studio 直接生成、战役、画布):点下去那一刻就是批准那一刻,
+    //     于是在这里读一次活名称冻结上去 —— 冻结之后 worker 再也不会重读。
+    // 读不到名字的元素不进快照:少一个名字是安全的降级(编号照旧,只是不写名字),
+    // 编一个名字不是。
+    let frozenEntities: ApprovedEntity[] = [];
+    if (entityIds.length > 0) {
+      const live = await prisma.entity.findMany({
+        where: { id: { in: entityIds }, ...OWNED },
+        select: { id: true, type: true, name: true },
+      });
+      if (approvedEntities?.length) {
+        const drifted = approvedEntityDrift(approvedEntities, live);
+        if (drifted.length > 0) {
+          return { error: "One of these elements was renamed since this plan — ask for it again to get a fresh one." };
+        }
+        frozenEntities = approvedEntities;
+      } else {
+        const byId = new Map(live.map((e) => [e.id, e]));
+        frozenEntities = entityIds.map((id) => byId.get(id)).filter((e): e is ApprovedEntity => !!e);
+      }
     }
 
     // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
@@ -734,6 +768,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             // the right variant. Image-only (the shared material normalizer drops it for video).
             // Omitted when empty → column stays null (old/bare/video gens unchanged).
             ...(material.variantSel ? { variantSel: material.variantSel } : {}),
+            // #774:批准那一刻冻结的元素身份。worker 认人只读这一列,不再重读活名称。
+            // 不参与幂等材料 —— 改过名的重放不该被判成「换了内容」。空 → 列保持 null,
+            // worker 照旧编号,只是不写名字。
+            ...(frozenEntities.length ? { approvedEntities: frozenEntities } : {}),
           },
           select: { id: true },
         });

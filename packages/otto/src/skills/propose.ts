@@ -9,7 +9,7 @@
  */
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
-import { newId, referenceBudget } from "@fikirtive/core";
+import { newId, referenceBudget, type ApprovedEntity } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import {
@@ -61,14 +61,15 @@ export async function executePropose(
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
 
-  // Validate entity ownership (security-critical: owner-scoped query)
-  let ownedEntityIds: string[] = [];
+  // Validate entity ownership (security-critical: owner-scoped query).
+  // #774 判官 r2 P1:名字与类型跟归属**同一趟**读出来 —— 卡上冻结的就是这一刻的身份,
+  // 引擎认人那几句机器指令以后只认它,不会在付费调用前再读一次活名称。
+  let ownedEntities: ApprovedEntity[] = [];
   if (input.entityIds.length > 0) {
-    const owned = await prisma.entity.findMany({
+    ownedEntities = await prisma.entity.findMany({
       where: { id: { in: input.entityIds }, ownerId: ctx.orgId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, type: true, name: true },
     });
-    ownedEntityIds = owned.map((e) => e.id);
   }
 
   // #647 T6:唯一那台引擎被后台关掉时,`buildProposeCard` 抛 GenerationUnavailableError。
@@ -76,7 +77,7 @@ export async function executePropose(
   // 走不到)。别的异常照旧上抛:那是真故障,不该被翻译成一句「关掉了」。
   let built: ProposeCardResult;
   try {
-    built = buildProposeCard(input, ctx, ownedEntityIds);
+    built = buildProposeCard(input, ctx, ownedEntities);
   } catch (e) {
     if (e instanceof GenerationUnavailableError) return { error: e.message };
     throw e;

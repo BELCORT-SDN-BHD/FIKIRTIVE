@@ -27,6 +27,7 @@ import {
   EXECUTED_SPEC,
   type GenVideoModel,
   type ReferenceBudget,
+  type ApprovedEntity,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
@@ -82,6 +83,18 @@ export type CardPayload = {
   downgradeNote?: string;
   structuredPrompt: string;
   entityIds: string[];
+  /**
+   * #774 判官 r2 P1 —— 这几个 @元素在**铸卡那一刻**叫什么、是什么类型,冻结在卡上。
+   *
+   * 引擎认人那几句机器指令(`Define the product in <Image_2> as <Subject_2>: 名字.`)
+   * 里的名字只能来自这里。元素名是商家随时能改的自由文本(`updateEntity` 只 trim),
+   * 名字若由 worker 在付费调用前现读,批准之后改一次名就能把没过审批的指令送进那次
+   * 已经批准的付费调用。冻结在卡上 = 商家在按下按钮之前就看得见这份映射
+   * (`approvedEntitiesNote`),按下之后谁也改不动它(卡 payload 不可变)。
+   *
+   * 次序 = `entityIds` 的次序。老卡没有这个字段 → 编号照旧,只是不写名字。
+   */
+  approvedEntities?: ApprovedEntity[];
   variantSel: Record<string, string>;
   estimatedPriceUsd: number;
   /** The DISPLAYED charge in credits — the same pricedGenCredits value startGen reserves,
@@ -251,14 +264,17 @@ export function buildDowngradeNote(
  * Pure helper: compute the GEN_CARD payload from validated inputs.
  * No prisma, no SDK imports — all DB interactions live in executePropose().
  *
- * @param input          - Raw LLM input (already zod-parsed by the SDK)
- * @param ctx            - OttoContext from the run (identity never comes from input)
- * @param ownedEntityIds - Entity ids confirmed owned by ctx.orgId (DB lookup done by caller)
+ * @param input         - Raw LLM input (already zod-parsed by the SDK)
+ * @param ctx           - OttoContext from the run (identity never comes from input)
+ * @param ownedEntities - Entities confirmed owned by ctx.orgId, **with their current name and
+ *                        type** (DB lookup done by caller). The names are what gets frozen onto
+ *                        the card as `approvedEntities` — the caller must read them in the same
+ *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
   input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
   ctx: OttoContext,
-  ownedEntityIds: string[],
+  ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
   // Step 1: kind is the PLANNER'S decision — an attached reference no longer forces video.
   // A reference (ctx.sourceGenerationId) becomes an i2v start-frame for a video plan; for an
@@ -284,7 +300,7 @@ export function buildProposeCard(
 
   // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently
   if (!hasSourceImage) {
-    const ownedSet = new Set(ownedEntityIds);
+    const ownedSet = new Set(ownedEntities.map((e) => e.id));
     entityIds = entityIds.filter((id) => ownedSet.has(id));
     const filteredVarSel: Record<string, string> = {};
     for (const [k, v] of Object.entries(variantSel)) {
@@ -414,6 +430,14 @@ export function buildProposeCard(
   };
   const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured;
 
+  // Step 4.8: 审批身份快照 —— 这张卡最终留下的每个 @元素,配上它**此刻**的名字与类型。
+  // 只认 ownedEntities 里那一份(归属查询同一趟读出来的),`entityIds` 里找不到身份的
+  // 元素宁可不进快照:少一个名字是安全的降级,编一个名字不是。
+  const ownedById = new Map(ownedEntities.map((e) => [e.id, e]));
+  const approvedEntities = entityIds
+    .map((id) => ownedById.get(id))
+    .filter((e): e is ApprovedEntity => !!e);
+
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
     kind,
@@ -427,6 +451,10 @@ export function buildProposeCard(
       : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,
+    // #774 判官 r2 P1:名字与类型在这里一起冻结,次序跟着 entityIds 走。只收这张卡真的
+    // 留下的那些元素 —— i2v 清空、归属过滤之后剩下谁,快照里就只有谁。空的就不写这个
+    // 字段(老卡的形状),下游一律按「没有获批的名字」处理。
+    ...(approvedEntities.length ? { approvedEntities } : {}),
     variantSel,
     estimatedPriceUsd: price,
     estimatedCredits,

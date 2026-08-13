@@ -24,7 +24,9 @@ import {
   imageDefaults,
   MAX_CONDITIONING_IMAGES,
   withReferenceMap,
+  approvedEntityMap,
   type ReferenceSlot,
+  type ReferenceSlotType,
   REF_VIDEO_MIN_SECONDS,
   REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
@@ -562,14 +564,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       const perEntity: { asset: { ownerId: string; contentHash: string; ext: string } }[][] = [];
       // #774 U2:编号要说出「<Image_2> 是谁」,所以这里顺手记下每个 @元素的身份。
       // 顺序 = job.entityIds 顺序 = perEntity 顺序 —— 三者共用同一趟循环。
-      const entityMeta: { id: string; type: "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK"; name: string }[] = [];
+      //
+      // #774 判官 r2 P1 —— **名字只来自审批快照**(`job.approvedEntities`,由 startGen 在
+      // 批准那一刻冻结),绝不来自这里现读的活行。元素名是商家随时能改的自由文本,现读
+      // 等于:批准之后改一次名,就能把没过审批的指令送进这次已经批准的付费调用。
+      // 快照里没有的元素 → `name: null` → 编号句照写,只是不写名字(降级方向是少一个
+      // 名字,不是多一条没批准的指令)。类型可以来自活行:它是四选一的枚举、建好之后
+      // 没有写入口,结构上写不进指令。
+      const approvedById = approvedEntityMap(job.approvedEntities);
+      const entityMeta: { id: string; type: ReferenceSlotType; name: string | null }[] = [];
       for (const entityId of job.entityIds) {
         const variantId = variantSel[entityId] ?? null;
         // the parent entity must still be live + owned. softDeleteEntity doesn't cascade to
         // refs, so an entity deleted AFTER the guardian check would otherwise leave live refs
         // the worker would spend on. (Guardian blocks a deleted entity pre-spend; this is the
         // race backstop.)
-        const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true, type: true, name: true } });
+        const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true, type: true } });
         if (!liveEntity) {
           await failClosedWithRefund(job,"an @mentioned element was deleted — remove it and try again");
           return;
@@ -604,7 +614,8 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           return;
         }
         perEntity.push(found);
-        entityMeta.push({ id: liveEntity.id, type: liveEntity.type, name: liveEntity.name });
+        const approved = approvedById.get(liveEntity.id);
+        entityMeta.push({ id: liveEntity.id, type: approved?.type ?? liveEntity.type, name: approved?.name ?? null });
       }
       // cap the aggregate at the model's input limit, ROUND-ROBIN across entities so an
       // early entity with many base refs can't starve a later @mentioned variant of its

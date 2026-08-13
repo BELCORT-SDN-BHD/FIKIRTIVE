@@ -17,6 +17,7 @@
 // The authoritative card contract, straight from the server package. Type-only, so it
 // is erased at build time and drags no server code into the client bundle.
 import type { CardPayload as ServerCardPayload } from "@fikirtive/otto";
+import { parseApprovedEntities } from "@fikirtive/core";
 
 /**
  * The GEN_CARD payload as the card reads it — **derived from the server contract, not
@@ -85,6 +86,15 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
   take("estimatedPriceUsd", num, (v) => v as number);
   take("estimatedCredits", num, (v) => v as number);
   take("entityIds", (v) => Array.isArray(v) && v.every(str), (v) => v as string[]);
+  // #774 判官 r2 P1 —— 引擎认人那几句机器指令里的名字,商家必须在花钱之前看得见。
+  // 解析口径不在这里重写:`parseApprovedEntities` 是唯一那一份(卡面、付费请求、worker
+  // 共用),这里只判「这张卡到底带没带一份读得懂的快照」。带了但一条都读不懂 = 畸形,
+  // 记进 malformedFields —— 与其它字段同一条纪律,不静默糊过去。
+  take(
+    "approvedEntities",
+    (v) => Array.isArray(v) && v.length > 0 && parseApprovedEntities(v).length === v.length,
+    (v) => parseApprovedEntities(v),
+  );
   take(
     "variantSel",
     (v) => !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every(str),

@@ -33,6 +33,9 @@ vi.mock("@fikirtive/db", () => ({
 // ---------------------------------------------------------------------------
 // Shared test context factory
 // ---------------------------------------------------------------------------
+/** #774:归属查询同一趟读出来的元素身份 —— 名字与类型就是要被冻结到卡上的那一份。 */
+const OWNED_ENTITY_1 = { id: "entity-1", type: "PRODUCT" as const, name: "the AeroBottle" };
+
 function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
   return {
     orgId: "org-test",
@@ -166,7 +169,7 @@ describe("buildProposeCard — pure helper", () => {
       entityIds: ["entity-1"],
       variantSel: { "entity-1": "variant-1" },
     };
-    const { cardPayload } = buildProposeCard(input, ctx, ["entity-1"]);
+    const { cardPayload } = buildProposeCard(input, ctx, [OWNED_ENTITY_1]);
 
     expect(cardPayload.kind).toBe("video");
     expect(cardPayload.entityIds).toEqual([]);
@@ -188,7 +191,7 @@ describe("buildProposeCard — pure helper", () => {
       entityIds: ["entity-1"],
       variantSel: { "entity-1": "variant-1" },
     };
-    const { cardPayload } = buildProposeCard(input, ctx, ["entity-1"]);
+    const { cardPayload } = buildProposeCard(input, ctx, [OWNED_ENTITY_1]);
 
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.entityIds).toEqual(["entity-1"]);
@@ -240,7 +243,7 @@ describe("buildProposeCard — pure helper", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "animate this", entityIds: ["entity-1"], variantSel: {} },
       makeCtx({ sourceGenerationId: "gen-abc123" }),
-      ["entity-1"],
+      [OWNED_ENTITY_1],
     );
     expect(cardPayload.kind).toBe("video");
     expect(cardPayload.entityIds).toEqual([]);
@@ -263,7 +266,7 @@ describe("buildProposeCard — pure helper", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "move like this", entityIds: ["entity-1"], variantSel: { "entity-1": "variant-1" } },
       ctx,
-      ["entity-1"],
+      [OWNED_ENTITY_1],
     );
 
     expect(cardPayload.kind).toBe("video");
@@ -346,9 +349,10 @@ describe("buildProposeCard — pure helper", () => {
       entityIds: ["owned1", "foreign2"],
       variantSel: { "owned1": "var-a", "foreign2": "var-b" },
     };
-    const ownedEntityIds = ["owned1"]; // foreign2 not in owned set
+    // foreign2 not in owned set
+    const ownedEntities = [{ id: "owned1", type: "PRODUCT" as const, name: "Owned one" }];
 
-    const { cardPayload } = buildProposeCard(input, ctx, ownedEntityIds);
+    const { cardPayload } = buildProposeCard(input, ctx, ownedEntities);
 
     expect(cardPayload.entityIds).toEqual(["owned1"]);
     expect(cardPayload.variantSel).toEqual({ "owned1": "var-a" });

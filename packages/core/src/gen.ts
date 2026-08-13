@@ -121,6 +121,8 @@ export function deriveMode(input: {
 export const MAX_GEN_COUNT = 4;
 export const MAX_GEN_PROMPT = 2000;
 export const MAX_GEN_ENTITIES = 8;
+/** 元素名的长度上限(与 Library 表单同一把尺)。只用来给传输层封顶,不做业务判断。 */
+export const MAX_ENTITY_NAME = 120;
 export const GEN_VIDEO_SECONDS = 5;
 export const REFERENCE_VIDEO_MODEL: GenVideoModel = "seedance-2-mini";
 /** Whole-clip reference video window: Seedance needs ≥2s; the upper bound protects COGS
@@ -499,6 +501,20 @@ export const genRequest = z
     // (backward-compat). Both key and value are bounded so a malformed id can
     // never reach the worker and silently spend on a degraded generation.
     variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).optional(),
+    // #774 判官 r2 P1:每个 @元素在**批准那一刻**的名字与类型。引擎认人那几句机器指令
+    // 里的名字只能来自这里 —— 它由铸卡侧写在卡上、商家批准前就看得见,由 `startGen` 落到
+    // `GenJob.approvedEntities`,worker 只读那一列,绝不在付费调用前重读活名称。缺席 =
+    // 这一趟没有获批的名字(旧卡、或非卡入口),worker 照旧编号,只是不写名字。
+    approvedEntities: z
+      .array(
+        z.object({
+          id: z.string().min(1).max(64),
+          type: z.enum(["CHARACTER", "LOCATION", "PRODUCT", "BRANDMARK"]),
+          name: z.string().min(1).max(MAX_ENTITY_NAME),
+        }),
+      )
+      .max(MAX_GEN_ENTITIES)
+      .optional(),
     count: z.number().int().min(1).max(MAX_GEN_COUNT),
     kind: z.enum(GEN_KINDS).default("image"),
     model: z.string().min(1).max(40).default("seedream"),
@@ -534,6 +550,16 @@ export const genRequest = z
     if (v.variantSel) {
       for (const k of Object.keys(v.variantSel)) {
         if (!v.entityIds.includes(k)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["variantSel"], message: "variantSel references an entity that isn't @mentioned" });
+      }
+    }
+    // #774:审批身份只能覆盖这一趟真的 @ 到的元素。多出来的一条身份 = 一条没人 @ 过、
+    // 却会被写进模型指令的名字,所以在能落库之前拒掉(validate-before-spend)。
+    if (v.approvedEntities) {
+      const ids = new Set<string>();
+      for (const e of v.approvedEntities) {
+        if (!v.entityIds.includes(e.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["approvedEntities"], message: "approvedEntities references an entity that isn't @mentioned" });
+        if (ids.has(e.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["approvedEntities"], message: "approvedEntities carries two identities for the same entity" });
+        ids.add(e.id);
       }
     }
     const menu: readonly string[] = v.kind === "video" ? GEN_VIDEO_MODELS : GEN_MODELS;
