@@ -167,6 +167,19 @@ describe("spend cap honesty (decision ①)", () => {
     expect(markup).not.toMatch(/<input[^>]*value="0"/);
   });
 
+  // #524 — the hint is a promise about the charging path, so it is pinned here. It said
+  // "Otto pauses a task over this many credits" while nothing read the setting; #487's honest
+  // pass had to retract that; the cap is enforced in reserveCredits now, so it says so again.
+  // The one thing it must never do is drift back to describing a feature that does not exist.
+  it("tells the truth about what the cap does — a refusal, per action, nothing charged", () => {
+    const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 500 }), "otto", "cap");
+    if (cap.kind !== "number") throw new Error("Expected the spend cap number field");
+    expect(cap.hint).toBe(
+      "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)",
+    );
+    expect(cap.hint).not.toMatch(/doesn't|budget target|yet/i);
+  });
+
   it("renders a saved positive cap as an editable input with Save disabled until it changes", () => {
     const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 500 }), "otto", "cap");
     const markup = renderField("otto", cap);

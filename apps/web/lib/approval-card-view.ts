@@ -14,7 +14,27 @@ import { approvalCardTitleLine, approvalDoneLine, approvalOutcomeLine } from "@f
 import { labelForTool } from "./otto-stream-bridge";
 import { socialPlatformLabel } from "./social-labels";
 
-export type ApprovalCardStatus = "pending" | "approved" | "rejected" | "expired";
+/**
+ * Card lifecycle. `pending` is the only consumable state; everything else is TERMINAL and a card
+ * never returns to `pending` (AR1 处方2 — consent is one-way).
+ *
+ * `failed` (#524 r5, judge r4 P1-A'②) is a terminal state reached only from `approved`: the consent
+ * was spent and the run then died. It exists because "approved" alone is a lie in that case — the
+ * merchant is looking at a card that says yes while nothing was delivered. Forward-only, so the
+ * one-way rule holds.
+ *
+ * #524 r6 (judge r5 P1-A'②): `failed` says nothing about MONEY on its own, and r5's card copy
+ * asserted "nothing was charged" on every one of them. That is not knowable from the LLM refund
+ * alone — a resume executes the approved tool FIRST, so the tool can have created and paid for a
+ * generation before the next model call threw. What was charged is carried separately, in
+ * `chargeVerdict`, and only ever set to `zero` when the ledger PROVED it.
+ */
+export type ApprovalCardStatus = "pending" | "approved" | "rejected" | "expired" | "failed";
+
+/** Every state a card can be READ BACK in once it is no longer awaiting the merchant. Derived, so
+ *  a new terminal state can never be added to the lifecycle above without every surface that
+ *  reports one having to acknowledge it (#524 r5). */
+export type ApprovalCardResolution = Exclude<ApprovalCardStatus, "pending">;
 
 /** What the user is consenting to (enriched server-side at park time, owner-scoped read). */
 export type ApprovalCardSummary = {
@@ -35,6 +55,38 @@ export type ApprovalCardPayload = {
   contentHash?: string | null;
   /** ISO instant after which the ASK is no longer confirmable (APPROVAL_CARD_TTL_MS). */
   expiresAt?: string | null;
+  /**
+   * Which try at approving this card we are on — 1-based, server-generated, absent = 1 (#524 r5,
+   * judge r4 P1-A'①).
+   *
+   * The resume turn's reservation is keyed by it (`…:a<attempt>`), and the ledger's
+   * `reserve:<refId>` idempotency key is globally unique. Before this field, every try at one card
+   * reused ONE refId: an attempt that reserved, refunded, and left the card pending made the next
+   * try collide (P2002) forever — the card said "Try again" and the ledger made that impossible.
+   * A try that burned its refId bumps this, so the merchant's next click reserves under a fresh
+   * one. Two clicks INSIDE one attempt still share a refId and stay idempotent: the second one's
+   * reserve loses on that unique key and is answered benignly, having moved nothing.
+   *
+   * #524 r6 (judge r5 P1-A'①): this is a FAST PATH, not the authority. The attempt a retry actually
+   * reserves under is derived from the LEDGER (`finalizedReservations`), which cannot be left stale
+   * by a crash or a failed write the way this field can, and which is also right for the cards
+   * minted before this field existed.
+   */
+  attempt?: number;
+  /**
+   * Only meaningful on a `failed` card: what the ledger could PROVE about this action's charges
+   * (#524 r6, judge r5 P1-A'②).
+   *
+   * `"zero"` — proven free: this turn's hold was refunded in full AND no other credit was held for
+   * this org from the moment that hold was taken, so no leg of the action charged anything.
+   * `"unknown"` — not proven. Something else was held in that window (the approved tool may have
+   * run and paid before the failure), or the ledger could not be read. Absent reads as `"unknown"`:
+   * the fail-closed direction is the sentence that promises the merchant less.
+   *
+   * It exists because the two cases need DIFFERENT words, and only one of them may say "nothing was
+   * charged". Guessing that sentence is worse than not saying it.
+   */
+  chargeVerdict?: "zero" | "unknown";
 };
 
 /** Structural parse of an unknown durable payload — null when it isn't an approval card. */
@@ -43,7 +95,9 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
   const p = v as Record<string, unknown>;
   if (typeof p.toolName !== "string" || typeof p.ref !== "string") return null;
   const status =
-    p.status === "approved" || p.status === "rejected" || p.status === "expired" ? p.status : "pending";
+    p.status === "approved" || p.status === "rejected" || p.status === "expired" || p.status === "failed"
+      ? p.status
+      : "pending";
   let summary: ApprovalCardSummary | null = null;
   const s = p.summary as Record<string, unknown> | null | undefined;
   if (s && typeof s === "object" && typeof s.channel === "string" && typeof s.caption === "string") {
@@ -62,7 +116,43 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
     summary,
     contentHash: typeof p.contentHash === "string" ? p.contentHash : null,
     expiresAt: typeof p.expiresAt === "string" ? p.expiresAt : null,
+    // A missing / malformed attempt reads as 1 — every card minted before #524 r5 is on its first
+    // try, and a corrupt value must not be able to invent a refId nobody can reason about.
+    attempt: Number.isInteger(p.attempt) && (p.attempt as number) >= 1 ? (p.attempt as number) : 1,
+    // Anything but a literal proof reads as "unknown" — the arm whose sentence claims less.
+    chargeVerdict: p.chargeVerdict === "zero" ? "zero" : "unknown",
   };
+}
+
+/**
+ * The one sentence a resolved card puts in front of the merchant, so the card, the approve
+ * response and the thread note cannot drift into three different claims (#524 r6).
+ *
+ * `failed` is the only status whose words depend on money, and it has exactly two: the proven one
+ * and the honest one. "Nothing was charged" is said only when `chargeVerdict === "zero"`; otherwise
+ * the merchant is told what is actually true — part of it may have been paid for — and where to
+ * look (Billing is where the product lists charges; see CHAT_SPEND_NOTE).
+ */
+export function approvalCardResolutionText(payload: ApprovalCardPayload): string | null {
+  switch (payload.status) {
+    case "approved":
+      // #851 landed while #524 was in flight and moved this sentence to the publish authority:
+      // hardcoding it here made the card say "it will publish as scheduled" one line under a
+      // detail line reading "nothing is sent". Delegating to the view keeps ONE approved sentence
+      // for the card, the approve response and the thread note — and it stays right when the
+      // publish switch flips, which a literal here never could.
+      return approvalCardView(payload).approvedLine;
+    case "rejected":
+      return "Declined — nothing was published.";
+    case "expired":
+      return "This request expired — ask Otto to request approval again.";
+    case "failed":
+      return payload.chargeVerdict === "zero"
+        ? "Approved, but it couldn't run — nothing was charged. Ask Otto to set it up again."
+        : "Approved, but it couldn't finish — part of it may already have been charged. Check Billing, then ask Otto to set it up again.";
+    default:
+      return null;
+  }
 }
 
 const CAPTION_EXCERPT_MAX = 180;

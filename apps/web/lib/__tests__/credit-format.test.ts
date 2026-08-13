@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatCredits, creditsLabel } from "../credit-format";
+import { formatCredits, creditsLabel, spendCapBlockedMessage } from "../credit-format";
 
 describe("formatCredits", () => {
   it("keeps up to 1 decimal for sub-1000 balances (fractional credits are real signal)", () => {
@@ -41,5 +41,31 @@ describe("creditsLabel", () => {
     expect(creditsLabel(0.4)).toBe("0.4 credits");
     expect(creditsLabel(20)).toBe("20 credits");
     expect(creditsLabel(12345)).toBe("12,345 credits");
+  });
+});
+
+// #524 — the sentence a merchant reads when their OWN cap stopped an action. The whole point
+// of the ticket is that the product's words and the charging path agree, so the words are
+// pinned: both real numbers, and the exit is the setting they can move, never a top-up.
+describe("spendCapBlockedMessage", () => {
+  it("names what the action needed, what the cap is, and where the cap lives", () => {
+    expect(spendCapBlockedMessage(11, 5)).toBe(
+      "Paused by your spend cap — this needs 11 credits and your cap is 5 credits per action. Raise the cap in Settings to run it.",
+    );
+  });
+
+  it("never sends a capped merchant to Billing — they are not short of credits", () => {
+    const message = spendCapBlockedMessage(11, 5);
+    expect(message).not.toMatch(/top up|billing/i);
+  });
+
+  it("singularizes a 1-credit cap like every other credit amount", () => {
+    expect(spendCapBlockedMessage(2, 1)).toContain("your cap is 1 credit per action");
+  });
+
+  it("says so plainly when the cap could not be read, and confirms nothing was charged", () => {
+    expect(spendCapBlockedMessage(11, null)).toBe(
+      "Paused — your spend cap couldn't be read, so nothing was charged. Try again in a moment.",
+    );
   });
 });
