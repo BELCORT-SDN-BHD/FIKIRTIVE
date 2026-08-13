@@ -15,8 +15,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const m = vi.hoisted(() => ({ findMany: vi.fn() }));
-vi.mock("@fikirtive/db", () => ({ prisma: { workerHeartbeat: { findMany: m.findMany } } }));
+// #794 ③:存活端点现在读两样东西 —— 心跳,以及最近一次成功备份。两个都要能被这里
+// 换成「炸的 / 永不回话的」,否则备份那次读会在这些用例里走一条测不到的路。
+const m = vi.hoisted(() => ({ findMany: vi.fn(), findFirst: vi.fn() }));
+vi.mock("@fikirtive/db", () => ({
+  prisma: { workerHeartbeat: { findMany: m.findMany }, backupRun: { findFirst: m.findFirst } },
+}));
 
 /** 每个用例拿一份全新的路由模块(连同它模块级的 single-flight)。 */
 const loadRoute = async () => (await import("../route")).GET;
@@ -24,20 +28,27 @@ const loadRoute = async () => (await import("../route")).GET;
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  // 默认:备份那次读跟着心跳一起「库正常」,除非用例另行安排。
+  m.findFirst.mockResolvedValue(null);
 });
 
 describe("GET /api/health 在下游出事时(判官 r2 P1-2)", () => {
   it("数据库不可达 → 仍然 200,db 如实写 unknown", async () => {
     m.findMany.mockRejectedValue(new Error("connection refused"));
+    m.findFirst.mockRejectedValue(new Error("connection refused"));
     const GET = await loadRoute();
     const res = await GET();
     expect(res.status).toBe(200); // ← 整条判词的要害:绝不是 503
     const body = await res.json();
     expect(body).toMatchObject({ ok: true, db: "unknown", worker: "unknown", workers: {} });
+    // #794 ③:读不到 ≠ 从来没备份过。库故障必须报 unknown,绝不能报成 missing ——
+    // 后者是「一次也没成功过」,是最该被看见、也最不该被一次连接错误伪造出来的状态。
+    expect(body.backup).toBe("unknown");
   });
 
   it("数据库挂住(不回话)→ 到点也回 200,不把探针一起拖到超时", async () => {
     m.findMany.mockImplementation(() => new Promise(() => {})); // 永不 settle
+    m.findFirst.mockImplementation(() => new Promise(() => {}));
     const GET = await loadRoute();
     const started = Date.now();
     const res = await GET();
@@ -61,6 +72,7 @@ describe("GET /api/health 在下游出事时(判官 r2 P1-2)", () => {
 describe("库持续挂住时,探针不许把连接池吃光(判官 r3 P2-1)", () => {
   it("100 次探针只发起 1 次查询 —— 而不是积 100 个永不结束的任务", async () => {
     m.findMany.mockImplementation(() => new Promise(() => {})); // 永不 settle
+    m.findFirst.mockImplementation(() => new Promise(() => {}));
     const GET = await loadRoute();
 
     // 判官造的形状:库挂着,探针照来。并发 100 次(同一秒里挤进来)。
@@ -72,6 +84,8 @@ describe("库持续挂住时,探针不许把连接池吃光(判官 r3 P2-1)", ()
 
     // ← single-flight 之前这里会是 105,每一个都占着一条连接不放。
     expect(m.findMany).toHaveBeenCalledTimes(1);
+    // #794 ③ 加进来的第二次读走同一条纪律 —— 否则它自己就变成新的连接池杀手。
+    expect(m.findFirst).toHaveBeenCalledTimes(1);
   }, 30_000);
 
   it("库恢复之后不需要任何额外动作:下一次探针重新发起查询并报 up", async () => {
