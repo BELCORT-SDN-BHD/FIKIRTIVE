@@ -125,15 +125,16 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
                     <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                       {r.source === "otto" ? "✦ Otto learned" : "You added"}
                     </span>
-                    <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => setEditingId(r.id)}>✎</button>
-                    <button
+                    <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setEditingId(r.id)}>✎</Button>
+                    <Button
                       type="button"
-                      className="text-[0.75rem] text-muted-foreground hover:text-foreground whitespace-nowrap"
+                      variant="ghost"
+                      className="h-auto w-auto whitespace-nowrap p-0 text-[0.75rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
                       onClick={() => void onArchive(r.id, r.data, archived ? "active" : "archived")}
                     >
                       {archived ? "Unarchive" : "Archive"}
-                    </button>
-                    <button type="button" aria-label="Delete" className="text-muted-foreground hover:text-foreground" onClick={() => void onDelete(r.id)}>🗑</button>
+                    </Button>
+                    <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onDelete(r.id)}>🗑</Button>
                   </div>
                   <span className="text-[0.875rem] leading-[1.45] text-muted-foreground">{d.who}</span>
                   {d.pains && <span className="text-[0.8125rem] leading-[1.45] text-muted-foreground">Pains: {d.pains}</span>}
@@ -165,8 +166,8 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
                 <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                   {n.source === "otto" ? "✦ Otto learned" : "You added"}
                 </span>
-                <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</button>
-                <button type="button" aria-label="Delete" className="text-muted-foreground hover:text-foreground" onClick={() => void onNoteDelete(n.id)}>🗑</button>
+                <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</Button>
+                <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onNoteDelete(n.id)}>🗑</Button>
               </div>
             )}
           </div>
@@ -188,7 +189,7 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
           {activeCount >= 6 && (
             <p className="text-[0.75rem] text-muted-foreground mb-1.5">Tip: keep groups few — archive one before adding more.</p>
           )}
-          <button type="button" className="text-[0.8125rem] text-muted-foreground hover:text-foreground" onClick={() => setAdding(true)}>+ Add a customer group</button>
+          <Button type="button" variant="ghost" className="h-auto w-auto p-0 text-[0.8125rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setAdding(true)}>+ Add a customer group</Button>
         </div>
       )}
     </section>
