@@ -513,6 +513,12 @@ model GenJob {
   // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
   // null/absent = base refs for all mentions (backward-compat with old rows)
   variantSel         Json?
+  /// #774:审批那一刻冻结的元素身份 —— [{ id, type, name }],次序 = entityIds 次序。
+  /// 引擎认人那几句机器指令里的名字**只能**来自这里:元素名是商家随时可改的自由文本,
+  /// worker 若在付费调用前现读,改一次名就能把没过审批的指令送进已经批准的那次付费调用。
+  /// null = 旧行 / 这一趟没有获批的名字 → worker 照旧编号,只是不写名字(降级方向是
+  /// 少一个名字,不是多一条没批准的指令)。不参与幂等材料。
+  approvedEntities   Json?
   // 双提交幂等：shot 绑定生成的稳定键（"frame:<shotId>:<slot>" / "animate:<shotId>"）。
   // startGen 命中同键的在途(QUEUED/GENERATING)任务则复用，重载再点不二次扣费。
   idempotencyKey     String?

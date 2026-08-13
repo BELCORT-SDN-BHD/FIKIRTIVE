@@ -470,19 +470,21 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
   });
 
   // ===================================================================================
-  // 微修轮 v5 · NODE-282-R4①(数据流完备清扫的点名实例):ownedIds 不得在锁前派生。
+  // 微修轮 v5 · NODE-282-R4①(数据流完备清扫的点名实例):owned 集不得在锁前派生。
   // 形态:s0 引用 e0+e1;prepare 启动时 owned 集只有 e0,在等锁期间变为 {e0,e1}(如另一
-  // session 完成实体创建)。锁后派生(v5)→ 铸卡收到 ["e0","e1"](buildProposeCard 第三实参
-  // =写路径入参);锁前派生(v4)→ 铸卡吃到过期的 ["e0"]。
+  // session 完成实体创建)。锁后派生(v5)→ 铸卡收到两个元素(buildProposeCard 第三实参
+  // =写路径入参);锁前派生(v4)→ 铸卡吃到过期的一个。
+  // #774:第三实参从「id 数组」变成「带名字与类型的身份数组」—— 名字要跟归属同一趟读出来
+  // 才能冻结到卡上,所以这条锁后派生的纪律现在连名字一起管。
   // ===================================================================================
-  it("R4① 回归:等锁期间 owned-entity 集变化 → 锁后按新集派生 ownedIds 进铸卡(不吃锁前快照)", async () => {
+  it("R4① 回归:等锁期间 owned-entity 集变化 → 锁后按新集派生 owned 身份进铸卡(不吃锁前快照)", async () => {
     const p = payload3();
     p.shots[0].entityIds = ["e0", "e1"]; // s0 references two entities
     p.shots[2].firstFrameGenerationId = "gen2"; // isolate: only s0 mints
     wireLoads(card(p));
 
     // The owned-entity set CHANGES while prepare waits for the lock.
-    let ownedRows = [{ id: "e0" }]; // at call time: only e0 owned
+    let ownedRows = [{ id: "e0", type: "PRODUCT", name: "Bottle" }]; // at call time: only e0 owned
     mockEntityFindMany.mockImplementation(async () => ownedRows);
 
     // An in-flight card writer holds the lock (manual mutex entry, same map the tx mock uses).
@@ -492,17 +494,22 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     const prepP = prepareStoryboardFirstFrames({ cardId: "card-1" });
     await new Promise((r) => setTimeout(r, 0)); // let prepare park on the lock
 
-    ownedRows = [{ id: "e0" }, { id: "e1" }]; // e1 becomes owned DURING the lock wait
+    // e1 becomes owned DURING the lock wait
+    ownedRows = [{ id: "e0", type: "PRODUCT", name: "Bottle" }, { id: "e1", type: "CHARACTER", name: "Mia" }];
     releaseLock();
 
     const res = await prepP;
     if (!("children" in res)) throw new Error("expected children");
 
-    // ownedIds was derived AFTER the lock → the mint (buildProposeCard 3rd arg = the
+    // The owned set was derived AFTER the lock → the mint (buildProposeCard 3rd arg = the
     // owned-entity write-path input) received the NEW set, not the pre-lock snapshot.
+    // #774:名字与类型也一起进去了 —— 卡上冻结的就是这一刻的身份。
     expect(mockChatCreate).toHaveBeenCalledTimes(1); // s0 minted once
     const ownedArg = mockBuildProposeCard.mock.calls[0][2];
-    expect(ownedArg).toEqual(["e0", "e1"]);
+    expect(ownedArg).toEqual([
+      { id: "e0", type: "PRODUCT", name: "Bottle" },
+      { id: "e1", type: "CHARACTER", name: "Mia" },
+    ]);
     expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
   });
 

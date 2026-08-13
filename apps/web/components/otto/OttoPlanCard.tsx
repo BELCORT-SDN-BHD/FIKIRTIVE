@@ -14,6 +14,10 @@ import type { CardState } from "@/lib/otto-inject-helpers";
 // The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
 // gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
 import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
+// #774 判官 r2 P1 —— 卡上那行「引擎会被告知这些照片是谁」的措辞,与真正送出去的名字
+// 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。走**子路径**而不是包根:
+// `@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
+import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 
 /** What a successful approve hands up. Carries the EXACT card it happened on plus the
  *  SERVER's own result — the parent never has to infer either from a closure or from a
@@ -125,6 +129,7 @@ export function OttoPlanCard({
   // derivations of one fact is exactly how the card came to promise things the
   // generator never received (#580 复审 r1 P1-2).
   const specChips = p.specChips ?? [];
+  const referenceNamesNote = approvedEntitiesNote(p.approvedEntities ?? []);
   // The card's honest run state. `working` maps to "queued": the card knows a job was
   // created, not that it started — so it must not say "making this now" (P1-3).
   const runState = runStateOfCard(cardState);
@@ -347,6 +352,16 @@ export function OttoPlanCard({
                 {chip}
               </span>
             ))}
+          </div>
+        )}
+
+        {/* #774 —— 引擎认人用的那几个名字,商家在花钱之前就看得见。卡上写的这几个字
+            就是付费提示词里那几个字:名字冻结在这张卡上,批准之后谁也改不动它,worker
+            只认这一份(改名不会偷偷换掉已经批准的指令)。老卡没有这份快照 → 不显示这行,
+            而不是猜一个。 */}
+        {referenceNamesNote && (
+          <div className="mt-[9px] text-[0.75rem] text-muted-foreground">
+            {referenceNamesNote}
           </div>
         )}
 

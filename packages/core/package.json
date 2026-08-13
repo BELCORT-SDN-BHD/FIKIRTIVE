@@ -72,6 +72,10 @@
       "types": "./dist/provider-secrecy.d.ts",
       "default": "./dist/provider-secrecy.js"
     },
+    "./reference-budget": {
+      "types": "./dist/reference-budget.d.ts",
+      "default": "./dist/reference-budget.js"
+    },
     "./refgen": {
       "types": "./dist/refgen.d.ts",
       "default": "./dist/refgen.js"

@@ -274,13 +274,28 @@ describe("真实 POST 并发峰值(判官 P1-1 的最坏形状)", () => {
   });
 });
 
+/**
+ * 供应商的视频轮询间隔是**真的 5 秒**(byteplus.ts 的 `#videoTask` 里那个 `setTimeout(5_000)`),
+ * 而且整段轮询都跑在闸门的位子里。所以这一组用**假时钟**跑:时间由测试身体一格一格推,
+ * 每推 5000ms 就等于给每个在途任务发一轮轮询。
+ *
+ * 这么写不只是为了快。老写法让「任务什么时候完成」取决于一场比赛 —— 假 fetch 里一个 1ms
+ * 的定时器和测试身体里一个 5ms 的 flush 抢先,谁先到谁说了算,于是每一轮 5 秒都是一次掷硬币,
+ * 尾巴长到能顶穿 40 秒超时。现在假 fetch 只**同步查表**:测试身体放行了就 succeeded,没放行
+ * 就 running。没有比赛,也就没有偶发。
+ */
 describe("视频任务按整个任务占位,不是只占提交那一下", () => {
+  // 假时钟只属于这一组。本文件其余用例全靠真定时器过日子,漏出去就是一片挂起。
+  afterEach(() => { vi.useRealTimers(); });
+
   it("并发视频任务数不超过闸门上限,且轮询期间位子仍被占着", async () => {
+    vi.useFakeTimers();
     __setProviderRequestGateForTests(new RequestGate(2));
     let submits = 0;
     let concurrentTasks = 0;
     let peakTasks = 0;
-    const release: (() => void)[] = [];
+    /** 测试身体显式放行的任务 id —— 假 fetch 只读这张表,自己一个定时器都不起。 */
+    const released = new Set<string>();
 
     globalThis.fetch = (async (url: unknown) => {
       const href = String(url);
@@ -290,11 +305,12 @@ describe("视频任务按整个任务占位,不是只占提交那一下", () => 
         if (concurrentTasks > peakTasks) peakTasks = concurrentTasks;
         return { ok: true, status: 200, json: async () => ({ id: `task-${submits}` }) } as unknown as Response;
       }
-      if (href.includes("/contents/generations/tasks/")) {
-        // Stay "running" until this task is explicitly released — that is the window in which the
-        // account slot must remain held.
-        const finished = await new Promise<boolean>((resolve) => { release.push(() => resolve(true)); setTimeout(() => resolve(false), 1); });
-        if (!finished) return { ok: true, status: 200, json: async () => ({ status: "running" }) } as unknown as Response;
+      const polled = href.match(/\/contents\/generations\/tasks\/(.+)$/);
+      if (polled) {
+        // 没被放行就一直报 running —— 那正是位子必须一直被占着的那段窗口。
+        if (!released.has(polled[1]!)) {
+          return { ok: true, status: 200, json: async () => ({ status: "running" }) } as unknown as Response;
+        }
         concurrentTasks--;
         return { ok: true, status: 200, json: async () => ({ status: "succeeded", content: { video_url: "https://cdn.test/v.mp4" } }) } as unknown as Response;
       }
@@ -302,21 +318,43 @@ describe("视频任务按整个任务占位,不是只占提交那一下", () => 
     }) as unknown as typeof fetch;
 
     const provider = new BytePlusProvider("ark-test-key");
-    // 4 tasks over 2 slots = two rounds. The poll interval inside the provider is 5s, so this
-    // suite is inherently a ~10s wall-clock test; the generous timeout below is for CI load,
-    // not for a slow assertion.
     const tasks = Array.from({ length: 4 }, () =>
       provider.generateVideo({ prompt: "move", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" }));
+    // 先把汇总处理器挂上:万一中途某条断言先炸,这 4 个 promise 也不会变成没人接的拒绝。
+    const settled = Promise.allSettled(tasks);
 
-    // Let the first batch submit and start polling, then let everything finish.
-    await new Promise((r) => setTimeout(r, 60));
-    expect(submits).toBeLessThanOrEqual(2); // only two tasks may exist at once
-    for (const r of release.splice(0)) r();
-    const flush = setInterval(() => { for (const r of release.splice(0)) r(); }, 5);
-    await Promise.all(tasks);
-    clearInterval(flush);
+    // 起跑:闸门 2 个位子,所以同一时刻只可能存在 2 个任务。
+    await vi.advanceTimersByTimeAsync(0);
+    expect(submits).toBe(2);
+    expect(concurrentTasks).toBe(2);
 
+    // 整整两轮轮询过去,前两个任务都没被放行 —— 它们报 running,位子照旧被占着,
+    // 于是第 3、4 个任务一个也提交不出去。这就是本用例真正要证的那句话:
+    // 位子是按**整个任务**占的,不是只占提交那一下。
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(submits).toBe(2);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(submits).toBe(2);
+    expect(concurrentTasks).toBe(2);
+    expect(peakTasks).toBe(2);
+
+    // 放行前两个:下一轮轮询它们读到 succeeded,下载完、归还位子,3、4 才轮得上。
+    released.add("task-1");
+    released.add("task-2");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(submits).toBe(4);
+    expect(concurrentTasks).toBe(2); // 位子上换成了 3、4
+
+    // 放行后两个收尾。全程假时间 20 秒,离 15 分钟的轮询死线远得很。
+    released.add("task-3");
+    released.add("task-4");
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    const outcomes = await settled;
+    expect(outcomes.map((o) => (o.status === "fulfilled" ? "ok" : String((o as PromiseRejectedResult).reason))))
+      .toEqual(["ok", "ok", "ok", "ok"]);
     expect(submits).toBe(4);
     expect(peakTasks).toBeLessThanOrEqual(2);
-  }, 40_000);
+    expect(concurrentTasks).toBe(0); // 位子全归还了
+  });
 });
