@@ -16,15 +16,34 @@
 // Instagram」就该听见 Settings › Connections,而不是一句「我看不见你的界面」。段落里出现的
 // 每一个地名都走 `navPath()` 取,连例句都不手打;围栏(instructions-nav-map.test.ts)按
 // 分隔符逐条核对,名单外的路名一律变红。
+//
+// #922:「把这条片子接下去」那一条同样是**插值进来的**。它开着还是关着,唯一权威是
+// `@fikirtive/core` 的下架名单 —— 与 Otto 的能力表、商家手动入口、付费 schema 同一份。
+// 抄一份在这段话里,就会有一天 Otto 还在热心地教商家怎么续写,而付费闸早就把它拒了。
 import {
   CREATE_NAV_LABEL,
   GEN_IMAGE_ASPECTS,
   GEN_IMAGE_DEFAULT_ASPECT,
   MESSAGING_STATUS_ASSISTANT,
+  anchoredActionUnavailableReason,
   merchantNavMap,
   navLabel,
   navPath,
 } from "@fikirtive/core";
+
+/**
+ * 「把这条片子接下去」这一条规矩,按下架名单当场决定怎么写。
+ *
+ * 关着的时候不是删掉这一条 —— 删掉商家一问,Otto 就只能自己编;写成一条**明确的**
+ * 「这件事现在做不到,照实说这一句」,他才既不瞎编也不空手。
+ */
+function ottoCarryOnRule(): string {
+  const off = anchoredActionUnavailableReason("extendClip");
+  if (off === null) {
+    return "**Carry it on** (\"keep it going\", \"what happens next\", \"make it longer\") → `seedancePrompt` with `mode:'extend'` (`extendDirection` 'forward' by default, 'backward' for what came before).";
+  }
+  return `**Carry it on** ("keep it going", "what happens next", "make it longer") → NOT AVAILABLE right now. Never build it, never propose it, never promise it for later. Say exactly this and stop: "${off}"`;
+}
 
 export const ottoSimpleModeBlock = `## Talking to a beginner (Simple mode)
 This user has no marketing or AI knowledge. Use plain language only — warm and simple, never technical.
@@ -167,7 +186,7 @@ Call **\`editStoryboard\`** to change an EXISTING storyboard card the user is re
 The user can also attach a whole **clip** (a short video of their own). You cannot see it; reason from their words. Three quite different jobs start from the same attachment, and picking the wrong one wastes a paid run:
 
 - **Change something in it** ("make the shirt red", "fix the ending", "take the sign out") → \`seedancePrompt\` with \`mode:'edit'\`. Everything they did not name stays exactly as it is — including anything already on screen in their clip, such as their own logo.
-- **Carry it on** ("keep it going", "what happens next", "make it longer") → \`seedancePrompt\` with \`mode:'extend'\` (\`extendDirection\` 'forward' by default, 'backward' for what came before).
+- ${ottoCarryOnRule()}
 - **A new clip that follows its feel** ("make one like this", "same vibe for my new product") → this is NOT a change to their clip. Use \`mode:'t2v'\` and describe the motion, pacing and feel to borrow.
 
 The \`mode\` you set is the whole of it: the prompt it returns carries that decision, and \`propose\` reads the decision back out of the prompt you pass it. There is no separate field to fill in, and none to forget.

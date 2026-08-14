@@ -185,16 +185,33 @@ describe("#775 判官 r7 —— 锚定请求的形状,一路走到适配器都�
     CASE_TIMEOUT_MS,
   );
 
+  /**
+   * #922 —— 续写在 beta 期间下架(Founder 裁决 2026-08-14)。
+   *
+   * 这一条原本与上面那条同形(形状一路走到适配器)。现在它证的是**更前面**的一件事:
+   * 这条链子在 `startGen` 就断了 —— 没有 GenJob、没有预扣、`generateVideo` 一次都没被调到。
+   * 断言链子的下游而不是只断言一个错误字符串,是因为「拒绝了」和「没花钱」是两件事,
+   * 而挡 beta 的是后面那一件。恢复条件:#922 缺口 B 裁决落地(删掉 core 下架名单那一行),
+   * 到时候这一条会红,提醒把它改回上面那个形状。
+   */
   it(
-    "续写:官方句式 + 真 clip + 不传 aspect ⇒ 库里冻的是 adaptive,适配器实收 adaptive",
+    "续写:官方句式 + 真 clip ⇒ startGen 当场拒,一个 GenJob 都不建、一次付费调用都没有(#922)",
     async () => {
       const clip = await seedClip();
-      const { persisted, received } = await aspectThroughTheWholeChain({
+      const before = await prisma.genJob.count({ where: { ownerId } });
+      const started = await startGen({
+        projectId,
+        kind: "video",
+        model: MODEL,
+        count: 1,
+        entityIds: [],
+        idempotencyKey: `probe:${randomUUID()}`,
         prompt: EXTEND_PROMPT,
         referenceVideoGenerationId: clip,
       });
-      expect(persisted).toBe(VIDEO_ASPECT_ADAPTIVE);
-      expect(received).toBe(VIDEO_ASPECT_ADAPTIVE);
+      expect("error" in started, "续写必须被拒").toBe(true);
+      expect(await prisma.genJob.count({ where: { ownerId } })).toBe(before);
+      expect(w.generateVideo).not.toHaveBeenCalled();
     },
     CASE_TIMEOUT_MS,
   );

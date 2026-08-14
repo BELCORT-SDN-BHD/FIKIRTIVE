@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { anchoredActionUnavailableReason } from "@fikirtive/core";
 import {
   VIDEO_ACTION_IDS,
   VIDEO_ACTIONS,
   VIDEO_CRAFT,
   videoActionsFor,
   videoAction,
+  videoActionUnavailableReason,
   actionNeedsClip,
   openingForTeaching,
   videoActionFromPrompt,
@@ -46,8 +48,8 @@ describe("能力表按**收到什么**开门 —— 形状不对的动作永远�
     expect(videoActionsFor(STILL_PAIR)).toEqual(["stillToStill"]);
   });
 
-  it("给了一整条片子:改它 / 接下去 / 照着它做,三件事都开门", () => {
-    expect(videoActionsFor(CLIP)).toEqual(["editClip", "extendClip", "guideFromClip"]);
+  it("给了一整条片子:改它 / 照着它做 —— 接下去在 beta 期间下架,不在候选里(#922)", () => {
+    expect(videoActionsFor(CLIP)).toEqual(["editClip", "guideFromClip"]);
   });
 
   it("剪辑与续写**只有**拿到整条片子才成立(这是它们与其它动作的唯一分界)", () => {
@@ -161,5 +163,42 @@ describe("创作能力表 —— 每一格都必须有一个真字段撑着(不�
 
   it("每一格都有一句给 Otto 读的人话", () => {
     for (const row of VIDEO_CRAFT) expect(row.does.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #922 —— beta 期间下架名单在能力表上的落点
+// ---------------------------------------------------------------------------
+
+/**
+ * Founder 裁决(2026-08-14):beta 期间下架续写,剪辑保留。名单住在 `@fikirtive/core`
+ * (付费 schema 与商家手动入口读的是同一份),能力表这一侧只是把它接进来。
+ *
+ * 这一组要钉的是「接进来了,而且没在这里另抄一份」:能力表说关着的那个动作,与 core
+ * 的名单**逐字**同一句话。抄一份,某天 Otto 还在提而付费闸已经拒,商家撞见的是批准之后
+ * 的一次失败。
+ */
+describe("#922 —— 下架名单在能力表上的落点", () => {
+  it("续写关着、剪辑开着,而且那句话与 core 的名单逐字同一份", () => {
+    expect(videoActionUnavailableReason("extendClip")).toBe(anchoredActionUnavailableReason("extendClip"));
+    expect(videoActionUnavailableReason("extendClip")).not.toBeNull();
+    expect(videoActionUnavailableReason("editClip")).toBeNull();
+  });
+
+  it("不锚在商家片子上的那几档与这次裁决无关,一律开着", () => {
+    for (const id of ["fromText", "animateStill", "stillToStill", "guideFromClip"] as const) {
+      expect(videoActionUnavailableReason(id)).toBeNull();
+    }
+  });
+
+  it("下架只关**候选**,不动这一行本身 —— 官方句式、禁词、形状判定一个字没改", () => {
+    // 恢复的那一天靠的就是这一行还在:名单一删,它当场回到候选里。
+    expect(videoAction("extendClip").opening).toBe(`Extend ${VIDEO_CLIP_TOKEN}`);
+    expect(videoAction("extendClip").needs(CLIP)).toBe(true);
+    expect(actionNeedsClip("extendClip")).toBe(true);
+  });
+
+  it("认字那一端也一个字没改 —— 认不出续写,付费闸就拒不了残留卡", () => {
+    expect(videoActionFromPrompt(`${videoAction("extendClip").opening} forward, he waves.`)).toBe("extendClip");
   });
 });

@@ -76,11 +76,16 @@ describe("锚定请求:从 schema 到 GenJob,形状全程跟着商家那条片�
       expect(out).not.toMatchObject({ rejected: false, aspectRatio: "16:9" });
     });
 
-    it(`${name}:显式 adaptive ⇒ 全程 adaptive`, () => {
+    // #922:续写在 beta 期间下架(Founder 裁决 2026-08-14),所以它在 schema 那一层
+    // 就停住了 —— 「跟着片子走的形状」对它不再有下文。剪辑照旧全程 adaptive。
+    // 恢复条件是缺口 B 裁决落地;名单一删,这条分支自己回到 adaptive 那一支。
+    it(`${name}:显式 adaptive ⇒ ${name === "剪辑" ? "全程 adaptive" : "下架后 schema 当场拒(#922)"}`, () => {
       const out = aspectThatReachesTheEngine(
         videoRequest({ prompt, referenceVideoGenerationId: "gen_vid", aspectRatio: VIDEO_ASPECT_ADAPTIVE }),
       );
-      expect(out).toEqual({ rejected: false, aspectRatio: VIDEO_ASPECT_ADAPTIVE });
+      expect(out).toEqual(
+        name === "剪辑" ? { rejected: false, aspectRatio: VIDEO_ASPECT_ADAPTIVE } : { rejected: true },
+      );
     });
 
     it(`${name}:显式 16:9 ⇒ schema 当场拒,归一化根本轮不到`, () => {

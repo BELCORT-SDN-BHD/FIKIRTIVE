@@ -99,6 +99,10 @@
     "./upload": {
       "types": "./dist/upload.d.ts",
       "default": "./dist/upload.js"
+    },
+    "./video-actions": {
+      "types": "./dist/video-actions.d.ts",
+      "default": "./dist/video-actions.js"
     }
   },
   "scripts": {

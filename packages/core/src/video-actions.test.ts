@@ -7,9 +7,11 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  ANCHORED_ACTION_UNAVAILABLE,
   VIDEO_CLIP_TOKEN,
   VIDEO_EDIT_OPENING,
   VIDEO_EXTEND_OPENING,
+  anchoredActionUnavailableReason,
   anchoredVideoAction,
   isAnchoredVideoPrompt,
 } from "./video-actions.js";
@@ -73,5 +75,39 @@ describe("只在开头才算,普通提示词一律 null", () => {
       expect(anchoredVideoAction(p)).toBeNull();
       expect(isAnchoredVideoPrompt(p)).toBe(false);
     }
+  });
+});
+
+/**
+ * #922 缺口 B 前置 —— beta 期间的下架名单。
+ *
+ * 名单是**唯一**权威:Otto 的能力表、商家手动入口、以及付费 schema 都从这里读。
+ * 所以这一组只证名单本身说得清、说得一致 —— 三处「真的读了它」由各自那一层的
+ * 测试证(`video-capabilities.test.ts` / `clip-manual-entry.test.ts` /
+ * `anchored-spend-gate.test.ts`),这里不代它们签字。
+ */
+describe("#922 —— 下架名单", () => {
+  it("续写关着,剪辑开着", () => {
+    expect(anchoredActionUnavailableReason("extendClip")).not.toBeNull();
+    expect(anchoredActionUnavailableReason("editClip")).toBeNull();
+  });
+
+  it("关着的那一句是给商家看的人话:说清关了什么、还剩什么,且不出现供应商名", () => {
+    const said = anchoredActionUnavailableReason("extendClip")!;
+    expect(said.length).toBeGreaterThan(0);
+    // 还剩什么必须说 —— 只说「不行」等于把商家推到猜。
+    expect(said.toLowerCase()).toContain("clip");
+    expect(said.toLowerCase()).not.toMatch(/seedance|byteplus|ark|volc|credit/);
+  });
+
+  it("名单只收锚定那两档 —— 表上不许出现别的 key", () => {
+    for (const key of Object.keys(ANCHORED_ACTION_UNAVAILABLE)) {
+      expect(["editClip", "extendClip"]).toContain(key);
+    }
+  });
+
+  it("下架不影响**认字**:那段字仍然被认成续写(认错了,付费闸就拒不了它)", () => {
+    expect(anchoredVideoAction(`${VIDEO_EXTEND_OPENING} forward, he waves.`)).toBe("extendClip");
+    expect(isAnchoredVideoPrompt(`${VIDEO_EXTEND_OPENING} forward, he waves.`)).toBe(true);
   });
 });

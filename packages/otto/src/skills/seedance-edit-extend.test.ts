@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { assembleSeedance, seedancePromptInput, anchoredClipLines } from "./seedance-prompt.helpers.js";
 import { seedancePromptSkill } from "./seedance-prompt.js";
 import { VIDEO_CLIP_TOKEN, videoPromptWarnings } from "./video-capabilities.js";
-import { anchoredVideoAction } from "@fikirtive/core";
+import { anchoredActionUnavailableReason, anchoredVideoAction } from "@fikirtive/core";
 
 const edit = (over: Record<string, unknown> = {}) =>
   seedancePromptInput.parse({
@@ -219,12 +219,27 @@ describe("禁词只提醒,不改写商家的话", () => {
 });
 
 describe("skill 面 —— Otto 学不到这两件事,商家就永远用不上", () => {
-  it("description 教会两个 mode 各自什么时候用", () => {
+  it("description 教会剪辑什么时候用", () => {
     const d = seedancePromptSkill.description;
     expect(d).toContain("mode:'edit'");
-    expect(d).toContain("mode:'extend'");
     expect(d).toContain("Strictly edit");
-    expect(d).toContain("Extend");
+  });
+
+  /**
+   * #922 —— 续写下架期间,教材必须**明说它关着**,而不是悄悄不提。
+   *
+   * 悄悄删掉那一段的后果是可预见的:商家问「能不能接下去」,Otto 手上没有任何一句关于
+   * 这件事的话,于是自己编 —— 编出来的可能是「可以呀」,而付费闸会在批准之后把它拒掉。
+   * 所以教材里写的是那句要照实说的话,与商家在别处读到的**逐字**同一份。
+   */
+  it("续写下架时,description 明令别写、并给出照实说的那一句(#922)", () => {
+    const d = seedancePromptSkill.description;
+    const off = anchoredActionUnavailableReason("extendClip");
+    expect(off).not.toBeNull();
+    expect(d).toContain("SWITCHED OFF");
+    expect(d).toContain(off!);
+    // 教怎么写续写的那半句必须不在了 —— 在了就是又教了一遍。
+    expect(d).not.toContain("carry-on sentence");
   });
 
   it("skill 把禁词提醒当 notes 交回,不改写 prompt", async () => {

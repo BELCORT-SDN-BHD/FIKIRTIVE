@@ -10,7 +10,7 @@
  * 两者都不经过模型的第二次转述,所以「漏传」这个失败模式在结构上不存在了。
  */
 import { describe, it, expect } from "vitest";
-import { VIDEO_ASPECT_ADAPTIVE } from "@fikirtive/core";
+import { VIDEO_ASPECT_ADAPTIVE, anchoredActionUnavailableReason } from "@fikirtive/core";
 import {
   buildProposeCard,
   proposeInput,
@@ -61,8 +61,14 @@ const card = (prompt: string, ctx: OttoContext, over: Record<string, unknown> = 
 // P1-2 —— 形状钉板与提示词同源,漏传这个失败模式不存在了
 // ---------------------------------------------------------------------------
 
-describe("剪辑/续写:形状跟着商家那条片子,判据来自那段提示词本身", () => {
-  for (const [name, prompt] of [["剪辑", editPrompt], ["续写", extendPrompt]] as const) {
+/**
+ * #922:这一组原本对**剪辑与续写两档**各跑一遍。续写在 beta 期间下架(Founder 裁决
+ * 2026-08-14)之后,它铸不出卡了,所以这些「卡上会长什么样」的断言对它不再成立 ——
+ * 换成下面 `#922` 那一组「一张卡都不铸」的断言,不是把它删掉。剪辑这一档一个字没动,
+ * 循环留着不摊平,好让缺口 B 裁决落地时把 `extendPrompt` 加回名单即可。
+ */
+describe("剪辑:形状跟着商家那条片子,判据来自那段提示词本身", () => {
+  for (const [name, prompt] of [["剪辑", editPrompt]] as const) {
     it(`${name}:商家点了 16:9 也不送 16:9,卡上落 adaptive —— 没有任何一个可以漏传的声明`, () => {
       const { cardPayload } = card(prompt(), clipCtx(), { desiredAspect: "16:9" });
       expect(cardPayload.params.aspectRatio).toBe(VIDEO_ASPECT_ADAPTIVE);
@@ -161,5 +167,46 @@ describe("proposeInput 契约", () => {
     const { cardPayload } = card(plainPrompt(), makeCtx(), { desiredAspect: "9:16" });
     expect(cardPayload.params.aspectRatio).toBe("9:16");
     expect(cardPayload.kind).toBe("video");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #922 —— 续写在 beta 期间下架:铸卡这一侧一张卡都不铸
+// ---------------------------------------------------------------------------
+
+/**
+ * Founder 裁决(2026-08-14,部署窗口现场):beta 期间下架续写的两面入口,剪辑保留。
+ * 恢复条件是缺口 B(时长/定价)裁决落地 —— 到时候删掉 core 下架名单里那一行,这一组
+ * 会跟着红,提醒把上面那些「卡上会长什么样」的断言加回续写。
+ *
+ * 这一层是**主闸**:Otto 提案与商家手动入口走的都是这一个铸卡器,所以挡在这里 =
+ * 两面同时挡住,而且挡在**花钱之前**(拒绝时一张 GEN_CARD 都不落库)。
+ */
+describe("#922:续写下架 ⇒ 铸卡侧当场拒(剪辑照铸)", () => {
+  it("续写的提示词 + 真的挂着片子(形状完全成立)⇒ 仍然一张卡都不铸", () => {
+    expect(() => card(extendPrompt(), clipCtx())).toThrow(VideoActionUnavailableError);
+  });
+
+  it("同一形状的剪辑照铸 —— 下架的是那一个动作,不是这条路", () => {
+    expect(card(editPrompt(), clipCtx()).cardPayload.kind).toBe("video");
+  });
+
+  it("拒绝带的是给商家看的那句人话,而且与两面共用同一份(core 的下架名单)", () => {
+    try {
+      card(extendPrompt(), clipCtx());
+      throw new Error("should have refused");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProposeRefusal);
+      expect((e as Error).message).toBe(anchoredActionUnavailableReason("extendClip"));
+      expect((e as Error).message.toLowerCase()).not.toContain("seedance");
+    }
+  });
+
+  it("商家的话指着续写、模型却写了剪辑 ⇒ 也停下来照实说,不静默铸成剪辑卡", () => {
+    // #775 判官 r3 P1-2 的第二个证人。续写下架后它不能失效:失效了,商家说「sambung」
+    // 而模型写了严格编辑,系统会一声不响地改他的原件。
+    expect(() =>
+      card(editPrompt(), makeCtx({ referenceVideoGenerationId: "gen_vid", turnText: "sambung klip ni lagi sikit" })),
+    ).toThrow(VideoActionUnavailableError);
   });
 });

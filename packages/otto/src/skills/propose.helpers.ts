@@ -31,6 +31,7 @@ import {
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 import { decideVideoAction } from "./video-intent.js";
+import { videoActionUnavailableReason } from "./video-capabilities.js";
 
 // ---------------------------------------------------------------------------
 // Input schema (what the LLM provides) — re-exported for propose.ts
@@ -406,6 +407,12 @@ export function buildProposeCard(
    */
   if (cardAction && ctx.turnText && (cardAction === "editClip" || cardAction === "extendClip")) {
     const fromWords = decideVideoAction({ text: ctx.turnText, shape: videoShape });
+    // #922 —— 措辞侧指着一个**下架**的动作(商家说「接下去」,而续写关着)⇒ 照实说那一句,
+    // 别把它当成对卡的默许。少了这一条,这道对表在续写下架期间会整条失效:关着的动作
+    // 再也回不了 `action`,于是「他说接下去、模型写了严格编辑」会被静默铸成一张剪辑卡。
+    if (fromWords.kind === "ask" && fromWords.options.some((a) => videoActionUnavailableReason(a) !== null)) {
+      throw new VideoActionUnavailableError(fromWords.question);
+    }
     if (
       fromWords.kind === "action" &&
       (fromWords.action === "editClip" || fromWords.action === "extendClip") &&

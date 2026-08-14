@@ -22,7 +22,7 @@ import { creditsLabel } from "@/lib/credit-format";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { proposeClipActionCard, type ClipActionCard } from "@/lib/clip-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
-import { CLIP_ENTRY_COPY, type ClipEntryAction } from "@/lib/clip-action-entry";
+import { CLIP_ENTRY_ACTIONS, CLIP_ENTRY_COPY, type ClipEntryAction } from "@/lib/clip-action-entry";
 
 export function ClipActions({
   generationId,
@@ -108,7 +108,8 @@ export function ClipActions({
     <div className="flex flex-col gap-2 border-t border-border px-4 py-3">
       {action === null ? (
         <div className="flex flex-wrap gap-2">
-          {(["edit", "extend"] as const).map((key) => (
+          {/* #922 —— 画哪几个键由 core 的下架名单说了算,不在这里另列一份。 */}
+          {CLIP_ENTRY_ACTIONS.map((key) => (
             <Button
               key={key}
               variant="ghost"

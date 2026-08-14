@@ -15,8 +15,30 @@
  * `coworkGenerate(cardId)` 上,幂等域仍然是 `cowork:<cardId>`。
  */
 
+// 走**浏览器安全的子路径**,绝不走主 barrel:这个模块被 `ClipActions.tsx`(client)引到,
+// 而 `client-core-imports.test.ts` 把 Node 能力的主 barrel 挡在客户端可达范围之外。
+// 与 `@fikirtive/core/spend`、`/canvas-card-status` 同一个做法。
+import { anchoredActionUnavailableReason } from "@fikirtive/core/video-actions";
+
 /** 锚在商家自己那条片子上的两个动作,在界面这一侧的名字。 */
 export type ClipEntryAction = "edit" | "extend";
+
+/** 界面这一侧的名字 → 能力表/钱路那一侧的名字。两侧的对照只有这一处。 */
+const ANCHORED_ID = { edit: "editClip", extend: "extendClip" } as const;
+
+/**
+ * #922 —— 详情面板上**真的画出来**的入口键。
+ *
+ * 关着的动作直接不画:商家点不到的东西不该占着一个键位,更不该点下去才被拒
+ * (仓库对「做不到的动作」的既有做法就是不进候选 —— 见能力表的 `videoActionsFor`)。
+ *
+ * 判据从 core 的下架名单读,与 Otto 那一面、与付费 schema 是**同一份**。界面这一侧
+ * 一个字都不另判:另判一次,某天名单改了而这里没改,商家就会看见一个点了就报错的键。
+ * 名单一删,这个键自己回来 —— 下面 `CLIP_ENTRY_COPY` 的措辞一直原样留着,正是为了那一天。
+ */
+export const CLIP_ENTRY_ACTIONS: readonly ClipEntryAction[] = (["edit", "extend"] as const).filter(
+  (a) => anchoredActionUnavailableReason(ANCHORED_ID[a]) === null,
+);
 
 /**
  * 屏幕上的字。English sentence case,白标 —— 一处供应商名字都没有。

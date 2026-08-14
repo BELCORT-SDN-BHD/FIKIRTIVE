@@ -17,6 +17,7 @@
 import {
   videoAction as capability,
   videoActionFromPrompt,
+  videoActionUnavailableReason,
   videoActionsFor,
   type VideoAction,
   type VideoInputShape,
@@ -125,6 +126,10 @@ export function decideVideoAction(input: VideoIntentInput): VideoIntentDecision 
   // 无论换成哪个动作都是一次注定让商家失望的付费运行。
   const fromPrompt = input.prompt ? videoActionFromPrompt(input.prompt) : null;
   if (fromPrompt) {
+    // #922 —— 「这件事现在关着」排在形状前面,而且**说的是实话**:关着的时候再说一句
+    // 「把片子挂上来我就做」,商家照做一次还是拿不到,那才是最伤人的那种误导。
+    const unavailable = videoActionUnavailableReason(fromPrompt);
+    if (unavailable) return { kind: "ask", question: unavailable, options: [fromPrompt] };
     if (capability(fromPrompt).needs(input.shape)) {
       return { kind: "action", action: fromPrompt, matched: [] };
     }
@@ -143,6 +148,11 @@ export function decideVideoAction(input: VideoIntentInput): VideoIntentDecision 
   ) as VideoAction[];
   if (wanted.length > 0) {
     const options = wanted.slice(0, 2);
+    // #922 —— 他要的那件事**关着**(不是「形状不对」)⇒ 照实说那一句,别再叫他去挂片子。
+    // 关着的动作从 `videoActionsFor` 里被拿掉了,所以它落在这个分支里 —— 而这个分支原本
+    // 只会说一句「我手上没有那条片子」,对一个明明挂了片子的商家就是一句谎话。
+    const unavailable = options.map((a) => videoActionUnavailableReason(a)).find((r): r is string => r !== null);
+    if (unavailable) return { kind: "ask", question: unavailable, options };
     return {
       kind: "ask",
       question:

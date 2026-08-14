@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { anchoredActionUnavailableReason } from "@fikirtive/core";
 import { decideVideoAction, VIDEO_INTENT_SIGNALS } from "./video-intent.js";
 import { VIDEO_ACTION_IDS } from "./video-capabilities.js";
 import { assembleSeedance, seedancePromptInput } from "./seedance-prompt.helpers.js";
@@ -26,7 +27,13 @@ describe("意图 → 动作:承重形状(商家说人话,Otto 选对那件事)",
     }
   });
 
-  it("「接下去」那一族 → 续写", () => {
+  /**
+   * #922:这一族原本落到 `extendClip`。续写在 beta 期间下架(Founder 裁决 2026-08-14)
+   * 之后,它不再是一个动作 —— 但**信号一个字没删**,因为认得出他要什么,才说得出那句
+   * 实话。落到别的动作(比如「照着它做一条新的」)才是这里最危险的错法:商家会为一条
+   * 他没要的片子付钱。
+   */
+  it("「接下去」那一族 → 照实说这件事现在关着,绝不换成另一个动作(#922)", () => {
     for (const text of [
       "keep it going for a few more seconds",
       "what happens next in this clip",
@@ -34,7 +41,12 @@ describe("意图 → 动作:承重形状(商家说人话,Otto 选对那件事)",
       "这段视频再延长一点",
       "sambung klip ni lagi sikit",
     ]) {
-      expect(actionOf(text)).toBe("extendClip");
+      const d = decideVideoAction({ text, shape: CLIP });
+      expect(d.kind, text).toBe("ask");
+      if (d.kind !== "ask") throw new Error("unreachable");
+      expect(d.question, text).toBe(anchoredActionUnavailableReason("extendClip"));
+      // 挂着片子的人不该被叫去「把片子挂上来」—— 那句话在这里是假的。
+      expect(d.question).not.toContain("attach it");
     }
   });
 
@@ -61,12 +73,14 @@ describe("意图 → 动作:承重形状(商家说人话,Otto 选对那件事)",
 });
 
 describe("含糊与错配 —— 宁可问一句,绝不静默做错那件事", () => {
-  it("同一句话里既要改又要接 → 问一句,选项就是那两件事", () => {
+  // #922:两件事里有一件关着 ⇒ 先说关着的那一句(而不是把两件事摆出来让他选一个
+  // 他其实拿不到的)。选项仍然点名那个动作,好让铸卡侧的第二个证人认得出这是哪一件事。
+  it("同一句话里既要改又要接 → 先说「接下去现在关着」,不假装还能选(#922)", () => {
     const d = decideVideoAction({ text: "change the ending and keep it going", shape: CLIP });
     expect(d.kind).toBe("ask");
     if (d.kind !== "ask") throw new Error("unreachable");
-    expect(d.options).toEqual(["editClip", "extendClip"]);
-    expect(d.question.length).toBeGreaterThan(0);
+    expect(d.options).toEqual(["extendClip"]);
+    expect(d.question).toBe(anchoredActionUnavailableReason("extendClip"));
   });
 
   it("嘴上说要改片子,手上一条片子都没挂 → 问一句,不悄悄改成别的动作", () => {
@@ -104,10 +118,13 @@ describe("提示词是最强证据 —— 它就是引擎真会收到的那段�
     expect(d.action).toBe("editClip");
   });
 
-  it("延长的开头 + 手上有片子 ⇒ 续写", () => {
+  // #922:提示词仍然被**认成**续写(认不出来,付费闸就拒不了残留卡);认出来之后,
+  // 回的是「这件事现在关着」那一句,而不是一个动作。
+  it("延长的开头 + 手上有片子 ⇒ 认得出是续写,但照实说它现在关着(#922)", () => {
     const d = decideVideoAction({ prompt: promptOf("extend"), shape: CLIP });
-    if (d.kind !== "action") throw new Error("expected an action");
-    expect(d.action).toBe("extendClip");
+    if (d.kind !== "ask") throw new Error("expected an ask");
+    expect(d.options).toEqual(["extendClip"]);
+    expect(d.question).toBe(anchoredActionUnavailableReason("extendClip"));
   });
 
   it("严格编辑的开头、手上一条片子都没有 ⇒ 问一句,绝不落到别的动作上", () => {
@@ -131,8 +148,8 @@ describe("提示词是最强证据 —— 它就是引擎真会收到的那段�
     }
   });
 
-  it("没给提示词时,老的按话判一个字没变", () => {
-    expect(actionOf("把这条片子接下去")).toBe("extendClip");
+  it("没给提示词时,老的按话判一个字没变(剪辑这一族)", () => {
+    expect(actionOf("把这条片子的衣服改成红色")).toBe("editClip");
   });
 });
 
