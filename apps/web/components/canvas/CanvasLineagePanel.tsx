@@ -16,6 +16,7 @@
  */
 
 import type { CanvasLineageTree, CanvasLineageTreeRow } from "@/lib/canvas-lineage-tree";
+import { Button } from "@/components/ui/button";
 
 const LABEL_STYLE: React.CSSProperties = {
   fontSize: 11,
@@ -50,12 +51,22 @@ function LineageRow({
 }) {
   const said = row.prompt;
   return (
-    <button
+    // #840 车4:迁到 ui/Button,`cv-lineage-row` 留在原地 —— 它是一整套带状态的配方
+    // (hover / :active / [aria-current="true"] 选中态 / prefers-reduced-motion),没有对位
+    // 的 shadcn 变体。但它是单类选择器、住在 @layer components,而 Tailwind 工具类住在其后的
+    // @layer utilities —— 所以 Button 自带的工具类会盖过它,冲突的每一项都在下面显式压回原值:
+    // 尺寸(h-11 → h-auto/min-h-[30px])、内距(px-5 → px-2 py-1)、字号字重(text-sm
+    // font-semibold → text-xs font-normal)、对齐(justify-center → justify-start)、
+    // 间距(gap-2 → gap-1.5)、圆角(rounded-lg → rounded-[10px])、文字色(text-foreground
+    // → text-muted-foreground)。选中态那条是 `.cv-lineage-row[aria-current="true"]`(类+属性,
+    // 专有度高过工具类),原样生效,不需要压。
+    <Button
       type="button"
+      variant="ghost"
       data-lineage-row={row.id}
       aria-current={row.isFocus ? "true" : undefined}
       onClick={() => onPick(row.id)}
-      className="cv-lineage-row"
+      className="cv-lineage-row h-auto min-h-[30px] w-full justify-start gap-1.5 rounded-[10px] px-2 py-1 text-xs font-normal text-muted-foreground"
       style={{ marginLeft: Math.max(0, row.depth - indentFrom) * 12 }}
     >
       <span className="cv-lineage-kind">{row.kind}</span>
@@ -64,7 +75,7 @@ function LineageRow({
       {!row.letter && row.batchPosition && (
         <span className="cv-lineage-pos">{row.batchPosition}</span>
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -86,14 +97,16 @@ export function CanvasLineagePanel({
     <aside aria-label="Lineage" className="al-panel cv-lineage">
       <header className="cv-lineage-head">
         <h2 className="cv-lineage-title">Lineage</h2>
-        <button
+        <Button
           type="button"
-          className="al-btn al-btn-sm"
+          variant="ghost"
+          size="sm"
+          className="h-auto px-[13px] py-1.5 text-[12.5px]"
           aria-label="Close lineage"
           onClick={onClose}
         >
           Close
-        </button>
+        </Button>
       </header>
 
       {unavailable ? (

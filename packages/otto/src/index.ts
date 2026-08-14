@@ -29,6 +29,17 @@ export { propose } from "./skills/propose.js";
 // web gate① child-card minting layer (storyboard-gate1-actions), which prices minted
 // children through the SAME path as a normal propose. Types travel with it.
 export { buildProposeCard } from "./skills/propose.js";
+// anchoredClipLines — the two official sentences an edit/extend prompt opens with
+// (#775). Exposed for #922 缺口 A: the merchant-facing "Edit this clip" / "Continue this
+// clip" entry mints the same anchored card from the merchant's own words, and must open
+// it with the SAME assembler the Otto path uses — a second copy of the official phrasing
+// would drift away from `anchoredVideoAction`, the money-path judge that reads it.
+export { anchoredClipLines } from "./skills/seedance-prompt.helpers.js";
+// ProposeRefusal — the base class BOTH card-minting refusals inherit (engine turned off,
+// or this turn's shape cannot carry what the prompt asks for). Entry points catch the
+// BASE class, never the individual reasons, so adding a third refusal cannot leave one
+// entry silently uncaught (#775 · #647 T6). Exposed for the #922 缺口 A minting entry.
+export { ProposeRefusal } from "./skills/propose.js";
 export type { CardPayload, ProposeCardResult } from "./skills/propose.js";
 export { generate } from "./skills/generate.js";
 export { updateBrief } from "./skills/update-brief.js";

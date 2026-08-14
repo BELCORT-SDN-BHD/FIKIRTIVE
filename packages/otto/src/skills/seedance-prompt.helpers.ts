@@ -11,6 +11,7 @@ import {
   PORTRAIT_CAPTION_BAN_KEEPING_LOGO,
 } from "./prompt-vocab.js";
 import { videoAction } from "./video-capabilities.js";
+import type { AnchoredVideoAction } from "@fikirtive/core";
 
 export const seedanceShot = z.object({
   subject: z.string().min(1),
@@ -74,18 +75,89 @@ export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
  *   · 两句都不出现 "reference" —— 那个词会把任务读成「照着它做一条新的」。
  *
  * 第二句(边界)与第一句同等重要:少了它,「严格编辑」只是一个形容词。
+ *
+ * ── 为什么导出(#922 缺口 A)────────────────────────────────────────────────
+ * 商家在素材库里点「Edit this clip」时,同样要铸一张带官方句式的卡,而那条路上没有模型、
+ * 没有 shot 结构 —— 只有他自己打的那一句话。让它自己再拼一遍这两行,就是把官方句式抄成
+ * 第二份:哪天官方改了措辞,两条路会开始各说各话,而下游读它的 `anchoredVideoAction`
+ * (core,钱路判据)只认一份。所以把这两行抽成一个纯函数,两条路共用同一个装配器,
+ * `anchoredOpening` 退成一层薄适配。
+ *
+ * ── 组句只加、绝不改(判官 r1 P2-1)────────────────────────────────────────
+ * `segment` 是**商家自己打的那句话**,它一个字节都不许被这里动 —— 卡上冻结的那一段是
+ * 批准后原样送到引擎的同一份,机器在这里删一个句号,商家看到的与真发生的就分家了
+ * (#917 整票为的就是这件事)。
+ *
+ * 所以句末那个句号改成**只在需要时补**:`segment` 自己已经以句末标点收尾(商家打了
+ * "the shirt to red.")就不再补一个,否则会出现 "…red.."。从不删除、从不改写商家的字节。
+ *
+ * ── 开头那个分隔符是机器读的,不能省(判官 r3 P1)─────────────────────────
+ * r1 那一版把同一条「已经在那里就不再补」的规矩也用在了**开头**:`segment` 以空白起头
+ * 就不补空格。那是错的,而且错在钱路上。
+ *
+ * 开头那个空格不是排版,是 core 识别器(`anchoredVideoAction`)的**结束边界**:它认的是
+ * 开场词后面紧跟一个**字面 ASCII 空格**。而 `/^\s/` 认的是整个 Unicode 空白类 ——
+ * 商家用 tab 或换行起头(措辞框收得下,入口层也只判长度不判形状),装配出来的就是
+ * `…and modify\t改什么`:识别器认不出来 → 回 `null` → 卡从 `adaptive` 悄悄退回 16:9,
+ * 付费 schema 那道 anchored 收紧(`genRequest`)也整条不执行。商家批准的还是那段字,
+ * 真发生的却换了一种任务 —— 正是 #917 要断根的那类分家,只不过这次是我自己造的。
+ *
+ * 所以分隔符归**装配层无条件所有**:开场词后面永远放一个字面 ASCII 空格,商家的字节
+ * 从那个空格之后**逐字节原样**开始。他自己带了前导空白,那就跟在分隔空格后面一起进卡
+ * (识别器只看「开场词 + 空格」这个前缀,后面是什么空白都照认 —— 五种起头形态已实证)。
+ * 修装配、不修 raw:商家的话仍然一个字节没动。
+ *
+ * 旧那条路(Otto 的 shot 装配)产出的 `seg` 既不以标点收尾也不以空白起头,所以这两条
+ * 规矩下它一个字符都不会变。
  */
-function anchoredOpening(i: SeedancePromptInput, seg: string): string[] {
-  if (i.mode === "extend") {
+
+/** 句末标点(含全角)。判的是「这段字自己收没收尾」,不是「它写得对不对」。 */
+const SENTENCE_FINAL = /[.!?。!?…]$/u;
+
+/**
+ * 组句。永远不动 `segment` 本身。
+ *
+ * 开头的空格**无条件**放(它是识别器的边界,见上面的判官 r3 P1);句末的句号只在
+ * `segment` 自己没收尾时补(那里没有任何机器在读,补重了只是难看)。
+ */
+function joinSegment(head: string, segment: string): string {
+  const tail = SENTENCE_FINAL.test(segment.trimEnd()) ? "" : ".";
+  return `${head} ${segment}${tail}`;
+}
+
+/**
+ * 能力表里这两档必有官方开头 —— 那正是「锚在片子上」的定义(表上其余各档 `opening` 是 null)。
+ * 真丢了要当场炸,而不是把 "null" 三个字母拼进一条马上要送去花钱的提示词里。
+ */
+function officialOpening(action: AnchoredVideoAction): string {
+  const opening = videoAction(action).opening;
+  if (opening === null) throw new Error(`videoAction(${action}) has no official opening`);
+  return opening;
+}
+
+export function anchoredClipLines(input: {
+  action: AnchoredVideoAction;
+  extendDirection: "forward" | "backward";
+  segment: string;
+}): string[] {
+  if (input.action === "extendClip") {
     return [
-      `${videoAction("extendClip").opening} ${i.extendDirection}, ${seg}.`,
+      joinSegment(`${officialOpening("extendClip")} ${input.extendDirection},`, input.segment),
       "Continue the same characters, wardrobe, setting, and lighting.",
     ];
   }
   return [
-    `${videoAction("editClip").opening} ${seg}.`,
+    joinSegment(officialOpening("editClip"), input.segment),
     "Keep every other part of the clip exactly as it is.",
   ];
+}
+
+function anchoredOpening(i: SeedancePromptInput, seg: string): string[] {
+  return anchoredClipLines({
+    action: i.mode === "extend" ? "extendClip" : "editClip",
+    extendDirection: i.extendDirection,
+    segment: seg,
+  });
 }
 
 /**

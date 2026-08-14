@@ -21,6 +21,8 @@ import { getMyAccount } from "@/lib/account-actions";
 import { cn } from "@/lib/utils";
 import type { EntityDTO } from "@/lib/types";
 import FlowCanvas from "./FlowCanvas";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 /**
  * 受控 Entry 交给这块画布的运行时上下文(#606 T7)。
@@ -88,12 +90,15 @@ export function NorthstarCanvasWorkspace({
         <div className="p-3">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" strokeWidth={2} />
-            <input
+            {/* #840 车4:迁到 ui/Input。这一枚手搓的样子与组件默认值几乎同形(边框 + card 底
+                + 焦点环),只逐条压回它自己的尺寸:h-9(非 h-11)、rounded-[10px]、1px 边框
+                (非 1.5px)、左侧留出放大镜的 pl-8 与 pr-2、13px 字号。 */}
+            <Input
               value={sideSearch}
               onChange={(event) => setSideSearch(event.target.value)}
               placeholder="Search"
               aria-label="Search canvases"
-              className="h-9 w-full rounded-[10px] border border-input bg-card pr-2 pl-8 text-[13px] text-foreground shadow-[var(--shadow-xs)] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+              className="h-9 rounded-[10px] border px-0 py-0 pr-2 pl-8 text-[13px] shadow-[var(--shadow-xs)] focus-visible:ring-ring/40"
             />
           </div>
         </div>
@@ -101,18 +106,21 @@ export function NorthstarCanvasWorkspace({
             shows "Chat" but leaves the accessible name as the raw key "chat". */}
         <div className="flex gap-1 px-3">
           {SIDE_TABS.map(({ id, label }) => (
-            <button
+            <Button
               key={id}
               type="button"
-              onClick={() => setSideTab(id)}
-              aria-pressed={sideTab === id}
+              variant="ghost"
               className={cn(
-                "h-8 flex-1 rounded-[10px] text-xs font-semibold transition-colors duration-[120ms]",
+                // #840 车4:选中/未选中两态原来就是显式写的,原样保留(不靠 ghost 默认色);
+                // 只把 Button 自带的 h-11 / px-5 压回这一行 tab 的 h-8 与零内距。
+                "h-8 flex-1 rounded-[10px] px-0 text-xs font-semibold transition-colors duration-[120ms]",
                 sideTab === id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
               )}
+              onClick={() => setSideTab(id)}
+              aria-pressed={sideTab === id}
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
