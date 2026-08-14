@@ -28,13 +28,10 @@ export function ClipActions({
   generationId,
   disabled = false,
   disabledReason,
-  onStarted,
 }: {
   generationId: string;
   disabled?: boolean;
   disabledReason?: string;
-  /** A paid run really started — the panel's owner reloads whatever it shows. */
-  onStarted?: () => void;
 }) {
   const [action, setAction] = useState<ClipEntryAction | null>(null);
   const [wording, setWording] = useState("");
@@ -87,7 +84,6 @@ export function ClipActions({
       }
       setStarted(true);
       notifyBalanceRefresh();
-      onStarted?.();
     } finally {
       setBusy(false);
     }

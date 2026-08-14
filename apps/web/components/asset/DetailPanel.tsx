@@ -883,12 +883,7 @@ export default function DetailPanel({
                 「Shared actions」铁律)。入口到确认为止全程 $0;扣费仍然只发生在既有的
                 `coworkGenerate(cardId)` 上,与 Otto 挂片子那条路同一张卡、同一个幂等域。 */}
             {gen.kind === "video" && (
-              <ClipActions
-                generationId={gen.id}
-                disabled={readOnly}
-                disabledReason={readOnlyReason}
-                onStarted={notifyBalanceRefresh}
-              />
+              <ClipActions generationId={gen.id} disabled={readOnly} disabledReason={readOnlyReason} />
             )}
 
             {/* Edit @composer (24) */}
