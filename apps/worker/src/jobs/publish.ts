@@ -502,10 +502,16 @@ export async function handlePublish(
   execute: PublishExecutor = realExecute,
   reconcile: ReconcileFn = reconcileAttempt,
 ): Promise<void> {
-  const post = await prisma.scheduledPost.findUnique({
-    where: { id: data.scheduledPostId },
-    select: { ...DUE_SELECT, status: true, metaPostId: true, deletedAt: true },
-  });
+  // Same bootstrap read, same named system identity as every other handler — ScheduledPost is a
+  // TENANT_MODELS table, so an UNFRAMED lookup by id is refused by the tenant guard exactly the
+  // way the ingest one was. `worker-job-dispatch` may scan and may not write; the write phase
+  // still enters runAsTenant below.
+  const post = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.scheduledPost.findUnique({
+      where: { id: data.scheduledPostId },
+      select: { ...DUE_SELECT, status: true, metaPostId: true, deletedAt: true },
+    }),
+  );
   if (!post || post.deletedAt) {
     console.warn(`[publish] ${data.scheduledPostId} missing/deleted — dropping`);
     return;

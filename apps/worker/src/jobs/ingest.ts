@@ -92,7 +92,17 @@ export async function redispatchLostIngest(
 }
 
 export async function handleIngest(data: IngestJobData): Promise<void> {
-  const asset = await prisma.asset.findUnique({ where: { id: data.assetId } });
+  // The BOOTSTRAP read runs under the same named system identity every other job handler uses
+  // (caption/gen/refgen/render/understand all open `worker-job-dispatch` for exactly this read).
+  // The queue payload carries only the asset id, so this lookup is how the tenant becomes
+  // knowable at all — and an unframed read of a TENANT_MODELS table is refused outright
+  // (`[tenant-guard] Asset.findUnique has no ownerId filter`), which is what left every upload's
+  // ingest failing forever. The frame is not a loophole: `worker-job-dispatch` may SCAN across
+  // tenants and may not write a single row (tenant-guard.ts SYSTEM_SCAN_OPS), and the write phase
+  // still has to enter runAsTenant below.
+  const asset = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.asset.findUnique({ where: { id: data.assetId } }),
+  );
   if (!asset) {
     console.error(`[ingest] asset ${data.assetId} missing — dropping`);
     return;
