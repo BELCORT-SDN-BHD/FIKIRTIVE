@@ -265,8 +265,54 @@ describe("#922 —— 锚定句的组句:只补缺的分隔符,绝不动 segment
     expect(line("make it 1.5x brighter")).toBe(`${HEAD} make it 1.5x brighter.`);
   });
 
-  it("segment 自己以空白起头 ⇒ 不再补那个空格,首尾空白原样留着", () => {
-    expect(line(" the shirt to red ")).toBe(`${HEAD} the shirt to red .`);
+  it("省略号收尾也算收尾 ⇒ 不补那第四个点(判官 r3 P3 点名的显式案例)", () => {
+    expect(line("Wait...")).toBe(`${HEAD} Wait...`);
+    expect(line("Wait…")).toBe(`${HEAD} Wait…`);
+  });
+
+  /**
+   * 判官 r3 P1 —— 开场词后面那个空格是**识别器的边界**,不是排版。
+   *
+   * r1 那一版按「已经在那里就不再补」处理它:`segment` 以空白起头就不补空格。可 `/^\s/`
+   * 认整个 Unicode 空白类,而 core 的 `anchoredVideoAction` 只认**字面 ASCII 空格**。
+   * 于是商家用 tab / 换行起头(措辞框收得下),装配出来是 `…and modify\t改什么`,
+   * 识别器回 `null` ⇒ 卡从 adaptive 退回 16:9、付费 schema 的 anchored 收紧整条不执行。
+   *
+   * 所以这一组把两件事一起钉死,少一件都不算修好:
+   *   ① 分隔空格**无条件**在(识别器认得出来);
+   *   ② 商家的字节从那个空格之后**逐字节原样**开始(他自己的前导空白也原样留着)。
+   */
+  describe("前导空白的五种起头形态 —— 分隔符归装配层,商家的字节一个不动", () => {
+    const FORMS: Array<[string, string]> = [
+      ["无前导空白", "the shirt to red"],
+      ["前导空格", " the shirt to red"],
+      ["前导 tab", "\tthe shirt to red"],
+      ["前导换行", "\nthe shirt to red"],
+      ["前导回车", "\rthe shirt to red"],
+    ];
+
+    for (const [name, seg] of FORMS) {
+      it(`${name} ⇒ 仍被 core 认成 editClip,且字节逐一原样`, () => {
+        const assembled = line(seg);
+        // ① 装配层拥有那个分隔空格,无条件在。
+        expect(assembled).toBe(`${HEAD} ${seg}.`);
+        // ② 商家的那一段,从分隔空格之后起,逐字节原样。
+        expect(assembled.slice(HEAD.length + 1, HEAD.length + 1 + seg.length)).toBe(seg);
+        // ③ 钱路判据认得出来 —— 这一条才是 P1 的要害。
+        expect(anchoredVideoAction(assembled)).toBe("editClip");
+      });
+
+      it(`${name} ⇒ 续写那一档同样认得出来`, () => {
+        const assembled = anchoredClipLines({
+          action: "extendClip", extendDirection: "forward", segment: seg,
+        })[0]!;
+        expect(anchoredVideoAction(assembled)).toBe("extendClip");
+      });
+    }
+
+    it("首尾空白都在:前导跟在分隔空格后面,尾部原样留着", () => {
+      expect(line(" the shirt to red ")).toBe(`${HEAD}  the shirt to red .`);
+    });
   });
 
   it("续写那一档同一条规矩,且方向词照旧在官方位置上", () => {
@@ -275,7 +321,7 @@ describe("#922 —— 锚定句的组句:只补缺的分隔符,绝不动 segment
   });
 
   it("组句之后仍然是官方句式 —— 钱路判据认得出来", () => {
-    for (const seg of ["the shirt to red", "the shirt to red.", " padded "]) {
+    for (const seg of ["the shirt to red", "the shirt to red.", " padded ", "Wait..."]) {
       expect(anchoredVideoAction(line(seg))).toBe("editClip");
     }
   });

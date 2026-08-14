@@ -22,7 +22,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { anchoredVideoAction, VIDEO_ASPECT_ADAPTIVE, GEN_VIDEO_MODEL_OPTIONS } from "@fikirtive/core";
+import {
+  anchoredVideoAction, VIDEO_ASPECT_ADAPTIVE, GEN_VIDEO_MODEL_OPTIONS,
+  // 判官 r3 P1 的第②层:卡→付费请求的构造器与付费 schema 本身,
+  // 与 core 的 anchored-spend-gate 用的是同一对判据,不另抄一份。
+  buildGenRequestFromCard, genRequest,
+} from "@fikirtive/core";
 
 // React 18/19 的 act 门:不打开,act(...) 会警告并且不刷新更新队列。
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -202,9 +207,14 @@ describe("#922 缺口 A — 商家措辞 → 官方锚定句式", () => {
         expected: `${EDIT_HEAD} make it 1.5x brighter.${EDIT_TAIL}`,
       },
       {
-        name: "首尾空白也是商家打的字节 ⇒ 原样保留,装配器不再补那个空格",
+        name: "首尾空白也是商家打的字节 ⇒ 原样保留(前导那一个跟在装配层的分隔空格后面)",
         wording: " the shirt to red ",
-        expected: `${EDIT_HEAD} the shirt to red .${EDIT_TAIL}`,
+        expected: `${EDIT_HEAD}  the shirt to red .${EDIT_TAIL}`,
+      },
+      {
+        name: "省略号收尾 ⇒ 不补那第四个点(判官 r3 P3 点名的显式案例)",
+        wording: "Wait...",
+        expected: `${EDIT_HEAD} Wait...${EDIT_TAIL}`,
       },
     ];
 
@@ -222,6 +232,71 @@ describe("#922 缺口 A — 商家措辞 → 官方锚定句式", () => {
         expect(payload.structuredPrompt).toBe(c.expected);
         // ④ 改成什么样都还得是官方句式,否则钱路判据认不出来。
         expect(anchoredVideoAction(result.structuredPrompt)).toBe("editClip");
+      });
+    }
+  });
+
+  /**
+   * 判官 r3 P1 —— 前导空白不许改变商家批准并付费的**操作语义**。
+   *
+   * 措辞框收得下 tab / 换行,入口层也只判长度不判形状,所以「以 tab 起头」是一条**可达**
+   * 输入。r1 那一版的装配器遇到它就不补分隔空格,而 core 的识别器只认字面 ASCII 空格 ——
+   * 于是这条片子的「严格编辑」在商家毫不知情的情况下退化成中性的 guideFromClip:
+   * 卡上的画幅从 adaptive 变回 16:9,付费 schema 那道 anchored 收紧整条不执行。
+   *
+   * 所以这一组不只看卡文本,而是把**两层**一起走一遍(与 core 的 anchored-spend-gate
+   * 同一条口径):① 卡层 —— 认得出动作、画幅是 adaptive;② 付费层 —— 卡→请求的构造器
+   * 顶得住客户端的比例覆盖,且付费 schema 本身会拒绝一个非 adaptive 的同段提示词。
+   * 只断第①层是不够的:P1 掉的正是第②层整条不执行。
+   */
+  describe("前导空白的五种起头形态 ⇒ 两层都仍然是 anchored(判官 r3 P1)", () => {
+    const FORMS: Array<[string, string]> = [
+      ["无前导空白", "the shirt to red"],
+      ["前导空格", " the shirt to red"],
+      ["前导 tab", "\tthe shirt to red"],
+      ["前导换行", "\nthe shirt to red"],
+      ["前导回车", "\rthe shirt to red"],
+    ];
+
+    for (const [name, wording] of FORMS) {
+      it(`${name} ⇒ 卡层认 editClip / adaptive,付费层收紧照常执行`, async () => {
+        armHappyPath();
+        const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording });
+        if ("error" in result) throw new Error(result.error);
+
+        // 商家的字节仍然一个不动。
+        expect(result.structuredPrompt.includes(wording)).toBe(true);
+
+        // ── 第①层:卡 ──────────────────────────────────────────────
+        expect(anchoredVideoAction(result.structuredPrompt)).toBe("editClip");
+        const payload = mockChatCreate.mock.calls[0]![0].data.payload as {
+          structuredPrompt: string;
+          referenceVideoGenerationId?: string;
+          params: { aspectRatio?: string };
+        };
+        expect(payload.params.aspectRatio).toBe(VIDEO_ASPECT_ADAPTIVE);
+        expect(payload.referenceVideoGenerationId).toBe(CLIP);
+
+        // ── 第②层:付费边界 ────────────────────────────────────────
+        // 卡→请求:客户端把比例覆盖成 16:9 也不作数,卡上的 adaptive 说了算。
+        const built = buildGenRequestFromCard({
+          projectId: "p", threadId: "t", cardId: "c", entityIds: [], variantSel: {},
+          cardPayload: payload,
+          prompt: payload.structuredPrompt,
+          overrides: { aspectRatio: "16:9" },
+        });
+        if (!built.ok) throw new Error("卡→请求应当构造得出来");
+        expect(built.req.aspectRatio).toBe(VIDEO_ASPECT_ADAPTIVE);
+
+        // 付费 schema 本身:同一段提示词配一个非 adaptive 的比例,必须被拒。
+        // 这一条才是 P1 真正掉掉的东西 —— 识别不出来时它整条不执行,于是静默放行。
+        const req = { ...built.req, idempotencyKey: "cowork:c" };
+        expect(genRequest.safeParse(req).success).toBe(true);
+        expect(genRequest.safeParse({ ...req, aspectRatio: "16:9" }).success).toBe(false);
+        // 片子没带上也必须被拒(anchored 收紧的另一半)。
+        const noClip: Record<string, unknown> = { ...req };
+        delete noClip.referenceVideoGenerationId;
+        expect(genRequest.safeParse(noClip).success).toBe(false);
       });
     }
   });
