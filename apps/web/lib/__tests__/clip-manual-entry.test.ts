@@ -17,7 +17,7 @@
  *     (core 的判据认不出来),而入口本身照样跑得通 —— 正是这条测试要挡的那种漂移。
  *   · 把 ClipActions 的 "Get a price" 改成直接调 `coworkGenerate` ⇒ 「$0 到确认」当场红。
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { createElement, act } from "react";
@@ -466,6 +466,30 @@ describe("#922 缺口 A — 按下去之前一分钱都不花", () => {
   beforeEach(() => {
     uiMocks.coworkGenerate.mockReset();
     armHappyPath();
+  });
+
+  /** 挂上去的东西必须在本文件里拆干净。
+   *
+   *  这不是打扫卫生,是一条真事故的补丁:apps/web 的 vitest 配置是
+   *  `pool: "threads"` + `singleThread: true` —— 全部 350 个测试文件跑在**同一条线程**上。
+   *  `isolate` 只换掉模块表与 jsdom,**换不掉这条线程的事件循环**:一个没卸载的 React 根
+   *  留下的异步更新,会在**下一个文件**的测试里落地。React 的 act 队列是每份 React 实例
+   *  一条、跨文件共用的,所以那一笔野更新会被邻居的 `await act(...)` 收走 —— 邻居自己
+   *  等的那些更新反而没等到。
+   *
+   *  这正是 r2 头一次云 CI 红的原因:排在这个文件后面的是 `canvas-video-spec-ui.test.ts`,
+   *  它的三条断言当场变成「按了没反应」,而 vitest 打出来的警告写着
+   *  `An update to ClipActions inside a test was not wrapped in act(...)` —— 组件名是
+   *  这个文件的,文件名却是邻居的。本机跑绿是因为文件顺序不同(邻居换了人)。
+   *
+   *  所以:每个用例结束就卸载、摘掉容器,再排空一轮微任务,让最后那一笔 setState 死在
+   *  本文件的 act 作用域里。 */
+  afterEach(async () => {
+    if (root) await act(async () => { root!.unmount(); });
+    container?.remove();
+    root = null;
+    container = null;
+    await act(async () => { await Promise.resolve(); });
   });
 
   it("点入口 → 打字 → 拿报价:全程零次扣费调用;确认那一下才走既有的 coworkGenerate", async () => {
