@@ -88,13 +88,16 @@ type CanvasFlowNode = Node & {
  * `cv-tb` 留在原地:`.gb .cv-tb` 是两个类的选择器,专有度高过 Button 自带的任何一条工具类,
  * 所以 36×36、9px 圆角、透明底、hover 变 muted、以及 `.gb .cv-tb-active` 的选中底色都照旧
  * 由它说了算,一处没动。Button 只补进原语该有的东西(焦点环、disabled 语义、按下反馈)。
- * 两条显式压回:
+ * 三条显式压回 —— 每一条都是 `.gb .cv-tb` **没有声明**、因而压不住的那一项:
+ *  · `p-0` —— 这一枚是 36×36 的定宽方钮,自己不写内距(preflight 已把原生按钮的内距清零)。
+ *    Button 的 `size` 默认带 `px-5`,左右各 20px 加起来超过 36px 的整宽,content box 被压到
+ *    0,里面那枚 shrink-0 的图标就会溢出、偏出中心。同理下面 `.cv-play` 那一枚 30×30 的圆钮。
  *  · `[&_svg]:size-[18px]` —— Button 强制子级 svg 为 1.1em(命中的是子元素,不是这枚键
  *    自己,所以 `.gb .cv-tb` 压不住它),而这一排图标原本就是 18px。
  *  · `disabled:opacity-100` —— `.gb .cv-tb:disabled` 只改文字色不改透明度,Button 默认的
  *    `disabled:opacity-40` 会让停用态比原来更淡。
  */
-const CV_TOOLBAR_BUTTON_CLASS = "cv-tb [&_svg]:size-[18px] disabled:opacity-100";
+const CV_TOOLBAR_BUTTON_CLASS = "cv-tb p-0 [&_svg]:size-[18px] disabled:opacity-100";
 
 const CANVAS_CARD_SIDE = 320;
 /**

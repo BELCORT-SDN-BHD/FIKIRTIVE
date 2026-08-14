@@ -316,10 +316,11 @@ export function VideoNode({ data, id, selected }: NodeProps) {
             <Button
               // #840 车4:迁到 ui/Button,`cv-play` 留在原地 —— 它是 `.gb .react-flow__node
               // .cv-play`(三个类的选择器)画的一枚绝对居中的圆钮,专有度高过 Button 自带的
-              // 任何一条工具类,几何与配色照旧全由它说了算;唯一压不住的是 Button 强制的
-              // `[&_svg]:size-[1.1em]`(它命中的是子元素,不是这一枚键自己),所以显式钉回
-              // 13px —— 那正是这枚三角原本的尺寸。
-              className="cv-play nodrag nopan [&_svg]:size-[13px]"
+              // 任何一条工具类,几何与配色照旧全由它说了算。压不住的是它**没有声明**的那两项:
+              // `p-0`(30×30 的定宽圆钮自己不写内距,Button 的 `px-5` 左右各 20px 会把 content
+              // box 压到 0,里面那枚 shrink-0 的三角就会溢出偏心)、`[&_svg]:size-[13px]`
+              // (Button 强制子级 svg 为 1.1em,命中的是子元素;13px 正是这枚三角原本的尺寸)。
+              className="cv-play nodrag nopan p-0 [&_svg]:size-[13px]"
               variant="ghost"
               type="button"
               aria-label="Play"
