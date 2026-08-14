@@ -25,15 +25,22 @@ function OttoCloud() {
 function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
   if (!onRefresh) return null;
   return (
-    // #840 车4:迁到 ui/Button。这一枚键的样子整个写在下面那份 inline style 里,而 inline
-    // 赢过任何表里的规则 —— 所以 ghost 变体的底色/文字色/hover 一条都落不到屏幕上,外观
-    // 逐像素不变。落到屏幕上的只有 style 没写的那两样:focus-visible 的键盘焦点环与按下时
-    // 的 active:scale —— 正是围栏立法要买的东西(手搓件各自重实现 focus ring 是 #739/#813
-    // 那批无障碍缺陷的出处)。
+    // #840 车4:迁到 ui/Button。这一枚键的样子几乎整个写在下面那份 inline style 里,而 inline
+    // 赢过任何表里的规则 —— 所以 ghost 变体的底色/文字色/hover 一条都落不到屏幕上。
+    //
+    // `h-auto` 是判官 r1 P1-1 补上的:inline style **没写** height,于是 Button `size` 默认的
+    // `h-11`(44px)照落。这一枚原本是没有固定高的小键 —— 11.5px 字号、`line-height: 1`、
+    // 上下各 7px 内距 + 1px 边框 ≈ 27.5px,44px 让它在三个使用状态(失败卡、排队卡、生成中卡)
+    // 上都长了一截。凡是 inline style 或旧类**没有声明**的属性,组件的默认值就会落到屏幕上,
+    // 这是同一条教训的第三例(前两例是 `.cv-tb` / `.cv-play` 的 `p-0`)。
+    //
+    // 剩下真正落到屏幕上的只有 style 没写、而我们**要**的那两样:focus-visible 的键盘焦点环
+    // 与按下时的 active:scale —— 正是围栏立法要买的东西(手搓件各自重实现 focus ring 是
+    // #739/#813 那批无障碍缺陷的出处)。
     <Button
       type="button"
       variant="ghost"
-      className="nodrag nopan"
+      className="nodrag nopan h-auto"
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onRefresh(); }}
       style={{

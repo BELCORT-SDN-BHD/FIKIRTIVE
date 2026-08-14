@@ -5,9 +5,10 @@
  * 那个词会把任务读成「照着它做一条新的」,于是商家要的是改三个字,拿回来的是一条全新的片。
  */
 import { describe, it, expect } from "vitest";
-import { assembleSeedance, seedancePromptInput } from "./seedance-prompt.helpers.js";
+import { assembleSeedance, seedancePromptInput, anchoredClipLines } from "./seedance-prompt.helpers.js";
 import { seedancePromptSkill } from "./seedance-prompt.js";
 import { VIDEO_CLIP_TOKEN, videoPromptWarnings } from "./video-capabilities.js";
+import { anchoredVideoAction } from "@fikirtive/core";
 
 const edit = (over: Record<string, unknown> = {}) =>
   seedancePromptInput.parse({
@@ -236,5 +237,46 @@ describe("skill 面 —— Otto 学不到这两件事,商家就永远用不上",
     );
     expect(out.prompt).toContain("the reference board");
     expect(out.notes?.some((n) => n.includes("reference"))).toBe(true);
+  });
+});
+
+/**
+ * #922 缺口 A(判官 r1 P2-1)—— 装配器**只加、不改**。
+ *
+ * 商家手动入口把他自己打的那句话原样交给这个装配器,所以句末那个句号只能在**还不在那里**
+ * 时才补。删一个他打的字符,卡上冻结的那一段就不再是他看到的那一段(#917)。
+ * 这一组直接测装配器本身:Otto 那条路与素材库那条路共用它,规则只有一份。
+ */
+describe("#922 —— 锚定句的组句:只补缺的分隔符,绝不动 segment 的字节", () => {
+  const HEAD = "Strictly edit <Video_1>, and modify";
+  const line = (segment: string) => anchoredClipLines({ action: "editClip", extendDirection: "forward", segment })[0]!;
+
+  it("没有句末标点 ⇒ 补一个句号", () => {
+    expect(line("the shirt to red")).toBe(`${HEAD} the shirt to red.`);
+  });
+
+  it("已有句末标点 ⇒ 不再补(不会出现 '..')", () => {
+    for (const seg of ["the shirt to red.", "brighter?", "now!", "把衬衫改成红色。"]) {
+      expect(line(seg)).toBe(`${HEAD} ${seg}`);
+    }
+  });
+
+  it("句中的句号不算句末 ⇒ 照常补,商家的字节一个不动", () => {
+    expect(line("make it 1.5x brighter")).toBe(`${HEAD} make it 1.5x brighter.`);
+  });
+
+  it("segment 自己以空白起头 ⇒ 不再补那个空格,首尾空白原样留着", () => {
+    expect(line(" the shirt to red ")).toBe(`${HEAD} the shirt to red .`);
+  });
+
+  it("续写那一档同一条规矩,且方向词照旧在官方位置上", () => {
+    expect(anchoredClipLines({ action: "extendClip", extendDirection: "backward", segment: "she walks in." })[0])
+      .toBe("Extend <Video_1> backward, she walks in.");
+  });
+
+  it("组句之后仍然是官方句式 —— 钱路判据认得出来", () => {
+    for (const seg of ["the shirt to red", "the shirt to red.", " padded "]) {
+      expect(anchoredVideoAction(line(seg))).toBe("editClip");
+    }
   });
 });

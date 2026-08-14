@@ -52,6 +52,33 @@ const {
   const mockProjectFindFirst = vi.fn();
   const mockChatFindFirst = vi.fn();
   const mockChatCreate = vi.fn();
+  // 事务替身:**缓冲**写入,回调成功才回放到上面那两个 spy 上,抛了就整批丢掉 ——
+  // 「拒绝时零落库」于是是一条真断言,不是「抛得比第一次写更早」的副产物
+  // (与 storyboard-gate1-actions.test.ts 的 $transaction 替身同一个做法)。
+  const db: Record<string, unknown> = {
+    generation: { findFirst: mockGenerationFindFirst },
+    // `create` 在**事务外**也要给 —— 不给的话,「在铸卡之前就建会话」那种写法会撞上
+    // undefined 而抛错,于是「零新会话落库」会因为**报错**而变绿,不是因为规矩成立。
+    // 红演练 C 第一次跑就撞到了这个假绿,补上之后它才真的会红。
+    chatThread: { findFirst: mockThreadFindFirst, create: mockThreadCreate },
+    project: { findFirst: mockProjectFindFirst },
+    chatMessage: { findFirst: mockChatFindFirst, create: mockChatCreate },
+    // 刻意**不**提供 genJob / ledger / reservation:这条路碰到它们就是 TypeError,
+    // 而不是一次悄悄通过的断言。
+  };
+  db.$transaction = async (fn: (tx: unknown) => unknown) => {
+    const staged: Array<() => Promise<unknown>> = [];
+    const tx = {
+      chatThread: { create: async (args: unknown) => { staged.push(() => mockThreadCreate(args)); return {}; } },
+      chatMessage: {
+        findFirst: mockChatFindFirst,
+        create: async (args: unknown) => { staged.push(() => mockChatCreate(args)); return {}; },
+      },
+    };
+    const result = await fn(tx);
+    for (const write of staged) await write();
+    return result;
+  };
   return {
     mockOwner: vi.fn(),
     mockGenerationFindFirst,
@@ -61,14 +88,7 @@ const {
     mockChatFindFirst,
     mockChatCreate,
     mockResolveDisabled: vi.fn(),
-    db: {
-      generation: { findFirst: mockGenerationFindFirst },
-      chatThread: { findFirst: mockThreadFindFirst, create: mockThreadCreate },
-      project: { findFirst: mockProjectFindFirst },
-      chatMessage: { findFirst: mockChatFindFirst, create: mockChatCreate },
-      // 刻意**不**提供 genJob / ledger / reservation:这条路碰到它们就是 TypeError,
-      // 而不是一次悄悄通过的断言。
-    },
+    db,
   };
 });
 
@@ -110,21 +130,22 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------
 describe("#922 缺口 A — 商家措辞 → 官方锚定句式", () => {
-  it("剪辑铸出来的那段字,由钱路判据自己认成 editClip,商家的话逐字还在", async () => {
+  it("剪辑铸出来的那段字,由钱路判据自己认成 editClip", async () => {
     armHappyPath();
     const result = await proposeClipActionCard({
       generationId: CLIP,
       action: "edit",
-      wording: "  the shirt to red.  ",
+      wording: "the shirt to red",
     });
     expect("error" in result).toBe(false);
     if ("error" in result) return;
     // 判据来自 @fikirtive/core —— `genRequest` 与 `gen-from-card` 读的**同一个**函数。
     expect(anchoredVideoAction(result.structuredPrompt)).toBe("editClip");
-    // 商家的话原样在里面(首尾空白与句末句号是入口去的,不是改写)。
-    expect(result.structuredPrompt).toContain("the shirt to red");
-    // 边界句 —— 少了它「严格编辑」只是个形容词。
-    expect(result.structuredPrompt).toContain("Keep every other part of the clip exactly as it is.");
+    // 整段逐字节核对:官方开头 + 商家的话 + 边界句,一个字都不多不少。
+    expect(result.structuredPrompt).toBe(
+      "Strictly edit <Video_1>, and modify the shirt to red.\n" +
+        "Keep every other part of the clip exactly as it is.",
+    );
   });
 
   it("续写铸出来的那段字被认成 extendClip", async () => {
@@ -136,7 +157,73 @@ describe("#922 缺口 A — 商家措辞 → 官方锚定句式", () => {
     });
     if ("error" in result) throw new Error(result.error);
     expect(anchoredVideoAction(result.structuredPrompt)).toBe("extendClip");
-    expect(result.structuredPrompt).toContain("she walks out of frame");
+    expect(result.structuredPrompt).toBe(
+      "Extend <Video_1> forward, she walks out of frame.\n" +
+        "Continue the same characters, wardrobe, setting, and lighting.",
+    );
+  });
+
+  /**
+   * 判官 r1 P2-1 —— 商家打进去的那句话,在卡文本里**逐字节**还在。
+   *
+   * 上一版在入口层删首尾空白、删句末句号,于是「商家看到的」与「真发生的」分了家
+   * (#917 整票为的就是这件事)。这一组把那件事钉死:对每一种写法,卡文本必须**恰好**
+   * 等于「官方开头 + 商家原文 + 只在需要时补的那个句号」,而商家原文那一段用
+   * `indexOf` 做子串核对 —— 断的是原始字节,不是 trim 过的副本。
+   */
+  describe("商家的话逐字节保留(判官 r1 P2-1)", () => {
+    const EDIT_HEAD = "Strictly edit <Video_1>, and modify";
+    const EDIT_TAIL = "\nKeep every other part of the clip exactly as it is.";
+
+    const cases: { name: string; wording: string; expected: string }[] = [
+      {
+        name: "商家自己写了句号 ⇒ 句号留着,装配器不再补一个(不会出现 '..')",
+        wording: "the shirt to red.",
+        expected: `${EDIT_HEAD} the shirt to red.${EDIT_TAIL}`,
+      },
+      {
+        name: "商家自己写了问号 ⇒ 原样留着",
+        wording: "can you make the sky brighter?",
+        expected: `${EDIT_HEAD} can you make the sky brighter?${EDIT_TAIL}`,
+      },
+      {
+        name: "商家写了全角句号(华语/马来西亚商家常见)⇒ 原样留着",
+        wording: "把衬衫改成红色。",
+        expected: `${EDIT_HEAD} 把衬衫改成红色。${EDIT_TAIL}`,
+      },
+      {
+        name: "没有句末标点 ⇒ 装配器补一个,商家的字节一个不动",
+        wording: "the shirt to red",
+        expected: `${EDIT_HEAD} the shirt to red.${EDIT_TAIL}`,
+      },
+      {
+        name: "句中的句号一个都不许被当成句末标点删掉",
+        wording: "make it 1.5x brighter",
+        expected: `${EDIT_HEAD} make it 1.5x brighter.${EDIT_TAIL}`,
+      },
+      {
+        name: "首尾空白也是商家打的字节 ⇒ 原样保留,装配器不再补那个空格",
+        wording: " the shirt to red ",
+        expected: `${EDIT_HEAD} the shirt to red .${EDIT_TAIL}`,
+      },
+    ];
+
+    for (const c of cases) {
+      it(c.name, async () => {
+        armHappyPath();
+        const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: c.wording });
+        if ("error" in result) throw new Error(result.error);
+        // ① 整段逐字节。
+        expect(result.structuredPrompt).toBe(c.expected);
+        // ② 商家的原始字节原封不动地出现在里面(断的是 `wording` 本身,不是任何副本)。
+        expect(result.structuredPrompt.includes(c.wording)).toBe(true);
+        // ③ 落库那一份与回传那一份是同一段字 —— 卡上冻结的就是屏幕上给他看的。
+        const payload = mockChatCreate.mock.calls[0]![0].data.payload as { structuredPrompt: string };
+        expect(payload.structuredPrompt).toBe(c.expected);
+        // ④ 改成什么样都还得是官方句式,否则钱路判据认不出来。
+        expect(anchoredVideoAction(result.structuredPrompt)).toBe("editClip");
+      });
+    }
   });
 
   it("卡钉在商家那条片子上,画幅跟着它走 —— 与 Otto 路逐字同一个语义", async () => {
@@ -163,9 +250,22 @@ describe("#922 缺口 A — 商家措辞 → 官方锚定句式", () => {
     expect(mockChatCreate).not.toHaveBeenCalled();
   });
 
-  it("clipEntrySegment 只做三件事:去空白、去句末句号、判长度 —— 不润色", () => {
-    expect(clipEntrySegment("  the shirt to red.  ")).toEqual({ segment: "the shirt to red" });
-    expect(clipEntrySegment("make the SHIRT red")).toEqual({ segment: "make the SHIRT red" });
+  it("clipEntrySegment 只判不改:原文一个字节都不动(判官 r1 P2-1)", () => {
+    // 上一版这条测试期望的正是被判掉的那个行为(把 "  the shirt to red.  " 改写成
+    // "the shirt to red")。现在钉的是反过来那件事:返回的就是传进去的那一份。
+    for (const raw of [
+      "  the shirt to red.  ",
+      "the shirt to red",
+      "make the SHIRT red",
+      "把衬衫改成红色。",
+      "make it 1.5x brighter",
+      "\tleading tab and trailing newline\n",
+    ]) {
+      expect(clipEntrySegment(raw)).toEqual({ segment: raw });
+    }
+    // 判长度看的是去掉首尾空白之后的样子(空格不是内容),但返回仍是原文。
+    const padded = `  ${"x".repeat(CLIP_ENTRY_WORDING_MAX)}  `;
+    expect(clipEntrySegment(padded)).toEqual({ segment: padded });
     expect(clipEntrySegment("  ")).toHaveProperty("error");
     expect(clipEntrySegment("x".repeat(CLIP_ENTRY_WORDING_MAX + 1))).toHaveProperty("error");
   });
@@ -194,6 +294,25 @@ describe("#922 缺口 A — 铸卡这一步 $0", () => {
     mockResolveDisabled.mockResolvedValue({ disabled: new Set(Object.keys(GEN_VIDEO_MODEL_OPTIONS)) });
     const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "the shirt to red" });
     expect("error" in result).toBe(true);
+    expect(mockChatCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 判官 r1 P2-2 —— 被拒绝的一次点击不许留下痕迹。
+   *
+   * 上一版在铸卡**之前**就把新会话建好了。于是「引擎被关掉」× 「这个项目还没有会话」
+   * 这个组合下,商家什么都没拿到,会话列表里却凭空多出一条空的 "Untitled"。
+   */
+  it("引擎被关掉 × 项目里一条会话都没有 ⇒ 零新会话落库、零卡落库", async () => {
+    armHappyPath();
+    mockThreadFindFirst.mockResolvedValue(null); // 出生的那条 + 最近那条,都读不到
+    mockProjectFindFirst.mockResolvedValue({ id: "proj-1" });
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set(Object.keys(GEN_VIDEO_MODEL_OPTIONS)) });
+
+    const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "the shirt to red" });
+
+    expect("error" in result).toBe(true);
+    expect(mockThreadCreate, "被拒绝的一次点击留下了一条空会话").not.toHaveBeenCalled();
     expect(mockChatCreate).not.toHaveBeenCalled();
   });
 });

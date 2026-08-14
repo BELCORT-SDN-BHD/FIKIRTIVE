@@ -12,7 +12,8 @@
 // (`app/otto/page.tsx`:「Grok-bright ("gb") is the only skin」,北极星画布写死
 // `skin="gb"`),所以对位的是它,不是 al-btn-glass 的 Vapor 深色原值。
 //
-// 放在 .ts 里而不是各文件复制一份:三个节点文件 15 个调用点共用同一枚键,复制会漂。
+// 放在 .ts 里而不是各文件复制一份:三个节点文件 14 个调用点共用同一枚键,复制会漂。
+// (ImageNode 7 + VideoNode 6 + TextNode 1;判官 r1 P3-1 更正了原来写的 15。)
 export const NODE_TOOL_BUTTON_CLASS =
   "nodrag nopan h-auto px-[13px] py-1.5 text-[12.5px] " +
   "border-border bg-[color-mix(in_oklab,var(--card)_92%,transparent)] shadow-sm hover:bg-card";

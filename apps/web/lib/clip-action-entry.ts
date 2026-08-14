@@ -52,16 +52,21 @@ export const CLIP_ENTRY_WORDING_MAX = 600;
 /**
  * 商家打的那句话 → 送进装配器的那一段。
  *
- * 只做三件事,一件都不是改写:去掉首尾空白、去掉句末的句号(装配器自己会补一个,不去掉
- * 就成了 "…, modify the shirt to red..")、判长度。**绝不**替商家润色 —— 卡上冻结的
- * 提示词是批准后原样上路的那一份,机器在这里动一个字,商家批准的与引擎收到的就分家
- * (#775 对禁词只提醒不改写,同一条纪律)。
+ * **一个字节都不动**(判官 r1 P2-1)。这里只**判**,不改:空不空、长不长。判的时候看的是
+ * 去掉首尾空白之后的样子(首尾空白不是内容,不该让「只打了几个空格」通过、也不该让长度
+ * 因为空格而超限),但**返回的是原文**。
+ *
+ * 上一版在这里做了两件改写:去首尾空白、删句末句号。删句号是为了避开装配器补的那个点
+ * 造成的 "…red..",而代价是商家看到的与真发生的分了家 —— #917 一整票为的就是这件事:
+ * 卡上冻结的那一段是批准后**原样**送到引擎的同一份,机器在这里动一个字,证词就不成立了。
+ * 衔接问题现在归装配层(`anchoredClipLines`):它只在句号/空格**还不在那里**时才补一个,
+ * 从不删、从不改。
  */
 export function clipEntrySegment(raw: string): { segment: string } | { error: string } {
-  const trimmed = raw.trim().replace(/[.。]+$/u, "").trim();
-  if (trimmed.length === 0) return { error: "Tell us what to change first." };
-  if (trimmed.length > CLIP_ENTRY_WORDING_MAX) {
+  const measured = raw.trim();
+  if (measured.length === 0) return { error: "Tell us what to change first." };
+  if (measured.length > CLIP_ENTRY_WORDING_MAX) {
     return { error: `Keep it under ${CLIP_ENTRY_WORDING_MAX} characters.` };
   }
-  return { segment: trimmed };
+  return { segment: raw };
 }

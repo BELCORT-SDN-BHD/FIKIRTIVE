@@ -961,9 +961,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                                 void run(() => editShotPrompt({ cardId, index: shot.index, durationSeconds: Number(v) }));
                               }}
                             >
+                              {/* 高度这一条要写成 `data-[size=default]:h-auto`,不能只写 `h-auto`
+                                  (判官 r1 P1-1 的自查里抓到的第二例):SelectTrigger 的默认高度是
+                                  `data-[size=default]:h-9`,类+属性选择器(0,2,0),专有度高过裸
+                                  `h-auto`(0,1,0);而 twMerge 只在**同一组修饰符**内消解冲突,
+                                  带 `data-[…]` 的与不带的不同组,所以裸写会被它盖掉,原本约 26px
+                                  的这一格会变成 36px。写成同一个修饰符,twMerge 就会如常只留后者。 */}
                               <SelectTrigger
                                 aria-label="Duration"
-                                className="h-auto rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground shadow-none disabled:opacity-40"
+                                className="data-[size=default]:h-auto rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground shadow-none disabled:opacity-40"
                               >
                                 <SelectValue />
                               </SelectTrigger>

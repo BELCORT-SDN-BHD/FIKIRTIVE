@@ -81,8 +81,40 @@ export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
  * 没有 shot 结构 —— 只有他自己打的那一句话。让它自己再拼一遍这两行,就是把官方句式抄成
  * 第二份:哪天官方改了措辞,两条路会开始各说各话,而下游读它的 `anchoredVideoAction`
  * (core,钱路判据)只认一份。所以把这两行抽成一个纯函数,两条路共用同一个装配器,
- * `anchoredOpening` 退成一层薄适配。行为一格未动。
+ * `anchoredOpening` 退成一层薄适配。
+ *
+ * ── 组句只加、绝不改(判官 r1 P2-1)────────────────────────────────────────
+ * `segment` 是**商家自己打的那句话**,它一个字节都不许被这里动 —— 卡上冻结的那一段是
+ * 批准后原样送到引擎的同一份,机器在这里删一个句号,商家看到的与真发生的就分家了
+ * (#917 整票为的就是这件事)。
+ *
+ * 所以句末那个句号改成**只在需要时补**:`segment` 自己已经以句末标点收尾(商家打了
+ * "the shirt to red.")就不再补一个,否则会出现 "…red.."。同一条规矩用在开头那个空格上:
+ * `segment` 自己以空白起头就不再补一个。两条都只是「不重复添加一个已经在那里的分隔符」,
+ * 从不删除、从不改写商家的字节。旧那条路(Otto 的 shot 装配)产出的 `seg` 既不以标点收尾
+ * 也不以空白起头,所以它一个字符都不会变。
  */
+
+/** 句末标点(含全角)。判的是「这段字自己收没收尾」,不是「它写得对不对」。 */
+const SENTENCE_FINAL = /[.!?。!?…]$/u;
+
+/** 组句用的分隔符:已经在那里就不再加一个。永远不动 `segment` 本身。 */
+function joinSegment(head: string, segment: string): string {
+  const lead = /^\s/u.test(segment) ? "" : " ";
+  const tail = SENTENCE_FINAL.test(segment.trimEnd()) ? "" : ".";
+  return `${head}${lead}${segment}${tail}`;
+}
+
+/**
+ * 能力表里这两档必有官方开头 —— 那正是「锚在片子上」的定义(表上其余各档 `opening` 是 null)。
+ * 真丢了要当场炸,而不是把 "null" 三个字母拼进一条马上要送去花钱的提示词里。
+ */
+function officialOpening(action: AnchoredVideoAction): string {
+  const opening = videoAction(action).opening;
+  if (opening === null) throw new Error(`videoAction(${action}) has no official opening`);
+  return opening;
+}
+
 export function anchoredClipLines(input: {
   action: AnchoredVideoAction;
   extendDirection: "forward" | "backward";
@@ -90,12 +122,12 @@ export function anchoredClipLines(input: {
 }): string[] {
   if (input.action === "extendClip") {
     return [
-      `${videoAction("extendClip").opening} ${input.extendDirection}, ${input.segment}.`,
+      joinSegment(`${officialOpening("extendClip")} ${input.extendDirection},`, input.segment),
       "Continue the same characters, wardrobe, setting, and lighting.",
     ];
   }
   return [
-    `${videoAction("editClip").opening} ${input.segment}.`,
+    joinSegment(officialOpening("editClip"), input.segment),
     "Keep every other part of the clip exactly as it is.",
   ];
 }

@@ -102,11 +102,25 @@ export async function proposeClipActionCard(
       if (!validated) return { error: "That clip isn't available." };
 
       // ③ 卡要落在一条会话里(ChatMessage.threadId 是必填外键,与 Otto 铸的卡同一张表)。
-      //    优先落在这条片子自己出生的那条会话里 —— 商家回头能在原地看见这次改动的来龙去脉
-      //    (Founder:每个东西都要有迹可循)。那条会话没了或这条片子本来就不是聊出来的,
-      //    就落在这个项目最近的一条活会话上;一条都没有才新开一条。
-      const threadId = await resolveClipCardThread(ownerId, clip.projectId, clip.threadId);
-      if (!threadId) return { error: "Couldn't set this up — please try again." };
+      //    这一步**只读**:优先落在这条片子自己出生的那条会话里 —— 商家回头能在原地看见
+      //    这次改动的来龙去脉(Founder:每个东西都要有迹可循);那条会话没了或这条片子
+      //    本来就不是聊出来的,就落在这个项目最近的一条活会话上。
+      //
+      //    判官 r1 P2-2:**一条会话都不在这里建**。上一版在这里就把新会话建好了,于是
+      //    引擎被关掉(下面第 ⑤ 步抛 ProposeRefusal)时商家什么都没拿到,却在会话列表里
+      //    多出一条空的 "Untitled" —— 一次被拒绝的动作留下了痕迹。现在新会话的 id 先铸出来
+      //    (id 不是行),真正落库放到第 ⑥ 步、与卡在**同一个事务**里:卡铸不出来,事务
+      //    根本不会开始;事务里任何一步失败,两行一起回滚。
+      const existingThreadId = await findLiveClipCardThread(ownerId, clip.projectId, clip.threadId);
+      if (!existingThreadId) {
+        // 要新开会话就得先确认项目也是这个租户的 —— 同样只读,拒绝路径零写入。
+        const project = await prisma.project.findFirst({
+          where: { id: clip.projectId, ownerId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!project) return { error: "Couldn't set this up — please try again." };
+      }
+      const threadId = existingThreadId ?? newId();
 
       // ④ 官方那两句话由 #775 的同一个装配器写。商家的那句话原样做 segment。
       const structuredPrompt = anchoredClipLines({
@@ -163,23 +177,33 @@ export async function proposeClipActionCard(
         throw e;
       }
 
+      // ⑥ 落库 —— 卡铸出来了才到这一步,而且会话与卡在同一个事务里(判官 r1 P2-2)。
+      //    新会话只有在这里才第一次成为一行;事务里任何一步失败,它跟卡一起消失。
       const cardId = newId();
-      const last = await prisma.chatMessage.findFirst({
-        where: { threadId, ownerId },
-        orderBy: { seq: "desc" },
-        select: { seq: true },
-      });
-      await prisma.chatMessage.create({
-        data: {
-          id: cardId,
-          threadId,
-          ownerId,
-          role: "AGENT",
-          kind: "GEN_CARD",
-          seq: (last?.seq ?? 0) + 1,
-          text: "",
-          payload: built.cardPayload,
-        },
+      await prisma.$transaction(async (tx) => {
+        if (!existingThreadId) {
+          // "Untitled" —— 与 `createEmptyCoworkThread` 同一份措辞(会话不是战役,#546)。
+          await tx.chatThread.create({ data: { id: threadId, ownerId, projectId: clip.projectId, title: "Untitled" } });
+        }
+        const last = existingThreadId
+          ? await tx.chatMessage.findFirst({
+              where: { threadId, ownerId },
+              orderBy: { seq: "desc" },
+              select: { seq: true },
+            })
+          : null;
+        await tx.chatMessage.create({
+          data: {
+            id: cardId,
+            threadId,
+            ownerId,
+            role: "AGENT",
+            kind: "GEN_CARD",
+            seq: (last?.seq ?? 0) + 1,
+            text: "",
+            payload: built.cardPayload,
+          },
+        });
       });
 
       return {
@@ -196,8 +220,11 @@ export async function proposeClipActionCard(
   });
 }
 
-/** 这张卡落在哪条会话里。全部 owner 作用域;找不到就开一条。 */
-async function resolveClipCardThread(
+/**
+ * 这张卡能落进哪条**已经存在**的会话。全部 owner 作用域,**只读** —— 一行都不写。
+ * 一条都找不到就回 null,由调用方决定要不要连同卡一起在事务里新开一条。
+ */
+async function findLiveClipCardThread(
   ownerId: string,
   projectId: string,
   bornInThreadId: string | null,
@@ -214,15 +241,5 @@ async function resolveClipCardThread(
     orderBy: { updatedAt: "desc" },
     select: { id: true },
   });
-  if (recent) return recent.id;
-
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) return null;
-  const id = newId();
-  // "Untitled" —— 与 `createEmptyCoworkThread` 同一份措辞(会话不是战役,#546)。
-  await prisma.chatThread.create({ data: { id, ownerId, projectId, title: "Untitled" } });
-  return id;
+  return recent?.id ?? null;
 }
