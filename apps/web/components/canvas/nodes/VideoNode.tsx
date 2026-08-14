@@ -9,6 +9,9 @@ import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { NODE_TOOL_BUTTON_CLASS } from "./node-tool-button";
 
 export function VideoNode({ data, id, selected }: NodeProps) {
   const d = data as {
@@ -108,80 +111,92 @@ export function VideoNode({ data, id, selected }: NodeProps) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         {actionable && (
-          <button
+          <Button
             type="button"
             aria-label="Show how this video was made"
             aria-pressed={infoOpen}
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             title="When it was made, the settings, and what it cost"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
-          </button>
+          </Button>
         )}
         {/* T6: the card's whole story — what made it, what it made, who came out of the same
             press. Offered on a card that failed too: where it came from is exactly what a
             merchant wants to know about a card that did not work (#605). */}
         {d.onOpenLineage && (
-          <button
+          <Button
             type="button"
             aria-label="Show what this card came from"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             title="What made this card, and what it made"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
           >
             Lineage
-          </button>
+          </Button>
         )}
         {/* D6: the one and only way a card reaches Otto. Clicking the video used to do it
             silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
         {canSendToOtto && (
-          <button
+          <Button
             type="button"
             aria-label="Send the picked cards to Otto"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             title={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
           >
             Send to Otto
-          </button>
+          </Button>
         )}
         {canRemake && !!originalPrompt && (
-          <button
+          <Button
             type="button"
             aria-label="Make another version of this video"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onRemake?.(id, originalPrompt); }}
             title={`Make another one from the same description${d.remakeCostHint ? ` · ${d.remakeCostHint}` : ""} · you confirm before anything is charged`}
           >
             More like this
-          </button>
+          </Button>
         )}
         {actionable && d.onOpenDetail && (
-          <button
+          <Button
             type="button"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
           >
             Detail
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
           aria-label="Delete video node"
-          className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          variant="secondary"
+          size="sm"
+          className={NODE_TOOL_BUTTON_CLASS}
           disabled={writeLock.locked}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onDelete?.(); }}
           title={writeLock.locked ? writeLock.reason : "Delete video node"}
         >
           ✕
-        </button>
+        </Button>
       </NodeToolbar>
       {infoOpen && (
         <NodeToolbar
@@ -219,23 +234,26 @@ export function VideoNode({ data, id, selected }: NodeProps) {
                 d.onRemake?.(id, text);
               }}
             >
-              <input
+              {/* #840 车4:迁到 ui/Input,四条覆盖与图片卡那条 bar 同因同解(见 ImageNode)。 */}
+              <Input
                 value={remakePrompt}
                 onChange={(e) => setRemakePrompt(e.target.value)}
                 placeholder="Change the wording, then send to make a new video…"
                 aria-label="Edit this video's prompt and make a new video"
-                className="nodrag nopan"
+                className="nodrag nopan h-auto w-auto rounded-none p-0 shadow-none"
                 onPointerDown={(e) => e.stopPropagation()}
                 style={{ flex: 1, minWidth: 0, border: "none", background: "none", outline: "none", font: "inherit" }}
               />
-              <button
+              <Button
                 type="submit"
                 aria-label="Make a new video from this edited prompt"
-                className="al-btn al-btn-primary al-btn-sm nodrag nopan"
+                variant="default"
+                size="sm"
+                className="nodrag nopan h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
                 disabled={!remakePrompt.trim()}
               >
                 →
-              </button>
+              </Button>
             </form>
             {d.remakeCostHint && (
               <span
@@ -295,15 +313,21 @@ export function VideoNode({ data, id, selected }: NodeProps) {
             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
           />
           {!playing && (
-            <button
-              className="cv-play nodrag nopan"
+            <Button
+              // #840 车4:迁到 ui/Button,`cv-play` 留在原地 —— 它是 `.gb .react-flow__node
+              // .cv-play`(三个类的选择器)画的一枚绝对居中的圆钮,专有度高过 Button 自带的
+              // 任何一条工具类,几何与配色照旧全由它说了算;唯一压不住的是 Button 强制的
+              // `[&_svg]:size-[1.1em]`(它命中的是子元素,不是这一枚键自己),所以显式钉回
+              // 13px —— 那正是这枚三角原本的尺寸。
+              className="cv-play nodrag nopan [&_svg]:size-[13px]"
+              variant="ghost"
               type="button"
               aria-label="Play"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); void videoRef.current?.play(); }}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
-            </button>
+            </Button>
           )}
         </div>
       ) : (

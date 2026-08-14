@@ -11,6 +11,7 @@
 
 import { useEffect, useRef } from "react";
 import type { CanvasComparePair } from "@/lib/canvas-batch-identity";
+import { Button } from "@/components/ui/button";
 
 export type CanvasCompareCard = {
   id: string;
@@ -75,9 +76,18 @@ export function CanvasComparePanel({
     >
       <header className="cv-compare-head">
         <span className="cv-compare-title">{pair.title}</span>
-        <button type="button" className="al-btn al-btn-sm" aria-label="Close compare" onClick={onClose}>
+        {/* #840 车4:`al-btn al-btn-sm` = 透明底/透明边/继承色的小键 → ghost + 显式压回
+            al-btn-sm 的高度、内距与字号(圆角天生同值)。 */}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-auto px-[13px] py-1.5 text-[12.5px]"
+          aria-label="Close compare"
+          onClick={onClose}
+        >
           Close
-        </button>
+        </Button>
       </header>
       <div className="cv-compare-grid">
         <CompareSide card={left} label={pair.left.label} />

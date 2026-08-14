@@ -62,22 +62,22 @@ type Family = { family: string; why: string; files: Record<string, number> };
  * 每一行的数字是那个文件当天的实测数,作为上限记账。
  */
 const EXEMPT: Family[] = [
-  {
-    family: "canvas",
-    why: "画布与节点卡:工具条、节点动作、提示词输入全是手搓,且与 @xyflow 的拖拽/选中语义缠在一起,单独一族迁。",
-    files: {
-      "components/canvas/FlowCanvas.tsx": 22,
-      "components/canvas/nodes/ImageNode.tsx": 9,
-      "components/canvas/nodes/VideoNode.tsx": 9,
-      "components/canvas/nodes/TextNode.tsx": 2,
-      "components/canvas/nodes/GeneratingBody.tsx": 1,
-      "components/canvas/nodes/NodeLineagePanel.tsx": 1,
-      "components/canvas/NorthstarCanvasWorkspace.tsx": 2,
-      "components/canvas/CanvasLineagePanel.tsx": 2,
-      "components/canvas/CanvasComparePanel.tsx": 1,
-      "components/canvas/NorthstarHome.tsx": 1,
-    },
-  },
+  // canvas is gone from this board — #840 第 3 步第四车 migrated the whole family to
+  // @/components/ui: FlowCanvas.tsx (the image-count row, the composer's Generate/Close, the
+  // five batch-bar keys, the eight bottom-toolbar tools, the legacy-skin prompt bar, the
+  // animate dialog's motion keys and its custom-motion box), nodes/ImageNode.tsx and
+  // nodes/VideoNode.tsx (card toolbars + the evolve/remake bars + the poster play key),
+  // nodes/TextNode.tsx, nodes/GeneratingBody.tsx (Check again), nodes/NodeLineagePanel.tsx
+  // (Copy), NorthstarCanvasWorkspace.tsx (side search + the Chat/Projects tabs),
+  // CanvasLineagePanel.tsx, CanvasComparePanel.tsx and NorthstarHome.tsx. All sweep to 0 now.
+  // Three call sites keep a canvas-only CSS class next to the shadcn primitive — `.cv-tb`,
+  // `.cv-play`, `.cv-lineage-row`. Those are two- and three-class selectors, so they keep
+  // winning the cascade over Button's own utilities and the geometry is untouched; every place
+  // a utility DOES reach (svg sizing, disabled opacity, the row's size/alignment/colour) is
+  // pinned back explicitly at the call site rather than left to a precedence guess. Their rows
+  // stay in FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and
+  // never shrinks — but the live board only lists what is still owed, same as auth/navigation's
+  // departure above.
   // otto-chat, otto-shell, and otto-memory are gone from this board — #840 第 3 步第二车
   // migrated all three families to @/components/ui in full: OttoChatStream, OttoConversation,
   // OttoFrontDoor, OttoResult, OttoPlanCard, parts/ReasoningPart (otto-chat); OttoNav, OttoApp,
@@ -103,10 +103,10 @@ const EXEMPT: Family[] = [
   },
   {
     family: "otto-creation",
-    why: "创作入口(快速简报/分镜卡/模板/发现):#774-#785 创作波正在重做这些面,按 #840 第 3 条,这一族不单开打磨 PR —— 在各自功能票里直接用 shadcn 做,围栏在那时收账。",
+    why: "创作入口(快速简报/模板/发现):#774-#785 创作波正在重做这些面,按 #840 第 3 条,这一族不单开打磨 PR —— 在各自功能票里直接用 shadcn 做,围栏在那时收账。" +
+      "StoryboardCard.tsx 已于第四车清零(与画布族同车):四枚裸图标键、两个编辑框、时长下拉全部迁到 @/components/ui;时长那一格从原生下拉迁到 Radix Select,屏幕上的 Auto 与各时长档一样不少,只把「未设」的内部值从空串换成哨兵(Radix 禁止空串 value),no-op 判据跟着改,可访问名字用 aria-label 补回(按钮型触发器不走 label 关联)。",
     files: {
       "components/otto/QuickBrief.tsx": 7,
-      "components/otto/StoryboardCard.tsx": 7,
       "components/otto/TemplateModal.tsx": 1,
       "components/otto/OttoTemplates.tsx": 1,
       "components/otto/OttoDiscover.tsx": 1,

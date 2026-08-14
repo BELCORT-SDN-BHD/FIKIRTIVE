@@ -20,7 +20,9 @@ import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
@@ -80,6 +82,20 @@ type CanvasFlowNode = Node & {
   batchIndex?: number | null;
   batchSize?: number | null;
 };
+/**
+ * #840 车4 —— 板底那条工具条上一枚键的类。
+ *
+ * `cv-tb` 留在原地:`.gb .cv-tb` 是两个类的选择器,专有度高过 Button 自带的任何一条工具类,
+ * 所以 36×36、9px 圆角、透明底、hover 变 muted、以及 `.gb .cv-tb-active` 的选中底色都照旧
+ * 由它说了算,一处没动。Button 只补进原语该有的东西(焦点环、disabled 语义、按下反馈)。
+ * 两条显式压回:
+ *  · `[&_svg]:size-[18px]` —— Button 强制子级 svg 为 1.1em(命中的是子元素,不是这枚键
+ *    自己,所以 `.gb .cv-tb` 压不住它),而这一排图标原本就是 18px。
+ *  · `disabled:opacity-100` —— `.gb .cv-tb:disabled` 只改文字色不改透明度,Button 默认的
+ *    `disabled:opacity-40` 会让停用态比原来更淡。
+ */
+const CV_TOOLBAR_BUTTON_CLASS = "cv-tb [&_svg]:size-[18px] disabled:opacity-100";
+
 const CANVAS_CARD_SIDE = 320;
 /**
  * #643 T2 —— 一张卡默认会交付的形状：它自己记着的那一格（板子读回来的 lineage），
@@ -1708,10 +1724,12 @@ export default function FlowCanvas({
                   style={{ display: "flex", gap: 2, alignItems: "center" }}
                 >
                   {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
-                    <button
+                    <Button
                       key={n}
                       type="button"
-                      className={imageCount === n ? "al-btn al-btn-sm al-btn-primary" : "al-btn al-btn-sm"}
+                      variant={imageCount === n ? "default" : "ghost"}
+                      size="sm"
+                      className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
                       aria-pressed={imageCount === n}
                       aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
                       title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
@@ -1719,7 +1737,7 @@ export default function FlowCanvas({
                       onClick={() => setImageCount(n)}
                     >
                       {n}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 {/* #643 T2: the shape this Generate will deliver. The menu is whatever the server
@@ -1755,16 +1773,18 @@ export default function FlowCanvas({
                 )}
               </div>
               <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
-              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
-              <button
-                className="al-btn al-btn-sm"
+              <Button variant="default" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-auto px-[13px] py-1.5 text-[12.5px] [&_svg]:size-[15px]"
                 type="button"
                 title="Close prompt"
                 aria-label="Close image prompt"
                 onClick={() => closeComposer(true)}
               >
                 <X size={15} strokeWidth={2.2} aria-hidden />
-              </button>
+              </Button>
             </form>
           )}
           {/* B6: what to do with several cards at once. Appears only when more than one card
@@ -1781,45 +1801,53 @@ export default function FlowCanvas({
                   and a card beside the card it was made from is a different thing to put on
                   screen — neither is offered here (#605 验收② · r1 P1-2 · #603 T4). */}
               {comparePair && (
-                <button
+                <Button
                   type="button"
-                  className="al-btn al-btn-sm"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto px-[13px] py-1.5 text-[12.5px]"
                   title="Look at these two side by side"
                   onClick={() => setCompareIds([comparePair.left.id, comparePair.right.id])}
                 >
                   Compare
-                </button>
+                </Button>
               )}
               {/* D6: the whole picked set goes over to Otto together, one reference each, when
                   the merchant asks for it — never as a side effect of clicking a card (#604). */}
-              <button
+              <Button
                 type="button"
-                className="al-btn al-btn-sm"
+                variant="ghost"
+                size="sm"
+                className="h-auto px-[13px] py-1.5 text-[12.5px]"
                 title={sendToOttoTitle}
                 onClick={sendSelectionToOtto}
               >
                 Send to Otto
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="al-btn al-btn-sm"
+                variant="ghost"
+                size="sm"
+                className="h-auto px-[13px] py-1.5 text-[12.5px]"
                 disabled={selection.downloads.length === 0}
                 title={selection.downloads.length === 0 ? "None of these are finished yet" : "Save these to your computer"}
                 onClick={() => downloadSelection(selection.downloads)}
               >
                 Download {selection.downloads.length > 0 ? selection.downloads.length : ""}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="al-btn al-btn-sm"
+                variant="ghost"
+                size="sm"
+                className="h-auto px-[13px] py-1.5 text-[12.5px]"
                 title="Take these cards off the board"
                 onClick={() => setPendingBatchDeleteIds(selection.ids)}
               >
                 Remove
-              </button>
-              <button type="button" className="al-btn al-btn-sm" title="Deselect" onClick={clearSelection}>
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px]" title="Deselect" onClick={clearSelection}>
                 Clear
-              </button>
+              </Button>
             </div>
           )}
           {/* Slim bottom toolbar — the single operation center for the canvas: zoom,
@@ -1832,62 +1860,68 @@ export default function FlowCanvas({
               it to a second row instead of clipping it; the cap is the stack's width,
               which is already inset from the host. */}
           <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools" style={{ flexWrap: "wrap", justifyContent: "center", maxWidth: "100%" }}>
-            <button
+            <Button
               type="button"
-              className="cv-tb"
+              variant="ghost"
+              className={CV_TOOLBAR_BUTTON_CLASS}
               title="Zoom out"
               aria-label="Zoom out"
               onClick={() => void flowRef.current?.zoomOut({ duration: 150 })}
             >
               <ZoomOut size={18} strokeWidth={1.9} aria-hidden />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="cv-tb"
+              variant="ghost"
+              className={CV_TOOLBAR_BUTTON_CLASS}
               title="Zoom in"
               aria-label="Zoom in"
               onClick={() => void flowRef.current?.zoomIn({ duration: 150 })}
             >
               <ZoomIn size={18} strokeWidth={1.9} aria-hidden />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="cv-tb"
+              variant="ghost"
+              className={CV_TOOLBAR_BUTTON_CLASS}
               title="Fit to screen"
               aria-label="Fit to screen"
               onClick={() => void flowRef.current?.fitView({ padding: 0.22, duration: 220 })}
             >
               <Maximize2 size={18} strokeWidth={1.9} aria-hidden />
-            </button>
+            </Button>
             <span className="cv-tb-div" />
             {/* B6: two tools instead of one toggle. As a toggle, both modes shared a button
                 whose pressed state read the same after two clicks — the merchant could not
                 tell which tool was live, and the box-select mode was effectively unreachable.
                 Each tool now shows its own on/off state and needs exactly one click. */}
-            <button
+            <Button
               type="button"
-              className={panMode ? "cv-tb cv-tb-active" : "cv-tb"}
+              variant="ghost"
+              className={cn(CV_TOOLBAR_BUTTON_CLASS, panMode && "cv-tb-active")}
               title="Hand tool — drag the board to move around"
               aria-label="Hand tool"
               aria-pressed={panMode}
               onClick={() => setPanMode(true)}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0" /><path d="M14 10V4a2 2 0 0 0-4 0v2" /><path d="M10 10.5V6a2 2 0 0 0-4 0v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></svg>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={panMode ? "cv-tb" : "cv-tb cv-tb-active"}
+              variant="ghost"
+              className={cn(CV_TOOLBAR_BUTTON_CLASS, !panMode && "cv-tb-active")}
               title="Select tool — drag a box to pick several cards"
               aria-label="Select tool"
               aria-pressed={!panMode}
               onClick={() => setPanMode(false)}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
-            </button>
+            </Button>
             <span className="cv-tb-div" />
-            <button
+            <Button
               type="button"
-              className="cv-tb"
+              variant="ghost"
+              className={CV_TOOLBAR_BUTTON_CLASS}
               title={directToolTitle ?? "Generate an image — describe what you want"}
               aria-label="Generate image"
               aria-expanded={composerOpen && !directToolsLocked}
@@ -1895,20 +1929,21 @@ export default function FlowCanvas({
               onClick={() => setComposerOpen((v) => !v)}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="cv-tb"
+              variant="ghost"
+              className={CV_TOOLBAR_BUTTON_CLASS}
               title={directToolTitle ?? "Make a video from a prompt"}
               aria-label="Video"
               disabled={directToolsLocked}
               onClick={() => { closeComposer(false); setCostQuote(null); setT2vOpen(true); }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
-            </button>
-            <button type="button" className="cv-tb" title={directToolTitle ?? "Add text"} aria-label="Add text" disabled={directToolsLocked} onClick={addTextNode}>
+            </Button>
+            <Button type="button" variant="ghost" className={CV_TOOLBAR_BUTTON_CLASS} title={directToolTitle ?? "Add text"} aria-label="Add text" disabled={directToolsLocked} onClick={addTextNode}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
-            </button>
+            </Button>
           </div>
         </div>
       ) : directToolsLocked ? (
@@ -1934,18 +1969,20 @@ export default function FlowCanvas({
             />
           </div>
           <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
-          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
+          <Button variant="default" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</Button>
           {activeThreadId && (
-            <button
+            <Button
               type="button"
-              className="al-btn al-btn-sm"
+              variant="ghost"
+              size="sm"
+              className="h-auto px-[13px] py-1.5 text-[12.5px]"
               aria-pressed={filterToConvo}
               onClick={() => setFilterToConvo((v) => !v)}
             >
               {filterToConvo ? "Showing this convo" : "Filter to this convo"}
-            </button>
+            </Button>
           )}
-          <button className="al-btn al-btn-sm" type="button" onClick={addTextNode}>+ Text</button>
+          <Button variant="ghost" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px]" type="button" onClick={addTextNode}>+ Text</Button>
         </form>
       )}
       <Dialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
@@ -2013,25 +2050,32 @@ export default function FlowCanvas({
             )}
             <div className="flex gap-2">
               {([["gentle", "Gentle"], ["dynamic", "Dynamic"], ["custom", "Custom"]] as const).map(([key, label]) => (
-                <button
+                <Button
                   key={key}
                   type="button"
+                  variant="ghost"
                   onClick={() => setMotion(key)}
                   aria-pressed={motion === key}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-sm transition-colors ${motion === key ? "border-foreground bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-accent"}`}
+                  // #840 车4:两态配色原来就是显式写的,原样保留;只把 Button 自带的
+                  // h-11 / px-5 / font-semibold 压回这一排选项键的原值(内距 px-3 py-2、
+                  // 高度随内容、常规字重)。
+                  className={`h-auto flex-1 rounded-lg border px-3 py-2 text-sm font-normal transition-colors ${motion === key ? "border-foreground bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-accent"}`}
                 >
                   {label}
-                </button>
+                </Button>
               ))}
             </div>
             {motion === "custom" && (
-              <input
+              // #840 车4:迁到 ui/Input。原来的手搓样子与组件默认值同形,只逐条压回它自己的
+              // 值:1px 边框(非 1.5px)、border 用 --border(非 --input)、bg-background
+              // (非 card)、高度随内距(非 h-11)、14px 字号、无阴影。
+              <Input
                 type="text"
                 aria-label="Custom camera motion"
                 value={customMotion}
                 onChange={(e) => setCustomMotion(e.target.value)}
                 placeholder="e.g. slow zoom in as she turns to camera"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                className="h-auto rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-none focus-visible:ring-ring/40"
               />
             )}
           </div>

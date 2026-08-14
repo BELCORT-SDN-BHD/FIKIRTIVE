@@ -6,6 +6,7 @@
 import type { TerminalCardStatus } from "@/lib/canvas-card-status";
 import { terminalCardCopy } from "@/lib/canvas-terminal-copy";
 import type { GenFailureReason } from "@fikirtive/core/gen-failure";
+import { Button } from "@/components/ui/button";
 function OttoCloud() {
   return (
     <svg width="30" height="27" viewBox="0 0 120 110" aria-hidden>
@@ -24,8 +25,14 @@ function OttoCloud() {
 function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
   if (!onRefresh) return null;
   return (
-    <button
+    // #840 车4:迁到 ui/Button。这一枚键的样子整个写在下面那份 inline style 里,而 inline
+    // 赢过任何表里的规则 —— 所以 ghost 变体的底色/文字色/hover 一条都落不到屏幕上,外观
+    // 逐像素不变。落到屏幕上的只有 style 没写的那两样:focus-visible 的键盘焦点环与按下时
+    // 的 active:scale —— 正是围栏立法要买的东西(手搓件各自重实现 focus ring 是 #739/#813
+    // 那批无障碍缺陷的出处)。
+    <Button
       type="button"
+      variant="ghost"
       className="nodrag nopan"
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onRefresh(); }}
@@ -43,7 +50,7 @@ function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
       }}
     >
       Check again
-    </button>
+    </Button>
   );
 }
 

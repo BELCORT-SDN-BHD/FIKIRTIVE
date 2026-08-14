@@ -10,6 +10,9 @@ import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { NODE_TOOL_BUTTON_CLASS } from "./node-tool-button";
 
 /** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
  *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
@@ -129,54 +132,62 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         {actionable && (
-          <button
+          <Button
             type="button"
             aria-label="Show how this image was made"
             aria-pressed={infoOpen}
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             title="When it was made, the settings, and what it cost"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
-          </button>
+          </Button>
         )}
         {/* T6: the card's whole story — what made it, what it made, who came out of the same
             press. Unlike Info it is offered on a card that FAILED too: what a merchant most
             wants to know about a card that did not work is where it came from (#605). */}
         {d.onOpenLineage && (
-          <button
+          <Button
             type="button"
             aria-label="Show what this card came from"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             title="What made this card, and what it made"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
           >
             Lineage
-          </button>
+          </Button>
         )}
         {/* D6: the one and only way a card reaches Otto. Clicking the picture used to do it
             silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
         {canSendToOtto && (
-          <button
+          <Button
             type="button"
             aria-label="Send the picked cards to Otto"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             title={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
           >
             Send to Otto
-          </button>
+          </Button>
         )}
         {/* A3: one click makes another take of THIS image from its own prompt — the old path
             was Detail → Regenerate (two clicks and a panel). Paid, and priced right here. */}
         {canVariant && (
-          <button
+          <Button
             type="button"
             aria-label="Make another version of this image"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             disabled={writeLock.locked}
             onPointerDown={(e) => e.stopPropagation()}
             // #643 T2：形状用这张卡上正显示的那一格 —— 同一张卡上的两个按钮不许交付两种形状。
@@ -184,41 +195,47 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             title={writeLock.locked ? writeLock.reason : `Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
           >
             More like this
-          </button>
+          </Button>
         )}
         {actionable && d.onOpenDetail && (
-          <button
+          <Button
             type="button"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
           >
             Detail
-          </button>
+          </Button>
         )}
         {actionable && d.onAnimate && (
-          <button
+          <Button
             type="button"
-            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            variant="secondary"
+            size="sm"
+            className={NODE_TOOL_BUTTON_CLASS}
             disabled={writeLock.locked}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onAnimate?.(); }}
             title={writeLock.locked ? writeLock.reason : "Make a video from this image"}
           >
             Make video
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
           aria-label="Delete image node"
-          className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          variant="secondary"
+          size="sm"
+          className={NODE_TOOL_BUTTON_CLASS}
           disabled={writeLock.locked}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onDelete?.(); }}
           title={writeLock.locked ? writeLock.reason : "Delete image node"}
         >
           ✕
-        </button>
+        </Button>
       </NodeToolbar>
       {infoOpen && (
         <NodeToolbar
@@ -256,12 +273,18 @@ export function ImageNode({ data, id, selected }: NodeProps) {
                 d.onEvolve?.(id, text, evolveShape);
               }}
             >
-              <input
+              {/* #840 车4:迁到 ui/Input。覆盖的四项都是组件默认值与这条紧凑 bar 的冲突 ——
+                  `h-auto` 压回 `h-11`(44px 会把 6px 内距的 bar 撑成两倍高)、`w-auto` 压回
+                  `w-full`(它是 flex:1 的项,width:100% 会挤爆整行)、`p-0` 压回 `px-3.5 py-2`
+                  (preflight 已把原生 input 内距清零,原来就是 0)、`shadow-none` 压回
+                  `shadow-xs`。边框/背景/字体在下面那份 inline style 里,inline 赢过表里规则,
+                  一字未动;新落到屏幕上的只有 focus-visible 的焦点环与 placeholder 配色。 */}
+              <Input
                 value={evolvePrompt}
                 onChange={(e) => setEvolvePrompt(e.target.value)}
                 placeholder="Change the wording, then send to make a new take…"
                 aria-label="Edit this image's prompt and make a new image"
-                className="nodrag nopan"
+                className="nodrag nopan h-auto w-auto rounded-none p-0 shadow-none"
                 onPointerDown={(e) => e.stopPropagation()}
                 style={{ flex: 1, minWidth: 0, border: "none", background: "none", outline: "none", font: "inherit" }}
               />
@@ -278,14 +301,16 @@ export function ImageNode({ data, id, selected }: NodeProps) {
                   />
                 </div>
               )}
-              <button
+              <Button
                 type="submit"
                 aria-label="Make a new image from this edited prompt"
-                className="al-btn al-btn-primary al-btn-sm nodrag nopan"
+                variant="default"
+                size="sm"
+                className="nodrag nopan h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
                 disabled={!evolvePrompt.trim()}
               >
                 →
-              </button>
+              </Button>
             </form>
             {/* This bar starts a paid image generation built on THIS image, so its price is
                 visible before the merchant can trigger it. Before #550 ② it was the only paid

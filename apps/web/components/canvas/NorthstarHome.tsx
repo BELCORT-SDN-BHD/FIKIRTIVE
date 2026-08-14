@@ -20,6 +20,7 @@ import { ArrowUp, Plus } from "lucide-react";
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { createProject } from "@/lib/actions";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export interface NorthstarHomeProject {
   id: string;
@@ -75,13 +76,18 @@ export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }
         }}
       >
         <div className="flex items-center gap-2 rounded-[16px] border border-input bg-card p-1.5 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
-          <input
+          {/* #840 车4:迁到 ui/Input。这一枚是「裸嵌在一个自绘边框壳里」的输入 —— 边框、
+              背景与焦点环由外面那层 div 的 `focus-within:` 画,所以组件自带的边框/背景/
+              阴影/高度/圆角在这里全是重复,逐条压回原来的裸态(`h-auto`/`rounded-none`/
+              `border-0`/`bg-transparent`/`shadow-none`),内距与字号保持原值。焦点环也压掉
+              (`focus-visible:ring-0`):外壳已经画了一圈,组件再画一圈就是两圈。 */}
+          <Input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Raya promo for the croffle set"
             aria-label="What are we making?"
             maxLength={120}
-            className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-[14px] leading-[20px] text-foreground outline-none placeholder:text-muted-foreground"
+            className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-2 py-1.5 text-[14px] leading-[20px] text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0"
           />
           <Button
             type="submit"

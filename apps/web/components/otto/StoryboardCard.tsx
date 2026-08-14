@@ -4,6 +4,8 @@ import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Loader2, RotateCw }
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   parseStoryboardCardPayload,
   shotsNeedingMintedFirstFrame,
@@ -59,6 +61,15 @@ const VIDEO_SYNC_MAX_TRIES = 120;
 // already reachable server-side, the card was simply the one that stopped asking.
 const SLOW_SYNC_INTERVAL_MS = 60000;
 const SLOW_SYNC_MAX_TRIES = 30;
+
+/**
+ * #840 车4 —— 时长那一格「未设」的内部值。
+ *
+ * 原生下拉用空串表示未设;Radix 的 Select 明令禁止空串 value(它把空串留给
+ * 「清空并显示 placeholder」),所以换一个哨兵。它只活在这一格的 value 与 no-op 判据里,
+ * 一次都不会走到 `editShotPrompt` —— 商家看到的仍然是 "Auto",选它仍然什么都不发生。
+ */
+const DURATION_AUTO = "auto";
 
 const spinner = <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />;
 
@@ -808,41 +819,54 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                     {shot.title && (
                       <span className="font-semibold text-[0.875rem] text-foreground">{shot.title}</span>
                     )}
+                    {/* #840 车4:四枚裸图标键迁到 ui/Button。原来是完全裸的原生按钮(preflight
+                        已把内距/边框清零),所以 `h-auto w-auto p-0` 把 Button 的 h-11/px-5
+                        压回原样,`hover:bg-transparent` 压掉 ghost 新增的底色(原来 hover 只
+                        变文字色),`[&_svg]:size-*` 把图标钉回各自原本的 15/14px(Button 强制
+                        子级 svg 为 1.1em)。停用态原来的 `disabled:opacity-30` 保留,它在
+                        className 末位,twMerge 会让它盖过组件默认的 40。#888 的编辑锁语义
+                        (`busy || editLocked || …`)与 onClick 一字未动。 */}
                     <div className="ml-auto flex items-center gap-1">
-                      <button type="button" aria-label="Move up" disabled={busy || editLocked || shot.index === 0}
+                      <Button type="button" variant="ghost" aria-label="Move up" disabled={busy || editLocked || shot.index === 0}
                         onClick={() => run(() => reorderShots({ cardId, order: swap(shots.map((s) => s.index), shot.index, shot.index - 1) }))}
-                        className="text-muted-foreground disabled:opacity-30 hover:text-foreground">
+                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[15px]">
                         <ChevronUp size={15} />
-                      </button>
-                      <button type="button" aria-label="Move down" disabled={busy || editLocked || shot.index === shots.length - 1}
+                      </Button>
+                      <Button type="button" variant="ghost" aria-label="Move down" disabled={busy || editLocked || shot.index === shots.length - 1}
                         onClick={() => run(() => reorderShots({ cardId, order: swap(shots.map((s) => s.index), shot.index, shot.index + 1) }))}
-                        className="text-muted-foreground disabled:opacity-30 hover:text-foreground">
+                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[15px]">
                         <ChevronDown size={15} />
-                      </button>
-                      <button type="button" aria-label="Edit shot" disabled={busy || editLocked}
+                      </Button>
+                      <Button type="button" variant="ghost" aria-label="Edit shot" disabled={busy || editLocked}
                         onClick={() => (isEditing ? setEditing(null) : startEdit(shot))}
-                        className="text-muted-foreground disabled:opacity-30 hover:text-foreground">
+                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[14px]">
                         <Pencil size={14} />
-                      </button>
-                      <button type="button" aria-label="Delete shot" disabled={busy || editLocked || shots.length <= 1}
+                      </Button>
+                      <Button type="button" variant="ghost" aria-label="Delete shot" disabled={busy || editLocked || shots.length <= 1}
                         onClick={() => run(() => deleteShot({ cardId, index: shot.index }))}
-                        className="text-muted-foreground disabled:opacity-30 hover:text-foreground">
+                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[14px]">
                         <Trash2 size={14} />
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
                   {isEditing ? (
                     <div className="flex flex-col gap-2 mt-1">
+                      {/* #840 车4:两个编辑框迁到 ui/Textarea。`field-sizing-fixed` 压回组件
+                          默认的 `field-sizing-content`(rows={2} 是定高框,不该随打字长高 ——
+                          同 #920 对四处 composer 的处置),`min-h-0` 压回 `min-h-16`,
+                          `shadow-none` 压回 `shadow-xs`。字号另写一条 `md:` 同值:组件带
+                          `md:text-sm`,它与 base 的 `text-*` 不同组,twMerge 不消解,不写宽屏
+                          下会悄悄从 13px 变成 14px。原有的圆角/边框/底色/内距/字号一字未改。 */}
                       <label className="text-[0.75rem] text-muted-foreground">
                         <span className="font-semibold text-foreground">First frame</span>
-                        <textarea value={draftFf} onChange={(e) => setDraftFf(e.target.value)} rows={2}
-                          className="mt-1 w-full rounded-[10px] border border-border bg-card p-2 text-[0.8125rem] text-foreground" />
+                        <Textarea value={draftFf} onChange={(e) => setDraftFf(e.target.value)} rows={2}
+                          className="field-sizing-fixed mt-1 min-h-0 w-full rounded-[10px] border border-border bg-card p-2 text-[0.8125rem] text-foreground shadow-none md:text-[0.8125rem]" />
                       </label>
                       <label className="text-[0.75rem] text-muted-foreground">
                         <span className="font-semibold text-foreground">Video</span>
-                        <textarea value={draftV} onChange={(e) => setDraftV(e.target.value)} rows={2}
-                          className="mt-1 w-full rounded-[10px] border border-border bg-card p-2 text-[0.8125rem] text-foreground" />
+                        <Textarea value={draftV} onChange={(e) => setDraftV(e.target.value)} rows={2}
+                          className="field-sizing-fixed mt-1 min-h-0 w-full rounded-[10px] border border-border bg-card p-2 text-[0.8125rem] text-foreground shadow-none md:text-[0.8125rem]" />
                       </label>
                       <div className="flex gap-2">
                         <Button variant="default" disabled={busy} onClick={() => saveEdit(shot.index)}>
@@ -920,23 +944,36 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           {/* Duration select (model-driven options; editing-class → disabled while generating). */}
                           <label className="flex items-center gap-2 text-[0.75rem] text-muted-foreground">
                             <span className="font-semibold text-foreground">Duration</span>
-                            <select
-                              value={shot.durationSeconds ?? ""}
+                            {/* #840 车4:迁到 ui/Select(Radix)。屏幕上的东西一样不变 —— 未设时
+                                触发器仍读 "Auto",菜单里仍是 Auto + 各时长档,选 Auto 仍是
+                                no-op(编辑动作没有清回自动的路)。唯一的变化是那一格的内部值:
+                                Radix 明令禁止空串 value,所以 "" 换成哨兵 "auto",no-op 那一支
+                                照原样跟着改判据。`aria-label` 是把可访问名字**补回来**,不是
+                                新增:原生下拉从外层 label 拿到 "Duration",而按钮型的
+                                触发器不走 label 关联(它的名字来自内容 = 选中的那一档)。 */}
+                            <Select
+                              value={shot.durationSeconds != null ? String(shot.durationSeconds) : DURATION_AUTO}
                               disabled={busy || generating || editing !== null}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                // "Auto" (empty) is display-only for the unset state — the edit
+                              onValueChange={(v) => {
+                                // "Auto" is display-only for the unset state — the edit
                                 // action has no clear-to-auto path, so picking it is a no-op.
-                                if (v === "") return;
+                                if (v === DURATION_AUTO) return;
                                 void run(() => editShotPrompt({ cardId, index: shot.index, durationSeconds: Number(v) }));
                               }}
-                              className="rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground disabled:opacity-40"
                             >
-                              <option value="">Auto</option>
-                              {videoDurations.map((d) => (
-                                <option key={d} value={d}>{d}s</option>
-                              ))}
-                            </select>
+                              <SelectTrigger
+                                aria-label="Duration"
+                                className="h-auto rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground shadow-none disabled:opacity-40"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={DURATION_AUTO}>Auto</SelectItem>
+                                {videoDurations.map((d) => (
+                                  <SelectItem key={d} value={String(d)}>{d}s</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </label>
 
                           {/* Player, status or nothing — ONE derived state decides. A remake in

@@ -8,6 +8,7 @@
 // never asks for anything. It never names the generation engine.
 import { useState } from "react";
 import { canvasLineageRows, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { Button } from "@/components/ui/button";
 
 export function NodeLineagePanel({
   lineage,
@@ -55,14 +56,20 @@ export function NodeLineagePanel({
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>Prompt</span>
-            <button
+            {/* #840 车4:`al-btn al-btn-sm`(无配色修饰)= 透明底、透明边、继承文字色的小键
+                → ghost 变体同一套;高度/内距/字号显式压回 al-btn-sm 的原值(圆角天生同值:
+                --radius-sm 与 Button 的 rounded-[10px] 都是 10px)。ghost 的 hover 底色是
+                新增的反馈,原来没有 —— 与第一车对同类键的处置同口径,算打磨。 */}
+            <Button
               type="button"
-              className="al-btn al-btn-sm nodrag nopan"
+              variant="ghost"
+              size="sm"
+              className="nodrag nopan h-auto px-[13px] py-1.5 text-[12.5px]"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); copyPrompt(); }}
             >
               {copied ? "Copied" : "Copy"}
-            </button>
+            </Button>
           </div>
           <p style={{ fontSize: 12, lineHeight: 1.45, margin: 0, maxHeight: 96, overflowY: "auto" }}>{text}</p>
         </div>
