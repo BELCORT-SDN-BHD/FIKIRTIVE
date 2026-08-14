@@ -11,6 +11,7 @@ import {
   PORTRAIT_CAPTION_BAN_KEEPING_LOGO,
 } from "./prompt-vocab.js";
 import { videoAction } from "./video-capabilities.js";
+import type { AnchoredVideoAction } from "@fikirtive/core";
 
 export const seedanceShot = z.object({
   subject: z.string().min(1),
@@ -74,18 +75,37 @@ export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
  *   · 两句都不出现 "reference" —— 那个词会把任务读成「照着它做一条新的」。
  *
  * 第二句(边界)与第一句同等重要:少了它,「严格编辑」只是一个形容词。
+ *
+ * ── 为什么导出(#922 缺口 A)────────────────────────────────────────────────
+ * 商家在素材库里点「Edit this clip」时,同样要铸一张带官方句式的卡,而那条路上没有模型、
+ * 没有 shot 结构 —— 只有他自己打的那一句话。让它自己再拼一遍这两行,就是把官方句式抄成
+ * 第二份:哪天官方改了措辞,两条路会开始各说各话,而下游读它的 `anchoredVideoAction`
+ * (core,钱路判据)只认一份。所以把这两行抽成一个纯函数,两条路共用同一个装配器,
+ * `anchoredOpening` 退成一层薄适配。行为一格未动。
  */
-function anchoredOpening(i: SeedancePromptInput, seg: string): string[] {
-  if (i.mode === "extend") {
+export function anchoredClipLines(input: {
+  action: AnchoredVideoAction;
+  extendDirection: "forward" | "backward";
+  segment: string;
+}): string[] {
+  if (input.action === "extendClip") {
     return [
-      `${videoAction("extendClip").opening} ${i.extendDirection}, ${seg}.`,
+      `${videoAction("extendClip").opening} ${input.extendDirection}, ${input.segment}.`,
       "Continue the same characters, wardrobe, setting, and lighting.",
     ];
   }
   return [
-    `${videoAction("editClip").opening} ${seg}.`,
+    `${videoAction("editClip").opening} ${input.segment}.`,
     "Keep every other part of the clip exactly as it is.",
   ];
+}
+
+function anchoredOpening(i: SeedancePromptInput, seg: string): string[] {
+  return anchoredClipLines({
+    action: i.mode === "extend" ? "extendClip" : "editClip",
+    extendDirection: i.extendDirection,
+    segment: seg,
+  });
 }
 
 /**

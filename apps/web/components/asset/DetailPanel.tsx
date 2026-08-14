@@ -35,6 +35,7 @@ import {
 } from "@/lib/video-spec";
 import { creditsLabel } from "@/lib/credit-format";
 import { assetSpendControlDisabled, type AssetSpendStatus } from "@/lib/asset-detail-status";
+import { ClipActions } from "@/components/asset/ClipActions";
 import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
@@ -875,6 +876,20 @@ export default function DetailPanel({
                 Delete
               </Button>
             </div>
+
+            {/* #922 缺口 A —— 「改这条片子 / 把这条片子接下去」的商家自己那一面。
+                在这里而不是在素材库网格上,是因为**画布也在这里**:画布视频卡的 "Detail"
+                打开的正是这个面板,所以两个面共用同一个入口,不是两份实现(Founder
+                「Shared actions」铁律)。入口到确认为止全程 $0;扣费仍然只发生在既有的
+                `coworkGenerate(cardId)` 上,与 Otto 挂片子那条路同一张卡、同一个幂等域。 */}
+            {gen.kind === "video" && (
+              <ClipActions
+                generationId={gen.id}
+                disabled={readOnly}
+                disabledReason={readOnlyReason}
+                onStarted={notifyBalanceRefresh}
+              />
+            )}
 
             {/* Edit @composer (24) */}
             {gen.kind === "image" && (
