@@ -3,6 +3,16 @@ import React, { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
 import { ExitLink } from "@/components/exits/Exits";
 import { BRAND_MEMORY_HREF } from "@/lib/exits";
@@ -105,6 +115,9 @@ export function StuffLibrary({
   const [filter, setFilter] = useState<StuffFilter>(mode === "picker" ? "images" : "all");
   const [search, setSearch] = useState("");
   const [renameTarget, setRenameTarget] = useState<StuffItem | null>(null);
+  // #934 — a click here used to delete immediately. Route it through a confirmation
+  // instead, so an accidental click can't take an item out of Library unnoticed.
+  const [deleteTarget, setDeleteTarget] = useState<StuffItem | null>(null);
 
   // Picker: only image items that carry an assetId are selectable.
   const pickable = useMemo(
@@ -297,7 +310,7 @@ export function StuffLibrary({
                         className="pointer-events-auto w-full"
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (item.entityId) onDelete(item.entityId);
+                          setDeleteTarget(item);
                         }}
                       >
                         Delete
@@ -336,6 +349,30 @@ export function StuffLibrary({
           await onRename?.(renameTarget.entityId, name);
         }}
       />
+      <AlertDialog open={!!deleteTarget} onOpenChange={(next) => { if (!next) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove from library?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget
+                ? `This moves "${deleteTarget.label}" out of Library. It won't show up in projects, pickers, or search anymore.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90"
+              onClick={() => {
+                if (deleteTarget?.entityId) onDelete?.(deleteTarget.entityId);
+                setDeleteTarget(null);
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

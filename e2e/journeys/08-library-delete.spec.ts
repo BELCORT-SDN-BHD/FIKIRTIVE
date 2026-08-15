@@ -31,6 +31,9 @@ test("An element deleted from the Library is gone, and is still gone after a rel
   await tile.hover();
   await tile.getByRole("button", { name: "Delete" }).click();
 
+  // #934 — Delete now opens a confirmation instead of removing the tile straight away.
+  await page.getByRole("button", { name: "Remove" }).click();
+
   await expect(doomed).toHaveCount(0);
 
   // The claim under test: it is gone from the workspace, not just from this render.
