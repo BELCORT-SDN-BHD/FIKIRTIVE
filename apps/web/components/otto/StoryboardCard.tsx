@@ -339,9 +339,23 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     const askedAtEpoch = viewEpochRef.current;
     syncSeqRef.current += 1;
     const requestSeq = syncSeqRef.current;
+    // #926 (判官 r18): an ERROR answer is still an answer to a NUMBERED question, and a stale
+    // one carries no information about the world it now describes — same seq/epoch bar the
+    // success path clears above. Before this, a mount-time sync that lost the race to a later
+    // manual refresh (r17's overlapping-same-epoch case) could come back failed and conclude
+    // "give up" over a watch the fresher answer had just opened. `derivedPending: false` asks
+    // resolveSyncAnswer for the verdict a failure is allowed to reach ONLY when this is still
+    // the question being asked (rule ③ in its doc: a stale answer must not conclude — it
+    // returns `stillPending: true` regardless, same as a stale success).
+    const giveUpUnlessStale = () =>
+      resolveSyncAnswer({
+        askedAtEpoch, currentEpoch: viewEpochRef.current,
+        requestSeq, latestSeq: syncSeqRef.current,
+        derivedPending: false,
+      }).stillPending;
     try {
       const res = await syncStoryboardMedia({ cardId });
-      if ("error" in res) return false; // give up quietly on a sync error
+      if ("error" in res) return giveUpUnlessStale(); // give up quietly — only if still asked
       const nextView = parseStoryboardCardPayload(res.payload);
       // The answer we just got is FRESH, so pendingness is derived at phase "fast" no matter what
       // gear (or none) we were in when we asked — a manual refresh out of "exhausted" must be able
@@ -359,7 +373,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       setReports(res.shots);
       return answer.stillPending;
     } catch {
-      return false;
+      return giveUpUnlessStale();
     }
   }, [cardId]);
 
@@ -424,7 +438,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const reconcileOnce = useCallback(async () => {
     const stillPending = await runSyncOnce();
     if (stillPending) { setGenerating(true); setSyncPhase("fast"); pollTriesRef.current = 0; }
-    else setSyncPhase("off"); // we have a current answer — "we stopped checking" is no longer true
+    // #926 (判官 r18): "off" means nothing is being watched any more — `generating` has to say
+    // the same thing, or a card can end up locked (edit disabled, refresh disabled) with no
+    // timer left alive to ever clear it, reload-only. Concluding "off" must always let go of
+    // "still working" in the same breath.
+    else { setGenerating(false); setSyncPhase("off"); } // current answer — "stopped checking" true
   }, [runSyncOnce]);
 
   // Reload recovery: on mount the card has NO answer from the server, so anything the payload
