@@ -24,6 +24,9 @@ const organizationFindFirst = vi.fn();
 const creditLedgerFindMany = vi.fn();
 const genJobFindMany = vi.fn();
 const refGenJobFindMany = vi.fn();
+// #592 — readDisplayName (profile-names.ts) reads the merchant's own name through
+// Membership, the same query getMyAccount now draws the sidebar's displayName from.
+const membershipFindFirst = vi.fn();
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     organization: { findFirst: organizationFindFirst },
@@ -31,6 +34,7 @@ vi.mock("@fikirtive/db", () => ({
     creditLedger: { findMany: creditLedgerFindMany },
     genJob: { findMany: genJobFindMany },
     refGenJob: { findMany: refGenJobFindMany },
+    membership: { findFirst: membershipFindFirst },
   },
 }));
 
@@ -48,6 +52,8 @@ beforeEach(() => {
   genJobFindMany.mockResolvedValue([]);
   refGenJobFindMany.mockReset();
   refGenJobFindMany.mockResolvedValue([]);
+  membershipFindFirst.mockReset();
+  membershipFindFirst.mockResolvedValue({ user: { name: null } }); // no display name set, by default
   organizationFindFirst.mockResolvedValue({ name: "Acme Studio" });
   mockHeaders.mockResolvedValue(new Headers({ cookie: "better-auth.session_token=test" }));
   mockSignOut.mockResolvedValue(undefined);
@@ -62,10 +68,12 @@ describe("getMyAccount", () => {
     expect(organizationFindFirst).not.toHaveBeenCalled();
     expect(creditLedgerFindMany).not.toHaveBeenCalled();
     expect(genJobFindMany).not.toHaveBeenCalled();
+    expect(membershipFindFirst).not.toHaveBeenCalled();
   });
 
   it("scopes both reads to the resolved ownerId and maps internal→displayed credits + USD", async () => {
     mockRequireOwner.mockResolvedValue({ email: "a@test", ownerId: "orgA" });
+    membershipFindFirst.mockResolvedValue({ user: { name: "Nick QA" } });
     findUnique.mockResolvedValue({ balance: 9990, reserved: 100 }); // internal credits (1 internal = $0.01)
     // the query filters balanceDelta != 0 in the DB, so the mock returns only balance-moving rows
     creditLedgerFindMany.mockResolvedValue([
@@ -92,8 +100,15 @@ describe("getMyAccount", () => {
     });
     expect(creditLedgerFindMany.mock.calls[0][0].where).toEqual({ orgId: "orgA", balanceDelta: { not: 0 } });
     expect(genJobFindMany.mock.calls[0][0].where).toEqual({ ownerId: "orgA", id: { in: ["genjob_abc", "genjob_video"] } });
+    // #592 — the same tenant-scoped Membership query #574 introduced (profile-names.ts'
+    // readDisplayName), not a second one that could drift or leak another org's name.
+    expect(membershipFindFirst).toHaveBeenCalledWith({
+      where: { orgId: "orgA", user: { email: "a@test" } },
+      select: { user: { select: { name: true } } },
+    });
 
     expect(res.email).toBe("a@test");
+    expect(res.displayName).toBe("Nick QA");
     expect(res.organizationName).toBe("Acme Studio");
     expect(res.balance).toBe(999); // 9990 internal / 10 = 999 displayed
     expect(res.reserved).toBe(10); // 100 / 10
@@ -104,6 +119,19 @@ describe("getMyAccount", () => {
     expect(res.recent[1]).toMatchObject({ label: "Image", delta: -1 }); // media reserve (genjob refId)
     expect(res.recent[2]).toMatchObject({ label: "Chat", delta: -3.5 }); // otto- refId → conversation cost
     expect(res.recent[3]).toMatchObject({ label: "Video", delta: -7 });
+  });
+
+  // #592 — displayName is "" (not null/undefined) when the merchant never set one, same
+  // as #574's getMyProfileNames. The sidebar identity area's own fallback to email is
+  // pinned separately, against sidebarIdentityLabel (global-navigation.test.ts).
+  it("returns an empty displayName when the merchant never set one", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "a@test", ownerId: "orgA" });
+    membershipFindFirst.mockResolvedValue({ user: { name: null } });
+    findUnique.mockResolvedValue({ balance: 0, reserved: 0 });
+    creditLedgerFindMany.mockResolvedValue([]);
+    const res = await getMyAccount();
+    if ("error" in res) throw new Error("unexpected error");
+    expect(res.displayName).toBe("");
   });
 
   it("treats a missing CreditAccount as zero (never throws)", async () => {

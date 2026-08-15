@@ -39,26 +39,36 @@ export function workspaceNameOrUnset(storedName: string | null | undefined, emai
   return stored.trim().toLowerCase() === email.trim().toLowerCase() ? "" : stored;
 }
 
-/** Read the signed-in merchant's own two names. Fail-closed: an unauthenticated or
- *  unresolvable session gets {error} and never another org's row.
+/** Read just the merchant's own display name, given an ALREADY-RESOLVED gate (no auth
+ *  check here — the caller did that). The user row is reached through `Membership` rather
+ *  than by email: `User` is an auth-identity table with no `ownerId` column, and scoping by
+ *  the authenticated `ownerId` keeps the read inside the tenant the session actually
+ *  resolved to (see profile-actions.ts for the same reasoning on the write side).
  *
- *  The user row is reached through `Membership` rather than by email: `User` is an
- *  auth-identity table with no `ownerId` column, and scoping by the authenticated `ownerId`
- *  keeps the read inside the tenant the session actually resolved to (see profile-actions.ts
- *  for the same reasoning on the write side). */
+ *  #592 — factored out of {@link getMyProfileNames} so the sidebar identity read
+ *  (account-actions.ts) can pull the display name from this exact query too, instead of
+ *  growing a second copy that could drift from what #574 already established as the
+ *  merchant's display name. */
+export async function readDisplayName(ownerId: string, email: string): Promise<string> {
+  const membership = await prisma.membership.findFirst({
+    where: { orgId: ownerId, user: { email } },
+    select: { user: { select: { name: true } } },
+  });
+  return membership?.user.name?.trim() ?? "";
+}
+
+/** Read the signed-in merchant's own two names. Fail-closed: an unauthenticated or
+ *  unresolvable session gets {error} and never another org's row. */
 export async function getMyProfileNames(): Promise<ProfileNames | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
-  const [membership, organization] = await Promise.all([
-    prisma.membership.findFirst({
-      where: { orgId: ownerId, user: { email: gate.email } },
-      select: { user: { select: { name: true } } },
-    }),
+  const [displayName, organization] = await Promise.all([
+    readDisplayName(ownerId, gate.email),
     prisma.organization.findFirst({ where: { id: ownerId, deletedAt: null }, select: { name: true } }),
   ]);
   return {
-    displayName: membership?.user.name?.trim() ?? "",
+    displayName,
     workspaceName: workspaceNameOrUnset(organization?.name, gate.email),
     email: gate.email,
   };

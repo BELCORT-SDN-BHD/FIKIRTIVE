@@ -244,6 +244,7 @@ describe("#694 全新商家的 composer 只给真能连上的渠道", () => {
 describe("#694 账户页的连接进度不把连不上的渠道算进分母(附带口径 2)", () => {
   const account: AccountInfo = {
     email: "w2b@example.test",
+    displayName: "",
     organizationName: "Kopi Kita",
     isFounder: false,
     balance: 100,

@@ -21,8 +21,10 @@ test("After signing out, the money surface is walled again", async ({ page }) =>
   await expect(page.getByText("55").first()).toBeVisible();
 
   // The identity area is a disclosure (`<details>`); its summary is what a merchant clicks.
+  // #592 — the summary now shows the merchant's display name (seeded here as personName),
+  // falling back to email only when no display name is set, so it must be located by name.
   const nav = globalNav(page);
-  await nav.locator("summary").filter({ hasText: ws.email }).click();
+  await nav.locator("summary").filter({ hasText: ws.personName }).click();
   await nav.getByRole("menuitem", { name: "Sign out" }).click();
 
   await expect(page).toHaveURL(/\/login/);

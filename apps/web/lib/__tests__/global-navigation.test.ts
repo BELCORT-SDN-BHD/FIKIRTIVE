@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import {
+  IdentityMenu,
   MerchantShellContent,
   SectionTabs,
   nextDisclosureOpenForGroup,
@@ -278,6 +279,34 @@ describe("nextDisclosureOpenForGroup", () => {
   it("an unknown group key keeps a manual toggle and never claims to be on a page", () => {
     expect(nextDisclosureOpenForGroup("nope", { type: "toggle", open: true })).toBe(true);
     expect(nextDisclosureOpenForGroup("nope", { type: "navigation", pathname: "/billing" })).toBe(false);
+  });
+});
+
+// #592 — the sidebar identity area used to always show the merchant's email, even after
+// they set a display name on /profile (#574's own fix). It must now draw the label from
+// the same source #574 introduced (getMyProfileNames/readDisplayName), falling back to
+// the email only when no display name is set — the pre-#592 behavior. Rendered directly
+// (not through MerchantShellContent's internal useEffect fetch, which never runs under
+// renderToStaticMarkup) so this pins the real markup the merchant sees, not just a pure
+// resolver's return value.
+describe("IdentityMenu (#592)", () => {
+  function renderIdentity(account: { email: string; displayName: string; balance: number } | null) {
+    return renderToStaticMarkup(
+      createElement(IdentityMenu, { account, signOutAction: vi.fn(async () => undefined) }),
+    );
+  }
+
+  it("renders the display name, not the email, when a display name is set", () => {
+    const markup = renderIdentity({ email: "nicksgan+e2e02@bel.example.com", displayName: "Nick QA", balance: 10 });
+
+    expect(markup).toContain("Nick QA");
+    expect(markup).not.toContain("nicksgan+e2e02@bel.example.com");
+  });
+
+  it("falls back to the email when no display name is set (current behavior)", () => {
+    const markup = renderIdentity({ email: "nicksgan+e2e02@bel.example.com", displayName: "", balance: 10 });
+
+    expect(markup).toContain("nicksgan+e2e02@bel.example.com");
   });
 });
 

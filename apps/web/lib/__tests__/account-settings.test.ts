@@ -25,6 +25,7 @@ const { parseWholeCredits } = await import("@/components/otto/settings/SettingsP
 
 const account: AccountInfo = {
   email: "owner@acme.test",
+  displayName: "",
   organizationName: "Acme Studio",
   isFounder: false,
   balance: 100,
