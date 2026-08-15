@@ -104,7 +104,7 @@ export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => startCanvas("")}
+            onClick={() => startCanvas(draft)}
             disabled={pending}
           >
             <Plus strokeWidth={2.5} />
