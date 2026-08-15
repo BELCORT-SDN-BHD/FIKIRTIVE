@@ -25,17 +25,20 @@ import { Input } from "@/components/ui/input";
 export interface NorthstarHomeProject {
   id: string;
   name: string;
-  updatedAt: string;
+  /**
+   * Pre-formatted on the server (NorthstarHomeEntry), not a raw timestamp — this is a
+   * client component, so React renders it once on the server and again in the browser
+   * during hydration. `toLocaleDateString` used to run here on both sides, and Node's
+   * ICU data doesn't always agree with the browser's for the same locale, which trips
+   * a hydration mismatch (#949 A5). Formatting it once, server-side, and shipping the
+   * finished string removes the second computation entirely, so there's nothing left
+   * to disagree with.
+   */
+  updatedLabel: string;
 }
 
 export function canvasHref(projectId: string): string {
   return `${CANVAS_HREF}?project=${encodeURIComponent(projectId)}`;
-}
-
-function formatUpdated(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
 }
 
 export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }) {
@@ -139,7 +142,7 @@ export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }
               >
                 <span className="min-w-0 flex-1 truncate font-medium text-foreground">{project.name}</span>
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {formatUpdated(project.updatedAt)}
+                  {project.updatedLabel}
                 </span>
               </Link>
             </li>

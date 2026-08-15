@@ -35,6 +35,15 @@ export function isGenerationBackedItem(item: StuffItem): item is StuffItem & { g
   return (item.source === "gen" || item.source === "ad") && !!item.generationId;
 }
 
+/**
+ * A generation with no prompt (Otto's own reference edits, or a prompt that never made it
+ * to the row) used to fall back to `h.id` — a raw ULID like "01M02KMT02PPGWCJPH" — as the
+ * card's label (#949 A4). That's an internal id, not a merchant-facing name.
+ */
+function untitledLabel(kind: "image" | "video"): string {
+  return kind === "video" ? "Untitled video" : "Untitled image";
+}
+
 export function productImageIndex(records: BrandRecordRow[]): Map<string, string> {
   const idx = new Map<string, string>();
   for (const r of records) {
@@ -73,7 +82,7 @@ export function buildStuffItems(args: {
     items.push({
       id: `gen:${h.id}`,
       source: "gen",
-      label: h.prompt || h.id,
+      label: h.prompt || untitledLabel(h.kind),
       url: h.src,
       mediaKind: h.kind,
       generationId: h.id,
@@ -85,7 +94,7 @@ export function buildStuffItems(args: {
     items.push({
       id: `ad:${a.id}`,
       source: "ad",
-      label: a.prompt || a.id,
+      label: a.prompt || untitledLabel(a.kind),
       url: a.src,
       mediaKind: a.kind,
       generationId: a.id,

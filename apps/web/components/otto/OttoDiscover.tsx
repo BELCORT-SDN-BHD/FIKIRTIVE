@@ -49,7 +49,10 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
   return (
     // gb: .gb resolves brand/accent/muted tokens for the Grok-bright skin;
     // leading-[1.5] — design-baseline body line-height (Analytics standard)
-    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+    // padding-top 64px (not 20px) — clears the floating "show sidebar" toggle
+    // (OttoApp.tsx: `absolute left-3 top-3 size-[34px]`, footprint to 46px) that
+    // otherwise sits on top of this pane and ate the "Dis" of "Discover" (#949 A1).
+    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "64px 20px 20px" }}>
       <div style={{ marginBottom: "16px" }}>
         <h2 style={{ margin: 0, fontSize: "1.125rem", color: "var(--foreground)" }}>Discover</h2>
         <p style={{ margin: "4px 0 0", color: "var(--muted-foreground)", fontSize: "0.875rem" }}>

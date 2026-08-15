@@ -30,6 +30,23 @@ describe("buildStuffItems", () => {
     expect(items.find((i) => i.id === "gen:g1")).toMatchObject({ generationId: "g1", projectId: "p1", assetId: "ag1", label: "Still" });
     expect(items.find((i) => i.id === "ad:a1")).toMatchObject({ generationId: "a1", projectId: "p3", assetId: "aa1", label: "Raya teaser" });
   });
+
+  // #949 A4 — a generation with no prompt (an Otto reference edit, or a row the
+  // prompt never landed on) used to fall back to the raw id (a ULID) as the label.
+  it("labels a prompt-less item by media kind, never the raw id", () => {
+    const items = buildStuffItems({
+      entities: [],
+      history: [
+        { id: "01M02KMT02PPGWCJPH", projectId: "p1", assetId: "ag1", src: "/g1.png", kind: "image", prompt: "" },
+        { id: "01M02J7ZJJW43F420JH", projectId: "p1", assetId: "ag2", src: "/g2.mp4", kind: "video", prompt: "" },
+      ],
+      ads: [{ id: "01M02AD00000000000A", projectId: "p3", assetId: "aa1", src: "/ad1.png", kind: "image", prompt: "", createdAt: "2026-01-01T00:00:00.000Z" }],
+      records: [],
+    });
+    expect(items.find((i) => i.id === "gen:01M02KMT02PPGWCJPH")?.label).toBe("Untitled image");
+    expect(items.find((i) => i.id === "gen:01M02J7ZJJW43F420JH")?.label).toBe("Untitled video");
+    expect(items.find((i) => i.id === "ad:01M02AD00000000000A")?.label).toBe("Untitled image");
+  });
 });
 
 describe("filterStuffItems", () => {

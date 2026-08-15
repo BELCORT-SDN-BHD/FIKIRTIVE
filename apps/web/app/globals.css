@@ -1223,7 +1223,10 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    against this ancestor container instead of .cv-settings's own container-type. */
 .gb .cv-settings-frame { container-type: inline-size; }
 .gb .cv-settings { display: flex; flex: 1; overflow: hidden; container-type: inline-size; }
-.gb .cv-settings-nav { width: clamp(160px, 20cqi, 210px); flex: none; border-right: 1px solid var(--border); padding: 30px 16px; position: sticky; top: 0; }
+/* padding-top 64px (not 30px) — clears the floating "show sidebar" toggle (OttoApp.tsx:
+   `absolute left-3 top-3 size-[34px]`, footprint to 46px) that otherwise sits on top of
+   this rail and ate the "Se" of "Settings" (#949 A1). */
+.gb .cv-settings-nav { width: clamp(160px, 20cqi, 210px); flex: none; border-right: 1px solid var(--border); padding: 64px 16px 30px; position: sticky; top: 0; }
 .gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; }
 .gb .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
 .gb .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
@@ -1254,7 +1257,10 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
     position: static;
     border-right: none;
     border-bottom: 1px solid var(--border);
-    padding: 24px 16px 10px;
+    /* Stays 64px, not 24px: this container breakpoint (own-box <=680px) fires at a
+       wider *viewport* than the button's own hide breakpoint (real viewport <=680px),
+       so there's a window where the rail has gone narrow but the button is still up. */
+    padding: 64px 16px 10px;
   }
   .gb .cv-settings-nav h1 { margin-bottom: 12px; }
   .gb .cv-settings-nav a { display: inline-flex; margin: 0 6px 6px 0; }

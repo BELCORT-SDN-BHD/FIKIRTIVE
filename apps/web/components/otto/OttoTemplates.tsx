@@ -18,8 +18,13 @@ export default function OttoTemplates({ projectId, entities = [] }: { projectId:
   const shown = useMemo(() => filterTemplates(TEMPLATES, { category, search }), [category, search]);
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
+  // pt-16 (not p-5's 20px on every side) — the floating "show sidebar" toggle in
+  // OttoApp.tsx is `absolute left-3 top-3 size-[34px]` over this pane, so its footprint
+  // reaches down to 46px; anything short of that clips under it (#949 A1 — this pane's
+  // "Te" was eaten). Matching Library/Schedule's accidental horizontal dodge would also
+  // shrink this pane's card grid, so we clear the button vertically instead.
   return (
-    <div className="gb leading-[1.5] flex flex-1 flex-col overflow-auto p-5">
+    <div className="gb leading-[1.5] flex flex-1 flex-col overflow-auto pt-16 px-5 pb-5">
       <div className="mb-4">
         <h2 className="m-0 text-lg text-foreground">Templates</h2>
         <p className="mt-1 mb-0 text-sm text-muted-foreground">

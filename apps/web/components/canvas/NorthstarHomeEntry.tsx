@@ -5,6 +5,14 @@ import { NorthstarHome, type NorthstarHomeProject } from "@/components/canvas/No
 import { requireOwner } from "@/lib/auth-guard";
 import { getProjects } from "@/lib/data";
 
+/** Same "en-MY" date the merchant sees everywhere else, formatted once, server-side —
+ *  see the `updatedLabel` doc comment on NorthstarHomeProject for why it lands here
+ *  and not in the client component (#949 A5). */
+function formatUpdated(date: Date): string {
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
+}
+
 /**
  * 北极星 · 极简真首页的受控入口(#609)。
  *
@@ -21,7 +29,7 @@ export async function NorthstarHomeEntry() {
   const rows: NorthstarHomeProject[] = projects.map((project) => ({
     id: project.id,
     name: project.name,
-    updatedAt: project.updatedAt.toISOString(),
+    updatedLabel: formatUpdated(project.updatedAt),
   }));
 
   return <NorthstarHome projects={rows} />;

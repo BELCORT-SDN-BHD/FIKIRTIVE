@@ -320,6 +320,15 @@ export function OttoChatStream({
     },
   });
 
+  // useChat's own `error` is transport-level only (fetch/network/parse failures before
+  // the route's data-error protocol even starts — business errors arrive as a streamed
+  // data-error part and render via OttoStreamErrorNotice instead, see below). Its raw
+  // `.message` (e.g. "Failed to fetch") is developer-facing, not merchant-facing (#949
+  // A2) — log it for diagnosis, keep the friendly copy on screen.
+  useEffect(() => {
+    if (error) console.error("[OttoChatStream] transport error:", error);
+  }, [error]);
+
   const isStreaming = status === "streaming";
   const isBusy = status === "submitted" || status === "streaming";
 
@@ -1300,13 +1309,16 @@ export function OttoChatStream({
           )}
 
           {/* useChat transport-level error (network / parse failures distinct from
-              route data-error). Kept as a fallback alongside stream-level errors. */}
+              route data-error). Kept as a fallback alongside stream-level errors.
+              Always the friendly copy — `error.message` is raw transport text
+              ("Failed to fetch" and the like), not something a merchant can act on;
+              it's logged above instead (#949 A2). */}
           {status === "error" && !streamError && (
             <div
               role="alert"
               className="rounded-[14px] bg-error-soft px-4 py-3 text-[0.875rem] text-[var(--error-soft-foreground)]"
             >
-              {error?.message || "Otto hit a snag — please try again."}
+              Otto hit a snag — please try again.
             </div>
           )}
         </div>
