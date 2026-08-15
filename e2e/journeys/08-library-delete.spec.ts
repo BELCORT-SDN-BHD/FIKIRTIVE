@@ -16,7 +16,7 @@ test("An element deleted from the Library is gone, and is still gone after a rel
     personName: "Kaia",
     openingGrant: 80,
   });
-  await seedElement(ws, "Kopi tumbler");
+  const { entityId } = await seedElement(ws, "Kopi tumbler");
   await seedElement(ws, "Pandan roll");
 
   await signIn(page, ws, "/otto?view=library");
@@ -32,7 +32,25 @@ test("An element deleted from the Library is gone, and is still gone after a rel
   await tile.getByRole("button", { name: "Delete" }).click();
 
   // #934 — Delete now opens a confirmation instead of removing the tile straight away.
+  //
+  // #359 / 2026-08-15 — the tile disappears optimistically the instant Remove is clicked
+  // (OttoStuff.handleDelete), before softDeleteEntity's server action has actually landed.
+  // A reload racing that in-flight request can beat the write to the database, and this
+  // journey flashed red on exactly that race once. Wait for the delete's OWN server-action
+  // response before reloading — a Next.js Server Action call is a POST carrying a `next-action`
+  // header, but the Library page also polls a couple of OTHER server actions in the background
+  // (generation history, balance) on their own timers, so matching on the header alone is not
+  // enough: measured live, one of those unrelated polls can win the race and resolve this wait
+  // before the real delete request has even been sent. Matching the POST body for THIS entity's
+  // id is what pins the wait to the one request that matters.
+  const deleteRequestLanded = page.waitForResponse(async (res) => {
+    const req = res.request();
+    if (req.method() !== "POST") return false;
+    if ((await req.headerValue("next-action")) === null) return false;
+    return (req.postData() ?? "").includes(entityId);
+  });
   await page.getByRole("button", { name: "Remove" }).click();
+  await deleteRequestLanded;
 
   await expect(doomed).toHaveCount(0);
 
