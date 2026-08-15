@@ -288,6 +288,19 @@ export async function seedElement(ws: Workspace, name: string): Promise<{ entity
   return { entityId };
 }
 
+/** An empty conversation thread in the seeded project — landing on it is what puts the merchant
+ *  straight on the chat composer (with its attach button) instead of the "new chat" front door,
+ *  the same way opening a project with a prior conversation would. */
+export async function seedThread(ws: Workspace): Promise<{ threadId: string }> {
+  const threadId = id("thread");
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatThread.create({
+      data: { id: threadId, ownerId: ws.orgId, projectId: ws.projectId, title: "", createdAt: at(0) },
+    }),
+  );
+  return { threadId };
+}
+
 /** The wallet as the database holds it — internal units, straight from the account row. */
 export async function readAccount(ws: Workspace): Promise<{ balance: number; reserved: number }> {
   const account = await prisma.creditAccount.findUniqueOrThrow({

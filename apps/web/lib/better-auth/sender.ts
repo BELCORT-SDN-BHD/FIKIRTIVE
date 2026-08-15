@@ -3,7 +3,19 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { emailPort } from "@/lib/email";
+import { renderAuthEmail } from "@/lib/email/auth-email-template";
 import { isAllowedEmail } from "@/lib/allowlist";
+
+/**
+ * #939 — Better Auth's own default token lifetime for password-reset and email-verification:
+ * 3600 seconds, applied by better-auth itself (`resetPasswordTokenExpiresIn` /
+ * `emailVerification.expiresIn`) because server.ts leaves both unconfigured. Unlike the
+ * magic-link plugin — which pins its own lifetime to AUTH_EMAIL_LINK_TTL_SECONDS below — this
+ * number is not ours to derive from a local constant; it is stated here only so the email copy
+ * can say something true. If server.ts ever configures either option explicitly, this constant
+ * must move with it.
+ */
+const AUTH_EMAIL_DEFAULT_TOKEN_TTL_SECONDS = 3600;
 
 const WINDOW_MS = 60 * 60 * 1000;
 const MAX_PER_ADDRESS_PER_WINDOW = 5;
@@ -482,6 +494,7 @@ async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
     subject: job.purpose === "password-reset" ? "Reset your Fikirtive password" : "Verify your Fikirtive email",
     url: job.url,
     intro: job.purpose === "password-reset" ? "Reset your password" : "Verify your email",
+    validitySeconds: AUTH_EMAIL_DEFAULT_TOKEN_TTL_SECONDS,
   });
 }
 
@@ -531,6 +544,9 @@ export async function sendAuthEmail(message: {
   subject: string;
   url: string;
   intro: string;
+  /** #939 — the real lifetime of THIS link, in seconds, so the "valid for" line is never a
+   *  restated guess. See AUTH_EMAIL_DEFAULT_TOKEN_TTL_SECONDS / AUTH_EMAIL_LINK_TTL_SECONDS. */
+  validitySeconds: number;
 }): Promise<void> {
   const context = jobAbortStore.getStore();
   // Past its deadline the job's slot has already gone back to the pool, so starting a send now
@@ -542,11 +558,19 @@ export async function sendAuthEmail(message: {
   // Marked BEFORE the call, not after: the question this answers is "might a request have reached
   // the provider", and the conservative answer from the moment we hand it over is yes (#757).
   if (context) context.sendDispatched = true;
+  // #939 — branded HTML + text, built by the ONE shared template so every auth-email purpose
+  // gets the same look. The token link is handed through untouched; the template only wraps it.
+  const { html, text } = renderAuthEmail({
+    action: message.intro,
+    url: message.url,
+    validitySeconds: message.validitySeconds,
+  });
   try {
     await emailPort.send({
       to: message.to,
       subject: message.subject,
-      text: `${message.intro}:\n${message.url}\n\nIf you didn't request this, ignore this email.`,
+      text,
+      html,
       devPreview: message.url,
       signal: context?.signal,
       idempotencyKey: idempotencyKeyFor(message),

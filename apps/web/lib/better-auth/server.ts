@@ -6,6 +6,7 @@ import { nextCookies } from "better-auth/next-js";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
 import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_LINK_TTL_SECONDS } from "./sender";
+import { toVerifyLandingUrl } from "./verify-landing-url";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
@@ -101,7 +102,13 @@ export const auth = betterAuth({
     sendVerificationEmail: async ({ user, url }) => {
       // Same handover as every other auth email (#678): the signup response must not wait on the
       // mail provider either.
-      enqueueAuthEmail({ purpose: "verify-email", email: user.email, url });
+      //
+      // #940 — the mailed link points at our own /verify-email landing page first, not straight
+      // at this raw API route: that route has no page behind it, so a merchant who clicked it
+      // saw an entirely blank browser tab for however long verification + auto sign-in +
+      // workspace provisioning took server-side. toVerifyLandingUrl() only changes where the
+      // link visually lands; token and callbackURL still reach THIS endpoint unchanged.
+      enqueueAuthEmail({ purpose: "verify-email", email: user.email, url: toVerifyLandingUrl(url) });
     },
     // #543 — verifying is the last step the merchant should have to take; the link drops
     // them straight into their new workspace. The token is single-use and short-lived, and
@@ -357,7 +364,16 @@ export const auth = betterAuth({
         // `auth.api.signInMagicLink` can mail an address nobody invited. Its cost is invisible —
         // it is a background query behind an answer the merchant already has.
         if (!(await isAllowedEmail(email))) return;
-        await sendAuthEmail({ to: email, subject: "Sign in to Fikirtive", url, intro: "Sign in to Fikirtive" });
+        // #939 — this purpose's real lifetime, not Better Auth's default: AUTH_EMAIL_LINK_TTL_SECONDS
+        // (15 minutes) is what `expiresIn` above actually configures, so it is also what the
+        // "valid for" line in the email must say.
+        await sendAuthEmail({
+          to: email,
+          subject: "Sign in to Fikirtive",
+          url,
+          intro: "Sign in to Fikirtive",
+          validitySeconds: AUTH_EMAIL_LINK_TTL_SECONDS,
+        });
       },
     }),
     // Surface the canonical role on the session so compat.ts matches NextAuth byte-for-byte.
