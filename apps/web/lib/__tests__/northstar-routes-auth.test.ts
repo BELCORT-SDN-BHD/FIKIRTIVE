@@ -144,8 +144,12 @@ describe("已登录商家照常进出", () => {
     signedIn();
     const element = await NorthstarHomeEntry();
     expect(mocks.getProjects).toHaveBeenCalledWith(SIGNED_IN.ownerId);
+    // #949 A5 — NorthstarHomeEntry now formats the date server-side (updatedLabel,
+    // en-MY pinned to Asia/Kuala_Lumpur) instead of shipping a raw updatedAt ISO
+    // string for the client to reformat. 2026-08-01T00:00:00.000Z is 01 Aug 08:00
+    // in KL, so the label stays "1 Aug 2026".
     expect(element.props.projects).toEqual([
-      { id: "p-1", name: "Raya campaign", updatedAt: "2026-08-01T00:00:00.000Z" },
+      { id: "p-1", name: "Raya campaign", updatedLabel: "1 Aug 2026" },
     ]);
   });
 
