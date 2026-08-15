@@ -22,6 +22,8 @@ COPY apps/web apps/web
 # token-crypto (AES-256-GCM + signed media-proxy token) is a workspace dep of @fikirtive/web
 # (app/api/media/pub/[token] verifies the signed URL). Build it before web or the skinny image
 # can't resolve @fikirtive/token-crypto.
+ARG NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 RUN pnpm --filter @fikirtive/core build \
   && pnpm --filter @fikirtive/token-crypto build \
   && pnpm --filter @fikirtive/storage build \
