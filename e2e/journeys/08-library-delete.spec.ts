@@ -38,11 +38,12 @@ test("An element deleted from the Library is gone, and is still gone after a rel
   // A reload racing that in-flight request can beat the write to the database, and this
   // journey flashed red on exactly that race once. Wait for the delete's OWN server-action
   // response before reloading — a Next.js Server Action call is a POST carrying a `next-action`
-  // header, but the Library page also polls a couple of OTHER server actions in the background
-  // (generation history, balance) on their own timers, so matching on the header alone is not
-  // enough: measured live, one of those unrelated polls can win the race and resolve this wait
-  // before the real delete request has even been sent. Matching the POST body for THIS entity's
-  // id is what pins the wait to the one request that matters.
+  // header, but the Library page ALSO fires a couple of other server actions of its own around
+  // the same moment (a one-shot mount effect that loads generation history, an event-broadcast
+  // balance refresh — neither is a timer/poll), so matching on the header alone is not enough:
+  // measured live, one of those unrelated actions can win the race and resolve this wait before
+  // the real delete request has even been sent. Matching the POST body for THIS entity's id is
+  // what pins the wait to the one request that matters.
   const deleteRequestLanded = page.waitForResponse(async (res) => {
     const req = res.request();
     if (req.method() !== "POST") return false;

@@ -1,17 +1,23 @@
 /**
  * A genuinely-new PNG on every call (#941).
  *
- * #931 was a production CORS defect in the browser→R2 presigned-PUT path that went undetected
- * by this suite because every prior upload-adjacent fixture reused the same bytes: identical
- * content hashes to the identical storage key every run, so `authorizeUpload`'s content-addressed
- * dedup (packages… `storage.exists(key)` → `{kind:"exists"}`) short-circuited before the browser
- * ever issued the PUT the incident was about. A journey built on a static fixture can stay green
- * forever while that code path silently rots.
+ * Before this ticket the resident e2e suite had ZERO upload coverage — no fixture, static or
+ * otherwise, ever drove a file through the composer's attach path. So `freshPng()` is not a fix
+ * for some prior fixture that let #931 (a production CORS defect in the browser→R2 presigned-PUT
+ * path) slip through — there was no such fixture, and no such coverage, for anything to slip
+ * through in the first place. Two more facts hold independent of that history, worth stating so
+ * a static fixture is never assumed "obviously fine" here either:
+ *   - `authorizeUpload`'s content-addressed dedup keys on (ownerId, sha256), and every seeded
+ *     workspace mints a fresh random orgId — so identical bytes across two different runs would
+ *     never land on the same key regardless of whether the bytes themselves were static.
+ *   - on CI, `storage.supportsDirectUpload` is false (LocalDiskStorage — see the journey's own
+ *     coverage-boundary note), and `authorizeUpload`'s unsupported-driver check returns BEFORE
+ *     the dedup check ever runs. Dedup is not reachable from this fixture on today's suite at all.
  *
- * `freshPng()` closes that hole the only way that is actually reliable: the pixel itself is a
- * fresh random colour each call, so the file's sha256 — and therefore the storage key — is new
- * on every run, in every CI job, for as long as this suite exists. There is no cache, seed, or
- * fixture file that could ever cause two runs to collide.
+ * `freshPng()` exists to keep that failure mode foreclosed permanently rather than lean on either
+ * fact staying true: a fresh random pixel — and therefore a fresh sha256 and storage key — on
+ * every call means a future e2e run against a real R2/MinIO backend (where dedup DOES execute)
+ * can never quietly start coasting on a stale hash the way a static fixture eventually could.
  *
  * The bytes are a real, fully valid 1×1 truecolour-with-alpha PNG (correct IHDR, a real
  * zlib-deflated IDAT scanline, correct CRC32 on every chunk) — not a hand-waved stub. Anything

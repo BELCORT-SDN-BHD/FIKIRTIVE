@@ -1,14 +1,15 @@
 /**
  * Journey 13 — a genuinely new upload reaches storage and becomes a real Asset (#941).
  *
- * WHY THIS EXISTS. #931 was a production CORS defect in the browser→R2 presigned-PUT path.
- * Nothing in this suite caught it, because every upload-adjacent fixture before this one reused
- * the same bytes: identical content hashes to the identical storage key every run, and
- * `authorizeUpload`'s content-addressed dedup (`storage.exists(key)` → `{kind:"exists"}`) skips
- * the browser's PUT entirely once a key already exists — so a repeated fixture can stay green
- * forever without the direct-upload path ever running a second time. `support/upload-fixture.ts`
- * closes that hole the only reliable way: the pixel is a fresh random colour every run, so the
- * sha256 — and therefore the storage key — is new every time, in every job, permanently.
+ * WHY THIS EXISTS. Before this ticket the resident e2e suite had ZERO upload coverage — this is
+ * the first journey to drive a file through the composer's attach path at all, so there is no
+ * prior fixture this one is replacing, and no defect it quietly let through before. `#931` (a
+ * production CORS defect in the browser→R2 presigned-PUT path) is the reason uploads are covered
+ * at all now, not a bug this suite once missed. `support/upload-fixture.ts`'s header spells out
+ * why the fixture salts its bytes anyway (`freshPng()`, a fresh random pixel every call): in
+ * short, per-owner key namespacing and CI's local storage driver both already make a static
+ * fixture harmless here today, and the salt exists to keep it that way permanently, including
+ * against a future e2e run against a real R2/MinIO backend where dedup actually executes.
  *
  * COVERAGE BOUNDARY — read this before treating a green run here as an R2/CORS guarantee.
  * `playwright.config.ts`'s "NO NETWORK" rule means the app under test carries no R2 credential
