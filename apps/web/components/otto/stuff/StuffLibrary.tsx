@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -100,6 +100,7 @@ export function StuffLibrary({
   onSetProductImage,
   onOpenGeneration,
   onOpenEntity,
+  onAdd,
 }: {
   items: StuffItem[];
   mode: "library" | "picker";
@@ -111,6 +112,10 @@ export function StuffLibrary({
   /** #781 — open a saved element (cast/product/location/brand mark) so its base look and
    *  styling variants are reachable. Without this the variant pathway had no door at all. */
   onOpenEntity?: (entityId: string) => void;
+  /** #942 — opens the same "Add to Library" upload dialog the header's Add button opens.
+   *  Only read by "library" mode's empty state, to turn a blank library into a next step
+   *  instead of a dead end. */
+  onAdd?: () => void;
 }) {
   const [filter, setFilter] = useState<StuffFilter>(mode === "picker" ? "images" : "all");
   const [search, setSearch] = useState("");
@@ -224,18 +229,31 @@ export function StuffLibrary({
       {filtered.length === 0 ? (
         // #701 — three different facts, three different sentences. A search that found
         // nothing is not an empty library, and "go to Brand memory" is a link, not directions.
-        <div className="py-4 text-[0.875rem] text-muted-foreground">
-          {searching ? (
-            noMatchesMessage(search)
-          ) : filter === "products" ? (
-            <>
-              No product assets yet. Add product knowledge in{" "}
-              <ExitLink href={BRAND_MEMORY_HREF}>Brand memory</ExitLink>, then link images here.
-            </>
-          ) : (
-            "Nothing here yet."
-          )}
-        </div>
+        searching ? (
+          <div className="py-4 text-[0.875rem] text-muted-foreground">{noMatchesMessage(search)}</div>
+        ) : filter === "products" ? (
+          <div className="py-4 text-[0.875rem] text-muted-foreground">
+            No product assets yet. Add product knowledge in{" "}
+            <ExitLink href={BRAND_MEMORY_HREF}>Brand memory</ExitLink>, then link images here.
+          </div>
+        ) : items.length === 0 && onAdd ? (
+          // #942 — the onboarding tile's "Add a character or product" lands here when the shop
+          // has nothing saved yet. It used to say "Nothing here yet." and stop there, a dead
+          // end with no next step. Point straight at the same upload dialog the header's Add
+          // button opens, instead of building a second upload path.
+          <div className="flex flex-col items-center gap-3 rounded-[16px] border border-dashed border-border px-6 py-10 text-center">
+            <p className="max-w-[360px] text-[0.875rem] text-muted-foreground">
+              Add your first character or product photo. Otto keeps it consistent across every
+              project.
+            </p>
+            <Button type="button" size="sm" onClick={onAdd}>
+              <Plus size={16} />
+              Add to Library
+            </Button>
+          </div>
+        ) : (
+          <div className="py-4 text-[0.875rem] text-muted-foreground">Nothing here yet.</div>
+        )
       ) : (
         <div className={grid}>
           {filtered.map((item) => {

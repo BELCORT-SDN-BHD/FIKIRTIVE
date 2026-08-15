@@ -258,6 +258,7 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
           onSetProductImage={(assetId) => setChooseProductFor(assetId)}
           onOpenGeneration={(generationId, itemProjectId) => setDetailFor({ generationId, projectId: itemProjectId })}
           onOpenEntity={(id) => setOpenEntityId(id)}
+          onAdd={() => setAddOpen(true)}
         />
         <div className="mt-4 flex items-center gap-3">
           {historyHasMore && (
