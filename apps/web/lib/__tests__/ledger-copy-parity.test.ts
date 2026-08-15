@@ -36,6 +36,10 @@ const creditAccountFindUnique = vi.fn();
 const creditLedgerFindMany = vi.fn();
 const genJobFindMany = vi.fn();
 const refGenJobFindMany = vi.fn();
+// #592 — getMyAccount now also calls readDisplayName (profile-names.ts), which reads
+// Membership. This file's fixtures are all about ledger-row wording, not display names, so
+// the stub just answers "no display name" (null) and every case takes the fallback branch.
+const membershipFindFirst = vi.fn();
 /**
  * #524 r6 — the two READ-ONLY ledger questions ottoApprove asks (judge r5 P1-A'①/②).
  *
@@ -57,6 +61,7 @@ vi.mock("@fikirtive/db", () => ({
     creditLedger: { findMany: creditLedgerFindMany },
     genJob: { findMany: genJobFindMany },
     refGenJob: { findMany: refGenJobFindMany },
+    membership: { findFirst: membershipFindFirst },
   },
   // #524 r6: ottoApprove asks the LEDGER which attempt is still free, and whether a failed
   // approval may claim "nothing was charged". Read-only; defaults say "fresh" and "unknown".
@@ -181,6 +186,7 @@ beforeEach(() => {
   mockRequireOwner.mockResolvedValue({ ownerId: "org_1", email: "owner@shop.test" });
   organizationFindFirst.mockResolvedValue({ name: "Acme Studio", settings: { timezone: TZ } });
   creditAccountFindUnique.mockResolvedValue({ balance: 5000, reserved: 0 });
+  membershipFindFirst.mockResolvedValue(null); // no display name — not what this file tests
   genJobFindMany.mockResolvedValue([
     { id: "job_video", kind: "VIDEO", count: 1, videoOptions: { resolution: "720p" } },
     { id: "job_image", kind: "IMAGE", count: 2, videoOptions: null },
