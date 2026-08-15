@@ -93,6 +93,7 @@ function expectReachableMailto(anchor: HTMLAnchorElement | null, where: string):
 
 const account: AccountInfo = {
   email: "owner@acme.test",
+  displayName: "",
   organizationName: "Acme Studio",
   isFounder: false,
   balance: 100,

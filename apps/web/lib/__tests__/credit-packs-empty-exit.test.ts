@@ -29,6 +29,7 @@ import type { CreditPackShelf } from "@/lib/billing-actions";
 
 const account: AccountInfo = {
   email: "owner@acme.test",
+  displayName: "",
   organizationName: "Acme Studio",
   isFounder: false,
   balance: 100,

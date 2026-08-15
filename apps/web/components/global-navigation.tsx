@@ -469,6 +469,76 @@ function NavigationGroup({ group, pathname }: { group: RailGroup; pathname: stri
   );
 }
 
+/** The subset of AccountInfo (account-actions.ts) the identity area needs. */
+type SidebarAccount = { email: string; displayName: string; balance: number };
+
+/** #592 — what the identity area shows for the signed-in merchant: their own display name
+ *  (same source as the Otto greeting, #574's getMyProfileNames/readDisplayName) when they've
+ *  set one, otherwise their email — the pre-#592 behavior. Pure, so the fallback is testable
+ *  without rendering (the component fetches `account` in a `useEffect`, which never runs
+ *  under `renderToStaticMarkup`, so a pure resolver is the only way to pin this by test). */
+export function sidebarIdentityLabel(account: SidebarAccount | null): string {
+  if (!account) return "Account";
+  return account.displayName || account.email || "Account";
+}
+
+/** Identity — the avatar is a real menu (Profile, Sign out). Extracted from GlobalNavigation
+ *  so it can be rendered directly in a test with a given `account`, without needing the
+ *  fetch effect to run. */
+export function IdentityMenu({
+  account,
+  signOutAction,
+}: {
+  account: SidebarAccount | null;
+  signOutAction: () => Promise<void>;
+}) {
+  const identityLabel = sidebarIdentityLabel(account);
+  return (
+    <details className="group/identity">
+      <summary
+        className={cn(
+          navigationLinkClass,
+          "cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden",
+        )}
+      >
+        <Avatar className="size-6 shrink-0">
+          <AvatarFallback className="bg-accent text-[0.6rem] font-semibold text-accent-foreground">
+            {(account ? identityLabel : "?").slice(0, 1).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <span className="truncate lg:hidden xl:inline">{identityLabel}</span>
+      </summary>
+      <div
+        role="menu"
+        aria-label="Account menu"
+        className="mt-1 space-y-0.5 rounded-[10px] border border-border bg-card p-1 shadow-lg"
+      >
+        <Link
+          role="menuitem"
+          href="/profile"
+          title="Profile"
+          className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40"
+        >
+          <User className="size-4 shrink-0" aria-hidden />
+          <span className="lg:hidden xl:inline">Profile</span>
+        </Link>
+        <form action={signOutAction}>
+          <Button
+            role="menuitem"
+            type="submit"
+            variant="ghost"
+            title="Sign out"
+            className="h-9 w-full justify-start gap-2 rounded-lg px-2 text-sm font-normal text-foreground hover:bg-accent"
+          >
+            <LogOut className="size-4 shrink-0" aria-hidden />
+            <span className="lg:hidden xl:inline">Sign out</span>
+          </Button>
+        </form>
+      </div>
+    </details>
+  );
+}
+
 export function GlobalNavigation({
   pathname,
   signOutAction,
@@ -485,7 +555,7 @@ export function GlobalNavigation({
   /** False on a surface that draws its own mobile top bar; that bar carries the entry. */
   showMobileTrigger: boolean;
 }) {
-  const [account, setAccount] = useState<{ email: string; balance: number } | null>(null);
+  const [account, setAccount] = useState<SidebarAccount | null>(null);
 
   // This rail holds the only credits figure in the product, so it must re-read the
   // balance whenever a charge settles — not only at mount. Subscribing to the spend
@@ -509,7 +579,7 @@ export function GlobalNavigation({
       const isLatest = beginRead();
       getMyAccount().then((result) => {
         if (!alive || !isLatest() || "error" in result) return;
-        setAccount({ email: result.email, balance: result.balance });
+        setAccount({ email: result.email, displayName: result.displayName, balance: result.balance });
       }).catch(() => {});
     };
     const loadIfVisible = () => {
@@ -623,50 +693,9 @@ export function GlobalNavigation({
               </span>
             </Link>
 
-            {/* Identity — the avatar is now a real menu (Profile, Sign out), replacing
+            {/* Identity — the avatar is a real menu (Profile, Sign out), replacing
                 the old "Account" box and its standalone Log out button. */}
-            <details className="group/identity">
-              <summary
-                className={cn(
-                  navigationLinkClass,
-                  "cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden",
-                )}
-              >
-                <Avatar className="size-6 shrink-0">
-                  <AvatarFallback className="bg-accent text-[0.6rem] font-semibold text-accent-foreground">
-                    {(account?.email ?? "?").slice(0, 1).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="truncate lg:hidden xl:inline">{account?.email ?? "Account"}</span>
-              </summary>
-              <div
-                role="menu"
-                aria-label="Account menu"
-                className="mt-1 space-y-0.5 rounded-[10px] border border-border bg-card p-1 shadow-lg"
-              >
-                <Link
-                  role="menuitem"
-                  href="/profile"
-                  title="Profile"
-                  className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40"
-                >
-                  <User className="size-4 shrink-0" aria-hidden />
-                  <span className="lg:hidden xl:inline">Profile</span>
-                </Link>
-                <form action={signOutAction}>
-                  <Button
-                    role="menuitem"
-                    type="submit"
-                    variant="ghost"
-                    title="Sign out"
-                    className="h-9 w-full justify-start gap-2 rounded-lg px-2 text-sm font-normal text-foreground hover:bg-accent"
-                  >
-                    <LogOut className="size-4 shrink-0" aria-hidden />
-                    <span className="lg:hidden xl:inline">Sign out</span>
-                  </Button>
-                </form>
-              </div>
-            </details>
+            <IdentityMenu account={account} signOutAction={signOutAction} />
           </div>
         </nav>
       </aside>

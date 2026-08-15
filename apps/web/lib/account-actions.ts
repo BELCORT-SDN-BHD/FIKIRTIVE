@@ -11,6 +11,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@fikirtive/db";
 import { displayCredits, CREDITS_PER_USD, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { readDisplayName } from "./profile-names";
 import { auth } from "@/lib/better-auth/server";
 import { formatCredits } from "@/lib/credit-format";
 import { partsInTz, formatDayLabel, formatTime } from "@/lib/schedule-view";
@@ -27,6 +28,10 @@ export type AccountActivity = {
 };
 export type AccountInfo = {
   email: string;
+  // #592 — same source as the Otto greeting (#574's getMyProfileNames/readDisplayName):
+  // the merchant's own display name, "" when never set. The sidebar identity area falls
+  // back to `email` in that case, unlike the greeting's generic fallback.
+  displayName: string;
   organizationName: string;
   isFounder: boolean;
   balance: number; // spendable, DISPLAYED credits
@@ -157,12 +162,13 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
   if ("error" in owner) return { error: owner.error };
   const { email, ownerId } = owner;
 
-  const [organization, account] = await Promise.all([
+  const [organization, account, displayName] = await Promise.all([
     prisma.organization.findFirst({
       where: { id: ownerId, deletedAt: null },
       select: { name: true, settings: true },
     }),
     prisma.creditAccount.findUnique({ where: { orgId: ownerId }, select: { balance: true, reserved: true } }),
+    readDisplayName(ownerId, email),
   ]);
   if (!organization) return { error: "Could not load your organization." };
   // Ledger times display in the merchant's own workspace timezone (existing Schedule
@@ -202,6 +208,7 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
 
   return {
     email,
+    displayName,
     organizationName: organization.name,
     isFounder: ownerId === FOUNDER_OWNER_ID,
     balance: displayCredits(balanceInternal),
