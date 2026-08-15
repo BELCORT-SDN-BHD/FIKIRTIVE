@@ -61,6 +61,14 @@ describe("商家的话与模型选的档对不上 ⇒ 停下来问,一张卡都�
       expect(m.toLowerCase()).not.toContain("editclip");
     }
   });
+
+  // #928 判官 r2 P1-1:模型把提示词写成中性的 t2v/guideFromClip 时,原检查挂在
+  // 「cardAction 已经是 editClip/extendClip」的条件里,整条被跳过 —— 商家说「sambung」
+  // (续写,现在下架)也照样铸出一张普通视频卡,零意图核验。现在对**所有**带参考片的
+  // 视频提案先查商家这句话,不管模型把提示词写成了哪一档。
+  it("普通(guideFromClip)提示词 + 商家续写意图 + 参考片 ⇒ 拒绝,零铸卡(#928)", () => {
+    expect(() => card(promptOf("t2v"), clipCtx("sambung klip ni lagi sikit"))).toThrow(ProposeRefusal);
+  });
 });
 
 describe("对得上 / 没有意见 ⇒ 照铸,一个字节都不变", () => {
@@ -84,10 +92,6 @@ describe("对得上 / 没有意见 ⇒ 照铸,一个字节都不变", () => {
 
   it("没有 turnText(旧调用 / 别的入口)⇒ 一切照旧,不因为少一个可选字段就拒绝", () => {
     expect(() => card(promptOf("edit"), clipCtx(undefined))).not.toThrow();
-  });
-
-  it("普通视频卡不受这道对表影响 —— 它只管锚在片子上的那两档", () => {
-    expect(() => card(promptOf("t2v"), clipCtx("sambung klip ni lagi sikit"))).not.toThrow();
   });
 
   it("图片卡完全不受影响", () => {

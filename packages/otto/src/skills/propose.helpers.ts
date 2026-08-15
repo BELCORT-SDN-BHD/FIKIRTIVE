@@ -404,8 +404,15 @@ export function buildProposeCard(
    *   · 只在措辞侧给出**明确单一结论**时才算数(含糊、零信号一律没有意见);
    *   · 对不上时**不改判、不纠正**,而是停下来问 —— 拿关键词去推翻模型就是另一种预判商家。
    * 一分钱都还没花,所以停下来问的代价只有一句话。
+   *
+   * #928 判官 r2 P1-1 —— 「措辞指着一个下架动作」原本挂在 `cardAction` 已经落在
+   * editClip/extendClip 的条件里,于是模型把提示词写成中性的 guideFromClip 时(商家嘴上
+   * 说「继续」「sambung」,模型没跟着走)这一整条检查被跳过 —— 商家的续写意图从没被读到,
+   * 一张带参考片的普通提案照样铸卡收费。现在拆成两步:①「商家这句话是不是指着一个下架
+   * 动作」对**所有**带参考片的视频提案都跑,与 `cardAction` 落在哪一档无关;②「编辑/续写
+   * 互相错配」保持原来的窄范围,只在 `cardAction` 已经是 editClip/extendClip 时才对表。
    */
-  if (cardAction && ctx.turnText && (cardAction === "editClip" || cardAction === "extendClip")) {
+  if (kind === "video" && isRefVideo && ctx.turnText) {
     const fromWords = decideVideoAction({ text: ctx.turnText, shape: videoShape });
     // #922 —— 措辞侧指着一个**下架**的动作(商家说「接下去」,而续写关着)⇒ 照实说那一句,
     // 别把它当成对卡的默许。少了这一条,这道对表在续写下架期间会整条失效:关着的动作
@@ -414,6 +421,8 @@ export function buildProposeCard(
       throw new VideoActionUnavailableError(fromWords.question);
     }
     if (
+      cardAction &&
+      (cardAction === "editClip" || cardAction === "extendClip") &&
       fromWords.kind === "action" &&
       (fromWords.action === "editClip" || fromWords.action === "extendClip") &&
       fromWords.action !== cardAction

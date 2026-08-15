@@ -17,6 +17,7 @@ import {
   composePrompt, isModelDisabled,
   buildGenRequestFromCard,
   suggestModel, generationUnavailableMessage,
+  anchoredVideoAction, anchoredActionUnavailableReason,
 } from "@fikirtive/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
@@ -286,6 +287,20 @@ export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string }
       if ("error" in registry) return registry; // 读不到开关状态就不许铸卡(P1-3 同一条规矩)
       if (!suggestModel({ kind: proposal.data.kind, disabled: registry.disabled })) {
         return { error: generationUnavailableMessage(proposal.data.kind) };
+      }
+
+      // #928 判官 r2 P2-1 —— 同一个病,克隆版:这条入口验的是**结构**（上面那道闸），
+      // 不问旧卡锚的动作现在是不是被下架了。beta 之前铸好的续写卡点 Make another / Try
+      // again，结构照样合法（片子还挂着、比例还是 adaptive），于是原样克隆出一张新的
+      // GEN_CARD —— 商家拿到一张确认了也点不动的死卡（点 Generate 会撞上付费 schema 的
+      // 兜底闸，但那时确认卡已经骗过一次）。
+      //
+      // 判据与另外三处铸卡入口、以及付费 schema 的兜底闸同一份
+      // （`anchoredVideoAction` + `ANCHORED_ACTION_UNAVAILABLE`，都在 core），不再另开一处。
+      if (proposal.data.kind === "video") {
+        const anchoredAction = anchoredVideoAction(proposal.data.structuredPrompt);
+        const unavailable = anchoredAction ? anchoredActionUnavailableReason(anchoredAction) : null;
+        if (unavailable) return { error: unavailable };
       }
 
       // Clone the payload verbatim — same model/params/prompt/refs/source. No seed is pinned,
