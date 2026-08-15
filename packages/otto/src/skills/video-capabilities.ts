@@ -26,6 +26,7 @@ import {
   VIDEO_EDIT_OPENING,
   VIDEO_EXTEND_OPENING,
   anchoredVideoAction,
+  anchoredActionUnavailableReason,
 } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
@@ -137,9 +138,27 @@ export function videoAction(id: VideoAction): VideoCapability {
   return cap;
 }
 
-/** 这个形状下**真做得到**的动作,按表的次序。 */
+/**
+ * #922 —— 这个动作现在**关着**吗。关着回给商家看的那句话,开着回 `null`。
+ *
+ * 名单不在这里,在 `@fikirtive/core`(`ANCHORED_ACTION_UNAVAILABLE`)—— 付费 schema
+ * 也读那一份。能力表这一侧只是把它接进来,一个字都不另抄:抄一份,「Otto 还在提」与
+ * 「付费闸已经拒」就会在某一天各说各话,而商家撞见的是批准之后的那一次失败。
+ *
+ * 只有锚定那两档进得了名单:其余四档不锚在商家自己的片子上,与这次裁决无关。
+ */
+export function videoActionUnavailableReason(id: VideoAction): string | null {
+  return id === "editClip" || id === "extendClip" ? anchoredActionUnavailableReason(id) : null;
+}
+
+/**
+ * 这个形状下**真做得到**的动作,按表的次序。
+ *
+ * #922:关着的动作不在候选里 —— 「形状不对」与「现在关着」对下游是同一件事(这一趟做不到),
+ * 而两件事各有各的说法,由 `videoActionUnavailableReason` 与 `decideVideoAction` 分头说清楚。
+ */
 export function videoActionsFor(shape: VideoInputShape): VideoAction[] {
-  return VIDEO_ACTIONS.filter((c) => c.needs(shape)).map((c) => c.id);
+  return VIDEO_ACTIONS.filter((c) => c.needs(shape) && videoActionUnavailableReason(c.id) === null).map((c) => c.id);
 }
 
 /** 没有片子时的三种形状 —— 素材位只有三个布尔,所以这个集合是**穷尽**的,不是抽样。 */

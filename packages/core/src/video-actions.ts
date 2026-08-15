@@ -62,3 +62,42 @@ export function anchoredVideoAction(prompt: string): AnchoredVideoAction | null 
 export function isAnchoredVideoPrompt(prompt: string): boolean {
   return anchoredVideoAction(prompt) !== null;
 }
+
+// ---------------------------------------------------------------------------
+// #922 缺口 B 前置 —— beta 期间哪一个动作开着,哪一个关着
+// ---------------------------------------------------------------------------
+
+/**
+ * **下架名单**:key 在表上 = 这个动作现在关着,value = 商家读到的那一句。
+ *
+ * ── Founder 裁决(2026-08-14,部署窗口现场)────────────────────────────────
+ * 「beta 期间下架续写动作的两面入口(手动 + Otto 提案),剪辑保留。」
+ *
+ * 依据是同一天的引擎实测(#922):引擎的 `duration` 是**成片总长**,不是增量,而本仓契约
+ * 把参考视频的出片时长硬钉 5 秒(`GEN_VIDEO_SECONDS`)。于是对一条 5-6 秒的参考片
+ * ——我们自己出的片全是 5 秒—— 续写,拿回来的整条就是原片的重演(实测首 5 秒 SSIM 0.954),
+ * 新内容 0 秒,而商家照付 16 credits。剪辑不受这件事影响:它本来就是「同一条片子,改一处」。
+ *
+ * ── 为什么名单住在这里 ──────────────────────────────────────────────────
+ * 读它的有三处,而且分散在三层:Otto 的能力表(提案那一端)、商家手动入口(界面那一端)、
+ * 以及付费 schema `genRequest`(花钱那一端)。抄成三份,某一天就会有一处忘了改 ——
+ * 而忘掉的那一处很可能正是收费的那一处。所以判据只有这一份,三处都从这里读。
+ *
+ * ── 恢复条件 ────────────────────────────────────────────────────────────
+ * #922 缺口 B(续写时长脱离 5 秒硬钉 + 相应定价)裁决落地后,删掉 `extendClip` 那一行即可 ——
+ * 上面三处会同时跟着开门,不需要再去改它们中的任何一处。
+ */
+export const ANCHORED_ACTION_UNAVAILABLE: Readonly<Partial<Record<AnchoredVideoAction, string>>> = {
+  extendClip:
+    "Carrying a clip on is switched off for now — changing something inside a clip you already have still works.",
+};
+
+/**
+ * 这个动作现在关着吗。关着回**给商家看的那句话**,开着回 `null`。
+ *
+ * 回的是一句话而不是一个布尔,是因为每一处「关着」都要对商家开口,而三处各写一句就是
+ * 三种说法 —— 商家在对话里听见的、在素材库里看见的、和确认时撞上的会互相矛盾。
+ */
+export function anchoredActionUnavailableReason(action: AnchoredVideoAction): string | null {
+  return ANCHORED_ACTION_UNAVAILABLE[action] ?? null;
+}

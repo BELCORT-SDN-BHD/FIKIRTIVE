@@ -182,3 +182,53 @@ describe("增强指令(directive)仍然接得上,但它只能加在**卡上那�
     expect(built.req.prompt).not.toContain("Strictly edit");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #922 —— beta 期间下架的动作,花不出钱
+// ---------------------------------------------------------------------------
+
+/**
+ * Founder 裁决(2026-08-14,部署窗口现场):beta 期间续写整条下架,剪辑保留。
+ *
+ * 这道闸是**兜底**,不是主闸:铸卡两面(Otto 提案 / 商家手动入口)已经不产续写卡了。
+ * 它挡的是那两面挡不住的两种东西 —— 下架之前铸好、还躺在会话里的残留卡,以及绕开铸卡
+ * 直接构造的请求。判据是 core 的下架名单(`ANCHORED_ACTION_UNAVAILABLE`),
+ * 与那两面读的是同一份。
+ */
+describe("#922:续写在 beta 期间花不出钱(剪辑一格没动)", () => {
+  const withClip = (over: Record<string, unknown> = {}) =>
+    baseReq({ referenceVideoGenerationId: "gen_vid", aspectRatio: VIDEO_ASPECT_ADAPTIVE, ...over });
+
+  it("形状完全合法的续写请求(带片子 + adaptive)⇒ 照样拒", () => {
+    expect(genRequest.safeParse(withClip({ prompt: EXTEND_PROMPT })).success).toBe(false);
+  });
+
+  it("同一形状的剪辑照旧放行 —— 下架的是那一个动作,不是这条路", () => {
+    expect(genRequest.safeParse(withClip({ prompt: EDIT_PROMPT })).success).toBe(true);
+  });
+
+  it("拒的理由指着提示词本身(动作下架),不是缺片子或比例不对", () => {
+    const r = genRequest.safeParse(withClip({ prompt: EXTEND_PROMPT }));
+    if (r.success) throw new Error("expected a rejection");
+    expect(r.error.issues.map((i) => i.path.join("."))).toContain("prompt");
+  });
+
+  it("残留卡走的那条路也拒:卡→请求构造出来的续写请求过不了付费 schema", () => {
+    const built = buildGenRequestFromCard({
+      ...BASE,
+      cardPayload: anchoredCard({ structuredPrompt: EXTEND_PROMPT }),
+      prompt: EXTEND_PROMPT,
+    });
+    if (!built.ok) throw new Error("unreachable");
+    // 构造器照旧忠实地把卡上那段字带出来(它管的是「执行只认卡」),钱在付费 schema 这一层停下。
+    expect(built.req.prompt).toBe(EXTEND_PROMPT);
+    expect(genRequest.safeParse({ ...built.req, idempotencyKey: "cowork:c" }).success).toBe(false);
+  });
+
+  it("误伤检查:带片子的**非**官方句式(照着这条做一条新的)一个字节都不受影响", () => {
+    expect(
+      genRequest.safeParse(baseReq({ prompt: PLAIN_PROMPT, referenceVideoGenerationId: "gen_vid", aspectRatio: "16:9" }))
+        .success,
+    ).toBe(true);
+  });
+});

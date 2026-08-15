@@ -10,7 +10,7 @@
  * 换成夹具,所以它测的是真接线:关掉唯一那台视频引擎之后,分镜侧一张卡都不许落库。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_VIDEO_MODELS } from "@fikirtive/core";
+import { GEN_VIDEO_MODELS, VIDEO_EDIT_OPENING, VIDEO_EXTEND_OPENING } from "@fikirtive/core";
 
 const {
   mockOwner, mockResolveDisabled, mockChatFindFirst, mockChatCreate, mockChatUpdate,
@@ -66,14 +66,14 @@ const VIDEO_OFF = "Video generation is turned off right now.";
 const IMAGE_OFF = "Image generation is turned off right now.";
 
 /** 一张已铸好的 GEN_CARD —— 「Make another / Try again」克隆的就是它。 */
-function genCard(kind: "image" | "video") {
+function genCard(kind: "image" | "video", promptOverride?: string) {
   return {
     id: "gen-card-1",
     threadId: "t-1",
     payload: {
       kind,
       model: kind === "video" ? "seedance-2-mini" : "seedream",
-      structuredPrompt: kind === "video" ? "a cat walks" : "a cat",
+      structuredPrompt: promptOverride ?? (kind === "video" ? "a cat walks" : "a cat"),
       entityIds: [],
       variantSel: {},
       params: kind === "video" ? { count: 1, durationSeconds: 5, resolution: "720p" } : { count: 1 },
@@ -100,9 +100,9 @@ function storyboardCard() {
 }
 
 /** 让 chatMessage.findFirst 同时服务分镜卡与 GEN_CARD 两种查询。 */
-function wireCards(varyKind: "image" | "video" = "video") {
+function wireCards(varyKind: "image" | "video" = "video", promptOverride?: string) {
   const sb = storyboardCard();
-  const gc = genCard(varyKind);
+  const gc = genCard(varyKind, promptOverride);
   mockChatFindFirst.mockImplementation(async (args: { where?: { kind?: string }; orderBy?: unknown }) => {
     if (args?.where?.kind === "STORYBOARD_CARD") return sb;
     if (args?.where?.kind === "GEN_CARD") return gc;
@@ -205,6 +205,53 @@ describe("#647 T6 修复轮 P1-1:Make another / Try again 也走同一道闸", (
   it("什么都没关 ⇒ 视频卡照旧可以「再来一张」", async () => {
     mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>() });
     wireCards("video");
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ threadId: "t-1" });
+    expect(mockChatCreateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #928 判官 r2 P2-1 —— 旧续写卡被 Make another / Try again 克隆成新的死卡
+// ---------------------------------------------------------------------------
+//
+// 判官现场:`coworkVaryCard` 只校验旧卡的**结构**(上面那道引擎开关闸),不问旧卡锚的
+// 动作现在是不是被下架了。beta 之前铸好的续写卡结构完全合法(片子挂着、比例是
+// adaptive、引擎没关),于是照样被原样克隆成一张新 GEN_CARD —— 商家看到的是一张能点
+// 的确认卡,点下去才在付费 schema 的兜底闸撞见「续写关着」。判据与另外三处铸卡入口、
+// 以及付费 schema 的兜底闸同一份(`anchoredVideoAction` + `ANCHORED_ACTION_UNAVAILABLE`,
+// 都在 core)。
+describe("#928 判官 r2 P2-1:旧续写卡不许被克隆成新的死卡", () => {
+  const EXTEND_OFF = "Carrying a clip on is switched off for now — changing something inside a clip you already have still works.";
+
+  beforeEach(() => {
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>() }); // 引擎开着,只测下架名单
+  });
+
+  it("旧卡锚着续写(官方开头)⇒ 中央下架文案拒绝,零卡落库", async () => {
+    wireCards("video", `${VIDEO_EXTEND_OPENING} forward, he walks out and waves.`);
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ error: EXTEND_OFF });
+    expect(mockChatCreateMany).not.toHaveBeenCalled();
+    expect(mockThreadUpdate).not.toHaveBeenCalled();
+  });
+
+  it("旧卡锚着剪辑(官方开头)⇒ 剪辑没下架,照常可以「再来一张」", async () => {
+    wireCards("video", `${VIDEO_EDIT_OPENING} the shirt to deep red.`);
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ threadId: "t-1" });
+    expect(mockChatCreateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("普通(非锚定)视频卡不受影响 —— 这道闸只管锚在片子上的那两档", async () => {
+    wireCards("video", "a cat walks");
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ threadId: "t-1" });
+    expect(mockChatCreateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("图片卡完全不受影响", async () => {
+    wireCards("image");
     const r = await coworkVaryCard({ cardId: "gen-card-1" });
     expect(r).toEqual({ threadId: "t-1" });
     expect(mockChatCreateMany).toHaveBeenCalledTimes(1);

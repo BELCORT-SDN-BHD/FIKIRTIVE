@@ -44,6 +44,10 @@ const CLIP_VIDEO_EXTS = ["mp4", "mov", "webm"];
 
 const clipActionInput = z.object({
   generationId: z.string().min(1).max(64),
+  // #922:这里**刻意不**照下架名单裁剪 enum。裁了就是把同一个判断写成第二份,而这条路
+  // 上的判断本来就有唯一的一处:下面第 ⑤ 步的 `buildProposeCard` 走能力表,关着的动作
+  // 当场抛 `ProposeRefusal`,商家拿到的正是名单里那句人话,一张卡都不落库、$0。
+  // 界面那一侧同样只是**不画**那个键(`CLIP_ENTRY_ACTIONS`),不自己判。
   action: z.enum(["edit", "extend"]),
   wording: z.string().min(1).max(2000),
 });

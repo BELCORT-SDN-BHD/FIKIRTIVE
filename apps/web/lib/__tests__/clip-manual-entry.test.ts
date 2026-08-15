@@ -23,7 +23,7 @@ import path from "node:path";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
-  anchoredVideoAction, VIDEO_ASPECT_ADAPTIVE, GEN_VIDEO_MODEL_OPTIONS,
+  anchoredVideoAction, anchoredActionUnavailableReason, VIDEO_ASPECT_ADAPTIVE, GEN_VIDEO_MODEL_OPTIONS,
   // 判官 r3 P1 的第②层:卡→付费请求的构造器与付费 schema 本身,
   // 与 core 的 anchored-spend-gate 用的是同一对判据,不另抄一份。
   buildGenRequestFromCard, genRequest,
@@ -114,7 +114,7 @@ vi.mock("@fikirtive/core", async (importOriginal) => ({
 }));
 
 const { proposeClipActionCard } = await import("../clip-actions");
-const { clipEntrySegment, CLIP_ENTRY_COPY, CLIP_ENTRY_WORDING_MAX } = await import("../clip-action-entry");
+const { clipEntrySegment, CLIP_ENTRY_ACTIONS, CLIP_ENTRY_COPY, CLIP_ENTRY_WORDING_MAX } = await import("../clip-action-entry");
 
 const OWNER = "owner-1";
 const CLIP = "gen_clip_1";
@@ -153,19 +153,35 @@ describe("#922 缺口 A — 商家措辞 → 官方锚定句式", () => {
     );
   });
 
-  it("续写铸出来的那段字被认成 extendClip", async () => {
+  /**
+   * #922 —— 续写在 beta 期间下架(Founder 裁决 2026-08-14)。
+   *
+   * 这一条原本断言「续写铸出来的那段字被认成 extendClip」。现在断言的是它**铸不出来**,
+   * 而且拒绝那句话与 core 的下架名单逐字同一份 —— 这条服务端路径**没有自己的判断**:
+   * 它连 enum 都没裁,靠的就是 `buildProposeCard` 走能力表当场拒。这条测试正是那件事的
+   * 证据(单一权威真的贯通到了这一层),不是它的替代品。
+   */
+  it("#922:续写下架 ⇒ 服务端一张卡都不铸,回的是名单里那句人话", async () => {
     armHappyPath();
     const result = await proposeClipActionCard({
       generationId: CLIP,
       action: "extend",
       wording: "she walks out of frame",
     });
+    expect(result).toEqual({ error: anchoredActionUnavailableReason("extendClip") });
+    // 拒绝路径零写入:会话没建、卡没落库(与 r1 P2-2 同一条纪律)。
+    expect(mockChatCreate).not.toHaveBeenCalled();
+  });
+
+  it("#922:同一条路上的剪辑一个字节没变", async () => {
+    armHappyPath();
+    const result = await proposeClipActionCard({
+      generationId: CLIP,
+      action: "edit",
+      wording: "she walks out of frame",
+    });
     if ("error" in result) throw new Error(result.error);
-    expect(anchoredVideoAction(result.structuredPrompt)).toBe("extendClip");
-    expect(result.structuredPrompt).toBe(
-      "Extend <Video_1> forward, she walks out of frame.\n" +
-        "Continue the same characters, wardrobe, setting, and lighting.",
-    );
+    expect(anchoredVideoAction(result.structuredPrompt)).toBe("editClip");
   });
 
   /**
@@ -502,8 +518,9 @@ describe("#922 缺口 A — 入口本身", () => {
     }
   });
 
-  it("两个入口键都在,措辞是 English sentence case", () => {
+  it("措辞两档都还在(下架不是删文案),English sentence case、白标", () => {
     expect(CLIP_ENTRY_COPY.edit.cta).toBe("Edit this clip");
+    // 续写的措辞刻意原样留着 —— 恢复的那一天靠的就是它,名单一删这个键自己回来。
     expect(CLIP_ENTRY_COPY.extend.cta).toBe("Continue this clip");
     for (const key of ["edit", "extend"] as const) {
       for (const text of Object.values(CLIP_ENTRY_COPY[key])) {
@@ -511,6 +528,22 @@ describe("#922 缺口 A — 入口本身", () => {
         expect(text.toLowerCase()).not.toMatch(/seedance|byteplus|ark|volc/);
       }
     }
+  });
+
+  /**
+   * #922 —— **画出来的键**由 core 的下架名单说了算,界面这一侧不另判一次。
+   *
+   * 判据用的是 core 那个函数本身,不是把 `["edit"]` 手抄一遍:抄一遍,名单改了而这条
+   * 测试没改,它会继续绿着为一个已经过期的界面作证。
+   */
+  it("#922:详情面板只画名单里开着的那些键 —— 续写的键不画", () => {
+    expect(CLIP_ENTRY_ACTIONS).toEqual(
+      (["edit", "extend"] as const).filter(
+        (a) => anchoredActionUnavailableReason(a === "extend" ? "extendClip" : "editClip") === null,
+      ),
+    );
+    expect(CLIP_ENTRY_ACTIONS).not.toContain("extend");
+    expect(CLIP_ENTRY_ACTIONS).toContain("edit");
   });
 });
 
@@ -571,9 +604,9 @@ describe("#922 缺口 A — 按下去之前一分钱都不花", () => {
     uiMocks.coworkGenerate.mockResolvedValue({ id: "job-1" });
     await mount();
 
-    // ① 两个入口都在。
+    // ① 剪辑的入口在;续写的键在 beta 期间根本不画(#922)。
     expect(buttonNamed("Edit this clip")).toBeTruthy();
-    expect(buttonNamed("Continue this clip")).toBeTruthy();
+    expect(() => buttonNamed("Continue this clip")).toThrow();
 
     // ② 展开措辞框、打一句话。
     await click(buttonNamed("Edit this clip"));

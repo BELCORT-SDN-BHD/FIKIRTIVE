@@ -61,12 +61,22 @@ describe("商家的话与模型选的档对不上 ⇒ 停下来问,一张卡都�
       expect(m.toLowerCase()).not.toContain("editclip");
     }
   });
+
+  // #928 判官 r2 P1-1:模型把提示词写成中性的 t2v/guideFromClip 时,原检查挂在
+  // 「cardAction 已经是 editClip/extendClip」的条件里,整条被跳过 —— 商家说「sambung」
+  // (续写,现在下架)也照样铸出一张普通视频卡,零意图核验。现在对**所有**带参考片的
+  // 视频提案先查商家这句话,不管模型把提示词写成了哪一档。
+  it("普通(guideFromClip)提示词 + 商家续写意图 + 参考片 ⇒ 拒绝,零铸卡(#928)", () => {
+    expect(() => card(promptOf("t2v"), clipCtx("sambung klip ni lagi sikit"))).toThrow(ProposeRefusal);
+  });
 });
 
 describe("对得上 / 没有意见 ⇒ 照铸,一个字节都不变", () => {
-  it("商家说「sambung」+ 模型也选了续写 ⇒ 照铸", () => {
-    const { cardPayload } = card(promptOf("extend"), clipCtx("sambung klip ni lagi sikit"));
-    expect(cardPayload.kind).toBe("video");
+  // #922:「两边都说续写 ⇒ 照铸」在续写下架期间不成立 —— 两边说得再一致,那件事现在
+  // 也做不到。这一条改成断言它停在**下架**上(而不是停在对表上),缺口 B 裁决落地、
+  // 名单一删,它会跟着红,提醒把「照铸」改回来。
+  it("商家说「sambung」+ 模型也选了续写 ⇒ 续写下架期间照样不铸(#922)", () => {
+    expect(() => card(promptOf("extend"), clipCtx("sambung klip ni lagi sikit"))).toThrow(ProposeRefusal);
   });
 
   it("商家说「改成红色」+ 模型也选了编辑 ⇒ 照铸", () => {
@@ -84,10 +94,6 @@ describe("对得上 / 没有意见 ⇒ 照铸,一个字节都不变", () => {
     expect(() => card(promptOf("edit"), clipCtx(undefined))).not.toThrow();
   });
 
-  it("普通视频卡不受这道对表影响 —— 它只管锚在片子上的那两档", () => {
-    expect(() => card(promptOf("t2v"), clipCtx("sambung klip ni lagi sikit"))).not.toThrow();
-  });
-
   it("图片卡完全不受影响", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
@@ -99,7 +105,14 @@ describe("对得上 / 没有意见 ⇒ 照铸,一个字节都不变", () => {
 });
 
 describe("不拿关键词推翻模型 —— 只在**两边都明确且相反**时才停", () => {
-  it("商家一句话里既要改又要接(含糊)⇒ 措辞侧没有明确结论,不拦模型", () => {
-    expect(() => card(promptOf("edit"), clipCtx("change the ending and keep it going"))).not.toThrow();
+  // #922:这一条原本证「含糊 ⇒ 不拦模型」。续写下架之后,同一句话里那半句要的是一件
+  // **关着**的事,而关着不是含糊 —— 照实说一句比静默铸一张剪辑卡诚实。剪辑那一族的
+  // 「不拿关键词推翻模型」由下面那条(零信号/无 turnText)与上一组照铸的用例继续守着。
+  it("商家一句话里既要改又要接 ⇒ 先说「接下去关着」,不静默当成只要改(#922)", () => {
+    expect(() => card(promptOf("edit"), clipCtx("change the ending and keep it going"))).toThrow(ProposeRefusal);
+  });
+
+  it("只说要改、一个续写信号都没有 ⇒ 照旧不拦模型", () => {
+    expect(() => card(promptOf("edit"), clipCtx("tolong ubah baju jadi merah"))).not.toThrow();
   });
 });

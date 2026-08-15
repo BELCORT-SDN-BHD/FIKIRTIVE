@@ -8,7 +8,24 @@ import {
   CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly,
   VIDEO_CONSTRAINTS, EMOTION_CUES, referenceAdvice,
 } from "./prompt-vocab.js";
-import { openingForTeaching, videoPromptWarnings } from "./video-capabilities.js";
+import { openingForTeaching, videoActionUnavailableReason, videoPromptWarnings } from "./video-capabilities.js";
+
+/**
+ * #922 —— 续写下架期间,这段教材里教「怎么写续写」的那几句换成「别写,照实说」。
+ *
+ * 判据从能力表读(它读的是 core 的下架名单),不在这里另写一个开关:教材与铸卡闸
+ * 各挂一个开关,总有一天会剩下一个开着 —— 而那天 Otto 会热心地写一条马上被拒的提示词,
+ * 商家等来的是一句技术错误。名单一删,这段话自己就把续写教回来。
+ */
+const EXTEND_OFF = videoActionUnavailableReason("extendClip");
+
+const EXTEND_TEACHING =
+  EXTEND_OFF === null
+    ? "mode:'extend' — they want that clip carried on (\"keep it going\", \"what happens next\"); the prompt opens " +
+      `with the engine's carry-on sentence ("${openingForTeaching("extendClip")} forward, …"), so pass ` +
+      "`extendDirection` 'forward' (default) or 'backward'. "
+    : "mode:'extend' is SWITCHED OFF right now — never assemble one, and never promise it. When they ask for a clip " +
+      `to be carried on, say exactly this and stop: "${EXTEND_OFF}" `;
 
 export const seedancePromptSkill = defineOttoSkill({
   name: "seedancePrompt",
@@ -26,9 +43,8 @@ export const seedancePromptSkill = defineOttoSkill({
     "mode:'edit' — they want something INSIDE that clip changed and everything else left alone " +
     `("make the shirt red", "fix the ending"); the prompt opens with the engine's strict-edit sentence ` +
     `("${openingForTeaching("editClip")} …") and adds the line that protects the rest. ` +
-    "mode:'extend' — they want that clip carried on (\"keep it going\", \"what happens next\"); the prompt opens " +
-    `with the engine's carry-on sentence ("${openingForTeaching("extendClip")} forward, …"), so pass ` +
-    "`extendDirection` 'forward' (default) or 'backward'. The sentence names their clip for you — never write " +
+    EXTEND_TEACHING +
+    "The sentence names their clip for you — never write " +
     "that name yourself, exactly as with image numbering. Both modes take EXACTLY ONE shot — an edit or an " +
     "extension is one change, not a sequence — and neither takes a style or quality direction: re-styling " +
     "fights the whole point of anchoring to a clip they already have. When they attached a clip but want a " +

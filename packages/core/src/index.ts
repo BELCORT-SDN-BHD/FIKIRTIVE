@@ -97,6 +97,9 @@ export {
   VIDEO_EXTEND_OPENING,
   anchoredVideoAction,
   isAnchoredVideoPrompt,
+  // #922:beta 期间的下架名单 —— Otto 的能力表、商家手动入口、付费 schema 读的同一份。
+  ANCHORED_ACTION_UNAVAILABLE,
+  anchoredActionUnavailableReason,
   type AnchoredVideoAction,
 } from "./video-actions.js";
 export * from "./otto-budget.js";

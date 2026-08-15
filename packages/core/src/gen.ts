@@ -11,7 +11,7 @@
  * Video (i2v) lands as a follow-up slice on this same skeleton.
  */
 import { z } from "zod";
-import { isAnchoredVideoPrompt } from "./video-actions.js";
+import { anchoredVideoAction, anchoredActionUnavailableReason } from "./video-actions.js";
 
 export const GEN_MODELS = ["seedream"] as const;
 export type GenModel = (typeof GEN_MODELS)[number];
@@ -718,7 +718,28 @@ export const genRequest = z
      * (同样带参考视频、但提示词不是官方句式)一个字节都不受影响,画布那条路的合法画幅
      * 语义原样保留。
      */
-    if (v.kind === "video" && isAnchoredVideoPrompt(v.prompt)) {
+    const anchoredAction = v.kind === "video" ? anchoredVideoAction(v.prompt) : null;
+    if (anchoredAction) {
+      /**
+       * #922 —— **下架的动作花不出钱**,哪怕请求形状完全合法。
+       *
+       * 这一条排在另外两条前面,因为它管的不是形状而是「这件事现在做不做」。上面两道闸
+       * 都假设这趟运行本身是要做的;续写下架之后,一条带着片子、比例也对的续写请求仍然
+       * 不许扣钱 —— 铸卡两面已经不产它了,能走到这里的只剩下架之前铸好的残留卡、或者
+       * 直接构造的请求,而那两种正是这道闸存在的理由(与上面判官 r3 的两个探针同一类)。
+       *
+       * 名单在 core 的 `ANCHORED_ACTION_UNAVAILABLE` —— 铸卡两面读的是同一份。
+       * 这里的 message 与别的 schema 消息同一个体例(内部用;商家看到的是 startGen 统一的
+       * 那一句),商家读得到的那句人话由铸卡两面在**花钱之前**说。
+       */
+      const unavailable = anchoredActionUnavailableReason(anchoredAction);
+      if (unavailable) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["prompt"],
+          message: "carrying a clip on is not available right now",
+        });
+      }
       if (!v.referenceVideoGenerationId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
