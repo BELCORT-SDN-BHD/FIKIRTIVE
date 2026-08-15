@@ -357,7 +357,16 @@ export const auth = betterAuth({
         // `auth.api.signInMagicLink` can mail an address nobody invited. Its cost is invisible —
         // it is a background query behind an answer the merchant already has.
         if (!(await isAllowedEmail(email))) return;
-        await sendAuthEmail({ to: email, subject: "Sign in to Fikirtive", url, intro: "Sign in to Fikirtive" });
+        // #939 — this purpose's real lifetime, not Better Auth's default: AUTH_EMAIL_LINK_TTL_SECONDS
+        // (15 minutes) is what `expiresIn` above actually configures, so it is also what the
+        // "valid for" line in the email must say.
+        await sendAuthEmail({
+          to: email,
+          subject: "Sign in to Fikirtive",
+          url,
+          intro: "Sign in to Fikirtive",
+          validitySeconds: AUTH_EMAIL_LINK_TTL_SECONDS,
+        });
       },
     }),
     // Surface the canonical role on the session so compat.ts matches NextAuth byte-for-byte.

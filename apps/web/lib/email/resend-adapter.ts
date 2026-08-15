@@ -11,7 +11,7 @@ import type { EmailMessage, EmailPort } from "./types";
 export function createResendEmailPort(): EmailPort {
   return {
     async send(message: EmailMessage): Promise<void> {
-      const { to, subject, text, from, signal, idempotencyKey } = message;
+      const { to, subject, text, html, from, signal, idempotencyKey } = message;
       const preview = message.devPreview ?? text ?? message.html ?? "";
 
       if (!process.env.RESEND_API_KEY) {
@@ -48,6 +48,10 @@ export function createResendEmailPort(): EmailPort {
           to,
           subject,
           text,
+          // #939 — Resend's REST API accepts both parts on one request; `html` is simply
+          // omitted from the JSON body (JSON.stringify drops `undefined` values) when a caller
+          // sends text-only.
+          html,
         }),
       });
       if (!res.ok) {
