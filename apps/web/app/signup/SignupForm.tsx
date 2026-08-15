@@ -31,7 +31,10 @@ export function SignupForm() {
 
     setBusy(true);
     setError(null);
-    const { error } = await authClient.signUp.email({ email: address, password, name, callbackURL: "/" });
+    // #940 — callbackURL goes straight to /otto rather than "/": the root route is nothing but
+    // a server redirect to /otto, so landing there directly drops one full round trip out of the
+    // already-slow post-verification chain.
+    const { error } = await authClient.signUp.email({ email: address, password, name, callbackURL: "/otto" });
     setBusy(false);
     if (error) {
       setError(error.message ?? "We couldn't create the account. Try again.");
