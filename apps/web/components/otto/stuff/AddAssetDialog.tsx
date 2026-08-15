@@ -130,6 +130,13 @@ export function AddAssetDialog({
       setError("Name is required.");
       return;
     }
+    // #934 — with no files, createEntity still succeeds: it creates the entity row and
+    // simply attaches zero images, so Library gets a blank tile with nothing to show. Make
+    // that state unreachable from this form instead of leaving it to a later cleanup.
+    if (!files || files.length === 0) {
+      setError("Choose an image to upload.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -257,7 +264,11 @@ export function AddAssetDialog({
               <Button variant="ghost" size="sm" onClick={close} disabled={saving}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={() => void submit()} disabled={saving || !name.trim()}>
+              <Button
+                size="sm"
+                onClick={() => void submit()}
+                disabled={saving || !name.trim() || !files || files.length === 0}
+              >
                 {saving ? "Adding…" : "Add"}
               </Button>
             </div>
