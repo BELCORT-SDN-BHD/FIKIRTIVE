@@ -259,7 +259,10 @@ export function EditDesk({ projectId }: { projectId: string }) {
   const nameOf = (clipSrc: string) => media.find((m) => m.src === clipSrc)?.label ?? "Clip";
 
   return (
-    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+    // padding-top 64px (not 20px) — clears the floating "show sidebar" toggle
+    // (OttoApp.tsx: `absolute left-3 top-3 size-[34px]`, footprint to 46px) that
+    // otherwise sits on top of this pane and ate the "Vi" of "Video editor" (#949 A1).
+    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "64px 20px 20px" }}>
       <div className="mb-4">
         <h2 className="m-0 text-[1.125rem] text-foreground">Video editor</h2>
         <p className="mt-1 mb-0 text-[0.875rem] text-muted-foreground">
