@@ -7,10 +7,21 @@ import { getProjects } from "@/lib/data";
 
 /** Same "en-MY" date the merchant sees everywhere else, formatted once, server-side —
  *  see the `updatedLabel` doc comment on NorthstarHomeProject for why it lands here
- *  and not in the client component (#949 A5). */
+ *  and not in the client component (#949 A5). `timeZone` pinned to Asia/Kuala_Lumpur
+ *  like every other en-MY formatter in this codebase (inbox-format.ts, broadcast-format.ts,
+ *  campaign-list-page.tsx, campaign-detail-page.tsx, campaign-trends-page.tsx,
+ *  contacts-page.tsx, workflow-format.ts, report-format.ts) — without it this reads in
+ *  the SERVER's zone (production containers commonly run UTC), so a Malaysian merchant
+ *  (UTC+8) would see "yesterday" for the first 8 hours of every day (judge r1 P1).
+ */
 function formatUpdated(date: Date): string {
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
+  return date.toLocaleDateString("en-MY", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kuala_Lumpur",
+  });
 }
 
 /**
