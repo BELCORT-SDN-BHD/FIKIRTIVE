@@ -18,6 +18,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { getMyAccount } from "@/lib/account-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { cn } from "@/lib/utils";
 import type { EntityDTO } from "@/lib/types";
 import FlowCanvas from "./FlowCanvas";
@@ -71,6 +72,11 @@ export function NorthstarCanvasWorkspace({
   const [sideSearch, setSideSearch] = useState("");
 
   const refreshBalance = useCallback(async () => {
+    // #932:这枚顶栏的读数曾经只顾自己 —— 结算后本地重读、setBalance,但从没喊出共享的
+    // notifyBalanceRefresh() 信号,于是同屏的全局导航侧栏(订阅这枚信号的唯一订阅者)
+    // 收不到通知,停在旧数字直到商家手动刷新整页。先喊信号、再等自己的读,和 OttoApp
+    // 的 refreshBalance 同一顺序 —— 一次结算,两块显示同一拍重读同一条 ledger。
+    notifyBalanceRefresh();
     const account = await getMyAccount();
     if (!("error" in account)) setBalance(account.balance);
   }, []);
