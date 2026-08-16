@@ -65,8 +65,8 @@ import { composerReferencePayload, composerReferencesPlaceholder, removeComposer
 export { threadToUiMessages } from "@/lib/otto-ui-messages";
 export type { OttoUiMessage, OttoUiMessageMetadata } from "@/lib/otto-ui-messages";
 
-/** Prop-compatible with how OttoView renders OttoConversation, so Task 6 can swap
- *  this in drop-in. balanceUsd / onRefresh are accepted for parity (unused here). */
+/** balanceUsd / onRefresh are accepted for parity with the earlier non-streaming Otto
+ *  chat this replaced (removed); unused here. */
 export interface OttoChatStreamProps {
   projectId: string;
   entities: EntityDTO[];
@@ -142,7 +142,7 @@ export function OttoChatStream({
   const [streamErrorKind, setStreamErrorKind] = useState<OttoErrorData["kind"] | null>(null);
   const [retryDraft, setRetryDraft] = useState<string | null>(null);
   /** Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs.
-   *  proposed spend path. Mirrors OttoConversation's pendingApprovalCardIds set. */
+   *  proposed spend path. */
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
   /** Card durableIds for which the user has clicked "Make it" (or "Try again") in this
    *  session — drives the optimistic "working" state before the genJobId lands from the
@@ -172,7 +172,8 @@ export function OttoChatStream({
   const wholeVideoFileRef = useRef<File | null>(null);
   const seenComposerReferenceIdsRef = useRef<Set<string>>(new Set());
 
-  // Bounded in-flight poll for the async worker result (ported from OttoConversation):
+  // Bounded in-flight poll for the async worker result (ported from the earlier
+  // non-streaming chat, removed):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
   // hasWorkingJob true; we poll the durable thread and inject the result when it lands.
   const POLL_MS = 2500;
@@ -406,7 +407,7 @@ export function OttoChatStream({
     onThreadUpdate(fresh);
   }
 
-  // Reset the give-up state whenever we switch threads (mirror OttoConversation).
+  // Reset the give-up state whenever we switch threads.
   // Guarded by a prev-id ref so the reset runs only on an actual thread change, not
   // on the mount render (where the state is already fresh) — avoids a cascading render.
   const prevThreadIdRef = useRef(thread.id);
@@ -472,7 +473,7 @@ export function OttoChatStream({
     setStreamErrorKind(null);
     setRetryDraft(null);
     setAttachError(null);
-    // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
+    // A new turn may queue a new generation — re-arm polling.
     rearmGenerationPoll();
     // Capture and clear attachments before send. Revoke local preview blob URLs
     // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
@@ -985,7 +986,7 @@ export function OttoChatStream({
                         nativeInputValueSetter?.call(ta, seed);
                         ta.dispatchEvent(new Event("input", { bubbles: true }));
                         ta.focus();
-                        setText(seed); // mirror OttoConversation — sync React state directly
+                        setText(seed); // sync React state directly
                       }
                     }}
                     onRetry={() => {
@@ -1005,7 +1006,7 @@ export function OttoChatStream({
               );
             }
 
-            // Meta approval-flow cards (F23) — mirror OttoConversation's branches.
+            // Meta approval-flow cards (F23).
             // The approve buttons inside call the existing gated server actions
             // (approveMetaActionPlan / approveAdBuild); this only renders them.
             if (kind === "ACTION_CARD") {
@@ -1253,7 +1254,7 @@ export function OttoChatStream({
           )}
 
           {/* Async generation in progress: a card was approved (genJobId set) and the
-              worker hasn't written a terminal result yet. Ported from OttoConversation. */}
+              worker hasn't written a terminal result yet. */}
           {!isBusy && hasWorkingJob && !pollGaveUp && (
             <div className="flex items-start gap-3">
               <OttoAvatar size={26} state="thinking" />
@@ -1524,7 +1525,7 @@ export function OttoChatStream({
 }
 
 /** Avatar + flexible body row used for the inline plan card / result widgets
- *  (mirrors OttoConversation's MessageRow layout for GEN_CARD / GEN_RESULT). */
+ *  (GEN_CARD / GEN_RESULT). */
 function WidgetRow({ children, animateIn }: { children: React.ReactNode; animateIn?: boolean }) {
   return (
     <div className="flex items-start gap-[9px]" style={animateIn ? MSG_ENTER_STYLE : undefined}>

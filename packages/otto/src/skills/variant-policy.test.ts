@@ -1,33 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { MAX_GEN_COUNT } from "@fikirtive/core";
 import {
   VARIANT_AXES,
-  DEFAULT_VARIANT_COUNT,
-  variantCountFor,
   checkVariantSet,
   type VariantAxis,
 } from "./variant-policy.js";
-
-describe("变体数量 —— 卡面真做得到的那个数,不是我们希望的那个数", () => {
-  it("视频永远只有一条 —— 铸卡那一侧就是这么写的", () => {
-    expect(variantCountFor("video")).toBe(1);
-    expect(variantCountFor("video", 4)).toBe(1);
-  });
-
-  it("图片:没说就给默认几个方向,说了就按他说的,超出菜单就收进菜单", () => {
-    expect(variantCountFor("image")).toBe(DEFAULT_VARIANT_COUNT);
-    expect(variantCountFor("image", 2)).toBe(2);
-    expect(variantCountFor("image", 99)).toBe(MAX_GEN_COUNT);
-    expect(variantCountFor("image", 0)).toBe(1);
-    expect(variantCountFor("image", -3)).toBe(1);
-    expect(variantCountFor("image", 2.7)).toBe(2);
-  });
-
-  it("默认数落在菜单里", () => {
-    expect(DEFAULT_VARIANT_COUNT).toBeGreaterThanOrEqual(1);
-    expect(DEFAULT_VARIANT_COUNT).toBeLessThanOrEqual(MAX_GEN_COUNT);
-  });
-});
 
 describe("变体政策 —— 提醒,不拦截", () => {
   const a = (axis: VariantAxis, prompt: string) => ({ axis, prompt });

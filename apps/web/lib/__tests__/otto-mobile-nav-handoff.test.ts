@@ -230,7 +230,7 @@ describe("/otto mobile navigation entry", () => {
   });
 
   it("offers no Go to outside the merchant shell, where there is no global drawer", async () => {
-    // /skin-preview mounts the real Otto shell with mock data and no global navigation.
+    // A surface that mounts the Otto shell without MerchantShellContent has no global navigation.
     const dom = await mount(
       ottoNavElement(
         { onDrawerClose: vi.fn(), onToggleCollapse: vi.fn() },
@@ -264,7 +264,6 @@ describe("/otto tablet tier — no Otto control may surface over the global draw
       adJobs: [],
       account: null,
       analytics: {},
-      ottoStreamEnabled: false,
       initialNavCollapsed,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Only the navigation props matter here; the rest are opaque payloads OttoView (stubbed) would read.
     } as any);
@@ -403,7 +402,6 @@ describe("#820 crossing 1024px puts the drawer away", () => {
           adJobs: [],
           account: null,
           analytics: {},
-          ottoStreamEnabled: false,
           initialNavCollapsed: false,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Only the navigation props matter here.
         } as any),

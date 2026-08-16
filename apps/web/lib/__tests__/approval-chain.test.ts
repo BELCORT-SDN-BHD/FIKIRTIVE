@@ -514,24 +514,16 @@ describe("streamed needs_approval status → pending set (#498 round-8)", () => 
     expect(violations, `\n${violations.join("\n")}`).toEqual([]);
   });
 
-  // 存在性钉:类级扫描只约束「已有写点」的形状;这里钉死两个契约分支本身还在——
-  // 流式 onData 的 needs_approval 分支(第三处)与非流式回退 send 的
-  // needs_approval 分支(第四处)都仍经契约工具整体替换(approvedCardIds 恒空,
-  // 两处都没有 fired 卡)。
-  it("存在性钉:流式与非流式 needs_approval 分支都在且经契约工具整体替换", () => {
+  // 存在性钉:类级扫描只约束「已有写点」的形状;这里钉死流式 onData 的
+  // needs_approval 分支(第三处)本身还在,仍经契约工具整体替换
+  // (approvedCardIds 恒空,没有 fired 卡)。
+  it("存在性钉:流式 needs_approval 分支仍在且经契约工具整体替换", () => {
     const chatStream = fs.readFileSync(
       path.resolve(__dirname, "../../components/otto/OttoChatStream.tsx"),
       "utf8",
     );
     expect(chatStream).toMatch(
       /s\.kind === "needs_approval"[\s\S]{0,600}?nextPendingApprovalCardIds\(cur, \[\], s\.pendingCardIds\)/,
-    );
-    const conversation = fs.readFileSync(
-      path.resolve(__dirname, "../../components/otto/OttoConversation.tsx"),
-      "utf8",
-    );
-    expect(conversation).toMatch(
-      /res\.status === "needs_approval"[\s\S]{0,600}?nextPendingApprovalCardIds\(cur, \[\], res\.pendingCardIds\)/,
     );
   });
 });

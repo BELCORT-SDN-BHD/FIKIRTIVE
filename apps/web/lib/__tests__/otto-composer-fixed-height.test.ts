@@ -1,5 +1,5 @@
 /**
- * #920(#840 判官 r1 P2)— Otto's four fixed-row `<Textarea>` boxes must not grow with
+ * #920(#840 判官 r1 P2)— Otto's three fixed-row `<Textarea>` boxes must not grow with
  * content.
  *
  * `@/components/ui/textarea` ships `field-sizing-content` in its own base classes —
@@ -15,7 +15,7 @@
  * the claim two ways instead of one:
  *   1. COMPILED — `field-sizing-fixed` really does compile to `field-sizing: fixed` through
  *      the real Tailwind v4 pipeline (not just a class name that happens to look right).
- *   2. SOURCE — every one of Otto's four fixed-row Textarea call sites carries that class,
+ *   2. SOURCE — every one of Otto's three fixed-row Textarea call sites carries that class,
  *      keeps its `rows={N}`, and none of them regained `field-sizing-content` by width
  *      (twMerge drops the earlier one, but a stray second `field-sizing-*` class written
  *      by hand wouldn't go through twMerge until render, so the source itself is checked
@@ -34,7 +34,6 @@ const globalsPath = path.join(WEB_ROOT, "app/globals.css");
 /** The four fixed-row composer/caption boxes and the `rows` each one is built around. */
 const FIXED_HEIGHT_TEXTAREAS: { file: string; rows: number }[] = [
   { file: "components/otto/OttoChatStream.tsx", rows: 2 },
-  { file: "components/otto/OttoConversation.tsx", rows: 2 },
   { file: "components/otto/OttoFrontDoor.tsx", rows: 3 },
   { file: "components/otto/OttoSchedule.tsx", rows: 4 },
 ];
@@ -81,9 +80,9 @@ describe("#920 — Otto's fixed-row composers do not grow with content", () => {
     expect(css).toMatch(/\.field-sizing-content\s*\{\s*field-sizing:\s*content;?\s*\}/);
   });
 
-  it("still finds all four fixed-row composers (population floor)", () => {
+  it("still finds all three fixed-row composers (population floor)", () => {
     // Fails loudly if a composer is renamed/moved rather than quietly checking nothing.
-    expect(FIXED_HEIGHT_TEXTAREAS.length).toBe(4);
+    expect(FIXED_HEIGHT_TEXTAREAS.length).toBe(3);
     for (const { file } of FIXED_HEIGHT_TEXTAREAS) {
       expect(fs.existsSync(path.join(WEB_ROOT, file)), file).toBe(true);
     }

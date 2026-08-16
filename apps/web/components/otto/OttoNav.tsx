@@ -178,7 +178,7 @@ export function OttoNav({
   collapsed = false,
   onToggleCollapse,
 }: OttoNavProps) {
-  // Null / false outside the merchant shell (e.g. /skin-preview) — no global drawer there.
+  // Null / false outside the merchant shell (not wrapped in MerchantShellContent) — no global drawer there.
   const openGlobalNavigation = useOpenGlobalNavigation();
   const globalNavigationOpen = useGlobalNavigationOpen();
 
