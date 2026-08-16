@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, CalendarDays, Megaphone, Plus, Target } from "lucide-react";
 import type { listCampaigns } from "@/lib/campaign-view-data";
 import { CAMPAIGN_STATUS_BADGE, isCampaignStatus } from "@/lib/campaign-lifecycle";
+import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,12 +11,7 @@ import { CampaignNav } from "./campaign-nav";
 type ListResult = Awaited<ReturnType<typeof listCampaigns>>;
 
 function dateLabel(value: string) {
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kuala_Lumpur",
-  }).format(new Date(value));
+  return MY_DATE_FORMAT.format(new Date(value));
 }
 
 function statusVariant(status: string): "outline" | "success" | "warning" | "destructive" {

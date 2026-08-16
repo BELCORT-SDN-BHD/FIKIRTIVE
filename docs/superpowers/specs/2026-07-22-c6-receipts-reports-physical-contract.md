@@ -19,7 +19,7 @@
 > 阶段（`#359` 第 29 条）；C6 M0 方案站已获 Founder 2026-07-21 预授权（纯文档、零代码、零建表，`#359` 评论「C6 M0 方案站预授权…
 > M1 建表起逐站另取授权」）。**与 C5 不同：C6 无「四站一次性授权」——`#399` 明写 M1 建表 / M2 引擎 / M3 界面逐站另取授权**（§10、§14）。
 > 上位范围来自 map §8 C6 候选行（`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:205`）、B0-41/42 行
-> （`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:106-107`）与 B6 矩阵块（`docs/ops/route-b/matrix/06-B6.md:7-8`）。
+> （`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:106-107`）与 B6 矩阵块（`docs/archive/route-b/matrix/06-B6.md:7-8`）。
 > 「读取并验证」只读铁律与「明确交接」契约的冻结上位是 `docs/BLUEPRINT.md:48-49`；「钱路神圣」是 `docs/BLUEPRINT.md:61`。
 > 上游发送域已冻结的合同是 C5（`docs/superpowers/specs/2026-07-21-c5-broadcast-eligibility-physical-contract.md`）与 C4a
 > （`docs/superpowers/specs/2026-07-19-c4a-inbox-whatsapp-physical-contract.md`）。
@@ -42,7 +42,7 @@ seam，M4）与 D8 发送侧 ExternalEffect/ActionReceipt 绑定（`#359` 第 10
 | B0 | 本合同承接 | 验收边界 |
 |---|---|---|
 | B0-41 | 统一回执/报告脊柱（Mandate/Action/ExternalEffect/BusinessEvent/Receipt；发送、送达、失败、回复可追溯）+ 对账 + owner-scoped 只读报告读面 | 只读回执事实；`0 假回执`（map D.4，`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:85`）；unknown 不伪装成 delivered |
-| B0-42 | 统一 commerce/POS/CRM **只读** connector seam（订单/顾客/交易/积分；webhook + reconciliation）的领域边界与 seam 形状；EasyStore 为可选首批 adapter 之一 | 只读；永不代管、永不自建账本（`docs/BLUEPRINT.md:48`）；零 connector 不阻塞 CRM 核心（`docs/ops/route-b/matrix/06-B6.md:8`）；物理载体是**独立 Founder-gated 决定**（§7.5、§14） |
+| B0-42 | 统一 commerce/POS/CRM **只读** connector seam（订单/顾客/交易/积分；webhook + reconciliation）的领域边界与 seam 形状；EasyStore 为可选首批 adapter 之一 | 只读；永不代管、永不自建账本（`docs/BLUEPRINT.md:48`）；零 connector 不阻塞 CRM 核心（`docs/archive/route-b/matrix/06-B6.md:8`）；物理载体是**独立 Founder-gated 决定**（§7.5、§14） |
 
 ### §2.2 明确不吸收
 
@@ -59,7 +59,7 @@ seam，M4）与 D8 发送侧 ExternalEffect/ActionReceipt 绑定（`#359` 第 10
 - **钱路 / 账本**：C6 无 credits、无 ledger、无 money-safety 触发。「读取并验证」经营事实是**只读、类比 pixel tracking，永不代管、
   永不自建商家账本**（`docs/BLUEPRINT.md:48`）；真实通道费计价归 C4a §10 M6 的 `ChannelFeeWallet/ChannelFeeLedger`，不在本文。
 - **归因 / 追踪原语（E5-06/07、D10）**：TrackedLink/QrAsset/AttributionEvent 六原语与短链 redirect 是 **B2 数据层**（已
-  `spec-ready`，`docs/ops/route-b/matrix/02-B2.md:15-16`），其报告消费端**汇入** B0-41 报告面，但**本 M0 不冻结它们**；D10
+  `spec-ready`，`docs/archive/route-b/matrix/02-B2.md:15-16`），其报告消费端**汇入** B0-41 报告面，但**本 M0 不冻结它们**；D10
   tracked-generation 逐 path bounded contract 归 R-010 §11.2 gate 5（`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:205`）。
   「回复率」等**把回复/转化归因到某次具体群发**的能力依赖该归因层，本文只如实呈可得口径、把精确归因列为 deferred（§6.4、§14）。
   （map §8 C6 候选行含 E5-06/07，但 `#399` scope 只列 B0-41/42；本文据此**裁定**：归因/追踪原语归 B2 层（已 spec-ready）与 D10
@@ -91,7 +91,7 @@ seam，M4）与 D8 发送侧 ExternalEffect/ActionReceipt 绑定（`#359` 第 10
 1. **回执（receipt）**：对「一次已尝试的发送，provider 实际发生了什么」的**只读、经核验**的事实记录。回执**不是**本地消息行、
    不是 draft、不是 outbox start、不是模拟发送态；本地任何这些状态**都不构成** delivery truth（C4a §3.1 第 62-63 行、
    C4a §8 第 513 行）。回执按统一脊柱分层持有（§4.1），永不代管商家账本（`docs/BLUEPRINT.md:48`）。
-2. **回执脊柱五层（Mandate/Action/ExternalEffect/BusinessEvent/Receipt）**（map B0-41，`docs/ops/route-b/matrix/06-B6.md:7`）：
+2. **回执脊柱五层（Mandate/Action/ExternalEffect/BusinessEvent/Receipt）**（map B0-41，`docs/archive/route-b/matrix/06-B6.md:7`）：
    `Mandate`=发送授权/D5 两次确认（D8/C5，本文不建）；`Action`=exact frozen action（`BroadcastRun` / 会话回复，C5/C4，已 live）；
    `ExternalEffect`=对 provider 的一次尝试及其 ack 生命周期（发送侧 outbox/worker 产物，**D8** 持有，本文不建，C6 只**观察**其 ack）；
    `BusinessEvent`=规范化的**入站** provider 事实（送达/已读/失败/回复；或 commerce 订单/付款）——**C6 承接**；
@@ -111,7 +111,7 @@ seam，M4）与 D8 发送侧 ExternalEffect/ActionReceipt 绑定（`#359` 第 10
    schema.prisma:1735`）同一口径。C6 的回执与对账**只按此 ref join**，caller 不可传、不可覆盖（真实事实的 ref 由 provider-message-ref
    经 D8 发送侧绑定 server-resolve，§4.4）。
 7. **只读 connector seam（B0-42）**：对经营事实（订单/交易/积分等）的**只读**接入缝——provider 可替换、零 connector 不阻塞
-   CRM 核心（`docs/ops/route-b/matrix/06-B6.md:8`）；类比 pixel tracking，**永不代管、永不自建账本、绝不成为收款/开票/催收系统**
+   CRM 核心（`docs/archive/route-b/matrix/06-B6.md:8`）；类比 pixel tracking，**永不代管、永不自建账本、绝不成为收款/开票/催收系统**
    （`docs/BLUEPRINT.md:48-49`）。
 
 这些词同时写入根目录 `CONTEXT.md` 的「Customer engagement 顾客互动」段。代码/UI/API 必须显式使用这些词义；
@@ -378,7 +378,7 @@ index `(ownerId, providerConnectionId, receivedAt, id)`（连接级 reconcile �
 
 B0-42 是**只读** commerce/POS/CRM connector seam：经 C4a §4 adapter port 的 `reconcile?`（`NormalizedProviderFacts`）拉取，或经
 webhook（「收信」合宪，`docs/BLUEPRINT.md:85`）接入订单/交易/积分等经营 `BusinessEvent`；EasyStore 为可选首批 adapter 之一
-（`docs/ops/route-b/matrix/06-B6.md:8`）。**契约级铁律固定**：只读、provider 可替换、零 connector 不阻塞 CRM 核心、
+（`docs/archive/route-b/matrix/06-B6.md:8`）。**契约级铁律固定**：只读、provider 可替换、零 connector 不阻塞 CRM 核心、
 **永不代管、永不自建账本**（`docs/BLUEPRINT.md:48-49`）。
 
 **其物理载体（如 `CommerceEvent` append-only + 可选 state 投影）本文只给形状草案，不在本 M0 冻结**：commerce 事实 taxonomy
@@ -554,7 +554,7 @@ Analytics 面文档或实机走查**，因此本文**不捏造** respond.io Repo
 
 ## §13 六级状态与 evidence contract
 
-按 `docs/ops/route-b/B0-CONTRACT.md`：
+按 `docs/archive/route-b/B0-CONTRACT.md`：
 
 | B0 | 当前 live 状态 | 本 PR（M0 docs-only）合并后 | 后续到期条件 |
 |---|---|---|---|

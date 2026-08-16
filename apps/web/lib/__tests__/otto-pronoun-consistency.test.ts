@@ -235,7 +235,7 @@ function scan(): Offence[] {
     for (const stream of streams) {
       // 两条流会重复命中同一句;去重后 offenders 才是「几处病」而不是「扫了几遍」。
       for (const offence of offencesIn(relative, stream)) {
-        offences.set(`${offence.file} ${offence.rule} ${offence.sentence}`, offence);
+        offences.set(`${offence.file}\0${offence.rule}\0${offence.sentence}`, offence);
       }
     }
   }

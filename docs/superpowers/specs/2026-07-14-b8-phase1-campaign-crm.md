@@ -5,7 +5,7 @@
 > **[R-010 schema authority](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/339) 硬停**：「兼容的合同继续有效」只指不存在冲突的机械部分。本稿/#314 的 `(ownerId,channel,externalId)` identity、Contact consent 字段、Campaign `utmBase` 与 B2 v1.2 已冻结的 issuer/version identity、`ConsentEvent` 四轴、结构化 `utmJson` 三处互斥。D-038 不选择真源；本 PR 不改 schema。三处须经独立 Founder-approved schema alignment 后才可进入施工。
 > **判决真源**：①issue #296 Resolution（D-1～D-12 终局）②issue #294 Resolution（授权信封：精确清单式+指纹保鲜+72h）③issue #295 Resolution（停按钮：基线三分流+单粒度+对象级插手）④`docs/research/GRILL-VERDICTS-2026-07-03.md` 2026-07-14 追加节（审批粒度 :259 / 停按钮 :260 / 三环卖法 / 建卖两图）。
 > **设计底稿**：`docs/design/route-b/2026-07-12-b8-campaign-design.md`（Campaign 8 行）+ `docs/design/route-b/2026-07-12-b8-crm-design.md`（CRM 3 行）——本 spec 只取原 11 行底座相关部分；无需依赖仓库外草稿即可恢复本稿依据。
-> **范围锚**：`docs/ops/route-b/matrix/08-B8.md` 的 B0-51～B0-61（文件第 7～17 行，§八逐行对账）。**数据上位**：`docs/design/2026-07-03-harmony-01-data-model.md`。**缝配方**：`docs/review/EXPANSION-SEAMS.md`。
+> **范围锚**：`docs/archive/route-b/matrix/08-B8.md` 的 B0-51～B0-61（文件第 7～17 行，§八逐行对账）。**数据上位**：`docs/design/2026-07-03-harmony-01-data-model.md`。**缝配方**：`docs/review/EXPANSION-SEAMS.md`。
 > **同批同构件**：[`2026-07-14-envelope-stop-design.md`](2026-07-14-envelope-stop-design.md)（#294/#295 冻结图纸）——本 spec 的打包总价页💰与停按钮两节与之**同构**，机器细节以该稿为准，本文只写 Campaign 化身处。
 > **纪律**：**零发明**——每条设计指回判决原文或两份设计图原文；拿不准的进 §七假设台账或 §九留白。语言华语（宪法 9）；生成 brief 英文；界面文案英文 sentence case（founder 设计罗盘）。💰行变真必过 `money-safety-review`。
 > **当前去向**：只把不涉及 R-010 的机械部分作为 B0-51～61 后续施工输入；identity/consent/UTM 三处不得派工。冲突闭合后，本稿才可与 B5～B7 及总计划「七·甲」共同进入后续 to-spec/to-tickets；任何时候都不得单独签发为完整商业 Phase‑1。

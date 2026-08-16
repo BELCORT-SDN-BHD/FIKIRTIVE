@@ -10,7 +10,7 @@
 import type { RunContext } from "@openai/agents";
 import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
-import { prisma } from "@fikirtive/db";
+import { renameChatThread } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
@@ -33,10 +33,9 @@ export async function executeSetTitle(
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
 
-  await prisma.chatThread.updateMany({
-    where: { id: ctx.threadId, ownerId: ctx.orgId, deletedAt: null },
-    data: { title: input.title.trim() },
-  });
+  // #952 item 13 — the write itself is shared with the human-facing coworkRenameThread action
+  // (packages/db's chat-thread-rename.ts); identity here still comes exclusively from ctx.
+  await renameChatThread({ threadId: ctx.threadId, ownerId: ctx.orgId, title: input.title.trim() });
 
   return { ok: true };
 }
