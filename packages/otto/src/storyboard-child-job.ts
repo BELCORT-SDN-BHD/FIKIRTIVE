@@ -224,3 +224,60 @@ export async function inFlightPointerBlock(
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// #925 —— 父卡不指着的子卡不许开销
+// ---------------------------------------------------------------------------
+
+/** 商家看得懂、而且能照做的那句话(白标、English sentence case)。confirm 侧唯一的拒绝话术。 */
+export const PARENT_POINTER_STALE_MESSAGE =
+  "This shot has changed since you opened it — refresh the storyboard and try again. Nothing was charged.";
+
+/**
+ * #925 —— 一张分镜子卡(GEN_CARD,payload 带 storyboardCardId+shotId 回链)此刻还有没有父卡
+ * 指着它。有 → null,confirm 照常;没有 → 该说的那句话,调用方零写入地退出。
+ *
+ * 形状:一张 $0、已 prepare 但从未 confirm 的子卡,其父卡指针被任何路径换掉之后(闸①/闸②
+ * 的 prepare 撞见 stale 而铸替换卡、单镜 regen 铸替换卡、编辑因为这张子卡还没起任何作业而
+ * 放行删指针——`inFlightPointerBlock` 只挡得住「在途」,挡不住「压根没起过」),一张陈旧
+ * 标签页仍然摸得到这张子卡的 id。它自己的结构仍然合法(GEN_CARD、ownerId 对、payload 能过
+ * `coworkProposalSchema`),而 `coworkGenerate`→`startGen` 原本只认这一件事,从不回头看父卡
+ * 现在还认不认它 —— 这个函数就是补上那一问的**唯一**入口。
+ *
+ * 判据只有一条,不理会走到这一步的是哪条替换路径:父卡**此刻**的 shots 里,有没有任何一镜
+ * 的 firstFrameCardId 或 videoCardId 仍然等于这张子卡的 id。三条已知路径都会让它变否:
+ *   • prepare 撞见 mismatch/EXHAUSTED → 铸替换卡,指针换成新子卡的 id;
+ *   • 单镜 regen → 同上,指针换成新子卡的 id;
+ *   • 编辑放行(#888 的那一格,子卡还没起过任何作业)→ 指针键被整个删掉(不是换,是没了)。
+ *   不管指针是被换掉还是被删掉,「现在还指不指着这张子卡」的答案都是「不」,判据统一。
+ *
+ * 非分镜子卡(普通 propose/canvas/asset 的 GEN_CARD,payload 没有 storyboardCardId)不适用
+ * 这条闸 —— 调用方只在读到 storyboardCardId 时才调用,零行为改变。
+ *
+ * 调用方纪律:必须在**同一笔事务**里(create+reserve 的那一笔 money tx)、在 create 之前调用。
+ * 内部先取父卡的卡级 advisory lock(`lockCardTx`,与闸①/编辑的其它父卡写者同一把锁),所以这
+ * 次核对与任何并发的指针替换严格串行——核对时看到的就是这笔事务提交时仍然为真的那份指针,
+ * 不存在核对与创建之间被插入一次替换的窗口。
+ *
+ * 只读:不改父卡、不改子卡,一分钱不动。父卡不存在(被删、kind 变了、跨租户)与「有父卡但
+ * 指针换了」是同一个答案——都当作「不指着」,fail closed。
+ *
+ * 单一函数(#925 范围注记):这是父卡指针校验的唯一入口——往后把指针从 payload 提升为数据库
+ * 列+约束(#925 范围注记提到的第二步)时,只需要改这一处的实现,不必满仓库找调用点。
+ */
+export async function assertStoryboardParentPointer(
+  tx: PrismaTx,
+  ownerId: string,
+  storyboardCardId: string,
+  childCardId: string,
+): Promise<string | null> {
+  await lockCardTx(tx, storyboardCardId); // 同一把卡级锁——与 prepare/regen/edit 严格串行
+  const parent = await tx.chatMessage.findFirst({
+    where: { id: storyboardCardId, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+    select: { payload: true },
+  });
+  const payload = parent?.payload as unknown as StoryboardCardPayload | null;
+  const stillPointed =
+    payload?.shots.some((s) => s.firstFrameCardId === childCardId || s.videoCardId === childCardId) ?? false;
+  return stillPointed ? null : PARENT_POINTER_STALE_MESSAGE;
+}

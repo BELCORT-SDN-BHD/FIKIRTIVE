@@ -87,6 +87,9 @@ export {
   JOB_LIVE_STATUSES,
   VIDEO_IN_FLIGHT_EDIT_BLOCK,
   FRAME_IN_FLIGHT_EDIT_BLOCK,
+  // #925 —— 父卡不指着的子卡不许开销(confirm 侧的唯一校验入口)。
+  assertStoryboardParentPointer,
+  PARENT_POINTER_STALE_MESSAGE,
 } from "./storyboard-child-job.js";
 export type { ChildJob, PrismaTx } from "./storyboard-child-job.js";
 export { proposeResearch, proposeResearchSkill } from "./skills/propose-research.js";

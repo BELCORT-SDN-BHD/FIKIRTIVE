@@ -37,6 +37,8 @@ import {
 } from "@fikirtive/core";
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
+// #925 —— 父卡不指着的子卡不许开销:confirm 的同一笔 money tx 内核对父卡当前指针的唯一入口。
+import { assertStoryboardParentPointer } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -114,6 +116,9 @@ export type ActiveGenModels = {
 };
 
 class QueuePrepareFailed extends Error {}
+/** #925 —— 父卡此刻已经不指着这张子卡了(prepare/regen 换指针、编辑放行删指针)。
+ *  只在 money tx 内、create/reserve 之前抛出;message 就是 confirm 该回给商家的那句话。 */
+class StoryboardParentPointerStale extends Error {}
 
 function modelMenu(kind: "image" | "video"): readonly string[] {
   return kind === "video" ? GEN_VIDEO_MODELS : GEN_MODELS;
@@ -257,6 +262,10 @@ type TrustedCoworkRequest = {
    *  (merchant-prompt-provenance)。null = 这一单没有可分家的两句话。它不是 `genRequest`
    *  的字段:公开入口交这个字段一律被 `.strict()` 拒收,伪造面因此不存在。 */
   merchantPrompt: string | null;
+  /** #925 —— 这张卡是不是一张分镜子卡(payload.storyboardCardId 回链)。null = 不是,
+   *  跳过父卡指针核对,普通 propose/canvas/asset 卡零行为改变。服务端从子卡持久化的
+   *  payload 读出,不由调用方提交——与 `expectedCredits`/`approvedEntities` 同一条纪律。 */
+  storyboardCardId: string | null;
 };
 const TRUSTED_COWORK_REQUESTS = new WeakMap<object, TrustedCoworkRequest>();
 
@@ -377,6 +386,11 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
     ...parsed.data,
     approvedEntities: cardApprovedEntities.length ? cardApprovedEntities : undefined,
   };
+  // #925 —— 这张卡是不是一张分镜子卡:读服务端持久化的 payload,不由调用方提交。
+  // `mintChild`/`mintVideoChild`(storyboard-gate1-actions.ts)在铸卡那一刻写下这个回链字段;
+  // 不是分镜子卡(普通 propose/canvas/asset)的 payload 上没有这一格,下面的父卡指针核对
+  // 因此整段跳过——零行为改变。
+  const storyboardCardId = typeof payload.storyboardCardId === "string" ? payload.storyboardCardId : null;
   TRUSTED_COWORK_REQUESTS.set(trustedRequest, {
     ownerId: gate.ownerId,
     cardId,
@@ -388,6 +402,7 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
     // 进程内那一次绑定(coworkGenerate 拼装那一步),浏览器序列化过来的 `raw` 永远进不了
     // 那张 WeakMap。取不到就是 null,读取端据此把 `prompt` 本身当成商家写的那句。
     merchantPrompt: readMerchantPrompt(raw) ?? null,
+    storyboardCardId,
   });
   return startGen(trustedRequest);
 }
@@ -853,6 +868,20 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           });
         }
 
+        // #925 —— 父卡不指着的子卡不许开销。只在这张卡是分镜子卡时才问(非分镜卡零行为改
+        // 变);判据与副作用全在 assertStoryboardParentPointer 一处(#925 范围注记:往后把
+        // 指针提升为数据库列+约束时,只改那一个函数,这里的调用点不必再动)。同一笔 money
+        // tx、create/reserve 之前——核对与创建之间不留任何能被并发替换插进来的窗口。
+        if (trustedCoworkRequest?.storyboardCardId) {
+          const blocked = await assertStoryboardParentPointer(
+            tx,
+            ownerId,
+            trustedCoworkRequest.storyboardCardId,
+            trustedCoworkRequest.cardId,
+          );
+          if (blocked) throw new StoryboardParentPointerStale(blocked);
+        }
+
         const created = await tx.genJob.create({
           data: {
             id: jobId, ownerId, projectId, shotId: shotId ?? null,
@@ -922,6 +951,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       }
       if (e instanceof Error && e.message === "THREAD_DELETED_DURING_GENERATION_START") {
         return { error: "Thread not found." };
+      }
+      // #925 — the tx rolled back before create/reserve: zero job, zero reservation.
+      if (e instanceof StoryboardParentPointerStale) {
+        return { error: e.message };
       }
       if (e instanceof QueuePrepareFailed) {
         return {
