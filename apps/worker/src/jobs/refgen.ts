@@ -57,14 +57,53 @@ export const REFGEN_QUEUED_REAP_MS = 1000 * 60 * 25;
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
 
+/**
+ * #951 —— 与 gen.ts 的 GEN_IN_FLIGHT_STATUSES(#602 r2,判官 P1-2)同一道理:一个作业的终态
+ * 只能被「第一个到场的人」决定一次,而下面每个调用点靠的都是**调用方内存里那份快照**,不是
+ * 这一刻库里的真相。entity-gone / variant-gone 这两道闸都站在 claim **之前**——此时这一单
+ * 是否已经被另一条并发的 delivery(迟到重投)赢下 claim、跑完 provider、连产出带结算一起
+ * 提交,调用方并不知道。旧写法只认调用方自己的信念,无条件把行写成 FAILED——若那一刻产出
+ * 已经提交、DONE 也已经写下,这一笔无条件写会把一单**已经收钱、已经交付**的作业重新盖成
+ * FAILED,而它的 outputAssetIds/spentUsd 仍留着交付的痕迹,形成自相矛盾的行。
+ */
+const REFGEN_IN_FLIGHT_STATUSES = ["QUEUED", "GENERATING"] as const;
+
+/** Thrown INSIDE failClosedRefund's transaction to roll the FAILED flip back when the ledger
+ *  says the charge was already SETTLED (mirrors gen.ts's SETTLED_PRE_SPEND_FAIL). */
+const REFGEN_SETTLED_PRE_SPEND_FAIL = new Error("pre-spend fail-close but the charge is already settled");
+
 /** Terminal-fail a refgen job that NEVER delivered AND release its credit hold, atomically.
  *  refundReservation is idempotent and no-ops when there's no open reservation (historical
- *  job) or it was already settled — so every pre-commit fail-closed branch can call this. */
+ *  job) or it was already settled — so every pre-commit fail-closed branch can call this.
+ *
+ *  #951 —— CONDITIONAL, like every terminal write in gen.ts (#602/#858): the FAILED flip only
+ *  applies while the row is still in flight AND has recorded no outputs. `count === 0` means a
+ *  concurrent delivery already ended this job (committed its outputs, or another finalizer got
+ *  there first) — that write owns the truth, so this call does nothing further. If the flip DID
+ *  land but refundReservation reports "already-settled" (the commit's SETTLE won a race against
+ *  THIS transaction's own FAILED write), the whole transaction is rolled back instead of leaving
+ *  a paid-and-delivered job shown FAILED — money was never at risk (refundReservation's own
+ *  finalizer-once index blocks a real double-refund either way), but the row itself must not
+ *  lie about what happened to it. */
 async function failClosedRefund(jobId: string, ownerId: string, error: string): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    await tx.refGenJob.update({ where: { id: jobId }, data: { status: "FAILED", error, finishedAt: new Date() } });
-    await refundReservation(tx, { orgId: ownerId, refId: jobId });
-  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      const { count } = await tx.refGenJob.updateMany({
+        where: {
+          id: jobId, ownerId, status: { in: [...REFGEN_IN_FLIGHT_STATUSES] },
+          // committed ⟹ delivered-and-settled — never terminable by a pre-spend gate.
+          outputAssetIds: { isEmpty: true },
+        },
+        data: { status: "FAILED", error, finishedAt: new Date() },
+      });
+      if (count === 0) return;
+      const outcome = await refundReservation(tx, { orgId: ownerId, refId: jobId });
+      if (outcome === "already-settled") throw REFGEN_SETTLED_PRE_SPEND_FAIL; // roll the flip back
+    });
+  } catch (e) {
+    if (e !== REFGEN_SETTLED_PRE_SPEND_FAIL) throw e;
+    console.error(`[refgen] ${jobId}: a pre-spend gate wanted to fail this job closed, but the charge is already SETTLED — the delivery beat us to it. Left in flight on purpose: FAILED would promise a refund that never happened. Reason was: ${error}`);
+  }
 }
 
 /** F07-analog of gen.ts hasLiveGenMessage: does pg-boss still hold a deliverable message for
