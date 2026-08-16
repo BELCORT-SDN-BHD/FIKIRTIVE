@@ -2,9 +2,6 @@
  * Fikirtive worker — long-lived pg-boss consumer (eng review D6/D9).
  *
  *   Postgres (pgboss schema) ──▶ ingest queue ──▶ hash verify → ffprobe → thumbs
- *                            └─▶ sweep queue  ──▶ created for future D21 refcount purge;
- *                                                 NO producer, NO consumer yet (D21 deferred)
- *                                                 — do not assume it runs
  *
  * pg-boss v12 rules honored here: explicit createQueue() before work(),
  * own `pgboss` schema (excluded from Prisma migrations), generous
@@ -38,10 +35,8 @@ import { startHeartbeat } from "./heartbeat.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
-  REFGEN_QUEUE,
   REFGEN_DLQ,
   REFGEN_QUEUE_POLICY,
-  GEN_QUEUE,
   GEN_DLQ,
   GEN_QUEUE_POLICY,
   CAPTION_DLQ,
@@ -171,13 +166,12 @@ async function main(): Promise<void> {
     expireInSeconds: 60 * 30, // multi-GB download + ffprobe headroom
     deadLetter: `${QUEUES.ingest}.dlq`,
   });
-  await boss.createQueue(QUEUES.sweep);
   await boss.createQueue(RENDER_DLQ);
   await boss.createQueue(QUEUES.render, { ...RENDER_QUEUE_POLICY });
   await boss.createQueue(REFGEN_DLQ);
-  await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY });
+  await boss.createQueue(QUEUES.refgen, { ...REFGEN_QUEUE_POLICY });
   await boss.createQueue(GEN_DLQ);
-  await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY });
+  await boss.createQueue(QUEUES.gen, { ...GEN_QUEUE_POLICY });
   await boss.createQueue(CAPTION_DLQ);
   await boss.createQueue(QUEUES.caption, { ...CAPTION_QUEUE_POLICY });
   await boss.createQueue(RESEARCH_DLQ);
@@ -224,8 +218,8 @@ async function main(): Promise<void> {
 
   await consume<IngestJobData>(QUEUES.ingest, (data) => handleIngest(data));
   await consume<RenderJobData>(QUEUES.render, handleRender);
-  await consume<RefGenJobData>(REFGEN_QUEUE, handleRefGen);
-  await consume<GenJobData>(GEN_QUEUE, handleGen);
+  await consume<RefGenJobData>(QUEUES.refgen, handleRefGen);
+  await consume<GenJobData>(QUEUES.gen, handleGen);
   // $0 caption job ($0 — whisper.cpp only, NEVER fal): SEPARATE queue from render
   // so a slow transcribe never blocks a render.
   await consume<CaptionJobData>(QUEUES.caption, handleCaption);
