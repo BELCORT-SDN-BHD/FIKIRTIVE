@@ -1,3 +1,4 @@
+-- DESTRUCTIVE-OK: Founder-approved dead-schema deletion (issue #952, audit ledger #850): 10 zero-reference tables (L0 six + NextAuth legacy three + TemplateBundle), all verified zero live reads/writes; fresh-db replay clean.
 /*
   Warnings:
 
