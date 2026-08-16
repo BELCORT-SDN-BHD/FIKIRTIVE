@@ -1,7 +1,7 @@
 # B8 · Campaign 管理一期 —— 设计全图
 
 > **性质**:路线乙 B8 块设计工位(epoch `claude-20260712-03`,工单 L4b·试产)的施工图纸。华语(宪法 9),docs-only,**本 PR 无任何产品代码**。
-> **基线**:main@`1b1414d9`(#240 B0 契约签署);矩阵签署件 `docs/ops/route-b/matrix/08-B8.md`(B0-51~B0-58 八行)为范围界。
+> **基线**:main@`1b1414d9`(#240 B0 契约签署);矩阵签署件 `docs/archive/route-b/matrix/08-B8.md`(B0-51~B0-58 八行)为范围界。
 > **模板地位**:本工位是两个试产工位之一,本文同时作为后续 B 块设计工位的**结构范本**(12 节铁律)。范本注解以 `〔范本注〕` 标出,产品内容不受影响。
 > **待动工前提**：本设计图完成后，由对应 GitHub task 向 Founder 呈交「体量过目」与深度档位（§九）；无 standing controller，无对标锚不开工（§二），且开工前须重查 native dependencies 与 live facts。
 

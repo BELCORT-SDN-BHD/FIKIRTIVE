@@ -14,7 +14,7 @@
 > 连续性与 authority：[#414](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/414) 是本票唯一 issue identity；
 > live GitHub 内容本轮未查询，故不引用未核实 comment 作为授权。上位范围来自
 > `docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md` §4/§8、
-> `docs/ops/route-b/B0-CONTRACT.md`、B5/B7 matrix、`docs/BLUEPRINT.md` 宪法 4/6/7/10 与第六章、
+> `docs/archive/route-b/B0-CONTRACT.md`、B5/B7 matrix、`docs/BLUEPRINT.md` 宪法 4/6/7/10 与第六章、
 > `docs/research/GRILL-VERDICTS-2026-07-03.md` 的 O-02/O-05/O-09 判决。邻接物理合同为 C5 与 C6；
 > 它们及指定 main 上的实现事实只被复用，不被本文重写。
 
