@@ -22,6 +22,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@fikirtive/db";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", async () => ({
