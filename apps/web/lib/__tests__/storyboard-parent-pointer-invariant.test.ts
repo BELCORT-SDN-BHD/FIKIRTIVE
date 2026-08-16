@@ -42,7 +42,7 @@ vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => (
 const { coworkGenerate } = await import("../cowork-actions");
 const { prepareStoryboardFirstFrames, regenShotFirstFrameCard } = await import("../storyboard-gate1-actions");
 const { editShotPrompt } = await import("../storyboard-actions");
-const { prisma, Prisma } = await import("@fikirtive/db");
+const { prisma } = await import("@fikirtive/db");
 
 // ── real-DB helpers (gen-ledger.test.ts pattern) ─────────────────────────────
 async function seedOrg(balance: number): Promise<string> {
