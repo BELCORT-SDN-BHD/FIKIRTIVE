@@ -107,6 +107,26 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+/**
+ * #866: calling `invoke()` on a hooked db method starts the real Postgres query, but does not
+ * mean it has reached Postgres and started waiting on a lock yet — that dispatch is a real
+ * network round-trip, and on a loaded machine it can lag behind a competing in-process path that
+ * needs no I/O of its own. A deferred resolved right after `invoke()` returns its promise (not
+ * after the wait is confirmed) is a "fixed instant" stand-in for that DB-level fact, and CI VMs
+ * that resolve it in a different order than a quiet laptop is exactly what made this test flake.
+ * Same pattern as `canvas-terminal-settlement.test.ts`'s `waitForLockWait`.
+ */
+async function waitForLockWait(): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT count(*)::bigint AS n FROM pg_stat_activity
+       WHERE wait_event_type = 'Lock' AND state = 'active'`;
+    if (Number(rows[0]!.n) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("the loser's reclaim update never blocked on the winner's row lock — the race was not forced");
+}
+
 type DbMethodHook = (
   invoke: () => Promise<unknown>,
   args: unknown[],
@@ -1425,6 +1445,11 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
         ) {
           await winnerClaimed.promise;
           const blockedUpdate = invoke() as Promise<{ count: number }>;
+          // Don't let the winner proceed to its (mock-short-circuited, no-I/O) frequency-cap
+          // rollback until this update has actually reached Postgres and is genuinely waiting on
+          // the winner's row lock — see waitForLockWait's comment for why "invoke() was called"
+          // isn't enough of a guarantee on its own.
+          await waitForLockWait();
           loserUpdateStarted.resolve();
           const result = await blockedUpdate;
           if (result.count === 1) loserClaimCount += 1;
