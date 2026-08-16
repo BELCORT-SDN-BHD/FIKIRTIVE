@@ -9,7 +9,7 @@
  * is a shared `packId` (and `packTitle`) stamped into each card payload so the UI can
  * group them together.
  *
- * Cost: $0 — NO GenJob, NO fal call, NO credit spend.
+ * Cost: $0 — NO GenJob, NO provider call, NO credit spend.
  * Spending still happens exclusively through the existing `generate` skill, once the
  * user approves each individual card in the pack.
  *

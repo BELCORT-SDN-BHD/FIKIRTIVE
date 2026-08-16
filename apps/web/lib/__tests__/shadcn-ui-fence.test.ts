@@ -147,7 +147,7 @@ const EXEMPT: Family[] = [
     why: "内部后台:不是商家面,优先级最低,但同样要迁 —— 手搓 checkbox 与筛选框的无障碍缺陷在哪一侧都是缺陷。",
     files: {
       "components/admin/AdminDashboardV2.tsx": 5,
-      "components/admin/SettingsAdmin.tsx": 4,
+      "components/admin/SettingsAdmin.tsx": 3,
       "components/admin/TenantDetail.tsx": 3,
       "components/admin/ImpersonationBanner.tsx": 1,
     },

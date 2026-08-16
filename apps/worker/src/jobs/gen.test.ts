@@ -412,7 +412,7 @@ describe("handleGen — provider rejection fail-closed (EP-A4 route ①)", () =>
 describe("handleGen — provider timeout fail-closed (EP-A4 route ②)", () => {
   it("a timeout on the last delivery terminal-fails + refunds exactly once", async () => {
     m.genJobFindUnique.mockResolvedValue(imageJob);
-    m.generateImages.mockRejectedValue(new Error("fal request timed out after 20 minutes"));
+    m.generateImages.mockRejectedValue(new Error("provider request timed out after 20 minutes"));
 
     await expect(handleGen({ genJobId: "g1" }, GEN_RETRY_LIMIT)).rejects.toThrow(/timed out/);
 

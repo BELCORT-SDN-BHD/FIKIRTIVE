@@ -43,13 +43,11 @@ describe("platform permission bundles", () => {
   });
 
   it("gives super-admin every declared capability", () => {
-    expect(PLATFORM_ROLE_CAPABILITIES["super-admin"].size).toBe(SECTIONS.length * 2 + 1);
+    expect(PLATFORM_ROLE_CAPABILITIES["super-admin"].size).toBe(SECTIONS.length * 2);
     for (const section of SECTIONS) {
       expect(rolesAllow(["super-admin"], section, "read")).toBe(true);
       expect(rolesAllow(["super-admin"], section, "mutate")).toBe(true);
     }
-    expect(platformRolesAllowCapability(["super-admin"], "model.self_hosted.mutate")).toBe(true);
-    expect(platformRolesAllowCapability(["ops"], "model.self_hosted.mutate")).toBe(false);
   });
 
   it("chooses a stable compatibility role without changing the assignments", () => {

@@ -19,7 +19,7 @@
  * returns the same deterministic draft plus the page text, and Otto fills any gaps with its own
  * (already-metered) turn reasoning — no separate LLM call. Both entrypoints are honest $0 reads.
  *
- * No genRequest/startGen/fal and no withLlmBudget → the spend paths are untouched.
+ * No genRequest/startGen/provider call and no withLlmBudget → the spend paths are untouched.
  */
 
 import { extractProductDraft, type ProductDraft } from "@fikirtive/core";

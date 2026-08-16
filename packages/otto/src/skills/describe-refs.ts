@@ -2,7 +2,7 @@
  * describeRefs — $0 tool
  *
  * See-once cache of reference-image descriptions. Spends NO money, creates NO GenJob,
- * calls NO fal/generation code.
+ * calls NO generation-provider code.
  *
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId.

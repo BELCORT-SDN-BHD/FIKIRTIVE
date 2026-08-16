@@ -2,7 +2,7 @@
  * setTitle — $0 tool
  *
  * Sets the conversation title on the active ChatThread. Spends NO money, creates NO GenJob,
- * calls NO fal/generation code.
+ * calls NO generation-provider code.
  *
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId or threadId.

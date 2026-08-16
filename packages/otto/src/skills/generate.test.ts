@@ -459,16 +459,15 @@ describe("Test 8 — missing startGen port throws", () => {
 // ---------------------------------------------------------------------------
 
 describe("Test 9 — import audit: no direct spend bypass in generate.ts", () => {
-  it("generate.ts source does not import fal provider, create GenJob directly, or import from apps/*", () => {
+  it("generate.ts source does not import the generation provider directly, create GenJob directly, or import from apps/*", () => {
     // Read the source file and assert forbidden patterns are absent.
     const src = readFileSync(
       new URL("./generate.ts", import.meta.url),
       "utf8",
     );
 
-    // Must NOT directly call/import the fal provider
-    expect(src).not.toMatch(/from\s+['"]@fal-ai\//);
-    expect(src).not.toMatch(/from\s+['"]fal['"]/);
+    // Must NOT directly call/import the generation provider package
+    expect(src).not.toMatch(/from\s+['"]@fikirtive\/generation['"]/);
 
     // Must NOT create a GenJob directly (only startGen does this)
     expect(src).not.toMatch(/genJob\.create/);

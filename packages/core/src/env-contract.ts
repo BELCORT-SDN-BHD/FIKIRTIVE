@@ -97,7 +97,7 @@ export type EnvRecord = Record<string, string | undefined>;
 const isSet = (v: string | undefined): v is string => typeof v === "string" && v.trim() !== "";
 
 // 下面两个谓词逐字比较、**不做 trim**,和消费方一模一样
-// (packages/generation 的 `process.env.GENERATION_PROVIDER === "fal"`、
+// (packages/generation 的 `process.env.GENERATION_PROVIDER === "byteplus"`、
 //  packages/storage 的 `process.env.STORAGE_DRIVER === "r2"`)。
 // 契约在这里替代码做规范化,就等于开始描述一个代码并不存在的行为。带空白的值由上面那条
 // 通用空白守卫直接判错,不会走到这里。
@@ -377,10 +377,10 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     readBy: "code",
     requirement: "optional",
     format: "enum",
-    values: ["mock", "byteplus", "fal"],
+    values: ["mock", "byteplus"],
     secret: false,
     shared: false,
-    summary: "mock ($0, default) | byteplus | fal. Anything unrecognized resolves to mock so a misconfigured deploy cannot burn money.",
+    summary: "mock ($0, default) | byteplus (the only paid provider, ADR 0003). Anything unrecognized resolves to mock so a misconfigured deploy cannot burn money.",
   },
   {
     name: "BYTEPLUS_API_KEY",
@@ -393,18 +393,6 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     secret: true,
     shared: false,
     summary: "BytePlus Ark key. Required when the byteplus provider is selected.",
-  },
-  {
-    name: "FAL_KEY",
-    surface: "worker",
-    readBy: "code",
-    requirement: "conditional",
-    requiredWhen: providerIs("fal"),
-    when: "GENERATION_PROVIDER=fal",
-    format: "free",
-    secret: true,
-    shared: false,
-    summary: "fal.ai key. Required when the fal provider is selected.",
   },
   {
     name: "OTTO_DEFAULT_VIDEO_MODEL",
@@ -649,49 +637,6 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Fallback web-search provider.",
   },
 
-  // ── 旧 cowork 规划器 ──────────────────────────────────────────────────────
-  {
-    name: "COWORK_PROVIDER",
-    surface: "web",
-    readBy: "code",
-    requirement: "optional",
-    format: "enum",
-    values: ["mock", "fal", "modal"],
-    secret: false,
-    shared: false,
-    summary: "Legacy cowork planner transport.",
-  },
-  {
-    name: "COWORK_PAID_PROVIDERS_ALLOWED",
-    surface: "web",
-    readBy: "none",
-    requirement: "optional",
-    format: "boolean-ish",
-    secret: false,
-    shared: false,
-    summary:
-      "Documented but READ BY NOTHING today — effectiveCoworkProvider() has no production caller, so the paid planner is off by construction, not by this flag. Kept declared so the stale doc entry is visible instead of looking live.",
-  },
-  {
-    name: "MODAL_LLM_ENDPOINT",
-    surface: "web",
-    readBy: "code",
-    requirement: "optional",
-    format: "url",
-    secret: false,
-    shared: false,
-    summary: "Modal transport endpoint for the legacy cowork planner.",
-  },
-  {
-    name: "MODAL_LLM_KEY",
-    surface: "web",
-    readBy: "code",
-    requirement: "optional",
-    format: "free",
-    secret: true,
-    shared: false,
-    summary: "Modal transport key.",
-  },
   {
     name: "COWORK_VISION_ENABLED",
     surface: "web",
@@ -1095,7 +1040,7 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
     //
     // 病因很具体:契约这边过去按 trim 后的值判断,而消费方按原值严格比较——
     // packages/storage/src/index.ts 的 `process.env.STORAGE_DRIVER === "r2"`、
-    // packages/generation 的 `=== "fal"` 都是逐字比较。于是 STORAGE_DRIVER=" r2 " 在契约里
+    // packages/generation 的 `=== "byteplus"` 都是逐字比较。于是 STORAGE_DRIVER=" r2 " 在契约里
     // 一个问题都没有,工厂却落回本地盘:商家的文件写进容器自己的盘,而开机检查刚刚说过一切正常。
     // 这正是这张票要消灭的那一族「说的≠做的」,只不过它长在了检查器自己身上。
     //

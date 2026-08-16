@@ -78,9 +78,9 @@ export function videoReferencesRide(shape: VideoReferenceShape): boolean {
  *   核实成可混,只改 `videoReferencesRide` 一处,名额自动对得上。
  *
  * 名额的第一问是 provider(#785 判官 r1 P1):**这一趟真正会跑的适配器**收不收元素照。
- * 备用路(fal)没有多素材参考那条路,名额于是是 0 —— 卡面照实说「一张都不会用上」,
- * worker 也确实一张都不送。判据只有 `videoElementReferencesHonoured` 一处,所以「说的」
- * 与「送的」在 provider 这一维上不可能分家。
+ * ADR 0003 之后只剩 byteplus 一个会花钱的适配器,它收;判据只有
+ * `videoElementReferencesHonoured` 一处,所以「说的」与「送的」在 provider 这一维上
+ * 不可能分家。
  */
 export function conditioningCap(input: VideoReferenceShape & { kind: "image" | "video" }): number {
   if (input.kind !== "video") return MAX_CONDITIONING_IMAGES;

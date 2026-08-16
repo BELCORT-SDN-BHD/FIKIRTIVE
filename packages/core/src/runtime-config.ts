@@ -1,8 +1,11 @@
 /**
  * Pure runtime-config helpers (OPT-6 P1a). No prisma — core stays pure. The DB
  * read-through lives in apps/web/lib/runtime-config.ts; this file owns ONLY the
- * clamp (the safety primitive) and the provider money-lock. (The transport
- * switch it also owned died with the legacy cowork planner actions, batch-3 7-10.)
+ * clamp (the safety primitive) for the vision caps. (The cowork_provider knob
+ * and its transport/money-lock this file used to also own were removed
+ * wholesale — ADR 0003, docs/adr/0003-single-provider-byteplus.md — the
+ * transport switch itself had already died with the legacy cowork planner
+ * actions, batch-3 7-10, with no production caller left.)
  */
 
 export const VISION_DEFAULTS = { maxImages: 3, maxBytes: 4_000_000 } as const;
@@ -31,18 +34,4 @@ export function mergeVisionConfig(
   const enabled = env.enabled && db.enabled !== false;
   const { maxImages, maxBytes } = clampVisionInts({ maxImages: db.maxImages ?? env.maxImages, maxBytes: db.maxBytes ?? env.maxBytes });
   return { enabled, policy: "C", maxImages, maxBytes };
-}
-
-/** Resolve the EFFECTIVE cowork planner provider, with a beta money-safety lock.
- *  DB provider overrides env, BUT when paid providers are not allowed (the beta
- *  default), any paid provider (fal/modal) is forced to undefined → mock ($0).
- *  This caps cowork LLM spend that the credits ledger does not cover. */
-export function effectiveCoworkProvider(args: {
-  dbProvider?: string;
-  envProvider?: string;
-  paidAllowed?: boolean;
-}): string | undefined {
-  const resolved = args.dbProvider ?? args.envProvider;
-  if (!args.paidAllowed) return undefined; // locked → mock
-  return resolved;
 }

@@ -127,7 +127,6 @@ async function render(section: "overview" | "staff" | "audit" | "money"): Promis
         section,
         data: DATA,
         selfEmail: FOUNDER,
-        currentRole: "super-admin" as const,
       }),
     ),
   );

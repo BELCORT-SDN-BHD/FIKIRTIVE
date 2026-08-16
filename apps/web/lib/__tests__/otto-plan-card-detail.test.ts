@@ -715,7 +715,7 @@ describe("#580 r2 P1-1 价格担保谓词", () => {
   });
 
   it("USD 估价永远换不出 credits —— 猜算回退已经删除", () => {
-    // 0.39 USD 曾被猜成 ceil(0.39/0.1) = 4 credits。记账用的 fal 成本不是商家的报价。
+    // 0.39 USD 曾被猜成 ceil(0.39/0.1) = 4 credits。记账用的引擎成本不是商家的报价。
     expect(guaranteedCredits({ estimatedPriceUsd: 0.39 })).toBeNull();
     expect(guaranteedCredits({ estimatedPriceUsd: 100 })).toBeNull();
   });

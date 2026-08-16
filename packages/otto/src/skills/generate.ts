@@ -6,7 +6,7 @@
  * (anti-flip: the model cannot pass or override spend params).
  *
  * The only spend path is ctx.startGen — injected by the web caller. This tool NEVER:
- *   - calls the fal provider directly
+ *   - calls the generation provider directly
  *   - calls reserveCredits
  *   - creates a GenJob directly
  *

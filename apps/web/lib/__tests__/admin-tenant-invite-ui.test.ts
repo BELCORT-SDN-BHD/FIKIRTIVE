@@ -77,7 +77,6 @@ async function renderTenants(): Promise<HTMLDivElement> {
         section: "tenants" as const,
         data: DATA,
         selfEmail: "founder@fikirtive.test",
-        currentRole: "super-admin",
       }),
     ),
   );

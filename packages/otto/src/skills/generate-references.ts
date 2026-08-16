@@ -6,7 +6,7 @@
  * ctx.refgen.generate (a thin closure over startRefGen, the BASE/REFSHEET spend authority) and, for
  * mode=VARIANT, ctx.refgen.createVariant (#781 — the styling-variant spend authority, the same action
  * the merchant's element dialog calls). This tool NEVER:
- *   - calls the fal/generation provider directly
+ *   - calls the generation provider directly
  *   - reserves credits
  *   - creates a RefGenJob directly
  *

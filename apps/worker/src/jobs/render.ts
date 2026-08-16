@@ -370,7 +370,7 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
   await runAsTenant(job.ownerId, async () => {
     // atomic claim: take a QUEUED job, or RE-take a RENDERING one whose attempt is
     // long past the ffmpeg/expire window (a crashed render — re-rendering is free,
-    // no fal spend). A redelivery while another worker is actively rendering loses
+    // no engine spend). A redelivery while another worker is actively rendering loses
     // the claim and exits, so it can't start a 2nd ffmpeg or flip DONE→RENDERING (#3).
     const STALE_MS = 1000 * 60 * 13; // > ffmpeg timeout (10m), < queue expire (15m) so a crashed render is both redelivered AND claimable
     const claim = await prisma.renderJob.updateMany({
