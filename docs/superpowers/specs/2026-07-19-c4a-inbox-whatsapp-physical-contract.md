@@ -718,7 +718,7 @@ resume 才恢复”做成数据/并发 hard rule；不是靠 prompt 建议。真
 
 ## §13 六级状态与 evidence contract
 
-按 `docs/ops/route-b/B0-CONTRACT.md`：
+按 `docs/archive/route-b/B0-CONTRACT.md`：
 
 | B0 | 当前 live 状态 | 本 PR 合并后 | 后续到期条件 |
 |---|---|---|---|

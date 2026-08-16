@@ -109,7 +109,7 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
     const inspected = relations.map(({ child, field }) => `${child}.${field}`);
     expect(inspected).toContain("Generation.project");
     expect(inspected).toContain("ChatMessage.thread");
-    expect(inspected).toContain("QrAsset.link");
+    expect(inspected).toContain("EntityVariant.entity");
 
     const unsafe = relations
       .filter(({ relationFields }) => !relationFields.includes("ownerId"))
