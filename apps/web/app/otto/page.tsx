@@ -101,9 +101,6 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   // pre-#543 workspace name IS the full address, so any candidate containing "@" is refused
   // rather than passed on. See lib/otto-greeting.ts.
 
-  // Streaming chat is the single Otto surface for all users (reference-vision rollout, 2026-07-01).
-  const ottoStreamEnabled = true;
-
   return (
     <OttoApp
       key={`${projectId}:${openThreadId ?? ""}`}
@@ -123,7 +120,6 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       account={account}
       analytics={analytics}
       history={history}
-      ottoStreamEnabled={ottoStreamEnabled}
       initialView={initialView}
       onboardingDismissed={settings.ottoOnboardingDismissed}
       skin={skin}

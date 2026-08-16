@@ -67,7 +67,7 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.model).toBe("seedream");
 
-    // count defaults to 1 for image. estimatedPriceUsd stays the record-only fal cost…
+    // count defaults to 1 for image. estimatedPriceUsd stays the record-only engine cost…
     const expectedPrice = GEN_PRICE_USD_PER_IMAGE * 1;
     expect(cardPayload.estimatedPriceUsd).toBeCloseTo(expectedPrice);
 
@@ -716,31 +716,6 @@ describe("executePropose — mock DB", () => {
     expect(payload["variantSel"]).toEqual({ e1: "var_red" });
   });
 
-  // 判官 r1 P1(provider 这一维)—— 备用适配器根本收不了元素照(付费前直接拒),所以
-  // 同一张纯文生视频卡在那条路上必须说另一句话:承诺「Uses 3 of your reference photos」
-  // 就是替一条做不到的路许诺。判据与选片名额是同一个(`videoElementReferencesHonoured`)。
-  it("#785: on the fallback adapter the same card says none will be used — and promises nothing", async () => {
-    const prev = process.env["GENERATION_PROVIDER"];
-    process.env["GENERATION_PROVIDER"] = "fal";
-    try {
-      mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
-      mockPrisma.referenceImage.count.mockResolvedValue(3);
-
-      await executePropose(
-        { kind: "video", structuredPrompt: "our product on a beach", entityIds: ["e1"], variantSel: {} },
-        { context: makeCtx({ orgId: "org-cap" }) },
-      );
-
-      const payload = persistedPayload();
-      expect(payload["downgraded"]).toBe(true);
-      expect(payload["downgradeNote"]).toContain("None of your 3 reference photos will be used for this clip.");
-      expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
-    } finally {
-      if (prev === undefined) delete process.env["GENERATION_PROVIDER"];
-      else process.env["GENERATION_PROVIDER"] = prev;
-    }
-  });
-
   // 名额压线:9 个 image_url 部件,纯文生视频没有帧占位 ⇒ 元素照上限就是 9。
   it("#785: a text-to-video card truncates element photos at the engine's image ceiling", async () => {
     mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
@@ -1015,21 +990,6 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
         expect(cardPayload.downgraded, `${desiredAspect} 没兑现就必须披露`).toBe(true);
         expect(cardPayload.downgradeNote).toBeTruthy();
       }
-    }
-  });
-
-  it("正向锁:选中备用适配器(丢弃画幅的那条路)时,卡面不得声称已兑现", () => {
-    const prev = process.env.GENERATION_PROVIDER;
-    process.env.GENERATION_PROVIDER = "fal";
-    try {
-      // 即便卡上带着画幅(T2 之后的形状),只要真正会跑这一单的适配器不发规格,
-      // 卡面就不许把它当成已兑现的承诺。
-      expect(imageAspectHonoured()).toBe(false);
-      expect(buildSpecChips("image", { aspectRatio: "9:16", count: 1 }, false))
-        .toEqual(["2048 × 2048", "1 image"]);
-    } finally {
-      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
-      else process.env.GENERATION_PROVIDER = prev;
     }
   });
 
@@ -1309,15 +1269,4 @@ describe("#777 卡面:一组连贯的图 vs 几张散图", () => {
       .toEqual(["1620 × 2880", "9:16", "1 image"]);
   });
 
-  it("反向锁:选中做不到组图的备用适配器时,卡面必须闭嘴(绝不承诺执行层做不到的事)", () => {
-    const prev = process.env.GENERATION_PROVIDER;
-    process.env.GENERATION_PROVIDER = "fal";
-    try {
-      expect(buildSpecChips("image", { count: 4, coherentSet: true }, false))
-        .toEqual(["2048 × 2048", "4 images"]);
-    } finally {
-      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
-      else process.env.GENERATION_PROVIDER = prev;
-    }
-  });
 });

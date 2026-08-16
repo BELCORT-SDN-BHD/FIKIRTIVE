@@ -73,12 +73,6 @@ export * from "./reference-budget.js";
 export * from "./ref-config.js";
 export * from "./gen.js";
 export * from "./spend.js";
-export {
-  X_PUBLISH_CREDITS_NO_LINK,
-  X_PUBLISH_CREDITS_WITH_LINK,
-  captionHasLink,
-  xPublishTierDisplayCredits,
-} from "./x-billing.js";
 export * from "./owner-settings.js";
 export * from "./provider-secrecy.js";
 export * from "./cowork.js";

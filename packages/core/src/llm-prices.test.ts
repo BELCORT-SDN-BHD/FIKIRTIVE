@@ -10,7 +10,7 @@ describe("llmPricesFor — never priced free (metering-hole guard)", () => {
     expect(llmPricesFor("claude-opus-4-8")).toEqual({ inputPerToken: 5e-6, outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 });
   });
 
-  it("provider-prefixed fal sonnet id (anthropic/claude-sonnet-4.5) → sonnet rates, NOT zero", () => {
+  it("provider-prefixed sonnet id (OpenRouter-style, anthropic/claude-sonnet-4.5) → sonnet rates, NOT zero", () => {
     const p = llmPricesFor("anthropic/claude-sonnet-4.5");
     expect(p.inputPerToken).toBe(3e-6);
     expect(p.outputPerToken).toBe(15e-6);

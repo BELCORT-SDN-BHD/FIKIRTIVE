@@ -7,7 +7,7 @@
  * batch-3 7-10 (2026-07-07) — Otto owns propose now.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, Prisma, refundReservation } from "@fikirtive/db";
+import { prisma, Prisma, refundReservation, renameChatThread } from "@fikirtive/db";
 import { z } from "zod";
 import {
   newId,
@@ -193,10 +193,10 @@ export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | {
     const { ownerId } = gate;
     const { threadId, title } = parsed.data;
     try {
-      const { count } = await prisma.chatThread.updateMany({
-        where: { id: threadId, ownerId, deletedAt: null },
-        data: { title },
-      });
+      // #952 item 13 — the write itself is shared with Otto's setTitle skill (packages/db's
+      // chat-thread-rename.ts); this action keeps its own auth gate, request validation, and
+      // revalidatePath below.
+      const { count } = await renameChatThread({ threadId, ownerId, title });
       if (!count) return { error: "Conversation not found." };
     } catch { return { error: "Couldn't rename — please try again." }; } // {error} contract, like the sibling actions
     revalidatePath("/", "layout");

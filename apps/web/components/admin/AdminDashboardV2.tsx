@@ -55,12 +55,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-function providerLabel(value: string): string {
-  if (value === "mock") return "Simulation";
-  if (value === "modal") return "Self-hosted";
-  return "Hosted AI";
-}
-
 function modelLabel(model: { id: string; kind: "image" | "video" }): string {
   return /seedance|seedream/i.test(model.id)
     ? model.kind === "video" ? "Primary video" : "Primary image"
@@ -77,7 +71,6 @@ type Props = {
   section: AdminV2Section;
   data: AdminV2Data;
   selfEmail: string;
-  currentRole: string;
 };
 
 const FOUNDER_OWNER_ID = "founder";
@@ -1088,16 +1081,15 @@ function CasesSection({ data, setCase }: { data: AdminV2Data; setCase: (row: Cas
   );
 }
 
-function OttoSection({ data, currentRole }: { data: AdminV2Data; currentRole: string }) {
+function OttoSection({ data }: { data: AdminV2Data }) {
   return (
     <div className="grid gap-5">
       <div className="grid gap-3 md:grid-cols-4">
-        <MetricCard label="Provider" value={providerLabel(data.otto.provider)} detail="Runtime provider mode from existing config." tone={data.otto.provider === "mock" ? "warning" : "info"} />
         <MetricCard label="Enabled models" value={`${data.otto.enabledModelCount}/${data.otto.modelCount}`} detail="Typed catalogs minus disabled overlay rows." tone="neutral" />
         <MetricCard label="Directive cells" value={`${data.otto.filledDirectiveCells}/${data.otto.directiveCells}`} detail="Enabled prompt directive cells with content." tone="info" />
         <MetricCard label="Family coverage" value={`${data.otto.coveredFamilies}/${data.otto.routedFamilies}`} detail="Routed video families with at least one directive." tone={data.otto.coveredFamilies === data.otto.routedFamilies ? "success" : "warning"} />
       </div>
-      <RuntimeConfigPanel data={data} canModal={currentRole === "super-admin"} />
+      <RuntimeConfigPanel data={data} />
       <ModelControlsPanel data={data} />
       <DirectivesPanel data={data} />
       <KnowledgePanel data={data} />
@@ -1105,39 +1097,15 @@ function OttoSection({ data, currentRole }: { data: AdminV2Data; currentRole: st
   );
 }
 
-function RuntimeConfigPanel({ data, canModal }: { data: AdminV2Data; canModal: boolean }) {
+function RuntimeConfigPanel({ data }: { data: AdminV2Data }) {
   const router = useRouter();
-  const [provider, setProvider] = useState(data.otto.provider);
-  const [providerBase, setProviderBase] = useState(data.otto.provider);
   const [enabled, setEnabled] = useState(data.otto.vision.enabled);
   const [maxImages, setMaxImages] = useState(data.otto.vision.maxImages);
   const [maxBytes, setMaxBytes] = useState(data.otto.vision.maxBytes);
   const [visionBase, setVisionBase] = useState(data.otto.vision);
-  const [providerMessage, setProviderMessage] = useState<string | null>(null);
   const [visionMessage, setVisionMessage] = useState<string | null>(null);
-  const [savingProvider, setSavingProvider] = useState(false);
   const [savingVision, setSavingVision] = useState(false);
-  const providerDirty = provider !== providerBase;
   const visionDirty = enabled !== visionBase.enabled || maxImages !== visionBase.maxImages || maxBytes !== visionBase.maxBytes;
-
-  async function saveProvider() {
-    if (!providerDirty || savingProvider) return;
-    setSavingProvider(true);
-    setProviderMessage(null);
-    const result = await saveRuntimeConfig({ key: "cowork_provider", value: { provider } }).catch(() => null);
-    setSavingProvider(false);
-    if (!result) {
-      setProviderMessage("Save failed.");
-      return;
-    }
-    if ("error" in result) {
-      setProviderMessage(result.error);
-      return;
-    }
-    setProviderBase(provider);
-    setProviderMessage("Saved.");
-    router.refresh();
-  }
 
   async function saveVision() {
     if (!visionDirty || savingVision) return;
@@ -1160,34 +1128,7 @@ function RuntimeConfigPanel({ data, canModal }: { data: AdminV2Data; canModal: b
 
   return (
     <Panel title="Runtime controls" subtitle="Runtime config takes effect on the next Otto turn; server actions keep the existing audit trail.">
-      <div className="grid gap-3 xl:grid-cols-2">
-        <div className="rounded-xl border border-border bg-background p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Otto provider</h3>
-              <p className="mt-1 text-xs text-muted-foreground">Paid providers remain server-gated.</p>
-            </div>
-            <Badge variant={provider === "mock" ? "warning" : "info"}>{providerLabel(provider)}</Badge>
-          </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-            <label className="grid gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Provider</span>
-              <Select value={provider} onValueChange={setProvider}>
-                <SelectTrigger className="w-full bg-card"><span>{providerLabel(provider)}</span></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mock">{providerLabel("mock")}</SelectItem>
-                  <SelectItem value="fal">{providerLabel("fal")}</SelectItem>
-                  {canModal ? <SelectItem value="modal">{providerLabel("modal")}</SelectItem> : null}
-                </SelectContent>
-              </Select>
-            </label>
-            <Button type="button" variant="secondary" disabled={!providerDirty || savingProvider} onClick={saveProvider}>
-              {savingProvider ? "Saving" : "Save"}
-            </Button>
-          </div>
-          {providerMessage ? <p className="mt-3 text-xs text-muted-foreground">{providerMessage}</p> : null}
-        </div>
-
+      <div className="grid gap-3">
         <div className="rounded-xl border border-border bg-background p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -1614,18 +1555,18 @@ function CaseDialog({ row, onClose }: { row: CaseRow | null; onClose: () => void
   );
 }
 
-export function AdminDashboardV2({ section, data, selfEmail, currentRole }: Props) {
+export function AdminDashboardV2({ section, data, selfEmail }: Props) {
   const [selectedCase, setSelectedCase] = useState<CaseRow | null>(null);
   const content = useMemo(() => {
     if (section === "money") return <MoneySection data={data} />;
     if (section === "tenants") return <TenantsSection data={data} />;
     if (section === "staff") return <StaffSection data={data} selfEmail={selfEmail} />;
     if (section === "cases") return <CasesSection data={data} setCase={setSelectedCase} />;
-    if (section === "otto") return <OttoSection data={data} currentRole={currentRole} />;
+    if (section === "otto") return <OttoSection data={data} />;
     if (section === "audit") return <AuditSection data={data} />;
     if (section === "system") return <SystemSection data={data} />;
     return <Overview data={data} setCase={setSelectedCase} />;
-  }, [currentRole, data, section, selfEmail]);
+  }, [data, section, selfEmail]);
 
   return (
     <PageChrome section={section} data={data}>

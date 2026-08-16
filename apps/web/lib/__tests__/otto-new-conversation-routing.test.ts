@@ -199,7 +199,6 @@ function baseProps(over: Partial<OttoAppProps> = {}): OttoAppProps {
     adJobs: [],
     account: null,
     analytics: { state: "notConnected" },
-    ottoStreamEnabled: true,
     ...over,
   };
 }

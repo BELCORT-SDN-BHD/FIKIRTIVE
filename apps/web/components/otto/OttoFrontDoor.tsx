@@ -95,10 +95,8 @@ export interface OttoFrontDoorProps {
   entities: EntityDTO[];
   userName: string;
   onThreadStarted: (thread: ChatThreadDTO) => void;
-  /** Founder streaming flag. When true, the first message streams (see onStreamStart). */
-  ottoStreamEnabled?: boolean;
   /** Streaming path: an empty thread was created; hand its first message up so
-   *  OttoChatStream streams it in on mount. Used only when ottoStreamEnabled. */
+   *  OttoChatStream streams it in on mount. Used only when provided. */
   onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string; entityIds?: string[] }) => void;
   /** When set (e.g. from Discover), pre-fills the composer. */
   seedText?: string;
@@ -113,7 +111,6 @@ export function OttoFrontDoor({
   entities,
   userName,
   onThreadStarted,
-  ottoStreamEnabled,
   onStreamStart,
   seedText,
   onSeedConsumed,
@@ -147,8 +144,8 @@ export function OttoFrontDoor({
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Synchronous latch: two fast clicks / Enter+tile both pass the async `busy` check
-  // before the re-render, and each would start a NEW thread (no threadId). Mirror
-  // OttoConversation.send()'s busyRef guard so the front door can't duplicate conversations.
+  // before the re-render, and each would start a NEW thread (no threadId). Guards the
+  // front door so it can't duplicate conversations.
   const startingRef = useRef(false);
 
   // #542 — the sentence itself lives in lib/otto-greeting.ts so the tests assert against the
@@ -198,9 +195,9 @@ export function OttoFrontDoor({
       // Streaming front door: create an empty thread (no first turn, no spend), then
       // hand the first message to OttoChatStream which streams it in on mount. The
       // thread row already exists, so the route's existing-thread branch handles it.
-      // Note: when ottoStreamEnabled is true, onStreamStart MUST be provided (OttoView
-      // always passes it); if somehow absent the code falls through to the classic ottoTurn path.
-      if (ottoStreamEnabled && onStreamStart) {
+      // Note: OttoView always provides onStreamStart; if somehow absent the code falls
+      // through to the classic ottoTurn path.
+      if (onStreamStart) {
         const created = await createEmptyCoworkThread({ projectId, title: msgText });
         if ("error" in created) {
           setError(created.error);

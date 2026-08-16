@@ -3,12 +3,12 @@
  * shape: load the RefGenJob, call the model provider, store outputs
  * content-addressed, attach them to the entity as ReferenceImages.
  *
- * This is a PAID call (fal in prod), so the money-safety invariants matter:
+ * This is a PAID call (byteplus in prod), so the money-safety invariants matter:
  *
  *  - exactly-once spend (codex review): an atomic QUEUED→GENERATING claim
  *    lets only one delivery reach the provider; outputAssetIds is written
  *    BEFORE attaching so a crash during attach resumes from stored assets.
- *    A failure AFTER fal bills (res.ok, then parse/download/db) is terminal —
+ *    A failure AFTER the engine bills (res.ok, then parse/download/db) is terminal —
  *    the adapter marks it `charged` and the catch refuses to retry-and-re-
  *    charge; a lost claim (concurrent or crashed delivery) fails closed.
  *  - validate before spend (codex P1): the entity is re-loaded owned + live
@@ -39,7 +39,7 @@ import { sanitizeError, scrubUrls } from "../redact.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
 
-/** fal Seedream edit caps total (inputs + outputs) at 15 images (codex P2). */
+/** Seedream edit caps total (inputs + outputs) at 15 images (codex P2). */
 const MAX_EDIT_INPUT_PLUS_OUTPUT = 15;
 
 // A GENERATING row older than this is treated as crashed/stale (mirrors gen.ts GEN_STALE_MS):
@@ -354,7 +354,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
             data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
           });
           // refund only if WE just failed it closed (count>0) — never touch an active
-          // winner's hold. The merchant got no result; the founder absorbs any fal cost.
+          // winner's hold. The merchant got no result; the founder absorbs any engine cost.
           if (staled.count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
         });
         return;
@@ -463,11 +463,11 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       // SETTLE the credit hold atomically with the resume marker — the generation
       // succeeded, so the reserved charge becomes permanent in the same commit.
       // CONDITIONAL commit (mirror gen.ts): write the resume marker + settle ONLY if we still
-      // own the GENERATING claim. A redelivery that expired our in-flight fal call (>20min hang)
+      // own the GENERATING claim. A redelivery that expired our in-flight engine call (>20min hang)
       // may have already taken the stale branch above → FAILED + refunded this job. If so this
       // matches 0 rows: do NOT settle (the REFUND already won the finalizer index) and do NOT
       // attach/deliver — discard. The stored assets become orphans (content-addressed, reusable,
-      // harmless); the founder absorbed the fal cost and the merchant stays refunded (no free
+      // harmless); the founder absorbed the engine cost and the merchant stays refunded (no free
       // delivery, no DONE-vs-REFUND mismatch). Returning false signals discard.
       const committedRefgen = await prisma.$transaction(async (tx) => {
         const marked = await tx.refGenJob.updateMany({
@@ -482,7 +482,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         return true;
       });
       if (!committedRefgen) {
-        console.warn(`[refgen] ${job.id}: redelivery already failed+refunded this job mid-flight — discarding the (orphan) outputs, not attaching. Founder absorbed the fal cost.`);
+        console.warn(`[refgen] ${job.id}: redelivery already failed+refunded this job mid-flight — discarding the (orphan) outputs, not attaching. Founder absorbed the engine cost.`);
         return;
       }
       committed = true; // outputs recorded + settled — past here a failure RESUMES, never re-spends
@@ -495,7 +495,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       const message = sanitizeError(err, 500);
       // a failure after the paid call is terminal — retrying would re-spend.
       // `spent` covers post-provider failures here; `charged` covers a failure
-      // INSIDE the adapter after fal already billed (it ran the model, then the
+      // INSIDE the adapter after the engine already billed (it ran the model, then the
       // result parse/download threw). Only a genuinely pre-charge throw retries,
       // up to the budget (limit 2 → deliveries at retryCount 0,1,2; `>=` once).
       const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
@@ -507,7 +507,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       console.error(`[refgen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
       if (final) {
         // terminal fail → release the hold (the merchant got no result; the founder absorbs any
-        // real fal cost). `final` is by definition pre-commit (committed → final is false), so
+        // real engine cost). `final` is by definition pre-commit (committed → final is false), so
         // settle never ran; the finalizer index makes refund safe even against a racing settle.
         // A post-charge failure still records spentUsd so "paid but not delivered" stays auditable.
         await prisma.$transaction(async (tx) => {

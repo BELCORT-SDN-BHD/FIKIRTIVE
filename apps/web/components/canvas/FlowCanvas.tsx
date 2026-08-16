@@ -58,7 +58,6 @@ import { buildCanvasLineageTree } from "@/lib/canvas-lineage-tree";
 import { CanvasLineagePanel } from "./CanvasLineagePanel";
 import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
 import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
-import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import {
   CANVAS_OTTO_CHAT_REQUIRED,
   canvasComposerReferenceForNode,
@@ -139,8 +138,6 @@ type FlowCanvasProps = {
   onBalanceRefresh?: () => void | Promise<void>;
   onActivityRefresh?: () => void | Promise<void>;
   onReferenceInChat?: (refs: Omit<OttoComposerReference, "requestId">[]) => void;
-  directToolsLocked?: boolean;
-  directToolsLockedReason?: string;
   /**
    * Whether the gb composer starts open. Otto's canvas keeps the Grok pattern — revealed by the
    * image tool, default false. The north-star canvas page shows the prompt box as part of the
@@ -254,8 +251,6 @@ export default function FlowCanvas({
   onBalanceRefresh,
   onActivityRefresh,
   onReferenceInChat,
-  directToolsLocked = false,
-  directToolsLockedReason = DEFAULT_CANVAS_NODE_LOCK_REASON,
   defaultComposerOpen = false,
 }: FlowCanvasProps) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
@@ -364,11 +359,6 @@ export default function FlowCanvas({
       await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
     })();
   }, [onActivityRefresh]);
-  const withNodeActionLock = useCallback((data: Record<string, unknown>) => ({
-    ...data,
-    directToolsLocked,
-    directToolsLockedReason,
-  }), [directToolsLocked, directToolsLockedReason]);
 
   /**
    * Where a new card goes.
@@ -406,7 +396,7 @@ export default function FlowCanvas({
   }, []);
 
   useEffect(() => {
-    if (!composerOpen || directToolsLocked) return;
+    if (!composerOpen) return;
     let retryTimer: number | null = null;
     const focusEditor = () => {
       const editor = composerFormRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
@@ -420,14 +410,13 @@ export default function FlowCanvas({
       window.cancelAnimationFrame(frame);
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
-  }, [composerOpen, directToolsLocked, composerKey]);
+  }, [composerOpen, composerKey]);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
 
   // Build a stable per-node onAnimate that reads generationId at call time
   const onAnimateByNode = useRef<Record<string, () => void>>({});
-  const directToolsLockedRef = useRef(directToolsLocked);
   const scheduleFitView = useCallback(() => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
     fitTimerRef.current = window.setTimeout(() => {
@@ -487,7 +476,6 @@ export default function FlowCanvas({
       // "Make video" is a paid image→video generation, so clicking it only OPENS
       // a confirm; the actual spend happens in runAnimate() after the owner says OK.
       onAnimateByNode.current[id] = () => {
-        if (directToolsLockedRef.current) return;
         if (!nodeDataRef.current[id]?.generationId) {
           toast.error("This image is not ready for video yet.");
           return;
@@ -510,7 +498,6 @@ export default function FlowCanvas({
   // same-tick double-fire without serializing separate generations.
   const videoBusyRef = useRef(false);
   const runAnimate = useCallback(async (id: string, motionPrompt: string): Promise<boolean> => {
-    if (directToolsLockedRef.current) return false;
     if (!costQuote) {
       toast.error("Wait for the exact video cost before confirming.");
       return false;
@@ -598,7 +585,6 @@ export default function FlowCanvas({
    * the merchant sends their own message.
    */
   const sendSelectionToOtto = useCallback(() => {
-    if (directToolsLockedRef.current) return;
     const refs = nodesRef.current
       .filter((n) => n.selected === true && (n.type === "image" || n.type === "video"))
       .map((node) => {
@@ -658,7 +644,6 @@ export default function FlowCanvas({
 
   // stable delete
   const deleteNode = useCallback((id: string) => {
-    if (directToolsLockedRef.current) return;
     // The merchant's own deletion races an in-flight read exactly the same way (#612 r5).
     removedNodeIdsRef.current.add(id);
     setNodes((ns) => ns.filter((n) => n.id !== id));
@@ -680,7 +665,7 @@ export default function FlowCanvas({
   // Remove a whole selection (#547 B6). Same per-card server action as the single ✕ —
   // batching is a UI convenience, not a new deletion path.
   const deleteNodes = useCallback((ids: string[]) => {
-    if (directToolsLockedRef.current || ids.length === 0) return;
+    if (ids.length === 0) return;
     const removing = new Set(ids);
     for (const id of removing) removedNodeIdsRef.current.add(id);
     setNodes((ns) => ns.filter((n) => !removing.has(n.id)));
@@ -774,16 +759,14 @@ export default function FlowCanvas({
           type: n.type,
           position: { x: n.pos.x, y: n.pos.y },
           data: {
-            ...withNodeActionLock({
-              status: n.status,
-              prompt: n.prompt,
-              skin,
-              onDelete: () => setPendingDeleteId(n.id),
-              onRefresh: requestReload,
-              onMediaSize: getOnMediaSize(n.id),
-              onSendToOtto: sendSelectionToOtto,
-              // onAnimate added after generationId arrives via onResolve
-            }),
+            status: n.status,
+            prompt: n.prompt,
+            skin,
+            onDelete: () => setPendingDeleteId(n.id),
+            onRefresh: requestReload,
+            onMediaSize: getOnMediaSize(n.id),
+            onSendToOtto: sendSelectionToOtto,
+            // onAnimate added after generationId arrives via onResolve
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
@@ -795,7 +778,7 @@ export default function FlowCanvas({
       ]);
       scheduleFitView();
     },
-    [activeThreadId, getOnMediaSize, sendSelectionToOtto, requestReload, skin, scheduleFitView, withNodeActionLock],
+    [activeThreadId, getOnMediaSize, sendSelectionToOtto, requestReload, skin, scheduleFitView],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
@@ -835,7 +818,6 @@ export default function FlowCanvas({
 
   // Shared submit handler — used by form onSubmit and MentionInput onSubmit
   const handleGenerate = useCallback(async () => {
-    if (directToolsLocked) return;
     if (!prompt.trim()) return;
     if (!costQuote) {
       toast.error("Wait for the exact image cost before generating.");
@@ -896,7 +878,7 @@ export default function FlowCanvas({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCoherentSet, imageCount, imageShape, imageShapeMenu, projectId, prompt, promptIds, spawnRect, variantSel]);
+  }, [activeThreadId, closeComposer, costQuote, generateImage, imageCoherentSet, imageCount, imageShape, imageShapeMenu, projectId, prompt, promptIds, spawnRect, variantSel]);
 
   /**
    * "More like this" / the edited prompt on a selected image card (#547 A3 · A4).
@@ -910,7 +892,6 @@ export default function FlowCanvas({
   const evolveActionRef = useRef<{ material: string; actionId: string } | null>(null);
   const evolveBusyRef = useRef(false);
   const runImageEvolve = useCallback(async (id: string, rawPrompt: string, aspect?: string): Promise<boolean> => {
-    if (directToolsLockedRef.current) return false;
     const text = rawPrompt.trim();
     if (!text) return false;
     if (!costQuote) {
@@ -990,7 +971,6 @@ export default function FlowCanvas({
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
-    if (directToolsLocked) return;
     closeComposer(false);
     const { x, y } = spawnRect();
     const result = await createCanvasNode({ projectId, type: "text", x, y, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
@@ -1001,7 +981,7 @@ export default function FlowCanvas({
           id: result.id,
           type: "text",
           position: { x, y },
-          data: withNodeActionLock({ text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => setPendingDeleteId(result.id) }),
+          data: { text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => setPendingDeleteId(result.id) },
           style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
@@ -1010,7 +990,7 @@ export default function FlowCanvas({
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView, closeComposer, spawnRect, withNodeActionLock]);
+  }, [projectId, activeThreadId, onTextChange, skin, scheduleFitView, closeComposer, spawnRect]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -1019,7 +999,6 @@ export default function FlowCanvas({
   const handleCanvasDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    if (directToolsLockedRef.current) return;
     const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
     if (files.length === 0) {
       toast.error("Drop a PNG, JPG, or WEBP image.");
@@ -1054,7 +1033,7 @@ export default function FlowCanvas({
             id: created.id,
             type: "image",
             position: { x, y },
-            data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onSendToOtto: sendSelectionToOtto, onMediaSize: getOnMediaSize(created.id) }),
+            data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onSendToOtto: sendSelectionToOtto, onMediaSize: getOnMediaSize(created.id) },
             style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
             threadId: activeThreadId ?? null,
           },
@@ -1066,7 +1045,7 @@ export default function FlowCanvas({
       });
       scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload, skin, scheduleFitView, spawnRect, withNodeActionLock]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload, skin, scheduleFitView, spawnRect]);
 
   // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
   // image cards own the explicit "Make video" image-to-video path.
@@ -1088,7 +1067,7 @@ export default function FlowCanvas({
     setT2vKey((k) => k + 1);
   }, []);
   const runT2v = useCallback(async (prompt: string): Promise<boolean> => {
-    if (directToolsLocked || videoBusyRef.current) return false;
+    if (videoBusyRef.current) return false;
     if (!costQuote) {
       toast.error("Wait for the exact video cost before confirming.");
       return false;
@@ -1137,12 +1116,11 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect, t2vIds, t2vSpec, t2vVariantSel, videoSpecMenu]);
+  }, [activeThreadId, costQuote, generateVideoFromText, projectId, spawnRect, t2vIds, t2vSpec, t2vVariantSel, videoSpecMenu]);
 
   /** "More like this" / an edited prompt on a VIDEO card. Video always keeps its explicit
    *  cost confirm (founder rule), so this seeds the same dialog instead of spending. */
   const handleVideoRemake = useCallback((_id: string, text: string) => {
-    if (directToolsLockedRef.current) return;
     const prompt = text.trim();
     if (!prompt) return;
     closeComposer(false);
@@ -1158,32 +1136,15 @@ export default function FlowCanvas({
     setT2vOpen(true);
   }, [closeComposer]);
 
-  useEffect(() => {
-    directToolsLockedRef.current = directToolsLocked;
-  }, [directToolsLocked]);
-  // When the lock engages, close the composer and every open spend dialog. Render-phase
-  // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
-  const [prevToolsLocked, setPrevToolsLocked] = useState(directToolsLocked);
-  if (prevToolsLocked !== directToolsLocked) {
-    setPrevToolsLocked(directToolsLocked);
-    if (directToolsLocked) {
-      closeComposer(true);
-      setPendingDeleteId(null);
-      setPendingBatchDeleteIds(null);
-      setPendingAnimateId(null);
-      resetT2v();
-    }
-  }
-
   // Cost transparency (宪法 3): images generate with no confirm dialog, so the quote
   // must be loaded while the composer is visible — its cost label sits next to the
   // Generate button. Video/t2v quotes still load when their confirm dialogs open.
-  const composerVisible = skin === "gb" ? composerOpen : !directToolsLocked;
+  const composerVisible = skin === "gb" ? composerOpen : true;
   // Same rule for a selected card's attached bar and its "More like this" button: both show
   // the exact price before submit (#550 ②, #547 A3/A4), so the quote has to be loaded while
   // a card is selected. ensureModels caches after the first call, so re-selecting cards
   // costs no round trips.
-  const cardBarVisible = !directToolsLocked && nodes.some(
+  const cardBarVisible = nodes.some(
     (n) => (n.type === "image" || n.type === "video")
       && n.selected === true
       && imageNodeActionable(n.data as { status?: string; url?: string; generationId?: string }),
@@ -1225,7 +1186,7 @@ export default function FlowCanvas({
         id: r.id,
         type: r.type,
         position: { x: r.x, y: r.y },
-        data: withNodeActionLock({
+        data: {
           // This card came OUT of a board read, so the server has answered for it. If a later
           // read stops returning it, that is a deletion rather than a read running behind
           // (#612 r4) — reads omit tombstones, so nothing else could ever say so.
@@ -1257,7 +1218,7 @@ export default function FlowCanvas({
           onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
           onSendToOtto: r.type === "image" || r.type === "video" ? sendSelectionToOtto : undefined,
           onMediaSize: r.type === "image" || r.type === "video" ? getOnMediaSize(r.id) : undefined,
-        }),
+        },
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,
         genJobId: r.genJobId ?? null,
@@ -1271,7 +1232,7 @@ export default function FlowCanvas({
     // merchant has selected — the board reloads on a timer, and a selection that vanishes
     // mid-action is the board undoing their work (review P2-1).
     setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped, removedNodeIdsRef.current));
-  }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload, withNodeActionLock]);
+  }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
   useEffect(() => { reloadRef.current = reload; }, [reload]);
@@ -1330,30 +1291,26 @@ export default function FlowCanvas({
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    const canPersistWrites = !directToolsLockedRef.current;
-    const effectiveChanges = canPersistWrites
-      ? changes
-      : changes.filter((c) => c.type !== "position" && c.type !== "dimensions" && c.type !== "remove");
-    if (effectiveChanges.length === 0) return;
-    let next = applyNodeChanges(effectiveChanges, nodesRef.current) as CanvasFlowNode[];
+    if (changes.length === 0) return;
+    let next = applyNodeChanges(changes, nodesRef.current) as CanvasFlowNode[];
     const persistMoves: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
     const deletes: string[] = [];
     // Bridge NodeResizer dimension changes into our style-based sizing so the
     // card visually grows/shrinks on the board (display-only — no regeneration).
-    for (const c of effectiveChanges) {
+    for (const c of changes) {
       if (c.type === "dimensions" && c.dimensions) {
         const { width, height } = c.dimensions;
         next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
       }
     }
-    for (const c of effectiveChanges) {
+    for (const c of changes) {
       if (c.type === "position" && c.position) {
         const n = next.find((x2) => x2.id === c.id);
         // Update position in ref immediately (for onAnimate offset calc)
         const entry = nodeDataRef.current[c.id];
         if (entry) entry.pos = { x: c.position.x, y: c.position.y };
 
-        if (canPersistWrites && c.dragging === false) {
+        if (c.dragging === false) {
           // Read position from CHANGE object (not stale nodes closure)
           const { x, y } = c.position;
           if (n) persistMoves.push({ id: n.id, x, y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
@@ -1361,7 +1318,7 @@ export default function FlowCanvas({
       }
       // Persist the new size when a resize gesture ends (display-only; reuses the
       // same moveCanvasNode path as a drag — no spend, just x/y/w/h).
-      if (canPersistWrites && c.type === "dimensions" && c.resizing === false) {
+      if (c.type === "dimensions" && c.resizing === false) {
         const n = next.find((x2) => x2.id === c.id);
         if (n) {
           const entry = nodeDataRef.current[n.id];
@@ -1369,7 +1326,7 @@ export default function FlowCanvas({
           persistMoves.push({ id: n.id, x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
         }
       }
-      if (canPersistWrites && c.type === "remove") deletes.push(c.id);
+      if (c.type === "remove") deletes.push(c.id);
     }
     nodesRef.current = next;
     setNodes(next);
@@ -1387,7 +1344,7 @@ export default function FlowCanvas({
     status: pendingDeleteNode.data?.status as string | undefined,
     url: pendingDeleteNode.data?.url as string | undefined,
   });
-  const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
+  const showGraph = canvasReady;
   // #645 T4：视频按档计价，所以价格必须跟着商家**这一刻选中的那一档**走。价格永远来自
   // 服务端那张按档价目表（`creditsFor`），界面自己不算 —— 报不出这一档的价就如实说
   // "checking exact cost"，绝不拿默认档的价格顶上（那就是显示一个价、扣另一个价）。
@@ -1419,7 +1376,6 @@ export default function FlowCanvas({
   // 视频卡的「More like this」是去开 t2v 确认框的,所以这里报的必须是**那个框会用的那一档**
   // 的价 —— 报默认档就会出现「卡上说 11、框里收 27」。价格仍然只有服务端那一个来源。
   const remakeCostHint = genCostHint(specCredits(t2vSpec) ?? costQuote?.videoCredits);
-  const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const nodesOnBoard = filterNodesByConvo(nodes, activeThreadId, filterToConvo);
   // How many cards are picked right now. A card's own toolbar is about THAT card, so it only
   // appears while exactly one is picked: with several picked, neighbouring cards' toolbars
@@ -1438,7 +1394,7 @@ export default function FlowCanvas({
     ariaLabel: canvasNodeAriaLabel(n),
     data: n.type === "image"
       ? {
-          ...withNodeActionLock(n.data),
+          ...n.data,
           selectedCount,
           sendToOttoTitle,
           onEvolve: handleEvolve,
@@ -1452,8 +1408,8 @@ export default function FlowCanvas({
           imageShapeOptions: imageShapeMenu?.options,
         }
       : n.type === "video"
-        ? { ...withNodeActionLock(n.data), selectedCount, sendToOttoTitle, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
-        : withNodeActionLock(n.data),
+        ? { ...n.data, selectedCount, sendToOttoTitle, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
+        : n.data,
   }));
   // T6: the four recorded columns, read off the board exactly once, for everything that talks
   // about relationships — the same-batch frame, the lines between cards, the tree, the compare
@@ -1609,11 +1565,6 @@ export default function FlowCanvas({
       onDragOver={(e) => {
         if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
         e.preventDefault();
-        if (directToolsLocked) {
-          e.dataTransfer.dropEffect = "none";
-          setDragOver(false);
-          return;
-        }
         e.dataTransfer.dropEffect = "copy";
         setDragOver(true);
       }}
@@ -1639,7 +1590,6 @@ export default function FlowCanvas({
             edges={lineageEdges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
-            nodesDraggable={!directToolsLocked}
             panOnDrag={panMode}
             selectionOnDrag={!panMode}
             // B6: picking several cards at once. React Flow's default only accepts the
@@ -1664,7 +1614,6 @@ export default function FlowCanvas({
           projectId={projectId}
           onClose={() => setDetailFor(null)}
           entities={entities}
-          readOnlyReason={directToolsLocked ? directToolsLockedReason : undefined}
         />
       )}
       {/* The lineage tree (#605 T6). Opened from a card, about that card, and closed by the
@@ -1694,7 +1643,7 @@ export default function FlowCanvas({
         <div className="cv-bottom-stack">
           {/* Composer — hidden until Generate is clicked (Grok pattern). Reuses the
               existing handleGenerate spend path unchanged; sits on top of the stack. */}
-          {composerOpen && !directToolsLocked && (
+          {composerOpen && (
             <form
               ref={composerFormRef}
               className="al-promptbar cv-composer-pop"
@@ -1792,7 +1741,7 @@ export default function FlowCanvas({
           )}
           {/* B6: what to do with several cards at once. Appears only when more than one card
               is selected, so the single-card toolbar is untouched. */}
-          {selection.count > 1 && !directToolsLocked && (
+          {selection.count > 1 && (
             // Its own row in the stack. It used to be pinned to the same bottom edge as the
             // tool row with a higher z-index, so as soon as it grew it covered the zoom/fit/
             // hand/select tools and they stopped being clickable (#604 r2 P2①). The row still
@@ -1925,10 +1874,9 @@ export default function FlowCanvas({
               type="button"
               variant="ghost"
               className={CV_TOOLBAR_BUTTON_CLASS}
-              title={directToolTitle ?? "Generate an image — describe what you want"}
+              title="Generate an image — describe what you want"
               aria-label="Generate image"
-              aria-expanded={composerOpen && !directToolsLocked}
-              disabled={directToolsLocked}
+              aria-expanded={composerOpen}
               onClick={() => setComposerOpen((v) => !v)}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
@@ -1937,24 +1885,16 @@ export default function FlowCanvas({
               type="button"
               variant="ghost"
               className={CV_TOOLBAR_BUTTON_CLASS}
-              title={directToolTitle ?? "Make a video from a prompt"}
+              title="Make a video from a prompt"
               aria-label="Video"
-              disabled={directToolsLocked}
               onClick={() => { closeComposer(false); setCostQuote(null); setT2vOpen(true); }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
             </Button>
-            <Button type="button" variant="ghost" className={CV_TOOLBAR_BUTTON_CLASS} title={directToolTitle ?? "Add text"} aria-label="Add text" disabled={directToolsLocked} onClick={addTextNode}>
+            <Button type="button" variant="ghost" className={CV_TOOLBAR_BUTTON_CLASS} title="Add text" aria-label="Add text" onClick={addTextNode}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
             </Button>
           </div>
-        </div>
-      ) : directToolsLocked ? (
-        <div
-          className="al-promptbar"
-          style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 420, justifyContent: "center" }}
-        >
-          <span className="text-[0.875rem] font-medium text-muted-foreground">{directToolsLockedReason}</span>
         </div>
       ) : (
         <form
@@ -2002,7 +1942,6 @@ export default function FlowCanvas({
             <Button variant="ghost" onClick={() => setPendingDeleteId(null)}>{pendingDeletePaid ? "Keep it" : "Cancel"}</Button>
             <Button
               variant="destructive"
-              disabled={directToolsLocked}
               onClick={() => { if (pendingDeleteId) deleteNode(pendingDeleteId); setPendingDeleteId(null); }}
             >
               Remove
@@ -2020,7 +1959,6 @@ export default function FlowCanvas({
             <Button variant="ghost" onClick={() => setPendingBatchDeleteIds(null)}>Cancel</Button>
             <Button
               variant="destructive"
-              disabled={directToolsLocked}
               onClick={() => {
                 if (pendingBatchDeleteIds) deleteNodes(pendingBatchDeleteIds);
                 setPendingBatchDeleteIds(null);

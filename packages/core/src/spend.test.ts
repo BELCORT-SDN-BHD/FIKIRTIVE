@@ -7,7 +7,7 @@ import { GEN_IMAGE_ASPECTS, GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
 import { MARGIN_FLOOR, marginTruthTable, pendingRulingFor, acceptedExceptionFor } from "./margin-truth.js";
 // Note: video credit charge is split — flat per resolution for BytePlus flat-priced models
-// (seedance-2-mini), USD-formula for all other (fal) models.
+// (seedance-2-mini), USD-formula for all other (retired, menu-external) models.
 
 describe("genSpentUsd", () => {
   it("image = flat per-image price × count", () => {
@@ -99,8 +99,8 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     })).toBe(16 * INTERNAL_PER_DISPLAY);
   });
   it("#647 T6:菜单外的模型(历史行)落护栏价 —— 算不出价就宁可贵,绝不贱卖", () => {
-    // 这条测试的前身是「fal 非 flat 模型走 USD 公式」。那 12 台 fal 引擎在 T6 下架之后,
-    // 它们各自抄来的费率也随之作废(videoRateUsdPerSec 对菜单外的 id 回 0),USD 公式会
+    // 这条测试的前身是「非 flat 模型走 USD 公式」。那 12 台当初走备用供应商的引擎在 T6 下架
+    // 之后,它们各自抄来的费率也随之作废(videoRateUsdPerSec 对菜单外的 id 回 0),USD 公式会
     // 算出 1 显示 credit —— 一条视频卖一毛钱。新的付费请求永远走不到这里(契约闸只放行
     // 在产那一台),这只是历史行读价的兜底,而兜底的语义只有一个:护栏价。
     const job = { kind: "VIDEO" as const, model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "", audio: false } };

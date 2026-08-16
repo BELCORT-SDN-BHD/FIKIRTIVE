@@ -60,7 +60,6 @@ import {
   runOttoTurn,
   finalizeOttoTurn,
   ottoBudgetArgsFor,
-  noopTraceSink,
   type OttoModelRuntime,
   type OttoRuntimeDeps,
 } from "./runtime.js";
@@ -231,7 +230,6 @@ describe("createOttoRuntime — profile matrix (profiles only limit tools/steps)
   const deps: OttoRuntimeDeps = {
     modelRuntime: fixtureModelRuntime(fakeTextModel("hi")),
     skills: [makeSafeSkill([])],
-    traceSink: noopTraceSink,
   };
 
   it("interactive: full toolset, OTTO_MAX_STEPS", () => {
@@ -314,7 +312,7 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
 
   it("fixture-no-charge manifest → paid:false (the ONLY way to a no-charge run is the manifest itself)", () => {
     const rt = createOttoRuntime(
-      { modelRuntime: fixtureModelRuntime(fakeTextModel("x")), skills: [], traceSink: noopTraceSink },
+      { modelRuntime: fixtureModelRuntime(fakeTextModel("x")), skills: [] },
       "eval",
     );
     expect(ottoBudgetArgsFor(rt, { orgId: "o", refId: "r", input: "x" }).paid).toBe(false);
@@ -364,7 +362,7 @@ describe("production composition root (PH1-A5)", () => {
       process.env.OTTO_BILLABLE_MODEL = "fixture-no-charge";
       process.env.OTTO_MODEL = "cli";
       const rt = createOttoRuntime(
-        { modelRuntime: ottoModelRuntime, skills: [], traceSink: noopTraceSink },
+        { modelRuntime: ottoModelRuntime, skills: [] },
         "interactive",
       );
       expect(rt.modelRuntime).toBe(ottoModelRuntime);
@@ -385,7 +383,7 @@ describe("production composition root (PH1-A5)", () => {
 describe("runOttoTurn — real meter stream failure and completion ordering (PH1F-A2)", () => {
   it("an onStream throw refunds the full paid reservation and never success-settles", async () => {
     const runtime = createOttoRuntime(
-      { modelRuntime: paidFixtureModelRuntime(fakeTextModel("partial")), skills: [], traceSink: noopTraceSink },
+      { modelRuntime: paidFixtureModelRuntime(fakeTextModel("partial")), skills: [] },
       "interactive",
     );
 
@@ -431,7 +429,7 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
         return mapOttoUsage(usage);
       },
     });
-    const runtime = createOttoRuntime({ modelRuntime, skills: [], traceSink: noopTraceSink }, "interactive");
+    const runtime = createOttoRuntime({ modelRuntime, skills: [] }, "interactive");
     const streamResult = {
       async *[Symbol.asyncIterator]() {
         order.push("drain-start");
@@ -508,7 +506,6 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
     const deps: OttoRuntimeDeps = {
       modelRuntime: fixtureModelRuntime(fakeToolCallingModel("echoBrand", { q: "brand colors" }, "Echoed!")),
       skills: [makeSafeSkill(log)],
-      traceSink: noopTraceSink,
     };
     const rt = createOttoRuntime(deps, "interactive");
 
@@ -532,7 +529,6 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
     const deps: OttoRuntimeDeps = {
       modelRuntime: fixtureModelRuntime(fakeTextModel("hi there")),
       skills: [],
-      traceSink: noopTraceSink,
     };
     const rt = createOttoRuntime(deps, "interactive");
 
@@ -564,7 +560,6 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
         fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_1" }, "Approved and scheduled!"),
       ),
       skills: [makeGatedSkill(log)],
-      traceSink: noopTraceSink,
     };
     const interactive = createOttoRuntime(deps, "interactive");
     const resume = createOttoRuntime(deps, "approval-resume");
@@ -611,7 +606,6 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
       modelRuntime: legacyModelRuntime,
       agent: legacyAgent,
       maxTurns: OTTO_MAX_STEPS,
-      traceSink: noopTraceSink,
     });
     const parkedResult = await runOttoTurn(
       { orgId: "org_t", refId: "fixture:legacy-park", input: "approve the legacy post" },
@@ -713,7 +707,6 @@ describe("#566 — resume carries the live context", () => {
         fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_1" }, "Done!"),
       ),
       skills: [makePortGatedSkill(log)],
-      traceSink: noopTraceSink,
     };
     const interactive = createOttoRuntime(deps, "interactive");
     const resume = createOttoRuntime(deps, "approval-resume");
@@ -795,7 +788,6 @@ describe("#566 — resume carries the live context", () => {
         fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_1" }, "Done!"),
       ),
       skills: [makePortGatedSkill(log)],
-      traceSink: noopTraceSink,
     };
     return createOttoRuntime(deps, "approval-resume");
   }

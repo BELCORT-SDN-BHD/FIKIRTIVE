@@ -4,12 +4,14 @@ import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Mock @fikirtive/db
+//
+// #952 item 13 — executeSetTitle no longer calls prisma.chatThread.updateMany directly; it
+// delegates to the shared renameChatThread (packages/db/src/chat-thread-rename.ts), the same
+// function the human-facing coworkRenameThread action calls. Mocked at that seam instead.
 // ---------------------------------------------------------------------------
 vi.mock("@fikirtive/db", () => ({
+  renameChatThread: vi.fn(),
   prisma: {
-    chatThread: {
-      updateMany: vi.fn(),
-    },
     genJob: {
       create: vi.fn(),
     },
@@ -36,40 +38,33 @@ function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
 // ---------------------------------------------------------------------------
 
 describe("executeSetTitle — mock DB", () => {
-  let mockPrisma: {
-    chatThread: { updateMany: ReturnType<typeof vi.fn> };
-    genJob: { create: ReturnType<typeof vi.fn> };
-  };
+  let mockRenameChatThread: ReturnType<typeof vi.fn>;
+  let mockGenJobCreate: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     const db = await import("@fikirtive/db");
-    mockPrisma = db.prisma as unknown as typeof mockPrisma;
-    (mockPrisma.chatThread.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
+    mockRenameChatThread = db.renameChatThread as unknown as ReturnType<typeof vi.fn>;
+    mockGenJobCreate = (db.prisma as unknown as { genJob: { create: ReturnType<typeof vi.fn> } }).genJob.create;
+    mockRenameChatThread.mockResolvedValue({ count: 1 });
   });
 
-  it("calls chatThread.updateMany with where.id=ctx.threadId and where.ownerId=ctx.orgId", async () => {
+  it("calls renameChatThread with threadId=ctx.threadId and ownerId=ctx.orgId", async () => {
     const ctx = makeCtx({ orgId: "org-A", threadId: "thread-B" });
     await executeSetTitle({ title: "My Campaign" }, { context: ctx });
 
-    expect(mockPrisma.chatThread.updateMany).toHaveBeenCalledTimes(1);
-    const call = (mockPrisma.chatThread.updateMany as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-      where: Record<string, unknown>;
-      data: Record<string, unknown>;
-    };
-    expect(call.where["id"]).toBe("thread-B");
-    expect(call.where["ownerId"]).toBe("org-A");
-    expect(call.where["deletedAt"]).toEqual(null);
+    expect(mockRenameChatThread).toHaveBeenCalledTimes(1);
+    const call = mockRenameChatThread.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call["threadId"]).toBe("thread-B");
+    expect(call["ownerId"]).toBe("org-A");
   });
 
-  it("stores trimmed title in data.title", async () => {
+  it("stores trimmed title", async () => {
     const ctx = makeCtx();
     await executeSetTitle({ title: "  Padded Title  " }, { context: ctx });
 
-    const call = (mockPrisma.chatThread.updateMany as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-      data: Record<string, unknown>;
-    };
-    expect(call.data["title"]).toBe("Padded Title");
+    const call = mockRenameChatThread.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call["title"]).toBe("Padded Title");
   });
 
   it("returns ok:true", async () => {
@@ -82,16 +77,14 @@ describe("executeSetTitle — mock DB", () => {
     const ctx = makeCtx({ orgId: "org-real", threadId: "thread-real" });
     await executeSetTitle({ title: "Campaign launch" }, { context: ctx });
 
-    const call = (mockPrisma.chatThread.updateMany as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-      where: Record<string, unknown>;
-    };
-    expect(call.where["id"]).toBe("thread-real");
-    expect(call.where["ownerId"]).toBe("org-real");
+    const call = mockRenameChatThread.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call["threadId"]).toBe("thread-real");
+    expect(call["ownerId"]).toBe("org-real");
   });
 
   it("never calls prisma.genJob.create ($0 tool)", async () => {
     const ctx = makeCtx();
     await executeSetTitle({ title: "Title" }, { context: ctx });
-    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 });

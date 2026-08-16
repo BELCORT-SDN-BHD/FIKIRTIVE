@@ -2,6 +2,8 @@
 // views. No data access, no gateway calls — pure formatting of values already returned by
 // customer-broadcast-ui-actions.ts. Copy is English sentence case throughout.
 
+import { MY_DATE_TIME_FORMAT } from "@/lib/my-date-format";
+
 // #728 — the channel name, the broadcast purpose and the four-axis status vocabulary are one
 // set of words for the whole of CRM, defined in `@/lib/crm-labels` and re-exported here so this
 // family keeps its single import site without keeping a second copy of the map.
@@ -9,14 +11,7 @@ export { axisStatusPresentation, channelAccountLabel, channelLabel, purposeLabel
 
 type BadgeVariant = "default" | "brand" | "outline" | "success" | "warning" | "destructive";
 
-const DATE_TIME = new Intl.DateTimeFormat("en-MY", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: "Asia/Kuala_Lumpur",
-});
+const DATE_TIME = MY_DATE_TIME_FORMAT;
 
 export function dateTimeLabel(value: Date | string | null | undefined): string {
   if (!value) return "Not recorded";

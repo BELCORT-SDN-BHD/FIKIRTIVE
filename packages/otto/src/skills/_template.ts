@@ -22,7 +22,7 @@ export const templateSkill = defineOttoSkill({
   parameters: templateInput,
   execute: async (input, { context }) => {
     // Reach the outside world ONLY through an injected ctx port (e.g. context.somePort),
-    // never by importing the fal provider / reserveCredits / Prisma directly (see AGENTS.md).
+    // never by importing the generation provider / reserveCredits / Prisma directly (see AGENTS.md).
     void context;
     return { ok: true, echoed: input.example };
   },

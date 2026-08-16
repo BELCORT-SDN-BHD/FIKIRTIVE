@@ -1,9 +1,7 @@
 /**
  * Fikirtive cowork — the agent (the product's differentiator). v1 skill: draft a
- * storyboard from an idea. The provider port mirrors the generation provider:
- * a mock for dev ($0, deterministic) and a real LLM for prod (fal, reusing
- * FAL_KEY). cowork manipulates the project through the SAME server actions a
- * user would, so anything it does, the user could undo.
+ * storyboard from an idea. cowork manipulates the project through the SAME server
+ * actions a user would, so anything it does, the user could undo.
  */
 import { z } from "zod";
 import { GEN_KINDS, MAX_GEN_PROMPT, MAX_GEN_ENTITIES, MAX_GEN_COUNT } from "./gen.js";
@@ -133,23 +131,6 @@ export interface LlmUsage {
   cachedInputTokens?: number;
 }
 
-/** The cowork PORT: a model-neutral transport, one method. It knows nothing
- *  about storyboards or prompts — only how to turn messages into text. mock
- *  ($0 deterministic) / fal (OpenRouter→Claude) / self-hosted-later are classes.
- *  `skillId` is carried so the mock dispatches by identity, never by sniffing
- *  prompt text; `opts.mockReply` lets a skill supply its $0 canned reply.
- *
- *  The `usage` field in the return is OPTIONAL and absent for mock ($0) calls.
- *  Existing callers that only read `.text` are unaffected. */
-export interface CoworkTransport {
-  readonly name: string;                                   // "mock" | "fal:llm"
-  chat(
-    skillId: string,
-    messages: ChatMessage[],
-    opts?: { mockReply?: () => string; responseFormat?: "json_object"; maxTokens?: number },
-  ): Promise<{ text: string; usage?: LlmUsage }>;
-}
-
 export const MAX_PLAN_STEPS = 8;
 export const COWORK_MEMORY_TURNS = 8;
 
@@ -221,17 +202,12 @@ export const coworkBriefRequest = z.object({
 export type CoworkBriefRequest = z.infer<typeof coworkBriefRequest>;
 
 /** Admin runtime-config write input (OPT-6 P1a). One discriminated key per setting;
- *  each value is .strict() so unknown fields are rejected. NOTE: provider includes
- *  "modal" (P1b) — but the WRITE is super-admin-only + credential-checked in
- *  saveRuntimeConfig (the zod schema only bounds the shape, not the authority). */
+ *  each value is .strict() so unknown fields are rejected. */
 export const runtimeConfigInput = z.discriminatedUnion("key", [
   z.object({ key: z.literal("vision"), value: z.object({
     enabled: z.boolean().optional(),
     maxImages: z.number().int().min(1).max(8).optional(),
     maxBytes: z.number().int().min(1).max(16_000_000).optional(),
-  }).strict() }),
-  z.object({ key: z.literal("cowork_provider"), value: z.object({
-    provider: z.enum(["mock", "fal", "modal"]), // P1b unlocks modal — super-admin-gated + credential-checked in saveRuntimeConfig
   }).strict() }),
   // OPT-6 P2 §⑥ knowledge keys — $0 planner text (not spend gates). Bounded length.
   z.object({ key: z.literal("planner_system"), value: z.object({ text: z.string().trim().max(8000) }).strict() }),

@@ -6,7 +6,6 @@ import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } fro
 import { isGenFailureReason } from "@fikirtive/core/gen-failure";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
-import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
@@ -67,8 +66,6 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     selectedCount?: number;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
-    directToolsLocked?: boolean;
-    directToolsLockedReason?: string;
     /** Pre-formatted price for the Evolve bar, supplied by FlowCanvas from the server
      *  quote (never a literal here — pricing lives in configuration/packages/core). */
     evolveCostHint?: string;
@@ -114,13 +111,12 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   // Only a card a board read has answered for wears a letter. What a press ASKED for is not
   // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
   const letter = canvasBatchLetter(canvasRecordedFacts(d));
-  const canEvolve = actionable && !!d.onEvolve && !d.directToolsLocked;
-  const canVariant = actionable && !!d.onVariant && !d.directToolsLocked && !!originalPrompt;
-  const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
-  const writeLock = getCanvasNodeWriteLock(d);
+  const canEvolve = actionable && !!d.onEvolve;
+  const canVariant = actionable && !!d.onVariant && !!originalPrompt;
+  const canSendToOtto = actionable && !!d.onSendToOtto;
   return (
     <>
-      <NodeResize gb={d.skin === "gb"} selected={selected} locked={writeLock.locked} />
+      <NodeResize gb={d.skin === "gb"} selected={selected} />
       <NodeToolbar
         className="cv-node-toolbar nodrag nopan"
         isVisible={soloSelected}
@@ -188,11 +184,10 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             variant="secondary"
             size="sm"
             className={NODE_TOOL_BUTTON_CLASS}
-            disabled={writeLock.locked}
             onPointerDown={(e) => e.stopPropagation()}
             // #643 T2：形状用这张卡上正显示的那一格 —— 同一张卡上的两个按钮不许交付两种形状。
-            onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onVariant?.(id, evolveShape); }}
-            title={writeLock.locked ? writeLock.reason : `Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
+            onClick={(e) => { e.stopPropagation(); d.onVariant?.(id, evolveShape); }}
+            title={`Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
           >
             More like this
           </Button>
@@ -215,10 +210,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             variant="secondary"
             size="sm"
             className={NODE_TOOL_BUTTON_CLASS}
-            disabled={writeLock.locked}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onAnimate?.(); }}
-            title={writeLock.locked ? writeLock.reason : "Make a video from this image"}
+            onClick={(e) => { e.stopPropagation(); d.onAnimate?.(); }}
+            title="Make a video from this image"
           >
             Make video
           </Button>
@@ -229,10 +223,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
           variant="secondary"
           size="sm"
           className={NODE_TOOL_BUTTON_CLASS}
-          disabled={writeLock.locked}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onDelete?.(); }}
-          title={writeLock.locked ? writeLock.reason : "Delete image node"}
+          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+          title="Delete image node"
         >
           ✕
         </Button>

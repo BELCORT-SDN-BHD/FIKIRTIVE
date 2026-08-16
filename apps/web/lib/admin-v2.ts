@@ -264,7 +264,6 @@ export type PermissionMatrixRow = {
 };
 
 export type OttoOpsSummary = {
-  provider: string;
   modelCount: number;
   enabledModelCount: number;
   directiveCells: number;
@@ -414,7 +413,6 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       staffRows,
       modelOverlay,
       vision,
-      runtimeProvider,
       knowledgeRows,
       workerHeartbeats,
       lastBackupSuccess,
@@ -569,10 +567,6 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         select: { modelId: true, enabled: true, notes: true },
       }),
       resolveVisionConfig(),
-      prisma.runtimeConfig.findUnique({
-        where: { key: "cowork_provider" },
-        select: { valueJson: true },
-      }),
       prisma.runtimeConfig.findMany({
         where: { key: { in: ["planner_system", "brief_default", "description_template"] } },
         select: { key: true, valueJson: true },
@@ -969,10 +963,6 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     const routedFamilies = Array.from(
       new Set((GEN_VIDEO_MODELS as readonly string[]).map((id) => modelFamily(id)).filter(Boolean)),
     ) as string[];
-    const provider =
-      (runtimeProvider?.valueJson as { provider?: string } | null)?.provider ??
-      process.env.COWORK_PROVIDER ??
-      "mock";
     const knowledgeByKey = new Map(knowledgeRows.map((row) => [row.key, row.valueJson]));
     const knowledgeValue = (key: "planner_system" | "brief_default" | "description_template") => {
       const text = (knowledgeByKey.get(key) as { text?: unknown } | undefined)?.text;
@@ -1081,7 +1071,6 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         })),
       },
       otto: {
-        provider,
         modelCount: modelIds.length,
         enabledModelCount: modelIds.filter((id) => !disabledModels.has(id)).length,
         // 计数就是那张网格本身的长度 —— 不再是「家族数 × 模式数」这个第二份推导

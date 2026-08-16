@@ -31,6 +31,7 @@ export {
   type CanvasSettlementBacklogJob,
   type CanvasRepairRecord,
 } from "./canvas-settlement.js";
+export * from "./chat-thread-rename.js";
 export * from "./consent-fold.js";
 export * from "./consent-runtime.js";
 // #803: the sole upgrade path from a merchant-entered identity to a channel-verified one.

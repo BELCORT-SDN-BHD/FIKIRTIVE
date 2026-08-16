@@ -66,7 +66,6 @@ function renderFrontDoor(userName: string): string {
       entities: [],
       userName,
       onThreadStarted: vi.fn(),
-      ottoStreamEnabled: true,
       onStreamStart: vi.fn(),
     }),
   );

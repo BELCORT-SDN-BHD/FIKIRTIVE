@@ -1,5 +1,5 @@
 /**
- * Caption handler ($0 — whisper.cpp transcription, NEVER fal/gen).
+ * Caption handler ($0 — whisper.cpp transcription, NEVER the paid provider).
  *
  * Pipeline: probe asset → (audio gate) → ffmpeg extract 16kHz mono WAV →
  * whisper-cli → JSON → CaptionCue[] → content-hash-keyed Transcript cache.

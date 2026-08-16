@@ -2,7 +2,7 @@
  * updateBrief — $0 tool
  *
  * Refines the project's creative brief. Spends NO money, creates NO GenJob,
- * calls NO fal/generation code.
+ * calls NO generation-provider code.
  *
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId or projectId.
