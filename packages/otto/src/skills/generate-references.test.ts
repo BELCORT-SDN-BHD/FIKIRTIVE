@@ -148,7 +148,7 @@ describe("Test 5 — missing refgen port throws", () => {
 describe("Test 6 — import audit: no direct spend bypass", () => {
   it("source does not import the provider, create a RefGenJob, reserve credits, or import web actions", () => {
     const src = readFileSync(new URL("./generate-references.ts", import.meta.url), "utf8");
-    expect(src).not.toMatch(/from\s+['"]@fal-ai\//);
+    expect(src).not.toMatch(/from\s+['"]@fikirtive\/generation['"]/);
     expect(src).not.toMatch(/refGenJob\.create/);
     expect(src).not.toMatch(/reserveCredits\s*\(/);
     expect(src).not.toMatch(/from\s+['"][^'"]*apps\//);

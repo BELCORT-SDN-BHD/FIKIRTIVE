@@ -66,7 +66,7 @@ export function refgenSpentUsd(job: RefGenSpendInput): number {
 //  - pricedGenCredits / pricedRefgenCredits = the CHARGE we debit the user, deterministic,
 //    in INTERNAL credits (1 internal credit = $0.01), with margin. RESERVE and SETTLE both
 //    use this exact value → reserve == settle, no variable delta.
-//  - genSpentUsd / refgenSpentUsd (above) = the true fal COST, record-only. Margin = the gap.
+//  - genSpentUsd / refgenSpentUsd (above) = the true engine COST, record-only. Margin = the gap.
 
 /** Internal credit accounting unit: 1 internal credit = $0.01. balance/ledger are internal. */
 export const CREDITS_PER_USD = 100;

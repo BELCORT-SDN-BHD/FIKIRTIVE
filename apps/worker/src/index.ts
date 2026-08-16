@@ -220,7 +220,7 @@ async function main(): Promise<void> {
   await consume<RenderJobData>(QUEUES.render, handleRender);
   await consume<RefGenJobData>(QUEUES.refgen, handleRefGen);
   await consume<GenJobData>(QUEUES.gen, handleGen);
-  // $0 caption job ($0 — whisper.cpp only, NEVER fal): SEPARATE queue from render
+  // $0 caption job ($0 — whisper.cpp only, NEVER the paid provider): SEPARATE queue from render
   // so a slow transcribe never blocks a render.
   await consume<CaptionJobData>(QUEUES.caption, handleCaption);
   // Otto deep research (research S3, the MONEY CORE): bounded search→read→synthesize agent,

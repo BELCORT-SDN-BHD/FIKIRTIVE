@@ -113,7 +113,7 @@ const mimeForExt = (ext: string) =>
     : "image/jpeg";
 
 // A GENERATING row older than this is treated as crashed/stale (its worker died or
-// the message was redelivered past queue expiry). Kept ABOVE the realistic fal call
+// the message was redelivered past queue expiry). Kept ABOVE the realistic engine call
 // time and BELOW the GEN/REFGEN queue expiry (20m), so an actively-running gen is
 // never failed closed by a duplicate delivery, but a truly stuck one eventually is.
 //
@@ -129,8 +129,8 @@ const mimeForExt = (ext: string) =>
 export const GEN_STALE_MS = 1000 * 60 * 18;
 // The PROACTIVE reaper (reapStaleGenJobs) runs on its OWN timer, independent of pg-boss
 // redelivery — so its cutoff must exceed the gen-queue expiry (GEN_QUEUE_POLICY.expireInSeconds
-// = 20m). Otherwise it could fail-close a long (18–20m) fal call that pg-boss still considers
-// alive, refunding the merchant + eating the founder's fal cost. The on-redelivery stale path
+// = 20m). Otherwise it could fail-close a long (18–20m) engine call that pg-boss still considers
+// alive, refunding the merchant + eating the founder's engine cost. The on-redelivery stale path
 // keeps GEN_STALE_MS (a redelivery already implies the 20m expiry has passed).
 export const GEN_REAP_MS = 1000 * 60 * 25;
 // A job that has sat in QUEUED this long was never claimed by a worker (worker down / message
@@ -827,7 +827,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           });
           // refund only if WE just failed it closed (count>0) — never touch the hold of an
           // actively-running winner. The merchant didn't get a result; the founder absorbs
-          // any real fal cost on the possibly-paid call.
+          // any real engine cost on the possibly-paid call.
           if (staled.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); failedClosed = true; }
         });
         // Only when WE failed it closed (not when an active winner still owns it): tell the
@@ -1236,12 +1236,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
               ids.push(gen.id);
             }
             // CONDITIONAL commit: write the resume marker + settle ONLY if we still own the
-            // GENERATING claim. A duplicate delivery that expired our in-flight fal call (>20min
+            // GENERATING claim. A duplicate delivery that expired our in-flight engine call (>20min
             // hang) may have already taken the stale-claim branch above → FAILED + refunded this
             // job. If so this matches 0 rows: THROW to ROLL BACK this whole transaction — the
             // Asset + Generation rows just created are USER-VISIBLE (project media/candidate
             // queries read Generation), so a plain `return` would COMMIT them = a free delivery.
-            // Rolling back discards them; the founder absorbed the fal cost, the merchant stays
+            // Rolling back discards them; the founder absorbed the engine cost, the merchant stays
             // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
             const marked = await tx.genJob.updateMany({
               where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
@@ -1259,7 +1259,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           // discard sentinel and ROLLED BACK (no Asset/Generation rows persisted). Discard
           // cleanly — never retry (would re-create) and never terminal-fail (already FAILED).
           if (storeErr === REDELIVERY_DISCARD) {
-            console.warn(`[gen] ${job.id}: redelivery already failed+refunded this job mid-flight — rolled back outputs, not delivering. Founder absorbed the fal cost.`);
+            console.warn(`[gen] ${job.id}: redelivery already failed+refunded this job mid-flight — rolled back outputs, not delivering. Founder absorbed the engine cost.`);
             return;
           }
           // exhausted: a persistent R2/DB outage. Re-throw to the terminal post-charge
@@ -1303,7 +1303,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       const message = sanitizeError(err);
       // a failure after the paid call is terminal — retrying would re-spend.
       // `spent` covers post-provider failures here; `charged` covers a failure
-      // INSIDE the adapter after fal already billed (it ran the model, then the
+      // INSIDE the adapter after the engine already billed (it ran the model, then the
       // result parse/download threw). Only a genuinely pre-charge throw retries.
       const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
       // #765 — `permanent` is the OTHER reason to stop, and it asks a different question from
@@ -1325,7 +1325,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       console.error(`[gen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
       if (final) {
         // terminal fail → release the hold (the merchant got no result; the founder
-        // absorbs any real fal cost on a paid-but-undelivered call). A `final` failure
+        // absorbs any real engine cost on a paid-but-undelivered call). A `final` failure
         // is by definition pre-commit (committed → final is false), so settle never ran;
         // and the finalizer unique index makes refund safe even against a racing settle.
         // A post-charge failure still records spent=true + spentUsd so "paid but not

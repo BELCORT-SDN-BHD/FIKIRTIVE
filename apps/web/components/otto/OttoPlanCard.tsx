@@ -115,9 +115,9 @@ export function OttoPlanCard({
 
   const isVideo = p.kind === "video";
   // The one number the merchant decides on — the real charge in CREDITS (= what startGen
-  // reserves). There is no USD→credits fallback any more: the record-only fal cost divided
-  // by $0.10 was never a quote, and guessing one is how an unpriced card got an approve
-  // button (#580 复审 r2 P1-1). Guaranteed or absent, nothing in between.
+  // reserves). There is no USD→credits fallback any more: the record-only engine cost
+  // divided by $0.10 was never a quote, and guessing one is how an unpriced card got an
+  // approve button (#580 复审 r2 P1-1). Guaranteed or absent, nothing in between.
   const credits = gate.credits;
   // The follow-on video estimate rides the SAME predicate — an estimate we can't vouch
   // for is not shown as a number, so the two-step total is never half-guessed.

@@ -3,9 +3,7 @@ import { prisma } from "@fikirtive/db";
 import { coworkVisionConfig, mergeVisionConfig } from "@fikirtive/core";
 
 /** Config keys = a fixed code-side enum (the only writable keys). */
-// NOTE: cowork_provider is INERT since batch-3 7-10 deleted getTransport (its only reader);
-// the knob + its admin UI stay until removed via 市政厅 v2.
-export const CONFIG_KEYS = { vision: "vision", coworkProvider: "cowork_provider" } as const;
+export const CONFIG_KEYS = { vision: "vision" } as const;
 
 /** Raw read of one config row; null on absent OR any DB fault (fail-closed,
  *  never throws — callers fall back to env/code defaults). */

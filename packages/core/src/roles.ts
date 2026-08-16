@@ -17,12 +17,12 @@ export const SECTIONS = [
 ] as const;
 export type Section = (typeof SECTIONS)[number];
 export type Action = "read" | "mutate";
-export type PlatformCapability = `${Section}.${Action}` | "model.self_hosted.mutate";
+export type PlatformCapability = `${Section}.${Action}`;
 
 const allPlatformCapabilities = SECTIONS.flatMap((section) => [
   `${section}.read` as PlatformCapability,
   `${section}.mutate` as PlatformCapability,
-]).concat("model.self_hosted.mutate" as PlatformCapability);
+]);
 
 /** Roles are permission bundles, not mutually-exclusive identities. */
 export const PLATFORM_ROLE_CAPABILITIES: Record<Role, ReadonlySet<PlatformCapability>> = {

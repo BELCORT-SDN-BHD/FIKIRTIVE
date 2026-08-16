@@ -24,7 +24,7 @@ const m = vi.hoisted(() => {
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {} }));
 vi.mock("../storage.js", () => ({ storage: {} }));
-vi.mock("../generation.js", () => ({ provider: { name: "fal", generate: m.generate } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generate } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set<string>()) }));
 
 import { handleRefGen } from "./refgen.js";

@@ -112,7 +112,7 @@ export type CardPayload = {
   estimatedPriceUsd: number;
   /** The DISPLAYED charge in credits — the same pricedGenCredits value startGen reserves,
    *  so the card quote equals what actually leaves the balance. The card shows THIS, not
-   *  estimatedPriceUsd (which is the record-only fal cost, ~2.5x lower). */
+   *  estimatedPriceUsd (which is the record-only engine cost, ~2.5x lower). */
   estimatedCredits: number;
   /** Present only when this image card is the first step of a two-step video plan.
    *  DISPLAY ONLY — an estimate of the follow-on video step's cost. Never used to charge. */
@@ -527,7 +527,7 @@ export function buildProposeCard(
 
   // Step 4.5: the DISPLAYED charge in CREDITS — computed from the SAME pricedGenCredits
   // value startGen reserves (gen-actions.ts), so the card quote equals what actually
-  // leaves the balance. (estimatedPriceUsd above stays the record-only fal cost.)
+  // leaves the balance. (estimatedPriceUsd above stays the record-only engine cost.)
   const estimatedCredits = displayCredits(
     pricedGenCredits({
       kind: kind === "video" ? "VIDEO" : "IMAGE",

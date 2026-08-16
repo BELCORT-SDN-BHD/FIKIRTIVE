@@ -72,8 +72,8 @@ describe("#743 — a read-only system frame writes NOTHING, whatever the model",
     await expect(
       runAsSystem(ADMIN, async () =>
         prisma.runtimeConfig.upsert({
-          where: { key: "cowork_provider" },
-          create: { key: "cowork_provider", valueJson: { probe: true } },
+          where: { key: "vision" },
+          create: { key: "vision", valueJson: { probe: true } },
           update: { valueJson: { probe: true } },
         }),
       ),

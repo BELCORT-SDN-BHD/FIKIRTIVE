@@ -2,7 +2,7 @@
  * propose — $0 tool
  *
  * Builds and persists a GEN_CARD chat message (a generation proposal the user
- * can later approve). Spends NO money, creates NO GenJob, calls NO fal/generation code.
+ * can later approve). Spends NO money, creates NO GenJob, calls NO generation-provider code.
  *
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId, threadId, or projectId.

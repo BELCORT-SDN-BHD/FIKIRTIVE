@@ -25,7 +25,7 @@ describe("check-skill-imports fence", () => {
     }
   });
 
-  it("hard-fails when a skill imports the fal provider (@fikirtive/generation)", () => {
+  it("hard-fails when a skill imports the generation provider package (@fikirtive/generation)", () => {
     writeFileSync(join(ROOT, BAD), `import { generateImage } from "@fikirtive/generation";\nexport const y = generateImage;\n`);
     try {
       let failed = false;

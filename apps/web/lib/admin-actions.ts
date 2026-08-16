@@ -19,7 +19,6 @@ import {
   roleSchema,
   isRole,
   primaryPlatformRole,
-  platformRolesAllowCapability,
 } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
 
@@ -113,38 +112,22 @@ export async function seedResearchDirectives(): Promise<{ ok: true; inserted: nu
   }
 }
 
-/** Write one runtime-config key. Base gate requireRole("model","mutate") (=ops) covers
- *  every NON-modal key. provider=modal is a per-VALUE exception: super-admin only (the
- *  uncensored self-hosted-planner content/ToS surface) AND a write-time credential check
- *  (mirroring the fal check) so a provider this env can't build is never persisted.
- *  Audited; a cowork_provider write records the provider for high-sensitivity audit.
- *  NOTE: cowork_provider is INERT since batch-3 7-10 (its only reader, getTransport,
- *  was deleted); knob + UI stay until removed via 市政厅 v2. */
+/** Write one runtime-config key. requireRole("model","mutate") (=ops) covers every key —
+ *  the cowork_provider knob (and its super-admin/modal special case) was removed wholesale,
+ *  ADR 0003 (docs/adr/0003-single-provider-byteplus.md). Audited. */
 export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireRole("model", "mutate");      // ops can write all NON-modal keys
+  const gate = await requireRole("model", "mutate");
   if ("error" in gate) return gate;
   const parsed = runtimeConfigInput.safeParse(raw);
   if (!parsed.success) return { error: "That setting is out of bounds." };
   const { key, value } = parsed.data;
 
-  if (key === "cowork_provider" && value.provider === "modal") {
-    if (!platformRolesAllowCapability(gate.roles, "model.self_hosted.mutate")) {
-      return { error: "You don't have access to the self-hosted planner." };
-    }
-    // write-time credential check: never persist a provider the web env can't build
-    if (!process.env.MODAL_LLM_ENDPOINT || !process.env.MODAL_LLM_KEY) {
-      return { error: "MODAL_LLM_ENDPOINT / MODAL_LLM_KEY are not set in this environment — can't switch to modal." };
-    }
-  }
-  if (key === "cowork_provider" && value.provider === "fal" && !process.env.FAL_KEY) {
-    return { error: "The hosted AI provider is not configured in this environment." };
-  }
   try {
     await prisma.$transaction(async (tx) => {
       await tx.runtimeConfig.upsert({
         where: { key }, create: { key, valueJson: value, updatedBy: gate.email }, update: { valueJson: value, updatedBy: gate.email },
       });
-      await tx.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "config.edit", payload: { key, ...(key === "cowork_provider" ? { provider: value.provider } : {}), via: gate.email } } });
+      await tx.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "config.edit", payload: { key, via: gate.email } } });
     });
   } catch {
     return { error: "Couldn't save the setting — please try again." };

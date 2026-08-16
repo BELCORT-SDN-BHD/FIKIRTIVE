@@ -19,10 +19,10 @@ export type GenModel = (typeof GEN_MODELS)[number];
  * 视频引擎菜单 —— **在产的只有这一台**。
  *
  * #647 T6:这里原本挂着 13 格,其中 12 格(kling / veo3.1 系 / ltx-2 / pixverse-v6 /
- * grok-imagine / wan-2.5 / hailuo-02 / seedance-2)全部走 fal 接线,**从来没有在生产
- * 出过一条片**。它们同时占着事实表、档位表、费率表、fal 接线表各一格,后台各一个开关,
- * 知识库各一列家族 —— 一整片「说的」而没有「做的」。菜单上没有一格是假的(#641),
- * 所以它们下架。
+ * grok-imagine / wan-2.5 / hailuo-02 / seedance-2)全部走当时的备用供应商接线,**从来
+ * 没有在生产出过一条片**。它们同时占着事实表、档位表、费率表、接线表各一格,后台各一个
+ * 开关,知识库各一列家族 —— 一整片「说的」而没有「做的」。菜单上没有一格是假的(#641),
+ * 所以它们下架;那个备用供应商本身也已在 #952 整族删除(ADR 0003)。
  *
  * 留下的 seedance-2-mini 是 BytePlus 直连、在产实付、毛利闸盯着的那一台。
  * 要再卖一台:先给它 flat 且清地板的价(FLAT_PRICED_VIDEO_MODELS + 成本输入),
@@ -134,8 +134,8 @@ export const REF_VIDEO_MAX_SECONDS = 6;
 /**
  * #785 —— 一次视频任务里 `image_url` 部件的**总上限 9 张**(首帧/末帧也算在这 9 张里)。
  *
- * 出处与它的诚实度:Seedance 2.0 系列的多模态参考上限(9 图 / 3 视频 / 3 音频)在 fal 官方
- * 模型仓库的入参 schema 与多份三方 API 文档上一致(2026-08-13 核)。第一方 Ark 文档页是
+ * 出处与它的诚实度:Seedance 2.0 系列的多模态参考上限(9 图 / 3 视频 / 3 音频)在彼时
+ * 另一家模型仓库的入参 schema 与多份三方 API 文档上一致(2026-08-13 核)。第一方 Ark 文档页是
  * JS 渲染的,抓不到正文,所以这个数**没有第一方逐字出处** —— 本文件的规矩是「没核过的
  * 数字不许编」,这里守的是同一条规矩的另一面:**取三方一致的那个数,并且只往少了送**。
  *
@@ -156,8 +156,8 @@ export const MAX_VIDEO_IMAGE_PARTS = 9;
  * 来源 https://docs.byteplus.com/en/docs/ModelArk/Pricing(2026-08-05 核);同值另有
  * 2026-06 真实账单佐证(docs/design/2026-07-03-harmony-04-costing-model.md §二)。
  *
- * 旧值 $0.04 是 fal 基数占位 —— F39 的注释自认「pending the founder's actual Ark
- * per-image rate」,高记约 14%。#644 改真。
+ * 旧值 $0.04 是当初备用供应商的基数占位 —— F39 的注释自认「pending the founder's
+ * actual Ark per-image rate」,高记约 14%。#644 改真。
  */
 export const GEN_PRICE_USD_PER_IMAGE = 0.035;
 
@@ -504,8 +504,8 @@ export const REFERENCE_VIDEO_COGS_USD = byteplusVideoCogsUsd({
  * 记成 720p 会把它的毛利算错)。未知/缺省分辨率一律回落到更贵的 720p —— 记账宁可高估。
  * 声音开关不影响 2.0 系列价格,所以这一档不看 audio。
  *
- * #647 T6:菜单外的 id(下架前存下的历史行)回 **0** —— 那 12 台引擎的费率是从各自的 fal
- * 定价页抄来的,引擎既已下架,那些数字就再没有人核过;留着它们等于让一条谁都不再验证的
+ * #647 T6:菜单外的 id(下架前存下的历史行)回 **0** —— 那 12 台引擎的费率是从当初备用
+ * 供应商各自的定价页抄来的,引擎既已下架,那些数字就再没有人核过;留着它们等于让一条谁都不再验证的
  * 价格继续参与记账。0 的意思是「这一趟的成本我们不知道」,而不是「这一趟不花钱」:
  * 记账是 record-only,而**收费**那一侧(spend.ts)对同一批 id 走的是护栏价,不是 0。
  */
@@ -652,7 +652,7 @@ export const genRequest = z
       }
     }
     // every chosen video control must be in the model's option set — a value the
-    // fal endpoint would reject (or a more expensive one than priced) must never
+    // engine endpoint would reject (or a more expensive one than priced) must never
     // reach the worker and spend.
     if (v.kind === "video" && (GEN_VIDEO_MODELS as readonly string[]).includes(v.model)) {
       const o = GEN_VIDEO_MODEL_OPTIONS[v.model as GenVideoModel];
@@ -795,9 +795,9 @@ export const GEN_QUEUE_POLICY = {
   retryBackoff: true,
   // base seconds for the retry backoff. WITHOUT this, pg-boss defaults retry_delay=0, which
   // makes `retryBackoff` a silent no-op (start_after = now()) — a failed paid gen would retry
-  // INSTANTLY (hammering fal on a transient 5xx). With it, retries are spaced (30s, then grows).
+  // INSTANTLY (hammering the engine on a transient 5xx). With it, retries are spaced (30s, then grows).
   retryDelay: 30,
-  // > the longest realistic fal call so a still-running gen is never expired +
+  // > the longest realistic engine call so a still-running gen is never expired +
   // redelivered (which would let the duplicate-delivery fail-closed wrongly FAIL an
   // active paid job). Both web (dispatch) and worker (consumer) create the queue
   // with THIS policy, so boot order can't leave them split.

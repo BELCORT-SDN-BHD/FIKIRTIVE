@@ -76,8 +76,7 @@ export function buildSpecChips(
     // 「Uses your attached image」(#619) 同一条规矩：界面上出现的每一句都得是执行层真会
     // 做的事。数字不在这里算(来自 `referenceBudget(...).used`)，为 0 时一个字都不说。
     // 判据是**这一趟真正会跑的那个适配器**收不收元素照(`videoElementReferencesHonoured`),
-    // 不是那个「现役适配器能不能」的静态标志 —— 备用路(fal)在付费前就拒收元素照,卡面
-    // 绝不能替它承诺「Uses 3 of your reference photos」(判官 r1 P1)。与图片画幅那一条
+    // 不是那个「现役适配器能不能」的静态标志(判官 r1 P1)。与图片画幅那一条
     // (`imageAspectHonoured`)同一个形状,而且与选片名额读的是同一个函数。
     const refCount = video?.elementReferenceCount ?? 0;
     if (videoElementReferencesHonoured() && refCount > 0) {

@@ -10,6 +10,6 @@ export const QUEUES = {
   refgen: REFGEN_QUEUE,
   /** Redesign shot/session generation: prompt → provider → Generation candidate. */
   gen: GEN_QUEUE,
-  /** $0 caption job: extract audio → whisper.cpp → cached transcript (NEVER fal). */
+  /** $0 caption job: extract audio → whisper.cpp → cached transcript (NEVER the paid provider). */
   caption: CAPTION_QUEUE,
 } as const;
