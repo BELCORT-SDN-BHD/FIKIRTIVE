@@ -1,3 +1,5 @@
+import { MY_DATE_TIME_FORMAT } from "@/lib/my-date-format";
+
 export type WorkflowBadgeVariant =
   | "brand"
   | "outline"
@@ -11,14 +13,7 @@ export type WorkflowPresentation = {
   variant: WorkflowBadgeVariant;
 };
 
-const DATE_TIME = new Intl.DateTimeFormat("en-MY", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: "Asia/Kuala_Lumpur",
-});
+const DATE_TIME = MY_DATE_TIME_FORMAT;
 
 export function dateTimeLabel(value: Date | string | null | undefined): string {
   if (!value) return "Not recorded";

@@ -19,6 +19,7 @@ import { createContact, importContacts, type ImportContactsResult } from "@/lib/
 import { crmConsentBadge } from "@/lib/crm-consent-labels";
 import { contactSourceLabel, identityGradePresentation } from "@/lib/crm-labels";
 import { listContacts } from "@/lib/crm-view-data";
+import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,12 +59,7 @@ type CreateSuccess = Extract<Awaited<ReturnType<typeof createContact>>, { ok: tr
 type StageFilter = "all" | "New" | "Active" | "Dormant";
 
 function dateLabel(value: Date | string): string {
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kuala_Lumpur",
-  }).format(new Date(value));
+  return MY_DATE_FORMAT.format(new Date(value));
 }
 
 function DeniedState({ message }: { message: string }) {

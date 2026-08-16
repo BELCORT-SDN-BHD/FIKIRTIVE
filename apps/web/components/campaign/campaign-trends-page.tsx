@@ -6,6 +6,7 @@ import { Archive, LoaderCircle, Save } from "lucide-react";
 import type { listCampaigns } from "@/lib/campaign-view-data";
 import { listTrendSnapshots, saveTrendSnapshot } from "@/lib/trend-actions";
 import { trendSourceLabels } from "@/lib/trend-source-labels";
+import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,12 +19,7 @@ type TrendResult = Awaited<ReturnType<typeof listTrendSnapshots>>;
 type CampaignResult = Awaited<ReturnType<typeof listCampaigns>>;
 
 function dateLabel(value: string) {
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kuala_Lumpur",
-  }).format(new Date(value));
+  return MY_DATE_FORMAT.format(new Date(value));
 }
 
 export default function CampaignTrendsPage({

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   resolveDisabledModels: vi.fn(),
   getEnhanceDirective: vi.fn(),
   familyHasPromptSkill: vi.fn(),
+  renameChatThread: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", async () => ({
@@ -30,9 +31,10 @@ vi.mock("@fikirtive/db", () => ({
   },
   Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" } },
   refundReservation: vi.fn(),
+  renameChatThread: mocks.renameChatThread,
 }));
 
-const { coworkGenerate } = await import("../cowork-actions");
+const { coworkGenerate, coworkRenameThread } = await import("../cowork-actions");
 const { readMerchantPrompt } = await import("../merchant-prompt-provenance");
 
 beforeEach(() => {
@@ -63,6 +65,7 @@ beforeEach(() => {
   // gets attached. The #914 r2 tests below override this per-case.
   mocks.familyHasPromptSkill.mockReturnValue(true);
   mocks.getEnhanceDirective.mockResolvedValue(undefined);
+  mocks.renameChatThread.mockResolvedValue({ count: 1 });
 });
 
 describe("coworkGenerate", () => {
@@ -195,5 +198,38 @@ describe("coworkGenerate", () => {
       );
       expect(boundOnLastCall()).toBe("A product hero on a clean studio set");
     });
+  });
+});
+
+// #952 item 13 — coworkRenameThread's DB write now goes through the shared renameChatThread
+// (packages/db/src/chat-thread-rename.ts), the same function Otto's setTitle skill calls
+// (packages/otto/src/skills/set-title.test.ts). This proves the human-facing action still keeps
+// its own auth gate, request validation, and "not found" handling around that shared call.
+describe("coworkRenameThread", () => {
+  it("calls the shared renameChatThread with the owner-scoped threadId and title", async () => {
+    const result = await coworkRenameThread({ threadId: "thread-1", title: "  New title  " });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.renameChatThread).toHaveBeenCalledTimes(1);
+    expect(mocks.renameChatThread).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      ownerId: "owner-1",
+      title: "New title", // the zod schema trims before this call, same as before
+    });
+  });
+
+  it("reports 'not found' when the shared write touches nothing, without throwing", async () => {
+    mocks.renameChatThread.mockResolvedValueOnce({ count: 0 });
+
+    const result = await coworkRenameThread({ threadId: "thread-missing", title: "New title" });
+
+    expect(result).toEqual({ error: "Conversation not found." });
+  });
+
+  it("rejects an empty title before ever calling the shared write", async () => {
+    const result = await coworkRenameThread({ threadId: "thread-1", title: "" });
+
+    expect(result).toEqual({ error: "Give the conversation a title (1-120 chars)." });
+    expect(mocks.renameChatThread).not.toHaveBeenCalled();
   });
 });
