@@ -46,7 +46,11 @@ const MAX_WORD = 20; // longest word allowed between "claude" and "api" ("claude
 const MAX_GAP = 4; // longest run of spaces/tabs inside one match
 const PROVIDER_NAME_RE = new RegExp(
   [
-    `\\b(?:seedance|seedream|byteplus|bytedance|jimeng|volcengine|volc|vmp|prometheus)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
+    // #905 — `modelark` (BytePlus's model-catalogue brand) and `dreamina` (the engine's own
+    // consumer-facing name) join this group for the same reason `volcengine`/`prometheus` did
+    // in #779: neither is a word in any language a merchant writes to us in, so both match bare
+    // and both take the same optional version tail ("Dreamina 2.0", "modelark-v2").
+    `\\b(?:seedance|seedream|byteplus|bytedance|jimeng|volcengine|volc|vmp|prometheus|modelark|dreamina)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
     `\\bfal(?:provider|client|error|[./:_-][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b`,
     `即梦`,
     // #779 judge r1, P2-1 — the OBSERVABILITY side of the same supplier. Its metrics workspace,
@@ -63,6 +67,18 @@ const PROVIDER_NAME_RE = new RegExp(
     // upstream text nowhere at all — it classifies into a closed vocabulary — precisely because
     // a deny list is only as good as the last name someone remembered to add to it.
     `\\bark(?:(?:provider|client|error|api|sdk|model)\\b|[-._/:][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}}\\b)`,
+    // #905 — the same supplier's English brand name, spelled out as two ordinary words.
+    // `volcano` and `engine` are each common on their own (the near-miss test below keeps
+    // "Volcano Hot Pot" legal), so only the exact adjacent phrase is matched — no bare
+    // `volcano`, no bare `engine`.
+    `\\bvolcano[ \\t]{1,${MAX_GAP}}engine\\b`,
+    // #905 — `ark` bare is still an ordinary English word (Noah's ark, Ark Encounter), so the
+    // glued shapes above (`ark-api-key`, `arkapi`) miss a merchant reading it back out loud:
+    // "the Ark model", "using the Ark provider", "Ark API returned an error". Give it the exact
+    // context rule `claude`/`anthropic` already use below — a nearby api/sdk/model/provider/
+    // error/version word, not the bare word alone, is what earns a redaction.
+    `\\bark\\b(?=(?:[ \\t]{1,${MAX_GAP}}[a-z0-9'-]{1,${MAX_WORD}})?[ \\t]{1,${MAX_GAP}}(?:api|sdk|model|provider|error|version)\\b)`,
+    `(\\b(?:api|sdk|model|provider|error|version)\\b(?:[ \\t]{1,${MAX_GAP}}[a-z0-9'-]{1,${MAX_WORD}})?[ \\t]{1,${MAX_GAP}})ark\\b`,
     // #787 — the CAPTION engine and its model files. A merchant buys "Subtitles", not an
     // engine name, so these belong here with the rest.
     //
@@ -100,7 +116,10 @@ const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "giu");
  *
  *   names        "volcengine"(10) + "[./:_-]x" + tail(20) = 23 + version/fast(4+4+15+4+4 = 31) → 63
  *   fal          "fal"(3) + "[./:_-]" + tail(20) = 24, + `\b`                                → 25
- *   ark          "ark"(3) + "[-._/:]x" + tail(20) = 25, + `\b`                               → 26
+ *   ark (glued)  "ark"(3) + "[-._/:]x" + tail(20) = 25, + `\b`                               → 26
+ *   volcano      "volcano"(7) + gap(4) + "engine"(6), + `\b`                                 → 17
+ *   ark ahead    "ark"(3) + `\b` + gap(4) + word(20) + gap(4) + "provider"(8), + `\b`         → 39
+ *   ark after    "provider"(8) + gap(4) + word(20) + gap(4) + "ark"(3), + `\b`                → 39
  *   whisper.cpp  "whisper"(7) + "-cpp"(4) = 11, + `\b`                                       → 12
  *   ggml         "ggml"(4) + "[-_.]x" + tail(20) = 26, + `\b`                                → 27
  *   claude-glued "anthropic"(9) + "[-_./0-9]" + tail(20) = 30, + `\b`                        → 31
@@ -108,7 +127,9 @@ const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "giu");
  *   claude after "provider"(8) + gap(4) + word(20) + gap(4) + "anthropic"(9), + `\b`         → 46
  *
  * 63 < 64 — the ceiling moved from 62 when #779 added "volcengine"/"prometheus" (10 chars,
- * one longer than "bytedance") to the names group. The streaming filter holds back this much,
+ * one longer than "bytedance") to the names group. #905 added "modelark"/"dreamina" (≤10
+ * chars, no change) to the same group and the "volcano engine" / "ark" context rows above
+ * (all ≤ 46) — none of it moves the ceiling past 63. The streaming filter holds back this much,
  * so a match is never judged on text it
  * has not seen yet — the property tests in provider-secrecy.test.ts assert the consequence
  * (streamed output === whole-text output) rather than trusting the arithmetic alone.
