@@ -27,6 +27,7 @@ import {
 import { crmConsentBadge, CRM_PRE_LEDGER_OPT_OUT_NOTE } from "@/lib/crm-consent-labels";
 import { channelLabel, identityGradePresentation, purposeLabel } from "@/lib/crm-labels";
 import { getContact, type CrmContactDetailRow } from "@/lib/crm-view-data";
+import { MY_DATE_TIME_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,14 +39,7 @@ type DetailResult = Awaited<ReturnType<typeof getContact>>;
 
 function dateTimeLabel(value: Date | string | null): string {
   if (!value) return "Not recorded";
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "Asia/Kuala_Lumpur",
-  }).format(new Date(value));
+  return MY_DATE_TIME_FORMAT.format(new Date(value));
 }
 
 const SOURCE_LABELS: Record<string, string> = {

@@ -12,7 +12,7 @@
 > **铁律:凡"待拍板",在 founder 批准前 runner 不得动工、不得默认"应该会批"。** 本文件不制造任何新决定 —— 没有既有依据的项一律进第七章待拍板清单。
 
 > ⚠️ **执行层职能已移交(2026-07-14 加注)。** 本文件「执行模型(runner)的唯一作业队列来源」的职能已移交:
-> 现行执行合同 = `docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md`(founder 五答签认);唯一能力真源 = `docs/ops/route-b/matrix/`;
+> 现行执行合同 = `docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md`(founder 五答签认);唯一能力真源 = `docs/archive/route-b/matrix/`;
 > 新决策入闸 = GRILL-VERDICTS 2026-07-14 追加节「工作方法」判决(wayfinder → to-spec → to-tickets → harness;决策地图 = issue #287)。
 > **不要再从本表取活或据此排执行顺序。** 全文保留作来源考据(B0 来源穷举明文引「MASTERPLAN 全章」,各 P 项仍是判决挂靠原件)。
 

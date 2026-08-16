@@ -112,7 +112,6 @@ export interface OttoAppProps {
   analytics: AnalyticsData;
   /** Recent generation thumbnails for the sidebar History strip (display-only). */
   history?: HistoryThumb[];
-  ottoStreamEnabled: boolean;
   initialView?: OttoViewKey;
   /** Re-skin flag (?skin=gb): opt into the Grok-bright look (strangler). */
   skin?: "gb";
@@ -150,7 +149,6 @@ export function OttoApp({
   account,
   analytics,
   history,
-  ottoStreamEnabled,
   initialView,
   skin,
   initialNavCollapsed,
@@ -182,7 +180,7 @@ export function OttoApp({
   const [renameThreadTarget, setRenameThreadTarget] = useState<ChatThreadDTO | null>(null);
   const [deleteThreadTarget, setDeleteThreadTarget] = useState<ChatThreadDTO | null>(null);
   const newProjectPendingRef = useRef(false);
-  // False outside the merchant shell (e.g. /skin-preview) — no global drawer there.
+  // False outside the merchant shell (not wrapped in MerchantShellContent) — no global drawer there.
   const globalNavigationOpen = useGlobalNavigationOpen();
   // ── Multi-project navigation ──
   const curProjectId = activeProjectId ?? projectId;
@@ -686,7 +684,6 @@ export function OttoApp({
           history={history ?? []}
           account={account}
           analytics={analytics}
-          ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}
           onViewChange={handleViewChange}
           onOpenThread={handleSelectThread}

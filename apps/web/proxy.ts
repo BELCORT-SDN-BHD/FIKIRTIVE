@@ -75,8 +75,6 @@ export const config = {
   //   The route's HMAC token (signed by the publish worker over ownerId+key+expiry) is its SOLE
   //   authorization; verifyMediaToken fail-closes to 404 on any bad/expired/forged token. This
   //   exception is scoped to exactly /api/media/pub/* (the [token] route) — it opens nothing else.
-  // skin-preview: dev-only visual harness for the UI re-skin (the page itself 404s in
-  // production), excluded here so it renders without a session in dev. Throwaway.
   // northstar: NO LONGER EXEMPT (#606, D7 · T7). The exemption existed only because that
   // prefix was a design-only prototype behind a preview flag that 404'd in production. The
   // mock pages and the flag are both deleted; what is left under the prefix are two REAL
@@ -87,5 +85,5 @@ export const config = {
   // MUST render without a session — that is the whole point of them — so they join /login
   // outside the wall. They mutate nothing on their own; every action behind them goes through
   // Better Auth's own gates (pause switch, allowlist, verification, rate limit).
-  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };

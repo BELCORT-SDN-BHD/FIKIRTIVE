@@ -193,14 +193,15 @@ export function nextDisclosureOpenForGroup(groupKey: string, update: DisclosureU
 
 /** Every path prefix the merchant shell owns. Derived from the registry, so a new
  *  destination can never land on a page with no rail around it — the exact "alive but
- *  no door" state #801 was filed against. `/profile` and `/connections` are shell
- *  surfaces reachable from the identity menu rather than nav destinations of their own. */
+ *  no door" state #801 was filed against. `/profile` is a shell surface reachable from
+ *  the identity menu rather than a nav destination of its own. Connections lives at
+ *  `/otto?view=connections` — already covered by OTTO_ASSISTANT's path below, since
+ *  `isMerchantSurface` matches on pathname only, never the query. */
 const MERCHANT_SURFACE_PATHS: readonly string[] = [
   ...new Set([
     ...merchantNavLinks().map((item) => splitLocation(item.href).path),
     splitLocation(OTTO_ASSISTANT.href).path,
     "/profile",
-    "/connections",
   ]),
 ];
 
@@ -235,11 +236,11 @@ export function ownsFullHeightWorkspace(pathname: string): boolean {
  *  top bar (#747, Founder 2026-08-08: hide the global hamburger on Otto's phone layout,
  *  keep Otto's own menu, and put the global entry inside it as a single item).
  *
- *  Null outside the merchant shell — /skin-preview mounts the real Otto shell with mock
- *  data and has no global drawer to open, so the item must not render there. Handing the
- *  opener down rather than duplicating the nav tree keeps ONE source of truth for what
- *  the global navigation contains: credits, identity, and Sign out included, none of
- *  which Otto's rail knows how to draw. */
+ *  Null outside the merchant shell — a surface that mounts the Otto shell without wrapping
+ *  it in MerchantShellContent has no global drawer to open, so the item must not render
+ *  there. Handing the opener down rather than duplicating the nav tree keeps ONE source of
+ *  truth for what the global navigation contains: credits, identity, and Sign out included,
+ *  none of which Otto's rail knows how to draw. */
 type GlobalNavigationDrawer = {
   /** Open the global drawer. */
   open: () => void;

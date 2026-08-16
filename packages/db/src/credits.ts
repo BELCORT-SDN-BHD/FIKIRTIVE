@@ -312,7 +312,7 @@ export type RefundOutcome = "refunded" | "already-settled" | "already-refunded" 
 
 /** REFUND a reservation on terminal failure: full release (balance restored, hold cleared)
  *  so a merchant is never charged for a generation they didn't receive (founder absorbs any
- *  real fal cost on paid-but-undelivered). MUST run in the same tx as the FAILED status
+ *  real engine cost on paid-but-undelivered). MUST run in the same tx as the FAILED status
  *  write. The amount is read FROM THE RESERVE ROW (never recomputed). Mutual exclusion with
  *  SETTLE + double-refund idempotency are DB-enforced (see settleCredits): a settled job's
  *  refund insert hits the finalizer unique index → P2002 → no-op before any account change.

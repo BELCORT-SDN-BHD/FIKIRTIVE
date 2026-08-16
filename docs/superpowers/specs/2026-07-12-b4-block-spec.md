@@ -54,7 +54,7 @@
 
 ## 二、范围与矩阵行映射
 
-B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrated`/`implemented`，经 §一 核实为真）+ 0.5（E4-14 X，`schema`→真 adapter）+ 5 新建（B0-27/28/29/30/103）。本 spec 对每行硬化 `人工入口/Otto skill/权限花费闸/测试/报告` 五列的 TBD-B4；明示排除：Ads 写执行契约归 Ads 域（本块只承 App Review 重验 + 与发布共享的 kill-switch/impersonation 闸对齐，不重开 ads 写编排）。
+B4 块（`docs/archive/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrated`/`implemented`，经 §一 核实为真）+ 0.5（E4-14 X，`schema`→真 adapter）+ 5 新建（B0-27/28/29/30/103）。本 spec 对每行硬化 `人工入口/Otto skill/权限花费闸/测试/报告` 五列的 TBD-B4；明示排除：Ads 写执行契约归 Ads 域（本块只承 App Review 重验 + 与发布共享的 kill-switch/impersonation 闸对齐，不重开 ads 写编排）。
 
 ### 2.1 存量 14 行 —— 起证清单（每行：锚断言测试 + 六态证据 + 双执行差额）
 

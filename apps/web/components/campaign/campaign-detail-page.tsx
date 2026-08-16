@@ -53,6 +53,7 @@ import {
 } from "@/components/crm/broadcasts/broadcast-format";
 import { trendSourceLabels } from "@/lib/trend-source-labels";
 import { scheduledPostStatusLabel, socialPlatformLabel } from "@/lib/social-labels";
+import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -82,12 +83,7 @@ const EMPTY_ENTRY: ProposedCampaignEntry = {
 };
 
 function dateLabel(value: string) {
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kuala_Lumpur",
-  }).format(new Date(value));
+  return MY_DATE_FORMAT.format(new Date(value));
 }
 
 function localDate(value: string) {

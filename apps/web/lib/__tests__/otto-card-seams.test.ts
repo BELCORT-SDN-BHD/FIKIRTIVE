@@ -32,7 +32,6 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SKILLS_DIR = path.join(REPO_ROOT, "packages/otto/src/skills");
 const WEB_LIB_DIR = path.join(REPO_ROOT, "apps/web/lib");
 const OTTO_CHAT_STREAM = path.join(REPO_ROOT, "apps/web/components/otto/OttoChatStream.tsx");
-const OTTO_CONVERSATION = path.join(REPO_ROOT, "apps/web/components/otto/OttoConversation.tsx");
 
 /** The source text of ONE `<Name … />` JSX element, braces balanced so nested handlers are
  *  included and the next sibling is not. Returns "" when the element isn't rendered here.
@@ -181,7 +180,7 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
   });
 
   it("stream approval/cancel paths fully re-arm poll state, restart the poll window, and refresh after cancel", () => {
-    for (const component of [OTTO_CHAT_STREAM, OTTO_CONVERSATION]) {
+    for (const component of [OTTO_CHAT_STREAM]) {
       const src = fs.readFileSync(component, "utf8");
       const helper = src.match(/function rearmGenerationPoll\(\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
       expect(helper).toContain("setPollGaveUp(false)");
@@ -233,18 +232,15 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
 
   it("no parent re-announces what the card already announced (one action, one broadcast)", () => {
     // Round-3 review: fencing only <OttoPlanCard> was too narrow. OttoChatStream writes the
-    // approval callback inline in the card's own props, so there the element IS the whole
-    // callback layer — but OttoConversation renders the card inside <MessageRow> and passes
-    // the real approval handler as a prop of THAT element (`onApproved={(cardId) => {…}}`,
-    // where the "No balance announcement here" comment lives). A re-added announcement in
-    // that handler would have sailed straight past the old assertion.
+    // approval callback inline in the card's own props, so the element IS the whole
+    // callback layer.
     //
-    // Scoped to these ELEMENTS, never to MessageRow's function body: that body legitimately
-    // wires ResearchCard/StoryboardCard with `onBalanceRefresh={() => void onBalanceRefresh?.()}`,
-    // and those cards do need it. PackCard and the other spend surfaces keep their own wiring too.
+    // Scoped to this ELEMENT, never to the surrounding render function's body: that body
+    // legitimately wires ResearchCard/StoryboardCard with
+    // `onBalanceRefresh={() => void onBalanceRefresh?.()}`, and those cards do need it.
+    // PackCard and the other spend surfaces keep their own wiring too.
     const PLAN_CARD_CALLBACK_LAYERS: Record<string, string[]> = {
       [OTTO_CHAT_STREAM]: ["OttoPlanCard"],
-      [OTTO_CONVERSATION]: ["OttoPlanCard", "MessageRow"],
     };
     // A CALL, not a prop forward — `onBalanceRefresh={onBalanceRefresh}` passes the callback
     // down to sibling cards and must stay legal.

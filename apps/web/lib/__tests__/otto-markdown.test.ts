@@ -5,10 +5,10 @@
  *  ① 渲染:`**bold**` 出 <strong> 而不是字面星号,列表出 <ul>/<li>,表格出 <table>,代码出 <pre>。
  *  ② 边界:raw HTML 不成 DOM、javascript:/相对链接不成锚、外链带安全属性、markdown 图片不发请求。
  *
- * 并且四个渲染出口各有一条守卫,但**强度分两档,别当成同一件事**:
+ * 并且三个渲染出口各有一条守卫,但**强度分两档,别当成同一件事**:
  *  · TextPart 与 ResearchReport 是真渲染断言 —— 出口被改回裸文本就红。
- *  · OttoConversation 与 OttoMemory 是**接线检查(wiring check)**:读源码字符串,只证明这两个
- *    文件仍然引用 OttoMarkdown,**不验证渲染行为**(它们牵入 server actions,整树渲染不动)。
+ *  · OttoMemory 是**接线检查(wiring check)**:读源码字符串,只证明这个
+ *    文件仍然引用 OttoMarkdown,**不验证渲染行为**(它牵入 server actions,整树渲染不动)。
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -230,7 +230,7 @@ describe("OttoMarkdown — XSS / prompt-injection boundary", () => {
 describe("render exits — every surface that shows Otto prose (#586 acceptance)", () => {
   const SAMPLE = "**Credits left:** 13.2\n\n- wallet image";
 
-  it("exit 1/4 · TextPart (OttoChatStream, streaming + reloaded history) renders markdown", () => {
+  it("exit 1/3 · TextPart (OttoChatStream, streaming + reloaded history) renders markdown", () => {
     const markup = renderToStaticMarkup(
       createElement(TextPart, { role: "assistant" as const, text: SAMPLE }),
     );
@@ -240,7 +240,7 @@ describe("render exits — every surface that shows Otto prose (#586 acceptance)
     expect(markup).toContain("<li>wallet image</li>");
   });
 
-  it("exit 1/4 · TextPart leaves the USER bubble literal (merchant text is never parsed)", () => {
+  it("exit 1/3 · TextPart leaves the USER bubble literal (merchant text is never parsed)", () => {
     const markup = renderToStaticMarkup(
       createElement(TextPart, { role: "user" as const, text: SAMPLE }),
     );
@@ -251,23 +251,7 @@ describe("render exits — every surface that shows Otto prose (#586 acceptance)
     expect(markup).toContain("pre-wrap");
   });
 
-  it("exit 2/4 · OttoConversation — wiring check on the SOURCE text, NOT a render assertion", async () => {
-    // OttoConversation pulls in server actions, so assert on the source wiring rather
-    // than rendering the whole tree: the assistant branch must use OttoMarkdown and must
-    // no longer carry the pre-wrap class that produced the literal asterisks.
-    const { readFileSync } = await import("node:fs");
-    const source = readFileSync(
-      new URL("../../components/otto/OttoConversation.tsx", import.meta.url),
-      "utf8",
-    );
-
-    expect(source).toContain('import { OttoMarkdown } from "./parts/OttoMarkdown"');
-    expect(source).toContain("<OttoMarkdown text={m.text} />");
-    // The remaining pre-wrap bubble is the USER one; there must be exactly one left.
-    expect(source.match(/whitespace-pre-wrap/g)?.length).toBe(1);
-  });
-
-  it("exit 3/4 · OttoMemory — wiring check on the SOURCE text, NOT a render assertion", async () => {
+  it("exit 2/3 · OttoMemory — wiring check on the SOURCE text, NOT a render assertion", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync(
       new URL("../../components/otto/OttoMemory.tsx", import.meta.url),
@@ -278,7 +262,7 @@ describe("render exits — every surface that shows Otto prose (#586 acceptance)
     expect(source).toContain('b.role === "you" ? b.text : <OttoMarkdown text={b.text} />');
   });
 
-  it("exit 4/4 · ResearchReport renders the synthesis as markdown", () => {
+  it("exit 3/3 · ResearchReport renders the synthesis as markdown", () => {
     const markup = renderToStaticMarkup(
       createElement(ResearchReport, {
         cardId: "m1",

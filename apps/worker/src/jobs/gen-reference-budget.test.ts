@@ -592,25 +592,6 @@ describe("#785 —— 视频卡说的张数 = worker 真正发给视频引擎的
     expect(predicted).toEqual({ used: 0, total: 17, truncated: true });
   });
 
-  // 判官 r1 P1(披露真实性)—— provider 这一维的同一道等价闸。
-  // 备用适配器(GENERATION_PROVIDER=fal)没有多素材参考那条路,所以名额是 0:worker 一张都
-  // 不送,卡面也照实说「一张都不会用上」。两侧读的都是 `videoElementReferencesHonoured`,
-  // 所以这条路上「说的」与「送的」同样不可能分家。
-  it("备用适配器被选中:真 handleGen 一张元素照都不送,而且卡面照实说 0", async () => {
-    const prev = process.env.GENERATION_PROVIDER;
-    process.env.GENERATION_PROVIDER = "fal";
-    try {
-      const entityIds = mockRefs([17]);
-      const actual = await refImageUrlsFromRealWorker({ ...videoJob, entityIds });
-      expect(actual).toEqual([]);
-      expect(referenceBudget({ kind: "video", perEntityLiveCounts: [17], hasBaseImage: false, attachedImageCount: 0 }))
-        .toEqual({ used: 0, total: 17, truncated: true });
-    } finally {
-      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
-      else process.env.GENERATION_PROVIDER = prev;
-    }
-  });
-
   it("没有 @元素时,发给视频引擎的请求里根本没有 refImageUrls 这个字段(旧行为逐字不变)", async () => {
     m.referenceImageFindMany.mockImplementation(async () => []);
     m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });

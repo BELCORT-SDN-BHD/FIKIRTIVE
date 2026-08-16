@@ -1,7 +1,7 @@
 # B8 设计全图 · Marketplace 站内优化（Shopee / Lazada）
 
 > 路线乙 · B8 块 · 第二波设计工位（epoch `claude-20260712-03`，工单 L4d·第二波）。
-> 覆盖矩阵行：**B0-68 / B0-69 / B0-70 / B0-71 / B0-72**（`docs/ops/route-b/matrix/08-B8.md`）。
+> 覆盖矩阵行：**B0-68 / B0-69 / B0-70 / B0-71 / B0-72**（`docs/archive/route-b/matrix/08-B8.md`）。
 > 基线：`origin/main@1b1414d9`（#240 B0 发布契约合入后）。语言：华语（生成 prompt 保持英文，UI copy sentence case）。
 > 模板：v1.1 铁律 13 节（同二波口碑工位）。**docs-only；不写产品代码；不写已退役的本地 Route-B 台账；状态与证据写入对应 current GitHub task/PR。**
 

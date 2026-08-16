@@ -14,7 +14,7 @@
 
 ### 1.1 块定义与行数
 
-B3 块（`docs/ops/route-b/matrix/03-B3.md`）= **46 行**，拆两 tranche（v0.2 BR2②(b) 改档后）：
+B3 块（`docs/archive/route-b/matrix/03-B3.md`）= **46 行**，拆两 tranche（v0.2 BR2②(b) 改档后）：
 
 - **主 tranche 38 行**：E1-01~E1-19（19）、E2-13/E2-14/E2-22（3）、E5-17（1）、B0-10~B0-16 + B0-19~B0-26（15）。本 spec 主体覆盖对象；已经随 #258 冻结批迁 `spec-ready`。
 - **tranche-2 处置 8 行** = 六新行 + 改档两行：

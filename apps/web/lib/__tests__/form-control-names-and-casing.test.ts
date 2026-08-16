@@ -177,11 +177,10 @@ describe("#739 — every form control carries a name, not just a placeholder", (
     for (const control of sweepControls().all) {
       byFile.set(control.file, (byFile.get(control.file) ?? 0) + 1);
     }
-    // Named on purpose: the two Otto composers and the canvas text node from the ticket,
+    // Named on purpose: the Otto composer and the canvas text node from the ticket,
     // plus the surfaces the family sweep turned up on the same root. A rewrite that drops
     // any of these out of the sweep goes red here rather than passing quietly.
     for (const file of [
-      "components/otto/OttoConversation.tsx",
       "components/otto/OttoChatStream.tsx",
       "components/otto/OttoFrontDoor.tsx",
       "components/otto/OttoMemory.tsx",
@@ -194,8 +193,8 @@ describe("#739 — every form control carries a name, not just a placeholder", (
   });
 
   it("names the product's main input the same way the merchant sees it", () => {
-    for (const file of ["components/otto/OttoConversation.tsx", "components/otto/OttoChatStream.tsx"]) {
-      // #840 — both composers now render the design-system <Textarea>, not a bare
+    for (const file of ["components/otto/OttoChatStream.tsx"]) {
+      // #840 — the composer renders the design-system <Textarea>, not a bare
       // <textarea>; match either spelling, same union the sweep itself polices.
       const composer = source(file).match(/<[Tt]extarea[\s\S]*?id="otto-composer"[\s\S]*?\/>/)?.[0];
       expect(composer, file).toBeDefined();
@@ -215,11 +214,11 @@ describe("#739 — every form control carries a name, not just a placeholder", (
     expect(contacts).toContain('<SelectTrigger aria-label="Lifecycle stage">');
   });
 
-  // #813 — the eight single-line boxes the widened sweep caught. Pinned by name so a
+  // #813 — the single-line boxes the widened sweep caught (one of the original eight,
+  // app/kitchensink/page.tsx, was throwaway and deleted in #952). Pinned by name so a
   // rewrite that drops the label goes red on the sentence, not only on the sweep.
   it("names every single-line box the widened sweep caught (#813)", () => {
     const named: Array<[string, string]> = [
-      ["app/kitchensink/page.tsx", 'aria-label="Email"'],
       ["components/admin/AdminDashboardV2.tsx", 'aria-label="Filter audit events"'],
       ["components/campaign/campaign-detail-page.tsx", 'aria-label="Proposal opening hook"'],
       ["components/canvas/FlowCanvas.tsx", 'aria-label="Custom camera motion"'],

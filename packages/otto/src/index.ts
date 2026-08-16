@@ -11,7 +11,6 @@ export {
   runOttoTurn,
   finalizeOttoTurn,
   ottoBudgetArgsFor,
-  noopTraceSink,
 } from "./runtime.js";
 export type {
   OttoRunProfile,

@@ -16,9 +16,8 @@ export interface TextPartProps {
 }
 
 /**
- * One text bubble in the Otto stream. The bubble styles are reused VERBATIM from
- * OttoConversation (user bubble + Otto bubble) so the streaming chat looks identical
- * to the classic chat. While `streaming`, an assistant bubble shows a blinking caret.
+ * One text bubble in the Otto stream (user bubble + Otto bubble). While `streaming`,
+ * an assistant bubble shows a blinking caret.
  *
  * #586: the ASSISTANT bubble renders markdown (OttoMarkdown). The USER bubble stays
  * literal pre-wrap text — the merchant typed those characters and is entitled to see

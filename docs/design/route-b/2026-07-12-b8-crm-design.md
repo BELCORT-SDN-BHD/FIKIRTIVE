@@ -1,7 +1,7 @@
 # B8 · CRM 起步形态 —— 设计全图
 
 > **性质**：路线乙 B8 块设计工位交付物（docs-only，非 spec、非 schema、非代码）。epoch `claude-20260712-03` 工单 L4a·试产。
-> **基线**：main@`1b1414d9`（含 B0 发布契约 #240）。矩阵签署件为界：`docs/ops/route-b/matrix/08-B8.md`。
+> **基线**：main@`1b1414d9`（含 B0 发布契约 #240）。矩阵签署件为界：`docs/archive/route-b/matrix/08-B8.md`。
 > **定位（蓝图第六章 CRM 行）**：respond.io 级 SMB-lite 起步 → 架构按 Salesforce 级终局设计；联系人主要从对话/广告自动进来，WhatsApp-first；帮商家收款 = 以后且起步不碰资金流。
 > **本文档同时是后续设计工位的模板范本**：12 节铁律，宁写「无」不留空；术语带人话对照；不发明 feature（只来自对标 + 判决 + 矩阵行）。
 > **不写已退役的本地 Route-B 台账**：状态与证据写入对应 current GitHub task/PR，不在本文件复制 current truth。

@@ -2,7 +2,7 @@
  * rememberBrandFact — $0 skill
  *
  * Saves a durable brand fact to the Memory table (source: "otto").
- * Spends NO money, creates NO GenJob, calls NO fal/generation code.
+ * Spends NO money, creates NO GenJob, calls NO generation-provider code.
  *
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId.

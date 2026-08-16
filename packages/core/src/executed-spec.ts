@@ -30,9 +30,7 @@ export const EXECUTED_SPEC: {
     defaultAspect: GenImageAspect;
     aspectHonoured: boolean;
     sourceAspectInheritedFromSnapshot: boolean;
-    fallbackAdapterAspectHonoured: boolean;
     coherentSetHonoured: boolean;
-    fallbackAdapterCoherentSetHonoured: boolean;
   };
   video: {
     aspectHonoured: boolean;
@@ -57,18 +55,9 @@ export const EXECUTED_SPEC: {
      *  (`GenJob.imageOptions`)。快照读不到(迁移前的老图)就诚实回落默认方图 ——
      *  执行层不去猜像素、不去反推比例。 */
     sourceAspectInheritedFromSnapshot: true,
-    /** 备用(legacy fallback)图像适配器**不**携带画幅:它的尺寸参数未经官方文档确认,
-     *  本仓库的规矩是「没确认就不发明参数」—— 确认了就得接上,视频侧的声音开关正是
-     *  这么在 #646 T5 接通的。false ⇒ 这条路上画幅不成立,不得假装它成立。
-     *  现役生产路径不走这条。 */
-    fallbackAdapterAspectHonoured: false,
     /** #777:现役适配器把「一组连贯图」作为**一次请求**发出去(整组一次出齐),
      *  `byteplus.test.ts` 对请求体整体断言。true ⇒ 卡面可以照实说「一组连贯的图」。 */
     coherentSetHonoured: true,
-    /** 备用(legacy fallback)适配器**做不到**一次出一整组:它只有 `num_images`,
-     *  出来的是 N 张互不相干的图。false ⇒ 这条路上组图不成立,而且适配器会在
-     *  付费之前拒绝 —— 不许收了「一组」的钱交一堆散图。 */
-    fallbackAdapterCoherentSetHonoured: false,
   },
   video: {
     aspectHonoured: true,
@@ -90,65 +79,40 @@ export const EXECUTED_SPEC: {
 /**
  * 这一趟**真正会跑**的那个适配器,会不会兑现图片画幅。
  *
- * 判官轮 r1 P2:卡面文案原本只问 `EXECUTED_SPEC.image.aspectHonoured`,那是**现役**适配器
- * 的静态事实;可真正执行这一单的适配器由 `GENERATION_PROVIDER` 选定,而备用适配器根本不
- * 携带画幅。只问静态标志,就会在选中备用路时承诺一件那条路做不到的事 —— 正是本项目反复
- * 重学的「说的与做的失同步」。
- *
- * 所以披露的判据是这个函数,不是那个标志。分支与 `createGenerationProvider()` 读同一个
- * 环境变量、同一套取值;`packages/generation` 的测试拿**每个真适配器实际发出去的请求体**
- * 逐个对表,任一侧漂移当场红。
+ * ADR 0003(docs/adr/0003-single-provider-byteplus.md,2026-08-16):byteplus 是唯一的
+ * 付费适配器,不再有第二条「备用路」需要按 `GENERATION_PROVIDER` 分支判断能不能兑现 ——
+ * 判官轮 r1 P2 当初把这条判据从静态标志改成函数,是因为那时选中的适配器会影响答案;
+ * 现在只剩一个会花钱的适配器,答案回到 `EXECUTED_SPEC.image.aspectHonoured` 本身。
+ * 保留成函数(而不是让调用方直接读那个标志)是因为 `packages/generation` 的测试仍然拿
+ * **真适配器实际发出去的请求体**逐个对表 —— 判据与行为分居两处,任一侧漂移才有得测。
  *
  * 纯函数:不选型、不报价、不发请求。
  */
-export function imageAspectHonoured(env?: Record<string, string | undefined>): boolean {
-  // 现役适配器都做不到,就没有下文了。
-  if (!EXECUTED_SPEC.image.aspectHonoured) return false;
-  const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
-  // 备用路:不发尺寸 ⇒ 按声明如实回 false(不许假装)。
-  if (provider === "fal") return EXECUTED_SPEC.image.fallbackAdapterAspectHonoured;
-  // 现役路(byteplus)发确切 WxH;离线 mock 按同一张表出精确同比例的图。两者都兑现。
-  return true;
+export function imageAspectHonoured(): boolean {
+  return EXECUTED_SPEC.image.aspectHonoured;
 }
 
 /**
  * 这一趟**真正会跑**的那个适配器,会不会把 @元素参考照送进视频引擎(#785 判官 r1 P1)。
  *
- * 与上面那条画幅判据同一个形状,理由也同一个:`EXECUTED_SPEC.video.elementReferencesHonoured`
- * 是**现役**适配器的静态事实,可这一单由谁执行取决于 `GENERATION_PROVIDER`。备用适配器
- * (fal)的 t2v/i2v 路由根本没有多素材参考这个入参 —— 它在付费之前就把带元素照的请求拒掉
- * (`packages/generation/src/index.ts` 的 `generateVideo`)。只问那个静态标志,卡面就会在
- * 那条路上承诺「Uses 3 of your reference photos」,而那 3 张永远上不了车 —— 正是本仓库
- * 反复重学的「说的与做的失同步」。
- *
- * 这个函数不只喂卡面:选片名额 `conditioningCap`(worker 与卡面共用的那一个)也读它。
- * 所以在 provider 这一维上,「说几张」与「送几张」结构上不可能分家 —— 备用路上名额是 0,
- * 卡面照实说「你那 N 张一张都不会用上」,worker 也确实一张都不送。
- *
- * 离线 mock 回 true:它不花钱、不对商家交付(每一格规格对它都同样不成立),这里要挡的是
- * 两条真花钱的路之间的漂移。
+ * ADR 0003:同上——只剩 byteplus 一个会花钱的适配器,不再有「备用路收不了元素照」这个
+ * 特例要分支。这个函数不只喂卡面:选片名额 `conditioningCap`(worker 与卡面共用的那一个)
+ * 也读它,所以「说几张」与「送几张」结构上不可能分家。
  *
  * 纯函数:不选型、不报价、不发请求。
  */
-export function videoElementReferencesHonoured(env?: Record<string, string | undefined>): boolean {
-  // 现役适配器都做不到,就没有下文了。
-  if (!EXECUTED_SPEC.video.elementReferencesHonoured) return false;
-  const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
-  return provider !== "fal";
+export function videoElementReferencesHonoured(): boolean {
+  return EXECUTED_SPEC.video.elementReferencesHonoured;
 }
 
 /**
  * 这一趟**真正会跑**的那个适配器,会不会兑现「一组连贯图」(#777)。
  *
- * 与 `imageAspectHonoured` 同一条判据、同一个环境变量:静态能力位先说话,再按
- * 选中的适配器分支。备用路做不到,所以那条路上必须如实回 false —— 而适配器本身
- * 也会在付费之前拒掉组图请求,声明与行为两头对齐(`index.test.ts` 钉着)。
+ * ADR 0003:与 `imageAspectHonoured` 同一条判据、同一个理由——只剩 byteplus 一个会花钱的
+ * 适配器,答案就是 `EXECUTED_SPEC.image.coherentSetHonoured` 本身。
  *
  * 纯函数:不选型、不报价、不发请求。
  */
-export function imageCoherentSetHonoured(env?: Record<string, string | undefined>): boolean {
-  if (!EXECUTED_SPEC.image.coherentSetHonoured) return false;
-  const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
-  if (provider === "fal") return EXECUTED_SPEC.image.fallbackAdapterCoherentSetHonoured;
-  return true;
+export function imageCoherentSetHonoured(): boolean {
+  return EXECUTED_SPEC.image.coherentSetHonoured;
 }
