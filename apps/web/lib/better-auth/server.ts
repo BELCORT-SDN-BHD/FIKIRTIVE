@@ -1,13 +1,12 @@
 import "server-only";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { magicLink, customSession, admin } from "better-auth/plugins";
+import { magicLink, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
 import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_LINK_TTL_SECONDS } from "./sender";
 import { toVerifyLandingUrl } from "./verify-landing-url";
-import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
@@ -375,10 +374,6 @@ export const auth = betterAuth({
           validitySeconds: AUTH_EMAIL_LINK_TTL_SECONDS,
         });
       },
-    }),
-    // Surface the canonical role on the session so compat.ts matches NextAuth byte-for-byte.
-    customSession(async ({ user, session }) => {
-      return { user: { ...user, role: await roleForEmail(user.email) }, session };
     }),
     // Operator-console engine. Phase 1: installed for the session.create.before ban hook
     // (BetterAuthUser.banned ⇒ login blocked). Its API stays inert (no BA user has an admin

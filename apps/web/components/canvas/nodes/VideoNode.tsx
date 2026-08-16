@@ -6,7 +6,6 @@ import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } fro
 import { isGenFailureReason } from "@fikirtive/core/gen-failure";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
-import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 import { Button } from "@/components/ui/button";
@@ -51,8 +50,6 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     /** Opens the video confirm dialog seeded with this prompt — the paid video path keeps
      *  its explicit "no charge until you confirm" step (founder: video always confirms). */
     onRemake?: (id: string, prompt: string) => void;
-    directToolsLocked?: boolean;
-    directToolsLockedReason?: string;
     /** Pre-formatted video price from the server quote — never a literal here. */
     remakeCostHint?: string;
   };
@@ -60,7 +57,6 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   // Only a card a board read has answered for wears a letter. What a press ASKED for is not
   // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
   const letter = canvasBatchLetter(canvasRecordedFacts(d));
-  const writeLock = getCanvasNodeWriteLock(d);
   const terminal = isTerminalCardStatus(d.status);
   // WHY this card rested, narrowed back into the algebra (#827) — same rule as the image card:
   // React Flow's `data` is untyped, so an unrecognised word rests on `unexplained` rather than
@@ -69,9 +65,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   const failureReason = isGenFailureReason(d.failureReason) ? d.failureReason : "unexplained";
   const viewable = !!d.url && !terminal;
   const actionable = viewable && !!d.generationId;
-  const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
+  const canSendToOtto = actionable && !!d.onSendToOtto;
   const originalPrompt = (d.prompt ?? "").trim();
-  const canRemake = actionable && !!d.onRemake && !d.directToolsLocked && !writeLock.locked;
+  const canRemake = actionable && !!d.onRemake;
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -99,7 +95,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   };
   return (
     <>
-      <NodeResize gb={gb} selected={selected} locked={writeLock.locked} />
+      <NodeResize gb={gb} selected={selected} />
       <NodeToolbar
         className="cv-node-toolbar nodrag nopan"
         isVisible={soloSelected}
@@ -190,10 +186,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
           variant="secondary"
           size="sm"
           className={NODE_TOOL_BUTTON_CLASS}
-          disabled={writeLock.locked}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onDelete?.(); }}
-          title={writeLock.locked ? writeLock.reason : "Delete video node"}
+          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+          title="Delete video node"
         >
           ✕
         </Button>

@@ -95,22 +95,10 @@ export type OttoModelRuntime = {
   readonly pricing: PricingLookup;
 };
 
-/** One sanitized trace event (Phase 2 flight-simulator sink contract). */
-export type OttoTraceEvent = { readonly type: string; readonly [key: string]: unknown };
-
-/** Where sanitized run telemetry goes. Production composes the no-op sink
- *  (privacy-minimal); the Phase-2 simulator composes a JSONL sink. Phase 1 wires
- *  the seam only — the runner does not emit events yet. */
-export type OttoTraceSink = { readonly record: (event: OttoTraceEvent) => void };
-
-/** The production trace sink: privacy-minimal, records nothing. */
-export const noopTraceSink: OttoTraceSink = Object.freeze({ record: () => {} });
-
 /** Everything a composition root injects. Server-owned code only. */
 export type OttoRuntimeDeps = {
   readonly modelRuntime: OttoModelRuntime;
   readonly skills: readonly OttoSkill[];
-  readonly traceSink: OttoTraceSink;
 };
 
 /** A composed, frozen runtime: the agent (profile-limited tools), the step cap,
@@ -122,7 +110,6 @@ export type OttoRuntime = {
   /** The profile's step cap — BOTH the run() maxTurns AND the reserve maxSteps,
    *  so the reserve is always priced for exactly the steps the run may take. */
   readonly maxTurns: number;
-  readonly traceSink: OttoTraceSink;
 };
 
 /**
@@ -168,7 +155,6 @@ export function createOttoRuntime(deps: OttoRuntimeDeps, profile: OttoRunProfile
     modelRuntime: deps.modelRuntime,
     agent,
     maxTurns: OTTO_MAX_STEPS,
-    traceSink: deps.traceSink,
   });
 }
 

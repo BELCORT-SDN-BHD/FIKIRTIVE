@@ -8,7 +8,6 @@ import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { AccountInfo } from "@/lib/account-actions";
 import { buildStuffItems } from "@/lib/stuff-items";
 import { OttoFrontDoor } from "./OttoFrontDoor";
-import { OttoConversation } from "./OttoConversation";
 import { OttoChatStream } from "./OttoChatStream";
 import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
@@ -48,7 +47,6 @@ interface OttoViewProps {
   account: AccountInfo | null;
   /** Analytics view payload — wired in Task 5; the Analytics branch consumes it. */
   analytics: AnalyticsData;
-  ottoStreamEnabled: boolean;
   onBalanceRefresh: () => Promise<void>;
   onActivityRefresh?: () => Promise<void>;
   onViewChange: (view: OttoViewKey) => void;
@@ -95,7 +93,6 @@ export function OttoView({
   history,
   account,
   analytics,
-  ottoStreamEnabled,
   onBalanceRefresh,
   onActivityRefresh,
   onViewChange,
@@ -350,7 +347,6 @@ export function OttoView({
               userName={userName}
               seedText={seedText}
               onSeedConsumed={onSeedConsumed}
-              ottoStreamEnabled={ottoStreamEnabled}
               onThreadStarted={onThreadStarted}
               onStreamStart={(thread, pending) => {
                 // Streaming front door: an empty thread was created; hand its first
@@ -359,7 +355,7 @@ export function OttoView({
                 setPendingFirst({ threadId: thread.id, text: pending.text, goalKey: pending.goalKey, entityIds: pending.entityIds });
               }}
             />
-          ) : ottoStreamEnabled ? (
+          ) : (
             <OttoChatStream
               key={activeThread.id}
               projectId={projectId}
@@ -380,18 +376,6 @@ export function OttoView({
               onPendingFirstSent={() => setPendingFirst(null)}
               composerReferences={composerReferences.filter((ref) => ref.threadId === activeThread.id)}
               onComposerReferencesConsumed={handleComposerReferencesConsumed}
-            />
-          ) : (
-            <OttoConversation
-              projectId={projectId}
-              entities={entities}
-              thread={activeThread}
-              balanceUsd={balanceUsd}
-              onRefresh={() => refreshThread(activeThread.id)}
-              onThreadUpdate={(updated) => {
-                onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
-              }}
-              onBalanceRefresh={onBalanceRefresh}
             />
           )}
         </div>
@@ -415,9 +399,9 @@ export function OttoView({
           </Button>
         )}
         {/* Canvas-first (Grok): the canvas is usable immediately — you can generate directly
-            on it without starting a chat first (directToolsLocked={false}); the front door
-            stays available in the left pane. Canvas gens with no active thread attach to the
-            project (threadId null), exactly like a thread-scoped gen minus the thread tag. */}
+            on it without starting a chat first; the front door stays available in the left
+            pane. Canvas gens with no active thread attach to the project (threadId null),
+            exactly like a thread-scoped gen minus the thread tag. */}
         <FlowCanvas
           projectId={projectId}
           entities={entities}
@@ -427,8 +411,6 @@ export function OttoView({
           onBalanceRefresh={onBalanceRefresh}
           onActivityRefresh={onActivityRefresh}
           onReferenceInChat={showFrontDoor ? undefined : handleCanvasReference}
-          directToolsLocked={false}
-          directToolsLockedReason="Start with Otto to unlock canvas tools."
         />
       </div>
     </div>

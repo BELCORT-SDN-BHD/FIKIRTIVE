@@ -1,43 +1,35 @@
 /**
- * 北极星沉浸壳 · 双声部 scoped token 层(Wave C · C-D 地基 · team f1-tokens)
+ * 北极星沉浸壳 · scoped token 层(Wave C · C-D 地基 · team f1-tokens)
  * ============================================================================
  * founder 2026-07-10 批准入城实测。设计法源:design-rules §2(修正案)/ §5a / §A1 / §A2 / §G8。
  *
- * 一句话:coral = Otto 的声音(§2 coral law,不动);blue = 人手的声音(交互、焦点、
- * 可点)。这一层只在沉浸壳根容器 `.gb.ns-immersive` 上做 **scoped 覆盖** —— 全局 token
- * 值一个字节都不改,壳外的产品路由(不带 .ns-immersive)完全不受影响。
+ * 这一层只在沉浸壳根容器 `.gb.ns-immersive` 上做 **scoped 覆盖** —— 全局 token 值一个字节都
+ * 不改,壳外的产品路由(不带 .ns-immersive)完全不受影响。
  *
  * 覆盖为什么能穿透 Tailwind 工具类:`ring-ring`/`outline-ring`/`bg-info-soft` 等最终解析到
  * `var(--ring)`/`var(--info-soft)` 这些 CSS 自定义属性;把这些属性在根容器上重新赋值,值沿
  * 继承树下传,所有后代工具类自动拿到新值 —— 无需改任何组件。选择器用 `.gb.ns-immersive`
  * (0,2,0)压过 globals 里的 `.gb`(0,1,0),不论两份 CSS 谁先加载都稳赢。
+ *
+ * #952 删除周:原「蓝声部」(--human / --human-soft / --human-soft-foreground)与
+ * --ns-canvas 别名、以及依赖它们的 5 个 ready 类(.ns-human-text / .ns-human-fill /
+ * .ns-human-soft / .ns-pressable / .ns-glass)在全树 grep 后零消费者(零处 className、零处
+ * var() 引用),按纯删除清理。焦点环仍然是蓝色(见下面 --ring),但那是独立的、真被消费的
+ * token,与已删的 --human 只是颜色巧合,不是同一条线。
  */
 
-/* ── 双声部 token 覆盖(light)──────────────────────────────────────────────── */
+/* ── token 覆盖(light)──────────────────────────────────────────────── */
 .gb.ns-immersive {
   /* 画布:中性冷灰底(§5a 法四「地面永远不发暖」;冷 = B 通道最高)。卡片 --card 仍是
-     纯白,白卡浮在冷灰画布上 = 面平钮凸的地基。--ns-canvas 是同值别名,嵌套 well 想显式
-     引用画布灰时用它。 */
+     纯白,白卡浮在冷灰画布上 = 面平钮凸的地基。 */
   --background: #F5F6F8;
-  --ns-canvas: #F5F6F8;
-
-  /* 蓝声部三档(--human · base #2563EB 族 / soft / soft-foreground,§A1 已算比校准)。
-     比值全部对冷灰画布 #F5F6F8 或对 --human-soft 计算,非目测:
-       --human           #2563EB  base · 作文字 5.01:1 ✓AA-small · 作焦点键线/圆点 5.17:1 ✓
-       --human-soft      #DBEAFE  soft 填充底
-       --human-soft-fg   #1D4ED8  soft 底上文字 5.49:1 ✓ · 画布上蓝标签文字 6.5:1 ✓
-     注:白字压 --human = 5.17:1 ✓AA-small —— 蓝实心钮的白字 <19px 合法(与 coral 3.50 不同,
-     蓝实心不受「只准 AA-large」的限制,见 .ns-human-fill)。 */
-  --human: #2563EB;
-  --human-soft: #DBEAFE;
-  --human-soft-foreground: #1D4ED8;
 
   /* 焦点环在 ns 范围改蓝(§A2):焦点/键盘 = 人手的动作 → 蓝。覆盖 --ring 一处,globals 里
      的 `.gb :focus-visible` 双层键线 + Tailwind `ring-ring`/`outline-ring`/`border-ring`
      全部自动转蓝。蓝键线压白 5.17:1 ✓(coral 是 3.42:1,蓝更清晰)。 */
   --ring: #2563EB;
 
-  /* 信息蓝语义在 ns 范围移除(§2 修正案):蓝已被人手声部占用,再留一个「info 蓝」= 两个蓝
+  /* 信息蓝语义在 ns 范围移除(§2 修正案):蓝已被人手交互占用,再留一个「info 蓝」= 两个蓝
      两种意思,撞车。把 info 三档改中性灰,信息提示读作「中性通知」(灰图标/灰字/极淡灰底),
      把蓝彻底让给「可交互」。全部引用现成灰 token,不新造 hex(§T1):
        --info            = --muted-foreground(#6E6E68)· 圆点/图标/≥19px · 压白 4.6:1 ✓
@@ -48,7 +40,7 @@
   --info-soft-foreground: var(--muted-foreground);
 }
 
-/* ── 双声部 token 覆盖(dark 镜像)────────────────────────────────────────────────
+/* ── token 覆盖(dark 镜像)────────────────────────────────────────────────
    #804 起 dark 是真开的,这一组不再是「备着」。三个分支对应全局 globals.css 里
    `.gb.dark, .gb[data-theme="dark"], .dark .gb` 的三种开法,一一对齐:
 
@@ -68,60 +60,8 @@
 .gb.ns-immersive[data-theme="dark"],
 .dark .gb.ns-immersive {
   --background: #0B0C0E;
-  --ns-canvas: #0B0C0E;
-  --human: #3B82F6;
-  --human-soft: #16243D;
-  --human-soft-foreground: #93C5FD;
   --ring: #3B82F6;
   --info: var(--muted-foreground);
   --info-soft: var(--secondary);
   --info-soft-foreground: var(--muted-foreground);
-}
-
-/* ── 蓝声部 ready 类(zone worker 直接挂,别手搓 hex)─────────────────────────── */
-/* 蓝文字:base 作文字合法(5.01:1),链接/强调/「这是人手可动的」标注用它 */
-.gb.ns-immersive .ns-human-text { color: var(--human); }
-/* 蓝实心动作:白字 <19px 合法(5.17:1 ✓AA-small);人手主动作按钮的蓝身份 */
-.gb.ns-immersive .ns-human-fill {
-  background: var(--human);
-  color: #FFFFFF;
-}
-/* 蓝软片:淡蓝底 + 深蓝字(5.49:1),chip / 选中态 / 人手区块的低调蓝 */
-.gb.ns-immersive .ns-human-soft {
-  background: var(--human-soft);
-  color: var(--human-soft-foreground);
-}
-
-/* ── 手感工具类(§5a 手感四法 · §G1 pointer-down 反馈)──────────────────────── */
-/* .ns-pressable:装在任何可点控件上 = 浮起(shadow)+ 1px 顶部高光边 + 按下 scale(0.97)。
-   「可点 = 凸,可读 = 平」的主信号(§5a 法一)。顶部高光靠 inset 白边模拟受光的凸面;按下
-   靠 :active(鼠标/键盘 Space/Enter 都在 pointer/key-down 即触发,合 §G1);过渡时长走
-   --dur-fast,reduced-motion 由 globals 全局 clamp 自动压成瞬时(§A5),无需本文件再写媒体查询。*/
-.gb.ns-immersive .ns-pressable {
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  transition:
-    transform var(--dur-fast, 120ms) var(--ease-out, ease),
-    box-shadow var(--dur-fast, 120ms) var(--ease-out, ease);
-}
-.gb.ns-immersive .ns-pressable:hover {
-  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.65);
-}
-.gb.ns-immersive .ns-pressable:active {
-  transform: scale(0.97);
-}
-
-/* .ns-glass:只给「悬浮 OVER 滚动内容」的 chrome(dock 面板/贴顶栏/抽屉),静态卡片禁用
-   (§5a 法三 · §G8)。prefers-reduced-transparency 下退实色(frosty → solid,§G8 强制)。 */
-.gb.ns-immersive .ns-glass {
-  background: color-mix(in oklab, var(--card) 72%, transparent);
-  -webkit-backdrop-filter: blur(16px) saturate(1.6);
-  backdrop-filter: blur(16px) saturate(1.6);
-  border: 1px solid var(--border);
-}
-@media (prefers-reduced-transparency: reduce) {
-  .gb.ns-immersive .ns-glass {
-    background: var(--card);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
 }

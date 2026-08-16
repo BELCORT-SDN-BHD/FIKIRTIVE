@@ -88,7 +88,6 @@ describe("the conversation-charge disclosure is one sentence in three places", (
       entities: [],
       userName: "Siti",
       onThreadStarted: vi.fn(),
-      ottoStreamEnabled: true,
       onStreamStart: vi.fn(),
     }));
   }
