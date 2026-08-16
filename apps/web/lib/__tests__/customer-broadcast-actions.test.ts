@@ -1502,7 +1502,14 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
         where: { id: grantedMember.id, ownerId: ORG_A, sendState: "pending" },
       }),
     ).resolves.toBe(0);
-  });
+    // #866: real DB round trips (barrier reads, two eligibility evaluations, the claim, the
+    // waitForLockWait poll, the rollback, markSkipped, the loser's own claim + event write) —
+    // on the file's default 20s that add up fine on a quiet machine but tripped the file's own
+    // testTimeout on CI's slower 2-core runner (measured: exceeded 20000ms there; a 45s retry
+    // still exceeded on a machine sharing load with several other agent worktrees, measured
+    // 50368ms). Same idiom as auth-email-queue-executor.test.ts's / better-auth-caller-authority
+    // .test.ts's per-test bump — 60s gives this specific concurrency test real headroom.
+  }, 60_000);
 
   it("skips a DND-blocked contact with a doNotDisturb reason and zero frequency rows", async () => {
     await prisma.contact.update({ where: { id: CONTACT_GRANT, ownerId: ORG_A }, data: { doNotDisturb: true } });
