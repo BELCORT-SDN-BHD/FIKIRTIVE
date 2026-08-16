@@ -100,6 +100,9 @@ afterAll(async () => {
   await prisma.scheduledPost.deleteMany({ where: { ownerId: { in: [A, B] } } });
   // 哈希对不上的那条用例会落一行 asset.hash_mismatch 审计事件
   await prisma.actionEvent.deleteMany({ where: { ownerId: { in: [A, B] } } });
+  // 同库共跑的 understand-db.test.ts 会触发跨租户扫描(scanAssetsNeedingUnderstanding),
+  // 把本文件 ingest 完的素材认领成 AssetUnderstanding 行 —— 得先删它们,Asset 上有 FK。
+  await prisma.assetUnderstanding.deleteMany({ where: { ownerId: { in: [A, B] } } });
   await prisma.asset.deleteMany({ where: { ownerId: { in: [A, B] } } });
   await prisma.organization.deleteMany({ where: { id: { in: [A, B] } } });
 });
