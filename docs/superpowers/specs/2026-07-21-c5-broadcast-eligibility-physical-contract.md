@@ -15,7 +15,7 @@
 > （模拟供应商）；第 29 条=WhatsApp 路线改为 Meta Tech Provider 直连 + Embedded Signup，**supersede C4a spec 的
 > Gupshup 首实现命名**；第 30 条=C5 四站一次性授权（M0 规格→M3 界面），但 M1 建表仍须其自己的 schema/migration 票。
 > 上位范围来自 map §8 C5 候选行（`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:204`）与
-> B0-43/44/45/46 行（`docs/ops/route-b/matrix/07-B7.md:7-10`）。四轴发送资格语义的冻结上位是
+> B0-43/44/45/46 行（`docs/archive/route-b/matrix/07-B7.md:7-10`）。四轴发送资格语义的冻结上位是
 > R-010 §4.5/§4.5.1（`docs/superpowers/specs/2026-07-16-r010-schema-authority-alignment.md`）。
 
 ## §1 一句话结果
@@ -677,7 +677,7 @@ C4a §12 **刻意排除** Broadcasts；C5 承接它。本 M0 轮**未登录 resp
 
 ## §13 六级状态与 evidence contract
 
-按 `docs/ops/route-b/B0-CONTRACT.md`：
+按 `docs/archive/route-b/B0-CONTRACT.md`：
 
 | B0 | 当前 live 状态 | 本 PR（M0 docs-only）合并后 | 后续到期条件 |
 |---|---|---|---|

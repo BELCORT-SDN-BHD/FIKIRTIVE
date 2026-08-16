@@ -2,21 +2,11 @@
 // views. No data access, no gateway calls — pure formatting of values already
 // returned by customer-inbox-ui-actions.ts.
 
+import { MY_DATE_TIME_FORMAT, MY_TIME_FORMAT } from "@/lib/my-date-format";
+
 const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-const DATE_TIME = new Intl.DateTimeFormat("en-MY", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: "Asia/Kuala_Lumpur",
-});
-const TIME_ONLY = new Intl.DateTimeFormat("en-MY", {
-  hour: "numeric",
-  minute: "2-digit",
-  second: "2-digit",
-  timeZone: "Asia/Kuala_Lumpur",
-});
+const DATE_TIME = MY_DATE_TIME_FORMAT;
+const TIME_ONLY = MY_TIME_FORMAT;
 
 /** "Not recorded" for a genuinely absent value — never fabricate a fallback date. */
 export function dateTimeLabel(value: Date | string | null | undefined): string {

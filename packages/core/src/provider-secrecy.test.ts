@@ -67,14 +67,55 @@ describe("redactProviderNames", () => {
     }
   });
 
+  // #905 — the same supplier's remaining alias family: `modelark` (its model-catalogue brand,
+  // bare like `volcengine`), `dreamina` (the engine's own consumer name, bare + version tail),
+  // and the spelled-out `Volcano Engine`. Red-first proof this was a real gap: every one of
+  // these strings passed `redactProviderNames` unchanged before this ticket (verified against
+  // origin/main), which is exactly the "会真发" style leak #791 exists to close.
+  it("#905 别名族(ModelArk / Dreamina / Volcano Engine)也换成 generation provider", () => {
+    for (const s of [
+      "Powered by ModelArk",
+      "ModelArk quota exceeded",
+      "generated with modelark-v2",
+      "generated with Dreamina",
+      "Dreamina 2.0 made this image",
+      "powered by dreamina",
+      "Powered by Volcano Engine",
+      "Volcano Engine returned an error",
+    ]) {
+      const out = redactProviderNames(s);
+      expect(out).toContain("generation provider");
+      expect(out.toLowerCase()).not.toMatch(/modelark|dreamina|volcano[ \t]+engine/);
+    }
+  });
+
   // ark 是普通英文词(方舟),按 whisper 同一条规矩收窄:只认技术形状,裸词不动。
   it("商家自己的 ark 不许被洗掉", () => {
     for (const innocent of [
       "Noah's ark is our bestseller",
       "Ark Encounter tickets, RM120",
       "the ark of the covenant",
+      // #905 — even with the new context rule below, a truly BARE "Ark" (no api/sdk/model/
+      // provider/error/version anywhere nearby) stays legal. The context rule only fires when
+      // a technical word is actually next to it — see the next test.
+      "Powered by Ark",
     ]) {
       expect(redactProviderNames(innocent)).toBe(innocent);
+    }
+  });
+
+  // #905 — `ark` in the same sentence shapes `claude`/`anthropic` already earn a redaction for:
+  // a nearby api/sdk/model/provider/error/version word, spelled with a space (not glued, which
+  // #779's `ark-api-key` shape already covered).
+  it("#905 「Ark」+ 技术上下文词(带空格)也换成 generation provider", () => {
+    for (const s of [
+      "via the Ark model",
+      "Ark API returned an error",
+      "using the Ark provider",
+      "an error from the Ark sdk",
+    ]) {
+      const out = redactProviderNames(s);
+      expect(out).toContain("generation provider");
     }
   });
 
@@ -88,6 +129,9 @@ describe("redactProviderNames", () => {
       "our VMPro blender",
       "Arkitek Studio, Johor",
       "markup is 30%",
+      // #905 — the new "volcano engine" phrase and ark-context rule must not swallow these.
+      "our engine runs great",
+      "the model is a great fit for your brand",
     ]) {
       expect(redactProviderNames(innocent)).toBe(innocent);
     }
