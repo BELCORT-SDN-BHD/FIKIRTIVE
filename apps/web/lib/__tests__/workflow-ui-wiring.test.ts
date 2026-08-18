@@ -6,9 +6,31 @@ function source(relativePath: string) {
   return fs.readFileSync(path.resolve(__dirname, relativePath), "utf8");
 }
 
+// W2-13 (#993) — the workflow ROUTE (`app/crm/workflows/[id]/page.tsx`) used to preload
+// Stage 3's four reads and paginate Routines to exhaustion before handing them to the detail
+// page. The whole CRM section is hidden until Meta verification passes (Founder ruling
+// 2026-08-18; restore trigger recorded on issue #359), so every /crm route is a bare
+// `redirect("/")` now and its loader is gone with it — rebuilding those loaders is part of
+// restoring CRM, and this file says so out loud rather than going quiet.
+//
+// Everything below the route is untouched and still fully pinned here: the detail page, the
+// archive dialog, the authorization panel and the monitoring panel are all component-side.
 describe("workflow UI read wiring", () => {
-  it("preloads and refreshes every Stage 3 read surface", () => {
+  it("the route no longer loads anything — it redirects (CRM hidden, W2-13/#993)", () => {
     const route = source("../../app/crm/workflows/[id]/page.tsx");
+
+    expect(route).toContain('redirect("/")');
+    for (const read of [
+      "listRoutines",
+      "listRoutineRuns",
+      "getContactJourneyStates",
+      "listBusinessHoursPolicies",
+    ]) {
+      expect(route, `route 还在取 ${read}`).not.toContain(read);
+    }
+  });
+
+  it("the detail page still refreshes every Stage 3 read surface for itself", () => {
     const detail = source("../../components/crm/workflows/workflow-detail-page.tsx");
 
     for (const read of [
@@ -17,25 +39,16 @@ describe("workflow UI read wiring", () => {
       "getContactJourneyStates",
       "listBusinessHoursPolicies",
     ]) {
-      expect(route).toContain(read);
       expect(detail).toContain(read);
     }
-    expect(route).toContain("initialRoutines={routines}");
-    expect(route).toContain("initialRuns={runs}");
-    expect(route).toContain("initialJourneys={journeys}");
-    expect(route).toContain("initialPolicies={policies}");
     expect(detail).toContain("Promise.allSettled");
     expect(detail).not.toContain("activeRoutines={null}");
     expect(detail).not.toContain("data={null}");
   });
 
-  it("exhausts Routine pages for detail and archive and fails archive closed", () => {
-    const route = source("../../app/crm/workflows/[id]/page.tsx");
+  it("exhausts Routine pages for archive and fails archive closed", () => {
     const archive = source("../../components/crm/workflows/archive-workflow-dialog.tsx");
 
-    expect(route).toContain("do {");
-    expect(route).toContain("page.resource.nextCursor");
-    expect(route).toContain("limit: 200");
     expect(archive).toContain('status: "active"');
     expect(archive).toContain("page.resource.nextCursor");
     expect(archive).toContain("} while (cursor)");

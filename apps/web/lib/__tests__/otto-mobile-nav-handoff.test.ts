@@ -199,7 +199,10 @@ describe("/otto mobile navigation entry", () => {
     // It opens the real thing, not a copy: credits, Profile and Sign out come with it.
     expect(dom.querySelector('a[href="/profile"]')).not.toBeNull();
     expect(dom.querySelector('a[href="/campaign"]')).not.toBeNull();
-    expect(dom.querySelector('a[href="/crm"]')).not.toBeNull();
+    // W2-13(#993):第三条原来是 `/crm`。CRM 整段收起来了,所以抽屉里也不该再有它 ——
+    // 换成另一条真在树上的门,「开的是真家伙」这个断言不变。
+    expect(dom.querySelector('a[href="/billing"]')).not.toBeNull();
+    expect(dom.querySelector('a[href="/crm"]'), "收起来的 CRM 又出现在抽屉里").toBeNull();
   });
 
   it("withdraws Otto's rail while the drawer is up, whichever way it was open", async () => {
