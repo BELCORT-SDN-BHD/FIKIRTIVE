@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SCHEDULED_POST_STATUSES,
-  isScheduledPostStatus,
   canTransition,
-  allowedNextStates,
-  TERMINAL_STATUSES,
   type ScheduledPostStatus,
 } from "./schedule-state.js";
 
@@ -19,16 +16,6 @@ describe("SCHEDULED_POST_STATUSES", () => {
       "NEEDS_ATTENTION",
       "CANCELLED",
     ]);
-  });
-
-  it("isScheduledPostStatus accepts valid, rejects others", () => {
-    expect(isScheduledPostStatus("DRAFT")).toBe(true);
-    expect(isScheduledPostStatus("PUBLISHED")).toBe(true);
-    expect(isScheduledPostStatus("draft")).toBe(false); // case-sensitive
-    expect(isScheduledPostStatus("QUEUED")).toBe(false); // that's a render status
-    expect(isScheduledPostStatus(undefined)).toBe(false);
-    expect(isScheduledPostStatus(null)).toBe(false);
-    expect(isScheduledPostStatus(42)).toBe(false);
   });
 });
 
@@ -94,45 +81,5 @@ describe("canTransition — illegal transitions rejected", () => {
     for (const s of SCHEDULED_POST_STATUSES) {
       expect(canTransition(s, s)).toBe(false);
     }
-  });
-});
-
-describe("allowedNextStates", () => {
-  it("returns the legal successors for each state", () => {
-    expect([...allowedNextStates("DRAFT")].sort()).toEqual(["CANCELLED", "SCHEDULED"]);
-    expect([...allowedNextStates("SCHEDULED")].sort()).toEqual(["CANCELLED", "PUBLISHING"]);
-    expect([...allowedNextStates("PUBLISHING")].sort()).toEqual([
-      "FAILED",
-      "NEEDS_ATTENTION",
-      "PUBLISHED",
-    ]);
-    expect([...allowedNextStates("NEEDS_ATTENTION")].sort()).toEqual(["CANCELLED", "SCHEDULED"]);
-    expect([...allowedNextStates("FAILED")].sort()).toEqual(["CANCELLED", "SCHEDULED"]);
-  });
-
-  it("terminal states have no successors", () => {
-    expect(allowedNextStates("PUBLISHED")).toEqual([]);
-    expect(allowedNextStates("CANCELLED")).toEqual([]);
-  });
-
-  it("is consistent with canTransition", () => {
-    for (const from of SCHEDULED_POST_STATUSES) {
-      const next = allowedNextStates(from);
-      for (const to of SCHEDULED_POST_STATUSES) {
-        expect(canTransition(from, to)).toBe(next.includes(to));
-      }
-    }
-  });
-
-  it("returns a fresh array (callers cannot mutate the transition map)", () => {
-    const a = allowedNextStates("DRAFT");
-    a.push("PUBLISHED");
-    expect(allowedNextStates("DRAFT").includes("PUBLISHED")).toBe(false);
-  });
-});
-
-describe("TERMINAL_STATUSES", () => {
-  it("is exactly PUBLISHED and CANCELLED", () => {
-    expect([...TERMINAL_STATUSES].sort()).toEqual(["CANCELLED", "PUBLISHED"]);
   });
 });

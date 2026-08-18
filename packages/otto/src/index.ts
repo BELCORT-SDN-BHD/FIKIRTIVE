@@ -61,7 +61,7 @@ export { allSkills, skillCatalog } from "./registry.js";
 export { APPROVAL_TOOL_NAMES, approvalRefOf, collectApprovalInterruptions } from "./approval-tools.js";
 export type { ApprovalInterruption } from "./approval-tools.js";
 export type { SkillMeta } from "./registry.js";
-export { PROMPT_SKILLS, PROMPT_SKILLED_FAMILIES, familyHasPromptSkill } from "./prompt-skills.js";
+export { familyHasPromptSkill } from "./prompt-skills.js";
 export { defineOttoSkill, deriveNeedsApproval } from "./skill.js";
 export type { OttoSkill, OttoSkillSpec, Cost, Effect, Reach } from "./skill.js";
 export type { StoryboardCardPayload, StoryboardCardInput } from "./skills/propose-storyboard.helpers.js";
