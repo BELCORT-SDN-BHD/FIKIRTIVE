@@ -18,13 +18,13 @@
  *      recognise self-service signup. Framework routing identity, not a heuristic on our side.
  *
  *  Everything else that mints a session in this configuration is a door somebody came through —
- *  `/sign-in/email`, the magic link, the Google callback, and the auto sign-in after email
- *  verification — so every real sign-in still yields exactly one row.
+ *  `/sign-in/email`, `/sign-in/email-otp` (the mailed sign-in code), the Google callback, and the
+ *  auto sign-in after email verification — so every real sign-in still yields exactly one row.
  *
  *  DENY-LIST, DELIBERATELY. An allow-list of sign-in paths would silently DROP a real login the
  *  day a door is added, and a login this table never recorded cannot be recovered; an unlisted
  *  side-effect session is instead visible as a wrong row that can be corrected. The two entries
- *  below are the complete set for the plugins this app enables (magic link, admin, Google,
+ *  below are the complete set for the plugins this app enables (email OTP, admin, Google,
  *  email+password) as of Better Auth 1.6.20 — verified against its own `createSession` call
  *  sites, not inferred.
  */

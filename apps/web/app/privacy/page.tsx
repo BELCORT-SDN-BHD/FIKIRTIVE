@@ -270,7 +270,7 @@ export default function PrivacyPage() {
             <li>A cloud hosting provider and a managed database provider, which run the application and hold its data.</li>
             <li>A file storage and content delivery provider, which holds uploaded and generated files.</li>
             <li>Payments — Stripe.</li>
-            <li>An email delivery service, which sends transactional email such as sign-in links.</li>
+            <li>An email delivery service, which sends transactional email such as sign-in codes.</li>
             <li>An error monitoring service, which may receive details of a failed request.</li>
             <li>Sign-in with Google — Google.</li>
             <li>Web search providers, when Otto researches something. Your query text is sent.</li>

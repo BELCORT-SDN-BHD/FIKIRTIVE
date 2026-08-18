@@ -3,14 +3,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { emailPort } from "@/lib/email";
-import { renderAuthEmail } from "@/lib/email/auth-email-template";
+import { renderAuthCodeEmail, renderAuthEmail } from "@/lib/email/auth-email-template";
 import { isAllowedEmail } from "@/lib/allowlist";
 
 /**
  * #939 — Better Auth's own default token lifetime for password-reset and email-verification:
  * 3600 seconds, applied by better-auth itself (`resetPasswordTokenExpiresIn` /
  * `emailVerification.expiresIn`) because server.ts leaves both unconfigured. Unlike the
- * magic-link plugin — which pins its own lifetime to AUTH_EMAIL_LINK_TTL_SECONDS below — this
+ * email-OTP plugin — which pins its own lifetime to AUTH_EMAIL_CODE_TTL_SECONDS below — this
  * number is not ours to derive from a local constant; it is stated here only so the email copy
  * can say something true. If server.ts ever configures either option explicitly, this constant
  * must move with it.
@@ -58,40 +58,57 @@ async function consumeAddressCap(email: string): Promise<boolean> {
 
 /**
  * A queued auth email. Deliberately opaque: a normalised address, what it is FOR, and — for the
- * sign-in link — whether the request that produced it was inside its budget.
+ * sign-in code — whether the request that produced it was inside its budget.
  *
  * `overBudget` RIDES ON THE JOB rather than gating the enqueue, and that placement is the point.
  * Skipping the hand-over for an over-budget request meant the request did strictly less work
- * (no sanitise, no job, no push, no timer) while returning the same words — the very shape
- * difference this ticket exists to remove, rebuilt inside its own throttle. Every request now
- * performs the identical four steps and this module is what drops the job.
+ * (no job, no push, no timer) while returning the same words — the very shape difference this
+ * ticket exists to remove, rebuilt inside its own throttle. Every request now performs the
+ * identical steps and this module is what drops the job.
+ *
+ * THE SIGN-IN JOB CARRIES NO DESTINATION any more. A magic link had to know where the merchant
+ * should land, because clicking it navigated. A code does not navigate: the merchant is still on
+ * the login page, and the page redirects itself once the code is accepted. So `callbackURL` left
+ * the job, the queue and the mail — one fewer caller-supplied value on the path.
  */
 export type AuthEmailJob =
-  | { purpose: "sign-in-link"; email: string; callbackURL: string; overBudget: boolean }
+  | { purpose: "sign-in-code"; email: string; overBudget: boolean }
   | { purpose: "password-reset"; email: string; url: string }
   | { purpose: "verify-email"; email: string; url: string };
 
 const isDiscardable = (job: AuthEmailJob): boolean =>
-  job.purpose === "sign-in-link" && job.overBudget;
+  job.purpose === "sign-in-code" && job.overBudget;
 
 // ── executor tuning ──────────────────────────────────────────────────────────────────────────
 
 /**
  * #757 — HOW LONG THE THING IN THE ENVELOPE STAYS USABLE, and the single place that decides it.
  *
- * A sign-in link is a credential with an expiry, so every other number in this file is measured
+ * A sign-in code is a credential with an expiry, so every other number in this file is measured
  * against it: a queue may only be as deep as the mail it holds can still be delivered in time.
  * That made it the one constant that must not be restated anywhere — and it was. Better Auth's
- * `magicLink({ expiresIn })` in server.ts carried its own literal `60 * 15`, and the queue's
- * capacity carried a comment quoting it. Two copies of a load-bearing number is one edit away
- * from a queue that sizes itself against a lifetime nothing enforces, and nothing would fail.
+ * plugin in server.ts carried its own literal `60 * 15`, and the queue's capacity carried a
+ * comment quoting it. Two copies of a load-bearing number is one edit away from a queue that
+ * sizes itself against a lifetime nothing enforces, and nothing would fail.
  *
- * server.ts now reads `AUTH_EMAIL_LINK_TTL_SECONDS` from here, so there is one number.
+ * server.ts now reads `AUTH_EMAIL_CODE_TTL_SECONDS` from here, so there is one number.
+ *
+ * WHY IT DID NOT MOVE WHEN THE LINK BECAME A CODE. Better Auth's `emailOTP` default is 300
+ * seconds, and taking it would have re-priced this whole file for no gain: fifteen minutes is
+ * still the honest budget for "read a phone, type six digits into a laptop", and the thing the
+ * number really governs — how deep the queue may be before it starts posting dead credentials —
+ * is a property of the mail path, which did not change.
+ *
+ * IT IS FIFTEEN MINUTES FROM EACH SEND, not from the first. `resendStrategy: "reuse"` (server.ts)
+ * re-sends the same code and extends its expiry, so one code's total life can exceed this number
+ * when a merchant presses again. That only ever makes the arithmetic below safer — every job in
+ * the queue is carrying a credential minted or refreshed at hand-over time, so the deadline this
+ * depth is derived against is the shortest one any of them has, not the longest.
  */
-export const AUTH_EMAIL_LINK_TTL_MS = 15 * 60 * 1000;
+export const AUTH_EMAIL_CODE_TTL_MS = 15 * 60 * 1000;
 
 /** The same lifetime in the unit Better Auth's plugin takes. Derived, never restated. */
-export const AUTH_EMAIL_LINK_TTL_SECONDS = AUTH_EMAIL_LINK_TTL_MS / 1000;
+export const AUTH_EMAIL_CODE_TTL_SECONDS = AUTH_EMAIL_CODE_TTL_MS / 1000;
 
 /**
  * How many auth-email jobs may be in flight at once.
@@ -184,14 +201,14 @@ export const AUTH_EMAIL_WORST_SLOT_MS =
  *
  * WHY A BOUND AT ALL. Every valid request hands over a job — including the over-budget ones,
  * because making them cheaper is itself a timing channel. Unbounded, that means one anonymous
- * caller can grow this queue without limit and starve every merchant's sign-in link, password
+ * caller can grow this queue without limit and starve every merchant's sign-in code, password
  * reset and verification email behind their backlog. A bound turns that into a bounded amount
  * of dropped mail with an operator log, which is a far better failure.
  *
  * #757 — WHY IT IS NOT A NUMBER ANY MORE. A bound only helps if a job that lands at the BACK of
- * the queue still arrives while the link it carries is alive; past that point the queue is full
- * of credentials that will be posted dead, which costs the merchant their hourly budget as well
- * as their link. 500 was chosen against a five-second slot and fails against a twenty-two-second
+ * the queue still arrives while the credential it carries is alive; past that point the queue is
+ * full of credentials that will be posted dead, which costs the merchant their hourly budget as
+ * well as their code. 500 was chosen against a five-second slot and fails against a twenty-two-second
  * one — the same 500 jobs take 45.8 minutes to clear, so everything past the first few dozen was
  * always going to be posted after it expired.
  *
@@ -201,16 +218,16 @@ export const AUTH_EMAIL_WORST_SLOT_MS =
  * and the next four start together, so a queue of N takes `ceil(N / workers)` ROUNDS of a whole
  * slot each. Rounding is not a rounding error here — one round is the full 22 seconds, and 22
  * seconds was the entire margin. The continuous form allowed 163, whose real cost is
- * `ceil(163/4) = 41` rounds = 902 s against a 900 s link: the last three jobs would begin their
- * round after the link they carry had already expired.
+ * `ceil(163/4) = 41` rounds = 902 s against a 900 s credential: the last three jobs would begin
+ * their round after the thing they carry had already expired.
  *
- * So the depth is the largest N with `ceil(N / workers) × worst slot ≤ link lifetime`, which is
- * exactly `workers × floor(lifetime / worst slot)` — whole rounds, no part-slots, 160 today. The
- * inequality holds by construction; change the deadline, the pool or the link's life and the
+ * So the depth is the largest N with `ceil(N / workers) × worst slot ≤ credential lifetime`, which
+ * is exactly `workers × floor(lifetime / worst slot)` — whole rounds, no part-slots, 160 today. The
+ * inequality holds by construction; change the deadline, the pool or the credential's life and the
  * depth follows on its own.
  */
 export const AUTH_EMAIL_MAX_QUEUED =
-  AUTH_EMAIL_MAX_CONCURRENCY * Math.floor(AUTH_EMAIL_LINK_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
+  AUTH_EMAIL_MAX_CONCURRENCY * Math.floor(AUTH_EMAIL_CODE_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
 
 /** One drop line per ten seconds. The case it fires in is a flood, and a line per dropped job
  *  would be a second denial of service. */
@@ -453,14 +470,14 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
  *
  * CHARGING THE CAP FOR AN ADDRESS WITHOUT ACCESS COSTS NOTHING. That address is never sent mail
  * on any branch, so its "budget" is a counter nobody spends; and the caller who could burn it is
- * already bounded by the throttle on the door in front (magic-link-request.ts).
+ * already bounded by the throttle on the door in front (signin-code-request.ts).
  *
  * WHAT IS UNCHANGED: an address without access still never reaches Better Auth, so it still
  * never causes a verification row to be written. The refusal moved AFTER the cap read, not after
  * the mint.
  */
 async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
-  if (job.purpose === "sign-in-link") {
+  if (job.purpose === "sign-in-code") {
     const allowed = await isAllowedEmail(job.email);
     const withinCap = await consumeAddressCap(job.email);
     if (!allowed) return;
@@ -470,9 +487,15 @@ async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
     }
     // Dynamic import breaks the cycle (server.ts imports this module for its send hooks) and
     // costs nothing here — this is the background, and the module is already resident.
+    //
+    // `auth.api.*` rather than the HTTP endpoint on purpose, and it is the ONLY way in: the
+    // plugin's own `/email-otp/send-verification-otp` route is in `disabledPaths` (server.ts),
+    // so minting a code is reachable from this queue and from nowhere else. The plugin generates
+    // the code, writes its verification row and then calls the send hook registered in server.ts,
+    // which is where the mail is actually built.
     const { auth } = await import("./server");
-    await auth.api.signInMagicLink({
-      body: { email: job.email, callbackURL: job.callbackURL },
+    await auth.api.sendVerificationOTP({
+      body: { email: job.email, type: "sign-in" },
       headers: internalCallHeaders(),
     });
     return;
@@ -514,22 +537,30 @@ function internalCallHeaders(): Headers {
 }
 
 /**
- * #757 — ONE MINTED LINK IS ONE EMAIL, however many times it is dispatched.
+ * #757 — ONE MINTED CREDENTIAL IS ONE EMAIL, however many times it is dispatched.
  *
  * Derived from the message rather than from the attempt, which is the whole point: two dispatches
- * of the same link produce the same key and the provider delivers one of them, while two
- * different links are two different emails and are left alone. A per-attempt id (a job uuid, a
- * timestamp) would de-duplicate nothing, since the case worth surviving is precisely the second
- * attempt at the first message.
+ * of the same link (or the same code) produce the same key and the provider delivers one of them,
+ * while two different ones are two different emails and are left alone. A per-attempt id (a job
+ * uuid, a timestamp) would de-duplicate nothing, since the case worth surviving is precisely the
+ * second attempt at the first message.
  *
  * Hashed rather than sent in the clear because the key travels in a header and lands in provider
- * logs; the address is already in the envelope, but nothing here needs to put it anywhere else.
+ * logs; the address is already in the envelope, but nothing here needs to put it anywhere else —
+ * and a sign-in code is a live credential, so it least of all.
  */
-function idempotencyKeyFor(message: { to: string; subject: string; url: string }): string {
+function idempotencyKeyFor(message: { to: string; subject: string; secret: string }): string {
   return createHash("sha256")
-    .update(`${message.to}\n${message.subject}\n${message.url}`)
+    .update(`${message.to}\n${message.subject}\n${message.secret}`)
     .digest("hex");
 }
+
+/**
+ * What the envelope carries: a LINK the merchant clicks, or a CODE they type back. Exactly one of
+ * the two, enforced by the type rather than by a runtime check — an auth email with neither is a
+ * blank card, and one with both is two ways in for one credential.
+ */
+export type AuthEmailPayload = { url: string; code?: never } | { code: string; url?: never };
 
 /**
  * Write one auth email. AWAITED — but only ever from the background side above, or from the
@@ -539,15 +570,16 @@ function idempotencyKeyFor(message: { to: string; subject: string; url: string }
  * several hundred milliseconds ago, and a shared mail provider's 429 must not become a signal
  * about whose address was in flight when it happened.
  */
-export async function sendAuthEmail(message: {
-  to: string;
-  subject: string;
-  url: string;
-  intro: string;
-  /** #939 — the real lifetime of THIS link, in seconds, so the "valid for" line is never a
-   *  restated guess. See AUTH_EMAIL_DEFAULT_TOKEN_TTL_SECONDS / AUTH_EMAIL_LINK_TTL_SECONDS. */
-  validitySeconds: number;
-}): Promise<void> {
+export async function sendAuthEmail(
+  message: {
+    to: string;
+    subject: string;
+    intro: string;
+    /** #939 — the real lifetime of THIS credential, in seconds, so the "valid for" line is never
+     *  a restated guess. See AUTH_EMAIL_DEFAULT_TOKEN_TTL_SECONDS / AUTH_EMAIL_CODE_TTL_SECONDS. */
+    validitySeconds: number;
+  } & AuthEmailPayload,
+): Promise<void> {
   const context = jobAbortStore.getStore();
   // Past its deadline the job's slot has already gone back to the pool, so starting a send now
   // would be mail arriving from a job the executor considers finished. Refuse to start one.
@@ -559,21 +591,39 @@ export async function sendAuthEmail(message: {
   // the provider", and the conservative answer from the moment we hand it over is yes (#757).
   if (context) context.sendDispatched = true;
   // #939 — branded HTML + text, built by the ONE shared template so every auth-email purpose
-  // gets the same look. The token link is handed through untouched; the template only wraps it.
-  const { html, text } = renderAuthEmail({
-    action: message.intro,
-    url: message.url,
-    validitySeconds: message.validitySeconds,
-  });
+  // gets the same look. The token (link or code) is handed through untouched; the template only
+  // wraps it.
+  //
+  // `secret` is the credential itself, carried alongside: it is what the dev transport writes to
+  // a file (how a local sign-in is completed with no mail provider configured) and what the
+  // idempotency key is derived from.
+  const { html, text, secret } =
+    message.url !== undefined
+      ? {
+          ...renderAuthEmail({
+            action: message.intro,
+            url: message.url,
+            validitySeconds: message.validitySeconds,
+          }),
+          secret: message.url,
+        }
+      : {
+          ...renderAuthCodeEmail({
+            action: message.intro,
+            code: message.code,
+            validitySeconds: message.validitySeconds,
+          }),
+          secret: message.code,
+        };
   try {
     await emailPort.send({
       to: message.to,
       subject: message.subject,
       text,
       html,
-      devPreview: message.url,
+      devPreview: secret,
       signal: context?.signal,
-      idempotencyKey: idempotencyKeyFor(message),
+      idempotencyKey: idempotencyKeyFor({ to: message.to, subject: message.subject, secret }),
     });
   } catch (error: unknown) {
     console.error(

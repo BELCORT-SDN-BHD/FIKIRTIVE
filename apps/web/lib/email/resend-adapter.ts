@@ -7,6 +7,11 @@ import type { EmailMessage, EmailPort } from "./types";
  * better-auth/sender.ts — same env vars (RESEND_API_KEY / AUTH_EMAIL_FROM), same dev fallback
  * (no key + non-production → write <repo>/.data/last-magic-link.txt + console.log instead of
  * sending), same request shape. No behavior change; only the transport moved behind EmailPort.
+ *
+ * THE DEV FILE'S NAME IS OLDER THAN WHAT IT HOLDS. It is written whatever the credential is —
+ * a verification link, a reset link, or (since sign-in moved to one-time codes) six digits. The
+ * path is left alone because a dozen local tracer scripts read it by name; renaming it is a
+ * tooling change, not part of the auth flow.
  */
 export function createResendEmailPort(): EmailPort {
   return {

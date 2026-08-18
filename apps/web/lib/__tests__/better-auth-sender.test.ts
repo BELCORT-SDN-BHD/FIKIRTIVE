@@ -160,11 +160,11 @@ describe("the auth-email queue", () => {
   it("exports no error type or copy a caller could surface", async () => {
     const sender = await import("@/lib/better-auth/sender");
     expect(Object.keys(sender).sort()).toEqual([
+      "AUTH_EMAIL_CODE_TTL_MS",
+      "AUTH_EMAIL_CODE_TTL_SECONDS",
       "AUTH_EMAIL_DROP_LOG_INTERVAL_MS",
       "AUTH_EMAIL_JITTER_MAX_MS",
       "AUTH_EMAIL_JOB_TIMEOUT_MS",
-      "AUTH_EMAIL_LINK_TTL_MS",
-      "AUTH_EMAIL_LINK_TTL_SECONDS",
       "AUTH_EMAIL_MAX_CONCURRENCY",
       "AUTH_EMAIL_MAX_QUEUED",
       "AUTH_EMAIL_SLOT_FLOOR_MS",
