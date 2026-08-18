@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault, setProjectPinned } from "@/lib/actions";
 import { Button } from "@/components/ui/button";
 import { OttoNav } from "./OttoNav";
@@ -156,6 +156,7 @@ export function OttoApp({
   onboardingDismissed = false,
 }: OttoAppProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
   const [sidebarThreadList, setSidebarThreadList] = useState<ChatThreadDTO[]>(sidebarThreads);
@@ -232,6 +233,29 @@ export function OttoApp({
     window.addEventListener("popstate", syncFromLocation);
     return () => window.removeEventListener("popstate", syncFromLocation);
   }, [threads]);
+
+  // ── The URL is the other way this view changes ──
+  // The Workspace entries in the global navigation are <Link href="/otto?view=…"> (see
+  // packages/core/src/navigation.ts), so pressing one is a SOFT navigation: the address bar
+  // moves and the server re-renders this page, but React keeps this component MOUNTED whenever
+  // app/otto/page.tsx's key is unchanged (same project, same open thread). `view` is seeded by
+  // useState, which runs once per mount, and popstate — the listener above — is never fired by
+  // a pushed link. So Library / Video editor / Brand / Templates / Discover / Schedule /
+  // Analytics each moved the URL and left the screen exactly where it was.
+  //
+  // One way only (URL → state), and only when the URL's own view CHANGES — that is what keeps
+  // it from fighting this component's own pushes. handleViewChange sets the state first and
+  // then writes the same value into the URL with raw history.pushState (deliberately not a Next
+  // navigation, so the chat stream is never remounted mid-turn); Next mirrors that push into the
+  // router, so `lastUrlView` catches up to a value the state already holds and nothing moves.
+  // No <Suspense> needed, for the same reason as MerchantAppShell's own useSearchParams:
+  // app/layout.tsx renders this whole tree per request.
+  const urlView = parseViewParam(searchParams.get("view"));
+  const [lastUrlView, setLastUrlView] = useState(urlView);
+  if (urlView !== lastUrlView) {
+    setLastUrlView(urlView);
+    setView(urlView);
+  }
 
   useEffect(() => {
     queueMicrotask(() => {

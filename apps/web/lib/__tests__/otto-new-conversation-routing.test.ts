@@ -30,6 +30,8 @@ const { routerPush, routerReplace, routerRefresh } = vi.hoisted(() => ({
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPush, replace: routerReplace, refresh: routerRefresh }),
+  // OttoApp reads the query too now (the view follows the URL through a soft navigation).
+  useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
 const { createProjectMock } = vi.hoisted(() => ({ createProjectMock: vi.fn() }));
