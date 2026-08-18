@@ -900,6 +900,11 @@ export interface OttoContext {
   entities?: {
     /** debt-08: create a named reusable element (character/location/product/brandmark), no photo upload. */
     create(input: { name: string; type: EntityType }): Promise<{ id: string } | { error: string }>;
+    /** beta bug 4: rename an element and/or correct its kind. Both were human-UI-only until now —
+     *  a bottle saved as a person reached the engine as "bottle (person)" with no way back. The
+     *  action refuses moving an element OUT of CHARACTER while a generation using it is still
+     *  running (that direction drops the worker's anchoring check on already-queued paid work). */
+    update(entityId: string, fields: { name?: string; type?: EntityType }): Promise<{ ok: true } | { error: string }>;
     /** debt-10: soft-delete an element (tombstone; history/snapshots stay intact). */
     remove(entityId: string): Promise<{ ok: true } | { error: string }>;
     /** debt-09: remove one reference photo from an element (soft — asset row becomes a tombstone). */

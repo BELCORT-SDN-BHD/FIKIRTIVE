@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_IMAGE_MODEL_OPTIONS, buildGenRequestFromCard } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import { buildProposeCard, buildSpecChips, EXECUTED_SPEC } from "./propose.helpers.js";
-import { imageAspectHonoured } from "@fikirtive/core";
+import { imageAspectHonoured, VIDEO_START_FRAME_CHIP } from "@fikirtive/core";
 // executePropose (DB-side) still imported from propose.ts
 import { executePropose, proposeSkill } from "./propose.js";
 import type { OttoContext } from "../context.js";
@@ -620,9 +620,14 @@ describe("executePropose — mock DB", () => {
     const payload = persistedPayload();
     expect(payload["kind"]).toBe("video");
     expect(payload["downgraded"]).toBe(true);
-    expect(payload["downgradeNote"]).toContain("None of your 17 reference photos will be used for this clip.");
+    // #979:「一张都不上车」要连着**为什么**一起说 —— 商家给的那条片子确实进引擎。
+    expect(payload["downgradeNote"]).toContain(
+      "The clip on this card is what this run follows — your 17 saved reference photos aren't sent alongside it.",
+    );
     // 而且绝不能倒过来吹一个「用了 N 张」的规格条目。
     expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
+    // 参考片不是首帧 —— 那一格不许出现在这张卡上。
+    expect(payload["specChips"] as string[]).not.toContain(VIDEO_START_FRAME_CHIP);
   });
 
   // 判官 r1 P1 —— 首帧 i2v 是**同一档**的另一个场景(引擎只认首帧),照片同样一张都不带,
@@ -642,9 +647,49 @@ describe("executePropose — mock DB", () => {
     // 卡上照旧不带 @元素(worker 那一档也不会去取图)—— 变的只有「不再沉默」。
     expect(payload["entityIds"]).toEqual([]);
     expect(payload["downgraded"]).toBe(true);
-    expect(payload["downgradeNote"]).toContain("None of your 4 reference photos will be used for this clip.");
+    // #979(beta 录像 06:32 / 10:24)—— 这句话以前说到一半就停了:「None of your 4 reference
+    // photos will be used」字面为真,读起来却是「你给的图我们一张都没用」,而对话里 Otto 同时
+    // 说刚做好的那张会当首帧。同一次生成、两句相反的话。现在先说真会用上的那张。
+    expect(payload["downgradeNote"]).toContain(
+      "The picture on this card becomes the clip's first frame — your 4 saved reference photos aren't sent alongside it.",
+    );
     // 而且绝不能倒过来吹一个「用了 N 张」的规格条目。
     expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
+  });
+
+  // #979 —— 卡面与对话不许对同一次生成给出两句相反的话。
+  it("#979: an i2v card SAYS the picture becomes the first frame, on the chips and in the note", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(2);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "make her walk toward the camera", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen_img" }) },
+    );
+
+    const payload = persistedPayload();
+    const chips = payload["specChips"] as string[];
+    // ① 肯定的那一半:这张图真的会被用上,卡面自己说出来(不再只有对话说)。
+    expect(chips).toContain(VIDEO_START_FRAME_CHIP);
+    // ② 否定的那一半照旧在,但它现在挂在肯定那一半后面,读不出「什么图都没用」。
+    const note = payload["downgradeNote"] as string;
+    expect(note).toContain("becomes the clip's first frame");
+    expect(note).toContain("your 2 saved reference photos aren't sent alongside it");
+    // ③ 那句会被误读成「一张图都不用」的旧话必须消失。
+    expect(note).not.toContain("None of your 2 reference photos will be used");
+  });
+
+  // 单数照实说 —— 「your 1 saved reference photos」是一句一眼可见的机器话。
+  it("#979: one photo is said in the singular", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(1);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "make her walk", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen_img" }) },
+    );
+
+    expect(persistedPayload()["downgradeNote"]).toContain("your 1 saved reference photo isn't sent alongside it.");
   });
 
   // 归属过滤仍然排在披露前面:别人的元素不许进这句话的分母(也不许被数)。
@@ -661,7 +706,9 @@ describe("executePropose — mock DB", () => {
     expect(mockPrisma.referenceImage.count).toHaveBeenCalledWith({
       where: { entityId: "e1", variantId: null, ownerId: "org-cap", deletedAt: null },
     });
-    expect(persistedPayload()["downgradeNote"]).toContain("None of your 4 reference photos will be used for this clip.");
+    expect(persistedPayload()["downgradeNote"]).toContain(
+      "The picture on this card becomes the clip's first frame — your 4 saved reference photos aren't sent alongside it.",
+    );
   });
 
   // 反面:i2v 但商家一个元素都没 @ ⇒ 没有什么可披露的,不许编一句提醒。

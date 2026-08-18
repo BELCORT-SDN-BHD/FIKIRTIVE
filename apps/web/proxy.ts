@@ -91,5 +91,9 @@ export const config = {
   // the token never reached Better Auth. The page is the same shape as the three doors above:
   // it holds no data and judges nothing, it only forwards `token`/`callbackURL` verbatim to
   // /api/better-auth/verify-email (already excluded), which is where the token is checked.
-  matcher: ["/((?!login|signup|forgot-password|reset-password|verify-email|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  // BOUNDED to exactly this path (`verify-email/?$`) for the same reason api/ops/dlq is (#793):
+  // as a bare prefix it also opened /verify-emailx, /verify-email-admin and
+  // /verify-email/anything, so a future route whose name merely starts the same way would have
+  // shipped public with no one deciding that. Pinned by lib/__tests__/proxy.test.ts.
+  matcher: ["/((?!login|signup|forgot-password|reset-password|verify-email/?$|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };

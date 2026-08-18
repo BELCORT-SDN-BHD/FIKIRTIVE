@@ -876,8 +876,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // 批准那一刻冻结),绝不来自这里现读的活行。元素名是商家随时能改的自由文本,现读
       // 等于:批准之后改一次名,就能把没过审批的指令送进这次已经批准的付费调用。
       // 快照里没有的元素 → `name: null` → 编号句照写,只是不写名字(降级方向是少一个
-      // 名字,不是多一条没批准的指令)。类型可以来自活行:它是四选一的枚举、建好之后
-      // 没有写入口,结构上写不进指令。
+      // 名字,不是多一条没批准的指令)。类型可以来自活行:它是四选一的枚举 —— beta bug 4
+      // 起商家能改它,但改到的永远是那四个值之一,结构上写不进指令。改类型这个动作本身在
+      // 作业在飞期间被 `updateEntity` 挡着(apps/web/lib/actions.ts),挡的是下面那道定锚闸
+      // 被抽走,不是这一句。
       const approvedById = approvedEntityMap(job.approvedEntities);
       const entityMeta: { id: string; type: ReferenceSlotType; name: string | null }[] = [];
       for (const entityId of job.entityIds) {

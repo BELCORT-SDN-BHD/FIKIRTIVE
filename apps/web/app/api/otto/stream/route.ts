@@ -60,6 +60,7 @@ import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
+import { newThreadTitle } from "@/lib/otto-canned-starters";
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
@@ -197,7 +198,9 @@ export async function POST(req: NextRequest): Promise<Response> {
       // Persist USER message first (create thread row first if new — FK ordering)
       if (isNew) {
         await prisma.chatThread.create({
-          data: { id: threadId, ownerId, projectId, title: text.slice(0, 80) },
+          // #979:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
+          // 命名(两个门都建对话,只在一个门上装守卫就等于没装)。
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text) },
         });
       }
       userMessageId = newId();

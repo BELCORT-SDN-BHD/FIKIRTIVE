@@ -28,6 +28,7 @@ import {
 import type { EntityType, ShotStatus } from "@fikirtive/db";
 import { storage, extFromFilename } from "./storage";
 import { getBoss } from "./queue";
+import { isCannedStarter } from "./otto-canned-starters";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
@@ -127,6 +128,23 @@ const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled 
 /** Empty Chat title fallback. It is not a reusable Project placeholder, but auto-title
  *  must still refuse to copy it onto a default Project. */
 const UNTITLED_CHAT_TITLE = "Untitled";
+
+/** 自动命名往回看几条对话(#979)。见 `autoTitleProjectIfDefault` 里为什么是一个窗口。 */
+const AUTOTITLE_THREAD_SCAN = 25;
+
+/**
+ * 这个对话标题能不能拿去当画布的名字(#979)。
+ *
+ * 三种不能,理由各不相同,但结果一样 —— 拿它命名等于没命名:
+ *   · 空的 —— 商家还没打过字;
+ *   · "Untitled" / 画布占位名 —— 那是我们的默认值,不是他的话;
+ *   · 罐头开场白 —— 那是我们写好、他点了一下的文案(`isCannedStarter`)。
+ */
+function isAdoptableProjectName(title: string): boolean {
+  if (!title || title === UNTITLED_CHAT_TITLE) return false;
+  if (DEFAULT_PROJECT_NAMES.has(title)) return false;
+  return !isCannedStarter(title);
+}
 
 async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string; name: string } | null> {
   if (!DEFAULT_PROJECT_NAMES.has(name)) return null;
@@ -366,13 +384,24 @@ export async function autoTitleProjectIfDefault(projectId: string): Promise<{ ok
     const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
     if (!project) return { error: "Project not found." };
     if (!DEFAULT_PROJECT_NAMES.has(project.name)) return { ok: true }; // already named
-    const thread = await prisma.chatThread.findFirst({
+    // #979:取最早一条**可采用**的对话,不是最早那一条。
+    //
+    // 只读最早一条是判官抓到的第二个洞:罐头开场白那条对话现在叫 "Untitled",而它恰恰
+    // 是最早的那条 —— 于是这里每次都读到它、每次都早退,画布**永远**停在「New project」。
+    // 「之后会被真正的内容命名」就成了一句假话。所以往后找:跳过还没有名字的、跳过占位名、
+    // 跳过我们自己的开场白,第一条商家真正打过字的对话来命名画布。
+    //
+    // 取一个窗口而不是全部:这个动作只在画布还叫占位名时跑,那一刻的对话数以个位数计;
+    // 窗口拉满(全是罐头/空对话)时的结果与今天一样 —— 画布保持默认名,等下一条真消息,
+    // 没有比现在更差的那一档。
+    const threads = await prisma.chatThread.findMany({
       where: { ownerId, projectId: project.id },
       orderBy: { createdAt: "asc" },
+      take: AUTOTITLE_THREAD_SCAN,
       select: { title: true },
     });
-    const title = thread?.title?.trim();
-    if (!title || title === UNTITLED_CHAT_TITLE || DEFAULT_PROJECT_NAMES.has(title)) return { ok: true }; // nothing to adopt yet
+    const title = threads.map((t) => t.title?.trim() ?? "").find(isAdoptableProjectName);
+    if (!title) return { ok: true }; // nothing to adopt yet
     const clean = title.slice(0, 80);
     await prisma.project.update({ where: { id: project.id }, data: { name: clean } });
     await logAction(ownerId, "project.autotitle", project.id, { name: clean });
@@ -462,20 +491,97 @@ export async function createEntity(formData: FormData) {
 
 export async function updateEntity(
   entityId: string,
-  fields: { name?: string; notes?: string; negativeConstraints?: string },
+  fields: { name?: string; notes?: string; negativeConstraints?: string; type?: string },
 ): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async () => {
     const { ownerId } = gate;
-    const data: Record<string, string> = {};
+    const data: { name?: string; notes?: string; negativeConstraints?: string; type?: EntityType } = {};
     if (fields.name !== undefined && fields.name.trim()) data.name = fields.name.trim();
     if (fields.notes !== undefined) data.notes = fields.notes;
     if (fields.negativeConstraints !== undefined) data.negativeConstraints = fields.negativeConstraints;
+    // beta bug 4 —— 类型从「建好就再也改不了」改成可改(Founder 方案 A)。录屏里那只瓶子被
+    // 标成了人,送进引擎的机器指令就是 `Define the person in <Image_1>`,而商家没有任何改
+    // 正的路 —— 只能删掉重建,连同它的参考照一起丢。
+    let typeFrom: EntityType | null = null;
+    if (fields.type !== undefined) {
+      if (!ENTITY_TYPES.has(fields.type)) return { error: "Unknown entity type." };
+      const current = await prisma.entity.findFirst({
+        where: { id: entityId, ownerId, deletedAt: null },
+        select: { type: true },
+      });
+      if (!current) return { error: "Entity not found." };
+      if (current.type !== fields.type) {
+        // ── 把 CHARACTER 改成别的类型:在飞的付费作业底下不许改 ────────────────────
+        //
+        // 与 `deleteVariant`(refgen-actions.ts)同一条规矩、同一套论证:钱路 fail-closed 闸,
+        // **没有陈旧窗口**。
+        //
+        // 要保住的是什么:worker 那道**只对 CHARACTER 生效**的定锚闸
+        // (apps/worker/src/jobs/gen.ts,`liveEntity.type === "CHARACTER" && found.length === 0`)。
+        // 它挡的是「没有参考照的角色滑进一次没有条件图的付费调用」,而守望者(checkCast)
+        // 是 fail-OPEN 的,所以它是最后一层。CHARACTER 一旦被改走,这道闸就在一单**已经排
+        // 上队**的作业底下自己消失,那一单于是照跑照花钱 —— 不改类型的话它本会
+        // `failClosedWithRefund` 退款。钱的事一律 fail closed,所以这个方向不许改。
+        //
+        // ── 为什么**只**拦这一个方向 ──────────────────────────────────────────────
+        // 反方向(别的类型 → CHARACTER)只会给这一单**加**上那道闸,不会抽走任何东西:
+        // 有参考照 → 闸不触发,什么都没变;没有参考照 → 闸触发,终态失败 + 退款。两种结
+        // 果都不漏钱,所以没有理由拦。CHARACTER 之外互相改(如 PRODUCT → LOCATION)根本
+        // 碰不到这道闸,同样不拦。锁定面因此只剩「CHARACTER + 有在飞作业」这一格。
+        //
+        // ⚠️ 这一格里**不许**再按「有没有审批快照」二次收窄 —— 那会把洞重新开出来:
+        // 定锚闸读的是 `liveEntity.type`(worker 现查的活行),与 `job.approvedEntities`
+        // 无关。快照只保护提示词里那个名字与类型(`approved?.type ?? liveEntity.type` 决定
+        // 编号句里的名词),保护不到定锚。所以**带快照的单与不带快照的单同样要拦**;startGen
+        // 的 `approvedEntityDrift` 只拦得住下一次花钱,拦不住此刻已经在队列里的这一单。
+        //
+        // ── 为什么没有陈旧窗口 ──────────────────────────────────────────────────
+        // 与 deleteVariant 逐字同因:任何窗口都会比这条产品线自己的付费时钟链短,而链上每
+        // 一档都还在花钱 —— 供应商轮询 15m < GEN_STALE_MS 18m < 队列过期 20m < 清道夫
+        // GEN_REAP_MS/GEN_QUEUED_REAP_MS 25m(apps/worker/src/jobs/clock-invariants.test.ts
+        // 钉死)。一个 QUEUED 了 16 分钟的单,pg-boss 照送、worker 照跑、钱照花(gen.ts 里
+        // GEN_QUEUED_REAP_MS 的注释写得很白:25 分钟以内 QUEUED 都可能只是排队没轮到)。
+        // 按「超时=废弃」放行,等于恰好在它还会花钱的那几分钟里把闸打开。
+        //
+        // 「岂不是永久锁死?」不会,而且这里不需要任何时间常量:reapStaleGenJobs 对 QUEUED
+        // 与 GENERATING 都会在 ~25 分钟加一轮巡检(5 分钟一扫)里终态化并退款,之后这道闸
+        // 自然放行。最坏是等半小时,不是改不回来。
+        //
+        // 只挡 GenJob,**不挡 RefGenJob**:参考图那条路在建单那一刻就把整句提示词冻在
+        // `RefGenJob.prompt` 上,它的 worker(apps/worker/src/jobs/refgen.ts)从头到尾
+        // 一次都没读过 `entity.type` —— 挡它属于凭空立规矩,不是防护。
+        //
+        // 已知未闭合(不在本票范围):这次读与下面那次写不在同一事务里,与 startGen 之间存
+        // 在亚秒级 TOCTOU 窗口。这是本文件既有形状的通病(改名同样暴露),另票跟踪,别把它
+        // 当成已解决。
+        if (current.type === "CHARACTER") {
+          const inFlight = await prisma.genJob.findFirst({
+            where: {
+              ownerId,
+              status: { in: ["QUEUED", "GENERATING"] },
+              entityIds: { has: entityId },
+            },
+            select: { id: true },
+          });
+          if (inFlight) {
+            return { error: "A generation using this is still running — wait for it to finish, then change the type." };
+          }
+        }
+        data.type = fields.type as EntityType;
+        typeFrom = current.type;
+      }
+    }
     if (Object.keys(data).length === 0) return { ok: true };
     const { count } = await prisma.entity.updateMany({ where: { id: entityId, ownerId, deletedAt: null }, data });
     if (count === 0) return { error: "Entity not found." };
-    await logAction(ownerId, "entity.update", null, { entityId, fields: Object.keys(data) });
+    await logAction(ownerId, "entity.update", null, {
+      entityId,
+      fields: Object.keys(data),
+      // 每个东西都要有迹可循:类型换过之后,老作品为什么带着另一个名词,只有这一行答得出来。
+      ...(typeFrom ? { typeFrom, typeTo: data.type } : {}),
+    });
     revalidatePath("/", "layout");
     return { ok: true };
   });

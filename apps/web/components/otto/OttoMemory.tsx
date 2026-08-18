@@ -1,5 +1,5 @@
 "use client";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Sparkles, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   type RowDiff, type SectionKey,
 } from "@fikirtive/core/memory-sections";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
+import { BRAND_MEMORY_STARTERS } from "@/lib/otto-canned-starters";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
@@ -40,12 +41,9 @@ export function threadToBubbles(
     .map((m) => ({ role: m.role === "USER" ? "you" : "otto", text: m.text } as Bubble));
 }
 
-const CHIPS = [
-  { label: "Describe my brand", prompt: "Let me describe my brand to you — ask me what you need to know." },
-  { label: "My ideal customer", prompt: "Help me define my main customer groups." },
-  { label: "My brand voice", prompt: "Help me pin down my brand voice." },
-  { label: "Research my site", prompt: "Research my website and save what you learn — brand facts, products, and current offers. My URL: " },
-];
+/** #979:这四句话现在住在 `lib/otto-canned-starters` —— 命名守卫认的就是这一份。
+ *  抄成两份,守卫认得的和界面发出的会先后漂移,而漂移那天没有一条测试会红。 */
+const CHIPS = BRAND_MEMORY_STARTERS;
 
 /** ISO "YYYY-MM-DD" for a Date column, or null to clear. */
 function isoDay(d: Date | null): string | null {
@@ -90,13 +88,46 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
   };
   const [touchedTabs, setTouchedTabs] = useState<Set<SectionKey>>(new Set());
 
-  // ── Chat state (unchanged) ──
+  // ── Chat state ──
+  // BUG 6 (second half). This transcript lives in component state, and the server never hands
+  // this view a thread: OttoView renders <OttoMemory> with memory/records/projectId only. So
+  // anything that unmounts the Otto tree — a project switch, an explicit ?thread= switch, a
+  // reload, a browser tab restore — used to lose BOTH the transcript and the pointer to the
+  // conversation it belonged to, and the merchant's next question silently opened a SECOND
+  // brand conversation instead of continuing the first.
+  //
+  // Cheapest honest fix: remember only the thread ID, per tab and per project, and let the
+  // server stay the authority for the messages (they are already durable — the transcript is
+  // read back with the same call sendChat uses). Nothing about the conversation is stored in
+  // the browser beyond that ID.
+  const brandThreadKey = `fikirtive:otto-brand-thread:${projectId}`;
   const [chat, setChat] = useState<Bubble[]>([]);
   const [brandThreadId, setBrandThreadId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const remembered = window.sessionStorage.getItem(brandThreadKey);
+    if (!remembered) return;
+    let alive = true;
+    void getCoworkThreadClient(remembered).then((thread) => {
+      if (!alive) return;
+      if (!thread) {
+        // Owner-scoped read came back empty — the conversation is genuinely gone (deleted),
+        // so drop the pointer rather than keep replying into a thread that no longer exists.
+        window.sessionStorage.removeItem(brandThreadKey);
+        return;
+      }
+      // Never overwrite a turn the merchant has already started in this mount.
+      setBrandThreadId((prev) => prev ?? remembered);
+      setChat((prev) => (prev.length ? prev : threadToBubbles(thread.messages)));
+    }).catch(() => {
+      // A failed read proves nothing about the thread — keep the pointer, keep the screen.
+    });
+    return () => { alive = false; };
+  }, [brandThreadKey]);
 
   // ── Section slices ──
   const factsFor = (key: SectionKey) => memory.filter((m) => sectionForCategory(m.category) === key);
@@ -124,6 +155,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
         setChatError(res.error ?? "Something went wrong — please try again.");
       } else {
         setBrandThreadId(res.threadId);
+        window.sessionStorage.setItem(brandThreadKey, res.threadId);
         const thread = await getCoworkThreadClient(res.threadId);
         if (thread) {
           setChat(threadToBubbles(thread.messages));
