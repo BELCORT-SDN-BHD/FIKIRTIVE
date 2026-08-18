@@ -124,13 +124,33 @@ function effectiveClasses(el: Element, width: number): Set<string> {
 }
 
 /** 会把内容切掉的类。`line-clamp-*` 按前缀认。 */
-const TRUNCATING = ["truncate", "text-ellipsis", "text-clip", "overflow-hidden", "overflow-x-hidden"];
+const TRUNCATING = [
+  "truncate",
+  "text-ellipsis",
+  "text-clip",
+  "overflow-hidden",
+  "overflow-x-hidden",
+  // 判官 P2-1:`overflow-clip` 与 utility 白名单里的 `overflow-hidden` 切得一样狠,
+  // 之前只认后者,前者就是一条穿得过去的路。
+  "overflow-clip",
+  "overflow-x-clip",
+];
+
+/** 内联 style 里的截断声明。判官 P2-1:白名单只读 class,于是
+ *  `style={{overflow:"hidden", textOverflow:"ellipsis"}}` 造出的**真**截断祖先
+ *  能让 26/26 全绿穿过去 —— 浏览器可不管这个声明写在 class 还是 style 里。 */
+const TRUNCATING_STYLE = [
+  /(^|;)\s*overflow(-x|-y)?\s*:\s*(hidden|clip)\b/i,
+  /(^|;)\s*text-overflow\s*:\s*(ellipsis|clip)\b/i,
+  /(^|;)\s*-webkit-line-clamp\s*:/i,
+];
 
 function truncatesAt(el: Element, width: number): boolean {
   for (const cls of effectiveClasses(el, width)) {
     if (TRUNCATING.includes(cls) || cls.startsWith("line-clamp-")) return true;
   }
-  return false;
+  const style = el.getAttribute("style") ?? "";
+  return TRUNCATING_STYLE.some((re) => re.test(style));
 }
 
 function parse(markup: string): Element {
@@ -489,7 +509,9 @@ function declaredStatusKinds(): string[] {
   // 联合类型的每一支自己一行、以 `|` 开头;第一行不以 `|` 开头的就是声明的尽头。
   const block: string[] = [];
   for (let i = start + 1; i < lines.length && lines[i].trim().startsWith("|"); i++) block.push(lines[i]);
-  const kinds = [...block.join("\n").matchAll(/kind:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+  // 判官 P3-1:`[a-z_]+` 会漏掉 camelCase 的 kind —— 那种 kind 对这条运行时对账是隐形的,
+  // 只剩 `satisfies` 那条编译腿在守,单腿站不住。
+  const kinds = [...block.join("\n").matchAll(/kind:\s*"([A-Za-z_]+)"/g)].map((m) => m[1]);
   expect(kinds.length, "解析不出任何 kind —— 声明的写法变了,先修这段解析").toBeGreaterThan(0);
   return kinds;
 }
