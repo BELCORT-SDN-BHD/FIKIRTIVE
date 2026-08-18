@@ -11,7 +11,7 @@
  *
  * NOT an action surface: no "use server", not *-actions — the parity scanner must not discover it.
  */
-import { createEntity, softDeleteEntity, softDeleteReferenceImage } from "./actions";
+import { createEntity, updateEntity, softDeleteEntity, softDeleteReferenceImage } from "./actions";
 
 export function makeOttoEntitiesPort() {
   return {
@@ -27,6 +27,15 @@ export function makeOttoEntitiesPort() {
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Couldn't create that element." };
       }
+    },
+    // beta bug 4 —— 改名与改类型走的就是人手 Library 卡片按的那一个 `updateEntity`:
+    // 白名单、租户闸、在飞作业闸全在那个动作里,这里一行判断都不重做。
+    update: async (
+      entityId: string,
+      fields: { name?: string; type?: string },
+    ): Promise<{ ok: true } | { error: string }> => {
+      const res = await updateEntity(entityId, fields);
+      return "error" in res ? { error: res.error } : { ok: true };
     },
     remove: async (entityId: string): Promise<{ ok: true } | { error: string }> => {
       const res = await softDeleteEntity(entityId);
