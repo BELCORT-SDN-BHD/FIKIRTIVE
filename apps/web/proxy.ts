@@ -85,5 +85,11 @@ export const config = {
   // MUST render without a session — that is the whole point of them — so they join /login
   // outside the wall. They mutate nothing on their own; every action behind them goes through
   // Better Auth's own gates (pause switch, allowlist, verification, rate limit).
-  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  // verify-email: the landing page the SIGN-UP VERIFICATION MAIL points at (#940 —
+  // lib/better-auth/verify-landing-url.ts). Whoever clicks that link has no session yet — that
+  // is precisely what the link is for — so the wall bounced every new merchant to /login and
+  // the token never reached Better Auth. The page is the same shape as the three doors above:
+  // it holds no data and judges nothing, it only forwards `token`/`callbackURL` verbatim to
+  // /api/better-auth/verify-email (already excluded), which is where the token is checked.
+  matcher: ["/((?!login|signup|forgot-password|reset-password|verify-email|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };

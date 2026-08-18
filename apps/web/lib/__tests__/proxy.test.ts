@@ -159,6 +159,34 @@ describe("proxy — the northstar prefix is back inside the login wall (#606)", 
   });
 });
 
+// #940: the sign-up verification mail lands on /verify-email (lib/better-auth/verify-landing-url.ts
+// builds that link; lib/better-auth/server.ts mails it). Everyone who clicks it is BY DEFINITION
+// session-less — verifying is how they get a session — so the wall must not run there. It did:
+// the page was missing from the exclusion list, so every new merchant was redirected to /login
+// and the token in the link never reached Better Auth.
+describe("proxy — email verification landing page (/verify-email)", () => {
+  it("the matcher does NOT run the auth wall for /verify-email (the mail's reader has no session)", () => {
+    // The matcher decides on the pathname alone; the link's ?token=…&callbackURL=… rides along
+    // and is read by the page itself, which forwards it untouched.
+    expect(matcherRuns("/verify-email")).toBe(false);
+  });
+
+  it("the endpoint the landing page forwards to stays outside the wall too", () => {
+    // The page only hands `token` on to this route; if THAT were walled the fix would be half done.
+    expect(matcherRuns("/api/better-auth/verify-email")).toBe(false);
+  });
+
+  it("opens nothing else: the app behind the door stays walled", async () => {
+    expect(matcherRuns("/otto")).toBe(true);
+    expect(matcherRuns("/billing")).toBe(true);
+
+    // Proves the wall is live in this env, so the `false` assertions above mean "exempted".
+    const res = await proxy(req("/otto"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+});
+
 // #793: the dead-letter probe is pulled by an external uptime service, which has no session.
 // It answers clear/backed-up/unknown and nothing else, so it joins /api/health outside the wall —
 // and the exemption must not quietly become "everything under /api/ops is public".
