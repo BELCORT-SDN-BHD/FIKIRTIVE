@@ -202,7 +202,9 @@ describe("收敛掉的旧路由一律 redirect,不 404", () => {
  *
  * templates 与 discover 当初就是这样漏掉的:Otto 自有导轨有入口、OttoView 真渲染、路由真
  * 接受 —— 只有主导航不知道它们存在。所以这条不从权威表出发,而从**产品自己接受什么**出发:
- * `/otto` 路由白名单 `VALID_VIEWS` 是 Otto 表面的独立事实源,逐个视图核对权威表里有没有门。
+ * `/otto` 路由白名单 `OTTO_VIEW_KEYS`(#969 判官 P2-3 之后由 components/otto/otto-view-param.ts
+ * 一家收着,服务端页面与客户端外壳都读它)是 Otto 表面的独立事实源,逐个视图核对权威表里
+ * 有没有门。
  */
 describe("Otto 表面没有第二处漏网", () => {
   /** 有意不进主导航的视图,逐个写明理由 —— 空豁免簿比长豁免簿更容易骗过自己。 */
@@ -212,8 +214,8 @@ describe("Otto 表面没有第二处漏网", () => {
   };
 
   function ottoValidViews(): string[] {
-    const source = readFileSync(path.join(WEB_ROOT, "app/otto/page.tsx"), "utf8");
-    const list = /const VALID_VIEWS = \[([^\]]*)\]/.exec(source)?.[1] ?? "";
+    const source = readFileSync(path.join(WEB_ROOT, "components/otto/otto-view-param.ts"), "utf8");
+    const list = /const OTTO_VIEW_KEYS = \[([^\]]*)\]/.exec(source)?.[1] ?? "";
     return [...list.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
   }
 
