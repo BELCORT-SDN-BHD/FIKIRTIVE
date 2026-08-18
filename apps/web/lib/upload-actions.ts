@@ -333,6 +333,13 @@ export async function finalizeCandidateUploads(
   // RESIDUAL, stated rather than papered over: between this moment and that sweep, the asset is
   // visible with a client-claimed hash. Closing that window properly needs `Asset.verifiedAt` +
   // hide-until-verified, which is a schema change and stays deferred.
+  //
+  // `getBoss()` INSIDE the loop is deliberate and costs nothing. It is a cached lazy singleton
+  // (lib/queue.ts): on the happy path every iteration after the first gets the same resolved
+  // handle. When the queue is genuinely down, its failure cell puts the cache into a cooldown,
+  // so iterations 2..N reject IMMEDIATELY instead of each paying a fresh connect timeout — a
+  // batch of ten fails fast rather than ten times slowly. Hoisting the call out of the loop
+  // would put the whole batch back behind one `await` and reintroduce defect (1) above.
   const undispatched: string[] = [];
   for (const id of assetIds) {
     try {
