@@ -4,6 +4,7 @@
  * 两条承重的:**只读自己租户**、**嘴上不许有「分析」这个动作**(票面铁律)。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { UNDERSTANDING_PROVIDER_PAUSED } from "@fikirtive/core";
 
 const mocks = vi.hoisted(() => ({ findMany: vi.fn() }));
 vi.mock("@fikirtive/db", () => ({ prisma: { assetUnderstanding: { findMany: mocks.findMany } } }));
@@ -136,7 +137,56 @@ describe("读不成的素材要如实说(不许说「稍后会自动读」)", ()
   it("全都读成时不多出一个空的 notRead 字段", async () => {
     const out = await executeRecallStoreKnowledge({}, ctx);
     expect(out.notRead).toBeUndefined();
+    expect(out.waitingOnUs).toBeUndefined();
     expect(out.note).toBeUndefined();
+  });
+});
+
+/**
+ * 2026-08-18 事故里 Otto 说的那句谎:每一份**好**文件都被讲成「读不了,建议传更清晰的
+ * 版本」。文件从头到尾没有任何问题,坏的是我们自己的配置 —— 商家重传多少次都是同一个结果。
+ * 所以「不会重试」这句话只许跟着真的不会重试的那一类出现。
+ */
+describe("我方还没修好的文件:说的是另一句实话", () => {
+  it("PAUSED 的行走 waitingOnUs,不混进 notRead", async () => {
+    mocks.findMany.mockResolvedValue([
+      unread({ assetId: "a-waiting", status: "PAUSED", error: UNDERSTANDING_PROVIDER_PAUSED }),
+    ]);
+    const out = await executeRecallStoreKnowledge({}, ctx);
+    expect(out.notRead).toBeUndefined();
+    expect(out.waitingOnUs).toEqual([
+      { assetId: "a-waiting", kind: "image-caption", reason: UNDERSTANDING_PROVIDER_PAUSED },
+    ]);
+  });
+
+  it("给模型的那句话里没有「不会重试」,也没有「传一份更清楚的」", async () => {
+    mocks.findMany.mockResolvedValue([
+      unread({ assetId: "a-waiting", status: "PAUSED", error: UNDERSTANDING_PROVIDER_PAUSED }),
+    ]);
+    const note = (await executeRecallStoreKnowledge({}, ctx)).note!.toLowerCase();
+    expect(note).not.toMatch(/not be retried/);
+    expect(note).not.toMatch(/clearer or smaller/);
+    expect(note).toMatch(/still in line|will be read once/);
+    expect(note).toMatch(/never ask the user to re-upload/);
+  });
+
+  it("两类同时在场时,两句话各说各的,谁也不代表谁", async () => {
+    mocks.findMany.mockResolvedValue([
+      unread({ assetId: "a-huge", status: "SKIPPED" }),
+      unread({ assetId: "a-waiting", status: "PAUSED", error: UNDERSTANDING_PROVIDER_PAUSED }),
+    ]);
+    const out = await executeRecallStoreKnowledge({}, ctx);
+    expect(out.notRead?.map((f) => f.assetId)).toEqual(["a-huge"]);
+    expect(out.waitingOnUs?.map((f) => f.assetId)).toEqual(["a-waiting"]);
+    const note = out.note!;
+    // 「不会重试」必须**指名**它管的是哪一堆 —— 不指名就等于把两类都说死了
+    expect(note).toMatch(/`notRead`[^]*will NOT be retried/);
+    expect(note).toMatch(/`waitingOnUs`[^]*will be read once/);
+  });
+
+  it("查询把 PAUSED 一并取回来 —— 取不回来就等于对商家隐去了这一整类", async () => {
+    await executeRecallStoreKnowledge({}, ctx);
+    expect(mocks.findMany.mock.calls[0]![0].where.status.in).toContain("PAUSED");
   });
 });
 

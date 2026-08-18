@@ -14,7 +14,7 @@
 | 盲区 | 之前 | 现在(仓库形状) |
 | --- | --- | --- |
 | 商家浏览器里崩了 | 一条信号都没有,只能等商家开口 | `instrumentation-client.ts` + `app/global-error.tsx` 把浏览器崩溃送出去 |
-| 系统放弃掉的活 | 七条死信队列只建不看 | `/api/ops/dlq` 巡检七条队列,非空即 503 并上报 |
+| 系统放弃掉的活 | 八条死信队列只建不看 | `/api/ops/dlq` 巡检八条队列,非空即 503 并上报 |
 | 谁在拉探针 | 没有人拉 `/api/health` | 三个免费 uptime monitor 的定义写在下面(生产侧动作) |
 | 谁会被通知 | 零推送 | 一条 Sentry alert rule 的定义写在下面(生产侧动作) |
 
@@ -38,7 +38,7 @@
 
 ### 死信巡检
 
-七条死信队列(单一名单在 `packages/core/src/dead-letters.ts`,新增队列漏登记会被
+八条死信队列(单一名单在 `packages/core/src/dead-letters.ts`,新增队列漏登记会被
 `dead-letters.test.ts` 抓住):
 
 | 队列 | 放弃掉的是什么 |
@@ -50,9 +50,10 @@
 | `caption.dlq` | 字幕转写($0) |
 | `research.dlq` | Otto 深度研究(**花过钱的**) |
 | `publish.dlq` | 定时发布 |
+| `understand.dlq` | 素材理解($0;2026-08-18 补登记,此前漏在名单外,探针对它天生失明) |
 
 - `GET /api/ops/dlq` —— 免鉴权(和 `/api/health` 同一个理由:外部 uptime 服务没有 session)。
-  - `200 {"ok":true,"deadLetters":"clear"}` = 七条**全部查得到,且一条不剩**
+  - `200 {"ok":true,"deadLetters":"clear"}` = 八条**全部查得到,且一条不剩**
   - `503 {"ok":false,"deadLetters":"backed-up"}` = 有死信
   - `503 {"ok":false,"deadLetters":"unknown"}` = 有队列查不到、计数读不懂,或库读不到
   - **只有「查得到且是空的」才配 200**:一个证明不了自己看得见的探针报平安,比没有探针

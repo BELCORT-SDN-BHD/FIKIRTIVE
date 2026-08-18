@@ -191,6 +191,9 @@ const CORE = {
   DATABASE_URL: "postgresql://u:p@host:5432/db",
   BETTER_AUTH_SECRET: "s".repeat(32),
   BETTER_AUTH_URL: "https://app.example.com",
+  // 整顿 C1a 起,报警不再是可选装饰:没有 DSN 的生产进程收不到任何错误报警,
+  // 所以它属于「最小能用的生产环境」的一部分。
+  SENTRY_DSN: "https://key@o1.ingest.sentry.io/2",
 };
 
 describe("checkEnv", () => {
@@ -313,6 +316,56 @@ describe("STORAGE_DRIVER must be a remote driver in production (#797 r2 P1-2)", 
         }
       }
     }
+  });
+});
+
+/**
+ * 整顿 C1a —— 报警渠道必须真的在。
+ *
+ * 它以前是 optional,而那个取值的失效形状是这一族里最糟的一种:没配 DSN 时 `Sentry.init`
+ * 从不运行,`captureException`/`captureMessage` 全部静默 no-op,于是**每一条错误报警都不响**
+ * ——包括钱路上那几条「商家付了钱什么都没拿到,需要 founder 裁决」。而开机检查一个字都不说,
+ * 「装了监控」和「监控在响」被当成同一件事。
+ *
+ * 三格钉住:生产缺 = 拒绝启动(两侧都是);开发缺 = 照常绿;逃生门仍然开着。
+ */
+describe("SENTRY_DSN is required in production (整顿 C1a)", () => {
+  for (const surface of ["web", "worker"] as const) {
+    it(`production without a DSN is RED (${surface}) — the alert pipeline would be silent`, () => {
+      const { SENTRY_DSN: _dropped, ...noDsn } = CORE;
+      const problems = checkEnv({ ...noDsn, ...REMOTE_STORAGE }, { surface, production: true });
+      const dsn = problems.find((p) => p.name === "SENTRY_DSN");
+      expect(dsn, "a production process with no error monitoring must not pass the contract").toBeTruthy();
+      expect(dsn?.kind).toBe("missing");
+    });
+
+    it(`a production process REFUSES TO START without it (${surface})`, () => {
+      const { SENTRY_DSN: _dropped, ...noDsn } = CORE;
+      const decision = bootEnvDecision({ NODE_ENV: "production", ...noDsn, ...REMOTE_STORAGE }, { surface, production: true });
+      expect(decision.action).toBe("exit");
+      expect(decision.action === "exit" && decision.report).toContain("SENTRY_DSN");
+    });
+  }
+
+  it("development without a DSN is GREEN — local machines legitimately run with no monitoring", () => {
+    const { SENTRY_DSN: _dropped, ...noDsn } = CORE;
+    expect(checkEnv({ ...noDsn, ...REMOTE_STORAGE }, { surface: "web", production: false })).toEqual([]);
+  });
+
+  it("the escape hatch still opens: FIKIRTIVE_ENV_CONTRACT=warn starts anyway", () => {
+    const { SENTRY_DSN: _dropped, ...noDsn } = CORE;
+    const decision = bootEnvDecision(
+      { NODE_ENV: "production", FIKIRTIVE_ENV_CONTRACT: "warn", ...noDsn, ...REMOTE_STORAGE },
+      { surface: "worker", production: true },
+    );
+    expect(decision.action).toBe("warn");
+  });
+
+  it("the Telegram alert channel stays OPTIONAL — the bot has to be created by a human first", () => {
+    // 半配(有 token 没 chat id)也不许变成开机错误:发送器要求两个齐才发,缺一个
+    // 与全空同义,都只是「这条通道没开」。
+    const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, TELEGRAM_BOT_TOKEN: "123:AA" }, { surface: "worker", production: true });
+    expect(problems).toEqual([]);
   });
 });
 

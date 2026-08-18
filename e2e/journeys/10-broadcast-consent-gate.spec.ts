@@ -15,7 +15,12 @@ import { test, expect } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 
-test("With no channel connected, a broadcast cannot be started and the reason is on screen", async ({ page }) => {
+// W2-13 (#993) — SKIPPED, not deleted. The whole CRM section is hidden from the merchant until
+// Meta verification passes (Founder ruling 2026-08-18; restore trigger recorded on issue #359):
+// `/crm/broadcasts` is a bare `redirect("/")` now, so this journey can no longer reach the surface
+// it describes. The engine, the components and the two promises below are all still in the repo —
+// un-skip this file on the same day the section comes back, and it should pass as written.
+test.skip("With no channel connected, a broadcast cannot be started and the reason is on screen", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "broadcast",
     workspaceName: "Kaia Cafe",
