@@ -40,6 +40,7 @@ import {
   type GenerationReceipt,
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
+import { captureMoneyPathError, founderAlert } from "../alerting.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
@@ -104,6 +105,7 @@ async function recordGenerationReceipts(
   } catch (e) {
     // 记账写不进去就是记账写不进去 —— 已经交付的产出和已经结算的钱一个字节都不动。
     console.warn(`[gen] ${job.id}: receipt columns not recorded (left Unknown) — ${e instanceof Error ? e.message : String(e)}`);
+    captureMoneyPathError(e, { event: "gen.receipt_not_recorded", jobId: job.id, orgId: job.ownerId });
   }
 }
 
@@ -516,6 +518,7 @@ async function failClosedWithRefund(
   } catch (e) {
     if (e !== SETTLED_PRE_SPEND_FAIL) throw e;
     console.error(`[gen] ${job.id}: a pre-spend gate wanted to fail this job closed, but the charge is already SETTLED — the delivery beat us to it. Left in flight on purpose: FAILED would promise a refund that never happened, and the storyboard edit gate reads FAILED as "dead, safe to unlink". Reason was: ${error}`);
+    captureMoneyPathError(e, { event: "gen.fail_closed_blocked_by_settle", jobId: job.id, orgId: job.ownerId, gateReason: error });
   }
   // Tell the cowork UI the turn is over (idempotent via the genJobId unique index).
   // Without a terminal message the client polls forever on a stuck "making this…".
@@ -555,6 +558,27 @@ async function hasLiveGenMessage(genJobId: string): Promise<boolean> {
   } catch (e) {
     console.warn(`[gen] pg-boss liveness check failed for ${genJobId}; skipping reap this sweep:`, e instanceof Error ? e.message : e);
     return true;
+  }
+}
+
+/**
+ * 这一单**实际被扣掉**多少(商家看得懂的口径),读不到就 null(= unknown,绝不猜)。
+ *
+ * 直接从 SETTLE 那一行算,而不是重新按价目表推导:报警里那个数字要能拿去跟账本对,
+ * 所以它必须是账本自己说的。settleCredits 写的是 `balanceDelta = B - A`、
+ * `reservedDelta = -B`(B=预扣,A=实扣),于是 A = -reservedDelta - balanceDelta。
+ * 只在报警路径上用,失败一律吞掉——报警读不到金额,也不该把巡检拖下水。
+ */
+async function settledDisplayCredits(orgId: string, refId: string): Promise<number | null> {
+  try {
+    const settle = await prisma.creditLedger.findFirst({
+      where: { orgId, refId, kind: "SETTLE" },
+      select: { balanceDelta: true, reservedDelta: true },
+    });
+    if (!settle) return null;
+    return displayCredits(-settle.reservedDelta - settle.balanceDelta);
+  } catch {
+    return null;
   }
 }
 
@@ -654,6 +678,7 @@ export async function reapStaleGenJobs(): Promise<number> {
         reaped++;
       } catch (e) {
         console.error(`[gen] reaper resume failed for ${job.id} (retries next sweep):`, e instanceof Error ? e.message : e);
+        captureMoneyPathError(e, { event: "gen.reaper_resume_failed", jobId: job.id, orgId: job.ownerId });
       }
     }
 
@@ -716,6 +741,22 @@ export async function reapStaleGenJobs(): Promise<number> {
           } catch (e) {
             if (e !== SETTLED_DONE_EMPTY) throw e;
             console.error(`[gen] ${job.id}: DONE with no outputs AND the charge is settled — this merchant paid for nothing. Left untouched on purpose: FAILED would promise a refund that never happened. Needs a founder decision.`);
+            // 整顿 C1a:这句求救过去只落 console.error,而生产日志没有人二十四小时盯着——
+            // 一句「需要 founder 裁决」事实上说给了没有人。三条通道一起发,`await` 是故意的:
+            // 这一趟巡检不差这几百毫秒,而 fire-and-forget 会让报警死在进程退出的竞态里。
+            await founderAlert({
+              key: "gen.paid_for_nothing",
+              title: "A merchant paid for a generation and received nothing",
+              action:
+                "Decide this one by hand — nothing automatic can fix it. The job is DONE with zero outputs and the charge is SETTLED, so the sweep deliberately left the row alone (flipping it to FAILED would promise a refund that never happened). Refund in the credits ledger if that is the call.",
+              context: {
+                genJobId: job.id,
+                orgId: job.ownerId,
+                kind: job.kind,
+                model: job.model,
+                chargedCredits: await settledDisplayCredits(job.ownerId, job.id),
+              },
+            });
             return;
           }
           if (outcome === null) return; // someone else ended this row — their truth stands
@@ -729,6 +770,7 @@ export async function reapStaleGenJobs(): Promise<number> {
         if (healed) reaped++;
       } catch (e) {
         console.error(`[gen] reaper self-heal failed for ${job.id} (retries next sweep):`, e instanceof Error ? e.message : e);
+        captureMoneyPathError(e, { event: "gen.reaper_self_heal_failed", jobId: job.id, orgId: job.ownerId });
       }
     }
 
@@ -1262,6 +1304,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           // cleanly — never retry (would re-create) and never terminal-fail (already FAILED).
           if (storeErr === REDELIVERY_DISCARD) {
             console.warn(`[gen] ${job.id}: redelivery already failed+refunded this job mid-flight — rolled back outputs, not delivering. Founder absorbed the engine cost.`);
+            // 商家没损失(已退款),平台损失了一次真实的引擎调用。它不是缺陷,是竞态的正确
+            // 结局——但它是**真钱**,零上报就等于没人知道它一天发生几次。
+            captureMoneyPathError(storeErr, { event: "gen.founder_absorbed_engine_cost", jobId: job.id, orgId: job.ownerId, kind: job.kind, model: job.model });
             return;
           }
           // exhausted: a persistent R2/DB outage. Re-throw to the terminal post-charge

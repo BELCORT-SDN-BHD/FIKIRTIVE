@@ -28,10 +28,15 @@ const m = vi.hoisted(() => ({
   generateVideo: vi.fn(),
   storagePut: vi.fn(),
   storagePresignedGet: vi.fn(),
+  // 整顿 C1a:报警管道注入成假 transport —— 用例断言的是「这类事件必然产生一次带上下文的
+  // 上报」,不是 Sentry/Resend/Telegram 本身,所以这里一个真实外呼都不发。
+  founderAlert: vi.fn(),
+  captureMoneyPathError: vi.fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: { put: m.storagePut, presignedGet: m.storagePresignedGet } }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
+vi.mock("../alerting.js", () => ({ founderAlert: m.founderAlert, captureMoneyPathError: m.captureMoneyPathError }));
 
 import { prisma, reserveCredits, settleCredits, refundReservation } from "@fikirtive/db";
 import { handleGen, reapStaleGenJobs, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
@@ -56,6 +61,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  m.founderAlert.mockResolvedValue([]);
   m.storagePresignedGet.mockImplementation(async (key: string) => `url:${key}`);
   m.storagePut.mockImplementation(async () => ({ contentHash: randomUUID().replace(/-/g, "").padEnd(64, "0").slice(0, 64) }));
 
@@ -70,6 +76,13 @@ beforeEach(async () => {
 afterAll(async () => {
   await prisma.$disconnect();
 });
+
+/** 这一趟巡检为**这一条**作业行发出的报警。同上:全局次数会被同库里别的行污染。 */
+function alertsFor(refId: string): { key: string; context: Record<string, unknown> }[] {
+  return m.founderAlert.mock.calls
+    .map((call) => call[0] as { key: string; context: Record<string, unknown> })
+    .filter((alert) => alert?.context?.genJobId === refId);
+}
 
 /** 这一单在钱上留下的全部痕迹 —— 张数与余额,不是文字。 */
 async function moneyTrail(refId = jobId) {
@@ -188,9 +201,31 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
       expect(money.kinds, "在一笔已结算的预扣上又开了一张退款").toEqual(["RESERVE", "SETTLE"]);
       expect(money.balance).toBe(START - HOLD); // 那笔钱确实还在平台这边
       expect(spy.mock.calls.flat().join(" ")).toContain("paid for nothing"); // 交给人看
+
+      // 整顿 C1a —— 「交给人看」到今天为止只是一行日志,而生产日志没有人二十四小时盯着。
+      // 这一条断言的是**报警真的发出去过一次**,并且带着足以定位这一单的上下文:哪个商家、
+      // 哪一单、扣了多少钱。少任何一样,收到报警的人都还得先去翻库才知道在说谁。
+      // 按作业行过滤,理由与上面那条注释一样:扫描是跨租户的,同一个库里还住着别的用例
+      // 留下来的行,拿全局次数当断言就是把用例交给运行次序。
+      expect(alertsFor(jobId), "这个商家付了钱什么都没拿到,而没有任何人被通知").toHaveLength(1);
+      expect(alertsFor(jobId)[0]).toEqual(
+        expect.objectContaining({
+          key: "gen.paid_for_nothing",
+          context: expect.objectContaining({ genJobId: jobId, orgId, chargedCredits: HOLD / 10 }),
+        }),
+      );
     } finally {
       spy.mockRestore();
     }
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("退得掉的那几行不报警 —— 报警只留给真的需要人来裁决的那一种", async () => {
+    // 反向钉板:没有这一条,上面那个断言只证明「报警器会响」,不证明「它只在该响的时候响」。
+    // 一个逢扫必响的报警器,和一个不响的报警器,一周之内会退化成同一个东西。
+    await seedDoneEmpty({ settled: false });
+    await reapStaleGenJobs();
+    expect((await jobRow()).status).toBe("FAILED");
+    expect(alertsFor(jobId), "一行自己就退得掉的作业,不该惊动 founder").toEqual([]);
   }, DB_CASE_TIMEOUT_MS);
 
   it("别人已经退过的那一行 → 翻成 FAILED,但不吞别家的退款(不多开第二张)", async () => {
