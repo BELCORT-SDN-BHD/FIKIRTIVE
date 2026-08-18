@@ -34,8 +34,26 @@ const REPO_ROOT = path.resolve(HERE, "../../..");
 /** 本契约文件自己逐字列出了所有变量名,扫描时必须排除,否则「源码里出现过」永远为真。 */
 const CONTRACT_FILE = path.join("packages", "core", "src", "env-contract.ts");
 
-const SCAN_ROOTS = ["apps/web", "apps/worker", "packages"];
-const SKIP_DIR = new Set(["node_modules", "dist", ".next", "__tests__", "migrations", ".git"]);
+/**
+ * 扫哪些树(C3)。原来只有前三个,于是两整片会读 env 的代码在契约眼里根本不存在:
+ * ops 脚本(`scripts/`,连同 `apps/web/scripts/`)与 e2e 夹具(`e2e/`)。
+ *
+ * `scripts/` 里一个 .ts 文件都没有(71 个 .mjs、12 个 .sh),所以只把目录加进来是**假的补全**
+ * ——走查器的扩展名过滤会把它整片跳过。要真的看见它,扩展名必须一并带上 `.mjs`,
+ * 这同时也把 `apps/web/scripts/boot.mjs`(容器的启动命令,web 的真实第一个进程)拉进了视野。
+ */
+const SCAN_ROOTS = ["apps/web", "apps/worker", "packages", "scripts", "e2e"];
+const SKIP_DIR = new Set([
+  "node_modules",
+  "dist",
+  ".next",
+  "__tests__",
+  "migrations",
+  ".git",
+  // `scripts/archive/` 是一次性 QA 脚本的墓地(留档用,永不再跑)。它读的名字里有整批
+  // 已经被裁掉的东西(FAL_KEY 之类),扫进来只会让契约替死人背账。
+  "archive",
+]);
 
 function collectSourceFiles(dir: string, out: string[]): void {
   let entries: string[];
@@ -52,8 +70,8 @@ function collectSourceFiles(dir: string, out: string[]): void {
       collectSourceFiles(full, out);
       continue;
     }
-    if (!/\.(ts|tsx)$/.test(entry)) continue;
-    if (/\.test\.tsx?$/.test(entry)) continue;
+    if (!/\.(ts|tsx|mjs)$/.test(entry)) continue;
+    if (/\.test\.(tsx?|mjs)$/.test(entry)) continue;
     if (rel === CONTRACT_FILE) continue;
     out.push(full);
   }
@@ -85,6 +103,31 @@ function envNamesReadInSource(text: string): Set<string> {
 
 const readInSource = envNamesReadInSource(sourceText);
 
+/**
+ * 部署进程之外读到的 env(C3)。
+ *
+ * 把 `scripts/` 与 `e2e/` 扫进来之后,新暴露出一批变量:它们真的被读,但读它们的东西
+ * 不是 web / worker / backup-cron 里的任何一个,而是**开发者手上的工具**。契约描述的是
+ * 部署进程的环境——把 e2e 的端口号和脚本的确认锁塞进 ENV_CONTRACT,只会让 .env.example
+ * 越来越不像一份可以照着配的生产配置。
+ *
+ * 但它们必须被**点名**:一个哪里都没登记的 env 读取,正是这张票要消灭的东西。所以这张
+ * 名单本身也被断言(见下面两条测试)——名字必须仍然真的被读到,并且不许同时出现在契约里。
+ * 想把其中一个转成生产变量,删掉这里的一行就会立刻红。
+ */
+const NON_DEPLOY_ENV: Readonly<Record<string, string>> = {
+  CI: "e2e 夹具判断自己是不是在 CI 上跑(e2e/playwright.config.ts)。由 GitHub Actions 注入。",
+  E2E_BASE_URL: "e2e 打哪个站点(e2e/support/env.ts)。",
+  E2E_PORT: "e2e 自己起 web 时用的端口(e2e/support/env.ts)。",
+  BASE_URL: "ops 追踪脚本打哪个站点(scripts/tools/*-tracer.mjs)。",
+  WEB_ORIGIN: "同上,另一半脚本用的名字。",
+  COWORK_PROVIDER: "离线评测脚本 scripts/tools/eval-cowork-knowledge.mjs 的模型开关,产品代码不读。",
+  ALLOW_LIVE:
+    "apps/web/scripts/create-credit-packs.mjs 的第二道确认:拿 live Stripe key 跑必须显式 ALLOW_LIVE=1。",
+  I_UNDERSTAND_THIS_SPENDS: "scripts/tools/_interlock.mjs 的花钱确认锁。",
+  I_UNDERSTAND_THIS_TOUCHES_PROD: "scripts/tools/_interlock.mjs 的碰生产确认锁。",
+};
+
 /** .env.example 里出现的变量名(`NAME=` 或注释掉的 `# NAME=`)。 */
 function envNamesInExample(text: string): Set<string> {
   const names = new Set<string>();
@@ -93,6 +136,24 @@ function envNamesInExample(text: string): Set<string> {
     if (m?.[1]) names.add(m[1]);
   }
   return names;
+}
+
+/**
+ * 「这个名字真的在源码里出现过吗」——词边界,不是裸子串(C3)。
+ *
+ * 旧写法是 `sourceText.includes(name)`。它在 `FOO_BAR` 上对 `FOO` 返回真,于是一个早已
+ * 没人读的变量,只要还有一个同前缀(或同后缀)的兄弟活着,就能永远冒充 readBy="code",
+ * 而这条本该抓死变量的检查会静静地一直绿。契约里这样的家族一抓一大把:
+ * DATABASE_URL / DATABASE_URL_POOLED、SENTRY_DSN / NEXT_PUBLIC_SENTRY_DSN、
+ * R2_BUCKET / R2_BACKUP_BUCKET、BETTER_AUTH_URL / NEXT_PUBLIC_BETTER_AUTH_URL、
+ * ASSET_UNDERSTANDING / ASSET_UNDERSTANDING_DAILY_BUDGET_USD。
+ *
+ * 变量名的字符集是 [A-Z][A-Z0-9_]*,全部落在 \w 里,所以 \b 正好卡在「前后不是字母、
+ * 数字或下划线」的位置:`FOO_BAR` 与 `MY_FOO` 都不再命中 `FOO`。同一个理由也意味着
+ * 名字里没有任何正则元字符,不需要转义(下面有一条测试把这个前提钉住)。
+ */
+function appearsAsWholeName(name: string, text: string): boolean {
+  return new RegExp(String.raw`\b${name}\b`).test(text);
 }
 
 const envExampleText = readFileSync(path.join(REPO_ROOT, ".env.example"), "utf8");
@@ -105,21 +166,44 @@ describe("env contract ↔ source ↔ .env.example (#797 债#8)", () => {
   });
 
   it("every env var the product source reads is declared in ENV_CONTRACT", () => {
-    const undeclared = [...readInSource].filter((name) => !ENV_CONTRACT_BY_NAME.has(name)).sort();
+    const undeclared = [...readInSource]
+      .filter((name) => !ENV_CONTRACT_BY_NAME.has(name) && !(name in NON_DEPLOY_ENV))
+      .sort();
     expect(
       undeclared,
       undeclared.length === 0
         ? ""
         : `These variables are read by product code but are not in ENV_CONTRACT. Declare them ` +
-          `(packages/core/src/env-contract.ts) so the boot check and .env.example can see them:\n` +
+          `(packages/core/src/env-contract.ts) so the boot check and .env.example can see them — ` +
+          `or, if a deployed process never reads them, add them to NON_DEPLOY_ENV in this file with a reason:\n` +
           undeclared.map((n) => `  • ${n}`).join("\n"),
+    ).toEqual([]);
+  });
+
+  it("the non-deploy exemption list cannot rot — every name on it is still read, and none of them is also in the contract", () => {
+    const stale = Object.keys(NON_DEPLOY_ENV).filter((name) => !readInSource.has(name)).sort();
+    expect(
+      stale,
+      stale.length === 0
+        ? ""
+        : `NON_DEPLOY_ENV exempts these, but nothing reads them any more. Delete the lines:\n` +
+          stale.map((n) => `  • ${n}`).join("\n"),
+    ).toEqual([]);
+
+    const bothPlaces = Object.keys(NON_DEPLOY_ENV).filter((name) => ENV_CONTRACT_BY_NAME.has(name)).sort();
+    expect(
+      bothPlaces,
+      bothPlaces.length === 0
+        ? ""
+        : `These are exempted as non-deploy AND declared in the contract — two truths about the same name:\n` +
+          bothPlaces.map((n) => `  • ${n}`).join("\n"),
     ).toEqual([]);
   });
 
   it("every declared var is actually read somewhere — or says honestly that it is not", () => {
     const wrong: string[] = [];
     for (const spec of ENV_CONTRACT) {
-      const appearsInSource = sourceText.includes(spec.name);
+      const appearsInSource = appearsAsWholeName(spec.name, sourceText);
       if (spec.readBy === "code" && !appearsInSource) {
         wrong.push(`${spec.name}: readBy="code" but the name appears nowhere in product source`);
       }
@@ -171,6 +255,16 @@ describe("env contract ↔ source ↔ .env.example (#797 债#8)", () => {
       // 指纹只对「两侧都读」的变量有意义。
       if (spec.shared && spec.surface !== "both") {
         problems.push(`${spec.name}: shared=true but surface is "${spec.surface}" — one side would never carry it`);
+      }
+      // 逐面覆盖只有在那一面真的读它时才有意义(C3)。给一个 web-only 的变量写
+      // worker 覆盖,是一条永远不会生效、却看起来像在生效的规则。
+      for (const [surface, requirement] of Object.entries(spec.requirementBySurface ?? {})) {
+        if (spec.surface !== "both" && spec.surface !== surface) {
+          problems.push(`${spec.name}: requirementBySurface names "${surface}" but surface is "${spec.surface}"`);
+        }
+        if (requirement === "conditional" && !spec.requiredWhen) {
+          problems.push(`${spec.name}: requirementBySurface."${surface}" is conditional without requiredWhen`);
+        }
       }
       if (!spec.summary.trim()) problems.push(`${spec.name}: empty summary`);
     }
@@ -366,6 +460,131 @@ describe("SENTRY_DSN is required in production (整顿 C1a)", () => {
     // 与全空同义,都只是「这条通道没开」。
     const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, TELEGRAM_BOT_TOKEN: "123:AA" }, { surface: "worker", production: true });
     expect(problems).toEqual([]);
+  });
+});
+
+/**
+ * C3 —— 契约说的和代码做的对齐的那几处。每一条都是先被实证抓到「文档说 A、代码做 B」,
+ * 再钉一格测试,而不是反过来。
+ */
+describe("env 契约修真(C3)", () => {
+  describe("扫描器认名字,不认子串", () => {
+    it("a name is not 'read' just because a longer sibling contains it", () => {
+      const text = "const a = process.env.FOO_BAR; const b = process.env.MY_FOO;";
+      expect(appearsAsWholeName("FOO_BAR", text)).toBe(true);
+      expect(appearsAsWholeName("MY_FOO", text)).toBe(true);
+      // 裸子串会把这两条都判成真,于是一个死掉的 FOO 可以永远冒充「还在被读」。
+      expect(text.includes("FOO")).toBe(true);
+      expect(appearsAsWholeName("FOO", text)).toBe(false);
+    });
+
+    it("the real families in this contract are the ones the substring check would have hidden", () => {
+      const text = "process.env.DATABASE_URL_POOLED + process.env.NEXT_PUBLIC_SENTRY_DSN";
+      expect(appearsAsWholeName("DATABASE_URL", text)).toBe(false);
+      expect(appearsAsWholeName("SENTRY_DSN", text)).toBe(false);
+      expect(appearsAsWholeName("DATABASE_URL_POOLED", text)).toBe(true);
+    });
+
+    it("every declared name is regex-safe, so the matcher needs no escaping", () => {
+      for (const spec of ENV_CONTRACT) {
+        expect(spec.name, `${spec.name}: env names must be [A-Z][A-Z0-9_]*`).toMatch(/^[A-Z][A-Z0-9_]*$/);
+      }
+    });
+  });
+
+  describe("BETTER_AUTH_URL:web 硬要求,worker 只是兜底", () => {
+    const { BETTER_AUTH_URL: _dropped, ...noAuthUrl } = CORE;
+
+    it("web without it is RED — sessions, callbacks and Stripe return URLs all bind to it", () => {
+      const problems = checkEnv({ ...noAuthUrl, ...REMOTE_STORAGE }, { surface: "web", production: true });
+      expect(problems.find((p) => p.name === "BETTER_AUTH_URL")?.kind).toBe("missing");
+    });
+
+    it("a worker carrying only PUBLIC_BASE_URL is GREEN — the old declaration refused to start it", () => {
+      const problems = checkEnv(
+        { ...noAuthUrl, ...REMOTE_STORAGE, PUBLIC_BASE_URL: "https://app.example.com" },
+        { surface: "worker", production: true },
+      );
+      expect(problems, "the boot check must not invent an outage the code does not have").toEqual([]);
+    });
+
+    it("a malformed value is still fatal on BOTH sides — the override is about strength, not format", () => {
+      for (const surface of ["web", "worker"] as const) {
+        const problems = checkEnv({ BETTER_AUTH_URL: "app.example.com" }, { surface, production: false });
+        expect(problems.map((p) => p.name)).toEqual(["BETTER_AUTH_URL"]);
+      }
+    });
+  });
+
+  describe("DATABASE_URL_POOLED 两侧都读", () => {
+    it("the worker now validates it too — it reads it in index.ts and in the nightly backup", () => {
+      const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, DATABASE_URL_POOLED: "not-a-url" }, {
+        surface: "worker",
+        production: true,
+      });
+      expect(problems.map((p) => p.name)).toEqual(["DATABASE_URL_POOLED"]);
+    });
+
+    it("staying unset is fine on both sides — it is a preference, never a requirement", () => {
+      for (const surface of ["web", "worker"] as const) {
+        expect(checkEnv({ ...CORE, ...REMOTE_STORAGE }, { surface, production: true })).toEqual([]);
+      }
+    });
+  });
+
+  describe("素材理解的两个开关(平台掏钱的那一路)", () => {
+    it("both stay optional — unset is the shipped shape (ON, $5/day)", () => {
+      expect(checkEnv({ ...CORE, ...REMOTE_STORAGE }, { surface: "worker", production: true })).toEqual([]);
+    });
+
+    it("a mistyped budget is caught at boot instead of silently reverting to the default", () => {
+      const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "5usd" }, {
+        surface: "worker",
+        production: true,
+      });
+      expect(problems.map((p) => p.name)).toEqual(["ASSET_UNDERSTANDING_DAILY_BUDGET_USD"]);
+    });
+
+    it("\"0\" is legal — a deliberate full stop is not a typo", () => {
+      const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "0" }, {
+        surface: "worker",
+        production: true,
+      });
+      expect(problems).toEqual([]);
+    });
+
+    it("web is never asked about them — only the worker runs the understand queue", () => {
+      const spec = ENV_CONTRACT_BY_NAME.get("ASSET_UNDERSTANDING");
+      expect(spec?.surface).toBe("worker");
+      expect(ENV_CONTRACT_BY_NAME.get("ASSET_UNDERSTANDING_DAILY_BUDGET_USD")?.surface).toBe("worker");
+    });
+  });
+
+  describe("WEB_BOOT_MIGRATION_STATUS:活的,而且只有两个合法值", () => {
+    it("accepts exactly what the boot script writes", () => {
+      for (const value of ["applied", "failed"]) {
+        expect(checkEnv({ ...CORE, ...REMOTE_STORAGE, WEB_BOOT_MIGRATION_STATUS: value }, {
+          surface: "web",
+          production: true,
+        })).toEqual([]);
+      }
+    });
+
+    it("rejects anything else — every other value is read as \"applied\", i.e. as a healthy lie", () => {
+      const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, WEB_BOOT_MIGRATION_STATUS: "ok" }, {
+        surface: "web",
+        production: true,
+      });
+      expect(problems.map((p) => p.name)).toEqual(["WEB_BOOT_MIGRATION_STATUS"]);
+    });
+  });
+
+  describe("META_GRAPH_MOCK 的文档说真话", () => {
+    it("the summary names the value the code actually compares against, and never the old \"1\"", () => {
+      const summary = ENV_CONTRACT_BY_NAME.get("META_GRAPH_MOCK")?.summary ?? "";
+      expect(summary).toContain("fixture");
+      expect(summary.toLowerCase()).toContain("production");
+    });
   });
 });
 
