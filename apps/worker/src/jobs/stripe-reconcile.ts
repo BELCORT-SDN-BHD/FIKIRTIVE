@@ -61,7 +61,9 @@ export const STRIPE_RECONCILE_WINDOW_MS = 48 * 60 * 60 * 1000;
 export const STRIPE_RECONCILE_GRACE_MS = 30 * 60 * 1000;
 
 const PAGE_SIZE = 100; // Stripe 单页上限
-const MAX_PAGES = 20; // 20 × 100 = 一个 48h 窗口里 2000 笔,远超实际量;超出会另报一次
+/** 翻页上限。20 × 100 = 一个 48h 窗口里 2000 笔,远超实际量;真撞上了会另报一次警,
+ *  因为「这一轮没看全」和「这一轮没发现问题」绝不能长得一样。导出是为了让用例够得着它。 */
+export const STRIPE_RECONCILE_MAX_PAGES = 20;
 
 export type StripeReconcileResult = {
   /** 窗口内取回的 session 总数(含未支付的)。 */
@@ -139,13 +141,13 @@ export async function reconcileStripePayments(opts?: {
     let truncated = false;
     let cursor: string | undefined;
     try {
-      for (let page = 0; page < MAX_PAGES; page++) {
+      for (let page = 0; page < STRIPE_RECONCILE_MAX_PAGES; page++) {
         const res = await port.list({ created: { gte, lte }, limit: PAGE_SIZE, ...(cursor ? { starting_after: cursor } : {}) });
         sessions.push(...res.data);
         if (!res.has_more) break;
         cursor = res.data.at(-1)?.id;
         if (!cursor) break; // has_more 但空页 —— 没有游标可走,当成读完
-        if (page === MAX_PAGES - 1) truncated = true;
+        if (page === STRIPE_RECONCILE_MAX_PAGES - 1) truncated = true;
       }
     } catch (e) {
       // 读不到 Stripe ≠ 没有缺口。绝不能安静地当成「一切正常」。
@@ -159,8 +161,8 @@ export async function reconcileStripePayments(opts?: {
     let alerted = 0;
     if (truncated) {
       alert(
-        `[stripe-reconcile] the 48h window returned more than ${MAX_PAGES * PAGE_SIZE} checkout sessions — this sweep did NOT see all of them; raise the page cap`,
-        { cap: MAX_PAGES * PAGE_SIZE },
+        `[stripe-reconcile] the 48h window returned more than ${STRIPE_RECONCILE_MAX_PAGES * PAGE_SIZE} checkout sessions — this sweep did NOT see all of them; raise the page cap`,
+        { cap: STRIPE_RECONCILE_MAX_PAGES * PAGE_SIZE },
       );
       alerted++;
     }

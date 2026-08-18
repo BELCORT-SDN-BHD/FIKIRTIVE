@@ -24,6 +24,7 @@ import { prisma } from "@fikirtive/db";
 import {
   reconcileStripePayments,
   STRIPE_RECONCILE_GRACE_MS,
+  STRIPE_RECONCILE_MAX_PAGES,
   STRIPE_RECONCILE_WINDOW_MS,
   type StripeCheckoutSessionLike,
   type StripeSessionsPort,
@@ -219,5 +220,22 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
     expect(result).toMatchObject({ scanned: 2, paid: 2, unreconciled: 2, alerted: 2 });
     const params = stripe.calls[1] as { starting_after?: string };
     expect(params.starting_after).toBe(sessionId);
+  }, DB_CASE_TIMEOUT_MS);
+});
+
+describe("钱路 M1-b ①:这一轮没看全 ≠ 这一轮没发现问题", () => {
+  it("翻页撞上上限时另报一次警,并如实说没看完", async () => {
+    // 每页都说 has_more，逼到上限。
+    const pages: StripeCheckoutSessionLike[][] = Array.from({ length: STRIPE_RECONCILE_MAX_PAGES + 2 }, (_, i) => [
+      { id: `cs_page_${i}`, payment_status: "unpaid", created: 0, metadata: {} },
+    ]);
+    const stripe = fakeStripe(pages);
+
+    const result = await reconcileStripePayments({ client: stripe, now: NOW });
+
+    expect(stripe.calls).toHaveLength(STRIPE_RECONCILE_MAX_PAGES);
+    expect(result.alerted).toBe(1);
+    const [err] = m.captureException.mock.calls[0] as [Error];
+    expect(err.message).toContain("did NOT see all of them");
   }, DB_CASE_TIMEOUT_MS);
 });
