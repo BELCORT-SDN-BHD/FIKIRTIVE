@@ -1,11 +1,12 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { formatElapsed, usualSeconds } from "@/lib/progress-format";
+import { formatElapsed, QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
 import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
+import { ErrorWithTopUp } from "@/components/exits/Exits";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
@@ -441,7 +442,7 @@ export function OttoPlanCard({
                   folds QUEUED and GENERATING into one "working"). So it says queued —
                   the one thing that is true either way — instead of "making this now". */}
               <span className="text-[0.875rem] font-semibold text-[var(--success-soft-foreground)]">
-                ✓ Approved — in the queue · {formatElapsed(elapsed)} · usually ~{usualSeconds(isVideo)}s
+                ✓ Approved — in the queue · {formatElapsed(elapsed)} · {QUEUE_WAIT_NOTE}
               </span>
               {genJobId && (
                 <Button variant="ghost" size="sm" disabled={busy} onClick={cancel}>
@@ -489,8 +490,12 @@ export function OttoPlanCard({
         )}
 
         {error ? (
+          // #971:钱不够那一句以前就停在这里 —— 一段写着「Top up in Billing.」却点不动的字。
+          // 商家在批准按钮上撞到它、已经决定要付钱了,还得自己去找 Billing 在哪(beta 录像
+          // 10:32,原地停了 40 秒)。`ErrorWithTopUp` 只认服务端那一份 CTA 字面量,别的错误
+          // 原样渲染,不会凭空长出充值链接。
           <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {error}
+            <ErrorWithTopUp text={error} />
           </div>
         ) : (
           <div className="mt-3 flex items-center gap-[6px] text-[0.75rem] text-muted-foreground/70">

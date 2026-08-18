@@ -226,10 +226,40 @@ export { buildSpecChips };
  *     也是引擎真收到的一张）；
  *   - 挂了不止一张图 → 说清哪张是底图，其余只参与理解（付费请求的底图字段是单值）。
  */
+/**
+ * #971 —— 「一张元素参考照都上不了车」这句话,按**这一趟的形状**说完整。
+ *
+ * 三档,一句都不含糊:
+ *   · 带首帧 —— 商家挂的那张图真的成为片子的第一帧(`EXECUTED_SPEC.video.startFrameHonoured`,
+ *     现役适配器把它作为 `image_url` 部件发出去)。先说这件事,再说元素照不上车;
+ *   · 带整段参考片 —— 同理,那条片子真的进引擎(`role:"reference_video"`);
+ *   · 两样都没有 —— 那就只剩「一张都不会用上」这一件事实,照旧原话说出来。
+ *
+ * 单复数照实说:总数是 1 时写 "reference photo",不写 "1 reference photos"。
+ */
+function zeroElementReferenceNote(
+  total: number,
+  shape?: { hasStartFrame?: boolean; hasReferenceVideo?: boolean },
+): string {
+  const one = total === 1;
+  const photos = one ? "reference photo" : "reference photos";
+  const notSent = `your ${total} saved ${photos} ${one ? "isn't" : "aren't"} sent alongside it`;
+  if (shape?.hasStartFrame) {
+    return `The picture on this card becomes the clip's first frame — ${notSent}.`;
+  }
+  if (shape?.hasReferenceVideo) {
+    return `The clip on this card is what this run follows — ${notSent}.`;
+  }
+  return `None of your ${total} ${photos} will be used for this clip.`;
+}
+
 export function buildReferenceBudgetNotes(input: {
   budget: ReferenceBudget;
   attachedImageCount: number;
   usesAttachedImage: boolean;
+  /** #971:这一趟视频的形状 —— 决定「一张元素照都不上车」这句话背后**真正的理由**,
+   *  也决定卡面要不要先把真会用上的那样东西说出来。图片卡不传。 */
+  videoShape?: { hasStartFrame?: boolean; hasReferenceVideo?: boolean };
 }): string[] {
   const notes: string[] = [];
   if (input.budget.truncated) {
@@ -237,8 +267,16 @@ export function buildReferenceBudgetNotes(input: {
       // #785：视频的三个带素材场景（首帧 / 首+末帧 / 整段参考视频）一张元素照都带不了，
       // 所以这里 used 会是 0。「use 0 of your 17」既不像人话，也读着像出了故障 ——
       // 零这一档单独说一句。仍然是**同一个数字**（budget），只是换了说法。
+      //
+      // #971(beta 录像 06:32 / 10:24)—— 零这一档说到一半就停了。「None of your 2 reference
+      // photos will be used for this clip.」字面为真(元素照确实一张都不上车),商家读到的
+      // 却是「我给的图一张都没用上」;而同一次生成里 Otto 在对话中(同样为真地)说刚做好的
+      // 那张图会当首帧。同一件事、两句相反的话,商家只能认定其中一句在骗他。
+      //
+      // 所以带素材的两档先把**真会用上的那样东西**说出来,再说元素照不上车。判据不在这里
+      // 手写:形状由铸卡侧算好传进来,与 `conditioningCap` 读的是同一组布尔。
       input.budget.used === 0
-        ? `None of your ${input.budget.total} reference photos will be used for this clip.`
+        ? zeroElementReferenceNote(input.budget.total, input.videoShape)
         : `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
     );
   }
@@ -269,7 +307,9 @@ export function withVideoReferenceChip(payload: CardPayload, elementReferenceCou
       payload.params,
       !!payload.sourceGenerationId,
       false, // usesAttachedImage 是图片侧的概念(编辑底图),视频卡永远为 false
-      { elementReferenceCount },
+      // #971:首帧那一格同样从卡自己读(带首帧 ⇒ 元素照 0 张 ⇒ 这个分支根本走不到,
+      // 所以两次算出来的前几格照旧逐字相同)。
+      { elementReferenceCount, hasStartFrame: !!payload.sourceGenerationId },
     ),
   };
 }
@@ -627,7 +667,12 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    specChips: buildSpecChips(kind, sm.params, shapeFollowsWhatTheyGave, usesAttachedImage),
+    // #971:首帧那一格只认 `isI2V` —— 整段参考片不是首帧,把它算进来就是承诺一件没发生的事。
+    // (`shapeFollowsWhatTheyGave` 把两者合在一起,那是**形状**那一格的口径,不是这一格的。)
+    specChips: buildSpecChips(kind, sm.params, shapeFollowsWhatTheyGave, usesAttachedImage, {
+      elementReferenceCount: 0,
+      hasStartFrame: isI2V,
+    }),
     downgraded,
     ...(downgraded
       ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, shapeFollowsWhatTheyGave) }

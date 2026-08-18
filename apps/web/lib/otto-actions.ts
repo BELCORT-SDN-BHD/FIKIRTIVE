@@ -67,6 +67,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 // the streaming route so an out-of-credits refusal is never reported as a product fault here
 // and as the real two numbers there.
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
+import { newThreadTitle } from "@/lib/otto-canned-starters";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
 // burned by a refusal knowable one line earlier. Never an authority; reserveCredits still decides.
 import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal } from "@/lib/spend-cap-preflight";
@@ -1582,7 +1583,10 @@ export async function ottoTurn(raw: unknown): Promise<
       // Persist USER message first (create thread row first if new — FK ordering)
       if (isNew) {
         await prisma.chatThread.create({
-          data: { id: threadId, ownerId, projectId, title: text.slice(0, 80) },
+          // #971:标题只能来自商家**自己**打的字。产品自己写好的起手 chip(Brand memory 那
+          // 四句)被点一下也是一条消息,但它是我们的文案 —— 拿它当标题,画布随后沿用,
+          // 商家的画布就在侧栏里叫「Let me describe my brand to you — …」(beta 录像 01:28)。
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text) },
         });
       }
       const userMessageId = newId();

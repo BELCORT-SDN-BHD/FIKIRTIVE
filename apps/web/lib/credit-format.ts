@@ -44,8 +44,21 @@ export function creditsLabel(n: number): string {
  *  Takes the DISPLAYED credits the action was quoted at (same unit as every other helper here),
  *  never a hand-written number — so the amount named is always the amount actually attempted. */
 export function outOfCreditsMessage(quotedCredits: number): string {
-  return `Not enough credits — this needs ${creditsLabel(quotedCredits)}. Top up in Billing.`;
+  return `Not enough credits — this needs ${creditsLabel(quotedCredits)}. ${TOP_UP_CTA}`;
 }
+
+/** 每一句「钱不够」的收尾 —— **也是这句话唯一的出口**(#971)。
+ *
+ *  #699 把三份措辞收成一份,并把商家指向 Billing。可这几句话是**服务端动作返回的字符串**,
+ *  卡片那一层从来只是 `{error}` 一段死文字:beta 录像 10:32,商家在批准按钮上撞到
+ *  「Not enough credits — this needs 22 credits. Top up in Billing.」,然后在原地停了 40 秒 ——
+ *  他已经决定要付钱了,产品却让他自己去找 Billing 在哪。
+ *
+ *  所以这句 CTA 从字符串里提出来成为常量:句子照旧由服务端拼(数字必须是真的那一次报价),
+ *  而渲染层拿这同一个常量把结尾换成一条真的能点的链接(`components/exits/Exits.tsx` 的
+ *  `ErrorWithTopUp`)。两边钉着同一份字面量,所以「句子改了、链接认不出来了」这件事会当场红,
+ *  不会悄悄退回一段死文字。 */
+export const TOP_UP_CTA = "Top up in Billing.";
 
 /** The ONE thing a merchant is told when THEIR OWN spend cap stopped an action (#524).
  *
@@ -89,7 +102,7 @@ export function chatHoldShortfallMessage(
   minimumCredits: number,
 ): string {
   if (balanceCredits === null) return outOfCreditsMessage(minimumCredits);
-  return `You have ${creditsLabel(balanceCredits)} — starting a message with Otto needs at least ${creditsLabel(minimumCredits)}. Top up in Billing.`;
+  return `You have ${creditsLabel(balanceCredits)} — starting a message with Otto needs at least ${creditsLabel(minimumCredits)}. ${TOP_UP_CTA}`;
 }
 
 /** The early warning, shown BEFORE they try (#791-7): the balance is under what one video

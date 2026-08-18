@@ -35,6 +35,7 @@ import { requireOwner } from "@/lib/auth-guard";
 import { prisma } from "@fikirtive/db";
 import { refundReservation } from "@fikirtive/db";
 import { revalidatePath } from "next/cache";
+import { BRAND_MEMORY_STARTERS } from "@/lib/otto-canned-starters";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -161,6 +162,21 @@ describe("autoTitleProjectIfDefault — a new project takes its name from the fi
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
     expect(prisma.project.update).not.toHaveBeenCalled();
   });
+
+  // #971(beta 录像 01:28)—— 画布叫「Let me describe my brand to you — ask me what you need
+  // to know.」。那不是商家写的字,是 Brand memory 起手 chip 里我们自己的文案。建对话那一侧
+  // 已经不会再把它写成标题,但**已经叫这个名字的旧对话行还在库里**,而画布是从对话标题抄
+  // 名字的 —— 少了这一条,那些画布会继续被我们的文案命名。
+  it.each(BRAND_MEMORY_STARTERS.map((c) => [c.label, c.prompt] as const))(
+    "never copies our own starter chip「%s」onto a canvas",
+    async (_label, prompt) => {
+      (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+      (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: prompt.trim() });
+
+      await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
+      expect(prisma.project.update).not.toHaveBeenCalled();
+    },
+  );
 
   it("never copies a project placeholder name across either", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });

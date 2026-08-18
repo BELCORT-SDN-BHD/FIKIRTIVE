@@ -28,6 +28,7 @@ import {
 import type { EntityType, ShotStatus } from "@fikirtive/db";
 import { storage, extFromFilename } from "./storage";
 import { getBoss } from "./queue";
+import { isCannedStarter } from "./otto-canned-starters";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
@@ -372,7 +373,12 @@ export async function autoTitleProjectIfDefault(projectId: string): Promise<{ ok
       select: { title: true },
     });
     const title = thread?.title?.trim();
-    if (!title || title === UNTITLED_CHAT_TITLE || DEFAULT_PROJECT_NAMES.has(title)) return { ok: true }; // nothing to adopt yet
+    // #971:产品自己写好的起手 chip 不是商家的命名。新对话那一侧已经不会再把它写成标题,
+    // 但**已经叫这个名字的旧对话行还在库里**,而画布是从对话标题抄名字的 —— 少了这一条,
+    // 那些画布会继续被我们的文案命名。宁可留着「New project」等真正的内容来命名它。
+    if (!title || title === UNTITLED_CHAT_TITLE || DEFAULT_PROJECT_NAMES.has(title) || isCannedStarter(title)) {
+      return { ok: true }; // nothing to adopt yet
+    }
     const clean = title.slice(0, 80);
     await prisma.project.update({ where: { id: project.id }, data: { name: clean } });
     await logAction(ownerId, "project.autotitle", project.id, { name: clean });

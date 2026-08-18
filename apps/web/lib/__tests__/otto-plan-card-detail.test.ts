@@ -75,6 +75,7 @@ import {
   runStateSpins,
   shouldShowTracePanel,
 } from "@/lib/otto-status-helpers";
+import { outOfCreditsMessage } from "@/lib/credit-format";
 
 // ---------------------------------------------------------------------------
 // 1. 类型对齐 —— 卡面类型是从契约派生的,不是抄的
@@ -684,6 +685,40 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
 
     expect(onApproved).not.toHaveBeenCalled();
     expect(host.textContent).toContain("Not enough credits.");
+  });
+
+  // -------------------------------------------------------------------------
+  // #971 —— 「钱不够」不许是一条死路(beta 录像 10:32:商家撞在这句话上停了 40 秒)
+  //
+  // 与 #707 三张卡同一个病,只是这一张当时没被数进去:句子告诉商家去 Billing,
+  // 而卡上没有任何东西能点。他已经决定要付钱了,产品却让他自己去找路。
+  // -------------------------------------------------------------------------
+  it("#971 钱不够时,卡上有一条真的能点去 Billing 的路", async () => {
+    coworkGenerateMock.mockResolvedValue({
+      error: outOfCreditsMessage(22),
+    });
+    const host = mountCard({ pendingApproval: false, onApproved: vi.fn() });
+    await approveThroughTheUi(host);
+
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert, "短余额提示根本没显示").toBeTruthy();
+    // 服务端算出的那个数字照旧原样说出来 —— 拒绝不许藏起它是拿什么判的。
+    expect(alert!.textContent).toContain("this needs 22 credits");
+    const link = alert!.querySelector<HTMLAnchorElement>('a[href="/billing"]');
+    expect(link, "叫商家去充值,却没给他路").toBeTruthy();
+    expect(link!.textContent?.trim()).toBe("Top up in Billing");
+    // 而且句子只说一遍 —— 链接是把结尾那句换掉,不是在后面再补一句。
+    expect(alert!.textContent!.match(/Top up in Billing/g)).toHaveLength(1);
+  });
+
+  it("#971 别的错误不许凭空长出一个充值链接", async () => {
+    coworkGenerateMock.mockResolvedValue({ error: "Project not found." });
+    const host = mountCard({ pendingApproval: false, onApproved: vi.fn() });
+    await approveThroughTheUi(host);
+
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert!.textContent).toContain("Project not found.");
+    expect(alert!.querySelector('a[href="/billing"]'), "钱没问题的错误挂了一条充值路").toBeNull();
   });
 });
 

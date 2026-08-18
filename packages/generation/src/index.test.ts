@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   EXECUTED_SPEC, GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES,
   imageAspectHonoured, imageCoherentSetHonoured, buildSpecChips, conditioningCap, videoElementReferencesHonoured,
+  videoStartFrameHonoured, VIDEO_START_FRAME_CHIP,
   type GenVideoModel,
 } from "@fikirtive/core";
 import { createGenerationProvider, MockProvider } from "./index.js";
@@ -225,6 +226,54 @@ describe("#785 videoElementReferencesHonoured() ↔ 适配器对元素照的实�
       expect(sent.carried).toBe(0);
       const chips = buildSpecChips("video", VIDEO_PARAMS, false, false, { elementReferenceCount: 0 });
       expect(chips.some((c) => c.includes("reference photos"))).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // #971 —— 首帧那一格:卡面说「Starts from your image」,适配器就得真把那张图发出去。
+  //
+  // 这一格是 beta 录像 06:32 / 10:24 那对矛盾的正面修补:带首帧的片子里元素照一张都不上车,
+  // 于是卡上唯一一句关于图片的话是「你那 2 张一张都不会用上」——字面为真,读起来却是
+  // 「什么图都没用」,而对话里 Otto 同时说刚做好的那张会当首帧。现在卡面自己先把真会用上的
+  // 那张说出来,所以这句承诺必须与适配器的实际请求体钉在一起。
+  // -------------------------------------------------------------------------
+  it("#971 首帧:卡面承诺与适配器真发出去的那张图一致", async () => {
+    await withProvider("byteplus", async () => {
+      const claimed = videoStartFrameHonoured();
+      const chips = buildSpecChips("video", VIDEO_PARAMS, true, false, {
+        elementReferenceCount: 0,
+        hasStartFrame: true,
+      });
+      expect(chips.includes(VIDEO_START_FRAME_CHIP)).toBe(claimed);
+
+      // 真跑一次带首帧的提交,证明那张图确实进了请求体。
+      let body: unknown;
+      vi.useFakeTimers();
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+        const u = String(url);
+        if (u.includes("/contents/generations/tasks") && init?.method === "POST") {
+          body = JSON.parse(init.body!);
+          return { ok: true, status: 200, json: async (): Promise<unknown> => ({ id: "cgt-971" }), text: async (): Promise<string> => "" };
+        }
+        if (u.includes("/contents/generations/tasks/")) {
+          return { ok: true, status: 200, json: async (): Promise<unknown> => ({ status: "succeeded", content: { video_url: "https://x/v.mp4" } }), text: async (): Promise<string> => "" };
+        }
+        return { ok: true, status: 200, arrayBuffer: async (): Promise<ArrayBuffer> => new Uint8Array([1]).buffer, text: async (): Promise<string> => "" };
+      }));
+      try {
+        const promise = createGenerationProvider().generateVideo({
+          prompt: "make her walk toward the camera", imageUrl: "https://r2/first.png",
+          durationSeconds: 5, model: "seedance-2-mini" as GenVideoModel,
+        });
+        await vi.runAllTimersAsync();
+        await promise;
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      }
+      expect(JSON.stringify(body ?? {}), "卡面说从这张图起帧,请求体里却没有它").toContain("https://r2/first.png");
+      // 首帧那一档元素照一张都不上车 —— 名额与卡面读的是同一个判据,不许一边说、一边送。
+      expect(conditioningCap({ kind: "video", hasVideoStartFrame: true })).toBe(0);
     });
   });
 });
