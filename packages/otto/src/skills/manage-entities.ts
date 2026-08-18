@@ -105,7 +105,7 @@ export const manageEntitiesSkill = defineOttoSkill({
     "Manage the user's reusable elements — the @-referenceable characters, locations, products and brandmarks — $0, never generates or spends. " +
     "create: a new NAMED element (needs name + type). It has NO reference photos yet — tell the user to add photos on the elements page (uploading a file is something they do by hand). " +
     "update: correct an element's name and/or kind (needs entityId plus name, type, or both) — use this when something was saved as the wrong kind, e.g. a bottle saved as a person. " +
-    "It applies to the next generation only, and it is refused while a generation using that element is still running. " +
+    "It applies to the next generation only. Moving an element OUT of CHARACTER is refused while a generation using it is still running (that change would drop a safety check on work already queued) — every other change goes through. " +
     "delete: remove an element (needs entityId; history stays intact). " +
     "delete_reference_image: remove one reference photo from an element (needs refImageId).",
   parameters: params,

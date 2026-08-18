@@ -460,13 +460,6 @@ export async function createEntity(formData: FormData) {
   });
 }
 
-/** 换类型时,这一单在飞的生成算「还没跑到读类型那一步」的时限。
- *
- *  与 refgen-actions 的 STALE_MS 同一个数字、同一个理由:worker 死在半路的任务会永远停在
- *  QUEUED,而一道没有时限的闸会把「改错类型」变成**永久改不回来** —— 那正是这张票要修的病。
- *  过了这个窗口的在飞任务按已废弃处理,不再挡住商家纠正标签。 */
-const ENTITY_TYPE_INFLIGHT_MS = 15 * 60 * 1000;
-
 export async function updateEntity(
   entityId: string,
   fields: { name?: string; notes?: string; negativeConstraints?: string; type?: string },
@@ -491,31 +484,61 @@ export async function updateEntity(
       });
       if (!current) return { error: "Entity not found." };
       if (current.type !== fields.type) {
-        // 唯一一处真会被「飞行中改类型」弄坏的地方:worker 那道**只对 CHARACTER 生效**的
-        // 定锚闸(apps/worker/src/jobs/gen.ts,`liveEntity.type === "CHARACTER"`)读的是活行类型。CHARACTER 改成别的,
-        // 这道闸就在一单已经排上队的作业底下自己消失,而它挡的正是「没有参考照的角色滑
-        // 进一次没有条件图的付费调用」—— 守望者是 fail-OPEN 的,这道闸是最后一层。钱的
-        // 事一律 fail closed,所以这一刻不许改。
+        // ── 把 CHARACTER 改成别的类型:在飞的付费作业底下不许改 ────────────────────
+        //
+        // 与 `deleteVariant`(refgen-actions.ts)同一条规矩、同一套论证:钱路 fail-closed 闸,
+        // **没有陈旧窗口**。
+        //
+        // 要保住的是什么:worker 那道**只对 CHARACTER 生效**的定锚闸
+        // (apps/worker/src/jobs/gen.ts,`liveEntity.type === "CHARACTER" && found.length === 0`)。
+        // 它挡的是「没有参考照的角色滑进一次没有条件图的付费调用」,而守望者(checkCast)
+        // 是 fail-OPEN 的,所以它是最后一层。CHARACTER 一旦被改走,这道闸就在一单**已经排
+        // 上队**的作业底下自己消失,那一单于是照跑照花钱 —— 不改类型的话它本会
+        // `failClosedWithRefund` 退款。钱的事一律 fail closed,所以这个方向不许改。
+        //
+        // ── 为什么**只**拦这一个方向 ──────────────────────────────────────────────
+        // 反方向(别的类型 → CHARACTER)只会给这一单**加**上那道闸,不会抽走任何东西:
+        // 有参考照 → 闸不触发,什么都没变;没有参考照 → 闸触发,终态失败 + 退款。两种结
+        // 果都不漏钱,所以没有理由拦。CHARACTER 之外互相改(如 PRODUCT → LOCATION)根本
+        // 碰不到这道闸,同样不拦。锁定面因此只剩「CHARACTER + 有在飞作业」这一格。
+        //
+        // ⚠️ 这一格里**不许**再按「有没有审批快照」二次收窄 —— 那会把洞重新开出来:
+        // 定锚闸读的是 `liveEntity.type`(worker 现查的活行),与 `job.approvedEntities`
+        // 无关。快照只保护提示词里那个名字与类型(`approved?.type ?? liveEntity.type` 决定
+        // 编号句里的名词),保护不到定锚。所以**带快照的单与不带快照的单同样要拦**;startGen
+        // 的 `approvedEntityDrift` 只拦得住下一次花钱,拦不住此刻已经在队列里的这一单。
+        //
+        // ── 为什么没有陈旧窗口 ──────────────────────────────────────────────────
+        // 与 deleteVariant 逐字同因:任何窗口都会比这条产品线自己的付费时钟链短,而链上每
+        // 一档都还在花钱 —— 供应商轮询 15m < GEN_STALE_MS 18m < 队列过期 20m < 清道夫
+        // GEN_REAP_MS/GEN_QUEUED_REAP_MS 25m(apps/worker/src/jobs/clock-invariants.test.ts
+        // 钉死)。一个 QUEUED 了 16 分钟的单,pg-boss 照送、worker 照跑、钱照花(gen.ts 里
+        // GEN_QUEUED_REAP_MS 的注释写得很白:25 分钟以内 QUEUED 都可能只是排队没轮到)。
+        // 按「超时=废弃」放行,等于恰好在它还会花钱的那几分钟里把闸打开。
+        //
+        // 「岂不是永久锁死?」不会,而且这里不需要任何时间常量:reapStaleGenJobs 对 QUEUED
+        // 与 GENERATING 都会在 ~25 分钟加一轮巡检(5 分钟一扫)里终态化并退款,之后这道闸
+        // 自然放行。最坏是等半小时,不是改不回来。
         //
         // 只挡 GenJob,**不挡 RefGenJob**:参考图那条路在建单那一刻就把整句提示词冻在
         // `RefGenJob.prompt` 上,它的 worker(apps/worker/src/jobs/refgen.ts)从头到尾
         // 一次都没读过 `entity.type` —— 挡它属于凭空立规矩,不是防护。
         //
-        // 带审批快照的 GenJob 本来就已经被两道现成的闸护住,这里不重复:startGen 的
-        // `approvedEntityDrift` 在花钱之前就会因为类型变了而拒绝(gen-actions.ts),
-        // worker 的编号句也只认快照里的类型(`approved?.type ?? liveEntity.type`)。这道闸补的是**没有快照**的
-        // 那些单 —— 它们的类型是 worker 现读的。
-        const inFlight = await prisma.genJob.findFirst({
-          where: {
-            ownerId,
-            status: { in: ["QUEUED", "GENERATING"] },
-            updatedAt: { gte: new Date(Date.now() - ENTITY_TYPE_INFLIGHT_MS) },
-            entityIds: { has: entityId },
-          },
-          select: { id: true },
-        });
-        if (inFlight) {
-          return { error: "A generation using this is still running — wait for it to finish, then change the type." };
+        // 已知未闭合(不在本票范围):这次读与下面那次写不在同一事务里,与 startGen 之间存
+        // 在亚秒级 TOCTOU 窗口。这是本文件既有形状的通病(改名同样暴露),另票跟踪,别把它
+        // 当成已解决。
+        if (current.type === "CHARACTER") {
+          const inFlight = await prisma.genJob.findFirst({
+            where: {
+              ownerId,
+              status: { in: ["QUEUED", "GENERATING"] },
+              entityIds: { has: entityId },
+            },
+            select: { id: true },
+          });
+          if (inFlight) {
+            return { error: "A generation using this is still running — wait for it to finish, then change the type." };
+          }
         }
         data.type = fields.type as EntityType;
         typeFrom = current.type;

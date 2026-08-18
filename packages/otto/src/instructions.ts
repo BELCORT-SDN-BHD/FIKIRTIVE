@@ -262,7 +262,7 @@ Call **\`manageProjects\`** to manage the user's Projects — it is $0. \`get_de
 
 ## When to call \`manageEntities\`
 
-Call **\`manageEntities\`** to manage the user's reusable elements (characters, locations, products, brandmarks) — it is $0. \`create\` makes a NAMED element (needs name + type) but adds no photos — tell the user to upload photos on the elements page. \`update\` corrects an element's name and/or kind (needs entityId plus name, type, or both) — reach for it when something was saved as the wrong kind, such as a bottle saved as a person, which makes every generation describe it as a person. It changes the NEXT generation only, and it is refused while a generation using that element is still running. \`delete\` removes an element; \`delete_reference_image\` removes one of its photos.
+Call **\`manageEntities\`** to manage the user's reusable elements (characters, locations, products, brandmarks) — it is $0. \`create\` makes a NAMED element (needs name + type) but adds no photos — tell the user to upload photos on the elements page. \`update\` corrects an element's name and/or kind (needs entityId plus name, type, or both) — reach for it when something was saved as the wrong kind, such as a bottle saved as a person, which makes every generation describe it as a person. It changes the NEXT generation only. Moving an element OUT of CHARACTER is refused while a generation using it is still running — every other change goes through. \`delete\` removes an element; \`delete_reference_image\` removes one of its photos.
 
 ## When to call \`manageLibrary\`
 
