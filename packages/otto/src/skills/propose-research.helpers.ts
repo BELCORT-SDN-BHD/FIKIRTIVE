@@ -46,7 +46,7 @@ export function researchTierSearchBudgetInternal(maxSearches: number): number {
 /** 每档 maxSteps → 卡面 DISPLAY 预估 credits,DERIVED(不再拍脑袋占位)。
  *
  *  卡面显示走 DISPLAYED 单位(全 UI 惯例:estimatedCredits = displayCredits(internal),见
- *  propose.helpers.ts 的 gen 卡),故这里 = displayCredits(researchTierBudgetInternal(maxSteps)),
+ *  propose.helpers.ts 的 gen 卡),故这里 = displayCredits(researchTierBudgetInternal(maxSteps, maxSearches)),
  *  Math.ceil 到整数显示 credit。→ 卡面估值 ≈ worker 真 reserve(同一档、同一模型、同一 margin)。
  *  注意:显示值 ≠ 内部 budget(差 INTERNAL_PER_DISPLAY 倍),approve 的余额门用 internal 版本。 */
 export function researchTierEstimate(maxSteps: number, maxSearches: number): number {
