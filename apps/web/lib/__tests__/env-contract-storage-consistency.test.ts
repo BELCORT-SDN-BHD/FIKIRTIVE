@@ -26,6 +26,10 @@ const CORE = {
   DATABASE_URL: "postgresql://u:p@host:5432/db",
   BETTER_AUTH_SECRET: "s".repeat(32),
   BETTER_AUTH_URL: "https://app.example.com",
+  // 整顿 C1a 起 SENTRY_DSN 在生产是必填。这个 fixture 的意思一直是「一个最小的、
+  // 合格的生产 env」,所以它跟着契约走 —— 这里的用例问的是 STORAGE_DRIVER,
+  // 少一个不相干的必填项会让每一格都多出一条噪音。
+  SENTRY_DSN: "https://key@o1.ingest.sentry.io/2",
 };
 
 const TOUCHED = ["STORAGE_DRIVER", ...Object.keys(R2_CREDS), ...Object.keys(CORE)] as const;
