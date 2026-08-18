@@ -24,9 +24,10 @@ import { getOrCreateDefaultProject } from "./actions";
 import { getMyAccount } from "./account-actions";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import {
+  getAllCoworkThreadMetas,
   getCoworkThread,
-  getCoworkThreads,
   getEntities,
+  getProjects,
   resolveCoworkResultUrls,
 } from "./data";
 import { toChatThreadDTO, toChatThreadMetaDTO, toEntityDTO } from "./dto";
@@ -40,7 +41,15 @@ export type OttoPanelSeed = {
   projectId: string;
   /** @提及要用的清单。 */
   entities: EntityDTO[];
-  /** 这个 project 的会话;最近那一条带完整消息,其余是 meta。 */
+  /** 会话历史用的项目清单(W2-8:面板头部那份列表按项目分组)。 */
+  projects: { id: string; name: string; pinnedAt: string | null }[];
+  /**
+   * **每一个** project 的会话 meta(W2-8 起)。
+   *
+   * 从前这里只有当前 project 那一份 —— 面板里的历史列表要按项目分组,拿一个 project 的
+   * 会话画不出分组。取的是 `/otto` 那条侧栏今天用的同一个函数
+   * (`getAllCoworkThreadMetas`),不是为面板另写一条查询。最近那一条带完整消息。
+   */
   threads: ChatThreadDTO[];
   /** 打开时停在哪一条;没有会话就是 null(面板画前门)。 */
   activeThreadId: string | null;
@@ -67,14 +76,17 @@ export async function loadOttoPanelSeed(): Promise<OttoPanelSeed | { error: stri
   const { ownerId } = gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<OttoPanelSeed | { error: string }> => {
-    const [entities, threadRows, userName] = await Promise.all([
+    const [entities, projectRows, threadRows, userName] = await Promise.all([
       getEntities(ownerId),
-      getCoworkThreads(ownerId, ensured.id),
+      getProjects(ownerId),
+      getAllCoworkThreadMetas(ownerId),
       ottoGreetingNameFromProfile(getMyProfileNames),
     ]);
 
     let threads = threadRows.map(toChatThreadMetaDTO);
-    const openThreadId = threadRows[0]?.id ?? null;
+    // 打开时停在**当前 project** 最近那一条 —— 与 W2-7 逐字同义。列表现在覆盖每一个
+    // project,但「面板一打开接着聊哪一条」不跟着变宽,那是另一个决定。
+    const openThreadId = threadRows.find((t) => t.projectId === ensured.id)?.id ?? null;
     if (openThreadId) {
       const full = await getCoworkThread(ownerId, openThreadId);
       if (full) {
@@ -87,6 +99,11 @@ export async function loadOttoPanelSeed(): Promise<OttoPanelSeed | { error: stri
     return {
       projectId: ensured.id,
       entities: entities.map(toEntityDTO),
+      projects: projectRows.map((p) => ({
+        id: p.id,
+        name: p.name,
+        pinnedAt: p.pinnedAt ? p.pinnedAt.toISOString() : null,
+      })),
       threads,
       activeThreadId: openThreadId,
       balanceUsd: "error" in accountResult ? 0 : accountResult.balanceUsd,

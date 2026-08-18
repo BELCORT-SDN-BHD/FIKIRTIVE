@@ -20,6 +20,8 @@
  * 与路由处理器读的是同一份。
  */
 
+import { GOAL_PRESETS, type GoalKey } from "@fikirtive/core/goals";
+
 /** 新对话在还没有名字时叫什么。历来就是这个字面量(`clip-actions` 建对话时也用它)。 */
 export const UNTITLED_CHAT_TITLE = "Untitled";
 
@@ -51,15 +53,27 @@ export const BRAND_MEMORY_STARTERS: CannedStarter[] = [
 /**
  * 前门四个目标格子的标签 —— 点一下发出去的就是这句话本身(`OttoFrontDoor` 的 `start()`)。
  * 键就是随这一轮上报的 `goalKey`,所以标签与 goalKey 不可能各写一份。
+ *
+ * 字面量取自 `GOAL_PRESETS`(W2-8):同一句话原本在这里与 `packages/core/src/goals.ts` 各写
+ * 了一遍,改一处另一处不会红。**这四个键是显式的**——前门就画这四格,后来为面板 chips 加
+ * 的目标不会因为这里的推导而悄悄多出一格。
  */
 export const FRONT_DOOR_GOAL_LABELS = {
-  "sell-product": "Sell a product",
-  "announce-sale": "Announce a sale",
-  "get-followers": "Get more followers",
-  "make-video": "Make a video",
+  "sell-product": GOAL_PRESETS["sell-product"].label,
+  "announce-sale": GOAL_PRESETS["announce-sale"].label,
+  "get-followers": GOAL_PRESETS["get-followers"].label,
+  "make-video": GOAL_PRESETS["make-video"].label,
 } as const;
 
 export type FrontDoorGoalKey = keyof typeof FRONT_DOOR_GOAL_LABELS;
+
+/** 每一个目标标签(含只在面板 chips 上出现的那几个)。命名守卫认的是这一份。 */
+export const GOAL_LABELS: readonly string[] = Object.values(GOAL_PRESETS).map((g) => g.label);
+
+/** 目标 key → 它那句话。界面画 chip 时取这里,不自己写字。 */
+export function goalLabel(key: GoalKey): string {
+  return GOAL_PRESETS[key].label;
+}
 
 /** 比对用的归一化:去首尾空白、把连续空白压成一个空格、转小写。
  *  商家点 chip 发出的字与常量逐字相同,归一化只是让「多一个空格」这类无意义差异不算数。 */
@@ -71,7 +85,9 @@ function normalize(text: string): string {
 const CANNED_EXACT = new Set(
   [
     ...BRAND_MEMORY_STARTERS.filter((c) => !c.opensWith).map((c) => c.prompt),
-    ...Object.values(FRONT_DOOR_GOAL_LABELS),
+    // **全部**目标标签,不只是前门那四个:面板底部的页面 chips 发出去的也是我们写的字,
+    // 少认一个,商家的画布就会叫「Fill next week」(#979 那个病的第三组样本)。
+    ...GOAL_LABELS,
   ].map(normalize),
 );
 

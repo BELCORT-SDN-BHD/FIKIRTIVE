@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { MAX_GEN_PROMPT, MAX_GEN_ENTITIES, MAX_GEN_COUNT } from "./gen.js";
+import { GOAL_KEYS } from "./goals.js";
 import { clampVisionInts } from "./runtime-config.js";
 
 export const MAX_COWORK_IDEA = 4000;
@@ -39,7 +40,9 @@ export const coworkTurnRequest = z.object({
   replyToMessageId: z.string().min(1).max(64).optional(),
   // Goal tile selection — optional; absent on plain turns + legacy callers (additive, safe).
   // On a NEW thread, ottoTurn seeds the opening with the preset's plain-language framing.
-  goalKey: z.enum(["sell-product", "announce-sale", "get-followers", "make-video"]).optional(),
+  // 键从 GOAL_PRESETS 生成(W2-8):这里原来手抄了一份四个键的清单,加一个目标就要记得同时
+  // 改两处,而漏改的那一天服务端会静默拒收一个界面上真的画着的 chip。
+  goalKey: z.enum(GOAL_KEYS).optional(),
   // Simple mode — inject plain-language voice block (Task 6). Absent → legacy/pro behavior.
   simple: z.boolean().optional(),
   // #879 step 1: optional page-context pins for the Otto foundation schema (semantics land in
