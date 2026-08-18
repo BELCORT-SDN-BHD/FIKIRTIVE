@@ -52,6 +52,12 @@ const SKIP_DIR = new Set([
   ".git",
   // `scripts/archive/` 是一次性 QA 脚本的墓地(留档用,永不再跑)。它读的名字里有整批
   // 已经被裁掉的东西(FAL_KEY 之类),扫进来只会让契约替死人背账。
+  //
+  // ⚠️ 这是**裸目录名**,对全部扫描根生效。今天全仓只有 scripts/archive 这一个
+  // (`find apps packages e2e scripts -type d -name archive` 只出它),所以是安全的;
+  // 但将来谁在 apps/ 或 packages/ 下建一个叫 archive 的**业务**目录,那片代码读的 env
+  // 就会对契约整片隐身——而且不会有任何一条测试红。真到那天,把这条改成带路径前缀的
+  // 判断(只跳过 scripts/archive),别扩大这个裸名。
   "archive",
 ]);
 
@@ -180,7 +186,9 @@ describe("env contract ↔ source ↔ .env.example (#797 债#8)", () => {
     ).toEqual([]);
   });
 
-  it("the non-deploy exemption list cannot rot — every name on it is still read, and none of them is also in the contract", () => {
+  // 两条断言刻意分成两个 it:同一个 it 里第一条失败会中止那个 it,第二条再坏也看不见。
+  // 名单烂掉与名单重复是两种不同的坏法,要能同时看见。
+  it("the non-deploy exemption list cannot rot — every name on it is still read", () => {
     const stale = Object.keys(NON_DEPLOY_ENV).filter((name) => !readInSource.has(name)).sort();
     expect(
       stale,
@@ -189,7 +197,9 @@ describe("env contract ↔ source ↔ .env.example (#797 债#8)", () => {
         : `NON_DEPLOY_ENV exempts these, but nothing reads them any more. Delete the lines:\n` +
           stale.map((n) => `  • ${n}`).join("\n"),
     ).toEqual([]);
+  });
 
+  it("no name is exempted as non-deploy AND declared in the contract — one name, one truth", () => {
     const bothPlaces = Object.keys(NON_DEPLOY_ENV).filter((name) => ENV_CONTRACT_BY_NAME.has(name)).sort();
     expect(
       bothPlaces,
@@ -547,6 +557,29 @@ describe("env 契约修真(C3)", () => {
 
     it("\"0\" is legal — a deliberate full stop is not a typo", () => {
       const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "0" }, {
+        surface: "worker",
+        production: true,
+      });
+      expect(problems).toEqual([]);
+    });
+
+    // 判官 P3-3:负数与非数字在消费方走同一条静默回落(`n >= 0 ? n : 默认 5`)。
+    // 只拦非数字就只拦了一半——想写「停掉」写成 -1 的人会拿到每天 5 美元照跑。
+    it("a negative budget is rejected too — in the reader it silently becomes $5/day, not a stop", () => {
+      for (const value of ["-1", "-0.5"]) {
+        const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, ASSET_UNDERSTANDING_DAILY_BUDGET_USD: value }, {
+          surface: "worker",
+          production: true,
+        });
+        expect(problems.map((p) => p.name), `${value} must be refused`).toEqual([
+          "ASSET_UNDERSTANDING_DAILY_BUDGET_USD",
+        ]);
+        expect(problems[0]?.message).toContain("negative");
+      }
+    });
+
+    it("a legitimate fractional budget still passes", () => {
+      const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "12.5" }, {
         surface: "worker",
         production: true,
       });

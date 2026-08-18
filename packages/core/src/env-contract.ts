@@ -64,6 +64,11 @@ export type EnvFormat =
   | "email-list"
   | "integer"
   | "number"
+  /**
+   * 数字,且不许是负数。与 number 分开,是因为「负数会怎样」在两类变量上不是同一件事:
+   * 消费方把负数当没设、静默回落默认值的那些,负号是一个不会有人发现的错。
+   */
+  | "non-negative-number"
   | "boolean-ish"
   | "enum"
   | "free";
@@ -196,8 +201,13 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     // worker:兜底,不是要求(C3)。worker 只在一处读它——publish 的 media-proxy 回源
     // origin `PUBLIC_BASE_URL || BETTER_AUTH_URL`。把它在 worker 面也写成 required,
     // 等于让一台配置完全正确、只用 PUBLIC_BASE_URL 的生产 worker 被开机检查拒绝启动。
-    // 「两个来源里至少有一个」这条真规则由 apps/worker/src/publish-env-check.ts 判,
-    // 它已经把两者当同一件事看;契约不在这里再造一份可能与它走散的第二真相。
+    // 「两个来源里至少有一个」这条规则由 apps/worker/src/publish-env-check.ts 看着,它已经把
+    // 两者当同一件事(`!!(PUBLIC_BASE_URL || BETTER_AUTH_URL)`)。说清楚它是什么、不是什么:
+    //   - 它 **fail-soft**:只 `console.warn`,从不 exit(`apps/worker/src/index.ts:116`)。
+    //   - 它 **只骂半配**:三件套全空时 `publishChainWarning` 直接 return null,一个字都不说。
+    // 两条都是刻意的——publish 链在 Meta 审核前本来就是全空的 inert 状态,为它 exit 会把
+    // 生成/渲染/字幕/研究一起拖下水。所以那边不是一道「至少有一个」的硬闸,谁也别把它
+    // 当硬闸引用。契约这一侧同样不造硬闸:worker 面 optional,与「上线前刻意 inert」对齐。
     requirementBySurface: { worker: "optional" },
     format: "url",
     secret: false,
@@ -489,11 +499,15 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     surface: "worker",
     readBy: "code",
     requirement: "optional",
-    format: "number",
+    // non-negative-number,不是 number(判官 P3-3)。消费方是
+    // `Number.isFinite(n) && n >= 0 ? n : 默认 5`——**非数字和负数走的是同一条静默回落**,
+    // 只拦非数字等于只拦了一半:有人想写「停掉」写成 -1,拿到的是每天 5 美元照跑,
+    // 而没有任何一处会说这件事。两种写错都拦下来,这句话才配说「格式检查兜住了它」。
+    format: "non-negative-number",
     secret: false,
     shared: false,
     summary:
-      "Platform-wide understanding spend ceiling per day, in USD. Unset = 5. \"0\" is a legitimate value meaning fully paused; a negative or non-numeric value silently degrades to the default, so the format check is what keeps a typo from becoming an unintended budget.",
+      "Platform-wide understanding spend ceiling per day, in USD. Unset = 5. \"0\" is a legitimate value meaning fully paused. Both a negative and a non-numeric value would silently fall back to the default 5 in the reader, so the boot check rejects both — a typo can never quietly become a budget nobody chose.",
   },
 
   // ── 对象存储 ──────────────────────────────────────────────────────────────
@@ -1113,6 +1127,13 @@ function formatSchema(spec: EnvVarSpec): z.ZodType<unknown> {
       return z.string().refine((v) => /^\d+$/.test(v.trim()), "must be a non-negative integer");
     case "number":
       return z.string().refine((v) => Number.isFinite(Number(v.trim())) && v.trim() !== "", "must be a number");
+    case "non-negative-number":
+      return z
+        .string()
+        .refine(
+          (v) => v.trim() !== "" && Number.isFinite(Number(v.trim())) && Number(v.trim()) >= 0,
+          "must be a number and must not be negative",
+        );
     case "boolean-ish":
       return z
         .string()
