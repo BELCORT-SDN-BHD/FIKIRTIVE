@@ -4,8 +4,8 @@ import { disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-
 import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 import { getAccountViewData } from "@/lib/account-view-data";
-import { UNAVAILABLE_PUBLISHING_CHANNEL_IDS } from "@/lib/channels/channel-meta";
-import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
+import { channelCapabilityBlurb, channelMeta, publishingChannelRows } from "@/lib/channels/channel-meta";
+import { CONNECTION_BLOCKER_COPY, publishSurfaceCopy } from "@fikirtive/core/schedule-draft";
 import { describeMetaAdAccountStatus } from "@/lib/meta-ad-account-status";
 import { supportMailto } from "@/lib/exits";
 import type { ChannelState } from "./settings/sections";
@@ -154,8 +154,15 @@ function ChannelRow({ channel }: { channel: ChannelState }) {
     : channel.status === "connected"
       ? channel.targets.join(", ") || "Connected"
       : "Not connected";
+  // W2-4 —— 这颗按钮是**这一个渠道自己的**开关,所以它的 accessible name 里带自己的渠道名。
+  // 之前三行渲染出来的按钮读屏听起来是「Connect、Connect、Connect」,分不出哪颗管哪个渠道;
+  // 更要紧的是,那时候「有哪几行、哪一行能按」是整段 Publishing 一起决定的。现在每一行各带
+  // 各的名字,一个全局开关冒充不了三个(围栏 settings-route.test.ts 就钉这一条)。
+  // 看得见的字保持 Connect / Manage / Reconnect 不变 —— 语音控制点的是它。
+  const caps = channelMeta(channel.id)?.capabilities;
   return (
     <div
+      data-channel={channel.id}
       className="border-b border-border last:border-b-0"
       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.75rem 0", flexWrap: "wrap" }}
     >
@@ -166,10 +173,13 @@ function ChannelRow({ channel }: { channel: ChannelState }) {
         <div style={{ minWidth: 0 }}>
           <div className="text-foreground text-[0.875rem] font-medium">{channel.label}</div>
           <div className="text-muted-foreground text-[0.75rem]">{hint}</div>
+          {caps && (
+            <div className="text-muted-foreground text-[0.75rem]">{channelCapabilityBlurb(caps)}</div>
+          )}
         </div>
       </div>
       <Button asChild size="sm" variant={variant}>
-        <a href={channel.connectUrl} style={{ textDecoration: "none" }}>
+        <a href={channel.connectUrl} aria-label={`${label} ${channel.label}`} style={{ textDecoration: "none" }}>
           {label}
         </a>
       </Button>
@@ -177,15 +187,23 @@ function ChannelRow({ channel }: { channel: ChannelState }) {
   );
 }
 
-function MessagingRow({ label }: { label: string }) {
+/** 一条今天连不上的渠道:说得出的实话,零按钮。X(没有 OAuth 路由)与 WhatsApp(没有适配器)
+ *  用的是同一行 —— 「不能连」是同一件事,不该有两种画法。
+ *
+ *  W2-4 只给它加了一个 `id`:图标原本靠 `label.toLowerCase()` 反查,渠道名与图标 id 一样纯属
+ *  巧合(“X” → “x”),多渠道版式下第一个带空格或大小写不同的渠道名就会静默丢图标。名字维持
+ *  `MessagingRow` 不动 —— 改名会牵动一条不属于这一票的既有围栏(crm-honest-preview.test.ts
+ *  按函数名切这段源码),那是没必要的连带改动。 */
+function MessagingRow({ id, label }: { id: string; label: string }) {
   return (
     <div
+      data-channel={id}
       className="border-b border-border last:border-b-0"
       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.75rem 0", flexWrap: "wrap" }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
         <span className="text-muted-foreground" style={{ flexShrink: 0 }} aria-hidden>
-          <ChannelGlyph id={label.toLowerCase()} />
+          <ChannelGlyph id={id} />
         </span>
         <div className="text-foreground text-[0.875rem] font-medium">{label}</div>
       </div>
@@ -314,6 +332,8 @@ export default function OttoConnections() {
   const showAdsPanel = meta.phase === "connected" || meta.phase === "unreachable";
   const publishingLoading = channelsState.phase === "loading" || meta.phase === "loading";
   const connectError = connectErrorCode ? describeConnectError(connectErrorCode) : null;
+  // 发布这件事今天是什么样,由共享权威说 —— 这一页只是引用它(见下面那块的说明)。
+  const publishTruth = publishSurfaceCopy();
 
   return (
     // leading-[1.5] — design-baseline body line-height (Analytics standard)
@@ -361,14 +381,26 @@ export default function OttoConnections() {
           </div>
         )}
 
+        {/* W2-4(规格书 §4.7)—— 这一页今天缺的那句实话。
+            不在这里手写:它已经有权威(`PUBLISH_PREVIEW_COPY` 的第②③句),Schedule、审批卡和
+            Otto 说的是同一份。这一页曾经是全产品唯一没说这件事的发布面 —— 商家站在一排
+            Connect 按钮前面,没人告诉他今天按下去也连不上。抄一遍就是第二份会漂移的措辞;
+            引用它,PUBLISHING_AVAILABLE 翻面那天这里跟着一起变。 */}
+        <div className="bg-secondary rounded-[14px]" style={{ padding: "0.875rem 1rem", display: "flex", flexDirection: "column", gap: "0.375rem" }}>
+          <p className="text-foreground text-[0.8125rem]" style={{ margin: 0 }}>{publishTruth.why}</p>
+          <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>{publishTruth.real}</p>
+        </div>
+
         {/* Publishing — where Otto posts on your behalf. */}
         <div>
           <h2 className="text-foreground font-semibold" style={{ fontSize: 15, margin: "0 0 0.25rem" }}>Publishing</h2>
+          {/* W2-4:这句原本把「谁能连、谁不能」写死成一句话("Instagram and Facebook … X is
+              listed below but not available yet"),于是渠道名单有两份 —— 一份在 CHANNEL_META,
+              一份在这段文案里。下面每一行现在各自说自己的实情,这句就只留分区本身的意思。 */}
           <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0 0 0.5rem" }}>
-            Instagram and Facebook — Otto schedules posts and reads results here. X is listed
-            below but not available yet.
+            Where Otto posts on your behalf. Connecting one channel does not connect the others.
           </p>
-          <div className="bg-card border border-border rounded-[14px]" style={{ padding: "0 1rem" }}>
+          <div data-section="publishing" className="bg-card border border-border rounded-[14px]" style={{ padding: "0 1rem" }}>
             {publishingLoading && (
               <p className="text-muted-foreground text-[0.75rem]" style={{ padding: "0.75rem 0" }}>Checking…</p>
             )}
@@ -378,14 +410,19 @@ export default function OttoConnections() {
                 <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>Retry</Button>
               </div>
             )}
-            {!publishingLoading && channelsState.phase === "loaded" && channelsState.channels.map((c) =>
-              UNAVAILABLE_PUBLISHING_CHANNEL_IDS.has(c.id) ? (
-                <MessagingRow key={c.id} label={c.label} />
-              ) : (
+            {/* W2-4 多渠道版式:**有哪几行**来自 CHANNEL_META(渠道权威),**每一行的状态**才来自
+                那一次读。所以每一个渠道各带各的开关 —— 一行连着、一行要重连、一行今天根本连不上,
+                三行各说各的,没有一颗全局开关替它们回答。X 那一行按 isConnectableChannel() 落到
+                MessagingRow:说实话、不画 Connect 按钮(今天已经这样,这里连同围栏一起保住)。
+                X OAuth 落地那天删 channel-meta.ts 里那一个 id,这一行自己就变成可连的。 */}
+            {!publishingLoading && channelsState.phase === "loaded" && publishingChannelRows(channelsState.channels).map((row) =>
+              !row.connectable ? (
+                <MessagingRow key={row.id} id={row.id} label={row.label} />
+              ) : row.state ? (
                 // Status already comes from getAccountViewData()'s single Meta read for
                 // instagram/facebook (#518 rework finding 2) — no client-side override needed.
-                <ChannelRow key={c.id} channel={c} />
-              ),
+                <ChannelRow key={row.id} channel={row.state} />
+              ) : null,
             )}
           </div>
 
@@ -526,9 +563,9 @@ export default function OttoConnections() {
           <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0 0 0.5rem" }}>
             CRM channels your customers message you on.
           </p>
-          <div className="bg-card border border-border rounded-[14px]" style={{ padding: "0 1rem" }}>
+          <div data-section="messaging" className="bg-card border border-border rounded-[14px]" style={{ padding: "0 1rem" }}>
             {MESSAGING_CHANNELS.map((m) => (
-              <MessagingRow key={m.id} label={m.label} />
+              <MessagingRow key={m.id} id={m.id} label={m.label} />
             ))}
           </div>
         </div>
