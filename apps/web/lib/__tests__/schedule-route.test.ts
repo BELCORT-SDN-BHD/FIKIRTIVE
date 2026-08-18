@@ -23,6 +23,18 @@ import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 
+/** 本票新建的八个文件 —— 换壳的新地址只能从 `SHELL_ROUTES` 来,这八个里一处字面量都不许有。 */
+const SHELL_ROUTE_CONSUMERS: readonly string[] = [
+  "app/schedule/layout.tsx",
+  "app/schedule/loading.tsx",
+  "app/schedule/page.tsx",
+  "app/schedule/analytics/page.tsx",
+  "components/schedule/schedule-tabs.tsx",
+  "components/schedule/schedule-surface.tsx",
+  "components/schedule/analytics-surface.tsx",
+  "components/schedule/otto-view-navigation.ts",
+];
+
 const mocks = vi.hoisted(() => ({
   redirect: vi.fn((to: string) => {
     throw new Error(`NEXT_REDIRECT:${to}`);
@@ -253,12 +265,46 @@ describe("页内两个页签(Q4-A)", () => {
     expect(selected!.getAttribute("id")).toBe(labelledBy);
   });
 
+  // 判官 r1 [P3-1]:受控 Tabs 不给 onValueChange,Radix 的 trigger 在 Space / Enter 上唯一
+  // 做的那件事(调 onValueChange)就落空了 —— Enter 靠 anchor 的原生默认还能走,空格没有
+  // 原生默认,于是键盘上少了一个键。这两条把两个键都钉住。
+  it.each([" ", "Enter"])("键盘 %s 键能切到 Analytics(不是只有鼠标点得动)", async (key) => {
+    await mount(tabsAround(createElement("div", null, "Schedule body")));
+
+    const analyticsTab = Array.from(container!.querySelectorAll('[role="tab"]')).find(
+      (t) => t.textContent === "Analytics",
+    );
+    expect(analyticsTab, "没有 Analytics 那颗 tab").toBeTruthy();
+    await act(async () => {
+      analyticsTab!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+
+    expect(mocks.push, `${key} 键没有把人送到 Analytics`).toHaveBeenCalledWith(SHELL_ROUTES.analytics);
+  });
+
   it("页签不是手搓的 —— 用的是 ui/tabs 与真 <Link>(规格书 §5.6 ②)", () => {
     const source = readFileSync(path.join(WEB_ROOT, "components/schedule/schedule-tabs.tsx"), "utf8");
     expect(source).toContain('from "@/components/ui/tabs"');
     expect(source).toContain('from "next/link"');
     expect(source, "又手写了一个 role=tablist").not.toContain('role="tablist"');
     expect(source, "又手写了一个 role=tab").not.toContain('role="tab"');
+  });
+
+  // 判官 r1 [P2-1]:上面那条「地址来自权威源」只比对了**值**,而两边值相等这件事,把
+  // SHELL_ROUTES 整个 import 删掉、四处地址全手抄一遍,一样成立 —— 判官实测这么改之后
+  // 28/28 全绿。规格书 §1.3 要的不是「值对得上」,是「这棵树只有一份真相」,那是一句关于
+  // **来源**的话,只有扫源码才钉得住。
+  it("地址来自权威源本身,不是抄一份值出来对得上就行(规格书 §1.3)", () => {
+    const source = readFileSync(path.join(WEB_ROOT, "components/schedule/schedule-tabs.tsx"), "utf8");
+    expect(source, "页签的地址不再从导航权威源来了").toContain('from "@fikirtive/core/navigation"');
+  });
+
+  it.each(SHELL_ROUTE_CONSUMERS)("%s 里没有手抄的 /schedule 地址字面量", (relative) => {
+    const source = readFileSync(path.join(WEB_ROOT, relative), "utf8");
+    expect(
+      source.includes('"/schedule'),
+      `${relative} 把地址又写了第二遍 —— 它只能来自 SHELL_ROUTES`,
+    ).toBe(false);
   });
 });
 
@@ -267,11 +313,18 @@ describe("页内两个页签(Q4-A)", () => {
 /**
  * 围栏扫的是**本票的改动面**(规格书 §7.1「全仓没有 Coming soon」在本票的落点)。
  *
- * 大小写敏感,钉的是规格书写下的那句商家可见的文案 "Coming soon"。同一个文件里
- * `capsBlurb()` 还有一句小写的 "media coming soon",它挂在 `maxMediaCount <= 0` 那条
- * 分支上 —— 今天只有 X 是 0,而 X 被 `CONNECTABLE_CHANNEL_META` 挡在这块屏之外,所以
- * 那句话画不出来。它属于渠道文案那一票(W2-4 Connections 多渠道版式),不在本票范围内,
- * 已随交接单独上报;本围栏不替它签字,也不给它开豁免名单。
+ * 大小写敏感,钉的是规格书写下的那句商家可见的文案 "Coming soon"。
+ *
+ * 【判官 r1 P2-2 更正】同一个文件里 `capsBlurb()` 还有一句小写的 "media coming soon"。
+ * 我原先在这里写「它画不出来」—— **那是错的,已被判官实测推翻**:判官挂上真组件、灌一条
+ * `channel: "x"` 的既有草稿,composer 真把 "Text posts · media coming soon" 渲染了出来。
+ * 原因就在 `OttoSchedule.tsx:1309-1313` 那段**刻意保留**的反例:`shownChannels` 会把草稿
+ * 自己所在的渠道加回去(「A post written for X before X was hidden still belongs to X」),
+ * 所以 X 虽然不在 `CONNECTABLE_CHANNEL_META` 里,仍会出现在既有 X 草稿的 composer 上。
+ *
+ * 也就是说那句小写文案**是活的**,不是死分支。本票不改它:AC 钉的是大小写敏感的
+ * "Coming soon",这一句归渠道文案那一票(W2-4 Connections 多渠道版式)。围栏照旧不给它
+ * 开豁免名单,也不假装它不存在 —— 它在交接与 PR 正文里按「活文案」如实登记。
  */
 const HONESTY_SCAN: readonly string[] = [
   "components/otto/OttoSchedule.tsx",
