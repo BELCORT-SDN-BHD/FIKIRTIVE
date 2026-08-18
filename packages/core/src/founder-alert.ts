@@ -43,11 +43,34 @@ export type FounderAlertChannel = (alert: FounderAlert) => Promise<"sent" | "ski
 
 export type FounderAlertChannels = Record<FounderAlertChannelName, FounderAlertChannel>;
 
+/**
+ * 四种取值刻意互不重叠——把其中任意两种合并,报警系统就开始对自己说谎:
+ *   sent       —— 送出去了。
+ *   skipped    —— 这台部署没配这条通道(刻意的状态)。
+ *   suppressed —— 配了、能发,但**这一条是重复**,只让 Sentry 承载(见 dispatch 的 repeat)。
+ *   failed     —— 配了、该发、没发成。唯一需要有人去修的一种。
+ */
 export type FounderAlertOutcome = {
   channel: FounderAlertChannelName;
-  status: "sent" | "skipped" | "failed";
+  status: "sent" | "skipped" | "suppressed" | "failed";
   /** failed 时的原因,只留消息文本,永不带值/密钥。 */
   reason?: string;
+};
+
+export type DispatchFounderAlertOptions = {
+  /**
+   * 这一条是**同一件事的重复**(调用方已经为它发过一次完整报警)。
+   *
+   * 为什么需要它:钱路上那些「故意不清理」的行——`gen.paid_for_nothing` 就是标准例——会被
+   * 每 5 分钟一趟的巡检一遍遍扫到。没有这个开关,一行卡住 = 每天约 288 封邮件 + 288 条
+   * Telegram,而那把 `RESEND_API_KEY` 和商家登录邮件是同一把:一条报警能把登录打挂,
+   * 报警就成了自己要报的那种事故。
+   *
+   * 但**重复绝不等于不重要**,所以不是静音:Sentry 照常收,它本来就是按 key 聚类计数的
+   * 那一层,「这一行今天被扫到多少次」正好是它擅长回答的问题。压掉的只有会重复打扰人的
+   * 两条推送通道,而且记成 `suppressed` 而不是 `skipped`——没配置和被压掉是两回事。
+   */
+  repeat?: boolean;
 };
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -70,6 +93,7 @@ export function formatFounderAlertText(alert: FounderAlert): string {
 export async function dispatchFounderAlert(
   alert: FounderAlert,
   channels: FounderAlertChannels,
+  opts: DispatchFounderAlertOptions = {},
 ): Promise<FounderAlertOutcome[]> {
   const outcomes: FounderAlertOutcome[] = [];
 
@@ -80,6 +104,12 @@ export async function dispatchFounderAlert(
     sentryOk = false;
     outcomes.push({ channel: "sentry", status: "failed", reason: errText(e) });
     console.error(`[founder-alert] ${alert.key}: sentry channel failed:`, errText(e));
+  }
+
+  // 重复命中:两条推送通道**根本不调用**(不是发了再丢),Sentry 上面已经收过了。
+  if (opts.repeat) {
+    for (const name of ["email", "telegram"] as const) outcomes.push({ channel: name, status: "suppressed" });
+    return outcomes;
   }
 
   for (const name of ["email", "telegram"] as const) {
@@ -127,8 +157,13 @@ export type SentryLike = {
 };
 
 /**
- * Sentry 通道。DSN 没配时 SDK 自己 no-op,所以这里不再判一次——**这条通道永远算 sent**,
- * 因为 C1a 之后 SENTRY_DSN 在生产是必填,开机检查会拦住没配的部署。
+ * Sentry 通道。
+ *
+ * **没有 DSN 就报 "skipped",绝不报 "sent"。** 这条曾经写成恒 "sent",理由是「C1a 之后
+ * SENTRY_DSN 在生产必填,开机检查会拦住」——但那个理由漏了一个真实存在的形状:走
+ * `FIKIRTIVE_ENV_CONTRACT=warn` 逃生阀启动的生产进程。那台机器没有 DSN、`Sentry.init`
+ * 从不运行、每次 capture 静默 no-op,而派发结果会白纸黑字写着 `sentry: sent`。
+ * 那正是这张票要消灭的「说的 ≠ 做的」——只不过长在了报警器自己身上,是最不能有的地方。
  *
  * 用 `captureMessage` + 结构化 context,而不是 `captureException(new Error(...))`,理由是**聚类**:
  *   · 合成的 Error 的堆栈全部指向这个文件的同一行,Sentry 会把每一种 founder 报警都归成
@@ -139,8 +174,9 @@ export type SentryLike = {
  * 钱路 catch 那一族仍然用 captureException —— 那里有真实的 Error 与真实的堆栈,
  * 见 apps/worker/src/alerting.ts。
  */
-export function createSentryChannel(sentry: SentryLike): FounderAlertChannel {
+export function createSentryChannel(sentry: SentryLike, env: EnvRecord = process.env): FounderAlertChannel {
   return async (alert) => {
+    if (!(env.SENTRY_DSN ?? "").trim()) return "skipped";
     sentry.captureMessage(`[founder-alert] ${alert.key} — ${alert.title}`, {
       level: "error",
       tags: { founder_alert: alert.key },
@@ -204,7 +240,7 @@ export function createTelegramChannel(env: EnvRecord = process.env): FounderAler
 /** 生产接线:三条通道一次配齐。Sentry 由各自的宿主传进来(core 不依赖 @sentry/node)。 */
 export function createFounderAlertChannels(sentry: SentryLike, env: EnvRecord = process.env): FounderAlertChannels {
   return {
-    sentry: createSentryChannel(sentry),
+    sentry: createSentryChannel(sentry, env),
     email: createResendAlertEmailChannel(env),
     telegram: createTelegramChannel(env),
   };

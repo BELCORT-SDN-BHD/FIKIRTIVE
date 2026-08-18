@@ -582,6 +582,41 @@ async function settledDisplayCredits(orgId: string, refId: string): Promise<numb
   }
 }
 
+/**
+ * 「这一行的 paid-for-nothing 报警,是不是第一次发?」—— 返回 true 表示这一趟拿到了首发权。
+ *
+ * 为什么必须有它:那一行是**故意不清理**的(翻成 FAILED 会许下一句没发生的退款),而巡检
+ * 每 5 分钟来一趟。没有这道闸,一行卡住就是每天约 288 封邮件 + 288 条 Telegram —— 而那把
+ * `RESEND_API_KEY` 与商家登录的魔法链接是同一把:一条报警足以把登录打挂。报警把自己变成
+ * 事故,是这一族缺陷里最难看的一种。
+ *
+ * 用 ActionEvent 的主键做一次性标记,形状照抄同仓已有的做法(stripe webhook 的
+ * `stripe_failed:<sessionId>`):**由数据库唯一约束裁决,不是 check-then-act**,所以两个巡检
+ * 同时扫到同一行也只有一个拿到首发权。刻意不动 GenJob 行、不动账本 —— 那一行「一个字都不动」
+ * 本身就是这条分支的语义。
+ *
+ * 失败方向是 fail-OPEN:只有**确凿的主键冲突**(P2002)才降级为重复;任何其它写库故障都当作
+ * 首发,宁可多发一条也不让一次 DB 抖动把「商家付了钱什么都没拿到」永久静音。这和同仓
+ * stripe 分支「告警至少一次,DB 故障不许消音」是同一条纪律。
+ */
+async function claimPaidForNothingAlert(job: { id: string; ownerId: string }): Promise<boolean> {
+  try {
+    await prisma.actionEvent.create({
+      data: {
+        id: `gen_paid_for_nothing:${job.id}`,
+        ownerId: job.ownerId,
+        type: "gen.paid_for_nothing",
+        payload: { genJobId: job.id, alertedAt: new Date().toISOString() },
+      },
+    });
+    return true;
+  } catch (e) {
+    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return false;
+    console.warn(`[gen] ${job.id}: could not record the paid-for-nothing alert marker; alerting anyway:`, e instanceof Error ? e.message : e);
+    return true;
+  }
+}
+
 export async function reapStaleGenJobs(): Promise<number> {
   return runAsSystem("gen-reaper", async () => {
     const cutoff = new Date(Date.now() - GEN_REAP_MS);
@@ -744,19 +779,29 @@ export async function reapStaleGenJobs(): Promise<number> {
             // 整顿 C1a:这句求救过去只落 console.error,而生产日志没有人二十四小时盯着——
             // 一句「需要 founder 裁决」事实上说给了没有人。三条通道一起发,`await` 是故意的:
             // 这一趟巡检不差这几百毫秒,而 fire-and-forget 会让报警死在进程退出的竞态里。
-            await founderAlert({
-              key: "gen.paid_for_nothing",
-              title: "A merchant paid for a generation and received nothing",
-              action:
-                "Decide this one by hand — nothing automatic can fix it. The job is DONE with zero outputs and the charge is SETTLED, so the sweep deliberately left the row alone (flipping it to FAILED would promise a refund that never happened). Refund in the credits ledger if that is the call.",
-              context: {
-                genJobId: job.id,
-                orgId: job.ownerId,
-                kind: job.kind,
-                model: job.model,
-                chargedCredits: await settledDisplayCredits(job.ownerId, job.id),
+            //
+            // 首发权由 claimPaidForNothingAlert 的主键裁决:这一行**故意不清理**,而巡检每 5
+            // 分钟来一趟,所以第二趟起只让 Sentry 承载(它本来就是按 key 聚类计数的那一层,
+            // 「这一行今天被扫到几次」正好归它答),邮件与 Telegram 不再打扰人。
+            const firstAlert = await claimPaidForNothingAlert(job);
+            await founderAlert(
+              {
+                key: "gen.paid_for_nothing",
+                title: "A merchant paid for a generation and received nothing",
+                action:
+                  "Decide this one by hand — nothing automatic can fix it. The job is DONE with zero outputs and the charge is SETTLED, so the sweep deliberately left the row alone (flipping it to FAILED would promise a refund that never happened). Refund in the credits ledger if that is the call.",
+                context: {
+                  genJobId: job.id,
+                  orgId: job.ownerId,
+                  kind: job.kind,
+                  model: job.model,
+                  chargedCredits: await settledDisplayCredits(job.ownerId, job.id),
+                  // 重复那几条要一眼看得出是重复,否则 Sentry 里读起来像「又出了一单」。
+                  repeatOfEarlierAlert: !firstAlert,
+                },
               },
-            });
+              { repeat: !firstAlert },
+            );
             return;
           }
           if (outcome === null) return; // someone else ended this row — their truth stands

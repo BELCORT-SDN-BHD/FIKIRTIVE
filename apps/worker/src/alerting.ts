@@ -14,6 +14,7 @@ import * as Sentry from "@sentry/node";
 import {
   createFounderAlertChannels,
   dispatchFounderAlert,
+  type DispatchFounderAlertOptions,
   type FounderAlert,
   type FounderAlertOutcome,
 } from "@fikirtive/core/founder-alert";
@@ -35,9 +36,12 @@ export function captureMoneyPathError(err: unknown, context: MoneyPathContext): 
 }
 
 /** 钱路事故的完整报警。返回逐通道结果,便于测试与调用点记账;**永不抛**。 */
-export async function founderAlert(alert: FounderAlert): Promise<FounderAlertOutcome[]> {
+export async function founderAlert(
+  alert: FounderAlert,
+  opts: DispatchFounderAlertOptions = {},
+): Promise<FounderAlertOutcome[]> {
   try {
-    return await dispatchFounderAlert(alert, createFounderAlertChannels(Sentry));
+    return await dispatchFounderAlert(alert, createFounderAlertChannels(Sentry), opts);
   } catch (e) {
     console.error(`[founder-alert] ${alert.key}: dispatch itself failed:`, e instanceof Error ? e.message : e);
     return [];

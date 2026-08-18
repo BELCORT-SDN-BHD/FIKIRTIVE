@@ -114,7 +114,15 @@ curl -s -X POST "https://api.telegram.org/bot<TOKEN>/sendMessage" \
 - **有人付了钱,但我们不知道该给谁**(`stripe.paid_session_unusable_metadata`)——
   Stripe 说付款成功,但订单信息坏掉,credits 发不出去。要人工去 Stripe 后台找到买家补发。
 
-每条消息里都带着 org、金额、作业 id —— 够你直接去后台找到那一单,不用先问工程。
+每条消息都带着足以直接定位那一单的字段,但**两类带的东西不一样**:
+
+- 生成那条:商家 org、实际扣掉的金额、作业 id —— 去后台按作业 id 就能翻到。
+- Stripe 那条:Stripe 的 event id / session id / payment intent、付款金额与币种。它**没有
+  org**,因为「不知道这笔钱该记给谁」正是它要报的那件事;也没有作业 id,那一步还没发生。
+  查法是拿 session id 去 Stripe 后台找买家。
+
+同一行卡住不会反复轰炸你:第一次发全部三条通道,之后同一行只在 Sentry 里继续计数,
+邮件与 Telegram 不再重复(否则一行卡住就是每天几百条)。
 
 ---
 

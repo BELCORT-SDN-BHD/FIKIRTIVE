@@ -106,6 +106,28 @@ describe("dispatchFounderAlert", () => {
     expect(sentry).toHaveBeenCalledTimes(2);
   });
 
+  it("a REPEAT goes to Sentry only — the two push channels are never even called", async () => {
+    // 判官实测:同一行被连扫 5 次。那一行是故意不清理的,巡检每 5 分钟一趟 ⇒ 一天约 288 次。
+    // 288 封邮件烧的是与商家登录魔法链接共享的同一把 RESEND_API_KEY:一条报警足以把登录打挂。
+    const c = channels();
+    const outcomes = await dispatchFounderAlert(ALERT, c, { repeat: true });
+    expect(c.sentry, "重复也要计数 —— Sentry 正是回答「这一行今天被扫到几次」的那一层").toHaveBeenCalledTimes(1);
+    expect(c.email, "第 288 封邮件").not.toHaveBeenCalled();
+    expect(c.telegram).not.toHaveBeenCalled();
+    expect(outcomes).toEqual([
+      { channel: "sentry", status: "sent" },
+      { channel: "email", status: "suppressed" },
+      { channel: "telegram", status: "suppressed" },
+    ]);
+  });
+
+  it("suppressed is NOT skipped — being throttled and being unconfigured must never read the same", async () => {
+    const configured = await dispatchFounderAlert(ALERT, channels(), { repeat: true });
+    const unconfigured = await dispatchFounderAlert(ALERT, channels({ email: skippedChannel(), telegram: skippedChannel() }));
+    expect(configured.find((o) => o.channel === "email")?.status).toBe("suppressed");
+    expect(unconfigured.find((o) => o.channel === "email")?.status).toBe("skipped");
+  });
+
   it("never throws, even with all three channels down — an alert must not take the money path with it", async () => {
     const boom = vi.fn(async () => { throw new Error("down"); });
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -115,11 +137,24 @@ describe("dispatchFounderAlert", () => {
 });
 
 describe("createSentryChannel", () => {
+  const WITH_DSN = { SENTRY_DSN: "https://key@o1.ingest.sentry.io/2" };
+
+  it("no DSN ⇒ skipped, and captureMessage is never called — it would be a silent no-op", async () => {
+    // 这条通道曾经恒报 "sent",理由是「生产必填,开机检查会拦」。那个理由漏了一个真实形状:
+    // 走 FIKIRTIVE_ENV_CONTRACT=warn 逃生阀启动的生产进程 —— 没有 DSN、Sentry.init 从不运行、
+    // 每次 capture 静默 no-op,而派发结果白纸黑字写着 sentry: sent。
+    // 「说的 ≠ 做的」长在报警器自己身上,是这张票最不能留的一处。
+    const captureMessage = vi.fn();
+    expect(await createSentryChannel({ captureMessage }, {})(ALERT)).toBe("skipped");
+    expect(await createSentryChannel({ captureMessage }, { SENTRY_DSN: "   " })(ALERT)).toBe("skipped");
+    expect(captureMessage).not.toHaveBeenCalled();
+  });
+
   it("groups on the STABLE half and carries the changing half as structured context", async () => {
     // 聚类是这条断言的全部意义:会变的 id 留在 message 里,Sentry 会给每一单开一个 issue,
     // 「这类事发生过几次」就再也问不出来了。
     const captureMessage = vi.fn();
-    expect(await createSentryChannel({ captureMessage })(ALERT)).toBe("sent");
+    expect(await createSentryChannel({ captureMessage }, WITH_DSN)(ALERT)).toBe("sent");
     expect(captureMessage).toHaveBeenCalledTimes(1);
     const [message, context] = captureMessage.mock.calls[0] as unknown as [string, Record<string, unknown>];
     expect(message).toContain("gen.paid_for_nothing");
@@ -203,12 +238,20 @@ describe("createResendAlertEmailChannel", () => {
 describe("createFounderAlertChannels (production wiring)", () => {
   it("a deployment with Sentry only still delivers — email and telegram report themselves as skipped", async () => {
     const captureMessage = vi.fn();
-    const outcomes = await dispatchFounderAlert(ALERT, createFounderAlertChannels({ captureMessage }, {}));
+    const env = { SENTRY_DSN: "https://key@o1.ingest.sentry.io/2" };
+    const outcomes = await dispatchFounderAlert(ALERT, createFounderAlertChannels({ captureMessage }, env));
     expect(outcomes).toEqual([
       { channel: "sentry", status: "sent" },
       { channel: "email", status: "skipped" },
       { channel: "telegram", status: "skipped" },
     ]);
     expect(captureMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a deployment on the warn escape hatch reports THREE skips — no channel claims a delivery it did not make", async () => {
+    const captureMessage = vi.fn();
+    const outcomes = await dispatchFounderAlert(ALERT, createFounderAlertChannels({ captureMessage }, {}));
+    expect(outcomes.map((o) => o.status)).toEqual(["skipped", "skipped", "skipped"]);
+    expect(captureMessage).not.toHaveBeenCalled();
   });
 });
