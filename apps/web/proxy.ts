@@ -71,10 +71,14 @@ export const config = {
   //   it must answer before a container is allowed to take traffic. Same zero-data contract as
   //   api/health: ready true/false + a reason word, nothing about any merchant.
   // api/meta/data-deletion excluded — Meta calls it unauthenticated; the signed_request is its auth.
-  // api/media/pub excluded — the ONLY caller is Meta's async media-fetch server (no session, ever).
-  //   The route's HMAC token (signed by the publish worker over ownerId+key+expiry) is its SOLE
-  //   authorization; verifyMediaToken fail-closes to 404 on any bad/expired/forged token. This
-  //   exception is scoped to exactly /api/media/pub/* (the [token] route) — it opens nothing else.
+  // api/media/pub excluded — its callers have no session, ever. It was written for ONE of them,
+  //   Meta's async media-fetch server, and B0-28 added a second: an ordinary human browser, on
+  //   the seat-less share preview below, which signs a short-lived token for the shared post's own
+  //   media (lib/share-preview-view.ts). Both hold the same kind of authorization and neither can
+  //   hold a session, which is why the exemption reads the same for both.
+  //   The route's HMAC token (signed over ownerId+key+expiry) is its SOLE authorization;
+  //   verifyMediaToken fail-closes to 404 on any bad/expired/forged token. This exception is
+  //   scoped to exactly /api/media/pub/* (the [token] route) — it opens nothing else.
   // northstar: NO LONGER EXEMPT (#606, D7 · T7). The exemption existed only because that
   // prefix was a design-only prototype behind a preview flag that 404'd in production. The
   // mock pages and the flag are both deleted; what is left under the prefix are two REAL

@@ -184,6 +184,15 @@ describe("计数器够不到的时候:对话闸放行,生成与上传照旧拒",
     expect(await withCounterTableMissing(() => consumeUploadGate("org-blip"))).toBe(false);
   });
 
+  // B0-28。分享预览门也 fail closed,而它是这几道里唯一一条**免登录**的路,所以这一条必须钉住:
+  // 它长得最像媒体代理(同样没有会话),而媒体代理是故意放行的。两者的区别不在「有没有会话」,
+  // 在「拒了要付什么代价」—— 分享页的授权本来就要 Postgres(铸造行就是权威层),数据库答不了
+  // 这个计数器,也答不了那次授权,所以拒绝一分钱不多花;媒体代理拒了却会打断一次商家已经付过
+  // 钱的发布。少了这一条,以后谁按「跟媒体代理一样」把它改成放行,没有任何东西会红。
+  it("分享预览门照旧 fail closed —— 免登录不等于该跟媒体代理一样放行", async () => {
+    expect(await withCounterTableMissing(() => consumeSharePreviewDoor(from("198.51.100.77")))).toBe(false);
+  });
+
   it("故障过去之后照常计数 —— 放行不留坏状态", async () => {
     await withCounterTableMissing(() => consumeOttoTurnGate("org-blip-2"));
     expect(await consumeOttoTurnGate("org-blip-2")).toBe(true);

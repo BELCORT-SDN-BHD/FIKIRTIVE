@@ -18,7 +18,8 @@ export { callerKey } from "@/lib/caller-identity";
  *   · GENERATION — the paid dispatch. Credits bound what can be SPENT, not how many jobs, rows
  *     and queue messages a stuck client loop can create on the way to running out;
  *   · UPLOAD — mints a presigned URL into our own bucket, once per call, with nothing counting;
- *   · the EXTERNAL LINK — the signed media proxy, the one route with no session by design.
+ *   · the EXTERNAL LINK — the signed media proxy, then the only route with no session by design
+ *     (B0-28 added a second, the share preview below, and its gate is at the bottom of this file).
  *
  * WHY EACH LIMIT IS THE NUMBER IT IS is written at the constant. The rule used for all of them:
  * size the cap against the most demanding REAL use we can name (a 24-cell batch, a bulk product
