@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
+import { OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 
 const mocks = vi.hoisted(() => {
   class MockInsufficientCredits extends Error {
@@ -40,6 +41,7 @@ const mocks = vi.hoisted(() => {
     MockSpendCapBlocked,
     requireOwner: vi.fn(),
     isImpersonating: vi.fn(),
+    consumeOttoTurnGate: vi.fn(),
     projectFindFirst: vi.fn(),
     chatThreadCreate: vi.fn(),
     chatThreadFindFirst: vi.fn(),
@@ -72,6 +74,16 @@ vi.mock("ai", () => ({
 
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mocks.isImpersonating }));
+// Founder 2026-08-18 — the conversation gate is a REAL Postgres counter that fails CLOSED when it
+// cannot reach the database (packages/db/src/rate-limit.ts says so on purpose). This suite is
+// deliberately DB-free, so an unmocked gate would refuse every turn and turn the file red for a
+// reason that has nothing to do with what it tests. Granted by default; the gate's own numbers are
+// covered in rate-limit-gates.test.ts, and the WIRING — that this route really consults it, and
+// what a refusal costs — is pinned by its own case below.
+vi.mock("@/lib/rate-limit-gates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit-gates")>()),
+  consumeOttoTurnGate: mocks.consumeOttoTurnGate,
+}));
 vi.mock("@/lib/otto-actions", () => ({
   buildOttoContext: mocks.buildOttoContext,
   buildContextSystemMessage: mocks.buildContextSystemMessage,
@@ -184,6 +196,7 @@ function streamedRunResult(args: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.consumeOttoTurnGate.mockResolvedValue(true);
   mocks.parts.length = 0;
   mocks.requireOwner.mockResolvedValue({ ownerId: "org_stream", email: "owner@example.com" });
   mocks.isImpersonating.mockResolvedValue(false);
@@ -924,5 +937,37 @@ describe("#791-6 供应商名不会流到商家眼前", () => {
     expect(deltasOf(parts, "reasoning-delta")).toBe(
       "They asked for two options. Warm daylight and night market.",
     );
+  });
+});
+
+// ── 对话闸接在这扇门上,而且拒绝的那一次什么都不做 ──────────────────────────────────────
+//
+// 额度管得住一轮**能花多少**(冻结那一步管的),管不住一个卡死的客户端能**起多少轮** ——
+// 每一轮都是一次真的模型调用。闸本身的数字在 rate-limit-gates.test.ts;这里钉的是**这条路
+// 真的问过它**,以及被拒时一行都没写、模型一次都没跑 —— 一次被拒的请求必须是零成本的。
+describe("POST /api/otto/stream — the conversation gate (Founder 2026-08-18)", () => {
+  it("asks the gate for THIS tenant before anything is written", async () => {
+    await POST(req({ projectId: "proj_stream", text: "hello" }));
+    expect(mocks.consumeOttoTurnGate).toHaveBeenCalledWith("org_stream");
+  });
+
+  it("a refused turn answers 429 with the shared sentence, and runs and persists nothing", async () => {
+    mocks.consumeOttoTurnGate.mockResolvedValue(false);
+
+    const res = await POST(req({ projectId: "proj_stream", text: "hello" }));
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: OTTO_TURN_RATE_LIMIT_MESSAGE });
+    // Nothing ran, nothing was persisted, and no money path was entered.
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.withLlmBudget).not.toHaveBeenCalled();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+  });
+
+  it("never mentions credits in the refusal — nothing was reserved and nothing was charged", async () => {
+    mocks.consumeOttoTurnGate.mockResolvedValue(false);
+    const body = (await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json()) as { error: string };
+    expect(body.error).not.toMatch(/credit/i);
   });
 });

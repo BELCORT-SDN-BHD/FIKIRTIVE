@@ -19,6 +19,26 @@ const LLM_RESERVATION_STALE_MS = 1000 * 60 * 60;
  */
 const REAPER_REFUND_REASON = "llm-reservation-reaper";
 
+/**
+ * Slack allowed between the two DIFFERENT clocks pass 3 compares (judge r2 P2-①).
+ *
+ * `approvedAt` is stamped by the WEB process (otto-actions claimApprovalCard, `new Date()`);
+ * `ChatMessage.createdAt` is stamped by POSTGRES. Those are two machines, and only one direction
+ * of drift can hurt: if the web clock runs AHEAD, a message written a moment after the claim gets
+ * a `createdAt` that reads as BEFORE `approvedAt`, the probe sees no evidence, and a card whose
+ * run succeeded is retired — the one thing this sweep may never do. Widening the probe by a few
+ * seconds removes exactly that case. The other direction needs nothing: a web clock running
+ * BEHIND makes messages look later, which can only make the sweep skip a card, and a card left
+ * stale is a display fault we can fix by hand.
+ *
+ * Five seconds is far past the drift any NTP-disciplined host carries and far short of the
+ * hour-long staleness window, so it cannot mask a real leak. Stamping `approvedAt` from the
+ * database clock instead would remove the second clock entirely — but it would mean rewriting the
+ * consent-spending CAS as raw SQL to reach `now()`, and putting the money-critical one-way consent
+ * write at risk to save a subtraction is the wrong trade.
+ */
+const APPROVED_AT_CLOCK_GRACE_MS = 5000;
+
 /** The APPROVAL_CARD an `otto-approve:<threadId>:<cardId>[:a<attempt>]` reservation belongs to.
  *  Ids are ULIDs and carry no colons, so the split is exact; anything else is not an approve
  *  reservation and yields null. */
@@ -46,6 +66,10 @@ function approveCardIdOf(refId: string): string | null {
  * what happened to the money first and calling this ONLY on a reservation the ledger says was
  * refunded. This function is the writer, not the decision.
  *
+ * Pass 3 below answers the same question from the CONVERSATION rather than from the ledger, for
+ * the refId families that reserve nothing and so leave the ledger with nothing to say. Same rule,
+ * different evidence, and still the caller's decision, never this write's.
+ *
  * `chargeVerdict: "unknown"` is the honest answer here and not a placeholder: the approved tool
  * runs FIRST on a resume, so a death after the claim may well have left a paid generation behind,
  * and an hour later there is no window narrow enough to prove otherwise. The card's `unknown`
@@ -55,6 +79,14 @@ function approveCardIdOf(refId: string): string | null {
 async function retireLeakedApprovalCard(orgId: string, refId: string): Promise<void> {
   const cardId = approveCardIdOf(refId);
   if (!cardId) return;
+  await retireApprovalCard(orgId, cardId);
+}
+
+/** The retirement WRITE itself, by card id — shared by every pass that decides a card is stranded
+ *  (the two ledger-keyed ones above, and the card-state one below). Split out so the three passes
+ *  can disagree about HOW they find a leak while never disagreeing about what retiring one means:
+ *  one CAS, one terminal status, one honest `chargeVerdict`. */
+async function retireApprovalCard(orgId: string, cardId: string): Promise<void> {
   try {
     const card = await prisma.chatMessage.findFirst({
       where: { id: cardId, ownerId: orgId, kind: "APPROVAL_CARD", deletedAt: null },
@@ -113,9 +145,12 @@ async function retireLeakedApprovalCard(orgId: string, refId: string): Promise<v
  *  never happened. Pass 2 sweeps on the state itself — our own refund, card still `approved` —
  *  so the next tick finishes what the last one started, and keeps finishing it until it lands.
  *
+ *  Pass 3 sweeps the CARD, not the ledger — belt and braces for any approve whose refId reserved
+ *  nothing, so passes 1 and 2 have no row to key on. Its own reasoning is at the pass.
+ *
  *  Returns how many leaked reservations were actually REFUNDED (pass 1). A row whose refund
  *  no-oped was not leaked — someone finalized it — and counting it would inflate the one number
- *  operations reads as "how much is leaking". */
+ *  operations reads as "how much is leaking". Passes 2 and 3 move no money, so they are not in it. */
 export async function reapStaleLlmReservations(): Promise<number> {
   return runAsSystem("llm-reservation-reaper", async () => {
     const cutoff = new Date(Date.now() - LLM_RESERVATION_STALE_MS);
@@ -183,6 +218,84 @@ export async function reapStaleLlmReservations(): Promise<number> {
     for (const { orgId, refId } of orphanCards) {
       await runAsTenant(orgId, async () => {
         await retireLeakedApprovalCard(orgId, refId);
+      });
+    }
+
+    // ── pass 3: BELT AND BRACES — the CARD as the leak record, when the ledger has none ─────────
+    //
+    // Passes 1 and 2 both key on this resume's RESERVE row, which exists whenever the turn is
+    // priced (it is today: OTTO_CONVERSATION_TURN_MARGIN, the provider's cost plus 5%). A refId
+    // family that reserves NOTHING leaves them with nothing to match — fixture no-charge runtimes
+    // today, and any surface a future ruling prices at zero. This pass was written the last time
+    // that was true of conversation itself, and it is kept because the failure it prevents is
+    // severe and the sweep is cheap: merchant approves a card, the process dies mid-run (deploy,
+    // OOM), the live catch in ottoApprove never gets to run, and the card reads "Approved" forever
+    // over something that never happened — with re-approval refused by the CAS, because consent is
+    // one-way. Keying the recovery on the card instead of on a price makes it survive pricing
+    // changes in either direction.
+    //
+    // It is ADDITIVE, never a replacement: passes 1 and 2 still own every reserved refId, and a
+    // card both find is retired by the SAME CAS (retireApprovalCard), which pins `status =
+    // "approved"` — so whichever pass gets there first wins and the other is a no-op. There is no
+    // double write and no order to get right.
+    //
+    // WHAT THIS PASS MAY NOT DO. A successful approve also ends `approved` and stays there
+    // forever, so "approved and old" is not a leak — retiring one of those would show a merchant
+    // their finished work as a failure, which is the exact harm #524 r8 was written to prevent.
+    // The discriminator is therefore evidence that the CONVERSATION MOVED ON after consent was
+    // spent: every terminal outcome of a resume writes into the thread (the reply on success, the
+    // narration and chained cards on a further approval, the degrade note when it runs out of
+    // turns, the failure note when it dies in-process), and a resume that lost the thread CAS lost
+    // it to a concurrent turn that wrote its own messages there. A process death writes nothing.
+    // So: NO message created after `approvedAt` ⇒ nothing happened ⇒ this card is stranded.
+    //
+    // It errs the safe way in both directions. A merchant who typed again while the run was in
+    // flight leaves a later message, so a genuinely leaked card is SKIPPED (it stays stale — a
+    // display fault, recoverable by hand) rather than a successful one being failed. And a card
+    // whose approved tool did create work before the death is still retired, with
+    // `chargeVerdict: "unknown"` — the same honest answer pass 1 gave, for the same reason: an
+    // hour later nothing can prove that leg did not already pay for a generation.
+    //
+    // The scan is deliberately coarse (mint time before the cutoff — necessarily true whenever
+    // the approval is, since a card cannot be approved before it exists) and the real age test is
+    // done here in TypeScript against `approvedAt`, so a malformed stamp stands the sweep down for
+    // that card instead of erroring a cast and taking the whole tick with it.
+    const approvedCards = await prisma.$queryRaw<
+      { orgId: string; cardId: string; threadId: string; approvedAt: string }[]
+    >`
+    SELECT c."ownerId" AS "orgId", c."id" AS "cardId", c."threadId", c."payload"->>'approvedAt' AS "approvedAt"
+    FROM "ChatMessage" c
+    WHERE c."kind" = 'APPROVAL_CARD'
+      AND c."deletedAt" IS NULL
+      AND c."payload"->>'status' = 'approved'
+      AND c."payload"->>'approvedAt' IS NOT NULL
+      AND c."createdAt" < ${cutoff}`;
+    for (const { orgId, cardId, threadId, approvedAt } of approvedCards) {
+      const approvedAtMs = Date.parse(approvedAt);
+      // Unparseable, or approved too recently to call dead: leave it alone. A run still inside the
+      // stale window is a run that may still be talking.
+      if (!Number.isFinite(approvedAtMs) || approvedAtMs >= cutoff.getTime()) continue;
+      await runAsTenant(orgId, async () => {
+        // Two clocks meet on this line — a web-stamped instant against a Postgres-stamped one.
+        // The grace covers the only drift direction that could retire a SUCCESS; see
+        // APPROVED_AT_CLOCK_GRACE_MS.
+        //
+        // The card is ITSELF a message in this thread, so it has to be excluded by name: a
+        // merchant who presses Approve within the grace of the card appearing would otherwise
+        // have the card answer for itself, and this pass would never sweep a fast approver's card
+        // at all. A row that existed before the run started can never be evidence the run
+        // continued.
+        const movedOn = await prisma.chatMessage.findFirst({
+          where: {
+            threadId,
+            ownerId: orgId,
+            id: { not: cardId },
+            createdAt: { gt: new Date(approvedAtMs - APPROVED_AT_CLOCK_GRACE_MS) },
+          },
+          select: { id: true },
+        });
+        if (movedOn) return; // the conversation went on — something ran, hands off
+        await retireApprovalCard(orgId, cardId);
       });
     }
     return reaped;

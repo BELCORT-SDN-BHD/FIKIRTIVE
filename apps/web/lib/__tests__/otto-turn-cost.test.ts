@@ -111,17 +111,31 @@ describe("the conversation-charge disclosure is one sentence in three places", (
       expect(render()).not.toMatch(/a little credit/i);
     });
 
-    it(`${name}: says chatting costs credits and where the charges are listed`, () => {
+    // Founder 的第二次裁决(2026-08-18)把对话放回按用量收费:成本 +5%。这三处共用的那一句
+    // 因此必须再跟着钱走一次 —— 免费那半天的说法一个字都不许留下,而且新说法要把「按用量、
+    // 去哪里查」讲清楚,不能又退回「a little credit」那种没凭据的软话。
+    //
+    // 这条纪律最后砍掉的是它自己的初稿。那一句原本还带一个量级断言「usually a fraction of
+    // one per message」:1.05 下实测一次回复是 1.4 displayed credits,#536 实测区间
+    // (0.21–1.73)大半在 1 credit 以上,而且它下方就渲染着 CHAT_HOLD_NOTE(holds up to 4
+    // credits)—— 它跟「a little credit」是同一种没凭据的软话,只是换了个方向,所以整个量级
+    // 断言删掉,不是改小。要再写量级,先拿当日价格下的实测来。
+    it(`${name}: says a chat turn costs credits for what it uses, and where to check`, () => {
       const markup = render();
-      expect(markup).toContain("Chatting with Otto uses credits");
+      expect(markup).toContain("Chatting with Otto costs credits for what it uses");
       expect(markup).toContain("Billing");
+      expect(markup).not.toMatch(/Chatting with Otto is free/);
     });
   }
 
   it("comes from ONE constant, so the three surfaces cannot drift apart again", () => {
-    expect(CHAT_SPEND_NOTE).toBe("Chatting with Otto uses credits — your charges are listed in Billing.");
+    expect(CHAT_SPEND_NOTE).toBe(
+      "Chatting with Otto costs credits for what it uses — your charges are listed in Billing.",
+    );
     for (const [, render] of surfaces) {
       expect(render()).toContain("your charges are listed in Billing");
+      // 量级断言不许悄悄回来(见上面那段:删的理由是没凭据,不是嫌它长)。
+      expect(render()).not.toMatch(/fraction of (one|a credit)/i);
     }
   });
 });

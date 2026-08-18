@@ -1127,3 +1127,99 @@ describe("#524 × #898 — the spend cap governs new paid actions, never the con
     expect(acc.balance + acc.reserved).toBe(30);
   });
 });
+
+// ── Founder 第二次裁决 2026-08-18:对话按用量收费(API 成本 + 5%)—— 台账上是真的一笔 ────────
+//
+// 同一天的第一次裁决把对话设成免费,几小时后被推翻:「其实应该看用量,不然之后思考很久或其他
+// 的,我们的成本会 cover 不到。」于是钱路回到它本来的形状 —— 一轮对话**真的**冻结、真的结算,
+// 台账上留下 RESERVE + SETTLE。价钱只是那个乘数,钱路一行没动:这里钉的是那个乘数落到台账上
+// 的样子,以及 #898 那道起步门槛跟着价钱一起回来。
+describe("a priced conversation turn moves credits and leaves an honest pair of rows", () => {
+  const CHAT_REF = "otto-stream:paid-turn-1";
+  /** #543 的冻结上限 / #898 的起步门槛,与 @fikirtive/core 的常量同值。 */
+  const CHAT_CAP = 40;
+  const CHAT_MIN = 10;
+
+  it("成功一轮:冻结 min(40, 余额) → 按真实用量结算,余额只少了真正用掉的那一笔", async () => {
+    const before = await account(ORG);
+    // withLlmBudget 在 margin=1.05 下的完整调用序列:balance-aware 冻结,然后按实际 token 结算。
+    const held = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: CHAT_REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    expect(held).toBe(CHAT_CAP); // 余额 1000 远高于上限
+
+    // 那条 beta 回复的真实成本 $0.125 × 1.05 × 100 = 14 内部 credits(1.4 显示 credits)。
+    const ACTUAL = 14;
+    await prisma.$transaction((tx) =>
+      settleCredits(tx, { orgId: ORG, refId: CHAT_REF, actualInternal: ACTUAL }),
+    );
+
+    const after = await account(ORG);
+    expect(after.balance).toBe(before.balance - ACTUAL);
+    expect(after.reserved).toBe(0);
+    const rows = await ledger(ORG);
+    expect(rows.map((r) => r.kind)).toEqual(["RESERVE", "SETTLE"]);
+    // 台账不变量:余额 == Σ balanceDelta,冻结 == Σ reservedDelta。
+    expect(sumBalance(rows)).toBe(-ACTUAL);
+    expect(sumReserved(rows)).toBe(0);
+  });
+
+  it("用得越多扣得越多 —— 这就是「看用量」那句话在台账上的样子", async () => {
+    const before = await account(ORG);
+    await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: "otto-stream:short", capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: "otto-stream:short", actualInternal: 2 }));
+    await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: "otto-stream:long", capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: "otto-stream:long", actualInternal: 31 }));
+
+    // 一句短问题 2,一轮想很久的 31 —— 长的那轮不可能比它自己的成本便宜。
+    expect((await account(ORG)).balance).toBe(before.balance - 2 - 31);
+  });
+
+  it("失败一轮(模型报错走退款):整笔冻结原样退回,商家一分不花", async () => {
+    const before = await account(ORG);
+    await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: CHAT_REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+    );
+    const outcome = await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: CHAT_REF }));
+
+    expect(outcome).toBe("refunded");
+    const after = await account(ORG);
+    expect(after.balance).toBe(before.balance);
+    expect(after.reserved).toBe(0);
+    expect(sumBalance(await ledger(ORG))).toBe(0);
+  });
+
+  it("余额为 0 的商家在门口就被拦下 —— #898 那道起步门槛随价钱一起回来", async () => {
+    // 免费那半天里这是放行的;按用量收费之后放行才是错的 —— 一轮谁也结算不了的对话,
+    // 与其跑到一半失败,不如在门口说清楚「去充值」。
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 0 } });
+
+    await expect(
+      prisma.$transaction((tx) =>
+        reserveCreditsUpTo(tx, { orgId: ORG, refId: CHAT_REF, capInternal: CHAT_CAP, minimumInternal: CHAT_MIN }),
+      ),
+    ).rejects.toThrow(InsufficientCredits);
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(0);
+    expect(await ledger(ORG)).toHaveLength(0); // 拒绝不留痕、不扣钱
+  });
+
+  it("生成那一路一个字没改 —— 两次裁决动的都只是对话", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "job-1", cost: 110 }));
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: "job-1" }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000 - 110);
+    expect(acc.reserved).toBe(0);
+    const rows = await ledger(ORG);
+    expect(rows.map((r) => r.kind)).toEqual(["RESERVE", "SETTLE"]);
+    expect(sumBalance(rows)).toBe(-110);
+    expect(sumReserved(rows)).toBe(0);
+  });
+});

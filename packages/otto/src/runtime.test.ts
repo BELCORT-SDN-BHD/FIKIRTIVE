@@ -49,6 +49,7 @@ import type { Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/ag
 import {
   OTTO_MAX_STEPS,
   OTTO_OUTPUT_CAP_TOKENS,
+  OTTO_CONVERSATION_TURN_MARGIN,
   OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
   OTTO_CHAT_MIN_START_INTERNAL,
   llmPricesFor,
@@ -65,7 +66,7 @@ import {
 } from "./runtime.js";
 import { ottoModel, ottoModelRuntime, OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL, OTTO_DEFAULT_MODEL } from "./model.js";
 import { otto, ottoInteractiveRuntime, ottoApprovalResumeRuntime } from "./otto.js";
-import { actualCostInternal, mapOttoUsage, withLlmBudget } from "./meter.js";
+import { actualCostInternal, llmHoldInternal, mapOttoUsage, withLlmBudget } from "./meter.js";
 import { defineOttoSkill } from "./skill.js";
 import { tryRestoreRunStateWithContext } from "./run-input.js";
 import { allSkills } from "./registry.js";
@@ -284,30 +285,47 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     expect(args.usageOnError?.(new Error("boom"))).toBeNull();
   });
 
-  it("#543: the conversation turn carries the 40-internal hold cap (was a 120-internal hold)", () => {
+  // ── Founder 的第二次裁决(2026-08-18):对话按用量收费,API 成本 + 5% ──────────────────────
+  //
+  // 整条规则是 @fikirtive/core 里的一个乘数(OTTO_CONVERSATION_TURN_MARGIN);#543 的冻结上限与
+  // #898 的起步门槛都随它一起回到在役。
+  it("prices the conversation turn from the chat multiplier, not from the ambient generation margin", () => {
+    for (const rt of [ottoInteractiveRuntime, ottoApprovalResumeRuntime]) {
+      const args = ottoBudgetArgsFor(rt, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
+      expect(args.margin).toBe(OTTO_CONVERSATION_TURN_MARGIN);
+      expect(args.margin).toBe(1.05);
+      // Explicitly NOT the env/default markup — that one prices GENERATION, and a shared margin
+      // would have quietly re-priced every image and video with this ruling.
+      expect(args.margin).not.toBe(ottoLlmMargin());
+    }
+  });
+
+  it("holds the cost-plus-5% worst case, capped: 70 internal derived, 40 held", () => {
     const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
-    expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
-    expect(args.reserveCapInternal).toBe(40);
-    // The worst case it caps, at the live prices/margin/steps.
+    // The meter's one definition of the hold, asked with the production args.
+    expect(llmHoldInternal(args)).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
+    // The number the cap is capping, at the CHAT price…
+    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS)).toBe(70);
+    // …and at the generation markup, which this turn deliberately does NOT use.
     expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), OTTO_MAX_STEPS)).toBe(120);
   });
 
-  it("#543: the approval-resume turn carries the same cap (same conversation, same hold)", () => {
-    const args = ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: "o", refId: "otto-turn:m2", input: "x" });
-    expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
+  it("#543: the conversation turn carries the 40-internal hold cap", () => {
+    for (const rt of [ottoInteractiveRuntime, ottoApprovalResumeRuntime]) {
+      const args = ottoBudgetArgsFor(rt, { orgId: "o", refId: "otto-turn:m2", input: "x" });
+      expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
+      expect(args.reserveCapInternal).toBe(40);
+    }
   });
 
-  it("#898: the conversation turn also carries the 1-credit entry minimum, so the hold can fit a small balance", () => {
-    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
-    expect(args.reserveMinInternal).toBe(OTTO_CHAT_MIN_START_INTERNAL);
-    expect(args.reserveMinInternal).toBe(10);
-    // The pair is what makes 3.9 credits sendable: gate at 10, hold at min(40, 39).
-    expect(args.reserveMinInternal).toBeLessThan(args.reserveCapInternal!);
-  });
-
-  it("#898: the approval-resume turn carries the same minimum (same conversation, same door)", () => {
-    const args = ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: "o", refId: "otto-turn:m2", input: "x" });
-    expect(args.reserveMinInternal).toBe(OTTO_CHAT_MIN_START_INTERNAL);
+  it("#898: it also carries the 1-credit entry minimum, so the hold can fit a small balance", () => {
+    for (const rt of [ottoInteractiveRuntime, ottoApprovalResumeRuntime]) {
+      const args = ottoBudgetArgsFor(rt, { orgId: "o", refId: "otto-turn:m2", input: "x" });
+      expect(args.reserveMinInternal).toBe(OTTO_CHAT_MIN_START_INTERNAL);
+      expect(args.reserveMinInternal).toBe(10);
+      // The pair is what makes 3.9 credits sendable: gate at 10, hold at min(40, 39).
+      expect(args.reserveMinInternal).toBeLessThan(args.reserveCapInternal!);
+    }
   });
 
   it("fixture-no-charge manifest → paid:false (the ONLY way to a no-charge run is the manifest itself)", () => {
@@ -375,6 +393,63 @@ describe("production composition root (PH1-A5)", () => {
         else process.env[k] = v;
       }
     }
+  });
+});
+
+// ── Founder 的第二次裁决(2026-08-18):一整轮对话按真实用量收费 ──────────────────────────
+//
+// 「其实应该看用量,不然之后思考很久或其他的,我们的成本会 cover 不到。」这一组用**真 meter**
+// 跑生产的预算参数,钉住那两个数:冻结走 #898 的 balance-aware 路,结算按真实 token 算,
+// 而且**用得越多收得越多** —— 那正是这条规则要成立的地方。
+describe("runOttoTurn — a conversation turn charges for what it used (Founder 2026-08-18)", () => {
+  it("takes the balance-aware hold and settles the ACTUAL token cost", async () => {
+    const runtime = createOttoRuntime(
+      { modelRuntime: paidFixtureModelRuntime(fakeTextModel("here you go")), skills: [] },
+      "interactive",
+    );
+
+    await runOttoTurn({ orgId: "org_t", refId: "otto-turn:paid-1", input: "hello" }, baseCtx, runtime);
+
+    // #898: a conversation turn holds min(cap, balance) through reserveCreditsUpTo.
+    expect(meterMocks.reserveCreditsUpTo).toHaveBeenCalledOnce();
+    expect(meterMocks.reserveCreditsUpTo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: "org_t",
+        refId: "otto-turn:paid-1",
+        capInternal: OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
+        minimumInternal: OTTO_CHAT_MIN_START_INTERNAL,
+      }),
+    );
+    expect(meterMocks.reserveCredits).not.toHaveBeenCalled();
+    // The settle is the turn's REAL usage priced at the chat multiplier — the fixture model
+    // reports 3 in / 2 out, which at cost + 5% rounds up to 1 internal credit.
+    const settled = actualCostInternal(
+      { inputTokens: 3, outputTokens: 2 },
+      llmPricesFor("claude-sonnet-4-6"),
+      OTTO_CONVERSATION_TURN_MARGIN,
+    );
+    expect(meterMocks.settleCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: "org_t", refId: "otto-turn:paid-1", actualInternal: settled }),
+    );
+    expect(meterMocks.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("costs MORE the more it used — that is the whole point of usage pricing", async () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "o", refId: "r", input: "x" });
+    const charge = (usage: { inputTokens: number; outputTokens: number }) =>
+      actualCostInternal(usage, args.prices!, args.margin!);
+
+    const tiny = charge({ inputTokens: 1, outputTokens: 1 });
+    const full = charge({ inputTokens: 12_000, outputTokens: 1_500 });
+    const huge = charge({ inputTokens: 5_000_000, outputTokens: 900_000 });
+
+    expect(tiny).toBeGreaterThan(0); // 没有免费的一轮 —— 每一轮都至少收回成本
+    expect(full).toBeGreaterThan(tiny);
+    expect(huge).toBeGreaterThan(full);
+    // 「思考很久」那种一轮不可能比成本便宜:收的 ≥ 花的。
+    expect(huge).toBeGreaterThanOrEqual(charge({ inputTokens: 5_000_000, outputTokens: 900_000 }));
   });
 });
 
@@ -482,10 +557,12 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
 
     expect(orderBeforeDrainRelease).toEqual(["drain-start"]);
     expect(order).toEqual(["drain-start", "drain-complete", "completed", "usage"]);
+    // Priced with the CHAT multiplier (Founder's second ruling 2026-08-18: cost + 5%), never the
+    // generation markup — a shared margin here would silently re-price conversation with images.
     const actualInternal = actualCostInternal(
       { inputTokens: 3, outputTokens: 2 },
       llmPricesFor("claude-sonnet-4-6"),
-      ottoLlmMargin(),
+      OTTO_CONVERSATION_TURN_MARGIN,
     );
     expect(meterMocks.settleCredits).toHaveBeenCalledWith(
       expect.anything(),

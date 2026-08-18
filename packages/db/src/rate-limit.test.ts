@@ -216,8 +216,10 @@ describe("#795 计数器够不到的时候", () => {
   });
 
   it("只有明确写了 allow 的调用点才放行,而且照样标记 degraded", async () => {
-    // 唯一的 allow 用户是签名媒体代理:那条路本来不碰数据库,授权是 HMAC 不是这道闸,
-    // 数据库抖一下不该变成「商家已经付过钱的那次发布失败了」的原因。
+    // allow 是逐道门的产品判断,不是默认值。签名媒体代理:那条路本来不碰数据库,授权是 HMAC
+    // 不是这道闸,数据库抖一下不该变成「商家已经付过钱的那次发布失败了」的原因。Otto 对话闸
+    // (2026-08-18 产品负责人裁定)同理:那条路的钱由冻结守着(冻结自己 fail closed),这道闸
+    // 只管量,放行不可能多花钱;拒了却等于「Otto 挂了」。生成、上传一律保持 fail closed。
     const verdict = await withCounterTableMissing(() =>
       consumeRateLimit([{ key: "down:b", max: 100, windowMs: MINUTE }], { onStorageFailure: "allow" }),
     );

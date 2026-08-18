@@ -320,6 +320,18 @@ const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
   mockOtherHoldsSince: vi.fn(async (_orgId: string, _refId: string): Promise<"none" | "some" | "unknown"> => "none"),
 }));
 
+const { mockConsumeOttoTurnGate } = vi.hoisted(() => ({ mockConsumeOttoTurnGate: vi.fn(async () => true) }));
+
+// Founder 2026-08-18 — the conversation gate is a REAL Postgres counter that fails CLOSED when it
+// cannot reach the database (packages/db/src/rate-limit.ts, deliberately). This suite mocks the db
+// barrel wholesale, so an unmocked gate would refuse every `ottoTurn` here and turn the file red
+// for a reason that has nothing to do with what it tests. Granted by default; the gate's own
+// numbers live in rate-limit-gates.test.ts, and the WIRING has its own case below.
+vi.mock("@/lib/rate-limit-gates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit-gates")>()),
+  consumeOttoTurnGate: mockConsumeOttoTurnGate,
+}));
+
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     project: { findFirst: mockProjectFindFirst },
@@ -430,13 +442,14 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 // #524 r6: the second leg of a plain generate approval, priced by the same chain startGen charges with.
 const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight");
 // #524 r2: the REAL hold derivation (the @fikirtive/otto mock spreads the actual module), so the
 // expected number in the spend-cap cases comes from the same code the production path runs.
 const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed } = await import("@fikirtive/otto");
+const { OTTO_TURN_RATE_LIMIT_MESSAGE } = await import("@/lib/rate-limit-gates");
 // The REAL withLlmBudget (see the @fikirtive/otto mock). Tests that need the true reserve→claim→run
 // order install it on mockWithLlmBudget; it runs against the mocked ledger writers above.
 const realWithLlmBudget = (await import("@fikirtive/otto")) as unknown as {
@@ -628,6 +641,7 @@ function setupHappyPath() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConsumeOttoTurnGate.mockResolvedValue(true);
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
   // #498 round-5: the tie-language fallback probes recent USER messages; default
   // to an empty thread history (→ "en") unless a test scripts one.
@@ -2197,8 +2211,8 @@ describe("ottoTurn — interruption CAS miss → stale, no orphan AGENT message"
   });
 });
 
-describe("ottoApprove — interruption CAS miss → stale, no orphan AGENT message", () => {
-  it("returns stale and does NOT write an AGENT chatMessage when CAS misses on chained interruption path", async () => {
+describe("ottoApprove — interruption CAS miss → stale, and the merchant is told why", () => {
+  it("returns stale, writes NO orphan narration, and DOES leave the honest stale note", async () => {
     mockRequireOwner.mockResolvedValue(GATE);
     mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
 
@@ -2243,10 +2257,24 @@ describe("ottoApprove — interruption CAS miss → stale, no orphan AGENT messa
     // Must return stale, not needs_approval
     expect(res).toEqual({ ok: true, status: "stale" });
 
-    // No AGENT message must have been written (the orphan guard)
-    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT" }) }),
-    );
+    // The ORPHAN guard is unchanged: the run's own narration must not be persisted over a state
+    // that was never written — that is what this test was opened for.
+    const agentTexts = mockChatMessageCreate.mock.calls
+      .map(([a]) => (a as { data?: { role?: string; text?: string } }).data)
+      .filter((d) => d?.role === "AGENT")
+      .map((d) => d!.text);
+    expect(agentTexts).not.toContain("intermediate text");
+
+    // 判官 r2 P1 / 2026-08-18:但「什么都不写」是另一个 bug。商家按了 Approve、那一步真的跑了,
+    // 屏幕上却一个字都没有 —— 而且线程里没有任何痕迹,一小时后清道夫会把这张**跑成功的**卡
+    // 判成 failed。所以这条路必须留下一句诚实的话,而且只有那一句。
+    expect(agentTexts).toEqual([APPROVE_STALE_INTERRUPTED_NOTE]);
+    // 而且必须写进**这张卡自己的线程**——清道夫第 3 遍只看那里(按 threadId 查 claim 之后的消息)。
+    const noteThreads = mockChatMessageCreate.mock.calls
+      .map(([a]) => (a as { data?: { role?: string; threadId?: string } }).data)
+      .filter((d) => d?.role === "AGENT")
+      .map((d) => d!.threadId);
+    expect(noteThreads).toEqual([APPROVE_THREAD_ID]);
   });
 });
 
@@ -4573,5 +4601,109 @@ describe("#524 r6 — a failed card only claims zero when the ledger PROVED it (
 
     const reservedRefId = (mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId;
     expect(mockOtherHoldsSince).toHaveBeenCalledWith(OWNER_ID, reservedRefId);
+  });
+});
+
+// ── 非流式那扇门也走同一道对话闸 ──────────────────────────────────────────────────────────
+//
+// 额度管得住一轮能花多少,管不住能起多少轮。闸的数字在 rate-limit-gates.test.ts;这里钉的是
+// **这条路真的问过它**、问的是这个租户,以及被拒的那一次一行都没写、模型一次都没跑 ——
+// 而且答的是与流式那扇门**同一句话**(两扇门一个说法)。
+describe("ottoTurn — the conversation gate (Founder 2026-08-18)", () => {
+  it("asks the gate for THIS tenant before anything is validated or written", async () => {
+    setupHappyPath();
+    await ottoTurn(BASE_INPUT);
+    expect(mockConsumeOttoTurnGate).toHaveBeenCalledWith(OWNER_ID);
+  });
+
+  it("a refused turn returns the shared sentence and runs and persists nothing", async () => {
+    setupHappyPath();
+    mockConsumeOttoTurnGate.mockResolvedValue(false);
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toEqual({ error: OTTO_TURN_RATE_LIMIT_MESSAGE });
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+    expect(mockChatMessageCreate).not.toHaveBeenCalled();
+    // 被拒的那一次什么都没冻结、什么都没扣,所以这句话不许读成「你没钱了」。
+    expect(OTTO_TURN_RATE_LIMIT_MESSAGE).not.toMatch(/credit/i);
+  });
+});
+
+// ── 判官 r2 P1(2026-08-18):每一个终点都必须在线程里留下痕迹 ─────────────────────────────
+//
+// 清道夫第 3 遍(apps/worker/src/jobs/llm-reservation-reaper.ts)判断一张 approved 卡是不是
+// 搁浅,靠的是「同意书被花掉之后,这场对话有没有再动过」。判官指出这个前提当时**是假的**:
+// ottoApprove 有三个终点一个字都不写 —— 两条 CAS 输了的 stale,和最外层 catch。最重的那一条是
+// 完成分支:活真的跑完了、图也真的扣费生成了,只因为并发的一轮抢先动了线程,商家什么都没看到;
+// 一小时后清道夫会把这张**成功**的卡判成 failed,并在商家的图库前面写「可能已经扣过费」。
+//
+// 修法不是让清道夫更聪明,是让这三个终点都说话 —— 那本来就是商家该看到的东西。
+describe("ottoApprove — every terminal exit leaves evidence in the thread (judge r2 P1)", () => {
+  /** The AGENT texts this action wrote, in order. */
+  const agentNotes = (): string[] =>
+    mockChatMessageCreate.mock.calls
+      .map(([a]) => (a as { data?: { role?: string; text?: string } }).data)
+      .filter((d) => d?.role === "AGENT")
+      .map((d) => d!.text ?? "");
+
+  /**
+   * The note has to land in THE CARD'S OWN THREAD, because that is the only place the leaked-card
+   * sweep looks (llm-reservation-reaper.ts pass 3 probes `ChatMessage` by `threadId` for anything
+   * created after the claim). A note written anywhere else would read as evidence to nobody.
+   */
+  const noteThreadIds = (): string[] =>
+    mockChatMessageCreate.mock.calls
+      .map(([a]) => (a as { data?: { role?: string; threadId?: string } }).data)
+      .filter((d) => d?.role === "AGENT")
+      .map((d) => d!.threadId ?? "");
+
+  it("① completed + thread CAS lost: the merchant is told the work FINISHED, not left in silence", async () => {
+    setupUniversalApprove();
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 }); // a concurrent turn moved the thread
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toEqual({ ok: true, status: "stale" });
+    expect(agentNotes()).toEqual([APPROVE_STALE_COMPLETED_NOTE]);
+    expect(noteThreadIds()).toEqual([APPROVE_THREAD_ID_2]);
+    // 这句话必须说「跑完了」,不能读成「失败了」—— 东西已经在商家手上。
+    expect(APPROVE_STALE_COMPLETED_NOTE).toMatch(/finished the work/i);
+    expect(APPROVE_STALE_COMPLETED_NOTE).not.toMatch(/failed|couldn't finish/i);
+  });
+
+  it("② outer catch: the thread carries the SAME sentence the merchant is handed back", async () => {
+    setupUniversalApprove();
+    // 跑完之后写线程炸了 —— 落到最外层 catch 的那种真实故障。
+    mockChatThreadUpdateMany.mockRejectedValue(new Error("thread write exploded"));
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID }) as { error: string };
+
+    expect(res.error).toBe("Couldn't approve — please try again.");
+    // 线程里那句 = 返回值那句。两处不许各说各话(与上面 spent-consent 那条同一条纪律)。
+    expect(agentNotes()).toEqual([res.error]);
+    expect(noteThreadIds()).toEqual([APPROVE_THREAD_ID_2]);
+  });
+
+  it("③ the note write failing INSIDE the catch never replaces the real error", async () => {
+    // 数据库真的躺了的时候,第二次失败不许把第一次失败的原因盖掉 —— 商家要读到的是真实原因,
+    // 不是「数据库挂了」。persistAgentNote 自己吞异常,这条钉的就是那个保证。
+    setupUniversalApprove();
+    mockChatThreadUpdateMany.mockRejectedValue(new Error("thread write exploded"));
+    mockChatMessageCreate.mockRejectedValue(new Error("database is down"));
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID }) as { error: string };
+
+    expect(res.error).toBe("Couldn't approve — please try again.");
+    expect(res.error).not.toMatch(/database/i);
+  });
+
+  it("三句话互不相同,而且都不是空的 —— 一个终点一句实话", () => {
+    const notes = [APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE];
+    for (const note of notes) expect(note.length).toBeGreaterThan(20);
+    expect(new Set(notes).size).toBe(notes.length);
+    // 这两句讲的是「活跑完了 / 还要再问一次」,不是钱 —— 不许让商家以为这里另外扣了什么。
+    for (const note of notes) expect(note).not.toMatch(/credit/i);
   });
 });

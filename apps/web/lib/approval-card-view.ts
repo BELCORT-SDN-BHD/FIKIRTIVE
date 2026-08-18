@@ -87,6 +87,24 @@ export type ApprovalCardPayload = {
    * charged". Guessing that sentence is worse than not saying it.
    */
   chargeVerdict?: "zero" | "unknown";
+  /**
+   * When the consent was SPENT — the instant the CAS moved this card `pending → approved`, as an
+   * ISO instant (Founder 2026-08-18 follow-up).
+   *
+   * It exists so the recovery for a leaked approve does not depend on a ledger row. The usual
+   * anchor is the resume turn's own RESERVE row — a process death between the hold and the model
+   * leaves one behind, dated, for the reaper to find. But a refId family that reserves NOTHING
+   * (a fixture no-charge runtime, or any future surface priced at zero) leaves no such row, and
+   * `ChatMessage` has no `updatedAt` column, so without this stamp nothing in the database says
+   * WHEN consent was spent. `createdAt` is mint time, and a card may be approved any time inside
+   * its 24-hour TTL, so sweeping on it would either wait a day or retire a run that started ten
+   * seconds ago.
+   *
+   * Written once, by the claim (otto-actions claimApprovalCard). Absent on cards approved before
+   * this shipped, and on those the card-state sweep stands down rather than guessing — the
+   * fail-safe direction is a card that stays stale, never one retired over work that succeeded.
+   */
+  approvedAt?: string | null;
 };
 
 /** Structural parse of an unknown durable payload — null when it isn't an approval card. */
@@ -121,6 +139,9 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
     attempt: Number.isInteger(p.attempt) && (p.attempt as number) >= 1 ? (p.attempt as number) : 1,
     // Anything but a literal proof reads as "unknown" — the arm whose sentence claims less.
     chargeVerdict: p.chargeVerdict === "zero" ? "zero" : "unknown",
+    // Round-trips so a later payload rewrite cannot silently drop the one record of WHEN consent
+    // was spent. A malformed value reads as absent, which stands the card-state sweep down.
+    approvedAt: typeof p.approvedAt === "string" ? p.approvedAt : null,
   };
 }
 

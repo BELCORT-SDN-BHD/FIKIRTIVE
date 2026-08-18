@@ -8,6 +8,9 @@
  *     能造出多少 job、多少行、多少队列消息;
  *   · 上传 —— 每调用一次就签出一个进我们自己桶的 URL,没有任何东西在数;
  *   · 外链 —— 签名媒体代理,产品里唯一一条按设计就没有会话的路。
+ *
+ * 2026-08-18 追加第五道:**Otto 对话**。额度管得住一轮能花多少(冻结那一步管的),管不住一个
+ * 卡死的客户端能起多少轮 —— 而每一轮都是一次真的模型调用。
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "@fikirtive/db";
@@ -15,10 +18,13 @@ import {
   callerKey,
   consumePasswordDoor,
   consumeGenerationGate,
+  consumeOttoTurnGate,
   consumeUploadGate,
   consumeMediaProxyGate,
   PASSWORD_DOOR_PER_CALLER_PER_HOUR,
   GENERATION_PER_TENANT_PER_HOUR,
+  OTTO_TURN_PER_TENANT_PER_HOUR,
+  OTTO_TURN_RATE_LIMIT_MESSAGE,
   UPLOAD_PER_TENANT_PER_HOUR,
   MEDIA_PROXY_PER_CALLER_PER_10_MIN,
 } from "@/lib/rate-limit-gates";
@@ -85,6 +91,51 @@ describe("#795 生成闸", () => {
   });
 });
 
+// ── Otto 对话闸 —— 数的是「起了多少轮」,不是「花了多少钱」 ────────────────────────────────
+//
+// 钱由冻结那一步管:一轮对话在模型被调用之前先向余额冻结,余额不够就起不来。这道闸补的是另一
+// 半 —— 没有任何东西在数一个卡死的客户端能起多少轮,而每一轮都是一次真的模型调用。
+describe("Otto 对话闸(只管量,不管钱)", () => {
+  it("按租户计数 —— 一个商家聊得多不影响另一个", async () => {
+    await consumeOttoTurnGate("org-a");
+    await consumeOttoTurnGate("org-b");
+    const rows = await prisma.rateLimitCounter.findMany({
+      where: { key: { startsWith: "otto:" } },
+      select: { key: true, count: true },
+    });
+    expect(rows.sort((x, y) => x.key.localeCompare(y.key))).toEqual([
+      { key: "otto:org-a", count: 1 },
+      { key: "otto:org-b", count: 1 },
+    ]);
+  });
+
+  it("一小时给一个商家六十轮,第六十一轮拒", async () => {
+    for (let i = 0; i < OTTO_TURN_PER_TENANT_PER_HOUR; i += 1) {
+      expect(await consumeOttoTurnGate("org-chatty"), `第 ${i + 1} 轮应放行`).toBe(true);
+    }
+    expect(await consumeOttoTurnGate("org-chatty")).toBe(false);
+  }, 60_000);
+
+  it("额度必须容得下一场真实的长对话 —— 闸拒到真人身上就是我们自己造的故障", async () => {
+    // beta 里最长的一场实测远低于二十轮;六十≈一小时里每分钟一条。
+    expect(OTTO_TURN_PER_TENANT_PER_HOUR).toBeGreaterThanOrEqual(60);
+  });
+
+  it("拒绝语只说等一会儿,一个字都不提 credits —— 什么都没扣,暗示扣了就是撒谎", () => {
+    expect(OTTO_TURN_RATE_LIMIT_MESSAGE).toMatch(/try again/i);
+    expect(OTTO_TURN_RATE_LIMIT_MESSAGE).not.toMatch(/credit/i);
+    expect(OTTO_TURN_RATE_LIMIT_MESSAGE).not.toMatch(/pay|upgrade|top up/i);
+  });
+
+  it("两个对话入口共用同一个桶 —— 换一扇门不该重新发一份预算", async () => {
+    // 流式路由与 ottoTurn 都调用同一个函数、同一个键;这里钉的是「同一个租户只有一份预算」。
+    await consumeOttoTurnGate("org-two-doors");
+    await consumeOttoTurnGate("org-two-doors");
+    const row = await prisma.rateLimitCounter.findFirstOrThrow({ where: { key: "otto:org-two-doors" } });
+    expect(row.count).toBe(2);
+  });
+});
+
 describe("#795 上传闸", () => {
   it("按租户计数,额度容得下一次批量商品导入", async () => {
     await consumeUploadGate("org-a");
@@ -103,16 +154,53 @@ describe("#795 外链闸(签名媒体代理)", () => {
   });
 });
 
-describe("#795 四道闸各数各的", () => {
+// ── 存储故障:对话闸放行,生成与上传照旧拒(产品负责人裁定 2026-08-18)─────────────────────
+//
+// 计数器够不到的时候放行还是拒,是逐道门的产品判断,不是一个全局开关。对话这道门放行是安全的:
+// 钱本来就由冻结那一步守着,而冻结自己 fail closed —— 数据库答不了这个计数器,也答不了那笔
+// 冻结,所以放行不可能多花一分钱,只可能多起几轮。拒了却等于「Otto 挂了」。
+describe("计数器够不到的时候:对话闸放行,生成与上传照旧拒", () => {
+  /** 把表挪走,制造一次**真实**的存储故障(而不是 mock 一个 Error),用完原样挪回来。 */
+  async function withCounterTableMissing<T>(fn: () => Promise<T>): Promise<T> {
+    await prisma.$executeRawUnsafe(`ALTER TABLE "rate_limit_counter" RENAME TO "rate_limit_counter_gates"`);
+    try {
+      return await fn();
+    } finally {
+      await prisma.$executeRawUnsafe(`ALTER TABLE "rate_limit_counter_gates" RENAME TO "rate_limit_counter"`);
+    }
+  }
+
+  it("对话闸放行 —— 计数表抖一下不许变成「Otto 挂了」(钱另有冻结守着)", async () => {
+    expect(await withCounterTableMissing(() => consumeOttoTurnGate("org-blip"))).toBe(true);
+  });
+
+  it("生成闸照旧 fail closed —— 花商家额度那一路,闸够不到就不许开", async () => {
+    expect(await withCounterTableMissing(() => consumeGenerationGate("org-blip"))).toBe(false);
+  });
+
+  it("上传闸照旧 fail closed —— 同理,那一路要写我们自己的桶", async () => {
+    expect(await withCounterTableMissing(() => consumeUploadGate("org-blip"))).toBe(false);
+  });
+
+  it("故障过去之后照常计数 —— 放行不留坏状态", async () => {
+    await withCounterTableMissing(() => consumeOttoTurnGate("org-blip-2"));
+    expect(await consumeOttoTurnGate("org-blip-2")).toBe(true);
+    const row = await prisma.rateLimitCounter.findFirstOrThrow({ where: { key: "otto:org-blip-2" } });
+    expect(row.count).toBe(1); // 故障那一次没记上,恢复之后这一次记上了
+  });
+});
+
+describe("#795 每道闸各数各的", () => {
   it("键前缀两两不同 —— 一道门的流量不许花掉另一道门的预算", async () => {
     await consumePasswordDoor(from("203.0.113.30"));
     await consumeGenerationGate("203.0.113.30");
+    await consumeOttoTurnGate("203.0.113.30");
     await consumeUploadGate("203.0.113.30");
     await consumeMediaProxyGate(from("203.0.113.30"));
     const rows = await prisma.rateLimitCounter.findMany({ select: { key: true, count: true } });
-    // 同一个字符串,四道门四行,每行各 1 —— 没有任何一道门在替另一道记账。
-    expect(rows).toHaveLength(4);
+    // 同一个字符串,五道门五行,每行各 1 —— 没有任何一道门在替另一道记账。
+    expect(rows).toHaveLength(5);
     expect(new Set(rows.map((r) => r.count))).toEqual(new Set([1]));
-    expect(new Set(rows.map((r) => r.key.split(":")[0]))).toEqual(new Set(["pw", "gen", "upload", "media"]));
+    expect(new Set(rows.map((r) => r.key.split(":")[0]))).toEqual(new Set(["pw", "gen", "otto", "upload", "media"]));
   });
 });

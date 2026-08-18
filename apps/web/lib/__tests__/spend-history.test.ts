@@ -260,13 +260,32 @@ describe("the spend-history window is described honestly", () => {
 });
 
 describe("honest conversation-spend copy", () => {
-  it("no longer calls a chat turn 'a little credit' and points at Billing", () => {
+  // Founder 的第二次裁决(2026-08-18)把对话放回按用量收费。这句话经过三个版本:
+  // 「a little credit」(假的)→「is free」(只真了半天)→ 现在这句(按用量,成本 +5%)。
+  it("no longer calls a chat turn 'a little credit', names the usage basis, and points at Billing", () => {
     expect(CHAT_SPEND_NOTE).not.toMatch(/a little/i);
+    expect(CHAT_SPEND_NOTE).toMatch(/what it uses/i);
     expect(CHAT_SPEND_NOTE).toMatch(/credits/i);
     expect(CHAT_SPEND_NOTE).toMatch(/Billing/);
+    // 免费那半天的说法不许留下 —— 它现在是假的。
+    expect(CHAT_SPEND_NOTE).not.toMatch(/\bis free\b/i);
   });
 
   it("does not promise a complete record the window cannot deliver (round-1 P1①)", () => {
     expect(CHAT_SPEND_NOTE).not.toMatch(/every charge/i);
+  });
+
+  // The read side is untouched on purpose: turns charged BEFORE the ruling are real history and
+  // must keep rendering as the charges they were.
+  it("still reads historical Chat charges out of the ledger honestly", () => {
+    const entries = buildSpendHistory(
+      [
+        row({ id: "s1", kind: "SETTLE", refId: "otto-stream:m1", balanceDelta: 87, reservedDelta: -120, createdAt: new Date("2026-07-30T13:15:20.000Z") }),
+        row({ id: "r1", kind: "RESERVE", refId: "otto-stream:m1", balanceDelta: -120, reservedDelta: 120 }),
+      ],
+      new Map(),
+      TZ,
+    );
+    expect(entries[0]).toMatchObject({ category: "chat", label: "Chat", delta: -3.3 });
   });
 });

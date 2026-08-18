@@ -105,34 +105,43 @@ export function lowBalanceForVideoMessage(
   return `You have ${creditsLabel(balanceCredits)} left — a short video costs ${creditsLabel(videoCredits)}.`;
 }
 
-/** The ONE disclosure for what an Otto conversation costs (#555).
+/** The ONE disclosure for what an Otto conversation costs (#555; Founder's second ruling
+ *  2026-08-18 put conversation back on usage pricing).
  *
- *  It used to read "Chatting with Otto uses a little credit." in three separate places. A
- *  measured session put 89% of its credits on conversation turns, one turn costing as much
- *  as three images — "a little" was not true, and there was nowhere to check. This single
- *  constant keeps the three surfaces from drifting again, and points at the place that can
- *  now answer the question (Billing's spend history).
+ *  It has now been three sentences. "Chatting with Otto uses a little credit." was untrue — a
+ *  measured session put 89% of its credits on conversation, one turn costing as much as three
+ *  images. "Chatting with Otto is free" was true for a few hours, between the two rulings of the
+ *  same day. This is the third and it matches the code: a turn charges what it actually used, at
+ *  the provider's cost plus 5% (OTTO_CONVERSATION_TURN_MARGIN in @fikirtive/core).
  *
- *  Deliberately says "your charges are listed", NOT "every charge": the history is a window
- *  over the most recent items and names its own cut (round-1 review P1① — the copy must not
- *  promise more than the page delivers). */
+ *  IT CARRIES NO MAGNITUDE CLAIM, and that is the point it keeps failing on. A draft of this
+ *  sentence said "usually a fraction of one per message"; at the 1.05 multiplier the measured
+ *  reply is 1.4 displayed credits and most of the #536 band sits ABOVE one credit, so the clause
+ *  was the same species of untruth as "a little credit" — and it read as a contradiction of
+ *  CHAT_HOLD_NOTE ("holds up to 4 credits") rendered directly beneath it. Any future softening
+ *  needs a measurement behind it, at the price of the day.
+ *
+ *  Says "what it uses" rather than a number, because there is no number to give — the price is
+ *  the turn's real usage. Deliberately says "your charges are listed", NOT "every charge": the
+ *  history is a window over the most recent items and names its own cut (round-1 review P1① —
+ *  the copy must not promise more than the page delivers). */
 export const CHAT_SPEND_NOTE =
-  "Chatting with Otto uses credits — your charges are listed in Billing.";
+  "Chatting with Otto costs credits for what it uses — your charges are listed in Billing.";
 
-/** The ONE disclosure of the conversation HOLD (#791-9).
+/** The ONE disclosure of the conversation HOLD (#791-9, live again with the second ruling).
  *
- *  A turn reserves a fixed amount before the model is called, settles the actual token cost,
- *  and refunds the remainder in the same transaction (settleCredits: A = min(actual, held),
- *  the difference goes back to balance). Merchants were never told any of it — they saw the
- *  balance dip and partly come back, with nothing explaining either move, which reads like
- *  an accounting bug. Saying it plainly costs nothing: the real behaviour is more generous
- *  than what anyone guesses from a silent dip.
+ *  A turn reserves an amount before the model is called, settles the actual token cost, and
+ *  refunds the remainder in the same transaction (settleCredits: A = min(actual, held), the
+ *  difference goes back to balance). Merchants were never told any of it — they saw the balance
+ *  dip and partly come back, with nothing explaining either move, which reads like an accounting
+ *  bug. Saying it plainly costs nothing: the real behaviour is more generous than what anyone
+ *  guesses from a silent dip.
  *
  *  The number is DERIVED from the hold constant, never typed out — a hand-written "4" would
  *  become a lie the next time the hold is tuned.
  *
- *  #898: "up to". The hold is now min(the constant, the balance) — a merchant with 1.2 credits
- *  has 1.2 held, not 4 — so the flat "holds 4 credits" would be wrong for exactly the merchants
- *  who read this line hardest. */
+ *  #898: "up to". The hold is min(the constant, the balance) — a merchant with 1.2 credits has
+ *  1.2 held, not 4 — so the flat "holds 4 credits" would be wrong for exactly the merchants who
+ *  read this line hardest. */
 export const CHAT_HOLD_NOTE =
   `Each message holds up to ${creditsLabel(displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL))} up front, charges only what it uses, and returns the rest right away.`;

@@ -1170,9 +1170,12 @@ export function OttoChatStream({
             // if that ephemeral state was ever missed. Gated on `!streamError` so it never
             // doubles the live alert; appended AFTER any partial text the turn produced.
             const partError = dataErrorOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);
-            // #555: every Otto turn is charged. Once it has settled, the route streams a
-            // durable `data-cost` part — show the number here, next to the reply it paid
-            // for, instead of leaving the merchant to infer it from a moving balance.
+            // #555: every charged Otto turn says what it cost. Once the turn settles, the route
+            // streams a durable `data-cost` part — show the number here, next to the reply it
+            // paid for, instead of leaving the merchant to infer it from a moving balance.
+            // A turn that settled to nothing (a refunded failure, a mock runtime) streams no
+            // part at all, and turnCostOf refuses any non-positive number, so this line is
+            // never a "0 credits" artifact.
             const turnCost = m.role === "user"
               ? null
               : turnCostOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);

@@ -8,6 +8,46 @@ export const OTTO_OUTPUT_CAP_TOKENS = 1_500;
 export const OTTO_MAX_STEPS = 10;
 
 /**
+ * The price multiplier applied to ONE Otto CONVERSATION turn — the single place a chat turn
+ * is priced.
+ *
+ *   hold   = worst-case model cost × THIS × CREDITS_PER_USD   (turnBudgetInternal below)
+ *   charge = actual     model cost × THIS × CREDITS_PER_USD   (actualCostInternal, meter.ts)
+ *
+ * **1.05 = the provider's API cost plus 5%.** Founder SECOND ruling 2026-08-18, superseding the
+ * same-day ruling that made chat free: 其实应该看用量，不然之后思考很久或其他的，我们的成本会
+ * cover 不到，可能就 api 成本 +5% 我们赚的钱这样。
+ *
+ * WHAT CHANGED HIS MIND, and why the shape of the rule is "usage" rather than a flat price: a
+ * conversation turn has no bounded cost. A turn that thinks for a long time, or reads a lot of
+ * context, costs the platform whatever it costs — and a free (or flat) chat surface is exactly
+ * the design where our own bill can run past what the merchant ever pays us. Charging ACTUAL
+ * USAGE makes that impossible by construction: the merchant is billed for what their turn really
+ * consumed, so a long thinking turn is expensive for them and covered for us, and a one-line
+ * question stays nearly free without us pricing it as if it might not be.
+ *
+ * WHY 1.05 AND NOT THE 2.0 GENERATION MARKUP. Conversation is not where this product earns —
+ * generation is (OTTO_LLM_MARGIN_DEFAULT in llm-prices.ts, unchanged at 2.0). The 5% is cost
+ * RECOVERY with a thin margin on top, so talking to Otto stays cheap enough that nobody rations
+ * it, while no conversation can be sold below what it costs us to serve.
+ *
+ * WHAT IT MEANS IN CREDITS. The measured beta reply that used to cost 2.5 displayed credits at
+ * 2.0 had a real provider cost of $0.125; at 1.05 the same reply charges 14 internal = 1.4
+ * displayed credits. The full worst-case turn (every one of OTTO_MAX_STEPS steps burning the
+ * whole context and output cap, at live sonnet prices) is 70 internal — which the #543 hold
+ * ceiling below still caps at 40.
+ *
+ * WHY A MULTIPLIER AND NOT A SPECIAL CASE IN THE SPEND MACHINERY. reserve → settle → refund is
+ * untouched by pricing: the hold and the charge are both this arithmetic, never a branch on "is
+ * this chat", so re-pricing conversation cannot reach the code that moves money. That is what
+ * made the free ruling a one-number change, and what makes this reversal one too.
+ *
+ * Re-pricing chat is this ONE number. The hold shape below (#543's ceiling, #898's entry
+ * minimum) applies whenever it is above 0, and stands down if conversation is ever free again.
+ */
+export const OTTO_CONVERSATION_TURN_MARGIN = 1.05;
+
+/**
  * Worst-case internal-credit cost for a single Otto LLM step, rounded up.
  * "Floor" in the sense of a minimum reserve — never under-reserves.
  *
@@ -45,8 +85,14 @@ export function turnBudgetInternal(
 }
 
 /**
- * The HOLD a single Otto CONVERSATION turn places on the balance, in INTERNAL credits.
+ * The HOLD a single PRICED Otto CONVERSATION turn places on the balance, in INTERNAL credits.
  * 40 internal = 4 displayed credits.
+ *
+ * LIVE (Founder's second ruling 2026-08-18 put conversation back on usage pricing, so this
+ * ceiling is in force again — runtime.ts ottoBudgetArgsFor passes it whenever
+ * OTTO_CONVERSATION_TURN_MARGIN is above 0). It caps a hold, never a charge; at the 1.05
+ * multiplier the derived worst case is 70 internal, so the cap still bites and still buys the
+ * thing #543 opened it for — a merchant near the bottom of their balance can start a turn.
  *
  * #543 Founder decision (2026-07-31). The derived worst case above assumes every one of
  * OTTO_MAX_STEPS steps burns the full context and output cap, which at live sonnet prices
@@ -55,6 +101,8 @@ export function turnBudgetInternal(
  * last credits: a merchant with 11 credits left cannot start a turn at all. 40 internal is still comfortably above
  * the measured single-turn peak (33 internal / 3.3 displayed), so it is a cap on the HOLD,
  * not a change to what a turn costs.
+ *   ├─ HISTORICAL AT margin 2.0 (2026-07-31): "120 internal / 12 displayed" is the worst case at THAT margin; at today's 1.05 it is 70 internal / 7 displayed (per-step ceil, not a flat 52.5% of 120).
+ *   └─ HISTORICAL AT margin 2.0 (2026-07-31): the "33 internal / 3.3 displayed" measured peak is that same turn priced at 2.0; at 1.05 it lands around 17–18 internal (~1.7–1.8 displayed). The 40 ceiling clears both, so #543's reasoning survives the re-pricing unchanged.
  *
  * Scope: the conversation turn only (runtime.ts ottoBudgetArgsFor). Research jobs and
  * single-call helpers keep the derived worst-case budget.
@@ -74,8 +122,14 @@ export function turnBudgetInternal(
 export const OTTO_CONVERSATION_TURN_RESERVE_INTERNAL = 40;
 
 /**
- * The minimum balance a merchant needs to START a conversation turn, in INTERNAL credits.
- * 10 internal = 1 displayed credit.
+ * The minimum balance a merchant needs to START a PRICED conversation turn, in INTERNAL
+ * credits. 10 internal = 1 displayed credit.
+ *
+ * LIVE again with the second ruling (2026-08-18): a turn that charges for usage has to be able
+ * to refuse a merchant who cannot pay for any usage at all, or the first thing they would meet
+ * is a hold that fails halfway. This is #898's documented trade coming back with the price — a
+ * merchant at 0 credits is told to top up instead of starting a turn nobody can settle. It is
+ * only passed while OTTO_CONVERSATION_TURN_MARGIN is above 0; a free conversation has no door.
  *
  * #898 Founder decision (2026-08-13) — the interim correction to #543. The hold was also the
  * door: a merchant holding 3.9 credits could not send a message at all, so they could not even
@@ -98,5 +152,6 @@ export const OTTO_CONVERSATION_TURN_RESERVE_INTERNAL = 40;
  * in @fikirtive/db) so the absorption is visible instead of silent. It disappears on its own
  * once the assembler (#879 step 2) lands. Merchants are never over-charged and the balance
  * can never go negative — reserve/settle/refund and their exactly-once indexes are untouched.
+ *   └─ HISTORICAL AT margin 2.0 (2026-08-13): every credit figure in this block was measured at THAT margin — #536's 0.4–3.3 band, the 0.4–1.3 typical message, the ~2.3-credit absorption bound; at today's 1.05 they are ~0.21–1.73, ~0.21–0.68 and ~1.2. All three shrink, so #898's conclusions (1 credit clears the typical message; the exposure is bounded and small) hold a fortiori.
  */
 export const OTTO_CHAT_MIN_START_INTERNAL = 10;

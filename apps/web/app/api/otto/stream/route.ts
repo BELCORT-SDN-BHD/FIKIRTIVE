@@ -60,6 +60,7 @@ import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
+import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -122,6 +123,14 @@ export async function POST(req: NextRequest): Promise<Response> {
     return new Response("Paused while impersonating a customer.", { status: 403 });
   }
   const { ownerId } = gate;
+  // The conversation gate, per tenant, per hour (2026-08-18). Credits bound what a turn can
+  // SPEND — the reserve does that, and fails closed on its own — but nothing bounds how many
+  // turns a stuck client can START, and each one is a real model call. Placed after the owner is
+  // known and BEFORE the USER message is persisted or the stream opens, so a refusal writes
+  // nothing and runs nothing. See OTTO_TURN_PER_TENANT_PER_HOUR: a bound on volume, never a price.
+  if (!(await consumeOttoTurnGate(ownerId))) {
+    return Response.json({ error: OTTO_TURN_RATE_LIMIT_MESSAGE }, { status: 429 });
+  }
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<Response> => {
 
