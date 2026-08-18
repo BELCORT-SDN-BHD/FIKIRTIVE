@@ -59,7 +59,7 @@ remainder). Generation uses estimate → reserve → settle.
 
 **Stack:** Next.js 16 · TypeScript · Prisma 7 + Postgres (Neon) · Cloudflare R2 · pg-boss ·
 OpenAI Agents SDK (Anthropic via the AI SDK adapter) · BytePlus Ark (Seedream image /
-Seedance video), fal, and mock ($0 local dev) · server-side
+Seedance video) and mock ($0 local dev) · server-side
 ffmpeg (worker) · Railway deployment manifests.
 
 ## Dev

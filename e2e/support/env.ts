@@ -63,11 +63,18 @@ export const E2E_AUTH_SECRET = "fikirtive-e2e-only-session-secret-not-for-produc
  * Stripe shelf has no key to call — the fence is the ABSENCE of the credential, not a flag
  * somebody has to remember to pass.
  *
- * EVERY NAME HERE MUST BE ONE THE PRODUCT ACTUALLY READS. `packages/core/src/env-contract.ts` is
- * the declared list, and its test fails if apps/ + packages/ read a variable it does not declare —
- * so a name that is absent from the contract is a name no code path can act on. Fencing such a
- * name is worse than useless: it reads as live protection and protects nothing, and the next
- * person to audit this file has to re-derive which entries still have a consumer.
+ * EVERY NAME HERE MUST BE ONE THE PRODUCT ACTUALLY READS. Fencing a name nothing reads is worse
+ * than useless: it reads as live protection and protects nothing, and the next person to audit
+ * this file has to re-derive which entries still have a consumer.
+ *
+ * `packages/core/src/env-contract.ts` is the right FIRST look — its test fails when apps/ +
+ * packages/ read a variable the contract does not declare. But it is not a complete index of
+ * reads: what it catches is the literal `process.env.X` form in .ts/.tsx. Two live credentials
+ * here are invisible to it — BYTEPLUS_API_KEY is read as `env.BYTEPLUS_API_KEY` off an injected
+ * env object (packages/generation/src/index.ts), and ANTHROPIC_API_KEY is declared
+ * readBy:"library" because @ai-sdk/anthropic reads it inside packages/otto. So absence from the
+ * contract is a hint, never a verdict: BEFORE deleting an entry, run one extension-agnostic
+ * grep across the whole repo and confirm the last consumer is really gone.
  */
 export const OFF_MACHINE_CREDENTIAL_NAMES = [
   "BYTEPLUS_API_KEY",
