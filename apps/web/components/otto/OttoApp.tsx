@@ -5,6 +5,7 @@ import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault,
 import { Button } from "@/components/ui/button";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
+import { parseViewParam, type OttoViewKey } from "./otto-view-param";
 import { OttoConfirmDialog, OttoRenameDialog } from "./OttoPromptDialog";
 import type { AdTile } from "./OttoStuff";
 import type { AdJobItem } from "@/lib/data";
@@ -123,14 +124,7 @@ export interface OttoAppProps {
   onboardingDismissed?: boolean;
 }
 
-export type OttoViewKey = "otto" | "stuff" | "library" | "edit" | "templates" | "discover" | "memory" | "account" | "connections" | "schedule" | "analytics";
-
-const OTTO_VIEW_KEYS = new Set<OttoViewKey>(["otto", "stuff", "library", "edit", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"]);
-
-function parseViewParam(raw: string | null): OttoViewKey {
-  if (raw === "stuff") return "library";
-  return raw && OTTO_VIEW_KEYS.has(raw as OttoViewKey) ? (raw as OttoViewKey) : "otto";
-}
+export type { OttoViewKey };
 
 export function OttoApp({
   projectId,
@@ -312,11 +306,15 @@ export function OttoApp({
     notifyBalanceRefresh();
   }, []);
 
-  const projectHref = useCallback((projId: string, threadId?: string, opts?: { newChat?: boolean }) => {
+  // `view` is an explicit argument rather than read from state on purpose: projectHref is a
+  // dependency of half the handlers below, and closing over the current screen would rebuild
+  // every one of them on each view change.
+  const projectHref = useCallback((projId: string, threadId?: string, opts?: { newChat?: boolean; view?: OttoViewKey }) => {
     const p = new URLSearchParams();
     p.set("project", projId);
     if (threadId) p.set("thread", threadId);
     if (opts?.newChat && !threadId) p.set("new", "1");
+    if (opts?.view && opts.view !== "otto") p.set("view", opts.view);
     // gb is the default now — no ?skin needed in the URL.
     return `/otto?${p.toString()}`;
   }, []);
@@ -576,7 +574,13 @@ export function OttoApp({
       return;
     }
     if (snapshotActive === id) {
-      router.replace(projectHref(curProjectId, newActive ?? undefined));
+      // The conversation rail is on every screen, so a delete can be pressed from Library or
+      // Analytics — and now that the view FOLLOWS the URL (#969), replacing with a bare
+      // /otto?project=… (which IS the conversation screen) would yank the merchant off the
+      // screen they are looking at. Carry the screen forward; the one exception is the branch
+      // above, where the last conversation is gone and the state itself went back to "otto".
+      const nextView: OttoViewKey = newActive === null ? "otto" : view;
+      router.replace(projectHref(curProjectId, newActive ?? undefined, { view: nextView }));
     }
   }
 

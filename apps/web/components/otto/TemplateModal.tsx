@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import DetailPanel from "@/components/asset/DetailPanel";
-import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
+import { startAssetGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
@@ -92,7 +92,7 @@ type TemplateStartOutcome =
 
 export async function startTemplateJob(
   request: unknown,
-  starter: (request: unknown) => ReturnType<typeof startGen> = startGen,
+  starter: (request: unknown) => ReturnType<typeof startAssetGen> = startAssetGen,
 ): Promise<TemplateStartOutcome> {
   try {
     const started = await starter(request);
@@ -181,7 +181,6 @@ export default function TemplateModal({
 }) {
   const cancelledRef = useRef(false);
   const inFlightRef = useRef(false);
-  const idempotencyKeyRef = useRef<string | null>(null);
   useEffect(() => {
     cancelledRef.current = false;
     return () => { cancelledRef.current = true; };
@@ -236,19 +235,6 @@ export default function TemplateModal({
   const canGenerate =
     !uploading && !!sourceGenId && (!template.question || answer.trim().length > 0) && isTemplatePaidConfirmAvailable(run);
 
-  useEffect(() => {
-    idempotencyKeyRef.current = null;
-  }, [template.id, sourceGenId, answer]);
-
-  function templateRunKey() {
-    const safeTemplateId = template.id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "template";
-    const runId = typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : Math.random().toString(36).slice(2, 12);
-    idempotencyKeyRef.current ??= `tpl:${safeTemplateId}:${runId}`;
-    return idempotencyKeyRef.current;
-  }
-
   /** ONE press (#896, Founder 2026-08-13): the button carries the price, so pressing it is
    *  the approval. The spend path below — idempotency key, in-flight lock, the paid-confirm
    *  availability gate — is exactly what it was behind the old second click. */
@@ -281,7 +267,15 @@ export default function TemplateModal({
         // (#783). Templates that don't care leave this off, and the shape is inherited from the
         // uploaded photo exactly as before. One image either way — the price does not move.
         ...(template.aspectRatio ? { aspectRatio: template.aspectRatio } : {}),
-        idempotencyKey: templateRunKey(),
+        // 幂等键由服务端从「动作 + 锚点 + 请求体」算出来(startAssetGen)。这一面不再自己出键:
+        // 旧的 `tpl:<templateId>:<runId>` 每开一次弹窗就换一个 runId,所以刷新一次或开第二个
+        // 标签页再按一次,就是两次真扣费。同一张底图 + 同一个模板 + 同一个答案 ⇒ 同一个键。
+        assetOp: "template",
+        assetAnchorGenerationId: sourceGenId,
+        // 屏幕上那个价随请求发出去,服务端重核 —— 与详情页三条付费路同一套绑定。
+        // 图片按张计价(pricedGenCredits 的 IMAGE 支只看 count),所以这个数与服务端
+        // 用真实机型算出来的那个数恒等,不会因为在产机型换了而误拒。
+        expectedCredits: templateRunCredits(),
       });
       // Announce before branching: an "unknown" start is outcome-unknown, not proven-free
       // — the job may already be reserved (#550).
@@ -319,7 +313,7 @@ export default function TemplateModal({
     phase === "done" ? (
       <>
         <Button type="button" variant="ghost" size="sm" onClick={() => setDetailOpen(true)}>Open in detail</Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => { idempotencyKeyRef.current = null; dispatchRun({ type: "reset" }); }}>Make another</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => dispatchRun({ type: "reset" })}>Make another</Button>
         <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
       </>
     ) : phase === "generating" ? (

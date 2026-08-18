@@ -1,5 +1,5 @@
 "use client";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Sparkles, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -88,13 +88,46 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
   };
   const [touchedTabs, setTouchedTabs] = useState<Set<SectionKey>>(new Set());
 
-  // ── Chat state (unchanged) ──
+  // ── Chat state ──
+  // BUG 6 (second half). This transcript lives in component state, and the server never hands
+  // this view a thread: OttoView renders <OttoMemory> with memory/records/projectId only. So
+  // anything that unmounts the Otto tree — a project switch, an explicit ?thread= switch, a
+  // reload, a browser tab restore — used to lose BOTH the transcript and the pointer to the
+  // conversation it belonged to, and the merchant's next question silently opened a SECOND
+  // brand conversation instead of continuing the first.
+  //
+  // Cheapest honest fix: remember only the thread ID, per tab and per project, and let the
+  // server stay the authority for the messages (they are already durable — the transcript is
+  // read back with the same call sendChat uses). Nothing about the conversation is stored in
+  // the browser beyond that ID.
+  const brandThreadKey = `fikirtive:otto-brand-thread:${projectId}`;
   const [chat, setChat] = useState<Bubble[]>([]);
   const [brandThreadId, setBrandThreadId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const remembered = window.sessionStorage.getItem(brandThreadKey);
+    if (!remembered) return;
+    let alive = true;
+    void getCoworkThreadClient(remembered).then((thread) => {
+      if (!alive) return;
+      if (!thread) {
+        // Owner-scoped read came back empty — the conversation is genuinely gone (deleted),
+        // so drop the pointer rather than keep replying into a thread that no longer exists.
+        window.sessionStorage.removeItem(brandThreadKey);
+        return;
+      }
+      // Never overwrite a turn the merchant has already started in this mount.
+      setBrandThreadId((prev) => prev ?? remembered);
+      setChat((prev) => (prev.length ? prev : threadToBubbles(thread.messages)));
+    }).catch(() => {
+      // A failed read proves nothing about the thread — keep the pointer, keep the screen.
+    });
+    return () => { alive = false; };
+  }, [brandThreadKey]);
 
   // ── Section slices ──
   const factsFor = (key: SectionKey) => memory.filter((m) => sectionForCategory(m.category) === key);
@@ -122,6 +155,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
         setChatError(res.error ?? "Something went wrong — please try again.");
       } else {
         setBrandThreadId(res.threadId);
+        window.sessionStorage.setItem(brandThreadKey, res.threadId);
         const thread = await getCoworkThreadClient(res.threadId);
         if (thread) {
           setChat(threadToBubbles(thread.messages));

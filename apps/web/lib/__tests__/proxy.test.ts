@@ -169,6 +169,30 @@ describe("proxy — email verification landing page (/verify-email)", () => {
     // The matcher decides on the pathname alone; the link's ?token=…&callbackURL=… rides along
     // and is read by the page itself, which forwards it untouched.
     expect(matcherRuns("/verify-email")).toBe(false);
+    // Next normalizes the trailing slash away, but a mail client may still send one.
+    expect(matcherRuns("/verify-email/")).toBe(false);
+  });
+
+  /**
+   * #969 judge P2-1/P2-2: this exemption shipped as an UNBOUNDED PREFIX, so every path that
+   * merely STARTS with the word escaped the wall. They 404 today, so nothing leaked — but the
+   * next route named /verify-email-admin would have been public with no one deciding that.
+   * Same shape as the /api/ops/dlq boundary above (#793): the exemption is one path.
+   */
+  it.each([
+    "/verify-emailx",
+    "/verify-email-admin",
+    "/verify-email2",
+    "/verify-email/anything",
+    "/verify-email/admin/tokens",
+  ])("runs the auth wall for %s — the exemption is one path, not a prefix", (path) => {
+    expect(matcherRuns(path)).toBe(true);
+  });
+
+  it("a session-less request to a same-prefix path still redirects to /login", async () => {
+    const res = await proxy(req("/verify-email-admin"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
   });
 
   it("the endpoint the landing page forwards to stays outside the wall too", () => {
