@@ -52,6 +52,10 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
     latest.current = { onRelease };
   });
 
+  // 浏览器在 pointerup **之后**才发 click,而那时拖动状态已经清干净了 —— 光看 state
+  // 会把「拖完松手」当成「点了一下」,图标一拖就把面板打开。用一次性的旗子挡掉那一发。
+  const swallowNextClick = React.useRef(false);
+
   React.useEffect(() => {
     if (!drag) return;
 
@@ -69,10 +73,11 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
     }
 
     function handleUp() {
-      setDrag((current) => {
-        if (current?.moved) latest.current.onRelease({ x: current.x, y: current.y });
-        return null;
-      });
+      if (drag?.moved) {
+        swallowNextClick.current = true;
+        latest.current.onRelease({ x: drag.x, y: drag.y });
+      }
+      setDrag(null);
     }
 
     window.addEventListener("pointermove", handleMove);
@@ -85,7 +90,6 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
     };
   }, [drag]);
 
-  const dragged = drag?.moved === true;
   const left = drag ? drag.x : resting.left;
   const top = drag ? drag.y : resting.top;
 
@@ -113,8 +117,10 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
         });
       }}
       onClick={() => {
-        // 刚拖完的那一次松手也会走 click —— 那不是要开面板。
-        if (dragged) return;
+        if (swallowNextClick.current) {
+          swallowNextClick.current = false;
+          return;
+        }
         onOpen();
       }}
       style={{

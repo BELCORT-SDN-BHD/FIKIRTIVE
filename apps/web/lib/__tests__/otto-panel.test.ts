@@ -16,7 +16,7 @@
  *
  *  ③ **Cmd/Ctrl + J 与 Expand**(§3.1)。
  */
-import { act, createElement, type ReactElement } from "react";
+import { act, createElement, type FC, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,11 +58,15 @@ async function render(element: ReactElement): Promise<HTMLDivElement> {
   return container;
 }
 
-function shell(props: Partial<OttoPanelShellProps> = {}, main?: ReactElement) {
-  return createElement(OttoPanelShell, {
-    ...props,
-    children: main ?? createElement("div", { "data-main-content": "" }, "Page content"),
-  });
+/** `children` 在 props 上是必填的,这里把它当第三个参数传,所以先看成可选。 */
+const Shell = OttoPanelShell as FC<Omit<OttoPanelShellProps, "children">>;
+
+function shell(props: Partial<Omit<OttoPanelShellProps, "children">> = {}, main?: ReactElement) {
+  return createElement(
+    Shell,
+    props,
+    main ?? createElement("div", { "data-main-content": "" }, "Page content"),
+  );
 }
 
 function panelOf(el: HTMLElement): HTMLElement {
@@ -375,5 +379,28 @@ describe("launcher (§3.2)", () => {
     await act(async () => launcher.click());
 
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("snaps to the nearest edge when dragged — and that drag does not count as a click", async () => {
+    // 浏览器在 pointerup 之后还会补一发 click。把它当成点击,图标就一拖开一次面板。
+    function pointer(type: string, x: number, y: number): MouseEvent {
+      return new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+    }
+
+    const el = await render(shell());
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Close Otto"]')!.click();
+    });
+    const launcher = document.querySelector<HTMLElement>("[data-otto-launcher]")!;
+    expect(launcher.getAttribute("data-otto-launcher-edge")).toBe("right");
+
+    await act(async () => launcher.dispatchEvent(pointer("pointerdown", 1380, 840)));
+    await act(async () => window.dispatchEvent(pointer("pointermove", 200, 400)));
+    await act(async () => window.dispatchEvent(pointer("pointerup", 200, 400)));
+    await act(async () => launcher.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(document.querySelector("[data-otto-launcher]")!.getAttribute("data-otto-launcher-edge")).toBe("left");
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(OTTO_PANEL_STORAGE_KEY)!).launcher.edge).toBe("left");
   });
 });
