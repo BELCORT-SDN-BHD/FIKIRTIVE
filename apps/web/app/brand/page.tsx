@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { requireOwner } from "@/lib/auth-guard";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { getEntities, getMyAds, getProjects, getRecentGenerationThumbs } from "@/lib/data";
@@ -36,7 +37,7 @@ export const metadata = { title: "Brand · Fikirtive" };
 export default async function BrandPage({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string }>;
+  searchParams: Promise<{ project?: string; tab?: string }>;
 }) {
   const sp = await searchParams;
 
@@ -53,6 +54,18 @@ export default async function BrandPage({
   const projects = await getProjects(ownerId);
   const requested = sp?.project ? projects.find((p) => p.id === sp.project) : undefined;
   const projectId = requested?.id ?? projects[0]?.id ?? ensured.id;
+
+  // `?project=` 指向一条不是自己的项目时,**改地址栏**,不静默回落(判官 P3-1)。
+  // `/otto` 一直是这么做的(`app/otto/page.tsx` 同一段),两扇门必须是同一个行为:
+  // 静默回落会把一个假 id 留在地址栏上,而商家看到的内容其实来自另一个项目 —— 他一刷新、
+  // 一分享、一收藏,带走的都是那个假 id,下一次再落在别处。归一之后地址栏说的就是屏幕上的事。
+  // `?tab=` 一起带过去:它是这一面自己的状态(哪个页签),纠正项目不该顺手把页签也丢了。
+  if (sp?.project && !requested) {
+    const corrected = new URLSearchParams();
+    corrected.set("project", projectId);
+    if (sp.tab) corrected.set("tab", sp.tab);
+    redirect(`${SHELL_ROUTES.brand}?${corrected.toString()}`);
+  }
 
   const [memory, records, entities, history, ads] = await Promise.all([
     listMemory(ownerId),

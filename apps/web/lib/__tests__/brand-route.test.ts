@@ -141,8 +141,16 @@ describe("W2-2 · 地基重设计的两张表原地不动(规格书 §1.2 / §4.
 // ② + ③ 真挂一次:手搓件退场,换来的东西真的在;诚实说明句逐字在屏幕上
 // ───────────────────────────────────────────────────────────────────────────────
 
-const { routerReplace, searchParams } = vi.hoisted(() => ({
+const { routerReplace, redirectMock, requireOwnerMock, projectRows, searchParams } = vi.hoisted(() => ({
   routerReplace: vi.fn(),
+  redirectMock: vi.fn((target: string) => {
+    // Next 的 `redirect()` 靠**抛异常**中断这次渲染 —— 一个只记账不抛的替身会让页面继续跑
+    // 到底,于是「守卫拦住了」和「守卫没拦住但后面碰巧没炸」看起来一模一样。这里照抄它的
+    // 语义,调用点因此不需要 `return redirect(...)` 才成立。
+    throw Object.assign(new Error(`NEXT_REDIRECT:${target}`), { digest: `NEXT_REDIRECT;${target}` });
+  }),
+  requireOwnerMock: vi.fn(async () => ({ email: "shop@test.my", ownerId: "org_1" })),
+  projectRows: { value: [{ id: "proj_1" }, { id: "proj_2" }] as { id: string }[] },
   searchParams: { value: new URLSearchParams() },
 }));
 
@@ -150,20 +158,34 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: routerReplace, refresh: vi.fn() }),
   usePathname: () => "/brand",
   useSearchParams: () => searchParams.value,
+  redirect: redirectMock,
 }));
 vi.mock("@/lib/otto-client-actions", () => ({ ottoTurn: vi.fn() }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn(async () => null) }));
 vi.mock("@/lib/memory-actions", () => ({
   addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(),
   listMyMemory: vi.fn(async () => []),
+  listMemory: vi.fn(async () => []),
 }));
 vi.mock("@/lib/brand-record-actions", () => ({
   saveBrandRecord: vi.fn(), deleteBrandRecord: vi.fn(), restoreBrandRecord: vi.fn(),
   listMyBrandRecords: vi.fn(async () => []),
+  listBrandRecords: vi.fn(async () => []),
 }));
 vi.mock("@/lib/product-ingest-actions", () => ({ ingestProductFromUrl: vi.fn() }));
+// 页面这一侧的服务端依赖。这里只替掉「去数据库拿什么」，守卫本身(requireOwner)是被测的东西。
+vi.mock("@/lib/auth-guard", () => ({ requireOwner: requireOwnerMock }));
+vi.mock("@/lib/actions", () => ({ getOrCreateDefaultProject: vi.fn(async () => ({ id: "proj_ensured" })) }));
+vi.mock("@/lib/data", () => ({
+  getProjects: vi.fn(async () => projectRows.value),
+  getEntities: vi.fn(async () => []),
+  getMyAds: vi.fn(async () => []),
+  getRecentGenerationThumbs: vi.fn(async () => []),
+}));
+vi.mock("@/lib/dto", () => ({ toEntityDTO: (entity: unknown) => entity }));
 
 const { OttoMemory } = await import("@/components/otto/OttoMemory");
+const { default: BrandPage } = await import("@/app/brand/page");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -172,8 +194,14 @@ let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
   searchParams.value = new URLSearchParams();
+  projectRows.value = [{ id: "proj_1" }, { id: "proj_2" }];
   window.sessionStorage.clear();
   vi.clearAllMocks();
+  // clearAllMocks 会把 hoisted 替身的实现一起清掉,所以每一条用例前重新装回来。
+  requireOwnerMock.mockImplementation(async () => ({ email: "shop@test.my", ownerId: "org_1" }));
+  redirectMock.mockImplementation((target: string) => {
+    throw Object.assign(new Error(`NEXT_REDIRECT:${target}`), { digest: `NEXT_REDIRECT;${target}` });
+  });
 });
 
 afterEach(async () => {
@@ -226,6 +254,65 @@ async function mountBrand(opts: { tab?: string; records?: BrandRecordRow[]; item
 function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement | undefined {
   return Array.from(scope.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
 }
+
+// ───────────────────────────────────────────────────────────────────────────────
+// 门本身:谁进得来,以及地址栏说的是不是屏幕上的事(判官 P2-1 / P3-1)
+// ───────────────────────────────────────────────────────────────────────────────
+
+/** 真跑一次这张服务端页面。`redirect()` 按 Next 的语义抛出,所以这里要接住。 */
+async function runBrandPage(query: Record<string, string> = {}): Promise<{ redirectedTo: string | null }> {
+  try {
+    await BrandPage({ searchParams: Promise.resolve(query) });
+    return { redirectedTo: null };
+  } catch (error) {
+    const digest = (error as { digest?: string }).digest ?? "";
+    if (!digest.startsWith("NEXT_REDIRECT;")) throw error;
+    return { redirectedTo: digest.slice("NEXT_REDIRECT;".length) };
+  }
+}
+
+describe("W2-2 · /brand 这扇门自己的行为", () => {
+  it("没登录的人到不了这一面 —— 守卫说不,页面就去登录页(判官 P2-1)", async () => {
+    // 这条断言存在的理由:整个 W2-2 之前没有一条测试碰过「未认证」。而 `/brand` 上画的是
+    // 商家的品牌资料与产品目录,守卫是这一面唯一的墙。它以前只是「看起来写对了」。
+    requireOwnerMock.mockImplementation(async () => ({ error: "Not authorized." }) as never);
+    const { redirectedTo } = await runBrandPage();
+    expect(redirectMock).toHaveBeenCalledWith("/login");
+    expect(redirectedTo).toBe("/login");
+  });
+
+  it("守卫说不的时候,一条商家数据都没读过", async () => {
+    // 「先读了再拦」和「拦住了」在屏幕上一样,在租户边界上不一样。
+    const { listMemory } = await import("@/lib/memory-actions");
+    const { listBrandRecords } = await import("@/lib/brand-record-actions");
+    requireOwnerMock.mockImplementation(async () => ({ error: "Not authorized." }) as never);
+    await runBrandPage();
+    expect(listMemory).not.toHaveBeenCalled();
+    expect(listBrandRecords).not.toHaveBeenCalled();
+  });
+
+  it("?project= 指到别人的项目时,改地址栏 —— 不静默回落(判官 P3-1)", async () => {
+    // `/otto` 一直是这么做的。静默回落会把一个假 id 留在地址栏上,而屏幕上的内容其实来自
+    // 另一个项目 —— 刷新、分享、收藏带走的都是那个假 id。
+    const { redirectedTo } = await runBrandPage({ project: "proj_someone_else" });
+    expect(redirectedTo).toBe("/brand?project=proj_1");
+  });
+
+  it("纠正地址的时候不顺手把页签丢了", async () => {
+    const { redirectedTo } = await runBrandPage({ project: "proj_someone_else", tab: "products" });
+    expect(redirectedTo).toBe("/brand?project=proj_1&tab=products");
+  });
+
+  it("?project= 是自己的项目就不动地址栏", async () => {
+    const { redirectedTo } = await runBrandPage({ project: "proj_2" });
+    expect(redirectedTo).toBeNull();
+  });
+
+  it("不带 ?project= 也不动地址栏 —— 归一只对着那个假 id,不是对着每一次访问", async () => {
+    const { redirectedTo } = await runBrandPage();
+    expect(redirectedTo).toBeNull();
+  });
+});
 
 describe("W2-2 ③ 诚实说明句(规格书 §4.4 的原话,一个字不许改)", () => {
   const HONEST_NOTE =
@@ -333,7 +420,11 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
   it("Escape 关掉它(手搓那版只认点遮罩,键盘用户没有出路)", async () => {
     const dialog = await openPicker();
     await act(async () => {
-      dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      // `cancelable: true` 是必须的(判官 P3-4)。默认的 KeyboardEvent 不可取消,
+      // 而 Radix 的关闭路径要先 `preventDefault()` 才算数 —— 事件不可取消时,
+      // 「有人挂了 onEscapeKeyDown 并把关闭拦下来」这类回归在这条断言里根本演不出来:
+      // 判官第一发 Escape 变异没红,原因就在这一行。
+      dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
     expect(document.querySelector('[role="dialog"]'), "按了 Escape 还开着").toBeNull();
   });
