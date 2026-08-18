@@ -187,6 +187,78 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
 ];
 
 /**
+ * 换壳之后的路由常量(Wave 2,规格书 `docs/specs/wave2-shell.md` §2.2)。
+ *
+ * 为什么先摆在这里、而且这一票只加不改:换壳要开六路并行(Library / Brand / Schedule /
+ * Settings / Create / Home),六个人会同时需要同一串新地址。谁在自己那一面手写一次
+ * `"/library"`,这棵树就又多了一份会各自漂移的真相 —— 本仓最贵的一课(两个导航、两个日历、
+ * 两个创作入口)全是这么来的。所以新地址先在权威源里落一份,六路各自 import。
+ *
+ * **它现在还不是导航数据**:`MERCHANT_NAV` 这一票一个字都不动,七格权威改写留给切换总票
+ * (W2-11)。也就是说本票合并之后旧壳行为零变化,只是多了一份后续票引用得到的常量。
+ *
+ * 用 key 而不是一串散常量:后续票要按 key 取(`SHELL_ROUTES.library`),围栏也要能把它当
+ * 枚举源逐条对账(`Object.values`)。
+ */
+export const SHELL_ROUTES = {
+  /** 商家自己的总览。今天 `/` 是 `redirect("/otto")`,W2-6 把它换成真页面。 */
+  home: "/",
+  /** 创作旗舰面。今天叫 `/northstar-immersive`(见 CREATE_NAV_HREF),W2-5 改名搬家。 */
+  create: "/create",
+  /** 画布本身,永远在 Create 那扇门后面。 */
+  canvas: "/create/canvas",
+  /** 已经做出来的每一张图、每一条片。今天是 `/otto?view=library`。 */
+  library: "/library",
+  /** 剪辑台 —— 要剪的东西就在 Library,所以它跟着 Library 走(规格书 Q6)。 */
+  edit: "/library/editor",
+  /** Otto 该记住的品牌与产品。今天是 `/otto?view=memory`。 */
+  brand: "/brand",
+  /** 战役。今天已经是真路由,新旧同址。 */
+  campaign: "/campaign",
+  /** 唯一的日历。今天是 `/otto?view=schedule`。 */
+  schedule: "/schedule",
+  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
+  analytics: "/schedule/analytics",
+  /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
+  billing: "/billing",
+  /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
+  connections: "/settings/connections",
+  /** 花费上限与发布默认值。今天是 `/otto?view=account`。 */
+  preferences: "/settings",
+  /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
+  profile: "/profile",
+} as const;
+
+/**
+ * 旧 `/otto?view=X` 的去处 —— 每一个 view 都必须在这里有一行,否则围栏红
+ * (规格书 §2.3 ③)。
+ *
+ * 这是围栏的第二个枚举源:`MERCHANT_NAV_REDIRECTS` 的 `{from,to,why}` 只表达得了整路径
+ * 重定向,而 `/otto` 那十一个视图是同一条路径上的 query。旧书签一律 307,永不 404
+ * (§2.5),所以这张表的**键位完整性**就是「没有一个旧地址撞墙」的机器判定:
+ * 权威名单是 `apps/web/components/otto/otto-view-param.ts` 的 `OTTO_VIEW_KEYS`,
+ * 围栏拿那份名单逐个来核这里,不在这里手抄第二份视图清单
+ * (见 `apps/web/lib/__tests__/route-redirects.test.ts`)。
+ *
+ * 值里的路径部分全部来自 SHELL_ROUTES —— 同一条围栏会核对这一点,所以这张表不可能长出
+ * 一个 SHELL_ROUTES 里没有的地址。`?otto=1` 是「落地后自动把 Otto 面板打开」,
+ * `#templates` / `#ideas` 是 `/create` 页面下方的两个区段(Q6),它们都不是新路由。
+ */
+export const OTTO_VIEW_REDIRECTS: Readonly<Record<string, string>> = {
+  otto: "/?otto=1",
+  library: "/library",
+  stuff: "/library",
+  edit: "/library/editor",
+  memory: "/brand",
+  templates: "/create#templates",
+  discover: "/create#ideas",
+  schedule: "/schedule",
+  analytics: "/schedule/analytics",
+  connections: "/settings/connections",
+  account: "/settings",
+};
+
+/**
  * 按 key 取一条链接。壳要单独用某一条(例如导轨底部那行 credits 点进账单)时走这里,
  * 而不是在壳里再硬写一次它的路径 —— 路径只有权威源写。
  */
