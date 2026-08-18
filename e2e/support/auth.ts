@@ -101,10 +101,19 @@ export async function requestSignInCode(page: Page, email: string, callbackURL: 
  * Asserts the landing rather than assuming it: a refused sign-in leaves the merchant on /login,
  * and a journey that quietly continued from there would report a page's emptiness as a product
  * fact.
+ *
+ * AND WAITS FOR THE SHELL, not merely for the URL. Accepting a code is a client-side navigation,
+ * so the address bar reads the destination the instant the redirect starts — before that page has
+ * rendered anything. A journey that continued from there would immediately ask about controls
+ * that do not exist yet and read "not visible" as "not offered": that is exactly how journey 12's
+ * collapsed projects rail went missing (`isVisible()` is a single instantaneous check, not a
+ * wait). The global navigation is on every signed-in surface, so its presence is the honest
+ * signal that this merchant is in and the app has drawn itself.
  */
 export async function signIn(page: Page, ws: Workspace, callbackURL = "/otto"): Promise<void> {
   const code = await requestSignInCode(page, ws.email, callbackURL);
   await page.getByLabel("Sign-in code").fill(code);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`${callbackURL.split("?")[0]}`));
+  await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
 }
