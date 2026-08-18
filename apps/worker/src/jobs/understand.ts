@@ -15,11 +15,15 @@
  *
  * ── 暂缓 ≠ 丢弃(这条链路最贵的一条纪律)──────────────────────────────────────
  * 扫描器第 ① 段只找**完全没有理解行**的素材,所以任何一行终态都是一道再也开不了的门。
- * 不跑的原因因此必须分三类,终态跟着分:
+ * 不跑的原因因此必须分四类,终态跟着分:
  *   · **资源 / 还不知道**(开关关、平台预算见底、这个环境签不出 URL、宽高时长还没探测出来)
  *     ⇒ 行退回 QUEUED,下一轮继续。这类事情明天就不成立了,写成终态等于让商家的素材被
  *     永久忘掉。
  *   · **真终局**(这份字节按预算读不动:视频超时长、图片超像素闸)⇒ SKIPPED。它明天也不会变。
+ *   · **我方坏了**(模型 id 不存在、key 不对、schema 被拒)⇒ 重试到上限后 **PAUSED**,
+ *     并且报警。文件本身好好的,写 FAILED 就是对商家说一句他没办法反驳的谎话 ——
+ *     2026-08-18 的事故正是这个形状:一个没核过的模型 id 让每次调用 404,404 被当成
+ *     「这份素材读不了」,于是每个商家的每一份好文件被逐个永久判死,零恢复路径。
  *   · **素材没了**(软删)⇒ **删行**,连 SKIPPED 都不写。软删是可逆的 —— 重传会把同一个
  *     Asset 复活(upsert 清 deletedAt),而 Asset 按 (ownerId, contentHash) 复用,所以
  *     一行删除类的终态会让「删掉再重传」这条商家唯一的自救路径也失效。删行是自愈的:
@@ -49,6 +53,7 @@ import {
   UNDERSTANDING_METADATA_PENDING,
   UNDERSTANDING_NO_MEDIA_URL,
   UNDERSTANDING_PAUSED,
+  UNDERSTANDING_PROVIDER_PAUSED,
   UNDERSTANDING_UNREADABLE,
   assetUnderstandingEnabled,
   newId,
@@ -68,10 +73,13 @@ import {
 } from "@fikirtive/core";
 import {
   createUnderstandingProvider,
+  isProviderConfigError,
   isUnreadableMediaError,
+  providerConfigError,
   understandingErrorUsage,
   type UnderstandingProvider,
 } from "@fikirtive/generation";
+import * as Sentry from "@sentry/node";
 import { storage } from "../storage.js";
 import { sanitizeError } from "../redact.js";
 
@@ -97,29 +105,80 @@ export const UNDERSTAND_REDISPATCH_MIN_AGE_MS = 10 * 60_000;
 /** RUNNING 滞留多久算「worker 崩在半路」。远大于一次请求超时 + 落盘尾巴。 */
 export const UNDERSTAND_STALE_MS = 30 * 60_000;
 
+/**
+ * 一行 PAUSED(我方配置坏了)多久之后再试一次。
+ *
+ * 一小时是在两件事之间选的:配置修好之后商家不该等一天,而配置**没**修好时同一行不该
+ * 每分钟被反复投出去。
+ *
+ * 口径说准(判官 P3-1):这是**每一行**的冷却,不是全平台的节流。扫描器每分钟跑一轮,
+ * 每轮至多捡 UNDERSTAND_SCAN_BATCH(25)行,所以积压很深时的总量是 25 行/分钟,
+ * 而不是「一小时一批 25 行」。真正的花费上限不在这里,在平台日预算那道闸:
+ * 404 那类重试是 $0(供应商连图都没看),而 200-空正文那类每次都真的付钱,靠日预算兜住。
+ */
+export const UNDERSTAND_PAUSED_RETRY_MS = 60 * 60_000;
+
 /** 只理解商家**自己传进来**的东西。GENERATED 是我们自己产的图,读它等于读自己写的字。 */
 const UNDERSTOOD_SOURCES = ["UPLOAD", "IMPORT"] as const;
+
+/** 这一刻属于哪个 UTC 日的桶。计量器的分桶键,读写两边共用一个函数。 */
+function spendDay(now: Date): Date {
+  const day = new Date(now);
+  day.setUTCHours(0, 0, 0, 0);
+  return day;
+}
+
+/**
+ * 记一笔**付费调用**的花费。
+ *
+ * ── 为什么必须是累加,而不是对行上那两列做 SUM(判官 delta 裁决)──────────────
+ * 行上的 inputTokens/outputTokens 是**这一行最后一次尝试**的快照,每次落盘都是 SET 覆写。
+ * 拿它们的 SUM 当计量器,同一行跑三次付费调用就只记一次 —— 实测(真库)三次调用记
+ * $0.000104、真实 $0.000312,3.00×。后果不是账不好看:cap 在一整段行数区间里**永远
+ * 不会触发**,实际花费于是由吞吐而不是由预算参数决定。旧注释里那句「一行三次重试数成 1」
+ * 被实现逐字复现了,而钱路守卫不能靠注释声明。
+ *
+ * ── 调用点纪律:一次供应商调用 = 一笔,记在**调用刚回来**的地方 ─────────────────
+ * 不是在每一次状态落盘的地方记 —— 一趟调用会写好几次行(重试的 QUEUED、最终的 PAUSED /
+ * FAILED),在那些地方记就会重复计数。所以记账点只有一个:`port.understand()` 返回或抛出
+ * 的紧挨着的下一行。加法在数据库里做,两个副本同时记账不会丢更新。
+ */
+export async function recordUnderstandingSpend(
+  usage: { inputTokens: number; outputTokens: number },
+  now: Date = new Date(),
+): Promise<void> {
+  const inputTokens = Math.max(0, Math.trunc(Number(usage.inputTokens) || 0));
+  const outputTokens = Math.max(0, Math.trunc(Number(usage.outputTokens) || 0));
+  // 供应商没报用量 ⇒ 这一趟没有可记的钱。记一个 0 也无妨,但空写会让 `calls` 说谎。
+  if (inputTokens === 0 && outputTokens === 0) return;
+  const day = spendDay(now);
+  await prisma.understandingSpendDay.upsert({
+    where: { day },
+    create: { day, inputTokens: BigInt(inputTokens), outputTokens: BigInt(outputTokens), calls: 1 },
+    update: {
+      inputTokens: { increment: BigInt(inputTokens) },
+      outputTokens: { increment: BigInt(outputTokens) },
+      calls: { increment: 1 },
+    },
+  });
+}
 
 /**
  * 今天全平台的理解已经花了多少美元。
  *
- * 数的是**钱**不是行数:两列 token 就在表上,`understandingCostUsd()` 是现成的算式,
- * 而行数在两头都会错(一次已经计费的失败数成 0,一行三次重试数成 1)。
+ * 读的是累加计量器(见 {@link recordUnderstandingSpend}),不是行上那两列的快照 SUM。
+ * 数的是**钱**不是行数:`understandingCostUsd()` 是现成的算式,而行数在两头都会错
+ * (一次已经计费的失败数成 0,一行三次重试数成 1)。
  *
  * 跨租户 —— 「我们一天最多被账单多少钱」本来就是一个 platform-wide 的问题,
- * 所以它在一个具名系统身份下读全表,只读、不写。
+ * 所以它在一个具名系统身份下读,只读、不写。
  */
 export async function understandingSpentTodayUsd(now: Date = new Date()): Promise<number> {
   return runAsSystem("understanding-budget", async () => {
-    const startOfDay = new Date(now);
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    const sum = await prisma.assetUnderstanding.aggregate({
-      where: { updatedAt: { gte: startOfDay } },
-      _sum: { inputTokens: true, outputTokens: true },
-    });
+    const bucket = await prisma.understandingSpendDay.findUnique({ where: { day: spendDay(now) } });
     return understandingCostUsd({
-      inputTokens: sum._sum.inputTokens ?? 0,
-      outputTokens: sum._sum.outputTokens ?? 0,
+      inputTokens: Number(bucket?.inputTokens ?? 0),
+      outputTokens: Number(bucket?.outputTokens ?? 0),
     });
   });
 }
@@ -148,13 +207,29 @@ const METADATA_READY_FOR_UNDERSTANDING = [
   { mime: { startsWith: "video/" }, durationS: { not: null } },
 ] as const;
 
-/** 上一次报出来的暂缓原因。只在状态**变化**时打日志 —— 每分钟一行同样的话不是可观测性。 */
+/**
+ * 上一次报出来的暂缓原因。只在状态**变化**时说话 —— 每分钟一行同样的话不是可观测性。
+ *
+ * 边沿触发也是**报警**的形状(判官 delta:cap 命中不许运维侧静默)。商家侧安静是对的,
+ * 他什么都不用做;但「今天的预算烧完了」是一件必须有人知道的事 —— 上一版它只进 stdout,
+ * 而没有人读 worker 的 stdout。日志留着,另外补一条 Sentry:一次暂缓一条,不是每分钟一条。
+ */
 let pauseNotice: string | null = null;
 function noticePause(reason: string | null): void {
   if (reason === pauseNotice) return;
   pauseNotice = reason;
-  if (reason) console.log(`[understand] paused — ${reason}. Queued files stay queued.`);
-  else console.log("[understand] resumed — reading files again");
+  if (!reason) {
+    console.log("[understand] resumed — reading files again");
+    return;
+  }
+  console.log(`[understand] paused — ${reason}. Queued files stay queued.`);
+  if (!process.env.SENTRY_DSN) return;
+  // 标题按**原因**聚合,金额进 payload:把美元数写进标题,Sentry 会把同一个故障每变一次
+  // 数字就开一个新 issue,alert rule 跟着重复轰炸(和 dead-letters 那条同一个理由)。
+  Sentry.captureException(new Error("Asset understanding is paused"), {
+    tags: { area: "asset-understanding", outcome: "paused-scan" },
+    extra: { reason },
+  });
 }
 
 /**
@@ -240,6 +315,28 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
     });
     for (const row of stranded) if (!ids.includes(row.id)) ids.push(row.id);
 
+    // ③ 我方配置坏掉时停下来的行 —— **这一段就是那条恢复路径**。
+    //    在它之前,配置类失败落的是 FAILED 终态,而扫描器第 ① 段只找「完全没有理解行」的
+    //    素材、第 ② 段只找 QUEUED:两段都看不见它,于是一次配置错误 = 商家的素材被永久
+    //    忘掉,连重传都救不回来(唯一约束还占着)。配置修好之后这些行必须自己回来。
+    const paused = await prisma.assetUnderstanding.findMany({
+      where: { status: "PAUSED", updatedAt: { lt: new Date(now.getTime() - UNDERSTAND_PAUSED_RETRY_MS) } },
+      select: { id: true, ownerId: true },
+      orderBy: { updatedAt: "asc" },
+      take: UNDERSTAND_SCAN_BATCH,
+    });
+    for (const row of paused) {
+      // 逐行写入带自己的租户(两段式,同 reapStaleUnderstanding);条件里带 PAUSED,
+      // 所以一行刚被别的副本捡走就 count===0,不会被派两次。
+      const { count } = await runAsTenant(row.ownerId, async () =>
+        prisma.assetUnderstanding.updateMany({
+          where: { id: row.id, ownerId: row.ownerId, status: "PAUSED" },
+          data: { status: "QUEUED" },
+        }),
+      );
+      if (count > 0 && !ids.includes(row.id)) ids.push(row.id);
+    }
+
     return ids;
   });
 }
@@ -307,6 +404,79 @@ async function fail(row: Row, message: string, usage?: { inputTokens: number; ou
   await prisma.assetUnderstanding.updateMany({
     where: { id: row.id, ownerId: row.ownerId },
     data: { status: "FAILED", error: message.slice(0, 300), ...(usage ?? {}) },
+  });
+}
+
+/**
+ * **可恢复的暂停**:我们自己的请求/配置坏了(模型 id 不存在、key 不对、schema 被拒)。
+ * 文件本身没有任何问题,所以这里**不写 FAILED** —— 那是在说文件的坏话,而且是一句谎话。
+ *
+ * 和 {@link hold} 的差别是那句谎话的另一面:hold 退回 QUEUED,下一分钟就再试一次,配置
+ * 坏着的时候那是每分钟一次的无效砸门;PAUSED 停下来等人修,由扫描器第 ③ 段按
+ * {@link UNDERSTAND_PAUSED_RETRY_MS} 的节奏捡回来。两者都不是终态,商家的素材一件不丢。
+ */
+async function pauseForConfig(row: Row, usage?: { inputTokens: number; outputTokens: number }): Promise<void> {
+  await prisma.assetUnderstanding.updateMany({
+    where: { id: row.id, ownerId: row.ownerId },
+    data: { status: "PAUSED", error: UNDERSTANDING_PROVIDER_PAUSED, ...(usage ?? {}) },
+  });
+}
+
+/**
+ * **200 回来了,但正文用不了** —— 空正文,或者这个 kind 的产物解析不出来。
+ *
+ * 走**配置类**(重试 → PAUSED),不写终态。理由和 404 那一条是同一条:同一时刻全平台
+ * 一起吐不出可用正文,几乎必然是我方/供应商的档位问题,而不是每个商家的每份文件同时坏掉。
+ * 最具体的形状:`thinking` 被重新打开 ⇒ 思考 token 吃满 `max_tokens` ⇒ `content` 空 ⇒
+ * 按上一版每一份文件都落 FAILED 终态、零恢复路径。
+ *
+ * **用量必须落库**:这一趟供应商已经回过话,钱花掉了。不记账,平台日预算对这一整类是瞎的 ——
+ * 而那道预算闸正是这条路唯一的花费上限(和 404 不同,这里每次重试都真的付钱)。
+ */
+async function holdUnusableResponse(
+  row: Row,
+  retryCount: number,
+  usage: { inputTokens: number; outputTokens: number },
+): Promise<null> {
+  if (retryCount < UNDERSTAND_RETRY_LIMIT) {
+    await prisma.assetUnderstanding.updateMany({
+      where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
+      data: { status: "QUEUED", error: UNDERSTANDING_PROVIDER_PAUSED, ...usage },
+    });
+    // 抛给 pg-boss 记账 + 退避重投(和端口抛出来的配置类错误走同一条路)。
+    throw providerConfigError("understanding response had nothing usable in it");
+  }
+  await pauseForConfig(row, usage);
+  reportUnderstandingFailure(row, "paused-config", "the response had nothing usable in it");
+  return null;
+}
+
+/**
+ * 最终失败的**报警留痕**。
+ *
+ * 为什么不能只靠 throw:这个 handler 在最后一次失败时是 `return null` 的 —— 不抛,所以
+ * index.ts 的 `runHandler` 捕不到、pg-boss 认为这份活成功了、死信队列永远收不到它。
+ * 2026-08-18 那次事故的静默就是这么来的:SENTRY_DSN 在生产是配着的,前两次重试的 throw
+ * 大概率也进过 Sentry,但最终那一次被吞掉,而且没有任何一条告警路由指着它 —— 于是全平台
+ * 的理解在两天里逐行死光,面板上一片安静。
+ *
+ * 措辞按**分类**分组,不带行 id(Sentry 按标题聚合;把 id 写进标题会让同一个故障每行开一个
+ * issue,alert rule 跟着重复轰炸)。行 id / kind 进 payload。
+ */
+function reportUnderstandingFailure(
+  row: Row,
+  outcome: "paused-config" | "failed",
+  message: string,
+): void {
+  const title =
+    outcome === "paused-config"
+      ? "Asset understanding is paused: the provider refused our request"
+      : "Asset understanding gave up on a file";
+  console.error(`[understand] ${row.id} (${row.kind}) ${outcome}: ${message}`);
+  if (!process.env.SENTRY_DSN) return;
+  Sentry.captureException(new Error(title), {
+    tags: { area: "asset-understanding", outcome },
+    extra: { understandingId: row.id, kind: row.kind, detail: message },
   });
 }
 
@@ -397,8 +567,10 @@ async function rememberVideoFacts(ownerId: string, facts: string[]): Promise<num
  * 返回而不是等下一轮扫描,是因为差别是商家的十分钟:菜单应该在几秒内被读成产品行。
  * 万一那次 send 失败,行仍然是 QUEUED,扫描器的重投窗口照样兜住它。
  *
- * `provider` 参数存在的唯一理由是测试:生产调用不传,拿到 env 决定的端口(未配 key = mock,
- * 和 createGenerationProvider 同一条安全默认)。**测试一律传 mock,绝不真调。**
+ * `provider` 参数存在的唯一理由是测试:生产调用不传,拿到 env 决定的端口(未配 key = mock ——
+ * 这一条是**理解端口自己的**默认,不再与 `createGenerationProvider` 共用一条:后者在 C1b ①
+ * 之后于生产缺配置时直接拒绝并退款,而这里商家一分钱不付,没有可退的预留)。
+ * **测试一律传 mock,绝不真调。**
  */
 export async function handleUnderstand(
   data: { understandingId: string },
@@ -505,25 +677,50 @@ export async function handleUnderstand(
     try {
       // `media` 让端口在发请求之前用**同一个** pre-flight 再判一次(belt)。
       result = await port.understand({ kind, mediaUrl, mime: asset.mime, media: asset });
+      // **记账点(成功侧)。** 一次调用一笔,记在这里而不是在下面各个落盘分支里 ——
+      // 一趟调用会写好几次行,在那些地方记就会重复计数。见 recordUnderstandingSpend。
+      await recordUnderstandingSpend(result.usage);
     } catch (e) {
+      // 用量跟着错误走出来 = 供应商回过话了 = **这一趟钱已经花了**。两处都要用它:
+      //   · 计量器(平台今天一共花了多少)—— **记账点(失败侧)**,一次调用一笔;
+      //   · 行上那两列(这一行最后一次读花了多少)—— 下面每条落盘分支都带着它。
+      // 记账放在 catch 的第一行:下面每一条分支都可能落盘,记账不能挂在其中任何一条上。
+      const spentUsage = understandingErrorUsage(e) ?? undefined;
+      if (spentUsage) await recordUnderstandingSpend(spentUsage);
       // 读不了这份字节 ⇒ 重试永远同一个答案 ⇒ 终止,不占重试预算。
-      // 用量跟着错误走时(200 + 空正文:钱已经花了)一并落库,不然日预算对那一类是瞎的。
       if (isUnreadableMediaError(e)) {
-        await fail(row, UNDERSTANDING_UNREADABLE, understandingErrorUsage(e) ?? undefined);
+        await fail(row, UNDERSTANDING_UNREADABLE, spentUsage);
         return null;
       }
+      // **我方的请求/配置坏了**(模型 id 不存在、key 不对、schema 被拒)。文件没问题,
+      // 所以它永远不许落 FAILED —— 判据在 @fikirtive/generation 的
+      // classifyUnderstandingFailure,这里只按结论分路。
+      const configProblem = isProviderConfigError(e);
       const message = sanitizeError(e);
       console.warn(`[understand] ${row.id} (${kind}) failed:`, message);
-      // 还有重试额度 ⇒ 退回 QUEUED 让 pg-boss 再送一次(CAS 才能再赢一次);
-      // 用完了 ⇒ 落 FAILED。这条队列不碰商家余额,所以重试是安全的。
+      // 还有重试额度 ⇒ 退回 QUEUED 让 pg-boss 再送一次(CAS 才能再赢一次)。
+      // 这条队列不碰商家余额,所以重试是安全的;配置类和暂时性走同一条重试路,
+      // 它们的差别只在**用完之后**落什么。
       if (retryCount < UNDERSTAND_RETRY_LIMIT) {
         await prisma.assetUnderstanding.updateMany({
           where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
-          data: { status: "QUEUED", error: message.slice(0, 300) },
+          data: {
+            status: "QUEUED",
+            error: configProblem ? UNDERSTANDING_PROVIDER_PAUSED : message.slice(0, 300),
+            ...(spentUsage ?? {}),
+          },
         });
         throw e; // pg-boss 记账 + 退避重投
       }
-      await fail(row, message);
+      // 重试用完。**这里是那个吞点** —— 不抛,所以 pg-boss 认为这份活成功了,死信队列
+      // 永远收不到它。两条路都必须自己把话说出去(reportUnderstandingFailure)。
+      if (configProblem) {
+        await pauseForConfig(row, spentUsage);
+        reportUnderstandingFailure(row, "paused-config", message);
+        return null;
+      }
+      await fail(row, message, spentUsage);
+      reportUnderstandingFailure(row, "failed", message);
       return null;
     }
 
@@ -541,12 +738,9 @@ export async function handleUnderstand(
 
     if (kind === "image-caption") {
       const caption = parseImageCaption(parsedJson);
-      if (!caption) {
-        // 供应商回过话了 ⇒ 这一趟**已经计费**。带上用量落盘,不然平台日预算对这一整类
-        // 失败是瞎的(而「读回来的是散文」正是本票自陈未实测的那个失效模式)。
-        await fail(row, UNDERSTANDING_UNREADABLE, tokens);
-        return null;
-      }
+      // 200 但产物解析不出来 ⇒ **不写终态**,走配置类(见 holdUnusableResponse):
+      // 「读回来的不是我们要的形状」在全平台一起发生时是档位问题,不是每个商家的文件同时坏。
+      if (!caption) return holdUnusableResponse(row, retryCount, tokens);
       // 三件套之间那条线:这张图基本上是一整页字 ⇒ 值得再花一次去读它的产品行。
       //
       // **caption 落 DONE 与 doc-extract 建行在同一个事务里。** 分成两步写(r2)有一个
@@ -587,12 +781,10 @@ export async function handleUnderstand(
 
     if (kind === "doc-extract") {
       const doc = parseDocExtract(parsedJson);
-      // 票面要求的解析失败兜底:**一行 BrandRecord 都不写**,落一句商家读得懂的话。
-      // 半份产品目录比没有产品目录糟得多 —— 商家会以为 Otto 已经认识他的菜单了。
-      if (!doc) {
-        await fail(row, UNDERSTANDING_UNREADABLE, tokens);
-        return null;
-      }
+      // 票面要求的解析失败兜底:**一行 BrandRecord 都不写**。半份产品目录比没有产品目录
+      // 糟得多 —— 商家会以为 Otto 已经认识他的菜单了。落什么状态见 holdUnusableResponse:
+      // 不写终态,这样档位修好之后这张菜单还会被读到。
+      if (!doc) return holdUnusableResponse(row, retryCount, tokens);
       let saved = 0;
       for (const product of doc.products) {
         if (await upsertProductRecord(row.ownerId, product)) saved++;
@@ -609,10 +801,7 @@ export async function handleUnderstand(
 
     // video-qa
     const video = parseVideoQa(parsedJson);
-    if (!video) {
-      await fail(row, UNDERSTANDING_UNREADABLE, tokens);
-      return null;
-    }
+    if (!video) return holdUnusableResponse(row, retryCount, tokens);
     const remembered = await rememberVideoFacts(row.ownerId, video.facts);
     await prisma.assetUnderstanding.updateMany({
       where: { id: row.id, ownerId: row.ownerId },
