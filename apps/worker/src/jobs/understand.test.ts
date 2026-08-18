@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => {
     aggregate: vi.fn(),
   };
   const asset = { findMany: vi.fn(), findFirst: vi.fn() };
+  /** 平台花费计量器(累加,按 UTC 日分桶)—— 预算闸读它,每次付费调用写它。 */
+  const understandingSpendDay = { findUnique: vi.fn(), upsert: vi.fn() };
   const brandRecord = { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() };
   const memory = { findFirst: vi.fn(), create: vi.fn() };
 
@@ -48,6 +50,7 @@ const mocks = vi.hoisted(() => {
     asset,
     brandRecord,
     memory,
+    understandingSpendDay,
     // 交互式事务:把同一组 mock 当 tx 交回去。**不是**装饰 —— caption 落 DONE 与
     // doc-extract 建行必须在同一个事务里(见 understand.ts),而「它们真的都走了 tx」
     // 是下面那组崩溃形状用例断言的东西。
@@ -56,7 +59,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     prisma,
-    assetUnderstanding, asset, brandRecord, memory,
+    assetUnderstanding, asset, brandRecord, memory, understandingSpendDay,
     reserveCredits, settleCredits, refundReservation,
     presignedGet, understand, captureException,
   };
@@ -111,6 +114,8 @@ beforeEach(() => {
   mocks.assetUnderstanding.deleteMany.mockResolvedValue({ count: 1 });
   mocks.assetUnderstanding.findMany.mockResolvedValue([]);
   mocks.assetUnderstanding.aggregate.mockResolvedValue({ _sum: { inputTokens: 0, outputTokens: 0 } });
+  mocks.understandingSpendDay.findUnique.mockResolvedValue(null); // 今天还没花过
+  mocks.understandingSpendDay.upsert.mockResolvedValue({});
   mocks.asset.findFirst.mockResolvedValue({
     contentHash: "a1".repeat(32), ext: "jpg", mime: "image/jpeg",
     durationS: null, width: 1600, height: 1200, sizeBytes: BigInt(400_000), deletedAt: null,
@@ -126,6 +131,38 @@ beforeEach(() => {
     usage: { inputTokens: 900, outputTokens: 60 },
   });
 });
+
+/** 计量器桶的一行(累加表,不是行上那两列的快照)。 */
+function meterBucket(inputTokens: number, outputTokens = 0) {
+  return {
+    day: new Date("2026-08-13T00:00:00.000Z"),
+    inputTokens: BigInt(inputTokens),
+    outputTokens: BigInt(outputTokens),
+    calls: 1,
+  };
+}
+
+/**
+ * 一个**会记住加法**的假计量器,语义和真库那张表一致:upsert 增量、findUnique 读当前值。
+ * 用它而不是一个固定值,是因为预算闸的正确性完全取决于「这一轮花掉的钱下一次读得到」——
+ * 一个不会加的假计量器会让 cap 的测试永远绿(那正是判官实测到的真实缺陷形状)。
+ */
+function fakeMeter() {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  mocks.understandingSpendDay.findUnique.mockImplementation(async () => meterBucket(inputTokens, outputTokens));
+  mocks.understandingSpendDay.upsert.mockImplementation(async (args: any) => {
+    inputTokens += Number(args.update.inputTokens.increment);
+    outputTokens += Number(args.update.outputTokens.increment);
+    return {};
+  });
+  return {
+    reset() {
+      inputTokens = 0;
+      outputTokens = 0;
+    },
+  };
+}
 
 /** 每个用例跑完都复核一次:商家的余额一格没动。 */
 function expectNoCreditCalls() {
@@ -321,11 +358,12 @@ describe("资源类原因是暂缓,不是丢弃", () => {
 });
 
 describe("平台日预算:超线本轮停,次日恢复", () => {
-  const spend = (usd: number) => ({ _sum: { inputTokens: Math.round(usd / 1e-7), outputTokens: 0 } });
+  /** 计量器里已经躺着这么多钱(累加桶,不是行上那两列的快照 SUM)。 */
+  const spend = (usd: number) => meterBucket(Math.round(usd / 1e-7));
 
   it("今天已经花超预算 ⇒ 这一轮不派新活,一行都不建(行留在 QUEUED)", async () => {
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
-    mocks.assetUnderstanding.aggregate.mockResolvedValue(spend(1.5));
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(1.5));
     mocks.asset.findMany.mockResolvedValue([{ id: "a-img", ownerId: OWNER, mime: "image/jpeg" }]);
     mocks.assetUnderstanding.findMany.mockResolvedValue([{ id: "u-stranded" }]);
     expect(await scanAssetsNeedingUnderstanding()).toEqual([]);
@@ -336,40 +374,75 @@ describe("平台日预算:超线本轮停,次日恢复", () => {
 
   it("预算以内照跑", async () => {
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
-    mocks.assetUnderstanding.aggregate.mockResolvedValue(spend(0.4));
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(0.4));
     mocks.asset.findMany.mockResolvedValue([{ id: "a-img", ownerId: OWNER, mime: "image/jpeg" }]);
     expect(await scanAssetsNeedingUnderstanding()).toHaveLength(1);
   });
 
-  it("次日自动恢复 —— 花费按 UTC 当天切,昨天的不算进今天", async () => {
+  it("次日自动恢复 —— 花费按 UTC 当天切,昨天的桶不算进今天", async () => {
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
     const day2 = new Date("2026-08-14T02:00:00.000Z");
-    mocks.assetUnderstanding.aggregate.mockResolvedValue(spend(0));
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(null);
     mocks.asset.findMany.mockResolvedValue([{ id: "a-img", ownerId: OWNER, mime: "image/jpeg" }]);
     expect(await scanAssetsNeedingUnderstanding(day2)).toHaveLength(1);
-    const where = mocks.assetUnderstanding.aggregate.mock.calls[0]![0].where;
-    expect((where.updatedAt.gte as Date).toISOString()).toBe("2026-08-14T00:00:00.000Z");
+    const where = mocks.understandingSpendDay.findUnique.mock.calls[0]![0].where;
+    expect((where.day as Date).toISOString()).toBe("2026-08-14T00:00:00.000Z");
   });
 
   it("算的是**真实美元**,和 understandingCostUsd 同一条算式", async () => {
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
-    mocks.assetUnderstanding.aggregate.mockResolvedValue({
-      _sum: { inputTokens: 3_000_000, outputTokens: 500_000 },
+    mocks.understandingSpendDay.findUnique.mockResolvedValue({
+      day: new Date("2026-08-13T00:00:00.000Z"),
+      inputTokens: BigInt(3_000_000),
+      outputTokens: BigInt(500_000),
+      calls: 7,
     });
     const spent = await understandingSpentTodayUsd();
     expect(spent).toBeCloseTo(understandingCostUsd({ inputTokens: 3_000_000, outputTokens: 500_000 }), 12);
     expect(spent).toBeCloseTo(0.5, 12); // 3M × $0.1/M + 0.5M × $0.4/M
-    // 两列都 null(还没跑过任何一行)不炸
-    mocks.assetUnderstanding.aggregate.mockResolvedValue({ _sum: { inputTokens: null, outputTokens: null } });
+    // 今天还没有桶(一笔都还没花)不炸
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(null);
     expect(await understandingSpentTodayUsd()).toBe(0);
   });
 
-  it("SUM 只读两列 token —— 数的是钱,不是行数", async () => {
+  it("读的是**累加计量器**,不是行上那两列的快照 SUM(快照会把一行 N 次调用数成 1)", async () => {
     await understandingSpentTodayUsd();
-    expect(mocks.assetUnderstanding.aggregate.mock.calls[0]![0]._sum).toEqual({
-      inputTokens: true, outputTokens: true,
-    });
+    expect(mocks.understandingSpendDay.findUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.assetUnderstanding.aggregate).not.toHaveBeenCalled();
     expect(mocks.assetUnderstanding.count).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 记账点的**位置**断言(判官 delta)。计量器只有在「一次供应商调用 = 一笔」时才是对的:
+   * 记在各个落盘分支上会重复计数(一趟调用要写好几次行),记在别处会漏。
+   */
+  it("一次供应商调用 = 计量器一笔增量,而且是 increment 不是覆写", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.understandingSpendDay.upsert).toHaveBeenCalledTimes(1);
+    const call = mocks.understandingSpendDay.upsert.mock.calls[0]![0];
+    // 覆写(直接给数字)会让同一天的第二笔抹掉第一笔 —— 必须是 increment
+    expect(call.update.inputTokens).toEqual({ increment: BigInt(900) });
+    expect(call.update.outputTokens).toEqual({ increment: BigInt(60) });
+    expect(call.update.calls).toEqual({ increment: 1 });
+    expect(call.create).toMatchObject({ inputTokens: BigInt(900), outputTokens: BigInt(60), calls: 1 });
+  });
+
+  it("失败但已经计费的那一趟也记一笔,而且只记一笔(落盘写了好几次)", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockRejectedValue(emptyUnderstandingResponseError({ inputTokens: 2_100, outputTokens: 4 }));
+    await handleUnderstand({ understandingId: "u-1" }, 2, port);
+    expect(mocks.understandingSpendDay.upsert).toHaveBeenCalledTimes(1);
+    expect(mocks.understandingSpendDay.upsert.mock.calls[0]![0].update.inputTokens).toEqual({
+      increment: BigInt(2_100),
+    });
+  });
+
+  it("供应商一个字都没回(没花钱)⇒ 计量器一笔都不记", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockRejectedValue(new Error("understanding request got no response (timeout)"));
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
+    expect(mocks.understandingSpendDay.upsert).not.toHaveBeenCalled();
   });
 
   it("已经计费的失败也进账 —— 供应商回了 200 但产物读不出来的那一趟", async () => {
@@ -429,7 +502,7 @@ describe("预算闸必须也在 handler 里(积压队列会绕过扫描器那一
   });
 
   it("付费调用之前复查 —— 超了就 hold 回队列,供应商一次不调", async () => {
-    mocks.assetUnderstanding.aggregate.mockResolvedValue({ _sum: { inputTokens: 20_000_000, outputTokens: 0 } }); // $2
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(meterBucket(20_000_000)); // $2
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.understand).not.toHaveBeenCalled();
     expect(mocks.presignedGet).not.toHaveBeenCalled(); // 连 URL 都不签
@@ -440,26 +513,25 @@ describe("预算闸必须也在 handler 里(积压队列会绕过扫描器那一
   });
 
   it("预算以内照跑", async () => {
-    mocks.assetUnderstanding.aggregate.mockResolvedValue({ _sum: { inputTokens: 1_000_000, outputTokens: 0 } }); // $0.1
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(meterBucket(1_000_000)); // $0.1
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.understand).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * 这一条同时钉住两件事:handler 里的复查真的在,**以及计量器真的会加** ——
+   * 六趟同一行的调用必须一趟一趟往上累,而不是每趟把桶覆写成同一个数。上一版的快照 SUM
+   * 在这里会永远停在 $0.5,于是六趟全放行 —— 那正是判官实测到的 cap 永不触发。
+   */
   it("积压的一整批:预算在第二件之后见底 ⇒ 后面的一件都不打供应商", async () => {
-    // 扫描器只在**派活之前**查一次,所以这一批是它派完之后才超的线
-    let spentTokens = 0;
-    mocks.assetUnderstanding.aggregate.mockImplementation(async () => ({
-      _sum: { inputTokens: spentTokens, outputTokens: 0 },
-    }));
-    mocks.understand.mockImplementation(async () => {
-      spentTokens += 5_000_000; // 每趟 $0.5
-      return {
-        text: JSON.stringify({ summary: "A ceramic mug", isDocument: false }),
-        usage: { inputTokens: 5_000_000, outputTokens: 0 },
-      };
+    // 一个会记住加法的假计量器 —— 语义和真库那张表一致(increment,不是覆写)
+    fakeMeter();
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ summary: "A ceramic mug", isDocument: false }),
+      usage: { inputTokens: 5_000_000, outputTokens: 0 }, // 每趟 $0.5
     });
     for (let i = 0; i < 6; i++) await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    // $1 的预算 ⇒ 前两趟跑掉($0 起、$0.5 时),第三趟起 SUM 已经是 $1.0 ⇒ 全部 hold
+    // $1 的预算 ⇒ 前两趟跑掉($0 起、$0.5 时),第三趟起计量器已经是 $1.0 ⇒ 全部 hold
     expect(mocks.understand).toHaveBeenCalledTimes(2);
   });
 });
@@ -1200,11 +1272,11 @@ describe("一次导入两千张,最终一张都不会漏", () => {
     for (let i = 0; i < 30; i++) store.addAsset({ id: `a-${i}` });
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
 
-    mocks.assetUnderstanding.aggregate.mockResolvedValue({ _sum: { inputTokens: 20_000_000, outputTokens: 0 } }); // $2
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(meterBucket(20_000_000)); // $2
     for (let i = 0; i < 5; i++) await tick(store);
     expect(store.rows).toHaveLength(0); // 超预算:一行都不建,也一行都不写死
 
-    mocks.assetUnderstanding.aggregate.mockResolvedValue({ _sum: { inputTokens: 0, outputTokens: 0 } }); // 次日归零
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(null); // 次日:新的一天,新的桶
     while (await tick(store)) {
       /* 跑到没活为止 */
     }
@@ -1217,17 +1289,14 @@ describe("一次导入两千张,最终一张都不会漏", () => {
     for (let i = 0; i < 25; i++) store.addAsset({ id: `a-${i}` });
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
 
-    // 扫描器派活那一刻 SUM 还是 $0(所以它这一轮不拦);每一趟真的花掉 $0.5。
-    let spentTokens = 0;
-    mocks.assetUnderstanding.aggregate.mockImplementation(async () => ({
-      _sum: { inputTokens: spentTokens, outputTokens: 0 },
-    }));
+    // 扫描器派活那一刻计量器还是 $0(所以它这一轮不拦);每一趟真的花掉 $0.5,
+    // 而计量器**按调用累加**(和真库那张表同一个语义)。
+    const meter = fakeMeter();
     mocks.understand.mockImplementation(async () => {
       await new Promise((r) => setTimeout(r, 0)); // 真的并发:让另一条 lane 挤进来
-      spentTokens += 5_000_000; // $0.5
       return {
         text: JSON.stringify({ summary: "A ceramic mug", isDocument: false }),
-        usage: { inputTokens: 5_000_000, outputTokens: 0 },
+        usage: { inputTokens: 5_000_000, outputTokens: 0 }, // $0.5
       };
     });
 
@@ -1246,8 +1315,7 @@ describe("一次导入两千张,最终一张都不会漏", () => {
     expect(store.rows.some((r) => r.status === "SKIPPED")).toBe(false);
 
     // 次日归零 ⇒ 剩下的全部补上,一件不漏
-    spentTokens = 0;
-    mocks.assetUnderstanding.aggregate.mockImplementation(async () => ({ _sum: { inputTokens: 0, outputTokens: 0 } }));
+    meter.reset();
     mocks.understand.mockResolvedValue({
       text: JSON.stringify({ summary: "A ceramic mug", isDocument: false }),
       usage: { inputTokens: 900, outputTokens: 60 },

@@ -121,26 +121,64 @@ export const UNDERSTAND_PAUSED_RETRY_MS = 60 * 60_000;
 /** 只理解商家**自己传进来**的东西。GENERATED 是我们自己产的图,读它等于读自己写的字。 */
 const UNDERSTOOD_SOURCES = ["UPLOAD", "IMPORT"] as const;
 
+/** 这一刻属于哪个 UTC 日的桶。计量器的分桶键,读写两边共用一个函数。 */
+function spendDay(now: Date): Date {
+  const day = new Date(now);
+  day.setUTCHours(0, 0, 0, 0);
+  return day;
+}
+
+/**
+ * 记一笔**付费调用**的花费。
+ *
+ * ── 为什么必须是累加,而不是对行上那两列做 SUM(判官 delta 裁决)──────────────
+ * 行上的 inputTokens/outputTokens 是**这一行最后一次尝试**的快照,每次落盘都是 SET 覆写。
+ * 拿它们的 SUM 当计量器,同一行跑三次付费调用就只记一次 —— 实测(真库)三次调用记
+ * $0.000104、真实 $0.000312,3.00×。后果不是账不好看:cap 在一整段行数区间里**永远
+ * 不会触发**,实际花费于是由吞吐而不是由预算参数决定。旧注释里那句「一行三次重试数成 1」
+ * 被实现逐字复现了,而钱路守卫不能靠注释声明。
+ *
+ * ── 调用点纪律:一次供应商调用 = 一笔,记在**调用刚回来**的地方 ─────────────────
+ * 不是在每一次状态落盘的地方记 —— 一趟调用会写好几次行(重试的 QUEUED、最终的 PAUSED /
+ * FAILED),在那些地方记就会重复计数。所以记账点只有一个:`port.understand()` 返回或抛出
+ * 的紧挨着的下一行。加法在数据库里做,两个副本同时记账不会丢更新。
+ */
+export async function recordUnderstandingSpend(
+  usage: { inputTokens: number; outputTokens: number },
+  now: Date = new Date(),
+): Promise<void> {
+  const inputTokens = Math.max(0, Math.trunc(Number(usage.inputTokens) || 0));
+  const outputTokens = Math.max(0, Math.trunc(Number(usage.outputTokens) || 0));
+  // 供应商没报用量 ⇒ 这一趟没有可记的钱。记一个 0 也无妨,但空写会让 `calls` 说谎。
+  if (inputTokens === 0 && outputTokens === 0) return;
+  const day = spendDay(now);
+  await prisma.understandingSpendDay.upsert({
+    where: { day },
+    create: { day, inputTokens: BigInt(inputTokens), outputTokens: BigInt(outputTokens), calls: 1 },
+    update: {
+      inputTokens: { increment: BigInt(inputTokens) },
+      outputTokens: { increment: BigInt(outputTokens) },
+      calls: { increment: 1 },
+    },
+  });
+}
+
 /**
  * 今天全平台的理解已经花了多少美元。
  *
- * 数的是**钱**不是行数:两列 token 就在表上,`understandingCostUsd()` 是现成的算式,
- * 而行数在两头都会错(一次已经计费的失败数成 0,一行三次重试数成 1)。
+ * 读的是累加计量器(见 {@link recordUnderstandingSpend}),不是行上那两列的快照 SUM。
+ * 数的是**钱**不是行数:`understandingCostUsd()` 是现成的算式,而行数在两头都会错
+ * (一次已经计费的失败数成 0,一行三次重试数成 1)。
  *
  * 跨租户 —— 「我们一天最多被账单多少钱」本来就是一个 platform-wide 的问题,
- * 所以它在一个具名系统身份下读全表,只读、不写。
+ * 所以它在一个具名系统身份下读,只读、不写。
  */
 export async function understandingSpentTodayUsd(now: Date = new Date()): Promise<number> {
   return runAsSystem("understanding-budget", async () => {
-    const startOfDay = new Date(now);
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    const sum = await prisma.assetUnderstanding.aggregate({
-      where: { updatedAt: { gte: startOfDay } },
-      _sum: { inputTokens: true, outputTokens: true },
-    });
+    const bucket = await prisma.understandingSpendDay.findUnique({ where: { day: spendDay(now) } });
     return understandingCostUsd({
-      inputTokens: sum._sum.inputTokens ?? 0,
-      outputTokens: sum._sum.outputTokens ?? 0,
+      inputTokens: Number(bucket?.inputTokens ?? 0),
+      outputTokens: Number(bucket?.outputTokens ?? 0),
     });
   });
 }
@@ -169,13 +207,29 @@ const METADATA_READY_FOR_UNDERSTANDING = [
   { mime: { startsWith: "video/" }, durationS: { not: null } },
 ] as const;
 
-/** 上一次报出来的暂缓原因。只在状态**变化**时打日志 —— 每分钟一行同样的话不是可观测性。 */
+/**
+ * 上一次报出来的暂缓原因。只在状态**变化**时说话 —— 每分钟一行同样的话不是可观测性。
+ *
+ * 边沿触发也是**报警**的形状(判官 delta:cap 命中不许运维侧静默)。商家侧安静是对的,
+ * 他什么都不用做;但「今天的预算烧完了」是一件必须有人知道的事 —— 上一版它只进 stdout,
+ * 而没有人读 worker 的 stdout。日志留着,另外补一条 Sentry:一次暂缓一条,不是每分钟一条。
+ */
 let pauseNotice: string | null = null;
 function noticePause(reason: string | null): void {
   if (reason === pauseNotice) return;
   pauseNotice = reason;
-  if (reason) console.log(`[understand] paused — ${reason}. Queued files stay queued.`);
-  else console.log("[understand] resumed — reading files again");
+  if (!reason) {
+    console.log("[understand] resumed — reading files again");
+    return;
+  }
+  console.log(`[understand] paused — ${reason}. Queued files stay queued.`);
+  if (!process.env.SENTRY_DSN) return;
+  // 标题按**原因**聚合,金额进 payload:把美元数写进标题,Sentry 会把同一个故障每变一次
+  // 数字就开一个新 issue,alert rule 跟着重复轰炸(和 dead-letters 那条同一个理由)。
+  Sentry.captureException(new Error("Asset understanding is paused"), {
+    tags: { area: "asset-understanding", outcome: "paused-scan" },
+    extra: { reason },
+  });
 }
 
 /**
@@ -621,11 +675,19 @@ export async function handleUnderstand(
     try {
       // `media` 让端口在发请求之前用**同一个** pre-flight 再判一次(belt)。
       result = await port.understand({ kind, mediaUrl, mime: asset.mime, media: asset });
+      // **记账点(成功侧)。** 一次调用一笔,记在这里而不是在下面各个落盘分支里 ——
+      // 一趟调用会写好几次行,在那些地方记就会重复计数。见 recordUnderstandingSpend。
+      await recordUnderstandingSpend(result.usage);
     } catch (e) {
+      // 用量跟着错误走出来 = 供应商回过话了 = **这一趟钱已经花了**。两处都要用它:
+      //   · 计量器(平台今天一共花了多少)—— **记账点(失败侧)**,一次调用一笔;
+      //   · 行上那两列(这一行最后一次读花了多少)—— 下面每条落盘分支都带着它。
+      // 记账放在 catch 的第一行:下面每一条分支都可能落盘,记账不能挂在其中任何一条上。
+      const spentUsage = understandingErrorUsage(e) ?? undefined;
+      if (spentUsage) await recordUnderstandingSpend(spentUsage);
       // 读不了这份字节 ⇒ 重试永远同一个答案 ⇒ 终止,不占重试预算。
-      // 用量跟着错误走时(200 + 空正文:钱已经花了)一并落库,不然日预算对那一类是瞎的。
       if (isUnreadableMediaError(e)) {
-        await fail(row, UNDERSTANDING_UNREADABLE, understandingErrorUsage(e) ?? undefined);
+        await fail(row, UNDERSTANDING_UNREADABLE, spentUsage);
         return null;
       }
       // **我方的请求/配置坏了**(模型 id 不存在、key 不对、schema 被拒)。文件没问题,
@@ -633,9 +695,6 @@ export async function handleUnderstand(
       // classifyUnderstandingFailure,这里只按结论分路。
       const configProblem = isProviderConfigError(e);
       const message = sanitizeError(e);
-      // 用量跟着错误走时(供应商已经回过话 ⇒ 钱花掉了)必须落库,**每一条路都要**:
-      // 少了它,一整类已经计费的失败在平台日预算里记 $0.0000,账面于是永远健康。
-      const spentUsage = understandingErrorUsage(e) ?? undefined;
       console.warn(`[understand] ${row.id} (${kind}) failed:`, message);
       // 还有重试额度 ⇒ 退回 QUEUED 让 pg-boss 再送一次(CAS 才能再赢一次)。
       // 这条队列不碰商家余额,所以重试是安全的;配置类和暂时性走同一条重试路,

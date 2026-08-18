@@ -23,9 +23,9 @@ const presignedGet = vi.hoisted(() => vi.fn(async () => "https://storage.example
 vi.mock("../storage.js", () => ({ storage: { presignedGet } }));
 
 import { prisma } from "@fikirtive/db";
-import { newId } from "@fikirtive/core";
+import { newId, understandingCostUsd } from "@fikirtive/core";
 import type { UnderstandingProvider } from "@fikirtive/generation";
-import { handleUnderstand, scanAssetsNeedingUnderstanding } from "./understand.js";
+import { handleUnderstand, scanAssetsNeedingUnderstanding, understandingSpentTodayUsd } from "./understand.js";
 
 // ── 安全闸(同 packages/db/test/setup.ts):非 *_test 库一律拒跑 ──────────────────
 const dbUrl = process.env.DATABASE_URL;
@@ -299,6 +299,79 @@ describe("存量 FAILED 行的恢复(直接跑迁移文件里的那条语句)", 
       // 第 ② 段捞的是躺够久的 QUEUED 行 —— 把 now 往后拨,等的就是那个窗口
       const dispatched = await scanAssetsNeedingUnderstanding(new Date(Date.now() + 24 * 3_600_000));
       expect(dispatched).toContain(id);
+    },
+    30_000,
+  );
+});
+
+/**
+ * **平台日预算的计量器必须真的会加**(判官 delta 裁决)。
+ *
+ * 为什么这一族只能打真库、而且只能是行为断言:上一版的计量器是对 `AssetUnderstanding`
+ * 两列 token 的**快照 SUM**,而每一次落盘都是 SET 覆写 —— 于是同一行跑三次付费调用,
+ * 账面只留最后一次。理解那一侧本来只调一次,所以这个洞睡着;而「200 但正文用不了改成
+ * 重试」把它叫醒了:一行三次真调用记成一次,计量器读数是真实花费的三分之一,
+ * cap 于是在一整段行数区间里**永远不会触发**。
+ *
+ * 那句「一行三次重试数成 1」在旧注释里写着,还被实现逐字复现 —— 钱路守卫不能靠注释声明,
+ * 只能靠一条会红的断言。这就是那条断言。
+ */
+describe("日预算计量器:同一行 N 次付费调用必须记 N 笔", () => {
+  const USAGE = { inputTokens: 1_000, outputTokens: 10 };
+  const UNIT_USD = understandingCostUsd(USAGE);
+
+  /** 每次都回一段解析不出来的散文 ⇒ 每一趟都真的付费,而且不会走成 DONE。 */
+  const alwaysUnusable: UnderstandingProvider = {
+    name: "mock",
+    async understand() {
+      return { text: "I think it's a mug!", usage: { ...USAGE } };
+    },
+  };
+
+  it(
+    "同一行跑满三次付费调用 ⇒ 计量器读数 = 3 × 单价(不是 1 ×)",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      await prisma.assetUnderstanding.create({
+        data: { id, ownerId: OWNER, assetId, kind: "image-caption", status: "QUEUED" },
+      });
+
+      // 增量断言:这个库是跨套件共用的,绝对值会被别人搅动,增量不会。
+      const before = await understandingSpentTodayUsd();
+
+      // 三次真调用 —— 前两次退回 QUEUED 并抛(队列重投),第三次落 PAUSED
+      await expect(handleUnderstand({ understandingId: id }, 0, alwaysUnusable)).rejects.toThrow();
+      await expect(handleUnderstand({ understandingId: id }, 1, alwaysUnusable)).rejects.toThrow();
+      await expect(handleUnderstand({ understandingId: id }, 2, alwaysUnusable)).resolves.toBeNull();
+      expect((await myRow(id))!.status).toBe("PAUSED");
+
+      const after = await understandingSpentTodayUsd();
+      expect(after - before).toBeCloseTo(3 * UNIT_USD, 10);
+    },
+    30_000,
+  );
+
+  it(
+    "两行同时记账,一笔都不许丢(并发下的加法必须是原子的)",
+    async () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 2; i++) {
+        const assetId = await seedAsset();
+        const id = newId();
+        await prisma.assetUnderstanding.create({
+          data: { id, ownerId: OWNER, assetId, kind: "image-caption", status: "QUEUED" },
+        });
+        ids.push(id);
+      }
+
+      const before = await understandingSpentTodayUsd();
+      // 同一个 UTC 日的同一个桶,两笔并发写 —— 丢更新的实现在这里少记一笔
+      await Promise.all(
+        ids.map((id) => handleUnderstand({ understandingId: id }, 2, alwaysUnusable).catch(() => null)),
+      );
+      const after = await understandingSpentTodayUsd();
+      expect(after - before).toBeCloseTo(2 * UNIT_USD, 10);
     },
     30_000,
   );
