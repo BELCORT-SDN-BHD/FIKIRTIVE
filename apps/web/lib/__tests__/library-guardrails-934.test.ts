@@ -48,7 +48,15 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function mount(element: ReactElement): Promise<HTMLDivElement> {
+/**
+ * 返回的是 `document.body`,不是那个挂载点(W2-1)。
+ *
+ * 弹窗从手搓的 `fixed inset-0` 换成 `components/ui/dialog` 之后,内容走 Radix 的
+ * Portal —— 它渲染到 `document.body` 下面,不在挂载点里。商家看到的东西一样不少,
+ * 只是「在 DOM 的哪一支」变了,所以这里把查询范围放到整个文档。
+ * (同一份文件里那些 alert-dialog 的断言本来就在查 `document`,与这一条一致。)
+ */
+async function mount(element: ReactElement): Promise<HTMLElement> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -56,7 +64,7 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
   await act(async () => {
     await Promise.resolve();
   });
-  return container;
+  return document.body;
 }
 
 /** Type into a real input the way the merchant does (React's onChange sees it). */
