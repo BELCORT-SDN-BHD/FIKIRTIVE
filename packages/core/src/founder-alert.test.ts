@@ -184,6 +184,20 @@ describe("createResendAlertEmailChannel", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422 }) as Response));
     await expect(createResendAlertEmailChannel({ RESEND_API_KEY: "re_x" })(ALERT)).rejects.toThrow("HTTP 422");
   });
+
+  it("both outbound calls carry a deadline — a hung provider must not stall the refund sweep", async () => {
+    // 这条报警是在 reapStaleGenJobs 的每行循环里 await 的。一个被接受却永远不回答的连接
+    // 会把整趟退款巡检钉住,那比报警发不出去糟得多(#678 给认证邮件装 signal 的同一理由)。
+    const seen: RequestInit[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      seen.push(init);
+      return { ok: true } as Response;
+    }));
+    await createResendAlertEmailChannel({ RESEND_API_KEY: "re_x" })(ALERT);
+    await createTelegramChannel({ TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALERT_CHAT_ID: "-1" })(ALERT);
+    expect(seen).toHaveLength(2);
+    for (const init of seen) expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 describe("createFounderAlertChannels (production wiring)", () => {

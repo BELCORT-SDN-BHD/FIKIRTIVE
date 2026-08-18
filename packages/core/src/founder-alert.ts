@@ -110,6 +110,14 @@ export async function dispatchFounderAlert(
 
 type EnvRecord = Record<string, string | undefined>;
 
+/**
+ * 每条外呼的死线。存在的理由与 #678 给 EmailPort 装 `signal` 的完全一样:一个被对方接受
+ * 却永远不回答的连接,会在 socket 还开着的整段时间里把调用方钉在这里——而这里的调用方是
+ * **巡检的每行循环**(`reapStaleGenJobs` 里 `await founderAlert(...)`)。一条卡住的报警
+ * 因此能变成一整趟停摆的退款巡检,那比报警发不出去糟得多。
+ */
+const ALERT_FETCH_TIMEOUT_MS = 10_000;
+
 /** Sentry SDK 里我们用到的那一个方法。写成结构类型,core 就不必依赖 @sentry/node。 */
 export type SentryLike = {
   captureMessage: (
@@ -158,6 +166,7 @@ export function createResendAlertEmailChannel(env: EnvRecord = process.env): Fou
     const text = formatFounderAlertText(alert);
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
+      signal: AbortSignal.timeout(ALERT_FETCH_TIMEOUT_MS),
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from: (env.AUTH_EMAIL_FROM ?? "").trim() || "Fikirtive <onboarding@resend.dev>",
@@ -182,6 +191,7 @@ export function createTelegramChannel(env: EnvRecord = process.env): FounderAler
     if (!token || !chatId) return "skipped";
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
+      signal: AbortSignal.timeout(ALERT_FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chatId, text: formatFounderAlertText(alert), disable_web_page_preview: true }),
     });
