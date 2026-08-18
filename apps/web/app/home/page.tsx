@@ -13,17 +13,13 @@
  * 认证身份读(与 `app/northstar-immersive/page.tsx` 同一种做法)。
  */
 
-import { Suspense } from "react";
 import { HomeEntry } from "@/components/home/HomeEntry";
-import HomeLoading from "./loading";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Home · Fikirtive" };
 
+/** 等待态由同目录的 `loading.tsx` 提供 —— App Router 自己会拿它当这条路由的 Suspense 边界,
+ *  所以这里不再手写第二个 fallback。 */
 export default function Page() {
-  return (
-    <Suspense fallback={<HomeLoading />}>
-      <HomeEntry />
-    </Suspense>
-  );
+  return <HomeEntry />;
 }

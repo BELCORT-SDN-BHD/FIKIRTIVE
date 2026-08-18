@@ -304,7 +304,7 @@ describe("有东西的账号:五块都画得出来", () => {
       canvases: [{ id: "proj-1", name: "Raya promo", updatedLabel: "12 Aug 2026" }],
       thumbs: [{ id: "gen-1", projectId: "proj-1", src: "/files/a.png", kind: "image", prompt: "Croffle set" }],
       upcoming: [{ id: "post-1", dayLabel: "Wed, Jul 10", timeLabel: "9:05 AM", channelLabel: "Instagram", statusLabel: "Scheduled", caption: "Back on Friday." }],
-      campaigns: [{ id: "camp-1", name: "Raya 2026", goal: "Sell the croffle set", statusLabel: "Active", badge: "success" }],
+      campaigns: [{ id: "camp-1", name: "Raya 2026", goal: "Sell the croffle set", statusLabel: "Active", badge: "success", href: "/campaign/camp-1" }],
       equipment: null,
     });
     const text = visibleText(markup);
@@ -388,9 +388,11 @@ describe("Home 的规则(components/home/home-data.ts)", () => {
   it("「进行中的战役」不含收了工的那些", async () => {
     const { openCampaigns } = await import("@/components/home/home-data");
     const row = (id: string, status: string) => ({ id, status, name: id, goal: "g" });
-    const got = openCampaigns([row("a", "ACTIVE"), row("b", "DONE"), row("c", "DRAFT"), row("d", "CANCELLED")]);
+    const got = openCampaigns([row("a", "ACTIVE"), row("b", "DONE"), row("c", "DRAFT"), row("d", "CANCELLED")], "/campaign");
     expect(got.map((c) => c.id)).toEqual(["a", "c"]);
     expect(got.map((c) => c.statusLabel)).toEqual(["Active", "Draft"]);
+    // 地址由调用方从导航权威源拼好递进来 —— Home 不自己写第二份 `/campaign`(§1.3)。
+    expect(got.map((c) => c.href)).toEqual(["/campaign/a", "/campaign/c"]);
   });
 
   it("装备清单做完就整块消失,没做完就照实说哪一格还欠着", async () => {

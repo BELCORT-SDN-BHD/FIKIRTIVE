@@ -100,7 +100,8 @@ export async function HomeEntry() {
       prompt: thumb.prompt,
     })),
     upcoming: upcomingPosts(scheduled),
-    campaigns: "error" in campaignResult ? [] : openCampaigns(campaignResult.campaigns),
+    campaigns:
+      "error" in campaignResult ? [] : openCampaigns(campaignResult.campaigns, navLinkByKey("campaign").href),
     equipment: equipmentSteps({
       brandMemoryCount: memory.length,
       productCount: records.filter((record) => record.kind === "product").length,

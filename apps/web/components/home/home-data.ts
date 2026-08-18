@@ -131,6 +131,8 @@ export type HomeCampaign = {
   goal: string;
   statusLabel: string;
   badge: "outline" | "success" | "warning" | "destructive";
+  /** 由调用方按导航权威源拼好递进来 —— 这一页不自己写第二份 `/campaign` 路径(§1.3)。 */
+  href: string;
 };
 
 /** 收了工的战役(DONE / CANCELLED)不是「进行中」。草稿算 —— 它正在被计划,而徽章会照实
@@ -139,7 +141,7 @@ const CLOSED_CAMPAIGN_STATUSES: ReadonlySet<string> = new Set(["DONE", "CANCELLE
 
 export const HOME_CAMPAIGN_LIMIT = 3;
 
-export function openCampaigns(rows: readonly CampaignShape[]): HomeCampaign[] {
+export function openCampaigns(rows: readonly CampaignShape[], campaignBaseHref: string): HomeCampaign[] {
   return rows
     .filter((row) => !CLOSED_CAMPAIGN_STATUSES.has(row.status))
     .slice(0, HOME_CAMPAIGN_LIMIT)
@@ -149,6 +151,7 @@ export function openCampaigns(rows: readonly CampaignShape[]): HomeCampaign[] {
       goal: row.goal,
       statusLabel: isCampaignStatus(row.status) ? CAMPAIGN_STATUS_LABELS[row.status] : row.status,
       badge: isCampaignStatus(row.status) ? CAMPAIGN_STATUS_BADGE[row.status] : "warning",
+      href: `${campaignBaseHref}/${row.id}`,
     }));
 }
 

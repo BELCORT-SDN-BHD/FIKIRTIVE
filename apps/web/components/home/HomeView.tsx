@@ -176,7 +176,7 @@ export function HomeView({ data }: { data: HomeData }) {
                   </CardHeader>
                   <CardContent className="mt-auto">
                     <Button asChild variant="secondary" className="w-full">
-                      <Link href={`/campaign/${campaign.id}`}>
+                      <Link href={campaign.href}>
                         <Megaphone />
                         Open campaign
                       </Link>
