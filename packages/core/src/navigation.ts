@@ -64,6 +64,53 @@ export function isNavGroup(node: MerchantNavNode): node is MerchantNavGroup {
 }
 
 /**
+ * 换壳之后的路由常量(Wave 2,规格书 `docs/specs/wave2-shell.md` §2.2)。
+ *
+ * 为什么是一份、而且摆在最前面:换壳开六路并行(Library / Brand / Schedule / Settings /
+ * Create / Home),六个人会同时需要同一串新地址。谁在自己那一面手写一次 `"/library"`,
+ * 这棵树就又多了一份会各自漂移的真相 —— 本仓最贵的一课(两个导航、两个日历、两个创作
+ * 入口)全是这么来的。所以新地址在权威源里只落这一份,六路各自 import。
+ *
+ * W2-5 把它从文件下半段挪到这里:`CREATE_NAV_HREF` / `CANVAS_HREF` 现在就是这张表里的两条
+ * (创作面改名 `/create` 之后,再写第二遍地址就是又开一份真相),而 const 的求值是自上而下的,
+ * 所以表必须先于读它的人。**十三个值逐字节不变**;跟着改的只有两句已经过期的注释 ——
+ * 这一段自己的「W2-5 改名搬家」预告,与 `create:` 那一行的「今天叫 `/northstar-immersive`」。
+ *
+ * **它仍然不是导航数据**:`MERCHANT_NAV` 的七格权威改写留给切换总票(W2-11)。
+ *
+ * 用 key 而不是一串散常量:后续票要按 key 取(`SHELL_ROUTES.library`),围栏也要能把它当
+ * 枚举源逐条对账(`Object.values`)。
+ */
+export const SHELL_ROUTES = {
+  /** 商家自己的总览。今天 `/` 是 `redirect("/otto")`,W2-6 把它换成真页面。 */
+  home: "/",
+  /** 创作旗舰面。W2-5 起这就是它真正的地址(旧 `/northstar-immersive` 永久重定向到这里)。 */
+  create: "/create",
+  /** 画布本身,永远在 Create 那扇门后面。 */
+  canvas: "/create/canvas",
+  /** 已经做出来的每一张图、每一条片。今天是 `/otto?view=library`。 */
+  library: "/library",
+  /** 剪辑台 —— 要剪的东西就在 Library,所以它跟着 Library 走(规格书 Q6)。 */
+  edit: "/library/editor",
+  /** Otto 该记住的品牌与产品。今天是 `/otto?view=memory`。 */
+  brand: "/brand",
+  /** 战役。今天已经是真路由,新旧同址。 */
+  campaign: "/campaign",
+  /** 唯一的日历。今天是 `/otto?view=schedule`。 */
+  schedule: "/schedule",
+  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
+  analytics: "/schedule/analytics",
+  /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
+  billing: "/billing",
+  /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
+  connections: "/settings/connections",
+  /** 花费上限与发布默认值。今天是 `/otto?view=account`。 */
+  preferences: "/settings",
+  /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
+  profile: "/profile",
+} as const;
+
+/**
  * 创作入口的名字 —— **全仓只写这一处**。
  *
  * 白标命名体系还没定(Founder 未拍板),先叫 "Create";体系定了就改这一行,导轨、Otto
@@ -71,11 +118,17 @@ export function isNavGroup(node: MerchantNavNode): node is MerchantNavGroup {
  */
 export const CREATE_NAV_LABEL = "Create";
 
-/** 创作旗舰面:沉浸式画布的家(开工输入框 + 新建画布 + 商家自己的画布列表)。 */
-export const CREATE_NAV_HREF = "/northstar-immersive";
+/**
+ * 创作旗舰面:沉浸式画布的家(开工输入框 + 新建画布 + 商家自己的画布列表)。
+ *
+ * W2-5(规格书 §2.2):地址从 `/northstar-immersive` 改成 `/create`。`northstar-immersive`
+ * 是内部代号 —— 它出现在商家的地址栏里,本身就是一处「说的与做的不一致」。旧地址不 404,
+ * 由 `apps/web/app/northstar-immersive/*` 三个重定向路由永久送到新地址。
+ */
+export const CREATE_NAV_HREF = SHELL_ROUTES.create;
 
 /** 画布本身。Create 首页把商家送到自己那张画布上,所以导轨不再单列一行。 */
-export const CANVAS_HREF = "/northstar-immersive/create/canvas";
+export const CANVAS_HREF = SHELL_ROUTES.canvas;
 
 /**
  * Otto —— 助手,不是板块。
@@ -169,49 +222,6 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
     why: "The old simple-mode surface was retired; there is one Otto.",
   },
 ];
-
-/**
- * 换壳之后的路由常量(Wave 2,规格书 `docs/specs/wave2-shell.md` §2.2)。
- *
- * 为什么先摆在这里、而且这一票只加不改:换壳要开六路并行(Library / Brand / Schedule /
- * Settings / Create / Home),六个人会同时需要同一串新地址。谁在自己那一面手写一次
- * `"/library"`,这棵树就又多了一份会各自漂移的真相 —— 本仓最贵的一课(两个导航、两个日历、
- * 两个创作入口)全是这么来的。所以新地址先在权威源里落一份,六路各自 import。
- *
- * **它现在还不是导航数据**:`MERCHANT_NAV` 这一票一个字都不动,七格权威改写留给切换总票
- * (W2-11)。也就是说本票合并之后旧壳行为零变化,只是多了一份后续票引用得到的常量。
- *
- * 用 key 而不是一串散常量:后续票要按 key 取(`SHELL_ROUTES.library`),围栏也要能把它当
- * 枚举源逐条对账(`Object.values`)。
- */
-export const SHELL_ROUTES = {
-  /** 商家自己的总览。今天 `/` 是 `redirect("/otto")`,W2-6 把它换成真页面。 */
-  home: "/",
-  /** 创作旗舰面。今天叫 `/northstar-immersive`(见 CREATE_NAV_HREF),W2-5 改名搬家。 */
-  create: "/create",
-  /** 画布本身,永远在 Create 那扇门后面。 */
-  canvas: "/create/canvas",
-  /** 已经做出来的每一张图、每一条片。今天是 `/otto?view=library`。 */
-  library: "/library",
-  /** 剪辑台 —— 要剪的东西就在 Library,所以它跟着 Library 走(规格书 Q6)。 */
-  edit: "/library/editor",
-  /** Otto 该记住的品牌与产品。今天是 `/otto?view=memory`。 */
-  brand: "/brand",
-  /** 战役。今天已经是真路由,新旧同址。 */
-  campaign: "/campaign",
-  /** 唯一的日历。今天是 `/otto?view=schedule`。 */
-  schedule: "/schedule",
-  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
-  analytics: "/schedule/analytics",
-  /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
-  billing: "/billing",
-  /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
-  connections: "/settings/connections",
-  /** 花费上限与发布默认值。今天是 `/otto?view=account`。 */
-  preferences: "/settings",
-  /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
-  profile: "/profile",
-} as const;
 
 /**
  * 旧 `/otto?view=X` 的去处 —— 每一个 view 都必须在这里有一行,否则围栏红
