@@ -35,6 +35,7 @@ import { test, expect } from "@playwright/test";
 import { seedWorkspace, seedThread, readAccount } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { prisma, INTERNAL_PER_DISPLAY } from "../support/db.js";
+import { waitUntilInteractive } from "../support/ui.js";
 import { freshPng, freshPngFilename } from "../support/upload-fixture.js";
 
 test("A freshly-uploaded image reaches the server and becomes a real Asset, every run", async ({ page }) => {
@@ -63,7 +64,15 @@ test("A freshly-uploaded image reaches the server and becomes a real Asset, ever
 
   // The hidden file input Uppy/the attach button drive (apps/web/components/otto/OttoChatStream.tsx)
   // — setInputFiles works on it directly, the same way the visible paperclip button does.
-  await page.getByLabel("Attach a file").setInputFiles({
+  //
+  // It is `hidden`, which is exactly why this journey needs the wait below and no other one does:
+  // there is no visibility to wait on, and setInputFiles skips actionability checks altogether, so
+  // the file can be dropped on the input while React has not hydrated it yet — and that event is
+  // discarded, never replayed. `signIn` returning is not proof this control is live: it waits for
+  // the global navigation, which is a different subtree (#981, see waitUntilInteractive).
+  const attach = page.getByLabel("Attach a file");
+  await waitUntilInteractive(attach);
+  await attach.setInputFiles({
     name: freshPngFilename(),
     mimeType: "image/png",
     buffer: bytes,

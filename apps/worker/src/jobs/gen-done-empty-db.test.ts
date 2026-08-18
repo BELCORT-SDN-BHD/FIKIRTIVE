@@ -28,10 +28,15 @@ const m = vi.hoisted(() => ({
   generateVideo: vi.fn(),
   storagePut: vi.fn(),
   storagePresignedGet: vi.fn(),
+  // 整顿 C1a:报警管道注入成假 transport —— 用例断言的是「这类事件必然产生一次带上下文的
+  // 上报」,不是 Sentry/Resend/Telegram 本身,所以这里一个真实外呼都不发。
+  founderAlert: vi.fn(),
+  captureMoneyPathError: vi.fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: { put: m.storagePut, presignedGet: m.storagePresignedGet } }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
+vi.mock("../alerting.js", () => ({ founderAlert: m.founderAlert, captureMoneyPathError: m.captureMoneyPathError }));
 
 import { prisma, reserveCredits, settleCredits, refundReservation } from "@fikirtive/db";
 import { handleGen, reapStaleGenJobs, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
@@ -56,6 +61,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  m.founderAlert.mockResolvedValue([]);
   m.storagePresignedGet.mockImplementation(async (key: string) => `url:${key}`);
   m.storagePut.mockImplementation(async () => ({ contentHash: randomUUID().replace(/-/g, "").padEnd(64, "0").slice(0, 64) }));
 
@@ -70,6 +76,22 @@ beforeEach(async () => {
 afterAll(async () => {
   await prisma.$disconnect();
 });
+
+/** 这一趟巡检为**这一条**作业行发出的报警。同上:全局次数会被同库里别的行污染。 */
+function alertsFor(refId: string): { key: string; context: Record<string, unknown> }[] {
+  return callsFor(refId).map((call) => call[0]);
+}
+
+/** 同上,但取第二个参数(派发选项),用来分辨首发与重复。 */
+function optsFor(refId: string): { repeat?: boolean }[] {
+  return callsFor(refId).map((call) => call[1] ?? {});
+}
+
+function callsFor(refId: string): [{ key: string; context: Record<string, unknown> }, { repeat?: boolean } | undefined][] {
+  return m.founderAlert.mock.calls
+    .map((call) => call as unknown as [{ key: string; context: Record<string, unknown> }, { repeat?: boolean } | undefined])
+    .filter(([alert]) => alert?.context?.genJobId === refId);
+}
 
 /** 这一单在钱上留下的全部痕迹 —— 张数与余额,不是文字。 */
 async function moneyTrail(refId = jobId) {
@@ -130,8 +152,14 @@ describe("#782 r13 写入点不变量 —— DONE ⇒ generationIds 非空", () 
 // ② 存量自愈:翻转 + 退款的 exactly-once
 // ---------------------------------------------------------------------------
 
-/** 造一行「不该存在」的历史数据:DONE、零产出、宽限期之外。`settled` 决定它的钱走到哪一步。 */
-async function seedDoneEmpty(opts: { settled: boolean; refunded?: boolean }) {
+/**
+ * 造一行「不该存在」的历史数据:DONE、零产出、宽限期之外。`settled` 决定它的钱走到哪一步。
+ *
+ * `settledInternal` 给一次**部分结算**(实扣 A < 预扣 B)。它存在的唯一理由是让报警里那个
+ * 金额有分辨力:A === B 时,「从 SETTLE 行读回实扣」与「读 RESERVE 行的预扣额」这两种写法
+ * 得到同一个数字,断言分不出对错(判官的变异④正是靠这一点活下来的)。
+ */
+async function seedDoneEmpty(opts: { settled: boolean; refunded?: boolean; settledInternal?: number }) {
   await prisma.genJob.create({
     data: {
       id: jobId, ownerId: orgId, projectId, prompt: "a clip", kind: "VIDEO", model: "seedance-2-mini", count: 1,
@@ -141,7 +169,7 @@ async function seedDoneEmpty(opts: { settled: boolean; refunded?: boolean }) {
     },
   });
   await prisma.$transaction((tx) => reserveCredits(tx, { orgId, refId: jobId, cost: HOLD }));
-  if (opts.settled) await prisma.$transaction((tx) => settleCredits(tx, { orgId, refId: jobId }));
+  if (opts.settled) await prisma.$transaction((tx) => settleCredits(tx, { orgId, refId: jobId, actualInternal: opts.settledInternal }));
   if (opts.refunded) await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId: jobId }));
 }
 
@@ -188,8 +216,130 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
       expect(money.kinds, "在一笔已结算的预扣上又开了一张退款").toEqual(["RESERVE", "SETTLE"]);
       expect(money.balance).toBe(START - HOLD); // 那笔钱确实还在平台这边
       expect(spy.mock.calls.flat().join(" ")).toContain("paid for nothing"); // 交给人看
+
+      // 整顿 C1a —— 「交给人看」到今天为止只是一行日志,而生产日志没有人二十四小时盯着。
+      // 这一条断言的是**报警真的发出去过一次**,并且带着足以定位这一单的上下文:哪个商家、
+      // 哪一单、扣了多少钱。少任何一样,收到报警的人都还得先去翻库才知道在说谁。
+      // 按作业行过滤,理由与上面那条注释一样:扫描是跨租户的,同一个库里还住着别的用例
+      // 留下来的行,拿全局次数当断言就是把用例交给运行次序。
+      expect(alertsFor(jobId), "这个商家付了钱什么都没拿到,而没有任何人被通知").toHaveLength(1);
+      expect(alertsFor(jobId)[0]).toEqual(
+        expect.objectContaining({
+          key: "gen.paid_for_nothing",
+          context: expect.objectContaining({ genJobId: jobId, orgId, chargedCredits: HOLD / 10 }),
+        }),
+      );
     } finally {
       spy.mockRestore();
+    }
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("退得掉的那几行不报警 —— 报警只留给真的需要人来裁决的那一种", async () => {
+    // 反向钉板:没有这一条,上面那个断言只证明「报警器会响」,不证明「它只在该响的时候响」。
+    // 一个逢扫必响的报警器,和一个不响的报警器,一周之内会退化成同一个东西。
+    await seedDoneEmpty({ settled: false });
+    await reapStaleGenJobs();
+    expect((await jobRow()).status).toBe("FAILED");
+    expect(alertsFor(jobId), "一行自己就退得掉的作业,不该惊动 founder").toEqual([]);
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("报警里的金额是**实扣**,不是预扣 —— 部分结算下两者不同,写错就看得见", async () => {
+    // 判官变异④:把「从 SETTLE 行读回实扣」改成「读 RESERVE 行的预扣额」。在 A === B 的
+    // fixture 上两种写法得到同一个数字,变异因此存活。这里造一次真的部分结算(实扣 600 <
+    // 预扣 1000),两个数字分开,断言才真的在验它。
+    //
+    // 为什么这件事要紧:这个数字是给人拿去跟账本对的。报一个「商家被扣了 100」而账上只有
+    // 60,收到报警的人会照着多退 40 —— 报警本身成了第二次钱错。
+    const ACTUAL = 600;
+    await seedDoneEmpty({ settled: true, settledInternal: ACTUAL });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await reapStaleGenJobs();
+      expect(alertsFor(jobId)).toHaveLength(1);
+      const context = alertsFor(jobId)[0]!.context;
+      expect(context.chargedCredits, "报的是预扣额,不是这个商家真被扣掉的钱").toBe(ACTUAL / 10);
+      expect(context.chargedCredits).not.toBe(HOLD / 10);
+      // 账本自己也这么说:未花掉的部分退回,余额只少了实扣那一份。
+      expect((await moneyTrail()).balance).toBe(START - ACTUAL);
+    } finally {
+      spy.mockRestore();
+    }
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("同一行第二趟巡检只进 Sentry —— 一行卡住不许变成每天 288 封邮件", async () => {
+    // 那一行是**故意不清理**的,而巡检每 5 分钟一趟。没有一次性标记,同一行会被永远重复报警;
+    // 而邮件那把 RESEND_API_KEY 与商家登录的魔法链接是同一把:一条报警足以把登录打挂。
+    await seedDoneEmpty({ settled: true });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await reapStaleGenJobs();
+      await reapStaleGenJobs();
+
+      const alerts = alertsFor(jobId);
+      expect(alerts, "两趟巡检 = 两条报警事件(Sentry 要照常计数)").toHaveLength(2);
+      // 第一趟:完整三通道。第二趟:repeat,只走 Sentry。
+      expect(optsFor(jobId)[0]?.repeat ?? false, "首发不该被当成重复").toBe(false);
+      expect(optsFor(jobId)[1]?.repeat, "第二趟仍在发邮件和 Telegram").toBe(true);
+      expect(alerts[1]!.context.repeatOfEarlierAlert).toBe(true);
+      // 标记落在 ActionEvent 的主键上,所以它是 exactly-once 的,不是 check-then-act。
+      const markers = await prisma.actionEvent.count({ where: { id: `gen_paid_for_nothing:${jobId}` } });
+      expect(markers).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("两个巡检同时扫到同一行 → 只有一个拿到首发权(唯一约束裁决,不是 check-then-act)", async () => {
+    await seedDoneEmpty({ settled: true });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await Promise.all([reapStaleGenJobs(), reapStaleGenJobs()]);
+      const firsts = optsFor(jobId).filter((o) => !o.repeat);
+      expect(firsts, "并发下发了两次完整报警(两封邮件、两条 Telegram)").toHaveLength(1);
+      expect(await prisma.actionEvent.count({ where: { id: `gen_paid_for_nothing:${jobId}` } })).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("标记写不进去(非 P2002 的库故障)⇒ 仍按首发处理 —— 节流闸是 fail-OPEN,不许把求救静音", async () => {
+    // 这条钉的是整个节流设计里最要紧、也最容易被写反的一个方向。
+    //
+    // 节流闸是「拿不到首发权就降级成只进 Sentry」。它的 catch-all 如果写成 return false
+    // (fail-CLOSED),那么一次外键错、一次连接池打满、一次磁盘满 —— 任何与「已经报过」
+    // 毫无关系的库故障 —— 都会让这条求救**永久**降级:邮件和 Telegram 从此不再发,
+    // 而没有任何人知道降级发生过。为了不吵而把「商家付了钱什么都没拿到」静音,
+    // 正好是这张票要消灭的那件事,只不过换成由我们自己动手。
+    //
+    // 所以只有**确凿的主键冲突(P2002 = 这一行确实已经报过)**才算重复;其它一切
+    // 算首发。宁可多发一条,也不让一次 DB 抖动把它关掉。
+    await seedDoneEmpty({ settled: true });
+    const markerId = `gen_paid_for_nothing:${jobId}`;
+    const realCreate = prisma.actionEvent.create.bind(prisma.actionEvent);
+    // 只对**这一行**的标记注入故障:巡检是跨租户的,同库里还住着别的用例留下的行,
+    // 一个无差别的 mock 会顺手改掉它们的行为。
+    const createSpy = vi.spyOn(prisma.actionEvent, "create").mockImplementation((async (args: { data?: { id?: string } }) => {
+      if (args?.data?.id === markerId) throw Object.assign(new Error("FK violated"), { code: "P2003" });
+      return realCreate(args as never);
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await reapStaleGenJobs();
+
+      expect(alertsFor(jobId), "库故障把这一行的报警整条吞掉了").toHaveLength(1);
+      expect(optsFor(jobId)[0]?.repeat ?? false, "一次非 P2002 的库故障被当成了「已经报过」").toBe(false);
+      expect(alertsFor(jobId)[0]!.context.repeatOfEarlierAlert).toBe(false);
+      // 标记确实没落库 —— 证明走的就是故障那一路,不是悄悄写成功了。
+      expect(await prisma.actionEvent.count({ where: { id: markerId } })).toBe(0);
+
+      // 而且它**持续**按首发处理:标记一天写不进去,这句求救就一天不许被降级。
+      await reapStaleGenJobs();
+      expect(optsFor(jobId).map((o) => o.repeat ?? false)).toEqual([false, false]);
+    } finally {
+      createSpy.mockRestore();
+      errSpy.mockRestore();
+      warnSpy.mockRestore();
     }
   }, DB_CASE_TIMEOUT_MS);
 

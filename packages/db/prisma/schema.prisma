@@ -215,7 +215,7 @@ model AssetUnderstanding {
   organization Organization @relation(fields: [ownerId], references: [id])
   assetId      String
   kind         String   // 'image-caption' | 'doc-extract' | 'video-qa'
-  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED
+  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED | PAUSED
   /// 商家读得到的那一句(Otto 取回时说的就是它)。白标,落盘前过 redact。
   summary      String   @default("")
   /// 该 kind 的结构化产物(ImageCaptionData / DocExtractData / VideoQaData)。
@@ -237,6 +237,32 @@ model AssetUnderstanding {
   @@index([ownerId, status, createdAt])
   // 清道夫:滞留 RUNNING 的行。
   @@index([status, updatedAt])
+}
+
+// 平台理解花费的**累加**计量器,按 UTC 日分桶(#784 判官 delta 裁决)。
+//
+// 为什么它不能是 AssetUnderstanding 那两列的 SUM(那正是上一版的实现):行上的
+// inputTokens/outputTokens 是**这一行最后一次尝试**的快照,每次落盘都是 SET 覆写。
+// 一行跑三次付费调用,快照只留最后一次 —— 计量器读数是真实花费的三分之一,而平台日预算
+// 正是靠这个读数决定「今天还能不能再花」。实测(真库):三次调用记 $0.000104,真实
+// $0.000312,3.00×;在一整段行数区间里 cap 因此永远不会触发。
+//
+// 所以计量与快照分家,各干各的:
+//   · 行上那两列 —— 「这一行最后一次读花了多少」,给 Otto / 运维看,SET 语义不变;
+//   · 这张表     —— 「今天全平台一共花了多少」,只增不减,每一次**付费调用**记一笔。
+//
+// 没有 ownerId 是刻意的:「我们一天最多被账单多少钱」本来就没有租户可归。它也因此不进
+// TENANT_MODELS(那份名单管的是带 ownerId 的模型)。不进 CreditLedger、不参与任何扣费 ——
+// 理解是平台成本,商家一分钱不付(@fikirtive/core 的铁律 2)。
+model UnderstandingSpendDay {
+  /** UTC 日(DATE,不带时分秒)—— 桶的身份就是它。 */
+  day          DateTime @id @db.Date
+  /** 只增不减。BigInt 而不是 Int:计量器溢出会变成一次写失败,而写失败的那一刻钱已经花了。 */
+  inputTokens  BigInt   @default(0)
+  outputTokens BigInt   @default(0)
+  /** 今天记了多少笔付费调用。诊断用(和 token 一起长,对不上就是有人漏记/重记)。 */
+  calls        Int      @default(0)
+  updatedAt    DateTime @updatedAt
 }
 
 model Shot {

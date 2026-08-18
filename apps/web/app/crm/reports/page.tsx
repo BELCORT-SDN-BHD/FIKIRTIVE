@@ -1,20 +1,7 @@
-import BroadcastReportListPage from "@/components/crm/reports/broadcast-report-list-page";
-import { listBroadcastRuns } from "@/lib/customer-broadcast-ui-actions";
-import { getCustomerBroadcastReport } from "@/lib/customer-broadcast-report-ui-actions";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const metadata = { title: "Delivery reports · Fikirtive" };
-
+/** CRM 整段收起来了(W2-13 / #993)。文件保留、内容换成重定向,旧书签不撞墙 ——
+ *  原委与恢复条件写在 app/crm/page.tsx。 */
 export default async function CrmReportsRoute() {
-  const runs = await listBroadcastRuns({});
-  const items = runs.ok
-    ? await Promise.all(
-        runs.resource.map(async (run) => ({
-          run,
-          report: await getCustomerBroadcastReport({ broadcastRunId: run.id }),
-        })),
-      )
-    : [];
-
-  return <BroadcastReportListPage initialRuns={runs} initialItems={items} />;
+  redirect("/");
 }

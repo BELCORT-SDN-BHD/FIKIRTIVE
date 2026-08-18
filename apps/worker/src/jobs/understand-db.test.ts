@@ -15,15 +15,17 @@
  * 纪律照旧:**供应商全程 mock,一个字节都不出网**;每个用例自己建自己的租户、跑完自己收。
  */
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 const presignedGet = vi.hoisted(() => vi.fn(async () => "https://storage.example/obj?sig=x"));
 vi.mock("../storage.js", () => ({ storage: { presignedGet } }));
 
 import { prisma } from "@fikirtive/db";
-import { newId } from "@fikirtive/core";
+import { newId, understandingCostUsd } from "@fikirtive/core";
 import type { UnderstandingProvider } from "@fikirtive/generation";
-import { handleUnderstand, scanAssetsNeedingUnderstanding } from "./understand.js";
+import { handleUnderstand, scanAssetsNeedingUnderstanding, understandingSpentTodayUsd } from "./understand.js";
 
 // ── 安全闸(同 packages/db/test/setup.ts):非 *_test 库一律拒跑 ──────────────────
 const dbUrl = process.env.DATABASE_URL;
@@ -211,6 +213,184 @@ describe("菜单两步在真库上的原子性与幂等", () => {
       await handleUnderstand({ understandingId: followUp! }, 0, port);
       const products = await prisma.brandRecord.findMany({ where: { ownerId: OWNER, kind: "product" } });
       expect(products.map((p) => p.nameKey)).toContain("nasi lemak");
+    },
+    30_000,
+  );
+});
+
+/**
+ * 存量恢复(2026-08-18 事故):被误判成终态的行必须能回到队列。
+ *
+ * 为什么这一族也必须打真库,而且**执行迁移文件里那条语句本身**:恢复是一句 SQL,而这句
+ * SQL 唯一会出事的地方是它的 WHERE —— 少一个条件就从「修好被误杀的行」变成「把真的
+ * 读不了的文件重新排进队列,永远读不完」。假库钉不住 `LIKE`;把 SQL 重抄一份到测试里,
+ * 钉住的也只是那份抄件。所以这里读的是迁移文件本体,跑的是它 RECOVERY 标记之间的原文。
+ */
+const RECOVERY_SQL = (() => {
+  const path = fileURLToPath(
+    new URL(
+      "../../../../packages/db/prisma/migrations/20260818140000_understanding_paused_and_404_recovery/migration.sql",
+      import.meta.url,
+    ),
+  );
+  const sql = readFileSync(path, "utf8");
+  const body = sql.split(">>> RECOVERY")[1]?.split("<<< RECOVERY")[0] ?? "";
+  const statement = body.slice(body.indexOf("UPDATE")).split(";")[0]?.trim();
+  if (!statement) throw new Error("recovery statement not found in the migration file");
+  return statement;
+})();
+
+describe("存量 FAILED 行的恢复(直接跑迁移文件里的那条语句)", () => {
+  /** 生产上那些行落的就是这一句 —— 端口逐字抛出、sanitizeError 原样放行、worker 落库。 */
+  const SIGNATURE = "understanding request failed (404)";
+
+  async function seedRow(status: string, error: string | null) {
+    const assetId = await seedAsset();
+    const id = newId();
+    await prisma.assetUnderstanding.create({
+      data: { id, ownerId: OWNER, assetId, kind: "image-caption", status, error },
+    });
+    return id;
+  }
+
+  it(
+    "只清签名内的 FAILED 行,而且跑两遍结果一样",
+    async () => {
+      const killedByConfig = await seedRow("FAILED", SIGNATURE);
+      const reallyUnreadable = await seedRow("FAILED", "That file couldn't be read clearly enough to use.");
+      const skippedTooBig = await seedRow("SKIPPED", `left unread — ${SIGNATURE}`);
+      const done = await seedRow("DONE", null);
+
+      // 计数按 `>= 1` 断言而不是 `=== 1`:这条语句是**全表**的(签名跨租户,那正是它的
+      // 设计),同一个测试库里别的套件也可能有行。真正的内容断言在下面,逐行、按 owner。
+      expect(await prisma.$executeRawUnsafe(RECOVERY_SQL)).toBeGreaterThanOrEqual(1);
+
+      const after = async (id: string) => (await myRow(id))!;
+      const snapshot = async () =>
+        Object.fromEntries(
+          await Promise.all(
+            [killedByConfig, reallyUnreadable, skippedTooBig, done].map(async (id) => {
+              const r = await after(id);
+              return [id, `${r.status}|${r.error ?? ""}`] as const;
+            }),
+          ),
+        );
+
+      expect(await after(killedByConfig)).toMatchObject({ status: "QUEUED", error: null });
+      // 越界清理的三个反例:真读不了的、别的终态、已经读懂的 —— 一行都不许被碰
+      expect((await after(reallyUnreadable)).status).toBe("FAILED");
+      expect((await after(skippedTooBig)).status).toBe("SKIPPED");
+      expect((await after(done)).status).toBe("DONE");
+
+      // 幂等:再跑一遍,我们这四行一个字都不变(status 和 error 已经一起改掉了,
+      // 所以第二遍匹配不到它们)。比断言「第二遍影响 0 行」更稳,也更接近真正的主张。
+      const before = await snapshot();
+      await prisma.$executeRawUnsafe(RECOVERY_SQL);
+      expect(await snapshot()).toEqual(before);
+    },
+    30_000,
+  );
+
+  it(
+    "恢复出来的行**真的**会被扫描器重新派出去(不然「恢复」只是改了个字)",
+    async () => {
+      const id = await seedRow("FAILED", SIGNATURE);
+      await prisma.$executeRawUnsafe(RECOVERY_SQL);
+      // 第 ② 段捞的是躺够久的 QUEUED 行 —— 把 now 往后拨,等的就是那个窗口
+      const dispatched = await scanAssetsNeedingUnderstanding(new Date(Date.now() + 24 * 3_600_000));
+      expect(dispatched).toContain(id);
+    },
+    30_000,
+  );
+});
+
+/**
+ * **平台日预算的计量器必须真的会加**(判官 delta 裁决)。
+ *
+ * 为什么这一族只能打真库、而且只能是行为断言:上一版的计量器是对 `AssetUnderstanding`
+ * 两列 token 的**快照 SUM**,而每一次落盘都是 SET 覆写 —— 于是同一行跑三次付费调用,
+ * 账面只留最后一次。理解那一侧本来只调一次,所以这个洞睡着;而「200 但正文用不了改成
+ * 重试」把它叫醒了:一行三次真调用记成一次,计量器读数是真实花费的三分之一,
+ * cap 于是在一整段行数区间里**永远不会触发**。
+ *
+ * 那句「一行三次重试数成 1」在旧注释里写着,还被实现逐字复现 —— 钱路守卫不能靠注释声明,
+ * 只能靠一条会红的断言。这就是那条断言。
+ */
+describe("日预算计量器:同一行 N 次付费调用必须记 N 笔", () => {
+  const USAGE = { inputTokens: 1_000, outputTokens: 10 };
+  const UNIT_USD = understandingCostUsd(USAGE);
+
+  /** 每次都回一段解析不出来的散文 ⇒ 每一趟都真的付费,而且不会走成 DONE。 */
+  const alwaysUnusable: UnderstandingProvider = {
+    name: "mock",
+    async understand() {
+      return { text: "I think it's a mug!", usage: { ...USAGE } };
+    },
+  };
+
+  it(
+    "同一行跑满三次付费调用 ⇒ 计量器读数 = 3 × 单价(不是 1 ×)",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      await prisma.assetUnderstanding.create({
+        data: { id, ownerId: OWNER, assetId, kind: "image-caption", status: "QUEUED" },
+      });
+
+      // 增量断言:这个库是跨套件共用的,绝对值会被别人搅动,增量不会。
+      const before = await understandingSpentTodayUsd();
+
+      // 三次真调用 —— 前两次退回 QUEUED 并抛(队列重投),第三次落 PAUSED
+      await expect(handleUnderstand({ understandingId: id }, 0, alwaysUnusable)).rejects.toThrow();
+      await expect(handleUnderstand({ understandingId: id }, 1, alwaysUnusable)).rejects.toThrow();
+      await expect(handleUnderstand({ understandingId: id }, 2, alwaysUnusable)).resolves.toBeNull();
+      expect((await myRow(id))!.status).toBe("PAUSED");
+
+      const after = await understandingSpentTodayUsd();
+      expect(after - before).toBeCloseTo(3 * UNIT_USD, 10);
+    },
+    30_000,
+  );
+
+  it(
+    "两行同时记账,一笔都不许丢(并发下的加法必须是原子的)",
+    async () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 2; i++) {
+        const assetId = await seedAsset();
+        const id = newId();
+        await prisma.assetUnderstanding.create({
+          data: { id, ownerId: OWNER, assetId, kind: "image-caption", status: "QUEUED" },
+        });
+        ids.push(id);
+      }
+
+      const before = await understandingSpentTodayUsd();
+      // 同一个 UTC 日的同一个桶,两笔并发写 —— 丢更新的实现在这里少记一笔
+      await Promise.all(
+        ids.map((id) => handleUnderstand({ understandingId: id }, 2, alwaysUnusable).catch(() => null)),
+      );
+      const after = await understandingSpentTodayUsd();
+      expect(after - before).toBeCloseTo(2 * UNIT_USD, 10);
+    },
+    30_000,
+  );
+});
+
+describe("PAUSED 是真库上合法的状态(CHECK 约束跟上了)", () => {
+  it(
+    "写得进 PAUSED,而且停够之后被扫描器捡回 QUEUED",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      await prisma.assetUnderstanding.create({
+        data: { id, ownerId: OWNER, assetId, kind: "image-caption", status: "PAUSED", error: "paused" },
+      });
+      expect((await myRow(id))!.status).toBe("PAUSED");
+
+      const dispatched = await scanAssetsNeedingUnderstanding(new Date(Date.now() + 24 * 3_600_000));
+      expect(dispatched).toContain(id);
+      expect((await myRow(id))!.status).toBe("QUEUED");
     },
     30_000,
   );

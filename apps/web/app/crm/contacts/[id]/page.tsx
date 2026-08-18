@@ -1,10 +1,7 @@
-import ContactProfilePage from "@/components/crm/contact-profile-page";
-import { getContact } from "@/lib/crm-view-data";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const metadata = { title: "Contact profile · Fikirtive" };
-
-export default async function CrmContactProfileRoute({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  return <ContactProfilePage initialState={await getContact(id)} />;
+/** CRM 整段收起来了(W2-13 / #993)。文件保留、内容换成重定向,旧书签不撞墙 ——
+ *  原委与恢复条件写在 app/crm/page.tsx。 */
+export default async function CrmContactProfileRoute() {
+  redirect("/");
 }

@@ -36,6 +36,10 @@
       "types": "./dist/env-contract.d.ts",
       "default": "./dist/env-contract.js"
     },
+    "./founder-alert": {
+      "types": "./dist/founder-alert.d.ts",
+      "default": "./dist/founder-alert.js"
+    },
     "./gen": {
       "types": "./dist/gen.d.ts",
       "default": "./dist/gen.js"
