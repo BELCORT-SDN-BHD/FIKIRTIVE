@@ -101,6 +101,8 @@ export async function executePropose(
   // #785：视频这一支的名额取决于这张卡自己的形状(有没有首帧 / 整段参考视频)——
   // `referenceBudget` 与 worker 读的是同一个 `conditioningCap`,所以卡上说的张数与
   // 引擎真收到的张数不可能分家。
+  const hasVideoStartFrame = cardPayload.kind === "video" && !!cardPayload.sourceGenerationId;
+  const hasReferenceVideo = !!cardPayload.referenceVideoGenerationId;
   const budget = referenceBudget({
     kind: cardPayload.kind,
     perEntityLiveCounts: await countLiveReferenceImagesPerEntity(
@@ -110,13 +112,20 @@ export async function executePropose(
     ),
     hasBaseImage: usesAttachedImage,
     attachedImageCount,
-    hasVideoStartFrame: cardPayload.kind === "video" && !!cardPayload.sourceGenerationId,
-    hasReferenceVideo: !!cardPayload.referenceVideoGenerationId,
+    hasVideoStartFrame,
+    hasReferenceVideo,
   });
   const finalPayload = withVideoReferenceChip(
     withReferenceBudget(
       cardPayload,
-      buildReferenceBudgetNotes({ budget, attachedImageCount, usesAttachedImage }),
+      // #979:那句「一张元素照都不上车」要说得完整,就得知道**为什么**不上车 ——
+      // 同一组布尔既喂给名额计算,也喂给这句话,所以卡上的理由不可能与名额分家。
+      buildReferenceBudgetNotes({
+        budget,
+        attachedImageCount,
+        usesAttachedImage,
+        videoShape: { hasStartFrame: hasVideoStartFrame, hasReferenceVideo },
+      }),
     ),
     budget.used,
   );

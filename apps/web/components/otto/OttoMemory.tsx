@@ -17,6 +17,7 @@ import {
   type RowDiff, type SectionKey,
 } from "@fikirtive/core/memory-sections";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
+import { BRAND_MEMORY_STARTERS } from "@/lib/otto-canned-starters";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
@@ -40,12 +41,9 @@ export function threadToBubbles(
     .map((m) => ({ role: m.role === "USER" ? "you" : "otto", text: m.text } as Bubble));
 }
 
-const CHIPS = [
-  { label: "Describe my brand", prompt: "Let me describe my brand to you — ask me what you need to know." },
-  { label: "My ideal customer", prompt: "Help me define my main customer groups." },
-  { label: "My brand voice", prompt: "Help me pin down my brand voice." },
-  { label: "Research my site", prompt: "Research my website and save what you learn — brand facts, products, and current offers. My URL: " },
-];
+/** #979:这四句话现在住在 `lib/otto-canned-starters` —— 命名守卫认的就是这一份。
+ *  抄成两份,守卫认得的和界面发出的会先后漂移,而漂移那天没有一条测试会红。 */
+const CHIPS = BRAND_MEMORY_STARTERS;
 
 /** ISO "YYYY-MM-DD" for a Date column, or null to clear. */
 function isoDay(d: Date | null): string | null {
