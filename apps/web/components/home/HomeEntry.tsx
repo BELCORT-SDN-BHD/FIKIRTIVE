@@ -18,8 +18,13 @@ import "server-only";
  * 解析并**忽略**调用方传的 id(见 `listMemory` 的注释),所以两条路都不经过客户端。
  *
  * 每一个读取都自己 `.catch` —— 一次 Prisma 故障会 REJECT 而不是返回 `{error}`,而
- * `Promise.all` 里一个未捕获的 rejection 会把整页带走(#542 的原案)。Home 的一块读不出来
- * 时,该块照实空着,其余四块照常 —— 但**永远不拿一个编出来的数字顶上**。
+ * `Promise.all` 里一个未捕获的 rejection 会把整页带走(#542 的原案)。
+ *
+ * **降级不许伪装成空态**(判官 r1 P3-1)。`.catch` 一律落到 `UNREADABLE`,不是 `[]`:
+ * 空数组的意思是「商家真的还没有」,而这一刻我们其实什么都不知道。两者塌成同一个值,
+ * 一次 `listMemory` 抖动就会对已经教过品牌的商家重弹「Teach Otto your brand」,一次
+ * `getProjects` 抖动就会对有 40 张画布的商家写「Nothing here yet」—— 那不是降级,是假话。
+ * 一块读不出来时,那一块照实说读不出来,其余四块照常。
  */
 
 import { redirect } from "next/navigation";
@@ -39,12 +44,15 @@ import { HomeView } from "./HomeView";
 import {
   HOME_CANVAS_LIMIT,
   HOME_THUMB_LIMIT,
+  UNREADABLE,
   equipmentSteps,
   homeGreeting,
   openCampaigns,
+  readOk,
   upcomingPosts,
   upcomingWindow,
   type HomeData,
+  type Read,
 } from "./home-data";
 
 /** Same "en-MY" date the merchant sees everywhere else, formatted once, server-side
@@ -52,6 +60,12 @@ import {
 function formatUpdated(date: Date): string {
   if (Number.isNaN(date.getTime())) return "";
   return MY_DATE_FORMAT.format(date);
+}
+
+/** 跑一个读取,读得到就是 `{ok,value}`,炸了就是 `UNREADABLE` —— **绝不**退回一个空值。
+ *  一个地方写一次,是为了下一块数据没法「顺手」退回 `[]`(判官 r1 P3-1 的根)。 */
+async function attempt<T>(read: () => Promise<T>): Promise<Read<T>> {
+  return read().then(readOk, () => UNREADABLE);
 }
 
 export async function HomeEntry() {
@@ -62,52 +76,74 @@ export async function HomeEntry() {
   const now = new Date();
   const nextSevenDays = upcomingWindow(now);
 
-  const [greetingName, accountResult, projects, thumbs, scheduled, campaignResult, memory, records] =
+  const [greetingName, account, projects, thumbs, scheduled, campaignResult, memory, records] =
     await Promise.all([
       // 名字的整个步骤(含它自己的 catch)由这个 helper 收着 —— 见 lib/otto-greeting.ts。
       ottoGreetingNameFromProfile(getMyProfileNames),
-      getMyAccount().catch(() => ({ error: "load-failed" }) as const),
-      getProjects(ownerId).catch(() => [] as Awaited<ReturnType<typeof getProjects>>),
-      getRecentGenerationThumbs(ownerId, HOME_THUMB_LIMIT).catch(
-        () => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>,
-      ),
-      listScheduledPosts(nextSevenDays).catch(() => [] as Awaited<ReturnType<typeof listScheduledPosts>>),
-      listCampaigns().catch(() => ({ error: "load-failed" }) as const),
-      listMemory(ownerId).catch(() => [] as Awaited<ReturnType<typeof listMemory>>),
-      listBrandRecords(ownerId).catch(() => [] as Awaited<ReturnType<typeof listBrandRecords>>),
+      // 会话拒绝时 getMyAccount 返回 {error},故障时 REJECT —— 两条都是「读不出来」,不是 0。
+      attempt(getMyAccount),
+      attempt(() => getProjects(ownerId)),
+      attempt(() => getRecentGenerationThumbs(ownerId, HOME_THUMB_LIMIT)),
+      attempt(() => listScheduledPosts(nextSevenDays)),
+      attempt(listCampaigns),
+      attempt(() => listMemory(ownerId)),
+      attempt(() => listBrandRecords(ownerId)),
     ]);
 
-  const account = "error" in accountResult ? null : accountResult;
   // 路径只由导航权威源写(§1.3)—— 这一页一条都不硬写,W2-11 改那棵树时它们跟着换。
+  // 这三个 key 由围栏钉着存在(home-page.test.ts),所以这里不给一个编出来的地址兜底:
+  // 一条假地址比一次红更贵 —— 它会静静把商家送到一扇不存在的门前(判官 r1 P3-3)。
   const billing = navLinkByKey("billing");
   const brand = navLinkByKey("brand");
   const campaign = navLinkByKey("campaign");
 
+  // ⑤ 要两份数据都读到才判得了「做完没有」。任何一份读不出来,这块就说读不出来 ——
+  // 拿一半事实去劝商家做一件他可能早就做完的事,正是 P3-1 那类假话。
+  const equipment: HomeData["equipment"] =
+    memory.ok && records.ok
+      ? readOk(
+          equipmentSteps({
+            brandMemoryCount: memory.value.length,
+            productCount: records.value.filter((record) => record.kind === "product").length,
+            brandHref: brand.href,
+          }),
+        )
+      : UNREADABLE;
+
   const data: HomeData = {
     greeting: homeGreeting(greetingName, now),
-    // 余额读不出来时是 null,不是 0 —— 0 是一个关于钱的**主张**,而我们这一刻什么都不知道。
-    creditsLabel: account ? creditsLabel(account.balance) : null,
+    // 余额读不出来就说读不出来,不显示 0 —— 0 是一个关于钱的**主张**,而我们这一刻什么都不知道。
+    credits: account.ok && !("error" in account.value) ? readOk(creditsLabel(account.value.balance)) : UNREADABLE,
     billingHref: billing.href,
     billingLabel: billing.label,
-    canvases: projects.slice(0, HOME_CANVAS_LIMIT).map((project) => ({
-      id: project.id,
-      name: project.name,
-      updatedLabel: formatUpdated(project.updatedAt),
-    })),
-    thumbs: thumbs.map((thumb) => ({
-      id: thumb.id,
-      projectId: thumb.projectId,
-      src: thumb.src,
-      kind: thumb.kind,
-      prompt: thumb.prompt,
-    })),
-    upcoming: upcomingPosts(scheduled),
-    campaigns: "error" in campaignResult ? [] : openCampaigns(campaignResult.campaigns, campaign.href),
-    equipment: equipmentSteps({
-      brandMemoryCount: memory.length,
-      productCount: records.filter((record) => record.kind === "product").length,
-      brandHref: brand.href,
-    }),
+    canvases: projects.ok
+      ? readOk(
+          projects.value.slice(0, HOME_CANVAS_LIMIT).map((project) => ({
+            id: project.id,
+            name: project.name,
+            updatedLabel: formatUpdated(project.updatedAt),
+          })),
+        )
+      : UNREADABLE,
+    thumbs: thumbs.ok
+      ? readOk(
+          thumbs.value.map((thumb) => ({
+            id: thumb.id,
+            projectId: thumb.projectId,
+            src: thumb.src,
+            kind: thumb.kind,
+            prompt: thumb.prompt,
+          })),
+        )
+      : UNREADABLE,
+    upcoming: scheduled.ok ? readOk(upcomingPosts(scheduled.value)) : UNREADABLE,
+    // listCampaigns 自己会返回 {error}(它在内部 catch 了 Prisma),那也是「读不出来」——
+    // 不是「这个商家没有战役」。
+    campaigns:
+      campaignResult.ok && !("error" in campaignResult.value)
+        ? readOk(openCampaigns(campaignResult.value.campaigns, campaign.href))
+        : UNREADABLE,
+    equipment,
   };
 
   return <HomeView data={data} />;

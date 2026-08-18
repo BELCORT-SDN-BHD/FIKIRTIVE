@@ -33,7 +33,7 @@ import { StartSomething } from "@/components/start-something/StartSomething";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { HomeData } from "./home-data";
+import { HOME_COPY, creditsLine, type HomeData } from "./home-data";
 
 /** 每一块共用的小标题。 */
 function BlockHeading({ children }: { children: React.ReactNode }) {
@@ -44,9 +44,21 @@ function BlockHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** 「这一刻读不出来」的那一行。**不是**空态的写法,也不是一句安慰话:它只说发生了什么。 */
+function Unreadable({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="status" className="mt-3 text-sm text-muted-foreground">
+      {children}
+    </p>
+  );
+}
+
 export function HomeView({ data }: { data: HomeData }) {
   const publishCopy = publishSurfaceCopy();
-  const nothingMade = data.canvases.length === 0 && data.thumbs.length === 0;
+  // 「真的什么都还没做」只有一种成立方式:两边都**读到了**,而且两边都空。任何一边读不出来,
+  // 这一页都没有资格说这句话(判官 r1 P3-1)。
+  const nothingMade =
+    data.canvases.ok && data.thumbs.ok && data.canvases.value.length === 0 && data.thumbs.value.length === 0;
 
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
@@ -55,9 +67,7 @@ export function HomeView({ data }: { data: HomeData }) {
         <section>
           <h1 className="text-[28px] leading-[34px] font-bold tracking-[-0.02em]">{data.greeting}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            {data.creditsLabel
-              ? `You have ${data.creditsLabel}.`
-              : "Your credit balance couldn't be read just now."}{" "}
+            {creditsLine(data.credits)}{" "}
             <Link href={data.billingHref} className="font-medium text-foreground underline underline-offset-4">
               {data.billingLabel}
             </Link>
@@ -69,16 +79,15 @@ export function HomeView({ data }: { data: HomeData }) {
 
         {/* ② 接着做 */}
         <section>
-          <BlockHeading>Pick up where you left off</BlockHeading>
+          <BlockHeading>{HOME_COPY.pickUpHeading}</BlockHeading>
           {nothingMade ? (
-            <p className="mt-3 text-sm text-muted-foreground">
-              Nothing here yet — start your first canvas.
-            </p>
+            <p className="mt-3 text-sm text-muted-foreground">{HOME_COPY.nothingMade}</p>
           ) : (
             <>
-              {data.canvases.length > 0 && (
+              {!data.canvases.ok && <Unreadable>{HOME_COPY.canvasesUnreadable}</Unreadable>}
+              {data.canvases.ok && data.canvases.value.length > 0 && (
                 <ul className="mt-3 flex flex-col gap-1">
-                  {data.canvases.map((canvas) => (
+                  {data.canvases.value.map((canvas) => (
                     <li key={canvas.id}>
                       <Link
                         href={canvasHref(canvas.id)}
@@ -93,11 +102,12 @@ export function HomeView({ data }: { data: HomeData }) {
                   ))}
                 </ul>
               )}
-              {data.thumbs.length > 0 && (
+              {!data.thumbs.ok && <Unreadable>{HOME_COPY.thumbsUnreadable}</Unreadable>}
+              {data.thumbs.ok && data.thumbs.value.length > 0 && (
                 <>
-                  <p className="mt-6 text-xs text-muted-foreground">Recently made</p>
+                  <p className="mt-6 text-xs text-muted-foreground">{HOME_COPY.recentlyMade}</p>
                   <ul className="mt-2 flex flex-wrap gap-2">
-                    {data.thumbs.map((thumb) => (
+                    {data.thumbs.value.map((thumb) => (
                       <li key={thumb.id}>
                         <Link
                           href={canvasHref(thumb.projectId)}
@@ -130,12 +140,18 @@ export function HomeView({ data }: { data: HomeData }) {
           )}
         </section>
 
-        {/* ③ 接下来发什么 —— 有排期才出现 */}
-        {data.upcoming.length > 0 && (
+        {/* ③ 接下来发什么 —— 有排期才出现;读不出来时**照说读不出来**,不当成「没排期」 */}
+        {!data.upcoming.ok && (
           <section>
-            <BlockHeading>What goes out next</BlockHeading>
+            <BlockHeading>{HOME_COPY.scheduleHeading}</BlockHeading>
+            <Unreadable>{HOME_COPY.scheduleUnreadable}</Unreadable>
+          </section>
+        )}
+        {data.upcoming.ok && data.upcoming.value.length > 0 && (
+          <section>
+            <BlockHeading>{HOME_COPY.scheduleHeading}</BlockHeading>
             <ul className="mt-3 flex flex-col gap-2">
-              {data.upcoming.map((post) => (
+              {data.upcoming.value.map((post) => (
                 <li
                   key={post.id}
                   className="flex items-start gap-3 rounded-[12px] border border-border bg-card px-4 py-3"
@@ -158,12 +174,18 @@ export function HomeView({ data }: { data: HomeData }) {
           </section>
         )}
 
-        {/* ④ 进行中的战役 —— 有战役才出现 */}
-        {data.campaigns.length > 0 && (
+        {/* ④ 进行中的战役 —— 有战役才出现;读不出来同③,照说读不出来 */}
+        {!data.campaigns.ok && (
           <section>
-            <BlockHeading>Campaigns in progress</BlockHeading>
+            <BlockHeading>{HOME_COPY.campaignsHeading}</BlockHeading>
+            <Unreadable>{HOME_COPY.campaignsUnreadable}</Unreadable>
+          </section>
+        )}
+        {data.campaigns.ok && data.campaigns.value.length > 0 && (
+          <section>
+            <BlockHeading>{HOME_COPY.campaignsHeading}</BlockHeading>
             <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {data.campaigns.map((campaign) => (
+              {data.campaigns.value.map((campaign) => (
                 <Card key={campaign.id} className="min-w-0">
                   <CardHeader>
                     <div className="flex items-start justify-between gap-3">
@@ -178,7 +200,7 @@ export function HomeView({ data }: { data: HomeData }) {
                     <Button asChild variant="secondary" className="w-full">
                       <Link href={campaign.href}>
                         <Megaphone />
-                        Open campaign
+                        {HOME_COPY.openCampaign}
                       </Link>
                     </Button>
                   </CardContent>
@@ -188,12 +210,19 @@ export function HomeView({ data }: { data: HomeData }) {
           </section>
         )}
 
-        {/* ⑤ 把 Otto 装备好 —— 只在没做完的时候出现 */}
-        {data.equipment && (
+        {/* ⑤ 把 Otto 装备好 —— 只在没做完的时候出现;判不了做完没有时,说自己判不了,
+            而不是默认商家还没做(那会对已经教过品牌的商家重弹一次同样的话) */}
+        {!data.equipment.ok && (
           <section>
-            <BlockHeading>Get Otto ready</BlockHeading>
+            <BlockHeading>{HOME_COPY.equipmentHeading}</BlockHeading>
+            <Unreadable>{HOME_COPY.equipmentUnreadable}</Unreadable>
+          </section>
+        )}
+        {data.equipment.ok && data.equipment.value && (
+          <section>
+            <BlockHeading>{HOME_COPY.equipmentHeading}</BlockHeading>
             <ul className="mt-3 flex flex-col gap-2">
-              {data.equipment.map((step) => (
+              {data.equipment.value.map((step) => (
                 <li key={step.key}>
                   <Link
                     href={step.href}
@@ -212,7 +241,7 @@ export function HomeView({ data }: { data: HomeData }) {
                         {step.label}
                       </span>
                       <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {step.done ? "Done" : step.hint}
+                        {step.done ? HOME_COPY.stepDone : step.hint}
                       </span>
                     </span>
                   </Link>

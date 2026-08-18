@@ -20,6 +20,71 @@ import { formatDayHeading, formatTime, partsInTz, statusPill } from "@/lib/sched
 import { socialPlatformLabel } from "@/lib/social-labels";
 import { CAMPAIGN_STATUS_BADGE, CAMPAIGN_STATUS_LABELS, isCampaignStatus } from "@/lib/campaign-lifecycle";
 
+/* ── 读得到,还是这一刻不知道 ────────────────────────────────────────────────── */
+
+/**
+ * 一块数据的读取结果 —— 「空」与「读不出来」是**两件事**,这个类型让它们塌不到一起
+ * (判官 r1 P3-1)。
+ *
+ * 第一版每一块都 `.catch(() => [])`,于是一次瞬时故障就变成了一句关于商家的**假话**:
+ * `listMemory` 抖一下,已经教过 Otto 品牌的商家会被重新劝一次「Teach Otto your brand」;
+ * `getProjects` 抖一下,手上有 40 张画布的商家会读到「Nothing here yet — start your first
+ * canvas.」。钱那一行从第一版起就分得清(读不出来就说读不出来,绝不显示 0),这个类型把其余
+ * 四块拉到同一条线上。
+ *
+ * 空数组 = 「商家真的还没有」。`{ok:false}` = 「这一刻我们不知道」。渲染层必须把后者画成一句
+ * 诚实的「读不出来」,不许当空态处理。
+ */
+export type Read<T> = { readonly ok: true; readonly value: T } | { readonly ok: false };
+
+/** 这一刻读不出来。它不是空 —— 见 {@link Read}。 */
+export const UNREADABLE = { ok: false } as const;
+
+export function readOk<T>(value: T): Read<T> {
+  return { ok: true, value };
+}
+
+/**
+ * Home 会说的每一句话 —— 全部在这里,一句都不在渲染里散着写。
+ *
+ * 两个理由,都不是整洁:
+ *   ① 「读不出来」那几句必须**成套**存在,而且措辞一致 —— 它们是这一页最容易被写漏、
+ *      写成半句安慰话的地方(判官 r1 P3-1)。
+ *   ② 围栏要能判「这一页有没有多长出一句话」。样板数据不一定带数字:
+ *      「Your best performing post is doing great」一个数字都没有,却是彻头彻尾的编造
+ *      (判官 r1 P2-1 的构造)。所以围栏改成**金样对账** —— 渲染出来的每一句话都必须在
+ *      钉死的清单里,新句子进不来,除非有人明写地把它加进去。
+ *
+ * 数据本身(画布名、caption、日期)不在这里 —— 那是商家自己的字,不是产品说的话。
+ */
+export const HOME_COPY = {
+  // ② 接着做
+  pickUpHeading: "Pick up where you left off",
+  /** 空账号唯一的那一句(规格书 §4.1 逐字)。只在两边都读到了、且两边都真的空时出现。 */
+  nothingMade: "Nothing here yet — start your first canvas.",
+  recentlyMade: "Recently made",
+  // ③ 接下来发什么
+  scheduleHeading: "What goes out next",
+  // ④ 进行中的战役
+  campaignsHeading: "Campaigns in progress",
+  openCampaign: "Open campaign",
+  // ⑤ 把 Otto 装备好
+  equipmentHeading: "Get Otto ready",
+  stepDone: "Done",
+  // 「这一刻读不出来」的一整套。同一个句型,因为它们说的是同一件事。
+  creditsUnreadable: "Your credit balance couldn't be read just now.",
+  canvasesUnreadable: "Your canvases couldn't be read just now.",
+  thumbsUnreadable: "What you made recently couldn't be read just now.",
+  scheduleUnreadable: "Your schedule couldn't be read just now.",
+  campaignsUnreadable: "Your campaigns couldn't be read just now.",
+  equipmentUnreadable: "What Otto still needs couldn't be read just now.",
+} as const;
+
+/** 余额那一行。数字由 `creditsLabel()` 格式化后传进来,这里只负责句子。 */
+export function creditsLine(credits: Read<string>): string {
+  return credits.ok ? `You have ${credits.value}.` : HOME_COPY.creditsUnreadable;
+}
+
 /* ── ① 开场 ──────────────────────────────────────────────────────────────────── */
 
 /**
@@ -214,16 +279,20 @@ export function equipmentSteps(input: {
 
 /* ── 整页 ────────────────────────────────────────────────────────────────────── */
 
+/**
+ * 整页。每一块都是 {@link Read}:**空**与**读不出来**在类型层面就分得开,渲染层没有把两者
+ * 写成同一支的自由(判官 r1 P3-1)。
+ */
 export type HomeData = {
   greeting: string;
-  /** `creditsLabel()` 格好的余额。`null` = 这一刻读不出来 —— 那就照说读不出来,不编一个数。 */
-  creditsLabel: string | null;
+  /** `creditsLabel()` 格好的余额。读不出来就说读不出来 —— 绝不显示 0,0 是一个关于钱的主张。 */
+  credits: Read<string>;
   billingHref: string;
   billingLabel: string;
-  canvases: HomeCanvas[];
-  thumbs: HomeThumb[];
-  upcoming: HomeUpcomingPost[];
-  campaigns: HomeCampaign[];
-  /** `null` = 两件事都做完了,这块整个不出现。 */
-  equipment: HomeEquipmentStep[] | null;
+  canvases: Read<HomeCanvas[]>;
+  thumbs: Read<HomeThumb[]>;
+  upcoming: Read<HomeUpcomingPost[]>;
+  campaigns: Read<HomeCampaign[]>;
+  /** 读到了、且值是 `null` = 两件事都做完了,这块整个不出现;读不出来则照说读不出来。 */
+  equipment: Read<HomeEquipmentStep[] | null>;
 };

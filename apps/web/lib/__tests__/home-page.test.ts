@@ -9,12 +9,20 @@
  *   ② `getAnalytics` 不在这一页的 import 图上 —— 整张图翻一遍,不是只看第一层。
  *   ③ 空账号渲染出来的是**诚实的空**:`Nothing here yet` + 装备清单,一块数字磁贴都没有。
  *   ④ 有排期时,发布关着的那句实话**逐字**来自核心的 `PUBLISH_PREVIEW_COPY.fact`。
+ *   ⑤ **读不出来 ≠ 没有**(判官 r1 P3-1):五块的降级态与真空态必须长得不一样。
+ *   ⑥ **只说清单里的话**(判官 r1 P2-1):页面上每一段字都得在金样清单里 —— 样板数据不一定
+ *      带数字,词表挡不住「Your best performing post is doing great」这种定性编造。
+ *   ⑦ Home 用的三个导航 key 真的存在(判官 r1 P3-3):key 改名是一次 CI 红,不是一次线上 500。
  *
- * 变异自查(逐一实做,做完全部还原):
+ * 变异自查(逐一实做,做完全部还原;红的条数记在 PR 正文里):
  *   - 往 `HomeEntry.tsx` 加一行 `import { getAnalytics } from "@/lib/analytics-actions"`
  *     ⇒ ① 的枚举对账红(多出一个数据源)且 ② 的 import 图红(点名 lib/analytics-actions.ts)。
  *   - 往空账号的 Home 上塞一块「本月触达 1,240」磁贴 ⇒ ③ 红(空账号渲染出了数字磁贴)。
- *   两条都验过会红,这份绿才是在说事实。
+ *   - 塞判官那三句无数字的编造 ⇒ ⑥ 红(三个场景 + 裸句子那条,共 4 条)。
+ *   - 把「读不出来」当成空态渲染 ⇒ ⑤ 红;把一个读取的降级换成 `{ok:true, value:[]}` ⇒ ⑤ 的
+ *     入口那条红(**第一版围栏在这一发下没红,已按它加固**:改成钉形状,手写 catch 一个不许有)。
+ *   - 把 `navLinkByKey("campaign")` 改成一个不存在的 key ⇒ ⑦ 红。
+ *   每一发都验过会红,这份绿才是在说事实。
  */
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -22,7 +30,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { PUBLISH_PREVIEW_COPY, PUBLISHING_AVAILABLE } from "@fikirtive/core/schedule-draft";
+import { navLinkByKey } from "@fikirtive/core/navigation";
 import { canvasHref } from "@/components/canvas/canvas-href";
+import { HOME_COPY, type HomeData } from "@/components/home/home-data";
 
 // StartSomething 是这一页里唯一的客户端件(开工输入框,规格书 Q2-A 的共享实现)。
 // 渲染它要的两样东西在 node 环境里没有,按这个仓库既有的做法 mock 掉。
@@ -223,8 +233,10 @@ function homeImportGraph(): string[] {
 describe("Home 上没有一个 Meta 数字(规格书 §4.1「绝对不出现的东西」)", () => {
   it("整张 import 图翻一遍:analytics 的读取点一个都碰不到", () => {
     const graph = homeImportGraph();
-    // 图本身要真的走开了 —— 只有一个文件的话,下面两条断言就是在核对空气。
-    expect(graph.length).toBeGreaterThan(10);
+    // 图本身要真的走开了 —— 只走到几个文件的话,下面两条断言就是在核对空气。
+    // 2026-08-18 实测 79 个一方文件(含 lib/channels、meta-graph、meta-insights 这些 Meta 管道)。
+    // 这里钉的是**下限**而不是那个数:图会随无关模块的 import 变动,钉死它只会带来无关的红。
+    expect(graph.length, "import 图只走到这么几个文件 —— 这条围栏没有真的翻过 lib 层").toBeGreaterThan(50);
 
     const analyticsModules = graph.filter((file) => file.includes("analytics-actions"));
     expect(analyticsModules, "Home 的 import 图碰到了 analytics 读取模块").toEqual([]);
@@ -241,35 +253,91 @@ describe("Home 上没有一个 Meta 数字(规格书 §4.1「绝对不出现的�
 
 /* ── ③④ 渲染 ────────────────────────────────────────────────────────────────── */
 
-const EMPTY_ACCOUNT_DATA = {
+const ok = <T,>(value: T) => ({ ok: true as const, value });
+const UNREADABLE = { ok: false as const };
+
+const STEPS = [
+  { key: "brand", label: "Teach Otto your brand", hint: "Voice, rules, audience — Otto uses it every time", done: false, href: "/otto?view=memory" },
+  { key: "products", label: "Add what you sell", hint: "Otto can only write about products it knows", done: false, href: "/otto?view=memory" },
+];
+
+/** 一个刚开张的账号:每一块都**读到了**,而且每一块都真的空。 */
+const EMPTY_ACCOUNT_DATA: HomeData = {
   greeting: "Good morning, Aisha",
-  creditsLabel: "20 credits",
+  credits: ok("20 credits"),
   billingHref: "/billing",
   billingLabel: "Billing & credits",
-  canvases: [],
-  thumbs: [],
-  upcoming: [],
-  campaigns: [],
-  equipment: [
-    { key: "brand", label: "Teach Otto your brand", hint: "Voice, rules, audience — Otto uses it every time", done: false, href: "/otto?view=memory" },
-    { key: "products", label: "Add what you sell", hint: "Otto can only write about products it knows", done: false, href: "/otto?view=memory" },
-  ],
+  canvases: ok([]),
+  thumbs: ok([]),
+  upcoming: ok([]),
+  campaigns: ok([]),
+  equipment: ok(STEPS),
 };
 
-async function renderHome(data: unknown): Promise<string> {
+/** 一个有东西的账号。 */
+const BUSY_ACCOUNT_DATA: HomeData = {
+  ...EMPTY_ACCOUNT_DATA,
+  canvases: ok([{ id: "proj-1", name: "Raya promo", updatedLabel: "12 Aug 2026" }]),
+  thumbs: ok([{ id: "gen-1", projectId: "proj-1", src: "/files/a.png", kind: "image", prompt: "Croffle set" }]),
+  upcoming: ok([
+    { id: "post-1", dayLabel: "Wed, Jul 10", timeLabel: "9:05 AM", channelLabel: "Instagram", statusLabel: "Scheduled", caption: "Croffle set is back on Friday." },
+  ]),
+  campaigns: ok([
+    { id: "camp-1", name: "Raya 2026", goal: "Sell the croffle set", statusLabel: "Active", badge: "success", href: "/campaign/camp-1" },
+  ]),
+  equipment: ok(null),
+};
+
+/** 同一个账号,但这一刻**每一块都读不出来**。它和上面那个空账号必须长得不一样。 */
+const UNREADABLE_DATA: HomeData = {
+  ...EMPTY_ACCOUNT_DATA,
+  credits: UNREADABLE,
+  canvases: UNREADABLE,
+  thumbs: UNREADABLE,
+  upcoming: UNREADABLE,
+  campaigns: UNREADABLE,
+  equipment: UNREADABLE,
+};
+
+async function renderHome(data: HomeData): Promise<string> {
   const { HomeView } = await import("@/components/home/HomeView");
   return renderToStaticMarkup(createElement(HomeView, { data } as never));
 }
 
+/** 商家眼睛看到的那一串,不是 HTML 转义之后的那一串。
+ *
+ *  `couldn't` 在 markup 里是 `couldn&#x27;t`,`Billing & credits` 是 `Billing &amp; credits`。
+ *  不还原就等于拿两套写法对账,围栏会在一个撇号上假红 —— 而它要判的是**商家读到了什么**。
+ *  先剥标签再还原(顺序反了,一个还原出来的 `<` 会被当成标签);`&amp;` 放最后,否则
+ *  `&amp;#x27;` 会被解成撇号。 */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
 /** 商家可见的字(标签/属性里的机器串不算) —— 数字磁贴要在这一层判。 */
 function visibleText(markup: string): string {
-  return markup.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+  return decodeEntities(markup.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ");
+}
+
+/** 渲染出来的**每一句**,按元素切开。金样围栏拿它逐句对账。 */
+function visibleChunks(markup: string): string[] {
+  return markup
+    .replace(/<[^>]*>/g, "\u0000")
+    .split("\u0000")
+    .map((chunk) => decodeEntities(chunk).replace(/\s+/g, " ").trim())
+    .filter((chunk) => chunk.length > 0);
 }
 
 describe("空账号看到的是诚实的空(规格书 §4.1)", () => {
   it("那一句实话在,装备清单在", async () => {
     const text = visibleText(await renderHome(EMPTY_ACCOUNT_DATA));
-    expect(text).toContain("Nothing here yet — start your first canvas.");
+    expect(text).toContain(HOME_COPY.nothingMade);
     expect(text).toContain("Teach Otto your brand");
     expect(text).toContain("Add what you sell");
     // 开场那一行是真的:余额来自 getMyAccount,不是一个磁贴上的装饰数字。
@@ -292,21 +360,14 @@ describe("空账号看到的是诚实的空(规格书 §4.1)", () => {
 
   it("没有东西的两块整块不出现,而不是摆一个空壳子", async () => {
     const text = visibleText(await renderHome(EMPTY_ACCOUNT_DATA));
-    expect(text).not.toContain("What goes out next");
-    expect(text).not.toContain("Campaigns in progress");
+    expect(text).not.toContain(HOME_COPY.scheduleHeading);
+    expect(text).not.toContain(HOME_COPY.campaignsHeading);
   });
 });
 
 describe("有东西的账号:五块都画得出来", () => {
   it("画布、缩略图、排期、战役各就各位;装备做完了就没有第五块", async () => {
-    const markup = await renderHome({
-      ...EMPTY_ACCOUNT_DATA,
-      canvases: [{ id: "proj-1", name: "Raya promo", updatedLabel: "12 Aug 2026" }],
-      thumbs: [{ id: "gen-1", projectId: "proj-1", src: "/files/a.png", kind: "image", prompt: "Croffle set" }],
-      upcoming: [{ id: "post-1", dayLabel: "Wed, Jul 10", timeLabel: "9:05 AM", channelLabel: "Instagram", statusLabel: "Scheduled", caption: "Back on Friday." }],
-      campaigns: [{ id: "camp-1", name: "Raya 2026", goal: "Sell the croffle set", statusLabel: "Active", badge: "success", href: "/campaign/camp-1" }],
-      equipment: null,
-    });
+    const markup = await renderHome(BUSY_ACCOUNT_DATA);
     const text = visibleText(markup);
 
     expect(text).toContain("Raya promo");
@@ -314,40 +375,247 @@ describe("有东西的账号:五块都画得出来", () => {
     expect(text).toContain("Wed, Jul 10");
     expect(text).not.toContain("Nothing here yet");
     // 装备清单做完就整块消失。
-    expect(text).not.toContain("Get Otto ready");
+    expect(text).not.toContain(HOME_COPY.equipmentHeading);
     // 画布与缩略图都点得回那张画布 —— 地址由权威源拼,这一页不自己写路径。
     expect(markup).toContain(`href="${canvasHref("proj-1")}"`);
     expect(markup).toContain('src="/files/a.png"');
   });
 });
 
-describe("有排期时,发布关着的实话逐字来自核心常量(规格书 §7.1)", () => {
-  const withSchedule = {
-    ...EMPTY_ACCOUNT_DATA,
-    upcoming: [
-      {
-        id: "post-1",
-        dayLabel: "Wed, Jul 10",
-        timeLabel: "9:05 AM",
-        channelLabel: "Instagram",
-        statusLabel: "Scheduled",
-        caption: "Croffle set is back on Friday.",
-      },
-    ],
-  };
+/* ── P3-1:降级不许伪装成空态 ─────────────────────────────────────────────────── */
 
+/**
+ * 判官 r1 P3-1 —— 这一组是这次回炉的正题。
+ *
+ * 第一版每一块都 `.catch(() => [])`,于是「读不出来」和「真的没有」在页面上**长得一模一样**:
+ * `listMemory` 抖一下,已经教过 Otto 品牌的商家被重新劝一次;`getProjects` 抖一下,手上有
+ * 40 张画布的商家读到「Nothing here yet」。钱那一行从第一版起就分得清,这里把其余四块拉齐。
+ *
+ * 判定方式是**两态可区分**:同一块数据,空态渲染出来的字与降级态渲染出来的字必须不同,
+ * 而且降级态必须说出「读不出来」。
+ */
+describe("读不出来 ≠ 没有(判官 r1 P3-1)", () => {
+  it("五块的降级态与空态,渲染出来的字必须不一样", async () => {
+    const emptyText = visibleText(await renderHome(EMPTY_ACCOUNT_DATA));
+    const unreadableText = visibleText(await renderHome(UNREADABLE_DATA));
+    expect(unreadableText).not.toBe(emptyText);
+  });
+
+  it("① 余额读不出来:说读不出来,绝不显示一个数", async () => {
+    const text = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, credits: UNREADABLE }));
+    expect(text).toContain(HOME_COPY.creditsUnreadable);
+    expect(text).not.toContain("You have");
+    expect(text.match(/\d/g), "余额读不出来,页面却还是印了数字").toBeNull();
+  });
+
+  it("② 画布读不出来:不说「Nothing here yet」—— 那是对有 40 张画布的商家说假话", async () => {
+    const text = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, canvases: UNREADABLE }));
+    expect(text).toContain(HOME_COPY.canvasesUnreadable);
+    expect(text, "读不出来却宣布商家什么都还没做").not.toContain(HOME_COPY.nothingMade);
+  });
+
+  it("② 缩略图读不出来:同样照说,不当成「没做过东西」", async () => {
+    const text = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, thumbs: UNREADABLE }));
+    expect(text).toContain(HOME_COPY.thumbsUnreadable);
+    expect(text).not.toContain(HOME_COPY.nothingMade);
+  });
+
+  it("③ 排期读不出来:块还在,但说的是读不出来,不是「没排期」(空态是整块不出现)", async () => {
+    const empty = visibleText(await renderHome(EMPTY_ACCOUNT_DATA));
+    const unreadable = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, upcoming: UNREADABLE }));
+    expect(empty).not.toContain(HOME_COPY.scheduleHeading);
+    expect(unreadable).toContain(HOME_COPY.scheduleHeading);
+    expect(unreadable).toContain(HOME_COPY.scheduleUnreadable);
+  });
+
+  it("④ 战役读不出来:同③", async () => {
+    const empty = visibleText(await renderHome(EMPTY_ACCOUNT_DATA));
+    const unreadable = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, campaigns: UNREADABLE }));
+    expect(empty).not.toContain(HOME_COPY.campaignsHeading);
+    expect(unreadable).toContain(HOME_COPY.campaignsHeading);
+    expect(unreadable).toContain(HOME_COPY.campaignsUnreadable);
+  });
+
+  it("⑤ 判不了做完没有时:说自己判不了,不重弹一次「Teach Otto your brand」", async () => {
+    const text = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, equipment: UNREADABLE }));
+    expect(text).toContain(HOME_COPY.equipmentUnreadable);
+    expect(text, "读不出来却又劝了商家一次 —— 这正是 P3-1 那句假话").not.toContain("Teach Otto your brand");
+  });
+
+  it("⑤ 做完了(读到了、值是 null)与判不了,是两回事", async () => {
+    const done = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, equipment: ok(null) }));
+    const unknown = visibleText(await renderHome({ ...EMPTY_ACCOUNT_DATA, equipment: UNREADABLE }));
+    expect(done).not.toContain(HOME_COPY.equipmentHeading);
+    expect(unknown).toContain(HOME_COPY.equipmentHeading);
+  });
+
+  /**
+   * 入口只有**一条**降级路。
+   *
+   * 第一版这条围栏只认 `catch(() => [])` 那一种写法,于是一次自查演练当场穿了过去:
+   * 把 `attempt(() => getProjects(ownerId))` 换成
+   * `getProjects(ownerId).then(v => ({ok:true, value:v})).catch(() => ({ok:true, value:[]}))`
+   * —— 同样是把「不知道」写成了「没有」,围栏却全绿。所以这里改成钉**形状**:
+   * 手写的 catch 一个都不许有,八个读取每一个都必须在那唯一的 helper 里面,
+   * 而那个 helper 只落到 `UNREADABLE`。
+   */
+  it("入口的降级只有一条路:八个读取全走 attempt(),手写 catch 一个都没有", () => {
+    const source = sourceOf("components/home/HomeEntry.tsx");
+
+    expect(
+      [...source.matchAll(/\.catch\(/g)].length,
+      "有读取自己接住了故障 —— 那正是「顺手返回一个空值」的入口",
+    ).toBe(0);
+
+    // §4.1 的八个读取(名字那一个除外:`ottoGreetingNameFromProfile` 自带 catch,
+    // 而它的降级是一句通用问候,不是一个关于商家的空态)。
+    for (const fn of [
+      "getMyAccount",
+      "getProjects",
+      "getRecentGenerationThumbs",
+      "listScheduledPosts",
+      "listCampaigns",
+      "listMemory",
+      "listBrandRecords",
+    ]) {
+      expect(
+        new RegExp(`attempt\\((\\(\\)\\s*=>\\s*)?${fn}\\b`).test(source),
+        `${fn} 没走 attempt() —— 它自己决定了故障时长什么样`,
+      ).toBe(true);
+    }
+
+    // 空值不许被包成「读到了」。
+    expect(source, "把一个空值包成了「读到了」").not.toMatch(/readOk\(\s*(\[\]|\{\s*\})\s*\)/);
+    expect(source, "把一个空值包成了「读到了」").not.toMatch(/ok:\s*true[\s\S]{0,40}value:\s*(\[\]|\{\s*\})/);
+    expect(source).toContain("UNREADABLE");
+  });
+
+  it("那个 helper 本身只会落到 UNREADABLE —— 它是这条路唯一的出口", () => {
+    const source = sourceOf("components/home/HomeEntry.tsx");
+    const helper = /async function attempt<T>\([\s\S]*?\n\}/.exec(source)?.[0] ?? "";
+    expect(helper, "attempt() 不见了,上面那条围栏就在核对一个不存在的形状").toContain("UNREADABLE");
+    expect(helper).toContain("readOk");
+    expect(helper, "helper 里出现了空值兜底").not.toMatch(/\[\]/);
+  });
+});
+
+/* ── P2-1:文案金样 —— 定性编造也挡得住 ──────────────────────────────────────── */
+
+/**
+ * 判官 r1 P2-1 —— 样板数据不一定带数字。
+ *
+ * 上一版的围栏只挡数字与一张词表,判官当场构造出三句**一个数字都没有**的编造
+ * (「Your best performing post is doing great」之类),18 条断言全绿。词表永远追不上人的想象力,
+ * 所以这里换一种形状:**金样对账**。
+ *
+ * 规则一句话:Home 渲染出来的每一段字,要么是 {@link HOME_COPY} 里钉着的产品措辞,要么是
+ * 核心常量(发布实话),要么是**这次 fixture 自己喂进去的商家数据**。三者之外一个字都不许有。
+ * 想加一句新话,就得明写地把它加进 HOME_COPY 并加进下面的清单 —— 那正是我们要的:
+ * 一句新话必须是一次**明写**的改动,不能是一个手滑或一次「顺手补个鼓励语」。
+ *
+ * 覆盖三个场景(空 / 有东西 / 全读不出来),所以每一条分支上的字都被这条围栏看过。
+ */
+describe("Home 只说清单里的话(判官 r1 P2-1)", () => {
+  /** StartSomething(共享开工框)自带的字。它是 Home 的一部分,所以也在清单里。 */
+  const START_SOMETHING_COPY = [
+    "New canvas",
+    "The canvas is named after what you wrote — you can rename it later.",
+  ];
+
+  /** 产品说的每一句 —— 全部来自权威常量,这里一个字面量都不重打。 */
+  const PRODUCT_COPY = [
+    ...Object.values(HOME_COPY),
+    ...START_SOMETHING_COPY,
+    PUBLISH_PREVIEW_COPY.fact,
+    PUBLISH_PREVIEW_COPY.why,
+  ];
+
+  /** 商家自己的字 + 这次 fixture 喂进去的值。它们不是产品说的话,是数据。 */
+  function fixtureWords(data: HomeData): string[] {
+    const words: string[] = [data.greeting, data.billingLabel];
+    if (data.credits.ok) words.push(`You have ${data.credits.value}.`);
+    if (data.canvases.ok) for (const c of data.canvases.value) words.push(c.name, c.updatedLabel);
+    if (data.upcoming.ok) {
+      for (const p of data.upcoming.value) {
+        words.push(`${p.dayLabel}, ${p.timeLabel} · ${p.channelLabel}`, p.caption, p.statusLabel);
+      }
+    }
+    if (data.campaigns.ok) for (const c of data.campaigns.value) words.push(c.name, c.goal, c.statusLabel);
+    if (data.equipment.ok && data.equipment.value) {
+      for (const s of data.equipment.value) words.push(s.label, s.hint);
+    }
+    return words;
+  }
+
+  const SCENARIOS = [
+    ["空账号", EMPTY_ACCOUNT_DATA],
+    ["有东西的账号", BUSY_ACCOUNT_DATA],
+    ["每一块都读不出来", UNREADABLE_DATA],
+  ] as const;
+
+  it.each(SCENARIOS)("%s:页面上没有一句清单外的话", async (_name, data) => {
+    const allowed = new Set([...PRODUCT_COPY, ...fixtureWords(data)]);
+    const strays = visibleChunks(await renderHome(data)).filter((chunk) => !allowed.has(chunk));
+    expect(
+      strays,
+      "这些字既不在 HOME_COPY / 核心常量里,也不是 fixture 喂进去的数据 —— 新话要明写地加进清单",
+    ).toEqual([]);
+  });
+
+  it("清单本身没有空转:它确实覆盖了页面上真在渲染的那些话", async () => {
+    const chunks = visibleChunks(await renderHome(BUSY_ACCOUNT_DATA));
+    // 页面真的有字(围栏不是在核对一个空页面),而且产品措辞真的出现了。
+    expect(chunks.length).toBeGreaterThan(10);
+    expect(chunks).toContain(HOME_COPY.pickUpHeading);
+    expect(chunks).toContain(PUBLISH_PREVIEW_COPY.fact);
+  });
+
+  it("HOME_COPY 是**唯一**的措辞出处:渲染层不留裸句子", () => {
+    const view = sourceOf("components/home/HomeView.tsx");
+    // 注释已剥。JSX 里的裸文字节点(> 两个英文词 <)一律违例 —— 它们绕得过 HOME_COPY。
+    const bareText = [...view.matchAll(/>\s*([A-Za-z][A-Za-z',.\- ]{6,})\s*</g)].map((m) => m[1].trim());
+    expect(bareText, "这些句子直接写在渲染里,金样清单管不到它们").toEqual([]);
+  });
+});
+
+describe("有排期时,发布关着的实话逐字来自核心常量(规格书 §7.1)", () => {
   it("那一句就是 PUBLISH_PREVIEW_COPY.fact,一个字不差", async () => {
     expect(PUBLISHING_AVAILABLE, "发布已经通电了,这条断言要按新事实改写").toBe(false);
-    const text = visibleText(await renderHome(withSchedule));
-    expect(text).toContain("What goes out next");
+    const text = visibleText(await renderHome(BUSY_ACCOUNT_DATA));
+    expect(text).toContain(HOME_COPY.scheduleHeading);
     expect(text).toContain("Wed, Jul 10");
     expect(text).toContain(PUBLISH_PREVIEW_COPY.fact);
   });
 
-  it("这一页没有自己写第二份发布措辞", async () => {
+  it("这一页没有自己写第二份发布措辞", () => {
     const source = sourceOf("components/home/HomeView.tsx");
     expect(source).not.toContain("Publishing is not switched on");
     expect(source).toContain("publishSurfaceCopy()");
+  });
+});
+
+/* ── P3-3:导航 key 必须真的存在 ─────────────────────────────────────────────── */
+
+/**
+ * 判官 r1 P3-3 —— `navLinkByKey` 找不到 key 会 throw,而它在 `HomeEntry` 里连调三次:
+ * 谁把导航树上的一个 key 改了名,Home 就整页 500。
+ *
+ * 修法选的是**围栏**而不是兜底地址:一条编出来的 URL 会静静把商家送到一扇不存在的门前,
+ * 而那正是这一波换壳要根治的病(§1.3)。key 改名是一次 CI 红,不是一次线上 500。
+ */
+describe("Home 用到的三个导航 key 都在权威源里(判官 r1 P3-3)", () => {
+  const KEYS = ["billing", "brand", "campaign"] as const;
+
+  it.each(KEYS)("navLinkByKey(\"%s\") 取得到,且有真地址", (key) => {
+    const link = navLinkByKey(key);
+    expect(link.href.startsWith("/"), `${key} 的地址不是一条真路径`).toBe(true);
+    expect(link.label.length).toBeGreaterThan(0);
+  });
+
+  it("HomeEntry 用的就是这三个 key,不多不少 —— 多一个就得先在这里报到", () => {
+    const source = sourceOf("components/home/HomeEntry.tsx");
+    const used = [...source.matchAll(/navLinkByKey\("([^"]+)"\)/g)].map((m) => m[1]).sort();
+    expect(used, "HomeEntry 换了导航 key,而围栏还在钉旧的那几个").toEqual([...KEYS].sort());
   });
 });
 
