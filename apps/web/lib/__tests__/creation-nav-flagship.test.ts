@@ -254,12 +254,22 @@ describe("Otto 表面没有第二处漏网", () => {
  *    修法不是补全枚举,是不枚举。
  */
 describe("壳里不留第二份地址", () => {
+  /**
+   * 一张画布的地址,全仓只在这一个模块里拼(W2-6)。它原来长在 `NorthstarHome.tsx` 里,
+   * 而那是个 `"use client"` 模块 —— 它的每一个导出在服务端都是**客户端引用**,server
+   * component 拿到的不是函数本体、调不动。Home 要画「接着做」的画布链接,只能要么抄第二份,
+   * 要么把这一行搬到一个普通模块里。搬了,所以壳允许经它拿地址;而它自己**必须**引权威源
+   * (下面那条断言先钉它,再钉壳)。
+   */
+  const CANVAS_ADDRESS_MODULE = "components/canvas/canvas-href.ts";
+
   const SHELLS = [
     "components/global-navigation.tsx",
     "components/northstar/immersive/immersive-shell.tsx",
     "components/canvas/NorthstarHome.tsx",
     "components/canvas/NorthstarCanvasWorkspace.tsx",
     "components/canvas/ImmersiveCanvasEntry.tsx",
+    CANVAS_ADDRESS_MODULE,
   ] as const;
 
   it.each(SHELLS)("%s 不硬写创作面或助手的路径", (file) => {
@@ -272,8 +282,18 @@ describe("壳里不留第二份地址", () => {
   });
 
   it("引的是权威源,不是自己又定义了一份常量", () => {
+    const AUTHORITY = /from\s+["']@fikirtive\/core\/navigation["']/;
+    const ADDRESS_MODULE = /from\s+["']@\/components\/canvas\/canvas-href["']/;
+
+    // 中转模块自己没有第二条路:它必须直接引权威源,否则下面那条「经它拿也算」就成了漏洞。
+    expect(sourceCode(CANVAS_ADDRESS_MODULE), "画布地址模块自己没有引权威源").toMatch(AUTHORITY);
+
     for (const file of SHELLS) {
-      expect(sourceCode(file), `${file} 没有引权威源`).toMatch(/from\s+["']@fikirtive\/core\/navigation["']/);
+      const source = sourceCode(file);
+      expect(
+        AUTHORITY.test(source) || ADDRESS_MODULE.test(source),
+        `${file} 既没引权威源,也没经那个唯一的地址模块`,
+      ).toBe(true);
     }
   });
 });
