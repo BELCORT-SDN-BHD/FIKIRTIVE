@@ -201,7 +201,9 @@ export function OttoPanel({
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const delta = event.key === "ArrowLeft" ? KEYBOARD_RESIZE_STEP_PX : -KEYBOARD_RESIZE_STEP_PX;
-    onResize(clampPanelWidth(state.width + delta, viewport.width));
+    // 从**生效中**的宽度起跳,不是从存档宽。Expand 打开时这两个数不一样,按存档宽算会让
+    // 第一下方向键把面板从 864px 猛缩回 376px —— 那不是「宽一点」,那是跳一下。
+    onResize(clampPanelWidth(width + delta, viewport.width));
   }
 
   const frame: React.CSSProperties = floating
@@ -224,7 +226,7 @@ export function OttoPanel({
         <div
           data-otto-panel-dock-hint=""
           aria-hidden
-          className="pointer-events-none fixed top-0 right-0 z-[71] h-full w-[2px] bg-brand"
+          className="pointer-events-none fixed top-0 right-0 z-[46] h-full w-[2px] bg-brand"
         />
       )}
       <aside
@@ -234,10 +236,17 @@ export function OttoPanel({
         {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
         style={frame}
         className={cn(
-          "z-[70] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
+          // 层级(#994 挂载票定表):导轨 z-40 < 面板 z-45 < `ui/dialog` 的遮罩与内容 z-50。
+          // 面板现在停在每一个商家表面上,z-70(旧那颗 Otto 按钮的值)会让它盖住每一个模态框 ——
+          // 模态框必须在最上面,所以面板退到 45:仍在导轨之上(浮动窗拖过去时压得住它),
+          // 但任何 dialog 一开就在面板之上。
+          "z-[45] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
           floating
             ? "rounded-[var(--radius-lg)] border border-border/80 shadow-[var(--shadow-lg,0_18px_44px_rgba(20,20,24,0.16))]"
-            : "relative h-full shrink-0 border-l border-border",
+            // 停靠形态没有任何脱离文档流的定位 —— 它就是排版里的一格(挤而不盖)。`sticky` 仍
+            // 占位、仍把主内容挤窄,只是页面往下滚的时候面板头部不跟着滚出屏幕;`self-start`
+            // 是它成立的前提(被 stretch 拉满高度的元素没有可粘的余量)。
+            : "sticky top-0 h-dvh shrink-0 self-start border-l border-border",
         )}
       >
         {!floating && (

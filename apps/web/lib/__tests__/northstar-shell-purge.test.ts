@@ -34,6 +34,7 @@ import {
   OTTO_ASSISTANT,
   everyNavDestination,
 } from "@fikirtive/core/navigation";
+import { ottoPanelMountsOn } from "@/components/otto/panel/panel-surface";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(HERE, "../..");
@@ -152,6 +153,19 @@ const FIXTURE_MODULES = [
 /** 空头承诺与内部黑话 —— 商家不该在壳里读到的字。 */
 const BANNED_COPY = ["This will spend real credits", "upgrade ticket", "1,240"] as const;
 
+/**
+ * 短语扫描的豁免树(#994 · W2-7)。
+ *
+ * Otto 面板挂进商家壳之后,壳的 import 图第一次走到**真的** Otto 会话树。那棵树里的
+ * 「This will spend real credits」印在真的审批卡上,而且是**真话** —— 按下去真的扣钱,
+ * 这一点由钱路的 ledger 与幂等键证明,不由一句字符串证明。这条围栏立起来是为了挡北极星
+ * 那些**假**的经营承诺(一个不会扣钱却说自己会扣钱的假 Otto 小窗),不是为了审真产品的文案。
+ *
+ * 只豁免短语这一条:「碰不到样板数据」(FIXTURE_MODULES)仍然全图有效 —— 那一条挡的是
+ * 假数据本身,而假数据在哪里都不该被壳碰到。
+ */
+const BANNED_COPY_SCAN_SKIP = ["components/otto/"] as const;
+
 /* ── ① 六扇门合流进主导航 ─────────────────────────────────────────────────── */
 
 describe("六扇门合流", () => {
@@ -209,8 +223,10 @@ describe("假物清零", () => {
   it("壳的自有表面读不到空头承诺与内部黑话", () => {
     const hits: string[] = [];
     for (const [file, source] of reachableSources(SHELL_ENTRIES)) {
+      const relative = file.slice(WEB_ROOT.length + 1);
+      if (BANNED_COPY_SCAN_SKIP.some((tree) => relative.startsWith(tree))) continue;
       for (const phrase of BANNED_COPY) {
-        if (source.includes(phrase)) hits.push(`${file.slice(WEB_ROOT.length + 1)} :: ${phrase}`);
+        if (source.includes(phrase)) hits.push(`${relative} :: ${phrase}`);
       }
     }
     expect(hits).toEqual([]);
@@ -230,12 +246,28 @@ describe("退场", () => {
     expect(shell).not.toContain("immersive-dock");
   });
 
-  it("壳里那一颗 Otto 按钮跳的是真对话", () => {
+  it("壳里那颗 Otto 入口不再把商家带走 —— 它就地开面板", () => {
     const shell = readFileSync(resolve(WEB_ROOT, "components/northstar/immersive/immersive-shell.tsx"), "utf8");
-    // #801:地址不再抄在壳里,而是引权威源那一条助手常量 —— 解析出来仍然是 /otto。
-    expect(shell).toContain("OTTO_ASSISTANT.href");
-    expect(OTTO_ASSISTANT.href).toBe("/otto");
+    // #994(W2-7):那颗 `fixed right-4 bottom-4` 的按钮从这层壳退场。原来它是一个
+    // `<Link href={OTTO_ASSISTANT.href}>` —— 点一下把商家从正在做的事上带到另一页去。
+    // 现在商家壳统一挂一块 Otto 面板,收起时就是那颗可拖、松手吸边的 launcher。
+    expect(shell).not.toContain("OTTO_ASSISTANT");
+    expect(shell).not.toContain("right-4 bottom-4");
     expect(shell).not.toContain("/northstar-immersive/otto");
+
+    // launcher 做的是**开面板**,不是跳转:它这个文件里没有任何一条地址。
+    const launcher = readFileSync(resolve(WEB_ROOT, "components/otto/panel/OttoLauncher.tsx"), "utf8");
+    expect(launcher).toContain("onOpen");
+    expect(launcher).not.toContain("next/link");
+    expect(launcher).not.toContain("href");
+    // 助手那条地址仍然在权威源里(旧书签要能落地),只是壳不再拿它当入口。
+    expect(OTTO_ASSISTANT.href).toBe("/otto");
+
+    // 「画布页自带真输入框,那一页不挂」这条判断没有消失,只是搬到了唯一决定挂不挂的地方。
+    const surface = readFileSync(resolve(WEB_ROOT, "components/otto/panel/panel-surface.ts"), "utf8");
+    expect(surface).toContain("CANVAS_HREF");
+    expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
+    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(true);
   });
 
   it("退役组件不再被壳里任何一页引用", () => {

@@ -106,6 +106,10 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
       aria-keyshortcuts="Meta+J Control+J"
       onPointerDown={(event) => {
         if (event.button !== 0) return;
+        // 每一次新的按下都先把旗子清干净。`pointercancel`(手势被系统接管、页面滚起来)
+        // 会走 handleUp 而**不**产生 click,旗子就那样留着,下一次真的点击被它吃掉 ——
+        // 商家点了图标却什么都没发生。清在这里,因为这里是唯一「下一次点击开始了」的时刻。
+        swallowNextClick.current = false;
         setDrag({
           offsetX: event.clientX - left,
           offsetY: event.clientY - top,
@@ -138,7 +142,8 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
             : []),
         ].join(", "),
       }}
-      className="z-[70] size-12 touch-none rounded-full p-0 shadow-[var(--shadow-md)] active:cursor-grabbing"
+      // 层级与面板同一张表(见 OttoPanel):导轨 40 < launcher 45 < dialog 50。
+      className="z-[45] size-12 touch-none rounded-full p-0 shadow-[var(--shadow-md)] active:cursor-grabbing"
     >
       <OttoAvatar size={26} mood="idle" />
     </Button>

@@ -124,7 +124,8 @@ export function OttoPanelShell({
 
   React.useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      // Shift 排除掉:`Cmd/Ctrl+Shift+J` 是 Chrome 开发者工具,抢它没有任何好处。
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
       if (event.key.toLowerCase() !== "j") return;
       event.preventDefault();
       setState(togglePanelOpen);
@@ -178,10 +179,13 @@ export function OttoPanelShell({
 
   return (
     <OttoPanelControlsContext.Provider value={controls}>
-      <div data-otto-panel-shell="" className="flex min-h-0 flex-1">
+      {/* `items-start` 而不是默认的 stretch:主内容必须保持它挂载之前的高度行为(内容多高就多高,
+          页面自己的 `min-h-dvh` / `h-dvh` 说了算)。被拉伸成一个确定高度会让页面里 `h-full` 那
+          一类百分比高度突然解析成整屏,那是版式漂移,不是面板的活。面板自己带 `h-dvh`,不靠拉伸。 */}
+      <div data-otto-panel-shell="" className="flex min-w-0 items-start">
         {/* 主内容。被面板挤窄靠的是 flex 排版本身,所以这里不需要任何定位、遮罩或宽度动画:
-            动的是面板那一侧的宽度,主内容跟着让。 */}
-        <div data-otto-panel-main="" className="flex min-h-0 min-w-0 flex-1 flex-col">
+            动的是面板那一侧的宽度,主内容跟着让。里面仍是普通块级流,与挂载之前逐行一致。 */}
+        <div data-otto-panel-main="" className="min-w-0 flex-1">
           {children}
         </div>
         {state.open && (

@@ -14,14 +14,18 @@
  *   ② <1024 的自有顶栏 —— 52px 在流内,汉堡开的是**全局抽屉**(useOpenGlobalNavigation,
  *      #747 同一套交接):一屏只有一个抽屉入口,不叠罗汉。≥1024 全局导轨常驻,顶栏隐去。
  *
- * #609:右下那颗真 Otto 按钮留着 —— Otto 是随处可用的助手。画布页自带真输入框,那一页不挂。
+ * #994(W2-7):右下那颗 Otto 按钮从这里退场。它做的事(「Otto 随处可用」)没有变,做事的
+ * 东西换了:商家壳现在统一挂一块 Otto 面板,收起时就是那颗可拖、松手吸边的圆形 launcher
+ * (`components/otto/panel/`)。行为从**跳转 `/otto`** 改成**就地开面板** —— 商家不再被从
+ * 正在做的事上带走。#609 那条「画布页自带真输入框,那一页不挂」原样保留,只是判定挪到了
+ * `panel-surface.ts`(壳只能有一个地方决定挂不挂)。
  */
 
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { CANVAS_HREF, CREATE_NAV_HREF, OTTO_ASSISTANT } from "@fikirtive/core/navigation";
+import { CREATE_NAV_HREF } from "@fikirtive/core/navigation";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,7 +34,7 @@ import {
 } from "@/components/global-navigation";
 
 /** 路径一律引权威源(packages/core/src/navigation.ts):这层壳里不留第二份地址。
- *  顶栏品牌回的就是主导航 Create 那一格的目的地;Otto 按钮落的就是助手那一条。 */
+ *  顶栏品牌回的就是主导航 Create 那一格的目的地。 */
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 function useReducedMotion(): boolean {
@@ -65,9 +69,6 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
     document.head.appendChild(el);
   }, []);
 
-  // 画布页自带真输入框(#600 合体内核),再挂一颗按钮就是两个 Otto 同屏。
-  const hideOttoButton = pathname === CANVAS_HREF;
-
   return (
     <div className="gb ns-immersive flex h-dvh flex-col bg-background text-foreground">
       {/* <1024 顶栏:汉堡开**全局**抽屉 + 品牌回创作首页。≥1024 全局导轨常驻,故隐藏此条。
@@ -98,16 +99,6 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
-      {/* 一颗真 Otto 按钮:跳真对话。没有小窗、没有编造的经营事实、没有假消息流。 */}
-      {!hideOttoButton && (
-        <Link
-          href={OTTO_ASSISTANT.href}
-          aria-label={OTTO_ASSISTANT.label}
-          className="fixed right-4 bottom-4 z-[70] flex size-12 items-center justify-center rounded-full border border-border bg-card shadow-[var(--shadow-md)] transition-[background-color,transform] duration-[160ms] ease-out hover:bg-accent active:scale-[0.96] motion-reduce:transition-colors motion-reduce:active:scale-100"
-        >
-          <OttoAvatar size={26} mood="idle" />
-        </Link>
-      )}
     </div>
   );
 }

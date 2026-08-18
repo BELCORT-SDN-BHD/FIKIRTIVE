@@ -403,4 +403,51 @@ describe("launcher (§3.2)", () => {
     expect(el.querySelector("[data-otto-panel]")).toBeNull();
     expect(JSON.parse(window.localStorage.getItem(OTTO_PANEL_STORAGE_KEY)!).launcher.edge).toBe("left");
   });
+
+  /** #994 挂载轮 —— 判官 P3 ①。拖动被系统接管(`pointercancel`)时不会补 click,
+   *  那面「吃掉下一发 click」的旗子就留在原地,把商家**下一次真的点击**吃掉:
+   *  点了图标,什么都没发生。面板挂到每一页之后,这一下就是「Otto 打不开」。 */
+  it("一次被取消的拖动,不会吃掉下一次真的点击", async () => {
+    function pointer(type: string, x: number, y: number): MouseEvent {
+      return new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+    }
+
+    const el = await render(shell());
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Close Otto"]')!.click();
+    });
+    const launcher = document.querySelector<HTMLElement>("[data-otto-launcher]")!;
+
+    // 拖起来,然后让系统把这次手势收走 —— 浏览器不会为 pointercancel 补一发 click。
+    await act(async () => launcher.dispatchEvent(pointer("pointerdown", 1380, 840)));
+    await act(async () => window.dispatchEvent(pointer("pointermove", 1200, 400)));
+    await act(async () => window.dispatchEvent(pointer("pointercancel", 1200, 400)));
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+
+    // 下一次是真的点击:按下 → 松手 → click,一步都没移动。
+    await act(async () => document.querySelector("[data-otto-launcher]")!.dispatchEvent(pointer("pointerdown", 1200, 400)));
+    await act(async () => window.dispatchEvent(pointer("pointerup", 1200, 400)));
+    await act(async () => document.querySelector("[data-otto-launcher]")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+});
+
+describe("键盘改宽度 (§3.1)", () => {
+  /** #994 挂载轮 —— 判官 P3 ②。方向键必须从**生效中**的宽度起跳。读存档宽的话,
+   *  Expand 打开时第一下方向键会把面板从 864px 猛缩回 376px:那不是「宽一点」,那是跳一下。 */
+  it("Expand 打开时,方向键从生效宽度起跳,不是从存档宽", async () => {
+    const el = await render(shell());
+    const handle = el.querySelector<HTMLElement>("[data-otto-panel-resize]")!;
+
+    await act(async () => el.querySelector<HTMLButtonElement>('[aria-label="Expand Otto"]')!.click());
+    expect(panelOf(el).style.width).toBe(`${EXPANDED_WIDTH}px`);
+
+    // ArrowLeft = 往左拖 = 更宽一点。生效宽是 864,加 16 之后被常规上限 min(720, 50vw)=720 夹住。
+    await act(async () => {
+      handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    });
+
+    expect(panelOf(el).style.width).toBe("720px");
+  });
 });
