@@ -320,6 +320,18 @@ const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
   mockOtherHoldsSince: vi.fn(async (_orgId: string, _refId: string): Promise<"none" | "some" | "unknown"> => "none"),
 }));
 
+const { mockConsumeOttoTurnGate } = vi.hoisted(() => ({ mockConsumeOttoTurnGate: vi.fn(async () => true) }));
+
+// Founder 2026-08-18 — the conversation gate is a REAL Postgres counter that fails CLOSED when it
+// cannot reach the database (packages/db/src/rate-limit.ts, deliberately). This suite mocks the db
+// barrel wholesale, so an unmocked gate would refuse every `ottoTurn` here and turn the file red
+// for a reason that has nothing to do with what it tests. Granted by default; the gate's own
+// numbers live in rate-limit-gates.test.ts, and the WIRING has its own case below.
+vi.mock("@/lib/rate-limit-gates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit-gates")>()),
+  consumeOttoTurnGate: mockConsumeOttoTurnGate,
+}));
+
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     project: { findFirst: mockProjectFindFirst },
@@ -437,6 +449,7 @@ const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight
 // #524 r2: the REAL hold derivation (the @fikirtive/otto mock spreads the actual module), so the
 // expected number in the spend-cap cases comes from the same code the production path runs.
 const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed } = await import("@fikirtive/otto");
+const { OTTO_TURN_RATE_LIMIT_MESSAGE } = await import("@/lib/rate-limit-gates");
 // The REAL withLlmBudget (see the @fikirtive/otto mock). Tests that need the true reserve→claim→run
 // order install it on mockWithLlmBudget; it runs against the mocked ledger writers above.
 const realWithLlmBudget = (await import("@fikirtive/otto")) as unknown as {
@@ -628,6 +641,7 @@ function setupHappyPath() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConsumeOttoTurnGate.mockResolvedValue(true);
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
   // #498 round-5: the tie-language fallback probes recent USER messages; default
   // to an empty thread history (→ "en") unless a test scripts one.
@@ -4578,5 +4592,32 @@ describe("#524 r6 — a failed card only claims zero when the ledger PROVED it (
 
     const reservedRefId = (mockReserveCredits.mock.calls[0]![1] as { refId: string }).refId;
     expect(mockOtherHoldsSince).toHaveBeenCalledWith(OWNER_ID, reservedRefId);
+  });
+});
+
+// ── Founder 2026-08-18:非流式那扇门也走同一道对话闸 ────────────────────────────────────────
+//
+// 对话免费之后余额不再是任何上限,而平台照样为每一轮付模型的钱。闸的数字在
+// rate-limit-gates.test.ts;这里钉的是**这条路真的问过它**、问的是这个租户,以及被拒的那一次
+// 一行都没写、模型一次都没跑 —— 而且答的是与流式那扇门**同一句话**(两扇门一个说法)。
+describe("ottoTurn — the conversation gate (Founder 2026-08-18)", () => {
+  it("asks the gate for THIS tenant before anything is validated or written", async () => {
+    setupHappyPath();
+    await ottoTurn(BASE_INPUT);
+    expect(mockConsumeOttoTurnGate).toHaveBeenCalledWith(OWNER_ID);
+  });
+
+  it("a refused turn returns the shared sentence and runs and persists nothing", async () => {
+    setupHappyPath();
+    mockConsumeOttoTurnGate.mockResolvedValue(false);
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toEqual({ error: OTTO_TURN_RATE_LIMIT_MESSAGE });
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+    expect(mockChatMessageCreate).not.toHaveBeenCalled();
+    // A refusal must never read as a money problem — nothing was charged, and chat is free.
+    expect(OTTO_TURN_RATE_LIMIT_MESSAGE).not.toMatch(/credit/i);
   });
 });

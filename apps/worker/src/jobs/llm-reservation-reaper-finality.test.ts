@@ -238,3 +238,99 @@ describe("#524 r8 — the ordinary leak is still swept, and replays cannot doubl
     expect((await cardStatus(orgId, cardId)).status).toBe("failed");
   });
 });
+
+// ── Founder 2026-08-18(判官 P1)—— 免费一轮之后,漏掉的批准卡靠卡片状态兜底 ─────────────
+//
+// 上面每一条都以「台账上有一行 RESERVE」为前提。裁决把对话价钱设成 0 之后,恢复轮不再预扣,
+// 那一行不存在了 —— 前两遍对 approve 彻底不再命中,而进程死在跑的中间仍然会把卡片钉死在
+// "Approved"(CAS 单向,商家再也点不动)。这一组打真库证的是第 3 遍:**一行台账都没有**,
+// 卡片照样被收口;以及它唯一不能犯的错 —— 把一张跑完的卡判成失败。
+describe("Founder 2026-08-18 — a free approve leaves no ledger row, and the card pass recovers it", () => {
+  /** An org whose approve really did cost nothing: a claimed card, a thread, and ZERO ledger rows. */
+  async function seedFreeApprove(
+    opts: { approvedAgoMs?: number; replyAfterClaim?: boolean } = {},
+  ): Promise<{ orgId: string; cardId: string; threadId: string; approvedAt: Date }> {
+    const { approvedAgoMs = 3 * HOUR, replyAfterClaim = false } = opts;
+    const orgId = `free818-${randomUUID()}`;
+    const threadId = `t-${randomUUID()}`;
+    const cardId = `c-${randomUUID()}`;
+    const approvedAt = new Date(Date.now() - approvedAgoMs);
+    orgIds.push(orgId);
+    await prisma.organization.create({ data: { id: orgId } });
+    await prisma.creditAccount.create({ data: { orgId, balance: START, reserved: 0 } });
+    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId: `pr-${randomUUID()}` } });
+    await prisma.chatMessage.create({
+      data: {
+        id: cardId,
+        threadId,
+        ownerId: orgId,
+        role: "AGENT",
+        kind: "APPROVAL_CARD",
+        seq: 1,
+        // Exactly what claimApprovalCard writes: the terminal-forever `approved`, plus the one
+        // record of WHEN the consent was spent (ChatMessage has no updatedAt to read it from).
+        payload: { toolName: "generateReferences", ref: "e1", status: "approved", attempt: 1, approvedAt: approvedAt.toISOString() },
+        createdAt: new Date(approvedAt.getTime() - 60_000),
+      },
+    });
+    if (replyAfterClaim) {
+      await prisma.chatMessage.create({
+        data: {
+          id: `r-${randomUUID()}`,
+          threadId,
+          ownerId: orgId,
+          role: "AGENT",
+          kind: "TEXT",
+          seq: 2,
+          text: "Done — the reference images are on their way.",
+          createdAt: new Date(approvedAt.getTime() + 30_000),
+        },
+      });
+    }
+    return { orgId, cardId, threadId, approvedAt };
+  }
+
+  it("retires the stranded card with NOTHING in the ledger to key on — the P1 the judge found", async () => {
+    const { orgId, cardId } = await seedFreeApprove();
+
+    const reaped = await reapStaleLlmReservations();
+
+    // The premise, asserted rather than assumed: a free turn really did leave the ledger empty,
+    // so passes 1 and 2 had nothing to match and this recovery came from the card alone.
+    expect(await ledgerRows(orgId)).toEqual([]);
+    expect(reaped).toBe(0); // pass 3 moves no money
+    expect(await cardStatus(orgId, cardId)).toMatchObject({ status: "failed", chargeVerdict: "unknown" });
+    // The balance is untouched — this pass has no business with money.
+    expect(await prisma.creditAccount.findUniqueOrThrow({ where: { orgId } })).toMatchObject({
+      balance: START,
+      reserved: 0,
+    });
+  });
+
+  it("never fails a card whose run FINISHED — a reply after the claim is proof it happened", async () => {
+    const { orgId, cardId } = await seedFreeApprove({ replyAfterClaim: true });
+
+    await reapStaleLlmReservations();
+
+    expect((await cardStatus(orgId, cardId)).status).toBe("approved");
+  });
+
+  it("leaves a fresh approve alone — a run inside the stale window may still be talking", async () => {
+    const { orgId, cardId } = await seedFreeApprove({ approvedAgoMs: 5 * 60_000 });
+
+    await reapStaleLlmReservations();
+
+    expect((await cardStatus(orgId, cardId)).status).toBe("approved");
+  });
+
+  it("drains: the retired card stops matching, so a second tick writes nothing more", async () => {
+    const { orgId, cardId } = await seedFreeApprove();
+
+    await reapStaleLlmReservations();
+    const first = await cardStatus(orgId, cardId);
+    await reapStaleLlmReservations();
+
+    expect(await cardStatus(orgId, cardId)).toEqual(first);
+    expect(await ledgerRows(orgId)).toEqual([]);
+  });
+});

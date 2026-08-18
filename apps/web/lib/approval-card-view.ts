@@ -87,6 +87,23 @@ export type ApprovalCardPayload = {
    * charged". Guessing that sentence is worse than not saying it.
    */
   chargeVerdict?: "zero" | "unknown";
+  /**
+   * When the consent was SPENT — the instant the CAS moved this card `pending → approved`, as an
+   * ISO instant (Founder 2026-08-18 follow-up).
+   *
+   * It exists because the recovery for a leaked approve lost its anchor. Until chat was priced at
+   * 0 the resume turn took a credit HOLD before the model ran, so a process death in that window
+   * left a stale RESERVE row the reaper could find, date and refund. A free turn writes no ledger
+   * row at all, so the card is now the ONLY record that consent was spent — and `ChatMessage` has
+   * no `updatedAt` column, so without this stamp nothing in the database says WHEN. `createdAt` is
+   * mint time, and a card may be approved any time inside its 24-hour TTL, so sweeping on it would
+   * either wait a day or retire a run that started ten seconds ago.
+   *
+   * Written once, by the claim (otto-actions claimApprovalCard). Absent on cards approved before
+   * this shipped, and on those the card-state sweep stands down rather than guessing — the
+   * fail-safe direction is a card that stays stale, never one retired over work that succeeded.
+   */
+  approvedAt?: string | null;
 };
 
 /** Structural parse of an unknown durable payload — null when it isn't an approval card. */
@@ -121,6 +138,9 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
     attempt: Number.isInteger(p.attempt) && (p.attempt as number) >= 1 ? (p.attempt as number) : 1,
     // Anything but a literal proof reads as "unknown" — the arm whose sentence claims less.
     chargeVerdict: p.chargeVerdict === "zero" ? "zero" : "unknown",
+    // Round-trips so a later payload rewrite cannot silently drop the one record of WHEN consent
+    // was spent. A malformed value reads as absent, which stands the card-state sweep down.
+    approvedAt: typeof p.approvedAt === "string" ? p.approvedAt : null,
   };
 }
 

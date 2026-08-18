@@ -70,6 +70,7 @@ import { ottoFailureMessage } from "@/lib/otto-error-copy";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
 // burned by a refusal knowable one line earlier. Never an authority; reserveCredits still decides.
 import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal } from "@/lib/spend-cap-preflight";
+import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
@@ -1145,13 +1146,20 @@ async function consumeApprovalCard(
  * Errors are NOT swallowed (judge r2 P2): a write that failed is not "someone else won", and the
  * caller must never turn it into a cheerful `resolution: "approved"`. It propagates, withLlmBudget
  * refunds the hold, and the merchant is told the approve failed.
+ *
+ * Founder 2026-08-18 — WHY THE CLAIM IS STAMPED. A conversation turn is now free, so this resume
+ * takes no hold and leaves no RESERVE row, and the leaked-approve reaper lost the dated record it
+ * used to sweep on (apps/worker/src/jobs/llm-reservation-reaper.ts). The card is now the only
+ * record that consent was spent, and `ChatMessage` has no `updatedAt`, so the instant goes into
+ * the payload here — in the SAME conditional write that spends the consent, so it cannot drift
+ * away from it. See ApprovalCardPayload.approvedAt.
  */
 async function claimApprovalCard(
   cardId: string,
   ownerId: string,
   payload: ApprovalCardPayload,
 ): Promise<boolean> {
-  return casApprovalCard(prisma, cardId, ownerId, payload, "approved");
+  return casApprovalCard(prisma, cardId, ownerId, { ...payload, approvedAt: new Date().toISOString() }, "approved");
 }
 
 
@@ -1481,6 +1489,12 @@ export async function ottoTurn(raw: unknown): Promise<
   > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
+    // Founder 2026-08-18 — the same conversation gate the streaming route takes, on the same
+    // per-tenant bucket, so the two doors into one conversation share one hourly budget instead of
+    // each handing out its own. Placed before anything is validated, persisted or run: a refusal
+    // costs nothing. It bounds runaway volume now that a free turn no longer bounds itself by
+    // spending credits; it is not a price. See OTTO_TURN_PER_TENANT_PER_HOUR.
+    if (!(await consumeOttoTurnGate(ownerId))) return { error: OTTO_TURN_RATE_LIMIT_MESSAGE };
 
     const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
 
