@@ -32,9 +32,6 @@ export const PANEL_DEFAULT_WIDTH_MAX = 560;
 export const PANEL_EXPANDED_WIDTH_PX = 960;
 export const PANEL_EXPANDED_WIDTH_RATIO = 0.6;
 
-/** 左缘缩放手柄的命中区(hover 时视觉加宽,命中区不变)。 */
-export const PANEL_RESIZE_HANDLE_PX = 6;
-
 /** 浮动窗尺寸约束:最小 320 × 360,最大 720 × 90vh。 */
 export const FLOAT_MIN_WIDTH = 320;
 export const FLOAT_MIN_HEIGHT = 360;

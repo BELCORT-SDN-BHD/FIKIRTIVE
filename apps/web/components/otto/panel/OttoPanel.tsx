@@ -22,7 +22,6 @@ import { Button } from "@/components/ui/button";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 import { cn } from "@/lib/utils";
 import {
-  PANEL_RESIZE_HANDLE_PX,
   RESIZE_HANDLES,
   RESIZE_HANDLE_CURSOR,
   type FloatingRect,
@@ -235,10 +234,10 @@ export function OttoPanel({
         {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
         style={frame}
         className={cn(
-          "relative z-[70] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
+          "z-[70] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
           floating
             ? "rounded-[var(--radius-lg)] border border-border/80 shadow-[var(--shadow-lg,0_18px_44px_rgba(20,20,24,0.16))]"
-            : "h-full shrink-0 border-l border-border",
+            : "relative h-full shrink-0 border-l border-border",
         )}
       >
         {!floating && (
@@ -250,8 +249,8 @@ export function OttoPanel({
             data-otto-panel-resize=""
             onPointerDown={startDockedResize}
             onKeyDown={handleResizeKey}
-            style={{ width: PANEL_RESIZE_HANDLE_PX }}
-            className="absolute top-0 left-0 z-10 h-full cursor-col-resize outline-none hover:bg-brand/20 focus-visible:bg-brand/30"
+            // 命中区 6px,摸到之后长到 12px —— 抓住了就不容易掉(§3.1)。
+            className="absolute top-0 left-0 z-10 h-full w-[6px] cursor-col-resize outline-none hover:w-3 hover:bg-brand/20 focus-visible:w-3 focus-visible:bg-brand/30"
           />
         )}
 
