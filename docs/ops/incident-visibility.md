@@ -25,7 +25,14 @@
   只答 clear/backed-up/unknown,不给条数或队列名;计数直接查 job 表,所以 worker 死透了它
   照样出声。接线与生产侧残留清单见 `docs/ops/dashboards.md`。
 - web/worker 含 Sentry instrumentation(server 侧 + 浏览器侧),但只有 live environment
-  配置生效后才会记录。
+  配置生效后才会记录。`SENTRY_DSN` 自整顿 C1a 起是**生产必填**:没有 DSN 时每一次 capture
+  都是静默 no-op,而开机检查此前一个字都不说。今天生产缺它 = 进程拒绝启动。
+- **Founder 报警管道**(整顿 C1a,`packages/core/src/founder-alert.ts`)是第三条路,与上面两套
+  并列而不替代:它只承载**需要人来做决定**的钱路事故(今天两条:`gen.paid_for_nothing`、
+  `stripe.paid_session_unusable_metadata`),一条事件同时走 Sentry(归档聚类)、
+  邮件 tools@belcort.com(离线追人)、Telegram(手机会响;两个 env 未配即静默跳过,
+  接线向导 `docs/ops/telegram-alerts.md`)。**「进了 Sentry」不等于「有人被通知」**——
+  通知那一半在 Sentry 的 alert rule 上,接线步骤在 `docs/ops/dashboards.md` 第三节。
 - 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
   在当前部署和权限下验证。
 - `/admin/queue`(#779)只读生成队列指标库,回答「队列堵没堵」。未配置 `QUEUE_METRICS_QUERY_URL`

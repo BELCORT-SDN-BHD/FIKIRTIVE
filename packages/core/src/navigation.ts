@@ -211,11 +211,11 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
     to: "/otto?view=schedule",
     why: "One calendar, not two. The campaign calendar only re-edited plan-entry dates that the campaign's own page already edits; the schedule is the calendar that actually posts.",
   },
-  {
-    from: "/library",
-    to: "/otto?view=library",
-    why: "The old standalone library was retired into the workspace Library.",
-  },
+  // `/library` 曾经在这张表里(「旧的独立素材库已并进工作区 Library」)。W2-1 把它撤了 ——
+  // 不是改了去处,是**它不再是一条收敛掉的旧路由**:`/library` 现在是真页面
+  // (`apps/web/app/library/page.tsx`,规格书 §2.2「shim 撤销,变回真页面」)。这张表的
+  // 契约是「每一条 from 都必须有一个真的 redirect 路由文件」,留着这一行就等于要求那扇门
+  // 继续把商家甩走。
   {
     from: "/m",
     to: "/otto",

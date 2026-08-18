@@ -253,24 +253,28 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Which header carries a trustworthy caller address: railway | xff:<hops> | dev. Unset = railway in production, dev elsewhere. Checked at boot — an unrecognised value refuses to start.",
   },
   {
+    // surface 从 web 转 both(整顿 C1a):worker 现在也读它——founder 报警的邮件那一路
+    // (packages/core/src/founder-alert.ts)走同一个 Resend 端点,而最要紧的那条求救
+    // 「商家付了钱什么都没拿到」就长在 worker 里。仍然 optional:不设 = 报警只走
+    // Sentry(+Telegram),不是错误。
     name: "RESEND_API_KEY",
-    surface: "web",
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "free",
     secret: true,
     shared: false,
-    summary: "Magic-link sender (resend.com). Production sign-in email throws without it.",
+    summary: "Resend API key. Sends the magic-link email (web) and the founder alert email (web + worker). Production sign-in email throws without it; alerts fall back to Sentry-only.",
   },
   {
     name: "AUTH_EMAIL_FROM",
-    surface: "web",
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "free",
     secret: false,
     shared: false,
-    summary: "Verified Resend sender address for auth email.",
+    summary: "Verified Resend sender address, used by auth email and by the founder alert email.",
   },
 
   // ── 共享密钥(web 与 worker 必须同值)────────────────────────────────────
@@ -770,14 +774,26 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
 
   // ── 运维可见性 ────────────────────────────────────────────────────────────
   {
+    // 整顿 C1a:从 optional 转 required。
+    //
+    // 理由是它自己的失效形状:没配 DSN 时 `Sentry.init` 从不运行、`captureException` 静默
+    // no-op,于是**全部错误报警一次不响**,而开机检查一个字都不说。这正是「装了监控」与
+    // 「监控在响」被当成同一件事的那一族缺陷——而钱路上的求救(gen.ts 的
+    // `gen.paid_for_nothing`、stripe webhook 的坏 metadata)现在就走这条通道,
+    // 一台没有 DSN 的生产进程等于把它们说给没有人听。
+    //
+    // 生产缺失 = 拒绝启动(平台随后持续重启,于是「没配好」表现为看得见的起不来,而不是
+    // 一个看起来健康、实则聋了的进程)。dev/CI 不受影响:存在性只在 NODE_ENV=production
+    // 判定,本地照旧完全 inert。真需要在没有 DSN 的情况下开一台生产进程,逃生门仍是
+    // FIKIRTIVE_ENV_CONTRACT=warn。
     name: "SENTRY_DSN",
     surface: "both",
     readBy: "code",
-    requirement: "optional",
+    requirement: "required",
     format: "url",
     secret: false,
     shared: false,
-    summary: "Error monitoring. Everything is a no-op when unset.",
+    summary: "Error monitoring, and the archive half of the founder alert pipeline. Required in production: with no DSN every alert is a silent no-op.",
   },
   {
     name: "NEXT_PUBLIC_SENTRY_DSN",
@@ -794,6 +810,33 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     shared: false,
     summary: "Browser-side error monitoring. Next.js inlines this literally into the client bundle at build time, so it is not a secret. No-op (Sentry.init never runs) when unset, same convention as SENTRY_DSN.",
   },
+  // ── Founder 报警的 Telegram 通道(整顿 C1a)────────────────────────────────
+  // 两个都 optional,而且刻意成组:bot 要 CEO 自己在 BotFather 建(向导
+  // docs/ops/telegram-alerts.md),建好之前这条通道本来就不存在。缺任一个 = 静默跳过
+  // Telegram,Sentry 与邮件照发。**不写成 conditional**:半配(有 token 没 chat id)
+  // 在这里不会静默降级——发送器要求两个齐才发,缺一个就是「没开这条通道」,与全空同义。
+  {
+    name: "TELEGRAM_BOT_TOKEN",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: true,
+    shared: false,
+    summary: "BotFather token for the alert bot. Unset = the Telegram channel is skipped; Sentry and email are unaffected.",
+  },
+  {
+    name: "TELEGRAM_ALERT_CHAT_ID",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    // 不是 integer:群组的 chat id 是负数,而且未来的 supergroup id 会超出安全整数范围。
+    format: "free",
+    secret: false,
+    shared: false,
+    summary: "Chat the alert bot posts into (a group id is negative). Unset = the Telegram channel is skipped.",
+  },
+
   {
     name: "BYTEPLUS_RESOURCE_PACK_USD",
     surface: "web",

@@ -50,7 +50,11 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function mount(element: ReactElement): Promise<HTMLDivElement> {
+/**
+ * 返回 `document.body`(W2-1):AddAssetDialog 换成 `components/ui/dialog` 之后,弹窗内容
+ * 由 Radix 的 Portal 渲染到 body 下面,不在挂载点里。断言的东西一件没变。
+ */
+async function mount(element: ReactElement): Promise<HTMLElement> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -58,7 +62,7 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
   await act(async () => {
     await Promise.resolve();
   });
-  return container;
+  return document.body;
 }
 
 function clickByText(dom: HTMLElement, startsWith: string): Promise<void> {
