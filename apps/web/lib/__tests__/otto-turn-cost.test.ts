@@ -111,17 +111,25 @@ describe("the conversation-charge disclosure is one sentence in three places", (
       expect(render()).not.toMatch(/a little credit/i);
     });
 
-    it(`${name}: says chatting costs credits and where the charges are listed`, () => {
+    // Founder ruling 2026-08-18: chat replies stopped consuming credits, so the sentence these
+    // three surfaces share had to change with the money — "uses credits" is now as untrue as
+    // "a little credit" was, and in the more damaging direction (it warns about a cost that
+    // does not exist, on the screen where the merchant decides whether to talk at all).
+    it(`${name}: says chatting is free, and names what credits ARE for`, () => {
       const markup = render();
-      expect(markup).toContain("Chatting with Otto uses credits");
-      expect(markup).toContain("Billing");
+      expect(markup).toContain("Chatting with Otto is free");
+      expect(markup).toMatch(/image or a video/);
+      // No per-reply charge exists any more, so no surface may point at one.
+      expect(markup).not.toMatch(/Chatting with Otto uses credits/);
     });
   }
 
   it("comes from ONE constant, so the three surfaces cannot drift apart again", () => {
-    expect(CHAT_SPEND_NOTE).toBe("Chatting with Otto uses credits — your charges are listed in Billing.");
+    expect(CHAT_SPEND_NOTE).toBe(
+      "Chatting with Otto is free — credits are only used when you make an image or a video.",
+    );
     for (const [, render] of surfaces) {
-      expect(render()).toContain("your charges are listed in Billing");
+      expect(render()).toContain("credits are only used when you make an image or a video");
     }
   });
 });

@@ -49,6 +49,7 @@ import type { Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/ag
 import {
   OTTO_MAX_STEPS,
   OTTO_OUTPUT_CAP_TOKENS,
+  OTTO_CONVERSATION_TURN_MARGIN,
   OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
   OTTO_CHAT_MIN_START_INTERNAL,
   llmPricesFor,
@@ -65,7 +66,7 @@ import {
 } from "./runtime.js";
 import { ottoModel, ottoModelRuntime, OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL, OTTO_DEFAULT_MODEL } from "./model.js";
 import { otto, ottoInteractiveRuntime, ottoApprovalResumeRuntime } from "./otto.js";
-import { actualCostInternal, mapOttoUsage, withLlmBudget } from "./meter.js";
+import { actualCostInternal, llmHoldInternal, mapOttoUsage, withLlmBudget } from "./meter.js";
 import { defineOttoSkill } from "./skill.js";
 import { tryRestoreRunStateWithContext } from "./run-input.js";
 import { allSkills } from "./registry.js";
@@ -284,30 +285,44 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     expect(args.usageOnError?.(new Error("boom"))).toBeNull();
   });
 
-  it("#543: the conversation turn carries the 40-internal hold cap (was a 120-internal hold)", () => {
+  // ── Founder ruling 2026-08-18: a conversation turn charges NOTHING ───────────────────────
+  //
+  // Credits are spent on GENERATION only. The whole ruling is one multiplier in
+  // @fikirtive/core (OTTO_CONVERSATION_TURN_MARGIN); everything below is what the composition
+  // root does with it. #543's hold ceiling and #898's entry minimum are not deleted — they are
+  // simply not passed while the turn is free, because there is no hold to cap and no door to
+  // stand at.
+  it("prices the conversation turn from the chat multiplier, not from the ambient generation margin", () => {
+    for (const rt of [ottoInteractiveRuntime, ottoApprovalResumeRuntime]) {
+      const args = ottoBudgetArgsFor(rt, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
+      expect(args.margin).toBe(OTTO_CONVERSATION_TURN_MARGIN);
+      expect(args.margin).toBe(0);
+      // Explicitly NOT the env/default markup — that one still prices generation.
+      expect(args.margin).not.toBe(ottoLlmMargin());
+    }
+  });
+
+  it("holds NOTHING for a conversation turn: the derived worst case comes out 0", () => {
     const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
-    expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
-    expect(args.reserveCapInternal).toBe(40);
-    // The worst case it caps, at the live prices/margin/steps.
+    // The meter's one definition of the hold, asked with the production args.
+    expect(llmHoldInternal(args)).toBe(0);
+    // For contrast: at the generation markup the same turn would have held 120 internal, which
+    // #543 then capped to 40. That is the number the ruling removed.
     expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), OTTO_MAX_STEPS)).toBe(120);
   });
 
-  it("#543: the approval-resume turn carries the same cap (same conversation, same hold)", () => {
-    const args = ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: "o", refId: "otto-turn:m2", input: "x" });
-    expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
-  });
-
-  it("#898: the conversation turn also carries the 1-credit entry minimum, so the hold can fit a small balance", () => {
-    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
-    expect(args.reserveMinInternal).toBe(OTTO_CHAT_MIN_START_INTERNAL);
-    expect(args.reserveMinInternal).toBe(10);
-    // The pair is what makes 3.9 credits sendable: gate at 10, hold at min(40, 39).
-    expect(args.reserveMinInternal).toBeLessThan(args.reserveCapInternal!);
-  });
-
-  it("#898: the approval-resume turn carries the same minimum (same conversation, same door)", () => {
-    const args = ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: "o", refId: "otto-turn:m2", input: "x" });
-    expect(args.reserveMinInternal).toBe(OTTO_CHAT_MIN_START_INTERNAL);
+  it("#543/#898: no hold ceiling and no entry minimum ride along while the turn is free", () => {
+    for (const rt of [ottoInteractiveRuntime, ottoApprovalResumeRuntime]) {
+      const args = ottoBudgetArgsFor(rt, { orgId: "o", refId: "otto-turn:m2", input: "x" });
+      // A ceiling over an empty hold would be noise; an entry minimum over a free action would
+      // be the very trap this ruling removes — a merchant who spent their last credits on a
+      // video could not ask Otto what to do about it.
+      expect(args.reserveCapInternal).toBeUndefined();
+      expect(args.reserveMinInternal).toBeUndefined();
+    }
+    // The constants themselves survive, with their reasoning, for the day chat is priced again.
+    expect(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL).toBe(40);
+    expect(OTTO_CHAT_MIN_START_INTERNAL).toBe(10);
   });
 
   it("fixture-no-charge manifest → paid:false (the ONLY way to a no-charge run is the manifest itself)", () => {
@@ -378,6 +393,51 @@ describe("production composition root (PH1-A5)", () => {
   });
 });
 
+// ── Founder 2026-08-18: a whole conversation turn, end to end, charges nothing ──────────────
+//
+// The regression this exists for, in one sentence: a beta merchant went 14.8 → 10.6 credits on
+// chat replies alone and was then refused the 11-credit video those replies were about. This
+// runs the REAL meter over the REAL production budget args and pins the two amounts that made
+// that possible — the hold and the charge — at 0. What the ledger then does with a 0 is proven
+// against a real database in packages/db/src/credits.test.ts ("a free conversation turn moves
+// no credits and writes no ledger row").
+describe("runOttoTurn — a conversation turn charges nothing (Founder 2026-08-18)", () => {
+  it("holds 0 and settles 0 for a completed turn, and never enters the balance-aware hold", async () => {
+    const runtime = createOttoRuntime(
+      { modelRuntime: paidFixtureModelRuntime(fakeTextModel("here you go")), skills: [] },
+      "interactive",
+    );
+
+    await runOttoTurn({ orgId: "org_t", refId: "otto-turn:free-1", input: "hello" }, baseCtx, runtime);
+
+    expect(meterMocks.reserveCredits).toHaveBeenCalledOnce();
+    expect(meterMocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      { orgId: "org_t", refId: "otto-turn:free-1", cost: 0 },
+    );
+    // #898's balance-aware hold is for a PRICED turn; a free one has no balance to fit.
+    expect(meterMocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    expect(meterMocks.settleCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: "org_t", refId: "otto-turn:free-1", actualInternal: 0 }),
+    );
+    expect(meterMocks.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("stays free no matter how much the turn used — the charge is 0 for any token count", async () => {
+    // The old bug was proportional to usage: a long reply cost more. Pin that the multiplier,
+    // not the size of the reply, is what decides.
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "o", refId: "r", input: "x" });
+    for (const usage of [
+      { inputTokens: 1, outputTokens: 1 },
+      { inputTokens: 12_000, outputTokens: 1_500 },
+      { inputTokens: 5_000_000, outputTokens: 900_000 },
+    ]) {
+      expect(actualCostInternal(usage, args.prices!, args.margin!)).toBe(0);
+    }
+  });
+});
+
 // ── PH1F-A2: stream failure money path + settlement ordering ────────────────
 
 describe("runOttoTurn — real meter stream failure and completion ordering (PH1F-A2)", () => {
@@ -401,17 +461,24 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
       runtime,
     )).rejects.toThrow("client stream failed");
 
-    // #898: the conversation turn reserves through reserveCreditsUpTo (hold = min(cap, balance)).
-    // The claim is unchanged — exactly one reservation, then a full refund.
-    expect(meterMocks.reserveCreditsUpTo).toHaveBeenCalledOnce();
-    expect(meterMocks.reserveCredits).not.toHaveBeenCalled();
+    // Founder 2026-08-18: the conversation turn is priced at 0, so the hold has no ceiling and
+    // no entry minimum to fit a balance to — the fixed reserve seam is the live one again, and
+    // it asks for 0 (reserveCredits itself no-ops on cost <= 0, so no RESERVE row is written).
+    // The ORDER and the SHAPE of the money path are what this test pins, and both are unchanged:
+    // exactly one reserve, then a full refund, never a success settle.
+    expect(meterMocks.reserveCredits).toHaveBeenCalledOnce();
+    expect(meterMocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: "org_t", refId: "paid:stream-error", cost: 0 }),
+    );
+    expect(meterMocks.reserveCreditsUpTo).not.toHaveBeenCalled();
     expect(meterMocks.refundReservation).toHaveBeenCalledOnce();
     expect(meterMocks.refundReservation).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ orgId: "org_t", refId: "paid:stream-error" }),
     );
     expect(meterMocks.settleCredits).not.toHaveBeenCalled();
-    expect(meterMocks.reserveCreditsUpTo.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(meterMocks.reserveCredits.mock.invocationCallOrder[0]).toBeLessThan(
       meterMocks.refundReservation.mock.invocationCallOrder[0]!,
     );
   });
@@ -482,11 +549,14 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
 
     expect(orderBeforeDrainRelease).toEqual(["drain-start"]);
     expect(order).toEqual(["drain-start", "drain-complete", "completed", "usage"]);
+    // Priced with the CHAT multiplier (Founder 2026-08-18: 0), not the generation markup —
+    // so the settle is for 0 and settleCredits finds no reservation to charge against.
     const actualInternal = actualCostInternal(
       { inputTokens: 3, outputTokens: 2 },
       llmPricesFor("claude-sonnet-4-6"),
-      ottoLlmMargin(),
+      OTTO_CONVERSATION_TURN_MARGIN,
     );
+    expect(actualInternal).toBe(0);
     expect(meterMocks.settleCredits).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -799,12 +869,13 @@ describe("#566 — resume carries the live context", () => {
     const restored = await RunState.fromString(paidResume.agent, serialized);
     restored.approve(restored.getInterruptions()[0]!);
 
-    // Control: on this very runtime a fresh run DOES reserve — so the assertion below is real.
-    // #898: a conversation turn reserves through reserveCreditsUpTo, so that is the live seam.
+    // Control: on this very runtime a fresh run DOES enter the reserve — so the assertion below
+    // is real. (Founder 2026-08-18 prices the turn at 0, so what it reserves is 0; the point of
+    // the control is that the guard below stops the run BEFORE this seam, not that money moves.)
     meterMocks.reserveCredits.mockClear();
     meterMocks.reserveCreditsUpTo.mockClear();
     await runOttoTurn({ orgId: "org_t", refId: "fixture:566-control", input: "hi" }, liveCtx(), paidResume);
-    expect(meterMocks.reserveCreditsUpTo).toHaveBeenCalled();
+    expect(meterMocks.reserveCredits).toHaveBeenCalled();
 
     meterMocks.reserveCredits.mockClear();
     meterMocks.reserveCreditsUpTo.mockClear();

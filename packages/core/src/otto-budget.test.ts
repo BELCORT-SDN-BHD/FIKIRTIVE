@@ -3,6 +3,7 @@ import {
   oneStepFloorInternal,
   turnBudgetInternal,
   OTTO_MAX_STEPS,
+  OTTO_CONVERSATION_TURN_MARGIN,
   OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
   OTTO_CHAT_MIN_START_INTERNAL,
 } from "./otto-budget.js";
@@ -29,6 +30,36 @@ describe("oneStepFloorInternal", () => {
 describe("turnBudgetInternal", () => {
   it("turn budget = maxSteps * floor (Sonnet-ish prices, margin=3, maxSteps=10)", () => {
     expect(turnBudgetInternal({ inputPerToken: 15e-6, outputPerToken: 75e-6 }, 3, 10)).toBe(880);
+  });
+});
+
+// Founder ruling 2026-08-18 — chat replies stop consuming credits; credits are spent on
+// generation only. The whole of that ruling is this one multiplier.
+describe("OTTO_CONVERSATION_TURN_MARGIN (chat is free)", () => {
+  it("is 0 — a conversation turn is priced at nothing", () => {
+    expect(OTTO_CONVERSATION_TURN_MARGIN).toBe(0);
+  });
+
+  it("zeroes the HOLD at live prices: the worst case a turn could hold comes out 0", () => {
+    // The same call the meter makes (llmHoldInternal → turnBudgetInternal) with the chat price.
+    expect(
+      turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS),
+    ).toBe(0);
+    // …and 0 is what makes it free downstream: reserveCredits no-ops on cost <= 0, so no
+    // RESERVE row is written and settle/refund then find no reservation to act on.
+    expect(turnBudgetInternal(llmPricesFor("claude-opus-4-8"), OTTO_CONVERSATION_TURN_MARGIN, 1)).toBe(0);
+  });
+
+  it("zeroes the CHARGE for any usage — a long turn is as free as a short one", () => {
+    // oneStepFloorInternal shares the arithmetic actualCostInternal uses (cost × margin × 100).
+    expect(oneStepFloorInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN)).toBe(0);
+  });
+
+  it("leaves GENERATION pricing alone — the generation markup is untouched", () => {
+    // The ruling moved chat only. A shared margin would have quietly re-priced every image
+    // and video with it.
+    expect(OTTO_LLM_MARGIN_DEFAULT).toBe(2.0);
+    expect(OTTO_CONVERSATION_TURN_MARGIN).not.toBe(OTTO_LLM_MARGIN_DEFAULT);
   });
 });
 
@@ -79,8 +110,11 @@ describe("OTTO_CHAT_MIN_START_INTERNAL (#898 chat entry gate)", () => {
     expect(Math.min(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, balance)).toBe(39);
   });
 
-  it("is a real floor, not zero — a 0.0x balance must not become free chat", () => {
+  it("is a real floor, not zero — a PRICED turn must not fall through to free chat", () => {
     // reserveCredits no-ops on cost <= 0: a hold that rounded to nothing would meter nothing.
+    // (Chat is free today by DECISION — OTTO_CONVERSATION_TURN_MARGIN — and the composition
+    // root drops this minimum entirely while it is. This pins the other case: if chat is ever
+    // priced again, the floor it comes back with must be a real one, not an accidental 0.)
     expect(OTTO_CHAT_MIN_START_INTERNAL).toBeGreaterThan(0);
     expect(Math.min(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL)).toBeGreaterThan(0);
   });

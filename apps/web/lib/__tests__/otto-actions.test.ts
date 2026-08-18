@@ -3138,8 +3138,12 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
         }),
       );
 
-    it("the fixture really does hold something (otherwise the cases below prove nothing)", () => {
-      expect(holdInternal()).toBeGreaterThan(0);
+    // Founder 2026-08-18: the resume turn is a CONVERSATION turn, and a conversation turn is
+    // free. So this leg contributes exactly 0 to the approved action, and what the cap is judged
+    // against is the tool the merchant actually approved. The cases below are written against
+    // that arithmetic; this pins the premise so they cannot silently start proving something else.
+    it("the resume turn itself holds NOTHING — the approved action is the tool alone", () => {
+      expect(holdInternal()).toBe(0);
     });
 
     // ① 判官点名的交错:预检时上限还高,真 reserve 时已被调低。r2 会吃掉卡片;r3 里
@@ -3197,10 +3201,11 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       expect(mockRun).toHaveBeenCalled();
     });
 
-    // ② 判官的 50/40/60 全成本反例:hold 40 单独看得过 cap 50,但商家批的是 6 张参考图
-    //    (60cr)。只算 hold 会放行→吃卡→工具自己的权威闸再拒。全成本预检在任何东西被
-    //    冻结之前就说了实话。
-    it("full-cost repro (cap 50 / hold 40 / 6 refgens 60): refused before ANY hold is taken", async () => {
+    // ② 判官的全成本反例。原版是 cap 50 / hold 40 / 6 张参考图 60 —— hold 单独看得过,
+    //    合起来越界。Founder 2026-08-18 把 hold 变成 0 之后,越界的那一半只剩参考图本身
+    //    (60 内部 credits),但被钉住的那句话没变:**在任何东西被冻结之前,报的是整个动作
+    //    的价钱**,而不是这条腿或那条腿。
+    it("full-cost repro (cap 50 / free resume turn / 6 refgens 60): refused before ANY hold is taken", async () => {
       setupRefgenApprove(6);
       withRealMeter();
       // The stored cap is in DISPLAYED credits (1 displayed = 10 internal), so the judge's
@@ -3210,9 +3215,9 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
       expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
-      // Named the FULL approved cost (hold 40 + 6 refgens 60 = 100 internal = 10 displayed),
-      // not just the resume hold — the whole point of judge r2's P1-B.
-      expect((res as { error: string }).error).toContain("this needs 10 credits");
+      // Named the FULL approved cost (free resume turn + 6 refgens 60 = 60 internal = 6
+      // displayed) — the whole point of judge r2's P1-B, now with an honest first leg of 0.
+      expect((res as { error: string }).error).toContain("this needs 6 credits");
       expect((res as { error: string }).error).toContain("your cap is 5 credits");
       expect(mockReserveCredits).not.toHaveBeenCalled(); // nothing was even held
       expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
@@ -3241,9 +3246,9 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       withRealMeter();
       // The preflight reads a cap that still covers the whole action…
       mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 500 } });
-      // …and by the time the ledger looks, the merchant has lowered it to a ceiling that each leg
-      // would clear on its own but the ACTION would not. This is the authority speaking.
-      const LOWERED_CAP = 70;
+      // …and by the time the ledger looks, the merchant has lowered it below what the action
+      // costs. This is the authority speaking, in the reserve's own transaction.
+      const LOWERED_CAP = 50;
       mockAssertWithinSpendCap.mockImplementation(async (_tx: unknown, _orgId: string, cost: number) => {
         if (cost > LOWERED_CAP) throw new MockSpendCapBlocked({ requiredInternal: cost, capInternal: LOWERED_CAP });
       });
@@ -3251,13 +3256,13 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
 
       expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
-      // What it was asked to judge: the WHOLE approval — this resume's hold plus 6 reference
-      // images — and each of those legs alone is under the lowered ceiling.
+      // What it was asked to judge: the WHOLE approval — this resume turn (free since
+      // 2026-08-18) plus the 6 reference images the merchant actually approved.
       const judged = mockAssertWithinSpendCap.mock.calls[0]![2] as number;
       expect(judged).toBe(holdInternal() + 60);
-      expect(holdInternal()).toBeLessThanOrEqual(LOWERED_CAP);
-      expect(60).toBeLessThanOrEqual(LOWERED_CAP);
       expect(judged).toBeGreaterThan(LOWERED_CAP);
+      // The preflight, one read earlier, had said yes (cap 500) — so this refusal can only have
+      // come from the verdict taken inside the reserve's transaction, which is the point.
       // Fail closed, and closed early: nothing held, consent untouched, model never ran.
       expect(mockReserveCredits).not.toHaveBeenCalled();
       expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
@@ -4323,21 +4328,21 @@ describe("#524 r6 — a plain generate approval is judged as ONE action (judge r
         cardId: GEN_CARD_ID,
       }),
     ).toBe(60);
-    expect(holdInternal()).toBeGreaterThan(0);
+    // Founder 2026-08-18: the resume turn is free, so the action total IS this generation.
+    expect(holdInternal()).toBe(0);
   });
 
-  it("judges hold + generation as one number, so a cap of 70 refuses the 100-credit action", async () => {
+  it("judges the resume turn and the generation as ONE number, and refuses the whole action", async () => {
     setupGenerateApprove();
-    // 上限 7 displayed = 70 internal:hold 单独看得过,60 单独看也得过。
-    mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 7 } });
+    // 上限 5 displayed = 50 internal:整动作 60 越界。
+    mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 5 } });
 
     const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: GEN_CARD_ID });
 
     expect(res).toMatchObject({ error: expect.stringContaining("spend cap") });
-    // 前提成立:两条腿各自都在天花板以内 —— 只有合起来才越界。
-    expect(holdInternal()).toBeLessThanOrEqual(70);
-    expect(60).toBeLessThanOrEqual(70);
-    expect(holdInternal() + 60).toBeGreaterThan(70);
+    // 前提成立:对话那条腿不再往总额里加钱,越界的是商家真正批的那一格。
+    expect(holdInternal()).toBe(0);
+    expect(holdInternal() + 60).toBeGreaterThan(50);
     // 一格没动:没冻结、没批准、没跑。
     expect(mockReserveCredits).not.toHaveBeenCalled();
     expect(mockApprove).not.toHaveBeenCalled();
@@ -4346,10 +4351,10 @@ describe("#524 r6 — a plain generate approval is judged as ONE action (judge r
 
   it("hands the SAME total to the authority inside the reserve's transaction, not only to the preflight", async () => {
     setupGenerateApprove();
-    // 预检读到的上限还够(总额 100 ≤ 500),商家随后调低 —— 权威闸拿到的必须仍是整动作。
+    // 预检读到的上限还够(总额 60 ≤ 500),商家随后调低 —— 权威闸拿到的必须仍是整动作。
     mockOrganizationFindUnique.mockResolvedValue({ settings: { spendCapCredits: 50 } });
     mockAssertWithinSpendCap.mockImplementation(async (_tx: unknown, _orgId: string, cost: number) => {
-      if (cost > 70) throw new MockSpendCapBlocked({ requiredInternal: cost, capInternal: 70 });
+      if (cost > 50) throw new MockSpendCapBlocked({ requiredInternal: cost, capInternal: 50 });
     });
 
     const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: GEN_CARD_ID });

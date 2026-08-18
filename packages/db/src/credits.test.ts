@@ -1127,3 +1127,73 @@ describe("#524 × #898 — the spend cap governs new paid actions, never the con
     expect(acc.balance + acc.reserved).toBe(30);
   });
 });
+
+// ── Founder 2026-08-18:对话不再花钱 —— 一整轮聊天在台账上必须是**零** ──────────────
+//
+// 裁决只改一个数(@fikirtive/core 的 OTTO_CONVERSATION_TURN_MARGIN → 0),钱路一行没动。
+// 这里钉的是那个 0 落到台账上的样子:金额是 0 的时候,现有的零值处理自己就把整轮做成
+// 「不动钱、不落行」—— reserve 在 cost <= 0 直接返回(不写 RESERVE 行),settle 与 refund
+// 找不到 RESERVE 就各自 no-op。所以不是「记一笔 0」,而是**一笔都不记**:
+// 花费历史不会被零值行刷屏,日后的成本报表也不会把一堆 0 误读成扣费。
+describe("a free conversation turn moves no credits and writes no ledger row", () => {
+  const CHAT_REF = "otto-stream:free-turn-1";
+
+  it("成功一轮:reserve(0) → settle(0) 之后,余额分文未动,台账一行没有", async () => {
+    const before = await account(ORG);
+
+    // 这就是 withLlmBudget 在 margin=0 下的完整调用序列:hold=0,实际花费=0。
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: CHAT_REF, cost: 0 }));
+    await prisma.$transaction((tx) =>
+      settleCredits(tx, { orgId: ORG, refId: CHAT_REF, actualInternal: 0 }),
+    );
+
+    const after = await account(ORG);
+    expect(after.balance).toBe(before.balance);
+    expect(after.reserved).toBe(0);
+    expect(await ledger(ORG)).toHaveLength(0); // 零值行也没有
+  });
+
+  it("失败一轮(模型报错走退款):同样分文未动、一行未写", async () => {
+    const before = await account(ORG);
+
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: CHAT_REF, cost: 0 }));
+    const outcome = await prisma.$transaction((tx) =>
+      refundReservation(tx, { orgId: ORG, refId: CHAT_REF }),
+    );
+
+    // 没有 RESERVE 行可退 —— 退款函数如实说「没有预留」,而不是假装退了一笔。
+    expect(outcome).toBe("no-reservation");
+    const after = await account(ORG);
+    expect(after.balance).toBe(before.balance);
+    expect(after.reserved).toBe(0);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("余额为 0 的商家照样能聊 —— 免费的动作没有门槛", async () => {
+    // 这正是裁决要解掉的死局:钱在聊天里花光,然后连「我该怎么办」都问不了。
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 0 } });
+
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: CHAT_REF, cost: 0 })),
+    ).resolves.toBeUndefined();
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0);
+    expect(acc.reserved).toBe(0);
+    expect(await ledger(ORG)).toHaveLength(0);
+  });
+
+  it("生成那一路一个字没改 —— 同一场景下的真扣费照旧落行", async () => {
+    // 对照组:免费的是对话,不是生成。裁决没有动生成的价钱。
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "job-1", cost: 110 }));
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: "job-1" }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000 - 110);
+    expect(acc.reserved).toBe(0);
+    const rows = await ledger(ORG);
+    expect(rows.map((r) => r.kind)).toEqual(["RESERVE", "SETTLE"]);
+    expect(sumBalance(rows)).toBe(-110);
+    expect(sumReserved(rows)).toBe(0);
+  });
+});

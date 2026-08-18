@@ -260,13 +260,31 @@ describe("the spend-history window is described honestly", () => {
 });
 
 describe("honest conversation-spend copy", () => {
-  it("no longer calls a chat turn 'a little credit' and points at Billing", () => {
+  // Founder 2026-08-18: a chat turn charges nothing, so the disclosure stopped being "here is
+  // where your chat charges are listed" and became "there are none". It still names credits —
+  // dropping the word entirely would just move the surprise to the first generation.
+  it("says a chat turn is free instead of warning about a charge that no longer exists", () => {
     expect(CHAT_SPEND_NOTE).not.toMatch(/a little/i);
+    expect(CHAT_SPEND_NOTE).toMatch(/free/i);
     expect(CHAT_SPEND_NOTE).toMatch(/credits/i);
-    expect(CHAT_SPEND_NOTE).toMatch(/Billing/);
+    expect(CHAT_SPEND_NOTE).not.toMatch(/Chatting with Otto uses credits/);
   });
 
   it("does not promise a complete record the window cannot deliver (round-1 P1①)", () => {
     expect(CHAT_SPEND_NOTE).not.toMatch(/every charge/i);
+  });
+
+  // The read side is untouched on purpose: turns charged BEFORE the ruling are real history and
+  // must keep rendering as the charges they were.
+  it("still reads historical Chat charges out of the ledger honestly", () => {
+    const entries = buildSpendHistory(
+      [
+        row({ id: "s1", kind: "SETTLE", refId: "otto-stream:m1", balanceDelta: 87, reservedDelta: -120, createdAt: new Date("2026-07-30T13:15:20.000Z") }),
+        row({ id: "r1", kind: "RESERVE", refId: "otto-stream:m1", balanceDelta: -120, reservedDelta: 120 }),
+      ],
+      new Map(),
+      TZ,
+    );
+    expect(entries[0]).toMatchObject({ category: "chat", label: "Chat", delta: -3.3 });
   });
 });

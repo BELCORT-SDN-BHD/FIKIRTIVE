@@ -29,7 +29,7 @@
  */
 import { Agent, run, MaxTurnsExceededError } from "@openai/agents";
 import type { AgentInputItem, Model, RunStreamEvent, RunState } from "@openai/agents";
-import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL } from "@fikirtive/core";
+import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_MARGIN, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL } from "@fikirtive/core";
 import type { LlmPrices } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import type { OttoSkill } from "./skill.js";
@@ -190,6 +190,12 @@ export type OttoTurnRunResult = {
  * come from the SAME manifest — an entry only contributes identity + refId.
  * `paid` is false IFF the manifest declares itself fixture-no-charge; there is no
  * other no-charge channel.
+ *
+ * The one value that does NOT come from the manifest is the PRICE of a conversation turn
+ * (`margin`, plus the hold shape it governs). It is a product decision, not a model fact —
+ * Founder ruling 2026-08-18 prices a chat turn at 0 — so it comes from the same
+ * composition-time constants file as the step caps (@fikirtive/core otto-budget.ts) and never
+ * from a request, an env var, or the manifest.
  */
 export function ottoBudgetArgsFor(
   runtime: OttoRuntime,
@@ -197,19 +203,32 @@ export function ottoBudgetArgsFor(
   MaxTurnsError: typeof MaxTurnsExceededError = MaxTurnsExceededError,
 ): Parameters<typeof withLlmBudget>[0] {
   const mr = runtime.modelRuntime;
+  // Founder ruling 2026-08-18 — a conversation turn is priced by ONE number, and that number
+  // is currently 0: chat is FREE, credits are spent on GENERATION only. See
+  // OTTO_CONVERSATION_TURN_MARGIN in otto-budget.ts for the ruling and the arithmetic. At 0 the
+  // hold AND the charge both come out 0, reserveCredits no-ops on `cost <= 0` (no RESERVE row),
+  // and settle/refund find no reservation and no-op in turn — the turn moves no money and
+  // leaves no ledger row, with reserve/settle/refund themselves untouched.
+  const chatChargesCredits = OTTO_CONVERSATION_TURN_MARGIN > 0;
   return {
     orgId: request.orgId,
     refId: request.refId,
     model: mr.billableModelId,
     paid: mr.billableModelId !== "fixture-no-charge",
     maxSteps: runtime.maxTurns,
+    // The chat price. Explicit here rather than defaulted to ottoLlmMargin() so the conversation
+    // turn's price is a composition-time fact and not an ambient env read.
+    margin: OTTO_CONVERSATION_TURN_MARGIN,
     // #543 — cap the conversation-turn HOLD (not the charge) so a small balance stays
     // spendable to the last credit. Composition-time constant; see otto-budget.ts.
-    reserveCapInternal: OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
+    // Applies to a PRICED turn only: a free turn holds nothing, so there is no hold to cap.
+    reserveCapInternal: chatChargesCredits ? OTTO_CONVERSATION_TURN_RESERVE_INTERNAL : undefined,
     // #898 — the cap alone was still a door: a balance under it could not open a turn at all.
     // With a minimum the hold shrinks to fit the balance instead, so the last credit is
     // spendable. Composition-time constant; see otto-budget.ts.
-    reserveMinInternal: OTTO_CHAT_MIN_START_INTERNAL,
+    // Applies to a PRICED turn only: a turn that costs nothing has no door to stand at, so a
+    // merchant who just spent their last credits on a video can still ask Otto about it.
+    reserveMinInternal: chatChargesCredits ? OTTO_CHAT_MIN_START_INTERNAL : undefined,
     prices: mr.pricing(mr.billableModelId),
     usageOnError: (e: unknown) =>
       e instanceof MaxTurnsError && (e as { state?: { usage?: unknown } }).state?.usage

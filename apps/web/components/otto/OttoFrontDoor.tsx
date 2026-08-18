@@ -9,7 +9,7 @@ import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { ottoGreeting } from "@/lib/otto-greeting";
-import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
+import { CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
 import { ExitLink } from "@/components/exits/Exits";
 import { BILLING_HREF } from "@/lib/exits";
 import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
@@ -438,10 +438,11 @@ export function OttoFrontDoor({
           Otto plans and makes it — creations start only after you confirm on the card. {CHAT_SPEND_NOTE}
         </p>
 
-        {/* #791-9: the hold, said out loud. The balance dips before a reply and partly comes
-            back after it; with nothing explaining either move it reads like an accounting
-            bug, when the real behaviour is more generous than anyone would guess. */}
-        <p className="m-0 text-center text-[0.71875rem] text-muted-foreground/70">{CHAT_HOLD_NOTE}</p>
+        {/* #791-9's hold disclosure lived here. Founder ruling 2026-08-18 made a chat turn free
+            (OTTO_CONVERSATION_TURN_MARGIN = 0), so nothing is held before a reply and nothing
+            is charged after it — the balance no longer dips and comes back, and a line
+            explaining a hold that does not happen would be the new untrue sentence. What IS
+            still true rides in the trust line above (CHAT_SPEND_NOTE). */}
       </div>
     </div>
   );

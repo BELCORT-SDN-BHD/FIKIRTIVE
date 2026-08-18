@@ -1170,9 +1170,14 @@ export function OttoChatStream({
             // if that ephemeral state was ever missed. Gated on `!streamError` so it never
             // doubles the live alert; appended AFTER any partial text the turn produced.
             const partError = dataErrorOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);
-            // #555: every Otto turn is charged. Once it has settled, the route streams a
-            // durable `data-cost` part — show the number here, next to the reply it paid
-            // for, instead of leaving the merchant to infer it from a moving balance.
+            // #555: when a turn IS charged, the route streams a durable `data-cost` part once
+            // it settles, and the number belongs next to the reply that paid for it rather
+            // than inferred from a moving balance.
+            // Founder 2026-08-18: a conversation turn now costs nothing, so a free turn writes
+            // no ledger row, the route finds no settled cost and streams no part, and this line
+            // simply does not render — turnCostOf already refuses any non-positive number, so
+            // there is no "0 credits" to leak. Left standing, unchanged, for the day chat is
+            // priced again (OTTO_CONVERSATION_TURN_MARGIN in @fikirtive/core).
             const turnCost = m.role === "user"
               ? null
               : turnCostOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);
