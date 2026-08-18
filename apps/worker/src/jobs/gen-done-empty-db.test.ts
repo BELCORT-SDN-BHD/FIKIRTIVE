@@ -302,6 +302,47 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
     }
   }, DB_CASE_TIMEOUT_MS);
 
+  it("标记写不进去(非 P2002 的库故障)⇒ 仍按首发处理 —— 节流闸是 fail-OPEN,不许把求救静音", async () => {
+    // 这条钉的是整个节流设计里最要紧、也最容易被写反的一个方向。
+    //
+    // 节流闸是「拿不到首发权就降级成只进 Sentry」。它的 catch-all 如果写成 return false
+    // (fail-CLOSED),那么一次外键错、一次连接池打满、一次磁盘满 —— 任何与「已经报过」
+    // 毫无关系的库故障 —— 都会让这条求救**永久**降级:邮件和 Telegram 从此不再发,
+    // 而没有任何人知道降级发生过。为了不吵而把「商家付了钱什么都没拿到」静音,
+    // 正好是这张票要消灭的那件事,只不过换成由我们自己动手。
+    //
+    // 所以只有**确凿的主键冲突(P2002 = 这一行确实已经报过)**才算重复;其它一切
+    // 算首发。宁可多发一条,也不让一次 DB 抖动把它关掉。
+    await seedDoneEmpty({ settled: true });
+    const markerId = `gen_paid_for_nothing:${jobId}`;
+    const realCreate = prisma.actionEvent.create.bind(prisma.actionEvent);
+    // 只对**这一行**的标记注入故障:巡检是跨租户的,同库里还住着别的用例留下的行,
+    // 一个无差别的 mock 会顺手改掉它们的行为。
+    const createSpy = vi.spyOn(prisma.actionEvent, "create").mockImplementation((async (args: { data?: { id?: string } }) => {
+      if (args?.data?.id === markerId) throw Object.assign(new Error("FK violated"), { code: "P2003" });
+      return realCreate(args as never);
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await reapStaleGenJobs();
+
+      expect(alertsFor(jobId), "库故障把这一行的报警整条吞掉了").toHaveLength(1);
+      expect(optsFor(jobId)[0]?.repeat ?? false, "一次非 P2002 的库故障被当成了「已经报过」").toBe(false);
+      expect(alertsFor(jobId)[0]!.context.repeatOfEarlierAlert).toBe(false);
+      // 标记确实没落库 —— 证明走的就是故障那一路,不是悄悄写成功了。
+      expect(await prisma.actionEvent.count({ where: { id: markerId } })).toBe(0);
+
+      // 而且它**持续**按首发处理:标记一天写不进去,这句求救就一天不许被降级。
+      await reapStaleGenJobs();
+      expect(optsFor(jobId).map((o) => o.repeat ?? false)).toEqual([false, false]);
+    } finally {
+      createSpy.mockRestore();
+      errSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  }, DB_CASE_TIMEOUT_MS);
+
   it("别人已经退过的那一行 → 翻成 FAILED,但不吞别家的退款(不多开第二张)", async () => {
     await seedDoneEmpty({ settled: false, refunded: true });
 
