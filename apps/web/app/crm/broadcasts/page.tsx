@@ -1,34 +1,7 @@
-import BroadcastListPage from "@/components/crm/broadcasts/broadcast-list-page";
-import { getMemberDirectory, listBroadcastRuns, listChannelScopes } from "@/lib/customer-broadcast-gateway";
-import { getCustomerBroadcastReport } from "@/lib/customer-broadcast-report-ui-actions";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const metadata = { title: "Broadcasts · Fikirtive" };
-
+/** CRM 整段收起来了(W2-13 / #993)。文件保留、内容换成重定向,旧书签不撞墙 ——
+ *  原委与恢复条件写在 app/crm/page.tsx。 */
 export default async function CrmBroadcastsRoute() {
-  // #727 — the banner and the "New broadcast" entry both depend on whether a messaging channel
-  // exists, so the page reads it instead of assuming it.
-  const [runs, directory, channelScopes] = await Promise.all([
-    listBroadcastRuns({}),
-    getMemberDirectory(),
-    listChannelScopes(),
-  ]);
-  const reportRunIds = runs.ok
-    ? (
-        await Promise.all(
-          runs.resource.map(async (run) => ({
-            id: run.id,
-            report: await getCustomerBroadcastReport({ broadcastRunId: run.id }),
-          })),
-        )
-      ).filter(({ report }) => report.ok).map(({ id }) => id)
-    : [];
-  return (
-    <BroadcastListPage
-      initialRuns={runs}
-      initialDirectory={directory}
-      initialReportRunIds={reportRunIds}
-      initialChannelScopes={channelScopes}
-    />
-  );
+  redirect("/");
 }

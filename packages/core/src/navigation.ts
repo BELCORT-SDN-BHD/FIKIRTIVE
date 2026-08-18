@@ -17,12 +17,14 @@
  *      OTTO_ASSISTANT,导轨把它画在板块之上、随处可点。
  *   ③ **一个日历** —— 排期日历是唯一权威(真有 ScheduledPost 表、worker 会照它发布);
  *      /campaign/calendar 那张草稿列表收敛成重定向,见 MERCHANT_NAV_REDIRECTS。
- *   ④ **没通电的能力只开一扇诚实的门**(#792)—— CRM 七扇门收成 Customers 一扇,并带
- *      一句 `preview`:消息渠道一个都连不上,所以那些页面发不出也收不到消息。页面本身
- *      一页没删,商家从预览页照样进得去。
+ *   ④ **CRM 整段先收起来**(W2-13 / #993,Founder 裁决 2026-08-18 裁决2)—— 从前这里有
+ *      一格 Customers 预览门(#792,七扇 /crm 子门收成一扇并挂一句 `preview`)。渠道一条都
+ *      连不上,预览门再诚实也仍然是一扇通向空房间的门,所以这一格整个删掉:
+ *      **导航里不许再出现任何 `/crm` 前缀的 href**(围栏在 navigation.test.ts)。
+ *      /crm 的 14 个路由文件保留、各自 `redirect("/")`(旧书签不撞墙),4600 行 CRM 引擎与
+ *      packages/otto 的 CRM 技能原地保留。**恢复触发条件 = Meta verification 通过**
+ *      (登记在延期台账 issue #359):那一天把这一格连同它的 `preview` 一起加回来。
  */
-
-import { MESSAGING_STATUS_MERCHANT } from "./messaging-status.js";
 
 /** 一条真能点开的目的地。 */
 export type MerchantNavLink = {
@@ -102,27 +104,9 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     href: "/campaign",
     does: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
   },
-  {
-    // #792 —— 七扇门收成一扇诚实的预览门(Founder 裁决 2026-08-08)。
-    //
-    // 原来这一组把 Inbox / Broadcasts / Workflows / Reports 与 Contacts 并排放在导轨上,
-    // 每一扇都长得像一个能用的能力。可是**一个消息渠道都连不上**(Connections 里 Messaging
-    // 整段写着 "Not available yet",全仓没有任何一条商家可走的连接路径),所以那六扇门后面
-    // 没有一条消息发得出去、收得进来。导轨因此在替产品说大话。
-    //
-    // 收敛之后:导轨只承诺一件**现在真的做得到**的事 —— 建客户档案;那句 preview 把没通电
-    // 的部分说在前面;那些页面本身一页没删,商家从预览页进得去(引擎 4600 行原地保留,等
-    // 通电)。渠道接通的那一天(独立里程碑),删掉 preview 这一行即可。
-    key: "customers",
-    label: "Customers",
-    // /crm 底下每一页都在这扇门后面(pathMatches 按前缀判定),所以走进 /crm 的任何一页,
-    // 导轨亮的都是这一格。
-    href: "/crm",
-    does: "Keep a record of every customer — who they are, how to reach them, and what you may contact them about.",
-    // 那句实话不写在这里 —— 它是消息渠道状态的**唯一措辞**,Otto 的指令与技能描述读的是
-    // 同一份(#792 r2 判词 P1:从前这里说「连不上」,Otto 那边却在劝商家「去连一个」)。
-    preview: MESSAGING_STATUS_MERCHANT,
-  },
+  // W2-13(#993)—— Customers 那一格删于此。它曾经是 #792 收敛出来的那扇预览门
+  // (`href: "/crm"`,`preview: MESSAGING_STATUS_MERCHANT`)。Founder 2026-08-18 裁决2:
+  // Meta verification 没过之前,CRM 整段不出现在商家表面上。加回来的条件与做法写在文件头 ④。
   {
     key: "workspace",
     label: "Workspace",

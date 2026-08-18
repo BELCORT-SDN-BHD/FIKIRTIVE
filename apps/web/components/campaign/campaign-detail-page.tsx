@@ -669,11 +669,14 @@ export function CampaignBroadcastsCard({
           <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nothing grouped yet.</p>
         ) : broadcasts.map((broadcast) => {
           const status = runStatusPresentation(broadcast.status);
+          // W2-13(#993):这一行原来点得开(`/crm/broadcasts/{id}`)。CRM 整段收起来之后
+          // 那个地址只会把商家弹回 Home —— 一条点了就被弹走的链接比没有链接更糟,所以这里
+          // 只留下这条广播的事实,不再假装它点得开。Meta verification 通过、CRM 接回来时
+          // 把链接加回来(延期台账 issue #359)。
           return (
-            <Link
+            <div
               key={broadcast.id}
-              href={`/crm/broadcasts/${broadcast.id}`}
-              className="rounded-xl border border-border p-3 outline-none transition-colors hover:bg-secondary/40 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+              className="rounded-xl border border-border p-3"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="truncate text-sm font-semibold">{purposeLabel(broadcast.purpose)} broadcast</p>
@@ -684,7 +687,7 @@ export function CampaignBroadcastsCard({
                   ? `Sent (simulated) ${dateLabel(broadcast.executedAt)}`
                   : `Created ${dateLabel(broadcast.createdAt)}`}
               </p>
-            </Link>
+            </div>
           );
         })}
       </CardContent>

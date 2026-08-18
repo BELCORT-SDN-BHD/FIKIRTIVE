@@ -83,27 +83,33 @@ describe("创作正名(Founder 裁决:画布是旗舰面,不下线)", () => {
   });
 });
 
-describe("没通电的能力只开一扇诚实的门(#792)", () => {
-  const customers = merchantNavLinks().find((item) => item.key === "customers");
+describe("CRM 整段隐藏(W2-13 / #993,恢复触发条件 = Meta verification 通过)", () => {
+  // 这是本票的**主围栏**(规格书 §7.1「`merchantNavLinks()` 里没有任何 `/crm` 前缀」)。
+  // 变异自查:把 `{ key: "customers", href: "/crm", … }` 加回 MERCHANT_NAV,这一条立刻红。
+  it("导轨数据里没有任何 /crm 前缀的 href —— 一扇门都不剩", () => {
+    const crmDoors = merchantNavLinks().filter((item) => item.href.startsWith("/crm"));
+    expect(crmDoors.map((item) => `${item.key} → ${item.href}`)).toEqual([]);
+  });
 
-  it("客户能力只有一扇门,而且它就是 /crm 的根", () => {
-    expect(customers).toBeDefined();
-    expect(customers!.href).toBe("/crm");
-
-    // 折叠的意思是**导轨上只剩一格**:七扇 /crm/* 子门一个都不许再回到主导航。
+  it("助手那一条也不许指向 CRM(everyNavDestination 是导轨 + 助手的全集)", () => {
     const crmDoors = everyNavDestination().filter((item) => item.href.startsWith("/crm"));
-    expect(crmDoors.map((item) => item.href)).toEqual(["/crm"]);
+    expect(crmDoors.map((item) => `${item.key} → ${item.href}`)).toEqual([]);
   });
 
-  it("那扇门带着一句实话,而且实话说的是渠道没接通", () => {
-    expect(customers!.preview, "预览门没有实话就只是一个改了名的板块").toBeTruthy();
-    expect(customers!.preview!.length).toBeGreaterThan(40);
-    expect(customers!.preview).toMatch(/messaging channel/i);
+  it("customers 这个 key 已经不存在 —— 取它的名字要炸,不许静默返回一个空门", () => {
+    expect(() => navLabel("customers")).toThrow(/customers/);
+    expect(() => navPath("customers")).toThrow(/customers/);
   });
 
-  it("能力齐的门不许挂 preview —— 这枚徽章只在真的没通电时出现", () => {
+  it("Otto 读的界面地图里也没有 CRM —— 它不可能把商家送去一扇不存在的门", () => {
+    expect(merchantNavMap()).not.toContain("/crm");
+  });
+
+  // preview 这个字段本身留着(CRM 回来那天要用),但今天树上没有一扇预览门 ——
+  // 有一扇就意味着导轨又在承诺一件做不到的事,而这一票正是为了不再有这种门。
+  it("今天树上没有任何预览门", () => {
     const preview = everyNavDestination().filter((item) => item.preview);
-    expect(preview.map((item) => item.key)).toEqual(["customers"]);
+    expect(preview.map((item) => item.key)).toEqual([]);
   });
 
   it("实话不写工期 —— 产品不承诺自己不知道的事", () => {
@@ -163,8 +169,6 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
   it("navLabel 给的是导轨上那个词(不带分组前缀),分组名也取得到", () => {
     expect(navLabel("library")).toBe("Library");
     expect(navLabel("campaign")).toBe("Campaign");
-    // #792:CRM 那一组已折叠成 Customers 一格,所以取的是顶层链接与仍在的分组名。
-    expect(navLabel("customers")).toBe("Customers");
     expect(navLabel("workspace")).toBe("Workspace");
     expect(navLabel("otto")).toBe(OTTO_ASSISTANT.label);
     // 组内项:navPath 带分组前缀,navLabel 不带 —— 两者只差那一格。

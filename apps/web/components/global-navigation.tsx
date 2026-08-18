@@ -21,7 +21,6 @@ import {
   Settings,
   SlidersHorizontal,
   User,
-  Users,
   CalendarDays,
   X,
 } from "lucide-react";
@@ -59,7 +58,6 @@ const NAV_ICONS: Record<string, NavigationIcon> = {
   // 板块
   create: Frame,
   campaign: Megaphone,
-  customers: Users,
   workspace: Library,
   settings: Settings,
   // Workspace
