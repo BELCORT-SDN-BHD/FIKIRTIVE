@@ -147,9 +147,9 @@ describe("classifyUnderstandingFailure —— 判据表逐行", () => {
     [503, "try again", "transient"],
     // HTTP 语义写死的那一个
     [415, "", "media"],
-    // 供应商指名道姓说这份字节读不了
+    // 供应商指名道姓说这份字节读不了(指名素材 + 说字节读不动,两半都在)
     [400, "failed to decode the image", "media"],
-    [400, "invalid image: truncated data", "media"],
+    [400, "the image data is truncated", "media"],
     [422, "unsupported media type", "media"],
     // **本次事故那一行**:模型 id 不解析
     [404, '{"error":{"code":"NotFound","message":"The model does not exist"}}', "config"],
@@ -166,9 +166,32 @@ describe("classifyUnderstandingFailure —— 判据表逐行", () => {
   });
 
   it("正文命中媒体措辞时不看 status code —— 400 也可以是真的文件坏了", () => {
-    expect(classifyUnderstandingFailure(400, "IMAGE FORMAT not supported")).toBe("media");
+    expect(classifyUnderstandingFailure(400, "THE IMAGE IS CORRUPTED")).toBe("media");
     // 但 5xx 永远先是 transient:供应商自己崩了,不是这份文件的判决
     expect(classifyUnderstandingFailure(500, "failed to decode the image")).toBe("transient");
+  });
+
+  /**
+   * 对抗组(判官 P2-1)。裸子串会自己长出反例:一个光秃秃的 `decode` 让
+   * "failed to decode request body"(**我方请求**坏了)命中 media,于是全租户的好文件
+   * 又一次被判死刑 —— 和本次事故一字不差的同一个形状,只是换了一扇门进来。
+   * 判据因此要两半:指名素材 **且** 说这些字节读不动。
+   */
+  it.each([
+    // 说的是**我们发过去的东西**坏了,不是商家的文件 —— 一个字都没提素材
+    ["failed to decode request body", "config"],
+    ["request payload truncated", "config"],
+    ["corrupt json in request", "config"],
+    // 提了素材,但说的是「参数不对 / 不支持」,不是「这些字节读不动」
+    ['{"error":{"message":"The parameter `image_url` specified in the request are not valid"}}', "config"],
+    ["this model does not support image input", "config"],
+    ["unsupported image format", "config"],
+    // 两半齐了才算 media
+    ["failed to decode the image", "media"],
+    ["the video file is damaged", "media"],
+    ["frame data is unreadable", "media"],
+  ] as const)("400 + %j ⇒ %s", (detail, expected) => {
+    expect(classifyUnderstandingFailure(400, detail)).toBe(expected);
   });
 });
 
@@ -178,6 +201,7 @@ describe("失败分类", () => {
       [415, ""],
       [400, "failed to decode the image"],
       [422, "unsupported media type"],
+      [400, "the video file is damaged"],
     ] as const) {
       fetchMock.mockResolvedValue({ ok: false, status, text: async () => detail });
       const err = await new ArkUnderstandingProvider("k").understand(IMAGE_REQ).catch((e: unknown) => e);
@@ -224,8 +248,11 @@ describe("失败分类", () => {
     expect(err).toBeInstanceOf(Error);
     // 丢掉用量 ⇒ 平台日预算对这一整类失败是瞎的,连续空响应可以无限计费而账面为零
     expect(understandingErrorUsage(err)).toEqual({ inputTokens: 2_100, outputTokens: 4 });
-    // 重试同一份字节不会变出正文,而每一次重试都要再付一次 —— 终止,不排队
-    expect(isUnreadableMediaError(err)).toBe(true);
+    // **config 而不是 media**(判官 P2-2):空正文最可能的成因是档位 —— thinking 被重新
+    // 打开,思考 token 吃满 max_tokens,content 空着回来。那一刻全平台一起空,而按 media
+    // 处置每一份好文件都会被逐行判死,正是 2026-08-18 事故换一扇门进来。
+    expect(isProviderConfigError(err)).toBe(true);
+    expect(isUnreadableMediaError(err)).toBe(false);
   });
 
   it("真的没花钱的那些错误不会凭空长出用量", async () => {

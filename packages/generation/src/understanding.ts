@@ -110,21 +110,29 @@ export function isProviderConfigError(e: unknown): boolean {
 export type UnderstandingFailureClass = "media" | "config" | "transient";
 
 /**
- * 只有这几句措辞**证明**问题出在这份字节上。名单窄是刻意的,因为两个方向的代价不对称:
- * 把 config 错判成 media,一个配置错误会把每个商家的每一份好文件逐个永久判死(本次事故);
- * 把 media 错判成 config,代价只是那一份文件多跑几次 $0 的重试,然后停在一个可恢复的
- * 暂停态里 —— 没有任何东西被永久毁掉。所以「证据不足」这一边必须倒向 config。
+ * 一句抱怨要算成「这份字节坏了」,必须**同时**满足两件事:
+ *   ① 它指名在说这份**素材**(MEDIA_SUBJECT_WORDS),而不是在说我们发过去的别的东西;
+ *   ② 它说的是**这些字节读不动**(MEDIA_DAMAGE_WORDS),而不是「这个东西我不支持/参数不对」。
+ * 少任何一半都倒向 config。
+ *
+ * 为什么必须是两半(判官 P2-1):裸子串会自己长出反例。上一版名单里有一个光秃秃的
+ * `decode`,而供应商回一句 "failed to decode request body"(**我方请求**坏了)照样命中 ——
+ * 于是全租户的好文件又一次被判死刑,和本次事故一字不差的同一个形状,只是换了一扇门进来。
+ *
+ * 名单窄是刻意的,因为两个方向的代价不对称:把 config 错判成 media,一个配置错误会把
+ * 每个商家的每一份好文件逐个永久判死;把 media 错判成 config,代价只是那一份文件多跑几次
+ * 重试,然后停在一个可恢复的暂停态里 —— 没有任何东西被永久毁掉。
  */
-const MEDIA_FAILURE_MARKERS = [
-  "unsupported media type",
-  "invalid image",
-  "invalid video",
-  "image format",
-  "video format",
-  "decode",
-  "corrupt",
-  "truncated",
-] as const;
+const MEDIA_SUBJECT_WORDS = ["image", "video", "media", "picture", "frame"] as const;
+/**
+ * 刻意**不**收 `invalid` / `unsupported` / `format` 这三个词:它们最常出现的地方是
+ * 「这个参数不对」和「这个模型不支持」——两者都是我方配置。实测形状 `The parameter
+ * \`image_url\` specified in the request are not valid` 同时带 image 和 invalid,
+ * 收了它们,这一句会被判成「商家的图坏了」。
+ */
+const MEDIA_DAMAGE_WORDS = ["decode", "corrupt", "damaged", "truncated", "unreadable"] as const;
+/** HTTP 自己定义的那一句,语义无歧义(415 之外也可能出现在正文里)。 */
+const UNSUPPORTED_MEDIA_TYPE = "unsupported media type";
 
 /**
  * 失败分类的**唯一**判据。显式函数 + 逐形状测试,不是一个 status code 的一刀切
@@ -132,19 +140,24 @@ const MEDIA_FAILURE_MARKERS = [
  * 回答 —— 实测 seed-1-6-flash 对我们的 maxLength schema 就回 400)。
  *
  * 判据表(逐行都有测试):
- *   | 形状                          | 归类       | 为什么                                   |
- *   |-------------------------------|-----------|------------------------------------------|
- *   | 408 / 429 / 5xx               | transient | 供应商侧或限流,和这份文件、这份配置都无关     |
- *   | 415                           | media     | HTTP 语义就是「这个媒体类型我不收」           |
- *   | 正文命中 MEDIA_FAILURE_MARKERS  | media     | 供应商指名道姓说这份字节读不了               |
- *   | 其余 4xx(400/401/403/404/422) | config    | **证据不足的一边** —— 见上,倒向「我方坏」    |
- *   | 其它                          | transient | 不该发生;不确定就不写终态                   |
+ *   | 形状                              | 归类       | 为什么                                  |
+ *   |-----------------------------------|-----------|-----------------------------------------|
+ *   | 408 / 429 / 5xx                   | transient | 供应商侧或限流,和这份文件、这份配置都无关   |
+ *   | 415                               | media     | HTTP 语义就是「这个媒体类型我不收」         |
+ *   | 正文里 "unsupported media type"     | media     | HTTP 自己定义的那句话,无歧义              |
+ *   | 正文**同时**指名素材 + 说字节读不动    | media     | 供应商指名道姓说这份字节坏了               |
+ *   | 其余 4xx(400/401/403/404/422)     | config    | **证据不足的一边** —— 见上,倒向「我方坏」  |
+ *   | 其它                              | transient | 不该发生;不确定就不写终态                 |
  */
 export function classifyUnderstandingFailure(status: number, detail: string): UnderstandingFailureClass {
   if (status === 408 || status === 429 || status >= 500) return "transient";
   if (status === 415) return "media";
   const body = (detail || "").toLowerCase();
-  if (MEDIA_FAILURE_MARKERS.some((marker) => body.includes(marker))) return "media";
+  if (body.includes(UNSUPPORTED_MEDIA_TYPE)) return "media";
+  // 两半都要:指名素材 **且** 说这些字节读不动。少一半 = 证据不足 = config。
+  const namesTheMedia = MEDIA_SUBJECT_WORDS.some((word) => body.includes(word));
+  const saysTheBytesAreBad = MEDIA_DAMAGE_WORDS.some((word) => body.includes(word));
+  if (namesTheMedia && saysTheBytesAreBad) return "media";
   if (status >= 400) return "config";
   return "transient";
 }
@@ -152,13 +165,23 @@ export function classifyUnderstandingFailure(status: number, detail: string): Un
 /**
  * 供应商回了 200、报了用量,但正文是空的 —— **这一趟钱已经花了**。
  *
- * 上一版在这里抛一个普通 Error,用量随栈一起丢掉:worker 落一行没有 token 的 FAILED,
- * 平台日预算的 SUM 因此对这一整类失败视而不见。连续的空响应可以一直计费而账面永远是零。
- * 所以用量必须跟着错误走出这个函数 —— worker 拿它落库,再按失败处理。
+ * 用量必须跟着错误走出这个函数(worker 拿它落库):上上版在这里抛一个普通 Error,用量随栈
+ * 一起丢掉,于是平台日预算的 SUM 对这一整类失败视而不见,连续的空响应可以一直计费而账面
+ * 永远是零。
+ *
+ * **它是 config 类,不是 media 类**(判官 P2-2)。上一版把空正文当成「这份文件读不了」写死
+ * 终态,而空正文最可能的成因根本不在文件上 —— 最具体的那个形状:`thinking` 被重新打开
+ * (供应商改默认,或者有人删了 `disabled`),思考 token 吃满 `max_tokens`,`content` 于是
+ * 空着回来。那一刻**每个商家的每一份文件**都会拿到空正文,而按上一版的处置,它们会被逐行
+ * 永久判死 —— 和 2026-08-18 那次事故一字不差,只是换了一扇门进来。
+ *
+ * 代价说清楚:和 404 不同,这条路**每一次重试都真的花钱**。兜住它的不是这个分支自己,是
+ * 平台日预算那道闸(每一次调用之前都查一次 SUM);烧到上限就整条链路暂缓,次日复位。
+ * 拿「一天至多烧掉日预算」换「商家的素材一件都不丢」——这条链路的纪律就是这么定的。
  */
 export function emptyUnderstandingResponseError(usage: UnderstandingUsage): Error {
   return Object.assign(new Error("understanding response had no text"), {
-    unreadable: true as const,
+    providerConfig: true as const,
     understandingUsage: usage,
   });
 }

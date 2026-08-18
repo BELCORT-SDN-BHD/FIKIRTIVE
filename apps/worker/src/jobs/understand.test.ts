@@ -377,9 +377,11 @@ describe("平台日预算:超线本轮停,次日恢复", () => {
     mocks.understand.mockResolvedValue({
       text: "I think it's a mug!", usage: { inputTokens: 2_000, outputTokens: 30 },
     });
-    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    // 重试用完的那一次落 PAUSED(config 类,见 holdUnusableResponse)—— 状态变了,
+    // 但这条用例钉的那件事没变:钱花了就必须记账。
+    await handleUnderstand({ understandingId: "u-1" }, 2, port);
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
-    expect(last.data.status).toBe("FAILED");
+    expect(last.data.status).toBe("PAUSED");
     // 钱花了就必须记账,否则日预算对这一整类失败是瞎的
     expect(last.data.inputTokens).toBe(2_000);
     expect(last.data.outputTokens).toBe(30);
@@ -388,11 +390,21 @@ describe("平台日预算:超线本轮停,次日恢复", () => {
   it("**200 + 空正文**那一趟也记账 —— 用量随错误走出端口(否则可无限计费而账面为零)", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockRejectedValue(emptyUnderstandingResponseError({ inputTokens: 2_100, outputTokens: 4 }));
-    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).resolves.toBeNull();
+    // 重试用完的那一次:PAUSED(config 类),用量照样落库
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
-    expect(last.data.status).toBe("FAILED");
+    expect(last.data.status).toBe("PAUSED");
     expect(last.data.inputTokens).toBe(2_100);
     expect(last.data.outputTokens).toBe(4);
+  });
+
+  it("还在重试中的那几次也把用量落下 —— 每一条路都要记,不然日预算漏一整类", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockRejectedValue(emptyUnderstandingResponseError({ inputTokens: 2_100, outputTokens: 4 }));
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).rejects.toThrow();
+    const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
+    expect(last.data.status).toBe("QUEUED");
+    expect(last.data).toMatchObject({ inputTokens: 2_100, outputTokens: 4 });
   });
 
   it("真的没花钱的失败不会凭空长出用量", async () => {
@@ -495,13 +507,23 @@ describe("image-caption", () => {
     expect(mocks.assetUnderstanding.createMany).not.toHaveBeenCalled();
   });
 
-  it("产物解析不出来 ⇒ FAILED,不落半句空理解", async () => {
+  it("产物解析不出来 ⇒ 不落半句空理解,而且**不写终态**(重试,用完才 PAUSED)", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockResolvedValue({ text: "I think it's a mug!", usage: { inputTokens: 1, outputTokens: 1 } });
-    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).rejects.toThrow();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
-    expect(last.data.status).toBe("FAILED");
+    expect(last.data.status).toBe("QUEUED");
     expect(mocks.assetUnderstanding.createMany).not.toHaveBeenCalled();
+
+    // 重试用完 ⇒ PAUSED,依然不是 FAILED
+    vi.clearAllMocks();
+    mocks.assetUnderstanding.updateMany.mockResolvedValue({ count: 1 });
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockResolvedValue({ text: "I think it's a mug!", usage: { inputTokens: 1, outputTokens: 1 } });
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
+    const statuses = mocks.assetUnderstanding.updateMany.mock.calls.map((c) => c[0].data.status);
+    expect(statuses).not.toContain("FAILED");
+    expect(statuses.at(-1)).toBe("PAUSED");
   });
 });
 
@@ -609,14 +631,16 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
     });
   });
 
-  it("**解析失败兜底**:读不出来 ⇒ 一行 BrandRecord 都不写", async () => {
+  it("**解析失败兜底**:读不出来 ⇒ 一行 BrandRecord 都不写,且不判这张菜单的死刑", async () => {
     mocks.understand.mockResolvedValue({ text: "Sorry, the photo is too blurry.", usage: { inputTokens: 3000, outputTokens: 20 } });
-    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    // 重试额度用完的那一次:落 PAUSED,不是 FAILED —— 档位修好之后这张菜单还会被读到
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
     expect(mocks.brandRecord.create).not.toHaveBeenCalled();
     expect(mocks.brandRecord.update).not.toHaveBeenCalled();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
-    expect(last.data.status).toBe("FAILED");
-    expect(String(last.data.error)).toMatch(/couldn't be read/i);
+    expect(last.data.status).toBe("PAUSED");
+    // 用量必须落库:这一趟供应商回过话了,钱花掉了(日预算的唯一依据)
+    expect(last.data).toMatchObject({ inputTokens: 3000, outputTokens: 20 });
   });
 
   it("空清单是合法结果(读不出来就不猜)—— DONE,零产品行", async () => {

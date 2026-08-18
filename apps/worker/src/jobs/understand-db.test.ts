@@ -261,19 +261,32 @@ describe("存量 FAILED 行的恢复(直接跑迁移文件里的那条语句)", 
       const skippedTooBig = await seedRow("SKIPPED", `left unread — ${SIGNATURE}`);
       const done = await seedRow("DONE", null);
 
-      expect(await prisma.$executeRawUnsafe(RECOVERY_SQL)).toBe(1); // 只有一行够格
+      // 计数按 `>= 1` 断言而不是 `=== 1`:这条语句是**全表**的(签名跨租户,那正是它的
+      // 设计),同一个测试库里别的套件也可能有行。真正的内容断言在下面,逐行、按 owner。
+      expect(await prisma.$executeRawUnsafe(RECOVERY_SQL)).toBeGreaterThanOrEqual(1);
 
       const after = async (id: string) => (await myRow(id))!;
+      const snapshot = async () =>
+        Object.fromEntries(
+          await Promise.all(
+            [killedByConfig, reallyUnreadable, skippedTooBig, done].map(async (id) => {
+              const r = await after(id);
+              return [id, `${r.status}|${r.error ?? ""}`] as const;
+            }),
+          ),
+        );
+
       expect(await after(killedByConfig)).toMatchObject({ status: "QUEUED", error: null });
       // 越界清理的三个反例:真读不了的、别的终态、已经读懂的 —— 一行都不许被碰
       expect((await after(reallyUnreadable)).status).toBe("FAILED");
       expect((await after(skippedTooBig)).status).toBe("SKIPPED");
       expect((await after(done)).status).toBe("DONE");
 
-      // 幂等:第二遍一行都匹配不到(status 和 error 已经一起改掉了)
-      expect(await prisma.$executeRawUnsafe(RECOVERY_SQL)).toBe(0);
-      expect(await after(killedByConfig)).toMatchObject({ status: "QUEUED", error: null });
-      expect((await after(reallyUnreadable)).status).toBe("FAILED");
+      // 幂等:再跑一遍,我们这四行一个字都不变(status 和 error 已经一起改掉了,
+      // 所以第二遍匹配不到它们)。比断言「第二遍影响 0 行」更稳,也更接近真正的主张。
+      const before = await snapshot();
+      await prisma.$executeRawUnsafe(RECOVERY_SQL);
+      expect(await snapshot()).toEqual(before);
     },
     30_000,
   );

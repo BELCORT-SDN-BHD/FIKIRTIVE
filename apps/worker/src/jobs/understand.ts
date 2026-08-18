@@ -75,6 +75,7 @@ import {
   createUnderstandingProvider,
   isProviderConfigError,
   isUnreadableMediaError,
+  providerConfigError,
   understandingErrorUsage,
   type UnderstandingProvider,
 } from "@fikirtive/generation";
@@ -107,9 +108,13 @@ export const UNDERSTAND_STALE_MS = 30 * 60_000;
 /**
  * 一行 PAUSED(我方配置坏了)多久之后再试一次。
  *
- * 一小时是在两件事之间选的:配置修好之后商家不该等一天,而配置**没**修好时这条链路不该
- * 每分钟对着供应商砸同一批 404。配置类失败不带用量(供应商连图都没看),所以重试的钱是零,
- * 唯一的成本是请求本身 —— 一小时一轮、每轮至多 UNDERSTAND_SCAN_BATCH 行,足够低。
+ * 一小时是在两件事之间选的:配置修好之后商家不该等一天,而配置**没**修好时同一行不该
+ * 每分钟被反复投出去。
+ *
+ * 口径说准(判官 P3-1):这是**每一行**的冷却,不是全平台的节流。扫描器每分钟跑一轮,
+ * 每轮至多捡 UNDERSTAND_SCAN_BATCH(25)行,所以积压很深时的总量是 25 行/分钟,
+ * 而不是「一小时一批 25 行」。真正的花费上限不在这里,在平台日预算那道闸:
+ * 404 那类重试是 $0(供应商连图都没看),而 200-空正文那类每次都真的付钱,靠日预算兜住。
  */
 export const UNDERSTAND_PAUSED_RETRY_MS = 60 * 60_000;
 
@@ -356,11 +361,40 @@ async function fail(row: Row, message: string, usage?: { inputTokens: number; ou
  * 坏着的时候那是每分钟一次的无效砸门;PAUSED 停下来等人修,由扫描器第 ③ 段按
  * {@link UNDERSTAND_PAUSED_RETRY_MS} 的节奏捡回来。两者都不是终态,商家的素材一件不丢。
  */
-async function pauseForConfig(row: Row): Promise<void> {
+async function pauseForConfig(row: Row, usage?: { inputTokens: number; outputTokens: number }): Promise<void> {
   await prisma.assetUnderstanding.updateMany({
     where: { id: row.id, ownerId: row.ownerId },
-    data: { status: "PAUSED", error: UNDERSTANDING_PROVIDER_PAUSED },
+    data: { status: "PAUSED", error: UNDERSTANDING_PROVIDER_PAUSED, ...(usage ?? {}) },
   });
+}
+
+/**
+ * **200 回来了,但正文用不了** —— 空正文,或者这个 kind 的产物解析不出来。
+ *
+ * 走**配置类**(重试 → PAUSED),不写终态。理由和 404 那一条是同一条:同一时刻全平台
+ * 一起吐不出可用正文,几乎必然是我方/供应商的档位问题,而不是每个商家的每份文件同时坏掉。
+ * 最具体的形状:`thinking` 被重新打开 ⇒ 思考 token 吃满 `max_tokens` ⇒ `content` 空 ⇒
+ * 按上一版每一份文件都落 FAILED 终态、零恢复路径。
+ *
+ * **用量必须落库**:这一趟供应商已经回过话,钱花掉了。不记账,平台日预算对这一整类是瞎的 ——
+ * 而那道预算闸正是这条路唯一的花费上限(和 404 不同,这里每次重试都真的付钱)。
+ */
+async function holdUnusableResponse(
+  row: Row,
+  retryCount: number,
+  usage: { inputTokens: number; outputTokens: number },
+): Promise<null> {
+  if (retryCount < UNDERSTAND_RETRY_LIMIT) {
+    await prisma.assetUnderstanding.updateMany({
+      where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
+      data: { status: "QUEUED", error: UNDERSTANDING_PROVIDER_PAUSED, ...usage },
+    });
+    // 抛给 pg-boss 记账 + 退避重投(和端口抛出来的配置类错误走同一条路)。
+    throw providerConfigError("understanding response had nothing usable in it");
+  }
+  await pauseForConfig(row, usage);
+  reportUnderstandingFailure(row, "paused-config", "the response had nothing usable in it");
+  return null;
 }
 
 /**
@@ -599,6 +633,9 @@ export async function handleUnderstand(
       // classifyUnderstandingFailure,这里只按结论分路。
       const configProblem = isProviderConfigError(e);
       const message = sanitizeError(e);
+      // 用量跟着错误走时(供应商已经回过话 ⇒ 钱花掉了)必须落库,**每一条路都要**:
+      // 少了它,一整类已经计费的失败在平台日预算里记 $0.0000,账面于是永远健康。
+      const spentUsage = understandingErrorUsage(e) ?? undefined;
       console.warn(`[understand] ${row.id} (${kind}) failed:`, message);
       // 还有重试额度 ⇒ 退回 QUEUED 让 pg-boss 再送一次(CAS 才能再赢一次)。
       // 这条队列不碰商家余额,所以重试是安全的;配置类和暂时性走同一条重试路,
@@ -606,20 +643,22 @@ export async function handleUnderstand(
       if (retryCount < UNDERSTAND_RETRY_LIMIT) {
         await prisma.assetUnderstanding.updateMany({
           where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
-          data: { status: "QUEUED", error: configProblem ? UNDERSTANDING_PROVIDER_PAUSED : message.slice(0, 300) },
+          data: {
+            status: "QUEUED",
+            error: configProblem ? UNDERSTANDING_PROVIDER_PAUSED : message.slice(0, 300),
+            ...(spentUsage ?? {}),
+          },
         });
         throw e; // pg-boss 记账 + 退避重投
       }
       // 重试用完。**这里是那个吞点** —— 不抛,所以 pg-boss 认为这份活成功了,死信队列
       // 永远收不到它。两条路都必须自己把话说出去(reportUnderstandingFailure)。
       if (configProblem) {
-        await pauseForConfig(row);
+        await pauseForConfig(row, spentUsage);
         reportUnderstandingFailure(row, "paused-config", message);
         return null;
       }
-      // 用量跟着错误走时一并落库:少了它,一整类已经计费的失败在平台日预算里记 $0.0000,
-      // 账面于是永远健康(和空响应那一类是同一个洞)。
-      await fail(row, message, understandingErrorUsage(e) ?? undefined);
+      await fail(row, message, spentUsage);
       reportUnderstandingFailure(row, "failed", message);
       return null;
     }
@@ -638,12 +677,9 @@ export async function handleUnderstand(
 
     if (kind === "image-caption") {
       const caption = parseImageCaption(parsedJson);
-      if (!caption) {
-        // 供应商回过话了 ⇒ 这一趟**已经计费**。带上用量落盘,不然平台日预算对这一整类
-        // 失败是瞎的(而「读回来的是散文」正是本票自陈未实测的那个失效模式)。
-        await fail(row, UNDERSTANDING_UNREADABLE, tokens);
-        return null;
-      }
+      // 200 但产物解析不出来 ⇒ **不写终态**,走配置类(见 holdUnusableResponse):
+      // 「读回来的不是我们要的形状」在全平台一起发生时是档位问题,不是每个商家的文件同时坏。
+      if (!caption) return holdUnusableResponse(row, retryCount, tokens);
       // 三件套之间那条线:这张图基本上是一整页字 ⇒ 值得再花一次去读它的产品行。
       //
       // **caption 落 DONE 与 doc-extract 建行在同一个事务里。** 分成两步写(r2)有一个
@@ -684,12 +720,10 @@ export async function handleUnderstand(
 
     if (kind === "doc-extract") {
       const doc = parseDocExtract(parsedJson);
-      // 票面要求的解析失败兜底:**一行 BrandRecord 都不写**,落一句商家读得懂的话。
-      // 半份产品目录比没有产品目录糟得多 —— 商家会以为 Otto 已经认识他的菜单了。
-      if (!doc) {
-        await fail(row, UNDERSTANDING_UNREADABLE, tokens);
-        return null;
-      }
+      // 票面要求的解析失败兜底:**一行 BrandRecord 都不写**。半份产品目录比没有产品目录
+      // 糟得多 —— 商家会以为 Otto 已经认识他的菜单了。落什么状态见 holdUnusableResponse:
+      // 不写终态,这样档位修好之后这张菜单还会被读到。
+      if (!doc) return holdUnusableResponse(row, retryCount, tokens);
       let saved = 0;
       for (const product of doc.products) {
         if (await upsertProductRecord(row.ownerId, product)) saved++;
@@ -706,10 +740,7 @@ export async function handleUnderstand(
 
     // video-qa
     const video = parseVideoQa(parsedJson);
-    if (!video) {
-      await fail(row, UNDERSTANDING_UNREADABLE, tokens);
-      return null;
-    }
+    if (!video) return holdUnusableResponse(row, retryCount, tokens);
     const remembered = await rememberVideoFacts(row.ownerId, video.facts);
     await prisma.assetUnderstanding.updateMany({
       where: { id: row.id, ownerId: row.ownerId },
