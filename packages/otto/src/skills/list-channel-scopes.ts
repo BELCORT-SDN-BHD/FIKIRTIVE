@@ -15,7 +15,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
-import { MESSAGING_STATUS_ASSISTANT, navLabel } from "@fikirtive/core";
+import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -37,8 +37,8 @@ export const listChannelScopesSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "List the workspace's connected messaging channel accounts (channel + scope key) — the same rows " +
-    `a human sees on the message-template and broadcast pages under ${navLabel("customers")}. $0 read-only. ` +
+    "List the workspace's connected messaging channel accounts (channel + scope key). $0 read-only. " +
+    "There is no page in the app that shows them, so never point the merchant at one. " +
     `Never guess an id. ${MESSAGING_STATUS_ASSISTANT}`,
   parameters: params,
   execute: executeListChannelScopes,

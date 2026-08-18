@@ -1,9 +1,7 @@
-import SegmentsPage from "@/components/crm/segments-page";
-import { listSegments } from "@/lib/segment-actions";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const metadata = { title: "Customer segments · Fikirtive" };
-
+/** CRM 整段收起来了(W2-13 / #993)。文件保留、内容换成重定向,旧书签不撞墙 ——
+ *  原委与恢复条件写在 app/crm/page.tsx。 */
 export default async function CustomerSegmentsPage() {
-  return <SegmentsPage initialState={await listSegments()} />;
+  redirect("/");
 }

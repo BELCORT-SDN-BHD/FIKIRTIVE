@@ -49,8 +49,14 @@ export function isUnderstandingKind(v: string): v is UnderstandingKind {
  *  图片超像素闸)—— 那是**内容**的属性,重传同样的字节也一样。资源原因(开关关、
  *  平台预算见底、这个环境签不出 URL、宽高/时长还没探测出来)一律**不落 SKIPPED**:
  *  那些行退回 QUEUED,下一轮继续。素材被软删也不落 SKIPPED —— 那一行直接删掉,
- *  否则商家「删掉再重传」这条唯一的自救路径也会失效(worker 的 `drop`)。 */
-export const UNDERSTANDING_STATUSES = ["QUEUED", "RUNNING", "DONE", "FAILED", "SKIPPED"] as const;
+ *  否则商家「删掉再重传」这条唯一的自救路径也会失效(worker 的 `drop`)。
+ *
+ *  PAUSED = **可恢复的暂停**,不是终态:我们自己的请求或配置坏了(模型 id 不存在、
+ *  key 不对、schema 被拒),文件本身一点问题都没有。重试用完之后行停在这里等人修,
+ *  修好了扫描器把它捡回 QUEUED。它存在的唯一理由是 2026-08-18 那次事故:一个没核过的
+ *  模型 id 让每次调用 404,而 404 当时被当成「这份素材读不了」写成 FAILED 终态,于是
+ *  每个商家的每一份好文件被逐个永久判死,而且没有任何一条恢复路径。 */
+export const UNDERSTANDING_STATUSES = ["QUEUED", "RUNNING", "DONE", "FAILED", "SKIPPED", "PAUSED"] as const;
 export type UnderstandingStatus = (typeof UNDERSTANDING_STATUSES)[number];
 
 /** 理解模型的**内部**代号。白标:对外(日志、卡面、Otto 的嘴)一律不出现供应商 id;
@@ -540,3 +546,10 @@ export const UNDERSTANDING_PAUSED = "Reading is paused right now.";
 export const UNDERSTANDING_NO_MEDIA_URL = "This environment can't hand the file to the reader yet.";
 export const UNDERSTANDING_METADATA_PENDING = "That file's dimensions aren't known yet — it will be read once they are.";
 export const UNDERSTANDING_BUDGET_REACHED = "Today's reading budget is used up — this file is read tomorrow.";
+/**
+ * **PAUSED 的措辞** —— 这一句必须和 FAILED 那一句说的是两回事,因为它们要商家做的事相反。
+ * 「读不清楚」的正确建议是传一份更清楚的;而这一行的文件本来就好好的,商家做什么都没用,
+ * 也不该被叫去重传。所以它只说两件事:还没读到、会自己再来。
+ */
+export const UNDERSTANDING_PROVIDER_PAUSED =
+  "That file hasn't been read yet — something on our side needs fixing first. It stays in line and will be read once that's sorted.";

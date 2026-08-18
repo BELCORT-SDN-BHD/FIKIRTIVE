@@ -14,6 +14,7 @@
  *    re-hashes the stream and deletes mismatches (see worker/jobs/ingest)
  */
 import { createHash } from "node:crypto";
+import * as Sentry from "@sentry/node";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
 import {
@@ -42,6 +43,26 @@ import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";
 import { requireOwner } from "@/lib/auth-guard";
 import { consumeUploadGate } from "@/lib/rate-limit-gates";
+
+/**
+ * C1b ③ — an ingest dispatch we could not place, reported where somebody will see it.
+ *
+ * NOT exported: every export of a `"use server"` module becomes a callable server action, and
+ * this is a local reporting detail rather than an endpoint. Module-local keeps it off the wire.
+ *
+ * The payload carries asset IDs and NOTHING else — no tenant, no filename, no hash. An unverified
+ * upload is somebody's private file; what ops needs in order to act is how many and which rows,
+ * and both are answerable from an ID. (Same discipline as the dead-letter probe's own report,
+ * `lib/dlq-watch.ts`: say what is stuck, never whose it is.)
+ */
+function reportUndispatchedIngest(assetIds: string[]): void {
+  if (!process.env.SENTRY_DSN) return;
+  Sentry.captureMessage(`ingest dispatch failed for ${assetIds.length} upload(s) — hashes unverified until the sweep`, {
+    level: "error",
+    tags: { probe: "ingest-dispatch" },
+    extra: { assetIds: assetIds.join(" "), count: assetIds.length },
+  });
+}
 
 export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResult | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
@@ -285,15 +306,51 @@ export async function finalizeCandidateUploads(
   // claimed sha256 named the key, the worker PROVES it (D19 rule 3). Unlike
   // the legacy path (where the server hashed the bytes it stored, so the hash
   // is already trusted), here the hash is a client claim and this dispatch is
-  // load-bearing. If it fails the rows still exist but unverified — logged at
-  // error level for the reconciliation sweep to re-dispatch (proper fix:
-  // Asset.verifiedAt + hide-until-verified, deferred while single-tenant).
-  try {
-    const boss = await getBoss();
-    for (const id of assetIds) await boss.send(INGEST_QUEUE, { assetId: id });
-  } catch (e) {
-    console.error("[upload] UNVERIFIED — ingest dispatch failed for", assetIds, ":", e instanceof Error ? e.message : e);
+  // load-bearing.
+  //
+  // ── C1b ③: A FAILED DISPATCH IS NOW LOUD, AND ONE FAILURE NO LONGER STRANDS THE BATCH ────
+  // This block used to be a single try/catch around the whole loop, with a `console.error` as
+  // its only consequence. Two defects lived in that shape:
+  //
+  //   1. ONE THROW ENDED THE LOOP. A send that failed on the second of five assets meant assets
+  //      three, four and five were never even attempted — and the log line then named all five,
+  //      so the record of what happened was wrong in the same breath it was written.
+  //   2. NOTHING ALERTED. `console.error` from a server action reaches the platform log and
+  //      stops there. The one signal that a merchant's file is live with an UNPROVEN hash went
+  //      to a stream nobody watches, which is the same as not having it.
+  //
+  // What did NOT change, deliberately: the action still answers `ok`. The rows really are
+  // committed and the file really is in the merchant's library — telling them it failed would be
+  // a different lie, and one that makes them upload it a second time. What was missing was never
+  // the merchant's half; it was ours.
+  //
+  // The durable retry already exists and is the reason a lost send is recoverable at all:
+  // `redispatchLostIngest` (apps/worker/src/jobs/ingest.ts) sweeps every UPLOAD asset still
+  // carrying no probe metadata after 15 minutes and re-sends it, deduped by singletonKey. So
+  // the honest description of a failure here is "verification is late and someone should know",
+  // and that is exactly what now gets reported.
+  //
+  // RESIDUAL, stated rather than papered over: between this moment and that sweep, the asset is
+  // visible with a client-claimed hash. Closing that window properly needs `Asset.verifiedAt` +
+  // hide-until-verified, which is a schema change and stays deferred.
+  //
+  // `getBoss()` INSIDE the loop is deliberate and costs nothing. It is a cached lazy singleton
+  // (lib/queue.ts): on the happy path every iteration after the first gets the same resolved
+  // handle. When the queue is genuinely down, its failure cell puts the cache into a cooldown,
+  // so iterations 2..N reject IMMEDIATELY instead of each paying a fresh connect timeout — a
+  // batch of ten fails fast rather than ten times slowly. Hoisting the call out of the loop
+  // would put the whole batch back behind one `await` and reintroduce defect (1) above.
+  const undispatched: string[] = [];
+  for (const id of assetIds) {
+    try {
+      const boss = await getBoss();
+      await boss.send(INGEST_QUEUE, { assetId: id });
+    } catch (e) {
+      undispatched.push(id);
+      console.error("[upload] UNVERIFIED — ingest dispatch failed for", id, ":", e instanceof Error ? e.message : e);
+    }
   }
+  if (undispatched.length > 0) reportUndispatchedIngest(undispatched);
   revalidatePath("/", "layout");
   return { ok: true, count: persistable.length, failures, generationIds };
 }
