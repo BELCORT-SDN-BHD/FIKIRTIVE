@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 /**
- * CRM 折叠成诚实预览入口(#792)—— 双面围栏 + **能力真值核验**。
+ * CRM 隐藏与能力真值围栏(#792 → W2-13 / #993)。
+ *
+ * **W2-13(#993,Founder 裁决 2026-08-18 裁决2):CRM 整段从商家表面上消失。**
+ * 导轨那一格删了,`/crm` 的 14 个路由各自 `redirect("/")`(旧书签不撞墙),恢复触发条件
+ * = Meta verification 通过(登记在延期台账 issue #359)。所以这份围栏的①层从「只剩一格,
+ * 而且那一格先说自己是预览」改成「一格都不剩,而且没有半扇门」——**改的是断言的事实,
+ * 不是删掉覆盖**:②能力真值、③真行为、④Otto 三层原样留着,因为 CRM 引擎与页面组件一行
+ * 没删,它们哪天被接通,这份账要照着核。
+ *
+ * 下面这段是 #792 当时的原委,留着是因为②③两层的判据全部由它推导:
  *
  * Founder 裁决(2026-08-08):七扇 CRM 门收成一个「Customer(预览版)」入口,诚实说明消息
  * 渠道未接通、现在能做的是建客户档案。
@@ -10,7 +19,8 @@
  * 写卡点」,不是「写的卡点是不是真的」。差别就是这一票的全部内容。
  *
  * 所以现在分四层:
- *   ① **UI** —— 导轨只剩一格、点开前就说自己是预览、七个表面一个都没被藏起来;
+ *   ① **UI** —— (W2-13 改写)导轨上一格都不剩、壳在 /crm 底下什么都不画、14 个路由全都
+ *      只是 `redirect("/")`、商家点得到的地方一条 /crm 都没有;
  *   ② **能力真值** —— 页面上每一句卡点都必须在**实现里找得到证据**(那个永远失败的
  *      chokepoint 还在、那个只会写 simulated 的分支还在、那两个没接通的事实还在)。实现
  *      变了这里就红,红了就该回来改文案 —— 这正是「说的与做的」被绑在一起的地方;
@@ -22,16 +32,13 @@
  * 零后端、零生成:静态渲染 + 源码读取 + jsdom 里的真组件事件。
  */
 import { readFileSync, readdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { everyNavDestination, merchantNavMap, navLinkByKey } from "@fikirtive/core/navigation";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { merchantNavLinks, merchantNavMap } from "@fikirtive/core/navigation";
 import {
   MESSAGING_STATUS_ASSISTANT,
   MESSAGING_STATUS_CANNOT_CONNECT,
@@ -67,7 +74,8 @@ import { createContact } from "@/lib/crm-actions";
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
 
-/** 折叠掉的那七个表面。它们的**路由一页没删** —— 引擎原地保留,等一处一处接通。 */
+/** 收起来的那七个表面。它们的**路由文件一页没删**(各自 `redirect("/")`),页面组件与引擎
+ *  原地保留 —— 等 Meta verification 通过再接回来(W2-13 / #993,台账 issue #359)。 */
 const FOLDED_CRM_SURFACES: readonly string[] = [
   "/crm/inbox",
   "/crm/contacts",
@@ -78,9 +86,9 @@ const FOLDED_CRM_SURFACES: readonly string[] = [
   "/crm/reports",
 ];
 
-const CUSTOMERS = navLinkByKey("customers");
-/** 那句实话本身。围栏的每一条都指着它,所以先在这里断一次它真的存在。 */
-const PREVIEW_TRUTH = CUSTOMERS.preview ?? "";
+/** 「消息渠道连不上」那句实话。它原来住在导航那一格的 `preview` 字段上;那一格删了之后,
+ *  唯一权威仍然是 core 的这个常量 —— 预览页与 Otto 读的都是它,一份没多。 */
+const PREVIEW_TRUTH = MESSAGING_STATUS_MERCHANT;
 
 const ALL_ENTRIES = [...WORKS_TODAY, ...IN_PREVIEW];
 const ENTRY_BY_HREF = new Map(ALL_ENTRIES.map((entry) => [entry.href, entry]));
@@ -99,6 +107,37 @@ function source(relativeToWebRoot: string): string {
 /** 实现不一定住在 apps/web 里 —— Routine 的写入点在 packages/db。 */
 function repoSource(relativeToRepoRoot: string): string {
   return readFileSync(path.join(REPO_ROOT, relativeToRepoRoot), "utf8");
+}
+
+const CRM_APP_DIR = path.join(WEB_ROOT, "app/crm");
+
+/** app/crm 底下每一个 page.tsx(相对 CRM_APP_DIR)。枚举源,不手抄清单。 */
+function crmRouteFiles(): string[] {
+  return readdirSync(CRM_APP_DIR, { recursive: true, encoding: "utf8" })
+    .filter((file) => file.endsWith("page.tsx"))
+    .sort();
+}
+
+/**
+ * 商家真点得到的那些文件 —— app/ 与 components/ 底下,**除了**收起来的 CRM 自己那两棵子树。
+ *
+ * 为什么要排除它们:CRM 的页面组件与 error 边界原地保留(等 Meta verification),它们内部
+ * 当然还互相链接。那些链接商家到不了 —— 每一条 /crm 路由都先 `redirect("/")`。这条围栏问的
+ * 是「有没有一扇**商家点得到**的门通向收起来的段」,#792 之后的那种「半扇门」正是它要挡的。
+ */
+function merchantReachableFiles(): string[] {
+  const roots = [path.join(WEB_ROOT, "app"), path.join(WEB_ROOT, "components")];
+  const hidden = [CRM_APP_DIR, path.join(WEB_ROOT, "components/crm")];
+  const files: string[] = [];
+  for (const root of roots) {
+    for (const rel of readdirSync(root, { recursive: true, encoding: "utf8" })) {
+      const full = path.join(root, rel);
+      if (!/\.tsx?$/.test(rel) || rel.includes("__tests__")) continue;
+      if (hidden.some((dir) => full.startsWith(`${dir}${path.sep}`))) continue;
+      files.push(full);
+    }
+  }
+  return files;
 }
 
 /**
@@ -214,251 +253,87 @@ const ottoInstructionsText = readFileSync(
   "utf8",
 );
 
-/* ── ① UI 一面 ─────────────────────────────────────────────────────────────── */
+/* ── ① UI 一面:CRM 整段不在商家表面上(W2-13 / #993)────────────────────────── */
 
-describe("导轨上只剩一格,而且它先说自己是预览", () => {
-  it("七扇 CRM 门在导轨里一扇都不剩", () => {
+describe("导轨上一格都不剩,而且没有半扇门", () => {
+  it("导轨数据里没有任何 /crm 前缀的 href", () => {
+    const crmDoors = merchantNavLinks().filter((item) => item.href.startsWith("/crm"));
+    expect(crmDoors.map((item) => `${item.key} → ${item.href}`)).toEqual([]);
+  });
+
+  it("画出来的导轨里也一个都没有(数据对了,壳也得跟上)", () => {
     const markup = renderShell("/campaign");
 
-    const stillInTheRail = FOLDED_CRM_SURFACES.filter((href) => markup.includes(`href="${href}"`));
-    expect(stillInTheRail, "折叠没做完:这些子门还在主导航上").toEqual([]);
+    const stillInTheRail = ["/crm", ...FOLDED_CRM_SURFACES].filter((href) =>
+      markup.includes(`href="${href}"`),
+    );
+    expect(stillInTheRail, "CRM 还在主导航上").toEqual([]);
   });
 
-  it("剩下的那一格通向预览页", () => {
-    expect(renderShell("/campaign")).toContain(`href="${CUSTOMERS.href}"`);
-    expect(CUSTOMERS.href).toBe("/crm");
-  });
-
-  it("点开之前就看得到 Preview —— 徽章画的是权威源里的那句实话", () => {
-    // 先证明有对象:实话是空的,底下每一条 toContain 都会白白通过。
-    expect(PREVIEW_TRUTH.length, "Customers 这扇门没有那句实话").toBeGreaterThan(40);
-
-    const markup = renderShell("/campaign");
-    expect(markup).toContain(">Preview<");
-    expect(markup).toContain(PREVIEW_TRUTH);
-  });
-
-  it("能力齐的门不许长出 Preview 徽章(徽章只跟着 preview 字段走)", () => {
-    const markup = renderShell("/campaign");
-    const badges = markup.match(/>Preview</g) ?? [];
-    const previewDoors = everyNavDestination().filter((item) => item.preview);
-
-    expect(badges.length).toBe(previewDoors.length);
-  });
-
-  it("站在任何一个 CRM 表面上,亮的都是这一格", () => {
+  it("壳在 /crm 底下什么都不画 —— 不是「亮着一格但点进去被弹走」", () => {
     for (const surface of ["/crm", ...FOLDED_CRM_SURFACES]) {
-      expect(renderShell(surface), surface).toMatch(
-        // r3:预览门的 title 现在带着那句实话(见「各断点都诚实」那一组),所以按前缀匹配。
-        new RegExp(`aria-current="page" title="${CUSTOMERS.label} — Preview\\.`),
-      );
+      const markup = renderShell(surface);
+      expect(markup, surface).not.toContain('aria-label="Global navigation"');
+      expect(markup, surface).toContain("Page content");
     }
   });
-});
 
-/* ── 各断点都诚实:徽章的可见性由**真编译出来的 CSS** 说了算(r3 判词 P1-1)────────── */
-
-/**
- * r2 的围栏只断言「服务端 HTML 里有那枚徽章」。徽章带着 `lg:hidden xl:inline-flex`,标签带着
- * `lg:hidden xl:inline` —— 于是 1024–1279(最常见的笔电宽度)那一档,导轨只剩一个没有任何
- * 说明的图标,而围栏照绿。**HTML 里存在 ≠ 屏幕上看得见**,这一组补的就是这半句。
- *
- * 判定不靠我重写一份 Tailwind 语义,而是把这些类名喂给**产品自己那条 Tailwind v4 管线**
- * (@tailwindcss/node,`next build` 用的同一个编译器,做法与 design-tokens.test.ts 一致),
- * 再从编译出来的 CSS 里读每个断点下的 `display`。
- */
-const RAIL_TIERS = [
-  { width: 375, what: "手机抽屉" },
-  { width: 800, what: "平板" },
-  { width: 1100, what: "笔电(图标档,判词点名的那一档)" },
-  { width: 1440, what: "宽屏" },
-] as const;
-
-/**
- * 一个工具类生成的那条 `display` 规则(以及它属于哪个断点)。
- *
- * Tailwind v4 把断点写成**嵌套**在类规则里的 `@media`:
- *   `.lg\:block { @media (width >= 64rem) { display: block } }`
- * 所以判定是「找到这个类的规则块,再看 display 落在块内哪一层」,不是去切顶层 @media。
- * 不生成 display 的类(例如 `shrink-0`)返回 null。
- */
-function displayRuleOf(css: string, token: string): { minWidth: number; display: string } | null {
-  const selector = `.${token.replace(/([:.[\]/])/g, "\\$1")}`;
-  const at = css.indexOf(`${selector} {`);
-  if (at < 0) return null;
-
-  const open = css.indexOf("{", at);
-  let depth = 1;
-  let i = open + 1;
-  while (i < css.length && depth > 0) {
-    if (css[i] === "{") depth += 1;
-    else if (css[i] === "}") depth -= 1;
-    i += 1;
-  }
-  const body = css.slice(open + 1, i - 1);
-
-  const nested = /@media\s*\(([^)]*)\)\s*\{([\s\S]*?)\}/.exec(body);
-  if (nested) {
-    const display = /display:\s*([^;}]+)/.exec(nested[2]);
-    if (!display) return null;
-    const rem = /width\s*>=\s*([\d.]+)rem/.exec(nested[1]);
-    const px = /width\s*>=\s*([\d.]+)px/.exec(nested[1]);
-    return {
-      minWidth: rem ? Number(rem[1]) * 16 : px ? Number(px[1]) : 0,
-      display: display[1].trim(),
-    };
-  }
-
-  const display = /display:\s*([^;}]+)/.exec(body);
-  return display ? { minWidth: 0, display: display[1].trim() } : null;
-}
-
-/** 这串 class 在 `width` 这个宽度下,元素的 display 是什么 —— 断点最大的那条赢。 */
-function displayAt(css: string, className: string, width: number): string {
-  const applicable = className
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((token) => displayRuleOf(css, token))
-    .filter((rule): rule is { minWidth: number; display: string } => rule !== null)
-    .filter((rule) => rule.minWidth <= width)
-    .sort((left, right) => left.minWidth - right.minWidth);
-  return applicable.at(-1)?.display ?? "inline";
-}
-
-function visibleAt(css: string, className: string, width: number): boolean {
-  return displayAt(css, className, width) !== "none";
-}
-
-/** 产品自己那条 Tailwind v4 管线(与 design-tokens.test.ts 同一条路)。 */
-async function compileUtilities(candidates: string[]): Promise<string> {
-  const require_ = createRequire(path.join(WEB_ROOT, "package.json"));
-  const requireFromPostcss = createRequire(require_.resolve("@tailwindcss/postcss"));
-  const { compile } = await import(
-    pathToFileURL(requireFromPostcss.resolve("@tailwindcss/node")).href
-  );
-  const entry = path.join(WEB_ROOT, "app/globals.css");
-  const compiler = await compile(await readFile(entry, "utf8"), {
-    base: path.dirname(entry),
-    onDependency: () => {},
-  });
-  return compiler.build(candidates);
-}
-
-/** 导轨里 Customers 那一行的 markup —— 只在这一行里找诚实标识,免得别处的字混进来。 */
-function customersRailRow(): string {
-  const markup = renderShell("/campaign");
-  const start = markup.indexOf(`href="${CUSTOMERS.href}"`);
-  expect(start, "导轨里找不到 Customers 那一行").toBeGreaterThan(-1);
-  const open = markup.lastIndexOf("<a", start);
-  const end = markup.indexOf("</a>", start);
-  return markup.slice(open, end);
-}
-
-describe("Preview 在每一个断点都说得出口(r3 判词 P1-1)", () => {
-  const row = customersRailRow();
-  // 徽章与那颗点:两块可见的诚实标识,各管一段宽度。
-  const badgeClass = /<span[^>]*class="([^"]*)"[^>]*>Preview</.exec(row)?.[1] ?? "";
-  const dotClass = /<span[^>]*data-preview-dot[^>]*class="([^"]*)"/.exec(row)
-    ?? /<span[^>]*class="([^"]*)"[^>]*data-preview-dot/.exec(row);
-  const previewDotClass = dotClass?.[1] ?? "";
-
-  let css = "";
-
-  beforeAll(async () => {
-    css = await compileUtilities([
-      ...badgeClass.split(/\s+/),
-      ...previewDotClass.split(/\s+/),
-      "bg-warning",
-      // 自检用的合成类,必须与产品用的是同一批语义。
-      "hidden",
-      "block",
-      "lg:block",
-      "xl:hidden",
-      "lg:hidden",
-      "xl:inline-flex",
-    ]);
-  }, 60_000);
-
-  it("两块标识都真的在这一行里(找不到就等于底下全是空转)", () => {
-    expect(badgeClass, "徽章不在 Customers 那一行").not.toBe("");
-    expect(previewDotClass, "图标档那颗点不在 Customers 那一行").not.toBe("");
-  });
-
-  // 自检①:判定器逮得住 —— 一个在该宽度下确实被藏起来的类,必须被判为不可见。
-  it("判定器逮得住:lg:hidden 在 1100 判不可见,xl:inline-flex 在 1440 判可见", () => {
-    expect(displayAt(css, "hidden lg:hidden xl:inline-flex", 1100)).toBe("none");
-    expect(visibleAt(css, "hidden lg:hidden xl:inline-flex", 1100)).toBe(false);
-    expect(visibleAt(css, "hidden lg:hidden xl:inline-flex", 1440)).toBe(true);
-  });
-
-  // 自检②:判定器不误伤 —— 只在中间那一档出现的写法,必须两头判不可见、中间判可见。
-  it("判定器不误伤:hidden lg:block xl:hidden 只在 1024–1279 可见", () => {
-    expect(visibleAt(css, "hidden lg:block xl:hidden", 800)).toBe(false);
-    expect(visibleAt(css, "hidden lg:block xl:hidden", 1100)).toBe(true);
-    expect(visibleAt(css, "hidden lg:block xl:hidden", 1440)).toBe(false);
-    // 没有任何 display 工具类时不许瞎判成隐藏。
-    expect(visibleAt(css, "shrink-0 rounded-full", 1100)).toBe(true);
-  });
-
-  it.each(RAIL_TIERS.map((tier) => [tier.width, tier.what] as const))(
-    "%dpx(%s):这一行至少有一块看得见的诚实标识",
-    (width) => {
-      const visible = [
-        ["badge", badgeClass],
-        ["dot", previewDotClass],
-      ].filter(([, className]) => visibleAt(css, className, width));
-
-      expect(
-        visible.map(([name]) => name),
-        `${width}px 下 Customers 只剩一个没有说明的入口 —— 「点开之前就诚实」在这一档失效了`,
-      ).not.toEqual([]);
-    },
-  );
-
-  it("而且它的名字在**每一个**宽度都带着实话(徽章有没有地方画都一样)", () => {
-    const row = customersRailRow();
-
-    // 无障碍名字与 tooltip 不吃宽度,所以它们是那句实话的底线。
-    expect(row).toContain(`aria-label="${CUSTOMERS.label} (preview)"`);
-    expect(row).toContain(`title="${CUSTOMERS.label} — Preview. ${PREVIEW_TRUTH}"`);
-  });
-
-  it("那颗点是真的画得出来的 —— 尺寸与颜色都编译得出规则", () => {
-    // display 判定说它「在这一档不是 none」,但一个拼错的颜色类会让它照样看不见。
-    // 所以再核一层:它的每个类都真的生成了声明,而且真有背景色。
-    const tokens = previewDotClass.split(/\s+/).filter(Boolean);
-    const dead = tokens.filter((token) => {
-      const selector = `.${token.replace(/([:.[\]/])/g, "\\$1")}`;
-      return !css.includes(`${selector} {`);
-    });
-    expect(dead, "这些类名没编译出任何规则(多半是拼错了)").toEqual([]);
-
-    const background = css.slice(css.indexOf(".bg-warning {"));
-    expect(background.slice(0, 120)).toMatch(/background-color:/);
-  });
-
-  it("能力齐的门不许被这套标识碰到", () => {
+  it("再也没有 Preview 徽章 —— 那枚徽章只跟着 preview 字段走,而今天一个都没有", () => {
     const markup = renderShell("/campaign");
-    const campaignAt = markup.indexOf('href="/campaign"');
-    const campaignRow = markup.slice(markup.lastIndexOf("<a", campaignAt), markup.indexOf("</a>", campaignAt));
+    const badges = markup.match(/>Preview</g) ?? [];
+    const previewDoors = merchantNavLinks().filter((item) => item.preview);
 
-    expect(campaignRow).not.toContain("data-preview-dot");
-    expect(campaignRow).not.toContain("aria-label=");
-    expect(campaignRow).toContain('title="Campaign"');
+    expect(previewDoors.map((item) => item.key)).toEqual([]);
+    expect(badges.length).toBe(0);
+  });
+
+  it("14 个 /crm 路由文件一个不少,而且每一个都只是 redirect(\"/\") —— 旧书签不撞墙", () => {
+    const routes = crmRouteFiles();
+
+    // 数目钉死:少一个 = 有人把书签的落点删成了 404;多一个 = 有人在收起来的段里新开了页。
+    expect(routes.length, "app/crm 底下的 page.tsx 数目变了").toBe(14);
+
+    const notRedirecting = routes.filter((file) => {
+      const src = readFileSync(path.join(CRM_APP_DIR, file), "utf8");
+      return !src.includes('redirect("/")') || /from "@\/components\/crm|from "@\/lib\//.test(src);
+    });
+    expect(notRedirecting, "这些路由还在渲染页面或取数").toEqual([]);
+  });
+
+  it("七个骨架页删干净了(重定向页没有内容可等)", () => {
+    const skeletons = readdirSync(CRM_APP_DIR, { recursive: true, encoding: "utf8" }).filter(
+      (file) => file.endsWith("loading.tsx"),
+    );
+    expect(skeletons).toEqual([]);
+  });
+
+  it("商家点得到的地方,一条 /crm 都不剩(导轨、页面链接)", () => {
+    // 收起来的段自己内部还互相链接(components/crm/** 与 app/crm/** 的 error.tsx),那些页面
+    // 商家到不了 —— 它们是留给恢复那天的。这条查的是**商家真点得到**的那一面。
+    const offenders = merchantReachableFiles().filter((file) =>
+      /href=\{?["`]\/crm|router\.push\(`?["`]?\/crm/.test(readFileSync(file, "utf8")),
+    );
+    expect(
+      offenders.map((file) => path.relative(WEB_ROOT, file)),
+      "这些商家到得了的页面还链向收起来的 CRM —— 点了会被弹回 Home",
+    ).toEqual([]);
   });
 });
 
-describe("预览页先说实话,再指路", () => {
-  it("第一屏就说渠道连不上 —— 与导轨读的是同一句", () => {
+// W2-13(#993)之后这一页**商家到不了**(`/crm` 已是 `redirect("/")`)。它留在盘上是因为它
+// 逐面记着 CRM 今天**真正卡在哪** —— 那份账正是②层核对的对象,也是 Meta verification 通过、
+// CRM 接回来那天要照着走的清单。所以这一组照跑:页面自称的每一句仍然必须是真的。
+describe("那份「卡在哪」的账仍然逐句为真(页面留档,商家现在到不了)", () => {
+  it("第一屏就说渠道连不上 —— 与 Otto 读的是同一句", () => {
     expect(previewMarkup).toContain(PREVIEW_TRUTH);
     expect(previewMarkup).toContain(">Preview<");
   });
 
-  it("折叠掉的七个表面一个都没被藏起来 —— 都还进得去", () => {
-    const unreachable = FOLDED_CRM_SURFACES.filter(
+  it("七个表面一个都没漏 —— 这份账是全的", () => {
+    const missing = FOLDED_CRM_SURFACES.filter(
       (href) => !previewMarkup.includes(`href="${href}"`),
     );
-    expect(unreachable, "这些页面活着,却在产品里没有门了").toEqual([]);
+    expect(missing, "这些面在账上找不到,接回来那天会被漏掉").toEqual([]);
   });
 
   it("七个表面每一个都写了自己的卡点 —— 不许只在页首写一句总的", () => {
@@ -1233,32 +1108,29 @@ describe("「连不上渠道」是产品事实,不只是页面上的一句话", 
     );
 
     expect(row).toContain("Not available yet");
-    // 它能连的那一天这条会红 —— 那正是该回来把 preview 删掉的时刻。
+    // 它能连的那一天这条会红 —— 那正是该回来把整段 CRM 接通的时刻(台账 issue #359)。
     expect(row).not.toMatch(/href=|onClick=/);
-  });
-
-  it("产品事实变了,预览门就该跟着删 —— 这里把两者绑在一起", () => {
-    if (source("components/otto/OttoConnections.tsx").includes("Not available yet")) {
-      expect(PREVIEW_TRUTH, "渠道还没通,这扇门却不再说自己是预览").not.toBe("");
-    }
   });
 });
 
 /* ── ④ Otto 一面 ───────────────────────────────────────────────────────────── */
 
-describe("Otto 说的与导轨画的是同一件事", () => {
-  it("Otto 读到的地图里,Customers 那一行带着那句实话", () => {
-    expect(ottoInstructionsText).toContain(PREVIEW_TRUTH);
-    expect(merchantNavMap()).toContain(PREVIEW_TRUTH);
-  });
-
-  it("地图里不再有七扇 CRM 子门(Otto 不会把商家送去一个折叠掉的名字)", () => {
-    for (const href of FOLDED_CRM_SURFACES) {
+describe("Otto 说的与商家看到的是同一件事", () => {
+  it("Otto 的地图里一条 /crm 都没有 —— 它不会把商家送去一扇不存在的门", () => {
+    expect(merchantNavMap()).not.toContain("/crm");
+    for (const href of ["/crm", ...FOLDED_CRM_SURFACES]) {
       expect(ottoInstructionsText, `${href} 还在 Otto 的地图里`).not.toContain(`(${href})`);
     }
   });
 
-  it("空渠道口径全仓只有一份 —— 导轨、预览页与 Otto 读的是同一个常量(r2 判词 P1)", () => {
+  it("Otto 明说这一段今天没有地方,而不是含糊带过", () => {
+    // 商家问「我的联系人在哪」,Otto 手上必须有一句实话可说 —— 而它不能是一个地名。
+    expect(ottoInstructionsText).toMatch(
+      /no page in the app today for an inbox, broadcasts, message templates, customer segments, delivery reports or contact profiles/i,
+    );
+  });
+
+  it("空渠道口径全仓只有一份 —— 预览页与 Otto 读的是同一个常量(r2 判词 P1)", () => {
     expect(PREVIEW_TRUTH).toBe(MESSAGING_STATUS_MERCHANT);
     expect(ottoInstructionsText).toContain(MESSAGING_STATUS_ASSISTANT);
     expect(source("components/crm/customers-preview-page.tsx")).not.toContain(
@@ -1272,6 +1144,5 @@ describe("Otto 说的与导轨画的是同一件事", () => {
       /suggest connecting one|(?<!never )tell (?:the user|them) to connect one/i,
     );
     expect(ottoInstructionsText).toMatch(/NOT a to-do for the merchant/);
-    expect(ottoInstructionsText).toContain(CUSTOMERS.label);
   });
 });

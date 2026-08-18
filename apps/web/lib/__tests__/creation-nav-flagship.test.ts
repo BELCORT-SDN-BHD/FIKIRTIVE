@@ -107,7 +107,9 @@ describe("每一个目的地都有门,且 375px 抽屉里到得了", () => {
     "/otto",                    // 助手
     "/northstar-immersive",     // Create(画布的家)
     "/campaign",
-    "/crm",                     // Customers(#792:七扇 CRM 门收成这一扇预览门)
+    // W2-13(#993):Customers 那一格删了 —— CRM 整段不在商家表面上,恢复触发条件写在
+    // 延期台账 issue #359(Meta verification 通过)。/crm 的路由文件还在,但它们只 redirect,
+    // 不是商家「必须到得了」的门,所以不在这份名单里。
     "/otto?view=library",
     "/otto?view=edit",          // #780 剪辑台:拼接/字幕/配乐的门
     "/otto?view=memory",        // Brand & products
@@ -166,7 +168,7 @@ describe("Otto 是助手,不是板块", () => {
   });
 
   it("每一个商家表面都够得着它(导轨常驻,创作面上也在)", () => {
-    for (const surface of ["/campaign", "/crm", "/crm/inbox", "/billing", CREATE_NAV_HREF, CANVAS_HREF]) {
+    for (const surface of ["/campaign", "/billing", "/otto", CREATE_NAV_HREF, CANVAS_HREF]) {
       expect(renderShell(surface), surface).toContain(`href="${OTTO_ASSISTANT.href}"`);
     }
   });
