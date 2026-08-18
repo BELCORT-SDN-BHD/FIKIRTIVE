@@ -85,7 +85,6 @@ export async function seedWorkspace(opts: {
       name: opts.personName,
       emailVerified: at(0),
       role: "viewer",
-      activeOrgId: orgId,
     },
   });
   await prisma.betterAuthUser.create({

@@ -89,7 +89,6 @@ model Entity {
   negativeConstraints String     @default("")
   // cowork: reserved — structured see-once description (subject/action/style/...), populated by the Phase-C vision sub-agent.
   descriptionJson     Json?
-  promptTokens        String[]   @default([])
   // v1 additive: nullable soft-ref for future agency layer (no FK, no backfill)
   brandId             String?
   createdAt           DateTime   @default(now())
@@ -141,7 +140,7 @@ model ReferenceImage {
   entityId  String
   assetId   String
   position  Int       @default(0)
-  note      String    @default("")
+  // note 已删（C2 死列清理）：从建表起没有任何界面或动作读过它,只有本地 QA 种子脚本在写。
   // 视角标签：阶段二的视角级缺图检查用（CEO 评审 D12 计数制裁决预留）
   viewTag   String?
   // null = base/entity-level ref; set = belongs to that variant (Phase B)
@@ -625,10 +624,8 @@ model ResearchJob {
   idempotencyKey  String
   tier            String
   status          String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED（house style：代码校验的 String,非 PG enum）
-  /// worker 起步时 withLlmBudget reserve 的 turnBudget 上限（记录用；approve 时为 null）
-  reservedCredits Int?
-  /// worker settle 的实际 token 成本（记录用；approve 时为 null）
-  actualCredits   Int?
+  // 记账列 reservedCredits / actualCredits 已删（C2 死列清理）：钱的唯一权威是 withLlmBudget
+  // 写的 CreditLedger,这两列从建表起就没有写入者也没有读取者。
   error           String?
   queueJobId      String?
   createdAt       DateTime @default(now())
@@ -648,7 +645,8 @@ model User {
   /// Compatibility/display role for Better Auth and older UI. Authorization reads UserRole;
   /// new code must not assume this one string is the user's complete access.
   role          String    @default("viewer")
-  activeOrgId   String? // RESERVED NOW (future multi-org switcher; avoids an auth-table migration later)
+  // activeOrgId 已删（C2 死列清理）：它只有一个写入者、零读取者,活跃 org 一直是从 Membership
+  // 现场解出来的。真要做多 org 切换器时,再按那时的需求加列。
   memberships   Membership[] // NEW: per-org membership (per-tenant RBAC lives here)
   roles         UserRole[]
 }
@@ -1256,10 +1254,10 @@ model CanvasNode {
   // 词表与写入者的唯一权威在 apps/web/lib/canvas-card-status.ts;'unknown' 没有写入者,
   // 它只是迁移给历史越集值准备的落脚点。卡面(queued/generating/…)是**推导**出来的,不入库。
   status       String    @default("done")
-  // 一列三义的旧「来源」列(#603 T4 · spec #599 D5)。它同时装过「真派生」「同批锚点」
-  // 「假兄弟血缘」三件事,所以任何读它的人都只能猜。下面四列把这三件事拆开落盘;这一列
-  // 自 T4 起**无写入者、无读取者**,只为迁移回填留作证据。删列另开一片(见 migration 说明)。
-  sourceNodeId String?
+  // 一列三义的旧「来源」列 sourceNodeId 已删(C2 死列清理)。它同时装过「真派生」「同批锚点」
+  // 「假兄弟血缘」三件事,所以任何读它的人都只能猜;下面四列把这三件事拆开落盘,而它自 #603 T4
+  // 起就无写入者、无读取者。T4 的一次性回填仍在迁移史里原样保留(20260805120000),回填测试
+  // 自带那一列的老形状来复演它。
   // ── 批次身份:服务端在结算那一刻就掌握的事实,不再由坐标或幸存卡数推回 ──
   /// 这张卡在该付费作业产出列表里的位置(0 起)。null = 不知道(无作业/未绑定产出/老行)。
   batchIndex   Int?
@@ -1449,7 +1447,8 @@ model Campaign {
   goal      String
   startAt   DateTime
   endAt     DateTime
-  utmBase   String?
+  // utmBase 已删（C2 死列清理）：R-010 D3 判它不是长期权威并停写停读,之后既无写入者也无
+  // 读取者;UTM 的真源是 link-time 定案的严格五键 + 事件当时快照。
   planJson  Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

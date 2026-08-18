@@ -11,8 +11,14 @@
  *             历史错绑行。这四类一律留 NULL,读作「不知道」,不画线、不显示 A/B、不画组框。
  *
  * 这段测试与迁移文件绑定:改了那句 SQL 而没有改这里,这里就红。
+ *
+ * 老列 `CanvasNode.sourceNodeId` 已经在 C2 死列清理里从现行 schema 删掉了(它零读者零写入者),
+ * 所以这里**自己把那一列的老形状建回来**再复演 —— 见下面的 beforeAll/afterAll。这不是绕过:
+ * 全新库仍按迁移顺序先建列、跑完 T4 回填、再删列,而这段测试要验的正是「回填当时读到的是什么」,
+ * 它需要的就是回填当时那个形状。packages/db 的 vitest 是 singleFork 串行跑的,
+ * 这两句 DDL 不会撞上别的测试文件。
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -48,6 +54,22 @@ function backfillStatement(): string {
 
 let orgId: string;
 let projectId: string;
+
+/**
+ * 复演所需的老形状:一列 nullable TEXT,和 20260626210452_add_canvas_node 当年建的一模一样。
+ * 只有本文件通过原生 SQL 碰它 —— Prisma client 不知道它存在,而多一个可空列对别的写入者不可见。
+ */
+beforeAll(async () => {
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "CanvasNode" ADD COLUMN IF NOT EXISTS "sourceNodeId" TEXT`,
+  );
+});
+
+afterAll(async () => {
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "CanvasNode" DROP COLUMN IF EXISTS "sourceNodeId"`,
+  );
+});
 
 beforeEach(async () => {
   orgId = `org_${randomUUID()}`;
