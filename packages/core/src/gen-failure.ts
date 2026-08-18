@@ -55,6 +55,32 @@ export const REFERENCE_IMAGE_PERSON_REJECTED =
   + "and generate again. You weren't charged.";
 
 /**
+ * The sentence a merchant reads when THIS DEPLOY HAS NO ENGINE WIRED UP.
+ *
+ * Not a refusal of anything they sent: the generation never reached an engine because this
+ * environment has no paid provider selected. Until now that condition was invisible — the
+ * factory quietly handed back the offline stand-in, the worker rendered a solid-colour PNG,
+ * settled the hold, and the merchant paid credits for a swatch. The honest ending is a refusal
+ * plus a refund, and this is what that refusal says.
+ *
+ * Every clause is one this system can prove at the moment it is written:
+ *   - "a problem on our side" — the request never left the building, so nothing about it was
+ *     wrong; saying otherwise would send a merchant editing a prompt that was fine.
+ *   - "You weren't charged" — the stand-in throws BEFORE any engine call, so the failure is
+ *     provably free and the worker's terminal branch refunds the hold in the same transaction.
+ *     It is the same promise, for the same reason, as the refusal above.
+ *   - "trying again won't help until we've fixed it" — the condition is a deployment setting,
+ *     identical on every retry. The generic copy's "you can try again" would burn the merchant's
+ *     afternoon on an answer that cannot change, which is the exact failure #765 exists to stop.
+ *
+ * WHITE LABEL, like every sentence here: it names no engine, no model, no vendor — a merchant
+ * must not learn what is missing, only that something on our side is.
+ */
+export const GENERATION_ENGINE_UNAVAILABLE =
+  "Generation isn't available right now — that's a problem on our side, not with what you sent. "
+  + "You weren't charged, and trying again won't help until we've fixed it.";
+
+/**
  * WHY A GENERATION FAILED, as a CLOSED SET OF NAMES (#827).
  *
  * #765 gave the refusal a sentence. This gives it a NAME, and the difference is what survives a
@@ -75,7 +101,7 @@ export const REFERENCE_IMAGE_PERSON_REJECTED =
  * table `apps/web/lib/canvas-terminal-copy.ts` (the same trick). That is the closed algebra doing
  * its job: a reason nobody wrote copy for cannot ship as a blank card.
  */
-export const GEN_FAILURE_REASONS = ["unexplained", "referenceImagePerson"] as const;
+export const GEN_FAILURE_REASONS = ["unexplained", "referenceImagePerson", "engineUnavailable"] as const;
 
 export type GenFailureReason = (typeof GEN_FAILURE_REASONS)[number];
 
@@ -97,6 +123,7 @@ export type ExplainedGenFailureReason = Exclude<GenFailureReason, "unexplained">
  */
 const MERCHANT_GEN_FAILURE_SENTENCES: Readonly<Record<ExplainedGenFailureReason, string>> = {
   referenceImagePerson: REFERENCE_IMAGE_PERSON_REJECTED,
+  engineUnavailable: GENERATION_ENGINE_UNAVAILABLE,
 };
 
 /** Is this string one of the names above? For the untyped edges — a React node's data bag, a

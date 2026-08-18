@@ -567,8 +567,10 @@ async function rememberVideoFacts(ownerId: string, facts: string[]): Promise<num
  * 返回而不是等下一轮扫描,是因为差别是商家的十分钟:菜单应该在几秒内被读成产品行。
  * 万一那次 send 失败,行仍然是 QUEUED,扫描器的重投窗口照样兜住它。
  *
- * `provider` 参数存在的唯一理由是测试:生产调用不传,拿到 env 决定的端口(未配 key = mock,
- * 和 createGenerationProvider 同一条安全默认)。**测试一律传 mock,绝不真调。**
+ * `provider` 参数存在的唯一理由是测试:生产调用不传,拿到 env 决定的端口(未配 key = mock ——
+ * 这一条是**理解端口自己的**默认,不再与 `createGenerationProvider` 共用一条:后者在 C1b ①
+ * 之后于生产缺配置时直接拒绝并退款,而这里商家一分钱不付,没有可退的预留)。
+ * **测试一律传 mock,绝不真调。**
  */
 export async function handleUnderstand(
   data: { understandingId: string },

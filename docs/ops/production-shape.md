@@ -20,7 +20,7 @@
 
 | 位置 | 声明了什么 |
 | --- | --- |
-| `apps/web/railway.json` | web 服务:Dockerfile 构建、健康检查 `/api/health`(300s 超时)、失败重启上限 10、副本 1 |
+| `apps/web/railway.json` | web 服务:Dockerfile 构建、**部署闸 `/api/ready`**(300s 超时;C1b ② 前误指恒 200 的 `/api/health`)、失败重启上限 10、副本 1 |
 | `apps/worker/railway.json` | worker 服务:Dockerfile 构建、失败重启上限 10、副本 1。**无健康检查**——worker 不提供 HTTP |
 | `packages/core/src/env-contract.ts` | 全部 env 变量:谁读、什么时候必需、什么形状、哪些必须 web/worker 同值 |
 | `.env.example` | 同一份清单的人话版。与上面那份漂移即测试红 |

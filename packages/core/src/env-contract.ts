@@ -380,7 +380,7 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     values: ["mock", "byteplus"],
     secret: false,
     shared: false,
-    summary: "mock ($0, default) | byteplus (the only paid provider, ADR 0003). Anything unrecognized resolves to mock so a misconfigured deploy cannot burn money.",
+    summary: "mock ($0) | byteplus (the only paid provider, ADR 0003). Unset means mock in dev/CI, and a REFUSAL (job fails, hold refunded) in production — a production deploy with no engine must not sell stand-in artefacts.",
   },
   {
     name: "BYTEPLUS_API_KEY",
