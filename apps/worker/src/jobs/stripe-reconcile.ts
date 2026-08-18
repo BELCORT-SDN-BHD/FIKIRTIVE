@@ -17,13 +17,26 @@
  *     权威,那正是 Money exactly-once 禁止的事。
  *   - 它读 Stripe,只读已支付的 checkout session;它读账本,只问「有没有这一行」。
  *
- * 时间窗。回看 48 小时,但**跳过最近 30 分钟**:webhook 慢几秒到几分钟是正常的,没有这道
- * 宽限期,这个 sweeper 会把每一笔刚刚成交的付款都报成缺口。
+ * 时间窗与**两轮确认制**(判官 P2-1)。回看 48 小时,并跳过最近 30 分钟。但那 30 分钟只挡得住
+ * 「webhook 慢了一会儿」,挡不住**延迟到账**:
  *
- * 告警刻意是 at-least-once。一笔「商家付了钱、账本没有」的缺口在被补上之前不该安静下来,
- * 所以每一轮扫到都报一次(Sentry 把同一笔的重复事件收进同一个 issue,既不是风暴,也不会被
- * 一次数据库故障消音)。审计行是 best-effort 的另一半:主键由 session id 派生,重复检测撞
- * 主键,于是一笔缺口在 ActionEvent 里只留一行。
+ *   Stripe 的 `created` 过滤器筛的是 **session 创建时间,不是付款时间**。FPX / GrabPay 这类
+ *   延迟通知的付款方式(马来西亚的主流)会先以 `unpaid` 完成 session,几小时后才真正到账 ——
+ *   webhook 那边正是靠 `checkout.session.async_payment_succeeded` 这一支接住它的
+ *   (apps/web/app/api/stripe/webhook/route.ts)。一个三小时前创建、刚刚才 paid 的 session,
+ *   早就滑出了 30 分钟宽限期,而它的 webhook 可能还在路上。只按一轮就报警,等于第一天就把
+ *   一批**完全合法**的付款喊成「商家付了钱一分没拿到」—— 而被无视的告警等于没有告警,那正是
+ *   这个 sweeper 自己要避免的东西。
+ *
+ *   所以:**首见缺口只记观察,不惊动 founder;下一轮(30 分钟后)仍是缺口才升级报警。**
+ *   观察态就存在那一行审计里 —— 主键由 session id 派生,所以「见过没见过」由数据库唯一约束
+ *   回答,而不是靠进程内存(worker 随时可能重启)。延迟到账的 session 在这两轮之间几乎必然
+ *   落账,于是它安静地消失;真正的缺口只晚 30 分钟,而 48 小时的窗口远远兜得住。
+ *
+ * 升级之后的告警仍然是 at-least-once:一笔确认过的缺口在被补上之前,每一轮都再喊一次
+ * (Sentry 把同一笔的重复事件收进同一个 issue,既不是风暴,也不会被一次数据库故障消音)。
+ * 审计写不下去时(比如组织行已经不在)也一律按「见过」处理并报警 —— 宁可早喊一轮,
+ * 也不许一次数据库故障把缺口变哑。
  *
  * TODO(#359 收敛):告警此刻直连 Sentry。分支 claude/c1a-alerting 的 founder-alert 模块
  * (Sentry + 邮件 + Telegram,Founder 2026-08-18 裁决)合入 main 之后,把下面的 `alert()`
@@ -70,9 +83,11 @@ export type StripeReconcileResult = {
   scanned: number;
   /** 其中 payment_status === "paid" 的。 */
   paid: number;
-  /** 已支付但账本里没有对应入账行的 —— 这就是缺口。 */
+  /** 已支付但账本里没有对应入账行的 —— 这一轮看到的缺口总数(含首见的)。 */
   unreconciled: number;
-  /** 实际发出的告警数(= unreconciled,外加分页被截断时的一条)。 */
+  /** 其中**首见**的:只记了观察行,没有惊动 founder(延迟到账的付款正是长这样)。 */
+  firstSeen: number;
+  /** 实际发出的告警数(= 二次及以后确认的缺口,外加分页截断 / 读 Stripe 失败各一条)。 */
   alerted: number;
   /** 没跑成的原因(没配 Stripe 密钥 / 拉取失败),跑成了就是 null。 */
   skipped: string | null;
@@ -126,7 +141,7 @@ export async function reconcileStripePayments(opts?: {
   client?: StripeSessionsPort | null;
   now?: Date;
 }): Promise<StripeReconcileResult> {
-  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, alerted: 0, skipped: null };
+  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, skipped: null };
   const port = opts?.client ?? realStripePort();
   if (!port) return { ...empty, skipped: "STRIPE_SECRET_KEY is not set — nothing to reconcile against" };
 
@@ -158,6 +173,7 @@ export async function reconcileStripePayments(opts?: {
 
     let paid = 0;
     let unreconciled = 0;
+    let firstSeen = 0;
     let alerted = 0;
     if (truncated) {
       alert(
@@ -186,8 +202,57 @@ export async function reconcileStripePayments(opts?: {
       const amount = typeof session.amount_total === "number" ? session.amount_total : null;
       const currency = typeof session.currency === "string" ? session.currency.toUpperCase() : "";
       const money = amount === null ? "an unknown amount" : `${currency} ${(amount / 100).toFixed(2)}`;
+
+      // 两轮确认制的状态机,整个装在这一行审计的**主键**里(判官 P2-1)。
+      //   create 成功  ⇒ 这一笔是**首见** ⇒ 只观察,不惊动 founder。延迟到账(FPX/GrabPay)
+      //                  的付款几乎必然在下一轮之前落账,于是它就此安静消失。
+      //   撞主键 P2002 ⇒ **上一轮就见过** ⇒ 缺口活过了一整轮,升级报警。
+      //   其它写失败  ⇒ 分不清首见还是再见(比如组织行已经不在、库抖了一下)⇒ 按再见处理,
+      //                  报警。宁可早喊一轮,也绝不让一次数据库故障把缺口变哑。
+      // 状态放在库里而不是进程内存,是因为 worker 随时可能重启,而「见过没见过」必须跨重启成立。
+      let seenBefore: boolean;
+      try {
+        await prisma.actionEvent.create({
+          data: {
+            id: `stripe_unreconciled:${session.id}`,
+            ownerId: orgId || "founder",
+            type: "credits.purchase.unreconciled",
+            payload: {
+              sessionId: session.id,
+              orgId: orgId || null,
+              credits: session.metadata?.credits ?? null,
+              amountTotal: amount,
+              currency: currency || null,
+              paymentIntentId: session.payment_intent ?? null,
+              // 判官 P3-2:这是 session 的**创建**时间,不是付款时间 —— 名字必须说实话。
+              // Checkout Session 本身不带「何时付的款」,那在 PaymentIntent 上;延迟到账时
+              // 两者可以差好几个小时,而这个差正是两轮确认制存在的原因。
+              sessionCreatedAt: typeof session.created === "number" ? new Date(session.created * 1000).toISOString() : null,
+              firstSeenAt: new Date(now).toISOString(),
+            },
+          },
+        });
+        seenBefore = false;
+      } catch (e) {
+        const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+        seenBefore = true; // 撞主键 = 真见过;其它错 = 说不准,按见过报警(fail loud)
+        if (!duplicate) {
+          console.error(`[stripe-reconcile] could not record the observation row for ${session.id}; escalating anyway:`, e);
+        }
+      }
+
+      if (!seenBefore) {
+        firstSeen++;
+        console.warn(
+          `[stripe-reconcile] first sighting: ${money} paid on Stripe with no ledger entry yet (session=${session.id} org=${orgId || "unknown"}). ` +
+            `Not alerting yet — a delayed-notification payment (FPX/GrabPay) looks exactly like this while its webhook is still in flight. ` +
+            `If it is still missing next sweep, that is when the founder hears about it.`,
+        );
+        continue;
+      }
+
       alert(
-        `[stripe-reconcile] a merchant PAID ${money} on Stripe and the credits ledger has no entry for it — they were charged and received nothing. ` +
+        `[stripe-reconcile] a merchant PAID ${money} on Stripe and the credits ledger STILL has no entry for it a full sweep later — they were charged and received nothing. ` +
           `Replay the Checkout Session's webhook event in the Stripe dashboard (that is the only correct fix; this sweep never writes credits). ` +
           `session=${session.id} org=${orgId || "unknown"}`,
         {
@@ -200,29 +265,8 @@ export async function reconcileStripePayments(opts?: {
         },
       );
       alerted++;
-
-      // 审计行 best-effort:主键由 session id 派生 ⇒ 重复扫描撞主键,一笔缺口只留一行。
-      // 写失败(比如 orgId 指向的组织已经不在)绝不影响上面那声告警 —— 告警已经发出去了。
-      await prisma.actionEvent
-        .create({
-          data: {
-            id: `stripe_unreconciled:${session.id}`,
-            ownerId: orgId || "founder",
-            type: "credits.purchase.unreconciled",
-            payload: {
-              sessionId: session.id,
-              orgId: orgId || null,
-              credits: session.metadata?.credits ?? null,
-              amountTotal: amount,
-              currency: currency || null,
-              paymentIntentId: session.payment_intent ?? null,
-              paidAt: typeof session.created === "number" ? new Date(session.created * 1000).toISOString() : null,
-            },
-          },
-        })
-        .catch(() => {});
     }
 
-    return { scanned: sessions.length, paid, unreconciled, alerted, skipped: null };
+    return { scanned: sessions.length, paid, unreconciled, firstSeen, alerted, skipped: null };
   });
 }

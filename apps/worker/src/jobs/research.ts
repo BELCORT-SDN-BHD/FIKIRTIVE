@@ -21,7 +21,15 @@
  *  4b. (钱路 M1-b) DELIVERY AND SETTLE COMMIT TOGETHER. The report, the card's "done" and the
  *     job's DONE are written inside withLlmBudget's settle transaction (`commitInSettleTx` →
  *     deliverResearch). A failure anywhere in there rolls the SETTLE back with them and the whole
- *     hold is refunded, so "the merchant paid and the report never existed" has no shape left.
+ *     hold is refunded — so on THAT path "the merchant paid and the report never existed" has no
+ *     shape left.
+ *     **一个例外,说清楚而不是否认(判官 P2-3):跑满步数的那条路不在其中。** 研究撞上
+ *     tier.maxSteps 时 `run` 抛 MaxTurnsExceeded,上面的 `usageOnError` 从它身上取回真实用量,
+ *     于是 withLlmBudget 在自己的 catch 里**按实际 token 结算**并把错误抛出来 —— 交付钩子压根
+ *     没被调用,下面的 catch 把卡片与作业写成 FAILED(「The research hit its step budget before
+ *     finishing.」)。结果就是:**商家按真实烧掉的 token 付了钱,而没有报告**。这是既有的定价
+ *     决定(不变量 #3:截断按实际用量收费,不按预扣满额收费),M1-b 一个字都没改它 —— 模型确实
+ *     替商家跑了那些搜索和阅读,只是没跑完。要不要在这种情况下也退钱,是 Founder 的钱决定。
  *  5. No provider key is ever logged or placed in an error message (adapters scrub keys already).
  *
  * All reads are owner-scoped off ResearchJob.ownerId.

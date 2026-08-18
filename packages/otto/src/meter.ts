@@ -24,7 +24,9 @@
  *     settle still charges min(actual, hold) and a failure still refunds the whole hold.
  * 10. (钱路 M1-b) `commitInSettleTx` puts the DELIVERY in the settle's own transaction: either the
  *     merchant's goods and the charge both land, or neither does and the whole hold is refunded.
- *     Callers that do not pass it are byte-identical to before.
+ *     Callers that do not pass it are byte-identical to before. NOTE the one path it does NOT
+ *     cover, spelled out on the field itself: a `usageOnError` settle (invariant #2's truncated
+ *     turn) charges real tokens and never calls the hook — delivery-less but paid, by design.
  */
 import {
   CREDITS_PER_USD,
@@ -163,10 +165,20 @@ export type LlmBudgetArgs = {
    * best-effort)。审计把这一条坐实为 P1。
    *
    * 语义:钩子抛错 ⇒ 整笔事务回滚 ⇒ **SETTLE 那一行根本不存在**,预扣仍然挂着;
-   * `withLlmBudget` 随即把整笔预扣退掉,再把原错误抛给调用方。于是终局只有两种,没有第三种:
+   * `withLlmBudget` 随即把整笔预扣退掉,再把原错误抛给调用方。于是**在这个钩子跑得到的那条路
+   * 上**,终局只有两种:
    *   ① 交付落库 且 结算落库(同一笔提交,要么都在要么都不在);
    *   ② 什么都没交付 且 商家一分钱没花(全额退款)—— 引擎已经烧掉的 token 由 founder 承担,
    *      与 gen/refgen 终态失败时「商家没拿到结果就不收钱」的口径逐字一致。
+   *
+   * **但这不是这个函数的全部终局(判官 P2-3,说清楚而不是否认)。** 还有第三种,它先于这个钩子
+   * 存在,这次也刻意没有改动 —— `usageOnError` 那条路(见下面 `fn` 的 catch):`fn` 抛了,而
+   * `usageOnError` 从错误里取回了**真实用量**(典型是 Otto 跑满步数的 MaxTurnsExceeded)。那里
+   * 按实际 token 结算,然后把错误抛出去 —— **这个钩子根本不会被调用**。于是:
+   *   ③ 什么都没交付,但商家**按真实烧掉的 token 付了钱**。
+   * 这是既有的定价决定(文件头不变量 #2/#3:截断的一轮按实际用量收费,绝不按预扣满额收费),
+   * 不是这条缝带来的缺口 —— 模型确实替商家干了那些活,只是没干完。要改它得单独立项,由 Founder
+   * 拍板;在此之前,谁读这段注释都必须知道它存在。
    *
    * 不传这个钩子的调用方,行为一个字节都没变(结算失败照旧原样抛出,不新增退款)。
    *
