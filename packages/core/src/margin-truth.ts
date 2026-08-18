@@ -118,14 +118,21 @@ export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [
     tier: "otto:chat",
     // 按量计价的档没有「比例」这一轴 —— 毛利率对任何 token 数都一样,见 USAGE_PRICED_SURFACES。
     ratios: ["全部对话(按量计价,毛利率与用量无关)"],
-    margin: 1 - 1 / OTTO_CONVERSATION_TURN_MARGIN, // 1.05 ⇒ 4.76%
+    // 1.05 ⇒ 4.76%。刻意写成**和 marginRow 一模一样的算式**「(收费 − 成本) / 收费」,
+    // 而不是代数上等价的 `1 − 1/k` —— 两者在 IEEE754 里差最后几位,而 margin-truth.test.ts
+    // 对按量计价面要求**逐位**相等(判官 P3-3,防活读被改抄一份)。代数等价 ≠ 浮点相等。
+    // (成本单位恒 $1,见 USAGE_PRICED_COGS_UNIT_USD;乘 1 在浮点里是恒等,所以这里省掉它
+    //  既不改变一个比特,又避开了那个常量在本行之后才声明的 TDZ。)
+    margin: (OTTO_CONVERSATION_TURN_MARGIN - 1) / OTTO_CONVERSATION_TURN_MARGIN,
     // Founder 2026-08-18 裁决 9 的理由,原话留档:
     reason:
       "聊天是销售员、生成是商品 —— Founder 2026-08-18 裁决9。聊天按 API 成本 × 1.05 计价" +
       "(OTTO_CONVERSATION_TURN_MARGIN),毛利率 4.76%,远在 45% 地板之下,Founder 明示接受:" +
       "对话不是这个产品赚钱的地方,它是让商家不用省着用的入口;真正要守住 45% 的是生成。" +
       "注意这一条豁免的是**地板**,不是「收费 > 成本」—— 1.05 > 1,聊天仍然不许亏着卖," +
-      "R1 规则照旧管着它。",
+      "R1 规则照旧管着它。" +
+      "⚠️ 本行只建模聊天的 LLM 成本:聊天自己的搜索腿(researchWeb)至今零计价、不在本表内," +
+      "所以这里的 4.76% 偏乐观,真实毛利率更低。缺口已知,另票跟进接同一套 3× 计价。",
     ruledOn: "2026-08-18",
     source:
       "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/970 —— Founder 裁决 9(2026-08-18," +
@@ -195,6 +202,12 @@ type MarginSku = { id: string; label: string; charge: () => number; cogs: () => 
  *   otto:research:search 深研的搜索成本 × 3.0        → 66.7%,清地板(裁决 9b 落地的 3× 判决)。
  */
 export const USAGE_PRICED_SURFACES: readonly { id: string; label: string; multiplier: () => number }[] = [
+  // ⚠️ 这一行只建模**聊天的 LLM 成本**。聊天自己那条搜索腿(researchWeb,
+  // packages/otto/src/skills/research-web.ts)至今零计价、也不在这张表里,所以这里印出来的
+  // 4.76% 是**偏乐观**的:真实毛利率比它低,低多少取决于商家聊天里触发了多少次轻查。
+  // 这个缺口是**已知的**,不在本票范围内(本票只落地深研那条腿的 3× 计价);把它写在这里,
+  // 是为了让这一行不再声称自己量全了 —— 一个量了一半却看起来像量全了的闸,比没有闸更危险。
+  // 另票跟进:给 researchWeb 接上同一套 3× 计价,然后把这条注释连同缺口一起删掉。
   { id: "otto:chat", label: "Otto 聊天(每 $1 provider 成本)", multiplier: () => OTTO_CONVERSATION_TURN_MARGIN },
   { id: "otto:research:llm", label: "深研 LLM(每 $1 provider 成本)", multiplier: () => ottoLlmMargin() },
   { id: "otto:research:search", label: "深研搜索(每 $1 provider 成本)", multiplier: () => SEARCH_MARGIN_MULTIPLIER },

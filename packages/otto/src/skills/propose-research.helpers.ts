@@ -25,8 +25,12 @@ const RESEARCH_METER_MODEL = "claude-sonnet-4-6";
  *  钱路 M1-c(2026-08-18 裁决 9b):一次深研收两笔 —— LLM token,**加上搜索**。搜索按
  *  Founder 2026-07-03 裁的 3× 计价(searchChargeInternal),此前从未实现,于是这个预估、
  *  卡面数字和 worker 的 hold 三处都少算了它。`maxSearches` 是档位自己的上限,所以这里算的
- *  仍然是同一个 worst case,和 worker 传给 withLlmBudget 的 `extraHoldInternal` 逐字同源。 */
-export function researchTierBudgetInternal(maxSteps: number, maxSearches = 0): number {
+ *  仍然是同一个 worst case,和 worker 传给 withLlmBudget 的 `extraHoldInternal` 逐字同源。
+ *
+ *  `maxSearches` 是**必填**(判官 P3-2):给它一个默认 0 等于留了一条「安静地按只有 LLM
+ *  的价钱算」的路,而那正是这张票要杀掉的那一类 bug —— 少算一条腿的报价不会报错,只会
+ *  报低价。必填之后,漏传是编译错误,不是一个悄悄变便宜的估值。 */
+export function researchTierBudgetInternal(maxSteps: number, maxSearches: number): number {
   return (
     turnBudgetInternal(llmPricesFor(RESEARCH_METER_MODEL), ottoLlmMargin(), maxSteps) +
     searchChargeInternal(maxSearches)
@@ -45,7 +49,7 @@ export function researchTierSearchBudgetInternal(maxSearches: number): number {
  *  propose.helpers.ts 的 gen 卡),故这里 = displayCredits(researchTierBudgetInternal(maxSteps)),
  *  Math.ceil 到整数显示 credit。→ 卡面估值 ≈ worker 真 reserve(同一档、同一模型、同一 margin)。
  *  注意:显示值 ≠ 内部 budget(差 INTERNAL_PER_DISPLAY 倍),approve 的余额门用 internal 版本。 */
-export function researchTierEstimate(maxSteps: number, maxSearches = 0): number {
+export function researchTierEstimate(maxSteps: number, maxSearches: number): number {
   return Math.ceil(displayCredits(researchTierBudgetInternal(maxSteps, maxSearches)));
 }
 

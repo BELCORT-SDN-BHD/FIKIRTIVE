@@ -15,8 +15,11 @@
  *  2. No double-reserve on pg-boss retry: a status CAS (QUEUED→RUNNING via updateMany) makes this
  *     handler a NO-OP on any redelivery/duplicate (count===0 → return before any spend). The queue
  *     is also retryLimit:0, so a failed run never auto-retries. Belt + suspenders.
- *  3. searchSources / readSource are FREE reads (no credit calls). The only cost is LLM tokens,
- *     metered by the wrapper. Truncation (MaxTurnsExceeded) settles ACTUAL usage, never over-charges.
+ *  3. The run has TWO costs, both settled by the same wrapper, neither charged inside the agent:
+ *     LLM tokens, and the SEARCH fee (钱路 M1-c — Founder 2026-07-03's 3× ruling; `readSource` is
+ *     still genuinely free). The search leg rides `extraHoldInternal` / `extraSettleInternal`:
+ *     hold = this tier's maxSearches × the rate, settle = `ctx.searchesUsed` × the rate. Truncation
+ *     (MaxTurnsExceeded) settles ACTUAL usage of BOTH legs, never over-charges.
  *  4. A failure BEFORE spend (e.g. insufficient balance) charges $0 — withLlmBudget refunds.
  *  5. No provider key is ever logged or placed in an error message (adapters scrub keys already).
  *
@@ -70,7 +73,8 @@ async function readPageWorker(
   return { url: fetched.url, title: fetched.title ?? "", page, totalPages, text };
 }
 
-/** Build the FREE search port from env keys — SAME sourcing as buildOttoContext (web). */
+/** Build the search port from env keys — SAME sourcing as buildOttoContext (web).
+ *  The port itself moves no credits; the fee is settled by the wrapper off `ctx.searchesUsed`. */
 function buildSearch(): ResearchContext["search"] {
   const k1 = process.env.TAVILY_API_KEY;
   const k2 = process.env.BRAVE_SEARCH_API_KEY;
@@ -177,7 +181,8 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
     const tier = RESEARCH_TIERS[tierKey] ?? RESEARCH_TIERS.standard;
     const topic = payload.topic ?? "";
 
-    // (d) Build the small, mutable ResearchContext. search/readPage are FREE ports; counters cap use.
+    // (d) Build the small, mutable ResearchContext. readPage is free; search is CHARGED — its
+    // counter (searchesUsed) is what the settle below bills against. Counters also cap use.
     const ctx: ResearchContext = {
       search: buildSearch(),
       readPage: (url: string, page?: number) => readPageWorker(url, page),

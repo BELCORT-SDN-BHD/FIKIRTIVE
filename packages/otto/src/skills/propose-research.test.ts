@@ -118,16 +118,32 @@ describe("RESEARCH_TIERS", () => {
     // The internal budget is INTERNAL_PER_DISPLAY (~10×) larger — that gap IS the unit-mismatch
     // the approve gate must respect. If a refactor ever makes these equal, this fails loudly.
     for (const key of ["quick", "standard", "deep"] as const) {
-      const maxSteps = RESEARCH_TIERS[key].maxSteps;
-      expect(researchTierBudgetInternal(maxSteps)).toBeGreaterThan(researchTierEstimate(maxSteps));
+      const { maxSteps, maxSearches } = RESEARCH_TIERS[key];
+      expect(researchTierBudgetInternal(maxSteps, maxSearches)).toBeGreaterThan(
+        researchTierEstimate(maxSteps, maxSearches),
+      );
     }
   });
 
   it("researchTierBudgetInternal is monotonic across tiers", () => {
-    expect(researchTierBudgetInternal(RESEARCH_TIERS.quick.maxSteps))
-      .toBeLessThan(researchTierBudgetInternal(RESEARCH_TIERS.standard.maxSteps));
-    expect(researchTierBudgetInternal(RESEARCH_TIERS.standard.maxSteps))
-      .toBeLessThan(researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps));
+    const budget = (key: "quick" | "standard" | "deep") =>
+      researchTierBudgetInternal(RESEARCH_TIERS[key].maxSteps, RESEARCH_TIERS[key].maxSearches);
+    expect(budget("quick")).toBeLessThan(budget("standard"));
+    expect(budget("standard")).toBeLessThan(budget("deep"));
+  });
+
+  // 判官 P3-2:两个预算函数的 maxSearches 是**必填**。默认 0 会留一条「安静地按只有 LLM
+  // 的价钱算」的路 —— 少算一条腿的报价不会报错,只会报低价,而那正是这张票要杀的病。
+  it("maxSearches 是必填参数 —— 漏传搜索腿不再是一个悄悄变便宜的估值", () => {
+    // 类型层面已经挡住(漏传是编译错误);这里钉住**行为**:传 0 与传真实上限算出来的数
+    // 必须不同,证明这个参数真的参与计价,而不是一个被忽略的形参。
+    const { maxSteps, maxSearches } = RESEARCH_TIERS.standard;
+    expect(researchTierBudgetInternal(maxSteps, 0)).toBeLessThan(
+      researchTierBudgetInternal(maxSteps, maxSearches),
+    );
+    expect(researchTierBudgetInternal(maxSteps, maxSearches) - researchTierBudgetInternal(maxSteps, 0)).toBe(
+      researchTierSearchBudgetInternal(maxSearches),
+    );
   });
 });
 

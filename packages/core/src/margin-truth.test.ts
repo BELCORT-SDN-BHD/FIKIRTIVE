@@ -121,6 +121,18 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     }
   });
 
+  // 判官 P3-3:上面那条 0.5 个点的容差是给「Founder 手记了个圆整数」留的余地,而它同时
+  // 也给「有人把活读换成一个抄来的字面量」留了余地 —— 0.0476 会稳稳通过 0.005 的检查。
+  // 按量计价面没有手记的理由:它的 margin 就是 1 − 1/倍数,必须**逐位**等于现算值。
+  // 换成字面量,这条当场红。
+  it("按量计价面的留档毛利率**逐位**等于闸内现算值(活读不许被改抄一份)", () => {
+    const usagePriced = BELOW_FLOOR_FOUNDER_ACCEPTED.filter((e) => e.tier.startsWith("otto:"));
+    expect(usagePriced.length, "按量计价面的豁免行不见了").toBeGreaterThan(0);
+    for (const e of usagePriced) {
+      expect(e.margin, `${e.tier} 的留档毛利不是现算的`).toBe(rows.get(e.tier)!.margin);
+    }
+  });
+
   it("裁决已落地:待裁决名单是空的(留一条在上面 = R3 硬红)", () => {
     expect(BELOW_FLOOR_PENDING_FOUNDER_RULING).toEqual([]);
   });
