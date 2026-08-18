@@ -136,22 +136,23 @@ const { prisma } = await import("@fikirtive/db");
 const { auth } = await import("@/lib/better-auth/server");
 const { authEmailQueueSettled, __resetAuthEmailCapsForTests, __configureAuthEmailQueueForTests } =
   await import("@/lib/better-auth/sender");
-const { __resetMagicLinkThrottleForTests } = await import("@/lib/better-auth/magic-link-request");
-const { requestMagicLink } = await import("@/app/login/actions");
+const { __resetSignInCodeThrottleForTests } = await import("@/lib/better-auth/signin-code-request");
+const { requestSignInCode } = await import("@/app/login/actions");
 const { POST: betterAuthPost } = await import("@/app/api/better-auth/[...all]/route");
 
 const NEUTRAL = {
   status: "success",
-  message: "If this email has access, a sign-in link is on its way — check your inbox.",
+  message: "If this email has access, a sign-in code is on its way — check your inbox.",
 };
 
 const CALLER = new Headers({ origin: "http://localhost:3100", "x-forwarded-for": "203.0.113.10" });
 
-/** Rows minted for one address. The token lives in `identifier`; the ADDRESS lives in `value`
- *  (magic-link/index.mjs stores `JSON.stringify({email, name})` there), which is why an earlier
- *  version of this file matched on the wrong column and never cleaned anything up. */
+/** Rows minted for one address. The ADDRESS lives in `identifier` (the email-OTP plugin writes
+ *  `sign-in-otp-<email>` there) and the `value` is the encrypted code — the opposite way round
+ *  from the magic link this replaced, which is worth stating because an earlier version of this
+ *  file matched on the wrong column and silently counted nothing. */
 const rowsFor = (email: string) =>
-  prisma.betterAuthVerification.count({ where: { value: { contains: email } } });
+  prisma.betterAuthVerification.count({ where: { identifier: { contains: email } } });
 
 beforeAll(async () => {
   await prisma.allowedEmail.upsert({
@@ -168,8 +169,8 @@ beforeEach(async () => {
   mockHeaders.mockReturnValue(CALLER);
   // #795 — both budgets are shared rows with an hour-long window. Reset them so each case
   // starts from a known state; this file is about the SHAPE of the path, and the two files that
-  // own the budgets (better-auth-sender / magic-link-throttle) test them without any reset.
-  await __resetMagicLinkThrottleForTests();
+  // own the budgets (better-auth-sender / signin-code-throttle) test them without any reset.
+  await __resetSignInCodeThrottleForTests();
   await __resetAuthEmailCapsForTests();
   // This file is about the REQUEST path, whose whole claim is that it waits on none of this.
   // The executor's per-job jitter and its slot floor would only add real seconds to every case
@@ -200,7 +201,7 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
   it("records the same awaits and the same database calls for all three", async () => {
     const walk = async (email: string) => {
       trace.length = 0;
-      const answer = await requestMagicLink({ email, callbackURL: "/" });
+      const answer = await requestSignInCode({ email });
       const recorded = [...trace]; // snapshot AT THE MOMENT the merchant has their answer
       await authEmailQueueSettled(); // let the background finish before the next address starts
       return { answer, recorded };
@@ -237,7 +238,7 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     const overBudget: string[][] = [];
     for (let i = 0; i < 8; i++) {
       trace.length = 0;
-      const answer = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
+      const answer = await requestSignInCode({ email: ENV_ALLOWED });
       (i < 5 ? inBudget : overBudget).push([...trace]);
       expect(answer).toEqual(NEUTRAL);
       await authEmailQueueSettled();
@@ -254,7 +255,7 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
 
   it("still delivers to exactly the two addresses that have access, silently", async () => {
     for (const email of [ENV_ALLOWED, DB_ALLOWED, UNKNOWN]) {
-      await requestMagicLink({ email, callbackURL: "/" });
+      await requestSignInCode({ email });
       await authEmailQueueSettled();
     }
     const written = mockSend.mock.calls.map((c) => (c[0] as { to: string }).to).sort();
@@ -267,7 +268,7 @@ describe("#678 r3 ② — anonymous requests do not grow the verification table"
   it("writes nothing for ten unknown addresses, and exactly one for an address with access", async () => {
     const before = await prisma.betterAuthVerification.count();
     const strangers = Array.from({ length: 10 }, () => `p678-swarm-${randomUUID()}@fikirtive.test`);
-    for (const email of strangers) await requestMagicLink({ email, callbackURL: "/" });
+    for (const email of strangers) await requestSignInCode({ email });
     await authEmailQueueSettled();
 
     // The token is minted AFTER the access check now, so an address nobody invited never
@@ -277,10 +278,17 @@ describe("#678 r3 ② — anonymous requests do not grow the verification table"
 
     // Control: a press from an address that DOES have access mints one, so the zero above is
     // the gate working and not the door being nailed shut.
-    const controlBefore = await rowsFor(ENV_ALLOWED);
-    await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
+    //
+    // The outstanding code is cleared first because a live one is REUSED rather than replaced
+    // (server.ts, `resendStrategy: "reuse"`): without this the control would press, correctly
+    // reuse the row an earlier case left behind, and read as a delta of zero — a green gate
+    // reporting the opposite of what it is checking.
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: ENV_ALLOWED } },
+    });
+    await requestSignInCode({ email: ENV_ALLOWED });
     await authEmailQueueSettled();
-    expect((await rowsFor(ENV_ALLOWED)) - controlBefore).toBe(1);
+    expect(await rowsFor(ENV_ALLOWED)).toBe(1);
   });
 });
 
@@ -298,7 +306,7 @@ describe("#678 r3 ③ — the request answers while the email is still in flight
       );
     });
 
-    const result = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
+    const result = await requestSignInCode({ email: ENV_ALLOWED });
     expect(result).toEqual(NEUTRAL);
     // Nothing about the job had even STARTED at that point — the queue drains on a macrotask.
     expect(trace).toEqual([...REQUEST_PATH]);
@@ -328,8 +336,8 @@ describe("#678 r3 ④ — a 429/5xx from the shared mail provider is an operator
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     mockSend.mockRejectedValue(new EmailSendError("provider detail", kind as "retryable"));
 
-    const known = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
-    const stranger = await requestMagicLink({ email: UNKNOWN, callbackURL: "/" });
+    const known = await requestSignInCode({ email: ENV_ALLOWED });
+    const stranger = await requestSignInCode({ email: UNKNOWN });
     expect(known).toEqual(NEUTRAL);
     expect(known).toEqual(stranger);
 
@@ -345,40 +353,177 @@ describe("#678 r3 ④ — a 429/5xx from the shared mail provider is an operator
   });
 });
 
-// ── the HTTP door is the same door ───────────────────────────────────────────────────────────
-describe("#678 r3 — Better Auth's own endpoint answers every address identically too", () => {
-  const post = (email: string) =>
+// ── THERE IS NO SECOND DOOR ANY MORE ─────────────────────────────────────────────────────────
+/**
+ * This describe used to prove that Better Auth's own `/sign-in/magic-link` endpoint answered
+ * every address with the same status, the same body and the same recorded work as the login
+ * page's server action — because the route file proxied it through the very same request path.
+ *
+ * The swap to codes removed the endpoint instead of matching it. `/email-otp/send-verification-otp`
+ * is in `disabledPaths` (lib/better-auth/server.ts), so the router 404s it and the ONLY way to
+ * cause a code to be minted is the server action above, which every case in this file already
+ * measures. Two doors that must be kept identical is a standing invitation for them to drift;
+ * one door cannot.
+ *
+ * What still has to be proven is that the second door is really gone — a closed path that
+ * quietly reopens would restore in-request minting for anyone who knows the URL, and no other
+ * case here would notice.
+ */
+describe("#678 r3 — the only public way to ask for a code is the server action", () => {
+  const post = (path: string, body: unknown) =>
     betterAuthPost(
-      new Request("http://localhost:3100/api/better-auth/sign-in/magic-link", {
+      new Request(`http://localhost:3100/api/better-auth${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           origin: "http://localhost:3100",
           "x-forwarded-for": "198.51.100.7",
         },
-        body: JSON.stringify({ email, callbackURL: "/" }),
+        body: JSON.stringify(body),
       }),
     );
 
-  it("same status, same body, and the same work for an address with access and one without", async () => {
-    trace.length = 0;
-    const known = await post(ENV_ALLOWED);
-    const knownTrace = [...trace];
-    await authEmailQueueSettled();
+  it("404s the mint endpoint for every address, and writes nothing for any of them", async () => {
+    for (const email of [ENV_ALLOWED, DB_ALLOWED, UNKNOWN]) {
+      const before = await rowsFor(email);
+      trace.length = 0;
+      const res = await post("/email-otp/send-verification-otp", { email, type: "sign-in" });
+      await authEmailQueueSettled();
+      // Snapshotted before the assertions below, which query the database themselves and would
+      // otherwise appear in the very trace being asserted.
+      const recorded = [...trace];
 
-    trace.length = 0;
-    const stranger = await post(UNKNOWN);
-    const strangerTrace = [...trace];
-    await authEmailQueueSettled();
+      // RED if the path is ever taken out of `disabledPaths`: Better Auth would answer 200 and
+      // mint a row inside the request, for an address nobody invited.
+      expect(res.status, `${email} reached the mint endpoint`).toBe(404);
+      expect(await rowsFor(email)).toBe(before);
+      expect(mockSend).not.toHaveBeenCalled();
+      // And it did no work of ours at all — not even the throttle, because there is nothing to
+      // throttle: the request never reached a handler.
+      expect(recorded).toEqual([]);
+    }
+  });
 
-    expect(known.status).toBe(200);
-    expect(stranger.status).toBe(known.status);
-    expect(await stranger.json()).toEqual(await known.json());
-    // The endpoint takes the same four steps the login page does — minus `headers()`, because the
-    // caller's headers arrived on the Request itself. Derived from REQUEST_PATH rather than
-    // restated, so a change to the path cannot leave the two doors describing different shapes.
-    expect(strangerTrace).toEqual(knownTrace);
-    expect(knownTrace).toEqual(REQUEST_PATH.filter((step) => step !== "headers"));
+  it("closes every OTP endpoint this product does not use, and leaves the one it does open", async () => {
+    const { auth: authInstance } = await import("@/lib/better-auth/server");
+    // The list is read off the live configuration rather than restated, so adding a plugin
+    // endpoint without deciding about it cannot slip past this.
+    const disabled = authInstance.options.disabledPaths ?? [];
+    expect(disabled).toContain("/email-otp/send-verification-otp");
+    expect(disabled).toContain("/email-otp/request-password-reset");
+    expect(disabled).toContain("/email-otp/reset-password");
+    expect(disabled).toContain("/forget-password/email-otp");
+    expect(disabled).toContain("/email-otp/verify-email");
+    expect(disabled).toContain("/email-otp/check-verification-otp");
+    expect(disabled).toContain("/email-otp/request-email-change");
+    expect(disabled).toContain("/email-otp/change-email");
+    // The one door a browser is allowed to knock on is NOT closed — a fence that shut everything
+    // would pass the assertions above and break sign-in.
+    expect(disabled).not.toContain("/sign-in/email-otp");
+
+    // …and it really answers: a garbage code is refused (4xx), not 404'd by the router.
+    const res = await post("/sign-in/email-otp", { email: UNKNOWN, otp: "000000" });
+    expect(res.status).not.toBe(404);
+  });
+});
+
+// ── ⑥ the door where the code is TYPED answers one refusal, whatever the row's state ─────────
+/**
+ * The oracle this closes, and why it needed its own describe.
+ *
+ * Every case above is about ASKING for a code. This one is about SUBMITTING one, and it is the
+ * surface the swap from links to codes introduced: unlike the magic link's redeem door — which
+ * took a token and no address, so there was nothing to key a probe on — this door takes the
+ * EMAIL. A verification row exists only for an address that passed the allowlist, so any answer
+ * that varies with the row's state is an answer about the account.
+ *
+ * Better Auth gives three: INVALID_OTP (400) when there is no row, TOO_MANY_ATTEMPTS (403) once
+ * the row's three guesses are spent, OTP_EXPIRED (400) once it is past its expiry. The first
+ * three guesses at a live code look exactly like guesses at nothing — which is why a test that
+ * stops at three passes while the door is wide open. The two cases below are the ones that told
+ * the addresses apart, taken from the judge's counter-example.
+ *
+ * THROUGH `betterAuthPost`, NOT `auth.handler`. The normalisation lives in the route file, so a
+ * test that calls the handler directly (as signin-code-door.test.ts does, deliberately, to reach
+ * Better Auth's own behaviour) walks straight past the thing under test.
+ */
+describe("#678 r3 ⑥ — submitting a code cannot be used to ask whether an address has an account", () => {
+  const submit = (email: string, otp: string) =>
+    betterAuthPost(
+      new Request("http://localhost:3100/api/better-auth/sign-in/email-otp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost:3100",
+          "x-forwarded-for": "198.51.100.9",
+        },
+        body: JSON.stringify({ email, otp }),
+      }),
+    );
+
+  /** Status + body, which is everything a probe can read off one of these. */
+  const answerOf = async (res: Response) => ({ status: res.status, body: await res.json() });
+
+  const WRONG = ["111111", "222222", "333333", "444444"];
+
+  it("answers the FOURTH guess identically for a merchant and for a stranger", async () => {
+    // The merchant has a live code; the stranger has never had one. RED before the fence: the
+    // fourth guess returned 403 TOO_MANY_ATTEMPTS for the merchant (the row's budget is spent)
+    // and 400 INVALID_OTP for the stranger (there is no row to spend).
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: ENV_ALLOWED } },
+    });
+    await auth.api.createVerificationOTP({ body: { email: ENV_ALLOWED, type: "sign-in" } });
+    expect(await rowsFor(ENV_ALLOWED)).toBe(1);
+    expect(await rowsFor(UNKNOWN)).toBe(0);
+
+    for (const otp of WRONG) {
+      const merchant = await answerOf(await submit(ENV_ALLOWED, otp));
+      const stranger = await answerOf(await submit(UNKNOWN, otp));
+      expect(merchant, `guess ${otp} told the two addresses apart`).toEqual(stranger);
+    }
+  });
+
+  it("answers an EXPIRED code identically for a merchant and for a stranger", async () => {
+    // One request per address, no waiting — the cheaper half of the same probe. RED before the
+    // fence: 400 OTP_EXPIRED for the merchant, 400 INVALID_OTP for the stranger.
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: ENV_ALLOWED } },
+    });
+    await auth.api.createVerificationOTP({ body: { email: ENV_ALLOWED, type: "sign-in" } });
+    await prisma.betterAuthVerification.updateMany({
+      where: { identifier: `sign-in-otp-${ENV_ALLOWED}` },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    const merchant = await answerOf(await submit(ENV_ALLOWED, "555555"));
+    const stranger = await answerOf(await submit(UNKNOWN, "555555"));
+    expect(merchant).toEqual(stranger);
+  });
+
+  it("keeps exactly one refusal in the vocabulary, and it is Better Auth's own", async () => {
+    // Naming the shape rather than only comparing two of them: a future edit that collapsed both
+    // sides onto a NEW shape would satisfy the cases above and quietly change the client contract.
+    const stranger = await answerOf(await submit(UNKNOWN, "666666"));
+    expect(stranger).toEqual({
+      status: 400,
+      body: { message: "Invalid OTP", code: "INVALID_OTP" },
+    });
+  });
+
+  it("still lets the correct code through, cookie and all", async () => {
+    // The fence must refuse to be a wall. RED if the normalisation is ever widened to 2xx: the
+    // session cookie rides on that response and sign-in would silently stop working.
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: ENV_ALLOWED } },
+    });
+    const otp = await auth.api.createVerificationOTP({
+      body: { email: ENV_ALLOWED, type: "sign-in" },
+    });
+
+    const res = await submit(ENV_ALLOWED, otp);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie") ?? "").toContain("session_token");
   });
 });
 
@@ -472,11 +617,13 @@ afterAll(async () => {
     PASSWORD_UNLISTED,
   ];
   try {
-    // The address lives in `value`, not in `identifier` (which is the random token).
+    // The address lives in `identifier` (`sign-in-otp-<email>`), not in `value` — see rowsFor.
     await prisma.betterAuthVerification.deleteMany({
-      where: { OR: addresses.map((email) => ({ value: { contains: email } })) },
+      where: { OR: addresses.map((email) => ({ identifier: { contains: email } })) },
     });
-    await prisma.betterAuthVerification.deleteMany({ where: { value: { contains: "p678-swarm-" } } });
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: "p678-swarm-" } },
+    });
     await prisma.betterAuthSession.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.betterAuthAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.betterAuthUser.deleteMany({ where: { email: { in: addresses } } });

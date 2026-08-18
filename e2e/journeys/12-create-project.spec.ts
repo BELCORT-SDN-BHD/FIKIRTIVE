@@ -23,8 +23,17 @@ test("A merchant creates a project, lands in it, and is charged nothing for it",
   await signIn(page, ws, "/otto");
 
   // The projects rail starts collapsed at this viewport; "New project" lives inside it.
+  //
+  // WAITED FOR, not sampled. `isVisible()` is a single instantaneous read: it answers "is this on
+  // screen right now", and right now is a moment while the workbench is still mounting. It
+  // happened to be true when signing in was a server redirect that landed on a fully painted
+  // document; with the sign-in code the page navigates itself, so the read could fall before the
+  // rail existed — the toggle was then skipped and the journey blamed "New project" for being
+  // missing. The rail is genuinely collapsed at this viewport, so waiting for the toggle is the
+  // honest form of the same check.
   const showSidebar = page.getByRole("button", { name: "Show sidebar" });
-  if (await showSidebar.isVisible()) await showSidebar.click();
+  await showSidebar.waitFor({ state: "visible" });
+  await showSidebar.click();
 
   await page.getByRole("button", { name: "New project" }).click();
 

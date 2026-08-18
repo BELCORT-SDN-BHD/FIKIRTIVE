@@ -120,7 +120,7 @@ export function ProfileNames({ displayName, workspaceName }: { displayName: stri
         autoComplete="name"
         onSave={updateDisplayName}
       />
-      {/* #680 — when the merchant has never been asked for a shop name (magic-link and invite
+      {/* #680 — when the merchant has never been asked for a shop name (sign-in code and invite
           sign-ins never ask), this field is EMPTY and the placeholder asks for it. It used to
           arrive pre-filled with their email address, which read as an answer they had given. */}
       <NameField

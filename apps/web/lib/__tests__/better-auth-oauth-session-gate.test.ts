@@ -26,11 +26,20 @@ import { APIError } from "better-auth/api";
 // rests SOLELY on session.create.before. That is the gap flagged in
 // docs/superpowers/handoffs/2026-06-25-betterauth-cutover.md §6 item 2.
 //
-// "/magic-link/verify" is the faithful, deterministic stand-in for the OAuth
-// callback: same front-door bypass, and for an already-existing user it skips
-// createUser and goes straight to internalAdapter.createSession(user.id) —
-// the identical createSession → session.create.before chain — without having
-// to forge signed OAuth state and mock Google's token/userinfo endpoints.
+// "/sign-in/email-otp" is the faithful, deterministic stand-in for the OAuth
+// callback: for an already-existing user it skips createUser and goes straight
+// to internalAdapter.createSession(user.id) — the identical createSession →
+// session.create.before chain — without having to forge signed OAuth state and
+// mock Google's token/userinfo endpoints.
+//
+// It bypasses the front door too, and that is not an accident of routing: its
+// path DOES start with "/sign-in" and it DOES carry an email, so the middleware
+// would have refused it — server.ts carves it out on purpose, because deciding
+// the allowlist at that door turns "wrong code" and "no such merchant" into two
+// visibly different answers (an account-existence oracle, #678). This test is
+// therefore the proof that the carve-out costs nothing: the deny-by-default
+// guarantee for the code door rests SOLELY on session.create.before, exactly as
+// it does for the OAuth callback.
 //
 // Requires DATABASE_URL pointing at a local Postgres with the better_auth
 // migration applied (same prerequisite as isolation.test.ts).
@@ -61,19 +70,12 @@ const GATE_MESSAGE = "This email isn't on the allowlist.";
 const blockedEmail = `blocked-${randomUUID()}@example.com`;
 const userId = `bau_${randomUUID()}`;
 
-/** Seed a magic-link verification row (plain-token mode: the URL token is the
- *  stored identifier) and return the raw token to put in the verify URL. */
-async function seedMagicLinkToken(email: string): Promise<string> {
-  const token = randomUUID().replace(/-/g, "");
-  await prisma.betterAuthVerification.create({
-    data: {
-      id: `bav_${randomUUID()}`,
-      identifier: token,
-      value: JSON.stringify({ email, name: "Blocked Tester" }),
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-    },
-  });
-  return token;
+/** Mint a REAL sign-in code for this address and return it. Better Auth's own server-only
+ *  endpoint is used rather than a hand-seeded row because the stored value is encrypted under
+ *  BETTER_AUTH_SECRET (server.ts, `storeOTP: "encrypted"`) — a forged row would not verify, and a
+ *  test that had to reimplement the cipher would pass for the wrong reason. */
+async function mintSignInCode(email: string): Promise<string> {
+  return auth.api.createVerificationOTP({ body: { email, type: "sign-in" } });
 }
 
 beforeAll(async () => {
@@ -85,18 +87,23 @@ beforeAll(async () => {
 afterAll(async () => {
   // Cascade (onDelete: Cascade) removes any sessions/accounts with the user.
   await prisma.betterAuthUser.deleteMany({ where: { id: userId } });
-  // Verification rows have no user FK; drop any our seeds left behind.
-  await prisma.betterAuthVerification.deleteMany({ where: { value: { contains: blockedEmail } } });
+  // Verification rows have no user FK; drop any our seeds left behind. The address lives in the
+  // OTP row's `identifier` (`sign-in-otp-<email>`), never in its `value` — the value is the
+  // encrypted code.
+  await prisma.betterAuthVerification.deleteMany({
+    where: { identifier: { contains: blockedEmail } },
+  });
 });
 
 describe("Better Auth allowlist gate — session.create.before library wiring (integration)", () => {
-  it("blocks a non-allowlisted user on a front-door-bypassing session path (magic-link verify, like the OAuth callback): 403, no session cookie, no ba_session row", async () => {
-    const token = await seedMagicLinkToken(blockedEmail);
+  it("blocks a non-allowlisted user on a front-door-bypassing session path (sign-in code, like the OAuth callback): 403, no session cookie, no ba_session row", async () => {
+    const otp = await mintSignInCode(blockedEmail);
 
     const res = await auth.handler(
-      new Request(`${BASE_URL}/api/better-auth/magic-link/verify?token=${token}`, {
-        method: "GET",
-        headers: { origin: BASE_URL },
+      new Request(`${BASE_URL}/api/better-auth/sign-in/email-otp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: BASE_URL },
+        body: JSON.stringify({ email: blockedEmail, otp }),
       }),
     );
 

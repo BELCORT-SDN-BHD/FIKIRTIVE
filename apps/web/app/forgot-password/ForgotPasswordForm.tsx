@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 /** Password-reset request. The confirmation is deliberately NEUTRAL — it never reveals
- *  whether an address has an account (the same rule the magic-link form follows). */
+ *  whether an address has an account (the same rule the sign-in-code form follows). */
 export function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);

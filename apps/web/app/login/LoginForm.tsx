@@ -4,24 +4,31 @@ import { useEffect, useRef, useState } from "react";
 import { authClient } from "@/lib/better-auth/client";
 import { sanitizeCallbackURL } from "@/lib/safe-redirect";
 import {
-  MAGIC_LINK_INVALID_EMAIL_MESSAGE,
-  MAGIC_LINK_UNKNOWN_FAILED_MESSAGE,
-  normalizeMagicLinkEmail,
-  type MagicLinkFailure,
-  type MagicLinkRequestResult,
-} from "@/lib/better-auth/magic-link-contract";
+  SIGN_IN_CODE_INVALID_EMAIL_MESSAGE,
+  SIGN_IN_CODE_LENGTH,
+  SIGN_IN_CODE_REJECTED_MESSAGE,
+  SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE,
+  normalizeSignInEmail,
+  type SignInCodeFailure,
+  type SignInCodeRequestResult,
+} from "@/lib/better-auth/signin-code-contract";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { requestMagicLink } from "./actions";
+import { requestSignInCode } from "./actions";
 
 type LoginFormError =
-  | ({ source: "magic_link" } & MagicLinkFailure)
-  | { source: "password" | "social"; message: string };
+  | ({ source: "sign_in_code" } & SignInCodeFailure)
+  | { source: "password" | "social" | "code_entry"; message: string };
 
-/** Interactive sign-in surface. Email + password is the primary path; magic link
- *  (passwordless) and Google sit beneath as alternatives. Password/social use
- *  authClient; magic link uses the typed server action backed by Better Auth.
+/** Interactive sign-in surface. Email + password is the primary path; a mailed sign-in code
+ *  (passwordless) and Google sit beneath as alternatives. Password/social/code-entry use
+ *  authClient; asking for a code uses the typed server action backed by Better Auth.
  *  `from` preserves the post-login redirect.
+ *
+ *  WHY THE CODE STEP LIVES ON THIS PAGE rather than behind a link in an email: the merchant
+ *  finishes signing in in the tab they started in. A mailed link had to guess where they wanted
+ *  to end up and carry it through the mail; a code carries nothing, so the redirect below is the
+ *  same one the password path uses.
  *
  *  `googleEnabled` is decided on the SERVER from the actual OAuth credentials (#681) and
  *  handed down — this component never reads env and never guesses. False means the server
@@ -31,19 +38,21 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
   const callbackURL = sanitizeCallbackURL(from);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [showPw, setShowPw] = useState(false);
-  const [busy, setBusy] = useState<"magic" | "google" | "password" | null>(null);
-  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState<"code" | "google" | "password" | "verify" | null>(null);
+  const [codeSent, setCodeSent] = useState(false);
   const [error, setError] = useState<LoginFormError | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
+  const codeInputRef = useRef<HTMLInputElement>(null);
   const focusEmailAfterReset = useRef(false);
 
   useEffect(() => {
-    if (!sent && focusEmailAfterReset.current) {
+    if (!codeSent && focusEmailAfterReset.current) {
       focusEmailAfterReset.current = false;
       emailInputRef.current?.focus();
     }
-  }, [sent]);
+  }, [codeSent]);
 
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -56,37 +65,62 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
     else window.location.assign(callbackURL);
   }
 
-  async function sendMagicLink(e?: React.SyntheticEvent) {
+  async function sendSignInCode(e?: React.SyntheticEvent) {
     e?.preventDefault();
     if (busy) return;
-    const normalizedEmail = normalizeMagicLinkEmail(email);
+    const normalizedEmail = normalizeSignInEmail(email);
     if (!normalizedEmail) {
       setError({
-        source: "magic_link",
+        source: "sign_in_code",
         status: "error",
         reason: "invalid_email",
-        message: MAGIC_LINK_INVALID_EMAIL_MESSAGE,
+        message: SIGN_IN_CODE_INVALID_EMAIL_MESSAGE,
       });
       emailInputRef.current?.focus();
       return;
     }
-    setBusy("magic");
+    setBusy("code");
     setError(null);
-    let result: MagicLinkRequestResult;
+    let result: SignInCodeRequestResult;
     try {
-      result = await requestMagicLink({ email: normalizedEmail, callbackURL });
+      result = await requestSignInCode({ email: normalizedEmail });
     } catch {
       result = {
         status: "error" as const,
         reason: "unknown" as const,
-        message: MAGIC_LINK_UNKNOWN_FAILED_MESSAGE,
+        message: SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE,
       };
     }
     setBusy(null);
     if (result.status === "error") {
-      setError({ source: "magic_link", ...result });
+      setError({ source: "sign_in_code", ...result });
     } else {
-      setSent(true);
+      setCode("");
+      setCodeSent(true);
+    }
+  }
+
+  async function verifySignInCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    const normalizedEmail = normalizeSignInEmail(email);
+    const otp = code.trim();
+    if (!normalizedEmail || otp.length !== SIGN_IN_CODE_LENGTH) {
+      setError({ source: "code_entry", message: SIGN_IN_CODE_REJECTED_MESSAGE });
+      codeInputRef.current?.focus();
+      return;
+    }
+    setBusy("verify");
+    setError(null);
+    const { error } = await authClient.signIn.emailOtp({ email: normalizedEmail, otp });
+    setBusy(null);
+    if (error) {
+      // ONE message for every refusal Better Auth can return here — see
+      // SIGN_IN_CODE_REJECTED_MESSAGE for why the three are not told apart.
+      setError({ source: "code_entry", message: SIGN_IN_CODE_REJECTED_MESSAGE });
+      codeInputRef.current?.focus();
+    } else {
+      window.location.assign(callbackURL);
     }
   }
 
@@ -105,28 +139,83 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
   function useDifferentEmail() {
     setEmail("");
     setPassword("");
+    setCode("");
     setError(null);
     focusEmailAfterReset.current = true;
-    setSent(false);
+    setCodeSent(false);
   }
 
-  if (sent) {
+  if (codeSent) {
     return (
-      <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
-        <p className="text-[15px] font-semibold text-foreground">Check your email</p>
-        <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-          If <span className="font-medium text-foreground">{email.trim()}</span> has access, a
-          sign-in link is on its way — check your inbox.
-        </p>
-        <Button
-          type="button"
-          variant="link"
-          onClick={useDifferentEmail}
-          className="mt-3.5 h-auto w-auto p-0 text-[13.5px] font-semibold text-muted-foreground underline hover:text-foreground"
-        >
-          Use a different email
+      <form
+        onSubmit={verifySignInCode}
+        className="flex flex-col gap-3.5 rounded-[var(--radius-card)] border border-border bg-card p-5 shadow-xs"
+      >
+        <div className="text-center">
+          <p className="text-[15px] font-semibold text-foreground">Check your email</p>
+          <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
+            If <span className="font-medium text-foreground">{email.trim()}</span> has access, a
+            sign-in code is on its way — enter it below.
+          </p>
+        </div>
+
+        {error && (
+          <p role="alert" className="text-center text-[13.5px] font-medium text-destructive">
+            {error.message}
+          </p>
+        )}
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="code" className="sr-only">
+            Sign-in code
+          </label>
+          <Input
+            ref={codeInputRef}
+            id="code"
+            name="code"
+            required
+            autoFocus
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={SIGN_IN_CODE_LENGTH}
+            placeholder="123456"
+            aria-label="Sign-in code"
+            className="text-center text-[19px] font-semibold tracking-[0.4em]"
+            value={code}
+            // Digits only, and never longer than a real code: a paste that brings spaces or a
+            // stray letter along would otherwise be submitted as-is and refused for a reason the
+            // merchant cannot see.
+            onChange={(e) =>
+              setCode(e.target.value.replace(/\D/g, "").slice(0, SIGN_IN_CODE_LENGTH))
+            }
+          />
+        </div>
+
+        <Button type="submit" disabled={!!busy} className="w-full">
+          {busy === "verify" ? "Signing in…" : "Sign in"}
         </Button>
-      </div>
+
+        <div className="flex items-center justify-center gap-3 text-[13.5px]">
+          <Button
+            type="button"
+            variant="link"
+            onClick={() => sendSignInCode()}
+            disabled={!!busy}
+            className="h-auto w-auto p-0 font-semibold text-muted-foreground underline hover:text-foreground"
+          >
+            {busy === "code" ? "Sending…" : "Send it again"}
+          </Button>
+          <span className="text-muted-foreground/50">·</span>
+          <Button
+            type="button"
+            variant="link"
+            onClick={useDifferentEmail}
+            className="h-auto w-auto p-0 font-semibold text-muted-foreground underline hover:text-foreground"
+          >
+            Use a different email
+          </Button>
+        </div>
+      </form>
     );
   }
 
@@ -158,19 +247,9 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <label htmlFor="password" className="text-[13px] font-semibold text-foreground/85">
-              Password
-            </label>
-            <Button
-              type="button"
-              variant="link"
-              onClick={() => sendMagicLink()}
-              className="h-auto w-auto p-0 text-[12.5px] font-semibold text-muted-foreground hover:text-foreground hover:no-underline"
-            >
-              Email me a sign-in link
-            </Button>
-          </div>
+          <label htmlFor="password" className="text-[13px] font-semibold text-foreground/85">
+            Password
+          </label>
           <div className="relative">
             <Input
               id="password"
@@ -223,8 +302,8 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
       </div>
 
       <div className="flex flex-col gap-2.5">
-        <Button type="button" variant="secondary" onClick={() => sendMagicLink()} disabled={!!busy} className="w-full">
-          {busy === "magic" ? (
+        <Button type="button" variant="secondary" onClick={() => sendSignInCode()} disabled={!!busy} className="w-full">
+          {busy === "code" ? (
             "Sending…"
           ) : (
             <>
@@ -232,7 +311,7 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
                 <rect x="2" y="4" width="20" height="16" rx="2" />
                 <path d="m2 7 10 6 10-6" />
               </svg>
-              Email me a sign-in link
+              Email me a sign-in code
             </>
           )}
         </Button>
