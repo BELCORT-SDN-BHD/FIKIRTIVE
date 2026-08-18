@@ -83,6 +83,7 @@ export interface OttoPanelShellProps {
   onOpenHistory?: () => void;
   historyOpen?: boolean;
   onNewChat?: () => void;
+  headerBusy?: boolean;
 }
 
 export function OttoPanelShell({
@@ -95,6 +96,7 @@ export function OttoPanelShell({
   onOpenHistory,
   historyOpen,
   onNewChat,
+  headerBusy,
 }: OttoPanelShellProps) {
   // 首帧一律按默认值画(服务端不知道 localStorage,也不知道视窗有多大),
   // 挂载后再一次性套用存值 —— 这就是 `data-otto-panel-hydrated` 存在的理由。
@@ -217,6 +219,7 @@ export function OttoPanelShell({
             onOpenHistory={onOpenHistory}
             historyOpen={historyOpen}
             onNewChat={onNewChat}
+            headerBusy={headerBusy}
             contextChip={contextChip}
             contextAttached={contextAttached}
             quickChips={quickChips}

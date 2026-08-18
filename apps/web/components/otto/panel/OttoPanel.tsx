@@ -61,6 +61,8 @@ export interface OttoPanelProps {
   /** 历史列表现在是不是开着(头部那颗 ☰ 的按下态)。 */
   historyOpen?: boolean;
   onNewChat?: () => void;
+  /** 面板正在把一条会话的消息取回来 —— 会改变「现在显示哪一条」的那两颗先禁掉。 */
+  headerBusy?: boolean;
   contextChip?: OttoPanelContextChip;
   /**
    * 这一轮会不会自动把商家看的这一页当上下文(W2-8)。
@@ -103,6 +105,7 @@ export function OttoPanel({
   onOpenHistory,
   historyOpen = false,
   onNewChat,
+  headerBusy = false,
   contextChip,
   contextAttached = false,
   children,
@@ -297,7 +300,12 @@ export function OttoPanel({
           <OttoAvatar size={22} mood="idle" />
           <span className="mr-auto truncate text-[14px] font-semibold tracking-[-0.01em]">Otto</span>
           {onOpenHistory && (
-            <PanelIconButton label="Conversation history" pressed={historyOpen} onClick={onOpenHistory}>
+            <PanelIconButton
+              label="Conversation history"
+              pressed={historyOpen}
+              disabled={headerBusy}
+              onClick={onOpenHistory}
+            >
               <History className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}
@@ -309,7 +317,7 @@ export function OttoPanel({
             {expanded ? <Minimize2 className="size-4" strokeWidth={1.9} /> : <Maximize2 className="size-4" strokeWidth={1.9} />}
           </PanelIconButton>
           {onNewChat && (
-            <PanelIconButton label="New chat" onClick={onNewChat}>
+            <PanelIconButton label="New chat" disabled={headerBusy} onClick={onNewChat}>
               <SquarePen className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}
@@ -373,11 +381,13 @@ function PanelIconButton({
   label,
   onClick,
   pressed,
+  disabled,
   children,
 }: {
   label: string;
   onClick: () => void;
   pressed?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -386,6 +396,7 @@ function PanelIconButton({
       variant="ghost"
       size="icon"
       onClick={onClick}
+      disabled={disabled}
       aria-label={label}
       title={label}
       {...(pressed === undefined ? {} : { "aria-pressed": pressed })}

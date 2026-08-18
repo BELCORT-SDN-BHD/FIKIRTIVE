@@ -98,15 +98,31 @@ export function OttoPanelHost({
   // 上一版实现的话在 git 历史里(`apps/web/lib/otto-panel-context.ts`,提交 ea0db0f5)。
 
   // ── 会话 ────────────────────────────────────────────────────────────────
+  //
+  // 「现在该显示哪一条」这个**意图**的版本号。商家每表达一次新意图(选另一条、开新对话、
+  // 前门或 chip 建了一条)就 +1;取数发起时记下当时的号码,落地时对不上就把结果丢掉。
+  //
+  // 判官 r2 [P3-新①]:没有这一道,一次迟到的取数会把商家**从他刚开的新对话里拽回**上一条
+  // 旧会话 —— 前门连同里面打了一半的字一起消失。禁用按钮只挡得住看得见的那几条路(还有
+  // chip 那一条),意图号才是真正的守卫:它拦的是「结果落地」这一刻,不是「点得到点不到」。
+  const intentRef = React.useRef(0);
+  /** 表达一次新意图,并拿到它的号码。只在事件处理里调用,不在渲染里。 */
+  const claimIntent = React.useCallback(() => {
+    setOpeningThreadId(null);
+    return ++intentRef.current;
+  }, []);
+
   const upsertThread = React.useCallback((thread: ChatThreadDTO) => {
     setThreads((current) => [thread, ...current.filter((t) => t.id !== thread.id)]);
   }, []);
 
   const handleThreadStarted = React.useCallback((thread: ChatThreadDTO) => {
+    claimIntent();
+    setThreadError(null);
     upsertThread(thread);
     setActiveThreadId(thread.id);
     setHistoryOpenedAt(null);
-  }, [upsertThread]);
+  }, [claimIntent, upsertThread]);
 
   const handleStreamStart = React.useCallback((thread: ChatThreadDTO, pending: PendingFirstMessage) => {
     handleThreadStarted(thread);
@@ -114,9 +130,17 @@ export function OttoPanelHost({
   }, [handleThreadStarted]);
 
   const openNewChat = React.useCallback(() => {
+    claimIntent();
+    setThreadError(null);
     setActiveThreadId(null);
     setPendingFirst(null);
     setHistoryOpenedAt(null);
+  }, [claimIntent]);
+
+  /** 开合历史。判官 r2 [P3-新②]:打不开那句话不许跨开合残留 —— 关掉再打开是新的一眼。 */
+  const toggleHistory = React.useCallback(() => {
+    setThreadError(null);
+    setHistoryOpenedAt((at) => (at === null ? Date.now() : null));
   }, []);
 
   /**
@@ -133,8 +157,13 @@ export function OttoPanelHost({
    *
    * 取数走的是 `/otto` 换会话时用的同一个 `getCoworkThreadClient`,不是为面板另写一条。
    * 已经带着消息的那一条直接切;当前这一条不重取 —— 重取会把正在流式写入的那一轮换掉。
+   *
+   * 取数期间商家改主意了(开新对话、点了一颗 chip、又选了另一条)怎么办:那一刻意图号
+   * 已经变了,这一次的结果**整份丢掉** —— 不切、不写进列表、也不报错。报错会让一个他
+   * 已经放弃的动作在新界面上弹一句话出来。
    */
   const selectThread = React.useCallback(async (thread: ChatThreadDTO) => {
+    const intent = claimIntent();
     setThreadError(null);
     if (thread.id === activeThreadId || thread.messages.length > 0) {
       setActiveThreadId(thread.id);
@@ -143,6 +172,8 @@ export function OttoPanelHost({
     }
     setOpeningThreadId(thread.id);
     const fresh = await getCoworkThreadClient(thread.id).catch(() => null);
+    // 迟到判定要在**任何** setState 之前:商家已经去了别处,这一份结果就不该再影响界面。
+    if (intentRef.current !== intent) return;
     setOpeningThreadId(null);
     // 取不到就**留在列表上**说一句实话,而不是切过去让商家盯着一片空白猜发生了什么。
     if (!fresh) {
@@ -152,7 +183,7 @@ export function OttoPanelHost({
     upsertThread(fresh);
     setActiveThreadId(fresh.id);
     setHistoryOpenedAt(null);
-  }, [activeThreadId, upsertThread]);
+  }, [activeThreadId, claimIntent, upsertThread]);
 
   // ── 快捷 chips ───────────────────────────────────────────────────────────
   const chips = React.useMemo(() => panelQuickChips(location), [location]);
@@ -198,9 +229,16 @@ export function OttoPanelHost({
    * 就把商家正在做的事丢掉,是这块面板最不该有的行为。
    *
    * 用 `display: none` 而不是卸载:DOM 节点还在,React 状态、composer 里的字、流式那一轮
-   * 全部原地不动。**display 走内联样式**是刻意的 —— `hidden` 属性与 Tailwind 的 `flex` 类
-   * 撞车时(preflight 的 `[hidden]` 选择器裹在 `:where()` 里,优先级 0)会被类赢掉,那是一个
-   * 只在某些类组合下才出现的隐身失败。
+   * 全部原地不动。
+   *
+   * **display 走内联样式**而不是 `hidden` 属性 —— 理由不是「`hidden` 会失效」(判官 r2
+   * [P3-新③] 更正了我上一版写反的说法):本仓 tailwindcss@4.3.0 的 preflight 写的是
+   * `[hidden]:where(:not([hidden='until-found'])) { display: none !important }`,那个
+   * `!important` 压得住 `.flex`,所以 `hidden` 本来也能藏住。
+   *
+   * 选内联的真正理由是它更稳、更好读:内联样式优先于任何非 `!important` 的类,不依赖
+   * preflight 有没有被引入或将来会不会改写;显示与否由这个组件当场说了算,而且
+   * `style.display` 可以被测试直接断言 —— 「藏起来了没有」因此是一条看得见的事实。
    */
   const panelBody = (
     <>
@@ -248,9 +286,12 @@ export function OttoPanelHost({
         ) : null
       }
       // 历史入口只在真的有列表可开时才画 —— 种子还没到就没有历史可看(§3.4:没接上的东西不画)。
-      onOpenHistory={seed ? () => setHistoryOpenedAt((at) => (at === null ? Date.now() : null)) : undefined}
+      onOpenHistory={seed ? toggleHistory : undefined}
       historyOpen={historyOpen}
       onNewChat={seed ? openNewChat : undefined}
+      // 正在把一条会话的消息取回来时,头部这两颗会改变「现在显示哪一条」的按钮先禁掉。
+      // 真正的守卫是意图号(见上面 `claimIntent`);禁用只是让这一下不必发生。
+      headerBusy={openingThreadId !== null}
     >
       {children}
     </OttoPanelShell>

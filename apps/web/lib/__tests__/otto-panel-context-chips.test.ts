@@ -374,6 +374,42 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     expect(getCoworkThreadClient).not.toHaveBeenCalled();
   });
 
+  it("取数途中改主意开新对话 —— 迟到的结果被丢弃,前门不被拽回", async () => {
+    // 取数悬着,直到测试自己放行 —— 「迟到」在这里是可控的,不是靠 sleep 撞运气。
+    let release: (value: unknown) => void = () => {};
+    getCoworkThreadClient.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+    });
+
+    // 取数途中:会改变「显示哪一条」的两颗先禁掉(意图号才是真守卫,这只是不必发生的一下)。
+    expect(el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.disabled).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>('[aria-label="New chat"]')!.disabled).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>("[data-otto-thread-list-new]")!.disabled).toBe(true);
+
+    // 商家改主意:开新对话(走头部那颗以外的第二条路也一样 —— 这里直接调列表里那颗之外的
+    // 意图源,模拟「禁用挡不住的那些路」,例如底部 chip)。
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${panelQuickChips(SHELL_ROUTES.campaign)[0]!.goalKey}"]`)!.click();
+    });
+
+    // 现在那份取数才回来。
+    await act(async () => {
+      release(fullThread("Kuih teaser for Raya"));
+      await Promise.resolve();
+    });
+
+    // 没有被拽回旧会话:面板上不是那条历史的内容。
+    expect(el.querySelector<HTMLElement>("[data-otto-panel-body]")!.textContent).not.toContain("Kuih teaser for Raya");
+    // 也不会为一个已经放弃的动作弹一句错误出来。
+    expect(el.querySelector("[data-otto-thread-list-error]")).toBeNull();
+  });
+
   it("取不到就留在列表上说实话,不切过去让商家盯着一片空白", async () => {
     getCoworkThreadClient.mockResolvedValue(null);
 
@@ -388,6 +424,24 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     expect(el.querySelector("[data-otto-thread-list-error]")).not.toBeNull();
     // 列表还开着 —— 没有切到一条画不出内容的会话上去。
     expect(el.querySelector("[data-otto-thread-list]")).not.toBeNull();
+  });
+
+  it("那句「打不开」不许跨开合残留 —— 关掉再打开是新的一眼", async () => {
+    getCoworkThreadClient.mockResolvedValue(null);
+
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
+    await act(async () => history.click());
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+    });
+    expect(el.querySelector("[data-otto-thread-list-error]")).not.toBeNull();
+
+    await act(async () => history.click()); // 关
+    await act(async () => history.click()); // 再开
+
+    expect(el.querySelector("[data-otto-thread-list]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-thread-list-error]")).toBeNull();
   });
 });
 

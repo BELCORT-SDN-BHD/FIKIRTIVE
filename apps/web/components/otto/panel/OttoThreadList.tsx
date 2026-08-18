@@ -78,6 +78,7 @@ export function OttoThreadList({
         type="button"
         variant="outline"
         data-otto-thread-list-new=""
+        disabled={openingThreadId !== null}
         onClick={onNewChat}
         className="h-9 w-full justify-start gap-2 rounded-[10px] px-3 text-[13px] font-medium"
       >
