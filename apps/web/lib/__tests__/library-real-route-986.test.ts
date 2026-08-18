@@ -20,7 +20,12 @@
  *   - 删掉 `app/library/editor/page.tsx` ⇒ ①「每条新地址都有页」红;
  *   - 把 AddAssetDialog 的 `<Dialog>` 换回手搓 `fixed inset-0 role="dialog"` ⇒ ④ 的 Escape、
  *     焦点陷阱、无手搓遮罩三条一起红;
- *   - 把 `MERCHANT_NAV` 里 Library 那一格的 href 改成 `/library` ⇒ ③ Stack A 红。
+ *   - 把 `MERCHANT_NAV` 里 Library 那一格的 href 改成 `/library` ⇒ ③ Stack A 红;
+ *   - 判官 P2-1 那一发(它抓到的正是下面这条断言曾经是摆设):给 DialogContent 加一句
+ *     `onEscapeKeyDown={(e) => e.preventDefault()}` 压制 Escape ——
+ *       · 事件不带 `cancelable` 时:**20/20 全绿**,压制被放过去了(实测复现);
+ *       · 事件带上 `cancelable: true` 之后:同一个变异当场红。
+ *     所以这条断言的可信度不在「有没有 dispatch」,而在事件本身取不取消得掉。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -334,7 +339,10 @@ describe("两处手搓弹窗换成 ui/dialog(规格书 §4.3)", () => {
 
     expect(document.querySelector('[role="dialog"]'), "弹窗没开").toBeTruthy();
     await act(async () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      // `cancelable: true` 不是装饰(判官 P2-1):不可取消的事件上 preventDefault 是空操作,
+      // 于是**任何压制 Escape 的改动**(例如给 DialogContent 加一个 onEscapeKeyDown 拦截)
+      // 都还是关得掉弹窗 —— 这条断言就活成了摆设。判官已实证:补上之后同一个压制变异当场红。
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
 
     expect(onClose, "按了 Escape,弹窗当没听见").toHaveBeenCalled();
@@ -379,7 +387,8 @@ describe("两处手搓弹窗换成 ui/dialog(规格书 §4.3)", () => {
     expect(dialog!.contains(document.activeElement)).toBe(true);
 
     await act(async () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      // 同上(判官 P2-1):少了 cancelable,这条 Escape 断言压制不倒。
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
     expect(document.querySelector('[role="dialog"]'), "按了 Escape 弹窗还在").toBeFalsy();
   });
