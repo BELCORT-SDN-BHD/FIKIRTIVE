@@ -37,11 +37,6 @@ vi.mock("@/lib/account-actions", () => ({
 const loadOttoPanelSeed = vi.fn();
 vi.mock("@/lib/otto-panel-seed", () => ({ loadOttoPanelSeed: () => loadOttoPanelSeed() }));
 
-const loadOttoPanelContextName = vi.fn();
-vi.mock("@/lib/otto-panel-context", () => ({
-  loadOttoPanelContextName: (...args: unknown[]) => loadOttoPanelContextName(...args),
-}));
-
 const createEmptyCoworkThread = vi.fn();
 vi.mock("@/lib/otto-client-actions", () => ({
   ottoTurn: vi.fn(),
@@ -50,7 +45,10 @@ vi.mock("@/lib/otto-client-actions", () => ({
   renameCoworkThread: vi.fn(),
   setCoworkThreadPinned: vi.fn(),
 }));
-vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
+const getCoworkThreadClient = vi.fn();
+vi.mock("@/lib/cowork-fetch", () => ({
+  getCoworkThreadClient: (...args: unknown[]) => getCoworkThreadClient(...args),
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -59,11 +57,39 @@ const { panelContextSubject, panelQuickChips } = await import("@/components/otto
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 
+/** 一条只有 meta 的历史会话 —— 种子里除打开那条以外的每一条都长这样(`messages: []`)。 */
+const META_THREAD = {
+  id: "t_old",
+  projectId: "p_raya",
+  title: "Kuih teaser",
+  updatedAt: new Date("2026-08-18T02:00:00.000Z").toISOString(),
+  messages: [],
+};
+
+/** 同一条会话,带着真正的消息 —— `getCoworkThreadClient` 取回来的那一份。 */
+function fullThread(text: string) {
+  return {
+    ...META_THREAD,
+    messages: [
+      {
+        id: "m1",
+        role: "USER" as const,
+        kind: "TEXT" as const,
+        seq: 1,
+        text,
+        payload: null,
+        genJobId: null,
+        createdAt: META_THREAD.updatedAt,
+      },
+    ],
+  };
+}
+
 const SEED = {
   projectId: "p_raya",
   entities: [],
   projects: [{ id: "p_raya", name: "Raya campaign", pinnedAt: null }],
-  threads: [],
+  threads: [META_THREAD],
   activeThreadId: null,
   balanceUsd: 12,
   userName: "Aisyah",
@@ -83,7 +109,7 @@ beforeEach(() => {
   Object.defineProperty(window, "innerHeight", { value: 900, writable: true, configurable: true });
   window.localStorage.clear();
   loadOttoPanelSeed.mockResolvedValue(SEED);
-  loadOttoPanelContextName.mockResolvedValue(null);
+  getCoworkThreadClient.mockResolvedValue(fullThread("Kuih teaser for Raya"));
 });
 
 afterEach(async () => {
@@ -158,63 +184,47 @@ describe("面板知道商家在看哪一页 (§3.4)", () => {
 // ---------------------------------------------------------------------------
 // 上下文 chip
 // ---------------------------------------------------------------------------
-describe("上下文 chip", () => {
-  it("在一条战役上写这条战役的真名字", async () => {
-    loadOttoPanelContextName.mockResolvedValue({ name: "Raya promo" });
+describe("上下文 chip 这一票不画 —— 因为它今天说不出真话", () => {
+  /**
+   * 判官 r1 [P2]:chip 写着「On this page: Raya promo」,商家读到的是「Otto 看得见我这一页」。
+   * 今天没有任何服务端读者会因为这一页是哪一页而改变这一轮的上下文,所以那句话是假的,
+   * 「关掉它 Otto 就不看了」也是假的。两句假话不如不说。
+   *
+   * 这一组断言钉的是**两件事同时成立**:界面上不画,以及解析器仍然备着 —— #879 step 2
+   * 接上真读者的那一天,接回两个 prop 就够,不必重做一遍。
+   */
+  it("任何一面上都不画 chip", async () => {
+    for (const location of [SHELL_ROUTES.campaign, `${SHELL_ROUTES.campaign}/01J0000000000000000000000A`]) {
+      const el = await mount(shell(location));
+      expect(el.querySelector("[data-otto-panel-context]"), location).toBeNull();
+      expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]"), location).toBeNull();
+      if (root) await act(async () => root?.unmount());
+      container?.remove();
+      root = null;
+      container = null;
+    }
+  });
 
+  it("对象页也不去查名字 —— 不画的东西不该先跑一次查询", async () => {
     const el = await mount(shell(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`));
-    const chip = el.querySelector<HTMLElement>("[data-otto-panel-context]")!;
-
-    expect(loadOttoPanelContextName).toHaveBeenCalledWith("campaign", "01J0000000000000000000000A");
-    expect(chip.textContent).toContain("On this page: Raya promo");
-    // id 不许露在商家眼前。
-    expect(chip.textContent).not.toContain("01J0000000000000000000000A");
-  });
-
-  it("名字读不到就不画 —— 不用 id 顶替,也不编一个", async () => {
-    loadOttoPanelContextName.mockResolvedValue(null);
-
-    const el = await mount(shell(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`));
-
     expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
-    expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]")).toBeNull();
   });
 
-  it("列表页写那一页的名字,一次取数都不做", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
-
-    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain(
-      `On this page: ${navLinkByKey("campaign").label}`,
-    );
-    expect(loadOttoPanelContextName).not.toHaveBeenCalled();
+  it("解析器仍然认得这一页与这个对象(#879 step 2 接得上)", () => {
+    expect(panelContextSubject(SHELL_ROUTES.campaign)).toEqual({
+      kind: "page",
+      routeKey: "campaign",
+      label: navLinkByKey("campaign").label,
+    });
+    expect(panelContextSubject(`${SHELL_ROUTES.campaign}/abc`)).toMatchObject({ kind: "object", objectId: "abc" });
   });
 
-  it("关掉之后 chip 消失,而且本次会话不再自动带上下文", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
-
-    // 关之前:面板上明写着「这一轮带着上下文」。
-    expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]")).not.toBeNull();
-
-    await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="Stop using this page as context"]')!.click();
-    });
-
-    expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
-    // 状态断言:少了一个 div 不算数,面板必须说它不再带上下文了。
-    expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]")).toBeNull();
-  });
-
-  it("关掉之后换一条会话也不会自己回来", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
-    await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="Stop using this page as context"]')!.click();
-    });
-
-    await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="New chat"]')!.click();
-    });
-
-    expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]")).toBeNull();
+  it("战役底下的固定子段不是对象 —— 不许拿它的名字当 id 去查库", () => {
+    for (const segment of ["calendar", "trends", "workbench"]) {
+      const subject = panelContextSubject(`${SHELL_ROUTES.campaign}/${segment}`);
+      expect(subject, segment).toMatchObject({ kind: "page", routeKey: "campaign" });
+      expect(subject && "objectId" in subject, segment).toBe(false);
+    }
   });
 });
 
@@ -304,5 +314,141 @@ describe("头部的 ☰ 历史", () => {
 
     await act(async () => history.click());
     expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
+  });
+
+  it("选一条会话 / 开新对话都会把列表关掉", async () => {
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
+
+    await act(async () => history.click());
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+    });
+    expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
+
+    await act(async () => history.click());
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>("[data-otto-thread-list-new]")!.click();
+    });
+    expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 判官 r1 [P1-1] —— 点进历史不是一片空白
+// ---------------------------------------------------------------------------
+describe("选一条历史会话,消息真的出来 (P1-1)", () => {
+  it("meta 会话被选中时把真正的消息取回来,并画出来", async () => {
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // ① 真的去取了(种子里这一条只有 meta,不取就只能画空白)。
+    expect(getCoworkThreadClient).toHaveBeenCalledWith(META_THREAD.id);
+    // ② 取回来的消息真的渲染出来了 —— 断言的是商家看得到的字,不是内部状态。
+    expect(el.querySelector<HTMLElement>("[data-otto-panel-body]")!.textContent).toContain("Kuih teaser for Raya");
+  });
+
+  it("已经带着消息的那一条不再多取一次", async () => {
+    loadOttoPanelSeed.mockResolvedValue({
+      ...SEED,
+      threads: [{ ...META_THREAD, messages: [{ id: "m1", role: "USER", kind: "TEXT", text: "already here", seq: 1 }] }],
+    });
+
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+    });
+
+    expect(getCoworkThreadClient).not.toHaveBeenCalled();
+  });
+
+  it("取不到就留在列表上说实话,不切过去让商家盯着一片空白", async () => {
+    getCoworkThreadClient.mockResolvedValue(null);
+
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+    });
+
+    expect(el.querySelector("[data-otto-thread-list-error]")).not.toBeNull();
+    // 列表还开着 —— 没有切到一条画不出内容的会话上去。
+    expect(el.querySelector("[data-otto-thread-list]")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 判官 r1 [P1-2] —— 开历史不许把正在做的事丢掉
+// ---------------------------------------------------------------------------
+describe("开关历史不丢草稿 (P1-2)", () => {
+  /** 照 React 的方式改输入框的值,让 onChange 真的跑一遍。 */
+  function typeInto(textarea: HTMLTextAreaElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    setter.call(textarea, value);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("打了一半的字在开关历史之后还在,而且还是同一个输入框(没被卸载重建)", async () => {
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const composer = el.querySelector<HTMLTextAreaElement>("[data-otto-panel-body] textarea")!;
+    await act(async () => typeInto(composer, "Raya promo, 3 posts"));
+    expect(composer.value).toBe("Raya promo, 3 posts");
+
+    const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
+    await act(async () => history.click());
+    await act(async () => history.click());
+
+    const after = el.querySelector<HTMLTextAreaElement>("[data-otto-panel-body] textarea")!;
+    // 值还在 —— 这是商家看得到的那一半。
+    expect(after.value).toBe("Raya promo, 3 posts");
+    // 节点是同一个 —— 这是「没有被卸载重建」的证据。换组件类型的写法过不了这一条。
+    expect(after).toBe(composer);
+  });
+
+  it("历史开着的时候会话只是被藏起来,没有被卸掉", async () => {
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+
+    const wrap = el.querySelector<HTMLElement>("[data-otto-panel-conversation-wrap]")!;
+    expect(wrap.style.display).toBe("none");
+    // 还在 DOM 里 = `useChat` 实例还在 = 流式那一轮的 onFinish 还写得回去。
+    expect(wrap.querySelector("textarea")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 判官 r1 [P2-2] —— chip 点失败要说出来
+// ---------------------------------------------------------------------------
+describe("chip 点失败照前门的形状说话 (P2-2)", () => {
+  it("建会话失败时画出那句话,chips 仍可再点", async () => {
+    createEmptyCoworkThread.mockResolvedValue({ error: "You're out of credits." });
+
+    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const first = panelQuickChips(SHELL_ROUTES.campaign)[0]!;
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.click();
+    });
+
+    const alert = el.querySelector<HTMLElement>("[data-otto-quick-chip-error]")!;
+    expect(alert).not.toBeNull();
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain("You're out of credits.");
+    // 死按钮不许留下 —— 失败之后还能再试。
+    expect(el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.disabled).toBe(false);
   });
 });

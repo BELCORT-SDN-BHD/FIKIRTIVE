@@ -16,7 +16,7 @@
 import * as React from "react";
 import type { ChatThreadDTO } from "@/lib/types";
 import { loadOttoPanelSeed } from "@/lib/otto-panel-seed";
-import { loadOttoPanelContextName } from "@/lib/otto-panel-context";
+import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { startStreamedThread, type PendingFirstMessage } from "@/lib/otto-start-thread";
 import {
   OttoPanelConversation,
@@ -26,7 +26,7 @@ import {
 import { OttoPanelShell } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
 import { OttoThreadList } from "./OttoThreadList";
-import { panelContextSubject, panelQuickChips } from "./panel-page";
+import { panelQuickChips } from "./panel-page";
 
 type Seed = Extract<Awaited<ReturnType<typeof loadOttoPanelSeed>>, { projectId: string }>;
 
@@ -52,6 +52,10 @@ export function OttoPanelHost({
   const [historyOpenedAt, setHistoryOpenedAt] = React.useState<number | null>(null);
   const historyOpen = historyOpenedAt !== null;
   const [chipBusy, setChipBusy] = React.useState(false);
+  const [chipError, setChipError] = React.useState<string | null>(null);
+  /** 正在把哪一条历史的消息取回来(取到了才切过去,见 `selectThread`)。 */
+  const [openingThreadId, setOpeningThreadId] = React.useState<string | null>(null);
+  const [threadError, setThreadError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -72,39 +76,20 @@ export function OttoPanelHost({
     };
   }, []);
 
-  // ── 上下文 chip ──────────────────────────────────────────────────────────
-  // 商家关掉之后,**本次会话**不再自动带上下文。这一条是「现在这一段对话」的事实,不是
-  // 这台设备的偏好,所以它只活在内存里:不落 localStorage、不落库。刷新之后是新的一段。
-  const [contextDismissed, setContextDismissed] = React.useState(false);
-  const subject = React.useMemo(() => panelContextSubject(location), [location]);
-  // 名字连同**它是谁的名字**一起存:换一页时不必先清空(那是一次 effect 里的 setState),
-  // 读的时候对不上就当没读到 —— 上一页的战役名一帧都不会出现在这一页的 chip 上。
-  const [objectName, setObjectName] = React.useState<{ objectId: string; name: string } | null>(null);
-
-  React.useEffect(() => {
-    if (!subject || subject.kind !== "object") return;
-    const { objectKind, objectId } = subject;
-    let cancelled = false;
-    void (async () => {
-      const found = await loadOttoPanelContextName(objectKind, objectId).catch(() => null);
-      if (!cancelled && found) setObjectName({ objectId, name: found.name });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [subject]);
-
-  /** chip 上写的那个名字。对象页要等真名字回来 —— 没读到就不画 chip,不用 id 顶替。 */
-  const contextLabel = subject === null
-    ? null
-    : subject.kind === "page"
-      ? subject.label
-      : objectName?.objectId === subject.objectId
-        ? objectName.name
-        : null;
-
-  /** 这一轮要不要自动把商家看的这一页当上下文。关掉之后为 false —— 断言看这一条。 */
-  const contextAttached = !contextDismissed && contextLabel !== null;
+  // ── 上下文 chip:这一票**不画** ────────────────────────────────────────────
+  //
+  // 判官 r1 [P2]:chip 写着「On this page: Raya promo」,商家读到的是「Otto 看得见我这一页」;
+  // 关掉它读到的是「Otto 不再看了」。两句话今天都不成立 —— 服务端没有任何读者会因为这一页
+  // 是哪一页而改变这一轮的上下文:
+  //   · `coworkTurnRequest` 的 `surface` / `subjectRef` 只被 `app/api/otto/stream/route.ts`
+  //     **写进** ChatMessage 那一行,`buildOttoContext(...)` 的入参里没有它们;
+  //   · `ottoTurn`(apps/web/lib/otto-actions.ts)与引擎(packages/otto/src)里这两个名字
+  //     出现 0 次;
+  //   · #879 step 1 自己的围栏就写着「pure shape, zero behavior change」。
+  //
+  // 所以 chip 传上去只会让面板替一件没发生的事背书。解析器(`panelContextSubject`)、取名字的
+  // server action 与它们的围栏都留着 —— **chip 随 #879 step 2 启用**,那张票接上真读者的
+  // 同一天,这里把 `contextChip` / `contextAttached` 两个 prop 接回去即可。
 
   // ── 会话 ────────────────────────────────────────────────────────────────
   const upsertThread = React.useCallback((thread: ChatThreadDTO) => {
@@ -128,10 +113,40 @@ export function OttoPanelHost({
     setHistoryOpenedAt(null);
   }, []);
 
-  const selectThread = React.useCallback((thread: ChatThreadDTO) => {
-    setActiveThreadId(thread.id);
+  /**
+   * 从列表里选一条会话。
+   *
+   * 判官 r1 [P1-1]:种子里除了打开时那一条,其余全是 **meta**(`toChatThreadMetaDTO` 给的
+   * `messages: []`)。只 `setActiveThreadId` 的话,商家点进任何一条历史看到的都是一片空白 ——
+   * 而那片空白看起来不像「还在加载」,像「这条会话没了」。
+   *
+   * **先取回消息,拿到了才切**,不是先切再补:`OttoChatStream` 的初始消息是一次性的
+   * `useState` 初始化(`chatInit`,那个组件按 thread.id 做 key、靠重挂载换会话),挂载之后
+   * 再改 `thread.messages` 它一个字都不会读。所以「乐观切换 + 取回来 upsert」在这一处
+   * 恰恰无效 —— 空白会一直留在那里。
+   *
+   * 取数走的是 `/otto` 换会话时用的同一个 `getCoworkThreadClient`,不是为面板另写一条。
+   * 已经带着消息的那一条直接切;当前这一条不重取 —— 重取会把正在流式写入的那一轮换掉。
+   */
+  const selectThread = React.useCallback(async (thread: ChatThreadDTO) => {
+    setThreadError(null);
+    if (thread.id === activeThreadId || thread.messages.length > 0) {
+      setActiveThreadId(thread.id);
+      setHistoryOpenedAt(null);
+      return;
+    }
+    setOpeningThreadId(thread.id);
+    const fresh = await getCoworkThreadClient(thread.id).catch(() => null);
+    setOpeningThreadId(null);
+    // 取不到就**留在列表上**说一句实话,而不是切过去让商家盯着一片空白猜发生了什么。
+    if (!fresh) {
+      setThreadError("Couldn't open that conversation — please try again.");
+      return;
+    }
+    upsertThread(fresh);
+    setActiveThreadId(fresh.id);
     setHistoryOpenedAt(null);
-  }, []);
+  }, [activeThreadId, upsertThread]);
 
   // ── 快捷 chips ───────────────────────────────────────────────────────────
   const chips = React.useMemo(() => panelQuickChips(location), [location]);
@@ -140,6 +155,7 @@ export function OttoPanelHost({
   const pickChip = React.useCallback(async (chip: { goalKey: string; label: string }) => {
     if (!seed || chipBusy) return;
     setChipBusy(true);
+    setChipError(null);
     try {
       // 与前门目标格子同一条路(`lib/otto-start-thread.ts`):建一条空会话,把 chip 那句话
       // 连同 goalKey 交给会话流发出去。这一步不花钱,计费在那一轮真的跑起来之后。
@@ -147,8 +163,13 @@ export function OttoPanelHost({
         projectId: seed.projectId,
         text: chip.label,
         goalKey: chip.goalKey,
-      });
-      if ("error" in started) return;
+      }).catch(() => ({ error: "Couldn't reach Otto — please try again." }));
+      // 判官 r1 [P2-2]:失败要说出来,照前门那一条的形状(`OttoFrontDoor` 的 setError)。
+      // 一颗按下去什么都不发生的 chip,商家只会再按一次,然后以为产品坏了。
+      if ("error" in started) {
+        setChipError(started.error);
+        return;
+      }
       handleStreamStart(started.thread, started.pending);
     } finally {
       setChipBusy(false);
@@ -162,43 +183,68 @@ export function OttoPanelHost({
         ? { status: "error", message: load.message }
         : { status: "ready", seed: load.seed, threads, activeThreadId, pendingFirst };
 
-  const panelBody = historyOpenedAt !== null && seed ? (
-    <OttoThreadList
-      projects={seed.projects}
-      threads={threads}
-      activeProjectId={seed.projectId}
-      activeThreadId={activeThreadId}
-      onSelectThread={selectThread}
-      onNewChat={openNewChat}
-      now={historyOpenedAt}
-    />
-  ) : (
-    <OttoPanelConversation
-      state={conversationState}
-      onThreadStarted={handleThreadStarted}
-      onStreamStart={handleStreamStart}
-      onThreadUpdate={upsertThread}
-      onActiveThreadChange={setActiveThreadId}
-      onPendingFirstSent={() => setPendingFirst(null)}
-    />
+  /**
+   * 会话**常挂**,历史列表盖在它上面。
+   *
+   * 判官 r1 [P1-2]:原来这里是一个三元,同一个位置在两个组件类型之间换 —— React 会把整棵
+   * 子树卸掉重建。代价不是「重画一次」:composer 里打了一半的字没了(判官实证 textarea 清空),
+   * 正在流式的那一轮连同 `useChat` 实例一起消失,`onFinish` 永远不会写回去。打开历史看一眼
+   * 就把商家正在做的事丢掉,是这块面板最不该有的行为。
+   *
+   * 用 `display: none` 而不是卸载:DOM 节点还在,React 状态、composer 里的字、流式那一轮
+   * 全部原地不动。**display 走内联样式**是刻意的 —— `hidden` 属性与 Tailwind 的 `flex` 类
+   * 撞车时(preflight 的 `[hidden]` 选择器裹在 `:where()` 里,优先级 0)会被类赢掉,那是一个
+   * 只在某些类组合下才出现的隐身失败。
+   */
+  const panelBody = (
+    <>
+      <div
+        data-otto-panel-conversation-wrap=""
+        className="min-h-0 flex-1 flex-col"
+        style={{ display: historyOpen ? "none" : "flex" }}
+      >
+        <OttoPanelConversation
+          state={conversationState}
+          onThreadStarted={handleThreadStarted}
+          onStreamStart={handleStreamStart}
+          onThreadUpdate={upsertThread}
+          onActiveThreadChange={setActiveThreadId}
+          onPendingFirstSent={() => setPendingFirst(null)}
+        />
+      </div>
+      {historyOpenedAt !== null && seed && (
+        <OttoThreadList
+          projects={seed.projects}
+          threads={threads}
+          activeProjectId={seed.projectId}
+          activeThreadId={activeThreadId}
+          onSelectThread={(thread) => void selectThread(thread)}
+          onNewChat={openNewChat}
+          openingThreadId={openingThreadId}
+          error={threadError}
+          now={historyOpenedAt}
+        />
+      )}
+    </>
   );
 
   return (
     <OttoPanelShell
       panelBody={panelBody}
       quickChips={
-        seed ? <OttoQuickChips chips={chips} disabled={chipBusy} onPick={(chip) => void pickChip(chip)} /> : null
+        seed ? (
+          <OttoQuickChips
+            chips={chips}
+            disabled={chipBusy}
+            error={chipError}
+            onPick={(chip) => void pickChip(chip)}
+          />
+        ) : null
       }
       // 历史入口只在真的有列表可开时才画 —— 种子还没到就没有历史可看(§3.4:没接上的东西不画)。
       onOpenHistory={seed ? () => setHistoryOpenedAt((at) => (at === null ? Date.now() : null)) : undefined}
       historyOpen={historyOpen}
       onNewChat={seed ? openNewChat : undefined}
-      contextAttached={contextAttached}
-      contextChip={
-        contextAttached && contextLabel
-          ? { label: contextLabel, onDismiss: () => setContextDismissed(true) }
-          : undefined
-      }
     >
       {children}
     </OttoPanelShell>

@@ -93,8 +93,7 @@ export function buildOttoNavEntries({
 }
 
 /** 日期分组的四档。English sentence case,与商家看到的一致。 */
-export const THREAD_DATE_BUCKETS = ["Today", "Yesterday", "Previous 7 days", "Older"] as const;
-export type ThreadDateBucket = (typeof THREAD_DATE_BUCKETS)[number];
+export type ThreadDateBucket = "Today" | "Yesterday" | "Previous 7 days" | "Older";
 
 /** 本地日历的「第几天」——用日历天而不是 24 小时,商家说的「昨天」是日历上的昨天。 */
 function calendarDay(ms: number): number {

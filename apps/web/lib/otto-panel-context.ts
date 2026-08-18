@@ -12,10 +12,11 @@
  * id 拿回的是 null(不是别人的名字,也不是一句「无权访问」——面板只会不画 chip)。
  */
 import { prisma } from "@fikirtive/db";
-import { requireOwner } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 
-/** 面板认得的对象种类。与 `panel-page.ts` 的 `PanelObjectKind` 一一对应。 */
-export type PanelContextObjectKind = "campaign";
+/** 面板认得的对象种类。与 `panel-page.ts` 的对象路由表一一对应。 */
+type PanelContextObjectKind = "campaign";
 
 /**
  * 读一个对象在 chip 上该显示的名字。
@@ -31,16 +32,22 @@ export async function loadOttoPanelContextName(
   const gate = await requireOwner();
   if ("error" in gate) return null;
 
-  try {
-    if (kind === "campaign") {
-      const row = await prisma.campaign.findFirst({
-        where: { id: objectId, ownerId: gate.ownerId, deletedAt: null },
-        select: { name: true },
-      });
-      return row?.name ? { name: row.name } : null;
+  // `runAsUser` 帧 —— 与同族的 `otto-panel-seed.ts` 同一条 B1 缝(#464 ②-B)。
+  // 这一条查询本身已经带 ownerId,开帧是为了让面板这一族的读**全部**在同一个身份上下文里:
+  // 一族里有一处例外,下一个人就会照着那一处写。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async () => {
+    try {
+      if (kind === "campaign") {
+        const row = await prisma.campaign.findFirst({
+          where: { id: objectId, ownerId: gate.ownerId, deletedAt: null },
+          select: { name: true },
+        });
+        return row?.name ? { name: row.name } : null;
+      }
+      return null;
+    } catch {
+      return null;
     }
-    return null;
-  } catch {
-    return null;
-  }
+  });
 }

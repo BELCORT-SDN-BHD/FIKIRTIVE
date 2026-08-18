@@ -19,15 +19,28 @@ import type { PanelQuickChip } from "./panel-page";
 export function OttoQuickChips({
   chips,
   disabled = false,
+  error = null,
   onPick,
 }: {
   chips: PanelQuickChip[];
   disabled?: boolean;
+  /** 上一次点击失败时那句话。照前门的形状说出来,不留一颗按了没反应的按钮。 */
+  error?: string | null;
   onPick: (chip: PanelQuickChip) => void;
 }) {
   if (chips.length === 0) return null;
   return (
-    <div data-otto-panel-quick-chips="" className="flex flex-wrap gap-1.5 border-t border-border px-3 py-2">
+    <div data-otto-panel-quick-chips="" className="border-t border-border px-3 py-2">
+      {error && (
+        <div
+          role="alert"
+          data-otto-quick-chip-error=""
+          className="mb-1.5 rounded-[10px] bg-error-soft px-2.5 py-1.5 text-[12px] text-[var(--error-soft-foreground)]"
+        >
+          {error}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5">
       {chips.map((chip) => (
         <Button
           key={chip.goalKey}
@@ -42,6 +55,7 @@ export function OttoQuickChips({
           {chip.label}
         </Button>
       ))}
+      </div>
     </div>
   );
 }

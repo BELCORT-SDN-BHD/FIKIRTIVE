@@ -35,6 +35,10 @@ export interface OttoThreadListProps {
   activeThreadId: string | null;
   onSelectThread: (thread: ChatThreadDTO) => void;
   onNewChat: () => void;
+  /** 正在取这一条的消息 —— 取到了上层才切过去,所以这一下要看得见。 */
+  openingThreadId?: string | null;
+  /** 打不开时那句话。留在列表上说,不切过去让商家盯着一片空白。 */
+  error?: string | null;
   /**
    * 日期分档相对哪一刻算 —— 由上层在**打开历史的那一下**读一次(那是一个事件),
    * 而不是在这里每次渲染读一次 `Date.now()`:同一份列表在重画时换一档,是一个只在跨午夜
@@ -54,6 +58,8 @@ export function OttoThreadList({
   activeThreadId,
   onSelectThread,
   onNewChat,
+  openingThreadId = null,
+  error = null,
   now,
 }: OttoThreadListProps) {
   const entries = buildOttoNavEntries({
@@ -78,6 +84,16 @@ export function OttoThreadList({
         <SquarePen className="size-4 shrink-0" strokeWidth={1.9} aria-hidden />
         New chat
       </Button>
+
+      {error && (
+        <div
+          role="alert"
+          data-otto-thread-list-error=""
+          className="rounded-[10px] bg-error-soft px-2.5 py-1.5 text-[12px] text-[var(--error-soft-foreground)]"
+        >
+          {error}
+        </div>
+      )}
 
       {!hasAnyThread && (
         // 说真话:没有会话就说没有,不摆一份假的历史。
@@ -109,6 +125,7 @@ export function OttoThreadList({
                   </div>
                   {group.threads.map((thread) => {
                     const active = thread.id === activeThreadId;
+                    const opening = thread.id === openingThreadId;
                     const dot = statusDot(thread.status);
                     return (
                       <Button
@@ -117,6 +134,8 @@ export function OttoThreadList({
                         variant="ghost"
                         data-otto-thread-list-thread={thread.id}
                         {...(active ? { "aria-current": "true" as const } : {})}
+                        {...(opening ? { "aria-busy": true } : {})}
+                        disabled={openingThreadId !== null}
                         onClick={() => onSelectThread(thread)}
                         title={thread.title}
                         className={`h-auto w-full justify-start gap-2 rounded-[10px] px-2 py-1.5 text-left text-[13px] ${
@@ -132,6 +151,7 @@ export function OttoThreadList({
                           />
                         )}
                         <span className="min-w-0 truncate">{thread.title}</span>
+                        {opening && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">Opening…</span>}
                       </Button>
                     );
                   })}

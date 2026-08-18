@@ -20,10 +20,25 @@ export type ShellRouteKey = keyof typeof SHELL_ROUTES;
 
 /** 哪些面底下挂着「一个对象一页」。今天只有战役有真的对象页(`/campaign/<id>`)。 */
 const OBJECT_ROUTES = { campaign: "campaign" } as const;
-export type PanelObjectKind = (typeof OBJECT_ROUTES)[keyof typeof OBJECT_ROUTES];
+type PanelObjectKind = (typeof OBJECT_ROUTES)[keyof typeof OBJECT_ROUTES];
+
+/**
+ * 一条 shell 路由底下**不是对象**的那些固定子段。
+ *
+ * 判官 r1 [P3]:`/campaign/calendar`、`/campaign/trends`、`/campaign/workbench` 是三个真的
+ * 页面文件,不是三条战役。少了这一层,面板会拿 "calendar" 当 id 去查一次库(白跑一次查询,
+ * 而且必然查不到 → 一个永远不出现的 chip)。
+ *
+ * 为什么是一份手写名单而不是「id 长得像不像 ULID」:id 的形状是战役那一侧的规矩
+ * (`campaign-view-data.ts` 的 `ULID_PATTERN`),抄到这里就又多了一份会漂移的真相。
+ * 这三段本身也在退场路上(规格书 §5.4:`/campaign/calendar` 收敛成重定向),名单只会变短。
+ */
+const NON_OBJECT_SEGMENTS: Readonly<Record<string, readonly string[]>> = {
+  campaign: ["calendar", "trends", "workbench"],
+};
 
 /** 一次匹配的结果:落在哪一条 shell 路由上,以及(如果有)它后面那一段对象 id。 */
-export type ShellRouteMatch = { key: ShellRouteKey; objectId?: string };
+type ShellRouteMatch = { key: ShellRouteKey; objectId?: string };
 
 /** 传进来的可能带 query / hash,只看路径那一段;结尾的斜杠不算一段。 */
 function pathOf(location: string): string {
@@ -43,7 +58,7 @@ const ROUTES_LONGEST_FIRST: readonly (readonly [ShellRouteKey, string])[] = (
  * `/campaigns` 一个都不命中。首页(`/`)只认全等 —— 每一条路径都以 `/` 开头,
  * 拿它做前缀会把整个站点都算成首页的对象。
  */
-export function matchShellRoute(location: string): ShellRouteMatch | null {
+function matchShellRoute(location: string): ShellRouteMatch | null {
   const path = pathOf(location);
   if (!path) return null;
   for (const [key, href] of ROUTES_LONGEST_FIRST) {
@@ -53,12 +68,20 @@ export function matchShellRoute(location: string): ShellRouteMatch | null {
     const rest = path.slice(href.length + 1);
     // 再深一层就不是「这一页的对象」了(例如 `/campaign/abc/entries`),V1 不猜。
     if (!rest || rest.includes("/")) return { key };
+    // 固定子段是一**页**,不是一个对象 —— 别拿它的名字当 id 去查库。
+    if (NON_OBJECT_SEGMENTS[key]?.includes(rest)) return { key };
     return { key, objectId: rest };
   }
   return null;
 }
 
-/** 上下文 chip 说的是哪一件事。 */
+/**
+ * 上下文 chip 说的是哪一件事。
+ *
+ * **这一票不画 chip**(判官 r1 [P2]:服务端没有任何读者会因为这一页是哪一页而改变这一轮的
+ * 上下文,画出来就是替一件没发生的事背书)。这个解析器与它的围栏留着,等 #879 step 2 接上
+ * 真读者的那一天,`OttoPanelHost` 把两个 prop 接回去即可 —— 见那个文件里的「上下文 chip」一节。
+ */
 export type PanelContextSubject =
   /** 一页。`label` 就是它在导航里的名字(`On this page: Library`)。 */
   | { kind: "page"; routeKey: ShellRouteKey; label: string }

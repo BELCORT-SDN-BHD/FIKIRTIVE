@@ -20,7 +20,7 @@
  * 与路由处理器读的是同一份。
  */
 
-import { GOAL_PRESETS, type GoalKey } from "@fikirtive/core/goals";
+import { GOAL_PRESETS } from "@fikirtive/core/goals";
 
 /** 新对话在还没有名字时叫什么。历来就是这个字面量(`clip-actions` 建对话时也用它)。 */
 export const UNTITLED_CHAT_TITLE = "Untitled";
@@ -69,11 +69,6 @@ export type FrontDoorGoalKey = keyof typeof FRONT_DOOR_GOAL_LABELS;
 
 /** 每一个目标标签(含只在面板 chips 上出现的那几个)。命名守卫认的是这一份。 */
 export const GOAL_LABELS: readonly string[] = Object.values(GOAL_PRESETS).map((g) => g.label);
-
-/** 目标 key → 它那句话。界面画 chip 时取这里,不自己写字。 */
-export function goalLabel(key: GoalKey): string {
-  return GOAL_PRESETS[key].label;
-}
 
 /** 比对用的归一化:去首尾空白、把连续空白压成一个空格、转小写。
  *  商家点 chip 发出的字与常量逐字相同,归一化只是让「多一个空格」这类无意义差异不算数。 */
