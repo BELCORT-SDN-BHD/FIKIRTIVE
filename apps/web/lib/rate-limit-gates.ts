@@ -44,7 +44,7 @@ const HOUR = 60 * MINUTE;
  * 30 is chosen against the worst honest hour we can name: a shared office or cafe address where
  * several people each mistype a password a few times. A credential-stuffing run wants thousands.
  * Keyed on the ADDRESS ONLY, never on the submitted email — a refusal must never be readable as
- * "that account exists" (the same rule the magic-link door is built around).
+ * "that account exists" (the same rule the sign-in-code door is built around).
  */
 export const PASSWORD_DOOR_PER_CALLER_PER_HOUR = 30;
 

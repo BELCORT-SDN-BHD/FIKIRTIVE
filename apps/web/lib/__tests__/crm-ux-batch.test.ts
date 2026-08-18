@@ -195,7 +195,9 @@ describe("broadcast cross-flow links", () => {
 });
 
 describe("campaign Broadcasts panel", () => {
-  it("renders grouped broadcasts with status, date, and detail link", () => {
+  // W2-13(#993):这张卡原来每一行都链去 `/crm/broadcasts/{id}`。CRM 整段收起来之后那个
+  // 地址只把商家弹回 Home,所以链接去掉了,事实留下 —— 断言跟着改成「事实还在、门没了」。
+  it("renders grouped broadcasts with status and date, and no link into hidden CRM", () => {
     const markup = renderToStaticMarkup(createElement(CampaignBroadcastsCard, {
       broadcasts: [{
         id: RUN.id,
@@ -210,7 +212,7 @@ describe("campaign Broadcasts panel", () => {
     expect(markup).toContain("Marketing broadcast");
     expect(markup).toContain("Completed (simulated)");
     expect(markup).toContain("Sent (simulated)");
-    expect(markup).toContain('href="/crm/broadcasts/run-1"');
+    expect(markup).not.toContain('href="/crm/broadcasts/run-1"');
   });
 
   it("mirrors the sibling panels' visible empty state", () => {

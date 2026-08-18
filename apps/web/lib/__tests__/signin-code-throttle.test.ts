@@ -35,22 +35,22 @@ vi.mock("@/lib/better-auth/sender", () => ({
   },
 }));
 
-const { acceptMagicLinkRequest, __resetMagicLinkThrottleForTests, MAX_PER_CALLER, MAX_PER_CALLER_PER_ADDRESS } =
-  await import("@/lib/better-auth/magic-link-request");
+const { acceptSignInCodeRequest, __resetSignInCodeThrottleForTests, MAX_PER_CALLER, MAX_PER_CALLER_PER_ADDRESS } =
+  await import("@/lib/better-auth/signin-code-request");
 
 /** The throttle's window. Not exported from the module — a test that wants to step over it has
  *  to name it, and naming it here keeps the cases readable. */
 const HOUR = 60 * 60 * 1000;
 
 const from = (ip: string) => new Headers({ "x-forwarded-for": ip });
-const press = (email: string, ip = "203.0.113.10", callbackURL = "/") =>
-  acceptMagicLinkRequest({ email, callbackURL, requestHeaders: from(ip) });
+const press = (email: string, ip = "203.0.113.10") =>
+  acceptSignInCodeRequest({ email, requestHeaders: from(ip) });
 /** Jobs the background will actually act on — the rest are handed over and dropped there. */
 const deliverable = () => queued.filter((j) => j.overBudget === false);
 
 beforeEach(async () => {
   queued.length = 0;
-  await __resetMagicLinkThrottleForTests();
+  await __resetSignInCodeThrottleForTests();
 });
 
 describe("the caller-and-address budget", () => {
@@ -106,7 +106,7 @@ describe("the shared-egress bound", () => {
     // does run out. An unidentifiable caller must never be handed a PRIVATE budget — that is
     // what a per-request fallback would do, and it would make the cap decorative.
     const unidentifiable = () =>
-      acceptMagicLinkRequest({ email: "owner@shop.test", callbackURL: "/", requestHeaders: new Headers() });
+      acceptSignInCodeRequest({ email: "owner@shop.test", requestHeaders: new Headers() });
 
     for (let i = 0; i < MAX_PER_CALLER_PER_ADDRESS; i++) expect(await unidentifiable()).toBe("accepted");
     expect(deliverable()).toHaveLength(MAX_PER_CALLER_PER_ADDRESS);
@@ -122,19 +122,17 @@ describe("the shared-egress bound", () => {
 describe("#678 r4 — an over-budget request does the SAME work as one inside its budget", () => {
   it("hands over a job every single time, in the same shape", async () => {
     // RED before r4: the enqueue was inside `if (roomForCaller && roomForPair)`, so an
-    // over-budget press skipped the sanitise, the job construction, the push and the timer —
-    // strictly less work, same answer, and therefore a clock again.
+    // over-budget press skipped the job construction, the push and the timer — strictly less
+    // work, same answer, and therefore a clock again.
     const answers: string[] = [];
-    for (let i = 0; i < 8; i++) answers.push(await press("owner@shop.test", "203.0.113.99", "/x"));
+    for (let i = 0; i < 8; i++) answers.push(await press("owner@shop.test", "203.0.113.99"));
 
     expect(new Set(answers)).toEqual(new Set(["accepted"]));
     expect(queued).toHaveLength(8);
-    // Every job is fully formed — the callback really was sanitised on the way past, not only
-    // for the ones that will be delivered.
+    // Every job is fully formed, not only the ones that will be delivered.
     for (const job of queued) {
-      expect(job.purpose).toBe("sign-in-link");
+      expect(job.purpose).toBe("sign-in-code");
       expect(job.email).toBe("owner@shop.test");
-      expect(job.callbackURL).toBe("/x");
     }
     // The only thing that differs is the verdict riding along, which no caller can read.
     expect(queued.map((j) => j.overBudget)).toEqual([
@@ -154,7 +152,7 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
    * else's lockout: a cafe, a co-working floor and most mobile networks share one egress address,
    * so the loose sixty-per-caller bucket belongs to every merchant on that wifi at once. One
    * person's retry loop kept it renewed indefinitely, and none of the others could tell why their
-   * sign-in link stopped arriving.
+   * sign-in code stopped arriving.
    *
    * The rate the cap enforces is unchanged — five per address and sixty per egress per rolling
    * hour, granted. What changes is that the hour is now measured from the GRANTS, so it actually
@@ -203,7 +201,7 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
      *
      * Which rebuilds the very defect this ticket exists to remove, one bucket over: one merchant
      * retrying one address walks the shared sixty-slot budget round and round, and everybody else
-     * behind that egress address stops receiving sign-in links. Nothing they can see explains it,
+     * behind that egress address stops receiving sign-in codes. Nothing they can see explains it,
      * and the retrying merchant is not doing anything abusive — they are pressing a button that
      * told them a link was on its way.
      *
@@ -270,12 +268,12 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
     }, 60_000);
   });
 
-  it("sanitises the callback on the over-budget path too", async () => {
-    for (let i = 0; i < 5; i++) await press("owner@shop.test", "203.0.113.98", "/ok");
+  it("hands over the same fully-formed job on the over-budget path too", async () => {
+    for (let i = 0; i < 5; i++) await press("owner@shop.test", "203.0.113.98");
     queued.length = 0;
-    await press("owner@shop.test", "203.0.113.98", "//evil.example.com");
+    await press("owner@shop.test", "203.0.113.98");
     expect(queued).toEqual([
-      { purpose: "sign-in-link", email: "owner@shop.test", callbackURL: "/", overBudget: true },
+      { purpose: "sign-in-code", email: "owner@shop.test", overBudget: true },
     ]);
   });
 });
@@ -296,10 +294,12 @@ describe("what the caller is allowed to learn", () => {
     expect(deliverable()).toHaveLength(5);
   });
 
-  it("hands the background a normalised address and a same-origin callback only", async () => {
-    await press("  Owner@Shop.Test ", "203.0.113.10", "//evil.example.com");
+  it("hands the background a normalised address and nothing else", async () => {
+    await press("  Owner@Shop.Test ", "203.0.113.10");
+    // A code carries no destination, so there is no caller-supplied URL on this path at all —
+    // the sanitiser that used to guard it has nothing left to guard.
     expect(queued).toEqual([
-      { purpose: "sign-in-link", email: "owner@shop.test", callbackURL: "/", overBudget: false },
+      { purpose: "sign-in-code", email: "owner@shop.test", overBudget: false },
     ]);
   });
 });
@@ -313,14 +313,13 @@ describe("#795 — the budget is one budget, not one per process", () => {
 
     // A SECOND module instance stands in for a second web instance: same code, same database,
     // its own module-level state. RED before #795, when the buckets were a Map: this import got
-    // an empty map and handed the same address five more deliverable links.
+    // an empty map and handed the same address five more deliverable codes.
     vi.resetModules();
-    const second = await import("@/lib/better-auth/magic-link-request");
+    const second = await import("@/lib/better-auth/signin-code-request");
     queued.length = 0;
     expect(
-      await second.acceptMagicLinkRequest({
+      await second.acceptSignInCodeRequest({
         email: "shared@shop.test",
-        callbackURL: "/",
         requestHeaders: from(ip),
       }),
     ).toBe("accepted");

@@ -17,12 +17,14 @@
  *      OTTO_ASSISTANT,导轨把它画在板块之上、随处可点。
  *   ③ **一个日历** —— 排期日历是唯一权威(真有 ScheduledPost 表、worker 会照它发布);
  *      /campaign/calendar 那张草稿列表收敛成重定向,见 MERCHANT_NAV_REDIRECTS。
- *   ④ **没通电的能力只开一扇诚实的门**(#792)—— CRM 七扇门收成 Customers 一扇,并带
- *      一句 `preview`:消息渠道一个都连不上,所以那些页面发不出也收不到消息。页面本身
- *      一页没删,商家从预览页照样进得去。
+ *   ④ **CRM 整段先收起来**(W2-13 / #993,Founder 裁决 2026-08-18 裁决2)—— 从前这里有
+ *      一格 Customers 预览门(#792,七扇 /crm 子门收成一扇并挂一句 `preview`)。渠道一条都
+ *      连不上,预览门再诚实也仍然是一扇通向空房间的门,所以这一格整个删掉:
+ *      **导航里不许再出现任何 `/crm` 前缀的 href**(围栏在 navigation.test.ts)。
+ *      /crm 的 14 个路由文件保留、各自 `redirect("/")`(旧书签不撞墙),4600 行 CRM 引擎与
+ *      packages/otto 的 CRM 技能原地保留。**恢复触发条件 = Meta verification 通过**
+ *      (登记在延期台账 issue #359):那一天把这一格连同它的 `preview` 一起加回来。
  */
-
-import { MESSAGING_STATUS_MERCHANT } from "./messaging-status.js";
 
 /** 一条真能点开的目的地。 */
 export type MerchantNavLink = {
@@ -102,27 +104,9 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     href: "/campaign",
     does: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
   },
-  {
-    // #792 —— 七扇门收成一扇诚实的预览门(Founder 裁决 2026-08-08)。
-    //
-    // 原来这一组把 Inbox / Broadcasts / Workflows / Reports 与 Contacts 并排放在导轨上,
-    // 每一扇都长得像一个能用的能力。可是**一个消息渠道都连不上**(Connections 里 Messaging
-    // 整段写着 "Not available yet",全仓没有任何一条商家可走的连接路径),所以那六扇门后面
-    // 没有一条消息发得出去、收得进来。导轨因此在替产品说大话。
-    //
-    // 收敛之后:导轨只承诺一件**现在真的做得到**的事 —— 建客户档案;那句 preview 把没通电
-    // 的部分说在前面;那些页面本身一页没删,商家从预览页进得去(引擎 4600 行原地保留,等
-    // 通电)。渠道接通的那一天(独立里程碑),删掉 preview 这一行即可。
-    key: "customers",
-    label: "Customers",
-    // /crm 底下每一页都在这扇门后面(pathMatches 按前缀判定),所以走进 /crm 的任何一页,
-    // 导轨亮的都是这一格。
-    href: "/crm",
-    does: "Keep a record of every customer — who they are, how to reach them, and what you may contact them about.",
-    // 那句实话不写在这里 —— 它是消息渠道状态的**唯一措辞**,Otto 的指令与技能描述读的是
-    // 同一份(#792 r2 判词 P1:从前这里说「连不上」,Otto 那边却在劝商家「去连一个」)。
-    preview: MESSAGING_STATUS_MERCHANT,
-  },
+  // W2-13(#993)—— Customers 那一格删于此。它曾经是 #792 收敛出来的那扇预览门
+  // (`href: "/crm"`,`preview: MESSAGING_STATUS_MERCHANT`)。Founder 2026-08-18 裁决2:
+  // Meta verification 没过之前,CRM 整段不出现在商家表面上。加回来的条件与做法写在文件头 ④。
   {
     key: "workspace",
     label: "Workspace",
@@ -185,6 +169,78 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
     why: "The old simple-mode surface was retired; there is one Otto.",
   },
 ];
+
+/**
+ * 换壳之后的路由常量(Wave 2,规格书 `docs/specs/wave2-shell.md` §2.2)。
+ *
+ * 为什么先摆在这里、而且这一票只加不改:换壳要开六路并行(Library / Brand / Schedule /
+ * Settings / Create / Home),六个人会同时需要同一串新地址。谁在自己那一面手写一次
+ * `"/library"`,这棵树就又多了一份会各自漂移的真相 —— 本仓最贵的一课(两个导航、两个日历、
+ * 两个创作入口)全是这么来的。所以新地址先在权威源里落一份,六路各自 import。
+ *
+ * **它现在还不是导航数据**:`MERCHANT_NAV` 这一票一个字都不动,七格权威改写留给切换总票
+ * (W2-11)。也就是说本票合并之后旧壳行为零变化,只是多了一份后续票引用得到的常量。
+ *
+ * 用 key 而不是一串散常量:后续票要按 key 取(`SHELL_ROUTES.library`),围栏也要能把它当
+ * 枚举源逐条对账(`Object.values`)。
+ */
+export const SHELL_ROUTES = {
+  /** 商家自己的总览。今天 `/` 是 `redirect("/otto")`,W2-6 把它换成真页面。 */
+  home: "/",
+  /** 创作旗舰面。今天叫 `/northstar-immersive`(见 CREATE_NAV_HREF),W2-5 改名搬家。 */
+  create: "/create",
+  /** 画布本身,永远在 Create 那扇门后面。 */
+  canvas: "/create/canvas",
+  /** 已经做出来的每一张图、每一条片。今天是 `/otto?view=library`。 */
+  library: "/library",
+  /** 剪辑台 —— 要剪的东西就在 Library,所以它跟着 Library 走(规格书 Q6)。 */
+  edit: "/library/editor",
+  /** Otto 该记住的品牌与产品。今天是 `/otto?view=memory`。 */
+  brand: "/brand",
+  /** 战役。今天已经是真路由,新旧同址。 */
+  campaign: "/campaign",
+  /** 唯一的日历。今天是 `/otto?view=schedule`。 */
+  schedule: "/schedule",
+  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
+  analytics: "/schedule/analytics",
+  /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
+  billing: "/billing",
+  /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
+  connections: "/settings/connections",
+  /** 花费上限与发布默认值。今天是 `/otto?view=account`。 */
+  preferences: "/settings",
+  /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
+  profile: "/profile",
+} as const;
+
+/**
+ * 旧 `/otto?view=X` 的去处 —— 每一个 view 都必须在这里有一行,否则围栏红
+ * (规格书 §2.3 ③)。
+ *
+ * 这是围栏的第二个枚举源:`MERCHANT_NAV_REDIRECTS` 的 `{from,to,why}` 只表达得了整路径
+ * 重定向,而 `/otto` 那十一个视图是同一条路径上的 query。旧书签一律 307,永不 404
+ * (§2.5),所以这张表的**键位完整性**就是「没有一个旧地址撞墙」的机器判定:
+ * 权威名单是 `apps/web/components/otto/otto-view-param.ts` 的 `OTTO_VIEW_KEYS`,
+ * 围栏拿那份名单逐个来核这里,不在这里手抄第二份视图清单
+ * (见 `apps/web/lib/__tests__/route-redirects.test.ts`)。
+ *
+ * 值里的路径部分全部来自 SHELL_ROUTES —— 同一条围栏会核对这一点,所以这张表不可能长出
+ * 一个 SHELL_ROUTES 里没有的地址。`?otto=1` 是「落地后自动把 Otto 面板打开」,
+ * `#templates` / `#ideas` 是 `/create` 页面下方的两个区段(Q6),它们都不是新路由。
+ */
+export const OTTO_VIEW_REDIRECTS: Readonly<Record<string, string>> = {
+  otto: "/?otto=1",
+  library: "/library",
+  stuff: "/library",
+  edit: "/library/editor",
+  memory: "/brand",
+  templates: "/create#templates",
+  discover: "/create#ideas",
+  schedule: "/schedule",
+  analytics: "/schedule/analytics",
+  connections: "/settings/connections",
+  account: "/settings",
+};
 
 /**
  * 按 key 取一条链接。壳要单独用某一条(例如导轨底部那行 credits 点进账单)时走这里,

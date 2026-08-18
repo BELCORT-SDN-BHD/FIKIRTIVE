@@ -1,10 +1,7 @@
-import BroadcastComposerPage from "@/components/crm/broadcasts/broadcast-composer-page";
-import { getBroadcastComposerOptions, getMemberDirectory } from "@/lib/customer-broadcast-gateway";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const metadata = { title: "New broadcast · Fikirtive" };
-
+/** CRM 整段收起来了(W2-13 / #993)。文件保留、内容换成重定向,旧书签不撞墙 ——
+ *  原委与恢复条件写在 app/crm/page.tsx。 */
 export default async function CrmBroadcastNewRoute() {
-  const [options, directory] = await Promise.all([getBroadcastComposerOptions(), getMemberDirectory()]);
-  return <BroadcastComposerPage initialOptions={options} initialDirectory={directory} />;
+  redirect("/");
 }

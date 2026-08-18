@@ -15,7 +15,7 @@
  *      an unknown one's database miss. Jitter cannot cover that; it is zero-mean noise and the
  *      branch difference is not.
  *   3. NO CAPACITY. Every valid request hands over a job, so an unbounded queue let one caller
- *      starve every merchant's sign-in link behind their backlog.
+ *      starve every merchant's sign-in code behind their backlog.
  *
  * Closed by: bounded concurrency, a FIXED FLOOR on slot occupancy, jitter before the slot rather
  * than inside it, a per-job deadline with a real abort signal, and a bounded queue with a stated
@@ -108,16 +108,15 @@ const {
   AUTH_EMAIL_SLOT_FLOOR_MS,
   AUTH_EMAIL_MAX_QUEUED,
   AUTH_EMAIL_WORST_SLOT_MS,
-  AUTH_EMAIL_LINK_TTL_MS,
+  AUTH_EMAIL_CODE_TTL_MS,
 } = await import("@/lib/better-auth/sender");
-const { acceptMagicLinkRequest, __resetMagicLinkThrottleForTests } = await import(
-  "@/lib/better-auth/magic-link-request"
+const { acceptSignInCodeRequest, __resetSignInCodeThrottleForTests } = await import(
+  "@/lib/better-auth/signin-code-request"
 );
 
 const press = (email: string, ip: string) =>
-  acceptMagicLinkRequest({
+  acceptSignInCodeRequest({
     email,
-    callbackURL: "/",
     requestHeaders: new Headers({ "x-forwarded-for": ip }),
   });
 
@@ -149,9 +148,9 @@ beforeAll(async () => {
   });
   const warmup = `p678-warmup-${randomUUID()}@fikirtive.test`;
   process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${warmup}`;
-  enqueueAuthEmail({ purpose: "sign-in-link", email: warmup, callbackURL: "/", overBudget: false });
+  enqueueAuthEmail({ purpose: "sign-in-code", email: warmup, overBudget: false });
   await authEmailQueueSettled();
-  await prisma.betterAuthVerification.deleteMany({ where: { value: { contains: warmup } } });
+  await prisma.betterAuthVerification.deleteMany({ where: { identifier: { contains: warmup } } });
   // #795 — and warm the REQUEST path too, for the same reason as everything above it. The
   // throttle consults a shared counter now, so the first press through this path pays a cold cost
   // (module graph, pool slot, statement preparation) that the ones after it do not. The timing
@@ -170,7 +169,7 @@ beforeEach(async () => {
   heldAccessChecks.clear();
   mockSend.mockClear();
   await __resetAuthEmailCapsForTests();
-  await __resetMagicLinkThrottleForTests();
+  await __resetSignInCodeThrottleForTests();
   __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
 });
 
@@ -186,7 +185,7 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
    */
   async function canaryDelayAfter(target: string, holdTarget: boolean): Promise<number> {
     delivered.length = 0;
-    await __resetMagicLinkThrottleForTests();
+    await __resetSignInCodeThrottleForTests();
     __configureAuthEmailQueueForTests({
       maxConcurrency: 1,
       jitterMaxMs: 0,
@@ -226,7 +225,7 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
     // answers out of memory with no database work at all — faster even than branch A.
     await __resetAuthEmailCapsForTests();
     for (let i = 0; i < 5; i++) {
-      enqueueAuthEmail({ purpose: "sign-in-link", email: TARGET_SPENT, callbackURL: "/", overBudget: false });
+      enqueueAuthEmail({ purpose: "sign-in-code", email: TARGET_SPENT, overBudget: false });
       await authEmailQueueSettled();
     }
     const spent = await canaryDelayAfter(TARGET_SPENT, false);
@@ -255,14 +254,14 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
     await press(TARGET_ALLOWED, "203.0.113.51");
     expect(await waitUntil(() => openSends.has(TARGET_ALLOWED))).toBe(true);
     expect(
-      await prisma.betterAuthVerification.count({ where: { value: { contains: TARGET_ALLOWED } } }),
+      await prisma.betterAuthVerification.count({ where: { identifier: { contains: TARGET_ALLOWED } } }),
     ).toBeGreaterThan(0);
 
     await press(TARGET_UNKNOWN, "203.0.113.52");
     await waitUntil(() => false, 200);
     expect(mockSend.mock.calls.some((c) => c[0].to === TARGET_UNKNOWN)).toBe(false);
     expect(
-      await prisma.betterAuthVerification.count({ where: { value: { contains: TARGET_UNKNOWN } } }),
+      await prisma.betterAuthVerification.count({ where: { identifier: { contains: TARGET_UNKNOWN } } }),
     ).toBe(0);
 
     releaseAll();
@@ -379,7 +378,7 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
 });
 
 // ── the queue has a capacity, and a stated drop policy ───────────────────────────────────────
-describe("#678 — the queue is bounded, so no caller can starve every merchant's sign-in link", () => {
+describe("#678 — the queue is bounded, so no caller can starve every merchant's sign-in code", () => {
   it("stays under its capacity through a flood, with the REAL sender", async () => {
     // Nothing about the sender is mocked here: mocking it is exactly what hid the unbounded
     // queue last round — a mocked `enqueueAuthEmail` proved the throttle's Map was bounded while
@@ -398,19 +397,18 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     // and the loop could no longer observe the depth between them. Nothing about the claim moves:
     // the property under test is what the QUEUE does when 5 000 jobs arrive with nothing draining,
     // `enqueueAuthEmail` here is still the REAL one (mocking it is what hid the unbounded queue
-    // last round), and "every request hands over a job" is asserted in magic-link-throttle.
+    // last round), and "every request hands over a job" is asserted in signin-code-throttle.
     let peak = 0;
     for (let i = 0; i < 5_000; i++) {
       enqueueAuthEmail({
-        purpose: "sign-in-link",
+        purpose: "sign-in-code",
         email: `flood-${i}@shop.test`,
-        callbackURL: "/",
         overBudget: false,
       });
       peak = Math.max(peak, __authEmailQueueDepthForTests());
     }
     // RED before the bound: 5 000 presses, 5 000 outstanding jobs, and every real merchant's
-    // sign-in link queued behind them.
+    // sign-in code queued behind them.
     expect(peak).toBeLessThanOrEqual(AUTH_EMAIL_MAX_QUEUED);
 
     // The drop is an operator signal only — the merchant's answer never changed — and it is
@@ -437,9 +435,8 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     // Fill the queue with jobs the throttle already refused…
     for (let i = 0; i < 20; i++) {
       enqueueAuthEmail({
-        purpose: "sign-in-link",
+        purpose: "sign-in-code",
         email: `refused-${i}@shop.test`,
-        callbackURL: "/",
         overBudget: true,
       });
     }
@@ -477,9 +474,8 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
 
     for (let i = 0; i < 40; i++) {
       enqueueAuthEmail({
-        purpose: "sign-in-link",
+        purpose: "sign-in-code",
         email: `p757-tail-${i}@shop.test`,
-        callbackURL: "/",
         overBudget: true,
       });
     }
@@ -619,10 +615,10 @@ describe("#757 — a queued link cannot outlive the link", () => {
   it("holds the drain-before-expiry inequality at the real parameters, and is the largest depth that does", () => {
     // RED before #757: 500 jobs = 125 rounds = 2 750 000 ms (45.8 min) against a 900 000 ms link.
     // RED again before r2: 163 jobs = 41 rounds = 902 000 ms, two seconds past the link.
-    expect(drainMs(AUTH_EMAIL_MAX_QUEUED)).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS);
+    expect(drainMs(AUTH_EMAIL_MAX_QUEUED)).toBeLessThanOrEqual(AUTH_EMAIL_CODE_TTL_MS);
     // …and it is not passing by being trivially small: one more job buys a whole extra round,
     // and that round does not fit. So this is the deepest backlog still deliverable in time.
-    expect(drainMs(AUTH_EMAIL_MAX_QUEUED + 1)).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS);
+    expect(drainMs(AUTH_EMAIL_MAX_QUEUED + 1)).toBeGreaterThan(AUTH_EMAIL_CODE_TTL_MS);
     expect(AUTH_EMAIL_MAX_QUEUED).toBeGreaterThan(0);
   });
 
@@ -630,28 +626,28 @@ describe("#757 — a queued link cannot outlive the link", () => {
     // The largest N with `ceil(N / workers) ≤ rounds` is exactly `workers × rounds`, so a correct
     // derivation always lands on a multiple of the pool width. 163 was not one, which is the
     // shape of the error: it had taken three jobs out of a round that does not exist.
-    const rounds = Math.floor(AUTH_EMAIL_LINK_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
+    const rounds = Math.floor(AUTH_EMAIL_CODE_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
     expect(AUTH_EMAIL_MAX_QUEUED).toBe(AUTH_EMAIL_MAX_CONCURRENCY * rounds);
     expect(AUTH_EMAIL_MAX_QUEUED % AUTH_EMAIL_MAX_CONCURRENCY).toBe(0);
   });
 
   it("derives that depth from the lifetime Better Auth really stamps on the token", async () => {
-    // The inequality is only worth anything if `AUTH_EMAIL_LINK_TTL_MS` is the SAME fifteen
-    // minutes the magic-link plugin uses. RED before #757: `expiresIn` was its own literal in
+    // The inequality is only worth anything if `AUTH_EMAIL_CODE_TTL_MS` is the SAME fifteen
+    // minutes the email-OTP plugin uses. RED before #757: `expiresIn` was its own literal in
     // server.ts, so the queue's arithmetic and the token's real lifetime could drift apart
     // silently — the queue would keep sizing itself against a number nothing enforced.
     const startedAt = Date.now();
-    enqueueAuthEmail({ purpose: "sign-in-link", email: TTL_PROBE, callbackURL: "/", overBudget: false });
+    enqueueAuthEmail({ purpose: "sign-in-code", email: TTL_PROBE, overBudget: false });
     await authEmailQueueSettled();
 
     const row = await prisma.betterAuthVerification.findFirst({
-      where: { value: { contains: TTL_PROBE } },
+      where: { identifier: { contains: TTL_PROBE } },
       orderBy: { createdAt: "desc" },
     });
     expect(row).not.toBeNull();
     const lifetimeMs = (row as { expiresAt: Date }).expiresAt.getTime() - startedAt;
-    expect(lifetimeMs).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS - 5_000);
-    expect(lifetimeMs).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS + 5_000);
+    expect(lifetimeMs).toBeGreaterThan(AUTH_EMAIL_CODE_TTL_MS - 5_000);
+    expect(lifetimeMs).toBeLessThanOrEqual(AUTH_EMAIL_CODE_TTL_MS + 5_000);
   });
 });
 
@@ -664,9 +660,9 @@ afterAll(async () => {
     await prisma.betterAuthVerification.deleteMany({
       where: {
         OR: [
-          { value: { contains: "p678-target-" } },
-          { value: { contains: "p678-canary-" } },
-          { value: { contains: "p757-ttl-" } },
+          { identifier: { contains: "p678-target-" } },
+          { identifier: { contains: "p678-canary-" } },
+          { identifier: { contains: "p757-ttl-" } },
         ],
       },
     });

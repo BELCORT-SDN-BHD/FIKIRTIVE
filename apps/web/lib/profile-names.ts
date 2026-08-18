@@ -25,7 +25,7 @@ export type ProfileNames = {
 
 /** #680 — a workspace whose stored name IS the account's own email address has no shop name;
  *  it has the placeholder bootstrapPersonalOrg used to write for merchants who came in through
- *  a magic link or an invite (no signup form, so no shop name was ever asked for). Reading it
+ *  a sign-in code or an invite (no signup form, so no shop name was ever asked for). Reading it
  *  as "" is what lets /profile show its "Set your shop name" placeholder instead of presenting
  *  an address as the answer to "Your shop name — shown across Fikirtive."
  *
