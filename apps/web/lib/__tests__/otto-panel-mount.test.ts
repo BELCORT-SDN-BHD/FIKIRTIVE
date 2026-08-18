@@ -32,6 +32,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CANVAS_HREF, CREATE_NAV_HREF, OTTO_ASSISTANT } from "@fikirtive/core/navigation";
+import { expectDockedStaysInFlow } from "./otto-panel-dock-contract";
 
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/campaign"),
@@ -60,6 +61,9 @@ vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { MerchantShellContent } = await import("@/components/global-navigation");
+// 面板体是 `React.lazy` 分包的(判官 r1 P3-6)。先把那个模块取进 registry,`React.lazy`
+// 的 promise 才会在一两拍内落地 —— 否则等的就是模块解析本身,拍数变成机器速度的函数。
+await import("@/components/otto/panel/OttoPanelConversation");
 const { ottoPanelMountsOn } = await import("@/components/otto/panel/panel-surface");
 const { OTTO_PANEL_STORAGE_KEY } = await import("@/components/otto/panel/panel-state");
 const { ottoGreeting } = await import("@/lib/otto-greeting");
@@ -89,14 +93,25 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
+/**
+ * 面板体是 `next/dynamic` 懒加载的(判官 r1 P3-6),所以它要多等一拍:先是 import() 那个
+ * promise,再是 Suspense 提交,再是里面自己那次取数。等到 body 有内容、或者两拍都过去了
+ * 为止 —— 固定 sleep 会在慢机器上飘,这里等的是条件本身。
+ */
+async function settle(): Promise<void> {
+  for (let tick = 0; tick < 4; tick += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
 async function mount(element: ReactElement): Promise<HTMLDivElement> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => root!.render(element));
-  await act(async () => {
-    await Promise.resolve();
-  });
+  await settle();
   return container;
 }
 
@@ -140,11 +155,10 @@ describe("挤而不盖,在真的商家壳里 (G2,§3.5 ①)", () => {
     expect(panel).not.toBeNull();
     expect(main.contains(panel)).toBe(false);
     expect(main.parentElement).toBe(panel.parentElement);
-    // 停靠形态不脱离文档流 —— 它占宽度,所以主内容是被挤窄的。
-    expect(panel.style.position).toBe("");
     expect(panel.getAttribute("data-otto-panel-mode")).toBe("docked");
     expect(panel.style.width).toBe(`${DEFAULT_WIDTH}px`);
     expect(el.querySelector("[data-page]")).not.toBeNull();
+    expectDockedStaysInFlow(panel);
   });
 
   it("没有遮罩,主内容也没有被关掉", async () => {
@@ -171,6 +185,40 @@ describe("挤而不盖,在真的商家壳里 (G2,§3.5 ①)", () => {
     });
 
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 判官 r1 P3-7 —— 这是本票一个核心判断,之前只有代码注释在守它。
+ *
+ * 面板挂在 `MerchantShellContent` 的内容列里,而不是 `app/layout.tsx` 的最外层:最外层还包着
+ * `/login`、`/signup`、`/reset-password` 这些**根本没有商家**的面。三件事一起钉:
+ * 面板不画、launcher 不画、而且**一条查询都不发** —— 最后这条最要紧,一个没登录的人
+ * 打开登录页不该在后台触发一次 `requireOwner` + 五条读。
+ */
+describe("没有商家的面,一点 Otto 都不挂", () => {
+  const NON_MERCHANT = ["/login", "/signup", "/reset-password", "/forgot-password", "/verify-email", "/admin", "/legal", "/privacy"] as const;
+
+  for (const surface of NON_MERCHANT) {
+    it(`${surface}:没有面板、没有 launcher、没有取数`, async () => {
+      const el = await mount(shell(surface));
+
+      expect(el.querySelector("[data-otto-panel]")).toBeNull();
+      expect(document.querySelector("[data-otto-launcher]")).toBeNull();
+      expect(loadOttoPanelSeed).not.toHaveBeenCalled();
+      // 页面自己照常渲染 —— 不挂面板不等于不渲染。
+      expect(el.querySelector("[data-page]")).not.toBeNull();
+    });
+  }
+
+  it("商家面上确实会取数 —— 上面那条零调用不是因为取数根本没接上", async () => {
+    loadOttoPanelSeed.mockResolvedValue({
+      projectId: "prj_1", entities: [], threads: [], activeThreadId: null, balanceUsd: 0, userName: "Aisyah",
+    });
+
+    await mount(shell("/campaign"));
+
+    expect(loadOttoPanelSeed).toHaveBeenCalled();
   });
 });
 
@@ -263,13 +311,58 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
   });
 });
 
+describe("窄屏过渡守卫(判官 P2-2,W2-11 删移动层时一并清)", () => {
+  /** 视窗改小之后重挂 —— 面板读的是挂载那一刻的 `window.innerWidth`。 */
+  async function mountAt(width: number, height: number) {
+    Object.defineProperty(window, "innerWidth", { value: width, writable: true, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: height, writable: true, configurable: true });
+    return mount(shell("/campaign"));
+  }
+
+  it("375px 的手机上默认不开 —— 320px 的面板会把整屏吃掉", async () => {
+    const el = await mountAt(375, 812);
+
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    // 页面拿回整个宽度,而 Otto 仍然够得着:launcher 还在。
+    expect(el.querySelector("[data-page]")).not.toBeNull();
+    expect(document.querySelector("[data-otto-launcher]")).not.toBeNull();
+  });
+
+  it("只压默认,不压能力:窄屏上按 launcher 照样开得起来", async () => {
+    const el = await mountAt(375, 812);
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click();
+    });
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("桌面宽度不受影响 —— 默认仍然是开的(Q3-A)", async () => {
+    const el = await mountAt(VIEWPORT.width, VIEWPORT.height);
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+});
+
 describe("层级表:模态框永远在最上面", () => {
   /** 从一段 class 串里读出 `z-[NN]` / `z-NN`。 */
   function zOf(source: string): number[] {
     return [...source.matchAll(/\bz-\[?(\d+)\]?\b/g)].map((m) => Number(m[1]));
   }
 
-  it("导轨 < 面板/launcher < dialog —— 面板不许盖住任何一个模态框", async () => {
+  /**
+   * 对照物是**壳内**那两处手搓的 `fixed inset-0 z-50` 模态框,不是 `ui/dialog`
+   * (判官 r1 P3-3):`ui/dialog` 走 Radix Portal 挂到 `<body>`,而商家壳整个装在
+   * `app/layout.tsx` 那个 `relative z-10` 的层叠上下文里 —— 壳里的数字再大也压不到它。
+   * 这两处正是 W2-12 要收编的那一批;在收编之前,面板必须让着它们。
+   */
+  const IN_SHELL_MODALS = [
+    "components/otto/OttoStuff.tsx",
+    "components/otto/stuff/AddAssetDialog.tsx",
+  ] as const;
+
+  it("导轨 < 面板/launcher < 壳内模态框 —— 面板不许盖住一个模态框", async () => {
     const el = await mount(shell("/campaign"));
     const panelZ = zOf(el.querySelector("[data-otto-panel]")!.className);
 
@@ -278,13 +371,21 @@ describe("层级表:模态框永远在最上面", () => {
     });
     const launcherZ = zOf(document.querySelector("[data-otto-launcher]")!.className);
 
-    // 两个对照值都从它们自己的文件里读,不在这里抄第二份。
-    const dialogZ = Math.min(...zOf(readFileSync(resolve(WEB_ROOT, "components/ui/dialog.tsx"), "utf8")));
+    // 对照值全部从它们自己的文件里读,不在这里抄第二份。
+    const modalZ = Math.min(
+      ...IN_SHELL_MODALS.flatMap((file) => {
+        const source = readFileSync(resolve(WEB_ROOT, file), "utf8");
+        const scrims = [...source.matchAll(/fixed inset-0 z-\[?(\d+)\]?/g)].map((m) => Number(m[1]));
+        expect(scrims.length, `${file} 里应当还有那层手搓遮罩(它被收编后这条要跟着改)`).toBeGreaterThan(0);
+        return scrims;
+      }),
+    );
     const railZ = Math.max(...zOf(readFileSync(resolve(WEB_ROOT, "components/global-navigation.tsx"), "utf8")));
 
+    expect(panelZ.length + launcherZ.length).toBeGreaterThan(0);
     for (const z of [...panelZ, ...launcherZ]) {
-      expect(z, `panel/launcher z=${z} vs dialog z=${dialogZ}`).toBeLessThan(dialogZ);
-      expect(z, `panel/launcher z=${z} vs rail z=${railZ}`).toBeGreaterThan(railZ);
+      expect(z, `panel/launcher z=${z} vs 壳内模态框 z=${modalZ}`).toBeLessThan(modalZ);
+      expect(z, `panel/launcher z=${z} vs 导轨 z=${railZ}`).toBeGreaterThan(railZ);
     }
   });
 });
@@ -304,6 +405,41 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
 
     // 问候语从 `lib/otto-greeting.ts` 取,不在测试里重抄一遍 —— 抄一遍就变成在核对自己。
     expect(el.querySelector("[data-otto-panel-body]")!.textContent).toContain(ottoGreeting("Aisyah"));
+  });
+
+  /**
+   * 判官 r1 P3-5 —— 把「取几次」这件事**测出来**,而不是在注释里声称。
+   *
+   * 实测(这条断言就是那次测量):关一次再开一次,种子取 **2** 次。面板收起时 `OttoPanel`
+   * 整个卸载(#1002 已判官 PASS 的契约),会话连同它的 state 一起走,重开就是一次新的取数。
+   *
+   * 为什么**不**把它缓存下来(选项 A:取数上提到 `OttoPanelShell`):种子里带着
+   * `balanceUsd`,而面板里的会话没有自己的余额订阅 —— `OttoChatStream` 只是把这个数
+   * 当普通 prop 往下传给审批卡。缓存等于把商家的 credits 数字冻在第一次开面板的那一刻:
+   * 他去 /billing 充了值回来,面板还在用旧数。用 5 条查询换一个在**花钱的面**上会说谎的
+   * 数字,是笔坏买卖。真正的修法是订阅 `subscribeBalanceRefresh` 再缓存,而那是面板会话
+   * plumbing 的活 —— W2-8(#995)owns 它,本票不在它头上先做半套。
+   */
+  it("关一次再开一次 = 取两次种子(这是实测,不是声称)", async () => {
+    loadOttoPanelSeed.mockResolvedValue({
+      projectId: "prj_1", entities: [], threads: [], activeThreadId: null, balanceUsd: 12, userName: "Aisyah",
+    });
+
+    const el = await mount(shell("/campaign"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Close Otto"]')!.click();
+    });
+    await settle();
+    // 关着的时候不取 —— 卸载不该顺手再发一次请求。
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click();
+    });
+    await settle();
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
   });
 
   it("取数失败就说实话,不摆一个按了没反应的输入框", async () => {

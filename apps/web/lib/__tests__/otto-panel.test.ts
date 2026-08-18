@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OttoPanelShell, type OttoPanelShellProps } from "@/components/otto/panel/OttoPanelShell";
 import { OTTO_PANEL_STORAGE_KEY } from "@/components/otto/panel/panel-state";
+import { expectDockedStaysInFlow, expectFloatingIsFixed } from "./otto-panel-dock-contract";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -83,10 +84,10 @@ describe("Dock, don't cover (§3.5 ①,G2)", () => {
 
     expect(main.contains(panel)).toBe(false);
     expect(main.parentElement).toBe(panel.parentElement);
-    // 停靠形态没有任何定位:它就是排版里的一格,所以主内容是被挤窄的,不是被盖住的。
-    expect(panel.style.position).toBe("");
-    expect(panel.getAttribute("data-otto-panel-mode")).toBe("docked");
     expect(panel.style.width).toBe(`${DEFAULT_WIDTH}px`);
+    // 停靠形态仍在文档流里:它就是排版里的一格,所以主内容是被挤窄的,不是被盖住的。
+    // 判定读的是 class —— 定位全写在 class 上,只看行内 style 是一条永远为真的断言。
+    expectDockedStaysInFlow(panel);
   });
 
   it("renders no scrim and never switches the page off", async () => {
@@ -282,8 +283,7 @@ describe("拖动语义,走真的指针事件 (§3.2)", () => {
     });
 
     const floating = panelOf(el);
-    expect(floating.getAttribute("data-otto-panel-mode")).toBe("floating");
-    expect(floating.style.position).toBe("fixed");
+    expectFloatingIsFixed(floating);
     // 脱离本身要落在吸附带之外,否则一松手就弹回去。
     expect(document.querySelector("[data-otto-panel-dock-hint]")).toBeNull();
     // 浮动了也不遮:主内容还在它自己的位置上,没有遮罩盖上来。

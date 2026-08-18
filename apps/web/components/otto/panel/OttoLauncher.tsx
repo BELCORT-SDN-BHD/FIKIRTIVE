@@ -142,7 +142,8 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
             : []),
         ].join(", "),
       }}
-      // 层级与面板同一张表(见 OttoPanel):导轨 40 < launcher 45 < dialog 50。
+      // 层级与面板同一张表(见 OttoPanel 那段:壳内手搓的 fixed z-50 模态框才是对照物,
+      // portal 到 body 的 ui/dialog 根本不在这个层叠上下文里)。导轨 40 < launcher 45 < 50。
       className="z-[45] size-12 touch-none rounded-full p-0 shadow-[var(--shadow-md)] active:cursor-grabbing"
     >
       <OttoAvatar size={26} mood="idle" />

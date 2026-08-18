@@ -236,10 +236,18 @@ export function OttoPanel({
         {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
         style={frame}
         className={cn(
-          // 层级(#994 挂载票定表):导轨 z-40 < 面板 z-45 < `ui/dialog` 的遮罩与内容 z-50。
-          // 面板现在停在每一个商家表面上,z-70(旧那颗 Otto 按钮的值)会让它盖住每一个模态框 ——
-          // 模态框必须在最上面,所以面板退到 45:仍在导轨之上(浮动窗拖过去时压得住它),
-          // 但任何 dialog 一开就在面板之上。
+          // 层级(#994 挂载票定表,判官 r1 P3-3 修正因果):导轨 z-40 < 面板 z-45 < 模态框 z-50。
+          //
+          // 先说清楚**谁不在这条表里**:`ui/dialog` 走 Radix Portal 挂到 `<body>` 上,而商家壳
+          // 整个装在 `app/layout.tsx` 那个 `relative z-10` 的 div 里 —— 那是一个层叠上下文,
+          // 里面的数字再大也只在里面排队。所以旧的 z-70 从来压不住 `ui/dialog`,「不改就盖住每一个
+          // 模态框」是句错话。
+          //
+          // 真正会被盖住的是**壳内**那两处手搓的 `fixed inset-0 z-50` 模态框 ——
+          // `OttoStuff.tsx`(Choose a product)与 `stuff/AddAssetDialog.tsx`(Add asset)。
+          // 它们和面板同在那个 z-10 上下文里,z-70 的面板确实会压在它们上面(它们正是 W2-12
+          // 要收编成 `ui/dialog` 的那一批)。面板退到 45,这两处就回到面板之上;
+          // 45 仍在导轨 40 之上,浮动窗拖过导轨时压得住它。
           "z-[45] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
           floating
             ? "rounded-[var(--radius-lg)] border border-border/80 shadow-[var(--shadow-lg,0_18px_44px_rgba(20,20,24,0.16))]"

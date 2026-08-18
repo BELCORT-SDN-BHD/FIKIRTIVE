@@ -7,7 +7,10 @@
  * 为什么不是在 layout 里服务端取好:面板挂在**每一个**商家表面上,而 `/login`、`/signup`
  * 这些面根本没有商家。把这几条查询放进共享 layout,等于让每一次页面渲染都先跑一遍
  * Otto 的数据装配 —— 包括商家今天根本没打开过面板的那些次。所以取数放在这里,由面板
- * 第一次真的要画会话时调一次(客户端 → 这个 server action),之后整个 SPA 生命周期内不再取。
+ * 真的要画会话时才调(客户端 → 这个 server action)。**调几次说准确**(判官 r1 P3-5):
+ * 面板开着期间路由怎么切都不重取(壳不卸载),但关一次再开一次会再取一次 —— 面板收起时
+ * `OttoPanel` 整个卸载。为什么不把那一次缓存掉,理由写在 `OttoPanelConversation.tsx` 顶部
+ * (一句话:种子里带 `balanceUsd`,缓存会把 credits 冻住)。
  *
  * 为什么不是新写一套读:每一条都是 `/otto` 那一页今天已经在用的同一个函数
  * (`getEntities` / `getCoworkThreads` / `getCoworkThread` / `getMyAccount` / 问候名),

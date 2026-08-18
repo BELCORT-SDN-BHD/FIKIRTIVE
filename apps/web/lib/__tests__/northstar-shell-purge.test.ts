@@ -154,17 +154,32 @@ const FIXTURE_MODULES = [
 const BANNED_COPY = ["This will spend real credits", "upgrade ticket", "1,240"] as const;
 
 /**
- * 短语扫描的豁免树(#994 · W2-7)。
+ * 短语扫描的豁免 —— **逐对**列,不是逐树列(#994 · W2-7,判官 r1 P3-4)。
  *
  * Otto 面板挂进商家壳之后,壳的 import 图第一次走到**真的** Otto 会话树。那棵树里的
  * 「This will spend real credits」印在真的审批卡上,而且是**真话** —— 按下去真的扣钱,
  * 这一点由钱路的 ledger 与幂等键证明,不由一句字符串证明。这条围栏立起来是为了挡北极星
- * 那些**假**的经营承诺(一个不会扣钱却说自己会扣钱的假 Otto 小窗),不是为了审真产品的文案。
+ * 那些**假**的经营承诺(一个不会扣钱却说自己会扣钱的假 Otto 小窗),不是审真产品的文案。
+ *
+ * 但豁免必须只有它需要的那么大。写成「整棵 `components/otto/` 免检三条短语」的话,
+ * 顺手连「upgrade ticket」「1,240」也一起放行了 —— 那两句在真 Otto 树里一处都没有
+ * (2026-08-19 实查),放行它们纯属白送。所以这里列的是 `{tree, phrase}` 对:
+ * 今天只需要一对,以后要加也得一对一对地说清楚为什么。
  *
  * 只豁免短语这一条:「碰不到样板数据」(FIXTURE_MODULES)仍然全图有效 —— 那一条挡的是
  * 假数据本身,而假数据在哪里都不该被壳碰到。
  */
-const BANNED_COPY_SCAN_SKIP = ["components/otto/"] as const;
+const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [
+  {
+    tree: "components/otto/",
+    phrase: "This will spend real credits",
+    why: "真审批卡上的真话(今天唯一一处:StoryboardCard.tsx);它旁边就是幂等的扣费路径",
+  },
+];
+
+function exempt(relativePath: string, phrase: string): boolean {
+  return BANNED_COPY_EXEMPTIONS.some((row) => relativePath.startsWith(row.tree) && row.phrase === phrase);
+}
 
 /* ── ① 六扇门合流进主导航 ─────────────────────────────────────────────────── */
 
@@ -224,12 +239,32 @@ describe("假物清零", () => {
     const hits: string[] = [];
     for (const [file, source] of reachableSources(SHELL_ENTRIES)) {
       const relative = file.slice(WEB_ROOT.length + 1);
-      if (BANNED_COPY_SCAN_SKIP.some((tree) => relative.startsWith(tree))) continue;
       for (const phrase of BANNED_COPY) {
-        if (source.includes(phrase)) hits.push(`${relative} :: ${phrase}`);
+        if (source.includes(phrase) && !exempt(relative, phrase)) hits.push(`${relative} :: ${phrase}`);
       }
     }
     expect(hits).toEqual([]);
+  });
+
+  /** 豁免必须只有它需要的那么大,而且必须真的还需要(判官 r1 P3-4)。 */
+  it("那一条豁免既没有变成通行证,也没有变成僵尸", () => {
+    const reachable = [...reachableSources(SHELL_ENTRIES)].map(([file, source]) => [
+      file.slice(WEB_ROOT.length + 1),
+      source,
+    ] as const);
+
+    for (const row of BANNED_COPY_EXEMPTIONS) {
+      // ① 还需要:拿掉它,围栏就红 —— 一条早已没有对象的豁免应当删掉,不是留着。
+      const covered = reachable.filter(([file, source]) => file.startsWith(row.tree) && source.includes(row.phrase));
+      expect(covered.map(([file]) => file), `豁免 ${row.tree} × "${row.phrase}" 已经没有对象了,删掉它`).not.toEqual([]);
+
+      // ② 没变成通行证:被豁免的树里,**其余**那些短语一处都不许有。
+      const others = BANNED_COPY.filter((phrase) => phrase !== row.phrase);
+      const leaked = reachable.flatMap(([file, source]) =>
+        file.startsWith(row.tree) ? others.filter((phrase) => source.includes(phrase)).map((p) => `${file} :: ${p}`) : [],
+      );
+      expect(leaked, `${row.tree} 只豁免了一条短语,别的照旧不许出现`).toEqual([]);
+    }
   });
 });
 

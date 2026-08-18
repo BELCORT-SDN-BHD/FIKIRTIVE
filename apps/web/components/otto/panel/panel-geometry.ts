@@ -51,6 +51,23 @@ export const LAUNCHER_MARGIN = 24;
 /** 没有 `window` 时(SSR 首帧、纯函数测试)假定的视窗。 */
 export const FALLBACK_VIEWPORT: Viewport = { width: 1440, height: 900 };
 
+/**
+ * ⚠️ 过渡守卫,W2-11 删移动层时一并清(#994 挂载轮 · 判官 P2-2)。
+ *
+ * 规格第 43 行 Founder 裁决 desktop-only,移动端整层的删除在 W2-11(§5.1)。问题出在
+ * 这两票之间:面板一挂上,375px 的手机上 `maxPanelWidth(375)` 是 320(320 这个下限比
+ * 50vw 更硬 —— 审批卡再窄就读不出金额),而默认是**开**的,于是主内容只剩 55px。
+ * 那不是「窄了点」,那是商家壳在手机上坏掉。
+ *
+ * 所以窄于这个宽度时,**默认**不开面板 —— 只改默认,不改能力:商家自己按 launcher 或
+ * `Cmd/Ctrl+J` 照样开得起来,存档里存着的 `open` 也照样算数。
+ *
+ * 1024 = Tailwind 的 `lg`,也就是导轨从抽屉变成常驻列的那条线
+ * (`global-navigation.tsx` 的 `RAIL_IS_PERMANENT`)。同一条线,不新发明第二条;
+ * 常量写在这里而不是从那边 import,是因为那边 import 这一族组件,反过来会成环。
+ */
+export const PANEL_DEFAULT_OPEN_MIN_WIDTH = 1024;
+
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   if (max < min) return min;
