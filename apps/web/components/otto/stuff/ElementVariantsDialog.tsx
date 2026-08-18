@@ -44,6 +44,7 @@ import {
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
+import { ErrorWithTopUp } from "@/components/exits/Exits";
 import {
   isVariantRunning,
   latestVariantRef,
@@ -286,12 +287,13 @@ export function ElementVariantsDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* #979 —— 变体这一步的钱不够同样不许是死路(与计划卡、AddAssetDialog 同一个修法)。 */}
         {error && (
           <div
             role="alert"
             className="rounded-[14px] bg-error-soft px-3 py-2 text-[0.875rem] text-[var(--error-soft-foreground)]"
           >
-            {error}
+            <ErrorWithTopUp text={error} />
           </div>
         )}
 
