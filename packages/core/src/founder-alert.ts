@@ -110,18 +110,34 @@ export async function dispatchFounderAlert(
 
 type EnvRecord = Record<string, string | undefined>;
 
-/** 我们从 Sentry SDK 用到的两个方法。写成结构类型,core 就不必依赖 @sentry/node。 */
+/** Sentry SDK 里我们用到的那一个方法。写成结构类型,core 就不必依赖 @sentry/node。 */
 export type SentryLike = {
-  captureMessage: (message: string, level?: "error" | "warning") => unknown;
+  captureMessage: (
+    message: string,
+    context?: { level?: "error" | "warning"; tags?: Record<string, string>; extra?: Record<string, unknown> },
+  ) => unknown;
 };
 
 /**
  * Sentry 通道。DSN 没配时 SDK 自己 no-op,所以这里不再判一次——**这条通道永远算 sent**,
  * 因为 C1a 之后 SENTRY_DSN 在生产是必填,开机检查会拦住没配的部署。
+ *
+ * 用 `captureMessage` + 结构化 context,而不是 `captureException(new Error(...))`,理由是**聚类**:
+ *   · 合成的 Error 的堆栈全部指向这个文件的同一行,Sentry 会把每一种 founder 报警都归成
+ *     同一个 issue —— 「商家付了钱什么都没拿到」和「Stripe 收了钱不知道给谁」混在一起,
+ *     等于两条都读不出来。
+ *   · message 只放稳定部分(key + 标题),会变的 org / 金额 / 作业 id 走 extra,于是同一类事
+ *     聚成一个 issue、按 `founder_alert` 标签就能筛,而每一次的定位信息一个字都没丢。
+ * 钱路 catch 那一族仍然用 captureException —— 那里有真实的 Error 与真实的堆栈,
+ * 见 apps/worker/src/alerting.ts。
  */
 export function createSentryChannel(sentry: SentryLike): FounderAlertChannel {
   return async (alert) => {
-    sentry.captureMessage(formatFounderAlertText(alert), "error");
+    sentry.captureMessage(`[founder-alert] ${alert.key} — ${alert.title}`, {
+      level: "error",
+      tags: { founder_alert: alert.key },
+      extra: { ...alert.context, action: alert.action, text: formatFounderAlertText(alert) },
+    });
     return "sent";
   };
 }

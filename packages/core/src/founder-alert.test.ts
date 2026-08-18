@@ -115,12 +115,18 @@ describe("dispatchFounderAlert", () => {
 });
 
 describe("createSentryChannel", () => {
-  it("reports the whole alert text at error level", async () => {
+  it("groups on the STABLE half and carries the changing half as structured context", async () => {
+    // 聚类是这条断言的全部意义:会变的 id 留在 message 里,Sentry 会给每一单开一个 issue,
+    // 「这类事发生过几次」就再也问不出来了。
     const captureMessage = vi.fn();
     expect(await createSentryChannel({ captureMessage })(ALERT)).toBe("sent");
     expect(captureMessage).toHaveBeenCalledTimes(1);
-    expect(captureMessage.mock.calls[0]?.[0]).toContain("genJobId: gen_1");
-    expect(captureMessage.mock.calls[0]?.[1]).toBe("error");
+    const [message, context] = captureMessage.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(message).toContain("gen.paid_for_nothing");
+    expect(message, "作业 id 进了 message ⇒ 每一单自成一个 issue").not.toContain("gen_1");
+    expect(context.level).toBe("error");
+    expect(context.tags).toEqual({ founder_alert: "gen.paid_for_nothing" });
+    expect(context.extra).toEqual(expect.objectContaining({ genJobId: "gen_1", orgId: "org_1", chargedCredits: 22 }));
   });
 });
 
