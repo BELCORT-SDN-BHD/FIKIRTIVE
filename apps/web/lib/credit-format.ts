@@ -112,15 +112,21 @@ export function lowBalanceForVideoMessage(
  *  measured session put 89% of its credits on conversation, one turn costing as much as three
  *  images. "Chatting with Otto is free" was true for a few hours, between the two rulings of the
  *  same day. This is the third and it matches the code: a turn charges what it actually used, at
- *  the provider's cost plus 5% (OTTO_CONVERSATION_TURN_MARGIN in @fikirtive/core), so a short
- *  question really is a fraction of a credit and a long one costs more.
+ *  the provider's cost plus 5% (OTTO_CONVERSATION_TURN_MARGIN in @fikirtive/core).
+ *
+ *  IT CARRIES NO MAGNITUDE CLAIM, and that is the point it keeps failing on. A draft of this
+ *  sentence said "usually a fraction of one per message"; at the 1.05 multiplier the measured
+ *  reply is 1.4 displayed credits and most of the #536 band sits ABOVE one credit, so the clause
+ *  was the same species of untruth as "a little credit" — and it read as a contradiction of
+ *  CHAT_HOLD_NOTE ("holds up to 4 credits") rendered directly beneath it. Any future softening
+ *  needs a measurement behind it, at the price of the day.
  *
  *  Says "what it uses" rather than a number, because there is no number to give — the price is
  *  the turn's real usage. Deliberately says "your charges are listed", NOT "every charge": the
  *  history is a window over the most recent items and names its own cut (round-1 review P1① —
  *  the copy must not promise more than the page delivers). */
 export const CHAT_SPEND_NOTE =
-  "Chatting with Otto costs credits for what it uses — usually a fraction of one per message, all listed in Billing.";
+  "Chatting with Otto costs credits for what it uses — your charges are listed in Billing.";
 
 /** The ONE disclosure of the conversation HOLD (#791-9, live again with the second ruling).
  *

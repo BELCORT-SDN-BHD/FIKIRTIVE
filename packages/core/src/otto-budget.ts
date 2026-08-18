@@ -101,6 +101,8 @@ export function turnBudgetInternal(
  * last credits: a merchant with 11 credits left cannot start a turn at all. 40 internal is still comfortably above
  * the measured single-turn peak (33 internal / 3.3 displayed), so it is a cap on the HOLD,
  * not a change to what a turn costs.
+ *   ├─ HISTORICAL AT margin 2.0 (2026-07-31): "120 internal / 12 displayed" is the worst case at THAT margin; at today's 1.05 it is 70 internal / 7 displayed (per-step ceil, not a flat 52.5% of 120).
+ *   └─ HISTORICAL AT margin 2.0 (2026-07-31): the "33 internal / 3.3 displayed" measured peak is that same turn priced at 2.0; at 1.05 it lands around 17–18 internal (~1.7–1.8 displayed). The 40 ceiling clears both, so #543's reasoning survives the re-pricing unchanged.
  *
  * Scope: the conversation turn only (runtime.ts ottoBudgetArgsFor). Research jobs and
  * single-call helpers keep the derived worst-case budget.
@@ -150,5 +152,6 @@ export const OTTO_CONVERSATION_TURN_RESERVE_INTERNAL = 40;
  * in @fikirtive/db) so the absorption is visible instead of silent. It disappears on its own
  * once the assembler (#879 step 2) lands. Merchants are never over-charged and the balance
  * can never go negative — reserve/settle/refund and their exactly-once indexes are untouched.
+ *   └─ HISTORICAL AT margin 2.0 (2026-08-13): every credit figure in this block was measured at THAT margin — #536's 0.4–3.3 band, the 0.4–1.3 typical message, the ~2.3-credit absorption bound; at today's 1.05 they are ~0.21–1.73, ~0.21–0.68 and ~1.2. All three shrink, so #898's conclusions (1 credit clears the typical message; the exposure is bounded and small) hold a fortiori.
  */
 export const OTTO_CHAT_MIN_START_INTERNAL = 10;
