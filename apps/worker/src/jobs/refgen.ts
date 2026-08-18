@@ -34,6 +34,7 @@ import {
   type RefGenModel,
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
+import { captureMoneyPathError } from "../alerting.js";
 import { provider } from "../generation.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { isModelDisabled } from "@fikirtive/core";
@@ -103,6 +104,7 @@ async function failClosedRefund(jobId: string, ownerId: string, error: string): 
   } catch (e) {
     if (e !== REFGEN_SETTLED_PRE_SPEND_FAIL) throw e;
     console.error(`[refgen] ${jobId}: a pre-spend gate wanted to fail this job closed, but the charge is already SETTLED — the delivery beat us to it. Left in flight on purpose: FAILED would promise a refund that never happened. Reason was: ${error}`);
+    captureMoneyPathError(e, { event: "refgen.fail_closed_blocked_by_settle", jobId, orgId: ownerId, gateReason: error });
   }
 }
 
@@ -249,6 +251,7 @@ export async function reapStaleRefGenJobs(): Promise<number> {
         reaped++;
       } catch (e) {
         console.error(`[refgen] reaper resume failed for ${job.id} (retries next sweep):`, e instanceof Error ? e.message : e);
+        captureMoneyPathError(e, { event: "refgen.reaper_resume_failed", jobId: job.id, orgId: job.ownerId });
       }
     }
 
@@ -483,6 +486,14 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       });
       if (!committedRefgen) {
         console.warn(`[refgen] ${job.id}: redelivery already failed+refunded this job mid-flight — discarding the (orphan) outputs, not attaching. Founder absorbed the engine cost.`);
+        // 同 gen.ts 的对应分支:商家已退款,平台真金白银付了一次引擎调用。零上报 = 没人
+        // 知道它一天发生几次。这里没有异常对象,所以合成一个,让 Sentry 有一条可聚类的事件。
+        captureMoneyPathError(new Error("refgen redelivery discarded paid outputs — founder absorbed the engine cost"), {
+          event: "refgen.founder_absorbed_engine_cost",
+          jobId: job.id,
+          orgId: job.ownerId,
+          mode: job.mode,
+        });
         return;
       }
       committed = true; // outputs recorded + settled — past here a failure RESUMES, never re-spends

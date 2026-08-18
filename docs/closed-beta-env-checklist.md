@@ -7,7 +7,14 @@ Set in Railway BEFORE inviting any external user / before the first paid endpoin
 - `AUTH_ALLOWED_EMAILS=...`  — comma-separated invite allowlist (deny-by-default).
 - `FOUNDER_ADMIN_EMAILS=...` — your founder email(s); seeded to super-admin on sign-in.
 - `AUTH_EMAIL_FROM="Fikirtive <you@yourdomain>"` — verified Resend sender.
-- `SENTRY_DSN=...`           — error monitoring (optional but recommended for beta; no-op if unset).
+- `SENTRY_DSN=...`           — REQUIRED on both web and worker. A production process without it
+  refuses to start (env contract), because with no DSN every capture is a silent no-op and the
+  money-path founder alerts reach nobody. Escape hatch if the CHECK is what is wrong:
+  `FIKIRTIVE_ENV_CONTRACT=warn`.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALERT_CHAT_ID` — optional, both services. Puts the money-path
+  founder alerts on a phone. Two-minute walkthrough: `docs/ops/telegram-alerts.md`.
+- `RESEND_API_KEY` on the **worker** too — the worker sends the "a merchant paid for nothing"
+  alert email; without it that alert degrades to Sentry (+ Telegram) only.
 - COWORK planner stays $0: do NOT set `COWORK_PAID_PROVIDERS_ALLOWED=true`; ensure the DB
   `runtimeConfig.cowork_provider` row is unset or `mock`. (Money-safety: the paid planner is
   locked by default — closed-beta P0, `effectiveCoworkProvider`.)

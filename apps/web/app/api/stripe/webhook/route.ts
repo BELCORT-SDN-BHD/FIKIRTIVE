@@ -1,4 +1,5 @@
 import { stripe } from "@/lib/stripe";
+import { founderAlert } from "@/lib/founder-alert";
 import { grantCredits, prisma } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
 import { newId, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
@@ -37,6 +38,35 @@ export async function POST(req: NextRequest): Promise<Response> {
         const credits = Number(session.metadata?.credits);
         if (!orgId || !credits || credits <= 0 || !Number.isInteger(credits)) {
           await prisma.actionEvent.create({ data: { id: newId(), ownerId: "founder", type: "credits.purchase.bad", payload: { eventId: event.id, metadata: session.metadata ?? null } } }).catch(() => {});
+          // 整顿 C1a:这条分支是这个文件里**唯一**一条「真钱进账、我们不知道该给谁」却
+          // 只写审计不叫人的路。它下面那两条(async_payment_failed / dispute·refund)从第一天
+          // 起就报警,而这一条更硬 —— 那两条是钱没来或钱被拉回,这一条是**商家已经付了款**,
+          // 而 metadata 坏掉让我们发不出 credits。对齐它们,并且升到 founderAlert(需要人工
+          // 补发,只进 Sentry 等于没人会去做)。
+          //
+          // 报警绝不决定响应码:一个会抛的报警通道会让这个 handler 返回非 2xx,把 Stripe 推进
+          // 一场发生在钱事件上的无限重试。派发本身已经承诺永不抛(dispatchFounderAlert 的契约),
+          // 这里再包一层 try —— 与下面 async_payment_failed 那条一模一样的理由:200 契约不许
+          // 依赖别的模块守不守自己的承诺。
+          try {
+            await founderAlert({
+              key: "stripe.paid_session_unusable_metadata",
+              title: "A Stripe payment succeeded but we cannot tell which merchant it belongs to",
+              action:
+                "Grant the credits by hand: open the session in the Stripe dashboard, find the buyer, then add the credits to their org. Nothing automatic will retry this — Stripe was answered 200 on purpose so it stops redelivering.",
+              context: {
+                stripeEventId: event.id,
+                stripeSessionId: typeof session.id === "string" ? session.id : null,
+                paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
+                amountTotal: typeof session.amount_total === "number" ? session.amount_total : null,
+                currency: typeof session.currency === "string" ? session.currency : null,
+                orgIdInMetadata: orgId || null,
+                creditsInMetadata: Number.isFinite(credits) ? credits : null,
+              },
+            });
+          } catch (e) {
+            console.error(`[stripe] ${event.type} paid-session alert failed; session=${typeof session.id === "string" ? session.id : "unknown"}:`, e);
+          }
           return new Response("ignored: missing metadata", { status: 200 }); // 200 → no retry storm
         }
         // Dedup on the Checkout SESSION id, not the event id: one session = one payment = one
