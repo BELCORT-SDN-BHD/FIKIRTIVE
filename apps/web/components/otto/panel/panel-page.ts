@@ -7,11 +7,15 @@
  * 页面名只有 `MERCHANT_NAV` 一份权威。换壳把某一面搬到新地址时,这个文件不用改 ——
  * 本仓最贵的一课就是同一个地址被抄进第二处之后两边各自漂移。
  *
- * V1 只做「路由 + 对象名」这一层(§3.5 原则 ④ 的 🟡):
- *   · 整条路径等于某个 SHELL_ROUTES → 这一档是**一页**,chip 上写它在导航里的名字;
- *   · 路径是某个 SHELL_ROUTES 再加一段 id → 这一档是**一个对象**,chip 上写它的真名字。
- *     真名字要读数据库,所以这里只交出 `{ objectKind, objectId }`,取名字是调用方的活
- *     (`lib/otto-panel-context.ts`)—— 纯函数里不许有取数。
+ * 这一层只回答「这是哪一页 / 哪一个对象」(§3.5 原则 ④ 的 🟡):
+ *   · 整条路径等于某个 SHELL_ROUTES → 这一档是**一页**,名字就是它在导航里的名字;
+ *   · 路径是某个 SHELL_ROUTES 再加一段 id → 这一档是**一个对象**,只交出
+ *     `{ objectKind, objectId }`。对象的真名字要读数据库,而纯函数里不许有取数。
+ *
+ * **今天没有人拿它去画上下文 chip**:判官 r1 [P2] 查明服务端没有任何读者会因为商家在看
+ * 哪一页而改变这一轮的上下文,所以 chip 会说假话,W2-8 不画它。取真名字的那个 server
+ * action 一并删了(零调用者的租户查询就是没人守望的攻击面)——#879 step 2 接上真语义时
+ * 按它自己的需要写读者,这个解析器与它的围栏那时直接用得上。
  */
 import { GOAL_PRESETS, type GoalKey } from "@fikirtive/core/goals";
 import { SHELL_ROUTES, everyNavDestination } from "@fikirtive/core/navigation";
@@ -75,13 +79,7 @@ function matchShellRoute(location: string): ShellRouteMatch | null {
   return null;
 }
 
-/**
- * 上下文 chip 说的是哪一件事。
- *
- * **这一票不画 chip**(判官 r1 [P2]:服务端没有任何读者会因为这一页是哪一页而改变这一轮的
- * 上下文,画出来就是替一件没发生的事背书)。这个解析器与它的围栏留着,等 #879 step 2 接上
- * 真读者的那一天,`OttoPanelHost` 把两个 prop 接回去即可 —— 见那个文件里的「上下文 chip」一节。
- */
+/** 上下文 chip 会说的那一件事(今天没有人画它,理由见文件头)。 */
 export type PanelContextSubject =
   /** 一页。`label` 就是它在导航里的名字(`On this page: Library`)。 */
   | { kind: "page"; routeKey: ShellRouteKey; label: string }

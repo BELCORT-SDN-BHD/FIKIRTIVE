@@ -87,9 +87,15 @@ export function OttoPanelHost({
   //     出现 0 次;
   //   · #879 step 1 自己的围栏就写着「pure shape, zero behavior change」。
   //
-  // 所以 chip 传上去只会让面板替一件没发生的事背书。解析器(`panelContextSubject`)、取名字的
-  // server action 与它们的围栏都留着 —— **chip 随 #879 step 2 启用**,那张票接上真读者的
-  // 同一天,这里把 `contextChip` / `contextAttached` 两个 prop 接回去即可。
+  // 所以 chip 传上去只会让面板替一件没发生的事背书。
+  //
+  // **chip 随 #879 step 2 启用**:那张票接上真读者的同一天,这里把 `contextChip` /
+  // `contextAttached` 两个 prop 接回去即可 —— chip 本体(`OttoPanel` 那一段)与路径解析器
+  // (`panel-page.ts` 的 `panelContextSubject`)都还在,连围栏一起。
+  //
+  // 取对象真名字的那个 server action **已经删掉**(Founder 整顿标准:零调用者的租户查询
+  // 就是一块没人守望的攻击面,建了没用即根性缺陷)。step 2 按它自己的语义写读者,要参考
+  // 上一版实现的话在 git 历史里(`apps/web/lib/otto-panel-context.ts`,提交 ea0db0f5)。
 
   // ── 会话 ────────────────────────────────────────────────────────────────
   const upsertThread = React.useCallback((thread: ChatThreadDTO) => {

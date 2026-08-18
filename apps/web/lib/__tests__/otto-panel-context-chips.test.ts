@@ -4,16 +4,17 @@
  *
  * 规格:`docs/specs/wave2-shell.md` §3.4。
  *
- * 三件事只有在「面板真的知道商家在看哪一页」之后才成立:
+ * 三件事:
  *
- *  ① **上下文 chip 说的是真名字**。在一条战役页上写的是这条战役自己的名字(从数据库读),
- *     不是 id、不是「Campaign」。读不到就不画 —— 编一个名字比不画更糟。
- *  ② **关得掉,而且关掉之后不再自动带上下文**。断言看的是面板上那条状态
- *     (`data-otto-panel-context-attached`),不是「少了一个 div」:chip 本来就可能因为
- *     这一页没有上下文而不在,两件事必须分得开。
+ *  ① **上下文 chip 这一票不画**。判官 r1 [P2]:服务端没有任何读者会因为商家在看哪一页
+ *     而改变这一轮的上下文,所以「Otto 看得见我这一页」与「关掉它就不看了」都是假话。
+ *     解析器留着、围栏留着,chip 随 #879 step 2 启用。
+ *  ② **面板仍然认得这一页是哪一页**(纯函数),包括「战役底下的固定子段不是一条战役」。
  *  ③ **快捷 chips 随页面变,而且文案不是这一票新写的**。每一颗的字都必须逐字等于
  *     `GOAL_PRESETS` 里那个目标的 label —— 也就是商家点下去真正发出的那句话。
  *     新写一份文案的那一天,商家的画布就会被我们的 chip 命名(#979 的第三组样本)。
+ *
+ * 另有两组是判官 r1 两项 P1 的钉板:点进历史看得到内容、开历史不丢正在做的事。
  */
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -205,7 +206,7 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
     }
   });
 
-  it("对象页也不去查名字 —— 不画的东西不该先跑一次查询", async () => {
+  it("对象页上也没有 —— 名字读得到与否都不改变这一条", async () => {
     const el = await mount(shell(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`));
     expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
   });
