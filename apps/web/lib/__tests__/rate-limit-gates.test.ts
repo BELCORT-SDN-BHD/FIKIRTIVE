@@ -21,6 +21,8 @@ import {
   consumeOttoTurnGate,
   consumeUploadGate,
   consumeMediaProxyGate,
+  consumeSharePreviewDoor,
+  SHARE_PREVIEW_PER_CALLER_PER_HOUR,
   PASSWORD_DOOR_PER_CALLER_PER_HOUR,
   GENERATION_PER_TENANT_PER_HOUR,
   OTTO_TURN_PER_TENANT_PER_HOUR,
@@ -190,6 +192,23 @@ describe("计数器够不到的时候:对话闸放行,生成与上传照旧拒",
   });
 });
 
+// ── B0-28 分享预览门 ───────────────────────────────────────────────────────────────────────
+//
+// 产品里第二条按设计就没有会话的路,也是第一条**给人走**的:商家给一条帖子铸一条只读链接发给
+// 客户,客户在没有账号的浏览器里打开。授权是链接自己的 HMAC + 那一行还活着的铸造记录;这道闸
+// 只管一个地址能多快地花掉那份授权。
+describe("B0-28 分享预览门(免登录公开页)", () => {
+  it("按出口地址计数,自己一个桶", async () => {
+    expect(await consumeSharePreviewDoor(from("198.51.100.44"))).toBe(true);
+    const rows = await prisma.rateLimitCounter.findMany({ where: { key: { startsWith: "sharepv:" } } });
+    expect(rows.map((r) => r.key)).toEqual(["sharepv:198.51.100.44"]);
+  });
+
+  it("额度容得下一整间办公室反复打开同一条链接", () => {
+    expect(SHARE_PREVIEW_PER_CALLER_PER_HOUR).toBeGreaterThanOrEqual(60);
+  });
+});
+
 describe("#795 每道闸各数各的", () => {
   it("键前缀两两不同 —— 一道门的流量不许花掉另一道门的预算", async () => {
     await consumePasswordDoor(from("203.0.113.30"));
@@ -197,10 +216,13 @@ describe("#795 每道闸各数各的", () => {
     await consumeOttoTurnGate("203.0.113.30");
     await consumeUploadGate("203.0.113.30");
     await consumeMediaProxyGate(from("203.0.113.30"));
+    await consumeSharePreviewDoor(from("203.0.113.30"));
     const rows = await prisma.rateLimitCounter.findMany({ select: { key: true, count: true } });
-    // 同一个字符串,五道门五行,每行各 1 —— 没有任何一道门在替另一道记账。
-    expect(rows).toHaveLength(5);
+    // 同一个字符串,六道门六行,每行各 1 —— 没有任何一道门在替另一道记账。
+    expect(rows).toHaveLength(6);
     expect(new Set(rows.map((r) => r.count))).toEqual(new Set([1]));
-    expect(new Set(rows.map((r) => r.key.split(":")[0]))).toEqual(new Set(["pw", "gen", "otto", "upload", "media"]));
+    expect(new Set(rows.map((r) => r.key.split(":")[0]))).toEqual(
+      new Set(["pw", "gen", "otto", "upload", "media", "sharepv"]),
+    );
   });
 });

@@ -211,6 +211,47 @@ describe("proxy — email verification landing page (/verify-email)", () => {
   });
 });
 
+// B0-28: the seat-less share link. A merchant mints a read-only link for ONE scheduled post and
+// sends it to a client who has no account — "no seat needed" IS the feature, so the reader has no
+// session by construction and the wall would bounce every one of them to /login. The link's own
+// HMAC plus its live SharePreviewToken row is the authorization, checked on every load.
+describe("proxy — seat-less share preview (/schedule/share-preview)", () => {
+  it("the matcher does NOT run the auth wall for the preview page (its reader has no account)", () => {
+    // The matcher decides on the pathname alone; the link's ?t=<token> rides along and is read
+    // (and verified) by the page itself.
+    expect(matcherRuns("/schedule/share-preview")).toBe(false);
+    expect(matcherRuns("/schedule/share-preview/")).toBe(false);
+  });
+
+  /**
+   * BOUNDED to one path, for the reason the two boundaries above were written: W2 builds the
+   * merchant's own calendar at `/schedule`, which is a full workspace surface. A prefix exemption
+   * would have shipped it — and everything nested under the preview — public.
+   */
+  it.each([
+    "/schedule",
+    "/schedule/",
+    "/schedule/analytics",
+    "/schedule/share-previewx",
+    "/schedule/share-preview-admin",
+    "/schedule/share-preview/anything",
+  ])("runs the auth wall for %s — the exemption is one path, not a prefix", (path) => {
+    expect(matcherRuns(path)).toBe(true);
+  });
+
+  it("a session-less request to the merchant calendar itself still redirects to /login", async () => {
+    const res = await proxy(req("/schedule"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+
+  it("the signed media proxy the preview's images load through is outside the wall too", () => {
+    // The page renders <img src="/api/media/pub/<signed token>">; if THAT were walled the fix
+    // would be half done — a preview with every image broken.
+    expect(matcherRuns("/api/media/pub/abc.def")).toBe(false);
+  });
+});
+
 // #793: the dead-letter probe is pulled by an external uptime service, which has no session.
 // It answers clear/backed-up/unknown and nothing else, so it joins /api/health outside the wall —
 // and the exemption must not quietly become "everything under /api/ops is public".

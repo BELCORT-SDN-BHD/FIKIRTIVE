@@ -127,6 +127,24 @@ export const UPLOAD_PER_TENANT_PER_HOUR = 1000;
  */
 export const MEDIA_PROXY_PER_CALLER_PER_10_MIN = 600;
 
+/**
+ * The share-preview page, per calling address, per hour.
+ *
+ * The second session-less door in the product, and the first one a HUMAN walks through: a
+ * merchant mints a read-only link for one scheduled post and sends it to a client, who opens it
+ * in a browser with no account. Its authorization is the link's own HMAC plus a live mint row;
+ * this only bounds how fast one address may spend that authorization.
+ *
+ * WHY 120. Sized against the most demanding honest hour: a client opening the link, refreshing a
+ * few times, forwarding it to two colleagues behind one office address, each of them reloading
+ * while they discuss it. That is tens, not hundreds. 120 leaves the honest reader far below the
+ * cap while bounding a script that holds one valid link to a couple of page loads a minute.
+ *
+ * NOT the media behind it: each image the page shows is fetched through the signed media proxy,
+ * which counts on its own generous gate (above). This one counts page loads.
+ */
+export const SHARE_PREVIEW_PER_CALLER_PER_HOUR = 120;
+
 /** The password door. Returns the retry hint (ms) when refused, or null when allowed through. */
 export async function consumePasswordDoor(requestHeaders: Headers): Promise<number | null> {
   const verdict = await consumeRateLimit([
@@ -223,5 +241,20 @@ export async function consumeMediaProxyGate(requestHeaders: Headers): Promise<bo
     [{ key: `media:${callerKey(requestHeaders)}`, max: MEDIA_PROXY_PER_CALLER_PER_10_MIN, windowMs: 10 * MINUTE }],
     { onStorageFailure: "allow" },
   );
+  return verdict.granted;
+}
+
+/**
+ * The share-preview page (B0-28), per calling address.
+ *
+ * FAIL-CLOSED, unlike the media proxy it sits next to, and the difference is not an oversight:
+ * this page's authorization needs Postgres anyway (the mint row is the authority layer), so a
+ * database that cannot answer this counter cannot authorize the page either. Refusing costs
+ * nothing that was not already going to be refused.
+ */
+export async function consumeSharePreviewDoor(requestHeaders: Headers): Promise<boolean> {
+  const verdict = await consumeRateLimit([
+    { key: `sharepv:${callerKey(requestHeaders)}`, max: SHARE_PREVIEW_PER_CALLER_PER_HOUR, windowMs: HOUR },
+  ]);
   return verdict.granted;
 }

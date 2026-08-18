@@ -95,5 +95,15 @@ export const config = {
   // as a bare prefix it also opened /verify-emailx, /verify-email-admin and
   // /verify-email/anything, so a future route whose name merely starts the same way would have
   // shipped public with no one deciding that. Pinned by lib/__tests__/proxy.test.ts.
-  matcher: ["/((?!login|signup|forgot-password|reset-password|verify-email/?$|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  // schedule/share-preview: the seat-less share link (B0-28). A merchant mints a read-only link
+  // for ONE of their scheduled posts and sends it to a client who has no account — "no seat
+  // needed" is the entire feature, so the reader necessarily has no session and the wall would
+  // bounce every one of them to /login. Its authorization is the link's own HMAC token plus a
+  // live SharePreviewToken row (lib/share-preview.ts), checked server-side on every load, and
+  // every failure resolves to the same "not available" page. The page reads exactly the one post
+  // the token attests and nothing else (lib/share-preview-view.ts).
+  // BOUNDED to exactly this path (`schedule/share-preview/?$`) for the same reason as the two
+  // above — W2 builds the merchant's own calendar at `/schedule`, and that surface must stay
+  // inside the wall, as must anything nested under this one.
+  matcher: ["/((?!login|signup|forgot-password|reset-password|verify-email/?$|schedule/share-preview/?$|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };
