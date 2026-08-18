@@ -86,8 +86,10 @@
   worker 心跳超过阈值显示 `stale`。
 - `GET /api/ready` —— **就绪**:这个容器该不该接流量。**迁移未就位或 DB 不可达 → 503**;
   都正常 → 200。**数据库故障要靠这个端点才看得见。**
-- 平台自己的探针也是这么分的:重启探针指 `/api/health`,部署 / 负载探针指 `/api/ready`。
-  诊断顺序见 `docs/ops/incident-visibility.md`。
+- 平台侧只有一个 HTTP 探针:`apps/web/railway.json` 的 `healthcheckPath`,它是**部署闸**,
+  现指 `/api/ready`(C1b ② 之前误指恒 200 的 `/api/health`,等于没有闸)。重启不读 URL,
+  走 `restartPolicyType: ON_FAILURE`(进程退出才触发)。诊断顺序见
+  `docs/ops/incident-visibility.md`。
 
 ---
 

@@ -148,12 +148,36 @@ export async function handleIngest(data: IngestJobData): Promise<void> {
       return;
     }
 
+    // ── C1b ③: AN UNOPENABLE BLOB IS A FAILURE, NOT A SHRUG ─────────────────────────────────
+    // This used to `catch { console.error(...); return; }`. Returning tells pg-boss the job
+    // SUCCEEDED, and that one word is the whole defect: no retry, no dead letter, no Sentry —
+    // the upload was abandoned and the system's own record said everything went fine.
+    //
+    // What made it invisible for so long is that a partial backstop existed. The asset's probe
+    // columns stay null, so `redispatchLostIngest` below re-sends it every five minutes… until
+    // the 24-hour ceiling, after which it is dropped for good, silently, with no dead-letter
+    // entry and nothing ever raised. A file that quietly stops being retried a day later is
+    // indistinguishable, from the outside, from one that was ingested.
+    //
+    // Throwing puts it on the machinery that already exists for exactly this, and on the SAME
+    // footing as `probeFile` below (which has always thrown): pg-boss retries with backoff
+    // (retryLimit 3, apps/worker/src/index.ts), the worker's `runHandler` reports each throw to
+    // Sentry, and an exhausted job lands in `ingest.dlq` — one of the seven queues
+    // `/api/ops/dlq` counts and alerts on (#793). Nothing new was invented to carry it.
+    //
+    // AND THE RETRY IS THE RIGHT CALL HERE, not just the loud one. The hash re-verification
+    // immediately above STREAMED this very object end to end, so the bytes were readable
+    // seconds ago; `ffmpegInput` only takes a local `access()` or signs a URL. A failure at this
+    // point is the object vanishing between two calls, a disk fault, or a signing
+    // misconfiguration — all transient or operational, all things a retry can genuinely fix.
+    // That is also why this cannot become a dead-letter flood: a permanently unreadable object
+    // would already have failed the hash stream and thrown there.
     let file: string;
     try {
       file = await storage.ffmpegInput(key);
-    } catch {
-      console.error(`[ingest] blob for ${asset.id} unreachable — skipping`);
-      return;
+    } catch (e) {
+      console.error(`[ingest] blob for ${asset.id} unreachable — retrying (dead-letters if it keeps failing):`, e instanceof Error ? e.message : e);
+      throw e;
     }
     const probe = await probeFile(file);
     await prisma.asset.update({

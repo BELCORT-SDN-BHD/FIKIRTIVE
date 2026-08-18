@@ -2,10 +2,10 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   EXECUTED_SPEC, GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES,
   imageAspectHonoured, imageCoherentSetHonoured, buildSpecChips, conditioningCap, videoElementReferencesHonoured,
-  videoStartFrameHonoured, VIDEO_START_FRAME_CHIP,
+  videoStartFrameHonoured, VIDEO_START_FRAME_CHIP, GENERATION_ENGINE_UNAVAILABLE,
   type GenVideoModel,
 } from "@fikirtive/core";
-import { createGenerationProvider, MockProvider } from "./index.js";
+import { createGenerationProvider, MockProvider, UnconfiguredProvider } from "./index.js";
 
 /** Read a PNG's IHDR width/height — the only way to prove the mock really produced
  *  the requested shape (rather than a table lookup asserting itself). */
@@ -34,6 +34,111 @@ describe("createGenerationProvider factory", () => {
 
   it("unset → mock", () => {
     expect(createGenerationProvider().name).toBe("mock");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C1b ① — A PRODUCTION DEPLOY WITH NO ENGINE REFUSES; IT DOES NOT SELL SWATCHES.
+//
+// The defect: `GENERATION_PROVIDER` absent used to resolve to the offline stand-in in EVERY
+// environment. In production that meant the worker delivered an 8×8 solid-colour PNG as the
+// merchant's generation and SETTLED the hold — full price, fake artefact, no signal anywhere.
+// The old comment called that "safe by default so a misconfigured prod can't silently burn
+// money"; it protected our money and spent the merchant's.
+//
+// These tests fix the environment ITSELF as the variable, because that is the whole claim:
+// the same absent setting has to mean two different things in dev and in production.
+// ---------------------------------------------------------------------------
+describe("C1b ① 缺配置的生产部署:拒绝,而不是发假货", () => {
+  afterEach(() => {
+    delete process.env.GENERATION_PROVIDER;
+    delete process.env.BYTEPLUS_API_KEY;
+  });
+
+  it("生产 + 变量缺失 → 拒绝端口(绝不是 mock)", () => {
+    const provider = createGenerationProvider({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
+    expect(provider).toBeInstanceOf(UnconfiguredProvider);
+    // The name is checked as well as the class: `apps/worker/src/jobs/gen.ts` branches on
+    // `provider.name === "mock"` to SKIP its conditioning-reachability gates, so a refusing
+    // port that called itself "mock" would quietly relax real gates on a production path.
+    expect(provider.name).toBe("unconfigured");
+    expect(provider.name).not.toBe("mock");
+  });
+
+  it("生产 + 空串或错拼 → 同样拒绝(近似值不是选择)", () => {
+    for (const value of ["", " byteplus", "byteplu", "fal", "BYTEPLUS", "MOCK"]) {
+      const provider = createGenerationProvider({ NODE_ENV: "production", GENERATION_PROVIDER: value } as NodeJS.ProcessEnv);
+      expect(provider.name, `GENERATION_PROVIDER=${JSON.stringify(value)} must not resolve to an engine or a stand-in`).toBe("unconfigured");
+    }
+  });
+
+  it("生产 + 显式 mock → 保留 mock(显式选择仍然作数)", () => {
+    // The ticket's own boundary: an explicitly requested stand-in is a choice someone made and
+    // can be read back off the deploy. Only the ABSENT setting is the lie.
+    const provider = createGenerationProvider({ NODE_ENV: "production", GENERATION_PROVIDER: "mock" } as NodeJS.ProcessEnv);
+    expect(provider).toBeInstanceOf(MockProvider);
+  });
+
+  it("非生产 + 变量缺失 → 仍是 mock(dev/CI 一行配置都不用加)", () => {
+    for (const env of [{}, { NODE_ENV: "development" }, { NODE_ENV: "test" }]) {
+      expect(createGenerationProvider(env as NodeJS.ProcessEnv)).toBeInstanceOf(MockProvider);
+    }
+  });
+
+  it("生产 + byteplus + key → 照旧真引擎(这次改动碰不到付费路)", () => {
+    const provider = createGenerationProvider({ NODE_ENV: "production", GENERATION_PROVIDER: "byteplus", BYTEPLUS_API_KEY: "ark-x" } as NodeJS.ProcessEnv);
+    expect(provider.name).toBe("byteplus");
+  });
+
+  it("拒绝端口两个入口都抛 permanent,且抛的就是商家那句白牌话", async () => {
+    const provider = createGenerationProvider({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
+    const errors: unknown[] = [];
+    // Both entry points, because a port that refused images and silently returned a video would
+    // be the same defect with one fewer test.
+    await expect(provider.generate({ prompt: "p", inputImageUrls: [], count: 1 } as never)).rejects.toThrow();
+    await expect(provider.generateVideo({ prompt: "p", imageUrl: "u", durationSeconds: 5 } as never)).rejects.toThrow();
+    for (const call of [
+      provider.generate({ prompt: "p", inputImageUrls: [], count: 1 } as never),
+      provider.generateVideo({ prompt: "p", imageUrl: "u", durationSeconds: 5 } as never),
+    ]) errors.push(await call.catch((e: unknown) => e));
+
+    for (const err of errors) {
+      // `permanent` is what makes the worker give up on the FIRST attempt instead of walking the
+      // merchant through the whole retry budget for an answer that cannot change.
+      expect((err as { permanent?: unknown }).permanent).toBe(true);
+      // NOT `charged`: nothing reached an engine, so the failure is provably free — which is what
+      // makes the sentence's "You weren't charged" true rather than hopeful.
+      expect((err as { charged?: unknown }).charged).toBeUndefined();
+      // Byte-identical to the whitelist entry. The worker persists this message to `GenJob.error`
+      // and `merchantGenFailureMessage` compares it BYTE FOR BYTE — one character of operator
+      // diagnosis in here and the merchant silently falls back to "you can try again", which is
+      // the advice this whole change exists to stop giving.
+      expect((err as Error).message).toBe(GENERATION_ENGINE_UNAVAILABLE);
+    }
+  });
+
+  it("商家那句话里没有一个字是运维诊断(变量名绝不外泄)", async () => {
+    const provider = createGenerationProvider({ NODE_ENV: "production", GENERATION_PROVIDER: "byteplu" } as NodeJS.ProcessEnv);
+    const err = await provider.generate({ prompt: "p", inputImageUrls: [], count: 1 } as never).catch((e: unknown) => e);
+    const shown = String((err as Error).message).toLowerCase();
+    for (const leak of ["generation_provider", "byteplu", "env", "unset", "unconfigured", "mock"]) {
+      expect(shown, `merchant sentence leaked "${leak}"`).not.toContain(leak);
+    }
+  });
+
+  it("运维那一半照样说清楚:第一条被拒的活就把真实条件写进日志", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const provider = createGenerationProvider({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
+      await provider.generate({ prompt: "p", inputImageUrls: [], count: 1 } as never).catch(() => {});
+      const logged = spy.mock.calls.flat().join(" ");
+      // The operator gets the whole diagnosis in one line — nobody should have to correlate a
+      // solid-colour swatch with a deploy to work out what happened.
+      expect(logged).toContain("GENERATION_PROVIDER");
+      expect(logged).toContain("unset");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
