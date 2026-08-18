@@ -1,11 +1,11 @@
 import "server-only";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { magicLink, admin } from "better-auth/plugins";
+import { emailOTP, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
-import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_LINK_TTL_SECONDS } from "./sender";
+import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_CODE_TTL_SECONDS } from "./sender";
 import { toVerifyLandingUrl } from "./verify-landing-url";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
@@ -23,6 +23,45 @@ const SELF_SIGNUP_PATH = "/sign-up/email";
 function isSelfSignupPath(path: string | undefined | null): boolean {
   return path === SELF_SIGNUP_PATH;
 }
+
+/**
+ * EVERY HTTP ENDPOINT THE emailOTP PLUGIN MOUNTS EXCEPT THE ONE THIS PRODUCT USES.
+ *
+ * Registering the plugin opens nine routes; the sign-in flow needs exactly two of them, and only
+ * one of those two is allowed to face the public:
+ *
+ *   · `/sign-in/email-otp` — the merchant submits the code they were mailed. Stays OPEN, and is
+ *     the only OTP route a browser ever calls.
+ *   · `/email-otp/send-verification-otp` — MINTS a code and mails it. Closed here and reachable
+ *     only through `auth.api.sendVerificationOTP` from the background queue, which is what keeps
+ *     #678's property intact: an address nobody invited cannot cause a verification row to be
+ *     written, because the public cannot reach the thing that writes one. The login page asks for
+ *     a code through a server action instead (app/login/actions.ts).
+ *
+ * The remaining seven are a SECOND set of doors for jobs this product already does another way —
+ * a password reset that takes a code (we mail a link), an email-verification that takes a code
+ * (we mail a link, #940), a change-email flow we do not offer at all. Left mounted they would be
+ * uncounted duplicates of counted doors: `/email-otp/request-password-reset` mails a merchant a
+ * reset credential without ever passing the hourly cap that `/request-password-reset` carries.
+ * Nothing needs them, so nothing may call them.
+ *
+ * `disabledPaths` is Better Auth's own switch and it acts in the ROUTER (`router.onRequest`, 404),
+ * which is precisely the right layer: the public loses the endpoint, `auth.api.*` — trusted server
+ * code, already past our gates — keeps it.
+ */
+const CLOSED_EMAIL_OTP_PATHS = [
+  "/email-otp/send-verification-otp",
+  "/email-otp/check-verification-otp",
+  "/email-otp/verify-email",
+  "/email-otp/request-password-reset",
+  "/email-otp/reset-password",
+  "/forget-password/email-otp",
+  "/email-otp/request-email-change",
+  "/email-otp/change-email",
+] as const;
+
+/** The one OTP endpoint that stays open, and the door the login page's second step calls. */
+export const SIGN_IN_CODE_VERIFY_PATH = "/sign-in/email-otp";
 
 // Secret guard — BUILD-SAFE. Do NOT hard-throw at module top level (that can break `next build`
 // before env is wired). better-auth already fails closed without a valid secret; this just warns
@@ -157,6 +196,9 @@ export const auth = betterAuth({
   // inbound copy first). When the caller is unidentifiable the header is absent and Better Auth
   // falls back to its own single shared bucket — the same semantics our side gives that case.
   advanced: { ipAddress: { ipAddressHeaders: [CALLER_IP_HEADER] } },
+  // See CLOSED_EMAIL_OTP_PATHS. Spread rather than inlined so the list has one home and the tests
+  // can assert against the same array the router is handed.
+  disabledPaths: [...CLOSED_EMAIL_OTP_PATHS],
   rateLimit: {
     // #795 — THE fix for "the gate is a number nobody can trust". Better Auth's limiter defaults
     // to PROCESS MEMORY, so every one of the rules below was per-instance: a second web replica
@@ -207,12 +249,14 @@ export const auth = betterAuth({
       // stops the patient version), so the hourly one is layered in front of this handler instead,
       // in app/api/better-auth/[...all]/route.ts. Nothing here is loosened; a cap is added.
       //
-      // NOTE (#678 r3): there is deliberately NO rule for "/sign-in/magic-link" here. These
-      // rules only run inside `auth.handler`, and that endpoint no longer receives public
-      // traffic — app/api/better-auth/[...all]/route.ts answers it through the same throttled
-      // request path the login page uses (lib/better-auth/magic-link-request.ts), and the only
-      // caller left of Better Auth's own endpoint is our background queue. A rule here would
-      // cap the background, not the public.
+      // NOTE (#678 r3): there is deliberately NO rule for the sign-in-code doors here either.
+      // The one that MINTS a code is not a public door at all — it is in `disabledPaths`, and its
+      // only caller is our background queue, so a rule here would cap the background rather than
+      // the public. The one that REDEEMS a code (`/sign-in/email-otp`) keeps the plugin's own
+      // rule (3 per 60 s per address) untouched for the same reason "/sign-in/email" does: an
+      // entry here would REPLACE that burst cap instead of adding to it. What bounds guessing is
+      // the per-code attempt budget (`allowedAttempts`), which no request-level limiter can
+      // substitute for — see the plugin's configuration below.
     },
   },
   // Deny-by-default allowlist across EVERY method (before any session is issued).
@@ -224,30 +268,35 @@ export const auth = betterAuth({
         // #543 — the ONE open door: self-service registration with email + password. The
         // allowlist is NOT the gate here (that is the whole point of the ticket); the pause
         // switch and the revocation check in databaseHooks.user.create.before are. Nothing
-        // else opens: magic link, Google and password sign-in keep their existing gates.
+        // else opens: the sign-in code, Google and password sign-in keep their existing gates.
         if (signupsPaused()) throw new APIError("FORBIDDEN", { message: SIGNUPS_PAUSED_MESSAGE });
         return;
       }
-      if (ctx.path === "/sign-in/magic-link" || ctx.path === "/sign-in/email") {
+      if (ctx.path === SIGN_IN_CODE_VERIFY_PATH || ctx.path === "/sign-in/email") {
         // #678 — DELIBERATELY NO ALLOWLIST DECISION HERE, for both doors. Deciding at the door
-        // is what made the RESPONSE TIME a function of whether the address has an account:
+        // is what made the ANSWER a function of whether the address has an account:
         //
-        //   magic link — an address without access returned after ONE allowlist query, while an
-        //     address with access went on to write a verification token, query again and wait on
-        //     the email network. Same words, visibly different clock.
+        //   sign-in code — an allowlist refusal here is a 403 saying so, while every other
+        //     submission gets Better Auth's "Invalid OTP". Anyone could then type six random
+        //     digits at an address and read which of the two came back: an account-existence
+        //     oracle on a door that needs no credential to knock on. (The magic link this
+        //     replaced had the same defect in its timing rather than its wording — an address
+        //     without access returned after ONE allowlist query while an address with access
+        //     went on to mint a token and wait on the email network.)
         //   password — an address without access was refused here, skipping Better Auth's own
         //     dummy password hash (sign-in.mjs hashes the submitted password when no user is
         //     found, precisely so the two cases cost the same). Our shortcut walked around the
         //     constant-time path it was imitating.
         //
-        // Where the access decision lives now: for the magic link, on the background side BEFORE
-        // the token is minted (lib/better-auth/sender.ts) — so this endpoint is only ever reached
-        // for an address that already passed it; for the password door, inside Better Auth's own
-        // credential check, which is constant-time by construction.
+        // Where the access decision lives now: for the sign-in code, on the background side
+        // BEFORE the code is minted (lib/better-auth/sender.ts) and again in the send hook — so a
+        // code only ever reaches an address that already passed it; for the password door, inside
+        // Better Auth's own credential check, which is constant-time by construction.
         //
-        // NOTHING IS LOOSENED. Redeeming a magic-link token is still refused twice over —
+        // NOTHING IS LOOSENED. Redeeming a code is still refused twice over —
         // databaseHooks.user.create.before (assertAllowedEmail) and
-        // databaseHooks.session.create.before (assertAllowedForUserId) both stay fail-closed.
+        // databaseHooks.session.create.before (assertAllowedForUserId) both stay fail-closed —
+        // and reaching either of them requires the correct six digits first.
         // A password sign-in for an address without access still ends in Better Auth's own
         // INVALID_EMAIL_OR_PASSWORD unless the credential is genuinely correct, in which case
         // session.create.before refuses the session.
@@ -296,7 +345,7 @@ export const auth = betterAuth({
         // #543 carves out EXACTLY one path — self-service `/sign-up/email` — where the allowlist is
         // no longer the gate. That path is still fail-closed on the two things that must hold:
         // signups must be open, and a REVOKED address can never re-register its way back in. Every
-        // other method (magic link, Google, and a null endpoint context) keeps the allowlist gate.
+        // other method (the sign-in code, Google, and a null endpoint context) keeps the allowlist gate.
         before: async (user, ctx) => {
           if (isSelfSignupPath(ctx?.path)) {
             if (signupsPaused()) throw new APIError("FORBIDDEN", { message: SIGNUPS_PAUSED_MESSAGE });
@@ -319,7 +368,7 @@ export const auth = betterAuth({
     session: {
       create: {
         // Gate 2: prevents a session being issued for any non-allowlisted email — covers repeat sign-ins
-        // and revocation. Runs on every session creation regardless of method (OAuth, magic-link, password).
+        // and revocation. Runs on every session creation regardless of method (OAuth, sign-in code, password).
         before: async (session) => {
           await assertAllowedForUserId(session.userId);
         },
@@ -346,13 +395,83 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    magicLink({
-      // #757 — ONE source for the link's lifetime. This used to be its own `60 * 15` while the
-      // auth-email queue sized its capacity against a copy of the same number in a comment; two
-      // copies of a load-bearing constant is one edit away from a queue full of links that
-      // expire before they are posted, with nothing failing to say so.
-      expiresIn: AUTH_EMAIL_LINK_TTL_SECONDS,
-      sendMagicLink: async ({ email, url }) => {
+    emailOTP({
+      // #757 — ONE source for the credential's lifetime. This used to be its own `60 * 15` while
+      // the auth-email queue sized its capacity against a copy of the same number in a comment;
+      // two copies of a load-bearing constant is one edit away from a queue full of credentials
+      // that expire before they are posted, with nothing failing to say so. (Better Auth's own
+      // default here is 300 s; ours is deliberately longer — see the constant.)
+      expiresIn: AUTH_EMAIL_CODE_TTL_SECONDS,
+      // Better Auth's default is 6 already; it is written out because it is the number the login
+      // page's input length and the email's layout are both built around.
+      otpLength: 6,
+      /**
+       * HOW MANY GUESSES ONE ISSUED CODE IS WORTH — and the reason this, not a new rate limiter,
+       * is the answer to brute force.
+       *
+       * A wrong code increments the attempt counter on the verification row itself and the fourth
+       * try is refused outright, leaving the identifier locked (`atomicVerifyOTP` in the plugin).
+       * So a code is worth at most 3 of 10⁶, and rotating IP addresses does not buy more tries:
+       * the budget lives on the code, not on the caller. Above that, the number of codes an
+       * address can be issued is already bounded twice — five per caller-and-address per hour on
+       * the request door (better-auth/signin-code-request.ts) and five per ADDRESS per hour on the
+       * outbound side (better-auth/sender.ts) — which caps the whole attack at fifteen guesses an
+       * hour against any one merchant. Better Auth's own per-IP rule (3 per 60 s on every path
+       * this plugin mounts) sits under all of it.
+       *
+       * 3 is Better Auth's default and it is written out for the same reason as the length: it is
+       * the number the security argument above is made of.
+       */
+      allowedAttempts: 3,
+      /**
+       * THE CODE DOES NOT SIT IN THE DATABASE IN THE CLEAR — and "hashed" would not have fixed
+       * that either. `storeOTP: "hashed"` is an unsalted SHA-256, and the input space is a million
+       * six-digit numbers: anyone holding the row recovers the code in milliseconds, so it buys
+       * nothing a plaintext column does not already give away. "encrypted" is XChaCha20-Poly1305
+       * under BETTER_AUTH_SECRET (the same primitive `account.encryptOAuthTokens` above uses), and
+       * that secret is NOT in the database — so a database backup, or read access to one table, is
+       * no longer a live set of sign-in codes.
+       *
+       * NO NEW ENVIRONMENT VARIABLE: the key is BETTER_AUTH_SECRET, which is already required and
+       * already guarded at ≥32 chars at the top of this file. The one consequence worth stating:
+       * rotating that secret invalidates codes in flight, which is at most fifteen minutes of
+       * "ask for a new one" and is the same blast radius rotation already has for sessions.
+       */
+      storeOTP: "encrypted",
+      /**
+       * PRESSING "SEND IT AGAIN" RE-SENDS THE SAME CODE — it does not mint a second one, and
+       * that is a correctness fix rather than a preference.
+       *
+       * Better Auth's default ("rotate") writes a NEW verification row per request and never
+       * removes the old one, while verification always reads the newest row. So a merchant whose
+       * first email is slow, who presses again, ends up holding two emails with two different
+       * codes of which only the newer one works — and typing the one they happened to open first
+       * is not merely refused, it SPENDS one of the three attempts belonging to a code they have
+       * not even seen yet. Three presses and an unlucky reading order locks them out of their own
+       * sign-in with two live codes in their inbox.
+       *
+       * "reuse" makes every email say the same six digits and extends that one code's expiry, so
+       * there is exactly one live credential per address and no wrong-but-plausible thing to
+       * type. It requires a RECOVERABLE stored code, which `storeOTP: "encrypted"` above is
+       * (hashing would silently fall back to rotate). A code whose attempts are exhausted is
+       * never resurrected — `tryReuseOTP` refuses it and a fresh one is minted — so this cannot
+       * be used to keep a burnt code alive.
+       */
+      resendStrategy: "reuse",
+      /**
+       * Nothing here overrides email VERIFICATION (`overrideDefaultEmailVerification` is left at
+       * its default of false) and nothing sends a code on sign-up (`sendVerificationOnSignUp`,
+       * same). Signup verification stays the link + /verify-email landing page it already is
+       * (#940/#969) — this plugin only owns the sign-in door.
+       *
+       * `disableSignUp` is left at its default too, which means this door can create an account
+       * for an address that does not have one — exactly as the magic link it replaces did, and
+       * gated by exactly the same two fail-closed hooks: `databaseHooks.user.create.before`
+       * (assertAllowedEmail) and `databaseHooks.session.create.before` (assertAllowedForUserId).
+       * Turning it on would ALSO put a user-existence branch inside the send endpoint, which is
+       * the shape #678 spent three rounds removing.
+       */
+      sendVerificationOTP: async ({ email, otp }) => {
         // #678 r3 — this hook is BACKGROUND-ONLY. The single caller of the endpoint that runs it
         // is the auth-email queue (lib/better-auth/sender.ts), which has already checked access
         // and the per-address budget before minting anything. So delivery is simply awaited here:
@@ -360,18 +479,19 @@ export const auth = betterAuth({
         //
         // The access check is repeated anyway, and the repetition is deliberate: it makes the
         // ENDPOINT invite-only rather than only the queue in front of it, so no future caller of
-        // `auth.api.signInMagicLink` can mail an address nobody invited. Its cost is invisible —
-        // it is a background query behind an answer the merchant already has.
+        // `auth.api.sendVerificationOTP` — of ANY type, including the password-reset and
+        // change-email flows this plugin also mounts — can mail an address nobody invited. Its
+        // cost is invisible: it is a background query behind an answer the merchant already has.
         if (!(await isAllowedEmail(email))) return;
-        // #939 — this purpose's real lifetime, not Better Auth's default: AUTH_EMAIL_LINK_TTL_SECONDS
+        // #939 — this purpose's real lifetime, not Better Auth's default: AUTH_EMAIL_CODE_TTL_SECONDS
         // (15 minutes) is what `expiresIn` above actually configures, so it is also what the
         // "valid for" line in the email must say.
         await sendAuthEmail({
           to: email,
-          subject: "Sign in to Fikirtive",
-          url,
+          subject: "Your Fikirtive sign-in code",
+          code: otp,
           intro: "Sign in to Fikirtive",
-          validitySeconds: AUTH_EMAIL_LINK_TTL_SECONDS,
+          validitySeconds: AUTH_EMAIL_CODE_TTL_SECONDS,
         });
       },
     }),

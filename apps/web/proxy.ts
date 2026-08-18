@@ -39,7 +39,7 @@ export default async function proxy(req: NextRequest) {
   // deploy that simply FORGETS the flag must not serve the app unauthenticated. So in
   // production the wall is ON unless someone EXPLICITLY sets AUTH_ENABLED=false. In dev
   // it stays opt-in (AUTH_ENABLED=true) so local work needs no login.
-  // (Prod also requires RESEND_API_KEY so magic-link sign-in works behind the wall.)
+  // (Prod also requires RESEND_API_KEY so sign-in codes work behind the wall.)
   const enabled =
     process.env.NODE_ENV === "production"
       ? process.env.AUTH_ENABLED !== "false"

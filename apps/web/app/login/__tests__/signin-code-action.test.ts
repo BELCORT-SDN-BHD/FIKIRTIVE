@@ -18,12 +18,12 @@ vi.mock("@/lib/better-auth/sender", () => ({
 const mockHeaders = vi.fn();
 vi.mock("next/headers", () => ({ headers: mockHeaders }));
 
-const { requestMagicLink } = await import("../actions");
-const { __resetMagicLinkThrottleForTests } = await import("@/lib/better-auth/magic-link-request");
+const { requestSignInCode } = await import("../actions");
+const { __resetSignInCodeThrottleForTests } = await import("@/lib/better-auth/signin-code-request");
 
 const NEUTRAL = {
   status: "success",
-  message: "If this email has access, a sign-in link is on its way — check your inbox.",
+  message: "If this email has access, a sign-in code is on its way — check your inbox.",
 };
 const INVALID = {
   status: "error",
@@ -33,39 +33,32 @@ const INVALID = {
 
 beforeEach(async () => {
   queued.length = 0;
-  await __resetMagicLinkThrottleForTests();
+  await __resetSignInCodeThrottleForTests();
   mockHeaders.mockReset();
   mockHeaders.mockResolvedValue(new Headers({ "x-forwarded-for": "203.0.113.10" }));
 });
 
-describe("requestMagicLink", () => {
+describe("requestSignInCode", () => {
   it("rejects a malformed address before anything is queued", async () => {
-    await expect(requestMagicLink({ email: "not-an-email", callbackURL: "/" })).resolves.toEqual(
-      INVALID,
-    );
+    await expect(requestSignInCode({ email: "not-an-email" })).resolves.toEqual(INVALID);
     expect(queued).toHaveLength(0);
   });
 
   it("hands over one opaque job and answers neutrally", async () => {
-    await expect(
-      requestMagicLink({ email: " Owner@Example.com ", callbackURL: "/campaign?tab=plan" }),
-    ).resolves.toEqual(NEUTRAL);
+    await expect(requestSignInCode({ email: " Owner@Example.com " })).resolves.toEqual(NEUTRAL);
+    // A code does not navigate, so nothing about where the merchant wanted to land travels with
+    // the job — the page keeps its own redirect. RED if `callbackURL` ever comes back.
     expect(queued).toEqual([
-      {
-        purpose: "sign-in-link",
-        email: "owner@example.com",
-        callbackURL: "/campaign?tab=plan",
-        overBudget: false,
-      },
+      { purpose: "sign-in-code", email: "owner@example.com", overBudget: false },
     ]);
   });
 
   it("answers the same for an address with access, one without, and one over the throttle", async () => {
     const answers: unknown[] = [];
-    answers.push(await requestMagicLink({ email: "owner@example.com", callbackURL: "/" }));
-    answers.push(await requestMagicLink({ email: "stranger@example.com", callbackURL: "/" }));
+    answers.push(await requestSignInCode({ email: "owner@example.com" }));
+    answers.push(await requestSignInCode({ email: "stranger@example.com" }));
     for (let i = 0; i < 6; i++) {
-      answers.push(await requestMagicLink({ email: "owner@example.com", callbackURL: "/" }));
+      answers.push(await requestSignInCode({ email: "owner@example.com" }));
     }
     for (const answer of answers) expect(answer).toEqual(NEUTRAL);
     // Every press handed over a job — r4: an over-budget press that skipped the hand-over did
@@ -86,11 +79,11 @@ describe("#678 — the action's whole answer vocabulary is existence-independent
     for (const forbidden of [
       "rate_limited",
       "delivery_failed",
-      "Too many sign-in links",
+      "Too many sign-in",
       "EmailSendError",
       // r3: the work itself, not just the vocabulary. None of these may appear on this path —
-      // minting the token, asking the allowlist, or touching the database are background work.
-      "signInMagicLink",
+      // minting the code, asking the allowlist, or touching the database are background work.
+      "sendVerificationOTP",
       "isAllowedEmail",
       "prisma",
     ]) {
@@ -99,12 +92,30 @@ describe("#678 — the action's whole answer vocabulary is existence-independent
   });
 
   it("the contract itself offers only existence-independent reasons", async () => {
-    const contract = await import("@/lib/better-auth/magic-link-contract");
+    const contract = await import("@/lib/better-auth/signin-code-contract");
     expect(Object.keys(contract).sort()).toEqual([
-      "MAGIC_LINK_INVALID_EMAIL_MESSAGE",
-      "MAGIC_LINK_SUCCESS_MESSAGE",
-      "MAGIC_LINK_UNKNOWN_FAILED_MESSAGE",
-      "normalizeMagicLinkEmail",
+      "SIGN_IN_CODE_INVALID_EMAIL_MESSAGE",
+      "SIGN_IN_CODE_LENGTH",
+      "SIGN_IN_CODE_REJECTED_MESSAGE",
+      "SIGN_IN_CODE_SUCCESS_MESSAGE",
+      "SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE",
+      "normalizeSignInEmail",
     ]);
+  });
+
+  /** The three refusals Better Auth can return when a code is submitted — wrong, expired, out of
+   *  attempts — collapse into ONE sentence on the page. Telling them apart would answer "does a
+   *  live code exist for this address", which is the oracle the whole path avoids. */
+  it("offers exactly one thing to say about a refused code", async () => {
+    const { SIGN_IN_CODE_REJECTED_MESSAGE } = await import(
+      "@/lib/better-auth/signin-code-contract"
+    );
+    const form = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("../LoginForm.tsx", import.meta.url), "utf8"),
+    );
+    expect(SIGN_IN_CODE_REJECTED_MESSAGE).not.toMatch(/expired|attempts/i);
+    for (const leak of ["OTP_EXPIRED", "TOO_MANY_ATTEMPTS", "INVALID_OTP", "Invalid OTP"]) {
+      expect(form, `LoginForm must not branch on ${leak}`).not.toContain(leak);
+    }
   });
 });

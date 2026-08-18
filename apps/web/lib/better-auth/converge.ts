@@ -136,7 +136,7 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       // The other two callers converge without a session at all: the user-create hook and
       // afterEmailVerification. Neither is a login of its own — each is the FIRST HALF of one
       // login whose session-create convergence writes that login's single row. Concretely, a
-      // first-time magic-link sign-in creates the user (verified) and then the session, so this
+      // a first-time sign-in-code login creates the user (verified) and then the session, so this
       // function ran twice tens of milliseconds apart and, before this fix, appended twice.
       //
       // Self-service registration never reached this line even before: it is held at

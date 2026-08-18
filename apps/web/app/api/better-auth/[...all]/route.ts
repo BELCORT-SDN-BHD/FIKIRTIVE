@@ -1,7 +1,5 @@
 import { toNextJsHandler } from "better-auth/next-js";
 import { auth } from "@/lib/better-auth/server";
-import { MAGIC_LINK_INVALID_EMAIL_MESSAGE } from "@/lib/better-auth/magic-link-contract";
-import { acceptMagicLinkRequest } from "@/lib/better-auth/magic-link-request";
 import { consumePasswordDoor, consumePublicAuthDoor } from "@/lib/rate-limit-gates";
 import { withCallerIdentityHeader } from "@/lib/caller-identity";
 import { HOURLY_PUBLIC_DOORS } from "@/lib/public-auth-doors";
@@ -25,7 +23,6 @@ const forward = {
 
 export const GET = forward.GET;
 
-const MAGIC_LINK_PATH = "/sign-in/magic-link";
 const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
 
 /** Better Auth's own 429, byte for byte (api/rate-limiter/index.ts), so a caller cannot tell
@@ -39,17 +36,19 @@ function tooManyRequests(retryAfterMs: number): Response {
 }
 
 /**
- * #678 r3 — the magic-link endpoint is mounted here by Better Auth, so it is a public door
- * whether or not our UI uses it. It gets the SAME four-step request path as the login page's
- * server action rather than Better Auth's own handler, for two reasons:
+ * #678 r3 — the endpoint that MINTS a sign-in credential used to be intercepted here, because
+ * Better Auth mounted it whether or not our UI called it and its own handler minted the token
+ * inside the request — the exact work an address without access must not be able to cause.
  *
- *   - Better Auth's handler mints the verification token inside the request, which is the work
- *     an address without access must not be able to cause. The background side mints it, after
- *     the access check.
- *   - Better Auth's per-IP `rateLimit` rules only run inside this handler, so leaving the two
- *     doors on different limiters meant the door the product actually uses had none.
+ * The swap from links to codes let that interception go away entirely rather than be rewritten:
+ * `/email-otp/send-verification-otp` is now in `disabledPaths` (lib/better-auth/server.ts), so
+ * the router answers it 404 and the only caller left is our background queue, through
+ * `auth.api.sendVerificationOTP`. A door that does not exist needs no proxy in front of it. The
+ * login page asks for a code through a server action (app/login/actions.ts), which runs the same
+ * four-step request path the interception used to.
  *
- * Every other Better Auth endpoint is untouched and still goes to its own handler.
+ * What is left here is the two HOURLY caps that Better Auth cannot express (see below). Every
+ * other Better Auth endpoint is untouched and goes straight to its own handler.
  */
 export async function POST(request: Request): Promise<Response> {
   const pathname = new URL(request.url).pathname;
@@ -63,7 +62,7 @@ export async function POST(request: Request): Promise<Response> {
   // writing the hourly cap in that map would have deleted the burst cap it was meant to reinforce.
   //
   // Counted on the CALLING ADDRESS ONLY, never on the submitted email: a 429 must never be
-  // readable as "that account exists". Same discipline as the magic-link door below.
+  // readable as "that account exists".
   if (pathname.endsWith(PASSWORD_SIGN_IN_PATH)) {
     const retryAfterMs = await consumePasswordDoor(request.headers);
     if (retryAfterMs !== null) return tooManyRequests(retryAfterMs);
@@ -79,27 +78,18 @@ export async function POST(request: Request): Promise<Response> {
     return forward.POST(request);
   }
 
-  if (!pathname.endsWith(MAGIC_LINK_PATH)) {
-    return forward.POST(request);
-  }
-
-  let body: Record<string, unknown> = {};
-  try {
-    body = ((await request.json()) ?? {}) as Record<string, unknown>;
-  } catch {
-    body = {};
-  }
-
-  const outcome = await acceptMagicLinkRequest({
-    email: body.email,
-    callbackURL: typeof body.callbackURL === "string" ? body.callbackURL : "/",
-    requestHeaders: request.headers,
-  });
-
-  // A malformed address is refused the same way for everyone — the check is pure string work and
-  // never asks whether anybody owns it. Everything else gets Better Auth's own `{status:true}`,
-  // byte for byte, so the client plugin keeps working and no caller can tell the cases apart.
-  return outcome === "invalid_email"
-    ? Response.json({ message: MAGIC_LINK_INVALID_EMAIL_MESSAGE, code: "INVALID_EMAIL" }, { status: 400 })
-    : Response.json({ status: true });
+  // THE SIGN-IN-CODE DOOR (`/sign-in/email-otp`) IS DELIBERATELY NOT LISTED ABOVE, and that is a
+  // decision rather than an oversight.
+  //
+  // The patient attack an hourly cap exists to stop is guessing, and guessing is already bounded
+  // where it cannot be routed around: a wrong code spends one of three attempts recorded ON THE
+  // CODE (`allowedAttempts`, lib/better-auth/server.ts), and the fourth try locks that code out
+  // for good. Rotating calling addresses buys nothing, because the budget does not belong to the
+  // caller. How many codes can exist for one merchant is bounded twice over as well — five per
+  // caller-and-address per hour on the request side and five per ADDRESS per hour on the outbound
+  // side — so the whole attack surface is fifteen guesses an hour at a six-digit code.
+  //
+  // A counter here would add a fourth number that bounds nothing the first three do not, while
+  // making a shared office address able to lock its own colleagues out of typing their codes.
+  return forward.POST(request);
 }

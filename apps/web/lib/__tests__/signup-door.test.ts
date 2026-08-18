@@ -4,7 +4,7 @@
  * Runs the REAL Better Auth instance against the REAL local test Postgres, so the
  * assertions cover the whole door: the open `/sign-up/email` path, the pause switch,
  * the revoked-email fail-closed case, email verification, the welcome grant, and the
- * regressions that must NOT move (magic link stays invite-only; existing accounts and
+ * regressions that must NOT move (the sign-in code stays invite-only; existing accounts and
  * the deny-by-default session gate are untouched).
  *
  * Money: the welcome grant is a CreditLedger write. The exactly-once proof lives in
@@ -34,7 +34,7 @@ delete process.env.SIGNUPS_PAUSED;
 const { auth } = await import("@/lib/better-auth/server");
 const { prisma } = await import("@fikirtive/db");
 const { SIGNUP_GRANT_CREDITS } = await import("@fikirtive/core");
-const { authEmailQueueSettled, __configureAuthEmailQueueForTests } = await import(
+const { enqueueAuthEmail, authEmailQueueSettled, __configureAuthEmailQueueForTests } = await import(
   "@/lib/better-auth/sender"
 );
 
@@ -213,19 +213,19 @@ describe("#543 · what must NOT open", () => {
     expect(await prisma.allowedEmail.findUnique({ where: { email } })).toBeNull();
   });
 
-  it("magic link stays invite-only — an unknown email still gets the neutral response and NO email", async () => {
+  it("the sign-in code stays invite-only — an unknown email gets no code, and registers nothing", async () => {
     const email = newEmail();
-    const res = await auth.handler(
-      new Request("http://localhost:3100/api/better-auth/sign-in/magic-link", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: "http://localhost:3100" },
-        body: JSON.stringify({ email, callbackURL: "/" }),
-      }),
-    );
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: true });
+    // Straight at the queue, because that is the only way in: the HTTP endpoint that mints a
+    // code is in `disabledPaths` (see auth-enumeration-structural.test.ts for that half). This
+    // is the background side's own gate — the one that decides whether an address that reached
+    // the queue is allowed to be mailed at all.
+    enqueueAuthEmail({ purpose: "sign-in-code", email, overBudget: false });
+    await authEmailQueueSettled();
+
     expect(sent.filter((m) => m.to === email)).toHaveLength(0);
+    // Asking for a code is not registration: an unknown address gets no invite row out of it.
     expect(await prisma.allowedEmail.findUnique({ where: { email } })).toBeNull();
+    expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
   });
 
   it("password sign-in for a never-registered email still answers with the generic credential error", async () => {

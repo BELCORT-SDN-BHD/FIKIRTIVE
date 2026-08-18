@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The two endpoint-level parity cases that used to live here — "a stranger's magic-link request
+ * The two endpoint-level parity cases that used to live here — "a stranger's sign-in-code request
  * answers exactly like an owner's" and "a stranger's password request is indistinguishable from
  * invalid credentials" — moved to `auth-enumeration-structural.test.ts` (#678 r2).
  *

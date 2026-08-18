@@ -1,12 +1,11 @@
 import "server-only";
 import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
-import { normalizeMagicLinkEmail } from "./magic-link-contract";
+import { normalizeSignInEmail } from "./signin-code-contract";
 import { enqueueAuthEmail } from "./sender";
-import { sanitizeCallbackURL } from "@/lib/safe-redirect";
 import { callerKey } from "@/lib/rate-limit-gates";
 
 /**
- * #678 — THE sign-in request path. Every public entrance to the magic-link door goes through
+ * #678 — THE sign-in request path. Every public entrance to the sign-in-code door goes through
  * this function, and it is four fixed steps in a fixed order:
  *
  *   ① check the address is well FORMED — pure string work, and a well-formed address is well
@@ -32,14 +31,16 @@ import { callerKey } from "@/lib/rate-limit-gates";
  * WHY THE THROTTLE LIVES HERE AND NOT IN BETTER AUTH'S CONFIG. Better Auth 1.6.20 runs its
  * `rateLimit` rules inside `auth.handler` — the HTTP router. The login page never goes through
  * that router; it calls a server action. So a per-IP rule in that config sat on a door nobody
- * used, and the real door had no cap at all.
+ * used, and the real door had no cap at all. Since the switch to codes there is no HTTP door for
+ * this half of the flow at all: the endpoint that mints a code is in `disabledPaths`
+ * (lib/better-auth/server.ts), so THIS function is the only public way to ask for one.
  *
  * #795 — WHERE THE COUNTING MOVED, AND WHY THE PROPERTIES SURVIVED.
  *
  * The buckets used to be a `Map` in this process. That made the published cap a fiction the
  * moment a second web instance existed: two instances, two maps, twice the budget — and every
- * deploy reset both. On an open-registration beta this is the door that carries the load, so the
- * counters moved to Postgres (packages/db `consumeRateLimit`, one shared row per bucket).
+ * deploy reset every window. On an open-registration beta this is the door that carries the load,
+ * so the counters moved to Postgres (packages/db `consumeRateLimit`, one shared row per bucket).
  *
  * Everything this file argued for is now a property of that function rather than of a local ring
  * buffer, and all three are tested against a real database there:
@@ -53,7 +54,7 @@ import { callerKey } from "@/lib/rate-limit-gates";
  *
  * FAIL CLOSED, and it lands where it should. If the counter is unreachable, `consumeRateLimit`
  * refuses (its default), so the job is handed over marked over-budget and dropped on the
- * background side: the merchant gets the same "check your email" they always get, and no link
+ * background side: the merchant gets the same "check your email" they always get, and no code
  * arrives. That is the same honest cost step ④ already documents — never a distinguishable
  * answer, and never an uncounted door.
  */
@@ -61,8 +62,14 @@ import { callerKey } from "@/lib/rate-limit-gates";
 const WINDOW_MS = 60 * 60 * 1000;
 
 /** One caller + one address. Sized to a real merchant's worst hour: mistyped once, tried twice
- *  more, then asked for a fresh link. Beyond it the answer is unchanged and the job is dropped
- *  on the background side. */
+ *  more, then asked for a fresh code. Beyond it the answer is unchanged and the job is dropped
+ *  on the background side.
+ *
+ *  It is also half of what bounds guessing a code: a caller can only cause five codes an hour to
+ *  be issued for one address, and Better Auth allows three guesses per code before locking the
+ *  identifier (`allowedAttempts`, lib/better-auth/server.ts). Fifteen tries an hour against a
+ *  six-digit space is the real ceiling on brute force, and it is set here and there — not by a
+ *  limiter on the door where the code is typed. */
 export const MAX_PER_CALLER_PER_ADDRESS = 5;
 
 /**
@@ -83,21 +90,20 @@ export const MAX_PER_CALLER_PER_ADDRESS = 5;
 export const MAX_PER_CALLER = 60;
 
 /** Namespaced so this door's counters can never collide with another gate's (#795). */
-const CALLER_BUCKET = (caller: string) => `magic:${caller}`;
-const ADDRESS_BUCKET = (caller: string, email: string) => `magic:${caller}|${email}`;
+const CALLER_BUCKET = (caller: string) => `signincode:${caller}`;
+const ADDRESS_BUCKET = (caller: string, email: string) => `signincode:${caller}|${email}`;
 
 /** The only two outcomes a caller may see. Being over the throttle is NOT one of them: it is
  *  swallowed here on purpose, so no caller — and no future edit to a caller — can turn it into
  *  a distinguishable answer. */
-export type MagicLinkRequestOutcome = "accepted" | "invalid_email";
+export type SignInCodeRequestOutcome = "accepted" | "invalid_email";
 
-export async function acceptMagicLinkRequest(input: {
+export async function acceptSignInCodeRequest(input: {
   email: unknown;
-  callbackURL: string | null | undefined;
   requestHeaders: Headers;
-}): Promise<MagicLinkRequestOutcome> {
+}): Promise<SignInCodeRequestOutcome> {
   // ① format
-  const email = normalizeMagicLinkEmail(input.email);
+  const email = normalizeSignInEmail(input.email);
   if (!email) return "invalid_email";
 
   // ② throttle — BOTH buckets in one call, so they are read together, decided together and
@@ -115,17 +121,16 @@ export async function acceptMagicLinkRequest(input: {
 
   // ③ hand over an opaque job — ALWAYS, and always after the same work. The verdict travels
   //    with the job; the executor is what drops it.
-  enqueueAuthEmail({
-    purpose: "sign-in-link",
-    email,
-    callbackURL: sanitizeCallbackURL(input.callbackURL),
-    overBudget: !verdict.granted,
-  });
+  //
+  //    Nothing about where the merchant wanted to end up travels with it any more: a code does
+  //    not navigate, so the login page keeps its own redirect and this path carries one fewer
+  //    caller-supplied value.
+  enqueueAuthEmail({ purpose: "sign-in-code", email, overBudget: !verdict.granted });
 
   // ④ one answer.
   //
-  // THE HONEST COST, stated plainly: a merchant who is over the throttle is told a link is on
-  // its way and no link arrives. That is the price of an answer that cannot be read as "this
+  // THE HONEST COST, stated plainly: a merchant who is over the throttle is told a code is on
+  // its way and no code arrives. That is the price of an answer that cannot be read as "this
   // address exists" — the alternative is a distinct over-the-limit answer, which is only ever
   // reachable by someone who kept pressing, and a prober can keep pressing too.
   return "accepted";
@@ -133,6 +138,6 @@ export async function acceptMagicLinkRequest(input: {
 
 /** TEST ONLY. The buckets have an hour-long window; a test that wants a fresh budget cannot wait
  *  one out. #795 — they are shared rows now, so clearing them is a delete and this is async. */
-export async function __resetMagicLinkThrottleForTests(): Promise<void> {
-  await clearRateLimitCounters("magic:");
+export async function __resetSignInCodeThrottleForTests(): Promise<void> {
+  await clearRateLimitCounters("signincode:");
 }
