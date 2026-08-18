@@ -22,7 +22,7 @@
  *
  * r2 note on that first one. The original check asked whether the GLOBAL dark selector string
  * contained `.dark .gb`, which it did, so sixteen cases went green while
- * `.gb.ns-immersive` (app/northstar-immersive/immersive-tokens.css) shipped a dark mirror
+ * `.gb.ns-immersive` (app/create/immersive-tokens.css) shipped a dark mirror
  * that matched nothing: its two branches were both same-element (`.gb.ns-immersive.dark`),
  * next-themes writes `.dark` on <html>, and the light root tied `.dark .gb` on specificity
  * (0,2,0) and won on load order. Dark rendered #F5F6F8 ground under #FAFAFA type — 1.04:1 on
@@ -432,7 +432,7 @@ describe("#804 — EVERY .gb token root is actually reachable in dark", () => {
    * The r1 defect, pinned as its own shape rather than as its selector: an ancestor carries
    * `.dark`, and a token root that loads LATER re-declares `--background` without
    * `--foreground`. Before the fix this resolved to #FAFAFA type on a #F5F6F8 ground —
-   * 1.04:1 — on /northstar-immersive, a route that is live to customers. Both load orders
+   * 1.04:1 — on /create, a route that is live to customers. Both load orders
    * are checked because the whole failure was a specificity tie broken by order: a fix that
    * only works because the sheets happen to load in one order is not a fix.
    */
