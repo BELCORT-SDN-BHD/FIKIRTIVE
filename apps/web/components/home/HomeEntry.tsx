@@ -60,7 +60,7 @@ export async function HomeEntry() {
   const { ownerId } = owner;
 
   const now = new Date();
-  const window = upcomingWindow(now);
+  const nextSevenDays = upcomingWindow(now);
 
   const [greetingName, accountResult, projects, thumbs, scheduled, campaignResult, memory, records] =
     await Promise.all([
@@ -71,15 +71,17 @@ export async function HomeEntry() {
       getRecentGenerationThumbs(ownerId, HOME_THUMB_LIMIT).catch(
         () => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>,
       ),
-      listScheduledPosts(window).catch(() => [] as Awaited<ReturnType<typeof listScheduledPosts>>),
+      listScheduledPosts(nextSevenDays).catch(() => [] as Awaited<ReturnType<typeof listScheduledPosts>>),
       listCampaigns().catch(() => ({ error: "load-failed" }) as const),
       listMemory(ownerId).catch(() => [] as Awaited<ReturnType<typeof listMemory>>),
       listBrandRecords(ownerId).catch(() => [] as Awaited<ReturnType<typeof listBrandRecords>>),
     ]);
 
   const account = "error" in accountResult ? null : accountResult;
+  // 路径只由导航权威源写(§1.3)—— 这一页一条都不硬写,W2-11 改那棵树时它们跟着换。
   const billing = navLinkByKey("billing");
   const brand = navLinkByKey("brand");
+  const campaign = navLinkByKey("campaign");
 
   const data: HomeData = {
     greeting: homeGreeting(greetingName, now),
@@ -100,8 +102,7 @@ export async function HomeEntry() {
       prompt: thumb.prompt,
     })),
     upcoming: upcomingPosts(scheduled),
-    campaigns:
-      "error" in campaignResult ? [] : openCampaigns(campaignResult.campaigns, navLinkByKey("campaign").href),
+    campaigns: "error" in campaignResult ? [] : openCampaigns(campaignResult.campaigns, campaign.href),
     equipment: equipmentSteps({
       brandMemoryCount: memory.length,
       productCount: records.filter((record) => record.kind === "product").length,
