@@ -68,6 +68,28 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
     expect(strays, "这些去处的地址在 SHELL_ROUTES 里没有对应的一条").toEqual([]);
   });
 
+  // 判官 P2-1:上面那些交叉核对都只经过「被别处引用到」的那几条 —— canvas / campaign /
+  // billing / profile 四条今天没有任何一条对账碰得到,把 `/create/canvas` 拼成
+  // `/create/canvass` 全绿。所以这一条把十三个值逐字钉死:地址是规格书 §2.2 拍的板,
+  // 改它必须是一次**明写**的改动,不能是一个手滑。
+  it("十三条新地址逐字就是规格书 §2.2 那一份", () => {
+    expect(SHELL_ROUTES).toEqual({
+      home: "/",
+      create: "/create",
+      canvas: "/create/canvas",
+      library: "/library",
+      edit: "/library/editor",
+      brand: "/brand",
+      campaign: "/campaign",
+      schedule: "/schedule",
+      analytics: "/schedule/analytics",
+      billing: "/billing",
+      connections: "/settings/connections",
+      preferences: "/settings",
+      profile: "/profile",
+    });
+  });
+
   it("每一条新路由常量都是一个真路径(以 / 开头,不带 query、不带锚点、不带尾斜杠)", () => {
     for (const [key, href] of Object.entries(SHELL_ROUTES)) {
       expect(href.startsWith("/"), `${key} → ${href}`).toBe(true);
