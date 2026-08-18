@@ -57,9 +57,10 @@ describe("① 人工一面:剪辑台真的有一扇门", () => {
   });
 
   it("路由与外壳都认这个 view —— 门不通向 404,也不静默回落到别处", () => {
-    expect(codeOf("app/otto/page.tsx")).toContain('"edit"');
-    const shell = codeOf("components/otto/OttoApp.tsx");
-    expect(shell).toContain('"edit"');
+    // 路由与外壳读的是同一张表(#969 判官 P2-3 之后收成一份),所以钉在那张表上。
+    expect(codeOf("components/otto/otto-view-param.ts")).toContain('"edit"');
+    expect(codeOf("app/otto/page.tsx")).toContain("parseOptionalViewParam");
+    expect(codeOf("components/otto/OttoApp.tsx")).toContain("parseViewParam");
     expect(codeOf("components/otto/OttoView.tsx")).toMatch(/view === "edit"/);
   });
 
