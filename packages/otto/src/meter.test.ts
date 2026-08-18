@@ -1092,3 +1092,28 @@ describe("commitInSettleTx — 交付与结算同一笔提交", () => {
     expect(mocks.refundReservation).not.toHaveBeenCalled();
   });
 });
+
+describe("commitInSettleTx × paid:false — 免费路上也必须交付", () => {
+  it("paid:false:不计量,但交付照跑(而且在一笔事务里)", async () => {
+    let handedTx: unknown = null;
+
+    const out = await withLlmBudget(
+      makeArgs({
+        paid: false,
+        commitInSettleTx: async (tx) => {
+          handedTx = tx;
+        },
+      }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+
+    expect(out).toBe("ok");
+    expect(handedTx, "免费路上交付被安静地跳过了 —— 换了个入口的同一种静默失败").not.toBeNull();
+    expect(mocks.$transaction).toHaveBeenCalledTimes(1);
+    // 免费 = 一分钱都不碰(invariant #4 不许被这条缝松动)
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+});

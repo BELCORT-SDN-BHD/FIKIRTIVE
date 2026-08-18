@@ -280,7 +280,14 @@ export async function withLlmBudget<T>(
 ): Promise<T> {
   // Invariant #4: mock/free path — no metering at all.
   if (!args.paid) {
-    return (await fn()).result;
+    const out = await fn();
+    // 钱路 M1-b:免费路上没有 settle 可言,但**交付仍然必须发生**。少了这三行,一个把交付
+    // 托付给这个钩子的调用方在 paid:false 上会安静地什么都不交付 —— 正是这张票要消灭的那类
+    // 静默失败,只不过换了个入口。交付照旧在一笔事务里(要么整份货都在,要么一点都不在);
+    // 这里没有预扣,所以抛错就是抛错,没有可退的钱。
+    const freeCommit = args.commitInSettleTx;
+    if (freeCommit) await prisma.$transaction((tx) => freeCommit(tx));
+    return out.result;
   }
 
   const registeredPrices = llmPricesFor(args.model);
