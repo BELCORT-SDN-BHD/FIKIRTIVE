@@ -172,9 +172,14 @@ export async function reconcileStripePayments(opts?: {
       paid++;
       const orgId = typeof session.metadata?.orgId === "string" ? session.metadata.orgId : "";
       // 账本那一行的身份就是这把幂等键 —— 与 webhook 侧 grantCredits 用的逐字同一把。
-      // session id 是全局唯一的,所以按键单查即可回答「这笔付款入账了吗」。
+      //
+      // 有 orgId(正常形状:结账时由服务端写进 metadata)就走 (orgId, idempotencyKey) 这个**唯一
+      // 索引**,一次索引命中。没有 orgId 是异常形状(webhook 侧会记 credits.purchase.bad),此时
+      // 只能按键扫 —— 罕见,而且这种 session 本来就一定要报警。
       const idempotencyKey = `stripe:${session.id}`;
-      const entry = await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
+      const entry = orgId
+        ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId, idempotencyKey } }, select: { id: true } })
+        : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
       if (entry) continue; // 有账本行 —— 这笔已经入账,什么都不做
 
       unreconciled++;

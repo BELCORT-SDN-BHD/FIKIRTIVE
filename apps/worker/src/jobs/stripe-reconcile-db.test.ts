@@ -239,3 +239,40 @@ describe("钱路 M1-b ①:这一轮没看全 ≠ 这一轮没发现问题", () =
     expect(err.message).toContain("did NOT see all of them");
   }, DB_CASE_TIMEOUT_MS);
 });
+
+describe("钱路 M1-b ①:metadata 缺 orgId 的异常形状", () => {
+  it("缺 orgId 但账本有那一行 ⇒ 仍然不报(按键回退查也必须查得到)", async () => {
+    await prisma.creditLedger.create({
+      data: {
+        id: `cl_${randomUUID()}`,
+        orgId,
+        balanceDelta: 2500,
+        reservedDelta: 0,
+        kind: "GRANT",
+        source: "PURCHASE",
+        reason: "stripe top-up",
+        idempotencyKey: `stripe:${sessionId}`,
+        createdBy: "stripe",
+      },
+    });
+    const stripe = fakeStripe([[paidSession({ metadata: {} })]]);
+
+    const result = await reconcileStripePayments({ client: stripe, now: NOW });
+
+    expect(result).toMatchObject({ paid: 1, unreconciled: 0, alerted: 0 });
+    expect(m.captureException).not.toHaveBeenCalled();
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("缺 orgId 且账本没有 ⇒ 照报,审计行挂在 founder 名下", async () => {
+    await prisma.organization.upsert({ where: { id: "founder" }, update: {}, create: { id: "founder" } });
+    const stripe = fakeStripe([[paidSession({ metadata: {} })]]);
+
+    const result = await reconcileStripePayments({ client: stripe, now: NOW });
+
+    expect(result).toMatchObject({ paid: 1, unreconciled: 1, alerted: 1 });
+    const [err] = m.captureException.mock.calls[0] as [Error];
+    expect(err.message).toContain("org=unknown");
+    const audit = await prisma.actionEvent.findUnique({ where: { id: `stripe_unreconciled:${sessionId}` } });
+    expect(audit?.ownerId).toBe("founder");
+  }, DB_CASE_TIMEOUT_MS);
+});
