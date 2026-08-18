@@ -189,12 +189,10 @@ describe("reaper prefix coverage — every prefixed refId in the codebase is rea
 // 卡片就停在 `approved`,而那件事一步都没发生 —— 同意书是单向的,商家既退不回也点不动。
 // 清道夫本来就要来退这笔钱;r6 让它顺手把卡片一起收口。
 //
-// ⚠️ 适用范围(Founder 2026-08-18 之后必须读这段):这一组钉的是**按台账找漏**的第 1、2 遍,
-// 它们只在那一轮**真的预扣过**的时候才会命中。对话现在免费(OTTO_CONVERSATION_TURN_MARGIN = 0),
-// 恢复轮不写 RESERVE 行,所以**今天的 approve 一行都进不了这两遍**——下面每个 case 里的
-// `scans([...])` 都是手工喂的行,不代表生产里还会出现。今天那条路由第 3 遍(卡片状态)兜底,
-// 它自己的 case 在本文件末尾。这两遍留着是因为付费 refId(research,以及将来重新定价的对话)
-// 仍然走它们。
+// ⚠️ 适用范围:这一组钉的是**按台账找漏**的第 1、2 遍 —— 只有那一轮真的预扣过才会命中。
+// 对话按用量收费(OTTO_CONVERSATION_TURN_MARGIN = 1.05)时恢复轮会预扣,所以生产里的 approve
+// 正走这两遍;不预扣的 refId 家族(fixture no-charge,以及将来任何按 0 定价的面)则由第 3 遍
+// (卡片状态)兜底,它自己的 case 在本文件末尾。
 describe("#524 r6 — a leaked PRICED approve reservation also retires its approval card", () => {
   const APPROVE_REF = "otto-approve:thread-9:card-9:a2";
 
@@ -311,17 +309,18 @@ describe("#524 r8 — only the reaper's OWN refund licenses a card write", () =>
   });
 });
 
-// ── Founder 2026-08-18(判官 P1):对话免费之后,漏掉的批准卡靠**卡片状态**兜底 ─────────────
+// ── 第 3 遍(兜底):台账上没有钥匙的时候,靠**卡片状态**救援搁浅的批准卡 ─────────────────────
 //
-// 裁决把对话价钱设成 0,恢复轮于是不再预扣、不再落 RESERVE 行 —— 而第 1、2 遍全都以那一行为
-// 钥匙。它们不是变松了,是对 approve **彻底不再命中**。留下的洞:商家点了批准,进程死在跑的
-// 中间(部署 / OOM),ottoApprove 里那段活的 catch 一次都没机会跑,卡片就永远停在
+// 第 1、2 遍全都以恢复轮那一行 RESERVE 为钥匙。不预扣的 refId 家族(fixture no-charge,以及
+// 将来任何按 0 定价的面)不会有那一行,那两遍就彻底不命中。留下的洞:商家点了批准,进程死在
+// 跑的中间(部署 / OOM),ottoApprove 里那段活的 catch 一次都没机会跑,卡片就永远停在
 // "Approved" —— 而 CAS 让它再也点不动(同意书单向)。
 //
 // 第 3 遍换一种证据回答同一个问题:**同意书被花掉之后,这场对话有没有继续动过**。
 // 跑完的那一轮一定会往线程里写东西(回复 / 追加的卡 / 用尽轮次的说明 / 进程内失败的说明);
-// 进程死了则一个字都不会写。所以「claim 之后没有新消息」= 这张卡是漏的。
-describe("Founder 2026-08-18 — the card-state pass retires a stranded approve with no ledger row", () => {
+// 进程死了则一个字都不会写。所以「claim 之后没有新消息」= 这张卡是漏的。把救援钉在卡片而不是
+// 价钱上,它就能扛住任何一次重新定价 —— 两个方向都能。
+describe("the card-state pass retires a stranded approve with no ledger row", () => {
   const CARD = { orgId: "o1", cardId: "card-free-1", threadId: "thread-free-1" };
 
   it("stale `approved` card, nothing happened in the thread since → retired, with no refund at all", async () => {
@@ -357,7 +356,7 @@ describe("Founder 2026-08-18 — the card-state pass retires a stranded approve 
     expect(m.chatMessageUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("asks only about messages created AFTER the consent was spent", async () => {
+  it("asks only about messages created AFTER the consent was spent, in this card's own thread", async () => {
     const approvedAt = longAgo();
     scans([], [], [{ ...CARD, approvedAt }]);
     cardReads({ payload: { toolName: "x", ref: "r", status: "approved" } });
@@ -368,7 +367,32 @@ describe("Founder 2026-08-18 — the card-state pass retires a stranded approve 
       .map(([a]) => a as { where: Record<string, unknown> })
       .find((a) => a.where.threadId !== undefined)!;
     expect(threadRead.where).toMatchObject({ threadId: CARD.threadId, ownerId: CARD.orgId });
-    expect(threadRead.where.createdAt).toEqual({ gt: new Date(Date.parse(approvedAt)) });
+    // 判官 r2 P2-①:两个时钟。`approvedAt` 是 web 进程盖的章,`createdAt` 是 Postgres 盖的。
+    // web 快了的时候,claim 之后那条消息会显得「更早」,证据就丢了,一张跑成功的卡会被判失败。
+    // 探针因此往前放宽 5 秒 —— 只补这一个方向;另一个方向本来就只会让它少扫,那是安全的一侧。
+    expect(threadRead.where.createdAt).toEqual({ gt: new Date(Date.parse(approvedAt) - 5000) });
+    // 卡片本身也是这条线程里的一条消息。放宽之后它会把自己认成「后来的消息」—— 于是**手快的
+    // 商家**(卡出现 5 秒内就点批准)那张卡永远扫不到。跑之前就存在的行不可能是「跑下去了」的证据。
+    expect(threadRead.where.id).toEqual({ not: CARD.cardId });
+  });
+
+  it("the grace boundary: a message just BEFORE the stamp still counts, one well before does not", async () => {
+    const approvedAtMs = Date.now() - 3 * HOUR_MS;
+    const approvedAt = new Date(approvedAtMs).toISOString();
+
+    // ① 落在放宽窗口内(web 时钟快了 2 秒的样子)—— 算证据,卡不动。
+    scans([], [], [{ ...CARD, approvedAt }]);
+    cardReads({ payload: { toolName: "x", ref: "r", status: "approved" } }, { id: "reply-skewed" });
+    await reapStaleLlmReservations();
+    expect(m.chatMessageUpdateMany).not.toHaveBeenCalled();
+
+    // ② 窗口之外(真的是 claim 之前的旧消息)—— 不算证据,卡收口。
+    // 探针的 where 就是这条界线:findFirst 只会返回符合 gt 的行,所以「窗口之外」= 查不到。
+    vi.clearAllMocks();
+    scans([], [], [{ ...CARD, approvedAt }]);
+    cardReads({ payload: { toolName: "x", ref: "r", status: "approved" } }, null);
+    await reapStaleLlmReservations();
+    expect(m.chatMessageUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("a FRESH approve is left alone — a run inside the stale window may still be talking", async () => {
@@ -404,21 +428,55 @@ describe("Founder 2026-08-18 — the card-state pass retires a stranded approve 
   });
 });
 
-// ── P1 端到端(单元层):免费一轮 → 没有 RESERVE 行 → 第 3 遍仍然收口 ─────────────────────
+// ── 三遍并存:钥匙不同,收口是同一个 ──────────────────────────────────────────────────────
 //
-// 前两遍与这一遍分别测过之后,还差一句把它们连起来的话:**今天真实的那条路**上,恢复轮的
-// 预扣确实是 0(所以台账上什么都没有),而卡片仍然被收口。缺了这一句,两组绿灯各自成立,
-// 中间那道缝(判官发现的那个)照样绿。
+// 对话按用量收费之后,同一张卡可能被第 1 遍(有 RESERVE 行)和第 3 遍(卡片状态)同时看见。
+// 两遍走的是同一条收口路径 retireApprovalCard —— 同一个 CAS,钉在 `status = "approved"` 上 ——
+// 所以先到的那一遍赢,后到的那一遍是 no-op。这里钉的就是「重叠不会写两次、也不需要谁先谁后」。
 import { OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS, llmPricesFor, turnBudgetInternal } from "@fikirtive/core";
 
-describe("Founder 2026-08-18 — a free approve leaves no ledger row, and is still recovered", () => {
-  it("the resume turn's hold really is 0 at live prices — so passes 1 and 2 have nothing to find", () => {
+describe("passes 1 and 3 can see the SAME card, and retiring it stays exactly-once", () => {
+  const REF = "otto-approve:thread-x:card-x:a1";
+
+  it("today's priced turn really does reserve — so pass 1 is the live路径, not a museum piece", () => {
     // 这就是 meter 里 llmHoldInternal 走的那道算术,用生产的价钱与步数问一遍。
-    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS)).toBe(0);
+    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS))
+      .toBeGreaterThan(0);
   });
 
-  it("with ZERO ledger rows anywhere, the stranded card is still retired", async () => {
-    // 第 1、2 遍都空手而归(生产里就是这样:免费一轮不落任何行),第 3 遍照样把卡收口。
+  it("one card found by BOTH passes is CAS'd once — the second write is refused by the same guard", async () => {
+    // 第 1 遍拿到它(有未结算的 RESERVE),第 3 遍也拿到它(卡还 approved、线程没动过)。
+    scans(
+      [{ orgId: "o1", refId: REF }],
+      [],
+      [{ orgId: "o1", cardId: "card-x", threadId: "thread-x", approvedAt: longAgo() }],
+    );
+    // 第一次读到 approved(第 1 遍收口),之后读到 failed —— 真库里 CAS 之后就是这样。
+    let cardReadCount = 0;
+    m.chatMessageFindFirst.mockImplementation((args: { where?: Record<string, unknown> }) => {
+      if (args?.where?.threadId !== undefined) return Promise.resolve(null); // 线程没动过
+      cardReadCount += 1;
+      return Promise.resolve({
+        payload: { toolName: "generateReferences", ref: "e1", status: cardReadCount === 1 ? "approved" : "failed" },
+      });
+    });
+
+    const n = await reapStaleLlmReservations();
+
+    expect(n).toBe(1); // 第 1 遍退了那笔钱
+    // 卡只被写了一次:第 3 遍再来时读到的已经是 failed,连 updateMany 都不会发出去。
+    expect(m.chatMessageUpdateMany).toHaveBeenCalledTimes(1);
+    const [args] = m.chatMessageUpdateMany.mock.calls[0]! as [{
+      where: { id: string; AND: unknown[] };
+      data: { payload: Record<string, unknown> };
+    }];
+    expect(args.where.id).toBe("card-x");
+    // 而且**即使**两遍都发出去,守门的也是同一个 CAS —— 钉在 approved 上,只可能赢一次。
+    expect(args.where.AND).toEqual([{ payload: { path: ["status"], equals: "approved" } }]);
+    expect(args.data.payload).toMatchObject({ status: "failed", chargeVerdict: "unknown" });
+  });
+
+  it("with no ledger row at all, pass 3 alone still retires it", async () => {
     scans([], [], [{ orgId: "o9", cardId: "card-9", threadId: "thread-9", approvedAt: longAgo() }]);
     cardReads({ payload: { toolName: "approveScheduledPost", ref: "sp1", status: "approved" } });
 

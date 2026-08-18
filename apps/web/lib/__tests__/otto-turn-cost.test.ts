@@ -111,25 +111,23 @@ describe("the conversation-charge disclosure is one sentence in three places", (
       expect(render()).not.toMatch(/a little credit/i);
     });
 
-    // Founder ruling 2026-08-18: chat replies stopped consuming credits, so the sentence these
-    // three surfaces share had to change with the money — "uses credits" is now as untrue as
-    // "a little credit" was, and in the more damaging direction (it warns about a cost that
-    // does not exist, on the screen where the merchant decides whether to talk at all).
-    it(`${name}: says chatting is free, and names what credits ARE for`, () => {
+    // Founder 的第二次裁决(2026-08-18)把对话放回按用量收费:成本 +5%。这三处共用的那一句
+    // 因此必须再跟着钱走一次 —— 免费那半天的说法一个字都不许留下,而且新说法要把「按用量、
+    // 通常不到一个 credit」讲清楚,不能又退回「a little credit」那种没凭据的软话。
+    it(`${name}: says a chat turn costs credits for what it uses, and where to check`, () => {
       const markup = render();
-      expect(markup).toContain("Chatting with Otto is free");
-      expect(markup).toMatch(/image or a video/);
-      // No per-reply charge exists any more, so no surface may point at one.
-      expect(markup).not.toMatch(/Chatting with Otto uses credits/);
+      expect(markup).toContain("Chatting with Otto costs credits for what it uses");
+      expect(markup).toContain("Billing");
+      expect(markup).not.toMatch(/Chatting with Otto is free/);
     });
   }
 
   it("comes from ONE constant, so the three surfaces cannot drift apart again", () => {
     expect(CHAT_SPEND_NOTE).toBe(
-      "Chatting with Otto is free — credits are only used when you make an image or a video.",
+      "Chatting with Otto costs credits for what it uses — usually a fraction of one per message, all listed in Billing.",
     );
     for (const [, render] of surfaces) {
-      expect(render()).toContain("credits are only used when you make an image or a video");
+      expect(render()).toContain("usually a fraction of one per message");
     }
   });
 });

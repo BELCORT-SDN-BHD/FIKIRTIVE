@@ -940,11 +940,11 @@ describe("#791-6 供应商名不会流到商家眼前", () => {
   });
 });
 
-// ── Founder 2026-08-18:对话闸接在这扇门上,而且拒绝的那一次什么都不做 ──────────────────────
+// ── 对话闸接在这扇门上,而且拒绝的那一次什么都不做 ──────────────────────────────────────
 //
-// 对话免费之后,余额不再是任何上限,平台却照样为每一轮付模型的钱。闸本身的数字在
-// rate-limit-gates.test.ts;这里钉的是**这条路真的问过它**,以及被拒时一行都没写、模型一次
-// 都没跑 —— 一次被拒的请求必须是免费的,对商家和对我们都是。
+// 额度管得住一轮**能花多少**(冻结那一步管的),管不住一个卡死的客户端能**起多少轮** ——
+// 每一轮都是一次真的模型调用。闸本身的数字在 rate-limit-gates.test.ts;这里钉的是**这条路
+// 真的问过它**,以及被拒时一行都没写、模型一次都没跑 —— 一次被拒的请求必须是零成本的。
 describe("POST /api/otto/stream — the conversation gate (Founder 2026-08-18)", () => {
   it("asks the gate for THIS tenant before anything is written", async () => {
     await POST(req({ projectId: "proj_stream", text: "hello" }));
@@ -965,7 +965,7 @@ describe("POST /api/otto/stream — the conversation gate (Founder 2026-08-18)",
     expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
   });
 
-  it("never mentions credits in the refusal — nothing was charged, and chat is free", async () => {
+  it("never mentions credits in the refusal — nothing was reserved and nothing was charged", async () => {
     mocks.consumeOttoTurnGate.mockResolvedValue(false);
     const body = (await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json()) as { error: string };
     expect(body.error).not.toMatch(/credit/i);

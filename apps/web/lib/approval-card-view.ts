@@ -91,13 +91,14 @@ export type ApprovalCardPayload = {
    * When the consent was SPENT — the instant the CAS moved this card `pending → approved`, as an
    * ISO instant (Founder 2026-08-18 follow-up).
    *
-   * It exists because the recovery for a leaked approve lost its anchor. Until chat was priced at
-   * 0 the resume turn took a credit HOLD before the model ran, so a process death in that window
-   * left a stale RESERVE row the reaper could find, date and refund. A free turn writes no ledger
-   * row at all, so the card is now the ONLY record that consent was spent — and `ChatMessage` has
-   * no `updatedAt` column, so without this stamp nothing in the database says WHEN. `createdAt` is
-   * mint time, and a card may be approved any time inside its 24-hour TTL, so sweeping on it would
-   * either wait a day or retire a run that started ten seconds ago.
+   * It exists so the recovery for a leaked approve does not depend on a ledger row. The usual
+   * anchor is the resume turn's own RESERVE row — a process death between the hold and the model
+   * leaves one behind, dated, for the reaper to find. But a refId family that reserves NOTHING
+   * (a fixture no-charge runtime, or any future surface priced at zero) leaves no such row, and
+   * `ChatMessage` has no `updatedAt` column, so without this stamp nothing in the database says
+   * WHEN consent was spent. `createdAt` is mint time, and a card may be approved any time inside
+   * its 24-hour TTL, so sweeping on it would either wait a day or retire a run that started ten
+   * seconds ago.
    *
    * Written once, by the claim (otto-actions claimApprovalCard). Absent on cards approved before
    * this shipped, and on those the card-state sweep stands down rather than guessing — the

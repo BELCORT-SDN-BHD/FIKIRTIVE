@@ -12,9 +12,9 @@ export { callerKey } from "@/lib/caller-identity";
  *
  *   · the PASSWORD door — Better Auth caps it at 3 per 10 seconds, which stops a fast attack and
  *     does nothing at all about a patient one (3/10s is 1,080 attempts an hour from one address);
- *   · the OTTO CONVERSATION door (added 2026-08-18) — a turn used to hold and charge credits, so
- *     the balance was the bound; now that chat is free the platform pays for every turn and
- *     nothing else counts them;
+ *   · the OTTO CONVERSATION door (added 2026-08-18) — credits bound what a turn can SPEND, not
+ *     how many turns a stuck client can start, and every started turn is a real model call we
+ *     pay for before any of it settles;
  *   · GENERATION — the paid dispatch. Credits bound what can be SPENT, not how many jobs, rows
  *     and queue messages a stuck client loop can create on the way to running out;
  *   · UPLOAD — mints a presigned URL into our own bucket, once per call, with nothing counting;
@@ -88,23 +88,23 @@ export const GENERATION_PER_TENANT_PER_HOUR = 600;
 /**
  * Otto conversation turns, per tenant, per hour.
  *
- * WHY IT EXISTS NOW. Until 2026-08-18 a turn held and charged credits, so the balance was itself
- * the bound: a runaway client loop ran out of money and stopped. Founder ruling 2026-08-18 made
- * chat free (OTTO_CONVERSATION_TURN_MARGIN in @fikirtive/core), which is the right product call
- * and removes the only thing that was counting. The platform still pays the model for every one
- * of those turns, so the bound has to come from somewhere: this is it.
+ * IT BOUNDS RUNAWAY USAGE, NOT SPEND. The same shape as the generation gate above: credits are
+ * the money authority and a conversation turn reserves against them before the model is called
+ * (OTTO_CONVERSATION_TURN_MARGIN in @fikirtive/core prices it at the provider's cost plus 5%), so
+ * nobody can be charged past their balance with or without this. What credits do NOT bound is how
+ * many turns a stuck client can START — each one is a real model call, a hold, and a settle, and
+ * a broken retry loop can produce them faster than a human ever would.
  *
- * IT IS NOT A PRICE AND NOT A SPEND CAP. It cannot charge anyone, it does not shrink with a
- * balance, and it is not a lever for monetising conversation — chat is free and stays free. It
- * exists only so one tenant's stuck retry loop cannot bill the platform for an unbounded number
- * of model calls while the merchant sees nothing wrong.
+ * IT IS NOT A PRICE AND NOT A SPEND CAP. It cannot charge anyone and it does not shrink with a
+ * balance; the reserve does both. It exists only so one tenant's loop cannot manufacture an
+ * unbounded number of turns while the merchant sees nothing wrong.
  *
  * WHY 60. Sized against the most demanding real hour we can name and then left generous: a
  * merchant working steadily with Otto sends a message every minute or two, and a beta session
  * that felt long measured well under twenty turns. Sixty is roughly one a minute for a solid
  * hour — past any human conversation — while still bounding a broken client to dozens of refused
- * calls an hour instead of thousands of paid ones. A gate that refuses honest work is an outage
- * we inflicted on ourselves; this one should never be reached by a person.
+ * calls an hour instead of thousands of dispatched ones. A gate that refuses honest work is an
+ * outage we inflicted on ourselves; this one should never be reached by a person.
  */
 export const OTTO_TURN_PER_TENANT_PER_HOUR = 60;
 
@@ -160,22 +160,42 @@ export async function consumeGenerationGate(ownerId: string): Promise<boolean> {
 }
 
 /**
- * What a merchant is told when the Otto conversation gate refuses (Founder 2026-08-18).
+ * What a merchant is told when the Otto conversation gate refuses (2026-08-18).
  *
  * ONE sentence for BOTH doors — the streaming route and the non-streaming `ottoTurn` — so the two
  * entries to the same conversation cannot end up saying different things about the same limit.
  * Honest about the wait: the window is an hour, so "a moment" would be a promise it cannot keep.
- * It never mentions credits — nothing was charged, and hinting otherwise would undo the very
- * ruling this gate protects.
+ * It never mentions credits, because this refusal is not about them: nothing was reserved and
+ * nothing was charged, and pointing at Billing would send the merchant to fix the wrong thing.
  */
 export const OTTO_TURN_RATE_LIMIT_MESSAGE =
   "You've sent Otto a lot of messages in the last hour. Take a short break and try again a little later.";
 
-/** The Otto conversation door — both entries (stream route and ottoTurn) go through this. */
+/**
+ * The Otto conversation door — both entries (stream route and ottoTurn) go through this.
+ *
+ * IT STAYS OPEN WHEN THE COUNTER CANNOT BE REACHED (product-lead call, 2026-08-18), which makes
+ * it the second gate here to do so, after the media proxy. The reasoning is the same shape as
+ * that one's: weigh what a refusal costs against what it protects.
+ *
+ * THE MONEY IS ALREADY PROTECTED WITHOUT THIS GATE. A conversation turn reserves against the
+ * merchant's balance before the model is called, and that reserve fails closed on its own — a
+ * database that cannot answer this counter cannot answer the reserve either, so nothing can be
+ * spent while it is down. All this gate adds is a bound on runaway VOLUME, and a few unmetered
+ * minutes of that is cheap. What a refusal costs is not cheap at all: Otto is how merchants use
+ * this product, so a fail-closed gate turns a rate-table hiccup into "Otto is down" for everyone
+ * at once.
+ *
+ * THE OTHER GATES DELIBERATELY DIFFER. `consumeGenerationGate` and `consumeUploadGate` stay
+ * fail-CLOSED: they guard dispatch into a queue and a presigned URL into our own bucket, work
+ * that needs Postgres anyway, so refusing while the database is unreachable costs nothing it was
+ * not already going to cost.
+ */
 export async function consumeOttoTurnGate(ownerId: string): Promise<boolean> {
-  const verdict = await consumeRateLimit([
-    { key: `otto:${ownerId}`, max: OTTO_TURN_PER_TENANT_PER_HOUR, windowMs: HOUR },
-  ]);
+  const verdict = await consumeRateLimit(
+    [{ key: `otto:${ownerId}`, max: OTTO_TURN_PER_TENANT_PER_HOUR, windowMs: HOUR }],
+    { onStorageFailure: "allow" },
+  );
   return verdict.granted;
 }
 

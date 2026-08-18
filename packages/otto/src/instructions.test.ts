@@ -95,9 +95,9 @@ describe("ottoInstructions — #805 自我介绍先说把活干完", () => {
     expect(ottoInstructions).toContain(
       "Making an image or a video costs credits and never happens without the user approving that specific card first.",
     );
-    // 聊天那条实话也必须仍在场:限定范围不等于把聊天的钱话藏起来。
-    // (Founder 2026-08-18 把这条实话改了 —— 聊天现在真的免费,收费只在生成。)
-    expect(ottoInstructions).toContain("Talking to you is FREE.");
+    // 聊天计费那条实话也必须仍在场:限定范围不等于把聊天计费藏起来。
+    // (Founder 2026-08-18 第二次裁决把它改回按用量收费 —— API 成本 +5%。)
+    expect(ottoInstructions).toContain("Talking to you costs credits");
   });
 });
 
@@ -446,11 +446,13 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     expect(ottoInstructions).toContain("approve it on the card");
   });
 
-  it("keeps the truth about what a conversation turn costs — which is now nothing", () => {
-    // Founder 2026-08-18: chat replies stopped consuming credits. The sentence has to move with
-    // the money, in both directions: it must say FREE now, and it must NOT still say "costs".
-    expect(ottoInstructions).toContain("Talking to you is FREE");
-    expect(ottoInstructions).not.toContain("Talking to you costs credits");
+  it("keeps the truth about what a conversation turn costs — usage, at cost plus a little", () => {
+    // Founder 的第二次裁决(2026-08-18)把对话放回按用量收费。这句话必须跟着钱走 ——
+    // 而且不许留下前一次裁决那半天里的「免费」说法。
+    expect(ottoInstructions).toContain("Talking to you costs credits");
+    expect(ottoInstructions).not.toContain("Talking to you is FREE");
+    // 计价口径要说出口:按这条消息真实用量算,所以短问题便宜、长思考贵。
+    expect(ottoInstructions).toMatch(/what the message actually uses/i);
   });
 
   // 3) 金额启发式 —— 同一把尺子,同样只是预警。
@@ -458,9 +460,8 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   // 零 free。这条口径由复审与判官轮守;下面的词表只负责在常见回归上早点报警。
   // (r5 判官已证明它挡不住 "costs the same as" 与 "three credits" 这类写法。)
   const MONEY_ALLOWED = [
-    // canonical 钱句(#555 唯一披露口径;Founder 2026-08-18 改为「聊天免费」)。
-    // 这里的 `free` 是**真话**,所以走白名单 —— 词表禁的是无凭据的免费声明,不是免费本身。
-    "Talking to you is FREE.",
+    // canonical 钱句(#555 唯一披露口径;Founder 第二次裁决 2026-08-18 = 按用量,成本 +5%)。
+    "Talking to you costs credits",
     // 生成边界:文字不启动、批准前不计生成费
     "no words start it, whatever the user types, and nothing is charged for making an image or video until that approval happens",
     // 既有的、说明生成要批准才花钱的那句
@@ -479,7 +480,7 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
 
   it("keeps the canonical money sentence, and makes no comparison or free claim anywhere else", () => {
     // 先肯定式:canonical 句必须在场。
-    expect(ottoInstructions).toContain("Talking to you is FREE.");
+    expect(ottoInstructions).toContain("Talking to you costs credits");
     const stripped = stripAllowed(ottoInstructions, MONEY_ALLOWED);
     const hit = stripped.match(MONEY_VOCAB);
     expect(
@@ -645,15 +646,16 @@ describe("ottoInstructions — #555 credits and spending", () => {
     expect(ottoInstructions).toMatch(/totals\.onHold` is money only HELD/);
     expect(ottoInstructions).toMatch(/never add it to the spent figure/i);
   });
-  it("makes NO per-reply cost promise, because there is no per-reply cost (Founder 2026-08-18)", () => {
-    expect(ottoInstructions).toMatch(/Talking to you is FREE/);
-    // #555's live per-reply cost line described a charge that no longer exists — the UI stopped
-    // rendering it (no ledger row ⇒ no `data-cost` part), so promising it here would send Otto
-    // pointing at a number the merchant will never see.
-    expect(ottoInstructions).not.toMatch(/the cost of that reply appears underneath it/);
+  it("keeps the per-reply cost promise to what actually happens — live, under that reply", () => {
+    expect(ottoInstructions).toMatch(/Talking to you costs credits/i);
+    // Round-1 review P1②: the old wording ("each reply shows what it cost") over-promised —
+    // it is not true after a reload, so the promise is now scoped to the live turn.
+    expect(ottoInstructions).toMatch(/While you are replying, the cost of that reply appears underneath it/);
     expect(ottoInstructions).not.toMatch(/Each reply shows what that reply cost/);
-    // The half that IS still true stays: old Chat entries are real history, not a mistake.
-    expect(ottoInstructions).toMatch(/no new ones appear/);
+    // 预扣三件事(先冻结、按实际扣、剩下退回)是这条钱路的真实行为,必须说得出口。
+    expect(ottoInstructions).toMatch(/holds a few credits before it starts/i);
+    expect(ottoInstructions).toMatch(/charged only what it actually used/i);
+    expect(ottoInstructions).toMatch(/rest goes back/i);
   });
   // Round-2 review P1①: pinning one exact wrong sentence let its SYNONYMS survive — the
   // instructions admitted `hasMore` on one line and called the same list "the complete

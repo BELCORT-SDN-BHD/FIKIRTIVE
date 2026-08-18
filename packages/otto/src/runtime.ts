@@ -193,9 +193,9 @@ export type OttoTurnRunResult = {
  *
  * The one value that does NOT come from the manifest is the PRICE of a conversation turn
  * (`margin`, plus the hold shape it governs). It is a product decision, not a model fact —
- * Founder ruling 2026-08-18 prices a chat turn at 0 — so it comes from the same
- * composition-time constants file as the step caps (@fikirtive/core otto-budget.ts) and never
- * from a request, an env var, or the manifest.
+ * Founder's second ruling 2026-08-18 prices a chat turn at the provider's cost plus 5% — so it
+ * comes from the same composition-time constants file as the step caps (@fikirtive/core
+ * otto-budget.ts) and never from a request, an env var, or the manifest.
  */
 export function ottoBudgetArgsFor(
   runtime: OttoRuntime,
@@ -203,12 +203,16 @@ export function ottoBudgetArgsFor(
   MaxTurnsError: typeof MaxTurnsExceededError = MaxTurnsExceededError,
 ): Parameters<typeof withLlmBudget>[0] {
   const mr = runtime.modelRuntime;
-  // Founder ruling 2026-08-18 — a conversation turn is priced by ONE number, and that number
-  // is currently 0: chat is FREE, credits are spent on GENERATION only. See
-  // OTTO_CONVERSATION_TURN_MARGIN in otto-budget.ts for the ruling and the arithmetic. At 0 the
-  // hold AND the charge both come out 0, reserveCredits no-ops on `cost <= 0` (no RESERVE row),
-  // and settle/refund find no reservation and no-op in turn — the turn moves no money and
-  // leaves no ledger row, with reserve/settle/refund themselves untouched.
+  // A conversation turn is priced by ONE number. Founder's second ruling 2026-08-18 set it to
+  // 1.05 — the provider's API cost plus 5% — so a turn charges what it actually used, and a long
+  // thinking turn can never cost the platform more than it earns. See
+  // OTTO_CONVERSATION_TURN_MARGIN in otto-budget.ts for the ruling and the arithmetic.
+  //
+  // The hold shape below rides on the same number: it is the shape of a PRICED turn, so it is
+  // passed whenever the multiplier is above 0 and stands down if conversation is ever free again
+  // (a turn that holds nothing has no hold to cap and no door to stand at). That one condition,
+  // rather than two hand-maintained switches, is what made both directions of this ruling a
+  // single-constant change.
   const chatChargesCredits = OTTO_CONVERSATION_TURN_MARGIN > 0;
   return {
     orgId: request.orgId,
@@ -221,13 +225,10 @@ export function ottoBudgetArgsFor(
     margin: OTTO_CONVERSATION_TURN_MARGIN,
     // #543 — cap the conversation-turn HOLD (not the charge) so a small balance stays
     // spendable to the last credit. Composition-time constant; see otto-budget.ts.
-    // Applies to a PRICED turn only: a free turn holds nothing, so there is no hold to cap.
     reserveCapInternal: chatChargesCredits ? OTTO_CONVERSATION_TURN_RESERVE_INTERNAL : undefined,
     // #898 — the cap alone was still a door: a balance under it could not open a turn at all.
     // With a minimum the hold shrinks to fit the balance instead, so the last credit is
     // spendable. Composition-time constant; see otto-budget.ts.
-    // Applies to a PRICED turn only: a turn that costs nothing has no door to stand at, so a
-    // merchant who just spent their last credits on a video can still ask Otto about it.
     reserveMinInternal: chatChargesCredits ? OTTO_CHAT_MIN_START_INTERNAL : undefined,
     prices: mr.pricing(mr.billableModelId),
     usageOnError: (e: unknown) =>

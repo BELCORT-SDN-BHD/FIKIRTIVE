@@ -14,27 +14,38 @@ export const OTTO_MAX_STEPS = 10;
  *   hold   = worst-case model cost × THIS × CREDITS_PER_USD   (turnBudgetInternal below)
  *   charge = actual     model cost × THIS × CREDITS_PER_USD   (actualCostInternal, meter.ts)
  *
- * **0 = a conversation turn is FREE.** Founder ruling 2026-08-18: credits are spent on
- * GENERATION only (image / video / …); talking to Otto never consumes them. A measured beta
- * session drained 14.8 → 10.6 credits on chat replies alone and was then refused the 11-credit
- * video it had spent those credits describing — the merchant paid to ask for the thing and
- * then could not buy it. Generation prices are unchanged; the platform absorbs the
- * conversation's model cost, and earns on what the conversation produces.
+ * **1.05 = the provider's API cost plus 5%.** Founder SECOND ruling 2026-08-18, superseding the
+ * same-day ruling that made chat free: 其实应该看用量，不然之后思考很久或其他的，我们的成本会
+ * cover 不到，可能就 api 成本 +5% 我们赚的钱这样。
  *
- * WHY A MULTIPLIER AND NOT A SPECIAL CASE IN THE SPEND MACHINERY. reserve → settle → refund
- * is untouched: every amount inside it comes out 0 by the pricing arithmetic instead of by a
- * branch on "is this chat". The existing zero-handling then does the rest, in the direction the
- * ledger already documents — `reserveCredits`/`reserveCreditsUpTo` no-op on `cost <= 0`, so a
- * free turn writes NO RESERVE row, and `settleCredits`/`refundReservation` both no-op when
- * there is no reservation. A chat turn therefore moves no money and leaves no ledger row at
- * all: nothing to spam the spend history with, nothing to reconcile, and no zero-value rows
- * for a later report to mistake for charges. Fail-closed behaviour is untouched — every guard
- * that refuses a call still refuses it; there is simply nothing left to refuse on this path.
+ * WHAT CHANGED HIS MIND, and why the shape of the rule is "usage" rather than a flat price: a
+ * conversation turn has no bounded cost. A turn that thinks for a long time, or reads a lot of
+ * context, costs the platform whatever it costs — and a free (or flat) chat surface is exactly
+ * the design where our own bill can run past what the merchant ever pays us. Charging ACTUAL
+ * USAGE makes that impossible by construction: the merchant is billed for what their turn really
+ * consumed, so a long thinking turn is expensive for them and covered for us, and a one-line
+ * question stays nearly free without us pricing it as if it might not be.
  *
- * Re-pricing chat is this ONE number (2.0 = the standard 2× markup — see
- * OTTO_LLM_MARGIN_DEFAULT in llm-prices.ts). The hold shape below comes back with it.
+ * WHY 1.05 AND NOT THE 2.0 GENERATION MARKUP. Conversation is not where this product earns —
+ * generation is (OTTO_LLM_MARGIN_DEFAULT in llm-prices.ts, unchanged at 2.0). The 5% is cost
+ * RECOVERY with a thin margin on top, so talking to Otto stays cheap enough that nobody rations
+ * it, while no conversation can be sold below what it costs us to serve.
+ *
+ * WHAT IT MEANS IN CREDITS. The measured beta reply that used to cost 2.5 displayed credits at
+ * 2.0 had a real provider cost of $0.125; at 1.05 the same reply charges 14 internal = 1.4
+ * displayed credits. The full worst-case turn (every one of OTTO_MAX_STEPS steps burning the
+ * whole context and output cap, at live sonnet prices) is 70 internal — which the #543 hold
+ * ceiling below still caps at 40.
+ *
+ * WHY A MULTIPLIER AND NOT A SPECIAL CASE IN THE SPEND MACHINERY. reserve → settle → refund is
+ * untouched by pricing: the hold and the charge are both this arithmetic, never a branch on "is
+ * this chat", so re-pricing conversation cannot reach the code that moves money. That is what
+ * made the free ruling a one-number change, and what makes this reversal one too.
+ *
+ * Re-pricing chat is this ONE number. The hold shape below (#543's ceiling, #898's entry
+ * minimum) applies whenever it is above 0, and stands down if conversation is ever free again.
  */
-export const OTTO_CONVERSATION_TURN_MARGIN = 0;
+export const OTTO_CONVERSATION_TURN_MARGIN = 1.05;
 
 /**
  * Worst-case internal-credit cost for a single Otto LLM step, rounded up.
@@ -77,12 +88,11 @@ export function turnBudgetInternal(
  * The HOLD a single PRICED Otto CONVERSATION turn places on the balance, in INTERNAL credits.
  * 40 internal = 4 displayed credits.
  *
- * DORMANT WHILE CHAT IS FREE (Founder 2026-08-18). A turn priced at
- * OTTO_CONVERSATION_TURN_MARGIN = 0 holds nothing, so the composition root stops passing this
- * ceiling at all (runtime.ts ottoBudgetArgsFor) rather than passing a ceiling over an empty
- * hold. The number is kept, with its reasoning intact, because it is the shape the hold takes
- * the moment chat is priced again: flip the multiplier and #543/#898 come back exactly as
- * described below, with no second decision to re-make.
+ * LIVE (Founder's second ruling 2026-08-18 put conversation back on usage pricing, so this
+ * ceiling is in force again — runtime.ts ottoBudgetArgsFor passes it whenever
+ * OTTO_CONVERSATION_TURN_MARGIN is above 0). It caps a hold, never a charge; at the 1.05
+ * multiplier the derived worst case is 70 internal, so the cap still bites and still buys the
+ * thing #543 opened it for — a merchant near the bottom of their balance can start a turn.
  *
  * #543 Founder decision (2026-07-31). The derived worst case above assumes every one of
  * OTTO_MAX_STEPS steps burns the full context and output cap, which at live sonnet prices
@@ -113,12 +123,11 @@ export const OTTO_CONVERSATION_TURN_RESERVE_INTERNAL = 40;
  * The minimum balance a merchant needs to START a PRICED conversation turn, in INTERNAL
  * credits. 10 internal = 1 displayed credit.
  *
- * DORMANT WHILE CHAT IS FREE (Founder 2026-08-18), for the same reason as the ceiling above and
- * one of its own: a turn that costs nothing has no door to stand at. Gating a free action on a
- * balance would recreate the exact trap this whole change exists to remove — a merchant who
- * spent their last credits on a video could no longer ask Otto what to do about it. So the
- * composition root stops passing this minimum while the multiplier is 0, and passes it again
- * the moment chat is priced.
+ * LIVE again with the second ruling (2026-08-18): a turn that charges for usage has to be able
+ * to refuse a merchant who cannot pay for any usage at all, or the first thing they would meet
+ * is a hold that fails halfway. This is #898's documented trade coming back with the price — a
+ * merchant at 0 credits is told to top up instead of starting a turn nobody can settle. It is
+ * only passed while OTTO_CONVERSATION_TURN_MARGIN is above 0; a free conversation has no door.
  *
  * #898 Founder decision (2026-08-13) — the interim correction to #543. The hold was also the
  * door: a merchant holding 3.9 credits could not send a message at all, so they could not even

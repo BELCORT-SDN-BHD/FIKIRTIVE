@@ -1147,12 +1147,12 @@ async function consumeApprovalCard(
  * caller must never turn it into a cheerful `resolution: "approved"`. It propagates, withLlmBudget
  * refunds the hold, and the merchant is told the approve failed.
  *
- * Founder 2026-08-18 — WHY THE CLAIM IS STAMPED. A conversation turn is now free, so this resume
- * takes no hold and leaves no RESERVE row, and the leaked-approve reaper lost the dated record it
- * used to sweep on (apps/worker/src/jobs/llm-reservation-reaper.ts). The card is now the only
- * record that consent was spent, and `ChatMessage` has no `updatedAt`, so the instant goes into
- * the payload here — in the SAME conditional write that spends the consent, so it cannot drift
- * away from it. See ApprovalCardPayload.approvedAt.
+ * WHY THE CLAIM IS STAMPED (2026-08-18). The leaked-approve reaper's recovery keys on a dated
+ * record that consent was spent. It normally has one — this resume's RESERVE row — but a refId
+ * family that reserves NOTHING leaves it with nothing to sweep, and `ChatMessage` has no
+ * `updatedAt` to fall back on. So the instant goes into the payload here, in the SAME conditional
+ * write that spends the consent, where it cannot drift away from it and cannot depend on how
+ * conversation happens to be priced. See ApprovalCardPayload.approvedAt.
  */
 async function claimApprovalCard(
   cardId: string,
@@ -1285,8 +1285,39 @@ async function markApprovalFailed(
   }
 }
 
+/**
+ * What the merchant is told when an approve RAN but lost the thread CAS (judge r2 P1, 2026-08-18).
+ *
+ * Both sentences fix a gap that predates the reaper question. A concurrent turn moving the thread
+ * makes `ottoApprove` return `status: "stale"` and write NOTHING, so the merchant who pressed
+ * Approve saw their conversation carry on as if they never had — while their approved work had in
+ * fact run, and on the completed branch had been paid for and delivered. Saying so is the product
+ * fix; it is also what makes "every terminal outcome leaves evidence in the thread" true by
+ * CONSTRUCTION rather than by luck, which is the premise the leaked-card sweep rests on
+ * (apps/worker/src/jobs/llm-reservation-reaper.ts pass 3).
+ *
+ * Neither sentence claims more than is known. The work committed — that is what winning the tool
+ * call and losing a state CAS means — so both say it plainly; what was lost is Otto's own reply
+ * and the paused state, and both say that too instead of implying the work itself failed.
+ */
+export const APPROVE_STALE_COMPLETED_NOTE =
+  "Your approval went through and Otto finished the work. Another message arrived at the same moment, so Otto's reply couldn't be added here — anything it made is saved.";
+
+export const APPROVE_STALE_INTERRUPTED_NOTE =
+  "Your approval went through and Otto has more to ask before it can carry on. Another message arrived at the same moment, so that follow-up couldn't be saved here — ask Otto to pick it up again.";
+
 /** Append an AGENT message to the thread (best-effort), so a failure the merchant needs to know
- *  about is visible in the conversation and not only on the card. */
+ *  about is visible in the conversation and not only on the card.
+ *
+ *  IT NEVER THROWS, and three callers now depend on that: each of them is already on a terminal
+ *  path (a lost CAS, or the outer catch) where the honest answer is decided and a second failure
+ *  must not replace it. A `create` that fails here costs the merchant a sentence; letting it
+ *  propagate out of the outer catch would cost them the REAL error and hand them "database down"
+ *  in place of what actually went wrong. The double-failure sliver — the note is lost AND the
+ *  thread therefore carries no evidence, so a leaked card could later be swept — is accepted
+ *  deliberately: it needs the database to be failing at exactly that instant, and its cost is a
+ *  card retired to `failed` with `chargeVerdict: "unknown"`, which is the sentence that promises
+ *  least, never a charge. */
 async function persistAgentNote(threadId: string, ownerId: string, text: string): Promise<void> {
   try {
     const last = await prisma.chatMessage.findFirst({
@@ -1489,11 +1520,11 @@ export async function ottoTurn(raw: unknown): Promise<
   > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
-    // Founder 2026-08-18 — the same conversation gate the streaming route takes, on the same
-    // per-tenant bucket, so the two doors into one conversation share one hourly budget instead of
-    // each handing out its own. Placed before anything is validated, persisted or run: a refusal
-    // costs nothing. It bounds runaway volume now that a free turn no longer bounds itself by
-    // spending credits; it is not a price. See OTTO_TURN_PER_TENANT_PER_HOUR.
+    // The same conversation gate the streaming route takes, on the same per-tenant bucket, so the
+    // two doors into one conversation share one hourly budget instead of each handing out its own.
+    // Placed before anything is validated, persisted or run: a refusal costs nothing. It bounds
+    // runaway VOLUME; what a turn may spend is bounded by the reserve. See
+    // OTTO_TURN_PER_TENANT_PER_HOUR.
     if (!(await consumeOttoTurnGate(ownerId))) return { error: OTTO_TURN_RATE_LIMIT_MESSAGE };
 
     const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
@@ -2204,7 +2235,15 @@ export async function ottoApprove(raw: unknown): Promise<
           where: { id: threadId, ownerId, ottoState: priorOttoState },
           data: { ottoState: newOttoState, updatedAt: new Date() },
         });
-        if (casInterrupt === 0) { revalidatePath("/", "layout"); return { ok: true, status: "stale" }; }
+        if (casInterrupt === 0) {
+          // The tool the merchant approved already RAN — losing this CAS only means a concurrent
+          // turn moved the thread before the paused state could be written. Saying so is the
+          // product fix (they used to see nothing at all here); it is also what keeps every
+          // terminal exit of this action leaving evidence in the thread.
+          await persistAgentNote(threadId, ownerId, APPROVE_STALE_INTERRUPTED_NOTE);
+          revalidatePath("/", "layout");
+          return { ok: true, status: "stale" };
+        }
 
         // CAS won — persist any assistant text produced before the interruption.
         // #498 P1a: the RESUMED run can park again with ZERO narration — the exact
@@ -2293,7 +2332,16 @@ export async function ottoApprove(raw: unknown): Promise<
         where: { id: threadId, ownerId, ottoState: priorOttoState },
         data: { ottoState: newOttoState, updatedAt: new Date() },
       });
-      if (casCompleted === 0) { revalidatePath("/", "layout"); return { ok: true, status: "stale" }; }
+      if (casCompleted === 0) {
+        // The worst of the three silent exits: the run SUCCEEDED — the approved tool ran, the
+        // generation was created and charged — and the merchant was told nothing whatsoever
+        // because a concurrent turn had moved the thread. They keep the work and lose the
+        // sentence explaining it. This note is that sentence, and it is also the thread evidence
+        // that stops the leaked-card sweep from ever reading this success as a stranded approve.
+        await persistAgentNote(threadId, ownerId, APPROVE_STALE_COMPLETED_NOTE);
+        revalidatePath("/", "layout");
+        return { ok: true, status: "stale" };
+      }
       await prisma.chatMessage.create({
         data: {
           id: newId(),
@@ -2315,7 +2363,15 @@ export async function ottoApprove(raw: unknown): Promise<
       };
     } catch (e) {
       console.error("[ottoApprove] failed:", errSummary(e));
-      return { error: ottoFailureMessage(e, "Couldn't approve — please try again.") };
+      // ONE sentence, said in both places: the merchant reads it wherever they are looking, and
+      // the thread and the response cannot drift into two different accounts of the same failure.
+      // (Same shape as the spent-consent path above, which pairs markApprovalFailed with a note.)
+      // `persistAgentNote` cannot throw — see its doc — so a database that is down here costs the
+      // note and nothing else; the real error still reaches the merchant, which is the whole point
+      // of not letting a second failure speak over the first.
+      const sentence = ottoFailureMessage(e, "Couldn't approve — please try again.");
+      await persistAgentNote(threadId, ownerId, sentence);
+      return { error: sentence };
     }
   });
 }

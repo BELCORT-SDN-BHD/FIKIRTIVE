@@ -33,31 +33,49 @@ describe("turnBudgetInternal", () => {
   });
 });
 
-// Founder ruling 2026-08-18 — chat replies stop consuming credits; credits are spent on
-// generation only. The whole of that ruling is this one multiplier.
-describe("OTTO_CONVERSATION_TURN_MARGIN (chat is free)", () => {
-  it("is 0 — a conversation turn is priced at nothing", () => {
-    expect(OTTO_CONVERSATION_TURN_MARGIN).toBe(0);
+// Founder 的第二次裁决(2026-08-18,推翻同日的「聊天免费」):按用量收费 —— API 成本 + 5%。
+// 原话:「其实应该看用量,不然之后思考很久或其他的,我们的成本会 cover 不到,可能就 api 成本
+// +5% 我们赚的钱这样。」整条规则就是这一个乘数。
+describe("OTTO_CONVERSATION_TURN_MARGIN (usage pricing: provider cost + 5%)", () => {
+  it("is 1.05 — the provider's API cost plus five percent", () => {
+    expect(OTTO_CONVERSATION_TURN_MARGIN).toBe(1.05);
+    // 高于 1 才谈得上「我们赚的钱」;低于生成那档才谈得上「对话不是赚钱的地方」。
+    expect(OTTO_CONVERSATION_TURN_MARGIN).toBeGreaterThan(1);
+    expect(OTTO_CONVERSATION_TURN_MARGIN).toBeLessThan(OTTO_LLM_MARGIN_DEFAULT);
   });
 
-  it("zeroes the HOLD at live prices: the worst case a turn could hold comes out 0", () => {
-    // The same call the meter makes (llmHoldInternal → turnBudgetInternal) with the chat price.
+  it("covers cost on ANY turn — a long thinking turn can never be sold below what it cost us", () => {
+    // 这正是 Founder 反悔的那一条:一轮想很久的对话,成本没有上限。按用量收费之后,
+    // 「收的」永远等于「花的」乘以同一个大于 1 的数,所以不可能 cover 不到。
+    for (const model of ["claude-sonnet-4-6", "claude-opus-4-8"] as const) {
+      const prices = llmPricesFor(model);
+      for (const steps of [1, 3, OTTO_MAX_STEPS]) {
+        const charged = turnBudgetInternal(prices, OTTO_CONVERSATION_TURN_MARGIN, steps);
+        const cost = turnBudgetInternal(prices, 1, steps);
+        expect(charged, `${model} × ${steps}`).toBeGreaterThanOrEqual(cost);
+      }
+    }
+  });
+
+  it("prices the live worst-case turn at 70 internal, which #543's ceiling still caps", () => {
+    // 满 10 步、每步吃满上下文与输出上限,现役 sonnet 价:70 内部 credits。
     expect(
       turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS),
-    ).toBe(0);
-    // …and 0 is what makes it free downstream: reserveCredits no-ops on cost <= 0, so no
-    // RESERVE row is written and settle/refund then find no reservation to act on.
-    expect(turnBudgetInternal(llmPricesFor("claude-opus-4-8"), OTTO_CONVERSATION_TURN_MARGIN, 1)).toBe(0);
+    ).toBe(70);
+    // 冻结上限仍然咬得住(40 < 70)—— 否则 #543 就成了一句空话。
+    expect(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL).toBeLessThan(70);
+    expect(oneStepFloorInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN)).toBe(7);
   });
 
-  it("zeroes the CHARGE for any usage — a long turn is as free as a short one", () => {
-    // oneStepFloorInternal shares the arithmetic actualCostInternal uses (cost × margin × 100).
-    expect(oneStepFloorInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN)).toBe(0);
+  it("the measured beta reply: 2.5 credits at the old 2.0 markup becomes 1.4 at cost + 5%", () => {
+    // 那条回复真实的供应商成本是 $0.125(25 内部 ÷ 2.0 ÷ CREDITS_PER_USD)。
+    const rawUsd = 25 / (OTTO_LLM_MARGIN_DEFAULT * 100);
+    expect(rawUsd).toBeCloseTo(0.125, 6);
+    expect(Math.ceil(rawUsd * OTTO_CONVERSATION_TURN_MARGIN * 100)).toBe(14); // 1.4 显示 credits
   });
 
   it("leaves GENERATION pricing alone — the generation markup is untouched", () => {
-    // The ruling moved chat only. A shared margin would have quietly re-priced every image
-    // and video with it.
+    // 两次裁决动的都只是对话。共用一个 margin 会把每一张图、每一条视频一起重新定价。
     expect(OTTO_LLM_MARGIN_DEFAULT).toBe(2.0);
     expect(OTTO_CONVERSATION_TURN_MARGIN).not.toBe(OTTO_LLM_MARGIN_DEFAULT);
   });
@@ -110,11 +128,8 @@ describe("OTTO_CHAT_MIN_START_INTERNAL (#898 chat entry gate)", () => {
     expect(Math.min(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, balance)).toBe(39);
   });
 
-  it("is a real floor, not zero — a PRICED turn must not fall through to free chat", () => {
+  it("is a real floor, not zero — a priced turn must not fall through to free chat", () => {
     // reserveCredits no-ops on cost <= 0: a hold that rounded to nothing would meter nothing.
-    // (Chat is free today by DECISION — OTTO_CONVERSATION_TURN_MARGIN — and the composition
-    // root drops this minimum entirely while it is. This pins the other case: if chat is ever
-    // priced again, the floor it comes back with must be a real one, not an accidental 0.)
     expect(OTTO_CHAT_MIN_START_INTERNAL).toBeGreaterThan(0);
     expect(Math.min(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL)).toBeGreaterThan(0);
   });

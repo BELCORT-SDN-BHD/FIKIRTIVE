@@ -9,8 +9,8 @@
  *   · 上传 —— 每调用一次就签出一个进我们自己桶的 URL,没有任何东西在数;
  *   · 外链 —— 签名媒体代理,产品里唯一一条按设计就没有会话的路。
  *
- * Founder 2026-08-18 追加第五道:**Otto 对话**。之前那一轮要预扣要结算,余额自己就是上限;
- * 对话改成免费之后,平台照样为每一轮付模型的钱,而没有任何东西在数了。
+ * 2026-08-18 追加第五道:**Otto 对话**。额度管得住一轮能花多少(冻结那一步管的),管不住一个
+ * 卡死的客户端能起多少轮 —— 而每一轮都是一次真的模型调用。
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "@fikirtive/db";
@@ -91,11 +91,11 @@ describe("#795 生成闸", () => {
   });
 });
 
-// ── Otto 对话闸(Founder 2026-08-18)—— 免费之后,唯一还在数的东西 ────────────────────────
+// ── Otto 对话闸 —— 数的是「起了多少轮」,不是「花了多少钱」 ────────────────────────────────
 //
-// 之前一轮对话要预扣、要结算,余额本身就是上限:客户端死循环花光就停。裁决把对话价钱设成 0
-// 之后,那个上限没了 —— 而每一轮平台照样要付模型的钱。这道闸补的就是这个,只管量,不管钱。
-describe("Otto 对话闸(裁决 2026-08-18 之后的唯一量闸)", () => {
+// 钱由冻结那一步管:一轮对话在模型被调用之前先向余额冻结,余额不够就起不来。这道闸补的是另一
+// 半 —— 没有任何东西在数一个卡死的客户端能起多少轮,而每一轮都是一次真的模型调用。
+describe("Otto 对话闸(只管量,不管钱)", () => {
   it("按租户计数 —— 一个商家聊得多不影响另一个", async () => {
     await consumeOttoTurnGate("org-a");
     await consumeOttoTurnGate("org-b");
@@ -151,6 +151,42 @@ describe("#795 外链闸(签名媒体代理)", () => {
     const rows = await prisma.rateLimitCounter.findMany({ where: { key: { startsWith: "media:" } } });
     expect(rows.map((r) => r.key)).toEqual(["media:198.51.100.9"]);
     expect(MEDIA_PROXY_PER_CALLER_PER_10_MIN).toBeGreaterThanOrEqual(300);
+  });
+});
+
+// ── 存储故障:对话闸放行,生成与上传照旧拒(产品负责人裁定 2026-08-18)─────────────────────
+//
+// 计数器够不到的时候放行还是拒,是逐道门的产品判断,不是一个全局开关。对话这道门放行是安全的:
+// 钱本来就由冻结那一步守着,而冻结自己 fail closed —— 数据库答不了这个计数器,也答不了那笔
+// 冻结,所以放行不可能多花一分钱,只可能多起几轮。拒了却等于「Otto 挂了」。
+describe("计数器够不到的时候:对话闸放行,生成与上传照旧拒", () => {
+  /** 把表挪走,制造一次**真实**的存储故障(而不是 mock 一个 Error),用完原样挪回来。 */
+  async function withCounterTableMissing<T>(fn: () => Promise<T>): Promise<T> {
+    await prisma.$executeRawUnsafe(`ALTER TABLE "rate_limit_counter" RENAME TO "rate_limit_counter_gates"`);
+    try {
+      return await fn();
+    } finally {
+      await prisma.$executeRawUnsafe(`ALTER TABLE "rate_limit_counter_gates" RENAME TO "rate_limit_counter"`);
+    }
+  }
+
+  it("对话闸放行 —— 计数表抖一下不许变成「Otto 挂了」(钱另有冻结守着)", async () => {
+    expect(await withCounterTableMissing(() => consumeOttoTurnGate("org-blip"))).toBe(true);
+  });
+
+  it("生成闸照旧 fail closed —— 花商家额度那一路,闸够不到就不许开", async () => {
+    expect(await withCounterTableMissing(() => consumeGenerationGate("org-blip"))).toBe(false);
+  });
+
+  it("上传闸照旧 fail closed —— 同理,那一路要写我们自己的桶", async () => {
+    expect(await withCounterTableMissing(() => consumeUploadGate("org-blip"))).toBe(false);
+  });
+
+  it("故障过去之后照常计数 —— 放行不留坏状态", async () => {
+    await withCounterTableMissing(() => consumeOttoTurnGate("org-blip-2"));
+    expect(await consumeOttoTurnGate("org-blip-2")).toBe(true);
+    const row = await prisma.rateLimitCounter.findFirstOrThrow({ where: { key: "otto:org-blip-2" } });
+    expect(row.count).toBe(1); // 故障那一次没记上,恢复之后这一次记上了
   });
 });
 

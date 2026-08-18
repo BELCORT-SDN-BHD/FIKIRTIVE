@@ -260,14 +260,15 @@ describe("the spend-history window is described honestly", () => {
 });
 
 describe("honest conversation-spend copy", () => {
-  // Founder 2026-08-18: a chat turn charges nothing, so the disclosure stopped being "here is
-  // where your chat charges are listed" and became "there are none". It still names credits —
-  // dropping the word entirely would just move the surprise to the first generation.
-  it("says a chat turn is free instead of warning about a charge that no longer exists", () => {
+  // Founder 的第二次裁决(2026-08-18)把对话放回按用量收费。这句话经过三个版本:
+  // 「a little credit」(假的)→「is free」(只真了半天)→ 现在这句(按用量,成本 +5%)。
+  it("no longer calls a chat turn 'a little credit', names the usage basis, and points at Billing", () => {
     expect(CHAT_SPEND_NOTE).not.toMatch(/a little/i);
-    expect(CHAT_SPEND_NOTE).toMatch(/free/i);
+    expect(CHAT_SPEND_NOTE).toMatch(/what it uses/i);
     expect(CHAT_SPEND_NOTE).toMatch(/credits/i);
-    expect(CHAT_SPEND_NOTE).not.toMatch(/Chatting with Otto uses credits/);
+    expect(CHAT_SPEND_NOTE).toMatch(/Billing/);
+    // 免费那半天的说法不许留下 —— 它现在是假的。
+    expect(CHAT_SPEND_NOTE).not.toMatch(/\bis free\b/i);
   });
 
   it("does not promise a complete record the window cannot deliver (round-1 P1①)", () => {

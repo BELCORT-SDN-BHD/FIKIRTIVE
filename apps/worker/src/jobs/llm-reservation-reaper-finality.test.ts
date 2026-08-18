@@ -245,58 +245,58 @@ describe("#524 r8 — the ordinary leak is still swept, and replays cannot doubl
 // 那一行不存在了 —— 前两遍对 approve 彻底不再命中,而进程死在跑的中间仍然会把卡片钉死在
 // "Approved"(CAS 单向,商家再也点不动)。这一组打真库证的是第 3 遍:**一行台账都没有**,
 // 卡片照样被收口;以及它唯一不能犯的错 —— 把一张跑完的卡判成失败。
-describe("Founder 2026-08-18 — a free approve leaves no ledger row, and the card pass recovers it", () => {
-  /** An org whose approve really did cost nothing: a claimed card, a thread, and ZERO ledger rows. */
-  async function seedFreeApprove(
-    opts: { approvedAgoMs?: number; replyAfterClaim?: boolean } = {},
-  ): Promise<{ orgId: string; cardId: string; threadId: string; approvedAt: Date }> {
-    const { approvedAgoMs = 3 * HOUR, replyAfterClaim = false } = opts;
-    const orgId = `free818-${randomUUID()}`;
-    const threadId = `t-${randomUUID()}`;
-    const cardId = `c-${randomUUID()}`;
-    const approvedAt = new Date(Date.now() - approvedAgoMs);
-    orgIds.push(orgId);
-    await prisma.organization.create({ data: { id: orgId } });
-    await prisma.creditAccount.create({ data: { orgId, balance: START, reserved: 0 } });
-    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId: `pr-${randomUUID()}` } });
+/** An org whose approve really did cost nothing: a claimed card, a thread, and ZERO ledger rows. */
+async function seedFreeApprove(
+  opts: { approvedAgoMs?: number; replyAfterClaim?: boolean; mintedBeforeMs?: number; replyOffsetMs?: number } = {},
+): Promise<{ orgId: string; cardId: string; threadId: string; approvedAt: Date }> {
+  const { approvedAgoMs = 3 * HOUR, replyAfterClaim = false, mintedBeforeMs = 60_000, replyOffsetMs = 30_000 } = opts;
+  const orgId = `free818-${randomUUID()}`;
+  const threadId = `t-${randomUUID()}`;
+  const cardId = `c-${randomUUID()}`;
+  const approvedAt = new Date(Date.now() - approvedAgoMs);
+  orgIds.push(orgId);
+  await prisma.organization.create({ data: { id: orgId } });
+  await prisma.creditAccount.create({ data: { orgId, balance: START, reserved: 0 } });
+  await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId: `pr-${randomUUID()}` } });
+  await prisma.chatMessage.create({
+    data: {
+      id: cardId,
+      threadId,
+      ownerId: orgId,
+      role: "AGENT",
+      kind: "APPROVAL_CARD",
+      seq: 1,
+      // Exactly what claimApprovalCard writes: the terminal-forever `approved`, plus the one
+      // record of WHEN the consent was spent (ChatMessage has no updatedAt to read it from).
+      payload: { toolName: "generateReferences", ref: "e1", status: "approved", attempt: 1, approvedAt: approvedAt.toISOString() },
+      createdAt: new Date(approvedAt.getTime() - mintedBeforeMs),
+    },
+  });
+  if (replyAfterClaim) {
     await prisma.chatMessage.create({
       data: {
-        id: cardId,
+        id: `r-${randomUUID()}`,
         threadId,
         ownerId: orgId,
         role: "AGENT",
-        kind: "APPROVAL_CARD",
-        seq: 1,
-        // Exactly what claimApprovalCard writes: the terminal-forever `approved`, plus the one
-        // record of WHEN the consent was spent (ChatMessage has no updatedAt to read it from).
-        payload: { toolName: "generateReferences", ref: "e1", status: "approved", attempt: 1, approvedAt: approvedAt.toISOString() },
-        createdAt: new Date(approvedAt.getTime() - 60_000),
+        kind: "TEXT",
+        seq: 2,
+        text: "Done — the reference images are on their way.",
+        createdAt: new Date(approvedAt.getTime() + replyOffsetMs),
       },
     });
-    if (replyAfterClaim) {
-      await prisma.chatMessage.create({
-        data: {
-          id: `r-${randomUUID()}`,
-          threadId,
-          ownerId: orgId,
-          role: "AGENT",
-          kind: "TEXT",
-          seq: 2,
-          text: "Done — the reference images are on their way.",
-          createdAt: new Date(approvedAt.getTime() + 30_000),
-        },
-      });
-    }
-    return { orgId, cardId, threadId, approvedAt };
   }
+  return { orgId, cardId, threadId, approvedAt };
+}
 
-  it("retires the stranded card with NOTHING in the ledger to key on — the P1 the judge found", async () => {
+describe("Founder 2026-08-18 — a free approve leaves no ledger row, and the card pass recovers it", () => {
+  it("retires the stranded card with NOTHING in the ledger to key on", async () => {
     const { orgId, cardId } = await seedFreeApprove();
 
     const reaped = await reapStaleLlmReservations();
 
-    // The premise, asserted rather than assumed: a free turn really did leave the ledger empty,
-    // so passes 1 and 2 had nothing to match and this recovery came from the card alone.
+    // The premise, asserted rather than assumed: this turn really did leave the ledger empty,
+    // so passes 1 and 2 had nothing to match and the recovery came from the card alone.
     expect(await ledgerRows(orgId)).toEqual([]);
     expect(reaped).toBe(0); // pass 3 moves no money
     expect(await cardStatus(orgId, cardId)).toMatchObject({ status: "failed", chargeVerdict: "unknown" });
@@ -332,5 +332,42 @@ describe("Founder 2026-08-18 — a free approve leaves no ledger row, and the ca
 
     expect(await cardStatus(orgId, cardId)).toEqual(first);
     expect(await ledgerRows(orgId)).toEqual([]);
+  });
+});
+
+// ── 判官 r2(2026-08-18)—— 两个时钟,以及卡片不许给自己作证 ────────────────────────────────
+//
+// 探针拿 web 盖的 `approvedAt` 去比 Postgres 盖的 `createdAt`。web 快了的时候,claim 之后那条
+// 消息会显得「更早」,证据就丢了 —— 而丢证据的后果正是这一遍唯一不能犯的错:把一张跑成功的卡
+// 判成失败。放宽 5 秒补的就是这一个方向。放宽本身又带来一件事:卡片自己也是这条线程里的一条
+// 消息,手快的商家(卡一出现就点批准)会让卡片给自己作证,那张卡就永远扫不到 —— 所以卡片按
+// id 排除。这两条都打真库。
+describe("Founder 2026-08-18 — the clock grace, and the card never answers for itself", () => {
+  it("a message stamped just BEFORE the claim still counts — the web clock running ahead must not fail a success", async () => {
+    // 那一轮真的跑完并写了回复,但 Postgres 给它的时间比 web 盖的 approvedAt 早 2 秒。
+    const { orgId, cardId } = await seedFreeApprove({ replyAfterClaim: true, replyOffsetMs: -2_000 });
+
+    await reapStaleLlmReservations();
+
+    expect((await cardStatus(orgId, cardId)).status).toBe("approved");
+  });
+
+  it("a message stamped well before the claim is NOT evidence — the grace cannot hide a real leak", async () => {
+    // 一分钟前的旧消息(比如商家在卡还 pending 时说的话)不算「后来发生了什么」。
+    const { orgId, cardId } = await seedFreeApprove({ replyAfterClaim: true, replyOffsetMs: -60_000 });
+
+    await reapStaleLlmReservations();
+
+    expect(await cardStatus(orgId, cardId)).toMatchObject({ status: "failed", chargeVerdict: "unknown" });
+  });
+
+  it("a card approved within the grace of its own arrival is still swept — it cannot be its own evidence", async () => {
+    // 手快的商家:卡出现 1 秒后就按了批准。没有排除的话,卡片自己落在放宽窗口里,这一遍对这类
+    // 商家就等于不存在。
+    const { orgId, cardId } = await seedFreeApprove({ mintedBeforeMs: 1_000 });
+
+    await reapStaleLlmReservations();
+
+    expect(await cardStatus(orgId, cardId)).toMatchObject({ status: "failed", chargeVerdict: "unknown" });
   });
 });
