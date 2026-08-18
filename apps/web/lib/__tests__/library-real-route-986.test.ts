@@ -116,8 +116,17 @@ const { default: LibraryEditorPage } = await import("@/app/library/editor/page")
 const { OttoStuff } = await import("@/components/otto/OttoStuff");
 const { AddAssetDialog } = await import("@/components/otto/stuff/AddAssetDialog");
 
-let root: Root | null = null;
-let container: HTMLDivElement | null = null;
+/**
+ * 一次测试里可能挂载**不止一次**(例如同一页在「没有失败任务」与「有失败任务」两种数据下
+ * 各画一次),所以挂载点要逐个记下来、逐个拆掉。
+ *
+ * 这不是洁癖:本仓的 vitest 让同一个 jsdom `document` 跨文件活着,而 Radix 的弹窗走
+ * Portal 挂在 `document.body` 上。漏掉一个没拆的 root,它的弹窗就会留在 body 里,被**后面
+ * 那些文件**的 `document.querySelector('[role="dialog"]')` 捡到 —— 实测正是这样:这份文件
+ * 单跑全绿,进了全量套件却把 library-empty-states / library-guardrails-934 / refgen-topup-exit
+ * 三份一起弄红。所以这里拆干净,再把 body 收一次尾。
+ */
+const mounted: { root: Root; container: HTMLDivElement }[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -138,18 +147,22 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  if (root) await act(async () => root?.unmount());
-  container?.remove();
-  root = null;
-  container = null;
+  for (const entry of mounted.splice(0)) {
+    await act(async () => entry.root.unmount());
+    entry.container.remove();
+  }
+  // Portal 挂在 body 上,不在挂载点里 —— 拆完 root 之后再收一次尾,下一份文件拿到的是
+  // 一个干净的 document。
+  document.body.replaceChildren();
 });
 
 /** 返回 `document.body`:Radix 的弹窗走 Portal,不在挂载点那一支里。 */
 async function mount(element: ReactElement): Promise<HTMLElement> {
-  container = document.createElement("div");
+  const container = document.createElement("div");
   document.body.appendChild(container);
-  root = createRoot(container);
-  await act(async () => root!.render(element));
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  await act(async () => root.render(element));
   await act(async () => {
     await Promise.resolve();
   });
@@ -290,16 +303,14 @@ describe("Stack A 纪律:新路由与旧路由并存,旧壳一个字没动(规�
   });
 
   it("新页上不画按不动的键:聊天不在这一页上,那两颗键就不出现", async () => {
-    const dom = await mount(await LibraryPage());
     mocks.getMyAdJobs.mockResolvedValue([FAILED_JOB]);
-    const withJob = await mount(await LibraryPage());
+    const dom = await mount(await LibraryPage());
 
-    expect(withJob.textContent, "失败的那一条仍然要说话").toContain("Didn't go through");
-    expect(buttonWithText(withJob, "Open conversation"), "一颗按下去什么都不发生的键").toBeFalsy();
-    expect(buttonWithText(withJob, "Retry with Otto")).toBeFalsy();
+    expect(dom.textContent, "失败的那一条仍然要说话").toContain("Didn't go through");
+    expect(buttonWithText(dom, "Open conversation"), "一颗按下去什么都不发生的键").toBeFalsy();
+    expect(buttonWithText(dom, "Retry with Otto")).toBeFalsy();
     // 「Hide」不依赖聊天,它照旧在 —— 免得上面两条其实是「整排键都没画出来」。
-    expect(buttonWithText(withJob, "Hide")).toBeTruthy();
-    expect(dom).toBeTruthy();
+    expect(buttonWithText(dom, "Hide")).toBeTruthy();
   });
 });
 
