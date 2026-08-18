@@ -13,14 +13,21 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const TEMPLATE_MODAL = path.join(REPO_ROOT, "apps/web/components/otto/TemplateModal.tsx");
 
 describe("TemplateModal spend safety", () => {
-  it("uses a server-resolved model and a stable guarded idempotency key", () => {
+  it("uses a server-resolved model and a server-derived idempotency key", () => {
     const src = fs.readFileSync(TEMPLATE_MODAL, "utf8");
 
     expect(src).toContain("getActiveGenModels");
     expect(src).not.toContain("activeImageModel");
     expect(src).toContain("inFlightRef.current");
-    expect(src).toContain("idempotencyKeyRef.current");
-    expect(src).toContain("crypto.randomUUID()");
+    // The key is DERIVED ON THE SERVER from the run's intent (startAssetGen → assetActionKey).
+    // A key minted in the browser — from a clock or a fresh uuid per modal — gives the SAME
+    // intent two different identities, so a reload or a second tab re-charges. This surface
+    // therefore names the action and its anchor, and mints nothing.
+    expect(src).toContain("startAssetGen");
+    expect(src).toContain('assetOp: "template"');
+    expect(src).toContain("assetAnchorGenerationId: sourceGenId");
+    expect(src).not.toContain("idempotencyKey:");
+    expect(src).not.toContain("crypto.randomUUID()");
     expect(src).not.toContain("Date.now()");
   });
 

@@ -16,6 +16,7 @@ import {
 const HASH_HEX_LENGTH = 32;
 const FACTORY_KEY_RE = /^batch:([0-9a-f]{32}):attempt:([0-9a-f]{32})$/;
 const CANVAS_KEY_RE = /^canvas:([0-9a-f]{64})$/;
+const ASSET_KEY_RE = /^asset:(?:regen|animate|edit|template):[0-9a-f]{64}$/;
 
 export interface CanvasActionKey {
   key: string;
@@ -298,6 +299,54 @@ function canonicalJson(value: unknown): string {
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+/** 资产详情面板 / 模板弹窗那一族付费动作的服务端动作名。见 `assetActionKey`。 */
+export const ASSET_ACTION_OPS = ["regen", "animate", "edit", "template"] as const;
+export type AssetActionOp = (typeof ASSET_ACTION_OPS)[number];
+
+export interface AssetActionKey {
+  key: string;
+}
+
+/**
+ * 保留的、**服务端自己算**的资产动作身份 —— 与 `canvasActionKey` 同一条纪律,只是
+ * 身份的来源不同:画布那边是浏览器给一个稳定的逻辑 actionId,这边一个字都不问浏览器,
+ * 直接从「商家这一次想要的东西」本身算出来。
+ *
+ * 为什么必须这样:详情面板过去自己出键 —— `regen-<genId>-<Date.now()>`。时间戳意味着
+ * **同一个意图的两次提交拿到两个不同的键**:刷新一次、开第二个标签页、双击一次,服务端
+ * 与数据库的去重(GenJob_active_idempotency_key)都看不见那是同一次重放,于是第二次
+ * reserveCredits 照跑 —— 商家为同一件东西付两次钱。挡在中间的只有 React 的一个 ref,
+ * 它随页面一起消失。
+ *
+ * 摘要覆盖的正是「换了它就是另一个动作」的那些东西:动作类型、这一次锚在哪一张图上,
+ * 以及整个付费请求体(提示词、模型、张数、@元素、形状/时长/清晰度…)。`genRequest`
+ * 是 `.strict()` 的,所以能走到这里的请求体只可能由已知字段组成 —— 调用方塞不进一个
+ * 只为了变键的垃圾字段。价格不进摘要:调价不改变商家想要的东西(它自有一道重核闸)。
+ *
+ * 键长固定 `asset:` + op + `:` + 64 位十六进制 ≤ 79,在 genRequest 的 80 字符上限内。
+ */
+export function assetActionKey(
+  op: AssetActionOp,
+  anchorGenerationId: string,
+  request: unknown,
+): AssetActionKey {
+  const digest = createHash("sha256")
+    .update("asset-action-v1")
+    .update("\0")
+    .update(`${op.length}:${op}`)
+    .update("\0")
+    .update(`${anchorGenerationId.length}:${anchorGenerationId}`)
+    .update("\0")
+    .update(canonicalJson(request))
+    .digest("hex");
+  return { key: `asset:${op}:${digest}` };
+}
+
+/** 只认这一族保留键。`startGen` 拒收调用方自带的成员;只有 `startAssetGen` 能算出一个。 */
+export function parseAssetActionKey(key: string): AssetActionKey | null {
+  return ASSET_KEY_RE.test(key) ? { key } : null;
 }
 
 /**

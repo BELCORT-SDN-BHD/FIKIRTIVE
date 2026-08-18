@@ -12,19 +12,16 @@ import { getAnalytics } from "@/lib/analytics-actions";
 import { getOwnerSettings } from "@/lib/owner-settings-actions";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import { OttoApp } from "@/components/otto/OttoApp";
+import { parseOptionalViewParam } from "@/components/otto/otto-view-param";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Otto · Fikirtive" };
 
-const VALID_VIEWS = ["otto", "stuff", "library", "edit", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"] as const;
-type ValidView = (typeof VALID_VIEWS)[number];
-
 export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; project?: string; thread?: string; new?: string }> }) {
   const sp = await searchParams;
-  const rawInitialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
-    ? (sp!.view as ValidView)
-    : undefined;
-  const initialView: ValidView | undefined = rawInitialView === "stuff" ? "library" : rawInitialView;
+  // The screen list and the stuff → library alias live in one place now (#969 judge P2-3):
+  // components/otto/otto-view-param.ts, which OttoApp reads too.
+  const initialView = parseOptionalViewParam(sp?.view);
   // Grok-bright ("gb") is the only skin — hardcoded, no rollback param.
   const skin = "gb" as const;
 
@@ -80,6 +77,14 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   const openThreadId = forceNewThread
     ? undefined
     : (sp?.thread && threadRows.some((t) => t.id === sp.thread)) ? sp.thread : threadRows[0]?.id;
+  // Which conversation did the ADDRESS BAR ask for? Deliberately NOT `openThreadId` (BUG 6):
+  // that one falls back to the project's newest thread, so any turn that creates a thread in
+  // the background — Brand & products has its own chat, and ottoTurn ends in
+  // revalidatePath("/", "layout") — quietly renames the key below, remounts this entire tree,
+  // and wipes every transcript that lives in client state. The URL moves only when the
+  // merchant actually asks for another conversation, so keying on it keeps the explicit
+  // switch (and the project switch) remounting, and nothing else.
+  const requestedThreadKey = forceNewThread ? "" : (sp?.thread ?? "");
   if (openThreadId) {
     const activeFull = await getCoworkThread(ownerId, openThreadId);
     if (activeFull) {
@@ -103,7 +108,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   return (
     <OttoApp
-      key={`${projectId}:${openThreadId ?? ""}`}
+      key={`${projectId}:${requestedThreadKey}`}
       projectId={projectId}
       projects={projectList}
       activeProjectId={projectId}

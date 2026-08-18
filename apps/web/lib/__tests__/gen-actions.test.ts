@@ -476,13 +476,14 @@ describe("startGen", () => {
   describe("#645 T4:资产详情入口的价格绑定(与 Canvas/Otto 同一套机制)", () => {
     const assetRequest = (over: Record<string, unknown> = {}) => ({
       expectedCredits: 1,
+      assetOp: "regen",
+      assetAnchorGenerationId: "gen1",
       projectId: "p1",
       prompt: "product hero",
       entityIds: [],
       count: 1,
       kind: "image",
       model: "seedream",
-      idempotencyKey: "regen-gen1-123",
       ...over,
     });
 
@@ -513,7 +514,7 @@ describe("startGen", () => {
         durationSeconds: 12,
         resolution: "720p",
         expectedCredits: 11,
-        idempotencyKey: "anim-gen1-123",
+        assetOp: "animate",
       }));
       expect(result).toEqual({
         error: "The confirmed price changed from 11 to 27 credits. Reopen this image to load the current price, then try again.",
@@ -526,6 +527,73 @@ describe("startGen", () => {
         const result = await startAssetGen({ ...assetRequest(), ...bad, expectedCredits: (bad as Record<string, unknown>).expectedCredits });
         expect(result).toEqual({ error: "That generation request is out of bounds." });
       }
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    // ── 双扣缺口 —— 幂等键必须由服务端从意图算出来 ──────────────────────────
+    //
+    // 这条路以前自己出键:`regen-<genId>-<Date.now()>`。带时间戳 = 同一个意图的两次提交
+    // 拿到两个不同身份,于是服务端的活跃键复用与数据库的唯一索引都看不见那是重放,第二次
+    // 预扣照跑。挡在中间的只有面板自己的一个 React ref —— 刷新一次它就没了,第二个标签页
+    // 里它根本不存在。
+    const derivedKey = () =>
+      (db.genJobCreate.mock.calls.at(-1)?.[0]?.data as Record<string, unknown>).idempotencyKey as string;
+
+    it("调用方自带幂等键 ⇒ 出界(键只可能由服务端算)", async () => {
+      const result = await startAssetGen({ ...assetRequest(), idempotencyKey: "regen-gen1-123" });
+      expect(result).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    it("动作类型/锚点缺席或不在名单上 ⇒ 出界(键算不出来就不许花钱)", async () => {
+      const bads: Record<string, unknown>[] = [
+        { assetOp: undefined },
+        { assetOp: "wipe" },
+        { assetOp: 1 },
+        { assetAnchorGenerationId: undefined },
+        { assetAnchorGenerationId: "" },
+        { assetAnchorGenerationId: "g".repeat(129) },
+      ];
+      for (const bad of bads) {
+        const req = { ...assetRequest(), ...bad };
+        expect(await startAssetGen(req)).toEqual({ error: "That generation request is out of bounds." });
+      }
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    it("同一个意图提交两次 ⇒ 服务端算出同一个键(刷新/第二标签页/双击都是重放)", async () => {
+      await startAssetGen(assetRequest());
+      const first = derivedKey();
+      expect(first).toMatch(/^asset:regen:[0-9a-f]{64}$/);
+      await startAssetGen(assetRequest());
+      expect(derivedKey()).toBe(first);
+    });
+
+    it("换了提示词就是另一个意图 ⇒ 另一个键(合法的新单照收)", async () => {
+      await startAssetGen(assetRequest());
+      const first = derivedKey();
+      await startAssetGen(assetRequest({ prompt: "product hero, but blue" }));
+      expect(derivedKey()).not.toBe(first);
+    });
+
+    it("同一份内容换一个动作/锚点 ⇒ 各自独立的键(重做 ≠ 编辑 ≠ 另一张图)", async () => {
+      await startAssetGen(assetRequest());
+      const regen = derivedKey();
+      await startAssetGen(assetRequest({ assetOp: "edit" }));
+      const edit = derivedKey();
+      await startAssetGen(assetRequest({ assetAnchorGenerationId: "gen2" }));
+      expect(new Set([regen, edit, derivedKey()]).size).toBe(3);
+    });
+
+    it("有人拿一个 asset: 形状的键直接调 startGen ⇒ 出界(保留族,与 canvas: 同一条)", async () => {
+      const result = await startGen({
+        projectId: "p1", prompt: "product hero", entityIds: [], count: 1,
+        kind: "image", model: "seedream",
+        idempotencyKey: `asset:regen:${"a".repeat(64)}`,
+      });
+      expect(result).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
       expect(db.reserveCredits).not.toHaveBeenCalled();
     });
   });
@@ -2080,7 +2148,10 @@ describe("startGen —— 审批身份在花钱之前定死(且只认卡)", () =
     expect(direct).toEqual({ error: "That generation request is out of bounds." });
     const canvas = await startCanvasGen({ actionId: "a1", expectedCredits: 1, ...bare, approvedEntities: [FORGED] });
     expect(canvas).toEqual({ error: "That generation request is out of bounds." });
-    const asset = await startAssetGen({ ...bare, expectedCredits: 1, approvedEntities: [FORGED], idempotencyKey: "regen-g1-2" });
+    const asset = await startAssetGen({
+      ...bare, expectedCredits: 1, approvedEntities: [FORGED],
+      assetOp: "regen", assetAnchorGenerationId: "g1",
+    });
     expect(asset).toEqual({ error: "That generation request is out of bounds." });
     expect(db.genJobCreate).not.toHaveBeenCalled();
     expect(db.reserveCredits).not.toHaveBeenCalled();
