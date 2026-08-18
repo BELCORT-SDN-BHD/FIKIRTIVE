@@ -1,11 +1,11 @@
 /**
- * #939 — the shared HTML+text builder for auth emails. Pure-function unit tests: no mocks,
- * no database. The call sites that actually wire this into verify-email/password-reset/
- * sign-in-link are exercised in lib/__tests__/auth-email-branding.test.ts, which proves the
- * shared function is really reached from both places rather than duplicated.
+ * #939 — the shared HTML+text builders for auth emails. Pure-function unit tests: no mocks,
+ * no database. The call sites that actually wire these into verify-email/password-reset/
+ * sign-in code are exercised in lib/__tests__/auth-email-branding.test.ts, which proves the
+ * shared functions are really reached from both places rather than duplicated.
  */
 import { describe, it, expect } from "vitest";
-import { renderAuthEmail } from "../auth-email-template";
+import { renderAuthCodeEmail, renderAuthEmail } from "../auth-email-template";
 
 /** Decodes an HTML attribute value the same way a browser does — the inverse of the escaping
  *  `renderAuthEmail` applies before embedding a URL in `href="…"`. */
@@ -77,5 +77,67 @@ describe("renderAuthEmail", () => {
     const { html } = renderAuthEmail({ action: 'Verify <you> & "confirm"', url, validitySeconds: 3600 });
     expect(html).not.toContain("<you>");
     expect(html).toContain("&lt;you&gt;");
+  });
+});
+
+/**
+ * The code variant. Same shell, different middle — and the differences that matter are the ones
+ * asserted here: the code is present and readable, the validity line says CODE rather than link,
+ * and there is nothing clickable anywhere. A sign-in mail with no link is a sign-in mail phishing
+ * has nothing to copy.
+ */
+describe("renderAuthCodeEmail", () => {
+  const code = "418902";
+
+  it("shows the code in both parts, and states the real validity window", () => {
+    const { html, text } = renderAuthCodeEmail({
+      action: "Sign in to Fikirtive",
+      code,
+      validitySeconds: 900,
+    });
+    expect(html).toContain(code);
+    expect(text).toContain(code);
+    expect(html).toContain("This code is valid for 15 minutes.");
+    expect(text).toContain("This code is valid for 15 minutes.");
+    // The link email's sentence must not leak into the code email.
+    expect(html).not.toContain("This link is valid");
+    expect(text).not.toContain("This link is valid");
+  });
+
+  it("carries nothing to click — no href, no URL, not even in the text part", () => {
+    const { html, text } = renderAuthCodeEmail({
+      action: "Sign in to Fikirtive",
+      code,
+      validitySeconds: 900,
+    });
+    expect(html).not.toContain("href=");
+    expect(html).not.toMatch(/https?:\/\//);
+    expect(text).not.toMatch(/https?:\/\//);
+  });
+
+  it("carries the Fikirtive wordmark and no external image/script/stylesheet resources", () => {
+    const { html } = renderAuthCodeEmail({
+      action: "Sign in to Fikirtive",
+      code,
+      validitySeconds: 900,
+    });
+    expect(html).toContain("Fikirtive");
+    expect(html).not.toMatch(/<script/i);
+    expect(html).not.toMatch(/<img/i);
+    expect(html).not.toMatch(/<link/i);
+  });
+
+  it("HTML-escapes both the action phrase and the code", () => {
+    const { html } = renderAuthCodeEmail({
+      action: 'Sign <in> & "confirm"',
+      code: "<b>0</b>",
+      validitySeconds: 900,
+    });
+    expect(html).not.toContain("<in>");
+    expect(html).toContain("&lt;in&gt;");
+    // A code is digits in practice; escaping it anyway means a future generator that is not
+    // cannot inject markup into a merchant's inbox.
+    expect(html).not.toContain("<b>0</b>");
+    expect(html).toContain("&lt;b&gt;0&lt;/b&gt;");
   });
 });

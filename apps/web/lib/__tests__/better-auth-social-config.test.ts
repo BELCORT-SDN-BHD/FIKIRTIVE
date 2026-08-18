@@ -55,9 +55,10 @@ describe("the auth config obeys the predicate", () => {
   it("closing that door leaves every other sign-in path and guard in place", async () => {
     const { auth } = await import("@/lib/better-auth/server");
 
-    // The email/password and magic-link doors are untouched...
+    // The email/password and sign-in-code doors are untouched...
     expect(typeof auth.api.signInEmail).toBe("function");
-    expect(typeof auth.api.signInMagicLink).toBe("function");
+    expect(typeof auth.api.signInEmailOTP).toBe("function");
+    expect(typeof auth.api.sendVerificationOTP).toBe("function");
     // ...and so is the operator console the admin plugin backs.
     expect(typeof auth.api.banUser).toBe("function");
   });

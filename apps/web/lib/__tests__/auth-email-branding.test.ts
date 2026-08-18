@@ -5,10 +5,15 @@
  *
  * Two call sites build the AuthEmailJob → sendAuthEmail(...) → emailPort.send(...) chain:
  *   1. runAuthEmailJob's password-reset/verify-email branch (lib/better-auth/sender.ts).
- *   2. the magicLink plugin's `sendMagicLink` hook (lib/better-auth/server.ts) — reached only
- *      through the REAL Better Auth instance, so this file constructs it exactly like
+ *   2. the emailOTP plugin's `sendVerificationOTP` hook (lib/better-auth/server.ts) — reached
+ *      only through the REAL Better Auth instance, so this file constructs it exactly like
  *      signup-door.test.ts / auth-email-queue-executor.test.ts do, against the real local
  *      Postgres. Only emailPort.send is mocked.
+ *
+ * The two kinds of auth mail differ in what the card holds — a link to click, or a code to type —
+ * and the sign-in case below is where that difference is pinned: a code email must carry the code
+ * and NO link at all, because a sign-in mail with nothing clickable is a sign-in mail a phisher
+ * cannot imitate.
  */
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -35,11 +40,11 @@ const SIGNIN_ADDR = `p939-signin-${randomUUID()}@fikirtive.test`;
 const RESET_ADDR = `p939-reset-${randomUUID()}@fikirtive.test`;
 process.env.AUTH_ALLOWED_EMAILS = [SIGNIN_ADDR, RESET_ADDR].join(",");
 
-// Constructs the real `auth` object, which registers the magicLink plugin's sendMagicLink
+// Constructs the real `auth` object, which registers the emailOTP plugin's sendVerificationOTP
 // hook — sender.ts's own `runOneJob` dynamic-imports this same module path when a
-// "sign-in-link" job runs, so this is the same singleton instance either way.
+// "sign-in-code" job runs, so this is the same singleton instance either way.
 const { prisma } = await import("@fikirtive/db");
-await import("@/lib/better-auth/server");
+const { auth } = await import("@/lib/better-auth/server");
 const {
   enqueueAuthEmail,
   authEmailQueueSettled,
@@ -103,34 +108,52 @@ describe("#939 — auth emails carry branded html + text at the real send call s
     expect(msg!.html).toContain("This link is valid for 1 hour.");
   });
 
-  it("sign-in-link — the REAL magicLink plugin's sendMagicLink hook (server.ts) passes html+text with the true 15-minute validity, not the other purposes' 1 hour", async () => {
-    enqueueAuthEmail({
-      purpose: "sign-in-link",
-      email: SIGNIN_ADDR,
-      callbackURL: "http://localhost:3100/dashboard",
-      overBudget: false,
-    });
+  it("sign-in-code — the REAL emailOTP plugin's sendVerificationOTP hook (server.ts) passes html+text with the true 15-minute validity, not the other purposes' 1 hour", async () => {
+    enqueueAuthEmail({ purpose: "sign-in-code", email: SIGNIN_ADDR, overBudget: false });
     await authEmailQueueSettled();
 
     const msg = sent.find((m) => m.to === SIGNIN_ADDR);
     expect(msg, `no email captured for ${SIGNIN_ADDR}; inbox=${JSON.stringify(sent)}`).toBeDefined();
     expect(msg!.html).toBeTruthy();
     expect(msg!.text).toBeTruthy();
-    // The real, minted magic-link token — proves the link reaching the inbox is the one
-    // Better Auth actually issued, not a placeholder.
-    const mintedUrl = msg!.devPreview ?? msg!.text!.match(/https?:\/\/\S+/)?.[0];
-    expect(mintedUrl).toBeTruthy();
-    expect(hrefsIn(msg!.html!)).toContain(mintedUrl);
-    expect(msg!.html).toContain("This link is valid for 15 minutes.");
-    expect(msg!.text).toContain("This link is valid for 15 minutes.");
-    expect(msg!.html).not.toContain("This link is valid for 1 hour.");
+
+    // The real, minted code — six digits, and the SAME six in the html, the text and the dev
+    // preview. Proves what reaches the inbox is what Better Auth actually issued.
+    const code = msg!.devPreview;
+    expect(code).toMatch(/^\d{6}$/);
+    expect(msg!.text).toContain(code);
+    expect(msg!.html).toContain(code);
+
+    // …and it is the code Better Auth STORED, not one this hook invented. The stored value is
+    // ciphertext (server.ts, `storeOTP: "encrypted"`), so this reads it back through the
+    // library's own decrypt — which is also the proof the row is not holding the code in the
+    // clear: this call throws outright when the plugin is configured to hash, and would return
+    // the digits unchanged if it were configured to store them plainly.
+    await expect(
+      auth.api.getVerificationOTP({ query: { email: SIGNIN_ADDR, type: "sign-in" } }),
+    ).resolves.toEqual({ otp: code });
+    const row = await prisma.betterAuthVerification.findFirst({
+      where: { identifier: `sign-in-otp-${SIGNIN_ADDR}` },
+    });
+    expect(row?.value).not.toContain(code);
+
+    // NOTHING TO CLICK. A code email with a link in it is the shape phishing copies.
+    expect(hrefsIn(msg!.html!)).toEqual([]);
+    expect(msg!.text).not.toMatch(/https?:\/\//);
+
+    expect(msg!.html).toContain("This code is valid for 15 minutes.");
+    expect(msg!.text).toContain("This code is valid for 15 minutes.");
+    expect(msg!.html).not.toContain("1 hour");
+    expect(msg!.subject).toBe("Your Fikirtive sign-in code");
   });
 });
 
 afterAll(async () => {
   __configureAuthEmailQueueForTests({});
   try {
-    await prisma.betterAuthVerification.deleteMany({ where: { value: { contains: "p939-" } } });
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: "p939-" } },
+    });
   } catch {
     /* best-effort cleanup */
   }
