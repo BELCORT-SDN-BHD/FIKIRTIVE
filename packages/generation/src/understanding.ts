@@ -239,8 +239,10 @@ export class ArkUnderstandingProvider implements UnderstandingProvider {
 }
 
 /**
- * 端口工厂。**默认 mock**,和 `createGenerationProvider` 同一条安全默认:
- * 配错的生产环境不会安静地开始烧钱,开发/测试永远不碰网络。
+ * 端口工厂。**默认 mock**:配错的环境不会安静地开始烧钱,开发/测试永远不碰网络。
+ * (`createGenerationProvider` 从前是同一条默认,C1b ① 之后已经不是 —— 它在生产上缺配置会
+ * 直接拒绝并退款。这里保留默认 mock 是因为钱的形状不同:素材理解**商家一分钱不付**,
+ * 没有预留可退,也就没有「悄悄卖假货」这个失败模式。)
  *
  * 复用 `GENERATION_PROVIDER=byteplus` 与同一把 key:理解走的是同一个供应商账户,
  * 多开一个开关只会多一种「两个变量对不上」的配置漂移。总开关是产品侧的
