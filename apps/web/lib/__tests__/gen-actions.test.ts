@@ -2019,7 +2019,20 @@ describe("startGen —— 审批身份在花钱之前定死(且只认卡)", () =
     cardApproving([APPROVED]);
     db.entityFindMany.mockResolvedValue([{ ...APPROVED, name: INJECTION }]);
     const r = await startCoworkGen(cowork);
-    expect(r).toEqual({ error: "One of these elements was renamed since this plan — ask for it again to get a fresh one." });
+    expect(r).toEqual({ error: "One of these elements was renamed or changed type since this plan — ask for it again to get a fresh one." });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  // beta bug 4 —— 类型开成可改之后,这道闸多了一条真会被走到的路:商家批完卡才发现
+  // 那只瓶子被存成了人,回 Library 改正类型,再回来点这张旧卡。漂移闸从第一天起就同时
+  // 比类型,所以拒付本来就对;要钉的是**那句话现在说得出这个原因**。
+  it("批准之后改了类型 → 同样拒付,而且话里说得出「改了类型」", async () => {
+    cardApproving([APPROVED]);
+    db.entityFindMany.mockResolvedValue([{ ...APPROVED, type: "CHARACTER" }]);
+    const r = await startCoworkGen(cowork);
+    expect(r).toEqual({ error: "One of these elements was renamed or changed type since this plan — ask for it again to get a fresh one." });
     expect(db.genJobCreate).not.toHaveBeenCalled();
     expect(db.reserveCredits).not.toHaveBeenCalled();
     expect(mockBossSend).not.toHaveBeenCalled();
@@ -2039,7 +2052,7 @@ describe("startGen —— 审批身份在花钱之前定死(且只认卡)", () =
     cardApproving([APPROVED]);                                   // 卡面写的是 A
     db.entityFindMany.mockResolvedValue([{ ...APPROVED, name: INJECTION }]); // 活行已是 B
     const r = await startCoworkGen({ ...cowork, approvedEntities: [FORGED] }); // 提交 B
-    expect(r).toEqual({ error: "One of these elements was renamed since this plan — ask for it again to get a fresh one." });
+    expect(r).toEqual({ error: "One of these elements was renamed or changed type since this plan — ask for it again to get a fresh one." });
     expect(db.genJobCreate).not.toHaveBeenCalled();
     expect(db.reserveCredits).not.toHaveBeenCalled();
     expect(mockBossSend).not.toHaveBeenCalled();

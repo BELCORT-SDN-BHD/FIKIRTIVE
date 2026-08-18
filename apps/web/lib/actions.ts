@@ -460,22 +460,76 @@ export async function createEntity(formData: FormData) {
   });
 }
 
+/** 换类型时,这一单在飞的生成算「还没跑到读类型那一步」的时限。
+ *
+ *  与 refgen-actions 的 STALE_MS 同一个数字、同一个理由:worker 死在半路的任务会永远停在
+ *  QUEUED,而一道没有时限的闸会把「改错类型」变成**永久改不回来** —— 那正是这张票要修的病。
+ *  过了这个窗口的在飞任务按已废弃处理,不再挡住商家纠正标签。 */
+const ENTITY_TYPE_INFLIGHT_MS = 15 * 60 * 1000;
+
 export async function updateEntity(
   entityId: string,
-  fields: { name?: string; notes?: string; negativeConstraints?: string },
+  fields: { name?: string; notes?: string; negativeConstraints?: string; type?: string },
 ): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async () => {
     const { ownerId } = gate;
-    const data: Record<string, string> = {};
+    const data: { name?: string; notes?: string; negativeConstraints?: string; type?: EntityType } = {};
     if (fields.name !== undefined && fields.name.trim()) data.name = fields.name.trim();
     if (fields.notes !== undefined) data.notes = fields.notes;
     if (fields.negativeConstraints !== undefined) data.negativeConstraints = fields.negativeConstraints;
+    // beta bug 4 —— 类型从「建好就再也改不了」改成可改(Founder 方案 A)。录屏里那只瓶子被
+    // 标成了人,送进引擎的机器指令就是 `Define the person in <Image_1>`,而商家没有任何改
+    // 正的路 —— 只能删掉重建,连同它的参考照一起丢。
+    let typeFrom: EntityType | null = null;
+    if (fields.type !== undefined) {
+      if (!ENTITY_TYPES.has(fields.type)) return { error: "Unknown entity type." };
+      const current = await prisma.entity.findFirst({
+        where: { id: entityId, ownerId, deletedAt: null },
+        select: { type: true },
+      });
+      if (!current) return { error: "Entity not found." };
+      if (current.type !== fields.type) {
+        // 唯一一处真会被「飞行中改类型」弄坏的地方:worker 那道**只对 CHARACTER 生效**的
+        // 定锚闸(apps/worker/src/jobs/gen.ts,`liveEntity.type === "CHARACTER"`)读的是活行类型。CHARACTER 改成别的,
+        // 这道闸就在一单已经排上队的作业底下自己消失,而它挡的正是「没有参考照的角色滑
+        // 进一次没有条件图的付费调用」—— 守望者是 fail-OPEN 的,这道闸是最后一层。钱的
+        // 事一律 fail closed,所以这一刻不许改。
+        //
+        // 只挡 GenJob,**不挡 RefGenJob**:参考图那条路在建单那一刻就把整句提示词冻在
+        // `RefGenJob.prompt` 上,它的 worker(apps/worker/src/jobs/refgen.ts)从头到尾
+        // 一次都没读过 `entity.type` —— 挡它属于凭空立规矩,不是防护。
+        //
+        // 带审批快照的 GenJob 本来就已经被两道现成的闸护住,这里不重复:startGen 的
+        // `approvedEntityDrift` 在花钱之前就会因为类型变了而拒绝(gen-actions.ts),
+        // worker 的编号句也只认快照里的类型(`approved?.type ?? liveEntity.type`)。这道闸补的是**没有快照**的
+        // 那些单 —— 它们的类型是 worker 现读的。
+        const inFlight = await prisma.genJob.findFirst({
+          where: {
+            ownerId,
+            status: { in: ["QUEUED", "GENERATING"] },
+            updatedAt: { gte: new Date(Date.now() - ENTITY_TYPE_INFLIGHT_MS) },
+            entityIds: { has: entityId },
+          },
+          select: { id: true },
+        });
+        if (inFlight) {
+          return { error: "A generation using this is still running — wait for it to finish, then change the type." };
+        }
+        data.type = fields.type as EntityType;
+        typeFrom = current.type;
+      }
+    }
     if (Object.keys(data).length === 0) return { ok: true };
     const { count } = await prisma.entity.updateMany({ where: { id: entityId, ownerId, deletedAt: null }, data });
     if (count === 0) return { error: "Entity not found." };
-    await logAction(ownerId, "entity.update", null, { entityId, fields: Object.keys(data) });
+    await logAction(ownerId, "entity.update", null, {
+      entityId,
+      fields: Object.keys(data),
+      // 每个东西都要有迹可循:类型换过之后,老作品为什么带着另一个名词,只有这一行答得出来。
+      ...(typeFrom ? { typeFrom, typeTo: data.type } : {}),
+    });
     revalidatePath("/", "layout");
     return { ok: true };
   });

@@ -14,7 +14,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
+import { ChangeEntityTypeDialog } from "./ChangeEntityTypeDialog";
 import { ExitLink } from "@/components/exits/Exits";
+import type { EntityTypeDTO } from "@/lib/types";
 import { BRAND_MEMORY_HREF } from "@/lib/exits";
 import {
   type StuffFilter,
@@ -96,6 +98,7 @@ export function StuffLibrary({
   mode,
   onPick,
   onRename,
+  onChangeType,
   onDelete,
   onSetProductImage,
   onOpenGeneration,
@@ -106,6 +109,10 @@ export function StuffLibrary({
   mode: "library" | "picker";
   onPick?: (assetId: string) => void;
   onRename?: (entityId: string, name: string) => void;
+  /** beta bug 4 — correct a saved element's kind (a bottle saved as a person). Resolves to an
+   *  error message for the dialog to show, or null on success: the action refuses the change while
+   *  a generation using this element is still running, and that refusal has to be readable. */
+  onChangeType?: (entityId: string, type: EntityTypeDTO) => Promise<string | null>;
   onDelete?: (entityId: string) => void;
   onSetProductImage?: (assetId: string) => void;
   onOpenGeneration?: (generationId: string, projectId: string) => void;
@@ -120,6 +127,8 @@ export function StuffLibrary({
   const [filter, setFilter] = useState<StuffFilter>(mode === "picker" ? "images" : "all");
   const [search, setSearch] = useState("");
   const [renameTarget, setRenameTarget] = useState<StuffItem | null>(null);
+  // beta bug 4 — which element's kind the merchant is correcting.
+  const [typeTarget, setTypeTarget] = useState<StuffItem | null>(null);
   // #934 — a click here used to delete immediately. Route it through a confirmation
   // instead, so an accidental click can't take an item out of Library unnoticed.
   const [deleteTarget, setDeleteTarget] = useState<StuffItem | null>(null);
@@ -321,6 +330,19 @@ export function StuffLibrary({
                         Rename
                       </Button>
                     )}
+                    {isEntity && item.entityType && onChangeType && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="pointer-events-auto w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTypeTarget(item);
+                        }}
+                      >
+                        Change type
+                      </Button>
+                    )}
                     {isEntity && onDelete && (
                       <Button
                         size="sm"
@@ -365,6 +387,16 @@ export function StuffLibrary({
         onSubmit={async (name) => {
           if (!renameTarget?.entityId) return;
           await onRename?.(renameTarget.entityId, name);
+        }}
+      />
+      <ChangeEntityTypeDialog
+        open={!!typeTarget}
+        onOpenChange={(open) => { if (!open) setTypeTarget(null); }}
+        itemLabel={typeTarget?.label ?? ""}
+        currentType={typeTarget?.entityType ?? "PRODUCT"}
+        onSubmit={async (type) => {
+          if (!typeTarget?.entityId) return null;
+          return (await onChangeType?.(typeTarget.entityId, type)) ?? null;
         }}
       />
       <AlertDialog open={!!deleteTarget} onOpenChange={(next) => { if (!next) setDeleteTarget(null); }}>

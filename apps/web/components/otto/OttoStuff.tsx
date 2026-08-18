@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, Plus, Film, ImageIcon, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { EntityDTO } from "@/lib/types";
+import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
 import type { AdJobItem, HistoryThumb } from "@/lib/data";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import { updateEntity, softDeleteEntity } from "@/lib/actions";
@@ -188,6 +188,21 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
     }
   }
 
+  /** beta bug 4 — correct a saved element's kind. Optimistic like the rename beside it, but the
+   *  failure is NOT silent: the action refuses while a generation using this element is running,
+   *  and the merchant has to read why nothing changed, so the message goes back to the dialog. */
+  async function handleChangeType(entityId: string, type: EntityTypeDTO): Promise<string | null> {
+    const snapshot = entityList.find((e) => e.id === entityId);
+    if (!snapshot || snapshot.type === type) return null;
+    setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, type } : e)));
+    const res = await updateEntity(entityId, { type });
+    if ("error" in res) {
+      setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, type: snapshot.type } : e)));
+      return res.error;
+    }
+    return null;
+  }
+
   async function handleDelete(entityId: string) {
     const snapshot = entityList.find((e) => e.id === entityId);
     setEntityList((cur) => cur.filter((e) => e.id !== entityId));
@@ -254,6 +269,7 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
           items={items}
           mode="library"
           onRename={handleRename}
+          onChangeType={handleChangeType}
           onDelete={handleDelete}
           onSetProductImage={(assetId) => setChooseProductFor(assetId)}
           onOpenGeneration={(generationId, itemProjectId) => setDetailFor({ generationId, projectId: itemProjectId })}

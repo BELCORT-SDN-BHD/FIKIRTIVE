@@ -680,7 +680,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       });
       const drifted = approvedEntityDrift(approvedEntities, live);
       if (drifted.length > 0) {
-        return { error: "One of these elements was renamed since this plan — ask for it again to get a fresh one." };
+        // beta bug 4 —— 这句话以前只说「renamed」,而 `approvedEntityDrift` 从第一天起就
+        // **同时**比名字和类型。类型当时改不了,所以那句话碰巧没说错过;方案 A 把类型开成
+        // 可改之后,商家最常撞上这道闸的原因恰恰是刚刚改过类型,而屏幕上写着「被改名了」。
+        return { error: "One of these elements was renamed or changed type since this plan — ask for it again to get a fresh one." };
       }
       frozenEntities = approvedEntities;
     }

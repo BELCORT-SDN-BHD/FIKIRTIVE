@@ -130,7 +130,8 @@ export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
 // #774 U2 —— 参考图编号(官方句式 `Define … in <Image_N> as <Subject_N>`)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** @元素的四种类型(= `Entity.type` 枚举)。四选一,没有写入口能改它。 */
+/** @元素的四种类型(= `Entity.type` 枚举)。**四选一** —— beta bug 4 起商家可以改它
+ *  (`updateEntity`),但改到的仍只能是这四个值之一,一个字的自由文本都塞不进来。 */
 export type ReferenceSlotType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
 
 /**
@@ -250,7 +251,8 @@ const slotName = (n: string) => (n.length > SLOT_NAME_MAX ? n.slice(0, SLOT_NAME
  * ── 名字从哪里来 ─────────────────────────────────────────────────────────
  * 只从审批快照来。`name` 是 `null` 时(旧任务行、或这个元素没进审批载荷)照样编号,
  * 只是不写名字 —— 编号本身是结构事实,推不出自由文本,所以这条降级不丢安全也不丢对位。
- * 类型是四选一的枚举、建好之后没有写入口,结构上写不进指令,因此它可以来自活行。
+ * 类型是四选一的枚举 —— beta bug 4 起商家能改它,但改到的永远是那四个值之一,结构上
+ * 写不进指令,因此它仍然可以来自活行。
  */
 export function referenceMapLines(slots: ReferenceSlot[]): string[] {
   const firstSlotOf = new Map<string, number>();
