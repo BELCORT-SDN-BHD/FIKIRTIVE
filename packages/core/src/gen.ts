@@ -575,9 +575,12 @@ export const genRequest = z
     model: z.string().min(1).max(40).default("seedream"),
     // REQUIRED double-submit key — every spend request must carry one so it ALWAYS
     // flows through the dedup machinery (startGen pre-check + the partial-unique index);
-    // a keyless request could otherwise bypass dedup and double-charge. Callers use
-    // tpl:<templateId>:<runId>, per-click keys for direct Studio actions, cowork:<cardId>
-    // (exactly-once-ever), or batch:<logical hash>:attempt:<attempt hash>. Never omit it.
+    // a keyless request could otherwise bypass dedup and double-charge. Every family is
+    // DERIVED ON THE SERVER from the merchant's intent, never minted per click by a browser:
+    // asset:<op>:<intent hash> (detail panel + templates), canvas:<action hash>,
+    // cowork:<cardId> (exactly-once-ever), batch:<logical hash>:attempt:<attempt hash>.
+    // A per-click or wall-clock key is the double-charge bug itself — the same intent
+    // resubmitted (reload, second tab, double click) must produce the SAME key. Never omit it.
     idempotencyKey: z.string().min(1).max(80),
     // cowork tag: when set, this gen belongs to a Cowork thread — startGen persists it
     // onto GenJob.threadId so the worker can tag the Generation and the studio views can

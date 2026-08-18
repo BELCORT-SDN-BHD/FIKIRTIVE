@@ -57,14 +57,18 @@ import {
   campaignApprovalGateRefusal,
 } from "./campaign-approval-lock";
 import {
+  assetActionKey,
   canvasActionKey,
   factoryHistoryDisposition,
   factoryMaterialMatches,
   factoryReusedPrior,
   normalizeFactoryMaterial,
+  parseAssetActionKey,
   parseCanvasActionKey,
   parseFactoryAttemptKey,
+  ASSET_ACTION_OPS,
   FACTORY_HISTORY_SELECT,
+  type AssetActionOp,
   type CanvasActionKey,
   type FactoryAttemptKey,
   type FactoryHistoryRow,
@@ -239,6 +243,9 @@ function canvasHistoryVerdict(
 }
 
 const CANVAS_ACTION_ID_MAX_LENGTH = 128;
+/** 资产动作锚点(这一次动作作用在哪一张图上)的长度上限 —— 与画布 actionId 同一个量级。
+ *  它只进摘要,不进键面,所以长度不影响键长;设界只是不收一个明显不是 id 的东西。 */
+const ASSET_ANCHOR_ID_MAX_LENGTH = 128;
 const TRUSTED_CANVAS_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
 /** #645 T4(判官 r1 P0-2):资产详情页那条付费路的价格绑定,与 Canvas/Otto 同一套
  *  「商家看到的数字是授权的一部分」机制,只是各自的补救话术不同。 */
@@ -303,30 +310,54 @@ export async function startCanvasGen(raw: unknown): Promise<StartGenResult> {
 }
 
 /**
- * 资产详情页的付费入口(#645 T4,判官 r1 P0-2)。
+ * 资产详情页 / 模板弹窗的付费入口(#645 T4,判官 r1 P0-2)。
  *
- * 详情页先把价格显示给商家看,再按那个价扣钱 —— 中间隔着一次网络往返和一个可能开了
- * 很久的面板。价格若在这期间变了(定价调整,或商家自己在同一个面板里把片子从 5 秒改到
- * 12 秒),旧路是「按旧价签字、按新价扣款」。Canvas / Otto / Campaign 三条路都有价格
- * 重核,唯独这条没有,所以这里补上**同一套**绑定:面板把屏幕上那个数字带上,服务端
- * 自己算一遍,不符就在 create/reserve 之前拒绝。
+ * 两件事在这里一起成立:
  *
- * 与 Canvas 入口的唯一区别:详情页自己出幂等键(regen-/anim-/edit- 前缀 + 时间戳),
- * 所以这里不代生成键,只做价格绑定。
+ * ① **价格绑定。** 面板先把价格显示给商家看,再按那个价扣钱 —— 中间隔着一次网络往返和
+ *    一个可能开了很久的面板。价格若在这期间变了(定价调整,或商家自己在同一个面板里把片子
+ *    从 5 秒改到 12 秒),旧路是「按旧价签字、按新价扣款」。所以面板把屏幕上那个数字带上,
+ *    服务端自己算一遍,不符就在 create/reserve 之前拒绝。
+ *
+ * ② **幂等键由服务端算,调用方一个字都不许出。** 这条路过去自己出键
+ *    (`regen-<genId>-<Date.now()>`),而带时间戳的键等于**同一个意图的两次提交拿到两个
+ *    不同的身份**:刷新、第二个标签页、一次双击 —— 服务端与数据库的去重都看不见那是重放,
+ *    第二次 reserveCredits 照跑,商家为同一件东西付两次钱。挡在中间的只有面板自己的一个
+ *    React ref,它随页面一起消失。现在与 `startCanvasGen` 同一条:调用方交出的是**动作
+ *    类型 + 锚点 + 请求体**,键由 `assetActionKey` 从这三样算出来 —— 同一个意图 ⇒ 同一个键
+ *    ⇒ 落到既有的「活跃键复用」那一支,一分钱不多收;改了提示词 ⇒ 另一个键 ⇒ 新的一单,
+ *    照收。
+ *
+ * 终态之后的重试是**新的一次购买**,而且它自然成立:活跃唯一索引(以及上面那两处复用查询)
+ * 只认 QUEUED / GENERATING,DONE / FAILED / CANCELLED 的旧行不挡路。
  */
 export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return { error: "That generation request is out of bounds." };
   }
-  const { expectedCredits, ...request } = raw as Record<string, unknown>;
+  const record = raw as Record<string, unknown>;
+  // 与 startCanvasGen 逐字同一条:这一族的键只可能由服务端算出来,所以带了键的请求
+  // 一律出界 —— 不是「忽略它」,是拒收,免得调用方以为自己那份键起了作用。
+  if (Object.prototype.hasOwnProperty.call(record, "idempotencyKey")) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const { expectedCredits, assetOp, assetAnchorGenerationId, ...request } = record;
   if (
     typeof expectedCredits !== "number" ||
     !Number.isFinite(expectedCredits) ||
-    expectedCredits <= 0
+    expectedCredits <= 0 ||
+    typeof assetOp !== "string" ||
+    !(ASSET_ACTION_OPS as readonly string[]).includes(assetOp) ||
+    typeof assetAnchorGenerationId !== "string" ||
+    assetAnchorGenerationId.length === 0 ||
+    assetAnchorGenerationId.length > ASSET_ANCHOR_ID_MAX_LENGTH
   ) {
     return { error: "That generation request is out of bounds." };
   }
-  const trustedRequest = { ...request };
+  const trustedRequest = {
+    ...request,
+    idempotencyKey: assetActionKey(assetOp as AssetActionOp, assetAnchorGenerationId, request).key,
+  };
   TRUSTED_ASSET_REQUESTS.set(trustedRequest, { expectedCredits });
   return startGen(trustedRequest);
 }
@@ -460,6 +491,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     }
     const canvasAction = trustedCanvasKey ? parsedCanvasAction : null;
     if (trustedCanvasKey && !canvasAction) {
+      return { error: "That generation request is out of bounds." };
+    }
+    // 资产动作族与画布族同一条保留纪律:`asset:` 形状的键只可能由 `startAssetGen` 算出来。
+    // 调用方自带一个 —— 哪怕形状正确 —— 就是在自己挑一个身份,而挑身份正是双扣的入口;
+    // 反过来,带着可信资产记录却没有一个算得出来的键,说明这条路被绕开了。两种都出界,$0。
+    const assetAction = parseAssetActionKey(idempotencyKey);
+    if ((assetAction !== null) !== (trustedAssetRequest !== undefined)) {
       return { error: "That generation request is out of bounds." };
     }
     const coworkCardId = idempotencyKey?.startsWith("cowork:")

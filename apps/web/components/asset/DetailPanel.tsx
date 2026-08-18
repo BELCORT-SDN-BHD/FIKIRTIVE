@@ -284,8 +284,9 @@ export default function DetailPanel({
     // ~8 min at 2.5s — mirrors the canvas poll() window (useCanvasGen.ts). Video gens can
     // legitimately exceed the old ~4-min cap; the worker settles late jobs regardless of this
     // client poll. A client-side give-up is a "timeout" (still working), NOT a "failed": surfacing
-    // it as failed invites a retry, and regen/animate/edit mint a fresh idempotencyKey per click →
-    // a second real charge on a job that's still running.
+    // it as failed invites a retry, and a retry while the job is still running is a wasted trip —
+    // the server-derived key makes it land back on the SAME job (no second charge), but the button
+    // should still tell the truth about what is happening.
     for (let i = 0; i < 192; i++) {
       if (cancelledRef.current) return "timeout";
       const job = await getGenJob(jobId);
@@ -337,7 +338,11 @@ export default function DetailPanel({
         kind: "image",
         model: models.image,
         ...(aspectRatio ? { aspectRatio } : {}),
-        idempotencyKey: `regen-${generationId}-${Date.now()}`,
+        // 幂等键由服务端从「动作 + 这一次锚在哪张图上 + 请求体」算出来(gen-actions 的
+        // startAssetGen)。这一面一个键都不出:带时间戳的键让刷新、第二个标签页、一次双击
+        // 各自变成一次新的付费动作。
+        assetOp: "regen",
+        assetAnchorGenerationId: generationId,
       });
       if ("error" in result) {
         setRegenStatus("failed");
@@ -353,9 +358,10 @@ export default function DetailPanel({
       if (!cancelledRef.current) {
         setRegenStatus(status);
         // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
-        // "still processing" state so the control never reverts to an inviting "Regenerate" whose
-        // re-click mints a NEW idempotencyKey = a second charge. done/failed reset to idle (a real
-        // failure is refunded, so retrying it is safe).
+        // "still processing" state so the control never reverts to an inviting "Regenerate" for
+        // work that is already under way. This is honesty, not the money guard: since the key is
+        // derived server-side from the intent, a re-click while that job is active is reused, not
+        // re-charged. done/failed reset to idle (a real failure is refunded, so retrying is safe).
         if (status !== "timeout") {
           setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
         }
@@ -394,7 +400,9 @@ export default function DetailPanel({
         resolution: spec.resolution,
         audio: vd.audio,
         ...(spec.aspectRatio ? { aspectRatio: spec.aspectRatio } : {}),
-        idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
+        // 键由服务端算 —— 见 handleRegen 那一处的注释。
+        assetOp: "animate",
+        assetAnchorGenerationId: selectedGenId,
       });
       if ("error" in result) {
         if (!cancelledRef.current) setAnimStatus("failed");
@@ -480,7 +488,10 @@ export default function DetailPanel({
         // variant), so a paid "edit this" result relates to the displayed image instead of
         // being an unconditioned fresh generation. Owned id resolved server-side (D19).
         sourceGenerationId: selectedGenId,
-        idempotencyKey: `edit-${selectedGenId}-${Date.now()}`,
+        // 键由服务端算 —— 见 handleRegen 那一处的注释。改一个字的编辑就是另一个意图,
+        // 摘要覆盖了提示词与 @元素,所以它自然拿到另一个键。
+        assetOp: "edit",
+        assetAnchorGenerationId: selectedGenId,
       });
       if ("error" in result) {
         if (!cancelledRef.current) setEditStatus("failed");
