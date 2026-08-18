@@ -9,13 +9,18 @@
  * 白标:内部 kind → 供应商模型 id 的映射只住在这个文件里(和 IMAGE_MODEL_MAP /
  * VIDEO_MODEL_MAP 同一条纪律),错误信息里不出现供应商名。
  *
- * 未核实的地方,老实写在这里(与本仓「不确认就不发明参数」的规矩一致):
- *   · 模型 id `seed-2-0-mini` 取自票面。本仓其它两台引擎的 id 都是 arkcli 只读核实过的
- *     **带版本**形态,这一台还没核过 —— 部署窗口必须先 `arkcli models get` 核一次。
- *     核不到就让它照下面的 fail-closed 抛错,不要猜一个版本号补上去。
- *   · 视频输入的 `fps` 抽帧参数、`detail: "low"` 与 `response_format: json_schema`
- *     都按官方文档形状发出;账户上的参数目录当时是空的,同样在部署窗口实测一次。
- * 这两条都不挡本票:mock 端口下整条链路是完整的,而 key 没配时工厂本来就回 mock。
+ * ── 2026-08-18 实测(本账户,只读核实)───────────────────────────────────────
+ * 上一版这里写的是「模型 id 取自票面、还没核过」,而那句老实话后来**没人去核**:
+ * 裸别名 `seed-2-0-mini` 在本账户不解析,生产两天里每一次理解请求都是 404。所以这一段
+ * 现在写的是核实过的事实,不是待办:
+ *   · 模型 id = `seed-2-0-mini-260428`(**带版本**,和本仓另外两台引擎同一条形态纪律)。
+ *     裸别名实测 404;带版本实测 200,`response_format: json_schema` 被接受,六张真图
+ *     六次读对。
+ *   · `detail: "low"` **被尊重**:同一张图 low 记 642 prompt token、high 记 1304 ——
+ *     像素闸那一段假设的「万一被忽略」没有发生(闸仍然留着,它是 belt)。
+ *   · 这一族模型**默认开思考**,而思考按输出 token 计费:开着比关着贵约 4 倍、慢约 4 倍,
+ *     准确率还更低(读一张菜单它会开始自我辩论)。所以请求体里显式 `thinking.disabled` ——
+ *     那不是省钱的微调,是这条链路的正确档位。
  */
 import {
   UNDERSTANDING_CAPS,
@@ -31,8 +36,16 @@ import {
 import { ARK_BASE } from "./byteplus.js";
 import { providerRequestGate } from "./provider-concurrency.js";
 
-/** 内部代号 → 供应商基础模型 id。缺映射 = 立刻抛(fail closed),绝不猜。 */
-const UNDERSTANDING_MODEL_MAP: Record<string, string> = { [UNDERSTANDING_MODEL]: "seed-2-0-mini" };
+/**
+ * 内部代号 → 供应商基础模型 id。缺映射 = 立刻抛(fail closed),绝不猜。
+ *
+ * **带版本号**,和 IMAGE_MODEL_MAP / VIDEO_MODEL_MAP 一样(2026-08-18 只读核实:裸别名
+ * `seed-2-0-mini` 在本账户 404,`seed-2-0-mini-260428` 200)。别名看起来更耐久,实际上
+ * 是一个没人验过的假设 —— 而它失败的形状是 404,和「我们发错了参数」长得一模一样。
+ */
+const UNDERSTANDING_MODEL_MAP: Record<string, string> = {
+  [UNDERSTANDING_MODEL]: "seed-2-0-mini-260428",
+};
 
 export interface UnderstandingRequest {
   kind: UnderstandingKind;
@@ -71,6 +84,69 @@ export function unreadableMediaError(message: string): Error {
 
 export function isUnreadableMediaError(e: unknown): boolean {
   return e instanceof Error && (e as { unreadable?: boolean }).unreadable === true;
+}
+
+/**
+ * **我方**的请求或配置坏了(模型 id 不存在、key 不对、schema 被拒)——
+ * 商家的文件一点问题都没有,所以它永远不许变成一行「这个文件读不了」的终态。
+ *
+ * 这是本次事故的形状:一个没核过的模型 id 让每一次调用都 404,而 404 之前被归进
+ * 「这份素材读不了」那一类,于是每一个商家的每一份好文件被逐个永久判死。
+ */
+export function providerConfigError(message: string): Error {
+  return Object.assign(new Error(message), { providerConfig: true as const });
+}
+
+export function isProviderConfigError(e: unknown): boolean {
+  return e instanceof Error && (e as { providerConfig?: boolean }).providerConfig === true;
+}
+
+/**
+ * 一次失败到底是**谁**坏了。三答案,三条处置路线(worker 的 handleUnderstand):
+ *   `media`     这份字节读不了 ⇒ 终态 FAILED(重试同一份字节永远同一个答案)
+ *   `config`    我们的请求/配置坏了 ⇒ **绝不写终态**,重试到上限后进可恢复的暂停态
+ *   `transient` 供应商那边这会儿不行 ⇒ 普通重试
+ */
+export type UnderstandingFailureClass = "media" | "config" | "transient";
+
+/**
+ * 只有这几句措辞**证明**问题出在这份字节上。名单窄是刻意的,因为两个方向的代价不对称:
+ * 把 config 错判成 media,一个配置错误会把每个商家的每一份好文件逐个永久判死(本次事故);
+ * 把 media 错判成 config,代价只是那一份文件多跑几次 $0 的重试,然后停在一个可恢复的
+ * 暂停态里 —— 没有任何东西被永久毁掉。所以「证据不足」这一边必须倒向 config。
+ */
+const MEDIA_FAILURE_MARKERS = [
+  "unsupported media type",
+  "invalid image",
+  "invalid video",
+  "image format",
+  "video format",
+  "decode",
+  "corrupt",
+  "truncated",
+] as const;
+
+/**
+ * 失败分类的**唯一**判据。显式函数 + 逐形状测试,不是一个 status code 的一刀切
+ * (上一版就是 `400 || 415 || 422 ⇒ 这份素材读不了`,而 400 同样是「我们发错了」最常见的
+ * 回答 —— 实测 seed-1-6-flash 对我们的 maxLength schema 就回 400)。
+ *
+ * 判据表(逐行都有测试):
+ *   | 形状                          | 归类       | 为什么                                   |
+ *   |-------------------------------|-----------|------------------------------------------|
+ *   | 408 / 429 / 5xx               | transient | 供应商侧或限流,和这份文件、这份配置都无关     |
+ *   | 415                           | media     | HTTP 语义就是「这个媒体类型我不收」           |
+ *   | 正文命中 MEDIA_FAILURE_MARKERS  | media     | 供应商指名道姓说这份字节读不了               |
+ *   | 其余 4xx(400/401/403/404/422) | config    | **证据不足的一边** —— 见上,倒向「我方坏」    |
+ *   | 其它                          | transient | 不该发生;不确定就不写终态                   |
+ */
+export function classifyUnderstandingFailure(status: number, detail: string): UnderstandingFailureClass {
+  if (status === 408 || status === 429 || status >= 500) return "transient";
+  if (status === 415) return "media";
+  const body = (detail || "").toLowerCase();
+  if (MEDIA_FAILURE_MARKERS.some((marker) => body.includes(marker))) return "media";
+  if (status >= 400) return "config";
+  return "transient";
 }
 
 /**
@@ -168,6 +244,10 @@ export class ArkUnderstandingProvider implements UnderstandingProvider {
       max_tokens: caps.maxOutputTokens,
       // 温度压到底:同一张图两次读出两套产品行,商家看到的是「Otto 记错了」。
       temperature: 0,
+      // **显式关掉思考。** 这一族模型默认开着,而思考按输出 token 计费 —— 2026-08-18 实测:
+      // 开着比关着贵约 4 倍、慢约 4 倍,读出来还更不准。这条链路要的是「看图说事实」,
+      // 不是让模型对着一张菜单自我辩论。
+      thinking: { type: "disabled" },
       messages: [
         {
           role: "user",
@@ -201,10 +281,12 @@ export class ArkUnderstandingProvider implements UnderstandingProvider {
       // 日志里带 status 与截断后的 detail,但**不带 mediaUrl**(presigned URL 带签名)。
       // detail 只进服务器日志,不进抛出的 message —— 那条 message 会被 worker 落库,
       // 而供应商的回话里可能带模型名。
-      console.error("understanding request failed:", { kind: req.kind, status: res.status, detail });
-      // 400/415/422 = 这段素材它读不了。重试同一份字节永远是同一个答案 —— 终止,不排队。
-      if (res.status === 400 || res.status === 415 || res.status === 422) {
-        throw unreadableMediaError(`understanding provider rejected the file (${res.status})`);
+      const failure = classifyUnderstandingFailure(res.status, detail);
+      console.error("understanding request failed:", { kind: req.kind, status: res.status, failure, detail });
+      // 分三条路,判据在 classifyUnderstandingFailure(那张表就是这三行的全部理由)。
+      if (failure === "media") throw unreadableMediaError(`understanding provider rejected the file (${res.status})`);
+      if (failure === "config") {
+        throw providerConfigError(`understanding request was refused before the file was read (${res.status})`);
       }
       throw new Error(`understanding request failed (${res.status})`);
     }

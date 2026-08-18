@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => {
 
   const presignedGet = vi.fn();
   const understand = vi.fn();
+  /** 报警管道。最终失败是 `return null`(不抛),所以只有它能证明那句话真的说出去了。 */
+  const captureException = vi.fn();
 
   const prisma = {
     assetUnderstanding,
@@ -56,7 +58,7 @@ const mocks = vi.hoisted(() => {
     prisma,
     assetUnderstanding, asset, brandRecord, memory,
     reserveCredits, settleCredits, refundReservation,
-    presignedGet, understand,
+    presignedGet, understand, captureException,
   };
 });
 
@@ -74,10 +76,12 @@ vi.mock("@fikirtive/db/principal", () => ({
 }));
 
 vi.mock("../storage.js", () => ({ storage: { presignedGet: mocks.presignedGet } }));
+vi.mock("@sentry/node", () => ({ captureException: mocks.captureException }));
 
-import { emptyUnderstandingResponseError, unreadableMediaError } from "@fikirtive/generation";
-import { understandingCostUsd } from "@fikirtive/core";
+import { emptyUnderstandingResponseError, providerConfigError, unreadableMediaError } from "@fikirtive/generation";
+import { UNDERSTANDING_PROVIDER_PAUSED, understandingCostUsd } from "@fikirtive/core";
 import {
+  UNDERSTAND_PAUSED_RETRY_MS,
   UNDERSTAND_SCAN_BATCH,
   handleUnderstand,
   scanAssetsNeedingUnderstanding,
@@ -98,6 +102,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.ASSET_UNDERSTANDING;
   delete process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD;
+  delete process.env.SENTRY_DSN;
   mocks.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(mocks.prisma));
   mocks.assetUnderstanding.updateMany.mockResolvedValue({ count: 1 }); // CAS 默认赢
   mocks.assetUnderstanding.count.mockResolvedValue(1);
@@ -689,6 +694,20 @@ describe("失败分类", () => {
     expect(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.status).toBe("FAILED");
   });
 
+  it("重试额度用完 ⇒ 用量跟着错误走的那一趟一并落库(不然日预算记 $0.0000 假健康)", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    // 空响应那一类走的是 unreadable 分支;这里钉的是**普通失败**那条路也把用量带出来
+    mocks.understand.mockRejectedValue(
+      Object.assign(new Error("understanding request failed (500)"), {
+        understandingUsage: { inputTokens: 2_100, outputTokens: 4 },
+      }),
+    );
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
+    const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
+    expect(last.data.status).toBe("FAILED");
+    expect(last.data).toMatchObject({ inputTokens: 2_100, outputTokens: 4 });
+  });
+
   it("落库的失败措辞里没有 presigned URL、没有供应商名", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockRejectedValue(new Error("seedream failed reading https://r2.example/obj?sig=SECRET"));
@@ -697,6 +716,102 @@ describe("失败分类", () => {
     expect(persisted).not.toContain("seedream");
     expect(persisted).not.toContain("sig=secret");
     expect(persisted).not.toContain("https://");
+  });
+});
+
+/**
+ * 2026-08-18 事故的回归组。事故的形状:一个没核过的模型 id 让每次调用 404,404 被归进
+ * 「这份素材读不了」写成 FAILED 终态,而扫描器两段都看不见 FAILED —— 于是全平台商家的
+ * 好文件被逐行永久判死,面板上一片安静。
+ *
+ * 这里钉三件事:配置类**永远不写 FAILED**、它进的是一个能被捡回来的暂停态、
+ * 以及那个不抛的吞点真的把话说给了报警管道。
+ */
+describe("我方配置坏了:文件没问题,所以一行终态都不许写", () => {
+  it("重试用完 ⇒ PAUSED,不是 FAILED", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockRejectedValue(providerConfigError("understanding request was refused (404)"));
+    await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
+
+    const statuses = mocks.assetUnderstanding.updateMany.mock.calls.map((c) => c[0].data.status);
+    expect(statuses).not.toContain("FAILED");
+    expect(statuses.at(-1)).toBe("PAUSED");
+    expectNoCreditCalls();
+  });
+
+  it("落在行上的那句话说的是我方的事,不是「这个文件读不清楚」", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockRejectedValue(providerConfigError("understanding request was refused (404)"));
+    await handleUnderstand({ understandingId: "u-1" }, 2, port);
+    const error = String(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.error);
+    expect(error).toBe(UNDERSTANDING_PROVIDER_PAUSED);
+    expect(error).not.toMatch(/couldn't be read/i);
+    // 白标:status code / 供应商措辞不进商家读得到的那一句
+    expect(error).not.toMatch(/404/);
+  });
+
+  it("还有重试额度 ⇒ 和别的失败一样退回 QUEUED 并抛(差别只在用完之后)", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockRejectedValue(providerConfigError("understanding request was refused (404)"));
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).rejects.toThrow();
+    expect(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.status).toBe("QUEUED");
+  });
+
+  it("最终那一次不抛,所以必须自己进报警管道 —— 两条吞点路都要", async () => {
+    process.env.SENTRY_DSN = "https://example.invalid/1";
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+
+    mocks.understand.mockRejectedValue(providerConfigError("understanding request was refused (404)"));
+    await handleUnderstand({ understandingId: "u-1" }, 2, port);
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+    expect(mocks.captureException.mock.calls[0]![1].tags.outcome).toBe("paused-config");
+
+    mocks.understand.mockRejectedValue(new Error("understanding request failed (500)"));
+    await handleUnderstand({ understandingId: "u-1" }, 2, port);
+    expect(mocks.captureException).toHaveBeenCalledTimes(2);
+    expect(mocks.captureException.mock.calls[1]![1].tags.outcome).toBe("failed");
+    // 标题按分类聚合,行 id 只进 payload(不然一个故障每行开一个 issue)
+    expect(String(mocks.captureException.mock.calls[1]![0].message)).not.toContain("u-1");
+    expect(mocks.captureException.mock.calls[1]![1].extra.understandingId).toBe("u-1");
+  });
+
+  it("跑通的那一趟一句报警都不发", async () => {
+    process.env.SENTRY_DSN = "https://example.invalid/1";
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+});
+
+describe("PAUSED 会被捡回来 —— 这是配置修好之后唯一的恢复路径", () => {
+  /** 扫描器三段共用一个 findMany mock,按 status 分派。 */
+  function scannerRows(byStatus: Record<string, unknown[]>) {
+    mocks.assetUnderstanding.findMany.mockImplementation(async (args: any) =>
+      (byStatus[args.where.status] ?? []).slice(0, args.take),
+    );
+  }
+
+  it("停够了的行回到 QUEUED 并在本轮被派出去", async () => {
+    scannerRows({ PAUSED: [{ id: "u-paused", ownerId: OWNER }] });
+    expect(await scanAssetsNeedingUnderstanding()).toEqual(["u-paused"]);
+    const call = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
+    expect(call.where).toMatchObject({ id: "u-paused", ownerId: OWNER, status: "PAUSED" });
+    expect(call.data.status).toBe("QUEUED");
+  });
+
+  it("只捡停够久的 —— 配置还坏着的时候不许每分钟砸同一批门", async () => {
+    scannerRows({ PAUSED: [] });
+    const now = new Date("2026-08-18T12:00:00Z");
+    await scanAssetsNeedingUnderstanding(now);
+    const pausedQuery = mocks.assetUnderstanding.findMany.mock.calls.find((c) => c[0].where.status === "PAUSED")![0];
+    expect(pausedQuery.where.updatedAt.lt.getTime()).toBe(now.getTime() - UNDERSTAND_PAUSED_RETRY_MS);
+    expect(pausedQuery.take).toBe(UNDERSTAND_SCAN_BATCH);
+  });
+
+  it("同一行被另一个副本抢走(条件式认领输了)⇒ 不派第二次", async () => {
+    scannerRows({ PAUSED: [{ id: "u-paused", ownerId: OWNER }] });
+    mocks.assetUnderstanding.updateMany.mockResolvedValue({ count: 0 });
+    expect(await scanAssetsNeedingUnderstanding()).toEqual([]);
   });
 });
 

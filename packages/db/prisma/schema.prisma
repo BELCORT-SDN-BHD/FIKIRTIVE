@@ -215,7 +215,7 @@ model AssetUnderstanding {
   organization Organization @relation(fields: [ownerId], references: [id])
   assetId      String
   kind         String   // 'image-caption' | 'doc-extract' | 'video-qa'
-  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED
+  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED | PAUSED
   /// 商家读得到的那一句(Otto 取回时说的就是它)。白标,落盘前过 redact。
   summary      String   @default("")
   /// 该 kind 的结构化产物(ImageCaptionData / DocExtractData / VideoQaData)。

@@ -13,7 +13,9 @@ import {
 import {
   ArkUnderstandingProvider,
   MockUnderstandingProvider,
+  classifyUnderstandingFailure,
   createUnderstandingProvider,
+  isProviderConfigError,
   isUnreadableMediaError,
   understandingErrorUsage,
 } from "./understanding.js";
@@ -62,6 +64,20 @@ describe("请求体:成本敏感的每一项都真的发出去了", () => {
     expect(part.image_url.detail).toBe("low");
     expect(body.response_format.json_schema.name).toBe(UNDERSTANDING_JSON_SCHEMAS["image-caption"]!.name);
     expect(body.response_format.json_schema.strict).toBe(true);
+  });
+
+  it("模型 id 带版本号 —— 裸别名在本账户 404,那正是全平台理解静默死掉的原因", async () => {
+    fetchMock.mockResolvedValue(okResponse('{"summary":"x","isDocument":false}'));
+    await new ArkUnderstandingProvider("k").understand(IMAGE_REQ);
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body);
+    expect(body.model).toMatch(/-\d{6}$/);
+  });
+
+  it("思考显式关掉 —— 默认开着比关着贵约 4 倍、慢约 4 倍,而且更不准", async () => {
+    fetchMock.mockResolvedValue(okResponse('{"summary":"x","isDocument":false}'));
+    await new ArkUnderstandingProvider("k").understand(IMAGE_REQ);
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body);
+    expect(body.thinking).toEqual({ type: "disabled" });
   });
 
   it("视频走 video_url 并带上抽帧帧率 —— 少了它,「不到一条视频 1%」当场不成立", async () => {
@@ -121,12 +137,74 @@ describe("用量与产物", () => {
   });
 });
 
+describe("classifyUnderstandingFailure —— 判据表逐行", () => {
+  // 判据表的每一行都在这里,因为这个函数决定的是「一份好文件会不会被永久判死」。
+  it.each([
+    // 供应商侧 / 限流:和这份文件、这份配置都没关系
+    [408, "timeout", "transient"],
+    [429, "rate limited", "transient"],
+    [500, "internal error", "transient"],
+    [503, "try again", "transient"],
+    // HTTP 语义写死的那一个
+    [415, "", "media"],
+    // 供应商指名道姓说这份字节读不了
+    [400, "failed to decode the image", "media"],
+    [400, "invalid image: truncated data", "media"],
+    [422, "unsupported media type", "media"],
+    // **本次事故那一行**:模型 id 不解析
+    [404, '{"error":{"code":"NotFound","message":"The model does not exist"}}', "config"],
+    // key / 权限:同样是我方
+    [401, "authentication error", "config"],
+    [403, "permission denied", "config"],
+    // schema 被拒的 400 —— 实测过的那一种(maxLength 不被接受)
+    [400, '{"error":{"code":"InvalidParameter","message":"response_format is not valid"}}', "config"],
+    // **证据不足的 400/422**:倒向 config,因为反过来判错的代价是每个商家的每份好文件
+    [400, "", "config"],
+    [422, "something went wrong", "config"],
+  ] as const)("HTTP %i + %j ⇒ %s", (status, detail, expected) => {
+    expect(classifyUnderstandingFailure(status, detail)).toBe(expected);
+  });
+
+  it("正文命中媒体措辞时不看 status code —— 400 也可以是真的文件坏了", () => {
+    expect(classifyUnderstandingFailure(400, "IMAGE FORMAT not supported")).toBe("media");
+    // 但 5xx 永远先是 transient:供应商自己崩了,不是这份文件的判决
+    expect(classifyUnderstandingFailure(500, "failed to decode the image")).toBe("transient");
+  });
+});
+
 describe("失败分类", () => {
-  it("4xx 的读不懂三兄弟是**终止**失败 —— 同一份字节重试永远同一个答案", async () => {
-    for (const status of [400, 415, 422]) {
-      fetchMock.mockResolvedValue({ ok: false, status, text: async () => "bad file" });
+  it("供应商指名说这份字节读不了 ⇒ **终止**失败(同一份字节重试永远同一个答案)", async () => {
+    for (const [status, detail] of [
+      [415, ""],
+      [400, "failed to decode the image"],
+      [422, "unsupported media type"],
+    ] as const) {
+      fetchMock.mockResolvedValue({ ok: false, status, text: async () => detail });
       const err = await new ArkUnderstandingProvider("k").understand(IMAGE_REQ).catch((e: unknown) => e);
       expect(isUnreadableMediaError(err)).toBe(true);
+      expect(isProviderConfigError(err)).toBe(false);
+    }
+  });
+
+  // 这一条就是 2026-08-18 事故的回归测试:404 曾经掉进「这份素材读不了」,于是每一份
+  // 好文件被逐个永久判死。它现在必须是 config —— 一个**绝不写终态**的分类。
+  it("模型 id 不解析(404)⇒ 配置类,不是「这个文件读不了」", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: async () => '{"error":{"code":"NotFound","message":"The model does not exist"}}',
+    });
+    const err = await new ArkUnderstandingProvider("k").understand(IMAGE_REQ).catch((e: unknown) => e);
+    expect(isProviderConfigError(err)).toBe(true);
+    expect(isUnreadableMediaError(err)).toBe(false);
+  });
+
+  it("401 / 403 / 证据不足的 400 也是配置类 —— 一律不许判文件的死刑", async () => {
+    for (const status of [400, 401, 403]) {
+      fetchMock.mockResolvedValue({ ok: false, status, text: async () => "" });
+      const err = await new ArkUnderstandingProvider("k").understand(IMAGE_REQ).catch((e: unknown) => e);
+      expect(isProviderConfigError(err)).toBe(true);
+      expect(isUnreadableMediaError(err)).toBe(false);
     }
   });
 
@@ -135,6 +213,7 @@ describe("失败分类", () => {
       fetchMock.mockResolvedValue({ ok: false, status, text: async () => "later" });
       const err = await new ArkUnderstandingProvider("k").understand(IMAGE_REQ).catch((e: unknown) => e);
       expect(isUnreadableMediaError(err)).toBe(false);
+      expect(isProviderConfigError(err)).toBe(false);
       expect(err).toBeInstanceOf(Error);
     }
   });

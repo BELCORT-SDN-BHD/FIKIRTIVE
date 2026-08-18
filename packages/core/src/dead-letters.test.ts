@@ -9,6 +9,7 @@ import { INGEST_QUEUE, INGEST_DLQ, RENDER_QUEUE_POLICY, CAPTION_QUEUE_POLICY } f
 import { REFGEN_QUEUE_POLICY } from "./refgen.js";
 import { GEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY } from "./gen.js";
 import { PUBLISH_QUEUE_POLICY } from "./publish.js";
+import { UNDERSTAND_DLQ, UNDERSTAND_QUEUE_POLICY } from "./asset-understanding.js";
 
 const row = (name: string, over: Partial<DeadLetterQueueRow> = {}): DeadLetterQueueRow => ({
   name,
@@ -31,6 +32,7 @@ describe("DEAD_LETTER_QUEUES", () => {
       GEN_QUEUE_POLICY.deadLetter,
       RESEARCH_QUEUE_POLICY.deadLetter,
       PUBLISH_QUEUE_POLICY.deadLetter,
+      UNDERSTAND_QUEUE_POLICY.deadLetter,
     ];
     for (const target of declared) expect(DEAD_LETTER_QUEUES).toContain(target);
   });
@@ -41,14 +43,21 @@ describe("DEAD_LETTER_QUEUES", () => {
     expect(INGEST_DLQ).toBe("ingest.dlq");
   });
 
-  it("lists seven distinct queues", () => {
-    expect(DEAD_LETTER_QUEUES).toHaveLength(7);
-    expect(new Set<string>(DEAD_LETTER_QUEUES).size).toBe(7);
+  // #784 的 understand 队列配了 deadLetter 却一个月没进名单 —— 探针于是对整条素材理解
+  // 链路失明,而它正是 2026-08-18 那次「全平台理解静默死光」发生的地方。钉住它。
+  it("includes the understand dead-letter queue", () => {
+    expect(DEAD_LETTER_QUEUES).toContain(UNDERSTAND_DLQ);
+    expect(UNDERSTAND_DLQ).toBe("understand.dlq");
+  });
+
+  it("lists eight distinct queues", () => {
+    expect(DEAD_LETTER_QUEUES).toHaveLength(8);
+    expect(new Set<string>(DEAD_LETTER_QUEUES).size).toBe(8);
   });
 });
 
 describe("censusDeadLetters", () => {
-  it("is clear only when all seven queues exist and are empty", () => {
+  it("is clear only when all eight queues exist and are empty", () => {
     expect(censusDeadLetters(all())).toEqual({
       status: "clear",
       total: 0,

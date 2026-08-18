@@ -13,10 +13,16 @@ import { INGEST_DLQ, RENDER_DLQ, CAPTION_DLQ } from "./timeline.js";
 import { REFGEN_DLQ } from "./refgen.js";
 import { GEN_DLQ, RESEARCH_DLQ } from "./gen.js";
 import { PUBLISH_DLQ } from "./publish.js";
+import { UNDERSTAND_DLQ } from "./asset-understanding.js";
 
 /**
  * 每一条配了 deadLetter 的队列,它的死信目标都必须出现在这里。新增队列时,
  * `dead-letters.test.ts` 会拿 `*_QUEUE_POLICY.deadLetter` 反查,漏一条就红。
+ *
+ * understand 是 2026-08-18 补进来的,而它漏了整整一个月的事实值得留在这里:那条队列
+ * **配了** deadLetter,名单却没有它,于是 /api/ops/dlq 对它天生失明。这道反查断言当时
+ * 也没红 —— 因为它只反查那份手写的 declared 列表,而漏掉的那一条同样没被写进去。
+ * 教训不是「再加一条断言」,是新队列的 policy 和这份名单必须在同一个提交里成对出现。
  */
 export const DEAD_LETTER_QUEUES = [
   INGEST_DLQ,
@@ -26,6 +32,7 @@ export const DEAD_LETTER_QUEUES = [
   CAPTION_DLQ,
   RESEARCH_DLQ,
   PUBLISH_DLQ,
+  UNDERSTAND_DLQ,
 ] as const;
 
 /**

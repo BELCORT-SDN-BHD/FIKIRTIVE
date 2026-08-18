@@ -15,6 +15,8 @@
  * 纪律照旧:**供应商全程 mock,一个字节都不出网**;每个用例自己建自己的租户、跑完自己收。
  */
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 const presignedGet = vi.hoisted(() => vi.fn(async () => "https://storage.example/obj?sig=x"));
@@ -211,6 +213,98 @@ describe("菜单两步在真库上的原子性与幂等", () => {
       await handleUnderstand({ understandingId: followUp! }, 0, port);
       const products = await prisma.brandRecord.findMany({ where: { ownerId: OWNER, kind: "product" } });
       expect(products.map((p) => p.nameKey)).toContain("nasi lemak");
+    },
+    30_000,
+  );
+});
+
+/**
+ * 存量恢复(2026-08-18 事故):被误判成终态的行必须能回到队列。
+ *
+ * 为什么这一族也必须打真库,而且**执行迁移文件里那条语句本身**:恢复是一句 SQL,而这句
+ * SQL 唯一会出事的地方是它的 WHERE —— 少一个条件就从「修好被误杀的行」变成「把真的
+ * 读不了的文件重新排进队列,永远读不完」。假库钉不住 `LIKE`;把 SQL 重抄一份到测试里,
+ * 钉住的也只是那份抄件。所以这里读的是迁移文件本体,跑的是它 RECOVERY 标记之间的原文。
+ */
+const RECOVERY_SQL = (() => {
+  const path = fileURLToPath(
+    new URL(
+      "../../../../packages/db/prisma/migrations/20260818140000_understanding_paused_and_404_recovery/migration.sql",
+      import.meta.url,
+    ),
+  );
+  const sql = readFileSync(path, "utf8");
+  const body = sql.split(">>> RECOVERY")[1]?.split("<<< RECOVERY")[0] ?? "";
+  const statement = body.slice(body.indexOf("UPDATE")).split(";")[0]?.trim();
+  if (!statement) throw new Error("recovery statement not found in the migration file");
+  return statement;
+})();
+
+describe("存量 FAILED 行的恢复(直接跑迁移文件里的那条语句)", () => {
+  /** 生产上那些行落的就是这一句 —— 端口逐字抛出、sanitizeError 原样放行、worker 落库。 */
+  const SIGNATURE = "understanding request failed (404)";
+
+  async function seedRow(status: string, error: string | null) {
+    const assetId = await seedAsset();
+    const id = newId();
+    await prisma.assetUnderstanding.create({
+      data: { id, ownerId: OWNER, assetId, kind: "image-caption", status, error },
+    });
+    return id;
+  }
+
+  it(
+    "只清签名内的 FAILED 行,而且跑两遍结果一样",
+    async () => {
+      const killedByConfig = await seedRow("FAILED", SIGNATURE);
+      const reallyUnreadable = await seedRow("FAILED", "That file couldn't be read clearly enough to use.");
+      const skippedTooBig = await seedRow("SKIPPED", `left unread — ${SIGNATURE}`);
+      const done = await seedRow("DONE", null);
+
+      expect(await prisma.$executeRawUnsafe(RECOVERY_SQL)).toBe(1); // 只有一行够格
+
+      const after = async (id: string) => (await myRow(id))!;
+      expect(await after(killedByConfig)).toMatchObject({ status: "QUEUED", error: null });
+      // 越界清理的三个反例:真读不了的、别的终态、已经读懂的 —— 一行都不许被碰
+      expect((await after(reallyUnreadable)).status).toBe("FAILED");
+      expect((await after(skippedTooBig)).status).toBe("SKIPPED");
+      expect((await after(done)).status).toBe("DONE");
+
+      // 幂等:第二遍一行都匹配不到(status 和 error 已经一起改掉了)
+      expect(await prisma.$executeRawUnsafe(RECOVERY_SQL)).toBe(0);
+      expect(await after(killedByConfig)).toMatchObject({ status: "QUEUED", error: null });
+      expect((await after(reallyUnreadable)).status).toBe("FAILED");
+    },
+    30_000,
+  );
+
+  it(
+    "恢复出来的行**真的**会被扫描器重新派出去(不然「恢复」只是改了个字)",
+    async () => {
+      const id = await seedRow("FAILED", SIGNATURE);
+      await prisma.$executeRawUnsafe(RECOVERY_SQL);
+      // 第 ② 段捞的是躺够久的 QUEUED 行 —— 把 now 往后拨,等的就是那个窗口
+      const dispatched = await scanAssetsNeedingUnderstanding(new Date(Date.now() + 24 * 3_600_000));
+      expect(dispatched).toContain(id);
+    },
+    30_000,
+  );
+});
+
+describe("PAUSED 是真库上合法的状态(CHECK 约束跟上了)", () => {
+  it(
+    "写得进 PAUSED,而且停够之后被扫描器捡回 QUEUED",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      await prisma.assetUnderstanding.create({
+        data: { id, ownerId: OWNER, assetId, kind: "image-caption", status: "PAUSED", error: "paused" },
+      });
+      expect((await myRow(id))!.status).toBe("PAUSED");
+
+      const dispatched = await scanAssetsNeedingUnderstanding(new Date(Date.now() + 24 * 3_600_000));
+      expect(dispatched).toContain(id);
+      expect((await myRow(id))!.status).toBe("QUEUED");
     },
     30_000,
   );
