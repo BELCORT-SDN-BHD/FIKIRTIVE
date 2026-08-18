@@ -74,7 +74,7 @@ export const EXECUTED_SPEC: {
      *  (`videoReferencesRide`):带首帧/末帧/整段参考视频的三个场景引擎当互斥处理,那些
      *  档上元素照一张也不发,卡面也照实说 0。false ⇒ 卡面不得承诺元素照会上车。 */
     elementReferencesHonoured: true,
-    /** #971(beta 录像 06:32 / 10:24):商家挂的那张图**真的**成为片子的首帧 —— 现役适配器把它
+    /** #979(beta 录像 06:32 / 10:24):商家挂的那张图**真的**成为片子的首帧 —— 现役适配器把它
      *  作为 `image_url` 部件发出去(单帧那一档 role 省略,配末帧时显式 `first_frame`;
      *  `byteplus.test.ts` 的 i2v 用例整体断言请求体)。
      *
@@ -128,7 +128,7 @@ export function imageCoherentSetHonoured(): boolean {
 }
 
 /**
- * 这一趟**真正会跑**的那个适配器,会不会把商家给的那张图当成片子的首帧(#971)。
+ * 这一趟**真正会跑**的那个适配器,会不会把商家给的那张图当成片子的首帧(#979)。
  *
  * ADR 0003:与上面三条同一条判据、同一个理由——只剩 byteplus 一个会花钱的适配器,答案就是
  * `EXECUTED_SPEC.video.startFrameHonoured` 本身。

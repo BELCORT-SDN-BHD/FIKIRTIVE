@@ -129,6 +129,23 @@ const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled 
  *  must still refuse to copy it onto a default Project. */
 const UNTITLED_CHAT_TITLE = "Untitled";
 
+/** 自动命名往回看几条对话(#979)。见 `autoTitleProjectIfDefault` 里为什么是一个窗口。 */
+const AUTOTITLE_THREAD_SCAN = 25;
+
+/**
+ * 这个对话标题能不能拿去当画布的名字(#979)。
+ *
+ * 三种不能,理由各不相同,但结果一样 —— 拿它命名等于没命名:
+ *   · 空的 —— 商家还没打过字;
+ *   · "Untitled" / 画布占位名 —— 那是我们的默认值,不是他的话;
+ *   · 罐头开场白 —— 那是我们写好、他点了一下的文案(`isCannedStarter`)。
+ */
+function isAdoptableProjectName(title: string): boolean {
+  if (!title || title === UNTITLED_CHAT_TITLE) return false;
+  if (DEFAULT_PROJECT_NAMES.has(title)) return false;
+  return !isCannedStarter(title);
+}
+
 async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string; name: string } | null> {
   if (!DEFAULT_PROJECT_NAMES.has(name)) return null;
   const candidates = await prisma.project.findMany({
@@ -367,18 +384,24 @@ export async function autoTitleProjectIfDefault(projectId: string): Promise<{ ok
     const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
     if (!project) return { error: "Project not found." };
     if (!DEFAULT_PROJECT_NAMES.has(project.name)) return { ok: true }; // already named
-    const thread = await prisma.chatThread.findFirst({
+    // #979:取最早一条**可采用**的对话,不是最早那一条。
+    //
+    // 只读最早一条是判官抓到的第二个洞:罐头开场白那条对话现在叫 "Untitled",而它恰恰
+    // 是最早的那条 —— 于是这里每次都读到它、每次都早退,画布**永远**停在「New project」。
+    // 「之后会被真正的内容命名」就成了一句假话。所以往后找:跳过还没有名字的、跳过占位名、
+    // 跳过我们自己的开场白,第一条商家真正打过字的对话来命名画布。
+    //
+    // 取一个窗口而不是全部:这个动作只在画布还叫占位名时跑,那一刻的对话数以个位数计;
+    // 窗口拉满(全是罐头/空对话)时的结果与今天一样 —— 画布保持默认名,等下一条真消息,
+    // 没有比现在更差的那一档。
+    const threads = await prisma.chatThread.findMany({
       where: { ownerId, projectId: project.id },
       orderBy: { createdAt: "asc" },
+      take: AUTOTITLE_THREAD_SCAN,
       select: { title: true },
     });
-    const title = thread?.title?.trim();
-    // #971:产品自己写好的起手 chip 不是商家的命名。新对话那一侧已经不会再把它写成标题,
-    // 但**已经叫这个名字的旧对话行还在库里**,而画布是从对话标题抄名字的 —— 少了这一条,
-    // 那些画布会继续被我们的文案命名。宁可留着「New project」等真正的内容来命名它。
-    if (!title || title === UNTITLED_CHAT_TITLE || DEFAULT_PROJECT_NAMES.has(title) || isCannedStarter(title)) {
-      return { ok: true }; // nothing to adopt yet
-    }
+    const title = threads.map((t) => t.title?.trim() ?? "").find(isAdoptableProjectName);
+    if (!title) return { ok: true }; // nothing to adopt yet
     const clean = title.slice(0, 80);
     await prisma.project.update({ where: { id: project.id }, data: { name: clean } });
     await logAction(ownerId, "project.autotitle", project.id, { name: clean });

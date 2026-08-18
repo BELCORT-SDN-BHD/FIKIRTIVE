@@ -37,6 +37,7 @@ import {
 } from "@/lib/storyboard-gate1-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
+import { QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { TopUpNotice } from "@/components/exits/Exits";
 import { canAffordPack } from "./pack-credit-math";
 
@@ -1150,7 +1151,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
 
         {generating && (
           <div className="mt-3 flex items-center gap-2 text-[0.875rem] text-muted-foreground">
-            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Working — this can take a moment…
+            {/* #979:等待措辞只有一处作者(`QUEUE_WAIT_NOTE`)—— 这句话本来就是仓库里
+                那句诚实的原型,现在计划卡也引它,两处不会再各自漂成两句。 */}
+            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Working — {QUEUE_WAIT_NOTE}…
           </div>
         )}
 

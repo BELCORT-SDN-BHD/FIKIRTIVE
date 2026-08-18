@@ -42,7 +42,7 @@ export function SupportExit({ subject, label = "Email support" }: { subject: str
  */
 /**
  * 服务端拼好的那句拒绝 —— 照原样说出来,但把结尾那句「Top up in Billing.」换成一条真的
- * 能点的路(#971)。
+ * 能点的路(#979)。
  *
  * 为什么不是 `TopUpNotice`:那个组件自己写句子,而这几句拒绝的**数字**只有服务端知道
  * (这一次报价是多少、余额还剩多少)。丢掉数字就退回 #699 之前那种「不说它是拿什么判的」

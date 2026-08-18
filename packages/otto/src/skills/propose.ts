@@ -118,7 +118,7 @@ export async function executePropose(
   const finalPayload = withVideoReferenceChip(
     withReferenceBudget(
       cardPayload,
-      // #971:那句「一张元素照都不上车」要说得完整,就得知道**为什么**不上车 ——
+      // #979:那句「一张元素照都不上车」要说得完整,就得知道**为什么**不上车 ——
       // 同一组布尔既喂给名额计算,也喂给这句话,所以卡上的理由不可能与名额分家。
       buildReferenceBudgetNotes({
         budget,

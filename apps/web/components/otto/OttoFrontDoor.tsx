@@ -14,11 +14,17 @@ import { ExitLink } from "@/components/exits/Exits";
 import { BILLING_HREF } from "@/lib/exits";
 import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
+import {
+  FRONT_DOOR_GOAL_LABELS, newThreadTitle, type FrontDoorGoalKey,
+} from "@/lib/otto-canned-starters";
 
 interface GoalTile {
+  /** #979:标签**不在这里写** —— 点一下发出去的就是这句话本身,而那是我们的文案,不是
+   *  商家的命名。唯一权威在 `lib/otto-canned-starters` 的 `FRONT_DOOR_GOAL_LABELS`,
+   *  命名守卫认的就是那一份。 */
   label: string;
   hint: string;
-  goalKey: "sell-product" | "announce-sale" | "get-followers" | "make-video";
+  goalKey: FrontDoorGoalKey;
   icon: React.ReactNode;
 }
 
@@ -62,25 +68,25 @@ function IconClapperboard() {
 
 const GOAL_TILES: GoalTile[] = [
   {
-    label: "Sell a product",
+    label: FRONT_DOOR_GOAL_LABELS["sell-product"],
     hint: "Show off one thing you make",
     goalKey: "sell-product",
     icon: <IconShoppingBag />,
   },
   {
-    label: "Announce a sale",
+    label: FRONT_DOOR_GOAL_LABELS["announce-sale"],
     hint: "Get people in this week",
     goalKey: "announce-sale",
     icon: <IconTag />,
   },
   {
-    label: "Get more followers",
+    label: FRONT_DOOR_GOAL_LABELS["get-followers"],
     hint: "Grow your audience",
     goalKey: "get-followers",
     icon: <IconUsers />,
   },
   {
-    label: "Make a video",
+    label: FRONT_DOOR_GOAL_LABELS["make-video"],
     hint: "A short clip for social",
     goalKey: "make-video",
     icon: <IconClapperboard />,
@@ -206,7 +212,9 @@ export function OttoFrontDoor({
         const thread: ChatThreadDTO = {
           id: created.id,
           projectId,
-          title: msgText.slice(0, 80),
+          // #979:乐观标题走的必须是**服务端刚刚落库的那一份**规矩,否则侧栏先显我们的
+          // 标签、刷新后再翻成 Untitled —— 商家看到的是产品自己改口。
+          title: newThreadTitle(msgText),
           updatedAt: new Date().toISOString(),
           messages: [],
         };

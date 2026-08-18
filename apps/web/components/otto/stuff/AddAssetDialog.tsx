@@ -16,6 +16,7 @@ import { startRefGen } from "@/lib/refgen-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
+import { ErrorWithTopUp } from "@/components/exits/Exits";
 
 type Mode = "upload" | "generate";
 
@@ -254,9 +255,12 @@ export function AddAssetDialog({
               />
             </label>
 
+            {/* #979:钱不够那一句以前就停在这里 —— 一段写着「Top up in Billing.」却点不动的字。
+                与计划卡是同一个死路,同一个修法:句子原样(数字必须是服务端真报的那一次),
+                只把结尾换成真的能点的路;别的错误原样渲染。 */}
             {error && (
               <div role="alert" className="text-[0.8125rem] text-[var(--error-soft-foreground)]">
-                {error}
+                <ErrorWithTopUp text={error} />
               </div>
             )}
 
@@ -331,9 +335,10 @@ export function AddAssetDialog({
                 </>
               )}
 
+              {/* #979 —— 同上,这是「生成参考图」那一步的第二个出口。 */}
               {error && (
                 <div role="alert" className="text-[0.8125rem] text-[var(--error-soft-foreground)]">
-                  {error}
+                  <ErrorWithTopUp text={error} />
                 </div>
               )}
 

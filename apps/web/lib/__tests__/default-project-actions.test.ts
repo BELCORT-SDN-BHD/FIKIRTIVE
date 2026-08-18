@@ -35,7 +35,7 @@ import { requireOwner } from "@/lib/auth-guard";
 import { prisma } from "@fikirtive/db";
 import { refundReservation } from "@fikirtive/db";
 import { revalidatePath } from "next/cache";
-import { BRAND_MEMORY_STARTERS } from "@/lib/otto-canned-starters";
+import { BRAND_MEMORY_STARTERS, FRONT_DOOR_GOAL_LABELS } from "@/lib/otto-canned-starters";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,6 +70,7 @@ beforeEach(() => {
   (prisma.$executeRaw as Mock).mockResolvedValue(undefined);
   (refundReservation as Mock).mockResolvedValue({ ok: true });
   (prisma.chatThread.findFirst as Mock).mockResolvedValue(null);
+  (prisma.chatThread.findMany as Mock).mockResolvedValue([]);
   (prisma.project.update as Mock).mockResolvedValue({ id: "p1" });
   (prisma.$transaction as Mock).mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
 });
@@ -118,7 +119,7 @@ describe("autoTitleProjectIfDefault — a new project takes its name from the fi
 
   it.each(DEFAULTS)("renames a still-default %s to the first conversation's title", async (placeholder) => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: placeholder });
-    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "Ramadan bundle launch" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: "Ramadan bundle launch" }]);
 
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true, name: "Ramadan bundle launch" });
 
@@ -138,11 +139,11 @@ describe("autoTitleProjectIfDefault — a new project takes its name from the fi
 
   it("adopts the OLDEST conversation's title, not the newest", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
-    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "First one" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: "First one" }, { title: "Later one" }]);
 
-    await autoTitleProjectIfDefault("p1");
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true, name: "First one" });
 
-    expect(prisma.chatThread.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    expect(prisma.chatThread.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ ownerId: "o1", projectId: "p1" }),
       orderBy: { createdAt: "asc" },
     }));
@@ -150,20 +151,20 @@ describe("autoTitleProjectIfDefault — a new project takes its name from the fi
 
   it("truncates an over-long conversation title to 80 chars", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
-    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "B".repeat(120) });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: "B".repeat(120) }]);
 
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true, name: "B".repeat(80) });
   });
 
   it("never copies the literal Untitled onto a project", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
-    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "Untitled" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: "Untitled" }]);
 
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
     expect(prisma.project.update).not.toHaveBeenCalled();
   });
 
-  // #971(beta 录像 01:28)—— 画布叫「Let me describe my brand to you — ask me what you need
+  // #979(beta 录像 01:28)—— 画布叫「Let me describe my brand to you — ask me what you need
   // to know.」。那不是商家写的字,是 Brand memory 起手 chip 里我们自己的文案。建对话那一侧
   // 已经不会再把它写成标题,但**已经叫这个名字的旧对话行还在库里**,而画布是从对话标题抄
   // 名字的 —— 少了这一条,那些画布会继续被我们的文案命名。
@@ -171,16 +172,70 @@ describe("autoTitleProjectIfDefault — a new project takes its name from the fi
     "never copies our own starter chip「%s」onto a canvas",
     async (_label, prompt) => {
       (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
-      (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: prompt.trim() });
+      (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: prompt.trim() }]);
 
       await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
       expect(prisma.project.update).not.toHaveBeenCalled();
     },
   );
 
+  it.each(Object.values(FRONT_DOOR_GOAL_LABELS))(
+    "never copies our own front-door goal label「%s」onto a canvas",
+    async (label) => {
+      (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+      (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: label }]);
+
+      await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
+      expect(prisma.project.update).not.toHaveBeenCalled();
+    },
+  );
+
+  // 判官第二枪:只读最早一条对话,罐头那条改叫 Untitled 之后就永远命中早退 ——
+  // 画布**再也不会**被命名,而注释还写着「之后会被真正的内容命名」。那是一句假话。
+  // 现在往后找第一条可采用的对话,所以商家真打的第一条消息最终会命名这块画布。
+  it("skips our own copy and adopts the merchant's first real conversation", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([
+      { title: BRAND_MEMORY_STARTERS[0]!.prompt },   // 罐头 chip(最早)
+      { title: "Untitled" },                          // 前门建的空对话
+      { title: "Sell a product" },                    // 我们的目标格子标签
+      { title: "Raya hamper photos" },                // ← 商家自己的第一条
+      { title: "Later idea" },
+    ]);
+
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true, name: "Raya hamper photos" });
+    expect(prisma.project.update).toHaveBeenCalledWith({
+      where: { id: "p1" },
+      data: { name: "Raya hamper photos" },
+    });
+  });
+
+  it("still adopts the EARLIEST adoptable one, not the newest", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([
+      { title: "Untitled" },
+      { title: "First real one" },
+      { title: "Second real one" },
+    ]);
+
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true, name: "First real one" });
+  });
+
+  it("reads conversations oldest-first and bounded", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: "Raya hamper photos" }]);
+
+    await autoTitleProjectIfDefault("p1");
+
+    expect(prisma.chatThread.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: { createdAt: "asc" },
+      take: expect.any(Number),
+    }));
+  });
+
   it("never copies a project placeholder name across either", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
-    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "New campaign" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: "New campaign" }]);
 
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
     expect(prisma.project.update).not.toHaveBeenCalled();
@@ -189,10 +244,10 @@ describe("autoTitleProjectIfDefault — a new project takes its name from the fi
   it("waits when there is no conversation yet, or its title is blank", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
 
-    (prisma.chatThread.findFirst as Mock).mockResolvedValue(null);
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([]);
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
 
-    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "   " });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ title: "   " }]);
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
 
     expect(prisma.project.update).not.toHaveBeenCalled();
@@ -203,7 +258,7 @@ describe("autoTitleProjectIfDefault — a new project takes its name from the fi
 
     await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
 
-    expect(prisma.chatThread.findFirst).not.toHaveBeenCalled();
+    expect(prisma.chatThread.findMany).not.toHaveBeenCalled();
     expect(prisma.project.update).not.toHaveBeenCalled();
   });
 

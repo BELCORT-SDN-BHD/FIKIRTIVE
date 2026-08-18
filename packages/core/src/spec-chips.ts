@@ -33,12 +33,12 @@ export type SpecChipParams = {
  *  数字只可能来自 `referenceBudget(...).used` —— 卡面不自己数。 */
 export type VideoReferenceChipInput = {
   elementReferenceCount: number;
-  /** #971:这张卡带着一张**首帧**(商家挂的那张图会成为片子的第一帧)。
+  /** #979:这张卡带着一张**首帧**(商家挂的那张图会成为片子的第一帧)。
    *  只可能来自卡自己的 `sourceGenerationId` —— 卡面不自己推。 */
   hasStartFrame?: boolean;
 };
 
-/** #971 —— 「你的图会成为第一帧」那一格。措辞住在这里,因为卡面与测试必须钉同一份。 */
+/** #979 —— 「你的图会成为第一帧」那一格。措辞住在这里,因为卡面与测试必须钉同一份。 */
 export const VIDEO_START_FRAME_CHIP = "Starts from your image";
 
 /**
@@ -79,7 +79,7 @@ export function buildSpecChips(
     // 声音：#646 T5 接通后这一条照实出现。判据仍然只有 EXECUTED_SPEC 一处 —— 哪天执行层
     // 又断了，改那一处，卡面立刻停止承诺。
     if (EXECUTED_SPEC.video.audioHonoured) chips.push(params.audio ? "With sound" : "No sound");
-    // #971:首帧那一档,卡面必须先说**真会用上的那张图**。少了这一格,卡上关于图片的
+    // #979:首帧那一档,卡面必须先说**真会用上的那张图**。少了这一格,卡上关于图片的
     // 唯一一句话就是「你那 N 张一张都不会用上」——字面为真,读起来却是「我们什么图都没用」,
     // 而对话里 Otto 同时(同样为真地)说刚做好的那张会当首帧。同一次生成、两句相反的话
     // (beta 录像 06:32 / 10:24)。判据与别的格子同一个形状:真正会跑的那个适配器收不收首帧。

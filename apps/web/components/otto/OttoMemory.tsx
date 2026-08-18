@@ -41,7 +41,7 @@ export function threadToBubbles(
     .map((m) => ({ role: m.role === "USER" ? "you" : "otto", text: m.text } as Bubble));
 }
 
-/** #971:这四句话现在住在 `lib/otto-canned-starters` —— 命名守卫认的就是这一份。
+/** #979:这四句话现在住在 `lib/otto-canned-starters` —— 命名守卫认的就是这一份。
  *  抄成两份,守卫认得的和界面发出的会先后漂移,而漂移那天没有一条测试会红。 */
 const CHIPS = BRAND_MEMORY_STARTERS;
 

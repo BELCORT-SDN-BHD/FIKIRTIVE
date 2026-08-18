@@ -198,7 +198,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       // Persist USER message first (create thread row first if new — FK ordering)
       if (isNew) {
         await prisma.chatThread.create({
-          // #971:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
+          // #979:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
           // 命名(两个门都建对话,只在一个门上装守卫就等于没装)。
           data: { id: threadId, ownerId, projectId, title: newThreadTitle(text) },
         });

@@ -688,12 +688,12 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
   });
 
   // -------------------------------------------------------------------------
-  // #971 —— 「钱不够」不许是一条死路(beta 录像 10:32:商家撞在这句话上停了 40 秒)
+  // #979 —— 「钱不够」不许是一条死路(beta 录像 10:32:商家撞在这句话上停了 40 秒)
   //
   // 与 #707 三张卡同一个病,只是这一张当时没被数进去:句子告诉商家去 Billing,
   // 而卡上没有任何东西能点。他已经决定要付钱了,产品却让他自己去找路。
   // -------------------------------------------------------------------------
-  it("#971 钱不够时,卡上有一条真的能点去 Billing 的路", async () => {
+  it("#979 钱不够时,卡上有一条真的能点去 Billing 的路", async () => {
     coworkGenerateMock.mockResolvedValue({
       error: outOfCreditsMessage(22),
     });
@@ -711,7 +711,7 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
     expect(alert!.textContent!.match(/Top up in Billing/g)).toHaveLength(1);
   });
 
-  it("#971 别的错误不许凭空长出一个充值链接", async () => {
+  it("#979 别的错误不许凭空长出一个充值链接", async () => {
     coworkGenerateMock.mockResolvedValue({ error: "Project not found." });
     const host = mountCard({ pendingApproval: false, onApproved: vi.fn() });
     await approveThroughTheUi(host);

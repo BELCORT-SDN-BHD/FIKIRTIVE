@@ -227,7 +227,7 @@ export { buildSpecChips };
  *   - 挂了不止一张图 → 说清哪张是底图，其余只参与理解（付费请求的底图字段是单值）。
  */
 /**
- * #971 —— 「一张元素参考照都上不了车」这句话,按**这一趟的形状**说完整。
+ * #979 —— 「一张元素参考照都上不了车」这句话,按**这一趟的形状**说完整。
  *
  * 三档,一句都不含糊:
  *   · 带首帧 —— 商家挂的那张图真的成为片子的第一帧(`EXECUTED_SPEC.video.startFrameHonoured`,
@@ -257,7 +257,7 @@ export function buildReferenceBudgetNotes(input: {
   budget: ReferenceBudget;
   attachedImageCount: number;
   usesAttachedImage: boolean;
-  /** #971:这一趟视频的形状 —— 决定「一张元素照都不上车」这句话背后**真正的理由**,
+  /** #979:这一趟视频的形状 —— 决定「一张元素照都不上车」这句话背后**真正的理由**,
    *  也决定卡面要不要先把真会用上的那样东西说出来。图片卡不传。 */
   videoShape?: { hasStartFrame?: boolean; hasReferenceVideo?: boolean };
 }): string[] {
@@ -268,7 +268,7 @@ export function buildReferenceBudgetNotes(input: {
       // 所以这里 used 会是 0。「use 0 of your 17」既不像人话，也读着像出了故障 ——
       // 零这一档单独说一句。仍然是**同一个数字**（budget），只是换了说法。
       //
-      // #971(beta 录像 06:32 / 10:24)—— 零这一档说到一半就停了。「None of your 2 reference
+      // #979(beta 录像 06:32 / 10:24)—— 零这一档说到一半就停了。「None of your 2 reference
       // photos will be used for this clip.」字面为真(元素照确实一张都不上车),商家读到的
       // 却是「我给的图一张都没用上」;而同一次生成里 Otto 在对话中(同样为真地)说刚做好的
       // 那张图会当首帧。同一件事、两句相反的话,商家只能认定其中一句在骗他。
@@ -307,7 +307,7 @@ export function withVideoReferenceChip(payload: CardPayload, elementReferenceCou
       payload.params,
       !!payload.sourceGenerationId,
       false, // usesAttachedImage 是图片侧的概念(编辑底图),视频卡永远为 false
-      // #971:首帧那一格同样从卡自己读(带首帧 ⇒ 元素照 0 张 ⇒ 这个分支根本走不到,
+      // #979:首帧那一格同样从卡自己读(带首帧 ⇒ 元素照 0 张 ⇒ 这个分支根本走不到,
       // 所以两次算出来的前几格照旧逐字相同)。
       { elementReferenceCount, hasStartFrame: !!payload.sourceGenerationId },
     ),
@@ -667,7 +667,7 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    // #971:首帧那一格只认 `isI2V` —— 整段参考片不是首帧,把它算进来就是承诺一件没发生的事。
+    // #979:首帧那一格只认 `isI2V` —— 整段参考片不是首帧,把它算进来就是承诺一件没发生的事。
     // (`shapeFollowsWhatTheyGave` 把两者合在一起,那是**形状**那一格的口径,不是这一格的。)
     specChips: buildSpecChips(kind, sm.params, shapeFollowsWhatTheyGave, usesAttachedImage, {
       elementReferenceCount: 0,

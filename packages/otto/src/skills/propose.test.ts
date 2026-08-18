@@ -620,7 +620,7 @@ describe("executePropose — mock DB", () => {
     const payload = persistedPayload();
     expect(payload["kind"]).toBe("video");
     expect(payload["downgraded"]).toBe(true);
-    // #971:「一张都不上车」要连着**为什么**一起说 —— 商家给的那条片子确实进引擎。
+    // #979:「一张都不上车」要连着**为什么**一起说 —— 商家给的那条片子确实进引擎。
     expect(payload["downgradeNote"]).toContain(
       "The clip on this card is what this run follows — your 17 saved reference photos aren't sent alongside it.",
     );
@@ -647,7 +647,7 @@ describe("executePropose — mock DB", () => {
     // 卡上照旧不带 @元素(worker 那一档也不会去取图)—— 变的只有「不再沉默」。
     expect(payload["entityIds"]).toEqual([]);
     expect(payload["downgraded"]).toBe(true);
-    // #971(beta 录像 06:32 / 10:24)—— 这句话以前说到一半就停了:「None of your 4 reference
+    // #979(beta 录像 06:32 / 10:24)—— 这句话以前说到一半就停了:「None of your 4 reference
     // photos will be used」字面为真,读起来却是「你给的图我们一张都没用」,而对话里 Otto 同时
     // 说刚做好的那张会当首帧。同一次生成、两句相反的话。现在先说真会用上的那张。
     expect(payload["downgradeNote"]).toContain(
@@ -657,8 +657,8 @@ describe("executePropose — mock DB", () => {
     expect(payload["specChips"] as string[]).not.toContainEqual(expect.stringContaining("reference photos"));
   });
 
-  // #971 —— 卡面与对话不许对同一次生成给出两句相反的话。
-  it("#971: an i2v card SAYS the picture becomes the first frame, on the chips and in the note", async () => {
+  // #979 —— 卡面与对话不许对同一次生成给出两句相反的话。
+  it("#979: an i2v card SAYS the picture becomes the first frame, on the chips and in the note", async () => {
     mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
     mockPrisma.referenceImage.count.mockResolvedValue(2);
 
@@ -680,7 +680,7 @@ describe("executePropose — mock DB", () => {
   });
 
   // 单数照实说 —— 「your 1 saved reference photos」是一句一眼可见的机器话。
-  it("#971: one photo is said in the singular", async () => {
+  it("#979: one photo is said in the singular", async () => {
     mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
     mockPrisma.referenceImage.count.mockResolvedValue(1);
 

@@ -47,7 +47,7 @@ export function outOfCreditsMessage(quotedCredits: number): string {
   return `Not enough credits — this needs ${creditsLabel(quotedCredits)}. ${TOP_UP_CTA}`;
 }
 
-/** 每一句「钱不够」的收尾 —— **也是这句话唯一的出口**(#971)。
+/** 每一句「钱不够」的收尾 —— **也是这句话唯一的出口**(#979)。
  *
  *  #699 把三份措辞收成一份,并把商家指向 Billing。可这几句话是**服务端动作返回的字符串**,
  *  卡片那一层从来只是 `{error}` 一段死文字:beta 录像 10:32,商家在批准按钮上撞到

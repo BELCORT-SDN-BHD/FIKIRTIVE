@@ -490,7 +490,7 @@ export function OttoPlanCard({
         )}
 
         {error ? (
-          // #971:钱不够那一句以前就停在这里 —— 一段写着「Top up in Billing.」却点不动的字。
+          // #979:钱不够那一句以前就停在这里 —— 一段写着「Top up in Billing.」却点不动的字。
           // 商家在批准按钮上撞到它、已经决定要付钱了,还得自己去找 Billing 在哪(beta 录像
           // 10:32,原地停了 40 秒)。`ErrorWithTopUp` 只认服务端那一份 CTA 字面量,别的错误
           // 原样渲染,不会凭空长出充值链接。
