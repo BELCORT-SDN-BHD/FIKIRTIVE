@@ -26,6 +26,7 @@ import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
+import { reconcileStripePayments } from "./jobs/stripe-reconcile.js";
 import { handleUnderstand, reapStaleUnderstanding, scanAssetsNeedingUnderstanding } from "./jobs/understand.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
@@ -369,6 +370,36 @@ async function main(): Promise<void> {
   if (plan.supervises) {
     setInterval(() => void schedule(), 60_000);
     void schedule(); // sweep due posts once on startup too
+  }
+
+  // 钱路 M1-b ①:Stripe ↔ 账本对账。商家的钱进了 Stripe 而我们库里一行痕迹都没有(webhook
+  // 掉了、签名密钥换了、路由 502),此前没有任何东西在看 —— 2026-08-17 那笔 RM25 是靠人肉
+  // 发现的。这个扫描只报警、绝不补账:补账走 Stripe 后台重投,让同一条 webhook 路径带着同一
+  // 把幂等键跑一次,「一次付款一行账」才仍然由数据库唯一约束保证。
+  //
+  // 半小时一轮(不是 5 分钟):它要打外部 API,而窗口是 48 小时 —— 慢一点不会漏掉任何东西,
+  // 却省掉一天几百次的无谓调用。和 reaper 一样只在 supervise 的那一个角色上跑,不然两个服务
+  // 会把同一笔缺口报两遍。
+  let reconciling = false;
+  const reconcileStripe = async () => {
+    if (reconciling) return;
+    reconciling = true;
+    try {
+      const r = await reconcileStripePayments();
+      if (r.skipped) console.log(`[worker] stripe reconcile skipped: ${r.skipped}`);
+      else if (r.unreconciled) console.error(`[worker] stripe reconcile: ${r.unreconciled} PAID session(s) with no ledger entry (of ${r.paid} paid in the last 48h) — alerted`);
+      else console.log(`[worker] stripe reconcile: ${r.paid} paid session(s) in the last 48h, all present in the ledger`);
+    } catch (e) {
+      // reconcileStripePayments 自己就不抛;这里是最后一道,免得一次意外把 worker 带下去。
+      console.error("[worker] stripe reconcile error:", e);
+      captureError(e);
+    } finally {
+      reconciling = false;
+    }
+  };
+  if (plan.supervises) {
+    setInterval(() => void reconcileStripe(), 30 * 60_000);
+    void reconcileStripe(); // 开机也跑一轮:停机期间掉的 webhook 正是这个扫描存在的理由
   }
 
   // #784 asset understanding — the ONLY producer on UNDERSTAND_QUEUE, and deliberately so:

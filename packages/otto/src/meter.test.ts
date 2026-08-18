@@ -1033,3 +1033,62 @@ describe("#524 × #898 — the conversation hold and the capped charge take diff
     expect(mocks.refundReservation).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 钱路 M1-b —— commitInSettleTx:交付与结算同一笔提交(invariant #10)
+// ---------------------------------------------------------------------------
+describe("commitInSettleTx — 交付与结算同一笔提交", () => {
+  it("在 settle 的**同一个 tx** 上回调,而且排在 settle 之后", async () => {
+    const order: string[] = [];
+    let handedTx: unknown = null;
+    mocks.settleCredits.mockImplementation(async () => {
+      order.push("settle");
+    });
+
+    await withLlmBudget(
+      makeArgs({
+        commitInSettleTx: async (tx) => {
+          order.push("commit");
+          handedTx = tx;
+        },
+      }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+
+    expect(order).toEqual(["settle", "commit"]);
+    // 交付拿到的 tx 与 settle 拿到的是**同一个对象** —— 这就是「同一笔提交」这句话的机器证明。
+    const settleTx = (mocks.settleCredits.mock.calls[0] as [unknown, unknown])[0];
+    expect(handedTx).toBe(settleTx);
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("钩子抛错:整笔回滚之后全额退款,原错误照样抛给调用方", async () => {
+    const boom = new Error("the report write blew up");
+
+    await expect(
+      withLlmBudget(
+        makeArgs({
+          commitInSettleTx: async () => {
+            throw boom;
+          },
+        }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+      ),
+    ).rejects.toBe(boom);
+
+    // settle 那一笔事务整个回滚了(这里 $transaction 是替身,所以断言的是「随后补了退款」)。
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: ORG, refId: REF });
+  });
+
+  it("不传钩子的调用方:结算失败仍然原样抛出,绝不新增一笔退款(零行为变更)", async () => {
+    const boom = new Error("settle transaction failed");
+    mocks.settleCredits.mockRejectedValue(boom);
+
+    await expect(
+      withLlmBudget(makeArgs(), vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } })),
+    ).rejects.toBe(boom);
+
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+});

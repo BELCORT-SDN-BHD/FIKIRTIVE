@@ -22,6 +22,9 @@
  *     round: hold = min(worst case, #543 cap, balance, merchant's spend cap), refused only below
  *     the minimum. Every bound can only make the hold SMALLER, so invariants 1–3 are untouched —
  *     settle still charges min(actual, hold) and a failure still refunds the whole hold.
+ * 10. (钱路 M1-b) `commitInSettleTx` puts the DELIVERY in the settle's own transaction: either the
+ *     merchant's goods and the charge both land, or neither does and the whole hold is refunded.
+ *     Callers that do not pass it are byte-identical to before.
  */
 import {
   CREDITS_PER_USD,
@@ -32,12 +35,16 @@ import {
 } from "@fikirtive/core";
 import {
   prisma,
+  Prisma,
   reserveCredits,
   reserveCreditsUpTo,
   settleCredits,
   refundReservation,
   assertWithinSpendCap,
 } from "@fikirtive/db";
+
+/** The transaction handle settle/refund already take — re-exported shape for `commitInSettleTx`. */
+type Tx = Prisma.TransactionClient;
 
 export type TokenUsage = {
   inputTokens: number;
@@ -146,6 +153,26 @@ export type LlmBudgetArgs = {
    *  charge is refused. The cap remains a hard ceiling; the hold can only come out smaller. */
   reserveMinInternal?: number;
   usageOnError?: (e: unknown) => TokenUsage | null;
+  /**
+   * 钱路 M1-b —— **交付与结算同一笔提交**。在 settle 的那一笔事务里运行,拿到的就是 settle
+   * 用的那个 `tx`。
+   *
+   * 为什么需要这个缝。此前「收钱」和「交货」是两笔独立事务:settle 先提交,交付的写在它后面
+   * 单独跑。中间任何一次失败 —— 进程被 SIGKILL、写库报错、约束冲突 —— 结果都是**钱收了、货
+   * 没了**,而且没有任何东西会回头把它补上(research 的报告写此前甚至是 try/catch 吞掉的
+   * best-effort)。审计把这一条坐实为 P1。
+   *
+   * 语义:钩子抛错 ⇒ 整笔事务回滚 ⇒ **SETTLE 那一行根本不存在**,预扣仍然挂着;
+   * `withLlmBudget` 随即把整笔预扣退掉,再把原错误抛给调用方。于是终局只有两种,没有第三种:
+   *   ① 交付落库 且 结算落库(同一笔提交,要么都在要么都不在);
+   *   ② 什么都没交付 且 商家一分钱没花(全额退款)—— 引擎已经烧掉的 token 由 founder 承担,
+   *      与 gen/refgen 终态失败时「商家没拿到结果就不收钱」的口径逐字一致。
+   *
+   * 不传这个钩子的调用方,行为一个字节都没变(结算失败照旧原样抛出,不新增退款)。
+   *
+   * 钩子里只允许写「这一单的货」,不许再碰余额:钱的权威仍然只有 reserve/settle/refund。
+   */
+  commitInSettleTx?: (tx: Tx) => Promise<void>;
   /**
    * A claim on the work, run AFTER the hold is taken and BEFORE the model is called (#524 r3).
    *
@@ -373,9 +400,22 @@ export async function withLlmBudget<T>(
     actualInternal = reserve;
   }
 
-  await prisma.$transaction((tx) =>
-    settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal }),
-  );
+  // 钱路 M1-b —— 结算与交付同一笔提交(见 `commitInSettleTx` 的字段说明)。
+  // 没有钩子的调用方走的还是原来那一行:同样的事务、同样的抛法、不新增任何退款。
+  const commit = args.commitInSettleTx;
+  try {
+    await prisma.$transaction(async (tx) => {
+      await settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal });
+      if (commit) await commit(tx);
+    });
+  } catch (e) {
+    if (!commit) throw e; // 零行为变更:没托付交付给我们的调用方,原样抛出
+    // 事务已经整笔回滚 ⇒ SETTLE 那一行不存在 ⇒ 预扣还挂着。把它全额退掉,商家才不会为一件
+    // 没交付的东西付钱。refundReservation 自带 finalizer-once 唯一索引:万一另一条路径真的
+    // 已经结算成功,这里拿到 "already-settled" 而不会多退一分钱。
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: args.orgId, refId: args.refId }));
+    throw e;
+  }
 
   return out.result;
 }
