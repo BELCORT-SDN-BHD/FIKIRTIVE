@@ -24,6 +24,7 @@ const forward = {
 export const GET = forward.GET;
 
 const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
+const SIGN_IN_CODE_VERIFY_PATH = "/sign-in/email-otp";
 
 /** Better Auth's own 429, byte for byte (api/rate-limiter/index.ts), so a caller cannot tell
  *  which of the two caps refused it — and so the client plugin's error handling is unchanged. */
@@ -33,6 +34,16 @@ function tooManyRequests(retryAfterMs: number): Response {
     statusText: "Too Many Requests",
     headers: { "X-Retry-After": String(Math.ceil(retryAfterMs / 1000)) },
   });
+}
+
+/**
+ * Better Auth's own INVALID_OTP refusal, byte for byte — `APIError.from("BAD_REQUEST",
+ * EMAIL_OTP_ERROR_CODES.INVALID_OTP)` serialises to exactly this (`@better-auth/core`'s
+ * `defineErrorCodes` puts the key in `code` and the sentence in `message`). Reusing the shape
+ * rather than inventing one keeps the client plugin's error handling unchanged.
+ */
+function invalidSignInCode(): Response {
+  return Response.json({ message: "Invalid OTP", code: "INVALID_OTP" }, { status: 400 });
 }
 
 /**
@@ -69,6 +80,47 @@ export async function POST(request: Request): Promise<Response> {
     return forward.POST(request);
   }
 
+  // ── THE SIGN-IN-CODE DOOR ANSWERS ONE REFUSAL, WHATEVER WENT WRONG ──────────────────────────
+  //
+  // This is #678's defect wearing a new face, and it arrived with the swap from links to codes.
+  // The login page collapses every refusal into one sentence, but a probe reads the RESPONSE, not
+  // the copy — and Better Auth's three refusals are three different answers about the same thing:
+  //
+  //   · no verification row at all      → 400 INVALID_OTP
+  //   · a row whose attempts are spent  → 403 TOO_MANY_ATTEMPTS
+  //   · a row past its expiry           → 400 OTP_EXPIRED
+  //
+  // A row only ever exists for an address that PASSED THE ALLOWLIST — the background job refuses
+  // to mint one otherwise (lib/better-auth/sender.ts, `if (!allowed) return`) — so "which refusal
+  // came back" is "does this address have an account". Deterministically, with no credential and
+  // no waiting: send four guesses and read the fourth (403 for a merchant, 400 for a stranger),
+  // or send one guess after the code expires (OTP_EXPIRED vs INVALID_OTP) for a single request per
+  // address. Under an open-registration beta that enumerates the customer list.
+  //
+  // The magic link this replaced had no such surface: its redeem door took a TOKEN and no email,
+  // so there was nothing to key a probe on, and its request door was normalised to one
+  // `{status:true}` right here. So the fence goes back in the same place, in the same shape.
+  //
+  // WHAT IS DELIBERATELY LET THROUGH, and why neither leaks:
+  //   · 2xx — the sign-in itself, which has to keep its `Set-Cookie`. Reaching it requires the
+  //     correct six digits, which only ever went to that address's inbox.
+  //   · 429 — the rate limiter's own refusal. It is counted on the CALLING ADDRESS and the path,
+  //     never on the submitted email (Better Auth's `createRateLimitKey(ip, path)`), so it says
+  //     nothing about the account — the same reasoning the password door above already runs on.
+  //
+  // WHAT THIS DOES NOT CLOSE, stated rather than implied: the two branches still do different
+  // amounts of DATABASE work (a row that exists is consumed and re-written with an incremented
+  // attempt count; a row that does not exist is one lookup that finds nothing), so a difference
+  // remains on the clock. It is one INSERT wide — not the "one query versus a token write plus the
+  // mail network" gulf #678 was about — and closing it properly means equalising work inside
+  // Better Auth's own handler, which is not reachable from out here. Registered as residual risk
+  // rather than papered over.
+  if (pathname.endsWith(SIGN_IN_CODE_VERIFY_PATH)) {
+    const response = await forward.POST(request);
+    if (response.ok || response.status === 429) return response;
+    return invalidSignInCode();
+  }
+
   // The hourly half of the three public doors — see HOURLY_PUBLIC_DOORS. Each door counts into
   // its own bucket, so spending the registration budget never closes password reset.
   const hourlyDoor = HOURLY_PUBLIC_DOORS.find((door) => pathname.endsWith(door));
@@ -78,8 +130,8 @@ export async function POST(request: Request): Promise<Response> {
     return forward.POST(request);
   }
 
-  // THE SIGN-IN-CODE DOOR (`/sign-in/email-otp`) IS DELIBERATELY NOT LISTED ABOVE, and that is a
-  // decision rather than an oversight.
+  // THE SIGN-IN-CODE DOOR GETS NO HOURLY BUCKET OF ITS OWN, unlike the password door above, and
+  // that is a decision rather than an oversight.
   //
   // The patient attack an hourly cap exists to stop is guessing, and guessing is already bounded
   // where it cannot be routed around: a wrong code spends one of three attempts recorded ON THE

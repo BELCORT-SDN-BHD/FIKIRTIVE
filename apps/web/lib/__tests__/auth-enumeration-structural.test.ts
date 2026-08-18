@@ -421,9 +421,109 @@ describe("#678 r3 — the only public way to ask for a code is the server action
     // would pass the assertions above and break sign-in.
     expect(disabled).not.toContain("/sign-in/email-otp");
 
-    // …and it really answers: a garbage code is refused by Better Auth (4xx), not by the router.
+    // …and it really answers: a garbage code is refused (4xx), not 404'd by the router.
     const res = await post("/sign-in/email-otp", { email: UNKNOWN, otp: "000000" });
     expect(res.status).not.toBe(404);
+  });
+});
+
+// ── ⑥ the door where the code is TYPED answers one refusal, whatever the row's state ─────────
+/**
+ * The oracle this closes, and why it needed its own describe.
+ *
+ * Every case above is about ASKING for a code. This one is about SUBMITTING one, and it is the
+ * surface the swap from links to codes introduced: unlike the magic link's redeem door — which
+ * took a token and no address, so there was nothing to key a probe on — this door takes the
+ * EMAIL. A verification row exists only for an address that passed the allowlist, so any answer
+ * that varies with the row's state is an answer about the account.
+ *
+ * Better Auth gives three: INVALID_OTP (400) when there is no row, TOO_MANY_ATTEMPTS (403) once
+ * the row's three guesses are spent, OTP_EXPIRED (400) once it is past its expiry. The first
+ * three guesses at a live code look exactly like guesses at nothing — which is why a test that
+ * stops at three passes while the door is wide open. The two cases below are the ones that told
+ * the addresses apart, taken from the judge's counter-example.
+ *
+ * THROUGH `betterAuthPost`, NOT `auth.handler`. The normalisation lives in the route file, so a
+ * test that calls the handler directly (as signin-code-door.test.ts does, deliberately, to reach
+ * Better Auth's own behaviour) walks straight past the thing under test.
+ */
+describe("#678 r3 ⑥ — submitting a code cannot be used to ask whether an address has an account", () => {
+  const submit = (email: string, otp: string) =>
+    betterAuthPost(
+      new Request("http://localhost:3100/api/better-auth/sign-in/email-otp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost:3100",
+          "x-forwarded-for": "198.51.100.9",
+        },
+        body: JSON.stringify({ email, otp }),
+      }),
+    );
+
+  /** Status + body, which is everything a probe can read off one of these. */
+  const answerOf = async (res: Response) => ({ status: res.status, body: await res.json() });
+
+  const WRONG = ["111111", "222222", "333333", "444444"];
+
+  it("answers the FOURTH guess identically for a merchant and for a stranger", async () => {
+    // The merchant has a live code; the stranger has never had one. RED before the fence: the
+    // fourth guess returned 403 TOO_MANY_ATTEMPTS for the merchant (the row's budget is spent)
+    // and 400 INVALID_OTP for the stranger (there is no row to spend).
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: ENV_ALLOWED } },
+    });
+    await auth.api.createVerificationOTP({ body: { email: ENV_ALLOWED, type: "sign-in" } });
+    expect(await rowsFor(ENV_ALLOWED)).toBe(1);
+    expect(await rowsFor(UNKNOWN)).toBe(0);
+
+    for (const otp of WRONG) {
+      const merchant = await answerOf(await submit(ENV_ALLOWED, otp));
+      const stranger = await answerOf(await submit(UNKNOWN, otp));
+      expect(merchant, `guess ${otp} told the two addresses apart`).toEqual(stranger);
+    }
+  });
+
+  it("answers an EXPIRED code identically for a merchant and for a stranger", async () => {
+    // One request per address, no waiting — the cheaper half of the same probe. RED before the
+    // fence: 400 OTP_EXPIRED for the merchant, 400 INVALID_OTP for the stranger.
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: ENV_ALLOWED } },
+    });
+    await auth.api.createVerificationOTP({ body: { email: ENV_ALLOWED, type: "sign-in" } });
+    await prisma.betterAuthVerification.updateMany({
+      where: { identifier: `sign-in-otp-${ENV_ALLOWED}` },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    const merchant = await answerOf(await submit(ENV_ALLOWED, "555555"));
+    const stranger = await answerOf(await submit(UNKNOWN, "555555"));
+    expect(merchant).toEqual(stranger);
+  });
+
+  it("keeps exactly one refusal in the vocabulary, and it is Better Auth's own", async () => {
+    // Naming the shape rather than only comparing two of them: a future edit that collapsed both
+    // sides onto a NEW shape would satisfy the cases above and quietly change the client contract.
+    const stranger = await answerOf(await submit(UNKNOWN, "666666"));
+    expect(stranger).toEqual({
+      status: 400,
+      body: { message: "Invalid OTP", code: "INVALID_OTP" },
+    });
+  });
+
+  it("still lets the correct code through, cookie and all", async () => {
+    // The fence must refuse to be a wall. RED if the normalisation is ever widened to 2xx: the
+    // session cookie rides on that response and sign-in would silently stop working.
+    await prisma.betterAuthVerification.deleteMany({
+      where: { identifier: { contains: ENV_ALLOWED } },
+    });
+    const otp = await auth.api.createVerificationOTP({
+      body: { email: ENV_ALLOWED, type: "sign-in" },
+    });
+
+    const res = await submit(ENV_ALLOWED, otp);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie") ?? "").toContain("session_token");
   });
 });
 

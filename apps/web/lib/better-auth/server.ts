@@ -253,7 +253,9 @@ export const auth = betterAuth({
       // The one that MINTS a code is not a public door at all — it is in `disabledPaths`, and its
       // only caller is our background queue, so a rule here would cap the background rather than
       // the public. The one that REDEEMS a code (`/sign-in/email-otp`) keeps the plugin's own
-      // rule (3 per 60 s per address) untouched for the same reason "/sign-in/email" does: an
+      // rule — 3 per 60 s per CALLING ADDRESS and path, never per email account: Better Auth keys
+      // every rate-limit bucket with `createRateLimitKey(ip, path)`, so this cap says nothing
+      // about who was being signed in — untouched for the same reason "/sign-in/email" is: an
       // entry here would REPLACE that burst cap instead of adding to it. What bounds guessing is
       // the per-code attempt budget (`allowedAttempts`), which no request-level limiter can
       // substitute for — see the plugin's configuration below.
@@ -453,9 +455,17 @@ export const auth = betterAuth({
        * "reuse" makes every email say the same six digits and extends that one code's expiry, so
        * there is exactly one live credential per address and no wrong-but-plausible thing to
        * type. It requires a RECOVERABLE stored code, which `storeOTP: "encrypted"` above is
-       * (hashing would silently fall back to rotate). A code whose attempts are exhausted is
-       * never resurrected — `tryReuseOTP` refuses it and a fresh one is minted — so this cannot
-       * be used to keep a burnt code alive.
+       * (hashing would silently fall back to rotate).
+       *
+       * WHAT REUSE DOES AND DOES NOT EXTEND, because only one of the two would matter:
+       *   · the EXPIRY is extended, so `expiresIn` is fifteen minutes FROM EACH SEND rather than
+       *     from the first — a merchant who presses again keeps one code alive longer than a
+       *     quarter of an hour. Bounded by the request door's five presses an address gets per
+       *     hour, and harmless: a live code in one merchant's own inbox is what they asked for.
+       *   · the ATTEMPT COUNT is NOT reset — `tryReuseOTP` only writes `expiresAt`, and it
+       *     refuses outright once the three guesses are spent, so a fresh code is minted instead.
+       *     Pressing "send it again" therefore cannot be used to buy more guesses or to
+       *     resurrect a burnt code, which is what keeps `allowedAttempts` the real ceiling.
        */
       resendStrategy: "reuse",
       /**

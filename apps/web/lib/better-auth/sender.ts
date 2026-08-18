@@ -98,6 +98,12 @@ const isDiscardable = (job: AuthEmailJob): boolean =>
  * still the honest budget for "read a phone, type six digits into a laptop", and the thing the
  * number really governs — how deep the queue may be before it starts posting dead credentials —
  * is a property of the mail path, which did not change.
+ *
+ * IT IS FIFTEEN MINUTES FROM EACH SEND, not from the first. `resendStrategy: "reuse"` (server.ts)
+ * re-sends the same code and extends its expiry, so one code's total life can exceed this number
+ * when a merchant presses again. That only ever makes the arithmetic below safer — every job in
+ * the queue is carrying a credential minted or refreshed at hand-over time, so the deadline this
+ * depth is derived against is the shortest one any of them has, not the longest.
  */
 export const AUTH_EMAIL_CODE_TTL_MS = 15 * 60 * 1000;
 
