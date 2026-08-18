@@ -334,15 +334,64 @@ describe("W2-4 ③ Publishing 逐行渲染 CHANNEL_META", () => {
     }
   });
 
-  it("行的来源是纯函数:那一次读少回来一个渠道,版式也不会少一行", () => {
-    const rows = publishingRows_pure();
-    expect(rows.map((r) => r.id)).toEqual(CHANNEL_META.map((c) => c.id));
-    expect(rows.find((r) => r.id === "facebook")!.state).toBeNull();
-    expect(rows.find((r) => r.id === "instagram")!.state).toEqual({ id: "instagram" });
+  // 判官 P2-1:这条原本只钉纯函数(`publishingChannelRows` 会不会少一行),而**屏幕上**
+  // 少不少一行是另一回事 —— 当时组件对 state 为 null 的可连渠道整行渲染 null,判官探针喂
+  // [instagram, x] 时 Facebook 那一行凭空消失。所以现在挂真组件、看真 DOM。
+  it("那一次读少回来一个渠道,屏幕上也不少一行 —— 它说自己没读到,不是不见了", async () => {
+    // 服务端只带回了 Instagram 与 X:Facebook 既不能说连着,也不能说没连。
+    const dom = await mountConnections([
+      { id: "instagram", label: "Instagram", status: "not_connected", targets: [], connectUrl: "/api/meta/authorize" },
+      { id: "x", label: "X", status: "not_connected", targets: [], connectUrl: "/api/x/authorize" },
+    ]);
+    const rows = publishingRows(dom);
 
-    function publishingRows_pure() {
-      return publishingChannelRows([{ id: "instagram" }]);
-    }
+    // ① 行还在,而且还是那三行、那个顺序。
+    expect(rows.map((r) => r.dataset.channel)).toEqual(CHANNEL_META.map((c) => c.id));
+
+    // ② 那一行说的是「没读到」,不是编一个状态出来。降级态 ≠ 真空态。
+    const facebook = rows.find((r) => r.dataset.channel === "facebook")!;
+    expect(facebook.textContent).toContain("Facebook");
+    expect(facebook.textContent, "读不到却报了一个状态").not.toMatch(/Not connected|Connected(?!\w)/);
+    expect(facebook.textContent).toContain("couldn’t read this connection");
+
+    // ③ 而且给得出下一步:Retry 走的就是本页那一次 load()。
+    const retry = facebook.querySelector("button");
+    expect(retry, "读不到又没有下一步 —— 那是死路").toBeTruthy();
+    expect(retry!.getAttribute("aria-label")).toBe("Retry Facebook");
+
+    // 纯函数那一层同样钉住(屏幕上少一行的病根就在这一层被读错的时候)。
+    const pure = publishingChannelRows([{ id: "instagram" }]);
+    expect(pure.map((r) => r.id)).toEqual(CHANNEL_META.map((c) => c.id));
+    expect(pure.find((r) => r.id === "facebook")!.state).toBeNull();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────────
+// ③b 两份渠道名单必须一致(判官 P3-2)
+// ───────────────────────────────────────────────────────────────────────────────
+
+describe("W2-4 ③b registry 与 CHANNEL_META 是同一份名单", () => {
+  // 这一票把版式的来源从「服务端回来什么」换成了 CHANNEL_META,漂移的代价因此变高:
+  // registry 里注册了、CHANNEL_META 里没有的渠道,商家一行都看不到(静默消失);反过来
+  // CHANNEL_META 有、registry 没有的,那一行永远读不到状态。两边必须逐条对齐。
+  //
+  // 不 import registry.ts:它 transitively 拉 prisma 与 `server-only`(x.ts → auth-guard),
+  // 那是服务端模块,在这个 jsdom 套件里 import 它要靠一串与本条无关的替身,替身本身就会
+  // 变成漂移的藏身处。这里读两份**源码**,拿的是真的注册表与真的 id。
+  it("注册了哪几个渠道,CHANNEL_META 就有哪几行,顺序也一样", () => {
+    const registry = source("lib/channels/registry.ts");
+    const registered = [...registry.matchAll(/registerChannel\((\w+)\)/g)].map((m) => m[1]);
+    expect(registered.length, "registry.ts 里一个 registerChannel 都没扫到 —— 围栏读空了").toBeGreaterThan(0);
+
+    // 适配器模块名不是权威,模块里那个 `id:` 才是。
+    const registeredIds = registered.map((moduleName) => {
+      const adapter = source(`lib/channels/${moduleName}.ts`);
+      const id = /\bid:\s*"([^"]+)"/.exec(adapter);
+      expect(id, `lib/channels/${moduleName}.ts 里没找到 id`).toBeTruthy();
+      return id![1];
+    });
+
+    expect(registeredIds).toEqual(CHANNEL_META.map((c) => c.id));
   });
 });
 

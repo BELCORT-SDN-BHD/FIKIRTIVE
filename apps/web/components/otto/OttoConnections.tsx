@@ -187,6 +187,44 @@ function ChannelRow({ channel }: { channel: ChannelState }) {
   );
 }
 
+/**
+ * 一条**读不到状态**的可连渠道(W2-4 判官 P2-1)。
+ *
+ * 它与「连不上」是两件事:那一次读回来的名单里没有这个渠道,所以我们既不能说它连着,也不能
+ * 说它没连 —— 唯一诚实的说法就是「这一行刚才没读到」。
+ *
+ * 为什么必须画出来、而不是不画:版式的立论是「有哪几行来自 CHANNEL_META,少回一个渠道也不
+ * 少一行」(见 lib/channels/channel-meta.ts 的 publishingChannelRows)。整行渲染成 null 会让
+ * 那句话当场变成假话 —— 商家看到的是一个渠道**凭空消失**,而消失恰恰是最不像故障的故障。
+ * 与 Home 那边刚立的同一条纪律:降级态不等于真空态。
+ *
+ * Retry 走的就是本页那一次 load()(与分区整体读失败时那颗 Retry 同一个动作),所以这颗按钮
+ * 真的做得到它说的事。今天 registry 是静态的三个渠道,这一行到不了;它存在是为了让「说的」
+ * 与「做的」在这条路径上也对得上。
+ */
+function UnreadableChannelRow({ id, label, onRetry }: { id: string; label: string; onRetry: () => void }) {
+  return (
+    <div
+      data-channel={id}
+      className="border-b border-border last:border-b-0"
+      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.75rem 0", flexWrap: "wrap" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+        <span className="text-muted-foreground" style={{ flexShrink: 0 }} aria-hidden>
+          <ChannelGlyph id={id} />
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <div className="text-foreground text-[0.875rem] font-medium">{label}</div>
+          <div className="text-muted-foreground text-[0.75rem]">We couldn&rsquo;t read this connection just now.</div>
+        </div>
+      </div>
+      <Button type="button" size="sm" variant="ghost" aria-label={`Retry ${label}`} onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 /** 一条今天连不上的渠道:说得出的实话,零按钮。X(没有 OAuth 路由)与 WhatsApp(没有适配器)
  *  用的是同一行 —— 「不能连」是同一件事,不该有两种画法。
  *
@@ -422,7 +460,10 @@ export default function OttoConnections() {
                 // Status already comes from getAccountViewData()'s single Meta read for
                 // instagram/facebook (#518 rework finding 2) — no client-side override needed.
                 <ChannelRow key={row.id} channel={row.state} />
-              ) : null,
+              ) : (
+                // 那一次读没带回这个渠道:说不知道,不让它凭空消失(判官 P2-1)。
+                <UnreadableChannelRow key={row.id} id={row.id} label={row.label} onRetry={() => void load()} />
+              ),
             )}
           </div>
 
