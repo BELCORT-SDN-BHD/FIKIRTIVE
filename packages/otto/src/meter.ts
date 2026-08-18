@@ -22,6 +22,13 @@
  *     round: hold = min(worst case, #543 cap, balance, merchant's spend cap), refused only below
  *     the minimum. Every bound can only make the hold SMALLER, so invariants 1–3 are untouched —
  *     settle still charges min(actual, hold) and a failure still refunds the whole hold.
+ * 10. (钱路 M1-c) `extraHoldInternal` / `extraSettleInternal` carry a NON-LLM leg of the same
+ *     charge — today only the research search fee (Founder 2026-07-03's 3× ruling, finally
+ *     implemented). It is the ONE bound that makes the hold BIGGER, and that is exactly why it
+ *     is safe: a settle-side addition without a matching hold would be clamped away by
+ *     settleCredits and the cost would silently land on us. Invariants 1–3 are untouched — a
+ *     failed call still refunds the WHOLE hold (search fee included), and settle is still
+ *     clamped to the held amount, so the pair can never over-charge.
  */
 import {
   CREDITS_PER_USD,
@@ -191,6 +198,32 @@ export type LlmBudgetArgs = {
    * this field. Server-derived only; never request- or model-supplied.
    */
   capCostInternal?: number;
+  /**
+   * 钱路 M1-c — 这一次调用里 **LLM 之外**还要收的钱的**worst case**,单位 internal credits。
+   *
+   * 为什么需要它:深研的搜索此前是「free」的,而 free 的意思其实是**没人计价** ——
+   * Founder 2026-07-03 就裁过搜索按 3× 收费,代码里一个字都没有。要把那条裁决落地,这个
+   * wrapper 必须能持住一笔不是从 token 数算出来的钱;否则 settle 那边加了钱、hold 这边没加,
+   * `settleCredits` 会把它 clamp 掉,商家一分没多付,成本全由我们自己吃 —— 那不叫计价,
+   * 那叫换个地方漏。
+   *
+   * 语义与 #543 的 cap 相反:cap 只能把 hold 变**小**,这个只能把 hold 变**大**,而且必须
+   * 大到足够覆盖 `extraSettleInternal` 可能返回的最大值(深研 = 档位的 maxSearches × 单次费率)。
+   * 非正整数一律忽略 —— 坏值的方向是「不额外持有」,于是最坏情况退回到本次改动之前的行为。
+   * 服务端组合期数据,永不来自请求或模型。
+   */
+  extraHoldInternal?: number;
+  /**
+   * 钱路 M1-c — 这一次调用里 LLM 之外**实际**发生的钱,单位 internal credits。在 `fn` 之后读
+   * (搜索次数只有跑完才知道),加进 settle。
+   *
+   * 三条不变量它一条都不动:
+   *  · 只在**已经 settle** 的那条路上生效 —— fn 抛错且没有可用 usage 时走的仍是**全额退款**,
+   *    搜索费一起退。跑失败的一轮不向商家收钱,这条比追回几分钱的搜索成本重要。
+   *  · settle 仍然被 `settleCredits` clamp 到 ≤ 持有额,所以它永远不可能超收。
+   *  · 返回非有限值/负数一律按 0 —— 计数器坏掉时不收费,不收一个编出来的数。
+   */
+  extraSettleInternal?: () => number;
 };
 
 /** Thrown when `afterReserve` itself FAILED (#524 r5, judge r4 P1-A'①). The hold was taken and
@@ -235,7 +268,31 @@ export function llmHoldInternal(args: LlmBudgetArgs): number {
   const margin = args.margin ?? ottoLlmMargin();
   const worstCase = turnBudgetInternal(prices, margin, args.maxSteps ?? 1);
   const cap = args.reserveCapInternal;
-  return typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
+  const llm = typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
+  // 钱路 M1-c:非 LLM 的那一笔(现役唯一用户 = 深研的搜索费)加在 cap **外面**。cap 是
+  // #543 给对话轮的 LLM hold 定的天花板,它管的是 token 那条腿;一笔确定会被 settle 的
+  // 非 token 费用如果被同一个 cap 压住,settle 就会 clamp 掉它 —— 收费函数说收了,账本没收。
+  return llm + extraHoldOf(args);
+}
+
+/** `extraHoldInternal` 的取值规则:正整数才算数,其余一律 0(坏值 = 不额外持有)。 */
+function extraHoldOf(args: LlmBudgetArgs): number {
+  const extra = args.extraHoldInternal;
+  return typeof extra === "number" && Number.isInteger(extra) && extra >= 1 ? extra : 0;
+}
+
+/** `extraSettleInternal` 的取值规则:非负有限数向上取整,其余(含抛错)一律 0。
+ *  一个坏掉的计数器不许变成一笔编出来的收费。 */
+function extraSettleOf(args: LlmBudgetArgs): number {
+  if (!args.extraSettleInternal) return 0;
+  let v: number;
+  try {
+    v = Number(args.extraSettleInternal());
+  } catch (e) {
+    console.warn("[withLlmBudget] extraSettleInternal threw; charging 0 for the non-LLM leg.", e);
+    return 0;
+  }
+  return Number.isFinite(v) && v > 0 ? Math.ceil(v) : 0;
 }
 
 /**
@@ -345,7 +402,8 @@ export async function withLlmBudget<T>(
   } catch (e) {
     const errUsage = args.usageOnError?.(e) ?? null;
     if (errUsage) {
-      const actualInternal = actualCostInternal(errUsage, prices, margin);
+      // 优雅截断(MaxTurnsExceeded)= 这一轮**真的跑了**:token 照结,搜索费一并结。
+      const actualInternal = actualCostInternal(errUsage, prices, margin) + extraSettleOf(args);
       await prisma.$transaction((tx) =>
         settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal }),
       );
@@ -367,9 +425,11 @@ export async function withLlmBudget<T>(
   // Invariant #2: settle actual cost (≤ reserved); settleCredits refunds the remainder.
   let actualInternal: number;
   if (out.usage) {
-    actualInternal = actualCostInternal(out.usage, prices, margin);
+    // 钱路 M1-c:token 那一笔 + 非 LLM 那一笔(现役 = 搜索 3×)。settleCredits 仍然 clamp
+    // 到 ≤ 持有额,所以加法不可能变成超收;而 hold 侧已经把 worst case 一起持住了。
+    actualInternal = actualCostInternal(out.usage, prices, margin) + extraSettleOf(args);
   } else {
-    // No usage info → charge the full reserve (no refund).
+    // No usage info → charge the full reserve (no refund). 全额里已经含了 extra hold。
     actualInternal = reserve;
   }
 

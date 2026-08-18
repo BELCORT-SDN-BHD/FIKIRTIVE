@@ -8,7 +8,7 @@ process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
 
 const { POST } = await import("@/app/api/stripe/webhook/route");
 const { prisma } = await import("@fikirtive/db");
-const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
+const { INTERNAL_PER_DISPLAY, CREDIT_PACKS, CREDIT_PACK_CURRENCY } = await import("@fikirtive/core");
 
 function req(body = "{}") {
   return { text: async () => body, headers: { get: () => "sig_test" } } as never;
@@ -32,6 +32,16 @@ function checkoutEvent({
   credits: string;
   paymentStatus: string;
 }) {
+  // 钱路 M1-c:金额从**真的包表**派生,不再是一个写死的 10_000。夹具因此描述的是一笔
+  // 真会发生的充值;写一个不存在的 credits 数就当场炸在这里,而不是让 webhook 的包核对
+  // 悄悄把整组幂等用例变成「一次都没入账」。
+  const pack = CREDIT_PACKS.find((p) => String(p.credits) === credits);
+  if (!pack) {
+    throw new Error(
+      `夹具 credits=${credits} 不是在售包 —— 在售的是 ${CREDIT_PACKS.map((p) => p.credits).join("/")}。` +
+        `包表变了就改夹具,别把核对绕过去。`,
+    );
+  }
   return {
     id: eventId,
     type,
@@ -41,7 +51,8 @@ function checkoutEvent({
         payment_status: paymentStatus,
         metadata: { orgId, credits },
         payment_intent: `pi_${sessionId}`,
-        amount_total: 10_000,
+        amount_total: pack.amountMinor,
+        currency: CREDIT_PACK_CURRENCY,
       },
     },
   };
@@ -215,7 +226,7 @@ describe("stripe webhook money-in integration", () => {
       type: "checkout.session.async_payment_failed",
       sessionId,
       orgId,
-      credits: "70",
+      credits: "220",
       paymentStatus: "unpaid",
     }));
     expect((await POST(req())).status).toBe(200);
@@ -229,7 +240,7 @@ describe("stripe webhook money-in integration", () => {
         type: "checkout.session.completed",
         sessionId,
         orgId,
-        credits: "70",
+        credits: "220",
         paymentStatus: "paid",
       }));
       expect((await POST(req())).status).toBe(200);
@@ -237,9 +248,9 @@ describe("stripe webhook money-in integration", () => {
 
     const rows = await prisma.creditLedger.findMany({ where: { orgId } });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ idempotencyKey: `stripe:${sessionId}`, balanceDelta: 70 * INTERNAL_PER_DISPLAY });
+    expect(rows[0]).toMatchObject({ idempotencyKey: `stripe:${sessionId}`, balanceDelta: 220 * INTERNAL_PER_DISPLAY });
     const account = await prisma.creditAccount.findUniqueOrThrow({ where: { orgId } });
-    expect(account.balance).toBe(70 * INTERNAL_PER_DISPLAY);
+    expect(account.balance).toBe(220 * INTERNAL_PER_DISPLAY);
   });
 
   it("completed(paid) → failed: the late failure never claws back and never claims 'no credits'", async () => {
@@ -250,7 +261,7 @@ describe("stripe webhook money-in integration", () => {
       type: "checkout.session.completed",
       sessionId,
       orgId,
-      credits: "90",
+      credits: "600",
       paymentStatus: "paid",
     }));
     expect((await POST(req())).status).toBe(200);
@@ -261,7 +272,7 @@ describe("stripe webhook money-in integration", () => {
       type: "checkout.session.async_payment_failed",
       sessionId,
       orgId,
-      credits: "90",
+      credits: "600",
       paymentStatus: "unpaid",
     }));
     expect((await POST(req())).status).toBe(200);
@@ -269,8 +280,8 @@ describe("stripe webhook money-in integration", () => {
     // The ledger is untouched: no clawback, no second grant.
     const rows = await prisma.creditLedger.findMany({ where: { orgId } });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ idempotencyKey: `stripe:${sessionId}`, balanceDelta: 90 * INTERNAL_PER_DISPLAY });
-    expect((await prisma.creditAccount.findUniqueOrThrow({ where: { orgId } })).balance).toBe(90 * INTERNAL_PER_DISPLAY);
+    expect(rows[0]).toMatchObject({ idempotencyKey: `stripe:${sessionId}`, balanceDelta: 600 * INTERNAL_PER_DISPLAY });
+    expect((await prisma.creditAccount.findUniqueOrThrow({ where: { orgId } })).balance).toBe(600 * INTERNAL_PER_DISPLAY);
 
     // …and the audit row does NOT tell operations the buyer got nothing.
     const failure = await prisma.actionEvent.findUniqueOrThrow({ where: { id: `stripe_failed:${sessionId}` } });
@@ -285,7 +296,7 @@ describe("stripe webhook money-in integration", () => {
       type: "checkout.session.async_payment_failed",
       sessionId,
       orgId,
-      credits: "30",
+      credits: "50",
       paymentStatus: "unpaid",
     });
     constructEvent.mockReturnValue(event);

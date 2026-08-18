@@ -21,6 +21,9 @@ import {
   type GenSpendInput,
 } from "./spend.js";
 import { GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
+import { OTTO_CONVERSATION_TURN_MARGIN } from "./otto-budget.js";
+import { ottoLlmMargin } from "./llm-prices.js";
+import { SEARCH_MARGIN_MULTIPLIER } from "./pricing-config.js";
 
 /** 宪法 5 毛利地板:(售价 − 成本) / 售价 ≥ 45%。(docs/BLUEPRINT.md) */
 export const MARGIN_FLOOR = 0.45;
@@ -101,10 +104,34 @@ export type AcceptedFloorException = {
  * $3.50/M,同样的收费(11 / 22 / 33cr,一格没动)对上的成本变成 $0.3804 / $0.7608 /
  * $1.1411,毛利率 65.42%。缺口不是被豁免掉的,是被成本降没的 —— 按规则 2(「在名单上却
  * 已经清了地板 → 红」)这三条必须清掉,留着就是让一条不再成立的豁免继续挂在账上。
- * 清空之后没有任何一档需要豁免。全表 27 档的最低毛利率是 **65.0%**(图片与参考图这两档;
- * 视频档最低的是 720p 5/10/15 秒的 65.42%),离 45% 地板还有 20 个点。
+ * 清空之后**没有任何一个生成档需要豁免**:生成侧最低毛利率是 65.0%(图片与参考图),
+ * 离 45% 地板还有 20 个点。
+ *
+ * **现在名单上只有一条,而且不是生成档:`otto:chat`**(Founder 2026-08-18 裁决 9,钱路
+ * M1-c)。聊天改按量计价 = API 成本 × 1.05,毛利率 4.76%,与 45% 地板令直接冲突;Founder
+ * 的裁决是接受,理由「聊天是销售员、生成是商品」。把它写成一条**显式豁免行**而不是让它
+ * 继续待在闸外,是这次要修的病本身:一个从来没被闸看过的付费面,不叫「清了地板」,叫
+ * 「没人量过」。现在每次 CI 都会把这一行以 `RULED` 打印出来 —— 豁免不许褪成背景。
  */
-export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [];
+export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [
+  {
+    tier: "otto:chat",
+    // 按量计价的档没有「比例」这一轴 —— 毛利率对任何 token 数都一样,见 USAGE_PRICED_SURFACES。
+    ratios: ["全部对话(按量计价,毛利率与用量无关)"],
+    margin: 1 - 1 / OTTO_CONVERSATION_TURN_MARGIN, // 1.05 ⇒ 4.76%
+    // Founder 2026-08-18 裁决 9 的理由,原话留档:
+    reason:
+      "聊天是销售员、生成是商品 —— Founder 2026-08-18 裁决9。聊天按 API 成本 × 1.05 计价" +
+      "(OTTO_CONVERSATION_TURN_MARGIN),毛利率 4.76%,远在 45% 地板之下,Founder 明示接受:" +
+      "对话不是这个产品赚钱的地方,它是让商家不用省着用的入口;真正要守住 45% 的是生成。" +
+      "注意这一条豁免的是**地板**,不是「收费 > 成本」—— 1.05 > 1,聊天仍然不许亏着卖," +
+      "R1 规则照旧管着它。",
+    ruledOn: "2026-08-18",
+    source:
+      "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/970 —— Founder 裁决 9(2026-08-18," +
+      "聊天按量计价 = API 成本 +5%)落地的那次改动,OTTO_CONVERSATION_TURN_MARGIN 就是在这里定的",
+  },
+];
 
 /** 取某一档的已裁豁免;不在名单上返回 undefined。纯函数。 */
 export function acceptedExceptionFor(tier: string): AcceptedFloorException | undefined {
@@ -145,6 +172,48 @@ const videoJob = (seconds: number, resolution: string): GenSpendInput => ({
 type MarginSku = { id: string; label: string; charge: () => number; cogs: () => number };
 
 /**
+ * **按量计价的付费面**(钱路 M1-c,2026-08-18)—— 聊天与深研,此前三个都在毛利闸**外面**。
+ *
+ * 为什么它们进不了上面那种「一档一个价」的表:生成是定价的(11cr 一条 5 秒视频,成本是
+ * provider 的牌价),而这三个面收的是**乘数** —— 收费 = 这一次真实的 provider 成本 × 倍数。
+ * 一次对话烧了多少 token 事前没人知道,所以它没有「一档」。
+ *
+ * 但正因为收费是成本的固定倍数,**毛利率与用量完全无关**:
+ *
+ *   margin = (cost × k − cost) / (cost × k) = 1 − 1/k
+ *
+ * 于是这三行的正确建模单位就是「**每 $1 的 provider 成本**」:成本恒 $1.00(这是**定义的
+ * 计量单位**,不是抄来的牌价),收费 = $1.00 × 倍数。烧 $0.03 还是 $30 的一轮,毛利率一样。
+ *
+ * 倍数一律**现取**,不抄:改 OTTO_CONVERSATION_TURN_MARGIN、改 OTTO_LLM_MARGIN、改
+ * SEARCH_MARGIN_MULTIPLIER,这张表当场跟着动,毛利闸当场重判。这正是「测试即报表」在
+ * 按量计价面上的形状。
+ *
+ * 三行分别是:
+ *   otto:chat            聊天一轮的 LLM 成本 × 1.05  → 4.76%,**跌破地板**,Founder 已裁接受(裁决 9)。
+ *   otto:research:llm    深研的 LLM 成本 × ottoLlmMargin() → 默认 2.0 ⇒ 50%,清地板。
+ *   otto:research:search 深研的搜索成本 × 3.0        → 66.7%,清地板(裁决 9b 落地的 3× 判决)。
+ */
+export const USAGE_PRICED_SURFACES: readonly { id: string; label: string; multiplier: () => number }[] = [
+  { id: "otto:chat", label: "Otto 聊天(每 $1 provider 成本)", multiplier: () => OTTO_CONVERSATION_TURN_MARGIN },
+  { id: "otto:research:llm", label: "深研 LLM(每 $1 provider 成本)", multiplier: () => ottoLlmMargin() },
+  { id: "otto:research:search", label: "深研搜索(每 $1 provider 成本)", multiplier: () => SEARCH_MARGIN_MULTIPLIER },
+];
+
+/** 按量计价面的成本计量单位:**$1 的 provider 成本**。这是单位的定义,不是一个抄来的价格
+ *  —— 所以毛利闸那边手抄的 COGS_INPUTS 对这三行填的也只能是 1.0,两边不可能漂移。 */
+export const USAGE_PRICED_COGS_UNIT_USD = 1;
+
+function usagePricedSkus(): MarginSku[] {
+  return USAGE_PRICED_SURFACES.map((s) => ({
+    id: s.id,
+    label: s.label,
+    charge: () => USAGE_PRICED_COGS_UNIT_USD * s.multiplier(),
+    cogs: () => USAGE_PRICED_COGS_UNIT_USD,
+  }));
+}
+
+/**
  * 现役可售视频档 = **从能力表现枚举**(#645 T4),不是手抄清单。
  *
  * 为什么改成枚举:扩容后是 2 分辨率 × 12 时长 = 24 档。手抄一份就等于把菜单抄了第二遍,
@@ -175,8 +244,13 @@ function sellableVideoSkus(): MarginSku[] {
 
 /**
  * 报表覆盖的档位。**现役可售的每一档都在这里**:图片、参考图,现役视频模型的
- * 全部时长 × 分辨率(#645 T4 起 24 档),以及整段参考视频。
+ * 全部时长 × 分辨率(#645 T4 起 24 档),整段参考视频,以及(钱路 M1-c 起)三个
+ * **按量计价的付费面** —— 聊天、深研 LLM、深研搜索。
  * (视频任务恒 count=1 —— gen-actions 强制。)
+ *
+ * 「可售」= 会向商家收钱。按量计价面此前不在这张表上,于是毛利闸从来没量过它们:
+ * 聊天 4.76% 没人知道,深研的搜索干脆零计价。补上它们不是扩大范围,是把范围补成
+ * 它本来声称的那个 —— **每一个收钱的面**。
  */
 export const MARGIN_TRUTH_SKUS: readonly MarginSku[] = [
   {
@@ -198,6 +272,7 @@ export const MARGIN_TRUTH_SKUS: readonly MarginSku[] = [
     charge: () => pricedGenCredits({ ...videoJob(5, "720p"), referenceVideoGenerationId: "ref" }) / CREDITS_PER_USD,
     cogs: () => genSpentUsd({ ...videoJob(5, "720p"), referenceVideoGenerationId: "ref" }),
   },
+  ...usagePricedSkus(),
 ];
 
 /** 现算整张毛利真相表。 */

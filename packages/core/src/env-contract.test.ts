@@ -316,6 +316,46 @@ describe("STORAGE_DRIVER must be a remote driver in production (#797 r2 P1-2)", 
   });
 });
 
+// ── 钱路 M1-c(审计 P1):OTTO_LLM_MARGIN 的下限守卫 ────────────────────────────
+// 与 STORAGE_DRIVER 同一族「格式合法但配置是错的」,只是危险取值长成一个完全合法的数。
+// 分工:运行时钳位(llm-prices.ts)保证不会亏着卖,这里保证**有人被告知**。
+describe("OTTO_LLM_MARGIN 下限守卫(钱路审计 P1)", () => {
+  for (const surface of ["web", "worker"] as const) {
+    it(`0.5(每卖一单亏一单)= RED,dev 与生产一视同仁 (${surface})`, () => {
+      for (const production of [true, false]) {
+        const env = production ? { ...CORE, ...REMOTE_STORAGE, OTTO_LLM_MARGIN: "0.5" } : { OTTO_LLM_MARGIN: "0.5" };
+        const problems = checkEnv(env, { surface, production });
+        const margin = problems.find((p) => p.name === "OTTO_LLM_MARGIN");
+        expect(margin, `production=${production} 下必须报错`).toBeTruthy();
+        expect(margin?.kind).toBe("invalid");
+        expect(margin?.message).toContain("1");
+        // 报错要说清楚为什么,否则没法照着修。
+        expect(margin?.message).toMatch(/below the provider|sell at a loss|less than the provider/i);
+      }
+    });
+
+    it(`1.0 / 2.0 / 2.5 = GREEN —— 守卫只拦亏本,不拦定价 (${surface})`, () => {
+      for (const ok of ["1", "1.0", "2", "2.5", "10"]) {
+        const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, OTTO_LLM_MARGIN: ok }, { surface, production: true });
+        expect(problems.filter((p) => p.name === "OTTO_LLM_MARGIN"), `OTTO_LLM_MARGIN=${ok}`).toEqual([]);
+      }
+    });
+  }
+
+  it("不设(用默认 2.0)照旧 GREEN —— 这是个可选变量", () => {
+    const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE }, { surface: "web", production: true });
+    expect(problems.filter((p) => p.name === "OTTO_LLM_MARGIN")).toEqual([]);
+  });
+
+  it("一个生产进程不会带着 0.5 的 margin 起来", () => {
+    const decision = bootEnvDecision(
+      { ...CORE, ...REMOTE_STORAGE, NODE_ENV: "production", OTTO_LLM_MARGIN: "0.5" },
+      { surface: "worker", production: true },
+    );
+    expect(decision.action).toBe("exit");
+  });
+});
+
 describe("bootEnvDecision", () => {
   const goodProd = { NODE_ENV: "production", ...CORE, ...REMOTE_STORAGE };
 

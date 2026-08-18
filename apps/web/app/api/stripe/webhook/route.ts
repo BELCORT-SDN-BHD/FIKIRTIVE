@@ -1,7 +1,7 @@
 import { stripe } from "@/lib/stripe";
 import { grantCredits, prisma } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
-import { newId, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import { newId, INTERNAL_PER_DISPLAY, verifyCreditPackPurchase } from "@fikirtive/core";
 import * as Sentry from "@sentry/node";
 import type { NextRequest } from "next/server";
 
@@ -38,6 +38,61 @@ export async function POST(req: NextRequest): Promise<Response> {
         if (!orgId || !credits || credits <= 0 || !Number.isInteger(credits)) {
           await prisma.actionEvent.create({ data: { id: newId(), ownerId: "founder", type: "credits.purchase.bad", payload: { eventId: event.id, metadata: session.metadata ?? null } } }).catch(() => {});
           return new Response("ignored: missing metadata", { status: 200 }); // 200 → no retry storm
+        }
+        // 钱路 M1-c(2026-08-18):**付的钱与给的 credits 是不是一对?**
+        //
+        // 在此之前没有任何东西问过这个问题。充值包只活在 Stripe 后台,webhook 拿 metadata 里的
+        // credits 直接入账,金额一眼都没看 —— 后台把 RM25 的包错配成 600 credits,系统会照发,
+        // 一声不响。现在包表在代码里(@fikirtive/core CREDIT_PACKS),这里逐笔核对。
+        //
+        // 三态,不是两态(仓库既有口径 #786:「对不上」≠「没法核」):
+        //   match        → 照常入账。
+        //   mismatch     → **不入账**,报警(Founder 裁决:金额或 credits 不匹配 → 不静默入账)。
+        //   unverifiable → Stripe 这次没报金额/币种。报警,但照常入账 —— 拿一个我们自己读不到
+        //                  的字段去坑掉一个真付了钱的商家,是在用错误的方向 fail closed。
+        //
+        // 这道核对**不碰幂等语义**:它只在 grantCredits 之前决定「要不要走这一步」,
+        // 键仍是 stripe:<session.id>,重投照旧命中同一条账,exactly-once 一个字没动。
+        const packCheck = verifyCreditPackPurchase({
+          credits,
+          amountTotal: session.amount_total,
+          currency: session.currency,
+        });
+        if (packCheck.verdict !== "match") {
+          const detail =
+            `[stripe] credits.purchase pack check ${packCheck.verdict} — ${packCheck.reason}; ` +
+            `session=${session.id ?? "unknown"} org=${orgId} credits=${credits} ` +
+            `amount_total=${String(session.amount_total)} currency=${String(session.currency)}`;
+          // 报警不许决定响应码:一个抛错的告警通道会让这里返回非 2xx,把 Stripe 推进无限重投。
+          try {
+            Sentry.captureMessage(detail, packCheck.verdict === "mismatch" ? "error" : "warning");
+          } catch (e) {
+            console.error(`${detail} — alert transport failed:`, e);
+          }
+          await prisma.actionEvent
+            .create({
+              data: {
+                // session id 派生 → Stripe 重投撞主键,审计行 exactly-once 靠 DB 约束而不是查后写。
+                id: session.id ? `stripe_packcheck:${session.id}` : newId(),
+                ownerId: orgId,
+                type: "credits.purchase.packMismatch",
+                payload: {
+                  verdict: packCheck.verdict,
+                  reason: packCheck.reason,
+                  eventId: event.id,
+                  sessionId: session.id ?? null,
+                  credits,
+                  amountTotal: session.amount_total ?? null,
+                  currency: session.currency ?? null,
+                  granted: packCheck.verdict === "unverifiable",
+                },
+              },
+            })
+            .catch(() => {});
+          if (packCheck.verdict === "mismatch") {
+            // 200 → Stripe 不重投。钱已经收了,credits 没发,报警已响,人来处理。
+            return new Response("ignored: pack mismatch", { status: 200 });
+          }
         }
         // Dedup on the Checkout SESSION id, not the event id: one session = one payment = one
         // grant. session.id stays exactly-once even if Stripe delivers multiple distinct events

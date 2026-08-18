@@ -26,6 +26,7 @@ import { prisma } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   RESEARCH_TIERS,
+  researchTierSearchBudgetInternal,
   researchAgent,
   withLlmBudget,
   ottoModelRuntime,
@@ -40,6 +41,7 @@ import {
   braveSearch,
   searchWithFallback,
   RESEARCH_QUEUE,
+  searchChargeInternal,
 } from "@fikirtive/core";
 import { fetchAndExtract } from "@fikirtive/core/server";
 import { sanitizeError } from "../redact.js";
@@ -208,6 +210,14 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
           model: ottoModelRuntime.billableModelId,
           paid: true,
           maxSteps: tier.maxSteps,
+          // 钱路 M1-c(裁决 9b):搜索按 Founder 2026-07-03 裁的 3× 收费。此前 searchSources
+          // 被标成 FREE —— 而「free」的真正含义是**没人计价**:每一次深研都在替商家买搜索,
+          // 账上一分没记。现在它是这次收费的第二条腿:
+          //   hold   = 这一档的 maxSearches × 单次费率(worst case,与卡面预估同源)
+          //   settle = 实际搜了几次 × 单次费率(ctx.searchesUsed,跑完才知道)
+          // 跑失败(withLlmBudget 全额退款)那条路不收 —— 一轮没成的深研不向商家收钱。
+          extraHoldInternal: researchTierSearchBudgetInternal(tier.maxSearches),
+          extraSettleInternal: () => searchChargeInternal(ctx.searchesUsed),
           usageOnError: (e) =>
             e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage
               ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)

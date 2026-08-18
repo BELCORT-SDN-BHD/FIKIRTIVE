@@ -1033,3 +1033,138 @@ describe("#524 × #898 — the conversation hold and the capped charge take diff
     expect(mocks.refundReservation).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 钱路 M1-c — extraHoldInternal / extraSettleInternal(非 LLM 的那一笔)
+//
+// 现役唯一用户 = 深研的搜索费(Founder 2026-07-03 裁的 3×,裁决 9b 落地)。搜索此前被标成
+// FREE,而「free」的真正含义是**没人计价**。这一族用例钉住的是:加这条腿**不能**动到
+// reserve→settle→refund 的任何一条不变量。
+// ---------------------------------------------------------------------------
+describe("钱路 M1-c — extraHoldInternal / extraSettleInternal(搜索费那条腿)", () => {
+  const EXTRA_HOLD = 36; // 12 次搜索 × 3 internal(standard 档的 worst case)
+  const usage = { inputTokens: 1000, outputTokens: 100 };
+  const llmOnly = turnBudgetInternal(llmPricesFor(MODEL), MARGIN, 1);
+  const tokenOnly = () => actualCostInternal(usage, llmPricesFor(MODEL), MARGIN);
+
+  it("hold 变大:持有额 = LLM worst case + 非 LLM worst case", () => {
+    expect(llmHoldInternal(makeArgs({ extraHoldInternal: EXTRA_HOLD }))).toBe(llmOnly + EXTRA_HOLD);
+    // 不传就是原来的行为,一格不动。
+    expect(llmHoldInternal(makeArgs())).toBe(llmOnly);
+  });
+
+  it("settle 变大:token 那一笔 + 实际发生的搜索费", async () => {
+    await withLlmBudget(
+      makeArgs({ extraHoldInternal: EXTRA_HOLD, extraSettleInternal: () => 15 }), // 实际搜了 5 次
+      async () => ({ result: "ok", usage }),
+    );
+    expect(mocks.settleCredits).toHaveBeenCalledWith(mocks.fakeTx, {
+      orgId: ORG,
+      refId: REF,
+      actualInternal: tokenOnly() + 15,
+    });
+  });
+
+  it("持有额必须盖得住最坏情况的 settle —— 否则搜索费会被 clamp 掉、成本落在我们头上", async () => {
+    // 一次搜满 12 次的深研:settle 的搜索部分正好等于 hold 的搜索部分。
+    await withLlmBudget(
+      makeArgs({ extraHoldInternal: EXTRA_HOLD, extraSettleInternal: () => EXTRA_HOLD }),
+      async () => ({ result: "ok", usage }),
+    );
+    const heldTotal = llmOnly + EXTRA_HOLD;
+    const settled = mocks.settleCredits.mock.calls[0]![1].actualInternal;
+    expect(settled).toBeLessThanOrEqual(heldTotal);
+    // 而且搜索那部分**真的进了 settle**,不是被吞掉。
+    expect(settled).toBe(tokenOnly() + EXTRA_HOLD);
+  });
+
+  it("不变量 #3 不动:fn 抛错 → 全额退款(搜索费一起退,一轮没成的深研不收钱)", async () => {
+    const boom = new Error("provider down");
+    const extraSettle = vi.fn(() => 15);
+    await expect(
+      withLlmBudget(
+        makeArgs({ extraHoldInternal: EXTRA_HOLD, extraSettleInternal: extraSettle }),
+        vi.fn().mockRejectedValue(boom),
+      ),
+    ).rejects.toBe(boom);
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    expect(extraSettle).not.toHaveBeenCalled();
+  });
+
+  it("优雅截断(usageOnError)= 真的跑了 → token 与搜索一起结", async () => {
+    const err = Object.assign(new Error("max turns"), { state: { usage } });
+    await expect(
+      withLlmBudget(
+        makeArgs({
+          extraHoldInternal: EXTRA_HOLD,
+          extraSettleInternal: () => 9,
+          usageOnError: () => usage,
+        }),
+        vi.fn().mockRejectedValue(err),
+      ),
+    ).rejects.toBe(err);
+    expect(mocks.settleCredits).toHaveBeenCalledWith(mocks.fakeTx, {
+      orgId: ORG,
+      refId: REF,
+      actualInternal: tokenOnly() + 9,
+    });
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("paid:false 照旧零计量 —— 搜索费也不例外", async () => {
+    const r = await withLlmBudget(
+      makeArgs({ paid: false, extraHoldInternal: EXTRA_HOLD, extraSettleInternal: () => 99 }),
+      async () => ({ result: "free", usage }),
+    );
+    expect(r).toBe("free");
+    expect(llmHoldInternal(makeArgs({ paid: false, extraHoldInternal: EXTRA_HOLD }))).toBe(0);
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("坏掉的 extraHold 一律忽略(方向 = 不额外持有,退回改动前的行为)", () => {
+    for (const bad of [0, -5, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(llmHoldInternal(makeArgs({ extraHoldInternal: bad })), `extraHold=${String(bad)}`).toBe(llmOnly);
+    }
+  });
+
+  it("坏掉的 extraSettle 收 0 —— 计数器坏掉不许变成一笔编出来的收费", async () => {
+    const bads = [
+      () => Number.NaN,
+      () => -5,
+      () => Number.POSITIVE_INFINITY,
+      () => {
+        throw new Error("counter blew up");
+      },
+    ];
+    for (const bad of bads) {
+      vi.clearAllMocks();
+      mocks.settleCredits.mockResolvedValue(undefined);
+      mocks.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(mocks.fakeTx));
+      await withLlmBudget(
+        makeArgs({ extraHoldInternal: EXTRA_HOLD, extraSettleInternal: bad }),
+        async () => ({ result: "ok", usage }),
+      );
+      expect(mocks.settleCredits.mock.calls[0]![1].actualInternal).toBe(tokenOnly());
+    }
+  });
+
+  it("非整数的实际搜索费向上进位 —— 余量归我们,不是归商家", async () => {
+    await withLlmBudget(
+      makeArgs({ extraHoldInternal: EXTRA_HOLD, extraSettleInternal: () => 2.1 }),
+      async () => ({ result: "ok", usage }),
+    );
+    expect(mocks.settleCredits.mock.calls[0]![1].actualInternal).toBe(tokenOnly() + 3);
+  });
+
+  it("没有这条腿时,行为与本次改动之前逐字相同(回归钉板)", async () => {
+    await withLlmBudget(makeArgs(), async () => ({ result: "ok", usage }));
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(mocks.fakeTx, { orgId: ORG, refId: REF, cost: llmOnly });
+    expect(mocks.settleCredits).toHaveBeenCalledWith(mocks.fakeTx, {
+      orgId: ORG,
+      refId: REF,
+      actualInternal: tokenOnly(),
+    });
+  });
+});
