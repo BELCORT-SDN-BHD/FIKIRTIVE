@@ -75,6 +75,9 @@ import {
 
 type NavigationIcon = React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 
+/** 折叠按钮的 `aria-controls` 指向的就是这条导轨本身。两处引用同一个常量,不手打两遍。 */
+export const NAV_RAIL_ELEMENT_ID = "global-navigation-rail";
+
 /**
  * key → 图标。**只有这一张表**,树的形状不在这里。
  *
@@ -161,12 +164,10 @@ function RailLink({
   link,
   active,
   collapsed,
-  nested = false,
 }: {
   link: RailLinkNode;
   active: boolean;
   collapsed: boolean;
-  nested?: boolean;
 }) {
   const Icon = link.icon;
   return (
@@ -176,7 +177,7 @@ function RailLink({
       aria-current={active ? "page" : undefined}
       title={link.preview ? `${link.label} — Preview. ${link.preview}` : link.label}
       aria-label={link.preview ? `${link.label} (preview)` : link.label}
-      className={cn(rowClass(collapsed, active), nested && !collapsed && "pl-10")}
+      className={rowClass(collapsed, active)}
     >
       <span className="relative shrink-0">
         <Icon className="size-4" aria-hidden />
@@ -363,6 +364,7 @@ export function NavigationRail({ pathname, onAskOtto, signOutAction, account }: 
 
   return (
     <nav
+      id={NAV_RAIL_ELEMENT_ID}
       aria-label="Global navigation"
       data-nav-rail=""
       data-nav-rail-state={collapsed ? "collapsed" : "expanded"}
@@ -382,7 +384,9 @@ export function NavigationRail({ pathname, onAskOtto, signOutAction, account }: 
         >
           {collapsed ? "F" : "FIKIRTIVE"}
         </Link>
-        {/* 一层导轨的那颗开关。宽度不再自己变,所以这是它唯一会变的原因。 */}
+        {/* 一层导轨的那颗开关。宽度不再自己变,所以这是它唯一会变的原因。
+            `aria-expanded` 只说「有东西展着」,`aria-controls` 才说清**展的是哪一样** ——
+            这颗按钮画在导轨里面,读屏用户听不出它管的是自己所在的这条导轨还是别处的什么。 */}
         <Button
           type="button"
           variant="ghost"
@@ -390,6 +394,7 @@ export function NavigationRail({ pathname, onAskOtto, signOutAction, account }: 
           data-nav-rail-toggle
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
           aria-expanded={!collapsed}
+          aria-controls={NAV_RAIL_ELEMENT_ID}
           onClick={() => setState(toggleNavRailCollapsed)}
           className="size-9 shrink-0 rounded-[10px] text-muted-foreground"
         >

@@ -49,7 +49,7 @@ if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => 
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { NAV_RAIL_ICONS, NavigationRail, railIdentityLabel } = await import(
+const { NAV_RAIL_ELEMENT_ID, NAV_RAIL_ICONS, NavigationRail, railIdentityLabel } = await import(
   "@/components/navigation/rail/NavigationRail"
 );
 const { NAV_RAIL_STORAGE_KEY, RAIL_WIDTH_COLLAPSED, RAIL_WIDTH_EXPANDED } = await import(
@@ -274,6 +274,9 @@ describe("一层导轨:240 ↔ 64,商家自己按 (§5.3,票面验收 ③)", () 
 
     expect(railOf(el).style.width).toBe(`${RAIL_WIDTH_EXPANDED}px`);
     expect(toggle().getAttribute("aria-label")).toBe("Collapse navigation");
+    // 判官 r1 [P3-5]:`aria-expanded` 只说「有东西展着」,`aria-controls` 才说清是哪一样。
+    expect(toggle().getAttribute("aria-controls")).toBe(NAV_RAIL_ELEMENT_ID);
+    expect(railOf(el).id).toBe(NAV_RAIL_ELEMENT_ID);
 
     await act(async () => toggle().click());
 

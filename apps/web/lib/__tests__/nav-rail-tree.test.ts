@@ -20,6 +20,7 @@ import {
   SHELL_ROUTES,
   isNavGroup,
   merchantNavLinks,
+  type MerchantNavGroup,
   type MerchantNavLink,
 } from "@fikirtive/core/navigation";
 import {
@@ -32,18 +33,33 @@ import {
   splitLocation,
 } from "@/components/navigation/rail/rail-tree";
 
+function L(key: string, href: string): MerchantNavLink {
+  return { key, label: key, href, does: "" };
+}
+
 /** 换壳后的七格(规格书 §2.3 ①),只用它来验规则 —— 权威源本身这一票不动。 */
 const WAVE2_LINKS: readonly MerchantNavLink[] = [
-  { key: "home", label: "Home", href: SHELL_ROUTES.home, does: "" },
-  { key: "create", label: "Create", href: SHELL_ROUTES.create, does: "" },
-  { key: "library", label: "Library", href: SHELL_ROUTES.library, does: "" },
-  { key: "brand", label: "Brand", href: SHELL_ROUTES.brand, does: "" },
-  { key: "campaign", label: "Campaigns", href: SHELL_ROUTES.campaign, does: "" },
-  { key: "schedule", label: "Schedule", href: SHELL_ROUTES.schedule, does: "" },
-  { key: "billing", label: "Billing & credits", href: SHELL_ROUTES.billing, does: "" },
-  { key: "connections", label: "Connections", href: SHELL_ROUTES.connections, does: "" },
-  { key: "preferences", label: "Preferences", href: SHELL_ROUTES.preferences, does: "" },
+  L("home", SHELL_ROUTES.home),
+  L("create", SHELL_ROUTES.create),
+  L("library", SHELL_ROUTES.library),
+  L("brand", SHELL_ROUTES.brand),
+  L("campaign", SHELL_ROUTES.campaign),
+  L("schedule", SHELL_ROUTES.schedule),
+  L("billing", SHELL_ROUTES.billing),
+  L("connections", SHELL_ROUTES.connections),
+  L("preferences", SHELL_ROUTES.preferences),
 ];
+
+/** 换壳后的 Settings 分组(§2.1)。分组高亮这条规则同样要能在数据改完之前就验。 */
+const WAVE2_SETTINGS_GROUP: MerchantNavGroup = {
+  key: "settings",
+  label: "Settings",
+  items: [
+    L("billing", SHELL_ROUTES.billing),
+    L("connections", SHELL_ROUTES.connections),
+    L("preferences", SHELL_ROUTES.preferences),
+  ],
+};
 
 /** 每一条会被点亮的 href —— 唯一性检查就是「这个数组的长度不许大于 1」。 */
 function litHrefs(pathname: string, links: readonly MerchantNavLink[]): string[] {
@@ -58,10 +74,46 @@ describe("高亮唯一 —— 换壳后的七格 (票面验收 ②)", () => {
   });
 
   it("lights Connections, not Preferences, on the connections page", () => {
-    // 这一条是最长匹配的理由本身:/settings/connections 同时落在 /settings 上,
-    // 但商家心里在 Connections。少了长度比较,Settings 里两格会一起亮。
+    // /settings/connections 同时落在 /settings 上。少了长度比较,亮的**仍然只有一格**,
+    // 但会是错的那一格 —— 唯一性与「赢的是对的那一个」是两条纪律,见下面那条顺序无关的断言。
     expect(activeNavKey(SHELL_ROUTES.connections, WAVE2_LINKS)).toBe("connections");
     expect(activeNavKey(SHELL_ROUTES.preferences, WAVE2_LINKS)).toBe("preferences");
+  });
+
+  it("longest match wins regardless of list order", () => {
+    // 判官 r1 [P2]:上面那条断言在 WAVE2_LINKS 里恰好 connections 排在 preferences 之前,
+    // 所以把长度比较换成「取第一条匹配」它也照样绿 —— 侥幸通过,不是钉住。
+    // 顺序无关才是这条规则的真形状:同一组链接正反两序都必须答 connections。
+    const pair = [L("preferences", SHELL_ROUTES.preferences), L("connections", SHELL_ROUTES.connections)];
+
+    expect(activeNavKey(SHELL_ROUTES.connections, pair)).toBe("connections");
+    expect(activeNavKey(SHELL_ROUTES.connections, [...pair].reverse())).toBe("connections");
+  });
+
+  it("lights the deepest match wherever a third level appears", () => {
+    // 三层同前缀,六种排列都要答最深的那一条:两条链接对不出「是不是真的按长度」,
+    // 因为随便一种偏好都可能在两条上碰巧对一次。
+    const three = [
+      L("shallow", "/settings"),
+      L("middle", "/settings/connections"),
+      L("deep", "/settings/connections/meta"),
+    ];
+    const orders = [
+      [0, 1, 2],
+      [0, 2, 1],
+      [1, 0, 2],
+      [1, 2, 0],
+      [2, 0, 1],
+      [2, 1, 0],
+    ];
+
+    for (const order of orders) {
+      const links = order.map((index) => three[index]!);
+      expect(
+        activeNavKey("/settings/connections/meta", links),
+        `order ${order.join("")} picked the wrong cell`,
+      ).toBe("deep");
+    }
   });
 
   it("lights Schedule on the analytics tab, which is a tab and not a rail cell (Q4)", () => {
@@ -128,6 +180,22 @@ describe("导轨画的就是权威源 (§1.3)", () => {
       }
       expect(isGroupActive(node, "/login")).toBe(false);
     }
+  });
+
+  it("lights the Settings group on each of its Wave 2 children, and on nothing else", () => {
+    // 判官 r1 [P3-2]:分组高亮从前只在今天的权威源上验过 —— 而本票的承诺是「规则今天就对,
+    // W2-11 只改数据」。把换壳后的分组形态传进来,这条承诺对分组才成立。
+    for (const item of WAVE2_SETTINGS_GROUP.items) {
+      expect(
+        isGroupActive(WAVE2_SETTINGS_GROUP, item.href, WAVE2_LINKS),
+        `Settings must light on ${item.href}`,
+      ).toBe(true);
+    }
+
+    // 一个不属于它的赢家不许把它点亮 —— 包括 Settings 自己名下那条 `/settings` 的**子路径**
+    // 被别人赢走的情况(赢家在整棵树里选,不是在分组内部选)。
+    expect(isGroupActive(WAVE2_SETTINGS_GROUP, SHELL_ROUTES.library, WAVE2_LINKS)).toBe(false);
+    expect(isGroupActive(WAVE2_SETTINGS_GROUP, "/login", WAVE2_LINKS)).toBe(false);
   });
 
   it("reads the credits row's destination from the registry, not from a literal", () => {
