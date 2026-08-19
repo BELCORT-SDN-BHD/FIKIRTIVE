@@ -17,6 +17,14 @@ import { FOUNDER_OWNER_ID, knownDisabledSet } from "@fikirtive/core";
  *  错误信息**不带**底层驱动原文:它会被 pg-boss 序列化进 job.output,连接串/口令之类
  *  不该落在那里(与 handleGen 重抛时 sanitize 同一条理由)。
  *
+ *  **与 `apps/web/lib/model-registry.ts` 的 `resolveDisabledModels` 是同一张表、故意不同的
+ *  失败语义,不要合并**:那一侧站在商家面前,读不到时回 `{ error }`,由每个入口翻成诚实空态
+ *  给人看;这一侧站在已排队任务前面,读不到时必须抛,让 handleGen requeue —— 网页侧读错最多
+ *  白高兴一场,这一侧走过去就是**真花钱**。两处的失败语义各有一整套行为测试钉着
+ *  (`apps/web/lib/__tests__/model-registry-fail-closed.test.ts`、
+ *  `jobs/gen-registry-fail-closed.test.ts`、`jobs/refgen-registry-fail-closed.test.ts`),
+ *  合成一个函数就得有一方改行为。
+ *
  *  #463: intentionally NOT wrapped in a principal frame. ModelRegistryOverlay is platform-wide
  *  founder config (tenant-guard-exempt), and this runs INSIDE a tenant-scoped gen handler —
  *  wrapping it would either re-label platform config as tenant data or shadow the caller's
