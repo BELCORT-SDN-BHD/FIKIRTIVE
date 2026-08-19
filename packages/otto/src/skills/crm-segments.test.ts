@@ -1,7 +1,7 @@
 import type { RunContext } from "@openai/agents";
 import { describe, expect, it, vi } from "vitest";
-import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 import { buildSegmentSkill, executeBuildSegment } from "./build-segment.js";
 import {
   crmSegmentRuleGroup,
@@ -47,23 +47,17 @@ function ports() {
  * packages, and a package export widened for a test would be a worse trade.
  */
 /**
- * C7 —— 这一段是新加的「今天做不到什么」。
+ * C7 —— 新加的那一段「今天做不到什么」。
  *
- * 它**逐字写在这块板上**,不是从 `_availability.ts` import 过来的:板子的合同就是「改一个字
- * 就得来改这里」,一旦改成引用同一个常量,那边动一个字这边跟着动、测试照绿,复审就没了。
+ * **它的逐字钉板不在这里,在 `availability-truth-fence.test.ts`。** r1 时这一段的副本是抄在
+ * 这块板上的,理由是「板子的合同就是改一个字就得来改这里」。r2 把那份副本挪走了,因为同一段
+ * 文字被 `saveCustomerSegment` 也拼着,而这块板只覆盖 readSegments / buildSegment —— 两处
+ * 抄一段、第三处没人管,是比引用常量更坏的形状。
  *
- * 唯一的例外是最后那句渠道现状 —— 它是 `@fikirtive/core` 里既有的唯一权威
- * (`MESSAGING_STATUS_ASSISTANT`),自己有测试和自己的复审归属,在这里再抄第三份反而是
- * 制造漂移,所以拼它。
+ * 现在的分工:那一段的**措辞**由新围栏逐字钉(它同时钉 Routine 那一段,并列着每条事实主张的
+ * 取证命令);这块板继续管**它前面那一整段**——每个字节仍然被某一处逐字断言压着。
  */
-const SEGMENT_AVAILABILITY_COPY =
-  "Availability, say it plainly whenever segments come up: there is no page in the app today for " +
-  "customer segments, contacts or broadcasts, so never send the user to one. Two of the five rule " +
-  "facts select real people — channel and contactability. The other three have nothing behind them " +
-  "yet: last order recency and tags are not connected, and lifetime spend has no source of data in " +
-  "the product, so a rule built on any of those three matches nobody rather than guessing. A saved " +
-  "segment is a list and nothing more today. " +
-  MESSAGING_STATUS_ASSISTANT;
+const SEGMENT_AVAILABILITY_COPY = CRM_SEGMENT_AVAILABILITY;
 
 const APPROVED_OTTO_COPY = {
   readSegments:
@@ -169,6 +163,20 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
       "Availability, say it plainly whenever segments come up: there is no page in the app today for customer segments, contacts or broadcasts, so never send the user to one.",
     surface: "buildSegment",
     why: "同一句实话、同一份证据 —— 两条技能各带一份,因为模型读到哪一条就只读到哪一条。",
+  },
+  // C7 r2(判官 [P2-1])—— contactability 那一句带两个全称词,两个都可证,而且这正是 r1
+  // 含糊过去的地方:r1 把 contactability 整个记作「能用」,没说它只有一侧选得出人。
+  {
+    sentence:
+      "The fifth, contactability, works in one direction only: contactability=not_contactable matches every contact, and contactability=contactable matches nobody, because opt-in needs the customer's own confirmation.",
+    surface: "readSegments",
+    why: "可证,且已行为实证:`contactable` 要 `marketingConsent === \"opt_in\"`(segment-rules.ts `contactMatchesLeaf`),`opt_in` 要 `consentFact()` 拿到 `verified_grant`(consent-authority.ts),而 `consent-fold.ts` 只对 customer + interactive + verified 的事件给 `verified_grant`;生产仅有的两个 `recordConsentEvent` 调用点(crm-actions.ts:297 `crm_manual`、:917 `import`)在闭合写者矩阵里都是 merchant / backfill / asserted。所以 opt_in 生产不可达 ⇒ contactable 恒假 ⇒ not_contactable 恒真。探针实跑:contactable→false、not_contactable→true。",
+  },
+  {
+    sentence:
+      "The fifth, contactability, works in one direction only: contactability=not_contactable matches every contact, and contactability=contactable matches nobody, because opt-in needs the customer's own confirmation.",
+    surface: "buildSegment",
+    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
   },
 ];
 
