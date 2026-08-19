@@ -568,13 +568,18 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
   // ── 计费 ──────────────────────────────────────────────────────────────────
   {
     name: "STRIPE_SECRET_KEY",
-    surface: "web",
+    // 钱路 M1-b:worker 也读它了 —— apps/worker/src/jobs/stripe-reconcile.ts 每半小时把最近
+    // 48 小时**已支付**的 checkout session 与账本对一遍(只读、只报警,一个字都不写钱)。
+    // worker 上不设这把密钥不会坏任何东西:对账扫描直接跳过并说明原因;坏的是那时候没人在看。
+    // `shared: false` 保持不变:两侧拿的是同一把密钥没错,但它不进配置指纹 —— 指纹里的值是
+    // HMAC 摘要,而 web 侧漏配这把密钥的后果(整条充值路挂掉)另有更直接的报错。
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "free",
     secret: true,
     shared: false,
-    summary: "Stripe secret key (sk_live_… in production).",
+    summary: "Stripe secret key (sk_live_… in production). web: checkout + webhook. worker: the read-only 48h ledger reconciliation sweep.",
   },
   {
     name: "STRIPE_WEBHOOK_SECRET",
