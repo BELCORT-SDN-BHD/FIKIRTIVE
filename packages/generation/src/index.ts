@@ -14,7 +14,7 @@
  */
 import { deflateSync, crc32 } from "node:zlib";
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@fikirtive/core";
-import { imageOutputSize } from "@fikirtive/core";
+import { GENERATION_ENGINE_UNAVAILABLE, imageOutputSize } from "@fikirtive/core";
 import { BytePlusProvider } from "./byteplus.js";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
@@ -162,20 +162,106 @@ export function extFromUrl(url: string): string | null {
   return m?.[1] ? m[1].toLowerCase() : null;
 }
 
+/* ---------------- the deploy with no engine ---------------- */
+
+/**
+ * A provider that exists only to REFUSE, for a production deploy with no engine selected.
+ *
+ * It is a provider rather than a boot-time throw, and a `permanent` throw rather than a plain
+ * one, for reasons spelled out on `createGenerationProvider` below. What matters at this level
+ * is that it is honest twice over, to two different readers:
+ *
+ *   - the OPERATOR gets the actual condition, named, on the first refused job (worker stdout,
+ *     and Sentry via the worker's `runHandler`). "GENERATION_PROVIDER is unset" is the whole
+ *     diagnosis; nobody has to correlate a swatch with a deploy.
+ *   - the MERCHANT gets `GENERATION_ENGINE_UNAVAILABLE` and nothing else. The thrown message IS
+ *     that whitelisted sentence, deliberately: the worker persists the thrown message to
+ *     `GenJob.error`, and `merchantGenFailureMessage` compares that string against the whitelist
+ *     BYTE FOR BYTE. Putting the operator's diagnosis in the message would fail that comparison,
+ *     drop the card back to the generic "you can try again", and tell the merchant to keep
+ *     retrying a deployment setting. So the two audiences get two channels, not one string.
+ *
+ * `name` is "unconfigured", not "mock", and that is load-bearing beyond logging: the gen job
+ * reads `provider.name === "mock"` to decide whether to skip its conditioning-reachability
+ * gates. Calling this one "mock" would relax real gates on a production path.
+ */
+export class UnconfiguredProvider implements GenerationProvider {
+  readonly name = "unconfigured";
+  constructor(private readonly why: string) {}
+
+  /** One shape for both entry points: say it to the operator, refuse it to the merchant. */
+  private refuse(what: string): never {
+    console.error(`[generation] REFUSING ${what}: ${this.why} — no engine is configured, so this deploy cannot generate. The merchant's hold is being refunded.`);
+    throw permanentInputError(GENERATION_ENGINE_UNAVAILABLE);
+  }
+
+  async generate(_req: GenerationRequest): Promise<GeneratedImage[]> {
+    this.refuse("an image generation");
+  }
+
+  async generateVideo(_req: VideoRequest): Promise<GeneratedVideo> {
+    this.refuse("a video generation");
+  }
+}
+
 /* ---------------- env factory ---------------- */
 
 /**
- * Two providers: GENERATION_PROVIDER=byteplus (the PROD path — Seedream image /
- * Seedance video, needs BYTEPLUS_API_KEY, real money), and anything else (incl.
- * unset) is the mock — safe by default so a misconfigured prod can't silently
- * burn money, and dev/tracer never touch the network. ADR 0003 (docs/adr/) —
- * byteplus is the only paid provider; there is no fallback.
+ * THE PROVIDER THIS DEPLOY ACTUALLY HAS, and — since the C1b honesty pass — an
+ * explicit refusal where it has none.
+ *
+ * Three answers, each earned by an explicit setting:
+ *   byteplus — the PROD path (Seedream image / Seedance video, needs BYTEPLUS_API_KEY,
+ *              real money). ADR 0003: the only paid provider; there is no fallback.
+ *   mock     — deterministic solid-colour PNGs, $0, no network. Dev, CI and the tracer
+ *              scripts ask for this BY NAME, and that path is untouched.
+ *   neither  — unset, empty, or a typo.
+ *
+ * ── WHAT "NEITHER" USED TO MEAN, AND WHY IT HAD TO CHANGE ────────────────────────────────
+ * It used to mean the mock, and the comment here called that "safe by default so a
+ * misconfigured prod can't silently burn money". Half of that was true: nothing was spent
+ * AT THE ENGINE. The other half was never true, and it is the half the merchant pays for —
+ * the worker took the stand-in's 8×8 solid-colour PNG, stored it, delivered it as their
+ * generation and SETTLED the hold. A production deploy that lost its provider variable did
+ * not fail; it quietly began selling swatches at full price, with nothing anywhere saying so.
+ * "Cannot burn money" had silently meant OUR money.
+ *
+ * So `neither` now refuses IN PRODUCTION, and the refusal travels the money path that already
+ * exists rather than inventing a second one: `UnconfiguredProvider` throws a `permanent` error
+ * on the first call, which is the same shape the engine's own permanent refusals throw, so the
+ * worker's terminal branch terminal-fails the job and refunds the hold in one transaction
+ * (apps/worker/src/jobs/gen.ts). No new refund code, no new idempotency key — the merchant's
+ * credits come back through `refundReservation` on `refund:<jobId>` like every other pre-charge
+ * failure.
+ *
+ * ── WHY THE REFUSAL IS PER-REQUEST AND NOT A BOOT REFUSAL ────────────────────────────────
+ * Throwing here at import time would look stricter and be worse: the worker is the process
+ * that performs refunds, so a worker that refuses to boot leaves every already-queued job
+ * holding its reservation with nothing left running to release it, and Railway restarts the
+ * corpse ten times for good measure. Refusing one job at a time keeps the refund path alive,
+ * which is the only property that actually protects the merchant's balance.
+ *
+ * ── AND WHY NON-PRODUCTION STILL GETS THE MOCK ──────────────────────────────────────────
+ * The same rule the env contract already lives by (packages/core/src/env-contract.ts): a
+ * missing variable is a normal, deliberate state in dev and CI, and only production is
+ * entitled to treat it as fatal. Note what this does NOT rely on: an unrecognised VALUE
+ * ("byteplu", "fal") is already fatal in every environment, because the contract declares this
+ * variable an enum and `bootEnvDecision` refuses the format outright. The one hole left was
+ * the variable being absent in production, and that is exactly the hole closed here.
  */
-export function createGenerationProvider(): GenerationProvider {
-  if (process.env.GENERATION_PROVIDER === "byteplus") {
-    const key = process.env.BYTEPLUS_API_KEY;
+export function createGenerationProvider(env: NodeJS.ProcessEnv = process.env): GenerationProvider {
+  // Compared with `===`, never trimmed or lower-cased. A near-miss (" byteplus") is a typo, and
+  // a typo must not be the thing that starts spending a merchant's money.
+  if (env.GENERATION_PROVIDER === "byteplus") {
+    const key = env.BYTEPLUS_API_KEY;
     if (!key) throw new Error("GENERATION_PROVIDER=byteplus but BYTEPLUS_API_KEY is not set");
     return new BytePlusProvider(key);
+  }
+  if (env.GENERATION_PROVIDER === "mock") return new MockProvider();
+  if (env.NODE_ENV === "production") {
+    return new UnconfiguredProvider(
+      `GENERATION_PROVIDER is ${env.GENERATION_PROVIDER === undefined ? "unset" : `"${env.GENERATION_PROVIDER}"`}`,
+    );
   }
   return new MockProvider();
 }
@@ -200,11 +286,15 @@ export {
 export {
   ArkUnderstandingProvider,
   MockUnderstandingProvider,
+  classifyUnderstandingFailure,
   createUnderstandingProvider,
   emptyUnderstandingResponseError,
+  isProviderConfigError,
   isUnreadableMediaError,
+  providerConfigError,
   understandingErrorUsage,
   unreadableMediaError,
+  type UnderstandingFailureClass,
   type UnderstandingProvider,
   type UnderstandingRequest,
   type UnderstandingResult,

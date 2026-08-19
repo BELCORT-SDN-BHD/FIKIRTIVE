@@ -1565,15 +1565,11 @@ function Composer({
               // merchant types.
               className="field-sizing-fixed min-h-0 w-full resize-none rounded-[10px] border-border bg-card px-3 py-2 text-[13px] shadow-none"
             />
-            <Button
-              type="button"
-              variant="ghost"
-              disabled
-              title="Coming soon — Otto will draft this from your brand memory."
-              className="mt-1 h-auto w-auto gap-1.5 p-0 text-[12px] font-semibold text-muted-foreground opacity-60 hover:bg-transparent disabled:cursor-default disabled:opacity-60"
-            >
-              <CoralCloud size={16} /> Ask Otto to write it
-            </Button>
+            {/* 这里曾经有一颗永久 disabled 的按钮,title 里替 Otto 许诺它以后会照品牌记忆
+                代写文案(规格书 §4.6 点名删除)。一颗永远按不下去的按钮许的是一个没人排期
+                的诺,而 Otto 就在旁边 —— 要它写文案直接说就行,不需要一颗死按钮代言。
+                围栏见 apps/web/lib/__tests__/schedule-route.test.ts(那句话逐字写在围栏里,
+                这里不复述 —— 复述一遍等于把它又写回代码里,围栏会红)。 */}
           </Field>
 
           {/* First comment (channel-gated) */}

@@ -9,11 +9,16 @@ vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create:
 vi.mock("@fikirtive/core", () => ({ newId: () => "evt_id", INTERNAL_PER_DISPLAY: 10 }));
 const captureMessage = vi.fn();
 vi.mock("@sentry/node", () => ({ captureMessage }));
+// 整顿 C1a:报警管道注入成假 transport。断言的是「这类事件必然产生一次带上下文的上报」,
+// 不是 Sentry/Resend/Telegram 本身 —— 一个真实外呼都不发。
+const founderAlert = vi.fn();
+vi.mock("@/lib/founder-alert", () => ({ founderAlert }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   actionEventCreate.mockResolvedValue({});
+  founderAlert.mockResolvedValue([]);
   creditLedgerFindUnique.mockResolvedValue(null); // default: this session was never granted
 });
 
@@ -197,6 +202,56 @@ describe("stripe webhook", () => {
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 整顿 C1a —— 这条分支是这个文件里唯一一条「真钱进账、我们不知道该给谁」却只写审计不叫人
+   * 的路。旁边的 async_payment_failed / dispute·refund 从第一天起就报警,而这一条更硬:那两条
+   * 是钱没来或钱被拉回,这一条是**商家已经付过款**,只是 metadata 坏掉让我们发不出 credits。
+   * 没有人工补发,那笔钱就是白收的。
+   */
+  it("PAID session with unusable metadata now ALERTS (money in, nobody to credit) — audit row alone was not enough", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_bad", type: "checkout.session.completed",
+      data: { object: { id: "cs_bad", payment_status: "paid", metadata: {}, payment_intent: "pi_bad", amount_total: 4900, currency: "myr" } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200); // 200 契约不变:报警绝不决定响应码
+    expect(grantCredits).not.toHaveBeenCalled();
+    expect(actionEventCreate).toHaveBeenCalled(); // 审计照旧
+    expect(founderAlert, "钱进来了,没人知道该给谁,而没有任何人被通知").toHaveBeenCalledTimes(1);
+    expect(founderAlert).toHaveBeenCalledWith(expect.objectContaining({
+      key: "stripe.paid_session_unusable_metadata",
+      // 上下文要够人直接去 Stripe 后台找到这一笔,而不是先回来读代码。
+      context: expect.objectContaining({ stripeEventId: "evt_bad", stripeSessionId: "cs_bad", paymentIntentId: "pi_bad", amountTotal: 4900, currency: "myr" }),
+    }));
+  });
+
+  it("still 200s + still audits when the ALERT itself throws — a money event must never enter a Stripe retry storm", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_bad2", type: "checkout.session.completed",
+      data: { object: { id: "cs_bad2", payment_status: "paid", metadata: { orgId: "org_1" } } },
+    });
+    founderAlert.mockRejectedValue(new Error("every channel down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await POST(req());
+      expect(res.status).toBe(200);
+      expect(actionEventCreate).toHaveBeenCalled();
+      expect(grantCredits).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a GOOD purchase does not alert — an alarm that fires on every sale is an alarm nobody reads", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_ok", type: "checkout.session.completed",
+      data: { object: { id: "cs_ok", payment_status: "paid", metadata: { orgId: "org_1", credits: "100" } } },
+    });
+    grantCredits.mockResolvedValue({ ok: true });
+    expect((await POST(req())).status).toBe(200);
+    expect(founderAlert).not.toHaveBeenCalled();
   });
 
   it("200 on a duplicate event (grantCredits reports duplicate)", async () => {

@@ -60,10 +60,24 @@ export interface UnreadFile {
 /** 终态里「读不成」的那两个。它们不会自己重来 —— 所以不许对商家说「稍后会自动读」。 */
 const NOT_READ_STATUSES = ["SKIPPED", "FAILED"] as const;
 
+/**
+ * **等着重来**的那一个:我们自己的配置坏了,文件本身没问题。
+ *
+ * 它必须和上面那两个分开,因为「不会重试」这句话在这里是**假的**,而假话的方向最伤人:
+ * 商家会被劝去重传一份根本没毛病的文件,传几次都还是这个结果。2026-08-18 的事故里
+ * Otto 就是这么说的 —— 每一份好文件都被讲成「读不了,建议传更清晰的版本」。
+ */
+const WAITING_STATUSES = ["PAUSED"] as const;
+
 export async function executeRecallStoreKnowledge(
   input: RecallInput,
   runContext: Pick<RunContext<OttoContext>, "context">,
-): Promise<{ understood: RecalledUnderstanding[]; notRead?: UnreadFile[]; note?: string }> {
+): Promise<{
+  understood: RecalledUnderstanding[];
+  notRead?: UnreadFile[];
+  waitingOnUs?: UnreadFile[];
+  note?: string;
+}> {
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
   const limit = input.limit ?? 6;
@@ -71,7 +85,7 @@ export async function executeRecallStoreKnowledge(
   const rows = await prisma.assetUnderstanding.findMany({
     where: {
       ownerId: ctx.orgId,
-      status: { in: ["DONE", ...NOT_READ_STATUSES] },
+      status: { in: ["DONE", ...NOT_READ_STATUSES, ...WAITING_STATUSES] },
       ...(input.kind ? { kind: input.kind } : {}),
     },
     orderBy: { createdAt: "desc" },
@@ -97,43 +111,62 @@ export async function executeRecallStoreKnowledge(
       readAt: r.createdAt.toISOString(),
     }));
 
+  const unreadFile = (r: (typeof matched)[number]) => ({
+    assetId: r.assetId,
+    kind: r.kind,
+    reason: redactProviderNames(r.error ?? "That file couldn't be read."),
+  });
+
   // 读不成的那些也带上 —— 哪怕同时有读成的(混着的时候把失败藏起来是同一句谎话的弱化版)。
   const notRead = matched
     .filter((r) => (NOT_READ_STATUSES as readonly string[]).includes(r.status))
     .slice(0, limit)
-    .map((r) => ({
-      assetId: r.assetId,
-      kind: r.kind,
-      reason: redactProviderNames(r.error ?? "That file couldn't be read."),
-    }));
+    .map(unreadFile);
+
+  // 我方还没修好的那些。**和上面那一堆分开**:它们会自己再来,而且商家做什么都帮不上忙。
+  const waitingOnUs = matched
+    .filter((r) => (WAITING_STATUSES as readonly string[]).includes(r.status))
+    .slice(0, limit)
+    .map(unreadFile);
+
+  // 两句话,分别只讲自己那一类的实话。「will NOT be retried」这句只许跟着 notRead 出现 ——
+  // 它对 waitingOnUs 是假的,而说反了的代价是让商家一遍遍重传一份没问题的文件。
+  const notReadNote =
+    "The files under `notRead` were tried and could not be used. They will NOT be retried on their own — " +
+    "never tell the user those are still being read or will be read later. The reason on each one is safe " +
+    "to tell the user in their own words; if they want one of those files used, the honest suggestion is to " +
+    "upload a clearer or smaller version of it.";
+  const waitingNote =
+    "The files under `waitingOnUs` have NOT been read yet because of a problem on our side, not with their " +
+    "files. They are still in line and will be read once that is fixed, so never say those could not be read, " +
+    "and never ask the user to re-upload or send a clearer version of one — that would not help. If the user " +
+    "asks about one, say plainly that it hasn't been read yet because of something on our end that is being " +
+    "sorted, and that nothing needs doing on their side.";
+  const notes = [
+    ...(notRead.length > 0 ? [notReadNote] : []),
+    ...(waitingOnUs.length > 0 ? [waitingNote] : []),
+  ];
 
   if (understood.length === 0) {
+    const nothingYet =
+      notes.length > 0
+        ? "Nothing has been read successfully from this account's files yet. There is no analyse button " +
+          "anywhere, so never offer to start an analysis."
+        : "Nothing has been read from this account's files yet. New photos and clips are read automatically " +
+          "in the background shortly after they arrive — there is no button for the user to press, so never " +
+          "offer to start one or tell the user to run an analysis.";
     return {
       understood: [],
       ...(notRead.length > 0 ? { notRead } : {}),
-      note:
-        notRead.length > 0
-          ? "Nothing has been read successfully from this account's files. The files under `notRead` were " +
-            "each tried and could not be used — the reason on each one is safe to tell the user in their own " +
-            "words. Those will NOT be retried on their own, so do not promise the user they will be read " +
-            "later. There is no analyse button anywhere, so never offer to start an analysis either; if the " +
-            "user wants one of those files used, the honest suggestion is to upload a clearer or smaller " +
-            "version of it."
-          : "Nothing has been read from this account's files yet. New photos and clips are read automatically " +
-            "in the background shortly after they arrive — there is no button for the user to press, so never " +
-            "offer to start one or tell the user to run an analysis.",
+      ...(waitingOnUs.length > 0 ? { waitingOnUs } : {}),
+      note: [nothingYet, ...notes].join(" "),
     };
   }
   return {
     understood,
     ...(notRead.length > 0 ? { notRead } : {}),
-    ...(notRead.length > 0
-      ? {
-          note:
-            "The files under `notRead` were tried and could not be used. They will NOT be retried on their " +
-            "own — never tell the user those are still being read or will be read later.",
-        }
-      : {}),
+    ...(waitingOnUs.length > 0 ? { waitingOnUs } : {}),
+    ...(notes.length > 0 ? { note: notes.join(" ") } : {}),
   };
 }
 
@@ -152,6 +185,9 @@ export const recallStoreKnowledgeSkill = defineOttoSkill({
     "It also returns `notRead`: files that were tried and could not be used, each with a plain-language reason. " +
     "Those are finished — they will NOT be retried on their own, so never say one is still being read or will be " +
     "read later; say what went wrong if the user asks about that file. " +
+    "It can also return `waitingOnUs`: files that have not been read yet because of a problem on our side. Those " +
+    "are the opposite case — they are still in line and will be read once it is fixed, so never say those could " +
+    "not be read and never ask the user to re-upload them. " +
     "IMPORTANT: this reading happens automatically in the background — there is no analyse button anywhere. " +
     "Never offer to analyse a file, never ask the user to start one, and never say a file is 'being analysed'. " +
     "If nothing is here yet, simply work from what the user tells you.",

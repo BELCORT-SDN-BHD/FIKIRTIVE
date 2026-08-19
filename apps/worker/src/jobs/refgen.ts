@@ -34,6 +34,7 @@ import {
   type RefGenModel,
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
+import { captureMoneyPathError } from "../alerting.js";
 import { provider } from "../generation.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { isModelDisabled } from "@fikirtive/core";
@@ -103,6 +104,7 @@ async function failClosedRefund(jobId: string, ownerId: string, error: string): 
   } catch (e) {
     if (e !== REFGEN_SETTLED_PRE_SPEND_FAIL) throw e;
     console.error(`[refgen] ${jobId}: a pre-spend gate wanted to fail this job closed, but the charge is already SETTLED — the delivery beat us to it. Left in flight on purpose: FAILED would promise a refund that never happened. Reason was: ${error}`);
+    captureMoneyPathError(e, { event: "refgen.fail_closed_blocked_by_settle", jobId, orgId: ownerId, gateReason: error });
   }
 }
 
@@ -149,8 +151,12 @@ async function resumeCommittedRefGenJob(job: RefGenJob): Promise<void> {
   });
   if (refunded) {
     console.warn(`[refgen] ${job.id}: outputs recorded but a REFUND won the finalizer — failing closed, not delivering`);
-    await prisma.refGenJob.update({
-      where: { id: job.id },
+    // #951 漏网(M1-b):gen.ts 的同一处(resumeCommittedGenJob 的 free-delivery guard)早就是
+    // 条件写了,refgen 这一处还留着无条件 update。理由与那边逐字相同:一个已经提交产出的行
+    // **此刻**是 GENERATING,所以「没有别的终态能和它抢」在今天成立 —— 但「这一处恰好抢不到」
+    // 是一条会烂掉的事实,而一次无条件状态写就足以在将来盖掉别人写下的真相。
+    await prisma.refGenJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId, status: { in: [...REFGEN_IN_FLIGHT_STATUSES] } },
       data: { status: "FAILED", error: "outputs were recorded but the charge was refunded — not delivering (free-delivery guard)", finishedAt: new Date() },
     });
     return;
@@ -249,6 +255,7 @@ export async function reapStaleRefGenJobs(): Promise<number> {
         reaped++;
       } catch (e) {
         console.error(`[refgen] reaper resume failed for ${job.id} (retries next sweep):`, e instanceof Error ? e.message : e);
+        captureMoneyPathError(e, { event: "refgen.reaper_resume_failed", jobId: job.id, orgId: job.ownerId });
       }
     }
 
@@ -483,6 +490,14 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       });
       if (!committedRefgen) {
         console.warn(`[refgen] ${job.id}: redelivery already failed+refunded this job mid-flight — discarding the (orphan) outputs, not attaching. Founder absorbed the engine cost.`);
+        // 同 gen.ts 的对应分支:商家已退款,平台真金白银付了一次引擎调用。零上报 = 没人
+        // 知道它一天发生几次。这里没有异常对象,所以合成一个,让 Sentry 有一条可聚类的事件。
+        captureMoneyPathError(new Error("refgen redelivery discarded paid outputs — founder absorbed the engine cost"), {
+          event: "refgen.founder_absorbed_engine_cost",
+          jobId: job.id,
+          orgId: job.ownerId,
+          mode: job.mode,
+        });
         return;
       }
       committed = true; // outputs recorded + settled — past here a failure RESUMES, never re-spends
@@ -499,23 +514,45 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       // result parse/download threw). Only a genuinely pre-charge throw retries,
       // up to the budget (limit 2 → deliveries at retryCount 0,1,2; `>=` once).
       const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
+      // #1001 判官 P3-4(M1-b)—— gen.ts 早就问了第三个问题,refgen 一直没问:`permanent`。
+      // charged 问「这一次花钱了吗?」;permanent 问「同一个请求还有可能成功吗?」。适配器在
+      // 引擎**看过商家送来的东西之后拒绝**时打上这个标记(packages/generation:
+      // permanentInputError,例如参考图里有可辨认的真人),同一张图每一次都会得到同一个拒绝。
+      // 少了这一格,一个必然失败的请求要跑满 REFGEN_RETRY_LIMIT 次重投才终结退款 —— 商家白等
+      // 三轮队列,拿到的还是同一句拒绝。钱的结果一个字不变:permanent 的失败是**证明没花钱**的
+      // (引擎跑之前的 4xx),spent 仍是 false、不记 spentUsd,退款走的还是每条 pre-charge 失败
+      // 共用的那一条终态分支。它只改变「我们什么时候放弃」。
+      const permanent = typeof err === "object" && err !== null && (err as { permanent?: unknown }).permanent === true;
       // a POST-COMMIT failure (outputs recorded + settled) must NOT terminal-fail — requeue so a
       // redelivery RESUMES (re-attaches) without re-spending. Terminal-failing it would leave a
       // CHARGED job shown FAILED + free the active-job guard, letting a user retry pay a SECOND
       // time. Only a pre-commit failure (committed === false) is terminal.
-      const final = !committed && (spent || charged || retryCount >= REFGEN_RETRY_LIMIT);
+      const final = !committed && (spent || charged || permanent || retryCount >= REFGEN_RETRY_LIMIT);
       console.error(`[refgen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
       if (final) {
         // terminal fail → release the hold (the merchant got no result; the founder absorbs any
         // real engine cost). `final` is by definition pre-commit (committed → final is false), so
         // settle never ran; the finalizer index makes refund safe even against a racing settle.
         // A post-charge failure still records spentUsd so "paid but not delivered" stays auditable.
+        //
+        // #951 漏网(M1-b):这是这个文件里最后一处无条件终态写,而 gen.ts 的同一处(#602 r2,
+        // 判官 P1-2)早已是条件写。它信的是**这条 delivery 内存里那份快照**:「这一单还什么都
+        // 没交付」。谓词把这个前提交给库自己判 ——
+        //   • status ∈ 在飞:别人已经写下的终态(取消、reaper 的 fail-close、另一条 delivery 的
+        //     DONE)不许被这条迟到的失败盖掉;
+        //   • outputAssetIds 为空:带着产出的行 ⟺ 提交事务落过(产出与 SETTLE 同一笔)⟹ 已交付
+        //     已收钱,它永远不是「什么都没交付」,更不该被写成 FAILED。
+        // count === 0 表示别人已经了结了这一单并做了它自己的钱 —— 我们这一笔退款连发都不发
+        // (真发也是幂等 no-op,但一笔不该存在的退款尝试本身就不该留在钱路上)。
         await prisma.$transaction(async (tx) => {
-          await tx.refGenJob.update({
-            where: { id: job.id },
+          const { count } = await tx.refGenJob.updateMany({
+            where: {
+              id: job.id, ownerId: job.ownerId, status: { in: [...REFGEN_IN_FLIGHT_STATUSES] },
+              outputAssetIds: { isEmpty: true },
+            },
             data: { status: "FAILED", error: message, finishedAt: new Date(), ...((spent || charged) ? { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } : {}) },
           });
-          await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
+          if (count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
         });
       } else {
         // recoverable: a pre-charge retry (keep the hold), OR a post-commit failure (committed:
