@@ -255,6 +255,30 @@ function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement | un
   return Array.from(scope.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
 }
 
+/**
+ * 等**那件事真的发生**,而不是等一段时间(#1030)。
+ *
+ * Radix 的 roving focus 不在按键那一刻搬焦点:`RovingFocusGroupItem` 的 `onKeyDown` 把
+ * `focusFirst(candidateNodes)` 塞进一个 `setTimeout(…)` 里
+ * (`@radix-ui/react-roving-focus`,1.1.13 的 dist 第 180 行)。而 `await act(...)` 保证的
+ * 是「React 的活干完了、微任务排空了」——**它不保证 Node 的定时器队列轮到过**。于是
+ * 「焦点走没走到下一个页签」变成一场和 1ms 定时器的赛跑:文件顺序一换、机器负载一变,
+ * 同一份代码就一半绿一半红。#1030 记的三次独立观察,失败字节永远是同一句
+ * `expected 'About the brand' to be 'Look & feel'` —— 焦点停在第一个页签上没动。
+ *
+ * 所以这里等的是条件本身:成立的那一刻就返回(通常第一轮就成立),没有 sleep、没有重试壳、
+ * 没有放宽断言。只有那件事**真的没发生**才会耗到截止线,而那时下面的断言照常打印真实差异 ——
+ * roving focus 真坏了,这条用例还是红的。
+ */
+async function actUntil(settled: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!settled() && Date.now() < deadline) {
+    // 让出一个宏任务:Radix 那个 setTimeout 只有在这里才轮得到跑。包在 act 里,是因为它跑出来的
+    // 焦点变化会顺着 Radix Tabs 的 onFocus 触发 React 更新 —— 那更新必须还在 act 的作用域内。
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+}
+
 // ───────────────────────────────────────────────────────────────────────────────
 // 门本身:谁进得来,以及地址栏说的是不是屏幕上的事(判官 P2-1 / P3-1)
 // ───────────────────────────────────────────────────────────────────────────────
@@ -367,11 +391,20 @@ describe("W2-2 ② 手搓 tablist 退场,换成 ui/tabs(规格书 §5.6 ②)", (
 
   it("方向键在页签之间走 —— 手搓那版按了什么都不会发生", async () => {
     const dom = await mountBrand();
-    const first = dom.querySelector<HTMLElement>('[role="tab"]')!;
+    const tabs = Array.from(dom.querySelectorAll<HTMLElement>('[role="tab"]'));
+    const [first, second] = tabs;
+
+    await act(async () => { first.focus(); });
+    // 先钉住起点。焦点还没落到页签上时,方向键本来就什么都不该发生 —— 那种失败必须长得像
+    // 「焦点没进来」,不能伪装成「roving focus 坏了」。
+    expect(document.activeElement, "方向键还没按,焦点就不在第一个页签上").toBe(first);
+
     await act(async () => {
-      first.focus();
       first.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     });
+    // 焦点推进是 Radix 推迟到宏任务里干的 —— 等它真的发生,而不是赌它已经发生(见 actUntil)。
+    await actUntil(() => document.activeElement === second);
+
     expect(document.activeElement?.textContent?.trim()).toBe(SECTIONS[1].label);
     // 页签是 URL 的一部分(?tab=),所以「换页签」这件事在这一面就是换地址。
     expect(routerReplace).toHaveBeenCalledWith(`/brand?tab=${SECTIONS[1].key}`, { scroll: false });
