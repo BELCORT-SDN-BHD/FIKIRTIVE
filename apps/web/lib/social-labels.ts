@@ -22,11 +22,9 @@
  * Pure presentation: no data access, no authority over what is true.
  */
 
-/** Turn a stored token into ordinary words: `NEEDS_ATTENTION` → `Needs attention`. */
-function humanize(token: string): string {
-  const words = token.replaceAll("_", " ").trim().toLowerCase();
-  return words.length === 0 ? words : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
-}
+/** Turn a stored token into ordinary words: `NEEDS_ATTENTION` → `Needs attention`. The rule is
+ *  shared with every other label module (lib/machine-token); this file only chooses the shape. */
+import { humanizeToken as humanize } from "./machine-token";
 
 // ── Social platform ──────────────────────────────────────────────────────────────────────────
 

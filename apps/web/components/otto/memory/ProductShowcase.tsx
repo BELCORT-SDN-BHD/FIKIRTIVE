@@ -9,14 +9,13 @@ import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { StuffItem } from "@/lib/stuff-items";
 import type { ProductDraftResult } from "@/lib/product-ingest-actions";
+import { shortDayLabel } from "@/lib/short-date-label";
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const fmtDay = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
-
-/** Short "Mon D" label for a row's updatedAt. Deterministic — no toLocaleDateString (SSR-safe). */
+/** Short "Mon D" label for a row's updatedAt. Deterministic — no toLocaleDateString (SSR-safe).
+ *  The month names come from lib/short-date-label; OfferList.tsx held the identical copy. */
 function whenLabel(d: Date | string): string {
   const date = new Date(d as unknown as string);
-  return Number.isNaN(date.getTime()) ? "" : fmtDay(date);
+  return Number.isNaN(date.getTime()) ? "" : shortDayLabel(date);
 }
 
 type ProdFields = { name: string; description: string; price: string; url: string; sellingAngle: string; tags: string; category: string };
