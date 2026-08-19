@@ -178,7 +178,7 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     //   · 只把 `model` 换成解析后的引擎名、其余一字不改 ≠ 落库的那个键。
     // 因为摘要在 `startAssetGen` 里就算完,而别名→引擎的翻译(`resolvePublicModelAlias`)
     // 要到 `startGen` 里才跑。#1029 的留桩说的正是这个形状,这里把它变成机器钉住的话:
-    // 哪天摘要改成在解析之后算(模型菜单动态化时就必须这么改),下面第二条会先红。
+    // 哪天摘要改成在解析之后算(模型菜单动态化时就必须这么改),下面第①条(别名体重算的那条)会先红。
     expect(IMAGE_ALIAS).not.toBe(activeImageModel());
     expect(job!.idempotencyKey).toBe(assetActionKey("regen", anchor, body).key);
     expect(job!.idempotencyKey).not.toBe(
