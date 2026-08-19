@@ -17,12 +17,14 @@
  *      OTTO_ASSISTANT,导轨把它画在板块之上、随处可点。
  *   ③ **一个日历** —— 排期日历是唯一权威(真有 ScheduledPost 表、worker 会照它发布);
  *      /campaign/calendar 那张草稿列表收敛成重定向,见 MERCHANT_NAV_REDIRECTS。
- *   ④ **没通电的能力只开一扇诚实的门**(#792)—— CRM 七扇门收成 Customers 一扇,并带
- *      一句 `preview`:消息渠道一个都连不上,所以那些页面发不出也收不到消息。页面本身
- *      一页没删,商家从预览页照样进得去。
+ *   ④ **CRM 整段先收起来**(W2-13 / #993,Founder 裁决 2026-08-18 裁决2)—— 从前这里有
+ *      一格 Customers 预览门(#792,七扇 /crm 子门收成一扇并挂一句 `preview`)。渠道一条都
+ *      连不上,预览门再诚实也仍然是一扇通向空房间的门,所以这一格整个删掉:
+ *      **导航里不许再出现任何 `/crm` 前缀的 href**(围栏在 navigation.test.ts)。
+ *      /crm 的 14 个路由文件保留、各自 `redirect("/")`(旧书签不撞墙),4600 行 CRM 引擎与
+ *      packages/otto 的 CRM 技能原地保留。**恢复触发条件 = Meta verification 通过**
+ *      (登记在延期台账 issue #359):那一天把这一格连同它的 `preview` 一起加回来。
  */
-
-import { MESSAGING_STATUS_MERCHANT } from "./messaging-status.js";
 
 /** 一条真能点开的目的地。 */
 export type MerchantNavLink = {
@@ -62,6 +64,53 @@ export function isNavGroup(node: MerchantNavNode): node is MerchantNavGroup {
 }
 
 /**
+ * 换壳之后的路由常量(Wave 2,规格书 `docs/specs/wave2-shell.md` §2.2)。
+ *
+ * 为什么是一份、而且摆在最前面:换壳开六路并行(Library / Brand / Schedule / Settings /
+ * Create / Home),六个人会同时需要同一串新地址。谁在自己那一面手写一次 `"/library"`,
+ * 这棵树就又多了一份会各自漂移的真相 —— 本仓最贵的一课(两个导航、两个日历、两个创作
+ * 入口)全是这么来的。所以新地址在权威源里只落这一份,六路各自 import。
+ *
+ * W2-5 把它从文件下半段挪到这里:`CREATE_NAV_HREF` / `CANVAS_HREF` 现在就是这张表里的两条
+ * (创作面改名 `/create` 之后,再写第二遍地址就是又开一份真相),而 const 的求值是自上而下的,
+ * 所以表必须先于读它的人。**十三个值逐字节不变**;跟着改的只有两句已经过期的注释 ——
+ * 这一段自己的「W2-5 改名搬家」预告,与 `create:` 那一行的「今天叫 `/northstar-immersive`」。
+ *
+ * **它仍然不是导航数据**:`MERCHANT_NAV` 的七格权威改写留给切换总票(W2-11)。
+ *
+ * 用 key 而不是一串散常量:后续票要按 key 取(`SHELL_ROUTES.library`),围栏也要能把它当
+ * 枚举源逐条对账(`Object.values`)。
+ */
+export const SHELL_ROUTES = {
+  /** 商家自己的总览。今天 `/` 是 `redirect("/otto")`,W2-6 把它换成真页面。 */
+  home: "/",
+  /** 创作旗舰面。W2-5 起这就是它真正的地址(旧 `/northstar-immersive` 永久重定向到这里)。 */
+  create: "/create",
+  /** 画布本身,永远在 Create 那扇门后面。 */
+  canvas: "/create/canvas",
+  /** 已经做出来的每一张图、每一条片。今天是 `/otto?view=library`。 */
+  library: "/library",
+  /** 剪辑台 —— 要剪的东西就在 Library,所以它跟着 Library 走(规格书 Q6)。 */
+  edit: "/library/editor",
+  /** Otto 该记住的品牌与产品。今天是 `/otto?view=memory`。 */
+  brand: "/brand",
+  /** 战役。今天已经是真路由,新旧同址。 */
+  campaign: "/campaign",
+  /** 唯一的日历。今天是 `/otto?view=schedule`。 */
+  schedule: "/schedule",
+  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
+  analytics: "/schedule/analytics",
+  /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
+  billing: "/billing",
+  /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
+  connections: "/settings/connections",
+  /** 花费上限与发布默认值。今天是 `/otto?view=account`。 */
+  preferences: "/settings",
+  /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
+  profile: "/profile",
+} as const;
+
+/**
  * 创作入口的名字 —— **全仓只写这一处**。
  *
  * 白标命名体系还没定(Founder 未拍板),先叫 "Create";体系定了就改这一行,导轨、Otto
@@ -69,11 +118,17 @@ export function isNavGroup(node: MerchantNavNode): node is MerchantNavGroup {
  */
 export const CREATE_NAV_LABEL = "Create";
 
-/** 创作旗舰面:沉浸式画布的家(开工输入框 + 新建画布 + 商家自己的画布列表)。 */
-export const CREATE_NAV_HREF = "/northstar-immersive";
+/**
+ * 创作旗舰面:沉浸式画布的家(开工输入框 + 新建画布 + 商家自己的画布列表)。
+ *
+ * W2-5(规格书 §2.2):地址从 `/northstar-immersive` 改成 `/create`。`northstar-immersive`
+ * 是内部代号 —— 它出现在商家的地址栏里,本身就是一处「说的与做的不一致」。旧地址不 404,
+ * 由 `apps/web/app/northstar-immersive/*` 三个重定向路由永久送到新地址。
+ */
+export const CREATE_NAV_HREF = SHELL_ROUTES.create;
 
 /** 画布本身。Create 首页把商家送到自己那张画布上,所以导轨不再单列一行。 */
-export const CANVAS_HREF = "/northstar-immersive/create/canvas";
+export const CANVAS_HREF = SHELL_ROUTES.canvas;
 
 /**
  * Otto —— 助手,不是板块。
@@ -102,27 +157,9 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     href: "/campaign",
     does: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
   },
-  {
-    // #792 —— 七扇门收成一扇诚实的预览门(Founder 裁决 2026-08-08)。
-    //
-    // 原来这一组把 Inbox / Broadcasts / Workflows / Reports 与 Contacts 并排放在导轨上,
-    // 每一扇都长得像一个能用的能力。可是**一个消息渠道都连不上**(Connections 里 Messaging
-    // 整段写着 "Not available yet",全仓没有任何一条商家可走的连接路径),所以那六扇门后面
-    // 没有一条消息发得出去、收得进来。导轨因此在替产品说大话。
-    //
-    // 收敛之后:导轨只承诺一件**现在真的做得到**的事 —— 建客户档案;那句 preview 把没通电
-    // 的部分说在前面;那些页面本身一页没删,商家从预览页进得去(引擎 4600 行原地保留,等
-    // 通电)。渠道接通的那一天(独立里程碑),删掉 preview 这一行即可。
-    key: "customers",
-    label: "Customers",
-    // /crm 底下每一页都在这扇门后面(pathMatches 按前缀判定),所以走进 /crm 的任何一页,
-    // 导轨亮的都是这一格。
-    href: "/crm",
-    does: "Keep a record of every customer — who they are, how to reach them, and what you may contact them about.",
-    // 那句实话不写在这里 —— 它是消息渠道状态的**唯一措辞**,Otto 的指令与技能描述读的是
-    // 同一份(#792 r2 判词 P1:从前这里说「连不上」,Otto 那边却在劝商家「去连一个」)。
-    preview: MESSAGING_STATUS_MERCHANT,
-  },
+  // W2-13(#993)—— Customers 那一格删于此。它曾经是 #792 收敛出来的那扇预览门
+  // (`href: "/crm"`,`preview: MESSAGING_STATUS_MERCHANT`)。Founder 2026-08-18 裁决2:
+  // Meta verification 没过之前,CRM 整段不出现在商家表面上。加回来的条件与做法写在文件头 ④。
   {
     key: "workspace",
     label: "Workspace",
@@ -174,60 +211,17 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
     to: "/otto?view=schedule",
     why: "One calendar, not two. The campaign calendar only re-edited plan-entry dates that the campaign's own page already edits; the schedule is the calendar that actually posts.",
   },
-  {
-    from: "/library",
-    to: "/otto?view=library",
-    why: "The old standalone library was retired into the workspace Library.",
-  },
+  // `/library` 曾经在这张表里(「旧的独立素材库已并进工作区 Library」)。W2-1 把它撤了 ——
+  // 不是改了去处,是**它不再是一条收敛掉的旧路由**:`/library` 现在是真页面
+  // (`apps/web/app/library/page.tsx`,规格书 §2.2「shim 撤销,变回真页面」)。这张表的
+  // 契约是「每一条 from 都必须有一个真的 redirect 路由文件」,留着这一行就等于要求那扇门
+  // 继续把商家甩走。
   {
     from: "/m",
     to: "/otto",
     why: "The old simple-mode surface was retired; there is one Otto.",
   },
 ];
-
-/**
- * 换壳之后的路由常量(Wave 2,规格书 `docs/specs/wave2-shell.md` §2.2)。
- *
- * 为什么先摆在这里、而且这一票只加不改:换壳要开六路并行(Library / Brand / Schedule /
- * Settings / Create / Home),六个人会同时需要同一串新地址。谁在自己那一面手写一次
- * `"/library"`,这棵树就又多了一份会各自漂移的真相 —— 本仓最贵的一课(两个导航、两个日历、
- * 两个创作入口)全是这么来的。所以新地址先在权威源里落一份,六路各自 import。
- *
- * **它现在还不是导航数据**:`MERCHANT_NAV` 这一票一个字都不动,七格权威改写留给切换总票
- * (W2-11)。也就是说本票合并之后旧壳行为零变化,只是多了一份后续票引用得到的常量。
- *
- * 用 key 而不是一串散常量:后续票要按 key 取(`SHELL_ROUTES.library`),围栏也要能把它当
- * 枚举源逐条对账(`Object.values`)。
- */
-export const SHELL_ROUTES = {
-  /** 商家自己的总览。今天 `/` 是 `redirect("/otto")`,W2-6 把它换成真页面。 */
-  home: "/",
-  /** 创作旗舰面。今天叫 `/northstar-immersive`(见 CREATE_NAV_HREF),W2-5 改名搬家。 */
-  create: "/create",
-  /** 画布本身,永远在 Create 那扇门后面。 */
-  canvas: "/create/canvas",
-  /** 已经做出来的每一张图、每一条片。今天是 `/otto?view=library`。 */
-  library: "/library",
-  /** 剪辑台 —— 要剪的东西就在 Library,所以它跟着 Library 走(规格书 Q6)。 */
-  edit: "/library/editor",
-  /** Otto 该记住的品牌与产品。今天是 `/otto?view=memory`。 */
-  brand: "/brand",
-  /** 战役。今天已经是真路由,新旧同址。 */
-  campaign: "/campaign",
-  /** 唯一的日历。今天是 `/otto?view=schedule`。 */
-  schedule: "/schedule",
-  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
-  analytics: "/schedule/analytics",
-  /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
-  billing: "/billing",
-  /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
-  connections: "/settings/connections",
-  /** 花费上限与发布默认值。今天是 `/otto?view=account`。 */
-  preferences: "/settings",
-  /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
-  profile: "/profile",
-} as const;
 
 /**
  * 旧 `/otto?view=X` 的去处 —— 每一个 view 都必须在这里有一行,否则围栏红

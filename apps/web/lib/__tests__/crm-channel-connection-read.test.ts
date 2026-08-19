@@ -294,13 +294,24 @@ describe("one connection authority, read once per route (#727)", () => {
     }
   });
 
-  it("every CRM route that states connection actually reads the workspace's channel accounts", () => {
+  // W2-13 (#993) — these three routes used to preload the workspace's channel accounts for
+  // the page below them. The whole CRM section is hidden until Meta verification passes
+  // (Founder ruling 2026-08-18; restore trigger recorded on issue #359), so every /crm route
+  // is now a bare `redirect("/")` and loads nothing at all.
+  //
+  // The claim this test made — "a route that states connection reads the real connection
+  // state" — is kept by pinning the new fact instead: a route that loads NOTHING cannot
+  // state anything. Rebuilding these loaders is part of restoring CRM; the components below
+  // them are untouched and still covered by the sweep above.
+  it("no CRM route states connection any more — they redirect and load nothing", () => {
     for (const route of [
       "../../app/crm/inbox/page.tsx",
       "../../app/crm/inbox/[id]/page.tsx",
       "../../app/crm/broadcasts/page.tsx",
     ]) {
-      expect(source(route)).toContain("listChannelScopes");
+      const src = source(route);
+      expect(src, `${route} 还在取数`).toContain('redirect("/")');
+      expect(src, `${route} 还在读渠道账号`).not.toContain("listChannelScopes");
     }
   });
 

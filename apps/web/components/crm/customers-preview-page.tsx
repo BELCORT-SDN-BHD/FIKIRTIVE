@@ -9,7 +9,7 @@ import {
   Sparkles,
   UsersRound,
 } from "lucide-react";
-import { navLinkByKey } from "@fikirtive/core/navigation";
+import { MESSAGING_STATUS_MERCHANT } from "@fikirtive/core/messaging-status";
 import { SupportExit } from "@/components/exits/Exits";
 import { sendStatePresentation } from "@/components/crm/reports/report-format";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
  * 译法哪天改了,这一页跟着改,不会剩下一句只有我们看得懂的话。
  */
 const SIMULATED_ATTEMPT_LABEL = sendStatePresentation("simulated_sent").label;
+
+/**
+ * 这一页自己的标题(W2-13 / #993)。
+ *
+ * 它原来读 `navLinkByKey("customers").label` —— 导轨怎么写这扇门,这一页就怎么写。CRM 整段
+ * 收起来之后导轨上没有这一格了(Founder 裁决 2026-08-18 裁决2),那个 key 一取就炸,所以标题
+ * 落在这一页自己身上。**没有第二份真相可漂**:今天没有任何导航条目说 Customers。
+ * 那句实话仍然来自唯一权威 `MESSAGING_STATUS_MERCHANT`,一个字都没抄。
+ *
+ * 这一页现在够不着(`/crm` 已是 `redirect("/")`),留在盘上是因为它记着 CRM 每一面**今天真正
+ * 卡在哪** —— Meta verification 通过、CRM 接回来那天,这份账要照着核。
+ */
+const PREVIEW_PAGE_TITLE = "Customers";
 
 /** 一条真能点开的去处。`works` 与 `blocked` 分开写 —— 只写一句,总会有一半被吞掉。
  *  两张表都是 export 的:`crm-honest-preview.test.ts` 逐条把 `blocked` 与实现里的证据
@@ -156,9 +169,6 @@ function EntryRow({ entry }: { entry: PreviewEntry }) {
 }
 
 export function CustomersPreviewPage() {
-  // 导轨怎么写这扇门,这一页就怎么写 —— 那句实话只有一处(#792)。
-  const door = navLinkByKey("customers");
-
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
       <div className="mx-auto max-w-4xl">
@@ -171,11 +181,13 @@ export function CustomersPreviewPage() {
             Return to Otto
           </Link>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{door.label}</h1>
+            <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+              {PREVIEW_PAGE_TITLE}
+            </h1>
             <Badge variant="warning">Preview</Badge>
           </div>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            {door.preview}
+            {MESSAGING_STATUS_MERCHANT}
           </p>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             Posting to Instagram and Facebook is a different connection, and that one does work. A

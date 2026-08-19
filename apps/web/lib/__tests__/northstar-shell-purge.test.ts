@@ -38,7 +38,8 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(HERE, "../..");
 const REPO_ROOT = resolve(WEB_ROOT, "../..");
-const SHELL_ROOT = resolve(WEB_ROOT, "app/northstar-immersive");
+/** 外壳路由组的家。W2-5 起它叫 `app/create` —— `northstar-immersive` 是内部代号,不再是地址。 */
+const SHELL_ROOT = resolve(WEB_ROOT, "app/create");
 
 /**
  * 原来的六扇门 —— 每一扇现在的去处。
@@ -48,33 +49,38 @@ const SHELL_ROOT = resolve(WEB_ROOT, "app/northstar-immersive");
  * 画布,点开就在画布上,所以主导航不再单列 Canvas 一行 —— 但它必须仍然在那扇门后面。
  */
 const DOORS: ReadonlyArray<{ door: string; livesAt: string; route: string }> = [
-  { door: "Home", livesAt: CREATE_NAV_HREF, route: "app/northstar-immersive/page.tsx" },
-  { door: "Canvas", livesAt: CANVAS_HREF, route: "app/northstar-immersive/create/canvas/page.tsx" },
+  { door: "Home", livesAt: CREATE_NAV_HREF, route: "app/create/page.tsx" },
+  { door: "Canvas", livesAt: CANVAS_HREF, route: "app/create/canvas/page.tsx" },
   { door: "Library", livesAt: "/otto?view=library", route: "app/otto/page.tsx" },
   { door: "Brand & products", livesAt: "/otto?view=memory", route: "app/otto/page.tsx" },
   { door: "Credits & billing", livesAt: "/billing", route: "app/billing/page.tsx" },
   { door: "Settings", livesAt: "/otto?view=account", route: "app/otto/page.tsx" },
 ];
 
-/** 被裁的路由:文件不在 = 直开 404。 */
+/**
+ * 被裁的路由:文件不在 = 直开 404。
+ *
+ * W2-5 改名之后它们按**新**根写:旧 `/northstar-immersive/create/home` 在新地址体系里就是
+ * `/create/home`。改名不是复活的借口 —— 一个都不许借着搬家回来。
+ */
 const RETIRED_ROUTES = [
-  "app/northstar-immersive/create/home/page.tsx",
-  "app/northstar-immersive/create/factory/page.tsx",
-  "app/northstar-immersive/create/storyboard/page.tsx",
-  "app/northstar-immersive/create/ideas/page.tsx",
-  "app/northstar-immersive/create/asset-viewer/page.tsx",
-  "app/northstar-immersive/create/media-editor/page.tsx",
-  "app/northstar-immersive/otto/page.tsx",
-  "app/northstar-immersive/global/otto-chat/page.tsx",
+  "app/create/home/page.tsx",
+  "app/create/factory/page.tsx",
+  "app/create/storyboard/page.tsx",
+  "app/create/ideas/page.tsx",
+  "app/create/asset-viewer/page.tsx",
+  "app/create/media-editor/page.tsx",
+  "app/create/otto/page.tsx",
+  "app/create/global/otto-chat/page.tsx",
   // #606 T7 第二刀 —— 剩下的 6 页 mock。其中 cityhall/admin 是一座**假的内部运维台**
   // (写死 environment "fikirtive-prod" 与假 commit),onboarding/login 是与真 /login
   // 打架的第二个登录页。开关删除后它们没有第二道门可躲,所以是删,不是关。
-  "app/northstar-immersive/cityhall/admin/page.tsx",
-  "app/northstar-immersive/global/legal/page.tsx",
-  "app/northstar-immersive/global/notifications/page.tsx",
-  "app/northstar-immersive/global/search/page.tsx",
-  "app/northstar-immersive/onboarding/checklist/page.tsx",
-  "app/northstar-immersive/onboarding/login/page.tsx",
+  "app/create/cityhall/admin/page.tsx",
+  "app/create/global/legal/page.tsx",
+  "app/create/global/notifications/page.tsx",
+  "app/create/global/search/page.tsx",
+  "app/create/onboarding/checklist/page.tsx",
+  "app/create/onboarding/login/page.tsx",
 ] as const;
 
 /** 整座设计稿画廊(`/northstar`)—— 目录级退场,不是逐页删。 */
@@ -136,9 +142,9 @@ function reachableSources(entries: readonly string[]): Map<string, string> {
 
 /** 外壳自有表面的三个入口:常驻壳 + 留在壳内的两扇门。 */
 const SHELL_ENTRIES = [
-  "app/northstar-immersive/layout.tsx",
-  "app/northstar-immersive/page.tsx",
-  "app/northstar-immersive/create/canvas/page.tsx",
+  "app/create/layout.tsx",
+  "app/create/page.tsx",
+  "app/create/canvas/page.tsx",
 ] as const;
 
 /** 北极星样板数据模块 —— 壳的自有表面一份都碰不到。 */
@@ -253,8 +259,10 @@ describe("退场", () => {
   });
 
   it("壳里没有任何一条链接指向已退场的路由", () => {
-    /** 壳里合法的目的地只有这两条 —— 其余任何 `/northstar…` 开头的**链接**都是残引。 */
-    const LIVE_HREFS = ["/northstar-immersive", "/northstar-immersive/create/canvas"];
+    // W2-5 之后这条更硬了:内部代号**一条链接都不许剩**。以前 `/northstar-immersive` 与
+    // `/northstar-immersive/create/canvas` 是两条合法目的地(那时它们就是真地址);现在真地址
+    // 叫 `/create`,所以任何 `/northstar…` 开头的字面量都只可能是没跟着搬家的残引。
+    //
     // 只看链接,不看散文:先剥掉注释(注释里提退役路由是在交代历史,不是把人送过去),
     // 再抓引号/反引号后面紧跟着的 `/northstar…` 字面量。`@/components/northstar/…`
     // 这类 import 路径不以 `/northstar` 开头,天然不在内。
@@ -264,12 +272,9 @@ describe("退场", () => {
     for (const [file, source] of reachable) {
       const code = source
         .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^\s*\/\/.*$/gm, "")
-        // 模板串写法 `${BASE}/create/canvas` 也算 —— BASE 就是这条前缀。
-        .replace(/\$\{BASE\}/g, "/northstar-immersive");
+        .replace(/^\s*\/\/.*$/gm, "");
       for (const match of code.matchAll(HREF_RE)) {
-        const href = match[1].split("?")[0].replace(/\/$/, "");
-        if (!LIVE_HREFS.includes(href)) hits.push(`${file.slice(WEB_ROOT.length + 1)} :: ${match[1]}`);
+        hits.push(`${file.slice(WEB_ROOT.length + 1)} :: ${match[1]}`);
       }
     }
     expect(hits).toEqual([]);
@@ -277,14 +282,14 @@ describe("退场", () => {
 
   it("外壳路由目录里只剩裁决留下的这些页", () => {
     expect(existsSync(resolve(SHELL_ROOT, "page.tsx"))).toBe(true);
-    expect(existsSync(resolve(SHELL_ROOT, "create/canvas/page.tsx"))).toBe(true);
-    expect(existsSync(resolve(SHELL_ROOT, "create/home"))).toBe(false);
-    // 目录级枚举:这个路由组里的 page.tsx 恰好只有真 Home 与真 Canvas 两个,一个不多。
+    expect(existsSync(resolve(SHELL_ROOT, "canvas/page.tsx"))).toBe(true);
+    expect(existsSync(resolve(SHELL_ROOT, "home"))).toBe(false);
+    // 目录级枚举:这个路由组里的 page.tsx 恰好只有真 Create 与真 Canvas 两个,一个不多。
     const pages = filesUnder(SHELL_ROOT)
       .filter((file) => file.endsWith("page.tsx"))
       .map((file) => relative(SHELL_ROOT, file))
       .sort();
-    expect(pages).toEqual(["create/canvas/page.tsx", "page.tsx"]);
+    expect(pages).toEqual(["canvas/page.tsx", "page.tsx"]);
   });
 });
 

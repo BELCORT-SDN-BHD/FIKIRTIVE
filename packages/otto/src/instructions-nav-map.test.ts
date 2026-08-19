@@ -342,8 +342,9 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
 
   // r3 判官 [P2-2]②:不写任何符号,靠两个合法单段名相邻也能拼出一条不存在的路。
   it("不写符号的拼路同样逮得住,地图上真有的组合放行", () => {
-    // #792 起 CRM 组已折叠成 Customers 这一格,所以拼路样本改用当下树上的真名字。
-    for (const spliced of ["Customers Library", "Settings Analytics", "Workspace Connections", "Customers Discover"]) {
+    // 拼路样本必须用**当下树上的真名字**(两个真名相邻才是这条尺子量的形状)。
+    // W2-13(#993)CRM 整段收起来之后 `Customers` 不再是名字,样本换成 `Campaign`。
+    for (const spliced of ["Campaign Library", "Settings Analytics", "Workspace Connections", "Campaign Discover"]) {
       expect(splicedPairs(`Point them to ${spliced}.`), `拼路「${spliced}」必须被逮住`).not.toEqual([]);
       expect(linesNamingUnmappedPlaces(`Point them to ${spliced}.`)).toHaveLength(1);
     }
@@ -475,14 +476,15 @@ describe("#802 ④ 没有人指着某个界面说话(r3 判官 [P1])", () => {
   it("尺子逮得住判官点名的六处原文,放得过正当业务句", () => {
     // 判官 r3 [P1] 的六处,逐条验红。
     for (const reference of [
-      "through the same validated, owner-scoped action layer as the Customers page.",
-      "through the same authenticated actions as the Customers UI.",
+      "through the same validated, owner-scoped action layer as the Schedule page.",
+      "through the same authenticated actions as the Library UI.",
       "$0 internal planning writes through the same owner-scoped actions as the Campaign UI.",
       "through the same owner-scoped actions as the Campaign pages.",
-      // #792:`Contacts` 折叠后不再是导航标签,所以这一处判官原文换成当下的标签,
-      // 保住它钉的那个**形状**(标签 + 复数 pages)。
-      "through the same owner-scoped actions as the Customers pages.",
-      "through the same owner-scoped action layer as the Customers page.",
+      // 判官原文写的是 `Contacts pages` / `CRM page`。那两个词先后不再是导航标签
+      // (#792 折叠、W2-13(#993)整段收起),所以逐次换成**当下**的标签,钉的形状不变
+      // (标签 + 单/复数 page(s))。
+      "through the same owner-scoped actions as the Library pages.",
+      "through the same owner-scoped action layer as the Campaign page.",
       // 同族的其它写法:
       "open the Schedule screen",
       "the Library tab",
@@ -534,9 +536,9 @@ describe("#802 双面:商家问路,地图里真有一条能答的入口", () => 
     { ask: "Where did my video go?", key: "library", cue: /video/i },
     { ask: "When is this going out?", key: "schedule", cue: /posted/i },
     { ask: "How many credits do I have left?", key: "billing", cue: /credits/i },
-    // #792:消息渠道没通电,Inbox 那扇门已折进 Customers 预览页 —— 所以这里问的是
-    // 折叠之后 Otto 真答得出的那件事:客户档案在哪。
-    { ask: "Where do I keep what I know about a customer?", key: "customers", cue: /record/i },
+    // 这里原来问的是「客户档案在哪」。W2-13(#993)CRM 整段收起来之后,那件事在商家表面上
+    // **确实没有地方**,Otto 也就不该答得出一个地名 —— 换成一个今天真答得出的问路。
+    { ask: "Where do I make something new?", key: "create", cue: /canvas/i },
     { ask: "What do you remember about my shop?", key: "brand", cue: /remember/i },
   ];
 

@@ -1,10 +1,7 @@
-import InboxTemplatesPage from "@/components/crm/inbox/inbox-templates-page";
-import { listChannelScopes, listTemplates } from "@/lib/customer-inbox-gateway";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const metadata = { title: "Message templates · Fikirtive" };
-
+/** CRM 整段收起来了(W2-13 / #993)。文件保留、内容换成重定向,旧书签不撞墙 ——
+ *  原委与恢复条件写在 app/crm/page.tsx。 */
 export default async function CrmTemplatesRoute() {
-  const [initialState, initialScopes] = await Promise.all([listTemplates({}), listChannelScopes()]);
-  return <InboxTemplatesPage initialState={initialState} initialScopes={initialScopes} />;
+  redirect("/");
 }

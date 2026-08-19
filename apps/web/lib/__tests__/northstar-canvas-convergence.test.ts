@@ -332,7 +332,7 @@ describe("the hand-rolled board no longer renders on this page", () => {
   });
 
   it("is not imported by the route file either", () => {
-    expect(source("app/northstar-immersive/create/canvas/page.tsx")).not.toContain(HANDMADE_BOARD);
+    expect(source("app/create/canvas/page.tsx")).not.toContain(HANDMADE_BOARD);
   });
 
   it("is not reached through the new workspace", () => {

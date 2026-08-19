@@ -64,9 +64,11 @@ describe("full-page containers are mobile-first", () => {
   // classes, or switch them to cn()/template literals and the green above means
   // nothing. These two guard the sweep itself.
   it("still finds the whole population it is supposed to police", () => {
-    // 53 containers across 36 files at the time of writing (#722). The floor leaves
-    // room for the codebase to grow; it exists to catch the population COLLAPSING.
-    expect(sweepContainers().total).toBeGreaterThanOrEqual(50);
+    // 53 containers across 36 files when this was written (#722); 46 after W2-13 (#993)
+    // deleted the seven CRM `loading.tsx` skeletons, one container each. The floor keeps
+    // the same 3 of headroom it always had — it exists to catch the population COLLAPSING,
+    // not to pin an exact number.
+    expect(sweepContainers().total).toBeGreaterThanOrEqual(43);
   });
 
   it("still covers the surfaces the walkthrough actually caught", () => {
@@ -78,7 +80,8 @@ describe("full-page containers are mobile-first", () => {
     const required: [string, number][] = [
       ["components/crm/workflows/workflow-list-page.tsx", 2],
       ["components/crm/workflows/workflow-detail-page.tsx", 2],
-      ["app/crm/workflows/loading.tsx", 1],
+      // app/crm/workflows/loading.tsx 不在这份名单里了:W2-13(#993)把七个 CRM 骨架页
+      // 一起删了(路由只剩 `redirect("/")`,没有内容可等)。error.tsx 还在,照扫。
       ["app/crm/workflows/error.tsx", 1],
       ["components/campaign/campaign-list-page.tsx", 1],
       ["components/campaign/campaign-detail-page.tsx", 2],
