@@ -1,5 +1,5 @@
 -- DESTRUCTIVE-OK: Founder-approved dead-column deletion (PR #1027 裁决 2026-08-19:批准全部七列;R010 spec 点名的 utmBase 专项破坏性授权即此条;生产实测证据与 PITR 重验在 PR #1027 评论留档)
--- live 结果是什么」。零读者 ⇒ 这些列里的字节从来没有影响过商家看到的任何东西,数据本就 inert:
+-- 每一列都在本文件下方逐条记明「谁验的、用什么命令验的、live 结果是什么」。零读者 ⇒ 这些列里的字节从来没有影响过商家看到的任何东西,数据本就 inert:
 -- 删的不是「还没人用的信息」,是「谁都读不到的字节」。生产的 Neon PITR 7 天窗口照常覆盖本次执行。
 --
 -- 核验方法(2026-08-19,worker,分支 claude/c2-dead-columns,base = origin/main 7673ae91):
