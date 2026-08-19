@@ -11,7 +11,17 @@ import {
 } from "@/components/ui/dialog";
 import { INSPIRATIONS, inspirationCategories, type Inspiration } from "@/lib/inspirations";
 
-export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: string) => void }) {
+/**
+ * `onUseInOtto` 是**可选**的(W2-5):这块内容从 `/otto?view=discover` 收编成 `/create` 页面
+ * 下方的 `#ideas` 区段(规格书 Q6-A)之后,它同时挂在两个地方。旧壳里 Otto 聊天框就在同一屏,
+ * 所以那颗「Use in Otto」按得到;`/create` 上今天还没有 Otto 面板(它由 W2-7 建好、W2-11 挂
+ * 上每一页),所以那里**不给**这个回调 —— 按钮随之不画。
+ *
+ * 为什么不留一颗按了没反应的按钮:一颗承诺了却做不到的控件,比没有这颗按钮更糟。商家在
+ * `/create` 上仍然可以 Copy prompt,贴进这一页顶上那个唯一的开工框。面板挂上去的那一天,
+ * 把回调传进来即可,这里一个字都不用改。
+ */
+export default function OttoDiscover({ onUseInOtto }: { onUseInOtto?: (prompt: string) => void }) {
   const [cat, setCat] = useState<string>("All");
   const [active, setActive] = useState<Inspiration | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -104,7 +114,9 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
               <Button variant="ghost" size="sm" onClick={() => copy(active.prompt)}>
                 {copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "Copy prompt"}
               </Button>
-              <Button variant="brand" size="sm" onClick={() => { onUseInOtto(active.prompt); setActive(null); }}>Use in Otto</Button>
+              {onUseInOtto && (
+                <Button variant="brand" size="sm" onClick={() => { onUseInOtto(active.prompt); setActive(null); }}>Use in Otto</Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>

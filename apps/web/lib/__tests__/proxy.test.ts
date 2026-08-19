@@ -159,6 +159,23 @@ describe("proxy — the northstar prefix is back inside the login wall (#606)", 
   });
 });
 
+// W2-5: the Create surface moved off the internal code name onto /create. A route rename is
+// exactly how a surface falls OUT of a login wall by accident — the exclusion list is written in
+// path prefixes, and nobody re-reads it when a directory moves. So the new address gets the same
+// two proofs the old one has, on the real matcher regex.
+describe("proxy — the renamed Create surface is inside the login wall (W2-5)", () => {
+  it("runs the auth wall for /create and its canvas", () => {
+    expect(matcherRuns("/create")).toBe(true);
+    expect(matcherRuns("/create/canvas")).toBe(true);
+  });
+
+  it("a session-less request to the canvas redirects to /login, keeping the deep link", async () => {
+    const res = await proxy(req("/create/canvas?project=p-1"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+});
+
 // #940: the sign-up verification mail lands on /verify-email (lib/better-auth/verify-landing-url.ts
 // builds that link; lib/better-auth/server.ts mails it). Everyone who clicks it is BY DEFINITION
 // session-less — verifying is how they get a session — so the wall must not run there. It did:

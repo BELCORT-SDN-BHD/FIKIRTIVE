@@ -354,6 +354,11 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
   ) {
     return { error: "That generation request is out of bounds." };
   }
+  // 留桩(#972 P3-2):摘要在这里就算完,而 `resolvePublicModelAlias` 要到 `startGen` 里
+  // 才跑,所以键里编进去的是浏览器送来的公开别名(capability-<kind>-N),不是具体引擎名。
+  // 今天成立是因为 `GEN_MODELS` / `GEN_VIDEO_MODELS` 是静态常量:别名按下标一一对应引擎,
+  // 同一个别名永远是同一台引擎。哪天模型菜单动态化(顺序会变),同一个别名就可能先后指向
+  // 两台引擎 —— 那时必须把解析后的引擎名纳入摘要,否则两个不同的意图会共用一个键。
   const trustedRequest = {
     ...request,
     idempotencyKey: assetActionKey(assetOp as AssetActionOp, assetAnchorGenerationId, request).key,
