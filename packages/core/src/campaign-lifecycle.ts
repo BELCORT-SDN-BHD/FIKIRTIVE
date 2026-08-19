@@ -8,6 +8,13 @@
  *
  * The statuses themselves are not invented here — they are the four `Campaign.status` already
  * documented in schema.prisma. What was missing was any path between them.
+ *
+ * **C7 —— 它从 `apps/web/lib/` 搬到 core,一个字未改。** 搬家的理由是这张表当时只有商家那
+ * 一面读得到:Otto 够不着 `apps/web`,于是 `packages/otto` 里长出了**第三、第四份**手抄
+ * 词汇(`skills/plan-campaign.ts` 的参数 enum 与 `context.ts` 的 Campaign 端口类型),而且
+ * 转移表对助手完全不可见 —— Otto 说得出四个状态名,却不知道哪个动作是合法的。
+ * core 是「跨包共用的产品事实」该待的地方(messaging-status、schedule-draft、navigation
+ * 都在这儿),所以这张表也搬过来:web 与 otto 从此读同一份。
  */
 
 export const CAMPAIGN_STATUSES = ["DRAFT", "ACTIVE", "DONE", "CANCELLED"] as const;

@@ -10,6 +10,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -46,7 +47,8 @@ export const suggestPostTimesSkill = defineOttoSkill({
   description:
     "Suggest good times to publish on a channel (Instagram/Facebook) using known best-window craft " +
     "knowledge — use it to warm the composer's time picker before the user has history of their own. " +
-    "$0 read-only. Give the channel; optionally a limit. Returns day-of-week + hour (UTC) slots, best first.",
+    "$0 read-only. Give the channel; optionally a limit. Returns day-of-week + hour (UTC) slots, best first. " +
+    `${ottoPublishTruth()}`,
   parameters: params,
   execute: executeSuggestPostTimes,
 });

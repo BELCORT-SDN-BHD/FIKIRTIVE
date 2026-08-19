@@ -4,12 +4,18 @@
  * These are internal draft mutations only. Workflow revision publish moves the definition pointer;
  * it never activates or authorizes a Routine. The injected web port fixes Routine budgets to zero and
  * supplies the summary policy, so neither model arguments nor this skill can manufacture authority.
+ *
+ * C7 —— 描述原来只说「**本技能**不会激活/派发」,那是一句关于技能的话,不是关于产品的话:
+ * 商家听完会以为「换个地方点一下就跑起来了」。真相是整个产品今天都启动不了一次 run
+ * (证据逐条列在 `_availability.ts` 的 `ROUTINE_EXECUTION_AVAILABILITY`),所以那一句拼在描述
+ * 末尾。同一次顺手删掉「as the Workflow UI」—— 那扇界面今天是 `redirect("/")`。
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 import { workflowResourceIdSchema } from "./read-workflows.js";
+import { ROUTINE_EXECUTION_AVAILABILITY } from "./_availability.js";
 
 const workflowSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/);
 const routineKeySchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,127}$/);
@@ -186,10 +192,11 @@ export const draftWorkflowsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Create a custom Workflow definition, validate or save its readable rule source, publish one immutable revision " +
-    "as the definition pointer, or create a Routine DRAFT through the same authenticated, owner-scoped service as " +
-    "the Workflow UI. $0 internal drafting only. Publishing a revision NEVER activates or authorizes a Routine. " +
-    "Routine budgets are fixed to zero server-side; this skill cannot authorize, kill, run, dispatch, send, call a " +
-    "provider, or spend credits. Use exact ids returned by readWorkflows and never guess them.",
+    "as the definition pointer, or create a Routine DRAFT through the same authenticated, owner-scoped service the " +
+    "merchant's own surfaces use. $0 internal drafting only. Publishing a revision NEVER activates or authorizes a " +
+    "Routine. Routine budgets are fixed to zero server-side; this skill cannot authorize, kill, run, dispatch, send, " +
+    "call a provider, or spend credits. Use exact ids returned by readWorkflows and never guess them. " +
+    ROUTINE_EXECUTION_AVAILABILITY,
   parameters: draftWorkflowsParams,
   execute: executeDraftWorkflows,
 });

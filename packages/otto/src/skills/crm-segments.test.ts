@@ -1,5 +1,6 @@
 import type { RunContext } from "@openai/agents";
 import { describe, expect, it, vi } from "vitest";
+import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 import { buildSegmentSkill, executeBuildSegment } from "./build-segment.js";
 import {
@@ -45,6 +46,25 @@ function ports() {
  * rule as the web fence; it is restated rather than imported because the two live in different
  * packages, and a package export widened for a test would be a worse trade.
  */
+/**
+ * C7 —— 这一段是新加的「今天做不到什么」。
+ *
+ * 它**逐字写在这块板上**,不是从 `_availability.ts` import 过来的:板子的合同就是「改一个字
+ * 就得来改这里」,一旦改成引用同一个常量,那边动一个字这边跟着动、测试照绿,复审就没了。
+ *
+ * 唯一的例外是最后那句渠道现状 —— 它是 `@fikirtive/core` 里既有的唯一权威
+ * (`MESSAGING_STATUS_ASSISTANT`),自己有测试和自己的复审归属,在这里再抄第三份反而是
+ * 制造漂移,所以拼它。
+ */
+const SEGMENT_AVAILABILITY_COPY =
+  "Availability, say it plainly whenever segments come up: there is no page in the app today for " +
+  "customer segments, contacts or broadcasts, so never send the user to one. Two of the five rule " +
+  "facts select real people — channel and contactability. The other three have nothing behind them " +
+  "yet: last order recency and tags are not connected, and lifetime spend has no source of data in " +
+  "the product, so a rule built on any of those three matches nobody rather than guessing. A saved " +
+  "segment is a list and nothing more today. " +
+  MESSAGING_STATUS_ASSISTANT;
+
 const APPROVED_OTTO_COPY = {
   readSegments:
     // #802 r4(判官 [P1]):「as the CRM page」是手写界面引用,改名必漂 —— 改写成不指界面的
@@ -60,7 +80,8 @@ const APPROVED_OTTO_COPY = {
     "group may also carry excludeReportedOptOut: on, it additionally leaves out every contact the " +
     "user recorded an opt-out for himself, and the count comes back as " +
     "excludedByReportedOptOutCount. It only ever removes people, and it does not change what the " +
-    "consent record already decides.",
+    "consent record already decides. " +
+    SEGMENT_AVAILABILITY_COPY,
   buildSegment:
     "Create or update one CRM Segment through the same validated, owner-scoped action layer the " +
     "merchant's own screens use. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
@@ -71,7 +92,8 @@ const APPROVED_OTTO_COPY = {
     "excludeReportedOptOut additionally leaves out every contact the user recorded an opt-out for " +
     "himself, including one who also opted out through their own channel; it only removes people, " +
     "never adds any, it is off unless the user asked for it, and it applies to this segment's " +
-    "counts, preview and broadcasts alike.",
+    "counts, preview and broadcasts alike. " +
+    SEGMENT_AVAILABILITY_COPY,
   excludeReportedOptOutField:
     "Optional, defaults to off. On: also leave out every contact the user has recorded an opt-out " +
     "for himself, including one who additionally opted out through their own channel. It only " +
@@ -129,6 +151,20 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
       "On: also leave out every contact the user has recorded an opt-out for himself, including one who additionally opted out through their own channel.",
     surface: "excludeReportedOptOutField",
     why: "The field description of the same rule, in the same words.",
+  },
+  // C7 —— 新加的那一句里,唯一带全称词的是「never send the user to one」。两个面各一条,
+  // 因为这块板要求豁免必须留在**它自己那一面**上。
+  {
+    sentence:
+      "Availability, say it plainly whenever segments come up: there is no page in the app today for customer segments, contacts or broadcasts, so never send the user to one.",
+    surface: "readSegments",
+    why: "可证:`apps/web/app/crm/page.tsx` 与它 13 个子页全是 `redirect(\"/\")`(围栏 `apps/web/lib/__tests__/route-redirects.test.ts` 逐条枚举),`packages/core/src/navigation.ts` 里没有任何一格指向 CRM(围栏 `navigation.test.ts`)。「一个也没有」在这里不是修辞,是枚举出来的。",
+  },
+  {
+    sentence:
+      "Availability, say it plainly whenever segments come up: there is no page in the app today for customer segments, contacts or broadcasts, so never send the user to one.",
+    surface: "buildSegment",
+    why: "同一句实话、同一份证据 —— 两条技能各带一份,因为模型读到哪一条就只读到哪一条。",
   },
 ];
 

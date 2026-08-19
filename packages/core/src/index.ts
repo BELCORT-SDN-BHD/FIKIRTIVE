@@ -206,3 +206,7 @@ export * from "./dead-letters.js";
 // 消息渠道状态的唯一措辞(#792 r2)。导轨、预览页、Otto 指令与 listChannelScopes 技能描述
 // 共读一份 —— 从前它们各说各话,其中两处还在劝商家去连一条连不了的渠道。
 export * from "./messaging-status.js";
+
+// 战役状态与它们之间的合法动作(#710 的那一张表,C7 从 apps/web 搬来)。读者现在有三个:
+// 服务端动作、商家那一页,以及 Otto —— 词汇不再各抄一份,转移表也第一次对助手可见。
+export * from "./campaign-lifecycle.js";

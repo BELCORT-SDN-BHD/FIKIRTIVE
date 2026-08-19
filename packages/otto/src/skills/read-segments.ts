@@ -10,6 +10,7 @@ import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 
 export const crmSegmentRule = z.discriminatedUnion("kind", [
   z
@@ -95,7 +96,8 @@ export const readSegmentsSkill = defineOttoSkill({
     "included, only known opt-out is excluded, and do-not-disturb is enforced later at send time. A rule group may " +
     "also carry excludeReportedOptOut: on, it additionally leaves out every contact the user recorded an opt-out " +
     "for himself, and the count comes back as excludedByReportedOptOutCount. It only ever removes people, and it " +
-    "does not change what the consent record already decides.",
+    "does not change what the consent record already decides. " +
+    CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: executeReadSegments,
 });

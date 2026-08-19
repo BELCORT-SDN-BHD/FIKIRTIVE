@@ -9,6 +9,7 @@ import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 import { crmSegmentRuleGroup } from "./read-segments.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 
 const params = z.object({
   operation: z.enum(["create", "update"]),
@@ -57,7 +58,8 @@ export const buildSegmentSkill = defineOttoSkill({
     "contactable estimate, and do-not-disturb remains a send-time restriction. The rule group's optional " +
     "excludeReportedOptOut additionally leaves out every contact the user recorded an opt-out for himself, " +
     "including one who also opted out through their own channel; it only removes people, never adds any, it is " +
-    "off unless the user asked for it, and it applies to this segment's counts, preview and broadcasts alike.",
+    "off unless the user asked for it, and it applies to this segment's counts, preview and broadcasts alike. " +
+    CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: executeBuildSegment,
 });

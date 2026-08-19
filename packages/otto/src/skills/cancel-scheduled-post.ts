@@ -9,6 +9,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -34,7 +35,8 @@ export const cancelScheduledPostSkill = defineOttoSkill({
   description:
     "Cancel a scheduled post so it will not publish. $0 and reversible only by re-creating the post. " +
     "Use when the user asks you to call off / remove a specific scheduled or draft post. Give the " +
-    "scheduledPostId. A post that already published (or is publishing) cannot be cancelled.",
+    "scheduledPostId. A post already marked as published, or in the middle of that move, cannot be cancelled. " +
+    `${ottoPublishTruth()}`,
   parameters: params,
   execute: executeCancelScheduledPost,
 });
