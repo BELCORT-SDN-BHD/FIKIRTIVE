@@ -171,7 +171,7 @@ describe("MerchantShellContent", () => {
       expect(wrapper).toContain("lg:pt-0");
     });
 
-    it.each(["/otto", "/northstar-immersive", "/northstar-immersive/create/canvas"])(
+    it.each(["/otto", "/create", "/create/canvas"])(
       "reserves nothing on %s, which draws its own in-flow bar over a full-height workspace",
       (pathname) => {
         const wrapper = renderShell(pathname).match(contentWrapper)?.[1];
@@ -204,16 +204,16 @@ describe("MerchantShellContent", () => {
       expect(renderShell("/otto")).not.toContain('aria-label="Open navigation"');
       expect(renderShell("/otto?view=connections")).not.toContain('aria-label="Open navigation"');
       // #801 — Create joined on the same terms: its own 52px bar opens THIS drawer.
-      expect(renderShell("/northstar-immersive")).not.toContain('aria-label="Open navigation"');
-      expect(renderShell("/northstar-immersive/create/canvas")).not.toContain(
+      expect(renderShell("/create")).not.toContain('aria-label="Open navigation"');
+      expect(renderShell("/create/canvas")).not.toContain(
         'aria-label="Open navigation"',
       );
     });
 
     it.each([
       "/otto",
-      "/northstar-immersive",
-      "/northstar-immersive/create/canvas",
+      "/create",
+      "/create/canvas",
       "/billing",
       "/profile",
       "/campaign",
@@ -323,7 +323,7 @@ describe("SectionTabs", () => {
 
   it("renders nothing outside a grouped section", () => {
     expect(renderTabs("/campaign")).toBe("");
-    expect(renderTabs("/northstar-immersive")).toBe("");
+    expect(renderTabs("/create")).toBe("");
     // W2-13(#993)— CRM 整段收起来了,导轨上一格都没有,所以它也长不出一条页签栏。
     expect(renderTabs("/crm")).toBe("");
     expect(renderTabs("/crm/segments")).toBe("");

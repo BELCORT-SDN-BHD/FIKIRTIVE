@@ -143,8 +143,14 @@ beforeEach(() => {
   mocks.chatMessageCreate.mockResolvedValue({});
   mocks.chatMessageUpdateMany.mockResolvedValue({ count: 1 });
   mocks.run.mockResolvedValue(makeRunResult());
-  mocks.withLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+  // 钱路 M1-b:真 withLlmBudget 会在**结算那一笔事务里**回调 `commitInSettleTx`(交付),所以
+  // 这个替身也必须回调它 —— 否则替身与它替代的东西签的不是同一份合同,这一整套用例会在生产
+  // 早已交付的路径上断言「什么都没写」。事务由 prisma 替身自己充当(它的 $transaction 就是
+  // 直接把自己交给回调)。
+  mocks.withLlmBudget.mockImplementation(async (args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
     const out = await fn();
+    const commit = (args as { commitInSettleTx?: (tx: unknown) => Promise<void> } | null)?.commitInSettleTx;
+    if (commit) await commit(mocks.prisma);
     return out.result;
   });
 });

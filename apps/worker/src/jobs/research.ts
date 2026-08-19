@@ -21,11 +21,24 @@
  *     hold = this tier's maxSearches × the rate, settle = `ctx.searchesUsed` × the rate. Truncation
  *     (MaxTurnsExceeded) settles ACTUAL usage of BOTH legs, never over-charges.
  *  4. A failure BEFORE spend (e.g. insufficient balance) charges $0 — withLlmBudget refunds.
+ *  4b. (钱路 M1-b) DELIVERY AND SETTLE COMMIT TOGETHER. The report, the card's "done" and the
+ *     job's DONE are written inside withLlmBudget's settle transaction (`commitInSettleTx` →
+ *     deliverResearch). A failure anywhere in there rolls the SETTLE back with them and the whole
+ *     hold is refunded — so on THAT path "the merchant paid and the report never existed" has no
+ *     shape left.
+ *     **一个例外,说清楚而不是否认(判官 P2-3):跑满步数的那条路不在其中。** 研究撞上
+ *     tier.maxSteps 时 `run` 抛 MaxTurnsExceeded,上面的 `usageOnError` 从它身上取回真实用量,
+ *     于是 withLlmBudget 在自己的 catch 里**按实际 token 结算**并把错误抛出来 —— 交付钩子压根
+ *     没被调用,下面的 catch 把卡片与作业写成 FAILED(「The research hit its step budget before
+ *     finishing.」)。结果就是:**商家按真实烧掉的 token 付了钱,而没有报告**。这是既有的定价
+ *     决定(不变量 #3:截断按实际用量收费,不按预扣满额收费),M1-b 一个字都没改它 —— 模型确实
+ *     替商家跑了那些搜索和阅读,只是没跑完。要不要在这种情况下也退钱,是 Founder 的钱决定。
  *  5. No provider key is ever logged or placed in an error message (adapters scrub keys already).
  *
  * All reads are owner-scoped off ResearchJob.ownerId.
  */
 import { prisma } from "@fikirtive/db";
+import type { Prisma } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   RESEARCH_TIERS,
@@ -133,6 +146,78 @@ async function failResearchCard(cardId: string, ownerId: string, errorText: stri
   });
 }
 
+/** Thrown INSIDE the settle transaction when this delivery no longer owns the RUNNING claim —
+ *  see deliverResearch. Rolls the SETTLE back, which is the whole point. */
+class ResearchDeliveryLost extends Error {
+  constructor() {
+    super("this research job was already ended by someone else — not delivering against a released hold");
+    this.name = "ResearchDeliveryLost";
+  }
+}
+
+/**
+ * 钱路 M1-b —— **交付**。这个函数里的每一笔写都跑在 `withLlmBudget` 结算的**那一笔事务**里
+ * (`commitInSettleTx`),所以商家的报告和这次研究的收费要么一起落库,要么一起不存在。
+ *
+ * 修的是什么。此前这三笔写站在结算**之后**、各写各的,而报告那一笔还被 try/catch 吞掉:
+ * 结算已经提交,报告写失败只留下一行 console.warn,作业照样翻 DONE —— 商家的余额少了,
+ * 卡片说「完成」,报告从来没有存在过,而且没有任何东西会回头补它。审计把这一条坐实为 P1。
+ *
+ * 为什么当初写成 best-effort 的那个理由现在不成立了。那句注释担心的是「报告写失败把作业翻
+ * 回去 ⇒ 重投 ⇒ 再花一次钱」。在新形状下重花钱是不可能的:抛错让 SETTLE 一起回滚、预扣被
+ * 全额退掉,作业随后被写成 FAILED;而 RESEARCH_QUEUE 是 retryLimit:0,即便真有重投,
+ * QUEUED→RUNNING 的 CAS 也拦在花钱之前。
+ *
+ * 第一笔就是终态 CAS:只有仍然握着 RUNNING 认领的这条 delivery 才有资格交付。若 reaper 已经
+ * 判它 interrupted(并由预扣 reaper 退了款),这里匹配 0 行 ⇒ 抛 ⇒ 整笔回滚 ⇒ 不会出现
+ * 「对着一笔已经退掉的预扣交货」。
+ */
+async function deliverResearch(
+  tx: Prisma.TransactionClient,
+  args: { job: { id: string; ownerId: string; threadId: string; cardId: string }; topic: string; synthesis: string; sources: unknown },
+): Promise<void> {
+  const { job, topic, synthesis, sources } = args;
+  const { count } = await tx.researchJob.updateMany({
+    where: { id: job.id, ownerId: job.ownerId, status: "RUNNING" },
+    // actualCredits is omitted — the authoritative settle lives in the CreditLedger via
+    // withLlmBudget; we do NOT re-derive a spend figure outside the wrapper.
+    data: { status: "DONE" },
+  });
+  if (count === 0) throw new ResearchDeliveryLost();
+
+  // The report itself (seq+1, owner/thread from the job), mirroring appendCoworkResult.
+  const last = await tx.chatMessage.findFirst({
+    where: { threadId: job.threadId, ownerId: job.ownerId },
+    orderBy: { seq: "desc" },
+    select: { seq: true },
+  });
+  await tx.chatMessage.create({
+    data: {
+      id: newId(),
+      threadId: job.threadId,
+      ownerId: job.ownerId,
+      role: "AGENT",
+      kind: "RESEARCH_REPORT",
+      seq: (last?.seq ?? 0) + 1,
+      text: topic ? `Research report: ${topic}` : "Research report",
+      payload: { topic, synthesis, sources } as unknown as object,
+    },
+  });
+
+  // Card → "done" (RMW: re-read payload, byte-preserve other fields, flip only status).
+  const freshCard = await tx.chatMessage.findFirst({
+    where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+    select: { payload: true },
+  });
+  if (freshCard) {
+    const cur = (freshCard.payload ?? {}) as ResearchCardPayloadShape;
+    await tx.chatMessage.updateMany({
+      where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+      data: { payload: { ...cur, status: "done" } as unknown as object },
+    });
+  }
+}
+
 /**
  * Mark the card + job FAILED, owner-scoped. NO credit calls here — withLlmBudget already
  * settled/refunded internally.
@@ -205,10 +290,12 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
     // reserves turnBudgetInternal(maxSteps) up front, runs, settles ACTUAL token cost, refunds the
     // rest. On MaxTurnsExceeded (graceful truncation) usageOnError feeds actual usage → settle actual.
     const refId = `research:${job.cardId}`;
+    // The agent's own RunResult, captured inside `fn` so the delivery hook — which runs after
+    // `fn` returned, inside the settle transaction — can derive the report from the same object.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let result: any;
+    let runResult: any = null;
     try {
-      result = await withLlmBudget(
+      await withLlmBudget(
         {
           orgId: job.ownerId,
           refId,
@@ -227,13 +314,31 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
             e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage
               ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
               : null,
+          // 钱路 M1-b:交付与结算同一笔提交。抛错 ⇒ 两者一起回滚 + 全额退款(见 deliverResearch)。
+          commitInSettleTx: (tx) =>
+            deliverResearch(tx, {
+              job,
+              topic,
+              // The agent's final message text IS the report synthesis.
+              synthesis: extractText(runResult),
+              sources: ctx.sourcesRead,
+            }),
         },
         async () => {
           const run_ = await run(researchAgent, researchInput, { context: ctx, maxTurns: tier.maxSteps });
+          runResult = run_;
           return { result: run_, usage: mapOttoUsage(run_.state.usage) };
         },
       );
     } catch (e) {
+      // 交付被别人抢先了结:reaper 已经把这一单判成 FAILED 并写下**它自己**那句给商家看的话
+      // (「research was interrupted — please try again」),预扣也已经在 withLlmBudget 里退清。
+      // 这条路径若再写一次,只会把商家读到的那句话换成一句内部错误 —— 赢家的终态消息不该被
+      // 一句道歉盖掉(与 gen.ts failClosedWithRefund 的同一条纪律)。
+      if (e instanceof ResearchDeliveryLost) {
+        console.warn(`[research] job ${job.id}: ${e.message}`);
+        return;
+      }
       // withLlmBudget threw (insufficient balance / provider / max-turns w/o usable state / etc.).
       // Credits already refunded/settled INSIDE withLlmBudget — we do NOT touch credits here.
       // PERSISTED error surfaces in the RESEARCH_CARD/ResearchJob and is rendered to the user/admin —
@@ -248,57 +353,9 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
       return;
     }
 
-    // (f) SUCCESS: the agent's final message text IS the report synthesis.
-    const synthesis = extractText(result);
-
-    // Write a RESEARCH_REPORT ChatMessage (seq+1, owner/thread from the job), mirroring appendCoworkResult.
-    try {
-      const last = await prisma.chatMessage.findFirst({
-        where: { threadId: job.threadId, ownerId: job.ownerId },
-        orderBy: { seq: "desc" },
-        select: { seq: true },
-      });
-      await prisma.chatMessage.create({
-        data: {
-          id: newId(),
-          threadId: job.threadId,
-          ownerId: job.ownerId,
-          role: "AGENT",
-          kind: "RESEARCH_REPORT",
-          seq: (last?.seq ?? 0) + 1,
-          text: topic ? `Research report: ${topic}` : "Research report",
-          payload: {
-            topic,
-            synthesis,
-            sources: ctx.sourcesRead,
-          } as unknown as object,
-        },
-      });
-    } catch (e) {
-      // Best-effort: a report-write hiccup must not flip the job back / re-spend. Log + continue to
-      // mark the card/job done (the spend already settled; the run succeeded).
-      console.warn(`[research] job ${job.id}: RESEARCH_REPORT write failed (non-fatal):`, e instanceof Error ? e.message : e);
-    }
-
-    // Card → "done" (RMW: re-read payload, byte-preserve other fields, flip only status).
-    const freshCard = await prisma.chatMessage.findFirst({
-      where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
-      select: { payload: true },
-    });
-    if (freshCard) {
-      const cur = (freshCard.payload ?? {}) as ResearchCardPayloadShape;
-      await prisma.chatMessage.updateMany({
-        where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
-        data: { payload: { ...cur, status: "done" } as unknown as object },
-      });
-    }
-
-    // Job → DONE (owner-scoped). actualCredits is omitted — the authoritative settle lives in the
-    // CreditLedger via withLlmBudget; we do NOT re-derive a spend figure outside the wrapper.
-    await prisma.researchJob.updateMany({
-      where: { id: job.id, ownerId: job.ownerId },
-      data: { status: "DONE" },
-    });
+    // (f) SUCCESS. There is nothing left to write: the report, the card and the job's DONE all
+    // landed inside the settle transaction above (deliverResearch), so reaching this line already
+    // means "the merchant's goods and the charge are committed together".
     console.log(`[research] job ${job.id}: DONE (${ctx.searchesUsed} searches, ${ctx.pagesUsed} reads, ${ctx.sourcesRead.length} sources)`);
   });
 }

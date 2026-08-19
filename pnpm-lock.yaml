@@ -204,6 +204,9 @@ importers:
       pg-boss:
         specifier: 12.18.2
         version: 12.18.2
+      stripe:
+        specifier: ^22.3.0
+        version: 22.3.0(@types/node@22.19.20)
     devDependencies:
       '@types/node':
         specifier: ^22
