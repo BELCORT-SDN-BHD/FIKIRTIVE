@@ -2,34 +2,28 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 // Unit test (no DB): mock prisma so the invariants hold deterministically —
-//  (1) every cross-tenant findMany carries an explicit ownerId predicate (guard-safe),
-//  (2) NO storage URL is ever emitted (only safe metadata), and
-//  (3) each message kind shapes to the right safe fields.
+//  (1) every cross-tenant findMany carries an explicit ownerId predicate (guard-safe), and
+//  (2) the rows carry METADATA ONLY (title/owner/project/count/time — no message bodies).
 // Only the methods conversation-admin calls are provided — a stray write throws.
 
 const chatThreadFindMany = vi.fn();
-const chatThreadFindUnique = vi.fn();
 const projectFindMany = vi.fn();
-const projectFindUnique = vi.fn();
-const chatMessageFindMany = vi.fn();
 const chatMessageGroupBy = vi.fn();
 const membershipFindMany = vi.fn();
-const genJobFindMany = vi.fn();
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    chatThread: { findMany: chatThreadFindMany, findUnique: chatThreadFindUnique },
-    project: { findMany: projectFindMany, findUnique: projectFindUnique },
-    chatMessage: { findMany: chatMessageFindMany, groupBy: chatMessageGroupBy },
+    chatThread: { findMany: chatThreadFindMany },
+    project: { findMany: projectFindMany },
+    chatMessage: { groupBy: chatMessageGroupBy },
     membership: { findMany: membershipFindMany },
-    genJob: { findMany: genJobFindMany },
   },
 }));
 
-const { listConversations, getConversation } = await import("@/lib/conversation-admin");
+const { listConversations } = await import("@/lib/conversation-admin");
 
 beforeEach(() => {
-  for (const m of [chatThreadFindMany, chatThreadFindUnique, projectFindMany, projectFindUnique, chatMessageFindMany, chatMessageGroupBy, membershipFindMany, genJobFindMany]) m.mockReset();
+  for (const m of [chatThreadFindMany, projectFindMany, chatMessageGroupBy, membershipFindMany]) m.mockReset();
 });
 
 describe("listConversations", () => {
@@ -72,66 +66,6 @@ describe("listConversations", () => {
   });
 });
 
-describe("getConversation", () => {
-  it("returns null when the thread does not exist", async () => {
-    chatThreadFindUnique.mockResolvedValue(null);
-    expect(await getConversation("nope")).toBeNull();
-    expect(chatMessageFindMany).not.toHaveBeenCalled();
-  });
-
-  it("returns null for a soft-deleted thread (not surfaced)", async () => {
-    chatThreadFindUnique.mockResolvedValue({ id: "td", ownerId: "org_u1", projectId: "p", title: "t", createdAt: new Date("2026-06-24T00:00:00Z"), deletedAt: new Date("2026-06-24T01:00:00Z") });
-    expect(await getConversation("td")).toBeNull();
-    expect(chatMessageFindMany).not.toHaveBeenCalled();
-  });
-
-  it("pins message + job reads to the thread's owner and shapes every kind safely (no URLs)", async () => {
-    const now = new Date("2026-06-24T11:00:00Z");
-    chatThreadFindUnique.mockResolvedValue({ id: "t1", ownerId: "org_u1", projectId: "p1", title: "Cat video", createdAt: now });
-    projectFindUnique.mockResolvedValue({ name: "Spring promo" });
-    chatMessageFindMany.mockResolvedValue([
-      { id: "m1", role: "USER", kind: "TEXT", seq: 1, text: "make a cat video", payload: null, genJobId: null, createdAt: now },
-      { id: "m2", role: "AGENT", kind: "PLAN", seq: 2, text: "", payload: { planSteps: ["generate keyframe", "animate"] }, genJobId: null, createdAt: now },
-      { id: "m3", role: "AGENT", kind: "GEN_CARD", seq: 3, text: "", payload: { model: "seedream", kind: "image", structuredPrompt: "a cat in a forest", estimatedPriceUsd: 0.04, urls: ["/files/u/org_u1/leak.png"] }, genJobId: null, createdAt: now },
-      { id: "m4", role: "AGENT", kind: "GEN_RESULT", seq: 4, text: "", payload: { model: "seedream", kind: "image", urls: ["/files/u/org_u1/secret.png"] }, genJobId: "job1", createdAt: now },
-    ]);
-    genJobFindMany.mockResolvedValue([{ id: "job1", status: "DONE", spentUsd: 0.04 }]);
-    membershipFindMany.mockResolvedValue([{ orgId: "org_u1", user: { email: "merchant@shop.test" } }]);
-
-    const detail = await getConversation("t1");
-    expect(detail).not.toBeNull();
-
-    // messages pinned to the thread's owner (guard-safe), not the admin's
-    expect(chatMessageFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { threadId: "t1", ownerId: "org_u1", deletedAt: null } }),
-    );
-    expect(genJobFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: ["job1"] }, ownerId: "org_u1" } }),
-    );
-
-    // kind-specific shaping
-    expect(detail!.messages[1].planSteps).toEqual(["generate keyframe", "animate"]);
-    expect(detail!.messages[2].card).toMatchObject({ capability: "Image", prompt: "a cat in a forest", estimatedPriceUsd: 0.04 });
-    expect(detail!.messages[3].result).toMatchObject({ capability: "Image", genJobId: "job1", status: "DONE", spentUsd: 0.04 });
-    expect(detail!.projectName).toBe("Spring promo");
-
-    // SAFETY INVARIANT: the shaped output must NEVER carry a storage URL, even though
-    // the raw GEN_CARD/GEN_RESULT payloads contained /files/ paths.
-    const json = JSON.stringify(detail);
-    expect(json).not.toContain("/files/");
-    expect(json).not.toContain("leak.png");
-    expect(json).not.toContain("secret.png");
-    expect(json).not.toMatch(/https?:\/\//);
-    expect(json).not.toMatch(/seedance|seedream|byteplus|bytedance|jimeng|即梦|\bfal\b|anthropic|claude/iu);
-  });
-
-  it("labels the founder org owner as 'founder' when no owner email exists", async () => {
-    const now = new Date("2026-06-24T12:00:00Z");
-    chatThreadFindUnique.mockResolvedValue({ id: "tf", ownerId: FOUNDER_OWNER_ID, projectId: "p", title: "t", createdAt: now });
-    projectFindUnique.mockResolvedValue({ name: "x" });
-    chatMessageFindMany.mockResolvedValue([]);
-    membershipFindMany.mockResolvedValue([]);
-    const detail = await getConversation("tf");
-    expect(detail!.ownerEmail).toBe("founder");
-  });
-});
+// There is deliberately NO transcript-reader test here: `getConversation` (the cross-tenant
+// message-body reader) was removed in C2b as a zero-caller export. This module is metadata-only,
+// which is what the privacy page's "founder cannot read your messages" claim rests on.

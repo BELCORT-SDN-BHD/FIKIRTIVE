@@ -110,5 +110,3 @@ export const describeRefsSkill = defineOttoSkill({
   parameters: describeRefsInput,
   execute: executeDescribeRefs,
 });
-
-export const describeRefs = describeRefsSkill.tool;

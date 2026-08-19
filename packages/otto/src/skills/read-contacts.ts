@@ -61,5 +61,3 @@ export const readContactsSkill = defineOttoSkill({
   parameters: params,
   execute: executeReadContacts,
 });
-
-export const readContacts = readContactsSkill.tool;

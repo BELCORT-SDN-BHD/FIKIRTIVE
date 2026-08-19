@@ -70,5 +70,3 @@ export const proposeStoryboardSkill = defineOttoSkill({
   ],
   execute: executeProposeStoryboard,
 });
-
-export const proposeStoryboard = proposeStoryboardSkill.tool;

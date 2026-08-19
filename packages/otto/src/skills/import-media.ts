@@ -73,5 +73,3 @@ export const importMediaSkill = defineOttoSkill({
   requires: [{ field: "url", question: "What is the URL of the image or video to import?" }],
   execute: executeImportMedia,
 });
-
-export const importMedia = importMediaSkill.tool;
