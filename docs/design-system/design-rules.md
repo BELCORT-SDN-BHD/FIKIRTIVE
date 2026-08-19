@@ -76,7 +76,7 @@ Rules (unchanged): coral law; semantic = state, never decoration; no raw hex out
 **这是 scoped 覆盖,不是全局改动。** §2 的表值一个字节都没动;下面这一层只在北极星沉浸壳的
 根容器 `.gb.ns-immersive` 上重新赋值几个 token —— 靠 CSS 自定义属性的继承下传,壳内所有工具
 类(`ring-ring`/`bg-info-soft`/…)自动拿到新值,壳外(live 产品、`/northstar` 画廊)完全不受
-影响。实现:`apps/web/app/northstar-immersive/immersive-tokens.css`(由该路由组 layout 导入),
+影响。实现:`apps/web/app/create/immersive-tokens.css`(由该路由组 layout 导入),
 选择器 `.gb.ns-immersive`(0,2,0)压过 globals 的 `.gb`(0,1,0),不论加载顺序都稳赢。
 
 **两个声部,一句话记住:coral = Otto 的声音(§2 coral law 不动),blue = 人手的声音**

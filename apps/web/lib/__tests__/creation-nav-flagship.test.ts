@@ -105,9 +105,11 @@ describe("每一个目的地都有门,且 375px 抽屉里到得了", () => {
    */
   const EVERY_DOOR_A_MERCHANT_MUST_REACH: readonly string[] = [
     "/otto",                    // 助手
-    "/northstar-immersive",     // Create(画布的家)
+    "/create",                  // Create(画布的家)—— W2-5 改名之前它叫 /northstar-immersive
     "/campaign",
-    "/crm",                     // Customers(#792:七扇 CRM 门收成这一扇预览门)
+    // W2-13(#993):Customers 那一格删了 —— CRM 整段不在商家表面上,恢复触发条件写在
+    // 延期台账 issue #359(Meta verification 通过)。/crm 的路由文件还在,但它们只 redirect,
+    // 不是商家「必须到得了」的门,所以不在这份名单里。
     "/otto?view=library",
     "/otto?view=edit",          // #780 剪辑台:拼接/字幕/配乐的门
     "/otto?view=memory",        // Brand & products
@@ -166,7 +168,7 @@ describe("Otto 是助手,不是板块", () => {
   });
 
   it("每一个商家表面都够得着它(导轨常驻,创作面上也在)", () => {
-    for (const surface of ["/campaign", "/crm", "/crm/inbox", "/billing", CREATE_NAV_HREF, CANVAS_HREF]) {
+    for (const surface of ["/campaign", "/billing", "/otto", CREATE_NAV_HREF, CANVAS_HREF]) {
       expect(renderShell(surface), surface).toContain(`href="${OTTO_ASSISTANT.href}"`);
     }
   });
@@ -247,7 +249,7 @@ describe("Otto 表面没有第二处漏网", () => {
 /**
  * #801 收尾 —— 两类漂移点,各钉一条。
  *
- * ① **硬写路径**:壳里每写一次 "/northstar-immersive" 或 "/otto",导航就多了一份会各自
+ * ① **硬写路径**:壳里每写一次创作面的地址(今天是 "/create")或 "/otto",导航就多了一份会各自
  *    漂移的真相。白标改名、路由搬家,漏掉任何一处就是一条死链。所以壳只准引权威常量。
  * ② **抄一份结构**:任何在导航之外把板块名列一遍的文案(tooltip、说明、指路),都会在下一次
  *    加板块时悄悄过期 —— 它已经过期过一次(那句 tooltip 列了四项,漏了 Workspace)。

@@ -18,6 +18,8 @@
  *
  * 零 I/O、零渲染:纯数据对账。
  */
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { OTTO_VIEW_REDIRECTS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { OTTO_VIEW_KEYS } from "@/components/otto/otto-view-param";
@@ -117,5 +119,64 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
     expect(SHELL_ROUTES.edit.startsWith(`${SHELL_ROUTES.library}/`)).toBe(true);
     expect(SHELL_ROUTES.analytics.startsWith(`${SHELL_ROUTES.schedule}/`)).toBe(true);
     expect(SHELL_ROUTES.connections.startsWith(`${SHELL_ROUTES.preferences}/`)).toBe(true);
+  });
+});
+
+/**
+ * CRM 整段收起来了(W2-13 / #993,Founder 裁决 2026-08-18 裁决2;恢复触发条件 = Meta
+ * verification 通过,登记在延期台账 issue #359)。
+ *
+ * 收起来的做法是**重定向,不是删页**:测试账号的书签里还有这十四串地址,404 会让商家以为
+ * 自己的东西丢了。所以这一组按 §2.5「旧书签一律不撞墙」逐个枚举 —— 枚举源是**磁盘上真实
+ * 存在的路由文件**,不是手抄的清单,少一个多一个都红。
+ */
+const CRM_APP_DIR = path.resolve(__dirname, "../../app/crm");
+
+function crmRoutes(): string[] {
+  return readdirSync(CRM_APP_DIR, { recursive: true, encoding: "utf8" })
+    .filter((file) => file.endsWith("page.tsx"))
+    .sort();
+}
+
+describe("CRM 十四条旧地址一条都不撞墙(W2-13 / #993)", () => {
+  it("十四个路由文件都还在 —— 收起来不等于删页", () => {
+    expect(crmRoutes()).toEqual([
+      "broadcasts/[id]/page.tsx",
+      "broadcasts/new/page.tsx",
+      "broadcasts/page.tsx",
+      "contacts/[id]/page.tsx",
+      "contacts/page.tsx",
+      "inbox/[id]/page.tsx",
+      "inbox/page.tsx",
+      "page.tsx",
+      "reports/[id]/page.tsx",
+      "reports/page.tsx",
+      "segments/page.tsx",
+      "templates/page.tsx",
+      "workflows/[id]/page.tsx",
+      "workflows/page.tsx",
+    ]);
+  });
+
+  it.each(crmRoutes())("%s 只做一件事:redirect(\"/\")", (file) => {
+    const src = readFileSync(path.join(CRM_APP_DIR, file), "utf8");
+
+    expect(src, `${file} 没有把人送走`).toContain('redirect("/")');
+    expect(src, `${file} 的落点不是 Home`).not.toMatch(/redirect\((?!"\/"\))/);
+    // 重定向页不渲染、不取数:留着任何一样,「收起来」就只是嘴上说说。
+    expect(src, `${file} 还在渲染 CRM 页面`).not.toContain('from "@/components/crm');
+    expect(src, `${file} 还在取数`).not.toContain('from "@/lib/');
+    expect(src, `${file} 还在声明 force-dynamic(它已经不取数了)`).not.toContain("force-dynamic");
+  });
+
+  it("落点是 SHELL_ROUTES.home —— 不是某个人手打的第二个「首页」", () => {
+    expect(SHELL_ROUTES.home).toBe("/");
+  });
+
+  it("骨架页删干净了(重定向页没有内容可等)", () => {
+    const loading = readdirSync(CRM_APP_DIR, { recursive: true, encoding: "utf8" }).filter((file) =>
+      file.endsWith("loading.tsx"),
+    );
+    expect(loading).toEqual([]);
   });
 });

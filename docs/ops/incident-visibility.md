@@ -10,19 +10,29 @@
   `{ ok:true, db:"up|unknown", worker:"up|stale|unknown", workers:{…}, migrations:"applied|failed" }`。
   心跳读取是顺带的(1 秒不回就放弃),读不到只把 `db`/`worker` 写成 `unknown`,**不改状态码** ——
   它回答的是「这个 Web 进程还答不答得出话」,不是「系统健康吗」。
-  (#796 之前它在 DB 不可达时回 503;那个行为被移到 `/api/ready`,因为平台的**重启**探针指着
-  这个端点,库故障回 503 会把还活着的 Web 重启掉、并让启动迁移一轮轮重试。)
+  (#796 之前它在 DB 不可达时回 503;那个行为被移到 `/api/ready`,因为当时假定平台会拿这个
+  端点做重启判断,库故障回 503 会把还活着的 Web 重启掉、并让启动迁移一轮轮重试。)
 - `GET /api/ready` 免登录返回**就绪**判断:迁移未就位或 DB 不可达 → HTTP 503(平台据此不把流量
-  切给这个容器,旧部署继续承载);都正常 → 200。平台的**部署 / 负载**探针指这里。
+  切给这个容器,旧部署继续承载);都正常 → 200。**Railway 的 `healthcheckPath` 指这里**
+  (C1b ② 更正:此前它指着恒 200 的 `/api/health`,所以「旧部署继续承载」这句承诺一直没有
+  任何配置在兑现;Railway 并没有单独的重启探针,重启由 `restartPolicyType: ON_FAILURE` 在
+  进程退出时触发)。
 - worker 心跳超过代码阈值会显示 `stale`;它是诊断信号,不是自动修复或通知保证。
   拆成算力/等待两班之后,每班一行(`worker-compute` / `worker-wait`,未拆时仍是 `worker`);
   顶层 `worker` 字段的含义是「至少一班活着」,按班真相在 `workers` 里。
-- `GET /api/ops/dlq` 免登录巡检七条死信队列(#793):HTTP 200 = 七条**全部查得到且一条不剩**,
+- `GET /api/ops/dlq` 免登录巡检八条死信队列(#793):HTTP 200 = 八条**全部查得到且一条不剩**,
   503 = 有死信(`backed-up`),或有队列查不到 / 计数读不懂 / 库读不到(`unknown`)。
   只答 clear/backed-up/unknown,不给条数或队列名;计数直接查 job 表,所以 worker 死透了它
   照样出声。接线与生产侧残留清单见 `docs/ops/dashboards.md`。
 - web/worker 含 Sentry instrumentation(server 侧 + 浏览器侧),但只有 live environment
-  配置生效后才会记录。
+  配置生效后才会记录。`SENTRY_DSN` 自整顿 C1a 起是**生产必填**:没有 DSN 时每一次 capture
+  都是静默 no-op,而开机检查此前一个字都不说。今天生产缺它 = 进程拒绝启动。
+- **Founder 报警管道**(整顿 C1a,`packages/core/src/founder-alert.ts`)是第三条路,与上面两套
+  并列而不替代:它只承载**需要人来做决定**的钱路事故(今天两条:`gen.paid_for_nothing`、
+  `stripe.paid_session_unusable_metadata`),一条事件同时走 Sentry(归档聚类)、
+  邮件 tools@belcort.com(离线追人)、Telegram(手机会响;两个 env 未配即静默跳过,
+  接线向导 `docs/ops/telegram-alerts.md`)。**「进了 Sentry」不等于「有人被通知」**——
+  通知那一半在 Sentry 的 alert rule 上,接线步骤在 `docs/ops/dashboards.md` 第三节。
 - 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
   在当前部署和权限下验证。
 - `/admin/queue`(#779)只读生成队列指标库,回答「队列堵没堵」。未配置 `QUEUE_METRICS_QUERY_URL`

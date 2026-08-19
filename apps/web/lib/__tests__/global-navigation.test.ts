@@ -38,7 +38,6 @@ describe("MerchantShellContent", () => {
     expect(markup).toContain('aria-label="Global navigation"');
     expect(markup).toContain('href="/otto"');
     expect(markup).toContain('href="/campaign"');
-    expect(markup).toContain('href="/crm"');
     expect(markup).toContain('href="/billing"');
     expect(markup).toContain("overflow-y-auto");
   });
@@ -53,12 +52,18 @@ describe("MerchantShellContent", () => {
     },
   );
 
-  // #792 — CRM is one door now (the Customers preview), so every page under /crm lights
-  // up that one door, however deep the route goes.
+  // W2-13(#993)— CRM 整段收起来了,所以 /crm 底下不再有任何一扇门,壳也不该在那里画导轨:
+  // `MERCHANT_SURFACE_PATHS` 是从 `merchantNavLinks()` 推出来的,那一格删了,这些路径就不再
+  // 是商家表面。那些路由文件仍在(各自 `redirect("/")`),所以旧书签落地在 Home 上,不是 404。
+  // 半扇门 = 导轨上亮着一格、点进去却被弹走,正是这条要挡的东西。
   it.each(["/crm", "/crm/reports/report-1", "/crm/inbox/templates"])(
-    "marks the Customers door current on %s",
+    "draws no rail at all on %s — the section is hidden, not half-open",
     (pathname) => {
-      expect(renderShell(pathname)).toMatch(/aria-current="page"[^>]*href="\/crm"/);
+      const markup = renderShell(pathname);
+
+      expect(markup).not.toContain('aria-label="Global navigation"');
+      expect(markup).not.toContain('href="/crm"');
+      expect(markup).toContain("Page content");
     },
   );
 
@@ -155,9 +160,8 @@ describe("MerchantShellContent", () => {
       "/profile",
       "/campaign",
       "/campaign/workbench",
-      "/crm/inbox",
-      "/crm/broadcasts",
-      "/crm/workflows",
+      // W2-13(#993):三条 /crm/* 从这份名单里去掉了 —— 它们不再是商家表面(壳在那里
+      // 一根导轨都不画),而不是「壳忘了给它们留位置」。
     ])("reserves the trigger's height above %s content on the mobile tier", (pathname) => {
       const wrapper = renderShell(pathname).match(contentWrapper)?.[1];
 
@@ -167,7 +171,7 @@ describe("MerchantShellContent", () => {
       expect(wrapper).toContain("lg:pt-0");
     });
 
-    it.each(["/otto", "/northstar-immersive", "/northstar-immersive/create/canvas"])(
+    it.each(["/otto", "/create", "/create/canvas"])(
       "reserves nothing on %s, which draws its own in-flow bar over a full-height workspace",
       (pathname) => {
         const wrapper = renderShell(pathname).match(contentWrapper)?.[1];
@@ -200,20 +204,19 @@ describe("MerchantShellContent", () => {
       expect(renderShell("/otto")).not.toContain('aria-label="Open navigation"');
       expect(renderShell("/otto?view=connections")).not.toContain('aria-label="Open navigation"');
       // #801 — Create joined on the same terms: its own 52px bar opens THIS drawer.
-      expect(renderShell("/northstar-immersive")).not.toContain('aria-label="Open navigation"');
-      expect(renderShell("/northstar-immersive/create/canvas")).not.toContain(
+      expect(renderShell("/create")).not.toContain('aria-label="Open navigation"');
+      expect(renderShell("/create/canvas")).not.toContain(
         'aria-label="Open navigation"',
       );
     });
 
     it.each([
       "/otto",
-      "/northstar-immersive",
-      "/northstar-immersive/create/canvas",
+      "/create",
+      "/create/canvas",
       "/billing",
       "/profile",
       "/campaign",
-      "/crm/inbox",
     ])("decides the reservation and the trigger from one predicate on %s", (pathname) => {
       const markup = renderShell(pathname);
       const reserved = (markup.match(contentWrapper)?.[1] ?? "").includes("pt-14");
@@ -320,9 +323,8 @@ describe("SectionTabs", () => {
 
   it("renders nothing outside a grouped section", () => {
     expect(renderTabs("/campaign")).toBe("");
-    expect(renderTabs("/northstar-immersive")).toBe("");
-    // #792 — Customers is a single link now, not a group, so it has no tabs of its own.
-    // Where its pages go is the preview page's job, not a second bar above them.
+    expect(renderTabs("/create")).toBe("");
+    // W2-13(#993)— CRM 整段收起来了,导轨上一格都没有,所以它也长不出一条页签栏。
     expect(renderTabs("/crm")).toBe("");
     expect(renderTabs("/crm/segments")).toBe("");
   });
