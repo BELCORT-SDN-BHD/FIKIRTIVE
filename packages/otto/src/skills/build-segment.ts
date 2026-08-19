@@ -51,7 +51,7 @@ export const buildSegmentSkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Create or update one CRM Segment through the same validated, owner-scoped action layer the merchant's own screens use. $0 " +
+    "Create or update one CRM Segment through the one validated, owner-scoped action layer, not a second implementation of its own. $0 " +
     "internal write. Pass a STRUCTURED one-level rule object only; never compile or send free-form natural language " +
     "inside this skill. create needs name + rules and uses a server-issued id. update also needs the exact segmentId " +
     "returned by readSegments. Unknown consent stays in the audience; only known opt-out is excluded from the " +

@@ -192,8 +192,8 @@ export const draftWorkflowsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Create a custom Workflow definition, validate or save its readable rule source, publish one immutable revision " +
-    "as the definition pointer, or create a Routine DRAFT through the same authenticated, owner-scoped service the " +
-    "merchant's own surfaces use. $0 internal drafting only. Publishing a revision NEVER activates or authorizes a " +
+    "as the definition pointer, or create a Routine DRAFT through the one authenticated, owner-scoped service, not a " +
+    "second implementation of its own. $0 internal drafting only. Publishing a revision NEVER activates or authorizes a " +
     "Routine. Routine budgets are fixed to zero server-side; this skill cannot authorize, kill, run, dispatch, send, " +
     "call a provider, or spend credits. Use exact ids returned by readWorkflows and never guess them. " +
     ROUTINE_EXECUTION_AVAILABILITY,

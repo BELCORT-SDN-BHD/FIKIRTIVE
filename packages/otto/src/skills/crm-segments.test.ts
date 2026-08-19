@@ -69,8 +69,12 @@ const APPROVED_OTTO_COPY = {
   readSegments:
     // #802 r4(判官 [P1]):「as the CRM page」是手写界面引用,改名必漂 —— 改写成不指界面的
     // 说法。这份钉板是那次改写的复审对象:两处描述各只改了这半句,别的一个字未动。
-    "Read the user's CRM Segments through the same owner-scoped action layer the merchant's own " +
-    "screens use. $0 " +
+    //
+    // C7 —— 那次改写留下的是「the merchant's own screens use」。#1007 之后这半句自己变成了
+    // 假话:CRM 那一段一扇打得开的门都没有,它紧挨着下面那句「今天没有页面」,一条描述里
+    // 两句互相打架。「同一条动作层、没有第二套实现」才是这半句要说的事,所以照着它重写。
+    "Read the user's CRM Segments through the one owner-scoped action layer, not a second " +
+    "implementation of its own. $0 " +
     "read-only. operation=list returns saved segments with rules and live " +
     "matched/contactable/known-opt-out counts. operation=get needs an exact segmentId from list " +
     "and returns that Segment's rule and counts. operation=preview evaluates a STRUCTURED " +
@@ -83,8 +87,8 @@ const APPROVED_OTTO_COPY = {
     "consent record already decides. " +
     SEGMENT_AVAILABILITY_COPY,
   buildSegment:
-    "Create or update one CRM Segment through the same validated, owner-scoped action layer the " +
-    "merchant's own screens use. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
+    "Create or update one CRM Segment through the one validated, owner-scoped action layer, not a " +
+    "second implementation of its own. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
     "or send free-form natural language inside this skill. create needs name + rules and uses a " +
     "server-issued id. update also needs the exact segmentId returned by readSegments. Unknown " +
     "consent stays in the audience; only known opt-out is excluded from the contactable estimate, " +

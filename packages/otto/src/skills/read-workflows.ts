@@ -188,8 +188,8 @@ export const readWorkflowsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Read the user's Workflow definitions, immutable revisions, Routine authorization envelopes, run and journey " +
-    "status, and business-hours policies through the same authenticated, owner-scoped service the merchant's own " +
-    "surfaces use. $0 read-only. Start with a list operation and never guess ids or cursors. This skill cannot " +
+    "status, and business-hours policies through the one authenticated, owner-scoped service, not a second " +
+    "implementation of its own. $0 read-only. Start with a list operation and never guess ids or cursors. This skill cannot " +
     "activate, reauthorize, or kill a Routine; create or advance a run or journey; dispatch a step; send; call a " +
     "provider; or spend credits. " +
     ROUTINE_EXECUTION_AVAILABILITY,
