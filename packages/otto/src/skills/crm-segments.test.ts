@@ -167,8 +167,25 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
   // C7 —— Founder 2026-08-20 裁决:断路器条款下再退一步,contactability 真值表(r5)与全部
   // 字段级机制解释一起删,`CRM_SEGMENT_AVAILABILITY` 改为三句短版。旧的三对豁免(「不下人口
   // 断言」的政策声明、excludeReportedOptOut 只减不加、分群只存规则定义)连同它们对应的句子
-  // 一起从披露里删掉了,不再需要豁免。三句短版里唯一新增的带全称词的句子只有下面这句 ——
-  // 「never a prediction or an estimate」是三句短版第③点(先 preview 再报数)的指令句。
+  // 一起从披露里删掉了,不再需要豁免。
+  //
+  // 2026-08-21 编排者裁决 —— 三句短版第②句原是软量词状态断言("much of...is incomplete"),
+  // 对 migration `20260809100000`(存量身份行批量判 channel_verified)仍说不通,判死为
+  // 前五轮那一类不可证伪主张。改成指令形("Never assume...")后带上了 never/any 两个全称
+  // 词,是新披露里第二个需要豁免的全称句。
+  {
+    sentence:
+      "Never assume the underlying data contact reach depends on — channel and consent status — is filled in for any given contact.",
+    surface: "readSegments",
+    why: "指令形(never assume),不主张任何联系人的数据现状,无事实主张可证伪 —— 唯一要核的是句子本身不含状态断言词,读它自己即可核销。",
+  },
+  {
+    sentence:
+      "Never assume the underlying data contact reach depends on — channel and consent status — is filled in for any given contact.",
+    surface: "buildSegment",
+    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
+  },
+  // 三句短版第③点(先 preview 再报数)的指令句 —— 「never a prediction or an estimate」。
   {
     sentence:
       "Before saying how many contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a prediction or an estimate.",

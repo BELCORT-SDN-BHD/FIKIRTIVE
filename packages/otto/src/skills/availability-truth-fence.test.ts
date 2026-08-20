@@ -41,8 +41,8 @@ import { CRM_SEGMENT_AVAILABILITY, ROUTINE_EXECUTION_AVAILABILITY } from "./_ava
 const APPROVED_AVAILABILITY_COPY = {
   CRM_SEGMENT_AVAILABILITY:
     "Availability, say it plainly whenever segments come up: there is no page in the app today for customer " +
-    "segments, contacts or broadcasts, so never send the user to one. Much of the underlying data contact reach " +
-    "depends on — channel and consent status — is incomplete for many contacts today. Before saying how many " +
+    "segments, contacts or broadcasts, so never send the user to one. Never assume the underlying data contact " +
+    "reach depends on — channel and consent status — is filled in for any given contact. Before saying how many " +
     "contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a " +
     "prediction or an estimate. " +
     MESSAGING_STATUS_ASSISTANT,
@@ -76,6 +76,12 @@ const CLAIM_EVIDENCE: ReadonlyArray<{ claim: string; verify: string }> = [
     claim: "call preview and report only the matchedCount it returns",
     verify:
       "apps/web/lib/segment-actions.ts:305 matchedCount: matched.length —— preview 真实返回的字段,不是虚构名字",
+  },
+  {
+    claim:
+      "Never assume the underlying data contact reach depends on — channel and consent status — is filled in for any given contact",
+    verify:
+      "2026-08-21 编排者裁决:指令形(never assume),不主张任何联系人的数据现状,无事实主张可证伪 —— 唯一要核的是这句话本身不含状态断言词(全句无「大多/全部/恒为/incomplete」等量词),读它自己即可核销,不需要数据层证据",
   },
   {
     claim: "Nothing in the product starts a routine run",
@@ -160,11 +166,14 @@ describe("C7 Otto 的「今天做不到什么」——措辞层", () => {
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches every/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches only/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches exactly/i);
+    // 2026-08-21 编排者裁决:句 2 旧版的软量词数据状态断言也判死 —— 同样不许回来。
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/incomplete for many contacts/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/much of the underlying data/i);
     // 人数/人群断言:披露里(MESSAGING_STATUS_ASSISTANT 那半句同样零数字)不许出现任何数字。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/\d/);
-    // 正面:三句短版要求的三件事确实在场。
+    // 正面:三句短版要求的三件事确实在场 —— 句 2 是指令形(never assume),不是状态断言。
     expect(CRM_SEGMENT_AVAILABILITY).toMatch(/there is no page in the app today for customer/);
-    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/is incomplete for many contacts today/);
+    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/Never assume the underlying data contact reach/);
     expect(CRM_SEGMENT_AVAILABILITY).toMatch(/call preview and report only the matchedCount/);
   });
 });

@@ -5,8 +5,9 @@
  * 详细机制解释版(闸门算法、known opt-out 精确定义、字段级读写者取证)连续五轮跨族复判每轮都
  * 被抓到与代码不符 —— 根因是同一个:散文一旦对「谁被选中、选中多少人」下断言,就会被下一批
  * 数据或下一处没查到的写入路径推翻。Founder 裁决放弃这条路,`CRM_SEGMENT_AVAILABILITY`
- * 改为极简事实版,只说三件事:①商家界面今天没有客户分群页面;②联系触达所依赖的底层数据
- * (渠道、同意状态)对多数联系人还不完整;③要回答「这个分群圈到多少人」,必须先调
+ * 改为极简事实版,只说三件事:①商家界面今天没有客户分群页面;②不要假设联系触达所依赖的
+ * 底层数据(渠道、同意状态)对任何一个联系人已经填好——指令形,不下数据状态断言;③要回答
+ * 「这个分群圈到多少人」,必须先调
  * `preview` 读它实测返回的 `matchedCount`,不做预测或估算。不写选择算法、不写 known
  * opt-out 定义、不写任何人数或人群断言。逐句取证与反向禁词围栏都在
  * `availability-truth-fence.test.ts`。
@@ -29,15 +30,17 @@ import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
  * · 没有页面 —— `apps/web/app/crm/page.tsx` 及 13 个子页全是 `redirect("/")`
  *   (`apps/web/lib/__tests__/route-redirects.test.ts`),`packages/core/src/navigation.ts`
  *   零 `/crm` href(`navigation.test.ts`)。
- * · 底层数据不完整 —— 产品成熟度陈述,不下精确断言,措辞用软量词("much of"),不用绝对
- *   量词。
+ * · 不下数据状态断言 —— 句 2 是指令形(never assume),不主张任何联系人的数据现状,因此无
+ *   事实主张可证伪(2026-08-21 编排者裁决:migration `20260809100000` 把存量身份行批量判
+ *   `channel_verified`,任何「大多不完整」式软量词对这些行仍说不通,所以连软量词状态断言
+ *   都不写)。
  * · preview 实测 —— `apps/web/lib/segment-actions.ts:305` `matchedCount: matched.length` 是
  *   `preview` 真实返回的字段,不是虚构名字。
  */
 export const CRM_SEGMENT_AVAILABILITY =
   "Availability, say it plainly whenever segments come up: there is no page in the app today for customer " +
-  "segments, contacts or broadcasts, so never send the user to one. Much of the underlying data contact reach " +
-  "depends on — channel and consent status — is incomplete for many contacts today. Before saying how many " +
+  "segments, contacts or broadcasts, so never send the user to one. Never assume the underlying data contact " +
+  "reach depends on — channel and consent status — is filled in for any given contact. Before saying how many " +
   "contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a " +
   "prediction or an estimate. " +
   MESSAGING_STATUS_ASSISTANT;
