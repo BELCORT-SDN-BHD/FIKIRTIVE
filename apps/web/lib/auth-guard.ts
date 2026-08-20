@@ -270,8 +270,6 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
         where: { userId, orgId, status: { notIn: ["suspended", "revoked"] } },
         data: { deletedAt: null },
       });
-      // carry the active org so a future multi-org switcher needs no auth-table migration
-      await tx.user.update({ where: { id: userId }, data: { activeOrgId: orgId } });
       // Welcome grant ATOMIC with the org/membership writes (grantCreditsTx runs in THIS tx): if
       // it fails the whole tx rolls back — no "org exists but 0 credits" limbo — and the next
       // request re-runs bootstrap cleanly. Idempotent on "signup:<orgId>" (createMany
