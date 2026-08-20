@@ -1,32 +1,53 @@
 {
-  "$comment": "Fikirtive brand palette · Soft Prism v4 · Founder 拍板 2026-08-20。V1 浅色 only。比例法:骨架 ~90% / 渐变糖 ~8% / 珊瑚 ~2%。语义色是状态语言,不算品牌色。",
+  "$comment": "Fikirtive brand palette v4 · Founder approved 2026-08-20 · V1 light only. Ratio: neutrals ~90% / gradients ~8% / coral ~2%. Semantic colors signal state only.",
   "foundation": {
-    "ground":  "#FAFAFC",
+    "ground": "#FAFAFC",
     "surface": "#FFFFFF",
-    "chrome":  "#F2F3F7",
-    "line":    "#E8E9EF",
-    "line2":   "#DDDEE6",
-    "ink":     "#16171C",
-    "ink2":    "#5B5F6C",
-    "ink3":    "#9CA0AC"
+    "chrome": "#F2F3F7",
+    "line": "#E8E9EF",
+    "line2": "#DDDEE6",
+    "ink": "#16171C",
+    "ink2": "#5B5F6C",
+    "ink3": "#9CA0AC"
   },
   "brand": {
-    "coral":      "#EC5828",
-    "coralSoft":  "#FBE7DC",
-    "paper":      "#F5F1E8",
-    "ottoEyes":   "#2B1308",
-    "$rule": "珊瑚=品牌与 Otto:F 砖与云朵用它;产品 UI 内珊瑚只示意 Otto 在场,人类操作按钮一律 ink。"
+    "coral": "#EC5828",
+    "coralSoft": "#FBE7DC",
+    "paper": "#F5F1E8",
+    "ottoEyes": "#2B1308",
+    "$rule": "Coral #EC5828 = brand mark color (F tile, Otto cloud). In product UI, coral marks Otto presence only; human-action buttons are ink."
   },
   "gradients": {
-    "$rule": "135°,双停靠;只包内容不包框架;一屏最多两块;糖上文字用对应深调,对比 ≥ 4.5:1。",
-    "violet": { "stops": ["#EDE9FE", "#DBEAFE"], "textOn": "#3B3663", "use": "开工砖 / 模板卡 / OG 卡" },
-    "peach":  { "stops": ["#FFEDD5", "#FFE1E1"], "textOn": "#7C3D2A", "use": "战役砖 / 空态插底 / merch" },
-    "sky":    { "stops": ["#E0F2FE", "#EDE9FE"], "textOn": "#2E4A66", "use": "数据糖 / 引导卡" }
+    "$rule": "135°, two stops. Content accents only, never page frames. At most two per screen. Text on gradients uses the matching textOn tone at >= 4.5:1.",
+    "violet": {
+      "stops": [
+        "#EDE9FE",
+        "#DBEAFE"
+      ],
+      "textOn": "#3B3663",
+      "use": "start tiles, template cards"
+    },
+    "peach": {
+      "stops": [
+        "#FFEDD5",
+        "#FFE1E1"
+      ],
+      "textOn": "#7C3D2A",
+      "use": "campaign tiles, empty states"
+    },
+    "sky": {
+      "stops": [
+        "#E0F2FE",
+        "#EDE9FE"
+      ],
+      "textOn": "#2E4A66",
+      "use": "data cards, onboarding"
+    }
   },
   "semantic": {
     "good": "#16A34A",
     "warn": "#D97706",
-    "bad":  "#E5484D",
+    "bad": "#E5484D",
     "info": "#3B6FE6"
   },
   "typography": {

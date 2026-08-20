@@ -1,7 +1,7 @@
-# Fikirtive brand — 官方品牌资产包(v4 · Soft Prism)
+# Fikirtive brand — 官方品牌资产包(v4)
 
-> 这里是 Fikirtive 品牌的**唯一权威家**。规则的完整版在 `guidelines/` 里的 brand guidelines(PDF/PPTX,18 页,结构严格按 Shopify brand guidelines 模板:Logos / Typography / Color palette / Imagery / Audience / Voice and tone / Grammar and style + tagline 与 boilerplate);本 README 只做索引与最常用的规矩。
-> 方向与全部拍板:Founder 2026-08-20(色彩方向 A 柔光棱镜 / Geist 留任 / V1 浅色 only / 机器人脸退役 / tagline / grammar 四项)。
+> 本目录是 Fikirtive 品牌资产的唯一权威。完整规范在 `guidelines/`(17 页 PDF/PPTX + 网页版,结构按 Shopify brand guidelines 模板:Logos / Typography / Color palette / Imagery / Audience / Voice and tone / Grammar and style + tagline 与 boilerplate)。本 README 只做索引与最常用规则。
+> 拍板记录:Founder 2026-08-20(色彩方向 / Geist 留任 / V1 浅色 only / 机器人脸退役 / tagline / grammar)。
 > Questions → Nicks Gan · nicksgan@belcort.com
 
 ## Tagline 与 boilerplate(原样使用,不改写)
@@ -11,20 +11,20 @@
 **Boilerplate**(press / 合作方 / 应用商店 / 社媒 bio 通用):
 > Fikirtive is the all-in-one marketing OS for small businesses. It gives merchants complete, hands-on marketing tools — creation, campaigns, scheduling, and publishing — plus Otto, an AI marketing operator that researches, plans, and executes with the merchant's approval. Every action is transparent: merchants see what things cost before they run, and everything leaves a trail they can read. Fikirtive is operated by BELCORT SDN BHD.
 
-## 两件官方标识,各司其职
+## 两件官方标识
 
-| 标识 | 是谁的 | 文件 |
+| 标识 | 归属 | 文件 |
 |---|---|---|
-| **F 字标**(有机手绘 F) | **公司/产品**的标 | `logo/svg/f-mark-*.svg`(墨/纸/白/珊瑚四色)、`f-tile-*`(方砖)、`f-app-icon-*`(圆角砖) |
-| **Otto 云朵** | **Otto(AI 操盘手)**的标 | `otto/otto.svg`(正稿)+ 7 个表情变体 |
+| **F 字标** | 公司/产品 | `logo/svg/f-mark-*.svg`(墨/纸/白/珊瑚四色)、`f-tile-*`(方砖)、`f-app-icon-*`(圆角砖) |
+| **Otto 云朵** | Otto(AI operator) | `otto/otto.svg`(正稿)+ 7 个表情变体 |
 
-两者**不许互换角色**。F 是招牌,云朵是店伙计的脸。
+两者不互换。
 
 ## 最常用四条
 
-1. **默认身份砖 = 珊瑚圆角砖**(`f-app-icon-coral` / `png/favicon-*.png`);黑砖是正式/单色场合。珊瑚 F 永不放珊瑚底;彩底上用纸色或墨色。
-2. **名字写法**:字标一律小写 `fikirtive`(Geist 750);行文写 `Fikirtive`;全大写 FIKIRTIVE 停用;法务主体 BELCORT SDN BHD 照旧。
-3. **珊瑚法**:珊瑚 `#EC5828` 是品牌色——F 砖与云朵用它;**产品 UI 内**珊瑚只示意 Otto 在场(气泡、进度、生成中),人类操作按钮一律墨黑 `#16171C`。
+1. **默认身份砖 = 珊瑚圆角砖**(`f-app-icon-coral` / `png/favicon-*.png`);黑砖用于正式/单色场合。珊瑚 F 不放彩色底;彩底上用纸色或墨色,且装在砖里。
+2. **名字写法**:字标一律小写 `fikirtive`(Geist 750);行文写 `Fikirtive`;全大写 FIKIRTIVE 停用;法务主体 BELCORT SDN BHD。
+3. **珊瑚 `#EC5828` 的分工**:品牌标识色(F 砖与云朵);产品 UI 内只用于标示 Otto 在场(气泡、进度、生成中);人类操作按钮一律墨黑 `#16171C`。
 4. **Grammar**(Founder 拍板 2026-08-20):美式拼写 · sentence case · Oxford comma · 金额 `RM 2,350.00` / `1,240 cr` · 日期 `12 Aug 2026` · 产品词 Fikirtive(行文)/ fikirtive(字标)/ Otto / credits / canvas · 禁句 "Coming soon"、供应商名、无来源数字。
 
 ## 目录
@@ -37,11 +37,14 @@ docs/brand/
 │   ├── svg/             ← F 标矢量正稿(marks / tiles / app icons)
 │   └── png/             ← 官方导出(1024/512 + favicon 16-512 全套)
 ├── otto/                ← 云朵正稿 + 7 表情(idle 即 otto.svg)
+├── fonts/               ← Geist 5 磅 + JetBrains Mono 2 磅静态 TTF(SIL OFL,许可证同目录)
 └── guidelines/
-    ├── fikirtive-brand-guidelines-v4.pptx   ← 18 页分页版(可编辑,PowerPoint 实测可开)
-    ├── fikirtive-brand-guidelines-v4.pdf    ← 18 页分页版(分发用)
-    └── brand-book.html                      ← 网页版(同结构同内容)
+    ├── fikirtive-brand-guidelines-v4.pdf    ← 17 页主稿(排版直出:活字 Geist 内嵌 + 矢量标,分发用)
+    ├── fikirtive-brand-guidelines-v4.pptx   ← 17 页可编辑副本(原生 Geist 文字 + SVG,PowerPoint 实测)
+    └── brand-book.html                      ← 排版源(浏览器打开即书页视图;PDF 由它经 Chrome 打印直出)
 ```
+
+> 编辑 PPTX 前先安装 `fonts/` 里的字体(双击 TTF → 安装),否则 PowerPoint 会静默回退到 Calibri。
 
 ## 血缘与来源
 
