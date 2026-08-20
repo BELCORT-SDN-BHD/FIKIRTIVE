@@ -166,16 +166,23 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
   },
   // C7 r3(二轮判官 [P2-1])—— r2 那一句方向写反了:Otto 分群端口不走 contactMatchesRules
   // 纯匹配器,走 selectedIntoAudience 产品闸(consent-authority.ts:122-139,经
-  // segment-actions.ts:221-233 的 matches());这一句改成沿这条闸重新算过的方向。
+  // segment-actions.ts:221-233 的 matches())。
+  // C7 r4(三轮判官 codex 跨族复判 [P1])—— r3 修对了机制方向,但又加了一层新的失实:
+  // 「today, that is everyone」「which today is nobody」「needs the customer's own verified
+  // confirmation」全部是绝对人口/人群主张,密封环境的 grep 只能证明「现在没有新 writer 会产生
+  // 新的 effective_revoke」,证不出「存量 legacy 围栏(unresolvedLegacyOptOut,零顾客验证即可
+  // 成立,consent-fold.ts:333-344)是空的」——仓内本就有反例(segment-actions.test.ts:331-361、
+  // consent-cross-page-consistency.test.ts:522-535)。这一句改成纯机制陈述,不再对「今天有多少
+  // 人」下任何断言。
   {
     sentence:
-      "The fifth, contactability, is the one rule that can pick out a real group of customers today: contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out needs the customer's own verified confirmation and no production writer supplies one.",
+      "The fifth, contactability, selects on consent: contactability=contactable matches every contact who is not a known opt-out, and contactability=not_contactable matches exactly the contacts who are — how many land on each side depends on the merchant's own data.",
     surface: "readSegments",
-    why: "可证,且已行为实证:走 `selectedIntoAudience`(`apps/web/lib/consent-authority.ts:122-139`,经 `segment-actions.ts:221-233` 的 `matches()` —— Otto 分群预览/构建实际走的产品闸,不是 `contactMatchesRules` 纯匹配器)。普通 contact → contactable=true、not_contactable=false;known opt-out(`isKnownOptOut`,`consent-fold.ts:314-316`,即 `state===\"effective_revoke\"` 或 `unresolvedLegacyOptOut`)的 contact → 相反。`effective_revoke` 只从 customer+interactive+verified 事件折出(`foldConsentEvents`,`consent-fold.ts:187`),生产仅有的两个 `recordConsentEvent` 调用点(`crm-actions.ts:297` `crm_manual`、`:917` `import`)在闭合写者矩阵里都是 merchant/backfill/asserted,今天不可达 —— 所以今天 contactable 选中全部联系人,not_contactable 选中无人。",
+    why: "可证,机制推演走 `selectedIntoAudience`(`apps/web/lib/consent-authority.ts:122-139`,经 `segment-actions.ts:221-233` 的 `matches()` —— Otto 分群预览/构建实际走的产品闸,不是 `contactMatchesRules` 纯匹配器,丢弃 `evaluateContact` 算出的 `marketingConsent`,只按 `isKnownOptOut(truth)`(`consent-fold.ts:313`)二值代入)。对非 known opt-out 的 contact 恒 contactable=true、not_contactable=false;对 known opt-out 的 contact 恒相反 —— 这是纯函数逻辑,与生产存量数据无关,句子本身不对「今天有多少人在哪一侧」下断言。",
   },
   {
     sentence:
-      "The fifth, contactability, is the one rule that can pick out a real group of customers today: contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out needs the customer's own verified confirmation and no production writer supplies one.",
+      "The fifth, contactability, selects on consent: contactability=contactable matches every contact who is not a known opt-out, and contactability=not_contactable matches exactly the contacts who are — how many land on each side depends on the merchant's own data.",
     surface: "buildSegment",
     why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
   },

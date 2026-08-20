@@ -6,10 +6,12 @@
  * 那个老根因 —— **说的与做的失同步**:
  *   · `readSegments` / `buildSegment` 照旧写着「和商家自己的屏幕走同一条动作层」,而那些屏幕
  *     今天一扇也打不开(`apps/web/app/crm` 下十四条路由全是 `redirect("/")`);
- *   · 分群五个规则事实里,四个**今天圈不出任何人**,第五个(contactability)圈得出,但方向和
- *     字面直觉相反(下面逐条列证据与取证命令);可技能描述照旧五个并列写,模型据此建出来的
- *     分群不是**静默地空**,就是**方向搞反**——把几乎全部联系人误当成一个圈出来的子群,或者
- *     把圈出来的那批误当成空;
+ *   · 分群五个规则事实里,四个**今天圈不出任何人**,第五个(contactability)圈得出,但机制
+ *     含义和字面直觉相反(下面逐条列证据与取证命令);可技能描述照旧五个并列写,模型据此建
+ *     出来的分群不是**静默地空**,就是**理解反了**——`contactable` 机制上是「排除已知拒收
+ *     后的剩余联系人」,不是「精确圈出的一小群人」;`not_contactable` 机制上是「恰好那批已知
+ *     拒收的联系人」,不是「大多数收不到消息的人」;两侧各有多少人由商家的实际数据决定,这
+ *     份说明不对人数下断言;
  *   · Routine 那两条技能只说「本技能不会激活/派发」,没说**整个产品今天都不会**——
  *     商家把规则发布、把 Routine 授权完,什么也不会发生。
  *
@@ -53,24 +55,33 @@ import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
  *    · `contactability` —— **判定不走 `contactMatchesRules` 纯匹配器直接读 `marketingConsent`
  *      事实**,走的是 Otto 分群端口实际调用的产品闸 `selectedIntoAudience`
  *      (`apps/web/lib/consent-authority.ts:122-139`,经 `apps/web/lib/segment-actions.ts:221-233`
- *      的 `matches()`)。那道闸把 `evaluateContact` 算出的 `marketingConsent`(生产恒 `"unknown"`)
- *      整个覆盖掉,按 `isKnownOptOut(truth)`(`packages/db/src/consent-fold.ts:314-316`)代入
- *      二值:不是 known opt-out 就按 `"opt_in"` 代入,是 known opt-out 就按 `"opt_out"` 代入再
- *      反向验证。于是 `contactable` = 除 known opt-out 外的全部,`not_contactable` = 恰好那批
- *      known opt-out —— **和 r2 那句写反的方向恰好相反**(二轮判官 [P2-1])。known opt-out
- *      只有两条来源:ledger 折出 `effective_revoke`(仅 customer + interactive + verified 事件
- *      可折出,`foldConsentEvents`,`packages/db/src/consent-fold.ts:187`),或 legacy 预账本
- *      围栏字节 `unresolvedLegacyOptOut`(`consent-fold.ts:317-333`)。生产两个
- *      `recordConsentEvent` 调用点(`crm-actions.ts:297` `crm_manual`、`:917` `import`)在闭合
- *      写者矩阵里都是 merchant / backfill / asserted,够不着 `effective_revoke`。所以**今天**
- *      `contactable` 选中全部联系人,`not_contactable` 选中无人 —— 商家自己在 CRM 里记的
- *      opt-out 不算 known opt-out,照旧落在 `contactable` 一侧,但可以用规则组的
- *      `excludeReportedOptOut` 减掉(`consent-authority.ts:133`),这是今天唯一能从分群里
- *      真正切出一个子集的路径。
+ *      的 `matches()`)。那道闸完全**丢弃** `evaluateContact` 传进来的 `marketingConsent` 事实,
+ *      不看它算出的是什么,只按 `isKnownOptOut(truth)`(`packages/db/src/consent-fold.ts:313`)
+ *      重新代入二值再反向验证。于是 `contactable` = 每个非 known opt-out 的联系人,
+ *      `not_contactable` = 恰好那批 known opt-out —— **和 r2 那句写反的方向恰好相反**
+ *      (二轮判官 [P2-1])。**两侧各有多少人取决于商家的实际数据,这段不对「今天」的人数下
+ *      任何断言**(三轮判官 codex 复判 [P1]:早先版本写过「今天全部/今天无人」,被证伪 ——
+ *      密封环境的 grep 只能证明「现在没有新 writer 会产生」,证不出「存量围栏是空的」)。
+ *      known opt-out 有**两条独立来源**:① ledger 折出 `effective_revoke`,customer +
+ *      verified 的事件即可,不限 interactive —— `foldConsentEvents`
+ *      (`packages/db/src/consent-fold.ts:187`)对 interactive 事件直接判定,对 backfill 的
+ *      `historical_verified_revoke` / `historical_verified_stop` / `stop_purpose_expansion`
+ *      三种 verified 基线事件同样判定(`:207-218`),**顾客不需要亲自在当下确认**;② legacy
+ *      预账本围栏 `unresolvedLegacyOptOut`,只需要 projection 仍是 `unknown` 且旧列
+ *      `Contact.marketingConsent === "opt_out"`(`contactConsentTruth`,`consent-fold.ts:333-344`),
+ *      **完全不经过顾客验证**。所以「known opt-out 需要顾客亲自验证」也是假的 —— 只有①的
+ *      interactive 分支需要,①的 backfill 分支与②都不需要。商家自己在 CRM 里记的 opt-out
+ *      本身**不产生** known opt-out(落在 `truth.reportedOptOut`,不进 `isKnownOptOut`),但
+ *      **不能因此断言它就落在 `contactable` 一侧** —— 同一个联系人可能同时背着 legacy 围栏
+ *      (来源②),那样她仍是 known opt-out,仍在 `not_contactable` 一侧,商家这次手记与她的
+ *      known-opt-out 身份互不相干。规则组的 `excludeReportedOptOut`
+ *      (`consent-authority.ts:133`)对商家自记的 opt-out 只做**减法**,不做加法,也不改变
+ *      known opt-out 本身的判定。
  *
- *    **行为自证**(2026-08-20 二轮判官 [P2-1] 实跑,走 `selectedIntoAudience`;
- *    `availability-truth-fence.test.ts` 的 `CLAIM_EVIDENCE` 与 `crm-segments.test.ts` 的
- *    `APPROVED_OTTO_UNIVERSAL` 固化同款断言,不再依赖一次性脚本):
+ *    **机制推演**(非自动化行为断言 —— 按 `selectedIntoAudience` 逐行手推,依据二轮判官
+ *    [P2-1] 密封探针的结构复述;`availability-truth-fence.test.ts` 的 `CLAIM_EVIDENCE` 与
+ *    `crm-segments.test.ts` 的 `APPROVED_OTTO_UNIVERSAL` **只是文案钉板 + 取证指针**,不跑
+ *    这段代码,不构成行为测试;要重验,按 `CLAIM_EVIDENCE` 里的 `verify` 命令逐条跑):
  *      contactChannelFacts([{whatsapp, merchant_unverified}])            → []
  *      rule `channel is whatsapp`               vs 生产形状的 contact    → false
  *      selectedIntoAudience(普通 contact,          `contactable`)        → true
@@ -92,13 +103,13 @@ export const CRM_SEGMENT_AVAILABILITY =
   "segments, contacts or broadcasts, so never send the user to one. Four of the five rule facts have nothing " +
   "behind them — last order recency, tags, lifetime spend, and channel, which counts only a number that a " +
   "connected channel has confirmed — so a rule using any of those four matches nobody rather than guessing. The " +
-  "fifth, contactability, is the one rule that can pick out a real group of customers today: " +
-  "contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and " +
-  "contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out " +
-  "needs the customer's own verified confirmation and no production writer supplies one. An opt-out the merchant " +
-  "recorded by hand is not a known opt-out, so it stays inside contactable; set the rule group's " +
-  "excludeReportedOptOut to leave those contacts out too, the one way to pick out a real subset of customers " +
-  "today. A saved segment is a list and nothing more today. " +
+  "fifth, contactability, selects on consent: contactability=contactable matches every contact who is not a " +
+  "known opt-out, and contactability=not_contactable matches exactly the contacts who are — how many land on " +
+  "each side depends on the merchant's own data. A known opt-out is either a customer's own verified evidence, " +
+  "given interactively through their channel or recorded as a verified historical baseline, or a legacy opt-out " +
+  "already on record before the consent ledger reached this contact. An opt-out the merchant recorded for a " +
+  "contact himself does not by itself make that contact a known opt-out; the rule group's excludeReportedOptOut " +
+  "can leave those contacts out too, as a subtraction only. A saved segment is a list and nothing more today. " +
   MESSAGING_STATUS_ASSISTANT;
 
 /**

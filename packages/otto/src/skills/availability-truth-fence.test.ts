@@ -44,13 +44,13 @@ const APPROVED_AVAILABILITY_COPY = {
     "segments, contacts or broadcasts, so never send the user to one. Four of the five rule facts have nothing " +
     "behind them — last order recency, tags, lifetime spend, and channel, which counts only a number that a " +
     "connected channel has confirmed — so a rule using any of those four matches nobody rather than guessing. The " +
-    "fifth, contactability, is the one rule that can pick out a real group of customers today: " +
-    "contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and " +
-    "contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out " +
-    "needs the customer's own verified confirmation and no production writer supplies one. An opt-out the merchant " +
-    "recorded by hand is not a known opt-out, so it stays inside contactable; set the rule group's " +
-    "excludeReportedOptOut to leave those contacts out too, the one way to pick out a real subset of customers " +
-    "today. A saved segment is a list and nothing more today. " +
+    "fifth, contactability, selects on consent: contactability=contactable matches every contact who is not a " +
+    "known opt-out, and contactability=not_contactable matches exactly the contacts who are — how many land on " +
+    "each side depends on the merchant's own data. A known opt-out is either a customer's own verified evidence, " +
+    "given interactively through their channel or recorded as a verified historical baseline, or a legacy opt-out " +
+    "already on record before the consent ledger reached this contact. An opt-out the merchant recorded for a " +
+    "contact himself does not by itself make that contact a known opt-out; the rule group's excludeReportedOptOut " +
+    "can leave those contacts out too, as a subtraction only. A saved segment is a list and nothing more today. " +
     MESSAGING_STATUS_ASSISTANT,
   ROUTINE_EXECUTION_AVAILABILITY:
     "Availability, say it plainly whenever a rule's effect comes up: there is no page in the app today for " +
@@ -96,12 +96,12 @@ const CLAIM_EVIDENCE: ReadonlyArray<{ claim: string; verify: string }> = [
   {
     claim: "contactability=contactable matches every contact who is not a known opt-out",
     verify:
-      "行为实证,走 selectedIntoAudience(consent-authority.ts:122-139,经 segment-actions.ts:221-233 的 matches() —— Otto 分群预览/构建实际走的产品闸,不是 contactMatchesRules 纯匹配器):普通 contact → contactable=true;known opt-out(isKnownOptOut,consent-fold.ts:314-316)的 contact → contactable=false",
+      "机制推演,走 selectedIntoAudience(consent-authority.ts:122-139,经 segment-actions.ts:221-233 的 matches() —— Otto 分群预览/构建实际走的产品闸,不是 contactMatchesRules 纯匹配器,丢弃 evaluateContact 算出的 marketingConsent,只按 isKnownOptOut(truth) 二值代入):对非 known opt-out 的 contact 恒 contactable=true,对 known opt-out 的 contact 恒 contactable=false —— 纯函数逻辑,与生产存量数据无关;不断言两侧各有多少人",
   },
   {
-    claim: "contactability=not_contactable matches only a known opt-out",
+    claim: "contactability=not_contactable matches exactly the contacts who are",
     verify:
-      "同一探针取反:selectedIntoAudience 对普通 contact → not_contactable=false,对 known opt-out contact → not_contactable=true;known opt-out 需 effective_revoke(仅 customer+interactive+verified 事件可折出,consent-fold.ts:187)或 legacy 围栏字节,生产两个 recordConsentEvent 调用点(crm-actions.ts:297 crm_manual、:917 import)都是 merchant/backfill/asserted,故今天不可达",
+      "同一函数取反,对 known opt-out 的 contact 恒 not_contactable=true,对非 known opt-out 的 contact 恒 not_contactable=false。known opt-out(isKnownOptOut,consent-fold.ts:313)有两条独立来源:① effective_revoke 由 customer+verified 事件折出,interactive 或 backfill 基线(historical_verified_revoke/historical_verified_stop/stop_purpose_expansion)均可(foldConsentEvents,consent-fold.ts:187/207-218),顾客不需要当下确认;② legacy 预账本围栏 unresolvedLegacyOptOut,只需 projection unknown 且旧列 opt_out,零顾客验证(contactConsentTruth,consent-fold.ts:333-344)。反例(证明存量并非恒空):apps/web/lib/__tests__/segment-actions.test.ts:331-361(legacy opt_out 契约测试,contactable matchedCount=0)、consent-cross-page-consistency.test.ts:522-535(真库形状里 excluded 3 人,其中 unresolvedLegacyOptOutCount=2 人来自 legacy fence,非 effective_revoke)",
   },
   {
     claim: "Nothing in the product starts a routine run",
@@ -165,10 +165,18 @@ describe("C7 Otto 的「今天做不到什么」——措辞层", () => {
     // channel_verified,而写那个等级的函数零生产调用点。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/select real people[^.]*channel/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/channel and contactability/i);
-    // 而且它必须正面说清今天哪一条规则真的选得出人,方向不能含糊也不能说反(判官 [P2-1])。
+    // 且它必须正面说清 contactable/not_contactable 谁选中谁,方向不能含糊也不能说反(二轮判官
+    // [P2-1]),但绝不能对「今天有多少人」下断言 —— 三轮判官 codex 复判 [P1]:密封环境证不出
+    // 存量数据,写死 everyone/nobody 就是新的失实。
     expect(CRM_SEGMENT_AVAILABILITY).toMatch(
-      /is the one rule that can pick out a real group of customers today/,
+      /contactability=contactable matches every contact who is not a known opt-out/,
     );
+    expect(CRM_SEGMENT_AVAILABILITY).toMatch(
+      /how many land on each side depends on the merchant's own data/,
+    );
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/that is everyone/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/which today is nobody/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/needs the customer's own verified confirmation/i);
   });
 });
 
