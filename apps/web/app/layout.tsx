@@ -17,7 +17,7 @@ const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Fikirtive",
-  description: "Model-neutral entity asset layer for AI video creators",
+  description: "Fikirtive is the marketing OS for small businesses.",
 };
 
 /**
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
  */
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#FCFCFC" },
+    { media: "(prefers-color-scheme: light)", color: "#FAFAFC" },
     { media: "(prefers-color-scheme: dark)", color: "#0B0B0C" },
   ],
 };

@@ -70,7 +70,7 @@ export default async function BillingPage({
               marginBottom: 20,
             }}
           >
-            Checkout cancelled. No charge was made.
+            Checkout canceled. No charge was made.
           </div>
         )}
 

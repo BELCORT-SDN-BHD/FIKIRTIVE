@@ -137,7 +137,7 @@ export function runStatusPresentation(status: string): WorkflowPresentation {
     case "blocked":
       return { label: "Blocked", variant: "warning" };
     case "cancelled":
-      return { label: "Cancelled", variant: "outline" };
+      return { label: "Canceled", variant: "outline" };
     case "failed":
       return { label: "Failed", variant: "destructive" };
     default:

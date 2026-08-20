@@ -691,8 +691,7 @@ export function OttoApp({
           >
             <IconMenu />
           </Button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/logo-wordmark.svg" alt="Fikirtive" height={22} style={{ display: "block" }} />
+          <span style={{ fontWeight: 750, letterSpacing: "-0.03em", fontSize: 20, lineHeight: 1 }}>fikirtive</span>
         </div>
         <OttoView
           view={view}

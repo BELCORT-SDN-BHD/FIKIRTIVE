@@ -638,10 +638,10 @@ export function GlobalNavigation({
         <div className="flex items-center gap-2 px-3 pt-3">
           <Link
             href={OTTO_ASSISTANT.href}
-            aria-label="FIKIRTIVE home"
+            aria-label="Fikirtive home"
             className="flex h-12 flex-1 items-center rounded-[10px] px-3 text-lg font-extrabold tracking-[-0.03em] text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 lg:justify-center lg:px-0 xl:justify-start xl:px-3"
           >
-            <span className="lg:hidden xl:inline">FIKIRTIVE</span>
+            <span className="lg:hidden xl:inline font-[750] tracking-[-0.03em]">fikirtive</span>
             <span className="hidden lg:inline xl:hidden">F</span>
           </Link>
           <Button
