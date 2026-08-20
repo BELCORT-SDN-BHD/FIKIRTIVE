@@ -3,10 +3,19 @@
  * (钱路 M1-b, delivery-in-settle-tx) throwing while `extraSettleInternal` (钱路 M1-c, the
  * research search fee) is NON-ZERO.
  *
- * Provenance: this file transcribes, byte-for-byte in its assertions, the differential-judge
- * probe written and verified for PR #1012's merge 5fb59eab (issue #1040). Only the file's
- * location/name and this header comment changed on transcription; every `describe`/`it` and
- * every expectation below is unmodified from the judge's original.
+ * Provenance: this file transcribes the differential-judge probe written and verified for
+ * PR #1012's merge 5fb59eab (issue #1040), byte-for-byte in its assertions for four of its
+ * five cases; the file's location/name and this header comment were rewritten on transcription.
+ * The fifth case ("no double-refund…") was corrected during PR #1072's cross-family re-review:
+ * the judge's original mocked `refundReservation` directly to return `"already-settled"`
+ * without ever driving the mini-ledger through a real SETTLE, so it asserted an account state
+ * (the whole hold still `reserved`) the authoritative ledger can never produce once a SETTLE has
+ * actually won — see packages/db/src/credits.ts:343-353 (the no-op arm never touches the
+ * account) and packages/db/src/credits.test.ts:786-791 (the real-DB pin: `already-settled` ⇒
+ * balance = seed − actual, reserved = 0). The case now drives a genuine settle through these
+ * SAME mini-ledger functions (via `afterReserve`, which fires before this call's own settle
+ * attempt) so the `already-settled` branch is reached by construction, not by overriding the
+ * mock's return value.
  *
  * Why this combination needs its own pin. `commitInSettleTx` (M1-b) and `extraSettleInternal`
  * (M1-c) landed on different sides of the same merge, so neither parent could ever exercise
@@ -47,7 +56,8 @@ const mocks = vi.hoisted(() => {
     state.reserveRow = a.cost;
   });
 
-  // credits.ts:268 — A = min(trunc(actual), B); balance += B-A; reserved -= B.
+  // credits.ts:273-275 — A = min(trunc(actual), B); balance += B-A; reserved -= B
+  // (settleCredits is declared at credits.ts:268).
   const settleCredits = vi.fn(async (_tx: unknown, a: { actualInternal?: number }) => {
     if (state.reserveRow === null) return;
     if (state.finalizer) return; // finalizer_once unique index
@@ -58,7 +68,8 @@ const mocks = vi.hoisted(() => {
     state.acct.reserved -= B;
   });
 
-  // credits.ts:328 — "The amount is read FROM THE RESERVE ROW (never recomputed)."
+  // credits.ts:316 — "The amount is read FROM THE RESERVE ROW (never recomputed)."
+  // (refundReservation is declared at credits.ts:328; the amount is read at credits.ts:333-335.)
   const refundReservation = vi.fn(async (_tx: unknown, _a: unknown) => {
     if (state.reserveRow === null) return "no-reservation";
     if (state.finalizer) return state.finalizer === "REFUND" ? "already-refunded" : "already-settled";
@@ -184,18 +195,45 @@ describe("JUDGE #1012 — M1-b × M1-c cross path: delivery throws while the sea
     expect(mocks.state.acct.reserved).toBe(0);
   });
 
-  it("no double-refund: if a SETTLE had already won the finalizer slot, the catch arm cannot over-refund", async () => {
+  it("no double-refund — a SETTLE that genuinely wins the finalizer race first: the catch arm's refund reports already-settled and touches nothing", async () => {
     const boom = new Error("delivery threw after someone else settled");
-    // Simulate a racing finalizer that committed OUTSIDE our rolled-back transaction.
-    mocks.refundReservation.mockImplementationOnce(async () => "already-settled");
+    // A racing finalizer's OWN, already-committed settle — a DIFFERENT actualInternal from
+    // anything this call computes, so the assertions below can only pass if that settle's
+    // numbers (not this call's) are what actually landed. Must be < the hold so settleCredits'
+    // own clamp (credits.ts:273-275) is exercised rather than trivially saturated.
+    const hold = llmHoldInternal(args());
+    const racingActual = Math.floor(hold / 2);
+    let balanceRightAfterRace: number | undefined;
+
     await expect(
       withLlmBudget(
-        args({ commitInSettleTx: async () => { throw boom; } }),
+        args({
+          // #524 r3 — afterReserve fires AFTER this call's own reserve and BEFORE fn(), i.e.
+          // strictly before this call ever attempts its own settle. Calling the settleCredits
+          // mock directly here (not through mocks.$transaction) models a transaction that
+          // ALREADY COMMITTED elsewhere — real concurrency the single-threaded mini-ledger can't
+          // otherwise produce — so the finalizer flip below is permanent, not something this
+          // call's own (later, rolled-back) transaction could undo.
+          afterReserve: async () => {
+            await mocks.settleCredits({}, { actualInternal: racingActual });
+            balanceRightAfterRace = mocks.state.acct.balance;
+            return true;
+          },
+          commitInSettleTx: async () => { throw boom; },
+        }),
         vi.fn().mockResolvedValue({ result: "r", usage: USAGE }),
       ),
     ).rejects.toBe(boom);
-    // The mocked "already-settled" arm touches nothing — no extra credit is invented.
-    expect(mocks.state.acct.balance).toBe(SEED_BALANCE - mocks.state.reserveRow!);
-    expect(mocks.state.acct.reserved).toBe(mocks.state.reserveRow!);
+
+    // This call's OWN settle attempt (inside the transaction that then throws) finds
+    // state.finalizer already "SETTLE" and no-ops (settleCredits' own finalizer_once guard,
+    // mirroring the DB unique index) — so the rollback below it changes nothing, and the
+    // catch arm's refund lands on credits.ts:343-353's no-op arm: count===0, already-settled,
+    // account untouched. Real-DB pin of the same shape: credits.test.ts:786-791.
+    expect(mocks.state.finalizer).toBe("SETTLE");
+    expect(mocks.state.acct.balance, "赢了race的那笔结算按它自己的 actual 收费,这笔失败的重复交付不许再动账").toBe(SEED_BALANCE - racingActual);
+    expect(mocks.state.acct.reserved, "SETTLE 已经把整笔 hold 清零").toBe(0);
+    expect(mocks.state.acct.balance).toBe(balanceRightAfterRace); // refund attempted nothing further
+    await expect(mocks.refundReservation.mock.results.at(-1)!.value).resolves.toBe("already-settled");
   });
 });
