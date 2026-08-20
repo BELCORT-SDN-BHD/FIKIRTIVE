@@ -156,7 +156,7 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
 
     const background = light!.match(/--background:\s*(#[0-9A-F]{6})/i)?.[1];
     const onFill = light!.match(/--destructive-foreground:\s*(#[0-9A-F]{6})/i)?.[1];
-    expect(background).toBe("#FCFCFC");
+    expect(background).toBe("#FAFAFC");
     expect(onFill).toBe("#FFFFFF");
 
     for (const token of ["destructive", "error"] as const) {

@@ -104,7 +104,7 @@ export const IN_PREVIEW: readonly PreviewEntry[] = [
   {
     href: "/crm/inbox",
     label: "Inbox",
-    works: "Read, search and organise the conversation records this workspace holds, and write a draft reply.",
+    works: "Read, search and organize the conversation records this workspace holds, and write a draft reply.",
     blocked:
       "Nothing comes in and nothing goes out. No channel delivers customer messages here, and sending a reply is refused by Fikirtive itself — the send path is not built, so there is no setting that would turn it on.",
     icon: Inbox,
@@ -128,7 +128,7 @@ export const IN_PREVIEW: readonly PreviewEntry[] = [
   {
     href: "/crm/workflows",
     label: "Workflows",
-    works: "Write a rule, authorise exactly what a Routine may do, and inspect every decision it takes.",
+    works: "Write a rule, authorize exactly what a Routine may do, and inspect every decision it takes.",
     blocked:
       "Every run is simulated, and delivery and spend are disconnected. A published rule is not an active Routine, and no workflow action reaches a customer.",
     icon: Sparkles,

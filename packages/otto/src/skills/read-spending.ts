@@ -140,5 +140,3 @@ export const readSpendingSkill = defineOttoSkill({
   parameters: params,
   execute: executeReadSpending,
 });
-
-export const readSpending = readSpendingSkill.tool;

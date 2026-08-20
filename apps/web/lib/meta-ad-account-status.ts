@@ -78,7 +78,7 @@ const UNKNOWN: MetaAdAccountStatusView = {
   label: "Unknown status",
   // Don't invent a cause, and don't print the code at the merchant — point at the one place they
   // can see the real answer for themselves.
-  detail: "We don't recognise what Meta reported for this account — check it in Meta Ads Manager.",
+  detail: "We don't recognize what Meta reported for this account — check it in Meta Ads Manager.",
   tone: "unknown",
 };
 

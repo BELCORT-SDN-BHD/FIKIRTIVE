@@ -14,7 +14,11 @@
  * Create。W2-5(Create 改名搬家)接手 `/create` 时直接复用这一份,不再建第二份。
  *
  * Otto 面板**永远不静默开画布** —— 它只提议,商家点了才建。这条纪律不在这里执行(这里根本
- * 不认识 Otto),但它是这个组件存在的理由之一:真正开画布的入口只有这一个。
+ * 不认识 Otto),但它是这个组件存在的理由之一。
+ *
+ * 说清楚范围:这是**新壳面**上开画布的唯一入口(Home 与 Create 都是它)。旧壳里还有一处
+ * `createProject` —— `components/otto/OttoApp.tsx:401` 的 "New project",那是旧 `/otto` 宿主
+ * 自己的按钮,Q5-A 已裁定不留旧全屏页,它随 W2-11 一并退场。这一票不动它。
  */
 
 import { useState, useTransition } from "react";

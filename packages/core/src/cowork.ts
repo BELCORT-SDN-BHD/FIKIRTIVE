@@ -4,40 +4,11 @@
  * actions a user would, so anything it does, the user could undo.
  */
 import { z } from "zod";
-import { GEN_KINDS, MAX_GEN_PROMPT, MAX_GEN_ENTITIES, MAX_GEN_COUNT } from "./gen.js";
+import { MAX_GEN_PROMPT, MAX_GEN_ENTITIES, MAX_GEN_COUNT } from "./gen.js";
 import { clampVisionInts } from "./runtime-config.js";
 
 export const MAX_COWORK_IDEA = 4000;
-export const COWORK_MAX_SCENES = 6;
-export const COWORK_MAX_SHOTS_PER_SCENE = 8;
 export const MAX_COWORK_TURN_REFERENCES = 8;
-
-export const coworkRequest = z
-  .object({
-    projectId: z.string().min(1).max(64),
-    idea: z.string().trim().min(1).max(MAX_COWORK_IDEA),
-  })
-  .strict();
-export type CoworkRequest = z.infer<typeof coworkRequest>;
-
-export const MAX_ENHANCE_TEXT = 2000;
-/** "✨ Enhance" — rewrite a rough shot prompt into a vivid, detailed one. */
-export const enhanceRequest = z
-  .object({
-    projectId: z.string().min(1).max(64),
-    text: z.string().trim().min(1).max(MAX_ENHANCE_TEXT),
-    // optional gen-shape (Phase 1): lets the server derive (family, mode) for a
-    // model-aware rewrite. R3 — the client sends SHAPE, the server derives the
-    // mode (never a client mode string). All absent → a family-neutral rewrite
-    // (byte-identical to the pre-Phase-1 behavior).
-    model: z.string().min(1).max(40).optional(),
-    kind: z.enum(GEN_KINDS).optional(),
-    conditioned: z.boolean().optional(),
-    hasSource: z.boolean().optional(),
-    hasTail: z.boolean().optional(),
-  })
-  .strict();
-export type EnhanceRequest = z.infer<typeof enhanceRequest>;
 
 /** One propose-only cowork turn: the user's NL text (+ optional @-mention refs and
  *  per-entity variant selections), against an existing thread or a fresh one. */
@@ -82,28 +53,6 @@ export const coworkTurnRequest = z.object({
 }).strict();
 export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
 
-/** A drafted storyboard: scenes, each with ordered shots (a prompt per shot). */
-export interface CoworkPlan {
-  scenes: { title: string; shots: { prompt: string }[] }[];
-}
-
-/** Validate an LLM's (untrusted) JSON before acting on it — caps scenes/shots
- *  so a runaway plan can't create hundreds of shots, and trims/bounds prompts. */
-export const coworkPlan = z.object({
-  scenes: z
-    .array(
-      z.object({
-        title: z.string().trim().max(120).default(""),
-        shots: z
-          .array(z.object({ prompt: z.string().trim().min(1).max(2000) }))
-          .min(1)
-          .max(COWORK_MAX_SHOTS_PER_SCENE),
-      }),
-    )
-    .min(1)
-    .max(COWORK_MAX_SCENES),
-});
-
 /** One part of a multimodal message content (OpenAI shape). */
 export type ChatContentPart =
   | { type: "text"; text: string }
@@ -114,25 +63,7 @@ export type ChatContentPart =
  *  the transport ships them. All current callers pass a string and are unaffected. */
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string | ChatContentPart[] };
 
-/** Knowledge injected into a skill run by the runner — e.g. the per-(family×mode)
- *  enhance directive the server resolved (Phase 1). Optional: absent → the skill
- *  uses its family-neutral base prompt. */
-export interface SkillCtx {
-  directive?: string;
-}
-
-/** Token usage reported back from a real LLM call.
- *  `cachedInputTokens` is a SUBSET of `inputTokens` (the portion served from the
- *  provider's prompt cache at a cheaper rate). Optional — absent when the transport
- *  doesn't have usage data (e.g. MockTransport). */
-export interface LlmUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens?: number;
-}
-
 export const MAX_PLAN_STEPS = 8;
-export const COWORK_MEMORY_TURNS = 8;
 
 /** Cowork vision (Phase C) config — read from env now; the future admin dashboard will
  *  make these DB-backed runtime toggles (so keep them read from THIS one place). */

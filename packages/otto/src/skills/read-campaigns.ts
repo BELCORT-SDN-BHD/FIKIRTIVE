@@ -50,6 +50,3 @@ export const readCampaignsSkill = defineOttoSkill({
   parameters: params,
   execute: executeReadCampaigns,
 });
-
-export const readCampaigns = readCampaignsSkill.tool;
-

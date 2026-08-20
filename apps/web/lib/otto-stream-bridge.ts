@@ -199,7 +199,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   proposeResearch: "Planning the research",
   // B4 debt-70~74 (schedule five-action parity):
   approveScheduledPost: "Asking you to approve a post",
-  cancelScheduledPost: "Cancelling a scheduled post",
+  cancelScheduledPost: "Canceling a scheduled post",
   editScheduledPost: "Editing a scheduled post",
   listScheduledPosts: "Checking your schedule",
   listPublishTargets: "Finding your connected accounts",

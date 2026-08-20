@@ -233,7 +233,7 @@ describe("stepEventOf — agent step narration (the live trace)", () => {
 
   it("labels the five B4 schedule skills (debt-70~74, B9 契约4: new skill ships with a label)", () => {
     expect(stepEventOf(toolCalledEvent("approveScheduledPost"))?.label).toBe("Asking you to approve a post");
-    expect(stepEventOf(toolCalledEvent("cancelScheduledPost"))?.label).toBe("Cancelling a scheduled post");
+    expect(stepEventOf(toolCalledEvent("cancelScheduledPost"))?.label).toBe("Canceling a scheduled post");
     expect(stepEventOf(toolCalledEvent("editScheduledPost"))?.label).toBe("Editing a scheduled post");
     expect(stepEventOf(toolCalledEvent("listScheduledPosts"))?.label).toBe("Checking your schedule");
     expect(stepEventOf(toolCalledEvent("listPublishTargets"))?.label).toBe("Finding your connected accounts");

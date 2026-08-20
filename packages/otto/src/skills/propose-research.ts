@@ -63,5 +63,3 @@ export const proposeResearchSkill = defineOttoSkill({
   ],
   execute: executeProposeResearch,
 });
-
-export const proposeResearch = proposeResearchSkill.tool;

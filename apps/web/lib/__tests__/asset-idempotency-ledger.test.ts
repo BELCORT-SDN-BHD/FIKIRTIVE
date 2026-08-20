@@ -16,11 +16,12 @@
  *
  * 只有 web 层的周边是假件(auth guard、impersonation、队列、guardian、机型开关、
  * next/cache)—— 与 gen-ledger.test.ts / factory-batch-ledger.test.ts 同一套。零 provider
- * 调用,零真实花费。worker 的终态用它自己调的那两个函数模拟(settleCredits)。
+ * 调用,零真实花费。worker 的成功终态用它自己调的那个函数模拟(settleCredits);这个文件
+ * 不碰失败终态,所以没有 refundReservation —— 别照着 gen-ledger.test.ts 的措辞读成两个。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import { INTERNAL_PER_DISPLAY, activeImageModel } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
@@ -34,11 +35,25 @@ vi.mock("../queue", () => ({
 vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
-const { startAssetGen } = await import("../gen-actions");
+const { startAssetGen, getActiveGenModels } = await import("../gen-actions");
 const { prisma, settleCredits } = await import("@fikirtive/db");
+const { assetActionKey } = await import("../batch-idempotency");
 
 const IMG = INTERNAL_PER_DISPLAY; // 一张图 = 1 显示 credit = 10 内部
 const VIDEO_5S_720P = 11 * INTERNAL_PER_DISPLAY; // seedance-2-mini 720p/5s(#644 裁决)
+
+/**
+ * 夹具的 `model` 与产线**同源**(#1032)。
+ *
+ * 真实的四个付费入口一个都不写引擎名:TemplateModal.tsx:264 与 DetailPanel.tsx:339 / 397 /
+ * 485 送的都是 `getActiveGenModels()` 回的公开别名(`capability-<kind>-N`),引擎名从来不
+ * 出浏览器。夹具过去直接送 `"seedream"` / `"seedance-2-mini"` —— 于是这个文件跑的输入形状
+ * 与产线不是同一个,而幂等键恰恰是从这个形状算出来的。这里改成向同一个函数要,连别名的
+ * 拼法都不在测试里另抄一份。
+ */
+const ACTIVE = await getActiveGenModels();
+const IMAGE_ALIAS = ACTIVE.image; // "capability-image-1"
+const VIDEO_ALIAS = ACTIVE.video; // "capability-video-1"
 
 // ── real-DB helpers(gen-ledger / factory-batch-ledger 同一套) ───────────────
 async function seedOrg(balance: number): Promise<string> {
@@ -95,7 +110,7 @@ function regenIntent(projectId: string, over: Record<string, unknown> = {}) {
     entityIds: [],
     count: 1,
     kind: "image",
-    model: "seedream",
+    model: IMAGE_ALIAS,
     aspectRatio: "1:1",
     ...over,
   };
@@ -143,11 +158,44 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     expect(job!.idempotencyKey).toMatch(/^asset:regen:[0-9a-f]{64}$/);
   });
 
-  it("并发双击(两个请求同时在飞)⇒ 唯一索引兜底,仍然只有一单一扣", async () => {
+  it("键编进去的是浏览器送的公开别名,不是解析后的引擎名(#1029 留桩的机器版)", async () => {
+    const ownerId = await seedOrg(100);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+
+    const intent = regenIntent(projectId);
+    // 进摘要的是「请求体」:三个信封字段(价格绑定、动作、锚点)被 startAssetGen 摘出去,
+    // 剩下的原样进 canonicalJson。这里照它的做法复现同一份。
+    const body: Record<string, unknown> = { ...intent };
+    for (const envelope of ["expectedCredits", "assetOp", "assetAnchorGenerationId"]) delete body[envelope];
+    const anchor = intent.assetAnchorGenerationId;
+
+    expect(idOf(await startAssetGen(intent)).disposition).toBe("fresh");
+    const [job] = await jobs(ownerId, projectId);
+
+    // 键是 64 位十六进制,别名不会**字面**出现在里面 —— 能钉住形状的是这两条一起:
+    //   · 用浏览器送的那份请求体(`model: capability-image-N`)重算 = 落库的那个键;
+    //   · 只把 `model` 换成解析后的引擎名、其余一字不改 ≠ 落库的那个键。
+    // 因为摘要在 `startAssetGen` 里就算完,而别名→引擎的翻译(`resolvePublicModelAlias`)
+    // 要到 `startGen` 里才跑。#1029 的留桩说的正是这个形状,这里把它变成机器钉住的话:
+    // 哪天摘要改成在解析之后算(模型菜单动态化时就必须这么改),下面第①条(别名体重算的那条)会先红。
+    expect(IMAGE_ALIAS).not.toBe(activeImageModel());
+    expect(job!.idempotencyKey).toBe(assetActionKey("regen", anchor, body).key);
+    expect(job!.idempotencyKey).not.toBe(
+      assetActionKey("regen", anchor, { ...body, model: activeImageModel() }).key,
+    );
+  });
+
+  it("并发双击(两个请求同时在飞)⇒ 项目 advisory 锁串行化,仍然只有一单一扣", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
+    // 串行化的第一道不是唯一索引,是项目 advisory 锁:create + reserve 那一笔事务一开头就
+    // `SELECT pg_advisory_xact_lock(hashtextextended('project:<projectId>'))`(gen-actions.ts
+    // 的 `startGen`),拿到锁之后在锁内再读一次同键的活跃单,所以后到的那个请求读到的是先到
+    // 者、走 reused。`GenJob_active_idempotency_key` 唯一索引是第二道防线 —— 只在锁没兜住
+    // 时用 P2002 兜底。这条用例断言的是两道合起来的结果。
     const [a, b] = await Promise.all([
       startAssetGen(regenIntent(projectId)),
       startAssetGen(regenIntent(projectId)),
@@ -201,7 +249,7 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
       entityIds: [],
       count: 1,
       kind: "video",
-      model: "seedance-2-mini",
+      model: VIDEO_ALIAS,
       sourceGenerationId: "gen_source_1",
       durationSeconds: 5,
       resolution: "720p",
@@ -215,7 +263,7 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
       entityIds: [],
       count: 1,
       kind: "image",
-      model: "seedream",
+      model: IMAGE_ALIAS,
       aspectRatio: "1:1",
       sourceGenerationId: "gen_source_1",
     });
@@ -279,7 +327,7 @@ describe("浏览器不许自己出键", () => {
 });
 
 describe("模板弹窗:同一张底图 + 同一个模板 + 同一个答案 = 一单一扣", () => {
-  it("弹窗重开一次再按 Generate ⇒ 落回同一单(旧的 tpl:<id>:<runId> 每次换 runId)", async () => {
+  it("同一次挂载内的重复提交 / server action 重发 ⇒ 落回同一单(旧的 tpl:<id>:<runId> 每次换 runId)", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
@@ -294,15 +342,19 @@ describe("模板弹窗:同一张底图 + 同一个模板 + 同一个答案 = 一
       prompt: "marketplace main image, clean white background",
       entityIds: [],
       count: 1,
-      model: "seedream",
+      model: IMAGE_ALIAS,
       aspectRatio: "1:1",
     });
 
     const first = idOf(await startAssetGen(templateRun()));
-    const reopened = idOf(await startAssetGen(templateRun()));
+    // 「弹窗重开一次」不是这个形状:关掉弹窗会把 TemplateModal 整个卸载(OttoTemplates 里
+    // 是条件渲染),重开后 `sourceGenId` 回到初值 null 逼商家重传,重传拿到的是一个新的
+    // generation id ⇒ 新锚点 ⇒ 新键 ⇒ 本来就该是新的一单。这里钉住的是同一次挂载内同一份
+    // 请求体被提交两次(server action 重发、断线重连后的重放)。
+    const resent = idOf(await startAssetGen(templateRun()));
 
-    expect(reopened.id).toBe(first.id);
-    expect(reopened.disposition).toBe("reused");
+    expect(resent.id).toBe(first.id);
+    expect(resent.disposition).toBe("reused");
     expect(await reserveRows(ownerId)).toHaveLength(1);
     const [job] = await jobs(ownerId, projectId);
     expect(job!.idempotencyKey).toMatch(/^asset:template:[0-9a-f]{64}$/);

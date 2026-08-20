@@ -126,5 +126,3 @@ export const manageContactsSkill = defineOttoSkill({
   parameters: params,
   execute: executeManageContacts,
 });
-
-export const manageContacts = manageContactsSkill.tool;

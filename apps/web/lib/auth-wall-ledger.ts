@@ -76,6 +76,18 @@ export const AUTH_WALL_EXEMPTIONS: readonly AuthWallExemption[] = [
     semantics: "exact",
     reason: "#940 verification landing page; the mail's reader has no session by definition.",
   },
+  // B0-28:无座位分享链接(schedule/share-preview)。商家为自己的**一条**排期贴文铸一个只读链接
+  // 发给没有账号的客户 —— 「不需要开户」正是这功能的全部意义,所以读者必然没有会话,墙会把
+  // 每一个都弹去 /login。授权是链接自带的 HMAC token 加一行存活的 SharePreviewToken
+  // (lib/share-preview.ts),每次加载都在服务端核验,任何失败都归一到同一张「不可用」页。
+  // 页面只读 token 认证的那一条贴文,别无其它(lib/share-preview-view.ts)。收成 exact 是因为
+  // /schedule 本身是商家自己的日历,必须留在墙内,这条子路径下面也不该再长出别的东西。
+  {
+    path: "schedule/share-preview",
+    semantics: "exact",
+    reason: "B0-28 seat-less share link for one scheduled post; its HMAC token plus a live "
+      + "SharePreviewToken row (lib/share-preview.ts) is the sole authorization.",
+  },
   // 公开法律页。app/terms/ 下只有 page.tsx,没有子页面(privacy 有 BM 版,terms 没有)。
   {
     path: "terms",
@@ -145,13 +157,17 @@ export const AUTH_WALL_EXEMPTIONS: readonly AuthWallExemption[] = [
     semantics: "exact",
     reason: "Meta calls it unauthenticated; the signed_request is its auth. No sub-callbacks exist.",
   },
-  // 唯一的调用方是 Meta 的异步取媒体服务器(永远没有会话)。路由的 HMAC token(由发布 worker
-  // 对 ownerId+key+expiry 签名)是它**唯一**的授权;verifyMediaToken 对任何坏 / 过期 / 伪造的
-  // token 一律 fail-close 成 404。路由是 app/api/media/pub/[token]/route.ts,子树是它的正常形状。
+  // 两个调用方永远都没有会话:Meta 的异步取媒体服务器,以及 B0-28 的无座位分享预览页
+  // (它渲染 <img src="/api/media/pub/<signed token>">,见 lib/share-preview-view.ts)。
+  // 路由的 HMAC token(签名覆盖 ownerId+key+expiry)是它**唯一**的授权;verifyMediaToken
+  // 对任何坏 / 过期 / 伪造的 token 一律 fail-close 成 404。路由是
+  // app/api/media/pub/[token]/route.ts,子树是它的正常形状。
   {
     path: "api/media/pub",
     semantics: "subtree",
-    reason: "Meta's async media fetcher hits the [token] route; its HMAC is the sole authorization.",
+    reason: "Two callers, both sessionless by construction: Meta's async media fetcher and the "
+      + "B0-28 share-preview page's own <img> tag; the route's HMAC token is the sole authorization "
+      + "for either.",
   },
   // Next 构建产物与图片优化器。没有 matcher 时 proxy 会跑在它们身上,静态资源会被认证逻辑挡住。
   {

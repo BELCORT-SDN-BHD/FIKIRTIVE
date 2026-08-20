@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { generate, generateInput, executeGenerate } from "./generate.js";
+import { generateSkill, generateInput, executeGenerate } from "./generate.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
@@ -104,10 +104,10 @@ describe("Test 1 — needsApproval resolves to literal true", () => {
     // The SDK wraps boolean into: async () => typeof v === 'boolean' ? v : false
     // So true → resolves true; 0 or undefined → resolves false (fail-open).
     // We call the function (it's always async after SDK normalization).
-    const result = await (generate.needsApproval as () => Promise<boolean>)();
+    const result = await (generateSkill.tool.needsApproval as () => Promise<boolean>)();
     expect(result).toBe(true);
     // Extra: the field must exist and be truthy (guards against accidental removal)
-    expect(generate.needsApproval).toBeTruthy();
+    expect(generateSkill.tool.needsApproval).toBeTruthy();
   });
 });
 

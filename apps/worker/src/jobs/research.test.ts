@@ -57,10 +57,20 @@ const mocks = vi.hoisted(() => {
     deep: { label: "Deep", maxSearches: 25, maxPages: 40, maxSteps: 24, estimatedCredits: 60 },
   };
 
+  // 钱路 M1-c:搜索按 Founder 2026-07-03 裁的 3× 计价。这里刻意用**真实的费率算法**
+  // (每次搜索 3 internal credits)而不是一个任意占位数 —— 占位数会让下面的金额断言
+  // 只是在核对夹具自己,而这条腿的全部意义就是「搜索真的被收了钱」。
+  const SEARCH_UNIT_INTERNAL = 3;
+  const searchChargeInternal = vi.fn((n: number) =>
+    Number.isInteger(n) && n > 0 ? n * SEARCH_UNIT_INTERNAL : 0,
+  );
+  const researchTierSearchBudgetInternal = vi.fn((maxSearches: number) => searchChargeInternal(maxSearches));
+
   return {
     prisma, reserveCredits, settleCredits, refundReservation, newId,
     withLlmBudget, run, mapOttoUsage, MaxTurnsExceededError, researchAgent, RESEARCH_TIERS,
     researchJobFindUnique, researchJobUpdateMany, chatMessageFindFirst, chatMessageCreate, chatMessageUpdateMany,
+    searchChargeInternal, researchTierSearchBudgetInternal, SEARCH_UNIT_INTERNAL,
   };
 });
 
@@ -73,6 +83,7 @@ vi.mock("@fikirtive/db", () => ({
 
 vi.mock("@fikirtive/otto", () => ({
   RESEARCH_TIERS: mocks.RESEARCH_TIERS,
+  researchTierSearchBudgetInternal: mocks.researchTierSearchBudgetInternal,
   researchAgent: mocks.researchAgent,
   withLlmBudget: mocks.withLlmBudget,
   ottoModelRuntime: { billableModelId: "claude-sonnet-4-6" },
@@ -87,6 +98,7 @@ vi.mock("@fikirtive/core", () => ({
   tavilySearch: vi.fn(() => async () => []),
   braveSearch: vi.fn(() => async () => []),
   searchWithFallback: vi.fn(() => async () => []),
+  searchChargeInternal: mocks.searchChargeInternal,
   // #791-6: sanitizeError (redact.ts) now reaches the shared provider-name scrubber in core.
   // Real behaviour, not a stub — a mocked-away redaction would let this suite pass while a
   // provider name reached a persisted error.
@@ -131,8 +143,14 @@ beforeEach(() => {
   mocks.chatMessageCreate.mockResolvedValue({});
   mocks.chatMessageUpdateMany.mockResolvedValue({ count: 1 });
   mocks.run.mockResolvedValue(makeRunResult());
-  mocks.withLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+  // 钱路 M1-b:真 withLlmBudget 会在**结算那一笔事务里**回调 `commitInSettleTx`(交付),所以
+  // 这个替身也必须回调它 —— 否则替身与它替代的东西签的不是同一份合同,这一整套用例会在生产
+  // 早已交付的路径上断言「什么都没写」。事务由 prisma 替身自己充当(它的 $transaction 就是
+  // 直接把自己交给回调)。
+  mocks.withLlmBudget.mockImplementation(async (args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
     const out = await fn();
+    const commit = (args as { commitInSettleTx?: (tx: unknown) => Promise<void> } | null)?.commitInSettleTx;
+    if (commit) await commit(mocks.prisma);
     return out.result;
   });
 });
@@ -173,6 +191,34 @@ describe("handleResearch — happy path", () => {
     // Contract matrix (WO-OTTO-PHASE1 现状锁定): research meters against the SAME production
     // billable model id — the constant's source moves to the atomic model-runtime manifest.
     expect(args.model).toBe("claude-sonnet-4-6");
+  });
+
+  // ── 钱路 M1-c(裁决 9b):搜索这条腿真的被持有、也真的被结算 ──────────────────
+  // 以前 searchSources 标着 FREE,而 free 的真正含义是**没人计价**:每一次深研都在替
+  // 商家买搜索,账上一分没记。下面两条钉住的正是「现在记了」。
+  it("hold 含搜索 worst case = 这一档的 maxSearches × 单次费率", async () => {
+    await handleResearch({ jobId: "job-1" }, 0);
+    const args = mocks.withLlmBudget.mock.calls[0]![0] as { extraHoldInternal?: number };
+    expect(args.extraHoldInternal).toBe(mocks.RESEARCH_TIERS.standard.maxSearches * mocks.SEARCH_UNIT_INTERNAL);
+    // 持有额来自档位自己的上限,不是一个手抄的数 —— 换档就跟着换。
+    expect(mocks.researchTierSearchBudgetInternal).toHaveBeenCalledWith(
+      mocks.RESEARCH_TIERS.standard.maxSearches,
+    );
+  });
+
+  it("settle 按**实际搜了几次**收,不是按上限收", async () => {
+    // 让 agent 在跑的过程中真的用掉 3 次搜索预算(ctx.searchesUsed 是 worker 自己维护的计数器)。
+    mocks.run.mockImplementationOnce(async (_agent: unknown, _input: unknown, opts: { context: { searchesUsed: number } }) => {
+      opts.context.searchesUsed = 3;
+      return { finalOutput: "report", state: { usage: {} } };
+    });
+    await handleResearch({ jobId: "job-1" }, 0);
+    const args = mocks.withLlmBudget.mock.calls[0]![0] as { extraSettleInternal?: () => number };
+    expect(typeof args.extraSettleInternal).toBe("function");
+    // 3 次 × 3 internal = 9,而不是上限的 12 × 3 = 36。
+    expect(args.extraSettleInternal!()).toBe(3 * mocks.SEARCH_UNIT_INTERNAL);
+    // 一次没搜就一分不收。
+    expect(mocks.searchChargeInternal).toHaveBeenCalled();
   });
 
   it("runs the researchAgent with maxTurns=tier.maxSteps", async () => {
