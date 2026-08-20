@@ -40,6 +40,7 @@
  */
 import { createHmac } from "node:crypto";
 import { z } from "zod";
+import { OTTO_LLM_MARGIN_FLOOR } from "./llm-prices.js";
 
 /** 谁读这个变量。both = web 与 worker 都读(其中 shared 的还必须是同一个值)。 */
 export type EnvSurface = "web" | "worker" | "both";
@@ -115,6 +116,20 @@ export type EnvVarSpec = {
   productionValues?: readonly string[];
   /** productionValues 的人话理由,进报错信息。 */
   productionReason?: string;
+  /**
+   * `format: "number"` 专用的**下限**(闭区间):小于这个数一律判错,dev 与生产一视同仁。
+   *
+   * 存在的理由与 productionValues 同源,只是换了一种「格式合法但配置是错的」:数字型开关的
+   * 危险取值往往完全合法。OTTO_LLM_MARGIN 是标准例子 —— 0.5 是个正经的有限正数,而它的意思
+   * 是「每一次 LLM 调用按 provider 账单的一半收费」,也就是每卖一单亏一单。那不是一个有人
+   * 会故意做的定价决定,是打错字;所以它在开机时就被点名拒绝,而不是安静地跑三个月。
+   *
+   * 与运行时钳位的分工:钳位(llm-prices.ts ottoLlmMargin)保证**不会亏着卖**,这里保证
+   * **有人被告知**。少了任何一半,要么损失照发生,要么损失被消音。
+   */
+  minimum?: number;
+  /** minimum 的人话理由,进报错信息。 */
+  minimumReason?: string;
   /** 一行说明,渲染进 .env.example 的生成片段。 */
   summary: string;
 };
@@ -468,9 +483,14 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     readBy: "code",
     requirement: "optional",
     format: "number",
+    // 钱路审计 P1(2026-08-18):此前无下限,0.5 是合法取值而它的意思是每卖一单亏一单。
+    minimum: OTTO_LLM_MARGIN_FLOOR,
+    minimumReason:
+      "a markup below 1.0 charges LESS than the provider's own bill — every metered Otto turn and research run would sell at a loss",
     secret: false,
     shared: false,
-    summary: "LLM pricing margin override.",
+    summary:
+      "LLM pricing margin override (default 2.0). Must be ≥ 1.0 — below that every metered call sells below cost, so the boot check refuses it and the runtime falls back to the default.",
   },
 
   // ── 素材理解(#784)——平台自己掏钱的那一路 ────────────────────────────────
@@ -659,13 +679,18 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
   // ── 计费 ──────────────────────────────────────────────────────────────────
   {
     name: "STRIPE_SECRET_KEY",
-    surface: "web",
+    // 钱路 M1-b:worker 也读它了 —— apps/worker/src/jobs/stripe-reconcile.ts 每半小时把最近
+    // 48 小时**已支付**的 checkout session 与账本对一遍(只读、只报警,一个字都不写钱)。
+    // worker 上不设这把密钥不会坏任何东西:对账扫描直接跳过并说明原因;坏的是那时候没人在看。
+    // `shared: false` 保持不变:两侧拿的是同一把密钥没错,但它不进配置指纹 —— 指纹里的值是
+    // HMAC 摘要,而 web 侧漏配这把密钥的后果(整条充值路挂掉)另有更直接的报错。
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "free",
     secret: true,
     shared: false,
-    summary: "Stripe secret key (sk_live_… in production).",
+    summary: "Stripe secret key (sk_live_… in production). web: checkout + webhook. worker: the read-only 48h ledger reconciliation sweep.",
   },
   {
     name: "STRIPE_WEBHOOK_SECRET",
@@ -1225,6 +1250,23 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
       const reason = parsed.error.issues[0]?.message ?? "has an invalid value";
       problems.push({ name: spec.name, kind: "invalid", message: `${spec.name} ${reason}` });
       continue;
+    }
+
+    // 格式合法,但这个数字本身是错的。与 productionValues 同一族守卫,只是危险取值长成
+    // 一个完全合法的数(OTTO_LLM_MARGIN=0.5)。**dev 与生产一视同仁**:亏着卖不分环境,
+    // 而且开发机上把它配错正是它上生产的路。
+    if (typeof spec.minimum === "number") {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n < spec.minimum) {
+        problems.push({
+          name: spec.name,
+          kind: "invalid",
+          message:
+            `${spec.name} is below its minimum of ${spec.minimum} ` +
+            `— ${spec.minimumReason ?? "the value is out of the range the code can honour"}`,
+        });
+        continue;
+      }
     }
 
     // 值合法,但这个档位只在开发机上成立。报的是变量名与允许档位——档位名不是秘密,

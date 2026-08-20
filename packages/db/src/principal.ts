@@ -32,6 +32,17 @@ export type SystemReason =
   | "auth:converge-identity"
   | "auth:bootstrap-personal-org"
   | "stripe-webhook"
+  /**
+   * 钱路 M1-b —— Stripe ↔ 账本对账扫描(apps/worker/src/jobs/stripe-reconcile.ts)。
+   *
+   * 真正的平台级身份:它问的是「最近 48 小时**所有**已支付的 checkout session,账本里都有
+   * 对应那一行吗」,这句话没有单一租户可以收口。它只读账本、只写平台级的 ActionEvent 审计,
+   * 一个字都不写钱 —— 补账仍然只能由 Stripe 后台重投那条既有的 webhook 路径完成。
+   *
+   * 刻意**没有**列进 READ_ONLY_SYSTEM_REASONS:那道闸会连 ActionEvent 的审计写一起拒掉,
+   * 而「查到缺口却留不下痕迹」正是这张票要消灭的形状。
+   */
+  | "stripe-reconciler"
   | "meta-data-deletion"
   | "worker-heartbeat"
   /** #794 — appends a BackupRun row (platform-level ops record, no tenant to scope). */

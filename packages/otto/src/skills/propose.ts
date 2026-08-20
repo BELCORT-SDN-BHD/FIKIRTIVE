@@ -180,5 +180,3 @@ export const proposeSkill = defineOttoSkill({
   ],
   execute: executePropose,
 });
-
-export const propose = proposeSkill.tool;

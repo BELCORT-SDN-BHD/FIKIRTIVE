@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { llmPricesFor, ottoLlmMargin, OTTO_LLM_MARGIN_DEFAULT } from "./llm-prices.js";
+import { llmPricesFor, ottoLlmMargin, OTTO_LLM_MARGIN_DEFAULT, OTTO_LLM_MARGIN_FLOOR } from "./llm-prices.js";
 
 describe("llmPricesFor — never priced free (metering-hole guard)", () => {
   it("canonical sonnet id → sonnet rates", () => {
@@ -46,11 +46,60 @@ describe("llmPricesFor — never priced free (metering-hole guard)", () => {
 });
 
 describe("ottoLlmMargin", () => {
-  it("defaults to OTTO_LLM_MARGIN_DEFAULT (2.0) when the env var is unset/invalid", () => {
+  /** 每个用例都自己收拾 env —— 这是个进程级全局,漏掉会污染同文件的其它用例。 */
+  const withMargin = <T>(value: string | undefined, fn: () => T): T => {
     const saved = process.env.OTTO_LLM_MARGIN;
-    delete process.env.OTTO_LLM_MARGIN;
-    expect(ottoLlmMargin()).toBe(OTTO_LLM_MARGIN_DEFAULT);
-    expect(OTTO_LLM_MARGIN_DEFAULT).toBe(2.0);
-    if (saved !== undefined) process.env.OTTO_LLM_MARGIN = saved;
+    if (value === undefined) delete process.env.OTTO_LLM_MARGIN;
+    else process.env.OTTO_LLM_MARGIN = value;
+    try {
+      return fn();
+    } finally {
+      if (saved === undefined) delete process.env.OTTO_LLM_MARGIN;
+      else process.env.OTTO_LLM_MARGIN = saved;
+    }
+  };
+
+  it("defaults to OTTO_LLM_MARGIN_DEFAULT (2.0) when the env var is unset/invalid", () => {
+    withMargin(undefined, () => {
+      expect(ottoLlmMargin()).toBe(OTTO_LLM_MARGIN_DEFAULT);
+      expect(OTTO_LLM_MARGIN_DEFAULT).toBe(2.0);
+    });
+  });
+
+  // ── 钱路 M1-c(审计 P1):下限守卫 ────────────────────────────────────────────
+  // 病灶就是一行:`Number.isFinite(v) && v > 0`。0.5 是个正经的正有限数,而它的意思是
+  // 「每一次 LLM 调用按 provider 账单的一半收费」—— 每卖一单亏一单,没有任何测试会红。
+  it("下限是 1.0 = 绝不低于 provider 自己的账单", () => {
+    expect(OTTO_LLM_MARGIN_FLOOR).toBe(1.0);
+    expect(OTTO_LLM_MARGIN_DEFAULT).toBeGreaterThan(OTTO_LLM_MARGIN_FLOOR);
+  });
+
+  it("配成 0.5(亏着卖)→ 忽略,退回默认值 2.0", () => {
+    withMargin("0.5", () => expect(ottoLlmMargin()).toBe(OTTO_LLM_MARGIN_DEFAULT));
+  });
+
+  it("下限以下的每一种写法都被拒:0.5 / 0.99 / 0 / 负数", () => {
+    for (const bad of ["0.5", "0.99", "0", "-3"]) {
+      withMargin(bad, () => expect(ottoLlmMargin(), `OTTO_LLM_MARGIN=${bad}`).toBe(OTTO_LLM_MARGIN_DEFAULT));
+    }
+  });
+
+  it("正好 1.0 是允许的 —— 下限是闭区间(平价转售不亏,只是不赚)", () => {
+    withMargin("1", () => expect(ottoLlmMargin()).toBe(1.0));
+  });
+
+  it("下限之上的合法覆盖照旧生效(守卫只拦亏本,不改行为)", () => {
+    withMargin("2.5", () => expect(ottoLlmMargin()).toBe(2.5));
+    withMargin("1.82", () => expect(ottoLlmMargin()).toBe(1.82));
+  });
+
+  it("退回方向是 fail-closed:被拒时收得**更多**,不是更少", () => {
+    withMargin("0.5", () => expect(ottoLlmMargin()).toBeGreaterThan(0.5));
+  });
+
+  it("垃圾值照旧退回默认(行为不变)", () => {
+    for (const bad of ["", "abc", "NaN", "Infinity"]) {
+      withMargin(bad, () => expect(ottoLlmMargin(), `OTTO_LLM_MARGIN=${bad}`).toBe(OTTO_LLM_MARGIN_DEFAULT));
+    }
   });
 });

@@ -141,5 +141,3 @@ export const recommendTemplatesSkill = defineOttoSkill({
   parameters: params,
   execute: executeRecommendTemplates,
 });
-
-export const recommendTemplates = recommendTemplatesSkill.tool;
