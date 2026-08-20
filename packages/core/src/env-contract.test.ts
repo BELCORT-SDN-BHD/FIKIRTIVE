@@ -127,7 +127,6 @@ const NON_DEPLOY_ENV: Readonly<Record<string, string>> = {
   E2E_PORT: "e2e 自己起 web 时用的端口(e2e/support/env.ts)。",
   BASE_URL: "ops 追踪脚本打哪个站点(scripts/tools/*-tracer.mjs)。",
   WEB_ORIGIN: "同上,另一半脚本用的名字。",
-  COWORK_PROVIDER: "离线评测脚本 scripts/tools/eval-cowork-knowledge.mjs 的模型开关,产品代码不读。",
   ALLOW_LIVE:
     "apps/web/scripts/create-credit-packs.mjs 的第二道确认:拿 live Stripe key 跑必须显式 ALLOW_LIVE=1。",
   I_UNDERSTAND_THIS_SPENDS: "scripts/tools/_interlock.mjs 的花钱确认锁。",
