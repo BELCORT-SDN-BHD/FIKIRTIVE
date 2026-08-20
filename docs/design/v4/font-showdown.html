@@ -1,0 +1,147 @@
+<title>FIKIRTIVE 字体比对</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Onest:wght@400;500;600;700;800&family=Schibsted+Grotesk:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#FAFAFC; --surface:#FFFFFF; --chrome:#F2F3F7;
+  --ink:#16171C; --ink2:#5B5F6C; --ink3:#9CA0AC;
+  --line:#E8E9EF; --line2:#DDDEE6;
+  --cta:#16171C; --cta-ink:#FFFFFF;
+  --otto:#EC5828; --otto-soft:#FBE7DC;
+  --grad-violet:linear-gradient(135deg,#EDE9FE 0%,#DBEAFE 100%);
+  --shadow:0 1px 2px rgba(20,22,30,.05),0 8px 24px rgba(20,22,30,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121318; --surface:#1A1C22; --chrome:#16181E;
+    --ink:#F1F2F5; --ink2:#A6AAB6; --ink3:#6E7280;
+    --line:#282B33; --line2:#32353F;
+    --cta:#F1F2F5; --cta-ink:#16171C;
+    --otto:#F26A3C; --otto-soft:#3A241B;
+    --grad-violet:linear-gradient(135deg,#2A2740 0%,#1F2A44 100%);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121318; --surface:#1A1C22; --chrome:#16181E;
+  --ink:#F1F2F5; --ink2:#A6AAB6; --ink3:#6E7280;
+  --line:#282B33; --line2:#32353F;
+  --cta:#F1F2F5; --cta-ink:#16171C;
+  --otto:#F26A3C; --otto-soft:#3A241B;
+  --grad-violet:linear-gradient(135deg,#2A2740 0%,#1F2A44 100%);
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--ground);color:var(--ink);font-family:'Geist',system-ui,sans-serif;line-height:1.6;font-size:15px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:920px;margin:0 auto;padding:52px 26px 90px}
+.eyebrow{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px}
+h1{font-size:clamp(28px,4.5vw,38px);font-weight:800;letter-spacing:-.02em;line-height:1.15;text-wrap:balance}
+.lede{font-size:16px;color:var(--ink2);max-width:62ch;margin-top:12px}
+.spec{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);margin-top:26px;overflow:hidden}
+.spec.rec{outline:2px solid var(--ink);outline-offset:-1px}
+.spec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:16px 22px;border-bottom:1px solid var(--line);background:var(--chrome);flex-wrap:wrap}
+.spec-head .name{font-size:16px;font-weight:750}
+.spec-head .meta{font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;color:var(--ink3);letter-spacing:.06em}
+.rec-tag{font-family:'Geist Mono',ui-monospace,monospace;font-size:10px;font-weight:700;letter-spacing:.1em;background:var(--cta);color:var(--cta-ink);padding:3px 8px;border-radius:6px}
+.sample{padding:24px 22px 20px}
+.sample .greet{font-size:31px;font-weight:750;letter-spacing:-.015em;line-height:1.15}
+.sample .subline{color:var(--ink2);font-size:14px;margin-top:4px}
+.numrow{display:flex;gap:26px;margin:18px 0 16px;flex-wrap:wrap}
+.num .v{font-size:22px;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.num .k{font-size:11px;color:var(--ink3);font-weight:500}
+.btns{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.b1{font-size:13px;font-weight:600;padding:8px 16px;border-radius:9px;background:var(--cta);color:var(--cta-ink)}
+.b2{font-size:13px;font-weight:600;padding:8px 16px;border-radius:9px;background:var(--grad-violet);color:var(--ink)}
+.b3{font-size:13px;font-weight:600;padding:8px 16px;border-radius:9px;border:1.5px solid var(--otto);color:var(--otto);display:inline-flex;align-items:center;gap:6px}
+.b3 i{width:12px;height:12px;border-radius:50%;background:var(--otto)}
+.sample p.body{color:var(--ink2);font-size:14.5px;max-width:60ch}
+.verdict{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid var(--line);font-size:13px}
+.verdict>div{padding:13px 22px}
+.verdict>div+div{border-left:1px solid var(--line)}
+.verdict .lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-bottom:3px}
+.verdict p{color:var(--ink2)}
+.f-geist .sample,.f-geist .sample .greet{font-family:'Geist',system-ui,sans-serif}
+.f-onest .sample,.f-onest .sample .greet{font-family:'Onest',system-ui,sans-serif}
+.f-schib .sample,.f-schib .sample .greet{font-family:'Schibsted Grotesk',system-ui,sans-serif}
+.f-brico .sample .greet{font-family:'Bricolage Grotesque',system-ui,sans-serif}
+.f-brico .sample{font-family:'Geist',system-ui,sans-serif}
+.mono-note{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;color:var(--ink3);margin-top:14px}
+.foot{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;color:var(--ink3);line-height:1.9}
+@media (max-width:560px){.verdict{grid-template-columns:1fr}.verdict>div+div{border-left:none;border-top:1px solid var(--line)}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">FIKIRTIVE · Type comparison · 方向 A 柔光棱镜已锁</div>
+  <h1>四副面孔,同一句话</h1>
+  <p class="lede">每张样片内容完全相同——Home 问候、数字、三种按钮、一段产品文案——只换字体。数据字统一保持等宽(JetBrains Mono),不参与比对。建议看三处:大标题的性格、数字的挺拔、小字按钮的清晰。</p>
+</header>
+
+<div class="spec rec f-geist">
+  <div class="spec-head"><span class="name">A · Geist(现役)</span><span class="rec-tag">推荐</span><span class="meta">Vercel 出品 · 2023 · 精密中性</span></div>
+  <div class="sample">
+    <div class="greet">Good morning, Nicks</div>
+    <div class="subline">1,240 credits · 3 posts scheduled this week</div>
+    <div class="numrow"><div class="num"><div class="v">1,240</div><div class="k">Credits</div></div><div class="num"><div class="v">RM 2,350</div><div class="k">This month</div></div><div class="num"><div class="v">23,590</div><div class="k">Reach</div></div></div>
+    <div class="btns"><span class="b1">Create campaign</span><span class="b2">Make a video</span><span class="b3"><i></i>Ask Otto</span></div>
+    <p class="body">Otto drafts the plan, you approve what may be made. Every credit is visible before it is spent, and everything Otto does leaves a trail you can read.</p>
+    <div class="mono-note">DATA · JetBrains Mono · batch 2/4 · 12 cr · 9:16</div>
+  </div>
+  <div class="verdict">
+    <div><div class="lbl">性格</div><p>工程师的整洁:冷静、精确、不抢戏。彩色渐变和 Otto 云朵在它旁边最出跳。</p></div>
+    <div><div class="lbl">风险</div><p>个性最淡——识别度要靠色彩和吉祥物扛(方向 A 本来就是这么设计的)。零迁移成本。</p></div>
+  </div>
+</div>
+
+<div class="spec f-onest">
+  <div class="spec-head"><span class="name">B · Onest</span><span class="meta">2023 · 圆润友好</span></div>
+  <div class="sample">
+    <div class="greet">Good morning, Nicks</div>
+    <div class="subline">1,240 credits · 3 posts scheduled this week</div>
+    <div class="numrow"><div class="num"><div class="v">1,240</div><div class="k">Credits</div></div><div class="num"><div class="v">RM 2,350</div><div class="k">This month</div></div><div class="num"><div class="v">23,590</div><div class="k">Reach</div></div></div>
+    <div class="btns"><span class="b1">Create campaign</span><span class="b2">Make a video</span><span class="b3"><i></i>Ask Otto</span></div>
+    <p class="body">Otto drafts the plan, you approve what may be made. Every credit is visible before it is spent, and everything Otto does leaves a trail you can read.</p>
+    <div class="mono-note">DATA · JetBrains Mono · batch 2/4 · 12 cr · 9:16</div>
+  </div>
+  <div class="verdict">
+    <div><div class="lbl">性格</div><p>笔画微圆,天生带笑——「不懂营销也不怕」的亲和感,和 Otto 云朵最搭调。</p></div>
+    <div><div class="lbl">风险</div><p>数字和小字略软,财务/数据面(billing、KPI)的「可信感」比 Geist 弱半档。</p></div>
+  </div>
+</div>
+
+<div class="spec f-schib">
+  <div class="spec-head"><span class="name">C · Schibsted Grotesk</span><span class="meta">2023 · 北欧编辑腔</span></div>
+  <div class="sample">
+    <div class="greet">Good morning, Nicks</div>
+    <div class="subline">1,240 credits · 3 posts scheduled this week</div>
+    <div class="numrow"><div class="num"><div class="v">1,240</div><div class="k">Credits</div></div><div class="num"><div class="v">RM 2,350</div><div class="k">This month</div></div><div class="num"><div class="v">23,590</div><div class="k">Reach</div></div></div>
+    <div class="btns"><span class="b1">Create campaign</span><span class="b2">Make a video</span><span class="b3"><i></i>Ask Otto</span></div>
+    <p class="body">Otto drafts the plan, you approve what may be made. Every credit is visible before it is spent, and everything Otto does leaves a trail you can read.</p>
+    <div class="mono-note">DATA · JetBrains Mono · batch 2/4 · 12 cr · 9:16</div>
+  </div>
+  <div class="verdict">
+    <div><div class="lbl">性格</div><p>标题最有态度:字形有棱角、有报刊气,大字时最「有牌子的样子」。</p></div>
+    <div><div class="lbl">风险</div><p>个性会渗进每一行小字——长界面文字多时容易「累」;需要更严的字号纪律。</p></div>
+  </div>
+</div>
+
+<div class="spec f-brico">
+  <div class="spec-head"><span class="name">D · Bricolage Grotesque 标题 + Geist 正文</span><span class="meta">2023 · 双拼:性格头 + 冷静身</span></div>
+  <div class="sample">
+    <div class="greet">Good morning, Nicks</div>
+    <div class="subline">1,240 credits · 3 posts scheduled this week</div>
+    <div class="numrow"><div class="num"><div class="v">1,240</div><div class="k">Credits</div></div><div class="num"><div class="v">RM 2,350</div><div class="k">This month</div></div><div class="num"><div class="v">23,590</div><div class="k">Reach</div></div></div>
+    <div class="btns"><span class="b1">Create campaign</span><span class="b2">Make a video</span><span class="b3"><i></i>Ask Otto</span></div>
+    <p class="body">Otto drafts the plan, you approve what may be made. Every credit is visible before it is spent, and everything Otto does leaves a trail you can read.</p>
+    <div class="mono-note">DATA · JetBrains Mono · batch 2/4 · 12 cr · 9:16</div>
+  </div>
+  <div class="verdict">
+    <div><div class="lbl">性格</div><p>只有大标题穿性格外套(Bricolage 的喇叭口切角),正文按钮全是 Geist 的冷静——品牌感和秩序感各拿一半。</p></div>
+    <div><div class="lbl">风险</div><p>两副字体要维护两套规矩;标题字用错地方会显做作。适合「brandkit 想要一眼记住」的野心。</p></div>
+  </div>
+</div>
+
+<div class="foot">
+  比对基准:方向 A 色板 · 相同内容与字号 · 数据字统一 JetBrains Mono<br>
+  全部来自 Google Fonts,零授权成本,next/font 直接可用
+</div>
+</div>

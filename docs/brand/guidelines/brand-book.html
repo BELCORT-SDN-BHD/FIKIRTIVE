@@ -1,0 +1,540 @@
+<title>Fikirtive Brand Guidelines</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#FAFAFC;--surface:#FFFFFF;--chrome:#F2F3F7;--line:#E8E9EF;
+    --ink:#16171C;--ink2:#5B5F6C;--ink3:#9CA0AC;
+    --coral:#EC5828;--coral-soft:#FBE7DC;--paper:#F5F1E8;--eye:#2B1308;
+    --good:#16A34A;--warn:#D97706;--bad:#E5484D;--info:#3B6FE6;
+    --mx:0.9in; /* page margin */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{background:#E9EAEE;font-family:'Geist',-apple-system,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+  .page{width:13.333in;height:7.5in;background:var(--surface);position:relative;overflow:hidden}
+  @media screen{
+    body{padding:48px 0}
+    .page{margin:0 auto 40px;box-shadow:0 2px 24px rgba(22,23,28,.12)}
+  }
+  @media print{
+    body{background:none;padding:0}
+    .page{margin:0;box-shadow:none;page-break-after:always}
+    .page:last-child{page-break-after:auto}
+  }
+  @page{size:13.333in 7.5in;margin:0}
+
+  /* shared page furniture */
+  .eyebrow{position:absolute;top:0.55in;left:var(--mx);font-size:9.5pt;font-weight:600;letter-spacing:.18em;color:var(--ink3);text-transform:uppercase}
+  .folio{position:absolute;bottom:0.34in;right:var(--mx);font-size:8.5pt;color:var(--ink3)}
+  h2.pt{position:absolute;top:0.92in;left:var(--mx);font-size:26pt;font-weight:750;letter-spacing:-.02em}
+  .body-block{position:absolute;left:var(--mx)}
+  .k{font-weight:650}
+  .rules{display:grid;grid-template-columns:1.55in 1fr;row-gap:0.16in;column-gap:0.25in}
+  .rules .rk{font-size:11pt;font-weight:650;padding-top:1px}
+  .rules .rv{font-size:10.5pt;color:var(--ink2);line-height:1.5}
+  .rules .rv b{color:var(--ink);font-weight:600}
+  .mono{font-family:'JetBrains Mono',monospace}
+  svg{display:block}
+
+  /* ---- cover / back ---- */
+  .cover .lockup{position:absolute;top:0.85in;left:var(--mx);display:flex;align-items:center;gap:0.22in}
+  .cover .lockup svg{width:0.62in;height:0.62in}
+  .cover .lockup .wm{font-size:22pt;font-weight:750;letter-spacing:-.03em}
+  .cover h1{position:absolute;left:var(--mx);bottom:1.55in;font-size:64pt;line-height:1.03;font-weight:800;letter-spacing:-.03em}
+  .cover .meta{position:absolute;left:var(--mx);right:var(--mx);bottom:0.62in;display:flex;justify-content:space-between;font-size:10.5pt;font-weight:500;color:var(--ink3)}
+  .back{background:var(--ink)}
+  .back .stack{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .back .stack svg{width:1.1in;height:1.1in}
+  .back .wm{color:var(--paper);font-size:24pt;font-weight:750;letter-spacing:-.03em;margin-top:0.38in}
+  .back .tg{color:var(--paper);font-size:14pt;font-weight:700;letter-spacing:-.02em;margin-top:0.16in}
+  .back .tg em{font-style:normal;color:var(--coral)}
+  .back .colophon{color:#6E7280;font-size:9pt;margin-top:0.5in}
+
+  /* ---- contents ---- */
+  .toc{position:absolute;top:2.1in;left:var(--mx);right:var(--mx)}
+  .toc a{display:grid;grid-template-columns:0.5in 1fr auto;align-items:baseline;text-decoration:none;color:inherit;padding:0.115in 0;border-bottom:1px solid var(--line)}
+  .toc a:last-child{border-bottom:none}
+  .toc .no{font-size:10.5pt;color:var(--ink3)}
+  .toc .nm{font-size:13pt;font-weight:650}
+  .toc .pg{font-size:10pt;color:var(--ink3)}
+  .contact{position:absolute;bottom:0.55in;left:var(--mx);font-size:9.5pt;color:var(--ink3)}
+
+  /* ---- marks page ---- */
+  .marks-intro{top:2.05in;width:4.3in;font-size:11.5pt;line-height:1.55;color:var(--ink2)}
+  .marks-intro .imp{color:var(--ink);font-weight:600;margin-top:0.16in}
+  .marks-pair{position:absolute;left:var(--mx);bottom:0.85in;display:flex;gap:0.5in;align-items:flex-end}
+  .marks-pair .mp{text-align:center}
+  .marks-pair .mp .lb{font-size:8.5pt;color:var(--ink3);margin-top:0.1in}
+  .colorways{position:absolute;top:1.9in;left:5.9in;right:var(--mx);display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.18in}
+  .cw{border-radius:0.14in;height:2.05in;display:grid;place-items:center;border:1px solid var(--line)}
+  .cw svg{width:0.95in;height:1.18in}
+  .cwl{font-size:8.5pt;color:var(--ink2);text-align:center;margin-top:0.08in}
+  .tiles{position:absolute;left:5.9in;right:var(--mx);bottom:0.98in;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.18in}
+  .tile{text-align:center}
+  .tile svg{width:1.15in;height:1.15in;margin:0 auto}
+  .tile .tl{font-size:8.5pt;color:var(--ink2);margin-top:0.1in;line-height:1.4}
+
+  /* ---- clear space ---- */
+  .csbox{position:absolute;left:var(--mx);top:1.95in;width:5.5in;height:4.7in;background:var(--ground);border-radius:0.16in;display:grid;place-items:center}
+  .csinner{position:relative;border:1.5px dashed #C9CBD6;padding:0.82in;border-radius:4px}
+  .csinner svg{width:1.65in;height:2.05in}
+  .csinner i{position:absolute;font-size:9pt;color:var(--ink2);font-style:normal;font-weight:500}
+  .csnote{position:absolute;left:var(--mx);bottom:0.5in;font-size:9pt;color:var(--ink3)}
+
+  /* ---- misuse ---- */
+  .mgrid{position:absolute;top:2.0in;left:var(--mx);right:var(--mx);bottom:0.7in;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:0.18in}
+  .mis{border:1px solid var(--line);border-radius:0.14in;padding:0.2in 0.25in;text-align:center;position:relative;display:flex;flex-direction:column}
+  .mis .x{position:absolute;top:0.1in;right:0.11in;width:0.22in;height:0.22in;border-radius:50%;background:#FDE8E8;color:var(--bad);font-size:8pt;font-weight:800;display:grid;place-items:center}
+  .mis .art{flex:1;display:grid;place-items:center;margin-bottom:0.1in}
+  .mis .c{font-size:9.5pt;color:var(--ink2);line-height:1.42}
+
+  /* ---- wordmark ---- */
+  .wmk{position:absolute;top:1.95in;left:var(--mx);font-size:66pt;font-weight:750;letter-spacing:-.03em;line-height:1}
+  .lockup-diagram{position:absolute;top:2.0in;right:var(--mx);width:3.6in}
+  .lockup-diagram .row{display:flex;align-items:center;gap:0.18in}
+  .lockup-diagram .row svg{width:0.56in;height:0.56in}
+  .lockup-diagram .row .w{font-size:15pt;font-weight:750;letter-spacing:-.03em}
+  .lockup-diagram .ann{font-size:8pt;color:var(--ink3);margin-top:0.12in;line-height:1.5}
+  .wmrules{top:3.45in;right:var(--mx);width:11.53in}
+  .reversed-bar{position:absolute;left:var(--mx);right:var(--mx);bottom:0.62in;height:1.3in;background:var(--ink);border-radius:0.14in;display:flex;align-items:center;justify-content:space-between;padding:0 0.5in}
+  .reversed-bar span{color:var(--paper);font-size:26pt;font-weight:750;letter-spacing:-.03em}
+  .reversed-bar i{color:#6E7280;font-size:8.5pt;font-style:normal}
+
+  /* ---- otto ---- */
+  .otto-fig{position:absolute;left:var(--mx);top:2.0in;width:5.1in;height:4.5in;background:var(--ground);border-radius:0.16in;display:grid;place-items:center}
+  .otto-fig svg{width:2.7in;height:2.48in}
+
+  /* ---- expressions ---- */
+  .exp-sub{position:absolute;top:1.72in;left:var(--mx);font-size:10.5pt;color:var(--ink2)}
+  .egrid{position:absolute;top:2.2in;left:var(--mx);right:var(--mx);bottom:0.75in;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:0.16in}
+  .exp{border:1px solid var(--line);border-radius:0.14in;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0.14in}
+  .exp svg{width:1.05in;height:0.96in}
+  .exp .en{font-size:9.5pt;font-weight:650;margin-top:0.12in}
+  .exp .eu{font-size:8pt;color:var(--ink3);margin-top:0.03in;text-align:center}
+
+  /* ---- typography ---- */
+  .tscale{position:absolute;top:2.0in;left:var(--mx);width:7.5in;border:1px solid var(--line);border-radius:0.16in;padding:0.06in 0.3in}
+  .tsr{display:grid;grid-template-columns:1.15in 1.35in 1fr;gap:0.22in;align-items:baseline;padding:0.148in 0;border-bottom:1px solid var(--line)}
+  .tsr:last-child{border-bottom:none}
+  .tsr .tn{font-size:9pt;font-weight:600;color:var(--ink)}
+  .tsr .tspec{font-size:8pt;color:var(--ink3)}
+  .typ右{}
+
+  /* ---- palette ---- */
+  .comp-line{position:absolute;top:1.7in;left:var(--mx);font-size:10.5pt;color:var(--ink2)}
+  .psec{font-size:9pt;font-weight:600;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;margin:0.16in 0 0.09in}
+  .swrow{display:grid;gap:0.12in}
+  .sw{border:1px solid var(--line);border-radius:0.1in;overflow:hidden}
+  .sw .c{height:0.52in}
+  .sw .m{padding:0.06in 0.1in}
+  .sw .n{font-size:8.5pt;font-weight:600}
+  .sw .h{font-family:'JetBrains Mono',monospace;font-size:7pt;color:var(--ink3)}
+  .pal-wrap{position:absolute;top:2.02in;left:var(--mx);right:var(--mx)}
+  .pair-lines{position:absolute;bottom:0.52in;left:var(--mx);right:var(--mx);font-size:9pt;color:var(--ink2);line-height:1.6}
+
+  /* ---- gradients ---- */
+  .gr-spec{position:absolute;top:1.7in;left:var(--mx);font-size:10.5pt;color:var(--ink2)}
+  .grrow{position:absolute;top:2.15in;left:var(--mx);right:var(--mx);display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.22in}
+  .gr{border-radius:0.16in;height:2.5in;padding:0.28in;display:flex;flex-direction:column;justify-content:space-between}
+  .gr .gn{font-size:14pt;font-weight:700;letter-spacing:-.01em}
+  .gr .gh{font-family:'JetBrains Mono',monospace;font-size:8pt;opacity:.8;margin-top:0.05in}
+  .gr .gu{font-size:9pt;opacity:.9}
+  .grules{position:absolute;bottom:0.55in;left:var(--mx);width:11.53in}
+
+  /* ---- imagery ---- */
+  .imrules{top:1.95in;width:6.4in}
+  .imex{position:absolute;top:1.95in;left:7.85in;right:var(--mx);display:grid;grid-template-columns:1fr 1fr;gap:0.2in}
+  .imx{text-align:center}
+  .imx .xl{font-size:8pt;color:var(--ink3);margin-top:0.08in}
+  .mcard{background:var(--surface);border:1px solid var(--line);border-radius:0.1in;box-shadow:0 3px 10px rgba(22,23,28,.08);padding:0.09in}
+  .mcard .ph{height:1.15in;border-radius:0.06in;background:#F5F1E8;display:grid;place-items:center}
+  .dots{height:1.35in;border-radius:0.1in;border:1px solid var(--line);background-image:radial-gradient(#D9DBE3 1px,transparent 1.2px);background-size:12px 12px}
+  .icons{height:1.35in;border:1px solid var(--line);border-radius:0.1in;display:flex;align-items:center;justify-content:center;gap:0.3in}
+  .gmini{height:1.35in;border-radius:0.1in;background:linear-gradient(135deg,#E0F2FE,#BAE6FD)}
+
+  /* ---- audience ---- */
+  .aud-lead{position:absolute;top:2.0in;left:var(--mx);font-size:19pt;font-weight:700;letter-spacing:-.015em}
+  .aud-body{position:absolute;top:2.75in;left:var(--mx);width:6.9in;font-size:12pt;line-height:1.7;color:var(--ink2)}
+  .aud-body p+p{margin-top:0.22in}
+
+  /* ---- voice ---- */
+  .vintro{position:absolute;top:1.72in;left:var(--mx);width:10.8in;font-size:10.5pt;color:var(--ink2);line-height:1.55}
+  .vtable{position:absolute;top:2.5in;left:var(--mx);right:var(--mx)}
+  .vhead{display:grid;grid-template-columns:1.7in 5.1in 1fr;gap:0.25in;background:var(--chrome);border-radius:0.08in;padding:0.08in 0.16in;font-size:8.5pt;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  .vrow{display:grid;grid-template-columns:1.7in 5.1in 1fr;gap:0.25in;padding:0.135in 0.16in;border-bottom:1px solid var(--line);font-size:10.5pt}
+  .vrow:last-child{border-bottom:none}
+  .vrow .vc{font-weight:650}
+  .vrow .vs{color:var(--ink2)}
+  .vrow .vn{color:var(--ink3);text-decoration:line-through}
+  .vrow .vn.desc{text-decoration:none;font-style:italic}
+
+  /* ---- tagline ---- */
+  .tag-spec{position:absolute;top:2.0in;left:var(--mx);font-size:40pt;font-weight:750;letter-spacing:-.028em}
+  .tag-spec em{font-style:normal;color:var(--coral)}
+  .tagrules{top:3.15in;width:11.53in}
+  .boiler{position:absolute;bottom:0.62in;left:var(--mx);right:var(--mx)}
+  .boiler .bl{font-size:10pt;font-weight:650;margin-bottom:0.1in}
+  .boiler .bq{border:1px solid var(--line);background:var(--ground);border-radius:0.12in;padding:0.2in 0.26in;font-size:10pt;color:var(--ink2);line-height:1.6}
+</style>
+
+<!-- ======================= 01 · COVER ======================= -->
+<div class="page cover" id="cover">
+  <div class="lockup">
+    <svg viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="280" fill="#EC5828"/><g transform="translate(-60,10)" stroke="#F5F1E8" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g transform="translate(-60,10)" fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+    <span class="wm">fikirtive</span>
+  </div>
+  <h1>Brand<br>guidelines</h1>
+  <div class="meta"><span>Version 4</span><span>Aug 2026</span></div>
+</div>
+
+<!-- ======================= 02 · CONTENTS ======================= -->
+<div class="page" id="contents">
+  <div class="eyebrow">Brand guidelines</div>
+  <h2 class="pt">Contents</h2>
+  <div class="toc">
+    <a href="#marks"><span class="no">01</span><span class="nm">Logos</span><span class="pg">03–08</span></a>
+    <a href="#type"><span class="no">02</span><span class="nm">Typography</span><span class="pg">09</span></a>
+    <a href="#palette"><span class="no">03</span><span class="nm">Color palette</span><span class="pg">10–11</span></a>
+    <a href="#imagery"><span class="no">04</span><span class="nm">Imagery</span><span class="pg">12</span></a>
+    <a href="#audience"><span class="no">05</span><span class="nm">Audience</span><span class="pg">13</span></a>
+    <a href="#voice"><span class="no">06</span><span class="nm">Voice and tone</span><span class="pg">14</span></a>
+    <a href="#grammar"><span class="no">07</span><span class="nm">Grammar and style</span><span class="pg">15</span></a>
+    <a href="#tagline"><span class="no">08</span><span class="nm">Tagline and boilerplate</span><span class="pg">16</span></a>
+  </div>
+  <div class="contact">Brand questions: Nicks Gan · nicksgan@belcort.com</div>
+  <div class="folio">02</div>
+</div>
+
+<!-- ======================= 03 · THE MARKS ======================= -->
+<div class="page" id="marks">
+  <div class="eyebrow">01 · Logos</div>
+  <h2 class="pt">The marks</h2>
+  <div class="body-block marks-intro">
+    <p>The F mark represents the company: hand-drawn strokes with rounded terminals, ending in three dots. The Otto cloud represents Otto, Fikirtive’s AI marketing operator.</p>
+    <p class="imp">Never interchange the two marks.</p>
+  </div>
+  <div class="marks-pair">
+    <div class="mp">
+      <svg width="70" height="87" viewBox="310 150 740 920"><g stroke="#16171C" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#16171C"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      <div class="lb">The company</div>
+    </div>
+    <div class="mp">
+      <svg width="88" height="81" viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg>
+      <div class="lb">Otto</div>
+    </div>
+  </div>
+  <div class="colorways">
+    <div>
+      <div class="cw" style="background:#F5F1E8;border:none">
+        <svg viewBox="310 150 740 920"><g stroke="#141414" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#141414"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      </div>
+      <div class="cwl">Ink — on light grounds</div>
+    </div>
+    <div>
+      <div class="cw" style="background:#141414;border:none">
+        <svg viewBox="310 150 740 920"><g stroke="#F5F1E8" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      </div>
+      <div class="cwl">Paper — on ink</div>
+    </div>
+    <div>
+      <div class="cw" style="background:#5B5F6C;border:none">
+        <svg viewBox="310 150 740 920"><g stroke="#FFFFFF" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#FFFFFF"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      </div>
+      <div class="cwl">White — on photography</div>
+    </div>
+    <div>
+      <div class="cw" style="background:#F5F1E8;border:none">
+        <svg viewBox="310 150 740 920"><g stroke="#EC5828" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#EC5828"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      </div>
+      <div class="cwl">Coral — on paper or white only</div>
+    </div>
+  </div>
+  <div class="tiles">
+    <div class="tile">
+      <svg viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="280" fill="#141414"/><g transform="translate(-60,10)" stroke="#F5F1E8" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g transform="translate(-60,10)" fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      <div class="tl">Black tile<br>Formal contexts</div>
+    </div>
+    <div class="tile">
+      <svg viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="280" fill="#EC5828"/><g transform="translate(-60,10)" stroke="#F5F1E8" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g transform="translate(-60,10)" fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      <div class="tl">Coral tile<br>Default identity</div>
+    </div>
+    <div class="tile">
+      <svg viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="420" fill="#EC5828"/><g transform="translate(-60,10)" stroke="#F5F1E8" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g transform="translate(-60,10)" fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      <div class="tl">App icon · favicon<br>OS icon grids</div>
+    </div>
+  </div>
+  <div class="csnote" style="left:5.9in;right:0.9in;bottom:0.55in;text-align:center">Tile corner radius: 22.5% of the side; the app icon is rounder for OS icon grids. All tiles carry the paper mark.</div>
+  <div class="folio">03</div>
+</div>
+
+<!-- ======================= 04 · CLEAR SPACE ======================= -->
+<div class="page" id="clearspace">
+  <div class="eyebrow">01 · Logos</div>
+  <h2 class="pt">Clear space and minimum size</h2>
+  <div class="csbox">
+    <div class="csinner">
+      <i style="top:0.28in;left:50%;transform:translateX(-50%)">x/4</i>
+      <i style="left:0.3in;top:50%;transform:translateY(-50%)">x/4</i>
+      <i style="bottom:0.28in;left:50%;transform:translateX(-50%)">x/4</i>
+      <i style="right:0.3in;top:50%;transform:translateY(-50%)">x/4</i>
+      <svg viewBox="310 150 740 920"><g stroke="#16171C" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#16171C"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+    </div>
+  </div>
+  <div class="csnote">x = the mark’s height. Nothing enters the clear zone — type, marks, or the page edge.</div>
+  <div class="body-block rules" style="top:2.15in;left:7.0in;width:5.4in">
+    <div class="rk">Clear space</div><div class="rv">One quarter of the mark height (x/4), on all four sides.</div>
+    <div class="rk">Minimum size</div><div class="rv">Tile 16 px / 4 mm. Bare F mark 24 px / 6 mm. Lockup 24 px / 6 mm tile height.</div>
+    <div class="rk">Scaling</div><div class="rv">Scale proportionally. Use the official exports; do not redraw.</div>
+    <div class="rk">Placement</div><div class="rv">Browser tabs and app icons: coral tile. Formal documents: black tile. On color: paper or ink mark, inside a tile. On photography: the white mark.</div>
+  </div>
+  <div class="folio">04</div>
+</div>
+
+<!-- ======================= 05 · MISUSE ======================= -->
+<div class="page" id="misuse">
+  <div class="eyebrow">01 · Logos</div>
+  <h2 class="pt">Misuse</h2>
+  <div class="mgrid">
+    <div class="mis"><span class="x"><svg width="9" height="9" viewBox="0 0 10 10"><path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="#E5484D" stroke-width="1.8" stroke-linecap="round"/></svg></span><div class="art"><svg width="82" height="102" viewBox="310 150 740 920"><g stroke="#16A34A" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#16A34A"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg></div><div class="c">Do not recolor</div></div>
+    <div class="mis"><span class="x"><svg width="9" height="9" viewBox="0 0 10 10"><path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="#E5484D" stroke-width="1.8" stroke-linecap="round"/></svg></span><div class="art"><svg width="82" height="102" viewBox="310 150 740 920"><g transform="rotate(-24 680 610)"><g stroke="#16171C" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#16171C"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></g></svg></div><div class="c">Do not rotate</div></div>
+    <div class="mis"><span class="x"><svg width="9" height="9" viewBox="0 0 10 10"><path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="#E5484D" stroke-width="1.8" stroke-linecap="round"/></svg></span><div class="art"><svg width="112" height="80" viewBox="310 150 740 920" preserveAspectRatio="none"><g stroke="#16171C" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#16171C"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg></div><div class="c">Do not stretch</div></div>
+    <div class="mis"><span class="x"><svg width="9" height="9" viewBox="0 0 10 10"><path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="#E5484D" stroke-width="1.8" stroke-linecap="round"/></svg></span><div class="art" style="background:linear-gradient(135deg,#FFEDD5,#FFE1E1);border-radius:0.1in;width:100%"><svg width="76" height="94" viewBox="310 150 740 920"><g stroke="#EC5828" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#EC5828"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg></div><div class="c">Do not put the coral mark on color — use paper or ink</div></div>
+    <div class="mis"><span class="x"><svg width="9" height="9" viewBox="0 0 10 10"><path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="#E5484D" stroke-width="1.8" stroke-linecap="round"/></svg></span><div class="art"><svg width="86" height="104" viewBox="280 130 800 960"><g transform="translate(38,42)" opacity="0.3"><g stroke="#16171C" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#16171C"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></g><g stroke="#16171C" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#16171C"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg></div><div class="c">Do not add shadows, outlines, or glows</div></div>
+    <div class="mis"><span class="x"><svg width="9" height="9" viewBox="0 0 10 10"><path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="#E5484D" stroke-width="1.8" stroke-linecap="round"/></svg></span><div class="art"><span style="font-family:Georgia,serif;font-size:25pt;font-weight:700;font-style:italic">fikirtive</span></div><div class="c">Do not re-typeset the wordmark</div></div>
+  </div>
+  <div class="folio">05</div>
+</div>
+
+<!-- ======================= 06 · WORDMARK & LOCKUP ======================= -->
+<div class="page" id="wordmark">
+  <div class="eyebrow">01 · Logos</div>
+  <h2 class="pt">Wordmark and lockup</h2>
+  <div class="wmk">fikirtive</div>
+  <div class="lockup-diagram">
+    <div class="row">
+      <svg viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="280" fill="#EC5828"/><g transform="translate(-60,10)" stroke="#F5F1E8" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g transform="translate(-60,10)" fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      <span class="w">fikirtive</span>
+    </div>
+    <div class="ann">Lockup construction: tile height = x · gap = x/3 · wordmark height = x/2, centered on the tile. Reversed lockup uses the paper wordmark on ink.</div>
+  </div>
+  <div class="body-block rules wmrules">
+    <div class="rk">Setting</div><div class="rv">Geist, weight 750, -3% tracking, always lowercase. Never re-typeset from another face; use the master asset.</div>
+    <div class="rk">Reversed</div><div class="rv">Paper <span class="mono">#F5F1E8</span> on ink. Used on the back cover of this document.</div>
+    <div class="rk">In running text</div><div class="rv">Fikirtive.</div>
+    <div class="rk">Retired</div><div class="rv" style="text-decoration:line-through">FIKIRTIVE in all caps.</div>
+    <div class="rk">Legal entity</div><div class="rv">BELCORT&nbsp;SDN&nbsp;BHD.</div>
+  </div>
+  <div class="reversed-bar"><span>fikirtive</span><i>Reversed — paper on ink</i></div>
+  <div class="folio">06</div>
+</div>
+
+<!-- ======================= 07 · OTTO ======================= -->
+<div class="page" id="otto">
+  <div class="eyebrow">01 · Logos</div>
+  <h2 class="pt">Otto</h2>
+  <div class="otto-fig">
+    <svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg>
+  </div>
+  <div class="body-block rules" style="top:2.15in;left:6.6in;width:5.8in">
+    <div class="rk">Color</div><div class="rv">Cloud <span class="mono">#EC5828</span>, eyes <span class="mono">#2B1308</span>. Unchanged on every background.</div>
+    <div class="rk">Role</div><div class="rv">Marks Otto’s own activity. Never decorative.</div>
+    <div class="rk">Clear space</div><div class="rv">One quarter of the cloud’s height. Never locked up with the F mark; the two marks never form one unit.</div>
+    <div class="rk">Minimum size</div><div class="rv">20 px / 5 mm. Below that, a coral dot.</div>
+    <div class="rk">Do not</div><div class="rv">Recolor, add a mouth, or place on human-action controls.</div>
+  </div>
+  <div class="folio">07</div>
+</div>
+
+<!-- ======================= 08 · EXPRESSIONS ======================= -->
+<div class="page" id="expressions">
+  <div class="eyebrow">01 · Logos</div>
+  <h2 class="pt">Expressions</h2>
+  <div class="exp-sub">Idle is the default. Every other expression marks a live product state.</div>
+  <div class="egrid">
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg><div class="en">Idle</div><div class="eu">Default state</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="53" y="44" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="68" y="44" width="7" height="13" rx="3.5" fill="#2B1308"/><circle cx="97" cy="30" r="5" fill="#EC5828" opacity=".5"/><circle cx="107" cy="21" r="3.2" fill="#EC5828" opacity=".32"/></svg><div class="en">Thinking</div><div class="eu">Planning, before a proposal</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/></svg><div class="en">Helpful</div><div class="eu">Greetings and tips</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M99 22 l4 8 8.5 1.2 -6 6 1.4 8.5 -7.9 -4.2 -7.9 4.2 1.4 -8.5 -6 -6 8.5 -1.2 z" fill="#EC5828" opacity=".6"/></svg><div class="en">Success</div><div class="eu">Work delivered</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="52" width="7" height="7" rx="3.5" fill="#2B1308"/><rect x="66" y="52" width="7" height="7" rx="3.5" fill="#2B1308"/></svg><div class="en">Waiting</div><div class="eu">Awaiting the merchant’s approval</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="50" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="50" width="7" height="13" rx="3.5" fill="#2B1308"/><path d="M46 42 l14 -4" stroke="#2B1308" stroke-width="4.5" stroke-linecap="round"/><path d="M78 38 l-14 4" stroke="#2B1308" stroke-width="4.5" stroke-linecap="round"/></svg><div class="en">Warning</div><div class="eu">Attention needed before spending</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M48 50 l10 10 M58 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/><path d="M65 50 l10 10 M75 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/></svg><div class="en">Error</div><div class="eu">Something failed</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="100" cy="28" r="13" fill="#16A34A"/><path d="M94 28 l4.5 4.5 8 -9" stroke="#fff" stroke-width="3.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="en">Approved</div><div class="eu">Approved and running</div></div>
+  </div>
+  <div class="folio">08</div>
+</div>
+
+<!-- ======================= 09 · TYPOGRAPHY ======================= -->
+<div class="page" id="type">
+  <div class="eyebrow">02 · Typography</div>
+  <h2 class="pt">Typography</h2>
+  <div class="tscale">
+    <div class="tsr"><span class="tn">Display</span><span class="tspec">48 / 52 · 750 · -2%</span><span style="font-size:24pt;font-weight:750;letter-spacing:-.02em">Good morning, Nicks</span></div>
+    <div class="tsr"><span class="tn">Title</span><span class="tspec">28 / 34 · 700 · -1.5%</span><span style="font-size:15pt;font-weight:700;letter-spacing:-.015em">Schedule for this week</span></div>
+    <div class="tsr"><span class="tn">Body</span><span class="tspec">16 / 26 · 400</span><span style="font-size:11pt;color:var(--ink2)">Otto drafts the plan. Nothing runs until you approve it.</span></div>
+    <div class="tsr"><span class="tn">Caption</span><span class="tspec">13 / 19 · 500</span><span style="font-size:9.5pt;font-weight:500;color:var(--ink3)">Last edited 2 hours ago</span></div>
+    <div class="tsr"><span class="tn">Data</span><span class="tspec">13 / 20 · Mono 400</span><span class="mono" style="font-size:9.5pt;color:var(--ink2)">1,240 cr · batch 2/4 · 9:16 · RM 2,350.00</span></div>
+  </div>
+  <div class="body-block rules" style="top:2.15in;left:9.0in;width:3.4in;grid-template-columns:1.1in 1fr">
+    <div class="rk">Geist</div><div class="rv">All interface and marketing text. Variable weight, 400–800.</div>
+    <div class="rk">JetBrains Mono</div><div class="rv">Numbers and data.</div>
+    <div class="rk">Hierarchy</div><div class="rv">By weight and size, never by changing face.</div>
+    <div class="rk">Figures</div><div class="rv">Tabular figures in any column of numbers.</div>
+    <div class="rk">License</div><div class="rv">Both faces are open source under the SIL Open Font License (Vercel; JetBrains).</div>
+  </div>
+  <div class="csnote">Sizes in px at web scale, with line height (size / line). Product surfaces derive their tokens from this scale.</div>
+  <div class="folio">09</div>
+</div>
+
+<!-- ======================= 10 · COLOR PALETTE ======================= -->
+<div class="page" id="palette">
+  <div class="eyebrow">03 · Color palette</div>
+  <h2 class="pt">Color palette</h2>
+  <div class="comp-line">Composition target: 90% neutrals, 8% gradient accents, 2% coral. Semantic colors sit outside the ratio — they signal state only.</div>
+  <div class="pal-wrap">
+    <div class="psec" style="margin-top:0.22in">Foundation</div>
+    <div class="swrow" style="grid-template-columns:repeat(7,1fr)">
+      <div class="sw"><div class="c" style="background:#FAFAFC;border-bottom:1px solid var(--line)"></div><div class="m"><div class="n">Ground</div><div class="h">#FAFAFC</div></div></div>
+      <div class="sw"><div class="c" style="background:#FFFFFF;border-bottom:1px solid var(--line)"></div><div class="m"><div class="n">Surface</div><div class="h">#FFFFFF</div></div></div>
+      <div class="sw"><div class="c" style="background:#F2F3F7"></div><div class="m"><div class="n">Chrome</div><div class="h">#F2F3F7</div></div></div>
+      <div class="sw"><div class="c" style="background:#E8E9EF"></div><div class="m"><div class="n">Line</div><div class="h">#E8E9EF</div></div></div>
+      <div class="sw"><div class="c" style="background:#16171C"></div><div class="m"><div class="n">Ink</div><div class="h">#16171C</div></div></div>
+      <div class="sw"><div class="c" style="background:#5B5F6C"></div><div class="m"><div class="n">Ink 2</div><div class="h">#5B5F6C</div></div></div>
+      <div class="sw"><div class="c" style="background:#9CA0AC"></div><div class="m"><div class="n">Ink 3</div><div class="h">#9CA0AC</div></div></div>
+    </div>
+    <div class="psec">Brand</div>
+    <div class="swrow" style="grid-template-columns:repeat(4,1fr);max-width:6.6in">
+      <div class="sw"><div class="c" style="background:#EC5828"></div><div class="m"><div class="n">Coral</div><div class="h">#EC5828</div></div></div>
+      <div class="sw"><div class="c" style="background:#FBE7DC"></div><div class="m"><div class="n">Coral soft</div><div class="h">#FBE7DC</div></div></div>
+      <div class="sw"><div class="c" style="background:#F5F1E8"></div><div class="m"><div class="n">Paper</div><div class="h">#F5F1E8</div></div></div>
+      <div class="sw"><div class="c" style="background:#2B1308"></div><div class="m"><div class="n">Otto eye</div><div class="h">#2B1308</div></div></div>
+    </div>
+    <div class="psec">Semantic</div>
+    <div class="swrow" style="grid-template-columns:repeat(4,1fr);max-width:6.6in">
+      <div class="sw"><div class="c" style="background:#16A34A"></div><div class="m"><div class="n">Success</div><div class="h">#16A34A</div></div></div>
+      <div class="sw"><div class="c" style="background:#D97706"></div><div class="m"><div class="n">Warning</div><div class="h">#D97706</div></div></div>
+      <div class="sw"><div class="c" style="background:#E5484D"></div><div class="m"><div class="n">Error</div><div class="h">#E5484D</div></div></div>
+      <div class="sw"><div class="c" style="background:#3B6FE6"></div><div class="m"><div class="n">Info</div><div class="h">#3B6FE6</div></div></div>
+    </div>
+  </div>
+  <div class="pair-lines">
+    <b style="font-weight:650;color:var(--ink)">Pairings.</b> Text on neutrals: Ink for primary, Ink 2 for secondary, Ink 3 for captions. Text on semantic fills: white, for bold labels and badges. Ink as a full-bleed ground: covers and closing surfaces only.
+    Digital-first palette: hex is the source of truth; print matching is defined when print work is commissioned.
+  </div>
+  <div class="folio">10</div>
+</div>
+
+<!-- ======================= 11 · GRADIENTS ======================= -->
+<div class="page" id="gradients">
+  <div class="eyebrow">03 · Color palette</div>
+  <h2 class="pt">Gradients</h2>
+  <div class="gr-spec">Linear, 135°, two stops.</div>
+  <div class="grrow">
+    <div class="gr" style="background:linear-gradient(135deg,#EDE9FE,#DBEAFE);color:#3B3663"><div><div class="gn">Violet</div><div class="gh">#EDE9FE – #DBEAFE · text #3B3663</div></div><div class="gu">Start tiles, template cards</div></div>
+    <div class="gr" style="background:linear-gradient(135deg,#FFEDD5,#FFE1E1);color:#7C3D2A"><div><div class="gn">Peach</div><div class="gh">#FFEDD5 – #FFE1E1 · text #7C3D2A</div></div><div class="gu">Campaign tiles, empty states</div></div>
+    <div class="gr" style="background:linear-gradient(135deg,#E0F2FE,#BAE6FD);color:#2E4A66"><div><div class="gn">Sky</div><div class="gh">#E0F2FE – #BAE6FD · text #2E4A66</div></div><div class="gu">Data cards, onboarding</div></div>
+  </div>
+  <div class="body-block rules grules" style="bottom:0.55in;top:auto;grid-template-columns:1.55in 1fr">
+    <div class="rk">Text</div><div class="rv">The matching deep tone shown on each tile, at 4.5:1 contrast or better.</div>
+    <div class="rk">Never</div><div class="rv">On buttons, body-text backgrounds, chart data, photography, or full pages. At most two tiles per screen, never two adjacent from the same family.</div>
+    <div class="rk">Coral</div><div class="rv">In product UI, coral marks Otto. Human-action buttons are ink <span class="mono">#16171C</span>.</div>
+  </div>
+  <div class="folio">11</div>
+</div>
+
+<!-- ======================= 12 · IMAGERY ======================= -->
+<div class="page" id="imagery">
+  <div class="eyebrow">04 · Imagery</div>
+  <h2 class="pt">Imagery</h2>
+  <div class="body-block rules imrules" style="grid-template-columns:1.4in 1fr">
+    <div class="rk">Photography</div><div class="rv">No stock photography. Use product screenshots, gradient tiles, or the Otto cloud.</div>
+    <div class="rk">Merchant work</div><div class="rv">Generated images and videos sit on a white card with a hairline border and soft shadow. No filters, brand-color overlays, or watermarks.</div>
+    <div class="rk">Illustration</div><div class="rv">Otto is the only illustrated character.</div>
+    <div class="rk">Icons</div><div class="rv">Thin-line geometric icons with a uniform stroke, colored to match the text. Icons never use coral.</div>
+    <div class="rk">Texture</div><div class="rv">A 16 px dot grid marks the canvas workspace only.</div>
+    <div class="rk">Gradients</div><div class="rv">Accent tiles on content only; rules in 03 · Color palette.</div>
+  </div>
+  <div class="imex">
+    <div class="imx"><div class="mcard"><div class="ph"><svg width="86" height="79" viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg></div></div><div class="xl">Merchant work — card, hairline, shadow</div></div>
+    <div class="imx"><div class="dots"></div><div class="xl">Canvas dot grid</div></div>
+    <div class="imx"><div class="icons">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#5B5F6C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#5B5F6C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-4.5-4.5L7 20"/></svg>
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#5B5F6C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+    </div><div class="xl">Icon style — thin line, uniform stroke</div></div>
+    <div class="imx"><div class="gmini"></div><div class="xl">Gradient accent tile</div></div>
+  </div>
+  <div class="folio">12</div>
+</div>
+
+<!-- ======================= 13 · AUDIENCE ======================= -->
+<div class="page" id="audience">
+  <div class="eyebrow">05 · Audience</div>
+  <h2 class="pt">Audience</h2>
+  <div class="aud-lead">Small-business owners.</div>
+  <div class="aud-body">
+    <p>They run the store and the marketing alone: no team, and no time to learn prompting. They need plans they can read, costs shown before anything runs, and a record of everything that happened.</p>
+    <p>Global by default. Southeast Asia is the first market; copy never assumes it. Anything involving money is specific: amounts, counts, dates.</p>
+    <p>The test for every line of copy: readable in one pass.</p>
+  </div>
+  <div class="folio">13</div>
+</div>
+
+<!-- ======================= 14 · VOICE AND TONE ======================= -->
+<div class="page" id="voice">
+  <div class="eyebrow">06 · Voice and tone</div>
+  <h2 class="pt">Voice and tone</h2>
+  <div class="vintro">Two voices. The product is neutral and precise. Otto speaks plainly, in the first person. Both are honest about cost and status: serious about spending, calm about failure.</div>
+  <div class="vtable">
+    <div class="vhead"><span>Context</span><span>Say</span><span>Not</span></div>
+    <div class="vrow"><span class="vc">Empty state</span><span class="vs">Nothing here yet — start your first canvas.</span><span class="vn">Your creative journey awaits! ✨</span></div>
+    <div class="vrow"><span class="vc">Before spending</span><span class="vs">4 images · 12 cr. Generate?</span><span class="vn desc">Charging first; pricing hidden in a tooltip</span></div>
+    <div class="vrow"><span class="vc">Errors</span><span class="vs">This didn’t go through. Your credits are untouched — try again.</span><span class="vn">Oops! Something went wrong</span></div>
+    <div class="vrow"><span class="vc">Unshipped features</span><span class="vs">Publishing isn’t switched on yet, so this stays a draft.</span><span class="vn">Coming soon!</span></div>
+    <div class="vrow"><span class="vc">Otto working</span><span class="vs">I’m making 4 images for “Raya promo” — 2 are done.</span><span class="vn desc">A spinner with no words</span></div>
+  </div>
+  <div class="folio">14</div>
+</div>
+
+<!-- ======================= 15 · GRAMMAR AND STYLE ======================= -->
+<div class="page" id="grammar">
+  <div class="eyebrow">07 · Grammar and style</div>
+  <h2 class="pt">Grammar and style</h2>
+  <div class="body-block rules" style="top:2.0in;width:10.6in;grid-template-columns:1.9in 1fr;row-gap:0.155in">
+    <div class="rk">Spelling</div><div class="rv">American English: color, favorite, organize.</div>
+    <div class="rk">Casing</div><div class="rv">Sentence case everywhere — titles, buttons, navigation. All caps only for small labels, with letter-spacing.</div>
+    <div class="rk">Oxford comma</div><div class="rv">Always: posts, images, and videos.</div>
+    <div class="rk">Currency</div><div class="rv"><span class="mono">RM 2,350.00</span> — currency prefix, thousands separator, two decimals. Credits as <span class="mono">1,240 cr</span>.</div>
+    <div class="rk">Dates</div><div class="rv"><span class="mono">12 Aug 2026</span>. Month and year: <span class="mono">Aug 2026</span>. Short contexts: <span class="mono">Fri, 12 Aug</span>.</div>
+    <div class="rk">Numbers</div><div class="rv">Numerals in UI copy: 4 images, 2 done.</div>
+    <div class="rk">Product terms</div><div class="rv">Fikirtive in text. fikirtive as the wordmark. Otto always capitalized; credits and canvas always lowercase.</div>
+    <div class="rk">Never</div><div class="rv">In customer-facing copy: “Coming soon,” AI vendor or model names, numbers without a source.</div>
+  </div>
+  <div class="folio">15</div>
+</div>
+
+<!-- ======================= 16 · TAGLINE AND BOILERPLATE ======================= -->
+<div class="page" id="tagline">
+  <div class="eyebrow">08 · Tagline and boilerplate</div>
+  <h2 class="pt">Tagline and boilerplate</h2>
+  <div class="tag-spec">The marketing OS<em>.</em></div>
+  <div class="body-block rules tagrules" style="top:3.3in;grid-template-columns:1.55in 1fr;row-gap:0.12in">
+    <div class="rk">Setting</div><div class="rv">Geist, weight 750, -2.8% tracking, always with the period.</div>
+    <div class="rk">The period</div><div class="rv">May be coral <span class="mono">#EC5828</span>; never any other color.</div>
+    <div class="rk">Placement</div><div class="rv">May sit under the wordmark on covers. Never a headline substitute in running copy.</div>
+  </div>
+  <div class="boiler">
+    <div class="bl">Boilerplate — use verbatim:</div>
+    <div class="bq">Fikirtive is the marketing OS for small businesses. Merchants get the full toolset — creation, campaigns, scheduling, and publishing — plus Otto, an AI marketing operator that researches, plans, and executes with the merchant’s approval. Merchants see the cost of every action before it runs, and every action leaves a readable record. Fikirtive is a product of BELCORT&nbsp;SDN&nbsp;BHD.</div>
+  </div>
+  <div class="folio">16</div>
+</div>
+
+<!-- ======================= 17 · BACK COVER ======================= -->
+<div class="page back" id="backcover">
+  <div class="stack">
+    <svg viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="280" fill="#EC5828"/><g transform="translate(-60,10)" stroke="#F5F1E8" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g transform="translate(-60,10)" fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+    <div class="wm">fikirtive</div>
+    <div class="tg">The marketing OS<em>.</em></div>
+    <div class="colophon">Brand guidelines · Version 4 · Aug 2026 · nicksgan@belcort.com</div>
+  </div>
+</div>
