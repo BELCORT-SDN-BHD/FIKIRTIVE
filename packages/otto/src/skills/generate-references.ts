@@ -150,6 +150,3 @@ export const generateReferencesSkill = defineOttoSkill({
   parameters: generateReferencesInput,
   execute: executeGenerateReferences,
 });
-
-// Backward-compatible bare-tool export.
-export const generateReferences = generateReferencesSkill.tool;

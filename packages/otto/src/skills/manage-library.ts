@@ -130,5 +130,3 @@ export const manageLibrarySkill = defineOttoSkill({
   parameters: params,
   execute: executeManageLibrary,
 });
-
-export const manageLibrary = manageLibrarySkill.tool;

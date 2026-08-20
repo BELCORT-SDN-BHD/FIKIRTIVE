@@ -73,7 +73,8 @@ describe("handleRefGen — error sanitization", () => {
       thrown = e;
     }
 
-    const failed = m.refGenJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    // #951 漏网(M1-b):终态失败写现在是**条件** updateMany(与 gen.ts 同形),断言跟着搬。
+    const failed = m.refGenJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failed?.[0].data.error).toContain("<redacted-url>");
     expect(failed?.[0].data.error).not.toContain("X-Amz-Signature");
     expect(thrown).toBeInstanceOf(Error);

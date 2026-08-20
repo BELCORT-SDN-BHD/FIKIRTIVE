@@ -165,6 +165,3 @@ export const generateSkill = defineOttoSkill({
   parameters: generateInput,
   execute: executeGenerate,
 });
-
-// Backward-compatible bare-tool export — keeps generate.test.ts UNCHANGED.
-export const generate = generateSkill.tool;

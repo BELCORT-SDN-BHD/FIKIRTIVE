@@ -9,18 +9,16 @@
  *   ② 新建画布按钮 —— 与①同一条真路径(createProject → 跳该项目的画布)。
  *   ③ 真项目列表 —— 商家自己的画布,按认证身份读(见 NorthstarHomeEntry),点开即进。
  *
+ * ①②现在是共享组件 `<StartSomething/>`(换壳规格书 Q2-A):Home 与 Create 摆的是同一个框、
+ * 同一条动作,不是两个长得像的框。这里只剩「这一页的标题」与③。
+ *
  * 这一页没有样板数据:没有余额、没有「今日决策队列」、没有编造的经营事实。空账号看到的就是
  * 空的 —— 那是诚实的空,不是假的满。
  */
 
-import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ArrowUp, Plus } from "lucide-react";
-import { CANVAS_HREF } from "@fikirtive/core/navigation";
-import { createProject } from "@/lib/actions";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { canvasHref } from "@/components/canvas/canvas-href";
+import { StartSomething } from "@/components/start-something/StartSomething";
 
 export interface NorthstarHomeProject {
   id: string;
@@ -37,29 +35,7 @@ export interface NorthstarHomeProject {
   updatedLabel: string;
 }
 
-export function canvasHref(projectId: string): string {
-  return `${CANVAS_HREF}?project=${encodeURIComponent(projectId)}`;
-}
-
 export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }) {
-  const router = useRouter();
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  function startCanvas(name: string) {
-    if (pending) return;
-    setError(null);
-    startTransition(async () => {
-      const result = await createProject(name);
-      if ("error" in result) {
-        setError(result.error);
-        return;
-      }
-      router.push(canvasHref(result.id));
-    });
-  }
-
   return (
     <div className="mx-auto w-full max-w-[720px] px-6 py-10">
       <h1 className="text-[28px] leading-[34px] font-bold tracking-[-0.02em] text-foreground">
@@ -70,59 +46,10 @@ export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }
         Generate on the canvas.
       </p>
 
-      {/* ① 开工输入框 + ② 新建画布 —— 同一条真路径 */}
-      <form
-        className="mt-6"
-        onSubmit={(event) => {
-          event.preventDefault();
-          startCanvas(draft);
-        }}
-      >
-        <div className="flex items-center gap-2 rounded-[16px] border border-input bg-card p-1.5 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
-          {/* #840 车4:迁到 ui/Input。这一枚是「裸嵌在一个自绘边框壳里」的输入 —— 边框、
-              背景与焦点环由外面那层 div 的 `focus-within:` 画,所以组件自带的边框/背景/
-              阴影/高度/圆角在这里全是重复,逐条压回原来的裸态(`h-auto`/`rounded-none`/
-              `border-0`/`bg-transparent`/`shadow-none`),内距与字号保持原值。焦点环也压掉
-              (`focus-visible:ring-0`):外壳已经画了一圈,组件再画一圈就是两圈。 */}
-          <Input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Raya promo for the croffle set"
-            aria-label="What are we making?"
-            maxLength={120}
-            className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-2 py-1.5 text-[14px] leading-[20px] text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            aria-label="Open a canvas for this"
-            className="size-8 shrink-0 rounded-full"
-            disabled={pending}
-          >
-            <ArrowUp strokeWidth={2.5} />
-          </Button>
-        </div>
-        <div className="mt-3 flex items-center gap-3">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => startCanvas(draft)}
-            disabled={pending}
-          >
-            <Plus strokeWidth={2.5} />
-            New canvas
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            The canvas is named after what you wrote — you can rename it later.
-          </span>
-        </div>
-        {error && (
-          <p role="alert" className="mt-3 text-[13px] text-error-soft-foreground">
-            {error}
-          </p>
-        )}
-      </form>
+      {/* ① 开工输入框 + ② 新建画布 —— 同一条真路径,与 Home 摆的是同一个组件 */}
+      <div className="mt-6">
+        <StartSomething />
+      </div>
 
       {/* ③ 真项目列表 */}
       <h2 className="mt-10 font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground uppercase">

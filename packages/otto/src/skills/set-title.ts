@@ -56,6 +56,3 @@ export const setTitleSkill = defineOttoSkill({
   parameters: setTitleInput,
   execute: executeSetTitle,
 });
-
-// Backward-compatible bare-tool export (keeps existing imports + tests unchanged).
-export const setTitle = setTitleSkill.tool;

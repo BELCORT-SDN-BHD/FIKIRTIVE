@@ -72,6 +72,3 @@ export const rememberBrandFactSkill = defineOttoSkill({
   parameters: rememberBrandFactInput,
   execute: executeRememberBrandFact,
 });
-
-// Backward-compatible bare-tool export (keeps existing imports + tests unchanged).
-export const rememberBrandFact = rememberBrandFactSkill.tool;

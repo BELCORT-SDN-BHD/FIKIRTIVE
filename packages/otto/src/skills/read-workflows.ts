@@ -191,5 +191,3 @@ export const readWorkflowsSkill = defineOttoSkill({
   parameters: readWorkflowsParams,
   execute: executeReadWorkflows,
 });
-
-export const readWorkflows = readWorkflowsSkill.tool;
