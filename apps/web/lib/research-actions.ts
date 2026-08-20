@@ -128,7 +128,12 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
     // tier.maxSteps. CreditAccount.balance is also INTERNAL, so this compares like-for-like. (The
     // card's estimatedCredits is DISPLAYED units, ~10× smaller — using it here would make the gate
     // far too lax; the honest fail-fast threshold is the internal budget.)
-    const estimateInternal = researchTierBudgetInternal(RESEARCH_TIERS[tier]?.maxSteps ?? 0);
+    // 钱路 M1-c:worker 的 hold 现在含**搜索**那一笔(裁决 9b 落地的 3× 计价),所以这道
+    // 预检也必须含 —— 少算它,预检就会放行一个 worker 立刻 reserve 不动的深研。
+    const estimateInternal = researchTierBudgetInternal(
+      RESEARCH_TIERS[tier]?.maxSteps ?? 0,
+      RESEARCH_TIERS[tier]?.maxSearches ?? 0,
+    );
 
     // BALANCE PRE-CHECK (fail-fast, NOT a reservation): read the org's spendable balance and
     // compare against the tier's INTERNAL budget. If it can't cover it, refuse WITHOUT creating a
