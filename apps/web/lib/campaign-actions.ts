@@ -19,7 +19,7 @@ import {
   canMoveCampaign,
   isCampaignStatus,
   type CampaignStatus,
-} from "./campaign-lifecycle";
+} from "@fikirtive/core/campaign-lifecycle";
 
 const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
 const GENERIC_CREATE_ERROR = "Couldn't save that campaign — please retry the same draft.";

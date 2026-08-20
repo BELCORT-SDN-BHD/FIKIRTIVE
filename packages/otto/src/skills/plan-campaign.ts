@@ -6,6 +6,8 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { CAMPAIGN_STATUSES } from "@fikirtive/core/campaign-lifecycle";
+import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -48,7 +50,9 @@ const params = z.object({
   entryId: idSchema.optional().describe("Exact plan entry id from readCampaigns get; never guess."),
   name: z.string().trim().min(1).max(120).optional(),
   goal: z.string().trim().min(1).max(500).optional(),
-  status: z.enum(["DRAFT", "ACTIVE", "DONE", "CANCELLED"]).optional(),
+  // C7 —— 手抄的第三份状态词汇改成读那一张表(`@fikirtive/core/campaign-lifecycle`)。
+  // 值与顺序一字未变,所以工具参数的形状零变化;变的只是它从哪儿来。
+  status: z.enum(CAMPAIGN_STATUSES).optional(),
   period: z.object({
     start: dateSchema,
     end: dateSchema,
@@ -138,7 +142,8 @@ export const planCampaignSkill = defineOttoSkill({
     "$0 internal planning writes through the same owner-scoped actions the merchant's own screens use. Inputs are structured only. " +
     "Approval records entry-level planning status only: it NEVER dispatches generation, credits, scheduling, sending, " +
     "publishing, provider calls, or standing outbound authorization. estCredits is display-only. Never invent ids; read " +
-    "them with readCampaigns first. Campaign does not own editable UTM data.",
+    "them with readCampaigns first. Campaign does not own editable UTM data. " +
+    `${ottoPublishTruth()}`,
   parameters: params,
   execute: executePlanCampaign,
 });

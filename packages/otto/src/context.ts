@@ -1,4 +1,5 @@
 import type {
+  CampaignStatus,
   ChannelReadState,
   GenRequestInput,
   ProductDraft,
@@ -530,7 +531,8 @@ export interface OttoContext {
     create(input: {
       name: string;
       goal: string;
-      status: "DRAFT" | "ACTIVE" | "DONE" | "CANCELLED";
+      // C7 —— 手抄的第四份状态词汇改成读那一张表(`@fikirtive/core/campaign-lifecycle`)。
+      status: CampaignStatus;
       period: { start: string; end: string; tz: "Asia/Kuala_Lumpur" };
       theme?: string;
     }): Promise<unknown>;

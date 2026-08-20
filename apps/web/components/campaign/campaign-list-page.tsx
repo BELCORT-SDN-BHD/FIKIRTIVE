@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, CalendarDays, Megaphone, Plus, Target } from "lucide-react";
 import type { listCampaigns } from "@/lib/campaign-view-data";
-import { CAMPAIGN_STATUS_BADGE, isCampaignStatus } from "@/lib/campaign-lifecycle";
+import { CAMPAIGN_STATUS_BADGE, isCampaignStatus } from "@fikirtive/core/campaign-lifecycle";
 import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

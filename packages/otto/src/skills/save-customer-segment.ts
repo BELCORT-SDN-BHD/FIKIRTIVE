@@ -5,6 +5,7 @@
 import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
 import { upsertBrandRecordFromOtto } from "./_brand-record.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 
 const params = z.object({
   name: z.string().min(1).max(120),
@@ -26,7 +27,10 @@ export const saveCustomerSegmentSkill = defineOttoSkill({
     "This is brand knowledge, NOT a CRM Segment and it has no audience rule or live contact membership. $0. " +
     "Use when the user describes who they sell to — a distinct group with its own pains/wants/channels. " +
     "Keep groups few and meaningful (a brand rarely needs more than ~6). 'who' is required when creating a new group. " +
-    "For CRM Segment rules/counts use readSegments; to create or update a CRM Segment use buildSegment.",
+    "For CRM Segment rules/counts use readSegments; to create or update a CRM Segment use buildSegment. " +
+    "This note card itself works and is kept with the rest of the user's Brand memory; the CRM handoff above is " +
+    "the part that is limited today. " +
+    CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: async ({ status, ...fields }, runContext) =>
     upsertBrandRecordFromOtto({ kind: "segment", fields, status }, runContext),

@@ -10,7 +10,8 @@
  * `CampaignListRow` 结构上就满足这些形状,所以调用点一行转换都不用写。
  *
  * 日期、时间、状态词一律走**既有**的展示权威(`lib/schedule-view` / `lib/social-labels` /
- * `lib/campaign-lifecycle` / `lib/credit-format`),Home 不发明第二套写法。
+ * `@fikirtive/core/campaign-lifecycle` / `lib/credit-format`),Home 不发明第二套写法。
+ * (战役状态那张表 C7 从 `lib/` 搬进了 core —— 那是同一张表,换了住址:Otto 也要读它。)
  */
 
 import { OTTO_GENERIC_GREETING_NAME, ottoGreetingName } from "@/lib/otto-greeting";
@@ -18,7 +19,7 @@ import { ottoOnboardingComplete, ottoOnboardingFacts } from "@/lib/otto-onboardi
 import { MY_TIME_ZONE } from "@/lib/my-date-format";
 import { formatDayHeading, formatTime, partsInTz, statusPill } from "@/lib/schedule-view";
 import { socialPlatformLabel } from "@/lib/social-labels";
-import { CAMPAIGN_STATUS_BADGE, CAMPAIGN_STATUS_LABELS, isCampaignStatus } from "@/lib/campaign-lifecycle";
+import { CAMPAIGN_STATUS_BADGE, CAMPAIGN_STATUS_LABELS, isCampaignStatus } from "@fikirtive/core/campaign-lifecycle";
 
 /* ── 读得到,还是这一刻不知道 ────────────────────────────────────────────────── */
 

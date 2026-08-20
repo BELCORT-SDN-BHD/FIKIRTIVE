@@ -4,7 +4,7 @@
 | skill | cost | effect | reach | needsApproval | description |
 |---|---|---|---|---|---|
 | approveScheduledPost | free | write | external | ✅ | Approve a DRAFT scheduled post so it takes its slot on the user's schedule. Publ |
-| buildSegment | free | write | internal | ❌ | Create or update one CRM Segment through the same validated, owner-scoped action |
+| buildSegment | free | write | internal | ❌ | Create or update one CRM Segment through the one validated, owner-scoped action  |
 | cancelScheduledPost | free | write | internal | ❌ | Cancel a scheduled post so it will not publish. $0 and reversible only by re-cre |
 | deleteReferenceVariant | free | write | internal | ❌ | Delete one of an element's reference variants (and its generated reference image |
 | describeRefs | free | write | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
@@ -41,7 +41,7 @@
 | proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
 | readCampaigns | free | read | internal | ❌ | Read the user's Campaign list, one exact Campaign with structured plan entries a |
 | readContacts | free | read | internal | ❌ | List, search, or read one exact CRM Contact through the same owner-scoped action |
-| readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the same owner-scoped action layer the merc |
+| readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the one owner-scoped action layer, not a se |
 | readSpending | free | read | internal | ❌ | Read the workspace's credit balance and recent credit history — the same rows th |
 | readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, immutable revisions, Routine authorization |
 | recallStoreKnowledge | free | read | internal | ❌ | Recall what has already been read from the user's own photos and clips — the pro |
