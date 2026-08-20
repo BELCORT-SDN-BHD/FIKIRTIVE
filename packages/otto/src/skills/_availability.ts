@@ -46,19 +46,33 @@ import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
  *      写入全钉 `MERCHANT_UNVERIFIED_IDENTITY`(`crm-actions.ts:216/232/522/536/545/609/634/675`),
  *      而且 `crm-actions.test.ts:541` 有围栏禁止那个文件写 verified 等级。要升级只能靠
  *      「连得上的渠道」,而渠道连不上 —— 这句话就印在本段末尾拼进来的那个权威里。
- *    · `contactability` —— 只有**一侧**选得出人。`contactable` 要
- *      `marketingConsent === "opt_in"`,`opt_in` 要 `consentFact()` 拿到 `verified_grant`,
- *      而 `packages/db/src/consent-fold.ts` 只对 customer + interactive + verified 的事件给
- *      `verified_grant`;生产两个 `recordConsentEvent` 调用点
- *      (`crm-actions.ts:297` `crm_manual`、`:917` `import`)在闭合写者矩阵里都是
- *      merchant / backfill / asserted。所以 `contactable` 恒空,`not_contactable` 恒全中。
+ *    · `contactability` —— **判定不走 `contactMatchesRules` 纯匹配器直接读 `marketingConsent`
+ *      事实**,走的是 Otto 分群端口实际调用的产品闸 `selectedIntoAudience`
+ *      (`apps/web/lib/consent-authority.ts:122-139`,经 `apps/web/lib/segment-actions.ts:221-233`
+ *      的 `matches()`)。那道闸把 `evaluateContact` 算出的 `marketingConsent`(生产恒 `"unknown"`)
+ *      整个覆盖掉,按 `isKnownOptOut(truth)`(`packages/db/src/consent-fold.ts:314-316`)代入
+ *      二值:不是 known opt-out 就按 `"opt_in"` 代入,是 known opt-out 就按 `"opt_out"` 代入再
+ *      反向验证。于是 `contactable` = 除 known opt-out 外的全部,`not_contactable` = 恰好那批
+ *      known opt-out —— **和 r2 那句写反的方向恰好相反**(二轮判官 [P2-1])。known opt-out
+ *      只有两条来源:ledger 折出 `effective_revoke`(仅 customer + interactive + verified 事件
+ *      可折出,`foldConsentEvents`,`packages/db/src/consent-fold.ts:187`),或 legacy 预账本
+ *      围栏字节 `unresolvedLegacyOptOut`(`consent-fold.ts:317-333`)。生产两个
+ *      `recordConsentEvent` 调用点(`crm-actions.ts:297` `crm_manual`、`:917` `import`)在闭合
+ *      写者矩阵里都是 merchant / backfill / asserted,够不着 `effective_revoke`。所以**今天**
+ *      `contactable` 选中全部联系人,`not_contactable` 选中无人 —— 商家自己在 CRM 里记的
+ *      opt-out 不算 known opt-out,照旧落在 `contactable` 一侧,但可以用规则组的
+ *      `excludeReportedOptOut` 减掉(`consent-authority.ts:133`),这是今天唯一能从分群里
+ *      真正切出一个子集的路径。
  *
- *    **行为自证**(2026-08-19 本机跑过,临时探针已删;同款断言已固化进
- *    `availability-truth-fence.test.ts`,不再依赖一次性脚本):
- *      contactChannelFacts([{whatsapp, merchant_unverified}]) → []
- *      rule `channel is whatsapp` vs 生产形状的 contact       → false
- *      rule `contactable`         vs 生产形状的 contact       → false
- *      rule `not_contactable`     vs 生产形状的 contact       → true
+ *    **行为自证**(2026-08-20 二轮判官 [P2-1] 实跑,走 `selectedIntoAudience`;
+ *    `availability-truth-fence.test.ts` 的 `CLAIM_EVIDENCE` 与 `crm-segments.test.ts` 的
+ *    `APPROVED_OTTO_UNIVERSAL` 固化同款断言,不再依赖一次性脚本):
+ *      contactChannelFacts([{whatsapp, merchant_unverified}])            → []
+ *      rule `channel is whatsapp`               vs 生产形状的 contact    → false
+ *      selectedIntoAudience(普通 contact,          `contactable`)        → true
+ *      selectedIntoAudience(known-opt-out contact, `contactable`)        → false
+ *      selectedIntoAudience(普通 contact,          `not_contactable`)    → false
+ *      selectedIntoAudience(known-opt-out contact, `not_contactable`)    → true
  *
  * ③ **圈出来的人今天也到不了** —— 渠道那半句拼唯一权威,不抄第二份。
  *
