@@ -62,7 +62,7 @@
   /* ---- marks page ---- */
   .marks-intro{top:2.05in;width:4.3in;font-size:11.5pt;line-height:1.55;color:var(--ink2)}
   .marks-intro .imp{color:var(--ink);font-weight:600;margin-top:0.16in}
-  .marks-pair{position:absolute;left:var(--mx);bottom:0.85in;display:flex;gap:0.5in}
+  .marks-pair{position:absolute;left:var(--mx);bottom:0.85in;display:flex;gap:0.5in;align-items:flex-end}
   .marks-pair .mp{text-align:center}
   .marks-pair .mp .lb{font-size:8.5pt;color:var(--ink3);margin-top:0.1in}
   .colorways{position:absolute;top:1.9in;left:5.9in;right:var(--mx);display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.18in}
@@ -147,10 +147,10 @@
   .imx{text-align:center}
   .imx .xl{font-size:8pt;color:var(--ink3);margin-top:0.08in}
   .mcard{background:var(--surface);border:1px solid var(--line);border-radius:0.1in;box-shadow:0 3px 10px rgba(22,23,28,.08);padding:0.09in}
-  .mcard .ph{height:1.15in;border-radius:0.06in;background:linear-gradient(135deg,#FFEDD5,#FFE1E1)}
+  .mcard .ph{height:1.15in;border-radius:0.06in;background:#F5F1E8;display:grid;place-items:center}
   .dots{height:1.35in;border-radius:0.1in;border:1px solid var(--line);background-image:radial-gradient(#D9DBE3 1px,transparent 1.2px);background-size:12px 12px}
   .icons{height:1.35in;border:1px solid var(--line);border-radius:0.1in;display:flex;align-items:center;justify-content:center;gap:0.3in}
-  .gmini{height:1.35in;border-radius:0.1in;background:linear-gradient(135deg,#E0F2FE,#EDE9FE)}
+  .gmini{height:1.35in;border-radius:0.1in;background:linear-gradient(135deg,#E0F2FE,#BAE6FD)}
 
   /* ---- audience ---- */
   .aud-lead{position:absolute;top:2.0in;left:var(--mx);font-size:19pt;font-weight:700;letter-spacing:-.015em}
@@ -189,7 +189,7 @@
 
 <!-- ======================= 02 · CONTENTS ======================= -->
 <div class="page" id="contents">
-  <div class="eyebrow">Fikirtive brand guidelines</div>
+  <div class="eyebrow">Brand guidelines</div>
   <h2 class="pt">Contents</h2>
   <div class="toc">
     <a href="#marks"><span class="no">01</span><span class="nm">Logos</span><span class="pg">03–08</span></a>
@@ -237,10 +237,10 @@
       <div class="cwl">Paper — on ink</div>
     </div>
     <div>
-      <div class="cw" style="background:#EC5828;border:none">
+      <div class="cw" style="background:#5B5F6C;border:none">
         <svg viewBox="310 150 740 920"><g stroke="#FFFFFF" fill="none" stroke-linecap="round"><path d="M478,430 C450,570 452,750 466,880" stroke-width="195"/><path d="M468,462 C545,298 745,232 855,300" stroke-width="190"/><path d="M488,650 C600,618 690,624 775,658" stroke-width="150"/></g><g fill="#FFFFFF"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
       </div>
-      <div class="cwl">White — on coral or photography</div>
+      <div class="cwl">White — on photography</div>
     </div>
     <div>
       <div class="cw" style="background:#F5F1E8;border:none">
@@ -263,7 +263,7 @@
       <div class="tl">App icon · favicon<br>OS icon grids</div>
     </div>
   </div>
-  <div class="csnote" style="left:5.9in;right:0.9in;bottom:0.55in;text-align:center">Tile corner radius: 22.5% of the side. All tiles carry the paper mark.</div>
+  <div class="csnote" style="left:5.9in;right:0.9in;bottom:0.55in;text-align:center">Tile corner radius: 22.5% of the side; the app icon is rounder for OS icon grids. All tiles carry the paper mark.</div>
   <div class="folio">03</div>
 </div>
 
@@ -285,7 +285,7 @@
     <div class="rk">Clear space</div><div class="rv">One quarter of the mark height (x/4), on all four sides.</div>
     <div class="rk">Minimum size</div><div class="rv">Tile 16 px / 4 mm. Bare F mark 24 px / 6 mm. Lockup 24 px / 6 mm tile height.</div>
     <div class="rk">Scaling</div><div class="rv">Scale proportionally. Use the official exports; do not redraw.</div>
-    <div class="rk">Placement</div><div class="rv">Browser tabs and app icons: coral tile. Formal documents: black tile. On color or photography: paper or ink mark, inside a tile.</div>
+    <div class="rk">Placement</div><div class="rv">Browser tabs and app icons: coral tile. Formal documents: black tile. On color: paper or ink mark, inside a tile. On photography: the white mark.</div>
   </div>
   <div class="folio">04</div>
 </div>
@@ -318,7 +318,7 @@
     <div class="ann">Lockup construction: tile height = x · gap = x/3 · wordmark height = x/2, centered on the tile. Reversed lockup uses the paper wordmark on ink.</div>
   </div>
   <div class="body-block rules wmrules">
-    <div class="rk">Setting</div><div class="rv">Geist, weight 750, -3% tracking, always lowercase. Never re-typeset from another face — use the master asset.</div>
+    <div class="rk">Setting</div><div class="rv">Geist, weight 750, -3% tracking, always lowercase. Never re-typeset from another face; use the master asset.</div>
     <div class="rk">Reversed</div><div class="rv">Paper <span class="mono">#F5F1E8</span> on ink. Used on the back cover of this document.</div>
     <div class="rk">In running text</div><div class="rv">Fikirtive.</div>
     <div class="rk">Retired</div><div class="rv" style="text-decoration:line-through">FIKIRTIVE in all caps.</div>
@@ -337,8 +337,8 @@
   </div>
   <div class="body-block rules" style="top:2.15in;left:6.6in;width:5.8in">
     <div class="rk">Color</div><div class="rv">Cloud <span class="mono">#EC5828</span>, eyes <span class="mono">#2B1308</span>. Unchanged on every background.</div>
-    <div class="rk">Role</div><div class="rv">Marks Otto’s own activity — never decorative.</div>
-    <div class="rk">Clear space</div><div class="rv">One quarter of the cloud’s height. Never locked up with the F mark — the two marks never form one unit.</div>
+    <div class="rk">Role</div><div class="rv">Marks Otto’s own activity. Never decorative.</div>
+    <div class="rk">Clear space</div><div class="rv">One quarter of the cloud’s height. Never locked up with the F mark; the two marks never form one unit.</div>
     <div class="rk">Minimum size</div><div class="rv">20 px / 5 mm. Below that, a coral dot.</div>
     <div class="rk">Do not</div><div class="rv">Recolor, add a mouth, or place on human-action controls.</div>
   </div>
@@ -358,7 +358,7 @@
     <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="52" width="7" height="7" rx="3.5" fill="#2B1308"/><rect x="66" y="52" width="7" height="7" rx="3.5" fill="#2B1308"/></svg><div class="en">Waiting</div><div class="eu">Awaiting the merchant’s approval</div></div>
     <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="50" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="50" width="7" height="13" rx="3.5" fill="#2B1308"/><path d="M46 42 l14 -4" stroke="#2B1308" stroke-width="4.5" stroke-linecap="round"/><path d="M78 38 l-14 4" stroke="#2B1308" stroke-width="4.5" stroke-linecap="round"/></svg><div class="en">Warning</div><div class="eu">Attention needed before spending</div></div>
     <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M48 50 l10 10 M58 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/><path d="M65 50 l10 10 M75 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/></svg><div class="en">Error</div><div class="eu">Something failed</div></div>
-    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="100" cy="28" r="13" fill="#16A34A"/><path d="M94 28 l4.5 4.5 8 -9" stroke="#fff" stroke-width="3.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="en">Approving</div><div class="eu">Approved — the action is running</div></div>
+    <div class="exp"><svg viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="100" cy="28" r="13" fill="#16A34A"/><path d="M94 28 l4.5 4.5 8 -9" stroke="#fff" stroke-width="3.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="en">Approved</div><div class="eu">Approved and running</div></div>
   </div>
   <div class="folio">08</div>
 </div>
@@ -417,8 +417,8 @@
     </div>
   </div>
   <div class="pair-lines">
-    <b style="font-weight:650;color:var(--ink)">Pairings.</b> Text on neutrals: ink for primary, Ink 2 for secondary, Ink 3 for captions. Text on semantic fills: white. Ink as a full-bleed ground: covers and closing surfaces only.
-    Digital-first palette — hex is the source of truth; print matching is defined when print work is commissioned.
+    <b style="font-weight:650;color:var(--ink)">Pairings.</b> Text on neutrals: Ink for primary, Ink 2 for secondary, Ink 3 for captions. Text on semantic fills: white, for bold labels and badges. Ink as a full-bleed ground: covers and closing surfaces only.
+    Digital-first palette: hex is the source of truth; print matching is defined when print work is commissioned.
   </div>
   <div class="folio">10</div>
 </div>
@@ -431,7 +431,7 @@
   <div class="grrow">
     <div class="gr" style="background:linear-gradient(135deg,#EDE9FE,#DBEAFE);color:#3B3663"><div><div class="gn">Violet</div><div class="gh">#EDE9FE – #DBEAFE · text #3B3663</div></div><div class="gu">Start tiles, template cards</div></div>
     <div class="gr" style="background:linear-gradient(135deg,#FFEDD5,#FFE1E1);color:#7C3D2A"><div><div class="gn">Peach</div><div class="gh">#FFEDD5 – #FFE1E1 · text #7C3D2A</div></div><div class="gu">Campaign tiles, empty states</div></div>
-    <div class="gr" style="background:linear-gradient(135deg,#E0F2FE,#EDE9FE);color:#2E4A66"><div><div class="gn">Sky</div><div class="gh">#E0F2FE – #EDE9FE · text #2E4A66</div></div><div class="gu">Data cards, onboarding</div></div>
+    <div class="gr" style="background:linear-gradient(135deg,#E0F2FE,#BAE6FD);color:#2E4A66"><div><div class="gn">Sky</div><div class="gh">#E0F2FE – #BAE6FD · text #2E4A66</div></div><div class="gu">Data cards, onboarding</div></div>
   </div>
   <div class="body-block rules grules" style="bottom:0.55in;top:auto;grid-template-columns:1.55in 1fr">
     <div class="rk">Text</div><div class="rv">The matching deep tone shown on each tile, at 4.5:1 contrast or better.</div>
@@ -451,10 +451,10 @@
     <div class="rk">Illustration</div><div class="rv">Otto is the only illustrated character.</div>
     <div class="rk">Icons</div><div class="rv">Thin-line geometric icons with a uniform stroke, colored to match the text. Icons never use coral.</div>
     <div class="rk">Texture</div><div class="rv">A 16 px dot grid marks the canvas workspace only.</div>
-    <div class="rk">Gradients</div><div class="rv">Accent tiles on content only — rules in 03 · Color palette.</div>
+    <div class="rk">Gradients</div><div class="rv">Accent tiles on content only; rules in 03 · Color palette.</div>
   </div>
   <div class="imex">
-    <div class="imx"><div class="mcard"><div class="ph"></div></div><div class="xl">Merchant work — card, hairline, shadow</div></div>
+    <div class="imx"><div class="mcard"><div class="ph"><svg width="86" height="79" viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg></div></div><div class="xl">Merchant work — card, hairline, shadow</div></div>
     <div class="imx"><div class="dots"></div><div class="xl">Canvas dot grid</div></div>
     <div class="imx"><div class="icons">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#5B5F6C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
@@ -472,8 +472,8 @@
   <h2 class="pt">Audience</h2>
   <div class="aud-lead">Small-business owners.</div>
   <div class="aud-body">
-    <p>They run the store and the marketing alone — no team and no time to learn prompting. They need plans they can read, costs shown before anything runs, and a record of everything that happened.</p>
-    <p>Global by default. Southeast Asia is the first market, not the frame of reference. Anything involving money is specific: amounts, counts, dates.</p>
+    <p>They run the store and the marketing alone: no team, and no time to learn prompting. They need plans they can read, costs shown before anything runs, and a record of everything that happened.</p>
+    <p>Global by default. Southeast Asia is the first market; copy never assumes it. Anything involving money is specific: amounts, counts, dates.</p>
     <p>The test for every line of copy: readable in one pass.</p>
   </div>
   <div class="folio">13</div>
@@ -483,14 +483,14 @@
 <div class="page" id="voice">
   <div class="eyebrow">06 · Voice and tone</div>
   <h2 class="pt">Voice and tone</h2>
-  <div class="vintro">Two voices. The product is neutral and precise. Otto speaks plainly, in the first person. Both are honest about cost and status — serious about spending, calm about failure.</div>
+  <div class="vintro">Two voices. The product is neutral and precise. Otto speaks plainly, in the first person. Both are honest about cost and status: serious about spending, calm about failure.</div>
   <div class="vtable">
     <div class="vhead"><span>Context</span><span>Say</span><span>Not</span></div>
     <div class="vrow"><span class="vc">Empty state</span><span class="vs">Nothing here yet — start your first canvas.</span><span class="vn">Your creative journey awaits! ✨</span></div>
     <div class="vrow"><span class="vc">Before spending</span><span class="vs">4 images · 12 cr. Generate?</span><span class="vn desc">Charging first; pricing hidden in a tooltip</span></div>
     <div class="vrow"><span class="vc">Errors</span><span class="vs">This didn’t go through. Your credits are untouched — try again.</span><span class="vn">Oops! Something went wrong</span></div>
     <div class="vrow"><span class="vc">Unshipped features</span><span class="vs">Publishing isn’t switched on yet, so this stays a draft.</span><span class="vn">Coming soon!</span></div>
-    <div class="vrow"><span class="vc">Otto working</span><span class="vs">Making 4 images for “Raya promo” — 2 are done.</span><span class="vn desc">A spinner with no words</span></div>
+    <div class="vrow"><span class="vc">Otto working</span><span class="vs">I’m making 4 images for “Raya promo” — 2 are done.</span><span class="vn desc">A spinner with no words</span></div>
   </div>
   <div class="folio">14</div>
 </div>
@@ -518,7 +518,7 @@
   <h2 class="pt">Tagline and boilerplate</h2>
   <div class="tag-spec">The marketing OS<em>.</em></div>
   <div class="body-block rules tagrules" style="top:3.3in;grid-template-columns:1.55in 1fr;row-gap:0.12in">
-    <div class="rk">Setting</div><div class="rv">Geist 750, -2.8% tracking, always with the period.</div>
+    <div class="rk">Setting</div><div class="rv">Geist, weight 750, -2.8% tracking, always with the period.</div>
     <div class="rk">The period</div><div class="rv">May be coral <span class="mono">#EC5828</span>; never any other color.</div>
     <div class="rk">Placement</div><div class="rv">May sit under the wordmark on covers. Never a headline substitute in running copy.</div>
   </div>

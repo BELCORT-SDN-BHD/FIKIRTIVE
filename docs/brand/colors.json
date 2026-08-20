@@ -38,7 +38,7 @@
     "sky": {
       "stops": [
         "#E0F2FE",
-        "#EDE9FE"
+        "#BAE6FD"
       ],
       "textOn": "#2E4A66",
       "use": "data cards, onboarding"
