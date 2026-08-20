@@ -43,5 +43,3 @@ export const listChannelScopesSkill = defineOttoSkill({
   parameters: params,
   execute: executeListChannelScopes,
 });
-
-export const listChannelScopes = listChannelScopesSkill.tool;

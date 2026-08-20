@@ -59,5 +59,3 @@ export const sharePostPreviewSkill = defineOttoSkill({
   parameters: params,
   execute: executeSharePostPreview,
 });
-
-export const sharePostPreview = sharePostPreviewSkill.tool;

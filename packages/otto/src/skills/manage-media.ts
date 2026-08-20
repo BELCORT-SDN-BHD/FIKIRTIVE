@@ -118,5 +118,3 @@ export const manageMediaSkill = defineOttoSkill({
   parameters: params,
   execute: executeManageMedia,
 });
-
-export const manageMedia = manageMediaSkill.tool;

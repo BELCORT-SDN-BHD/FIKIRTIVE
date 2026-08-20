@@ -6,7 +6,16 @@ const grantCredits = vi.fn();
 const actionEventCreate = vi.fn();
 const creditLedgerFindUnique = vi.fn();
 vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate }, creditLedger: { findUnique: creditLedgerFindUnique } } }));
-vi.mock("@fikirtive/core", () => ({ newId: () => "evt_id", INTERNAL_PER_DISPLAY: 10 }));
+// 钱路 M1-c:包核对用**真的**核对函数与**真的**包表 —— 假一个进来,这组用例就只是在测
+// 自己写的夹具,而这次要防的病恰恰是「代码里的包表与真实在售的包不是一回事」。
+vi.mock("@fikirtive/core", async () => {
+  const actual = await vi.importActual<typeof import("@fikirtive/core")>("@fikirtive/core");
+  return {
+    newId: () => "evt_id",
+    INTERNAL_PER_DISPLAY: 10,
+    verifyCreditPackPurchase: actual.verifyCreditPackPurchase,
+  };
+});
 const captureMessage = vi.fn();
 vi.mock("@sentry/node", () => ({ captureMessage }));
 // 整顿 C1a:报警管道注入成假 transport。断言的是「这类事件必然产生一次带上下文的上报」,
@@ -34,17 +43,21 @@ describe("stripe webhook", () => {
   });
 
   it("grants on checkout.session.completed (paid) with the right args", async () => {
+    // 夹具是**真的在售包**(Starter:RM25 = 2500 sen → 50 credits)。改成一个不存在的包,
+    // 这条用例现在会红 —— 这正是钱路 M1-c 加的那道核对。
     constructEvent.mockReturnValue({
       id: "evt_1", type: "checkout.session.completed",
-      data: { object: { id: "cs_1", payment_status: "paid", metadata: { orgId: "org_1", credits: "100" }, payment_intent: "pi_1", amount_total: 1000 } },
+      data: { object: { id: "cs_1", payment_status: "paid", metadata: { orgId: "org_1", credits: "50" }, payment_intent: "pi_1", amount_total: 2500, currency: "myr" } },
     });
     grantCredits.mockResolvedValue({ ok: true });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(grantCredits).toHaveBeenCalledWith(expect.objectContaining({
-      orgId: "org_1", amount: 100 * 10, source: "PURCHASE", idempotencyKey: "stripe:cs_1",
+      orgId: "org_1", amount: 50 * 10, source: "PURCHASE", idempotencyKey: "stripe:cs_1",
     }));
     expect(actionEventCreate).toHaveBeenCalled();
+    // 对得上就一声不响 —— 核对不许把每一笔正常充值都变成一条告警。
+    expect(captureMessage).not.toHaveBeenCalled();
   });
 
   it("grants on checkout.session.async_payment_succeeded (paid) with the same dedup key (F01)", async () => {
@@ -53,7 +66,7 @@ describe("stripe webhook", () => {
     // key makes it exactly-once even if completed + async_payment_succeeded both fire.
     constructEvent.mockReturnValue({
       id: "evt_async", type: "checkout.session.async_payment_succeeded",
-      data: { object: { id: "cs_async", payment_status: "paid", metadata: { orgId: "org_9", credits: "220" }, payment_intent: "pi_9", amount_total: 10000 } },
+      data: { object: { id: "cs_async", payment_status: "paid", metadata: { orgId: "org_9", credits: "220" }, payment_intent: "pi_9", amount_total: 10000, currency: "myr" } },
     });
     grantCredits.mockResolvedValue({ ok: true });
     const res = await POST(req());
@@ -245,17 +258,21 @@ describe("stripe webhook", () => {
   });
 
   it("a GOOD purchase does not alert — an alarm that fires on every sale is an alarm nobody reads", async () => {
+    // 钱路 M1-c:夹具改成**真的在售包**(Starter RM25 = 2500 sen → 50 credits)并带上币种。
+    // 原来的 100 credits / 无金额在包表落地后已经不是「一笔好购买」了——它对不上任何在售包,
+    // 正是这条新核对要拦的形状。要断言「好购买不报警」,夹具本身就得是一笔真能发生的购买。
     constructEvent.mockReturnValue({
       id: "evt_ok", type: "checkout.session.completed",
-      data: { object: { id: "cs_ok", payment_status: "paid", metadata: { orgId: "org_1", credits: "100" } } },
+      data: { object: { id: "cs_ok", payment_status: "paid", metadata: { orgId: "org_1", credits: "50" }, amount_total: 2500, currency: "myr" } },
     });
     grantCredits.mockResolvedValue({ ok: true });
     expect((await POST(req())).status).toBe(200);
     expect(founderAlert).not.toHaveBeenCalled();
+    expect(captureMessage).not.toHaveBeenCalled();
   });
 
   it("200 on a duplicate event (grantCredits reports duplicate)", async () => {
-    constructEvent.mockReturnValue({ id: "evt_1", type: "checkout.session.completed", data: { object: { payment_status: "paid", metadata: { orgId: "org_1", credits: "100" } } } });
+    constructEvent.mockReturnValue({ id: "evt_1", type: "checkout.session.completed", data: { object: { id: "cs_dup", payment_status: "paid", metadata: { orgId: "org_1", credits: "50" }, amount_total: 2500, currency: "myr" } } });
     grantCredits.mockResolvedValue({ duplicate: true });
     const res = await POST(req());
     expect(res.status).toBe(200);
@@ -314,6 +331,130 @@ describe("stripe webhook", () => {
     });
     const res = await POST(req());
     expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled();
+  });
+});
+
+// ── 钱路 M1-c:付的钱与给的 credits 是不是一对? ──────────────────────────────
+// 在此之前没有任何东西问过这个问题:充值包只活在 Stripe 后台,webhook 拿 metadata 里的
+// credits 直接入账,金额一眼都没看。后台把 RM25 的包错配成 600 credits,系统会照发。
+describe("stripe webhook — 充值包核对(Founder 2026-08-18:不匹配不静默入账)", () => {
+  /** 一笔付款成功的 Checkout,金额/币种/credits 可逐项注入。 */
+  const paidSession = (over: Record<string, unknown>) => ({
+    id: "evt_pack", type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_pack", payment_status: "paid", payment_intent: "pi_pack",
+        metadata: { orgId: "org_pack", credits: "220" },
+        amount_total: 10000, currency: "myr",
+        ...over,
+      },
+    },
+  });
+
+  it("匹配 → 照常入账,不报警(三个在售包逐个跑一遍)", async () => {
+    for (const [credits, amount] of [["50", 2500], ["220", 10000], ["600", 25000]] as const) {
+      vi.clearAllMocks();
+      actionEventCreate.mockResolvedValue({});
+      grantCredits.mockResolvedValue({ ok: true });
+      constructEvent.mockReturnValue(paidSession({ metadata: { orgId: "org_pack", credits }, amount_total: amount }));
+      const res = await POST(req());
+      expect(res.status).toBe(200);
+      expect(grantCredits, `${credits}cr @ ${amount}`).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: "org_pack", amount: Number(credits) * 10, idempotencyKey: "stripe:cs_pack" }),
+      );
+      expect(captureMessage).not.toHaveBeenCalled();
+      expect(founderAlert).not.toHaveBeenCalled();
+    }
+  });
+
+  it("金额对不上(付 RM25 却发 220 credits)→ **不入账** + founderAlert + 审计行", async () => {
+    grantCredits.mockResolvedValue({ ok: true });
+    constructEvent.mockReturnValue(paidSession({ amount_total: 2500 })); // 220cr 的包应是 10000
+    const res = await POST(req());
+    expect(res.status).toBe(200); // 200 = 不让 Stripe 无限重投;钱的问题交给人
+    expect(grantCredits).not.toHaveBeenCalled();
+    // 整顿 C1a 的口径:商家已付款而我们没发 credits = 需要人工补救 ⇒ 走全渠道
+    // (Sentry + 邮件 + Telegram),不是只进 Sentry(「只进 Sentry 等于没人会去做」)。
+    expect(founderAlert, "商家付了钱没拿到 credits,却没有任何人被通知").toHaveBeenCalledTimes(1);
+    expect(founderAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "stripe.paid_session_pack_mismatch",
+        context: expect.objectContaining({ orgId: "org_pack", amountTotal: 2500, creditsInMetadata: 220 }),
+      }),
+    );
+    // 告诉人怎么修:补 CREDIT_PACKS 再部署,或退款。
+    expect(founderAlert.mock.calls[0]![0].action).toMatch(/CREDIT_PACKS/);
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          id: "stripe_packcheck:cs_pack",
+          ownerId: "org_pack",
+          type: "credits.purchase.packMismatch",
+          payload: expect.objectContaining({ verdict: "mismatch", granted: false, amountTotal: 2500, credits: 220 }),
+        }),
+      }),
+    );
+  });
+
+  it("credits 数不在包表里(后台加了包、代码没更新)→ 不入账 + 报警点名怎么修", async () => {
+    grantCredits.mockResolvedValue({ ok: true });
+    constructEvent.mockReturnValue(paidSession({ metadata: { orgId: "org_pack", credits: "999" }, amount_total: 45000 }));
+    expect((await POST(req())).status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled();
+    expect(founderAlert).toHaveBeenCalledTimes(1);
+    // 报警要点名这一笔为什么被拦(reason 进 context),否则收到页的人无从下手。
+    expect(founderAlert.mock.calls[0]![0].context.reason).toMatch(/CREDIT_PACKS/);
+  });
+
+  it("币种不是 MYR → 不入账", async () => {
+    grantCredits.mockResolvedValue({ ok: true });
+    constructEvent.mockReturnValue(paidSession({ currency: "usd" }));
+    expect((await POST(req())).status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled();
+  });
+
+  it("没法核(Stripe 没报金额)→ **照常入账** + warning —— 「没法核」不等于「对不上」", async () => {
+    grantCredits.mockResolvedValue({ ok: true });
+    constructEvent.mockReturnValue(paidSession({ amount_total: null }));
+    expect((await POST(req())).status).toBe(200);
+    // 真付了钱的商家不能因为我们自己读不到一个字段而拿不到 credits(仓库既有口径 #786)。
+    expect(grantCredits).toHaveBeenCalledWith(expect.objectContaining({ orgId: "org_pack", amount: 2200 }));
+    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("unverifiable"), "warning");
+    // 但**不**惊动 founder:credits 已经发了,没有任何东西坏掉,也没有任何人需要动手。
+    // 把不用行动的事升成 founder 页面,只会训练出「报警可以不看」。
+    expect(founderAlert, "没坏的事不许惊动 founder").not.toHaveBeenCalled();
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ payload: expect.objectContaining({ verdict: "unverifiable", granted: true }) }),
+      }),
+    );
+  });
+
+  it("核对**不碰幂等语义**:入账仍然用 stripe:<session.id>,一个字没动", async () => {
+    grantCredits.mockResolvedValue({ ok: true });
+    constructEvent.mockReturnValue(paidSession({ id: "cs_idem", amount_total: 10000 }));
+    await POST(req());
+    expect(grantCredits).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "stripe:cs_idem" }));
+  });
+
+  it("告警通道抛错也不许把响应码带成非 2xx(否则 Stripe 对一个钱事件无限重投)", async () => {
+    // founderAlert 契约上「永不抛」,但 200 契约不许依赖别的模块守不守自己的承诺
+    // (与上面 async_payment_failed 那条一模一样的理由)。
+    founderAlert.mockRejectedValue(new Error("every channel down"));
+    grantCredits.mockResolvedValue({ ok: true });
+    constructEvent.mockReturnValue(paidSession({ amount_total: 2500 }));
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled(); // 告警挂了也照样拦住入账
+    founderAlert.mockResolvedValue([]);
+  });
+
+  it("审计行写失败也不许把响应码带成非 2xx", async () => {
+    actionEventCreate.mockRejectedValue(new Error("db down"));
+    grantCredits.mockResolvedValue({ ok: true });
+    constructEvent.mockReturnValue(paidSession({ amount_total: 2500 }));
+    expect((await POST(req())).status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled();
   });
 });

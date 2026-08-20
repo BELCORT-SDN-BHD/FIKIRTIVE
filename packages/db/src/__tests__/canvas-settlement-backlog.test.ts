@@ -191,7 +191,7 @@ async function cardsForJob(jobId: string) {
   return prisma.canvasNode.findMany({
     where: { ownerId: orgId, projectId, genJobId: jobId },
     orderBy: [{ y: "asc" }, { x: "asc" }],
-    select: { id: true, x: true, y: true, status: true, generationId: true, sourceNodeId: true },
+    select: { id: true, x: true, y: true, status: true, generationId: true },
   });
 }
 

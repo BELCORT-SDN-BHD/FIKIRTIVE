@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CHANNEL_META, channelMeta } from "../channel-meta";
-import { listChannels, getChannel } from "../registry";
+import { listChannels, channelRegistry } from "../registry";
 
 // channel-meta is the CLIENT-SAFE mirror of the (server-tainted) adapter registry.
 // This guards against drift: if an adapter's label/capabilities change, the mirror
@@ -14,7 +14,7 @@ describe("channel-meta mirrors the adapter registry", () => {
 
   it("label + capabilities match each adapter", () => {
     for (const m of CHANNEL_META) {
-      const adapter = getChannel(m.id)!;
+      const adapter = channelRegistry[m.id];
       expect(m.label).toBe(adapter.label);
       expect(m.capabilities).toEqual(adapter.capabilities);
     }

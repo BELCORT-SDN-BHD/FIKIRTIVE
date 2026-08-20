@@ -264,7 +264,7 @@ export async function deleteProject(projectId: string): Promise<{ ok: true } | {
         for (const job of activeJobs) {
           const { count } = await tx.genJob.updateMany({
             where: { id: job.id, ownerId, status: "QUEUED" },
-            data: { status: "FAILED", error: "Cancelled by project deletion", finishedAt: new Date() },
+            data: { status: "FAILED", error: "Canceled by project deletion", finishedAt: new Date() },
           });
           if (count !== 1) throw new Error("GENERATION_STARTED_DURING_DELETE");
           await refundReservation(tx, { orgId: ownerId, refId: job.id });

@@ -84,9 +84,9 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
           >
             <Menu className="size-5" strokeWidth={2} />
           </Button>
-          <Link href={CREATE_NAV_HREF} className="flex min-w-0 items-center gap-2" aria-label="FIKIRTIVE home">
+          <Link href={CREATE_NAV_HREF} className="flex min-w-0 items-center gap-2" aria-label="Fikirtive home">
             <OttoAvatar size={24} mood="idle" />
-            <span className="truncate text-[16px] font-bold tracking-[-0.01em] text-foreground">FIKIRTIVE</span>
+            <span className="truncate text-[16px] font-[750] tracking-[-0.03em] text-foreground">fikirtive</span>
           </Link>
         </div>
       )}

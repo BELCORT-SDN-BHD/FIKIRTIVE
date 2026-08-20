@@ -43,7 +43,7 @@ export function runStatusPresentation(status: string): { label: string; variant:
     case "completed":
       return { label: "Completed (simulated)", variant: "success" };
     case "cancelled":
-      return { label: "Cancelled", variant: "outline" };
+      return { label: "Canceled", variant: "outline" };
     case "failed":
       return { label: "Failed", variant: "destructive" };
     default:

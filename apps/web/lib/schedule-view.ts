@@ -6,16 +6,16 @@
 
 import type { ScheduledPostRow } from "./schedule-actions";
 import { scheduledPostStatusLabel } from "./social-labels";
+// The short month names are shared (lib/short-date-label) — five surfaces had five copies of
+// them. Re-exported so this module's own importers are untouched.
+import { MONTHS_SHORT } from "./short-date-label";
 
 // Fixed label arrays — the ONLY source of month/day names on this surface.
 export const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ] as const;
-export const MONTHS_SHORT = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-] as const;
+export { MONTHS_SHORT };
 export const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 // --- timezone-aware calendar-part extraction --------------------------------

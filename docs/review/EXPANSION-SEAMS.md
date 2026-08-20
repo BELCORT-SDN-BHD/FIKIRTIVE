@@ -123,7 +123,7 @@
 
 **Files:**
 - `apps/web/lib/channels/types.ts` — the `Channel` interface (`ChannelId` is an OPEN string, never a closed enum; capabilities; connectionStatus/connectUrl/disconnect/listTargets now, publish/insights stubbed `notImpl` until the Schedule/Analytics plans).
-- `apps/web/lib/channels/registry.ts` — `registerChannel()` / `listChannels()` / `getChannel()`; adapters self-register by being imported here.
+- `apps/web/lib/channels/registry.ts` — `registerChannel()` / `listChannels()` / `channelRegistry[id]` for a single adapter; adapters self-register by being imported here.
 - Worked example adapter: `apps/web/lib/channels/instagram.ts` (+ `facebook.ts`, `meta-shared.ts`).
 - OAuth pattern: `apps/web/lib/meta-oauth.ts` (HMAC-signed CSRF `state` = base64url({ownerId,nonce,ts}) + HMAC(BETTER_AUTH_SECRET), 10-min TTL, constant-time compare) + `apps/web/app/api/meta/{authorize,callback}/route.ts` (callback: `requireOwner` + `verifyState` + **`verified.ownerId === gate.ownerId`** + server-side code→token exchange in `meta-actions.ts:completeMetaConnect`; all errors redirect `/otto?view=connections&error=…`).
 - Token storage: `MetaConnection` model (`schema.prisma:987`) — one per org (`ownerId @unique`), `accessTokenEnc` AES-256-GCM via `apps/web/lib/token-encryption.ts` (never plaintext, never client), capability booleans (`canWrite`/`canManagePages` — true only if the platform actually granted the scope), `adsWritesPaused` kill-switch, `adsAutonomy ASK|AUTO`.

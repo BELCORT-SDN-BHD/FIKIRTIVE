@@ -359,7 +359,7 @@ floating（自由窗）
 - 手搓 tablist（`OttoMemory.tsx:373`）换成 `components/ui/tabs`（该原语今天零调用点）。
 - 手搓图片选择弹窗（`OttoMemory.tsx:438-444`，连 `role="dialog"` 都没有）换成 `ui/dialog`。
 - 页面顶部一句诚实说明（English sentence case）：
-  > Brand is where Otto learns your business. Colours, fonts and logo are not part of this yet — what you write here is what Otto uses today.
+  > Brand is where Otto learns your business. Colors, fonts, and logo are not part of this yet — what you write here is what Otto uses today.
 - **不碰** `BrandKit` / `BrandRule`：它们各有一个读取点、零写入点，属于「建了没人用」的一类，
   按 Founder「整顿基础框架」常令归入待处置，由地基重设计票决定是接通还是删表。
 - Agency 多品牌是真实未来场景 → V1 只保证 URL 形状 `/brand` 能长出 `/brand/[brandId]`，代码不预埋。

@@ -105,5 +105,3 @@ export const manageProjectsSkill = defineOttoSkill({
   parameters: params,
   execute: executeManageProjects,
 });
-
-export const manageProjects = manageProjectsSkill.tool;

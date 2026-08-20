@@ -70,5 +70,3 @@ export const metaInsightsSkill = defineOttoSkill({
   parameters: metaInsightsInput,
   execute: executeMetaInsights,
 });
-
-export const metaInsights = metaInsightsSkill.tool;
