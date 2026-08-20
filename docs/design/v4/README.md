@@ -13,6 +13,7 @@
 
 | 文件 | 内容 | 状态 |
 |---|---|---|
+| [`design-principles.md`](design-principles.md) | 《Fikirtive 设计原则》一页:13 条死规矩 + 逐条判法,品味判官对每张 UI PR 的判据 | 定稿(Founder 2026-08-20 逐条拍板 13/13) |
 | [`design-direction.html`](design-direction.html) | 方向书全文:七门设计方向、canvas 工作区交互蓝图、Soft Prism 系统 | 定稿(Founder 拍板全录) |
 | [`stitch-canvas-analysis.md`](stitch-canvas-analysis.md) | Founder 录屏 96 帧逐帧分析 + Stitch 交互语法 + 预先修掉的两个致命伤(无廉价编辑路径、跨屏风格漂移) | 研究定稿,prototype 场直接引用 |
 | [`font-showdown.html`](font-showdown.html) | 字体四选一比对过程稿(Geist 胜出) | 历史过程稿 |
