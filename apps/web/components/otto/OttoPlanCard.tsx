@@ -409,7 +409,7 @@ export function OttoPlanCard({
             up as a failure with a "Try again" button attached to it. */}
         {cancelled ? (
           <div className="mt-4 text-[0.875rem] text-muted-foreground">
-            Cancelled — you weren&rsquo;t charged.
+            Canceled — you weren&rsquo;t charged.
           </div>
         ) : runState === "failed" ? (
           <div className="mt-4">
@@ -446,7 +446,7 @@ export function OttoPlanCard({
               </span>
               {genJobId && (
                 <Button variant="ghost" size="sm" disabled={busy} onClick={cancel}>
-                  {busy ? "Cancelling…" : "Cancel"}
+                  {busy ? "Canceling…" : "Cancel"}
                 </Button>
               )}
             </div>

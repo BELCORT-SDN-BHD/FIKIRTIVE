@@ -293,7 +293,7 @@ export const TEMPLATES: Template[] = [
   {
     id: "deepavali-glow",
     name: "Deepavali post",
-    description: "Diya lamps and kolam colour around your product.",
+    description: "Diya lamps and kolam color around your product.",
     category: "Festivals & seasons",
     industries: ["any"],
     tags: ["deepavali", "diwali", "festival of lights", "kolam", "rangoli", "sweets"],
@@ -402,18 +402,18 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "marketplace-variants",
-    name: "Colour and variant line-up",
-    description: "Show every colour or size you stock in one square image.",
+    name: "Color and variant line-up",
+    description: "Show every color or size you stock in one square image.",
     category: "Marketplace listings",
     industries: ["fashion", "beauty", "home-living", "electronics", "any"],
-    tags: ["variants", "colours", "sizes", "range", "listing", "shopee", "lazada"],
+    tags: ["variants", "colors", "sizes", "range", "listing", "shopee", "lazada"],
     needsImage: true,
     aspectRatio: "1:1",
     question: { label: "Which variants should I show?", placeholder: "e.g. black, cream, olive and maroon" },
     promptTemplate:
       "a square e-commerce image showing this same product repeated in these variants: {q} — arranged in a neat evenly spaced row or grid on a pure white seamless background, identical lighting and angle on every unit, soft contact shadows, no text, photorealistic",
     captions: [
-      { language: "en", text: "All colours back in stock. Pick yours — [your product], [price]." },
+      { language: "en", text: "All colors back in stock. Pick yours — [your product], [price]." },
       { language: "ms", text: "Semua warna dah restock. Pilih warna anda — [your product], [price]." },
     ],
   },
@@ -569,7 +569,7 @@ export const TEMPLATES: Template[] = [
   {
     id: "fnb-kopitiam-table",
     name: "Kopitiam table scene",
-    description: "Marble table, mamak lighting — the setting locals recognise.",
+    description: "Marble table, mamak lighting — the setting locals recognize.",
     category: "Food & drink",
     industries: ["food-drink"],
     tags: ["kopitiam", "mamak", "warung", "gerai", "local", "table", "roti canai", "supper"],

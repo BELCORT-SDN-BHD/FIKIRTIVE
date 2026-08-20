@@ -323,7 +323,7 @@ export default function TemplateModal({
     ) : phase === "cancelled" ? (
       // Nothing to retry and nothing to apologise for — the merchant stopped it (#602 r2).
       <div className="flex w-full items-center justify-between gap-3">
-        <p className="m-0 text-[0.8125rem] text-muted-foreground">Cancelled — you weren&rsquo;t charged.</p>
+        <p className="m-0 text-[0.8125rem] text-muted-foreground">Canceled — you weren&rsquo;t charged.</p>
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
       </div>
     ) : phase === "unknown" ? (

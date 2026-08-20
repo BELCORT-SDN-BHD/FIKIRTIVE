@@ -61,7 +61,7 @@ const POST_STATUS_LABELS: Record<string, string> = {
   PUBLISHED: "Published",
   NEEDS_ATTENTION: "Needs attention",
   FAILED: "Failed",
-  CANCELLED: "Cancelled",
+  CANCELLED: "Canceled",
 };
 
 export function scheduledPostStatusLabel(status: string): string {

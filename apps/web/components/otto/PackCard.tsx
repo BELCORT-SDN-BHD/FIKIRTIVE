@@ -234,7 +234,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                 </div>
                 <div className="shrink-0 text-[0.75rem]">
                   {isCancelled ? (
-                    <span className="text-muted-foreground">cancelled</span>
+                    <span className="text-muted-foreground">canceled</span>
                   ) : isFailed ? (
                     <span className="text-[var(--error-soft-foreground)]">failed</span>
                   ) : isDone ? (

@@ -83,7 +83,7 @@ describe("① 取消落库成自己的词", () => {
     expect(res).toEqual({ refunded: true });
     expect(updateMany).toHaveBeenCalledWith({
       where: { id: "g1", ownerId: "org-1", status: "QUEUED" },
-      data: expect.objectContaining({ status: "CANCELLED", error: "Cancelled by you" }),
+      data: expect.objectContaining({ status: "CANCELLED", error: "Canceled by you" }),
     });
   });
 
@@ -96,7 +96,7 @@ describe("① 取消落库成自己的词", () => {
       data: expect.objectContaining({
         kind: "TURN_ERROR",
         genJobId: "g1",
-        text: "Cancelled — you weren't charged.",
+        text: "Canceled — you weren't charged.",
         payload: { cancelled: true },
       }),
     });
@@ -186,7 +186,7 @@ const CANCEL_ROW = {
   role: "AGENT",
   kind: "TURN_ERROR",
   seq: 8,
-  text: "Cancelled — you weren't charged.",
+  text: "Canceled — you weren't charged.",
   payload: { cancelled: true },
   genJobId: "job_1",
   createdAt: new Date("2026-08-05T00:00:00Z"),
@@ -256,7 +256,7 @@ describe("③ 刷新之后,那张卡还是「已取消」", () => {
   it("卡面说「已取消」,没有失败措辞,没有「再试一次」按钮", () => {
     const markup = renderPlanCard("cancelled");
 
-    expect(markup).toContain("Cancelled — you weren't charged.");
+    expect(markup).toContain("Canceled — you weren't charged.");
     expect(markup).not.toContain("This one didn't come through");
     expect(markup).not.toContain("Try again");
     expect(markup).not.toContain("Change something");

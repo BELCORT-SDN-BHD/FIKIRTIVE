@@ -126,7 +126,7 @@ const METRIC_CATALOG: readonly MetricSpec[] = [
   },
   {
     id: "cancelled",
-    label: "Cancelled",
+    label: "Canceled",
     help: "Jobs stopped before they finished.",
     unit: "count",
     metric: "task_cancelled",
@@ -372,7 +372,7 @@ const FAILURE_REASON_VOCABULARY: readonly { match: RegExp; label: string }[] = [
   { match: /invalid|param|schema|format|unsupported|bad.?request|malformed/i, label: "Invalid request" },
   { match: /network|connect|dns|socket|reset|unreachable/i, label: "Network fault" },
   { match: /internal|server|unavailable|5\d\d/i, label: "Upstream service error" },
-  { match: /cancel|abort/i, label: "Cancelled upstream" },
+  { match: /cancel|abort/i, label: "Canceled upstream" },
 ] as const;
 
 const FAILURE_REASON_OTHER = "Other";

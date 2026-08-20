@@ -340,7 +340,7 @@ describe("W2-2 · /brand 这扇门自己的行为", () => {
 
 describe("W2-2 ③ 诚实说明句(规格书 §4.4 的原话,一个字不许改)", () => {
   const HONEST_NOTE =
-    "Brand is where Otto learns your business. Colours, fonts and logo are not part of this " +
+    "Brand is where Otto learns your business. Colors, fonts, and logo are not part of this " +
     "yet — what you write here is what Otto uses today.";
 
   it("逐字出现在页面顶部", async () => {

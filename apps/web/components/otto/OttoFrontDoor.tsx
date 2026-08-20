@@ -441,8 +441,7 @@ export function OttoFrontDoor({
 
         {/* Trust line */}
         <p className="m-0 flex items-center gap-2 text-center text-[0.71875rem] text-muted-foreground/70">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
+          <OttoAvatar size={16} />
           Otto plans and makes it — creations start only after you confirm on the card. {CHAT_SPEND_NOTE}
         </p>
 

@@ -176,8 +176,8 @@ function OttoFace({ size = 30 }: { size?: number }) {
         <circle cx="61" cy="40" r="24" />
         <circle cx="85" cy="53" r="17" />
       </g>
-      <path d="M49 50 q5.5 -7 11 0" fill="none" stroke="#2B1308" strokeWidth="3.4" strokeLinecap="round" />
-      <path d="M64 50 q5.5 -7 11 0" fill="none" stroke="#2B1308" strokeWidth="3.4" strokeLinecap="round" />
+      <path d="M49 57 q5.5 -7 11 0" fill="none" stroke="#2B1308" strokeWidth="5" strokeLinecap="round" />
+      <path d="M64 57 q5.5 -7 11 0" fill="none" stroke="#2B1308" strokeWidth="5" strokeLinecap="round" />
     </svg>
   );
 }

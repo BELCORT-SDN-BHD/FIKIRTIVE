@@ -79,7 +79,7 @@ async function renderCard(
 
 describe("what a card says once it has stopped being made", () => {
   it.each([
-    ["cancelled", "Cancelled", "This generation was cancelled."],
+    ["cancelled", "Canceled", "This generation was canceled."],
     ["failed", "That didn't finish", "You weren't charged. Try again."],
     ["timeout", "Still working…", "This is taking longer than usual — check back in a moment."],
     ["missing", "Preview missing", "The job finished, but this card could not load the media."],
@@ -96,7 +96,7 @@ describe("what a card says once it has stopped being made", () => {
   it("shows a cancelled video card as cancelled too, not as a render in progress", async () => {
     const text = await renderCard(VideoNode, "cancelled");
 
-    expect(text).toContain("Cancelled");
+    expect(text).toContain("Canceled");
     expect(text).not.toContain("Rendering…");
     expect(text).not.toContain("Otto is making this");
   });
@@ -106,7 +106,7 @@ describe("what a card says once it has stopped being made", () => {
     // read returns it; a renderer asked about it now answers `unknown`, which rests.
     const text = await renderCard(ImageNode, "generating");
 
-    expect(text).not.toContain("Cancelled");
+    expect(text).not.toContain("Canceled");
     expect(text).toContain("Generating…");
   });
 

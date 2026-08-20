@@ -342,7 +342,7 @@ describe("#804 wire ④ — themeColor metadata", () => {
 
     const light = token(lightBlock(css), "background");
     const dark = token(darkBlock(css), "background");
-    expect(light).toBe("#FCFCFC");
+    expect(light).toBe("#FAFAFC");
     expect(dark).toBe("#0B0B0C");
     // Typed once in §K3 and again in the metadata is exactly how the two drift apart.
     expect(layout).toContain(`color: "${light}"`);

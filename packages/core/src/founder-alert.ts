@@ -80,7 +80,7 @@ export function formatFounderAlertText(alert: FounderAlert): string {
   const lines = Object.entries(alert.context)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k}: ${v === null ? "unknown" : String(v)}`);
-  return [`[FIKIRTIVE] ${alert.title}`, "", `What to do: ${alert.action}`, "", `Event: ${alert.key}`, ...lines].join("\n");
+  return [`[Fikirtive] ${alert.title}`, "", `What to do: ${alert.action}`, "", `Event: ${alert.key}`, ...lines].join("\n");
 }
 
 /**
@@ -207,7 +207,7 @@ export function createResendAlertEmailChannel(env: EnvRecord = process.env): Fou
       body: JSON.stringify({
         from: (env.AUTH_EMAIL_FROM ?? "").trim() || "Fikirtive <onboarding@resend.dev>",
         to: FOUNDER_ALERT_EMAIL,
-        subject: `[FIKIRTIVE] ${alert.title}`,
+        subject: `[Fikirtive] ${alert.title}`,
         text,
       }),
     });

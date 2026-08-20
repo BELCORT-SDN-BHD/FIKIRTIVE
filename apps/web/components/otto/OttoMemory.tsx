@@ -307,7 +307,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
             这一句是唯一诚实的说法。它写在组件里而不是写在 /brand 那张页面上,因为旧的
             /otto?view=memory 今天还开着,同一件事不许只在一扇门后面说。 */}
         <p className="text-[0.875rem] text-muted-foreground mt-0 mb-[18px] leading-[1.5]">
-          Brand is where Otto learns your business. Colours, fonts and logo are not part of this
+          Brand is where Otto learns your business. Colors, fonts, and logo are not part of this
           yet — what you write here is what Otto uses today.
         </p>
 
