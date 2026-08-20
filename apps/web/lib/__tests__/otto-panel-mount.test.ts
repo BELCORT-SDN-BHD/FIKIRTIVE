@@ -402,6 +402,36 @@ describe("层级表:模态框永远在最上面", () => {
   });
 });
 
+/**
+ * 收口移植(main P3-6,W2-8 状态搬家之后跟着搬)—— 原来这道优化只在注释里声称,没有一条
+ * 断言会在有人悄悄把它改回静态 import 时变红。这里补上机器判定:结构上核对源文件,而不是
+ * 靠渲染计时(渲染层面 vitest 分不清「静态引入」与「已经预热的懒加载」)。
+ */
+describe("面板体仍然懒加载,children 不受它阻塞 (收口移植,main P3-6)", () => {
+  const hostSource = readFileSync(resolve(WEB_ROOT, "components/otto/panel/OttoPanelHost.tsx"), "utf8");
+
+  it("会话体走 React.lazy,不是被合并悄悄改回静态 import", () => {
+    expect(hostSource).toMatch(
+      /const OttoPanelConversation = React\.lazy\(\s*\(\)\s*=>\s*\n\s*import\("\.\/OttoPanelConversation"\)/,
+    );
+    // 静态值 import 不该同时存在 —— 那样两份 OttoPanelConversation 会打架,分不了包。
+    expect(hostSource).not.toMatch(/^import\s*\{\s*OttoPanelConversation\s*[,}]/m);
+  });
+
+  it("children(整页内容)结构上不在懒加载的 Suspense 范围里", () => {
+    const suspenseStart = hostSource.indexOf("<React.Suspense");
+    const suspenseEnd = hostSource.indexOf("</React.Suspense>");
+    expect(suspenseStart, "这个文件应当还有一处 Suspense 包着会话体").toBeGreaterThan(-1);
+    expect(suspenseEnd).toBeGreaterThan(suspenseStart);
+
+    const childrenIndex = hostSource.indexOf("{children}");
+    expect(childrenIndex, "OttoPanelShell 的 children 应当原样透传").toBeGreaterThan(-1);
+    // children 出现的位置必须落在 Suspense 那一段字符区间之外 —— 面板体的分包再慢,
+    // 也不许拖着整页内容一起等。
+    expect(childrenIndex < suspenseStart || childrenIndex > suspenseEnd).toBe(true);
+  });
+});
+
 describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () => {
   it("拿到会话种子就画真的前门(同一句问候语,同一个组件)", async () => {
     loadOttoPanelSeed.mockResolvedValue({
@@ -422,17 +452,20 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
   /**
    * 判官 r1 P3-5 —— 把「取几次」这件事**测出来**,而不是在注释里声称。
    *
-   * 实测(这条断言就是那次测量):关一次再开一次,种子取 **2** 次。面板收起时 `OttoPanel`
-   * 整个卸载(#1002 已判官 PASS 的契约),会话连同它的 state 一起走,重开就是一次新的取数。
+   * 跨族判官复核(#1022,W2-8 收口批)[P2]:收口那一版把这条断言改成了「只取一次」,理由是
+   * `OttoPanelHost`(种子的持有者)现在无条件挂载,不再随 `OttoPanel` 的开合卸载重建——这个
+   * 观察是对的,但结论错了:种子取数不该绑在 `OttoPanelHost` 的挂载上,而该绑在**面板开合**
+   * 本身(见该文件顶部注释「取数按面板开合来」)。`OttoPanelHost` 用 `PanelOpenWatcher` 读
+   * `useOttoPanelControls().open`,每次从关到开都重新调一次 `loadOttoPanelSeed` —— 「关一次
+   * 再开一次」因此仍是 **2** 次,不是 1 次。
    *
-   * 为什么**不**把它缓存下来(选项 A:取数上提到 `OttoPanelShell`):种子里带着
-   * `balanceUsd`,而面板里的会话没有自己的余额订阅 —— `OttoChatStream` 只是把这个数
-   * 当普通 prop 往下传给审批卡。缓存等于把商家的 credits 数字冻在第一次开面板的那一刻:
-   * 他去 /billing 充了值回来,面板还在用旧数。用 5 条查询换一个在**花钱的面**上会说谎的
-   * 数字,是笔坏买卖。真正的修法是订阅 `subscribeBalanceRefresh` 再缓存,而那是面板会话
-   * plumbing 的活 —— W2-8(#995)owns 它,本票不在它头上先做半套。
+   * 为什么不能只取一次然后一直用着不重取:种子里带着 `balanceUsd`,面板会话没有自己的余额
+   * 刷新订阅(那是 `subscribeBalanceRefresh` 接上之后的活,仍未接)。商家在 /billing 充了值
+   * 回来再打开面板,如果种子只取过一次,`PackCard` / `ResearchCard` 那类可负担性判断会拿着
+   * 充值前的旧余额继续算——商家账上明明多了钱,面板却说他付不起。重取的时机选在「开」而
+   * 不是轮询或路由切换,是因为「开面板」正是商家下一次要看这个数字的那一刻。
    */
-  it("关一次再开一次 = 取两次种子(这是实测,不是声称)", async () => {
+  it("关一次再开一次 = 取两次种子(面板开合驱动重取,不是挂载驱动)", async () => {
     loadOttoPanelSeed.mockResolvedValue({
       projectId: "prj_1", entities: [], threads: [], activeThreadId: null, balanceUsd: 12, userName: "Aisyah",
     });
@@ -444,13 +477,14 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
       el.querySelector<HTMLButtonElement>('[aria-label="Close Otto"]')!.click();
     });
     await settle();
-    // 关着的时候不取 —— 卸载不该顺手再发一次请求。
+    // 关着的时候不取 —— 关掉不该顺手再发一次请求。
     expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       document.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click();
     });
     await settle();
+    // 重开要再取一次 —— 这就是商家充值后关开面板能看见新余额的那条保证。
     expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
   });
 

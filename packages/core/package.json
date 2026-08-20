@@ -52,6 +52,10 @@
       "types": "./dist/gen-failure.d.ts",
       "default": "./dist/gen-failure.js"
     },
+    "./goals": {
+      "types": "./dist/goals.d.ts",
+      "default": "./dist/goals.js"
+    },
     "./messaging-status": {
       "types": "./dist/messaging-status.d.ts",
       "default": "./dist/messaging-status.js"
