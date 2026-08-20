@@ -9,8 +9,15 @@
  * 商家的会话。会话列表与会话流各存一份的那一天,商家会在同一块面板上看到列表里有、
  * 聊天里没有的会话。所以三处共用的东西(种子、会话、当前是哪一条)收在这里一份。
  *
- * 取数仍是**按需**的:面板挂在每一个商家表面上,把这几条查询放进共享 layout 就等于每一次
- * 页面渲染都跑一遍 Otto 的数据装配。第一次真的要画会话时才调一次 `loadOttoPanelSeed`。
+ * 取数按**面板开合**来,不是挂载一次就够:面板挂在每一个商家表面上,把这几条查询放进
+ * 共享 layout 就等于每一次页面渲染都跑一遍 Otto 的数据装配,包括商家一次都没点开面板的
+ * 那些次 —— 所以取数不能跟着这一层(`OttoPanelHost`)的挂载走,这一层是无条件挂的。真正
+ * 该跟的信号是 `useOttoPanelControls().open` 从关到开的那一下:每次打开都重取一次,不是
+ * 只在首次挂载时取一次。种子里带着 `balanceUsd`,商家去 /billing 充了值回来,关开一次
+ * 面板就该看见新的数字(面板会话自己没有余额刷新订阅,理由见 `OttoPanelConversation.tsx`
+ * 顶部)。读 `open` 的那个小组件(`PanelOpenWatcher`,定义在下面)必须挂在 `OttoPanelShell`
+ * 的 children 里才够得到那个 hook —— 这一层自己是 `OttoPanelShell` 的调用者,不是它的
+ * 后代,读不到 Provider 往下发的值。
  *
  * 收口移植(main P3-6):会话那一整棵树(`OttoChatStream` → 审批卡 → 分镜卡 → …)仍然
  * `React.lazy` 按需加载 —— 静态 import 的话商家壳的 client bundle 从 9 个模块涨到 208 个,
@@ -30,7 +37,7 @@ import { loadOttoPanelSeed } from "@/lib/otto-panel-seed";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { startStreamedThread, type PendingFirstMessage } from "@/lib/otto-start-thread";
 import type { OttoPanelConversationState, PendingFirst } from "./OttoPanelConversation";
-import { OttoPanelShell } from "./OttoPanelShell";
+import { OttoPanelShell, useOttoPanelControls } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
 import { OttoThreadList } from "./OttoThreadList";
 import { panelQuickChips } from "./panel-page";
@@ -46,6 +53,19 @@ function ConversationFallback() {
       Opening your conversation…
     </p>
   );
+}
+
+/**
+ * 报「面板现在开着还是关着」给 `OttoPanelHost`。必须挂在 `OttoPanelShell` 的 children 里
+ * 才够得到 `useOttoPanelControls()` —— 那个 context 由 `OttoPanelShell` 自己的 Provider
+ * 往下发,只喂给它的后代;`OttoPanelHost` 是 Shell 的调用者,不是后代,读不到。不画任何东西。
+ */
+function PanelOpenWatcher({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+  const open = useOttoPanelControls()?.open ?? false;
+  React.useEffect(() => {
+    onOpenChange(open);
+  }, [open, onOpenChange]);
+  return null;
 }
 
 type Seed = Extract<Awaited<ReturnType<typeof loadOttoPanelSeed>>, { projectId: string }>;
@@ -76,8 +96,14 @@ export function OttoPanelHost({
   /** 正在把哪一条历史的消息取回来(取到了才切过去,见 `selectThread`)。 */
   const [openingThreadId, setOpeningThreadId] = React.useState<string | null>(null);
   const [threadError, setThreadError] = React.useState<string | null>(null);
+  /** 面板此刻开着还是关着 —— 由 `PanelOpenWatcher`(挂在下面 `children` 旁边)报上来。 */
+  const [open, setOpen] = React.useState(false);
 
+  // 打开的每一下都重取一次,不是只在这一层挂载时取一次(见本文件顶部「取数按面板开合来」)。
+  // `open` 从 false 变 true 才会真的发一次请求;从 true 变 false 只是把这一效果的依赖标记
+  // 为已变,函数体自己早退,不发请求 —— 关掉面板不该顺手再打一次数据装配。
   React.useEffect(() => {
+    if (!open) return;
     let cancelled = false;
     void (async () => {
       // 服务端动作自己不抛(它把失败折成 {error}),但网络那一段仍可能断。
@@ -94,7 +120,7 @@ export function OttoPanelHost({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [open]);
 
   // ── 上下文 chip:这一票**不画** ────────────────────────────────────────────
   //
@@ -315,6 +341,7 @@ export function OttoPanelHost({
       // 真正的守卫是意图号(见上面 `claimIntent`);禁用只是让这一下不必发生。
       headerBusy={openingThreadId !== null}
     >
+      <PanelOpenWatcher onOpenChange={setOpen} />
       {children}
     </OttoPanelShell>
   );

@@ -450,21 +450,22 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
   });
 
   /**
-   * 判官 r1 P3-5,收口时随 W2-8 状态搬家更正(#995)—— 把「取几次」这件事**测出来**,
-   * 而不是在注释里声称。这条断言原来钉的是「关一次再开一次 = 取两次」,前提是关闭会让
-   * `OttoPanel` 整个卸载(#1002 契约),会话连同它的 state 一起走。
+   * 判官 r1 P3-5 —— 把「取几次」这件事**测出来**,而不是在注释里声称。
    *
-   * W2-8 把种子的持有者搬进了 `OttoPanelHost`(见该文件顶部注释),挂载点在
-   * `OttoPanel` 的开合状态**之上**——`OttoPanelMount` 无条件挂 `OttoPanelHost`,开合
-   * 只是它往下传给 `OttoPanelShell` 的视觉状态,不再让整棵子树跟着卸载重建。于是
-   * 「关一次再开一次」不再是两次新挂载,种子因此只取 **1** 次,不是 2 次 —— 这条断言
-   * 更正为实测到的真行为。
+   * 跨族判官复核(#1022,W2-8 收口批)[P2]:收口那一版把这条断言改成了「只取一次」,理由是
+   * `OttoPanelHost`(种子的持有者)现在无条件挂载,不再随 `OttoPanel` 的开合卸载重建——这个
+   * 观察是对的,但结论错了:种子取数不该绑在 `OttoPanelHost` 的挂载上,而该绑在**面板开合**
+   * 本身(见该文件顶部注释「取数按面板开合来」)。`OttoPanelHost` 用 `PanelOpenWatcher` 读
+   * `useOttoPanelControls().open`,每次从关到开都重新调一次 `loadOttoPanelSeed` —— 「关一次
+   * 再开一次」因此仍是 **2** 次,不是 1 次。
    *
-   * balance 陈旧那个老问题(种子里的 `balanceUsd` 没有自己的刷新订阅)没有被这次搬家
-   * 解决,也没有变得更糟:两版架构都要等 `subscribeBalanceRefresh` 接上(那是面板会话
-   * plumbing 的活,仍未接),这条测试不替它打包票,只如实记录「关合不触发重取」这一件事。
+   * 为什么不能只取一次然后一直用着不重取:种子里带着 `balanceUsd`,面板会话没有自己的余额
+   * 刷新订阅(那是 `subscribeBalanceRefresh` 接上之后的活,仍未接)。商家在 /billing 充了值
+   * 回来再打开面板,如果种子只取过一次,`PackCard` / `ResearchCard` 那类可负担性判断会拿着
+   * 充值前的旧余额继续算——商家账上明明多了钱,面板却说他付不起。重取的时机选在「开」而
+   * 不是轮询或路由切换,是因为「开面板」正是商家下一次要看这个数字的那一刻。
    */
-  it("关一次再开一次 = 仍只取一次种子(状态搬进 OttoPanelHost,不再随开合卸载)", async () => {
+  it("关一次再开一次 = 取两次种子(面板开合驱动重取,不是挂载驱动)", async () => {
     loadOttoPanelSeed.mockResolvedValue({
       projectId: "prj_1", entities: [], threads: [], activeThreadId: null, balanceUsd: 12, userName: "Aisyah",
     });
@@ -476,15 +477,15 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
       el.querySelector<HTMLButtonElement>('[aria-label="Close Otto"]')!.click();
     });
     await settle();
-    // 关着的时候不取 —— 卸载不该顺手再发一次请求。
+    // 关着的时候不取 —— 关掉不该顺手再发一次请求。
     expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       document.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click();
     });
     await settle();
-    // 重开也不取 —— OttoPanelHost 没有跟着开合卸载,种子仍是挂载时那一份。
-    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    // 重开要再取一次 —— 这就是商家充值后关开面板能看见新余额的那条保证。
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
   });
 
   it("取数失败就说实话,不摆一个按了没反应的输入框", async () => {
