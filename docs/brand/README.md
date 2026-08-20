@@ -1,7 +1,7 @@
 # Fikirtive brand — 官方品牌资产包(v4)
 
 > 本目录是 Fikirtive 品牌资产的唯一权威。完整规范在 `guidelines/`(17 页 PDF/PPTX + 网页版,结构按 Shopify brand guidelines 模板:Logos / Typography / Color palette / Imagery / Audience / Voice and tone / Grammar and style + tagline 与 boilerplate)。本 README 只做索引与最常用规则。
-> 拍板记录:Founder 2026-08-20(色彩方向 / Geist 留任 / V1 浅色 only / 机器人脸退役 / tagline / grammar)。
+> 拍板记录:Founder 2026-08-20(色彩方向 / Geist 留任 / V1 浅色 only / 机器人脸退役 / tagline / grammar / boilerplate 收紧版)。
 > Questions → Nicks Gan · nicksgan@belcort.com
 
 ## Tagline 与 boilerplate(原样使用,不改写)
@@ -9,7 +9,7 @@
 **Tagline:`The marketing OS.`**(含句号;句号可用珊瑚色;不翻译、不加副句。)
 
 **Boilerplate**(press / 合作方 / 应用商店 / 社媒 bio 通用):
-> Fikirtive is the all-in-one marketing OS for small businesses. It gives merchants complete, hands-on marketing tools — creation, campaigns, scheduling, and publishing — plus Otto, an AI marketing operator that researches, plans, and executes with the merchant's approval. Every action is transparent: merchants see what things cost before they run, and everything leaves a trail they can read. Fikirtive is operated by BELCORT SDN BHD.
+> Fikirtive is the marketing OS for small businesses. Merchants get the full toolset — creation, campaigns, scheduling, and publishing — plus Otto, an AI marketing operator that researches, plans, and executes with the merchant’s approval. Merchants see the cost of every action before it runs, and every action leaves a readable record. Fikirtive is a product of BELCORT SDN BHD.
 
 ## 两件官方标识
 
@@ -51,7 +51,7 @@ docs/brand/
 - **F 字标原稿由 Founder 提供(2026-07-16,黑砖 raster)**,矢量重绘定稿于 `fikirtive-marketing-website` 仓 `design/brand/`;2026-08-20 起以本目录为唯一权威,营销站仓那份视为镜像(它的 README 已注明「if the original vector master surfaces, drop it in」——就是这里)。
 - **云朵正稿几何**来自营销站现役 mark(`public/otto-mark.svg`):四团不对称云 + 深褐竖条眼 `#2B1308`。产品内 `OttoAvatar.tsx` 的手写几何(对称三圆、白眼)与正稿不一致,**components 场统一收编到本正稿**。
 - 旧机器人脸三件(产品仓 `apps/web/public/brand/logo-mark.svg` / `logo-wordmark.svg` / `otto.svg`)已由 Founder 2026-08-20 裁决**退役**;文件暂留原地,随换壳切换票一并处理。
-- 设计过程档案(方向书、字体比对)在 Claude Design 项目「FIKIRTIVE — MAIN」`brandkit-v4/`;那是过程稿,不是权威。
+- 设计方向全量(方向书、canvas 交互研究、字体比对)在 **`docs/design/v4/`**;Claude Design 项目「FIKIRTIVE — MAIN」`brandkit-v4/` 只是过程稿镜像,不是权威。
 
 ## 消费方式
 

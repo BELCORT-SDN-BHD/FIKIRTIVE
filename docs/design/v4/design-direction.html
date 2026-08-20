@@ -1,0 +1,393 @@
+<title>FIKIRTIVE 设计方向书</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#FAFAFC; --surface:#FFFFFF; --chrome:#F2F3F7;
+  --ink:#16171C; --ink2:#5B5F6C; --ink3:#9CA0AC;
+  --line:#E8E9EF; --line2:#DDDEE6;
+  --cta:#16171C; --cta-ink:#FFFFFF;
+  --otto:#EC5828; --otto-soft:#FBE7DC;
+  --good:#16A34A; --warn:#D97706;
+  --grad-violet:linear-gradient(135deg,#EDE9FE 0%,#DBEAFE 100%);
+  --grad-peach:linear-gradient(135deg,#FFEDD5 0%,#FFE1E1 100%);
+  --grad-sky:linear-gradient(135deg,#E0F2FE 0%,#EDE9FE 100%);
+  --dot:#DADBE3;
+  --shadow:0 1px 2px rgba(20,22,30,.05),0 8px 24px rgba(20,22,30,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121318; --surface:#1A1C22; --chrome:#16181E;
+    --ink:#F1F2F5; --ink2:#A6AAB6; --ink3:#6E7280;
+    --line:#282B33; --line2:#32353F;
+    --cta:#F1F2F5; --cta-ink:#16171C;
+    --otto:#F26A3C; --otto-soft:#3A241B;
+    --grad-violet:linear-gradient(135deg,#2A2740 0%,#1F2A44 100%);
+    --grad-peach:linear-gradient(135deg,#3D2B1E 0%,#3C2226 100%);
+    --grad-sky:linear-gradient(135deg,#1B2E3E 0%,#2A2740 100%);
+    --dot:#2E3138;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121318; --surface:#1A1C22; --chrome:#16181E;
+  --ink:#F1F2F5; --ink2:#A6AAB6; --ink3:#6E7280;
+  --line:#282B33; --line2:#32353F;
+  --cta:#F1F2F5; --cta-ink:#16171C;
+  --otto:#F26A3C; --otto-soft:#3A241B;
+  --grad-violet:linear-gradient(135deg,#2A2740 0%,#1F2A44 100%);
+  --grad-peach:linear-gradient(135deg,#3D2B1E 0%,#3C2226 100%);
+  --grad-sky:linear-gradient(135deg,#1B2E3E 0%,#2A2740 100%);
+  --dot:#2E3138;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--ground);color:var(--ink);font-family:'Geist',system-ui,-apple-system,sans-serif;line-height:1.65;font-size:15.5px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:56px 28px 96px}
+.mono{font-family:'Geist Mono',ui-monospace,monospace}
+.eyebrow{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px}
+h1{font-size:clamp(30px,5vw,42px);font-weight:800;letter-spacing:-.02em;line-height:1.12;text-wrap:balance}
+h2{font-size:23px;font-weight:700;letter-spacing:-.015em;margin-bottom:6px;text-wrap:balance}
+h3{font-size:16px;font-weight:650}
+section{margin-top:72px}
+.lede{font-size:17px;color:var(--ink2);max-width:64ch;margin-top:14px}
+.sub{color:var(--ink2);max-width:68ch;margin-top:4px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{font-family:'Geist Mono',ui-monospace,monospace;font-size:11.5px;font-weight:500;padding:5px 11px;border:1px solid var(--line2);border-radius:999px;color:var(--ink2);background:var(--surface)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:var(--shadow)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:20px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:20px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:16px}
+th{font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line2)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+td:first-child{white-space:nowrap;font-weight:600}
+.tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:6px 16px 12px;margin-top:18px}
+.tag{display:inline-block;font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:6px;letter-spacing:.03em}
+.t-keep{background:color-mix(in srgb,var(--good) 12%,transparent);color:var(--good)}
+.t-new{background:var(--grad-violet);color:var(--ink)}
+.t-drop{background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--warn)}
+.t-otto{background:var(--otto-soft);color:var(--otto)}
+/* ————— layer diagram ————— */
+.layers{display:grid;gap:10px;margin-top:22px}
+.layer{display:grid;grid-template-columns:120px 1fr;gap:16px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}
+.layer .no{font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;font-weight:600;color:var(--ink3);padding-top:2px}
+.layer p{color:var(--ink2);font-size:14px;margin-top:3px}
+/* ————— palette candidates ————— */
+.pal{border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow);display:flex;flex-direction:column}
+.pal.rec{outline:2px solid var(--ink);outline-offset:-1px}
+.pal-head{padding:16px 18px 6px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.pal-head .rec-tag{font-family:'Geist Mono',ui-monospace,monospace;font-size:10px;font-weight:700;letter-spacing:.1em;background:var(--cta);color:var(--cta-ink);padding:3px 8px;border-radius:6px;white-space:nowrap}
+.pal p{padding:0 18px;font-size:13px;color:var(--ink2)}
+.swatches{display:flex;gap:6px;padding:14px 18px 6px}
+.sw{flex:1;height:44px;border-radius:8px;border:1px solid rgba(0,0,0,.06);position:relative}
+.sw span{position:absolute;bottom:-18px;left:0;font-family:'Geist Mono',ui-monospace,monospace;font-size:9px;color:var(--ink3);letter-spacing:0}
+.pal-demo{margin:30px 18px 18px;border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--ground)}
+.btn-demo{font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px}
+.gcard-demo{font-size:11px;font-weight:500;padding:10px 12px;border-radius:9px;flex:1;min-width:90px}
+.otto-dot{width:26px;height:26px;border-radius:50%;flex:none}
+/* ————— shell mockup ————— */
+.mock{border:1px solid var(--line2);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);margin-top:20px;background:var(--surface)}
+.mock-bar{display:flex;gap:5px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--chrome)}
+.mock-bar i{width:9px;height:9px;border-radius:50%;background:var(--line2)}
+.shell{display:grid;grid-template-columns:168px 1fr;min-height:340px}
+.snav{background:var(--chrome);border-right:1px solid var(--line);padding:14px 10px;font-size:11.5px}
+.snav .brand{display:flex;align-items:center;gap:7px;font-weight:700;font-size:12.5px;padding:4px 8px 14px}
+.fmark{width:20px;height:20px;border-radius:6px;background:var(--cta);color:var(--cta-ink);display:grid;place-items:center;font-size:11px;font-weight:800}
+.snav a{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;color:var(--ink2);text-decoration:none;margin-bottom:1px}
+.snav a.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(20,22,30,.06)}
+.snav .grp{font-family:'Geist Mono',ui-monospace,monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:12px 9px 5px}
+.smain{padding:20px 22px;position:relative;background:var(--ground)}
+.smain .bc{font-size:10.5px;color:var(--ink3);font-family:'Geist Mono',ui-monospace,monospace}
+.smain h4{font-size:19px;font-weight:750;letter-spacing:-.01em;margin:6px 0 2px}
+.smain .hint{font-size:11.5px;color:var(--ink2)}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:11px 13px}
+.kpi .k{font-size:10px;color:var(--ink3);font-weight:500}
+.kpi .v{font-size:17px;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.kpi .d{font-size:9.5px;color:var(--good);font-weight:600}
+.startrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.gtile{border-radius:11px;padding:13px;font-size:12px;font-weight:600;border:1px solid var(--line)}
+.gtile small{display:block;font-weight:400;font-size:10.5px;color:var(--ink2);margin-top:2px}
+.ottofab{position:absolute;right:16px;bottom:14px;width:38px;height:38px;border-radius:50%;background:var(--otto);box-shadow:0 6px 16px color-mix(in srgb,var(--otto) 40%,transparent);display:grid;place-items:center}
+.ottofab svg{width:22px;height:22px}
+/* ————— canvas mockup ————— */
+.cnv{position:relative;min-height:400px;background:var(--ground);background-image:radial-gradient(var(--dot) 1px,transparent 1px);background-size:18px 18px;overflow:hidden}
+.cbubble{position:absolute;top:14px;left:14px;width:212px;background:var(--surface);border:1px solid var(--line2);border-radius:13px;box-shadow:var(--shadow);padding:11px 13px;font-size:11px;z-index:3}
+.cbubble .who{display:flex;align-items:center;gap:6px;font-weight:700;font-size:11px;margin-bottom:5px}
+.cbubble .who i{width:16px;height:16px;border-radius:50%;background:var(--otto);flex:none}
+.cbubble p{color:var(--ink2);font-size:10.5px;line-height:1.5}
+.cbubble .step{display:flex;gap:6px;align-items:center;font-family:'Geist Mono',ui-monospace,monospace;font-size:9.5px;color:var(--ink2);margin-top:6px}
+.cbubble .step b{color:var(--good);font-weight:600}
+.clog{position:absolute;left:14px;bottom:14px;width:212px;background:var(--surface);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);padding:9px 11px;font-size:10px;z-index:3}
+.clog .row{display:flex;gap:6px;align-items:center;padding:3px 0;color:var(--ink2)}
+.clog .row b{color:var(--good)}
+.clog .row .spin{color:var(--otto);font-weight:700}
+.clog .ttl{font-family:'Geist Mono',ui-monospace,monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:3px}
+.cbox{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;width:min(360px,52%);background:var(--surface);border:1px solid var(--line2);border-radius:13px;box-shadow:var(--shadow);padding:10px 13px;z-index:3}
+.cbox .ph{font-size:11.5px;color:var(--ink3)}
+.cbox .row{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+.cbox .mini{display:flex;gap:5px}
+.cbox .mini i{width:18px;height:18px;border-radius:6px;border:1px solid var(--line2);display:block}
+.cbox .go{width:22px;height:22px;border-radius:7px;background:var(--cta)}
+.ctools{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:var(--surface);border:1px solid var(--line);border-radius:999px;box-shadow:var(--shadow);padding:8px 5px;display:flex;flex-direction:column;gap:7px;z-index:3}
+.ctools i{width:20px;height:20px;border-radius:6px;border:1px solid var(--line2);display:block}
+.ctools i.on{background:var(--chrome);border-color:var(--line2)}
+.cframe{position:absolute;border:1.5px dashed var(--line2);border-radius:12px;padding:7px}
+.cframe .lbl{position:absolute;top:-16px;left:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:9px;color:var(--ink3)}
+.ccard{width:86px;height:86px;border-radius:9px;border:1px solid var(--line2);box-shadow:var(--shadow);display:inline-block;margin:2px}
+.ccard.sel{outline:2px solid var(--otto);outline-offset:1px}
+.cnote{position:absolute;font-size:9.5px;padding:7px 9px;border-radius:8px;background:var(--surface);border:1px solid var(--line2);color:var(--ink2);width:110px;box-shadow:var(--shadow)}
+/* ————— roadmap ————— */
+.road{display:grid;gap:0;margin-top:20px;border-left:2px solid var(--line2);padding-left:22px}
+.stop{position:relative;padding-bottom:26px}
+.stop:last-child{padding-bottom:0}
+.stop::before{content:"";position:absolute;left:-29px;top:5px;width:11px;height:11px;border-radius:50%;background:var(--surface);border:2.5px solid var(--ink)}
+.stop.now::before{background:var(--otto);border-color:var(--otto)}
+.stop .when{font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.stop h3{margin:2px 0 3px}
+.stop p{color:var(--ink2);font-size:14px;max-width:62ch}
+.note{border-left:3px solid var(--otto);background:var(--otto-soft);border-radius:0 11px 11px 0;padding:14px 18px;margin-top:18px;font-size:14px}
+.note b{color:var(--otto)}
+ul.tight{margin:10px 0 0 18px;color:var(--ink2);font-size:14px}
+ul.tight li{margin-bottom:6px}
+ul.tight b{color:var(--ink)}
+.foot{margin-top:80px;padding-top:20px;border-top:1px solid var(--line);font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;color:var(--ink3);line-height:1.9}
+@media (max-width:640px){.shell{grid-template-columns:1fr}.snav{display:none}.layer{grid-template-columns:1fr;gap:4px}}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">FIKIRTIVE · Design direction · 2026-08-20 · v4 提案</div>
+  <h1>一个品牌,两种房间:<br>SaaS 的秩序 + 画布的自由</h1>
+  <p class="lede">依据 Founder 8/20 亲述方向整理:外壳回归传统 SaaS dashboard 的干净秩序(参考你选定的截图手感),creation 进入 Stitch 式整页画布;F 标与 Otto 云朵保留,其余全部重造。本文档自身即按提案方向排版——你现在看到的就是新方向的手感。</p>
+  <div class="chips">
+    <span class="chip">录屏 96 帧全览 ✓</span>
+    <span class="chip">Stitch v2 交互研究 ✓</span>
+    <span class="chip">现有 canvas 引擎盘点 ✓</span>
+    <span class="chip">品牌触点清查 ✓</span>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow">01 · 总构图</div>
+  <h2>三层一次看清</h2>
+  <div class="layers">
+    <div class="layer"><div class="no">LAYER 1<br>品牌</div><div><h3>FIKIRTIVE Brandkit(传统 agency 式)</h3><p>一套名字、一枚 F 标、一朵 Otto 云、一张色板、一副字体、一种说话方式。管住所有触点:favicon、登录页、邮件、分享卡、法务页——今天这些地方是「一个名字三种写法、一个吉祥物四套长相、favicon 还是框架默认」。</p></div></div>
+    <div class="layer"><div class="no">LAYER 2<br>外壳</div><div><h3>SaaS Dashboard(七扇门不变,皮全换)</h3><p>浅色分组侧栏 + 白卡内容区 + 大标题面包屑 + 黑色主按钮 + 渐变糖点缀。信息架构沿用换壳 V1 已拍板的七门(Home / Create / Library / Brand / Campaigns / Schedule / Settings),Otto 以右下角弹出按钮出场(Sidekick 式)。</p></div></div>
+    <div class="layer"><div class="no">LAYER 3<br>画布</div><div><h3>Canvas Section(Stitch 式整页工作区)</h3><p>点 Create 进画布 = 离开 dashboard,整页归画布。浮动 Otto 气泡讲人话,左下 agent log 排队留痕,底部一个输入框统一全部创作起手。现有引擎(钱路纪律、血缘、@实体引用)原样保留,只换组织方式和皮。</p></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">02 · 边界</div>
+  <h2>保留什么,重造什么</h2>
+  <div class="tablebox"><table>
+    <tr><th>东西</th><th>处置</th><th>为什么</th></tr>
+    <tr><td>"F" 标</td><td><span class="tag t-keep">保留</span></td><td>Founder 8/20 拍板;brandkit 里给它正式的规格(留白、最小尺寸、误用示例)</td></tr>
+    <tr><td>Otto 云朵形状</td><td><span class="tag t-keep">保留</span></td><td>Founder 8/20 拍板;收敛现存四套实现为一套官方 SVG 家族(8 种表情)</td></tr>
+    <tr><td>七扇门信息架构</td><td><span class="tag t-keep">保留</span></td><td>换壳 V1 已拍板且正在合并;这次只换皮不动骨</td></tr>
+    <tr><td>钱路与诚实纪律</td><td><span class="tag t-keep">保留</span></td><td>价格来自服务端、花钱先看见、空态诚实——这些是产品宪法,不属于皮</td></tr>
+    <tr><td>色板(含珊瑚色地位)</td><td><span class="tag t-new">重造</span></td><td>Founder:「颜色全部那些」都能改;三个候选见下节</td></tr>
+    <tr><td>字体</td><td><span class="tag t-keep">保留</span></td><td>Geist 留任(Founder 8/20 四选一拍板;比对样张存档)+ JetBrains Mono 做数据字</td></tr>
+    <tr><td>「Grok bones」旧方向 + 原型 v1/v2</td><td><span class="tag t-drop">作废</span></td><td>Founder 8/20 裁决换方向;Design 项目旧稿只作历史参考</td></tr>
+    <tr><td>移动端</td><td><span class="tag t-drop">不做</span></td><td>沿用 8/18 裁决 desktop-only</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">03 · 色彩 · 已拍板 2026-08-20</div>
+  <h2>色彩方向:A 柔光棱镜 ✓</h2>
+  <p class="sub">Founder 已拍板方向 A。B、C 两候选留档备查——当时的分歧点是<b>珊瑚色(Otto 的颜色)在新世界里的地位</b>,拍板结果:珊瑚仍是 Otto 专属。</p>
+  <div class="grid3">
+
+    <div class="pal rec">
+      <div class="pal-head"><h3>A · 柔光棱镜</h3><span class="rec-tag">已拍板 ✓</span></div>
+      <p>最贴近你喜欢的截图。中性冷灰做骨架,紫/桃/天蓝三组渐变做内容糖,珊瑚仍是 Otto 专属——「彩色属于内容,珊瑚属于 Otto」的旧法在新皮下继续成立。</p>
+      <div class="swatches">
+        <div class="sw" style="background:#FAFAFC"><span>#FAFAFC</span></div>
+        <div class="sw" style="background:#16171C"><span>#16171C</span></div>
+        <div class="sw" style="background:linear-gradient(135deg,#C4B5FD,#93C5FD)"><span>violet</span></div>
+        <div class="sw" style="background:linear-gradient(135deg,#FDBA74,#FDA4AF)"><span>peach</span></div>
+        <div class="sw" style="background:#EC5828"><span>otto</span></div>
+      </div>
+      <div class="pal-demo">
+        <span class="btn-demo" style="background:#16171C;color:#fff">Create campaign</span>
+        <span class="gcard-demo" style="background:linear-gradient(135deg,#EDE9FE,#DBEAFE);color:#3B3663">Make a video</span>
+        <span class="otto-dot" style="background:#EC5828"></span>
+      </div>
+    </div>
+
+    <div class="pal">
+      <div class="pal-head"><h3>B · 珊瑚新生</h3></div>
+      <p>珊瑚升格为整个品牌的主 accent:渐变糖围绕珊瑚一族展开(珊瑚→桃、珊瑚→紫),品牌记忆点最强、最「FIKIRTIVE」;代价是 Otto 需要新的专属识别(比如光晕/渐变態)。</p>
+      <div class="swatches">
+        <div class="sw" style="background:#FAFAF9"><span>#FAFAF9</span></div>
+        <div class="sw" style="background:#1C1917"><span>#1C1917</span></div>
+        <div class="sw" style="background:linear-gradient(135deg,#FDBA74,#F87171)"><span>coral-g</span></div>
+        <div class="sw" style="background:linear-gradient(135deg,#FECACA,#DDD6FE)"><span>blush</span></div>
+        <div class="sw" style="background:#EC5828"><span>brand</span></div>
+      </div>
+      <div class="pal-demo">
+        <span class="btn-demo" style="background:#EC5828;color:#fff">Create campaign</span>
+        <span class="gcard-demo" style="background:linear-gradient(135deg,#FFEDD5,#FFE4E6);color:#7C3D2A">Make a video</span>
+        <span class="otto-dot" style="background:conic-gradient(from 200deg,#EC5828,#F59E0B,#EC5828)"></span>
+      </div>
+    </div>
+
+    <div class="pal">
+      <div class="pal-head"><h3>C · 冷靛专业</h3></div>
+      <p>靛紫做主 accent(接近 Firma 截图那颗 Send 按钮),渐变走靛/蓝/青一族,最「金融级可信」;珊瑚保留给 Otto,对比最跳。风险:靛紫是 2026 年 SaaS 的大路货,识别度最弱。</p>
+      <div class="swatches">
+        <div class="sw" style="background:#FAFBFC"><span>#FAFBFC</span></div>
+        <div class="sw" style="background:#15161B"><span>#15161B</span></div>
+        <div class="sw" style="background:#6E62E5"><span>#6E62E5</span></div>
+        <div class="sw" style="background:linear-gradient(135deg,#C7D2FE,#A5F3FC)"><span>indigo-g</span></div>
+        <div class="sw" style="background:#EC5828"><span>otto</span></div>
+      </div>
+      <div class="pal-demo">
+        <span class="btn-demo" style="background:#6E62E5;color:#fff">Create campaign</span>
+        <span class="gcard-demo" style="background:linear-gradient(135deg,#E0E7FF,#CFFAFE);color:#3B3E75">Make a video</span>
+        <span class="otto-dot" style="background:#EC5828"></span>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>推荐 A 的理由:</b>它是你贴的截图的直译,又不必重新发明 Otto 的识别——珊瑚继续等于 Otto,商家一眼知道「橙色的地方 = AI 在场」。这条「颜色即身份」的语义是现有产品里少数值得留的设计资产。</div>
+</section>
+
+<section>
+  <div class="eyebrow">04 · 外壳手感</div>
+  <h2>Dashboard:秩序感示意</h2>
+  <p class="sub">以 Home 为例(方向 A 上色)。分组侧栏、白卡、KPI 行、渐变开工砖、右下 Otto 按钮。所有数字守换壳 V1 的老规矩:每个数字都有真实来源,空账号看到诚实的空。</p>
+  <div class="mock">
+    <div class="mock-bar"><i></i><i></i><i></i></div>
+    <div class="shell">
+      <nav class="snav">
+        <div class="brand"><span class="fmark">F</span> Fikirtive</div>
+        <a class="on">⌂ Home</a><a>✦ Create</a><a>▤ Library</a><a>◈ Brand</a><a>▶ Campaigns</a><a>▦ Schedule</a>
+        <div class="grp">Settings</div>
+        <a>Billing &amp; credits</a><a>Connections</a>
+      </nav>
+      <main class="smain">
+        <div class="bc">Home</div>
+        <h4>Good morning, Nicks</h4>
+        <div class="hint">1,240 credits · nothing scheduled for today yet</div>
+        <div class="kpis">
+          <div class="kpi"><div class="k">Credits</div><div class="v">1,240</div><div class="d">Top up</div></div>
+          <div class="kpi"><div class="k">Canvases</div><div class="v">6</div><div class="d">2 this week</div></div>
+          <div class="kpi"><div class="k">Scheduled</div><div class="v">3</div><div class="d">Next: Fri</div></div>
+        </div>
+        <div class="startrow">
+          <div class="gtile" style="background:var(--grad-violet)">Start something<small>Type an idea — it opens on a canvas</small></div>
+          <div class="gtile" style="background:var(--grad-peach)">Plan a campaign<small>Otto drafts, you approve</small></div>
+        </div>
+        <div class="ottofab" aria-label="Ask Otto"><svg viewBox="0 0 120 110"><g fill="#fff"><circle cx="42" cy="52" r="26"/><circle cx="78" cy="52" r="26"/><circle cx="60" cy="38" r="24"/><ellipse cx="60" cy="66" rx="40" ry="24"/></g><circle cx="50" cy="60" r="4" fill="var(--otto)"/><circle cx="70" cy="60" r="4" fill="var(--otto)"/></svg></div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">05 · 画布手感</div>
+  <h2>Canvas:自由但有迹可循</h2>
+  <p class="sub">进入 Create 后整页归画布。四个常驻件照录屏语法落位:左上 Otto 气泡(讲人话 + 列步骤)、左下 agent log(排队、可取消、全留痕)、底部唯一输入框、右侧画布工具条。生成物是卡片,同一次按键的成组结果有虚线批次框,血缘可追。</p>
+  <div class="mock">
+    <div class="mock-bar"><i></i><i></i><i></i></div>
+    <div class="cnv">
+      <div class="cbubble">
+        <div class="who"><i></i> Otto</div>
+        <p>Making 4 images for “Raya promo — teal batik table”. Two are done, two on the way.</p>
+        <div class="step"><b>✓</b> Reading your brand memory</div>
+        <div class="step"><b>✓</b> Image 1 &amp; 2 ready</div>
+        <div class="step"><span class="spin">◌</span> Image 3 &amp; 4 generating</div>
+      </div>
+      <div class="cframe" style="top:60px;left:280px">
+        <span class="lbl">Batch · 4 images · 12 cr</span>
+        <span class="ccard" style="background:var(--grad-violet)"></span><span class="ccard sel" style="background:var(--grad-peach)"></span><br>
+        <span class="ccard" style="background:var(--grad-sky)"></span><span class="ccard" style="background:var(--chrome)"></span>
+      </div>
+      <div class="cnote" style="top:96px;right:78px">Sticky note — free, saved as you type</div>
+      <div class="clog">
+        <div class="ttl">Agent log</div>
+        <div class="row"><span class="spin">◌</span> 4 images · Raya promo <span style="margin-left:auto">✕</span></div>
+        <div class="row"><b>✓</b> Animate hero image</div>
+        <div class="row"><b>✓</b> Upload product photos</div>
+      </div>
+      <div class="cbox">
+        <div class="ph">Ask Otto, or describe what to make… <span class="mono" style="font-size:9px">@product</span></div>
+        <div class="row"><div class="mini"><i></i><i></i><i></i></div><div class="mono" style="font-size:9.5px;color:var(--ink3)">1–4 · 9:16 · 3 cr</div><div class="go"></div></div>
+      </div>
+      <div class="ctools"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:34px">Stitch 十条语法 → FIKIRTIVE 采纳表</h3>
+  <div class="tablebox"><table>
+    <tr><th>Stitch 的招</th><th>采纳</th><th>落到 FIKIRTIVE</th></tr>
+    <tr><td>整页无限画布</td><td><span class="tag t-new">采纳</span></td><td>现有 FlowCanvas 已是整页,换皮 + 补「视角记忆」(今天每次刷新都重置缩放)</td></tr>
+    <tr><td>浮动对话气泡</td><td><span class="tag t-new">采纳</span></td><td>取代第三个输入框;Otto 在画布内按 project 分席对话</td></tr>
+    <tr><td>Agent log 任务队列</td><td><span class="tag t-new">采纳</span></td><td>排队、单条取消、全留痕——对上产品原则「有迹可循」;排队机制接现有 GenJob</td></tr>
+    <tr><td>底部唯一输入框</td><td><span class="tag t-new">采纳</span></td><td><b>三框合一</b>:画布 composer、Otto 聊天、编辑 prompt 收成一个 omnibox(治「三套心智模型」病)</td></tr>
+    <tr><td>先出计划再生成</td><td><span class="tag t-new">采纳</span></td><td>多资产任务先出清单让商家确认——与现有「花钱先批准」天然同构</td></tr>
+    <tr><td>变体不覆盖原稿</td><td><span class="tag t-keep">已有</span></td><td>「More like this」+ 血缘树已是这个逻辑,皮上把「从这张长出来」画得更明白</td></tr>
+    <tr><td>选中即寻址(单选/多选/全局)</td><td><span class="tag t-keep">已有</span></td><td>已有单卡工具条 + 多选批量条,保留;补齐「按对话筛选」(代码里有但死了)</td></tr>
+    <tr><td>$0 直接编辑</td><td><span class="tag t-keep">已有</span></td><td>便签、裁剪、拖放上传本就免费——Stitch 被骂最狠的坑我们先天没有</td></tr>
+    <tr><td>双索引历史(线程↔画布互相高亮)</td><td><span class="tag t-new">采纳</span></td><td>ChatThread 与卡片的关联字段已在库里,差的只是这层 UI</td></tr>
+    <tr><td>连线做原型 / Play 模式</td><td><span class="tag t-drop">不做</span></td><td>那是 UI 设计工具的需求;营销素材不需要——顺手摘掉卡片上残留的连线把手</td></tr>
+  </table></div>
+
+  <div class="note"><b>先天补掉 Stitch 的两个大坑:</b>① 它曾经「改一个字也要跑一轮 AI」,被骂到后来加免费直接编辑——我们的 $0 路径(便签/裁剪/上传/排列)从第一天就在;② 它每张图各画各的、风格漂移——我们的 @实体引用 + 品牌记忆本来就是「同一个角色/产品长一个样」的机制,这正是我们比它强的地方,皮上要把这优势演出来。</div>
+</section>
+
+<section>
+  <div class="eyebrow">06 · Otto 出场方式</div>
+  <h2>一个 Otto,两种在场</h2>
+  <ul class="tight">
+    <li><b>Dashboard 里:</b>右下角珊瑚圆钮(Sidekick 式),点开弹出面板;全局会话,跨页跟随。</li>
+    <li><b>画布里:</b>浮动气泡 + agent log,按 project 分席——每张画布自己的对话史,不与外面串线。</li>
+    <li><b>两边共享一个 knowledge base:</b>商家是谁、品牌记忆、生意事实两边都记得;Otto 自行判断何时更新知识库(Founder 8/20 提议,连接前后端时展开,已入档不丢)。</li>
+    <li><b>珊瑚 = Otto 在场</b>(若选方向 A/C):画布上任何 AI 正在动的东西,都以珊瑚示意——进度环、气泡描边、生成中的卡片呼吸灯。</li>
+  </ul>
+</section>
+
+<section>
+  <div class="eyebrow">07 · Brandkit 骨架 · 待你 elaborate</div>
+  <h2>传统 agency 式 brandkit 章节表(草案)</h2>
+  <p class="sub">按你的定义:general 层,不含 components。以下九章是 agency 标配,哪些砍、哪些加重,等你 elaborate 时逐条定。</p>
+  <div class="grid2">
+    <div class="card"><h3>1 · Logo 系统</h3><p class="sub" style="font-size:13.5px">F 标正稿 + 横版 wordmark + 最小尺寸/留白/误用示例。治「一个名字三种写法」。</p></div>
+    <div class="card"><h3>2 · Otto 吉祥物规范</h3><p class="sub" style="font-size:13.5px">云朵官方几何 + 8 表情 + 使用场景(哪里能出现、多大、能不能开玩笑)。治「四套长相」。</p></div>
+    <div class="card"><h3>3 · 色彩</h3><p class="sub" style="font-size:13.5px">主色/中性灰阶/渐变糖/语义色,含无障碍对比度底线。</p></div>
+    <div class="card"><h3>4 · 字体</h3><p class="sub" style="font-size:13.5px">品牌字 + 数据字(等宽),层级样例。</p></div>
+    <div class="card"><h3>5 · 声音与语气</h3><p class="sub" style="font-size:13.5px">Otto 怎么说话、产品怎么报错、空态怎么写——「诚实」已是产品法,这里给它一个声音。</p></div>
+    <div class="card"><h3>6 · 渐变与影像语言</h3><p class="sub" style="font-size:13.5px">渐变怎么用不俗、截图/插画风格、AI 生成物在品牌语境里怎么呈现。</p></div>
+    <div class="card"><h3>7 · 应用示例</h3><p class="sub" style="font-size:13.5px">favicon、浏览器标签、登录页、邮件、社交分享卡(OG)、pitch deck 封面——全是盘点里查出的空白。</p></div>
+    <div class="card"><h3>8 · 动效性格</h3><p class="sub" style="font-size:13.5px">节奏与缓动的性格定义(快而轻 vs 稳而柔),给 prototype 场做底。</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">08 · 路线</div>
+  <h2>三场走完,不混线</h2>
+  <div class="road">
+    <div class="stop now"><div class="when">本场 · 进行中</div><h3>方向 + Brandkit</h3><p>你拍色彩方向与字体 → 我出完整 brandkit(按上面骨架,你 elaborate 后定稿)+ 本方向书定稿。产出落 Claude Design 项目,你可直接改。</p></div>
+    <div class="stop"><div class="when">下一场</div><h3>Components / 设计系统</h3><p>把 brandkit 翻译成 shadcn 主题与组件族(按钮/卡/表格/表单/图表/空态)。Brandkit 管「品牌是谁」,这场管「产品怎么长」。</p></div>
+    <div class="stop"><div class="when">第三场</div><h3>完整 Prototype</h3><p>七门 + 画布 + Otto 全流程可点原型,用第二场的组件拼装。实现票之后按队列规矩登记进 #1042,不抢合并队列的道。</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">09 · 拍板记录 · 2026-08-20</div>
+  <h2>三块地基,当天全锁</h2>
+  <ul class="tight">
+    <li><b>① 色彩方向 = A 柔光棱镜 ✓</b>——冷灰骨架 + 紫/桃/天蓝渐变糖,珊瑚仍是 Otto 专属。</li>
+    <li><b>② 字体 = Geist 留任 ✓</b>——四选一比对后拍板;JetBrains Mono 继续做数据字。</li>
+    <li><b>③ 深色模式 = V1 只做浅色 ✓</b>——深色留给以后要时再开。</li>
+  </ul>
+</section>
+
+<div class="foot">
+  依据:Founder 录屏 IDEA FOR CANVA SECTION.mov(96 帧)· Stitch v2 研究(Google blog / SDK / 官方论坛,来源已存档)· 仓库实查 @ ed26181e · 品牌触点清查 2026-08-20<br>
+  本方向书取代:「Grok bones + Headspace/Phantom heart」(2026-06-28 锁定,2026-08-20 Founder 裁决作废)· 原型 v1/v2
+</div>
+
+</div>
