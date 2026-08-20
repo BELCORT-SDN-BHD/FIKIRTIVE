@@ -39,5 +39,3 @@ export const lookupProductsSkill = defineOttoSkill({
   parameters: params,
   execute: executeLookupProducts,
 });
-
-export const lookupProducts = lookupProductsSkill.tool;

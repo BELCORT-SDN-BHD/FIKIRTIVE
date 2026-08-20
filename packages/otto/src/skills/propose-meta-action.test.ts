@@ -1,6 +1,6 @@
 import { it, expect } from "vitest";
 import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core";
-import { proposeMetaActionSkill, executeProposeMetaAction, proposeMetaAction, proposeMetaActionInput } from "./propose-meta-action.js";
+import { proposeMetaActionSkill, executeProposeMetaAction, proposeMetaActionInput } from "./propose-meta-action.js";
 
 it("gate: free/write/internal → ungated", () => {
   expect(proposeMetaActionSkill.cost).toBe("free");
@@ -54,8 +54,6 @@ it("input zod schema has no currentValue/moneyClass/approval keys (LLM can't set
   expect(topLevelKeys).not.toContain("moneyClass");
   expect(topLevelKeys).not.toContain("currentValue");
   expect(topLevelKeys).not.toContain("approval");
-  // proposeMetaAction is the bare tool export (same reference as the skill's .tool)
-  expect(proposeMetaAction).toBe(proposeMetaActionSkill.tool);
 });
 
 // #767:以前这三条只断言文本含 `connect`,而「还没连过」与「连着但过期」两句都含 `connect`

@@ -89,5 +89,3 @@ export const seedancePromptSkill = defineOttoSkill({
     return { prompt, ...(notes.length > 0 ? { notes } : {}) };
   },
 });
-
-export const seedancePrompt = seedancePromptSkill.tool;

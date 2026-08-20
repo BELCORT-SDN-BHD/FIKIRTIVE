@@ -64,7 +64,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_e2e_test
       NEXT_TELEMETRY_DISABLED: "1"
       # 这里**没有**任何一个能花钱、能发信的凭据,而且不是靠自觉:e2e/global-setup.ts 在开浏览器
-      # 之前会检查环境里有没有 BYTEPLUS_API_KEY / FAL_KEY / STRIPE_SECRET_KEY / RESEND_API_KEY …,
+      # 之前会检查环境里有没有 BYTEPLUS_API_KEY / STRIPE_SECRET_KEY / ANTHROPIC_API_KEY / RESEND_API_KEY …,
       # 有就直接失败。一个每天自动跑的套件如果能真出片,那是每天在烧商家的余额。
     steps:
       - uses: actions/checkout@v4

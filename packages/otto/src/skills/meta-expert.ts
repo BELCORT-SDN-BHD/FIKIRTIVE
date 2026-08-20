@@ -113,5 +113,3 @@ export const metaExpertSkill = defineOttoSkill({
   parameters: metaExpertInput,
   execute: executeMetaExpert,
 });
-
-export const metaExpert = metaExpertSkill.tool;

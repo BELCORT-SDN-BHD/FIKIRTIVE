@@ -22,6 +22,18 @@
  *     round: hold = min(worst case, #543 cap, balance, merchant's spend cap), refused only below
  *     the minimum. Every bound can only make the hold SMALLER, so invariants 1–3 are untouched —
  *     settle still charges min(actual, hold) and a failure still refunds the whole hold.
+ * 10. (钱路 M1-b) `commitInSettleTx` puts the DELIVERY in the settle's own transaction: either the
+ *     merchant's goods and the charge both land, or neither does and the whole hold is refunded.
+ *     Callers that do not pass it are byte-identical to before. NOTE the one path it does NOT
+ *     cover, spelled out on the field itself: a `usageOnError` settle (invariant #2's truncated
+ *     turn) charges real tokens and never calls the hook — delivery-less but paid, by design.
+ * 11. (钱路 M1-c) `extraHoldInternal` / `extraSettleInternal` carry a NON-LLM leg of the same
+ *     charge — today only the research search fee (Founder 2026-07-03's 3× ruling, finally
+ *     implemented). It is the ONE bound that makes the hold BIGGER, and that is exactly why it
+ *     is safe: a settle-side addition without a matching hold would be clamped away by
+ *     settleCredits and the cost would silently land on us. Invariants 1–3 are untouched — a
+ *     failed call still refunds the WHOLE hold (search fee included), and settle is still
+ *     clamped to the held amount, so the pair can never over-charge.
  */
 import {
   CREDITS_PER_USD,
@@ -32,12 +44,16 @@ import {
 } from "@fikirtive/core";
 import {
   prisma,
+  Prisma,
   reserveCredits,
   reserveCreditsUpTo,
   settleCredits,
   refundReservation,
   assertWithinSpendCap,
 } from "@fikirtive/db";
+
+/** The transaction handle settle/refund already take — re-exported shape for `commitInSettleTx`. */
+type Tx = Prisma.TransactionClient;
 
 export type TokenUsage = {
   inputTokens: number;
@@ -147,6 +163,36 @@ export type LlmBudgetArgs = {
   reserveMinInternal?: number;
   usageOnError?: (e: unknown) => TokenUsage | null;
   /**
+   * 钱路 M1-b —— **交付与结算同一笔提交**。在 settle 的那一笔事务里运行,拿到的就是 settle
+   * 用的那个 `tx`。
+   *
+   * 为什么需要这个缝。此前「收钱」和「交货」是两笔独立事务:settle 先提交,交付的写在它后面
+   * 单独跑。中间任何一次失败 —— 进程被 SIGKILL、写库报错、约束冲突 —— 结果都是**钱收了、货
+   * 没了**,而且没有任何东西会回头把它补上(research 的报告写此前甚至是 try/catch 吞掉的
+   * best-effort)。审计把这一条坐实为 P1。
+   *
+   * 语义:钩子抛错 ⇒ 整笔事务回滚 ⇒ **SETTLE 那一行根本不存在**,预扣仍然挂着;
+   * `withLlmBudget` 随即把整笔预扣退掉,再把原错误抛给调用方。于是**在这个钩子跑得到的那条路
+   * 上**,终局只有两种:
+   *   ① 交付落库 且 结算落库(同一笔提交,要么都在要么都不在);
+   *   ② 什么都没交付 且 商家一分钱没花(全额退款)—— 引擎已经烧掉的 token 由 founder 承担,
+   *      与 gen/refgen 终态失败时「商家没拿到结果就不收钱」的口径逐字一致。
+   *
+   * **但这不是这个函数的全部终局(判官 P2-3,说清楚而不是否认)。** 还有第三种,它先于这个钩子
+   * 存在,这次也刻意没有改动 —— `usageOnError` 那条路(见下面 `fn` 的 catch):`fn` 抛了,而
+   * `usageOnError` 从错误里取回了**真实用量**(典型是 Otto 跑满步数的 MaxTurnsExceeded)。那里
+   * 按实际 token 结算,然后把错误抛出去 —— **这个钩子根本不会被调用**。于是:
+   *   ③ 什么都没交付,但商家**按真实烧掉的 token 付了钱**。
+   * 这是既有的定价决定(文件头不变量 #2/#3:截断的一轮按实际用量收费,绝不按预扣满额收费),
+   * 不是这条缝带来的缺口 —— 模型确实替商家干了那些活,只是没干完。要改它得单独立项,由 Founder
+   * 拍板;在此之前,谁读这段注释都必须知道它存在。
+   *
+   * 不传这个钩子的调用方,行为一个字节都没变(结算失败照旧原样抛出,不新增退款)。
+   *
+   * 钩子里只允许写「这一单的货」,不许再碰余额:钱的权威仍然只有 reserve/settle/refund。
+   */
+  commitInSettleTx?: (tx: Tx) => Promise<void>;
+  /**
    * A claim on the work, run AFTER the hold is taken and BEFORE the model is called (#524 r3).
    *
    * It exists so a caller holding a ONE-SHOT consent (ottoApprove's approval card) can consume it
@@ -191,6 +237,32 @@ export type LlmBudgetArgs = {
    * this field. Server-derived only; never request- or model-supplied.
    */
   capCostInternal?: number;
+  /**
+   * 钱路 M1-c — 这一次调用里 **LLM 之外**还要收的钱的**worst case**,单位 internal credits。
+   *
+   * 为什么需要它:深研的搜索此前是「free」的,而 free 的意思其实是**没人计价** ——
+   * Founder 2026-07-03 就裁过搜索按 3× 收费,代码里一个字都没有。要把那条裁决落地,这个
+   * wrapper 必须能持住一笔不是从 token 数算出来的钱;否则 settle 那边加了钱、hold 这边没加,
+   * `settleCredits` 会把它 clamp 掉,商家一分没多付,成本全由我们自己吃 —— 那不叫计价,
+   * 那叫换个地方漏。
+   *
+   * 语义与 #543 的 cap 相反:cap 只能把 hold 变**小**,这个只能把 hold 变**大**,而且必须
+   * 大到足够覆盖 `extraSettleInternal` 可能返回的最大值(深研 = 档位的 maxSearches × 单次费率)。
+   * 非正整数一律忽略 —— 坏值的方向是「不额外持有」,于是最坏情况退回到本次改动之前的行为。
+   * 服务端组合期数据,永不来自请求或模型。
+   */
+  extraHoldInternal?: number;
+  /**
+   * 钱路 M1-c — 这一次调用里 LLM 之外**实际**发生的钱,单位 internal credits。在 `fn` 之后读
+   * (搜索次数只有跑完才知道),加进 settle。
+   *
+   * 三条不变量它一条都不动:
+   *  · 只在**已经 settle** 的那条路上生效 —— fn 抛错且没有可用 usage 时走的仍是**全额退款**,
+   *    搜索费一起退。跑失败的一轮不向商家收钱,这条比追回几分钱的搜索成本重要。
+   *  · settle 仍然被 `settleCredits` clamp 到 ≤ 持有额,所以它永远不可能超收。
+   *  · 返回非有限值/负数一律按 0 —— 计数器坏掉时不收费,不收一个编出来的数。
+   */
+  extraSettleInternal?: () => number;
 };
 
 /** Thrown when `afterReserve` itself FAILED (#524 r5, judge r4 P1-A'①). The hold was taken and
@@ -235,7 +307,31 @@ export function llmHoldInternal(args: LlmBudgetArgs): number {
   const margin = args.margin ?? ottoLlmMargin();
   const worstCase = turnBudgetInternal(prices, margin, args.maxSteps ?? 1);
   const cap = args.reserveCapInternal;
-  return typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
+  const llm = typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
+  // 钱路 M1-c:非 LLM 的那一笔(现役唯一用户 = 深研的搜索费)加在 cap **外面**。cap 是
+  // #543 给对话轮的 LLM hold 定的天花板,它管的是 token 那条腿;一笔确定会被 settle 的
+  // 非 token 费用如果被同一个 cap 压住,settle 就会 clamp 掉它 —— 收费函数说收了,账本没收。
+  return llm + extraHoldOf(args);
+}
+
+/** `extraHoldInternal` 的取值规则:正整数才算数,其余一律 0(坏值 = 不额外持有)。 */
+function extraHoldOf(args: LlmBudgetArgs): number {
+  const extra = args.extraHoldInternal;
+  return typeof extra === "number" && Number.isInteger(extra) && extra >= 1 ? extra : 0;
+}
+
+/** `extraSettleInternal` 的取值规则:非负有限数向上取整,其余(含抛错)一律 0。
+ *  一个坏掉的计数器不许变成一笔编出来的收费。 */
+function extraSettleOf(args: LlmBudgetArgs): number {
+  if (!args.extraSettleInternal) return 0;
+  let v: number;
+  try {
+    v = Number(args.extraSettleInternal());
+  } catch (e) {
+    console.warn("[withLlmBudget] extraSettleInternal threw; charging 0 for the non-LLM leg.", e);
+    return 0;
+  }
+  return Number.isFinite(v) && v > 0 ? Math.ceil(v) : 0;
 }
 
 /**
@@ -253,7 +349,14 @@ export async function withLlmBudget<T>(
 ): Promise<T> {
   // Invariant #4: mock/free path — no metering at all.
   if (!args.paid) {
-    return (await fn()).result;
+    const out = await fn();
+    // 钱路 M1-b:免费路上没有 settle 可言,但**交付仍然必须发生**。少了这三行,一个把交付
+    // 托付给这个钩子的调用方在 paid:false 上会安静地什么都不交付 —— 正是这张票要消灭的那类
+    // 静默失败,只不过换了个入口。交付照旧在一笔事务里(要么整份货都在,要么一点都不在);
+    // 这里没有预扣,所以抛错就是抛错,没有可退的钱。
+    const freeCommit = args.commitInSettleTx;
+    if (freeCommit) await prisma.$transaction((tx) => freeCommit(tx));
+    return out.result;
   }
 
   const registeredPrices = llmPricesFor(args.model);
@@ -345,7 +448,8 @@ export async function withLlmBudget<T>(
   } catch (e) {
     const errUsage = args.usageOnError?.(e) ?? null;
     if (errUsage) {
-      const actualInternal = actualCostInternal(errUsage, prices, margin);
+      // 优雅截断(MaxTurnsExceeded)= 这一轮**真的跑了**:token 照结,搜索费一并结。
+      const actualInternal = actualCostInternal(errUsage, prices, margin) + extraSettleOf(args);
       await prisma.$transaction((tx) =>
         settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal }),
       );
@@ -367,15 +471,30 @@ export async function withLlmBudget<T>(
   // Invariant #2: settle actual cost (≤ reserved); settleCredits refunds the remainder.
   let actualInternal: number;
   if (out.usage) {
-    actualInternal = actualCostInternal(out.usage, prices, margin);
+    // 钱路 M1-c:token 那一笔 + 非 LLM 那一笔(现役 = 搜索 3×)。settleCredits 仍然 clamp
+    // 到 ≤ 持有额,所以加法不可能变成超收;而 hold 侧已经把 worst case 一起持住了。
+    actualInternal = actualCostInternal(out.usage, prices, margin) + extraSettleOf(args);
   } else {
-    // No usage info → charge the full reserve (no refund).
+    // No usage info → charge the full reserve (no refund). 全额里已经含了 extra hold。
     actualInternal = reserve;
   }
 
-  await prisma.$transaction((tx) =>
-    settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal }),
-  );
+  // 钱路 M1-b —— 结算与交付同一笔提交(见 `commitInSettleTx` 的字段说明)。
+  // 没有钩子的调用方走的还是原来那一行:同样的事务、同样的抛法、不新增任何退款。
+  const commit = args.commitInSettleTx;
+  try {
+    await prisma.$transaction(async (tx) => {
+      await settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal });
+      if (commit) await commit(tx);
+    });
+  } catch (e) {
+    if (!commit) throw e; // 零行为变更:没托付交付给我们的调用方,原样抛出
+    // 事务已经整笔回滚 ⇒ SETTLE 那一行不存在 ⇒ 预扣还挂着。把它全额退掉,商家才不会为一件
+    // 没交付的东西付钱。refundReservation 自带 finalizer-once 唯一索引:万一另一条路径真的
+    // 已经结算成功,这里拿到 "already-settled" 而不会多退一分钱。
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: args.orgId, refId: args.refId }));
+    throw e;
+  }
 
   return out.result;
 }

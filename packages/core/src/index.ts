@@ -98,6 +98,7 @@ export {
 } from "./video-actions.js";
 export * from "./otto-budget.js";
 export * from "./llm-prices.js";
+export * from "./pricing-config.js";
 export { GOAL_PRESETS, isGoalKey, type GoalKey } from "./goals.js";
 export * from "./model-config.js";
 export {

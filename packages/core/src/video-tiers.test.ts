@@ -23,6 +23,7 @@ import {
 } from "./gen.js";
 import { pricedGenCredits, genSpentUsd, INTERNAL_PER_DISPLAY, CREDITS_PER_USD, VIDEO_CREDITS_BY_RESOLUTION, REFERENCE_VIDEO_CREDITS, SEEDANCE_DISPLAY_CREDITS_PER_10S, seedanceDisplayCredits } from "./spend.js";
 import { MARGIN_FLOOR, marginTruthTable, acceptedExceptionFor, BELOW_FLOOR_FOUNDER_ACCEPTED } from "./margin-truth.js";
+import { OTTO_CONVERSATION_TURN_MARGIN } from "./otto-budget.js";
 
 const MODEL: GenVideoModel = "seedance-2-mini";
 
@@ -297,10 +298,45 @@ describe("#645 T4 毛利真值表(2 分辨率 × 12 时长 = 24 行,穷举)", ()
     }
   });
 
-  it("#769 具名豁免名单已清空:没有一档还需要豁免", () => {
+  it("具名豁免名单里没有任何**视频/生成**档 —— 唯一一条是聊天(钱路 M1-c)", () => {
     // 名单的第 2 条规则:「在名单上却已经不跌破了 → 红」。三条 #645 豁免(720p 5/10/15s)
     // 在 mini 成本下全部回到地板之上,所以必须清掉,留着就是一条不再成立的豁免挂在账上。
-    expect(BELOW_FLOOR_FOUNDER_ACCEPTED).toEqual([]);
+    // 生成侧因此必须是**零豁免**:任何一档视频/图片重新出现在这张名单上,都是定价倒退。
+    expect(BELOW_FLOOR_FOUNDER_ACCEPTED.filter((e) => !e.tier.startsWith("otto:"))).toEqual([]);
+
+    // 钱路 M1-c / Founder 2026-08-18 裁决 9:名单上**有且只有**聊天一条,而且它的字段齐全。
+    // 「存在」与「只有它」两句都必须钉住 —— 少了前一句,豁免可以被人悄悄删掉,聊天就又回到
+    // 闸外(那正是这次要修的病);少了后一句,这条豁免会变成别人搭便车的口子。
+    expect(BELOW_FLOOR_FOUNDER_ACCEPTED.map((e) => e.tier)).toEqual(["otto:chat"]);
+    const chat = BELOW_FLOOR_FOUNDER_ACCEPTED[0]!;
+    expect(chat.ruledOn).toBe("2026-08-18");
+    expect(chat.reason).toContain("聊天是销售员、生成是商品");
+    expect(chat.source).toContain("/pull/970");
+    // 留档的毛利率必须与**现算**的一致(1 − 1/1.05 = 4.76%),否则就是一条抄错的豁免。
+    expect(chat.margin).toBeCloseTo(1 - 1 / OTTO_CONVERSATION_TURN_MARGIN, 9);
+    expect(chat.margin).toBeLessThan(MARGIN_FLOOR);
+  });
+
+  it("聊天豁免的是**地板**,不是「收费 > 成本」—— 亏着卖照旧禁止", () => {
+    // 豁免有边界:1.05 > 1,所以聊天仍然赚钱,只是赚得薄。哪天有人把倍数调到 ≤1,
+    // R1(收费 ≤ 成本 → 恒红)会当场拦住它,名单救不了 —— 这一条把那个边界钉死。
+    const chatRow = marginTruthTable().find((r) => r.id === "otto:chat")!;
+    expect(OTTO_CONVERSATION_TURN_MARGIN).toBeGreaterThan(1);
+    expect(chatRow.grossUsd).toBeGreaterThan(0);
+    expect(chatRow.clearsFloor).toBe(false);
+  });
+
+  it("深研两条腿都清 45% 地板(裁决 9b:research 纳入毛利闸,搜索按 3× 计价)", () => {
+    const llm = marginTruthTable().find((r) => r.id === "otto:research:llm")!;
+    const search = marginTruthTable().find((r) => r.id === "otto:research:search")!;
+    // LLM 腿:默认 2.0× ⇒ 50%,清地板且不在任何豁免名单上。
+    expect(llm.margin).toBeCloseTo(0.5, 9);
+    expect(llm.clearsFloor).toBe(true);
+    expect(acceptedExceptionFor("otto:research:llm")).toBeUndefined();
+    // 搜索腿:Founder 2026-07-03 裁的 3× ⇒ 66.7%,清地板。
+    expect(search.margin).toBeCloseTo(2 / 3, 9);
+    expect(search.clearsFloor).toBe(true);
+    expect(acceptedExceptionFor("otto:research:search")).toBeUndefined();
   });
 
   it("跌破地板的档位 ⇔ 具名豁免名单,两边完全重合(新的违规藏不住)", () => {

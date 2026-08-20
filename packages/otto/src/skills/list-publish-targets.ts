@@ -75,5 +75,3 @@ export const listPublishTargetsSkill = defineOttoSkill({
   parameters: params,
   execute: executeListPublishTargets,
 });
-
-export const listPublishTargets = listPublishTargetsSkill.tool;
