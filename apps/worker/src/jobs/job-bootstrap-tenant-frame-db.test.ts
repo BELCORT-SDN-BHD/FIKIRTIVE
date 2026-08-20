@@ -100,6 +100,12 @@ afterAll(async () => {
   await prisma.scheduledPost.deleteMany({ where: { ownerId: { in: [A, B] } } });
   // 哈希对不上的那条用例会落一行 asset.hash_mismatch 审计事件
   await prisma.actionEvent.deleteMany({ where: { ownerId: { in: [A, B] } } });
+  // #784 的素材理解扫描器是**跨租户**的:同一个库上并行跑的 understand-db.test.ts 调
+  // scanAssetsNeedingUnderstanding() 时,会把这个文件刚建的素材也一并认领(建出
+  // AssetUnderstanding 行)。那一行的外键 AssetUnderstanding_assetId_ownerId_fkey 会挡住
+  // 下面这笔 asset 删除,于是这个文件会随并行调度的变化随机变红 —— 与被测行为无关。
+  // 清掉自己名下的认领行,清理顺序才和真实的外键图一致。
+  await prisma.assetUnderstanding.deleteMany({ where: { ownerId: { in: [A, B] } } });
   await prisma.asset.deleteMany({ where: { ownerId: { in: [A, B] } } });
   await prisma.organization.deleteMany({ where: { id: { in: [A, B] } } });
 });

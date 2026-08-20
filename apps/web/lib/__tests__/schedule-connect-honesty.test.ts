@@ -1285,8 +1285,12 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
     expect(actions).toContain("scheduleApproveBlockers");
 
     // 可连渠道名单:Connections 不再自带一份,三处入口读同一处。
+    // W2-4(#989):Connections 改成按 CHANNEL_META 逐行渲染之后,它读的不再是那个 Set 本身,
+    // 而是同一个权威模块里以它为基础的 `publishingChannelRows()`(内部走 isConnectableChannel)。
+    // 钉的规则没变 —— 「读共享权威,不自带一份」—— 所以这里接受同一族里的任一个符号,
+    // 与下面 sections 那一行本来就是同一种写法。
     expect(connections).not.toMatch(/const\s+UNAVAILABLE_PUBLISHING_CHANNEL_IDS\s*=/);
-    expect(connections).toContain("UNAVAILABLE_PUBLISHING_CHANNEL_IDS");
+    expect(connections).toMatch(/UNAVAILABLE_PUBLISHING_CHANNEL_IDS|publishingChannelRows|isConnectableChannel/);
     expect(schedule).toContain("CONNECTABLE_CHANNEL_META");
     expect(sections).toMatch(/isConnectableChannel|CONNECTABLE_CHANNEL/);
   });

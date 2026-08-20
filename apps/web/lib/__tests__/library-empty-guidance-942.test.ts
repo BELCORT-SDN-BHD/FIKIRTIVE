@@ -153,8 +153,13 @@ describe("#942 an empty Library guides the merchant instead of dead-ending", () 
     });
 
     // Same dialog the header's own "Add" button opens — not a second upload path.
-    const dialog = document.querySelector('[aria-label="Add asset"]');
+    // W2-1: it is `components/ui/dialog` now, so its accessible name comes from the
+    // DialogTitle it is labelled by rather than a hand-written aria-label. Assert on
+    // role + the name the merchant hears, which is what the aria-label stood for.
+    const dialog = document.querySelector('[role="dialog"]');
     expect(dialog, "clicking the CTA did not open the real upload dialog").toBeTruthy();
+    const titleId = dialog!.getAttribute("aria-labelledby");
+    expect(document.getElementById(titleId ?? "")?.textContent).toBe("Add to Library");
     expect(dialog!.textContent).toContain("Add to Library");
   });
 

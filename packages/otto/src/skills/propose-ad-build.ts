@@ -137,5 +137,3 @@ export const proposeAdBuildSkill = defineOttoSkill({
   parameters: proposeAdBuildInput,
   execute: executeProposeAdBuild,
 });
-
-export const proposeAdBuild = proposeAdBuildSkill.tool;

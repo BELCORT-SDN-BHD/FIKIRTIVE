@@ -219,5 +219,3 @@ export const manageCanvasSkill = defineOttoSkill({
   parameters: params,
   execute: executeManageCanvas,
 });
-
-export const manageCanvas = manageCanvasSkill.tool;

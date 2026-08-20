@@ -38,5 +38,3 @@ export const cancelScheduledPostSkill = defineOttoSkill({
   parameters: params,
   execute: executeCancelScheduledPost,
 });
-
-export const cancelScheduledPost = cancelScheduledPostSkill.tool;

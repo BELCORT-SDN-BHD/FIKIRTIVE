@@ -60,5 +60,3 @@ export const ingestProductSkill = defineOttoSkill({
   parameters: ingestProductInput,
   execute: executeIngestProduct,
 });
-
-export const ingestProduct = ingestProductSkill.tool;
