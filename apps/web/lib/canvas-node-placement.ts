@@ -1,6 +1,6 @@
 import "server-only";
 
-import { prisma, canvasBoardPlacementLockKey, type Prisma } from "@fikirtive/db";
+import { prisma, canvasBoardPlacementLockKey, canvasJobPlacementLockKey, type Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { freeCanvasRect, type CanvasRect } from "@fikirtive/core/canvas-layout";
 
@@ -44,7 +44,21 @@ export type CanvasJobPlacementResult =
   | { suppressed: true; scope: "job" | "generation" }
   | { error: string };
 
-const NODE_SELECT = {
+/**
+ * THE COLUMNS A CANVAS CARD IS READ WITH — one list, for every read that returns a card.
+ *
+ * It used to be written out three times (here, `canvas-actions.ts`, `otto-canvas-bridge.ts`),
+ * byte-identical but with nothing holding them together. Three hand-kept copies of "what a card
+ * is" is how a column gets added to the board read and forgotten in the bridge read, and then the
+ * same card carries a field on one surface and `undefined` on the other — for the merchant, a
+ * caption or a batch position that exists after a reload and not before it. Every column here is
+ * consumed by `CanvasNodeDTO`; adding one to the DTO now means adding it in exactly one place.
+ *
+ * NOT the same list as `CARD_SELECT` in `packages/db/src/canvas-settlement.ts`, on purpose — see
+ * the note there. That one feeds the pure settlement projection, which decides where cards go and
+ * has no notion of a card's `text`; this one is the shape a surface hands back to the merchant.
+ */
+export const CANVAS_NODE_SELECT = {
   id: true,
   type: true,
   x: true,
@@ -62,11 +76,6 @@ const NODE_SELECT = {
   madeFromNodeId: true,
   threadId: true,
 } as const;
-
-/** Every writer for one paid job shares this lock, regardless of pending/primary/sibling role. */
-export function canvasJobPlacementLockKey(ownerId: string, projectId: string, genJobId: string): string {
-  return `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`;
-}
 
 /**
  * WHERE A NEW CARD ACTUALLY LANDS (#549). Call this in the transaction that creates it.
@@ -158,7 +167,7 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
           status: { not: "deleted" },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        select: NODE_SELECT,
+        select: CANVAS_NODE_SELECT,
       });
       if (primary && (primary.generationId === null || primary.generationId === generationId)) {
         existing = primary;
@@ -174,7 +183,7 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
           ...(generationId ? { generationId } : {}),
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        select: NODE_SELECT,
+        select: CANVAS_NODE_SELECT,
       });
     }
 
@@ -288,7 +297,7 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
           data,
         });
         const node = written.count === 1
-          ? await tx.canvasNode.findFirst({ where: { id: existing.id, ownerId: input.ownerId }, select: NODE_SELECT })
+          ? await tx.canvasNode.findFirst({ where: { id: existing.id, ownerId: input.ownerId }, select: CANVAS_NODE_SELECT })
           : null;
         // Nothing matched (or the row went away): the card was tombstoned between the read above
         // and this write, and a deletion is a durable owner instruction — report it as suppressed
@@ -328,7 +337,7 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
         madeFromNodeId,
         threadId,
       },
-      select: NODE_SELECT,
+      select: CANVAS_NODE_SELECT,
     });
     return { inserted: true, node };
   });

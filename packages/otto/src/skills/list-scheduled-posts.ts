@@ -42,5 +42,3 @@ export const listScheduledPostsSkill = defineOttoSkill({
   parameters: params,
   execute: executeListScheduledPosts,
 });
-
-export const listScheduledPosts = listScheduledPostsSkill.tool;

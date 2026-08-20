@@ -111,5 +111,3 @@ export const manageEntitiesSkill = defineOttoSkill({
   parameters: params,
   execute: executeManageEntities,
 });
-
-export const manageEntities = manageEntitiesSkill.tool;

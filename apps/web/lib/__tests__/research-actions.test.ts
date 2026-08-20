@@ -86,7 +86,10 @@ vi.mock("@fikirtive/otto", () => ({
     standard: { label: "Standard", maxSearches: 12, maxPages: 20, maxSteps: 12, estimatedCredits: 11 },
     deep: { label: "Deep", maxSearches: 25, maxPages: 40, maxSteps: 24, estimatedCredits: 22 },
   },
-  researchTierBudgetInternal: (maxSteps: number) => maxSteps * 9,
+  // 钱路 M1-c:预检的预算是**两条腿** —— LLM(maxSteps × 9)+ 搜索(maxSearches × 3)。
+  // mock 刻意照着真函数的两条腿建模,而不是继续只算 LLM:少一条腿的 mock 会让下面的
+  // 余额门用例在一个「比生产便宜」的世界里跑,那正是这张票要杀的那种假绿。
+  researchTierBudgetInternal: (maxSteps: number, maxSearches: number) => maxSteps * 9 + maxSearches * 3,
 }));
 
 import { approveResearch } from "../research-actions";
@@ -234,7 +237,8 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
   });
 
   it("余额低于 INTERNAL 预算 → insufficient_credits,NOT 建 job / NOT enqueue / NOT 读账后写", async () => {
-    const deepInternal = researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps); // = 216 internal
+    // 291 internal = LLM 24×9 + 搜索 25×3(钱路 M1-c 起预检含搜索腿)
+    const deepInternal = researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps, RESEARCH_TIERS.deep.maxSearches);
     wireCard(card({ tier: "deep" }));
     mockCreditFindUnique.mockResolvedValue({ balance: deepInternal - 1 }); // just below the worker reserve
     const res = await approveResearch({ cardId: "card-1" });
@@ -245,7 +249,7 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
   });
 
   it("余额 ≥ INTERNAL 预算 → 放行(建 job)", async () => {
-    const deepInternal = researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps);
+    const deepInternal = researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps, RESEARCH_TIERS.deep.maxSearches);
     wireCard(card({ tier: "deep" }));
     mockCreditFindUnique.mockResolvedValue({ balance: deepInternal }); // exactly the reserve → allowed
     const res = await approveResearch({ cardId: "card-1" });
@@ -270,7 +274,7 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
   it("余额高于显示预估但低于内部预算 → 仍拒(锁死单位不匹配 bug)", async () => {
     const tier = "deep" as const;
     const displayed = RESEARCH_TIERS[tier].estimatedCredits; // 22 (displayed units)
-    const internal = researchTierBudgetInternal(RESEARCH_TIERS[tier].maxSteps); // 216 (internal units)
+    const internal = researchTierBudgetInternal(RESEARCH_TIERS[tier].maxSteps, RESEARCH_TIERS[tier].maxSearches); // 291 (internal units)
     expect(displayed).toBeLessThan(internal); // sanity: the two units genuinely differ
     const balance = displayed + 1; // 23 — clears the OLD displayed gate, fails the NEW internal one
     expect(balance).toBeLessThan(internal);

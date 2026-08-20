@@ -72,5 +72,3 @@ export const manageBrandMemorySkill = defineOttoSkill({
   parameters: params,
   execute: executeManageBrandMemory,
 });
-
-export const manageBrandMemory = manageBrandMemorySkill.tool;

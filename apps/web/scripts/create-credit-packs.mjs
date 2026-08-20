@@ -8,13 +8,13 @@
 import { interlock } from "../../../scripts/tools/_interlock.mjs";
 interlock({ spends: "Stripe API writes — creates Products/Prices; with a LIVE key (+ALLOW_LIVE=1) these are real live billing objects" });
 import Stripe from "stripe";
+// 钱路 M1-c:包表搬去 @fikirtive/core 的集中定价配置,这里**引用**而不是再存一份。
+// 以前这三行数字只活在这个脚本里,webhook 入账时没有任何东西能拿它核对金额;
+// 两份副本正是「说的」与「做的」分家的老路。core 必须先 build(pnpm --filter @fikirtive/core build)。
+import { CREDIT_PACKS, CREDIT_PACK_CURRENCY } from "@fikirtive/core";
 
-const CURRENCY = "myr";
-const PACKS = [
-  { name: "Starter — 50 credits", amountSen: 2500, credits: 50 },
-  { name: "Standard — 220 credits", amountSen: 10000, credits: 220 },
-  { name: "Pro — 600 credits", amountSen: 25000, credits: 600 },
-];
+const CURRENCY = CREDIT_PACK_CURRENCY;
+const PACKS = CREDIT_PACKS.map((p) => ({ name: p.name, amountSen: p.amountMinor, credits: p.credits }));
 
 const key = process.env.STRIPE_SECRET_KEY;
 if (!key) {

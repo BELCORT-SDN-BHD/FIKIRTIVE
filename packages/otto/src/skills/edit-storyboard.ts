@@ -186,5 +186,3 @@ export const editStoryboardSkill = defineOttoSkill({
   parameters: editStoryboardInput,
   execute: executeEditStoryboard,
 });
-
-export const editStoryboard = editStoryboardSkill.tool;

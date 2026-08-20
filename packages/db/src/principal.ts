@@ -14,10 +14,12 @@
  *  - It is reachable ONLY through the `@fikirtive/db/principal` subpath, never the package
  *    barrel: 79 test files do factory-style `vi.mock("@fikirtive/db", …)`, which replaces
  *    the whole module — they would silently lose these exports.
- *  - `packages/db` has zero workspace dependencies; this file keeps it that way (pure TS +
- *    node:async_hooks, no Prisma import).
+ *  - This file stays free of RUNTIME dependencies (pure TS + node:async_hooks, no Prisma import).
+ *    The one `@fikirtive/core` import below is `import type`, so it is erased at compile time and
+ *    the emitted module still pulls in nothing — the property this bullet exists to protect.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { OrgRole } from "@fikirtive/core/org-roles";
 
 /**
  * The CLOSED vocabulary of system-frame names (design contract §4) — do not invent a third
@@ -143,8 +145,17 @@ export type UserIdentity = {
   subjectEmail: string;
   /** The org being acted upon (the subject org). */
   ownerId: string;
-  /** Compatibility `Membership.role` in `ownerId`. Authorization uses MembershipRole. */
-  orgRole: "owner" | "admin" | "member" | "creator" | "approver" | null;
+  /**
+   * Compatibility `Membership.role` in `ownerId`. Authorization uses MembershipRole.
+   *
+   * `OrgRole` comes from `packages/core/src/org-roles.ts`, which the docblock above already names
+   * as the authority for this axis. It used to be spelled out here as a literal union that
+   * happened to list the same five names — two copies of a closed vocabulary, and the comment
+   * pointing at the other one. Adding a sixth role in core would have left this frame silently
+   * unable to carry it, and a role a frame cannot carry reads as `null`: "this frame resolved no
+   * membership", which is a different and wrong thing to tell every reader downstream.
+   */
+  orgRole: OrgRole | null;
   /**
    * `Membership.id` of the acting member in `ownerId` — the same id the CRM gateways
    * already hand their services, carried here so a reader needs no second query.

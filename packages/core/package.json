@@ -100,6 +100,10 @@
       "types": "./dist/spend.d.ts",
       "default": "./dist/spend.js"
     },
+    "./storage-key": {
+      "types": "./dist/storage-key.d.ts",
+      "default": "./dist/storage-key.js"
+    },
     "./templates": {
       "types": "./dist/templates.d.ts",
       "default": "./dist/templates.js"

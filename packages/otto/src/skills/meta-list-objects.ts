@@ -59,5 +59,3 @@ export const metaListObjectsSkill = defineOttoSkill({
   parameters: metaListObjectsInput,
   execute: executeMetaListObjects,
 });
-
-export const metaListObjects = metaListObjectsSkill.tool;

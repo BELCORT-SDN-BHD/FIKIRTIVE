@@ -741,10 +741,6 @@ export function OttoChatStream({
     <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`
         @keyframes otto-caret-blink { 50% { opacity: 0; } }
-        @keyframes otto-shimmer {
-          0%   { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
-        }
         @keyframes otto-msg-enter {
           from { opacity: 0; transform: translateY(6px); }
           to   { opacity: 1; transform: translateY(0); }
@@ -754,7 +750,6 @@ export function OttoChatStream({
           to   { opacity: 1; }
         }
         @media (prefers-reduced-motion: reduce) {
-          @keyframes otto-shimmer      { from {} to {} }
           @keyframes otto-msg-enter    { from {} to {} }
           @keyframes otto-status-fadein { from {} to {} }
         }
@@ -1235,13 +1230,12 @@ export function OttoChatStream({
             </div>
           )}
 
-          {/* Live status line: shows "Otto is thinking…" or the planning text while
-              in-flight; hides automatically once isBusy is false (replaces the
-              static "Otto is thinking…" block from Task 3). */}
+          {/* Live status line: narrates the turn's current phase in one short sentence
+              (#996 — copy lives in lib/otto-turn-narration.ts); hides automatically once
+              the first token arrives or isBusy goes false. */}
           <StatusLine
             isBusy={isBusy}
             liveStatus={liveStatus}
-            chatStatus={status}
             hasAssistantText={hasAssistantText}
           />
 

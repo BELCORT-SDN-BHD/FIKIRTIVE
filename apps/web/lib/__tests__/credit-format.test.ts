@@ -42,6 +42,17 @@ describe("creditsLabel", () => {
     expect(creditsLabel(20)).toBe("20 credits");
     expect(creditsLabel(12345)).toBe("12,345 credits");
   });
+
+  // #1039 — singular/plural used to judge the RAW value while the number printed was the
+  // ROUNDED one, so a balance in [0.95, 1.05) that wasn't exactly 1 printed "1 credits": the
+  // digit said one, the word said many. Fixed to judge the same rounded value it prints.
+  it("judges singular/plural off the PRINTED amount, not the raw balance", () => {
+    expect(creditsLabel(0.95)).toBe("1 credit"); // rounds to "1" — used to print "1 credits"
+    expect(creditsLabel(1.04)).toBe("1 credit"); // same rounding, other side of 1
+    expect(creditsLabel(1.05)).toBe("1.1 credits"); // rounds past 1 — correctly plural
+    expect(creditsLabel(0.04)).toBe("0 credits"); // rounds down to "0"
+    expect(creditsLabel(999.95)).toBe("1,000 credits"); // rounds up into the integer branch
+  });
 });
 
 // #524 — the sentence a merchant reads when their OWN cap stopped an action. The whole point

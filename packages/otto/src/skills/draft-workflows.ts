@@ -200,5 +200,3 @@ export const draftWorkflowsSkill = defineOttoSkill({
   parameters: draftWorkflowsParams,
   execute: executeDraftWorkflows,
 });
-
-export const draftWorkflows = draftWorkflowsSkill.tool;

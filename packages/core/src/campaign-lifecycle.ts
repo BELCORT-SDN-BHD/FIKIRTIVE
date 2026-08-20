@@ -25,7 +25,7 @@ export const CAMPAIGN_STATUS_LABELS: Record<CampaignStatus, string> = {
   DRAFT: "Draft",
   ACTIVE: "Active",
   DONE: "Done",
-  CANCELLED: "Cancelled",
+  CANCELLED: "Canceled",
 };
 
 /** Badge colour per status, shared by the list card and the detail header. The list already

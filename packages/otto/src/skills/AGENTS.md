@@ -17,7 +17,9 @@ External **reads** (web lookups) are NOT gated; external **writes** (post/send/p
    call `fetch()`/Prisma-for-external/fal directly — only injected `ctx` ports.
 2. **Inject the real port** in the web/worker `buildOttoContext` (API key, rate-limit, logging).
 3. **Write the skill**: copy `_template.ts` → `skills/<name>.ts`, fill the 3 fields + `execute`.
-   Add `export const <name> = <name>Skill.tool;` for the bare-tool export.
+   Export `<name>Skill` only — do NOT add a bare `export const <name> = <name>Skill.tool;`.
+   Nothing imports it (removed repo-wide, C2b); the registry and every caller take the Skill
+   object and reach `.tool` when they need the raw tool.
 4. **Register**: add `import { <name>Skill }` + an entry in `../registry.ts` `allSkills`.
 5. **Test**: a gate assertion in `migration.test.ts` (or a `<name>.test.ts`) + a port-required guard.
    Then regenerate the catalog: `pnpm --filter @fikirtive/otto run catalog`.

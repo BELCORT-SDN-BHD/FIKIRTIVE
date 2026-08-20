@@ -54,6 +54,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+// SUBPATHS, not the @fikirtive/core barrel: this is a client component (client-core-imports.test).
+// All three of these used to be private copies in this file — the founder org id, the
+// internal→displayed credit divisor typed out as `/ 10`, and a fifth version of the humanising
+// rule. A money divisor kept beside the money it converts is the copy that costs the most.
+import { FOUNDER_OWNER_ID } from "@fikirtive/core/storage-key";
+import { displayCredits } from "@fikirtive/core/spend";
+import { humanizeToken as humanizeCode } from "@/lib/machine-token";
 
 function modelLabel(model: { id: string; kind: "image" | "video" }): string {
   return /seedance|seedream/i.test(model.id)
@@ -73,8 +80,6 @@ type Props = {
   selfEmail: string;
 };
 
-const FOUNDER_OWNER_ID = "founder";
-const displayCredits = (internal: number) => internal / 10;
 const CONFIDENCE_LEVELS = ["high", "medium", "low", "untested"] as const;
 
 // ── #755 judge r1, P2-3: plain words instead of internal codes ────────────────────────────────
@@ -92,12 +97,6 @@ const ROLE_LABELS: Record<string, string> = {
   moderator: "Moderator",
   viewer: "Viewer",
 };
-
-/** Sentence-case a dotted/hyphenated code so an unmapped value is still readable, never raw. */
-function humanizeCode(code: string): string {
-  const words = code.replace(/[.\-_]+/g, " ").trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
 
 const roleLabel = (role: string) => ROLE_LABELS[role] ?? humanizeCode(role);
 

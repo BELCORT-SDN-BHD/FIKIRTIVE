@@ -151,7 +151,7 @@ describe("② 六态卡面:排队 / 进行中 / 成功 / 失败 / 已取消 / �
     ["queued", "In the queue…"],
     ["generating", "Generating…"],
     ["failed", "That didn't finish"],
-    ["cancelled", "Cancelled"],
+    ["cancelled", "Canceled"],
     ["unknown", "Status unknown"],
   ])("图片卡在 %s 说的是自己的那句话", async (status, expected) => {
     const text = await renderFace(ImageNode, status);
@@ -204,8 +204,8 @@ describe("② 六态卡面:排队 / 进行中 / 成功 / 失败 / 已取消 / �
       } as never));
     });
     const text = container!.textContent ?? "";
-    expect(text).toContain("Cancelled");
-    expect(text).toContain("This generation was cancelled.");
+    expect(text).toContain("Canceled");
+    expect(text).toContain("This generation was canceled.");
     expect(text).not.toContain("That didn't finish");
     expect(text).not.toContain("Try again");
     expect(text).not.toContain("Check again");
@@ -228,7 +228,7 @@ describe("② 六态卡面:排队 / 进行中 / 成功 / 失败 / 已取消 / �
   });
 
   it("视频卡认得同一套词", async () => {
-    expect(await renderFace(VideoNode, "cancelled")).toContain("Cancelled");
+    expect(await renderFace(VideoNode, "cancelled")).toContain("Canceled");
     expect(await renderFace(VideoNode, "queued")).toContain("In the queue…");
     expect(await renderFace(VideoNode, "generating")).toContain("Rendering…");
     expect(await renderFace(VideoNode, "unknown")).toContain("Status unknown");

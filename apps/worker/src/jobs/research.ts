@@ -15,8 +15,11 @@
  *  2. No double-reserve on pg-boss retry: a status CAS (QUEUED→RUNNING via updateMany) makes this
  *     handler a NO-OP on any redelivery/duplicate (count===0 → return before any spend). The queue
  *     is also retryLimit:0, so a failed run never auto-retries. Belt + suspenders.
- *  3. searchSources / readSource are FREE reads (no credit calls). The only cost is LLM tokens,
- *     metered by the wrapper. Truncation (MaxTurnsExceeded) settles ACTUAL usage, never over-charges.
+ *  3. The run has TWO costs, both settled by the same wrapper, neither charged inside the agent:
+ *     LLM tokens, and the SEARCH fee (钱路 M1-c — Founder 2026-07-03's 3× ruling; `readSource` is
+ *     still genuinely free). The search leg rides `extraHoldInternal` / `extraSettleInternal`:
+ *     hold = this tier's maxSearches × the rate, settle = `ctx.searchesUsed` × the rate. Truncation
+ *     (MaxTurnsExceeded) settles ACTUAL usage of BOTH legs, never over-charges.
  *  4. A failure BEFORE spend (e.g. insufficient balance) charges $0 — withLlmBudget refunds.
  *  4b. (钱路 M1-b) DELIVERY AND SETTLE COMMIT TOGETHER. The report, the card's "done" and the
  *     job's DONE are written inside withLlmBudget's settle transaction (`commitInSettleTx` →
@@ -39,6 +42,7 @@ import type { Prisma } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   RESEARCH_TIERS,
+  researchTierSearchBudgetInternal,
   researchAgent,
   withLlmBudget,
   ottoModelRuntime,
@@ -53,6 +57,7 @@ import {
   braveSearch,
   searchWithFallback,
   RESEARCH_QUEUE,
+  searchChargeInternal,
 } from "@fikirtive/core";
 import { fetchAndExtract } from "@fikirtive/core/server";
 import { sanitizeError } from "../redact.js";
@@ -81,7 +86,8 @@ async function readPageWorker(
   return { url: fetched.url, title: fetched.title ?? "", page, totalPages, text };
 }
 
-/** Build the FREE search port from env keys — SAME sourcing as buildOttoContext (web). */
+/** Build the search port from env keys — SAME sourcing as buildOttoContext (web).
+ *  The port itself moves no credits; the fee is settled by the wrapper off `ctx.searchesUsed`. */
 function buildSearch(): ResearchContext["search"] {
   const k1 = process.env.TAVILY_API_KEY;
   const k2 = process.env.BRAVE_SEARCH_API_KEY;
@@ -260,7 +266,8 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
     const tier = RESEARCH_TIERS[tierKey] ?? RESEARCH_TIERS.standard;
     const topic = payload.topic ?? "";
 
-    // (d) Build the small, mutable ResearchContext. search/readPage are FREE ports; counters cap use.
+    // (d) Build the small, mutable ResearchContext. readPage is free; search is CHARGED — its
+    // counter (searchesUsed) is what the settle below bills against. Counters also cap use.
     const ctx: ResearchContext = {
       search: buildSearch(),
       readPage: (url: string, page?: number) => readPageWorker(url, page),
@@ -295,6 +302,14 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
           model: ottoModelRuntime.billableModelId,
           paid: true,
           maxSteps: tier.maxSteps,
+          // 钱路 M1-c(裁决 9b):搜索按 Founder 2026-07-03 裁的 3× 收费。此前 searchSources
+          // 被标成 FREE —— 而「free」的真正含义是**没人计价**:每一次深研都在替商家买搜索,
+          // 账上一分没记。现在它是这次收费的第二条腿:
+          //   hold   = 这一档的 maxSearches × 单次费率(worst case,与卡面预估同源)
+          //   settle = 实际搜了几次 × 单次费率(ctx.searchesUsed,跑完才知道)
+          // 跑失败(withLlmBudget 全额退款)那条路不收 —— 一轮没成的深研不向商家收钱。
+          extraHoldInternal: researchTierSearchBudgetInternal(tier.maxSearches),
+          extraSettleInternal: () => searchChargeInternal(ctx.searchesUsed),
           usageOnError: (e) =>
             e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage
               ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)

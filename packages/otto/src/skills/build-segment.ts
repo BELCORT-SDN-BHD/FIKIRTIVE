@@ -63,5 +63,3 @@ export const buildSegmentSkill = defineOttoSkill({
   parameters: params,
   execute: executeBuildSegment,
 });
-
-export const buildSegment = buildSegmentSkill.tool;

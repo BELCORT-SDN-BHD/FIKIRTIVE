@@ -127,7 +127,7 @@ async function seedCard(input: {
  * carries, and which card it points at. Two boards that are the same board have the same shape.
  */
 function shape(
-  rows: Array<{ x: number; y: number; status: string; generationId: string | null; sourceNodeId: string | null }>,
+  rows: Array<{ x: number; y: number; status: string; generationId: string | null; layoutAnchorNodeId: string | null }>,
   context: { anchorId?: string; outputs?: string[] } = {},
 ) {
   const outputs = context.outputs ?? [];
@@ -137,7 +137,13 @@ function shape(
       return {
         x: row.x, y: row.y, status: row.status,
         carries: row.generationId === null ? "nothing" : index >= 0 ? `output-${index}` : "another-job",
-        sourceNodeId: row.sourceNodeId === null ? null : row.sourceNodeId === context.anchorId ? "the-anchor" : "elsewhere",
+        // The layout pointer, normalised against this run's own anchor. It used to read the
+        // one-column-three-meanings `sourceNodeId`, which #603 T4 stopped writing — so this
+        // dimension had been a constant null on every row since. `layoutAnchorNodeId` is the
+        // column that actually carries "which card this one was arranged around" today.
+        laidOutAround: row.layoutAnchorNodeId === null
+          ? null
+          : row.layoutAnchorNodeId === context.anchorId ? "the-anchor" : "elsewhere",
       };
     })
     .sort((a, b) => a.y - b.y || a.x - b.x || a.carries.localeCompare(b.carries));

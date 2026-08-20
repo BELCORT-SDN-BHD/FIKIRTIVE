@@ -176,7 +176,11 @@ export function toChatMessageDTO(
   return {
     id: m.id,
     role: m.role as "USER" | "AGENT",
-    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD" | "RESEARCH_CARD" | "RESEARCH_REPORT" | "PERFORMANCE_CARD",
+    // No cast: the row's `kind` IS the DTO's kind (ChatMessageDTO derives it from the schema
+    // enum). The cast that stood here named twelve of the fourteen members and, being a cast,
+    // could not complain about the two it had fallen behind on — an APPROVAL_CARD row was typed
+    // here as something it is not, silently, for as long as the list stayed stale.
+    kind: m.kind,
     seq: m.seq,
     text: m.text,
     payload,

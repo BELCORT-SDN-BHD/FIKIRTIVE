@@ -147,5 +147,3 @@ export const planCampaignSkill = defineOttoSkill({
   parameters: params,
   execute: executePlanCampaign,
 });
-
-export const planCampaign = planCampaignSkill.tool;

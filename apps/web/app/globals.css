@@ -500,25 +500,27 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --radius-card: 1.125rem;   /* 18px cards */
   --radius-modal: 1.5rem;    /* 24px modals */
 
-  --background: #FCFCFC;  --foreground: #0A0A0A;
-  --card: #FFFFFF;        --card-foreground: #0A0A0A;
-  --popover: #FFFFFF;     --popover-foreground: #0A0A0A;
-  --primary: #0A0A0A;     --primary-foreground: #FCFCFC;
-  --secondary: #F4F4F3;   --secondary-foreground: #0A0A0A;
-  --muted: #F4F4F3;       --muted-foreground: #6E6E68;
-  --accent: #ECECEA;      --accent-foreground: #0A0A0A;
+  --background: #FAFAFC;  --foreground: #16171C;
+  --card: #FFFFFF;        --card-foreground: #16171C;
+  --popover: #FFFFFF;     --popover-foreground: #16171C;
+  --primary: #16171C;     --primary-foreground: #FAFAFC;
+  --secondary: #F2F3F7;   --secondary-foreground: #16171C;
+  --muted: #F2F3F7;       --muted-foreground: #5B5F6C;
+  --accent: #E8E9EF;      --accent-foreground: #16171C;
   /* --destructive #E5484D → #D02F35: AA fix (#739). White on the old red was 3.91:1 — under the
      4.5:1 floor for the small labels destructive buttons carry (Library's "Delete"), and the same
      literal read 3.82:1 as `text-destructive` on --background. Same hue (358°), one step darker:
      5.07:1 filled, 4.94:1 as text. Dark value already passes (5.83:1) — unchanged. */
   --destructive: #D02F35; --destructive-foreground: #FFFFFF;
-  --border: #E6E6E3;      --input: #E6E6E3;
-  --ring: #EC5828;
+  --border: #E8E9EF;      --input: #E8E9EF;
+  /* --ring #EC5828 → #16171C: palette v4 (docs/brand/colors.json) — coral marks Otto presence
+     only; a focus ring is a human action, so it moves to ink like every other human affordance. */
+  --ring: #16171C;
 
   --brand: #EC5828;       --brand-foreground: #FFFFFF;
   /* Same-hue AA companion for small coral text and filled badges. */
   --brand-strong: #C93F12;
-  --brand-soft: #FBE4D8;  --brand-soft-foreground: #9A3A1A;
+  --brand-soft: #FBE7DC;  --brand-soft-foreground: #9A3A1A;
 
   --success: #16A34A; --success-soft: #E7F6EC; --success-soft-foreground: #15803D;
   /* --warning-soft-foreground #B45309 → #92400E: AA fix (4.45→6.28:1), design-rules v3 §A1.8,
@@ -546,12 +548,23 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* Data display — design-rules v3 §D5: data is ink, emphasis is coral, state is semantic. */
-  --chart-ink: #0A0A0A;
-  --chart-compare: #A6A6A0;
-  --chart-grid: #F4F4F2;
-  --chart-axis: #EFEFED;
+  --chart-ink: #16171C;
+  --chart-compare: #9CA0AC;
+  --chart-grid: #F2F3F7;
+  --chart-axis: #E8E9EF;
   --chart-peak: var(--brand);
-  --data-label: #86867F;
+  --data-label: #5B5F6C;
+
+  /* palette v4 (docs/brand/colors.json) */
+  --paper: #F5F1E8;
+  --line-strong: #DDDEE6;
+  --faint: #9CA0AC;
+  --grad-violet: linear-gradient(135deg, #EDE9FE, #DBEAFE);
+  --grad-violet-foreground: #3B3663;
+  --grad-peach: linear-gradient(135deg, #FFEDD5, #FFE1E1);
+  --grad-peach-foreground: #7C3D2A;
+  --grad-sky: linear-gradient(135deg, #E0F2FE, #BAE6FD);
+  --grad-sky-foreground: #2E4A66;
 
   /* Type: Geist sans + JetBrains mono (matches design system 0abf8563) — point the
      legacy --text-* / --font-mono tokens at Geist/JetBrains here so they stop leaking
@@ -591,6 +604,16 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --info:#5A8DF0; --info-soft:#0F1A33; --info-soft-foreground:#A8C2F7;
   --chart-ink:#FAFAFA; --chart-compare:#5E5E66; --chart-grid:#1C1C1F;
   --chart-axis:#262629; --chart-peak:var(--brand); --data-label:#8E8E96;
+  /* v4 additions — V1 ships light-only; dark mirrors declare the same values pending a dark direction */
+  --paper: #F5F1E8;
+  --line-strong: #DDDEE6;
+  --faint: #9CA0AC;
+  --grad-violet: linear-gradient(135deg, #EDE9FE, #DBEAFE);
+  --grad-violet-foreground: #3B3663;
+  --grad-peach: linear-gradient(135deg, #FFEDD5, #FFE1E1);
+  --grad-peach-foreground: #7C3D2A;
+  --grad-sky: linear-gradient(135deg, #E0F2FE, #BAE6FD);
+  --grad-sky-foreground: #2E4A66;
   /* Dark shadows — design-rules v3 §K1: the light rgba(20 20 24 / …) values are
      invisible on #0B0B0C; dark shadows ground, borders define edges (§K2.2). */
   --shadow-xs: 0 1px 2px rgba(0 0 0 / 0.40);
@@ -670,6 +693,13 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --color-chart-ink: var(--chart-ink);       --color-chart-compare: var(--chart-compare);
   --color-chart-grid: var(--chart-grid);     --color-chart-axis: var(--chart-axis);
   --color-chart-peak: var(--chart-peak);     --color-data-label: var(--data-label);
+  /* palette v4 (docs/brand/colors.json) — gradient images are not colors and stay unregistered */
+  --color-paper: var(--paper);
+  --color-line-strong: var(--line-strong);
+  --color-faint: var(--faint);
+  --color-grad-violet-foreground: var(--grad-violet-foreground);
+  --color-grad-peach-foreground: var(--grad-peach-foreground);
+  --color-grad-sky-foreground: var(--grad-sky-foreground);
   /* Control radius — design-rules v3 §5: rounded-lg must render the 14px control radius.
      Supersedes the Vapor @theme registration above (--radius-lg: 20px), which made every
      rounded-lg control render 20px (polish-delta #1). Utility-only re-point: Vapor recipes
@@ -680,9 +710,10 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 @layer components {
 
-/* Global focus ring — design-rules v3 §A2, verbatim. Two layers: 1px solid keyline
-   (3.42:1) + 40% coral halo (the 40% halo alone composites to 1.64:1 — invisible to
-   low vision). Supersedes the Vapor white --ring-focus (invisible on .gb light ground)
+/* Global focus ring — structure per design-rules v3 §A2; color follows --ring, which
+   brand v4 moved coral→ink (coral marks Otto presence only). Two layers: 1px solid
+   keyline (17.17:1 as ink) + 40% halo (the halo alone is too faint for low vision —
+   the keyline is the accessible layer). Supersedes the Vapor white --ring-focus (invisible on .gb light ground)
    and the per-component 35% color-mix scatter. :focus-visible only — mouse clicks
    never ring. Must stay AFTER every same-specificity :focus-visible recipe above,
    and in the SAME layer as them (@layer components), so it wins the cascade under
@@ -693,9 +724,14 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   outline: 2px solid transparent;   /* keeps the system indicator in forced-colors */
   outline-offset: 2px;
   box-shadow:
-    0 0 0 1px var(--ring),                                        /* keyline — 3.42:1 */
+    0 0 0 1px var(--ring),                                        /* keyline — 17.17:1 (ink ring, v4) */
     0 0 0 4px color-mix(in oklab, var(--ring) 40%, transparent);  /* halo — the warmth */
 }
+
+/* v4 gradient sugar — 135°, two stops, content accents only, never page frames, at most two per screen (colors.json $rule) */
+.gb .grad-violet { background: var(--grad-violet); color: var(--grad-violet-foreground); }
+.gb .grad-peach { background: var(--grad-peach); color: var(--grad-peach-foreground); }
+.gb .grad-sky { background: var(--grad-sky); color: var(--grad-sky-foreground); }
 
 /* ===== Canvas + Account/Settings rules — moved from otto-theme.css in the S4b teardown.
    Re-scoped .fk.gb-skin/.fk → .gb (the otto app + canvas render under .gb at root). ===== */
@@ -1371,7 +1407,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    last line instead of dropping to a line of its own (which would visually split the
    final paragraph). `otto-caret-blink` is injected once by OttoChatStream's root
    <style> block — the only surface that streams — the same coupling StatusLine already
-   has with `otto-shimmer`. */
+   has with `otto-status-fadein`. */
 .otto-prose[data-streaming="true"] > :last-child:not(ul):not(ol)::after,
 .otto-prose[data-streaming="true"] > ul:last-child > li:last-child::after,
 .otto-prose[data-streaming="true"] > ol:last-child > li:last-child::after {

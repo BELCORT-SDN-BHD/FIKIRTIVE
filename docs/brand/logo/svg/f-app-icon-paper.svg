@@ -1,0 +1,15 @@
+<svg viewBox="0 0 1240 1240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FIKIRTIVE">
+  <rect width="1240" height="1240" rx="280" fill="#F5F1E8"/>
+  <g transform="translate(-60,10)">
+  <g fill="none" stroke="#141414" stroke-linecap="round">
+    <path d="M 478,430 C 450,570 452,750 466,880" stroke-width="195"/>
+    <path d="M 468,462 C 545,298 745,232 855,300" stroke-width="190"/>
+    <path d="M 488,650 C 600,618 690,624 775,658" stroke-width="150"/>
+  </g>
+  <g fill="#141414">
+    <circle cx="448" cy="928" r="120"/>
+    <circle cx="893" cy="352" r="134"/>
+    <circle cx="798" cy="680" r="92"/>
+  </g>
+  </g>
+</svg>

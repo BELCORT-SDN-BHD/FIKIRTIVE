@@ -52,5 +52,3 @@ export const suggestPostTimesSkill = defineOttoSkill({
   parameters: params,
   execute: executeSuggestPostTimes,
 });
-
-export const suggestPostTimes = suggestPostTimesSkill.tool;

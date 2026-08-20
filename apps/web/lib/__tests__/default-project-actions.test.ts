@@ -329,7 +329,7 @@ describe("deleteProject", () => {
       where: { id: "g-queued", ownerId: "o1", status: "QUEUED" },
       data: expect.objectContaining({
         status: "FAILED",
-        error: "Cancelled by project deletion",
+        error: "Canceled by project deletion",
         finishedAt: expect.any(Date),
       }),
     });

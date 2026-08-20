@@ -451,7 +451,7 @@ export async function cancelScheduledPost(id: string): Promise<{ ok: true } | { 
   });
   if (!post) return { error: "Post not found." };
   if (!canTransition(post.status as ScheduledPostStatus, "CANCELLED")) {
-    return { error: "This post can't be cancelled from its current state." };
+    return { error: "This post can't be canceled from its current state." };
   }
 
   try {

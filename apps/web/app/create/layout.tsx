@@ -21,7 +21,7 @@ import "./immersive-tokens.css";
  * #609:外壳入口要读认证会话(身份栏 = 真登录用户),所以这一段整体动态渲染。
  */
 
-export const metadata = { title: "FIKIRTIVE" };
+export const metadata = { title: "Create · Fikirtive" };
 export const dynamic = "force-dynamic";
 
 export default function CreateLayout({ children }: { children: React.ReactNode }) {

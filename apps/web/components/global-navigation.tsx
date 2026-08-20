@@ -38,6 +38,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { OttoPanelMount } from "@/components/otto/panel/OttoPanelMount";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
 import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-refresh";
@@ -638,10 +639,10 @@ export function GlobalNavigation({
         <div className="flex items-center gap-2 px-3 pt-3">
           <Link
             href={OTTO_ASSISTANT.href}
-            aria-label="FIKIRTIVE home"
+            aria-label="Fikirtive home"
             className="flex h-12 flex-1 items-center rounded-[10px] px-3 text-lg font-extrabold tracking-[-0.03em] text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 lg:justify-center lg:px-0 xl:justify-start xl:px-3"
           >
-            <span className="lg:hidden xl:inline">FIKIRTIVE</span>
+            <span className="lg:hidden xl:inline font-[750] tracking-[-0.03em]">fikirtive</span>
             <span className="hidden lg:inline xl:hidden">F</span>
           </Link>
           <Button
@@ -777,8 +778,13 @@ export function MerchantShellContent({
             !ownsFullHeightWorkspace(pathname) && MOBILE_NAV_TRIGGER_INSET,
           )}
         >
-          <SectionTabs pathname={pathname} />
-          {children}
+          {/* #994(W2-7)—— Otto 面板停在内容列右侧。它与页面内容是同一行里的两个兄弟,
+              面板占多宽主内容就让多宽:没有遮罩、没有 `pointer-events: none`(spec §3.5 ①)。
+              面板收起时这一行只剩一个孩子,版式与挂载之前一样。 */}
+          <OttoPanelMount location={pathname}>
+            <SectionTabs pathname={pathname} />
+            {children}
+          </OttoPanelMount>
         </div>
       </div>
     </GlobalNavigationDrawerContext.Provider>

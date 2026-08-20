@@ -49,11 +49,11 @@ export const E2E_AUTH_SECRET = "fikirtive-e2e-only-session-secret-not-for-produc
  * question is not only "could this bill somebody" but "could this reach anyone at all". Both
  * failures are silent from inside a green run:
  *
- *   · money — BYTEPLUS_API_KEY / FAL_KEY generate for real; STRIPE_SECRET_KEY reaches the payment
- *     provider; OPENAI_API_KEY / ANTHROPIC_API_KEY / MODAL_LLM_KEY bill per token; and
- *     TAVILY_API_KEY / BRAVE_SEARCH_API_KEY are metered web-search transports that are ACTIVELY
- *     wired (apps/web/lib/otto-actions.ts, apps/worker/src/jobs/research.ts pick a provider from
- *     whichever of the two keys is present — so one leaked key is nightly billed traffic).
+ *   · money — BYTEPLUS_API_KEY generates for real; STRIPE_SECRET_KEY reaches the payment
+ *     provider; ANTHROPIC_API_KEY bills per token; and TAVILY_API_KEY / BRAVE_SEARCH_API_KEY are
+ *     metered web-search transports that are ACTIVELY wired (apps/web/lib/otto-actions.ts,
+ *     apps/worker/src/jobs/research.ts pick a provider from whichever of the two keys is present
+ *     — so one leaked key is nightly billed traffic).
  *   · reach — RESEND_API_KEY sends real mail to whatever address a fixture happens to hold, and
  *     SENTRY_DSN ships this suite's own deliberate failures to the production error stream, where
  *     they are indistinguishable from a merchant's.
@@ -62,14 +62,24 @@ export const E2E_AUTH_SECRET = "fikirtive-e2e-only-session-secret-not-for-produc
  * research port is left unwired (its own "not configured" answer), Sentry stays a no-op and the
  * Stripe shelf has no key to call — the fence is the ABSENCE of the credential, not a flag
  * somebody has to remember to pass.
+ *
+ * EVERY NAME HERE MUST BE ONE THE PRODUCT ACTUALLY READS. Fencing a name nothing reads is worse
+ * than useless: it reads as live protection and protects nothing, and the next person to audit
+ * this file has to re-derive which entries still have a consumer.
+ *
+ * `packages/core/src/env-contract.ts` is the right FIRST look — its test fails when apps/ +
+ * packages/ read a variable the contract does not declare. But it is not a complete index of
+ * reads: what it catches is the literal `process.env.<NAME>` form in .ts/.tsx. Two live credentials
+ * here are invisible to it — BYTEPLUS_API_KEY is read as `env.BYTEPLUS_API_KEY` off an injected
+ * env object (packages/generation/src/index.ts), and ANTHROPIC_API_KEY is declared
+ * readBy:"library" because @ai-sdk/anthropic reads it inside packages/otto. So absence from the
+ * contract is a hint, never a verdict: BEFORE deleting an entry, run one extension-agnostic
+ * grep across the whole repo and confirm the last consumer is really gone.
  */
 export const OFF_MACHINE_CREDENTIAL_NAMES = [
   "BYTEPLUS_API_KEY",
-  "FAL_KEY",
   "STRIPE_SECRET_KEY",
-  "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
-  "MODAL_LLM_KEY",
   "TAVILY_API_KEY",
   "BRAVE_SEARCH_API_KEY",
   "RESEND_API_KEY",

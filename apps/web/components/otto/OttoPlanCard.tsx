@@ -19,6 +19,9 @@ import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./pla
 // 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。走**子路径**而不是包根:
 // `@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
 import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
+// #996 (W2-9): 面板最窄 320px。版式跟着卡自己那只盒子走(容器查询),不跟视口走;
+// 每一个 credits 数字走 CardMoney —— 句子可以换行,数字不行。
+import { CardMoney, CARD_ACTIONS_CLASS, CARD_ROOT_CLASS, CARD_SPLIT_ROW_CLASS } from "./card-narrow";
 
 /** What a successful approve hands up. Carries the EXACT card it happened on plus the
  *  SERVER's own result — the parent never has to infer either from a closure or from a
@@ -266,7 +269,7 @@ export function OttoPlanCard({
   // being talked past with a `!`.
   if (!gate.readable || credits === null) {
     return (
-      <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
+      <div className={CARD_ROOT_CLASS} style={{ maxWidth: 480 }}>
         <div className="rounded-[14px] border border-border bg-secondary p-[13px]">
           <div className="mb-[9px] flex items-center gap-[7px]">
             <ClipboardList size={15} className="text-muted-foreground" />
@@ -285,7 +288,7 @@ export function OttoPlanCard({
 
   return (
     // leading-[1.5] — design-baseline body line-height (Analytics standard)
-    <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
+    <div className={CARD_ROOT_CLASS} style={{ maxWidth: 480 }}>
       {/* Card variant="tint": bg-accent (--brand-tint=#F4F4F3), border, rounded-[18px], p-6 */}
       <div className="rounded-[14px] border border-border bg-secondary p-[13px]">
         <div className="mb-[9px] flex items-center gap-[7px]">
@@ -391,15 +394,15 @@ export function OttoPlanCard({
                 Two-step plan
               </div>
               <div className="font-mono text-[11.5px] text-muted-foreground">
-                Step 1 of 2 &mdash; ~{creditsLabel(credits)} now
+                Step 1 of 2 &mdash; <CardMoney>~{creditsLabel(credits)}</CardMoney> now
               </div>
               <div className="mt-1 text-[0.875rem] text-muted-foreground">
-                Then the video &mdash; ~{creditsLabel(videoCredits)}
+                Then the video &mdash; <CardMoney>~{creditsLabel(videoCredits)}</CardMoney>
               </div>
             </div>
           ) : (
             <div className="font-mono text-[11.5px] text-muted-foreground">
-              About {creditsLabel(credits)}
+              About <CardMoney>{creditsLabel(credits)}</CardMoney>
             </div>
           )}
         </div>
@@ -409,14 +412,14 @@ export function OttoPlanCard({
             up as a failure with a "Try again" button attached to it. */}
         {cancelled ? (
           <div className="mt-4 text-[0.875rem] text-muted-foreground">
-            Cancelled — you weren&rsquo;t charged.
+            Canceled — you weren&rsquo;t charged.
           </div>
         ) : runState === "failed" ? (
           <div className="mt-4">
             <div className="text-[0.875rem] font-semibold text-foreground">
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
             </div>
-            <div className="mt-3 flex gap-3">
+            <div className={`mt-3 ${CARD_ACTIONS_CLASS}`}>
               <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={retry}>
                 {busy ? "Queuing…" : "Try again"}
               </Button>
@@ -432,12 +435,12 @@ export function OttoPlanCard({
             </div>
             {/* Spend-traceability line — pure copy, no charge logic. */}
             <div className="mt-2 text-[0.75rem] text-muted-foreground/70">
-              ✓ You approved this — it used {creditsLabel(credits)}.
+              ✓ You approved this — it used <CardMoney>{creditsLabel(credits)}</CardMoney>.
             </div>
           </div>
         ) : runState === "queued" ? (
           <div className="mt-4">
-            <div className="flex items-center gap-3">
+            <div className={CARD_SPLIT_ROW_CLASS}>
               {/* P1-3: the card knows a job exists, not that it started (the thread DTO
                   folds QUEUED and GENERATING into one "working"). So it says queued —
                   the one thing that is true either way — instead of "making this now". */}
@@ -446,20 +449,20 @@ export function OttoPlanCard({
               </span>
               {genJobId && (
                 <Button variant="ghost" size="sm" disabled={busy} onClick={cancel}>
-                  {busy ? "Cancelling…" : "Cancel"}
+                  {busy ? "Canceling…" : "Cancel"}
                 </Button>
               )}
             </div>
             {/* Spend-traceability line — pure copy, no charge logic. */}
             <div className="mt-2 text-[0.75rem] text-muted-foreground/70">
-              ✓ You approved this — it used {creditsLabel(credits)}.
+              ✓ You approved this — it used <CardMoney>{creditsLabel(credits)}</CardMoney>.
             </div>
           </div>
         ) : !gate.approvable ? (
           // r2 P1-2: the card read itself only partially. It still shows what it managed
           // to read (above) and says so (PARTIAL_PLAN_NOTE), but the path to spending on
           // it does not exist — no confirm step, no approve button, and approve() refuses.
-          <div className="mt-4 flex gap-3">
+          <div className={`mt-4 ${CARD_ACTIONS_CLASS}`}>
             <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleChangeSomething}>
               Ask again
             </Button>
@@ -468,7 +471,7 @@ export function OttoPlanCard({
           // ONE press (#896, Founder 2026-08-13). The price is on the button, so pressing it
           // IS the approval — the old "Review cost" step showed this same number again and
           // charged nothing, which is a click that buys the merchant nothing.
-          <div className="mt-4 flex gap-3">
+          <div className={`mt-4 ${CARD_ACTIONS_CLASS}`}>
             <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
               {busy ? "Starting…" : `Generate · ${creditsLabel(credits)}`}
             </Button>

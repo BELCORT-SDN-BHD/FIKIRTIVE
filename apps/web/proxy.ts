@@ -55,59 +55,26 @@ export default async function proxy(req: NextRequest) {
   }
 }
 
+// ⚠️ DO NOT hand-edit the matcher below. #901 / #978.
+//
+// Every exemption — which path, whether it is one path or a whole subtree, and WHY it may answer
+// without a session — is declared in lib/auth-wall-ledger.ts. That ledger is the source of truth;
+// the string below is its output, copied here because Next requires config.matcher to be a
+// build-time constant ("matcher values need to be constants so they can be statically analyzed
+// at build-time. Dynamic values such as variables will be ignored" — next/…/file-conventions/proxy),
+// so it cannot be computed at runtime from the ledger.
+//
+// To change what is outside the wall: edit the ledger, run the ledger's generator, paste the
+// result here. lib/__tests__/proxy.test.ts asserts `config.matcher[0] === buildAuthWallMatcher()`
+// byte for byte, plus the boundary shapes of every single entry, so drifting the two apart — or
+// hand-writing a new unbounded prefix straight into this string — turns CI red immediately.
+//
+// northstar: NO LONGER EXEMPT (#606, D7 · T7). The exemption existed only because that
+// prefix was a design-only prototype behind a preview flag that 404'd in production. The
+// mock pages and the flag are both deleted; what is left under the prefix are two REAL
+// product routes (Home + Canvas) that read the merchant's own projects and canvas, so the
+// prefix belongs inside the wall like every other product surface. The pages keep their own
+// requireOwner() gates — the wall is the outer of two locks, not the only one.
 export const config = {
-  // api/better-auth MUST stay excluded — else the sign-in/OAuth-callback endpoints get
-  // walled → infinite redirect / total lockout. (NextAuth's api/auth route is retired.)
-  // api/stripe excluded — the webhook is unauthenticated (Stripe calls it; the signature is its auth).
-  // api/health excluded — external uptime monitors probe it; it returns only up/stale, no data.
-  // api/ops/dlq excluded (#793) — the SAME external uptime monitors probe it, and they have no
-  //   session. It answers clear/backed-up/unknown and nothing else: no counts, no queue names, no
-  //   merchant data. The exemption is BOUNDED to exactly this path (`api/ops/dlq/?$`): a bare
-  //   prefix would also have opened /api/ops/dlqx, /api/ops/dlq-admin and /api/ops/dlq/anything,
-  //   so a future route whose name merely starts the same way would have shipped public by
-  //   accident (r2 — judge r1 P1). Any future ops route stays inside the wall unless it earns
-  //   its own line here. Pinned by the boundary shapes in lib/__tests__/proxy.test.ts.
-  // api/ready excluded (#796) — the PLATFORM's own deploy/load probe calls it with no session, and
-  //   it must answer before a container is allowed to take traffic. Same zero-data contract as
-  //   api/health: ready true/false + a reason word, nothing about any merchant.
-  // api/meta/data-deletion excluded — Meta calls it unauthenticated; the signed_request is its auth.
-  // api/media/pub excluded — its callers have no session, ever. It was written for ONE of them,
-  //   Meta's async media-fetch server, and B0-28 added a second: an ordinary human browser, on
-  //   the seat-less share preview below, which signs a short-lived token for the shared post's own
-  //   media (lib/share-preview-view.ts). Both hold the same kind of authorization and neither can
-  //   hold a session, which is why the exemption reads the same for both.
-  //   The route's HMAC token (signed over ownerId+key+expiry) is its SOLE authorization;
-  //   verifyMediaToken fail-closes to 404 on any bad/expired/forged token. This exception is
-  //   scoped to exactly /api/media/pub/* (the [token] route) — it opens nothing else.
-  // northstar: NO LONGER EXEMPT (#606, D7 · T7). The exemption existed only because that
-  // prefix was a design-only prototype behind a preview flag that 404'd in production. The
-  // mock pages and the flag are both deleted; what is left under the prefix are two REAL
-  // product routes (Home + Canvas) that read the merchant's own projects and canvas, so the
-  // prefix belongs inside the wall like every other product surface. The pages keep their own
-  // requireOwner() gates — the wall is the outer of two locks, not the only one.
-  // signup / forgot-password / reset-password: the #543 self-service door. These three pages
-  // MUST render without a session — that is the whole point of them — so they join /login
-  // outside the wall. They mutate nothing on their own; every action behind them goes through
-  // Better Auth's own gates (pause switch, allowlist, verification, rate limit).
-  // verify-email: the landing page the SIGN-UP VERIFICATION MAIL points at (#940 —
-  // lib/better-auth/verify-landing-url.ts). Whoever clicks that link has no session yet — that
-  // is precisely what the link is for — so the wall bounced every new merchant to /login and
-  // the token never reached Better Auth. The page is the same shape as the three doors above:
-  // it holds no data and judges nothing, it only forwards `token`/`callbackURL` verbatim to
-  // /api/better-auth/verify-email (already excluded), which is where the token is checked.
-  // BOUNDED to exactly this path (`verify-email/?$`) for the same reason api/ops/dlq is (#793):
-  // as a bare prefix it also opened /verify-emailx, /verify-email-admin and
-  // /verify-email/anything, so a future route whose name merely starts the same way would have
-  // shipped public with no one deciding that. Pinned by lib/__tests__/proxy.test.ts.
-  // schedule/share-preview: the seat-less share link (B0-28). A merchant mints a read-only link
-  // for ONE of their scheduled posts and sends it to a client who has no account — "no seat
-  // needed" is the entire feature, so the reader necessarily has no session and the wall would
-  // bounce every one of them to /login. Its authorization is the link's own HMAC token plus a
-  // live SharePreviewToken row (lib/share-preview.ts), checked server-side on every load, and
-  // every failure resolves to the same "not available" page. The page reads exactly the one post
-  // the token attests and nothing else (lib/share-preview-view.ts).
-  // BOUNDED to exactly this path (`schedule/share-preview/?$`) for the same reason as the two
-  // above — W2 builds the merchant's own calendar at `/schedule`, and that surface must stay
-  // inside the wall, as must anything nested under this one.
-  matcher: ["/((?!login|signup|forgot-password|reset-password|verify-email/?$|schedule/share-preview/?$|terms|privacy|legal|api/better-auth|api/stripe|api/health|api/ops/dlq/?$|api/ready|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login/?$|signup/?$|forgot-password/?$|reset-password/?$|verify-email/?$|schedule/share-preview/?$|terms/?$|privacy(?:/.*)?$|legal(?:/.*)?$|api/better-auth(?:/.*)?$|api/stripe(?:/.*)?$|api/health/?$|api/ops/dlq/?$|api/ready/?$|api/meta/data-deletion/?$|api/media/pub(?:/.*)?$|_next/static(?:/.*)?$|_next/image(?:/.*)?$|favicon\\.ico/?$).*)"],
 };

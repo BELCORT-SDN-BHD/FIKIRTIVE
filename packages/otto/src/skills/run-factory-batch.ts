@@ -122,6 +122,3 @@ export const runFactoryBatchSkill = defineOttoSkill({
   parameters: runFactoryBatchInput,
   execute: executeRunFactoryBatch,
 });
-
-// Bare-tool export (mirrors the generate skill convention).
-export const runFactoryBatch = runFactoryBatchSkill.tool;
