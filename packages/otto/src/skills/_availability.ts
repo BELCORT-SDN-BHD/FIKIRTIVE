@@ -71,13 +71,16 @@ import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
  */
 export const CRM_SEGMENT_AVAILABILITY =
   "Availability, say it plainly whenever segments come up: there is no page in the app today for customer " +
-  "segments, contacts or broadcasts, so never send the user to one. No segment rule can pick out a group of " +
-  "customers yet, so say that before building one. Four of the five rule facts have nothing behind them — last " +
-  "order recency, tags, lifetime spend, and channel, which counts only a number that a connected channel has " +
-  "confirmed — so a rule using any of those four matches nobody rather than guessing. The fifth, contactability, " +
-  "works in one direction only: contactability=not_contactable matches every contact, and " +
-  "contactability=contactable matches nobody, because opt-in needs the customer's own confirmation. A saved " +
-  "segment is a list and nothing more today. " +
+  "segments, contacts or broadcasts, so never send the user to one. Four of the five rule facts have nothing " +
+  "behind them — last order recency, tags, lifetime spend, and channel, which counts only a number that a " +
+  "connected channel has confirmed — so a rule using any of those four matches nobody rather than guessing. The " +
+  "fifth, contactability, is the one rule that can pick out a real group of customers today: " +
+  "contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and " +
+  "contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out " +
+  "needs the customer's own verified confirmation and no production writer supplies one. An opt-out the merchant " +
+  "recorded by hand is not a known opt-out, so it stays inside contactable; set the rule group's " +
+  "excludeReportedOptOut to leave those contacts out too, the one way to pick out a real subset of customers " +
+  "today. A saved segment is a list and nothing more today. " +
   MESSAGING_STATUS_ASSISTANT;
 
 /**

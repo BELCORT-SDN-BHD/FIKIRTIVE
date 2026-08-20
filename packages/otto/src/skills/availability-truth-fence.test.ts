@@ -41,13 +41,16 @@ import { CRM_SEGMENT_AVAILABILITY, ROUTINE_EXECUTION_AVAILABILITY } from "./_ava
 const APPROVED_AVAILABILITY_COPY = {
   CRM_SEGMENT_AVAILABILITY:
     "Availability, say it plainly whenever segments come up: there is no page in the app today for customer " +
-    "segments, contacts or broadcasts, so never send the user to one. No segment rule can pick out a group of " +
-    "customers yet, so say that before building one. Four of the five rule facts have nothing behind them — last " +
-    "order recency, tags, lifetime spend, and channel, which counts only a number that a connected channel has " +
-    "confirmed — so a rule using any of those four matches nobody rather than guessing. The fifth, contactability, " +
-    "works in one direction only: contactability=not_contactable matches every contact, and " +
-    "contactability=contactable matches nobody, because opt-in needs the customer's own confirmation. A saved " +
-    "segment is a list and nothing more today. " +
+    "segments, contacts or broadcasts, so never send the user to one. Four of the five rule facts have nothing " +
+    "behind them — last order recency, tags, lifetime spend, and channel, which counts only a number that a " +
+    "connected channel has confirmed — so a rule using any of those four matches nobody rather than guessing. The " +
+    "fifth, contactability, is the one rule that can pick out a real group of customers today: " +
+    "contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and " +
+    "contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out " +
+    "needs the customer's own verified confirmation and no production writer supplies one. An opt-out the merchant " +
+    "recorded by hand is not a known opt-out, so it stays inside contactable; set the rule group's " +
+    "excludeReportedOptOut to leave those contacts out too, the one way to pick out a real subset of customers " +
+    "today. A saved segment is a list and nothing more today. " +
     MESSAGING_STATUS_ASSISTANT,
   ROUTINE_EXECUTION_AVAILABILITY:
     "Availability, say it plainly whenever a rule's effect comes up: there is no page in the app today for " +
@@ -91,14 +94,14 @@ const CLAIM_EVIDENCE: ReadonlyArray<{ claim: string; verify: string }> = [
       "行为实证:contactMatchesRules(生产形状的 facts, 该规则) → false,四支各跑一次",
   },
   {
-    claim: "contactability=contactable matches nobody",
+    claim: "contactability=contactable matches every contact who is not a known opt-out",
     verify:
-      "opt_in 要 verified_grant(consent-fold.ts 只给 customer+interactive+verified);生产两个 recordConsentEvent 都是 crm_manual / import = merchant+backfill+asserted",
+      "行为实证,走 selectedIntoAudience(consent-authority.ts:122-139,经 segment-actions.ts:221-233 的 matches() —— Otto 分群预览/构建实际走的产品闸,不是 contactMatchesRules 纯匹配器):普通 contact → contactable=true;known opt-out(isKnownOptOut,consent-fold.ts:314-316)的 contact → contactable=false",
   },
   {
-    claim: "contactability=not_contactable matches every contact",
+    claim: "contactability=not_contactable matches only a known opt-out",
     verify:
-      "同上取反:contactable 恒假 ⇒ not_contactable 恒真;行为实证 contactMatchesRules(生产形状, not_contactable) → true",
+      "同一探针取反:selectedIntoAudience 对普通 contact → not_contactable=false,对 known opt-out contact → not_contactable=true;known opt-out 需 effective_revoke(仅 customer+interactive+verified 事件可折出,consent-fold.ts:187)或 legacy 围栏字节,生产两个 recordConsentEvent 调用点(crm-actions.ts:297 crm_manual、:917 import)都是 merchant/backfill/asserted,故今天不可达",
   },
   {
     claim: "Nothing in the product starts a routine run",
@@ -162,8 +165,10 @@ describe("C7 Otto 的「今天做不到什么」——措辞层", () => {
     // channel_verified,而写那个等级的函数零生产调用点。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/select real people[^.]*channel/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/channel and contactability/i);
-    // 而且它必须正面说清今天圈不出人,不是含糊带过。
-    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/No segment rule can pick out a group of customers yet/);
+    // 而且它必须正面说清今天哪一条规则真的选得出人,方向不能含糊也不能说反(判官 [P2-1])。
+    expect(CRM_SEGMENT_AVAILABILITY).toMatch(
+      /is the one rule that can pick out a real group of customers today/,
+    );
   });
 });
 

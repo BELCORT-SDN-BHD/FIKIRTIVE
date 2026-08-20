@@ -164,17 +164,18 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
     surface: "buildSegment",
     why: "同一句实话、同一份证据 —— 两条技能各带一份,因为模型读到哪一条就只读到哪一条。",
   },
-  // C7 r2(判官 [P2-1])—— contactability 那一句带两个全称词,两个都可证,而且这正是 r1
-  // 含糊过去的地方:r1 把 contactability 整个记作「能用」,没说它只有一侧选得出人。
+  // C7 r3(二轮判官 [P2-1])—— r2 那一句方向写反了:Otto 分群端口不走 contactMatchesRules
+  // 纯匹配器,走 selectedIntoAudience 产品闸(consent-authority.ts:122-139,经
+  // segment-actions.ts:221-233 的 matches());这一句改成沿这条闸重新算过的方向。
   {
     sentence:
-      "The fifth, contactability, works in one direction only: contactability=not_contactable matches every contact, and contactability=contactable matches nobody, because opt-in needs the customer's own confirmation.",
+      "The fifth, contactability, is the one rule that can pick out a real group of customers today: contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out needs the customer's own verified confirmation and no production writer supplies one.",
     surface: "readSegments",
-    why: "可证,且已行为实证:`contactable` 要 `marketingConsent === \"opt_in\"`(segment-rules.ts `contactMatchesLeaf`),`opt_in` 要 `consentFact()` 拿到 `verified_grant`(consent-authority.ts),而 `consent-fold.ts` 只对 customer + interactive + verified 的事件给 `verified_grant`;生产仅有的两个 `recordConsentEvent` 调用点(crm-actions.ts:297 `crm_manual`、:917 `import`)在闭合写者矩阵里都是 merchant / backfill / asserted。所以 opt_in 生产不可达 ⇒ contactable 恒假 ⇒ not_contactable 恒真。探针实跑:contactable→false、not_contactable→true。",
+    why: "可证,且已行为实证:走 `selectedIntoAudience`(`apps/web/lib/consent-authority.ts:122-139`,经 `segment-actions.ts:221-233` 的 `matches()` —— Otto 分群预览/构建实际走的产品闸,不是 `contactMatchesRules` 纯匹配器)。普通 contact → contactable=true、not_contactable=false;known opt-out(`isKnownOptOut`,`consent-fold.ts:314-316`,即 `state===\"effective_revoke\"` 或 `unresolvedLegacyOptOut`)的 contact → 相反。`effective_revoke` 只从 customer+interactive+verified 事件折出(`foldConsentEvents`,`consent-fold.ts:187`),生产仅有的两个 `recordConsentEvent` 调用点(`crm-actions.ts:297` `crm_manual`、`:917` `import`)在闭合写者矩阵里都是 merchant/backfill/asserted,今天不可达 —— 所以今天 contactable 选中全部联系人,not_contactable 选中无人。",
   },
   {
     sentence:
-      "The fifth, contactability, works in one direction only: contactability=not_contactable matches every contact, and contactability=contactable matches nobody, because opt-in needs the customer's own confirmation.",
+      "The fifth, contactability, is the one rule that can pick out a real group of customers today: contactability=contactable matches every contact who is not a known opt-out — today, that is everyone — and contactability=not_contactable matches only a known opt-out, which today is nobody, because a known opt-out needs the customer's own verified confirmation and no production writer supplies one.",
     surface: "buildSegment",
     why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
   },
