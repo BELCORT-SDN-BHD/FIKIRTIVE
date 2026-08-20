@@ -69,7 +69,7 @@ export const E2E_AUTH_SECRET = "fikirtive-e2e-only-session-secret-not-for-produc
  *
  * `packages/core/src/env-contract.ts` is the right FIRST look — its test fails when apps/ +
  * packages/ read a variable the contract does not declare. But it is not a complete index of
- * reads: what it catches is the literal `process.env.X` form in .ts/.tsx. Two live credentials
+ * reads: what it catches is the literal `process.env.<NAME>` form in .ts/.tsx. Two live credentials
  * here are invisible to it — BYTEPLUS_API_KEY is read as `env.BYTEPLUS_API_KEY` off an injected
  * env object (packages/generation/src/index.ts), and ANTHROPIC_API_KEY is declared
  * readBy:"library" because @ai-sdk/anthropic reads it inside packages/otto. So absence from the
