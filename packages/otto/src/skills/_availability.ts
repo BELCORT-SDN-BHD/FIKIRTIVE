@@ -6,8 +6,10 @@
  * 那个老根因 —— **说的与做的失同步**:
  *   · `readSegments` / `buildSegment` 照旧写着「和商家自己的屏幕走同一条动作层」,而那些屏幕
  *     今天一扇也打不开(`apps/web/app/crm` 下十四条路由全是 `redirect("/")`);
- *   · 分群五个规则事实**今天一个都圈不出一群人**(下面逐条列证据与取证命令),可技能描述把
- *     五个并列写,模型据此建出来的分群会**静默地空**;
+ *   · 分群五个规则事实里,四个**今天圈不出任何人**,第五个(contactability)圈得出,但方向和
+ *     字面直觉相反(下面逐条列证据与取证命令);可技能描述照旧五个并列写,模型据此建出来的
+ *     分群不是**静默地空**,就是**方向搞反**——把几乎全部联系人误当成一个圈出来的子群,或者
+ *     把圈出来的那批误当成空;
  *   · Routine 那两条技能只说「本技能不会激活/派发」,没说**整个产品今天都不会**——
  *     商家把规则发布、把 Routine 授权完,什么也不会发生。
  *
@@ -23,14 +25,16 @@ import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
  * 分群三条技能共读的那一句。
  *
  * 逐条实据。每一条都写明**谁验的、什么命令**,因为这一段本身就是一次「说真话」——
- * 它自己失实过一次(见文末「r1 的教训」),所以每个事实主张都必须自带取证路径。
+ * 它自己已经失实过两次(channel 那次见文末「r1 的教训」;contactability 方向写反那次见下面
+ * ② 的 contactability 子条目,标注 [P2-1]),所以每个事实主张都必须自带取证路径。
  *
  * ① **没有页面**(2026-08-19,`grep -rn 'redirect("/")' apps/web/app/crm` + 逐个读)——
  *    `apps/web/app/crm/page.tsx` 及 13 个子页全是 `redirect("/")`;
  *    `packages/core/src/navigation.ts` 零 `/crm` href。两条各有既有围栏:
  *    `apps/web/lib/__tests__/route-redirects.test.ts`、`packages/core/src/navigation.test.ts`。
  *
- * ② **五个规则事实,今天一个都圈不出一群人**。逐支的死因不同,但结论一样:
+ * ② **五个规则事实,四个今天圈不出任何人,第五个(contactability)圈得出但方向和字面直觉
+ *    相反**。逐支证据:
  *    · `last_order_recency` / `tag` —— `apps/web/lib/segment-actions.ts:64` 的
  *      `UNAVAILABLE_FACTS` 明写缺席,`evaluateContact`(:169-192)构造 `facts` 时根本不放
  *      它们,于是 `packages/core/src/segment-rules.ts` 的两支恒 false
