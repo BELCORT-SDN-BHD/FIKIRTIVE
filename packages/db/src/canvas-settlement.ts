@@ -82,6 +82,16 @@ export type CanvasSettlementTimeoutOptions = {
   transactionTimeoutMs: number;
 };
 
+/**
+ * The columns THIS projection needs — deliberately NOT the surface list.
+ *
+ * `CANVAS_NODE_SELECT` (apps/web/lib/canvas-node-placement.ts) is the shape a card is handed back
+ * to the merchant in, and it carries `text`. This one feeds `planCanvasSettlement`, which decides
+ * which rectangle each paid output occupies; a card's `text` says nothing about that, and this
+ * read runs on every board under an advisory lock, so it stays out. The two lists are different on
+ * purpose and neither is the other's copy — if a column is added to a card, ask which question it
+ * answers before adding it here.
+ */
 const CARD_SELECT = {
   id: true, type: true, x: true, y: true, w: true, h: true, prompt: true,
   generationId: true, genJobId: true, status: true, threadId: true,
@@ -90,7 +100,17 @@ const CARD_SELECT = {
   batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
 } as const;
 
-/** Every writer for one paid job's cards shares this lock, browser-side or worker-side. */
+/**
+ * Every writer for one paid job's cards shares this lock, browser-side or worker-side.
+ *
+ * THE ONE DEFINITION, and it has to be one. This exact derivation was also written out by hand in
+ * `apps/web/lib/canvas-node-placement.ts` — two hand-kept copies of the string that decides whether
+ * two writers for one PAID job take turns. They agreed byte for byte, which is exactly what made
+ * the risk invisible: a rename or a separator change on one side would not have failed to compile
+ * anywhere, and the two writers would simply have stopped serialising, putting one paid picture on
+ * two cards. The browser-side placement now imports this. Its output shape is pinned in
+ * `__tests__/canvas-settlement.test.ts` against the copy that was removed.
+ */
 export function canvasJobPlacementLockKey(ownerId: string, projectId: string, genJobId: string): string {
   return `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`;
 }

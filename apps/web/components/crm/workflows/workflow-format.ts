@@ -1,4 +1,8 @@
 import { MY_DATE_TIME_FORMAT } from "@/lib/my-date-format";
+// Every use of it here splices the result into a sentence this file wrote, so it must not
+// capitalise mid-sentence — the shared rule's lowercase shape (lib/machine-token, which ended
+// five disagreeing copies of this one line). Kept exported under this file's own name.
+import { humanizeTokenPhrase as humanizeCode } from "@/lib/machine-token";
 
 export type WorkflowBadgeVariant =
   | "brand"
@@ -390,6 +394,4 @@ export function isDenialErrorCode(code: string): boolean {
   return ["NOT_AUTHORIZED", "ACTION_DENIED", "RESOURCE_NOT_FOUND"].includes(code);
 }
 
-export function humanizeCode(code: string): string {
-  return code.replaceAll("_", " ").toLowerCase();
-}
+export { humanizeCode };

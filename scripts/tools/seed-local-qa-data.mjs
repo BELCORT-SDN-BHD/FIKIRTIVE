@@ -165,13 +165,11 @@ async function seedIdentity() {
         name: u.name,
         emailVerified: new Date(),
         role: u.userRole,
-        activeOrgId: u.isFounder ? null : u.orgId,
       },
       update: {
         name: u.name,
         emailVerified: new Date(),
         role: u.userRole,
-        activeOrgId: u.isFounder ? null : u.orgId,
       },
     });
     await prisma.betterAuthUser.upsert({
@@ -483,7 +481,6 @@ async function seedEntities(ownerId, assets) {
       aliases: [name.toLowerCase().replaceAll(" ", "-"), `qa-${i + 1}`],
       notes,
       negativeConstraints,
-      promptTokens: [name, "qa-seed"],
       baseAssetId: asset.id,
       createdAt: date(16 - (i % 10)),
     }, {
@@ -492,7 +489,6 @@ async function seedEntities(ownerId, assets) {
       aliases: [name.toLowerCase().replaceAll(" ", "-"), `qa-${i + 1}`],
       notes,
       negativeConstraints,
-      promptTokens: [name, "qa-seed"],
       baseAssetId: asset.id,
       deletedAt: null,
     });
@@ -502,10 +498,9 @@ async function seedEntities(ownerId, assets) {
       entityId,
       assetId: asset.id,
       position: 0,
-      note: "QA seed base reference",
       viewTag: "front",
       createdAt: date(15 - (i % 7)),
-    }, { position: 0, note: "QA seed base reference", deletedAt: null });
+    }, { position: 0, deletedAt: null });
     if (type !== "LOCATION") {
       const variantId = id(`${entityId}_variant_1`);
       await upsert("entityVariant", { id: variantId }, {
@@ -529,10 +524,9 @@ async function seedEntities(ownerId, assets) {
         assetId: assets[(i + 1) % assets.length].id,
         variantId,
         position: 0,
-        note: "QA seed variant reference",
         viewTag: "campaign",
         createdAt: date(8 - (i % 4)),
-      }, { assetId: assets[(i + 1) % assets.length].id, variantId, note: "QA seed variant reference", deletedAt: null });
+      }, { assetId: assets[(i + 1) % assets.length].id, variantId, deletedAt: null });
     }
   }
 }
