@@ -60,6 +60,7 @@ export const readContactsSkill = defineOttoSkill({
     "\"how many customers do I have\" with `returned`, and never present a page as everything. When they differ, " +
     "say so plainly: they have `totalCount` contacts and you are looking at the first `returned` of them. " +
     "`limit` (up to 100) raises the page size if they want more of it in one go. " +
+    "For a segment rule's matchedCount use readSegments; this skill has no preview operation. " +
     CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: executeReadContacts,

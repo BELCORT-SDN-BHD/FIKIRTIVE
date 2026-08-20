@@ -125,6 +125,7 @@ export const manageContactsSkill = defineOttoSkill({
     "channel-verified number is refused. No merge/unmerge, send, provider, money, tags, or custom-field path exists. " +
     "record_consent enters ConsentEvent as crm_manual backfill/asserted and never fabricates verified opt-in. " +
     "Use caller-stable request/import ids on retries and get exact Contact ids from readContacts. " +
+    "For a segment rule's matchedCount use readSegments; this skill has no preview operation. " +
     CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: executeManageContacts,
