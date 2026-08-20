@@ -164,25 +164,45 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
     surface: "buildSegment",
     why: "同一句实话、同一份证据 —— 两条技能各带一份,因为模型读到哪一条就只读到哪一条。",
   },
-  // C7 r3(二轮判官 [P2-1])—— r2 那一句方向写反了:Otto 分群端口不走 contactMatchesRules
-  // 纯匹配器,走 selectedIntoAudience 产品闸(consent-authority.ts:122-139,经
-  // segment-actions.ts:221-233 的 matches())。
-  // C7 r4(三轮判官 codex 跨族复判 [P1])—— r3 修对了机制方向,但又加了一层新的失实:
-  // 「today, that is everyone」「which today is nobody」「needs the customer's own verified
-  // confirmation」全部是绝对人口/人群主张,密封环境的 grep 只能证明「现在没有新 writer 会产生
-  // 新的 effective_revoke」,证不出「存量 legacy 围栏(unresolvedLegacyOptOut,零顾客验证即可
-  // 成立,consent-fold.ts:333-344)是空的」——仓内本就有反例(segment-actions.test.ts:331-361、
-  // consent-cross-page-consistency.test.ts:522-535)。这一句改成纯机制陈述,不再对「今天有多少
-  // 人」下任何断言。
+  // C7 r5(编排者第五轮,断路器条款下换设计)—— r2/r3/r4 三轮都栽在同一个根因:contactability
+  // 那句「谁选中谁」的真值表本身就是一句结果性断言,混合规则组(consent-single-authority.test.ts:
+  // 703-715)与 excludeReportedOptOut 开关都有反例能推翻任何简化写法。新设计的解法不是把真值表
+  // 写得更精确,是**这句话从此不写真值表**——contactability 那一整句真值表已从披露里删除;
+  // 下面三句是新披露里剩下的、真正带全称词的句子,逐句都能用静态证据核销,不依赖任何联系人存量
+  // 数据。
   {
     sentence:
-      "The fifth, contactability, selects on consent: contactability=contactable matches every contact who is not a known opt-out, and contactability=not_contactable matches exactly the contacts who are — how many land on each side depends on the merchant's own data.",
+      "This description makes no claim about how many contacts any rule or segment matches, or names them as everyone or nobody — that depends entirely on this merchant's own data, so call preview and read its matchedCount before saying who a segment reaches or how many.",
     surface: "readSegments",
-    why: "可证,机制推演走 `selectedIntoAudience`(`apps/web/lib/consent-authority.ts:122-139`,经 `segment-actions.ts:221-233` 的 `matches()` —— Otto 分群预览/构建实际走的产品闸,不是 `contactMatchesRules` 纯匹配器,丢弃 `evaluateContact` 算出的 `marketingConsent`,只按 `isKnownOptOut(truth)`(`consent-fold.ts:313`)二值代入)。对非 known opt-out 的 contact 恒 contactable=true、not_contactable=false;对 known opt-out 的 contact 恒相反 —— 这是纯函数逻辑,与生产存量数据无关,句子本身不对「今天有多少人在哪一侧」下断言。",
+    why: "这句本身就是「不下人口断言」的政策声明,不是一句需要证明为真的经验主张 —— 它的可证性在于它对自己的要求(不断言数量)可由本文件其余内容逐句核查(见下面两条豁免与 CLAIM_EVIDENCE):披露里再没有第二句「matches N 人」式的话。",
   },
   {
     sentence:
-      "The fifth, contactability, selects on consent: contactability=contactable matches every contact who is not a known opt-out, and contactability=not_contactable matches exactly the contacts who are — how many land on each side depends on the merchant's own data.",
+      "This description makes no claim about how many contacts any rule or segment matches, or names them as everyone or nobody — that depends entirely on this merchant's own data, so call preview and read its matchedCount before saying who a segment reaches or how many.",
+    surface: "buildSegment",
+    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
+  },
+  {
+    sentence:
+      "The rule group's excludeReportedOptOut can additionally leave those merchant-recorded contacts out, but only as a subtraction on top of whatever the consent gate already decided, never an addition.",
+    surface: "readSegments",
+    why: "可证:`apps/web/lib/consent-authority.ts:133` —— `if (rules.excludeReportedOptOut === true && truth.reportedOptOut) return false`,函数里不存在任何把 false 改判 true 的分支,唯一效果是提前退出,纯粹只减。",
+  },
+  {
+    sentence:
+      "The rule group's excludeReportedOptOut can additionally leave those merchant-recorded contacts out, but only as a subtraction on top of whatever the consent gate already decided, never an addition.",
+    surface: "buildSegment",
+    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
+  },
+  {
+    sentence:
+      "A saved segment stores its rule definition only; the matching contact list is recalculated live every time it is read, and saving never sends anything.",
+    surface: "readSegments",
+    why: "可证:`apps/web/lib/segment-actions.ts:603-621`(update)与 `:664-675`(create)的 prisma `data` 字面量只有 `name`/`phrase`/`rulesJson`;`list`/`get`/`preview`(`:348-445`)各自重新调用 `readContacts()` 现读联系人,`buildSegment` 本身不调用任何发送/冻结路径。(`saveCustomerSegment` 是另一套机制 —— brand-memory 笔记卡,不落 `rulesJson`,这句话对它只是同一段拼接文本,不代表它的存储机制与 CRM Segment 相同。)",
+  },
+  {
+    sentence:
+      "A saved segment stores its rule definition only; the matching contact list is recalculated live every time it is read, and saving never sends anything.",
     surface: "buildSegment",
     why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
   },
