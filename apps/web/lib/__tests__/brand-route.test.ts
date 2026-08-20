@@ -186,6 +186,8 @@ vi.mock("@/lib/dto", () => ({ toEntityDTO: (entity: unknown) => entity }));
 
 const { OttoMemory } = await import("@/components/otto/OttoMemory");
 const { default: BrandPage } = await import("@/app/brand/page");
+const { ottoTurn } = await import("@/lib/otto-client-actions");
+const { getCoworkThreadClient } = await import("@/lib/cowork-fetch");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -253,6 +255,30 @@ async function mountBrand(opts: { tab?: string; records?: BrandRecordRow[]; item
 
 function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement | undefined {
   return Array.from(scope.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
+}
+
+/**
+ * 等**那件事真的发生**,而不是等一段时间(#1030)。
+ *
+ * Radix 的 roving focus 不在按键那一刻搬焦点:`RovingFocusGroupItem` 的 `onKeyDown` 把
+ * `focusFirst(candidateNodes)` 塞进一个 `setTimeout(…)` 里
+ * (`@radix-ui/react-roving-focus`,1.1.13 的 dist 第 180 行)。而 `await act(...)` 保证的
+ * 是「React 的活干完了、微任务排空了」——**它不保证 Node 的定时器队列轮到过**。于是
+ * 「焦点走没走到下一个页签」变成一场和 1ms 定时器的赛跑:文件顺序一换、机器负载一变,
+ * 同一份代码就一半绿一半红。#1030 记的三次独立观察,失败字节永远是同一句
+ * `expected 'About the brand' to be 'Look & feel'` —— 焦点停在第一个页签上没动。
+ *
+ * 所以这里等的是条件本身:成立的那一刻就返回(通常第一轮就成立),没有 sleep、没有重试壳、
+ * 没有放宽断言。只有那件事**真的没发生**才会耗到截止线,而那时下面的断言照常打印真实差异 ——
+ * roving focus 真坏了,这条用例还是红的。
+ */
+async function actUntil(settled: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!settled() && Date.now() < deadline) {
+    // 让出一个宏任务:Radix 那个 setTimeout 只有在这里才轮得到跑。包在 act 里,是因为它跑出来的
+    // 焦点变化会顺着 Radix Tabs 的 onFocus 触发 React 更新 —— 那更新必须还在 act 的作用域内。
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -367,11 +393,20 @@ describe("W2-2 ② 手搓 tablist 退场,换成 ui/tabs(规格书 §5.6 ②)", (
 
   it("方向键在页签之间走 —— 手搓那版按了什么都不会发生", async () => {
     const dom = await mountBrand();
-    const first = dom.querySelector<HTMLElement>('[role="tab"]')!;
+    const tabs = Array.from(dom.querySelectorAll<HTMLElement>('[role="tab"]'));
+    const [first, second] = tabs;
+
+    await act(async () => { first.focus(); });
+    // 先钉住起点。焦点还没落到页签上时,方向键本来就什么都不该发生 —— 那种失败必须长得像
+    // 「焦点没进来」,不能伪装成「roving focus 坏了」。
+    expect(document.activeElement, "方向键还没按,焦点就不在第一个页签上").toBe(first);
+
     await act(async () => {
-      first.focus();
       first.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     });
+    // 焦点推进是 Radix 推迟到宏任务里干的 —— 等它真的发生,而不是赌它已经发生(见 actUntil)。
+    await actUntil(() => document.activeElement === second);
+
     expect(document.activeElement?.textContent?.trim()).toBe(SECTIONS[1].label);
     // 页签是 URL 的一部分(?tab=),所以「换页签」这件事在这一面就是换地址。
     expect(routerReplace).toHaveBeenCalledWith(`/brand?tab=${SECTIONS[1].key}`, { scroll: false });
@@ -441,5 +476,123 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
       data: expect.objectContaining({ name: "Sambal bottle", imageAssetId: "asset_1" }),
     }));
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────────
+// #977:浏览器把 sessionStorage 锁上时,/brand 这扇门仍然开得了
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Chrome 的「阻止所有 Cookie」不是让 `getItem` 返回空 —— 它让**读 `sessionStorage` 这个属性
+ * 本身**抛 SecurityError。抛点在属性上,是这几条用例的全部要害:任何
+ * `window.sessionStorage.xxx()` 的裸取,都会在拿到那个方法之前就炸。
+ *
+ * 而 W2-2 之后 `OttoMemory` 就是 `/brand` 这条顶层路由的**全部页面内容**
+ * (`app/brand/page.tsx`),它的 useEffect 同步体里抛一次,商家看到的不是「聊天记不住」,
+ * 是整面品牌资料白屏。
+ *
+ * 还原函数必须调 —— 否则后面每一条用例的 `beforeEach`(`sessionStorage.clear()`)会跟着炸。
+ */
+function denySessionStorage(): () => void {
+  const own = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+  Object.defineProperty(window, "sessionStorage", {
+    configurable: true,
+    get() {
+      throw new DOMException("Access is denied for this document.", "SecurityError");
+    },
+  });
+  return () => {
+    delete (window as unknown as Record<string, unknown>).sessionStorage;
+    if (own) Object.defineProperty(window, "sessionStorage", own);
+  };
+}
+
+/** 指针的键由组件按 projectId 拼(`mountBrand` 挂的是 proj_1)。 */
+const THREAD_KEY = "fikirtive:otto-brand-thread:proj_1";
+
+function aThread(texts: string[]): Awaited<ReturnType<typeof getCoworkThreadClient>> {
+  return {
+    id: "thread_brand",
+    projectId: "proj_1",
+    title: "Brand",
+    updatedAt: "2026-08-18T00:00:00.000Z",
+    messages: texts.map((text, i) => ({
+      id: `m_${i}`, role: "AGENT" as const, kind: "TEXT" as const, seq: i,
+      text, payload: null, genJobId: null, createdAt: "2026-08-18T00:00:00.000Z",
+    })),
+  };
+}
+
+/** 在输入框里打一句话再按 Send(受控 textarea:得走原生 setter 才触发得了 onChange)。 */
+async function say(dom: HTMLDivElement, text: string) {
+  const box = dom.querySelector<HTMLTextAreaElement>('textarea[aria-label="Tell Otto about your brand"]')!;
+  const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(box, text);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const send = [...dom.querySelectorAll("button")].find((b) => b.textContent?.includes("Send"))!;
+  await act(async () => send.click());
+}
+
+describe("#977 · 浏览器锁上 sessionStorage 时,/brand 仍然开得了", () => {
+  afterEach(() => {
+    // 这一段自己装的实现不许漏给别的用例(clearAllMocks 只清调用记录,不清实现)。
+    vi.mocked(ottoTurn).mockReset();
+    vi.mocked(getCoworkThreadClient).mockReset();
+  });
+
+  it("这把锁是真的:读 sessionStorage 这个属性本身就抛 SecurityError", () => {
+    const restore = denySessionStorage();
+    try {
+      expect(() => globalThis.sessionStorage).toThrowError(/denied/i);
+    } finally {
+      restore();
+    }
+    expect(() => globalThis.sessionStorage).not.toThrow();
+  });
+
+  it("整面照常画得出来 —— 不打到错误边界(白屏)", async () => {
+    const restore = denySessionStorage();
+    try {
+      const dom = await mountBrand();
+      expect(dom.querySelector("h1")?.textContent?.trim()).toBe("Brand memory");
+      expect(dom.querySelectorAll('[role="tab"]')).toHaveLength(SECTIONS.length);
+    } finally {
+      restore();
+    }
+  });
+
+  it("聊天照常发得出去,只是记不住指针 —— 存不了就当没记", async () => {
+    vi.mocked(ottoTurn).mockResolvedValue({ threadId: "thread_brand", status: "done", reply: "Saved that." });
+    vi.mocked(getCoworkThreadClient).mockResolvedValue(aThread(["Saved that."]));
+    const restore = denySessionStorage();
+    try {
+      const dom = await mountBrand();
+      await say(dom, "We sell hand-poured candles.");
+      expect(ottoTurn).toHaveBeenCalledTimes(1);
+      expect(dom.textContent, "锁上之后连一句话都发不出去了").toContain("Saved that.");
+    } finally {
+      restore();
+    }
+    // 锁打开之后回头看:一条指针都没落地 —— 写不进去就是没写,不留半截。
+    expect(window.sessionStorage.getItem(THREAD_KEY)).toBeNull();
+  });
+
+  it("锁没上的时候,记住的会话照旧续得上(加守卫不许把这条弄回归)", async () => {
+    window.sessionStorage.setItem(THREAD_KEY, "thread_brand");
+    vi.mocked(getCoworkThreadClient).mockResolvedValue(aThread(["Saved that."]));
+    vi.mocked(ottoTurn).mockResolvedValue({ threadId: "thread_brand", status: "done", reply: "Noted." });
+
+    const dom = await mountBrand();
+    expect(getCoworkThreadClient, "重挂时没去读记住的那条会话").toHaveBeenCalledWith("thread_brand");
+    expect(dom.textContent).toContain("Saved that.");
+
+    await say(dom, "Our customers are gift buyers.");
+    expect(ottoTurn, "下一句话另开了一条新会话").toHaveBeenLastCalledWith(
+      expect.objectContaining({ threadId: "thread_brand" }),
+    );
+    expect(window.sessionStorage.getItem(THREAD_KEY)).toBe("thread_brand");
   });
 });

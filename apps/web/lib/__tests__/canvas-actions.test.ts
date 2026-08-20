@@ -27,6 +27,14 @@ const { mockSettleCanvasCards, mockOwner, mockFindMany, mockCreate, mockUpdateMa
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
 vi.mock("../data", () => ({ getGenerationThumbs: mockGetGenerationThumbs }));
 vi.mock("../canvas-node-placement", () => ({
+  // The one card-column list. Real value, mocked module: the board read must ask for the same
+  // columns every other canvas surface asks for, and stubbing it would hide a divergence.
+  CANVAS_NODE_SELECT: {
+    id: true, type: true, x: true, y: true, w: true, h: true, text: true,
+    prompt: true, generationId: true, genJobId: true, status: true,
+    batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
+    threadId: true,
+  },
   placeCanvasJobNode: mockPlaceCanvasJobNode,
   tombstoneCanvasNode: mockTombstoneCanvasNode,
   // #549: every new card asks the board for a spot that is free. Stubbed to the identity here

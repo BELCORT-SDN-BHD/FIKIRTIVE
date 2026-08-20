@@ -41,5 +41,3 @@ export const seedreamPromptSkill = defineOttoSkill({
     return { prompt: assembleSeedream(i), ...(notes.length > 0 ? { notes } : {}) };
   },
 });
-
-export const seedreamPrompt = seedreamPromptSkill.tool;

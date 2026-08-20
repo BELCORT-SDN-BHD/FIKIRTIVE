@@ -194,5 +194,3 @@ export const recallStoreKnowledgeSkill = defineOttoSkill({
   parameters: recallStoreKnowledgeParams,
   execute: executeRecallStoreKnowledge,
 });
-
-export const recallStoreKnowledge = recallStoreKnowledgeSkill.tool;

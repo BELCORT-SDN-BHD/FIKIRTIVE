@@ -1128,6 +1128,47 @@ async function consumeApprovalCard(
 }
 
 /**
+ * Which parked interruption an APPROVAL_CARD refers to — the ONE definition, used by both
+ * `ottoApprove` (to bind the consent it is about to spend) and `ottoReject` (to mark the same
+ * call declined). The two carried a word-for-word copy of this, per-tool hash branches and all;
+ * a card that approves against one rule and rejects against another is a money bug waiting for
+ * the copies to drift apart, and only a comment stood between them.
+ *
+ * The match is (toolName, ref) AND — for the two tools whose `ref` is NOT unique — the card's
+ * own content hash. `generateReferences` refs an entityId that two same-entity parks share, and
+ * `runFactoryBatch` refs a batchId that may repeat across parks with different content, so each
+ * card must match exactly ITS OWN parked call and never a sibling's still-pending ask.
+ * `generate` is excluded: it is bound by cardId on its own path above, not by this one.
+ *
+ * Generic in the interruption element type so both call sites keep the exact type the run state
+ * handed them (`state.approve`/`state.reject` take it back unchanged).
+ */
+function findParkedApprovalInterruption<T>(
+  interruptions: readonly T[],
+  cardPayload: ApprovalCardPayload,
+): T | undefined {
+  return interruptions.find((item) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const it = item as any;
+    const toolName: string | undefined = it.name ?? it.rawItem?.name;
+    if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
+    try {
+      const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
+      if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
+      if (toolName === "generateReferences") {
+        return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
+      }
+      if (toolName === "runFactoryBatch") {
+        return factoryBatchApprovalHashFromArgs(args) === cardPayload.contentHash;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
  * Claim the approval card as the LAST step before the model runs (#524 r3, judge P1-A).
  *
  * ORDER IS THE FIX. r2 consumed the card and then let `reserveCredits` decide, with a read-only
@@ -1856,30 +1897,9 @@ export async function ottoApprove(raw: unknown): Promise<
           // (toolName, ref) binding FIRST — locate the parked interruption this card refers to. We need
           // its exact args to bind the consent for tools whose consent object IS the parked call
           // (generateReferences), and it lets a stale/already-approved card short-circuit before any read.
-          // P2 ref collision: for generateReferences the ref (entityId) is NOT unique — two same-entity
-          // parks with different prompts share it — so the match is additionally pinned to the card's
-          // content hash: each card matches exactly ITS OWN parked call, never a sibling's.
-          const targetItem = interruptions.find((item) => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const it = item as any;
-            const toolName: string | undefined = it.name ?? it.rawItem?.name;
-            if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
-            try {
-              const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
-              if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
-              if (toolName === "generateReferences") {
-                return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
-              }
-              // Same P2 discipline for runFactoryBatch: the ref (batchId) may repeat across two parks
-              // with different content — each card matches exactly ITS OWN parked call via the hash.
-              if (toolName === "runFactoryBatch") {
-                return factoryBatchApprovalHashFromArgs(args) === cardPayload.contentHash;
-              }
-              return true;
-            } catch {
-              return false;
-            }
-          });
+          // The matcher (with its per-tool hash pinning) is shared with ottoReject — see
+          // findParkedApprovalInterruption.
+          const targetItem = findParkedApprovalInterruption(interruptions, cardPayload);
           if (!targetItem) {
             // Parked ask gone (superseded/consumed). Truth first: if the post IS approved, consume the
             // card and answer benignly instead of failing the user for a stale ask.
@@ -2484,28 +2504,9 @@ export async function ottoReject(raw: unknown): Promise<
         try {
           const state = await tryRestoreRunState(otto, thread.ottoState);
           if (state) {
-            const targetItem = state.getInterruptions().find((item) => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const it = item as any;
-              const toolName: string | undefined = it.name ?? it.rawItem?.name;
-              if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
-              try {
-                const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
-                if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
-                // P2 ref collision (same as ottoApprove's matcher): a refgen card must reject exactly
-                // ITS OWN parked call, never a same-entity sibling's still-pending ask.
-                if (toolName === "generateReferences") {
-                  return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
-                }
-                // Same discipline for runFactoryBatch (ref=batchId may repeat across parks).
-                if (toolName === "runFactoryBatch") {
-                  return factoryBatchApprovalHashFromArgs(args) === cardPayload.contentHash;
-                }
-                return true;
-              } catch {
-                return false;
-              }
-            });
+            // The SAME matcher ottoApprove binds consent with — one definition, so a card cannot
+            // be approved against one rule and rejected against another.
+            const targetItem = findParkedApprovalInterruption(state.getInterruptions(), cardPayload);
             if (targetItem) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               state.reject(targetItem as any, { message: "The user declined this request." });

@@ -300,6 +300,42 @@ describe("a board bought without ever opening a chat", () => {
   });
 });
 
+/**
+ * ONE LOCK KEY, AND IT MUST STILL BE THE OLD ONE.
+ *
+ * `canvasJobPlacementLockKey` was defined twice — here and, byte for byte, in
+ * `apps/web/lib/canvas-node-placement.ts` — and the second copy has been deleted in favour of this
+ * one. That collapse is only safe if the surviving function produces EXACTLY what the deleted one
+ * produced: this key is what makes the worker's settlement and the browser's placement take turns
+ * over one paid job's cards, and a key that shifts by a single character means both writers run at
+ * once and one paid picture lands on two cards.
+ *
+ * So the deleted body is written out again below and the two are compared over inputs that could
+ * plausibly tell them apart — including ids carrying the separator itself, which is where a naive
+ * "join with colons" rewrite would first diverge. This is a pure string comparison; it takes no
+ * lock and touches no row.
+ */
+describe("one lock key: the surviving derivation equals the copy that was removed", () => {
+  /** Verbatim body of the copy deleted from apps/web/lib/canvas-node-placement.ts. */
+  const removedWebCopy = (ownerId: string, projectId: string, genJobId: string): string =>
+    `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`;
+
+  const cases: Array<[string, string, string]> = [
+    ["owner-1", "project-1", "job-1"],
+    ["org_01HTEST", "prj_01HTEST", "gj_01HTEST"],
+    // A separator inside an id: the two must agree on this too, or a future "tidier" rewrite
+    // (splitting, escaping, re-joining) would look equivalent on ordinary ids and not be.
+    ["owner:1", "project:1", "job:1"],
+    ["", "", ""],
+    ["商家-1", "项目-1", "任务-1"],
+  ];
+
+  it.each(cases)("derives the same key for (%s, %s, %s)", (ownerId, projectId, genJobId) => {
+    expect(canvasJobPlacementLockKey(ownerId, projectId, genJobId))
+      .toBe(removedWebCopy(ownerId, projectId, genJobId));
+  });
+});
+
 describe("what it must refuse to do", () => {
   it("runs twice without duplicating a single card", async () => {
     const { jobId } = await seedJob({ status: "DONE", outputs: 3 });
@@ -313,10 +349,10 @@ describe("what it must refuse to do", () => {
     expect(await cardsForJob(jobId)).toHaveLength(3);
 
     // Two writers place a job's cards: this one and the browser-side placement in
-    // apps/web/lib/canvas-node-placement.ts. They only take turns if they ask for the SAME lock,
-    // and the lock is named by a hand-written string in each file. Pin the exact shape here so a
-    // rename on either side fails a test instead of quietly letting both writers run at once.
-    // (Converging the two onto one exported helper belongs to the read-path slice, T2d.)
+    // apps/web/lib/canvas-node-placement.ts. They only take turns if they ask for the SAME lock.
+    // That file used to derive the key with its own hand-written copy of this function; it now
+    // imports this one, and the byte-for-byte equality of the two derivations is pinned in the
+    // "one lock key" block below. This case keeps the shape pinned where the settlement itself is.
     expect(canvasJobPlacementLockKey("owner-1", "project-1", "job-1"))
       .toBe("canvas-job-placement:owner-1:project-1:job-1");
   });

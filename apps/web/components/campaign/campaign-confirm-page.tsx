@@ -16,6 +16,11 @@ import {
   XCircle,
 } from "lucide-react";
 import { displayCredits } from "@fikirtive/core/spend";
+// The shared money words (#699's single format): thousands grouping and the 1-decimal rule that
+// every other credit figure in the product already obeys. This page hand-wrote the singular/
+// plural nine times instead, so a fractional balance printed here with every digit it had while
+// the same balance read "1,234.6 credits" one screen over.
+import { creditsLabel } from "@/lib/credit-format";
 import {
   confirmCampaignGeneration,
   quoteCampaignGeneration,
@@ -327,14 +332,14 @@ function ConfirmWorkspace({
               </div>
             ) : interruption ? (
               <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
-                Confirmed reserved before the interruption: <strong>{reservedThisRun} {reservedThisRun === 1 ? "credit" : "credits"}</strong>.
+                Confirmed reserved before the interruption: <strong>{creditsLabel(reservedThisRun)}</strong>.
                 {currentUnknown
                   ? " One item's start status could not be confirmed and may also have reserved credits. A retry will reuse it if it exists."
                   : " The remaining items did not start."}
               </div>
             ) : (
               <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
-                Reserved this run: <strong>{reservedThisRun} {reservedThisRun === 1 ? "credit" : "credits"}</strong>. Reused and failed items charged nothing.
+                Reserved this run: <strong>{creditsLabel(reservedThisRun)}</strong>. Reused and failed items charged nothing.
                 Any item that fails is refunded automatically.
               </div>
             )}
@@ -515,13 +520,13 @@ function ConfirmWorkspace({
               <div className="flex items-baseline justify-between border-t border-border pt-3">
                 <span className="text-sm text-muted-foreground">Total</span>
                 <span className="text-2xl font-semibold tracking-tight">
-                  {totalDisplayCredits} {totalDisplayCredits === 1 ? "credit" : "credits"}
+                  {creditsLabel(totalDisplayCredits)}
                 </span>
               </div>
               <div className="flex items-baseline justify-between">
                 <span className="text-sm text-muted-foreground">Current balance</span>
                 <span className="text-sm font-semibold">
-                  {balanceDisplayCredits} {balanceDisplayCredits === 1 ? "credit" : "credits"}
+                  {creditsLabel(balanceDisplayCredits)}
                 </span>
               </div>
               {/* #708: say where the difference went. A total that is smaller than the sum of the
@@ -545,7 +550,7 @@ function ConfirmWorkspace({
               {insufficientCredits ? (
                 <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
                   <p>
-                    <strong>Not enough credits</strong> — you have {balanceDisplayCredits} {balanceDisplayCredits === 1 ? "credit" : "credits"}, this needs {totalDisplayCredits} {totalDisplayCredits === 1 ? "credit" : "credits"}.
+                    <strong>Not enough credits</strong> — you have {creditsLabel(balanceDisplayCredits)}, this needs {creditsLabel(totalDisplayCredits)}.
                   </p>
                   <Link href="/billing" className="mt-2 inline-flex font-semibold underline underline-offset-4">
                     Top up credits
@@ -561,7 +566,7 @@ function ConfirmWorkspace({
                 {busy || quoting ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
                 {totalDisplayCredits === 0
                   ? "Confirm · no charge"
-                  : `Confirm · ${totalDisplayCredits} ${totalDisplayCredits === 1 ? "credit" : "credits"}`}
+                  : `Confirm · ${creditsLabel(totalDisplayCredits)}`}
               </Button>
               <Button asChild variant="ghost" className="w-full">
                 <Link href={`/campaign/${campaignId}`}><ArrowLeft />Back without generating</Link>
@@ -692,7 +697,7 @@ function LinePrice({
   if (line.charge === "new") {
     return (
       <span className="text-sm font-semibold">
-        {line.displayCredits} {line.displayCredits === 1 ? "credit" : "credits"}
+        {creditsLabel(line.displayCredits)}
       </span>
     );
   }
@@ -701,7 +706,7 @@ function LinePrice({
       <span className="text-sm font-semibold">0 credits</span>
       <span className="text-xs text-muted-foreground">
         {line.charge === "reused" ? reusedLabel(line.reuseState) : "Will not start"} · normally{" "}
-        {line.fullDisplayCredits} {line.fullDisplayCredits === 1 ? "credit" : "credits"}
+        {creditsLabel(line.fullDisplayCredits)}
       </span>
     </span>
   );

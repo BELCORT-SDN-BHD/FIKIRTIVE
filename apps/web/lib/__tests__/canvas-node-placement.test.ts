@@ -38,11 +38,16 @@ vi.mock("@fikirtive/db", () => {
     // thing every placement writer must agree on, so it is not re-invented here.
     canvasBoardPlacementLockKey: (ownerId: string, projectId: string) =>
       `canvas-board-placement:${ownerId}:${projectId}`,
+    // Same rule for the per-job lock. This file used to own a second definition of it; the one
+    // definition now lives in packages/db (its shape is pinned there, against the copy that was
+    // removed from here). Stubbed with the real string so the assertions below still read the
+    // key this module actually asks the database to take.
+    canvasJobPlacementLockKey: (ownerId: string, projectId: string, genJobId: string) =>
+      `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`,
   };
 });
 
 const {
-  canvasJobPlacementLockKey,
   placeCanvasJobNode,
   tombstoneCanvasNode,
 } = await import("../canvas-node-placement");
@@ -108,8 +113,15 @@ beforeEach(() => {
 });
 
 describe("placeCanvasJobNode", () => {
-  it("uses one job-wide lock key for primary and sibling placement", () => {
-    expect(canvasJobPlacementLockKey("o", "p", "j")).toBe("canvas-job-placement:o:p:j");
+  it("takes the one job-wide lock before it reads or writes anything", async () => {
+    await expect(placeCanvasJobNode(base)).resolves.toEqual({ inserted: true, node: saved });
+
+    // The FIRST statement of the transaction, and it names the owner/project/job the caller
+    // asked about — that is what makes this placement take turns with the worker-side settlement
+    // over the same paid job. The key's shape itself is pinned in packages/db.
+    expect(mocks.executeRaw.mock.calls[0]).toEqual(expect.arrayContaining([
+      "canvas-job-placement:owner-1:project-1:job-1",
+    ]));
   });
 
   it("creates one owner/project/job-scoped primary placement", async () => {

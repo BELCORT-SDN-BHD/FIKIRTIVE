@@ -6,14 +6,20 @@ import { consumeMediaProxyGate } from "@/lib/rate-limit-gates";
 
 /**
  * Signed media proxy (L1 spec §四C, Plan B). IG only fetches media from a PUBLIC URL, but our
- * media lives in a private, owner-namespaced R2 bucket (宪法 6 铁幕). The publish worker signs a
- * short-lived HMAC token over (ownerId + storage key + expiry) and hands Meta this URL; here we
- * verify it server-side and STREAM the bytes back — no session (Meta's servers call this), no
- * public bucket, no presigned-URL leak of our storage host.
+ * media lives in a private, owner-namespaced R2 bucket (宪法 6 铁幕). A signer mints a short-lived
+ * HMAC token over (ownerId + storage key + expiry) and hands out this URL; here we verify it
+ * server-side and STREAM the bytes back — no session, no public bucket, no presigned-URL leak of
+ * our storage host.
+ *
+ * TWO SIGNERS, ONE DOOR. It was written for the publish worker handing Meta a URL (that half is
+ * still inert until the energize slice + App Review). B0-28 added the second, and that one is
+ * LIVE: the seat-less share preview (apps/web/lib/share-preview-view.ts) signs a 10-minute token
+ * for the shared post's own media so a client with no account can see the image. So "nothing here
+ * can be reached yet" is no longer true — an ordinary browser is now a routine caller, which is
+ * exactly what the fail-closed checks below were built for.
  *
  * Fail-closed at every step: a bad/expired/forged token, an owner-namespace mismatch, a malformed
- * key, or a missing object all return 404 — never bytes. Inert until the publish worker actually
- * signs tokens (energize slice) + App Review passes; nothing here can be reached otherwise.
+ * key, or a missing object all return 404 — never bytes.
  *
  * Node runtime (the default for a route touching @/lib/storage + node:crypto) — never edge.
  *

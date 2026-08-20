@@ -99,5 +99,3 @@ export const readSegmentsSkill = defineOttoSkill({
   parameters: params,
   execute: executeReadSegments,
 });
-
-export const readSegments = readSegmentsSkill.tool;

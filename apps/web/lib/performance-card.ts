@@ -8,6 +8,8 @@
  */
 import { RANGES } from "./analytics-view";
 import type { PerformanceCardPayload, PerfCardAd, AdVerdict, DiagReason } from "@fikirtive/otto";
+// 与 per-ad-view.ts 共用同一份实现,不再各抄一份月名数组(lib/short-date-label)。
+import { shortIsoDayLabel as fmtDate } from "./short-date-label";
 
 export type PerfRow = {
   adId: string;
@@ -36,12 +38,6 @@ export type PerformanceCardView = {
 // (RANGES.key is the short "30d" form — do NOT match on key here). Mirrors per-ad-view.ts.
 function rangeLabel(preset: string): string {
   return RANGES.find((r) => r.preset === preset)?.label ?? preset;
-}
-function fmtDate(iso: string): string {
-  // iso date only — avoid locale/timezone surprises: "2026-07-03" → "Jul 3"
-  const [, m, d] = iso.slice(0, 10).split("-");
-  const mon = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m)];
-  return `${mon} ${Number(d)}`;
 }
 
 const KNOWN_VERDICTS: ReadonlySet<string> = new Set(["winner", "loser", "neutral"]);

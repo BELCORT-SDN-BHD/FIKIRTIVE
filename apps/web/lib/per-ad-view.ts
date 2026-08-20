@@ -1,5 +1,8 @@
 import { RANGES, currencyCode, moneyBucketKey } from "./analytics-view";
 import type { OwnerAdPerformance } from "./meta-performance";
+// "2026-07-03" → "Jul 3", from the app's one set of short month names (lib/short-date-label).
+// performance-card.ts held a character-for-character copy of this and its month array.
+import { shortIsoDayLabel as fmtDate } from "./short-date-label";
 
 /** Heading prefix for a run of ads whose currency Meta never reported. It always names the
  *  account, because such runs are PER ACCOUNT (#692 r2) and there can be several. */
@@ -52,12 +55,6 @@ function rangeLabel(preset: string): string {
   // getAdPerformance's datePreset is the Meta preset form ("last_30d"); RANGES.preset matches it
   // (RANGES.key is the short "30d" form — do NOT match on key here).
   return RANGES.find((r) => r.preset === preset)?.label ?? preset;
-}
-function fmtDate(iso: string): string {
-  // iso date only — avoid locale/timezone surprises: "2026-07-03" → "Jul 3"
-  const [, m, d] = iso.slice(0, 10).split("-");
-  const mon = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m)];
-  return `${mon} ${Number(d)}`;
 }
 
 /** Shape the owner's per-ad performance into a display model. Pure — no fetch, no I/O.
