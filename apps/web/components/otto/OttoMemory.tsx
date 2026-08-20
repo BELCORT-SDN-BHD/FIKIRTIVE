@@ -66,6 +66,45 @@ function summarize(facts: RowDiff<MemoryRow>, records: RowDiff<BrandRecordRow>):
   return parts.join(", ");
 }
 
+/** #977:Chrome 的「阻止所有 Cookie」不是让 `getItem` 返回空 —— 它让**读 `sessionStorage`
+ *  这个属性本身**抛 SecurityError。下面三处以前是 `window.sessionStorage.xxx()` 的裸取,
+ *  而第一处在 useEffect 的同步体里:W2-2 之后这个组件就是 `/brand` 这条顶层路由的全部页面
+ *  内容(`app/brand/page.tsx`),那一抛不是「聊天记不住」,是整面品牌资料打到错误边界白屏。
+ *
+ *  形状照抄 `components/canvas/useCanvasGen.ts` 的 `receiptStorage()`:存不了就当没记指针 ——
+ *  每次重挂开一条新会话线程,这一面照常用。 */
+function threadStorage(): Storage | null {
+  try {
+    return typeof globalThis.sessionStorage === "undefined" ? null : globalThis.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readThreadPointer(key: string): string | null {
+  try {
+    return threadStorage()?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeThreadPointer(key: string, threadId: string): void {
+  try {
+    threadStorage()?.setItem(key, threadId);
+  } catch {
+    /* 记不住指针只是下次重挂时另开一条会话,不是错误 —— 消息本身的权威在服务端。 */
+  }
+}
+
+function forgetThreadPointer(key: string): void {
+  try {
+    threadStorage()?.removeItem(key);
+  } catch {
+    /* 同上:删不掉的指针下一次读回来也只是指向一条读不到的会话,那条路已经处理过了。 */
+  }
+}
+
 export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItems = [] }: {
   initialMemory: MemoryRow[];
   initialRecords: BrandRecordRow[];
@@ -113,7 +152,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const remembered = window.sessionStorage.getItem(brandThreadKey);
+    const remembered = readThreadPointer(brandThreadKey);
     if (!remembered) return;
     let alive = true;
     void getCoworkThreadClient(remembered).then((thread) => {
@@ -121,7 +160,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
       if (!thread) {
         // Owner-scoped read came back empty — the conversation is genuinely gone (deleted),
         // so drop the pointer rather than keep replying into a thread that no longer exists.
-        window.sessionStorage.removeItem(brandThreadKey);
+        forgetThreadPointer(brandThreadKey);
         return;
       }
       // Never overwrite a turn the merchant has already started in this mount.
@@ -159,7 +198,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
         setChatError(res.error ?? "Something went wrong — please try again.");
       } else {
         setBrandThreadId(res.threadId);
-        window.sessionStorage.setItem(brandThreadKey, res.threadId);
+        writeThreadPointer(brandThreadKey, res.threadId);
         const thread = await getCoworkThreadClient(res.threadId);
         if (thread) {
           setChat(threadToBubbles(thread.messages));
