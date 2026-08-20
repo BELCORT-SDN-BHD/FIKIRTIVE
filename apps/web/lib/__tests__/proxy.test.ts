@@ -364,14 +364,21 @@ async function collectRoutePaths(
 }
 
 /**
- * 判官三轮 P2-2 / 判官四轮回炉:平行槽(parallel slot)让多个文件映射到同一条路由——Next 在
- * build/entries.js 的 createEntrypoints(:277-293)里按 normalizeAppPath 后的 pathname 把它们
- * 汇入 appPathsPerRoute[normalizedPath] 同一个数组,不是各自产生一条独立路由。这是唯一合法的
- * 「多个物理文件、一条 URL」形状——两个普通目录(或两个 route group)撞在同一个 URL,在 Next
- * 是构建期错误,不是可以静默合并的重复。三轮的裸 `new Set(...)` 去重会把这两种情况一视同仁地
- * 吞掉(判官反例:urlSegment("new") 一旦意外归一成 null,`/privacy` 与 `/privacy/new` 悄悄变成
- * 一条,金丝雀失效)。所以这里按 URL 分组,组内 >1 条时只有「至少一条经过 slot」才允许合并成
- * 一条;否则镜像 Next 的构建错误,直接 throw——不是产出一个吞掉冲突的假绿。
+ * 判官三轮 P2-2 / 判官四轮回炉 / 判官五轮微修:平行槽(parallel slot)让多个文件映射到同一条
+ * 路由——Next 在 build/entries.js 的 createEntrypoints(:277-293)里按 normalizeAppPath 后的
+ * pathname 把它们汇入 appPathsPerRoute[normalizedPath] 同一个数组,不是各自产生一条独立路由。
+ * 这是唯一合法的「多个物理文件、一条 URL」形状——两个普通目录(或两个 route group)撞在同一个
+ * URL,在 Next 是构建期错误,不是可以静默合并的重复(build/webpack/loaders/next-app-loader/
+ * index.js:567-583:`existingChildrenPath` 记录已匹配的非 slot 路径,`isIncomingParallelPage`/
+ * `hasCurrentParallelPage` 都为 false——即两条都不含 `@`——才在 :576 抛
+ * "You cannot have two parallel pages that resolve to the same path")。
+ *
+ * 判官五轮:「组内至少一条经过 slot 就放行」过宽——三个候选撞同一 URL、其中两条是普通目录、
+ * 一条是 slot(flags=[false,false,true])时,旧判据会放行,但组内两个非 slot 条目本身就已经
+ * 是上面那条 Next 构建错误,不因为恰好还有第三条 slot 路径而消失。改判据为:数「非 slot」条目
+ * (hasSlotAncestor===false)——组内非 slot 条目数 >1 时 throw(不管 slot 条目有多少条);
+ * ≤1 时合并成一条(纯 slot 组、或「一条非 slot + 任意条 slot」都合并,镜像 Next 允许一条
+ * children 页面搭配任意多个具名 parallel slot)。
  */
 async function realRoutePaths(
   dir = resolve(WEB_ROOT, "app"),
@@ -390,12 +397,14 @@ async function realRoutePaths(
   }
   const result: string[] = [];
   for (const [url, flags] of groups) {
-    if (flags.length > 1 && !flags.some(Boolean)) {
+    const nonSlotCount = flags.filter((hasSlotAncestor) => !hasSlotAncestor).length;
+    if (nonSlotCount > 1) {
       throw new Error(
-        `realRoutePaths: ${url} 被 ${flags.length} 个物理路径解析到同一条 URL,且没有一个经过 ` +
-          "parallel slot —— 这不是 Next 允许静默合并的形状(parallel slot 汇入同一路由是设计好的," +
-          "见 build/entries.js:277-293;两个普通目录或两个 route group 撞同一个 URL 在 Next 是构建" +
-          "错误)。请检查 app/ 下是否有路由命名冲突,或扩展 realRoutePaths() 的去重规则。",
+        `realRoutePaths: ${url} 被 ${flags.length} 个物理路径解析到同一条 URL,其中 ${nonSlotCount} ` +
+          "个都没有经过 parallel slot —— 这正是 next-app-loader/index.js:567-583 会抛" +
+          '"You cannot have two parallel pages that resolve to the same path" 的形状(两个普通目录' +
+          "或两个 route group 撞同一个 URL 在 Next 是构建错误),恰好还有别的 slot 条目共享同一 URL" +
+          "不能让这个错误消失。请检查 app/ 下是否有路由命名冲突,或扩展 realRoutePaths() 的去重规则。",
       );
     }
     result.push(url);
@@ -1090,6 +1099,23 @@ describe("proxy — realRoutePaths() against a synthetic fixture tree (judge rou
     writeFileSync(join(fixtureRoot, "(g)", "foo", "page.tsx"), "export default function FooToo() { return null }\n");
 
     await expect(realRoutePaths(fixtureRoot, "", true)).rejects.toThrow(/被 2 个物理路径解析到同一条 URL/);
+  });
+
+  it("P2-2 (judge round 5): a THIRD slot sibling does not launder a real two-ordinary-directory collision", async () => {
+    // foo/page.tsx + (g)/foo/page.tsx + foo/@modal/page.tsx all resolve to /foo:
+    // flags = [false, false, true] — two non-slot entries, one slot entry. "at least one slot
+    // present" (round 4's rule) would have let this merge into a single /foo; but the two
+    // non-slot entries are STILL the exact next-app-loader/index.js:567-583 duplicate-page shape
+    // (the earlier canary above), and a third, unrelated slot file sharing the URL doesn't make
+    // that conflict go away. The guard now counts non-slot entries, not "any slot present".
+    mkdirSync(join(fixtureRoot, "foo"), { recursive: true });
+    mkdirSync(join(fixtureRoot, "(g)", "foo"), { recursive: true });
+    mkdirSync(join(fixtureRoot, "foo", "@modal"), { recursive: true });
+    writeFileSync(join(fixtureRoot, "foo", "page.tsx"), "export default function Foo() { return null }\n");
+    writeFileSync(join(fixtureRoot, "(g)", "foo", "page.tsx"), "export default function FooToo() { return null }\n");
+    writeFileSync(join(fixtureRoot, "foo", "@modal", "page.tsx"), "export default function Modal() { return null }\n");
+
+    await expect(realRoutePaths(fixtureRoot, "", true)).rejects.toThrow(/被 3 个物理路径解析到同一条 URL,其中 2 个都没有经过 parallel slot/);
   });
 
   it("skips an underscore-prefixed directory, not just __tests__", async () => {
