@@ -122,10 +122,7 @@ export { extractProductDraft } from "./product-extract.js";
 export type { ProductDraft } from "./product-extract.js";
 export {
   SCHEDULED_POST_STATUSES,
-  TERMINAL_STATUSES,
-  isScheduledPostStatus,
   canTransition,
-  allowedNextStates,
   type ScheduledPostStatus,
 } from "./schedule-state.js";
 export {
