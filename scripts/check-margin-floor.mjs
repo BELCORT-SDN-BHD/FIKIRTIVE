@@ -69,6 +69,10 @@ const FLOOR_EPSILON = 1e-9;
  * The formula, the pixel table and the hand-transcription discipline are untouched; the
  * per-tier provenance right above each block records where mini's two rates were read.
  */
+/** 按量计价面的成本来源说明(三行共用;见下方 otto:* 条目的注释)。 */
+const USAGE_PRICED_COGS_SOURCE =
+  "计量单位定义:每 $1 的 provider 成本(按量计价面没有档位价,毛利率 = 1 − 1/倍数,与用量无关)";
+
 export const COGS_INPUTS = {
   "image:seedream": {
     cogsUsd: 0.035,
@@ -151,6 +155,15 @@ export const COGS_INPUTS = {
     cogsUsd: 0.49896,
     source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 V2VCompletion.original_price — (6s ref cap + 5s output) × 21,600 tok/s × $2.10/M = $0.49896(含视频输入档;我们参考片窗口的最坏情形)",
   },
+  // ── 钱路 M1-c(2026-08-18):按量计价的三个付费面 ──────────────────────────────
+  // 这三行的成本是 **$1 的 provider 成本** —— 一个计量单位的定义,不是从哪张价目表抄来的
+  // 数字。按量计价面的收费 = 这一次真实的 provider 成本 × 倍数,所以毛利率与用量无关,
+  // 而唯一有内容的输入是那个倍数;倍数由 @fikirtive/core 现取(margin-truth.ts 的
+  // USAGE_PRICED_SURFACES),这边一格都不抄。手抄独立性对这三行不适用,因为这里根本
+  // 没有第二个「真实价格」可抄 —— 有的只是单位本身,两边填 1.0 是同义反复而非重复副本。
+  "otto:chat": { cogsUsd: 1, source: USAGE_PRICED_COGS_SOURCE },
+  "otto:research:llm": { cogsUsd: 1, source: USAGE_PRICED_COGS_SOURCE },
+  "otto:research:search": { cogsUsd: 1, source: USAGE_PRICED_COGS_SOURCE },
 };
 
 /**
@@ -364,7 +377,29 @@ async function buildSellableSkus() {
     add(`video:${model}:ref`, `Reference video ${model} (E1-06)`, toUsd(refCharge));
   }
 
+  // 钱路 M1-c: the usage-priced paid surfaces (chat, research LLM, research search). They are
+  // NOT tiered — charge = this run's real provider cost × a multiplier — so the gate prices them
+  // per $1 of provider cost, which is exactly how core models them. The multipliers come from
+  // core (live constants), so re-pricing chat or search moves this gate on the next run.
+  const marginTruth = await import(pathToFileURL(path.join(root, "packages/core/dist/margin-truth.js")).href);
+  for (const surface of marginTruth.USAGE_PRICED_SURFACES ?? []) {
+    add(surface.id, surface.label, marginTruth.USAGE_PRICED_COGS_UNIT_USD * surface.multiplier());
+  }
+
   return { skus, missing };
+}
+
+/**
+ * FX 钉点闸(Founder 2026-08-18 裁决 10)。红 = 退出码 1;黄 = 只 warn,不拦。
+ * 规则本体是 @fikirtive/core 的纯函数 evaluateFxPin —— 这里只负责打印与生死。
+ * PURE-ish：`today` 注入，所以到期这条在自测里是可测的。
+ */
+export function reportFxPin(problems) {
+  const red = problems.filter((p) => p.level === "red");
+  const yellow = problems.filter((p) => p.level === "yellow");
+  for (const p of yellow) console.warn(`[margin-floor] FX 黄灯 — ${p.message}`);
+  for (const p of red) console.error(`[margin-floor] FX 红灯 — ${p.message}`);
+  return { red, yellow, ok: red.length === 0 };
 }
 
 function pct(x) {
@@ -439,7 +474,9 @@ async function main() {
     for (const r of accepted) {
       const entry = BELOW_FLOOR_FOUNDER_ACCEPTED.find((e) => e.tier === r.id);
       console.warn(`[margin-floor]   ${r.id}: margin ${pct(r.margin)} — cost basis: ${r.cogsSource}`);
-      console.warn(`[margin-floor]     ratios below the floor: ${entry.ratios.join(", ")} (the tier's other ratios clear it)`);
+      // 「其余比例是过的」只对分比例的视频档成立;按量计价面没有比例这一轴,整档都在地板下。
+      // 印一句对一半的话,等于让豁免看起来比实际小 —— 所以这里按条目自己说的话印。
+      console.warn(`[margin-floor]     scope below the floor: ${entry.ratios.join(", ")}`);
       console.warn(`[margin-floor]     why: ${entry.reason}`);
       console.warn(`[margin-floor]     Founder 已裁 ${entry.ruledOn} · ${entry.source}`);
     }
@@ -447,6 +484,21 @@ async function main() {
   }
   const clear = rows.length - parked.length - accepted.length;
   console.log(`[margin-floor] ${clear}/${rows.length} sellable SKU(s) clear the ${pct(MARGIN_FLOOR)} floor (${accepted.length} below it by founder ruling).`);
+
+  // ── FX 钉点(Founder 2026-08-18 裁决 10)────────────────────────────────────────
+  // 毛利地板算的是 USD;商家付的是 MYR。中间那个换算此前只活在 2026-06 的设计文档里
+  // (写 4.7,已过时),代码一个字都不知道 —— 于是汇率漂移可以一直吃毛利而没有任何东西会响。
+  // 现在它是 @fikirtive/core 的一条带闹钟的声明,和上面的毛利地板跑在同一个闸里。
+  const { FX_PIN, evaluateFxPin } = await import(pathToFileURL(path.join(root, "packages/core/dist/pricing-config.js")).href);
+  console.log(
+    `[margin-floor] FX 钉点 1 USD = ${FX_PIN.myrPerUsd} MYR · 参考现汇 ${FX_PIN.reference.rate}` +
+      `(${FX_PIN.reference.observedOn}) · 下次复核 ${FX_PIN.nextReviewDate}`,
+  );
+  const fx = reportFxPin(evaluateFxPin(FX_PIN, today));
+  if (!fx.ok) {
+    console.error("[margin-floor] FX 钉点是定价决定(B12/founder)。不要为了把闸弄绿而改钉点 —— 报到控制面。");
+    process.exit(1);
+  }
 }
 
 // Run as CLI only — importing this module (the self-test) must not execute main().

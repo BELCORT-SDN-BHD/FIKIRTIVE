@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { researchCardInput, buildResearchCardPayload, RESEARCH_TIERS, researchTierEstimate, researchTierBudgetInternal } from "./propose-research.helpers.js";
+import { researchCardInput, buildResearchCardPayload, RESEARCH_TIERS, researchTierEstimate, researchTierBudgetInternal, researchTierSearchBudgetInternal } from "./propose-research.helpers.js";
 import { executeProposeResearch, proposeResearchSkill } from "./propose-research.js";
-import { turnBudgetInternal, llmPricesFor, ottoLlmMargin, displayCredits } from "@fikirtive/core";
+import { turnBudgetInternal, llmPricesFor, ottoLlmMargin, displayCredits, searchChargeInternal } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
 vi.mock("@fikirtive/db", () => ({
@@ -53,13 +53,20 @@ describe("RESEARCH_TIERS", () => {
   });
 
   it("estimatedCredits is DERIVED from the worker's withLlmBudget reserve, not a magic number", () => {
-    // Each tier's card estimate must equal displayCredits(turnBudgetInternal(sonnet, margin, maxSteps))
-    // rounded up — i.e. the SAME reserve apps/worker/src/jobs/research.ts hands to withLlmBudget,
-    // expressed in DISPLAYED credits. This is the honesty invariant: card quote ≈ worker reserve.
+    // Each tier's card estimate must equal displayCredits(LLM 预算 + 搜索预算) rounded up —
+    // i.e. the SAME hold apps/worker/src/jobs/research.ts hands to withLlmBudget, expressed in
+    // DISPLAYED credits. This is the honesty invariant: card quote ≈ worker reserve.
+    //
+    // 钱路 M1-c(裁决 9b):这个不变量现在盖**两条腿**。搜索此前是 free,所以卡面报的价与
+    // worker 真持有的数曾经是同一个数;3× 计价落地后,少算搜索的卡面就是在骗商家 ——
+    // 这里把两条腿一起钉住,正是为了不让它们再分家。
     for (const key of ["quick", "standard", "deep"] as const) {
       const t = RESEARCH_TIERS[key];
       const expected = Math.ceil(
-        displayCredits(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), t.maxSteps)),
+        displayCredits(
+          turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), t.maxSteps) +
+            searchChargeInternal(t.maxSearches),
+        ),
       );
       expect(t.estimatedCredits).toBe(expected);
       // And it is NOT the retired S2 placeholder (10/25/60).
@@ -67,21 +74,43 @@ describe("RESEARCH_TIERS", () => {
     }
   });
 
-  it("researchTierEstimate is monotonic in maxSteps and matches the tier table", () => {
-    expect(researchTierEstimate(6)).toBeLessThan(researchTierEstimate(12));
-    expect(researchTierEstimate(12)).toBeLessThan(researchTierEstimate(24));
-    expect(researchTierEstimate(RESEARCH_TIERS.quick.maxSteps)).toBe(RESEARCH_TIERS.quick.estimatedCredits);
-    expect(researchTierEstimate(RESEARCH_TIERS.deep.maxSteps)).toBe(RESEARCH_TIERS.deep.estimatedCredits);
+  it("卡面预估真的**含**搜索那一笔 —— 少算它就是报低价", () => {
+    for (const key of ["quick", "standard", "deep"] as const) {
+      const t = RESEARCH_TIERS[key];
+      const llmOnly = turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), t.maxSteps);
+      expect(researchTierBudgetInternal(t.maxSteps, t.maxSearches)).toBe(llmOnly + searchChargeInternal(t.maxSearches));
+      expect(searchChargeInternal(t.maxSearches)).toBeGreaterThan(0);
+    }
   });
 
-  it("researchTierBudgetInternal returns the RAW internal turnBudget (the worker's withLlmBudget reserve)", () => {
-    // This is the exact value apps/worker/src/jobs/research.ts reserves via withLlmBudget for the
-    // tier's maxSteps — approve's balance gate compares CreditAccount.balance (also internal) to it.
+  it("researchTierEstimate is monotonic in maxSteps and matches the tier table", () => {
+    expect(researchTierEstimate(6, 5)).toBeLessThan(researchTierEstimate(12, 12));
+    expect(researchTierEstimate(12, 12)).toBeLessThan(researchTierEstimate(24, 25));
+    expect(researchTierEstimate(RESEARCH_TIERS.quick.maxSteps, RESEARCH_TIERS.quick.maxSearches)).toBe(
+      RESEARCH_TIERS.quick.estimatedCredits,
+    );
+    expect(researchTierEstimate(RESEARCH_TIERS.deep.maxSteps, RESEARCH_TIERS.deep.maxSearches)).toBe(
+      RESEARCH_TIERS.deep.estimatedCredits,
+    );
+  });
+
+  it("researchTierBudgetInternal returns the RAW internal hold (the worker's withLlmBudget reserve)", () => {
+    // This is the exact value apps/worker/src/jobs/research.ts holds via withLlmBudget for the
+    // tier — approve's balance gate compares CreditAccount.balance (also internal) to it.
+    // 钱路 M1-c:worker 的 hold = LLM 部分 + extraHoldInternal(搜索部分),这里两边逐字对齐。
     for (const key of ["quick", "standard", "deep"] as const) {
-      const maxSteps = RESEARCH_TIERS[key].maxSteps;
-      const expected = turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), maxSteps);
-      expect(researchTierBudgetInternal(maxSteps)).toBe(expected);
+      const { maxSteps, maxSearches } = RESEARCH_TIERS[key];
+      const expected =
+        turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), maxSteps) +
+        researchTierSearchBudgetInternal(maxSearches);
+      expect(researchTierBudgetInternal(maxSteps, maxSearches)).toBe(expected);
     }
+  });
+
+  it("researchTierSearchBudgetInternal = worker 传给 extraHoldInternal 的那个数(一个定义,两处引用)", () => {
+    expect(researchTierSearchBudgetInternal(RESEARCH_TIERS.quick.maxSearches)).toBe(5 * 3);
+    expect(researchTierSearchBudgetInternal(RESEARCH_TIERS.standard.maxSearches)).toBe(12 * 3);
+    expect(researchTierSearchBudgetInternal(RESEARCH_TIERS.deep.maxSearches)).toBe(25 * 3);
   });
 
   it("internal budget > displayed estimate for the same tier (they are DIFFERENT units)", () => {
@@ -89,16 +118,32 @@ describe("RESEARCH_TIERS", () => {
     // The internal budget is INTERNAL_PER_DISPLAY (~10×) larger — that gap IS the unit-mismatch
     // the approve gate must respect. If a refactor ever makes these equal, this fails loudly.
     for (const key of ["quick", "standard", "deep"] as const) {
-      const maxSteps = RESEARCH_TIERS[key].maxSteps;
-      expect(researchTierBudgetInternal(maxSteps)).toBeGreaterThan(researchTierEstimate(maxSteps));
+      const { maxSteps, maxSearches } = RESEARCH_TIERS[key];
+      expect(researchTierBudgetInternal(maxSteps, maxSearches)).toBeGreaterThan(
+        researchTierEstimate(maxSteps, maxSearches),
+      );
     }
   });
 
   it("researchTierBudgetInternal is monotonic across tiers", () => {
-    expect(researchTierBudgetInternal(RESEARCH_TIERS.quick.maxSteps))
-      .toBeLessThan(researchTierBudgetInternal(RESEARCH_TIERS.standard.maxSteps));
-    expect(researchTierBudgetInternal(RESEARCH_TIERS.standard.maxSteps))
-      .toBeLessThan(researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps));
+    const budget = (key: "quick" | "standard" | "deep") =>
+      researchTierBudgetInternal(RESEARCH_TIERS[key].maxSteps, RESEARCH_TIERS[key].maxSearches);
+    expect(budget("quick")).toBeLessThan(budget("standard"));
+    expect(budget("standard")).toBeLessThan(budget("deep"));
+  });
+
+  // 判官 P3-2:两个预算函数的 maxSearches 是**必填**。默认 0 会留一条「安静地按只有 LLM
+  // 的价钱算」的路 —— 少算一条腿的报价不会报错,只会报低价,而那正是这张票要杀的病。
+  it("maxSearches 是必填参数 —— 漏传搜索腿不再是一个悄悄变便宜的估值", () => {
+    // 类型层面已经挡住(漏传是编译错误);这里钉住**行为**:传 0 与传真实上限算出来的数
+    // 必须不同,证明这个参数真的参与计价,而不是一个被忽略的形参。
+    const { maxSteps, maxSearches } = RESEARCH_TIERS.standard;
+    expect(researchTierBudgetInternal(maxSteps, 0)).toBeLessThan(
+      researchTierBudgetInternal(maxSteps, maxSearches),
+    );
+    expect(researchTierBudgetInternal(maxSteps, maxSearches) - researchTierBudgetInternal(maxSteps, 0)).toBe(
+      researchTierSearchBudgetInternal(maxSearches),
+    );
   });
 });
 

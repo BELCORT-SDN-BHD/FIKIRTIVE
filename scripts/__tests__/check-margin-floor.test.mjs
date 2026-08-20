@@ -8,6 +8,7 @@ import {
   evaluateMarginFloor,
   evaluateFloorDecisions,
   assertCogsAgreement,
+  reportFxPin,
   MARGIN_FLOOR,
   COGS_INPUTS,
 } from "../check-margin-floor.mjs";
@@ -214,6 +215,57 @@ for (const seconds of [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
       `#645: sellable tier ${seconds}s ${res} must carry a certified COGS input`,
     );
   }
+}
+
+// ── 钱路 M1-c:按量计价的三个付费面必须带成本输入(否则 gate 的 MISSING 检查会红) ──
+for (const id of ["otto:chat", "otto:research:llm", "otto:research:search"]) {
+  assert.ok(COGS_INPUTS[id], `钱路 M1-c: 按量计价面 ${id} 必须在 COGS_INPUTS 里`);
+  assert.equal(COGS_INPUTS[id].cogsUsd, 1, `${id} 的成本单位是「每 $1 provider 成本」`);
+}
+
+// ── 钱路 M1-c:FX 钉点闸的红/黄/绿自测(Founder 2026-08-18 裁决 10) ──────────────
+// 规则本体是 @fikirtive/core 的纯函数;这里测的是**闸怎么处置它** —— 红要退出码 1,
+// 黄只是提醒。两者混为一谈,汇率复核过期就会把整条发布线停掉,那是没人会容忍的闸,
+// 而一个没人容忍的闸最后一定被关掉。
+{
+  const green = reportFxPin([]);
+  assert.equal(green.ok, true, "无问题 → 绿");
+  assert.equal(green.red.length, 0);
+  assert.equal(green.yellow.length, 0);
+}
+{
+  // 黄:复核到期。ok 必须仍然是 true —— 黄灯不拦 CI。
+  const yellow = reportFxPin([{ level: "yellow", message: "复核期到了" }]);
+  assert.equal(yellow.ok, true, "黄灯不许把闸判红");
+  assert.equal(yellow.yellow.length, 1);
+}
+{
+  // 红:令吉弱过钉点。ok 必须是 false —— 毛利被吃必须停下来问 Founder。
+  const red = reportFxPin([{ level: "red", message: "参考现汇已经弱过钉点" }]);
+  assert.equal(red.ok, false, "红灯必须判红");
+  assert.equal(red.red.length, 1);
+}
+{
+  // 红 + 黄同时出现 → 仍然红(红压过黄)。
+  const both = reportFxPin([
+    { level: "yellow", message: "复核期到了" },
+    { level: "red", message: "弱过钉点" },
+  ]);
+  assert.equal(both.ok, false, "同时有红有黄时,闸是红的");
+}
+
+// 仓库现行的 FX 钉点在今天必须是全绿的 —— 闸自己也不许带着一条已知红线合并。
+{
+  const { FX_PIN, evaluateFxPin } = await import("../../packages/core/dist/pricing-config.js");
+  const today = new Date().toISOString().slice(0, 10);
+  const problems = evaluateFxPin(FX_PIN, today);
+  assert.equal(
+    problems.filter((p) => p.level === "red").length,
+    0,
+    `现行 FX 钉点有红线:${problems.map((p) => p.message).join("; ")}`,
+  );
+  // 到期日必须在观察日之后(否则闹钟一上来就在响)。
+  assert.ok(FX_PIN.nextReviewDate > FX_PIN.reference.observedOn, "复核到期日必须晚于观察日");
 }
 
 console.log("✓ check-margin-floor red/green self-test passed");
