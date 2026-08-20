@@ -710,9 +710,10 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 @layer components {
 
-/* Global focus ring — design-rules v3 §A2, verbatim. Two layers: 1px solid keyline
-   (3.42:1) + 40% coral halo (the 40% halo alone composites to 1.64:1 — invisible to
-   low vision). Supersedes the Vapor white --ring-focus (invisible on .gb light ground)
+/* Global focus ring — structure per design-rules v3 §A2; color follows --ring, which
+   brand v4 moved coral→ink (coral marks Otto presence only). Two layers: 1px solid
+   keyline (17.17:1 as ink) + 40% halo (the halo alone is too faint for low vision —
+   the keyline is the accessible layer). Supersedes the Vapor white --ring-focus (invisible on .gb light ground)
    and the per-component 35% color-mix scatter. :focus-visible only — mouse clicks
    never ring. Must stay AFTER every same-specificity :focus-visible recipe above,
    and in the SAME layer as them (@layer components), so it wins the cascade under
@@ -723,7 +724,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   outline: 2px solid transparent;   /* keeps the system indicator in forced-colors */
   outline-offset: 2px;
   box-shadow:
-    0 0 0 1px var(--ring),                                        /* keyline — 3.42:1 */
+    0 0 0 1px var(--ring),                                        /* keyline — 17.17:1 (ink ring, v4) */
     0 0 0 4px color-mix(in oklab, var(--ring) 40%, transparent);  /* halo — the warmth */
 }
 

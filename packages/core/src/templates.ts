@@ -406,7 +406,8 @@ export const TEMPLATES: Template[] = [
     description: "Show every color or size you stock in one square image.",
     category: "Marketplace listings",
     industries: ["fashion", "beauty", "home-living", "electronics", "any"],
-    tags: ["variants", "colors", "sizes", "range", "listing", "shopee", "lazada"],
+    // "colours" is a search synonym (tags are match keys, never rendered) — MY merchants type British spelling.
+    tags: ["variants", "colors", "colours", "sizes", "range", "listing", "shopee", "lazada"],
     needsImage: true,
     aspectRatio: "1:1",
     question: { label: "Which variants should I show?", placeholder: "e.g. black, cream, olive and maroon" },
