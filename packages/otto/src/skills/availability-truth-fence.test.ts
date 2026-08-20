@@ -41,23 +41,10 @@ import { CRM_SEGMENT_AVAILABILITY, ROUTINE_EXECUTION_AVAILABILITY } from "./_ava
 const APPROVED_AVAILABILITY_COPY = {
   CRM_SEGMENT_AVAILABILITY:
     "Availability, say it plainly whenever segments come up: there is no page in the app today for customer " +
-    "segments, contacts or broadcasts, so never send the user to one. This description makes no claim about how " +
-    "many contacts any rule or segment matches, or names them as everyone or nobody — that depends entirely on " +
-    "this merchant's own data, so call preview and read its matchedCount before saying who a segment reaches or " +
-    "how many. Last order recency and tags are never built into the fact object a rule is checked against at " +
-    "all — that object has no such keys, by construction. Lifetime spend reads the contact's stored order total; " +
-    "the only place this app lets a merchant edit that field rejects the edit, and no other write path for it " +
-    "exists in this app's code. Channel reads only identities graded channel-verified — a grade one function " +
-    "grants per identity, and this app's migration history has also assigned to every pre-existing identity row " +
-    "at once. Contactability's underlying fact is discarded before the check runs: selection re-evaluates the " +
-    "whole rule group twice for each contact, once as an opt-in and once as an opt-out, and combines the two " +
-    "answers with whether she is a known opt-out — so her final membership can depend on the group's other " +
-    "leaves, not on contactability alone. A known opt-out is the customer's own confirmed word that she opted " +
-    "out, given through her channel, or — failing that — on file from a verified historical record; a merchant's " +
-    "own note that a contact opted out is not itself a known opt-out. The rule group's excludeReportedOptOut can " +
-    "additionally leave those merchant-recorded contacts out, but only as a subtraction on top of whatever the " +
-    "consent gate already decided, never an addition. A saved segment stores its rule definition only; the " +
-    "matching contact list is recalculated live every time it is read, and saving never sends anything. " +
+    "segments, contacts or broadcasts, so never send the user to one. Much of the underlying data contact reach " +
+    "depends on — channel and consent status — is incomplete for many contacts today. Before saying how many " +
+    "contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a " +
+    "prediction or an estimate. " +
     MESSAGING_STATUS_ASSISTANT,
   ROUTINE_EXECUTION_AVAILABILITY:
     "Availability, say it plainly whenever a rule's effect comes up: there is no page in the app today for " +
@@ -74,12 +61,10 @@ const APPROVED_AVAILABILITY_COPY = {
  * 凭印象说「还成立吧」。r1 的 channel 半句之所以能进模型上下文,正是因为当时没有这张表 ——
  * 有人凭「schema 里有 channel 这个 kind」就写了「能用」。
  *
- * ── 断路器条款后的收敛(2026-08-20,四轮 codex 复判后)──────────────────────────────
- * 这张表从此**只收静态可证类主张**——某字段生产侧有没有写入路径、某函数被谁调用、某段代码
- * 结构上做了什么。凡是「对某类 contact 恒选中/恒排除」这种从代码推出的结果性主张,一律不进
- * 这张表 —— 那类结论已经证明了两次会被下一批数据或下一处没查到的写入路径推翻(r3 的绝对量
- * 词、r4 的「四事实圈不出人」)。verify 只写「读哪个文件的哪一行,它写的是什么」,不写「所以
- * 对某类输入恒为 X」。
+ * ── 三句短版后的收敛(2026-08-20,Founder 裁决:放弃机制解释版)────────────────────
+ * 分群那一句从此只剩三句短版事实,不再逐条列举字段级读写者取证或闸门算法 —— 这张表因此只
+ * 收还留在披露里的主张。凡是「对某类 contact 恒选中/恒排除」或任何机制细节,一律不进这张
+ * 表,也不许回到披露文本里(见下面「三句短版之外的机制解释与人数断言不许回来」)。
  */
 const CLAIM_EVIDENCE: ReadonlyArray<{ claim: string; verify: string }> = [
   {
@@ -88,54 +73,9 @@ const CLAIM_EVIDENCE: ReadonlyArray<{ claim: string; verify: string }> = [
       "grep -rn 'redirect(\"/\")' apps/web/app/crm —— 14 个路由文件全中;既有围栏 apps/web/lib/__tests__/route-redirects.test.ts",
   },
   {
-    claim: "Last order recency and tags are never built into the fact object a rule is checked against at all",
+    claim: "call preview and report only the matchedCount it returns",
     verify:
-      "apps/web/lib/segment-actions.ts:64 UNAVAILABLE_FACTS = { lastOrderAt: true, tags: true };evaluateContact(:169-192)构造的 facts 对象字面量(:185-190)里没有 lastOrderAt/tags 这两行 —— 是键不存在,不是值为 undefined",
-  },
-  {
-    claim:
-      "the only place this app lets a merchant edit that field rejects the edit, and no other write path for it exists in this app's code",
-    verify:
-      "apps/web/lib/crm-actions.ts:325 拒收 \"That field is read-only.\";grep -rn totalOrdersMyr apps packages 及全部 migration SQL(packages/db/prisma/migrations)未发现其它写入点。不断言生产数据是否为空 —— packages/db/prisma/schema.prisma:1500 totalOrdersMyr 是 Decimal? 无字段级约束,那是数据层问题",
-  },
-  {
-    claim:
-      "Channel reads only identities graded channel-verified — a grade one function grants per identity, and this app's migration history has also assigned to every pre-existing identity row at once",
-    verify:
-      "packages/db/src/contact-identity.ts:95 markContactIdentityChannelVerified 逐条授予;packages/db/prisma/migrations/20260809100000_contact_identity_verification_grade/migration.sql:36(ADD COLUMN 默认值 channel_verified)与 :42-45(UPDATE 把迁移前全部存量 ContactIdentity 行统一设为该等级)——这条 migration 写入路径是四轮里第一次被查到,此前 r1-r4 都只查了应用代码调用点",
-  },
-  {
-    claim: "Contactability's underlying fact is discarded before the check runs",
-    verify:
-      "apps/web/lib/consent-authority.ts:122-139 selectedIntoAudience 源码:matchesAs(marketingConsent) 用调用方传入的值覆盖 facts 后才调 contactMatchesRules,函数体从未读取 evaluateContact 算出的原始 facts.marketingConsent",
-  },
-  {
-    claim:
-      "selection re-evaluates the whole rule group twice for each contact, once as an opt-in and once as an opt-out",
-    verify:
-      "consent-authority.ts:134-138:matchesAs(\"opt_in\") 与 matchesAs(\"opt_out\") 都把整条 rules(不是单叶)交给 contactMatchesRules;contactMatchesRules(packages/core/src/segment-rules.ts:382-391)对规则组每一叶取 .every/.some —— 读代码可证,不依赖任何联系人数据或结果",
-  },
-  {
-    claim:
-      "A known opt-out is the customer's own confirmed word that she opted out, given through her channel, or — failing that — on file from a verified historical record",
-    verify:
-      "isKnownOptOut(packages/db/src/consent-fold.ts:313-316)= state===\"effective_revoke\" || unresolvedLegacyOptOut。effective_revoke 的折叠条件(foldConsentEvents,consent-fold.ts:187-218):customer+interactive+verified 的最后一次立场为 revoke,或该立场缺席时 customer+backfill+verified 的三种基线 revoke 事件(historical_verified_revoke/historical_verified_stop/stop_purpose_expansion)生效——interactive 优先于 backfill,反例 packages/db/src/consent-runtime.test.ts:289-323(interactive grant 之后来一条 backfill revoke 基线,state 仍是 verified_grant)",
-  },
-  {
-    claim: "a merchant's own note that a contact opted out is not itself a known opt-out",
-    verify:
-      "apps/web/lib/crm-actions.ts:297-305(crm_manual)与 :915-926(import)两个 recordConsentEvent 调用点,在 packages/db/src/consent-fold.ts:52-125 的 CONSENT_WRITER_RULES 里都是 actorKind:\"merchant\"、evidenceStatus:\"asserted\";foldConsentEvents(:194-219)只对 evidenceStatus===\"verified\" 的事件改变 state,asserted 事件不产生 effective_revoke",
-  },
-  {
-    claim:
-      "The rule group's excludeReportedOptOut can additionally leave those merchant-recorded contacts out, but only as a subtraction",
-    verify:
-      "apps/web/lib/consent-authority.ts:133:if (rules.excludeReportedOptOut === true && truth.reportedOptOut) return false —— 唯一效果是提前 return false,函数里不存在任何把 false 改判 true 的分支;应用行为反例(非本表断言依据,供交叉核对)apps/web/lib/__tests__/segment-reported-optout-exclusion.test.ts:1280-1295、:1460-1470",
-  },
-  {
-    claim: "A saved segment stores its rule definition only",
-    verify:
-      "apps/web/lib/segment-actions.ts:603-621(update)与 :664-675(create)的 prisma data 字面量只有 name/phrase/rulesJson(+id/ownerId/kind);list/get/preview 三处(:348-445)各自重新调用 readContacts() 现读联系人,函数体里没有读任何冻结快照",
+      "apps/web/lib/segment-actions.ts:305 matchedCount: matched.length —— preview 真实返回的字段,不是虚构名字",
   },
   {
     claim: "Nothing in the product starts a routine run",
@@ -196,31 +136,36 @@ describe("C7 Otto 的「今天做不到什么」——措辞层", () => {
     }
   });
 
-  it("四轮判词证伪过的方向/量词不许回来 —— 断路器条款下最后一道网", () => {
-    // r1:「channel 选得出真人」的原句形状。
+  it("三句短版之外的机制解释与人数断言不许回来 —— Founder 2026-08-20 裁决后的最后一道网", () => {
+    // 删掉的机制词:选择算法的内部分支、known opt-out 定义、字段级读写者取证,一律不许回来。
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/twice for each contact/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/opt-in and once as an opt-out/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/known opt-out/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/unresolvedLegacyOptOut/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/effective_revoke/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/discarded before the check runs/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/graded channel-verified/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/last order recency and tags/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/lifetime spend reads/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/excludeReportedOptOut/i);
+    // r1-r4 四轮证伪过的方向/量词形状,仍然不许回来。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/select real people[^.]*channel/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/channel and contactability/i);
-    // r2:contactability 方向写反的原句形状。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/not_contactable matches every contact/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/contactable matches nobody/i);
-    // r3:绝对人口量词。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/that is everyone/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/which today is nobody/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/needs the customer's own verified confirmation/i);
-    // r4(断路器触发点):不分是四事实还是 contactability,任何「matches 结果」类断言一律不许
-    // 出现 —— 这是新设计的硬边界,不是某一句具体措辞的字眼。四条各自独立断言,不合并成一个
-    // 正则,免得改错一处却让整条断言看起来仍然通过。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches nobody/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches every/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches only/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches exactly/i);
-    // 正面:新设计要求的三类内容确实在场 —— 类③(行动指令)、类②(闸门机制)。
-    expect(CRM_SEGMENT_AVAILABILITY).toMatch(
-      /makes no claim about how many contacts any rule or segment matches/,
-    );
-    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/call preview and read its matchedCount/);
-    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/discarded before the check runs/);
-    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/only as a subtraction/);
+    // 人数/人群断言:披露里(MESSAGING_STATUS_ASSISTANT 那半句同样零数字)不许出现任何数字。
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/\d/);
+    // 正面:三句短版要求的三件事确实在场。
+    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/there is no page in the app today for customer/);
+    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/is incomplete for many contacts today/);
+    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/call preview and report only the matchedCount/);
   });
 });
 

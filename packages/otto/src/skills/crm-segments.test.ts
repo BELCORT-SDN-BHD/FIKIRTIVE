@@ -164,45 +164,20 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
     surface: "buildSegment",
     why: "同一句实话、同一份证据 —— 两条技能各带一份,因为模型读到哪一条就只读到哪一条。",
   },
-  // C7 r5(编排者第五轮,断路器条款下换设计)—— r2/r3/r4 三轮都栽在同一个根因:contactability
-  // 那句「谁选中谁」的真值表本身就是一句结果性断言,混合规则组(consent-single-authority.test.ts:
-  // 703-715)与 excludeReportedOptOut 开关都有反例能推翻任何简化写法。新设计的解法不是把真值表
-  // 写得更精确,是**这句话从此不写真值表**——contactability 那一整句真值表已从披露里删除;
-  // 下面三句是新披露里剩下的、真正带全称词的句子,逐句都能用静态证据核销,不依赖任何联系人存量
-  // 数据。
+  // C7 —— Founder 2026-08-20 裁决:断路器条款下再退一步,contactability 真值表(r5)与全部
+  // 字段级机制解释一起删,`CRM_SEGMENT_AVAILABILITY` 改为三句短版。旧的三对豁免(「不下人口
+  // 断言」的政策声明、excludeReportedOptOut 只减不加、分群只存规则定义)连同它们对应的句子
+  // 一起从披露里删掉了,不再需要豁免。三句短版里唯一新增的带全称词的句子只有下面这句 ——
+  // 「never a prediction or an estimate」是三句短版第③点(先 preview 再报数)的指令句。
   {
     sentence:
-      "This description makes no claim about how many contacts any rule or segment matches, or names them as everyone or nobody — that depends entirely on this merchant's own data, so call preview and read its matchedCount before saying who a segment reaches or how many.",
+      "Before saying how many contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a prediction or an estimate.",
     surface: "readSegments",
-    why: "这句本身就是「不下人口断言」的政策声明,不是一句需要证明为真的经验主张 —— 它的可证性在于它对自己的要求(不断言数量)可由本文件其余内容逐句核查(见下面两条豁免与 CLAIM_EVIDENCE):披露里再没有第二句「matches N 人」式的话。",
+    why: "可证:`apps/web/lib/segment-actions.ts:305` `matchedCount: matched.length` 是 `preview` 真实返回的字段;这句本身是「先测量再报数」的政策指令,不是需要证明为真的经验主张。",
   },
   {
     sentence:
-      "This description makes no claim about how many contacts any rule or segment matches, or names them as everyone or nobody — that depends entirely on this merchant's own data, so call preview and read its matchedCount before saying who a segment reaches or how many.",
-    surface: "buildSegment",
-    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
-  },
-  {
-    sentence:
-      "The rule group's excludeReportedOptOut can additionally leave those merchant-recorded contacts out, but only as a subtraction on top of whatever the consent gate already decided, never an addition.",
-    surface: "readSegments",
-    why: "可证:`apps/web/lib/consent-authority.ts:133` —— `if (rules.excludeReportedOptOut === true && truth.reportedOptOut) return false`,函数里不存在任何把 false 改判 true 的分支,唯一效果是提前退出,纯粹只减。",
-  },
-  {
-    sentence:
-      "The rule group's excludeReportedOptOut can additionally leave those merchant-recorded contacts out, but only as a subtraction on top of whatever the consent gate already decided, never an addition.",
-    surface: "buildSegment",
-    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
-  },
-  {
-    sentence:
-      "A saved segment stores its rule definition only; the matching contact list is recalculated live every time it is read, and saving never sends anything.",
-    surface: "readSegments",
-    why: "可证:`apps/web/lib/segment-actions.ts:603-621`(update)与 `:664-675`(create)的 prisma `data` 字面量只有 `name`/`phrase`/`rulesJson`;`list`/`get`/`preview`(`:348-445`)各自重新调用 `readContacts()` 现读联系人,`buildSegment` 本身不调用任何发送/冻结路径。(`saveCustomerSegment` 是另一套机制 —— brand-memory 笔记卡,不落 `rulesJson`,这句话对它只是同一段拼接文本,不代表它的存储机制与 CRM Segment 相同。)",
-  },
-  {
-    sentence:
-      "A saved segment stores its rule definition only; the matching contact list is recalculated live every time it is read, and saving never sends anything.",
+      "Before saying how many contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a prediction or an estimate.",
     surface: "buildSegment",
     why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
   },
