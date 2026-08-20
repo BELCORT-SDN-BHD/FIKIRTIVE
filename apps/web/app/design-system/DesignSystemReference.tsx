@@ -421,24 +421,27 @@ export function DesignSystemReference() {
             <div>--ease-spring · cubic-bezier(0.34, 1.56, 0.64, 1)</div>
           </div>
           <div className="flex flex-wrap gap-4">
-            <button
+            <Button
               type="button"
-              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors duration-[var(--dur-1)] ease-[var(--ease-out)] hover:bg-secondary"
+              variant="outline"
+              className="transition-colors duration-[var(--dur-1)] ease-[var(--ease-out)]"
             >
               dur-1 (120ms)
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors duration-[var(--dur-2)] ease-[var(--ease-out)] hover:bg-secondary"
+              variant="outline"
+              className="transition-colors duration-[var(--dur-2)] ease-[var(--ease-out)]"
             >
               dur-2 (150ms)
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors duration-[var(--dur-3)] ease-[var(--ease-out)] hover:bg-secondary"
+              variant="outline"
+              className="transition-colors duration-[var(--dur-3)] ease-[var(--ease-out)]"
             >
               dur-3 (200ms)
-            </button>
+            </Button>
           </div>
           <p className="mt-4 text-sm text-muted-foreground">Reduced motion is honored globally.</p>
         </section>
@@ -448,7 +451,7 @@ export function DesignSystemReference() {
         {/* §8 Focus */}
         <section>
           <SectionHeading index="§8" title="Focus" />
-          <Input placeholder="Tab into me" className="max-w-sm" />
+          <Input aria-label="Focus ring demo" placeholder="Tab into me" className="max-w-sm" />
           <p className="mt-2 text-sm text-muted-foreground">
             Focus ring is ink — coral is reserved for Otto presence (brand rule), and the ink keyline
             reads at 17:1.
@@ -495,11 +498,11 @@ export function DesignSystemReference() {
               </ComponentCard>
 
               <ComponentCard name="Input">
-                <Input placeholder="Merchant name" className="w-full" />
+                <Input aria-label="Merchant name" placeholder="Merchant name" className="w-full" />
               </ComponentCard>
 
               <ComponentCard name="Textarea">
-                <Textarea placeholder="Write a caption…" className="w-full" />
+                <Textarea aria-label="Caption" placeholder="Write a caption…" className="w-full" />
               </ComponentCard>
 
               <ComponentCard name="Label">
@@ -646,7 +649,7 @@ export function DesignSystemReference() {
                         This only changes the name shown to your team.
                       </DialogDescription>
                     </DialogHeader>
-                    <Input placeholder="Campaign name" />
+                    <Input aria-label="Campaign name" placeholder="Campaign name" />
                     <DialogFooter>
                       <Button variant="ghost" size="sm">
                         Cancel
