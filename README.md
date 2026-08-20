@@ -59,7 +59,7 @@ remainder). Generation uses estimate → reserve → settle.
 
 **Stack:** Next.js 16 · TypeScript · Prisma 7 + Postgres (Neon) · Cloudflare R2 · pg-boss ·
 OpenAI Agents SDK (Anthropic via the AI SDK adapter) · BytePlus Ark (Seedream image /
-Seedance video), fal, and mock ($0 local dev) · server-side
+Seedance video) and mock ($0 local dev) · server-side
 ffmpeg (worker) · Railway deployment manifests.
 
 ## Dev
@@ -70,9 +70,11 @@ docker compose up -d postgres                                   # local Postgres
 DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate deploy
 pnpm db:generate
 
-# Web + worker read env from a gitignored .env.local at the repo root.
-# Local dev is money-safe by default: GENERATION_PROVIDER=mock (=$0 generation),
-# COWORK_PROVIDER=mock. Otto's own turns use the real Anthropic model, so set
+# Env is NOT loaded from the repo root. Web reads a gitignored apps/web/.env.local (Next loads
+# it from its own project dir); the worker loads no file and reads the ambient shell environment;
+# prisma reads packages/db/.env. The root .env.example is the template — see its header.
+# Local dev is money-safe by default: GENERATION_PROVIDER unset (= $0 mock generation).
+# Otto's own turns use the real Anthropic model, so set
 # ANTHROPIC_API_KEY (and ANTHROPIC_BASE_URL=https://api.anthropic.com/v1) to exercise Otto.
 # That key is product-runtime configuration only; sanitation/review/recovery must not source
 # or inject it. Configure provider-side budget limits before using a paid provider.

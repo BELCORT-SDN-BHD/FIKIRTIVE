@@ -25,5 +25,3 @@ export const saveOfferSkill = defineOttoSkill({
   execute: async ({ startsAt, endsAt, ...fields }, runContext) =>
     upsertBrandRecordFromOtto({ kind: "offer", fields, startsAt, endsAt }, runContext),
 });
-
-export const saveOffer = saveOfferSkill.tool;

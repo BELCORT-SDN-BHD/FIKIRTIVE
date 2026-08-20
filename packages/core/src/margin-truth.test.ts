@@ -121,6 +121,18 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     }
   });
 
+  // 判官 P3-3:上面那条 0.5 个点的容差是给「Founder 手记了个圆整数」留的余地,而它同时
+  // 也给「有人把活读换成一个抄来的字面量」留了余地 —— 0.0476 会稳稳通过 0.005 的检查。
+  // 按量计价面没有手记的理由:它的 margin 就是 1 − 1/倍数,必须**逐位**等于现算值。
+  // 换成字面量,这条当场红。
+  it("按量计价面的留档毛利率**逐位**等于闸内现算值(活读不许被改抄一份)", () => {
+    const usagePriced = BELOW_FLOOR_FOUNDER_ACCEPTED.filter((e) => e.tier.startsWith("otto:"));
+    expect(usagePriced.length, "按量计价面的豁免行不见了").toBeGreaterThan(0);
+    for (const e of usagePriced) {
+      expect(e.margin, `${e.tier} 的留档毛利不是现算的`).toBe(rows.get(e.tier)!.margin);
+    }
+  });
+
   it("裁决已落地:待裁决名单是空的(留一条在上面 = R3 硬红)", () => {
     expect(BELOW_FLOOR_PENDING_FOUNDER_RULING).toEqual([]);
   });
@@ -152,18 +164,24 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
   it("打印毛利真相表(报表本体)", () => {
     const report = formatMarginTruthTable(marginTruthTable());
     console.log(`\n${report}\n`);
-    // 24 个视频档 + 图片 + 参考图 + 整段参考视频 = 27 行。
-    expect(report.split("\n")).toHaveLength(27 + 1);
+    // 24 个视频档 + 图片 + 参考图 + 整段参考视频 = 27 行,**加上**钱路 M1-c 补进来的
+    // 3 个按量计价面(聊天 / 深研 LLM / 深研搜索)= 30 行。
+    expect(report.split("\n")).toHaveLength(30 + 1);
     // 跌破地板的行必须**看得见**地标出来 —— 报表不许把它们印得跟过了地板一样。
-    // #769 后名单是空的,所以这里也必须一行「地板 ↓」都没有;两边同源,不可能分家。
+    // 名单与报表两边同源,不可能分家:现在名单上有且只有聊天那一条,所以「地板 ↓」正好一行。
     expect(report.match(/地板 ↓/g) ?? []).toHaveLength(BELOW_FLOOR_FOUNDER_ACCEPTED.length);
-    expect(report.match(/地板 ↓/g) ?? []).toHaveLength(0);
+    expect(report.match(/地板 ↓/g) ?? []).toHaveLength(1);
     // 视频档里最低的是 720p 的 5/10/15 秒整点档(65.42%)。
     expect(report).toContain("毛利率 65.4%");
-    // 但**全表**最低的不是它 —— 图片与参考图是 65.0%。把这句也钉住,免得
+    // **生成侧**最低的不是它 —— 图片与参考图是 65.0%。把这句也钉住,免得
     // 「最低毛利率」在注释里被写成视频档那个数(判官 r1 P3 抓到过一次)。
-    const lowest = marginTruthTable().reduce((a, b) => (b.margin < a.margin ? b : a));
+    const generationRows = marginTruthTable().filter((r) => !r.id.startsWith("otto:"));
+    const lowest = generationRows.reduce((a, b) => (b.margin < a.margin ? b : a));
     expect(lowest.margin).toBeCloseTo(0.65, 4);
     expect(["image:seedream", "refgen:seedream"]).toContain(lowest.id);
+    // 全表最低的是聊天(4.76%),它是**豁免行**而不是生成档 —— 这两句分开写,是为了不让
+    // 「最低毛利率 65%」这个旧结论在补进按量计价面之后继续被当成全表结论。
+    const lowestOverall = marginTruthTable().reduce((a, b) => (b.margin < a.margin ? b : a));
+    expect(lowestOverall.id).toBe("otto:chat");
   });
 });

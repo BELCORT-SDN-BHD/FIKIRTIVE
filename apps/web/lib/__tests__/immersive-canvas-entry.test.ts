@@ -121,7 +121,7 @@ describe("immersive canvas owned runtime selection", () => {
     );
 
     expect(url).toBe(
-      "/northstar-immersive/create/canvas?project=p-oldest&thread=t-recent&audience=a-1&persona=face-1&persona=face-2",
+      "/create/canvas?project=p-oldest&thread=t-recent&audience=a-1&persona=face-1&persona=face-2",
     );
   });
 });
@@ -205,7 +205,7 @@ describe("ImmersiveCanvasEntry", () => {
         audience: "audience-1",
       }),
     })).rejects.toThrow(
-      "NEXT_REDIRECT:/northstar-immersive/create/canvas?project=p-oldest&thread=t-new&audience=audience-1",
+      "NEXT_REDIRECT:/create/canvas?project=p-oldest&thread=t-new&audience=audience-1",
     );
   });
 });

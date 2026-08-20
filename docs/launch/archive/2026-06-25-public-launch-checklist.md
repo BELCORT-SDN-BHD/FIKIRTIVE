@@ -1,5 +1,24 @@
 # FIKIRTIVE — Public Launch Checklist & Config Audit
 
+> ## 已归档 2026-08-19 —— 不要照这份清单做事
+>
+> 本文写于 2026-06-25,最后一次改动 2026-07-07。此后产品与部署形态已经换过好几层:媒体供应商
+> 从 fal 换成 BytePlus、`COWORK_PROVIDER` 那条 planner 通路被 Otto 取代、env 从"人肉对照"变成
+> 机器校验的契约、worker 拆成两个 role。照着下面逐条配一台机器会配不起来。
+>
+> 原文一字未改地保留,只作历史证据;**任何一条都不可当作现行事实引用**。
+>
+> 现行事实来源(live,取用前自己核对):
+> - **env 契约与模板** —— `packages/core/src/env-contract.ts`(声明)+ 仓库根 `.env.example`(模板)。
+>   两者由 `packages/core/src/env-contract.test.ts` 互相钉死:代码里读了没声明、或模板里写了没声明,CI 就红。
+> - **部署与开闸台账** —— GitHub issue #850(beta 总账)与 #359(延后承诺总台账)。按项目法,GitHub 是唯一 live 台账。
+> - **服务拓扑与运维** —— `docs/ops/worker-services.md`、`docs/ops/production-shape.md`。
+>
+> 归档原因:C2「死凭证与陈旧运维文档」清理。刻意**只归档不重写**——写一份现行部署清单是部署窗口自己的活,
+> 不是这次清理的范围。
+>
+> ---
+
 > Date: 2026-06-25. Source: code scan of every `process.env.*` read + the storage/auth/spend paths.
 > Status going in: the prod-readiness audit's 1 blocker + 5 highs are **closed** (PR #4). What remains is
 > deploy configuration, a real-money canary, and test-coverage backfill.

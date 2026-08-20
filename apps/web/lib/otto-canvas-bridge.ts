@@ -2,13 +2,14 @@
 
 import {
   prisma,
+  canvasJobPlacementLockKey,
   CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS,
   CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS,
 } from "@fikirtive/db";
 import { CANVAS_IN_FLIGHT_JOB_STATUSES, newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
-import { canvasJobPlacementLockKey, freeCanvasRectForNewNode } from "./canvas-node-placement";
+import { CANVAS_NODE_SELECT, freeCanvasRectForNewNode } from "./canvas-node-placement";
 import { CANVAS_SPAWN_ORIGIN } from "@fikirtive/core/canvas-layout";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
@@ -240,15 +241,10 @@ export async function syncOttoCanvasNodes(
   // ── 2. Return all project nodes with media URLs resolved (display-only) ──
   // Tombstones are read here too, and then filtered out below: a deleted card must not be counted
   // as a card that is merely missing.
-  const boardSelect = {
-    id: true, type: true, x: true, y: true, w: true, h: true, text: true,
-    prompt: true, generationId: true, genJobId: true, status: true,
-    // Batch identity and parentage as the server settled them (#603 T4). The old single
-    // `sourceNodeId` is deliberately absent: it meant three different things at once.
-    batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
-    threadId: true,
-  } as const;
-  const board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: boardSelect });
+  // The one card-column list (`CANVAS_NODE_SELECT`). Batch identity and parentage come with it,
+  // as the server settled them (#603 T4); the old single `sourceNodeId` is deliberately absent
+  // from it — it meant three different things at once.
+  const board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: CANVAS_NODE_SELECT });
 
   // A node's media comes from its generationId, or (for canvas-promptbar nodes,
   // which persist only the job) from the job's first generation. Pull status for

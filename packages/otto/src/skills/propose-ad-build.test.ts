@@ -1,6 +1,6 @@
 import { it, expect } from "vitest";
 import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core";
-import { proposeAdBuildSkill, executeProposeAdBuild, proposeAdBuild, proposeAdBuildInput } from "./propose-ad-build.js";
+import { proposeAdBuildSkill, executeProposeAdBuild, proposeAdBuildInput } from "./propose-ad-build.js";
 
 const VALID_INPUT = {
   goal: "Drive traffic to our website",
@@ -109,6 +109,4 @@ it("input zod schema has no approval/accountId/targeting-shaped/identity keys", 
   expect(topLevelKeys).not.toContain("userId");
   // must NOT have the shaped targeting object (only the hint)
   expect(topLevelKeys).not.toContain("targeting");
-  // proposeAdBuild is the bare tool export (same reference as the skill's .tool)
-  expect(proposeAdBuild).toBe(proposeAdBuildSkill.tool);
 });

@@ -58,5 +58,3 @@ export const deleteReferenceVariantSkill = defineOttoSkill({
   parameters: params,
   execute: executeDeleteReferenceVariant,
 });
-
-export const deleteReferenceVariant = deleteReferenceVariantSkill.tool;

@@ -4,6 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -164,29 +171,18 @@ export function AddAssetDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Add asset"
-      onClick={close}
-    >
-      <div
-        className="w-full max-w-[480px] rounded-[16px] border border-border bg-card p-6 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="m-0 text-[1.125rem] font-semibold text-foreground">Add to Library</h2>
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label="Close"
-            className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
-            onClick={close}
-          >
-            ✕
-          </Button>
-        </div>
+    // W2-1 —— 这里曾经是一段手搓弹窗:自己画 `fixed inset-0` 的遮罩、自己在遮罩上接
+    // onClick 当「点外面关闭」,而焦点陷阱与 Escape 干脆没有(规格书 §4.3)。键盘用户按
+    // Tab 会走出弹窗、在后面那一页上乱点,按 Esc 什么也不会发生。三样都不是这份文件该
+    // 自己实现的东西 —— Radix 的 Dialog 一次给全,而且它就在 components/ui 里。
+    <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+      <DialogContent className="max-h-[85vh] gap-0 overflow-y-auto sm:max-w-[480px]">
+        <DialogHeader className="mb-4 pr-8">
+          <DialogTitle>Add to Library</DialogTitle>
+          <DialogDescription>
+            Upload an image you already have, or generate a new reference.
+          </DialogDescription>
+        </DialogHeader>
 
         {/* Segmented Upload / Generate. */}
         <div className="mb-5 flex gap-1 rounded-[14px] bg-muted p-1">
@@ -358,7 +354,7 @@ export function AddAssetDialog({
             </div>
           )
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

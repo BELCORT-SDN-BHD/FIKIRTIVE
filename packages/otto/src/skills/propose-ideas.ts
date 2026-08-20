@@ -93,5 +93,3 @@ export const proposeIdeasSkill = defineOttoSkill({
   parameters: params,
   execute: executeProposeIdeas,
 });
-
-export const proposeIdeas = proposeIdeasSkill.tool;

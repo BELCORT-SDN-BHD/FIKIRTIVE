@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  generateReferences,
+  generateReferencesSkill,
   generateReferencesInput,
   executeGenerateReferences,
 } from "./generate-references.js";
@@ -38,16 +38,16 @@ function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
 // Test 1 — needsApproval is the LITERAL `true` (anti-flip; cannot be flipped false by any arg/flag).
 // ---------------------------------------------------------------------------
 describe("Test 1 — needsApproval resolves to literal true (anti-flip)", () => {
-  it("generateReferences.needsApproval() resolves to true", async () => {
-    const result = await (generateReferences.needsApproval as () => Promise<boolean>)();
+  it("generateReferencesSkill.tool.needsApproval() resolves to true", async () => {
+    const result = await (generateReferencesSkill.tool.needsApproval as () => Promise<boolean>)();
     expect(result).toBe(true);
-    expect(generateReferences.needsApproval).toBeTruthy();
+    expect(generateReferencesSkill.tool.needsApproval).toBeTruthy();
   });
 
   it("no argument/flag can flip it to false", async () => {
     // The SDK normalizes boolean true to an async () => true — it takes no input, so a malicious
     // arg can't turn approval off. Call it with junk and confirm it still resolves true.
-    const fn = generateReferences.needsApproval as (x?: unknown) => Promise<boolean>;
+    const fn = generateReferencesSkill.tool.needsApproval as (x?: unknown) => Promise<boolean>;
     expect(await fn({ skipApproval: true })).toBe(true);
     expect(await fn(false)).toBe(true);
   });
@@ -234,7 +234,7 @@ describe("Test 7 — mode VARIANT routes to the variant spend authority, never t
 
   it("VARIANT is still an approval-gated spend: the schema accepts it and needsApproval stays literal true", async () => {
     expect(generateReferencesInput.safeParse({ entityId: ENTITY_ID, prompt: "p", mode: "VARIANT", variantName: "Red dress" }).success).toBe(true);
-    expect(await (generateReferences.needsApproval as () => Promise<boolean>)()).toBe(true);
+    expect(await (generateReferencesSkill.tool.needsApproval as () => Promise<boolean>)()).toBe(true);
   });
 });
 
