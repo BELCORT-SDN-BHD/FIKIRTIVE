@@ -11,6 +11,17 @@
  *
  * 取数仍是**按需**的:面板挂在每一个商家表面上,把这几条查询放进共享 layout 就等于每一次
  * 页面渲染都跑一遍 Otto 的数据装配。第一次真的要画会话时才调一次 `loadOttoPanelSeed`。
+ *
+ * 收口移植(main P3-6):会话那一整棵树(`OttoChatStream` → 审批卡 → 分镜卡 → …)仍然
+ * `React.lazy` 按需加载 —— 静态 import 的话商家壳的 client bundle 从 9 个模块涨到 208 个,
+ * 而**每一个**商家表面都要付这笔钱,包括面板收着、商家今天一次都没点开它的那些次。这道
+ * 优化原来挂在 `OttoPanelMount`,状态搬进这一层(W2-8)之后跟着搬到这里 —— `OttoPanelShell`
+ * / `OttoThreadList` / `OttoQuickChips` 都轻,仍然静态;`children`(整页内容)**不**被这道
+ * Suspense 盖到,见下方 `return`:它是 `OttoPanelShell` 的 children,不在 panelBody 里。
+ *
+ * 用 `React.lazy` 而不是 `next/dynamic`:分包这件事是那句 `import()` 做的,两者一样;
+ * 但 `next/dynamic` 只在 Next 自己的 runtime 里活 —— 在 vitest 里它恒渲染空,于是这一整段
+ * 会话就再也没有测试盯着了。一个测不到的优化不值得用一整块验收去换。
  */
 
 import * as React from "react";
@@ -18,15 +29,24 @@ import type { ChatThreadDTO } from "@/lib/types";
 import { loadOttoPanelSeed } from "@/lib/otto-panel-seed";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { startStreamedThread, type PendingFirstMessage } from "@/lib/otto-start-thread";
-import {
-  OttoPanelConversation,
-  type OttoPanelConversationState,
-  type PendingFirst,
-} from "./OttoPanelConversation";
+import type { OttoPanelConversationState, PendingFirst } from "./OttoPanelConversation";
 import { OttoPanelShell } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
 import { OttoThreadList } from "./OttoThreadList";
 import { panelQuickChips } from "./panel-page";
+
+const OttoPanelConversation = React.lazy(() =>
+  import("./OttoPanelConversation").then((m) => ({ default: m.OttoPanelConversation })),
+);
+
+/** 分包还没到之前面板体里的那一行字,和会话自己的加载态说同一句话,免得闪两种。 */
+function ConversationFallback() {
+  return (
+    <p data-otto-panel-conversation="loading" className="px-4 py-6 text-[13px] text-muted-foreground">
+      Opening your conversation…
+    </p>
+  );
+}
 
 type Seed = Extract<Awaited<ReturnType<typeof loadOttoPanelSeed>>, { projectId: string }>;
 
@@ -247,14 +267,16 @@ export function OttoPanelHost({
         className="min-h-0 flex-1 flex-col"
         style={{ display: historyOpen ? "none" : "flex" }}
       >
-        <OttoPanelConversation
-          state={conversationState}
-          onThreadStarted={handleThreadStarted}
-          onStreamStart={handleStreamStart}
-          onThreadUpdate={upsertThread}
-          onActiveThreadChange={setActiveThreadId}
-          onPendingFirstSent={() => setPendingFirst(null)}
-        />
+        <React.Suspense fallback={<ConversationFallback />}>
+          <OttoPanelConversation
+            state={conversationState}
+            onThreadStarted={handleThreadStarted}
+            onStreamStart={handleStreamStart}
+            onThreadUpdate={upsertThread}
+            onActiveThreadChange={setActiveThreadId}
+            onPendingFirstSent={() => setPendingFirst(null)}
+          />
+        </React.Suspense>
       </div>
       {historyOpenedAt !== null && seed && (
         <OttoThreadList

@@ -55,6 +55,10 @@ vi.mock("@/lib/cowork-fetch", () => ({
 
 const { MerchantShellContent } = await import("@/components/global-navigation");
 const { panelContextSubject, panelQuickChips } = await import("@/components/otto/panel/panel-page");
+// 会话体现在由 `OttoPanelHost` 里的 `React.lazy` 分包(收口移植,main P3-6)。先把它取进
+// registry,`mount()` 里那两拍 microtask 才等得到落地的结果,不然看到的永远是 Suspense
+// fallback(同一处理法见 otto-panel-mount.test.ts)。
+await import("@/components/otto/panel/OttoPanelConversation");
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 
