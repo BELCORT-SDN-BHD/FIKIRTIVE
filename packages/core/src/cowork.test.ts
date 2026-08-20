@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { coworkTurnRequest } from "./cowork.js";
+import { GOAL_PRESETS } from "./goals.js";
+
+describe("coworkTurnRequest goalKey (#995)", () => {
+  const base = { projectId: "p1", text: "let's go" };
+
+  // 枚举原来是手抄的一份四个键的清单。加一个目标却忘了改它,界面上画得出来的那颗 chip
+  // 会被服务端静默拒收 —— 而且没有任何测试会红。所以这里逐个目标核一遍。
+  it.each(Object.keys(GOAL_PRESETS))("接受界面上真的存在的目标「%s」", (goalKey) => {
+    expect(coworkTurnRequest.safeParse({ ...base, goalKey }).success).toBe(true);
+  });
+
+  it("不认识的目标照旧拒收", () => {
+    expect(coworkTurnRequest.safeParse({ ...base, goalKey: "make-me-rich" }).success).toBe(false);
+  });
+});
 
 describe("coworkTurnRequest sourceGenerationId", () => {
   const base = { projectId: "p1", text: "animate this" };

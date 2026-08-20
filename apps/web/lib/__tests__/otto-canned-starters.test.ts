@@ -14,9 +14,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { GOAL_PRESETS } from "@fikirtive/core/goals";
 import {
   BRAND_MEMORY_STARTERS,
   FRONT_DOOR_GOAL_LABELS,
+  GOAL_LABELS,
   UNTITLED_CHAT_TITLE,
   isCannedStarter,
   newThreadTitle,
@@ -58,6 +60,19 @@ describe("#979 命名守卫认得产品自己写的开场白", () => {
       expect(newThreadTitle(label)).toBe(UNTITLED_CHAT_TITLE);
     },
   );
+
+  // #995:面板底部的页面快捷 chips 也是目标 —— 它们的标签**同样**是我们写的字。守卫认的
+  // 必须是全部目标,不只是前门画出来的那四个,否则加一颗 chip 就复活一次 #979。
+  it.each(GOAL_LABELS)("目标标签「%s」(含只在面板 chips 上出现的)不会成为标题", (label) => {
+    expect(isCannedStarter(label)).toBe(true);
+    expect(newThreadTitle(label)).toBe(UNTITLED_CHAT_TITLE);
+  });
+
+  it("前门那四个标签不是自己写的一份 —— 与 GOAL_PRESETS 逐字相同", () => {
+    for (const [key, label] of Object.entries(FRONT_DOOR_GOAL_LABELS)) {
+      expect(label).toBe(GOAL_PRESETS[key as keyof typeof GOAL_PRESETS].label);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

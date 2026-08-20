@@ -6,7 +6,12 @@ import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
 import { Button } from "@/components/ui/button";
 import { useGlobalNavigationOpen, useOpenGlobalNavigation } from "@/components/global-navigation";
-import { buildOttoNavEntries, type OttoNavEntry } from "./otto-nav-model";
+import {
+  OTTO_NAV_PROJECT_LIMIT,
+  OTTO_NAV_THREAD_LIMIT,
+  buildOttoNavEntries,
+  type OttoNavEntry,
+} from "./otto-nav-model";
 import { getOttoNavCollapseAction, getOttoNavCollapseLabel } from "./otto-nav-collapse";
 
 const MOBILE_BP = 680;
@@ -85,9 +90,6 @@ const TOOL_ITEMS: NavItem[] = [
   // the entry point is now "Preferences" under the global nav's Workspace
   // settings group (#513 A组返工·三轮 item 1), not here.
 ];
-
-const PROJECT_LIMIT = 6;
-const THREAD_LIMIT = 2;
 
 function IconLibrary() {
   return (
@@ -228,8 +230,8 @@ export function OttoNav({
     sidebarThreads,
     activeProjectId,
     activeThreadId,
-    projectLimit: PROJECT_LIMIT,
-    threadLimit: THREAD_LIMIT,
+    projectLimit: OTTO_NAV_PROJECT_LIMIT,
+    threadLimit: OTTO_NAV_THREAD_LIMIT,
   });
   const hasHistoryContent = navEntries.length > 0;
   const hasSidebar = hasHistoryContent || TOOL_ITEMS.length > 0;

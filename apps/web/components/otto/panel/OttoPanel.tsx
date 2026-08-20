@@ -58,10 +58,23 @@ export interface OttoPanelProps {
   onToggleExpanded: () => void;
   onClose: () => void;
   onOpenHistory?: () => void;
+  /** 历史列表现在是不是开着(头部那颗 ☰ 的按下态)。 */
+  historyOpen?: boolean;
   onNewChat?: () => void;
+  /** 面板正在把一条会话的消息取回来 —— 会改变「现在显示哪一条」的那两颗先禁掉。 */
+  headerBusy?: boolean;
   contextChip?: OttoPanelContextChip;
+  /**
+   * 这一轮会不会自动把商家看的这一页当上下文(W2-8)。
+   *
+   * 它与 `contextChip` 有没有画**不是同一件事**:这一页本来就没有可说的上下文时两者都是空,
+   * 但商家亲手关掉之后,「不再自动带上下文」是一条要能被断言的状态,而不是「少了一个 div」。
+   */
+  contextAttached?: boolean;
   /** 会话流。W2-8 接进来;没接上就是一片空,不编内容。 */
   children?: React.ReactNode;
+  /** 底部那几颗随页面变化的快捷 chips(W2-8)。在输入框之上、体之下。 */
+  quickChips?: React.ReactNode;
   /** 输入框。它在,底部那句钱的实话才在 —— 没有地方花钱就没有那句话。 */
   footer?: React.ReactNode;
 }
@@ -90,9 +103,13 @@ export function OttoPanel({
   onToggleExpanded,
   onClose,
   onOpenHistory,
+  historyOpen = false,
   onNewChat,
+  headerBusy = false,
   contextChip,
+  contextAttached = false,
   children,
+  quickChips,
   footer,
 }: OttoPanelProps) {
   const [drag, setDrag] = React.useState<DragSession | null>(null);
@@ -234,6 +251,7 @@ export function OttoPanel({
         data-otto-panel=""
         data-otto-panel-mode={state.mode}
         {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
+        {...(contextAttached ? { "data-otto-panel-context-attached": "" } : {})}
         style={frame}
         className={cn(
           // 层级(#994 挂载票定表,判官 r1 P3-3 修正因果):导轨 z-40 < 面板 z-45 < 模态框 z-50。
@@ -282,7 +300,12 @@ export function OttoPanel({
           <OttoAvatar size={22} mood="idle" />
           <span className="mr-auto truncate text-[14px] font-semibold tracking-[-0.01em]">Otto</span>
           {onOpenHistory && (
-            <PanelIconButton label="Conversation history" onClick={onOpenHistory}>
+            <PanelIconButton
+              label="Conversation history"
+              pressed={historyOpen}
+              disabled={headerBusy}
+              onClick={onOpenHistory}
+            >
               <History className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}
@@ -294,7 +317,7 @@ export function OttoPanel({
             {expanded ? <Minimize2 className="size-4" strokeWidth={1.9} /> : <Maximize2 className="size-4" strokeWidth={1.9} />}
           </PanelIconButton>
           {onNewChat && (
-            <PanelIconButton label="New chat" onClick={onNewChat}>
+            <PanelIconButton label="New chat" disabled={headerBusy} onClick={onNewChat}>
               <SquarePen className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}
@@ -328,6 +351,8 @@ export function OttoPanel({
           {children}
         </div>
 
+        {quickChips}
+
         {footer && (
           <div data-otto-panel-footer="" className="shrink-0 border-t border-border px-3 py-2.5">
             {footer}
@@ -356,11 +381,13 @@ function PanelIconButton({
   label,
   onClick,
   pressed,
+  disabled,
   children,
 }: {
   label: string;
   onClick: () => void;
   pressed?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -369,6 +396,7 @@ function PanelIconButton({
       variant="ghost"
       size="icon"
       onClick={onClick}
+      disabled={disabled}
       aria-label={label}
       title={label}
       {...(pressed === undefined ? {} : { "aria-pressed": pressed })}
