@@ -25,6 +25,12 @@ export const MODEL_REGISTRY_UNAVAILABLE = "Generation is temporarily unavailable
  * 钱路的规矩这个仓库已经裁过(#652/#657 同族):**结果不明就不许前进**。所以这里如实报
  * 「不知道」,由每个入口翻译成「暂时做不了」的诚实空态 —— 返回联合类型而不是抛,是为了让
  * 编译器逼着每一个调用点当场表态(和 `suggestModel` 返回 null 同一手法)。
+ *
+ * **与 `apps/worker/src/model-registry.ts` 的 `workerDisabledModels` 是同一张表、故意不同的
+ * 失败语义,不要合并**:这一侧站在商家面前,读不到时正确的动作是**当场说人话**(诚实空态),
+ * 所以返回 `{ error }`;那一侧站在已排队任务前面,读不到时正确的动作是**别往下走**(抛 PLAIN
+ * → handleGen requeue、预扣挂着、零花费)。合成一个函数就得有一方改行为:让这一侧抛,商家会
+ * 撞上一个没人翻译的异常;让那一侧回 `{ error }`,worker 就多了一条可以被忽略的返回值。
  */
 export async function resolveDisabledModels(): Promise<{ disabled: Set<string> } | { error: string }> {
   try {
