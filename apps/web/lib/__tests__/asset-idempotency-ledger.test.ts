@@ -16,7 +16,8 @@
  *
  * 只有 web 层的周边是假件(auth guard、impersonation、队列、guardian、机型开关、
  * next/cache)—— 与 gen-ledger.test.ts / factory-batch-ledger.test.ts 同一套。零 provider
- * 调用,零真实花费。worker 的终态用它自己调的那两个函数模拟(settleCredits)。
+ * 调用,零真实花费。worker 的成功终态用它自己调的那个函数模拟(settleCredits);这个文件
+ * 不碰失败终态,所以没有 refundReservation —— 别照着 gen-ledger.test.ts 的措辞读成两个。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -143,11 +144,16 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     expect(job!.idempotencyKey).toMatch(/^asset:regen:[0-9a-f]{64}$/);
   });
 
-  it("并发双击(两个请求同时在飞)⇒ 唯一索引兜底,仍然只有一单一扣", async () => {
+  it("并发双击(两个请求同时在飞)⇒ 项目 advisory 锁串行化,仍然只有一单一扣", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
+    // 串行化的第一道不是唯一索引,是项目 advisory 锁:create + reserve 那一笔事务一开头就
+    // `SELECT pg_advisory_xact_lock(hashtextextended('project:<projectId>'))`(gen-actions.ts
+    // 的 `startGen`),拿到锁之后在锁内再读一次同键的活跃单,所以后到的那个请求读到的是先到
+    // 者、走 reused。`GenJob_active_idempotency_key` 唯一索引是第二道防线 —— 只在锁没兜住
+    // 时用 P2002 兜底。这条用例断言的是两道合起来的结果。
     const [a, b] = await Promise.all([
       startAssetGen(regenIntent(projectId)),
       startAssetGen(regenIntent(projectId)),
@@ -279,7 +285,7 @@ describe("浏览器不许自己出键", () => {
 });
 
 describe("模板弹窗:同一张底图 + 同一个模板 + 同一个答案 = 一单一扣", () => {
-  it("弹窗重开一次再按 Generate ⇒ 落回同一单(旧的 tpl:<id>:<runId> 每次换 runId)", async () => {
+  it("同一次挂载内的重复提交 / server action 重发 ⇒ 落回同一单(旧的 tpl:<id>:<runId> 每次换 runId)", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
@@ -299,10 +305,14 @@ describe("模板弹窗:同一张底图 + 同一个模板 + 同一个答案 = 一
     });
 
     const first = idOf(await startAssetGen(templateRun()));
-    const reopened = idOf(await startAssetGen(templateRun()));
+    // 「弹窗重开一次」不是这个形状:关掉弹窗会把 TemplateModal 整个卸载(OttoTemplates 里
+    // 是条件渲染),重开后 `sourceGenId` 回到初值 null 逼商家重传,重传拿到的是一个新的
+    // generation id ⇒ 新锚点 ⇒ 新键 ⇒ 本来就该是新的一单。这里钉住的是同一次挂载内同一份
+    // 请求体被提交两次(server action 重发、断线重连后的重放)。
+    const resent = idOf(await startAssetGen(templateRun()));
 
-    expect(reopened.id).toBe(first.id);
-    expect(reopened.disposition).toBe("reused");
+    expect(resent.id).toBe(first.id);
+    expect(resent.disposition).toBe("reused");
     expect(await reserveRows(ownerId)).toHaveLength(1);
     const [job] = await jobs(ownerId, projectId);
     expect(job!.idempotencyKey).toMatch(/^asset:template:[0-9a-f]{64}$/);

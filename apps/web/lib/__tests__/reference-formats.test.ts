@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { REFERENCE_FORMATS, formatFor } from "../reference-formats";
+import { REFERENCE_FORMATS } from "../reference-formats";
+
+const formatFor = (key: string) => REFERENCE_FORMATS.find((f) => f.key === key);
 
 describe("REFERENCE_FORMATS", () => {
   it("has the 4 approved formats mapped to existing entity types", () => {

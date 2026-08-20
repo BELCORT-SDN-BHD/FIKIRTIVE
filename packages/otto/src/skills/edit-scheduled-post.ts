@@ -74,5 +74,3 @@ export const editScheduledPostSkill = defineOttoSkill({
   parameters: params,
   execute: executeEditScheduledPost,
 });
-
-export const editScheduledPost = editScheduledPostSkill.tool;

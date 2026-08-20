@@ -213,8 +213,13 @@ describe("reapStaleRefGenJobs — committed-but-stuck resume scan (Codex 2026-07
     const n = await reapStaleRefGenJobs();
     expect(n).toBe(1); // transitioned out of stuck (to terminal FAILED) — counted as handled
     expect(m.referenceImageCreate).not.toHaveBeenCalled(); // refunded outputs are never attached
-    const failed = m.refGenJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    // #951 漏网(M1-b):这一笔终态写现在和 gen.ts 的同一处一样,是**条件** updateMany
+    // (只在行还在飞时才落),所以断言跟着搬到 updateMany 上,并连它的谓词一起钉。
+    const failed = m.refGenJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failed).toBeTruthy();
+    expect(failed![0].where).toEqual(
+      expect.objectContaining({ id: "r3", ownerId: "o3", status: { in: ["QUEUED", "GENERATING"] } }),
+    );
     expect(m.refGenJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeFalsy();
     expect(m.settleCredits).not.toHaveBeenCalled();
     expect(m.refundReservation).not.toHaveBeenCalled(); // already refunded — never refund twice

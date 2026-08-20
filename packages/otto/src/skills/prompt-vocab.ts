@@ -11,7 +11,6 @@ export const CAMERA_MOVES = [
   "fixed (固定)", "one continuous take (一镜到底)",
 ] as const; // 规则：每 shot 只用一个
 export const SHOT_SCALES = ["extreme wide", "wide", "full", "medium", "medium close-up", "close-up", "extreme close-up"] as const;
-export const CAMERA_ANGLES = ["eye-level", "high-angle", "low-angle", "bird's-eye", "POV"] as const;
 export const LIGHTING = [
   "golden hour", "dramatic side light", "soft diffused", "moody low-key", "bright high-key",
   "studio soft box (45°)", "backlight / rim", "neon", "volumetric", "natural window light",
@@ -20,7 +19,6 @@ export const STYLES = [
   "cinematic", "photorealistic", "editorial photography", "product photography", "documentary",
   "film grain", "3D CG render", "ink-wash (水墨)", "cyberpunk neon", "minimalist",
 ] as const;
-export const PACING = ["slow-motion", "hard cut", "fast cut", "timelapse", "one continuous take"] as const;
 
 /** 纯：去掉词表条目末尾的中文括注，只留英文（喂给 skill description，模型只看英文）。 */
 export const enOnly = (list: readonly string[]) => list.map((s) => s.replace(/\s*\(.*\)$/, ""));

@@ -1,3 +1,21 @@
+// ARCHIVED 2026-08-19 (C2 死凭证与陈旧文档清理). Kept for history; do NOT run it.
+//
+// WHY: the path it exists to guard is gone. `coworkTurn` — the action this harness says it
+// mirrors — was deleted 2026-07-07 (see the header of apps/web/lib/cowork-actions.ts); Otto owns
+// propose now. Its two entry symbols (`mockPlannerReply`, `parseCoworkTurn`) have zero product
+// callers left, only packages/core unit tests. Its `COWORK_PROVIDER` guard below pointed at a
+// variable no code reads any more — `packages/core/src/env-contract.ts` (the machine-checked
+// contract) does not declare it, and its test fails on any undeclared read, so there is none.
+// Nothing referenced this file: no CI job, no package.json script, only the June-2026 plan that
+// created it (and under its old path). It could not run from a clean checkout either — it hard-
+// requires the untracked `packages/db/.env` and a built `packages/core/dist`.
+//
+// The invariants it checked are covered by live unit tests, which is why archiving loses nothing:
+//   · directive-appears-once + re-compose is idempotent → packages/core/src/cowork-compose.test.ts
+//   · every video model resolves to a known family     → packages/core/src/gen.test.ts
+//   · routing/aspect/duration behaviour of suggestModel → packages/core/src/cowork-route.test.ts
+//
+// ── original header ────────────────────────────────────────────────────────────
 // OPT-6 P2 eval harness ($0/mock). Drives the REAL money-critical CORE the way
 // coworkTurn → coworkGenerate does — mockPlannerReply → parseCoworkTurn →
 // suggestModel → composePrompt — and asserts STRUCTURAL invariants. NEVER calls

@@ -118,5 +118,3 @@ export const proposeMetaActionSkill = defineOttoSkill({
   parameters: proposeMetaActionInput,
   execute: executeProposeMetaAction,
 });
-
-export const proposeMetaAction = proposeMetaActionSkill.tool;

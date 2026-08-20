@@ -165,5 +165,3 @@ export const proposePackSkill = defineOttoSkill({
   ],
   execute: executeProposePack,
 });
-
-export const proposePack = proposePackSkill.tool;
