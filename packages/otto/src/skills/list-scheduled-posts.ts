@@ -9,6 +9,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { ottoPublishTruth } from "@fikirtive/core/schedule-draft";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -36,7 +37,8 @@ export const listScheduledPostsSkill = defineOttoSkill({
   description:
     "List the user's scheduled posts (drafts, queued, published, needs-attention) so you can see the " +
     "same schedule they do and answer questions about it. $0 read-only. Optionally pass from/to (ISO) " +
-    "to window by scheduled time. Use before editing/approving/cancelling so you reference the right post id.",
+    "to window by scheduled time. Use before editing/approving/cancelling so you reference the right post id. " +
+    `${ottoPublishTruth()}`,
   parameters: params,
   execute: executeListScheduledPosts,
 });

@@ -3,11 +3,15 @@
  *
  * Reads only through the injected authenticated workflow port. It never accepts tenant identity,
  * imports the database, or receives Routine activation/run/dispatch authority.
+ *
+ * C7 —— 同 `draft-workflows.ts`:能读到 run 与 journey 的状态,不等于这个产品今天跑得起一次
+ * run。那句实话拼在描述末尾,措辞与另一条技能共用一份(`_availability.ts`)。
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
+import { ROUTINE_EXECUTION_AVAILABILITY } from "./_availability.js";
 
 export const workflowResourceIdSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
 
@@ -184,10 +188,11 @@ export const readWorkflowsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Read the user's Workflow definitions, immutable revisions, Routine authorization envelopes, run and journey " +
-    "status, and business-hours policies through the same authenticated, owner-scoped service as the Workflow UI. " +
-    "$0 read-only. Start with a list operation and never guess ids or cursors. This skill cannot activate, " +
-    "reauthorize, or kill a Routine; create or advance a run or journey; dispatch a step; send; call a provider; " +
-    "or spend credits.",
+    "status, and business-hours policies through the one authenticated, owner-scoped service, not a second " +
+    "implementation of its own. $0 read-only. Start with a list operation and never guess ids or cursors. This skill cannot " +
+    "activate, reauthorize, or kill a Routine; create or advance a run or journey; dispatch a step; send; call a " +
+    "provider; or spend credits. " +
+    ROUTINE_EXECUTION_AVAILABILITY,
   parameters: readWorkflowsParams,
   execute: executeReadWorkflows,
 });

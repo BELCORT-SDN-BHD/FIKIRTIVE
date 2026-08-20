@@ -12,6 +12,10 @@
       "types": "./dist/brand-records.d.ts",
       "default": "./dist/brand-records.js"
     },
+    "./campaign-lifecycle": {
+      "types": "./dist/campaign-lifecycle.d.ts",
+      "default": "./dist/campaign-lifecycle.js"
+    },
     "./canvas-card-status": {
       "types": "./dist/canvas-card-status.d.ts",
       "default": "./dist/canvas-card-status.js"
