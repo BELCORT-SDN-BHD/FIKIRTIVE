@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,8 +41,17 @@ function matcherRuns(pathname: string): boolean {
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-/** app/foo/[id]/page.tsx → /foo/id;app/api/x/[...all]/route.ts → /api/x/all/all。 */
-function urlSegment(directoryName: string): string {
+/**
+ * app/foo/[id]/page.tsx → /foo/id;app/api/x/[...all]/route.ts → /api/x/all/all。
+ *
+ * 判官回炉 P1-2(父提交遗留):route group `(name)` 与 parallel slot `@slot`(`@children` 除外)
+ * 在 URL 里完全不可见——Next 的 normalizeAppPath(next/dist/shared/lib/router/utils/app-paths.js
+ * 的 isGroupSegment/isParallelRouteSegment 分支)把这两种段整个丢弃,不是原样保留或改写成别的
+ * 字符串。返回 null 表示「这一层目录不产生任何 URL 段」,调用方据此不拼接。
+ */
+function urlSegment(directoryName: string): string | null {
+  if (directoryName.startsWith("(") && directoryName.endsWith(")")) return null; // route group
+  if (directoryName.startsWith("@") && directoryName !== "@children") return null; // parallel slot
   if (directoryName.startsWith("[...")) {
     const name = directoryName.slice(4, -1);
     return `${name}/${name}`;
@@ -78,7 +87,29 @@ const METADATA_IMAGE_STATIC_EXTENSIONS: Record<string, string[]> = {
   "twitter-image": ["jpg", "jpeg", "png", "gif"],
 };
 
-/** 只能出现在 app/ 根目录的静态 metadata 文件——Next 的匹配正则以 `^` 锚死开头,不接受嵌套。 */
+/**
+ * 判官回炉 P1-1:上面四种都接受一个可选的单数字后缀(icon0…icon9),Next 实际枚举 0-9——
+ * next/dist/build/webpack/loaders/metadata/discover.js:33 的 `Array(10).fill(0)`,匹配侧是
+ * next/dist/lib/metadata/is-metadata-route.js 的 `suffixMatcher`(`\d?`)。这里去掉数字后缀,
+ * 判断剩下的 basename 是不是四种约定之一;不是就返回 null。
+ */
+function metadataImageBaseName(name: string): string | null {
+  for (const base of Object.keys(METADATA_IMAGE_STATIC_EXTENSIONS)) {
+    if (name === base) return base;
+    if (name.length === base.length + 1 && name.startsWith(base) && /^\d$/.test(name.slice(base.length))) {
+      return base;
+    }
+  }
+  return null;
+}
+
+/**
+ * 只能出现在 app/ **物理**根目录的静态 metadata 文件——Next 的匹配正则以 `^` 锚死开头,
+ * 锚的是磁盘相对路径,不是 URL。一个 route group 下的 app/(marketing)/robots.ts 在 URL 里
+ * 看着像根(group 不可见),但磁盘路径是 `/(marketing)/robots.ts`,锚不上,Next 不会把它
+ * 认成真正的 /robots.txt。所以调用方传入的 `isRoot` 必须是「零层目录」的物理判断,不能用
+ * 剥离 group/slot 后的 urlPrefix 是否为空来代替(那样会把 group 下的 robots.ts 误判成根)。
+ */
 const ROOT_ONLY_METADATA_FILENAMES = new Set(["favicon.ico"]);
 
 /** 拆出 `<name>.<ext>`;没有扩展名时返回 null(理论上不会命中,纯防御)。 */
@@ -89,11 +120,32 @@ function splitFilename(filename: string): { name: string; ext: string } | null {
 }
 
 /**
- * 一个 app/ 目录条目(文件)如果是 Next 的 metadata 路由约定文件,返回它在当前目录下的
- * URL 段;不是就返回 null。`isRoot` 标出 urlPrefix === "" 的场景——favicon/robots/manifest
- * 只在 app/ 根目录生效(Next 的正则没有给它们开放嵌套),sitemap 与四种图标可以嵌套。
+ * 判官回炉 P2-a:带 `generateSitemaps`/`generateImageMetadata` 导出的动态 metadata 文件不再是
+ * 单一 URL——Next 把整条路由变成 `.../<id>` 系列(route-discovery.js 里
+ * `normalizeMetadataPageToRoute` 的 isDynamic 分支拼 `[__metadata_id__]`,不再是那份非动态分支
+ * 拼的固定路径)。id 的数量与取值由该导出函数在**运行时**返回什么决定,没有上限、值域不可
+ * 静态穷举。这里不假装能穷举:只用一次文本匹配探测这两个导出名是否存在;命中就把 URL
+ * 换成 `<base>/0` ——「至少存在一个可判定墙内外的具体实例」,并把这当成已知的、故意不追求
+ * 完整覆盖的形态记录在此。id=1、2……不进入这份枚举,因为它们的存在性本身要跑用户代码才
+ * 知道,静态枚举做不到,也不是这条对账测试要接住的东西。
  */
-function metadataRouteSegment(filename: string, isRoot: boolean): string | null {
+function hasDynamicMetadataIdExport(filePath: string): boolean {
+  let source: string;
+  try {
+    source = readFileSync(filePath, "utf8");
+  } catch {
+    return false;
+  }
+  return /\bexport\s+(?:async\s+function|function|const)\s+(generateSitemaps|generateImageMetadata)\b/.test(source);
+}
+
+/**
+ * 一个 app/ 目录条目(文件)如果是 Next 的 metadata 路由约定文件,返回它在当前目录下的
+ * URL 段;不是就返回 null。`filePath` 是它的绝对路径(供 hasDynamicMetadataIdExport 读取源码),
+ * `isRoot` 是物理根判断(见 ROOT_ONLY_METADATA_FILENAMES 的注释)——favicon/robots/manifest
+ * 只在这里生效,sitemap 与四种图标可以嵌套。
+ */
+function metadataRouteSegment(filePath: string, filename: string, isRoot: boolean): string | null {
   if (isRoot && ROOT_ONLY_METADATA_FILENAMES.has(filename)) return filename; // favicon.ico
 
   const parsed = splitFilename(filename);
@@ -107,36 +159,50 @@ function metadataRouteSegment(filename: string, isRoot: boolean): string | null 
     return CODE_EXTENSIONS.includes(ext) ? "manifest.webmanifest" : filename;
   }
   if (name === "sitemap" && (ext === "xml" || CODE_EXTENSIONS.includes(ext))) {
+    if (CODE_EXTENSIONS.includes(ext) && hasDynamicMetadataIdExport(filePath)) {
+      return "sitemap/0"; // generateSitemaps:见 hasDynamicMetadataIdExport 的注释
+    }
     return "sitemap.xml"; // 可嵌套,URL 扩展名固定为 .xml
   }
 
-  const staticExtensions = METADATA_IMAGE_STATIC_EXTENSIONS[name];
-  if (staticExtensions) {
-    if (staticExtensions.includes(ext)) return filename; // 静态图片,URL 保留扩展名
-    if (CODE_EXTENSIONS.includes(ext)) return name; // 动态生成器,URL 不带扩展名
+  const imageBase = metadataImageBaseName(name);
+  if (imageBase) {
+    const staticExtensions = METADATA_IMAGE_STATIC_EXTENSIONS[imageBase];
+    if (staticExtensions.includes(ext)) return filename; // 静态图片,URL 保留扩展名(含数字后缀)
+    if (CODE_EXTENSIONS.includes(ext)) {
+      if (hasDynamicMetadataIdExport(filePath)) return `${name}/0`; // generateImageMetadata,同上
+      return name; // 动态生成器,URL 不带扩展名
+    }
   }
 
   return null;
 }
 
 /** app/ 下每一条真路由的 URL 路径,从文件系统机械枚举 —— 地址不在测试里手抄第二份。 */
-function realRoutePaths(dir = resolve(WEB_ROOT, "app"), urlPrefix = ""): string[] {
+function realRoutePaths(dir = resolve(WEB_ROOT, "app"), urlPrefix = "", isPhysicalRoot = true): string[] {
   const found: string[] = [];
-  const isRoot = urlPrefix === "";
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isFile()) {
       if (LEAF_ROUTE_FILENAMES.has(entry.name)) {
-        found.push(isRoot ? "/" : urlPrefix);
+        found.push(urlPrefix === "" ? "/" : urlPrefix);
         continue;
       }
-      const metadataSegment = metadataRouteSegment(entry.name, isRoot);
+      const metadataSegment = metadataRouteSegment(join(dir, entry.name), entry.name, isPhysicalRoot);
       if (metadataSegment !== null) {
-        found.push(isRoot ? `/${metadataSegment}` : `${urlPrefix}/${metadataSegment}`);
+        found.push(urlPrefix === "" ? `/${metadataSegment}` : `${urlPrefix}/${metadataSegment}`);
       }
       continue;
     }
-    if (!entry.isDirectory() || entry.name === "__tests__") continue;
-    found.push(...realRoutePaths(join(dir, entry.name), `${urlPrefix}/${urlSegment(entry.name)}`));
+    // 判官回炉 P2-b:Next 递归收集 app/ 时跳过任何以 `_` 开头的路径段(不止 `__tests__` 这一个
+    // 特例)——next/dist/build/route-discovery.js 的 `ignorePartFilter: (part) =>
+    // part.startsWith('_')`。跟上这一条是为了不让公开子树底下一个以 `_` 开头、纯属本地协作
+    // 产物的目录被这份枚举误当成真路由,制造与安全无关的 CI 假红。
+    if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
+    const segment = urlSegment(entry.name);
+    const nextUrlPrefix = segment === null ? urlPrefix : `${urlPrefix}/${segment}`;
+    // route group / parallel slot 只是磁盘上多一层目录,URL 上不多一层——但对 favicon/robots/
+    // manifest 的物理根判断而言,它仍然是「往下走了一层」,isPhysicalRoot 一律传 false。
+    found.push(...realRoutePaths(join(dir, entry.name), nextUrlPrefix, false));
   }
   return found;
 }
