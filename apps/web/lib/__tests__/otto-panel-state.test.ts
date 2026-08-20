@@ -28,7 +28,7 @@ import {
   undockPanel,
   writeOttoPanelState,
 } from "@/components/otto/panel/panel-state";
-import { defaultPanelWidth } from "@/components/otto/panel/panel-geometry";
+import { PANEL_DEFAULT_OPEN_MIN_WIDTH, defaultPanelWidth } from "@/components/otto/panel/panel-geometry";
 
 const WIDE = { width: 1440, height: 900 };
 
@@ -65,6 +65,20 @@ describe("defaultOttoPanelState", () => {
 
   it("parks the launcher bottom-right, where today's Otto button already sits", () => {
     expect(defaultOttoPanelState(WIDE).launcher).toEqual({ edge: "right", y: 1 });
+  });
+
+  /** #994 挂载轮 · 判官 P2-2 —— 过渡守卫,W2-11 删移动层时连这条测试一起清。 */
+  it("窄屏上默认不开:320px 的面板会把 375px 的手机屏吃掉", () => {
+    // 边界逐点钉住:1023 关,1024 开。这条线就是导轨从抽屉变常驻列的那条 Tailwind `lg`。
+    expect(defaultOttoPanelState({ width: 375, height: 812 }).open).toBe(false);
+    expect(defaultOttoPanelState({ width: PANEL_DEFAULT_OPEN_MIN_WIDTH - 1, height: 800 }).open).toBe(false);
+    expect(defaultOttoPanelState({ width: PANEL_DEFAULT_OPEN_MIN_WIDTH, height: 800 }).open).toBe(true);
+
+    // 只压默认,不压能力:窄屏上商家自己开得起来,而且开完照样存得住。
+    const narrow = { width: 375, height: 812 };
+    const opened = setPanelOpen(defaultOttoPanelState(narrow), true);
+    expect(opened.open).toBe(true);
+    expect(parseOttoPanelState(serializeOttoPanelState(opened), narrow).open).toBe(true);
   });
 });
 

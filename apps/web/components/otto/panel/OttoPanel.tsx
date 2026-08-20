@@ -201,7 +201,9 @@ export function OttoPanel({
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const delta = event.key === "ArrowLeft" ? KEYBOARD_RESIZE_STEP_PX : -KEYBOARD_RESIZE_STEP_PX;
-    onResize(clampPanelWidth(state.width + delta, viewport.width));
+    // 从**生效中**的宽度起跳,不是从存档宽。Expand 打开时这两个数不一样,按存档宽算会让
+    // 第一下方向键把面板从 864px 猛缩回 376px —— 那不是「宽一点」,那是跳一下。
+    onResize(clampPanelWidth(width + delta, viewport.width));
   }
 
   const frame: React.CSSProperties = floating
@@ -224,7 +226,7 @@ export function OttoPanel({
         <div
           data-otto-panel-dock-hint=""
           aria-hidden
-          className="pointer-events-none fixed top-0 right-0 z-[71] h-full w-[2px] bg-brand"
+          className="pointer-events-none fixed top-0 right-0 z-[46] h-full w-[2px] bg-brand"
         />
       )}
       <aside
@@ -234,10 +236,25 @@ export function OttoPanel({
         {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
         style={frame}
         className={cn(
-          "z-[70] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
+          // 层级(#994 挂载票定表,判官 r1 P3-3 修正因果):导轨 z-40 < 面板 z-45 < 模态框 z-50。
+          //
+          // 先说清楚**谁不在这条表里**:`ui/dialog` 走 Radix Portal 挂到 `<body>` 上,而商家壳
+          // 整个装在 `app/layout.tsx` 那个 `relative z-10` 的 div 里 —— 那是一个层叠上下文,
+          // 里面的数字再大也只在里面排队。所以旧的 z-70 从来压不住 `ui/dialog`,「不改就盖住每一个
+          // 模态框」是句错话。
+          //
+          // 真正会被盖住的是**壳内**那两处手搓的 `fixed inset-0 z-50` 模态框 ——
+          // `OttoStuff.tsx`(Choose a product)与 `stuff/AddAssetDialog.tsx`(Add asset)。
+          // 它们和面板同在那个 z-10 上下文里,z-70 的面板确实会压在它们上面(它们正是 W2-12
+          // 要收编成 `ui/dialog` 的那一批)。面板退到 45,这两处就回到面板之上;
+          // 45 仍在导轨 40 之上,浮动窗拖过导轨时压得住它。
+          "z-[45] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
           floating
             ? "rounded-[var(--radius-lg)] border border-border/80 shadow-[var(--shadow-lg,0_18px_44px_rgba(20,20,24,0.16))]"
-            : "relative h-full shrink-0 border-l border-border",
+            // 停靠形态没有任何脱离文档流的定位 —— 它就是排版里的一格(挤而不盖)。`sticky` 仍
+            // 占位、仍把主内容挤窄,只是页面往下滚的时候面板头部不跟着滚出屏幕;`self-start`
+            // 是它成立的前提(被 stretch 拉满高度的元素没有可粘的余量)。
+            : "sticky top-0 h-dvh shrink-0 self-start border-l border-border",
         )}
       >
         {!floating && (
