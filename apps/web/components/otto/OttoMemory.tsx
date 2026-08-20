@@ -4,6 +4,10 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Sparkles, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import {
   addMemory, updateMemory, deleteMemory, listMyMemory, type MemoryRow,
 } from "@/lib/memory-actions";
@@ -62,6 +66,45 @@ function summarize(facts: RowDiff<MemoryRow>, records: RowDiff<BrandRecordRow>):
   return parts.join(", ");
 }
 
+/** #977:Chrome 的「阻止所有 Cookie」不是让 `getItem` 返回空 —— 它让**读 `sessionStorage`
+ *  这个属性本身**抛 SecurityError。下面三处以前是 `window.sessionStorage.xxx()` 的裸取,
+ *  而第一处在 useEffect 的同步体里:W2-2 之后这个组件就是 `/brand` 这条顶层路由的全部页面
+ *  内容(`app/brand/page.tsx`),那一抛不是「聊天记不住」,是整面品牌资料打到错误边界白屏。
+ *
+ *  形状照抄 `components/canvas/useCanvasGen.ts` 的 `receiptStorage()`:存不了就当没记指针 ——
+ *  每次重挂开一条新会话线程,这一面照常用。 */
+function threadStorage(): Storage | null {
+  try {
+    return typeof globalThis.sessionStorage === "undefined" ? null : globalThis.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readThreadPointer(key: string): string | null {
+  try {
+    return threadStorage()?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeThreadPointer(key: string, threadId: string): void {
+  try {
+    threadStorage()?.setItem(key, threadId);
+  } catch {
+    /* 记不住指针只是下次重挂时另开一条会话,不是错误 —— 消息本身的权威在服务端。 */
+  }
+}
+
+function forgetThreadPointer(key: string): void {
+  try {
+    threadStorage()?.removeItem(key);
+  } catch {
+    /* 同上:删不掉的指针下一次读回来也只是指向一条读不到的会话,那条路已经处理过了。 */
+  }
+}
+
 export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItems = [] }: {
   initialMemory: MemoryRow[];
   initialRecords: BrandRecordRow[];
@@ -109,7 +152,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const remembered = window.sessionStorage.getItem(brandThreadKey);
+    const remembered = readThreadPointer(brandThreadKey);
     if (!remembered) return;
     let alive = true;
     void getCoworkThreadClient(remembered).then((thread) => {
@@ -117,7 +160,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
       if (!thread) {
         // Owner-scoped read came back empty — the conversation is genuinely gone (deleted),
         // so drop the pointer rather than keep replying into a thread that no longer exists.
-        window.sessionStorage.removeItem(brandThreadKey);
+        forgetThreadPointer(brandThreadKey);
         return;
       }
       // Never overwrite a turn the merchant has already started in this mount.
@@ -155,7 +198,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
         setChatError(res.error ?? "Something went wrong — please try again.");
       } else {
         setBrandThreadId(res.threadId);
-        window.sessionStorage.setItem(brandThreadKey, res.threadId);
+        writeThreadPointer(brandThreadKey, res.threadId);
         const thread = await getCoworkThreadClient(res.threadId);
         if (thread) {
           setChat(threadToBubbles(thread.messages));
@@ -292,8 +335,19 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
         <h1 className="m-0 text-[1.5rem] font-bold text-foreground leading-tight">
           Brand memory
         </h1>
-        <p className="text-[0.9375rem] text-muted-foreground mt-[5px] mb-[18px] leading-[1.5]">
+        <p className="text-[0.9375rem] text-muted-foreground mt-[5px] mb-[10px] leading-[1.5]">
           What Otto remembers about your brand — Otto uses it in every project.
+        </p>
+
+        {/* W2-2(规格书 §4.4)——「说实话」那一半。这一面叫 Brand,但它今天只有**文字**这一层
+            通电:六个页签写进 Memory 与 BrandRecord 两张真表,Otto 每次都读。颜色、字体、logo
+            对应的 BrandKit / BrandRule 各只有一个读取点、零写入点(`lib/memory-actions.ts`),
+            也就是说商家就算填了也没有任何一处会用 —— 地基重设计是另一张票,在它落地之前,
+            这一句是唯一诚实的说法。它写在组件里而不是写在 /brand 那张页面上,因为旧的
+            /otto?view=memory 今天还开着,同一件事不许只在一扇门后面说。 */}
+        <p className="text-[0.875rem] text-muted-foreground mt-0 mb-[18px] leading-[1.5]">
+          Brand is where Otto learns your business. Colors, fonts, and logo are not part of this
+          yet — what you write here is what Otto uses today.
         </p>
 
         {/* ── Chat panel (chips + input + fine print) ── */}
@@ -401,80 +455,107 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
             />
           )}
 
-          {/* ── Tab bar ── */}
-          <div className="flex gap-1 rounded-[14px] bg-muted p-1 w-max mb-4" role="tablist">
-            {SECTIONS.map((s) => {
-              const count = s.key === "customers" ? recordsFor("segment").length
-                : s.key === "products" ? recordsFor("product").length
-                : s.key === "offers" ? recordsFor("offer").length : 0;
-              const on = activeTab === s.key;
-              return (
-                <Button key={s.key} type="button" variant="ghost" role="tab" aria-selected={on} onClick={() => setTab(s.key)}
-                  className={`h-auto gap-2 rounded-[10px] px-4 py-2 text-[0.8125rem] font-normal ${on ? "bg-card font-semibold text-foreground shadow-sm hover:bg-card" : "bg-transparent text-muted-foreground hover:bg-transparent"}`}>
-                  {s.label}
-                  {count > 0 && <span className="text-[0.6875rem] text-muted-foreground/70">{count}</span>}
-                  {touchedTabs.has(s.key) && <span className="h-[6px] w-[6px] rounded-full bg-brand" aria-label="Otto updated this" />}
-                </Button>
-              );
-            })}
-          </div>
+          {/* ── Tabs ──
+              W2-2(规格书 §5.6 ②):这里原本是一个手写 `role="tablist"` 的 div,里面六颗
+              `role="tab"` 的按钮。手写 tablist 的代价不是样子,是键盘模型 —— WAI-ARIA 的
+              tabs 模式要求左右方向键在页签之间走、Home/End 到两头、而整条 tablist 只占
+              一个 Tab 停靠点。手写那版一个都没有:六颗按钮各自吃一次 Tab,方向键什么都不做。
+              换成 `components/ui/tabs`(Radix)之后这套模型是组件自带的。 */}
+          <Tabs
+            className="gap-0"
+            value={activeTab}
+            onValueChange={(next) => setTab(next as SectionKey)}
+          >
+            <TabsList className="rounded-[14px] mb-4">
+              {SECTIONS.map((s) => {
+                const count = s.key === "customers" ? recordsFor("segment").length
+                  : s.key === "products" ? recordsFor("product").length
+                  : s.key === "offers" ? recordsFor("offer").length : 0;
+                return (
+                  <TabsTrigger
+                    key={s.key}
+                    value={s.key}
+                    className="flex-none gap-2 text-[0.8125rem] font-normal data-[state=active]:font-semibold"
+                  >
+                    {s.label}
+                    {count > 0 && <span className="text-[0.6875rem] text-muted-foreground/70">{count}</span>}
+                    {touchedTabs.has(s.key) && <span className="h-[6px] w-[6px] rounded-full bg-brand" aria-label="Otto updated this" />}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
 
-          {/* ── Active panel ── */}
-          {activeTab === "about" && (
-            <FactSection label="" rows={factsFor("about")} freshIds={freshIds} {...factHandlers("about")} />
-          )}
-          {activeTab === "look" && (
-            <FactSection label="" rows={factsFor("look")} freshIds={freshIds} {...factHandlers("look")} />
-          )}
-          {activeTab === "customers" && (
-            <SegmentCards
-              records={recordsFor("segment")}
-              looseNotes={factsFor("customers")}
-              freshIds={freshIds}
-              onSave={segSave}
-              onDelete={segDelete}
-              onArchive={segArchive}
-              onNoteSave={noteSave}
-              onNoteDelete={noteDelete}
-            />
-          )}
-          {activeTab === "products" && (
-            <ProductShowcase
-              records={recordsFor("product")}
-              looseNotes={factsFor("products")}
-              freshIds={freshIds}
-              stuffItems={stuffItems}
-              onSave={prodSave}
-              onArchive={prodArchive}
-              onNoteSave={noteSave}
-              onNoteDelete={noteDelete}
-              onSetImage={prodSetImage}
-              onOpenPicker={setPickerFor}
-              onIngest={ingestProductFromUrl}
-            />
-          )}
-          {activeTab === "offers" && (
-            <OfferList
-              records={recordsFor("offer")}
-              freshIds={freshIds}
-              onSave={offerSave}
-              onDelete={offerDelete}
-            />
-          )}
-          {activeTab === "rules" && (
-            <FactSection label="" rows={factsFor("rules")} freshIds={freshIds} {...factHandlers("rules")} />
-          )}
+            {/* ── Active panel ── */}
+            <TabsContent value="about">
+              <FactSection label="" rows={factsFor("about")} freshIds={freshIds} {...factHandlers("about")} />
+            </TabsContent>
+            <TabsContent value="look">
+              <FactSection label="" rows={factsFor("look")} freshIds={freshIds} {...factHandlers("look")} />
+            </TabsContent>
+            <TabsContent value="customers">
+              <SegmentCards
+                records={recordsFor("segment")}
+                looseNotes={factsFor("customers")}
+                freshIds={freshIds}
+                onSave={segSave}
+                onDelete={segDelete}
+                onArchive={segArchive}
+                onNoteSave={noteSave}
+                onNoteDelete={noteDelete}
+              />
+            </TabsContent>
+            <TabsContent value="products">
+              <ProductShowcase
+                records={recordsFor("product")}
+                looseNotes={factsFor("products")}
+                freshIds={freshIds}
+                stuffItems={stuffItems}
+                onSave={prodSave}
+                onArchive={prodArchive}
+                onNoteSave={noteSave}
+                onNoteDelete={noteDelete}
+                onSetImage={prodSetImage}
+                onOpenPicker={setPickerFor}
+                onIngest={ingestProductFromUrl}
+              />
+            </TabsContent>
+            <TabsContent value="offers">
+              <OfferList
+                records={recordsFor("offer")}
+                freshIds={freshIds}
+                onSave={offerSave}
+                onDelete={offerDelete}
+              />
+            </TabsContent>
+            <TabsContent value="rules">
+              <FactSection label="" rows={factsFor("rules")} freshIds={freshIds} {...factHandlers("rules")} />
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
 
-      {pickerFor && (
-        <div className="fixed inset-0 z-50 bg-foreground/40 flex items-center justify-center" onClick={() => setPickerFor(null)}>
-          <div className="bg-card rounded-[16px] border border-border p-5 max-w-[720px] w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-[0.9375rem] font-semibold mb-3">Choose an image from Library</h3>
-            <StuffLibrary items={stuffItems} mode="picker" onPick={(assetId) => { void prodSetImage(pickerFor, assetId); setPickerFor(null); }} />
-          </div>
-        </div>
-      )}
+      {/* ── Library picker ──
+          W2-2(规格书 §5.6 ①):原来这里是一个 `fixed inset-0` 的 div 叠一个卡片 div,
+          连 `role="dialog"` 都没有,自己接了一个 backdrop-click 关闭 —— 没有焦点陷阱、
+          没有 Escape、没有可访问名字,读屏软件根本不知道有东西打开了。换成
+          `components/ui/dialog`(Radix)之后这四样都是组件自带的。 */}
+      <Dialog open={pickerFor !== null} onOpenChange={(open) => { if (!open) setPickerFor(null); }}>
+        <DialogContent className="max-w-[min(720px,calc(100vw-2rem))] max-h-[80vh] overflow-auto">
+          <DialogHeader className="pr-8">
+            <DialogTitle className="text-[0.9375rem]">Choose an image from Library</DialogTitle>
+            <DialogDescription>
+              Pick one of your own images to show on this product.
+            </DialogDescription>
+          </DialogHeader>
+          {pickerFor && (
+            <StuffLibrary
+              items={stuffItems}
+              mode="picker"
+              onPick={(assetId) => { void prodSetImage(pickerFor, assetId); setPickerFor(null); }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

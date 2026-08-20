@@ -47,7 +47,7 @@ export function AdminV2Nav() {
         <Link href="/admin" className="mb-4 flex items-center gap-2 rounded-[9px] px-2 py-1.5 text-sm font-semibold text-foreground">
           <span className="grid size-7 place-items-center rounded-[8px] bg-foreground text-[11px] font-bold text-background">FK</span>
           <span className="leading-tight">
-            FIKIRTIVE
+            <span className="font-[750] tracking-[-0.03em]">fikirtive</span>
             <span className="block text-[11px] font-medium text-muted-foreground">Admin</span>
           </span>
         </Link>

@@ -2,6 +2,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, Plus, Film, ImageIcon, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
 import type { AdJobItem, HistoryThumb } from "@/lib/data";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
@@ -89,14 +97,19 @@ function AdJobCard({
         </div>
       )}
       <div className="flex flex-wrap gap-1.5 pt-1">
-        {job.threadId && (
-          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onOpenThread?.(job.threadId, job.projectId)}>
+        {/* W2-1 —— 这两颗键做的都是「跳进聊天里」,而聊天不在这一页上:`/library` 变成真
+            路由之后,商家可以站在一个没有聊天面的 Library 上(Otto 面板是 W2-7 才来的)。
+            原来它们只看 job 有没有 threadId / prompt,handler 缺席时按下去什么都不发生 ——
+            一颗按不动的按钮比没有按钮更糟。所以改成:谁给得起这个动作,谁才画这颗键。
+            旧壳(OttoView)两个 handler 一直都传,所以那边一颗不少、行为一模一样。 */}
+        {job.threadId && onOpenThread && (
+          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onOpenThread(job.threadId, job.projectId)}>
             <ExternalLink size={13} />
             Open conversation
           </Button>
         )}
-        {!isProcessing && job.prompt && (
-          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onRetryWithOtto?.(`Try again with this failed generation: ${job.prompt}`)}>
+        {!isProcessing && job.prompt && onRetryWithOtto && (
+          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onRetryWithOtto(`Try again with this failed generation: ${job.prompt}`)}>
             <RotateCcw size={13} />
             Retry with Otto
           </Button>
@@ -332,24 +345,20 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
         onChanged={refreshServerData}
       />
 
+      {/* W2-1 —— 与 AddAssetDialog 同一个修法(规格书 §4.3):手搓的 `fixed inset-0` 遮罩
+          自己接 onClick 当「点外面关闭」,却没有焦点陷阱、也不认 Escape。换成
+          components/ui/dialog 之后这三件事由 Radix 一次给全,屏幕上的东西一样不少。 */}
       {chooseProductFor && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Choose a product"
-          onClick={() => setChooseProductFor(null)}
-        >
-          <div
-            className="w-full max-w-[420px] rounded-[16px] border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="m-0 mb-1 text-[1.125rem] font-semibold text-foreground">Set as product image</h2>
-            <p className="mb-4 mt-0 text-[0.875rem] text-muted-foreground">Pick which product this image belongs to.</p>
+        <Dialog open onOpenChange={(next) => { if (!next) setChooseProductFor(null); }}>
+          <DialogContent className="sm:max-w-[420px]">
+            <DialogHeader className="pr-8">
+              <DialogTitle>Set as product image</DialogTitle>
+              <DialogDescription>Pick which product this image belongs to.</DialogDescription>
+            </DialogHeader>
             {activeProducts.length === 0 ? (
               // #701 — the path is real (Brand memory → Your products → + Add product); it
               // just was not a link, so the merchant had to find four levels of it themselves.
-              <p className="text-[0.875rem] text-muted-foreground">
+              <p className="m-0 text-[0.875rem] text-muted-foreground">
                 No products yet —{" "}
                 <ExitLink href={BRAND_MEMORY_HREF}>add one in Brand memory</ExitLink> first.
               </p>
@@ -371,13 +380,13 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
                 })}
               </div>
             )}
-            <div className="mt-4 flex justify-end">
+            <DialogFooter>
               <Button variant="ghost" size="sm" onClick={() => setChooseProductFor(null)}>
                 Cancel
               </Button>
-            </div>
-          </div>
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
       {detailFor && (
         <DetailPanel

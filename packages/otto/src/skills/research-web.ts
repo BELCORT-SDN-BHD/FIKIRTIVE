@@ -117,5 +117,3 @@ export const researchWebSkill = defineOttoSkill({
   parameters: researchWebInput,
   execute: executeResearchWeb,
 });
-
-export const researchWeb = researchWebSkill.tool;

@@ -23,10 +23,6 @@ export const SCHEDULED_POST_STATUSES = [
 ] as const;
 export type ScheduledPostStatus = (typeof SCHEDULED_POST_STATUSES)[number];
 
-export function isScheduledPostStatus(x: unknown): x is ScheduledPostStatus {
-  return typeof x === "string" && (SCHEDULED_POST_STATUSES as readonly string[]).includes(x);
-}
-
 /** 合法后继表。缺席的 (from,to) 组合即非法。终态映射到空数组。 */
 const TRANSITIONS: Record<ScheduledPostStatus, readonly ScheduledPostStatus[]> = {
   DRAFT: ["SCHEDULED", "CANCELLED"],
@@ -38,17 +34,7 @@ const TRANSITIONS: Record<ScheduledPostStatus, readonly ScheduledPostStatus[]> =
   CANCELLED: [],
 };
 
-/** 出度为空的终态。 */
-export const TERMINAL_STATUSES = SCHEDULED_POST_STATUSES.filter(
-  (s) => TRANSITIONS[s].length === 0,
-);
-
 /** from → to 是否合法。非法(含自→自、终态出边、跳步)一律 false。 */
 export function canTransition(from: ScheduledPostStatus, to: ScheduledPostStatus): boolean {
   return TRANSITIONS[from].includes(to);
-}
-
-/** from 的合法后继(新数组,调用方可安全 mutate)。 */
-export function allowedNextStates(from: ScheduledPostStatus): ScheduledPostStatus[] {
-  return [...TRANSITIONS[from]];
 }

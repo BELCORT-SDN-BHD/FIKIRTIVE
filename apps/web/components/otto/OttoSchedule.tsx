@@ -33,7 +33,7 @@ import { autoPublishHint } from "@/lib/auto-publish-gate";
 // (#851). This screen is the surface a merchant is most likely to read as "send" — so it states the
 // answer itself rather than hoping the merchant infers it from a greyed-out switch.
 import { publishPreviewBadge, publishSurfaceCopy, publishSurfaceLines } from "@fikirtive/core/schedule-draft";
-import { CONNECTABLE_CHANNEL_META, channelMeta, isConnectableChannel } from "@/lib/channels/channel-meta";
+import { CONNECTABLE_CHANNEL_META, channelCapabilityBlurb, channelMeta, isConnectableChannel } from "@/lib/channels/channel-meta";
 // The single source of "which accounts is this merchant connected to right now" and the ONE
 // derived judgement built on it (#741 r2). This screen never touches the raw list — the type
 // makes that impossible — so Plan, the composer and "Approve all" cannot drift apart again.
@@ -56,7 +56,7 @@ import {
   UNREAD_ACCOUNTS,
   type ConnectedAccounts,
 } from "@/lib/schedule-connections";
-import type { ChannelId, ChannelCapabilities } from "@/lib/channels/types";
+import type { ChannelId } from "@/lib/channels/types";
 import {
   partsInTz,
   formatTime,
@@ -145,15 +145,8 @@ function ChannelIcon({ channel, size = 15 }: { channel: string; size?: number })
   return CHANNEL_GLYPHS[channel]?.(size) ?? null;
 }
 
-/** Data-driven capability blurb (E4-16: UI copy from CHANNEL_META capabilities, no per-channel-name
- *  ternary). Adding a channel needs no edit here. */
-function capsBlurb(cap: ChannelCapabilities): string {
-  if (cap.maxMediaCount <= 0) return "Text posts · media coming soon";
-  if (cap.maxMediaCount === 1) return "Single feed image";
-  return cap.postTypes.includes("carousel")
-    ? `Feed image or carousel · up to ${cap.maxMediaCount} media`
-    : `Up to ${cap.maxMediaCount} photos or a video`;
-}
+// W2-4:能力那句话搬去 lib/channels/channel-meta.ts —— 它说的是渠道能力,权威就在那里
+// (顺带把 “media coming soon” 这半句没人排期的承诺删了,理由写在那个函数的注释里)。
 
 /** OTTO coral cloud mark (matches OttoAnalytics). Coral = OTTO only. */
 function CoralCloud({ size = 26 }: { size?: number }) {
@@ -1449,7 +1442,7 @@ function Composer({
             )}
             {cap && (
               <div className="text-[11.5px] text-muted-foreground mt-1">
-                {capsBlurb(cap)}
+                {channelCapabilityBlurb(cap)}
                 {cap.rateLimitPer24h ? ` · ${cap.rateLimitPer24h}/day limit` : ""}
               </div>
             )}
@@ -1572,15 +1565,11 @@ function Composer({
               // merchant types.
               className="field-sizing-fixed min-h-0 w-full resize-none rounded-[10px] border-border bg-card px-3 py-2 text-[13px] shadow-none"
             />
-            <Button
-              type="button"
-              variant="ghost"
-              disabled
-              title="Coming soon — Otto will draft this from your brand memory."
-              className="mt-1 h-auto w-auto gap-1.5 p-0 text-[12px] font-semibold text-muted-foreground opacity-60 hover:bg-transparent disabled:cursor-default disabled:opacity-60"
-            >
-              <CoralCloud size={16} /> Ask Otto to write it
-            </Button>
+            {/* 这里曾经有一颗永久 disabled 的按钮,title 里替 Otto 许诺它以后会照品牌记忆
+                代写文案(规格书 §4.6 点名删除)。一颗永远按不下去的按钮许的是一个没人排期
+                的诺,而 Otto 就在旁边 —— 要它写文案直接说就行,不需要一颗死按钮代言。
+                围栏见 apps/web/lib/__tests__/schedule-route.test.ts(那句话逐字写在围栏里,
+                这里不复述 —— 复述一遍等于把它又写回代码里,围栏会红)。 */}
           </Field>
 
           {/* First comment (channel-gated) */}

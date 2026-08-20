@@ -52,8 +52,8 @@ const TERMINAL_FACE_COPY: Readonly<Record<TerminalCardStatus, TerminalCardCopy>>
   },
   cancelled: {
     icon: "⃠",
-    title: "Cancelled",
-    detail: "This generation was cancelled.",
+    title: "Canceled",
+    detail: "This generation was canceled.",
     offersRefresh: false,
   },
   timeout: {

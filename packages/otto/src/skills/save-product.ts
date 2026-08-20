@@ -28,5 +28,3 @@ export const saveProductSkill = defineOttoSkill({
   execute: async ({ status, ...fields }, runContext) =>
     upsertBrandRecordFromOtto({ kind: "product", fields, status }, runContext),
 });
-
-export const saveProduct = saveProductSkill.tool;

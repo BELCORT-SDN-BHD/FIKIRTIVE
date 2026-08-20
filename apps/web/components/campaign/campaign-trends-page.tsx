@@ -92,7 +92,7 @@ export default function CampaignTrendsPage({
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Research conclusions</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Trend archive</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            Save thin, source-labelled conclusions for campaign planning. This archive does not call a provider.
+            Save thin, source-labeled conclusions for campaign planning. This archive does not call a provider.
           </p>
         </header>
         {error ? <div className="mt-4 rounded-xl border border-error-soft bg-error-soft p-4 text-sm text-destructive">{error}</div> : null}
@@ -135,7 +135,7 @@ export default function CampaignTrendsPage({
                 <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center">
                   <Archive className="mx-auto size-7 text-muted-foreground" />
                   <h2 className="mt-3 text-sm font-semibold">No trend conclusions yet</h2>
-                  <p className="mt-2 text-sm text-muted-foreground">Save the first source-labelled conclusion.</p>
+                  <p className="mt-2 text-sm text-muted-foreground">Save the first source-labeled conclusion.</p>
                 </div>
               ) : trends.map((trend) => {
                 const campaign = trend.campaignId ? campaignNames.get(trend.campaignId) : undefined;

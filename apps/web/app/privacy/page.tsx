@@ -54,10 +54,11 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *      (schema.prisma:2120,写入 schedule-service.ts:63);广告账号全仓无落库列,只有现取
  *      (meta-actions.ts:57、meta-objects.ts:34、meta-insights.ts:23 的 me/adaccounts)。
  *   3. founder 「阅读对话内容」剪掉(第三轮核出的另一处 UNBACKED)——跨工作区读消息正文的
- *      `getConversation`(conversation-admin.ts:118)**零生产调用者**:admin-v2.ts:22 只 import
- *      `listConversations`,另一处引用在测试;旧深链已改成 redirect
- *      (app/admin/conversations/[threadId]/page.tsx:5)。生产面是 metadata only
- *      (admin-v2.ts:621-632,`status: "metadata only"`;弹窗自述 AdminDashboardV2.tsx:1218)。
+ *      `getConversation` 当时**零生产调用者**,2026-08-19(C2b 死导出清扫)已整个删除:
+ *      conversation-admin.ts 现在只剩 `listConversations`(metadata only,零消息正文)。
+ *      旧深链已改成 redirect(app/admin/conversations/[threadId]/page.tsx:5)。生产面是
+ *      metadata only(admin-v2.ts:621-632,`status: "metadata only"`;弹窗自述
+ *      AdminDashboardV2.tsx:1218)。**现在没有任何代码路径能读到消息正文。**
  *   4. founder 可见范围补全(P1-a)——原先两条读起来像穷举,实际还能看到钱与用量:
  *      tenant-admin.ts:106-137(owner email、balance/reserved、最近 25 条点数账本、
  *      genJob/refGenJob 花费合计、project/generation 计数、最近 25 条审计事件类型),

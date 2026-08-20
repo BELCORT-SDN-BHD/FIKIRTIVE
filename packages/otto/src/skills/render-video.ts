@@ -157,5 +157,3 @@ export const renderVideoSkill = defineOttoSkill({
   parameters: params,
   execute: executeRenderVideo,
 });
-
-export const renderVideo = renderVideoSkill.tool;

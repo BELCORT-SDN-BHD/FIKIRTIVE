@@ -412,7 +412,7 @@ export async function cancelGenJob(raw: unknown): Promise<{ refunded: true } | {
       const result = await prisma.$transaction(async (tx) => {
         const { count } = await tx.genJob.updateMany({
           where: { id: jobId, ownerId, status: "QUEUED" },
-          data: { status: "CANCELLED", error: "Cancelled by you", finishedAt: new Date() },
+          data: { status: "CANCELLED", error: "Canceled by you", finishedAt: new Date() },
         });
         if (count > 0) {
           await refundReservation(tx, { orgId: ownerId, refId: jobId });
@@ -433,7 +433,7 @@ export async function cancelGenJob(raw: unknown): Promise<{ refunded: true } | {
                 role: "AGENT",
                 kind: "TURN_ERROR",
                 seq: (last._max.seq ?? 0) + 1,
-                text: "Cancelled — you weren't charged.",
+                text: "Canceled — you weren't charged.",
                 // THE DURABLE MARK (#602 T3). The thread's terminal message for a job is a
                 // TURN_ERROR whatever ended it — that kind carries the per-job unique index, so a
                 // cancel cannot have a kind of its own without a second terminal message being

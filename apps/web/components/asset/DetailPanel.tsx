@@ -818,7 +818,7 @@ export default function DetailPanel({
                     : regenStatus === "timeout"
                     ? "Still processing — check the library"
                     : regenStatus === "cancelled"
-                    ? "Cancelled"
+                    ? "Canceled"
                     : regenStatus === "failed"
                     ? "Failed — retry?"
                     : imageCost == null
@@ -845,7 +845,7 @@ export default function DetailPanel({
                     : animStatus === "timeout"
                     ? "Still processing — check the library"
                     : animStatus === "cancelled"
-                    ? "Cancelled"
+                    ? "Canceled"
                     : animStatus === "failed"
                     ? "Failed — retry?"
                     : videoCost == null
@@ -930,7 +930,7 @@ export default function DetailPanel({
                       : editStatus === "timeout"
                       ? "Still processing — check the library"
                       : editStatus === "cancelled"
-                      ? "Cancelled"
+                      ? "Canceled"
                       : editStatus === "failed"
                       ? "Failed"
                       : imageCost == null

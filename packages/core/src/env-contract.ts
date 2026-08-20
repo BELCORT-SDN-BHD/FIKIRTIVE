@@ -26,9 +26,21 @@
  *
  * 指纹(债 #6 的另一半)见本文件末尾 configFingerprint():web 与 worker 各自算一次,
  * 两边对不上就是「两个进程跑在不同配置上」,admin 亮红。
+ *
+ * ── 部署进程其实有三个,而 surface 只有两个(C3)────────────────────────────────
+ * 第三个是**夜间备份的 cron 服务**(`apps/worker/src/backup-cron.ts`,#794 ②):同一个 worker
+ * 镜像,换一条启动命令,由 Railway 的调度器按点起停。它没有自己的 surface,是刻意的:
+ *   - 它读的每一个变量都是 **worker 面的真子集**(DATABASE_URL / DATABASE_URL_POOLED、
+ *     STORAGE_DRIVER + R2_*、R2_BACKUP_*、BACKUP_TRIGGER、SENTRY_DSN、NODE_ENV),
+ *     所以 `surface: "worker"` 已经把它全覆盖了,一个都不多一个都不少。
+ *   - 它**不跑开机检查**(不调用 bootEnvDecision)。它是一次性进程,配置不全时的守卫是
+ *     它自己:没有 R2 目标或没有 DATABASE_URL 就 exit 1,让那一次 cron run 在调度器上变红。
+ * 换句话说,加第三个 surface 会改到 EnvSurface、appliesTo、CheckEnvOptions 与两个宿主,
+ * 却换不来任何一条新的检查——所以这里只把归属写清楚,不动机制。
  */
 import { createHmac } from "node:crypto";
 import { z } from "zod";
+import { OTTO_LLM_MARGIN_FLOOR } from "./llm-prices.js";
 
 /** 谁读这个变量。both = web 与 worker 都读(其中 shared 的还必须是同一个值)。 */
 export type EnvSurface = "web" | "worker" | "both";
@@ -53,6 +65,11 @@ export type EnvFormat =
   | "email-list"
   | "integer"
   | "number"
+  /**
+   * 数字,且不许是负数。与 number 分开,是因为「负数会怎样」在两类变量上不是同一件事:
+   * 消费方把负数当没设、静默回落默认值的那些,负号是一个不会有人发现的错。
+   */
+  | "non-negative-number"
   | "boolean-ish"
   | "enum"
   | "free";
@@ -62,6 +79,17 @@ export type EnvVarSpec = {
   surface: EnvSurface;
   readBy: EnvReadBy;
   requirement: EnvRequirement;
+  /**
+   * 同一个变量在两侧的要求强度不同时,在这里逐面覆盖 `requirement`(C3)。
+   *
+   * 存在的理由是一个具体的假致命:BETTER_AUTH_URL 在 web 是硬要求(会话、回调、Stripe 的
+   * return URL 都绑它),在 worker 只是 PUBLIC_BASE_URL 的兜底。写成一条 required 的
+   * `surface: "both"`,一台只配了 PUBLIC_BASE_URL 的生产 worker 会被开机检查判死——
+   * 检查器自己制造了一次停机,而它要防的正是这个。
+   *
+   * 只覆盖强度,不覆盖格式:格式在哪一侧都是同一条打字规则。
+   */
+  requirementBySurface?: Partial<Record<"web" | "worker", EnvRequirement>>;
   format: EnvFormat;
   /** enum 的合法取值(format === "enum" 时必填)。 */
   values?: readonly string[];
@@ -88,6 +116,20 @@ export type EnvVarSpec = {
   productionValues?: readonly string[];
   /** productionValues 的人话理由,进报错信息。 */
   productionReason?: string;
+  /**
+   * `format: "number"` 专用的**下限**(闭区间):小于这个数一律判错,dev 与生产一视同仁。
+   *
+   * 存在的理由与 productionValues 同源,只是换了一种「格式合法但配置是错的」:数字型开关的
+   * 危险取值往往完全合法。OTTO_LLM_MARGIN 是标准例子 —— 0.5 是个正经的有限正数,而它的意思
+   * 是「每一次 LLM 调用按 provider 账单的一半收费」,也就是每卖一单亏一单。那不是一个有人
+   * 会故意做的定价决定,是打错字;所以它在开机时就被点名拒绝,而不是安静地跑三个月。
+   *
+   * 与运行时钳位的分工:钳位(llm-prices.ts ottoLlmMargin)保证**不会亏着卖**,这里保证
+   * **有人被告知**。少了任何一半,要么损失照发生,要么损失被消音。
+   */
+  minimum?: number;
+  /** minimum 的人话理由,进报错信息。 */
+  minimumReason?: string;
   /** 一行说明,渲染进 .env.example 的生成片段。 */
   summary: string;
 };
@@ -97,8 +139,9 @@ export type EnvRecord = Record<string, string | undefined>;
 const isSet = (v: string | undefined): v is string => typeof v === "string" && v.trim() !== "";
 
 // 下面两个谓词逐字比较、**不做 trim**,和消费方一模一样
-// (packages/generation 的 `process.env.GENERATION_PROVIDER === "byteplus"`、
-//  packages/storage 的 `process.env.STORAGE_DRIVER === "r2"`)。
+// (packages/generation/src/index.ts:255 的 `env.GENERATION_PROVIDER === "byteplus"`——注入的
+//  env record,不是 process.env,但比较照样逐字;packages/storage/src/index.ts:686 的
+//  `process.env.STORAGE_DRIVER === "r2"`)。
 // 契约在这里替代码做规范化,就等于开始描述一个代码并不存在的行为。带空白的值由上面那条
 // 通用空白守卫直接判错,不会走到这里。
 
@@ -127,13 +170,19 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
   },
   {
     name: "DATABASE_URL_POOLED",
-    surface: "web",
+    // surface 从 web 转 both(C3):worker 也读它,而且是两处——`apps/worker/src/index.ts`
+    // 的连接串与 `apps/worker/src/db-backup.ts` 的 pg_dump 目标,两处都是
+    // `DATABASE_URL || DATABASE_URL_POOLED`。声明成 web-only 的后果不是崩,是**静默**:
+    // worker 面从来不校验它的格式,于是一个打错的 pooled URL 在 worker 上一路带到
+    // 「今晚的备份连不上库」才现形。
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "postgres-url",
     secret: true,
     shared: false,
-    summary: "Pooled (PgBouncer) endpoint the web runtime prefers. Falls back to DATABASE_URL.",
+    summary:
+      "Pooled (PgBouncer) endpoint. Web prefers it over DATABASE_URL; the worker (and the backup cron) use it only as the fallback when DATABASE_URL is unset — opposite preference, same variable.",
   },
   {
     name: "DB_POOL_MAX",
@@ -161,13 +210,27 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     name: "BETTER_AUTH_URL",
     surface: "both",
     readBy: "code",
+    // web:硬要求。会话 baseURL、trustedOrigins、magic-link 邮件里的链接、Stripe 的
+    // return/cancel URL 全绑它,缺了不是降级是发错。
     requirement: "required",
+    // worker:兜底,不是要求(C3)。worker 只在一处读它——publish 的 media-proxy 回源
+    // origin `PUBLIC_BASE_URL || BETTER_AUTH_URL`。把它在 worker 面也写成 required,
+    // 等于让一台配置完全正确、只用 PUBLIC_BASE_URL 的生产 worker 被开机检查拒绝启动。
+    // 「两个来源里至少有一个」这条规则由 apps/worker/src/publish-env-check.ts 看着,它已经把
+    // 两者当同一件事(`!!(PUBLIC_BASE_URL || BETTER_AUTH_URL)`)。说清楚它是什么、不是什么:
+    //   - 它 **fail-soft**:只 `console.warn`,从不 exit(`apps/worker/src/index.ts:116`)。
+    //   - 它 **只骂半配**:三件套全空时 `publishChainWarning` 直接 return null,一个字都不说。
+    // 两条都是刻意的——publish 链在 Meta 审核前本来就是全空的 inert 状态,为它 exit 会把
+    // 生成/渲染/字幕/研究一起拖下水。所以那边不是一道「至少有一个」的硬闸,谁也别把它
+    // 当硬闸引用。契约这一侧同样不造硬闸:worker 面 optional,与「上线前刻意 inert」对齐。
+    requirementBySurface: { worker: "optional" },
     format: "url",
     secret: false,
     // 刻意 NOT shared:worker 只把它当 media-proxy 回源 origin 的兜底,生产上 worker 常常
     // 只配 PUBLIC_BASE_URL。把它算进指纹会制造一条永远亮红的假警报。
     shared: false,
-    summary: "Canonical origin sessions and callbacks bind to.",
+    summary:
+      "Canonical origin sessions and callbacks bind to. REQUIRED on web; on the worker it is only the fallback for PUBLIC_BASE_URL, so it is optional there.",
   },
   {
     name: "NEXT_PUBLIC_BETTER_AUTH_URL",
@@ -253,24 +316,28 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Which header carries a trustworthy caller address: railway | xff:<hops> | dev. Unset = railway in production, dev elsewhere. Checked at boot — an unrecognised value refuses to start.",
   },
   {
+    // surface 从 web 转 both(整顿 C1a):worker 现在也读它——founder 报警的邮件那一路
+    // (packages/core/src/founder-alert.ts)走同一个 Resend 端点,而最要紧的那条求救
+    // 「商家付了钱什么都没拿到」就长在 worker 里。仍然 optional:不设 = 报警只走
+    // Sentry(+Telegram),不是错误。
     name: "RESEND_API_KEY",
-    surface: "web",
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "free",
     secret: true,
     shared: false,
-    summary: "Magic-link sender (resend.com). Production sign-in email throws without it.",
+    summary: "Resend API key. Sends the magic-link email (web) and the founder alert email (web + worker). Production sign-in email throws without it; alerts fall back to Sentry-only.",
   },
   {
     name: "AUTH_EMAIL_FROM",
-    surface: "web",
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "free",
     secret: false,
     shared: false,
-    summary: "Verified Resend sender address for auth email.",
+    summary: "Verified Resend sender address, used by auth email and by the founder alert email.",
   },
 
   // ── 共享密钥(web 与 worker 必须同值)────────────────────────────────────
@@ -351,10 +418,16 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     surface: "web",
     readBy: "code",
     requirement: "optional",
+    // 刻意 free 而不是 enum:代码是 `!== "fixture"` 的逐字比较,任何别的值都只是「没开」。
+    // 写成 enum 会把一个无害的错拼变成开机硬错。
     format: "free",
     secret: false,
     shared: false,
-    summary: "Dev only: \"1\" serves canned Meta Graph responses.",
+    // 修真(C3):旧口径写的是 "1",而 apps/web/lib/meta-graph.ts:112 认的是逐字的
+    // "fixture",并且在 NODE_ENV=production 下**先于**取值判断直接 return null。
+    // 照旧口径去配,拿到的是真实 Graph 调用,而文档说的是假数据。
+    summary:
+      "Dev/QA only: the exact value \"fixture\" serves canned Meta Graph responses (apps/web/lib/meta-graph.ts). Any other value is off, and production ignores it entirely — the fixture path is short-circuited before the value is even read.",
   },
   {
     name: "APP_ORIGIN",
@@ -410,9 +483,51 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     readBy: "code",
     requirement: "optional",
     format: "number",
+    // 钱路审计 P1(2026-08-18):此前无下限,0.5 是合法取值而它的意思是每卖一单亏一单。
+    minimum: OTTO_LLM_MARGIN_FLOOR,
+    minimumReason:
+      "a markup below 1.0 charges LESS than the provider's own bill — every metered Otto turn and research run would sell at a loss",
     secret: false,
     shared: false,
-    summary: "LLM pricing margin override.",
+    summary:
+      "LLM pricing margin override (default 2.0). Must be ≥ 1.0 — below that every metered call sells below cost, so the boot check refuses it and the runtime falls back to the default.",
+  },
+
+  // ── 素材理解(#784)——平台自己掏钱的那一路 ────────────────────────────────
+  // 进契约(C3)。这两个以前**一个字都没登记**,而它们是真正兜住这条花费的两样东西里的两样。
+  // 漏掉的原因不是有人偷懒,是扫描器看不见它们:两处读取都走
+  // `getEnv(env)[ASSET_UNDERSTANDING_ENV]`(packages/core/src/asset-understanding.ts),
+  // 而扫描器只认逐字的 `process.env.X`。一个只在生产上花钱的开关,靠一条认不出它的正则
+  // 来保证被登记——这正是这张票要消灭的那种「说的≠做的」。
+  {
+    name: "ASSET_UNDERSTANDING",
+    // worker-only:两处消费方都在 worker(index.ts 的开机播报、jobs/understand.ts 的扫描器)。
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    // 刻意 free 而不是 boolean-ish。读法是 `off | 0 | false` 才算关,**其它一切都算开**——
+    // boolean-ish 会放行 "no",而 "no" 在这个读法下是「开」。写成 boolean-ish 就等于文档
+    // 承诺了一个代码并不存在的语义。
+    format: "free",
+    secret: false,
+    shared: false,
+    summary:
+      "Pause switch for asset understanding. Only \"off\", \"0\" or \"false\" (case-insensitive) pause it; unset and every other value mean ON. It is a pause, not a delete — paused rows go back to QUEUED and run once it is on again.",
+  },
+  {
+    name: "ASSET_UNDERSTANDING_DAILY_BUDGET_USD",
+    surface: "worker",
+    readBy: "code",
+    requirement: "optional",
+    // non-negative-number,不是 number(判官 P3-3)。消费方是
+    // `Number.isFinite(n) && n >= 0 ? n : 默认 5`——**非数字和负数走的是同一条静默回落**,
+    // 只拦非数字等于只拦了一半:有人想写「停掉」写成 -1,拿到的是每天 5 美元照跑,
+    // 而没有任何一处会说这件事。两种写错都拦下来,这句话才配说「格式检查兜住了它」。
+    format: "non-negative-number",
+    secret: false,
+    shared: false,
+    summary:
+      "Platform-wide understanding spend ceiling per day, in USD. Unset = 5. \"0\" is a legitimate value meaning fully paused. Both a negative and a non-numeric value would silently fall back to the default 5 in the reader, so the boot check rejects both — a typo can never quietly become a budget nobody chose.",
   },
 
   // ── 对象存储 ──────────────────────────────────────────────────────────────
@@ -564,13 +679,18 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
   // ── 计费 ──────────────────────────────────────────────────────────────────
   {
     name: "STRIPE_SECRET_KEY",
-    surface: "web",
+    // 钱路 M1-b:worker 也读它了 —— apps/worker/src/jobs/stripe-reconcile.ts 每半小时把最近
+    // 48 小时**已支付**的 checkout session 与账本对一遍(只读、只报警,一个字都不写钱)。
+    // worker 上不设这把密钥不会坏任何东西:对账扫描直接跳过并说明原因;坏的是那时候没人在看。
+    // `shared: false` 保持不变:两侧拿的是同一把密钥没错,但它不进配置指纹 —— 指纹里的值是
+    // HMAC 摘要,而 web 侧漏配这把密钥的后果(整条充值路挂掉)另有更直接的报错。
+    surface: "both",
     readBy: "code",
     requirement: "optional",
     format: "free",
     secret: true,
     shared: false,
-    summary: "Stripe secret key (sk_live_… in production).",
+    summary: "Stripe secret key (sk_live_… in production). web: checkout + webhook. worker: the read-only 48h ledger reconciliation sweep.",
   },
   {
     name: "STRIPE_WEBHOOK_SECRET",
@@ -770,14 +890,26 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
 
   // ── 运维可见性 ────────────────────────────────────────────────────────────
   {
+    // 整顿 C1a:从 optional 转 required。
+    //
+    // 理由是它自己的失效形状:没配 DSN 时 `Sentry.init` 从不运行、`captureException` 静默
+    // no-op,于是**全部错误报警一次不响**,而开机检查一个字都不说。这正是「装了监控」与
+    // 「监控在响」被当成同一件事的那一族缺陷——而钱路上的求救(gen.ts 的
+    // `gen.paid_for_nothing`、stripe webhook 的坏 metadata)现在就走这条通道,
+    // 一台没有 DSN 的生产进程等于把它们说给没有人听。
+    //
+    // 生产缺失 = 拒绝启动(平台随后持续重启,于是「没配好」表现为看得见的起不来,而不是
+    // 一个看起来健康、实则聋了的进程)。dev/CI 不受影响:存在性只在 NODE_ENV=production
+    // 判定,本地照旧完全 inert。真需要在没有 DSN 的情况下开一台生产进程,逃生门仍是
+    // FIKIRTIVE_ENV_CONTRACT=warn。
     name: "SENTRY_DSN",
     surface: "both",
     readBy: "code",
-    requirement: "optional",
+    requirement: "required",
     format: "url",
     secret: false,
     shared: false,
-    summary: "Error monitoring. Everything is a no-op when unset.",
+    summary: "Error monitoring, and the archive half of the founder alert pipeline. Required in production: with no DSN every alert is a silent no-op.",
   },
   {
     name: "NEXT_PUBLIC_SENTRY_DSN",
@@ -794,6 +926,52 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     shared: false,
     summary: "Browser-side error monitoring. Next.js inlines this literally into the client bundle at build time, so it is not a secret. No-op (Sentry.init never runs) when unset, same convention as SENTRY_DSN.",
   },
+  {
+    // 判定:活的(C3)。旧分析说「只有 boot-status.ts:9 一处」是把**声明**当成了**读取**——
+    // 那一行是常量名的定义,真正的读点是 `/api/health` 与 `/api/ready`(都经
+    // `bootMigrationStatus(process.env)`),写点是 `apps/web/scripts/boot.mjs`(容器启动命令)。
+    // 两个进程之间唯一的信道,所以它进契约,不是删。
+    name: "WEB_BOOT_MIGRATION_STATUS",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    // enum 而不是 free:读法是 `=== "failed" ? failed : applied`,于是任何**别的**值都被
+    // 读成「一切正常」。一个拼错的值在这里的形状正是这张票要消灭的那种——健康检查在撒谎
+    // 而没有人会知道。两个合法值以外一律硬错。
+    format: "enum",
+    values: ["applied", "failed"],
+    secret: false,
+    shared: false,
+    summary:
+      "Written by apps/web/scripts/boot.mjs into the web server's env, read by /api/health and /api/ready. NEVER set this by hand — a hand-set \"applied\" makes the health check claim a migration succeeded that never ran. Unset = applied (local dev and tests do not migrate through the boot script).",
+  },
+  // ── Founder 报警的 Telegram 通道(整顿 C1a)────────────────────────────────
+  // 两个都 optional,而且刻意成组:bot 要 CEO 自己在 BotFather 建(向导
+  // docs/ops/telegram-alerts.md),建好之前这条通道本来就不存在。缺任一个 = 静默跳过
+  // Telegram,Sentry 与邮件照发。**不写成 conditional**:半配(有 token 没 chat id)
+  // 在这里不会静默降级——发送器要求两个齐才发,缺一个就是「没开这条通道」,与全空同义。
+  {
+    name: "TELEGRAM_BOT_TOKEN",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: true,
+    shared: false,
+    summary: "BotFather token for the alert bot. Unset = the Telegram channel is skipped; Sentry and email are unaffected.",
+  },
+  {
+    name: "TELEGRAM_ALERT_CHAT_ID",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    // 不是 integer:群组的 chat id 是负数,而且未来的 supergroup id 会超出安全整数范围。
+    format: "free",
+    secret: false,
+    shared: false,
+    summary: "Chat the alert bot posts into (a group id is negative). Unset = the Telegram channel is skipped.",
+  },
+
   {
     name: "BYTEPLUS_RESOURCE_PACK_USD",
     surface: "web",
@@ -974,6 +1152,13 @@ function formatSchema(spec: EnvVarSpec): z.ZodType<unknown> {
       return z.string().refine((v) => /^\d+$/.test(v.trim()), "must be a non-negative integer");
     case "number":
       return z.string().refine((v) => Number.isFinite(Number(v.trim())) && v.trim() !== "", "must be a number");
+    case "non-negative-number":
+      return z
+        .string()
+        .refine(
+          (v) => v.trim() !== "" && Number.isFinite(Number(v.trim())) && Number(v.trim()) >= 0,
+          "must be a number and must not be negative",
+        );
     case "boolean-ish":
       return z
         .string()
@@ -1024,9 +1209,11 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
       // 自己报得更准。写成守卫而不是逐条判断,是为了将来有人把某个 library 变量标成
       // required 时,这条不变量仍然成立。
       if (spec.readBy !== "code") continue;
-      if (spec.requirement === "required") {
+      // 强度可以逐面覆盖(C3):同一个名字在 web 是硬要求、在 worker 只是兜底,是真实存在的形状。
+      const requirement = spec.requirementBySurface?.[opts.surface] ?? spec.requirement;
+      if (requirement === "required") {
         problems.push({ name: spec.name, kind: "missing", message: `${spec.name} is required in production but is not set` });
-      } else if (spec.requirement === "conditional" && spec.requiredWhen?.(env)) {
+      } else if (requirement === "conditional" && spec.requiredWhen?.(env)) {
         problems.push({
           name: spec.name,
           kind: "conditional-missing",
@@ -1063,6 +1250,23 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
       const reason = parsed.error.issues[0]?.message ?? "has an invalid value";
       problems.push({ name: spec.name, kind: "invalid", message: `${spec.name} ${reason}` });
       continue;
+    }
+
+    // 格式合法,但这个数字本身是错的。与 productionValues 同一族守卫,只是危险取值长成
+    // 一个完全合法的数(OTTO_LLM_MARGIN=0.5)。**dev 与生产一视同仁**:亏着卖不分环境,
+    // 而且开发机上把它配错正是它上生产的路。
+    if (typeof spec.minimum === "number") {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n < spec.minimum) {
+        problems.push({
+          name: spec.name,
+          kind: "invalid",
+          message:
+            `${spec.name} is below its minimum of ${spec.minimum} ` +
+            `— ${spec.minimumReason ?? "the value is out of the range the code can honour"}`,
+        });
+        continue;
+      }
     }
 
     // 值合法,但这个档位只在开发机上成立。报的是变量名与允许档位——档位名不是秘密,

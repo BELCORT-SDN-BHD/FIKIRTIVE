@@ -368,7 +368,7 @@ describe("#779 white-label discipline", () => {
   it("classifies every shape without ever echoing its input", () => {
     const CLOSED_SET = [
       "Blocked by content rules", "Hit a capacity limit", "Timed out", "Credential rejected",
-      "Invalid request", "Network fault", "Upstream service error", "Cancelled upstream", "Other",
+      "Invalid request", "Network fault", "Upstream service error", "Canceled upstream", "Other",
     ];
     for (const raw of [
       "Volcengine quota exceeded", "VMP query refused", "ark api 500", "prometheus write failed",

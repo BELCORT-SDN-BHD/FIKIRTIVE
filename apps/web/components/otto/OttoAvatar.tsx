@@ -34,7 +34,7 @@ const MOOD_META: Record<OttoMood, { label: string; tilt: number; glow?: string; 
     glow: "drop-shadow(0 3px 10px color-mix(in oklab, var(--brand) 45%, transparent))",
     animated: true,
   },
-  helpful: { label: "Otto helping", tilt: 2 },
+  helpful: { label: "Otto helpful", tilt: 2 },
   success: {
     label: "Otto success",
     tilt: 0,
@@ -75,8 +75,10 @@ function ensureKeyframes() {
 /**
  * OTTO — the coral cloud mark (coral is OTTO's colour only). This is OTTO's face
  * everywhere: sidebar logo, chat avatars, the front-door hero. Matches the
- * design-system ui_kits; never a boxed robot. Reactions are no-mouth by design:
- * only eyes, pose, and subtle glow may change. `thinking` adds coral glow + bob.
+ * design-system ui_kits; never a boxed robot. Reactions are eyes + pose + subtle
+ * glow, plus the small side decorations the official masters define per mood
+ * (thought bubbles, a star, an approval badge) — never a mouth on the cloud
+ * itself. `thinking` adds coral glow + bob.
  */
 export function OttoAvatar({ size = 48, mood: moodProp, state = "idle", className }: OttoAvatarProps) {
   React.useEffect(() => {
@@ -127,61 +129,77 @@ function OttoEyes({ mood }: { mood: OttoMood }) {
   switch (mood) {
     case "thinking":
       return (
-        <g fill={EYE_COLOR}>
-          <ellipse cx="55" cy="49" rx="3.8" ry="4.8" />
-          <ellipse cx="70" cy="49" rx="3.8" ry="4.8" />
-          <circle cx="56.3" cy="47.3" r="1" fill="#FFFFFF" opacity="0.55" />
-          <circle cx="71.3" cy="47.3" r="1" fill="#FFFFFF" opacity="0.55" />
+        <g>
+          <g fill={EYE_COLOR}>
+            <rect x="53" y="44" width="7" height="13" rx="3.5" />
+            <rect x="68" y="44" width="7" height="13" rx="3.5" />
+          </g>
+          <circle cx="97" cy="30" r="5" fill="var(--brand)" opacity="0.5" />
+          <circle cx="107" cy="21" r="3.2" fill="var(--brand)" opacity="0.32" />
         </g>
       );
     case "helpful":
       return (
-        <g fill={EYE_COLOR}>
-          <rect x="48" y="49" width="8" height="12" rx="4" />
-          <rect x="64" y="49" width="8" height="12" rx="4" />
-          <circle cx="53.5" cy="51" r="1.1" fill="#FFFFFF" opacity="0.55" />
-          <circle cx="69.5" cy="51" r="1.1" fill="#FFFFFF" opacity="0.55" />
+        <g fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="5">
+          <path d="M49 57 q5.5 -7 11 0" />
+          <path d="M64 57 q5.5 -7 11 0" />
         </g>
       );
     case "success":
       return (
-        <g fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="3.6">
-          <path d="M49 57 q5.5 -8 11 0" />
-          <path d="M64 57 q5.5 -8 11 0" />
+        <g>
+          <g fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="5">
+            <path d="M49 57 q5.5 -7 11 0" />
+            <path d="M64 57 q5.5 -7 11 0" />
+          </g>
+          <path
+            d="M99 22 l4 8 8.5 1.2 -6 6 1.4 8.5 -7.9 -4.2 -7.9 4.2 1.4 -8.5 -6 -6 8.5 -1.2 z"
+            fill="var(--brand)"
+            opacity="0.6"
+          />
         </g>
       );
     case "warning":
       return (
         <g>
-          <path d="M48 46 l12 2" fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="3" />
-          <path d="M77 46 l-12 2" fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="3" />
-          <ellipse cx="55" cy="55" rx="3.7" ry="5.2" fill={EYE_COLOR} />
-          <ellipse cx="70" cy="55" rx="3.7" ry="5.2" fill={EYE_COLOR} />
+          <g fill={EYE_COLOR}>
+            <rect x="51" y="50" width="7" height="13" rx="3.5" />
+            <rect x="66" y="50" width="7" height="13" rx="3.5" />
+          </g>
+          <path d="M46 42 l14 -4" fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="4.5" />
+          <path d="M78 38 l-14 4" fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="4.5" />
         </g>
       );
     case "error":
       return (
-        <g fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="3.4">
-          <path d="M50 49 l9 9" />
-          <path d="M59 49 l-9 9" />
-          <path d="M66 49 l9 9" />
-          <path d="M75 49 l-9 9" />
+        <g fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="5">
+          <path d="M48 50 l10 10 M58 50 l-10 10" />
+          <path d="M65 50 l10 10 M75 50 l-10 10" />
         </g>
       );
     case "waiting":
       return (
         <g fill={EYE_COLOR}>
-          <rect x="50" y="53" width="10" height="4" rx="2" />
-          <rect x="65" y="53" width="10" height="4" rx="2" />
+          <rect x="51" y="52" width="7" height="7" rx="3.5" />
+          <rect x="66" y="52" width="7" height="7" rx="3.5" />
         </g>
       );
     case "approving":
       return (
-        <g fill={EYE_COLOR}>
-          <rect x="50" y="50" width="8" height="11" rx="4" />
-          <rect x="67" y="50" width="8" height="11" rx="4" />
-          <path d="M48 47 h11" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="2.8" />
-          <path d="M66 47 h11" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="2.8" />
+        <g>
+          <g fill="none" stroke={EYE_COLOR} strokeLinecap="round" strokeWidth="5">
+            <path d="M49 57 q5.5 -7 11 0" />
+            <path d="M64 57 q5.5 -7 11 0" />
+          </g>
+          <circle cx="100" cy="28" r="13" fill="var(--success, #16A34A)" />
+          <path
+            d="M94 28 l4.5 4.5 8 -9"
+            stroke="#FFFFFF"
+            strokeWidth="3.6"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </g>
       );
     case "idle":

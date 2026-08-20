@@ -4,6 +4,12 @@
  * these shapes; file locations become browser URLs here (DB stores no paths).
  */
 
+// TYPE-ONLY (erased at build): the schema's own enum, not a hand-typed copy of it. The copy that
+// used to live here had drifted a member behind `ChatMessageKind` in schema.prisma, and dto.ts
+// held a third copy that was two behind — the same "what we say" / "what we do" split this repo
+// keeps paying for. Deriving it means a member added to the schema cannot be missing here.
+import type { ChatMessageKind } from "@fikirtive/db";
+
 export type EntityTypeDTO = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
 export type ShotStatusDTO = "DRAFT" | "EXPORTED" | "ATTACHED" | "FINAL";
 
@@ -66,7 +72,7 @@ export interface ProjectDTO {
 export interface ChatMessageDTO {
   id: string;
   role: "USER" | "AGENT";
-  kind: "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD" | "RESEARCH_CARD" | "RESEARCH_REPORT" | "PERFORMANCE_CARD" | "APPROVAL_CARD";
+  kind: ChatMessageKind;
   seq: number;
   text: string;
   payload: unknown | null;

@@ -67,7 +67,7 @@ describe("cancelGenJob — refund/race (audit #46)", () => {
         role: "AGENT",
         kind: "TURN_ERROR",
         seq: 8,
-        text: "Cancelled — you weren't charged.",
+        text: "Canceled — you weren't charged.",
         genJobId: "g1",
       }),
     });
