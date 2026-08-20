@@ -71,7 +71,3 @@ export const REFERENCE_FORMATS: ReferenceFormat[] = [
       ),
   },
 ];
-
-export function formatFor(key: string): ReferenceFormat | undefined {
-  return REFERENCE_FORMATS.find((f) => f.key === key);
-}

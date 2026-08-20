@@ -43,8 +43,14 @@ vi.mock("../data", () => ({
   getGenerationThumbs: mockGetGenerationThumbs,
 }));
 vi.mock("../canvas-node-placement", () => ({
-  canvasJobPlacementLockKey: (ownerId: string, projectId: string, genJobId: string) =>
-    `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`,
+  // The one card-column list. Real value, mocked module: the bridge's board read must ask for the
+  // same columns every other surface asks for, and stubbing it would hide a divergence.
+  CANVAS_NODE_SELECT: {
+    id: true, type: true, x: true, y: true, w: true, h: true, text: true,
+    prompt: true, generationId: true, genJobId: true, status: true,
+    batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
+    threadId: true,
+  },
   placeCanvasJobNode: mockPlaceCanvasJobNode,
   // #549 r2: the bridge now asks the SHARED placement rule where its in-flight card goes, instead
   // of counting rows. Stubbed to the identity here — this file is about the bridge's own statement
@@ -82,6 +88,10 @@ vi.mock("@fikirtive/db", () => ({
   // #601 r2: the chat-side reader no longer repairs a delivered job itself — it calls the ONE
   // settlement the canvas reader and the worker call.
   settleCanvasCardsForGenJob: mockSettleCanvasCards,
+  // The per-job placement lock, now defined once in packages/db (its shape is pinned there).
+  // Real string, mocked module — the assertions below read the key this module really takes.
+  canvasJobPlacementLockKey: (ownerId: string, projectId: string, genJobId: string) =>
+    `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`,
   CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS: 2_000,
   CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS: 4_000,
 }));

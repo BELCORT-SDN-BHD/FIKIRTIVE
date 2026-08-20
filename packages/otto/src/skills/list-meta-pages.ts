@@ -61,5 +61,3 @@ export const listMetaPagesSkill = defineOttoSkill({
   parameters: listMetaPagesInput,
   execute: executeListMetaPages,
 });
-
-export const listMetaPages = listMetaPagesSkill.tool;

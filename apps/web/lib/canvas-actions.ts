@@ -5,7 +5,7 @@ import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
-import { freeCanvasRectForNewNode, placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
+import { CANVAS_NODE_SELECT, freeCanvasRectForNewNode, placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import { censusCanvasJobCards, displayGenerationIdForCard } from "./otto-canvas-bridge-core";
 import { canvasCardState, isCanvasCardRowStatus, OVERWRITABLE_CARD_STATUSES, type CanvasCardFace } from "./canvas-card-status";
@@ -44,10 +44,6 @@ export type CreateNodeInput = {
 export type CreatedCanvasNode = { id: string; x: number; y: number; w: number; h: number };
 type CanvasNodeResolveStatus = "done" | "failed" | "cancelled" | "timeout" | "missing";
 
-const SELECT = { id: true, type: true, x: true, y: true, w: true, h: true, text: true,
-  prompt: true, generationId: true, genJobId: true, status: true,
-  batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
-  threadId: true } as const;
 const RESOLVE_STATUSES = new Set<CanvasNodeResolveStatus>(["done", "failed", "cancelled", "timeout", "missing"]);
 
 function canvasNodeOrigin(idempotencyKey: string | null | undefined): "otto" | null {
@@ -73,7 +69,7 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (!(await ownedProject(projectId, gate.ownerId))) return { error: "Project not found." };
-  const nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
+  const nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: CANVAS_NODE_SELECT });
   // Tombstones are read too — a deleted row is a durable suppression marker, and it keeps
   // chat/result recovery from resurrecting an item the owner deliberately removed.
   const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];

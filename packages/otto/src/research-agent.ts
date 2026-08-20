@@ -5,10 +5,18 @@
  * `readSource` to read the useful ones page-by-page, then writes a thorough, well-organized
  * report grounded ONLY in what it read. Its FINAL message text IS the report synthesis.
  *
- * MONEY-SAFETY: this file spends NOTHING. searchSources/readSource are FREE reads (no credit
- * calls) — they only walk the injected `ctx.search` / `ctx.readPage` ports and bump in-context
- * counters. The ONLY cost is the LLM tokens the agent consumes, and that is metered by
- * `withLlmBudget` at the worker wrapper (apps/worker/src/jobs/research.ts) — NEVER here.
+ * MONEY-SAFETY: this file makes NO credit calls — it only walks the injected `ctx.search` /
+ * `ctx.readPage` ports and bumps in-context counters. But "no credit call here" is NOT the same
+ * as "free", and conflating the two is exactly how the search fee went unpriced for months:
+ *
+ *   readSource     genuinely FREE — reading a public page costs us nothing.
+ *   searchSources  **CHARGED** (钱路 M1-c, Founder 2026-07-03's 3× ruling). The charge is not
+ *                  made here; `ctx.searchesUsed` is what the worker wrapper settles against
+ *                  (apps/worker/src/jobs/research.ts passes it as withLlmBudget's
+ *                  `extraSettleInternal`). So every increment of that counter is real money.
+ *
+ * The other cost is the LLM tokens the agent consumes, metered by `withLlmBudget` at the same
+ * worker wrapper — NEVER here.
  *
  * The caps (maxSearches / maxPages) are enforced INSIDE the tools: past the cap the tool returns
  * a refusal string (not a throw), so the agent gracefully synthesizes from what it has. maxSteps
@@ -16,13 +24,13 @@
  */
 import { Agent, tool } from "@openai/agents";
 import { z } from "zod";
-import { OTTO_OUTPUT_CAP_TOKENS } from "@fikirtive/core";
+import { OTTO_OUTPUT_CAP_TOKENS, displayCredits, searchUnitChargeInternal } from "@fikirtive/core";
 import { ottoModel } from "./model.js";
 
 /**
  * ResearchContext — the small, mutable per-run context injected by the worker.
  *
- * `search` / `readPage` are the FREE outside-world ports (worker wires them from env keys +
+ * `search`(计费,见上) / `readPage`(免费)are the outside-world ports (worker wires them from env keys +
  * core adapters). `sourcesRead` accumulates the {url,title} of every page actually read (deduped)
  * so the report can cite them. The counters cap tool use; the tools read them + the caps.
  */
@@ -62,7 +70,8 @@ const readInput = z.object({
 
 /**
  * executeSearchSources — the searchSources tool body. Exported for direct unit-testing (same
- * pattern as executeResearchWeb). FREE: no credit calls, only ctx.search + the counter cap.
+ * pattern as executeResearchWeb). Makes no credit call itself — but every `ctx.searchesUsed`
+ * increment below is what the worker settles against, so this counter IS the bill.
  */
 export async function executeSearchSources(
   input: z.infer<typeof searchInput>,
@@ -85,16 +94,25 @@ export async function executeSearchSources(
 }
 
 /**
- * searchSources — FREE thin web search. Refuses past ctx.maxSearches (counter cap) so a runaway
- * agent can't burn the free search quota. Returns thin {title,url,snippet}[]; the agent picks
- * which URLs to actually read.
+ * searchSources — **CHARGED** thin web search. Refuses past ctx.maxSearches (counter cap) so a
+ * runaway agent can't burn the whole search budget. Returns thin {title,url,snippet}[]; the agent
+ * picks which URLs to actually read.
+ *
+ * 钱路 M1-c:描述里那句价格是**算出来的**,不是写死的。这是同一条 Pricing truth 铁律 ——
+ * 提示词里抄一个价,就是把价目表复制到了一个没人会想起要更新的地方,而这一份还是**说给
+ * 模型听的**:它一旦过期,过期的那句话会直接改变 agent 的搜索行为。
  */
+const SEARCH_COST_PER_CALL_DISPLAY = displayCredits(searchUnitChargeInternal("basic"));
+
 export const searchSources = tool<typeof searchInput, ResearchContext>({
   name: "searchSources",
   description:
     "Search the web for sources about your topic. Returns thin results (title, url, snippet) — " +
-    "pick the most promising URLs and read them with readSource. This is FREE and does not spend credits. " +
-    "Be efficient: a few well-chosen searches beat many redundant ones.",
+    "pick the most promising URLs and read them with readSource. " +
+    `COSTS CREDITS: each search is billed to the merchant (about ${SEARCH_COST_PER_CALL_DISPLAY} credits per search), ` +
+    "and they are charged for the searches you actually run — not for your budget. " +
+    "So spend only what the question needs: a few well-chosen searches beat many redundant ones, " +
+    "and stopping early genuinely saves the merchant money.",
   parameters: searchInput,
   execute: async (input, runContext) => {
     if (!runContext) throw new Error("ResearchContext required");

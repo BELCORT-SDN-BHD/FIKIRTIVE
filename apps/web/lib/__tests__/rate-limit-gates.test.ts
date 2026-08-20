@@ -21,6 +21,8 @@ import {
   consumeOttoTurnGate,
   consumeUploadGate,
   consumeMediaProxyGate,
+  consumeSharePreviewDoor,
+  SHARE_PREVIEW_PER_CALLER_PER_HOUR,
   PASSWORD_DOOR_PER_CALLER_PER_HOUR,
   GENERATION_PER_TENANT_PER_HOUR,
   OTTO_TURN_PER_TENANT_PER_HOUR,
@@ -182,11 +184,37 @@ describe("计数器够不到的时候:对话闸放行,生成与上传照旧拒",
     expect(await withCounterTableMissing(() => consumeUploadGate("org-blip"))).toBe(false);
   });
 
+  // B0-28。分享预览门也 fail closed,而它是这几道里唯一一条**免登录**的路,所以这一条必须钉住:
+  // 它长得最像媒体代理(同样没有会话),而媒体代理是故意放行的。两者的区别不在「有没有会话」,
+  // 在「拒了要付什么代价」—— 分享页的授权本来就要 Postgres(铸造行就是权威层),数据库答不了
+  // 这个计数器,也答不了那次授权,所以拒绝一分钱不多花;媒体代理拒了却会打断一次商家已经付过
+  // 钱的发布。少了这一条,以后谁按「跟媒体代理一样」把它改成放行,没有任何东西会红。
+  it("分享预览门照旧 fail closed —— 免登录不等于该跟媒体代理一样放行", async () => {
+    expect(await withCounterTableMissing(() => consumeSharePreviewDoor(from("198.51.100.77")))).toBe(false);
+  });
+
   it("故障过去之后照常计数 —— 放行不留坏状态", async () => {
     await withCounterTableMissing(() => consumeOttoTurnGate("org-blip-2"));
     expect(await consumeOttoTurnGate("org-blip-2")).toBe(true);
     const row = await prisma.rateLimitCounter.findFirstOrThrow({ where: { key: "otto:org-blip-2" } });
     expect(row.count).toBe(1); // 故障那一次没记上,恢复之后这一次记上了
+  });
+});
+
+// ── B0-28 分享预览门 ───────────────────────────────────────────────────────────────────────
+//
+// 产品里第二条按设计就没有会话的路,也是第一条**给人走**的:商家给一条帖子铸一条只读链接发给
+// 客户,客户在没有账号的浏览器里打开。授权是链接自己的 HMAC + 那一行还活着的铸造记录;这道闸
+// 只管一个地址能多快地花掉那份授权。
+describe("B0-28 分享预览门(免登录公开页)", () => {
+  it("按出口地址计数,自己一个桶", async () => {
+    expect(await consumeSharePreviewDoor(from("198.51.100.44"))).toBe(true);
+    const rows = await prisma.rateLimitCounter.findMany({ where: { key: { startsWith: "sharepv:" } } });
+    expect(rows.map((r) => r.key)).toEqual(["sharepv:198.51.100.44"]);
+  });
+
+  it("额度容得下一整间办公室反复打开同一条链接", () => {
+    expect(SHARE_PREVIEW_PER_CALLER_PER_HOUR).toBeGreaterThanOrEqual(60);
   });
 });
 
@@ -197,10 +225,13 @@ describe("#795 每道闸各数各的", () => {
     await consumeOttoTurnGate("203.0.113.30");
     await consumeUploadGate("203.0.113.30");
     await consumeMediaProxyGate(from("203.0.113.30"));
+    await consumeSharePreviewDoor(from("203.0.113.30"));
     const rows = await prisma.rateLimitCounter.findMany({ select: { key: true, count: true } });
-    // 同一个字符串,五道门五行,每行各 1 —— 没有任何一道门在替另一道记账。
-    expect(rows).toHaveLength(5);
+    // 同一个字符串,六道门六行,每行各 1 —— 没有任何一道门在替另一道记账。
+    expect(rows).toHaveLength(6);
     expect(new Set(rows.map((r) => r.count))).toEqual(new Set([1]));
-    expect(new Set(rows.map((r) => r.key.split(":")[0]))).toEqual(new Set(["pw", "gen", "otto", "upload", "media"]));
+    expect(new Set(rows.map((r) => r.key.split(":")[0]))).toEqual(
+      new Set(["pw", "gen", "otto", "upload", "media", "sharepv"]),
+    );
   });
 });
