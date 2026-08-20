@@ -31,8 +31,8 @@ import { MESSAGING_STATUS_ASSISTANT } from "@fikirtive/core";
  *   (`apps/web/lib/__tests__/route-redirects.test.ts`),`packages/core/src/navigation.ts`
  *   零 `/crm` href(`navigation.test.ts`)。
  * · 不下数据状态断言 —— 句 2 是指令形(never assume),不主张任何联系人的数据现状,也不主张
- *   哪个规则读哪个字段(纯 lifetime_spend 规则不读 channel,「reach depends on channel and
- *   consent」曾是一条可证伪主张),因此无事实主张可证伪。
+ *   哪个规则读哪个字段。r6 判官对旧限定语给出了可证伪反例(见 PR #1036 评论
+ *   issuecomment-5362177658),故句 2 只留纯指令,不复述任何代码读什么/不读什么。
  * · preview 实测 —— `apps/web/lib/segment-actions.ts:305` `matchedCount: matched.length` 是
  *   `preview` 真实返回的字段,不是虚构名字。
  */
