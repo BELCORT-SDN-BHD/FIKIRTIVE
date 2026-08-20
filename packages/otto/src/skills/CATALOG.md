@@ -40,7 +40,7 @@
 | proposeResearch | free | write | internal | ❌ | Draft a RESEARCH plan (RESEARCH_CARD) the user can review and approve before any |
 | proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
 | readCampaigns | free | read | internal | ❌ | Read the user's Campaign list, one exact Campaign with structured plan entries a |
-| readContacts | free | read | internal | ❌ | List, search, or read one exact CRM Contact through the same owner-scoped action |
+| readContacts | free | read | internal | ❌ | List, search, or read one exact CRM Contact through the one owner-scoped action  |
 | readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the one owner-scoped action layer, not a se |
 | readSpending | free | read | internal | ❌ | Read the workspace's credit balance and recent credit history — the same rows th |
 | readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, immutable revisions, Routine authorization |
