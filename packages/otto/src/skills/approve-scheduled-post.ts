@@ -64,5 +64,3 @@ export const approveScheduledPostSkill = defineOttoSkill({
   parameters: params,
   execute: executeApproveScheduledPost,
 });
-
-export const approveScheduledPost = approveScheduledPostSkill.tool;

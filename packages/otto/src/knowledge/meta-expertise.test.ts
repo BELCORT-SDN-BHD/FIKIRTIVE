@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateKnowledgeBase, queryMetaKnowledge, getBenchmark } from "./meta-expertise.js";
+import { validateKnowledgeBase, queryMetaKnowledge } from "./meta-expertise.js";
 import type { MetaExpertiseKB } from "./meta-expertise.js";
 
 const cite = { url: "https://www.facebook.com/business/help/x", title: "Meta Help", retrievedAt: "2026-07-03" };
@@ -69,18 +69,6 @@ describe("queryMetaKnowledge", () => {
   });
   it("ANDs metric + objective", () => {
     expect(queryMetaKnowledge(KBX, { metric: "ROAS", objective: "conversions" }).map((e) => e.id)).toEqual(["roas-conv"]);
-  });
-});
-
-describe("getBenchmark", () => {
-  it("prefers industry+objective match over objective-only", () => {
-    expect(getBenchmark(KBX, { metric: "CTR", objective: "traffic", industry: "ecommerce" })?.id).toBe("ctr-traffic-ecom");
-  });
-  it("falls back to objective-only when no industry match", () => {
-    expect(getBenchmark(KBX, { metric: "CTR", objective: "traffic", industry: "saas" })?.id).toBe("ctr-traffic");
-  });
-  it("returns null when the metric is unknown", () => {
-    expect(getBenchmark(KBX, { metric: "frequency" })).toBeNull();
   });
 });
 

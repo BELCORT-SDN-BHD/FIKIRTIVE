@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  deleteReferenceVariant,
+  deleteReferenceVariantSkill,
   executeDeleteReferenceVariant,
 } from "./delete-reference-variant.js";
 import type { OttoContext } from "../context.js";
@@ -36,7 +36,7 @@ function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
 // ---------------------------------------------------------------------------
 describe("Test 1 — $0 skill, needsApproval false", () => {
   it("deleteReferenceVariant.needsApproval() resolves to false", async () => {
-    const result = await (deleteReferenceVariant.needsApproval as () => Promise<boolean>)();
+    const result = await (deleteReferenceVariantSkill.tool.needsApproval as () => Promise<boolean>)();
     expect(result).toBe(false);
   });
 });

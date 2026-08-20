@@ -58,5 +58,3 @@ export const updateBriefSkill = defineOttoSkill({
   parameters: updateBriefInput,
   execute: executeUpdateBrief,
 });
-
-export const updateBrief = updateBriefSkill.tool;
