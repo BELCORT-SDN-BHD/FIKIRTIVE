@@ -127,7 +127,9 @@ const HOME_DATA_SOURCES: ImportMap = {
   "@/lib/my-date-format": ["MY_DATE_FORMAT", "MY_TIME_ZONE"],             // 日期与时区,只此一份
   "@/lib/schedule-view": ["formatDayHeading", "formatTime", "partsInTz", "statusPill"], // 排期面的写法
   "@/lib/social-labels": ["socialPlatformLabel"],                         // 渠道名字的唯一定义
-  "@/lib/campaign-lifecycle": ["CAMPAIGN_STATUS_BADGE", "CAMPAIGN_STATUS_LABELS", "isCampaignStatus"],
+  // 战役状态那张表(#710「the ONE campaign status table」)C7 从 `@/lib/` 搬进了 core ——
+  // 同一张表换了住址,因为 packages/otto 够不着 apps/web,而 Otto 也要读它。
+  "@fikirtive/core/campaign-lifecycle": ["CAMPAIGN_STATUS_BADGE", "CAMPAIGN_STATUS_LABELS", "isCampaignStatus"],
   "@fikirtive/core/navigation": ["navLinkByKey"],                         // 路径只由导航权威写
 };
 

@@ -23,6 +23,7 @@ import {
   DEFAULT_LAUNCHER_ANCHOR,
   FALLBACK_VIEWPORT,
   LAUNCHER_SIZE,
+  PANEL_DEFAULT_OPEN_MIN_WIDTH,
   type FloatingRect,
   type LauncherAnchor,
   type Viewport,
@@ -54,13 +55,16 @@ export const OTTO_PANEL_STORAGE_KEY = "fikirtive:otto-panel:v1";
 /**
  * 首开默认**开**(Q3-A,Founder 2026-08-18 拍板):我们的商家还不知道助手在哪,
  * 开一次是最便宜的教学;之后一律按存档。
+ *
+ * 唯一的例外是窄屏,而且是**过渡性**的:见 `PANEL_DEFAULT_OPEN_MIN_WIDTH`,
+ * W2-11 删移动层时一并清。它只压默认值,不压能力。
  */
 export function defaultOttoPanelState(viewport: Viewport = FALLBACK_VIEWPORT): OttoPanelState {
   const vp = normalizeViewport(viewport);
   const width = defaultPanelWidth(vp.width);
   return {
     mode: "docked",
-    open: true,
+    open: vp.width >= PANEL_DEFAULT_OPEN_MIN_WIDTH,
     width,
     float: floatingRectFromDocked(width, vp),
     launcher: { ...DEFAULT_LAUNCHER_ANCHOR },

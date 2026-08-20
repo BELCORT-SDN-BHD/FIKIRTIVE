@@ -38,6 +38,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { OttoPanelMount } from "@/components/otto/panel/OttoPanelMount";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
 import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-refresh";
@@ -777,8 +778,13 @@ export function MerchantShellContent({
             !ownsFullHeightWorkspace(pathname) && MOBILE_NAV_TRIGGER_INSET,
           )}
         >
-          <SectionTabs pathname={pathname} />
-          {children}
+          {/* #994(W2-7)—— Otto 面板停在内容列右侧。它与页面内容是同一行里的两个兄弟,
+              面板占多宽主内容就让多宽:没有遮罩、没有 `pointer-events: none`(spec §3.5 ①)。
+              面板收起时这一行只剩一个孩子,版式与挂载之前一样。 */}
+          <OttoPanelMount location={pathname}>
+            <SectionTabs pathname={pathname} />
+            {children}
+          </OttoPanelMount>
         </div>
       </div>
     </GlobalNavigationDrawerContext.Provider>

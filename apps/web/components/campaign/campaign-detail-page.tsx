@@ -41,7 +41,7 @@ import {
   isCampaignStatus,
   nextCampaignStatuses,
   type CampaignStatus,
-} from "@/lib/campaign-lifecycle";
+} from "@fikirtive/core/campaign-lifecycle";
 import {
   getCampaign,
   type CampaignDetailRow,

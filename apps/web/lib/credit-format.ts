@@ -26,9 +26,13 @@ export function formatCredits(n: number): string {
     : rounded.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-/** "1 credit" / "20 credits" — singular only for exactly 1. */
+/** "1 credit" / "20 credits" — singular only for exactly 1. Judges the PRINTED amount (the
+ *  same 1-decimal rounding formatCredits applies), not the raw balance: a balance in
+ *  [0.95, 1.05) that isn't exactly 1 still prints "1", and the words must agree with the
+ *  digit they sit next to, not with a value the merchant never sees (#1039). */
 export function creditsLabel(n: number): string {
-  return `${formatCredits(n)} ${n === 1 ? "credit" : "credits"}`;
+  const rounded = Math.round(n * 10) / 10;
+  return `${formatCredits(n)} ${rounded === 1 ? "credit" : "credits"}`;
 }
 
 /** The ONE thing a merchant is told when a generation costs more credits than they hold (#699).

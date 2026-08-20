@@ -3,7 +3,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ottoTurn, createEmptyCoworkThread } from "@/lib/otto-client-actions";
+import { ottoTurn } from "@/lib/otto-client-actions";
+import { startStreamedThread } from "@/lib/otto-start-thread";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
@@ -15,7 +16,7 @@ import { BILLING_HREF } from "@/lib/exits";
 import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import {
-  FRONT_DOOR_GOAL_LABELS, newThreadTitle, type FrontDoorGoalKey,
+  FRONT_DOOR_GOAL_LABELS, type FrontDoorGoalKey,
 } from "@/lib/otto-canned-starters";
 
 interface GoalTile {
@@ -204,24 +205,16 @@ export function OttoFrontDoor({
       // Note: OttoView always provides onStreamStart; if somehow absent the code falls
       // through to the classic ottoTurn path.
       if (onStreamStart) {
-        const created = await createEmptyCoworkThread({ projectId, title: msgText });
-        if ("error" in created) {
-          setError(created.error);
+        // #995:这一步(建空会话 + 乐观标题 + 交出第一句话)搬进 lib/otto-start-thread.ts,
+        // 面板底部的页面 chips 走的是同一份 —— 两处各写一份,先漂的一定是 #979 的标题守卫。
+        // F30: 解析出来的 @mention entityIds 一并带进第一条流式消息(下面那条经典 ottoTurn
+        // 路径本来就带,流式这一条不带就等于第一轮悄悄丢了实体条件)。
+        const started = await startStreamedThread({ projectId, text: msgText, goalKey: opts.goalKey, entityIds });
+        if ("error" in started) {
+          setError(started.error);
           return;
         }
-        const thread: ChatThreadDTO = {
-          id: created.id,
-          projectId,
-          // #979:乐观标题走的必须是**服务端刚刚落库的那一份**规矩,否则侧栏先显我们的
-          // 标签、刷新后再翻成 Untitled —— 商家看到的是产品自己改口。
-          title: newThreadTitle(msgText),
-          updatedAt: new Date().toISOString(),
-          messages: [],
-        };
-        // F30: carry the resolved @mention entityIds into the first streamed message — the
-        // classic ottoTurn path below already passes them, so the streaming path must too or
-        // the thread's first turn silently loses entity conditioning.
-        onStreamStart(thread, { text: msgText, ...(opts.goalKey ? { goalKey: opts.goalKey } : {}), ...(entityIds.length ? { entityIds } : {}) });
+        onStreamStart(started.thread, started.pending);
         return;
       }
 

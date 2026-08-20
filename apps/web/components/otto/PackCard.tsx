@@ -15,6 +15,15 @@ import { packTotalCredits, canAffordPack } from "./pack-credit-math";
 // price from the record-only USD estimate, so a pack could offer "Make all" on a total
 // the server never quoted.
 import { planCardGate } from "./plan-card-contract";
+// #996 (W2-9): 面板最窄 320px。清单行在窄版折成两行(尾段整行下沉),
+// 每一个 credits 数字走 CardMoney —— 句子可以换行,数字不行。
+import {
+  CardMoney,
+  CARD_LIST_ROW_CLASS,
+  CARD_LIST_ROW_TRAIL_CLASS,
+  CARD_PAD_CLASS,
+  CARD_ROOT_CLASS,
+} from "./card-narrow";
 
 /** The per-card shape PackCard receives from OttoChatStream. */
 export interface PackCardItem {
@@ -181,11 +190,11 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
 
   return (
     // leading-[1.5] — design-baseline body line-height (Analytics standard)
-    <div className="gb leading-[1.5]" style={{ maxWidth: 520 }}>
+    <div className={CARD_ROOT_CLASS} style={{ maxWidth: 520 }}>
       {/* Pack card: bg-accent = --brand-tint (#F4F4F3 neutral tint) in .fk.gb-skin context */}
-      <div className="rounded-[var(--radius-card)] border border-border bg-secondary p-6">
+      <div className={`rounded-[var(--radius-card)] border border-border bg-secondary ${CARD_PAD_CLASS}`}>
         {/* Pack header */}
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1">
           <ClipboardList size={20} className="text-primary" />
           <span className="text-[1rem] font-bold text-foreground">
             {packTitle}
@@ -217,7 +226,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             return (
               <div
                 key={c.cardId}
-                className="flex items-center gap-3 rounded-[14px] bg-card px-3 py-2.5"
+                className={`${CARD_LIST_ROW_CLASS} rounded-[14px] bg-card px-3 py-2.5`}
                 style={{ opacity: isFailed || isCancelled ? 0.6 : 1 }}
               >
                 {/* Icon bubble: --brand-soft in .fk.gb-skin = neutral gray #ECECEA = .gb --accent */}
@@ -229,37 +238,41 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                     {desc}
                   </div>
                   <div className="text-[0.75rem] text-muted-foreground">
-                    {c.credits === null ? PACK_UNPRICED_ROW : creditsLabel(c.credits)}
+                    {c.credits === null ? PACK_UNPRICED_ROW : <CardMoney>{creditsLabel(c.credits)}</CardMoney>}
                   </div>
                 </div>
-                <div className="shrink-0 text-[0.75rem]">
-                  {isCancelled ? (
-                    <span className="text-muted-foreground">canceled</span>
-                  ) : isFailed ? (
-                    <span className="text-[var(--error-soft-foreground)]">failed</span>
-                  ) : isDone ? (
-                    <span className="text-[var(--success)]">✓</span>
-                  ) : isGenerating ? (
-                    <span className="text-muted-foreground">starting…</span>
-                  ) : canMakeThis && c.credits !== null ? (
-                    // #896: one press, price on it. `c.credits !== null` is what
-                    // `affordableIdleCards` already guarantees — spelled out so the label
-                    // can name the number without a `!`.
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="rounded-[11px]"
-                      disabled={running}
-                      onClick={() => void runCards([c])}
-                    >
-                      {running ? "Starting…" : `Make this · ${creditsLabel(c.credits)}`}
-                    </Button>
-                  ) : (
-                    <span className="text-muted-foreground/70">queued</span>
-                  )}
-                </div>
-                <div className="shrink-0 text-[0.75rem] text-muted-foreground">
-                  #{idx + 1}
+                {/* #996: 窄版这一段整条下沉到第二行(`w-full`),所以 320px 下这一行是
+                    「图标 + 名字/价签」一行、「状态/按钮 + 序号」一行 —— 双列改单列。 */}
+                <div className={CARD_LIST_ROW_TRAIL_CLASS}>
+                  <div className="shrink-0 text-[0.75rem]">
+                    {isCancelled ? (
+                      <span className="text-muted-foreground">canceled</span>
+                    ) : isFailed ? (
+                      <span className="text-[var(--error-soft-foreground)]">failed</span>
+                    ) : isDone ? (
+                      <span className="text-[var(--success)]">✓</span>
+                    ) : isGenerating ? (
+                      <span className="text-muted-foreground">starting…</span>
+                    ) : canMakeThis && c.credits !== null ? (
+                      // #896: one press, price on it. `c.credits !== null` is what
+                      // `affordableIdleCards` already guarantees — spelled out so the label
+                      // can name the number without a `!`.
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="rounded-[11px]"
+                        disabled={running}
+                        onClick={() => void runCards([c])}
+                      >
+                        {running ? "Starting…" : `Make this · ${creditsLabel(c.credits)}`}
+                      </Button>
+                    ) : (
+                      <span className="text-muted-foreground/70">queued</span>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-[0.75rem] text-muted-foreground">
+                    #{idx + 1}
+                  </div>
                 </div>
               </div>
             );
@@ -276,8 +289,8 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
 
           {!allSubmitted && totalCredits !== null && (
             <>
-              <div className="mb-3 text-[1.375rem] font-bold text-foreground">
-                Total {creditsLabel(totalCredits)}
+              <div className="mb-3 font-bold text-foreground @max-[420px]:text-[1.125rem] @min-[420px]:text-[1.375rem]">
+                Total <CardMoney>{creditsLabel(totalCredits)}</CardMoney>
               </div>
 
               {!canAfford && (

@@ -2,73 +2,37 @@
 import React from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import type { OttoStatusData } from "@/lib/otto-stream-bridge";
+import { turnNarrationText } from "@/lib/otto-turn-narration";
 
 export interface StatusLineProps {
   /** Whether a turn is currently in-flight (status === "submitted" | "streaming"). */
   isBusy: boolean;
   /** The latest data-status received for the in-flight turn, or null if none yet. */
   liveStatus: OttoStatusData | null;
-  /**
-   * The useChat stream status. "submitted" = request sent, no tokens yet →
-   * show the skeleton/shimmer bubble. "streaming" = tokens arriving → hide
-   * the StatusLine (the real TextPart bubble is now visible).
-   */
-  chatStatus?: "submitted" | "streaming" | "ready" | "error";
   /** Whether the assistant has begun emitting text (first token arrived). */
   hasAssistantText?: boolean;
 }
 
 /**
- * Renders the live "Otto is thinking…" bubble for an in-flight turn.
+ * 一轮在飞时,那句「Otto 正在做什么」。
  *
- * Phase A — submitted, no tokens yet: show a shimmer skeleton placeholder bubble.
- * Phase B — streaming with assistant text: hide (the real TextPart has taken over).
- * Phase C — busy with planning status text: show the status text with a crossfade
- *            when the text changes.
+ * #996(W2-9,spec §3.4「生成进度」/ §3.5 原则 ⑤):这里以前是一块 shimmer 骨架加一句写死的
+ * "Otto is thinking…" —— 一个不说话的转圈。现在它叙述**已有的**回合阶段,一个阶段一句短句,
+ * 措辞全部来自 `lib/otto-turn-narration.ts` 那一份常量(没有新阶段,也没有第二处文案)。
  *
- * The shimmer is defined via the `otto-shimmer` keyframe injected ONCE in
- * OttoChatStream's root <style> block (alongside otto-caret-blink).
- *
- * Hidden once the turn is no longer in-flight (isBusy === false).
+ * 第一个字吐出来之后就让位:真气泡开始写字了,再挂一句「正在思考」就是同一件事说两遍。
+ * 这一轮结束(`isBusy === false`)就整块消失。
  */
-export function StatusLine({ isBusy, liveStatus, chatStatus, hasAssistantText }: StatusLineProps) {
-  if (!isBusy) return null;
-
-  // Phase B: tokens are arriving — real bubble is rendering, hide the status line.
-  if (hasAssistantText) return null;
-
-  // Phase A: submitted but no tokens yet — show shimmer skeleton bubble.
-  if (chatStatus === "submitted") {
-    return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
-        <OttoAvatar size={32} state="thinking" />
-        <div
-          style={{
-            width: 180,
-            height: 38,
-            borderRadius: "0 20px 20px 20px",
-            background:
-              "linear-gradient(90deg, var(--border) 25%, var(--card) 50%, var(--border) 75%)",
-            backgroundSize: "200% 100%",
-            animation: "otto-shimmer 1.4s ease-in-out infinite",
-          }}
-          aria-label="Otto is responding…"
-          role="status"
-        />
-      </div>
-    );
-  }
-
-  // Phase C: planning status text (or default thinking text), crossfade on change.
-  const statusText =
-    liveStatus?.kind === "planning" ? liveStatus.text : "Otto is thinking…";
+export function StatusLine({ isBusy, liveStatus, hasAssistantText }: StatusLineProps) {
+  const text = turnNarrationText({ isBusy, liveStatus, hasAssistantText });
+  if (text === null) return null;
 
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
       <OttoAvatar size={32} state="thinking" />
-      {/* key={statusText} triggers a React remount (→ CSS animation restart) when the
-          text changes, giving a crossfade between "Otto is thinking…" and planning text. */}
-      <StatusText key={statusText} text={statusText} />
+      {/* key={text} triggers a React remount (→ CSS animation restart) when the phase
+          changes, so each new sentence fades in instead of swapping in place. */}
+      <StatusText key={text} text={text} />
     </div>
   );
 }
@@ -81,6 +45,8 @@ export function StatusLine({ isBusy, liveStatus, chatStatus, hasAssistantText }:
 function StatusText({ text }: { text: string }) {
   return (
     <div
+      role="status"
+      aria-live="polite"
       style={{
         padding: "0.75rem 1rem",
         background: "var(--card)",

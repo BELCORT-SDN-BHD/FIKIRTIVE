@@ -12,6 +12,10 @@
       "types": "./dist/brand-records.d.ts",
       "default": "./dist/brand-records.js"
     },
+    "./campaign-lifecycle": {
+      "types": "./dist/campaign-lifecycle.d.ts",
+      "default": "./dist/campaign-lifecycle.js"
+    },
     "./canvas-card-status": {
       "types": "./dist/canvas-card-status.d.ts",
       "default": "./dist/canvas-card-status.js"
@@ -47,6 +51,10 @@
     "./gen-failure": {
       "types": "./dist/gen-failure.d.ts",
       "default": "./dist/gen-failure.js"
+    },
+    "./goals": {
+      "types": "./dist/goals.d.ts",
+      "default": "./dist/goals.js"
     },
     "./messaging-status": {
       "types": "./dist/messaging-status.d.ts",

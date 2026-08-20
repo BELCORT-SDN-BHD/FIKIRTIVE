@@ -11,10 +11,23 @@
  * tell them to connect one」。前一句承诺了一个产品此刻做不到的结果;后一句把商家指向一扇
  * 打不开的门(#554 之后没有人连得上)。屏幕已经改口,Otto 不改口,就是同一个产品两套说法。
  *
+ * ── C7 补的那一半:**沉默** ─────────────────────────────────────────────────
+ * 原来这个文件只做「不许说大话」。可 #851 之后仍有一整类漏网:一条技能提到帖子的发布、
+ * 却对「今天发不出去」只字不提 —— 它一句大话也没写,所以词族全绿,而模型读完这段描述得到
+ * 的印象仍然是「排好就会出去」。实测:同一天注册表里八条技能的描述提到发帖,带着权威那一句
+ * 的只有三条。
+ *
+ * 所以「谁必须带」从**手抄名单**改成**机械枚举**:判据是「描述里提到帖子的发布」,枚举源是
+ * 注册表全册。下个月新加一条排程技能,它一进注册表就自动进网。
+ *
  * ── 威胁模型边界(如实声明)────────────────────────────────────────────────
  * · 这里钉的是**描述文本**,不是模型的输出。Otto 仍可能在一句自由回答里说错话 —— 那一层
  *   归提示词的 golden 快照与复审。这条挡的是「描述里又写回一句承诺」这种源头。
  * · 词族是词法的:换一种从没见过的英语说法,这里逮不到。它挡的是旧话术回潮与顺手再写一句。
+ * · 枚举判据同样是词法的:一条技能用整段白话描述发帖而一次不写 publish 这个词,枚举不到它。
+ * · 扫描面是 `description`,不含 `parameters`。参数里的枚举值(例如
+ *   `readWorkflows` 的 policyStatus `"published"`)是业务状态名,不是「帖子会出去」的承诺;
+ *   把它们一起扫会逼出一堆与发帖无关的豁免,那正是名单式围栏烂掉的方式。
  * · `ottoPublishTruth()` 两态都在这里钉,所以翻开关不会让这个文件变成一条永远为真的断言。
  */
 import { describe, expect, it } from "vitest";
@@ -54,12 +67,49 @@ function overPromises(text: string, family = OVER_PROMISE): string[] {
   return family.filter((re) => re.test(text)).map((re) => `${re} → "${re.exec(text)![0]}"`);
 }
 
-/** 会说到「这条帖子会怎样」的三个技能 —— Otto 关于发布的全部嘴。 */
+/**
+ * #851 改过口的三条技能 —— 下面几组「不许再写回承诺」的断言钉在它们身上。
+ *
+ * **它不再是「谁必须带那句实话」的名单**(C7):名单会漂,而且已经漂过 —— 同一天注册表里
+ * 有八条技能的描述提到发帖,只有这三条带着权威那一句,另外五条(cancelScheduledPost、
+ * listScheduledPosts、suggestPostTimes、planCampaign,以及本来就该带的
+ * listPublishTargets)照旧各说各话。谁必须带,现在由下面 `PUBLISH_TRUTH_REQUIRED` 从
+ * 注册表**机械枚举**,不再手抄。
+ */
 const PUBLISH_SKILLS = [
   ["approveScheduledPost", approveScheduledPostSkill],
   ["schedulePosts", schedulePostsSkill],
   ["listPublishTargets", listPublishTargetsSkill],
 ] as const;
+
+/**
+ * 「发帖」意义上的 publish —— 与 Workflow **修订版**的 publish 是同一个词、两件事。
+ *
+ * `draftWorkflows` 的描述里那两处(`publish one immutable revision`、
+ * `Publishing a revision NEVER activates or authorizes a Routine`)说的是把定义指针移到某个
+ * 修订版,和帖子会不会到达 Instagram 毫无关系 —— 给它拼上排程那句实话只会把模型搞糊涂。
+ * 所以先把这个词义**从文本里摘掉**,剩下的才算「这条帖子会怎样」的口径。
+ *
+ * 这是一条**词义**豁免,不是一份技能名单:任何技能只要写的是修订版发布就自动落在外面,
+ * 只要写的是帖子发布就自动落在里面 —— 下面的自证断言两个方向都钉着。
+ */
+const REVISION_SENSE = /\bpublish(?:ing|es|ed)?\b(?:\s+(?:one|a|an|the|new|immutable|workflow))*\s+revisions?\b/gi;
+
+/** 这段文本里「这条帖子会怎样」的说法,逐个回报(空 = 这条技能对发帖只字未提)。 */
+function postPublishMentions(text: string): string[] {
+  return [...text.replace(REVISION_SENSE, " ").matchAll(/\bpublish\w*/gi)].map((m) => m[0]);
+}
+
+/**
+ * **谁必须带那句实话 —— 从注册表机械枚举出来的,不是手抄的名单。**
+ *
+ * 判据只有一条:这条技能的描述里提到了帖子的发布。提到了,商家就可能据此以为帖子会出去,
+ * 那就必须在同一段文字里读到权威那一句。今天枚举出七条;下个月新加一条排程技能,它一进
+ * 注册表就自动进这张网,没有人需要记得来改这里。
+ */
+const PUBLISH_TRUTH_REQUIRED = skillCatalog.filter(
+  (skill) => postPublishMentions(skill.description).length > 0,
+);
 
 describe("#851 Otto 的发布口径", () => {
   it("词族先自证会响,也自证不误伤正当写法", () => {
@@ -100,6 +150,54 @@ describe("#851 Otto 的发布口径", () => {
 
   it.each(PUBLISH_SKILLS)("%s 的描述里没有第二句「会真发」的承诺", (_name, skill) => {
     expect(overPromises(skill.description)).toEqual([]);
+  });
+
+  // ── C7:谁必须带那句实话,由注册表说了算 ──────────────────────────────────
+  it("词义豁免自证:修订版发布落在外面,帖子发布落在里面", () => {
+    // 外面:Workflow 修订版的两种真实写法(`draftWorkflows` 的原句)。
+    expect(postPublishMentions("publish one immutable revision as the definition pointer")).toEqual([]);
+    expect(postPublishMentions("Publishing a revision NEVER activates or authorizes a Routine.")).toEqual([]);
+    expect(postPublishMentions("save a revision, then publish the revision")).toEqual([]);
+    // 里面:帖子发布的各种写法,一个都不许被豁免吞掉。
+    expect(postPublishMentions("The post will publish at its scheduled time.")).not.toEqual([]);
+    expect(postPublishMentions("Suggest good times to publish on a channel")).not.toEqual([]);
+    expect(postPublishMentions("drafts, queued, published, needs-attention")).not.toEqual([]);
+    expect(postPublishMentions("it NEVER dispatches publishing")).not.toEqual([]);
+    // 一句话里两种词义并存时,帖子那一半照样看得见 —— 豁免摘的是词义,不是整句。
+    expect(postPublishMentions("publish a revision, then the post will publish")).not.toEqual([]);
+  });
+
+  it("枚举面自检:注册表真的被扫到了,而且今天七条都在", () => {
+    expect(skillCatalog.length).toBeGreaterThan(20);
+    const required = PUBLISH_TRUTH_REQUIRED.map((skill) => skill.name).sort();
+    // 一份**当日快照**,不是判据:判据是上面那条 filter。名单变了要有人看见 ——
+    // 新加一条谈发帖的技能会红在这里,提醒把它记进 PR 正文,而不是悄悄溜进模型上下文。
+    expect(required).toEqual([
+      "approveScheduledPost",
+      "cancelScheduledPost",
+      "listPublishTargets",
+      "listScheduledPosts",
+      "planCampaign",
+      "schedulePosts",
+      "suggestPostTimes",
+    ]);
+  });
+
+  it("凡描述里谈到帖子发布的技能,都整句带着权威那一句", () => {
+    const offenders = PUBLISH_TRUTH_REQUIRED.filter(
+      (skill) => !skill.description.includes(ottoPublishTruth()),
+    ).map((skill) => `${skill.name} → ${postPublishMentions(skill.description).join(", ")}`);
+    expect(offenders, "这些技能谈到帖子会不会发出去,却没读到权威那一句").toEqual([]);
+  });
+
+  it("这条判据拦得住新长出来的沉默 —— 反面自证", () => {
+    // 一条形状真实的新技能:谈发帖、不带权威那一句。判据必须认定它是漏网的。
+    const planted = {
+      name: "plantedSkill",
+      description: "List the posts that are waiting to publish this week. $0 read-only.",
+    };
+    expect(postPublishMentions(planted.description)).not.toEqual([]);
+    expect(planted.description.includes(ottoPublishTruth())).toBe(false);
   });
 
   it("批准技能不再把商家指向一个打不开的连接入口", () => {

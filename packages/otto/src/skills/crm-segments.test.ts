@@ -1,6 +1,7 @@
 import type { RunContext } from "@openai/agents";
 import { describe, expect, it, vi } from "vitest";
 import type { OttoContext } from "../context.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 import { buildSegmentSkill, executeBuildSegment } from "./build-segment.js";
 import {
   crmSegmentRuleGroup,
@@ -45,12 +46,29 @@ function ports() {
  * rule as the web fence; it is restated rather than imported because the two live in different
  * packages, and a package export widened for a test would be a worse trade.
  */
+/**
+ * C7 —— 新加的那一段「今天做不到什么」。
+ *
+ * **它的逐字钉板不在这里,在 `availability-truth-fence.test.ts`。** r1 时这一段的副本是抄在
+ * 这块板上的,理由是「板子的合同就是改一个字就得来改这里」。r2 把那份副本挪走了,因为同一段
+ * 文字被 `saveCustomerSegment` 也拼着,而这块板只覆盖 readSegments / buildSegment —— 两处
+ * 抄一段、第三处没人管,是比引用常量更坏的形状。
+ *
+ * 现在的分工:那一段的**措辞**由新围栏逐字钉(它同时钉 Routine 那一段,并列着每条事实主张的
+ * 取证命令);这块板继续管**它前面那一整段**——每个字节仍然被某一处逐字断言压着。
+ */
+const SEGMENT_AVAILABILITY_COPY = CRM_SEGMENT_AVAILABILITY;
+
 const APPROVED_OTTO_COPY = {
   readSegments:
     // #802 r4(判官 [P1]):「as the CRM page」是手写界面引用,改名必漂 —— 改写成不指界面的
     // 说法。这份钉板是那次改写的复审对象:两处描述各只改了这半句,别的一个字未动。
-    "Read the user's CRM Segments through the same owner-scoped action layer the merchant's own " +
-    "screens use. $0 " +
+    //
+    // C7 —— 那次改写留下的是「the merchant's own screens use」。#1007 之后这半句自己变成了
+    // 假话:CRM 那一段一扇打得开的门都没有,它紧挨着下面那句「今天没有页面」,一条描述里
+    // 两句互相打架。「同一条动作层、没有第二套实现」才是这半句要说的事,所以照着它重写。
+    "Read the user's CRM Segments through the one owner-scoped action layer, not a second " +
+    "implementation of its own. $0 " +
     "read-only. operation=list returns saved segments with rules and live " +
     "matched/contactable/known-opt-out counts. operation=get needs an exact segmentId from list " +
     "and returns that Segment's rule and counts. operation=preview evaluates a STRUCTURED " +
@@ -60,10 +78,11 @@ const APPROVED_OTTO_COPY = {
     "group may also carry excludeReportedOptOut: on, it additionally leaves out every contact the " +
     "user recorded an opt-out for himself, and the count comes back as " +
     "excludedByReportedOptOutCount. It only ever removes people, and it does not change what the " +
-    "consent record already decides.",
+    "consent record already decides. " +
+    SEGMENT_AVAILABILITY_COPY,
   buildSegment:
-    "Create or update one CRM Segment through the same validated, owner-scoped action layer the " +
-    "merchant's own screens use. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
+    "Create or update one CRM Segment through the one validated, owner-scoped action layer, not a " +
+    "second implementation of its own. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
     "or send free-form natural language inside this skill. create needs name + rules and uses a " +
     "server-issued id. update also needs the exact segmentId returned by readSegments. Unknown " +
     "consent stays in the audience; only known opt-out is excluded from the contactable estimate, " +
@@ -71,7 +90,8 @@ const APPROVED_OTTO_COPY = {
     "excludeReportedOptOut additionally leaves out every contact the user recorded an opt-out for " +
     "himself, including one who also opted out through their own channel; it only removes people, " +
     "never adds any, it is off unless the user asked for it, and it applies to this segment's " +
-    "counts, preview and broadcasts alike.",
+    "counts, preview and broadcasts alike. " +
+    SEGMENT_AVAILABILITY_COPY,
   excludeReportedOptOutField:
     "Optional, defaults to off. On: also leave out every contact the user has recorded an opt-out " +
     "for himself, including one who additionally opted out through their own channel. It only " +
@@ -129,6 +149,52 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
       "On: also leave out every contact the user has recorded an opt-out for himself, including one who additionally opted out through their own channel.",
     surface: "excludeReportedOptOutField",
     why: "The field description of the same rule, in the same words.",
+  },
+  // C7 —— 新加的那一句里,唯一带全称词的是「never send the user to one」。两个面各一条,
+  // 因为这块板要求豁免必须留在**它自己那一面**上。
+  {
+    sentence:
+      "Availability, say it plainly whenever segments come up: there is no page in the app today for customer segments, contacts or broadcasts, so never send the user to one.",
+    surface: "readSegments",
+    why: "可证:`apps/web/app/crm/page.tsx` 与它 13 个子页全是 `redirect(\"/\")`(围栏 `apps/web/lib/__tests__/route-redirects.test.ts` 逐条枚举),`packages/core/src/navigation.ts` 里没有任何一格指向 CRM(围栏 `navigation.test.ts`)。「一个也没有」在这里不是修辞,是枚举出来的。",
+  },
+  {
+    sentence:
+      "Availability, say it plainly whenever segments come up: there is no page in the app today for customer segments, contacts or broadcasts, so never send the user to one.",
+    surface: "buildSegment",
+    why: "同一句实话、同一份证据 —— 两条技能各带一份,因为模型读到哪一条就只读到哪一条。",
+  },
+  // C7 —— Founder 2026-08-20 裁决:断路器条款下再退一步,contactability 真值表(r5)与全部
+  // 字段级机制解释一起删,`CRM_SEGMENT_AVAILABILITY` 改为三句短版。旧的三对豁免(「不下人口
+  // 断言」的政策声明、excludeReportedOptOut 只减不加、分群只存规则定义)连同它们对应的句子
+  // 一起从披露里删掉了,不再需要豁免。
+  //
+  // 2026-08-21 编排者裁决(r6)—— 三句短版第②句上一版仍带「reach depends on — channel and
+  // consent status —」这个字段依赖框架,判官反例是纯 lifetime_spend 规则根本不读 channel,
+  // 所以这条依赖关系本身可证伪。改成不含依赖框架的指令形("Never assume channel or consent
+  // data is filled in...")后仍带 never/any 两个全称词,是新披露里第二个需要豁免的全称句。
+  {
+    sentence: "Never assume channel or consent data is filled in for any given contact.",
+    surface: "readSegments",
+    why: "指令形(never assume),不主张任何联系人的数据现状,也不暗示哪条规则读哪个字段,无事实主张可证伪 —— 唯一要核的是句子本身不含状态断言词或字段依赖词,读它自己即可核销。",
+  },
+  {
+    sentence: "Never assume channel or consent data is filled in for any given contact.",
+    surface: "buildSegment",
+    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
+  },
+  // 三句短版第③点(先 preview 再报数)的指令句 —— 「never a prediction or an estimate」。
+  {
+    sentence:
+      "Before saying how many contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a prediction or an estimate.",
+    surface: "readSegments",
+    why: "可证:`apps/web/lib/segment-actions.ts:305` `matchedCount: matched.length` 是 `preview` 真实返回的字段;这句本身是「先测量再报数」的政策指令,不是需要证明为真的经验主张。",
+  },
+  {
+    sentence:
+      "Before saying how many contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a prediction or an estimate.",
+    surface: "buildSegment",
+    why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
   },
 ];
 

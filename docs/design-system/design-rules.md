@@ -191,9 +191,8 @@ Two easings, four durations. Tokens (to live in `.gb`):
 | Otto dock expand/collapse | 200ms | ease-spring | transform + opacity |
 | Coral sweep | ≤ 600ms, one-shot | ease-out | box-shadow + background tint |
 | Gen-bar slide (`.cv-gen-bar`) | 1300ms loop | ease-in-out | position |
-| Skeleton shimmer (`otto-shimmer`) | 1400ms loop | ease-in-out | background-position |
 
-Rules: animate transform/opacity, never layout properties; nothing over 200ms except the sweep and the two loops; no delays on user-initiated actions. Reduced-motion fallbacks per animation class: §A5.
+Rules: animate transform/opacity, never layout properties; nothing over 200ms except the sweep and the gen-bar loop; no delays on user-initiated actions. Reduced-motion fallbacks per animation class: §A5.
 
 ## 7. OTTO (mascot)
 
@@ -616,10 +615,9 @@ v3 merged ten domain sections onto the v2 base. The list below records the choic
 2. **Focus ring:** the earlier single "3px @ 40%" halo (§F2) and the 35% mix (§N3) are superseded by the **§A2 two-layer ring** (1px solid keyline + 4px 40% halo) — the 40% halo alone is 1.64:1, invisible to low vision. Bordered fields keep the field variant: ring-coloured 1px border + 3px 40% halo. All alphas unify at 40%.
 3. **Field error text:** forms said `12/16 --error`, feedback said `13/18 --error-soft-foreground` → the v3 package selected **13/18, 500, `--error-soft-foreground`** (§A1 records the semantic-text rationale). Base `--error` remained legal for icons and ≥19px.
 4. **Dock avatar size:** otto-presence wrote 28px inside the 48px collapsed dock, off its own 16·22·26·32… ladder → **26px** (nearest ladder step). The 34px dialog-chip exception stays.
-5. **Shimmer durations:** v2 §6 "progress shimmer 1300ms" vs the 1.4s `otto-shimmer` skeleton → **two distinct animations, both kept**: gen-bar slide 1300ms, skeleton shimmer 1400ms; §6 motion table now names both.
-6. **16px input text:** not on the §3 type scale but required by §F3 (iOS anti-zoom) → documented in §3 as the one **control-only** size; never a reading size.
-7. **Analytics kit off-grid values** (KPI padding 15, panel radius 16): founder-locked pixel-matched kit → **pinned exception**; new data surfaces use 16 / 18; quantise when the founder refreshes the kit.
-8. **`--warning-soft-foreground` light** fails AA by 0.05 → the doc records the shipped value `#B45309` (`globals.css` is implementation truth). No replacement token is approved here; any change requires a current task and Founder review where applicable (§A1.8).
-9. **Ring alpha + disabled opacity locks:** §F2's 40% / 0.4 supersede the stock-shadcn 50% / 0.5 scatter across textarea/select/checkbox/switch.
-10. **Tracked evidence location:** token-architecture cited `docs/design/handoff/` (a pre-pivot export); the v3 package was recorded under **`docs/design-system/`** (rules + cards, landed 2026-07-07). Neither location is current authority by itself.
-11. **Historical drift evidence:** prior per-section gap tables have left the active tree and remain in Git history only. They are never an authorized work queue; a current GitHub task must independently verify and adopt any surviving gap.
+5. **16px input text:** not on the §3 type scale but required by §F3 (iOS anti-zoom) → documented in §3 as the one **control-only** size; never a reading size.
+6. **Analytics kit off-grid values** (KPI padding 15, panel radius 16): founder-locked pixel-matched kit → **pinned exception**; new data surfaces use 16 / 18; quantise when the founder refreshes the kit.
+7. **`--warning-soft-foreground` light** fails AA by 0.05 → the doc records the shipped value `#B45309` (`globals.css` is implementation truth). No replacement token is approved here; any change requires a current task and Founder review where applicable (§A1.8).
+8. **Ring alpha + disabled opacity locks:** §F2's 40% / 0.4 supersede the stock-shadcn 50% / 0.5 scatter across textarea/select/checkbox/switch.
+9. **Tracked evidence location:** token-architecture cited `docs/design/handoff/` (a pre-pivot export); the v3 package was recorded under **`docs/design-system/`** (rules + cards, landed 2026-07-07). Neither location is current authority by itself.
+10. **Historical drift evidence:** prior per-section gap tables have left the active tree and remain in Git history only. They are never an authorized work queue; a current GitHub task must independently verify and adopt any surviving gap.

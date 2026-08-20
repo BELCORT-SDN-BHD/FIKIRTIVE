@@ -9,6 +9,7 @@ import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 import { crmSegmentRuleGroup } from "./read-segments.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 
 const params = z.object({
   operation: z.enum(["create", "update"]),
@@ -50,14 +51,15 @@ export const buildSegmentSkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Create or update one CRM Segment through the same validated, owner-scoped action layer the merchant's own screens use. $0 " +
+    "Create or update one CRM Segment through the one validated, owner-scoped action layer, not a second implementation of its own. $0 " +
     "internal write. Pass a STRUCTURED one-level rule object only; never compile or send free-form natural language " +
     "inside this skill. create needs name + rules and uses a server-issued id. update also needs the exact segmentId " +
     "returned by readSegments. Unknown consent stays in the audience; only known opt-out is excluded from the " +
     "contactable estimate, and do-not-disturb remains a send-time restriction. The rule group's optional " +
     "excludeReportedOptOut additionally leaves out every contact the user recorded an opt-out for himself, " +
     "including one who also opted out through their own channel; it only removes people, never adds any, it is " +
-    "off unless the user asked for it, and it applies to this segment's counts, preview and broadcasts alike.",
+    "off unless the user asked for it, and it applies to this segment's counts, preview and broadcasts alike. " +
+    CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: executeBuildSegment,
 });
