@@ -41,10 +41,9 @@ import { CRM_SEGMENT_AVAILABILITY, ROUTINE_EXECUTION_AVAILABILITY } from "./_ava
 const APPROVED_AVAILABILITY_COPY = {
   CRM_SEGMENT_AVAILABILITY:
     "Availability, say it plainly whenever segments come up: there is no page in the app today for customer " +
-    "segments, contacts or broadcasts, so never send the user to one. Never assume the underlying data contact " +
-    "reach depends on — channel and consent status — is filled in for any given contact. Before saying how many " +
-    "contacts a segment or rule reaches, call preview and report only the matchedCount it returns — never a " +
-    "prediction or an estimate. " +
+    "segments, contacts or broadcasts, so never send the user to one. Never assume channel or consent data is " +
+    "filled in for any given contact. Before saying how many contacts a segment or rule reaches, call preview " +
+    "and report only the matchedCount it returns — never a prediction or an estimate. " +
     MESSAGING_STATUS_ASSISTANT,
   ROUTINE_EXECUTION_AVAILABILITY:
     "Availability, say it plainly whenever a rule's effect comes up: there is no page in the app today for " +
@@ -78,10 +77,9 @@ const CLAIM_EVIDENCE: ReadonlyArray<{ claim: string; verify: string }> = [
       "apps/web/lib/segment-actions.ts:305 matchedCount: matched.length —— preview 真实返回的字段,不是虚构名字",
   },
   {
-    claim:
-      "Never assume the underlying data contact reach depends on — channel and consent status — is filled in for any given contact",
+    claim: "Never assume channel or consent data is filled in for any given contact",
     verify:
-      "2026-08-21 编排者裁决:指令形(never assume),不主张任何联系人的数据现状,无事实主张可证伪 —— 唯一要核的是这句话本身不含状态断言词(全句无「大多/全部/恒为/incomplete」等量词),读它自己即可核销,不需要数据层证据",
+      "2026-08-21 编排者裁决(r6):指令形(never assume),不主张任何联系人的数据现状,也不暗示「联系触达依赖 channel/consent」——判官反例是纯 lifetime_spend 规则根本不读 channel,所以句子里已删掉任何 depends-on/reach 式的关联框架;唯一要核的是句子本身不含状态断言词或字段依赖词,读它自己即可核销,不需要数据层证据",
   },
   {
     claim: "Nothing in the product starts a routine run",
@@ -166,14 +164,28 @@ describe("C7 Otto 的「今天做不到什么」——措辞层", () => {
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches every/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches only/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/matches exactly/i);
-    // 2026-08-21 编排者裁决:句 2 旧版的软量词数据状态断言也判死 —— 同样不许回来。
+    // 2026-08-21 编排者裁决(r6 之前一轮):句 2 那一版的软量词数据状态断言也判死 —— 同样不许
+    // 回来(依旧留着当历史句禁词,即使下面的类级正则也已经覆盖它)。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/incomplete for many contacts/i);
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/much of the underlying data/i);
+    // r6:句 2 那一版「reach depends on — channel and consent status —」构成可证伪主张
+    // (判官反例:纯 lifetime_spend 规则不读 channel)—— 同样不许回来。
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/reach depends on/i);
+    // r6 判官绕过样例的类级正则,不是逐句钉死单个措辞,挡的是同一类换皮说法:
+    //   ·「Channel data is missing for many customers.」
+    //   ·「Each contact is evaluated under both consent states.」
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/\b(is|are)\s+(missing|incomplete|empty|unfilled)\b/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/\bevaluated\s+(twice|under both)\b/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/\bboth consent states\b/i);
+    expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/\bfor\s+(many|most|some|all|every)\s+(contacts|customers)\b/i);
     // 人数/人群断言:披露里(MESSAGING_STATUS_ASSISTANT 那半句同样零数字)不许出现任何数字。
     expect(CRM_SEGMENT_AVAILABILITY).not.toMatch(/\d/);
-    // 正面:三句短版要求的三件事确实在场 —— 句 2 是指令形(never assume),不是状态断言。
+    // 正面:三句短版要求的三件事确实在场 —— 句 2 是指令形(never assume),不是状态断言,
+    // 也不含字段依赖框架。这三条断言本身就是「三句新文案 + MESSAGING_STATUS_ASSISTANT 拼接
+    // 全文不踩任何新旧禁词」的自证:CRM_SEGMENT_AVAILABILITY 就是那份拼接全文,上面每一条
+    // not.toMatch 已经对它逐条跑过。
     expect(CRM_SEGMENT_AVAILABILITY).toMatch(/there is no page in the app today for customer/);
-    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/Never assume the underlying data contact reach/);
+    expect(CRM_SEGMENT_AVAILABILITY).toMatch(/Never assume channel or consent data is filled in/);
     expect(CRM_SEGMENT_AVAILABILITY).toMatch(/call preview and report only the matchedCount/);
   });
 });

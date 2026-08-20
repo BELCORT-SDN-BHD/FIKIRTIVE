@@ -169,19 +169,17 @@ const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
   // 断言」的政策声明、excludeReportedOptOut 只减不加、分群只存规则定义)连同它们对应的句子
   // 一起从披露里删掉了,不再需要豁免。
   //
-  // 2026-08-21 编排者裁决 —— 三句短版第②句原是软量词状态断言("much of...is incomplete"),
-  // 对 migration `20260809100000`(存量身份行批量判 channel_verified)仍说不通,判死为
-  // 前五轮那一类不可证伪主张。改成指令形("Never assume...")后带上了 never/any 两个全称
-  // 词,是新披露里第二个需要豁免的全称句。
+  // 2026-08-21 编排者裁决(r6)—— 三句短版第②句上一版仍带「reach depends on — channel and
+  // consent status —」这个字段依赖框架,判官反例是纯 lifetime_spend 规则根本不读 channel,
+  // 所以这条依赖关系本身可证伪。改成不含依赖框架的指令形("Never assume channel or consent
+  // data is filled in...")后仍带 never/any 两个全称词,是新披露里第二个需要豁免的全称句。
   {
-    sentence:
-      "Never assume the underlying data contact reach depends on — channel and consent status — is filled in for any given contact.",
+    sentence: "Never assume channel or consent data is filled in for any given contact.",
     surface: "readSegments",
-    why: "指令形(never assume),不主张任何联系人的数据现状,无事实主张可证伪 —— 唯一要核的是句子本身不含状态断言词,读它自己即可核销。",
+    why: "指令形(never assume),不主张任何联系人的数据现状,也不暗示哪条规则读哪个字段,无事实主张可证伪 —— 唯一要核的是句子本身不含状态断言词或字段依赖词,读它自己即可核销。",
   },
   {
-    sentence:
-      "Never assume the underlying data contact reach depends on — channel and consent status — is filled in for any given contact.",
+    sentence: "Never assume channel or consent data is filled in for any given contact.",
     surface: "buildSegment",
     why: "同一句、同一份证据 —— 两条技能各带一份,模型读到哪一条就只读到哪一条。",
   },
