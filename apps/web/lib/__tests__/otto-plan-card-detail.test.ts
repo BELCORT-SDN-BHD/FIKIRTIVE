@@ -857,11 +857,17 @@ describe("#580 r2 P1-3 PackCard 与单卡共用契约与价格门", () => {
     ).replaceAll("&#x27;", "'").replaceAll("&#39;", "'");
   }
 
+  /** #996(W2-9):金额现在包在 `<CardMoney>` 里(窄面板下不许被断行),所以「Total 10 credits」
+   *  在 HTML 字符串里被一个标签断开了。商家读到的还是同一句 —— 断言就断言他读到的那一份。 */
+  function visibleText(markup: string): string {
+    return markup.replace(/<[^>]*>/g, "");
+  }
+
   const PRICED = { kind: "image", structuredPrompt: "a poster", estimatedCredits: 4 };
 
   it("每张卡都有可担保价格 → 正常出总价与 Make all", () => {
     const markup = renderPack([PRICED, { ...PRICED, estimatedCredits: 6 }]);
-    expect(markup).toContain("Total 10 credits");
+    expect(visibleText(markup)).toContain("Total 10 credits");
     // #896:整包也是一击 —— 数量与总价都在按钮上,后面没有第二块确认屏。
     expect(markup).toContain("Make all (2 · 10 credits)");
     expect(markup).not.toContain("Confirm — make all");
@@ -939,7 +945,8 @@ describe("#896 r2 P1 PackCard 的价签跟着它真正会跑的那组卡走", ()
     const markup = renderStates(["done", "idle"]);
     expect(markup).toContain("Make all (1 · 5 credits)");
     expect(markup, "把已经付过钱的那张又算进了价签").not.toContain("10 credits");
-    expect(markup).toContain("Total 5 credits");
+    // #996:金额包进了 `<CardMoney>`,所以这一句要在去标签之后读(商家读到的那一份)。
+    expect(markup.replace(/<[^>]*>/g, "")).toContain("Total 5 credits");
   });
 
   it("余额门也按剩下那一组判 —— 付得起的批准不再被虚高的总价挡住", () => {

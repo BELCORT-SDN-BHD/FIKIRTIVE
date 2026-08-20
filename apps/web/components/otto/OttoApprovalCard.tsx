@@ -22,6 +22,8 @@ import {
   type ApprovalCardResolution,
 } from "@/lib/approval-card-view";
 import { chainedApprovalOf } from "./approval-chain";
+// #996 (W2-9): 面板最窄 320px。版式跟着卡自己那只盒子走(容器查询),不跟视口走。
+import { CARD_ACTIONS_CLASS, CARD_PAD_CLASS, CARD_ROOT_CLASS } from "./card-narrow";
 
 /** What a resolved approval hands up: the EXACT card, what it resolved to, and the
  *  server's own still-pending set when the resume parked again. The universal approval
@@ -116,8 +118,8 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
   }
 
   return (
-    <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
-      <div className="rounded-[18px] border border-border bg-secondary p-6">
+    <div className={CARD_ROOT_CLASS} style={{ maxWidth: 480 }}>
+      <div className={`rounded-[18px] border border-border bg-secondary ${CARD_PAD_CLASS}`}>
         {/* Header */}
         <div className="flex items-center gap-2 mb-4">
           <CalendarCheck size={20} className="text-foreground" />
@@ -172,7 +174,7 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
             {approvalCardResolutionText({ ...parsed, status: "failed" })}
           </div>
         ) : (
-          <div className="flex gap-3">
+          <div className={CARD_ACTIONS_CLASS}>
             <Button variant="default" disabled={busy} onClick={confirm}>
               {local === "approving" ? (
                 <span className="flex items-center gap-2">
