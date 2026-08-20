@@ -352,17 +352,24 @@ describe("层级表:模态框永远在最上面", () => {
   }
 
   /**
-   * 对照物是**壳内**那两处手搓的 `fixed inset-0 z-50` 模态框,不是 `ui/dialog`
-   * (判官 r1 P3-3):`ui/dialog` 走 Radix Portal 挂到 `<body>`,而商家壳整个装在
-   * `app/layout.tsx` 那个 `relative z-10` 的层叠上下文里 —— 壳里的数字再大也压不到它。
-   * 这两处正是 W2-12 要收编的那一批;在收编之前,面板必须让着它们。
+   * 对照物**曾经**是壳内那两处手搓的 `fixed inset-0 z-50` 模态框,不是 `ui/dialog`
+   * (判官 r1 P3-3)—— 但 #1010(W2-1,2026-08-19)已经把它们两个都收编进 `ui/dialog`
+   * 了(先于原先设想的 W2-12)。判官 r1 P3-3 那句话现在描述的正是它们自己:两处都已经
+   * 走 Radix Portal 挂到 `<body>`,不再分享商家壳 `app/layout.tsx` 那个
+   * `relative z-10` 的层叠上下文 —— 面板的 z 值再高也够不到它们,保证已经从「数字比较」
+   * 升级成「结构性隔离」。
+   *
+   * 这里仍然留一段数字比较,对照物换成 `ui/dialog.tsx` 自己的遮罩层:一是保留「面板必须
+   * 让着模态框」这条契约本身的机器判定(不是只靠代码注释口头承诺),二是防回归——如果
+   * 有人把 `ui/dialog` 的 z 值调到面板之下,这条测试要能测出来。另外补一条「这两个文件
+   * 确实从 `ui/dialog` 取组件」,防止有人偷偷改回手搓遮罩而不动这条测试引用的文件名。
    */
-  const IN_SHELL_MODALS = [
+  const MODAL_SURFACES = [
     "components/otto/OttoStuff.tsx",
     "components/otto/stuff/AddAssetDialog.tsx",
   ] as const;
 
-  it("导轨 < 面板/launcher < 壳内模态框 —— 面板不许盖住一个模态框", async () => {
+  it("导轨 < 面板/launcher < 模态框(现走 ui/dialog)—— 面板不许盖住一个模态框", async () => {
     const el = await mount(shell("/campaign"));
     const panelZ = zOf(el.querySelector("[data-otto-panel]")!.className);
 
@@ -371,20 +378,25 @@ describe("层级表:模态框永远在最上面", () => {
     });
     const launcherZ = zOf(document.querySelector("[data-otto-launcher]")!.className);
 
-    // 对照值全部从它们自己的文件里读,不在这里抄第二份。
-    const modalZ = Math.min(
-      ...IN_SHELL_MODALS.flatMap((file) => {
-        const source = readFileSync(resolve(WEB_ROOT, file), "utf8");
-        const scrims = [...source.matchAll(/fixed inset-0 z-\[?(\d+)\]?/g)].map((m) => Number(m[1]));
-        expect(scrims.length, `${file} 里应当还有那层手搓遮罩(它被收编后这条要跟着改)`).toBeGreaterThan(0);
-        return scrims;
-      }),
-    );
+    // 两处商家面上的模态框都必须走共享的 ui/dialog —— 不许有人偷偷换回自己那层手搓遮罩
+    // 却不动这条测试引用的文件。
+    for (const file of MODAL_SURFACES) {
+      const source = readFileSync(resolve(WEB_ROOT, file), "utf8");
+      expect(source, `${file} 应当从 ui/dialog 取模态框(不是自己手搓一个)`).toMatch(
+        /from ["']@\/components\/ui\/dialog["']/,
+      );
+    }
+
+    // z 值从 ui/dialog 自己的遮罩层读,不在这里抄第二份。
+    const dialogSource = readFileSync(resolve(WEB_ROOT, "components/ui/dialog.tsx"), "utf8");
+    const modalScrims = [...dialogSource.matchAll(/fixed inset-0 z-\[?(\d+)\]?/g)].map((m) => Number(m[1]));
+    expect(modalScrims.length, "components/ui/dialog.tsx 里应当有那层遮罩").toBeGreaterThan(0);
+    const modalZ = Math.min(...modalScrims);
     const railZ = Math.max(...zOf(readFileSync(resolve(WEB_ROOT, "components/global-navigation.tsx"), "utf8")));
 
     expect(panelZ.length + launcherZ.length).toBeGreaterThan(0);
     for (const z of [...panelZ, ...launcherZ]) {
-      expect(z, `panel/launcher z=${z} vs 壳内模态框 z=${modalZ}`).toBeLessThan(modalZ);
+      expect(z, `panel/launcher z=${z} vs ui/dialog 遮罩 z=${modalZ}`).toBeLessThan(modalZ);
       expect(z, `panel/launcher z=${z} vs 导轨 z=${railZ}`).toBeGreaterThan(railZ);
     }
   });
