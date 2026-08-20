@@ -22,6 +22,9 @@
 // copy of the map. The copy happened to agree; a copy that happens to agree is exactly how the
 // Inbox and Reports pages ended up disagreeing about the same channel.
 import { channelLabel } from "./crm-labels";
+// Same story one level down: this file kept its own copy of the humanising rule too. Every use
+// here splices the result into a longer line, so it takes the shared rule's lowercase shape.
+import { humanizeTokenPhrase as humanize } from "./machine-token";
 
 export type ResolvedRef = { id: string; name: string | null };
 export type ResolvedChannel = { channel: string; providerConnectionId: string | null; accountName: string | null };
@@ -70,10 +73,6 @@ const SUMMARY_FIELD_LABELS: Record<string, string> = {
   schemaVersion: "Policy version",
   policy: "Policy",
 };
-
-function humanize(code: string): string {
-  return code.replaceAll("_", " ").toLowerCase();
-}
 
 function actionLabel(action: string): string {
   return ACTION_LABELS[action] ?? humanize(action);

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
+import { shortDayLabel } from "@/lib/short-date-label";
 
 type OfferFields = { title: string; details: string; code: string; appliesTo: string; startsAt: string; endsAt: string };
 
@@ -26,13 +27,11 @@ function fieldsOf(r: BrandRecordRow): OfferFields {
   };
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const fmtDay = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
-
-/** "Ends Jul 15" / "Starts Jul 10" pill copy for an active/scheduled offer. */
+/** "Ends Jul 15" / "Starts Jul 10" pill copy for an active/scheduled offer. Month names come
+ *  from lib/short-date-label; ProductShowcase.tsx held the identical copy. */
 function datePill(r: BrandRecordRow, now: Date): string | null {
   const phase = offerPhase(r, now);
-  const fmt = (d: Date) => fmtDay(new Date(d));
+  const fmt = (d: Date) => shortDayLabel(new Date(d));
   if (phase === "scheduled" && r.startsAt) return `Starts ${fmt(r.startsAt)}`;
   if (r.endsAt) return `Ends ${fmt(r.endsAt)}`;
   return null;

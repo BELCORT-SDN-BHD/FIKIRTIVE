@@ -26,6 +26,11 @@
 // The SUBPATH, not the barrel: this module is reachable from client components, and the core
 // barrel pulls in Node-capable code (fenced by lib/__tests__/client-core-imports.test.ts).
 import { isChannelVerifiedIdentity } from "@fikirtive/core/contact-identity-grade";
+// The humanising rule itself is shared (lib/machine-token) — five modules kept five versions of
+// it and the five disagreed. Re-exported here so this family keeps its single import site,
+// exactly as it already does for the maps below.
+import { humanizeToken } from "./machine-token";
+export { humanizeToken };
 
 export type CrmBadgeVariant =
   | "default"
@@ -35,12 +40,6 @@ export type CrmBadgeVariant =
   | "warning"
   | "info"
   | "destructive";
-
-/** Underscored machine token → readable words. The last line of defence, never the first. */
-export function humanizeToken(token: string): string {
-  const words = token.replaceAll("_", " ").trim();
-  return words.length === 0 ? words : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
-}
 
 // ── Messaging channel ────────────────────────────────────────────────────────────────────────
 
