@@ -379,6 +379,19 @@ async function collectRoutePaths(
  * (hasSlotAncestor===false)——组内非 slot 条目数 >1 时 throw(不管 slot 条目有多少条);
  * ≤1 时合并成一条(纯 slot 组、或「一条非 slot + 任意条 slot」都合并,镜像 Next 允许一条
  * children 页面搭配任意多个具名 parallel slot)。
+ *
+ * 判官六轮(钉档,不镜像):上面这条豁免判据本身与 Next 有一处已知分歧,故意不追平——
+ * next-app-loader/index.js:570 的豁免检查是 `appPath.includes('@')`,查的是**整条物理路径**
+ * 字符串里任意位置有没有 `@`;而段是不是 parallel slot,Next 自己的段分类器
+ * shared/lib/router/routes/app.js:65(`parseAppRouteSegment`)只认**段首** `@`
+ * (`segment.startsWith('@')`)——与本文件的 isParallelSlotSegment/hasSlotAncestor 语义一致。
+ * 两者不是同一个判据:一个合法、不以 `@` 开头的普通段名(比如目录字面量 `foo@bar`,中段/
+ * 非段首含 `@`)会让 `appPath.includes('@')` 为真,从而在 index.js:570 触发豁免——Next 对这种
+ * 「两个真正的普通目录、只是名字中段带 @」的撞车会**静默放行**,不会抛 E28。这份枚举器不追
+ * 这个宽松:hasSlotAncestor 用的是段首判据,`foo@bar` 不算 slot,所以两个 `foo@bar` 物理路径
+ * 撞同一 URL 时,本枚举器仍按「两个非 slot 条目」throw——方向是「响亮地过严」,不是悄悄放过一
+ * 个真实重复页(那才是假绿)。这处分歧是编排者裁定保留、留档在 PR #1078 判官 r5 判词评论里的
+ * 已知设计决策,不是待修的 bug。
  */
 async function realRoutePaths(
   dir = resolve(WEB_ROOT, "app"),
@@ -1116,6 +1129,29 @@ describe("proxy — realRoutePaths() against a synthetic fixture tree (judge rou
     writeFileSync(join(fixtureRoot, "foo", "@modal", "page.tsx"), "export default function Modal() { return null }\n");
 
     await expect(realRoutePaths(fixtureRoot, "", true)).rejects.toThrow(/被 3 个物理路径解析到同一条 URL,其中 2 个都没有经过 parallel slot/);
+  });
+
+  it("P2-2 (judge round 5 pinned divergence): a mid-segment @ in an ordinary directory name still throws — Next's own looser appPath.includes('@') exemption is intentionally NOT mirrored", async () => {
+    // foo@bar is a perfectly legal, non-slot directory name (it does not START with @, so
+    // isParallelSlotSegment/hasSlotAncestor correctly says false — same segment-start rule Next's
+    // own classifier uses: shared/lib/router/routes/app.js:65's parseAppRouteSegment only treats
+    // a segment as 'parallel-route' when segment.startsWith('@')). Two of them colliding on the
+    // same URL is the same real duplicate-page shape as the plain "foo" canary above.
+    //
+    // Real Next would NOT throw here: next-app-loader/index.js:570 checks the exemption with
+    // `appPath.includes('@')` on the WHOLE physical path string, not the per-segment start —
+    // "foo@bar" contains "@" mid-string, so Next's own build would treat this as exempt and
+    // silently merge, even though neither path is actually a parallel slot. That laxity would be
+    // a false-green for a real duplicate route, so this enumerator deliberately does NOT mirror
+    // it (judge round 5 pinned decision, logged in the PR #1078 judge comment): it stays on the
+    // segment-start rule and throws. Direction of the divergence is "too strict, loud", never
+    // "too loose, silent".
+    mkdirSync(join(fixtureRoot, "foo@bar"), { recursive: true });
+    mkdirSync(join(fixtureRoot, "(g)", "foo@bar"), { recursive: true });
+    writeFileSync(join(fixtureRoot, "foo@bar", "page.tsx"), "export default function FooBar() { return null }\n");
+    writeFileSync(join(fixtureRoot, "(g)", "foo@bar", "page.tsx"), "export default function FooBarToo() { return null }\n");
+
+    await expect(realRoutePaths(fixtureRoot, "", true)).rejects.toThrow(/被 2 个物理路径解析到同一条 URL/);
   });
 
   it("skips an underscore-prefixed directory, not just __tests__", async () => {
