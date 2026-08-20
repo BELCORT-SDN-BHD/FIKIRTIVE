@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 110" role="img" aria-label="Otto error">
+  <g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g>
+  <path d="M48 50 l10 10 M58 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/>
+  <path d="M65 50 l10 10 M75 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/>
+</svg>

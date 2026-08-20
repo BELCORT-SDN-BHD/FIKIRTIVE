@@ -1,0 +1,375 @@
+<title>Fikirtive Brand Guidelines</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#FAFAFC; --surface:#FFFFFF; --chrome:#F2F3F7;
+  --ink:#16171C; --ink2:#5B5F6C; --ink3:#9CA0AC;
+  --line:#E8E9EF; --line2:#DDDEE6;
+  --cta:#16171C; --cta-ink:#FFFFFF;
+  --otto:#EC5828; --otto-soft:#FBE7DC;
+  --good:#16A34A; --warn:#D97706; --bad:#E5484D; --info:#3B6FE6;
+  --grad-violet:linear-gradient(135deg,#EDE9FE 0%,#DBEAFE 100%);
+  --grad-peach:linear-gradient(135deg,#FFEDD5 0%,#FFE1E1 100%);
+  --grad-sky:linear-gradient(135deg,#E0F2FE 0%,#EDE9FE 100%);
+  --dot:#DADBE3;
+  --shadow:0 1px 2px rgba(20,22,30,.05),0 8px 24px rgba(20,22,30,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121318; --surface:#1A1C22; --chrome:#16181E;
+    --ink:#F1F2F5; --ink2:#A6AAB6; --ink3:#6E7280;
+    --line:#282B33; --line2:#32353F;
+    --cta:#F1F2F5; --cta-ink:#16171C;
+    --otto:#F26A3C; --otto-soft:#3A241B;
+    --grad-violet:linear-gradient(135deg,#2A2740 0%,#1F2A44 100%);
+    --grad-peach:linear-gradient(135deg,#3D2B1E 0%,#3C2226 100%);
+    --grad-sky:linear-gradient(135deg,#1B2E3E 0%,#2A2740 100%);
+    --dot:#2E3138;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121318; --surface:#1A1C22; --chrome:#16181E;
+  --ink:#F1F2F5; --ink2:#A6AAB6; --ink3:#6E7280;
+  --line:#282B33; --line2:#32353F;
+  --cta:#F1F2F5; --cta-ink:#16171C;
+  --otto:#F26A3C; --otto-soft:#3A241B;
+  --grad-violet:linear-gradient(135deg,#2A2740 0%,#1F2A44 100%);
+  --grad-peach:linear-gradient(135deg,#3D2B1E 0%,#3C2226 100%);
+  --grad-sky:linear-gradient(135deg,#1B2E3E 0%,#2A2740 100%);
+  --dot:#2E3138;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--ground);color:var(--ink);font-family:'Geist',system-ui,sans-serif;line-height:1.65;font-size:15.5px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:0 28px 100px}
+.mono{font-family:'Geist Mono',ui-monospace,monospace}
+.eyebrow{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px}
+h2{font-size:24px;font-weight:750;letter-spacing:-.015em;margin-bottom:6px;text-wrap:balance}
+h3{font-size:16px;font-weight:650;margin-bottom:4px}
+section{margin-top:84px}
+.sub{color:var(--ink2);max-width:66ch;margin-top:6px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:var(--shadow)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:20px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:20px}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:20px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:14px}
+th{font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line2)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:6px 16px 12px;margin-top:18px}
+.do{color:var(--good);font-weight:700}
+.dont{color:var(--bad);font-weight:700}
+.note{border-left:3px solid var(--otto);background:var(--otto-soft);border-radius:0 11px 11px 0;padding:14px 18px;margin-top:18px;font-size:14px}
+.note b{color:var(--otto)}
+ul.tight{margin:10px 0 0 18px;color:var(--ink2);font-size:14px}
+ul.tight li{margin-bottom:6px}
+ul.tight b{color:var(--ink)}
+/* cover */
+.cover{padding:88px 0 20px}
+.cover .lockup{display:flex;align-items:center;gap:18px;margin-bottom:34px}
+.cover h1{font-size:clamp(34px,6vw,52px);font-weight:800;letter-spacing:-.025em;line-height:1.08;text-wrap:balance}
+.cover .lede{font-size:17px;color:var(--ink2);max-width:60ch;margin-top:16px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+.chip{font-family:'Geist Mono',ui-monospace,monospace;font-size:11.5px;font-weight:500;padding:5px 11px;border:1px solid var(--line2);border-radius:999px;color:var(--ink2);background:var(--surface)}
+/* logo */
+.stage{display:grid;place-items:center;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:36px 20px}
+.stage.dotted{background-image:radial-gradient(var(--dot) 1px,transparent 1px);background-size:16px 16px}
+.stage .cap{font-family:'Geist Mono',ui-monospace,monospace;font-size:10px;color:var(--ink3);margin-top:16px;letter-spacing:.08em;text-transform:uppercase}
+.wordmark{font-family:'Geist',sans-serif;font-weight:750;letter-spacing:-.03em}
+.clearbox{position:relative;display:inline-block;border:1.5px dashed var(--line2);padding:26px}
+.clearbox i{position:absolute;font-family:'Geist Mono',monospace;font-size:9px;color:var(--ink3)}
+.swrow{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.swatch{flex:1;min-width:118px;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+.swatch .c{height:64px}
+.swatch .m{padding:9px 12px}
+.swatch .n{font-size:12.5px;font-weight:650}
+.swatch .h{font-family:'Geist Mono',monospace;font-size:10.5px;color:var(--ink3)}
+/* type specimen */
+.typerow{display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:baseline;padding:13px 0;border-bottom:1px solid var(--line)}
+.typerow:last-child{border-bottom:none}
+.typerow .lbl{font-family:'Geist Mono',monospace;font-size:10px;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase}
+/* moods */
+.mood{display:grid;place-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 8px 12px;box-shadow:var(--shadow)}
+.mood .nm{font-family:'Geist Mono',monospace;font-size:10px;color:var(--ink3);margin-top:8px;letter-spacing:.06em}
+/* applications */
+.app-tab{display:flex;align-items:center;gap:8px;background:var(--chrome);border:1px solid var(--line);border-radius:10px 10px 0 0;padding:8px 12px;font-size:12px;width:min(300px,100%)}
+.og{border-radius:14px;border:1px solid var(--line);overflow:hidden;box-shadow:var(--shadow)}
+.og .top{background:var(--grad-violet);padding:26px 22px 20px}
+.og .top .t{font-size:19px;font-weight:750;letter-spacing:-.015em}
+.og .bot{background:var(--surface);padding:10px 22px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
+.email{border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);background:var(--surface)}
+.email .hd{padding:18px 22px 6px;display:flex;align-items:center;gap:10px}
+.email .bd{padding:8px 22px 18px;font-size:13.5px;color:var(--ink2)}
+.email .btn{display:inline-block;background:var(--cta);color:var(--cta-ink);font-size:12.5px;font-weight:600;padding:8px 16px;border-radius:9px;margin-top:10px}
+.merch{display:grid;place-items:center;border-radius:14px;border:1px solid var(--line);box-shadow:var(--shadow);padding:26px 12px;background:var(--surface)}
+.merch .cap{font-family:'Geist Mono',monospace;font-size:10px;color:var(--ink3);margin-top:12px;letter-spacing:.08em;text-transform:uppercase}
+.foot{margin-top:88px;padding-top:20px;border-top:1px solid var(--line);font-family:'Geist Mono',monospace;font-size:11px;color:var(--ink3);line-height:1.9}
+@media (max-width:600px){.typerow{grid-template-columns:1fr;gap:2px}}
+</style>
+
+<div class="wrap">
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+  <div class="lockup">
+    <svg width="64" height="64" viewBox="0 0 1240 1240" aria-label="Fikirtive mark"><rect width="1240" height="1240" rx="280" fill="#EC5828"/><g transform="translate(-60,10)"><g fill="none" stroke="#F5F1E8" stroke-linecap="round"><path d="M478 430C450 570 452 750 466 880" stroke-width="195"/><path d="M468 462C545 298 745 232 855 300" stroke-width="190"/><path d="M488 650C600 618 690 624 775 658" stroke-width="150"/></g><g fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></g></svg>
+    <span class="wordmark" style="font-size:40px">fikirtive</span>
+  </div>
+  <div class="eyebrow">Brand guidelines · v4 · 2026-08 · 内部使用</div>
+  <h1>柔光棱镜:<br>秩序是骨,彩色是糖,珊瑚是 Otto</h1>
+  <p class="lede">这本手册管 Fikirtive 这个牌子长什么样、怎么说话。给我们自己和我们的 agent 用;将来牌子立起来,merch、deck、对外物料也从这里出。三句话记住整个系统:<b>骨架永远冷静(近白 + 墨黑),彩色只做内容的糖(三组低饱和渐变),珊瑚只属于 Otto(橙色出现 = AI 在场)。</b></p>
+  <div class="chips">
+    <span class="chip">色彩方向 A · 已拍板 08-20</span>
+    <span class="chip">Geist · 已拍板 08-20</span>
+    <span class="chip">V1 浅色 only</span>
+    <span class="chip">结构 = Shopify brand guidelines 模板</span>
+    <span class="chip">Tagline:The marketing OS.</span>
+    <span class="chip">不含 components(另场处理)</span>
+  </div>
+</div>
+
+<!-- ============ 01 LOGO ============ -->
+<section>
+  <div class="eyebrow">01 · Logos · F 字标与 wordmark</div>
+  <h2>一枚手绘的 F,一行小写字</h2>
+  <p class="sub">官方 F 字标是<b>有机手绘体</b>——圆头笔画、三颗圆点收尾,与 Otto 云朵同一形状语言。原稿由 Founder 亲供(2026-07-16),矢量正稿在 <span class="mono" style="font-size:12px">docs/brand/logo/</span>(四色 mark + 双色方砖 + 三色圆角砖 + 全套 PNG/favicon)。旧的机器人脸一族(<span class="mono" style="font-size:12px">public/brand/logo-mark.svg · logo-wordmark.svg · otto.svg</span>)全部退役——Founder 2026-08-20 裁决。</p>
+
+  <div class="grid3">
+    <div class="stage" style="background:#F5F1E8">
+      <svg width="76" height="94" viewBox="310 150 740 920"><g fill="none" stroke="#141414" stroke-linecap="round"><path d="M478 430C450 570 452 750 466 880" stroke-width="195"/><path d="M468 462C545 298 745 232 855 300" stroke-width="190"/><path d="M488 650C600 618 690 624 775 658" stroke-width="150"/></g><g fill="#141414"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      <div class="cap" style="color:#5B5F6C">裸标 · 墨(纸底)</div>
+    </div>
+    <div class="stage">
+      <svg width="88" height="88" viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="280" fill="#EC5828"/><g transform="translate(-60,10)"><g fill="none" stroke="#F5F1E8" stroke-linecap="round"><path d="M478 430C450 570 452 750 466 880" stroke-width="195"/><path d="M468 462C545 298 745 232 855 300" stroke-width="190"/><path d="M488 650C600 618 690 624 775 658" stroke-width="150"/></g><g fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></g></svg>
+      <div class="cap">珊瑚圆角砖 · 默认身份(favicon 即它)</div>
+    </div>
+    <div class="stage">
+      <div style="display:flex;align-items:center;gap:12px">
+        <svg width="40" height="40" viewBox="0 0 1240 1240"><rect width="1240" height="1240" rx="280" fill="#EC5828"/><g transform="translate(-60,10)"><g fill="none" stroke="#F5F1E8" stroke-linecap="round"><path d="M478 430C450 570 452 750 466 880" stroke-width="195"/><path d="M468 462C545 298 745 232 855 300" stroke-width="190"/><path d="M488 650C600 618 690 624 775 658" stroke-width="150"/></g><g fill="#F5F1E8"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></g></svg>
+        <span class="wordmark" style="font-size:26px">fikirtive</span>
+      </div>
+      <div class="cap">标准 lockup(砖 + 字)</div>
+    </div>
+  </div>
+
+  <div class="grid2" style="align-items:start">
+    <div class="stage dotted">
+      <div class="clearbox">
+        <i style="top:6px;left:50%;transform:translateX(-50%)">¼ 高</i>
+        <i style="left:6px;top:50%;transform:translateY(-50%)">¼ 高</i>
+        <svg width="60" height="74" viewBox="310 150 740 920"><g fill="none" stroke="var(--ink)" stroke-linecap="round"><path d="M478 430C450 570 452 750 466 880" stroke-width="195"/><path d="M468 462C545 298 745 232 855 300" stroke-width="190"/><path d="M488 650C600 618 690 624 775 658" stroke-width="150"/></g><g fill="var(--ink)"><circle cx="448" cy="928" r="120"/><circle cx="893" cy="352" r="134"/><circle cx="798" cy="680" r="92"/></g></svg>
+      </div>
+      <div class="cap">留白 = 标高的 ¼,四面同距</div>
+    </div>
+    <div>
+      <h3>规格(官方包既定,照录)</h3>
+      <ul class="tight">
+        <li><b>四色 mark:</b>墨 #141414 / 纸 #F5F1E8 / 白 / 珊瑚 #EC5828。<b>珊瑚圆角砖是默认身份砖</b>(圆角 ≈ 22.5%),黑砖是正式/单色场合。</li>
+        <li><b>最小尺寸:</b>砖 16px(favicon 就是它);裸标高 ≥ 24px;lockup 高 ≥ 20px,再小只用砖。</li>
+        <li><b>彩底规则:</b><span class="dont">✗</span> 珊瑚 F 放珊瑚底;摄影/彩底上用纸色或墨色 F,且必须装在砖里,不裸放。</li>
+        <li><b>不许:</b>渐变字纹、加阴影、描边、旋转、拉伸(误用示例见 guidelines PDF 第 6 页)。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="tablebox"><table>
+    <tr><th>场合</th><th>写法</th><th>说明</th></tr>
+    <tr><td>Wordmark(画出来的字标)</td><td class="wordmark">fikirtive</td><td>全小写,Geist 750,字距 −3%。友好、现代,和云朵一家人</td></tr>
+    <tr><td>正文/UI 文案里提到</td><td>Fikirtive</td><td>Sentence case,跟全产品英文文案同法</td></tr>
+    <tr><td>法务主体</td><td>BELCORT SDN BHD</td><td>法务页照旧;产品名在法务文内也写 Fikirtive</td></tr>
+    <tr><td>全大写 FIKIRTIVE</td><td><span class="dont">✗ 停用</span></td><td>今天导航里的全大写随换皮退役——「一个名字三种写法」到此为止</td></tr>
+  </table></div>
+</section>
+
+<!-- ============ 02 OTTO ============ -->
+<section>
+  <div class="eyebrow">01 · Logos · Otto 吉祥物</div>
+  <h2>一朵会看你的云</h2>
+  <p class="sub">Otto 是珊瑚色的云,没有嘴——它用眼神和动作说话,话都写在聊天里。官方正稿 = 营销站现役 mark 的几何(四团不对称云 + 深褐竖条眼 <span class="mono" style="font-size:12px">#2B1308</span>,120×110 网格),矢量在 <span class="mono" style="font-size:12px">docs/brand/otto/</span>(正稿 + 7 表情)。产品内 <span class="mono" style="font-size:12px">OttoAvatar</span> 的手写几何与登录页手抄副本,components 场统一收编到正稿。</p>
+
+  <div class="grid4">
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg><div class="nm">idle · 常态</div></div>
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="53" y="44" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="68" y="44" width="7" height="13" rx="3.5" fill="#2B1308"/><circle cx="88" cy="34" r="4" fill="var(--otto)" opacity=".45"/><circle cx="97" cy="26" r="2.6" fill="var(--otto)" opacity=".3"/></svg><div class="nm">thinking · 思考</div></div>
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/></svg><div class="nm">helpful · 乐意</div></div>
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M92 28 l3.5 7 7 1 -5 5 1.2 7 -6.7 -3.5 -6.7 3.5 1.2 -7 -5 -5 7 -1 z" fill="var(--otto)" opacity=".55"/></svg><div class="nm">success · 成了</div></div>
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="52" width="7" height="7" rx="3.5" fill="#2B1308"/><rect x="66" y="52" width="7" height="7" rx="3.5" fill="#2B1308"/></svg><div class="nm">waiting · 等着</div></div>
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="50" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="50" width="7" height="13" rx="3.5" fill="#2B1308"/><path d="M46 42 l14 -4" stroke="#2B1308" stroke-width="4.5" stroke-linecap="round"/><path d="M78 38 l-14 4" stroke="#2B1308" stroke-width="4.5" stroke-linecap="round"/></svg><div class="nm">warning · 注意</div></div>
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M48 50 l10 10 M58 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/><path d="M65 50 l10 10 M75 50 l-10 10" stroke="#2B1308" stroke-width="5" stroke-linecap="round"/></svg><div class="nm">error · 坏了</div></div>
+    <div class="mood"><svg width="66" height="60" viewBox="0 0 120 110"><g fill="var(--otto)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><path d="M49 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M64 57 q5.5 -7 11 0" stroke="#2B1308" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="94" cy="33" r="11" fill="var(--good)"/><path d="M89 33 l4 4 7 -8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="nm">approving · 批了</div></div>
+  </div>
+
+  <div class="grid2" style="margin-top:18px">
+    <div class="card">
+      <h3>规矩</h3>
+      <ul class="tight">
+        <li><b>颜色:</b>云永远是珊瑚 #EC5828,眼睛永远深褐 #2B1308。任何主题、任何底色都不改——吉祥物豁免于主题化。</li>
+        <li><b>最小尺寸:</b>20px。再小就退成珊瑚圆点(和「Ask Otto」按钮里那颗一样)。</li>
+        <li><b>出现 = AI 在场:</b>云朵只出现在 Otto 真的在看、在做、在等的地方。装饰位不许摆——它是身份,不是花纹。</li>
+        <li><b>动:</b>只有轻微的悬浮呼吸(bob)。不翻跟头、不弹跳出场,尊重 reduced-motion。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>不许</h3>
+      <ul class="tight">
+        <li><span class="dont">✗</span> 换色、加渐变、描边——珊瑚就是它的名字。</li>
+        <li><span class="dont">✗</span> 加嘴。它不说话,聊天框才说话。</li>
+        <li><span class="dont">✗</span> 用在人类操作的按钮上(黑按钮是商家的手,云朵是 Otto 的脸,不能混)。</li>
+        <li><span class="dont">✗</span> 机器人脸旧稿回魂——已退役,merch 也不用。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 02 TYPOGRAPHY ============ -->
+<section>
+  <div class="eyebrow">02 · Typography · 字体</div>
+  <h2>Geist 说话,JetBrains Mono 报数</h2>
+  <p class="sub">一副面孔管全部人话(界面、标题、正文、按钮),一副等宽管全部数据(credits、批次、比例、ID)。层级用字重和字号做,不靠换字体。</p>
+  <div class="card" style="margin-top:20px">
+    <div class="typerow"><span class="lbl">Display · 750 · 34</span><span style="font-size:34px;font-weight:750;letter-spacing:-.02em;line-height:1.15">Good morning, Nicks</span></div>
+    <div class="typerow"><span class="lbl">Title · 700 · 23</span><span style="font-size:23px;font-weight:700;letter-spacing:-.015em">Schedule for this week</span></div>
+    <div class="typerow"><span class="lbl">Heading · 650 · 16</span><span style="font-size:16px;font-weight:650">Campaigns in progress</span></div>
+    <div class="typerow"><span class="lbl">Body · 400 · 15.5</span><span style="font-size:15.5px;color:var(--ink2)">Otto drafts the plan, you approve what may be made.</span></div>
+    <div class="typerow"><span class="lbl">Caption · 500 · 13</span><span style="font-size:13px;font-weight:500;color:var(--ink3)">Last edited 2 hours ago</span></div>
+    <div class="typerow"><span class="lbl">Data · Mono · 12.5</span><span class="mono" style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--ink2)">1,240 cr · batch 2/4 · 9:16 · RM 2,350.00</span></div>
+  </div>
+  <ul class="tight">
+    <li><b>数字对齐:</b>凡数字成列(KPI、账单、表格)必开 tabular figures,让个位对个位。</li>
+    <li><b>大小写:</b>全产品英文 sentence case;全大写只给 mono 小标签(眉题、代号),并配 +10% 字距。</li>
+    <li><b>中文:</b>系统字回退(PingFang SC / Noto Sans SC),字重对映 400/500/700,不另购中文字体。</li>
+  </ul>
+</section>
+
+<!-- ============ 03 COLOR ============ -->
+<section>
+  <div class="eyebrow">03 · 色彩 · 柔光棱镜</div>
+  <h2>90% 冷静,8% 糖,2% 珊瑚</h2>
+  <p class="sub">配比就是系统:画面九成是中性骨架,渐变糖只落在「内容与开始做事」的地方,珊瑚只落在 Otto 身上。语义色(绿黄红蓝)另算——它们是状态的话,不是品牌的脸。</p>
+
+  <h3 style="margin-top:22px">骨架(90%)</h3>
+  <div class="swrow">
+    <div class="swatch"><div class="c" style="background:#FAFAFC;border-bottom:1px solid var(--line)"></div><div class="m"><div class="n">Ground 地</div><div class="h">#FAFAFC</div></div></div>
+    <div class="swatch"><div class="c" style="background:#FFFFFF;border-bottom:1px solid var(--line)"></div><div class="m"><div class="n">Surface 卡</div><div class="h">#FFFFFF</div></div></div>
+    <div class="swatch"><div class="c" style="background:#F2F3F7"></div><div class="m"><div class="n">Chrome 侧栏</div><div class="h">#F2F3F7</div></div></div>
+    <div class="swatch"><div class="c" style="background:#E8E9EF"></div><div class="m"><div class="n">Line 边</div><div class="h">#E8E9EF</div></div></div>
+    <div class="swatch"><div class="c" style="background:#16171C"></div><div class="m"><div class="n">Ink 墨 / CTA</div><div class="h">#16171C</div></div></div>
+    <div class="swatch"><div class="c" style="background:#5B5F6C"></div><div class="m"><div class="n">Ink-2 次级字</div><div class="h">#5B5F6C</div></div></div>
+  </div>
+
+  <h3 style="margin-top:26px">糖(8%)——三组渐变,只做内容的甜</h3>
+  <div class="swrow">
+    <div class="swatch"><div class="c" style="background:linear-gradient(135deg,#EDE9FE,#DBEAFE)"></div><div class="m"><div class="n">Violet 紫</div><div class="h">#EDE9FE → #DBEAFE</div></div></div>
+    <div class="swatch"><div class="c" style="background:linear-gradient(135deg,#FFEDD5,#FFE1E1)"></div><div class="m"><div class="n">Peach 桃</div><div class="h">#FFEDD5 → #FFE1E1</div></div></div>
+    <div class="swatch"><div class="c" style="background:linear-gradient(135deg,#E0F2FE,#EDE9FE)"></div><div class="m"><div class="n">Sky 天</div><div class="h">#E0F2FE → #EDE9FE</div></div></div>
+  </div>
+  <ul class="tight">
+    <li><b>去处:</b>开工砖、模板卡、空态插图底、OG 卡、merch 底。<b>一屏最多两块糖</b>,饿一点才甜。</li>
+    <li><b>糖上的字:</b>用对应深调(紫底 #3B3663、桃底 #7C3D2A、天底 #2E4A66),不用纯黑,对比度 ≥ 4.5:1。</li>
+    <li><span class="dont">✗</span> 渐变做大段文字底、做按钮(黑按钮才是按钮)、做图表数据色。</li>
+  </ul>
+
+  <h3 style="margin-top:26px">珊瑚(2%)与语义色</h3>
+  <div class="swrow">
+    <div class="swatch"><div class="c" style="background:#EC5828"></div><div class="m"><div class="n">Otto 珊瑚</div><div class="h">#EC5828 · 只给 Otto</div></div></div>
+    <div class="swatch"><div class="c" style="background:#FBE7DC"></div><div class="m"><div class="n">Otto 软珊瑚</div><div class="h">#FBE7DC · Otto 的浅底</div></div></div>
+    <div class="swatch"><div class="c" style="background:#16A34A"></div><div class="m"><div class="n">Good</div><div class="h">#16A34A</div></div></div>
+    <div class="swatch"><div class="c" style="background:#D97706"></div><div class="m"><div class="n">Warn</div><div class="h">#D97706</div></div></div>
+    <div class="swatch"><div class="c" style="background:#E5484D"></div><div class="m"><div class="n">Bad</div><div class="h">#E5484D</div></div></div>
+    <div class="swatch"><div class="c" style="background:#3B6FE6"></div><div class="m"><div class="n">Info</div><div class="h">#3B6FE6</div></div></div>
+  </div>
+  <div class="note"><b>珊瑚法(继承并重申):</b>珊瑚 = Otto 的身份色。AI 在看、在做、在等的一切示意(气泡描边、进度环、生成中卡片的呼吸灯、焦点环)才许用珊瑚;人类操作的按钮、装饰、强调一律不许。商家学会一件事就够:<b>看见橙色,就是 Otto 在场。</b></div>
+</section>
+
+<!-- ============ 04 IMAGERY ============ -->
+<section>
+  <div class="eyebrow">04 · Imagery · 影像语言</div>
+  <h2>商家的作品是主角</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>摄影与 AI 生成物</h3>
+      <ul class="tight">
+        <li><b>不用 stock 照片</b>——牌子不借别人的脸;示意一律用产品真截图、渐变底或云朵。</li>
+        <li><b>生成物画廊式装裱:</b>白卡 + 细边 + 浅影;永不加滤镜、不叠品牌色、不打水印。</li>
+        <li><b>点阵纹理</b>(16-18px)只出现在 canvas 工作区——「这里可以创作」的信号,营销面不用。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>插画、图标与渐变</h3>
+      <ul class="tight">
+        <li><b>唯一插画角色是 Otto 云朵</b>(八表情);不引入第二套插画风格。</li>
+        <li><b>图标</b>细线几何风、线宽统一、跟随文字色;图标不用珊瑚——珊瑚是 Otto 的。具体图标库 components 场定稿。</li>
+        <li><b>渐变</b>是内容的糖(规则见 03 章),不做摄影滤镜、不做页面大底。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 05 AUDIENCE ============ -->
+<section>
+  <div class="eyebrow">05 · Audience · 受众</div>
+  <h2>在对谁说话</h2>
+  <p class="sub" style="font-size:19px;font-weight:650;color:var(--ink)">小生意的老板本人。</p>
+  <ul class="tight" style="max-width:70ch">
+    <li>开店的人自己就是老板 + 营销部:<b>不懂营销、没有营销团队,也不该为了用 AI 先学 prompt</b>。他们要的是看得懂的方案、花得明白的钱、和一个不会骗他们的系统。</li>
+    <li>地理上从马来西亚与东南亚起步,但<b>品牌按全球说话</b>——本地体验是优势,不是边界。全球通行的英文,不堆本地梗;涉及钱一律具体(金额、条数、日期),不打鸡血、不画饼。</li>
+    <li><i>给写手/设计/agent 的自检:这句话对一个忙着看店、每天只有十分钟处理营销的人,读一遍能不能懂?不能,就重写。</i></li>
+  </ul>
+</section>
+
+<!-- ============ 06 VOICE ============ -->
+<section>
+  <div class="eyebrow">06 · Voice and tone · 声音与语气</div>
+  <h2>诚实、具体、不装</h2>
+  <p class="sub">产品的嗓音有两个人:<b>产品本身</b>(中性、清楚、像个可靠的收银台)和 <b>Otto</b>(第一人称、温和、像个靠谱的店伙计)。两个都守同一条底线——不知道就说不知道,没通电就说没通电,花钱前先把价钱摆出来。</p>
+  <div class="tablebox"><table>
+    <tr><th>场合</th><th><span class="do">✓ 这样说</span></th><th><span class="dont">✗ 不这样说</span></th></tr>
+    <tr><td>空态</td><td>Nothing here yet — start your first canvas.</td><td>Your creative journey awaits! ✨</td></tr>
+    <tr><td>花钱前</td><td>4 images · 12 credits. Generate?</td><td>(直接扣了再说,或把价钱藏进 tooltip)</td></tr>
+    <tr><td>出错</td><td>This didn't go through. Your credits are untouched — try again.</td><td>Oops! Something went wrong 😢</td></tr>
+    <tr><td>没通电的能力</td><td>Publishing isn't switched on yet, so this stays a draft.</td><td>Coming soon!(本仓禁句——说了就要兑现)</td></tr>
+    <tr><td>Otto 干活中</td><td>Making 4 images for "Raya promo" — two are done.</td><td>Processing request… / 转圈不说话</td></tr>
+    <tr><td>Otto 提议</td><td>I can draft next week's posts — want me to?</td><td>(不问就做,或替商家点确认)</td></tr>
+  </table></div>
+  <ul class="tight">
+    <li><b>产品说话</b>不用感叹号、不用 emoji、不道歉三连;错误信息 = 发生了什么 + 钱怎么样了 + 下一步。</li>
+    <li><b>Otto 说话</b>可以有温度,但永远把事实放第一句;它提议、商家拍板,永远不替商家按钮。</li>
+    <li><b>供应商隐身:</b>任何文案不出现底层模型/供应商名(产品法,brandkit 重申)。</li>
+  </ul>
+</section>
+
+<!-- ============ 07 GRAMMAR ============ -->
+<section>
+  <div class="eyebrow">07 · Grammar and style · 拼写、标点、数字</div>
+  <h2>写字的硬规矩</h2>
+  <div class="tablebox"><table>
+    <tr><th>项</th><th>规定</th></tr>
+    <tr><td>拼写</td><td><b>美式英语</b>(color, favorite, organize);现存英式残留按票清理</td></tr>
+    <tr><td>大小写</td><td>全线 sentence case(标题、按钮、导航);全大写只给 mono 小标签,配 +10% 字距</td></tr>
+    <tr><td>序列逗号</td><td>用 Oxford comma:posts, images, <b>and</b> videos</td></tr>
+    <tr><td>金额</td><td>RM 2,350.00——币种前缀 + 千分位 + 两位小数;credits 写 1,240 cr</td></tr>
+    <tr><td>日期</td><td>12 Aug 2026;界面短语境可用 Fri, 12 Aug</td></tr>
+    <tr><td>产品词</td><td>Fikirtive(行文)· fikirtive(字标)· Otto(永远大写 O)· credits / canvas(小写)</td></tr>
+    <tr><td>禁句</td><td>Coming soon · 任何供应商/模型名 · 任何没有真实来源的数字</td></tr>
+  </table></div>
+</section>
+
+<!-- ============ 08 TAGLINE & BOILERPLATE ============ -->
+<section>
+  <div class="eyebrow">+ · Tagline and boilerplate</div>
+  <h2 style="font-size:44px;letter-spacing:-.025em">The marketing OS<span style="color:var(--otto)">.</span></h2>
+  <p class="sub">官方 tagline(Founder 拍板 2026-08-20)。原样使用——含句号,句号可用珊瑚色;不改写、不翻译、不加副句。</p>
+  <div class="card" style="margin-top:22px">
+    <h3>Boilerplate(press / 合作方 / 应用商店 / 社媒 bio 通用,一字不改地复制)</h3>
+    <p style="font-size:14px;color:var(--ink2);font-style:italic;margin-top:8px;line-height:1.7">Fikirtive is the all-in-one marketing OS for small businesses. It gives merchants complete, hands-on marketing tools — creation, campaigns, scheduling, and publishing — plus Otto, an AI marketing operator that researches, plans, and executes with the merchant's approval. Every action is transparent: merchants see what things cost before they run, and everything leaves a trail they can read. Fikirtive is operated by BELCORT SDN BHD.</p>
+  </div>
+  <p class="sub" style="margin-top:14px;font-size:13px">Questions → Nicks Gan · nicksgan@belcort.com</p>
+</section>
+
+<div class="foot">
+  Fikirtive brand guidelines v4 · 2026-08-20 · 依据 Founder 三裁决(色彩 A 柔光棱镜 / Geist 留任 / V1 浅色)+ elaboration(无品牌故事;机器人脸退役;受众=自用,预留 merch)<br>
+  标识血缘:F 字标原稿 Founder 亲供 2026-07-16,矢量官方包源出 fikirtive-marketing-website 仓 design/brand/,2026-08-20 起权威家 = 产品仓 docs/brand/;云朵正稿 = 营销站现役 mark 几何<br>
+  取代:「Grok bones + Headspace/Phantom heart」v3(2026-07-07)· public/brand 机器人脸三件 · 全大写 FIKIRTIVE 写法<br>
+  下一步:components 场把本册翻译成 shadcn 主题与 token;canvas/外壳 prototype 场按本册上妆
+</div>
+
+</div>

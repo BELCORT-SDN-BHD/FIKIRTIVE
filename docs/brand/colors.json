@@ -1,0 +1,37 @@
+{
+  "$comment": "Fikirtive brand palette · Soft Prism v4 · Founder 拍板 2026-08-20。V1 浅色 only。比例法:骨架 ~90% / 渐变糖 ~8% / 珊瑚 ~2%。语义色是状态语言,不算品牌色。",
+  "foundation": {
+    "ground":  "#FAFAFC",
+    "surface": "#FFFFFF",
+    "chrome":  "#F2F3F7",
+    "line":    "#E8E9EF",
+    "line2":   "#DDDEE6",
+    "ink":     "#16171C",
+    "ink2":    "#5B5F6C",
+    "ink3":    "#9CA0AC"
+  },
+  "brand": {
+    "coral":      "#EC5828",
+    "coralSoft":  "#FBE7DC",
+    "paper":      "#F5F1E8",
+    "ottoEyes":   "#2B1308",
+    "$rule": "珊瑚=品牌与 Otto:F 砖与云朵用它;产品 UI 内珊瑚只示意 Otto 在场,人类操作按钮一律 ink。"
+  },
+  "gradients": {
+    "$rule": "135°,双停靠;只包内容不包框架;一屏最多两块;糖上文字用对应深调,对比 ≥ 4.5:1。",
+    "violet": { "stops": ["#EDE9FE", "#DBEAFE"], "textOn": "#3B3663", "use": "开工砖 / 模板卡 / OG 卡" },
+    "peach":  { "stops": ["#FFEDD5", "#FFE1E1"], "textOn": "#7C3D2A", "use": "战役砖 / 空态插底 / merch" },
+    "sky":    { "stops": ["#E0F2FE", "#EDE9FE"], "textOn": "#2E4A66", "use": "数据糖 / 引导卡" }
+  },
+  "semantic": {
+    "good": "#16A34A",
+    "warn": "#D97706",
+    "bad":  "#E5484D",
+    "info": "#3B6FE6"
+  },
+  "typography": {
+    "sans": "Geist",
+    "data": "JetBrains Mono",
+    "$rule": "英文 sentence case;数字成列开 tabular figures;中文回退 PingFang SC / Noto Sans SC。"
+  }
+}
