@@ -50,12 +50,89 @@ function urlSegment(directoryName: string): string {
   return directoryName.startsWith("[") ? directoryName.slice(1, -1) : directoryName;
 }
 
+/**
+ * #1034:Next 的默认 `pageExtensions`(next.config.ts 未覆盖时,next/dist/server/config-shared.js
+ * 里的内建默认值)。`page` 与 `route` 两种叶子文件吃的是**同一份**扩展名列表——Next 的
+ * `leafOnlyPageFileRegex`(next/dist/server/lib/find-page-file.js)对 `(page|route)` 用同一个
+ * extPattern,不是官方文档表格暗示的那样各自收窄成 page={js,jsx,tsx}/route={js,ts}。
+ */
+const CODE_EXTENSIONS = ["tsx", "ts", "jsx", "js"];
+
+/** app/ 下会被编译成真 URL 的 page/route 叶子文件名,含全部扩展名变体。 */
+const LEAF_ROUTE_FILENAMES = new Set([
+  ...CODE_EXTENSIONS.map((ext) => `page.${ext}`),
+  ...CODE_EXTENSIONS.map((ext) => `route.${ext}`),
+]);
+
+/**
+ * icon / apple-icon / opengraph-image / twitter-image 共享同一套 metadata 路由规则(取自
+ * next/dist/lib/metadata/is-metadata-route.js 的 STATIC_METADATA_IMAGES):可嵌套在任意子目录;
+ * 静态图片文件在 URL 里保留自己的扩展名(如 /icon.png);动态生成器文件(.ts/.tsx/.js/.jsx,
+ * 例如 opengraph-image.tsx)在 URL 里不带扩展名——内容类型由运行时决定,见
+ * next/dist/lib/metadata/get-metadata-route.js 的 normalizeMetadataRoute。
+ */
+const METADATA_IMAGE_STATIC_EXTENSIONS: Record<string, string[]> = {
+  icon: ["ico", "jpg", "jpeg", "png", "svg"],
+  "apple-icon": ["jpg", "jpeg", "png"],
+  "opengraph-image": ["jpg", "jpeg", "png", "gif"],
+  "twitter-image": ["jpg", "jpeg", "png", "gif"],
+};
+
+/** 只能出现在 app/ 根目录的静态 metadata 文件——Next 的匹配正则以 `^` 锚死开头,不接受嵌套。 */
+const ROOT_ONLY_METADATA_FILENAMES = new Set(["favicon.ico"]);
+
+/** 拆出 `<name>.<ext>`;没有扩展名时返回 null(理论上不会命中,纯防御)。 */
+function splitFilename(filename: string): { name: string; ext: string } | null {
+  const dot = filename.lastIndexOf(".");
+  if (dot <= 0) return null;
+  return { name: filename.slice(0, dot), ext: filename.slice(dot + 1) };
+}
+
+/**
+ * 一个 app/ 目录条目(文件)如果是 Next 的 metadata 路由约定文件,返回它在当前目录下的
+ * URL 段;不是就返回 null。`isRoot` 标出 urlPrefix === "" 的场景——favicon/robots/manifest
+ * 只在 app/ 根目录生效(Next 的正则没有给它们开放嵌套),sitemap 与四种图标可以嵌套。
+ */
+function metadataRouteSegment(filename: string, isRoot: boolean): string | null {
+  if (isRoot && ROOT_ONLY_METADATA_FILENAMES.has(filename)) return filename; // favicon.ico
+
+  const parsed = splitFilename(filename);
+  if (!parsed) return null;
+  const { name, ext } = parsed;
+
+  if (isRoot && name === "robots" && (ext === "txt" || CODE_EXTENSIONS.includes(ext))) {
+    return "robots.txt"; // URL 扩展名固定,与源文件扩展名无关(见 normalizeMetadataRoute)
+  }
+  if (isRoot && name === "manifest" && (ext === "json" || ext === "webmanifest" || CODE_EXTENSIONS.includes(ext))) {
+    return CODE_EXTENSIONS.includes(ext) ? "manifest.webmanifest" : filename;
+  }
+  if (name === "sitemap" && (ext === "xml" || CODE_EXTENSIONS.includes(ext))) {
+    return "sitemap.xml"; // 可嵌套,URL 扩展名固定为 .xml
+  }
+
+  const staticExtensions = METADATA_IMAGE_STATIC_EXTENSIONS[name];
+  if (staticExtensions) {
+    if (staticExtensions.includes(ext)) return filename; // 静态图片,URL 保留扩展名
+    if (CODE_EXTENSIONS.includes(ext)) return name; // 动态生成器,URL 不带扩展名
+  }
+
+  return null;
+}
+
 /** app/ 下每一条真路由的 URL 路径,从文件系统机械枚举 —— 地址不在测试里手抄第二份。 */
 function realRoutePaths(dir = resolve(WEB_ROOT, "app"), urlPrefix = ""): string[] {
   const found: string[] = [];
+  const isRoot = urlPrefix === "";
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isFile() && (entry.name === "page.tsx" || entry.name === "route.ts")) {
-      found.push(urlPrefix === "" ? "/" : urlPrefix);
+    if (entry.isFile()) {
+      if (LEAF_ROUTE_FILENAMES.has(entry.name)) {
+        found.push(isRoot ? "/" : urlPrefix);
+        continue;
+      }
+      const metadataSegment = metadataRouteSegment(entry.name, isRoot);
+      if (metadataSegment !== null) {
+        found.push(isRoot ? `/${metadataSegment}` : `${urlPrefix}/${metadataSegment}`);
+      }
       continue;
     }
     if (!entry.isDirectory() || entry.name === "__tests__") continue;
@@ -584,6 +661,7 @@ const PUBLIC_APP_ROUTES = [
   "/api/ops/dlq",
   "/api/ready",
   "/api/stripe/webhook",
+  "/favicon.ico",
   "/forgot-password",
   "/legal/data-deletion",
   "/login",
