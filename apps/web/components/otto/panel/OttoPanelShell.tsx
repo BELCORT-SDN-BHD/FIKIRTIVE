@@ -84,6 +84,18 @@ export interface OttoPanelShellProps {
   historyOpen?: boolean;
   onNewChat?: () => void;
   headerBusy?: boolean;
+  /**
+   * 深链要求这一次访问必须打开(`?otto=1`,规格书 §2.5)—— 盖过 localStorage 记的上次
+   * 开合状态,但只在**挂载那一次**的存值合并里生效;之后商家自己开关面板走的是正常记忆,
+   * 不会被这份深链再次劫持。
+   *
+   * 折进下面那一次挂载后的 `reconcileViewport` 里,不是另开一个 `setState`:面板是每一次
+   * 完整访问只挂载一次的常驻层(挂在 `MerchantAppShell`,路由怎么切都不卸载),挂载后还有
+   * 另一个 effect 会把 localStorage 的存值套回来 —— 如果分两步各自 `setState`,后一步会
+   * 把这一步刚设的「打开」原样覆盖掉(两个 effect 谁先跑不确定,读值的那个不知道深链
+   * 要求打开)。合并成一步就没有这个竞态。
+   */
+  forceOpenOnMount?: boolean;
 }
 
 export function OttoPanelShell({
@@ -97,6 +109,7 @@ export function OttoPanelShell({
   historyOpen,
   onNewChat,
   headerBusy,
+  forceOpenOnMount,
 }: OttoPanelShellProps) {
   // 首帧一律按默认值画(服务端不知道 localStorage,也不知道视窗有多大),
   // 挂载后再一次性套用存值 —— 这就是 `data-otto-panel-hydrated` 存在的理由。
@@ -104,14 +117,19 @@ export function OttoPanelShell({
   const [state, setState] = React.useState<OttoPanelState>(() => defaultOttoPanelState(FALLBACK_VIEWPORT));
   const [hydrated, setHydrated] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
+  // 只读挂载那一刻的值:这个 ref 从来不会因为父层重渲染而更新,故意的——深链只在这次
+  // 访问的第一帧说话算数,商家关掉面板之后地址栏仍然带着同一个 `?otto=1` 也不该再劫持它。
+  const forceOpenOnMountRef = React.useRef(forceOpenOnMount);
 
   // 这一次「多」的渲染正是 §3.3 要的:服务端不知道 localStorage、也不知道视窗多大,
   // 首帧只能画默认值,存值只能在挂载之后套上去 —— 那一步必然是一次挂载后的 setState。
   React.useEffect(() => {
     const vp = readViewport();
+    const stored = readOttoPanelState(vp);
+    const merged = forceOpenOnMountRef.current ? setPanelOpen(stored, true) : stored;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上:挂载后套用存值,§3.3。
     setViewport(vp);
-    setState(reconcileViewport(readOttoPanelState(vp), vp));
+    setState(reconcileViewport(merged, vp));
     setHydrated(true);
   }, []);
 

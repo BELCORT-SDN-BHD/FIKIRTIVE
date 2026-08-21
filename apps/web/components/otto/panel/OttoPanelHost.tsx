@@ -83,6 +83,25 @@ type Load =
   | { status: "ready"; seed: Seed }
   | { status: "error"; message: string };
 
+/** 深链一次性消费的三个信号(规格书 §2.2/§2.5):`/?otto=1&project=P&thread=T`。 */
+type DeepLink = {
+  /** `?otto=1` —— 这次访问必须打开面板,不管 localStorage 上次记了什么。 */
+  forceOpen: boolean;
+  projectId: string | undefined;
+  threadId: string | undefined;
+};
+
+/** `location` 可能带 query(与 `OttoPanelMount` 收到的是同一个字符串),只看那一段。 */
+function parseDeepLink(location: string): DeepLink {
+  const qIndex = location.indexOf("?");
+  const query = new URLSearchParams(qIndex >= 0 ? location.slice(qIndex + 1) : "");
+  return {
+    forceOpen: query.get("otto") === "1",
+    projectId: query.get("project") ?? undefined,
+    threadId: query.get("thread") ?? undefined,
+  };
+}
+
 export function OttoPanelHost({
   location,
   children,
@@ -114,15 +133,28 @@ export function OttoPanelHost({
   /** 面板此刻开着还是关着 —— 由 `PanelOpenWatcher`(挂在下面 `children` 旁边)报上来。 */
   const [open, setOpen] = React.useState(false);
 
+  // 深链只读挂载那一刻的 `location`,不跟着后续导航重算:这一层横跨整个访问不卸载
+  // (挂在 `MerchantAppShell`),商家点开别的页面之后地址栏早就换了新的 query,深链的
+  // 意思是「这次访问的落地页说了什么」,不是「地址栏现在说什么」。
+  const [deepLink] = React.useState(() => parseDeepLink(location));
+  // 种子只用深链选一次:第一次因为它触发的取数(不管是 `otto=1` 自动打开,还是商家自己
+  // 手动开了面板而地址栏恰好还带着这两个参数)之后,后面商家自己关了再开,应该回到平常
+  // 「当前 project 最近一条」那条默认路径,不该被同一个深链悄悄按住不放。
+  const deepLinkConsumedRef = React.useRef(false);
+
   // 打开的每一下都重取一次,不是只在这一层挂载时取一次(见本文件顶部「取数按面板开合来」)。
   // `open` 从 false 变 true 才会真的发一次请求;从 true 变 false 只是把这一效果的依赖标记
   // 为已变,函数体自己早退,不发请求 —— 关掉面板不该顺手再打一次数据装配。
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    const select = deepLinkConsumedRef.current
+      ? undefined
+      : { projectId: deepLink.projectId, threadId: deepLink.threadId };
+    deepLinkConsumedRef.current = true;
     void (async () => {
       // 服务端动作自己不抛(它把失败折成 {error}),但网络那一段仍可能断。
-      const result = await loadOttoPanelSeed().catch(() => ({ error: "Otto is not reachable right now." }));
+      const result = await loadOttoPanelSeed(select).catch(() => ({ error: "Otto is not reachable right now." }));
       if (cancelled) return;
       if ("error" in result) {
         setLoad({ status: "error", message: result.error });
@@ -135,7 +167,7 @@ export function OttoPanelHost({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, deepLink]);
 
   // ── 上下文 chip:这一票**不画** ────────────────────────────────────────────
   //
@@ -479,6 +511,7 @@ export function OttoPanelHost({
       // 正在把一条会话的消息取回来时,头部这两颗会改变「现在显示哪一条」的按钮先禁掉。
       // 真正的守卫是意图号(见上面 `claimIntent`);禁用只是让这一下不必发生。
       headerBusy={openingThreadId !== null}
+      forceOpenOnMount={deepLink.forceOpen}
     >
       <PanelOpenWatcher onOpenChange={setOpen} />
       {children}

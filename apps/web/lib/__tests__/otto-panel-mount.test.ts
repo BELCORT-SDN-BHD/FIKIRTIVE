@@ -44,9 +44,13 @@ vi.mock("@/lib/account-actions", () => ({
   getMyAccount: vi.fn().mockResolvedValue({ error: "not mocked in this test" }),
 }));
 
-/** 面板体的取数。真实现要 Postgres;这里只需要证明「面板拿到什么就画什么」。 */
+/** 面板体的取数。真实现要 Postgres;这里只需要证明「面板拿到什么就画什么」。
+ *  参数原样转发(不是 `() => loadOttoPanelSeed()` 吞掉调用方传了什么)——深链测试要断言
+ *  的正是 `OttoPanelHost` 把 `{projectId, threadId}` 传对了没有。 */
 const loadOttoPanelSeed = vi.fn();
-vi.mock("@/lib/otto-panel-seed", () => ({ loadOttoPanelSeed: () => loadOttoPanelSeed() }));
+vi.mock("@/lib/otto-panel-seed", () => ({
+  loadOttoPanelSeed: (...args: unknown[]) => loadOttoPanelSeed(...args),
+}));
 
 /** 会话那一侧的服务端动作 —— 这个文件一次都不会走到它们,挡住是为了不把 Prisma 拖进来。 */
 vi.mock("@/lib/otto-client-actions", () => ({
@@ -87,7 +91,8 @@ const { MerchantShellContent } = await import("@/components/global-navigation");
 // 的 promise 才会在一两拍内落地 —— 否则等的就是模块解析本身,拍数变成机器速度的函数。
 await import("@/components/otto/panel/OttoPanelConversation");
 const { ottoPanelMountsOn } = await import("@/components/otto/panel/panel-surface");
-const { OTTO_PANEL_STORAGE_KEY } = await import("@/components/otto/panel/panel-state");
+const { OTTO_PANEL_STORAGE_KEY, defaultOttoPanelState, setPanelOpen, writeOttoPanelState } =
+  await import("@/components/otto/panel/panel-state");
 const { ottoGreeting } = await import("@/lib/otto-greeting");
 const otto_client_actions = await import("@/lib/otto-client-actions");
 const renameCoworkThread = vi.mocked(otto_client_actions.renameCoworkThread);
@@ -355,6 +360,70 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
 
     expect(el.querySelector<HTMLElement>("[data-otto-panel]")!.style.width).toBe(`${DEFAULT_WIDTH}px`);
     expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+});
+
+/**
+ * 深链一次性消费(判官修复轮 P1,规格书 §2.2/§2.5)。
+ *
+ * `/otto?project=P&thread=T` 重定向到 `/?otto=1&project=P&thread=T` 之后,这两件事必须
+ * 真的发生,不能只是「地址栏带着,没人读」:
+ *   ① `otto=1` 盖过 localStorage 记的上次开合状态,这次访问自动打开;
+ *   ② `project=`/`thread=` 原样转给 `loadOttoPanelSeed`,种子选择的那一半在
+ *      `otto-panel-seed.test.ts` 单独钉(选中哪一条会话的分支逻辑),这里只钉「转发对了」。
+ *
+ * 种子本身的选择分支(project/thread 校验、bare project 选最近会话)不在这个文件里重复
+ * 断言 —— 那是 `otto-panel-seed.test.ts` 的活,这里的 `loadOttoPanelSeed` 是一颗
+ * mock,断言的是「调用它的时候传了什么」,不是它内部怎么选。
+ */
+describe("深链一次性消费(判官修复轮 P1,规格书 §2.2/§2.5)", () => {
+  /** 写一份「关着」的存档,证明 `?otto=1` 真的盖过了它,不是恰好默认就是开的。 */
+  function writeClosedState() {
+    writeOttoPanelState(setPanelOpen(defaultOttoPanelState(VIEWPORT), false));
+  }
+
+  it("?otto=1 盖过存档里记的关着,这次访问自动打开", async () => {
+    writeClosedState();
+    const el = await mount(shell("/?otto=1"));
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("没有 ?otto=1 就不会自动开 —— 深链只在明说要开的时候开", async () => {
+    writeClosedState();
+    const el = await mount(shell("/?project=proj_x"));
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+  });
+
+  it("project= 与 thread= 原样转给 loadOttoPanelSeed", async () => {
+    await mount(shell("/?otto=1&project=proj_x&thread=thr_y"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledWith({ projectId: "proj_x", threadId: "thr_y" });
+  });
+
+  it("地址栏没给 project=/thread= 时,转发的是 undefined,不是空字符串", async () => {
+    await mount(shell("/?otto=1"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledWith({ projectId: undefined, threadId: undefined });
+  });
+
+  it("关了再开:深链只消费第一次,第二次开合回到默认(不双取,也不会一直粘着同一条深链)", async () => {
+    const el = await mount(shell("/?otto=1&project=proj_x&thread=thr_y"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: "proj_x", threadId: "thr_y" });
+
+    // Cmd/Ctrl+J 关掉,再按一次开 —— 与「快捷键与存档」那组用的同一个操作。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    // 恰好还是「打开」这一下才会取数,不是每次开合都取(#1022 那条纪律)——第二次打开
+    // 也确实触发了第二次取数,但这次不带深链参数了。
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, undefined);
   });
 });
 
