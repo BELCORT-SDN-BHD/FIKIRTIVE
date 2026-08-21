@@ -80,12 +80,15 @@ describe("W2-2 ① `/brand` 是真路由", () => {
     expect(code(loading), "手搓骨架又回来了").not.toContain("animate-pulse");
   });
 
-  it("Stack A:导航权威一个字没动 —— MERCHANT_NAV 里今天还没有 Brand 这一格", async () => {
-    // 这条不是「没做完」,是这一票的边界(规格书 §6.3):新旧路由并存,导航指过来是切换
-    // 总票 W2-11 的事。写成断言,是因为「顺手把导航也改了」正是让并行六路互相踩的那一步。
+  it("换壳落地后:MERCHANT_NAV 的 Brand 一格指的正是这条真路由(W2-11 收口)", async () => {
+    // 这条曾经是这一票的边界(规格书 §6.3):新旧路由并存,导航指过来是切换总票 W2-11 的
+    // 事,写成断言当时是为了防「顺手把导航也改了」这种越界。W2-11 已经落地,边界完成了
+    // 它的使命 —— 现在反过来钉「指对了」:MERCHANT_NAV 的 Brand 必须就是这一票建的
+    // 这条真路由,不是另起了第二个地址,旧壳的 `/otto?view=memory` 也不该再是权威指的地方。
     const { MERCHANT_NAV } = await import("@fikirtive/core/navigation");
     const hrefs = JSON.stringify(MERCHANT_NAV);
-    expect(hrefs, "导航权威被这一票改了 —— 那是 W2-11 的活").not.toContain('"/brand"');
+    expect(hrefs, "MERCHANT_NAV 的 Brand 没有指向这一票建的真路由").toContain('"/brand"');
+    expect(hrefs, "旧壳的 /otto?view=memory 不该再是导航权威指的地址").not.toContain("view=memory");
   });
 });
 

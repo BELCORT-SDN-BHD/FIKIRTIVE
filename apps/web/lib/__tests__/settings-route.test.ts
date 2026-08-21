@@ -168,16 +168,19 @@ describe("W2-4 ① `/settings` 与 `/settings/connections` 是真路由", () => 
     }
   });
 
-  it("Stack A:导航权威一个字没动 —— MERCHANT_NAV 里今天还指着旧地址", async () => {
-    // 这条不是「没做完」,是这一票的边界(规格书 §6.3):新旧路由并存,导航指过来是切换
-    // 总票 W2-11 的活。写成断言,是因为「顺手把导航也改了」正是让并行几路互相踩的那一步。
+  it("换壳落地后:MERCHANT_NAV 的 Settings 分组指的正是这两条真路由(W2-11 收口)", async () => {
+    // 这条曾经是这一票的边界(规格书 §6.3):新旧路由并存,导航指过来是切换总票 W2-11 的
+    // 活,写成断言当时是为了防「顺手把导航也改了」这种越界。W2-11 已经落地,边界完成了
+    // 它的使命 —— 现在反过来钉「指对了」:Settings 分组里的 Connections/Preferences
+    // 必须就是这一票建的这两条真路由,旧壳的 `?view=account`/`?view=connections` 不该
+    // 再是权威指的地方。
     const { MERCHANT_NAV } = await import("@fikirtive/core/navigation");
     const tree = JSON.stringify(MERCHANT_NAV);
-    expect(tree, "导航权威被这一票改了 —— 那是 W2-11 的活").not.toContain('"/settings"');
-    expect(tree).not.toContain('"/settings/connections"');
-    // 而旧壳照常:两个旧视图地址还在导航里,商家今天走的还是那条路。
-    expect(tree).toContain("/otto?view=account");
-    expect(tree).toContain("/otto?view=connections");
+    expect(tree, "MERCHANT_NAV 的 Preferences 没有指向这一票建的真路由").toContain('"/settings"');
+    expect(tree, "MERCHANT_NAV 的 Connections 没有指向这一票建的真路由").toContain('"/settings/connections"');
+    // 旧壳收口:两个旧视图地址不该再是导航权威指的地方。
+    expect(tree).not.toContain("view=account");
+    expect(tree).not.toContain("view=connections");
   });
 });
 
@@ -447,8 +450,10 @@ describe("W2-4 ④ 改动面里没有没人排期的承诺", () => {
   });
 
   it("Preferences 这一面不渲染任何通知承诺(#791-2 删过,别回来)", () => {
-    // 导航文案里那句 “Set your spend cap, notifications and posting defaults.” 还留着一个
-    // “notifications”,但它在导航权威文件里 —— 按 Stack A 归 W2-11 改,这里只钉页面本身。
+    // 导航文案里那句 “Set your spend cap, notifications and posting defaults.” 曾经还留着
+    // 一个 “notifications” —— 按 Stack A 归 W2-11 改,W2-11 落地时已经删掉(现在是
+    // “Set your spend cap and posting defaults.”,`navigation.test.ts` 钉着这一点)。
+    // 这里只钉页面本身,不重复权威文件那条。
     const sections = source("components/otto/settings/sections.tsx");
     const rendered = sections
       .replace(/\/\*[\s\S]*?\*\//g, "")

@@ -16,13 +16,26 @@
  *   - `/otto?view=<每一个旧值>` 都不 404(等 `/otto` 缩成重定向表,W2-11)
  *   - `?project=` / `?thread=` 在重定向后不丢(同上)
  *
- * 零 I/O、零渲染:纯数据对账。
+ * W2-11 落地后,§7.1「重定向」剩下的那三条也补齐在这个文件里(见文末三个 describe):
+ * `/otto` 本身缩成了纯重定向表(`app/otto/page.tsx`),所以这三条现在真的证得了。
+ *
+ * 零 I/O、零渲染(§2.2/OTTO_VIEW_REDIRECTS 的数据对账部分);末尾三组会真的调用
+ * `/otto` 的页面函数,mock 掉 `next/navigation` 的 `redirect()`(它靠抛异常中断渲染,
+ * 假件也必须抛,不然被测代码会继续往下跑,生产里它不会——沿用 library-real-route-986
+ * 已经立好的假件形状)。
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OTTO_VIEW_REDIRECTS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { OTTO_VIEW_KEYS } from "@/components/otto/otto-view-param";
+
+const mockRedirect = vi.fn((url: string) => {
+  throw new Error(`NEXT_REDIRECT:${url}`);
+});
+vi.mock("next/navigation", () => ({ redirect: mockRedirect }));
+
+const { default: OttoRedirect } = await import("../../app/otto/page");
 
 /** 去处里的路径部分 —— `?otto=1` 与 `#templates` 都不是新路由,不参与地址对账。 */
 function pathOf(target: string): string {
@@ -178,5 +191,88 @@ describe("CRM 十四条旧地址一条都不撞墙(W2-13 / #993)", () => {
       file.endsWith("loading.tsx"),
     );
     expect(loading).toEqual([]);
+  });
+});
+
+/**
+ * 延期项①(本文件第 15 行,W2-11 触发条件已到):§2.2 表里每一条 `to` 都落在一条真路由上。
+ * `from` 那一侧(`/otto?view=X`)不是文件系统上的东西——它是同一个 `/otto/page.tsx`
+ * 读出来的 query,不是十一个不同的路由文件,所以这里只核「去处」,「起点」由下面两组
+ * 通过真的调用页面函数来核(调用得动本身就证明了 `/otto` 这一个文件接住了全部十一个 view)。
+ */
+describe("§2.2 表的去处都落在真路由文件上(W2-11)", () => {
+  const APP_DIR = path.resolve(__dirname, "../../app");
+
+  function pageFileFor(urlPath: string): string {
+    const trimmed = urlPath === "/" ? "" : urlPath.replace(/^\//, "");
+    return path.join(APP_DIR, trimmed, "page.tsx");
+  }
+
+  it.each(Object.entries(OTTO_VIEW_REDIRECTS))("?view=%s → %s 有真的 page.tsx", (_view, target) => {
+    const route = pageFileFor(pathOf(target));
+    expect(existsSync(route), `${target} 没有路由文件(${route})`).toBe(true);
+  });
+});
+
+/**
+ * 延期项②:`/otto?view=<每一个旧值>` 都不 404 —— 真的调用页面函数(不是读源码字符串),
+ * 传入每一个 `OTTO_VIEW_KEYS`,断言它落进 `redirect()`、目标恰好是权威表那一行。
+ * 「不 404」在服务端组件的世界里就是「函数正常跑完并交出一个 redirect,不是抛一个
+ * 意料之外的错误、也不是渲染出空页面」。
+ */
+describe("/otto?view=<每一个旧值> 都不 404(W2-11)", () => {
+  it.each(OTTO_VIEW_KEYS)("?view=%s 落进 redirect(),目标是权威表那一行", async (view) => {
+    await expect(
+      OttoRedirect({ searchParams: Promise.resolve({ view }) }),
+    ).rejects.toThrow(`NEXT_REDIRECT:${OTTO_VIEW_REDIRECTS[view]}`);
+  });
+
+  it("不给 ?view= 也不 404 —— 落回「otto」那一行(面板自动打开)", async () => {
+    await expect(
+      OttoRedirect({ searchParams: Promise.resolve({}) }),
+    ).rejects.toThrow(`NEXT_REDIRECT:${OTTO_VIEW_REDIRECTS.otto}`);
+  });
+
+  it("一个产品不认的 ?view= 也不 404 —— 同样落回「otto」那一行", async () => {
+    await expect(
+      OttoRedirect({ searchParams: Promise.resolve({ view: "not-a-real-view" }) }),
+    ).rejects.toThrow(`NEXT_REDIRECT:${OTTO_VIEW_REDIRECTS.otto}`);
+  });
+});
+
+/**
+ * 延期项③:`?project=` / `?thread=` 在重定向后不丢。
+ */
+describe("?project= / ?thread= 重定向后不丢(W2-11)", () => {
+  it("?view=library&project=P&thread=T → /library 后面接住 project 与 thread", async () => {
+    await expect(
+      OttoRedirect({
+        searchParams: Promise.resolve({ view: "library", project: "P", thread: "T" }),
+      }),
+    ).rejects.toThrow("NEXT_REDIRECT:/library?project=P&thread=T");
+  });
+
+  it("落点本来就带 query 时(?otto=1)不拼出两个 ? —— project/thread 接在后面", async () => {
+    await expect(
+      OttoRedirect({
+        searchParams: Promise.resolve({ project: "P", thread: "T" }),
+      }),
+    ).rejects.toThrow("NEXT_REDIRECT:/?otto=1&project=P&thread=T");
+  });
+
+  it("落点带锚点时(#templates)query 在锚点之前,锚点仍在最后", async () => {
+    await expect(
+      OttoRedirect({
+        searchParams: Promise.resolve({ view: "templates", project: "P" }),
+      }),
+    ).rejects.toThrow("NEXT_REDIRECT:/create?project=P#templates");
+  });
+
+  it("view 参数本身不会跟着一起被转发(已被消费掉,不属于任何人)", async () => {
+    await expect(
+      OttoRedirect({
+        searchParams: Promise.resolve({ view: "memory", thread: "T" }),
+      }),
+    ).rejects.toThrow("NEXT_REDIRECT:/brand?thread=T");
   });
 });

@@ -1,16 +1,6 @@
 import { auth } from "@/lib/better-auth/server";
 import { NextResponse, type NextRequest } from "next/server";
 
-const STALE_OTTO_THREAD_ACTIVITY_ACTION_IDS = new Set([
-  "40e295ab821708676046d9a9ce1d58dca80ea9c87c",
-]);
-
-function isStaleOttoThreadActivityAction(req: NextRequest) {
-  return req.method === "POST"
-    && req.nextUrl.pathname === "/otto"
-    && STALE_OTTO_THREAD_ACTIVITY_ACTION_IDS.has(req.headers.get("next-action") ?? "");
-}
-
 /**
  * Next 16 proxy (the middleware successor; Node runtime by default).
  *
@@ -25,16 +15,6 @@ function isStaleOttoThreadActivityAction(req: NextRequest) {
  * Better Auth: it reads the BA session via auth.api.getSession.
  */
 export default async function proxy(req: NextRequest) {
-  if (isStaleOttoThreadActivityAction(req)) {
-    return new NextResponse(null, {
-      status: 204,
-      headers: {
-        "cache-control": "no-store",
-        "x-fikirtive-stale-client": "otto-thread-activity",
-      },
-    });
-  }
-
   // Fail-closed in production: now that money-incurring features (Otto) ship, a prod
   // deploy that simply FORGETS the flag must not serve the app unauthenticated. So in
   // production the wall is ON unless someone EXPLICITLY sets AUTH_ENABLED=false. In dev

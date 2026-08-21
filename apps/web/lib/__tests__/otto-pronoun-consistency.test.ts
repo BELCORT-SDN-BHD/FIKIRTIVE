@@ -257,7 +257,8 @@ describe("#682 ① no third-person pronoun stands in for Otto anywhere in produc
     for (const surface of [
       "apps/web/app/login/page.tsx",
       "apps/web/components/otto/OttoMemory.tsx",
-      "apps/web/components/otto/OttoOnboarding.tsx",
+      // W2-11:`OttoOnboarding.tsx` 随旧壳一起删除;换成同样真的对客文案页。
+      "apps/web/components/home/home-data.ts",
     ]) {
       expect(tracked, `${surface} fell out of the scan`).toContain(surface);
     }
@@ -586,8 +587,10 @@ describe("#682 ② every cured surface says the name", () => {
 
   it("the surface Founder named as already correct is left alone", () => {
     // 引导卡本来就用名字,是裁决里的正例。它必须**保持原样** —— 一次「统一」把正确的
-    // 那一处也改掉,是这类扫查最常见的副作用。
-    const source = readFileSync(path.join(REPO_ROOT, "apps/web/components/otto/OttoOnboarding.tsx"), "utf8");
+    // 那一处也改掉,是这类扫查最常见的副作用。W2-11:引导卡这个组件(`OttoOnboarding.tsx`)
+    // 随旧壳一起删除,但它守的这句话没有跟着消失 —— Home 自己的「把 Otto 装备好」区块
+    // (`components/home/home-data.ts`)原样带着同一句文案,正例挪了地方,不是没了。
+    const source = readFileSync(path.join(REPO_ROOT, "apps/web/components/home/home-data.ts"), "utf8");
     expect(source).toContain("Voice, rules, audience — Otto uses it every time");
   });
 });

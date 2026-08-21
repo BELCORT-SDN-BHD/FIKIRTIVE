@@ -16,9 +16,9 @@
  * Otto 面板**永远不静默开画布** —— 它只提议,商家点了才建。这条纪律不在这里执行(这里根本
  * 不认识 Otto),但它是这个组件存在的理由之一。
  *
- * 说清楚范围:这是**新壳面**上开画布的唯一入口(Home 与 Create 都是它)。旧壳里还有一处
- * `createProject` —— `components/otto/OttoApp.tsx:401` 的 "New project",那是旧 `/otto` 宿主
- * 自己的按钮,Q5-A 已裁定不留旧全屏页,它随 W2-11 一并退场。这一票不动它。
+ * 说清楚范围:这是全壳唯一的开画布入口(Home 与 Create 都是它)。旧壳里曾经还有一处
+ * `createProject` —— `OttoApp.tsx:401` 的 "New project",那是旧 `/otto` 宿主自己的按钮;
+ * Q5-A 裁定不留旧全屏页,它随 W2-11(切换总票)一并删除,`createProject` 从此只有这一处调用点。
  */
 
 import { useState, useTransition } from "react";

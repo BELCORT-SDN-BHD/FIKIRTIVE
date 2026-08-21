@@ -4,7 +4,9 @@
  * 这一票修的不是引擎,而是**门**:拼接/字幕/配乐的引擎自 #606 起一直在跑,商家却没有任何
  * 入口摸得到它(#846 记的就是这笔欠账)。所以围栏钉的是「门在不在、两扇门是不是同一间屋」,
  * 而不是内部函数长什么样:
- *   ① **人工一面** —— 导轨里有一扇真门,路由认这个 view,壳把剪辑台画出来。
+ *   ① **人工一面** —— 有一条真路由,画出来的是剪辑台本身(W2-11 切换总票之后,导轨上的
+ *      门撤了,详情见下面 describe 块自己的注释——那是一个已知、已上报的缺口,不是这条
+ *      纪律本身作废)。
  *   ② **Otto 一面** —— 端口与技能都能做同样三件事。
  *   ③ **同一个动作层** —— 两面调用的是同一个模块;任何一面都没有第二套业务实现,
  *      浏览器侧不碰 Prisma、不自己拼时间线 JSON。
@@ -21,10 +23,10 @@
  *   · `edit-desk-open.test.ts` —— 真组件真 React:reject 收尾、未知状态显示、恢复持久导出;
  *   · `edit-desk-actions.test.ts` —— 落库文档的形状(并发、损坏 base 拒写、配乐长度)。
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { navLinkByKey, navPath } from "@fikirtive/core/navigation";
+import { OTTO_VIEW_REDIRECTS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { skillCatalog } from "@fikirtive/otto";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -46,26 +48,27 @@ const DESK_ACTIONS = [
 ] as const;
 
 describe("① 人工一面:剪辑台真的有一扇门", () => {
-  it("导轨里有它自己的一格,指向一条真路由", () => {
-    const door = navLinkByKey("edit");
-    expect(door.href).toBe("/otto?view=edit");
-    expect(navPath("edit")).toBe("Workspace › Video editor");
-    // 那句人话必须说得出三件事,商家才知道这扇门后面是什么
-    expect(door.does).toMatch(/together/i);
-    expect(door.does).toMatch(/captions/i);
-    expect(door.does).toMatch(/music/i);
+  /**
+   * W2-11(切换总票)之后,「edit」不再是导轨里的一格 —— 新 `MERCHANT_NAV` 是规格书 §2.3①
+   * 拍板的七格骨架,`Workspace` 分组连同它下面那颗「Video editor」一起撤了(规格书 Q6 早已
+   * 说明理由:要剪的东西就在 Library 里,不该在导轨上另占一格)。但 Q6 说的是「挪进
+   * Library 的界面里」,不是「不留任何门」—— 今天 Library 自己的界面(`OttoStuff.tsx`)
+   * 还没有一处链接指向 `/library/editor`,这是一个真实的、W2-11 暴露出来的可发现性缺口,
+   * 已经在收尾报告里向协调者点名,不在这一票的动手范围内(建一个新的「点进剪辑台」UI 是
+   * 一次新功能,不是切换总票列出的活)。这里只钉今天为真的两件事:①真路由还在、还接的是
+   * 同一个组件;②旧书签 `/otto?view=edit` 一样 307 到它,不会 404。
+   */
+  it("真路由还在,不是被切换总票误删掉的一部分", () => {
+    expect(existsSync(path.join(WEB_ROOT, "app/library/editor/page.tsx"))).toBe(true);
+    expect(SHELL_ROUTES.edit).toBe("/library/editor");
   });
 
-  it("路由与外壳都认这个 view —— 门不通向 404,也不静默回落到别处", () => {
-    // 路由与外壳读的是同一张表(#969 判官 P2-3 之后收成一份),所以钉在那张表上。
-    expect(codeOf("components/otto/otto-view-param.ts")).toContain('"edit"');
-    expect(codeOf("app/otto/page.tsx")).toContain("parseOptionalViewParam");
-    expect(codeOf("components/otto/OttoApp.tsx")).toContain("parseViewParam");
-    expect(codeOf("components/otto/OttoView.tsx")).toMatch(/view === "edit"/);
+  it("旧书签 ?view=edit 一样 307 到它,不会 404(§2.5「旧地址一律不撞墙」)", () => {
+    expect(OTTO_VIEW_REDIRECTS.edit).toBe(SHELL_ROUTES.edit);
   });
 
   it("门后面画的是剪辑台本身", () => {
-    expect(codeOf("components/otto/OttoView.tsx")).toContain("<EditDesk");
+    expect(codeOf("app/library/editor/page.tsx")).toContain("<EditDesk");
   });
 });
 

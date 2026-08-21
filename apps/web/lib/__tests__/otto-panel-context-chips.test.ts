@@ -166,18 +166,31 @@ describe("面板知道商家在看哪一页 (§3.4)", () => {
     });
   });
 
-  it("首页只认全等 —— 拿 `/` 当前缀会把整个站点都算成它的对象", () => {
-    // 首页在导航树里没有一格,所以它没有可说的上下文 —— 但它绝不能把别的面吃掉。
-    expect(panelContextSubject(SHELL_ROUTES.home)).toBeNull();
-    expect(panelContextSubject(SHELL_ROUTES.campaign)).not.toBeNull();
+  it("首页只认全等 —— 拿 `/` 当前缀不会把整个站点都算成它的对象", () => {
+    // W2-11:Home 换壳后自己就是导航树里第一格(七格骨架的第一个),所以它今天确实有
+    // 名字可说了 —— 但 matchShellRoute() 对 home 仍然只认全等(见 panel-page.ts 里
+    // `href === SHELL_ROUTES.home` 那个特判),这条真正要钉的是「/ 不会被当成前缀吃掉
+    // 别的面」:campaign 必须解出它自己,不能被读成首页的对象。
+    expect(panelContextSubject(SHELL_ROUTES.home)).toEqual({
+      kind: "page",
+      routeKey: "home",
+      label: navLinkByKey("home").label,
+    });
+    expect(panelContextSubject(SHELL_ROUTES.campaign)).toMatchObject({ routeKey: "campaign" });
   });
 
-  it("长的先命中 —— 画布不是 Create 的一个对象", () => {
+  it("长的先命中 —— 画布不是 Create 的一个对象,剪辑台也不是 Library 的一个对象", () => {
     const subject = panelContextSubject(SHELL_ROUTES.canvas);
     // canvas 在导航树里没有单独一格(它在 Create 那扇门后面),所以没有 chip;
     // 关键是它没有被读成 `{ objectId: "canvas" }`。
     expect(subject).toBeNull();
-    expect(panelContextSubject(SHELL_ROUTES.edit)).toMatchObject({ kind: "page", routeKey: "edit" });
+    // W2-11:剪辑台的导轨门撤了(规格书 §2.3①,「edit」不再是 MERCHANT_NAV 的一格 ——
+    // 这是已知、已上报的可发现性缺口,见 edit-desk-two-surfaces.test.ts),所以它今天
+    // 也没有名字可说了(navLabelForRoute 在导航树里找不到它)—— 但它仍然必须落在
+    // 自己的 shell 路由上,不能被读成 library 的一个对象。
+    expect(panelContextSubject(SHELL_ROUTES.edit)).toBeNull();
+    // 换一个今天还真的有导航名字的「子路径压过父路径」例子:connections 在 settings 下面。
+    expect(panelContextSubject(SHELL_ROUTES.connections)).toMatchObject({ kind: "page", routeKey: "connections" });
   });
 
   it("query 与末尾斜杠不影响判定", () => {

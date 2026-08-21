@@ -52,8 +52,8 @@ function sourceOf(relative: string): string {
 
 /** Home 组件族 —— 这一页的全部源码,一个文件都不许漏在对账之外。 */
 const HOME_FAMILY = [
-  "app/home/page.tsx",
-  "app/home/loading.tsx",
+  "app/page.tsx",
+  "app/loading.tsx",
   "components/home/HomeEntry.tsx",
   "components/home/HomeView.tsx",
   "components/home/home-data.ts",
@@ -210,7 +210,7 @@ function resolveFirstParty(fromFile: string, moduleId: string): string | null {
 
 /** 从这一页的路由文件出发,把整张一方 import 图走完。 */
 function homeImportGraph(): string[] {
-  const start = path.join(WEB_ROOT, "app/home/page.tsx");
+  const start = path.join(WEB_ROOT, "app/page.tsx");
   const seen = new Set<string>([start]);
   const queue = [start];
   while (queue.length) {
@@ -259,8 +259,8 @@ const ok = <T,>(value: T) => ({ ok: true as const, value });
 const UNREADABLE = { ok: false as const };
 
 const STEPS = [
-  { key: "brand", label: "Teach Otto your brand", hint: "Voice, rules, audience — Otto uses it every time", done: false, href: "/otto?view=memory" },
-  { key: "products", label: "Add what you sell", hint: "Otto can only write about products it knows", done: false, href: "/otto?view=memory" },
+  { key: "brand", label: "Teach Otto your brand", hint: "Voice, rules, audience — Otto uses it every time", done: false, href: "/brand" },
+  { key: "products", label: "Add what you sell", hint: "Otto can only write about products it knows", done: false, href: "/brand" },
 ];
 
 /** 一个刚开张的账号:每一块都**读到了**,而且每一块都真的空。 */

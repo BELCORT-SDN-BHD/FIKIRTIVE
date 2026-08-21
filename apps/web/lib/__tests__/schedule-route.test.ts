@@ -10,8 +10,11 @@
  *
  * 全程零后端、零生成:身份、数据读取与排期的 server action 全是假件,一个积分都花不出去。
  *
- * 【Stack A】导航权威(`MERCHANT_NAV`)这一票一个字不动,所以旧的 `/otto?view=schedule`
- * 与 `?view=analytics` 照常;这里只证明新门自己立住了。
+ * 【Stack A】这一票落地时导航权威(`MERCHANT_NAV`)一个字没动,旧的 `/otto?view=schedule`
+ * 与 `?view=analytics` 照常;这里只证明新门自己立住了。导航权威改指过来是切换总票
+ * W2-11 的活,已经落地(`MERCHANT_NAV` 的 `schedule` 就是 `SHELL_ROUTES.schedule`,
+ * `/otto?view=schedule`/`?view=analytics` 变成经 `OTTO_VIEW_REDIRECTS` 的 307,见
+ * `route-redirects.test.ts`)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";

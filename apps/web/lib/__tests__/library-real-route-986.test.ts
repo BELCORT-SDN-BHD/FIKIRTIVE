@@ -32,7 +32,7 @@ import path from "node:path";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MERCHANT_NAV_REDIRECTS, SHELL_ROUTES, merchantNavLinks } from "@fikirtive/core/navigation";
+import { MERCHANT_NAV_REDIRECTS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import type { AdJobItem } from "@/lib/data";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -267,47 +267,11 @@ describe("两页真的画得出来(真 React,真组件)", () => {
     ).rejects.toThrow(`NEXT_REDIRECT:${SHELL_ROUTES.edit}`);
     expect(mocks.getEditDesk).not.toHaveBeenCalled();
   });
-});
 
-/* ── ③ Stack A:旧壳零行为变化 ──────────────────────────────────────────────── */
-
-describe("Stack A 纪律:新路由与旧路由并存,旧壳一个字没动(规格书 §6.3)", () => {
-  it("导航权威还指着旧地址 —— 这一票不搬导轨,商家点导轨走的还是老路", () => {
-    const library = merchantNavLinks().find((item) => item.key === "library");
-    expect(library?.href, "MERCHANT_NAV 被动了 —— 那是切换总票 W2-11 的活").toBe("/otto?view=library");
-    const editor = merchantNavLinks().find((item) => item.key === "edit");
-    expect(editor?.href).toBe("/otto?view=edit");
-  });
-
-  it("旧壳照旧画同一批组件 —— 组件没搬文件,两条路共用一份实现", () => {
-    const view = codeOf("components/otto/OttoView.tsx");
-    expect(view).toMatch(/view === "stuff" \|\| view === "library"/);
-    expect(view).toContain("<OttoStuff");
-    expect(view).toMatch(/view === "edit"/);
-    expect(view).toContain("<EditDesk");
-    // 新页引的就是这两份,不是它自己的副本。
-    expect(codeOf(routeFileFor(SHELL_ROUTES.library))).toContain('from "@/components/otto/OttoStuff"');
-    expect(codeOf(routeFileFor(SHELL_ROUTES.edit))).toContain('from "@/components/otto/edit/EditDesk"');
-  });
-
-  it("旧壳里那两颗「跳进聊天」的键一颗不少(它给得起 handler,所以照画)", async () => {
-    const dom = await mount(
-      createElement(OttoStuff, {
-        entities: [],
-        ads: [],
-        adJobs: [FAILED_JOB],
-        records: [],
-        history: [],
-        onOpenThread: vi.fn(),
-        onRetryWithOtto: vi.fn(),
-      }),
-    );
-
-    expect(buttonWithText(dom, "Open conversation"), "旧壳少了一颗键 —— 这一票不许改旧壳的样子").toBeTruthy();
-    expect(buttonWithText(dom, "Retry with Otto")).toBeTruthy();
-  });
-
-  it("新页上不画按不动的键:聊天不在这一页上,那两颗键就不出现", async () => {
+  // W2-11(换壳切换总票)删掉了这条原来所在的「Stack A:旧壳零行为变化」describe —— 那个
+  // 名字本身描述的是「新旧路由并存」那段过渡期,旧壳(`OttoView.tsx`/`OttoApp.tsx`)随本票
+  // 删除,过渡期结束。这条断言本身仍然成立,搬进这里(它测的是**这一页**,不是新旧对照)。
+  it("聊天不在这一页上,「跳进聊天」的两颗键就不出现", async () => {
     mocks.getMyAdJobs.mockResolvedValue([FAILED_JOB]);
     const dom = await mount(await LibraryPage());
 
