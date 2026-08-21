@@ -532,6 +532,56 @@ describe("深链按「到达」消费:同一挂载根上的软导航/重访(判�
     expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_edge" });
     expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: undefined, threadId: "thr_edge" });
   });
+
+  /**
+   * 「pending 复活」反向回归(判官 r4,PR #1086 最新一条)——上面 r4 那条修法本身引出的坑:
+   * 被取消的取数原样保留 pendingSelectRef,是为了让强开之后真正落地的那次还能用上;但如果
+   * 商家已经软导航离开了这个深链地址(地址栏不再带 otto=1/project=/thread= 任何一个),这份
+   * 「留着待用」的 pending 就该跟着归零——不然到达 A 被取消之后,商家软导航去了别的地方,
+   * 过一阵子自己手动开一次面板(不是新到达,该走默认路径),却被这份残留的 A 拽回一条早就
+   * 翻篇的旧深链会话。
+   *
+   * 判别力:去掉 `signature === null` 分支里清空 `pendingSelectRef` 那一行,这条测试会恰红
+   * ——最后一次调用会收到残留的 `{ threadId: "thr_A" }`,不是 `undefined`。
+   */
+  it("到达 A 被取消(到达后立刻手关)→ 软导航到无参数地址(pending 归零)→ 之后手动开面 → 走默认路径,不是残留的 A", async () => {
+    // 到达 A:otto=1&thread=thr_A。用一个手动挂起的 promise 代替默认 mock,好在它还没落地
+    // 之前就把面板关掉——制造「取数被取消」,不依赖 r3/r4 那条存档时序竞态本身。
+    let resolveFirst: ((value: unknown) => void) | undefined;
+    loadOttoPanelSeed.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveFirst = resolve; }),
+    );
+
+    const el = await mount(shell("/?otto=1&thread=thr_A"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_A" });
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    // 立刻手关——那次取数(还悬着,没落地)因此被取消。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+
+    // 把悬着的 promise 放行——落地时 cleanup 早已把它标记为 cancelled,不该提交,也不该
+    // 动 pendingSelectRef(r4 修的那条,这里只是确认它不干扰接下来的断言)。
+    await act(async () => {
+      resolveFirst?.({ error: "stale, must not commit" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 软导航到一个不带任何深链参数的地址——pending 该跟着归零(这条测试要钉的修法)。
+    await rerender(shell("/"));
+
+    // 商家自己手动开一次面板——这不是新到达,该走默认路径(select = undefined),不该收到
+    // 早就该归零的那份 A。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    expect(loadOttoPanelSeed).toHaveBeenLastCalledWith(undefined);
+  });
 });
 
 describe("窄屏过渡守卫(判官 P2-2,W2-11 删移动层时一并清)", () => {

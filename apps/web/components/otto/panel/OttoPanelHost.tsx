@@ -172,7 +172,17 @@ export function OttoPanelHost({
 
   React.useEffect(() => {
     if (signature === null) {
+      // 判官 r4(PR #1086 最新一条,「pending 复活」反向回归):r4 那处修法让被取消的取数
+      // 原样保留 pendingSelectRef,好让强开之后真正落地的那次还能用上——但如果地址栏此刻
+      // 已经不带任何深链参数了,这份「留着待用」的 pending 就该跟着归零,不能活过深链本身
+      // 的寿命。不然:到达 A 被取消(存档关闭,或到达后立刻被商家手关)→ 软导航到一个无
+      // 深链参数的地址 → 商家自己手动开一次面板(不是新到达,该走默认路径)→ 却读到 A
+      // 留下的 pendingSelectRef,把商家带回一条早就翻篇的旧深链会话。
+      //
+      // 语义:pending 的生命周期与「URL 还挂着这个深链」绑定——参数还在,取消了可以留着
+      // 复用(r4 修的那条);参数一旦离开地址栏,不管有没有被消费,一切归零。
       consumedSignatureRef.current = null;
+      pendingSelectRef.current = null;
       return;
     }
     if (signature === consumedSignatureRef.current) return; // 同一次到达的重渲染,零动作
