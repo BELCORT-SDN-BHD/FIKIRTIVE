@@ -15,7 +15,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import type { OttoViewKey } from "./OttoApp";
+import type { OttoViewKey } from "./otto-view-param";
 import { isGenerationBackedItem, type StuffItem } from "@/lib/stuff-items";
 import {
   listScheduledPosts,

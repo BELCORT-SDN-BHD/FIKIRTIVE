@@ -8,11 +8,12 @@
  * Canvas 变成主导航第一格 Create,另外四扇(Library / 品牌与商品资料 / 买积分账单 / 设置)
  * 主导航本来就有。留着第二套导航,就是留着两份会各自漂移的「说的」。
  *
- * 现在这层壳只做两件事:
- *   ① 内容 pane —— 唯一滚动所有者(§L1),换路由做一次极轻 fade-in
- *      (§8b;prefers-reduced-motion 下不动)。
- *   ② <1024 的自有顶栏 —— 52px 在流内,汉堡开的是**全局抽屉**(useOpenGlobalNavigation,
- *      #747 同一套交接):一屏只有一个抽屉入口,不叠罗汉。≥1024 全局导轨常驻,顶栏隐去。
+ * 现在这层壳只做一件事:内容 pane —— 唯一滚动所有者(§L1),换路由做一次极轻 fade-in
+ * (§8b;prefers-reduced-motion 下不动)。
+ *
+ * W2-11(切换总票,规格书 §5.1):`<1024` 的自有顶栏退场——它原来的活是给全局抽屉开一个
+ * 入口(#747),而全局抽屉本身随移动端整层一起删除了(新导轨是单层 240px↔64px,不再按
+ * 宽度分形态)。商家壳现在只有一条导轨,任何宽度下都在,画布页不必再自建一条汉堡通道。
  *
  * #994(W2-7):右下那颗 Otto 按钮从这里退场。它做的事(「Otto 随处可用」)没有变,做事的
  * 东西换了:商家壳现在统一挂一块 Otto 面板,收起时就是那颗可拖、松手吸边的圆形 launcher
@@ -22,19 +23,7 @@
  */
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu } from "lucide-react";
-import { CREATE_NAV_HREF } from "@fikirtive/core/navigation";
-import { OttoAvatar } from "@/components/otto/OttoAvatar";
-import { Button } from "@/components/ui/button";
-import {
-  useGlobalNavigationOpen,
-  useOpenGlobalNavigation,
-} from "@/components/global-navigation";
-
-/** 路径一律引权威源(packages/core/src/navigation.ts):这层壳里不留第二份地址。
- *  顶栏品牌回的就是主导航 Create 那一格的目的地。 */
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 function useReducedMotion(): boolean {
@@ -56,11 +45,6 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const reduced = useReducedMotion();
 
-  // Null outside the merchant shell (e.g. a unit test rendering this in isolation) —
-  // there is no global drawer to open there, so the trigger must not render.
-  const openGlobalNavigation = useOpenGlobalNavigation();
-  const globalNavigationOpen = useGlobalNavigationOpen();
-
   React.useEffect(() => {
     if (document.getElementById(FADE_KF_ID)) return;
     const el = document.createElement("style");
@@ -71,26 +55,6 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="gb ns-immersive flex h-dvh flex-col bg-background text-foreground">
-      {/* <1024 顶栏:汉堡开**全局**抽屉 + 品牌回创作首页。≥1024 全局导轨常驻,故隐藏此条。
-          抽屉开着时整条收起(#747 r2):抽屉贴同一条左边缘,顶栏留在原地就会压在它上面。 */}
-      {openGlobalNavigation && !globalNavigationOpen && (
-        <div className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-2 lg:hidden">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={openGlobalNavigation}
-            aria-label="Open navigation"
-            className="size-9 rounded-[10px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
-          >
-            <Menu className="size-5" strokeWidth={2} />
-          </Button>
-          <Link href={CREATE_NAV_HREF} className="flex min-w-0 items-center gap-2" aria-label="Fikirtive home">
-            <OttoAvatar size={24} mood="idle" />
-            <span className="truncate text-[16px] font-[750] tracking-[-0.03em] text-foreground">fikirtive</span>
-          </Link>
-        </div>
-      )}
       {/* 内容 pane:唯一滚动所有者;换路由 = 换 key 做一次轻 fade */}
       <main
         key={pathname}

@@ -3,7 +3,7 @@ import React, { useState, useTransition } from "react";
 import { getAnalytics, type AnalyticsData } from "@/lib/analytics-actions";
 import { RANGES, buildCurrencyNotes, type RangeKey } from "@/lib/analytics-view";
 import { ANALYTICS_PLATFORM_LABEL } from "@/lib/analytics-platforms";
-import type { OttoViewKey } from "./OttoApp";
+import type { OttoViewKey } from "./otto-view-param";
 import { PerAdPerformance } from "./PerAdPerformance";
 
 /**
