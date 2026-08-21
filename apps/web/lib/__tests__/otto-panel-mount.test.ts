@@ -505,6 +505,33 @@ describe("深链按「到达」消费:同一挂载根上的软导航/重访(判�
     expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
     expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: "proj_recent", threadId: undefined });
   });
+
+  /**
+   * 硬着陆 + 存档为关(判官 r3 刀锋竞态,PR #1086 最新一条)。
+   *
+   * 不是软导航,是**第一次挂载就落在深链地址上**,而且 localStorage 记着「关」:Shell 首帧
+   * 按默认值画(§3.3,桌面宽度默认开),hydration 随后才把它套成「关」——这一拍间,取数
+   * effect 会把 `pendingSelectRef` 排定的深链 select 用掉、发起第一次取数,随即被这次
+   * 「关」的 cleanup 取消;强开信号(otto=1)接着把面板重新打开,触发第二次、真正落地的
+   * 取数——判官纯内存复现的失败签名是两次取数依次收到 `[deep-thread, default]`:被取消的
+   * 那次带着深链 select,真正提交进状态的那次却收了 `undefined`,深链等于白读。
+   *
+   * 判别力:回退「pending 只被提交成功的取数消费」这处修法(把 `pendingSelectRef` 的清空
+   * 挪回取数一发起就清)会让这条恰红——最后一次真正落地的调用会收到 `undefined`。
+   */
+  it("硬着陆 + 存档为关:中途被取消的取数不许吞掉深链 select——最终提交生效的那次必须带着它", async () => {
+    writeClosedState();
+    await mount(shell("/?otto=1&thread=thr_edge"));
+
+    const el = container!;
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    // 这条硬着陆路径真的会取两次数(第一次带着深链 select 被后来的关闭取消,第二次是强开
+    // 之后真正落地、提交进状态的那次)——两次都要带着深链的 select,一次都不许被吞成默认。
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_edge" });
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: undefined, threadId: "thr_edge" });
+  });
 });
 
 describe("窄屏过渡守卫(判官 P2-2,W2-11 删移动层时一并清)", () => {

@@ -121,11 +121,19 @@ export function OttoPanelShell({
 
   // 这一次「多」的渲染正是 §3.3 要的:服务端不知道 localStorage、也不知道视窗多大,
   // 首帧只能画默认值,存值只能在挂载之后套上去 —— 那一步必然是一次挂载后的 setState。
+  //
+  // 判官 r3:这一步与下面的深链强开 effect 都在写同一个 `state`,改成函数式 `setState`
+  // 而不是直接给值——今天的执行顺序本来就安全(这个 effect 的依赖是 `[]`,只在挂载时跑
+  // 这一次;强开信号最早也要等 `OttoPanelHost` 的到达检测 effect 先跑完、再多一次渲染
+  // 才可能非 null,所以这一步必然先于任何一次真的强开落地),但两处都用函数式,读这份
+  // 代码的人不必去验证这条「谁先谁后」的前提才能确认它们不会互相覆盖。这一步本身不需要
+  // 读 `current`(存档是权威来源,不是拿旧状态去合并)——函数式在这里只是把它从「谁跑在
+  // 后面就赢」的隐性依赖里摘出来,不改变它算出来的值。
   React.useEffect(() => {
     const vp = readViewport();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上:挂载后套用存值,§3.3。
     setViewport(vp);
-    setState(reconcileViewport(readOttoPanelState(vp), vp));
+    setState(() => reconcileViewport(readOttoPanelState(vp), vp));
     setHydrated(true);
   }, []);
 

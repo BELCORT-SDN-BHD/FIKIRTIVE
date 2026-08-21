@@ -190,16 +190,31 @@ export function OttoPanelHost({
   // 为已变,函数体自己早退,不发请求 —— 关掉面板不该顺手再打一次数据装配。`fetchTrigger`
   // 是第二条能让这个 effect 重跑的信号:面板已经开着时一次裸 project/thread 到达不会翻动
   // `open`,但同样要用新的 select 重取一次。
+  //
+  // 判官 r3(PR #1086 最新一条,刀锋竞态):硬着陆 + localStorage 存档为关时,Shell 首帧
+  // 默认 open=true、hydration 随后才写 false——这一拍间这个 effect 会把 pendingSelectRef
+  // 消费掉发起第一次取数,随即被那次关闭的 cleanup 取消(下面的 `cancelled`);force
+  // signal 强开后触发的第二次取数(真正落地、提交进状态的那次)如果发现 pendingSelectRef
+  // 已经被第一次(被取消的那次)清空,就会收 `undefined`、落回默认会话,深链等于白读。
+  // 修法:pending 只能被**提交成功的取数**消费——被取消的那次原样保留 pendingSelectRef,
+  // 留给下一次真正落地的取数继续用;只有在结果真的写进状态之前,才把它清空(而且要核对
+  // 没有被更新的到达顶替过,不然会吞掉一个还没来得及跑的更新到达)。
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    const select = pendingSelectRef.current ?? undefined;
-    pendingSelectRef.current = null; // 这次取数已经把它用掉了,不管是被 open 还是被
-    // fetchTrigger 的变化触发的——下一次面板开合(没有新到达)必须落回默认路径。
+    const startedWithSelect = pendingSelectRef.current;
+    const select = startedWithSelect ?? undefined;
     void (async () => {
       // 服务端动作自己不抛(它把失败折成 {error}),但网络那一段仍可能断。
       const result = await loadOttoPanelSeed(select).catch(() => ({ error: "Otto is not reachable right now." }));
-      if (cancelled) return;
+      if (cancelled) return; // 这次取数被后来的关闭顶掉了——pendingSelectRef 原样留着,
+      // 不清:下一次真正落地的取数(强开之后的那次)还要用它,不能收一个空的默认路径。
+      // 这次取数确实要提交了——它排定的 select 已经用掉,可以清了;但只在没人在这次取数
+      // 飞行途中排了一个更新的到达时才清(那种情况下 pendingSelectRef 早就不是
+      // `startedWithSelect` 了,清掉的话会把还没来得及跑的那次新到达吞掉)。
+      if (pendingSelectRef.current === startedWithSelect) {
+        pendingSelectRef.current = null;
+      }
       if ("error" in result) {
         setLoad({ status: "error", message: result.error });
         return;
