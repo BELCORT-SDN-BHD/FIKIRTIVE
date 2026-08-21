@@ -36,6 +36,14 @@ import type { ChatThreadDTO } from "@/lib/types";
 import { loadOttoPanelSeed } from "@/lib/otto-panel-seed";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { startStreamedThread, type PendingFirstMessage } from "@/lib/otto-start-thread";
+import { deleteCoworkThread, renameCoworkThread, setCoworkThreadPinned } from "@/lib/otto-client-actions";
+import {
+  deleteProject as deleteProjectAction,
+  renameProject as renameProjectAction,
+  setProjectPinned as setProjectPinnedAction,
+} from "@/lib/actions";
+import { nextActiveThreadId } from "@/lib/thread-list";
+import { OttoConfirmDialog, OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
 import type { OttoPanelConversationState, PendingFirst } from "./OttoPanelConversation";
 import { OttoPanelShell, useOttoPanelControls } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
@@ -84,6 +92,7 @@ export function OttoPanelHost({
   children: React.ReactNode;
 }) {
   const [load, setLoad] = React.useState<Load>({ status: "loading" });
+  const seed = load.status === "ready" ? load.seed : null;
   const [threads, setThreads] = React.useState<ChatThreadDTO[]>([]);
   const [activeThreadId, setActiveThreadId] = React.useState<string | null>(null);
   const [pendingFirst, setPendingFirst] = React.useState<PendingFirst | null>(null);
@@ -96,6 +105,12 @@ export function OttoPanelHost({
   /** 正在把哪一条历史的消息取回来(取到了才切过去,见 `selectThread`)。 */
   const [openingThreadId, setOpeningThreadId] = React.useState<string | null>(null);
   const [threadError, setThreadError] = React.useState<string | null>(null);
+  /** 整理会话(W2-11 收编导轨:重命名 / 置顶 / 删除 —— 与 `OttoNav.tsx` 同一批动作函数)。 */
+  const [renameThreadTarget, setRenameThreadTarget] = React.useState<ChatThreadDTO | null>(null);
+  const [deleteThreadTarget, setDeleteThreadTarget] = React.useState<ChatThreadDTO | null>(null);
+  /** 整理项目,同一批(`@/lib/actions` 的 renameProject / setProjectPinned / deleteProject)。 */
+  const [renameProjectTarget, setRenameProjectTarget] = React.useState<{ id: string; name: string } | null>(null);
+  const [deleteProjectTarget, setDeleteProjectTarget] = React.useState<{ id: string; name: string } | null>(null);
   /** 面板此刻开着还是关着 —— 由 `PanelOpenWatcher`(挂在下面 `children` 旁边)报上来。 */
   const [open, setOpen] = React.useState(false);
 
@@ -231,9 +246,127 @@ export function OttoPanelHost({
     setHistoryOpenedAt(null);
   }, [activeThreadId, claimIntent, upsertThread]);
 
+  // ── 整理会话:重命名 / 置顶 / 删除(W2-11)────────────────────────────────────
+  //
+  // Shared actions 纪律:动作函数与 `OttoNav.tsx` 的 `handleRenameThread` /
+  // `handleSetThreadPinned` / `handleDeleteThread` 是同三个(`@/lib/otto-client-actions`),
+  // 这里不重写业务层,只是这一份状态(`threads`)自己的乐观更新 + 失败回滚 —— 面板与旧导轨
+  // 各自持一份 React state,回滚这一步没法共用。
+
+  const requestRenameThread = React.useCallback((id: string) => {
+    const target = threads.find((t) => t.id === id);
+    if (target) setRenameThreadTarget(target);
+  }, [threads]);
+
+  const requestDeleteThread = React.useCallback((id: string) => {
+    const target = threads.find((t) => t.id === id);
+    if (target) setDeleteThreadTarget(target);
+  }, [threads]);
+
+  const setThreadPinned = React.useCallback(async (id: string, pinned: boolean) => {
+    const snapshot = threads;
+    const pinnedAt = pinned ? new Date().toISOString() : null;
+    setThreads((items) => items.map((t) => (t.id === id ? { ...t, pinnedAt } : t)));
+    const result = await setCoworkThreadPinned(id, pinned);
+    if ("error" in result) {
+      setThreads(snapshot);
+      setThreadError(result.error);
+    }
+  }, [threads]);
+
+  const renameThread = React.useCallback(async (id: string, title: string) => {
+    const clean = title.trim();
+    if (!clean) return;
+    const snapshot = threads;
+    setThreads((items) => items.map((t) => (t.id === id ? { ...t, title: clean } : t)));
+    const result = await renameCoworkThread(id, clean);
+    if ("error" in result) {
+      setThreads(snapshot);
+      setThreadError(result.error);
+    }
+  }, [threads]);
+
+  const deleteThread = React.useCallback(async (id: string) => {
+    const snapshot = threads;
+    const snapshotActive = activeThreadId;
+    const next = nextActiveThreadId(threads, id, activeThreadId);
+    setThreads((items) => items.filter((t) => t.id !== id));
+    if (activeThreadId === id) setActiveThreadId(next);
+    const result = await deleteCoworkThread(id);
+    if ("error" in result) {
+      setThreads(snapshot);
+      setActiveThreadId(snapshotActive);
+      setThreadError(result.error);
+    }
+  }, [threads, activeThreadId]);
+
+  // ── 整理项目:重命名 / 置顶 / 删除(W2-11)────────────────────────────────────
+  //
+  // 面板里「项目」这一层今天只在会话历史的分组标题上露面(`OttoThreadList` 的 project
+  // header)——查过 Home「接着做」那一列(纯 `<Link>`,零控件)与 Library(那页是跨项目的
+  // 素材墙,压根不列项目)之后,这里是唯一还能挂得上控件的地方,不是新发明一处。
+
+  /** 重取一次种子 —— 删除项目牵连太多(会连它名下的会话一起消失),客户端手工推演这份状态
+   *  容易出错,不如让服务端(已经在 `deleteProject` 里 `revalidatePath` 过)重新说一次真相。 */
+  const reloadSeed = React.useCallback(async () => {
+    const result = await loadOttoPanelSeed().catch(() => ({ error: "Otto is not reachable right now." }));
+    if ("error" in result) {
+      setLoad({ status: "error", message: result.error });
+      return;
+    }
+    setLoad({ status: "ready", seed: result });
+    setThreads(result.threads);
+    setActiveThreadId(result.activeThreadId);
+  }, []);
+
+  const requestRenameProject = React.useCallback((id: string) => {
+    const target = seed?.projects.find((p) => p.id === id);
+    if (target) setRenameProjectTarget(target);
+  }, [seed]);
+
+  const requestDeleteProject = React.useCallback((id: string) => {
+    const target = seed?.projects.find((p) => p.id === id);
+    if (target) setDeleteProjectTarget(target);
+  }, [seed]);
+
+  const setProjectPinned = React.useCallback(async (id: string, pinned: boolean) => {
+    const pinnedAt = pinned ? new Date().toISOString() : null;
+    setLoad((current) =>
+      current.status === "ready"
+        ? { ...current, seed: { ...current.seed, projects: current.seed.projects.map((p) => (p.id === id ? { ...p, pinnedAt } : p)) } }
+        : current,
+    );
+    const result = await setProjectPinnedAction(id, pinned);
+    if ("error" in result) {
+      setThreadError(result.error);
+      await reloadSeed();
+    }
+  }, [reloadSeed]);
+
+  const renameProject = React.useCallback(async (id: string, name: string) => {
+    const result = await renameProjectAction(id, name);
+    if ("error" in result) {
+      setThreadError(result.error);
+      return;
+    }
+    setLoad((current) =>
+      current.status === "ready"
+        ? { ...current, seed: { ...current.seed, projects: current.seed.projects.map((p) => (p.id === id ? { ...p, name: result.name } : p)) } }
+        : current,
+    );
+  }, []);
+
+  const deleteProject = React.useCallback(async (id: string) => {
+    const result = await deleteProjectAction(id);
+    if ("error" in result) {
+      setThreadError(result.error);
+      return;
+    }
+    await reloadSeed();
+  }, [reloadSeed]);
+
   // ── 快捷 chips ───────────────────────────────────────────────────────────
   const chips = React.useMemo(() => panelQuickChips(location), [location]);
-  const seed = load.status === "ready" ? load.seed : null;
 
   const pickChip = React.useCallback(async (chip: { goalKey: string; label: string }) => {
     if (!seed || chipBusy) return;
@@ -312,6 +445,12 @@ export function OttoPanelHost({
           activeThreadId={activeThreadId}
           onSelectThread={(thread) => void selectThread(thread)}
           onNewChat={openNewChat}
+          onRenameThread={requestRenameThread}
+          onSetThreadPinned={(id, pinned) => void setThreadPinned(id, pinned)}
+          onDeleteThread={requestDeleteThread}
+          onRenameProject={requestRenameProject}
+          onSetProjectPinned={(id, pinned) => void setProjectPinned(id, pinned)}
+          onDeleteProject={requestDeleteProject}
           openingThreadId={openingThreadId}
           error={threadError}
           now={historyOpenedAt}
@@ -343,6 +482,75 @@ export function OttoPanelHost({
     >
       <PanelOpenWatcher onOpenChange={setOpen} />
       {children}
+      {/* 整理会话的两个对话框 —— 与 `OttoNav.tsx`/`OttoApp.tsx` 的会话删改弹窗一字不差
+          (同一份文案,不是重写一份),挂在这里而不是 `OttoPanelShell` 之外:面板是常驻的,
+          对话框只在商家真的点了改名/删除才浮现。 */}
+      <OttoRenameDialog
+        open={!!renameThreadTarget}
+        onOpenChange={(open) => { if (!open) setRenameThreadTarget(null); }}
+        title="Rename conversation"
+        description="This only changes the label shown in the conversation history."
+        label="Conversation name"
+        initialValue={renameThreadTarget?.title ?? ""}
+        onSubmit={async (title) => {
+          if (!renameThreadTarget) return;
+          await renameThread(renameThreadTarget.id, title);
+          setRenameThreadTarget(null);
+        }}
+      />
+      <OttoConfirmDialog
+        open={!!deleteThreadTarget}
+        onOpenChange={(open) => { if (!open) setDeleteThreadTarget(null); }}
+        title="Permanently delete conversation?"
+        description={deleteThreadTarget ? `Otto will delete "${deleteThreadTarget.title}" and its messages.` : ""}
+        impacts={[
+          "The conversation and its messages are permanently deleted.",
+          "Canvas nodes and generated media are detached from this conversation.",
+          "Generated library assets stay available.",
+        ]}
+        confirmText={deleteThreadTarget?.title}
+        confirmLabel="Delete conversation"
+        confirmingLabel="Deleting..."
+        tone="danger"
+        onConfirm={async () => {
+          if (!deleteThreadTarget) return;
+          await deleteThread(deleteThreadTarget.id);
+          setDeleteThreadTarget(null);
+        }}
+      />
+      <OttoRenameDialog
+        open={!!renameProjectTarget}
+        onOpenChange={(open) => { if (!open) setRenameProjectTarget(null); }}
+        title="Rename project"
+        description="This only changes the sidebar name. Your chats, canvas, and assets stay where they are."
+        label="Project name"
+        initialValue={renameProjectTarget?.name ?? ""}
+        onSubmit={async (name) => {
+          if (!renameProjectTarget) return;
+          await renameProject(renameProjectTarget.id, name);
+          setRenameProjectTarget(null);
+        }}
+      />
+      <OttoConfirmDialog
+        open={!!deleteProjectTarget}
+        onOpenChange={(open) => { if (!open) setDeleteProjectTarget(null); }}
+        title="Permanently delete project?"
+        description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and its project-scoped work.` : ""}
+        impacts={[
+          "The project record is permanently deleted.",
+          "Its chats, canvas nodes, jobs, and project media records are deleted.",
+          "Global library assets and credit ledger rows are not deleted here.",
+        ]}
+        confirmText={deleteProjectTarget?.name}
+        confirmLabel="Delete project"
+        confirmingLabel="Deleting..."
+        tone="danger"
+        onConfirm={async () => {
+          if (!deleteProjectTarget) return;
+          await deleteProject(deleteProjectTarget.id);
+          setDeleteProjectTarget(null);
+        }}
+      />
     </OttoPanelShell>
   );
 }
