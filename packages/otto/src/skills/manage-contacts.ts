@@ -3,6 +3,7 @@ import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 
 const lifecycleStage = z.enum(["New", "Active", "Dormant"]);
 const params = z.object({
@@ -115,14 +116,17 @@ export const manageContactsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Create or update standard CRM Contact fields, import a bounded CSV, store or correct a merchant-entered phone " +
-    "number, record a merchant-reported consent assertion, or set/clear DND through the same authenticated actions as " +
-    "the merchant's own screens use. $0 internal writes only. Inputs are structured and never accept owner identity. Phone numbers stored " +
+    "number, record a merchant-reported consent assertion, or set/clear DND through the one authenticated, " +
+    "owner-scoped action layer, not a second implementation of its own. " +
+    "$0 internal writes only. Inputs are structured and never accept owner identity. Phone numbers stored " +
     "here — typed or imported — are saved as merchant entered and NOT verified: they are kept and searchable, they are " +
     "never used for broadcasts or segments, and only a connected channel can upgrade one. Say so plainly instead of " +
     "implying a stored number can be messaged. update_phone/remove_phone touch merchant-entered numbers only; a " +
     "channel-verified number is refused. No merge/unmerge, send, provider, money, tags, or custom-field path exists. " +
     "record_consent enters ConsentEvent as crm_manual backfill/asserted and never fabricates verified opt-in. " +
-    "Use caller-stable request/import ids on retries and get exact Contact ids from readContacts.",
+    "Use caller-stable request/import ids on retries and get exact Contact ids from readContacts. " +
+    "For a segment rule's matchedCount use readSegments; this skill has no preview operation. " +
+    CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: executeManageContacts,
 });

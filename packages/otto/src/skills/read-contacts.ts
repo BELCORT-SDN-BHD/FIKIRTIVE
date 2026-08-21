@@ -3,6 +3,7 @@ import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
+import { CRM_SEGMENT_AVAILABILITY } from "./_availability.js";
 
 const params = z.object({
   operation: z.enum(["list", "get", "search"]),
@@ -43,7 +44,8 @@ export const readContactsSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "List, search, or read one exact CRM Contact through the same owner-scoped actions the merchant's own screens use. " +
+    "List, search, or read one exact CRM Contact through the one owner-scoped action layer, not a second " +
+    "implementation of its own. " +
     "$0 read-only. Results include lifecycle, stored identities with their credibility grade, DND, order receipt "
     + "total, and the " +
     "WhatsApp × marketing ConsentStateProjection plus consent history on get. Unknown is reported honestly: it is " +
@@ -57,7 +59,9 @@ export const readContactsSkill = defineOttoSkill({
     "when the rest were left out. Quote both numbers as they are — never re-count the rows, never answer " +
     "\"how many customers do I have\" with `returned`, and never present a page as everything. When they differ, " +
     "say so plainly: they have `totalCount` contacts and you are looking at the first `returned` of them. " +
-    "`limit` (up to 100) raises the page size if they want more of it in one go.",
+    "`limit` (up to 100) raises the page size if they want more of it in one go. " +
+    "For a segment rule's matchedCount use readSegments; this skill has no preview operation. " +
+    CRM_SEGMENT_AVAILABILITY,
   parameters: params,
   execute: executeReadContacts,
 });

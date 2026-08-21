@@ -72,22 +72,31 @@ function readViewport(): Viewport {
 export interface OttoPanelShellProps {
   /** 主内容。被挤窄,永远不被盖住。 */
   children: React.ReactNode;
-  /** 会话流(W2-8)。 */
+  /** 会话流 / 会话列表(W2-8)。 */
   panelBody?: React.ReactNode;
-  /** 输入框(W2-8 / W2-9)。 */
+  /** 底部随页面变化的快捷 chips(W2-8)。 */
+  quickChips?: React.ReactNode;
+  /** 输入框(W2-9)。 */
   panelFooter?: React.ReactNode;
   contextChip?: OttoPanelContextChip;
+  contextAttached?: boolean;
   onOpenHistory?: () => void;
+  historyOpen?: boolean;
   onNewChat?: () => void;
+  headerBusy?: boolean;
 }
 
 export function OttoPanelShell({
   children,
   panelBody,
+  quickChips,
   panelFooter,
   contextChip,
+  contextAttached,
   onOpenHistory,
+  historyOpen,
   onNewChat,
+  headerBusy,
 }: OttoPanelShellProps) {
   // 首帧一律按默认值画(服务端不知道 localStorage,也不知道视窗有多大),
   // 挂载后再一次性套用存值 —— 这就是 `data-otto-panel-hydrated` 存在的理由。
@@ -208,8 +217,12 @@ export function OttoPanelShell({
             onToggleExpanded={toggleExpanded}
             onClose={closePanel}
             onOpenHistory={onOpenHistory}
+            historyOpen={historyOpen}
             onNewChat={onNewChat}
+            headerBusy={headerBusy}
             contextChip={contextChip}
+            contextAttached={contextAttached}
+            quickChips={quickChips}
             footer={panelFooter}
           >
             {panelBody}
