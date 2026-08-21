@@ -108,8 +108,9 @@ describe("what the model is told", () => {
   });
 
   it("points the merchant at the panel they can use themselves", async () => {
+    // W2-11:Templates 不再单占一格,它是 Create 页面下方的一个区段。
     const out = (await executeRecommendTemplates({}, ctx)) as Reply;
-    expect(out.nextStep).toContain("/otto?view=templates");
+    expect(out.nextStep).toContain("/create#templates");
   });
 
   it("carries the ready captions by language", () => {

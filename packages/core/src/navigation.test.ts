@@ -27,6 +27,15 @@ import {
 } from "./navigation.js";
 
 describe("MERCHANT_NAV 的形状", () => {
+  // W2-11 验收条 1(#998):七格权威改写。数字写死,不是「至少七个」——多一格或少一格都是
+  // 一次没被讨论过的导航改动。
+  it("恰好七个顶层节点(Home / Create / Library / Brand / Campaigns / Schedule / Settings)", () => {
+    expect(MERCHANT_NAV.length).toBe(7);
+    expect(MERCHANT_NAV.map((node) => node.key)).toEqual([
+      "home", "create", "library", "brand", "campaign", "schedule", "settings",
+    ]);
+  });
+
   it("每个 key 只出现一次(图标、测试与后续票都按 key 认人)", () => {
     const keys = everyNavDestination().map((item) => item.key);
     const groupKeys = MERCHANT_NAV.filter(isNavGroup).map((group) => group.key);
@@ -63,6 +72,21 @@ describe("MERCHANT_NAV 的形状", () => {
   });
 });
 
+describe("换壳权威改写(W2-11 / #998,规格书 §2.3)", () => {
+  // 验收条 3:merchantNavLinks() 里没有任何 /crm 前缀,也没有任何 ?view= 残留。
+  // /crm 前缀已由「CRM 整段隐藏」那组测试钉死,这里补第二半:旧 /otto?view= 查询串。
+  it("没有任何一条链接还挂着旧壳的 ?view= 查询串", () => {
+    const stale = merchantNavLinks().filter((item) => item.href.includes("view="));
+    expect(stale.map((item) => `${item.key} → ${item.href}`)).toEqual([]);
+  });
+
+  it("每一条链接都是真路由地址,不是 /otto 的一个查询变体", () => {
+    for (const item of merchantNavLinks()) {
+      expect(item.href, `${item.key} 还落在 /otto 后面`).not.toMatch(/^\/otto(\?|$)/);
+    }
+  });
+});
+
 describe("创作正名(Founder 裁决:画布是旗舰面,不下线)", () => {
   it("创作入口的名字只写在一处 —— 白标命名体系定了改这一行就够", () => {
     const create = merchantNavLinks().find((item) => item.key === "create");
@@ -70,12 +94,12 @@ describe("创作正名(Founder 裁决:画布是旗舰面,不下线)", () => {
     expect(create!.label).toBe(CREATE_NAV_LABEL);
   });
 
-  it("创作是主导航第一格,通向画布的家", () => {
-    const first = MERCHANT_NAV.at(0);
-    expect(first).toBeDefined();
-    expect(isNavGroup(first!)).toBe(false);
-    expect((first as { key: string }).key).toBe("create");
-    expect((first as { href: string }).href).toBe(CREATE_NAV_HREF);
+  it("创作是主导航一格直达(不必先展开分组),通向画布的家", () => {
+    // W2-11(规格书 §2.1):Home 现在是落地页、排第一格(G4——唯一能一眼证明壳换了的屏);
+    // Create 仍旧不是要先展开的分组,是顶层的一格直达链接,画布依旧是旗舰面。
+    const create = MERCHANT_NAV.find((node) => !isNavGroup(node) && node.key === "create");
+    expect(create).toBeDefined();
+    expect((create as { href: string }).href).toBe(CREATE_NAV_HREF);
   });
 
   it("画布本身就在那扇门后面(不是另一处孤岛)", () => {
@@ -88,11 +112,6 @@ describe("CRM 整段隐藏(W2-13 / #993,恢复触发条件 = Meta verification �
   // 变异自查:把 `{ key: "customers", href: "/crm", … }` 加回 MERCHANT_NAV,这一条立刻红。
   it("导轨数据里没有任何 /crm 前缀的 href —— 一扇门都不剩", () => {
     const crmDoors = merchantNavLinks().filter((item) => item.href.startsWith("/crm"));
-    expect(crmDoors.map((item) => `${item.key} → ${item.href}`)).toEqual([]);
-  });
-
-  it("助手那一条也不许指向 CRM(everyNavDestination 是导轨 + 助手的全集)", () => {
-    const crmDoors = everyNavDestination().filter((item) => item.href.startsWith("/crm"));
     expect(crmDoors.map((item) => `${item.key} → ${item.href}`)).toEqual([]);
   });
 
@@ -119,27 +138,38 @@ describe("CRM 整段隐藏(W2-13 / #993,恢复触发条件 = Meta verification �
   });
 });
 
-describe("Otto 是助手,不是模块", () => {
+describe("Otto 是助手,不是模块(W2-11:而且不是地址)", () => {
   it("助手不在板块列表里", () => {
     expect(merchantNavLinks().some((item) => item.key === OTTO_ASSISTANT.key)).toBe(false);
     expect(MERCHANT_NAV.some((node) => isNavGroup(node) && node.key === OTTO_ASSISTANT.key)).toBe(false);
   });
 
-  it("但它确实是一个真能点开的目的地 —— 没有消失", () => {
-    expect(everyNavDestination().some((item) => item.href === OTTO_ASSISTANT.href)).toBe(true);
-    expect(OTTO_ASSISTANT.href).toBe("/otto");
+  it("它没有 href —— 面板不是地址,点开的是右侧常驻面板,不是一次跳转", () => {
+    // 结构性断言,不是「凑巧没写」:这条对象上根本不存在 href 属性,所以它不可能被
+    // 误接进任何按 href 做的枚举(everyNavDestination()、CRM 前缀检查、围栏……)。
+    expect("href" in OTTO_ASSISTANT).toBe(false);
+    expect(everyNavDestination().some((item) => item.key === OTTO_ASSISTANT.key)).toBe(false);
+  });
+
+  it("但它有名字,而且地图里说得清怎么打开它", () => {
+    expect(navLabel("otto")).toBe(OTTO_ASSISTANT.label);
+    const line = merchantNavMap().split("\n").find((row) => row.startsWith(`- ${OTTO_ASSISTANT.label}`));
+    expect(line, "地图里应当有助手那一行").toBeDefined();
+    expect(line, "地图应当说清怎么打开它").toMatch(/Cmd\/Ctrl\+J|Otto button/);
+    // 反面:那一行不许长成「名字 (href)」的形状 —— 它没有地址可以摆进括号里。
+    expect(line).not.toMatch(/\(\/[^)]*\)/);
   });
 });
 
 describe("两个日历择一为准", () => {
   it("树里只有一本日历,就是排期", () => {
     const calendars = merchantNavLinks().filter((item) => /calendar|schedule/i.test(item.href));
-    expect(calendars.map((item) => item.href)).toEqual(["/otto?view=schedule"]);
+    expect(calendars.map((item) => item.href)).toEqual(["/schedule"]);
   });
 
   it("旧的战役日历有去处,不是 404", () => {
     const retired = MERCHANT_NAV_REDIRECTS.find((row) => row.from === "/campaign/calendar");
-    expect(retired?.to).toBe("/otto?view=schedule");
+    expect(retired?.to).toBe("/schedule");
   });
 
   it("每一条收敛掉的旧路由都写明了去哪、为什么", () => {
@@ -153,7 +183,8 @@ describe("两个日历择一为准", () => {
 
 describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
   it("组内的写成「分组 › 子项」,顶层的就是它自己的名字", () => {
-    expect(navPath("schedule")).toBe("Workspace › Schedule");
+    // W2-11:schedule 换成七格之一,顶层直呼其名,不再挂在 Workspace 分组下面。
+    expect(navPath("schedule")).toBe("Schedule");
     expect(navPath("connections")).toBe("Settings › Connections");
     expect(navPath("create")).toBe(CREATE_NAV_LABEL);
     expect(navPath("otto")).toBe(OTTO_ASSISTANT.label);
@@ -162,18 +193,20 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
   it("不存在的 key 直接炸 —— 不许静默返回一个编出来的名字", () => {
     expect(() => navPath("insights")).toThrow(/insights/);
     expect(() => navLabel("insights")).toThrow(/insights/);
+    // workspace 分组随 W2-11 整格消失(六个孩子全部升为顶层或并入 Settings)。
+    expect(() => navLabel("workspace")).toThrow(/workspace/);
   });
 
   // r2 · #802 判官 [P1-1]:句子里顺口提到一个地方时用 navLabel(),指路时用 navPath()。
   // 两者都不许手打 —— 判官逮到的是提示词里一处手打的 `Campaign`。
   it("navLabel 给的是导轨上那个词(不带分组前缀),分组名也取得到", () => {
     expect(navLabel("library")).toBe("Library");
-    expect(navLabel("campaign")).toBe("Campaign");
-    expect(navLabel("workspace")).toBe("Workspace");
+    expect(navLabel("campaign")).toBe("Campaigns");
+    expect(navLabel("settings")).toBe("Settings");
     expect(navLabel("otto")).toBe(OTTO_ASSISTANT.label);
     // 组内项:navPath 带分组前缀,navLabel 不带 —— 两者只差那一格。
-    expect(navPath("library")).toBe(
-      `${navLabel("workspace")} ${NAV_PATH_SEPARATOR} ${navLabel("library")}`,
+    expect(navPath("connections")).toBe(
+      `${navLabel("settings")} ${NAV_PATH_SEPARATOR} ${navLabel("connections")}`,
     );
   });
 
@@ -263,7 +296,7 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
 
 describe("给 Otto 的界面地图", () => {
   it("路名用的是同一个分隔符(围栏按它认路)", () => {
-    expect(merchantNavMap()).toContain(`Workspace ${NAV_PATH_SEPARATOR} Schedule`);
+    expect(merchantNavMap()).toContain(`Settings ${NAV_PATH_SEPARATOR} Connections`);
   });
 
   it("从同一棵树生成 —— 每一条门都在地图里", () => {
@@ -275,7 +308,7 @@ describe("给 Otto 的界面地图", () => {
   });
 
   it("分组的路写成商家跟得下去的形状", () => {
-    expect(merchantNavMap()).toContain("Workspace › Schedule");
+    expect(merchantNavMap()).toContain("Settings › Connections");
   });
 
   it("预览门的实话跟着它进地图 —— Otto 不可能只说前一半(#792)", () => {
