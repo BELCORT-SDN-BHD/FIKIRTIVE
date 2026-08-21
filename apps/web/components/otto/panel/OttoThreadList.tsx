@@ -10,14 +10,22 @@
  * 320px 宽的面板里把那份模型画出来,一行取数、一行排序都没有。导轨本身不在这一票里删
  * (那是 W2-11),所以这段时间里两处画的必须是同一份历史 —— 模型只有一份,就不可能不是。
  *
- * 与导轨画法的差别只有一处,而且是刻意的:这里没有置顶/改名/删除那几个行内控件。面板是
- * 「接着聊哪一条」的地方,整理会话仍在导轨(W2-11 收编导轨时再决定它们的落点)。少画一个
- * 按了没反应的按钮,好过摆一排。
+ * W2-11(切换总票):置顶/改名/删除三个行内控件从导轨(`OttoNav.tsx`)搬到了这里 ——
+ * 换壳删掉了那条导轨本身,整理会话不能跟着一起消失(「换壳丢功能」是核心能力不容马虎的
+ * 反面)。业务动作函数原样复用(`@/lib/otto-client-actions`,Shared actions 纪律,
+ * 见 `OttoPanelHost.tsx`),这个文件只加控件本身,悬停/聚焦时才现出来,与导轨原来的
+ * 密度、图标一致。
  */
 
 import * as React from "react";
-import { Pin, SquarePen } from "lucide-react";
+import { MoreHorizontal, Pencil, Pin, SquarePen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { ChatThreadDTO } from "@/lib/types";
 import {
   OTTO_NAV_PROJECT_LIMIT,
@@ -35,6 +43,16 @@ export interface OttoThreadListProps {
   activeThreadId: string | null;
   onSelectThread: (thread: ChatThreadDTO) => void;
   onNewChat: () => void;
+  /** 打开改名对话框(与 `OttoNav.tsx` 同一颗:`OttoRenameDialog`,由上层持有)。 */
+  onRenameThread: (id: string) => void;
+  /** 置顶/取消置顶 —— 直接生效,不经确认(与导轨原来的行为一致)。 */
+  onSetThreadPinned: (id: string, pinned: boolean) => void;
+  /** 打开删除确认(与 `OttoNav.tsx` 同一颗:`OttoConfirmDialog`,由上层持有)。 */
+  onDeleteThread: (id: string) => void;
+  /** 项目一层的同三件事 —— 挂在项目标题行上,不是又开一个列表。 */
+  onRenameProject: (id: string) => void;
+  onSetProjectPinned: (id: string, pinned: boolean) => void;
+  onDeleteProject: (id: string) => void;
   /** 正在取这一条的消息 —— 取到了上层才切过去,所以这一下要看得见。 */
   openingThreadId?: string | null;
   /** 打不开时那句话。留在列表上说,不切过去让商家盯着一片空白。 */
@@ -58,6 +76,12 @@ export function OttoThreadList({
   activeThreadId,
   onSelectThread,
   onNewChat,
+  onRenameThread,
+  onSetThreadPinned,
+  onDeleteThread,
+  onRenameProject,
+  onSetProjectPinned,
+  onDeleteProject,
   openingThreadId = null,
   error = null,
   now,
@@ -107,11 +131,40 @@ export function OttoThreadList({
         if (entry.kind !== "project") return null;
         const project = entry.project;
         const groups = groupThreadsByDate(entry.threads, now);
+        const projectPinned = Boolean(project.pinnedAt);
         return (
-          <div key={project.id} data-otto-thread-list-project={project.id} className="flex flex-col gap-1">
+          <div key={project.id} data-otto-thread-list-project={project.id} className="group/project flex flex-col gap-1">
             <div className="flex items-center gap-1.5 px-1 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground/70 uppercase">
-              {project.pinnedAt && <Pin className="size-3 shrink-0" fill="currentColor" aria-hidden />}
-              <span className="truncate">{project.name}</span>
+              {projectPinned && <Pin className="size-3 shrink-0" fill="currentColor" aria-hidden />}
+              <span className="min-w-0 flex-1 truncate">{project.name}</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={`size-[20px] shrink-0 rounded-lg text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/project:opacity-100 group-focus-within/project:opacity-100 data-[state=open]:opacity-100 ${projectPinned ? "opacity-100" : ""}`}
+                    aria-label={`${project.name} controls`}
+                    title="Project controls"
+                  >
+                    <MoreHorizontal className="size-3.5" aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44">
+                  <DropdownMenuItem onSelect={() => onSetProjectPinned(project.id, !projectPinned)}>
+                    <Pin className="size-3.5" fill={projectPinned ? "currentColor" : "none"} aria-hidden />
+                    {projectPinned ? "Unpin project" : "Pin project"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => onRenameProject(project.id)}>
+                    <Pencil className="size-3.5" aria-hidden />
+                    Rename project
+                  </DropdownMenuItem>
+                  <DropdownMenuItem variant="destructive" onSelect={() => onDeleteProject(project.id)}>
+                    <Trash2 className="size-3.5" aria-hidden />
+                    Delete project
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             {entry.threads.length === 0 ? (
               <p className="px-1 pb-1 text-[12px] text-muted-foreground/70">No conversations yet</p>
@@ -127,33 +180,74 @@ export function OttoThreadList({
                   {group.threads.map((thread) => {
                     const active = thread.id === activeThreadId;
                     const opening = thread.id === openingThreadId;
+                    const pinned = Boolean(thread.pinnedAt);
                     const dot = statusDot(thread.status);
                     return (
-                      <Button
-                        key={thread.id}
-                        type="button"
-                        variant="ghost"
-                        data-otto-thread-list-thread={thread.id}
-                        {...(active ? { "aria-current": "true" as const } : {})}
-                        {...(opening ? { "aria-busy": true } : {})}
-                        disabled={openingThreadId !== null}
-                        onClick={() => onSelectThread(thread)}
-                        title={thread.title}
-                        className={`h-auto w-full justify-start gap-2 rounded-[10px] px-2 py-1.5 text-left text-[13px] ${
-                          active ? "bg-secondary font-semibold text-foreground" : "font-normal text-muted-foreground"
-                        }`}
-                      >
-                        {thread.pinnedAt && <Pin className="size-3 shrink-0" fill="currentColor" aria-hidden />}
-                        {dot && (
-                          <span
-                            className="inline-block size-[7px] shrink-0 rounded-full"
-                            style={{ background: dot }}
-                            aria-hidden
-                          />
-                        )}
-                        <span className="min-w-0 truncate">{thread.title}</span>
-                        {opening && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">Opening…</span>}
-                      </Button>
+                      <div key={thread.id} className="group/thread relative flex items-center">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          data-otto-thread-list-thread={thread.id}
+                          {...(active ? { "aria-current": "true" as const } : {})}
+                          {...(opening ? { "aria-busy": true } : {})}
+                          disabled={openingThreadId !== null}
+                          onClick={() => onSelectThread(thread)}
+                          title={thread.title}
+                          className={`h-auto w-full min-w-0 justify-start gap-2 rounded-[10px] py-1.5 pr-14 pl-2 text-left text-[13px] ${
+                            active ? "bg-secondary font-semibold text-foreground" : "font-normal text-muted-foreground"
+                          }`}
+                        >
+                          {pinned && <Pin className="size-3 shrink-0" fill="currentColor" aria-hidden />}
+                          {dot && (
+                            <span
+                              className="inline-block size-[7px] shrink-0 rounded-full"
+                              style={{ background: dot }}
+                              aria-hidden
+                            />
+                          )}
+                          <span className="min-w-0 truncate">{thread.title}</span>
+                          {opening && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">Opening…</span>}
+                        </Button>
+                        {/* 悬停/聚焦/已置顶才现身 —— 与导轨原来的密度一致,不是常驻的第三排按钮。 */}
+                        <div
+                          data-otto-thread-list-actions={thread.id}
+                          className={`absolute right-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/thread:opacity-100 group-focus-within/thread:opacity-100 ${pinned ? "opacity-100" : ""}`}
+                        >
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-[22px] rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+                            aria-label={pinned ? `Unpin ${thread.title}` : `Pin ${thread.title}`}
+                            title={pinned ? "Unpin conversation" : "Pin conversation"}
+                            onClick={(e) => { e.stopPropagation(); onSetThreadPinned(thread.id, !pinned); }}
+                          >
+                            <Pin className="size-3.5" fill={pinned ? "currentColor" : "none"} aria-hidden />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-[22px] rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+                            aria-label={`Rename ${thread.title}`}
+                            title="Rename conversation"
+                            onClick={(e) => { e.stopPropagation(); onRenameThread(thread.id); }}
+                          >
+                            <Pencil className="size-3.5" aria-hidden />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-[22px] rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            aria-label={`Delete ${thread.title}`}
+                            title="Delete conversation"
+                            onClick={(e) => { e.stopPropagation(); onDeleteThread(thread.id); }}
+                          >
+                            <Trash2 className="size-3.5" aria-hidden />
+                          </Button>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>

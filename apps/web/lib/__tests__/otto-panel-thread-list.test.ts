@@ -6,10 +6,11 @@
  *
  * 这一票唯一真正的风险不是「画不出来」,是**画出第二份**:面板自己去建一套分组/排序/上限,
  * 于是同一台机器上的导轨与面板给出两份互相矛盾的历史,而且两边都不会红。所以这里的第一组
- * 断言不是「列表长什么样」,是「列表与 `OttoNav` 同源同序」:
+ * 断言不是「列表长什么样」,是「列表与权威模型同源同序」:
  *
  *   ① 面板画出来的顺序**逐条**等于 `buildOttoNavEntries` 给的顺序(同一个模型函数);
- *   ② 上限只有一处作者 —— `OttoNav.tsx` 里不许再有自己的数字;
+ *   ② 上限只有一处作者 —— 面板自己不许再写一份数字(W2-11 换壳后 `OttoNav.tsx` 已删,
+ *      面板是唯一的渲染方,这条守的是「以后也不许长出第二份」);
  *   ③ 日期分组只**贴标签**,不重排(置顶那条不许被挪走);
  *   ④ `New chat` 在。
  */
@@ -82,6 +83,12 @@ async function renderList(overrides: Partial<Parameters<typeof OttoThreadList>[0
         activeThreadId: "t_today",
         onSelectThread: () => {},
         onNewChat: () => {},
+        onRenameThread: () => {},
+        onSetThreadPinned: () => {},
+        onDeleteThread: () => {},
+        onRenameProject: () => {},
+        onSetProjectPinned: () => {},
+        onDeleteProject: () => {},
         now: NOW,
         ...overrides,
       }),
@@ -126,9 +133,9 @@ describe("同源同序 —— 面板列表与导轨读的是同一份模型", ()
     expect(renderedThreadIds(sections[0]!)).toEqual(["t_today", "t_yesterday"]);
   });
 
-  it("上限只有一处作者 —— OttoNav 不许再自己写一份数字", () => {
-    const source = readFileSync(path.join(WEB_ROOT, "components/otto/OttoNav.tsx"), "utf8");
-    expect(source, "OttoNav 又自己定了一份上限 —— 两份列表迟早给出不同长度").not.toMatch(
+  it("上限只有一处作者 —— 面板不许自己写一份数字,读的是模型导出的那两个常量", () => {
+    const source = readFileSync(path.join(WEB_ROOT, "components/otto/panel/OttoThreadList.tsx"), "utf8");
+    expect(source, "面板又自己定了一份上限 —— 和模型给出不同长度的风险就回来了").not.toMatch(
       /const\s+(PROJECT_LIMIT|THREAD_LIMIT)\s*=/,
     );
     expect(source).toContain("OTTO_NAV_PROJECT_LIMIT");

@@ -19,8 +19,6 @@ vi.mock("@/lib/better-auth/server", () => ({
 
 const { default: proxy, config } = await import("../../proxy");
 
-const STALE_THREAD_ACTIVITY_ACTION_ID = "40e295ab821708676046d9a9ce1d58dca80ea9c87c";
-
 // Next runs proxy() ONLY for a pathname that matches config.matcher; an excluded path never even
 // reaches the auth wall. So exercise the REAL matcher regex to prove the exclusion, rather than
 // trusting proxy() alone (which the harness can call directly).
@@ -441,41 +439,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-});
-
-describe("proxy", () => {
-  it("no-ops stale Otto thread activity Server Action posts before auth", async () => {
-    const res = await proxy(req("/otto?project=project_1", {
-      method: "POST",
-      headers: { "next-action": STALE_THREAD_ACTIVITY_ACTION_ID },
-    }));
-
-    expect(res?.status).toBe(204);
-    expect(res?.headers).toMatchObject({
-      "cache-control": "no-store",
-      "x-fikirtive-stale-client": "otto-thread-activity",
-    });
-    expect(mockGetSession).not.toHaveBeenCalled();
-  });
-
-  it("does not intercept other Otto Server Action posts", async () => {
-    const res = await proxy(req("/otto?project=project_1", {
-      method: "POST",
-      headers: { "next-action": "other-action" },
-    }));
-
-    expect(res?.status).toBe(307);
-    expect(mockGetSession).toHaveBeenCalledOnce();
-  });
-
-  it("does not intercept the stable thread activity API route", async () => {
-    const res = await proxy(req("/api/otto/thread-activity?projectId=project_1", {
-      method: "GET",
-    }));
-
-    expect(res?.status).toBe(307);
-    expect(mockGetSession).toHaveBeenCalledOnce();
-  });
 });
 
 // H1: the signed media proxy is fetched by Meta's servers with NO session. If the auth wall

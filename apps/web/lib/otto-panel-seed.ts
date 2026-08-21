@@ -61,10 +61,22 @@ export type OttoPanelSeed = {
 /**
  * 取一次面板的会话种子。
  *
+ * `select` 是深链的落点(规格书 §2.2/§2.5,`/otto?project=P&thread=T` 那条旧地址重定向
+ * 到 `/?otto=1&project=P&thread=T` 之后要接得住):`projectId` 给了就优先用它当「打开时
+ * 停在哪个 project」,不给或者给了一个不是这个商家自己的 project 就落回
+ * `getOrCreateDefaultProject()` 那一条(与不带 `select` 调用时完全同一条路径,行为不变)。
+ * `threadId` 同理,而且必须落在**最终选中的那个 project** 上 —— 地址栏说的项目与会话
+ * 必须是同一件事,不能商家点开的其实是另一个 project 底下的会话。两者都在 `runAsUser`
+ * 帧内、对着已经按 `ownerId` 查出来的 `projectRows`/`threadRows` 核验,不是拿商家传来的
+ * id 直接查库(那就又开了一个可以被伪造 ownerId 的口子)——核不过就当没给,回落默认,
+ * 不抛错、不炸。
+ *
  * 失败一律返回 `{ error }` 而不是抛 —— 面板是随处可见的一层壳,它坏掉不该把商家正在看的
  * 那一页也一起带走。
  */
-export async function loadOttoPanelSeed(): Promise<OttoPanelSeed | { error: string }> {
+export async function loadOttoPanelSeed(
+  select?: { projectId?: string; threadId?: string },
+): Promise<OttoPanelSeed | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return { error: gate.error };
 
@@ -84,9 +96,22 @@ export async function loadOttoPanelSeed(): Promise<OttoPanelSeed | { error: stri
     ]);
 
     let threads = threadRows.map(toChatThreadMetaDTO);
-    // 打开时停在**当前 project** 最近那一条 —— 与 W2-7 逐字同义。列表现在覆盖每一个
-    // project,但「面板一打开接着聊哪一条」不跟着变宽,那是另一个决定。
-    const openThreadId = threadRows.find((t) => t.projectId === ensured.id)?.id ?? null;
+
+    // 深链 project:必须是这个商家自己的项目,查不到就当没给。
+    const requestedProjectId = select?.projectId && projectRows.some((p) => p.id === select.projectId)
+      ? select.projectId
+      : null;
+    const activeProjectId = requestedProjectId ?? ensured.id;
+
+    // 打开时停在**当前 project** 最近那一条,或者深链点名的那一条(同样必须是这个商家
+    // 自己的会话,而且落在刚定下来的 project 上)—— 与 W2-7 逐字同义,只多了深链这一条
+    // 优先级更高的分支。列表现在覆盖每一个 project,但「面板一打开接着聊哪一条」不跟着
+    // 变宽,那是另一个决定。
+    const requestedThreadId = select?.threadId
+      && threadRows.some((t) => t.id === select.threadId && t.projectId === activeProjectId)
+      ? select.threadId
+      : null;
+    const openThreadId = requestedThreadId ?? threadRows.find((t) => t.projectId === activeProjectId)?.id ?? null;
     if (openThreadId) {
       const full = await getCoworkThread(ownerId, openThreadId);
       if (full) {
@@ -97,7 +122,7 @@ export async function loadOttoPanelSeed(): Promise<OttoPanelSeed | { error: stri
     }
 
     return {
-      projectId: ensured.id,
+      projectId: activeProjectId,
       entities: entities.map(toEntityDTO),
       projects: projectRows.map((p) => ({
         id: p.id,

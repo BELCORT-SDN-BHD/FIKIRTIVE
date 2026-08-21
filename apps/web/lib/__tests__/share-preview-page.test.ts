@@ -263,6 +263,16 @@ describe("the merchant shell must never wrap this page", () => {
     expect(isMerchantSurface("/schedule/share-preview")).toBe(false);
   });
 
+  // 判官修复轮 P3-1:警铃只钉了裸路径本身,两个变异样本补上豁免的真实形状——
+  // exclusion 是路径段前缀(`startsWith(target + "/")`),不是字符串前缀。
+  it("a sub-path of the carve-out stays exempt too (/schedule/share-preview/<token>)", () => {
+    expect(isMerchantSurface("/schedule/share-preview/abc123")).toBe(false);
+  });
+
+  it("a same-prefix sibling is NOT the carve-out and gets wrapped (/schedule/share-previewx)", () => {
+    expect(isMerchantSurface("/schedule/share-previewx")).toBe(true);
+  });
+
   it("the page renders no shell of its own either — no nav, no identity menu, no sign-out", () => {
     const source = fs.readFileSync(path.join(WEB_ROOT, PAGE), "utf8");
     for (const forbidden of ["GlobalNavigation", "MerchantShell", "signOut", "SectionTabs"]) {

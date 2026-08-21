@@ -131,71 +131,85 @@ export const CREATE_NAV_HREF = SHELL_ROUTES.create;
 export const CANVAS_HREF = SHELL_ROUTES.canvas;
 
 /**
- * Otto —— 助手,不是板块。
+ * Otto 的描述 —— 助手,不是板块,而且**不是地址**(W2-11,规格书 §2.3 ②)。
  *
- * 它不在 MERCHANT_NAV 里:导轨把它画在板块之上、每一个商家表面都在,点开就是真对话。
- * 「主导航第一项叫 Otto」曾经把助手当成了模块,这个常量是那件事的反面。
+ * 它不在 MERCHANT_NAV 里:导轨把它画在板块之上、每一个商家表面都在,点开的是右侧常驻
+ * 面板,不是一次跳转。「主导航第一项叫 Otto」曾经把助手当成了模块,这个常量是那件事的
+ * 反面;`href` 字段的消失是下一层反面 —— Otto 不再是「点开就换页」的东西。
+ *
+ * 没有 `MerchantNavLink` 类型标注,是因为它没有 `href`——那个类型要求真地址,Otto 给不出。
+ * `navPath()` / `navLabel()` 仍然对 `otto` key 单独判断(它俩不读 `.href`),所以 Otto 仍能
+ * 说出自己的名字;`everyNavDestination()` 不再把它接进去,因为那份名单的契约就是「真链接」。
  */
-export const OTTO_ASSISTANT: MerchantNavLink = {
+export const OTTO_ASSISTANT = {
   key: "otto",
   label: "Ask Otto",
-  href: "/otto",
-  does: "Ask Otto to do any of this with you — Otto is your assistant, beside you on every page, and never a section of its own.",
-};
+  does: "Ask Otto to do any of this with you — Otto sits on the right of every page, and is never a section of its own.",
+} as const;
 
-/** 主导航,顺序即导轨从上到下的顺序。 */
+/**
+ * 主导航,顺序即导轨从上到下的顺序(W2-11,规格书 §2.3 ①)。
+ *
+ * 七格权威改写 —— 前面各票已经把真路由建好(W2-1…6、W2-10),这里只改数据本身。地址一律
+ * 引 `SHELL_ROUTES`,不在这里再写第二遍字面量。
+ *
+ * 两处诚实修正(`simulated-features.json` 已实证,随本票一并修掉):
+ *   - `preferences.does` 不再提 "notifications"——通知开关早已删除,没有任何邮件或站内渠道
+ *     读它。
+ *   - `analytics` 不再作为导航承诺出现:它读的是 Meta 广告账户,不是自然帖表现(规格书
+ *     §2.3 ①);Analytics 仍在,是 Schedule 页内的第二个页签(`SHELL_ROUTES.analytics`),
+ *     不占导航格。
+ *
+ * `Templates` / `Discover` / `Video editor` 不再各占一格(规格书 Q6-A):Video editor 跟着
+ * Library 走(`SHELL_ROUTES.edit`),Templates / Discover 收编进 Create 页面下方的两个区段
+ * (`#templates` / `#ideas`),不是新路由,所以这里没有它们的条目。
+ */
 export const MERCHANT_NAV: readonly MerchantNavNode[] = [
+  {
+    key: "home",
+    label: "Home",
+    href: SHELL_ROUTES.home,
+    does: "See what is waiting for you, what you made lately, and what goes out next.",
+  },
   {
     key: "create",
     label: CREATE_NAV_LABEL,
     href: CREATE_NAV_HREF,
-    does: "Start something new and open it on a canvas — every canvas you have lives here, and making anything always asks you first.",
+    does: "Start something new and open it on a canvas — every canvas you have lives here.",
+  },
+  {
+    key: "library",
+    label: "Library",
+    href: SHELL_ROUTES.library,
+    does: "Find every image and video you have already made.",
+  },
+  {
+    key: "brand",
+    label: "Brand",
+    href: SHELL_ROUTES.brand,
+    does: "Keep what Otto should remember about your brand and the things you sell.",
   },
   {
     key: "campaign",
-    label: "Campaign",
-    href: "/campaign",
+    label: "Campaigns",
+    href: SHELL_ROUTES.campaign,
     does: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
   },
-  // W2-13(#993)—— Customers 那一格删于此。它曾经是 #792 收敛出来的那扇预览门
-  // (`href: "/crm"`,`preview: MESSAGING_STATUS_MERCHANT`)。Founder 2026-08-18 裁决2:
-  // Meta verification 没过之前,CRM 整段不出现在商家表面上。加回来的条件与做法写在文件头 ④。
   {
-    key: "workspace",
-    label: "Workspace",
-    // 顺序照商家在 Otto 自有导轨里已经习惯的那一串(Library → 品牌 → Templates →
-    // Discover → Schedule → Analytics),不另发明一套。
-    //
-    // 为什么 Templates 与 Discover 在这里而不在 Create:它们确实是「开始做一件新东西」的
-    // 两条捷径,但 Create 必须保持**一格直达**画布 —— Founder 裁的是画布是主要卖点,把它
-    // 变成一个要先展开的分组,等于给旗舰面多加一次点击。分组留给工具,直达留给旗舰。
-    items: [
-      { key: "library", label: "Library", href: "/otto?view=library", does: "Find every image and video you have already made." },
-      // #780 —— 剪辑台的门。拼接/字幕/配乐引擎一直在跑(见 packages/core/timeline.ts 与
-      // apps/worker),但自 #606 起没有任何入口通向它,商家拿不到「多条片接成一条」。
-      // 紧挨 Library:要剪的东西就在那里,两格之间不隔第三样。
-      { key: "edit", label: "Video editor", href: "/otto?view=edit", does: "Put your clips together into one video, add captions, and lay music under it." },
-      { key: "brand", label: "Brand & products", href: "/otto?view=memory", does: "Keep what Otto should remember about your brand and the things you sell." },
-      { key: "templates", label: "Templates", href: "/otto?view=templates", does: "Start from a ready-made setup: pick one, add your product, get a polished image." },
-      { key: "discover", label: "Discover", href: "/otto?view=discover", does: "Browse ideas worth trying when you are not sure what to make next." },
-      {
-        key: "schedule",
-        label: "Schedule",
-        href: "/otto?view=schedule",
-        // 唯一的日历。/campaign/calendar 那张草稿列表已收敛(见 MERCHANT_NAV_REDIRECTS):
-        // 计划日期在战役自己那一页改,真正要发出去的东西只有这一本。
-        does: "The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.",
-      },
-      { key: "analytics", label: "Analytics", href: "/otto?view=analytics", does: "See how what you posted actually performed." },
-    ],
+    key: "schedule",
+    label: "Schedule",
+    href: SHELL_ROUTES.schedule,
+    // 唯一的日历。/campaign/calendar 那张草稿列表已收敛(见 MERCHANT_NAV_REDIRECTS):
+    // 计划日期在战役自己那一页改,真正要发出去的东西只有这一本。
+    does: "The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.",
   },
   {
     key: "settings",
     label: "Settings",
     items: [
-      { key: "connections", label: "Connections", href: "/otto?view=connections", does: "Connect or disconnect the accounts you post from." },
-      { key: "preferences", label: "Preferences", href: "/otto?view=account", does: "Set your spend cap, notifications and posting defaults." },
-      { key: "billing", label: "Billing & credits", href: "/billing", does: "Buy credits, and read what your credits have gone on." },
+      { key: "billing", label: "Billing & credits", href: SHELL_ROUTES.billing, does: "Buy credits, and read what your credits have gone on." },
+      { key: "connections", label: "Connections", href: SHELL_ROUTES.connections, does: "Connect or disconnect the accounts you post from." },
+      { key: "preferences", label: "Preferences", href: SHELL_ROUTES.preferences, does: "Set your spend cap and posting defaults." },
     ],
   },
 ];
@@ -208,7 +222,7 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
 export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly to: string; readonly why: string }[] = [
   {
     from: "/campaign/calendar",
-    to: "/otto?view=schedule",
+    to: SHELL_ROUTES.schedule,
     why: "One calendar, not two. The campaign calendar only re-edited plan-entry dates that the campaign's own page already edits; the schedule is the calendar that actually posts.",
   },
   // `/library` 曾经在这张表里(「旧的独立素材库已并进工作区 Library」)。W2-1 把它撤了 ——
@@ -216,11 +230,11 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
   // (`apps/web/app/library/page.tsx`,规格书 §2.2「shim 撤销,变回真页面」)。这张表的
   // 契约是「每一条 from 都必须有一个真的 redirect 路由文件」,留着这一行就等于要求那扇门
   // 继续把商家甩走。
-  {
-    from: "/m",
-    to: "/otto",
-    why: "The old simple-mode surface was retired; there is one Otto.",
-  },
+  //
+  // `/m` 曾经在这张表里(「旧的 simple-mode 表面已经退役,只有一个 Otto」)。W2-11 把它撤了
+  // 同一个理由:`apps/web/app/m/page.tsx` 这个文件本身随本票删除,不再是一条「收敛掉的旧
+  // 路由」——它是一条**不存在的**路由。旧书签 `/m` 今天起 404,而不是二次转发:它从来只是
+  // 一个内部代号入口,产品从未公测过,没有商家书签需要兼容。
 ];
 
 /**
@@ -267,9 +281,16 @@ export function merchantNavLinks(): readonly MerchantNavLink[] {
   return MERCHANT_NAV.flatMap((node) => (isNavGroup(node) ? node.items : [node]));
 }
 
-/** 每一条可点的目的地,含助手 —— 用于「这个能力有没有门」这类覆盖检查。 */
+/**
+ * 每一条可点的目的地 —— 只有真链接(W2-11)。
+ *
+ * 助手不在内:它没有 `href`,「这个能力有没有门」这类覆盖检查问的正是「有没有一条能点开的
+ * 地址」,而 Otto 给不出地址。以前这里把 `OTTO_ASSISTANT` 接在最前面,是它还有 `href` 的
+ * 年代;现在这个函数与 `merchantNavLinks()` 同义,保留成独立导出只是为了不逼所有调用点
+ * 改名。
+ */
 export function everyNavDestination(): readonly MerchantNavLink[] {
-  return [OTTO_ASSISTANT, ...merchantNavLinks()];
+  return merchantNavLinks();
 }
 
 /** 分组名与组内项之间的那一格 —— 商家跟着走的那条路只有这一种写法。 */
@@ -374,7 +395,11 @@ export function navPointableNames(): readonly string[] {
  */
 export function merchantNavMap(): string {
   const lines: string[] = [];
-  lines.push(describeNavLink(OTTO_ASSISTANT));
+  // 助手没有 href——它是面板,不是地址(W2-11)。这一行单独说清怎么打开它,不套
+  // describeNavLink() 那副「名字 (href) — 能做什么」的模具(它要求一条真地址)。
+  // 不写 "button"——packages/otto 的 #541 词表禁令挡的正是这个词:Otto 看不见 app 的
+  // 控件,连自己这份地图里都不许出现点名控件的写法(否则这句话本身就会被它复述出去)。
+  lines.push(`- ${OTTO_ASSISTANT.label} — ${OTTO_ASSISTANT.does} Reachable on every page, or with Cmd/Ctrl+J.`);
   for (const node of MERCHANT_NAV) {
     if (!isNavGroup(node)) {
       lines.push(describeNavLink(node));

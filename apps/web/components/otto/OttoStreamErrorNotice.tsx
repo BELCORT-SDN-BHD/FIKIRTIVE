@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import type { OttoErrorData } from "@/lib/otto-stream-bridge";
 import { Button } from "@/components/ui/button";
 
@@ -42,7 +43,7 @@ export function OttoStreamErrorNotice({
         <>
           {" "}
           <a
-            href="/otto?view=account"
+            href={SHELL_ROUTES.preferences}
             className="font-semibold text-[var(--error-soft-foreground)] underline"
           >
             Open settings

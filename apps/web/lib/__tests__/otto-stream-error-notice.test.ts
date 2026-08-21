@@ -103,7 +103,8 @@ describe("OttoStreamErrorNotice", () => {
 
     expect(markup).toContain('role="alert"');
     expect(markup).toContain("Paused by your spend cap");
-    expect(markup).toContain('href="/otto?view=account"');
+    // W2-11:落地地址从旧壳的 /otto?view=account 换成真路由 SHELL_ROUTES.preferences(/settings)。
+    expect(markup).toContain('href="/settings"');
     expect(markup).toContain("Open settings");
     expect(markup).not.toContain("Top up");
     expect(markup).not.toContain('href="/billing"');
@@ -141,7 +142,8 @@ describe("OttoStreamErrorNotice", () => {
     );
 
     expect(durableError).toEqual({ kind: "spend_cap", text: "Paused by your spend cap." });
-    expect(renderNotice(durableError)).toContain('href="/otto?view=account"');
+    // W2-11:落地地址从旧壳的 /otto?view=account 换成真路由 SHELL_ROUTES.preferences(/settings)。
+    expect(renderNotice(durableError)).toContain('href="/settings"');
   });
 
   it("keeps the existing generic reply failure presentation and retry action", () => {

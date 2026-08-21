@@ -11,6 +11,7 @@ import type { CreditPackShelf } from "@/lib/billing-actions";
 import { autoPublishHint, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
 import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 export type ChannelState = {
@@ -172,7 +173,7 @@ export function buildSettingsSections(args: {
                     {connectedCount} of {connectable.length} connected
                   </div>
                 </div>
-                <a className="cv-set-btn" href="/otto?view=connections">
+                <a className="cv-set-btn" href={SHELL_ROUTES.connections}>
                   Manage connections
                 </a>
               </div>

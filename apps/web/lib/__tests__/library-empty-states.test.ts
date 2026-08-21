@@ -164,7 +164,8 @@ describe("#701 Brand memory is pointed at with a link, not with directions", () 
     expect(dialog, "the product picker dialog did not open").toBeTruthy();
     expect(dialog!.textContent, "the dialog no longer mentions Brand memory").toContain("Brand memory");
 
-    const link = dialog!.querySelector<HTMLAnchorElement>('a[href*="view=memory"]');
+    // W2-11:落地地址从旧壳的 /otto?view=memory 换成真路由 SHELL_ROUTES.brand(/brand)。
+    const link = dialog!.querySelector<HTMLAnchorElement>('a[href="/brand"]');
     expect(link, "the merchant is told where to go and left to find it themselves").toBeTruthy();
     expect(link!.textContent?.trim()).not.toBe("");
   });
@@ -181,8 +182,9 @@ describe("#701 Brand memory is pointed at with a link, not with directions", () 
     });
 
     expect(dom.textContent).toContain("Brand memory");
+    // W2-11:落地地址从旧壳的 /otto?view=memory 换成真路由 SHELL_ROUTES.brand(/brand)。
     expect(
-      dom.querySelector<HTMLAnchorElement>('a[href*="view=memory"]'),
+      dom.querySelector<HTMLAnchorElement>('a[href="/brand"]'),
       "the same dead pointer, one filter over",
     ).toBeTruthy();
   });

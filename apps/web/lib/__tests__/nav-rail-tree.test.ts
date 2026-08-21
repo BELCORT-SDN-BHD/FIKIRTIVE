@@ -155,14 +155,14 @@ describe("高亮唯一 —— 拿今天的权威源逐条遍历", () => {
     }
   });
 
-  it("does not let a bare path claim a destination that pins a query", () => {
-    // 今天权威源里还有 `/otto?view=library` 这种形状(W2-11 才换掉)。光秃秃的 `/otto`
-    // 不许把 Library 点亮 —— 否则商家在助手页上会看到一格随机亮着。
-    const pinned = links.filter((link) => splitLocation(link.href).query.toString().length > 0);
-    expect(pinned.length, "registry has no query-pinned hrefs left — drop this assertion with them").toBeGreaterThan(0);
-
-    for (const link of pinned) {
-      expect(navMatchesLocation(splitLocation(link.href).path, link.href)).toBe(false);
+  // W2-11 换掉了权威源里最后几条带查询串的地址(`/otto?view=X` → 各自的真路由),
+  // 这份名单从此不再有 `?query=` 钉住的目的地——这条断言原本守的就是那个形状,随它一起撤。
+  // 如果 §1.3 那份权威源哪天又长出一条带查询的地址,`nav-rail.test.ts`/`nav-rail-tree.test.ts`
+  // 上面那些逐条遍历权威源的断言(`lights exactly one cell on every destination…`)仍然会
+  // 照着新形状去核,不需要专门再补一条。
+  it("每一条目的地都是路径地址,不带查询串", () => {
+    for (const link of links) {
+      expect(splitLocation(link.href).query.toString(), link.href).toBe("");
     }
   });
 });

@@ -10,6 +10,7 @@
 import { test, expect } from "@playwright/test";
 import { seedWorkspace, readAccount } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
+import { waitUntilInteractive } from "../support/ui.js";
 import { prisma, INTERNAL_PER_DISPLAY } from "../support/db.js";
 
 test("A merchant creates a project, lands in it, and is charged nothing for it", async ({ page }) => {
@@ -20,25 +21,26 @@ test("A merchant creates a project, lands in it, and is charged nothing for it",
     openingGrant: 75,
   });
 
-  await signIn(page, ws, "/otto");
+  await signIn(page, ws, "/");
 
-  // The projects rail starts collapsed at this viewport; "New project" lives inside it.
+  // W2-11 — the old `/otto` workbench and its collapsed projects rail are gone, and with them
+  // the "Show sidebar" toggle and the second "New project" button that lived inside it. The
+  // switched shell has exactly ONE way to start a canvas (`components/start-something/
+  // StartSomething.tsx`, Founder ruling 2026-08-18 Q2-A): the same component on Home and on
+  // Create, whose "New canvas" button calls the same `createProject` server action the old
+  // button called. So this journey drives the front door a merchant now really has.
   //
-  // WAITED FOR, not sampled. `isVisible()` is a single instantaneous read: it answers "is this on
-  // screen right now", and right now is a moment while the workbench is still mounting. It
-  // happened to be true when signing in was a server redirect that landed on a fully painted
-  // document; with the sign-in code the page navigates itself, so the read could fall before the
-  // rail existed — the toggle was then skipped and the journey blamed "New project" for being
-  // missing. The rail is genuinely collapsed at this viewport, so waiting for the toggle is the
-  // honest form of the same check.
-  const showSidebar = page.getByRole("button", { name: "Show sidebar" });
-  await showSidebar.waitFor({ state: "visible" });
-  await showSidebar.click();
+  // WAITED FOR HYDRATION, not merely for paint — the same defect the old comment here described,
+  // closed with the helper written for it: a click that lands before React owns the button is
+  // discarded and never replayed, and the journey would then spend its whole budget waiting for
+  // a project that was never asked for (#981, support/ui.ts).
+  const newCanvas = page.getByRole("button", { name: "New canvas" });
+  await waitUntilInteractive(newCanvas);
+  await newCanvas.click();
 
-  await page.getByRole("button", { name: "New project" }).click();
-
-  // The app opens the project it just made: a different id in the URL than the seeded one.
-  await expect(page).toHaveURL(/[?&]project=/);
+  // The app opens the project it just made, on the canvas: a different id in the URL than the
+  // seeded one.
+  await expect(page).toHaveURL(/\/create\/canvas\?project=/);
   const opened = new URL(page.url()).searchParams.get("project");
   expect(opened).not.toBe(ws.projectId);
 

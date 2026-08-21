@@ -220,18 +220,17 @@ describe("Templates 与 Discover 收编成 /create 的两个区段(规格书 Q6-
     expect(markup).toContain(INSPIRATIONS[0].title);
   });
 
-  it("这一票只建区段,导航格的删除留给切换总票 —— 旧壳零行为变化", () => {
-    // 两个旧视图今天照常在 Otto 自己的视图宿主里挂着(W2-11 才拆)。
-    const ottoView = sourceCode("components/otto/OttoView.tsx");
-    expect(ottoView).toContain("OttoTemplates");
-    expect(ottoView).toContain("OttoDiscover");
-  });
+  // W2-11(切换总票)把旧壳(`OttoView.tsx`/`OttoApp.tsx`/`OttoNav.tsx`)整个删了 —— 那句
+  // "导航格的删除留给切换总票,旧壳零行为变化" 描述的过渡期本身就此结束,原来钉在
+  // `OttoView.tsx` 内容上的两条断言随它一起撤(源码已经不存在,无从再钉)。
 
-  it("`/create` 上不画一颗按了没反应的「Use in Otto」(面板由 W2-11 才挂上)", () => {
+  it("面板挂到了 `/create`,但把 Discover 的 prompt 真的送进面板composer 是另一块接线,`onUseInOtto` 仍未接通(诚实的现状,不是回归)", () => {
+    // 按钮本身根本不画(见 OttoDiscover.tsx 的 `onUseInOtto &&` 判断),不是「按了没反应」。
+    // 接通它需要:打开面板 + 把 prompt 预填进 composer —— 与本票的导航权威改写、/otto 收口、
+    // 移动端整层删除、组织控件迁移是四件不同的事,留给专门的一票去接。
+    expect(existsSync(resolve(WEB_ROOT, "components/otto/OttoView.tsx")), "旧壳已随 W2-11 删除").toBe(false);
     const sections = sourceCode("components/create/CreateBrowseSections.tsx");
-    expect(sections, "创作面给了 onUseInOtto,但那一页还没有 Otto 面板").not.toContain("onUseInOtto");
-    // 旧壳照旧传它,所以那颗按钮在 /otto 上一如从前。
-    expect(sourceCode("components/otto/OttoView.tsx")).toContain("onUseInOtto");
+    expect(sections).not.toContain("onUseInOtto={");
   });
 });
 
@@ -287,8 +286,8 @@ describe("一屏只有一个开工入口(规格书 Q2-A)", () => {
      */
     const ALLOWED: Record<string, string> = {
       [START_SOMETHING]: "唯一的开工入口:商家写一句话 → 建画布 → 落在那张画布上。",
-      "components/otto/OttoApp.tsx":
-        "旧壳左侧项目列表那颗 +:它建的是一个空项目,不是「开始做点什么」。整条随 W2-11 退场。",
+      // "components/otto/OttoApp.tsx"(旧壳左侧项目列表那颗 +)随 W2-11 一起删除 —— 那一条
+      // 调用点不再存在,豁免簿跟着划掉,不是留一条陈账。
       "lib/otto-projects-port.ts":
         "Otto 技能的项目端口:Otto 只提议,商家点了才建 —— 它不画界面,也不静默开画布。",
     };

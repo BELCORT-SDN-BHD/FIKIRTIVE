@@ -18,10 +18,11 @@ export const metadata = { title: "Video editor · Fikirtive" };
  * 为什么它长在 Library 下面而不是自己占一格(规格书 Q6,Founder 已拍板):要剪的东西就在
  * Library 里,两格之间不隔第三样;而导航是七格的骨架,加回一格等于没换壳。
  *
- * **组件原样复用,不搬文件**:`components/otto/edit/EditDesk.tsx` 留在原处,旧壳
- * (`OttoView` 的 `view === "edit"`)照旧画它 —— 两条路,同一个组件,同一个动作层
- * (`lib/edit-desk-actions.ts`,`edit-desk-two-surfaces.test.ts` 钉着这一点)。
- * 旧壳这一票零行为变化,是 Stack A 的纪律(规格书 §6.3)。
+ * **组件原样复用,不搬文件**:`components/otto/edit/EditDesk.tsx` 留在原处;这一票落地时
+ * 旧壳(`OttoView` 的 `view === "edit"`)还照旧画着同一个组件,零行为变化,是 Stack A 的纪律
+ * (规格书 §6.3)。旧壳随 W2-11(切换总票)整层删除之后,这一条就是**唯一**的路了 ——
+ * 同一个组件、同一个动作层(`lib/edit-desk-actions.ts`,`edit-desk-two-surfaces.test.ts` 钉着
+ * 这一点)。
  */
 export default async function LibraryEditorPage({
   searchParams,

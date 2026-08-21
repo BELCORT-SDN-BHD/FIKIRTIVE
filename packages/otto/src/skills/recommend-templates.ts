@@ -20,7 +20,7 @@ import {
   templateById,
   type Template,
 } from "@fikirtive/core/templates";
-import { navLinkByKey } from "@fikirtive/core";
+import { SHELL_ROUTES, navPath } from "@fikirtive/core";
 import type { RunContext } from "@openai/agents";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
@@ -61,10 +61,15 @@ const params = z.object({
 
 type RecommendTemplatesInput = z.infer<typeof params>;
 
-const TEMPLATES_NAV = navLinkByKey("templates");
+// W2-11(规格书 Q6-A):Templates 不再单占一格,它是 Create 页面下方的一个区段
+// (`OTTO_VIEW_REDIRECTS.templates` 同一个地址),`navLinkByKey("templates")` 因此不再有
+// 结果可取。地址仍然只从权威源拼(`SHELL_ROUTES.create` + 区段锚点),不在这里写第二份。
+const TEMPLATES_SELF_SERVE_HREF = `${SHELL_ROUTES.create}#templates`;
 
-/** 商家自己走的那条路 —— 从导航唯一权威源取,不在这里抄第二份路径。 */
-export const TEMPLATES_SELF_SERVE = `The merchant can also do this themselves: ${TEMPLATES_NAV.label} (${TEMPLATES_NAV.href}).`;
+/** 商家自己走的那条路 —— 地址与地名都从导航唯一权威源取,不在这里抄第二份。
+ *  不写成「the Create page」:那是「导航标签 + page」的形状,#802 的界面引用围栏
+ *  (instructions-nav-map.test.ts ④)专挡这个 —— 改名必漂的正是这种手写引用。 */
+export const TEMPLATES_SELF_SERVE = `The merchant can also do this themselves: ${navPath("create")} (${TEMPLATES_SELF_SERVE_HREF}) has a Templates section for this.`;
 
 const NEXT_STEP =
   "Nothing has been made or charged. To make one: take the template's `prompt` (that is the finished English prompt — do not rewrite it), " +

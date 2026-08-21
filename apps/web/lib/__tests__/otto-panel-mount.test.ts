@@ -31,7 +31,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CANVAS_HREF, CREATE_NAV_HREF, OTTO_ASSISTANT } from "@fikirtive/core/navigation";
+import { CANVAS_HREF, CREATE_NAV_HREF } from "@fikirtive/core/navigation";
 import { expectDockedStaysInFlow } from "./otto-panel-dock-contract";
 
 vi.mock("next/navigation", () => ({
@@ -44,9 +44,13 @@ vi.mock("@/lib/account-actions", () => ({
   getMyAccount: vi.fn().mockResolvedValue({ error: "not mocked in this test" }),
 }));
 
-/** 面板体的取数。真实现要 Postgres;这里只需要证明「面板拿到什么就画什么」。 */
+/** 面板体的取数。真实现要 Postgres;这里只需要证明「面板拿到什么就画什么」。
+ *  参数原样转发(不是 `() => loadOttoPanelSeed()` 吞掉调用方传了什么)——深链测试要断言
+ *  的正是 `OttoPanelHost` 把 `{projectId, threadId}` 传对了没有。 */
 const loadOttoPanelSeed = vi.fn();
-vi.mock("@/lib/otto-panel-seed", () => ({ loadOttoPanelSeed: () => loadOttoPanelSeed() }));
+vi.mock("@/lib/otto-panel-seed", () => ({
+  loadOttoPanelSeed: (...args: unknown[]) => loadOttoPanelSeed(...args),
+}));
 
 /** 会话那一侧的服务端动作 —— 这个文件一次都不会走到它们,挡住是为了不把 Prisma 拖进来。 */
 vi.mock("@/lib/otto-client-actions", () => ({
@@ -58,6 +62,28 @@ vi.mock("@/lib/otto-client-actions", () => ({
 }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
 
+/** 项目那一侧的服务端动作 —— 与会话侧同一个理由,挡住是为了不把 Prisma 拖进来。 */
+vi.mock("@/lib/actions", () => ({
+  renameProject: vi.fn(),
+  deleteProject: vi.fn(),
+  setProjectPinned: vi.fn(),
+}));
+
+// Radix 的 DropdownMenu(项目行的「…」菜单)在 jsdom 里要这三样才活得起来 —— 与
+// nav-rail.test.ts 同一份 polyfill(popper 量尺寸、指针捕获、滚动到高亮项)。
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { MerchantShellContent } = await import("@/components/global-navigation");
@@ -65,8 +91,17 @@ const { MerchantShellContent } = await import("@/components/global-navigation");
 // 的 promise 才会在一两拍内落地 —— 否则等的就是模块解析本身,拍数变成机器速度的函数。
 await import("@/components/otto/panel/OttoPanelConversation");
 const { ottoPanelMountsOn } = await import("@/components/otto/panel/panel-surface");
-const { OTTO_PANEL_STORAGE_KEY } = await import("@/components/otto/panel/panel-state");
+const { OTTO_PANEL_STORAGE_KEY, defaultOttoPanelState, setPanelOpen, writeOttoPanelState } =
+  await import("@/components/otto/panel/panel-state");
 const { ottoGreeting } = await import("@/lib/otto-greeting");
+const otto_client_actions = await import("@/lib/otto-client-actions");
+const renameCoworkThread = vi.mocked(otto_client_actions.renameCoworkThread);
+const setCoworkThreadPinned = vi.mocked(otto_client_actions.setCoworkThreadPinned);
+const deleteCoworkThread = vi.mocked(otto_client_actions.deleteCoworkThread);
+const project_actions = await import("@/lib/actions");
+const renameProject = vi.mocked(project_actions.renameProject);
+const setProjectPinned = vi.mocked(project_actions.setProjectPinned);
+const deleteProject = vi.mocked(project_actions.deleteProject);
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -115,6 +150,23 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
   return container;
 }
 
+/**
+ * 在**同一个挂载根**上换一个 `location` 重渲染 —— 模拟软导航或 Back/Forward:`OttoPanelHost`
+ * 不卸载重挂,只是收到一个新的 `location` prop(判官 r2,PR #1086)。与 `mount()` 的差别
+ * 就是这一点:`mount()` 每次都是一次新的挂载,这个函数刻意复用现有 `root`。
+ */
+async function rerender(element: ReactElement): Promise<HTMLDivElement> {
+  if (!root || !container) throw new Error("rerender() 之前必须先 mount()");
+  await act(async () => root!.render(element));
+  await settle();
+  return container;
+}
+
+/** 写一份「关着」的存档,证明深链真的盖过了它,不是恰好默认就是开的。 */
+function writeClosedState() {
+  writeOttoPanelState(setPanelOpen(defaultOttoPanelState(VIEWPORT), false));
+}
+
 /** 真的商家壳,只把签退动作换成一个不做事的函数。 */
 function shell(pathname: string, page?: ReactElement) {
   return createElement(
@@ -132,11 +184,11 @@ describe("哪些面挂面板 (§3.2 末段)", () => {
   });
 
   it("这一面自己已经有一个 Otto 就不挂第二个", () => {
-    // 旧的整屏 Otto 壳,和它底下的每一条子路由。
-    expect(ottoPanelMountsOn(OTTO_ASSISTANT.href)).toBe(false);
-    expect(ottoPanelMountsOn("/otto?view=library")).toBe(false);
-    expect(ottoPanelMountsOn("/otto/anything")).toBe(false);
-    // 画布页自带真输入框(#609 原来那条 hideOttoButton,判断搬了家,理由没变)。
+    // W2-11:`/otto` 那条例外撤了——旧的整屏 Otto 壳不再被任何路由渲染,`/otto` 缩成了
+    // 一张纯重定向表,从不出现在浏览器里,不需要面板再对它让道。
+    expect(ottoPanelMountsOn("/otto")).toBe(true);
+    // 画布页自带真输入框(#609 原来那条 hideOttoButton,判断搬了家,理由没变)——这是
+    // 今天唯一剩下的例外。
     expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
   });
 
@@ -223,15 +275,6 @@ describe("没有商家的面,一点 Otto 都不挂", () => {
 });
 
 describe("一屏只有一个 Otto", () => {
-  it("旧的整屏 Otto 壳上不再停第二块面板", async () => {
-    const el = await mount(shell(OTTO_ASSISTANT.href));
-
-    expect(el.querySelector("[data-otto-panel]")).toBeNull();
-    expect(document.querySelector("[data-otto-launcher]")).toBeNull();
-    // 页面本身照常渲染 —— 不挂面板不等于不渲染。
-    expect(el.querySelector("[data-page]")).not.toBeNull();
-  });
-
   it("画布页也不停 —— 那一页自己有输入框", async () => {
     const el = await mount(shell(CANVAS_HREF));
 
@@ -253,7 +296,8 @@ describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
     expect(launcher.tagName).toBe("BUTTON");
     expect(launcher.getAttribute("href")).toBeNull();
     // 它自己里面也没有一条链接 —— 「点了被带走」这件事在这颗控件上不存在。
-    // (导轨顶上那条品牌链接仍指向 `/otto`,那是导航,不是这颗入口;它随 W2-11 改。)
+    // (W2-11:导轨顶上那条品牌链接已经改指 SHELL_ROUTES.home,不再是 `/otto`——
+    // 那是导航,不是这颗入口。)
     expect(launcher.querySelector("a")).toBeNull();
   });
 
@@ -272,6 +316,31 @@ describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
     // 页面没有换 —— 商家还在刚才那一页上。
     expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+
+  // W2-11 —— 导轨里那颗 Ask Otto(`NavigationRailContainer`,`components/global-navigation.tsx`)
+  // 是第二个入口,挂在 `OttoPanelMount` **之内**才够得着 `useOttoPanelControls()`。这里不重复
+  // 验面板本身怎么开合(上面两条已经钉过),只验这颗按钮拨的和 launcher/Close 拨的是**同一个**
+  // 开关,而不是它自己另开一路。
+  it("导轨里的 Ask Otto 拨的是同一个开关,不是另一路", async () => {
+    const el = await mount(shell("/campaign"));
+    const askOtto = () => el.querySelector<HTMLButtonElement>("[data-nav-rail-ask-otto]")!;
+
+    expect(askOtto().tagName).toBe("BUTTON");
+    expect(askOtto().getAttribute("href")).toBeNull();
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    await act(async () => {
+      askOtto().click();
+    });
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    expect(document.querySelector("[data-otto-launcher]")).not.toBeNull();
+
+    await act(async () => {
+      askOtto().click();
+    });
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+    expect(document.querySelector("[data-otto-launcher]")).toBeNull();
   });
 });
 
@@ -308,6 +377,210 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
 
     expect(el.querySelector<HTMLElement>("[data-otto-panel]")!.style.width).toBe(`${DEFAULT_WIDTH}px`);
     expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+});
+
+/**
+ * 深链一次性消费(判官修复轮 P1,规格书 §2.2/§2.5)。
+ *
+ * `/otto?project=P&thread=T` 重定向到 `/?otto=1&project=P&thread=T` 之后,这两件事必须
+ * 真的发生,不能只是「地址栏带着,没人读」:
+ *   ① `otto=1` 盖过 localStorage 记的上次开合状态,这次访问自动打开;
+ *   ② `project=`/`thread=` 原样转给 `loadOttoPanelSeed`,种子选择的那一半在
+ *      `otto-panel-seed.test.ts` 单独钉(选中哪一条会话的分支逻辑),这里只钉「转发对了」。
+ *
+ * 种子本身的选择分支(project/thread 校验、bare project 选最近会话)不在这个文件里重复
+ * 断言 —— 那是 `otto-panel-seed.test.ts` 的活,这里的 `loadOttoPanelSeed` 是一颗
+ * mock,断言的是「调用它的时候传了什么」,不是它内部怎么选。
+ */
+describe("深链一次性消费(判官修复轮 P1,规格书 §2.2/§2.5)", () => {
+
+  it("?otto=1 盖过存档里记的关着,这次访问自动打开", async () => {
+    writeClosedState();
+    const el = await mount(shell("/?otto=1"));
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("没有 ?otto=1 就不会自动开 —— 深链只在明说要开的时候开", async () => {
+    writeClosedState();
+    const el = await mount(shell("/?project=proj_x"));
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+  });
+
+  it("project= 与 thread= 原样转给 loadOttoPanelSeed", async () => {
+    await mount(shell("/?otto=1&project=proj_x&thread=thr_y"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledWith({ projectId: "proj_x", threadId: "thr_y" });
+  });
+
+  it("地址栏没给 project=/thread= 时,转发的是 undefined,不是空字符串", async () => {
+    await mount(shell("/?otto=1"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledWith({ projectId: undefined, threadId: undefined });
+  });
+
+  it("关了再开:深链只消费第一次,第二次开合回到默认(不双取,也不会一直粘着同一条深链)", async () => {
+    const el = await mount(shell("/?otto=1&project=proj_x&thread=thr_y"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: "proj_x", threadId: "thr_y" });
+
+    // Cmd/Ctrl+J 关掉,再按一次开 —— 与「快捷键与存档」那组用的同一个操作。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    // 恰好还是「打开」这一下才会取数,不是每次开合都取(#1022 那条纪律)——第二次打开
+    // 也确实触发了第二次取数,但这次不带深链参数了。
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, undefined);
+  });
+});
+
+/**
+ * 深链按「到达」消费,不是冻结在挂载那一刻(判官 r2,PR #1086 issuecomment 最新一条)。
+ *
+ * 根因:`OttoPanelHost` 挂在 `MerchantAppShell` 根部,横跨一整次访问不卸载——`location`
+ * 本身随 `useSearchParams()` 响应式更新(见 `global-navigation.tsx`),但上一轮把深链解析
+ * 冻结在 `useState(() => parseDeepLink(location))` 的挂载初值里,等于只认「这一层第一次
+ * 挂载时地址栏说了什么」。Back/Forward、或者商家在同一次访问里第二次软导航到同一个
+ * `/?otto=1&project=P&thread=T`,都会被无视——这正是被删的
+ * otto-new-conversation-routing.test.ts 277-287(`?thread=` 恢复指定会话)与 304-320
+ * (裸 project 选最近会话)两条钉的重访场景,迁移到新架构后必须继续成立。
+ *
+ * 判别力:下面四条里至少三条(①③④)在「冻结于挂载初值」的旧实现下必定失败——重渲染
+ * 根本不会让 deepLink 变化,既不会开面板也不会转发新的 select。
+ */
+describe("深链按「到达」消费:同一挂载根上的软导航/重访(判官 r2,规格书 §2.2/§2.5)", () => {
+  it("①首访无参→软导航到 ?otto=1&thread=T2(同一挂载根,Host 没有卸载重挂)→ 面板开且 seed 收 T2", async () => {
+    writeClosedState();
+    const el = await mount(shell("/"));
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    // 首帧按默认值(开)画、挂载后才套用存档(关)套回去——挂载期间那次开合翻转本身会触发一次
+    // 与深链无关的取数(§3.3 的已知代价,这份测试不是在验它);只钉「导航之后确实多了一次
+    // 带正确 select 的取数」,不假设导航前的次数是零。
+    const callsBeforeNavigation = loadOttoPanelSeed.mock.calls.length;
+
+    await rerender(shell("/?otto=1&thread=thr_T2"));
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(callsBeforeNavigation + 1);
+    expect(loadOttoPanelSeed).toHaveBeenLastCalledWith({ projectId: undefined, threadId: "thr_T2" });
+  });
+
+  it("②同一个深链地址原样重渲染(没有新到达)不重取——父层因无关状态重渲染时不该被当成一次访问", async () => {
+    await mount(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+
+    await rerender(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+  });
+
+  it("③参数从地址栏消失(零动作,不多取)之后同一组值再次到达(面板全程没关过)→ 当成新到达,再取一次", async () => {
+    await mount(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_T2" });
+
+    // 参数离开地址栏——消费标记重置,但这一下本身是零动作,不多取。
+    await rerender(shell("/"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+
+    // 同一组值再次到达,即使值完全没变——也要当成新到达,重新开、重新取。
+    await rerender(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: undefined, threadId: "thr_T2" });
+  });
+
+  it("④裸 project 到达(没有 otto=1,面板已经开着)转发 {projectId, threadId: undefined}——旧 :304-320 契约(裸 project 选最近会话)的到达一半;实际选中哪一条会话的分支在 otto-panel-seed.test.ts 钉", async () => {
+    await mount(shell("/?otto=1"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: undefined });
+
+    // 裸 project 到达——没有 otto=1(面板本来就开着,不需要再强开),也没有 thread=。
+    await rerender(shell("/?project=proj_recent"));
+
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: "proj_recent", threadId: undefined });
+  });
+
+  /**
+   * 硬着陆 + 存档为关(判官 r3 刀锋竞态,PR #1086 最新一条)。
+   *
+   * 不是软导航,是**第一次挂载就落在深链地址上**,而且 localStorage 记着「关」:Shell 首帧
+   * 按默认值画(§3.3,桌面宽度默认开),hydration 随后才把它套成「关」——这一拍间,取数
+   * effect 会把 `pendingSelectRef` 排定的深链 select 用掉、发起第一次取数,随即被这次
+   * 「关」的 cleanup 取消;强开信号(otto=1)接着把面板重新打开,触发第二次、真正落地的
+   * 取数——判官纯内存复现的失败签名是两次取数依次收到 `[deep-thread, default]`:被取消的
+   * 那次带着深链 select,真正提交进状态的那次却收了 `undefined`,深链等于白读。
+   *
+   * 判别力:回退「pending 只被提交成功的取数消费」这处修法(把 `pendingSelectRef` 的清空
+   * 挪回取数一发起就清)会让这条恰红——最后一次真正落地的调用会收到 `undefined`。
+   */
+  it("硬着陆 + 存档为关:中途被取消的取数不许吞掉深链 select——最终提交生效的那次必须带着它", async () => {
+    writeClosedState();
+    await mount(shell("/?otto=1&thread=thr_edge"));
+
+    const el = container!;
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    // 这条硬着陆路径真的会取两次数(第一次带着深链 select 被后来的关闭取消,第二次是强开
+    // 之后真正落地、提交进状态的那次)——两次都要带着深链的 select,一次都不许被吞成默认。
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_edge" });
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: undefined, threadId: "thr_edge" });
+  });
+
+  /**
+   * 「pending 复活」反向回归(判官 r4,PR #1086 最新一条)——上面 r4 那条修法本身引出的坑:
+   * 被取消的取数原样保留 pendingSelectRef,是为了让强开之后真正落地的那次还能用上;但如果
+   * 商家已经软导航离开了这个深链地址(地址栏不再带 otto=1/project=/thread= 任何一个),这份
+   * 「留着待用」的 pending 就该跟着归零——不然到达 A 被取消之后,商家软导航去了别的地方,
+   * 过一阵子自己手动开一次面板(不是新到达,该走默认路径),却被这份残留的 A 拽回一条早就
+   * 翻篇的旧深链会话。
+   *
+   * 判别力:去掉 `signature === null` 分支里清空 `pendingSelectRef` 那一行,这条测试会恰红
+   * ——最后一次调用会收到残留的 `{ threadId: "thr_A" }`,不是 `undefined`。
+   */
+  it("到达 A 被取消(到达后立刻手关)→ 软导航到无参数地址(pending 归零)→ 之后手动开面 → 走默认路径,不是残留的 A", async () => {
+    // 到达 A:otto=1&thread=thr_A。用一个手动挂起的 promise 代替默认 mock,好在它还没落地
+    // 之前就把面板关掉——制造「取数被取消」,不依赖 r3/r4 那条存档时序竞态本身。
+    let resolveFirst: ((value: unknown) => void) | undefined;
+    loadOttoPanelSeed.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveFirst = resolve; }),
+    );
+
+    const el = await mount(shell("/?otto=1&thread=thr_A"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_A" });
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    // 立刻手关——那次取数(还悬着,没落地)因此被取消。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+
+    // 把悬着的 promise 放行——落地时 cleanup 早已把它标记为 cancelled,不该提交,也不该
+    // 动 pendingSelectRef(r4 修的那条,这里只是确认它不干扰接下来的断言)。
+    await act(async () => {
+      resolveFirst?.({ error: "stale, must not commit" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 软导航到一个不带任何深链参数的地址——pending 该跟着归零(这条测试要钉的修法)。
+    await rerender(shell("/"));
+
+    // 商家自己手动开一次面板——这不是新到达,该走默认路径(select = undefined),不该收到
+    // 早就该归零的那份 A。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    expect(loadOttoPanelSeed).toHaveBeenLastCalledWith(undefined);
   });
 });
 
@@ -497,5 +770,210 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
     expect(body.querySelector('[data-otto-panel-conversation="error"]')).not.toBeNull();
     expect(body.textContent).toContain("Sign in to chat with Otto.");
     expect(body.querySelector("textarea")).toBeNull();
+  });
+});
+
+/**
+ * 组织控件迁移(W2-11)—— 导轨(`OttoNav.tsx`)删掉之后,整理会话的能力不许跟着消失
+ * (「换壳丢功能」违反核心能力不容马虎)。动作函数是同一批(`@/lib/otto-client-actions`),
+ * 这里钉的是它们真的从面板的会话历史列表接得到,一条各一。
+ */
+describe("整理会话在面板里接得到(W2-11 收编导轨)", () => {
+  const SEED_WITH_THREAD = {
+    projectId: "prj_1",
+    entities: [],
+    projects: [{ id: "prj_1", name: "My project", pinnedAt: null }],
+    threads: [
+      { id: "th_1", projectId: "prj_1", title: "Raya promo", updatedAt: new Date().toISOString(), pinnedAt: null, messages: [] },
+    ],
+    activeThreadId: null,
+    balanceUsd: 12,
+    userName: "Aisyah",
+  };
+
+  function setInputValue(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  async function openHistory(el: HTMLElement): Promise<void> {
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+  }
+
+  it("置顶按钮直接生效,调用的是导轨那一套动作函数", async () => {
+    loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
+    setCoworkThreadPinned.mockResolvedValue({ ok: true, pinnedAt: new Date().toISOString() });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+
+    const pin = el.querySelector<HTMLButtonElement>('[aria-label="Pin Raya promo"]')!;
+    await act(async () => pin.click());
+
+    expect(setCoworkThreadPinned).toHaveBeenCalledWith("th_1", true);
+    // 乐观更新:按下之后立刻显示成已置顶,不等服务端回来才现出图钉。
+    expect(el.querySelector('[aria-label="Unpin Raya promo"]')).not.toBeNull();
+  });
+
+  it("改名走同一个对话框、同一个动作函数,新标题落回列表", async () => {
+    loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
+    renameCoworkThread.mockResolvedValue({ ok: true });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Rename Raya promo"]')!.click();
+    });
+
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Conversation name"]')!;
+    setInputValue(input, "Raya launch plan");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+
+    expect(renameCoworkThread).toHaveBeenCalledWith("th_1", "Raya launch plan");
+    expect(el.querySelector('[data-otto-thread-list-thread="th_1"]')!.textContent).toContain("Raya launch plan");
+  });
+
+  it("删除要先经确认,confirmText 打对了才能按下去,调用的是同一个动作函数", async () => {
+    loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
+    deleteCoworkThread.mockResolvedValue({ ok: true });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Delete Raya promo"]')!.click();
+    });
+
+    const confirmButton = () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent === "Delete conversation",
+      )!;
+    // 没打对确认字样之前,按钮不能按。
+    expect(confirmButton().disabled).toBe(true);
+
+    const typed = document.querySelector<HTMLInputElement>('[aria-label="Type Raya promo to confirm"]')!;
+    setInputValue(typed, "Raya promo");
+    await act(async () => confirmButton().click());
+
+    expect(deleteCoworkThread).toHaveBeenCalledWith("th_1");
+    expect(el.querySelector('[data-otto-thread-list-thread="th_1"]')).toBeNull();
+  });
+});
+
+/**
+ * 项目一层的同三件事(W2-11)—— 查过 Home「接着做」(纯 `<Link>`,零控件)与 Library
+ * (那页只是跨项目素材墙,压根不列项目)之后,面板的会话历史是唯一还能挂控件的地方,
+ * 见 `OttoThreadList.tsx` 与 `OttoPanelHost.tsx` 顶部注释。
+ */
+describe("整理项目也在面板里接得到(W2-11)", () => {
+  const SEED_WITH_PROJECT = {
+    projectId: "prj_1",
+    entities: [],
+    projects: [{ id: "prj_1", name: "Raya campaign", pinnedAt: null }],
+    threads: [],
+    activeThreadId: null,
+    balanceUsd: 12,
+    userName: "Aisyah",
+  };
+
+  /** 真鼠标那一发:Radix 的 trigger 认的是 pointerdown,不是 click(与 nav-rail.test.ts 同理)。 */
+  function pointer(type: string, target: EventTarget): void {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0 }));
+  }
+
+  async function openHistory(el: HTMLElement): Promise<void> {
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+  }
+
+  async function openProjectMenu(el: HTMLElement, projectName: string): Promise<void> {
+    const trigger = el.querySelector<HTMLButtonElement>(`[aria-label="${projectName} controls"]`)!;
+    await act(async () => {
+      pointer("pointerdown", trigger);
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    });
+  }
+
+  function menuItem(label: string): HTMLElement {
+    return Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => item.textContent?.trim() === label,
+    )!;
+  }
+
+  function setInputValue(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("置顶从菜单里选,调用的是导轨那一套项目动作函数", async () => {
+    loadOttoPanelSeed.mockResolvedValue(SEED_WITH_PROJECT);
+    setProjectPinned.mockResolvedValue({ ok: true, pinnedAt: new Date().toISOString() });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+    await openProjectMenu(el, "Raya campaign");
+    await act(async () => menuItem("Pin project").click());
+
+    expect(setProjectPinned).toHaveBeenCalledWith("prj_1", true);
+  });
+
+  it("改名走同一个对话框、同一个动作函数,新名字落回项目标题", async () => {
+    loadOttoPanelSeed.mockResolvedValue(SEED_WITH_PROJECT);
+    renameProject.mockResolvedValue({ ok: true, name: "Raya launch" });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+    await openProjectMenu(el, "Raya campaign");
+    await act(async () => menuItem("Rename project").click());
+
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
+    setInputValue(input, "Raya launch");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+
+    expect(renameProject).toHaveBeenCalledWith("prj_1", "Raya launch");
+    expect(el.querySelector('[data-otto-thread-list-project="prj_1"]')!.textContent).toContain("Raya launch");
+  });
+
+  it("删除要先经确认,确认字样打对了才能按下去,并且重取一次种子(项目删除牵连太广,不手工推演)", async () => {
+    loadOttoPanelSeed.mockResolvedValueOnce(SEED_WITH_PROJECT).mockResolvedValueOnce({
+      projectId: "prj_2",
+      entities: [],
+      projects: [{ id: "prj_2", name: "Second project", pinnedAt: null }],
+      threads: [],
+      activeThreadId: null,
+      balanceUsd: 12,
+      userName: "Aisyah",
+    });
+    deleteProject.mockResolvedValue({ ok: true });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+    await openProjectMenu(el, "Raya campaign");
+    await act(async () => menuItem("Delete project").click());
+
+    const confirmButton = () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent === "Delete project",
+      )!;
+    expect(confirmButton().disabled).toBe(true);
+
+    const typed = document.querySelector<HTMLInputElement>('[aria-label="Type Raya campaign to confirm"]')!;
+    setInputValue(typed, "Raya campaign");
+    await act(async () => confirmButton().click());
+    await settle();
+
+    expect(deleteProject).toHaveBeenCalledWith("prj_1");
+    // 种子重取过一次(挂载时一次 + 删除后一次) —— 新的项目名字必须真的出现在历史里。
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
   });
 });

@@ -29,8 +29,6 @@ const WEB_ROOT = path.resolve(__dirname, "../..");
 const read = (relative: string) => readFileSync(path.join(WEB_ROOT, relative), "utf8");
 
 const GLOBAL_NAVIGATION = "components/global-navigation.tsx";
-const OTTO_APP = "components/otto/OttoApp.tsx";
-const OTTO_NAV = "components/otto/OttoNav.tsx";
 const OTTO_PAGE = "app/otto/page.tsx";
 const DETAIL_PANEL = "components/asset/DetailPanel.tsx";
 const ADD_ASSET_DIALOG = "components/otto/stuff/AddAssetDialog.tsx";
@@ -157,25 +155,16 @@ describe("balance freshness seam (#550 ①)", () => {
     expect(src).toMatch(/isLatest\(\)/);
   });
 
-  it("OttoApp announces unconditionally — no fragile read can swallow it (round-1 review P1② / P2①)", () => {
-    const src = read(OTTO_APP);
-
-    expect(src).toMatch(/import\s*\{[^}]*\bnotifyBalanceRefresh\b[^}]*\}\s*from\s*["']@\/lib\/balance-refresh["']/);
-    const body = src.match(/refreshBalance\s*=\s*useCallback\(async \(\) => \{([\s\S]*?)\n {2}\}\s*,\s*\[\]\)/)?.[1];
-    expect(body, "refreshBalance must still be the single funnel every consumer calls").toBeDefined();
-    expect(body).toMatch(/notifyBalanceRefresh\(\)/);
-    // The nav owns the read now. A pre-read here would both double every fetch and let a
-    // throw swallow the whole announcement.
-    expect(body).not.toMatch(/getMyAccount/);
-    expect(body).not.toMatch(/await/);
-  });
+  // W2-11(切换总票)把 `OttoApp.tsx`/`OttoNav.tsx` 整个删了 —— 余额公告从此只有一个漏斗:
+  // `global-navigation.tsx` 自己的 `subscribeBalanceRefresh`/`createLatestReadGate`(上面
+  // 两条已经钉着它),不再是「导轨读一次、OttoApp 转发一次」的两段接力。原来钉在
+  // `OttoApp.tsx` 的 `refreshBalance` 无条件公告那条断言随它一起撤,没有第二处要补 ——
+  // 那正是这一票要买的东西:唯一权威,不是唯一权威 + 一份转发。
 
   it("the dead balanceCredits plumbing is gone (nothing has rendered it since #513 A组)", () => {
-    for (const file of [OTTO_APP, OTTO_NAV, OTTO_PAGE]) {
-      expect(read(file), `${file} still carries the unrendered balanceCredits state`).not.toMatch(
-        /balanceCredits/,
-      );
-    }
+    expect(read(OTTO_PAGE), `${OTTO_PAGE} still carries the unrendered balanceCredits state`).not.toMatch(
+      /balanceCredits/,
+    );
   });
 
   it("the asset detail panel announces its own paid starts (regen, animate, edit)", () => {

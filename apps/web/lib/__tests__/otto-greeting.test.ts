@@ -212,10 +212,21 @@ describe("#542 greeting wiring — the sentence and the chain are pinned to prod
     expect(renderFrontDoor(userName)).toContain(GENERIC_SENTENCE);
   });
 
-  it("the Otto page wires the resolver, and the email fallback is gone for good", () => {
-    // Page-level seam. The page is an async server component with ~12 awaited data sources, so
-    // it cannot be invoked here; this pins its source instead of leaving the seam unguarded.
-    const source = readFileSync(path.join(__dirname, "..", "..", "app", "otto", "page.tsx"), "utf8");
+  // W2-11 (切换总票): `/otto` 缩成了一张纯重定向表(不再取数、不再渲染), so the page-level
+  // seam this test used to pin moved. There are now TWO real production surfaces that wire the
+  // resolver, not one: `lib/otto-panel-seed.ts` (the panel's own seed loader — direct successor
+  // of what `/otto/page.tsx` used to do for the same OttoFrontDoor) AND `components/home/
+  // HomeEntry.tsx` (Home is now the FIRST thing a merchant sees, and it greets by name too).
+  // Both are pinned so the invariant ("no path may greet with an email") still covers every
+  // real path, not just the one that happened to exist before this ticket.
+  it.each([
+    ["lib/otto-panel-seed.ts", ["lib", "otto-panel-seed.ts"]],
+    ["components/home/HomeEntry.tsx", ["components", "home", "HomeEntry.tsx"]],
+  ] as const)("%s wires the resolver, and the email fallback is gone for good", (_label, parts) => {
+    // Page/seed-level seam. Neither file can be invoked here (server action / async server
+    // component with several awaited data sources), so this pins their source instead of
+    // leaving the seam unguarded — same convention as before, just two files now.
+    const source = readFileSync(path.join(__dirname, "..", "..", ...parts), "utf8");
     expect(source).toContain("ottoGreetingNameFromProfile(getMyProfileNames)");
     // The exact regression this ticket is about: reviving ANY email-derived greeting fails here.
     expect(source).not.toContain('split("@")');

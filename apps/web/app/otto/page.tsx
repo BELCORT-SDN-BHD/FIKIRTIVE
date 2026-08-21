@@ -1,133 +1,58 @@
 import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth-guard";
-import { getOrCreateDefaultProject } from "@/lib/actions";
-import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs, getRecentGenerationThumbs, getProjects, getAllCoworkThreadMetas } from "@/lib/data";
-import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
-import { getMyAccount } from "@/lib/account-actions";
-import { getMyProfileNames } from "@/lib/profile-names";
-import { ottoGreetingNameFromProfile } from "@/lib/otto-greeting";
-import { listMemory } from "@/lib/memory-actions";
-import { listBrandRecords } from "@/lib/brand-record-actions";
-import { getAnalytics } from "@/lib/analytics-actions";
-import { getOwnerSettings } from "@/lib/owner-settings-actions";
-import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
-import { OttoApp } from "@/components/otto/OttoApp";
-import { parseOptionalViewParam } from "@/components/otto/otto-view-param";
+import { OTTO_VIEW_REDIRECTS } from "@fikirtive/core/navigation";
+import { parseViewParam } from "@/components/otto/otto-view-param";
+import type { LegacySearchParams } from "../northstar-immersive/legacy-search-params";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Otto · Fikirtive" };
 
-export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; project?: string; thread?: string; new?: string }> }) {
-  const sp = await searchParams;
-  // The screen list and the stuff → library alias live in one place now (#969 judge P2-3):
-  // components/otto/otto-view-param.ts, which OttoApp reads too.
-  const initialView = parseOptionalViewParam(sp?.view);
-  // Grok-bright ("gb") is the only skin — hardcoded, no rollback param.
-  const skin = "gb" as const;
-
-  const owner = await requireOwner();
-  if ("error" in owner) redirect("/login");
-  const { ownerId } = owner;
-
-  // Multi-project navigation (#546: a Project is never a Campaign — the Campaign object
-  // is independent, see CONTEXT.md): ensure at least one project exists, then pick the
-  // active one from ?project= (must be owned) or default to the oldest.
-  const ensured = await getOrCreateDefaultProject();
-  if ("error" in ensured) redirect("/login");
-  const projects = await getProjects(ownerId);
-  const requestedProject = sp?.project ? projects.find((p) => p.id === sp.project) : undefined;
-  const active = requestedProject || projects[0];
-  const projectId = active?.id ?? ensured.id;
-  if (sp?.project && !requestedProject) {
-    const next = new URLSearchParams();
-    next.set("project", projectId);
-    if (initialView) next.set("view", initialView);
-    redirect(`/otto?${next.toString()}`);
-  }
-
-  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics, userName, settingsResult] = await Promise.all([
-    getEntities(ownerId),
-    getCoworkThreads(ownerId, projectId),
-    getMyAccount(),
-    listMemory(ownerId),
-    listBrandRecords(ownerId),
-    getMyAds(ownerId),
-    getMyAdJobs(ownerId).catch(() => [] as Awaited<ReturnType<typeof getMyAdJobs>>),
-    getRecentGenerationThumbs(ownerId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
-    getAllCoworkThreadMetas(ownerId).catch(() => [] as Awaited<ReturnType<typeof getAllCoworkThreadMetas>>),
-    // Analytics view payload for the Analytics screen (read-only Meta reads; default 30d range).
-    // Refined in Task 5; provided here so the required OttoApp `analytics` prop typechecks.
-    getAnalytics({}).catch(() => ({ state: "notConnected" as const })),
-    // #542 — the greeting's name, resolved from the merchant's own two names so that the moment
-    // they set either one on /profile the greeting starts using it. The helper owns the whole
-    // step including the `.catch`: a Prisma fault REJECTS rather than returning {error}, and an
-    // un-caught rejection in this Promise.all would take the entire page down (round-2 P2).
-    ottoGreetingNameFromProfile(getMyProfileNames),
-    // #679 — the "Get Otto ready" card's dismissal, read from the workspace's own row rather
-    // than from this browser's localStorage. A failed read falls back to the defaults, which
-    // means "not dismissed": showing a card too often is recoverable, hiding one the merchant
-    // never dismissed is not.
-    getOwnerSettings().catch(() => ({ error: "load-failed" } as const)),
-  ]);
-  const settings = "error" in settingsResult ? DEFAULT_SETTINGS : settingsResult;
-
-  // Open the requested thread (?thread=, if it's in this project) or the most recent.
-  let threads = threadRows.map(toChatThreadMetaDTO);
-  const forceNewThread = sp?.new === "1";
-  const openThreadId = forceNewThread
-    ? undefined
-    : (sp?.thread && threadRows.some((t) => t.id === sp.thread)) ? sp.thread : threadRows[0]?.id;
-  // Which conversation did the ADDRESS BAR ask for? Deliberately NOT `openThreadId` (BUG 6):
-  // that one falls back to the project's newest thread, so any turn that creates a thread in
-  // the background — Brand & products has its own chat, and ottoTurn ends in
-  // revalidatePath("/", "layout") — quietly renames the key below, remounts this entire tree,
-  // and wipes every transcript that lives in client state. The URL moves only when the
-  // merchant actually asks for another conversation, so keying on it keeps the explicit
-  // switch (and the project switch) remounting, and nothing else.
-  const requestedThreadKey = forceNewThread ? "" : (sp?.thread ?? "");
-  if (openThreadId) {
-    const activeFull = await getCoworkThread(ownerId, openThreadId);
-    if (activeFull) {
-      const coworkUrls = await resolveCoworkResultUrls(ownerId, [activeFull]);
-      const activeDto = toChatThreadDTO(activeFull, coworkUrls);
-      threads = threads.map((t) => (t.id === activeDto.id ? activeDto : t));
+/**
+ * 目标地址可能自带 query(`OTTO_VIEW_REDIRECTS.otto` 是 `"/?otto=1"`)或锚点
+ * (`templates`/`discover` 落在 `/create#templates`、`/create#ideas`)。商家带来的
+ * `?project=`/`?thread=` 等参数要接在原有 query **之后**,锚点要留在**最后**——
+ * 直接拼接 `${target}?${query}` 在已经带 query 的目标上会拼出两个 `?`。
+ */
+function mergeRedirectTarget(raw: string, incoming: LegacySearchParams): string {
+  const hashIndex = raw.indexOf("#");
+  const hash = hashIndex >= 0 ? raw.slice(hashIndex) : "";
+  const withoutHash = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
+  const qIndex = withoutHash.indexOf("?");
+  const path = qIndex >= 0 ? withoutHash.slice(0, qIndex) : withoutHash;
+  const query = new URLSearchParams(qIndex >= 0 ? withoutHash.slice(qIndex + 1) : "");
+  for (const [key, value] of Object.entries(incoming)) {
+    // `view` 已经被消费掉去选目标了 —— 原样带去新地址没有意义(`/library?view=edit`
+    // 这种形状不属于任何人)。
+    if (key === "view" || value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const one of value) query.append(key, one);
+    } else {
+      query.append(key, value);
     }
   }
+  const qs = query.toString();
+  return `${path}${qs ? `?${qs}` : ""}${hash}`;
+}
 
-  // All conversations across every project (metas) for the Grok-style sidebar.
-  const sidebarThreads = allThreadRows.map(toChatThreadMetaDTO);
-  const projectList = projects.map((p) => ({ id: p.id, name: p.name, pinnedAt: p.pinnedAt ? p.pinnedAt.toISOString() : null }));
-
-  const account = "error" in accountResult ? null : accountResult;
-  const balanceUsd = account?.balanceUsd ?? 0;
-  // #542 (F-07) — `userName` above is already the resolved greeting name: display name → shop
-  // name → "there". The email is NOT in that chain at all. Greeting a merchant by their
-  // address's local part ("Hi tools") is the exact defect this ticket exists to remove, and a
-  // pre-#543 workspace name IS the full address, so any candidate containing "@" is refused
-  // rather than passed on. See lib/otto-greeting.ts.
-
-  return (
-    <OttoApp
-      key={`${projectId}:${requestedThreadKey}`}
-      projectId={projectId}
-      projects={projectList}
-      activeProjectId={projectId}
-      sidebarThreads={sidebarThreads}
-      initialActiveThreadId={openThreadId ?? null}
-      entities={entities.map(toEntityDTO)}
-      threads={threads}
-      balanceUsd={balanceUsd}
-      userName={userName}
-      memory={memory}
-      records={records}
-      ads={ads}
-      adJobs={adJobs}
-      account={account}
-      analytics={analytics}
-      history={history}
-      initialView={initialView}
-      onboardingDismissed={settings.ottoOnboardingDismissed}
-      skin={skin}
-    />
-  );
+/**
+ * `/otto` —— 纯重定向表(换壳切换总票 W2-11,规格书 §2.3 ③、§2.5)。
+ *
+ * 旧的整屏 Otto 壳已经拆完:助手是导轨之上的一颗按钮,不是一条地址(`OTTO_ASSISTANT` 从
+ * W2-11 起没有 `href`)。但商家手上的旧书签、Otto 自己说过的旧链接(`/otto?view=X`)
+ * 一个都不许撞墙(§2.5「旧地址一律 307,永不 404」)——这一页把每一个旧 view 送到它今天
+ * 真正的家。`?project=`/`?thread=` 跟着走:少数目的地会读它(剪辑台按 `?project=` 挑
+ * 项目),其余目的地不认识这两个参数,忽略即可,总比丢在半路强。
+ *
+ * 权威名单是 `OTTO_VIEW_REDIRECTS`(packages/core),这里不再抄第二份 view→地址的表;
+ * 没给 `?view=` 或给了一个产品不认的值,`parseViewParam` 落回 `"otto"`,同一张表接住。
+ *
+ * 这一页不再 import auth、DB 或任何取数动作 —— 它不画任何东西,只决定去哪。
+ */
+export default async function OttoRedirect({
+  searchParams,
+}: {
+  searchParams: Promise<LegacySearchParams>;
+}) {
+  const sp = await searchParams;
+  const rawView = Array.isArray(sp.view) ? sp.view[0] : sp.view;
+  const view = parseViewParam(rawView);
+  redirect(mergeRedirectTarget(OTTO_VIEW_REDIRECTS[view], sp));
 }

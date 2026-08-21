@@ -20,12 +20,18 @@ test("After signing out, the money surface is walled again", async ({ page }) =>
   await signIn(page, ws, "/billing");
   await expect(page.getByText("55").first()).toBeVisible();
 
-  // The identity area is a disclosure (`<details>`); its summary is what a merchant clicks.
-  // #592 — the summary now shows the merchant's display name (seeded here as personName),
-  // falling back to email only when no display name is set, so it must be located by name.
-  const nav = globalNav(page);
-  await nav.locator("summary").filter({ hasText: ws.personName }).click();
-  await nav.getByRole("menuitem", { name: "Sign out" }).click();
+  // The identity area is the rail's account button (W2-11 replaced the hand-rolled `<details>`
+  // disclosure with the shadcn dropdown — same two entries behind it, Profile and Sign out).
+  //
+  // #592 is still asserted, and still on the merchant's own eyes: the button SHOWS the display
+  // name (seeded here as personName), falling back to email only when no display name is set.
+  // Its accessible name is the fixed "Account menu" label, so the name check is a separate
+  // assertion rather than a locator filter — dropping it would have quietly retired #592.
+  const identity = globalNav(page).getByRole("button", { name: "Account menu" });
+  await expect(identity).toContainText(ws.personName);
+  await identity.click();
+  // The menu is portalled to the end of <body>, so it is NOT inside the navigation element.
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
 
   await expect(page).toHaveURL(/\/login/);
 

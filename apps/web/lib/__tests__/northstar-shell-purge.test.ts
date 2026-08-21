@@ -48,14 +48,18 @@ const SHELL_ROOT = resolve(WEB_ROOT, "app/create");
  * `door` = 裁决当时的门牌;`livesAt` = 合流后它在主导航里的真实目的地;`route` = 那个
  * 目的地背后的真路由文件。Home 与 Canvas 合并成一格 Create:创作首页列着商家自己的每一张
  * 画布,点开就在画布上,所以主导航不再单列 Canvas 一行 —— 但它必须仍然在那扇门后面。
+ *
+ * W2-11:Library / Brand & products / Settings 三扇曾经落在 `/otto?view=X`(#801 时代
+ * `/otto` 还是十视图宿主)。切换总票把它们换成各自的真路由 —— `/otto` 本身缩成了纯重定向
+ * 表,不再是任何一扇门的落点。
  */
 const DOORS: ReadonlyArray<{ door: string; livesAt: string; route: string }> = [
   { door: "Home", livesAt: CREATE_NAV_HREF, route: "app/create/page.tsx" },
   { door: "Canvas", livesAt: CANVAS_HREF, route: "app/create/canvas/page.tsx" },
-  { door: "Library", livesAt: "/otto?view=library", route: "app/otto/page.tsx" },
-  { door: "Brand & products", livesAt: "/otto?view=memory", route: "app/otto/page.tsx" },
+  { door: "Library", livesAt: "/library", route: "app/library/page.tsx" },
+  { door: "Brand", livesAt: "/brand", route: "app/brand/page.tsx" },
   { door: "Credits & billing", livesAt: "/billing", route: "app/billing/page.tsx" },
-  { door: "Settings", livesAt: "/otto?view=account", route: "app/otto/page.tsx" },
+  { door: "Settings", livesAt: "/settings", route: "app/settings/page.tsx" },
 ];
 
 /**
@@ -170,18 +174,27 @@ const BANNED_COPY = ["This will spend real credits", "upgrade ticket", "1,240"] 
  * 但豁免必须只有它需要的那么大。写成「整棵 `components/otto/` 免检三条短语」的话,
  * 顺手连「upgrade ticket」「1,240」也一起放行了 —— 那两句在真 Otto 树里一处都没有
  * (2026-08-19 实查),放行它们纯属白送。所以这里列的是 `{tree, phrase}` 对:
- * 今天只需要一对,以后要加也得一对一对地说清楚为什么。
+ * 以后要加也得一对一对地说清楚为什么。
+ *
+ * W2-11(切换总票):这里目前是**空**的,不是这条纪律作废了。旧的一对
+ * (`components/otto/` × "This will spend real credits",今天唯一一处是
+ * StoryboardCard.tsx 上的真审批卡)靠的从来不是 `SHELL_ENTRIES` 真的顺着业务 import
+ * 走到了 StoryboardCard —— 顺着 `app/create/{layout,page}.tsx` / `app/create/canvas/page.tsx`
+ * 走,从没有一条路径经过它。它能被这份豁免簿盖到,纯粹是 `immersive-shell.tsx` 里那颗
+ * <1024 手机汉堡巧合地 `import … from "@/components/global-navigation"`(开的是全局
+ * 抽屉,不是 Otto)——`reachableSources()` 是文件级的:只要一个文件被 import 到,它整份
+ * 源码都算「可达」,于是 `global-navigation.tsx`(挂了真的 `OttoPanelMount`)与它下游的
+ * 整棵真会话树全被这条无关的 import 顺手捎带进了可达集合。
+ *
+ * W2-11 删的正是那颗手机汉堡(移动端整层撤下,导轨不再按宽度分形态),这条巧合的搭车
+ * import 跟着消失,`components/otto/` 从此真的不在这层壳自己的可达图里 —— 这份豁免簿
+ * 因此清空,跟着符合它本来的意思:这层壳自己的表面碰不到 Otto 会话树,不多不少。真的
+ * Otto 面板仍然接在 `app/layout.tsx` 挂的全局导轨上,`otto-panel-mount.test.ts` 钉着它。
  *
  * 只豁免短语这一条:「碰不到样板数据」(FIXTURE_MODULES)仍然全图有效 —— 那一条挡的是
  * 假数据本身,而假数据在哪里都不该被壳碰到。
  */
-const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [
-  {
-    tree: "components/otto/",
-    phrase: "This will spend real credits",
-    why: "真审批卡上的真话(今天唯一一处:StoryboardCard.tsx);它旁边就是幂等的扣费路径",
-  },
-];
+const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [];
 
 function exempt(relativePath: string, phrase: string): boolean {
   return BANNED_COPY_EXEMPTIONS.some((row) => relativePath.startsWith(row.tree) && row.phrase === phrase);
@@ -214,8 +227,10 @@ describe("六扇门合流", () => {
     expect(existsSync(resolve(WEB_ROOT, "components/northstar/immersive/immersive-nav.tsx"))).toBe(false);
     const shell = readFileSync(resolve(WEB_ROOT, "components/northstar/immersive/immersive-shell.tsx"), "utf8");
     expect(shell).not.toContain("ImmersiveNav");
-    // 手机上那颗汉堡开的必须是**全局**抽屉,不是壳自己的第二个抽屉(#747 同一套交接)。
-    expect(shell).toContain("useOpenGlobalNavigation");
+    // W2-11:那颗手机汉堡与它开的全局抽屉一起退场了——移动端整层删除之后,商家壳只剩
+    // 一条单层导轨(任何宽度下都在,不再需要一个抽屉入口来够到它)。
+    expect(shell).not.toContain("useOpenGlobalNavigation");
+    expect(shell).not.toContain("useGlobalNavigationOpen");
   });
 });
 
@@ -301,8 +316,11 @@ describe("退场", () => {
     expect(launcher).toContain("onOpen");
     expect(launcher).not.toContain("next/link");
     expect(launcher).not.toContain("href");
-    // 助手那条地址仍然在权威源里(旧书签要能落地),只是壳不再拿它当入口。
-    expect(OTTO_ASSISTANT.href).toBe("/otto");
+    // W2-11:OTTO_ASSISTANT 从此没有 href 了(它是面板,不是地址,规格书 §2.3 ②)——
+    // `/otto` 这条旧书签地址仍然落地得了,只是不再挂在这个常量上;它变成了 W2-11 那张纯
+    // 重定向表(见 route-redirects.test.ts),自己有真的路由文件。
+    expect("href" in OTTO_ASSISTANT).toBe(false);
+    expect(existsSync(resolve(WEB_ROOT, "app/otto/page.tsx"))).toBe(true);
 
     // 「画布页自带真输入框,那一页不挂」这条判断没有消失,只是搬到了唯一决定挂不挂的地方。
     const surface = readFileSync(resolve(WEB_ROOT, "components/otto/panel/panel-surface.ts"), "utf8");

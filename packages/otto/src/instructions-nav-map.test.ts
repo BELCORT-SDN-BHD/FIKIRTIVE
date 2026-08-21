@@ -267,8 +267,10 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
 
   it("提示词引的每一个路径都是真路径", () => {
     const cited = [...ottoInstructions.matchAll(CITED_PATH)].map((m) => m[1]!);
-    // 扫描面自检:地图确实被扫到了(路径一条都没扫到 = 断言永远为真)。
-    expect(cited.length).toBeGreaterThan(10);
+    // 扫描面自检:地图确实被扫到了(路径一条都没扫到 = 断言永远为真)。W2-11 把
+    // `/otto?view=X` 换成了真路由,地图里的地址普遍变短,引用数随之降了一点 —— 门槛
+    // 跟着调,不是放松扫描面本身。
+    expect(cited.length).toBeGreaterThan(5);
     expect(unmappedPaths(ottoInstructions)).toEqual([]);
   });
 
@@ -300,19 +302,21 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
   // r2 · 判官 r1 [P2] 与 r3 [P2-2] 的表示逃逸,逐条钉死。r4 起靠的是**形状**不是字符表:
   // 名字后面凡是连接符再接大写词就算拼路,所以下一个同形字不必再改代码。
   it("同形连接符不是逃逸手段:〉 > 》 » ＞ ⟩ ∕ ： ⇒ ／ 一律逮住", () => {
+    // W2-11 把 `Workspace` 那一组折进了七格顶层,树上只剩一个组:`Settings`。样本组前缀
+    // 全部换成它,形状不变。
     const disguised = [
-      "Workspace 〉 Insights", // U+3009(r1)
-      "Workspace > Insights", // ASCII(r1)
-      "Workspace》Insights", // U+300B,连空格都不留
-      "Workspace » Insights",
+      "Settings 〉 Insights", // U+3009(r1)
+      "Settings > Insights", // ASCII(r1)
+      "Settings》Insights", // U+300B,连空格都不留
+      "Settings » Insights",
       "Settings ⟩ Overview",
       "Settings＞Overview", // 全角
-      "Workspace ∕ Insights", // U+2215(r3)
-      "Workspace：Insights", // 全角冒号(r3)
-      "Workspace ⇒ Insights", // U+21D2(r3)
-      "Workspace／Insights", // 全角斜线
-      "Workspace | Insights", // 竖线 —— 从没有人点过名,形状判定照样逮住
-      "Workspace ~ Insights",
+      "Settings ∕ Insights", // U+2215(r3)
+      "Settings：Insights", // 全角冒号(r3)
+      "Settings ⇒ Insights", // U+21D2(r3)
+      "Settings／Insights", // 全角斜线
+      "Settings | Insights", // 竖线 —— 从没有人点过名,形状判定照样逮住
+      "Settings ~ Insights",
     ];
     for (const place of disguised) {
       expect(
@@ -321,15 +325,15 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
       ).toHaveLength(1);
     }
     // 反向:同形字换到**真**路名上,照样是真路名 —— 归一化不许把对的判成错的。
-    expect(linesNamingUnmappedPlaces("Point them to Workspace > Schedule.")).toEqual([]);
+    expect(linesNamingUnmappedPlaces("Point them to Settings > Connections.")).toEqual([]);
     expect(linesNamingUnmappedPlaces("Point them to Settings〉Connections.")).toEqual([]);
   });
 
   it("在真入口后面接一截也不行(合法名 + 多出来的大写词 / 连接符)", () => {
     const extended = [
       "Settings › Connections Advanced", // 判官原例:剥掉合法名后残留无分隔符
-      "Workspace › Schedule Calendar",
-      "Workspace → Insights", // 箭头 + 编出来的下一层
+      "Settings › Preferences Extended",
+      "Settings → Insights", // 箭头 + 编出来的下一层
       "Settings -> Overview",
     ];
     for (const place of extended) {
@@ -343,14 +347,15 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
   // r3 判官 [P2-2]②:不写任何符号,靠两个合法单段名相邻也能拼出一条不存在的路。
   it("不写符号的拼路同样逮得住,地图上真有的组合放行", () => {
     // 拼路样本必须用**当下树上的真名字**(两个真名相邻才是这条尺子量的形状)。
-    // W2-13(#993)CRM 整段收起来之后 `Customers` 不再是名字,样本换成 `Campaign`。
-    for (const spliced of ["Campaign Library", "Settings Analytics", "Workspace Connections", "Campaign Discover"]) {
+    // W2-11 权威改写:顶层的 Campaign 改叫 Campaigns(复数),标准 Analytics 不再是导航标签
+    // (并入 Schedule 页内第二个页签),样本跟着换成当下真名字。
+    for (const spliced of ["Campaigns Library", "Settings Home", "Brand Schedule", "Create Preferences"]) {
       expect(splicedPairs(`Point them to ${spliced}.`), `拼路「${spliced}」必须被逮住`).not.toEqual([]);
       expect(linesNamingUnmappedPlaces(`Point them to ${spliced}.`)).toHaveLength(1);
     }
-    // 地图上真实存在的组合 = 白名单(判官指定):`Workspace Library` 就是 `Workspace › Library`,
-    // 拼起来正是地图上那条路,不许误伤。
-    for (const real of ["Workspace Library", "Settings Connections", "Workspace Analytics", "Settings Preferences"]) {
+    // 地图上真实存在的组合 = 白名单(判官指定)。W2-11 之后树上只剩一个组(Settings),
+    // 三个真组合都取自它自己的三个子项。
+    for (const real of ["Settings Connections", "Settings Preferences", "Settings Billing & credits"]) {
       expect(splicedPairs(`Read the user's ${real} here.`), `真组合「${real}」不该被逮`).toEqual([]);
     }
   });
@@ -392,8 +397,13 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
   });
 
   it("路径检测器同样逮得住编出来的路径,放得过真的", () => {
-    expect(unmappedPaths("Open it at (/settings/connections).")).toEqual(["/settings/connections"]);
-    expect(unmappedPaths("Open it at (/library).")).toEqual(["/library"]); // 已收敛的旧路由
+    // W2-11 把 `/settings/connections`、`/library` 都换成了真路由,不再是编出来的地址 ——
+    // 换成一条看着眼熟却仍然不存在的深层路径,和一条已收敛的旧路由(MERCHANT_NAV_REDIRECTS,
+    // 只会 redirect,不是入口)。
+    expect(unmappedPaths("Open it at (/settings/connections/advanced).")).toEqual([
+      "/settings/connections/advanced",
+    ]);
+    expect(unmappedPaths("Open it at (/campaign/calendar).")).toEqual(["/campaign/calendar"]);
     expect(unmappedPaths(`Open it at (${navLinkByKey("connections").href}).`)).toEqual([]);
   });
 });
@@ -419,26 +429,28 @@ describe("#802 ③ 源码里一个地名都不许手打(判官 r1 [P1-1] / r3 [P
   });
 
   it("AST 扫描器认得出注释、字符串、模板串与插值(r3 判官 [P2-1] 的两个漏洞)", () => {
+    // W2-11 权威改写把顶层标签从 `Campaign` 改成了复数 `Campaigns`,探针词跟着换 ——
+    // 钉的是扫描器的能力,不是这一个字面量本身。
     // 注释里的地名不算数(注释是写给人看的,不会进模型)。
-    expect(handTypedLabels("// 这句话提到 Campaign 只是注释\nconst a = 1;")).toEqual([]);
-    expect(handTypedLabels("/* Campaign 也可以出现在块注释里 */")).toEqual([]);
-    // 走权威的插值不算数 —— key 是小写的 "campaign",不是标签 "Campaign"。
+    expect(handTypedLabels("// 这句话提到 Campaigns 只是注释\nconst a = 1;")).toEqual([]);
+    expect(handTypedLabels("/* Campaigns 也可以出现在块注释里 */")).toEqual([]);
+    // 走权威的插值不算数 —— key 是小写的 "campaign",不是标签 "Campaigns"。
     expect(handTypedLabels('const s = `open ${navPath("campaign")} now`;')).toEqual([]);
-    // 判官漏洞①:`${"Campaign"}` —— 手搓状态机无条件漏,AST 照样看见。
-    expect(handTypedLabels('const s = `open ${"Campaign"} now`;')).toEqual(["Campaign"]);
+    // 判官漏洞①:`${"Campaigns"}` —— 手搓状态机无条件漏,AST 照样看见。
+    expect(handTypedLabels('const s = `open ${"Campaigns"} now`;')).toEqual(["Campaigns"]);
     // 判官漏洞②:嵌套模板 + 插值里的花括号,手搓状态机会数错,AST 不会。
     expect(
-      handTypedLabels("const s = `a ${cond ? `x ${ {k: 1}.k } y` : `z`} b Campaign`;"),
-    ).toEqual(["Campaign"]);
+      handTypedLabels("const s = `a ${cond ? `x ${ {k: 1}.k } y` : `z`} b Campaigns`;"),
+    ).toEqual(["Campaigns"]);
     expect(
       handTypedLabels("const s = `a ${cond ? `x ${ {k: 1}.k } y` : `z`} b`;"),
     ).toEqual([]);
     // 手打的算数,不管用哪种引号。
-    expect(handTypedLabels('const s = "open Campaign now";')).toEqual(["Campaign"]);
-    expect(handTypedLabels("const s = 'open Campaign now';")).toEqual(["Campaign"]);
-    expect(handTypedLabels("const s = `open Campaign now`;")).toEqual(["Campaign"]);
+    expect(handTypedLabels('const s = "open Campaigns now";')).toEqual(["Campaigns"]);
+    expect(handTypedLabels("const s = 'open Campaigns now';")).toEqual(["Campaigns"]);
+    expect(handTypedLabels("const s = `open Campaigns now`;")).toEqual(["Campaigns"]);
     // URL 里的 `//` 不是注释开头 —— 后面的地名照样要被看见。
-    expect(handTypedLabels('const s = "https://x.test — then open Campaign";')).toEqual(["Campaign"]);
+    expect(handTypedLabels('const s = "https://x.test — then open Campaigns";')).toEqual(["Campaigns"]);
     // 标签是词,不是子串:标识符里的同名片段不算手打。
     expect(handTypedLabels('const s = "call manageLibrary now";')).toEqual([]);
   });
@@ -478,13 +490,13 @@ describe("#802 ④ 没有人指着某个界面说话(r3 判官 [P1])", () => {
     for (const reference of [
       "through the same validated, owner-scoped action layer as the Schedule page.",
       "through the same authenticated actions as the Library UI.",
-      "$0 internal planning writes through the same owner-scoped actions as the Campaign UI.",
-      "through the same owner-scoped actions as the Campaign pages.",
+      "$0 internal planning writes through the same owner-scoped actions as the Campaigns UI.",
+      "through the same owner-scoped actions as the Campaigns pages.",
       // 判官原文写的是 `Contacts pages` / `CRM page`。那两个词先后不再是导航标签
       // (#792 折叠、W2-13(#993)整段收起),所以逐次换成**当下**的标签,钉的形状不变
-      // (标签 + 单/复数 page(s))。
+      // (标签 + 单/复数 page(s))。W2-11 权威改写又把 `Campaign` 改成了复数 `Campaigns`。
       "through the same owner-scoped actions as the Library pages.",
-      "through the same owner-scoped action layer as the Campaign page.",
+      "through the same owner-scoped action layer as the Campaigns page.",
       // 同族的其它写法:
       "open the Schedule screen",
       "the Library tab",

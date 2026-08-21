@@ -36,6 +36,14 @@ import type { ChatThreadDTO } from "@/lib/types";
 import { loadOttoPanelSeed } from "@/lib/otto-panel-seed";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { startStreamedThread, type PendingFirstMessage } from "@/lib/otto-start-thread";
+import { deleteCoworkThread, renameCoworkThread, setCoworkThreadPinned } from "@/lib/otto-client-actions";
+import {
+  deleteProject as deleteProjectAction,
+  renameProject as renameProjectAction,
+  setProjectPinned as setProjectPinnedAction,
+} from "@/lib/actions";
+import { nextActiveThreadId } from "@/lib/thread-list";
+import { OttoConfirmDialog, OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
 import type { OttoPanelConversationState, PendingFirst } from "./OttoPanelConversation";
 import { OttoPanelShell, useOttoPanelControls } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
@@ -75,6 +83,38 @@ type Load =
   | { status: "ready"; seed: Seed }
   | { status: "error"; message: string };
 
+/** 深链一次性消费的三个信号(规格书 §2.2/§2.5):`/?otto=1&project=P&thread=T`。 */
+type DeepLink = {
+  /** `?otto=1` —— 这次访问必须打开面板,不管 localStorage 上次记了什么。 */
+  forceOpen: boolean;
+  projectId: string | undefined;
+  threadId: string | undefined;
+};
+
+/** `location` 可能带 query(与 `OttoPanelMount` 收到的是同一个字符串),只看那一段。 */
+function parseDeepLink(location: string): DeepLink {
+  const qIndex = location.indexOf("?");
+  const query = new URLSearchParams(qIndex >= 0 ? location.slice(qIndex + 1) : "");
+  return {
+    forceOpen: query.get("otto") === "1",
+    projectId: query.get("project") ?? undefined,
+    threadId: query.get("thread") ?? undefined,
+  };
+}
+
+/**
+ * 这一次 `location` 算不算「带着深链」——`null` 就是「不带,没有到达可言」。
+ *
+ * 判官 r2(PR #1086 最新一条):三个信号里只要有一个在场,这次地址就是一次深链;三者的
+ * 具体取值(尤其 `forceOpen`)也计入这个签名,所以「裸 project」与「同一个 project 但带
+ * `otto=1`」是两次不同的到达——各自都要触发一轮新的处理,不会因为 project 没变就被判定
+ * 成同一次到达的重渲染。
+ */
+function deepLinkSignature(deepLink: DeepLink): string | null {
+  if (!deepLink.forceOpen && deepLink.projectId === undefined && deepLink.threadId === undefined) return null;
+  return `${deepLink.forceOpen ? "1" : "0"}|${deepLink.projectId ?? ""}|${deepLink.threadId ?? ""}`;
+}
+
 export function OttoPanelHost({
   location,
   children,
@@ -84,6 +124,7 @@ export function OttoPanelHost({
   children: React.ReactNode;
 }) {
   const [load, setLoad] = React.useState<Load>({ status: "loading" });
+  const seed = load.status === "ready" ? load.seed : null;
   const [threads, setThreads] = React.useState<ChatThreadDTO[]>([]);
   const [activeThreadId, setActiveThreadId] = React.useState<string | null>(null);
   const [pendingFirst, setPendingFirst] = React.useState<PendingFirst | null>(null);
@@ -96,19 +137,94 @@ export function OttoPanelHost({
   /** 正在把哪一条历史的消息取回来(取到了才切过去,见 `selectThread`)。 */
   const [openingThreadId, setOpeningThreadId] = React.useState<string | null>(null);
   const [threadError, setThreadError] = React.useState<string | null>(null);
+  /** 整理会话(W2-11 收编导轨:重命名 / 置顶 / 删除 —— 与 `OttoNav.tsx` 同一批动作函数)。 */
+  const [renameThreadTarget, setRenameThreadTarget] = React.useState<ChatThreadDTO | null>(null);
+  const [deleteThreadTarget, setDeleteThreadTarget] = React.useState<ChatThreadDTO | null>(null);
+  /** 整理项目,同一批(`@/lib/actions` 的 renameProject / setProjectPinned / deleteProject)。 */
+  const [renameProjectTarget, setRenameProjectTarget] = React.useState<{ id: string; name: string } | null>(null);
+  const [deleteProjectTarget, setDeleteProjectTarget] = React.useState<{ id: string; name: string } | null>(null);
   /** 面板此刻开着还是关着 —— 由 `PanelOpenWatcher`(挂在下面 `children` 旁边)报上来。 */
   const [open, setOpen] = React.useState(false);
 
+  // 判官 r2(PR #1086 最新一条,根因修复):`location` 本来就随 `useSearchParams()` 响应式
+  // 更新(`MerchantAppShell` → `pathWithQuery`),这一层挂在根 layout 上跨软导航不卸载
+  // ——之前把深链冻结在 `useState(() => parseDeepLink(location))` 的挂载初值里,等于只认
+  // 「这一层第一次挂载时地址栏说了什么」,Back/Forward 或第二次软导航到同一个
+  // `/?otto=1&project=P&thread=T` 因此被无视(被删的 otto-new-conversation-routing.test.ts
+  // 277-320 行钉的正是这类重访)。改成每次 `location` 变化都重新解析,不冻结。
+  const deepLink = React.useMemo(() => parseDeepLink(location), [location]);
+  const signature = React.useMemo(() => deepLinkSignature(deepLink), [deepLink]);
+
+  // signature 已经被处理成一次「到达」——地址栏参数一旦消失就清空,让同一组值下次再出现
+  // 时(而不是这次渲染的重复)重新算一次新到达,不是「已经处理过」。
+  const consumedSignatureRef = React.useRef<string | null>(null);
+  // 最近一次未消费到达排定的 {projectId, threadId}——被下面的取数 effect 消费一次就清空
+  // (`null` 就是「没有覆盖,走默认:当前 project 最近一条」,#1022 的默认路径不变)。
+  const pendingSelectRef = React.useRef<{ projectId: string | undefined; threadId: string | undefined } | null>(null);
+  // 每一次真到达都 +1——哪怕面板已经开着(裸 project/thread 到达不碰 `open`),取数 effect
+  // 也要能重跑,不必等一次「关到开」的转折。
+  const [fetchTrigger, setFetchTrigger] = React.useState(0);
+  // 只有带 `otto=1` 的到达才会强开面板。给 Shell 的是一个每次真到达都换新的字符串(计数器
+  // 而非签名本身),这样同一组深链参数在离开地址栏后再次出现,也照样算一次新到达而不是
+  // 「Shell 已经见过这串值」——Shell 不需要知道任何重置规则,只认「这个值变了」。
+  const forceOpenTokenRef = React.useRef(0);
+  const [forceOpenToken, setForceOpenToken] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (signature === null) {
+      // 判官 r4(PR #1086 最新一条,「pending 复活」反向回归):r4 那处修法让被取消的取数
+      // 原样保留 pendingSelectRef,好让强开之后真正落地的那次还能用上——但如果地址栏此刻
+      // 已经不带任何深链参数了,这份「留着待用」的 pending 就该跟着归零,不能活过深链本身
+      // 的寿命。不然:到达 A 被取消(存档关闭,或到达后立刻被商家手关)→ 软导航到一个无
+      // 深链参数的地址 → 商家自己手动开一次面板(不是新到达,该走默认路径)→ 却读到 A
+      // 留下的 pendingSelectRef,把商家带回一条早就翻篇的旧深链会话。
+      //
+      // 语义:pending 的生命周期与「URL 还挂着这个深链」绑定——参数还在,取消了可以留着
+      // 复用(r4 修的那条);参数一旦离开地址栏,不管有没有被消费,一切归零。
+      consumedSignatureRef.current = null;
+      pendingSelectRef.current = null;
+      return;
+    }
+    if (signature === consumedSignatureRef.current) return; // 同一次到达的重渲染,零动作
+    consumedSignatureRef.current = signature;
+    pendingSelectRef.current = { projectId: deepLink.projectId, threadId: deepLink.threadId };
+    setFetchTrigger((n) => n + 1);
+    if (deepLink.forceOpen) {
+      forceOpenTokenRef.current += 1;
+      setForceOpenToken(String(forceOpenTokenRef.current));
+    }
+  }, [signature, deepLink]);
+
   // 打开的每一下都重取一次,不是只在这一层挂载时取一次(见本文件顶部「取数按面板开合来」)。
   // `open` 从 false 变 true 才会真的发一次请求;从 true 变 false 只是把这一效果的依赖标记
-  // 为已变,函数体自己早退,不发请求 —— 关掉面板不该顺手再打一次数据装配。
+  // 为已变,函数体自己早退,不发请求 —— 关掉面板不该顺手再打一次数据装配。`fetchTrigger`
+  // 是第二条能让这个 effect 重跑的信号:面板已经开着时一次裸 project/thread 到达不会翻动
+  // `open`,但同样要用新的 select 重取一次。
+  //
+  // 判官 r3(PR #1086 最新一条,刀锋竞态):硬着陆 + localStorage 存档为关时,Shell 首帧
+  // 默认 open=true、hydration 随后才写 false——这一拍间这个 effect 会把 pendingSelectRef
+  // 消费掉发起第一次取数,随即被那次关闭的 cleanup 取消(下面的 `cancelled`);force
+  // signal 强开后触发的第二次取数(真正落地、提交进状态的那次)如果发现 pendingSelectRef
+  // 已经被第一次(被取消的那次)清空,就会收 `undefined`、落回默认会话,深链等于白读。
+  // 修法:pending 只能被**提交成功的取数**消费——被取消的那次原样保留 pendingSelectRef,
+  // 留给下一次真正落地的取数继续用;只有在结果真的写进状态之前,才把它清空(而且要核对
+  // 没有被更新的到达顶替过,不然会吞掉一个还没来得及跑的更新到达)。
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    const startedWithSelect = pendingSelectRef.current;
+    const select = startedWithSelect ?? undefined;
     void (async () => {
       // 服务端动作自己不抛(它把失败折成 {error}),但网络那一段仍可能断。
-      const result = await loadOttoPanelSeed().catch(() => ({ error: "Otto is not reachable right now." }));
-      if (cancelled) return;
+      const result = await loadOttoPanelSeed(select).catch(() => ({ error: "Otto is not reachable right now." }));
+      if (cancelled) return; // 这次取数被后来的关闭顶掉了——pendingSelectRef 原样留着,
+      // 不清:下一次真正落地的取数(强开之后的那次)还要用它,不能收一个空的默认路径。
+      // 这次取数确实要提交了——它排定的 select 已经用掉,可以清了;但只在没人在这次取数
+      // 飞行途中排了一个更新的到达时才清(那种情况下 pendingSelectRef 早就不是
+      // `startedWithSelect` 了,清掉的话会把还没来得及跑的那次新到达吞掉)。
+      if (pendingSelectRef.current === startedWithSelect) {
+        pendingSelectRef.current = null;
+      }
       if ("error" in result) {
         setLoad({ status: "error", message: result.error });
         return;
@@ -120,7 +236,7 @@ export function OttoPanelHost({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, fetchTrigger]);
 
   // ── 上下文 chip:这一票**不画** ────────────────────────────────────────────
   //
@@ -231,9 +347,127 @@ export function OttoPanelHost({
     setHistoryOpenedAt(null);
   }, [activeThreadId, claimIntent, upsertThread]);
 
+  // ── 整理会话:重命名 / 置顶 / 删除(W2-11)────────────────────────────────────
+  //
+  // Shared actions 纪律:动作函数与 `OttoNav.tsx` 的 `handleRenameThread` /
+  // `handleSetThreadPinned` / `handleDeleteThread` 是同三个(`@/lib/otto-client-actions`),
+  // 这里不重写业务层,只是这一份状态(`threads`)自己的乐观更新 + 失败回滚 —— 面板与旧导轨
+  // 各自持一份 React state,回滚这一步没法共用。
+
+  const requestRenameThread = React.useCallback((id: string) => {
+    const target = threads.find((t) => t.id === id);
+    if (target) setRenameThreadTarget(target);
+  }, [threads]);
+
+  const requestDeleteThread = React.useCallback((id: string) => {
+    const target = threads.find((t) => t.id === id);
+    if (target) setDeleteThreadTarget(target);
+  }, [threads]);
+
+  const setThreadPinned = React.useCallback(async (id: string, pinned: boolean) => {
+    const snapshot = threads;
+    const pinnedAt = pinned ? new Date().toISOString() : null;
+    setThreads((items) => items.map((t) => (t.id === id ? { ...t, pinnedAt } : t)));
+    const result = await setCoworkThreadPinned(id, pinned);
+    if ("error" in result) {
+      setThreads(snapshot);
+      setThreadError(result.error);
+    }
+  }, [threads]);
+
+  const renameThread = React.useCallback(async (id: string, title: string) => {
+    const clean = title.trim();
+    if (!clean) return;
+    const snapshot = threads;
+    setThreads((items) => items.map((t) => (t.id === id ? { ...t, title: clean } : t)));
+    const result = await renameCoworkThread(id, clean);
+    if ("error" in result) {
+      setThreads(snapshot);
+      setThreadError(result.error);
+    }
+  }, [threads]);
+
+  const deleteThread = React.useCallback(async (id: string) => {
+    const snapshot = threads;
+    const snapshotActive = activeThreadId;
+    const next = nextActiveThreadId(threads, id, activeThreadId);
+    setThreads((items) => items.filter((t) => t.id !== id));
+    if (activeThreadId === id) setActiveThreadId(next);
+    const result = await deleteCoworkThread(id);
+    if ("error" in result) {
+      setThreads(snapshot);
+      setActiveThreadId(snapshotActive);
+      setThreadError(result.error);
+    }
+  }, [threads, activeThreadId]);
+
+  // ── 整理项目:重命名 / 置顶 / 删除(W2-11)────────────────────────────────────
+  //
+  // 面板里「项目」这一层今天只在会话历史的分组标题上露面(`OttoThreadList` 的 project
+  // header)——查过 Home「接着做」那一列(纯 `<Link>`,零控件)与 Library(那页是跨项目的
+  // 素材墙,压根不列项目)之后,这里是唯一还能挂得上控件的地方,不是新发明一处。
+
+  /** 重取一次种子 —— 删除项目牵连太多(会连它名下的会话一起消失),客户端手工推演这份状态
+   *  容易出错,不如让服务端(已经在 `deleteProject` 里 `revalidatePath` 过)重新说一次真相。 */
+  const reloadSeed = React.useCallback(async () => {
+    const result = await loadOttoPanelSeed().catch(() => ({ error: "Otto is not reachable right now." }));
+    if ("error" in result) {
+      setLoad({ status: "error", message: result.error });
+      return;
+    }
+    setLoad({ status: "ready", seed: result });
+    setThreads(result.threads);
+    setActiveThreadId(result.activeThreadId);
+  }, []);
+
+  const requestRenameProject = React.useCallback((id: string) => {
+    const target = seed?.projects.find((p) => p.id === id);
+    if (target) setRenameProjectTarget(target);
+  }, [seed]);
+
+  const requestDeleteProject = React.useCallback((id: string) => {
+    const target = seed?.projects.find((p) => p.id === id);
+    if (target) setDeleteProjectTarget(target);
+  }, [seed]);
+
+  const setProjectPinned = React.useCallback(async (id: string, pinned: boolean) => {
+    const pinnedAt = pinned ? new Date().toISOString() : null;
+    setLoad((current) =>
+      current.status === "ready"
+        ? { ...current, seed: { ...current.seed, projects: current.seed.projects.map((p) => (p.id === id ? { ...p, pinnedAt } : p)) } }
+        : current,
+    );
+    const result = await setProjectPinnedAction(id, pinned);
+    if ("error" in result) {
+      setThreadError(result.error);
+      await reloadSeed();
+    }
+  }, [reloadSeed]);
+
+  const renameProject = React.useCallback(async (id: string, name: string) => {
+    const result = await renameProjectAction(id, name);
+    if ("error" in result) {
+      setThreadError(result.error);
+      return;
+    }
+    setLoad((current) =>
+      current.status === "ready"
+        ? { ...current, seed: { ...current.seed, projects: current.seed.projects.map((p) => (p.id === id ? { ...p, name: result.name } : p)) } }
+        : current,
+    );
+  }, []);
+
+  const deleteProject = React.useCallback(async (id: string) => {
+    const result = await deleteProjectAction(id);
+    if ("error" in result) {
+      setThreadError(result.error);
+      return;
+    }
+    await reloadSeed();
+  }, [reloadSeed]);
+
   // ── 快捷 chips ───────────────────────────────────────────────────────────
   const chips = React.useMemo(() => panelQuickChips(location), [location]);
-  const seed = load.status === "ready" ? load.seed : null;
 
   const pickChip = React.useCallback(async (chip: { goalKey: string; label: string }) => {
     if (!seed || chipBusy) return;
@@ -312,6 +546,12 @@ export function OttoPanelHost({
           activeThreadId={activeThreadId}
           onSelectThread={(thread) => void selectThread(thread)}
           onNewChat={openNewChat}
+          onRenameThread={requestRenameThread}
+          onSetThreadPinned={(id, pinned) => void setThreadPinned(id, pinned)}
+          onDeleteThread={requestDeleteThread}
+          onRenameProject={requestRenameProject}
+          onSetProjectPinned={(id, pinned) => void setProjectPinned(id, pinned)}
+          onDeleteProject={requestDeleteProject}
           openingThreadId={openingThreadId}
           error={threadError}
           now={historyOpenedAt}
@@ -340,9 +580,79 @@ export function OttoPanelHost({
       // 正在把一条会话的消息取回来时,头部这两颗会改变「现在显示哪一条」的按钮先禁掉。
       // 真正的守卫是意图号(见上面 `claimIntent`);禁用只是让这一下不必发生。
       headerBusy={openingThreadId !== null}
+      forceOpenSignal={forceOpenToken}
     >
       <PanelOpenWatcher onOpenChange={setOpen} />
       {children}
+      {/* 整理会话的两个对话框 —— 与 `OttoNav.tsx`/`OttoApp.tsx` 的会话删改弹窗一字不差
+          (同一份文案,不是重写一份),挂在这里而不是 `OttoPanelShell` 之外:面板是常驻的,
+          对话框只在商家真的点了改名/删除才浮现。 */}
+      <OttoRenameDialog
+        open={!!renameThreadTarget}
+        onOpenChange={(open) => { if (!open) setRenameThreadTarget(null); }}
+        title="Rename conversation"
+        description="This only changes the label shown in the conversation history."
+        label="Conversation name"
+        initialValue={renameThreadTarget?.title ?? ""}
+        onSubmit={async (title) => {
+          if (!renameThreadTarget) return;
+          await renameThread(renameThreadTarget.id, title);
+          setRenameThreadTarget(null);
+        }}
+      />
+      <OttoConfirmDialog
+        open={!!deleteThreadTarget}
+        onOpenChange={(open) => { if (!open) setDeleteThreadTarget(null); }}
+        title="Permanently delete conversation?"
+        description={deleteThreadTarget ? `Otto will delete "${deleteThreadTarget.title}" and its messages.` : ""}
+        impacts={[
+          "The conversation and its messages are permanently deleted.",
+          "Canvas nodes and generated media are detached from this conversation.",
+          "Generated library assets stay available.",
+        ]}
+        confirmText={deleteThreadTarget?.title}
+        confirmLabel="Delete conversation"
+        confirmingLabel="Deleting..."
+        tone="danger"
+        onConfirm={async () => {
+          if (!deleteThreadTarget) return;
+          await deleteThread(deleteThreadTarget.id);
+          setDeleteThreadTarget(null);
+        }}
+      />
+      <OttoRenameDialog
+        open={!!renameProjectTarget}
+        onOpenChange={(open) => { if (!open) setRenameProjectTarget(null); }}
+        title="Rename project"
+        description="This only changes the sidebar name. Your chats, canvas, and assets stay where they are."
+        label="Project name"
+        initialValue={renameProjectTarget?.name ?? ""}
+        onSubmit={async (name) => {
+          if (!renameProjectTarget) return;
+          await renameProject(renameProjectTarget.id, name);
+          setRenameProjectTarget(null);
+        }}
+      />
+      <OttoConfirmDialog
+        open={!!deleteProjectTarget}
+        onOpenChange={(open) => { if (!open) setDeleteProjectTarget(null); }}
+        title="Permanently delete project?"
+        description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and its project-scoped work.` : ""}
+        impacts={[
+          "The project record is permanently deleted.",
+          "Its chats, canvas nodes, jobs, and project media records are deleted.",
+          "Global library assets and credit ledger rows are not deleted here.",
+        ]}
+        confirmText={deleteProjectTarget?.name}
+        confirmLabel="Delete project"
+        confirmingLabel="Deleting..."
+        tone="danger"
+        onConfirm={async () => {
+          if (!deleteProjectTarget) return;
+          await deleteProject(deleteProjectTarget.id);
+          setDeleteProjectTarget(null);
+        }}
+      />
     </OttoPanelShell>
   );
 }
