@@ -31,7 +31,7 @@
 import { expect, type Page } from "@playwright/test";
 import { symmetricDecrypt } from "../../apps/web/node_modules/better-auth/dist/crypto/index.mjs";
 import { prisma } from "./db.js";
-import { E2E_AUTH_SECRET } from "./env.js";
+import { E2E_AUTH_SECRET, E2E_BASE_URL } from "./env.js";
 import type { Workspace } from "./seed.js";
 
 /** The identifier the email-OTP plugin files a sign-in code under. */
@@ -109,11 +109,28 @@ export async function requestSignInCode(page: Page, email: string, callbackURL: 
  * collapsed projects rail went missing (`isVisible()` is a single instantaneous check, not a
  * wait). The global navigation is on every signed-in surface, so its presence is the honest
  * signal that this merchant is in and the app has drawn itself.
+ *
+ * THE LANDING IS ASSERTED WHOLE (W2-11). This used to compare the address bar against
+ * `new RegExp(callbackURL.split("?")[0])` — an UNANCHORED substring, and one with the query
+ * thrown away. Two things went wrong with that the day the shell switched:
+ *
+ *   · it passed on a URL that merely CONTAINED the destination. `/otto?view=library` is a 307 to
+ *     `/library` now, and the check went green on the split second the address bar still read
+ *     `/otto…` before the redirect resolved — a journey then carried on against whichever page
+ *     won the race. Journeys 8 and 13 flipped colour run to run on exactly that.
+ *   · with Home at `/`, the destination `/` compiles to a regex that matches EVERY url, so a
+ *     journey headed there would have asserted nothing at all.
+ *
+ * Comparing against the full absolute URL fixes both, and is strictly stronger than what it
+ * replaces: a destination that redirects now fails HERE, naming the address the merchant really
+ * ended up on, instead of somewhere downstream as a missing control. Journeys pass the address
+ * the merchant actually lands on; where a redirect is the thing under test, `page.goto()` is the
+ * honest way to walk it (journeys 7 and 9 do).
  */
-export async function signIn(page: Page, ws: Workspace, callbackURL = "/otto"): Promise<void> {
+export async function signIn(page: Page, ws: Workspace, callbackURL = "/"): Promise<void> {
   const code = await requestSignInCode(page, ws.email, callbackURL);
   await page.getByLabel("Sign-in code").fill(code);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`${callbackURL.split("?")[0]}`));
+  await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
   await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
 }

@@ -52,8 +52,10 @@ function sourceOf(relative: string): string {
 
 /** Home 组件族 —— 这一页的全部源码,一个文件都不许漏在对账之外。 */
 const HOME_FAMILY = [
-  "app/page.tsx",
-  "app/loading.tsx",
+  // `(home)` 是一个路由组:不进地址(这一页仍是 `/`),只把 `loading.tsx` 的 Suspense
+  // 边界圈在这一页身上,不让 Home 的骨架盖到全 app(理由全文在 `app/(home)/page.tsx`)。
+  "app/(home)/page.tsx",
+  "app/(home)/loading.tsx",
   "components/home/HomeEntry.tsx",
   "components/home/HomeView.tsx",
   "components/home/home-data.ts",
@@ -210,7 +212,7 @@ function resolveFirstParty(fromFile: string, moduleId: string): string | null {
 
 /** 从这一页的路由文件出发,把整张一方 import 图走完。 */
 function homeImportGraph(): string[] {
-  const start = path.join(WEB_ROOT, "app/page.tsx");
+  const start = path.join(WEB_ROOT, "app/(home)/page.tsx");
   const seen = new Set<string>([start]);
   const queue = [start];
   while (queue.length) {

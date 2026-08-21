@@ -203,14 +203,34 @@ describe("CRM 十四条旧地址一条都不撞墙(W2-13 / #993)", () => {
 describe("§2.2 表的去处都落在真路由文件上(W2-11)", () => {
   const APP_DIR = path.resolve(__dirname, "../../app");
 
-  function pageFileFor(urlPath: string): string {
+  /**
+   * 一条 URL 路径在磁盘上可能的路由文件位置。
+   *
+   * 不止一个,是因为 **route group**:`app/(home)/page.tsx` 服务的地址就是 `/`——括号目录
+   * 不进地址,它存在只为把一份 `loading.tsx` 的 Suspense 边界圈在一页身上(理由全文在
+   * `app/(home)/page.tsx`)。把 URL 直接当成路径拼是把「地址」与「目录」当成同一件事,
+   * 那个前提今天不成立了,而这条围栏要核的是「这个去处有没有一条真路由」,不是「目录名
+   * 长得像不像地址」。
+   *
+   * 只展开**根一层**的括号目录 —— 今天只有这一处。真出现嵌套的那天这条围栏会红(找不到
+   * 文件),那是 fail closed:它不会悄悄放行一个不存在的去处。
+   */
+  function pageFileCandidates(urlPath: string): string[] {
     const trimmed = urlPath === "/" ? "" : urlPath.replace(/^\//, "");
-    return path.join(APP_DIR, trimmed, "page.tsx");
+    const groups = readdirSync(APP_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\(.+\)$/.test(entry.name))
+      .map((entry) => entry.name);
+    return [APP_DIR, ...groups.map((group) => path.join(APP_DIR, group))].map((base) =>
+      path.join(base, trimmed, "page.tsx"),
+    );
   }
 
   it.each(Object.entries(OTTO_VIEW_REDIRECTS))("?view=%s → %s 有真的 page.tsx", (_view, target) => {
-    const route = pageFileFor(pathOf(target));
-    expect(existsSync(route), `${target} 没有路由文件(${route})`).toBe(true);
+    const candidates = pageFileCandidates(pathOf(target));
+    expect(
+      candidates.some((route) => existsSync(route)),
+      `${target} 没有路由文件(找过:${candidates.join("、")})`,
+    ).toBe(true);
   });
 });
 

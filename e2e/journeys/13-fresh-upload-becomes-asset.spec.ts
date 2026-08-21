@@ -60,7 +60,11 @@ test("A freshly-uploaded image reaches the server and becomes a real Asset, ever
   });
   expect(before).toBeNull();
 
-  await signIn(page, ws, "/otto");
+  // W2-11 — there is no full-screen Otto page any more; Otto is the panel docked beside every
+  // merchant surface, and `?otto=1` is the product's own "land with Otto open" deep link (the
+  // one `/otto` itself 307s to). The composer this journey drives is the SAME `OttoChatStream`
+  // the old page hosted — the panel renders it, so the attach path under test did not move.
+  await signIn(page, ws, "/?otto=1");
 
   // The hidden file input Uppy/the attach button drive (apps/web/components/otto/OttoChatStream.tsx)
   // — setInputFiles works on it directly, the same way the visible paperclip button does.

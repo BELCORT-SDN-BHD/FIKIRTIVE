@@ -19,7 +19,10 @@ test("An element deleted from the Library is gone, and is still gone after a rel
   const { entityId } = await seedElement(ws, "Kopi tumbler");
   await seedElement(ws, "Pandan roll");
 
-  await signIn(page, ws, "/otto?view=library");
+  // W2-11 — the Library is its own route now. `/otto?view=library` is a 307 to it (journey 9
+  // walks that redirect on purpose); a merchant who clicked "Library" is sent HERE, so this is
+  // the address to be signed back into.
+  await signIn(page, ws, "/library");
 
   const doomed = page.getByRole("button", { name: "Open Kopi tumbler" });
   const survivor = page.getByRole("button", { name: "Open Pandan roll" });
