@@ -102,6 +102,19 @@ function parseDeepLink(location: string): DeepLink {
   };
 }
 
+/**
+ * 这一次 `location` 算不算「带着深链」——`null` 就是「不带,没有到达可言」。
+ *
+ * 判官 r2(PR #1086 最新一条):三个信号里只要有一个在场,这次地址就是一次深链;三者的
+ * 具体取值(尤其 `forceOpen`)也计入这个签名,所以「裸 project」与「同一个 project 但带
+ * `otto=1`」是两次不同的到达——各自都要触发一轮新的处理,不会因为 project 没变就被判定
+ * 成同一次到达的重渲染。
+ */
+function deepLinkSignature(deepLink: DeepLink): string | null {
+  if (!deepLink.forceOpen && deepLink.projectId === undefined && deepLink.threadId === undefined) return null;
+  return `${deepLink.forceOpen ? "1" : "0"}|${deepLink.projectId ?? ""}|${deepLink.threadId ?? ""}`;
+}
+
 export function OttoPanelHost({
   location,
   children,
@@ -133,25 +146,56 @@ export function OttoPanelHost({
   /** 面板此刻开着还是关着 —— 由 `PanelOpenWatcher`(挂在下面 `children` 旁边)报上来。 */
   const [open, setOpen] = React.useState(false);
 
-  // 深链只读挂载那一刻的 `location`,不跟着后续导航重算:这一层横跨整个访问不卸载
-  // (挂在 `MerchantAppShell`),商家点开别的页面之后地址栏早就换了新的 query,深链的
-  // 意思是「这次访问的落地页说了什么」,不是「地址栏现在说什么」。
-  const [deepLink] = React.useState(() => parseDeepLink(location));
-  // 种子只用深链选一次:第一次因为它触发的取数(不管是 `otto=1` 自动打开,还是商家自己
-  // 手动开了面板而地址栏恰好还带着这两个参数)之后,后面商家自己关了再开,应该回到平常
-  // 「当前 project 最近一条」那条默认路径,不该被同一个深链悄悄按住不放。
-  const deepLinkConsumedRef = React.useRef(false);
+  // 判官 r2(PR #1086 最新一条,根因修复):`location` 本来就随 `useSearchParams()` 响应式
+  // 更新(`MerchantAppShell` → `pathWithQuery`),这一层挂在根 layout 上跨软导航不卸载
+  // ——之前把深链冻结在 `useState(() => parseDeepLink(location))` 的挂载初值里,等于只认
+  // 「这一层第一次挂载时地址栏说了什么」,Back/Forward 或第二次软导航到同一个
+  // `/?otto=1&project=P&thread=T` 因此被无视(被删的 otto-new-conversation-routing.test.ts
+  // 277-320 行钉的正是这类重访)。改成每次 `location` 变化都重新解析,不冻结。
+  const deepLink = React.useMemo(() => parseDeepLink(location), [location]);
+  const signature = React.useMemo(() => deepLinkSignature(deepLink), [deepLink]);
+
+  // signature 已经被处理成一次「到达」——地址栏参数一旦消失就清空,让同一组值下次再出现
+  // 时(而不是这次渲染的重复)重新算一次新到达,不是「已经处理过」。
+  const consumedSignatureRef = React.useRef<string | null>(null);
+  // 最近一次未消费到达排定的 {projectId, threadId}——被下面的取数 effect 消费一次就清空
+  // (`null` 就是「没有覆盖,走默认:当前 project 最近一条」,#1022 的默认路径不变)。
+  const pendingSelectRef = React.useRef<{ projectId: string | undefined; threadId: string | undefined } | null>(null);
+  // 每一次真到达都 +1——哪怕面板已经开着(裸 project/thread 到达不碰 `open`),取数 effect
+  // 也要能重跑,不必等一次「关到开」的转折。
+  const [fetchTrigger, setFetchTrigger] = React.useState(0);
+  // 只有带 `otto=1` 的到达才会强开面板。给 Shell 的是一个每次真到达都换新的字符串(计数器
+  // 而非签名本身),这样同一组深链参数在离开地址栏后再次出现,也照样算一次新到达而不是
+  // 「Shell 已经见过这串值」——Shell 不需要知道任何重置规则,只认「这个值变了」。
+  const forceOpenTokenRef = React.useRef(0);
+  const [forceOpenToken, setForceOpenToken] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (signature === null) {
+      consumedSignatureRef.current = null;
+      return;
+    }
+    if (signature === consumedSignatureRef.current) return; // 同一次到达的重渲染,零动作
+    consumedSignatureRef.current = signature;
+    pendingSelectRef.current = { projectId: deepLink.projectId, threadId: deepLink.threadId };
+    setFetchTrigger((n) => n + 1);
+    if (deepLink.forceOpen) {
+      forceOpenTokenRef.current += 1;
+      setForceOpenToken(String(forceOpenTokenRef.current));
+    }
+  }, [signature, deepLink]);
 
   // 打开的每一下都重取一次,不是只在这一层挂载时取一次(见本文件顶部「取数按面板开合来」)。
   // `open` 从 false 变 true 才会真的发一次请求;从 true 变 false 只是把这一效果的依赖标记
-  // 为已变,函数体自己早退,不发请求 —— 关掉面板不该顺手再打一次数据装配。
+  // 为已变,函数体自己早退,不发请求 —— 关掉面板不该顺手再打一次数据装配。`fetchTrigger`
+  // 是第二条能让这个 effect 重跑的信号:面板已经开着时一次裸 project/thread 到达不会翻动
+  // `open`,但同样要用新的 select 重取一次。
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    const select = deepLinkConsumedRef.current
-      ? undefined
-      : { projectId: deepLink.projectId, threadId: deepLink.threadId };
-    deepLinkConsumedRef.current = true;
+    const select = pendingSelectRef.current ?? undefined;
+    pendingSelectRef.current = null; // 这次取数已经把它用掉了,不管是被 open 还是被
+    // fetchTrigger 的变化触发的——下一次面板开合(没有新到达)必须落回默认路径。
     void (async () => {
       // 服务端动作自己不抛(它把失败折成 {error}),但网络那一段仍可能断。
       const result = await loadOttoPanelSeed(select).catch(() => ({ error: "Otto is not reachable right now." }));
@@ -167,7 +211,7 @@ export function OttoPanelHost({
     return () => {
       cancelled = true;
     };
-  }, [open, deepLink]);
+  }, [open, fetchTrigger]);
 
   // ── 上下文 chip:这一票**不画** ────────────────────────────────────────────
   //
@@ -511,7 +555,7 @@ export function OttoPanelHost({
       // 正在把一条会话的消息取回来时,头部这两颗会改变「现在显示哪一条」的按钮先禁掉。
       // 真正的守卫是意图号(见上面 `claimIntent`);禁用只是让这一下不必发生。
       headerBusy={openingThreadId !== null}
-      forceOpenOnMount={deepLink.forceOpen}
+      forceOpenSignal={forceOpenToken}
     >
       <PanelOpenWatcher onOpenChange={setOpen} />
       {children}

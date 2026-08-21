@@ -85,17 +85,18 @@ export interface OttoPanelShellProps {
   onNewChat?: () => void;
   headerBusy?: boolean;
   /**
-   * 深链要求这一次访问必须打开(`?otto=1`,规格书 §2.5)—— 盖过 localStorage 记的上次
-   * 开合状态,但只在**挂载那一次**的存值合并里生效;之后商家自己开关面板走的是正常记忆,
-   * 不会被这份深链再次劫持。
+   * 深链「到达」信号(`?otto=1`,规格书 §2.5;判官 r2 根因修复,PR #1086)——盖过
+   * localStorage 记的上次开合状态。每次这个值相对上一次真的变化(且不是 `null`)都算一次
+   * 新到达,必须开,不管这次到达发生在挂载时还是挂载之后——`OttoPanelHost` 挂在根 layout
+   * 上跨软导航不卸载,Back/Forward 或第二次软导航到同一个深链地址都要认。传 `null` 或与
+   * 上次相同的值 = 零动作,尤其是:商家自己关掉面板之后,没有新到达就不会被这个信号重新
+   * 弹开(调用方 `OttoPanelHost` 负责判定「什么算一次新到达」,这里只认「值变了就开一次」)。
    *
-   * 折进下面那一次挂载后的 `reconcileViewport` 里,不是另开一个 `setState`:面板是每一次
-   * 完整访问只挂载一次的常驻层(挂在 `MerchantAppShell`,路由怎么切都不卸载),挂载后还有
-   * 另一个 effect 会把 localStorage 的存值套回来 —— 如果分两步各自 `setState`,后一步会
-   * 把这一步刚设的「打开」原样覆盖掉(两个 effect 谁先跑不确定,读值的那个不知道深链
-   * 要求打开)。合并成一步就没有这个竞态。
+   * 用下面那个独立 effect、而不是折进挂载 hydration 的那一步:两者都用函数式 `setState`
+   * (`current => setPanelOpen(current, true)`),不管两个 effect 谁先谁后跑,后一个 updater
+   * 总是读到前一个已经应用之后的值——不会互相覆盖,不需要挤在同一步里维护先后关系。
    */
-  forceOpenOnMount?: boolean;
+  forceOpenSignal?: string | null;
 }
 
 export function OttoPanelShell({
@@ -109,7 +110,7 @@ export function OttoPanelShell({
   historyOpen,
   onNewChat,
   headerBusy,
-  forceOpenOnMount,
+  forceOpenSignal,
 }: OttoPanelShellProps) {
   // 首帧一律按默认值画(服务端不知道 localStorage,也不知道视窗有多大),
   // 挂载后再一次性套用存值 —— 这就是 `data-otto-panel-hydrated` 存在的理由。
@@ -117,21 +118,28 @@ export function OttoPanelShell({
   const [state, setState] = React.useState<OttoPanelState>(() => defaultOttoPanelState(FALLBACK_VIEWPORT));
   const [hydrated, setHydrated] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
-  // 只读挂载那一刻的值:这个 ref 从来不会因为父层重渲染而更新,故意的——深链只在这次
-  // 访问的第一帧说话算数,商家关掉面板之后地址栏仍然带着同一个 `?otto=1` 也不该再劫持它。
-  const forceOpenOnMountRef = React.useRef(forceOpenOnMount);
 
   // 这一次「多」的渲染正是 §3.3 要的:服务端不知道 localStorage、也不知道视窗多大,
   // 首帧只能画默认值,存值只能在挂载之后套上去 —— 那一步必然是一次挂载后的 setState。
   React.useEffect(() => {
     const vp = readViewport();
-    const stored = readOttoPanelState(vp);
-    const merged = forceOpenOnMountRef.current ? setPanelOpen(stored, true) : stored;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上:挂载后套用存值,§3.3。
     setViewport(vp);
-    setState(reconcileViewport(merged, vp));
+    setState(reconcileViewport(readOttoPanelState(vp), vp));
     setHydrated(true);
   }, []);
+
+  // 深链强开(见上面 `forceOpenSignal` 的说明)——独立于挂载 hydration 之外的一个 effect,
+  // 用函数式 `setState` 保证不管两个 effect 的先后顺序都正确叠加。`lastForceOpenSignalRef`
+  // 只用来判定「这次是不是一个新信号」;`null` 或重复值本身不做任何事,把「什么算一次新
+  // 到达」完全交给调用方(`OttoPanelHost`)判定。
+  const lastForceOpenSignalRef = React.useRef<string | null | undefined>(undefined);
+  React.useEffect(() => {
+    if (forceOpenSignal == null) return;
+    if (forceOpenSignal === lastForceOpenSignalRef.current) return;
+    lastForceOpenSignalRef.current = forceOpenSignal;
+    setState((current) => setPanelOpen(current, true));
+  }, [forceOpenSignal]);
 
   React.useEffect(() => {
     function handleResize() {

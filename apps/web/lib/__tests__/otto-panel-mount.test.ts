@@ -150,6 +150,23 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
   return container;
 }
 
+/**
+ * 在**同一个挂载根**上换一个 `location` 重渲染 —— 模拟软导航或 Back/Forward:`OttoPanelHost`
+ * 不卸载重挂,只是收到一个新的 `location` prop(判官 r2,PR #1086)。与 `mount()` 的差别
+ * 就是这一点:`mount()` 每次都是一次新的挂载,这个函数刻意复用现有 `root`。
+ */
+async function rerender(element: ReactElement): Promise<HTMLDivElement> {
+  if (!root || !container) throw new Error("rerender() 之前必须先 mount()");
+  await act(async () => root!.render(element));
+  await settle();
+  return container;
+}
+
+/** 写一份「关着」的存档,证明深链真的盖过了它,不是恰好默认就是开的。 */
+function writeClosedState() {
+  writeOttoPanelState(setPanelOpen(defaultOttoPanelState(VIEWPORT), false));
+}
+
 /** 真的商家壳,只把签退动作换成一个不做事的函数。 */
 function shell(pathname: string, page?: ReactElement) {
   return createElement(
@@ -377,10 +394,6 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
  * mock,断言的是「调用它的时候传了什么」,不是它内部怎么选。
  */
 describe("深链一次性消费(判官修复轮 P1,规格书 §2.2/§2.5)", () => {
-  /** 写一份「关着」的存档,证明 `?otto=1` 真的盖过了它,不是恰好默认就是开的。 */
-  function writeClosedState() {
-    writeOttoPanelState(setPanelOpen(defaultOttoPanelState(VIEWPORT), false));
-  }
 
   it("?otto=1 盖过存档里记的关着,这次访问自动打开", async () => {
     writeClosedState();
@@ -424,6 +437,73 @@ describe("深链一次性消费(判官修复轮 P1,规格书 §2.2/§2.5)", () =
     // 也确实触发了第二次取数,但这次不带深链参数了。
     expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
     expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, undefined);
+  });
+});
+
+/**
+ * 深链按「到达」消费,不是冻结在挂载那一刻(判官 r2,PR #1086 issuecomment 最新一条)。
+ *
+ * 根因:`OttoPanelHost` 挂在 `MerchantAppShell` 根部,横跨一整次访问不卸载——`location`
+ * 本身随 `useSearchParams()` 响应式更新(见 `global-navigation.tsx`),但上一轮把深链解析
+ * 冻结在 `useState(() => parseDeepLink(location))` 的挂载初值里,等于只认「这一层第一次
+ * 挂载时地址栏说了什么」。Back/Forward、或者商家在同一次访问里第二次软导航到同一个
+ * `/?otto=1&project=P&thread=T`,都会被无视——这正是被删的
+ * otto-new-conversation-routing.test.ts 277-287(`?thread=` 恢复指定会话)与 304-320
+ * (裸 project 选最近会话)两条钉的重访场景,迁移到新架构后必须继续成立。
+ *
+ * 判别力:下面四条里至少三条(①③④)在「冻结于挂载初值」的旧实现下必定失败——重渲染
+ * 根本不会让 deepLink 变化,既不会开面板也不会转发新的 select。
+ */
+describe("深链按「到达」消费:同一挂载根上的软导航/重访(判官 r2,规格书 §2.2/§2.5)", () => {
+  it("①首访无参→软导航到 ?otto=1&thread=T2(同一挂载根,Host 没有卸载重挂)→ 面板开且 seed 收 T2", async () => {
+    writeClosedState();
+    const el = await mount(shell("/"));
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    // 首帧按默认值(开)画、挂载后才套用存档(关)套回去——挂载期间那次开合翻转本身会触发一次
+    // 与深链无关的取数(§3.3 的已知代价,这份测试不是在验它);只钉「导航之后确实多了一次
+    // 带正确 select 的取数」,不假设导航前的次数是零。
+    const callsBeforeNavigation = loadOttoPanelSeed.mock.calls.length;
+
+    await rerender(shell("/?otto=1&thread=thr_T2"));
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(callsBeforeNavigation + 1);
+    expect(loadOttoPanelSeed).toHaveBeenLastCalledWith({ projectId: undefined, threadId: "thr_T2" });
+  });
+
+  it("②同一个深链地址原样重渲染(没有新到达)不重取——父层因无关状态重渲染时不该被当成一次访问", async () => {
+    await mount(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+
+    await rerender(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+  });
+
+  it("③参数从地址栏消失(零动作,不多取)之后同一组值再次到达(面板全程没关过)→ 当成新到达,再取一次", async () => {
+    await mount(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_T2" });
+
+    // 参数离开地址栏——消费标记重置,但这一下本身是零动作,不多取。
+    await rerender(shell("/"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+
+    // 同一组值再次到达,即使值完全没变——也要当成新到达,重新开、重新取。
+    await rerender(shell("/?otto=1&thread=thr_T2"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: undefined, threadId: "thr_T2" });
+  });
+
+  it("④裸 project 到达(没有 otto=1,面板已经开着)转发 {projectId, threadId: undefined}——旧 :304-320 契约(裸 project 选最近会话)的到达一半;实际选中哪一条会话的分支在 otto-panel-seed.test.ts 钉", async () => {
+    await mount(shell("/?otto=1"));
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: undefined });
+
+    // 裸 project 到达——没有 otto=1(面板本来就开着,不需要再强开),也没有 thread=。
+    await rerender(shell("/?project=proj_recent"));
+
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: "proj_recent", threadId: undefined });
   });
 });
 
