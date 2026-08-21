@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { requireOwner } from "@/lib/auth-guard";
 import { signState, buildAuthorizeUrl } from "@/lib/meta-oauth";
 
@@ -10,7 +11,7 @@ export async function GET(req: NextRequest) {
   const configId = process.env.META_LOGIN_CONFIG_ID;
   if (!appId || !configId)
     return NextResponse.redirect(
-      new URL("/otto?view=connections&error=not_configured", base),
+      new URL(`${SHELL_ROUTES.connections}?error=not_configured`, base),
     );
   const redirectUri = new URL("/api/meta/callback", base).href;
   return NextResponse.redirect(

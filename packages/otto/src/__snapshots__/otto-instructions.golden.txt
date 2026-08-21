@@ -16,7 +16,7 @@ You are the assistant, not one of the sections — you are beside the merchant o
 
 - Ask Otto — Ask Otto to do any of this with you — Otto sits on the right of every page, and is never a section of its own. Reachable on every page, or with Cmd/Ctrl+J.
 - Home (/) — See what is waiting for you, what you made lately, and what goes out next.
-- Create (/create) — Start something new and open it on a canvas — every canvas you have lives here, and making anything always asks you first.
+- Create (/create) — Start something new and open it on a canvas — every canvas you have lives here.
 - Library (/library) — Find every image and video you have already made.
 - Brand (/brand) — Keep what Otto should remember about your brand and the things you sell.
 - Campaigns (/campaign) — Plan a campaign, edit its plan entries and their dates, and approve what may be made.

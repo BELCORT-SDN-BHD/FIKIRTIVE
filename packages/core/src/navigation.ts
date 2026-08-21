@@ -175,7 +175,7 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     key: "create",
     label: CREATE_NAV_LABEL,
     href: CREATE_NAV_HREF,
-    does: "Start something new and open it on a canvas — every canvas you have lives here, and making anything always asks you first.",
+    does: "Start something new and open it on a canvas — every canvas you have lives here.",
   },
   {
     key: "library",

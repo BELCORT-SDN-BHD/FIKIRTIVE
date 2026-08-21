@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { verifyState } from "@/lib/meta-oauth";
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     const sp = new URL(req.url).searchParams;
     const code = sp.get("code");
     const state = sp.get("state");
-    const back = new URL("/otto?view=connections", base);
+    const back = new URL(SHELL_ROUTES.connections, base);
 
     if (!code || !state) {
       back.searchParams.set("error", "missing");

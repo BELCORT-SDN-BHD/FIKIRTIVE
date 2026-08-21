@@ -51,8 +51,10 @@ describe("GET /api/meta/authorize", () => {
     const location = new URL(res.headers.get("location")!);
 
     expect(location.origin).toBe("https://app.test");
-    expect(location.pathname).toBe("/otto");
-    expect(location.searchParams.get("view")).toBe("connections");
+    // W2-11:落地地址从旧壳的 /otto?view=connections 换成真路由 SHELL_ROUTES.connections
+    // (/settings/connections)——OAuth 回跳语义(error=/connected= 这些 query)没变,只换了
+    // 地址本身,回跳逻辑一个字都没碰。
+    expect(location.pathname).toBe("/settings/connections");
     expect(location.searchParams.get("error")).toBe("not_configured");
   });
 
@@ -63,8 +65,10 @@ describe("GET /api/meta/authorize", () => {
     const location = new URL(res.headers.get("location")!);
 
     expect(location.origin).toBe("https://app.test");
-    expect(location.pathname).toBe("/otto");
-    expect(location.searchParams.get("view")).toBe("connections");
+    // W2-11:落地地址从旧壳的 /otto?view=connections 换成真路由 SHELL_ROUTES.connections
+    // (/settings/connections)——OAuth 回跳语义(error=/connected= 这些 query)没变,只换了
+    // 地址本身,回跳逻辑一个字都没碰。
+    expect(location.pathname).toBe("/settings/connections");
     expect(location.searchParams.get("error")).toBe("not_configured");
     expect(res.headers.get("location")).not.toContain("facebook.com");
   });
@@ -98,8 +102,10 @@ describe("GET /api/meta/callback", () => {
     const location = new URL(res.headers.get("location")!);
 
     expect(location.origin).toBe("https://app.test");
-    expect(location.pathname).toBe("/otto");
-    expect(location.searchParams.get("view")).toBe("connections");
+    // W2-11:落地地址从旧壳的 /otto?view=connections 换成真路由 SHELL_ROUTES.connections
+    // (/settings/connections)——OAuth 回跳语义(error=/connected= 这些 query)没变,只换了
+    // 地址本身,回跳逻辑一个字都没碰。
+    expect(location.pathname).toBe("/settings/connections");
     expect(location.searchParams.get("error")).toBe("missing");
     expect(mocks.completeMetaConnect).not.toHaveBeenCalled();
   });
@@ -110,8 +116,10 @@ describe("GET /api/meta/callback", () => {
     const res = await callbackGET(req(`https://app.test/api/meta/callback?code=c&state=${encodeURIComponent(state)}`));
     const location = new URL(res.headers.get("location")!);
 
-    expect(location.pathname).toBe("/otto");
-    expect(location.searchParams.get("view")).toBe("connections");
+    // W2-11:落地地址从旧壳的 /otto?view=connections 换成真路由 SHELL_ROUTES.connections
+    // (/settings/connections)——OAuth 回跳语义(error=/connected= 这些 query)没变,只换了
+    // 地址本身,回跳逻辑一个字都没碰。
+    expect(location.pathname).toBe("/settings/connections");
     expect(location.searchParams.get("error")).toBe("state");
     expect(mocks.completeMetaConnect).not.toHaveBeenCalled();
   });
@@ -124,8 +132,10 @@ describe("GET /api/meta/callback", () => {
 
     expect(mocks.completeMetaConnect).toHaveBeenCalledWith("auth-code", "https://app.test/api/meta/callback");
     expect(location.origin).toBe("https://app.test");
-    expect(location.pathname).toBe("/otto");
-    expect(location.searchParams.get("view")).toBe("connections");
+    // W2-11:落地地址从旧壳的 /otto?view=connections 换成真路由 SHELL_ROUTES.connections
+    // (/settings/connections)——OAuth 回跳语义(error=/connected= 这些 query)没变,只换了
+    // 地址本身,回跳逻辑一个字都没碰。
+    expect(location.pathname).toBe("/settings/connections");
     expect(location.searchParams.get("connected")).toBe("meta");
   });
 
@@ -136,8 +146,10 @@ describe("GET /api/meta/callback", () => {
     const res = await callbackGET(req(`https://app.test/api/meta/callback?code=auth-code&state=${encodeURIComponent(state)}`));
     const location = new URL(res.headers.get("location")!);
 
-    expect(location.pathname).toBe("/otto");
-    expect(location.searchParams.get("view")).toBe("connections");
+    // W2-11:落地地址从旧壳的 /otto?view=connections 换成真路由 SHELL_ROUTES.connections
+    // (/settings/connections)——OAuth 回跳语义(error=/connected= 这些 query)没变,只换了
+    // 地址本身,回跳逻辑一个字都没碰。
+    expect(location.pathname).toBe("/settings/connections");
     expect(location.searchParams.get("error")).toBe("exchange");
   });
 });

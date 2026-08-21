@@ -56,6 +56,24 @@ describe("MERCHANT_NAV 的形状", () => {
     }
   });
 
+  // W2-11 判官修复轮 P2:光查长度挡不住一句 does 悄悄多写或少写一个从句(Create 那次多带
+  // 的 "and making anything always asks you first." 就是这样漏过去的)。这里逐字锁死
+  // 规格书 §2.3① 那张表(`docs/specs/wave2-shell.md:117-131`)——九条 does,一个字都不许改,
+  // 改了就是一次没有讨论过的导航文案改动。
+  it("does 逐字锁死规格书 §2.3① 那张表,不是只查长度", () => {
+    expect(Object.fromEntries(merchantNavLinks().map((item) => [item.key, item.does]))).toEqual({
+      create: "Start something new and open it on a canvas — every canvas you have lives here.",
+      library: "Find every image and video you have already made.",
+      brand: "Keep what Otto should remember about your brand and the things you sell.",
+      campaign: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
+      schedule: "The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.",
+      billing: "Buy credits, and read what your credits have gone on.",
+      connections: "Connect or disconnect the accounts you post from.",
+      preferences: "Set your spend cap and posting defaults.",
+      home: "See what is waiting for you, what you made lately, and what goes out next.",
+    });
+  });
+
   it("标签是 English sentence case —— 不是 Title Case", () => {
     for (const item of everyNavDestination()) {
       // 第二个词起,除了品牌与专有名词(Otto),不许再大写开头。
@@ -155,7 +173,9 @@ describe("Otto 是助手,不是模块(W2-11:而且不是地址)", () => {
     expect(navLabel("otto")).toBe(OTTO_ASSISTANT.label);
     const line = merchantNavMap().split("\n").find((row) => row.startsWith(`- ${OTTO_ASSISTANT.label}`));
     expect(line, "地图里应当有助手那一行").toBeDefined();
-    expect(line, "地图应当说清怎么打开它").toMatch(/Cmd\/Ctrl\+J|Otto button/);
+    // 只认 Cmd/Ctrl+J 这一种说法——"Otto button" 是 packages/otto 自己 #541 词表明令禁止
+    // 的措辞(Otto 看不见 app 的控件),留它当"或"的另一支等于这条测试自己也会放行禁词。
+    expect(line, "地图应当说清怎么打开它").toMatch(/Cmd\/Ctrl\+J/);
     // 反面:那一行不许长成「名字 (href)」的形状 —— 它没有地址可以摆进括号里。
     expect(line).not.toMatch(/\(\/[^)]*\)/);
   });

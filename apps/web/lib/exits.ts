@@ -7,16 +7,22 @@
  * 自己判定重试没用,唯一出路就是联系我们,而这条路在产品里根本不存在。
  *
  * 答案产品早就有,只是散落在各处:删号确认框跳的就是 mailto:tao@belcort.com,
- * 侧栏里就挂着 /billing,Brand memory 就是 /otto?view=memory。所以这里不发明新去处,
+ * 侧栏里就挂着 /billing,Brand memory 就是 SHELL_ROUTES.brand。所以这里不发明新去处,
  * 只是把已有的三个去处收成一处 —— 谁要指路,只能从这里取地址。
  *
- * 纯常量 + 纯函数,不含 JSX,也不 import 任何东西 —— 所以服务端组件(法务页)、客户端
- * 组件(Settings、Otto 各卡)和纯模块都能读同一份,不受 `"use client"` / `"use server"`
- * 边界限制。渲染成可点元素的那一层在 components/exits/Exits.tsx。
+ * 纯常量 + 纯函数,不含 JSX —— 所以服务端组件(法务页)、客户端组件(Settings、Otto 各卡)
+ * 和纯模块都能读同一份,不受 `"use client"` / `"use server"` 边界限制。渲染成可点元素的
+ * 那一层在 components/exits/Exits.tsx。
+ *
+ * W2-11:唯一的例外是 `@fikirtive/core/navigation` 这一条 import——`packages/core` 本身
+ * 零 `"use client"`/`"use server"` 标记,不带任何边界,所以不破坏上面那条「哪里都能读」
+ * 的承诺;换来的是 `BRAND_MEMORY_HREF` 不再手抄一份地址,与 `SHELL_ROUTES.brand` 永远
+ * 是同一件事。
  *
  * (#786:这里原本写着 billing-actions 也读这个模块。它没有 —— 它只在自己的返回体上带一个
  *  `contactSupport` 标记,由 BuyPackButton 拿去换出口。注释与事实不符就是下一个假前提。)
  */
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 
 /** 唯一的人工出口。历来就是这个地址(隐私页、条款页、删号确认框都用它)。 */
 export const SUPPORT_EMAIL = "tao@belcort.com";
@@ -30,7 +36,7 @@ export function supportMailto(subject: string): string {
 export const BILLING_HREF = "/billing";
 
 /** Brand memory —— 「Your products」下的「+ Add product」在这个视图里。 */
-export const BRAND_MEMORY_HREF = "/otto?view=memory";
+export const BRAND_MEMORY_HREF = SHELL_ROUTES.brand;
 
 /** 没有可售积分包时,商家读到的那一句(#687)。
  *
