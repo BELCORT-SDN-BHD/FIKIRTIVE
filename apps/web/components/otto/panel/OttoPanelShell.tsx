@@ -241,16 +241,35 @@ export function OttoPanelShell({
   // 零动画不是这里少写了一行:全屏与停靠之间没有可插值的中间态(`position: fixed` ↔ 排版里
   // 的一格、`width: auto` ↔ 408px),两个方向、任何触发方式都是硬切。键盘发起的动作因此
   // 天然没有动画可等(Emil 第 11 条),不需要另设一个「这次是键盘」的开关。
+  //
+  // 「只剥最上面那一层」是**一条链**,不是一个 if:原型 L5917-5924 先看全屏、再看切换器,
+  // 顺序照抄。上一版把这个 effect 整个锁在 `if (!fullscreen) return` 后面,于是停靠态下
+  // 打开切换器再按 Esc,什么都不会发生 —— 商家开了一层浮层却没有键盘路径能关掉它,焦点
+  // 也留在浮层里回不到标题按钮。判官 [P2-2]。
+  //
+  // 关掉切换器不调 `setState`,而是回头喊 `onOpenHistory`:开合状态住在
+  // `OttoPanelHost`(`historyOpenedAt`),这里持第二份就会有两份不一致的真相。焦点还给
+  // 标题按钮是原型那一句 `$('#roomBtn').focus()` —— 那颗按钮不随浮层卸载,同步 focus 即可。
+  const roomsOpen = Boolean(roomSwitcher);
   React.useEffect(() => {
-    if (!fullscreen) return;
+    if (!fullscreen && !roomsOpen) return;
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+      // 一次 Esc 只剥一层。行里那颗三点菜单是 Radix 的 dismissable layer,它在
+      // `document` 的 capture 阶段先跑,关掉自己之后会 `preventDefault()`;window 上
+      // 这一处在冒泡末端才轮到,不看这一眼就会连菜单带浮层一起掀掉两层。
+      if (event.defaultPrevented) return;
       event.preventDefault();
-      setExpanded(false);
+      if (fullscreen) {
+        setExpanded(false);
+        return;
+      }
+      onOpenHistory?.();
+      document.querySelector<HTMLElement>("[data-otto-panel-title]")?.focus();
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [fullscreen]);
+  }, [fullscreen, roomsOpen, onOpenHistory]);
 
   // 关掉面板就退出 Expand:Expand 是「现在读这张卡要更宽」,不是一个要记住的形态。
   const closePanel = React.useCallback(() => {

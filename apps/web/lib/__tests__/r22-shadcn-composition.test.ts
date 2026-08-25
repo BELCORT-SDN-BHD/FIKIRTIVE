@@ -41,6 +41,16 @@ const R22_SURFACES = [
   "components/campaign/campaign-trends-page.tsx",
   "components/otto/panel/OttoPanelConversation.tsx",
   "components/otto/panel/OttoThreadList.tsx",
+  // 面板四子流那一波拆出来的两个新面 —— 上面那段注释说的正是这件事,而它上一版没有
+  // 兑现:切换器与答案卡从 `OttoPanelHost` / `OttoPanelConversation` 里分出去自成文件,
+  // 名单没跟着长,四条通用围栏就一条也扫不到它们了。
+  "components/otto/panel/OttoRoomSwitcher.tsx",
+  "components/otto/panel/OttoAnswerCard.tsx",
+  // 四扇门的等待画面同理:它们是商家真的会看见的一屏,只是活得短。
+  "app/approvals/loading.tsx",
+  "app/billing/loading.tsx",
+  "app/create/loading.tsx",
+  "app/routines/loading.tsx",
 ] as const;
 
 function source(relative: string): string {

@@ -466,6 +466,88 @@ describe("子流 ③:Switching a room chat(原型 renderRooms)", () => {
     expect(rooms.querySelector('[aria-label="Raya launch controls"]')).not.toBeNull();
     expect(rooms.querySelector("[data-otto-panel-rooms-new]")!.textContent).toBe("New conversation");
   });
+
+  /**
+   * 一份**真的会开合**的切换器。
+   *
+   * 上面几条看的是「画对没有」,静态节点就够;下面两条看的是「关不关得掉」,开合状态
+   * 必须真的存在 —— 上一版这里全传 `onOpenHistory: () => {}`,于是 23 条全绿也照不到
+   * 「Esc 关不掉切换器」这个洞(判官 [P2-2])。
+   *
+   * `conversationHost()` 只调一次:它每调一次都造一个新的组件类型,写在渲染里会让整段
+   * 会话每次 setState 都重挂载,那样「面板还在、会话没丢」这句断言就成了自证。
+   */
+  function roomsHost() {
+    const body = conversationHost();
+    const Host: FC = () => {
+      const [open, setOpen] = useState(true);
+      return shell({
+        panelBody: body,
+        roomsId: OTTO_ROOMS_ID,
+        historyOpen: open,
+        onOpenHistory: () => setOpen((value) => !value),
+        onNewChat: () => {},
+        roomSwitcher: open
+          ? createElement(OttoRoomSwitcher, {
+              projects: SEED.projects,
+              threads: THREADS,
+              activeThreadId: "t-today",
+              now: NOW,
+              onSelectThread: () => {},
+              onNewChat: () => {},
+              onRenameThread: () => {},
+              onSetThreadPinned: () => {},
+              onDeleteThread: () => {},
+              onRenameProject: () => {},
+              onSetProjectPinned: () => {},
+              onDeleteProject: () => {},
+            })
+          : null,
+      });
+    };
+    return createElement(Host);
+  }
+
+  async function openRooms(): Promise<HTMLElement> {
+    await render(roomsHost());
+    await act(async () => document.querySelector<HTMLElement>("[data-otto-launcher]")!.click());
+    return panelEl();
+  }
+
+  async function pressEscape() {
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  }
+
+  it("Esc 关掉切换器、焦点回到标题按钮,而面板与正在读的那段会话都还在", async () => {
+    const panel = await openRooms();
+    expect(panel.querySelector("[data-otto-panel-rooms]")).not.toBeNull();
+    expect(panel.querySelector("[data-otto-panel-title]")!.getAttribute("aria-expanded")).toBe("true");
+
+    await pressEscape();
+
+    const after = panelEl();
+    expect(after.querySelector("[data-otto-panel-rooms]")).toBeNull();
+    const title = after.querySelector<HTMLElement>("[data-otto-panel-title]")!;
+    expect(document.activeElement).toBe(title);
+    expect(title.getAttribute("aria-expanded")).toBe("false");
+
+    // 只剥了那一层:面板没关,会话没丢。
+    expect(document.querySelector("[data-otto-panel]")).not.toBeNull();
+    expect(after.querySelector('[data-otto-panel-conversation="fixture"]')).not.toBeNull();
+  });
+
+  it("全屏时 Esc 先退全屏、切换器留着 —— 剥层顺序照原型 L5917-5924", async () => {
+    const panel = await openRooms();
+    await act(async () => panel.querySelector<HTMLButtonElement>('[aria-label="Expand Otto"]')!.click());
+    expect(panelEl().hasAttribute("data-otto-panel-fullscreen")).toBe(true);
+
+    await pressEscape();
+    expect(panelEl().hasAttribute("data-otto-panel-fullscreen")).toBe(false);
+    expect(panelEl().querySelector("[data-otto-panel-rooms]")).not.toBeNull();
+
+    await pressEscape();
+    expect(panelEl().querySelector("[data-otto-panel-rooms]")).toBeNull();
+  });
 });
 
 describe("子流 ④:Switching to fullscreen view(原型 setFullscreen)", () => {
