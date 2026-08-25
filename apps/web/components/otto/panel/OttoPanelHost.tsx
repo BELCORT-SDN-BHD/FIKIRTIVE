@@ -655,8 +655,15 @@ export function OttoPanelHost({
     <OttoPanelShell
       variant={variant}
       panelBody={panelBody}
+      // R22 的面板只有三格:头、会话体、体底那格输入框(原型 L5433-5469)。这一排 chips
+      // 是插在体和 footer 之间的第四格,而 r22 的 composer 住在体里面 —— 画出来就落在输入框
+      // **下面**,读起来像第二个 footer。原型没有这一排,所以 r22 不画它。
+      //
+      // 起手式没有被删掉:没有会话时,体里画的就是起手格(fixture 是 `.r22-otto-starters`,
+      // 真接后端是 `OttoFrontDoor` 那四个目标格),两处走的都是这一份 `GOAL_PRESETS`。
+      // legacy 壳的版式不变,那一排照旧。
       quickChips={
-        seed ? (
+        variant !== "r22" && seed ? (
           <OttoQuickChips
             chips={chips}
             disabled={chipBusy}

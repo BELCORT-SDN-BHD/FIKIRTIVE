@@ -98,20 +98,35 @@ function fixtureQuestionFlow(prompt: string): CanvasQuestionFlow | null {
 /**
  * 打招呼、道谢、随口一问**不是创作请求**:它们不该排一张任务卡,也不该花一分钱。
  *
- * 三条路的次序是「提问流 → 创作意图 → 对话」。次序不是随手排的:
- * "Make the Raya hero more premium" 两边都命中 —— `make` 是创作意图,`premium` 是歧义 ——
- * 而它真正缺的是一次拍板,所以提问流先判,这条路一个字都不动。
- * 创作意图之后剩下的才是对话:`fixtureChatReply` 返回 null 就代表「这是真的要做东西」。
+ * 上一版只修了一半,病根边界还漏着:创作**动词**(make / create)和创作**名词**
+ * (image / video / carousel / batch)混在一张表里,而这张表又排在寒暄前面 ——
+ * 于是判官实测的这四条全被当成真创作请求排了任务卡:
+ *   「Thanks for the images!」(`images` 压过道谢)
+ *   「How much does a video cost?」「What is a carousel?」「Where did my last batch go?」
+ *
+ * 所以动词与名词拆开,而且先判**句式**再判词:
+ *   ① 整句就是一句招呼 → 招呼
+ *   ② 道谢,且句子里没有创作动词 → 道谢;「Thanks, now make a video」仍然是一次创作
+ *   ③ 以 what / how / where / why / when / who / which 起头、以 `?` 收尾的疑问句 → 回答
+ *   ④ 剩下的才看创作动词或创作名词;两个都没有,就当成一句可以直接答的话
+ *
+ * 提问流(`fixtureQuestionFlow`)仍然排在这一整条之前,那条路一个字都不动:
+ * "Make the Raya hero more premium" 两边都命中,而它真正缺的是一次拍板,不是一句回话。
+ * 返回 null 就代表「这是真的要做东西」。
  */
-const CREATE_INTENT = /\b(make|create|generate|design|draw|render|write|build|produce|remake|redo|variant|variants|variation|image|images|photo|photos|video|videos|carousel|poster|banner|flyer|story|stories|post|posts|caption|headline|ad|ads|logo|sketch|shot|shots|batch|mockup|mock up)\b/i;
+const CREATE_VERB = /\b(make|create|generate|design|draw|render|write|build|produce|remake|redo|mock up)\b/i;
+const CREATE_NOUN = /\b(variant|variants|variation|image|images|photo|photos|video|videos|carousel|poster|banner|flyer|story|stories|post|posts|caption|headline|ad|ads|logo|sketch|shot|shots|batch|mockup)\b/i;
 const GREETING = /^\s*(hi+|hey+|hello|helo|hai|yo|halo|hola|good (morning|afternoon|evening)|你好|哈啰|嗨)\b[\s!.,?~]*$/i;
 const THANKS = /(\bthanks\b|\bthank you\b|\bthx\b|\bterima kasih\b|谢谢|多谢|感谢)/i;
+const QUESTION = /^\s*(what|what's|whats|how|where|why|when|who|which)\b[\s\S]*\?\s*$/i;
 
-function fixtureChatReply(prompt: string, board: string): string | null {
-  if (CREATE_INTENT.test(prompt)) return null;
+function smallTalkReply(prompt: string, board: string): string | null {
+  const answerHere = `I can answer right here, or make something on ${board}. Ask me for images, a variant, or a caption and I'll start.`;
   if (GREETING.test(prompt)) return `Hey — I'm on ${board} with you. Tell me what to make and I'll start.`;
-  if (THANKS.test(prompt)) return "Anytime. Star the ones worth keeping, or tell me what to make next.";
-  return `I can answer right here, or make something on ${board}. Ask me for images, a variant, or a caption and I'll start.`;
+  if (THANKS.test(prompt) && !CREATE_VERB.test(prompt)) return "Anytime. Star the ones worth keeping, or tell me what to make next.";
+  if (QUESTION.test(prompt)) return answerHere;
+  if (CREATE_VERB.test(prompt) || CREATE_NOUN.test(prompt)) return null;
+  return answerHere;
 }
 
 const TOOL_BUTTONS: Array<{
@@ -256,7 +271,8 @@ export function R22CanvasSurface({
     const rows = await listCanvasNodes(runtimeContext.activeProjectId).catch(() => ({ error: "load-failed" } as const));
     if ("error" in rows) {
       setNodesError("Canvas items could not be loaded.");
-      setNotice("Canvas items could not be loaded. No empty state was inferred.");
+      // 诚实的那半句不能靠「empty state」「inferred」这种 UI 工程师词汇说 —— 商家读不懂。
+      setNotice("Canvas items could not be loaded. Retry — this is not an empty canvas.");
     } else {
       setNodesError(null);
       setLiveNodes(rows);
@@ -399,7 +415,7 @@ export function R22CanvasSurface({
       }
       setFixtureMessages((current) => [...current, { from: "me", text: next }]);
       const flow = fixtureQuestionFlow(next);
-      const chatReply = flow ? null : fixtureChatReply(next, fixtureBoardLabel);
+      const chatReply = flow ? null : smallTalkReply(next, fixtureBoardLabel);
       if (flow) {
         const taskId = `fixture-task-${fixtureMessages.length + 1}`;
         const inputRequestId = `${taskId}:input:1`;
@@ -440,6 +456,14 @@ export function R22CanvasSurface({
           }, 360);
         } else startFixtureJob(next);
       }
+      setMessage("");
+      return;
+    }
+    // 同一道闸装在真接后端这一面 —— 在这里一句 "hi" 会真的排一次生成、真的花商家的钱。
+    // 这一面的 Conversation 画的是会话列表,不是消息气泡,所以回话落在回执条上。
+    const liveSmallTalk = smallTalkReply(next, "this canvas");
+    if (liveSmallTalk) {
+      setNotice(`${liveSmallTalk} Nothing was made and no credits were used.`);
       setMessage("");
       return;
     }
@@ -545,7 +569,7 @@ export function R22CanvasSurface({
       </header>
 
       <div className="r22-canvas-stage" data-r22-canvas-stage>
-        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Project read outcome is unknown. No board or empty state was inferred." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld /> : <EmptyWorld /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} zoom={zoom} />}
+        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld /> : <EmptyWorld /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} zoom={zoom} />}
         {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
         {fixtureJob ? <div className={`r22-canvas-job is-${fixtureJob.status}`} role="status" data-canvas-job-status={fixtureJob.status} data-canvas-action-id={fixtureJob.id}><span>{JOB_STAGE_LABEL[fixtureJob.status]}</span><b>{fixtureJob.prompt}</b><small>{fixtureJob.status === "completed" ? "Saved to this canvas" : fixtureJob.status === "failed" ? "0 cr · nothing ran" : "Still the same request"}</small></div> : null}
@@ -639,7 +663,7 @@ export function R22CanvasSurface({
             </Button>
             {attachOpen && (
               <div className="r22-canvas-popover r22-canvas-attach-menu">
-                <Button unstyled type="button" onClick={() => setNotice(`Library references available: ${entities.length}`)}>From Library</Button>
+                <Button unstyled type="button" onClick={() => setNotice(entities.length ? "Pick from Library — attaching a saved reference is not connected yet." : "Nothing is saved in your Library yet.")}>From Library</Button>
                 <Button unstyled type="button" onClick={() => setNotice("Upload is not connected yet.")}>Upload a file</Button>
                 <Button unstyled type="button" onClick={() => setNotice("Link attachment is not connected yet.")}>Paste a link</Button>
               </div>

@@ -153,10 +153,10 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
  * `r22`(`components/global-navigation.tsx` 的默认值)。这一份考卷必须是那一份:
  * 拿 legacy 去考,考的就不是商家手上那块面板。
  */
-function shell(pathname: string) {
+function shell(pathname: string, ottoVariant: "legacy" | "r22" = "r22") {
   return createElement(
     MerchantShellContent,
-    { pathname, signOutAction: async () => {} },
+    { pathname, signOutAction: async () => {}, ottoVariant },
     createElement("div", { "data-page": "" }, "Page"),
   );
 }
@@ -168,13 +168,18 @@ function shell(pathname: string) {
  * DOM 断言都会在一块根本没画出来的面板上空过。
  */
 async function openPanel(el: HTMLDivElement): Promise<void> {
-  await act(async () => el.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click());
+  // legacy 壳在这个视窗宽度上默认就是开着的(`defaultOttoPanelState`),那时根本没有
+  // launcher 可按 —— 只有 r22 才需要这一下。所以按不到就往下走,并且不论哪一条路都要
+  // 亲眼看到面板真的在 DOM 里,不然下面每一条断言又回到「在空气上核对」。
+  const launcher = el.querySelector<HTMLButtonElement>("[data-otto-launcher]");
+  if (launcher) await act(async () => launcher.click());
   await settle();
+  expect(el.querySelector("[data-otto-panel]"), "面板没开,下面的断言在核对空气").not.toBeNull();
 }
 
 /** 挂上真的商家壳并按开面板 —— 面板内的断言都从这里起步。 */
-async function mountOpen(pathname: string): Promise<HTMLDivElement> {
-  const el = await mount(shell(pathname));
+async function mountOpen(pathname: string, ottoVariant: "legacy" | "r22" = "r22"): Promise<HTMLDivElement> {
+  const el = await mount(shell(pathname, ottoVariant));
   await openPanel(el);
   return el;
 }
@@ -325,8 +330,16 @@ describe("页面快捷 chips", () => {
     }
   });
 
-  it("面板底部真的画出来了,顺序与页面表一致", async () => {
-    const el = await mountOpen(SHELL_ROUTES.campaign);
+  /**
+   * 判官 2026-08-25 的版式判决:R22 的面板只有三格(头 / 会话体 / 体底那格输入框,
+   * 原型 L5433-5469),没有第四排 chips。而 r22 的 composer 住在体**里面**,所以这一排画
+   * 出来就落在输入框下面,读起来像第二个 footer —— 那正是 Founder 亲验时看到的偏离。
+   * 因此这一排只活在 legacy 壳里,下面两条 DOM 断言跟着搬到 legacy 上考。
+   * chips 这门能力没有丢:r22 的起手式在体里(fixture 是 `.r22-otto-starters`,真接后端是
+   * `OttoFrontDoor` 的目标格),两处与这一排读的是同一份 `GOAL_PRESETS`。
+   */
+  it("legacy 面板底部真的画出来了,顺序与页面表一致", async () => {
+    const el = await mountOpen(SHELL_ROUTES.campaign, "legacy");
     const rendered = [...el.querySelectorAll<HTMLElement>("[data-otto-quick-chip]")];
 
     expect(rendered.map((n) => n.getAttribute("data-otto-quick-chip"))).toEqual(
@@ -340,7 +353,7 @@ describe("页面快捷 chips", () => {
   it("点一颗 = 开一条新会话,把那句话交给会话流(与前门同一条路)", async () => {
     createEmptyCoworkThread.mockResolvedValue({ id: "t_new" });
 
-    const el = await mountOpen(SHELL_ROUTES.campaign);
+    const el = await mountOpen(SHELL_ROUTES.campaign, "legacy");
     const first = panelQuickChips(SHELL_ROUTES.campaign)[0]!;
 
     await act(async () => {
@@ -348,6 +361,15 @@ describe("页面快捷 chips", () => {
     });
 
     expect(createEmptyCoworkThread).toHaveBeenCalledWith({ projectId: SEED.projectId, title: first.label });
+  });
+
+  it("商家那块 r22 面板里没有这一排 —— 输入框下面不许再有第二个 footer", async () => {
+    const el = await mountOpen(SHELL_ROUTES.campaign);
+
+    // 先证明面板真的开着,否则下面这条是绿的假象。
+    expect(el.querySelector("[data-otto-panel]"), "面板没开,这条在核对空气").not.toBeNull();
+    expect(el.querySelector("[data-otto-panel-quick-chips]")).toBeNull();
+    expect(el.querySelectorAll("[data-otto-quick-chip]").length).toBe(0);
   });
 });
 
@@ -431,16 +453,21 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     let release: (value: unknown) => void = () => {};
     getCoworkThreadClient.mockReturnValue(new Promise((resolve) => { release = resolve; }));
 
-    const el = await mountOpen(SHELL_ROUTES.campaign);
+    // 这一条要的是「禁用挡不住的第二条意图源」,底部 chip 是最方便的那一颗 —— 它只画在
+    // legacy 壳上(r22 的版式判决见上面那条),所以这一条在 legacy 壳上考。守的是意图号,
+    // 那道守卫两个变体共用一份,不因为换壳而变。legacy 的历史入口是头部那颗 ☰,不是
+    // r22 那颗会话名。
+    const el = await mountOpen(SHELL_ROUTES.campaign, "legacy");
+    const history = () => el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
     await act(async () => {
-      el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
+      history().click();
     });
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
     });
 
     // 取数途中:会改变「显示哪一条」的两颗先禁掉(意图号才是真守卫,这只是不必发生的一下)。
-    expect(el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.disabled).toBe(true);
+    expect(history().disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>('[aria-label="New conversation"]')!.disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>("[data-otto-thread-list-new]")!.disabled).toBe(true);
 
@@ -545,7 +572,8 @@ describe("chip 点失败照前门的形状说话 (P2-2)", () => {
   it("建会话失败时画出那句话,chips 仍可再点", async () => {
     createEmptyCoworkThread.mockResolvedValue({ error: "You're out of credits." });
 
-    const el = await mountOpen(SHELL_ROUTES.campaign);
+    // chips 只画在 legacy 壳上(r22 的版式判决见「页面快捷 chips」那一段)。
+    const el = await mountOpen(SHELL_ROUTES.campaign, "legacy");
     const first = panelQuickChips(SHELL_ROUTES.campaign)[0]!;
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.click();

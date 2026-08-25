@@ -163,7 +163,10 @@ describe("R22 truthful-state UI contracts", () => {
       entities: [],
     }));
 
-    expect(html).toContain("Project read outcome is unknown");
+    // 「读不出」仍然说成读不出,只是不再用「read outcome」「empty state was inferred」这种
+    // UI 工程师词汇说 —— 商家读不懂(判官 2026-08-25 [P2-2])。
+    expect(html).toContain("Otto could not confirm whether this project opened");
+    expect(html).toContain("this is not an empty project");
     expect(html).toContain("unavailable");
     expect(html).not.toContain("Fixture board ready");
   });

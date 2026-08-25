@@ -41,7 +41,9 @@ const gen = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock("next/image", () => ({ default: () => null }));
-vi.mock("@/lib/canvas-actions", () => ({ listCanvasNodes: vi.fn().mockResolvedValue([]) }));
+/** 同样是 hoisted 的:非 fixture 那一面的读图失败回执要靠它翻牌。 */
+const canvasActions = vi.hoisted(() => ({ listCanvasNodes: vi.fn(async (): Promise<unknown[]> => []) }));
+vi.mock("@/lib/canvas-actions", () => canvasActions);
 vi.mock("@/components/canvas/useCanvasGen", () => ({
   freshCanvasActionId: () => "canvas-action-test",
   useCanvasGen: () => gen,
@@ -51,7 +53,7 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
 
 const { R22CanvasSurface } = await import("@/components/canvas/R22CanvasSurface");
 
-/** 命中 `CREATE_INTENT`,不命中提问流的关键词表 —— 这一条必须真的排队生成。 */
+/** 命中创作动词,不命中提问流的关键词表 —— 这一条必须真的排队生成。 */
 const CREATE_PROMPT = "Make 4 images of the teal batik candle";
 /** 命中提问流(`premium`)—— 这一条一个字都不该变。 */
 const ASK_PROMPT = "Make the Raya hero more premium";
@@ -60,7 +62,7 @@ const ASK_PROMPT = "Make the Raya hero more premium";
  * 被赶出商家视线的工程词族。它们没有消失,只是搬进了 `data-*` 与测试断言;
  * `textContent` 读不到属性,所以这条断言天然只管商家读得到的那一半。
  */
-const ENGINEER_WORDS = /\b(receipts?|fixtures?|durable)\b/i;
+const ENGINEER_WORDS = /\b(receipts?|fixtures?|durable|inferred|empty state)\b/i;
 
 function runtimeContext(overrides: Partial<ImmersiveCanvasRuntimeContext> = {}): ImmersiveCanvasRuntimeContext {
   return {
@@ -139,10 +141,18 @@ function screenText(): string {
 }
 
 describe("① 寒暄不进生成机", () => {
+  /**
+   * 前三条是裸形状;后四条是判官 2026-08-25 实测的四条红 —— 每一条都含一个创作**名词**
+   * (images / video / carousel / batch),上一版就是被这几个名词判成了真创作请求。
+   */
   it.each([
     ["hi", "Hey"],
     ["thanks!", "Anytime"],
     ["what can you do here?", "I can answer right here"],
+    ["Thanks for the images!", "Anytime"],
+    ["How much does a video cost?", "I can answer right here"],
+    ["What is a carousel?", "I can answer right here"],
+    ["Where did my last batch go?", "I can answer right here"],
   ])("「%s」换来 Conversation 里一句人话,不是一张任务卡", async (prompt, replyStart) => {
     await mount();
     const before = conversationLines().length;
@@ -181,6 +191,20 @@ describe("① 寒暄不进生成机", () => {
     expect(ottoState()).toBe("working");
     // 创作请求不该被当成聊天答一句就完事。
     expect(conversationLines().some((line) => line.startsWith("I can answer right here"))).toBe(false);
+  });
+
+  /**
+   * 反过来的那一半:寒暄先判不能把真活也吞掉。「Thanks, now make a video」里有创作动词,
+   * 它是一次创作,不是一句道谢 —— 少了这一条,上一个病就换个方向再犯一次。
+   */
+  it("道谢里带着创作动词 —— 还是一次创作,照旧排队", async () => {
+    await mount();
+
+    await askOtto("Thanks! Now make a video of the candle");
+
+    const job = need(".r22-canvas-job");
+    expect(job.getAttribute("data-canvas-job-status")).toBe("queued");
+    expect(conversationLines().some((line) => line.startsWith("Anytime"))).toBe(false);
   });
 
   it("歧义关键词照旧走提问流,不被聊天分支截胡", async () => {
@@ -275,5 +299,65 @@ describe("② 商家可见文本里没有工程词族", () => {
     await mount(runtimeContext({ visualFixture: null }));
     expect(screenText(), "非 fixture 面不该挂那枚徽章").not.toContain("Prototype · sample data");
     assertHumanScreen("live");
+  });
+
+  /**
+   * 判官 r1 [P2-2] 抓到的三处漏网:它们不属 receipt / fixture / durable 那四个词,但
+   * 「empty state」「inferred」同样是 UI 工程师词汇 —— 商家读不懂,是同一种病。
+   */
+  it("读图失败的回执(非 fixture)", async () => {
+    canvasActions.listCanvasNodes.mockRejectedValueOnce(new Error("read failed"));
+    await mount(runtimeContext({ visualFixture: null }));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(noticeText(), "读图失败那一句没画出来").toContain("Canvas items could not be loaded");
+    expect(noticeText()).toContain("this is not an empty canvas");
+    assertHumanScreen("读图失败");
+  });
+
+  it("项目读不出结果时的整屏", async () => {
+    await mount(runtimeContext({ fixtureRouteState: "unknown" }));
+
+    expect(screenText()).toContain("Otto could not confirm whether this project opened");
+    // 诚实那半句还在:不把「读不出」讲成「这里是空的」。
+    expect(screenText()).toContain("this is not an empty project");
+    assertHumanScreen("项目读不出结果");
+  });
+
+  it("附件菜单里的 From Library", async () => {
+    await mount();
+    await act(async () => { need<HTMLButtonElement>('button[aria-label="Attach"]').click(); });
+    const library = [...container!.querySelectorAll<HTMLButtonElement>(".r22-canvas-attach-menu button")]
+      .find((node) => node.textContent === "From Library");
+    expect(library, "附件菜单里没有 From Library").toBeDefined();
+
+    await act(async () => { library!.click(); });
+
+    expect(noticeText()).toBe("Nothing is saved in your Library yet.");
+    assertHumanScreen("附件菜单");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ③ 同一道闸也装在真接后端那一面
+// ---------------------------------------------------------------------------
+describe("③ 寒暄在 live 面上也不进生成机", () => {
+  it("一句 \"hi\" 不调 generateImage,也不花一分钱", async () => {
+    await mount(runtimeContext({ visualFixture: null }));
+
+    await askOtto("hi");
+
+    expect(gen.generateImage, "live 面上一句寒暄真的排了一次生成").not.toHaveBeenCalled();
+    expect(noticeText()).toContain("Nothing was made and no credits were used");
+  });
+
+  it("真的创作请求在 live 面上照旧送出去", async () => {
+    await mount(runtimeContext({ visualFixture: null }));
+
+    await askOtto(CREATE_PROMPT);
+
+    expect(gen.generateImage).toHaveBeenCalledTimes(1);
+    const [sentPrompt] = (gen.generateImage.mock.calls[0] ?? []) as unknown[];
+    expect(sentPrompt).toBe(CREATE_PROMPT);
   });
 });

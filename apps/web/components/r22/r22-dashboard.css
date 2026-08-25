@@ -1150,8 +1150,9 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-body] {
   background: #ffffff;
 }
 
-aside[data-otto-panel-variant="r22"] [data-otto-panel-footer],
-aside[data-otto-panel-variant="r22"] [data-otto-panel-quick-chips] {
+/* r22 的面板只有头 / 体 / 体底那格输入框(原型 L5433-5469)—— 那一排 quick chips 不画,
+   所以这里也不再为它留一条选择器。 */
+aside[data-otto-panel-variant="r22"] [data-otto-panel-footer] {
   border-color: #e8e9ef;
   background: #ffffff;
 }
