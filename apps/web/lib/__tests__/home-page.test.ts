@@ -375,10 +375,12 @@ describe("读不出来 ≠ 没有(判官 r1 P3-1,R22 版:一句整页横幅)", (
 });
 
 describe("没有验证过的数据就不画数字", () => {
-  it("没连上时:一个 Meta 数字都没有,只说会显示什么", () => {
+  it("没连上时:一个 Meta 数字都没有", () => {
     const text = visibleText(render({ kind: "not_connected" }));
 
-    expect(text).toContain(HOME_COPY.performanceVerifiedOnlyBody);
+    // Home 收静(Founder 2026-08-25 批的样张):这一句从常驻段落退场,迁到 Performance
+    // 卡标题的悬停提示里(见下面「Home 收静」那一段的③)。可见文本里不该再有它。
+    expect(text, "这句该在 tooltip 里,不该常驻").not.toContain(HOME_COPY.performanceVerifiedOnlyBody);
     for (const forbidden of ["48.2K", "4.8%", "Last 30 days", "+12.6%"]) {
       expect(text, `没连上的 Home 上出现了「${forbidden}」`).not.toContain(forbidden);
     }
@@ -398,6 +400,87 @@ describe("没有验证过的数据就不画数字", () => {
       connection: { kind: "verified_fixture", accountLabel: "@batikhouse" },
     } as never));
     expect(markup).not.toContain("Prototype · sample data");
+  });
+});
+
+/* ── ③ᐟ Home 收静(Founder 2026-08-25 批的样张:14 句常驻降到 4 句)──────────────
+ *
+ * 样张的减法逐条钉在这里:①连接卡「即将连接」那句解释话整句退场(页头那句灰已经说完
+ * 这件事);②四步时间线收成一行步进器,任何时刻只站得住一句说明;③「What Otto will
+ * analyse」三句说明迁进 tooltip,常驻的只剩三枚芯片标签;④徽章去掉内部代号。
+ * 功能等量 —— 删的是常驻的字,不是背后的判断或点击行为。 */
+describe("Home 收静:常驻说明句降到最少(Founder 2026-08-25 批的样张)", () => {
+  /** 这一轮从「常驻」退场的五句字面量 —— 三句整句删除,一句被新措辞取代,一句迁进
+   *  tooltip(见上面「没有验证过的数据就不画数字」那条)。connect-first 渲染下一个字都
+   *  不该再看见。 */
+  const RETIRED_SENTENCES = [
+    "Otto will use your real publishing history to find patterns and recommend what to make next.",
+    "Connect a channel to see real performance",
+    "Start a post or campaign now. Otto will improve suggestions once a channel is connected.",
+    "You can add brand context and more channels later.",
+    "Optional setup never blocks creation or marks itself complete.",
+  ];
+
+  it("① connect-first 渲染下,被删的五句字面量一个都不在可见输出里", () => {
+    const text = visibleText(render({ kind: "not_connected" }));
+    for (const sentence of RETIRED_SENTENCES) {
+      expect(text, `退场了的句子还在:「${sentence}」`).not.toContain(sentence);
+    }
+  });
+
+  /** 四步的说明句原文 —— 与 `HomeView.tsx` 里 `CONNECTION_STEPS` 逐字一致。任何时刻只有
+   *  当前那一步的说明会被渲染,其余三句留在代码里但不上屏。 */
+  const STEP_DESCRIPTIONS = [
+    "Choose a channel to get started",
+    "We’ll securely verify your access",
+    "We’ll import your publishing history",
+    "Otto will learn and surface insights",
+  ];
+
+  it("② 步进器:disconnected 时只站得住「Not connected」那一句说明", () => {
+    const text = visibleText(render({ kind: "not_connected" }));
+    const present = STEP_DESCRIPTIONS.filter((sentence) => text.includes(sentence));
+    expect(present, "disconnected 时上屏的步说明不止一句(或不是一句)").toEqual(["Choose a channel to get started"]);
+  });
+
+  it("② 步进器:ready 时只站得住「Ready」那一句说明", () => {
+    const text = visibleText(render({ kind: "connected", accountLabel: "Meta account", transient: false }));
+    const present = STEP_DESCRIPTIONS.filter((sentence) => text.includes(sentence));
+    expect(present, "ready 时上屏的步说明不止一句(或不是一句)").toEqual(["Otto will learn and surface insights"]);
+  });
+
+  /** 「Otto will analyse」三枚芯片背后的说明句 —— 与 `HomeView.tsx` 里 `ANALYSIS_ITEMS`
+   *  逐字一致。 */
+  const ANALYSIS_COPY = [
+    "Identify your best performing content and formats",
+    "Understand what resonates with your audience",
+    "Find your optimal posting times and consistency",
+  ];
+
+  it("③ 三句分析说明只住在 tooltip 内容里,不在常驻文本里", () => {
+    const text = visibleText(render({ kind: "not_connected" }));
+    for (const sentence of ANALYSIS_COPY) {
+      expect(text, `分析说明句还常驻在屏上:「${sentence}」`).not.toContain(sentence);
+    }
+    // 芯片的标签(不是说明句)仍然常驻 —— 三枚芯片本身没有退场,退场的只是它们的说明。
+    for (const label of ["Top content", "Audience response", "Publishing rhythm"]) {
+      expect(text, `芯片标签不见了:「${label}」`).toContain(label);
+    }
+
+    const view = sourceOf("components/home/HomeView.tsx");
+    const analysisBlock = /ANALYSIS_ITEMS\.map\(\(\{ label, copy \}\) => \(([\s\S]*?)\n {12}\)\)}/.exec(view)?.[1] ?? "";
+    expect(analysisBlock, "ANALYSIS_ITEMS.map 找不到了 —— 上面这条围栏在核对空气").not.toBe("");
+    expect(analysisBlock, "copy 没有被喂进 TooltipContent —— 说明句该迁去 tooltip,不是别处").toContain("<TooltipContent>{copy}</TooltipContent>");
+  });
+
+  it("④ 徽章去掉了内部代号,只留 fixture 披露那半句", () => {
+    const markup = renderToStaticMarkup(createElement(HomeView, {
+      data: BASE_DATA,
+      connection: { kind: "not_connected" },
+      fixture: true,
+    } as never));
+    expect(markup).toContain("Prototype · sample data");
+    expect(markup, "内部代号「Soft Prism」还留在徽章里").not.toContain("Soft Prism");
   });
 });
 

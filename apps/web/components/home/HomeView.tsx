@@ -10,17 +10,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
-  BarChart3,
   BriefcaseBusiness,
-  CalendarDays,
   Camera,
   Check,
   ChevronDown,
-  Heart,
   Info,
   LockKeyhole,
   LoaderCircle,
@@ -69,9 +67,18 @@ export function homeConnectionFromMeta(meta: Read<MetaConnectionResult>): HomeCo
 }
 
 const ANALYSIS_ITEMS = [
-  { label: "Top content", copy: "Identify your best performing content and formats", icon: BarChart3 },
-  { label: "Audience response", copy: "Understand what resonates with your audience", icon: Heart },
-  { label: "Publishing rhythm", copy: "Find your optimal posting times and consistency", icon: CalendarDays },
+  { label: "Top content", copy: "Identify your best performing content and formats" },
+  { label: "Audience response", copy: "Understand what resonates with your audience" },
+  { label: "Publishing rhythm", copy: "Find your optimal posting times and consistency" },
+] as const;
+
+/** 一行步进器的四步。标签常驻,说明句只在「这是当前这一步」时渲染一句(见渲染处)——
+ *  四句原文都留在这里,不是被删掉了,是版面上同一时刻只站得下一句。 */
+const CONNECTION_STEPS = [
+  { label: "Not connected", description: "Choose a channel to get started" },
+  { label: "Verifying", description: "We’ll securely verify your access" },
+  { label: "Syncing data", description: "We’ll import your publishing history" },
+  { label: "Ready", description: "Otto will learn and surface insights" },
 ] as const;
 
 function LoadingTruth({ data }: { data: HomeData }) {
@@ -115,6 +122,7 @@ export function HomeView({
   const channels = fixture ? CHANNELS.map((channel) => ({ ...channel, available: true })) : CHANNELS;
   const fixtureHref = (href: string) => fixture ? `${href}${href.includes("?") ? "&" : "?"}fixture=r22` : href;
   const provider = connectFlow?.channel ?? "Instagram";
+  const currentStep = ready ? CONNECTION_STEPS.length - 1 : 0;
 
   useEffect(() => {
     if (!fixture) return;
@@ -173,6 +181,7 @@ export function HomeView({
   }
   return (
     <div className="r22-home" data-r22-home>
+      <TooltipProvider>
       {/*
         右上角那一组(通知铃 + 头像 + chevron)不长在这里。原型 L12211 把头像点击直接转发给
         侧栏的 `#workspaceBtn`(`wsb.click()`)—— 触发点在右上,菜单与它的内容只有侧栏那**一份**。
@@ -222,7 +231,7 @@ export function HomeView({
           ) : (
             <>
               <h2>{connection.kind === "needs_reconnect" ? "Reconnect your channel" : "Connect your first channel"}</h2>
-              <p>{connection.kind === "needs_reconnect" ? "The existing Meta access expired. Reconnect it before Otto reads new data." : "Otto will use your real publishing history to find patterns and recommend what to make next."}</p>
+              {connection.kind === "needs_reconnect" ? <p>The existing Meta access expired. Reconnect it before Otto reads new data.</p> : null}
               <div className="r22-home-channels">
                 {channels.map(({ label, icon: Icon, recommended, available }) => (
                   <div className="r22-home-channel" key={label}>
@@ -236,48 +245,67 @@ export function HomeView({
           )}
         </div>
 
-        {connection.kind !== "unknown" ? <ol className="r22-home-connection-steps">
-          <li className={disconnected || connection.kind === "needs_reconnect" ? "is-active" : ready ? "is-done" : ""}><span /><div><b>Not connected</b><p>Choose a channel to get started</p></div></li>
-          <li className={ready ? "is-done" : ""}><span /><div><b>Verifying</b><p>We’ll securely verify your access</p></div></li>
-          <li className={ready ? "is-done" : ""}><span /><div><b>Syncing data</b><p>We’ll import your publishing history</p></div></li>
-          <li className={ready ? "is-active is-done" : ""}><span /><div><b>Ready</b><p>Otto will learn and surface insights</p></div></li>
-        </ol> : null}
+        {connection.kind !== "unknown" ? (
+          <div className="r22-home-stepper" role="list" aria-label="Connection progress">
+            {CONNECTION_STEPS.map((step, index) => {
+              const isCurrent = index === currentStep;
+              const isDone = index < currentStep;
+              return (
+                <span key={step.label} className={`r22-home-stepper-step${isCurrent ? " is-current" : ""}${isDone ? " is-done" : ""}`} role="listitem">
+                  {isDone ? null : <i aria-hidden="true" />}
+                  <b>{step.label}</b>
+                  {isCurrent ? <span className="r22-home-stepper-desc"> — {step.description}</span> : null}
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       <div className="r22-home-insight-grid">
         <section className={`r22-home-performance${verifiedFixture ? " has-data" : ""}`}>
-          <h2>Performance</h2>
+          <h2>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span tabIndex={0}>Performance</span>
+              </TooltipTrigger>
+              <TooltipContent>{HOME_COPY.performanceVerifiedOnlyBody}</TooltipContent>
+            </Tooltip>
+          </h2>
           {verifiedFixture ? <div className="r22-home-kpis"><span><small>Published</small><b>38</b><em>Last 30 days</em></span><span><small>Reach</small><b>48.2K</b><em>+12.6%</em></span><span><small>Engagement</small><b>4.8%</b><em>+0.7 pt</em></span><span><small>Best day</small><b>Thu</b><em>18:00–21:00</em></span></div> : <div>
             <span><LockKeyhole aria-hidden="true" /></span>
-            <b>{ready ? HOME_COPY.performanceUnavailableReady : "Connect a channel to see real performance"}</b>
-            <p>{ready ? HOME_COPY.performanceUnavailableReadyBody : HOME_COPY.performanceVerifiedOnlyBody}</p>
+            <b>{ready ? HOME_COPY.performanceUnavailableReady : "Connect a channel to see performance."}</b>
+            {ready ? <p>{HOME_COPY.performanceUnavailableReadyBody}</p> : null}
             <i /><i /><i />
           </div>}
         </section>
 
         <section className="r22-home-analysis">
-          <h2>What Otto will analyse</h2>
-          <ul>
-            {ANALYSIS_ITEMS.map(({ label, copy, icon: Icon }) => (
-              <li key={label}><span><Icon aria-hidden="true" /></span><div><b>{label}</b><p>{copy}</p></div></li>
+          <h2>Otto will analyse</h2>
+          <div className="r22-home-analysis-chips">
+            {ANALYSIS_ITEMS.map(({ label, copy }) => (
+              <Tooltip key={label}>
+                <TooltipTrigger asChild>
+                  <span className="r22-home-chip" tabIndex={0}>{label}</span>
+                </TooltipTrigger>
+                <TooltipContent>{copy}</TooltipContent>
+              </Tooltip>
             ))}
-          </ul>
+          </div>
         </section>
       </div>
 
       <section className="r22-home-create-row">
         <span><Plus aria-hidden="true" /></span>
-        <div><b>Create without data</b><p>Start a post or campaign now. Otto will improve suggestions once a channel is connected.</p></div>
-        <Link href={fixtureHref("/create")}>Create new</Link><Button unstyled type="button" aria-label="More creation choices"><ChevronDown /></Button>
+        <div><b>Create without data</b></div>
+        <div className="r22-home-create-actions">
+          <Link className="is-primary" href={fixtureHref("/create")}>Create new</Link>
+          <Button unstyled type="button" aria-label="More creation choices"><ChevronDown /></Button>
+          <Link className="is-secondary" href={fixtureHref("/brand")}>Add brand context</Link>
+        </div>
       </section>
 
-      <section className="r22-home-context-row">
-        <Info aria-hidden="true" />
-        <div><b>You can add brand context and more channels later.</b><p>Optional setup never blocks creation or marks itself complete.</p></div>
-        <Link href={fixtureHref("/brand")}>Add brand context</Link>
-      </section>
-
-      {fixture ? <footer>Prototype · sample data · Soft Prism v4</footer> : null}
+      {fixture ? <footer>Prototype · sample data</footer> : null}
 
       <Dialog open={connectFlow !== null} onOpenChange={(open) => { if (!open) dismissConnect(); }}>
         <DialogContent className="r22-home-connect-dialog" showCloseButton={false}>
@@ -326,6 +354,7 @@ export function HomeView({
           )}
         </DialogContent>
       </Dialog>
+      </TooltipProvider>
     </div>
   );
 }

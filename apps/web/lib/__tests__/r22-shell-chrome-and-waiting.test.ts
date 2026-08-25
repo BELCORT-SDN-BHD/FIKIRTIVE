@@ -70,7 +70,14 @@ const HOME_DATA: HomeData = {
   canvases: readOk([]), thumbs: readOk([]), upcoming: readOk([]), campaigns: readOk([]), equipment: readOk([]),
 };
 
-/** 落定画面与等待画面共用的那一批容器 —— 几何全靠它们。 */
+/** 落定画面与等待画面共用的那一批容器 —— 几何全靠它们。
+ *
+ * `r22-home-connection-steps` 与 `r22-home-context-row` 从这份名单退场(Home 收静,
+ * Founder 2026-08-25 批的样张):落定版把竖排时间线换成了 `.r22-home-stepper` 单行步进器、
+ * 把 `context-row` 整块删掉(按钮并进了 `.r22-home-create-row`),这两个容器在**落定**画面
+ * 上不再存在。骨架(`app/(home)/loading.tsx`)不在这一票的改动范围内,仍然画着它们
+ * 兜几何 —— `r22-home.css` 里那两个类名的规则因此也没删,只是落定这一侧不再消费,算一条
+ * 已知的骨架/落定几何小落差,留给下一次动骨架的票收口。 */
 const HOME_GEOMETRY_CONTAINERS = [
   "r22-home",
   "r22-home-header",
@@ -78,12 +85,10 @@ const HOME_GEOMETRY_CONTAINERS = [
   "r22-home-connect-copy",
   "r22-home-channels",
   "r22-home-channel",
-  "r22-home-connection-steps",
   "r22-home-insight-grid",
   "r22-home-performance",
   "r22-home-analysis",
   "r22-home-create-row",
-  "r22-home-context-row",
 ];
 
 describe("Home 骨架与落定同几何", () => {

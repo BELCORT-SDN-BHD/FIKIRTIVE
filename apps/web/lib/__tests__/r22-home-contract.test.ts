@@ -19,7 +19,7 @@ function render(connection: HomeConnection, fixture = false) {
 describe("R22 Data-first Home contract", () => {
   it("keeps sample-data language behind the explicit fixture prop", () => {
     expect(render({ kind: "not_connected" })).not.toContain("Prototype");
-    expect(render({ kind: "not_connected" }, true)).toContain("Prototype · sample data · Soft Prism v4");
+    expect(render({ kind: "not_connected" }, true)).toContain("Prototype · sample data");
   });
 
   it("does not turn an unreadable connection into disconnected or a connect CTA", () => {
