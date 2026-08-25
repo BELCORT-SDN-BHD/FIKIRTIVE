@@ -327,7 +327,17 @@ describe("R22 extended frontend contracts", () => {
     // Founder 2026-08-25 裁决:fixture 诚实由顶栏「Prototype · sample data」徽章承担,
     // 面板里那句话回到人话(原型 `#ottoContext` 的寄存器)。这条围栏钉的仍是同一件事 ——
     // 那条回话必须写明「这里不会替商家动任何东西」——只是不再用工程黑话写。
-    expect(ottoConversation).toContain("Nothing runs from here");
+    //
+    // 那句话搬了家(Cloudflare 四子流那一轮):回话从一段自己编的散文换成了原型
+    // `responseFor()` 的结构化答案卡,而「这一轮什么都没动」不再是散文里的一个从句,
+    // 是每一路答案都必须带的那条 `note`。所以这条围栏跟着钉到答案模型上 —— 钉的是
+    // 同一件事,而且比上一版更硬:上一版只要那一句在,这一版要求**每一路**都有。
+    const ottoAnswer = readFileSync(path.join(WEB_ROOT, "components/otto/panel/otto-answer.ts"), "utf8");
+    expect(ottoAnswer).toContain("This chat did not change workspace state or spend credits.");
+    expect(ottoAnswer).toContain("This chat did not change the approval or spend credits.");
+    expect(ottoAnswer).toContain("This chat did not start a routine or change a routine state.");
+    expect(ottoAnswer).toContain("This chat did not save, remove, or alter any Otto IQ record.");
+    expect(ottoAnswer).toContain("No analytics job was started and no credits were spent.");
     expect(ottoConversation).toContain("no action will run from chat");
     expect(ottoConversation).not.toContain("Visual fixture");
     for (const unstableFixtureId of [

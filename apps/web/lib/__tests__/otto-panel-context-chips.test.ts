@@ -376,36 +376,41 @@ describe("页面快捷 chips", () => {
 // ---------------------------------------------------------------------------
 // 头部的历史入口
 // ---------------------------------------------------------------------------
-describe("头部的 ☰ 历史", () => {
-  it("点开就是列表,再点回到会话", async () => {
+describe("头部的会话切换器", () => {
+  /**
+   * r22 的历史从「盖住会话的一整屏列表」换成了原型那层切换器(`OttoRoomSwitcher`,
+   * Cloudflare 四子流那一轮)。这一段考的仍是同三件事 —— 点得开、点得回、选完自己收起来
+   * ——只是问的对象换成了那一层。legacy 壳那份列表原样留着,由它自己那几条考。
+   */
+  it("点开就是切换器,再点回到会话", async () => {
     const el = await mountOpen(SHELL_ROUTES.campaign);
     const history = el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!;
 
-    expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms]")).toBeNull();
 
     await act(async () => history.click());
-    expect(el.querySelector("[data-otto-thread-list]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms]")).not.toBeNull();
     expect(history.getAttribute("aria-expanded")).toBe("true");
 
     await act(async () => history.click());
-    expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms]")).toBeNull();
   });
 
-  it("选一条会话 / 开新对话都会把列表关掉", async () => {
+  it("选一条会话 / 开新对话都会把切换器收起来", async () => {
     const el = await mountOpen(SHELL_ROUTES.campaign);
     const history = el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!;
 
     await act(async () => history.click());
     await act(async () => {
-      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+      el.querySelector<HTMLButtonElement>(`[data-otto-room="${META_THREAD.id}"]`)!.click();
     });
-    expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms]")).toBeNull();
 
     await act(async () => history.click());
     await act(async () => {
-      el.querySelector<HTMLButtonElement>("[data-otto-thread-list-new]")!.click();
+      el.querySelector<HTMLButtonElement>("[data-otto-panel-rooms-new]")!.click();
     });
-    expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms]")).toBeNull();
   });
 });
 
@@ -419,7 +424,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
       el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
     await act(async () => {
-      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+      el.querySelector<HTMLButtonElement>(`[data-otto-room="${META_THREAD.id}"]`)!.click();
     });
     await act(async () => {
       await Promise.resolve();
@@ -442,7 +447,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
       el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
     await act(async () => {
-      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+      el.querySelector<HTMLButtonElement>(`[data-otto-room="${META_THREAD.id}"]`)!.click();
     });
 
     expect(getCoworkThreadClient).not.toHaveBeenCalled();
@@ -497,12 +502,12 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
       el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
     await act(async () => {
-      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+      el.querySelector<HTMLButtonElement>(`[data-otto-room="${META_THREAD.id}"]`)!.click();
     });
 
-    expect(el.querySelector("[data-otto-thread-list-error]")).not.toBeNull();
-    // 列表还开着 —— 没有切到一条画不出内容的会话上去。
-    expect(el.querySelector("[data-otto-thread-list]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms-error]")).not.toBeNull();
+    // 切换器还开着 —— 没有切到一条画不出内容的会话上去。
+    expect(el.querySelector("[data-otto-panel-rooms]")).not.toBeNull();
   });
 
   it("那句「打不开」不许跨开合残留 —— 关掉再打开是新的一眼", async () => {
@@ -512,15 +517,15 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     const history = el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!;
     await act(async () => history.click());
     await act(async () => {
-      el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
+      el.querySelector<HTMLButtonElement>(`[data-otto-room="${META_THREAD.id}"]`)!.click();
     });
-    expect(el.querySelector("[data-otto-thread-list-error]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms-error]")).not.toBeNull();
 
     await act(async () => history.click()); // 关
     await act(async () => history.click()); // 再开
 
-    expect(el.querySelector("[data-otto-thread-list]")).not.toBeNull();
-    expect(el.querySelector("[data-otto-thread-list-error]")).toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-panel-rooms-error]")).toBeNull();
   });
 });
 
@@ -552,15 +557,35 @@ describe("开关历史不丢草稿 (P1-2)", () => {
     expect(after).toBe(composer);
   });
 
-  it("历史开着的时候会话只是被藏起来,没有被卸掉", async () => {
+  /**
+   * r22 的切换器是浮在头部下面的一层,会话连**藏**都不用藏 —— 商家一边看着刚才那段话,
+   * 一边挑下一条(Cloudflare 四子流那一轮换的正是这个)。P1-2 那条判词要的是「开历史不许
+   * 把正在做的事丢掉」,这一版比藏起来更强:它压根没离开视线。
+   *
+   * legacy 壳那份盖住整段的列表照旧用 `display:none` 藏,那一条由下面第二个 it 钉住 ——
+   * 两个变体各考各的形态,同一条判词。
+   */
+  it("r22:切换器开着的时候会话还看得见,更不会被卸掉", async () => {
     const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
       el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
 
     const wrap = el.querySelector<HTMLElement>("[data-otto-panel-conversation-wrap]")!;
-    expect(wrap.style.display).toBe("none");
+    expect(el.querySelector("[data-otto-panel-rooms]")).not.toBeNull();
+    expect(wrap.style.display).toBe("flex");
     // 还在 DOM 里 = `useChat` 实例还在 = 流式那一轮的 onFinish 还写得回去。
+    expect(wrap.querySelector("textarea")).not.toBeNull();
+  });
+
+  it("legacy:列表盖住会话时会话只是被藏起来,没有被卸掉", async () => {
+    const el = await mountOpen(SHELL_ROUTES.campaign, "legacy");
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+    });
+
+    const wrap = el.querySelector<HTMLElement>("[data-otto-panel-conversation-wrap]")!;
+    expect(wrap.style.display).toBe("none");
     expect(wrap.querySelector("textarea")).not.toBeNull();
   });
 });
