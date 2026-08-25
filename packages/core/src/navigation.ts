@@ -96,10 +96,14 @@ export const SHELL_ROUTES = {
   brand: "/brand",
   /** 战役。今天已经是真路由,新旧同址。 */
   campaign: "/campaign",
+  /** R22 审批工作台。 */
+  approvals: "/campaign/workbench",
   /** 唯一的日历。今天是 `/otto?view=schedule`。 */
   schedule: "/schedule",
-  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
+  /** R22 把 Analytics 定为独立顶层门；真实能力仍只展示 provider 确实返回的数据。 */
   analytics: "/schedule/analytics",
+  /** R22 自动化例程。后端 contract 尚待单独 session 接入。 */
+  routines: "/routines",
   /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
   billing: "/billing",
   /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
@@ -108,6 +112,10 @@ export const SHELL_ROUTES = {
   preferences: "/settings",
   /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
   profile: "/profile",
+  /** 通知完整历史。铃铛抽屉是快捷入口,这条路负责可刷新、可深链的完整表面。 */
+  notifications: "/notifications",
+  /** 产品帮助与人工支持出口。它不占主导航格,由 workspace 菜单进入。 */
+  help: "/help",
 } as const;
 
 /**
@@ -116,7 +124,7 @@ export const SHELL_ROUTES = {
  * 白标命名体系还没定(Founder 未拍板),先叫 "Create";体系定了就改这一行,导轨、Otto
  * 指路文案与围栏一起跟着换,没有第二处要找。
  */
-export const CREATE_NAV_LABEL = "Create";
+export const CREATE_NAV_LABEL = "Canvas";
 
 /**
  * 创作旗舰面:沉浸式画布的家(开工输入框 + 新建画布 + 商家自己的画布列表)。
@@ -156,9 +164,8 @@ export const OTTO_ASSISTANT = {
  * 两处诚实修正(`simulated-features.json` 已实证,随本票一并修掉):
  *   - `preferences.does` 不再提 "notifications"——通知开关早已删除,没有任何邮件或站内渠道
  *     读它。
- *   - `analytics` 不再作为导航承诺出现:它读的是 Meta 广告账户,不是自然帖表现(规格书
- *     §2.3 ①);Analytics 仍在,是 Schedule 页内的第二个页签(`SHELL_ROUTES.analytics`),
- *     不占导航格。
+ *   - R22 后来把 `analytics` 提升为顶层门。它读的是 Meta 广告账户而不是自然帖表现，
+ *     所以这扇门必须持续显示 source/freshness，不能把广告数据冒充自然帖表现。
  *
  * `Templates` / `Discover` / `Video editor` 不再各占一格(规格书 Q6-A):Video editor 跟着
  * Library 走(`SHELL_ROUTES.edit`),Templates / Discover 收编进 Create 页面下方的两个区段
@@ -185,7 +192,7 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
   },
   {
     key: "brand",
-    label: "Brand",
+    label: "Otto IQ",
     href: SHELL_ROUTES.brand,
     does: "Keep what Otto should remember about your brand and the things you sell.",
   },
@@ -196,12 +203,30 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     does: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
   },
   {
+    key: "approvals",
+    label: "Approvals",
+    href: SHELL_ROUTES.approvals,
+    does: "Review work that needs a decision without implying that unavailable bulk actions succeeded.",
+  },
+  {
     key: "schedule",
     label: "Schedule",
     href: SHELL_ROUTES.schedule,
     // 唯一的日历。/campaign/calendar 那张草稿列表已收敛(见 MERCHANT_NAV_REDIRECTS):
     // 计划日期在战役自己那一页改,真正要发出去的东西只有这一本。
     does: "The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.",
+  },
+  {
+    key: "analytics",
+    label: "Analytics",
+    href: SHELL_ROUTES.analytics,
+    does: "Read the performance data the connected provider actually exposes, with source and freshness visible.",
+  },
+  {
+    key: "routines",
+    label: "Routines",
+    href: SHELL_ROUTES.routines,
+    does: "See the routines Otto may run, their authority, schedule and credit limits.",
   },
   {
     key: "settings",

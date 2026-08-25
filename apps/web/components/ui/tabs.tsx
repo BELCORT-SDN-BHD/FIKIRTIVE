@@ -17,25 +17,25 @@ import { cn } from "@/lib/utils"
  * TabsTrigger 传 className 压小(`--card` + 1px `--border`,radius 10,p 2;
  * item h 30 radius 8 px 12 12/600,active `--secondary`)。
  */
-function Tabs({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Root>) {
-  return <TabsPrimitive.Root data-slot="tabs" className={cn("flex flex-col gap-3", className)} {...props} />
+function Tabs({ className, unstyled = false, ...props }: React.ComponentProps<typeof TabsPrimitive.Root> & { unstyled?: boolean }) {
+  return <TabsPrimitive.Root data-slot="tabs" className={unstyled ? className : cn("flex flex-col gap-3", className)} {...props} />
 }
 
-function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
+function TabsList({ className, unstyled = false, ...props }: React.ComponentProps<typeof TabsPrimitive.List> & { unstyled?: boolean }) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
-      className={cn("inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1", className)}
+      className={unstyled ? className : cn("inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1", className)}
       {...props}
     />
   )
 }
 
-function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+function TabsTrigger({ className, unstyled = false, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger> & { unstyled?: boolean }) {
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
-      className={cn(
+      className={unstyled ? className : cn(
         "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] px-4 py-2 text-[13px] font-semibold text-muted-foreground",
         "transition-[color,background-color,box-shadow] duration-[var(--dur-2)] ease-[var(--ease-out)] outline-none",
         "hover:text-foreground",
@@ -50,11 +50,11 @@ function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPr
   )
 }
 
-function TabsContent({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Content>) {
+function TabsContent({ className, unstyled = false, ...props }: React.ComponentProps<typeof TabsPrimitive.Content> & { unstyled?: boolean }) {
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn("flex-1 outline-none", className)}
+      className={unstyled ? className : cn("flex-1 outline-none", className)}
       {...props}
     />
   )

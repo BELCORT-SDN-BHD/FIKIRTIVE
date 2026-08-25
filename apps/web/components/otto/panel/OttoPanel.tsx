@@ -16,6 +16,7 @@
  */
 
 import * as React from "react";
+import Image from "next/image";
 import { History, Maximize2, Minimize2, SquarePen, X } from "lucide-react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
@@ -77,6 +78,7 @@ export interface OttoPanelProps {
   quickChips?: React.ReactNode;
   /** 输入框。它在,底部那句钱的实话才在 —— 没有地方花钱就没有那句话。 */
   footer?: React.ReactNode;
+  variant?: "legacy" | "r22";
 }
 
 type DragSession =
@@ -111,6 +113,7 @@ export function OttoPanel({
   children,
   quickChips,
   footer,
+  variant = "legacy",
 }: OttoPanelProps) {
   const [drag, setDrag] = React.useState<DragSession | null>(null);
   const [dockHint, setDockHint] = React.useState(false);
@@ -250,6 +253,7 @@ export function OttoPanel({
         aria-label="Otto"
         data-otto-panel=""
         data-otto-panel-mode={state.mode}
+        data-otto-panel-variant={variant}
         {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
         {...(contextAttached ? { "data-otto-panel-context-attached": "" } : {})}
         style={frame}
@@ -275,7 +279,7 @@ export function OttoPanel({
             : "sticky top-0 h-dvh shrink-0 self-start border-l border-border",
         )}
       >
-        {!floating && (
+        {!floating && variant !== "r22" && (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -291,13 +295,13 @@ export function OttoPanel({
 
         <header
           data-otto-panel-header=""
-          onPointerDown={startHeaderDrag}
+          onPointerDown={variant === "r22" ? undefined : startHeaderDrag}
           className={cn(
             "flex shrink-0 items-center gap-1.5 border-b border-border px-3 py-2.5 select-none",
             drag && drag.kind !== "resize-docked" ? "cursor-grabbing" : "cursor-grab",
           )}
         >
-          <OttoAvatar size={22} mood="idle" />
+          {variant === "r22" ? <Image src="/brand/r22-otto.svg" width={120} height={110} alt="" /> : <OttoAvatar size={22} mood="idle" />}
           <span className="mr-auto truncate text-[14px] font-semibold tracking-[-0.01em]">Otto</span>
           {onOpenHistory && (
             <PanelIconButton
@@ -309,13 +313,13 @@ export function OttoPanel({
               <History className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}
-          <PanelIconButton
+          {variant !== "r22" && <PanelIconButton
             label={expanded ? "Collapse Otto" : "Expand Otto"}
             pressed={expanded}
             onClick={onToggleExpanded}
           >
             {expanded ? <Minimize2 className="size-4" strokeWidth={1.9} /> : <Maximize2 className="size-4" strokeWidth={1.9} />}
-          </PanelIconButton>
+          </PanelIconButton>}
           {onNewChat && (
             <PanelIconButton label="New chat" disabled={headerBusy} onClick={onNewChat}>
               <SquarePen className="size-4" strokeWidth={1.9} />

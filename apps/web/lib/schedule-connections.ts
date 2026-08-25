@@ -27,7 +27,7 @@
  *   3. LOADED delegates to the shared server-side rule (scheduleApproveBlockers) with the real
  *      list, so the merchant is told in advance exactly what the server would refuse with.
  */
-import type { OwnerTarget } from "./schedule-actions";
+import type { OwnerTarget, OwnerTargetsResult } from "./schedule-actions";
 import { CONNECTABLE_CHANNEL_META, isConnectableChannel, channelMeta } from "./channels/channel-meta";
 import { canAutoPublish } from "./auto-publish-gate";
 import {
@@ -124,6 +124,11 @@ export function loadedAccounts(value: AccountsRead): ConnectedAccounts {
     };
   }
   return { phase: "loaded", rechecking: false, byChannel, canPublish: value.canPublish } as unknown as ConnectedAccounts;
+}
+
+/** Turns the complete owner-target read into the opaque shared lifecycle value. */
+export function accountsFromOwnerTargets(value: OwnerTargetsResult): ConnectedAccounts {
+  return loadedAccounts({ ...value, canPublish: false });
 }
 
 /**

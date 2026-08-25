@@ -171,10 +171,54 @@ function writeClosedState() {
 function shell(pathname: string, page?: ReactElement) {
   return createElement(
     MerchantShellContent,
+    { pathname, signOutAction: async () => {}, ottoVariant: "legacy" as const },
+    page ?? createElement("div", { "data-page": "" }, "Campaign workbench"),
+  );
+}
+
+/** Production R22 shell: compact launcher first; the retained legacy behavior is tested separately above. */
+function r22Shell(pathname: string, page?: ReactElement) {
+  return createElement(
+    MerchantShellContent,
     { pathname, signOutAction: async () => {} },
     page ?? createElement("div", { "data-page": "" }, "Campaign workbench"),
   );
 }
+
+describe("R22 Otto 生产默认", () => {
+  it("首屏只画 compact launcher,不提前取会话", async () => {
+    const el = await mount(r22Shell("/campaign"));
+
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    const launcher = document.querySelector<HTMLElement>("[data-otto-launcher]");
+    expect(launcher?.tagName).toBe("BUTTON");
+    expect(launcher?.querySelector('img[src="/brand/r22-otto.svg"]')).not.toBeNull();
+    expect(loadOttoPanelSeed).not.toHaveBeenCalled();
+  });
+
+  it("点 launcher 打开 408px docked 真面板,页面仍可操作", async () => {
+    const onClick = vi.fn();
+    const el = await mount(r22Shell("/campaign", createElement("button", { type: "button", "data-page": "", onClick }, "Approve")));
+
+    await act(async () => document.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click());
+    await settle();
+
+    const panel = el.querySelector<HTMLElement>("[data-otto-panel]");
+    expect(panel?.getAttribute("data-otto-panel-variant")).toBe("r22");
+    expect(panel?.getAttribute("data-otto-panel-mode")).toBe("docked");
+    expect(panel?.style.width).toBe("408px");
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    await act(async () => el.querySelector<HTMLButtonElement>("[data-page]")!.click());
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("?otto=1 深链仍会打开真实面板并转发 project/thread", async () => {
+    const el = await mount(r22Shell("/?otto=1&project=prj_r22&thread=thr_r22"));
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+    expect(loadOttoPanelSeed).toHaveBeenCalledWith({ projectId: "prj_r22", threadId: "thr_r22" });
+  });
+});
 
 describe("哪些面挂面板 (§3.2 末段)", () => {
   it("默认每一面都挂 —— Otto 就在商家正在看的那一页旁边", () => {
@@ -318,29 +362,10 @@ describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
     expect(el.querySelector("[data-page]")).not.toBeNull();
   });
 
-  // W2-11 —— 导轨里那颗 Ask Otto(`NavigationRailContainer`,`components/global-navigation.tsx`)
-  // 是第二个入口,挂在 `OttoPanelMount` **之内**才够得着 `useOttoPanelControls()`。这里不重复
-  // 验面板本身怎么开合(上面两条已经钉过),只验这颗按钮拨的和 launcher/Close 拨的是**同一个**
-  // 开关,而不是它自己另开一路。
-  it("导轨里的 Ask Otto 拨的是同一个开关,不是另一路", async () => {
-    const el = await mount(shell("/campaign"));
-    const askOtto = () => el.querySelector<HTMLButtonElement>("[data-nav-rail-ask-otto]")!;
-
-    expect(askOtto().tagName).toBe("BUTTON");
-    expect(askOtto().getAttribute("href")).toBeNull();
-    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
-
-    await act(async () => {
-      askOtto().click();
-    });
-    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+  it("R22 不保留旧全局 Ask Otto 导轨按钮", async () => {
+    const el = await mount(r22Shell("/campaign"));
+    expect(el.querySelector("[data-nav-rail-ask-otto]")).toBeNull();
     expect(document.querySelector("[data-otto-launcher]")).not.toBeNull();
-
-    await act(async () => {
-      askOtto().click();
-    });
-    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
-    expect(document.querySelector("[data-otto-launcher]")).toBeNull();
   });
 });
 

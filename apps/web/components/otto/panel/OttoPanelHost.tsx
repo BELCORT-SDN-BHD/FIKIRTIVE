@@ -49,6 +49,7 @@ import { OttoPanelShell, useOttoPanelControls } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
 import { OttoThreadList } from "./OttoThreadList";
 import { panelQuickChips } from "./panel-page";
+import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
 
 const OttoPanelConversation = React.lazy(() =>
   import("./OttoPanelConversation").then((m) => ({ default: m.OttoPanelConversation })),
@@ -77,6 +78,34 @@ function PanelOpenWatcher({ onOpenChange }: { onOpenChange: (open: boolean) => v
 }
 
 type Seed = Extract<Awaited<ReturnType<typeof loadOttoPanelSeed>>, { projectId: string }>;
+
+const R22_FIXTURE_SEED: Seed = {
+  projectId: "fixture-raya",
+  entities: [],
+  projects: [{ id: "fixture-raya", name: "Raya launch", pinnedAt: null }],
+  threads: [
+    { id: "fixture-otto-raya", projectId: "fixture-raya", title: "Raya launch plan", updatedAt: "2026-08-24T12:40:00.000Z", pinnedAt: "2026-08-24T12:41:00.000Z", status: "done", messages: [{ id: "fixture-otto-raya-user", role: "USER", kind: "TEXT", seq: 1, text: "Help me shape the Raya launch into three clear posts.", payload: null, genJobId: null, createdAt: "2026-08-24T12:39:00.000Z" }, { id: "fixture-otto-raya-agent", role: "AGENT", kind: "TEXT", seq: 2, text: "Start with the market-stall story, follow with the scent pairing, then close with the gift deadline.", payload: null, genJobId: null, createdAt: "2026-08-24T12:40:00.000Z" }] },
+    { id: "fixture-otto-connect", projectId: "fixture-raya", title: "Reconnect Instagram", updatedAt: "2026-08-23T08:15:00.000Z", pinnedAt: null, status: "done", messages: [{ id: "fixture-otto-connect-user", role: "USER", kind: "TEXT", seq: 1, text: "Why is Instagram held?", payload: null, genJobId: null, createdAt: "2026-08-23T08:14:00.000Z" }, { id: "fixture-otto-connect-agent", role: "AGENT", kind: "TEXT", seq: 2, text: "The provider has not confirmed this workspace connection. Reconnect from Settings before anything can publish.", payload: null, genJobId: null, createdAt: "2026-08-23T08:15:00.000Z" }] },
+  ],
+  activeThreadId: null,
+  balanceUsd: 250,
+  userName: "Nadia",
+};
+
+const R22_OTTO_FIXTURE_KEY = "r22:otto-panel:v1";
+const R22_OTTO_FIXTURE_UPDATED_AT = "2026-08-25T08:42:00.000Z";
+type R22OttoFixtureState = { projects: Seed["projects"]; threads: ChatThreadDTO[]; activeThreadId: string | null };
+
+function readR22OttoFixture(workspaceId: string): R22OttoFixtureState | null {
+  try {
+    const stored = window.sessionStorage.getItem(`${R22_OTTO_FIXTURE_KEY}:${workspaceId}`);
+    return stored ? JSON.parse(stored) as R22OttoFixtureState : null;
+  } catch { return null; }
+}
+
+function writeR22OttoFixture(workspaceId: string, value: R22OttoFixtureState): void {
+  try { window.sessionStorage.setItem(`${R22_OTTO_FIXTURE_KEY}:${workspaceId}`, JSON.stringify(value)); } catch { /* The visual fixture remains usable without storage. */ }
+}
 
 type Load =
   | { status: "loading" }
@@ -118,12 +147,15 @@ function deepLinkSignature(deepLink: DeepLink): string | null {
 export function OttoPanelHost({
   location,
   children,
+  variant = "legacy",
 }: {
   /** 当前地址(与 `OttoPanelMount` 收到的是同一个字符串)。 */
   location: string;
   children: React.ReactNode;
+  variant?: "legacy" | "r22";
 }) {
   const [load, setLoad] = React.useState<Load>({ status: "loading" });
+  const fixture = process.env.NODE_ENV !== "production" && new URLSearchParams(location.split("?", 2)[1] ?? "").get("fixture") === "r22";
   const seed = load.status === "ready" ? load.seed : null;
   const [threads, setThreads] = React.useState<ChatThreadDTO[]>([]);
   const [activeThreadId, setActiveThreadId] = React.useState<string | null>(null);
@@ -145,6 +177,10 @@ export function OttoPanelHost({
   const [deleteProjectTarget, setDeleteProjectTarget] = React.useState<{ id: string; name: string } | null>(null);
   /** 面板此刻开着还是关着 —— 由 `PanelOpenWatcher`(挂在下面 `children` 旁边)报上来。 */
   const [open, setOpen] = React.useState(false);
+  const [fixtureWorkspaceId, setFixtureWorkspaceId] = React.useState("batik-house");
+  const [fixtureLoaded, setFixtureLoaded] = React.useState(false);
+  const fixtureFailedOnceRef = React.useRef(false);
+  const fixtureLoadState = new URLSearchParams(location.split("?", 2)[1] ?? "").get("ottoState");
 
   // 判官 r2(PR #1086 最新一条,根因修复):`location` 本来就随 `useSearchParams()` 响应式
   // 更新(`MerchantAppShell` → `pathWithQuery`),这一层挂在根 layout 上跨软导航不卸载
@@ -216,7 +252,19 @@ export function OttoPanelHost({
     const select = startedWithSelect ?? undefined;
     void (async () => {
       // 服务端动作自己不抛(它把失败折成 {error}),但网络那一段仍可能断。
-      const result = await loadOttoPanelSeed(select).catch(() => ({ error: "Otto is not reachable right now." }));
+      let result: Seed | { error: string };
+      if (fixture) {
+        if (fixtureLoadState === "permission") result = { error: "Otto is not available to this workspace member. No conversation history was exposed." };
+        else if (fixtureLoadState === "error" && !fixtureFailedOnceRef.current) {
+          fixtureFailedOnceRef.current = true;
+          result = { error: "Otto could not load this workspace conversation. Nothing was inferred; retry is safe." };
+        } else {
+          const workspaceId = readR22WorkspaceDirectory().activeId;
+          const stored = readR22OttoFixture(workspaceId);
+          setFixtureWorkspaceId(workspaceId);
+          result = stored ? { ...R22_FIXTURE_SEED, projects: stored.projects, threads: stored.threads, activeThreadId: stored.activeThreadId } : workspaceId === "batik-house" ? R22_FIXTURE_SEED : { ...R22_FIXTURE_SEED, projects: [{ id: `fixture-${workspaceId}`, name: "Workspace project", pinnedAt: null }], projectId: `fixture-${workspaceId}`, threads: [], activeThreadId: null };
+        }
+      } else result = await loadOttoPanelSeed(select).catch(() => ({ error: "Otto is not reachable right now." }));
       if (cancelled) return; // 这次取数被后来的关闭顶掉了——pendingSelectRef 原样留着,
       // 不清:下一次真正落地的取数(强开之后的那次)还要用它,不能收一个空的默认路径。
       // 这次取数确实要提交了——它排定的 select 已经用掉,可以清了;但只在没人在这次取数
@@ -232,11 +280,17 @@ export function OttoPanelHost({
       setLoad({ status: "ready", seed: result });
       setThreads(result.threads);
       setActiveThreadId(result.activeThreadId);
+      if (fixture) setFixtureLoaded(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, fetchTrigger]);
+  }, [fixture, fixtureLoadState, open, fetchTrigger]);
+
+  React.useEffect(() => {
+    if (!fixture || !fixtureLoaded || load.status !== "ready") return;
+    writeR22OttoFixture(fixtureWorkspaceId, { projects: load.seed.projects, threads, activeThreadId });
+  }, [activeThreadId, fixture, fixtureLoaded, fixtureWorkspaceId, load, threads]);
 
   // ── 上下文 chip:这一票**不画** ────────────────────────────────────────────
   //
@@ -327,6 +381,11 @@ export function OttoPanelHost({
   const selectThread = React.useCallback(async (thread: ChatThreadDTO) => {
     const intent = claimIntent();
     setThreadError(null);
+    if (fixture) {
+      setActiveThreadId(thread.id);
+      setHistoryOpenedAt(null);
+      return;
+    }
     if (thread.id === activeThreadId || thread.messages.length > 0) {
       setActiveThreadId(thread.id);
       setHistoryOpenedAt(null);
@@ -345,7 +404,7 @@ export function OttoPanelHost({
     upsertThread(fresh);
     setActiveThreadId(fresh.id);
     setHistoryOpenedAt(null);
-  }, [activeThreadId, claimIntent, upsertThread]);
+  }, [activeThreadId, claimIntent, fixture, upsertThread]);
 
   // ── 整理会话:重命名 / 置顶 / 删除(W2-11)────────────────────────────────────
   //
@@ -366,26 +425,28 @@ export function OttoPanelHost({
 
   const setThreadPinned = React.useCallback(async (id: string, pinned: boolean) => {
     const snapshot = threads;
-    const pinnedAt = pinned ? new Date().toISOString() : null;
+    const pinnedAt = pinned ? (fixture ? R22_OTTO_FIXTURE_UPDATED_AT : new Date().toISOString()) : null;
     setThreads((items) => items.map((t) => (t.id === id ? { ...t, pinnedAt } : t)));
+    if (fixture) return;
     const result = await setCoworkThreadPinned(id, pinned);
     if ("error" in result) {
       setThreads(snapshot);
       setThreadError(result.error);
     }
-  }, [threads]);
+  }, [fixture, threads]);
 
   const renameThread = React.useCallback(async (id: string, title: string) => {
     const clean = title.trim();
     if (!clean) return;
     const snapshot = threads;
     setThreads((items) => items.map((t) => (t.id === id ? { ...t, title: clean } : t)));
+    if (fixture) return;
     const result = await renameCoworkThread(id, clean);
     if ("error" in result) {
       setThreads(snapshot);
       setThreadError(result.error);
     }
-  }, [threads]);
+  }, [fixture, threads]);
 
   const deleteThread = React.useCallback(async (id: string) => {
     const snapshot = threads;
@@ -393,13 +454,14 @@ export function OttoPanelHost({
     const next = nextActiveThreadId(threads, id, activeThreadId);
     setThreads((items) => items.filter((t) => t.id !== id));
     if (activeThreadId === id) setActiveThreadId(next);
+    if (fixture) return;
     const result = await deleteCoworkThread(id);
     if ("error" in result) {
       setThreads(snapshot);
       setActiveThreadId(snapshotActive);
       setThreadError(result.error);
     }
-  }, [threads, activeThreadId]);
+  }, [threads, activeThreadId, fixture]);
 
   // ── 整理项目:重命名 / 置顶 / 删除(W2-11)────────────────────────────────────
   //
@@ -410,6 +472,12 @@ export function OttoPanelHost({
   /** 重取一次种子 —— 删除项目牵连太多(会连它名下的会话一起消失),客户端手工推演这份状态
    *  容易出错,不如让服务端(已经在 `deleteProject` 里 `revalidatePath` 过)重新说一次真相。 */
   const reloadSeed = React.useCallback(async () => {
+    if (fixture) {
+      setLoad({ status: "ready", seed: R22_FIXTURE_SEED });
+      setThreads(R22_FIXTURE_SEED.threads);
+      setActiveThreadId(R22_FIXTURE_SEED.activeThreadId);
+      return;
+    }
     const result = await loadOttoPanelSeed().catch(() => ({ error: "Otto is not reachable right now." }));
     if ("error" in result) {
       setLoad({ status: "error", message: result.error });
@@ -418,7 +486,7 @@ export function OttoPanelHost({
     setLoad({ status: "ready", seed: result });
     setThreads(result.threads);
     setActiveThreadId(result.activeThreadId);
-  }, []);
+  }, [fixture]);
 
   const requestRenameProject = React.useCallback((id: string) => {
     const target = seed?.projects.find((p) => p.id === id);
@@ -431,20 +499,25 @@ export function OttoPanelHost({
   }, [seed]);
 
   const setProjectPinned = React.useCallback(async (id: string, pinned: boolean) => {
-    const pinnedAt = pinned ? new Date().toISOString() : null;
+    const pinnedAt = pinned ? (fixture ? R22_OTTO_FIXTURE_UPDATED_AT : new Date().toISOString()) : null;
     setLoad((current) =>
       current.status === "ready"
         ? { ...current, seed: { ...current.seed, projects: current.seed.projects.map((p) => (p.id === id ? { ...p, pinnedAt } : p)) } }
         : current,
     );
+    if (fixture) return;
     const result = await setProjectPinnedAction(id, pinned);
     if ("error" in result) {
       setThreadError(result.error);
       await reloadSeed();
     }
-  }, [reloadSeed]);
+  }, [fixture, reloadSeed]);
 
   const renameProject = React.useCallback(async (id: string, name: string) => {
+    if (fixture) {
+      setLoad((current) => current.status === "ready" ? { ...current, seed: { ...current.seed, projects: current.seed.projects.map((project) => project.id === id ? { ...project, name } : project) } } : current);
+      return;
+    }
     const result = await renameProjectAction(id, name);
     if ("error" in result) {
       setThreadError(result.error);
@@ -455,22 +528,38 @@ export function OttoPanelHost({
         ? { ...current, seed: { ...current.seed, projects: current.seed.projects.map((p) => (p.id === id ? { ...p, name: result.name } : p)) } }
         : current,
     );
-  }, []);
+  }, [fixture]);
 
   const deleteProject = React.useCallback(async (id: string) => {
+    if (fixture) {
+      setLoad((current) => current.status === "ready" ? { ...current, seed: { ...current.seed, projects: current.seed.projects.filter((project) => project.id !== id) } } : current);
+      setThreads((current) => current.filter((thread) => thread.projectId !== id));
+      return;
+    }
     const result = await deleteProjectAction(id);
     if ("error" in result) {
       setThreadError(result.error);
       return;
     }
     await reloadSeed();
-  }, [reloadSeed]);
+  }, [fixture, reloadSeed]);
 
   // ── 快捷 chips ───────────────────────────────────────────────────────────
   const chips = React.useMemo(() => panelQuickChips(location), [location]);
 
   const pickChip = React.useCallback(async (chip: { goalKey: string; label: string }) => {
     if (!seed || chipBusy) return;
+    if (fixture) {
+      const now = "2026-08-25T08:42:00.000Z";
+      const ordinal = threads.reduce((highest, thread) => {
+        const match = /^fixture-chip-(\d+)$/.exec(thread.id);
+        return match ? Math.max(highest, Number(match[1])) : highest;
+      }, 0) + 1;
+      const thread: ChatThreadDTO = { id: `fixture-chip-${ordinal}`, projectId: seed.projectId, title: chip.label, updatedAt: now, pinnedAt: null, status: "done", messages: [{ id: `fixture-chip-${ordinal}-user-1`, role: "USER", kind: "TEXT", seq: 1, text: chip.label, payload: null, genJobId: null, createdAt: now }, { id: `fixture-chip-${ordinal}-agent-2`, role: "AGENT", kind: "TEXT", seq: 2, text: "This deterministic fixture opened a local conversation. No Otto action or server request was sent.", payload: null, genJobId: null, createdAt: now }] };
+      setChipError(null);
+      handleThreadStarted(thread);
+      return;
+    }
     setChipBusy(true);
     setChipError(null);
     try {
@@ -491,7 +580,7 @@ export function OttoPanelHost({
     } finally {
       setChipBusy(false);
     }
-  }, [seed, chipBusy, handleStreamStart]);
+  }, [seed, chipBusy, fixture, handleStreamStart, handleThreadStarted, threads]);
 
   const conversationState: OttoPanelConversationState =
     load.status === "loading"
@@ -530,11 +619,13 @@ export function OttoPanelHost({
         <React.Suspense fallback={<ConversationFallback />}>
           <OttoPanelConversation
             state={conversationState}
+            fixture={fixture}
             onThreadStarted={handleThreadStarted}
             onStreamStart={handleStreamStart}
             onThreadUpdate={upsertThread}
             onActiveThreadChange={setActiveThreadId}
             onPendingFirstSent={() => setPendingFirst(null)}
+            onRetry={fixture && fixtureLoadState === "permission" ? undefined : () => { setLoad({ status: "loading" }); setFetchTrigger((value) => value + 1); }}
           />
         </React.Suspense>
       </div>
@@ -562,6 +653,7 @@ export function OttoPanelHost({
 
   return (
     <OttoPanelShell
+      variant={variant}
       panelBody={panelBody}
       quickChips={
         seed ? (

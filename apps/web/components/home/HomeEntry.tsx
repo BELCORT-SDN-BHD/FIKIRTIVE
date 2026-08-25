@@ -33,6 +33,7 @@ import { requireOwner } from "@/lib/auth-guard";
 import { getProjects, getRecentGenerationThumbs } from "@/lib/data";
 import { getMyAccount } from "@/lib/account-actions";
 import { getMyProfileNames } from "@/lib/profile-names";
+import { getMetaConnection } from "@/lib/meta-actions";
 import { ottoGreetingNameFromProfile } from "@/lib/otto-greeting";
 import { listScheduledPosts } from "@/lib/schedule-actions";
 import { listCampaigns } from "@/lib/campaign-view-data";
@@ -40,7 +41,7 @@ import { listMemory } from "@/lib/memory-actions";
 import { listBrandRecords } from "@/lib/brand-record-actions";
 import { creditsLabel } from "@/lib/credit-format";
 import { MY_DATE_FORMAT } from "@/lib/my-date-format";
-import { HomeView } from "./HomeView";
+import { HomeView, homeConnectionFromMeta } from "./HomeView";
 import {
   HOME_CANVAS_LIMIT,
   HOME_THUMB_LIMIT,
@@ -72,14 +73,16 @@ export async function HomeEntry() {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
+  const profile = await getMyProfileNames();
+  if (!("error" in profile) && !profile.workspaceName.trim()) redirect("/onboarding");
 
   const now = new Date();
   const nextSevenDays = upcomingWindow(now);
 
-  const [greetingName, account, projects, thumbs, scheduled, campaignResult, memory, records] =
+  const [greetingName, account, projects, thumbs, scheduled, campaignResult, memory, records, meta] =
     await Promise.all([
       // 名字的整个步骤(含它自己的 catch)由这个 helper 收着 —— 见 lib/otto-greeting.ts。
-      ottoGreetingNameFromProfile(getMyProfileNames),
+      ottoGreetingNameFromProfile(() => Promise.resolve(profile)),
       // 会话拒绝时 getMyAccount 返回 {error},故障时 REJECT —— 两条都是「读不出来」,不是 0。
       attempt(getMyAccount),
       attempt(() => getProjects(ownerId)),
@@ -88,6 +91,7 @@ export async function HomeEntry() {
       attempt(listCampaigns),
       attempt(() => listMemory(ownerId)),
       attempt(() => listBrandRecords(ownerId)),
+      attempt(getMetaConnection),
     ]);
 
   // 路径只由导航权威源写(§1.3)—— 这一页一条都不硬写,W2-11 改那棵树时它们跟着换。
@@ -146,5 +150,5 @@ export async function HomeEntry() {
     equipment,
   };
 
-  return <HomeView data={data} />;
+  return <HomeView data={data} connection={homeConnectionFromMeta(meta)} />;
 }

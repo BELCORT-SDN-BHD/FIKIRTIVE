@@ -38,7 +38,7 @@ import { CAMPAIGN_DISPATCH_IN_FLIGHT } from "@/lib/campaign-approval-lock";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CampaignNav } from "./campaign-nav";
 
 type DetailResult = Awaited<ReturnType<typeof getCampaign>>;
@@ -477,7 +477,7 @@ function ConfirmWorkspace({
                 <Select value={projectId} disabled={busy || quoting} onValueChange={chooseProject}>
                   <SelectTrigger><SelectValue placeholder="Choose a project" /></SelectTrigger>
                   <SelectContent>
-                    {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
+                    <SelectGroup>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectGroup>
                   </SelectContent>
                 </Select>
               </label>
@@ -493,9 +493,9 @@ function ConfirmWorkspace({
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {videoMenu.resolutions.map((resolution) => (
+                      <SelectGroup>{videoMenu.resolutions.map((resolution) => (
                         <SelectItem key={resolution} value={resolution}>{resolution}</SelectItem>
-                      ))}
+                      ))}</SelectGroup>
                     </SelectContent>
                   </Select>
                 </label>
@@ -510,9 +510,9 @@ function ConfirmWorkspace({
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {videoMenu.durations.map((seconds) => (
+                      <SelectGroup>{videoMenu.durations.map((seconds) => (
                         <SelectItem key={seconds} value={String(seconds)}>{seconds}s</SelectItem>
-                      ))}
+                      ))}</SelectGroup>
                     </SelectContent>
                   </Select>
                 </label>

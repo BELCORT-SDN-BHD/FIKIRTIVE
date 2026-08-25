@@ -31,6 +31,7 @@ const buttonVariants = cva(
         lg: "h-12 px-6 text-base",
         pill: "h-11 rounded-full px-6",
         icon: "size-11",
+        "icon-sm": "size-8 rounded-lg",
       },
     },
     defaultVariants: { variant: "default", size: "default" },
@@ -42,14 +43,17 @@ function Button({
   variant,
   size,
   asChild = false,
+  unstyled = false,
   ...props
 }: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & { asChild?: boolean }) {
+  VariantProps<typeof buttonVariants> & { asChild?: boolean; unstyled?: boolean }) {
   const Comp = asChild ? Slot.Root : "button"
   return (
     <Comp
       data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
+      data-variant={variant ?? "default"}
+      data-size={size ?? "default"}
+      className={unstyled ? className : cn(buttonVariants({ variant, size, className }))}
       {...props}
     />
   )

@@ -1,7 +1,4 @@
-import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth-guard";
-import { getMyAccount } from "@/lib/account-actions";
-import { OttoAccount } from "@/components/otto/OttoAccount";
+import { R22SettingsEntry } from "@/components/settings/R22SettingsEntry";
 
 /**
  * Preferences —— 换壳(Wave 2)的 W2-4,规格书 `docs/specs/wave2-shell.md` §4.7。
@@ -26,21 +23,6 @@ import { OttoAccount } from "@/components/otto/OttoAccount";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Settings · Fikirtive" };
 
-export default async function SettingsRoutePage() {
-  const owner = await requireOwner();
-  if ("error" in owner) redirect("/login");
-
-  // `getMyAccount()` 读的是它自己 requireOwner() 出来的 ownerId(见 lib/account-actions.ts)。
-  // 读不出来时传 null,组件照旧说「Could not load your account.」—— 不编一个空账户出来。
-  const accountResult = await getMyAccount();
-  const account = "error" in accountResult ? null : accountResult;
-
-  return (
-    // `gb` 是这仓唯一的皮肤,`cv-settings-frame` 是设置面那套 container query 的锚点
-    // (globals.css:1224)。旧壳在 OttoView 里套的就是这两个 class,这里照抄同一层壳,
-    // 不给设置面写第二套排版。
-    <main className="gb cv-settings-frame flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      <OttoAccount account={account} />
-    </main>
-  );
+export default function SettingsRoutePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> } = { searchParams: Promise.resolve({}) }) {
+  return <R22SettingsEntry searchParams={searchParams} />;
 }

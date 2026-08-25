@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * #840 底座包冒烟 —— 新补的 9 件 shadcn 组件今天一个调用点都没有。
+ * #840 底座包冒烟 —— 基础包与 R22 新采用的 shadcn 组合件都要真渲染一次。
  *
  * 没有调用点意味着:类型过了、`next build` 过了,它们仍然可能在第一次被用到的时候
  * 才炸(Radix 统一包的运行时导出名与类型对不上、Portal 没挂上、Indicator 少一层)。
@@ -24,10 +24,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Message, MessageContent } from "@/components/ui/message";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,7 +59,7 @@ function inDocument(selector: string): Element | null {
   return document.body.querySelector(selector);
 }
 
-describe("#840 底座包 — 9 件新组件都真的能渲染", () => {
+describe("#840 底座包与 R22 组合件都真的能渲染", () => {
   it("Alert:默认档与状态档都渲染,标题与描述带得上", () => {
     render(
       h(Alert, { variant: "destructive" },
@@ -113,6 +118,54 @@ describe("#840 底座包 — 9 件新组件都真的能渲染", () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Projects"]);
     expect(tabs[0].getAttribute("data-state")).toBe("active");
     expect(host.querySelector('[role="tabpanel"]')!.textContent).toBe("Chat panel");
+  });
+
+  it("ToggleGroup:单选筛选器发出 radiogroup / radio 与选中状态", () => {
+    render(
+      h(ToggleGroup, { type: "single", value: "all", "aria-label": "Filter approvals" },
+        h(ToggleGroupItem, { value: "all" }, "All"),
+        h(ToggleGroupItem, { value: "otto" }, "From Otto"),
+      ),
+    );
+    expect(host.querySelector('[role="radiogroup"]')!.getAttribute("aria-label")).toBe("Filter approvals");
+    const options = [...host.querySelectorAll('[role="radio"]')];
+    expect(options.map((option) => option.textContent)).toEqual(["All", "From Otto"]);
+    expect(options[0].getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("RadioGroup:原因选择器保留 radio 角色与受控状态", () => {
+    render(
+      h(RadioGroup, { value: "facts", "aria-label": "Reason for sending back" },
+        h(RadioGroupItem, { value: "voice", "aria-label": "Wrong voice" }),
+        h(RadioGroupItem, { value: "facts", "aria-label": "Wrong facts" }),
+      ),
+    );
+    expect(host.querySelector('[role="radiogroup"]')!.getAttribute("aria-label")).toBe("Reason for sending back");
+    const options = [...host.querySelectorAll('[role="radio"]')];
+    expect(options[1].getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("Switch:自动发布开关保留 switch 角色、状态与 thumb", () => {
+    render(h(Switch, { checked: true, "aria-label": "Auto-publish" }));
+    const control = host.querySelector('[data-slot="switch"]')!;
+    expect(control.getAttribute("role")).toBe("switch");
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector('[data-slot="switch-thumb"]')).toBeTruthy();
+  });
+
+  it("Message / Bubble:Otto 消息使用明确的 shadcn composition slots", () => {
+    render(
+      h(Message, { align: "end" },
+        h(MessageContent, null,
+          h(Bubble, { align: "end" },
+            h(BubbleContent, null, "Plan a Raya campaign"),
+          ),
+        ),
+      ),
+    );
+    expect(host.querySelector('[data-slot="message"]')!.getAttribute("data-align")).toBe("end");
+    expect(host.querySelector('[data-slot="bubble"]')!.getAttribute("data-align")).toBe("end");
+    expect(host.querySelector('[data-slot="bubble-content"]')!.textContent).toBe("Plan a Raya campaign");
   });
 
   it("Popover:开着的时候内容出现在 portal 里", () => {

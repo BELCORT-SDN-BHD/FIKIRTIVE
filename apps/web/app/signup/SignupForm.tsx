@@ -1,15 +1,17 @@
 "use client";
-
-import { useState } from "react";
-import { authClient } from "@/lib/better-auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+import { useState } from "react";
+import { authClient } from "@/lib/better-auth/client";
+import { Eye, EyeOff } from "lucide-react";
+
 export const MIN_PASSWORD_LENGTH = 8;
+export type R22SignupFixtureState = "success" | "error" | "rate-limit" | "provider-error" | "unknown" | "no-access";
 
 /** Self-service registration: shop name + email + password. Nothing is promised that the
  *  product doesn't do — the credits land after the email is verified, and the copy says so. */
-export function SignupForm() {
+export function SignupForm({ fixture = false, fixtureState = "success" }: { fixture?: boolean; fixtureState?: R22SignupFixtureState }) {
   const [shopName, setShopName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -17,6 +19,7 @@ export function SignupForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [fixtureFailedOnce, setFixtureFailedOnce] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,10 +34,22 @@ export function SignupForm() {
 
     setBusy(true);
     setError(null);
-    // #940 — callbackURL goes straight to /otto rather than "/": the root route is nothing but
-    // a server redirect to /otto, so landing there directly drops one full round trip out of the
-    // already-slow post-verification chain.
-    const { error } = await authClient.signUp.email({ email: address, password, name, callbackURL: "/otto" });
+    if (fixture) {
+      window.setTimeout(() => {
+        setBusy(false);
+        if (fixtureState === "rate-limit") return setError("Too many account requests. Wait before trying again; no account or email was created.");
+        if (fixtureState === "provider-error") return setError("The email provider did not confirm delivery. Nothing was marked sent.");
+        if (fixtureState === "no-access") return setError("Workspace creation is not available to this account policy. Nothing was created.");
+        if ((fixtureState === "error" || fixtureState === "unknown") && !fixtureFailedOnce) {
+          setFixtureFailedOnce(true);
+          return setError(fixtureState === "unknown" ? "Account creation outcome is unknown. Check this same request before starting another." : "Account creation was not confirmed. Nothing was added; retry this same request safely.");
+        }
+        setSentTo(address);
+      }, 360);
+      return;
+    }
+    // Email confirmation returns to the real onboarding gate; it does not imply onboarding is done.
+    const { error } = await authClient.signUp.email({ email: address, password, name, callbackURL: "/onboarding" });
     setBusy(false);
     if (error) {
       setError(error.message ?? "We couldn't create the account. Try again.");
@@ -45,22 +60,20 @@ export function SignupForm() {
 
   if (sentTo) {
     return (
-      <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
-        <p className="text-[15px] font-semibold text-foreground">Confirm your email</p>
-        <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-          We sent a confirmation link to{" "}
-          <span className="font-medium text-foreground">{sentTo}</span>. Open it to finish setting
-          up {shopName.trim()} — your free starter credits are added once the email is confirmed.
+      <div className="r22-auth-confirm" role="status">
+        <p className="r22-auth-confirm-title">Confirm your email</p>
+        <p className="r22-auth-subtitle">
+          {fixture ? "Fixture receipt for " : "We sent a confirmation link to "}
+          <strong>{sentTo}</strong>. {fixture ? `No account, email, workspace, or starter credits were created for ${shopName.trim()}.` : <>Open it to finish setting up {shopName.trim()} — your free starter credits are added once the email is confirmed.</>}
         </p>
-        <p className="mt-3 text-[12.5px] text-muted-foreground">
-          Nothing in your inbox? Check spam, or{" "}
-          <Button
+        <p className="r22-auth-fact">
+          {fixture ? "Inspect another address, or " : "Nothing in your inbox? Check spam, or "}
+          <Button unstyled
             type="button"
-            variant="link"
             onClick={() => { setSentTo(null); setPassword(""); }}
-            className="h-auto w-auto p-0 align-baseline text-[12.5px] font-semibold text-muted-foreground underline hover:text-foreground"
+            className="r22-auth-inline"
           >
-            try a different email
+            {fixture ? "return to the form" : "try a different email"}
           </Button>
           .
         </p>
@@ -69,18 +82,13 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3.5">
-      {error && (
-        <p role="alert" className="text-[13.5px] font-medium text-destructive">
-          {error}
-        </p>
-      )}
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="shopName" className="text-[13px] font-semibold text-foreground/85">
+    <form onSubmit={submit} className="r22-auth-form">
+      <p role="alert" className="r22-auth-error">{error ?? ""}</p>
+      <div>
+        <label htmlFor="shopName" className="r22-auth-label">
           Shop name
         </label>
-        <Input
+        <Input unstyled
           id="shopName"
           name="shopName"
           required
@@ -90,15 +98,15 @@ export function SignupForm() {
           autoComplete="organization"
           value={shopName}
           onChange={(e) => setShopName(e.target.value)}
+          className="r22-auth-input"
         />
-        <p className="text-[12px] text-muted-foreground">This names your workspace. You can change it later.</p>
+        <p className="r22-auth-help">This names your workspace. You can change it later.</p>
       </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="email" className="text-[13px] font-semibold text-foreground/85">
+      <div>
+        <label htmlFor="email" className="r22-auth-label">
           Email
         </label>
-        <Input
+        <Input unstyled
           id="email"
           name="email"
           type="email"
@@ -107,15 +115,15 @@ export function SignupForm() {
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          className="r22-auth-input"
         />
       </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="password" className="text-[13px] font-semibold text-foreground/85">
+      <div>
+        <label htmlFor="password" className="r22-auth-label">
           Password
         </label>
-        <div className="relative">
-          <Input
+        <div className="r22-auth-password">
+          <Input unstyled
             id="password"
             name="password"
             type={showPw ? "text" : "password"}
@@ -123,34 +131,22 @@ export function SignupForm() {
             minLength={MIN_PASSWORD_LENGTH}
             placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
             autoComplete="new-password"
-            className="pr-11"
+            className="r22-auth-input"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-          <Button
+          <Button unstyled
             type="button"
-            variant="ghost"
-            size="icon"
             onClick={() => setShowPw((v) => !v)}
             aria-label={showPw ? "Hide password" : "Show password"}
-            className="absolute right-1.5 top-1/2 size-9 -translate-y-1/2 rounded-[10px] text-muted-foreground hover:bg-transparent hover:text-foreground"
+            className="r22-auth-icon-button"
           >
-            {showPw ? (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
-                <path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-2.2 3M6.1 6.1A13.3 13.3 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 3.9-.9M3 3l18 18" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
-                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            )}
+            {showPw ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
           </Button>
         </div>
       </div>
-
-      <Button type="submit" disabled={busy} className="mt-0.5 w-full">
-        {busy ? "Creating your account…" : "Create account"}
+      <Button unstyled type="submit" disabled={busy} className="r22-auth-primary">
+        {busy ? "Creating your account…" : fixtureState === "unknown" && fixtureFailedOnce ? "Check account status" : "Create account"}
       </Button>
     </form>
   );

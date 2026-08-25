@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CampaignNav } from "./campaign-nav";
 
@@ -113,8 +113,8 @@ export default function CampaignTrendsPage({
                 <Select value={campaignId} onValueChange={setCampaignId}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No campaign</SelectItem>
-                    {campaigns.map((campaign) => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}
+                    <SelectGroup><SelectItem value="none">No campaign</SelectItem>
+                    {campaigns.map((campaign) => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}</SelectGroup>
                   </SelectContent>
                 </Select>
               </label>
@@ -172,4 +172,3 @@ export default function CampaignTrendsPage({
     </main>
   );
 }
-

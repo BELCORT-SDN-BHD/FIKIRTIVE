@@ -97,6 +97,7 @@ export interface OttoPanelShellProps {
    * 总是读到前一个已经应用之后的值——不会互相覆盖,不需要挤在同一步里维护先后关系。
    */
   forceOpenSignal?: string | null;
+  variant?: "legacy" | "r22";
 }
 
 export function OttoPanelShell({
@@ -111,11 +112,15 @@ export function OttoPanelShell({
   onNewChat,
   headerBusy,
   forceOpenSignal,
+  variant = "legacy",
 }: OttoPanelShellProps) {
   // 首帧一律按默认值画(服务端不知道 localStorage,也不知道视窗有多大),
   // 挂载后再一次性套用存值 —— 这就是 `data-otto-panel-hydrated` 存在的理由。
   const [viewport, setViewport] = React.useState<Viewport>(FALLBACK_VIEWPORT);
-  const [state, setState] = React.useState<OttoPanelState>(() => defaultOttoPanelState(FALLBACK_VIEWPORT));
+  const [state, setState] = React.useState<OttoPanelState>(() => {
+    const initial = defaultOttoPanelState(FALLBACK_VIEWPORT);
+    return variant === "r22" ? setPanelOpen(setDockedWidth(dockPanel(initial), 408, FALLBACK_VIEWPORT), false) : initial;
+  });
   const [hydrated, setHydrated] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
 
@@ -133,9 +138,13 @@ export function OttoPanelShell({
     const vp = readViewport();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 见上:挂载后套用存值,§3.3。
     setViewport(vp);
-    setState(() => reconcileViewport(readOttoPanelState(vp), vp));
+    setState(() => {
+      const restored = reconcileViewport(readOttoPanelState(vp), vp);
+      if (variant !== "r22") return restored;
+      return setPanelOpen(setDockedWidth(dockPanel(restored), 408, vp), false);
+    });
     setHydrated(true);
-  }, []);
+  }, [variant]);
 
   // 深链强开(见上面 `forceOpenSignal` 的说明)——独立于挂载 hydration 之外的一个 effect,
   // 用函数式 `setState` 保证不管两个 effect 的先后顺序都正确叠加。`lastForceOpenSignalRef`
@@ -225,7 +234,7 @@ export function OttoPanelShell({
       {/* `items-start` 而不是默认的 stretch:主内容必须保持它挂载之前的高度行为(内容多高就多高,
           页面自己的 `min-h-dvh` / `h-dvh` 说了算)。被拉伸成一个确定高度会让页面里 `h-full` 那
           一类百分比高度突然解析成整屏,那是版式漂移,不是面板的活。面板自己带 `h-dvh`,不靠拉伸。 */}
-      <div data-otto-panel-shell="" className="flex min-w-0 items-start">
+      <div data-otto-panel-shell="" data-otto-panel-variant={variant} className="flex min-w-0 items-start">
         {/* 主内容。被面板挤窄靠的是 flex 排版本身,所以这里不需要任何定位、遮罩或宽度动画:
             动的是面板那一侧的宽度,主内容跟着让。里面仍是普通块级流,与挂载之前逐行一致。 */}
         <div data-otto-panel-main="" className="min-w-0 flex-1">
@@ -233,6 +242,7 @@ export function OttoPanelShell({
         </div>
         {state.open && (
           <OttoPanel
+            variant={variant}
             state={state}
             viewport={viewport}
             hydrated={hydrated}
@@ -265,6 +275,7 @@ export function OttoPanelShell({
       </div>
       {!state.open && (
         <OttoLauncher
+          variant={variant}
           anchor={state.launcher}
           viewport={viewport}
           hydrated={hydrated}

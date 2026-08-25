@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -106,7 +107,7 @@ export function OttoThreadList({
         onClick={onNewChat}
         className="h-9 w-full justify-start gap-2 rounded-[10px] px-3 text-[13px] font-medium"
       >
-        <SquarePen className="size-4 shrink-0" strokeWidth={1.9} aria-hidden />
+        <SquarePen data-icon="inline-start" strokeWidth={1.9} aria-hidden />
         New chat
       </Button>
 
@@ -147,22 +148,24 @@ export function OttoThreadList({
                     aria-label={`${project.name} controls`}
                     title="Project controls"
                   >
-                    <MoreHorizontal className="size-3.5" aria-hidden />
+                    <MoreHorizontal data-icon="inline-start" aria-hidden />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-44">
+                  <DropdownMenuGroup>
                   <DropdownMenuItem onSelect={() => onSetProjectPinned(project.id, !projectPinned)}>
-                    <Pin className="size-3.5" fill={projectPinned ? "currentColor" : "none"} aria-hidden />
+                    <Pin fill={projectPinned ? "currentColor" : "none"} aria-hidden />
                     {projectPinned ? "Unpin project" : "Pin project"}
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => onRenameProject(project.id)}>
-                    <Pencil className="size-3.5" aria-hidden />
+                    <Pencil aria-hidden />
                     Rename project
                   </DropdownMenuItem>
                   <DropdownMenuItem variant="destructive" onSelect={() => onDeleteProject(project.id)}>
-                    <Trash2 className="size-3.5" aria-hidden />
+                    <Trash2 aria-hidden />
                     Delete project
                   </DropdownMenuItem>
+                  </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -197,7 +200,7 @@ export function OttoThreadList({
                             active ? "bg-secondary font-semibold text-foreground" : "font-normal text-muted-foreground"
                           }`}
                         >
-                          {pinned && <Pin className="size-3 shrink-0" fill="currentColor" aria-hidden />}
+                          {pinned && <Pin data-icon="inline-start" fill="currentColor" aria-hidden />}
                           {dot && (
                             <span
                               className="inline-block size-[7px] shrink-0 rounded-full"
@@ -222,7 +225,7 @@ export function OttoThreadList({
                             title={pinned ? "Unpin conversation" : "Pin conversation"}
                             onClick={(e) => { e.stopPropagation(); onSetThreadPinned(thread.id, !pinned); }}
                           >
-                            <Pin className="size-3.5" fill={pinned ? "currentColor" : "none"} aria-hidden />
+                            <Pin data-icon="inline-start" fill={pinned ? "currentColor" : "none"} aria-hidden />
                           </Button>
                           <Button
                             type="button"
@@ -233,7 +236,7 @@ export function OttoThreadList({
                             title="Rename conversation"
                             onClick={(e) => { e.stopPropagation(); onRenameThread(thread.id); }}
                           >
-                            <Pencil className="size-3.5" aria-hidden />
+                            <Pencil data-icon="inline-start" aria-hidden />
                           </Button>
                           <Button
                             type="button"
@@ -244,7 +247,7 @@ export function OttoThreadList({
                             title="Delete conversation"
                             onClick={(e) => { e.stopPropagation(); onDeleteThread(thread.id); }}
                           >
-                            <Trash2 className="size-3.5" aria-hidden />
+                            <Trash2 data-icon="inline-start" aria-hidden />
                           </Button>
                         </div>
                       </div>

@@ -8,7 +8,7 @@ import type { listCampaigns } from "@/lib/campaign-view-data";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CampaignNav } from "./campaign-nav";
 
@@ -118,8 +118,8 @@ export default function CampaignWorkbenchPage({ initialState }: { initialState: 
               <Select value={status} onValueChange={(value) => setStatus(value as "DRAFT" | "ACTIVE")}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="DRAFT">Draft</SelectItem>
-                  <SelectItem value="ACTIVE">Active</SelectItem>
+                  <SelectGroup><SelectItem value="DRAFT">Draft</SelectItem>
+                  <SelectItem value="ACTIVE">Active</SelectItem></SelectGroup>
                 </SelectContent>
               </Select>
             </label>
@@ -145,4 +145,3 @@ export default function CampaignWorkbenchPage({ initialState }: { initialState: 
     </main>
   );
 }
-

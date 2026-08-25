@@ -1,0 +1,81 @@
+.r22-settings-dialog [data-slot="dialog-footer"] button.is-danger {
+  border-color: #a33d36;
+  background: #a33d36;
+  color: #fff;
+}
+
+.r22-settings-session-list {
+  display: grid;
+  border: 1px solid #e8e9ef;
+  border-radius: 10px;
+}
+
+.r22-settings-session-list > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-top: 1px solid #e8e9ef;
+}
+
+.r22-settings-session-list > div:first-child { border-top: 0; }
+.r22-settings-session-list span { min-width: 0; flex: 1; }
+.r22-settings-session-list b, .r22-settings-session-list small { display: block; }
+.r22-settings-session-list b { font-size: 12px; }
+.r22-settings-session-list small { margin-top: 3px; color: #686d79; font-size: 10.5px; }
+.r22-settings-session-list button { padding: 5px 8px; border: 1px solid #dddee6; border-radius: 6px; font-size: 10.5px; }
+
+.r22-settings-dialog-empty {
+  padding: 14px;
+  border: 1px solid #e8e9ef;
+  border-radius: 10px;
+  background: #fafafc;
+}
+
+.r22-settings-dialog-empty b { font-size: 12.5px; }
+.r22-settings-dialog-empty p { margin: 5px 0 0; color: #5b5f6c; font-size: 11.5px; line-height: 1.5; }
+.r22-settings-dialog-empty a { display: inline-flex; margin-top: 12px; padding: 7px 10px; border-radius: 7px; background: #16171c; color: #fff; font-size: 11px; }
+
+.r22-settings-workspace-directory {
+  overflow: hidden;
+  border: 1px solid #e8e9ef;
+  border-radius: 10px;
+}
+
+.r22-settings-workspace-directory-head,
+.r22-settings-workspace-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-top: 1px solid #e8e9ef;
+}
+
+.r22-settings-workspace-directory-head {
+  justify-content: space-between;
+  border-top: 0;
+  background: #fafafc;
+}
+
+.r22-settings-workspace-directory-head > span,
+.r22-settings-workspace-directory-row > span:nth-child(2) { min-width: 0; flex: 1; }
+.r22-settings-workspace-directory b,
+.r22-settings-workspace-directory small { display: block; }
+.r22-settings-workspace-directory b { font-size: 12px; font-weight: 560; }
+.r22-settings-workspace-directory small { margin-top: 3px; color: #686d79; font-size: 10.5px; }
+.r22-settings-workspace-directory button { min-height: 28px; padding: 5px 9px; border: 1px solid #dddee6; border-radius: 7px; background: #fff; font-size: 10.5px; }
+.r22-settings-workspace-directory button:disabled { opacity: .48; }
+.r22-settings-workspace-directory > p[role="alert"] { margin: 0; padding: 10px 12px; border-top: 1px solid #efded8; background: #fff8f5; color: #963f31; font-size: 10.5px; }
+
+.r22-settings-workspace-directory-avatar {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none !important;
+  place-items: center;
+  border-radius: 7px;
+  background: #eceef3;
+  color: #333640;
+  font-size: 9.5px;
+  font-weight: 650;
+}

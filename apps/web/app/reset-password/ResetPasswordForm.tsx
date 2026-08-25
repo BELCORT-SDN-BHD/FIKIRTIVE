@@ -1,18 +1,20 @@
 "use client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 import { useState } from "react";
 import { authClient } from "@/lib/better-auth/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { MIN_PASSWORD_LENGTH } from "@/app/signup/SignupForm";
+import type { R22AuthFixtureState } from "@/app/login/LoginForm";
 
 /** Consumes a one-time reset token and sets a new password. On success the merchant is sent
  *  to the sign-in page — the reset itself does not mint a session. */
-export function ResetPasswordForm({ token }: { token: string }) {
+export function ResetPasswordForm({ token, fixture = false, fixtureState = "success" }: { token: string; fixture?: boolean; fixtureState?: R22AuthFixtureState }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [fixtureFailedOnce, setFixtureFailedOnce] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,6 +25,18 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
     setBusy(true);
     setError(null);
+    if (fixture) {
+      window.setTimeout(() => {
+        setBusy(false);
+        if (fixtureState === "provider-error") return setError("Password update could not be confirmed. No account was changed.");
+        if ((fixtureState === "error" || fixtureState === "unknown") && !fixtureFailedOnce) {
+          setFixtureFailedOnce(true);
+          return setError(fixtureState === "unknown" ? "Password update outcome is unknown. Check this same request before starting another." : "The update could not be confirmed. Retry safely; no account was changed.");
+        }
+        setDone(true);
+      }, 360);
+      return;
+    }
     const { error } = await authClient.resetPassword({ newPassword: password, token });
     setBusy(false);
     if (error) {
@@ -34,14 +48,12 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
   if (done) {
     return (
-      <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
-        <p className="text-[15px] font-semibold text-foreground">Password updated</p>
-        <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-          Sign in with your new password.
-        </p>
+      <div className="r22-auth-confirm" role="status">
+        <p className="r22-auth-confirm-title">Password updated</p>
+        <p className="r22-auth-subtitle">{fixture ? "Fixture success only. No password or session was changed." : "Sign in with your new password."}</p>
         <a
           href="/login"
-          className="mt-3.5 inline-flex h-10 w-full items-center justify-center rounded-[var(--radius-card)] border border-border text-[14px] font-semibold text-foreground hover:bg-muted"
+          className="r22-auth-primary"
         >
           Go to sign in
         </a>
@@ -50,17 +62,13 @@ export function ResetPasswordForm({ token }: { token: string }) {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3.5">
-      {error && (
-        <p role="alert" className="text-[13.5px] font-medium text-destructive">
-          {error}
-        </p>
-      )}
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="newPassword" className="text-[13px] font-semibold text-foreground/85">
+    <form onSubmit={submit} className="r22-auth-form">
+      <p role="alert" className="r22-auth-error">{error ?? ""}</p>
+      <div>
+        <label htmlFor="newPassword" className="r22-auth-label">
           New password
         </label>
-        <Input
+        <Input unstyled
           id="newPassword"
           name="newPassword"
           type="password"
@@ -71,10 +79,11 @@ export function ResetPasswordForm({ token }: { token: string }) {
           autoComplete="new-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          className="r22-auth-input"
         />
       </div>
-      <Button type="submit" disabled={busy} className="w-full">
-        {busy ? "Saving…" : "Save new password"}
+      <Button unstyled type="submit" disabled={busy} className="r22-auth-primary">
+        {busy ? "Saving…" : fixtureState === "unknown" && fixtureFailedOnce ? "Check update status" : "Save new password"}
       </Button>
     </form>
   );

@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { merchantNavLinks } from "@fikirtive/core/navigation";
-import { NavigationRail, type RailAccount } from "@/components/navigation/rail/NavigationRail";
+import { merchantNavLinks, SHELL_ROUTES } from "@fikirtive/core/navigation";
+import type { RailAccount } from "@/components/navigation/rail/NavigationRail";
 import { navMatchesLocation, splitLocation } from "@/components/navigation/rail/rail-tree";
+import { R22DashboardShell } from "@/components/r22/R22DashboardShell";
 import { OttoPanelMount } from "@/components/otto/panel/OttoPanelMount";
-import { useOttoPanelControls } from "@/components/otto/panel/OttoPanelShell";
 import { getMyAccount } from "@/lib/account-actions";
 import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-refresh";
 
@@ -27,7 +27,11 @@ import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-ref
  *  destination can never land on a page with no rail around it. `/profile` is a shell
  *  surface reachable from the identity menu rather than a nav destination of its own. */
 const MERCHANT_SURFACE_PATHS: readonly string[] = [
-  ...new Set([...merchantNavLinks().map((item) => splitLocation(item.href).path), "/profile"]),
+  ...new Set([
+    ...merchantNavLinks().map((item) => splitLocation(item.href).path),
+    ...Object.values(SHELL_ROUTES),
+    "/profile",
+  ]),
 ];
 
 /**
@@ -50,47 +54,24 @@ export function isMerchantSurface(pathname: string): boolean {
   return MERCHANT_SURFACE_PATHS.some((href) => navMatchesLocation(pathname, href));
 }
 
-/**
- * 导轨里那颗 Ask Otto —— 必须挂在 `OttoPanelMount` 之内才够得着
- * `useOttoPanelControls()`(那个 context 由 `OttoPanelShell` 往下发,只喂给它的后代)。
- *
- * 面板没有挂在这一面时(今天只有画布,见 `panel-surface.ts`)`controls` 是 `null` ——
- * 按钮因此什么都不做,这不是一个错误,是「这一面自己已经有一个 Otto」的意思本身。
- *
- * 余额从父层(`MerchantShellContent`)当 prop 收下来,不在这里自己取:画布与非画布之间
- * 那次 `OttoPanelMount` 内部形状切换(fragment ↔ `OttoPanelShell`)会让这一层重挂,状态
- * 留在父层就不会跟着闪一下。
- */
-function NavigationRailContainer({
-  pathname,
-  signOutAction,
-  account,
-}: {
-  pathname: string;
-  signOutAction: () => Promise<void>;
-  account: RailAccount | null;
-}) {
-  const controls = useOttoPanelControls();
-  return (
-    <NavigationRail
-      pathname={pathname}
-      onAskOtto={() => controls?.togglePanel()}
-      signOutAction={signOutAction}
-      account={account}
-    />
-  );
-}
-
 export function MerchantShellContent({
   children,
   pathname,
   signOutAction,
+  ottoVariant = "r22",
 }: {
   children?: React.ReactNode;
   pathname: string;
   signOutAction: () => Promise<void>;
+  /** R22 is the production shell. Legacy exists only so the retained panel contract can be tested in isolation. */
+  ottoVariant?: "legacy" | "r22";
 }) {
   const merchantSurface = isMerchantSurface(pathname);
+  const standaloneCanvas = navMatchesLocation(pathname, SHELL_ROUTES.canvas);
+  const standaloneSettings = navMatchesLocation(pathname, SHELL_ROUTES.preferences);
+  const visualFixture =
+    process.env.NODE_ENV !== "production" &&
+    new URLSearchParams(pathname.split("?", 2)[1] ?? "").get("fixture") === "r22";
   const [account, setAccount] = useState<RailAccount | null>(null);
 
   // 导轨持着全产品唯一的余额数字,所以它要在每次结算后重读,不只是挂载时读一次(#550:
@@ -104,7 +85,7 @@ export function MerchantShellContent({
   // 只在商家表面才取:没有商家的面(/login、/admin……)一条查询都不该发
   // (`otto-panel-mount.test.ts`「没有商家的面,一点 Otto 都不挂」钉的是同一条纪律)。
   useEffect(() => {
-    if (!merchantSurface) return;
+    if (!merchantSurface || standaloneCanvas || standaloneSettings || visualFixture) return;
     let alive = true;
     const beginRead = createLatestReadGate();
     const load = () => {
@@ -125,23 +106,19 @@ export function MerchantShellContent({
       unsubscribe();
       document.removeEventListener("visibilitychange", loadIfVisible);
     };
-  }, [merchantSurface]);
+  }, [merchantSurface, standaloneCanvas, standaloneSettings, visualFixture]);
 
   if (!merchantSurface) return <>{children}</>;
+  // R22 Canvas 是 dashboard shell 的兄弟 surface。打开项目后,全局导轨与全局 Otto
+  // 都退出 viewport;Canvas 自己持有项目顶栏、Otto 状态、Conversation 与 composer。
+  if (standaloneCanvas || standaloneSettings) return <>{children}</>;
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
-      {/* #994(W2-7)/W2-11 —— 面板停在内容列右侧。导轨、主内容、面板是同一行里的兄弟:
-          导轨宽度不随面板开合而变,主内容让给面板;没有遮罩,没有 `pointer-events: none`
-          (spec §3.5 ①)。导轨必须挂在 `OttoPanelMount` 内部(而不是它旁边),才能读到
-          面板的开合状态机去驱动 Ask Otto 按钮。 */}
-      <OttoPanelMount location={pathname}>
-        <div className="flex min-h-dvh min-w-0">
-          <NavigationRailContainer pathname={pathname} signOutAction={signOutAction} account={account} />
-          <div className="min-h-dvh min-w-0 flex-1">{children}</div>
-        </div>
-      </OttoPanelMount>
-    </div>
+    <OttoPanelMount location={pathname} variant={ottoVariant}>
+      <R22DashboardShell location={pathname} account={account} signOutAction={signOutAction}>
+        {children}
+      </R22DashboardShell>
+    </OttoPanelMount>
   );
 }
 

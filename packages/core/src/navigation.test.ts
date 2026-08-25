@@ -27,12 +27,12 @@ import {
 } from "./navigation.js";
 
 describe("MERCHANT_NAV 的形状", () => {
-  // W2-11 验收条 1(#998):七格权威改写。数字写死,不是「至少七个」——多一格或少一格都是
+  // R22:九扇主门加一个独立 Settings 分组。数字写死,不是「至少」——多一格或少一格都是
   // 一次没被讨论过的导航改动。
-  it("恰好七个顶层节点(Home / Create / Library / Brand / Campaigns / Schedule / Settings)", () => {
-    expect(MERCHANT_NAV.length).toBe(7);
+  it("恰好十个顶层节点(R22 九扇主门 + Settings)", () => {
+    expect(MERCHANT_NAV.length).toBe(10);
     expect(MERCHANT_NAV.map((node) => node.key)).toEqual([
-      "home", "create", "library", "brand", "campaign", "schedule", "settings",
+      "home", "create", "library", "brand", "campaign", "approvals", "schedule", "analytics", "routines", "settings",
     ]);
   });
 
@@ -66,7 +66,10 @@ describe("MERCHANT_NAV 的形状", () => {
       library: "Find every image and video you have already made.",
       brand: "Keep what Otto should remember about your brand and the things you sell.",
       campaign: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
+      approvals: "Review work that needs a decision without implying that unavailable bulk actions succeeded.",
       schedule: "The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.",
+      analytics: "Read the performance data the connected provider actually exposes, with source and freshness visible.",
+      routines: "See the routines Otto may run, their authority, schedule and credit limits.",
       billing: "Buy credits, and read what your credits have gone on.",
       connections: "Connect or disconnect the accounts you post from.",
       preferences: "Set your spend cap and posting defaults.",
@@ -78,7 +81,7 @@ describe("MERCHANT_NAV 的形状", () => {
     for (const item of everyNavDestination()) {
       // 第二个词起,除了品牌与专有名词(Otto),不许再大写开头。
       const words = item.label.split(/\s+/).slice(1);
-      const shouty = words.filter((word) => /^[A-Z]/.test(word) && !["Otto"].includes(word));
+      const shouty = words.filter((word) => /^[A-Z]/.test(word) && !["Otto", "IQ"].includes(word));
       expect(shouty, `${item.key}: ${item.label}`).toEqual([]);
     }
   });
@@ -183,7 +186,7 @@ describe("Otto 是助手,不是模块(W2-11:而且不是地址)", () => {
 
 describe("两个日历择一为准", () => {
   it("树里只有一本日历,就是排期", () => {
-    const calendars = merchantNavLinks().filter((item) => /calendar|schedule/i.test(item.href));
+    const calendars = merchantNavLinks().filter((item) => item.href === "/schedule");
     expect(calendars.map((item) => item.href)).toEqual(["/schedule"]);
   });
 

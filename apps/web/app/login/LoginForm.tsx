@@ -1,6 +1,9 @@
 "use client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Mail } from "lucide-react";
 import { authClient } from "@/lib/better-auth/client";
 import { sanitizeCallbackURL } from "@/lib/safe-redirect";
 import {
@@ -12,40 +15,33 @@ import {
   type SignInCodeFailure,
   type SignInCodeRequestResult,
 } from "@/lib/better-auth/signin-code-contract";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { requestSignInCode } from "./actions";
 
 type LoginFormError =
   | ({ source: "sign_in_code" } & SignInCodeFailure)
-  | { source: "password" | "social" | "code_entry"; message: string };
+  | { source: "code_entry"; message: string };
 
-/** Interactive sign-in surface. Email + password is the primary path; a mailed sign-in code
- *  (passwordless) and Google sit beneath as alternatives. Password/social/code-entry use
- *  authClient; asking for a code uses the typed server action backed by Better Auth.
- *  `from` preserves the post-login redirect.
- *
- *  WHY THE CODE STEP LIVES ON THIS PAGE rather than behind a link in an email: the merchant
- *  finishes signing in in the tab they started in. A mailed link had to guess where they wanted
- *  to end up and carry it through the mail; a code carries nothing, so the redirect below is the
- *  same one the password path uses.
- *
- *  `googleEnabled` is decided on the SERVER from the actual OAuth credentials (#681) and
- *  handed down — this component never reads env and never guesses. False means the server
- *  has no Google provider registered, so offering the button would promise a road that
- *  ends in a 500 and a generic "Sign-in failed. Try again." */
-export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled: boolean }) {
+export type R22AuthFixtureState = "success" | "error" | "rate-limit" | "provider-error" | "expired" | "used" | "no-access" | "unknown";
+
+export function LoginForm({ from, fixture = false, fixtureState = "success" }: { from: string; googleEnabled: boolean; fixture?: boolean; fixtureState?: R22AuthFixtureState }) {
   const callbackURL = sanitizeCallbackURL(from);
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [showPw, setShowPw] = useState(false);
-  const [busy, setBusy] = useState<"code" | "google" | "password" | "verify" | null>(null);
+  const [busy, setBusy] = useState<"code" | "verify" | null>(null);
   const [codeSent, setCodeSent] = useState(false);
+  const [resendSeconds, setResendSeconds] = useState(30);
   const [error, setError] = useState<LoginFormError | null>(null);
+  const [fixtureFailedOnce, setFixtureFailedOnce] = useState(false);
+  const [fixtureVerified, setFixtureVerified] = useState(false);
   const emailInputRef = useRef<HTMLInputElement>(null);
-  const codeInputRef = useRef<HTMLInputElement>(null);
+  const digitRefs = useRef<Array<HTMLInputElement | null>>([]);
   const focusEmailAfterReset = useRef(false);
+  const normalizedEmail = normalizeSignInEmail(email);
+  const emailIsValid = Boolean(normalizedEmail);
+  const digits = useMemo(
+    () => Array.from({ length: SIGN_IN_CODE_LENGTH }, (_, index) => code[index] ?? ""),
+    [code],
+  );
 
   useEffect(() => {
     if (!codeSent && focusEmailAfterReset.current) {
@@ -54,21 +50,17 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
     }
   }, [codeSent]);
 
-  async function signInWithPassword(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim() || !password || busy) return;
-    setBusy("password");
-    setError(null);
-    const { error } = await authClient.signIn.email({ email: email.trim(), password });
-    setBusy(null);
-    if (error) setError({ source: "password", message: error.message ?? "Wrong email or password." });
-    else window.location.assign(callbackURL);
-  }
+  useEffect(() => {
+    if (!codeSent || resendSeconds <= 0) return;
+    const timer = window.setInterval(() => {
+      setResendSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [codeSent, resendSeconds]);
 
-  async function sendSignInCode(e?: React.SyntheticEvent) {
-    e?.preventDefault();
+  async function sendSignInCode(event?: React.SyntheticEvent) {
+    event?.preventDefault();
     if (busy) return;
-    const normalizedEmail = normalizeSignInEmail(email);
     if (!normalizedEmail) {
       setError({
         source: "sign_in_code",
@@ -79,260 +71,187 @@ export function LoginForm({ from, googleEnabled }: { from: string; googleEnabled
       emailInputRef.current?.focus();
       return;
     }
+
     setBusy("code");
     setError(null);
+    if (fixture) {
+      window.setTimeout(() => {
+        setBusy(null);
+        if (fixtureState === "rate-limit") return setError({ source: "code_entry", message: "Too many requests. Wait before trying again; no email was sent." });
+        if (fixtureState === "provider-error") return setError({ source: "code_entry", message: "The email provider did not confirm delivery. Nothing was marked sent." });
+        if (fixtureState === "no-access") return setError({ source: "code_entry", message: "This account cannot access the requested workspace." });
+        if ((fixtureState === "error" || fixtureState === "unknown") && !fixtureFailedOnce) {
+          setFixtureFailedOnce(true);
+          return setError({ source: "code_entry", message: fixtureState === "unknown" ? "Sign-in request outcome is unknown. Check this same request before starting another." : "The request could not be confirmed. Retry safely; no email was sent." });
+        }
+        setCode("");
+        setResendSeconds(0);
+        setCodeSent(true);
+      }, 360);
+      return;
+    }
     let result: SignInCodeRequestResult;
     try {
       result = await requestSignInCode({ email: normalizedEmail });
     } catch {
       result = {
-        status: "error" as const,
-        reason: "unknown" as const,
+        status: "error",
+        reason: "unknown",
         message: SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE,
       };
     }
     setBusy(null);
+
     if (result.status === "error") {
       setError({ source: "sign_in_code", ...result });
-    } else {
-      setCode("");
-      setCodeSent(true);
+      return;
     }
+
+    setCode("");
+    setResendSeconds(30);
+    setCodeSent(true);
+    window.requestAnimationFrame(() => digitRefs.current[0]?.focus());
   }
 
-  async function verifySignInCode(e: React.FormEvent) {
-    e.preventDefault();
+  async function verifySignInCode(event: React.FormEvent) {
+    event.preventDefault();
     if (busy) return;
-    const normalizedEmail = normalizeSignInEmail(email);
     const otp = code.trim();
     if (!normalizedEmail || otp.length !== SIGN_IN_CODE_LENGTH) {
       setError({ source: "code_entry", message: SIGN_IN_CODE_REJECTED_MESSAGE });
-      codeInputRef.current?.focus();
+      digitRefs.current[Math.min(otp.length, SIGN_IN_CODE_LENGTH - 1)]?.focus();
       return;
     }
+
     setBusy("verify");
     setError(null);
-    const { error } = await authClient.signIn.emailOtp({ email: normalizedEmail, otp });
-    setBusy(null);
-    if (error) {
-      // ONE message for every refusal Better Auth can return here — see
-      // SIGN_IN_CODE_REJECTED_MESSAGE for why the three are not told apart.
-      setError({ source: "code_entry", message: SIGN_IN_CODE_REJECTED_MESSAGE });
-      codeInputRef.current?.focus();
-    } else {
-      window.location.assign(callbackURL);
+    if (fixture) {
+      window.setTimeout(() => {
+        setBusy(null);
+        if (fixtureState === "expired") return setError({ source: "code_entry", message: "That code expired. Request a fresh sign-in preview." });
+        if (fixtureState === "used") return setError({ source: "code_entry", message: "That code was already used. One code can only be accepted once." });
+        if (fixtureState === "no-access") return setError({ source: "code_entry", message: "The verified account cannot access the requested workspace." });
+        if (fixtureState === "provider-error") return setError({ source: "code_entry", message: "Verification could not be confirmed. No session was created." });
+        setFixtureVerified(true);
+      }, 360);
+      return;
     }
+    const { error: signInError } = await authClient.signIn.emailOtp({ email: normalizedEmail, otp });
+    setBusy(null);
+    if (signInError) {
+      setError({ source: "code_entry", message: SIGN_IN_CODE_REJECTED_MESSAGE });
+      digitRefs.current[0]?.focus();
+      return;
+    }
+    window.location.assign(callbackURL);
   }
 
-  async function signInWithGoogle() {
-    if (busy) return;
-    setBusy("google");
+  function updateDigit(index: number, value: string) {
+    const nextDigit = value.replace(/\D/g, "").slice(-1);
+    const next = [...digits];
+    next[index] = nextDigit;
+    setCode(next.join(""));
     setError(null);
-    const { error } = await authClient.signIn.social({ provider: "google", callbackURL });
-    // On success the browser is redirected to Google; only reachable on error.
-    if (error) {
-      setBusy(null);
-      setError({ source: "social", message: error.message ?? "Sign-in failed. Try again." });
+    if (nextDigit && index < SIGN_IN_CODE_LENGTH - 1) digitRefs.current[index + 1]?.focus();
+  }
+
+  function handleDigitKeyDown(index: number, event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Backspace" && !digits[index] && index > 0) {
+      event.preventDefault();
+      const next = [...digits];
+      next[index - 1] = "";
+      setCode(next.join(""));
+      digitRefs.current[index - 1]?.focus();
     }
+    if (event.key === "ArrowLeft" && index > 0) digitRefs.current[index - 1]?.focus();
+    if (event.key === "ArrowRight" && index < SIGN_IN_CODE_LENGTH - 1) digitRefs.current[index + 1]?.focus();
+  }
+
+  function handleCodePaste(event: React.ClipboardEvent<HTMLDivElement>) {
+    const pasted = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!pasted) return;
+    event.preventDefault();
+    setCode(pasted);
+    digitRefs.current[Math.min(pasted.length, SIGN_IN_CODE_LENGTH) - 1]?.focus();
   }
 
   function useDifferentEmail() {
     setEmail("");
-    setPassword("");
     setCode("");
     setError(null);
     focusEmailAfterReset.current = true;
     setCodeSent(false);
   }
 
+  if (fixtureVerified) {
+    return (
+      <div className="r22-auth-card r22-auth-confirm" role="status">
+        <div className="r22-auth-state-icon r22-auth-state-icon-sky" aria-hidden="true"><Check /></div>
+        <h1>Email verified</h1>
+        <p className="r22-auth-subtitle">Fixture success only. No session, email delivery, or workspace access was created.</p>
+        <a className="r22-auth-primary" href={callbackURL}>Preview return path</a>
+      </div>
+    );
+  }
+
   if (codeSent) {
     return (
-      <form
-        onSubmit={verifySignInCode}
-        className="flex flex-col gap-3.5 rounded-[var(--radius-card)] border border-border bg-card p-5 shadow-xs"
-      >
-        <div className="text-center">
-          <p className="text-[15px] font-semibold text-foreground">Check your email</p>
-          <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-            If <span className="font-medium text-foreground">{email.trim()}</span> has access, a
-            sign-in code is on its way — enter it below.
-          </p>
+      <form onSubmit={verifySignInCode} className="r22-auth-card">
+        <div className="r22-auth-state-icon r22-auth-state-icon-sky" aria-hidden="true">
+          <Mail size={22} strokeWidth={1.6} />
         </div>
+        <h1>Check your email</h1>
+        <p className="r22-auth-subtitle">
+          {fixture ? <>Fixture code entry for <strong>{normalizedEmail}</strong>. No email was sent and no account existence was revealed.</> : <>If that email has an account, the link is on its way to <strong>{normalizedEmail}</strong>. The link works for 15 minutes.</>}
+        </p>
 
-        {error && (
-          <p role="alert" className="text-center text-[13.5px] font-medium text-destructive">
-            {error.message}
-          </p>
-        )}
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="code" className="sr-only">
-            Sign-in code
-          </label>
-          <Input
-            ref={codeInputRef}
-            id="code"
-            name="code"
-            required
-            autoFocus
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={SIGN_IN_CODE_LENGTH}
-            placeholder="123456"
-            aria-label="Sign-in code"
-            className="text-center text-[19px] font-semibold tracking-[0.4em]"
-            value={code}
-            // Digits only, and never longer than a real code: a paste that brings spaces or a
-            // stray letter along would otherwise be submitted as-is and refused for a reason the
-            // merchant cannot see.
-            onChange={(e) =>
-              setCode(e.target.value.replace(/\D/g, "").slice(0, SIGN_IN_CODE_LENGTH))
-            }
-          />
+        <span className="r22-auth-label" id="sign-in-code-label">Code</span>
+        <div className="r22-auth-code" role="group" aria-labelledby="sign-in-code-label" aria-describedby="sign-in-code-error" onPaste={handleCodePaste}>
+          {digits.map((digit, index) => (
+            <span key={index} className={index === 3 ? "r22-auth-code-break" : undefined}>
+              <Input unstyled
+                ref={(node) => { digitRefs.current[index] = node; }}
+                value={digit}
+                onChange={(event) => updateDigit(index, event.target.value)}
+                onKeyDown={(event) => handleDigitKeyDown(index, event)}
+                maxLength={1}
+                inputMode="numeric"
+                autoComplete={index === 0 ? "one-time-code" : "off"}
+                aria-label={`Digit ${index + 1}`}
+                autoFocus={index === 0}
+              />
+            </span>
+          ))}
         </div>
+        <p className="r22-auth-error" id="sign-in-code-error" role="alert" aria-live="polite">{error?.message ?? ""}</p>
 
-        <Button type="submit" disabled={!!busy} className="w-full">
-          {busy === "verify" ? "Signing in…" : "Sign in"}
+        <Button unstyled className="r22-auth-primary" type="submit" disabled={Boolean(busy) || code.length !== 6}>
+          {busy === "verify" ? "Signing in…" : "Continue"}
         </Button>
-
-        <div className="flex items-center justify-center gap-3 text-[13.5px]">
-          <Button
-            type="button"
-            variant="link"
-            onClick={() => sendSignInCode()}
-            disabled={!!busy}
-            className="h-auto w-auto p-0 font-semibold text-muted-foreground underline hover:text-foreground"
-          >
-            {busy === "code" ? "Sending…" : "Send it again"}
+        <p className="r22-auth-resend">
+          <span>Didn’t get it?</span>{" "}
+          <Button unstyled type="button" onClick={() => sendSignInCode()} disabled={Boolean(busy) || resendSeconds > 0}>
+            {busy === "code" ? "Sending…" : resendSeconds > 0 ? `Resend in ${resendSeconds} seconds` : "Resend now"}
           </Button>
-          <span className="text-muted-foreground/50">·</span>
-          <Button
-            type="button"
-            variant="link"
-            onClick={useDifferentEmail}
-            className="h-auto w-auto p-0 font-semibold text-muted-foreground underline hover:text-foreground"
-          >
-            Use a different email
-          </Button>
-        </div>
+        </p>
+        <p className="r22-auth-fact">{fixture ? "Enter any six digits to inspect the requested auth state. Production still requires a real one-time code." : "Check your spam folder. Opening the link on another device signs you in there instead — one link, one use."}</p>
+        <Button unstyled className="r22-auth-secondary" type="button" onClick={useDifferentEmail}>Use a different email</Button>
       </form>
     );
   }
 
   return (
-    <div className="flex flex-col gap-3.5">
-      {error && (
-        <p role="alert" className="text-[13.5px] font-medium text-destructive">
-          {error.message}
-        </p>
-      )}
-
-      <form onSubmit={signInWithPassword} className="flex flex-col gap-3.5">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="email" className="text-[13px] font-semibold text-foreground/85">
-            Email
-          </label>
-          <Input
-            ref={emailInputRef}
-            id="email"
-            type="email"
-            name="email"
-            required
-            autoFocus
-            placeholder="you@yourbrand.com"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="password" className="text-[13px] font-semibold text-foreground/85">
-            Password
-          </label>
-          <div className="relative">
-            <Input
-              id="password"
-              type={showPw ? "text" : "password"}
-              name="password"
-              placeholder="Enter your password"
-              autoComplete="current-password"
-              className="pr-11"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowPw((v) => !v)}
-              aria-label={showPw ? "Hide password" : "Show password"}
-              className="absolute right-1.5 top-1/2 size-9 -translate-y-1/2 rounded-[10px] text-muted-foreground hover:bg-transparent hover:text-foreground"
-            >
-              {showPw ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
-                  <path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-2.2 3M6.1 6.1A13.3 13.3 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 3.9-.9M3 3l18 18" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
-                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-              )}
-            </Button>
-          </div>
-        </div>
-
-        <a
-          href="/forgot-password"
-          className="-mt-1 self-start text-[12.5px] font-semibold text-muted-foreground underline underline-offset-4 hover:text-foreground"
-        >
-          Forgot your password?
-        </a>
-
-        <Button type="submit" disabled={!!busy} className="mt-0.5 w-full">
-          {busy === "password" ? "Signing in…" : "Sign in"}
-        </Button>
-      </form>
-
-      <div className="flex items-center gap-3 text-[12.5px] font-medium text-muted-foreground">
-        <span className="h-px flex-1 bg-border" />
-        or
-        <span className="h-px flex-1 bg-border" />
+    <form onSubmit={sendSignInCode} className="r22-auth-card">
+      <h1>Sign in to Fikirtive</h1>
+      <p className="r22-auth-subtitle">New here? We’ll create your workspace after you confirm your email.</p>
+      <label className="r22-auth-label" htmlFor="email">Email</label>
+      <div className={`r22-auth-field${emailIsValid ? " is-valid" : ""}`}>
+        <Input unstyled ref={emailInputRef} id="email" type="email" name="email" required autoFocus placeholder="you@yourshop.com" autoComplete="email" aria-describedby="sign-in-email-error" value={email} onChange={(event) => { setEmail(event.target.value); setError(null); }} />
+        <span aria-hidden="true"><Check /></span>
       </div>
-
-      <div className="flex flex-col gap-2.5">
-        <Button type="button" variant="secondary" onClick={() => sendSignInCode()} disabled={!!busy} className="w-full">
-          {busy === "code" ? (
-            "Sending…"
-          ) : (
-            <>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="m2 7 10 6 10-6" />
-              </svg>
-              Email me a sign-in code
-            </>
-          )}
-        </Button>
-        {googleEnabled && (
-          <Button type="button" variant="secondary" onClick={signInWithGoogle} disabled={!!busy} className="w-full">
-            {busy === "google" ? (
-              "Redirecting…"
-            ) : (
-              <>
-                <svg viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M22.5 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.9a5 5 0 0 1-2.2 3.3v2.7h3.5c2-1.9 3.3-4.7 3.3-7.8z" />
-                  <path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.5-2.7c-1 .7-2.3 1.1-3.8 1.1-2.9 0-5.3-1.9-6.2-4.6H2.2v2.8A11 11 0 0 0 12 23z" />
-                  <path fill="#FBBC05" d="M5.8 14.1a6.6 6.6 0 0 1 0-4.2V7.1H2.2a11 11 0 0 0 0 9.8z" />
-                  <path fill="#EA4335" d="M12 5.4c1.6 0 3 .6 4.2 1.6l3.1-3.1A11 11 0 0 0 2.2 7.1l3.6 2.8C6.7 7.3 9.1 5.4 12 5.4z" />
-                </svg>
-                Continue with Google
-              </>
-            )}
-          </Button>
-        )}
-      </div>
-    </div>
+      <p className="r22-auth-error" id="sign-in-email-error" role="alert" aria-live="polite">{error?.message ?? ""}</p>
+      <Button unstyled className="r22-auth-primary" type="submit" disabled={!emailIsValid || Boolean(busy)}>{busy === "code" ? "Sending…" : fixtureState === "unknown" && fixtureFailedOnce ? "Check request status" : "Continue"}</Button>
+      <p className="r22-auth-fact">One email carries both a link and a six-digit code. Use whichever device is closer to hand.</p>
+    </form>
   );
 }

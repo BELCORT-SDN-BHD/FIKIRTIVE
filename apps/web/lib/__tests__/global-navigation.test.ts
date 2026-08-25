@@ -74,12 +74,20 @@ describe("isMerchantSurface —— 从权威源推出来,不是手抄的名单 (
 });
 
 describe("MerchantShellContent —— 只管这一面要不要壳", () => {
+  it("打开 project 后由 R22 Canvas 独占整个 viewport,不再画 dashboard 导轨", () => {
+    const markup = renderShell(SHELL_ROUTES.canvas);
+
+    expect(markup).not.toContain('aria-label="Global navigation"');
+    expect(markup).not.toContain("data-otto-panel-shell");
+    expect(markup).toContain("Page content");
+  });
+
   it("在商家表面画出导轨,商家自己的内容原样透出", () => {
     const markup = renderShell(SHELL_ROUTES.campaign);
 
     expect(markup).toContain('aria-label="Global navigation"');
     expect(markup).toContain(`href="${SHELL_ROUTES.campaign}"`);
-    expect(markup).toContain(`href="${SHELL_ROUTES.billing}"`);
+    expect(markup).toContain(`href="${SHELL_ROUTES.preferences}"`);
     expect(markup).toContain("Page content");
   });
 

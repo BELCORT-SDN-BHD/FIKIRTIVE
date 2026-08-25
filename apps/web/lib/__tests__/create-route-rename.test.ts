@@ -269,14 +269,11 @@ describe("一屏只有一个开工入口(规格书 Q2-A)", () => {
   });
 
   it("`/create` 摆的就是那一份(不是长得像的第二个)", () => {
-    expect(sourceCode("components/canvas/NorthstarHome.tsx")).toContain(
-      "@/components/start-something/StartSomething",
-    );
-    // 创作面这一页 → 受控入口 → NorthstarHome → 那个框,一条真的引用链。
-    expect(sourceCode("app/create/page.tsx")).toContain("@/components/canvas/NorthstarHomeEntry");
-    expect(sourceCode("components/canvas/NorthstarHomeEntry.tsx")).toContain(
-      "@/components/canvas/NorthstarHome",
-    );
+    // R22 把 `/create` 的可见入口收敛到 Projects dialog；旧 NorthstarHome 不再承担
+    // 视觉入口。路由必须直接进入唯一的 R22 Projects 实现，不能再挂回旧 shell。
+    expect(sourceCode("app/create/page.tsx")).toContain("@/components/projects/R22ProjectsEntry");
+    expect(sourceCode("components/projects/R22ProjectsEntry.tsx")).toContain("./R22ProjectsView");
+    expect(sourceCode("components/projects/R22ProjectsView.tsx")).toContain("createProject(");
   });
 
   it("开工动作也只有一条:`createProject` 的调用点是一份写明理由的名单", () => {
@@ -290,6 +287,10 @@ describe("一屏只有一个开工入口(规格书 Q2-A)", () => {
       // 调用点不再存在,豁免簿跟着划掉,不是留一条陈账。
       "lib/otto-projects-port.ts":
         "Otto 技能的项目端口:Otto 只提议,商家点了才建 —— 它不画界面,也不静默开画布。",
+      "components/projects/R22ProjectsView.tsx":
+        "R22 Projects 的显式 Create project dialog；提交后进入 canonical Canvas。",
+      "components/onboarding/R22Onboarding.tsx":
+        "Production onboarding 的显式 Continue in Canvas 恢复出口；fixture 不调用真实动作。",
     };
 
     const callers = productSources()

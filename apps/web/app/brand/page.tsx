@@ -2,12 +2,9 @@ import { redirect } from "next/navigation";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { requireOwner } from "@/lib/auth-guard";
 import { getOrCreateDefaultProject } from "@/lib/actions";
-import { getEntities, getMyAds, getProjects, getRecentGenerationThumbs } from "@/lib/data";
-import { toEntityDTO } from "@/lib/dto";
-import { listMemory } from "@/lib/memory-actions";
-import { listBrandRecords } from "@/lib/brand-record-actions";
-import { buildStuffItems } from "@/lib/stuff-items";
-import { OttoMemory } from "@/components/otto/OttoMemory";
+import { getProjects } from "@/lib/data";
+import { listMemory, type MemoryRow } from "@/lib/memory-actions";
+import { R22OttoIQView } from "@/components/otto-iq/R22OttoIQView";
 
 /**
  * Brand —— 换壳(Wave 2)的 W2-2,规格书 `docs/specs/wave2-shell.md` §4.4。
@@ -37,61 +34,39 @@ export const metadata = { title: "Brand · Fikirtive" };
 export default async function BrandPage({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string; tab?: string }>;
+  searchParams: Promise<{ project?: string; tab?: string; fixture?: string; state?: string }>;
 }) {
   const sp = await searchParams;
+  const panes = new Set(["hub", "voice", "audiences", "sources", "style", "visual"]);
+  const initialPane = panes.has(sp.tab ?? "") ? sp.tab as "voice" | "audiences" | "sources" | "style" | "visual" : "hub";
+  if (process.env.NODE_ENV !== "production" && sp.fixture === "r22") {
+    const fixtureState = sp.state === "loading" || sp.state === "empty" || sp.state === "error" || sp.state === "permission" || sp.state === "unknown" ? sp.state : "ready";
+    const fixtureDate = new Date("2026-08-24T12:00:00.000Z");
+    const fixtureMemory: MemoryRow[] = [
+      { id: "fixture-voice", category: "voice", content: "Everyday voice: Warm, direct and specific about the craft.", source: "user", pinned: true, updatedAt: fixtureDate },
+      { id: "fixture-audience-1", category: "audience", content: "Weekend gift buyers: Thoughtful local gifts for family visits.", source: "user", pinned: true, updatedAt: fixtureDate },
+      { id: "fixture-audience-2", category: "audience", content: "Returning customers: People restocking scents they already know.", source: "user", pinned: true, updatedAt: fixtureDate },
+      { id: "fixture-source-1", category: "source", content: "Brand story: Batik House origin and local craft notes.", source: "user", pinned: true, updatedAt: fixtureDate },
+      { id: "fixture-source-2", category: "knowledge", content: "Candle care: Trim the wick to 5 mm before lighting.", source: "user", pinned: true, updatedAt: fixtureDate },
+      { id: "fixture-style-1", category: "style", content: "Approved language: Describe materials and process plainly.", source: "user", pinned: true, updatedAt: fixtureDate },
+      { id: "fixture-style-2", category: "do not say", content: "Do not say: Never promise health or therapeutic outcomes.", source: "user", pinned: true, updatedAt: fixtureDate },
+      { id: "fixture-visual", category: "visual", content: "Raya visual direction: Teal batik, warm gold and calm natural light.", source: "user", pinned: true, updatedAt: fixtureDate },
+    ];
+    return <R22OttoIQView initialMemory={fixtureState === "empty" ? [] : fixtureMemory} initialPane={initialPane} fixture fixtureState={fixtureState} />;
+  }
 
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-  const { ownerId } = owner;
-
-  // 品牌资料本身是 owner-scoped 的(`listMemory` / `listBrandRecords` 都只按 session 的
-  // ownerId 查,连调用方传的 id 都不认)。projectId 在这一面只有一个用途:品牌聊天续的是
-  // 哪一条会话。所以这里跟 `/otto` 用同一条口径 —— `?project=` 认得(且必须是自己的),
-  // 否则落在同一个默认项目上,商家从哪扇门进来续的都是同一条对话。
   const ensured = await getOrCreateDefaultProject();
   if ("error" in ensured) redirect("/login");
-  const projects = await getProjects(ownerId);
-  const requested = sp?.project ? projects.find((p) => p.id === sp.project) : undefined;
+  const projects = await getProjects(owner.ownerId);
+  const requested = sp.project ? projects.find((project) => project.id === sp.project) : undefined;
   const projectId = requested?.id ?? projects[0]?.id ?? ensured.id;
-
-  // `?project=` 指向一条不是自己的项目时,**改地址栏**,不静默回落(判官 P3-1)。
-  // `/otto` 一直是这么做的(`app/otto/page.tsx` 同一段),两扇门必须是同一个行为:
-  // 静默回落会把一个假 id 留在地址栏上,而商家看到的内容其实来自另一个项目 —— 他一刷新、
-  // 一分享、一收藏,带走的都是那个假 id,下一次再落在别处。归一之后地址栏说的就是屏幕上的事。
-  // `?tab=` 一起带过去:它是这一面自己的状态(哪个页签),纠正项目不该顺手把页签也丢了。
-  if (sp?.project && !requested) {
-    const corrected = new URLSearchParams();
-    corrected.set("project", projectId);
+  if (sp.project && !requested) {
+    const corrected = new URLSearchParams({ project: projectId });
     if (sp.tab) corrected.set("tab", sp.tab);
     redirect(`${SHELL_ROUTES.brand}?${corrected.toString()}`);
   }
-
-  const [memory, records, entities, history, ads] = await Promise.all([
-    listMemory(ownerId),
-    listBrandRecords(ownerId),
-    getEntities(ownerId),
-    getRecentGenerationThumbs(ownerId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
-    getMyAds(ownerId).catch(() => [] as Awaited<ReturnType<typeof getMyAds>>),
-  ]);
-
-  // 产品图片选择器读的就是 Library 那一份统一清单 —— 组装函数原样复用(`OttoView` 也是拿
-  // 它喂这个视图的),不在这里另写一遍「什么算一件素材」。
-  const stuffItems = buildStuffItems({
-    entities: entities.map(toEntityDTO),
-    history,
-    ads,
-    records,
-  });
-
-  return (
-    <main className="flex min-h-dvh flex-col bg-background text-foreground">
-      <OttoMemory
-        initialMemory={memory}
-        initialRecords={records}
-        projectId={projectId}
-        stuffItems={stuffItems}
-      />
-    </main>
-  );
+  const memory = await listMemory(owner.ownerId);
+  return <R22OttoIQView initialMemory={memory} initialPane={initialPane} />;
 }

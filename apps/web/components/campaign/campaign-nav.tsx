@@ -7,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // Schedule 一本。旧链接照旧可用(那条路由现在重定向到排期),只是不再在这里开第二扇门。
 const items = [
   { href: "/campaign", label: "Campaigns", key: "list" },
-  { href: "/campaign/workbench", label: "Workbench", key: "workbench" },
+  { href: "/campaign/new", label: "Plan campaign", key: "workbench" },
   { href: "/campaign/trends", label: "Trends", key: "trends" },
 ] as const;
 
@@ -27,11 +27,11 @@ export function CampaignNav({ current }: { current: (typeof items)[number]["key"
   return (
     <>
       <Link
-        href="/otto"
+        href="/campaign"
         className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="size-4" />
-        Return to Otto
+        Back to campaigns
       </Link>
       <Tabs value={active} activationMode="manual">
         <TabsList
@@ -48,4 +48,3 @@ export function CampaignNav({ current }: { current: (typeof items)[number]["key"
     </>
   );
 }
-

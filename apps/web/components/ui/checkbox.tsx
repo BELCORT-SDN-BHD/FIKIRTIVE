@@ -10,11 +10,11 @@ import { cn } from "@/lib/utils"
  * FIKIRTIVE checkbox. Same 1.5px border and coral focus ring as `<Input>` so a form
  * reads as one control family, and the checked state is INK (coral stays agent-only).
  */
-function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxPrimitive.Root>) {
+function Checkbox({ className, unstyled = false, ...props }: React.ComponentProps<typeof CheckboxPrimitive.Root> & { unstyled?: boolean }) {
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"
-      className={cn(
+      className={unstyled ? className : cn(
         "peer size-[18px] shrink-0 rounded-[6px] border-[1.5px] border-input bg-card shadow-xs outline-none transition-[color,background-color,border-color,box-shadow] duration-150",
         "data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
         "data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground",

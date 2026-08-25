@@ -236,11 +236,10 @@ describe("两页真的画得出来(真 React,真组件)", () => {
     const dom = await mount(await LibraryPage());
 
     expect(dom.querySelector("h1")?.textContent).toBe("Library");
-    expect(dom.textContent).toContain("Everything you and Otto have made or saved across every project.");
-    // 数据是按 ownerId 取的,而且是 /otto 那一页本来就在用的同一批读取函数。
-    expect(mocks.getEntities).toHaveBeenCalledWith("own_1");
-    expect(mocks.listBrandRecords).toHaveBeenCalledWith("own_1");
-    expect(mocks.getRecentGenerationThumbs).toHaveBeenCalledWith("own_1");
+    expect(dom.textContent).toContain("Find every image and video you have already made.");
+    // 素材来自 owner-scoped 的完成历史；进行中与失败任务另读、另画，不能混成可复用素材。
+    expect(mocks.getGenerationHistory).toHaveBeenCalledWith({ take: 80 });
+    expect(mocks.getMyAdJobs).toHaveBeenCalledWith("own_1");
   });
 
   it("`/library` 不自己组装列表 —— 组装仍然只有 buildStuffItems 一处(行为围栏)", () => {
@@ -271,15 +270,15 @@ describe("两页真的画得出来(真 React,真组件)", () => {
   // W2-11(换壳切换总票)删掉了这条原来所在的「Stack A:旧壳零行为变化」describe —— 那个
   // 名字本身描述的是「新旧路由并存」那段过渡期,旧壳(`OttoView.tsx`/`OttoApp.tsx`)随本票
   // 删除,过渡期结束。这条断言本身仍然成立,搬进这里(它测的是**这一页**,不是新旧对照)。
-  it("聊天不在这一页上,「跳进聊天」的两颗键就不出现", async () => {
+  it("失败任务与素材分开,而且不画任何假动作", async () => {
     mocks.getMyAdJobs.mockResolvedValue([FAILED_JOB]);
     const dom = await mount(await LibraryPage());
 
     expect(dom.textContent, "失败的那一条仍然要说话").toContain("Didn't go through");
     expect(buttonWithText(dom, "Open conversation"), "一颗按下去什么都不发生的键").toBeFalsy();
     expect(buttonWithText(dom, "Retry with Otto")).toBeFalsy();
-    // 「Hide」不依赖聊天,它照旧在 —— 免得上面两条其实是「整排键都没画出来」。
-    expect(buttonWithText(dom, "Hide")).toBeTruthy();
+    expect(buttonWithText(dom, "Hide")).toBeFalsy();
+    expect(dom.textContent).toContain("Incomplete generations stay separate from reusable Library items.");
   });
 });
 

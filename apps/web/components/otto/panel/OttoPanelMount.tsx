@@ -20,14 +20,16 @@ import { ottoPanelMountsOn } from "./panel-surface";
 export function OttoPanelMount({
   location,
   children,
+  variant = "legacy",
 }: {
   /** 当前地址(带 query,与 `MerchantShellContent` 收到的是同一个字符串)。 */
   location: string;
   children: React.ReactNode;
+  variant?: "legacy" | "r22";
 }) {
   if (!ottoPanelMountsOn(location)) return <>{children}</>;
 
   // 面板里那些内容的状态收在 `OttoPanelHost`(#995)—— 这个文件只回答「这一面挂不挂」。
   // 早退在 hooks 之前,所以状态必须住在另一个组件里。
-  return <OttoPanelHost location={location}>{children}</OttoPanelHost>;
+  return <OttoPanelHost location={location} variant={variant}>{children}</OttoPanelHost>;
 }

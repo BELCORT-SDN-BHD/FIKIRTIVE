@@ -143,7 +143,7 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
 function shell(pathname: string) {
   return createElement(
     MerchantShellContent,
-    { pathname, signOutAction: async () => {} },
+    { pathname, signOutAction: async () => {}, ottoVariant: "legacy" },
     createElement("div", { "data-page": "" }, "Page"),
   );
 }
@@ -238,11 +238,12 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
   });
 
   it("战役底下的固定子段不是对象 —— 不许拿它的名字当 id 去查库", () => {
-    for (const segment of ["calendar", "trends", "workbench"]) {
+    for (const segment of ["calendar", "trends"]) {
       const subject = panelContextSubject(`${SHELL_ROUTES.campaign}/${segment}`);
       expect(subject, segment).toMatchObject({ kind: "page", routeKey: "campaign" });
       expect(subject && "objectId" in subject, segment).toBe(false);
     }
+    expect(panelContextSubject(SHELL_ROUTES.approvals)).toMatchObject({ kind: "page", routeKey: "approvals" });
   });
 });
 

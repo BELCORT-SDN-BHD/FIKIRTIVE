@@ -19,6 +19,7 @@
     "@fikirtive/token-crypto": "workspace:*",
     "@sentry/nextjs": "^10.58.0",
     "@sentry/node": "^10.58.0",
+    "@shadcn/react": "^0.3.0",
     "@tiptap/extension-mention": "^3.26.0",
     "@tiptap/extensions": "^3.26.0",
     "@tiptap/react": "^3.26.0",

@@ -18,6 +18,8 @@ export type AccountViewData = {
   // panel reads this instead of calling getMetaConnection() again itself (#518 rework
   // finding 2: up to four independent Meta reads per page load, collapsed to one).
   meta: MetaConnectionResult;
+  /** False means DEFAULT_SETTINGS is only the fail-closed runtime fallback, not a persisted fact. */
+  settingsReadable: boolean;
 };
 
 export async function getAccountViewData(): Promise<AccountViewData | { error: string }> {
@@ -58,8 +60,9 @@ export async function getAccountViewData(): Promise<AccountViewData | { error: s
     metaConnPromise,
     channelsPromise,
   ]);
-  const settings = settingsRes && !("error" in settingsRes) ? settingsRes : DEFAULT_SETTINGS;
+  const settingsReadable = !!settingsRes && !("error" in settingsRes);
+  const settings = settingsReadable ? settingsRes : DEFAULT_SETTINGS;
   const adsAutonomy: "ASK" | "AUTO" = !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
   const canPublish = !("error" in metaConn) && metaConn.canPublish === true;
-  return { settings, channels, shelf, adsAutonomy, canPublish, meta: metaConn };
+  return { settings, settingsReadable, channels, shelf, adsAutonomy, canPublish, meta: metaConn };
 }

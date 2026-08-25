@@ -1,0 +1,325 @@
+.r22-analytics {
+  width: min(1120px, calc(100% - 56px));
+  margin: 0 auto;
+  padding: 46px 0 84px;
+  color: var(--r22-ink);
+}
+
+.r22-analytics > header h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -.035em;
+}
+
+.r22-analytics > header p,
+.r22-analytics-fresh {
+  margin: 7px 0 0;
+  color: var(--r22-ink-2);
+  font-size: 13px;
+}
+
+.r22-analytics-fresh {
+  display: inline-flex;
+  margin-top: 14px;
+  padding: 6px 9px;
+  border: 1px solid var(--r22-line);
+  border-radius: 99px;
+  background: var(--r22-surface);
+  font-size: 10.5px;
+}
+
+.r22-analytics-controls {
+  display: flex;
+  margin-top: 22px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.r22-analytics-controls > select {
+  min-height: 31px;
+  padding: 0 28px 0 9px;
+  border: 1px solid var(--r22-line);
+  border-radius: 7px;
+  background: var(--r22-surface);
+  color: var(--r22-ink-3);
+  font-size: 10.5px;
+  opacity: 1;
+}
+
+.r22-analytics-controls > div {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--r22-line);
+  border-radius: 8px;
+  background: var(--r22-surface);
+}
+
+.r22-analytics-controls button {
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--r22-ink-2);
+  font-size: 10.5px;
+}
+
+.r22-analytics-controls button.is-active {
+  background: var(--r22-chrome);
+  color: var(--r22-ink);
+  font-weight: 620;
+}
+
+.r22-analytics-body {
+  transition: opacity 160ms cubic-bezier(.23, 1, .32, 1);
+}
+
+.r22-analytics-body.is-pending {
+  opacity: .48;
+}
+
+.r22-analytics-quality {
+  display: flex;
+  margin: 14px 0 0;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid #ead9bb;
+  border-radius: 8px;
+  background: #fff9ee;
+  color: #7b5b1d;
+  font-size: 10.5px;
+}
+
+.r22-analytics-quality svg { width: 14px; flex: none; }
+
+.r22-analytics-overview,
+.r22-analytics-chart {
+  margin-top: 15px;
+  padding: 18px;
+  border: 1px solid var(--r22-line);
+  border-radius: 11px;
+  background: var(--r22-surface);
+}
+
+.r22-analytics-overview > header,
+.r22-analytics-chart > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.r22-analytics-overview h2,
+.r22-analytics-chart h2 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.r22-analytics-overview header span,
+.r22-analytics-chart header span {
+  color: var(--r22-ink-3);
+  font-size: 10px;
+}
+
+.r22-analytics-overview > div {
+  display: grid;
+  margin-top: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.r22-analytics-overview article {
+  min-height: 128px;
+  padding: 15px;
+  border: 1px solid var(--r22-line);
+  border-radius: 9px;
+  background: var(--r22-ground);
+}
+
+.r22-analytics-overview article > span {
+  display: block;
+  color: var(--r22-ink-2);
+  font-size: 10.5px;
+}
+
+.r22-analytics-overview article b {
+  display: block;
+  margin-top: 13px;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: clamp(16px, 2vw, 23px);
+  font-weight: 560;
+  letter-spacing: -.04em;
+}
+
+.r22-analytics-overview article small {
+  display: block;
+  margin-top: 10px;
+  color: var(--r22-ink-3);
+  font-size: 9px;
+}
+
+.r22-analytics-overview article small.is-up {
+  color: #17824b;
+}
+
+.r22-analytics-overview article small.is-down {
+  color: #b5453d;
+}
+
+.r22-analytics-overview article small i {
+  color: var(--r22-ink-3);
+  font-style: normal;
+}
+
+.r22-analytics-insight {
+  display: grid;
+  margin-top: 10px;
+  padding: 13px 15px;
+  align-items: center;
+  grid-template-columns: 30px 1fr auto;
+  gap: 11px;
+  border: 1px solid #d9e5ff;
+  border-radius: 10px;
+  background: #f5f8ff;
+}
+
+.r22-analytics-insight p {
+  margin: 0;
+  color: var(--r22-ink-2);
+  font-size: 11.5px;
+}
+
+.r22-analytics-insight button,
+.r22-analytics-state button,
+.r22-analytics-state a {
+  padding: 8px 11px;
+  border: 1px solid var(--r22-line);
+  border-radius: 7px;
+  background: var(--r22-surface);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.r22-analytics-chart svg {
+  display: block;
+  width: 100%;
+  height: 235px;
+  margin-top: 18px;
+  overflow: visible;
+}
+
+.r22-analytics-chart svg line {
+  stroke: var(--r22-line);
+  stroke-width: 1;
+}
+
+.r22-analytics-area {
+  fill: #edf2ff;
+}
+
+.r22-analytics-line {
+  fill: none;
+  stroke: #3669d6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.r22-analytics-state {
+  display: flex;
+  min-height: 430px;
+  margin-top: 18px;
+  padding: 34px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  border: 1px solid var(--r22-line);
+  border-radius: 11px;
+  background: var(--r22-surface);
+  text-align: center;
+}
+
+.r22-analytics-state > svg {
+  width: 24px;
+  height: 24px;
+  color: var(--r22-ink-2);
+}
+
+.r22-analytics-state h2 {
+  margin: 13px 0 0;
+  font-size: 16px;
+}
+
+.r22-analytics-state p {
+  max-width: 470px;
+  margin: 7px 0 0;
+  color: var(--r22-ink-2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.r22-analytics-state button,
+.r22-analytics-state a {
+  margin-top: 14px;
+}
+
+.r22-analytics button,
+.r22-analytics a {
+  transition: transform 140ms cubic-bezier(.23, 1, .32, 1), opacity 140ms ease, background-color 140ms ease;
+}
+
+.r22-analytics button:active,
+.r22-analytics a:active {
+  transform: scale(.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-analytics-controls button:hover,
+  .r22-analytics-insight button:hover,
+  .r22-analytics-state button:hover,
+  .r22-analytics-state a:hover {
+    background: var(--r22-chrome);
+  }
+}
+
+@media (max-width: 820px) {
+  .r22-analytics-overview > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .r22-analytics {
+    width: calc(100% - 28px);
+    padding-top: 28px;
+  }
+
+  .r22-analytics-overview > div {
+    grid-template-columns: 1fr;
+  }
+
+  .r22-analytics-insight {
+    grid-template-columns: 30px 1fr;
+  }
+
+  .r22-analytics-insight button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .r22-analytics-chart svg {
+    height: 180px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-analytics-body {
+    transition: none;
+  }
+
+  .r22-analytics button:active,
+  .r22-analytics a:active {
+    transform: none;
+  }
+}

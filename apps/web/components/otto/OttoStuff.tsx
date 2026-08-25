@@ -73,7 +73,7 @@ function AdJobCard({
     ? "bg-warning-soft text-warning-soft-foreground"
     : "bg-error-soft text-[var(--error-soft-foreground)]";
   const pillLabel = isProcessing ? "Processing…" : "Didn't go through";
-  const when = new Date(job.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const when = new Date(job.createdAt).toLocaleDateString("en-GB", { month: "short", day: "numeric" });
 
   return (
     <div className="flex flex-col gap-2 rounded-[14px] border border-border bg-card p-3">

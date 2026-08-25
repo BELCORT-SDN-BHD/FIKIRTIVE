@@ -66,7 +66,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CampaignNav } from "./campaign-nav";
 
@@ -742,7 +742,7 @@ function GroupingCard({
             <Select value={selected} onValueChange={setSelected}>
               <SelectTrigger><SelectValue placeholder={`Choose ${title.toLowerCase()}`} /></SelectTrigger>
               <SelectContent>
-                {available.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+                <SelectGroup>{available.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectGroup>
               </SelectContent>
             </Select>
             <Button type="button" variant="secondary" disabled={!selected || busy !== null} onClick={async () => {

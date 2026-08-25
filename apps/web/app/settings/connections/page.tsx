@@ -1,6 +1,4 @@
-import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth-guard";
-import OttoConnections from "@/components/otto/OttoConnections";
+import { R22SettingsEntry } from "@/components/settings/R22SettingsEntry";
 
 /**
  * Connections —— 换壳(Wave 2)的 W2-4,规格书 `docs/specs/wave2-shell.md` §4.7。
@@ -19,14 +17,6 @@ import OttoConnections from "@/components/otto/OttoConnections";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Connections · Fikirtive" };
 
-export default async function ConnectionsRoutePage() {
-  const owner = await requireOwner();
-  if ("error" in owner) redirect("/login");
-
-  return (
-    // 与 /settings 同一层壳:`gb` 是唯一皮肤,高度交给这一层,滚动留在组件里。
-    <main className="gb flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      <OttoConnections />
-    </main>
-  );
+export default function ConnectionsRoutePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> } = { searchParams: Promise.resolve({}) }) {
+  return <R22SettingsEntry searchParams={searchParams} defaultSection="connections" />;
 }

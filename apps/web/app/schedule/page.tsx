@@ -5,6 +5,7 @@ import { toEntityDTO } from "@/lib/dto";
 import { listBrandRecords } from "@/lib/brand-record-actions";
 import { buildStuffItems } from "@/lib/stuff-items";
 import { ScheduleSurface } from "@/components/schedule/schedule-surface";
+import type { StuffItem } from "@/lib/stuff-items";
 
 /**
  * Schedule 的真路由(规格书 §4.6)—— 唯一权威日历,原样搬家。
@@ -16,7 +17,20 @@ import { ScheduleSurface } from "@/components/schedule/schedule-surface";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Schedule · Fikirtive" };
 
-export default async function SchedulePage() {
+function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
+const FIXTURE_STUFF: StuffItem[] = [1, 2, 3, 4].map((value) => ({ id: `fixture-${value}`, source: "gen", label: `Fixture media ${value}`, url: `/fixtures/r22-canvas/art-${value}.jpg`, mediaKind: "image", generationId: `fixture-asset-${value}`, projectId: "fixture-raya", assetId: `fixture-asset-${value}` }));
+
+export default async function SchedulePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> } = { searchParams: Promise.resolve({}) }) {
+  const params = await searchParams;
+  const fixture = process.env.NODE_ENV !== "production" && first(params.fixture) === "r22";
+  const openComposer = first(params.compose) === "new";
+  if (fixture) {
+    const requestedState = first(params.state);
+    const fixtureState = requestedState === "loading" || requestedState === "error" || requestedState === "permission" || requestedState === "empty" || requestedState === "unknown" ? requestedState : "ready";
+    const requestedOutcome = first(params.outcome);
+    const fixtureOutcome = requestedOutcome === "error" || requestedOutcome === "permission" || requestedOutcome === "unknown" ? requestedOutcome : "success";
+    return <ScheduleSurface key={openComposer ? "composer-open" : "composer-closed"} stuffItems={FIXTURE_STUFF} fixture openComposer={openComposer} fixtureState={fixtureState} fixtureOutcome={fixtureOutcome} />;
+  }
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
@@ -29,5 +43,5 @@ export default async function SchedulePage() {
   ]);
 
   const stuffItems = buildStuffItems({ entities: entities.map(toEntityDTO), history, ads, records });
-  return <ScheduleSurface stuffItems={stuffItems} />;
+  return <ScheduleSurface key={openComposer ? "composer-open" : "composer-closed"} stuffItems={stuffItems} openComposer={openComposer} />;
 }

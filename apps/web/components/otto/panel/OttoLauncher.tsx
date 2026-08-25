@@ -11,6 +11,7 @@
  */
 
 import * as React from "react";
+import Image from "next/image";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +31,7 @@ export interface OttoLauncherProps {
   onOpen: () => void;
   /** 松手时的落点(图标左上角),由上层交给 `snapLauncher` 吸边。 */
   onRelease: (point: { x: number; y: number }) => void;
+  variant?: "legacy" | "r22";
 }
 
 interface DragState {
@@ -43,7 +45,7 @@ interface DragState {
   moved: boolean;
 }
 
-export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: OttoLauncherProps) {
+export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease, variant = "legacy" }: OttoLauncherProps) {
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const resting = launcherPosition(anchor, viewport);
 
@@ -100,6 +102,7 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
       size="icon"
       data-otto-launcher=""
       data-otto-launcher-edge={anchor.edge}
+      data-otto-launcher-variant={variant}
       {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
       aria-label="Ask Otto"
       title="Ask Otto"
@@ -146,7 +149,7 @@ export function OttoLauncher({ anchor, viewport, hydrated, onOpen, onRelease }: 
       // portal 到 body 的 ui/dialog 根本不在这个层叠上下文里)。导轨 40 < launcher 45 < 50。
       className="z-[45] size-12 touch-none rounded-full p-0 shadow-[var(--shadow-md)] active:cursor-grabbing"
     >
-      <OttoAvatar size={26} mood="idle" />
+      {variant === "r22" ? <Image src="/brand/r22-otto.svg" width={120} height={110} alt="" /> : <OttoAvatar size={26} mood="idle" />}
     </Button>
   );
 }

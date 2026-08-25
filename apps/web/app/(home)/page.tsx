@@ -17,12 +17,22 @@
  */
 
 import { HomeEntry } from "@/components/home/HomeEntry";
+import { R22HomeFixture } from "@/components/home/HomeView";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Home · Fikirtive" };
 
 /** 等待态由同目录的 `loading.tsx` 提供 —— App Router 自己会拿它当这条路由的 Suspense 边界,
  *  所以这里不再手写第二个 fallback。 */
-export default function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const fixture = Array.isArray(sp.fixture) ? sp.fixture[0] : sp.fixture;
+  const connection = Array.isArray(sp.connection) ? sp.connection[0] : sp.connection;
+  const channel = Array.isArray(sp.channel) ? sp.channel[0] : sp.channel;
+  if (process.env.NODE_ENV !== "production" && fixture === "r22") return <R22HomeFixture connectionState={connection === "ready" || connection === "error" ? connection : undefined} channel={channel || "Instagram"} />;
   return <HomeEntry />;
 }

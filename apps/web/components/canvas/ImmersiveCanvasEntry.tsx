@@ -86,6 +86,30 @@ export async function ImmersiveCanvasEntry({
   searchParams: Promise<ImmersiveCanvasSearchParams>;
 }) {
   const sp = await searchParams;
+  const visualFixture =
+    process.env.NODE_ENV !== "production" && firstSearchParam(sp.fixture) === "r22";
+
+  // 浏览器 parity 必须在正式 route 上、同一个 viewport 复现,但 QA 数据不能穿过生产边界。
+  // 这个分支只在非 production 且显式 `?fixture=r22` 时存在,并在任何 auth/DB 读取前返回。
+  if (visualFixture) {
+    const requestedState = firstSearchParam(sp.state);
+    const fixtureRouteState = requestedState === "loading" || requestedState === "error" || requestedState === "permission" || requestedState === "missing" || requestedState === "unknown" ? requestedState : "ready";
+    const requestedSend = firstSearchParam(sp.send);
+    const fixtureSendOutcome = requestedSend === "error" || requestedSend === "permission" || requestedSend === "credits" || requestedSend === "unknown" ? requestedSend : "success";
+    const fixtureContext: ImmersiveCanvasRuntimeContext = {
+      projects: [{ id: "fixture-raya", name: "Raya launch" }],
+      threads: [],
+      activeProjectId: "fixture-raya",
+      activeThreadId: null,
+      initialBalance: 1240,
+      initialPrompt: firstSearchParam(sp.prompt) ?? "",
+      visualFixture: "r22",
+      fixtureRouteState,
+      fixtureSendOutcome,
+    };
+    return <NorthstarCanvasWorkspace runtimeContext={fixtureContext} entities={[]} />;
+  }
+
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
 
@@ -131,12 +155,13 @@ export async function ImmersiveCanvasEntry({
     })),
     activeProjectId: projectSelection.activeProjectId,
     activeThreadId: threadSelection.activeThreadId,
-    initialBalance: "error" in accountResult ? 0 : accountResult.balance,
+    initialBalance: "error" in accountResult ? null : accountResult.balance,
+    initialPrompt: firstSearchParam(sp.prompt) ?? "",
+    visualFixture: null,
   };
 
-  // #600 (spec #599 D1/D2): this page mounts the mature canvas kernel (FlowCanvas / @xyflow)
-  // wearing the north-star skin. The hand-rolled north-star board it replaced was deleted from
-  // the tree by #606 (D7 · T7) — there is one canvas implementation now, not two.
+  // 视觉 fixture 只能由非 production 的显式 query 打开。正常请求仍使用真实项目身份与
+  // 服务端数据边界;未接通的 frontend 状态必须诚实显示,不能把 QA 样本伪装成成功数据。
   return (
     <NorthstarCanvasWorkspace
       key={`${runtimeContext.activeProjectId}:${runtimeContext.activeThreadId ?? ""}`}

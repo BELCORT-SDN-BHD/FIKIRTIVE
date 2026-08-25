@@ -1,4 +1,4 @@
-import { NorthstarShellEntry } from "@/components/canvas/NorthstarShellEntry";
+import { ImmersiveShell } from "@/components/northstar/immersive/immersive-shell";
 // 双声部 scoped token 层(Wave C · C-D · f1-tokens):蓝人手声部 + 手感工具类,只作用于
 // `.gb.ns-immersive` 根容器,全局 token 值不动、live 产品不受影响。见 design-rules §2 修正案。
 import "./immersive-tokens.css";
@@ -25,5 +25,8 @@ export const metadata = { title: "Create · Fikirtive" };
 export const dynamic = "force-dynamic";
 
 export default function CreateLayout({ children }: { children: React.ReactNode }) {
-  return <NorthstarShellEntry>{children}</NorthstarShellEntry>;
+  // `/create` 与 `/create/canvas` 的受控 Entry 各自执行真正的 server principal gate。
+  // Layout 只持视觉 pane,这样非 production 的显式 R22 parity fixture 可以在正式 route
+  // 上渲染,而 production 请求仍会在 Entry 内 fail closed。
+  return <ImmersiveShell>{children}</ImmersiveShell>;
 }

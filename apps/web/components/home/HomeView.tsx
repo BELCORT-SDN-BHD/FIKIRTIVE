@@ -1,264 +1,345 @@
-/**
- * Home —— 商家自己的总览(换壳规格书 `docs/specs/wave2-shell.md` §4.1,W2-6)。
- *
- * 五块,每一块的数字都有真实来源:
- *   ① 开场 —— 问候 + credits 余额 + 开工入口
- *   ② 接着做 —— 最近的画布 + 最近生成的缩略图
- *   ③ 接下来发什么 —— 未来 7 天的排期 + 发布状态的实话
- *   ④ 进行中的战役
- *   ⑤ 把 Otto 装备好(仅未完成时出现)
- *
- * **这一页绝对不出现的东西**(这是纪律,不是偏好 —— #609 已经因为这个把旧的沉浸式首页砍过
- * 一次,`components/canvas/NorthstarHome.tsx` 的文件头逐字记着那件事):
- *   - 任何 Meta 来的数字。`getAnalytics` 今天对**每一个**商家都返回 `notConnected`
- *     (Facebook Login 在 app 层关着),放一个「本月触达」磁贴就是编造。这条有机器围栏:
- *     `lib/__tests__/home-page.test.ts` 把整张 import 图翻一遍,`getAnalytics` 出现就红。
- *   - 任何营收 / 订单 / 客户数。`Contact.totalOrdersMyr` 全仓无写入点,CRM 又整段藏起来。
- *   - 任何「今日决策队列」式的样板数据。
- *
- * 空账号看到的:开场(余额 = 起始 credits)+ 一句 `Nothing here yet — start your first
- * canvas.` + 装备清单。**这就是全部,且它是真的** —— ③④两块没有内容时整块不渲染,而不是
- * 摆一个空壳子说「这里以后会有东西」。
- *
- * 纯展示:一次读取都不做,数据由 `HomeEntry` 按认证身份取好递进来。发布状态那句话是唯一的
- * 例外 —— 它**必须**由这一层直接向核心常量要(`publishSurfaceCopy()`),否则它就成了一个
- * 调用方递什么就写什么的字符串,围栏也就只是在核对自己的复印件。
- */
+"use client";
+/* eslint-disable react-hooks/set-state-in-effect -- Non-production R22 fixtures restore browser-scoped drafts after hydration. */
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 import Link from "next/link";
-import { CalendarClock, Megaphone, Check } from "lucide-react";
-import { PUBLISHING_AVAILABLE, publishSurfaceCopy } from "@fikirtive/core/schedule-draft";
-import { canvasHref } from "@/components/canvas/canvas-href";
-import { StartSomething } from "@/components/start-something/StartSomething";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { HOME_COPY, creditsLine, type HomeData } from "./home-data";
+import { useEffect, useState } from "react";
+import {
+  BarChart3,
+  BriefcaseBusiness,
+  CalendarDays,
+  Camera,
+  Check,
+  ChevronDown,
+  Heart,
+  Info,
+  LockKeyhole,
+  LoaderCircle,
+  MessageCircle,
+  Music2,
+  Plus,
+  type LucideIcon,
+} from "lucide-react";
+import { readOk, type HomeData } from "./home-data";
+import type { MetaConnectionResult } from "@/lib/meta-actions";
+import type { Read } from "./home-data";
+import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
+import "./r22-home.css";
 
-/** 每一块共用的小标题。 */
-function BlockHeading({ children }: { children: React.ReactNode }) {
+const CHANNELS: Array<{ label: string; icon: LucideIcon; recommended?: boolean; available: boolean }> = [
+  { label: "Instagram", icon: Camera, recommended: true, available: true },
+  { label: "Facebook", icon: MessageCircle, available: true },
+  { label: "TikTok", icon: Music2, available: false },
+  { label: "LinkedIn", icon: BriefcaseBusiness, available: false },
+];
+
+export type HomeConnection =
+  | { kind: "unknown"; message: string }
+  | { kind: "not_connected" }
+  | { kind: "needs_reconnect" }
+  | { kind: "connected"; accountLabel: string; transient: boolean }
+  | { kind: "verified_fixture"; accountLabel: string };
+
+type ConnectFlow = {
+  channel: string;
+  step: "permissions" | "profile" | "submitting" | "error" | "success";
+};
+
+export function homeConnectionFromMeta(meta: Read<MetaConnectionResult>): HomeConnection {
+  if (!meta.ok || "error" in meta.value) {
+    return { kind: "unknown", message: "Connection status could not be read just now." };
+  }
+  if (!meta.value.connected) return { kind: "not_connected" };
+  if (meta.value.needsReconnect || meta.value.status === "expired") return { kind: "needs_reconnect" };
+  const account = meta.value.accounts?.[0];
+  return {
+    kind: "connected",
+    accountLabel: account?.name || "Meta account",
+    transient: meta.value.transientError === true,
+  };
+}
+
+const ANALYSIS_ITEMS = [
+  { label: "Top content", copy: "Identify your best performing content and formats", icon: BarChart3 },
+  { label: "Audience response", copy: "Understand what resonates with your audience", icon: Heart },
+  { label: "Publishing rhythm", copy: "Find your optimal posting times and consistency", icon: CalendarDays },
+] as const;
+
+function LoadingTruth({ data }: { data: HomeData }) {
+  const unreadable = [data.credits, data.canvases, data.thumbs, data.upcoming, data.campaigns, data.equipment].some((item) => !item.ok);
+  if (!unreadable) return null;
   return (
-    <h2 className="font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
-      {children}
-    </h2>
+    <div className="r22-home-read-warning" role="status">
+      <Info aria-hidden="true" />
+      <span>Some workspace data could not be read just now. No empty state has been inferred from it.</span>
+    </div>
   );
 }
 
-/** 「这一刻读不出来」的那一行。**不是**空态的写法,也不是一句安慰话:它只说发生了什么。 */
-function Unreadable({ children }: { children: React.ReactNode }) {
+export function HomeView({
+  data,
+  connection,
+  fixture = false,
+  fixtureConnectionOutcome = "success",
+  fixtureInitialChannel = "Instagram",
+  fixtureInitialReady = false,
+  fixtureInitialError = false,
+}: {
+  data: HomeData;
+  connection: HomeConnection;
+  fixture?: boolean;
+  fixtureConnectionOutcome?: "success" | "error";
+  fixtureInitialChannel?: string;
+  fixtureInitialReady?: boolean;
+  fixtureInitialError?: boolean;
+}) {
+  const [connectFlow, setConnectFlow] = useState<ConnectFlow | null>(fixtureInitialError ? { channel: fixtureInitialChannel, step: "error" } : null);
+  const [fixtureConnected, setFixtureConnected] = useState<{ channel: string; accountLabel: string } | null>(fixture ? null : fixtureInitialReady ? { channel: fixtureInitialChannel, accountLabel: fixtureInitialChannel } : null);
+  const [fixtureWorkspace, setFixtureWorkspace] = useState<{ id: string; name: string }>({ id: "batik-house", name: "Batik House" });
+  const [fixtureOutcome, setFixtureOutcome] = useState(fixtureConnectionOutcome);
+  const visibleConnection: HomeConnection = fixtureConnected
+    ? { kind: "verified_fixture", accountLabel: fixtureConnected.accountLabel }
+    : connection;
+  const disconnected = visibleConnection.kind === "not_connected";
+  const ready = visibleConnection.kind === "connected" || visibleConnection.kind === "verified_fixture";
+  const verifiedFixture = visibleConnection.kind === "verified_fixture";
+  const channels = fixture ? CHANNELS.map((channel) => ({ ...channel, available: true })) : CHANNELS;
+  const fixtureHref = (href: string) => fixture ? `${href}${href.includes("?") ? "&" : "?"}fixture=r22` : href;
+  const provider = connectFlow?.channel ?? "Instagram";
+
+  useEffect(() => {
+    if (!fixture) return;
+    const directory = readR22WorkspaceDirectory();
+    const active = directory.workspaces.find((workspace) => workspace.id === directory.activeId) ?? directory.workspaces[0]!;
+    setFixtureWorkspace({ id: active.id, name: active.name });
+    if (!fixtureInitialReady) { setFixtureConnected(null); return; }
+    const params = new URLSearchParams(window.location.search);
+    const connectionWorkspace = params.get("connectionWorkspace") ?? "batik-house";
+    if (connectionWorkspace !== active.id) { setFixtureConnected(null); return; }
+    setFixtureConnected({ channel: fixtureInitialChannel, accountLabel: fixtureInitialChannel === "Instagram" ? `@${active.name.toLowerCase().replace(/[^a-z0-9]+/g, "")}` : active.name });
+  }, [fixture, fixtureInitialChannel, fixtureInitialReady]);
+
+  function openConnect(channel: string) {
+    setConnectFlow({ channel, step: "permissions" });
+  }
+
+  function setFixtureConnectionUrl(state: "ready" | "error" | null, channel?: string) {
+    if (!fixture) return;
+    const next = new URL(window.location.href);
+    if (state) next.searchParams.set("connection", state);
+    else next.searchParams.delete("connection");
+    if (channel) next.searchParams.set("channel", channel);
+    else next.searchParams.delete("channel");
+    if (state) next.searchParams.set("connectionWorkspace", fixtureWorkspace.id);
+    else next.searchParams.delete("connectionWorkspace");
+    window.history.replaceState(window.history.state, "", `${next.pathname}${next.search}`);
+  }
+
+  function dismissConnect() {
+    if (connectFlow?.step === "error") {
+      setFixtureConnectionUrl(null);
+      setFixtureOutcome("success");
+    }
+    setConnectFlow(null);
+  }
+
+  function confirmConnection() {
+    if (!connectFlow) return;
+    if (!fixture) {
+      window.location.assign("/api/meta/authorize");
+      return;
+    }
+    const channel = connectFlow.channel;
+    setConnectFlow({ channel, step: "submitting" });
+    window.setTimeout(() => {
+      if (fixtureOutcome === "error") {
+        setFixtureConnectionUrl("error", channel);
+        setConnectFlow({ channel, step: "error" });
+        return;
+      }
+      setFixtureConnected({ channel, accountLabel: channel === "Instagram" ? `@${fixtureWorkspace.name.toLowerCase().replace(/[^a-z0-9]+/g, "")}` : fixtureWorkspace.name });
+      setFixtureConnectionUrl("ready", channel);
+      setConnectFlow({ channel, step: "success" });
+    }, 420);
+  }
   return (
-    <p role="status" className="mt-3 text-sm text-muted-foreground">
-      {children}
-    </p>
-  );
-}
+    <div className="r22-home" data-r22-home>
+      <header className="r22-home-header">
+        <div>
+          <h1>{data.greeting}</h1>
+          <p>{ready ? "Your verified channel connection is ready for Otto." : "Connect one channel so Otto can learn what is working."}</p>
+        </div>
+        <div className="r22-home-account" aria-label="Current account">
+          <span>NA</span>
+          <ChevronDown aria-hidden="true" />
+        </div>
+      </header>
 
-export function HomeView({ data }: { data: HomeData }) {
-  const publishCopy = publishSurfaceCopy();
-  // 「真的什么都还没做」只有一种成立方式:两边都**读到了**,而且两边都空。任何一边读不出来,
-  // 这一页都没有资格说这句话(判官 r1 P3-1)。
-  const nothingMade =
-    data.canvases.ok && data.thumbs.ok && data.canvases.value.length === 0 && data.thumbs.value.length === 0;
+      <LoadingTruth data={data} />
 
-  return (
-    <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
-      <div className="mx-auto flex max-w-5xl flex-col gap-10">
-        {/* ① 开场 */}
-        <section>
-          <h1 className="text-[28px] leading-[34px] font-bold tracking-[-0.02em]">{data.greeting}</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {creditsLine(data.credits)}{" "}
-            <Link href={data.billingHref} className="font-medium text-foreground underline underline-offset-4">
-              {data.billingLabel}
-            </Link>
-          </p>
-          <div className="mt-6 max-w-[720px]">
-            <StartSomething />
-          </div>
-        </section>
+      {connection.kind === "unknown" ? (
+        <div className="r22-home-connection-error" role="alert">
+          <Info aria-hidden="true" />
+          <div><b>Connection status unavailable</b><p>{connection.message} Nothing has been marked disconnected.</p></div>
+          <Link href={fixtureHref("/settings/connections")}>Open connections</Link>
+        </div>
+      ) : null}
 
-        {/* ② 接着做 */}
-        <section>
-          <BlockHeading>{HOME_COPY.pickUpHeading}</BlockHeading>
-          {nothingMade ? (
-            <p className="mt-3 text-sm text-muted-foreground">{HOME_COPY.nothingMade}</p>
+      <section className={`r22-home-connect-card${ready ? " is-ready" : ""}`}>
+        <div className="r22-home-connect-copy">
+          {ready ? (
+            <>
+              <div className="r22-home-ready-head">
+                <span aria-hidden="true"><Check /></span>
+                <div><h2>{fixtureConnected?.channel || (visibleConnection.kind === "verified_fixture" ? fixtureInitialChannel : "Meta")} is ready</h2><p>{visibleConnection.accountLabel} · access verified</p></div>
+                <Link href={fixtureHref("/settings/connections")}>Manage</Link>
+              </div>
+              <div className="r22-home-ready-summary">
+                <div><b>Connection verified</b><span>Current workspace only</span></div>
+                <div><b>Publishing permissions</b><span>Shown exactly as granted by Meta</span></div>
+                <div><b>Otto context</b><span>Uses only available verified data</span></div>
+              </div>
+              {visibleConnection.kind === "connected" && visibleConnection.transient ? <p className="r22-home-inline-warning">Meta could not be reached just now. The existing connection has not been marked disconnected.</p> : null}
+            </>
+          ) : connection.kind === "unknown" ? (
+            <div className="r22-home-unknown-card">
+              <h2>Connection status unavailable</h2>
+              <p>FIKIRTIVE could not verify whether a channel is connected. No connection action is offered until that read succeeds.</p>
+              <Link href={fixtureHref("/settings/connections")}>Review connections</Link>
+            </div>
           ) : (
             <>
-              {!data.canvases.ok && <Unreadable>{HOME_COPY.canvasesUnreadable}</Unreadable>}
-              {data.canvases.ok && data.canvases.value.length > 0 && (
-                <ul className="mt-3 flex flex-col gap-1">
-                  {data.canvases.value.map((canvas) => (
-                    <li key={canvas.id}>
-                      <Link
-                        href={canvasHref(canvas.id)}
-                        className="flex min-h-11 items-center gap-3 rounded-[12px] px-3 py-2 text-[14px] transition-colors duration-[120ms] hover:bg-accent"
-                      >
-                        <span className="min-w-0 flex-1 truncate font-medium">{canvas.name}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                          {canvas.updatedLabel}
-                        </span>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {!data.thumbs.ok && <Unreadable>{HOME_COPY.thumbsUnreadable}</Unreadable>}
-              {data.thumbs.ok && data.thumbs.value.length > 0 && (
-                <>
-                  <p className="mt-6 text-xs text-muted-foreground">{HOME_COPY.recentlyMade}</p>
-                  <ul className="mt-2 flex flex-wrap gap-2">
-                    {data.thumbs.value.map((thumb) => (
-                      <li key={thumb.id}>
-                        <Link
-                          href={canvasHref(thumb.projectId)}
-                          className="block size-20 overflow-hidden rounded-[12px] border border-border bg-muted transition-opacity duration-[120ms] hover:opacity-85"
-                          title={thumb.prompt || undefined}
-                        >
-                          {thumb.kind === "video" ? (
-                            <video
-                              src={thumb.src}
-                              muted
-                              playsInline
-                              preload="metadata"
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img
-                              src={thumb.src}
-                              alt={thumb.prompt || "Something you made"}
-                              className="h-full w-full object-cover"
-                            />
-                          )}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
+              <h2>{connection.kind === "needs_reconnect" ? "Reconnect your channel" : "Connect your first channel"}</h2>
+              <p>{connection.kind === "needs_reconnect" ? "The existing Meta access expired. Reconnect it before Otto reads new data." : "Otto will use your real publishing history to find patterns and recommend what to make next."}</p>
+              <div className="r22-home-channels">
+                {channels.map(({ label, icon: Icon, recommended, available }) => (
+                  <div className="r22-home-channel" key={label}>
+                    <Icon aria-hidden="true" /><b>{label}</b>{recommended && <em>Recommended</em>}
+                    {available ? <Button unstyled type="button" className="r22-home-fixture-connect" onClick={() => openConnect(label)}>{visibleConnection.kind === "needs_reconnect" ? "Reconnect" : "Connect"}</Button> : <Button unstyled type="button" disabled>Not available</Button>}
+                  </div>
+                ))}
+              </div>
+              {disconnected ? <Link className="r22-home-skip" href={fixtureHref("/create")}>Skip for now</Link> : null}
             </>
           )}
+        </div>
+
+        {connection.kind !== "unknown" ? <ol className="r22-home-connection-steps">
+          <li className={disconnected || connection.kind === "needs_reconnect" ? "is-active" : ready ? "is-done" : ""}><span /><div><b>Not connected</b><p>Choose a channel to get started</p></div></li>
+          <li className={ready ? "is-done" : ""}><span /><div><b>Verifying</b><p>We’ll securely verify your access</p></div></li>
+          <li className={ready ? "is-done" : ""}><span /><div><b>Syncing data</b><p>We’ll import your publishing history</p></div></li>
+          <li className={ready ? "is-active is-done" : ""}><span /><div><b>Ready</b><p>Otto will learn and surface insights</p></div></li>
+        </ol> : null}
+      </section>
+
+      <div className="r22-home-insight-grid">
+        <section className={`r22-home-performance${verifiedFixture ? " has-data" : ""}`}>
+          <h2>Performance</h2>
+          {verifiedFixture ? <div className="r22-home-kpis"><span><small>Published</small><b>38</b><em>Last 30 days</em></span><span><small>Reach</small><b>48.2K</b><em>+12.6%</em></span><span><small>Engagement</small><b>4.8%</b><em>+0.7 pt</em></span><span><small>Best day</small><b>Thu</b><em>18:00–21:00</em></span></div> : <div>
+            <span><LockKeyhole aria-hidden="true" /></span>
+            <b>{ready ? "Verified performance is not available yet" : "Connect a channel to see real performance"}</b>
+            <p>{ready ? "The connection is real, but this frontend has not received a verified publishing-history dataset." : "FIKIRTIVE will show only verified publishing and audience data."}</p>
+            <i /><i /><i />
+          </div>}
         </section>
 
-        {/* ③ 接下来发什么 —— 有排期才出现;读不出来时**照说读不出来**,不当成「没排期」 */}
-        {!data.upcoming.ok && (
-          <section>
-            <BlockHeading>{HOME_COPY.scheduleHeading}</BlockHeading>
-            <Unreadable>{HOME_COPY.scheduleUnreadable}</Unreadable>
-          </section>
-        )}
-        {data.upcoming.ok && data.upcoming.value.length > 0 && (
-          <section>
-            <BlockHeading>{HOME_COPY.scheduleHeading}</BlockHeading>
-            <ul className="mt-3 flex flex-col gap-2">
-              {data.upcoming.value.map((post) => (
-                <li
-                  key={post.id}
-                  className="flex items-start gap-3 rounded-[12px] border border-border bg-card px-4 py-3"
-                >
-                  <CalendarClock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">
-                      {post.dayLabel}, {post.timeLabel} · {post.channelLabel}
-                    </p>
-                    <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{post.caption}</p>
-                  </div>
-                  <Badge variant="outline" className="shrink-0">
-                    {post.statusLabel}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-            {/* 发布状态的实话 —— 逐字来自核心的四句式,这一页不写第二份措辞。 */}
-            <p className="mt-3 text-xs text-muted-foreground">{publishCopy.fact}</p>
-          </section>
-        )}
-
-        {/* ④ 进行中的战役 —— 有战役才出现;读不出来同③,照说读不出来 */}
-        {!data.campaigns.ok && (
-          <section>
-            <BlockHeading>{HOME_COPY.campaignsHeading}</BlockHeading>
-            <Unreadable>{HOME_COPY.campaignsUnreadable}</Unreadable>
-          </section>
-        )}
-        {data.campaigns.ok && data.campaigns.value.length > 0 && (
-          <section>
-            <BlockHeading>{HOME_COPY.campaignsHeading}</BlockHeading>
-            <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {data.campaigns.value.map((campaign) => (
-                <Card key={campaign.id} className="min-w-0">
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <CardTitle className="truncate">{campaign.name}</CardTitle>
-                        <CardDescription className="mt-1 line-clamp-2">{campaign.goal}</CardDescription>
-                      </div>
-                      <Badge variant={campaign.badge}>{campaign.statusLabel}</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="mt-auto">
-                    <Button asChild variant="secondary" className="w-full">
-                      <Link href={campaign.href}>
-                        <Megaphone />
-                        {HOME_COPY.openCampaign}
-                      </Link>
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* ⑤ 把 Otto 装备好 —— 只在没做完的时候出现;判不了做完没有时,说自己判不了,
-            而不是默认商家还没做(那会对已经教过品牌的商家重弹一次同样的话) */}
-        {!data.equipment.ok && (
-          <section>
-            <BlockHeading>{HOME_COPY.equipmentHeading}</BlockHeading>
-            <Unreadable>{HOME_COPY.equipmentUnreadable}</Unreadable>
-          </section>
-        )}
-        {data.equipment.ok && data.equipment.value && (
-          <section>
-            <BlockHeading>{HOME_COPY.equipmentHeading}</BlockHeading>
-            <ul className="mt-3 flex flex-col gap-2">
-              {data.equipment.value.map((step) => (
-                <li key={step.key}>
-                  <Link
-                    href={step.href}
-                    className="flex items-start gap-3 rounded-[12px] border border-border bg-card px-4 py-3 transition-colors duration-[120ms] hover:bg-accent"
-                  >
-                    <span
-                      aria-hidden
-                      className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border ${
-                        step.done ? "border-transparent bg-success-soft text-success-soft-foreground" : "border-border"
-                      }`}
-                    >
-                      {step.done ? <Check className="size-3" /> : null}
-                    </span>
-                    <span className="min-w-0">
-                      <span className={`block text-sm font-medium ${step.done ? "text-muted-foreground line-through" : ""}`}>
-                        {step.label}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {step.done ? HOME_COPY.stepDone : step.hint}
-                      </span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-            {/* 「渠道连没连」的实话。发布关着的时候一个账号都连不上,所以这里不画 Connect 按钮
-                ——只说事实,而且是核心那一份事实,不是这一页自己写的一句。通电那天这句消失,
-                真实的连接状态由 Connections(W2-4)那一面接手,Home 不会留着一句过期的话。 */}
-            {!PUBLISHING_AVAILABLE && (
-              <p className="mt-3 text-xs text-muted-foreground">{publishCopy.why}</p>
-            )}
-          </section>
-        )}
+        <section className="r22-home-analysis">
+          <h2>What Otto will analyse</h2>
+          <ul>
+            {ANALYSIS_ITEMS.map(({ label, copy, icon: Icon }) => (
+              <li key={label}><span><Icon aria-hidden="true" /></span><div><b>{label}</b><p>{copy}</p></div></li>
+            ))}
+          </ul>
+        </section>
       </div>
-    </main>
+
+      <section className="r22-home-create-row">
+        <span><Plus aria-hidden="true" /></span>
+        <div><b>Create without data</b><p>Start a post or campaign now. Otto will improve suggestions once a channel is connected.</p></div>
+        <Link href={fixtureHref("/create")}>Create new</Link><Button unstyled type="button" aria-label="More creation choices"><ChevronDown /></Button>
+      </section>
+
+      <section className="r22-home-context-row">
+        <Info aria-hidden="true" />
+        <div><b>You can add brand context and more channels later.</b><p>Optional setup never blocks creation or marks itself complete.</p></div>
+        <Link href={fixtureHref("/brand")}>Add brand context</Link>
+      </section>
+
+      {fixture ? <footer>Prototype · sample data · Soft Prism v4</footer> : null}
+
+      <Dialog open={connectFlow !== null} onOpenChange={(open) => { if (!open) dismissConnect(); }}>
+        <DialogContent className="r22-home-connect-dialog" showCloseButton={false}>
+          {connectFlow?.step === "permissions" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Connect {provider}</DialogTitle>
+                <DialogDescription>FIKIRTIVE will open a secure provider window in production.</DialogDescription>
+              </DialogHeader>
+              <div className="r22-home-provider"><b>Continue with {provider}</b><span>No password is stored in FIKIRTIVE.</span></div>
+              <ul className="r22-home-permissions">
+                <li><Check aria-hidden="true" />Read published content and audience insights</li>
+                <li><Check aria-hidden="true" />Publish approved work when you choose</li>
+                <li><Check aria-hidden="true" />Verify the connected account and permissions</li>
+              </ul>
+              <DialogFooter>
+                <Button unstyled type="button" className="is-quiet" onClick={dismissConnect}>Cancel</Button>
+                <Button unstyled type="button" className="is-primary" onClick={() => setConnectFlow({ channel: provider, step: "profile" })}>Continue with {provider}</Button>
+              </DialogFooter>
+            </>
+          ) : connectFlow?.step === "profile" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Choose a business profile</DialogTitle>
+                <DialogDescription>Only the selected profile will be connected to this workspace.</DialogDescription>
+              </DialogHeader>
+              {fixture ? <RadioGroup unstyled defaultValue={fixtureWorkspace.id} aria-label="Business profile"><label className="r22-home-profile"><RadioGroupItem unstyled value={fixtureWorkspace.id} /><span>{fixtureWorkspace.name.split(/\s+/).map((word) => word[0]).join("").slice(0, 2).toUpperCase()}</span><span><b>{provider === "Instagram" ? `@${fixtureWorkspace.name.toLowerCase().replace(/[^a-z0-9]+/g, "")}` : fixtureWorkspace.name}</b><small>{fixtureWorkspace.name} · Business profile</small></span></label></RadioGroup> : <div className="r22-home-provider"><b>Choose your profile with Meta</b><span>The secure Meta window lists only profiles you can authorize. FIKIRTIVE does not invent that list.</span></div>}
+              <p className="r22-home-dialog-note">FIKIRTIVE verifies publishing, insights and ownership permissions before importing data.</p>
+              <DialogFooter>
+                <Button unstyled type="button" className="is-quiet" onClick={() => setConnectFlow({ channel: provider, step: "permissions" })}>Back</Button>
+                <Button unstyled type="button" className="is-primary" onClick={confirmConnection}>{fixture ? "Connect this profile" : "Continue to Meta"}</Button>
+              </DialogFooter>
+            </>
+          ) : connectFlow?.step === "submitting" ? (
+            <div className="r22-home-connect-state" aria-live="polite"><LoaderCircle className="is-spinning" aria-hidden="true" /><DialogTitle>Verifying {provider}</DialogTitle><DialogDescription>Checking the selected account and permissions. No success is shown until verification finishes.</DialogDescription></div>
+          ) : connectFlow?.step === "error" ? (
+            <>
+              <div className="r22-home-connect-state" role="alert"><Info aria-hidden="true" /><DialogTitle>Connection could not be completed</DialogTitle><DialogDescription>The provider did not confirm the account. Nothing was connected and no workspace data changed.</DialogDescription></div>
+              <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={dismissConnect}>Cancel</Button><Button unstyled type="button" className="is-primary" onClick={() => { setFixtureOutcome("success"); setConnectFlow({ channel: provider, step: "profile" }); }}>Retry</Button></DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="r22-home-connect-state is-success" role="status"><Check aria-hidden="true" /><DialogTitle>Success! {provider} is connected.</DialogTitle><DialogDescription>Publishing and audience access was verified for this workspace.</DialogDescription></div>
+              <DialogFooter><Button unstyled type="button" className="is-primary" onClick={() => setConnectFlow(null)}>Done</Button></DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
   );
+}
+
+export function R22HomeFixture({ connectionState, channel = "Instagram" }: { connectionState?: "ready" | "error"; channel?: string }) {
+  const data: HomeData = {
+    greeting: "Good morning, Nadia",
+    credits: readOk("1,240 credits"),
+    billingHref: "/billing",
+    billingLabel: "Billing & credits",
+    canvases: readOk([]),
+    thumbs: readOk([]),
+    upcoming: readOk([]),
+    campaigns: readOk([]),
+    equipment: readOk([]),
+  };
+  return <HomeView data={data} connection={{ kind: "not_connected" }} fixture fixtureConnectionOutcome={connectionState === "error" ? "error" : "success"} fixtureInitialChannel={channel} fixtureInitialReady={connectionState === "ready"} fixtureInitialError={connectionState === "error"} />;
 }
 
 export default HomeView;

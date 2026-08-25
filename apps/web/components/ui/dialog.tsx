@@ -18,11 +18,11 @@ const DialogTrigger = DialogPrimitive.Trigger
 const DialogPortal = DialogPrimitive.Portal
 const DialogClose = DialogPrimitive.Close
 
-function DialogOverlay({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+function DialogOverlay({ className, unstyled = false, ...props }: React.ComponentProps<typeof DialogPrimitive.Overlay> & { unstyled?: boolean }) {
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn(
+      className={unstyled ? className : cn(
         "fixed inset-0 z-50 bg-[rgba(10,10,12,0.45)] backdrop-blur-[3px]",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         className
@@ -32,13 +32,13 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   )
 }
 
-function DialogContent({ className, children, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+function DialogContent({ className, children, overlayClassName, showCloseButton = true, unstyled = false, ...props }: React.ComponentProps<typeof DialogPrimitive.Content> & { overlayClassName?: string; showCloseButton?: boolean; unstyled?: boolean }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay unstyled={unstyled} className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
-        className={cn(
+        className={unstyled ? className : cn(
           "fixed left-1/2 top-1/2 z-50 grid w-full max-w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 gap-4",
           "rounded-[var(--radius-modal)] border border-border bg-popover p-6 text-popover-foreground shadow-[var(--shadow-xl)]",
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95",
@@ -47,10 +47,10 @@ function DialogContent({ className, children, ...props }: React.ComponentProps<t
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 inline-flex size-8 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 outline-none">
+        {showCloseButton ? <DialogPrimitive.Close className="absolute right-4 top-4 inline-flex size-8 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 outline-none">
           <XIcon className="size-4" />
           <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
+        </DialogPrimitive.Close> : null}
       </DialogPrimitive.Content>
     </DialogPortal>
   )
