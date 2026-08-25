@@ -34,7 +34,10 @@ export default defineConfig({
     include: ["lib/**/*.test.ts", "lib/**/__tests__/**/*.test.ts", "app/**/__tests__/**/*.test.ts"],
     // F35: refuse to run against a real (non-*_test) DATABASE_URL — the integration tests hit
     // the real Prisma client, so a stray prod DATABASE_URL would mutate that database.
-    setupFiles: ["./lib/__tests__/setup-db-guard.ts"],
+    // 两条都对 node 与 jsdom 两种环境生效(setupFiles 是逐测试文件跑的)。
+    // setup-async-local-storage 必须留在这里而不是塞进某几个文件:它修的正是
+    // 「跨文件共用一个 globalThis」这件事,见该文件头注释。
+    setupFiles: ["./lib/__tests__/setup-db-guard.ts", "./lib/__tests__/setup-async-local-storage.ts"],
     pool: "threads",
     poolOptions: { threads: { singleThread: true } },
     testTimeout: 20000,
