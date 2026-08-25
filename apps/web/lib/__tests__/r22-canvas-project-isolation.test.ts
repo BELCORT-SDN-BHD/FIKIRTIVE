@@ -131,10 +131,10 @@ async function askOtto(prompt: string): Promise<void> {
   });
 }
 
-function storedSession(projectId: string): { messages?: string[]; pending?: unknown; decision?: unknown } {
+function storedSession(projectId: string): { messages?: Array<{ from: string; text: string }>; pending?: unknown; decision?: unknown } {
   const raw = window.sessionStorage.getItem(storageKey(projectId));
   expect(raw, `${storageKey(projectId)} 里什么都没存 —— 这一面根本没写过存档`).not.toBeNull();
-  return JSON.parse(raw!) as { messages?: string[]; pending?: unknown; decision?: unknown };
+  return JSON.parse(raw!) as { messages?: Array<{ from: string; text: string }>; pending?: unknown; decision?: unknown };
 }
 
 describe("切项目不带走上一个项目的会话(判官实证 :277-294)", () => {
@@ -146,7 +146,7 @@ describe("切项目不带走上一个项目的会话(判官实证 :277-294)", ()
     expect(pick(".r22-canvas-input-card"), "project A 没有进入提问流 —— 后面在核对空气").not.toBeNull();
     expect(container!.textContent).toContain(PROMPT_A);
     expect(pick(".r22-canvas-decision")).not.toBeNull();
-    expect(storedSession("project-a").messages).toEqual([PROMPT_A]);
+    expect(storedSession("project-a").messages).toEqual([{ from: "me", text: PROMPT_A }]);
 
     // 2) 顶栏切到 project B。组件不卸载,只是 props 换了个 activeProjectId。
     await render("project-b");
@@ -197,8 +197,9 @@ describe("同一个回答只落一次账(判官实证 :415/:419)", () => {
    */
   function seedAnsweredSession(decisionVersion: number, pendingVersion: number): void {
     window.sessionStorage.setItem(storageKey("project-a"), JSON.stringify({
-      version: 1,
-      messages: [PROMPT_A],
+      // v2 = 会话记录带上「谁说的」。v1 的存档由组件当场丢弃(旧形状不去猜)。
+      version: 2,
+      messages: [{ from: "me", text: PROMPT_A }],
       pending: { taskId: "fixture-task-1", inputRequestId: REQUEST_ID, taskVersion: pendingVersion, flow: SEEDED_FLOW, prompt: PROMPT_A, index: 0, selected: ["Teal batik candle"], answers: [] },
       other: "",
       decision: {
@@ -208,7 +209,7 @@ describe("同一个回答只落一次账(判官实证 :415/:419)", () => {
         status: "answered",
         title: "Creative direction · 1 answers saved",
         detail: "Why Otto paused: two valid creative directions.",
-        events: [{ kind: "resumed", label: "Task resumed", detail: `Receipt ${REQUEST_ID} · version ${decisionVersion} · no paid action run in fixture` }],
+        events: [{ kind: "resumed", label: "Task resumed", detail: `Continued from your saved answers · version ${decisionVersion} · 0 cr` }],
       },
       job: null,
     }));
@@ -232,7 +233,8 @@ describe("同一个回答只落一次账(判官实证 :415/:419)", () => {
     await act(async () => { submit.click(); submit.click(); });
 
     expect(noticeText(), "第二下没有走幂等分支").toContain("This answer was already accepted");
-    expect(noticeText()).toContain("no duplicate task or spend was created");
+    // 幂等的两半仍然要**说给商家听**,只是换成人话:没有第二个任务、没有多扣钱。
+    expect(noticeText()).toContain("no second task and no extra credits");
     const events = await openDecisionEvents();
     expect(events.filter((line) => line.includes("Task resumed")), "同一个回答记了两次 resumed").toHaveLength(1);
   });

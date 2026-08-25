@@ -47,6 +47,18 @@ type PendingCanvasQuestion = { taskId: string; inputRequestId: string; taskVersi
 type DecisionEvent = { kind: "input_requested" | "answer" | "resumed" | "cancelled"; label: string; detail: string };
 type DecisionRecord = { taskId: string; inputRequestId: string; taskVersion: number; status: "waiting" | "answered" | "cancelled"; title: string; detail: string; events: DecisionEvent[] };
 type FixtureCanvasJob = { id: string; prompt: string; status: "queued" | "running" | "completed" | "failed" };
+type FixtureMessage = { from: "me" | "otto"; text: string };
+
+/**
+ * 商家读到的阶段名。工程状态码(`queued` / `completed` …)只活在 `data-canvas-job-status`、
+ * CSS 类名与测试断言里 —— 屏幕上一个都不出现。
+ */
+const JOB_STAGE_LABEL: Record<FixtureCanvasJob["status"], string> = {
+  queued: "Queued",
+  running: "Working",
+  completed: "Done",
+  failed: "Did not run",
+};
 
 const CANVAS_QUESTION_FLOWS: Record<"creative" | "scope", CanvasQuestionFlow> = {
   creative: {
@@ -83,6 +95,25 @@ function fixtureQuestionFlow(prompt: string): CanvasQuestionFlow | null {
   return /channel|format|schedule|when|deliverable/i.test(prompt) ? CANVAS_QUESTION_FLOWS.scope : CANVAS_QUESTION_FLOWS.creative;
 }
 
+/**
+ * 打招呼、道谢、随口一问**不是创作请求**:它们不该排一张任务卡,也不该花一分钱。
+ *
+ * 三条路的次序是「提问流 → 创作意图 → 对话」。次序不是随手排的:
+ * "Make the Raya hero more premium" 两边都命中 —— `make` 是创作意图,`premium` 是歧义 ——
+ * 而它真正缺的是一次拍板,所以提问流先判,这条路一个字都不动。
+ * 创作意图之后剩下的才是对话:`fixtureChatReply` 返回 null 就代表「这是真的要做东西」。
+ */
+const CREATE_INTENT = /\b(make|create|generate|design|draw|render|write|build|produce|remake|redo|variant|variants|variation|image|images|photo|photos|video|videos|carousel|poster|banner|flyer|story|stories|post|posts|caption|headline|ad|ads|logo|sketch|shot|shots|batch|mockup|mock up)\b/i;
+const GREETING = /^\s*(hi+|hey+|hello|helo|hai|yo|halo|hola|good (morning|afternoon|evening)|你好|哈啰|嗨)\b[\s!.,?~]*$/i;
+const THANKS = /(\bthanks\b|\bthank you\b|\bthx\b|\bterima kasih\b|谢谢|多谢|感谢)/i;
+
+function fixtureChatReply(prompt: string, board: string): string | null {
+  if (CREATE_INTENT.test(prompt)) return null;
+  if (GREETING.test(prompt)) return `Hey — I'm on ${board} with you. Tell me what to make and I'll start.`;
+  if (THANKS.test(prompt)) return "Anytime. Star the ones worth keeping, or tell me what to make next.";
+  return `I can answer right here, or make something on ${board}. Ask me for images, a variant, or a caption and I'll start.`;
+}
+
 const TOOL_BUTTONS: Array<{
   id: CanvasTool;
   label: string;
@@ -102,7 +133,7 @@ function OttoMark() {
 
 function FixtureWorld() {
   return (
-    <div className="r22-canvas-world" aria-label="R22 high-fidelity visual fixture">
+    <div className="r22-canvas-world" aria-label="Sample canvas board" data-r22-visual-fixture>
       <article className="r22-canvas-object r22-canvas-sticky">
         <span>Sticky · free</span>
         <p>Teal + gold table set. Try one flat-lay, one lifestyle shot.</p>
@@ -140,7 +171,7 @@ function EmptyWorld({ loading = false, error }: { loading?: boolean; error?: str
     <div className="r22-canvas-world">
       <section className="r22-canvas-empty" aria-live="polite" role={error ? "alert" : undefined}>
         <b>{error ? "Canvas could not be loaded" : loading ? "Loading canvas…" : "No canvas items yet"}</b>
-        <p>{error || (loading ? "Reading this project's saved items." : "Describe what to make below. Generated media will appear here after the paid action is accepted.")}</p>
+        <p>{error || (loading ? "Reading this project's saved items." : "Describe what to make below. New images land here once the request is accepted.")}</p>
       </section>
     </div>
   );
@@ -198,7 +229,7 @@ export function R22CanvasSurface({
   const [zoom, setZoom] = useState(100);
   const [message, setMessage] = useState(runtimeContext.initialPrompt ?? "");
   const [notice, setNotice] = useState("");
-  const [fixtureMessages, setFixtureMessages] = useState<string[]>([]);
+  const [fixtureMessages, setFixtureMessages] = useState<FixtureMessage[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<PendingCanvasQuestion | null>(null);
   const [otherAnswer, setOtherAnswer] = useState("");
   const [decisionRecord, setDecisionRecord] = useState<DecisionRecord | null>(null);
@@ -298,8 +329,10 @@ export function R22CanvasSurface({
     const stored = window.sessionStorage.getItem(fixtureStorageKey);
     if (stored) {
       try {
-        const restored = JSON.parse(stored) as { version?: number; messages?: string[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null };
-        if (restored.version !== 1) throw new Error("stale fixture state");
+        const restored = JSON.parse(stored) as { version?: number; messages?: FixtureMessage[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null };
+        // v2 = 会话记录从「一串我的话」变成「谁说的 + 说了什么」(Otto 现在也会答话)。
+        // 旧存档结构对不上,当场丢掉,不去猜它的形状。
+        if (restored.version !== 2) throw new Error("stale fixture state");
         setFixtureMessages(restored.messages ?? []);
         setPendingQuestion(restored.pending ?? null);
         setOtherAnswer(restored.other ?? "");
@@ -320,7 +353,7 @@ export function R22CanvasSurface({
   }, [fixture, fixtureStorageKey]);
   useEffect(() => {
     if (!fixture || !fixtureRestored) return;
-    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 1, messages: fixtureMessages, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob }));
+    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 2, messages: fixtureMessages, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob }));
   }, [decisionRecord, fixture, fixtureJob, fixtureMessages, fixtureRestored, fixtureStorageKey, otherAnswer, pendingQuestion]);
   useEffect(() => () => { fixtureTimersRef.current.forEach((timer) => window.clearTimeout(timer)); }, []);
   useEffect(() => {
@@ -332,19 +365,22 @@ export function R22CanvasSurface({
     }).catch(() => setRatioOptions([]));
   }, [fixture, imageShapes, quoteCosts]);
 
-  function startFixtureJob(prompt: string, receiptId?: string) {
-    const id = receiptId ?? fixtureJob?.id ?? `fixture-action-${fixtureMessages.length}`;
+  /** Otto 答话时指得出「我们现在在哪块板上」—— 顶栏叫什么,它就叫什么。 */
+  const fixtureBoardLabel = fixtureWorkspaceId === "batik-house" ? "the Raya launch board" : "this canvas";
+
+  function startFixtureJob(prompt: string, actionId?: string) {
+    const id = actionId ?? fixtureJob?.id ?? `fixture-action-${fixtureMessages.length}`;
     setSubmitting(true);
     setFixtureJob({ id, prompt, status: "queued" });
-    setNotice("Queued from one local fixture receipt. No provider or credit ledger was called.");
+    setNotice("Queued — nothing has been charged yet.");
     fixtureTimersRef.current.push(window.setTimeout(() => {
       setFixtureJob({ id, prompt, status: "running" });
-      setNotice("Fixture generation is running from the same local receipt.");
+      setNotice("Still on the same request — nothing new was started.");
     }, 320));
     fixtureTimersRef.current.push(window.setTimeout(() => {
       setSubmitting(false);
       setFixtureJob({ id, prompt, status: "completed" });
-      setNotice("Fixture generation completed once. Production success still requires a durable backend receipt.");
+      setNotice("Done — it landed on the canvas. Star the keepers, or ask for variants.");
     }, 920));
   }
 
@@ -361,8 +397,9 @@ export function R22CanvasSurface({
         setNotice("This project is not available. Return to Projects before sending anything.");
         return;
       }
-      setFixtureMessages((current) => [...current, next]);
+      setFixtureMessages((current) => [...current, { from: "me", text: next }]);
       const flow = fixtureQuestionFlow(next);
+      const chatReply = flow ? null : fixtureChatReply(next, fixtureBoardLabel);
       if (flow) {
         const taskId = `fixture-task-${fixtureMessages.length + 1}`;
         const inputRequestId = `${taskId}:input:1`;
@@ -380,6 +417,11 @@ export function R22CanvasSurface({
         setOttoOpen(true);
         setConversationOpen(true);
         setNotice("Otto paused — no credits used while waiting for your answer.");
+      } else if (chatReply) {
+        // 一句寒暄不是一次生成:不排任务卡、不动 `fixtureJob`、不报价。
+        setFixtureMessages((current) => [...current, { from: "otto", text: chatReply }]);
+        setConversationOpen(true);
+        setNotice("Answered in Conversation. Nothing was made and no credits were used.");
       } else {
         if (fixtureSendOutcome === "permission") {
           setFixtureJob({ id: `fixture-action-${fixtureMessages.length + 1}`, prompt: next, status: "failed" });
@@ -394,7 +436,7 @@ export function R22CanvasSurface({
             setSubmitting(false);
             setFixtureSendFailedOnce(true);
             setFixtureJob({ id, prompt: next, status: "failed" });
-            setNotice(fixtureSendOutcome === "unknown" ? "Generation outcome is unknown. Check this same receipt before starting another; no charge or success is assumed." : "The fixture provider did not confirm this job. Nothing was charged; retry reuses the same request.");
+            setNotice(fixtureSendOutcome === "unknown" ? "Otto could not confirm what happened. Check this same request before sending another — nothing counts as done, and nothing was charged." : "That request was not confirmed. Nothing was charged, and sending again picks up the same request instead of a new one.");
           }, 360);
         } else startFixtureJob(next);
       }
@@ -415,7 +457,7 @@ export function R22CanvasSurface({
     if (!accepted) return;
     actionRef.current = null;
     setMessage("");
-    setNotice("Generation accepted. The canvas card will update from the durable job state.");
+    setNotice("Generation accepted. The card on the canvas fills in as the job runs.");
   };
 
   const currentQuestion = pendingQuestion?.flow.questions[pendingQuestion.index];
@@ -438,20 +480,20 @@ export function R22CanvasSurface({
     }
     const requestKey = answeredRequestKey(pendingQuestion.inputRequestId, pendingQuestion.taskVersion);
     if (answeredRequestsRef.current.has(requestKey)) {
-      setNotice("This answer was already accepted. The original receipt was reused; no duplicate task or spend was created.");
+      setNotice("This answer was already accepted. Otto picked up the one you saved — no second task and no extra credits.");
       return;
     }
     answeredRequestsRef.current.add(requestKey);
     const detail = pendingQuestion.flow.questions.map((question, index) => `${question.question} ${answers[index]}`).join(" · ");
-    setDecisionRecord((current) => current ? { ...current, status: "answered", title: `${pendingQuestion.flow.title} · ${answers.length} answers saved`, detail: `Why Otto paused: ${pendingQuestion.flow.reason} · ${detail}`, events: [...current.events, { kind: "answer", label: currentQuestion.header, detail: currentAnswer }, { kind: "resumed", label: "Task resumed", detail: `Receipt ${pendingQuestion.inputRequestId} · version ${pendingQuestion.taskVersion} · no paid action run in fixture` }] } : current);
+    setDecisionRecord((current) => current ? { ...current, status: "answered", title: `${pendingQuestion.flow.title} · ${answers.length} answers saved`, detail: `Why Otto paused: ${pendingQuestion.flow.reason} · ${detail}`, events: [...current.events, { kind: "answer", label: currentQuestion.header, detail: currentAnswer }, { kind: "resumed", label: "Task resumed", detail: `Continued from your saved answers · version ${pendingQuestion.taskVersion} · 0 cr` }] } : current);
     setPendingQuestion(null);
     setOtherAnswer("");
-    setNotice("Decision saved in Conversation. Fixture task resumed; no paid action was run.");
+    setNotice("Decision saved in Conversation. Otto picked the task back up, and waiting cost 0 cr.");
   }
 
   function cancelQuestion() {
     if (!pendingQuestion) return;
-    setDecisionRecord((current) => current ? { ...current, status: "cancelled", title: `${pendingQuestion.flow.title} · task cancelled`, detail: "No answer was used. No credits were spent.", events: [...current.events, { kind: "cancelled", label: "Task cancelled", detail: `Request ${pendingQuestion.inputRequestId} cannot be submitted again` }] } : current);
+    setDecisionRecord((current) => current ? { ...current, status: "cancelled", title: `${pendingQuestion.flow.title} · task cancelled`, detail: "No answer was used. No credits were spent.", events: [...current.events, { kind: "cancelled", label: "Task cancelled", detail: "This decision is closed. Answering it again does not restart the task." }] } : current);
     setPendingQuestion(null);
     setOtherAnswer("");
     setNotice("Task cancelled — no credits were used.");
@@ -506,7 +548,7 @@ export function R22CanvasSurface({
         {fixture && fixtureRouteState !== "ready" ? <EmptyWorld loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Project read outcome is unknown. No board or empty state was inferred." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld /> : <EmptyWorld /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} zoom={zoom} />}
         {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
-        {fixtureJob ? <div className={`r22-canvas-job is-${fixtureJob.status}`} role="status"><span>{fixtureJob.status}</span><b>{fixtureJob.prompt}</b><small>Receipt {fixtureJob.id} · {fixtureJob.status === "completed" ? "fixture result saved" : fixtureJob.status === "failed" ? "0 cr · no confirmed job" : "same local action"}</small></div> : null}
+        {fixtureJob ? <div className={`r22-canvas-job is-${fixtureJob.status}`} role="status" data-canvas-job-status={fixtureJob.status} data-canvas-action-id={fixtureJob.id}><span>{JOB_STAGE_LABEL[fixtureJob.status]}</span><b>{fixtureJob.prompt}</b><small>{fixtureJob.status === "completed" ? "Saved to this canvas" : fixtureJob.status === "failed" ? "0 cr · nothing ran" : "Still the same request"}</small></div> : null}
 
         <aside
           className={`r22-canvas-otto${ottoOpen ? "" : " is-collapsed"}`}
@@ -520,7 +562,7 @@ export function R22CanvasSurface({
           </Button>
           {ottoOpen && (
             <div className="r22-canvas-otto-body">
-              {fixture && fixtureRouteState !== "ready" ? <p>Project access must be restored before Otto can read or run anything.</p> : pendingQuestion ? <><p>Paused — I need {pendingQuestion.flow.questions.length} decisions before I continue.</p><ul><li><span className="is-done"><Check aria-hidden="true" /></span>Checked the project brief and Otto IQ</li><li><span>?</span>Waiting for your answer</li></ul></> : fixtureJob ? <><p>{fixtureJob.status === "completed" ? "The fixture job completed once." : fixtureJob.status === "failed" ? "The request did not produce a confirmed job." : "The fixture job is progressing from one local receipt."}</p><ul><li><span className={fixtureJob.status !== "failed" ? "is-done" : ""}>{fixtureJob.status !== "failed" ? <Check aria-hidden="true" /> : "!"}</span>{fixtureJob.status === "failed" ? "No charge or provider success recorded" : `Receipt ${fixtureJob.id}`}</li></ul></> : fixture ? (
+              {fixture && fixtureRouteState !== "ready" ? <p>Project access must be restored before Otto can read or run anything.</p> : pendingQuestion ? <><p>Paused — I need {pendingQuestion.flow.questions.length} decisions before I continue.</p><ul><li><span className="is-done"><Check aria-hidden="true" /></span>Checked the project brief and Otto IQ</li><li><span>?</span>Waiting for your answer</li></ul></> : fixtureJob ? <><p>{fixtureJob.status === "completed" ? "Done — that one landed on the canvas." : fixtureJob.status === "failed" ? "That request did not run. Nothing was charged." : "Working on it — still the same request, no second one started."}</p><ul><li><span className={fixtureJob.status !== "failed" ? "is-done" : ""}>{fixtureJob.status !== "failed" ? <Check aria-hidden="true" /> : "!"}</span>{fixtureJob.status === "failed" ? "No credits used, and nothing was completed" : "Queued once, not twice"}</li></ul></> : fixture ? (
                 <>
                   <p>All 4 images are done. Star the keepers, or ask for variants.</p>
                   <ul>
@@ -531,10 +573,10 @@ export function R22CanvasSurface({
                 </>
               ) : (
                 <p>{submitting || generationProgress
-                  ? "The generation job is running from this project's durable action receipt."
+                  ? "Working on it — the card on the canvas fills in as the job runs."
                   : costQuote && ratioOptions.length && !nodesError
-                    ? "Otto is ready. The exact price and model availability were checked before this paid action can start."
-                    : "Checking this project's canvas, model availability, and exact price. No paid action can start yet."}</p>
+                    ? "Otto is ready. The exact price and what is available were both checked before anything can run."
+                    : "Checking this canvas, what is available, and the exact price. Nothing can run until that is done."}</p>
               )}
             </div>
           )}
@@ -559,12 +601,12 @@ export function R22CanvasSurface({
               {fixture && fixtureRouteState !== "ready" ? <li className="from-otto">Project conversation is unavailable until access is restored.</li> : fixture ? (
                 <>
                   <li className="from-otto">Project brief loaded. Ask me what to create.</li>
-                  {fixtureMessages.map((item, index) => <li className="from-me" key={`${item}:${index}`}>{item}</li>)}
-                  {fixtureJob ? <li className="from-otto">Generation {fixtureJob.status} · {fixtureJob.status === "failed" ? "no credits used" : fixtureJob.id}</li> : null}
-                  {decisionRecord ? <li key="fixture-decision" className={`r22-canvas-decision is-${decisionRecord.status}${decisionOpen ? " is-open" : ""}`}><Button unstyled type="button" onClick={() => setDecisionOpen((open) => !open)}><span>Decision</span><em>{decisionRecord.status === "waiting" ? "Waiting" : decisionRecord.status === "answered" ? "Answered" : "Cancelled"}</em></Button><b>{decisionRecord.title}</b>{decisionOpen ? <div className="r22-canvas-decision-detail"><p><strong>Why Otto paused</strong><br />{decisionRecord.detail}</p><ol>{decisionRecord.events.map((event, index) => <li key={`${event.kind}:${index}`}><span>{event.label}</span><small>{event.detail}</small></li>)}</ol></div> : null}</li> : null}
+                  {fixtureMessages.map((item, index) => <li className={item.from === "me" ? "from-me" : "from-otto"} key={`${item.from}:${index}:${item.text}`}>{item.text}</li>)}
+                  {fixtureJob ? <li className="from-otto">{fixtureJob.status === "failed" ? "That request did not run — no credits used." : fixtureJob.status === "completed" ? "Done — that one landed on the canvas." : "Working on it — I'll post here when it lands."}</li> : null}
+                  {decisionRecord ? <li key="fixture-decision" data-input-request-id={decisionRecord.inputRequestId} data-task-version={decisionRecord.taskVersion} className={`r22-canvas-decision is-${decisionRecord.status}${decisionOpen ? " is-open" : ""}`}><Button unstyled type="button" onClick={() => setDecisionOpen((open) => !open)}><span>Decision</span><em>{decisionRecord.status === "waiting" ? "Waiting" : decisionRecord.status === "answered" ? "Answered" : "Cancelled"}</em></Button><b>{decisionRecord.title}</b>{decisionOpen ? <div className="r22-canvas-decision-detail"><p><strong>Why Otto paused</strong><br />{decisionRecord.detail}</p><ol>{decisionRecord.events.map((event, index) => <li key={`${event.kind}:${index}`}><span>{event.label}</span><small>{event.detail}</small></li>)}</ol></div> : null}</li> : null}
                 </>
               ) : (
-                runtimeContext.threads.length ? runtimeContext.threads.map((thread) => <li className={thread.id === runtimeContext.activeThreadId ? "from-otto is-active" : "from-otto"} key={thread.id}><Link href={threadHref(thread.id)}>{thread.title}</Link></li>) : <li className="from-otto">No project conversation exists yet. Use the composer to create the first durable canvas action.</li>
+                runtimeContext.threads.length ? runtimeContext.threads.map((thread) => <li className={thread.id === runtimeContext.activeThreadId ? "from-otto is-active" : "from-otto"} key={thread.id}><Link href={threadHref(thread.id)}>{thread.title}</Link></li>) : <li className="from-otto">No conversation yet. Describe what to make below and Otto starts the first one.</li>
               )}
             </ul>
           )}
@@ -634,7 +676,7 @@ export function R22CanvasSurface({
           <Button unstyled type="button" aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(200, value + 10))}><Plus aria-hidden="true" /></Button>
         </div>
 
-        <div className={`r22-canvas-notice${notice ? " is-visible" : ""}`} aria-live="polite"><span>{notice}</span>{fixtureJob?.status === "failed" && (fixtureSendOutcome === "error" || fixtureSendOutcome === "unknown") ? <Button unstyled type="button" disabled={submitting} onClick={retryFixtureSend}>{submitting ? "Retrying…" : fixtureSendOutcome === "unknown" ? "Check receipt" : "Retry"}</Button> : null}</div>
+        <div className={`r22-canvas-notice${notice ? " is-visible" : ""}`} aria-live="polite"><span>{notice}</span>{fixtureJob?.status === "failed" && (fixtureSendOutcome === "error" || fixtureSendOutcome === "unknown") ? <Button unstyled type="button" disabled={submitting} onClick={retryFixtureSend}>{submitting ? "Retrying…" : fixtureSendOutcome === "unknown" ? "Check this request" : "Retry"}</Button> : null}</div>
       </div>
     </section>
   );

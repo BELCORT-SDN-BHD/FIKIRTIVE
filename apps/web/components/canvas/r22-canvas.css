@@ -434,13 +434,12 @@
   box-shadow: var(--r22-shadow-sm);
 }
 
+/* 原型里 Otto 的状态词(`.b-state`)是 500/10.5px/ink3 的普通句子字,不是全大写机器码。
+   任务卡的阶段名跟它同一个寄存器 —— 商家读到的是 "Working",不是 "RUNNING"。 */
 .r22-canvas-job > span {
   color: var(--r22-ink-3);
-  font-family: var(--font-jetbrains-mono), monospace;
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: .08em;
-  text-transform: uppercase;
+  font-size: 10.5px;
+  font-weight: 500;
 }
 
 .r22-canvas-job > b { font-size: 13px; }
