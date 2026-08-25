@@ -192,7 +192,10 @@ describe("R22 Otto 生产默认", () => {
     expect(el.querySelector("[data-otto-panel]")).toBeNull();
     const launcher = document.querySelector<HTMLElement>("[data-otto-launcher]");
     expect(launcher?.tagName).toBe("BUTTON");
-    expect(launcher?.querySelector('img[src="/brand/r22-otto.svg"]')).not.toBeNull();
+    // 云朵必须是内联 SVG:`<img>` 默认可原生拖拽,按住再动一下就发 dragstart + pointercancel,
+    // 这次拖拽从此没有 pointerup 可等 —— 2026-08-25 Founder 实机「拖不动」的成因。
+    expect(launcher?.querySelector("img")).toBeNull();
+    expect(launcher?.querySelector("svg")).not.toBeNull();
     expect(loadOttoPanelSeed).not.toHaveBeenCalled();
   });
 

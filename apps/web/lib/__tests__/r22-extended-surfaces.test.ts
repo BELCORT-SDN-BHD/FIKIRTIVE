@@ -324,7 +324,12 @@ describe("R22 extended frontend contracts", () => {
     // 权限那句是状态句,按 Founder 2026-08-25 缩辖区裁决收进 `HOME_COPY`(措辞未变)。
     expect(home).toContain("HOME_COPY.noPasswordStored");
     expect(ottoHost).toContain("if (fixture) return;");
-    expect(ottoConversation).toContain("No conversation or action was sent to the server.");
+    // Founder 2026-08-25 裁决:fixture 诚实由顶栏「Prototype · sample data」徽章承担,
+    // 面板里那句话回到人话(原型 `#ottoContext` 的寄存器)。这条围栏钉的仍是同一件事 ——
+    // 那条回话必须写明「这里不会替商家动任何东西」——只是不再用工程黑话写。
+    expect(ottoConversation).toContain("Nothing runs from here");
+    expect(ottoConversation).toContain("no action will run from chat");
+    expect(ottoConversation).not.toContain("Visual fixture");
     for (const unstableFixtureId of [
       "fixture-voice-${Date.now",
       "fixture-post-${Date.now",

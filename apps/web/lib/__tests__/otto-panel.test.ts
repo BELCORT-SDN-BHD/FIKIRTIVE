@@ -229,14 +229,14 @@ describe("头部与插槽 (§3.4)", () => {
   it("only shows the history and new-chat buttons when something is wired to them", async () => {
     const bare = await render(shell());
     expect(bare.querySelector('[aria-label="Conversation history"]')).toBeNull();
-    expect(bare.querySelector('[aria-label="New chat"]')).toBeNull();
+    expect(bare.querySelector('[aria-label="New conversation"]')).toBeNull();
 
     await act(async () => root?.unmount());
     container?.remove();
 
     const wired = await render(shell({ onOpenHistory: vi.fn(), onNewChat: vi.fn() }));
     expect(wired.querySelector('[aria-label="Conversation history"]')).not.toBeNull();
-    expect(wired.querySelector('[aria-label="New chat"]')).not.toBeNull();
+    expect(wired.querySelector('[aria-label="New conversation"]')).not.toBeNull();
   });
 
   it("says what the chat costs only where there is a composer to spend it", async () => {

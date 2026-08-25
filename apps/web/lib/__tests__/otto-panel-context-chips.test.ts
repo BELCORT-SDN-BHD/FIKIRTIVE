@@ -357,13 +357,13 @@ describe("页面快捷 chips", () => {
 describe("头部的 ☰ 历史", () => {
   it("点开就是列表,再点回到会话", async () => {
     const el = await mountOpen(SHELL_ROUTES.campaign);
-    const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
+    const history = el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!;
 
     expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
 
     await act(async () => history.click());
     expect(el.querySelector("[data-otto-thread-list]")).not.toBeNull();
-    expect(history.getAttribute("aria-pressed")).toBe("true");
+    expect(history.getAttribute("aria-expanded")).toBe("true");
 
     await act(async () => history.click());
     expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
@@ -371,7 +371,7 @@ describe("头部的 ☰ 历史", () => {
 
   it("选一条会话 / 开新对话都会把列表关掉", async () => {
     const el = await mountOpen(SHELL_ROUTES.campaign);
-    const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
+    const history = el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!;
 
     await act(async () => history.click());
     await act(async () => {
@@ -394,7 +394,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
   it("meta 会话被选中时把真正的消息取回来,并画出来", async () => {
     const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+      el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
@@ -417,7 +417,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
 
     const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+      el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
@@ -433,15 +433,15 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
 
     const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+      el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
     });
 
     // 取数途中:会改变「显示哪一条」的两颗先禁掉(意图号才是真守卫,这只是不必发生的一下)。
-    expect(el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.disabled).toBe(true);
-    expect(el.querySelector<HTMLButtonElement>('[aria-label="New chat"]')!.disabled).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.disabled).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>('[aria-label="New conversation"]')!.disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>("[data-otto-thread-list-new]")!.disabled).toBe(true);
 
     // 商家改主意:开新对话(走头部那颗以外的第二条路也一样 —— 这里直接调列表里那颗之外的
@@ -467,7 +467,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
 
     const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+      el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
@@ -482,7 +482,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     getCoworkThreadClient.mockResolvedValue(null);
 
     const el = await mountOpen(SHELL_ROUTES.campaign);
-    const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
+    const history = el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!;
     await act(async () => history.click());
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-thread-list-thread="${META_THREAD.id}"]`)!.click();
@@ -514,7 +514,7 @@ describe("开关历史不丢草稿 (P1-2)", () => {
     await act(async () => typeInto(composer, "Raya promo, 3 posts"));
     expect(composer.value).toBe("Raya promo, 3 posts");
 
-    const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
+    const history = el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!;
     await act(async () => history.click());
     await act(async () => history.click());
 
@@ -528,7 +528,7 @@ describe("开关历史不丢草稿 (P1-2)", () => {
   it("历史开着的时候会话只是被藏起来,没有被卸掉", async () => {
     const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
-      el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
+      el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click();
     });
 
     const wrap = el.querySelector<HTMLElement>("[data-otto-panel-conversation-wrap]")!;
