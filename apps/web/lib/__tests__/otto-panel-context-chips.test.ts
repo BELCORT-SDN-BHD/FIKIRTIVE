@@ -126,26 +126,57 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
+/**
+ * 会话体是 `React.lazy` 分包的,所以要多等几拍:先是 import() 那个 promise,再是 Suspense
+ * 提交,再是种子自己那次取数。等的是拍数而不是一个固定 sleep(与 `otto-panel-mount.test.ts`
+ * 的 `settle()` 逐字同一份做法)。
+ */
+async function settle(): Promise<void> {
+  for (let tick = 0; tick < 4; tick += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
 async function mount(element: ReactElement): Promise<HTMLDivElement> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => root!.render(element));
-  await act(async () => {
-    await Promise.resolve();
-  });
-  await act(async () => {
-    await Promise.resolve();
-  });
+  await settle();
   return container;
 }
 
+/**
+ * 生产变体的商家壳 —— `MerchantAppShell` 不传 `ottoVariant`,所以商家看到的永远是
+ * `r22`(`components/global-navigation.tsx` 的默认值)。这一份考卷必须是那一份:
+ * 拿 legacy 去考,考的就不是商家手上那块面板。
+ */
 function shell(pathname: string) {
   return createElement(
     MerchantShellContent,
-    { pathname, signOutAction: async () => {}, ottoVariant: "legacy" },
+    { pathname, signOutAction: async () => {} },
     createElement("div", { "data-page": "" }, "Page"),
   );
+}
+
+/**
+ * R22 首屏只画 compact launcher,面板是收着的、种子也还没取(那条规格钉在
+ * `otto-panel-mount.test.ts` 的「R22 Otto 生产默认」)。所以面板**里面**的每一条断言都得先
+ * 按这一颗 —— 商家真的要点它一下才看得到 chips、历史与草稿框。少了这一步,下面每一条
+ * DOM 断言都会在一块根本没画出来的面板上空过。
+ */
+async function openPanel(el: HTMLDivElement): Promise<void> {
+  await act(async () => el.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click());
+  await settle();
+}
+
+/** 挂上真的商家壳并按开面板 —— 面板内的断言都从这里起步。 */
+async function mountOpen(pathname: string): Promise<HTMLDivElement> {
+  const el = await mount(shell(pathname));
+  await openPanel(el);
+  return el;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +244,9 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
    */
   it("任何一面上都不画 chip", async () => {
     for (const location of [SHELL_ROUTES.campaign, `${SHELL_ROUTES.campaign}/01J0000000000000000000000A`]) {
-      const el = await mount(shell(location));
+      const el = await mountOpen(location);
+      // 面板真的开着才算数 —— 「收着所以没画 chip」不构成这一条的证据。
+      expect(el.querySelector("[data-otto-panel]"), location).not.toBeNull();
       expect(el.querySelector("[data-otto-panel-context]"), location).toBeNull();
       expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]"), location).toBeNull();
       if (root) await act(async () => root?.unmount());
@@ -224,7 +257,8 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
   });
 
   it("对象页上也没有 —— 名字读得到与否都不改变这一条", async () => {
-    const el = await mount(shell(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`));
+    const el = await mountOpen(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`);
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
     expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
   });
 
@@ -292,7 +326,7 @@ describe("页面快捷 chips", () => {
   });
 
   it("面板底部真的画出来了,顺序与页面表一致", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     const rendered = [...el.querySelectorAll<HTMLElement>("[data-otto-quick-chip]")];
 
     expect(rendered.map((n) => n.getAttribute("data-otto-quick-chip"))).toEqual(
@@ -306,7 +340,7 @@ describe("页面快捷 chips", () => {
   it("点一颗 = 开一条新会话,把那句话交给会话流(与前门同一条路)", async () => {
     createEmptyCoworkThread.mockResolvedValue({ id: "t_new" });
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     const first = panelQuickChips(SHELL_ROUTES.campaign)[0]!;
 
     await act(async () => {
@@ -322,7 +356,7 @@ describe("页面快捷 chips", () => {
 // ---------------------------------------------------------------------------
 describe("头部的 ☰ 历史", () => {
   it("点开就是列表,再点回到会话", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
 
     expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
@@ -336,7 +370,7 @@ describe("头部的 ☰ 历史", () => {
   });
 
   it("选一条会话 / 开新对话都会把列表关掉", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
 
     await act(async () => history.click());
@@ -358,7 +392,7 @@ describe("头部的 ☰ 历史", () => {
 // ---------------------------------------------------------------------------
 describe("选一条历史会话,消息真的出来 (P1-1)", () => {
   it("meta 会话被选中时把真正的消息取回来,并画出来", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -381,7 +415,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
       threads: [{ ...META_THREAD, messages: [{ id: "m1", role: "USER", kind: "TEXT", text: "already here", seq: 1 }] }],
     });
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -397,7 +431,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     let release: (value: unknown) => void = () => {};
     getCoworkThreadClient.mockReturnValue(new Promise((resolve) => { release = resolve; }));
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -431,7 +465,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
   it("取不到就留在列表上说实话,不切过去让商家盯着一片空白", async () => {
     getCoworkThreadClient.mockResolvedValue(null);
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -447,7 +481,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
   it("那句「打不开」不许跨开合残留 —— 关掉再打开是新的一眼", async () => {
     getCoworkThreadClient.mockResolvedValue(null);
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
     await act(async () => history.click());
     await act(async () => {
@@ -475,7 +509,7 @@ describe("开关历史不丢草稿 (P1-2)", () => {
   }
 
   it("打了一半的字在开关历史之后还在,而且还是同一个输入框(没被卸载重建)", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     const composer = el.querySelector<HTMLTextAreaElement>("[data-otto-panel-body] textarea")!;
     await act(async () => typeInto(composer, "Raya promo, 3 posts"));
     expect(composer.value).toBe("Raya promo, 3 posts");
@@ -492,7 +526,7 @@ describe("开关历史不丢草稿 (P1-2)", () => {
   });
 
   it("历史开着的时候会话只是被藏起来,没有被卸掉", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -511,7 +545,7 @@ describe("chip 点失败照前门的形状说话 (P2-2)", () => {
   it("建会话失败时画出那句话,chips 仍可再点", async () => {
     createEmptyCoworkThread.mockResolvedValue({ error: "You're out of credits." });
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mountOpen(SHELL_ROUTES.campaign);
     const first = panelQuickChips(SHELL_ROUTES.campaign)[0]!;
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.click();
