@@ -14,7 +14,7 @@ export const R22_NOTIFICATION_FIXTURE_KEY = "fikirtive.r22.notifications.v1";
 export const R22_NOTIFICATION_FIXTURE_EVENT = "fikirtive:r22-notifications";
 
 export const R22_NOTIFICATION_FIXTURE_ITEMS: R22NotificationItem[] = [
-  { id: "fixture-approval", title: "5 posts need approval", detail: "Raya launch is waiting for your decision.", time: "8 min", href: "/campaign/workbench?fixture=r22", read: false, kind: "approval" },
+  { id: "fixture-approval", title: "5 posts need approval", detail: "Raya launch is waiting for your decision.", time: "8 min", href: "/approvals?fixture=r22", read: false, kind: "approval" },
   { id: "fixture-generation", title: "Canvas export is ready", detail: "Four Raya concepts finished generating.", time: "1 hr", href: "/create/canvas?project=fixture-raya&fixture=r22", read: false, kind: "generation" },
   { id: "fixture-publish", title: "Weekend market post published", detail: "Instagram accepted the scheduled post.", time: "Yesterday", href: "/schedule?fixture=r22", read: true, kind: "publishing" },
 ];

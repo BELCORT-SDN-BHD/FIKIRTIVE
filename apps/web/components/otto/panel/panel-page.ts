@@ -29,16 +29,18 @@ type PanelObjectKind = (typeof OBJECT_ROUTES)[keyof typeof OBJECT_ROUTES];
 /**
  * 一条 shell 路由底下**不是对象**的那些固定子段。
  *
- * 判官 r1 [P3]:`/campaign/calendar`、`/campaign/trends`、`/campaign/workbench` 是三个真的
- * 页面文件,不是三条战役。少了这一层,面板会拿 "calendar" 当 id 去查一次库(白跑一次查询,
- * 而且必然查不到 → 一个永远不出现的 chip)。
+ * 判官 r1 [P3]:`/campaign/calendar`、`/campaign/trends` 是真的页面文件,不是两条战役。
+ * 少了这一层,面板会拿 "calendar" 当 id 去查一次库(白跑一次查询,而且必然查不到 →
+ * 一个永远不出现的 chip)。
  *
  * 为什么是一份手写名单而不是「id 长得像不像 ULID」:id 的形状是战役那一侧的规矩
  * (`campaign-view-data.ts` 的 `ULID_PATTERN`),抄到这里就又多了一份会漂移的真相。
- * 这三段本身也在退场路上(规格书 §5.4:`/campaign/calendar` 收敛成重定向),名单只会变短。
+ * 这几段本身也在退场路上(规格书 §5.4:`/campaign/calendar` 收敛成重定向),名单只会变短
+ * —— `workbench` 这一项就是这么走的:审批搬到 `/approvals` 之后,`/campaign/workbench`
+ * 只剩一个重定向文件,永远不会有人停在那条地址上让面板去解析它。
  */
 const NON_OBJECT_SEGMENTS: Readonly<Record<string, readonly string[]>> = {
-  campaign: ["calendar", "trends", "workbench"],
+  campaign: ["calendar", "trends"],
 };
 
 /** 一次匹配的结果:落在哪一条 shell 路由上,以及(如果有)它后面那一段对象 id。 */

@@ -20,7 +20,7 @@ You are the assistant, not one of the sections — you are beside the merchant o
 - Library (/library) — Find every image and video you have already made.
 - Otto IQ (/brand) — Keep what Otto should remember about your brand and the things you sell.
 - Campaigns (/campaign) — Plan a campaign, edit its plan entries and their dates, and approve what may be made.
-- Approvals (/campaign/workbench) — Review work that needs a decision without implying that unavailable bulk actions succeeded.
+- Approvals (/approvals) — Review work that needs a decision without implying that unavailable bulk actions succeeded.
 - Schedule (/schedule) — The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.
 - Analytics (/schedule/analytics) — Read the performance data the connected provider actually exposes, with source and freshness visible.
 - Routines (/routines) — See the routines Otto may run, their authority, schedule and credit limits.

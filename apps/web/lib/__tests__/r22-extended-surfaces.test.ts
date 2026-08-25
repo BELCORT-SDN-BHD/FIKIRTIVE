@@ -82,7 +82,7 @@ describe("R22 extended frontend contracts", () => {
       fixture: true,
       state: "ready",
       initialItems: [
-        { id: "unread", title: "Needs approval", detail: "One item", time: "Now", href: "/campaign/workbench?fixture=r22", read: false, kind: "approval" },
+        { id: "unread", title: "Needs approval", detail: "One item", time: "Now", href: "/approvals?fixture=r22", read: false, kind: "approval" },
         { id: "read", title: "Already published", detail: "One post", time: "Yesterday", href: "/schedule?fixture=r22", read: true, kind: "publishing" },
       ],
     }));

@@ -14,7 +14,7 @@ const items = [
 /**
  * W2-12(#997,规格书 §5.6 ②/§9.2):三个页签换成 `ui/tabs`,不再手搓选中态。
  *
- * 三条都是真路由(`/campaign`、`/campaign/workbench`、`/campaign/trends`),`value` 由
+ * 三条都是真路由(`/campaign`、`/campaign/new`、`/campaign/trends`),`value` 由
  * `current` 派生(受控),`TabsTrigger asChild` 套一个真 `<Link>` —— 导航靠 `href` 本身,
  * 不接 `onValueChange`/`useRouter`:旧版手写的 `<Link>` 页签本来就只认点击和 Enter,
  * 原生 `<a>` 对 Space 没有默认行为,从来不支持空格切页签。这里不新增行为,也就不必为了

@@ -64,7 +64,7 @@ describe("每一个目的地都手写在案,权威表与它互为对照", () => 
     "/library",                // 已经做出来的每一张图、每一条片
     "/brand",                  // Otto 该记住的品牌与产品
     "/campaign",                // 战役
-    "/campaign/workbench",      // R22 审批工作台
+    "/approvals",              // R22 审批收件箱(旧 /campaign/workbench 只 redirect)
     "/schedule",                // 唯一的日历
     "/schedule/analytics",      // R22 独立顶层 Analytics
     "/routines",                 // R22 自动化例程

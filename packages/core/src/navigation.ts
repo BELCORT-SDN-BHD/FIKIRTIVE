@@ -96,8 +96,12 @@ export const SHELL_ROUTES = {
   brand: "/brand",
   /** 战役。今天已经是真路由,新旧同址。 */
   campaign: "/campaign",
-  /** R22 审批工作台。 */
-  approvals: "/campaign/workbench",
+  /**
+   * R22 审批收件箱。曾经挂在 `/campaign/workbench`,那条旧地址现在只 redirect ——
+   * 审批收的是 routine 产出、团队草稿与排期改动,战役只是其中一个来源,把它写成战役的
+   * 子页面等于让导航里的名字与地址栏互相矛盾。
+   */
+  approvals: "/approvals",
   /** 唯一的日历。今天是 `/otto?view=schedule`。 */
   schedule: "/schedule",
   /** R22 把 Analytics 定为独立顶层门；真实能力仍只展示 provider 确实返回的数据。 */
@@ -249,6 +253,11 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
     from: "/campaign/calendar",
     to: SHELL_ROUTES.schedule,
     why: "One calendar, not two. The campaign calendar only re-edited plan-entry dates that the campaign's own page already edits; the schedule is the calendar that actually posts.",
+  },
+  {
+    from: "/campaign/workbench",
+    to: SHELL_ROUTES.approvals,
+    why: "Approvals is not a campaign sub-page. It collects routine output, teammate drafts and schedule changes, so it lives at its own address and the old one only forwards.",
   },
   // `/library` 曾经在这张表里(「旧的独立素材库已并进工作区 Library」)。W2-1 把它撤了 ——
   // 不是改了去处,是**它不再是一条收敛掉的旧路由**:`/library` 现在是真页面

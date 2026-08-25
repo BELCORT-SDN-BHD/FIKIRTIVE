@@ -96,7 +96,7 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
       edit: "/library/editor",
       brand: "/brand",
       campaign: "/campaign",
-      approvals: "/campaign/workbench",
+      approvals: "/approvals",
       schedule: "/schedule",
       analytics: "/schedule/analytics",
       routines: "/routines",

@@ -21,6 +21,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Workflow } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
 import "./r22-routines.css";
 
@@ -183,7 +184,7 @@ function RoutineCard({ row, fixture, busy, onEdit, onPause }: { row: R22RoutineR
       <footer>
         <Button unstyled type="button" disabled={busy} onClick={onEdit}>Edit</Button>
         <Button unstyled type="button" disabled={busy} onClick={onPause}>{busy ? "Updating…" : row.status === "paused" ? "Resume" : "Pause"}</Button>
-        {needsReview > 0 && <Link href={fixture ? "/campaign/workbench?fixture=r22" : "/campaign/workbench"}>Review {needsReview} post{needsReview === 1 ? "" : "s"}</Link>}
+        {needsReview > 0 && <Link href={fixture ? `${SHELL_ROUTES.approvals}?fixture=r22` : SHELL_ROUTES.approvals}>Review {needsReview} post{needsReview === 1 ? "" : "s"}</Link>}
         <span><Image src="/brand/r22-otto.svg" alt="" width={120} height={110} style={{ width: 16, height: "auto" }} />Otto prepares this</span>
       </footer>
       {!fixture && <p className="r22-routine-action-note">Editing and pausing need the R22 publishing-routine mutation contract. No change is made until an action confirms it.</p>}
