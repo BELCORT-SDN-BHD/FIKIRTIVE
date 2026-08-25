@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Separator } from "@/components/ui/separator";
 
 import Image from "next/image";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { useRouter } from "next/navigation";
 import {
   BarChart3,
@@ -57,6 +57,22 @@ function fixtureHref(href: string, fixture: boolean): string {
 function isActive(pathname: string, href: string, exact?: boolean): boolean {
   if (exact) return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/**
+ * 导航当前项要在**按下的那一瞬**亮,不等路由跑完。
+ *
+ * 高亮此前完全由 `usePathname()` 算,而 App Router 的 pathname 要等这一跳 commit 了才变 ——
+ * 没有 `loading.tsx` 的门(过去的 /create、/approvals、/routines)得等服务端把整页读完,
+ * 那一整段里商家按了一下,侧栏一点反应都没有。`useLinkStatus` 报的是这条 Link 自己的
+ * 在途状态,按下即为真,所以「已经在去了」这件事先到,路由随后追上。
+ *
+ * 它不画任何东西 —— 只是一个给 `:has()` 用的记号,真正的底色还是那一份 `.is-active`
+ * 配方,不另开第二种高亮画法。
+ */
+function NavPendingMark() {
+  const { pending } = useLinkStatus();
+  return pending ? <span data-nav-pending aria-hidden="true" /> : null;
 }
 
 function initials(value: string): string {
@@ -224,13 +240,13 @@ export function R22DashboardShell({
    * 按下的那一个旁边(`menuAnchor` 决定),内容、状态与登出 action 都不复制第二遍。
    */
   const workspaceMenu = (
-    <div className={menuAnchor === "account" ? "r22-dashboard-workspace-menu is-account-anchored" : "r22-dashboard-workspace-menu"} role="menu" aria-label="Workspace and account">
+    <div className={menuAnchor === "account" ? "r22-dashboard-workspace-menu is-account-anchored" : "r22-dashboard-workspace-menu"}>
       <p>Workspace</p>
-      {fixture ? fixtureWorkspaces.workspaces.map((workspace) => { const current = workspace.id === fixtureWorkspaces.activeId; return <Button unstyled type="button" role="menuitem" key={workspace.id} disabled={Boolean(workspaceSwitching)} onClick={() => switchFixtureWorkspace(workspace.id)}><span className="r22-dashboard-avatar">{initials(workspace.name)}</span><span><b>{workspace.name}</b><small>{current ? "Current workspace" : workspaceSwitching === workspace.id ? "Authorizing…" : `${workspace.role} access`}</small></span>{current ? <CheckCircle2 data-icon="inline-end" /> : null}</Button>; }) : <Button unstyled type="button" role="menuitem"><span className="r22-dashboard-avatar">{initials(identity)}</span><span><b>{identity}</b><small>Current workspace</small></span><CheckCircle2 data-icon="inline-end" /></Button>}
+      {fixture ? fixtureWorkspaces.workspaces.map((workspace) => { const current = workspace.id === fixtureWorkspaces.activeId; return <Button unstyled type="button" key={workspace.id} disabled={Boolean(workspaceSwitching)} onClick={() => switchFixtureWorkspace(workspace.id)}><span className="r22-dashboard-avatar">{initials(workspace.name)}</span><span><b>{workspace.name}</b><small>{current ? "Current workspace" : workspaceSwitching === workspace.id ? "Authorizing…" : `${workspace.role} access`}</small></span>{current ? <CheckCircle2 data-icon="inline-end" /> : null}</Button>; }) : <Button unstyled type="button"><span className="r22-dashboard-avatar">{initials(identity)}</span><span><b>{identity}</b><small>Current workspace</small></span><CheckCircle2 data-icon="inline-end" /></Button>}
       <Separator className="r22-dashboard-workspace-separator" />
-      <Link role="menuitem" href={fixtureHref("/settings", fixture)} onClick={() => setMenuAnchor(null)}>Workspace settings</Link>
-      <Button unstyled type="button" role="menuitem" onClick={() => { setMenuAnchor(null); setHelpOpen(true); }}>Help</Button>
-      <form action={signOutAction}><Button unstyled type="submit" role="menuitem">Sign out</Button></form>
+      <Link href={fixtureHref("/settings", fixture)} onClick={() => setMenuAnchor(null)}>Workspace settings</Link>
+      <Button unstyled type="button" onClick={() => { setMenuAnchor(null); setHelpOpen(true); }}>Help</Button>
+      <form action={signOutAction}><Button unstyled type="submit">Sign out</Button></form>
     </div>
   );
 
@@ -268,6 +284,7 @@ export function R22DashboardShell({
                 <Icon aria-hidden="true" />
                 <span>{label}</span>
                 {fixture && label === "Approvals" && <em>5</em>}
+                <NavPendingMark />
               </Link>
             );
           })}
@@ -277,6 +294,7 @@ export function R22DashboardShell({
         <Link className={pathname.startsWith("/settings") ? "r22-dashboard-settings is-active" : "r22-dashboard-settings"} href={fixtureHref("/settings", fixture)}>
           <Settings aria-hidden="true" />
           <span>Settings</span>
+          <NavPendingMark />
         </Link>
 
         <div className="r22-dashboard-rail-spacer" />
@@ -300,7 +318,7 @@ export function R22DashboardShell({
           · 头像 → 商家真名字的首字母(fixture 取当前工作区名,生产取 displayName / email),
             不是写死的 `NA`;
           · chevron → 和头像同属一个按钮,按下开的就是上面那一份工作区菜单。
-        原型把头像与 chevron 拆成 `<button>` 加一个死的 `<i>`;合成一个按钮是有意的偏离——
+        原型把头像与 chevron 拆成一颗按钮加一个不可按的图标;合成一个按钮是有意的偏离 ——
         Founder 点名的正是「chevron 是死的」,把它留在按钮外面等于把那句话再犯一次。
       */}
       {pathname === "/" ? <div className="r22-dashboard-quick-actions" aria-label="Account actions">

@@ -137,11 +137,20 @@
   outline: none;
 }
 
+/* `:has([data-nav-pending])` = 这一跳已经按下、还在路上。和 `.is-active` 同一份底色,
+   所以商家看到的是「当前项已经换过来了」,不是第二种状态。见 `NavPendingMark`。 */
 .r22-dashboard-nav a.is-active,
-.r22-dashboard-settings.is-active {
+.r22-dashboard-settings.is-active,
+.r22-dashboard-nav a:has([data-nav-pending]),
+.r22-dashboard-settings:has([data-nav-pending]) {
   background: var(--r22-surface);
   box-shadow: var(--r22-shadow-sm);
   color: var(--r22-ink);
+}
+
+/* 记号本身不画东西 —— 它只给 `:has()` 认。 */
+[data-nav-pending] {
+  display: none;
 }
 
 .r22-dashboard-nav svg,
@@ -1225,6 +1234,358 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-footer] {
   background: #ffffff;
 }
 
+/* ————— 全屏接管(原型 L448-459 的 `.otto-panel.fullscreen`)—————
+   位置与尺寸由 `OttoPanel.tsx` 的内联 style 给(`position:fixed;inset:0`),这里只管
+   全屏之后**版式**该怎么变:会话回到居中的一栏、留白放开,而不是把 408px 的窄栏拉宽
+   到 1600px —— 一行 200 个字读不下去。 */
+aside[data-otto-panel-fullscreen] .r22-otto-thread {
+  padding: 32px clamp(24px, 9vw, 160px) 42px;
+}
+
+aside[data-otto-panel-fullscreen] .r22-otto-foot {
+  padding: 12px clamp(24px, 9vw, 160px) 14px;
+}
+
+aside[data-otto-panel-fullscreen] .r22-otto-composer,
+aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
+  max-width: 730px;
+  margin-inline: auto;
+}
+
+/* ————— Otto 的答案卡(原型 L461-463 的 `.otto-answer` 一族)————— */
+.r22-otto-answer {
+  padding-top: 14px;
+  border-top: 1px solid #e8e9ef;
+  /* 入场:淡入 + 8px 上移的一次 ease-out。没有 scale —— 一张写着字的卡从 0 放大出来
+     像是被弹出来的,而它其实是被想出来的。 */
+  animation: r22-otto-answer-in 180ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+.r22-otto-answer h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.r22-otto-answer p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.58;
+}
+
+.r22-otto-answer ul {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #5b5f6c;
+  list-style: disc;
+}
+
+.r22-otto-answer-fact {
+  color: #686d79;
+  font-size: 12.5px;
+}
+
+@keyframes r22-otto-answer-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.r22-otto-answer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  margin-top: 10px;
+  white-space: nowrap;
+  color: #686d79;
+}
+
+.r22-otto-answer-actions button,
+.r22-otto-answer-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: #5b5f6c;
+  text-decoration: none;
+  transition: background-color 140ms ease, color 140ms ease, transform 120ms cubic-bezier(.23, 1, .32, 1);
+}
+
+.r22-otto-answer-actions button:active,
+.r22-otto-answer-actions a:active {
+  transform: scale(.97);
+}
+
+.r22-otto-answer-actions button[data-selected] {
+  background: #f2f3f7;
+  color: #16171c;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-otto-answer-actions button:hover,
+  .r22-otto-answer-actions a:hover {
+    background: #f2f3f7;
+    color: #16171c;
+  }
+}
+
+/* 回执用的活区。`min-height` 是为了让它从空变成一句话时不把下面的内容顶一下 ——
+   跳动本身就是一种噪音。 */
+.r22-otto-answer-confirm {
+  display: block;
+  min-height: 16px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #1a7f4b;
+}
+
+/* ————— 想一想 / 读不出来(原型 L463 的 `.otto-wait` 与 `.otto-error`)————— */
+.r22-otto-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12.5px;
+  color: #5b5f6c;
+}
+
+.r22-otto-mini-ring {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid #fbdfd3;
+  border-top-color: #ec5828;
+  border-radius: 50%;
+  animation: r22-otto-spin 900ms linear infinite;
+}
+
+@keyframes r22-otto-spin {
+  to { transform: rotate(360deg); }
+}
+
+.r22-otto-error {
+  display: block;
+  padding: 11px 12px;
+  border: 1px solid #dddee6;
+  border-left: 2px solid #c0392f;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #5b5f6c;
+}
+
+.r22-otto-error b {
+  display: block;
+  margin-bottom: 4px;
+  color: #16171c;
+}
+
+.r22-otto-error button {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #16171c;
+  text-decoration: underline;
+  transition: transform 120ms cubic-bezier(.23, 1, .32, 1);
+}
+
+.r22-otto-error button:active {
+  transform: scale(.97);
+}
+
+/* ————— 会话切换器(原型 L466 的 `.otto-rooms` 一族 + L681 的 `.hist-note`)————— */
+.r22-otto-rooms {
+  position: absolute;
+  z-index: 5;
+  top: 51px;
+  left: 40px;
+  width: 300px;
+  max-height: min(60vh, 460px);
+  padding: 8px;
+  border: 1px solid #e8e9ef;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgb(20 20 24 / 16%);
+  display: flex;
+  flex-direction: column;
+  animation: r22-otto-answer-in 160ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+.r22-room-search {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #dddee6;
+  border-radius: 5px;
+  font-size: 12px;
+  outline: none;
+}
+
+.r22-room-search:focus-visible {
+  border-color: #686d79;
+}
+
+.r22-room-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.r22-room-group {
+  margin-top: 8px;
+}
+
+.r22-room-group-label {
+  margin: 0;
+  padding: 0 6px 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: #686d79;
+}
+
+.r22-room-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.r22-room-item {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 28px 7px 6px;
+  border-radius: 5px;
+  text-align: left;
+  transition: background-color 140ms ease;
+}
+
+.r22-room-item b,
+.r22-room-item span {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.r22-room-item b {
+  font-size: 12px;
+  font-weight: 500;
+  color: #16171c;
+}
+
+.r22-room-item span {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: #686d79;
+}
+
+.r22-room-item[data-active] {
+  background: #f2f3f7;
+}
+
+.r22-room-item:disabled {
+  opacity: .5;
+}
+
+.r22-room-project {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 28px 7px 6px;
+  font-size: 12px;
+  color: #5b5f6c;
+}
+
+.r22-room-more {
+  position: absolute;
+  right: 4px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 5px;
+  color: #686d79;
+  opacity: 0;
+  transition: opacity 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.r22-room-row:hover .r22-room-more,
+.r22-room-row:focus-within .r22-room-more,
+.r22-room-more[data-pinned],
+.r22-room-more[data-state="open"] {
+  opacity: 1;
+}
+
+.r22-room-error {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: #fdecea;
+  font-size: 11.5px;
+  color: #8a2b22;
+}
+
+.r22-room-note {
+  margin: 10px 0 0;
+  padding: 0 6px;
+  font-size: 11.5px;
+  color: #686d79;
+}
+
+.r22-room-new {
+  width: 100%;
+  margin-top: 7px;
+  padding: 9px 6px 2px;
+  border-top: 1px solid #e8e9ef;
+  text-align: left;
+  font-size: 12px;
+  color: #16171c;
+  transition: transform 120ms cubic-bezier(.23, 1, .32, 1), color 140ms ease;
+}
+
+.r22-room-new:active {
+  transform: scale(.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-room-item:hover {
+    background: #f2f3f7;
+  }
+
+  .r22-room-more:hover {
+    background: #f2f3f7;
+    color: #16171c;
+  }
+}
+
+/* 减弱动效偏好:入场只剩「已经在那里」,转圈换成不移动的呼吸(原型 L743 同一条思路)。
+   按下的 scale 也一并撤掉 —— 那是一次位移,不是一次颜色。 */
+@media (prefers-reduced-motion: reduce) {
+  .r22-otto-answer,
+  .r22-otto-rooms {
+    animation: none;
+  }
+
+  .r22-otto-mini-ring {
+    animation: r22-otto-ringpulse 1.6s ease infinite;
+  }
+
+  .r22-otto-answer-actions button:active,
+  .r22-otto-answer-actions a:active,
+  .r22-otto-error button:active,
+  .r22-room-new:active {
+    transform: none;
+  }
+}
+
+@keyframes r22-otto-ringpulse {
+  0%, 100% { opacity: .3; }
+  50% { opacity: 1; }
+}
+
 /* ————— Otto pet(可拖、活着)—— 原型 L468-489 逐条对齐 ————— */
 
 .r22-otto-pet {
@@ -1334,5 +1695,36 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-footer] {
   .r22-otto-pet-say {
     transform: none !important;
     transition: opacity 150ms ease !important;
+  }
+}
+
+/* ————————————————————————————————————————————————————————————————————————
+   换屏:等待态的动效预算
+   ————————————————————————————————————————————————————————————————————————
+   原型 L1249 的原话:「刻意静止 —— 骨架只活 450ms,动效预算不许任何东西循环。
+   告诉商家有张卡要来的是形状,不是闪。」`ui/skeleton` 的 `animate-pulse` 是 2s 的
+   无限循环,正是它禁的那一类:骨架活不满一个循环,商家看到的是一层说不清的呼吸。
+   这里只在 R22 的等待屏上把它按住,shadcn 那份配方本身一个字不动(它还有别的用处,
+   也还有一条测试钉着它)。 */
+[data-r22-skeleton] [data-slot="skeleton"] {
+  animation: none;
+  background: var(--r22-chrome);
+}
+
+/* 落定只做一次淡入,140ms —— 不做「骨架闪 → 白闪 → 内容」那两段。
+   只动 opacity,不动 layout;骨架自己零入场动画(上面那条 `animation: none` 也管住了
+   它作为落定元素的那一份)。 */
+.r22-dashboard-content > *:not([data-r22-skeleton]) {
+  animation: r22-settle-in 140ms cubic-bezier(.23, 1, .32, 1);
+}
+
+@keyframes r22-settle-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-dashboard-content > * {
+    animation: none !important;
   }
 }
