@@ -16,7 +16,16 @@ const R22_SURFACES = [
   "components/canvas/R22CanvasSurface.tsx",
   "components/library/R22LibraryView.tsx",
   "components/otto-iq/R22OttoIQView.tsx",
+  // Approvals 八件升级之后一个组件画不下整面,拆成了壳 + 卡 + 详情 + 时间线 + 改版流。
+  // 这几条通用围栏(禁裸交互元素、禁手搓语义、DialogTitle 配对、分组组件)是**逐文件**跑的,
+  // 只扫这份名单里点名的路径 —— 拆出来的每一个新文件都必须自己上名单,否则那几条规则
+  // 覆盖不到它们,而这种漏是静默的。
   "components/approvals/R22ApprovalsView.tsx",
+  "components/approvals/ApprovalCard.tsx",
+  "components/approvals/ApprovalDetail.tsx",
+  "components/approvals/ApprovalTimeline.tsx",
+  "components/approvals/ApprovalThumb.tsx",
+  "components/approvals/ReviseFlow.tsx",
   "components/notifications/R22NotificationsView.tsx",
   "components/help/R22HelpView.tsx",
   "components/onboarding/R22Onboarding.tsx",
@@ -78,9 +87,16 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     const conversation = source("components/otto/panel/OttoPanelConversation.tsx");
 
     expect(projects).toContain("<TabsList");
+    // 这条钉的是「Approvals 这些控件是 shadcn 的,不是手搓的」。八件升级把这一面拆成了
+    // 五个文件,于是每个 primitive 钉在**现在真的画它的那个文件**上:筛选留在壳里,
+    // 勾选跟着卡走,理由单选跟着改版流走。写成「任意一个 approvals 文件里出现过」会让
+    // 这条断言从此不再指认任何东西。
     expect(approvals).toContain("<ToggleGroup");
-    expect(approvals).toContain("<RadioGroup");
-    expect(approvals).toContain("<Checkbox");
+    expect(approvals).toContain("<Tabs");
+    expect(source("components/approvals/ApprovalCard.tsx")).toContain("<Checkbox");
+    expect(source("components/approvals/ApprovalDetail.tsx")).toContain("<TabsList");
+    expect(source("components/approvals/ReviseFlow.tsx")).toContain("<RadioGroup");
+    expect(source("components/approvals/ReviseFlow.tsx")).toContain("<Textarea");
     expect(onboarding).toContain("<ToggleGroup");
     expect(onboarding).toContain("<Switch");
     expect(help).toContain("<Checkbox");

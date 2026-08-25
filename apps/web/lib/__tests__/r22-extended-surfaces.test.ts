@@ -136,13 +136,15 @@ describe("R22 extended frontend contracts", () => {
     click(checks[0]!);
     click(checks[1]!);
 
+    // 八件升级把旧的「Send back」拆成 Ask … to revise(走版本循环)与 Reject(终局)。
+    // 这条测的是**终局**那一半 —— 它原本就叫「bulk rejection」,只是当年只有一个按钮。
     const bulk = container!.querySelector(".r22-approvals-bulk")!;
-    click(button("Send back", bulk));
-    expect(container!.textContent).toContain("Why send 2 items?");
+    click(button("Reject", bulk));
+    expect(container!.textContent).toContain("Why reject 2 items?");
 
     click(container!.querySelector('[role="radio"][value="Wrong facts or price"]') as HTMLButtonElement);
     const rejectPanel = container!.querySelector(".r22-approvals-reject")!;
-    click(button("Send back", rejectPanel));
+    click(button("Reject", rejectPanel));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
     expect(container!.textContent).toContain("2 rejected. Fixture state only.");
 

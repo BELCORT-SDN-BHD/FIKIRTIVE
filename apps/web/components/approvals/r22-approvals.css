@@ -66,12 +66,18 @@
 .r22-approvals-diff span { color: var(--r22-ink-3); font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: line-through; }
 .r22-approvals-diff i { color: var(--r22-ink-3); font-size: 12px; font-style: normal; }
 .r22-approvals-diff b { padding: 4px 7px; border: 1px solid var(--r22-line-2); border-radius: 6px; background: var(--r22-chrome); color: var(--r22-ink); font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-actions { display: flex; min-height: 64px; align-items: center; gap: 8px; padding: 10px 14px 13px; }
-.r22-approvals-actions > button:not(.r22-approvals-more) { padding: 7px 14px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: 13px; }
-.r22-approvals-actions > a { margin-left: 4px; color: var(--r22-ink); font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--r22-line-2); }
+.r22-approvals-actions { display: flex; min-height: 64px; flex-direction: column; align-items: flex-start; gap: 7px; padding: 10px 14px 13px; }
+.r22-approvals-consequence { margin: 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
+.r22-approvals-actionrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.r22-approvals-actionrow > button:not(.r22-approvals-more) { padding: 7px 14px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: 13px; }
+.r22-approvals-actionrow > button:first-child { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
+.r22-approvals-actionrow > button:disabled { opacity: .45; }
+.r22-approvals-actionrow > a { margin-left: 4px; color: var(--r22-ink); font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--r22-line-2); }
 .r22-approvals-more { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; }
 .r22-approvals-more svg { width: 15px; height: 15px; }
-.r22-approvals-decision { display: flex; margin: 0; padding: 12px 14px; align-items: center; border-top: 1px solid var(--r22-line); color: var(--r22-ink-2); font-size: 12.5px; }
+.r22-approvals-decision { display: flex; margin: 0; padding: 12px 14px; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--r22-line); color: var(--r22-ink-2); font-size: 12.5px; }
+.r22-approvals-decision p { flex: 1; min-width: 220px; margin: 0; }
+.r22-approvals-decision button { padding: 5px 10px; border: 1px solid var(--r22-line-2); border-radius: 7px; color: var(--r22-ink); font-size: 11.5px; }
 .r22-approvals-reject { padding: 12px 14px 14px; border-top: 1px solid var(--r22-line); background: var(--r22-chrome); }
 .r22-approvals-reject h3 { margin: 0; font-size: 13px; font-weight: 600; }
 .r22-approvals-reject > p { margin: 3px 0 0; color: var(--r22-ink-2); font-size: 12px; }
@@ -94,6 +100,44 @@
 .r22-approvals-empty p, .r22-approvals-unavailable p { max-width: 530px; margin: 7px 0 0; color: var(--r22-ink-2); font-size: 12.5px; line-height: 1.55; }
 .r22-approvals-unavailable > div { display: flex; margin-top: 17px; gap: 8px; }
 .r22-approvals-unavailable a { display: flex; min-height: 34px; align-items: center; padding: 0 12px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); }
+/* ④ 版本徽章 + What changed + 已结清的旧意见 */
+.r22-approvals-badge { padding: 3px 7px; border: 1px solid var(--r22-line-2); border-radius: 6px; background: var(--r22-chrome); color: var(--r22-ink); font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.r22-approvals-changed { margin: 6px 0 0; color: var(--r22-ink); font-size: 12.5px; line-height: 1.5; }
+.r22-approvals-changed b { margin-right: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--r22-ink-3); }
+.r22-approvals-settled { margin: 4px 0 0; padding-left: 9px; border-left: 2px solid var(--r22-line-2); color: var(--r22-ink-3); font-size: 12px; line-height: 1.5; text-decoration: line-through; text-decoration-color: var(--r22-line-2); }
+/* ⑤ 阻断芯片 + Fix with Otto */
+.r22-approvals-blocker { margin-top: 9px; padding: 9px 11px; border: 1px solid #e8cdbc; border-radius: 9px; background: #fdf6f1; }
+.r22-approvals-blocker > div { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.r22-approvals-blocker button { padding: 4px 10px; border: 1px solid #d9b498; border-radius: 7px; background: var(--r22-surface); color: #8f4f28; font-size: 11.5px; }
+.r22-approvals-blocker p { margin: 6px 0 0; color: #a65f37; font-size: 12.5px; line-height: 1.5; }
+.r22-approvals-chip { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 99px; background: #a65f37; color: #fff; font-size: 10.5px; font-weight: 600; line-height: 1; }
+/* ⑧ 独立审批到期 */
+.r22-approvals-deadline { margin-left: auto; padding: 4px 9px; border: 1px solid var(--r22-line-2); border-radius: 99px; color: var(--r22-ink-2); font-size: 10.5px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.r22-approvals-deadline.is-urgent { border-color: #d9b498; background: #fdf1e8; color: #8f4f28; }
+/* ③ 卡内双页签 + ⑦ 时间线 */
+.r22-approvals-detail { margin: 0 14px 12px; padding: 12px 14px 14px; border: 1px solid var(--r22-line); border-radius: 10px; background: var(--r22-chrome); }
+.r22-approvals-detail [role="tablist"] { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--r22-line-2); }
+.r22-approvals-detail [role="tab"] { padding: 6px 10px; border-bottom: 2px solid transparent; color: var(--r22-ink-2); font-size: 12px; font-weight: 500; }
+.r22-approvals-detail [role="tab"].is-active { border-bottom-color: var(--r22-ink); color: var(--r22-ink); }
+.r22-approvals-detail h4 { margin: 14px 0 7px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--r22-ink-3); }
+.r22-approvals-previews { display: flex; gap: 12px; flex-wrap: wrap; }
+.r22-approvals-preview { width: 268px; max-width: 100%; padding: 10px 11px 12px; border: 1px solid var(--r22-line); border-radius: 9px; background: var(--r22-surface); }
+.r22-approvals-preview > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.r22-approvals-preview > header b { font-size: 12px; font-weight: 600; }
+.r22-approvals-preview > header span { color: var(--r22-ink-3); font-size: 10.5px; }
+.r22-approvals-preview .r22-approvals-thumb { width: 100%; height: 108px; }
+.r22-approvals-preview p { margin: 8px 0 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
+.r22-approvals-brief { display: grid; margin: 0; gap: 8px; }
+.r22-approvals-brief > div { display: grid; grid-template-columns: 132px 1fr; gap: 10px; }
+.r22-approvals-brief dt { color: var(--r22-ink-3); font-size: 11.5px; }
+.r22-approvals-brief dd { margin: 0; color: var(--r22-ink-2); font-size: 12.5px; line-height: 1.5; }
+.r22-approvals-brief-note { margin: 0; color: var(--r22-ink-3); font-size: 12px; line-height: 1.5; }
+.r22-approvals-timeline { display: grid; margin: 0; padding: 0; gap: 9px; list-style: none; }
+.r22-approvals-timeline li { position: relative; padding-left: 15px; }
+.r22-approvals-timeline li::before { position: absolute; top: 6px; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--r22-line-2); content: ""; }
+.r22-approvals-timeline b { margin-right: 8px; font-size: 12.5px; font-weight: 600; }
+.r22-approvals-timeline span { color: var(--r22-ink-3); font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.r22-approvals-timeline p { margin: 3px 0 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
 .r22-approvals-foot { margin: 30px 0 0; color: var(--r22-ink-3); font-size: 11px; }
 .r22-approvals button, .r22-approvals a { transition: transform 140ms cubic-bezier(.23, 1, .32, 1), opacity 140ms ease, background-color 140ms ease, color 140ms ease; }
 .r22-approvals button:active, .r22-approvals a:active { transform: scale(.97); }
