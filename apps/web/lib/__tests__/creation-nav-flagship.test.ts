@@ -147,7 +147,11 @@ describe("壳里不留第二份地址", () => {
     // 过渡,不再画任何门、不再引用任何路径 —— 见它自己的文件头注释。逼它「必须引权威源」
     // 就是逼它凭空长出一个不需要的依赖。
     "components/canvas/NorthstarHome.tsx",
-    "components/canvas/NorthstarCanvasWorkspace.tsx",
+    // 画布壳换人了(R22,Founder 2026-08-25 授权的旧架构归位):`NorthstarCanvasWorkspace.tsx`
+    // 已经缩成一个纯转发壳 —— 它把 props 原样交给 `R22CanvasSurface`,自己一条路径都不画、
+    // 也不再引权威源。会画门的那个是 `R22CanvasSurface.tsx`,所以这条围栏跟着它走:
+    // 名单钉的从来是「谁画门谁引权威源」,不是某个文件名。
+    "components/canvas/R22CanvasSurface.tsx",
     "components/canvas/ImmersiveCanvasEntry.tsx",
     CANVAS_ADDRESS_MODULE,
   ] as const;
