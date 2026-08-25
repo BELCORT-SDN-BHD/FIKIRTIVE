@@ -173,14 +173,17 @@ export function HomeView({
   }
   return (
     <div className="r22-home" data-r22-home>
+      {/*
+        右上角那一组(通知铃 + 头像 + chevron)不长在这里。原型 L12211 把头像点击直接转发给
+        侧栏的 `#workspaceBtn`(`wsb.click()`)—— 触发点在右上,菜单与它的内容只有侧栏那**一份**。
+        这里照抄那个结论:Home 不再自己画一个死的 `NA` 方块,整组交给壳
+        (`R22DashboardShell` 的 `.r22-dashboard-quick-actions`),那里铃、badge、工作区菜单
+        与登出本来就已经是活的。一个菜单、一份状态、两个触发点。
+      */}
       <header className="r22-home-header">
         <div>
           <h1>{data.greeting}</h1>
           <p>{ready ? HOME_COPY.connectionReadySubhead : "Connect one channel so Otto can learn what is working."}</p>
-        </div>
-        <div className="r22-home-account" aria-label="Current account">
-          <span>NA</span>
-          <ChevronDown aria-hidden="true" />
         </div>
       </header>
 

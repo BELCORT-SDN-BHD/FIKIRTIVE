@@ -30,6 +30,9 @@
 .r22-home-header > div:first-child {
   min-width: 0;
   flex: 1;
+  /* 右上角那一组由壳画(fixed 定位),不占这里的流。留出它的宽度,问候语与副标题就不会
+     跑到铃与头像底下去。原型 L12129 的 `.dh-page-actions` 也是同一个办法:absolute 出流。 */
+  padding-right: 148px;
 }
 
 .r22-home-header h1 {
@@ -43,33 +46,6 @@
   margin-top: 7px;
   color: #5b5f6c;
   font-size: 13px;
-}
-
-.r22-home-account {
-  position: absolute;
-  top: 32px;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  padding-right: 3px;
-}
-
-.r22-home-account span {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  border-radius: 50%;
-  background: #f2f3f7;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.r22-home-account svg {
-  width: 15px;
-  height: 15px;
-  stroke-width: 1.6;
 }
 
 .r22-home-read-warning {
@@ -644,10 +620,9 @@
     padding-bottom: 20px;
   }
 
-  .r22-home-account {
-    top: 14px;
-    right: 9px;
-    display: flex;
+  .r22-home-header > div:first-child {
+    /* 窄屏上那一组退到 `.r22-home` 的 72px 顶部留白里(壳的 680px 断点把它移到 top:14px),
+       不再压着问候语,所以这里的预留收回去。 */
     padding-right: 0;
   }
 

@@ -235,6 +235,33 @@
   background: var(--r22-surface);
   box-shadow: var(--r22-shadow-lg);
   transform-origin: bottom left;
+  /* 从它自己的位置进场:4px 位移 + 透明度,140ms,壳里那条统一的 ease-out。
+     不用 scale(0) —— 从无到有的缩放是变魔术,不是从某处来。 */
+  animation: r22-menu-in 140ms cubic-bezier(.23, 1, .32, 1);
+}
+
+/* 同一份菜单的第二个锚点:Home 右上角。挂在触发点底下、右对齐,而不是照原型
+   `wsb.click()` 那样弹到左下角侧栏去 —— 菜单要长在手指落下的地方。 */
+.r22-dashboard-workspace-menu.is-account-anchored {
+  top: calc(100% + 8px);
+  right: 0;
+  bottom: auto;
+  left: auto;
+  transform-origin: top right;
+}
+
+@keyframes r22-menu-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.r22-dashboard-workspace-menu.is-account-anchored {
+  animation-name: r22-menu-in-down;
+}
+
+@keyframes r22-menu-in-down {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .r22-dashboard-workspace-menu > p {
@@ -301,16 +328,28 @@
   background: var(--r22-ground);
 }
 
+/* 原型 L12129 的 `.dh-page-actions`:`right:0;top:34px;gap:18px`,而 `right:0` 是量在
+   `#door-home` 的内边距框上 —— 那一层左右各 48px。所以贴着视口算就是 right:48px,
+   和 `.r22-home` 的右内边距同一条线。 */
 .r22-dashboard-quick-actions {
   position: fixed;
-  top: 27px;
-  right: 88px;
+  top: 34px;
+  right: 48px;
   z-index: 44;
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 18px;
 }
 
-.r22-dashboard-quick-actions button {
+.r22-dashboard-quick-actions > span {
+  display: inline-flex;
+}
+
+.r22-dashboard-account-wrap {
+  position: relative;
+}
+
+.r22-dashboard-bell {
   position: relative;
   display: grid;
   width: 32px;
@@ -325,6 +364,35 @@
   width: 17px;
   height: 17px;
   stroke-width: 1.6;
+}
+
+/* 头像 + chevron 是一个按钮。原型把 chevron 留成按钮外一个死的 `<i>`,Founder 点名的
+   正是那一下 —— 合进来,整块都可按,命中区也从 34px 长到 57px。 */
+.r22-dashboard-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 2px 2px;
+  border-radius: 99px;
+}
+
+.r22-dashboard-account-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: #f0f1f3;
+  color: var(--r22-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.r22-dashboard-account > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--r22-ink-2);
 }
 
 .r22-dashboard-otto-launcher {

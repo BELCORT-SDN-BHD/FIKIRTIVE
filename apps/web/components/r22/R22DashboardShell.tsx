@@ -88,7 +88,15 @@ export function R22DashboardShell({
   const [query, setQuery] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  /**
+   * 原型 L12211:右上角头像的处理是 `var wsb=$('#workspaceBtn'); if(wsb)wsb.click()` ——
+   * 它不另开一个「账号菜单」,它按下侧栏那一个。所以这里存的是**哪个触发点开的**,不是
+   * 「开没开」:菜单只有一份(`workspaceMenu`),状态只有一份,两个触发点共用,弹出时锚在
+   * 按下的那一个旁边(原型让菜单永远弹在左下角侧栏,离手指 900px —— 那是它 `wsb.click()`
+   * 转发的副作用,不是它想要的效果)。
+   */
+  const [menuAnchor, setMenuAnchor] = useState<"rail" | "account" | null>(null);
+  const workspaceOpen = menuAnchor !== null;
   const [fixtureNotifications, setFixtureNotifications] = useState<R22NotificationItem[]>([]);
   const [projects, setProjects] = useState<GlobalSearchProject[]>(fixture ? [{ id: "fixture-raya", name: "Raya launch" }] : []);
   const [projectsState, setProjectsState] = useState<"loading" | "ready" | "error">(fixture ? "ready" : "loading");
@@ -97,6 +105,10 @@ export function R22DashboardShell({
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const notificationsTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
+  /** 开菜单的那一颗按钮本身。记元素而不是记「哪个锚点」,关闭逻辑就不用读任何 state ——
+   *  焦点也还得更准:还给真正被按下的那一颗。 */
+  const menuOpenerRef = useRef<HTMLButtonElement | null>(null);
   const projectsRequestedRef = useRef(fixture);
 
   const searchResults = useMemo<SearchResult[]>(() => {
@@ -120,6 +132,18 @@ export function R22DashboardShell({
     requestAnimationFrame(() => searchTriggerRef.current?.focus());
   };
 
+  /** 关掉工作区菜单,并把焦点还给**当初按下的那个**触发点(侧栏或右上角)。 */
+  const closeWorkspaceMenu = (restoreFocus = true) => {
+    const opener = menuOpenerRef.current;
+    setMenuAnchor(null);
+    if (restoreFocus) requestAnimationFrame(() => opener?.focus());
+  };
+
+  const closeNotifications = (restoreFocus = true) => {
+    setNotificationsOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => notificationsTriggerRef.current?.focus());
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -128,15 +152,33 @@ export function R22DashboardShell({
       }
       if (event.key === "Escape") {
         if (searchOpen) return;
-        if (notificationsOpen) { setNotificationsOpen(false); requestAnimationFrame(() => notificationsTriggerRef.current?.focus()); }
+        if (notificationsOpen) closeNotifications();
         if (helpOpen) { setHelpOpen(false); requestAnimationFrame(() => workspaceTriggerRef.current?.focus()); }
-        if (workspaceOpen) { setWorkspaceOpen(false); requestAnimationFrame(() => workspaceTriggerRef.current?.focus()); }
+        if (workspaceOpen) closeWorkspaceMenu();
         otto?.closePanel();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [helpOpen, notificationsOpen, otto, searchOpen, workspaceOpen]);
+
+  /**
+   * 点外面就关 —— 这一层此前**整个不存在**:菜单与通知抽屉只认 Esc 和再按一次触发点,
+   * 商家点到页面别处它们就那么开着。用 `pointerdown` 而不是 `click`,手指一落下就关,
+   * 不用等到抬起;捕获阶段监听,免得内部 `stopPropagation` 把它吃掉。
+   */
+  useEffect(() => {
+    if (!workspaceOpen && !notificationsOpen && !helpOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (!target?.closest) return;
+      if (workspaceOpen && !target.closest("[data-r22-workspace-region]")) closeWorkspaceMenu(false);
+      if (notificationsOpen && !target.closest("[data-r22-notifications-region]")) closeNotifications(false);
+      if (helpOpen && !target.closest("[data-r22-help-region]")) setHelpOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [helpOpen, notificationsOpen, workspaceOpen]);
 
   useEffect(() => {
     if (searchOpen) requestAnimationFrame(() => searchRef.current?.focus());
@@ -165,7 +207,7 @@ export function R22DashboardShell({
       const next = { ...fixtureWorkspaces, activeId: workspaceId };
       writeR22WorkspaceDirectory(next);
       setFixtureWorkspaces(next);
-      setWorkspaceOpen(false);
+      setMenuAnchor(null);
       window.location.reload();
     }, 320);
   };
@@ -174,6 +216,23 @@ export function R22DashboardShell({
     setFixtureNotifications(items);
     writeR22NotificationFixture(items);
   }
+
+  const unreadCount = fixtureNotifications.filter((item) => !item.read).length;
+
+  /**
+   * 工作区菜单 —— 全产品**一份**。侧栏底部与 Home 右上角是它的两个触发点,弹出时长在
+   * 按下的那一个旁边(`menuAnchor` 决定),内容、状态与登出 action 都不复制第二遍。
+   */
+  const workspaceMenu = (
+    <div className={menuAnchor === "account" ? "r22-dashboard-workspace-menu is-account-anchored" : "r22-dashboard-workspace-menu"} role="menu" aria-label="Workspace and account">
+      <p>Workspace</p>
+      {fixture ? fixtureWorkspaces.workspaces.map((workspace) => { const current = workspace.id === fixtureWorkspaces.activeId; return <Button unstyled type="button" role="menuitem" key={workspace.id} disabled={Boolean(workspaceSwitching)} onClick={() => switchFixtureWorkspace(workspace.id)}><span className="r22-dashboard-avatar">{initials(workspace.name)}</span><span><b>{workspace.name}</b><small>{current ? "Current workspace" : workspaceSwitching === workspace.id ? "Authorizing…" : `${workspace.role} access`}</small></span>{current ? <CheckCircle2 data-icon="inline-end" /> : null}</Button>; }) : <Button unstyled type="button" role="menuitem"><span className="r22-dashboard-avatar">{initials(identity)}</span><span><b>{identity}</b><small>Current workspace</small></span><CheckCircle2 data-icon="inline-end" /></Button>}
+      <Separator className="r22-dashboard-workspace-separator" />
+      <Link role="menuitem" href={fixtureHref("/settings", fixture)} onClick={() => setMenuAnchor(null)}>Workspace settings</Link>
+      <Button unstyled type="button" role="menuitem" onClick={() => { setMenuAnchor(null); setHelpOpen(true); }}>Help</Button>
+      <form action={signOutAction}><Button unstyled type="submit" role="menuitem">Sign out</Button></form>
+    </div>
+  );
 
   useEffect(() => {
     if (!searchOpen || fixture || projectsRequestedRef.current) return;
@@ -221,18 +280,9 @@ export function R22DashboardShell({
         </Link>
 
         <div className="r22-dashboard-rail-spacer" />
-        <div className="r22-dashboard-workspace-wrap">
-          {workspaceOpen && (
-            <div className="r22-dashboard-workspace-menu">
-              <p>Workspace</p>
-              {fixture ? fixtureWorkspaces.workspaces.map((workspace) => { const current = workspace.id === fixtureWorkspaces.activeId; return <Button unstyled type="button" key={workspace.id} disabled={Boolean(workspaceSwitching)} onClick={() => switchFixtureWorkspace(workspace.id)}><span className="r22-dashboard-avatar">{initials(workspace.name)}</span><span><b>{workspace.name}</b><small>{current ? "Current workspace" : workspaceSwitching === workspace.id ? "Authorizing…" : `${workspace.role} access`}</small></span>{current ? <CheckCircle2 data-icon="inline-end" /> : null}</Button>; }) : <Button unstyled type="button"><span className="r22-dashboard-avatar">{initials(identity)}</span><span><b>{identity}</b><small>Current workspace</small></span><CheckCircle2 data-icon="inline-end" /></Button>}
-              <Separator className="r22-dashboard-workspace-separator" />
-              <Link href={fixtureHref("/settings", fixture)}>Workspace settings</Link>
-              <Button unstyled type="button" onClick={() => { setWorkspaceOpen(false); setHelpOpen(true); }}>Help</Button>
-              <form action={signOutAction}><Button unstyled type="submit">Sign out</Button></form>
-            </div>
-          )}
-          <Button unstyled ref={workspaceTriggerRef} type="button" className="r22-dashboard-workspace" aria-expanded={workspaceOpen} onClick={() => setWorkspaceOpen((open) => !open)}>
+        <div className="r22-dashboard-workspace-wrap" data-r22-workspace-region>
+          {menuAnchor === "rail" && workspaceMenu}
+          <Button unstyled ref={workspaceTriggerRef} type="button" className="r22-dashboard-workspace" aria-haspopup="menu" aria-expanded={menuAnchor === "rail"} onClick={() => { menuOpenerRef.current = workspaceTriggerRef.current; setMenuAnchor((anchor) => (anchor === "rail" ? null : "rail")); }}>
             <span className="r22-dashboard-avatar">{initials(identity)}</span>
             <span>{identity}</span>
             <ChevronDown data-icon="inline-end" aria-hidden="true" />
@@ -242,13 +292,33 @@ export function R22DashboardShell({
 
       <main className="r22-dashboard-content">{children}</main>
 
-      {pathname === "/" ? <div className="r22-dashboard-quick-actions">
-        <Button unstyled ref={notificationsTriggerRef} type="button" aria-label={`Notifications${fixtureNotifications.filter((item) => !item.read).length ? `, ${fixtureNotifications.filter((item) => !item.read).length} unread` : ""}`} aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen((open) => !open); setHelpOpen(false); }}><Bell data-icon="inline-start" />{fixture && fixtureNotifications.some((item) => !item.read) ? <i>{fixtureNotifications.filter((item) => !item.read).length}</i> : null}</Button>
+      {/*
+        Home 右上角那一组。原型 L12199 的 `.dh-page-actions` 是「铃 + 头像 + chevron」三件,
+        这里三件都接了真东西:
+          · 铃 → 壳自己那一份通知抽屉(下面那个 `r22-dashboard-side-panel`),badge 从
+            `fixtureNotifications` 的未读数派生,没有写死的数字;
+          · 头像 → 商家真名字的首字母(fixture 取当前工作区名,生产取 displayName / email),
+            不是写死的 `NA`;
+          · chevron → 和头像同属一个按钮,按下开的就是上面那一份工作区菜单。
+        原型把头像与 chevron 拆成 `<button>` 加一个死的 `<i>`;合成一个按钮是有意的偏离——
+        Founder 点名的正是「chevron 是死的」,把它留在按钮外面等于把那句话再犯一次。
+      */}
+      {pathname === "/" ? <div className="r22-dashboard-quick-actions" aria-label="Account actions">
+        <span data-r22-notifications-region>
+          <Button unstyled ref={notificationsTriggerRef} type="button" className="r22-dashboard-bell" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen((open) => !open); setHelpOpen(false); setMenuAnchor(null); }}><Bell data-icon="inline-start" />{unreadCount ? <i>{unreadCount}</i> : null}</Button>
+        </span>
+        <span className="r22-dashboard-account-wrap" data-r22-workspace-region>
+          {menuAnchor === "account" && workspaceMenu}
+          <Button unstyled ref={accountTriggerRef} type="button" className="r22-dashboard-account" aria-haspopup="menu" aria-expanded={menuAnchor === "account"} aria-label={`Account menu for ${identity}`} onClick={() => { menuOpenerRef.current = accountTriggerRef.current; setMenuAnchor((anchor) => (anchor === "account" ? null : "account")); setNotificationsOpen(false); setHelpOpen(false); }}>
+            <span className="r22-dashboard-account-avatar">{initials(identity)}</span>
+            <ChevronDown aria-hidden="true" />
+          </Button>
+        </span>
       </div> : null}
 
       {notificationsOpen && pathname === "/" && (
-        <aside className="r22-dashboard-side-panel" aria-label="Notifications">
-          <header><div><b>Notifications</b><p>Updates that need your attention</p></div>{fixture && fixtureNotifications.some((item) => !item.read) ? <Button unstyled type="button" aria-label="Mark all notifications as read" onClick={() => updateFixtureNotifications(fixtureNotifications.map((item) => ({ ...item, read: true })))}><CheckCircle2 /></Button> : null}<Link href={fixture ? "/notifications?fixture=r22" : "/notifications"}>View all</Link><Button unstyled type="button" aria-label="Close notifications" onClick={() => { setNotificationsOpen(false); requestAnimationFrame(() => notificationsTriggerRef.current?.focus()); }}><X data-icon="inline-start" /></Button></header>
+        <aside className="r22-dashboard-side-panel" aria-label="Notifications" data-r22-notifications-region>
+          <header><div><b>Notifications</b><p>Updates that need your attention</p></div>{fixture && unreadCount ? <Button unstyled type="button" aria-label="Mark all notifications as read" onClick={() => updateFixtureNotifications(fixtureNotifications.map((item) => ({ ...item, read: true })))}><CheckCircle2 /></Button> : null}<Link href={fixture ? "/notifications?fixture=r22" : "/notifications"}>View all</Link><Button unstyled type="button" aria-label="Close notifications" onClick={() => closeNotifications()}><X data-icon="inline-start" /></Button></header>
           {fixture ? (
             fixtureNotifications.length ? <ul>{fixtureNotifications.slice(0, 3).map((item) => <li key={item.id} className={item.read ? "is-read" : ""}><span className={!item.read ? "is-coral" : ""} /><div><b>{item.title}</b><p>{item.detail}</p><Link href={`/notifications?fixture=r22&notification=${encodeURIComponent(item.id)}`} onClick={() => updateFixtureNotifications(fixtureNotifications.map((row) => row.id === item.id ? { ...row, read: true } : row))}>View detail</Link></div></li>)}</ul> : <div className="r22-dashboard-panel-empty"><Bell /><b>No notification history</b><p>Dismissed fixture events stay removed after refresh.</p><Link href="/notifications?fixture=r22">Open notifications</Link></div>
           ) : <div className="r22-dashboard-panel-empty"><Bell /><b>Notification delivery is not connected yet</b><p>No empty feed or read state was inferred. Open the full page for the backend contract and preferences.</p><Link href="/notifications">Open notifications</Link></div>}
@@ -256,7 +326,7 @@ export function R22DashboardShell({
       )}
 
       {helpOpen && (
-        <aside className="r22-dashboard-side-panel" aria-label="Help">
+        <aside className="r22-dashboard-side-panel" aria-label="Help" data-r22-help-region>
           <header><div><b>Help</b><p>Find the fastest way forward</p></div><Button unstyled type="button" aria-label="Close help" onClick={() => { setHelpOpen(false); requestAnimationFrame(() => workspaceTriggerRef.current?.focus()); }}><X data-icon="inline-start" /></Button></header>
           <div className="r22-dashboard-help-list">
             <Button unstyled type="button" disabled={!otto} onClick={() => { setHelpOpen(false); otto?.openPanel(); }}><b>Ask Otto</b><span>Open the real workspace conversation and history.</span></Button>
