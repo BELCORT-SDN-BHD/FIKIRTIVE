@@ -1111,6 +1111,13 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   padding: 8px 1px 0;
 }
 
+/* 原型 L461:`.otto-context{font-size:11px;color:var(--ink3);margin-bottom:-8px}`。 */
+.r22-otto-context {
+  margin-bottom: -8px;
+  font-size: 11px;
+  color: #686d79;
+}
+
 .r22-otto-empty h2 {
   margin: 0;
   font-size: 19px;

@@ -21,7 +21,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OttoPanelShell, type OttoPanelShellProps } from "@/components/otto/panel/OttoPanelShell";
-import { OttoPanelConversation } from "@/components/otto/panel/OttoPanelConversation";
+import { OttoPanelConversation, OTTO_PANEL_CONTEXT_DEFAULT } from "@/components/otto/panel/OttoPanelConversation";
 import { OttoRoomSwitcher, OTTO_ROOMS_ID } from "@/components/otto/panel/OttoRoomSwitcher";
 import {
   OTTO_ANSWER_CONFIRM,
@@ -202,6 +202,73 @@ describe("答案模型:五条路各自说自己的实话(原型 responseFor)", (
     expect(ottoAnswerShouldFail("show me the error")).toBe(true);
     expect(ottoAnswerShouldFail("did this fail?")).toBe(true);
     expect(ottoAnswerShouldFail("what is my terrorist policy")).toBe(false);
+  });
+});
+
+describe("空态与起手卡(原型 starterHTML,L6709)", () => {
+  function emptyState(): HTMLElement {
+    const el = document.querySelector<HTMLElement>('[data-otto-panel-conversation="fixture"]');
+    if (!el) throw new Error("fixture 会话没有挂上");
+    return el;
+  }
+
+  function starterCards(): HTMLButtonElement[] {
+    return [...document.querySelectorAll<HTMLButtonElement>(".r22-otto-starter")];
+  }
+
+  beforeEach(async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root!.render(conversationHost()));
+  });
+
+  it("空态逐字画出原型三件:上下文行、大标题、说明句 —— 不打招呼、不编占位话", () => {
+    const el = emptyState();
+    expect(el.querySelector(".r22-otto-context")?.textContent).toBe(
+      `${OTTO_PANEL_CONTEXT_DEFAULT} · explicit help, not a routine action`,
+    );
+    expect(el.querySelector("h2")?.textContent).toBe("How can Otto help?");
+    expect(el.querySelector(".r22-otto-empty p")?.textContent).toBe(
+      "I can explain this workspace and point you to a shared action. I cannot claim an action ran unless you use that action.",
+    );
+  });
+
+  it("三张起手卡的可见文案逐字等于原型 .otto-starter", () => {
+    const cards = starterCards();
+    expect(cards).toHaveLength(3);
+    expect(cards.map((c) => c.querySelector("b")?.textContent)).toEqual([
+      "Explain what needs review",
+      "Check routine boundaries",
+      "Trace Otto IQ provenance",
+    ]);
+    expect(cards.map((c) => c.querySelector("span")?.textContent)).toEqual([
+      "Read the approval and its source.",
+      "See what autonomous work may do.",
+      "Find merchant-controlled knowledge and its source.",
+    ]);
+  });
+
+  it.each([
+    ["Explain what needs review", "Why is this waiting for review?", "Why this needs review"],
+    ["Check routine boundaries", "What changes while a routine is paused?", "Routine boundary"],
+    ["Trace Otto IQ provenance", "Where did Otto learn this?", "Otto IQ provenance"],
+  ])("卡「%s」发出去的是预填句「%s」而不是卡标题,并且命中真路由,不落到 Workspace help(%s)", async (title, prompt, expectedTitle) => {
+    vi.useFakeTimers();
+    const card = starterCards().find((c) => c.querySelector("b")?.textContent === title)!;
+    await act(async () => card.click());
+
+    // 商家消息立刻上屏 —— 这一行断言就是这一票要堵住的坑:发出去的必须是预填句,
+    // 不能是卡上那句给商家看的标题。
+    const said = document.querySelector(".r22-otto-msg-me");
+    expect(said?.textContent).toBe(prompt);
+    expect(said?.textContent).not.toBe(title);
+
+    await act(async () => {
+      vi.advanceTimersByTime(OTTO_ANSWER_WAIT_MS);
+    });
+    expect(document.querySelector("[data-otto-answer] h3")?.textContent).toBe(expectedTitle);
+    expect(document.querySelector("[data-otto-answer] h3")?.textContent).not.toBe("Workspace help");
   });
 });
 

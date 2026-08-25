@@ -107,7 +107,7 @@ export function OttoPanelConversation({
   const { seed, threads, activeThreadId, pendingFirst } = state;
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
-  if (fixture) return <R22FixtureConversation userName={seed.userName} projectId={seed.projectId} threads={threads} activeThread={activeThread} contextLabel={contextLabel} onThreadStarted={onThreadStarted} onThreadUpdate={onThreadUpdate} />;
+  if (fixture) return <R22FixtureConversation projectId={seed.projectId} threads={threads} activeThread={activeThread} contextLabel={contextLabel} onThreadStarted={onThreadStarted} onThreadUpdate={onThreadUpdate} />;
 
   return (
     <div data-otto-panel-conversation="ready" className="flex min-h-0 flex-1 flex-col">
@@ -195,17 +195,24 @@ function answerPayloadOf(message: ChatThreadDTO["messages"][number]): OttoAnswer
   return answer && typeof answer.prompt === "string" ? answer : null;
 }
 
-/** 前门那三格,寄存器照原型 `.otto-starter`(一行标题 + 一行说明)。 */
+/**
+ * 空态那三格起手卡,逐字取自原型 `starterHTML()`(L6709)的 `.otto-starter`。
+ *
+ * 每一格**两句字面**分开存:卡上画的是 `title` + `detail`,按下去发出去的是 `prompt`
+ * —— 原型同一处这么分(`data-otto-starter` 存预填的提问句,`<b>`/`<span>` 存另外两句可见
+ * 文案),因为可见文案是说给商家听的「这格是干嘛的」,不是真的要问 Otto 的那句话。三句
+ * `prompt` 各自保证命中 `responseFor` 的一条真路由,不落到兜底的 "Workspace help"。
+ */
 const R22_STARTERS = [
-  { title: "Plan this week’s posts", detail: "Otto drafts a shape you can approve or change" },
-  { title: "Explain what is waiting for me", detail: "Approvals, held connections, anything blocked" },
-  { title: "Turn a product into a campaign", detail: "One product, three posts, one schedule" },
+  { title: "Explain what needs review", detail: "Read the approval and its source.", prompt: "Why is this waiting for review?" },
+  { title: "Check routine boundaries", detail: "See what autonomous work may do.", prompt: "What changes while a routine is paused?" },
+  { title: "Trace Otto IQ provenance", detail: "Find merchant-controlled knowledge and its source.", prompt: "Where did Otto learn this?" },
 ] as const;
 
 /** 一轮还没落地的问答:等着的那句话、它按的是哪一页、以及这一次是不是重试。 */
 type PendingTurn = { prompt: string; context: string; retrying: boolean };
 
-function R22FixtureConversation({ userName, projectId, threads, activeThread, contextLabel, onThreadStarted, onThreadUpdate }: { userName: string; projectId: string; threads: ChatThreadDTO[]; activeThread: ChatThreadDTO | null; contextLabel?: string; onThreadStarted: (thread: ChatThreadDTO) => void; onThreadUpdate: (thread: ChatThreadDTO) => void }) {
+function R22FixtureConversation({ projectId, threads, activeThread, contextLabel, onThreadStarted, onThreadUpdate }: { projectId: string; threads: ChatThreadDTO[]; activeThread: ChatThreadDTO | null; contextLabel?: string; onThreadStarted: (thread: ChatThreadDTO) => void; onThreadUpdate: (thread: ChatThreadDTO) => void }) {
   const [text, setText] = React.useState("");
   /** 正在想(`.otto-wait`)。原型是「发出去 → 等一下 → 落答案或落一句读不出来」。 */
   const [pending, setPending] = React.useState<PendingTurn | null>(null);
@@ -285,13 +292,15 @@ function R22FixtureConversation({ userName, projectId, threads, activeThread, co
       <MessageScroller className="min-h-0 flex-1">
         <MessageScrollerViewport>
           <MessageScrollerContent className="r22-otto-thread">
-            {/* 空态照原型 `.otto-empty`(L5473 那一段的兄弟):一句大标题、一句说明、三格起手式。
-                不是一颗假装 Otto 已经说过话的气泡 —— 他还没说过。 */}
+            {/* 空态逐字照原型 `starterHTML()`(L6709):一行上下文、一句大标题、一句说明、三格
+                起手式。不是一颗假装 Otto 已经说过话的气泡 —— 他还没说过,也不替商家打招呼
+                (原型这里没有称呼,只有边界与三条真能问的问题)。 */}
             {!messages.length ? <MessageScrollerItem messageId="fixture-welcome"><Message unstyled align="start"><MessageContent unstyled><Bubble unstyled align="start"><BubbleContent unstyled className="r22-otto-empty">
-              <h2>Hi {userName}</h2>
-              <p>Ask about anything on this page, or start with one of these.</p>
+              <div className="r22-otto-context">{context} · explicit help, not a routine action</div>
+              <h2>How can Otto help?</h2>
+              <p>I can explain this workspace and point you to a shared action. I cannot claim an action ran unless you use that action.</p>
               <div className="r22-otto-starters">
-                {R22_STARTERS.map((starter) => <Button unstyled key={starter.title} type="button" className="r22-otto-starter" onClick={() => send(starter.title)}><b>{starter.title}</b><span>{starter.detail}</span></Button>)}
+                {R22_STARTERS.map((starter) => <Button unstyled key={starter.title} type="button" className="r22-otto-starter" onClick={() => send(starter.prompt)}><b>{starter.title}</b><span>{starter.detail}</span></Button>)}
               </div>
             </BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
             {messages.map((message) => {
