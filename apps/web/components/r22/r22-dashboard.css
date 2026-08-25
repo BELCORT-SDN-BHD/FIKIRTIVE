@@ -824,7 +824,7 @@
     right: 102px;
   }
 
-  body:has([data-r22-home]) button[data-otto-launcher-variant="r22"] {
+  body:has([data-r22-home]) [data-otto-launcher-pet] {
     bottom: 22px;
   }
 }
@@ -948,9 +948,202 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   cursor: default;
 }
 
-aside[data-otto-panel-variant="r22"] [data-otto-panel-header] > img {
-  width: 26px;
-  height: auto;
+/* 面板头那朵云。原型 L452:`.op-head .cloud{width:22px;height:20px;flex:none}` —— 它不眨眼,
+   会眨的只有 pet(原型面板头那份 SVG 没有 `<g class="eyes">` 包裹)。 */
+.r22-otto-head-cloud {
+  width: 22px;
+  height: 20px;
+  flex: none;
+}
+
+/* 标题即会话切换器(原型 L5443 的 `roomBtn`):`.op-title` 最宽 190px,超出省略号。 */
+.r22-otto-head-title {
+  display: flex;
+  min-width: 0;
+  max-width: 190px;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  color: #16171c;
+}
+
+.r22-otto-head-title svg {
+  color: #686d79;
+}
+
+/* 原型 L453:`.op-expand{width:auto;padding:0 7px;font-size:11px}`。 */
+.r22-otto-head-expand {
+  display: grid;
+  height: 30px;
+  padding: 0 7px;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #5b5f6c;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-otto-head-title:hover,
+  .r22-otto-head-expand:hover {
+    background: #f2f3f7;
+    color: #16171c;
+  }
+}
+
+/* ————— 面板体:会话、空态、输入框 ————— */
+
+/* 原型 L455:`.op-body{padding:18px 16px 22px}`、`.op-conversation{max-width:730px;gap:16px}`。 */
+.r22-otto-thread {
+  display: flex;
+  width: 100%;
+  max-width: 730px;
+  margin: 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  padding: 18px 16px 22px;
+}
+
+/* 原型 L456:`.msg-otto` 是**白底上的一段字**,不是气泡 —— 加边框会让每一句回话都
+   看起来像一张卡片,面板里于是没有一处安静的地方。 */
+.r22-otto-msg-otto {
+  font-size: 13px;
+  line-height: 1.58;
+  color: #16171c;
+}
+
+/* 原型 L456:`.msg-me{align-self:flex-end;background:var(--chrome);border-radius:10px;
+   padding:8px 11px;font-size:13px;max-width:85%;line-height:1.45}`。 */
+.r22-otto-msg-me {
+  max-width: 85%;
+  margin-left: auto;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: #f2f3f7;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #16171c;
+}
+
+/* 原型 L459:`.otto-empty{padding:8px 1px 0;margin:auto 0}` 那一段。 */
+.r22-otto-empty {
+  padding: 8px 1px 0;
+}
+
+.r22-otto-empty h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.r22-otto-empty p {
+  margin: 7px 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #5b5f6c;
+}
+
+.r22-otto-starters {
+  display: grid;
+  gap: 7px;
+}
+
+.r22-otto-starter {
+  display: block;
+  padding: 10px;
+  border: 1px solid #e8e9ef;
+  border-radius: 7px;
+  background: #ffffff;
+  text-align: left;
+}
+
+.r22-otto-starter b,
+.r22-otto-starter span {
+  display: block;
+}
+
+.r22-otto-starter b {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.r22-otto-starter span {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #686d79;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-otto-starter:hover {
+    border-color: #dddee6;
+    background: #f2f3f7;
+  }
+}
+
+/* 原型 L460:`.op-foot{border-top:1px solid var(--line);padding:10px 12px}`。 */
+.r22-otto-foot {
+  flex: none;
+  padding: 10px 12px;
+  border-top: 1px solid #e8e9ef;
+  background: #ffffff;
+}
+
+.r22-otto-composer {
+  display: flex;
+  align-items: center;
+  border: 1px solid #dddee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.r22-otto-composer-input {
+  min-width: 0;
+  flex: 1;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  outline: none;
+}
+
+.r22-otto-composer-input::placeholder {
+  color: #686d79;
+}
+
+.r22-otto-composer:focus-within {
+  border-color: #686d79;
+}
+
+.r22-otto-composer-send {
+  display: grid;
+  padding: 8px 12px;
+  place-items: center;
+  color: #16171c;
+  transition: transform 120ms cubic-bezier(.23, 1, .32, 1), opacity 120ms ease;
+}
+
+.r22-otto-composer-send:disabled {
+  opacity: 0.4;
+}
+
+.r22-otto-composer-send:active:not(:disabled) {
+  transform: scale(.97);
+}
+
+/* 原型 L462:`.op-compose-note{display:flex;justify-content:space-between;padding:6px 2px 0;
+   font-size:10.5px;color:var(--ink3)}`。 */
+.r22-otto-compose-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 2px 0;
+  font-size: 10.5px;
+  color: #686d79;
 }
 
 aside[data-otto-panel-variant="r22"] [data-otto-panel-body] {
@@ -963,29 +1156,114 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-quick-chips] {
   background: #ffffff;
 }
 
-button[data-otto-launcher-variant="r22"] {
+/* ————— Otto pet(可拖、活着)—— 原型 L468-489 逐条对齐 ————— */
+
+.r22-otto-pet {
   z-index: 55;
-  width: 56px !important;
-  height: 56px !important;
-  border: 1px solid #e8e9ef;
-  background: #ffffff;
   color-scheme: light;
+  touch-action: none;
+}
+
+/* `.pet-btn{width:56px;height:56px;border-radius:50%;background:var(--surface);
+   border:1px solid var(--line);box-shadow:var(--shadow-md);display:grid;place-items:center;
+   cursor:grab;animation:bob 3.4s var(--ease-in-out) infinite}` —— 宽高由组件写在内联样式上
+   (`R22_LAUNCHER_METRICS`),这里不再用 `!important` 去压它:算落点的和画出来的必须是同一个数。 */
+.r22-otto-pet-btn {
+  display: grid;
+  place-items: center;
+  border: 1px solid #e8e9ef;
+  border-radius: 50%;
+  background: #ffffff;
   box-shadow: 0 4px 16px rgb(22 23 28 / 8%);
-  transition: transform 140ms cubic-bezier(.23, 1, .32, 1), opacity 140ms ease, box-shadow 140ms ease;
+  cursor: grab;
+  animation: r22-otto-bob 3.4s cubic-bezier(.77, 0, .175, 1) infinite;
+  transition: box-shadow 140ms ease, transform 140ms cubic-bezier(.23, 1, .32, 1);
 }
 
-button[data-otto-launcher-variant="r22"] > img {
+/* `.pet-btn .cloud{width:34px;height:31px;pointer-events:none}` */
+.r22-otto-pet-cloud {
   width: 34px;
-  height: auto;
+  height: 31px;
+  pointer-events: none;
 }
 
-@media (hover:hover) and (pointer:fine) {
-  button[data-otto-launcher-variant="r22"]:hover { box-shadow: 0 12px 40px rgb(22 23 28 / 14%); }
+@media (hover: hover) and (pointer: fine) {
+  .r22-otto-pet-btn:hover { box-shadow: 0 12px 40px rgb(22 23 28 / 14%); }
 }
 
-button[data-otto-launcher-variant="r22"]:active { transform: scale(.97); }
+.r22-otto-pet-btn:active { transform: scale(.97); }
 
+/* `.pet.dragging .pet-btn{cursor:grabbing;transform:scale(1.05) rotate(-3deg);
+   animation-play-state:paused;box-shadow:var(--shadow-lg)}` */
+[data-otto-launcher-pet][data-otto-launcher-dragging] .r22-otto-pet-btn {
+  cursor: grabbing;
+  transform: scale(1.05) rotate(-3deg);
+  box-shadow: 0 12px 40px rgb(22 23 28 / 14%);
+  animation-play-state: paused;
+}
+
+@keyframes r22-otto-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* `.pet .eyes rect{transform-box:fill-box;transform-origin:center;animation:blink 5.2s infinite}` */
+.r22-otto-eyes rect {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: r22-otto-blink 5.2s infinite;
+}
+
+@keyframes r22-otto-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  96%, 98% { transform: scaleY(.12); }
+}
+
+/* `.pet-say{position:absolute;right:64px;bottom:14px;max-width:200px;white-space:nowrap;…}` */
+.r22-otto-pet-say {
+  position: absolute;
+  right: 64px;
+  bottom: 14px;
+  max-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid #e8e9ef;
+  border-radius: 12px 12px 6px 12px;
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgb(22 23 28 / 8%);
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: #16171c;
+  opacity: 0;
+  transform: translateY(6px) scale(.95);
+  transform-origin: bottom right;
+  transition: opacity 180ms cubic-bezier(.23, 1, .32, 1), transform 180ms cubic-bezier(.23, 1, .32, 1);
+  pointer-events: none;
+}
+
+.r22-otto-pet-say[data-shown] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* 原型 L738-746:环境动画整个关掉(`.01ms` 的无限循环是空转,不是安静),
+   留下不动的透明度提示(原则 12)。 */
 @media (prefers-reduced-motion: reduce) {
-  button[data-otto-launcher-variant="r22"] { transition: opacity 120ms linear !important; }
-  button[data-otto-launcher-variant="r22"]:active { transform: none; }
+  .r22-otto-pet-btn,
+  .r22-otto-eyes rect {
+    animation: none !important;
+  }
+
+  .r22-otto-pet-btn {
+    transition: box-shadow 120ms linear !important;
+  }
+
+  .r22-otto-pet-btn:active,
+  [data-otto-launcher-pet][data-otto-launcher-dragging] .r22-otto-pet-btn {
+    transform: none;
+  }
+
+  .r22-otto-pet-say {
+    transform: none !important;
+    transition: opacity 150ms ease !important;
+  }
 }
