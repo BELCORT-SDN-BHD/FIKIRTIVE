@@ -241,11 +241,22 @@ describe("#739 — capitalisation lives in the copy, not in text-transform", () 
     expect(offenders).toEqual([]);
   });
 
-  it("ships the canvas side tabs and the calendar granularity as written labels", () => {
-    const canvas = source("components/canvas/NorthstarCanvasWorkspace.tsx");
-    expect(canvas).toContain('{ id: "chat", label: "Chat" }');
-    expect(canvas).toContain('{ id: "projects", label: "Projects" }');
-
+  /**
+   * ── 退役立碑:画布侧边页签那半条(Founder 2026-08-25 授权的旧架构归位)──
+   *
+   * 原文钉的是 `NorthstarCanvasWorkspace.tsx` 里的两条字面量
+   * `{ id: "chat", label: "Chat" }` 与 `{ id: "projects", label: "Projects" }` ——
+   * 它证明的是「大小写写在文案里,不靠 CSS text-transform 变出来」(#739)。
+   *
+   * 那两个页签**在生产里已经不存在**:R22 画布(Founder 08-24 检查点亲选 direction 2)
+   * 把侧边页签换成了一枚 Conversation 折叠面板(`R22CanvasSurface.tsx` 的
+   * `data-r22-canvas-conversation`),`NorthstarCanvasWorkspace.tsx` 只剩一层纯转发壳。
+   * 断言的对象没了,断言就不该靠改写字面量硬留下来 —— 它保护的规则本身由同一 describe
+   * 里那条「全仓零 `capitalize`」继续钉着(那一条扫的是整棵源码树,画布也在内)。
+   *
+   * 日历那半条照旧有效,`OttoSchedule.tsx` 一个字没变。
+   */
+  it("ships the calendar granularity as written labels", () => {
     const schedule = source("components/otto/OttoSchedule.tsx");
     expect(schedule).toContain('{ id: "month", label: "Month" }');
     expect(schedule).toContain('{ id: "week", label: "Week" }');

@@ -150,14 +150,34 @@ describe("W2-4 ① `/settings` 与 `/settings/connections` 是真路由", () => 
     expect(SHELL_ROUTES.connections.startsWith(`${SHELL_ROUTES.preferences}/`)).toBe(true);
   });
 
-  it("两页渲染的都是搬过来的那一份实现,没有第二套设置面", () => {
-    const prefs = source(join(PREFERENCES_DIR, "page.tsx"));
-    expect(prefs).toContain('from "@/components/otto/OttoAccount"');
-    expect(prefs).toContain("<OttoAccount");
+  /**
+   * ── 退役立碑:两页各自 import 旧实现那条(Founder 2026-08-25 授权的旧架构归位)──
+   *
+   * 原文钉的是「`/settings` 渲染 `OttoAccount`、`/settings/connections` 渲染
+   * `OttoConnections`」—— W2-4 那一票的验收是**搬家**,所以证据就是两页各自 import 那份
+   * 旧实现。R22 Data-first 换壳(Founder 08-24 检查点亲选 direction 2)之后,两条路由都改成
+   * 委派给**同一个** `R22SettingsEntry`,由它按 `defaultSection` 分区 —— 旧的两份 import
+   * 因此不再存在,而它们要守的东西(「没有第二套设置面」)反而更强了。
+   *
+   * 所以这条不是删掉,是把断言目标换成今天的唯一真相:两页都只委派那一个入口,并且各自
+   * 带着自己那一段 defaultSection;两页里都没有第二份设置面实现。
+   */
+  it("两页都只委派同一个 R22SettingsEntry,没有第二套设置面", () => {
+    const prefsFile = join(PREFERENCES_DIR, "page.tsx");
+    const connectionsFile = join(CONNECTIONS_DIR, "page.tsx");
+    const prefs = source(prefsFile);
+    const connections = source(connectionsFile);
 
-    const connections = source(join(CONNECTIONS_DIR, "page.tsx"));
-    expect(connections).toContain('from "@/components/otto/OttoConnections"');
-    expect(connections).toContain("<OttoConnections");
+    for (const [label, file] of [["preferences", prefsFile], ["connections", connectionsFile]] as const) {
+      expect(source(file), `${label} 没有委派给唯一的设置入口`).toContain('from "@/components/settings/R22SettingsEntry"');
+      expect(source(file), `${label} 没有渲染那个入口`).toContain("<R22SettingsEntry");
+      // 第二套设置面的形状就是「这一页自己又挂了一份实现」。注释里提旧名字是留档,不算实现。
+      expect(code(file), `${label} 又挂了一份旧设置面实现`).not.toMatch(/<Otto(Account|Connections)\b/);
+    }
+
+    // 分区来自路由本身,不是靠客户端猜:Connections 那扇门明写它落在哪一段。
+    expect(connections).toContain('defaultSection="connections"');
+    expect(prefs, "Preferences 那扇门不该自己也钉一个分区 —— 它用入口的默认值").not.toContain("defaultSection=");
   });
 
   it("等待画面走 ui/skeleton,不手搓那一份 pulse 配方(规格书 §5.6 ③)", () => {
