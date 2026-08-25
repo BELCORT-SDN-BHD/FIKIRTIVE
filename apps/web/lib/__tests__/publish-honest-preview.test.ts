@@ -45,6 +45,7 @@ import {
   approvalDoneLine,
   approvalOutcomeLine,
   ottoPublishTruth,
+  publicPublishLine,
   publishPreviewBadge,
   publishSurfaceCopy,
   publishSurfaceLines,
@@ -612,28 +613,57 @@ describe("#851 ⑤ Otto 的批准卡与按钮说同一句话", () => {
   });
 });
 
-// ── ⑥ 登录页:商家读到的第一句话 ──────────────────────────────────────────────
+// ── ⑥ 公开页:没登录的人读到的那一句 ─────────────────────────────────────────
 //
 // r1 判官 P1:登录页的卖点第三条写着「Schedules and publishes to Instagram and Facebook once
 // Meta approves your connection」。产品内每一处都改口说发不出去,而**没登录就能看到**的那一屏
 // 还在卖这件事 —— 而且 #554 之后没有人连得上,「once Meta approves」这个条件本身也不成立。
 //
-// 这里只钉登录页,不钉 terms / privacy:那两页是法务面,它们的句子带条件从句(「once
+// 【碑文】原两条逐字钉已退役,裁决:Founder 授权编排者判,2026-08-25。它们钉的是上面那句旧
+// 卖点的原文与它的 PUBLISHING_AVAILABLE 通电支;R22 重写(Founder 批准)把整块营销文案从登录
+// 页拿掉,句子与它的两支一起不在了 —— 钉子没了对象,只会永红。**但它保护的东西没有作废**:
+// 公开页关于发布能力的口径必须归开关管,通电那天不靠人记得回来改。所以这一节改成钉机制:
+//   · 两态存在且不同,off 那套一句「会真发」都没有(词族与全产品共用,不另立一套禁语);
+//   · on 那套确实会被词族逮住 —— 反面自证,不是一张空网;
+//   · 两块公开页把这句话整个交给权威,自己一个字都不留(与 ③ 同一做法)。
+// 页面这一侧的 import 形状由 public-copy-honesty-791.test.ts 钉,两边不重复。
+//
+// 这里只钉登录页与注册页,不钉 terms / privacy:那两页是法务面,它们的句子带条件从句(「once
 // publishing is switched on」),而词族是词法的、看不见条件 —— 用词族去守法务文本,会逼着
 // 法律条款为了绕开一条正则而改写。那两页这一轮的改动记在 PR 评论里,凭全仓 grep 复核。
-describe("#851 ⑥ 登录页不卖一个此刻做不到的结果", () => {
-  const LOGIN_SRC = readFileSync(path.resolve(__dirname, "../../app/login/page.tsx"), "utf8");
+describe("#851 ⑥ 公开页的发布口径归同一个开关管", () => {
+  const readSrc = (rel: string) => readFileSync(path.resolve(__dirname, rel), "utf8");
+  const PUBLIC_SRC: ReadonlyArray<readonly [string, string]> = [
+    ["登录页", readSrc("../../app/login/page.tsx")],
+    ["注册页", readSrc("../../app/signup/page.tsx")],
+  ];
 
-  it("那条卖点跟着同一个开关走,不是手写死的", () => {
-    // 与设置页那条同一个做法:屏幕上的话必须能被开关改掉,否则通电那天又要满仓找措辞。
-    expect(LOGIN_SRC).toContain("PUBLISHING_AVAILABLE");
+  it("两态存在、各说各的,off 那套一句「会真发」都没有,也不写工期", () => {
+    expect(publicPublishLine(false)).not.toBe(publicPublishLine(true));
+    expect(publicPublishLine(false).length, "空话会让下面每条断言白白通过").toBeGreaterThan(20);
+    expect(publicPublishLine(true).length).toBeGreaterThan(20);
+    expect(overPromises(publicPublishLine(false))).toEqual([]);
+    // 而且 off 那套必须真的把两件事都说清楚:排期是真的 + 现在发不出去。
+    expect(publicPublishLine(false)).toMatch(/land in your schedule/i);
+    expect(publicPublishLine(false)).toMatch(/not switched on/i);
   });
 
-  it("发不出去这段时期,登录页不留一句「会发到 Instagram / Facebook」", () => {
-    // 原句逐字钉住:它只允许活在 PUBLISHING_AVAILABLE 为真的那一支里,不能再是无条件的。
-    const old = "Schedules and publishes to Instagram and Facebook once Meta approves your connection";
-    const idx = LOGIN_SRC.indexOf(old);
-    expect(idx, "登录页的旧承诺必须还在,但只作为通电那一支").toBeGreaterThan(-1);
-    expect(LOGIN_SRC.slice(Math.max(0, idx - 200), idx)).toContain("PUBLISHING_AVAILABLE");
+  it("on 那套确实会说「会真发」—— 词族不是一张对谁都不响的空网", () => {
+    expect(overPromises(publicPublishLine(true), WILL_REALLY_SEND)).not.toEqual([]);
   });
+
+  it("不带参数取的就是当前开关那一套 —— 页面调用的正是这个形", () => {
+    expect(publicPublishLine()).toBe(publicPublishLine(PUBLISHING_AVAILABLE));
+  });
+
+  for (const [name, src] of PUBLIC_SRC) {
+    it(`${name}把这句话整个交给权威,自己一个字都不留`, () => {
+      expect(src, "口径没接上开关").toContain("publicPublishLine()");
+      // 与 ③ 同一做法:两态的原话一个字都不许住在页面里,抄一份进去这一条立刻红。
+      expect(src).not.toContain(publicPublishLine(false));
+      expect(src).not.toContain(publicPublishLine(true));
+      // 渠道名只住在权威模块里。页面上出现 Instagram / Facebook,就是又开了第二个说法的地方。
+      expect(src, "渠道名回到了页面上").not.toMatch(/Instagram|Facebook/i);
+    });
+  }
 });

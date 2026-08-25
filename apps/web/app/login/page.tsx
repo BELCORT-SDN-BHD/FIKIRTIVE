@@ -2,6 +2,7 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/better-auth/compat";
 import { googleSignInConfigured } from "@/lib/better-auth/social-config";
+import { publicPublishLine } from "@fikirtive/core/schedule-draft";
 import { LoginForm, type R22AuthFixtureState } from "./LoginForm";
 import "./r22-auth.css";
 
@@ -37,6 +38,9 @@ export default async function LoginPage({
         </div>
         {error ? <p className="r22-auth-page-error" role="alert">{ERRORS[error] ?? ERRORS.Default}</p> : null}
         <LoginForm from={from ?? "/"} googleEnabled={googleSignInConfigured()} fixture={fixture} fixtureState={fixtureState} />
+        {/* 发布口径的唯一权威在 packages/core 的 PUBLISHING_AVAILABLE 开关上。这一页不写自己的
+            版本 —— 开关一翻,这句话跟着翻,没有第二处措辞要找。 */}
+        <p className="r22-auth-public-fact">{publicPublishLine()}</p>
         <nav className="r22-auth-footer" aria-label="Legal">
           <a href="/terms">Terms</a><i>·</i><a href="/privacy">Privacy</a><i>·</i><a href="/status">Status</a>
         </nav>

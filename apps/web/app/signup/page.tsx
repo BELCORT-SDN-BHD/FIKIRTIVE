@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/better-auth/compat";
 import { signupsPaused, SIGNUPS_PAUSED_MESSAGE } from "@/lib/signup-gate";
 import { SIGNUP_GRANT_CREDITS, displayCredits } from "@fikirtive/core";
+import { publicPublishLine } from "@fikirtive/core/schedule-draft";
 import { SignupForm, type R22SignupFixtureState } from "./SignupForm";
 import "../login/r22-auth.css";
 
@@ -54,6 +55,8 @@ export default async function SignupPage({ searchParams }: { searchParams: Promi
             </>
           )}
         </div>
+        {/* 同登录页:发布口径只有 packages/core 那一个开关,注册页不留自己的版本。 */}
+        <p className="r22-auth-public-fact">{publicPublishLine()}</p>
         <p className="r22-auth-switch">
           Already have an account?{" "}
           <Link href="/login">

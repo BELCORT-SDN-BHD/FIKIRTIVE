@@ -18,28 +18,52 @@ const readCopy = (rel: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^[ \t]*\/\/.*$/gm, "");
 
-describe("#791-5 登录页不再低估自己的发布器", () => {
-  const login = readCopy("app/login/page.tsx");
+// ── #791-5 逐字钉句退役 → 机制断言(Founder 授权编排者判,2026-08-25)────────────
+//
+// 【碑文】原三条钉的是旧登录页的具体句子:「不再说 coming soon」「改说 Meta approves」
+// 「那句只活在 PUBLISHING_AVAILABLE 的通电支里」。R22 重写(Founder 批准)把整块营销
+// 文案从登录页拿掉了,被钉的句子连同它们的两支一起不存在了 —— 钉子失去对象,断言从
+// 「守着一句实话」退化成「守着一个已经不在的形状」。裁决:拆钉,但**恢复它保护的机制**:
+// 公开页关于发布能力的口径必须来自 packages/core 的开关,页面自己一个字都不写。
+// 通电那天翻 PUBLISHING_AVAILABLE 一行,登录页与注册页跟着改口,没有第二处措辞要找。
+//
+// 措辞两态由 publish-honest-preview.test.ts ⑥ 钉(词族在那边);这里钉的是**页面这一侧**:
+// 口径 import 自权威,且页面源码里没有一句手写的发布能力主张。
+describe("#791-5 公开页的发布口径归开关管,不是页面自己写的", () => {
+  const PUBLIC_PAGES: ReadonlyArray<[string, string]> = [
+    ["登录页", "app/login/page.tsx"],
+    ["注册页", "app/signup/page.tsx"],
+  ];
 
-  it("不再说「direct publish is coming soon」—— 发布器早就写好了", () => {
-    expect(login).not.toMatch(/coming soon/i);
-  });
+  /** 手写发布能力主张的几种自然写法。不求穷尽 —— 求的是「顺手再写一句」会立刻红。 */
+  const HAND_WRITTEN_PUBLISH_CLAIM = [
+    /\bpublishes to\b/i,
+    /\bwill (?:be )?(?:automatically )?(?:publish|post|go out|send|be sent)\b/i,
+    /\bauto-?publish\b/i,
+    /\bgoes? live\b/i,
+    /\bonce Meta approves\b/i,
+    /\bcoming soon\b/i,
+  ];
 
-  it("改说真正的卡点:Meta 的审核", () => {
-    expect(login).toMatch(/Instagram and Facebook/);
-    expect(login).toMatch(/Meta approves/);
-  });
+  for (const [name, rel] of PUBLIC_PAGES) {
+    it(`${name}的那句话 import 自 gate 模块`, () => {
+      const src = readCopy(rel);
+      expect(src, "发布口径必须来自权威模块,不许在页面里另起一套").toMatch(
+        /import\s*\{[^}]*\bpublicPublishLine\b[^}]*\}\s*from\s*"@fikirtive\/core\/schedule-draft"/,
+      );
+      expect(src, "import 了却没用,等于没接上开关").toContain("publicPublishLine()");
+    });
 
-  // #851:上面那句「once Meta approves」现在只属于**通电**那一支。发布整条通道没通电,商家
-  // 也连不上任何账号,所以没登录就能读到的那一屏不能再无条件地卖它。这一条钉的正是这件事 ——
-  // 本文件读的是源码,两支都在源码里,所以上面两条照常绿,却不再说明屏幕上写着什么。
-  // 屏幕上那一支由 publish-honest-preview.test.ts ⑥ 钉;通电那天两处一起回来。
-  it("#851 那句只活在开关的通电支里,不是无条件写在屏幕上", () => {
-    expect(login).toMatch(/PUBLISHING_AVAILABLE/);
-    const idx = login.indexOf("Schedules and publishes to Instagram and Facebook");
-    expect(idx).toBeGreaterThan(-1);
-    expect(login.slice(Math.max(0, idx - 200), idx)).toMatch(/PUBLISHING_AVAILABLE/);
-  });
+    it(`${name}源码里没有一句手写的发布能力主张`, () => {
+      const src = readCopy(rel);
+      // 承重自检:这张网必须真的会响,否则下面的 not.toMatch 全是空过。
+      const planted = "Approved posts will publish to your account, and auto-publish sends them.";
+      expect(HAND_WRITTEN_PUBLISH_CLAIM.some((re) => re.test(planted))).toBe(true);
+      for (const re of HAND_WRITTEN_PUBLISH_CLAIM) {
+        expect(src, `${rel} 里长出了一句手写的发布承诺:${re}`).not.toMatch(re);
+      }
+    });
+  }
 });
 
 // ── #791-8 对外不称 beta(Founder 裁决 2026-08-08 裁决④)──────────────────
@@ -75,26 +99,6 @@ describe("#791-8 对外文案不再称 beta", () => {
 describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", () => {
   const signup = readCopy("app/signup/page.tsx");
 
-  /** 把「enough for a full run: …」后面那句承诺拆成一件一件东西。
-   *
-   *  JSX 里这句被折行、夹着 {" "} 与 {starterCredits},所以先还原成一行纯文本:去掉表达式与
-   *  标签、压平空白,再按句号截断、按逗号 / and 拆项。拆出来的是**商家眼睛看到的东西**,
-   *  不是源码形状 —— 只有这样,「承诺了几件」才是断言得了的。 */
-  function promisedItems(): string[] {
-    const flat = signup
-      .replace(/\{[^{}]*\}/g, " ")
-      .replace(/<[^>]*>/g, " ")
-      .replace(/&apos;/g, "'")
-      .replace(/\s+/g, " ")
-      .trim();
-    const after = flat.split(/enough for a full run:/i)[1];
-    if (!after) return [];
-    return (after.split(".")[0] ?? "")
-      .split(/,|\band\b/i)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
   it("数字是从赠额常量算出来的,不是打上去的", () => {
     expect(signup).toContain("displayCredits(SIGNUP_GRANT_CREDITS)");
     expect(signup).toMatch(/\{starterCredits\}\s*free credits/);
@@ -102,12 +106,14 @@ describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", 
     expect(signup).not.toMatch(/\d+\s*free credits/);
   });
 
-  // #810 r3 P3:r2 这条只数「, a/an 出现几次」并要求 ≤2 —— 追加 "and analytics" 照样过,
-  // 因为那一项不带冠词。改成真正把承诺**枚举出来**,断言这个集合恰好等于被算过价的三件:
-  // 多一件、少一件、换一件,都在这里先红。
-  it("承诺的正好是被算过价的那三件:一场对话、一张图、一条短视频", () => {
-    expect(promisedItems()).toEqual(["a conversation with Otto", "an image", "a short video"]);
-  });
+  // 【碑文】原第二条(「承诺的正好是被算过价的那三件」+ promisedItems() 拆句器)已退役。
+  // 它钉的是注册页那句「enough for a full run: a conversation with Otto, an image and a short
+  // video」的逐字形状;R22 重写(Founder 批准)把副标题改成「Confirm your email, then name and
+  // prepare one workspace.」,那句枚举不在了,拆句器分不到任何东西,断言只会永红。
+  // 裁决:Founder 授权编排者判,2026-08-25 —— 旧文案钉子拆钉立碑作废。
+  // 保留的这一条不是钉句子,是钉**机制**:数字必须从 SIGNUP_GRANT_CREDITS 算出来,正文里不许
+  // 出现写死的「<数字> free credits」。改赠额时那一侧仍旧不会静静变成谎话。
+  // 若哪天注册页重新枚举「这些赠额够干什么」,这条枚举断言要连同拆句器一起回来。
 });
 
 // ── #805 主话术:「它帮你把活干完了」 ─────────────────────────────────────────
@@ -127,20 +133,18 @@ describe("#805 对外主话术:先说把活干完", () => {
     ["Otto 进门", "components/otto/OttoFrontDoor.tsx"],
   ];
 
+  // 【碑文】登录页三条**正面**逐字钉已退役,裁决:Founder 授权编排者判,2026-08-25。
+  //   ① 「主标题说的是活干完了」(钉 `Otto gets the … work done` / 禁 `without becoming a`)
+  //   ② 「四件事一件不少」(钉 campaign / segment / where the money went / creative 四词)
+  //   ③ 「说的是审批卡真正管得住的那一半」(钉 `nothing gets made or published until you approve`)
+  // R22 重写(Founder 批准)把登录页收成一块纯登录闸:品牌标、验证码卡、法务页脚,整块落地
+  // 营销文案不在这一页了。三条钉的都是那块文案里的具体句子,页面没了句子,钉子就只剩形状。
+  // 主话术这件事本身没有作废 —— 它现在没有承载面;哪天公开落地面回来(独立官网或登录页重开
+  // 左半屏),这三条要照原样回来钉在那一面上。
+  // 下面留着的是**负面**断言:它们不要求页面说什么,只要求页面别说得比事实大 —— 这类断言在
+  // 一块空页面上照样成立、照样会在有人重新写文案时立刻咬人,所以一条都不退。
   describe("登录页", () => {
     const login = readCopy("app/login/page.tsx");
-
-    it("主标题说的是活干完了,不是「不用变成 marketer」", () => {
-      expect(login).toMatch(/Otto gets the/);
-      expect(login).toMatch(/work done/);
-      expect(login).not.toMatch(/without becoming a/i);
-    });
-
-    it("四件事一件不少:建活动、调分群、看钱、换素材", () => {
-      for (const outcome of [/campaign/i, /segment/i, /where the money went/i, /creative/i]) {
-        expect(login).toMatch(outcome);
-      }
-    });
 
     it("不拿证明不了的社会证明当卖点(没有可指名的公开商家)", () => {
       expect(login).not.toMatch(/\btrusted by\b/i);
@@ -155,16 +159,13 @@ describe("#805 对外主话术:先说把活干完", () => {
       expect(login).not.toMatch(/every step that (?:spends|costs)/i);
     });
 
-    it("说的是审批卡真正管得住的那一半", () => {
-      expect(login).toMatch(/nothing gets made or published until you approve/i);
-    });
   });
 
-  it("注册页把 Otto 派去干活,不只是介绍认识", () => {
-    const signup = readCopy("app/signup/page.tsx");
-    expect(signup).toMatch(/put Otto to work/);
-    expect(signup).not.toMatch(/meet Otto/i);
-  });
+  // 【碑文】「注册页把 Otto 派去干活」(钉 `put Otto to work` / 禁 `meet Otto`)已退役,
+  // 同一裁决(2026-08-25)。R22 的注册页副标题改成了「Confirm your email, then name and
+  // prepare one workspace.」—— 讲的是注册这件事本身,不再承载主话术。禁语 `meet Otto` 这一半
+  // 也一并退:它禁的是主话术的错误写法,没有主话术就没有对象。落地面回来时与登录页三条同批回来。
+
 
   it("Otto 进门那句说的是做完的活,不是「我陪你走一遍」", () => {
     const frontDoor = readCopy("components/otto/OttoFrontDoor.tsx");

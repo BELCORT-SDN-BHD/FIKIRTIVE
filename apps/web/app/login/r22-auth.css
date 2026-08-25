@@ -43,6 +43,9 @@
 .r22-auth-terms { margin-top: 10px; font-size: 12px; }
 .r22-auth-switch a, .r22-auth-terms a { color: var(--r22-ink); text-decoration: underline; text-underline-offset: 3px; }
 .r22-auth-fact { margin-top: 14px; color: var(--r22-ink-3); font-size: 12px; line-height: 1.55; }
+/* 卡片外那一句产品实话(发布口径,归 PUBLISHING_AVAILABLE 开关管):与 switch / terms
+   同一族的居中脚注排版,不是卡内的 fact。 */
+.r22-auth-public-fact { margin-top: 18px; color: var(--r22-ink-3); text-align: center; font-size: 12px; line-height: 1.55; text-wrap: pretty; }
 .r22-auth-footer { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; color: var(--r22-ink-3); font-size: 12px; }
 .r22-auth-footer i { font-style: normal; }
 .r22-auth-page-error { margin-bottom: 12px; padding: 9px 12px; border-radius: 8px; background: #fff1f2; color: var(--r22-bad); font-size: 12.5px; }

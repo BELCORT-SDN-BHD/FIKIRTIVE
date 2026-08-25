@@ -238,6 +238,27 @@ export function ottoPublishTruth(available: boolean = PUBLISHING_AVAILABLE): str
     : "Publishing is NOT switched on: approving a post books its slot and saves it, and it sends nothing to Instagram or Facebook. No account can be connected either, so never tell the user that connecting one will make a post go out. Say this plainly whenever a post's fate comes up, never suggest a post leaves the workspace, and give no date for when publishing returns.";
 }
 
+/**
+ * The one line about publishing that somebody WITHOUT an account reads.
+ *
+ * The sign-in gate and the sign-up card are the only two screens a visitor can reach, and they are
+ * the two screens nobody remembers to revisit. The old wording on them was pinned sentence by
+ * sentence in tests (#791-5 / #805 / #851 ⑥); the R22 rewrite replaced those pages wholesale, and
+ * the pinned sentences went with them — including the half that made the claim conditional on this
+ * switch. Founder ruling 2026-08-25: retire the sentence-level pins, keep the MECHANISM. That is
+ * this function: the public pages hold no publishing wording of their own, so the day
+ * PUBLISHING_AVAILABLE flips, what a visitor reads changes with it and nobody has to remember.
+ *
+ * Deliberately shorter than publishSurfaceCopy(). Those four sentences speak to a merchant who
+ * already has a schedule ("Your schedule is real…"); a visitor has none yet, so the same words
+ * would be describing something they cannot see. Same switch, different reader.
+ */
+export function publicPublishLine(available: boolean = PUBLISHING_AVAILABLE): string {
+  return available
+    ? "Each approved post publishes to the Instagram or Facebook account you picked, at the time you picked."
+    : "Approved posts land in your schedule at the time you picked. Publishing is not switched on yet, so nothing is sent to Instagram or Facebook.";
+}
+
 export type ScheduleApproveInput = {
   channel: string;
   /** The post's stored account id — null/empty when nobody has picked one yet. */

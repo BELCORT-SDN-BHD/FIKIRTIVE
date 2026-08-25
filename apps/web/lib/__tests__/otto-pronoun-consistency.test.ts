@@ -540,16 +540,16 @@ describe("#830 an expression container inside JSX text no longer throws the sent
 // ---------------------------------------------------------------------------
 describe("#682 ② every cured surface says the name", () => {
   const CURED: Array<{ file: string; says: string[]; neverAgain: RegExp; why: string }> = [
-    {
-      // #805 换掉了登录页主话术,治好的那句话本身跟着换 —— 但**准则没变**:名字仍旧站在
-      // 代词原来的位置。旧病灶 `It researches your brand` 的禁令原样留着(它再也回不来),
-      // 另加一条:新主段落改写时最容易滑回去的形状,就是把 Otto 接成 `…and it runs the job`。
-      // 词法围栏抓不到句中的 it(见文件头),所以这一处逐句钉必须把它写死。
-      file: "apps/web/app/login/page.tsx",
-      says: ["Otto runs the job end to end"],
-      neverAgain: /It researches your brand|and it runs the job|Tell Otto[^.]*\bit\b/i,
-      why: "登录页:首跑第一屏,票面的 it(#805 改主话术后,名字仍在代词原来的位置)",
-    },
+    // 【碑文】`apps/web/app/login/page.tsx` 这一条已退役,裁决:Founder 授权编排者判,
+    // 2026-08-25(登录/注册页文案治理:旧文案钉子拆钉立碑作废)。
+    // 它钉的是 `Otto runs the job end to end` —— #805 主话术里名字站在代词原位的那一句。
+    // R22 重写(Founder 批准)把登录页收成一块纯登录闸,整块主话术不在这一页了,Otto 这个名字
+    // 一次都没出现,`says` 找不到句子、`neverAgain` 也没有对象,条目只会永红。
+    // 退役不留缺口:本文件 ① 的词法扫描仍旧覆盖 `apps/web/app/login/page.tsx`(见上面
+    // 「enumerates real copy files」那一条把它逐字列在扫描面里),任何指代 Otto 的代词形状
+    // 照样在那一层被逮住。这里失去的只是**句中 it** 这一种词法围栏看不见的形状 —— 而句中 it
+    // 需要先有一句写着 Otto 的文案才可能长出来,登录页现在没有。
+    // 哪天 Otto 文案回到登录页(公开落地面重开),这一条要连同它的 `neverAgain` 一起回来。
     {
       file: "apps/web/components/otto/OttoMemory.tsx",
       says: ["What Otto remembers about your brand — Otto uses it in every project."],
