@@ -22,10 +22,11 @@
 import {
   DEFAULT_LAUNCHER_ANCHOR,
   FALLBACK_VIEWPORT,
-  LAUNCHER_SIZE,
+  LEGACY_LAUNCHER_METRICS,
   PANEL_DEFAULT_OPEN_MIN_WIDTH,
   type FloatingRect,
   type LauncherAnchor,
+  type LauncherMetrics,
   type Viewport,
   clampFloatingRect,
   clampLauncherAnchor,
@@ -196,8 +197,9 @@ export function releaseLauncher(
   state: OttoPanelState,
   point: { x: number; y: number },
   viewport: Viewport = FALLBACK_VIEWPORT,
+  metrics: LauncherMetrics = LEGACY_LAUNCHER_METRICS,
 ): OttoPanelState {
-  return { ...state, launcher: snapLauncher(point, viewport) };
+  return { ...state, launcher: snapLauncher(point, viewport, metrics) };
 }
 
 /**
@@ -218,6 +220,10 @@ export function reconcileViewport(state: OttoPanelState, viewport: Viewport = FA
 }
 
 /** launcher 当前该画在哪(给 React 那层用,免得它自己再算一遍)。 */
-export function launcherRect(state: OttoPanelState, viewport: Viewport = FALLBACK_VIEWPORT): { left: number; top: number; size: number } {
-  return { ...launcherPosition(state.launcher, viewport), size: LAUNCHER_SIZE };
+export function launcherRect(
+  state: OttoPanelState,
+  viewport: Viewport = FALLBACK_VIEWPORT,
+  metrics: LauncherMetrics = LEGACY_LAUNCHER_METRICS,
+): { left: number; top: number; size: number } {
+  return { ...launcherPosition(state.launcher, viewport, metrics), size: metrics.size };
 }

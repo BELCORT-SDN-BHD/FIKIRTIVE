@@ -24,6 +24,7 @@ import {
   type Viewport,
   clampPanelWidth,
   expandedPanelWidth,
+  launcherMetrics,
 } from "./panel-geometry";
 import {
   type OttoPanelState,
@@ -64,9 +65,22 @@ export function useOttoPanelControls(): OttoPanelControls | null {
   return React.useContext(OttoPanelControlsContext);
 }
 
+/**
+ * 量一次视窗。
+ *
+ * 挂载那一刻 `window.innerWidth` 可能是 0 —— 后台标签页、预渲染、首帧还没布局完都会。
+ * (2026-08-25 在 4300 端口那棵树上实测:导航完成时 `innerWidth === 0`,稍后才变 1280,
+ * 而这中间**不会**有 `resize` 事件。)读到 0 之后 `normalizeViewport` 会安静地换成
+ * 1440×900,面板的浮动矩形与 launcher 的落点从此都按一个假视窗算,再也没有人来纠正它。
+ * 所以这里三处备胎轮着读,并且下面用 `ResizeObserver` 盯住根元素 —— 0 变成真数那一下
+ * 会触发一次真的重量,不再等一个永远不会来的 `resize`。
+ */
 function readViewport(): Viewport {
   if (typeof window === "undefined") return FALLBACK_VIEWPORT;
-  return { width: window.innerWidth, height: window.innerHeight };
+  const root = document.documentElement;
+  const width = window.innerWidth || root?.clientWidth || window.visualViewport?.width || 0;
+  const height = window.innerHeight || root?.clientHeight || window.visualViewport?.height || 0;
+  return { width, height };
 }
 
 export interface OttoPanelShellProps {
@@ -83,6 +97,8 @@ export interface OttoPanelShellProps {
   onOpenHistory?: () => void;
   historyOpen?: boolean;
   onNewChat?: () => void;
+  /** 头部那行会话名(R22)。 */
+  panelTitle?: string;
   headerBusy?: boolean;
   /**
    * 深链「到达」信号(`?otto=1`,规格书 §2.5;判官 r2 根因修复,PR #1086)——盖过
@@ -110,6 +126,7 @@ export function OttoPanelShell({
   onOpenHistory,
   historyOpen,
   onNewChat,
+  panelTitle,
   headerBusy,
   forceOpenSignal,
   variant = "legacy",
@@ -165,7 +182,15 @@ export function OttoPanelShell({
       setState((current) => reconcileViewport(current, vp));
     }
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    // 根元素拿到尺寸的那一下也算一次「视窗变了」—— 挂载时量到 0 的那一路只有这里能救回来
+    // (`resize` 不会为「0 → 真数」发一次事件)。jsdom 里没有 ResizeObserver,所以要探一下。
+    const observer =
+      typeof ResizeObserver === "function" ? new ResizeObserver(handleResize) : null;
+    observer?.observe(document.documentElement);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      observer?.disconnect();
+    };
   }, []);
 
   // 存档只在套用完存值之后写。少了这一条,首帧的默认值会在挂载前覆盖掉商家上次拖的宽度。
@@ -263,6 +288,7 @@ export function OttoPanelShell({
             onOpenHistory={onOpenHistory}
             historyOpen={historyOpen}
             onNewChat={onNewChat}
+            title={panelTitle}
             headerBusy={headerBusy}
             contextChip={contextChip}
             contextAttached={contextAttached}
@@ -280,7 +306,9 @@ export function OttoPanelShell({
           viewport={viewport}
           hydrated={hydrated}
           onOpen={() => setState((current) => setPanelOpen(current, true))}
-          onRelease={(point) => setState((current) => releaseLauncher(current, point, viewport))}
+          onRelease={(point) =>
+            setState((current) => releaseLauncher(current, point, viewport, launcherMetrics(variant)))
+          }
         />
       )}
     </OttoPanelControlsContext.Provider>

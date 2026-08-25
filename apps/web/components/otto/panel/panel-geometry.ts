@@ -48,6 +48,28 @@ export const UNDOCK_OFFSET_PX = 72;
 export const LAUNCHER_SIZE = 48;
 export const LAUNCHER_MARGIN = 24;
 
+/**
+ * R22 原型的 pet 是 56px、离边 22px(`.pet{right:22px;bottom:22px}`、
+ * `.pet-btn{width:56px;height:56px}`)。这两个数以前只写在 CSS 里、还带 `!important`,
+ * 而算落点的是这里的 48/24 —— 于是「画在哪」与「算在哪」差 8px,拖完松手会偏一下。
+ * 尺寸交给这一层,CSS 那边就不必再拿 `!important` 去压组件写的宽高。
+ */
+export const R22_LAUNCHER_SIZE = 56;
+export const R22_LAUNCHER_MARGIN = 22;
+
+/** 一颗 launcher 的尺寸与留白。几何全靠它算,不再从常量里直接读 48/24。 */
+export interface LauncherMetrics {
+  size: number;
+  margin: number;
+}
+
+export const LEGACY_LAUNCHER_METRICS: LauncherMetrics = { size: LAUNCHER_SIZE, margin: LAUNCHER_MARGIN };
+export const R22_LAUNCHER_METRICS: LauncherMetrics = { size: R22_LAUNCHER_SIZE, margin: R22_LAUNCHER_MARGIN };
+
+export function launcherMetrics(variant: "legacy" | "r22"): LauncherMetrics {
+  return variant === "r22" ? R22_LAUNCHER_METRICS : LEGACY_LAUNCHER_METRICS;
+}
+
 /** 没有 `window` 时(SSR 首帧、纯函数测试)假定的视窗。 */
 export const FALLBACK_VIEWPORT: Viewport = { width: 1440, height: 900 };
 
@@ -243,10 +265,10 @@ export interface LauncherAnchor {
   y: number;
 }
 
-/** launcher 顶边能走的范围。上下各留 24px,免得贴住浏览器边框。 */
-function launcherTopRange(viewport: Viewport): { min: number; max: number } {
-  const min = LAUNCHER_MARGIN;
-  const max = Math.max(min, viewport.height - LAUNCHER_SIZE - LAUNCHER_MARGIN);
+/** launcher 顶边能走的范围。上下各留一个 margin,免得贴住浏览器边框。 */
+function launcherTopRange(viewport: Viewport, metrics: LauncherMetrics): { min: number; max: number } {
+  const min = metrics.margin;
+  const max = Math.max(min, viewport.height - metrics.size - metrics.margin);
   return { min, max };
 }
 
@@ -258,11 +280,12 @@ function launcherTopRange(viewport: Viewport): { min: number; max: number } {
 export function snapLauncher(
   point: { x: number; y: number },
   viewport: Viewport = FALLBACK_VIEWPORT,
+  metrics: LauncherMetrics = LEGACY_LAUNCHER_METRICS,
 ): LauncherAnchor {
   const vp = normalizeViewport(viewport);
-  const centreX = Number.isFinite(point?.x) ? point.x + LAUNCHER_SIZE / 2 : vp.width;
+  const centreX = Number.isFinite(point?.x) ? point.x + metrics.size / 2 : vp.width;
   const edge: LauncherEdge = centreX <= vp.width / 2 ? "left" : "right";
-  const range = launcherTopRange(vp);
+  const range = launcherTopRange(vp, metrics);
   const span = range.max - range.min;
   const top = Number.isFinite(point?.y) ? point.y : range.max;
   const y = span <= 0 ? 0 : clamp((top - range.min) / span, 0, 1);
@@ -284,11 +307,27 @@ export function clampLauncherAnchor(anchor: Partial<LauncherAnchor> | undefined 
 export function launcherPosition(
   anchor: LauncherAnchor,
   viewport: Viewport = FALLBACK_VIEWPORT,
+  metrics: LauncherMetrics = LEGACY_LAUNCHER_METRICS,
 ): { left: number; top: number } {
   const vp = normalizeViewport(viewport);
   const safe = clampLauncherAnchor(anchor);
-  const range = launcherTopRange(vp);
+  const range = launcherTopRange(vp, metrics);
   const top = range.min + safe.y * (range.max - range.min);
-  const left = safe.edge === "left" ? LAUNCHER_MARGIN : Math.max(LAUNCHER_MARGIN, vp.width - LAUNCHER_SIZE - LAUNCHER_MARGIN);
+  const left = safe.edge === "left" ? metrics.margin : Math.max(metrics.margin, vp.width - metrics.size - metrics.margin);
   return { left: Math.round(left), top: Math.round(top) };
+}
+
+/**
+ * 这颗 launcher 还停在出厂位置吗?
+ *
+ * 出厂位置就是原型那句 `.pet{position:fixed;right:22px;bottom:22px}` —— 它**不需要知道
+ * 视窗有多大**。商家真的拖过之后才需要按比例算落点。分开这两种情况是 2026-08-25 实测
+ * 那个 bug 的根治:视窗读数在挂载那一刻可能是 0(后台标签页、预渲染、首帧还没布局完),
+ * `normalizeViewport` 会安静地退回 1440×900,于是 pet 被钉在 1368/828 —— 在 1280×720 的
+ * 窗口里整颗在屏幕外,在 1512×982 的窗口里飘在离角落 90px 的半空。出厂位置改用 CSS 贴角
+ * 之后,这一路根本不再经过任何测量。
+ */
+export function isDefaultLauncherAnchor(anchor: LauncherAnchor | undefined | null): boolean {
+  const safe = clampLauncherAnchor(anchor);
+  return safe.edge === DEFAULT_LAUNCHER_ANCHOR.edge && safe.y === DEFAULT_LAUNCHER_ANCHOR.y;
 }
