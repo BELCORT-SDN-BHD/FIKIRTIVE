@@ -223,7 +223,7 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
 
   // 等待落地那一刻要读的是**最新**的会话,不是发起那一刻捕获的那份 —— 中间商家可能又
   // 说了一句。用 ref 把最新的交给定时器,免得把 effect 的依赖写成一串会自我重启的东西
-  // (依赖里放对象 = 每次渲染都换新身份 = 定时器一直重开、永远等不到 700ms)。
+  // (依赖里放对象 = 每次渲染都换新身份 = 定时器一直重开、永远等不到 560ms)。
   const latest = React.useRef({ activeThread, onThreadUpdate });
   React.useEffect(() => {
     latest.current = { activeThread, onThreadUpdate };

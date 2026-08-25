@@ -51,8 +51,8 @@ export const OTTO_ANSWER_WAIT_LABEL = "Thinking through the workspace context…
 export const OTTO_ANSWER_ERROR_TITLE = "Couldn’t load the workspace detail.";
 export const OTTO_ANSWER_ERROR_NOTE = "No action ran and no credits were spent.";
 
-/** 想一想要多久。原型是 560ms;UI 反馈留在 300ms 以内的是**动效**,这是一次真的等待。 */
-export const OTTO_ANSWER_WAIT_MS = 700;
+/** 想一想要多久。照原型 560ms(L6733 的 `setTimeout(...,560)`)。 */
+export const OTTO_ANSWER_WAIT_MS = 560;
 
 /**
  * 答案卡底下那一排动作按下去之后 `aria-live` 说的话。

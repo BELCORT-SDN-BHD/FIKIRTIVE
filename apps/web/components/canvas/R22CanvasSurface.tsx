@@ -275,7 +275,9 @@ export function canvasAnswerFor(prompt: string, context: OttoAnswerContext): Ott
       lead: "Otto IQ is knowledge saved in this workspace, and every saved fact carries its source, so you can read what Otto is using.",
       bullets: [
         "Pending suggestions are not saved yet.",
-        "Rules you saved stay under your control; Otto cannot remove them.",
+        // 面板 `otto-answer.ts` 的 `responseFor()` 讲的是同一条规则,原话带连字符(理由见
+        // 该文件同一处的注释)。两面措辞必须统一,商家不该在面板与画布读到两种版本。
+        "Do-not-say rules remain under merchant control; Otto cannot remove them.",
         "Open Otto IQ to read the source before you accept a suggestion.",
       ],
       note: "This answer did not save, remove, or alter any Otto IQ record.",

@@ -16,7 +16,7 @@
  */
 
 import * as React from "react";
-import { ChevronDown, History, Maximize2, Minimize2, SquarePen, X } from "lucide-react";
+import { ChevronDown, History, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
@@ -414,7 +414,7 @@ export function OttoPanel({
             // 原型 L5447 的 `#ottoNew`,可及名字用它的原话 "New conversation" —— 面板里
             // 每一处讲的都是 conversation(改名/删除弹窗也是),不该只有这一颗叫 chat。
             <PanelIconButton label="New conversation" disabled={headerBusy} onClick={onNewChat}>
-              <SquarePen className="size-4" strokeWidth={1.9} />
+              <Plus className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}
           {/* Expand 在原型里是一颗写着字的按钮(L5451,按下变 "Restore")。它在 R22 里不再
