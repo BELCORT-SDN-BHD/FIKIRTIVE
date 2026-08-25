@@ -38,7 +38,9 @@ describe("R22 Canvas 是独立可见 surface,旧内核只可留作业务 contrac
       expect(surface, marker).toContain(marker);
     }
     expect(surface).toContain("Ask Otto, or describe what to make");
-    expect(surface).toContain("3 cr");
+    // 样例画布那一张图的价钱仍然是 3 cr,只是不再作为字面量散在贴纸和答案里 —— 价格贴纸、
+    // 答案卡的单价、批量四张的总价现在全从这一个常量派生(见 `FIXTURE_IMAGE_CREDITS` 的注释)。
+    expect(surface).toContain("FIXTURE_IMAGE_CREDITS = 3");
   });
 
   it("production composer 的价格和付费动作共用真实 Canvas generation adapter", () => {

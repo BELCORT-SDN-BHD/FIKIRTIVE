@@ -35,7 +35,7 @@ import { canvasHref } from "./canvas-href";
 import { listCanvasNodes, type CanvasNodeDTO } from "@/lib/canvas-actions";
 import type { ImmersiveCanvasRuntimeContext } from "./NorthstarCanvasWorkspace";
 import { freshCanvasActionId, useCanvasGen, type CanvasGenProgress } from "./useCanvasGen";
-import type { CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
+import { CANVAS_IMAGE_MAX_VARIANT_COUNT, type CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 import { readR22WorkspaceDirectory, scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
 import "./r22-canvas.css";
 
@@ -47,7 +47,43 @@ type PendingCanvasQuestion = { taskId: string; inputRequestId: string; taskVersi
 type DecisionEvent = { kind: "input_requested" | "answer" | "resumed" | "cancelled"; label: string; detail: string };
 type DecisionRecord = { taskId: string; inputRequestId: string; taskVersion: number; status: "waiting" | "answered" | "cancelled"; title: string; detail: string; events: DecisionEvent[] };
 type FixtureCanvasJob = { id: string; prompt: string; status: "queued" | "running" | "completed" | "failed" };
-type FixtureMessage = { from: "me" | "otto"; text: string };
+
+/**
+ * Otto 在画布上给出的一个**结构化真答案** —— 原型 `responseFor()` 的形状(标题 / 导语 /
+ * 要点 / 一句诚实注脚)。这不是装饰:注脚那一句是这张卡唯一敢下的断言,它说的是「刚才
+ * 这次答话没有动任何东西、没有花一分钱」。
+ */
+export type OttoCanvasAnswer = { title: string; lead: string; bullets: string[]; note: string };
+
+export type OttoAnswerContext = {
+  /** 商家读得到的板名 —— 顶栏叫什么,答案里就叫什么。 */
+  board: string;
+  /** 一张图的确切价钱。读不出来就是 `null`,那时答案说「还在核对」,不编一个数出来。 */
+  imageCredits: number | null;
+  /** 这块画布此刻真的可选的形状。空数组 = 还没读出来。 */
+  ratioOptions: string[];
+  /**
+   * 此刻正在跑的 routine 条数。画布这一面没有 routine 的出处,所以它一律是 `null` ——
+   * 三态里最诚实的那一态:不知道就说不知道,不假装「没有在跑」。
+   */
+  activeRoutines: number | null;
+};
+
+type ChatResponse = { kind: "line"; text: string } | { kind: "answer"; answer: OttoCanvasAnswer };
+
+type ChatEntry =
+  | { from: "me" | "otto"; text: string }
+  | { from: "answer"; answer: OttoCanvasAnswer; repeat: boolean };
+
+/** 商家读得懂的形状名。表里没有的比例原样报出去,不硬塞一个形容词。 */
+const RATIO_SHAPE_WORD: Record<string, string> = { "9:16": "vertical", "1:1": "square", "16:9": "wide", "4:5": "portrait" };
+
+/**
+ * 样例画布那一张图的价钱。真接后端的那一面读服务端报价(`quoteCosts`),两面共用同一个
+ * `imageCredits` 变量往下走 —— 价格贴纸、答案里的单价、批量四张的总价,全从这一处派生。
+ * 「同一个价钱写在三处」正是漂移的起点,所以这一面只允许有这一个出处。
+ */
+const FIXTURE_IMAGE_CREDITS = 3;
 
 /**
  * 商家读到的阶段名。工程状态码(`queued` / `completed` …)只活在 `data-canvas-job-status`、
@@ -120,13 +156,192 @@ const GREETING = /^\s*(hi+|hey+|hello|helo|hai|yo|halo|hola|good (morning|aftern
 const THANKS = /(\bthanks\b|\bthank you\b|\bthx\b|\bterima kasih\b|谢谢|多谢|感谢)/i;
 const QUESTION = /^\s*(what|what's|whats|how|where|why|when|who|which)\b[\s\S]*\?\s*$/i;
 
-function smallTalkReply(prompt: string, board: string): string | null {
-  const answerHere = `I can answer right here, or make something on ${board}. Ask me for images, a variant, or a caption and I'll start.`;
-  if (GREETING.test(prompt)) return `Hey — I'm on ${board} with you. Tell me what to make and I'll start.`;
-  if (THANKS.test(prompt) && !CREATE_VERB.test(prompt)) return "Anytime. Star the ones worth keeping, or tell me what to make next.";
-  if (QUESTION.test(prompt)) return answerHere;
+/**
+ * 一句提问换回一个**真答案** —— 原型 `responseFor(context,prompt)` 的五路,加上这块画布
+ * 自己的三路(价钱 / 形状 / 去向)。
+ *
+ * 上一版这里是一句敷衍话:「I can answer right here, or make something on …」。它有两个病:
+ * 一是它什么都没回答,二是同一个问题问两遍,它逐字重复同一句 —— 那不是回答,那是回声。
+ *
+ * 每一路都必须交出「答案 + 一句注脚」。注脚不是免责声明,它是这张卡唯一敢下的断言:
+ * 答话本身没有动任何东西、没有排任何队、没有花一分钱。凡是这一面读不出来的事实
+ * (routine 条数、渠道是否已连),一律走「不知道」那一支,不替商家猜。
+ */
+export function canvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCanvasAnswer {
+  const low = prompt.toLowerCase();
+  const credits = context.imageCredits;
+
+  // ① 价钱 —— 数字全从 `imageCredits` 派生;读不出来就说读不出来。
+  if (/\b(cost|costs|price|prices|pricing|credit|credits|how much|charge|charged|billing|budget)\b/.test(low)) {
+    return {
+      title: "What this costs",
+      lead: `Every paid action on ${context.board} shows the exact price before it runs.`,
+      bullets: credits === null
+        ? [
+            "The exact price is still being checked, so no number is shown yet.",
+            "The send button stays off until that price is known.",
+            "Cancelled or failed work is never charged.",
+          ]
+        : [
+            `${credits} cr per image.`,
+            `${credits * CANVAS_IMAGE_MAX_VARIANT_COUNT} cr for a batch of ${CANVAS_IMAGE_MAX_VARIANT_COUNT}.`,
+            "The price sits next to the send button, so you read it before anything runs.",
+            "Cancelled or failed work is never charged.",
+          ],
+      note: "This answer started nothing and spent nothing.",
+    };
+  }
+
+  // ② 形状 —— 列出来的就是此刻真的可选的那几个,不是一张写死的表。
+  if (/\b(format|formats|ratio|ratios|aspect|shape|shapes|size|sizes|vertical|square|portrait|landscape|crop|carousel)\b/.test(low) || /\b\d{1,2}:\d{1,2}\b/.test(low)) {
+    const named = context.ratioOptions
+      .map((option) => (RATIO_SHAPE_WORD[option] ? `${option} ${RATIO_SHAPE_WORD[option]}` : option))
+      .join(" · ");
+    return {
+      title: "Shapes you can ask for",
+      lead: "Pick the shape next to the send button before you send the request.",
+      bullets: context.ratioOptions.length
+        ? [
+            `Available right now: ${named}.`,
+            "The shape you pick applies to this request only.",
+            "Changing the shape does not re-run work that already finished.",
+          ]
+        : [
+            "The available shapes are still being read, so nothing is listed yet.",
+            "The send button stays off until those shapes are known.",
+            "Changing the shape later does not re-run work that already finished.",
+          ],
+      note: "This answer did not change the shape or spend credits.",
+    };
+  }
+
+  // ③ 审核与排程 —— 原型 L6694 那一路,连措辞一起搬。
+  if (/approval|approve|review|schedule|publish|go live/.test(low)) {
+    return {
+      title: "Why this needs review",
+      lead: "This is an explanation only. The approval stays exactly where it is until someone uses its real action.",
+      bullets: [
+        "Approve means schedule, not publish.",
+        "Auto-publish is off, so nothing publishes before approval.",
+        "Whether a channel is connected is answered in Schedule, not on this canvas.",
+      ],
+      note: "This answer did not change the approval or spend credits.",
+    };
+  }
+
+  // ④ Routine 边界 —— 三态各有整段(原型 L6695-6699)。画布读不到条数,走的是第一态。
+  if (/routine|routines|prepare|prepares|automatic|automation|autonomous/.test(low)) {
+    const active = context.activeRoutines;
+    if (active === null) {
+      return {
+        title: "Routine boundary",
+        lead: "I cannot confirm routine state from this canvas, so I will not claim autonomous work is running.",
+        bullets: [
+          "Autonomous preparation and spending both require an active routine.",
+          "You can still ask for an explanation here.",
+          "Any paid action still shows its cost first and settles only on completion.",
+        ],
+        note: "This answer did not start a routine or change a routine state.",
+      };
+    }
+    if (active === 0) {
+      return {
+        title: "Routine boundary",
+        lead: "No routine is active right now, so Otto cannot autonomously prepare work, spend credits, schedule, or publish.",
+        bullets: [
+          "You can still ask for an explanation here.",
+          "Help you asked for stays clearly separate from routine work.",
+          "Any paid action still shows its cost first and settles only on completion.",
+        ],
+        note: "This answer did not start a routine or change a routine state.",
+      };
+    }
+    return {
+      title: "Routine boundary",
+      lead: `${active} routine${active === 1 ? " is" : "s are"} active right now. Autonomous preparation stays inside those routine boundaries.`,
+      bullets: [
+        "Approve still means schedule, not publish.",
+        "Auto-publish is off, so scheduled work waits for approval.",
+        "Help you asked for here does not execute a routine action.",
+      ],
+      note: "This answer did not change the running routine or spend credits.",
+    };
+  }
+
+  // ⑤ Otto IQ 的来处(原型 L6700)。
+  if (/otto iq|provenance|learn|learned|learns|source|sources|knowledge|memory|remember/.test(low)) {
+    return {
+      title: "Otto IQ provenance",
+      lead: "Otto IQ is knowledge saved in this workspace, and every saved fact carries its source, so you can read what Otto is using.",
+      bullets: [
+        "Pending suggestions are not saved yet.",
+        "Rules you saved stay under your control; Otto cannot remove them.",
+        "Open Otto IQ to read the source before you accept a suggestion.",
+      ],
+      note: "This answer did not save, remove, or alter any Otto IQ record.",
+    };
+  }
+
+  // ⑥ Analytics 语境(原型 L6701)。
+  if (/analytics|metric|metrics|performance|results|last \d+ days/.test(low)) {
+    return {
+      title: "Analytics context",
+      lead: "You asked this, so it is an explanation only — not an automatic action.",
+      bullets: [
+        "I keep uncertainty visible instead of inventing a number.",
+        "Paid analysis shows its cost before it runs and settles only when it completes.",
+        "Open Analytics for a priced insight; this answer has not run one.",
+      ],
+      note: "No analysis was started and no credits were spent.",
+    };
+  }
+
+  // ⑦ 去向 —— 画布做东西,把东西送出去是另一件事,由另一处动作负责。
+  if (/\b(channel|channels|instagram|facebook|email|destination|publish to|post to|send it to)\b/.test(low)) {
+    return {
+      title: "Where this can go",
+      lead: `Work gets made on ${context.board}. Sending it somewhere is a separate step you take on purpose.`,
+      bullets: [
+        "Star the images worth keeping so they are easy to find later.",
+        "Scheduling and publishing live in Schedule, not on this canvas.",
+        "Approve means schedule, not publish.",
+      ],
+      note: "This answer did not schedule, publish, or spend credits.",
+    };
+  }
+
+  // ⑧ 兜底(原型 L6702)。
+  return {
+    title: "Workspace help",
+    lead: "I can explain this workspace and point you to the action that owns a change.",
+    bullets: [
+      "Work made here stays on this canvas, and anything you save is in Library.",
+      "Describe what to make and the request starts right here.",
+      "Costs are shown before paid actions, and cancelled or failed work is never charged.",
+    ],
+    note: "This answer did not change anything on this canvas or spend credits.",
+  };
+}
+
+/** 复制出去的就是屏上那一整张卡 —— 标题、导语、每条要点、注脚,一行一条(原型 L6704)。 */
+export function answerCopyText(answer: OttoCanvasAnswer): string {
+  return [answer.title, answer.lead, ...answer.bullets, answer.note].join("\n");
+}
+
+/**
+ * 一次输入落到哪条路上。次序即判词,先判**句式**再判词(这一条上一轮已经过验收,不动):
+ *   ① 整句就是一句招呼 → 招呼
+ *   ② 道谢,且句子里没有创作动词 → 道谢
+ *   ③ 疑问句,且句子里没有创作动词 → **真答案**
+ *   ④ 剩下的才看创作动词或创作名词;两个都没有 → 同样给一个真答案(兜底那一路)
+ * 返回 `null` 就代表「这是真的要做东西」。
+ */
+function chatResponseFor(prompt: string, context: OttoAnswerContext): ChatResponse | null {
+  if (GREETING.test(prompt)) return { kind: "line", text: `Hey — I'm on ${context.board} with you. Tell me what to make and I'll start.` };
+  if (THANKS.test(prompt) && !CREATE_VERB.test(prompt)) return { kind: "line", text: "Anytime. Star the ones worth keeping, or tell me what to make next." };
+  if (QUESTION.test(prompt) && !CREATE_VERB.test(prompt)) return { kind: "answer", answer: canvasAnswerFor(prompt, context) };
   if (CREATE_VERB.test(prompt) || CREATE_NOUN.test(prompt)) return null;
-  return answerHere;
+  return { kind: "answer", answer: canvasAnswerFor(prompt, context) };
 }
 
 const TOOL_BUTTONS: Array<{
@@ -161,7 +376,7 @@ function FixtureWorld() {
       </article>
 
       <section className="r22-canvas-object r22-canvas-batch" aria-label="Batch of four images">
-        <span className="r22-canvas-batch-tag">Batch · 4 images · 12 cr</span>
+        <span className="r22-canvas-batch-tag">Batch · {CANVAS_IMAGE_MAX_VARIANT_COUNT} images · {FIXTURE_IMAGE_CREDITS * CANVAS_IMAGE_MAX_VARIANT_COUNT} cr</span>
         <div className="r22-canvas-batch-row">
           <Button unstyled className="r22-canvas-art r22-canvas-art-one" type="button" aria-label="Image 1">
             <Image src="/fixtures/r22-canvas/art-1.jpg" fill sizes="128px" alt="Raya concept 1" priority />
@@ -178,6 +393,45 @@ function FixtureWorld() {
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * 会话里的一张答案卡(原型 `answerHTML`,L6704-6706)。画布侧的会话面板只有 272px 宽,
+ * 所以按 Founder 的裁量省掉 `Get support` 那一颗 —— 剩下的 Copy / Helpful / Not helpful
+ * 与那条 `aria-live` 确认位一个不少。
+ *
+ * 重复问同一件事时 `repeat` 为真:导语换成一句「上面说过」的变体,要点照旧摆出来 ——
+ * 逐字重复一整张卡不是回答,是回声。
+ */
+function OttoAnswerCard({
+  answer,
+  repeat,
+  feedback,
+  confirm,
+  onCopy,
+  onFeedback,
+}: {
+  answer: OttoCanvasAnswer;
+  repeat: boolean;
+  feedback: "up" | "down" | null;
+  confirm: string;
+  onCopy: () => void;
+  onFeedback: (vote: "up" | "down") => void;
+}) {
+  return (
+    <li className="r22-canvas-answer" data-otto-answer data-otto-answer-repeat={repeat ? "true" : undefined}>
+      <h4>{answer.title}</h4>
+      <p>{repeat ? "Same answer as above — nothing about this has changed since you asked. The points again:" : answer.lead}</p>
+      <ul>{answer.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
+      <p className="r22-canvas-answer-note">{answer.note}</p>
+      <div className="r22-canvas-answer-actions">
+        <Button unstyled type="button" data-otto-copy onClick={onCopy}>Copy</Button>
+        <Button unstyled type="button" className={feedback === "up" ? "is-selected" : ""} aria-pressed={feedback === "up"} onClick={() => onFeedback("up")}>Helpful</Button>
+        <Button unstyled type="button" className={feedback === "down" ? "is-selected" : ""} aria-pressed={feedback === "down"} onClick={() => onFeedback("down")}>Not helpful</Button>
+      </div>
+      <span className="r22-canvas-answer-confirm" role="status" aria-live="polite">{confirm}</span>
+    </li>
   );
 }
 
@@ -244,7 +498,13 @@ export function R22CanvasSurface({
   const [zoom, setZoom] = useState(100);
   const [message, setMessage] = useState(runtimeContext.initialPrompt ?? "");
   const [notice, setNotice] = useState("");
-  const [fixtureMessages, setFixtureMessages] = useState<FixtureMessage[]>([]);
+  /**
+   * 会话记录。两面共用一份 —— 一句提问在哪一面问都该换回同一张答案卡;只有存档那一步
+   * 是样例画布独有的(下面那个 effect 自己带 `fixture` 闸)。
+   */
+  const [chatLog, setChatLog] = useState<ChatEntry[]>([]);
+  /** 答案卡上的复制/评价是**这一次会话里的动作**,不进存档:刷新之后它们不该假装还在。 */
+  const [answerUi, setAnswerUi] = useState<Record<number, { feedback?: "up" | "down"; confirm?: string }>>({});
   const [pendingQuestion, setPendingQuestion] = useState<PendingCanvasQuestion | null>(null);
   const [otherAnswer, setOtherAnswer] = useState("");
   const [decisionRecord, setDecisionRecord] = useState<DecisionRecord | null>(null);
@@ -262,6 +522,7 @@ export function R22CanvasSurface({
   const [fixtureJob, setFixtureJob] = useState<FixtureCanvasJob | null>(null);
   const [fixtureSendFailedOnce, setFixtureSendFailedOnce] = useState(false);
   const fixtureTimersRef = useRef<number[]>([]);
+  const conversationListRef = useRef<HTMLUListElement>(null);
   const actionRef = useRef<{ material: string; actionId: string } | null>(null);
   const answeredRequestsRef = useRef(new Set<string>());
   const fixtureStorageKey = fixture ? scopedR22FixtureKey(`r22:canvas:${runtimeContext.activeProjectId}:${runtimeContext.activeThreadId ?? "new"}`) : "";
@@ -335,7 +596,8 @@ export function R22CanvasSurface({
     // 存档」必须显式清空,不能什么都不做 —— 否则上一个项目的会话残留在内存里,再被下面
     // 那个写入 effect 原样存进新项目的 key。
     const resetFixtureState = () => {
-      setFixtureMessages([]);
+      setChatLog([]);
+      setAnswerUi({});
       setPendingQuestion(null);
       setOtherAnswer("");
       setDecisionRecord(null);
@@ -345,11 +607,12 @@ export function R22CanvasSurface({
     const stored = window.sessionStorage.getItem(fixtureStorageKey);
     if (stored) {
       try {
-        const restored = JSON.parse(stored) as { version?: number; messages?: FixtureMessage[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null };
+        const restored = JSON.parse(stored) as { version?: number; messages?: ChatEntry[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null };
         // v2 = 会话记录从「一串我的话」变成「谁说的 + 说了什么」(Otto 现在也会答话)。
         // 旧存档结构对不上,当场丢掉,不去猜它的形状。
         if (restored.version !== 2) throw new Error("stale fixture state");
-        setFixtureMessages(restored.messages ?? []);
+        setChatLog(restored.messages ?? []);
+        setAnswerUi({});
         setPendingQuestion(restored.pending ?? null);
         setOtherAnswer(restored.other ?? "");
         setDecisionRecord(restored.decision ?? null);
@@ -369,9 +632,18 @@ export function R22CanvasSurface({
   }, [fixture, fixtureStorageKey]);
   useEffect(() => {
     if (!fixture || !fixtureRestored) return;
-    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 2, messages: fixtureMessages, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob }));
-  }, [decisionRecord, fixture, fixtureJob, fixtureMessages, fixtureRestored, fixtureStorageKey, otherAnswer, pendingQuestion]);
+    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 2, messages: chatLog, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob }));
+  }, [decisionRecord, fixture, fixtureJob, chatLog, fixtureRestored, fixtureStorageKey, otherAnswer, pendingQuestion]);
   useEffect(() => () => { fixtureTimersRef.current.forEach((timer) => window.clearTimeout(timer)); }, []);
+  /**
+   * 刚答出来的那张卡必须看得见。会话面板只有 40vh 高,一张答案卡就比一条消息高好几倍 ——
+   * 不跟着滚,商家问完一句得自己往下拖才读得到答案(原型 `scrollChat()` 干的就是这件事)。
+   * 直接跳到底,不做平滑滚动:这是键盘敲下回车之后的动作,不该带动画。
+   */
+  useEffect(() => {
+    const list = conversationListRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [chatLog, conversationOpen]);
   useEffect(() => {
     if (fixture) return;
     void quoteCosts(1).then(setCostQuote).catch(() => setCostQuote(null));
@@ -384,8 +656,58 @@ export function R22CanvasSurface({
   /** Otto 答话时指得出「我们现在在哪块板上」—— 顶栏叫什么,它就叫什么。 */
   const fixtureBoardLabel = fixtureWorkspaceId === "batik-house" ? "the Raya launch board" : "this canvas";
 
+  /**
+   * 一张图的确切价钱只有这一个出处:样例画布用原型样张那一份,真接后端的那一面用服务端
+   * 报价。价格贴纸与答案卡里的每一个数字都从这里派生 —— 谁都不许再写一遍。
+   */
+  const imageCredits = fixture ? FIXTURE_IMAGE_CREDITS : costQuote ? costQuote.imageCredits : null;
+  const priceLabel = imageCredits === null ? "Checking cost…" : `${imageCredits} cr`;
+  const answerContext: OttoAnswerContext = {
+    board: fixture ? fixtureBoardLabel : "this canvas",
+    imageCredits,
+    ratioOptions,
+    // 画布这一面没有 routine 的出处。给 `null` 不是省事,是三态里唯一诚实的那一态。
+    activeRoutines: null,
+  };
+
+  /** 一次答话落进会话记录。同一个标题第二次出现就是一次「重复问」,导语换成变体。 */
+  function pushAnswer(answer: OttoCanvasAnswer) {
+    setChatLog((current) => [
+      ...current,
+      { from: "answer", answer, repeat: current.some((entry) => entry.from === "answer" && entry.answer.title === answer.title) },
+    ]);
+  }
+
+  function copyAnswer(index: number, answer: OttoCanvasAnswer) {
+    const clipboard = navigator.clipboard;
+    if (clipboard?.writeText) void clipboard.writeText(answerCopyText(answer)).catch(() => {});
+    setAnswerUi((current) => ({ ...current, [index]: { ...current[index], confirm: "Copied" } }));
+  }
+
+  function voteAnswer(index: number, vote: "up" | "down") {
+    setAnswerUi((current) => ({
+      ...current,
+      [index]: { feedback: vote, confirm: vote === "up" ? "Thanks — marked helpful" : "Thanks — feedback recorded" },
+    }));
+  }
+
+  /** 会话面板里的那几张答案卡与消息行 —— 两面共用一份渲染。 */
+  const chatNodes = chatLog.map((item, index) => item.from === "answer" ? (
+    <OttoAnswerCard
+      key={`answer:${index}:${item.answer.title}`}
+      answer={item.answer}
+      repeat={item.repeat}
+      feedback={answerUi[index]?.feedback ?? null}
+      confirm={answerUi[index]?.confirm ?? ""}
+      onCopy={() => copyAnswer(index, item.answer)}
+      onFeedback={(vote) => voteAnswer(index, vote)}
+    />
+  ) : (
+    <li className={item.from === "me" ? "from-me" : "from-otto"} key={`${item.from}:${index}:${item.text}`}>{item.text}</li>
+  ));
+
   function startFixtureJob(prompt: string, actionId?: string) {
-    const id = actionId ?? fixtureJob?.id ?? `fixture-action-${fixtureMessages.length}`;
+    const id = actionId ?? fixtureJob?.id ?? `fixture-action-${chatLog.length}`;
     setSubmitting(true);
     setFixtureJob({ id, prompt, status: "queued" });
     setNotice("Queued — nothing has been charged yet.");
@@ -413,11 +735,13 @@ export function R22CanvasSurface({
         setNotice("This project is not available. Return to Projects before sending anything.");
         return;
       }
-      setFixtureMessages((current) => [...current, { from: "me", text: next }]);
-      const flow = fixtureQuestionFlow(next);
-      const chatReply = flow ? null : smallTalkReply(next, fixtureBoardLabel);
+      setChatLog((current) => [...current, { from: "me", text: next }]);
+      const chatReply = chatResponseFor(next, answerContext);
+      // 一句真的疑问句先于提问流:它缺的是一个答案,不是一次拍板。「Make the Raya hero
+      // more premium」不是疑问句,那条路照旧走 `fixtureQuestionFlow`,一个字没变。
+      const flow = chatReply?.kind === "answer" ? null : fixtureQuestionFlow(next);
       if (flow) {
-        const taskId = `fixture-task-${fixtureMessages.length + 1}`;
+        const taskId = `fixture-task-${chatLog.length + 1}`;
         const inputRequestId = `${taskId}:input:1`;
         const taskVersion = 1;
         setPendingQuestion({ taskId, inputRequestId, taskVersion, flow, prompt: next, index: 0, selected: [], answers: [] });
@@ -434,19 +758,20 @@ export function R22CanvasSurface({
         setConversationOpen(true);
         setNotice("Otto paused — no credits used while waiting for your answer.");
       } else if (chatReply) {
-        // 一句寒暄不是一次生成:不排任务卡、不动 `fixtureJob`、不报价。
-        setFixtureMessages((current) => [...current, { from: "otto", text: chatReply }]);
+        // 一句寒暄或一次提问都不是一次生成:不排任务卡、不动 `fixtureJob`、不报价。
+        // 也不弹回执条 —— 答案本身就是回执,再飘一条黑条只会挡住输入框。
+        if (chatReply.kind === "line") setChatLog((current) => [...current, { from: "otto", text: chatReply.text }]);
+        else pushAnswer(chatReply.answer);
         setConversationOpen(true);
-        setNotice("Answered in Conversation. Nothing was made and no credits were used.");
       } else {
         if (fixtureSendOutcome === "permission") {
-          setFixtureJob({ id: `fixture-action-${fixtureMessages.length + 1}`, prompt: next, status: "failed" });
+          setFixtureJob({ id: `fixture-action-${chatLog.length + 1}`, prompt: next, status: "failed" });
           setNotice("Your workspace permission does not allow this generation. Nothing ran and no credits were used.");
         } else if (fixtureSendOutcome === "credits") {
-          setFixtureJob({ id: `fixture-action-${fixtureMessages.length + 1}`, prompt: next, status: "failed" });
+          setFixtureJob({ id: `fixture-action-${chatLog.length + 1}`, prompt: next, status: "failed" });
           setNotice("Insufficient credits. Nothing ran; add credits before retrying this exact request.");
         } else if ((fixtureSendOutcome === "error" || fixtureSendOutcome === "unknown") && !fixtureSendFailedOnce) {
-          const id = `fixture-action-${fixtureMessages.length + 1}`;
+          const id = `fixture-action-${chatLog.length + 1}`;
           setSubmitting(true);
           window.setTimeout(() => {
             setSubmitting(false);
@@ -460,10 +785,13 @@ export function R22CanvasSurface({
       return;
     }
     // 同一道闸装在真接后端这一面 —— 在这里一句 "hi" 会真的排一次生成、真的花商家的钱。
-    // 这一面的 Conversation 画的是会话列表,不是消息气泡,所以回话落在回执条上。
-    const liveSmallTalk = smallTalkReply(next, "this canvas");
-    if (liveSmallTalk) {
-      setNotice(`${liveSmallTalk} Nothing was made and no credits were used.`);
+    // 答话落在 Conversation 里(会话列表下面),与样例画布同一张卡、同一套判词。
+    const liveChat = chatResponseFor(next, answerContext);
+    if (liveChat) {
+      setChatLog((current) => [...current, { from: "me", text: next }]);
+      if (liveChat.kind === "line") setChatLog((current) => [...current, { from: "otto", text: liveChat.text }]);
+      else pushAnswer(liveChat.answer);
+      setConversationOpen(true);
       setMessage("");
       return;
     }
@@ -619,18 +947,24 @@ export function R22CanvasSurface({
           className={`r22-canvas-conversation${conversationOpen ? "" : " is-collapsed"}${historyExpanded ? " is-expanded" : ""}`}
           data-r22-canvas-conversation
         >
-          <div className="r22-canvas-conversation-head"><Button unstyled type="button" aria-expanded={conversationOpen} onClick={() => setConversationOpen((open) => !open)}>Conversation <span>· {fixture ? fixtureRouteState === "ready" ? 1 + fixtureMessages.length + (decisionRecord ? 1 : 0) + (fixtureJob ? 1 : 0) : 0 : runtimeContext.threads.length}</span>{pendingQuestion ? <em>Waiting</em> : null}<ChevronDown aria-hidden="true" /></Button>{conversationOpen ? <Button unstyled type="button" aria-label={historyExpanded ? "Close full conversation" : "Expand conversation"} onClick={() => setHistoryExpanded((open) => !open)}>{historyExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}</Button> : null}</div>
+          <div className="r22-canvas-conversation-head"><Button unstyled type="button" aria-expanded={conversationOpen} onClick={() => setConversationOpen((open) => !open)}>Conversation <span>· {fixture ? fixtureRouteState === "ready" ? 1 + chatLog.length + (decisionRecord ? 1 : 0) + (fixtureJob ? 1 : 0) : 0 : runtimeContext.threads.length}</span>{pendingQuestion ? <em>Waiting</em> : null}<ChevronDown aria-hidden="true" /></Button>{conversationOpen ? <Button unstyled type="button" aria-label={historyExpanded ? "Close full conversation" : "Expand conversation"} onClick={() => setHistoryExpanded((open) => !open)}>{historyExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}</Button> : null}</div>
           {conversationOpen && (
-            <ul className="r22-canvas-conversation-list">
+            <ul className="r22-canvas-conversation-list" ref={conversationListRef}>
               {fixture && fixtureRouteState !== "ready" ? <li className="from-otto">Project conversation is unavailable until access is restored.</li> : fixture ? (
                 <>
                   <li className="from-otto">Project brief loaded. Ask me what to create.</li>
-                  {fixtureMessages.map((item, index) => <li className={item.from === "me" ? "from-me" : "from-otto"} key={`${item.from}:${index}:${item.text}`}>{item.text}</li>)}
+                  {chatNodes}
                   {fixtureJob ? <li className="from-otto">{fixtureJob.status === "failed" ? "That request did not run — no credits used." : fixtureJob.status === "completed" ? "Done — that one landed on the canvas." : "Working on it — I'll post here when it lands."}</li> : null}
                   {decisionRecord ? <li key="fixture-decision" data-input-request-id={decisionRecord.inputRequestId} data-task-version={decisionRecord.taskVersion} className={`r22-canvas-decision is-${decisionRecord.status}${decisionOpen ? " is-open" : ""}`}><Button unstyled type="button" onClick={() => setDecisionOpen((open) => !open)}><span>Decision</span><em>{decisionRecord.status === "waiting" ? "Waiting" : decisionRecord.status === "answered" ? "Answered" : "Cancelled"}</em></Button><b>{decisionRecord.title}</b>{decisionOpen ? <div className="r22-canvas-decision-detail"><p><strong>Why Otto paused</strong><br />{decisionRecord.detail}</p><ol>{decisionRecord.events.map((event, index) => <li key={`${event.kind}:${index}`}><span>{event.label}</span><small>{event.detail}</small></li>)}</ol></div> : null}</li> : null}
                 </>
               ) : (
-                runtimeContext.threads.length ? runtimeContext.threads.map((thread) => <li className={thread.id === runtimeContext.activeThreadId ? "from-otto is-active" : "from-otto"} key={thread.id}><Link href={threadHref(thread.id)}>{thread.title}</Link></li>) : <li className="from-otto">No conversation yet. Describe what to make below and Otto starts the first one.</li>
+                // 真接后端那一面:上半截是已存下的会话入口,下半截是这一次问出来的答案。
+                <>
+                  {runtimeContext.threads.length
+                    ? runtimeContext.threads.map((thread) => <li className={thread.id === runtimeContext.activeThreadId ? "from-otto is-active" : "from-otto"} key={thread.id}><Link href={threadHref(thread.id)}>{thread.title}</Link></li>)
+                    : chatLog.length ? null : <li className="from-otto">No conversation yet. Describe what to make below and Otto starts the first one.</li>}
+                  {chatNodes}
+                </>
               )}
             </ul>
           )}
@@ -677,7 +1011,7 @@ export function R22CanvasSurface({
                 ))}
               </div>
             )}
-            <span className="r22-canvas-price">{fixture ? "3 cr" : costQuote ? `${costQuote.imageCredits} cr` : "Checking cost…"}</span>
+            <span className="r22-canvas-price">{priceLabel}</span>
             <Button unstyled type="submit" className="r22-canvas-send" aria-label="Send" disabled={submitting || (fixture && fixtureRouteState !== "ready") || (!fixture && (!costQuote || !ratioOptions.length))}>
               <ArrowUp aria-hidden="true" />
             </Button>

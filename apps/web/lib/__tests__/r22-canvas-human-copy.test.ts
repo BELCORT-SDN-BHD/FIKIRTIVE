@@ -144,16 +144,20 @@ describe("① 寒暄不进生成机", () => {
   /**
    * 前三条是裸形状;后四条是判官 2026-08-25 实测的四条红 —— 每一条都含一个创作**名词**
    * (images / video / carousel / batch),上一版就是被这几个名词判成了真创作请求。
+   *
+   * 第三列是 Otto 该给出的东西:`line` = 一句寒暄人话,`answer` = 一张真答案卡的标题。
+   * 「I can answer right here…」那句敷衍话在这一轮被废掉了 —— 一个问题换回一句「我可以
+   * 回答」不算回答。
    */
   it.each([
-    ["hi", "Hey"],
-    ["thanks!", "Anytime"],
-    ["what can you do here?", "I can answer right here"],
-    ["Thanks for the images!", "Anytime"],
-    ["How much does a video cost?", "I can answer right here"],
-    ["What is a carousel?", "I can answer right here"],
-    ["Where did my last batch go?", "I can answer right here"],
-  ])("「%s」换来 Conversation 里一句人话,不是一张任务卡", async (prompt, replyStart) => {
+    ["hi", "line", "Hey"],
+    ["thanks!", "line", "Anytime"],
+    ["what can you do here?", "answer", "Workspace help"],
+    ["Thanks for the images!", "line", "Anytime"],
+    ["How much does a video cost?", "answer", "What this costs"],
+    ["What is a carousel?", "answer", "Shapes you can ask for"],
+    ["Where did my last batch go?", "answer", "Workspace help"],
+  ])("「%s」换来 Conversation 里一句人话或一张真答案卡,不是一张任务卡", async (prompt, kind, expected) => {
     await mount();
     const before = conversationLines().length;
 
@@ -161,8 +165,15 @@ describe("① 寒暄不进生成机", () => {
 
     const lines = conversationLines();
     expect(lines, "我说的那句没有进 Conversation").toContain(prompt);
-    const reply = lines.find((line) => line.startsWith(replyStart));
-    expect(reply, `Otto 没有答话 —— 现在的记录是 ${JSON.stringify(lines)}`).toBeDefined();
+    if (kind === "line") {
+      const reply = lines.find((line) => line.startsWith(expected));
+      expect(reply, `Otto 没有答话 —— 现在的记录是 ${JSON.stringify(lines)}`).toBeDefined();
+    } else {
+      const card = container!.querySelector("[data-otto-answer]");
+      expect(card, `一次提问没有换来答案卡 —— 现在的记录是 ${JSON.stringify(lines)}`).not.toBeNull();
+      expect(card!.querySelector("h4")?.textContent).toBe(expected);
+      expect(card!.querySelectorAll("ul li").length, "答案卡没有要点").toBeGreaterThan(0);
+    }
     expect(lines.length, "一问一答应该正好多两行").toBe(before + 2);
 
     // 这一条才是 Founder 亲验抓到的病:寒暄不许排任务卡、不许出现阶段词、不许报价。
@@ -170,7 +181,8 @@ describe("① 寒暄不进生成机", () => {
     expect(screenText()).not.toContain("Queued");
     expect(screenText()).not.toContain("Working on");
     expect(ottoState(), "寒暄把 Otto 推进了工作态").toBe("idle");
-    expect(noticeText()).toContain("Nothing was made and no credits were used");
+    // 答案本身就是回执:聊天路径上不许再飘一条黑条(那条黑条正是压住输入框的东西)。
+    expect(noticeText(), "聊天路径上弹了一条 toast").toBe("");
   });
 
   it("Otto 的回话指得出我们在哪块板上,不是一句通用客套", async () => {
@@ -190,7 +202,7 @@ describe("① 寒暄不进生成机", () => {
     expect(job.textContent).toContain(CREATE_PROMPT);
     expect(ottoState()).toBe("working");
     // 创作请求不该被当成聊天答一句就完事。
-    expect(conversationLines().some((line) => line.startsWith("I can answer right here"))).toBe(false);
+    expect(container!.querySelector("[data-otto-answer]"), "一次创作请求被答成了一张答案卡").toBeNull();
   });
 
   /**
@@ -348,7 +360,24 @@ describe("③ 寒暄在 live 面上也不进生成机", () => {
     await askOtto("hi");
 
     expect(gen.generateImage, "live 面上一句寒暄真的排了一次生成").not.toHaveBeenCalled();
-    expect(noticeText()).toContain("Nothing was made and no credits were used");
+    // 答话落在 Conversation 里,不再飘一条压着输入框的黑条。
+    expect(conversationLines().some((line) => line.startsWith("Hey"))).toBe(true);
+    expect(noticeText(), "live 面的聊天路径上弹了一条 toast").toBe("");
+  });
+
+  it("live 面上一次提问同样换回一张真答案卡", async () => {
+    await mount(runtimeContext({ visualFixture: null }));
+
+    await askOtto("How much does an image cost?");
+
+    expect(gen.generateImage).not.toHaveBeenCalled();
+    const card = need("[data-otto-answer]");
+    expect(card.querySelector("h4")?.textContent).toBe("What this costs");
+    // 价钱从服务端报价派生 —— 替身给的是 8 cr,答案里就必须是 8 与 8×4。
+    const bullets = [...card.querySelectorAll("ul li")].map((node) => node.textContent ?? "");
+    expect(bullets).toContain("8 cr per image.");
+    expect(bullets).toContain("32 cr for a batch of 4.");
+    expect(noticeText()).toBe("");
   });
 
   it("真的创作请求在 live 面上照旧送出去", async () => {

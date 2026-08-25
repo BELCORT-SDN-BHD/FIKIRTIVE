@@ -902,6 +902,87 @@
   font-weight: 700;
 }
 
+/*
+  会话里的答案卡。会话面板只有 272px 宽,所以每一行都压到最小可读字号,动作排靠
+  `flex-wrap` 掉行而不是横向溢出。
+*/
+/*
+  答案卡本身还是「Otto 说的一段话」,所以走会话里 Otto 那一条珊瑚色竖线(原型
+  `.cv-msg-otto`),不另外套一只方框 —— 272px 宽的面板里,一只方框吃掉两边各 11px,
+  每条要点都要多折一行。内部结构照原型 `.otto-answer`:标题 / 导语 / 要点 / 注脚。
+*/
+.r22-canvas-answer {
+  padding: 1px 0 1px 10px;
+  border-left: 2px solid var(--r22-coral);
+}
+
+.r22-canvas-answer h4 {
+  margin: 0 0 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.r22-canvas-answer > p {
+  margin: 0;
+  color: var(--r22-ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.r22-canvas-answer ul {
+  margin: 7px 0 0;
+  padding-left: 15px;
+  color: var(--r22-ink-2);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.r22-canvas-answer ul li {
+  margin-top: 2px;
+}
+
+.r22-canvas-answer .r22-canvas-answer-note {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--r22-line);
+  color: var(--r22-ink-3);
+  font-size: 10.5px;
+}
+
+.r22-canvas-answer-actions {
+  display: flex;
+  margin-top: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.r22-canvas-answer-actions button {
+  padding: 4px 6px;
+  border-radius: 5px;
+  color: var(--r22-ink-2) !important;
+  font-size: 11px !important;
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.r22-canvas-answer-actions button.is-selected {
+  background: var(--r22-chrome);
+  color: var(--r22-ink) !important;
+}
+
+.r22-canvas-answer-actions button:active {
+  transform: scale(0.97);
+}
+
+.r22-canvas-answer-confirm {
+  display: block;
+  min-height: 14px;
+  margin-top: 3px;
+  color: var(--r22-good);
+  font-size: 10.5px;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .r22-canvas-icon-button:hover,
   .r22-canvas-project-button:hover,
@@ -965,9 +1046,11 @@
   .r22-canvas-plus:active,
   .r22-canvas-send:active,
   .r22-canvas-tools button:active,
-  .r22-canvas-zoom button:active {
+  .r22-canvas-zoom button:active,
+  .r22-canvas-answer-actions button:active {
     transform: none;
   }
+
 }
 
 @keyframes r22-fade { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
