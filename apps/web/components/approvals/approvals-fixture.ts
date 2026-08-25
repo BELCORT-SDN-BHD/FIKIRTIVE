@@ -136,7 +136,7 @@ export type ApprovalItem = {
   timeline?: ApprovalTimelineEvent[];
 };
 
-export const FIXTURE_STATE_KEY = "fikirtive.r22.approvals.state.v1";
+export const FIXTURE_STATE_KEY = "fikirtive.r22.approvals.state.v2";
 
 /** ⑧ 剩这么多小时之内算临期,卡上升警示样式。一个阈值,不是每张卡各写一遍。 */
 export const DECIDE_BY_URGENT_HOURS = 4;

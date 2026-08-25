@@ -26,6 +26,7 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/approvals", useRouter: 
 
 const { R22ApprovalsView } = await import("@/components/approvals/R22ApprovalsView");
 const { OttoPanelShell } = await import("@/components/otto/panel/OttoPanelShell");
+const { FIXTURE_STATE_KEY } = await import("@/components/approvals/approvals-fixture");
 /** `children` 在 props 上是必填的,这里当第三个参数传(与 `otto-panel.test.ts` 同一个写法)。 */
 const Shell = OttoPanelShell as FC<{ variant?: "legacy" | "r22" }>;
 
@@ -297,6 +298,22 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     expect(version1.textContent).toContain("version 2 is waiting in Needs review");
     click(button("See the new version", version1));
     expect(card("h3-v2"), "从种子里的 V1 点过去没有落在 V2 上").not.toBeNull();
+  });
+
+  /**
+   * 皮肤票 cd5e96e2 改了种子 schema(previews/note/images 等展示字段进场),旧 v1
+   * 存档回放到新组件会是旧形状套新皮。存档键必须升到 v2,且 v1 不再是回放来源
+   * —— 这条钉住键的形状,防止改动被静默回退。
+   */
+  it("存档键是 v2:皮肤票换了种子形状,旧 v1 存档不再回放", () => {
+    expect(FIXTURE_STATE_KEY, "存档键常量没有升到 v2").toMatch(/\.v2$/);
+    expect(FIXTURE_STATE_KEY).not.toMatch(/\.v1$/);
+
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+
+    const approvalsKey = Object.keys(window.sessionStorage).find((key) => key.startsWith("fikirtive.r22.approvals.state."));
+    expect(approvalsKey, "挂载后没有把 Approvals 状态写进 sessionStorage").toBeDefined();
+    expect(approvalsKey, "写出去的存档键还是 v1 的形状").toMatch(/\.v2:/);
   });
 });
 
