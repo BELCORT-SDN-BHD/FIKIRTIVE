@@ -149,7 +149,7 @@ describe("R22 extended frontend contracts", () => {
     expect(container!.textContent).toContain("2 rejected. Fixture state only.");
 
     click(button("Undo"));
-    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).toContain("6 need your review");
     expect(container!.textContent).not.toContain("2 rejected. Fixture state only.");
   });
 
@@ -158,11 +158,11 @@ describe("R22 extended frontend contracts", () => {
     click(button("Approve", container!.querySelector(".r22-approvals-item")!));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
     expect(container!.textContent).toContain("Nothing changed");
-    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).toContain("6 need your review");
     click(button("Retry"));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
     expect(container!.textContent).toContain("1 approved. Fixture state only.");
-    expect(container!.textContent).toContain("4 need your review");
+    expect(container!.textContent).toContain("5 need your review");
   });
 
   it("keeps approval read failures distinct from empty and hides protected details", () => {
@@ -170,7 +170,7 @@ describe("R22 extended frontend contracts", () => {
     expect(container!.textContent).toContain("Approvals could not load");
     expect(container!.textContent).not.toContain("Nothing needs your review");
     click(button("Retry"));
-    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).toContain("6 need your review");
 
     act(() => root!.render(createElement(R22ApprovalsView, { fixture: true, fixtureState: "permission" })));
     expect(container!.textContent).toContain("Approvals are not available to this member");
@@ -183,10 +183,10 @@ describe("R22 extended frontend contracts", () => {
     click(button("Approve", container!.querySelector(".r22-approvals-item")!));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
     expect(container!.textContent).toContain("outcome is unknown");
-    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).toContain("6 need your review");
     click(button("Retry"));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
-    expect(container!.textContent).toContain("4 need your review");
+    expect(container!.textContent).toContain("5 need your review");
     expect(container!.textContent).toContain("Approved 3");
   });
 

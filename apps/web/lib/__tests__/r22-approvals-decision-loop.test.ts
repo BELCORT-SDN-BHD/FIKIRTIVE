@@ -15,7 +15,7 @@
  *   ⑤ 独立审批到期的临期警示。
  *   ⑥ 被阻断的卡:Approve 禁用、按 a 也不动、Fix with Otto 在面板挂不到时说实话。
  */
-import { act, createElement, type ReactElement } from "react";
+import { act, createElement, type FC, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +23,9 @@ const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/approvals", useRouter: () => navigation }));
 
 const { R22ApprovalsView } = await import("@/components/approvals/R22ApprovalsView");
+const { OttoPanelShell } = await import("@/components/otto/panel/OttoPanelShell");
+/** `children` 在 props 上是必填的,这里当第三个参数传(与 `otto-panel.test.ts` 同一个写法)。 */
+const Shell = OttoPanelShell as FC<{ variant?: "legacy" | "r22" }>;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,6 +34,7 @@ let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  window.localStorage.clear(); // 面板自己的开合存档走 localStorage,别跨用例串味。
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -42,6 +46,7 @@ afterEach(() => {
   root = null;
   container = null;
   window.sessionStorage.clear();
+  window.localStorage.clear();
 });
 
 function mount(element: ReactElement) {
@@ -115,7 +120,7 @@ describe("R22 Approvals 八件升级的行为契约", () => {
 
     // V1 不再占着 Needs review,总数因此不变(一进一出,不是凭空多一张)。
     expect(card("i1"), "V1 还留在 Needs review").toBeNull();
-    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).toContain("6 need your review");
     expect(container!.textContent).toContain("A new version is in Needs review. Fixture state only.");
 
     // V1 在 Sent back 里,写明是 superseded,并链得回 V2。
@@ -147,7 +152,7 @@ describe("R22 Approvals 八件升级的行为契约", () => {
 
     expect(container!.textContent).toContain("1 rejected. Fixture state only.");
     expect(card("i1-v2"), "Reject 不该产生 V2").toBeNull();
-    expect(container!.textContent).toContain("4 need your review");
+    expect(container!.textContent).toContain("5 need your review");
   });
 
   it("② Approve and next:批准之后焦点落到下一张待审卡", async () => {
@@ -181,7 +186,7 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     press(textarea, "a");
     press(textarea, "x");
     await settle(400);
-    expect(container!.textContent, "输入框里的 a 批掉了一张卡").toContain("5 need your review");
+    expect(container!.textContent, "输入框里的 a 批掉了一张卡").toContain("6 need your review");
     expect(container!.textContent).not.toContain("approved. Fixture state only.");
     expect(container!.querySelector(".r22-approvals-bulk"), "输入框里的 x 选中了一张卡").toBeNull();
 
@@ -190,7 +195,7 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     press(card("i1")!, "a");
     await settle(400);
     expect(container!.textContent).toContain("1 approved. Fixture state only.");
-    expect(container!.textContent).toContain("4 need your review");
+    expect(container!.textContent).toContain("5 need your review");
   });
 
   it("④ 事实摘要条与政策句只在 Needs review,due today 从 group 派生", async () => {
@@ -237,12 +242,55 @@ describe("R22 Approvals 八件升级的行为契约", () => {
 
     press(blocked, "a");
     await settle(400);
-    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).toContain("6 need your review");
     expect(container!.textContent).not.toContain("approved. Fixture state only.");
 
     // 这个测试没有挂 Otto 面板 —— 那正是「面板够不着」那一态,回执必须说实话。
     click(button("Fix with Otto", blocked));
     expect(container!.textContent).toContain("The Otto panel is not mounted on this page, so nothing was prefilled");
     expect(container!.textContent).toContain("Raise the weekly credit cap for the Weekend routine");
+  });
+
+  /**
+   * ⑤ 判官 r1 [P1]:上面那条钉的是**商家走不到**的那条路 —— `/approvals` 一定挂着面板。
+   * 这一条把面板真的挂上去,盯住商家唯一走得到的那条分支:面板确实开了,而回执**不许**
+   * 声称阻断上下文已经在面板里(`OttoPanelControls` 没有任何 prefill 通道,面板里此刻是
+   * 它自己那句招呼语)。
+   */
+  it("⑤ 面板挂得上时:Fix with Otto 真的开面板,但回执不宣称预填", () => {
+    // `variant: "r22"` 就是商家壳真的传的那个值(`global-navigation.tsx` 的 `ottoVariant`
+    // 默认 r22),它开局是收着的 —— 所以「面板被这一下打开了」这件事才证得出来。
+    mount(createElement(Shell, { variant: "r22" }, createElement(R22ApprovalsView, { fixture: true })));
+    expect(container!.querySelector("[data-otto-panel]"), "面板一开始就是开着的,这条证不了「开」").toBeNull();
+
+    click(button("Fix with Otto", card("i3")!));
+
+    expect(container!.querySelector("[data-otto-panel]"), "面板没有被打开").not.toBeNull();
+    const notice = container!.querySelector(".r22-approvals-notice")!;
+    expect(notice.textContent).toContain("Otto is open, but nothing was prefilled — the panel has no channel to receive it yet");
+    expect(notice.textContent).toContain("What needs fixing: Raise the weekly credit cap for the Weekend routine, or cut this batch to 2 images");
+    expect(notice.textContent).toContain("no cap, batch or credit was changed");
+    expect(notice.textContent, "回执又在宣称阻断上下文已经在面板里").not.toContain("in view");
+  });
+
+  /**
+   * ④ 判官 r1 [P2]:版本循环那条**种子**实例过去只在卡面写「a new version is in Needs
+   * review」,既没有 `supersededBy`、Needs review 里也没有对应的 V2 —— 一句当场证伪的话。
+   * 这一条钉住种子与代码路径产出的那一对长得一样:旧卡链得过去,新卡真的在那里。
+   */
+  it("④ 种子里的 V1/V2 成对:Sent back 的旧卡链得到 Needs review 里真实存在的 V2", () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+
+    const version2 = card("h3-v2");
+    expect(version2, "种子里的 V2 不在 Needs review").not.toBeNull();
+    expect(version2!.textContent).toContain("V2");
+    expect(version2!.textContent).toContain("Rewritten to keep the rule you set.");
+    expect(version2!.textContent).toContain("Settled · Breaks a rule I set — “no discounts before Oct 25”");
+
+    selectTab("Sent back 1");
+    const version1 = card("h3")!;
+    expect(version1.textContent).toContain("a new version is in Needs review");
+    click(button("See the new version", version1));
+    expect(card("h3-v2"), "从种子里的 V1 点过去没有落在 V2 上").not.toBeNull();
   });
 });

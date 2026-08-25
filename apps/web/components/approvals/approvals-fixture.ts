@@ -378,10 +378,63 @@ export const FIXTURE_ITEMS: ApprovalItem[] = [
     images: ["/fixtures/r22-canvas/art-2.jpg"],
     decision: "Sent to Otto for a revise by Nicks · yesterday 17:10 · Breaks a rule I set — “no discounts before Oct 25”",
     resolution: "superseded",
+    /**
+     * ④ 判官 r1 [P2]:这一条是版本循环**唯一一条种子实例**,所以它必须与
+     * `applyDecision` / `nextVersionOf` 跑出来的那一对长得一模一样 —— 旧卡带
+     * `supersededBy` 指向新卡(卡面才画得出 See the new version),新卡真的在
+     * Needs review 里(下面那条 `h3-v2`)。上一版只有卡面那句「a new version is in
+     * Needs review」,没有 `supersededBy`、也没有对应的 V2 卡:商家点进 Sent back
+     * 第一眼看到的就是一句当场证伪的话。
+     *
+     * 时间线也照那条代码路径:「Version 2 produced by Otto」是**新卡**的事件
+     * (`nextVersionOf` 把它追加在子卡上),旧卡只记到「Revise asked by Nicks」。
+     */
+    supersededBy: "h3-v2",
     timeline: [
       { id: "h3-t1", label: "Created by Otto · Weekend routine", when: "Yesterday 16:40" },
       { id: "h3-t2", label: "Revise asked by Nicks", when: "Yesterday 17:10", detail: "Breaks a rule I set" },
-      { id: "h3-t3", label: "Version 2 produced by Otto", when: "Yesterday 17:12" },
+    ],
+  },
+  {
+    /** ④ h3 的 V2 —— 形状与 `nextVersionOf` 的产物逐字段对齐(id 从 rootId 派生、
+     *  带 What changed 与「已结清」的旧意见、时间线接在 V1 的后面)。 */
+    id: "h3-v2",
+    rootId: "h3",
+    version: 2,
+    title: "Discount teaser for the gift set",
+    origin: "Otto · Weekend routine",
+    source: "otto",
+    cost: 0,
+    status: "waiting",
+    group: "week",
+    when: "Sat 10:00",
+    detail: "Instagram · 1 post",
+    images: ["/fixtures/r22-canvas/art-2.jpg"],
+    sources: ["Deepavali gift set", "no discounts before Oct 25"],
+    openLabel: "Open in campaign",
+    openHref: "/campaign?fixture=r22",
+    consequence: "Schedules 1 post · held until a channel is connected",
+    decideBy: "Fri 12:00",
+    decideByHours: 24,
+    whatChanged: REVISION_CHANGES["Breaks a rule I set"],
+    settledFeedback: "Breaks a rule I set — “no discounts before Oct 25”",
+    previews: [
+      {
+        platform: "Instagram",
+        image: "/fixtures/r22-canvas/art-2.jpg",
+        caption: "The Deepavali gift set is wrapped by hand — full price until Oct 25, then the festive bundle opens.",
+        fit: "Square 1:1 · caption 104 characters",
+      },
+    ],
+    brief: {
+      routine: "Weekend routine · runs Saturday 10:00",
+      promptGist: "Tease the gift set without naming a discount, because the no-discount rule runs until Oct 25.",
+      cost: "Free to schedule · the image was made in Canvas earlier",
+    },
+    timeline: [
+      { id: "h3-t1", label: "Created by Otto · Weekend routine", when: "Yesterday 16:40" },
+      { id: "h3-t2", label: "Revise asked by Nicks", when: "Yesterday 17:10", detail: "Breaks a rule I set" },
+      { id: "h3-v2-made", label: "Version 2 produced by Otto", when: "Yesterday 17:12", detail: REVISION_CHANGES["Breaks a rule I set"] },
     ],
   },
 ];

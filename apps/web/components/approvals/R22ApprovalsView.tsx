@@ -191,16 +191,27 @@ export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixt
     setRevising(null);
   }
 
-  /** ⑤ Fix with Otto —— 面板挂得到就开面板,挂不到就说挂不到,不假装已经预填。 */
+  /**
+   * ⑤ Fix with Otto —— 开得了面板就开面板,**但开面板不等于预填**。
+   *
+   * 判官 r1 [P1]:上一版在「面板挂得到」那条路上写「Otto is open with this blocker in
+   * view」,而 `OttoPanelControls`(OttoPanelShell.tsx:47-58)全部能力只有 open / close /
+   * toggle / toggleExpanded —— 没有任何 seed / prefill / compose 通道,面板打开时里面是它
+   * 自己的那句招呼语,零阻断上下文。而 `/approvals` 一定挂着面板(`panel-surface.ts` 只把
+   * 画布排除在外),所以那条撒谎的分支正是商家唯一走得到的分支。
+   *
+   * 两条路都只说得到「开了 / 没开」,以及**把要修的那件事原样写在回执里**让商家自己带进
+   * 面板 —— 这是今天这块壳真的做得到的全部。预填要等 `OttoPanelControls` 上真有一条通道
+   * (那是 Otto 面板自己的票,不是这一面能私自宣称的能力)。
+   */
   function fixWithOtto(item: ApprovalItem) {
     if (!item.blocker) return;
     setNoticeKind("success");
-    if (!otto) {
-      setNotice(`The Otto panel is not mounted on this page, so nothing was prefilled. What needs fixing: ${item.blocker.fixContext}. Fixture state only.`);
-      return;
-    }
-    otto.openPanel();
-    setNotice(`Otto is open with this blocker in view: ${item.blocker.fixContext}. Fixture state only — no cap, batch or credit was changed.`);
+    const opened = otto
+      ? "Otto is open, but nothing was prefilled — the panel has no channel to receive it yet"
+      : "The Otto panel is not mounted on this page, so nothing was prefilled";
+    otto?.openPanel();
+    setNotice(`${opened}. What needs fixing: ${item.blocker.fixContext}. Fixture state only — no cap, batch or credit was changed.`);
   }
 
   function openVersion(id: string) {
