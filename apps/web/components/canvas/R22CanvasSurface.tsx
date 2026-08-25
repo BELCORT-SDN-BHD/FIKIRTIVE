@@ -29,7 +29,9 @@ import {
   Undo2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CANVAS_HREF, CREATE_NAV_HREF } from "@fikirtive/core/navigation";
 import type { EntityDTO } from "@/lib/types";
+import { canvasHref } from "./canvas-href";
 import { listCanvasNodes, type CanvasNodeDTO } from "@/lib/canvas-actions";
 import type { ImmersiveCanvasRuntimeContext } from "./NorthstarCanvasWorkspace";
 import { freshCanvasActionId, useCanvasGen, type CanvasGenProgress } from "./useCanvasGen";
@@ -222,18 +224,20 @@ export function R22CanvasSurface({
     setNodesLoading(false);
   }, [fixture, runtimeContext.activeProjectId]);
 
+  // `useSearchParams()` 在没有 Suspense 边界的渲染里给得出 null(Next 的类型没说,运行时
+  // 会)。两处都拿它拼地址,少一处护栏就是少一处 TypeError,所以两处写法一致。
   const projectHref = useCallback((projectId: string) => {
-    const next = new URLSearchParams(searchParams.toString());
+    const next = new URLSearchParams(searchParams?.toString() ?? "");
     next.set("project", projectId);
     next.delete("thread");
-    return `/create/canvas?${next.toString()}`;
+    return `${CANVAS_HREF}?${next.toString()}`;
   }, [searchParams]);
 
   const threadHref = useCallback((threadId: string) => {
-    const next = new URLSearchParams(searchParams.toString());
+    const next = new URLSearchParams(searchParams?.toString() ?? "");
     next.set("project", runtimeContext.activeProjectId);
     next.set("thread", threadId);
-    return `/create/canvas?${next.toString()}`;
+    return `${CANVAS_HREF}?${next.toString()}`;
   }, [runtimeContext.activeProjectId, searchParams]);
 
   const onNewNode = useCallback((node: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; url?: string; prompt: string; generationId?: string; genJobId?: string }) => {
@@ -436,7 +440,7 @@ export function R22CanvasSurface({
       aria-label="Canvas workspace"
     >
       <header className="r22-canvas-topbar" data-r22-canvas-topbar>
-        <Link className="r22-canvas-icon-button" href={fixture ? "/create?fixture=r22" : "/create"} aria-label="Back to Canvas projects">
+        <Link className="r22-canvas-icon-button" href={fixture ? `${CREATE_NAV_HREF}?fixture=r22` : CREATE_NAV_HREF} aria-label="Back to Canvas projects">
           <ArrowLeft aria-hidden="true" />
         </Link>
         <div className="r22-canvas-project-switcher">
@@ -475,7 +479,7 @@ export function R22CanvasSurface({
 
       <div className="r22-canvas-stage" data-r22-canvas-stage>
         {fixture && fixtureRouteState !== "ready" ? <EmptyWorld loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Project read outcome is unknown. No board or empty state was inferred." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld /> : <EmptyWorld /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} zoom={zoom} />}
-        {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href="/create?fixture=r22">Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href="/create/canvas?project=fixture-raya&fixture=r22">Retry</Link> : null}</div> : null}
+        {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
         {fixtureJob ? <div className={`r22-canvas-job is-${fixtureJob.status}`} role="status"><span>{fixtureJob.status}</span><b>{fixtureJob.prompt}</b><small>Receipt {fixtureJob.id} · {fixtureJob.status === "completed" ? "fixture result saved" : fixtureJob.status === "failed" ? "0 cr · no confirmed job" : "same local action"}</small></div> : null}
 
