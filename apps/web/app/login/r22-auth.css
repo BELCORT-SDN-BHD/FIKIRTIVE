@@ -29,7 +29,7 @@
 .r22-auth-input { width: 100%; min-height: 40px; padding: 10px 12px; border: 1px solid var(--r22-line-strong); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: 13.5px; outline: none; transition: border-color 120ms ease; }
 .r22-auth-input:focus { border-color: var(--r22-ink); box-shadow: 0 0 0 1px var(--r22-ink); }
 .r22-auth-input::placeholder { color: var(--r22-ink-3); }
-.r22-auth-help { margin-top: 6px; color: var(--r22-ink-3); font-size: 12px; line-height: 1.45; }
+.r22-auth-help { margin-top: 6px; color: var(--r22-ink-3); font-size: var(--r22-text-small); line-height: 1.45; }
 .r22-auth-password { position: relative; }
 .r22-auth-password .r22-auth-input { padding-right: 42px; }
 .r22-auth-icon-button { position: absolute; top: 50%; right: 4px; display: grid; width: 34px; height: 34px; place-items: center; transform: translateY(-50%); border-radius: 7px; color: var(--r22-ink-3); }
@@ -38,13 +38,13 @@
 .r22-auth-confirm-title { font-size: 15px; font-weight: 600; }
 .r22-auth-inline { color: var(--r22-ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 .r22-auth-switch, .r22-auth-terms { margin-top: 18px; color: var(--r22-ink-3); text-align: center; font-size: var(--r22-text-small); line-height: 1.55; }
-.r22-auth-terms { margin-top: 10px; font-size: 12px; }
+.r22-auth-terms { margin-top: 10px; font-size: var(--r22-text-small); }
 .r22-auth-switch a, .r22-auth-terms a { color: var(--r22-ink); text-decoration: underline; text-underline-offset: 3px; }
-.r22-auth-fact { margin-top: 14px; color: var(--r22-ink-3); font-size: 12px; line-height: 1.55; }
+.r22-auth-fact { margin-top: 14px; color: var(--r22-ink-3); font-size: var(--r22-text-small); line-height: 1.55; }
 /* 卡片外那一句产品实话(发布口径,归 PUBLISHING_AVAILABLE 开关管):与 switch / terms
    同一族的居中脚注排版,不是卡内的 fact。 */
-.r22-auth-public-fact { margin-top: 18px; color: var(--r22-ink-3); text-align: center; font-size: 12px; line-height: 1.55; text-wrap: pretty; }
-.r22-auth-footer { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; color: var(--r22-ink-3); font-size: 12px; }
+.r22-auth-public-fact { margin-top: 18px; color: var(--r22-ink-3); text-align: center; font-size: var(--r22-text-small); line-height: 1.55; text-wrap: pretty; }
+.r22-auth-footer { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; color: var(--r22-ink-3); font-size: var(--r22-text-small); }
 .r22-auth-footer i { font-style: normal; }
 .r22-auth-page-error { margin-bottom: 12px; padding: 9px 12px; border-radius: 8px; background: var(--r22-bad-soft); color: var(--r22-bad); font-size: var(--r22-text-small); }
 .r22-auth-state-icon { display: grid; width: 44px; height: 44px; place-items: center; margin-bottom: 16px; border-radius: 12px; }
@@ -54,7 +54,7 @@
 .r22-auth-code { display: flex; align-items: center; gap: 8px; }
 .r22-auth-code span { display: contents; }
 .r22-auth-code span.r22-auth-code-break::before { width: 10px; height: 1px; margin: 0 1px; background: var(--r22-line-strong); content: ""; }
-.r22-auth-code input { width: 42px; height: 46px; border: 1px solid var(--r22-line-strong); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); text-align: center; font: 600 18px/1 var(--font-mono, ui-monospace, monospace); outline: none; }
+.r22-auth-code input { width: 42px; height: 46px; border: 1px solid var(--r22-line-strong); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); text-align: center; font: 500 20px/1 var(--font-mono, ui-monospace, monospace); /* 原型 .au-cell 真值,冻结族 */ outline: none; }
 .r22-auth-code input:focus { border-color: var(--r22-ink); box-shadow: 0 0 0 1px var(--r22-ink); }
 .r22-auth-resend { margin-top: 13px; color: var(--r22-ink-2); text-align: center; font-size: var(--r22-text-small); }
 .r22-auth-resend button { color: var(--r22-ink); text-decoration: underline; text-underline-offset: 3px; }

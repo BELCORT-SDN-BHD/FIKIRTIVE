@@ -7,7 +7,7 @@
 
 .r22-analytics > header h1 {
   margin: 0;
-  font-size: 30px;
+  font-size: var(--r22-text-h1);
   font-weight: 650;
   letter-spacing: -.035em;
 }
@@ -26,7 +26,7 @@
   border: 1px solid var(--r22-line);
   border-radius: 99px;
   background: var(--r22-surface);
-  font-size: 10.5px;
+  font-size: var(--r22-text-small);
 }
 
 .r22-analytics-controls {
@@ -44,7 +44,7 @@
   border-radius: 7px;
   background: var(--r22-surface);
   color: var(--r22-ink-3);
-  font-size: 10.5px;
+  font-size: var(--r22-text-body);
   opacity: 1;
 }
 
@@ -60,7 +60,7 @@
   padding: 6px 10px;
   border-radius: 6px;
   color: var(--r22-ink-2);
-  font-size: 10.5px;
+  font-size: var(--r22-text-caption);
 }
 
 .r22-analytics-controls button.is-active {
@@ -87,7 +87,7 @@
   border-radius: 8px;
   background: var(--r22-warn-soft);
   color: var(--r22-warn-text);
-  font-size: 10.5px;
+  font-size: var(--r22-text-body);
 }
 
 .r22-analytics-quality svg { width: 14px; flex: none; }
@@ -112,14 +112,14 @@
 .r22-analytics-overview h2,
 .r22-analytics-chart h2 {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14.5px; /* 原型 .panel h3 真值,冻结族 */
   font-weight: 650;
 }
 
 .r22-analytics-overview header span,
 .r22-analytics-chart header span {
   color: var(--r22-ink-3);
-  font-size: 10px;
+  font-size: var(--r22-text-mono-label);
 }
 
 .r22-analytics-overview > div {
@@ -147,7 +147,8 @@
   display: block;
   margin-top: 13px;
   font-family: var(--font-jetbrains-mono), monospace;
-  font-size: clamp(16px, 2vw, 23px);
+  font-size: 26px; /* 原型 .an-num 真值,冻结族;恢复固定值 */
+  font-variant-numeric: tabular-nums;
   font-weight: 560;
   letter-spacing: -.04em;
 }
@@ -156,7 +157,7 @@
   display: block;
   margin-top: 10px;
   color: var(--r22-ink-3);
-  font-size: 9px;
+  font-size: var(--r22-text-caption);
 }
 
 .r22-analytics-overview article small.is-up {
@@ -187,7 +188,7 @@
 .r22-analytics-insight p {
   margin: 0;
   color: var(--r22-ink-2);
-  font-size: var(--r22-text-caption);
+  font-size: var(--r22-text-small);
 }
 
 .r22-analytics-insight button,
@@ -197,7 +198,7 @@
   border: 1px solid var(--r22-line);
   border-radius: 7px;
   background: var(--r22-surface);
-  font-size: 10.5px;
+  font-size: var(--r22-text-body-lg);
   font-weight: 600;
 }
 
@@ -248,14 +249,14 @@
 
 .r22-analytics-state h2 {
   margin: 13px 0 0;
-  font-size: 16px;
+  font-size: 14.5px; /* 原型空态标题惯例真值,冻结族 */
 }
 
 .r22-analytics-state p {
   max-width: 470px;
   margin: 7px 0 0;
   color: var(--r22-ink-2);
-  font-size: 12px;
+  font-size: var(--r22-text-small);
   line-height: 1.55;
 }
 

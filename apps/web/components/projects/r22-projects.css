@@ -20,10 +20,10 @@
 
 .r22-projects h1 {
   margin-top: 20px;
-  font-size: 23px;
+  font-size: var(--r22-text-h1);
   line-height: 1.2;
-  font-weight: 650;
-  letter-spacing: -0.025em;
+  font-weight: 600;
+  letter-spacing: -0.015em;
 }
 
 .r22-projects-subtitle {
@@ -142,7 +142,7 @@
   border-top: 0;
   background: var(--r22-ground);
   color: var(--r22-ink-3);
-  font-size: 10px;
+  font-size: 10.5px; /* 原型 .pj-head 真值,冻结族 */
   font-weight: 600;
   letter-spacing: .07em;
   text-transform: uppercase;
@@ -238,10 +238,10 @@
   font-family: var(--font-geist-sans), Geist, Arial, sans-serif;
 }
 
-.r22-projects-cancel-dialog h2 { font-size: 17px; font-weight: 600; }
+.r22-projects-cancel-dialog h2 { font-size: 18px; /* 弹层标题惯例真值,冻结族 */ font-weight: 600; }
 .r22-projects-cancel-dialog p { margin-top: 5px; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
 .r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
-.r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] button { padding: 8px 12px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: 12px; }
+.r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] button { padding: 8px 12px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: var(--r22-text-caption); }
 .r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] button:last-child { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
 
 .r22-projects-modal [data-slot="dialog-header"] {

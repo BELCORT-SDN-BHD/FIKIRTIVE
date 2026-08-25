@@ -61,8 +61,8 @@
 .r22-settings-workspace-directory-row > span:nth-child(2) { min-width: 0; flex: 1; }
 .r22-settings-workspace-directory b,
 .r22-settings-workspace-directory small { display: block; }
-.r22-settings-workspace-directory b { font-size: 12px; font-weight: 560; }
-.r22-settings-workspace-directory small { margin-top: 3px; color: var(--r22-ink-3); font-size: 10.5px; }
+.r22-settings-workspace-directory b { font-size: var(--r22-text-body); font-weight: 560; }
+.r22-settings-workspace-directory small { margin-top: 3px; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); }
 .r22-settings-workspace-directory button { min-height: 28px; padding: 5px 9px; border: 1px solid var(--r22-line-2); border-radius: 7px; background: var(--r22-surface); font-size: 10.5px; }
 .r22-settings-workspace-directory button:disabled { opacity: .48; }
 .r22-settings-workspace-directory > p[role="alert"] { margin: 0; padding: 10px 12px; border-top: 1px solid var(--r22-workspace-alert-border); background: var(--r22-workspace-alert-soft); color: var(--r22-workspace-alert-text); font-size: 10.5px; }
@@ -76,6 +76,6 @@
   border-radius: 7px;
   background: var(--r22-chrome);
   color: var(--r22-avatar-ink);
-  font-size: 9.5px;
+  font-size: 10px; /* 原型 L2383-2384 真值,冻结族 */
   font-weight: 650;
 }
