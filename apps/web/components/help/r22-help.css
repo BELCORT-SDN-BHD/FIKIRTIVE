@@ -5,7 +5,7 @@
 .r22-help > header span { display: block; margin-top: 8px; color: var(--r22-ink-2); font-size: 13.5px; }
 .r22-help-search { display: flex; max-width: 720px; height: 44px; margin-top: 28px; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid var(--r22-line-2); border-radius: 10px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); }
 .r22-help-search > svg { width: 16px; color: var(--r22-ink-3); }
-.r22-help-search input { min-width: 0; flex: 1; border: 0; outline: none; background: transparent; font-size: 13px; }
+.r22-help-search input { min-width: 0; flex: 1; border: 0; outline: none; background: transparent; font-size: var(--r22-text-body); }
 .r22-help-search input:disabled { cursor: not-allowed; }
 .r22-help-search kbd { color: var(--r22-ink-3); font-family: var(--font-jetbrains-mono), monospace; font-size: 10px; }
 .r22-help-grid { display: grid; margin-top: 34px; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 18px; }
@@ -17,54 +17,54 @@
 .r22-help-heading p { margin-top: 4px; color: var(--r22-ink-2); font-size: 12px; }
 .r22-help-unavailable { min-height: 190px; margin-top: 20px; padding: 28px; align-content: center; border-radius: 10px; background: var(--r22-ground); text-align: center; }
 .r22-help-unavailable b { font-size: 13.5px; }
-.r22-help-unavailable p { max-width: 470px; margin: 7px auto 0; color: var(--r22-ink-2); font-size: 12.5px; line-height: 1.5; }
+.r22-help-unavailable p { max-width: 470px; margin: 7px auto 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
 .r22-help-articles ul { margin: 18px 0 0; padding: 0; list-style: none; }
 .r22-help-articles li + li { border-top: 1px solid var(--r22-line); }
 .r22-help-articles button { display: block; width: 100%; padding: 14px 9px; border-radius: 8px; text-align: left; }
 .r22-help-articles button small, .r22-help-articles button b, .r22-help-articles button span { display: block; }
 .r22-help-articles button small { color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.r22-help-articles button b { margin-top: 5px; font-size: 13px; font-weight: 620; }
+.r22-help-articles button b { margin-top: 5px; font-size: var(--r22-text-body); font-weight: 620; }
 .r22-help-articles button span { margin-top: 4px; color: var(--r22-ink-2); font-size: 12px; line-height: 1.45; }
 .r22-help-article-detail { margin-top: 18px; padding: 16px 9px; }
-.r22-help-article-detail > button { display: flex; padding: 0; align-items: center; gap: 6px; color: var(--r22-ink-2); font-size: 11.5px; }
+.r22-help-article-detail > button { display: flex; padding: 0; align-items: center; gap: 6px; color: var(--r22-ink-2); font-size: var(--r22-text-caption); }
 .r22-help-article-detail > button svg { width: 13px; }
 .r22-help-article-detail > small { display: block; margin-top: 22px; color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .r22-help-article-detail h3 { margin: 6px 0 0; font-size: 18px; letter-spacing: -.02em; }
-.r22-help-article-detail p { color: var(--r22-ink-2); font-size: 12.5px; line-height: 1.55; }
+.r22-help-article-detail p { color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
 .r22-help-contact fieldset { margin: 20px 0 0; padding: 0; border: 0; }
 .r22-help-contact legend { color: var(--r22-ink-3); font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
 .r22-help-contact label { display: flex; margin-top: 13px; align-items: flex-start; gap: 9px; }
 .r22-help-contact [data-slot="checkbox"] { margin-top: 3px; }
 .r22-help-contact label b, .r22-help-contact label small { display: block; }
-.r22-help-contact label b { font-size: 12.5px; font-weight: 600; }
-.r22-help-contact label small { margin-top: 2px; color: var(--r22-ink-2); font-size: 11.5px; line-height: 1.4; }
-.r22-help-boundary { margin: 20px 0 0; padding: 11px; border-radius: 8px; background: var(--r22-ground); color: var(--r22-ink-2); font-size: 11.5px; line-height: 1.45; }
+.r22-help-contact label b { font-size: var(--r22-text-small); font-weight: 600; }
+.r22-help-contact label small { margin-top: 2px; color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.4; }
+.r22-help-boundary { margin: 20px 0 0; padding: 11px; border-radius: 8px; background: var(--r22-ground); color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.45; }
 .r22-help-contact > a { display: flex; width: 100%; height: 38px; margin-top: 12px; align-items: center; justify-content: center; gap: 7px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: 12px; font-weight: 600; }
 .r22-help-contact > a svg { width: 14px; }
-.r22-help-support-form > label { display: block; margin-top: 16px; color: var(--r22-ink); font-size: 11.5px; font-weight: 620; }
-.r22-help-support-form input, .r22-help-support-form textarea { width: 100%; margin-top: 6px; padding: 9px 10px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: 12.5px; outline: none; }
+.r22-help-support-form > label { display: block; margin-top: 16px; color: var(--r22-ink); font-size: var(--r22-text-caption); font-weight: 620; }
+.r22-help-support-form input, .r22-help-support-form textarea { width: 100%; margin-top: 6px; padding: 9px 10px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-small); outline: none; }
 .r22-help-support-form textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
 .r22-help-support-form input:focus, .r22-help-support-form textarea:focus { border-color: var(--r22-ink); }
 .r22-help-support-primary { display: flex; min-height: 38px; margin-top: 12px; align-items: center; justify-content: center; padding: 8px 14px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: 12px; font-weight: 620; }
 .r22-help-support-primary:disabled { background: var(--r22-chrome); color: var(--r22-ink-3); }
-.r22-help-support-error { margin: 9px 0 0; color: var(--r22-coral); font-size: 11.5px; line-height: 1.45; }
+.r22-help-support-error { margin: 9px 0 0; color: var(--r22-coral); font-size: var(--r22-text-caption); line-height: 1.45; }
 .r22-help-support-review { margin-top: 18px; }
 .r22-help-support-review > small { color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-.r22-help-support-review > b { display: block; margin-top: 7px; font-size: 14px; }
+.r22-help-support-review > b { display: block; margin-top: 7px; font-size: var(--r22-text-body-lg); }
 .r22-help-support-review > p { margin: 6px 0 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
 .r22-help-support-review dl { margin: 16px 0 0; border-top: 1px solid var(--r22-line); }
 .r22-help-support-review dl > div { display: grid; grid-template-columns: 108px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--r22-line); font-size: 10.5px; }
 .r22-help-support-review dt { color: var(--r22-ink-3); }.r22-help-support-review dd { margin: 0; color: var(--r22-ink-2); }
 .r22-help-support-review > div { display: flex; align-items: center; gap: 10px; }
-.r22-help-support-review > div > button:not(.r22-help-support-primary) { margin-top: 12px; padding: 8px 2px; color: var(--r22-ink-2); font-size: 11.5px; }
+.r22-help-support-review > div > button:not(.r22-help-support-primary) { margin-top: 12px; padding: 8px 2px; color: var(--r22-ink-2); font-size: var(--r22-text-caption); }
 .r22-help-support-status { display: grid; min-height: 260px; margin-top: 18px; padding: 24px; place-items: center; align-content: center; border-radius: 10px; background: var(--r22-ground); text-align: center; }
 .r22-help-support-status > svg { width: 22px; height: 22px; color: var(--r22-ink-3); }
 .r22-help-support-status.is-error > svg { color: var(--r22-coral); }.r22-help-support-status.is-closed > svg { color: #277c52; }
 .r22-help-support-status > small { margin-top: 12px; color: var(--r22-ink-3); font: 500 9.5px/1 var(--font-jetbrains-mono), monospace; }
 .r22-help-support-status > b { margin-top: 7px; font-size: 13.5px; }
-.r22-help-support-status > p { max-width: 320px; margin: 7px 0 0; color: var(--r22-ink-2); font-size: 11.5px; line-height: 1.5; }
-.r22-help-email-exit { height: auto !important; margin-top: 14px !important; justify-content: flex-start !important; padding: 0 !important; background: transparent !important; color: var(--r22-ink-2) !important; font-size: 11px !important; font-weight: 500 !important; text-decoration: underline; text-underline-offset: 3px; }
-.r22-help > footer { display: flex; margin-top: 22px; align-items: center; gap: 16px; color: var(--r22-ink-2); font-size: 11.5px; }
+.r22-help-support-status > p { max-width: 320px; margin: 7px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.5; }
+.r22-help-email-exit { height: auto !important; margin-top: 14px !important; justify-content: flex-start !important; padding: 0 !important; background: transparent !important; color: var(--r22-ink-2) !important; font-size: var(--r22-text-mono-label) !important; font-weight: 500 !important; text-decoration: underline; text-underline-offset: 3px; }
+.r22-help > footer { display: flex; margin-top: 22px; align-items: center; gap: 16px; color: var(--r22-ink-2); font-size: var(--r22-text-caption); }
 .r22-help > footer span { font-weight: 650; }
 .r22-help > footer a { text-decoration: underline; text-underline-offset: 3px; }
 @media (hover:hover) and (pointer:fine) { .r22-help-articles button:hover { background: var(--r22-ground); } .r22-help-contact > a:hover { opacity: .88; } }

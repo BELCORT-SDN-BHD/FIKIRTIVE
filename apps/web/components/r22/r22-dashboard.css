@@ -1,18 +1,4 @@
 .r22-dashboard-shell {
-  --r22-ground: #fafafc;
-  --r22-surface: #ffffff;
-  --r22-chrome: #f2f3f7;
-  --r22-line: #e8e9ef;
-  --r22-line-2: #dddee6;
-  --r22-ink: #16171c;
-  --r22-ink-2: #5b5f6c;
-  --r22-ink-3: #686d79;
-  --r22-coral: #ec5828;
-  --r22-shadow-sm: 0 1px 2px rgb(22 23 28 / 5%);
-  --r22-shadow-md: 0 4px 16px rgb(22 23 28 / 8%);
-  --r22-shadow-lg: 0 12px 40px rgb(22 23 28 / 14%);
-  --r22-content-gutter: 48px;
-  --r22-content-width: 924px;
   color-scheme: light;
   position: relative;
   height: 100dvh;
@@ -97,7 +83,7 @@
 
 .r22-dashboard-search span {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
 }
 
 .r22-dashboard-search kbd {
@@ -221,7 +207,7 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -291,7 +277,7 @@
   gap: 9px;
   padding: 8px 9px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   text-align: left;
 }
 
@@ -312,7 +298,7 @@
 .r22-dashboard-workspace-menu small {
   margin-top: 2px;
   color: var(--r22-ink-3);
-  font-size: 11px;
+  font-size: var(--r22-text-mono-label);
 }
 
 .r22-dashboard-workspace-menu button > svg {
@@ -367,7 +353,7 @@
   border-radius: 8px;
 }
 
-.r22-dashboard-quick-actions button > i { position: absolute; top: -4px; right: -4px; display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border: 2px solid var(--r22-ground); border-radius: 99px; background: var(--r22-coral); color: #fff; font-size: 8px; font-style: normal; font-weight: 700; }
+.r22-dashboard-quick-actions button > i { position: absolute; top: -4px; right: -4px; display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border: 2px solid var(--r22-ground); border-radius: 99px; background: var(--r22-coral); color: var(--r22-surface); font-size: 8px; font-style: normal; font-weight: 700; }
 
 .r22-dashboard-quick-actions svg {
   width: 17px;
@@ -392,7 +378,7 @@
   flex: none;
   place-items: center;
   border-radius: 50%;
-  background: #f0f1f3;
+  background: var(--r22-chrome);
   color: var(--r22-ink);
   font-size: 12px;
   font-weight: 700;
@@ -463,7 +449,7 @@
 .r22-dashboard-otto-panel > header span {
   margin-top: 2px;
   color: var(--r22-ink-3);
-  font-size: 11.5px;
+  font-size: var(--r22-text-caption);
 }
 
 .r22-dashboard-side-panel > header button,
@@ -479,7 +465,7 @@
 .r22-dashboard-side-panel > header > a {
   flex: none;
   color: var(--r22-ink-2);
-  font-size: 11.5px;
+  font-size: var(--r22-text-caption);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -525,7 +511,7 @@
 }
 
 .r22-dashboard-side-panel > ul b {
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   font-weight: 600;
 }
 
@@ -559,14 +545,14 @@
 }
 
 .r22-dashboard-panel-empty b {
-  font-size: 14px;
+  font-size: var(--r22-text-body-lg);
 }
 
 .r22-dashboard-panel-empty p {
   max-width: 250px;
   margin: 5px 0 0;
   color: var(--r22-ink-2);
-  font-size: 12.5px;
+  font-size: var(--r22-text-small);
 }
 
 .r22-dashboard-panel-empty > a {
@@ -599,7 +585,7 @@
 }
 
 .r22-dashboard-help-list b {
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   font-weight: 600;
 }
 
@@ -630,7 +616,7 @@
 
 .r22-dashboard-otto-body h2 {
   margin: 16px 0 0;
-  font-size: 19px;
+  font-size: var(--r22-text-h2);
   font-weight: 600;
   letter-spacing: -0.02em;
 }
@@ -638,7 +624,7 @@
 .r22-dashboard-otto-body p {
   margin: 7px 0 16px;
   color: var(--r22-ink-2);
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   line-height: 1.55;
 }
 
@@ -648,7 +634,7 @@
   border: 1px solid var(--r22-line) !important;
   border-radius: 7px;
   background: var(--r22-surface) !important;
-  font-size: 12.5px;
+  font-size: var(--r22-text-small);
   text-align: left;
 }
 
@@ -667,7 +653,7 @@
   border: 1px solid var(--r22-line-2);
   border-radius: 8px;
   outline: none;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
 }
 
 .r22-dashboard-otto-panel footer > button {
@@ -730,7 +716,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 14px;
+  font-size: var(--r22-text-body-lg);
 }
 
 .r22-dashboard-search-dialog kbd {
@@ -792,7 +778,7 @@
 .r22-dashboard-search-empty {
   padding: 30px 14px;
   color: var(--r22-ink-3);
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   text-align: center;
 }
 
@@ -998,22 +984,22 @@
 /* The real Otto host keeps the existing authenticated thread, stream and action layer. This
    variant only replaces its visual shell with the R22 light surface. */
 [data-otto-panel-variant="r22"] {
-  --background: #ffffff;
-  --foreground: #16171c;
-  --card: #ffffff;
-  --card-foreground: #16171c;
-  --muted: #f2f3f7;
-  --muted-foreground: #686d79;
-  --border: #e8e9ef;
-  --brand: #ec5828;
+  --background: var(--r22-surface);
+  --foreground: var(--r22-ink);
+  --card: var(--r22-surface);
+  --card-foreground: var(--r22-ink);
+  --muted: var(--r22-chrome);
+  --muted-foreground: var(--r22-ink-3);
+  --border: var(--r22-line);
+  --brand: var(--r22-coral);
   color-scheme: light;
 }
 
 aside[data-otto-panel-variant="r22"] {
   z-index: 65;
-  border-color: #e8e9ef;
-  background: #ffffff;
-  color: #16171c;
+  border-color: var(--r22-line);
+  background: var(--r22-surface);
+  color: var(--r22-ink);
   box-shadow: -16px 0 40px rgb(22 23 28 / 7%);
   font-family: var(--font-geist-sans), Geist, Arial, sans-serif;
 }
@@ -1021,7 +1007,7 @@ aside[data-otto-panel-variant="r22"] {
 aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   min-height: 58px;
   padding: 10px 14px;
-  border-color: #e8e9ef;
+  border-color: var(--r22-line);
   cursor: default;
 }
 
@@ -1042,32 +1028,32 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   gap: 4px;
   padding: 4px 6px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   font-weight: 600;
   text-align: left;
-  color: #16171c;
+  color: var(--r22-ink);
 }
 
 .r22-otto-head-title svg {
-  color: #686d79;
+  color: var(--r22-ink-3);
 }
 
-/* 原型 L453:`.op-expand{width:auto;padding:0 7px;font-size:11px}`。 */
+/* 原型 L453:`.op-expand{width:auto;padding:0 7px;font-size: var(--r22-text-mono-label)}`。 */
 .r22-otto-head-expand {
   display: grid;
   height: 30px;
   padding: 0 7px;
   place-items: center;
   border-radius: 6px;
-  font-size: 11px;
-  color: #5b5f6c;
+  font-size: var(--r22-text-mono-label);
+  color: var(--r22-ink-2);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .r22-otto-head-title:hover,
   .r22-otto-head-expand:hover {
-    background: #f2f3f7;
-    color: #16171c;
+    background: var(--r22-chrome);
+    color: var(--r22-ink);
   }
 }
 
@@ -1088,22 +1074,22 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
 /* 原型 L456:`.msg-otto` 是**白底上的一段字**,不是气泡 —— 加边框会让每一句回话都
    看起来像一张卡片,面板里于是没有一处安静的地方。 */
 .r22-otto-msg-otto {
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   line-height: 1.58;
-  color: #16171c;
+  color: var(--r22-ink);
 }
 
 /* 原型 L456:`.msg-me{align-self:flex-end;background:var(--chrome);border-radius:10px;
-   padding:8px 11px;font-size:13px;max-width:85%;line-height:1.45}`。 */
+   padding:8px 11px;font-size: var(--r22-text-body);max-width:85%;line-height:1.45}`。 */
 .r22-otto-msg-me {
   max-width: 85%;
   margin-left: auto;
   padding: 8px 11px;
   border-radius: 10px;
-  background: #f2f3f7;
-  font-size: 13px;
+  background: var(--r22-chrome);
+  font-size: var(--r22-text-body);
   line-height: 1.45;
-  color: #16171c;
+  color: var(--r22-ink);
 }
 
 /* 原型 L459:`.otto-empty{padding:8px 1px 0;margin:auto 0}` 那一段。 */
@@ -1111,25 +1097,25 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   padding: 8px 1px 0;
 }
 
-/* 原型 L461:`.otto-context{font-size:11px;color:var(--ink3);margin-bottom:-8px}`。 */
+/* 原型 L461:`.otto-context{font-size: var(--r22-text-mono-label);color:var(--ink3);margin-bottom:-8px}`。 */
 .r22-otto-context {
   margin-bottom: -8px;
-  font-size: 11px;
-  color: #686d79;
+  font-size: var(--r22-text-mono-label);
+  color: var(--r22-ink-3);
 }
 
 .r22-otto-empty h2 {
   margin: 0;
-  font-size: 19px;
+  font-size: var(--r22-text-h2);
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .r22-otto-empty p {
   margin: 7px 0 16px;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   line-height: 1.55;
-  color: #5b5f6c;
+  color: var(--r22-ink-2);
 }
 
 .r22-otto-starters {
@@ -1140,9 +1126,9 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
 .r22-otto-starter {
   display: block;
   padding: 10px;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--r22-surface);
   text-align: left;
 }
 
@@ -1152,20 +1138,20 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
 }
 
 .r22-otto-starter b {
-  font-size: 12.5px;
+  font-size: var(--r22-text-small);
   font-weight: 500;
 }
 
 .r22-otto-starter span {
   margin-top: 3px;
-  font-size: 11.5px;
-  color: #686d79;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .r22-otto-starter:hover {
-    border-color: #dddee6;
-    background: #f2f3f7;
+    border-color: var(--r22-line-2);
+    background: var(--r22-chrome);
   }
 }
 
@@ -1173,16 +1159,16 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
 .r22-otto-foot {
   flex: none;
   padding: 10px 12px;
-  border-top: 1px solid #e8e9ef;
-  background: #ffffff;
+  border-top: 1px solid var(--r22-line);
+  background: var(--r22-surface);
 }
 
 .r22-otto-composer {
   display: flex;
   align-items: center;
-  border: 1px solid #dddee6;
+  border: 1px solid var(--r22-line-2);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--r22-surface);
 }
 
 .r22-otto-composer-input {
@@ -1191,23 +1177,23 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   padding: 9px 12px;
   border: 0;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   outline: none;
 }
 
 .r22-otto-composer-input::placeholder {
-  color: #686d79;
+  color: var(--r22-ink-3);
 }
 
 .r22-otto-composer:focus-within {
-  border-color: #686d79;
+  border-color: var(--r22-ink-3);
 }
 
 .r22-otto-composer-send {
   display: grid;
   padding: 8px 12px;
   place-items: center;
-  color: #16171c;
+  color: var(--r22-ink);
   transition: transform 120ms cubic-bezier(.23, 1, .32, 1), opacity 120ms ease;
 }
 
@@ -1227,18 +1213,18 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   gap: 12px;
   padding: 6px 2px 0;
   font-size: 10.5px;
-  color: #686d79;
+  color: var(--r22-ink-3);
 }
 
 aside[data-otto-panel-variant="r22"] [data-otto-panel-body] {
-  background: #ffffff;
+  background: var(--r22-surface);
 }
 
 /* r22 的面板只有头 / 体 / 体底那格输入框(原型 L5433-5469)—— 那一排 quick chips 不画,
    所以这里也不再为它留一条选择器。 */
 aside[data-otto-panel-variant="r22"] [data-otto-panel-footer] {
-  border-color: #e8e9ef;
-  background: #ffffff;
+  border-color: var(--r22-line);
+  background: var(--r22-surface);
 }
 
 /* ————— 全屏接管(原型 L448-459 的 `.otto-panel.fullscreen`)—————
@@ -1262,7 +1248,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 /* ————— Otto 的答案卡(原型 L461-463 的 `.otto-answer` 一族)————— */
 .r22-otto-answer {
   padding-top: 14px;
-  border-top: 1px solid #e8e9ef;
+  border-top: 1px solid var(--r22-line);
   /* 入场:淡入 + 8px 上移的一次 ease-out。没有 scale —— 一张写着字的卡从 0 放大出来
      像是被弹出来的,而它其实是被想出来的。 */
   animation: r22-otto-answer-in 180ms cubic-bezier(.23, 1, .32, 1) both;
@@ -1270,28 +1256,28 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 
 .r22-otto-answer h3 {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: var(--r22-text-body-lg);
   font-weight: 600;
 }
 
 .r22-otto-answer p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
   line-height: 1.58;
 }
 
 .r22-otto-answer ul {
   margin: 8px 0 12px;
   padding-left: 18px;
-  font-size: 12.5px;
+  font-size: var(--r22-text-small);
   line-height: 1.6;
-  color: #5b5f6c;
+  color: var(--r22-ink-2);
   list-style: disc;
 }
 
 .r22-otto-answer-fact {
-  color: #686d79;
-  font-size: 12.5px;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-small);
 }
 
 @keyframes r22-otto-answer-in {
@@ -1306,7 +1292,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   flex-wrap: nowrap;
   margin-top: 10px;
   white-space: nowrap;
-  color: #686d79;
+  color: var(--r22-ink-3);
 }
 
 .r22-otto-answer-actions button,
@@ -1316,8 +1302,8 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   gap: 4px;
   padding: 5px 7px;
   border-radius: 5px;
-  font-size: 11.5px;
-  color: #5b5f6c;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-2);
   text-decoration: none;
   transition: background-color 140ms ease, color 140ms ease, transform 120ms cubic-bezier(.23, 1, .32, 1);
 }
@@ -1328,15 +1314,15 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 }
 
 .r22-otto-answer-actions button[data-selected] {
-  background: #f2f3f7;
-  color: #16171c;
+  background: var(--r22-chrome);
+  color: var(--r22-ink);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .r22-otto-answer-actions button:hover,
   .r22-otto-answer-actions a:hover {
-    background: #f2f3f7;
-    color: #16171c;
+    background: var(--r22-chrome);
+    color: var(--r22-ink);
   }
 }
 
@@ -1346,7 +1332,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   display: block;
   min-height: 16px;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--r22-text-mono-label);
   color: #1a7f4b;
 }
 
@@ -1356,16 +1342,16 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 12.5px;
-  color: #5b5f6c;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink-2);
 }
 
 .r22-otto-mini-ring {
   width: 14px;
   height: 14px;
   flex: none;
-  border: 2px solid #fbdfd3;
-  border-top-color: #ec5828;
+  border: 2px solid var(--r22-coral-soft);
+  border-top-color: var(--r22-coral);
   border-radius: 50%;
   animation: r22-otto-spin 900ms linear infinite;
 }
@@ -1377,23 +1363,23 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 .r22-otto-error {
   display: block;
   padding: 11px 12px;
-  border: 1px solid #dddee6;
+  border: 1px solid var(--r22-line-2);
   border-left: 2px solid #c0392f;
   border-radius: 8px;
-  font-size: 12.5px;
-  color: #5b5f6c;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink-2);
 }
 
 .r22-otto-error b {
   display: block;
   margin-bottom: 4px;
-  color: #16171c;
+  color: var(--r22-ink);
 }
 
 .r22-otto-error button {
   margin-top: 8px;
   font-size: 12px;
-  color: #16171c;
+  color: var(--r22-ink);
   text-decoration: underline;
   transition: transform 120ms cubic-bezier(.23, 1, .32, 1);
 }
@@ -1411,9 +1397,9 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   width: 300px;
   max-height: min(60vh, 460px);
   padding: 8px;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--r22-surface);
   box-shadow: 0 18px 44px rgb(20 20 24 / 16%);
   display: flex;
   flex-direction: column;
@@ -1423,14 +1409,14 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 .r22-room-search {
   width: 100%;
   padding: 7px 8px;
-  border: 1px solid #dddee6;
+  border: 1px solid var(--r22-line-2);
   border-radius: 5px;
   font-size: 12px;
   outline: none;
 }
 
 .r22-room-search:focus-visible {
-  border-color: #686d79;
+  border-color: var(--r22-ink-3);
 }
 
 .r22-room-list {
@@ -1449,7 +1435,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: .06em;
-  color: #686d79;
+  color: var(--r22-ink-3);
 }
 
 .r22-room-row {
@@ -1478,17 +1464,17 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 .r22-room-item b {
   font-size: 12px;
   font-weight: 500;
-  color: #16171c;
+  color: var(--r22-ink);
 }
 
 .r22-room-item span {
   margin-top: 2px;
   font-size: 10.5px;
-  color: #686d79;
+  color: var(--r22-ink-3);
 }
 
 .r22-room-item[data-active] {
-  background: #f2f3f7;
+  background: var(--r22-chrome);
 }
 
 .r22-room-item:disabled {
@@ -1503,7 +1489,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   gap: 6px;
   padding: 7px 28px 7px 6px;
   font-size: 12px;
-  color: #5b5f6c;
+  color: var(--r22-ink-2);
 }
 
 .r22-room-more {
@@ -1514,7 +1500,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   height: 22px;
   place-items: center;
   border-radius: 5px;
-  color: #686d79;
+  color: var(--r22-ink-3);
   opacity: 0;
   transition: opacity 140ms ease, background-color 140ms ease, color 140ms ease;
 }
@@ -1531,25 +1517,25 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   padding: 6px 8px;
   border-radius: 5px;
   background: #fdecea;
-  font-size: 11.5px;
+  font-size: var(--r22-text-caption);
   color: #8a2b22;
 }
 
 .r22-room-note {
   margin: 10px 0 0;
   padding: 0 6px;
-  font-size: 11.5px;
-  color: #686d79;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
 }
 
 .r22-room-new {
   width: 100%;
   margin-top: 7px;
   padding: 9px 6px 2px;
-  border-top: 1px solid #e8e9ef;
+  border-top: 1px solid var(--r22-line);
   text-align: left;
   font-size: 12px;
-  color: #16171c;
+  color: var(--r22-ink);
   transition: transform 120ms cubic-bezier(.23, 1, .32, 1), color 140ms ease;
 }
 
@@ -1559,12 +1545,12 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 
 @media (hover: hover) and (pointer: fine) {
   .r22-room-item:hover {
-    background: #f2f3f7;
+    background: var(--r22-chrome);
   }
 
   .r22-room-more:hover {
-    background: #f2f3f7;
-    color: #16171c;
+    background: var(--r22-chrome);
+    color: var(--r22-ink);
   }
 }
 
@@ -1608,9 +1594,9 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
 .r22-otto-pet-btn {
   display: grid;
   place-items: center;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--r22-surface);
   box-shadow: 0 4px 16px rgb(22 23 28 / 8%);
   cursor: grab;
   animation: r22-otto-bob 3.4s cubic-bezier(.77, 0, .175, 1) infinite;
@@ -1663,13 +1649,13 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   bottom: 14px;
   max-width: 200px;
   padding: 8px 12px;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 12px 12px 6px 12px;
-  background: #ffffff;
+  background: var(--r22-surface);
   box-shadow: 0 4px 16px rgb(22 23 28 / 8%);
-  font-size: 12.5px;
+  font-size: var(--r22-text-small);
   white-space: nowrap;
-  color: #16171c;
+  color: var(--r22-ink);
   opacity: 0;
   transform: translateY(6px) scale(.95);
   transform-origin: bottom right;

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../components/r22/r22-tokens.css";
 
 /*
  * DARK MODE — wire ② of the §K3 activation contract (#804).

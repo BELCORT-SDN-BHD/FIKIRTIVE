@@ -8,12 +8,14 @@ const source = (file: string) => readFileSync(path.join(WEB_ROOT, file), "utf8")
 
 describe("R22 correction flow contracts", () => {
   it("uses one shared desktop content origin instead of route-specific centering", () => {
-    const shell = source("components/r22/r22-dashboard.css");
+    // token 中心化(R22 地基票)之后,content-gutter/content-width 的字面值只登记在
+    // r22-tokens.css 的 :root 一次;r22-dashboard.css 不再重复定义,单点权威更强而非更弱。
+    const tokens = source("components/r22/r22-tokens.css");
     const iq = source("components/otto-iq/r22-otto-iq-hub.css");
     const routines = source("components/routines/r22-routines.css");
 
-    expect(shell).toContain("--r22-content-gutter: 48px");
-    expect(shell).toContain("--r22-content-width: 924px");
+    expect(tokens).toContain("--r22-content-gutter: 48px");
+    expect(tokens).toContain("--r22-content-width: 924px");
     expect(iq).toContain("var(--r22-content-gutter)");
     expect(routines).toContain("var(--r22-content-gutter)");
     expect(iq).not.toContain("margin:0 auto");

@@ -6,6 +6,9 @@ const WEB_ROOT = path.resolve(__dirname, "../..");
 const WORKSPACE_PATH = path.join(WEB_ROOT, "components/canvas/NorthstarCanvasWorkspace.tsx");
 const SURFACE_PATH = path.join(WEB_ROOT, "components/canvas/R22CanvasSurface.tsx");
 const STYLES_PATH = path.join(WEB_ROOT, "components/canvas/r22-canvas.css");
+// token 中心化(R22 地基票)之后,ground/surface/ink/coral 的字面 hex 只在 r22-tokens.css
+// 的 :root 定义一次;r22-canvas.css 改成引用 var(--r22-*)。
+const TOKENS_PATH = path.join(WEB_ROOT, "components/r22/r22-tokens.css");
 
 function source(file: string): string {
   return existsSync(file) ? readFileSync(file, "utf8") : "";
@@ -59,10 +62,6 @@ describe("R22 Canvas 是独立可见 surface,旧内核只可留作业务 contrac
     const styles = source(STYLES_PATH);
 
     for (const contract of [
-      "--r22-ground: #fafafc",
-      "--r22-surface: #ffffff",
-      "--r22-ink: #16171c",
-      "--r22-coral: #ec5828",
       "color-scheme: light",
       "min-height: 100dvh",
       "left: 18px",
@@ -74,5 +73,22 @@ describe("R22 Canvas 是独立可见 surface,旧内核只可留作业务 contrac
       expect(styles, contract).toContain(contract);
     }
     expect(styles).not.toContain("prefers-color-scheme");
+
+    // ground/surface/ink/coral 的字面值现在只登记在 r22-tokens.css 的 :root——
+    // 单点权威,r22-canvas.css 一律引用 var(--r22-*),不再各自重复定义。
+    expect(existsSync(TOKENS_PATH)).toBe(true);
+    const tokens = source(TOKENS_PATH);
+    for (const contract of [
+      "--r22-ground: #fafafc",
+      "--r22-surface: #ffffff",
+      "--r22-ink: #16171c",
+      "--r22-coral: #ec5828",
+    ]) {
+      expect(tokens, contract).toContain(contract);
+    }
+    expect(styles).toContain("var(--r22-ground)");
+    expect(styles).toContain("var(--r22-surface)");
+    expect(styles).toContain("var(--r22-ink)");
+    expect(styles).toContain("var(--r22-coral)");
   });
 });

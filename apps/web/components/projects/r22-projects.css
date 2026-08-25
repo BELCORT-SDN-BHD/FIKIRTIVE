@@ -1,8 +1,8 @@
 .r22-projects {
   min-height: 100dvh;
   padding: 40px 66px 80px;
-  background: #fafafc;
-  color: #16171c;
+  background: var(--r22-ground);
+  color: var(--r22-ink);
 }
 
 .r22-projects p,
@@ -14,7 +14,7 @@
 .r22-projects-breadcrumb {
   display: flex;
   gap: 8px;
-  color: #686d79;
+  color: var(--r22-ink-3);
   font-size: 12px;
 }
 
@@ -28,26 +28,26 @@
 
 .r22-projects-subtitle {
   margin-top: 7px !important;
-  color: #5b5f6c;
-  font-size: 13px;
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-body);
 }
 
 .r22-projects-tabs {
   display: flex;
   gap: 24px;
   margin-top: 26px;
-  border-bottom: 1px solid #e8e9ef;
+  border-bottom: 1px solid var(--r22-line);
 }
 
 .r22-projects-tabs button {
   position: relative;
   padding: 0 1px 12px;
-  color: #686d79;
-  font-size: 13px;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-body);
 }
 
 .r22-projects-tabs button[aria-selected="true"] {
-  color: #16171c;
+  color: var(--r22-ink);
   font-weight: 600;
 }
 
@@ -57,7 +57,7 @@
   bottom: -1px;
   left: 0;
   height: 2px;
-  background: #16171c;
+  background: var(--r22-ink);
   content: "";
 }
 
@@ -75,15 +75,15 @@
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  border: 1px solid #dddee6;
+  border: 1px solid var(--r22-line-2);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--r22-surface);
 }
 
 .r22-projects-toolbar label svg {
   width: 14px;
   height: 14px;
-  color: #686d79;
+  color: var(--r22-ink-3);
   stroke-width: 1.8;
 }
 
@@ -93,7 +93,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--r22-text-body);
 }
 
 .r22-projects-toolbar > button {
@@ -104,9 +104,9 @@
   gap: 4px;
   padding: 0 15px;
   border-radius: 8px;
-  background: #16171c !important;
-  color: #ffffff !important;
-  font-size: 12.5px;
+  background: var(--r22-ink) !important;
+  color: var(--r22-surface) !important;
+  font-size: var(--r22-text-small);
   font-weight: 500;
 }
 
@@ -118,9 +118,9 @@
 .r22-projects-table {
   margin-top: 12px;
   overflow: hidden;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--r22-surface);
   box-shadow: 0 1px 2px rgb(22 23 28 / 5%);
 }
 
@@ -132,16 +132,16 @@
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  border-top: 1px solid #e8e9ef;
-  color: #5b5f6c;
-  font-size: 13px;
+  border-top: 1px solid var(--r22-line);
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-body);
 }
 
 .r22-projects-head {
   min-height: 34px;
   border-top: 0;
-  background: #fafafc;
-  color: #686d79;
+  background: var(--r22-ground);
+  color: var(--r22-ink-3);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: .07em;
@@ -161,9 +161,9 @@
   height: 28px;
   flex: none;
   place-items: center;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 7px;
-  background: #f2f3f7;
+  background: var(--r22-chrome);
   font-style: normal;
 }
 
@@ -179,14 +179,14 @@
 }
 
 .r22-projects-name b {
-  color: #16171c;
+  color: var(--r22-ink);
   font-weight: 500;
 }
 
 .r22-projects-name small {
   margin-top: 2px;
-  color: #686d79;
-  font-size: 11.5px;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-caption);
 }
 
 .r22-projects-row > span:last-child {
@@ -201,14 +201,14 @@
 
 .r22-projects-empty {
   padding: 54px 24px;
-  color: #5b5f6c;
-  font-size: 13px;
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-body);
   text-align: center;
 }
 
 .r22-projects-footnote {
   margin-top: 43px !important;
-  color: #686d79;
+  color: var(--r22-ink-3);
   font-size: 12px;
 }
 
@@ -216,10 +216,10 @@
   width: min(560px, 92vw);
   max-width: 560px;
   padding: 22px;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 16px;
-  background: #ffffff;
-  color: #16171c;
+  background: var(--r22-surface);
+  color: var(--r22-ink);
   color-scheme: light;
   box-shadow: 0 12px 40px rgb(22 23 28 / 14%);
   font-family: var(--font-geist-sans), Geist, Arial, sans-serif;
@@ -229,20 +229,20 @@
   width: min(430px, 92vw);
   max-width: 430px;
   padding: 22px;
-  border: 1px solid #e8e9ef;
+  border: 1px solid var(--r22-line);
   border-radius: 14px;
-  background: #ffffff;
-  color: #16171c;
+  background: var(--r22-surface);
+  color: var(--r22-ink);
   color-scheme: light;
   box-shadow: 0 12px 40px rgb(22 23 28 / 14%);
   font-family: var(--font-geist-sans), Geist, Arial, sans-serif;
 }
 
 .r22-projects-cancel-dialog h2 { font-size: 17px; font-weight: 600; }
-.r22-projects-cancel-dialog p { margin-top: 5px; color: #5b5f6c; font-size: 12.5px; line-height: 1.5; }
+.r22-projects-cancel-dialog p { margin-top: 5px; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
 .r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
-.r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] button { padding: 8px 12px; border: 1px solid #dddee6; border-radius: 8px; background: #ffffff; font-size: 12px; }
-.r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] button:last-child { border-color: #16171c; background: #16171c; color: #ffffff; }
+.r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] button { padding: 8px 12px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: 12px; }
+.r22-projects-cancel-dialog [data-slot="alert-dialog-footer"] button:last-child { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
 
 .r22-projects-modal [data-slot="dialog-header"] {
   display: flex;
@@ -258,15 +258,15 @@
 
 .r22-projects-modal [data-slot="dialog-header"] p {
   margin-top: 4px;
-  color: #5b5f6c;
-  font-size: 13px;
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-body);
 }
 
 .r22-projects-modal > button {
   top: 16px;
   right: 16px;
   border-radius: 7px;
-  color: #5b5f6c;
+  color: var(--r22-ink-2);
 }
 
 .r22-projects-modal > button svg {
@@ -285,7 +285,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: var(--r22-text-small);
   font-weight: 500;
 }
 
@@ -301,24 +301,24 @@
   width: 100%;
   padding: 9px 10px;
   resize: vertical;
-  border: 1px solid #dddee6;
+  border: 1px solid var(--r22-line-2);
   border-radius: 8px;
   outline: none;
-  background: #ffffff;
-  font-size: 13px;
+  background: var(--r22-surface);
+  font-size: var(--r22-text-body);
   font-weight: 400;
 }
 
 .r22-projects-form input:focus,
 .r22-projects-form textarea:focus,
 .r22-projects-form select:focus {
-  border-color: #686d79;
-  box-shadow: 0 0 0 1px #686d79;
+  border-color: var(--r22-ink-3);
+  box-shadow: 0 0 0 1px var(--r22-ink-3);
 }
 
 .r22-projects-contract {
-  color: #686d79;
-  font-size: 11px;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-mono-label);
   line-height: 1.45;
 }
 
@@ -336,17 +336,17 @@
 
 .r22-projects-modal > footer button {
   padding: 9px 14px;
-  border: 1px solid #dddee6 !important;
+  border: 1px solid var(--r22-line-2) !important;
   border-radius: 8px;
-  background: #ffffff !important;
-  font-size: 12.5px;
+  background: var(--r22-surface) !important;
+  font-size: var(--r22-text-small);
   font-weight: 500;
 }
 
 .r22-projects-modal > footer button:last-child {
-  border-color: #16171c !important;
-  background: #16171c !important;
-  color: #ffffff !important;
+  border-color: var(--r22-ink) !important;
+  background: var(--r22-ink) !important;
+  color: var(--r22-surface) !important;
 }
 
 .r22-projects-modal > footer button:disabled {
@@ -355,7 +355,7 @@
 
 @media (hover: hover) and (pointer: fine) {
   .r22-projects-row:hover:not(.r22-projects-head) {
-    background: #f2f3f7;
+    background: var(--r22-chrome);
   }
 }
 

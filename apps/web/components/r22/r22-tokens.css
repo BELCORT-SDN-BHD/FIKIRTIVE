@@ -1,0 +1,120 @@
+/*
+ * R22 设计 token 唯一出处。
+ *
+ * 全部 `--r22-*` 自定义属性只在这一个文件里定义,挂在 `:root`——保证沉浸壳(canvas/画布等
+ * northstar 面)也能读到,不再受限于某一个组件的选择器作用域。任何一个 R22 css 文件要用新
+ * 颜色/新字号,先在这里登记一枚 token,再在业务文件里用 `var(--r22-*)` 引用;不允许再往业
+ * 务 css 里写裸 hex。
+ *
+ * 第一组(结构中性色 + 阴影 + 版心)与第二组(语义色)逐字对应原型
+ * `/private/tmp/.../scratchpad/proto-serve/index.html` L8-33 的 `:root` token 块
+ * (Soft Prism tokens · source: docs/brand/colors.json v4,Founder approved 2026-08-20)。
+ * 第三组字号梯 token 只登记数值、本票不强推使用面(交给后续逐面收静)。
+ * 第四组往后是清理 19 个 r22-*.css 裸值时新入册的 token——原型没有名字的,按用途命名,
+ * 数值取自代码实况,不是我编的。
+ */
+
+:root {
+  /* ————— 结构中性色(原逐字定义在 r22-dashboard.css 的 .r22-dashboard-shell,现搬到这里)
+     ————— */
+  --r22-ground: #fafafc;
+  --r22-surface: #ffffff;
+  --r22-chrome: #f2f3f7;
+  --r22-line: #e8e9ef;
+  --r22-line-2: #dddee6;
+  --r22-ink: #16171c;
+  --r22-ink-2: #5b5f6c;
+  --r22-ink-3: #686d79;
+  --r22-coral: #ec5828;
+  --r22-shadow-sm: 0 1px 2px rgb(22 23 28 / 5%);
+  --r22-shadow-md: 0 4px 16px rgb(22 23 28 / 8%);
+  --r22-shadow-lg: 0 12px 40px rgb(22 23 28 / 14%);
+  --r22-content-gutter: 48px;
+  --r22-content-width: 924px;
+
+  /* ————— 语义色(原型 L23-24 的 good/warn/bad/info 五枚,原样移植)————— */
+  --r22-good: #16a34a;
+  --r22-good-text: #15803d;
+  --r22-warn: #d97706;
+  --r22-bad: #e5484d;
+  --r22-info: #3b6fe6;
+
+  /* ————— 品牌珊瑚色浅底(原型 L12 的 --coral-soft)————— */
+  --r22-coral-soft: #fbe7dc;
+
+  /* ————— 字号梯(照原型正文体系;本票只登记,不强推改用面)————— */
+  --r22-text-body: 13px;
+  --r22-text-body-lg: 14px;
+  --r22-text-small: 12.5px;
+  --r22-text-caption: 11.5px;
+  --r22-text-mono-label: 11px;
+  --r22-text-h2: 19px;
+  --r22-text-h1: 22px;
+
+  /* ————— 语义色的浅底/边框/加深文字伴生 token(新入册)—————
+     19 个文件里各自独立发明了一批红/绿/黄/蓝浅底徽标,同一用途、数值各不相同——按 Founder
+     批准的语义色迁移收敛成一套。数值取「原型点名的例子」或「多个文件里已经重复出现、次数
+     最多」的那个,不是新编的。 */
+  --r22-bad-soft: #fdecea;
+  --r22-bad-border: #f3caca;
+  --r22-bad-text: #8a2b22;
+  --r22-good-soft: #f0fdf4;
+  --r22-good-border: #bbf7d0;
+  --r22-warn-soft: #fff7ed;
+  --r22-warn-border: #fed7aa;
+  --r22-warn-text: #9a3412;
+  --r22-info-soft: #f5f8ff;
+  --r22-info-border: #d9e5ff;
+
+  /* ————— 品牌/装饰性 token(新入册,原型有名字但不在任务书十五枚清单里,代码里已经在用)
+     ————— */
+  --r22-coral-text: #8c3b20; /* 深珊瑚,配 coral-soft 浅底的文字档 */
+  --r22-ink-hover: #26272e; /* 原型 L13 --ink-hover,ink 按钮 hover 加深 */
+  --r22-grad-violet: linear-gradient(135deg, #ede9fe, #dbeafe); /* 原型 L16 --grad-violet */
+  --r22-on-violet: #3b3663; /* 原型 L16 --on-violet */
+  --r22-on-violet-muted: #4f4a73; /* onboarding 里同一张紫渐变卡上更淡的次级文字 */
+  --r22-grad-peach: linear-gradient(135deg, #ffedd5, #ffe1e1); /* 原型 L17 --grad-peach */
+  --r22-on-peach: #7c3d2a; /* 原型 L17 --on-peach */
+  --r22-grad-sky: linear-gradient(135deg, #e0f2fe, #bae6fd); /* 原型 L18 --grad-sky */
+  --r22-on-sky: #2e4a66; /* 原型 L18 --on-sky */
+  --r22-edge-violet: #c7b9fc; /* 原型 L20 --edge-violet,画布输入框棱光 */
+  --r22-edge-peach: #ffc0a2; /* 原型 L20 --edge-peach */
+  --r22-edge-sky: #8fd3fa; /* 原型 L20 --edge-sky */
+  --r22-paper: #f5f1e8; /* 原型 L12 --paper,画布便签/文字卡底色 */
+  --r22-paper-line: #e3dccd; /* canvas.css 实况值(与原型 --paper-line #E7DFCB 有小差,未改值) */
+  --r22-paper-ink: #4a4234; /* 与原型 --paper-ink 完全一致 */
+  --r22-paper-ink3: #777064; /* 画布便签标签色,canvas.css 实况值 */
+
+  /* ————— 一次性/局部装饰 token(新入册,按出现的组件命名)————— */
+  --r22-notice-tan-border: #ead9cf; /* routines.css + settings.css 共用的「错误/校验」浅棕徽标边框 */
+  --r22-notice-tan-soft: #fffaf7;
+  --r22-notice-tan-text: #8a4a2d;
+  --r22-workspace-alert-border: #efded8; /* settings-dialog-extra.css 工作区目录警示条,独立数值 */
+  --r22-workspace-alert-soft: #fff8f5;
+  --r22-workspace-alert-text: #963f31;
+  --r22-approvals-blocker-border: #e8cdbc; /* approvals.css 审批阻断横幅,独立数值 */
+  --r22-approvals-blocker-soft: #fdf6f1;
+  --r22-approvals-blocker-border-2: #d9b498;
+  --r22-approvals-blocker-text: #8f4f28;
+  --r22-approvals-blocker-soft-2: #fdf1e8;
+  --r22-swatch-teal-1: #0f5b5b; /* onboarding.css 品牌色选择器的装饰性色板选项,与状态语义无关 */
+  --r22-swatch-teal-2: #1b7a72;
+  --r22-swatch-gold-1: #c9a86b;
+  --r22-swatch-gold-2: #e7d6ae;
+  --r22-swatch-clay-1: #7a3b2e;
+  --r22-swatch-clay-2: #a85b3f;
+  --r22-swatch-cream: #f5efe4;
+  --r22-swatch-ink: #24252a;
+  --r22-tile-audiences: #edf4ef; /* otto-iq.css 分类卡装饰底色,纯视觉分类,非状态语义 */
+  --r22-tile-default-ink: #625945;
+  --r22-tile-audiences-ink: #466353;
+  --r22-tile-sources-ink: #8d5744;
+  --r22-tile-visual-ink: #53657a;
+  --r22-grad-iq-start: linear-gradient(135deg, #eef5ff, #f4eeff); /* otto-iq.css 起手卡渐变,独立于原型三色渐变 */
+  --r22-avatar-ink: #333640; /* settings-dialog-extra.css 工作区头像圆底文字色 */
+  --r22-dropzone-border: #cfd1da; /* knowledge-flow.css 拖拽上传虚线框 */
+  --r22-control-border: #bfc2cc; /* knowledge-flow.css 复选框/单选框未选中边框 */
+  --r22-step-muted: #8a8e98; /* knowledge-flow.css 步骤条未激活数字 */
+  --r22-step-done: #9ca3af; /* knowledge-flow.css 步骤条已完成边框 */
+  --r22-star-active: #b67a13; /* library.css 收藏星标的选中态 */
+}
