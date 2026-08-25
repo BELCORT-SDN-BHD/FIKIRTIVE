@@ -87,7 +87,7 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
   // billing / profile 四条今天没有任何一条对账碰得到,把 `/create/canvas` 拼成
   // `/create/canvass` 全绿。所以这一条把十三个值逐字钉死:地址是规格书 §2.2 拍的板,
   // 改它必须是一次**明写**的改动,不能是一个手滑。
-  it("十三条新地址逐字就是规格书 §2.2 那一份", () => {
+  it("十七条新地址逐字就是规格书 §2.2 那一份", () => {
     expect(SHELL_ROUTES).toEqual({
       home: "/",
       create: "/create",
@@ -96,12 +96,16 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
       edit: "/library/editor",
       brand: "/brand",
       campaign: "/campaign",
+      approvals: "/campaign/workbench",
       schedule: "/schedule",
       analytics: "/schedule/analytics",
+      routines: "/routines",
       billing: "/billing",
       connections: "/settings/connections",
       preferences: "/settings",
       profile: "/profile",
+      notifications: "/notifications",
+      help: "/help",
     });
   });
 

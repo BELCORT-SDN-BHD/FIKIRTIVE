@@ -53,6 +53,7 @@ vi.mock("@/components/ui/select", () => ({
   SelectTrigger: () => null,
   SelectValue: () => null,
   SelectContent: ({ children }: { children?: ReactNode }) => children,
+  SelectGroup: ({ children }: { children?: ReactNode }) => children,
   SelectItem: ({ value, children }: { value: string; children?: ReactNode }) =>
     createElement("option", { value }, children),
 }));

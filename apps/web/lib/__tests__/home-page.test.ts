@@ -305,7 +305,11 @@ const UNREADABLE_DATA: HomeData = {
 
 async function renderHome(data: HomeData): Promise<string> {
   const { HomeView } = await import("@/components/home/HomeView");
-  return renderToStaticMarkup(createElement(HomeView, { data } as never));
+  // `connection` is a required prop since HomeView grew a Meta-connection panel (fed by
+  // `homeConnectionFromMeta`). This file's five-block/copy-list/degradation fences are not
+  // about that panel, so every call site gets the same neutral "not connected" state —
+  // a real HomeConnection value, not an absent prop the component has to guess at.
+  return renderToStaticMarkup(createElement(HomeView, { data, connection: { kind: "not_connected" } } as never));
 }
 
 /** 商家眼睛看到的那一串,不是 HTML 转义之后的那一串。

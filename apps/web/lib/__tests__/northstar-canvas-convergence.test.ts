@@ -75,7 +75,11 @@ vi.mock("@/lib/actions", () => ({
   getOrCreateDefaultProject: mocks.getOrCreateDefaultProject,
 }));
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
-vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
+vi.mock("next/navigation", () => ({
+  notFound: mocks.notFound,
+  redirect: mocks.redirect,
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/lib/auth-guard", async () => ({
   requireOwner: mocks.requireOwner,
   resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
@@ -256,6 +260,7 @@ const sizedRect = () => ({
 
 beforeEach(() => {
   mocks.boardRead.mockResolvedValue([]);
+  mocks.listCanvasNodes.mockResolvedValue([]);
   mocks.quoteCosts.mockResolvedValue({ imageCredits: 8, videoCredits: 80 });
   mocks.imageShapes.mockResolvedValue({ options: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"], defaultAspect: "1:1" });
   mocks.videoSpecs.mockResolvedValue({

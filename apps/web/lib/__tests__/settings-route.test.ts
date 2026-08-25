@@ -103,6 +103,7 @@ vi.mock("@/lib/otto-client-actions", () => ({
 const { default: PreferencesPage } = await import("@/app/settings/page");
 const { default: ConnectionsPage } = await import("@/app/settings/connections/page");
 const { default: OttoConnections } = await import("@/components/otto/OttoConnections");
+const { R22SettingsEntry } = await import("@/components/settings/R22SettingsEntry");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -189,9 +190,12 @@ describe("W2-4 ① `/settings` 与 `/settings/connections` 是真路由", () => 
 // ───────────────────────────────────────────────────────────────────────────────
 
 describe("W2-4 ② 两页的入口闸", () => {
+  // 入口闸已经搬进 R22SettingsEntry.tsx(page.tsx 本身只转发 searchParams,不再自己
+  // requireOwner/redirect)。两个 route 各自的 page.tsx 只是拿不同的 defaultSection 调它 ——
+  // 所以这里直接对 R22SettingsEntry 验同一条语义,而不是拿两个 page 函数当两份独立实现来测。
   it.each([
-    ["/settings", () => PreferencesPage()],
-    ["/settings/connections", () => ConnectionsPage()],
+    ["/settings", () => R22SettingsEntry({ searchParams: Promise.resolve({}) })],
+    ["/settings/connections", () => R22SettingsEntry({ searchParams: Promise.resolve({}), defaultSection: "connections" })],
   ])("%s:没登录就回 /login", async (_href, render) => {
     mocks.requireOwner.mockResolvedValue({ error: "Not authorized." });
 
@@ -205,8 +209,9 @@ describe("W2-4 ② 两页的入口闸", () => {
   it("/settings:登录了就读账户,而且读的是 session 那个身份 —— 页面不传 ownerId", async () => {
     mocks.requireOwner.mockResolvedValue({ ownerId: "org_acme", email: ACCOUNT.email });
     mocks.getMyAccount.mockResolvedValue(ACCOUNT);
+    mocks.getAccountViewData.mockResolvedValue({ error: "settings-read-failed" });
 
-    const element = await PreferencesPage();
+    const element = await R22SettingsEntry({ searchParams: Promise.resolve({}) });
 
     expect(mocks.redirect).not.toHaveBeenCalled();
     expect(mocks.getMyAccount).toHaveBeenCalledTimes(1);
@@ -216,22 +221,30 @@ describe("W2-4 ② 两页的入口闸", () => {
     expect(element).toBeTruthy();
   });
 
-  it("两页的源码里都没有 ownerId —— 不接客户端传来的租户身份,也没有 searchParams 可以传", () => {
-    for (const dir of [PREFERENCES_DIR, CONNECTIONS_DIR]) {
-      const page = code(join(dir, "page.tsx"));
-      expect(page, `${dir}/page.tsx 出现了 ownerId`).not.toMatch(/\bownerId\b/);
-      expect(page, `${dir}/page.tsx 开始接 searchParams`).not.toMatch(/\bsearchParams\b/);
+  it("入口闸源码里没有 ownerId —— 不接客户端传来的租户身份", () => {
+    // `searchParams` 本身现在是合法的(R22SettingsEntry 靠它认 `?section=` 深链与
+    // 仅限非生产的 `?fixture=r22`,两者都是 UI 导航态,不是租户身份),不再是这条围栏的
+    // 判据 —— 判据只剩 ownerId 这一个字面量。
+    for (const file of [
+      join(PREFERENCES_DIR, "page.tsx"),
+      join(CONNECTIONS_DIR, "page.tsx"),
+      "components/settings/R22SettingsEntry.tsx",
+    ]) {
+      expect(code(file), `${file} 出现了 ownerId`).not.toMatch(/\bownerId\b/);
     }
   });
 
-  it("账户读不出来时传 null,让组件说实话 —— 不编一个空账户出来", async () => {
+  it("账户读不出来时说实话 —— 不编一个空账户出来", async () => {
     mocks.requireOwner.mockResolvedValue({ ownerId: "org_acme", email: ACCOUNT.email });
     mocks.getMyAccount.mockResolvedValue({ error: "Could not load your organization." });
+    mocks.getAccountViewData.mockResolvedValue({ error: "settings-read-failed" });
 
-    const element = await PreferencesPage();
-    // OttoAccount 收到 null 时渲染 "Could not load your account."(组件既有行为)。
-    const props = (element as unknown as { props: { children: { props: { account: unknown } } } }).props;
-    expect(props.children.props.account).toBeNull();
+    const element = await R22SettingsEntry({ searchParams: Promise.resolve({}) });
+    // R22SettingsShell 不再靠「account 传 null」这个形状说实话 —— 它收一个
+    // `accountReadable: false` 与 `dataError: "account"`,组件照这两个字段渲染真话。
+    const data = (element as unknown as { props: { data: { accountReadable: boolean; dataError?: string } } }).props.data;
+    expect(data.accountReadable).toBe(false);
+    expect(data.dataError).toBe("account");
   });
 });
 

@@ -180,6 +180,8 @@ describe("ImmersiveCanvasEntry", () => {
       activeProjectId: "p-selected",
       activeThreadId: "t-new",
       initialBalance: 42,
+      initialPrompt: "",
+      visualFixture: null,
     });
   });
 

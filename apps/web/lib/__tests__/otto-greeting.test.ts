@@ -219,15 +219,24 @@ describe("#542 greeting wiring — the sentence and the chain are pinned to prod
   // HomeEntry.tsx` (Home is now the FIRST thing a merchant sees, and it greets by name too).
   // Both are pinned so the invariant ("no path may greet with an email") still covers every
   // real path, not just the one that happened to exist before this ticket.
-  it.each([
-    ["lib/otto-panel-seed.ts", ["lib", "otto-panel-seed.ts"]],
-    ["components/home/HomeEntry.tsx", ["components", "home", "HomeEntry.tsx"]],
-  ] as const)("%s wires the resolver, and the email fallback is gone for good", (_label, parts) => {
-    // Page/seed-level seam. Neither file can be invoked here (server action / async server
-    // component with several awaited data sources), so this pins their source instead of
-    // leaving the seam unguarded — same convention as before, just two files now.
-    const source = readFileSync(path.join(__dirname, "..", "..", ...parts), "utf8");
+  it("lib/otto-panel-seed.ts wires the resolver, and the email fallback is gone for good", () => {
+    // Page/seed-level seam. The file can't be invoked here (async server code with several
+    // awaited data sources), so this pins its source instead of leaving the seam unguarded.
+    const source = readFileSync(path.join(__dirname, "..", "..", "lib", "otto-panel-seed.ts"), "utf8");
     expect(source).toContain("ottoGreetingNameFromProfile(getMyProfileNames)");
+    // The exact regression this ticket is about: reviving ANY email-derived greeting fails here.
+    expect(source).not.toContain('split("@")');
+    expect(source).not.toMatch(/userName\s*=\s*[^;]*email/);
+  });
+
+  it("components/home/HomeEntry.tsx wires the resolver, and the email fallback is gone for good", () => {
+    // HomeEntry reads `profile` once up front (it also needs it for the onboarding redirect
+    // at line 77) and hands the resolver a thunk around the already-resolved value, instead of
+    // passing `getMyProfileNames` itself — same wiring, not a second fetch. The invariant this
+    // ticket protects (no path may greet with an email) still has to hold either way.
+    const source = readFileSync(path.join(__dirname, "..", "..", "components", "home", "HomeEntry.tsx"), "utf8");
+    expect(source).toContain("const profile = await getMyProfileNames();");
+    expect(source).toContain("ottoGreetingNameFromProfile(() => Promise.resolve(profile))");
     // The exact regression this ticket is about: reviving ANY email-derived greeting fails here.
     expect(source).not.toContain('split("@")');
     expect(source).not.toMatch(/userName\s*=\s*[^;]*email/);

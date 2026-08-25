@@ -308,13 +308,13 @@ describe("#804 wire ② — `dark:` fires on the class, not the OS", () => {
     expect(rule).not.toContain("prefers-color-scheme");
   });
 
-  it("the three shipped dark: call sites are the ones this fixes", async () => {
+  it("the six shipped dark: call sites are the ones this fixes", async () => {
     const kit = path.join(webRoot, "components/ui");
     const withDark: string[] = [];
     for (const name of await fs.readdir(kit)) {
       if ((await fs.readFile(path.join(kit, name), "utf8")).includes("dark:")) withDark.push(name);
     }
-    expect(withDark.sort()).toEqual(["select.tsx", "switch.tsx", "textarea.tsx"]);
+    expect(withDark.sort()).toEqual(["bubble.tsx", "radio-group.tsx", "select.tsx", "switch.tsx", "textarea.tsx", "toggle.tsx"]);
   });
 });
 

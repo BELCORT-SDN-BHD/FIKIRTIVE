@@ -67,10 +67,10 @@ describe("W2-2 ① `/brand` 是真路由", () => {
     expect(existsSync(join(WEB_ROOT, dir, "page.tsx")), `${dir}/page.tsx 不存在`).toBe(true);
   });
 
-  it("页面渲染的是 OttoMemory 那一份实现,没有第二套品牌视图", () => {
+  it("页面渲染的是 R22OttoIQView 那一份实现,没有第二套品牌视图", () => {
     const page = source(join(dir, "page.tsx"));
-    expect(page).toContain('from "@/components/otto/OttoMemory"');
-    expect(page).toContain("<OttoMemory");
+    expect(page).toContain('from "@/components/otto-iq/R22OttoIQView"');
+    expect(page).toContain("<R22OttoIQView");
   });
 
   it("等待画面走 ui/skeleton,不手搓那一份 pulse 配方(规格书 §5.6 ③)", () => {

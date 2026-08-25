@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("@/lib/canvas-actions", () => ({ listCanvasNodes: vi.fn().mockResolvedValue([]) }));
 
 // FlowCanvas itself is the mature kernel covered elsewhere; this file only needs the one
 // prop the bug lives on. Capturing it (instead of invoking `useCanvasGen`'s own settle path)
