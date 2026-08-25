@@ -1,0 +1,238 @@
+// @vitest-environment jsdom
+/**
+ * r22-approvals-decision-loop.test.ts —— Approvals 八件升级里**行为**的那一半。
+ *
+ * 这里每一条看的都是商家屏幕上真的出现的东西(DOM、焦点、按钮的 disabled),
+ * 不是源码字符串:源码扫描证明得了「写了这句话」,证明不了「按下 a 之后焦点去了哪里」。
+ *
+ * 覆盖:
+ *   ① 版本循环 —— revise 之后 V1 转 superseded 进 Sent back,V2 带 What changed 与
+ *      「已结清」的旧意见回到 Needs review,并链得回去。
+ *   ② Approve and next —— 单卡批准之后焦点落在下一张待审卡上。
+ *   ③ 快捷键 a / r / x,以及**输入框聚焦时一个都不许触发**(在理由框里打
+ *      "a rule I set" 时每一个 a 都会批掉一张卡,是这类快捷键最典型的破法)。
+ *   ④ 事实摘要条与政策句只在 Needs review;「due today」是从 group 派生的,不是硬写的 2。
+ *   ⑤ 独立审批到期的临期警示。
+ *   ⑥ 被阻断的卡:Approve 禁用、按 a 也不动、Fix with Otto 在面板挂不到时说实话。
+ */
+import { act, createElement, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/approvals", useRouter: () => navigation }));
+
+const { R22ApprovalsView } = await import("@/components/approvals/R22ApprovalsView");
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+
+beforeEach(() => {
+  window.sessionStorage.clear();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root?.unmount());
+  container?.remove();
+  root = null;
+  container = null;
+  window.sessionStorage.clear();
+});
+
+function mount(element: ReactElement) {
+  act(() => root!.render(element));
+}
+
+function card(id: string): HTMLElement | null {
+  return container!.querySelector<HTMLElement>(`[data-approval-id="${id}"]`);
+}
+
+function button(label: string, scope: ParentNode = container!): HTMLButtonElement {
+  const found = [...scope.querySelectorAll("button")].find((node) => node.textContent?.trim() === label);
+  if (!found) throw new Error(`no button labelled ${label}`);
+  return found as HTMLButtonElement;
+}
+
+function click(node: HTMLElement) {
+  act(() => node.click());
+}
+
+/**
+ * 页签走 Radix `Tabs`,它认的是 mousedown 与 focus,不是 `HTMLElement.click()`
+ * 合成出来的那一下 click —— 拿 click 切页签会一声不吭地什么都不发生,
+ * 而后面的断言会把「页签没换」误读成「页签内容不对」。
+ */
+function selectTab(label: string) {
+  const trigger = button(label);
+  act(() => {
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+  });
+}
+
+function press(node: HTMLElement, key: string) {
+  act(() => {
+    node.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  });
+}
+
+async function settle(ms: number) {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+}
+
+/** 走完一次改版:开面板 → 选理由 → (可选)写一句 → 提交。 */
+async function revise(id: string, reason: string, note?: string) {
+  click(button("Ask Otto to revise", card(id)!));
+  click(container!.querySelector(`[role="radio"][value="${reason}"]`) as HTMLButtonElement);
+  const panel = container!.querySelector(".r22-approvals-reject")!;
+  if (note) {
+    const textarea = panel.querySelector("textarea") as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(textarea, note);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  click(button("Ask Otto to revise", panel));
+  await settle(1000);
+}
+
+describe("R22 Approvals 八件升级的行为契约", () => {
+  it("① 改版走版本循环:V1 转 superseded,V2 带 What changed 与已结清的旧意见回到 Needs review", async () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    await revise("i1", "Breaks a rule I set", "Keep the October rule");
+
+    // V2 回到 Needs review,带 What changed 与「已结清」的旧意见。
+    const second = card("i1-v2");
+    expect(second, "V2 没有出现在 Needs review").not.toBeNull();
+    expect(second!.textContent).toContain("V2");
+    expect(second!.textContent).toContain("Rewritten to keep the rule you set.");
+    expect(second!.textContent).toContain("Settled · Breaks a rule I set — Keep the October rule");
+
+    // V1 不再占着 Needs review,总数因此不变(一进一出,不是凭空多一张)。
+    expect(card("i1"), "V1 还留在 Needs review").toBeNull();
+    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).toContain("A new version is in Needs review. Fixture state only.");
+
+    // V1 在 Sent back 里,写明是 superseded,并链得回 V2。
+    selectTab("Sent back 2");
+    const original = card("i1");
+    expect(original, "V1 没有落进 Sent back").not.toBeNull();
+    expect(original!.textContent).toContain("Sent to Otto for a revise by Nicks");
+    click(button("See the new version", original!));
+    expect(container!.textContent).toContain("Needs review");
+    expect(card("i1-v2"), "从 V1 点回去没有回到 V2").not.toBeNull();
+  });
+
+  it("① Reject 是终局:不产生下一个版本", async () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    click(button("Reject", card("i1")!));
+    click(container!.querySelector('[role="radio"][value="Image looks off"]') as HTMLButtonElement);
+    click(button("Reject", container!.querySelector(".r22-approvals-reject")!));
+    await settle(400);
+
+    expect(container!.textContent).toContain("1 rejected. Fixture state only.");
+    expect(card("i1-v2"), "Reject 不该产生 V2").toBeNull();
+    expect(container!.textContent).toContain("4 need your review");
+  });
+
+  it("② Approve and next:批准之后焦点落到下一张待审卡", async () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    const first = card("i1")!;
+    act(() => first.focus());
+    click(button("Approve", first));
+    await settle(400);
+
+    expect(card("i1"), "被批准的卡还留在 Needs review").toBeNull();
+    expect(document.activeElement?.getAttribute("data-approval-id"), "焦点没有走到下一张卡").toBe("i2");
+  });
+
+  it("③ 快捷键 x 选、r 开改版、a 批准,且输入框聚焦时一个都不触发", async () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+
+    // x —— 选中这一张,批量条出现。
+    press(card("i1")!, "x");
+    expect(container!.querySelector(".r22-approvals-bulk")?.textContent).toContain("1 selected");
+    press(card("i1")!, "x");
+    expect(container!.querySelector(".r22-approvals-bulk")).toBeNull();
+
+    // r —— 开改版面板。
+    press(card("i1")!, "r");
+    const panel = container!.querySelector(".r22-approvals-reject")!;
+    expect(panel.textContent).toContain("What should Otto change?");
+
+    // 输入框聚焦:在理由框里打字,a / r / x 一个都不许触发。
+    const textarea = panel.querySelector("textarea") as HTMLTextAreaElement;
+    act(() => textarea.focus());
+    press(textarea, "a");
+    press(textarea, "x");
+    await settle(400);
+    expect(container!.textContent, "输入框里的 a 批掉了一张卡").toContain("5 need your review");
+    expect(container!.textContent).not.toContain("approved. Fixture state only.");
+    expect(container!.querySelector(".r22-approvals-bulk"), "输入框里的 x 选中了一张卡").toBeNull();
+
+    // 面板外的 a 照常批准。
+    click(button("Cancel", panel));
+    press(card("i1")!, "a");
+    await settle(400);
+    expect(container!.textContent).toContain("1 approved. Fixture state only.");
+    expect(container!.textContent).toContain("4 need your review");
+  });
+
+  it("④ 事实摘要条与政策句只在 Needs review,due today 从 group 派生", async () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    expect(container!.querySelector(".r22-approvals-fact")!.textContent).toContain("2 due today");
+    expect(container!.textContent).toContain("Miss the Decide by time and the slot is skipped");
+
+    // 批掉一张 today 的卡,计数跟着掉 —— 硬写的 2 在这里不会动。
+    click(button("Approve", card("i1")!));
+    await settle(400);
+    expect(container!.querySelector(".r22-approvals-fact")!.textContent).toContain("1 due today");
+
+    // 另外两个页签既没有事实条,也没有政策句。
+    selectTab("Approved 3");
+    expect(container!.querySelector(".r22-approvals-fact"), "Approved 页签也画了事实条").toBeNull();
+    expect(container!.textContent).not.toContain("Miss the Decide by time");
+    selectTab("Sent back 1");
+    expect(container!.querySelector(".r22-approvals-fact"), "Sent back 页签也画了事实条").toBeNull();
+    expect(container!.textContent).not.toContain("Miss the Decide by time");
+  });
+
+  it("⑤ 独立审批到期:临期的卡升警示,不临期的不升", () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    const urgent = card("i1")!.querySelector(".r22-approvals-deadline")!;
+    expect(urgent.textContent).toContain("Decide by Today 08:00");
+    expect(urgent.textContent).toContain("2 hours left");
+    expect(urgent.className).toContain("is-urgent");
+
+    const calm = card("i2")!.querySelector(".r22-approvals-deadline")!;
+    expect(calm.textContent).toContain("Decide by Today 17:00");
+    expect(calm.className, "还有 9 小时的卡不该升警示").not.toContain("is-urgent");
+  });
+
+  it("⑥ 被阻断的卡:Approve 禁用并说明为何,按 a 也不动,Fix with Otto 不假装预填", async () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    const blocked = card("i3")!;
+    expect(blocked.textContent).toContain("Over weekly credit cap");
+
+    const approve = button("Approve · 16 cr", blocked);
+    expect(approve.disabled, "被阻断的卡仍然可以批准").toBe(true);
+    const describedBy = approve.getAttribute("aria-describedby");
+    expect(describedBy, "禁用的按钮没有说明为何").toBeTruthy();
+    expect(container!.querySelector(`#${describedBy}`)!.textContent).toContain("8 cr left this week");
+
+    press(blocked, "a");
+    await settle(400);
+    expect(container!.textContent).toContain("5 need your review");
+    expect(container!.textContent).not.toContain("approved. Fixture state only.");
+
+    // 这个测试没有挂 Otto 面板 —— 那正是「面板够不着」那一态,回执必须说实话。
+    click(button("Fix with Otto", blocked));
+    expect(container!.textContent).toContain("The Otto panel is not mounted on this page, so nothing was prefilled");
+    expect(container!.textContent).toContain("Raise the weekly credit cap for the Weekend routine");
+  });
+});
