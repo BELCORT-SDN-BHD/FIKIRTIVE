@@ -323,7 +323,7 @@
 }
 
 .r22-projects-error {
-  color: #b4232d;
+  color: var(--r22-bad-text);
   font-size: 12px;
 }
 

@@ -1,5 +1,5 @@
 .r22-auth-gate {
-  --r22-line-strong: var(--r22-line-2); --r22-bad: var(--error); --r22-good: #16a34a;
+  --r22-line-strong: var(--r22-line-2); --r22-bad: var(--error);
   min-height: 100dvh; display: flex; align-items: flex-start; justify-content: center;
   overflow-y: auto; background: var(--r22-ground); color: var(--r22-ink);
 }
@@ -46,7 +46,7 @@
 .r22-auth-public-fact { margin-top: 18px; color: var(--r22-ink-3); text-align: center; font-size: 12px; line-height: 1.55; text-wrap: pretty; }
 .r22-auth-footer { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; color: var(--r22-ink-3); font-size: 12px; }
 .r22-auth-footer i { font-style: normal; }
-.r22-auth-page-error { margin-bottom: 12px; padding: 9px 12px; border-radius: 8px; background: #fff1f2; color: var(--r22-bad); font-size: var(--r22-text-small); }
+.r22-auth-page-error { margin-bottom: 12px; padding: 9px 12px; border-radius: 8px; background: var(--r22-bad-soft); color: var(--r22-bad); font-size: var(--r22-text-small); }
 .r22-auth-state-icon { display: grid; width: 44px; height: 44px; place-items: center; margin-bottom: 16px; border-radius: 12px; }
 .r22-auth-state-icon-sky { background: var(--r22-grad-sky); color: var(--r22-on-sky); }
 .r22-auth-state-icon-peach { background: var(--r22-grad-peach); color: var(--r22-on-peach); }

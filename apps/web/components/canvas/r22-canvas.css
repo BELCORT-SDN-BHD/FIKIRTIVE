@@ -3,7 +3,6 @@
 .r22-canvas-input-options b em{display:inline-block;margin-left:7px;padding:2px 5px;border-radius:99px;background:var(--r22-coral-soft);color:var(--r22-coral);font-size:8.5px;font-style:normal;font-weight:600;letter-spacing:.02em}.r22-canvas-input-card footer{gap:8px}.r22-canvas-input-card footer>span{min-width:0;font-size:10.5px;line-height:1.3}.r22-canvas-input-card footer button{flex:none;padding-inline:9px;font-size: var(--r22-text-mono-label)}.r22-canvas-decision-detail{border-top:1px solid var(--r22-canvas-line)}.r22-canvas-decision-detail>p{margin:0;padding:8px 9px;color:var(--r22-canvas-ink-2);font-size: var(--r22-text-mono-label);line-height:1.5}.r22-canvas-decision-detail>p strong{color:var(--r22-canvas-ink);font-weight:500}.r22-canvas-decision-detail ol{display:grid;margin:0;padding:0 9px 9px;gap:5px;list-style:none}.r22-canvas-decision-detail ol li{padding-top:6px;border-top:1px solid var(--r22-canvas-line);font-size:10.5px}.r22-canvas-decision-detail ol span,.r22-canvas-decision-detail ol small{display:block}.r22-canvas-decision-detail ol span{font-weight:600}.r22-canvas-decision-detail ol small{margin-top:2px;color:var(--r22-canvas-ink-3);line-height:1.45}
 
 .r22-canvas-surface {
-  --r22-good: #277c52;
   --r22-glow: 0 10px 34px -14px rgb(59 54 99 / 22%), 0 0 40px -10px rgb(221 214 254 / 50%), 0 0 40px -16px rgb(255 217 201 / 45%);
   --r22-glow-focus: 0 12px 40px -14px rgb(59 54 99 / 28%), 0 0 54px -8px rgb(221 214 254 / 62%), 0 0 54px -12px rgb(255 217 201 / 55%);
   --r22-shadow-sm: 0 1px 2px rgb(22 23 28 / 6%);
@@ -235,7 +234,7 @@
 
 .r22-canvas-live-state b { font-size: var(--r22-text-small); }
 .r22-canvas-live-state p { max-width: 240px; margin: 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); line-height: 1.45; }
-.r22-canvas-live-node.is-failed .r22-canvas-live-state { background: #fff7f7; }
+.r22-canvas-live-node.is-failed .r22-canvas-live-state { background: var(--r22-bad-soft); }
 .r22-canvas-live-node.is-cancelled .r22-canvas-live-state { background: var(--r22-chrome); }
 
 .r22-canvas-sticky {

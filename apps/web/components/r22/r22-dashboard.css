@@ -1333,7 +1333,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   min-height: 16px;
   margin-top: 4px;
   font-size: var(--r22-text-mono-label);
-  color: #1a7f4b;
+  color: var(--r22-good-text);
 }
 
 /* ————— 想一想 / 读不出来(原型 L463 的 `.otto-wait` 与 `.otto-error`)————— */
@@ -1364,7 +1364,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   display: block;
   padding: 11px 12px;
   border: 1px solid var(--r22-line-2);
-  border-left: 2px solid #c0392f;
+  border-left: 2px solid var(--r22-bad);
   border-radius: 8px;
   font-size: var(--r22-text-small);
   color: var(--r22-ink-2);
@@ -1516,9 +1516,9 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   margin: 8px 0 0;
   padding: 6px 8px;
   border-radius: 5px;
-  background: #fdecea;
+  background: var(--r22-bad-soft);
   font-size: var(--r22-text-caption);
-  color: #8a2b22;
+  color: var(--r22-bad-text);
 }
 
 .r22-room-note {

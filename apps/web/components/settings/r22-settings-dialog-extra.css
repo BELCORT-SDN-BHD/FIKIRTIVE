@@ -1,6 +1,6 @@
 .r22-settings-dialog [data-slot="dialog-footer"] button.is-danger {
-  border-color: #a33d36;
-  background: #a33d36;
+  border-color: var(--r22-bad);
+  background: var(--r22-bad);
   color: var(--r22-surface);
 }
 
