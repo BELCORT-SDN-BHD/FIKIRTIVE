@@ -168,6 +168,11 @@ export function R22DashboardShell({
       }
       if (event.key === "Escape") {
         if (searchOpen) return;
+        // 一次 Esc 只剥最上面一层。全屏与切换器住在 OttoPanelShell,那一层在时这一记
+        // 归它的链处理,壳不动面板:defaultPrevented 兜 Radix capture 阶段先消费的
+        // 情形,DOM 查询兜两个处理器都挂 window 冒泡、注册顺序不可靠的情形。
+        if (event.defaultPrevented) return;
+        if (document.querySelector("[data-otto-panel-fullscreen], [data-otto-panel-rooms]")) return;
         if (notificationsOpen) closeNotifications();
         if (helpOpen) { setHelpOpen(false); requestAnimationFrame(() => workspaceTriggerRef.current?.focus()); }
         if (workspaceOpen) closeWorkspaceMenu();

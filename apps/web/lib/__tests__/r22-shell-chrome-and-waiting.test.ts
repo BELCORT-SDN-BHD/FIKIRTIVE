@@ -40,6 +40,22 @@ vi.mock("@/lib/global-search-actions", () => ({
   loadGlobalSearchProjects: vi.fn().mockResolvedValue({ projects: [] }),
 }));
 
+/** Esc 剥层那组测试要能断言 closePanel 有没有被叫到,所以把它提到模块外面自己控。 */
+const { closePanelSpy } = vi.hoisted(() => ({ closePanelSpy: vi.fn() }));
+vi.mock("@/components/otto/panel/OttoPanelShell", () => ({
+  useOttoPanelControls: () => ({
+    open: false,
+    mode: "docked",
+    expanded: false,
+    hydrated: true,
+    dockedWidth: 0,
+    openPanel: vi.fn(),
+    closePanel: closePanelSpy,
+    togglePanel: vi.fn(),
+    toggleExpanded: vi.fn(),
+  }),
+}));
+
 const APP_DIR = path.resolve(__dirname, "../../app");
 
 function source(relative: string): string {
@@ -255,5 +271,75 @@ describe("badge 与首字母都从源头派生", () => {
     const home = readFileSync(path.resolve(__dirname, "../../components/home/HomeView.tsx"), "utf8");
     expect(home).not.toContain("r22-home-account");
     expect(home).not.toContain(">NA<");
+  });
+});
+
+describe("Esc 剥层:切换器/全屏在时,壳不碰面板", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  let host: HTMLDivElement;
+  let root: Root;
+  let layerMarker: HTMLElement | null = null;
+
+  async function mountShell() {
+    const { R22DashboardShell } = await import("@/components/r22/R22DashboardShell");
+    await act(async () => {
+      root.render(
+        h(R22DashboardShell, {
+          location: "/",
+          account: { displayName: "Harvest Candle Co", email: "n@h.example", balance: 0 },
+          signOutAction: vi.fn(async () => undefined),
+          children: h("div", null, "page"),
+        }),
+      );
+    });
+  }
+
+  function pressEscape() {
+    return act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+  }
+
+  beforeEach(() => {
+    closePanelSpy.mockClear();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    layerMarker?.remove();
+    layerMarker = null;
+  });
+
+  it("切换器层在(data-otto-panel-rooms)时,Esc 归 OttoPanelShell 的链,壳不关面板", async () => {
+    layerMarker = document.createElement("div");
+    layerMarker.setAttribute("data-otto-panel-rooms", "");
+    document.body.appendChild(layerMarker);
+
+    await mountShell();
+    await pressEscape();
+
+    expect(closePanelSpy).not.toHaveBeenCalled();
+  });
+
+  it("全屏层在(data-otto-panel-fullscreen)时,Esc 归 OttoPanelShell 的链,壳不关面板", async () => {
+    layerMarker = document.createElement("div");
+    layerMarker.setAttribute("data-otto-panel-fullscreen", "");
+    document.body.appendChild(layerMarker);
+
+    await mountShell();
+    await pressEscape();
+
+    expect(closePanelSpy).not.toHaveBeenCalled();
+  });
+
+  it("两层都不在时,Esc 仍然关面板(原行为不变)", async () => {
+    await mountShell();
+    await pressEscape();
+
+    expect(closePanelSpy).toHaveBeenCalledTimes(1);
   });
 });
