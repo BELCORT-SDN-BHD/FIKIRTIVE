@@ -33,6 +33,7 @@ import {
   CalendarDays,
   ChevronDown,
   Clapperboard,
+  ClipboardCheck,
   Coins,
   Compass,
   CreditCard,
@@ -45,6 +46,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plug,
+  Repeat,
   Settings,
   SlidersHorizontal,
   User,
@@ -93,7 +95,11 @@ export const NAV_RAIL_ICONS: Readonly<Record<string, NavigationIcon>> = {
   library: Library,
   brand: BookOpen,
   campaign: Megaphone,
+  // 审批工作台 —— 一份等人拍板的清单,不是第二本日历,所以不用 Calendar 家族。
+  approvals: ClipboardCheck,
   schedule: CalendarDays,
+  // 例程 = 会自己再跑一遍的事。Repeat 说的是「重复」,而 CalendarDays 已经归排期用了。
+  routines: Repeat,
   customers: Users,
   workspace: Library,
   settings: Settings,
