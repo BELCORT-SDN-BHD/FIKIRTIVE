@@ -35,6 +35,8 @@ let container: HTMLDivElement | null = null;
 beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear(); // 面板自己的开合存档走 localStorage,别跨用例串味。
+  // 零动效闸挂在 <html> 上、有 420ms 时限 —— 上一条用例按过键,它可能还没松开。
+  document.documentElement.removeAttribute("data-kb");
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -112,10 +114,10 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     await revise("i1", "Breaks a rule I set", "Keep the October rule");
 
     // V2 回到 Needs review,带 What changed 与「已结清」的旧意见。
+    // v2 皮把版本号写进帖子下面那句注解(「Version 2 · 改了什么」),不再是卡头一枚 V2 徽章。
     const second = card("i1-v2");
     expect(second, "V2 没有出现在 Needs review").not.toBeNull();
-    expect(second!.textContent).toContain("V2");
-    expect(second!.textContent).toContain("Rewritten to keep the rule you set.");
+    expect(second!.textContent).toContain("Version 2 · Rewritten to keep the rule you set.");
     expect(second!.textContent).toContain("Settled · Breaks a rule I set — Keep the October rule");
 
     // V1 不再占着 Needs review,总数因此不变(一进一出,不是凭空多一张)。
@@ -219,12 +221,13 @@ describe("R22 Approvals 八件升级的行为契约", () => {
 
   it("⑤ 独立审批到期:临期的卡升警示,不临期的不升", () => {
     mount(createElement(R22ApprovalsView, { fixture: true }));
-    const urgent = card("i1")!.querySelector(".r22-approvals-deadline")!;
+    // v2 皮把这枚芯片放在 meta 行末尾(`.r22-approvals-by`),与 slot 时间同一行、各写各的。
+    const urgent = card("i1")!.querySelector(".r22-approvals-by")!;
     expect(urgent.textContent).toContain("Decide by Today 08:00");
     expect(urgent.textContent).toContain("2 hours left");
     expect(urgent.className).toContain("is-urgent");
 
-    const calm = card("i2")!.querySelector(".r22-approvals-deadline")!;
+    const calm = card("i2")!.querySelector(".r22-approvals-by")!;
     expect(calm.textContent).toContain("Decide by Today 17:00");
     expect(calm.className, "还有 9 小时的卡不该升警示").not.toContain("is-urgent");
   });
@@ -234,11 +237,12 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     const blocked = card("i3")!;
     expect(blocked.textContent).toContain("Over weekly credit cap");
 
-    const approve = button("Approve · 16 cr", blocked);
+    // ⑥ 金额贴在动作上,而且写全 —— 稿的裁定:`16 credits`,不是内部简写 `16 cr`。
+    const approve = button("Approve · 16 credits", blocked);
     expect(approve.disabled, "被阻断的卡仍然可以批准").toBe(true);
     const describedBy = approve.getAttribute("aria-describedby");
     expect(describedBy, "禁用的按钮没有说明为何").toBeTruthy();
-    expect(container!.querySelector(`#${describedBy}`)!.textContent).toContain("8 cr left this week");
+    expect(container!.querySelector(`#${describedBy}`)!.textContent).toContain("8 credits left this week");
 
     press(blocked, "a");
     await settle(400);
@@ -283,14 +287,111 @@ describe("R22 Approvals 八件升级的行为契约", () => {
 
     const version2 = card("h3-v2");
     expect(version2, "种子里的 V2 不在 Needs review").not.toBeNull();
-    expect(version2!.textContent).toContain("V2");
-    expect(version2!.textContent).toContain("Rewritten to keep the rule you set.");
+    expect(version2!.textContent).toContain("Version 2 · Rewritten to keep the rule you set.");
     expect(version2!.textContent).toContain("Settled · Breaks a rule I set — “no discounts before Oct 25”");
 
     selectTab("Sent back 1");
     const version1 = card("h3")!;
-    expect(version1.textContent).toContain("a new version is in Needs review");
+    expect(version1.textContent).toContain("version 2 is waiting in Needs review");
     click(button("See the new version", version1));
     expect(card("h3-v2"), "从种子里的 V1 点过去没有落在 V2 上").not.toBeNull();
+  });
+});
+
+/**
+ * v2 皮肤的结构契约 —— 换皮换掉的那几件事,机器认得出。
+ *
+ * 上面那一组钉的是**行为**(八件),这一组钉的是**这一版皮凭什么叫「内容优先」**:
+ * 帖子自己的字与图真的在卡上、图点得开、入场错位是逐卡算的、键盘发起的动作走的是零动效
+ * 那条通道。这四条一旦静默退回旧皮(卡头写内部标题、图裁成小方块、点图没反应),
+ * 行为测试一条都不会红 —— 所以它们得自己有测试。
+ */
+describe("R22 Approvals v2 皮肤的结构契约", () => {
+  it("卡就是那条帖子:帖子的字与按真实比例的图都在 ap-post 里,内部标题不占卡面", () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    const post = card("i1")!.querySelector(".r22-approvals-post")!;
+
+    // ① 关注者会读到的那句话,在卡上。
+    const caption = post.querySelector(".r22-approvals-cap")!;
+    expect(caption.textContent).toContain("Trim the wick to 5mm before every burn.");
+
+    // ② 图跟着它,而且带着自己的比例(4:5 是竖版,不是被裁成的小方块)。
+    const shot = post.querySelector(".r22-approvals-shot")!;
+    expect(shot.className, "卡上的图没有按真实比例出现").toContain("is-4x5");
+    expect(shot.querySelector("img"), "ap-post 里没有媒体").not.toBeNull();
+
+    // ③ 我们给这条东西起的内部名字不再占着卡面最大的那一行 —— 它退到勾选框的无障碍名字上,
+    //    读屏的人仍然拿得到一个短名字来区分卡。
+    expect(post.textContent, "内部标题又爬回卡面了").not.toContain("Candle care tip for the pandan range");
+    expect(container!.querySelector('[aria-label="Select: Candle care tip for the pandan range"]'), "标题连无障碍名字都没了").not.toBeNull();
+  });
+
+  it("点一张图开审阅层:那句问句与三个出口都跟着决定进来,关得掉", () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    expect(document.querySelector(".r22-approvals-layer"), "层一开始就开着,证不了「开」").toBeNull();
+
+    click(card("i1")!.querySelector(".r22-approvals-shot") as HTMLElement);
+    const layer = document.querySelector(".r22-approvals-layer")!;
+    expect(layer, "点图没有打开审阅层").not.toBeNull();
+    expect(layer.querySelector(".r22-approvals-lcap")!.textContent).toContain("Trim the wick to 5mm before every burn.");
+    expect(layer.querySelector(".r22-approvals-frame img"), "层里没有那张图").not.toBeNull();
+
+    // ① 三态动作在这里是同一批,不是第二套判断。
+    expect(layer.textContent).toContain("Approve this post?");
+    expect(layer.textContent).toContain("Approving schedules 1 post");
+    for (const label of ["Approve", "Ask Otto to revise", "Reject"]) expect(button(label, layer)).toBeTruthy();
+
+    click(layer.querySelector(".r22-approvals-layer-x") as HTMLElement);
+    expect(document.querySelector(".r22-approvals-layer"), "审阅层关不掉").toBeNull();
+  });
+
+  it("还没做出来的图不装成看得见:四格全是不可点的占位,层开不出来", () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    const shots = [...card("i3")!.querySelectorAll(".r22-approvals-shot")];
+    expect(shots.length, "「做 4 张图」的卡上没有四格占位").toBe(4);
+    for (const shot of shots) {
+      expect(shot.className, "还没做出来的图被画成了成品").toContain("is-pending");
+      expect(shot.textContent).toContain("Not made yet");
+      expect(shot.tagName, "占位格是可点的,点开只会是一片空").not.toBe("BUTTON");
+    }
+
+    click(shots[0] as HTMLElement);
+    expect(document.querySelector(".r22-approvals-layer"), "占位格点开了一个空的审阅层").toBeNull();
+  });
+
+  it("审阅层在一批图里换页:换的是同一张卡的第几张预览", () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    const shots = [...card("i2")!.querySelectorAll(".r22-approvals-shot")] as HTMLElement[];
+    expect(shots.length, "四条帖子的卡上没有四格媒体").toBe(4);
+
+    click(shots[3]!);
+    const layer = document.querySelector(".r22-approvals-layer")!;
+    expect(layer.querySelector(".r22-approvals-lmeta")!.textContent).toContain("Facebook");
+    expect(layer.querySelector(".r22-approvals-frame")!.className, "1.91:1 的那条被当成竖版画了").toContain("is-191x1");
+
+    click(layer.querySelector('[aria-label="Show Instagram Today 18:00"]') as HTMLElement);
+    expect(layer.querySelector(".r22-approvals-lmeta")!.textContent).toContain("Instagram");
+    expect(layer.querySelector(".r22-approvals-frame")!.className).toContain("is-4x5");
+  });
+
+  it("入场错位是逐卡算的,不是一整段一起飞", () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    const stagger = [...container!.querySelectorAll("[data-approval-stagger]")].map((node) => node.getAttribute("data-approval-stagger"));
+    expect(stagger.length).toBeGreaterThan(1);
+    expect(stagger, "错位序号没有逐卡递增").toEqual(stagger.map((_value, index) => String(index)));
+    // 序号是数据,动效本身在 css 的 animation-delay 里 —— 这里只证数据到位了。
+    expect((card("i2") as HTMLElement).style.getPropertyValue("--r22-approvals-stagger")).toBe("1");
+  });
+
+  it("键盘发起的动作走零动效通道:data-kb 挂在 html 上", async () => {
+    mount(createElement(R22ApprovalsView, { fixture: true }));
+    expect(document.documentElement.getAttribute("data-kb"), "开局就挂着,这条证不了「键盘发起」").toBeNull();
+
+    press(card("i1")!, "x");
+    expect(document.documentElement.getAttribute("data-kb"), "按键之后没有挂上零动效闸").toBe("1");
+
+    // 闸是有时限的:过了这一小段就自己松开,鼠标操作照常带动效。
+    await settle(500);
+    expect(document.documentElement.getAttribute("data-kb"), "零动效闸松不开").toBeNull();
   });
 });

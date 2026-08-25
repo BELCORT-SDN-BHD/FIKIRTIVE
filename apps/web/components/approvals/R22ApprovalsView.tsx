@@ -2,14 +2,15 @@
 /* eslint-disable react-hooks/set-state-in-effect -- Non-production R22 fixtures restore browser-scoped drafts after hydration. */
 
 /**
- * R22ApprovalsView.tsx —— Approvals 的外壳:状态、诚实机、键盘、批量条。
+ * R22ApprovalsView.tsx —— Approvals 的外壳:状态、诚实机、键盘、批量条、审阅层。
  *
- * 一张卡长什么样在 `ApprovalCard.tsx`,一次决策对列表做了什么在 `approvals-decisions.ts`,
- * 数据在 `approvals-fixture.ts`。这里只剩「这一面现在处在什么状态」这一件事。
+ * 一张卡长什么样在 `ApprovalCard.tsx`,点开一张图之后长什么样在 `ApprovalLayer.tsx`,
+ * 一次决策对列表做了什么在 `approvals-decisions.ts`,数据在 `approvals-fixture.ts`。
+ * 这里只剩「这一面现在处在什么状态」这一件事。
  *
  * 五态诚实机原样保留(loading / error / permission / empty / unknown + 生产 unavailable),
  * 决策三态(permission / error+retry / unknown)、undo、workspace 隔离的 sessionStorage
- * 也都在。八件升级没有换掉其中任何一条 —— 它们本来就是这一面最贵的部分。
+ * 也都在。v2 换皮没有换掉其中任何一条 —— 它们本来就是这一面最贵的部分。
  */
 
 import Link from "next/link";
@@ -23,6 +24,7 @@ import { useOttoPanelControls } from "@/components/otto/panel/OttoPanelShell";
 import { readR22WorkspaceDirectory, scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
 
 import { ApprovalCard, type ApprovalCardHandlers, type MenuAction } from "./ApprovalCard";
+import { ApprovalLayer } from "./ApprovalLayer";
 import type { ReviseMode } from "./ReviseFlow";
 import { applyDecision, decisionNotice, type DecisionKind, type PendingDecision } from "./approvals-decisions";
 import {
@@ -32,6 +34,7 @@ import {
   GROUPS,
   REVISE_DELAY_MS,
   creditSuffix,
+  credits,
   reviseRecipient,
   type ApprovalDetailTab,
   type ApprovalItem,
@@ -67,6 +70,8 @@ export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixt
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<ApprovalDetailTab>("preview");
   const [focusId, setFocusId] = useState<string | null>(null);
+  /** 稿:审阅层看的是哪一张卡的第几张图。层自己不存内容,只存这两个坐标。 */
+  const [preview, setPreview] = useState<{ id: string; index: number } | null>(null);
 
   const counts = useMemo(() => ({ waiting: items.filter((item) => item.status === "waiting").length, approved: items.filter((item) => item.status === "approved").length, rejected: items.filter((item) => item.status === "rejected").length }), [items]);
   const visible = items.filter((item) => item.status === tab && (filter === "all" || filter === "otto" && item.source === "otto" || filter === "cost" && item.cost > 0));
@@ -128,7 +133,8 @@ export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixt
   const groupedWaiting = GROUPS
     .map((group) => ({ group, groupItems: visible.filter((item) => item.group === group.id) }))
     .filter((entry) => entry.groupItems.length > 0);
-  const waitingOrder = tab === "waiting" ? groupedWaiting.flatMap((entry) => entry.groupItems.map((item) => item.id)) : [];
+  const waitingOrder = tab === "waiting" ? groupedWaiting.flatMap((entry) => entry.groupItems.map((item) => item.id)) : visible.map((item) => item.id);
+  const previewItem = preview ? items.find((item) => item.id === preview.id) ?? null : null;
 
   function nextAfter(id: string): string | null {
     const index = waitingOrder.indexOf(id);
@@ -243,6 +249,7 @@ export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixt
     onFixWithOtto: fixWithOtto,
     onMenu: menu,
     onOpenVersion: openVersion,
+    onOpenPreview: (item, index) => setPreview({ id: item.id, index }),
     onReason: setReason,
     onNote: setNote,
     onSubmitRevise: submitRevise,
@@ -253,6 +260,7 @@ export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixt
     return <ApprovalCard
       key={item.id}
       item={item}
+      index={Math.max(0, waitingOrder.indexOf(item.id))}
       waiting={tab === "waiting"}
       busy={busyIds.includes(item.id)}
       anyBusy={busyIds.length > 0}
@@ -267,12 +275,27 @@ export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixt
   return <main className="r22-approvals" data-r22-approvals data-fixture>
     <header><div><h1>Approvals</h1><p>Everything waiting on your decision, in one list.</p></div></header>
     <div className="r22-approvals-banner"><AlertCircle aria-hidden="true" /><span>No channel is connected yet, so approving holds a post in Schedule instead of sending it.</span><Link href="/settings?section=connections&fixture=r22">Connect one</Link></div>
-    {tab === "waiting" ? <div className="r22-approvals-fact"><p><b>{counts.waiting} need your review</b> · {dueToday} due today · {approvable.length} ready to approve now{blockedItems.length ? ` · ${blockedCost} cr held by ${blockedItems.length} blocked item${blockedItems.length === 1 ? "" : "s"}` : ""}</p><Button unstyled type="button" disabled={!approvable.length || busyIds.length > 0} onClick={() => run({ ids: approvable.map((item) => item.id), kind: "approve" })}>{busyIds.length === approvable.length && busyIds.length > 0 ? "Approving…" : `Approve all (${approvable.length})${creditSuffix(approvableCost)}`}</Button></div> : null}
-    {notice ? <div className="r22-approvals-notice" data-kind={noticeKind} role={noticeKind === "error" ? "alert" : "status"}>{noticeKind === "success" ? <Check aria-hidden="true" /> : <AlertCircle aria-hidden="true" />}{notice}{retryDecision ? <Button unstyled type="button" onClick={() => run(retryDecision, true)}>Retry</Button> : null}{undoItems && noticeKind === "success" ? <Button unstyled type="button" onClick={() => { setItems(undoItems); setUndoItems(null); setNotice(""); }}>Undo</Button> : null}<Button unstyled type="button" onClick={() => { setUndoItems(null); setRetryDecision(null); setNotice(""); }}>Dismiss</Button></div> : null}
-    <div className="r22-approvals-bar"><Tabs unstyled value={tab} onValueChange={(value) => { setTab(value as ApprovalStatus); setSelected([]); setExpandedId(null); setRevising(null); }}><TabsList unstyled aria-label="Approval state">{(["waiting", "approved", "rejected"] as const).map((value) => <TabsTrigger unstyled className={tab === value ? "is-active" : ""} key={value} value={value}>{value === "waiting" ? "Needs review" : value === "approved" ? "Approved" : "Sent back"} <span>{counts[value]}</span></TabsTrigger>)}</TabsList></Tabs><ToggleGroup unstyled type="single" value={filter} aria-label="Filter approvals" onValueChange={(value) => { if (value) setFilter(value as "all" | "otto" | "cost"); }}>{(["all", "otto", "cost"] as const).map((value) => <ToggleGroupItem unstyled key={value} value={value} className={filter === value ? "is-active" : ""}>{value === "all" ? "All" : value === "otto" ? "From Otto" : "Costs credits"}</ToggleGroupItem>)}</ToggleGroup></div>
-    {visible.length ? <section className="r22-approvals-list">{tab === "waiting" ? groupedWaiting.map((entry, index) => <div className="r22-approvals-group" key={entry.group.id}><header><h2>{entry.group.label}</h2>{entry.group.time ? <span>{entry.group.time}</span> : null}</header>{index === 0 ? <p className="r22-approvals-rule">{DEADLINE_RULE}</p> : null}{entry.groupItems.map(renderCard)}</div>) : <div className="r22-approvals-group"><header><h2>Last 7 days</h2><span>times in GMT+8</span></header>{visible.map(renderCard)}</div>}</section> : <section className="r22-approvals-empty"><h2>{tab === "waiting" ? "Nothing needs your review" : tab === "approved" ? "Nothing approved in the last 7 days" : "Nothing sent back yet"}</h2><p>{filter !== "all" ? "The current filter matched nothing." : "Decision history remains visible here when it exists."}</p>{filter !== "all" ? <Button unstyled type="button" onClick={() => setFilter("all")}>Clear filter</Button> : null}</section>}
-    {selected.length ? <div className="r22-approvals-bulk" role="status"><b>{selected.length} selected</b><span>{selectedCost} cr</span><Button unstyled type="button" disabled={!approvableSelected.length || busyIds.length > 0} onClick={() => run({ ids: approvableSelected.map((item) => item.id), kind: "approve" })}>{busyIds.length ? "Approving…" : `Approve ${approvableSelected.length} selected${creditSuffix(approvableSelectedCost)}`}</Button><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => beginBulk("revise")}>Ask for a revise</Button><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => beginBulk("reject")}>Reject</Button><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => setSelected([])}>Clear selection</Button></div> : null}
-    <p className="r22-approvals-foot">Prototype · sample data · press a to approve and move to the next card, r to ask for a revise, x to select</p>
+    {tab === "waiting" ? <>
+      <div className="r22-approvals-fact"><p><b>{counts.waiting} need your review</b> · {dueToday} due today · {approvable.length} ready to approve now{blockedItems.length ? ` · ${credits(blockedCost)} held by ${blockedItems.length} blocked item${blockedItems.length === 1 ? "" : "s"}` : ""}</p><Button unstyled type="button" disabled={!approvable.length || busyIds.length > 0} onClick={() => run({ ids: approvable.map((item) => item.id), kind: "approve" })}>{busyIds.length === approvable.length && busyIds.length > 0 ? "Approving…" : `Approve all (${approvable.length})${creditSuffix(approvableCost)}`}</Button></div>
+      <p className="r22-approvals-rule">{DEADLINE_RULE}</p>
+    </> : null}
+    {notice ? <div className="r22-approvals-notice" data-kind={noticeKind} role={noticeKind === "error" ? "alert" : "status"}>{noticeKind === "success" ? <Check aria-hidden="true" /> : <AlertCircle aria-hidden="true" />}<p>{notice}</p>{retryDecision ? <Button unstyled type="button" onClick={() => run(retryDecision, true)}>Retry</Button> : null}{undoItems && noticeKind === "success" ? <Button unstyled type="button" onClick={() => { setItems(undoItems); setUndoItems(null); setNotice(""); }}>Undo</Button> : null}<Button unstyled type="button" onClick={() => { setUndoItems(null); setRetryDecision(null); setNotice(""); }}>Dismiss</Button></div> : null}
+    <div className="r22-approvals-bar"><Tabs unstyled value={tab} onValueChange={(value) => { setTab(value as ApprovalStatus); setSelected([]); setExpandedId(null); setRevising(null); setPreview(null); }}><TabsList unstyled aria-label="Approval state">{(["waiting", "approved", "rejected"] as const).map((value) => <TabsTrigger unstyled className={tab === value ? "is-active" : ""} key={value} value={value}>{value === "waiting" ? "Needs review" : value === "approved" ? "Approved" : "Sent back"} <span>{counts[value]}</span></TabsTrigger>)}</TabsList></Tabs><ToggleGroup unstyled type="single" value={filter} aria-label="Filter approvals" onValueChange={(value) => { if (value) setFilter(value as "all" | "otto" | "cost"); }}>{(["all", "otto", "cost"] as const).map((value) => <ToggleGroupItem unstyled key={value} value={value} className={filter === value ? "is-active" : ""}>{value === "all" ? "All" : value === "otto" ? "From Otto" : "Costs credits"}</ToggleGroupItem>)}</ToggleGroup></div>
+    {visible.length ? <section className="r22-approvals-list">{tab === "waiting" ? groupedWaiting.map((entry) => <div className="r22-approvals-group" key={entry.group.id}><header><h2>{entry.group.label}</h2>{entry.group.time ? <span>{entry.group.time}</span> : null}</header>{entry.groupItems.map(renderCard)}</div>) : <div className="r22-approvals-group"><header><h2>Last 7 days</h2><span>times in GMT+8</span></header>{visible.map(renderCard)}</div>}</section> : <section className="r22-approvals-empty"><h2>{filter !== "all" ? "Nothing here matches this filter" : tab === "waiting" ? "Nothing needs your review" : tab === "approved" ? "Nothing approved in the last 7 days" : "Nothing sent back yet"}</h2><p>{filter !== "all"
+      ? filter === "otto" ? "No approvals from Otto in this list right now." : "No approvals that cost credits in this list right now."
+      : tab === "waiting" ? "Everything Otto prepared has been handled."
+      : tab === "approved" ? "Anything you approve lands here with who approved it and when."
+      : "Anything you send back keeps the reason you gave, so Otto can fix the next version."}</p>{filter !== "all" ? <Button unstyled type="button" onClick={() => setFilter("all")}>Clear filter</Button> : null}</section>}
+    {selected.length ? <div className="r22-approvals-bulkwrap"><div className="r22-approvals-bulk" role="status"><b>{selected.length} selected</b>{selectedCost ? <span>{credits(selectedCost)}</span> : null}<Button unstyled type="button" disabled={!approvableSelected.length || busyIds.length > 0} onClick={() => run({ ids: approvableSelected.map((item) => item.id), kind: "approve" })}>{busyIds.length ? "Approving…" : `Approve ${approvableSelected.length} selected${creditSuffix(approvableSelectedCost)}`}</Button><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => beginBulk("revise")}>Ask for a revise</Button><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => beginBulk("reject")}>Reject</Button><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => setSelected([])}>Clear selection</Button></div><p className="r22-approvals-bulkhint">Approving takes you to the next card that still needs review.</p></div> : null}
+    <p className="r22-approvals-foot">Prototype · sample data · press a to approve and move to the next card, r to ask for a revise, x to select, Enter on a picture to open the full preview.</p>
+    {previewItem ? <ApprovalLayer
+      item={previewItem}
+      index={preview!.index}
+      onIndex={(index) => setPreview({ id: previewItem.id, index })}
+      onClose={() => setPreview(null)}
+      onApprove={approve}
+      onBegin={begin}
+    /> : null}
   </main>;
 }
 

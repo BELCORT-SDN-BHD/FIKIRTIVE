@@ -70,6 +70,10 @@
      ————— */
   --r22-coral-text: #8c3b20; /* 深珊瑚,配 coral-soft 浅底的文字档 */
   --r22-ink-hover: #26272e; /* 原型 L13 --ink-hover,ink 按钮 hover 加深 */
+  --r22-tint-hover: rgb(22 23 28 / 5%); /* 原型 L13 --tint-hover,幽灵按钮/页签的 hover 底色。
+     r22-approvals.css 从换壳起就在引用它,但它一直没入册 —— var() 取不到值时那条 hover
+     声明整条作废,页签 hover 于是一直是死的。补册,不是新发明。 */
+  --r22-scrim: rgb(22 23 28 / 42%); /* 原型 L319 .ap-layer .scrim,审阅层背后那层压暗 */
   --r22-grad-violet: linear-gradient(135deg, #ede9fe, #dbeafe); /* 原型 L16 --grad-violet */
   --r22-on-violet: #3b3663; /* 原型 L16 --on-violet */
   --r22-on-violet-muted: #4f4a73; /* onboarding 里同一张紫渐变卡上更淡的次级文字 */

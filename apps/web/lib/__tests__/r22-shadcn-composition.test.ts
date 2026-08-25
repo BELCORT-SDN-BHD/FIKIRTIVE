@@ -22,6 +22,9 @@ const R22_SURFACES = [
   // 覆盖不到它们,而这种漏是静默的。
   "components/approvals/R22ApprovalsView.tsx",
   "components/approvals/ApprovalCard.tsx",
+  // v2 皮肤又拆出一个:点开一张图之后的审阅层。上面那段话说的正是这件事 ——
+  // 新文件不上名单,四条通用围栏就一条也扫不到它。
+  "components/approvals/ApprovalLayer.tsx",
   "components/approvals/ApprovalDetail.tsx",
   "components/approvals/ApprovalTimeline.tsx",
   "components/approvals/ApprovalThumb.tsx",

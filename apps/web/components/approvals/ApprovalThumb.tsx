@@ -9,7 +9,7 @@
  * 的优化管线,所以告警本身留着(它说的是真的),但只留一处。
  */
 
-export function ApprovalThumb({ src, className = "r22-approvals-thumb" }: { src: string; className?: string }) {
+export function ApprovalThumb({ src, className = "r22-approvals-frame-img" }: { src: string; className?: string }) {
   return <img className={className} src={src} alt="" />;
 }
 

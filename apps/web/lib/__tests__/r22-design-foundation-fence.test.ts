@@ -90,7 +90,9 @@ describe("R22 地基围栏 ① 禁新增裸 hex —— 颜色只许住在央册�
  */
 const FONT_SIZE_SNAPSHOT: Record<string, string[]> = {
   "app/login/r22-auth.css": ["12px", "13.5px", "15px", "17px"],
-  "components/approvals/r22-approvals.css": ["10.5px", "12px", "16px", "8.5px", "9px"],
+  // Approvals v2 换皮时逐面收静完毕:整份文件的 `font-size` 全部落在字梯 token 上,
+  // off-ladder 集合清零。ratchet 只许下调 —— 这一面从此不许再冒出一个即兴尺寸。
+  "components/approvals/r22-approvals.css": [],
   "components/campaign/r22-campaigns.css": ["10.5px", "10px", "12px", "15px", "16px", "17px", "30px"],
   "components/canvas/r22-canvas.css": [
     "0.9em",

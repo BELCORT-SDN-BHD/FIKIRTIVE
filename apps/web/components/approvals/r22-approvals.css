@@ -1,3 +1,16 @@
+/*
+ * r22-approvals.css —— Approvals v2。
+ *
+ * 卡上的字只有两级:**帖子自己的字**(`--r22-text-body-lg`)和**做决定需要的字**
+ * (`--r22-text-small`)。别的都不配拥有一个尺寸。等宽字只留给钟点、金额和计数,
+ * 因为只有这三样需要跟上下行对齐着读。
+ *
+ * 颜色一律 `var(--r22-*)`,一个裸 hex 都没有 —— 央册在 `components/r22/r22-tokens.css`。
+ * 这两条由 `lib/__tests__/r22-design-foundation-fence.test.ts` 机器把关。
+ */
+
+/* ————— 版心。`app/approvals/loading.tsx` 的骨架复用这一层与下面四个区块类名,
+   所以第一帧就落在最终位置上,内容到了不横跳。 ————— */
 .r22-approvals {
   box-sizing: border-box;
   width: 1020px;
@@ -10,135 +23,276 @@
 }
 .r22-approvals > header h1 { margin: 0; font-size: var(--r22-text-h1); font-weight: 600; line-height: 1.5; letter-spacing: -.015em; }
 .r22-approvals > header p { margin: 5px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-body-lg); line-height: 1.5; }
-.r22-approvals-banner { display: flex; min-height: 41px; margin-top: 16px; align-items: center; gap: 9px; padding: 10px 14px; border: 1px solid var(--r22-line); border-radius: 10px; background: var(--r22-chrome); color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
-.r22-approvals-banner svg { width: 15px; height: 15px; flex: none; color: var(--r22-warn-text); }
+
+/* ————— 未接频道的横幅 ————— */
+.r22-approvals-banner { display: flex; min-height: 41px; margin-top: 16px; align-items: center; gap: 9px; padding: 10px 14px; border: 1px solid var(--r22-line); border-radius: 12px; background: var(--r22-chrome); color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
+.r22-approvals-banner svg { width: 15px; height: 15px; flex: none; color: var(--r22-warn); }
 .r22-approvals-banner span { flex: 1; }
-.r22-approvals-banner a { margin-left: auto; color: var(--r22-ink); font-size: var(--r22-text-small); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--r22-line-2); }
-.r22-approvals-fact { display: flex; margin-top: 16px; align-items: center; gap: 14px; }
-.r22-approvals-fact p { flex: 1; margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-body); line-height: 1.5; }
+.r22-approvals-banner a { margin-left: auto; color: var(--r22-ink); font-size: var(--r22-text-small); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--r22-line-2); }
+.r22-approvals-banner a:hover { text-decoration-color: var(--r22-ink); }
+
+/* ————— 事实条 + 唯一的一键动作 ————— */
+.r22-approvals-fact { display: flex; min-height: 32px; margin-top: 16px; align-items: center; gap: 14px; }
+.r22-approvals-fact p { flex: 1; margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
 .r22-approvals-fact b { color: var(--r22-ink); font-weight: 600; }
-.r22-approvals-fact button { flex: none; padding: 7px 14px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-small); }
-.r22-approvals-fact button:disabled { opacity: .45; }
-.r22-approvals-rule { max-width: 66ch; margin: 6px 0 0; color: var(--r22-ink-3); font-size: 12px; line-height: 1.5; }
-.r22-approvals-notice { display: flex; margin-top: 12px; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--r22-good-border); border-radius: 8px; background: var(--r22-good-soft); font-size: var(--r22-text-caption); }
+.r22-approvals-fact button { flex: none; padding: 7px 14px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-body); font-weight: 500; }
+.r22-approvals-fact button:hover { background: var(--r22-ink-hover); }
+.r22-approvals-fact button:disabled { opacity: .45; cursor: not-allowed; }
+.r22-approvals-rule { max-width: 66ch; margin: 6px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-caption); line-height: 1.55; }
+
+/* ————— 一条状态行,平白的话,永远不是一摞 toast ————— */
+.r22-approvals-notice { display: flex; margin-top: 14px; align-items: center; gap: 12px; flex-wrap: wrap; padding: 11px 14px; border: 1px solid var(--r22-line-2); border-radius: 12px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); color: var(--r22-ink-2); font-size: var(--r22-text-small); }
+.r22-approvals-notice p { flex: 1; min-width: 280px; max-width: 66ch; margin: 0; line-height: 1.55; }
+.r22-approvals-notice svg { width: 15px; height: 15px; flex: none; color: var(--r22-good-text); }
 .r22-approvals-notice[data-kind="error"] { border-color: var(--r22-bad-border); background: var(--r22-bad-soft); color: var(--r22-bad-text); }
-.r22-approvals-notice svg { width: 14px; }
-.r22-approvals-notice button { color: var(--r22-ink-2); }
-.r22-approvals-notice button:first-of-type { margin-left: auto; }
+.r22-approvals-notice[data-kind="error"] svg { color: var(--r22-bad); }
+.r22-approvals-notice button { padding: 5px 11px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-caption); }
+.r22-approvals-notice button:hover { background: var(--r22-chrome); }
+
+/* ————— 页签 + 筛选 ————— */
 .r22-approvals-bar { display: flex; margin-top: 20px; align-items: flex-end; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--r22-line); }
 .r22-approvals-bar [role="tablist"] { display: flex; gap: 4px; }
 .r22-approvals-bar [role="tab"] { display: inline-flex; min-height: 40px; align-items: center; gap: 7px; padding: 9px 12px; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-body); font-weight: 500; transition: color 120ms ease, background-color 120ms ease; }
 .r22-approvals-bar [role="tab"]:hover { background: var(--r22-tint-hover); color: var(--r22-ink); }
 .r22-approvals-bar [role="tab"].is-active { border-bottom-color: var(--r22-ink); color: var(--r22-ink); }
-.r22-approvals-bar [role="tab"] span { display: inline-grid; min-width: 19px; height: 17px; place-items: center; border-radius: 99px; background: var(--r22-chrome); color: var(--r22-ink-3); font: 500 10.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.r22-approvals-bar [role="tab"] span { display: inline-grid; min-width: 19px; height: 17px; place-items: center; border-radius: 99px; background: var(--r22-chrome); color: var(--r22-ink-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--r22-text-mono-label); font-weight: 500; font-variant-numeric: tabular-nums; }
+.r22-approvals-bar [role="tab"].is-active span { color: var(--r22-ink); }
 .r22-approvals-bar > [role="radiogroup"] { display: flex; gap: 6px; padding-bottom: 7px; }
-.r22-approvals-bar > [role="radiogroup"] [role="radio"] { padding: 5px 10px; border: 1px solid var(--r22-line-2); border-radius: 99px; color: var(--r22-ink-2); font-size: var(--r22-text-mono-label); }
-.r22-approvals-bar > [role="radiogroup"] [role="radio"].is-active { border-color: var(--r22-ink-3); background: var(--r22-ink); color: var(--r22-surface); }
+.r22-approvals-bar > [role="radiogroup"] [role="radio"] { padding: 5px 10px; border: 1px solid var(--r22-line-2); border-radius: 99px; color: var(--r22-ink-2); font-size: var(--r22-text-caption); font-weight: 500; transition: background-color 120ms ease; }
+.r22-approvals-bar > [role="radiogroup"] [role="radio"]:hover { background: var(--r22-chrome); }
+.r22-approvals-bar > [role="radiogroup"] [role="radio"].is-active { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
+
+/* ————— 分组标题 ————— */
 .r22-approvals-list { display: block; }
-.r22-approvals-group > header { display: flex; margin: 26px 0 10px; align-items: center; justify-content: space-between; }
+.r22-approvals-group > header { display: flex; margin: 26px 0 12px; align-items: baseline; justify-content: space-between; gap: 10px; }
 .r22-approvals-group:first-child > header { margin-top: 20px; }
-.r22-approvals-group > header h2 { margin: 0; font-size: var(--r22-text-body-lg); font-weight: 600; }
-.r22-approvals-group > header span { padding: 5px 9px; border: 1px solid var(--r22-line-2); border-radius: 99px; background: var(--r22-surface); color: var(--r22-ink-2); font-size: 10.5px; }
-.r22-approvals-item { margin-bottom: 12px; background: var(--r22-surface); outline: none; }
-.r22-approvals-item.is-busy { opacity: .62; }
+.r22-approvals-group > header h2 { margin: 0; font-size: var(--r22-text-body); font-weight: 600; }
+.r22-approvals-group > header span { color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
+
+/* ══════════ 卡:关注者会看到的东西,被做决定需要的东西框起来 ══════════ */
+.r22-approvals-item {
+  position: relative;
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 1px solid var(--r22-line);
+  border-radius: 12px;
+  background: var(--r22-surface);
+  box-shadow: var(--r22-shadow-sm);
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+  animation: r22-approvals-in 240ms cubic-bezier(.23, 1, .32, 1) both;
+  animation-delay: calc(var(--r22-approvals-stagger, 0) * 45ms);
+}
+@keyframes r22-approvals-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .r22-approvals-item:focus-visible { outline: 2px solid var(--r22-ink); outline-offset: 2px; }
-.r22-approvals-item-head { display: flex; min-height: 23px; align-items: center; gap: 10px; flex-wrap: wrap; }
-.r22-approvals-item-head b { flex: none; font-size: var(--r22-text-body-lg); font-weight: 700; line-height: 1.5; }
-.r22-approvals-check { display: grid; width: 15px; height: 15px; flex: none; place-items: center; border: 1px solid var(--r22-line-2); border-radius: 2px; background: var(--r22-surface); color: var(--r22-surface); }
+.r22-approvals-item.is-selected { border-color: var(--r22-ink); box-shadow: var(--r22-shadow-sm), 0 0 0 1px var(--r22-ink); }
+.r22-approvals-item.is-busy { opacity: .62; }
+.r22-approvals-item.is-done { opacity: .94; }
+.r22-approvals-item.is-rejecting .r22-approvals-foot { display: none; }
+
+/* ① meta 行 —— 一个字号、一个颜色,从左到右:谁在发、发去哪、什么时候发、何时之前决定 */
+.r22-approvals-meta { display: flex; min-height: 23px; align-items: center; gap: 9px; padding: 14px 16px 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.45; }
+.r22-approvals-check { display: grid; width: 15px; height: 15px; flex: none; place-items: center; border: 1px solid var(--r22-line-2); border-radius: 3px; background: var(--r22-surface); color: var(--r22-surface); cursor: pointer; }
 .r22-approvals-check[data-state="checked"] { border-color: var(--r22-ink); background: var(--r22-ink); }
 .r22-approvals-check svg { width: 10px; height: 10px; }
-.r22-approvals-origin { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--r22-line-2); border-radius: 99px; color: var(--r22-ink-3); font-size: 10.5px; font-weight: 500; line-height: 1; white-space: nowrap; }
-.r22-approvals-origin i { width: 6px; height: 6px; border-radius: 50%; background: var(--r22-coral); }
-.r22-approvals-origin em { width: 15px; height: 15px; border-radius: 50%; background: var(--r22-ink); color: var(--r22-surface); font-size: 8.5px; font-style: normal; font-weight: 600; line-height: 15px; text-align: center; }
-.r22-approvals-origin.is-otto { color: var(--r22-ink-2); }
-.r22-approvals-price { color: var(--r22-ink-2); font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
-.r22-approvals-body { padding: 12px 14px 4px; color: var(--r22-ink-2); }
-.r22-approvals-thumbs { display: flex; gap: 8px; margin-bottom: 10px; }
-.r22-approvals-thumb { display: block; width: 46px; height: 58px; overflow: hidden; flex: none; border: 1px solid var(--r22-line); border-radius: 6px; background: var(--r22-chrome); box-shadow: var(--r22-shadow-sm); object-fit: cover; }
-.r22-approvals-thumb.is-more { display: grid; place-items: center; border-color: var(--r22-line-2); color: var(--r22-ink-2); font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-thumb.is-pending { display: grid; place-items: center; padding: 0 4px; color: var(--r22-ink-3); font-size: 9px; font-style: normal; line-height: 1.3; text-align: center; }
-.r22-approvals-facts { margin: 2px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
-.r22-approvals-facts > span { color: var(--r22-ink); font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-warning { margin: 5px 0 0; color: var(--r22-warn-text); font-size: var(--r22-text-small); line-height: 1.5; }
-.r22-approvals-sources { display: flex; margin-top: 8px; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
-.r22-approvals-sources button { padding: 4px 8px; border: 1px solid var(--r22-line-2); border-radius: 7px; background: var(--r22-surface); color: var(--r22-ink-2); font: 500 10.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-diff { display: flex; margin: 0 0 10px; align-items: center; gap: 9px; }
-.r22-approvals-diff span { color: var(--r22-ink-3); font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: line-through; }
-.r22-approvals-diff i { color: var(--r22-ink-3); font-size: 12px; font-style: normal; }
-.r22-approvals-diff b { padding: 4px 7px; border: 1px solid var(--r22-line-2); border-radius: 6px; background: var(--r22-chrome); color: var(--r22-ink); font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-actions { display: flex; min-height: 64px; flex-direction: column; align-items: flex-start; gap: 7px; padding: 10px 14px 13px; }
-.r22-approvals-consequence { margin: 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
-.r22-approvals-actionrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.r22-approvals-actionrow > button:not(.r22-approvals-more) { padding: 7px 14px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: var(--r22-text-body); }
-.r22-approvals-actionrow > button:first-child { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
-.r22-approvals-actionrow > button:disabled { opacity: .45; }
-.r22-approvals-actionrow > a { margin-left: 4px; color: var(--r22-ink); font-size: var(--r22-text-small); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--r22-line-2); }
-.r22-approvals-more { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; }
+.r22-approvals-chico { display: grid; width: 16px; height: 16px; flex: none; place-items: center; color: var(--r22-ink-2); }
+.r22-approvals-chico svg { width: 16px; height: 16px; }
+.r22-approvals-metaline { display: flex; min-width: 0; align-items: center; gap: 6px; flex-wrap: wrap; }
+.r22-approvals-metaline time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+/* 分隔点不带信息,所以跟着这一行的颜色走,只是掉一点分量 */
+.r22-approvals-sep { padding: 0 2px; color: inherit; font-style: normal; opacity: .45; }
+.r22-approvals-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--r22-coral); }
+.r22-approvals-av { width: 17px; height: 17px; flex: none; border-radius: 50%; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-mono-label); font-style: normal; font-weight: 600; line-height: 17px; text-align: center; }
+/* ⑧ 审批到期,与 slot 时间彼此独立 */
+.r22-approvals-by { margin-left: auto; flex: none; padding: 4px 11px; border: 1px solid var(--r22-line-2); border-radius: 99px; color: var(--r22-ink-2); font-size: var(--r22-text-small); white-space: nowrap; }
+.r22-approvals-by time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+.r22-approvals-by.is-urgent { border-color: var(--r22-warn); color: var(--r22-warn); }
+
+/* ② 帖子本体 —— 字在上、图在下,关注者遇见它的那个顺序 */
+.r22-approvals-post { padding: 12px 16px 16px; }
+.r22-approvals-cap { max-width: 66ch; margin: 0; color: var(--r22-ink); font-size: var(--r22-text-body-lg); line-height: 1.6; }
+.r22-approvals-note { max-width: 66ch; margin: 8px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
+/* ④ 版本循环:改了什么,以及已经结清的旧意见 */
+.r22-approvals-changed { max-width: 66ch; margin: 8px 0 0; color: var(--r22-ink); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-settled { max-width: 66ch; margin: 4px 0 0; padding-left: 10px; border-left: 2px solid var(--r22-line-2); color: var(--r22-ink-3); font-size: var(--r22-text-small); line-height: 1.55; text-decoration: line-through; text-decoration-color: var(--r22-line-2); }
+/* 一批图留在一行上,按各自的真实比例;长批次在自己内部横滚,而不是折成一张网格 */
+.r22-approvals-media { display: flex; margin-top: 12px; gap: 10px; }
+.r22-approvals-media.is-many { gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.r22-approvals-shot { position: relative; display: block; height: 300px; overflow: hidden; flex: none; padding: 0; border: 1px solid var(--r22-line); border-radius: 12px; background: var(--r22-chrome); box-shadow: var(--r22-shadow-sm); transition: box-shadow 140ms ease, transform 140ms cubic-bezier(.23, 1, .32, 1); }
+.r22-approvals-media.is-many .r22-approvals-shot { height: 200px; }
+.r22-approvals-shot:active { transform: scale(.985); }
+.r22-approvals-shot.is-4x5 { aspect-ratio: 4 / 5; }
+.r22-approvals-shot.is-1x1 { aspect-ratio: 1 / 1; }
+.r22-approvals-shot.is-9x16 { aspect-ratio: 9 / 16; }
+.r22-approvals-shot.is-191x1 { aspect-ratio: 1.91 / 1; }
+/* 唯一一处「图片说话而不是给你看」的地方 */
+.r22-approvals-shot.is-pending { display: grid; place-items: center; border-style: dashed; border-color: var(--r22-line-2); background: var(--r22-chrome); box-shadow: none; cursor: default; }
+.r22-approvals-shot.is-pending span { padding: 0 10px; color: var(--r22-ink-3); font-size: var(--r22-text-caption); line-height: 1.5; text-align: center; }
+.r22-approvals-shot.is-pending:active { transform: none; }
+.r22-approvals-frame-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* ③ 页脚 —— 批准会发生什么,然后是三个出口 */
+.r22-approvals-foot { display: flex; min-height: 64px; flex-direction: column; gap: 9px; padding: 12px 16px 14px; border-top: 1px solid var(--r22-line); }
+.r22-approvals-conseq { max-width: 66ch; margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-conseq b { color: var(--r22-ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+.r22-approvals-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.r22-approvals-acts > button { padding: 7px 14px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-body); font-weight: 500; white-space: nowrap; }
+.r22-approvals-acts > button:hover { background: var(--r22-chrome); }
+.r22-approvals-acts > button:first-child { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
+.r22-approvals-acts > button:first-child:hover { background: var(--r22-ink-hover); }
+.r22-approvals-acts > button:nth-child(4) { border-color: transparent; background: none; color: var(--r22-ink-2); }
+.r22-approvals-acts > button:nth-child(4):hover { background: var(--r22-chrome); color: var(--r22-ink); }
+.r22-approvals-acts > button:disabled { opacity: .45; cursor: not-allowed; }
+.r22-approvals-acts > button:disabled:active { transform: none; }
+.r22-approvals-more { display: grid; width: 32px; height: 32px; margin-left: auto; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--r22-ink-2); }
+.r22-approvals-more:hover { background: var(--r22-chrome); color: var(--r22-ink); }
 .r22-approvals-more svg { width: 15px; height: 15px; }
-.r22-approvals-decision { display: flex; margin: 0; padding: 12px 14px; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--r22-line); color: var(--r22-ink-2); font-size: var(--r22-text-small); }
+.r22-approvals-pop a { display: block; width: 100%; }
+
+/* ④ 那堵墙,一行、一个颜色,出口就在同一行上 */
+.r22-approvals-block { display: flex; margin: 0; align-items: flex-start; gap: 9px; color: var(--r22-warn); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-block svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.r22-approvals-block span { flex: 1; max-width: 62ch; }
+.r22-approvals-block button { flex: none; padding: 5px 12px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-caption); white-space: nowrap; }
+.r22-approvals-block button:hover { background: var(--r22-chrome); }
+.r22-approvals-block button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ————— 已决卡那一行 ————— */
+.r22-approvals-decision { display: flex; margin: 0; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid var(--r22-line); color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
 .r22-approvals-decision p { flex: 1; min-width: 220px; margin: 0; }
-.r22-approvals-decision button { padding: 5px 10px; border: 1px solid var(--r22-line-2); border-radius: 7px; color: var(--r22-ink); font-size: var(--r22-text-caption); }
-.r22-approvals-reject { padding: 12px 14px 14px; border-top: 1px solid var(--r22-line); background: var(--r22-chrome); }
-.r22-approvals-reject h3 { margin: 0; font-size: var(--r22-text-body); font-weight: 600; }
-.r22-approvals-reject > p { margin: 3px 0 0; color: var(--r22-ink-2); font-size: 12px; }
-.r22-approvals-reject [role="radiogroup"] { display: flex; margin-top: 9px; flex-direction: column; gap: 3px; }
-.r22-approvals-reject label { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: var(--r22-text-small); cursor: pointer; }
-.r22-approvals-radio { display: grid; width: 14px; height: 14px; place-items: center; border: 1px solid var(--r22-line-2); border-radius: 50%; }
+.r22-approvals-decision button { padding: 5px 11px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-caption); }
+.r22-approvals-decision button:hover { background: var(--r22-chrome); }
+
+/* ————— 理由面板,一块板,两个承诺 ————— */
+.r22-approvals-reject { padding: 14px 16px 16px; border-top: 1px solid var(--r22-line); background: var(--r22-chrome); }
+.r22-approvals-reject h3 { margin: 0; color: var(--r22-ink); font-size: var(--r22-text-body); font-weight: 600; }
+.r22-approvals-reject > p { max-width: 66ch; margin: 4px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-reject [role="radiogroup"] { display: flex; margin-top: 10px; flex-direction: column; gap: 3px; }
+.r22-approvals-reject label { display: flex; align-items: center; gap: 9px; padding: 4px 2px; color: var(--r22-ink); font-size: var(--r22-text-small); cursor: pointer; }
+.r22-approvals-radio { display: grid; width: 14px; height: 14px; flex: none; place-items: center; border: 1px solid var(--r22-line-2); border-radius: 50%; background: var(--r22-surface); }
+.r22-approvals-radio[data-state="checked"] { border-color: var(--r22-ink); color: var(--r22-ink); }
 .r22-approvals-radio svg { width: 7px; height: 7px; }
-.r22-approvals-reject textarea { width: 100%; margin-top: 10px; padding: 9px 10px; resize: vertical; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: var(--r22-text-small); outline: none; }
-.r22-approvals-reject > div:last-child { display: flex; margin-top: 11px; gap: 8px; }
-.r22-approvals-reject > div:last-child button { padding: 7px 14px; border: 1px solid var(--r22-line-2); border-radius: 8px; font-size: var(--r22-text-body); }
-.r22-approvals-reject > div:last-child button:first-child { background: var(--r22-ink); color: var(--r22-surface); }
-.r22-approvals-reject > div:last-child button:disabled { opacity: .45; }
-.r22-approvals-bulk { position: fixed; left: 50%; bottom: 26px; z-index: 50; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 18px; transform: translateX(-50%); border: 1px solid var(--r22-line-2); border-radius: 99px; background: var(--r22-surface); box-shadow: var(--r22-shadow-lg); }
-.r22-approvals-bulk b { font-size: var(--r22-text-small); font-weight: 500; }
-.r22-approvals-bulk span { color: var(--r22-ink-2); font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-bulk button { padding: 6px 13px; border: 1px solid var(--r22-line-2); border-radius: 8px; font-size: var(--r22-text-small); }
-.r22-approvals-bulk button:first-of-type { background: var(--r22-ink); color: var(--r22-surface); }
-.r22-approvals-empty, .r22-approvals-unavailable { display: flex; min-height: 330px; margin-top: 18px; padding: 38px; align-items: center; justify-content: center; flex-direction: column; border: 1px solid var(--r22-line); border-radius: 12px; background: var(--r22-surface); text-align: center; }
-.r22-approvals-empty h2, .r22-approvals-unavailable h2 { margin: 13px 0 0; font-size: 16px; }
-.r22-approvals-empty p, .r22-approvals-unavailable p { max-width: 530px; margin: 7px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
-.r22-approvals-unavailable > div { display: flex; margin-top: 17px; gap: 8px; }
-.r22-approvals-unavailable a { display: flex; min-height: 34px; align-items: center; padding: 0 12px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); }
-/* ④ 版本徽章 + What changed + 已结清的旧意见 */
-.r22-approvals-badge { padding: 3px 7px; border: 1px solid var(--r22-line-2); border-radius: 6px; background: var(--r22-chrome); color: var(--r22-ink); font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-changed { margin: 6px 0 0; color: var(--r22-ink); font-size: var(--r22-text-small); line-height: 1.5; }
-.r22-approvals-changed b { margin-right: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--r22-ink-3); }
-.r22-approvals-settled { margin: 4px 0 0; padding-left: 9px; border-left: 2px solid var(--r22-line-2); color: var(--r22-ink-3); font-size: 12px; line-height: 1.5; text-decoration: line-through; text-decoration-color: var(--r22-line-2); }
-/* ⑤ 阻断芯片 + Fix with Otto */
-.r22-approvals-blocker { margin-top: 9px; padding: 9px 11px; border: 1px solid var(--r22-approvals-blocker-border); border-radius: 9px; background: var(--r22-approvals-blocker-soft); }
-.r22-approvals-blocker > div { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.r22-approvals-blocker button { padding: 4px 10px; border: 1px solid var(--r22-approvals-blocker-border-2); border-radius: 7px; background: var(--r22-surface); color: var(--r22-approvals-blocker-text); font-size: var(--r22-text-caption); }
-.r22-approvals-blocker p { margin: 6px 0 0; color: var(--r22-warn-text); font-size: var(--r22-text-small); line-height: 1.5; }
-.r22-approvals-chip { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 99px; background: var(--r22-warn-text); color: var(--r22-surface); font-size: 10.5px; font-weight: 600; line-height: 1; }
-/* ⑧ 独立审批到期 */
-.r22-approvals-deadline { margin-left: auto; padding: 4px 9px; border: 1px solid var(--r22-line-2); border-radius: 99px; color: var(--r22-ink-2); font-size: 10.5px; font-weight: 500; line-height: 1; white-space: nowrap; }
-.r22-approvals-deadline.is-urgent { border-color: var(--r22-approvals-blocker-border-2); background: var(--r22-approvals-blocker-soft-2); color: var(--r22-approvals-blocker-text); }
-/* ③ 卡内双页签 + ⑦ 时间线 */
-.r22-approvals-detail { margin: 0 14px 12px; padding: 12px 14px 14px; border: 1px solid var(--r22-line); border-radius: 10px; background: var(--r22-chrome); }
-.r22-approvals-detail [role="tablist"] { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--r22-line-2); }
-.r22-approvals-detail [role="tab"] { padding: 6px 10px; border-bottom: 2px solid transparent; color: var(--r22-ink-2); font-size: 12px; font-weight: 500; }
+.r22-approvals-reject textarea { display: block; width: 100%; min-height: 52px; margin-top: 10px; padding: 8px 10px; resize: vertical; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-small); line-height: 1.5; outline: none; }
+.r22-approvals-reject > div:last-child { display: flex; margin-top: 12px; gap: 8px; }
+.r22-approvals-reject > div:last-child button { padding: 7px 14px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-body); font-weight: 500; }
+.r22-approvals-reject > div:last-child button:first-child { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
+.r22-approvals-reject > div:last-child button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ③ 卡内双页签 + ⑦ 时间线 —— 就地展开,不跳走 */
+.r22-approvals-detail { padding: 14px 16px 16px; border-top: 1px solid var(--r22-line); background: var(--r22-chrome); }
+.r22-approvals-detail [role="tablist"] { display: flex; margin-bottom: 14px; gap: 4px; border-bottom: 1px solid var(--r22-line-2); }
+.r22-approvals-detail [role="tab"] { padding: 6px 10px; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); font-weight: 500; transition: color 120ms ease, background-color 120ms ease; }
+.r22-approvals-detail [role="tab"]:hover { background: var(--r22-tint-hover); color: var(--r22-ink); }
 .r22-approvals-detail [role="tab"].is-active { border-bottom-color: var(--r22-ink); color: var(--r22-ink); }
-.r22-approvals-detail h4 { margin: 14px 0 7px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--r22-ink-3); }
+.r22-approvals-detail h4 { margin: 16px 0 9px; color: var(--r22-ink-3); font-size: var(--r22-text-caption); font-weight: 600; }
 .r22-approvals-previews { display: flex; gap: 12px; flex-wrap: wrap; }
-.r22-approvals-preview { width: 268px; max-width: 100%; padding: 10px 11px 12px; border: 1px solid var(--r22-line); border-radius: 9px; background: var(--r22-surface); }
-.r22-approvals-preview > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.r22-approvals-preview > header b { font-size: 12px; font-weight: 600; }
-.r22-approvals-preview > header span { color: var(--r22-ink-3); font-size: 10.5px; }
-.r22-approvals-preview .r22-approvals-thumb { width: 100%; height: 108px; }
-.r22-approvals-preview p { margin: 8px 0 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
-.r22-approvals-brief { display: grid; margin: 0; gap: 8px; }
-.r22-approvals-brief > div { display: grid; grid-template-columns: 132px 1fr; gap: 10px; }
-.r22-approvals-brief dt { color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
-.r22-approvals-brief dd { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.5; }
-.r22-approvals-brief-note { margin: 0; color: var(--r22-ink-3); font-size: 12px; line-height: 1.5; }
-.r22-approvals-timeline { display: grid; margin: 0; padding: 0; gap: 9px; list-style: none; }
-.r22-approvals-timeline li { position: relative; padding-left: 15px; }
+.r22-approvals-preview { width: 276px; max-width: 100%; padding: 11px 12px 13px; border: 1px solid var(--r22-line); border-radius: 8px; background: var(--r22-surface); }
+.r22-approvals-preview > header { display: flex; margin-bottom: 9px; align-items: center; gap: 7px; color: var(--r22-ink-2); font-size: var(--r22-text-small); }
+.r22-approvals-preview > header b { color: var(--r22-ink); font-weight: 600; }
+.r22-approvals-preview > header time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+.r22-approvals-preview-img { position: relative; display: block; width: 100%; height: 150px; overflow: hidden; border: 1px solid var(--r22-line); border-radius: 6px; background: var(--r22-chrome); }
+.r22-approvals-preview-img.is-pending { display: grid; place-items: center; border-style: dashed; border-color: var(--r22-line-2); color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
+.r22-approvals-preview p { margin: 9px 0 0; color: var(--r22-ink); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-preview p.r22-approvals-fit { margin-top: 7px; color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
+.r22-approvals-brief { display: grid; margin: 0; gap: 10px; }
+.r22-approvals-brief > div { display: grid; grid-template-columns: 136px minmax(0, 1fr); gap: 12px; }
+.r22-approvals-brief dt { color: var(--r22-ink-3); font-size: var(--r22-text-small); }
+.r22-approvals-brief dd { max-width: 62ch; margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-sources { display: flex; gap: 6px; flex-wrap: wrap; }
+.r22-approvals-sources button { padding: 6px 11px; border: 1px solid var(--r22-line-2); border-radius: 99px; background: var(--r22-surface); color: var(--r22-ink-2); font-size: var(--r22-text-caption); transition: background-color 120ms ease; }
+.r22-approvals-sources button:hover { background: var(--r22-chrome); }
+.r22-approvals-brief-note { margin: 0; color: var(--r22-ink-3); font-size: var(--r22-text-small); line-height: 1.5; }
+.r22-approvals-timeline { display: grid; margin: 0; padding: 0; gap: 10px; list-style: none; }
+.r22-approvals-timeline li { position: relative; padding-left: 16px; }
 .r22-approvals-timeline li::before { position: absolute; top: 6px; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--r22-line-2); content: ""; }
 .r22-approvals-timeline b { margin-right: 8px; font-size: var(--r22-text-small); font-weight: 600; }
-.r22-approvals-timeline span { color: var(--r22-ink-3); font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.r22-approvals-timeline p { margin: 3px 0 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
-.r22-approvals-foot { margin: 30px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); }
+.r22-approvals-timeline span { color: var(--r22-ink-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--r22-text-mono-label); font-weight: 500; font-variant-numeric: tabular-nums; }
+.r22-approvals-timeline p { max-width: 62ch; margin: 4px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
+
+/* ————— ② 先选后批:浮在列表上的那一条 ————— */
+.r22-approvals-bulkwrap { position: fixed; left: 50%; bottom: 26px; z-index: 50; display: flex; align-items: center; flex-direction: column; gap: 8px; transform: translateX(-50%); }
+.r22-approvals-bulk { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 18px; border: 1px solid var(--r22-line-2); border-radius: 99px; background: var(--r22-surface); box-shadow: var(--r22-shadow-lg); }
+.r22-approvals-bulk b { color: var(--r22-ink); font-size: var(--r22-text-body); font-weight: 500; white-space: nowrap; }
+.r22-approvals-bulk span { color: var(--r22-ink-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--r22-text-caption); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.r22-approvals-bulk button { padding: 6px 13px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-body); font-weight: 500; white-space: nowrap; }
+.r22-approvals-bulk button:hover { background: var(--r22-chrome); }
+.r22-approvals-bulk button:first-of-type { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
+.r22-approvals-bulk button:first-of-type:hover { background: var(--r22-ink-hover); }
+.r22-approvals-bulk button:disabled { opacity: .45; cursor: not-allowed; }
+.r22-approvals-bulkhint { margin: 0; padding: 3px 12px; border-radius: 99px; background: var(--r22-ground); color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
+
+/* ————— 空态与不可用态 ————— */
+.r22-approvals-empty, .r22-approvals-unavailable { display: flex; min-height: 330px; margin-top: 18px; align-items: center; justify-content: center; flex-direction: column; padding: 38px; border: 1px solid var(--r22-line); border-radius: 16px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); text-align: center; }
+.r22-approvals-empty h2, .r22-approvals-unavailable h2 { margin: 13px 0 0; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 600; }
+.r22-approvals-empty p, .r22-approvals-unavailable p { max-width: 530px; margin: 7px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.6; }
+.r22-approvals-empty button { margin-top: 14px; padding: 6px 13px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-body); }
+.r22-approvals-unavailable > div { display: flex; margin-top: 17px; gap: 8px; }
+.r22-approvals-unavailable a { display: flex; min-height: 34px; align-items: center; padding: 0 12px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-body); }
+.r22-approvals-unavailable svg { width: 20px; height: 20px; color: var(--r22-ink-3); }
+
+/* ══════════ 审阅层。图是主角,决定坐在它旁边 ══════════ */
+.r22-approvals-scrim { position: fixed; inset: 0; z-index: 80; background: var(--r22-scrim); }
+.r22-approvals-layer {
+  position: fixed; left: 50%; top: 50%; z-index: 81;
+  display: grid; grid-template-columns: minmax(0, 1fr) 348px;
+  width: min(1080px, calc(100% - 64px)); max-height: min(760px, calc(100% - 64px));
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--r22-line); border-radius: 16px;
+  background: var(--r22-surface); box-shadow: var(--r22-shadow-lg);
+}
+.r22-approvals-layer[data-state="open"] { animation: r22-approvals-in 180ms cubic-bezier(.23, 1, .32, 1) both; }
+.r22-approvals-stage { display: flex; min-width: 0; align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; background: var(--r22-chrome); }
+.r22-approvals-frame { position: relative; height: min(480px, 58vh); max-height: 100%; margin: 0; overflow: hidden; border: 1px solid var(--r22-line); border-radius: 12px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); }
+.r22-approvals-frame.is-4x5 { aspect-ratio: 4 / 5; }
+.r22-approvals-frame.is-1x1 { aspect-ratio: 1 / 1; }
+.r22-approvals-frame.is-9x16 { aspect-ratio: 9 / 16; }
+.r22-approvals-frame.is-191x1 { aspect-ratio: 1.91 / 1; }
+.r22-approvals-frame.is-pending { display: grid; place-items: center; border-style: dashed; border-color: var(--r22-line-2); }
+.r22-approvals-frame.is-pending span { color: var(--r22-ink-3); font-size: var(--r22-text-small); }
+.r22-approvals-strip { display: flex; gap: 8px; }
+.r22-approvals-strip button { position: relative; width: 44px; height: 56px; overflow: hidden; padding: 0; border: 1px solid var(--r22-line); border-radius: 6px; background: var(--r22-surface); transition: box-shadow 140ms ease, transform 140ms cubic-bezier(.23, 1, .32, 1); }
+.r22-approvals-strip button:active { transform: scale(.97); }
+.r22-approvals-strip button[aria-current="true"] { box-shadow: 0 0 0 2px var(--r22-surface), 0 0 0 4px var(--r22-ink); }
+.r22-approvals-side { display: flex; overflow-y: auto; flex-direction: column; gap: 12px; padding: 22px 22px 24px; border-left: 1px solid var(--r22-line); }
+.r22-approvals-lmeta { display: flex; margin: 0; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--r22-ink-2); font-size: var(--r22-text-small); }
+.r22-approvals-lmeta time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+.r22-approvals-lcap { max-width: 44ch; margin: 0; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 400; line-height: 1.6; letter-spacing: normal; }
+.r22-approvals-lnote { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-lfit { margin: 0; color: var(--r22-ink-3); font-size: var(--r22-text-small); line-height: 1.55; }
+/* 一颗禁用的 Approve 不许在这里孤零零地灰着 —— 那堵墙跟着决定一起走 */
+.r22-approvals-lblock { display: flex; margin: 0; align-items: flex-start; gap: 8px; color: var(--r22-warn); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-lblock svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.r22-approvals-lask { margin: auto 0 0; padding-top: 14px; border-top: 1px solid var(--r22-line); color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 600; }
+.r22-approvals-lconseq { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
+.r22-approvals-lacts { display: flex; gap: 8px; flex-wrap: wrap; }
+.r22-approvals-lacts button { padding: 8px 14px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-body); font-weight: 500; }
+.r22-approvals-lacts button:hover { background: var(--r22-chrome); }
+.r22-approvals-lacts button:first-child { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
+.r22-approvals-lacts button:first-child:hover { background: var(--r22-ink-hover); }
+.r22-approvals-lacts button:disabled { opacity: .45; cursor: not-allowed; }
+.r22-approvals-layer-x { position: absolute; top: 14px; right: 14px; z-index: 2; display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; color: var(--r22-ink-2); transition: background-color 120ms ease, transform 120ms cubic-bezier(.23, 1, .32, 1); }
+.r22-approvals-layer-x:hover { background: var(--r22-chrome); color: var(--r22-ink); }
+.r22-approvals-layer-x:active { transform: scale(.97); }
+
+@media (width <= 900px) {
+  .r22-approvals-layer { grid-template-columns: minmax(0, 1fr); }
+  .r22-approvals-side { border-left: none; border-top: 1px solid var(--r22-line); }
+}
+
+/* ————— 按下的那一点回弹,全面通用 ————— */
 .r22-approvals button, .r22-approvals a { transition: transform 140ms cubic-bezier(.23, 1, .32, 1), opacity 140ms ease, background-color 140ms ease, color 140ms ease; }
 .r22-approvals button:active, .r22-approvals a:active { transform: scale(.97); }
-@media (prefers-reduced-motion: reduce) { .r22-approvals button, .r22-approvals a, .r22-approvals-bar [role="tab"] { transition: none; } .r22-approvals button:active, .r22-approvals a:active { transform: none; } }
+.r22-approvals-shot:active, .r22-approvals-strip button:active { transform: scale(.985); }
+
+/* ————— 键盘发起的动作一点动效都不带 ————— */
+html[data-kb="1"] .r22-approvals-item,
+html[data-kb="1"] .r22-approvals-detail,
+html[data-kb="1"] .r22-approvals-layer,
+html[data-kb="1"] .r22-approvals-scrim { animation: none !important; transition: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-approvals-item, .r22-approvals-layer[data-state="open"] { animation: none; }
+  .r22-approvals button, .r22-approvals a, .r22-approvals-bar [role="tab"], .r22-approvals-detail [role="tab"] { transition: none; }
+  .r22-approvals button:active, .r22-approvals a:active, .r22-approvals-shot:active, .r22-approvals-strip button:active, .r22-approvals-layer-x:active { transform: none; }
+}
