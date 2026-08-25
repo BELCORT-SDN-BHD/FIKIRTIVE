@@ -484,6 +484,43 @@ describe("Home 收静:常驻说明句降到最少(Founder 2026-08-25 批的样�
   });
 });
 
+/* ── ③ᐟᐟ Home 收尾:ready 态三句说明迁 tooltip(地基法 5 授权)─────────────────
+ *
+ * 「Connection verified / Publishing permissions / Otto context」三个标签底下的常驻句
+ * (`connectionVerifiedScope` / `publishingPermissionsScope` / `ottoContextScope`)迁为
+ * 各自标签上的 tooltip。标签本身(label)不动,还是常驻;退场的只是标签下面那一句常驻说明。
+ * 句子原文一字不改,只换住处 —— 这一段钉的就是「不在常驻文本里」。
+ *
+ * Tooltip 内容走 Radix `Portal`,在没有 `document` 的 SSR 环境下不会渲染进
+ * `renderToStaticMarkup` 的输出(其余三处 tooltip —— Performance 标题、分析芯片 —— 已经是
+ * 这个先例)。所以「真的迁进 tooltip 了」这一半靠源码断言:`HomeView.tsx` 里这三句必须真的
+ * 喂给了 `<TooltipContent>`,不是被静默删掉。 */
+describe("Home 收尾:ready 态连接卡三句说明迁 tooltip(地基法 5 授权)", () => {
+  const READY_SUMMARY_SENTENCES = [
+    HOME_COPY.connectionVerifiedScope,
+    HOME_COPY.publishingPermissionsScope,
+    HOME_COPY.ottoContextScope,
+  ];
+
+  it("ready 态渲染里,三句说明不在常驻可见文本里", () => {
+    const text = visibleText(render({ kind: "connected", accountLabel: "Meta account", transient: false }));
+    for (const sentence of READY_SUMMARY_SENTENCES) {
+      expect(text, `这句该在 tooltip 里,不该常驻:「${sentence}」`).not.toContain(sentence);
+    }
+    // 标签本身没有退场 —— 退场的只是标签下面那句常驻说明。
+    for (const label of [HOME_COPY.connectionVerifiedLabel, HOME_COPY.publishingPermissionsLabel, HOME_COPY.ottoContextLabel]) {
+      expect(text, `标签不见了:「${label}」`).toContain(label);
+    }
+  });
+
+  it("三句说明真的喂给了各自标签的 TooltipContent,不是被删掉了", () => {
+    const view = sourceOf("components/home/HomeView.tsx");
+    for (const key of ["connectionVerifiedScope", "publishingPermissionsScope", "ottoContextScope"] as const) {
+      expect(view, `HOME_COPY.${key} 没有被喂进 TooltipContent`).toContain(`<TooltipContent>{HOME_COPY.${key}}</TooltipContent>`);
+    }
+  });
+});
+
 /* ── ④ 状态句只从 HOME_COPY 来(金样辖区缩编版) ─────────────────────────────── */
 
 /**

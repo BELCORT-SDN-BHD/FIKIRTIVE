@@ -12,6 +12,14 @@
  * `.r22-home-insight-grid`……容器的内边距、栏宽、min-height、圆角与边框全部由同一份 CSS
  * 出,几何上不可能对不上。灰块只填文字的位置,卡片的轮廓在第一帧就落在最终位置上。
  *
+ * Home 收尾(Founder 2026-08-25 批的样张)之后,落定页的连接卡换了形状:connect-first 态
+ * 不再是两栏 grid(旧竖排时间线占右栏),而是 `.is-connect-first` 单卡 —— 标题、渠道四行、
+ * 一行步进器(`.r22-home-stepper`)、Skip for now,四段纵向堆叠。这份骨架跟着换:
+ * 单卡(标题条 + 四行 + 一细行 + 一短行)、下方两卡(Performance / Otto will analyse 的三枚
+ * 芯片行 `.r22-home-analysis-chips`)、create 行(图标 + 单行标题 + 三个动作占位)。旧版画的
+ * 竖排 `<ol><li>` 时间线、裸 `<ul><li>` 分析列表、`.r22-home-context-row` 整块占位都不在
+ * 落定页上了,骨架也跟着退场 —— 那几条 CSS 已经删掉。
+ *
  * `data-r22-skeleton` 关掉 `ui/skeleton` 自带的 `animate-pulse`(见 r22-dashboard.css):
  * 原型的原话是「骨架只活 450ms,动效预算不许任何东西循环。告诉商家有张卡要来的是形状,
  * 不是闪」。骨架零入场动画,内容落定时做一次 140ms 的淡入,不做「骨架闪→白闪→内容」。
@@ -35,10 +43,9 @@ export default function HomeLoading() {
         </div>
       </header>
 
-      <section className="r22-home-connect-card">
+      <section className="r22-home-connect-card is-connect-first">
         <div className="r22-home-connect-copy">
           <Skeleton className="h-[19px] w-[196px] rounded-[6px]" />
-          <Skeleton className="mt-[6px] h-[15px] w-full max-w-[380px] rounded-[6px]" />
           <div className="r22-home-channels">
             {[0, 1, 2, 3].map((row) => (
               <div className="r22-home-channel" key={row}>
@@ -48,19 +55,9 @@ export default function HomeLoading() {
               </div>
             ))}
           </div>
+          <Skeleton className="r22-home-stepper h-[14px] w-[280px] rounded-[6px]" />
+          <Skeleton className="r22-home-skip h-[13px] w-[92px] rounded-[6px]" />
         </div>
-
-        <ol className="r22-home-connection-steps">
-          {[0, 1, 2, 3].map((step) => (
-            <li key={step}>
-              <Skeleton className="h-[18px] w-[18px] rounded-full" />
-              <div>
-                <Skeleton className="h-[14px] w-[104px] rounded-[6px]" />
-                <Skeleton className="mt-[6px] h-[12px] w-[176px] rounded-[6px]" />
-              </div>
-            </li>
-          ))}
-        </ol>
       </section>
 
       <div className="r22-home-insight-grid">
@@ -70,17 +67,11 @@ export default function HomeLoading() {
         </section>
         <section className="r22-home-analysis">
           <Skeleton className="h-[19px] w-[168px] rounded-[6px]" />
-          <ul>
-            {[0, 1, 2].map((item) => (
-              <li key={item}>
-                <Skeleton className="h-[28px] w-[28px] rounded-[8px]" />
-                <div>
-                  <Skeleton className="h-[13px] w-[116px] rounded-[6px]" />
-                  <Skeleton className="mt-[5px] h-[11px] w-[228px] rounded-[6px]" />
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div className="r22-home-analysis-chips">
+            <Skeleton className="h-[26px] w-[96px] rounded-full" />
+            <Skeleton className="h-[26px] w-[148px] rounded-full" />
+            <Skeleton className="h-[26px] w-[132px] rounded-full" />
+          </div>
         </section>
       </div>
 
@@ -88,18 +79,12 @@ export default function HomeLoading() {
         <Skeleton className="h-[38px] w-[38px] shrink-0 rounded-full" />
         <div className="flex-1">
           <Skeleton className="h-[14px] w-[152px] rounded-[6px]" />
-          <Skeleton className="mt-[5px] h-[12px] w-full max-w-[420px] rounded-[6px]" />
         </div>
-        <Skeleton className="h-[32px] w-[96px] shrink-0 rounded-[8px]" />
-      </section>
-
-      <section className="r22-home-context-row">
-        <Skeleton className="h-[16px] w-[16px] shrink-0 rounded-[4px]" />
-        <div className="flex-1">
-          <Skeleton className="h-[13px] w-[288px] rounded-[6px]" />
-          <Skeleton className="mt-[5px] h-[11px] w-[336px] rounded-[6px]" />
+        <div className="r22-home-create-actions">
+          <Skeleton className="h-[34px] w-[96px] rounded-[8px]" />
+          <Skeleton className="h-[34px] w-[34px] rounded-[8px]" />
+          <Skeleton className="h-[34px] w-[140px] rounded-[8px]" />
         </div>
-        <Skeleton className="h-[14px] w-[124px] shrink-0 rounded-[6px]" />
       </section>
 
       <span className="sr-only">Loading your home</span>

@@ -69,8 +69,7 @@
 .r22-home-connect-card,
 .r22-home-performance,
 .r22-home-analysis,
-.r22-home-create-row,
-.r22-home-context-row {
+.r22-home-create-row {
   border: 1px solid var(--r22-line);
   border-radius: 12px;
   background: var(--r22-surface);
@@ -83,6 +82,18 @@
   min-height: 376px;
   margin-top: 18px;
   padding: 20px;
+}
+
+/* connect-first(未连 / 需要重连)态:步进器归位卡内一行,两栏 grid 收成单卡 —— 批准
+   样张的原始位置(Founder 2026-08-25)。ready 态不套这个类,右栏结构照旧不动。 */
+.r22-home-connect-card.is-connect-first {
+  grid-template-columns: 1fr;
+  min-height: 0;
+}
+
+.r22-home-connect-card.is-connect-first .r22-home-connect-copy {
+  padding-right: 0;
+  border-right: 0;
 }
 
 .r22-home-connect-copy {
@@ -235,40 +246,11 @@
   text-underline-offset: 3px;
 }
 
-.r22-home-connection-steps {
-  display: flex;
-  margin: 57px 0 0;
-  padding: 0 0 0 28px;
-  flex-direction: column;
-  gap: 0;
-  list-style: none;
-}
-
-.r22-home-connection-steps li {
-  position: relative;
-  display: flex;
-  min-height: 65px;
-  gap: 12px;
-}
-
-/* `.r22-home-connection-steps li > span` / `.is-active` / `.is-done` 三条不在这里了 ——
-   Home 收静把这个 `<ol>` 换成了下面的 `.r22-home-stepper` 单行步进器,是这一票唯一的落定
-   消费者。`.r22-home-connection-steps` 这一层(容器 + `li` + 下面这条连接线)**留着不删**:
-   `app/(home)/loading.tsx` 的骨架仍然画着这个 `<ol><li>`,靠这几条撑几何 —— 删了骨架就散架,
-   而骨架不在这一票的改动范围内。 */
-.r22-home-connection-steps li:not(:last-child)::after {
-  position: absolute;
-  top: 28px;
-  bottom: 0;
-  left: 13px;
-  width: 1px;
-  background: var(--r22-line-2);
-  content: "";
-}
-
-/* 一行步进器(取代上面那副竖排时间线的落定版):当前步实心圆点 + 标签 + 破折号 + 它那一句
-   说明;已完成步只剩标签;未来步空心圆点 + 仅标签。四句说明原文都在 `CONNECTION_STEPS`
-   里,任何时刻只有当前那一句被渲染。 */
+/* 一行步进器:当前步实心圆点 + 标签 + 破折号 + 它那一句说明;已完成步只剩标签;未来步
+   空心圆点 + 仅标签。四句说明原文都在 `CONNECTION_STEPS` 里,任何时刻只有当前那一句被
+   渲染。ready 态住在卡的右栏(结构不变);connect-first 态住在卡内、渠道列表之后
+   (Home 收尾,Founder 2026-08-25 批的样张原始位置)—— 两处共用 `ConnectionStepper`
+   同一份渲染逻辑,这里的几何规则也是共用的。 */
 .r22-home-stepper {
   display: flex;
   flex-wrap: wrap;
@@ -372,7 +354,6 @@
 .r22-home-ready-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 28px; }
 .r22-home-ready-summary > div { padding: 13px; border: 1px solid var(--r22-line); border-radius: 9px; background: var(--r22-chrome); }
 .r22-home-ready-summary b { display: block; font-size: var(--r22-text-mono-label); }
-.r22-home-ready-summary span { display: block; margin-top: 4px; color: var(--r22-ink-3); font-size: 9.5px; line-height: 1.4; }
 .r22-home-inline-warning { margin-top: 13px; padding: 9px 11px; border-radius: 8px; background: var(--r22-warn-soft); color: var(--r22-warn-text); font-size: 10.5px; }
 
 .r22-home-kpis {
@@ -474,28 +455,8 @@
   width: 46%;
 }
 
-.r22-home-analysis ul {
-  margin: 14px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.r22-home-analysis li {
-  display: flex;
-  min-height: 65px;
-  align-items: center;
-  gap: 12px;
-  border-top: 1px solid var(--r22-line);
-}
-
-.r22-home-analysis li:first-child {
-  border-top: 0;
-}
-
-/* `.r22-home-analysis li > span` / `li svg` / `li b` / `li p` 不在这里了 —— 落定版换成了
-   下面的 `.r22-home-analysis-chips` 芯片行,三句说明迁进了 tooltip。`ul`/`li` 本身两条
-   留着不删:`app/(home)/loading.tsx` 的骨架仍然画着一个裸 `<ul><li>`(没有自己的 class,
-   靠这两条祖先选择器兜几何),删了骨架就散架,而骨架不在这一票的改动范围内。 */
+/* 三枚芯片行(取代旧版竖排 `ul`/`li` 列表):标签常驻,三句说明迁进了 tooltip。骨架
+   (`app/(home)/loading.tsx`)同样用这个类撑几何,不再画那个旧列表。 */
 .r22-home-analysis-chips {
   display: flex;
   flex-wrap: wrap;
@@ -519,8 +480,7 @@
   outline-offset: 2px;
 }
 
-.r22-home-create-row,
-.r22-home-context-row {
+.r22-home-create-row {
   display: flex;
   min-height: 73px;
   margin-top: 16px;
@@ -545,8 +505,7 @@
   stroke-width: 1.5;
 }
 
-.r22-home-create-row > div,
-.r22-home-context-row > div {
+.r22-home-create-row > div {
   min-width: 0;
   flex: 1;
 }
@@ -557,12 +516,9 @@
   font-weight: 600;
 }
 
-/* `.r22-home-create-row p` / `.r22-home-context-row p` 与 `> a` / `> button`(含合并 chevron
-   那个负 margin 的老写法)不在这里了 —— 元话术整块退场,`Add brand context` 挪进了下面的
-   `.r22-home-create-actions` 一排,不再是 `.r22-home-create-row` 的直接子元素。
-   `.r22-home-context-row` 类名本身留着不删(下一条 + 68px/背景那条 + 响应式那条):
-   `app/(home)/loading.tsx` 的骨架仍然画着这一整块占位,靠这几条撑几何,骨架不在这一票的
-   改动范围内。 */
+/* `.r22-home-create-row p` 与 `> a` / `> button`(含合并 chevron 那个负 margin 的老写法)
+   不在这里了 —— 元话术整块退场,`Add brand context` 挪进了下面的 `.r22-home-create-actions`
+   一排,不再是 `.r22-home-create-row` 的直接子元素。 */
 .r22-home-create-row > .r22-home-create-actions {
   display: flex;
   align-items: center;
@@ -603,11 +559,6 @@
   height: 13px;
 }
 
-.r22-home-context-row {
-  min-height: 68px;
-  background: var(--r22-chrome);
-}
-
 .r22-home footer {
   margin-top: 34px;
   color: var(--r22-ink-3);
@@ -628,11 +579,6 @@
     padding-bottom: 22px;
     border-right: 0;
     border-bottom: 1px solid var(--r22-line);
-  }
-
-  .r22-home-connection-steps {
-    margin-top: 24px;
-    padding-left: 0;
   }
 }
 
@@ -663,8 +609,7 @@
     padding-inline: 10px;
   }
 
-  .r22-home-create-row,
-  .r22-home-context-row {
+  .r22-home-create-row {
     align-items: flex-start;
     flex-wrap: wrap;
   }

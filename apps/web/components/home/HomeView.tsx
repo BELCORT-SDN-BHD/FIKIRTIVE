@@ -81,6 +81,26 @@ const CONNECTION_STEPS = [
   { label: "Ready", description: "Otto will learn and surface insights" },
 ] as const;
 
+/** 一行步进器本体 —— 两处消费者(ready 态右栏 / connect-first 态卡内一行)共用同一份
+ *  渲染逻辑,当前步带说明、其余仅标签,不因为搬家而分叉成两份实现。 */
+function ConnectionStepper({ currentStep }: { currentStep: number }) {
+  return (
+    <div className="r22-home-stepper" role="list" aria-label="Connection progress">
+      {CONNECTION_STEPS.map((step, index) => {
+        const isCurrent = index === currentStep;
+        const isDone = index < currentStep;
+        return (
+          <span key={step.label} className={`r22-home-stepper-step${isCurrent ? " is-current" : ""}${isDone ? " is-done" : ""}`} role="listitem">
+            {isDone ? null : <i aria-hidden="true" />}
+            <b>{step.label}</b>
+            {isCurrent ? <span className="r22-home-stepper-desc"> — {step.description}</span> : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function LoadingTruth({ data }: { data: HomeData }) {
   const unreadable = [data.credits, data.canvases, data.thumbs, data.upcoming, data.campaigns, data.equipment].some((item) => !item.ok);
   if (!unreadable) return null;
@@ -119,6 +139,9 @@ export function HomeView({
   const disconnected = visibleConnection.kind === "not_connected";
   const ready = visibleConnection.kind === "connected" || visibleConnection.kind === "verified_fixture";
   const verifiedFixture = visibleConnection.kind === "verified_fixture";
+  // connect-first(未连 / 需要重连)态把两栏 grid 收成单卡,步进器搬进卡内一行 —— 见
+  // `.r22-home-connect-card.is-connect-first` 与下面 channels 之后的 `<ConnectionStepper>`。
+  const connectFirst = !ready && connection.kind !== "unknown";
   const channels = fixture ? CHANNELS.map((channel) => ({ ...channel, available: true })) : CHANNELS;
   const fixtureHref = (href: string) => fixture ? `${href}${href.includes("?") ? "&" : "?"}fixture=r22` : href;
   const provider = connectFlow?.channel ?? "Instagram";
@@ -206,7 +229,7 @@ export function HomeView({
         </div>
       ) : null}
 
-      <section className={`r22-home-connect-card${ready ? " is-ready" : ""}`}>
+      <section className={`r22-home-connect-card${ready ? " is-ready" : ""}${connectFirst ? " is-connect-first" : ""}`}>
         <div className="r22-home-connect-copy">
           {ready ? (
             <>
@@ -216,9 +239,30 @@ export function HomeView({
                 <Link href={fixtureHref("/settings/connections")}>Manage</Link>
               </div>
               <div className="r22-home-ready-summary">
-                <div><b>{HOME_COPY.connectionVerifiedLabel}</b><span>{HOME_COPY.connectionVerifiedScope}</span></div>
-                <div><b>{HOME_COPY.publishingPermissionsLabel}</b><span>{HOME_COPY.publishingPermissionsScope}</span></div>
-                <div><b>{HOME_COPY.ottoContextLabel}</b><span>{HOME_COPY.ottoContextScope}</span></div>
+                <div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <b tabIndex={0}>{HOME_COPY.connectionVerifiedLabel}</b>
+                    </TooltipTrigger>
+                    <TooltipContent>{HOME_COPY.connectionVerifiedScope}</TooltipContent>
+                  </Tooltip>
+                </div>
+                <div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <b tabIndex={0}>{HOME_COPY.publishingPermissionsLabel}</b>
+                    </TooltipTrigger>
+                    <TooltipContent>{HOME_COPY.publishingPermissionsScope}</TooltipContent>
+                  </Tooltip>
+                </div>
+                <div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <b tabIndex={0}>{HOME_COPY.ottoContextLabel}</b>
+                    </TooltipTrigger>
+                    <TooltipContent>{HOME_COPY.ottoContextScope}</TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
               {visibleConnection.kind === "connected" && visibleConnection.transient ? <p className="r22-home-inline-warning">{HOME_COPY.metaUnreachable}</p> : null}
             </>
@@ -240,26 +284,13 @@ export function HomeView({
                   </div>
                 ))}
               </div>
+              <ConnectionStepper currentStep={currentStep} />
               {disconnected ? <Link className="r22-home-skip" href={fixtureHref("/create")}>Skip for now</Link> : null}
             </>
           )}
         </div>
 
-        {connection.kind !== "unknown" ? (
-          <div className="r22-home-stepper" role="list" aria-label="Connection progress">
-            {CONNECTION_STEPS.map((step, index) => {
-              const isCurrent = index === currentStep;
-              const isDone = index < currentStep;
-              return (
-                <span key={step.label} className={`r22-home-stepper-step${isCurrent ? " is-current" : ""}${isDone ? " is-done" : ""}`} role="listitem">
-                  {isDone ? null : <i aria-hidden="true" />}
-                  <b>{step.label}</b>
-                  {isCurrent ? <span className="r22-home-stepper-desc"> — {step.description}</span> : null}
-                </span>
-              );
-            })}
-          </div>
-        ) : null}
+        {ready ? <ConnectionStepper currentStep={currentStep} /> : null}
       </section>
 
       <div className="r22-home-insight-grid">

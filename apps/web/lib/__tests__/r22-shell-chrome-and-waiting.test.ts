@@ -72,12 +72,13 @@ const HOME_DATA: HomeData = {
 
 /** 落定画面与等待画面共用的那一批容器 —— 几何全靠它们。
  *
- * `r22-home-connection-steps` 与 `r22-home-context-row` 从这份名单退场(Home 收静,
- * Founder 2026-08-25 批的样张):落定版把竖排时间线换成了 `.r22-home-stepper` 单行步进器、
- * 把 `context-row` 整块删掉(按钮并进了 `.r22-home-create-row`),这两个容器在**落定**画面
- * 上不再存在。骨架(`app/(home)/loading.tsx`)不在这一票的改动范围内,仍然画着它们
- * 兜几何 —— `r22-home.css` 里那两个类名的规则因此也没删,只是落定这一侧不再消费,算一条
- * 已知的骨架/落定几何小落差,留给下一次动骨架的票收口。 */
+ * `r22-home-connection-steps` 与 `r22-home-context-row` 退场(Home 收静,Founder
+ * 2026-08-25 批的样张):落定版把竖排时间线换成了 `.r22-home-stepper` 单行步进器、把
+ * `context-row` 整块删掉(按钮并进了 `.r22-home-create-row`)。Home 收尾这一票把骨架
+ * (`app/(home)/loading.tsx`)也换成了同一副新几何 —— 步进器归位连接卡内一行、分析卡换成
+ * 芯片行 —— 两个旧容器连骨架那一侧也不画了,`r22-home.css` 里对应的规则已经删除,不再是
+ * 已知落差。`r22-home-stepper` / `r22-home-skip` / `r22-home-analysis-chips` 三个新容器
+ * 补进清单:它们是新形状里骨架与落定共用的那几行。 */
 const HOME_GEOMETRY_CONTAINERS = [
   "r22-home",
   "r22-home-header",
@@ -85,9 +86,12 @@ const HOME_GEOMETRY_CONTAINERS = [
   "r22-home-connect-copy",
   "r22-home-channels",
   "r22-home-channel",
+  "r22-home-stepper",
+  "r22-home-skip",
   "r22-home-insight-grid",
   "r22-home-performance",
   "r22-home-analysis",
+  "r22-home-analysis-chips",
   "r22-home-create-row",
 ];
 
