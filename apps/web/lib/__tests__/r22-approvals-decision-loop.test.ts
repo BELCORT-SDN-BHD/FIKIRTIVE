@@ -123,6 +123,16 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     const original = card("i1");
     expect(original, "V1 没有落进 Sent back").not.toBeNull();
     expect(original!.textContent).toContain("Sent to Otto for a revise by Nicks");
+
+    // ⑦ 新决策实时追加进这一条的时间线,不是只写在卡面那一行 decision 上。
+    click(button("Details", original!));
+    selectTab("Source brief");
+    const timeline = original!.querySelector(".r22-approvals-timeline")!;
+    expect(timeline.textContent).toContain("Created by Otto · Weekday mornings");
+    expect(timeline.textContent).toContain("Sent to Otto for a revise by Nicks");
+    expect(timeline.textContent).toContain("just now");
+    click(button("Hide details", original!));
+
     click(button("See the new version", original!));
     expect(container!.textContent).toContain("Needs review");
     expect(card("i1-v2"), "从 V1 点回去没有回到 V2").not.toBeNull();
