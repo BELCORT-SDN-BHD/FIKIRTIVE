@@ -177,6 +177,26 @@ const VARIANT_CAP_EXEMPTIONS = [
       "Founder 后台总览:74 个条件渲染分支,全是运维读数(队列、额度、任务状态),没有一句是商家读到的 Otto 文案。" +
       "穷举它的组合既算不动也没意义;它仍受整份源码那条流覆盖。",
   },
+  // R22 前端重建的四张 fixture 面(2026-08-25 登记)。四张都是「一个组件画完一整个表面」
+  // 的写法,条件渲染分支各自 106 / 98 / 92 / 66,全部越过 64 的上限。上板不是放行:
+  // 整份源码那条流照跑,四条代词规则一条不少 —— 少掉的只有「把每种条件组合各拼一遍」
+  // 那层变体扫描。拆分它们是 Approvals / Campaigns 重构自己的活,不在收口期动刀。
+  {
+    file: "apps/web/components/canvas/R22CanvasSurface.tsx",
+    why: "R22 收口期高密度 fixture 面(106 个条件分支),随 Approvals/Campaigns 重构拆分,登记 2026-08-25;整份源码那条流仍覆盖它。",
+  },
+  {
+    file: "apps/web/components/otto-iq/R22OttoIQView.tsx",
+    why: "R22 收口期高密度 fixture 面(98 个条件分支),随 Approvals/Campaigns 重构拆分,登记 2026-08-25;整份源码那条流仍覆盖它。",
+  },
+  {
+    file: "apps/web/components/settings/R22SettingsShell.tsx",
+    why: "R22 收口期高密度 fixture 面(92 个条件分支),随 Approvals/Campaigns 重构拆分,登记 2026-08-25;整份源码那条流仍覆盖它。",
+  },
+  {
+    file: "apps/web/components/routines/R22RoutinesView.tsx",
+    why: "R22 收口期高密度 fixture 面(66 个条件分支),随 Approvals/Campaigns 重构拆分,登记 2026-08-25;整份源码那条流仍覆盖它。",
+  },
 ] as const;
 
 
@@ -520,6 +540,16 @@ describe("#830 an expression container inside JSX text no longer throws the sent
 // ---------------------------------------------------------------------------
 describe("#682 ② every cured surface says the name", () => {
   const CURED: Array<{ file: string; says: string[]; neverAgain: RegExp; why: string }> = [
+    {
+      // #805 换掉了登录页主话术,治好的那句话本身跟着换 —— 但**准则没变**:名字仍旧站在
+      // 代词原来的位置。旧病灶 `It researches your brand` 的禁令原样留着(它再也回不来),
+      // 另加一条:新主段落改写时最容易滑回去的形状,就是把 Otto 接成 `…and it runs the job`。
+      // 词法围栏抓不到句中的 it(见文件头),所以这一处逐句钉必须把它写死。
+      file: "apps/web/app/login/page.tsx",
+      says: ["Otto runs the job end to end"],
+      neverAgain: /It researches your brand|and it runs the job|Tell Otto[^.]*\bit\b/i,
+      why: "登录页:首跑第一屏,票面的 it(#805 改主话术后,名字仍在代词原来的位置)",
+    },
     {
       file: "apps/web/components/otto/OttoMemory.tsx",
       says: ["What Otto remembers about your brand — Otto uses it in every project."],
