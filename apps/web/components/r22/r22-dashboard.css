@@ -93,7 +93,7 @@
   background: var(--r22-chrome);
   color: var(--r22-ink-3);
   font-family: var(--font-jetbrains-mono), monospace;
-  font-size: 10px;
+  font-size: 10.5px; /* 原型 .searchbox kbd 真值,冻结族 */
 }
 
 .r22-dashboard-nav {
@@ -112,7 +112,7 @@
   padding: 8px 10px;
   border-radius: 8px;
   color: var(--r22-ink-2);
-  font-size: 13.5px;
+  font-size: var(--r22-text-body-lg);
   font-weight: 450;
 }
 
@@ -157,16 +157,16 @@
   background: var(--r22-ink);
   color: var(--r22-surface);
   font-family: var(--font-jetbrains-mono), monospace;
-  font-size: 9px;
+  font-size: 10px; /* 原型 #nav .ap-navcount 真值,冻结族 */
   font-style: normal;
 }
 
 .r22-dashboard-nav-label {
-  margin: 22px 10px 7px;
+  margin: 18px 10px 6px; /* 原型 .rail-label 真值 */
   color: var(--r22-ink-3);
-  font-size: 9.5px;
+  font-size: 10.5px; /* 原型 .rail-label 真值,冻结族 */
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em; /* 原型 .rail-label 真值 */
   text-transform: uppercase;
 }
 
@@ -199,7 +199,7 @@
   border-radius: 50%;
   background: var(--r22-ink);
   color: var(--r22-surface);
-  font-size: 9px;
+  font-size: var(--r22-text-mono-label);
   font-weight: 600;
 }
 
@@ -353,7 +353,7 @@
   border-radius: 8px;
 }
 
-.r22-dashboard-quick-actions button > i { position: absolute; top: -4px; right: -4px; display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border: 2px solid var(--r22-ground); border-radius: 99px; background: var(--r22-coral); color: var(--r22-surface); font-size: 8px; font-style: normal; font-weight: 700; }
+.r22-dashboard-quick-actions button > i { position: absolute; top: -4px; right: -4px; display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border: 2px solid var(--r22-ground); border-radius: 99px; background: var(--r22-coral); color: var(--r22-surface); font-size: 10px; /* 原型 #nav 徽标惯例真值,冻结族 */ font-style: normal; font-weight: 700; }
 
 .r22-dashboard-quick-actions svg {
   width: 17px;
@@ -441,7 +441,7 @@
 
 .r22-dashboard-side-panel > header b,
 .r22-dashboard-otto-panel > header b {
-  font-size: 13.5px;
+  font-size: var(--r22-text-body);
   font-weight: 600;
 }
 
@@ -518,11 +518,11 @@
 .r22-dashboard-side-panel > ul p {
   margin: 3px 0 7px;
   color: var(--r22-ink-2);
-  font-size: 12px;
+  font-size: var(--r22-text-small);
 }
 
 .r22-dashboard-side-panel > ul a {
-  font-size: 12px;
+  font-size: var(--r22-text-small);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -560,7 +560,7 @@
   padding: 8px 11px;
   border: 1px solid var(--r22-line-2);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--r22-text-small);
 }
 
 .r22-dashboard-help-list {
@@ -592,83 +592,7 @@
 .r22-dashboard-help-list span {
   margin-top: 3px;
   color: var(--r22-ink-2);
-  font-size: 12px;
-}
-
-.r22-dashboard-otto-panel {
-  display: flex;
-  flex-direction: column;
-}
-
-.r22-dashboard-otto-panel > header img {
-  width: 26px;
-  height: 24px;
-}
-
-.r22-dashboard-otto-body {
-  display: flex;
-  max-width: 730px;
-  margin: auto;
-  padding: 34px 28px;
-  align-items: flex-start;
-  flex-direction: column;
-}
-
-.r22-dashboard-otto-body h2 {
-  margin: 16px 0 0;
-  font-size: var(--r22-text-h2);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.r22-dashboard-otto-body p {
-  margin: 7px 0 16px;
-  color: var(--r22-ink-2);
-  font-size: var(--r22-text-body);
-  line-height: 1.55;
-}
-
-.r22-dashboard-otto-body button {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid var(--r22-line) !important;
-  border-radius: 7px;
-  background: var(--r22-surface) !important;
   font-size: var(--r22-text-small);
-  text-align: left;
-}
-
-.r22-dashboard-otto-panel > footer {
-  display: grid;
-  grid-template-columns:minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--r22-line);
-}
-
-.r22-dashboard-otto-panel textarea {
-  min-height: 54px;
-  padding: 9px 10px;
-  resize: none;
-  border: 1px solid var(--r22-line-2);
-  border-radius: 8px;
-  outline: none;
-  font-size: var(--r22-text-body);
-}
-
-.r22-dashboard-otto-panel footer > button {
-  align-self: end;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--r22-chrome);
-  color: var(--r22-ink-3);
-  font-size: 12px;
-}
-
-.r22-dashboard-otto-panel footer small {
-  grid-column: 1 / -1;
-  color: var(--r22-ink-3);
-  font-size: 10.5px;
 }
 
 .r22-dashboard-search-scrim {
@@ -725,7 +649,7 @@
   border-radius: 5px;
   color: var(--r22-ink-3);
   font-family: var(--font-jetbrains-mono), monospace;
-  font-size: 10px;
+  font-size: 10.5px; /* 原型 .searchbox kbd 真值,冻结族 */
 }
 
 .r22-dashboard-search-dialog > p {
@@ -766,13 +690,13 @@
 
 .r22-dashboard-search-dialog li span {
   flex: 1;
-  font-size: 13.5px;
+  font-size: var(--r22-text-body);
 }
 
 .r22-dashboard-search-dialog li small {
   color: var(--r22-ink-3);
   font-family: var(--font-jetbrains-mono), monospace;
-  font-size: 10px;
+  font-size: 12px; /* 原型 .app-search-pop button 继承值真值,冻结族 */
 }
 
 .r22-dashboard-search-empty {

@@ -295,14 +295,14 @@ export function HomeView({
 
       <div className="r22-home-insight-grid">
         <section className={`r22-home-performance${verifiedFixture ? " has-data" : ""}`}>
-          <h2>
+          <h3>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span tabIndex={0}>Performance</span>
               </TooltipTrigger>
               <TooltipContent>{HOME_COPY.performanceVerifiedOnlyBody}</TooltipContent>
             </Tooltip>
-          </h2>
+          </h3>
           {verifiedFixture ? <div className="r22-home-kpis"><span><small>Published</small><b>38</b><em>Last 30 days</em></span><span><small>Reach</small><b>48.2K</b><em>+12.6%</em></span><span><small>Engagement</small><b>4.8%</b><em>+0.7 pt</em></span><span><small>Best day</small><b>Thu</b><em>18:00–21:00</em></span></div> : <div>
             <span><LockKeyhole aria-hidden="true" /></span>
             <b>{ready ? HOME_COPY.performanceUnavailableReady : "Connect a channel to see performance."}</b>
@@ -312,7 +312,7 @@ export function HomeView({
         </section>
 
         <section className="r22-home-analysis">
-          <h2>Otto will analyse</h2>
+          <h3>Otto will analyse</h3>
           <div className="r22-home-analysis-chips">
             {ANALYSIS_ITEMS.map(({ label, copy }) => (
               <Tooltip key={label}>

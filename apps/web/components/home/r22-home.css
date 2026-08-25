@@ -16,6 +16,7 @@
 
 .r22-home h1,
 .r22-home h2,
+.r22-home h3,
 .r22-home p {
   margin: 0;
 }
@@ -58,7 +59,7 @@
   border-radius: 8px;
   background: var(--r22-surface);
   color: var(--r22-ink-2);
-  font-size: 12px;
+  font-size: var(--r22-text-small);
 }
 
 .r22-home-read-warning svg {
@@ -102,7 +103,13 @@
 }
 
 .r22-home h2 {
-  font-size: 15.5px;
+  font-size: 17px; /* 原型 .dh-card h2 真值,冻结族 —— 主卡标题(Connect/Ready) */
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.r22-home h3 {
+  font-size: 15px; /* 原型 .dh-panel h3 真值,冻结族 —— 面板标题(Performance/Otto will analyse) */
   font-weight: 620;
   letter-spacing: -0.01em;
 }
@@ -110,7 +117,7 @@
 .r22-home-connect-copy > p {
   margin-top: 3px;
   color: var(--r22-ink-2);
-  font-size: 12px;
+  font-size: var(--r22-text-small);
 }
 
 .r22-home-channels {
@@ -154,7 +161,7 @@
   border-radius: 99px;
   background: var(--r22-coral-soft);
   color: var(--r22-coral-text);
-  font-size: 8.5px;
+  font-size: 9px; /* 原型 .dh-recommended 真值,冻结族 */
   font-style: normal;
 }
 
@@ -177,15 +184,8 @@
   border-radius: 8px;
   background: var(--r22-chrome);
   color: var(--r22-ink-3);
-  font-size: 10.5px;
+  font-size: var(--r22-text-small);
   cursor: not-allowed;
-}
-
-.r22-home-fixture-note {
-  margin-top: 9px !important;
-  color: var(--r22-ink-3) !important;
-  font-size: 10px !important;
-  line-height: 1.45;
 }
 
 .r22-home-connect-dialog {
@@ -321,7 +321,7 @@
 
 .r22-home-connection-error > svg { width: 17px; height: 17px; color: var(--error); }
 .r22-home-connection-error > div { min-width: 0; flex: 1; }
-.r22-home-connection-error b { display: block; color: var(--r22-ink); font-size: 12px; }
+.r22-home-connection-error b { display: block; color: var(--r22-ink); font-size: var(--r22-text-small); }
 .r22-home-connection-error p { margin-top: 2px; }
 .r22-home-connection-error a,
 .r22-home-unknown-card a,
@@ -347,14 +347,14 @@
 .r22-home-unknown-card a { margin-top: 14px; }
 
 .r22-home-ready-head { display: flex; align-items: center; gap: 12px; }
-.r22-home-ready-head > span { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 50%; background: var(--r22-good-soft); color: var(--r22-good-text); font-size: 18px; font-weight: 700; }
+.r22-home-ready-head > span { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 50%; background: var(--r22-good-soft); color: var(--r22-good-text); font-weight: 700; }
 .r22-home-ready-head > span svg { width: 17px; height: 17px; }
 .r22-home-ready-head > div { min-width: 0; flex: 1; }
 .r22-home-ready-head p { margin-top: 3px; color: var(--r22-ink-2); font-size: var(--r22-text-mono-label); }
 .r22-home-ready-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 28px; }
 .r22-home-ready-summary > div { padding: 13px; border: 1px solid var(--r22-line); border-radius: 9px; background: var(--r22-chrome); }
 .r22-home-ready-summary b { display: block; font-size: var(--r22-text-mono-label); }
-.r22-home-inline-warning { margin-top: 13px; padding: 9px 11px; border-radius: 8px; background: var(--r22-warn-soft); color: var(--r22-warn-text); font-size: 10.5px; }
+.r22-home-inline-warning { margin-top: 13px; padding: 9px 11px; border-radius: 8px; background: var(--r22-warn-soft); color: var(--r22-warn-text); font-size: var(--r22-text-mono-label); }
 
 .r22-home-kpis {
   display: grid !important;
@@ -434,7 +434,7 @@
 .r22-home-performance p {
   margin-top: 3px;
   color: var(--r22-ink-3);
-  font-size: 10px;
+  font-size: 10.5px; /* 原型 .dh-locked p 真值,冻结族 */
 }
 
 .r22-home-performance i {
@@ -562,7 +562,7 @@
 .r22-home footer {
   margin-top: 34px;
   color: var(--r22-ink-3);
-  font-size: 10px;
+  font-size: 12px; /* 原型 .foot-note 真值,冻结族 */
 }
 
 @media (max-width: 1100px) {

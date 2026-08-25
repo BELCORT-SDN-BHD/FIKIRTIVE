@@ -581,8 +581,6 @@ export function R22OttoIQView({
   const [adding, setAdding] = useState(false);
   const [voiceFlowOpen, setVoiceFlowOpen] = useState(false);
   const [selected, setSelected] = useState<MemoryRow | null>(null);
-  const [name, setName] = useState("");
-  const [content, setContent] = useState("");
   const [editingContent, setEditingContent] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -660,30 +658,6 @@ export function R22OttoIQView({
     setDeleteOpen(false);
   }
 
-  function saveNew() {
-    if (!card || !name.trim() || !content.trim()) return;
-    const nextContent = `${name.trim()}: ${content.trim()}`;
-    setError("");
-    if (fixture) {
-      setRows((current) => [...current, { id: fixtureMemoryId(card.id, name), category: card.categories[0]!, content: nextContent, source: "user", pinned: true, updatedAt: fixtureUpdatedAt() }]);
-      setAdding(false);
-      setName("");
-      setContent("");
-      return;
-    }
-    startTransition(async () => {
-      const result = await addMemory({ category: card.categories[0], content: nextContent });
-      if ("error" in result) {
-        setError(result.error);
-        return;
-      }
-      setRows((current) => [...current, { id: result.id, category: card.categories[0]!, content: nextContent, source: "user", pinned: true, updatedAt: new Date() }]);
-      setAdding(false);
-      setName("");
-      setContent("");
-    });
-  }
-
   function saveSelected() {
     if (!selected || !editingContent.trim()) return;
     setError("");
@@ -758,21 +732,8 @@ export function R22OttoIQView({
     <main className="r22-iq" data-r22-otto-iq>
       <nav><Button unstyled type="button" onClick={() => open("hub")}>Otto IQ</Button><ChevronRight className="size-3" aria-hidden="true" /><span>{card?.title}</span></nav>
       <header><div><h1>{card?.title}</h1><p>{card?.description}</p></div><Button unstyled type="button" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></header>
-      {adding && card?.id !== "sources" && card?.id !== "audiences" && card?.id !== "style" && card?.id !== "visual" ? (
-        <section className="r22-iq-form">
-          <header><div><h2>Add {card?.title}</h2><p>Give Otto information you own or have permission to use.</p></div><Button unstyled type="button" className="is-quiet" onClick={() => setAdding(false)}>Close</Button></header>
-          <label>Name<Input unstyled autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={`Everyday ${card?.title}`} /></label>
-          <label>Approved context<Textarea unstyled rows={7} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste approved context. Nothing is saved until you continue." /></label>
-          <p>Scope: this authenticated workspace · Source: you</p>
-          {error ? <p role="alert">{error}</p> : null}
-          <footer><Button unstyled type="button" className="is-quiet" onClick={() => setAdding(false)}>Cancel</Button><Button unstyled type="button" disabled={!name.trim() || !content.trim() || pending} onClick={saveNew}>{pending ? "Saving…" : "Save context"}</Button></footer>
-        </section>
-      ) : (
-        <>
-          <div className="r22-iq-toolbar"><label><span className="sr-only">Search {card?.title}</span><Input unstyled type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${card?.title}`} /></label><span>{visible.length} saved</span></div>
-          {visible.length ? <div className="r22-iq-table"><div><b>{card?.title}</b><b>Source</b><b>Scope</b><b>Updated</b></div>{visible.map((row) => <Button unstyled type="button" key={row.id} onClick={() => openRow(row)}><span><b>{rowName(row)}</b><small>{row.content}</small></span><span>{row.source === "user" ? "You" : "Otto suggestion"}</span><span>Workspace</span><span>{new Date(row.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></Button>)}</div> : <section className="r22-iq-empty"><Eye /><b>{query ? "No approved context matches" : "Start with approved context"}</b><p>{query ? "Try a different search. Nothing was hidden as deleted." : "Add text you own. Otto never goes looking for material anywhere else."}</p>{!query ? <Button unstyled type="button" className="is-quiet" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button> : null}</section>}
-        </>
-      )}
+      <div className="r22-iq-toolbar"><label><span className="sr-only">Search {card?.title}</span><Input unstyled type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${card?.title}`} /></label><span>{visible.length} saved</span></div>
+      {visible.length ? <div className="r22-iq-table"><div><b>{card?.title}</b><b>Source</b><b>Scope</b><b>Updated</b></div>{visible.map((row) => <Button unstyled type="button" key={row.id} onClick={() => openRow(row)}><span><b>{rowName(row)}</b><small>{row.content}</small></span><span>{row.source === "user" ? "You" : "Otto suggestion"}</span><span>Workspace</span><span>{new Date(row.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></Button>)}</div> : <section className="r22-iq-empty"><Eye /><b>{query ? "No approved context matches" : "Start with approved context"}</b><p>{query ? "Try a different search. Nothing was hidden as deleted." : "Add text you own. Otto never goes looking for material anywhere else."}</p>{!query ? <Button unstyled type="button" className="is-quiet" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button> : null}</section>}
 
       <Dialog open={selected !== null} onOpenChange={(next) => { if (!next) setSelected(null); }}>
         <DialogContent className="r22-iq-detail">
