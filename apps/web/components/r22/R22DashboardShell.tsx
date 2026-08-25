@@ -79,7 +79,7 @@ export function R22DashboardShell({
   const router = useRouter();
   const otto = useOttoPanelControls();
   const pathname = pathOnly(location);
-  const fixture = new URLSearchParams(location.split("?", 2)[1] ?? "").get("fixture") === "r22";
+  const fixture = process.env.NODE_ENV !== "production" && new URLSearchParams(location.split("?", 2)[1] ?? "").get("fixture") === "r22";
   const [fixtureWorkspaces, setFixtureWorkspaces] = useState<R22FixtureWorkspaceDirectory>(DEFAULT_R22_WORKSPACE_DIRECTORY);
   const [workspaceSwitching, setWorkspaceSwitching] = useState("");
   const activeFixtureWorkspace = fixtureWorkspaces.workspaces.find((workspace) => workspace.id === fixtureWorkspaces.activeId) ?? fixtureWorkspaces.workspaces[0];

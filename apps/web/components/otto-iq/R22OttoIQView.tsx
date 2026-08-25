@@ -56,11 +56,11 @@ type Card = {
 };
 
 const CARDS: Card[] = [
-  { id: "voice", title: "Brand Voice", description: "How you sound. Otto reads this every time it writes a caption or a reply.", categories: ["voice", "tone"], icon: MessageSquareText },
-  { id: "audiences", title: "Audiences", description: "Who you are writing to. Otto picks one before it drafts.", categories: ["audience", "people"], icon: UsersRound },
+  { id: "voice", title: "Brand Voice", description: "How you sound. Otto reads this before writing any caption or reply.", categories: ["voice", "tone"], icon: MessageSquareText },
+  { id: "audiences", title: "Audiences", description: "Who you are writing to. Otto picks one before drafting.", categories: ["audience", "people"], icon: UsersRound },
   { id: "sources", title: "Knowledge Base", description: "Pages, files and notes you choose for Otto to reference — with provenance.", categories: ["knowledge", "source", "fact", "product"], icon: BookOpenText },
   { id: "style", title: "Style Guide", description: "Writing defaults, approved language and claims Otto must avoid.", categories: ["style", "rule", "never", "do not say"], icon: ShieldCheck },
-  { id: "visual", title: "Visual Guidelines", description: "The images, colours and framing Otto can reference when it makes a picture.", categories: ["visual", "look", "color", "colour"], icon: Palette },
+  { id: "visual", title: "Visual Guidelines", description: "The images, colours and framing Otto can reference when making a picture.", categories: ["visual", "look", "color", "colour"], icon: Palette },
 ];
 
 const FIXTURE_COUNTS: Record<Exclude<Pane, "hub">, string> = {
@@ -177,6 +177,12 @@ function BrandVoiceFlow({
     if (source === "text" && sourceText.trim().length < 1000) return setError("1000 character minimum not met. Add more approved example content.");
     if (source === "url" && !/^https?:\/\//i.test(sourceUrl.trim())) return setError("Enter a complete http or https URL you own or may use.");
     if (source === "file" && !fileName) return setError("Choose a supported file before generating.");
+    // 生产不许进伪造。`generating` 那一步之后是写死的描述与三条摘录 —— 那是**演示**,
+    // 不是这家商家粘贴的内容读出来的。以前它照样跑,商家一路读到与自己毫无关系的
+    // 「生成结果」,直到 Save 才撞上 `save()` 里那句实话。诚实要在花商家时间之前说,
+    // 所以阻断挪到入口,用的是同一句话;fixture 一个字节没变。
+    // 形状与同文件的兄弟流一致(KnowledgeBaseFlow `submit()`、AudienceFlow `next()`)。
+    if (!fixture) return setError("Brand Voice generation and source ingestion are not connected. Nothing was saved.");
     setError("");
     setStep("generating");
   }
@@ -727,7 +733,7 @@ export function R22OttoIQView({
           <div><h1>Otto IQ</h1><p>Merchant-controlled knowledge for Otto — every item has a source, owner and scope.</p></div>
           <Button unstyled type="button" className="is-quiet" onClick={() => otto?.openPanel()}>Ask Otto</Button>
         </header>
-        {fixture && fixtureWorkspaceId === "batik-house" ? <section className="r22-iq-nudge"><span aria-hidden="true" /><b>Otto</b><p>Otto noticed 4 things it would like to remember.</p><Button unstyled type="button" onClick={() => setReviewOpen(true)}>Review</Button></section> : null}
+        {fixture && fixtureWorkspaceId === "batik-house" ? <section className="r22-iq-nudge"><span aria-hidden="true" /><b>Otto</b><p>Otto noticed 4 things worth remembering.</p><Button unstyled type="button" onClick={() => setReviewOpen(true)}>Review</Button></section> : null}
         <div className="r22-iq-grid">
           {CARDS.map((item) => {
             const count = rows.filter((row) => item.categories.some((category) => row.category.toLowerCase().includes(category))).length;

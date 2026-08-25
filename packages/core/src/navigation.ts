@@ -152,7 +152,7 @@ export const CANVAS_HREF = SHELL_ROUTES.canvas;
 export const OTTO_ASSISTANT = {
   key: "otto",
   label: "Ask Otto",
-  does: "Ask Otto to do any of this with you — Otto sits on the right of every page, and is never a section of its own.",
+  does: "Ask Otto to do any of this with you — Otto sits on the right of every page, and is never a separate section.",
 } as const;
 
 /**

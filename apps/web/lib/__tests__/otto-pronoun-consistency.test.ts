@@ -202,8 +202,14 @@ const VARIANT_CAP_EXEMPTIONS = [
 
 const MENTIONS_OTTO = /\bOtto\b/;
 const GENDERED_PRONOUN = /\b(he|him|his|she|her|hers)\b/i;
-/** 「on its own」挂在一句提到 Otto 的话上时,its 只可能是 Otto。 */
-const OTTO_ON_ITS_OWN = /\bon its own\b/i;
+/**
+ * 「on its own」挂在一句提到 Otto 的话上时,its 只可能是 Otto。
+ *
+ * `of its own` 是同一个形状差一个介词(2026-08-25 判官实证:导航数据里
+ * 「Otto … is never a section **of its own**」从围栏底下整句走过去了)。两个介词共用
+ * 一条规则,新写法换介词也照样红。
+ */
+const OTTO_ITS_OWN = /\b(?:on|of) its own\b/i;
 /** 「…and it'll draft…」同理:一句里点了 Otto 的名,it'll 的主语就是 Otto。 */
 const OTTO_ITLL = /\bit(?:&apos;|&rsquo;|['’])ll\b/i;
 /** Otto 句之后紧跟一句以代词开头 —— 登录页那句的原形。 */
@@ -222,7 +228,7 @@ function offencesIn(file: string, stream: string): Offence[] {
     const push = (rule: string) => offences.push({ file, rule, sentence: sentence.slice(0, 240) });
 
     if (mentionsOtto && GENDERED_PRONOUN.test(sentence)) push("gendered pronoun in an Otto sentence");
-    if (mentionsOtto && OTTO_ON_ITS_OWN.test(sentence)) push('"on its own" in an Otto sentence');
+    if (mentionsOtto && OTTO_ITS_OWN.test(sentence)) push('"on its own" / "of its own" in an Otto sentence');
     if (mentionsOtto && OTTO_ITLL.test(sentence)) push("\"it'll\" in an Otto sentence");
     if (MENTIONS_OTTO.test(previous) && !mentionsOtto && PRONOUN_SUBJECT_OPENER.test(sentence)) {
       push("a pronoun opens the sentence right after an Otto sentence");
@@ -324,12 +330,15 @@ describe("#682 ① no third-person pronoun stands in for Otto anywhere in produc
     const planted = [
       "What Otto remembers about your brand — he uses it in every project.",
       "Auto lets Otto create paused draft campaigns in your ad account on its own.",
+      // 判官 2026-08-25 抓到的那一句(导航数据 `OTTO_ASSISTANT.does`)的原形:
+      // 与上一条只差一个介词,旧规则一声不吭地放它过去。
+      "Otto sits on the right of every page, and is never a section of its own.",
       "Ask Otto to research this again — it&apos;ll propose a fresh plan.",
     ];
     for (const sentence of planted) {
       const caught =
         (MENTIONS_OTTO.test(sentence) && GENDERED_PRONOUN.test(sentence)) ||
-        (MENTIONS_OTTO.test(sentence) && OTTO_ON_ITS_OWN.test(sentence)) ||
+        (MENTIONS_OTTO.test(sentence) && OTTO_ITS_OWN.test(sentence)) ||
         (MENTIONS_OTTO.test(sentence) && OTTO_ITLL.test(sentence));
       expect(caught, `the fence would let this through: ${sentence}`).toBe(true);
     }
@@ -338,7 +347,7 @@ describe("#682 ① no third-person pronoun stands in for Otto anywhere in produc
     // 反向:Founder 点名的正例不得被判红。
     const goodCopy = "Voice, rules, audience — Otto uses it every time";
     expect(MENTIONS_OTTO.test(goodCopy) && GENDERED_PRONOUN.test(goodCopy)).toBe(false);
-    expect(OTTO_ON_ITS_OWN.test(goodCopy) || OTTO_ITLL.test(goodCopy)).toBe(false);
+    expect(OTTO_ITS_OWN.test(goodCopy) || OTTO_ITLL.test(goodCopy)).toBe(false);
   });
 });
 
