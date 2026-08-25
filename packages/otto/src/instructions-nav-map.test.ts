@@ -349,7 +349,10 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
     // 拼路样本必须用**当下树上的真名字**(两个真名相邻才是这条尺子量的形状)。
     // W2-11 权威改写:顶层的 Campaign 改叫 Campaigns(复数),标准 Analytics 不再是导航标签
     // (并入 Schedule 页内第二个页签),样本跟着换成当下真名字。
-    for (const spliced of ["Campaigns Library", "Settings Home", "Brand Schedule", "Create Preferences"]) {
+    // R22:Brand 改叫 Otto IQ、Create 改叫 Canvas,这两个样本随之失效(拿着已经不存在的
+    // 名字去拼路,拼出来的两段本来就不是两个真名,尺子量的就不再是这条形状了)。换成当下
+    // 树上仍然是单段真名的 Routines / Canvas。
+    for (const spliced of ["Campaigns Library", "Settings Home", "Routines Schedule", "Canvas Preferences"]) {
       expect(splicedPairs(`Point them to ${spliced}.`), `拼路「${spliced}」必须被逮住`).not.toEqual([]);
       expect(linesNamingUnmappedPlaces(`Point them to ${spliced}.`)).toHaveLength(1);
     }
