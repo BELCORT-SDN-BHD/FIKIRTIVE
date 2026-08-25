@@ -14,33 +14,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { readR22WorkspaceDirectory, scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
 
+import {
+  FIXTURE_ITEMS,
+  FIXTURE_STATE_KEY,
+  GROUPS,
+  REASONS,
+  type ApprovalItem,
+  type ApprovalStatus,
+} from "./approvals-fixture";
 import "./r22-approvals.css";
-
-type ApprovalStatus = "waiting" | "approved" | "rejected";
-type ApprovalGroup = "today" | "week" | "none";
-type ApprovalItem = {
-  id: string; title: string; origin: string; source: "otto" | "team"; cost: number; status: ApprovalStatus;
-  group?: ApprovalGroup; when?: string; detail: string; images?: string[]; moreImages?: number; pendingImage?: boolean;
-  sources?: string[]; warning?: string; previousTime?: string; nextTime?: string; decision?: string; resolution?: "approved" | "rejected" | "superseded" | "canceled"; openLabel?: string; openHref?: string;
-};
-
-const FIXTURE_STATE_KEY = "fikirtive.r22.approvals.state.v1";
-
-const FIXTURE_ITEMS: ApprovalItem[] = [
-  { id: "i1", title: "Candle care tip for the pandan range", origin: "Otto · Weekday mornings", source: "otto", cost: 0, status: "waiting", group: "today", when: "Today 09:00", detail: "Instagram · 1 post", images: ["/fixtures/r22-canvas/art-3.jpg"], sources: ["candle scent list", "no discounts before Oct 25"], openLabel: "Open in campaign", openHref: "/campaign?fixture=r22" },
-  { id: "i2", title: "Deepavali gift set — 4 posts", origin: "Otto · Weekend routine", source: "otto", cost: 0, status: "waiting", group: "today", when: "Today 18:00", detail: "Instagram, Facebook · 2 of these hold Sat 10:00", images: ["/fixtures/r22-canvas/art-2.jpg", "/fixtures/r22-canvas/art-1.jpg", "/fixtures/r22-canvas/art-4.jpg", "/fixtures/r22-canvas/art-3.jpg"], moreImages: 2, sources: ["Deepavali gift set", "no discounts before Oct 25"], openLabel: "Open in campaign", openHref: "/campaign?fixture=r22" },
-  { id: "i3", title: "Make 4 more Deepavali variants", origin: "Otto · Weekend routine", source: "otto", cost: 16, status: "waiting", group: "week", when: "Before Sat 09:00", detail: "Images ×4 · 4 cr each", pendingImage: true, warning: "This batch would take the routine past its weekly credits cap, so it needs your go-ahead before Otto makes anything.", sources: ["candle scent list"], openLabel: "See the credit ledger", openHref: "/settings?section=billing&fixture=r22" },
-  { id: "i4", title: "Restock note for the pandan candle", origin: "Aiman · draft", source: "team", cost: 0, status: "waiting", group: "week", when: "Thu 17:00", detail: "Facebook · 1 post", images: ["/fixtures/r22-canvas/art-4.jpg"], sources: ["pandan candle"], openLabel: "Open in schedule", openHref: "/schedule?fixture=r22" },
-  { id: "i5", title: "Move Friday's post to Saturday", origin: "Otto · Weekday mornings", source: "otto", cost: 0, status: "waiting", group: "none", previousTime: "Fri 10:00", nextTime: "Sat 09:00", detail: "Instagram · 1 post · nothing is generated or spent by this change", sources: ["public holidays"], openLabel: "Open in schedule", openHref: "/schedule?fixture=r22" },
-  { id: "h1", title: "Weekend market reminder", origin: "Otto · Weekend routine", source: "otto", cost: 0, status: "approved", when: "Sat 10:00", detail: "Instagram · Scheduled · held until a channel is connected", images: ["/fixtures/r22-canvas/art-2.jpg"], decision: "Approved by Nicks · today 08:42" },
-  { id: "h2", title: "Soy wax restock — 2 posts", origin: "Otto · Weekday mornings", source: "otto", cost: 8, status: "approved", when: "Mon 09:00", detail: "Instagram · Scheduled · held until a channel is connected", images: ["/fixtures/r22-canvas/art-4.jpg", "/fixtures/r22-canvas/art-1.jpg"], decision: "Approved by Nicks · Mon 07:55 · see the 8 cr in the ledger" },
-  { id: "h3", title: "Discount teaser for the gift set", origin: "Otto · Weekend routine", source: "otto", cost: 0, status: "rejected", detail: "Instagram · Otto remade it and the new version is in Needs review", images: ["/fixtures/r22-canvas/art-2.jpg"], decision: "Sent back by Nicks · yesterday 17:10 · Breaks a rule I set — “no discounts before Oct 25”" },
-];
-
-const GROUPS: Array<{ id: ApprovalGroup; label: string; time?: string }> = [
-  { id: "today", label: "Due today", time: "times in GMT+8" }, { id: "week", label: "This week" }, { id: "none", label: "No deadline" },
-];
-const REASONS = ["Doesn't sound like us", "Wrong facts or price", "Image looks off", "Breaks a rule I set", "Something else"] as const;
 
 export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixtureOutcome = "success" }: { fixture?: boolean; fixtureState?: "ready" | "loading" | "error" | "permission" | "empty" | "unknown"; fixtureOutcome?: "success" | "error" | "permission" | "unknown" }) {
   const [items, setItems] = useState(fixtureState === "empty" ? [] : FIXTURE_ITEMS);
@@ -139,7 +121,7 @@ export function R22ApprovalsView({ fixture = false, fixtureState = "ready", fixt
         {item.images?.length || item.pendingImage ? <div className="r22-approvals-thumbs">{item.images?.map((image, index) => <img className="r22-approvals-thumb" src={image} alt="" key={`${item.id}-${index}`} />)}{item.pendingImage ? <span className="r22-approvals-thumb is-pending">To make</span> : null}{item.moreImages ? <Button unstyled type="button" className="r22-approvals-thumb is-more" aria-label={`Preview ${item.moreImages} more images`}>+{item.moreImages}</Button> : null}</div> : null}
         {item.previousTime && item.nextTime ? <p className="r22-approvals-diff"><span>{item.previousTime}</span><i>→</i><b>{item.nextTime}</b></p> : null}
         <p className="r22-approvals-facts">{item.when ? <><span>{item.when}</span> · </> : null}{item.detail}</p>
-        {item.warning ? <p className="r22-approvals-warning">{item.warning}</p> : null}
+        {item.blocker ? <p className="r22-approvals-warning">{item.blocker.why}</p> : null}
         {item.sources?.length ? <div className="r22-approvals-sources"><span>Based on</span>{item.sources.map((source) => <Button unstyled type="button" key={source}>{source}</Button>)}</div> : null}
       </div>
       {waiting ? <footer className="r22-approvals-actions"><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => decide([item.id], "approved", "Approved in fixture")}>{busy ? "Approving…" : "Approve"}</Button><Button unstyled type="button" disabled={busyIds.length > 0} onClick={() => beginReject(item.id, [item.id])}>Send back</Button><Link href={item.openHref ?? "/campaign?fixture=r22"}>{item.openLabel ?? "Open in campaign"}</Link><DropdownMenu><DropdownMenuTrigger asChild><Button unstyled type="button" disabled={busyIds.length > 0} className="r22-approvals-more" aria-label="More actions"><Ellipsis data-icon="inline-start" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem onSelect={() => decide([item.id], "approved", "Marked handled in fixture")}>Mark handled</DropdownMenuItem><DropdownMenuItem onSelect={() => decide([item.id], "rejected", "Superseded by a newer fixture request", "superseded")}>Mark superseded</DropdownMenuItem><DropdownMenuItem onSelect={() => decide([item.id], "rejected", "Canceled in fixture before approval", "canceled")}>Cancel request</DropdownMenuItem><DropdownMenuItem onSelect={() => { setNoticeKind("success"); setNotice("Otto explanation is available only in this visual fixture."); }}>Ask Otto why</DropdownMenuItem><DropdownMenuItem onSelect={() => { setNoticeKind("success"); setNotice("Fixture link ready to copy. No external action occurred."); }}>Copy link</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu></footer> : <p className="r22-approvals-decision">{item.decision}</p>}
