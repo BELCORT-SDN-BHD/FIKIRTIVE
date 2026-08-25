@@ -669,6 +669,9 @@ export function OttoPanelHost({
       onOpenHistory={seed ? toggleHistory : undefined}
       historyOpen={historyOpen}
       onNewChat={seed ? openNewChat : undefined}
+      // 头部读的是**现在开着的那一条**会话的名字(原型 L5443 的 `#ottoTitle`),
+      // 没有会话时是原型那句 "New conversation" —— 不是一个读不出上下文的死字「Otto」。
+      panelTitle={threads.find((thread) => thread.id === activeThreadId)?.title}
       // 正在把一条会话的消息取回来时,头部这两颗会改变「现在显示哪一条」的按钮先禁掉。
       // 真正的守卫是意图号(见上面 `claimIntent`);禁用只是让这一下不必发生。
       headerBusy={openingThreadId !== null}

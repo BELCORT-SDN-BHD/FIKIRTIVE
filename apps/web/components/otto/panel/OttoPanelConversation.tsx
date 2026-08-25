@@ -1,6 +1,6 @@
 "use client";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message, MessageContent } from "@/components/ui/message";
 import {
@@ -131,12 +131,32 @@ export function OttoPanelConversation({
   );
 }
 
+/**
+ * 面板底下那句常驻的话,逐字取自 R22 原型 L5466 的 `#ottoContext`。
+ *
+ * 它替掉的是上一版那句把工程脚手架的名字直接怼到商家眼前的话 —— 那既不是他要知道的事,
+ * 也不是他读得懂的词(那个词本身不再出现在这个文件里,连注释里也不留,`r22-extended-
+ * surfaces.test.ts` 是逐字扫源码的)。这一面是不是样本数据由顶栏那枚
+ * 「Prototype · sample data」徽章说,和面板里这句话讲的是两件事:这句讲的是**边界**
+ * ——在这里聊天不会替你动任何东西。
+ */
+export const OTTO_PANEL_CONTEXT_NOTE = "General workspace help · no action will run from chat";
+/** 原型 L5464 的 placeholder,一字不改。 */
+export const OTTO_PANEL_PLACEHOLDER = "Ask Otto — @ adds references";
+
+/** 前门那三格,寄存器照原型 `.otto-starter`(一行标题 + 一行说明)。 */
+const R22_STARTERS = [
+  { title: "Plan this week’s posts", detail: "Otto drafts a shape you can approve or change" },
+  { title: "Explain what is waiting for me", detail: "Approvals, held connections, anything blocked" },
+  { title: "Turn a product into a campaign", detail: "One product, three posts, one schedule" },
+] as const;
+
 function R22FixtureConversation({ userName, projectId, threads, activeThread, onThreadStarted, onThreadUpdate }: { userName: string; projectId: string; threads: ChatThreadDTO[]; activeThread: ChatThreadDTO | null; onThreadStarted: (thread: ChatThreadDTO) => void; onThreadUpdate: (thread: ChatThreadDTO) => void }) {
   const [text, setText] = React.useState("");
   const messages = activeThread?.messages ?? [];
 
-  function send() {
-    const clean = text.trim();
+  function send(forced?: string) {
+    const clean = (forced ?? text).trim();
     if (!clean) return;
     const now = "2026-08-25T08:42:00.000Z";
     const nextOrdinal = threads.reduce((highest, thread) => {
@@ -144,7 +164,10 @@ function R22FixtureConversation({ userName, projectId, threads, activeThread, on
       return match ? Math.max(highest, Number(match[1])) : highest;
     }, 0) + 1;
     const fixtureThreadId = activeThread?.id ?? `fixture-otto-${nextOrdinal}`;
-    const nextMessages: ChatThreadDTO["messages"] = [...messages, { id: `${fixtureThreadId}-user-${messages.length + 1}`, role: "USER", kind: "TEXT", seq: messages.length + 1, text: clean, payload: null, genJobId: null, createdAt: now }, { id: `${fixtureThreadId}-agent-${messages.length + 2}`, role: "AGENT", kind: "TEXT", seq: messages.length + 2, text: "This is a deterministic visual reply. No conversation or action was sent to the server.", payload: null, genJobId: null, createdAt: now }];
+    // 回话的寄存器 = 原型 `responseFor()` 的说明型答案:讲这一页的事、讲边界,
+    // 不讲「deterministic」「server」这类只有写代码的人才说的词。
+    const reply = "Here is what I can see on this page, and what I would do next. Nothing runs from here — when something needs to happen, it comes back as a card you approve first.";
+    const nextMessages: ChatThreadDTO["messages"] = [...messages, { id: `${fixtureThreadId}-user-${messages.length + 1}`, role: "USER", kind: "TEXT", seq: messages.length + 1, text: clean, payload: null, genJobId: null, createdAt: now }, { id: `${fixtureThreadId}-agent-${messages.length + 2}`, role: "AGENT", kind: "TEXT", seq: messages.length + 2, text: reply, payload: null, genJobId: null, createdAt: now }];
     if (activeThread) onThreadUpdate({ ...activeThread, messages: nextMessages, updatedAt: now, status: "done" });
     else onThreadStarted({ id: fixtureThreadId, projectId, title: clean.length > 42 ? `${clean.slice(0, 39)}…` : clean, updatedAt: now, pinnedAt: null, status: "done", messages: nextMessages });
     setText("");
@@ -159,18 +182,34 @@ function R22FixtureConversation({ userName, projectId, threads, activeThread, on
     <MessageScrollerProvider autoScroll>
       <MessageScroller className="min-h-0 flex-1">
         <MessageScrollerViewport>
-          <MessageScrollerContent className="gap-3 px-4 py-5">
-            {!messages.length ? <MessageScrollerItem messageId="fixture-welcome"><Message unstyled align="start"><MessageContent unstyled><Bubble unstyled align="start" className="mr-8"><BubbleContent unstyled className="rounded-xl border border-[#e8e9ef] bg-white px-3 py-2 text-[12.5px] leading-5 text-[#32343b]">Hi {userName}. I can help shape the work on this page.</BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
-            {messages.map((message) => { const user = message.role === "USER"; return <MessageScrollerItem key={message.id} messageId={String(message.id)} scrollAnchor={user}><Message unstyled align={user ? "end" : "start"}><MessageContent unstyled><Bubble unstyled align={user ? "end" : "start"} className={user ? "ml-8" : "mr-8"}><BubbleContent unstyled className={user ? "rounded-xl bg-[#16171c] px-3 py-2 text-[12.5px] leading-5 text-white" : "rounded-xl border border-[#e8e9ef] bg-white px-3 py-2 text-[12.5px] leading-5 text-[#32343b]"}>{message.text}</BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem>; })}
+          <MessageScrollerContent className="r22-otto-thread">
+            {/* 空态照原型 `.otto-empty`(L5473 那一段的兄弟):一句大标题、一句说明、三格起手式。
+                不是一颗假装 Otto 已经说过话的气泡 —— 他还没说过。 */}
+            {!messages.length ? <MessageScrollerItem messageId="fixture-welcome"><Message unstyled align="start"><MessageContent unstyled><Bubble unstyled align="start"><BubbleContent unstyled className="r22-otto-empty">
+              <h2>Hi {userName}</h2>
+              <p>Ask about anything on this page, or start with one of these.</p>
+              <div className="r22-otto-starters">
+                {R22_STARTERS.map((starter) => <Button unstyled key={starter.title} type="button" className="r22-otto-starter" onClick={() => send(starter.title)}><b>{starter.title}</b><span>{starter.detail}</span></Button>)}
+              </div>
+            </BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
+            {messages.map((message) => { const user = message.role === "USER"; return <MessageScrollerItem key={message.id} messageId={String(message.id)} scrollAnchor={user}><Message unstyled align={user ? "end" : "start"}><MessageContent unstyled><Bubble unstyled align={user ? "end" : "start"}><BubbleContent unstyled className={user ? "r22-otto-msg-me" : "r22-otto-msg-otto"}>{message.text}</BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem>; })}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton />
       </MessageScroller>
     </MessageScrollerProvider>
-    <form onSubmit={submit} className="border-t border-[#e8e9ef] p-3">
+    {/* 输入框在**底部**,是这根 flex 列的最后一格(原型 `.op-foot`)。父级
+        `[data-otto-panel-body]` 必须是 flex 列,否则上面那格的 `flex-1` 是废的,
+        整段会贴着顶走 —— 那正是 2026-08-25 Founder 看到的「输入框浮在上面」。 */}
+    <form data-otto-panel-composer="" onSubmit={submit} className="r22-otto-foot">
       <label className="sr-only" htmlFor="r22-otto-fixture-composer">Ask Otto</label>
-      <Textarea unstyled id="r22-otto-fixture-composer" rows={3} value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Ask Otto anything…" className="w-full resize-none rounded-[10px] border border-[#dddee6] bg-white px-3 py-2 text-[12.5px] outline-none focus:border-[#686d79]" />
-      <div className="mt-2 flex items-center justify-between gap-3"><span className="text-[10.5px] text-[#686d79]">Visual fixture · nothing is sent</span><Button unstyled type="submit" disabled={!text.trim()} className="min-h-8 rounded-lg bg-[#16171c] px-3 text-[11.5px] font-semibold text-white transition-transform duration-100 active:scale-[.97] disabled:opacity-40 motion-reduce:active:scale-100">Send</Button></div>
+      <div className="r22-otto-composer">
+        <Input unstyled id="r22-otto-fixture-composer" value={text} onChange={(event) => setText(event.target.value)} placeholder={OTTO_PANEL_PLACEHOLDER} className="r22-otto-composer-input" />
+        <Button unstyled type="submit" disabled={!text.trim()} aria-label="Send" className="r22-otto-composer-send">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 12.5v-9M4.2 7.2 8 3.4l3.8 3.8" /></svg>
+        </Button>
+      </div>
+      <div className="r22-otto-compose-note"><span>{OTTO_PANEL_CONTEXT_NOTE}</span><span>Enter to send</span></div>
     </form>
   </div>;
 }

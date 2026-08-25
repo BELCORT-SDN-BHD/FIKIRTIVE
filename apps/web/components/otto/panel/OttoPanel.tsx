@@ -16,12 +16,12 @@
  */
 
 import * as React from "react";
-import Image from "next/image";
-import { History, Maximize2, Minimize2, SquarePen, X } from "lucide-react";
+import { ChevronDown, History, Maximize2, Minimize2, SquarePen, X } from "lucide-react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 import { cn } from "@/lib/utils";
+import { R22OttoCloud } from "./OttoLauncher";
 import {
   RESIZE_HANDLES,
   RESIZE_HANDLE_CURSOR,
@@ -62,6 +62,8 @@ export interface OttoPanelProps {
   /** 历史列表现在是不是开着(头部那颗 ☰ 的按下态)。 */
   historyOpen?: boolean;
   onNewChat?: () => void;
+  /** 头部显示的会话名(R22)。没有会话时是原型那句 "New conversation"。 */
+  title?: string;
   /** 面板正在把一条会话的消息取回来 —— 会改变「现在显示哪一条」的那两颗先禁掉。 */
   headerBusy?: boolean;
   contextChip?: OttoPanelContextChip;
@@ -107,6 +109,7 @@ export function OttoPanel({
   onOpenHistory,
   historyOpen = false,
   onNewChat,
+  title,
   headerBusy = false,
   contextChip,
   contextAttached = false,
@@ -301,9 +304,31 @@ export function OttoPanel({
             drag && drag.kind !== "resize-docked" ? "cursor-grabbing" : "cursor-grab",
           )}
         >
-          {variant === "r22" ? <Image src="/brand/r22-otto.svg" width={120} height={110} alt="" /> : <OttoAvatar size={22} mood="idle" />}
-          <span className="mr-auto truncate text-[14px] font-semibold tracking-[-0.01em]">Otto</span>
-          {onOpenHistory && (
+          {variant === "r22" ? <R22OttoCloud className="r22-otto-head-cloud" /> : <OttoAvatar size={22} mood="idle" />}
+          {/* 原型 L5443 的 `roomBtn`:标题本身就是会话切换器的入口(标题 + ⌄),而不是一个
+              读不出上下文的死字「Otto」加一颗单独的 ☰。功能没有第二套 —— 按下去调的仍是
+              `onOpenHistory`,和 legacy 那颗 ☰ 同一条线。 */}
+          {variant === "r22" && onOpenHistory ? (
+            <Button
+              unstyled
+              type="button"
+              data-otto-panel-title=""
+              aria-expanded={historyOpen}
+              aria-label="Open conversation switcher"
+              disabled={headerBusy}
+              onClick={onOpenHistory}
+              className="r22-otto-head-title"
+            >
+              <span className="truncate">{title ?? "New conversation"}</span>
+              <ChevronDown className="size-3.5 shrink-0" strokeWidth={1.8} />
+            </Button>
+          ) : (
+            <span className="mr-auto truncate text-[14px] font-semibold tracking-[-0.01em]">
+              {variant === "r22" ? (title ?? "New conversation") : "Otto"}
+            </span>
+          )}
+          {variant === "r22" && <span className="ml-auto" />}
+          {onOpenHistory && variant !== "r22" && (
             <PanelIconButton
               label="Conversation history"
               pressed={historyOpen}
@@ -313,16 +338,33 @@ export function OttoPanel({
               <History className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}
-          {variant !== "r22" && <PanelIconButton
-            label={expanded ? "Collapse Otto" : "Expand Otto"}
-            pressed={expanded}
-            onClick={onToggleExpanded}
-          >
-            {expanded ? <Minimize2 className="size-4" strokeWidth={1.9} /> : <Maximize2 className="size-4" strokeWidth={1.9} />}
-          </PanelIconButton>}
           {onNewChat && (
-            <PanelIconButton label="New chat" disabled={headerBusy} onClick={onNewChat}>
+            // 原型 L5447 的 `#ottoNew`,可及名字用它的原话 "New conversation" —— 面板里
+            // 每一处讲的都是 conversation(改名/删除弹窗也是),不该只有这一颗叫 chat。
+            <PanelIconButton label="New conversation" disabled={headerBusy} onClick={onNewChat}>
               <SquarePen className="size-4" strokeWidth={1.9} />
+            </PanelIconButton>
+          )}
+          {/* Expand 在原型里是一颗写着字的按钮(L5451,按下变 "Restore")。它在 R22 里不再
+              被藏起来 —— 停靠 408px 读不下一张审批卡时,商家需要这一颗。 */}
+          {variant === "r22" ? (
+            <Button
+              unstyled
+              type="button"
+              aria-label={expanded ? "Restore Otto" : "Expand Otto"}
+              aria-pressed={expanded}
+              onClick={onToggleExpanded}
+              className="r22-otto-head-expand"
+            >
+              {expanded ? "Restore" : "Expand"}
+            </Button>
+          ) : (
+            <PanelIconButton
+              label={expanded ? "Collapse Otto" : "Expand Otto"}
+              pressed={expanded}
+              onClick={onToggleExpanded}
+            >
+              {expanded ? <Minimize2 className="size-4" strokeWidth={1.9} /> : <Maximize2 className="size-4" strokeWidth={1.9} />}
             </PanelIconButton>
           )}
           <PanelIconButton label="Close Otto" onClick={onClose}>
@@ -351,7 +393,19 @@ export function OttoPanel({
           </div>
         )}
 
-        <div data-otto-panel-body="" className="min-h-0 flex-1 overflow-y-auto">
+        {/* R22 的体是一根 flex 列,不是一块自己滚的方块。
+            这一条是「composer 在底部」的承重梁:体里那棵树(`OttoPanelConversation`)的根
+            带着 `flex min-h-0 flex-1 flex-col`,可是父级不是 flex 容器时那个 `flex-1` 是废的 ——
+            于是整段会话按内容高度贴在顶上,输入框跟着浮到面板上沿,底下空一大片。原型
+            (L457-458)里 `.op-body` 与 `.op-foot` 是 `.op-inner` 这根列的两格,输入框永远在底。
+            滚动交给里面的 message scroller,所以这一层 `overflow-hidden`,不叠第二个滚动区。 */}
+        <div
+          data-otto-panel-body=""
+          className={cn(
+            "min-h-0 flex-1",
+            variant === "r22" ? "flex flex-col overflow-hidden" : "overflow-y-auto",
+          )}
+        >
           {children}
         </div>
 
