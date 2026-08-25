@@ -168,7 +168,7 @@ function RoutineCard({ row, fixture, busy, onEdit, onPause }: { row: R22RoutineR
       </p>
 
       {row.status !== "paused" && cap !== null && cap > 0 ? (
-        <div className="r22-routine-progress"><span>{row.creditPeriod === "monthly" ? "Monthly credits" : row.creditPeriod === "weekly" ? "Weekly credits" : "Credit limit"}</span><span><i style={{ width: `${percent}%` }} /></span><b>{used === null ? `Usage unavailable · ${cap} cr cap` : `${used} of ${cap} cr`}</b><small>{used === null ? "No usage was inferred" : fixture ? "used · 3 days into the week" : `used this ${row.creditPeriod ?? "period"}`}</small></div>
+        <div className="r22-routine-progress"><span>{row.creditPeriod === "monthly" ? "Monthly credits" : row.creditPeriod === "weekly" ? "Weekly credits" : "Credit limit"}</span><span><i style={{ width: `${percent}%` }} /></span><b>{used === null ? `Usage unavailable · ${cap} cr cap` : `${used} of ${cap} cr`}</b><small>{used === null ? "Nothing is guessed here" : fixture ? "used · 3 days into the week" : `used this ${row.creditPeriod ?? "period"}`}</small></div>
       ) : row.status === "paused" ? <p className="r22-routine-fact">Paused — Otto is preparing nothing for this routine and spending nothing.</p> : null}
 
       {row.warning && <p className="r22-routine-warning">{row.warning} <Link href={fixture ? "/settings/connections?fixture=r22" : "/settings/connections"}>Open Connections</Link></p>}
@@ -448,7 +448,7 @@ export function R22RoutinesView({ routines, fixture = false, readError, fixtureS
     setValidation([]);
   };
 
-  if (fixture && (fixtureState === "loading" || fixtureState === "error" || fixtureState === "permission" || fixtureState === "unknown")) return <main className="r22-routines" data-r22-routines data-state={fixtureState}><div className="r22-routines-head"><div><h1>Routines</h1><p>Otto only works inside a routine you set up.</p></div></div><p className="r22-routine-read-error" role={fixtureState === "error" ? "alert" : "status"}>{fixtureState === "loading" ? "Loading workspace routines… No empty list is inferred while the read is pending." : fixtureState === "permission" ? "Routines are not available to this member. No names, slots, usage or counts are exposed." : fixtureState === "unknown" ? "Routine read outcome is unknown. No list or empty state was inferred." : "Routines could not be loaded. No empty list was inferred."}{fixtureState === "error" || fixtureState === "unknown" ? <> <Link href="/routines?fixture=r22">Retry</Link></> : null}</p></main>;
+  if (fixture && (fixtureState === "loading" || fixtureState === "error" || fixtureState === "permission" || fixtureState === "unknown")) return <main className="r22-routines" data-r22-routines data-state={fixtureState}><div className="r22-routines-head"><div><h1>Routines</h1><p>Otto only works inside a routine you set up.</p></div></div><p className="r22-routine-read-error" role={fixtureState === "error" ? "alert" : "status"}>{fixtureState === "loading" ? "Loading workspace routines… Nothing is guessed while this loads." : fixtureState === "permission" ? "Routines are not available to this member. No names, slots, usage or counts are exposed." : fixtureState === "unknown" ? "Routine read outcome is unknown. Nothing is guessed in its place." : "Routines could not be loaded. Nothing is guessed in its place."}{fixtureState === "error" || fixtureState === "unknown" ? <> <Link href="/routines?fixture=r22">Retry</Link></> : null}</p></main>;
 
   return (
     <main className="r22-routines" data-r22-routines>
@@ -460,7 +460,7 @@ export function R22RoutinesView({ routines, fixture = false, readError, fixtureS
         </TabsList>
       </Tabs>}
 
-      {readError && <p className="r22-routine-read-error" role="alert">Routines could not be loaded: {readError}. No data was inferred.</p>}
+      {readError && <p className="r22-routine-read-error" role="alert">Routines could not be loaded: {readError}. Nothing is guessed in its place.</p>}
       {notice && <p className="r22-routine-read-error" role="status">{notice}</p>}
       {deleted && <div className="r22-routine-undo" role="status"><span>{deleted.row.name} deleted.</span><Button unstyled type="button" onClick={() => { setRows((current) => [...current.slice(0, deleted.index), deleted.row, ...current.slice(deleted.index)]); setActivity((current) => prependFixtureActivity(current, "Routine restored", `${deleted.row.name} · previous configuration restored`)); setDeleted(null); setNotice("Routine restored in this fixture."); }}>Undo</Button></div>}
 

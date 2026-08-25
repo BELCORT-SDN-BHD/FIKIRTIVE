@@ -354,7 +354,7 @@ describe("读不出来 ≠ 没有(判官 r1 P3-1,R22 版:一句整页横幅)", (
     const text = visibleText(render({ kind: "not_connected" }, DEGRADED_DATA));
 
     expect(text).toContain(HOME_COPY.workspaceDataUnreadable);
-    expect(HOME_COPY.workspaceDataUnreadable, "那句横幅不再说「不许推断空态」").toContain("No empty state has been inferred");
+    expect(HOME_COPY.workspaceDataUnreadable, "那句横幅改用人话说「不猜」,判官 [P2-2] 之后不再说 inferred").toContain("Nothing is guessed in its place");
   });
 
   it("全部读到了就不说那句 —— 降级态与正常态渲染出来的字不一样", () => {

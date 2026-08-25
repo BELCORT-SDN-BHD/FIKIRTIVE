@@ -65,7 +65,7 @@ describe("R22 truthful-state UI contracts", () => {
     }));
 
     expect(html).toContain("Could not load");
-    expect(html).toContain("Credit activity could not be loaded. No empty history was inferred.");
+    expect(html).toContain("Credit activity could not be loaded. Nothing is guessed in its place.");
     expect(html).not.toContain("No credit activity is available.");
     expect(html).not.toContain("0 cr available");
     expect(html).not.toContain(">Top up<");
@@ -77,7 +77,7 @@ describe("R22 truthful-state UI contracts", () => {
       readError: "workflow service unavailable",
     }));
 
-    expect(html).toContain("Routines could not be loaded: workflow service unavailable. No data was inferred.");
+    expect(html).toContain("Routines could not be loaded: workflow service unavailable. Nothing is guessed in its place.");
     expect(html).not.toContain("No routine yet");
   });
 
@@ -102,7 +102,7 @@ describe("R22 truthful-state UI contracts", () => {
 
     expect(html).toContain("Monthly credits");
     expect(html).toContain("Usage unavailable · 120 cr cap");
-    expect(html).toContain("No usage was inferred");
+    expect(html).toContain("Nothing is guessed here");
     expect(html).toContain("Auto-publish unknown");
     expect(html).not.toContain("0 of 120 cr");
     expect(html).not.toContain("Weekly credits");
@@ -169,5 +169,74 @@ describe("R22 truthful-state UI contracts", () => {
     expect(html).toContain("this is not an empty project");
     expect(html).toContain("unavailable");
     expect(html).not.toContain("Fixture board ready");
+  });
+
+  // 判官 2026-08-25 [P2-2] 续篇:「No X was inferred」词族全仓归人,这条测试原本钉的旧句
+  // 已经全部换成人话寄存器("Nothing is guessed in its place." / "Nothing is guessed while
+  // this loads." / "Nothing is guessed here.")。负向断言防这个词悄悄回流到这几面的商家文案。
+  it("never lets the literal word 'inferred' back into these surfaces' merchant-visible copy", () => {
+    const settings = renderToStaticMarkup(createElement(R22SettingsShell, {
+      initialSection: "billing",
+      data: {
+        workspaceName: "Workspace name unavailable",
+        displayName: "",
+        email: "owner@example.test",
+        balance: null,
+        recent: [],
+        accountReadable: false,
+        spendCapCredits: null,
+        channels: [],
+        timezone: "Timezone could not be read",
+        dataError: "account",
+      },
+    }));
+
+    const routinesError = renderToStaticMarkup(createElement(R22RoutinesView, {
+      routines: [],
+      readError: "workflow service unavailable",
+    }));
+
+    const routinesUsage = renderToStaticMarkup(createElement(R22RoutinesView, {
+      routines: [{
+        id: "routine-1",
+        name: "weekday-mornings",
+        cadence: null,
+        postsPerWeek: null,
+        topic: "Market posts",
+        channel: "1 authorised channel",
+        creditsUsed: null,
+        creditsCap: 120,
+        creditPeriod: "monthly",
+        status: "draft",
+        autoPublish: null,
+        warning: null,
+        policy: null,
+        slots: [],
+      }],
+    }));
+
+    const canvasUnknown = renderToStaticMarkup(createElement(R22CanvasSurface, {
+      runtimeContext: {
+        projects: [{ id: "fixture-raya", name: "Raya launch" }],
+        threads: [],
+        activeProjectId: "fixture-raya",
+        activeThreadId: null,
+        initialBalance: 250,
+        initialPrompt: "",
+        visualFixture: "r22",
+        fixtureRouteState: "unknown",
+      },
+      entities: [],
+    }));
+
+    const iq = renderToStaticMarkup(createElement(R22OttoIQView, {
+      fixture: true,
+      fixtureState: "unknown",
+      initialMemory: [],
+    }));
+
+    for (const html of [settings, routinesError, routinesUsage, canvasUnknown, iq]) {
+      expect(html.toLowerCase()).not.toContain("inferred");
+    }
   });
 });

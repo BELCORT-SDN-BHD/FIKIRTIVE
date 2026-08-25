@@ -258,7 +258,7 @@ export function OttoPanelHost({
         if (fixtureLoadState === "permission") result = { error: "Otto is not available to this workspace member. No conversation history was exposed." };
         else if (fixtureLoadState === "error" && !fixtureFailedOnceRef.current) {
           fixtureFailedOnceRef.current = true;
-          result = { error: "Otto could not load this workspace conversation. Nothing was inferred; retry is safe." };
+          result = { error: "Otto could not load this workspace conversation. Nothing is guessed in its place; retry is safe." };
         } else {
           const workspaceId = readR22WorkspaceDirectory().activeId;
           const stored = readR22OttoFixture(workspaceId);

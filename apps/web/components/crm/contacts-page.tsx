@@ -176,7 +176,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
       const result = await createContact({ name, lifecycleStage: newStage, source: "manual" });
       if (!("ok" in result)) return setCreateError(result.error);
       setName("");
-      setCreateNotice("Contact saved. No phone number or consent was inferred.");
+      setCreateNotice("Contact saved. Nothing is guessed in its place.");
       setDuplicates(result.possibleDuplicates);
       await refreshContacts();
     } catch {

@@ -617,7 +617,7 @@ function ReconciliationPanel({ jobs }: { jobs: MoneyJobRow[] }) {
   return (
     <Panel
       title="Engine-reported vs estimated"
-      subtitle="What the engine says it billed, next to the cost we froze from our own price table. Unknown means the engine did not report it — nothing is inferred."
+      subtitle="What the engine says it billed, next to the cost we froze from our own price table. Unknown means the engine did not report it — nothing is guessed in its place."
       action={<Badge variant="outline">{reported} of {jobs.length} reported</Badge>}
     >
       <div className="grid gap-2">

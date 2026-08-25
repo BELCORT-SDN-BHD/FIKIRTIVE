@@ -71,7 +71,7 @@ export function readOk<T>(value: T): Read<T> {
 export const HOME_COPY = {
   /* ── 读不出来 ≠ 没有 ──────────────────────────────────────────────────────── */
   /** 任何一块读取降级时,整页只说这一句。它同时钉死「不许由此推断出一个空态」。 */
-  workspaceDataUnreadable: "Some workspace data could not be read just now. No empty state has been inferred from it.",
+  workspaceDataUnreadable: "Some workspace data could not be read just now. Nothing is guessed in its place.",
 
   /* ── 连接状态:不知道 ≠ 没连上 ────────────────────────────────────────────── */
   connectionStatusUnreadable: "Connection status could not be read just now.",

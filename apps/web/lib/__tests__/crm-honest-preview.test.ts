@@ -1067,7 +1067,7 @@ describe("「What works today」不是自称:真组件跑一遍", () => {
       source: "manual",
     });
     // 而且它不会顺手编造号码或同意 —— 这正是 blocked 那一句说的。
-    expect(dom.textContent).toContain("No phone number or consent was inferred.");
+    expect(dom.textContent).toContain("Nothing is guessed in its place.");
   });
 
   it("分群:真页面自己承认哪两个事实没接通,而且承认的与预览页写的是同一件事", () => {

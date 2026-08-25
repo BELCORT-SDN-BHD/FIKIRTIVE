@@ -446,7 +446,7 @@ export default function RoutineAuthorizationPanel({
         {routineReadError ? <Badge variant="outline">Status unavailable</Badge> : activePersistedCount > 0 ? <Badge variant="brand">{activePersistedCount} active</Badge> : <Badge variant="outline">No active Routines</Badge>}
       </div>
 
-      {routineReadError ? <div className="mt-5 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><Unplug className="mt-0.5 size-4 shrink-0" /><span><strong>Routine status could not be refreshed.</strong> {routineReadError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(routineReadError)} No authorization is inferred.</span></div> : null}
+      {routineReadError ? <div className="mt-5 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><Unplug className="mt-0.5 size-4 shrink-0" /><span><strong>Routine status could not be refreshed.</strong> {routineReadError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(routineReadError)} Nothing is guessed in its place.</span></div> : null}
 
       {errorCode ? (
         <div className="mt-4 rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={errorCode}>
