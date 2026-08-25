@@ -46,33 +46,73 @@ export function readOk<T>(value: T): Read<T> {
 }
 
 /**
- * Home 会说的每一句话 —— 全部在这里,一句都不在渲染里散着写。
+ * Home 的**状态句**单一出处 —— 「说系统真话」的那一类,一句都不在渲染里散着写。
  *
- * 两个理由,都不是整洁:
- *   ① 「读不出来」那几句必须**成套**存在,而且措辞一致 —— 它们是这一页最容易被写漏、
- *      写成半句安慰话的地方(判官 r1 P3-1)。
- *   ② 围栏要能判「这一页有没有多长出一句话」。样板数据不一定带数字:
- *      「Your best performing post is doing great」一个数字都没有,却是彻头彻尾的编造
- *      (判官 r1 P2-1 的构造)。所以围栏改成**金样对账** —— 渲染出来的每一句话都必须在
- *      钉死的清单里,新句子进不来,除非有人明写地把它加进去。
+ * 辖区(Founder 2026-08-25 裁决,配合 R22 Data-first Home 上位):**缩辖区,不退休**。
+ * 归这里管的是系统对商家说的真话:读不出来 / 读不到状态 / 权限与 Meta 授权范围 / 钱。
+ * 装饰性的标题、按钮名、引导语**解放** —— 它们不再需要报到,写在渲染里就好。
+ *
+ * 为什么这一类必须收在一处:它们是这一页最容易被写漏、写成半句安慰话的地方(判官 r1
+ * P3-1)。「读不出来」不许悄悄退化成「没有」;「我们不知道有没有连上」不许退化成「没连」;
+ * 「Meta 给了什么权限」不许在两个地方各说一套。围栏因此只扫**状态句形状**:渲染层出现一句
+ * 带真话标记(could not / unavailable / verified / permission…)的话,它必须是这里的一条。
+ *
+ * ── 退役立碑(Founder 2026-08-25 裁决,08-24 检查点「2 很棒」选定 direction 2)──
+ * 旧 Home「五块仪表盘」规格(`docs/specs/wave2-shell.md` §4.1)已被 Founder 亲选的 R22
+ * Data-first Home 取代,以下八条**装饰句**随之解放,不再进金样:
+ *   pickUpHeading "Pick up where you left off" / nothingMade "Nothing here yet — start your
+ *   first canvas." / recentlyMade "Recently made" / scheduleHeading "What goes out next" /
+ *   campaignsHeading "Campaigns in progress" / openCampaign "Open campaign" /
+ *   equipmentHeading "Get Otto ready" / stepDone "Done"。
+ * 它们不是被删掉的真话,是被裁掉的版面 —— R22 Home 上没有对应的块了。
  *
  * 数据本身(画布名、caption、日期)不在这里 —— 那是商家自己的字,不是产品说的话。
  */
 export const HOME_COPY = {
-  // ② 接着做
-  pickUpHeading: "Pick up where you left off",
-  /** 空账号唯一的那一句(规格书 §4.1 逐字)。只在两边都读到了、且两边都真的空时出现。 */
-  nothingMade: "Nothing here yet — start your first canvas.",
-  recentlyMade: "Recently made",
-  // ③ 接下来发什么
-  scheduleHeading: "What goes out next",
-  // ④ 进行中的战役
-  campaignsHeading: "Campaigns in progress",
-  openCampaign: "Open campaign",
-  // ⑤ 把 Otto 装备好
-  equipmentHeading: "Get Otto ready",
-  stepDone: "Done",
-  // 「这一刻读不出来」的一整套。同一个句型,因为它们说的是同一件事。
+  /* ── 读不出来 ≠ 没有 ──────────────────────────────────────────────────────── */
+  /** 任何一块读取降级时,整页只说这一句。它同时钉死「不许由此推断出一个空态」。 */
+  workspaceDataUnreadable: "Some workspace data could not be read just now. No empty state has been inferred from it.",
+
+  /* ── 连接状态:不知道 ≠ 没连上 ────────────────────────────────────────────── */
+  connectionStatusUnreadable: "Connection status could not be read just now.",
+  connectionStatusUnavailableHeading: "Connection status unavailable",
+  connectionStatusUnavailableBody: "FIKIRTIVE could not verify whether a channel is connected. No connection action is offered until that read succeeds.",
+  /** 读不到状态时,已有的连接**不许**被顺手标成断开。 */
+  nothingMarkedDisconnected: "Nothing has been marked disconnected.",
+  metaUnreachable: "Meta could not be reached just now. The existing connection has not been marked disconnected.",
+  channelNotAvailable: "Not available",
+
+  /* ── 权限与 Meta 授权范围 ─────────────────────────────────────────────────── */
+  connectionReadySubhead: "Your verified channel connection is ready for Otto.",
+  connectionVerifiedLabel: "Connection verified",
+  connectionVerifiedScope: "Current workspace only",
+  publishingPermissionsLabel: "Publishing permissions",
+  publishingPermissionsScope: "Shown exactly as granted by Meta",
+  ottoContextLabel: "Otto context",
+  ottoContextScope: "Uses only available verified data",
+  providerWindowNotice: "FIKIRTIVE will open a secure provider window in production.",
+  noPasswordStored: "No password is stored in FIKIRTIVE.",
+  permissionReadContent: "Read published content and audience insights",
+  permissionPublishApproved: "Publish approved work when you choose",
+  permissionVerifyAccount: "Verify the connected account and permissions",
+  profileScopeNotice: "Only the selected profile will be connected to this workspace.",
+  metaProfileListTruth: "The secure Meta window lists only profiles you can authorize. FIKIRTIVE does not invent that list.",
+  permissionVerificationNotice: "FIKIRTIVE verifies publishing, insights and ownership permissions before importing data.",
+  verifyingNotice: "Checking the selected account and permissions. No success is shown until verification finishes.",
+  connectFailedTitle: "Connection could not be completed",
+  connectFailedBody: "The provider did not confirm the account. Nothing was connected and no workspace data changed.",
+  connectSuccessBody: "Publishing and audience access was verified for this workspace.",
+
+  /* ── 有没有数据,照实说 ───────────────────────────────────────────────────── */
+  performanceUnavailableReady: "Verified performance is not available yet",
+  performanceUnavailableReadyBody: "The connection is real, but this frontend has not received a verified publishing-history dataset.",
+  performanceVerifiedOnlyBody: "FIKIRTIVE will show only verified publishing and audience data.",
+
+  /* ── 钱:读不出来就说读不出来,绝不显示 0 ─────────────────────────────────────
+   * 以下六句今天**一句都没有在 Home 上渲染** —— R22 Data-first Home 把五块仪表盘整个
+   * 换掉了,余额按设计原则第 18 条(Founder 2026-08-21)收归 Billing 一处。它们留在辖区
+   * 内是因为按裁决它们正是 HOME_COPY 该管的那一类(unreadable / 钱);背后那条仍在跑却
+   * 无人渲染的五块读取管道是另一件事,已上报,不在这次动。 */
   creditsUnreadable: "Your credit balance couldn't be read just now.",
   canvasesUnreadable: "Your canvases couldn't be read just now.",
   thumbsUnreadable: "What you made recently couldn't be read just now.",

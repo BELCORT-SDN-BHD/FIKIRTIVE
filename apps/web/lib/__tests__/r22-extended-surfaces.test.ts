@@ -319,7 +319,8 @@ describe("R22 extended frontend contracts", () => {
     expect(settings.indexOf("if (fixture) { onFixtureSave")).toBeLessThan(settings.indexOf("await setOwnerSetting"));
     expect(settings).toContain("disabled={busy || fixture}");
     expect(home).toContain('window.location.assign("/api/meta/authorize")');
-    expect(home).toContain("No password is stored in FIKIRTIVE.");
+    // 权限那句是状态句,按 Founder 2026-08-25 缩辖区裁决收进 `HOME_COPY`(措辞未变)。
+    expect(home).toContain("HOME_COPY.noPasswordStored");
     expect(ottoHost).toContain("if (fixture) return;");
     expect(ottoConversation).toContain("No conversation or action was sent to the server.");
     for (const unstableFixtureId of [

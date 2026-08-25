@@ -29,7 +29,7 @@ import {
   Plus,
   type LucideIcon,
 } from "lucide-react";
-import { readOk, type HomeData } from "./home-data";
+import { HOME_COPY, readOk, type HomeData } from "./home-data";
 import type { MetaConnectionResult } from "@/lib/meta-actions";
 import type { Read } from "./home-data";
 import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
@@ -56,7 +56,7 @@ type ConnectFlow = {
 
 export function homeConnectionFromMeta(meta: Read<MetaConnectionResult>): HomeConnection {
   if (!meta.ok || "error" in meta.value) {
-    return { kind: "unknown", message: "Connection status could not be read just now." };
+    return { kind: "unknown", message: HOME_COPY.connectionStatusUnreadable };
   }
   if (!meta.value.connected) return { kind: "not_connected" };
   if (meta.value.needsReconnect || meta.value.status === "expired") return { kind: "needs_reconnect" };
@@ -80,7 +80,7 @@ function LoadingTruth({ data }: { data: HomeData }) {
   return (
     <div className="r22-home-read-warning" role="status">
       <Info aria-hidden="true" />
-      <span>Some workspace data could not be read just now. No empty state has been inferred from it.</span>
+      <span>{HOME_COPY.workspaceDataUnreadable}</span>
     </div>
   );
 }
@@ -176,7 +176,7 @@ export function HomeView({
       <header className="r22-home-header">
         <div>
           <h1>{data.greeting}</h1>
-          <p>{ready ? "Your verified channel connection is ready for Otto." : "Connect one channel so Otto can learn what is working."}</p>
+          <p>{ready ? HOME_COPY.connectionReadySubhead : "Connect one channel so Otto can learn what is working."}</p>
         </div>
         <div className="r22-home-account" aria-label="Current account">
           <span>NA</span>
@@ -189,7 +189,7 @@ export function HomeView({
       {connection.kind === "unknown" ? (
         <div className="r22-home-connection-error" role="alert">
           <Info aria-hidden="true" />
-          <div><b>Connection status unavailable</b><p>{connection.message} Nothing has been marked disconnected.</p></div>
+          <div><b>{HOME_COPY.connectionStatusUnavailableHeading}</b><p>{connection.message} {HOME_COPY.nothingMarkedDisconnected}</p></div>
           <Link href={fixtureHref("/settings/connections")}>Open connections</Link>
         </div>
       ) : null}
@@ -204,16 +204,16 @@ export function HomeView({
                 <Link href={fixtureHref("/settings/connections")}>Manage</Link>
               </div>
               <div className="r22-home-ready-summary">
-                <div><b>Connection verified</b><span>Current workspace only</span></div>
-                <div><b>Publishing permissions</b><span>Shown exactly as granted by Meta</span></div>
-                <div><b>Otto context</b><span>Uses only available verified data</span></div>
+                <div><b>{HOME_COPY.connectionVerifiedLabel}</b><span>{HOME_COPY.connectionVerifiedScope}</span></div>
+                <div><b>{HOME_COPY.publishingPermissionsLabel}</b><span>{HOME_COPY.publishingPermissionsScope}</span></div>
+                <div><b>{HOME_COPY.ottoContextLabel}</b><span>{HOME_COPY.ottoContextScope}</span></div>
               </div>
-              {visibleConnection.kind === "connected" && visibleConnection.transient ? <p className="r22-home-inline-warning">Meta could not be reached just now. The existing connection has not been marked disconnected.</p> : null}
+              {visibleConnection.kind === "connected" && visibleConnection.transient ? <p className="r22-home-inline-warning">{HOME_COPY.metaUnreachable}</p> : null}
             </>
           ) : connection.kind === "unknown" ? (
             <div className="r22-home-unknown-card">
-              <h2>Connection status unavailable</h2>
-              <p>FIKIRTIVE could not verify whether a channel is connected. No connection action is offered until that read succeeds.</p>
+              <h2>{HOME_COPY.connectionStatusUnavailableHeading}</h2>
+              <p>{HOME_COPY.connectionStatusUnavailableBody}</p>
               <Link href={fixtureHref("/settings/connections")}>Review connections</Link>
             </div>
           ) : (
@@ -224,7 +224,7 @@ export function HomeView({
                 {channels.map(({ label, icon: Icon, recommended, available }) => (
                   <div className="r22-home-channel" key={label}>
                     <Icon aria-hidden="true" /><b>{label}</b>{recommended && <em>Recommended</em>}
-                    {available ? <Button unstyled type="button" className="r22-home-fixture-connect" onClick={() => openConnect(label)}>{visibleConnection.kind === "needs_reconnect" ? "Reconnect" : "Connect"}</Button> : <Button unstyled type="button" disabled>Not available</Button>}
+                    {available ? <Button unstyled type="button" className="r22-home-fixture-connect" onClick={() => openConnect(label)}>{visibleConnection.kind === "needs_reconnect" ? "Reconnect" : "Connect"}</Button> : <Button unstyled type="button" disabled>{HOME_COPY.channelNotAvailable}</Button>}
                   </div>
                 ))}
               </div>
@@ -246,8 +246,8 @@ export function HomeView({
           <h2>Performance</h2>
           {verifiedFixture ? <div className="r22-home-kpis"><span><small>Published</small><b>38</b><em>Last 30 days</em></span><span><small>Reach</small><b>48.2K</b><em>+12.6%</em></span><span><small>Engagement</small><b>4.8%</b><em>+0.7 pt</em></span><span><small>Best day</small><b>Thu</b><em>18:00–21:00</em></span></div> : <div>
             <span><LockKeyhole aria-hidden="true" /></span>
-            <b>{ready ? "Verified performance is not available yet" : "Connect a channel to see real performance"}</b>
-            <p>{ready ? "The connection is real, but this frontend has not received a verified publishing-history dataset." : "FIKIRTIVE will show only verified publishing and audience data."}</p>
+            <b>{ready ? HOME_COPY.performanceUnavailableReady : "Connect a channel to see real performance"}</b>
+            <p>{ready ? HOME_COPY.performanceUnavailableReadyBody : HOME_COPY.performanceVerifiedOnlyBody}</p>
             <i /><i /><i />
           </div>}
         </section>
@@ -282,13 +282,13 @@ export function HomeView({
             <>
               <DialogHeader>
                 <DialogTitle>Connect {provider}</DialogTitle>
-                <DialogDescription>FIKIRTIVE will open a secure provider window in production.</DialogDescription>
+                <DialogDescription>{HOME_COPY.providerWindowNotice}</DialogDescription>
               </DialogHeader>
-              <div className="r22-home-provider"><b>Continue with {provider}</b><span>No password is stored in FIKIRTIVE.</span></div>
+              <div className="r22-home-provider"><b>Continue with {provider}</b><span>{HOME_COPY.noPasswordStored}</span></div>
               <ul className="r22-home-permissions">
-                <li><Check aria-hidden="true" />Read published content and audience insights</li>
-                <li><Check aria-hidden="true" />Publish approved work when you choose</li>
-                <li><Check aria-hidden="true" />Verify the connected account and permissions</li>
+                <li><Check aria-hidden="true" />{HOME_COPY.permissionReadContent}</li>
+                <li><Check aria-hidden="true" />{HOME_COPY.permissionPublishApproved}</li>
+                <li><Check aria-hidden="true" />{HOME_COPY.permissionVerifyAccount}</li>
               </ul>
               <DialogFooter>
                 <Button unstyled type="button" className="is-quiet" onClick={dismissConnect}>Cancel</Button>
@@ -299,25 +299,25 @@ export function HomeView({
             <>
               <DialogHeader>
                 <DialogTitle>Choose a business profile</DialogTitle>
-                <DialogDescription>Only the selected profile will be connected to this workspace.</DialogDescription>
+                <DialogDescription>{HOME_COPY.profileScopeNotice}</DialogDescription>
               </DialogHeader>
-              {fixture ? <RadioGroup unstyled defaultValue={fixtureWorkspace.id} aria-label="Business profile"><label className="r22-home-profile"><RadioGroupItem unstyled value={fixtureWorkspace.id} /><span>{fixtureWorkspace.name.split(/\s+/).map((word) => word[0]).join("").slice(0, 2).toUpperCase()}</span><span><b>{provider === "Instagram" ? `@${fixtureWorkspace.name.toLowerCase().replace(/[^a-z0-9]+/g, "")}` : fixtureWorkspace.name}</b><small>{fixtureWorkspace.name} · Business profile</small></span></label></RadioGroup> : <div className="r22-home-provider"><b>Choose your profile with Meta</b><span>The secure Meta window lists only profiles you can authorize. FIKIRTIVE does not invent that list.</span></div>}
-              <p className="r22-home-dialog-note">FIKIRTIVE verifies publishing, insights and ownership permissions before importing data.</p>
+              {fixture ? <RadioGroup unstyled defaultValue={fixtureWorkspace.id} aria-label="Business profile"><label className="r22-home-profile"><RadioGroupItem unstyled value={fixtureWorkspace.id} /><span>{fixtureWorkspace.name.split(/\s+/).map((word) => word[0]).join("").slice(0, 2).toUpperCase()}</span><span><b>{provider === "Instagram" ? `@${fixtureWorkspace.name.toLowerCase().replace(/[^a-z0-9]+/g, "")}` : fixtureWorkspace.name}</b><small>{fixtureWorkspace.name} · Business profile</small></span></label></RadioGroup> : <div className="r22-home-provider"><b>Choose your profile with Meta</b><span>{HOME_COPY.metaProfileListTruth}</span></div>}
+              <p className="r22-home-dialog-note">{HOME_COPY.permissionVerificationNotice}</p>
               <DialogFooter>
                 <Button unstyled type="button" className="is-quiet" onClick={() => setConnectFlow({ channel: provider, step: "permissions" })}>Back</Button>
                 <Button unstyled type="button" className="is-primary" onClick={confirmConnection}>{fixture ? "Connect this profile" : "Continue to Meta"}</Button>
               </DialogFooter>
             </>
           ) : connectFlow?.step === "submitting" ? (
-            <div className="r22-home-connect-state" aria-live="polite"><LoaderCircle className="is-spinning" aria-hidden="true" /><DialogTitle>Verifying {provider}</DialogTitle><DialogDescription>Checking the selected account and permissions. No success is shown until verification finishes.</DialogDescription></div>
+            <div className="r22-home-connect-state" aria-live="polite"><LoaderCircle className="is-spinning" aria-hidden="true" /><DialogTitle>Verifying {provider}</DialogTitle><DialogDescription>{HOME_COPY.verifyingNotice}</DialogDescription></div>
           ) : connectFlow?.step === "error" ? (
             <>
-              <div className="r22-home-connect-state" role="alert"><Info aria-hidden="true" /><DialogTitle>Connection could not be completed</DialogTitle><DialogDescription>The provider did not confirm the account. Nothing was connected and no workspace data changed.</DialogDescription></div>
+              <div className="r22-home-connect-state" role="alert"><Info aria-hidden="true" /><DialogTitle>{HOME_COPY.connectFailedTitle}</DialogTitle><DialogDescription>{HOME_COPY.connectFailedBody}</DialogDescription></div>
               <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={dismissConnect}>Cancel</Button><Button unstyled type="button" className="is-primary" onClick={() => { setFixtureOutcome("success"); setConnectFlow({ channel: provider, step: "profile" }); }}>Retry</Button></DialogFooter>
             </>
           ) : (
             <>
-              <div className="r22-home-connect-state is-success" role="status"><Check aria-hidden="true" /><DialogTitle>Success! {provider} is connected.</DialogTitle><DialogDescription>Publishing and audience access was verified for this workspace.</DialogDescription></div>
+              <div className="r22-home-connect-state is-success" role="status"><Check aria-hidden="true" /><DialogTitle>Success! {provider} is connected.</DialogTitle><DialogDescription>{HOME_COPY.connectSuccessBody}</DialogDescription></div>
               <DialogFooter><Button unstyled type="button" className="is-primary" onClick={() => setConnectFlow(null)}>Done</Button></DialogFooter>
             </>
           )}

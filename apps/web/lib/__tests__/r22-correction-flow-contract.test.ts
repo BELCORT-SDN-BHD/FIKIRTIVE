@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { HOME_COPY } from "@/components/home/home-data";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const source = (file: string) => readFileSync(path.join(WEB_ROOT, file), "utf8");
@@ -24,11 +25,16 @@ describe("R22 correction flow contracts", () => {
 
     expect(home).toContain("<Dialog open={connectFlow !== null}");
     expect(home).toContain("Continue with");
-    expect(home).toContain("No password is stored in FIKIRTIVE.");
-    expect(home).toContain("Read published content and audience insights");
+    // 这两句是**状态句**(权限与 Meta 授权范围),按 Founder 2026-08-25 缩辖区裁决已收进
+    // `HOME_COPY` 单一出处 —— 措辞一个字没变,只是搬了家。钉引用,不再钉字面量。
+    expect(home).toContain("HOME_COPY.noPasswordStored");
+    expect(home).toContain("HOME_COPY.permissionReadContent");
+    expect(HOME_COPY.noPasswordStored).toBe("No password is stored in FIKIRTIVE.");
+    expect(HOME_COPY.permissionReadContent).toBe("Read published content and audience insights");
     expect(home).toContain("Choose a business profile");
     expect(home).toContain("Connect this profile");
-    expect(home).toContain("Connection could not be completed");
+    expect(home).toContain("HOME_COPY.connectFailedTitle");
+    expect(HOME_COPY.connectFailedTitle).toBe("Connection could not be completed");
     expect(home).not.toContain("connection preview only");
   });
 
