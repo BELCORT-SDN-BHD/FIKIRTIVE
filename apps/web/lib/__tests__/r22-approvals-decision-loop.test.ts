@@ -15,6 +15,8 @@
  *   ⑤ 独立审批到期的临期警示。
  *   ⑥ 被阻断的卡:Approve 禁用、按 a 也不动、Fix with Otto 在面板挂不到时说实话。
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { act, createElement, type FC, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -381,6 +383,43 @@ describe("R22 Approvals v2 皮肤的结构契约", () => {
     expect(stagger, "错位序号没有逐卡递增").toEqual(stagger.map((_value, index) => String(index)));
     // 序号是数据,动效本身在 css 的 animation-delay 里 —— 这里只证数据到位了。
     expect((card("i2") as HTMLElement).style.getPropertyValue("--r22-approvals-stagger")).toBe("1");
+  });
+
+  /**
+   * 审阅层居中的回归闸。
+   *
+   * 为什么钉 css 源码而不是 `getBoundingClientRect`:vitest 的 jsdom 不跑布局,也不注入
+   * 组件 import 进来的样式表 —— 层的几何在这里恒等于 0,量不出「有没有居中」。所以这一条
+   * 用机械尺子量**规则本身**,配合上面那条「点图开得出 `.r22-approvals-layer`」的 DOM 测试,
+   * 两头合起来才是完整的:元素真的挂着这个类,而这个类真的把它摆在中间。
+   *
+   * 钉的是两个具体病根,不是泛泛的「要居中」:
+   *   ① `DialogContent` 传 `unstyled` 之后,shadcn 默认类里那对 `-translate-*-1/2` 一并没了,
+   *      居中得由这条规则自己负责;
+   *   ② 入场动效**不许**借用卡片那组关键帧 —— 它的收尾帧 `transform:none` 配 `both`
+   *      会把基础 translate 永久盖掉。1280×720 实测过一次:rect 变成
+   *      top 360 / left 640 / 1080×468,左上角钉在视口正中心、右下整块溢出屏外。
+   */
+  it("审阅层永远居中、永远整个在视口里:translate 与入场动效不互相拆台", () => {
+    const css = readFileSync(path.resolve(__dirname, "../../components/approvals/r22-approvals.css"), "utf8");
+
+    const base = css.match(/\.r22-approvals-layer \{[^}]*\}/)?.[0] ?? "";
+    expect(base, "找不到 .r22-approvals-layer 的基础规则").not.toBe("");
+    expect(base, "换掉 DialogContent 默认类之后没有补回居中的 translate").toMatch(/transform:\s*translate\(-50%,\s*-50%\)/);
+    expect(base, "层没有留视口余量,大屏之外会溢出").toContain("min(1080px, calc(100vw - 64px))");
+    expect(base, "层的高度没有封顶,矮视口会顶破屏幕").toContain("min(760px, calc(100vh - 64px))");
+
+    const animation = css.match(/\.r22-approvals-layer\[data-state="open"\] \{\s*animation:\s*([\w-]+)/)?.[1] ?? "";
+    expect(animation, "找不到审阅层的入场动效").not.toBe("");
+    expect(animation, "审阅层又借用了卡片的关键帧,它的收尾帧会把居中 transform 抹成 none").not.toBe("r22-approvals-in");
+
+    const frames = css.match(new RegExp(`@keyframes ${animation} \\{.*\\}`))?.[0] ?? "";
+    expect(frames, `找不到 @keyframes ${animation}`).not.toBe("");
+    expect(frames, "入场动效的某一帧把居中 transform 抹掉了").not.toMatch(/transform:\s*none/);
+    // 每一帧都得带着居中的那一半,否则动画跑到哪一帧、层就在哪一帧飞出去。
+    const transforms = frames.match(/transform:\s*[^;]+;/g) ?? [];
+    expect(transforms.length, "关键帧里没有 transform,居中会在动画期间丢失").toBeGreaterThan(1);
+    for (const declaration of transforms) expect(declaration, "这一帧没有居中").toContain("-50%");
   });
 
   it("键盘发起的动作走零动效通道:data-kb 挂在 html 上", async () => {

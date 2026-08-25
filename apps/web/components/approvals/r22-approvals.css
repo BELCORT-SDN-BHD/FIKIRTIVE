@@ -232,18 +232,34 @@
 
 /* ══════════ 审阅层。图是主角,决定坐在它旁边 ══════════ */
 .r22-approvals-scrim { position: fixed; inset: 0; z-index: 80; background: var(--r22-scrim); }
+/*
+ * 层永远整个落在视口里,而且永远居中。
+ *
+ * 稿是用 `.ap-layer{display:grid;place-items:center}` 把 box 摆中间的,所以稿里那段入场
+ * 动效的收尾帧写 `transform:none` 是对的 —— box 是格子里的一个项目,transform 只管那 8px
+ * 的抬升。这里换成了 shadcn 的 Dialog:`DialogContent` 传了 `unstyled` 之后,它默认类里
+ * 那对 `-translate-x-1/2 -translate-y-1/2` 一并没了,居中改由这条规则自己的 translate 负责。
+ *
+ * 上一版把卡片的 `r22-approvals-in` 直接借给了这一层 —— 它的收尾帧 `transform:none` 配
+ * `both`(fill forwards)会把基础 translate **永久**盖掉:层于是左上角钉在视口正中心、
+ * 右下整块溢出屏外(1280×720 实测 rect = top 360 / left 640 / 1080×468)。
+ * 所以这一层有自己的一组关键帧,每一帧都带着居中的 translate,收尾帧回到静止值。
+ */
 .r22-approvals-layer {
   position: fixed; left: 50%; top: 50%; z-index: 81;
-  display: grid; grid-template-columns: minmax(0, 1fr) 348px;
-  width: min(1080px, calc(100% - 64px)); max-height: min(760px, calc(100% - 64px));
+  display: grid; grid-template-columns: minmax(0, 1fr) 348px; grid-template-rows: minmax(0, 1fr);
+  width: min(1080px, calc(100vw - 64px)); max-height: min(760px, calc(100vh - 64px));
   overflow: hidden;
   transform: translate(-50%, -50%);
+  transform-origin: center; /* 模态不锚触发器:它从自己的中心长出来 */
   border: 1px solid var(--r22-line); border-radius: 16px;
   background: var(--r22-surface); box-shadow: var(--r22-shadow-lg);
 }
-.r22-approvals-layer[data-state="open"] { animation: r22-approvals-in 180ms cubic-bezier(.23, 1, .32, 1) both; }
-.r22-approvals-stage { display: flex; min-width: 0; align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; background: var(--r22-chrome); }
-.r22-approvals-frame { position: relative; height: min(480px, 58vh); max-height: 100%; margin: 0; overflow: hidden; border: 1px solid var(--r22-line); border-radius: 12px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); }
+.r22-approvals-layer[data-state="open"] { animation: r22-approvals-layer-in 180ms cubic-bezier(.23, 1, .32, 1) both; }
+@keyframes r22-approvals-layer-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); } to { opacity: 1; transform: translate(-50%, -50%); } }
+.r22-approvals-stage { display: flex; min-width: 0; min-height: 0; align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; background: var(--r22-chrome); }
+/* 视口矮的时候先让图收缩,而不是把层顶破 */
+.r22-approvals-frame { position: relative; height: min(480px, 58vh); min-height: 0; max-height: 100%; margin: 0; overflow: hidden; flex: 0 1 auto; border: 1px solid var(--r22-line); border-radius: 12px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); }
 .r22-approvals-frame.is-4x5 { aspect-ratio: 4 / 5; }
 .r22-approvals-frame.is-1x1 { aspect-ratio: 1 / 1; }
 .r22-approvals-frame.is-9x16 { aspect-ratio: 9 / 16; }
@@ -254,7 +270,7 @@
 .r22-approvals-strip button { position: relative; width: 44px; height: 56px; overflow: hidden; padding: 0; border: 1px solid var(--r22-line); border-radius: 6px; background: var(--r22-surface); transition: box-shadow 140ms ease, transform 140ms cubic-bezier(.23, 1, .32, 1); }
 .r22-approvals-strip button:active { transform: scale(.97); }
 .r22-approvals-strip button[aria-current="true"] { box-shadow: 0 0 0 2px var(--r22-surface), 0 0 0 4px var(--r22-ink); }
-.r22-approvals-side { display: flex; overflow-y: auto; flex-direction: column; gap: 12px; padding: 22px 22px 24px; border-left: 1px solid var(--r22-line); }
+.r22-approvals-side { display: flex; min-height: 0; overflow-y: auto; flex-direction: column; gap: 12px; padding: 22px 22px 24px; border-left: 1px solid var(--r22-line); }
 .r22-approvals-lmeta { display: flex; margin: 0; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--r22-ink-2); font-size: var(--r22-text-small); }
 .r22-approvals-lmeta time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
 .r22-approvals-lcap { max-width: 44ch; margin: 0; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 400; line-height: 1.6; letter-spacing: normal; }
@@ -275,14 +291,16 @@
 .r22-approvals-layer-x:hover { background: var(--r22-chrome); color: var(--r22-ink); }
 .r22-approvals-layer-x:active { transform: scale(.97); }
 
+/* 窄屏改成上下两段:图那一段吃剩下的高度,右栏自己滚 —— 两段都还在 max-height 里面 */
 @media (width <= 900px) {
-  .r22-approvals-layer { grid-template-columns: minmax(0, 1fr); }
+  .r22-approvals-layer { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, auto); }
   .r22-approvals-side { border-left: none; border-top: 1px solid var(--r22-line); }
 }
 
-/* ————— 按下的那一点回弹,全面通用 ————— */
-.r22-approvals button, .r22-approvals a { transition: transform 140ms cubic-bezier(.23, 1, .32, 1), opacity 140ms ease, background-color 140ms ease, color 140ms ease; }
-.r22-approvals button:active, .r22-approvals a:active { transform: scale(.97); }
+/* ————— 按下的那一点回弹。审阅层被 portal 送去了 body,不在 `.r22-approvals` 底下,
+   所以它得自己点名,否则层里的按钮一点回弹都没有 ————— */
+.r22-approvals button, .r22-approvals a, .r22-approvals-layer button { transition: transform 140ms cubic-bezier(.23, 1, .32, 1), opacity 140ms ease, background-color 140ms ease, color 140ms ease; }
+.r22-approvals button:active, .r22-approvals a:active, .r22-approvals-layer button:active { transform: scale(.97); }
 .r22-approvals-shot:active, .r22-approvals-strip button:active { transform: scale(.985); }
 
 /* ————— 键盘发起的动作一点动效都不带 ————— */
@@ -294,5 +312,5 @@ html[data-kb="1"] .r22-approvals-scrim { animation: none !important; transition:
 @media (prefers-reduced-motion: reduce) {
   .r22-approvals-item, .r22-approvals-layer[data-state="open"] { animation: none; }
   .r22-approvals button, .r22-approvals a, .r22-approvals-bar [role="tab"], .r22-approvals-detail [role="tab"] { transition: none; }
-  .r22-approvals button:active, .r22-approvals a:active, .r22-approvals-shot:active, .r22-approvals-strip button:active, .r22-approvals-layer-x:active { transform: none; }
+  .r22-approvals button:active, .r22-approvals a:active, .r22-approvals-layer button:active, .r22-approvals-shot:active, .r22-approvals-strip button:active, .r22-approvals-layer-x:active { transform: none; }
 }
