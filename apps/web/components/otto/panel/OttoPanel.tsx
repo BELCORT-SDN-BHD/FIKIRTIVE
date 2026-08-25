@@ -50,6 +50,14 @@ export interface OttoPanelProps {
   hydrated: boolean;
   /** Expand 是这一刻的事,不进存档,所以由上层单独给。 */
   expanded: boolean;
+  /**
+   * R22 的 Expand 不是「宽一点」,是**全屏接管**(原型 `setFullscreen`,L5867-5881):
+   * 面板脱离排版铺满视窗,同级内容 `inert`,焦点关在面板里,Esc 退回停靠。
+   *
+   * 铺满这一步没有过渡 —— 408px 的抽屉与整屏之间没有一个读得出意思的中间态,拉一段
+   * 220ms 的宽度动画只会让人等。停靠形态自己那条开合过渡照旧(见下面 `frame`)。
+   */
+  fullscreen?: boolean;
   /** 停靠时真正要用的宽度(Expand 已经算进去了)。 */
   width: number;
   onResize: (width: number) => void;
@@ -61,6 +69,14 @@ export interface OttoPanelProps {
   onOpenHistory?: () => void;
   /** 历史列表现在是不是开着(头部那颗 ☰ 的按下态)。 */
   historyOpen?: boolean;
+  /**
+   * R22 的会话切换器(`OttoRoomSwitcher`)。它是头部这一格自己的浮层,挂在 `<header>`
+   * 里而不是 portal 出去 —— 全屏时的焦点陷阱按「面板这棵子树」算,portal 出去的内容
+   * 正好落在陷阱外面。上层只在它该开的时候把节点传进来。
+   */
+  roomSwitcher?: React.ReactNode;
+  /** 切换器那一层的 DOM id,给标题按钮的 `aria-controls` 用。 */
+  roomsId?: string;
   onNewChat?: () => void;
   /** 头部显示的会话名(R22)。没有会话时是原型那句 "New conversation"。 */
   title?: string;
@@ -99,6 +115,7 @@ export function OttoPanel({
   viewport,
   hydrated,
   expanded,
+  fullscreen = false,
   width,
   onResize,
   onUndock,
@@ -108,6 +125,8 @@ export function OttoPanel({
   onClose,
   onOpenHistory,
   historyOpen = false,
+  roomSwitcher,
+  roomsId,
   onNewChat,
   title,
   headerBusy = false,
@@ -229,7 +248,51 @@ export function OttoPanel({
     onResize(clampPanelWidth(width + delta, viewport.width));
   }
 
-  const frame: React.CSSProperties = floating
+  // ── 全屏接管(原型 L5867-5890)────────────────────────────────────────────
+  //
+  // 三件事一起才叫「全屏」,少一件就只是一块更大的方块:
+  //   ① 铺满视窗(下面 `frame`);
+  //   ② 对读屏与键盘也是一层浮层(`role="dialog"` + `aria-modal`,同级内容由
+  //      `OttoPanelShell` 打上 `inert`);
+  //   ③ 焦点走不出去(下面这道 Tab 陷阱),而且进来的第一下就落在能打字的地方。
+  const panelRef = React.useRef<HTMLElement>(null);
+
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    const node = panelRef.current;
+    if (!node) return;
+    // 进全屏第一件事:光标落进输入框(原型 L5880)。找不到输入框就退回面板自己,
+    // 至少焦点还在这一层里,而不是留在身后那块已经 `inert` 的内容上。
+    const composer = node.querySelector<HTMLElement>("[data-otto-panel-composer] input, [data-otto-panel-composer] textarea");
+    (composer ?? node).focus?.();
+  }, [fullscreen]);
+
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Tab") return;
+      const node = panelRef.current;
+      if (!node) return;
+      const items = [...node.querySelectorAll<HTMLElement>("button:not([disabled]),input:not([disabled]),textarea:not([disabled]),[href]")]
+        .filter((el) => el.offsetParent !== null || el === document.activeElement);
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [fullscreen]);
+
+  const frame: React.CSSProperties = fullscreen
+    ? { position: "fixed", inset: 0, width: "auto", height: "auto", transition: "none" }
+    : floating
     ? {
         position: "fixed",
         left: state.float.x,
@@ -253,12 +316,14 @@ export function OttoPanel({
         />
       )}
       <aside
+        ref={panelRef}
         aria-label="Otto"
         data-otto-panel=""
         data-otto-panel-mode={state.mode}
         data-otto-panel-variant={variant}
         {...(hydrated ? { "data-otto-panel-hydrated": "" } : {})}
         {...(contextAttached ? { "data-otto-panel-context-attached": "" } : {})}
+        {...(fullscreen ? { "data-otto-panel-fullscreen": "", role: "dialog", "aria-modal": true, tabIndex: -1 } : {})}
         style={frame}
         className={cn(
           // 层级(#994 挂载票定表,判官 r1 P3-3 修正因果):导轨 z-40 < 面板 z-45 < 模态框 z-50。
@@ -274,7 +339,11 @@ export function OttoPanel({
           // 要收编成 `ui/dialog` 的那一批)。面板退到 45,这两处就回到面板之上;
           // 45 仍在导轨 40 之上,浮动窗拖过导轨时压得住它。
           "z-[45] flex min-h-0 flex-col overflow-hidden bg-card text-foreground",
-          floating
+          // 全屏那一层要盖住导轨(z-40)与停靠面板(z-45)之外的一切壳内内容,所以自己
+          // 抬到 55 —— 仍在手搓模态框(z-50)之上、`ui/dialog` 那条 Portal 之外的世界里。
+          fullscreen
+            ? "z-[55] border-0"
+            : floating
             ? "rounded-[var(--radius-lg)] border border-border/80 shadow-[var(--shadow-lg,0_18px_44px_rgba(20,20,24,0.16))]"
             // 停靠形态没有任何脱离文档流的定位 —— 它就是排版里的一格(挤而不盖)。`sticky` 仍
             // 占位、仍把主内容挤窄,只是页面往下滚的时候面板头部不跟着滚出屏幕;`self-start`
@@ -300,7 +369,9 @@ export function OttoPanel({
           data-otto-panel-header=""
           onPointerDown={variant === "r22" ? undefined : startHeaderDrag}
           className={cn(
-            "flex shrink-0 items-center gap-1.5 border-b border-border px-3 py-2.5 select-none",
+            // `relative`:会话切换器是这一格自己的浮层,贴着头部下沿定位(原型 L466 的
+            // `.otto-rooms{position:absolute;top:45px;left:40px}`)。
+            "relative flex shrink-0 items-center gap-1.5 border-b border-border px-3 py-2.5 select-none",
             drag && drag.kind !== "resize-docked" ? "cursor-grabbing" : "cursor-grab",
           )}
         >
@@ -314,6 +385,7 @@ export function OttoPanel({
               type="button"
               data-otto-panel-title=""
               aria-expanded={historyOpen}
+              {...(roomsId ? { "aria-controls": roomsId } : {})}
               aria-label="Open conversation switcher"
               disabled={headerBusy}
               onClick={onOpenHistory}
@@ -370,6 +442,7 @@ export function OttoPanel({
           <PanelIconButton label="Close Otto" onClick={onClose}>
             <X className="size-4" strokeWidth={1.9} />
           </PanelIconButton>
+          {roomSwitcher}
         </header>
 
         {contextChip && (

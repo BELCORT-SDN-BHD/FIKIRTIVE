@@ -48,7 +48,8 @@ import type { OttoPanelConversationState, PendingFirst } from "./OttoPanelConver
 import { OttoPanelShell, useOttoPanelControls } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
 import { OttoThreadList } from "./OttoThreadList";
-import { panelQuickChips } from "./panel-page";
+import { OTTO_ROOMS_ID, OttoRoomSwitcher } from "./OttoRoomSwitcher";
+import { panelContextSubject, panelQuickChips } from "./panel-page";
 import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
 
 const OttoPanelConversation = React.lazy(() =>
@@ -544,6 +545,17 @@ export function OttoPanelHost({
     await reloadSeed();
   }, [fixture, reloadSeed]);
 
+  // ── 这一页叫什么名字 ──────────────────────────────────────────────────────
+  //
+  // 只用它做两件**不代替商家做决定**的事:回话按话题分路(`responseFor`),以及底下那一行
+  // 说清这是哪一片工作区。它不是上下文 chip —— chip 说的是「Otto 看得见这一页」,那句话
+  // 今天仍然不成立(理由在上面那一整段),所以 chip 仍然不画。
+  //
+  // 认不出这一页、或者停在一个对象页上(`/campaign/<id>`)时给空:对象的真名字要读库,
+  // 而这里没有取数;编一个页名比不说更糟。
+  const contextSubject = React.useMemo(() => panelContextSubject(location), [location]);
+  const contextLabel = contextSubject?.kind === "page" ? contextSubject.label : undefined;
+
   // ── 快捷 chips ───────────────────────────────────────────────────────────
   const chips = React.useMemo(() => panelQuickChips(location), [location]);
 
@@ -609,17 +621,22 @@ export function OttoPanelHost({
    * preflight 有没有被引入或将来会不会改写;显示与否由这个组件当场说了算,而且
    * `style.display` 可以被测试直接断言 —— 「藏起来了没有」因此是一条看得见的事实。
    */
+  // R22 的历史是头部那一层浮层(`OttoRoomSwitcher`),不再盖住会话 —— 切一条会话本来是
+  // 「换个话题接着聊」,让商家先失去正在读的那一段再去列表里找回来是把一次切换做成了一次
+  // 中断。legacy 壳照旧盖住,那是它自己的形态。
+  const roomsOverlay = variant === "r22";
   const panelBody = (
     <>
       <div
         data-otto-panel-conversation-wrap=""
         className="min-h-0 flex-1 flex-col"
-        style={{ display: historyOpen ? "none" : "flex" }}
+        style={{ display: historyOpen && !roomsOverlay ? "none" : "flex" }}
       >
         <React.Suspense fallback={<ConversationFallback />}>
           <OttoPanelConversation
             state={conversationState}
             fixture={fixture}
+            contextLabel={contextLabel}
             onThreadStarted={handleThreadStarted}
             onStreamStart={handleStreamStart}
             onThreadUpdate={upsertThread}
@@ -629,7 +646,7 @@ export function OttoPanelHost({
           />
         </React.Suspense>
       </div>
-      {historyOpenedAt !== null && seed && (
+      {historyOpenedAt !== null && seed && !roomsOverlay && (
         <OttoThreadList
           projects={seed.projects}
           threads={threads}
@@ -651,10 +668,34 @@ export function OttoPanelHost({
     </>
   );
 
+  // R22 的会话切换器 —— 与上面那份列表读的是同一份会话、同一批动作函数,只是形状换成了
+  // 原型那一层浮层(搜索 / Today / Recent / 一句尾注 / 新对话)。两处**不可能**不一致:
+  // 状态只有这里一份。
+  const roomSwitcher = roomsOverlay && historyOpenedAt !== null && seed ? (
+    <OttoRoomSwitcher
+      projects={seed.projects}
+      threads={threads}
+      activeThreadId={activeThreadId}
+      now={historyOpenedAt}
+      openingThreadId={openingThreadId}
+      error={threadError}
+      onSelectThread={(thread) => void selectThread(thread)}
+      onNewChat={openNewChat}
+      onRenameThread={requestRenameThread}
+      onSetThreadPinned={(id, pinned) => void setThreadPinned(id, pinned)}
+      onDeleteThread={requestDeleteThread}
+      onRenameProject={requestRenameProject}
+      onSetProjectPinned={(id, pinned) => void setProjectPinned(id, pinned)}
+      onDeleteProject={requestDeleteProject}
+    />
+  ) : null;
+
   return (
     <OttoPanelShell
       variant={variant}
       panelBody={panelBody}
+      roomSwitcher={roomSwitcher}
+      roomsId={roomsOverlay ? OTTO_ROOMS_ID : undefined}
       // R22 的面板只有三格:头、会话体、体底那格输入框(原型 L5433-5469)。这一排 chips
       // 是插在体和 footer 之间的第四格,而 r22 的 composer 住在体里面 —— 画出来就落在输入框
       // **下面**,读起来像第二个 footer。原型没有这一排,所以 r22 不画它。

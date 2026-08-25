@@ -96,6 +96,9 @@ export interface OttoPanelShellProps {
   contextAttached?: boolean;
   onOpenHistory?: () => void;
   historyOpen?: boolean;
+  /** R22 会话切换器那一层(挂在面板头部里,见 `OttoPanel` 的同名 prop)。 */
+  roomSwitcher?: React.ReactNode;
+  roomsId?: string;
   onNewChat?: () => void;
   /** 头部那行会话名(R22)。 */
   panelTitle?: string;
@@ -125,6 +128,8 @@ export function OttoPanelShell({
   contextAttached,
   onOpenHistory,
   historyOpen,
+  roomSwitcher,
+  roomsId,
   onNewChat,
   panelTitle,
   headerBusy,
@@ -212,11 +217,40 @@ export function OttoPanelShell({
   }, []);
 
   const docked = state.mode === "docked";
+  /**
+   * R22 的 Expand 是**全屏接管**,不是「加宽」(原型 `setFullscreen`,L5867-5881)。
+   *
+   * 408px 的停靠面板里读一张审批卡本来就窄,而中间那一档(min(960px, 60vw))两头不讨好:
+   * 内容还是被夹着,主内容已经只剩一条边。原型直接让内容区整个让位,✕ / Restore 退回停靠。
+   * legacy 壳保留中间档不动 —— 那是另一套壳的形态,不在这一票里翻。
+   */
+  const fullscreen = variant === "r22" && expanded && state.open;
   const dockedWidth = docked && state.open
-    ? expanded
-      ? expandedPanelWidth(viewport.width)
-      : clampPanelWidth(state.width, viewport.width)
+    // 全屏时面板是 `position: fixed`,不占排版 —— 主内容没有被挤,所以这里报 0 才是实话
+    // (它是喂给别的面读「我被让开了多少」的那个数)。
+    ? fullscreen
+      ? 0
+      : expanded
+        ? expandedPanelWidth(viewport.width)
+        : clampPanelWidth(state.width, viewport.width)
     : 0;
+
+  // Esc 退出全屏,回到停靠(原型 L5908-5921)。它**只剥最上面那一层** —— 面板本身不跟着
+  // 关掉,商家刚才在读的那段会话还在,只是回到 408px 那一格里。
+  //
+  // 零动画不是这里少写了一行:全屏与停靠之间没有可插值的中间态(`position: fixed` ↔ 排版里
+  // 的一格、`width: auto` ↔ 408px),两个方向、任何触发方式都是硬切。键盘发起的动作因此
+  // 天然没有动画可等(Emil 第 11 条),不需要另设一个「这次是键盘」的开关。
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setExpanded(false);
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [fullscreen]);
 
   // 关掉面板就退出 Expand:Expand 是「现在读这张卡要更宽」,不是一个要记住的形态。
   const closePanel = React.useCallback(() => {
@@ -262,7 +296,10 @@ export function OttoPanelShell({
       <div data-otto-panel-shell="" data-otto-panel-variant={variant} className="flex min-w-0 items-start">
         {/* 主内容。被面板挤窄靠的是 flex 排版本身,所以这里不需要任何定位、遮罩或宽度动画:
             动的是面板那一侧的宽度,主内容跟着让。里面仍是普通块级流,与挂载之前逐行一致。 */}
-        <div data-otto-panel-main="" className="min-w-0 flex-1">
+        {/* 全屏接管时主内容整块 `inert`(原型 L5876-5879 把面板的每一个同级都设成 inert):
+            它此刻被完全盖住,读屏读不到、Tab 停不进去、点也点不着 —— 三件事一个属性说清,
+            不必手搓 `aria-hidden` + `tabIndex={-1}` 两套还各自漏一半。 */}
+        <div data-otto-panel-main="" inert={fullscreen} className="min-w-0 flex-1">
           {children}
         </div>
         {state.open && (
@@ -272,6 +309,7 @@ export function OttoPanelShell({
             viewport={viewport}
             hydrated={hydrated}
             expanded={expanded}
+            fullscreen={fullscreen}
             width={docked ? dockedWidth : state.float.w}
             onResize={(width) => {
               setExpanded(false);
@@ -287,6 +325,8 @@ export function OttoPanelShell({
             onClose={closePanel}
             onOpenHistory={onOpenHistory}
             historyOpen={historyOpen}
+            roomSwitcher={roomSwitcher}
+            roomsId={roomsId}
             onNewChat={onNewChat}
             title={panelTitle}
             headerBusy={headerBusy}
