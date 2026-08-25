@@ -69,6 +69,15 @@ const CANVAS_QUESTION_FLOWS: Record<"creative" | "scope", CanvasQuestionFlow> = 
   },
 };
 
+/**
+ * §9.5 的幂等身份是 taskId + inputRequestId + taskVersion **三件一起**。`inputRequestId`
+ * 本身已经带了 taskId(它长成 `${taskId}:input:1`),漏掉的是版本 —— 少了它,同一请求的
+ * 下一个版本会被当成「已经回答过」挡掉,拿不回自己的回执。
+ */
+function answeredRequestKey(inputRequestId: string, taskVersion: number): string {
+  return `${inputRequestId}:v${taskVersion}`;
+}
+
 function fixtureQuestionFlow(prompt: string): CanvasQuestionFlow | null {
   if (!/premium|luxury|make it better|more polished|surprise me|audience|offer|goal|outcome|reference|source|conflict|channel|format|schedule|when|deliverable/i.test(prompt)) return null;
   return /channel|format|schedule|when|deliverable/i.test(prompt) ? CANVAS_QUESTION_FLOWS.scope : CANVAS_QUESTION_FLOWS.creative;
@@ -274,6 +283,18 @@ export function R22CanvasSurface({
   useEffect(() => {
     if (!fixture) return;
     setFixtureWorkspaceId(readR22WorkspaceDirectory().activeId);
+    // 这个 key 会在**同一个组件实例**上随项目/会话切换而改变:顶栏项目菜单走 `<Link>`,
+    // 路由只换 query 参数,组件不卸载,内存态一个字都不会自己消失。所以「这个项目没有
+    // 存档」必须显式清空,不能什么都不做 —— 否则上一个项目的会话残留在内存里,再被下面
+    // 那个写入 effect 原样存进新项目的 key。
+    const resetFixtureState = () => {
+      setFixtureMessages([]);
+      setPendingQuestion(null);
+      setOtherAnswer("");
+      setDecisionRecord(null);
+      setFixtureJob(null);
+      answeredRequestsRef.current.clear();
+    };
     const stored = window.sessionStorage.getItem(fixtureStorageKey);
     if (stored) {
       try {
@@ -287,10 +308,13 @@ export function R22CanvasSurface({
         if (restored.job?.status === "queued" || restored.job?.status === "running") {
           window.setTimeout(() => startFixtureJob(restored.job!.prompt, restored.job!.id), 0);
         }
-        if (restored.decision?.status === "answered") answeredRequestsRef.current.add(restored.decision.inputRequestId);
+        if (restored.decision?.status === "answered") answeredRequestsRef.current.add(answeredRequestKey(restored.decision.inputRequestId, restored.decision.taskVersion));
       } catch {
         window.sessionStorage.removeItem(fixtureStorageKey);
+        resetFixtureState();
       }
+    } else {
+      resetFixtureState();
     }
     setFixtureRestored(true);
   }, [fixture, fixtureStorageKey]);
@@ -412,11 +436,12 @@ export function R22CanvasSurface({
       setDecisionRecord((current) => current ? { ...current, title: `${pendingQuestion.flow.title} · ${pendingQuestion.index + 2} of ${pendingQuestion.flow.questions.length}`, events: [...current.events, { kind: "answer", label: currentQuestion.header, detail: currentAnswer }] } : current);
       return;
     }
-    if (answeredRequestsRef.current.has(pendingQuestion.inputRequestId)) {
+    const requestKey = answeredRequestKey(pendingQuestion.inputRequestId, pendingQuestion.taskVersion);
+    if (answeredRequestsRef.current.has(requestKey)) {
       setNotice("This answer was already accepted. The original receipt was reused; no duplicate task or spend was created.");
       return;
     }
-    answeredRequestsRef.current.add(pendingQuestion.inputRequestId);
+    answeredRequestsRef.current.add(requestKey);
     const detail = pendingQuestion.flow.questions.map((question, index) => `${question.question} ${answers[index]}`).join(" · ");
     setDecisionRecord((current) => current ? { ...current, status: "answered", title: `${pendingQuestion.flow.title} · ${answers.length} answers saved`, detail: `Why Otto paused: ${pendingQuestion.flow.reason} · ${detail}`, events: [...current.events, { kind: "answer", label: currentQuestion.header, detail: currentAnswer }, { kind: "resumed", label: "Task resumed", detail: `Receipt ${pendingQuestion.inputRequestId} · version ${pendingQuestion.taskVersion} · no paid action run in fixture` }] } : current);
     setPendingQuestion(null);
