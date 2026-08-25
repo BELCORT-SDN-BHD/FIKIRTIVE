@@ -24,6 +24,7 @@
   --r22-shadow-sm: 0 1px 2px rgb(22 23 28 / 6%);
   --r22-shadow-md: 0 8px 24px rgb(22 23 28 / 10%);
   --r22-shadow-lg: 0 18px 52px rgb(22 23 28 / 16%);
+  --r22-ease-out: cubic-bezier(.23, 1, .32, 1);
   --r22-canvas-surface: var(--r22-surface);
   --r22-canvas-chrome: var(--r22-chrome);
   --r22-canvas-line: var(--r22-line);
@@ -680,13 +681,23 @@
   font-size: 0.9em;
 }
 
-.r22-canvas-composer {
+/*
+  输入框那一格。回执条是它的兄弟,同住这一格里 —— 回执条按 `100%` 量出输入框的真实高度
+  再往上抬,所以输入框长到几行也压不到它。宽度锚点从 composer 搬到这里,composer 自己
+  跟着这一格走。
+*/
+.r22-canvas-dock {
   position: absolute;
   bottom: 20px;
   left: 50%;
   z-index: 35;
   width: min(640px, 72vw);
   transform: translateX(-50%);
+}
+
+.r22-canvas-composer {
+  position: relative;
+  width: 100%;
   border: 1.5px solid transparent;
   border-radius: 16px;
   background:
@@ -871,26 +882,45 @@
   font-weight: 500;
 }
 
+/*
+  回执条。`bottom: calc(100% + 16px)` = 贴在输入框上沿再往上 16px —— 几何上永远碰不到
+  输入框,不靠一个猜出来的固定数字。整条 `pointer-events: none`,底下的画布照点得到;
+  里头那颗 Retry 自己把指针事件收回来,不然那颗键会点不动。
+*/
 .r22-canvas-notice {
   position: absolute;
-  bottom: 86px;
+  bottom: calc(100% + 16px);
   left: 50%;
   z-index: 50;
+  display: flex;
   min-height: 0;
+  align-items: center;
+  gap: 10px;
   margin: 0;
-  transform: translateX(-50%);
+  padding: 9px 12px;
+  transform: translateX(-50%) translateY(6px);
   border-radius: 8px;
   background: var(--r22-ink);
+  box-shadow: var(--r22-shadow-md);
   color: var(--r22-surface);
   font-size: 12px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 200ms var(--r22-ease-out),
+    transform 200ms var(--r22-ease-out),
+    visibility 0s linear 200ms;
 }
 
 .r22-canvas-notice.is-visible {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  box-shadow: var(--r22-shadow-md);
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 200ms var(--r22-ease-out),
+    transform 200ms var(--r22-ease-out),
+    visibility 0s;
 }
 
 .r22-canvas-notice button {
@@ -900,6 +930,7 @@
   color: var(--r22-ink);
   font-size: 11px;
   font-weight: 700;
+  pointer-events: auto;
 }
 
 /*
@@ -963,7 +994,7 @@
   border-radius: 5px;
   color: var(--r22-ink-2) !important;
   font-size: 11px !important;
-  transition: background-color 140ms ease, color 140ms ease, transform 140ms ease;
+  transition: background-color 140ms var(--r22-ease-out), color 140ms var(--r22-ease-out), transform 140ms var(--r22-ease-out);
 }
 
 .r22-canvas-answer-actions button.is-selected {
@@ -1051,6 +1082,16 @@
     transform: none;
   }
 
+  /* 位移退场,只留一次不动的淡入淡出。 */
+  .r22-canvas-notice {
+    transform: translateX(-50%);
+    transition: opacity 150ms ease, visibility 0s linear 150ms;
+  }
+
+  .r22-canvas-notice.is-visible {
+    transform: translateX(-50%);
+    transition: opacity 150ms ease, visibility 0s;
+  }
 }
 
 @keyframes r22-fade { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }

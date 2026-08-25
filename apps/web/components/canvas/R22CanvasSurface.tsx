@@ -970,6 +970,15 @@ export function R22CanvasSurface({
           )}
         </aside>
 
+        {/*
+          回执条与输入框住在同一格里。它靠 `bottom: calc(100% + 16px)` 贴在输入框**上方**,
+          所以输入框长几行都遮不到 —— 上一版给的是一个固定的 `bottom: 86px`,输入框一长
+          就被黑条压住。原型那一条也压着输入框(`.toasts` bottom:84px vs `.omnibox`
+          bottom:20px + ~91px 高),这是原型自己的坑,照抄坑不叫忠实。
+        */}
+        <div className="r22-canvas-dock" data-r22-canvas-dock>
+        <div className={`r22-canvas-notice${notice ? " is-visible" : ""}`} aria-live="polite"><span>{notice}</span>{fixtureJob?.status === "failed" && (fixtureSendOutcome === "error" || fixtureSendOutcome === "unknown") ? <Button unstyled type="button" disabled={submitting} onClick={retryFixtureSend}>{submitting ? "Retrying…" : fixtureSendOutcome === "unknown" ? "Check this request" : "Retry"}</Button> : null}</div>
+
         <form
           className="r22-canvas-composer"
           data-r22-canvas-composer
@@ -1017,6 +1026,7 @@ export function R22CanvasSurface({
             </Button>
           </div>
         </form>
+        </div>
 
         <div className="r22-canvas-tools" data-r22-canvas-tools role="toolbar" aria-label="Canvas tools">
           {TOOL_BUTTONS.map(({ id, label, icon: Icon }) => (
@@ -1033,8 +1043,6 @@ export function R22CanvasSurface({
           <Button unstyled type="button" className="r22-canvas-zoom-label" aria-label="Reset zoom" onClick={() => setZoom(100)}>{zoom}%</Button>
           <Button unstyled type="button" aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(200, value + 10))}><Plus aria-hidden="true" /></Button>
         </div>
-
-        <div className={`r22-canvas-notice${notice ? " is-visible" : ""}`} aria-live="polite"><span>{notice}</span>{fixtureJob?.status === "failed" && (fixtureSendOutcome === "error" || fixtureSendOutcome === "unknown") ? <Button unstyled type="button" disabled={submitting} onClick={retryFixtureSend}>{submitting ? "Retrying…" : fixtureSendOutcome === "unknown" ? "Check this request" : "Retry"}</Button> : null}</div>
       </div>
     </section>
   );

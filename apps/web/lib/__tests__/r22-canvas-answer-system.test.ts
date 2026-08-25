@@ -13,12 +13,13 @@
  * 而且同一个问题连问两遍,它逐字重复同一句。一个问题换回一句「我可以回答」不是回答,
  * 是回声。
  *
- * 三条围栏,各封各的(回执条的几何那一条在下一片):
+ * 三条围栏,各封各的:
  *   ① **每一路都有真答案**(行为):八条分流各断一条,断的是屏上那张卡的标题与要点,
  *      不是源码里的字符串。
  *   ② **重复提问不逐字复读**(行为):同一件事问第二遍,导语换成「Same answer as above」
  *      的变体,要点照旧摆出来,两张卡的全文必须不同。
- *   ③ **聊天路径零 toast**(行为):答案本身就是回执,不必再飘一条黑条。
+ *   ③ **聊天路径零 toast,且 toast 永不遮输入框**(行为 + 几何):答案本身就是回执;
+ *      创作类的回执条按 `bottom: calc(100% + 16px)` 贴在输入框上方,几何上碰不到它。
  *
  * 零后端、零 provider、零积分:下面看的全是真挂载之后商家屏幕上的 DOM。
  */
@@ -235,7 +236,8 @@ describe("② 答案卡自己是完整的一件东西", () => {
   });
 
   it("Copy 把整张卡交给剪贴板,并且当场说一声", async () => {
-    const writeText = vi.fn(async (_text: string) => {});
+    const copiedText: string[] = [];
+    const writeText = vi.fn(async (text: string) => { copiedText.push(text); });
     Object.defineProperty(window.navigator, "clipboard", { value: { writeText }, configurable: true });
     await mount();
     await askOtto("How much does this cost?");
@@ -243,7 +245,7 @@ describe("② 答案卡自己是完整的一件东西", () => {
     await act(async () => { need<HTMLButtonElement>("[data-otto-copy]").click(); });
 
     expect(writeText).toHaveBeenCalledTimes(1);
-    const copied = writeText.mock.calls[0]![0];
+    const copied = copiedText[0]!;
     expect(copied).toContain("What this costs");
     expect(copied).toContain("3 cr per image.");
     expect(copied.split("\n").length, "复制出去的不是整张卡").toBeGreaterThan(4);
@@ -295,4 +297,48 @@ describe("③ 聊天零 toast,创作的那条 toast 遮不到输入框", () => {
     expect(need(".r22-canvas-notice span").textContent).toContain("Queued");
   });
 
+  /**
+   * 几何断言。jsdom 没有排版引擎,`getBoundingClientRect()` 一律是零 —— 在这里量真实
+   * 像素只会量到一个假绿。所以量的是**结构与那条 CSS 规则本身**:回执条与输入框同住
+   * 一格,并且用 `bottom: calc(100% + 16px)` 把自己抬到输入框上沿之上。这一对成立,
+   * 两个矩形在任何输入框高度下都不可能相交;上一版那个写死的 `bottom: 86px` 做不到
+   * 这一点(输入框本身就有 ~89px 高,一长行就被压住)。
+   */
+  it("回执条按几何抬在输入框上方,不是靠一个猜出来的固定数字", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../components/canvas/r22-canvas.css"), "utf8");
+
+    await mount();
+    const dock = need("[data-r22-canvas-dock]");
+    const notice = need(".r22-canvas-notice");
+    const composer = need("form.r22-canvas-composer");
+    expect(notice.parentElement, "回执条不在输入框那一格里 —— 它量不到输入框的高度").toBe(dock);
+    expect(composer.parentElement).toBe(dock);
+
+    const noticeRule = css.slice(css.indexOf(".r22-canvas-notice {"), css.indexOf(".r22-canvas-notice.is-visible"));
+    expect(noticeRule).toContain("bottom: calc(100% + 16px)");
+    expect(noticeRule, "回执条整条挡住了底下的画布").toContain("pointer-events: none");
+    expect(css, "回执条又被钉回一个固定高度").not.toContain("bottom: 86px");
+    // 输入框自己不再是定位锚点了,它跟着那一格走 —— 否则 `100%` 量到的是别人。
+    expect(css.slice(css.indexOf(".r22-canvas-composer {"), css.indexOf(".r22-canvas-composer:focus-within"))).toContain("position: relative");
+  });
+
+  it("Emil 工艺:入退场 200ms 的自定 ease-out,走 transition 不走 keyframes", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../components/canvas/r22-canvas.css"), "utf8");
+
+    expect(css).toContain("--r22-ease-out: cubic-bezier(.23, 1, .32, 1)");
+    const noticeRule = css.slice(css.indexOf(".r22-canvas-notice {"), css.indexOf(".r22-canvas-notice.is-visible"));
+    expect(noticeRule).toContain("opacity 200ms var(--r22-ease-out)");
+    expect(noticeRule).toContain("transform 200ms var(--r22-ease-out)");
+    expect(noticeRule, "回执条改用了 keyframes —— 一次性状态切换该用 transition").not.toContain("animation");
+    // 减弱动效偏好下只剩淡入淡出,不再有位移。
+    const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
+    expect(reduced).toContain(".r22-canvas-notice");
+    expect(reduced).toContain("transform: translateX(-50%)");
+  });
 });
