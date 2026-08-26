@@ -259,7 +259,10 @@ describe("② 问卷卡:题号、字母键、多选、Previous / Skip / Next", (
   it("含糊的一句话先出问卷,左上写着 Question 1 of 2", async () => {
     await openQuiz();
     expect(pop("[data-otto-quiz-card]"), "含糊的一句话直接开跑了").not.toBeNull();
-    expect(need("[data-otto-quiz-count]").textContent).toContain(questionnaireCountLabel(0, 2));
+    // 逐字钉住,不是拿同一个函数两边一起算 —— 那样把「从 1 起数」改成「从 0 起数」,
+    // 断言的两边会一起挪,闸就永远绿着(变异自检第 5 发正是这么抓出来的)。
+    expect(need("[data-otto-quiz-count]").textContent).toContain("Question 1 of 2");
+    expect(questionnaireCountLabel(0, 2)).toBe("Question 1 of 2");
   });
 
   it("每一行右端那枚字母角标就是真的按得动的那个键", async () => {
@@ -282,7 +285,7 @@ describe("② 问卷卡:题号、字母键、多选、Previous / Skip / Next", (
     await openQuiz();
     await press(need("[data-otto-quiz-card]"), "a");
     await click(need("[data-otto-quiz-next]"));
-    expect(need("[data-otto-quiz-count]").textContent).toContain(questionnaireCountLabel(1, 2));
+    expect(need("[data-otto-quiz-count]").textContent).toContain("Question 2 of 2");
     await press(need("[data-otto-quiz-card]"), "a");
     await press(need("[data-otto-quiz-card]"), "c");
     expect(chosenLabels(), "多选只留得住一个 —— 那不是多选").toEqual([0, 2]);
@@ -293,7 +296,7 @@ describe("② 问卷卡:题号、字母键、多选、Previous / Skip / Next", (
     await press(need("[data-otto-quiz-card]"), "b");
     await click(need("[data-otto-quiz-next]"));
     await click(need("[data-otto-quiz-previous]"));
-    expect(need("[data-otto-quiz-count]").textContent).toContain(questionnaireCountLabel(0, 2));
+    expect(need("[data-otto-quiz-count]").textContent).toContain("Question 1 of 2");
     expect(chosenLabels(), "回到上一题看到的是空白").toEqual([1]);
   });
 
