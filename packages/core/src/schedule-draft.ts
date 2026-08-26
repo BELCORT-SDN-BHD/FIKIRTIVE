@@ -252,11 +252,18 @@ export function ottoPublishTruth(available: boolean = PUBLISHING_AVAILABLE): str
  * Deliberately shorter than publishSurfaceCopy(). Those four sentences speak to a merchant who
  * already has a schedule ("Your schedule is real…"); a visitor has none yet, so the same words
  * would be describing something they cannot see. Same switch, different reader.
+ *
+ * The switched-off half was rewritten 2026-08-27 (beta 卫生终闸,收官清扫②). It used to promise
+ * "Approved posts land in your schedule at the time you picked" — two doors beta V1 does not open
+ * (approving and the schedule are both behind the beta scope), said on the very first screen a
+ * visitor sees. Beta V1 sells one thing, creation, so the visitor's line now promises exactly that
+ * and keeps the second half honest: nothing leaves Fikirtive yet. The switched-ON half is untouched
+ * — the day PUBLISHING_AVAILABLE flips, those doors are open again and the promise is true.
  */
 export function publicPublishLine(available: boolean = PUBLISHING_AVAILABLE): string {
   return available
     ? "Each approved post publishes to the Instagram or Facebook account you picked, at the time you picked."
-    : "Approved posts land in your schedule at the time you picked. Publishing is not switched on yet, so nothing is sent to Instagram or Facebook.";
+    : "Fikirtive turns your idea into finished images and videos; posting them to Instagram or Facebook is not switched on yet.";
 }
 
 export type ScheduleApproveInput = {

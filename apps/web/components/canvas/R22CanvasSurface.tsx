@@ -97,6 +97,23 @@ import "./r22-canvas.css";
  */
 type CanvasTool = "select" | "box" | "hand";
 
+/**
+ * 真画布上那颗 ＋(附件菜单)的总闸(2026-08-27,beta 卫生终闸收官清扫③)。**默认关。**
+ *
+ * 病灶与已删的 Share / Export 同族:菜单在真画布上摆着三项,而三项**一项都没接** ——
+ * From Library 弹一句「还没接上」,Upload 弹 "Upload is not connected yet.",Paste a link
+ * 弹 "Link attachment is not connected yet."。整扇菜单没有一条出路,商家按开它只收获一句
+ * 道歉,那不是功能,是「敬请期待」。既然一项活的都没有,连那颗 ＋ 一起收起来。
+ *
+ * 商家并没有因此失去加参考的路:composer 的 `@` 是真的 —— 候选读的就是他自己的 Library
+ * 存档(`creationMentionCandidates`),占位句 "@ adds references" 说的是真话。
+ *
+ * **只藏,不删**:三项、三句提示、`libraryOpen` / `fileInputRef` 那一整套一行没删,样例画布
+ * (`fixture`)那两项本来就是真的(一颗开真的文件选择器,一颗开素材库弹层),照旧摆着。
+ * 上传与外链接上来的那天,把这个常量翻成 `true`,同时把那三句「还没接上」换成真行为。
+ */
+const BETA_CANVAS_ATTACH_MENU = false;
+
 /** 画布视角:世界的平移量 + 缩放百分比(原型 `view={x,y,s}`,L5985 —— 一件事一个出处)。 */
 type CanvasView = { x: number; y: number; zoom: number };
 /** 撤销栈上的一步 = 一个物件从哪儿挪到了哪儿(原型 L6024-6026 的 `pushMove`)。 */
@@ -306,7 +323,11 @@ const CANVAS_QUESTION_FLOWS: Record<"creative" | "scope", CanvasQuestionFlow> = 
     cost: 3,
     questions: [
       { header: "Channels", question: "Where will this version be used?", help: "Choose every destination Otto should prepare in this run.", multi: true, required: true, options: [{ label: "Instagram", description: "Story and feed-ready outputs", recommended: true }, { label: "Facebook", description: "Feed-safe copy and crop" }, { label: "Email", description: "Hero image and campaign copy" }] },
-      { header: "Timing", question: "When should the campaign be ready for review?", help: "This sets the review target, not an automatic publish time.", multi: false, required: true, options: [{ label: "Tomorrow morning", description: "Prepare a complete review set", recommended: true }, { label: "Today", description: "Prioritise a fast first pass" }, { label: "This week", description: "Allow more exploration and variants" }] },
+      // 2026-08-27(beta 卫生终闸,收官清扫④):这一问原本拿 campaign 与 review 两个词造句 ——
+      // 它替商家取了两扇 beta 期不开的门的名字,
+      // 而他真正被问的只有一件事:这件东西你什么时候要做好。答案三格与触发条件一字未动
+      // (触发看的是商家自己的提问,不是这里的问句),换的只有措辞。
+      { header: "Timing", question: "When do you need this ready?", help: "This only sets how soon the work should be done, not when anything goes out.", multi: false, required: true, options: [{ label: "Tomorrow morning", description: "Prepare a complete first set", recommended: true }, { label: "Today", description: "Prioritise a fast first pass" }, { label: "This week", description: "Allow more exploration and variants" }] },
     ],
   },
 };
@@ -2369,8 +2390,11 @@ export function R22CanvasSurface({
               第二层开出来的素材库**弹层**(一格一格的缩略图,是内容不是动作 → Popover)。
               两层长在同一个位置上,所以素材库那一层用 `PopoverAnchor` 认这颗按钮当锚点 ——
               锚点包在外面而不是让两个 Radix 触发器互相套,链路少一节就少一处会断的地方。
+              真画布上这颗 ＋ 2026-08-27 收了起来 —— 闸在文件顶部的 `BETA_CANVAS_ATTACH_MENU`
+              (那段裁决说了为什么:真画布上三项一项都没接)。样例画布(`fixture`)那两项是真的,
+              照旧摆着。
             */}
-            <Popover open={libraryOpen && fixture} onOpenChange={setLibraryOpen}>
+            {fixture || BETA_CANVAS_ATTACH_MENU ? <Popover open={libraryOpen && fixture} onOpenChange={setLibraryOpen}>
               <PopoverAnchor asChild>
                 <span className="r22-canvas-attach-anchor" ref={attachAnchorRef}>
                   <DropdownMenu open={attachOpen} onOpenChange={setAttachOpen}>
@@ -2440,7 +2464,7 @@ export function R22CanvasSurface({
                   ))}
                 </div>
               </PopoverContent>
-            </Popover>
+            </Popover> : null}
             {/* 真的文件选择器。它不占位置,+ 菜单那一项按下去按的就是它。 */}
             <Input unstyled ref={fileInputRef} className="r22-canvas-file-input" type="file" accept="image/*" tabIndex={-1} aria-label="Upload an image" onChange={onPickFile} />
             <span />

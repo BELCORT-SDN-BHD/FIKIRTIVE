@@ -643,9 +643,16 @@ describe("#851 ⑥ 公开页的发布口径归同一个开关管", () => {
     expect(publicPublishLine(false).length, "空话会让下面每条断言白白通过").toBeGreaterThan(20);
     expect(publicPublishLine(true).length).toBeGreaterThan(20);
     expect(overPromises(publicPublishLine(false))).toEqual([]);
-    // 而且 off 那套必须真的把两件事都说清楚:排期是真的 + 现在发不出去。
-    expect(publicPublishLine(false)).toMatch(/land in your schedule/i);
+    // 而且 off 那套必须真的把两件事都说清楚:产品现在真的给得出什么 + 现在发不出去。
+    //
+    // 2026-08-27 迁钉(beta 卫生终闸收官清扫②):上一条钉的是 "land in your schedule" ——
+    // 那是这句话的旧上半句,而排期与审批两扇门 beta V1 都没开。钉着一句承诺被藏功能的话,
+    // 等于用围栏把病灶焊死。钉的**意图**一个字没变(上半句必须说出商家真拿得到的东西,
+    // 下半句必须说出现在发不出去),换的只有上半句指向哪件事:beta V1 卖的是创作。
+    expect(publicPublishLine(false)).toMatch(/images and videos/i);
     expect(publicPublishLine(false)).toMatch(/not switched on/i);
+    // 而且它不许再点名 beta 期进不去的门 —— 第一屏上的承诺是最不该指向看不见的门的一句。
+    expect(publicPublishLine(false)).not.toMatch(/\b(schedule|approv|campaign|routine)/i);
   });
 
   it("on 那套确实会说「会真发」—— 词族不是一张对谁都不响的空网", () => {

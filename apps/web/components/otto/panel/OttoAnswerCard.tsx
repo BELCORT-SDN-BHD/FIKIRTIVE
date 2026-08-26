@@ -20,6 +20,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
+import { BETA_HELP_DOOR } from "@/components/help/r22-help-beta";
 import { Button } from "@/components/ui/button";
 import {
   OTTO_ANSWER_CONFIRM,
@@ -91,13 +92,18 @@ export function OttoAnswerCard({ answer, answerId }: OttoAnswerCardProps) {
         >
           Not helpful
         </Button>
-        <Link
+        {/* Get support 2026-08-27 跟着整扇 Help 门进了幕后(beta 卫生终闸收官清扫①,闸在
+            `r22-help-beta.ts` 的 `BETA_HELP_DOOR`)。这颗按钮唯一的去处就是 `/help`,而那一面
+            beta 期只有样章 —— 把商家从一次真回答里送去一柜子样张,比不给这颗按钮更难解释。
+            他此刻正在跟 Otto 说话,而 Otto 就是 beta 期的帮助渠道。链接与 `OTTO_ANSWER_CONFIRM.
+            support` 那句回执一行没删,闸翻回 `true` 原样回来。 */}
+        {BETA_HELP_DOOR ? <Link
           data-otto-answer-support=""
           href={SHELL_ROUTES.help}
           onClick={() => setConfirm(OTTO_ANSWER_CONFIRM.support)}
         >
           Get support
-        </Link>
+        </Link> : null}
       </div>
       <span data-otto-answer-confirm="" className="r22-otto-answer-confirm" role="status" aria-live="polite">
         {confirm}

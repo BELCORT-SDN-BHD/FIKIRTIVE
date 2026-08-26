@@ -16,6 +16,8 @@
  *
  * 零后端、零 provider、零积分:下面看的全是真挂载之后商家屏幕上的 DOM,与四个纯函数。
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { act, createElement, useState, type FC, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -302,9 +304,14 @@ describe("子流 ①②:Giving feedback 与 Copying a chat", () => {
     expect(card.querySelectorAll("li").length).toBeGreaterThanOrEqual(2);
     expect(card.querySelector("[data-otto-answer-fact], .r22-otto-answer-fact")?.textContent)
       .toBe("This chat did not change the approval or spend credits.");
-    for (const label of ["Copy", "Helpful", "Not helpful", "Get support"]) {
-      expect([...card.querySelectorAll("button, a")].map((el) => el.textContent), label).toContain(label);
+    // 2026-08-27 迁钉(beta 卫生终闸收官清扫①):这一排原来是四颗,第四颗 Get support
+    // 跟着整扇 Help 门进了幕后(`r22-help-beta.ts` 的 `BETA_HELP_DOOR`)。钉三颗,并且明写
+    // 第四颗**不在** —— 少一颗和多一颗一样,都该让这一条红。
+    const labels = [...card.querySelectorAll("button, a")].map((el) => el.textContent);
+    for (const label of ["Copy", "Helpful", "Not helpful"]) {
+      expect(labels, label).toContain(label);
     }
+    expect(labels, "Help 门还藏着,这颗不该在").not.toContain("Get support");
   });
 
   it("Copy 真的写进剪贴板,回执说 Copied", async () => {
@@ -359,13 +366,23 @@ describe("子流 ①②:Giving feedback 与 Copying a chat", () => {
     expect(confirm.textContent?.toLowerCase()).not.toContain("submitted");
   });
 
-  it("Get support 是一条通往 /help 的真链接,并且当场说清没有发出任何消息", async () => {
+  /**
+   * 迁钉 2026-08-27(beta 卫生终闸收官清扫①)。上一条钉的是「Get support 是一条通往 /help
+   * 的真链接」—— 那扇门 beta 期收起来了(`r22-help-beta.ts`),它唯一的去处只有样章。
+   *
+   * 钉的意图没变,拆成两半:卡上现在**没有**这颗按钮(真 DOM 断言),而链接、`/help` 那个
+   * 地址与 `OTTO_ANSWER_CONFIRM.support` 那句回执**一行没删**(源码断言)—— 后一半正是
+   * 「只藏不删」这条工艺本身,闸翻回 `true` 的那天,上一条钉的行为原样回来。
+   */
+  it("Get support 跟着 Help 门进了幕后,而链接与回执一行没删", async () => {
     const card = await answered();
-    const support = card.querySelector<HTMLAnchorElement>("[data-otto-answer-support]")!;
-    expect(support.getAttribute("href")).toBe("/help");
+    expect(card.querySelector("[data-otto-answer-support]"), "Help 门还藏着,这条链接不该画出来").toBeNull();
 
-    await act(async () => support.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    expect(card.querySelector("[data-otto-answer-confirm]")!.textContent).toBe(OTTO_ANSWER_CONFIRM.support);
+    const source = readFileSync(path.resolve(__dirname, "../../components/otto/panel/OttoAnswerCard.tsx"), "utf8");
+    expect(source, "闸不见了").toContain("BETA_HELP_DOOR ?");
+    expect(source, "链接被删了,不是藏起来").toContain("data-otto-answer-support");
+    expect(source, "地址被删了").toContain("SHELL_ROUTES.help");
+    expect(source, "回执被删了").toContain("OTTO_ANSWER_CONFIRM.support");
   });
 });
 

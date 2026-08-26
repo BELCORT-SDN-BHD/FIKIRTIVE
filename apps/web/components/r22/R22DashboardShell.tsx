@@ -40,6 +40,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RailAccount } from "@/components/navigation/rail/NavigationRail";
 import { merchantNavLinks } from "@fikirtive/core/navigation";
+import { BETA_HELP_DOOR } from "@/components/help/r22-help-beta";
 import { loadGlobalSearchProjects, type GlobalSearchProject } from "@/lib/global-search-actions";
 import { useOttoPanelControls } from "@/components/otto/panel/OttoPanelShell";
 import { R22_NOTIFICATION_FIXTURE_EVENT, readR22NotificationFixture, writeR22NotificationFixture, type R22NotificationItem } from "@/components/notifications/r22-notification-fixture";
@@ -439,7 +440,11 @@ export function R22DashboardShell({
                 P2-21)。它是同一件事的第二个地址(⌘K 那一条写的是 `?section=connections`),
                 而且指着一个 beta 期被闸起来的 Settings 节 —— 一条通向看不见的门的帮助。
                 连接线回来的时候两处一起加回来,而且只加**一份**地址。 */}
-            <Link href={fixture ? "/help?fixture=r22" : "/help"}><b>Help and support</b><span>Search help articles or check a support request.</span></Link>
+            {/* 「Help and support → /help」2026-08-27 跟着整扇 Help 门进了幕后(beta 卫生终闸
+                收官清扫①,闸在 `r22-help-beta.ts` 的 `BETA_HELP_DOOR`)。那一面 beta 期只有
+                样章,这条链接是它唯一的商家入口。抽屉本身留着 —— 里头 Ask Otto 是真出口,而
+                Otto 正是 beta 期的帮助渠道。闸翻回 `true`,这一条原样回来。 */}
+            {BETA_HELP_DOOR ? <Link href={fixture ? "/help?fixture=r22" : "/help"}><b>Help and support</b><span>Search help articles or check a support request.</span></Link> : null}
           </div>
         </SheetContent>
       </Sheet>

@@ -72,3 +72,8 @@
 .r22-help button:active, .r22-help a:active { transform: scale(.97); }
 @media (max-width: 800px) { .r22-help { width: calc(100% - 32px); padding-top: 28px; } .r22-help-grid { grid-template-columns: 1fr; } .r22-help > footer { align-items: flex-start; flex-direction: column; gap: 8px; } }
 @media (prefers-reduced-motion: reduce) { .r22-help button:active, .r22-help a:active { transform: none; } }
+
+/* beta 期 `/help` 落地那一面(`R22HelpClosed`)。整块沿用上面的 `.r22-help-unavailable`,
+   只补两件它没有的:救生圈图标的尺寸,和那条邮件出口的样子。 */
+.r22-help-unavailable > svg { width: 20px; height: 20px; margin: 0 auto 10px; display: block; color: var(--r22-ink-3); }
+.r22-help-closed-exit { display: inline-block; margin-top: 14px; color: var(--r22-ink-2); font-size: var(--r22-text-small); text-decoration: underline; text-underline-offset: 3px; }
