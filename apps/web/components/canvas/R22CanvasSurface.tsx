@@ -3,8 +3,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
-import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +13,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AskOptions } from "@/components/otto/conversation/ConversationParts";
+import { ActionCards, QuestionnaireCard, type ConversationAction } from "@/components/otto/conversation/ConversationParts";
+import { MentionChips, MentionPicker, useMentionField } from "@/components/otto/conversation/MentionField";
+import { creationMentionCandidates } from "@/components/creation/creation-fixture";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -262,22 +262,11 @@ type ChatResponse = { kind: "line"; text: string } | { kind: "answer"; answer: O
 
 type ChatEntry =
   /** `refs` = 这条消息发出去时挂在身上的参考图。发完之后它就归这条消息,不再跟着 composer 走。 */
-  | { from: "me" | "otto"; text: string; refs?: CanvasAttachment[] }
+  | { from: "me" | "otto"; text: string; refs?: CanvasAttachment[]; mentions?: string[] }
   | { from: "answer"; answer: OttoCanvasAnswer; repeat: boolean };
 
 /** 商家读得懂的形状名。表里没有的比例原样报出去,不硬塞一个形容词。 */
 const RATIO_SHAPE_WORD: Record<string, string> = { "9:16": "vertical", "1:1": "square", "16:9": "wide", "4:5": "portrait" };
-
-/**
- * 商家读到的阶段名。工程状态码(`queued` / `completed` …)只活在 `data-canvas-job-status`、
- * CSS 类名与测试断言里 —— 屏幕上一个都不出现。
- */
-const JOB_STAGE_LABEL: Record<FixtureCanvasJob["status"], string> = {
-  queued: "Queued",
-  running: "Working",
-  completed: "Done",
-  failed: "Did not run",
-};
 
 const CANVAS_QUESTION_FLOWS: Record<"creative" | "scope", CanvasQuestionFlow> = {
   creative: {
@@ -799,6 +788,7 @@ function OttoAnswerCard({
   confirm,
   onCopy,
   onFeedback,
+  actions,
 }: {
   answer: OttoCanvasAnswer;
   repeat: boolean;
@@ -806,6 +796,8 @@ function OttoAnswerCard({
   confirm: string;
   onCopy: () => void;
   onFeedback: (vote: "up" | "down") => void;
+  /** 答尾那一列**能点着开工**的下一步(全站共用零件,Founder 2026-08-26 第 5 件)。 */
+  actions?: readonly ConversationAction[];
 }) {
   return (
     <li className="r22-canvas-answer" data-otto-answer data-otto-answer-repeat={repeat ? "true" : undefined}>
@@ -833,6 +825,7 @@ function OttoAnswerCard({
         </ToggleGroup>
       </div>
       <span className="r22-canvas-answer-confirm" role="status" aria-live="polite">{confirm}</span>
+      {actions?.length ? <ActionCards actions={actions} /> : null}
     </li>
   );
 }
@@ -1005,9 +998,20 @@ export function R22CanvasSurface({
    */
   const moveHistoryRef = useRef<{ undo: CanvasMoveStep[]; redo: CanvasMoveStep[] }>({ undo: [], redo: [] });
   const conversationListRef = useRef<HTMLUListElement>(null);
+  /** composer 本身。@ 选完之后光标要放回去,焦点也要还给它。 */
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const actionRef = useRef<{ material: string; actionId: string } | null>(null);
   const answeredRequestsRef = useRef(new Set<string>());
   const fixtureStorageKey = fixture ? scopedR22FixtureKey(`r22:canvas:${runtimeContext.activeProjectId}:${runtimeContext.activeThreadId ?? "new"}`) : "";
+
+  /**
+   * composer 的 `@`(Founder 2026-08-26 第 3 件)。
+   *
+   * 候选是商家**真的**有的东西 —— 读的就是这一面已经在读的那份 Library 存档,加上他的
+   * 项目与教给 Otto 的那几条。占位句从此配得上:它写着 @ 拉得到参考,打下去就真的拉得到。
+   */
+  const mentionCandidates = useMemo(() => creationMentionCandidates(library), [library]);
+  const mentions = useMentionField({ candidates: mentionCandidates, text: message, setText: setMessage, inputRef: composerRef });
 
   const refreshNodes = useCallback(async () => {
     if (fixture) return;
@@ -1510,6 +1514,38 @@ export function R22CanvasSurface({
     }));
   }
 
+  /**
+   * 答尾那一列动作卡(Cofounder 语法①,Founder 2026-08-26 第 5 件)。
+   *
+   * 与答案卡自带的那一排 chips 分工写死:chips 是**续话**(把下一句填进输入框),这一列是
+   * **开工**(点了就真的做成一件事)。所以这里带价钱,chips 上永远不带 —— 带价钱的东西
+   * 必须点了就真的发生。
+   *
+   * 零死卡:两张都真做得到 —— 一张真的排一次生成,一张是一条真链接(中键新开、右键复制
+   * 地址都成立)。做不到的那一张不该出现在这一列里。
+   */
+  function answerActions(answer: OttoCanvasAnswer): ConversationAction[] {
+    return [
+      {
+        id: "make-from-answer",
+        label: "Make a picture from this",
+        note: `${fixtureQuoteCredits("image", 1)} cr`,
+        icon: Sparkles,
+        onRun: () => {
+          setChatLog((current) => [...current, { from: "me", text: answer.title }]);
+          startFixtureJob(answer.title, { kind: "image", count: 1 });
+        },
+      },
+      {
+        id: "open-library",
+        label: "Open your Library",
+        note: "Everything made so far, in one place",
+        icon: LayoutGrid,
+        href: fixture ? "/library?fixture=r22" : "/library",
+      },
+    ];
+  }
+
   /** 会话面板里的那几张答案卡与消息行 —— 两面共用一份渲染。 */
   const chatNodes = chatLog.map((item, index) => item.from === "answer" ? (
     <OttoAnswerCard
@@ -1520,10 +1556,18 @@ export function R22CanvasSurface({
       confirm={answerUi[index]?.confirm ?? ""}
       onCopy={() => copyAnswer(index, item.answer)}
       onFeedback={(vote) => voteAnswer(index, vote)}
+      /* 动作卡只挂在**最后一张**答案上:每张都挂一列,商家读到的是一屏永远在催他开工的
+         按钮,而不是一次顺手的接续(与 chips 同一条纪律)。 */
+      actions={index === chatLog.length - 1 ? answerActions(item.answer) : undefined}
     />
   ) : (
     <li className={item.from === "me" ? "from-me" : "from-otto"} key={`${item.from}:${index}:${item.text}`}>
       {item.text}
+      {item.mentions?.length ? (
+        <span className="r22-canvas-message-mentions" data-canvas-message-mentions={item.mentions.join(", ")}>
+          {item.mentions.map((name) => <em key={name}>{name}</em>)}
+        </span>
+      ) : null}
       {item.refs?.length ? (
         // 发出去时挂在这条消息上的参考图。它留在记录里,商家回头读得出「那一次我给了什么」。
         <span className="r22-canvas-message-refs" data-canvas-message-refs>
@@ -1852,7 +1896,14 @@ export function R22CanvasSurface({
       }
       // 挂着的参考图跟这一条消息一起走:发出去之后它归这条消息,不再跟着输入框。
       const sentRefs = attachments;
-      setChatLog((current) => [...current, sentRefs.length ? { from: "me", text: next, refs: sentRefs } : { from: "me", text: next }]);
+      // @ 出来的那几个引用跟着这条消息走 —— 商家回头读得出「那一次我指的是哪几样东西」。
+      const sentMentions = mentions.sent(next).map((row) => row.name);
+      setChatLog((current) => [...current, {
+        from: "me",
+        text: next,
+        ...(sentRefs.length ? { refs: sentRefs } : {}),
+        ...(sentMentions.length ? { mentions: sentMentions } : {}),
+      }]);
       const chatReply = chatResponseFor(next, answerContext);
       // 一句真的疑问句先于提问流:它缺的是一个答案,不是一次拍板。「Make the Raya hero
       // more premium」不是疑问句,那条路照旧走 `fixtureQuestionFlow`,一个字没变。
@@ -1904,8 +1955,10 @@ export function R22CanvasSurface({
         } else startFixtureJob(next, { references: sentRefs.map((reference) => reference.name), count: override?.count });
       }
       setMessage("");
-      // 参考图已经跟着那条消息走了,输入框上不该再挂着同一批 —— 否则下一句会悄悄再带一遍。
+      // 参考图与 @ 引用都已经跟着那条消息走了,输入框上不该再挂着同一批 —— 否则下一句
+      // 会悄悄再带一遍。
       setAttachments([]);
+      mentions.reset();
       return;
     }
     // 同一道闸装在真接后端这一面 —— 在这里一句 "hi" 会真的排一次生成、真的花商家的钱。
@@ -1939,11 +1992,6 @@ export function R22CanvasSurface({
   const currentQuestion = pendingQuestion?.flow.questions[pendingQuestion.index];
   const currentAnswer = pendingQuestion ? [...pendingQuestion.selected, ...(otherAnswer.trim() ? [otherAnswer.trim()] : [])].join(", ") : "";
 
-  function toggleQuestionOption(label: string) {
-    if (!pendingQuestion || !currentQuestion) return;
-    setOtherAnswer("");
-    setPendingQuestion((current) => current ? { ...current, selected: currentQuestion.multi ? (current.selected.includes(label) ? current.selected.filter((item) => item !== label) : [...current.selected, label]) : [label] } : current);
-  }
 
   function continueQuestion() {
     if (!pendingQuestion || !currentQuestion || !currentAnswer) return;
@@ -1965,6 +2013,19 @@ export function R22CanvasSurface({
     setPendingQuestion(null);
     setOtherAnswer("");
     setNotice("Decision saved in Conversation. Otto picked the task back up, and waiting cost 0 cr.");
+  }
+
+  /** 回上一道。答案栈跟着退一格 —— 退回去看到的必须是他上次真选的那几个,不是空白。 */
+  function previousQuestion() {
+    if (!pendingQuestion || pendingQuestion.index === 0) return;
+    const at = pendingQuestion.index - 1;
+    setOtherAnswer("");
+    setPendingQuestion({
+      ...pendingQuestion,
+      index: at,
+      selected: (pendingQuestion.answers[at] ?? "").split(", ").filter(Boolean),
+      answers: pendingQuestion.answers.slice(0, at),
+    });
   }
 
   function cancelQuestion() {
@@ -2051,11 +2112,19 @@ export function R22CanvasSurface({
         {marquee ? <div className="r22-canvas-marquee" data-r22-canvas-marquee style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }} /> : null}
         {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
-        {fixtureJob ? <div className={`r22-canvas-job is-${fixtureJob.status}`} role="status" data-canvas-job-status={fixtureJob.status} data-canvas-action-id={fixtureJob.id}><span>{JOB_STAGE_LABEL[fixtureJob.status]}</span><b>{fixtureJob.prompt}</b><small>{fixtureJob.status === "completed" ? "Saved to this canvas" : fixtureJob.status === "failed" ? "0 cr · nothing ran" : "Still the same request"}</small></div> : null}
+        {/*
+          这里以前浮着一张任务卡(阶段名 + 那句话 + 一行小字)。它被整个删掉了(Founder
+          2026-08-26 第 4 件):同一件事屏幕上同时说三遍 —— Otto 头部的状态芯片说一遍、
+          会话里那一行说一遍、回执 toast 再说一遍 —— 而它是三者里唯一一个**盖在板上**的,
+          商家做完东西第一眼看到的是它压住的那半块画,不是他刚做出来的图。
 
+          状态本身一个字没丢:它现在住在 Otto 头部那一格上(`data-canvas-job-status`
+          跟着搬过去),那也是这一面本来就在说这件事的地方。
+        */}
         <aside
           className={`r22-canvas-otto${ottoOpen ? "" : " is-collapsed"}`}
           data-r22-canvas-otto
+          {...(fixtureJob ? { "data-canvas-job-status": fixtureJob.status, "data-canvas-action-id": fixtureJob.id } : {})}
         >
           <Button unstyled type="button" className="r22-canvas-otto-head" aria-expanded={ottoOpen} onClick={() => setOttoOpen((open) => !open)}>
             <OttoMark />
@@ -2065,7 +2134,21 @@ export function R22CanvasSurface({
           </Button>
           {ottoOpen && (
             <div className="r22-canvas-otto-body">
-              {fixture && fixtureRouteState !== "ready" ? <p>Project access must be restored before Otto can read or run anything.</p> : pendingQuestion ? <><p>Paused — I need {pendingQuestion.flow.questions.length} decisions before I continue.</p><ul><li><span className="is-done"><Check aria-hidden="true" /></span>Checked the project brief and Otto IQ</li><li><span>?</span>Waiting for your answer</li></ul></> : fixtureJob ? <><p>{fixtureJob.status === "completed" ? "Done — that one landed on the canvas." : fixtureJob.status === "failed" ? "That request did not run. Nothing was charged." : "Working on it — still the same request, no second one started."}</p><ul><li><span className={fixtureJob.status !== "failed" ? "is-done" : ""}>{fixtureJob.status !== "failed" ? <Check aria-hidden="true" /> : "!"}</span>{fixtureJob.status === "failed" ? "No credits used, and nothing was completed" : "Queued once, not twice"}</li></ul></> : fixture ? (
+              {fixture && fixtureRouteState !== "ready" ? <p>Project access must be restored before Otto can read or run anything.</p> : pendingQuestion ? <><p>Paused — I need {pendingQuestion.flow.questions.length} decisions before I continue.</p><ul><li><span className="is-done"><Check aria-hidden="true" /></span>Checked the project brief and Otto IQ</li><li><span>?</span>Waiting for your answer</li></ul></> : fixtureJob ? <><p>{fixtureJob.status === "completed" ? "Done — that one landed on the canvas." : fixtureJob.status === "failed" ? "That request did not run. Nothing was charged." : "Working on it — still the same request, no second one started."}</p><ul><li><span className={fixtureJob.status !== "failed" ? "is-done" : ""}>{fixtureJob.status !== "failed" ? <Check aria-hidden="true" /> : "!"}</span>{fixtureJob.status === "failed" ? "No credits used, and nothing was completed" : "Queued once, not twice"}</li></ul></> : fixture ? boardEmpty ? (
+                /*
+                  刚建出来的项目,板上一张图都没有(Founder 2026-08-26 第 4 件)。
+                  上一版这一格照样写着「All 4 images are done」与三条打了勾的步骤 ——
+                  一块空板配一段完成汇报,商家第一反应是「我的图呢」。开局该说的是开局的话:
+                  brief 读到了,接下来轮到他说一句。
+                */
+                <>
+                  <p>Your brief is loaded. Tell me what to make and the first ones land on this board.</p>
+                  <ul>
+                    <li><span className="is-done"><Check aria-hidden="true" /></span>Read your brief and Otto IQ</li>
+                    <li><span>?</span>Waiting for your first request</li>
+                  </ul>
+                </>
+              ) : (
                 <>
                   <p>All 4 images are done. Star the keepers, or ask for variants.</p>
                   <ul>
@@ -2085,27 +2168,43 @@ export function R22CanvasSurface({
           )}
         </aside>
 
-        {pendingQuestion && currentQuestion ? <Card className="r22-canvas-input-card" role="region" aria-labelledby="r22CanvasInputTitle">
-          <div className="r22-canvas-input-kicker"><i /><span>{currentQuestion.header} · {currentQuestion.required ? "Required" : "Optional"}</span><em>{pendingQuestion.index + 1} of {pendingQuestion.flow.questions.length}</em></div>
-          <h3 id="r22CanvasInputTitle">{currentQuestion.question}</h3>
-          <p>{currentQuestion.help}</p>
-          {currentQuestion.multi ? <div className="r22-canvas-input-options" role="group" aria-label={currentQuestion.question}>{currentQuestion.options.map((option) => { const selected = pendingQuestion.selected.includes(option.label); return <label className={selected ? "is-selected" : ""} key={option.label}><Checkbox unstyled checked={selected} onCheckedChange={() => toggleQuestionOption(option.label)} /><span><b>{option.label}{option.recommended ? <em>Recommended</em> : null}</b><small>{option.description}</small></span></label>; })}</div> : (
-            /* 「挑一个」这一路归全站共用的那一份零件(Founder 2026-08-26 裁决第 4 条)——
-               Create 弹窗、Otto 线程与这里的选项从此是同一份实现,视觉仍随画布语境走
-               (className 还是 `r22-canvas-input-options`)。多选那一路留在这里:它挑的是
-               「好几个」,不是同一个形状。 */
-            <AskOptions
-              idPrefix="r22-canvas-ask"
-              label={currentQuestion.question}
-              className="r22-canvas-input-options"
-              options={currentQuestion.options}
-              value={pendingQuestion.selected[0] ?? ""}
-              onValueChange={toggleQuestionOption}
-            />
-          )}
-          <Input unstyled className="r22-canvas-input-other" value={otherAnswer} onChange={(event) => { setOtherAnswer(event.target.value); if (!currentQuestion.multi) setPendingQuestion((current) => current ? { ...current, selected: [] } : current); }} placeholder="Something else…" aria-label="Other answer" />
-          <footer><span>Paused · 0 cr now · up to {pendingQuestion.flow.cost} cr after review</span><Button unstyled type="button" onClick={cancelQuestion}>Cancel task</Button><Button unstyled type="button" className="is-primary" disabled={!currentAnswer} onClick={continueQuestion}>{pendingQuestion.index < pendingQuestion.flow.questions.length - 1 ? "Next" : "Continue task"}</Button></footer>
-        </Card> : null}
+        {pendingQuestion && currentQuestion ? (
+          /*
+            Otto 中途问的几件事,从此走全站**同一张问卷卡**(Founder 2026-08-26 第 2 件,
+            形状照他给的那张 shadcn questionnaire 参考:题号计数、整行选项、右端字母角标、
+            Previous / Skip / Next)。这一面此前自己画了一整套 —— 单选走共用零件、多选、
+            题号、脚排各写各的,而键盘只在单选那一路是对的。
+            视觉仍随画布语境走(`className` 还是画布自己那一个),换的是骨头不是长相。
+          */
+          <QuestionnaireCard
+            idPrefix="r22-canvas-ask"
+            className="r22-canvas-input-card"
+            questions={pendingQuestion.flow.questions.map((question) => ({
+              id: question.header,
+              question: question.question,
+              help: question.help,
+              multi: question.multi,
+              options: question.options,
+            }))}
+            index={pendingQuestion.index}
+            selected={pendingQuestion.selected}
+            onSelectedChange={(next) => {
+              setOtherAnswer("");
+              setPendingQuestion((current) => (current ? { ...current, selected: next } : current));
+            }}
+            kicker={`${currentQuestion.header} · ${currentQuestion.required ? "Required" : "Optional"}`}
+            onPrevious={previousQuestion}
+            onSkip={cancelQuestion}
+            skipLabel="Cancel task"
+            onNext={continueQuestion}
+            nextLabel={pendingQuestion.index < pendingQuestion.flow.questions.length - 1 ? "Next" : "Continue task"}
+            canAdvance={Boolean(currentAnswer)}
+            footNote={`Paused · 0 cr now · up to ${pendingQuestion.flow.cost} cr after review`}
+            aliases={{ card: "data-r22-canvas-input-card", option: "data-canvas-ask-option" }}
+          >
+            <Input unstyled className="r22-canvas-input-other" value={otherAnswer} onChange={(event) => { setOtherAnswer(event.target.value); if (!currentQuestion.multi) setPendingQuestion((current) => current ? { ...current, selected: [] } : current); }} placeholder="Something else…" aria-label="Other answer" />
+          </QuestionnaireCard>
+        ) : null}
 
         <aside
           className={`r22-canvas-conversation${conversationOpen ? "" : " is-collapsed"}${historyExpanded ? " is-expanded" : ""}`}
@@ -2146,6 +2245,7 @@ export function R22CanvasSurface({
             参数弹层那几个控件同一条纪律。 */}
         {boardEmpty ? <CreationTemplateRow locked={Boolean(pendingQuestion)} onPick={(template) => setMessage(template.prompt)} /> : null}
 
+        <MentionPicker field={mentions}>
         <form
           className="r22-canvas-composer"
           data-r22-canvas-composer
@@ -2158,8 +2258,9 @@ export function R22CanvasSurface({
             上下文条 —— 板上选中的那几张、以及挂着的参考图。它是 composer 的第一行,因为
             它回答的是「我这句话在说谁」:选中两张再问一句,答的就该是那两张的事。
           */}
-          {fixture && (selectionChips.length > 0 || attachments.length > 0) ? (
+          {fixture && (selectionChips.length > 0 || attachments.length > 0 || mentions.chips.length > 0) ? (
             <div className="r22-canvas-composer-chips" data-r22-canvas-chips>
+              <MentionChips field={mentions} />
               {selectionChips.map((art) => (
                 <span className="r22-canvas-chip" key={art.id} data-canvas-context-chip={art.id}>
                   <b>{art.label}</b>
@@ -2181,16 +2282,19 @@ export function R22CanvasSurface({
             </div>
           ) : null}
           <Textarea unstyled
+            ref={composerRef}
             rows={1}
             value={message}
-            onChange={(event) => setMessage(event.target.value)}
+            onChange={(event) => { setMessage(event.target.value); mentions.sync(event.target.value, event.target.selectionStart); }}
             onKeyDown={(event) => {
+              // 候选浮层开着的时候上下键与 Enter 归它 —— 吃掉了就不再往下走。
+              if (mentions.onKeyDown(event)) return;
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void submitMessage();
               }
             }}
-            placeholder="Ask Otto, or describe what to make…"
+            placeholder="Ask Otto, or describe what to make — @ adds references"
             aria-label="Describe what to make"
           />
           <div className="r22-canvas-composer-row">
@@ -2335,6 +2439,7 @@ export function R22CanvasSurface({
             </Button>
           </div>
         </form>
+        </MentionPicker>
         </div>
 
         {/*

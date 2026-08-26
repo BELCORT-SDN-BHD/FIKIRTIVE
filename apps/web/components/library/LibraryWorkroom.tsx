@@ -33,7 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
-import { scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
+import { readR22WorkspaceDirectory, scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
 import {
   appendCanvasFixtureHandoff,
   FIXTURE_VIDEO_CONCEPT_SECONDS,
@@ -47,6 +47,7 @@ import { LibraryDetailLayer } from "./LibraryDetailLayer";
 import { LibraryNav } from "./LibraryNav";
 import { LibraryPackDialog } from "./LibraryPackDialog";
 import { LibraryQuickCreate, type QuickCreateRequest } from "./LibraryQuickCreate";
+import { CreationConversation } from "@/components/creation/CreationConversation";
 import { LibraryToolbar } from "./LibraryToolbar";
 import {
   addLibraryAssets,
@@ -99,6 +100,16 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   const [renaming, setRenaming] = useState<string | null>(null);
   /** 生成条开着没有。它是页内浮层,不是路由 —— 关掉不该丢掉网格的滚动位置与多选态。 */
   const [createOpen, setCreateOpen] = useState(false);
+  /**
+   * 全屏创作对话开着没有(Founder 2026-08-26 第 1 件的主路径)。
+   *
+   * 它与上面那条生成条并存,不是两套实现:同一份价目、同一批起手模板、同一个 Library
+   * 存档。分的是**规模** —— 心里已经有确切一句话的人按 Quick create,要一直做下去的人
+   * 按 Create。
+   */
+  const [fullOpen, setFullOpen] = useState(false);
+  /** 线程要进哪个工作区的那张会话表。 */
+  const [workspaceId, setWorkspaceId] = useState("");
   /** 这一次 Quick create 还在跑没有。跑着的时候发送键关着,一句话不该同时排两次。 */
   const [running, setRunning] = useState(false);
   /** 工具排上那个真的 file picker。空态里那颗 Upload 按的是**同一个** input —— 两条路
@@ -122,6 +133,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     setArchive(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
     setRestored(true);
   }, [restore]);
+
+  useEffect(() => { setWorkspaceId(readR22WorkspaceDirectory().activeId); }, []);
 
   /**
    * 一次写入 = 一次落盘 + 一句人话。落不进去就照实说,不把改动留在屏幕上骗人。
@@ -201,7 +214,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
       if (detailId || editId || packTarget) return;
       // 生成条开着的时候那一记归它。它自己也守着同一条链,这里明写一句是因为两个监听器
       // 挂在同一个 window 上、次序由挂载顺序决定 —— 靠次序对上的东西迟早会错一次。
-      if (createOpen) return;
+      if (createOpen || fullOpen) return;
       if (!selected.length) return;
       event.preventDefault();
       setSelected([]);
@@ -209,7 +222,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createOpen, detailId, editId, packTarget, selected.length]);
+  }, [createOpen, fullOpen, detailId, editId, packTarget, selected.length]);
 
   /* ── 批量动作 ─────────────────────────────────────────────────────────────── */
 
@@ -414,7 +427,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     <>
       {section !== "uploads" ? <Link className="r22-lib-empty-act" href={fixture ? "/create?fixture=r22" : "/create"}>Open Canvas</Link> : null}
       {section === "made"
-        ? <Button unstyled type="button" className="r22-lib-empty-act" onClick={() => setCreateOpen(true)}>Create</Button>
+        ? <Button unstyled type="button" className="r22-lib-empty-act" onClick={() => setFullOpen(true)}>Create</Button>
         : <Button unstyled type="button" className="r22-lib-empty-act" onClick={() => uploadRef.current?.click()}>Upload a picture</Button>}
     </>
   );
@@ -444,7 +457,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           onSort={setSort}
           onLayout={setLayout}
           onFiles={upload}
-          onCreate={() => setCreateOpen((open) => !open)}
+          onCreate={() => setFullOpen(true)}
+          onQuickCreate={() => setCreateOpen((open) => !open)}
           fileRef={uploadRef}
         />
 
@@ -497,6 +511,24 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
       </div>
 
       <LibraryQuickCreate open={createOpen} busy={running} onClose={() => setCreateOpen(false)} onRun={runQuickCreate} />
+
+      {/*
+        全屏创作对话。它读的、写的都是**这一份**存档:做出来的东西立刻在下面的网格里,
+        动作卡上那颗 Star 动的也是同一批资产 —— 不是一层自带一份数据的浮窗。
+      */}
+      <CreationConversation
+        open={fullOpen}
+        onOpenChange={setFullOpen}
+        archive={archive}
+        fixture={fixture}
+        workspaceId={workspaceId}
+        onFile={(assets) => write(addLibraryAssets(archiveRef.current, assets))}
+        onStar={(ids) => {
+          const wanted = new Set(ids);
+          const current = archiveRef.current;
+          return write({ ...current, assets: current.assets.map((asset) => (wanted.has(asset.id) ? { ...asset, starred: true } : asset)) });
+        }}
+      />
 
       {selectedCount ? (
         <div className="r22-lib-bulk" role="group" aria-label="Selected items">

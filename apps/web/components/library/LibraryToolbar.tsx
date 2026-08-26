@@ -3,11 +3,14 @@
 /**
  * LibraryToolbar.tsx —— 主区顶上那一排:搜索、类型、排序、视图、做点东西、上传。
  *
- * 这一排最右边现在是**两颗并列**的按钮,主次分明:
- *   · **Create** 是主按钮 —— 仓库里也能直接开工。商家站在自己的东西中间想再要一张,
- *     最短的路不是「回首页 → 进画布 → 选项目」,而是就地说一句话。
- *   · **Upload** 降为次级 —— 它照旧是一等公民(藏进菜单第三层等于告诉商家「你的照片不
- *     算数」),只是不再是这一排唯一的动作。
+ * 这一排最右边是三颗,主次分明:
+ *   · **Create** 是主按钮 —— 按下去开的是那块**全屏创作对话**(左产物、右线程,
+ *     Founder 2026-08-26 第 1 件)。仓库里也能直接开工,而且开的是能一直做下去的那块地方,
+ *     不是一条说完就收的输入条。
+ *   · **Quick create** 是轻入口 —— 页内那条一行生成条原样留着。商家心里已经有确切的一句
+ *     话、只想再要一张的时候,开一整块全屏是把他从他正在整理的那一屏拽走。两条路做的
+ *     是同一件事的两种规模,不是两套实现:价目、模板、落库都是同一份。
+ *   · **Upload** 照旧是一等公民(藏进菜单第三层等于告诉商家「你的照片不算数」)。
  *
  * 真的 file picker:一个 type=file 的 Input 藏在视觉之外(不是 `display:none` —— 那样键盘
  * 也到不了),按钮点它。
@@ -36,6 +39,7 @@ export function LibraryToolbar({
   onLayout,
   onFiles,
   onCreate,
+  onQuickCreate,
   fileRef: sharedFileRef,
 }: {
   query: string;
@@ -49,7 +53,10 @@ export function LibraryToolbar({
   onSort: (value: LibrarySort) => void;
   onLayout: (value: LibraryLayout) => void;
   onFiles: (files: FileList | null) => void;
+  /** 主路径:开那块全屏创作对话(Founder 2026-08-26 第 1 件)。 */
   onCreate: () => void;
+  /** 轻入口:页内那条一行生成条,原样留着 —— 见文件顶部那段分工。 */
+  onQuickCreate: () => void;
   /** 工作台把这个 ref 借走,好让空态里那颗 Upload 按的是**同一个** input(审计 B-6)。 */
   fileRef?: RefObject<HTMLInputElement | null>;
 }) {
@@ -88,7 +95,8 @@ export function LibraryToolbar({
 
       {fixture ? <span className="r22-lib-sample">Prototype · sample data</span> : null}
 
-      <Button unstyled type="button" className="r22-lib-create" data-r22-lib-create aria-expanded={createOpen} onClick={onCreate}><Sparkles aria-hidden="true" />Create</Button>
+      <Button unstyled type="button" className="r22-lib-quick" data-r22-lib-quick aria-expanded={createOpen} onClick={onQuickCreate}>Quick create</Button>
+      <Button unstyled type="button" className="r22-lib-create" data-r22-lib-create onClick={onCreate}><Sparkles aria-hidden="true" />Create</Button>
       <Button unstyled type="button" className="r22-lib-upload" onClick={() => fileRef.current?.click()}><Upload aria-hidden="true" />Upload</Button>
       <Input ref={fileRef} unstyled className="r22-lib-file" type="file" accept="image/*" aria-label="Upload a picture" onChange={pick} />
     </div>

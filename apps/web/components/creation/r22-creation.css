@@ -19,3 +19,279 @@
 @media (prefers-reduced-motion: reduce) {
   .r22-template { transition: none; }
 }
+
+/* ── 全屏创作对话:左产物,右线程(Founder 2026-08-26 第 1 件)───────────────── */
+
+.r22-creation-full {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  background: var(--r22-canvas-bg, var(--r22-chrome));
+  color: var(--r22-ink);
+}
+
+/* 左:这一场做出来的东西。 */
+.r22-creation-art {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  overflow-y: auto;
+}
+
+.r22-creation-art-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.r22-creation-art-grid figure {
+  margin: 0;
+  border: 1px solid var(--r22-line);
+  border-radius: 10px;
+  background: var(--r22-surface);
+  overflow: hidden;
+}
+
+.r22-creation-art-grid img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+}
+
+.r22-creation-art-grid figcaption {
+  padding: 7px 9px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-2);
+}
+
+.r22-creation-art-empty {
+  margin: auto;
+  max-width: 34ch;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink-3);
+  text-align: center;
+}
+
+.r22-creation-open-canvas {
+  align-self: flex-start;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink);
+  text-decoration: underline;
+}
+
+/* 右:线程。composer 钉在这一栏底部。 */
+.r22-creation-thread {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 18px;
+  border-left: 1px solid var(--r22-line);
+  background: var(--r22-surface);
+}
+
+.r22-creation-log {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.r22-creation-greeting {
+  margin: 0;
+  font-size: var(--r22-text-h2);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+.r22-creation-refs {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-creation-landed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.r22-creation-deviation {
+  color: var(--r22-ink-3);
+}
+
+.r22-creation-composer {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.r22-creation-composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 12px;
+  background: var(--r22-surface);
+}
+
+.r22-creation-composer-box textarea {
+  width: 100%;
+  min-height: 22px;
+  max-height: 140px;
+  resize: none;
+  font-size: var(--r22-text-body);
+  line-height: 1.5;
+  color: var(--r22-ink);
+}
+
+.r22-creation-composer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.r22-creation-gap {
+  flex: 1 1 auto;
+}
+
+.r22-creation-kind {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--r22-chrome);
+}
+
+.r22-creation-kind button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-2);
+}
+
+.r22-creation-kind button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.r22-creation-kind button[data-state="on"] {
+  background: var(--r22-surface);
+  color: var(--r22-ink);
+}
+
+.r22-creation-shape,
+.r22-creation-price,
+.r22-creation-balance {
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-creation-shape {
+  padding: 4px 9px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 7px;
+}
+
+.r22-creation-params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 220px;
+}
+
+.r22-creation-shapes,
+.r22-creation-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.r22-creation-shapes button,
+.r22-creation-counts button {
+  display: flex;
+  min-width: 30px;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 7px;
+  border: 1px solid var(--r22-line);
+  border-radius: 7px;
+  font-size: var(--r22-text-mono-label);
+  color: var(--r22-ink-2);
+}
+
+.r22-creation-shapes button i {
+  width: 14px;
+  border: 1px solid var(--r22-ink-3);
+  border-radius: 2px;
+}
+
+.r22-creation-shapes button[data-state="on"],
+.r22-creation-counts button[data-state="on"] {
+  border-color: var(--r22-ink);
+  color: var(--r22-ink);
+}
+
+.r22-creation-send {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--r22-ink);
+  color: var(--r22-surface);
+}
+
+.r22-creation-send:disabled {
+  opacity: .4;
+}
+
+.r22-creation-send svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* @ 候选浮层 —— 宽度跟着 composer 走,内容自己滚。 */
+.r22-mention-popover {
+  width: 280px;
+  padding: 0;
+}
+
+.r22-mention-popover [data-slot="command-item"] small {
+  margin-left: auto;
+  font-size: var(--r22-text-mono-label);
+  color: var(--r22-ink-3);
+}
+
+.r22-canvas-chip.is-mention b {
+  font-size: var(--r22-text-caption);
+}
+
+@media (max-width: 900px) {
+  .r22-creation-full {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .r22-creation-thread {
+    border-left: 0;
+    border-top: 1px solid var(--r22-line);
+  }
+}

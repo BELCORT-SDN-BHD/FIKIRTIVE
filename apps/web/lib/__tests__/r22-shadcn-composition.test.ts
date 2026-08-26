@@ -149,10 +149,13 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     expect(source("components/otto/conversation/ConversationParts.tsx"), "共用问答零件必须是真 RadioGroup").toContain("<RadioGroup");
     expect(source("components/projects/ProjectStartDialog.tsx"), "Create 弹窗的问题卡要用共用零件").toContain("<AskOptionCard");
     expect(source("components/library/LibraryQuickCreate.tsx")).toContain("<RadioGroup");
-    // 画布的问题卡两路:单选走共用零件,多选留在本地(它挑的是好几个,不是同一个形状)。
+    // 2026-08-26 第 2 件之后,画布那张问题卡整张走共用问卷零件 —— 单选、多选、题号、
+    // Previous/Skip/Next 与字母角标全在那一份里。所以这两条断言跟着实现走:
+    // 「画布用的是共用零件」钉在画布上,「多选是真 Checkbox」钉在**现在真的画它**的那一份上。
+    // 继续在画布上扫 `<Checkbox`,只会把一条已经不指认任何东西的断言留在这里。
     const canvas = source("components/canvas/R22CanvasSurface.tsx");
-    expect(canvas, "画布的单选要用共用零件").toContain("<AskOptions");
-    expect(canvas).toContain("<Checkbox");
+    expect(canvas, "画布的问题卡要用共用问卷零件").toContain("<QuestionnaireCard");
+    expect(source("components/otto/conversation/ConversationParts.tsx"), "共用问卷的多选要用真 Checkbox").toContain("<Checkbox");
     // 2026-08-26 画布一轮:五个手搓的 absolute 弹层(切项目 / 附件 / 素材库 / 参数 /
     // 选素材包)全部归位。判词按形状分:一串**动作**是 menu(上下键 + 首字母跳),
     // 任意**内容**是 popover。手搓的那五层只有 Esc 一条关闭路径,点外面不会关。

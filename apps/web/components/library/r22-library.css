@@ -47,6 +47,8 @@
 .r22-lib-create { display: flex; padding: 6px 13px; align-items: center; gap: 6px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-caption); font-weight: 500; transition: background-color 140ms ease-out; }
 .r22-lib-upload { display: flex; padding: 6px 13px; align-items: center; gap: 6px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-caption); font-weight: 500; transition: background-color 140ms ease-out; }
 .r22-lib-create svg, .r22-lib-upload svg { width: 14px; height: 14px; }
+/* 轻入口:那条一行生成条。它是次级 —— Create 才是主路径(Founder 2026-08-26 第 1 件)。 */
+.r22-lib-quick { padding: 6px 11px; border: 1px solid var(--r22-line-2); border-radius: 8px; color: var(--r22-ink-2); font-size: var(--r22-text-caption); font-weight: 500; transition: background-color 140ms ease-out; }
 /* 真的 file picker。藏在视觉之外,不是 display:none —— 那样键盘也到不了它。 */
 .r22-lib-file { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
@@ -283,7 +285,7 @@ html[data-kb="1"] .r22-lib-scrim { animation: none !important; transition: none 
 
 @media (prefers-reduced-motion: reduce) {
   .r22-lib-bulk, .r22-lib-layer[data-state="open"], .r22-lib-packlayer[data-state="open"], .r22-lib-scrim[data-state="open"], .r22-lib-make-form, .r22-lib-make-menu, .r22-lib-ask { animation: none; }
-  .r22-lib-tile, .r22-lib-row, .r22-lib-check, .r22-lib-star, .r22-lib-nav li button, .r22-lib-seg button, .r22-lib-layer-acts button, .r22-lib-layer-x, .r22-lib-make-kind button, .r22-lib-make-shape, .r22-lib-make-shapes button, .r22-lib-make-counts button, .r22-lib-ask-options > label, .r22-lib-ask-acts button, button.r22-lib-layer-source { transition: none; }
+  .r22-lib-tile, .r22-lib-row, .r22-lib-check, .r22-lib-star, .r22-lib-nav li button, .r22-lib-seg button, .r22-lib-layer-acts button, .r22-lib-layer-x, .r22-lib-quick, .r22-lib-make-kind button, .r22-lib-make-shape, .r22-lib-make-shapes button, .r22-lib-make-counts button, .r22-lib-ask-options > label, .r22-lib-ask-acts button, button.r22-lib-layer-source { transition: none; }
 }
 
 /* B-4:计数从拼进文字改成标签右侧一枚安静的数字,对齐 LibraryNav 已经做对的那一种。 */

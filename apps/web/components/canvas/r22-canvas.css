@@ -966,32 +966,8 @@
   font-weight: 650 !important;
 }
 
-.r22-canvas-job {
-  position: absolute;
-  top: 456px;
-  left: 1012px;
-  z-index: 24;
-  display: grid;
-  width: 380px;
-  gap: 5px;
-  padding: 14px 16px;
-  border: 1px solid var(--r22-line);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--r22-surface) 94%, var(--r22-edge-sky));
-  box-shadow: var(--r22-shadow-sm);
-}
+/* 板上那张任务卡整个删掉了(Founder 2026-08-26 第 4 件)—— 状态改由 Otto 头部承担。 */
 
-/* 原型里 Otto 的状态词(`.b-state`)是 500/10.5px/ink3 的普通句子字,不是全大写机器码。
-   任务卡的阶段名跟它同一个寄存器 —— 商家读到的是 "Working",不是 "RUNNING"。 */
-.r22-canvas-job > span {
-  color: var(--r22-ink-3);
-  font-size: 10.5px;
-  font-weight: 500;
-}
-
-.r22-canvas-job > b { font-size: var(--r22-text-body); }
-.r22-canvas-job > small { color: var(--r22-ink-3); font-size: 10.5px; }
-.r22-canvas-job.is-failed { border-color: color-mix(in srgb, var(--r22-coral) 62%, var(--r22-line)); }
 
 .r22-canvas-otto {
   position: absolute;

@@ -24,6 +24,7 @@
  */
 
 import * as React from "react";
+import Link from "next/link";
 import { Check, ChevronDown, type LucideIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -95,8 +96,12 @@ export function MessageBubble({
 }
 
 /** Otto 的一段话。散文就是散文 —— 卡片留给「有待办的东西」,不是每句话都装进框里。 */
-export function AssistantProse({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <p data-otto-prose="" className={`r22-convo-prose${className ? ` ${className}` : ""}`}>{children}</p>;
+export function AssistantProse({
+  children,
+  className,
+  ...rest
+}: { children: React.ReactNode; className?: string } & Omit<React.ComponentProps<"p">, "children">) {
+  return <p data-otto-prose="" className={`r22-convo-prose${className ? ` ${className}` : ""}`} {...rest}>{children}</p>;
 }
 
 /* ── 进度卡(Copilot 形)────────────────────────────────────────────────────── */
@@ -433,6 +438,8 @@ export function QuestionnaireCard({
   onSkip,
   onNext,
   nextLabel,
+  skipLabel,
+  canAdvance,
   kicker,
   footNote,
   children,
@@ -454,6 +461,15 @@ export function QuestionnaireCard({
   onNext: () => void;
   /** 主键上的字。不写就是 Next,最后一道自动变 Finish。 */
   nextLabel?: string;
+  /** 跳过键上的字。不写就是 Skip —— 有的语境里那颗是「Cancel task」。 */
+  skipLabel?: string;
+  /**
+   * 「现在可以往下走了吗」。不写就是「选中了至少一个」。
+   *
+   * 有的语境里答案还能从别处来(画布那张卡下面有一格「Something else…」)——把「答上了」
+   * 这件事写死成「选中了一个选项」,那一格就成了摆设:打了字,主键仍然是灰的。
+   */
+  canAdvance?: boolean;
   kicker?: React.ReactNode;
   footNote?: React.ReactNode;
   /** 题面与脚排之间还要塞的东西(例如「Something else…」那一格)。 */
@@ -572,7 +588,7 @@ export function QuestionnaireCard({
         {footNote ? <span className="r22-quiz-note">{footNote}</span> : null}
         <span className="r22-quiz-gap" />
         {onSkip ? (
-          <Button unstyled type="button" data-otto-quiz-skip="" {...(aliases?.skip ? { [aliases.skip]: "" } : {})} disabled={busy} onClick={onSkip}>Skip</Button>
+          <Button unstyled type="button" data-otto-quiz-skip="" {...(aliases?.skip ? { [aliases.skip]: "" } : {})} disabled={busy} onClick={onSkip}>{skipLabel ?? "Skip"}</Button>
         ) : null}
         <Button
           unstyled
@@ -580,7 +596,7 @@ export function QuestionnaireCard({
           className="is-primary"
           data-otto-quiz-next=""
           {...(aliases?.submit ? { [aliases.submit]: "" } : {})}
-          disabled={busy || !selected.length}
+          disabled={busy || !(canAdvance ?? selected.length > 0)}
           onClick={onNext}
         >
           {nextLabel ?? (last ? "Finish" : "Next")}
@@ -608,7 +624,12 @@ export type ConversationAction = {
   /** 一句安静的副文(去处、代价、结果)。 */
   note?: string;
   icon?: LucideIcon;
-  onRun: () => void;
+  /**
+   * 这一张是「去某个地方」时给地址,画出来就是一条**真链接** —— 商家可以中键新开、
+   * 可以右键复制地址,Next 也照常预取那一屏。用 `onRun` 转发一次跳转,这三件全没了。
+   */
+  href?: string;
+  onRun?: () => void;
 };
 
 export function ActionCards({
@@ -625,13 +646,22 @@ export function ActionCards({
     <div data-otto-action-cards="" className={`r22-convo-actions${className ? ` ${className}` : ""}`} role="group" aria-label={label}>
       {actions.map((action) => {
         const Icon = action.icon;
-        return (
-          <Button unstyled type="button" key={action.id} data-otto-action-card={action.id} className="r22-convo-action" onClick={action.onRun}>
+        const body = (
+          <>
             {Icon ? <Icon aria-hidden className="r22-convo-action-icon" /> : null}
             <span>
               <b>{action.label}</b>
               {action.note ? <small>{action.note}</small> : null}
             </span>
+          </>
+        );
+        return action.href ? (
+          <Link key={action.id} data-otto-action-card={action.id} className="r22-convo-action" href={action.href} onClick={action.onRun}>
+            {body}
+          </Link>
+        ) : (
+          <Button unstyled type="button" key={action.id} data-otto-action-card={action.id} className="r22-convo-action" onClick={action.onRun}>
+            {body}
           </Button>
         );
       })}
