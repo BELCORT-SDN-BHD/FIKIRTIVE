@@ -65,7 +65,9 @@ describe("R22 truthful-state UI contracts", () => {
     }));
 
     expect(html).toContain("Could not load");
-    expect(html).toContain("Credit activity could not be loaded. Nothing is guessed in its place.");
+    // 站岗句「Nothing is guessed in its place.」已按 Founder 2026-08-26 裁决删掉;这条钉的
+    // 从来不是那半句自证,而是「读不出来不许渲染成一本空账」—— 下面三条 not.toContain 才是。
+    expect(html).toContain("Credit activity could not be loaded.");
     expect(html).not.toContain("No credit activity is available.");
     expect(html).not.toContain("0 cr available");
     expect(html).not.toContain(">Top up<");

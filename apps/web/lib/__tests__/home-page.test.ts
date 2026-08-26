@@ -354,7 +354,11 @@ describe("读不出来 ≠ 没有(判官 r1 P3-1,R22 版:一句整页横幅)", (
     const text = visibleText(render({ kind: "not_connected" }, DEGRADED_DATA));
 
     expect(text).toContain(HOME_COPY.workspaceDataUnreadable);
-    expect(HOME_COPY.workspaceDataUnreadable, "那句横幅改用人话说「不猜」,判官 [P2-2] 之后不再说 inferred").toContain("Nothing is guessed in its place");
+    // 这句横幅只说「读不出来」这一件事:不许再说 inferred(判官 [P2-2]),也不许回头挂那句
+    // 「Nothing is guessed in its place.」站岗话(Founder 2026-08-26 裁决:商家没问过它)。
+    expect(HOME_COPY.workspaceDataUnreadable).toContain("could not be read");
+    expect(HOME_COPY.workspaceDataUnreadable, "横幅又长出了自证句").not.toContain("guessed");
+    expect(HOME_COPY.workspaceDataUnreadable, "横幅回到了工程词 inferred").not.toContain("inferred");
   });
 
   it("全部读到了就不说那句 —— 降级态与正常态渲染出来的字不一样", () => {

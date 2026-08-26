@@ -121,13 +121,25 @@ export function R22HelpView({ fixture = false, state = fixture ? "ready" : "unav
     if (fixture) router.replace("/help?fixture=r22", { scroll: false });
   }
 
+  /*
+    站岗句清除(Founder 2026-08-26 裁决)。这一格从前每个状态都补一句「我们没有拿别的东西
+    顶上」("Nothing is guessed in its place." / "No policy page was shown in their place." /
+    "Fikirtive will not pass policy pages off as help.")—— 商家没问过这个问题,那几句只是
+    对着空气保证自己没做坏事,整句删。删完 loading 只剩标题一句就够,不再挂一个空段落。
+  */
+  const unavailableBody = state === "loading" ? ""
+    : state === "error" ? "The help articles could not be read."
+    : state === "permission" ? "Ask an admin in this workspace for access, or contact support below without attaching your workspace."
+    : state === "unknown" ? "It may still finish. Try again."
+    : "Contact support below while real help articles are being connected.";
+
   return <main className="r22-help" data-r22-help data-fixture={fixture || undefined}>
     <header><p>Support</p><h1>How can we help?</h1><span>Find a verified answer or prepare a request for a person.</span></header>
     <label className="r22-help-search"><Search aria-hidden="true" /><Input unstyled value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search product help" disabled={!fixture || state !== "ready"} /><kbd>⌘K</kbd></label>
     <div className="r22-help-grid">
       <section className="r22-help-articles" aria-labelledby="help-articles-heading">
         <div className="r22-help-heading"><BookOpen aria-hidden="true" /><div><h2 id="help-articles-heading">Product help</h2><p>Task guidance tied to the current product.</p></div></div>
-        {state !== "ready" ? <div className="r22-help-unavailable" role={state === "error" ? "alert" : "status"}><b>{state === "loading" ? "Loading help…" : state === "error" ? "Product help could not be loaded" : state === "permission" ? "Product help is not available to this member" : state === "unknown" ? "We could not tell whether help loaded" : "Help articles are not switched on yet"}</b><p>{state === "loading" ? "Nothing is guessed while this loads." : state === "error" ? "The help articles could not be read. No policy page was shown in their place." : state === "permission" ? "Ask an admin in this workspace for access, or contact support below without attaching your workspace." : state === "unknown" ? "It may still finish. Nothing is guessed in its place — try again." : "Fikirtive will not pass policy pages off as help. Contact support below while real help articles are being connected."}</p>{state === "error" || state === "unknown" ? <Link href={fixture ? "/help?fixture=r22" : "/help"}>Retry</Link> : null}</div> : selectedArticle ? <article className="r22-help-article-detail"><Button unstyled type="button" onClick={closeArticle}><ArrowLeft data-icon="inline-start" aria-hidden="true" /> Back to results</Button><small>{selectedArticle.category}</small><h3>{selectedArticle.title}</h3><p>{selectedArticle.summary}</p><p>This is a sample article for this preview. Real help articles are not switched on yet.</p></article> : visible.length ? <ul>{visible.map((article) => <li key={article.id}><Button unstyled type="button" onClick={() => openArticle(article)}><small>{article.category}</small><b>{article.title}</b><span>{article.summary}</span></Button></li>)}</ul> : <div className="r22-help-unavailable"><b>No matching article</b><p>Try a broader task name or contact support.</p></div>}
+        {state !== "ready" ? <div className="r22-help-unavailable" role={state === "error" ? "alert" : "status"}><b>{state === "loading" ? "Loading help…" : state === "error" ? "Product help could not be loaded" : state === "permission" ? "Product help is not available to this member" : state === "unknown" ? "We could not tell whether help loaded" : "Help articles are not switched on yet"}</b>{unavailableBody ? <p>{unavailableBody}</p> : null}{state === "error" || state === "unknown" ? <Link href={fixture ? "/help?fixture=r22" : "/help"}>Retry</Link> : null}</div> : selectedArticle ? <article className="r22-help-article-detail"><Button unstyled type="button" onClick={closeArticle}><ArrowLeft data-icon="inline-start" aria-hidden="true" /> Back to results</Button><small>{selectedArticle.category}</small><h3>{selectedArticle.title}</h3><p>{selectedArticle.summary}</p><p>This is a sample article for this preview. Real help articles are not switched on yet.</p></article> : visible.length ? <ul>{visible.map((article) => <li key={article.id}><Button unstyled type="button" onClick={() => openArticle(article)}><small>{article.category}</small><b>{article.title}</b><span>{article.summary}</span></Button></li>)}</ul> : <div className="r22-help-unavailable"><b>No matching article</b><p>Try a broader task name or contact support.</p></div>}
       </section>
       <section className="r22-help-contact" aria-labelledby="help-contact-heading">
         <div className="r22-help-heading"><LifeBuoy aria-hidden="true" /><div><h2 id="help-contact-heading">Contact support</h2><p>{fixture ? "Review every field and status before anything leaves Fikirtive." : "Review what leaves Fikirtive before opening your email app."}</p></div></div>

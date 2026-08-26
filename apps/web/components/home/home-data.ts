@@ -70,8 +70,13 @@ export function readOk<T>(value: T): Read<T> {
  */
 export const HOME_COPY = {
   /* ── 读不出来 ≠ 没有 ──────────────────────────────────────────────────────── */
-  /** 任何一块读取降级时,整页只说这一句。它同时钉死「不许由此推断出一个空态」。 */
-  workspaceDataUnreadable: "Some workspace data could not be read just now. Nothing is guessed in its place.",
+  /**
+   * 任何一块读取降级时,整页只说这一句。它同时钉死「不许由此推断出一个空态」——
+   * 钉的是**渲染的行为**(不许拿空态顶上),不是再补一句「我们没有猜」。后面那半句
+   * (“Nothing is guessed in its place.”)已按 Founder 2026-08-26 裁决删掉:它站在这里
+   * 不回答商家的任何问题,只是对着空气保证自己没做坏事。
+   */
+  workspaceDataUnreadable: "Some workspace data could not be read just now.",
 
   /* ── 连接状态:不知道 ≠ 没连上 ────────────────────────────────────────────── */
   connectionStatusUnreadable: "Connection status could not be read just now.",

@@ -668,7 +668,7 @@
   position/背景/边框,没有 animation、没有 transition。
 
   ⚠️ 墨色必须在这一层就地钉死(Founder 2026-08-26 实证的「叠印」)。next-themes 在系统
-  深色时给 <html> 落 `.dark`,shadcn 的 `text-popover-foreground` 随之翻成 #FAFAFA;
+  深色时给 <html> 落 `.dark`,shadcn 的 `text-popover-foreground` 随之翻成近白的一档;
   r22 这一层却是固定浅色(r22-tokens.css 没有深色分支,面还是白的)。于是 label 那半截
   白字压在白面上只剩一层影,右边 mono 的 detail 因为自己写死 `--r22-ink-3` 照常实色 ——
   看上去就是一行里两段字叠在一起。palette 又是 portal 挂到 <body> 的,够不到

@@ -68,12 +68,22 @@ export function R22NotificationsView({ initialItems = [], state = "unavailable",
 
   if (state !== "ready") {
     const permission = state === "permission";
+    /*
+      站岗句清除(Founder 2026-08-26 裁决):这三句 —— "Nothing is guessed while this loads."
+      / "Nothing is guessed in its place." / "Fikirtive will not invent events, and will not
+      tell you everything is read." —— 都不回答商家的问题,只是对着空气保证自己没做坏事,
+      整句删。loading 与 error 删完只剩标题(error 底下就是那颗 Retry),不再挂空段落。
+    */
+    const body = permission ? "Ask an admin in this workspace to give you access to notifications."
+      : state === "unknown" ? "The read may still finish."
+      : state === "unavailable" ? "Notifications are not switched on yet, so nothing will reach you here."
+      : "";
     return <main className="r22-notifications" data-r22-notifications data-state={state}>
       <header><div><p>Workspace</p><h1>Notifications</h1><span>Review activity without losing the history behind it.</span></div></header>
       <section className="r22-notifications-state" role={state === "error" ? "alert" : undefined}>
         {permission ? <LockKeyhole aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
         <h2>{permission ? "Notifications are not available to this member" : state === "loading" ? "Loading notifications…" : state === "error" ? "Notifications could not be loaded" : state === "unknown" ? "We could not tell whether your notifications loaded" : "Notification delivery is not connected yet"}</h2>
-        <p>{permission ? "Ask an admin in this workspace to give you access to notifications." : state === "loading" ? "Reading your notifications. Nothing is guessed while this loads." : state === "error" ? "Nothing is guessed in its place. Try again." : state === "unknown" ? "The read may still finish. Nothing is guessed in its place." : "Notifications are not switched on yet. Fikirtive will not invent events, and will not tell you everything is read."}</p>
+        {body ? <p>{body}</p> : null}
         {state === "error" || state === "unknown" ? <Link href={fixture ? "/notifications?fixture=r22" : "/notifications"}>Retry</Link> : null}
         <Link href={settingsHref}>Notification settings</Link>
       </section>

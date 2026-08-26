@@ -351,4 +351,40 @@ describe("R22 extended frontend contracts", () => {
       "fixture-user-${Date.now",
     ]) expect(`${campaign}\n${schedule}\n${settings}\n${ottoHost}\n${ottoConversation}`).not.toContain(unstableFixtureId);
   });
+  /*
+    站岗句清除(Founder 2026-08-26 裁决:「他出现的地方很奇怪,就毫无意义的解释。Linear 是
+    不会这样的。」)。这一条钉的是**清完之后的现实**:这四面在读不出来 / 不知道 / 没开通的
+    时候,只说发生了什么、下一步按哪里,不再补一句「我们没有拿别的东西顶上」的自证话。
+    真话本身另有钉子管(状态标题、not.toContain 的那些空态与私料),这里只管站岗句不许回来。
+  */
+  it("keeps the self-certifying sentinel copy out of Home, Settings, Notifications, and Help", () => {
+    const SENTINELS = [
+      "Nothing is guessed in its place",
+      "Nothing is guessed while this loads",
+      "No policy page was shown in their place",
+      "will not pass policy pages off as help",
+      "will not invent events",
+    ];
+    for (const file of [
+      "components/home/home-data.ts",
+      "components/settings/R22SettingsShell.tsx",
+      "components/notifications/R22NotificationsView.tsx",
+      "components/help/R22HelpView.tsx",
+    ]) {
+      // 注释里点名这几句「为什么走了」是这次改动的记录,所以先剥注释再扫商家看得到的字。
+      const source = readFileSync(path.join(WEB_ROOT, file), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      for (const sentinel of SENTINELS) {
+        expect(source.includes(sentinel), `${file} 里又长回了站岗句:「${sentinel}」`).toBe(false);
+      }
+    }
+
+    // 删干净不等于删哑了:这三个状态照旧说得出自己是什么。
+    act(() => root!.render(createElement(R22NotificationsView, { fixture: true, state: "error" })));
+    expect(container!.textContent).toContain("Notifications could not be loaded");
+    act(() => root!.render(createElement(R22HelpView, { fixture: true, state: "unknown" })));
+    expect(container!.textContent).toContain("We could not tell whether help loaded");
+    expect(container!.textContent).toContain("It may still finish. Try again.");
+  });
 });
