@@ -416,11 +416,11 @@ export function R22DashboardShell({
             <DialogTitle className="sr-only">Global Search</DialogTitle>
             <DialogDescription className="sr-only">Search destinations and workspace projects.</DialogDescription>
             <Command loop label="Search Fikirtive">
-              <div>
+              <div className="r22-dashboard-search-field">
                 <CommandInput ref={searchRef} value={query} onValueChange={setQuery} placeholder="Search Fikirtive" />
                 <Kbd>Esc</Kbd>
               </div>
-              <CommandList id="r22-global-search-results">
+              <CommandList data-r22-search-results>
                 <CommandEmpty>No matching result</CommandEmpty>
                 {SEARCH_GROUPS.map((group) => {
                   const rows = searchResults.filter((item) => item.group === group);

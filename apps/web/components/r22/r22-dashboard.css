@@ -636,7 +636,7 @@
   display: contents;
 }
 
-.r22-dashboard-search-dialog [data-slot="command"] > div:first-child {
+.r22-dashboard-search-field {
   display: flex;
   align-items: center;
   gap: 10px;
