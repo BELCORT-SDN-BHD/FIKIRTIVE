@@ -393,8 +393,7 @@
 }
 
 .r22-canvas-icon-button:focus-visible,
-.r22-canvas-project-button:focus-visible,
-.r22-canvas-quiet-button:focus-visible {
+.r22-canvas-project-button:focus-visible {
   background: var(--r22-chrome);
   outline: none;
 }
@@ -518,14 +517,6 @@
 
 .r22-canvas-topbar-spacer {
   flex: 1;
-}
-
-.r22-canvas-quiet-button {
-  padding: 7px 14px !important;
-  border: 1px solid var(--r22-line-2) !important;
-  border-radius: 8px;
-  background: var(--r22-surface) !important;
-  font-size: var(--r22-text-small) !important;
 }
 
 .r22-canvas-stage {
@@ -1773,7 +1764,6 @@
 @media (hover: hover) and (pointer: fine) {
   .r22-canvas-icon-button:hover,
   .r22-canvas-project-button:hover,
-  .r22-canvas-quiet-button:hover,
   .r22-canvas-project-menu a:hover,
   .r22-canvas-popover button:hover,
   .r22-canvas-otto-head:hover,
@@ -1791,7 +1781,6 @@
 
 .r22-canvas-icon-button,
 .r22-canvas-project-button,
-.r22-canvas-quiet-button,
 .r22-canvas-project-menu a,
 .r22-canvas-popover button,
 .r22-canvas-otto-head,
@@ -1805,7 +1794,6 @@
 
 .r22-canvas-icon-button:active:not(:disabled),
 .r22-canvas-project-button:active:not(:disabled),
-.r22-canvas-quiet-button:active:not(:disabled),
 .r22-canvas-project-menu a:active,
 .r22-canvas-popover button:active:not(:disabled),
 .r22-canvas-otto-head:active:not(:disabled),
@@ -1829,7 +1817,6 @@
 
   .r22-canvas-icon-button:active,
   .r22-canvas-project-button:active,
-  .r22-canvas-quiet-button:active,
   .r22-canvas-project-menu a:active,
   .r22-canvas-popover button:active,
   .r22-canvas-otto-head:active,

@@ -34,7 +34,6 @@ import {
   FolderPlus,
   Frame,
   Hand,
-  ImagePlus,
   LayoutGrid,
   Maximize2,
   Minimize2,
@@ -88,7 +87,15 @@ import {
 import { ImageEditLayer, IMAGE_EDIT_CREDITS, type ImageEditOutcome } from "@/components/library/ImageEditLayer";
 import "./r22-canvas.css";
 
-type CanvasTool = "select" | "box" | "hand" | "image" | "star" | "arrange";
+/**
+ * 手上这一件工具。三个值,每一个都有真读者:`box` 出框选、`hand` 出平移、`select` 是默认档。
+ *
+ * beta 卫生大扫除(2026-08-26,P1-1)删掉了 `image` / `star` / `arrange` 三个值 —— 它们在整个
+ * 文件里没有任何读者,按下去只是把工具档换成一个没人消费的值,顺带把 select/box/hand 的当前
+ * 档取消掉。它们本来也不该是「模式」:加图该走 Library 那条隐藏 file input,加星与排布该是
+ * 普通按钮 + 无选中时 disabled。三件事都不在 beta 的创作主线上,先删。
+ */
+type CanvasTool = "select" | "box" | "hand";
 
 /** 画布视角:世界的平移量 + 缩放百分比(原型 `view={x,y,s}`,L5985 —— 一件事一个出处)。 */
 type CanvasView = { x: number; y: number; zoom: number };
@@ -564,15 +571,12 @@ const TOOL_BUTTONS: Array<{
   id: CanvasTool;
   label: string;
   icon: typeof MousePointer2;
-  /** 单键快捷键。没有的那几颗就是 `null` —— tooltip 里也不假装有一个。 */
-  key: string | null;
+  /** 单键快捷键。三颗都有一个 —— 工具条上不留没有快捷键的档。 */
+  key: string;
 }> = [
   { id: "select", label: "Select", icon: MousePointer2, key: "V" },
   { id: "box", label: "Box select", icon: Frame, key: "B" },
   { id: "hand", label: "Pan", icon: Hand, key: "H" },
-  { id: "image", label: "Add image", icon: ImagePlus, key: null },
-  { id: "star", label: "Star selected", icon: Star, key: null },
-  { id: "arrange", label: "Arrange canvas", icon: LayoutGrid, key: null },
 ];
 
 /**
@@ -581,7 +585,7 @@ const TOOL_BUTTONS: Array<{
  * 两处对不上这件事从此不可能发生。
  */
 const TOOL_SHORTCUTS: Record<string, CanvasTool> = Object.fromEntries(
-  TOOL_BUTTONS.filter((button) => button.key).map((button) => [button.key!.toLowerCase(), button.id]),
+  TOOL_BUTTONS.map((button) => [button.key.toLowerCase(), button.id]),
 );
 
 function OttoMark() {
@@ -2142,8 +2146,13 @@ export function R22CanvasSurface({
         </span>
         <span className="r22-canvas-topbar-spacer" />
         {fixture && <span className="r22-canvas-sample-note">Prototype · sample data</span>}
-        <Button unstyled type="button" className="r22-canvas-quiet-button" disabled={fixture && fixtureRouteState !== "ready"} onClick={() => setNotice("Sharing is not connected yet.")}>Share</Button>
-        <Button unstyled type="button" className="r22-canvas-quiet-button" disabled={fixture && fixtureRouteState !== "ready"} onClick={() => setNotice("Export is not connected yet.")}>Export</Button>
+        {/*
+          顶栏这里以前摆着 Share 与 Export 两颗。它们没有任何实现 —— 按下去只把一句
+          「Sharing / Export is not connected yet.」推进提示条,商家为此按一次、读一句道歉、
+          什么也没得到。beta 卫生大扫除(2026-08-26,P2-1 / P2-2)裁决:只是一句 toast 的
+          就直接删,不用「只藏不删」那套(那套是给有成套实现、只等开闸的门用的)。
+          分享与导出真要回来,是两个功能,不是两颗按钮。
+        */}
       </header>
 
       <div
@@ -2491,7 +2500,12 @@ export function R22CanvasSurface({
               </PopoverContent>
             </Popover>
             <span className="r22-canvas-price">{priceLabel}</span>
-            <Button unstyled type="submit" className="r22-canvas-send" aria-label="Send" disabled={submitting || (fixture && fixtureRouteState !== "ready") || (!fixture && (!costQuote || !ratioOptions.length))}>
+            {/*
+              空输入时 Send 是灰的(beta 卫生大扫除 2026-08-26,P1-3)。此前它始终可按,按下去
+              撞上 `submit` 里的 `if (!next) return` 就没了 —— 一颗按得动、什么也不发生的按钮。
+              判断与守卫用同一条尺子(`trim()` 之后还有字),两处不会各说各话。
+            */}
+            <Button unstyled type="submit" className="r22-canvas-send" aria-label="Send" disabled={submitting || !message.trim() || (fixture && fixtureRouteState !== "ready") || (!fixture && (!costQuote || !ratioOptions.length))}>
               <ArrowUp aria-hidden="true" />
             </Button>
           </div>
@@ -2524,7 +2538,7 @@ export function R22CanvasSurface({
                 </TooltipTrigger>
                 <TooltipContent side="left">
                   {label}
-                  {key ? <Kbd className="ml-1.5">{key}</Kbd> : null}
+                  <Kbd className="ml-1.5">{key}</Kbd>
                 </TooltipContent>
               </Tooltip>
             ))}

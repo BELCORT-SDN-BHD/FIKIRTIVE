@@ -402,3 +402,83 @@ describe("⑥ 工具条 / 比例 / 张数 是真的成组单选", () => {
     expect(stickyLeft(), "撤销那一颗按不动了").toBe(`${STICKY_HOME.x}px`);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ⑦ beta 卫生大扫除 · 画布波(2026-08-26 台账 P1-1 / P1-3 / P2-1 / P2-2)
+//
+// Founder 原话:「会遇到死按钮或没有意义的东西的情况…把没有用的东西删除(for 这个 beta
+// phase),避免产生不必要的问题」。这一组钉住的是**删干净了、且没伤到活的那几件**。
+//
+// 变异自检(逐条实做,证红后还原):
+//   · `TOOL_BUTTONS` 里把 image / star / arrange 三颗加回去 ⇒ ⑦-a 红;
+//   · `r22-canvas-send` 的 disabled 里删掉 `!message.trim()` ⇒ ⑦-c 红;
+//   · 顶栏把 Share(或 Export)那颗加回去 ⇒ ⑦-d 红。
+// ---------------------------------------------------------------------------
+describe("⑦ beta 收窄之后:死件不在了,活件一件没少", () => {
+  it("⑦-a 工具条只剩三颗真工具 —— 没读者的 image / star / arrange 一颗都不在", async () => {
+    await mount();
+
+    const labels = Array.from(need<HTMLElement>("[data-r22-canvas-tools]").querySelectorAll("button"))
+      .map((button) => button.getAttribute("aria-label"));
+
+    expect(labels, "工具条上还摆着没人消费那档的按钮").toEqual(["Select", "Box select", "Pan"]);
+    for (const dead of ["Add image", "Star selected", "Arrange canvas"]) {
+      expect(seen(`[data-r22-canvas-tools] button[aria-label="${dead}"]`), `死工具 ${dead} 还在工具条上`).toBe(false);
+    }
+  });
+
+  it("⑦-b 三颗真工具照旧:V / B / H 换得动,手形工具下拖不走便签", async () => {
+    await mount();
+
+    await pressKey({ key: "b" });
+    expect(toolButton("Box select").getAttribute("aria-checked"), "删了三颗死的,B 也跟着不认了").toBe("true");
+
+    await pressKey({ key: "h" });
+    expect(toolButton("Pan").getAttribute("aria-checked"), "H 换不到手形工具了").toBe("true");
+    await dragSticky();
+    expect(stickyLeft(), "手形工具下按在便签上把便签拖走了 —— 平移被删坏了").toBe(`${STICKY_HOME.x}px`);
+
+    await pressKey({ key: "v" });
+    expect(toolButton("Select").getAttribute("aria-checked"), "V 回不到选择工具了").toBe("true");
+    await dragSticky();
+    expect(stickyLeft(), "选择工具下便签拖不动了 —— 框选/拖拽被删坏了").not.toBe(`${STICKY_HOME.x}px`);
+  });
+
+  it("⑦-c 空输入时 Send 是灰的,打了字就亮 —— 不再有「按得动、什么也不发生」", async () => {
+    await mount();
+
+    const send = need<HTMLButtonElement>(".r22-canvas-send");
+    const composer = need<HTMLTextAreaElement>('textarea[aria-label="Describe what to make"]');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    const typeInto = async (value: string) => {
+      await act(async () => {
+        setValue.call(composer, value);
+        composer.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+
+    expect(send.disabled, "一个字都没打,Send 还按得动").toBe(true);
+
+    await typeInto("   ");
+    expect(send.disabled, "只打了几个空格,Send 就亮了 —— 送出去的守卫会把它 trim 成空").toBe(true);
+
+    await typeInto("A tray of kuih for Raya");
+    expect(send.disabled, "打了字,Send 还是灰的").toBe(false);
+
+    await typeInto("");
+    expect(send.disabled, "把字删光了,Send 没跟着灰回去").toBe(true);
+  });
+
+  it("⑦-d 顶栏没有 Share / Export —— 只会道歉的按钮不摆在 beta 的屏幕上", async () => {
+    await mount();
+
+    const topbarText = Array.from(container!.querySelectorAll("header button")).map((button) => button.textContent ?? "");
+    expect(topbarText.some((text) => /share/i.test(text)), "Share 还在顶栏上").toBe(false);
+    expect(topbarText.some((text) => /export/i.test(text)), "Export 还在顶栏上").toBe(false);
+    expect(seen(".r22-canvas-quiet-button"), "那两颗的壳还留在顶栏上").toBe(false);
+
+    // 顶栏活着的那几件一件没少:项目名开菜单、保存状态照旧说话。
+    expect(seen(".r22-canvas-project-button"), "顶栏切项目那颗被顺手删掉了").toBe(true);
+    expect(need(".r22-canvas-saved").textContent, "顶栏的保存状态不说话了").toBeTruthy();
+  });
+});
