@@ -34,9 +34,9 @@ export default function LibraryLoading() {
             ))}
           </ul>
 
-          <p className="r22-lib-nav-h">
+          <div className="r22-lib-nav-h">
             <Skeleton className="h-[9px] w-[64px] rounded-[4px]" />
-          </p>
+          </div>
           <ul>
             {[0, 1].map((row) => (
               <li key={row}>
