@@ -15,6 +15,9 @@
  *   ⑦ Esc 不越层 —— 轮得到自己才吃,吃了就喊一声;轮不到就原样放过去给壳。
  *   ⑧ 浮层的关键帧是**专属**的,而且每一帧都带着居中的那半个 `-50%`(approvals 42503fa5
  *      付过这笔学费:借来的关键帧收尾帧一个 `transform:none`,层当场飞出视口)。
+ *   ⑨ 浮层的面板是**实的** —— 同一个「unstyled DialogContent」病家族的第二种形状:层被
+ *      portal 到 `document.body`,`.r22-library` 身上那批短别名在层里解析不出来,面板整片
+ *      透明(1440×900 真机复现:详情层右栏的字直接叠在下层网格卡片上)。
  *
  * 变异自查(逐条实做,做完全部还原,红 → 绿):
  *   · `bulkStar` 里把 `starred: true` 改成 `starred: asset.starred` ⇒ ① 红;
@@ -24,7 +27,9 @@
  *   · `addToPack` 里把 `packIds: [...asset.packIds, packId]` 换成原样返回 ⇒ ⑤ 红;
  *   · `libraryCanvasHref` 里去掉 `project=` 那一段 ⇒ ⑥ 红;
  *   · Esc 处理里去掉 `if (!selected.length) return`(永远 preventDefault) ⇒ ⑦ 红;
- *   · `.r22-lib-layer[data-state="open"]` 改成借用 `r22-lib-bulk-in` ⇒ ⑧ 红。
+ *   · `.r22-lib-layer[data-state="open"]` 改成借用 `r22-lib-bulk-in` ⇒ ⑧ 红;
+ *   · `.r22-lib-layer` 的 `background` 改回 `var(--surface)`(真机上那个 P1 的原样) ⇒ ⑨ 两条红;
+ *   · 删掉整条 `.r22-lib-scrim` 规则 ⇒ ⑨ 红。
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -294,6 +299,71 @@ describe("Library 工作台:动效纪律", () => {
     const transforms = frames.match(/transform:\s*[^;]+;/g) ?? [];
     expect(transforms.length, "关键帧里没有 transform,居中会在动画期间丢失").toBeGreaterThan(1);
     for (const declaration of transforms) expect(declaration, "这一帧没有居中").toContain("-50%");
+  });
+
+  /**
+   * ⑨ P1 回炉件的围栏(1440×900 真机抓到,编排者过闸 2026-08-26)。
+   *
+   * 病灶不是「忘了写 background」,是**别名解析不到**:`.r22-library` 把 `--surface` /
+   * `--ink` / `--chrome` / `--line` 这一批短别名定义在它自己身上,而 Radix 把浮层 portal
+   * 到 `document.body` —— 层不在 `.r22-library` 底下,那批别名在层里一个也解析不出来,
+   * `background: var(--surface)` 于是等于没写。真机上的样子:详情层右栏整片透明,标题、
+   * 日期、来源、Prompt、动作排直接叠在下层网格的卡片上,只有那张大图看着是实的。
+   *
+   * 所以这一条钉的是**病根**而不是那一处症状:整段工作台 css 里一个局部别名都不许有。
+   * 只钉「层有 background」的话,下一条新写的规则照样会借回别名,而那种漏是静默的。
+   *
+   * 为什么钉 css 源码而不是 `getComputedStyle`:vitest 的 jsdom 不注入组件 import 进来的
+   * 样式表,层在这里恒等于「没有样式」,量不出透不透明(与 approvals 42503fa5 同一个理由)。
+   * 所以用机械尺子量规则本身,再配下面那条 DOM 断言 —— 元素真的挂着这几个类,而这几个类
+   * 真的把它涂实了,两头合起来才是完整的。
+   */
+  it("⑨ 浮层的面板是实的:整段工作台只用央册全局 token,一个局部别名都不借", () => {
+    const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const workroom = rules.slice(rules.indexOf(".r22-lib "));
+    expect(workroom, "找不到工作台那一段").not.toBe("");
+
+    const aliases = [...workroom.matchAll(/var\(--(ground|surface|chrome|line2|line|ink2|ink3|ink)\)/g)].map((hit) => hit[0]);
+    expect(
+      aliases,
+      "这批短别名只活在 `.r22-library` 身上,浮层被 portal 到 body 之后解析不出来 —— 面板会整片透明。请改用央册的 --r22-* 全局 token",
+    ).toEqual([]);
+  });
+
+  it("⑨ 详情层与素材包层各自压着不透明底板,scrim 也真的铺满了视口", () => {
+    const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    for (const selector of [".r22-lib-layer", ".r22-lib-packlayer", ".r22-lib-layer-side"]) {
+      const rule = rules.match(new RegExp(`\\${selector} \\{[^}]*\\}`))?.[0] ?? "";
+      expect(rule, `找不到 ${selector} 的规则`).not.toBe("");
+      expect(rule, `${selector} 没有不透明底板 —— 文字会叠在下层网格上`).toMatch(/background:\s*var\(--r22-surface\)/);
+    }
+
+    // 面板该有的那一身:边框、圆角、阴影 —— `unstyled` 把 shadcn 那一套全拿掉了,得自己补回来。
+    const layer = rules.match(/\.r22-lib-layer \{[^}]*\}/)?.[0] ?? "";
+    expect(layer).toMatch(/border:\s*1px solid var\(--r22-line\)/);
+    expect(layer).toMatch(/border-radius:\s*16px/);
+    expect(layer).toMatch(/box-shadow:\s*var\(--r22-shadow-lg\)/);
+    // 层被 portal 出去之后连字体和文字色都不再继承 `.r22-library`,一并自己带上。
+    expect(layer, "层出了 .r22-library 就不再继承文字色").toMatch(/color:\s*var\(--r22-ink\)/);
+    expect(layer, "层出了 .r22-library 就不再继承字体").toContain("font-family:");
+
+    const scrim = rules.match(/\.r22-lib-scrim \{[^}]*\}/)?.[0] ?? "";
+    expect(scrim, "找不到 .r22-lib-scrim —— `unstyled` 的 DialogOverlay 自己不带遮罩").not.toBe("");
+    expect(scrim).toMatch(/position:\s*fixed/);
+    expect(scrim).toMatch(/inset:\s*0/);
+    expect(scrim, "遮罩没有压暗色").toMatch(/background:\s*var\(--r22-scrim\)/);
+  });
+
+  it("⑨ DOM 那一半:开出来的层真的挂着这几个类,围栏才咬得到它", () => {
+    openLibrary();
+    click(container!.querySelector('button[aria-label="Open Raya gift box"]') as HTMLElement);
+
+    const layer = inLayer(".r22-lib-layer");
+    expect(layer.getAttribute("data-state")).toBe("open");
+    expect(document.body.querySelector(".r22-lib-scrim"), "遮罩没挂上 —— 下层网格会全亮").toBeTruthy();
+    // 右栏是真机上透出去的那一块,它必须在层里面,而不是飘在别处。
+    expect(layer.querySelector(".r22-lib-layer-side"), "详情层右栏不在层里").toBeTruthy();
   });
 
   it("⑧ 没有 transition: all,没有 scale(0),而且每一条过渡都在 200ms 以内", () => {
