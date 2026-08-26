@@ -37,6 +37,9 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clearToasts, installToastEnvironment, latestToast, settleToasts, toastAction, toastTexts, withToaster } from "./__helpers__/toast-probe";
+installToastEnvironment();
+
 vi.mock("next/navigation", () => ({ usePathname: () => "/library", useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }) }));
 
 // Radix 的 Dialog / ToggleGroup 在 jsdom 里要这几样。
@@ -73,6 +76,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearToasts();
   act(() => root?.unmount());
   container?.remove();
   document.body.replaceChildren();
@@ -81,8 +85,10 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+/** 回执现在由根布局上的 Toaster 画(审计 A-4),所以它跟被测组件挂在同一棵树里 ——
+ *  生产上 (`app/layout.tsx`) 它们本来就在同一棵树里。 */
 function mount(element: ReactElement) {
-  act(() => root!.render(element));
+  act(() => root!.render(withToaster(element)));
 }
 
 /** 工作台默认就是 fixture 样张,存档开着 —— 「刷新还在」那一条全靠它。 */
@@ -152,7 +158,7 @@ async function pickFile(file: File) {
 /* ── ① 多选之后批量加星 ──────────────────────────────────────────────────────── */
 
 describe("Library 工作台:多选与批量", () => {
-  it("① 选中的每一张都真的进了 Starred,而不是只有回执说进了", () => {
+  it("① 选中的每一张都真的进了 Starred,而不是只有回执说进了", async () => {
     openLibrary();
     expect(starOf("Raya table setting").getAttribute("aria-pressed")).toBe("false");
     expect(starOf("Raya opening clip").getAttribute("aria-pressed")).toBe("false");
@@ -165,7 +171,8 @@ describe("Library 工作台:多选与批量", () => {
 
     expect(starOf("Raya table setting").getAttribute("aria-pressed")).toBe("true");
     expect(starOf("Raya opening clip").getAttribute("aria-pressed")).toBe("true");
-    expect(container!.textContent).toContain("2 items starred.");
+    await settleToasts();
+    expect(latestToast()).toContain("2 items starred.");
     // 侧栏的 Starred 计数也跟着走 —— 种子里本来就有 3 张星标。
     navTo("Starred");
     expect(container!.querySelector('button[aria-label="Open Raya table setting"]')).toBeTruthy();
@@ -209,7 +216,8 @@ describe("Library 工作台:上传是一等公民", () => {
     openLibrary();
     await pickFile(new File([new Uint8Array(64)], "Shopfront awning.png", { type: "image/png" }));
 
-    expect(container!.textContent).toContain("Shopfront awning is in your Library.");
+    await settleToasts();
+    expect(latestToast()).toContain("Shopfront awning is in your Library.");
     expect(container!.querySelector('button[aria-label="Open Shopfront awning"]'), "上传的图没进网格").toBeTruthy();
     expect(storedArchive()!.assets.some((asset) => asset.name === "Shopfront awning"), "上传的图没落进存档").toBe(true);
 
@@ -227,7 +235,8 @@ describe("Library 工作台:上传是一等公民", () => {
     const before = container!.querySelectorAll(".r22-lib-tile").length;
     await pickFile(new File([new Uint8Array(UPLOAD_BUDGET_BYTES + 1)], "Huge banner.png", { type: "image/png" }));
 
-    expect(container!.textContent).toContain("Huge banner is larger than 1.5 MB, so it was not added.");
+    await settleToasts();
+    expect(latestToast()).toContain("Huge banner is larger than 1.5 MB, so it was not added.");
     expect(container!.querySelector('button[aria-label="Open Huge banner"]'), "说了不行,却还是放进去了").toBeNull();
     expect(container!.querySelectorAll(".r22-lib-tile").length).toBe(before);
     expect(storedArchive()?.assets.some((asset) => asset.name === "Huge banner") ?? false).toBe(false);
@@ -237,7 +246,7 @@ describe("Library 工作台:上传是一等公民", () => {
 /* ── ⑤ 素材包 ───────────────────────────────────────────────────────────────── */
 
 describe("Library 工作台:素材包", () => {
-  it("⑤ 加进素材包之后,在那个包的页面里看得见", () => {
+  it("⑤ 加进素材包之后,在那个包的页面里看得见", async () => {
     openLibrary();
     click(checkbox("Market stall, morning"));
     click(bulkButton("Add to pack"));
@@ -247,7 +256,8 @@ describe("Library 工作台:素材包", () => {
     expect(target, "素材包那一层里没有列出已有的包").toBeTruthy();
     click(target as HTMLElement);
 
-    expect(container!.textContent).toContain("1 item in Candle care assets.");
+    await settleToasts();
+    expect(latestToast()).toContain("1 item in Candle care assets.");
     navTo("Candle care assets");
     expect(container!.querySelector('button[aria-label="Open Market stall, morning"]'), "包页里看不到刚加进去的那张").toBeTruthy();
     expect(storedArchive()!.assets.find((asset) => asset.name === "Market stall, morning")!.packIds).toContain("pack-candle");

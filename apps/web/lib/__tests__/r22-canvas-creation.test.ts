@@ -15,6 +15,9 @@ import path from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { clearToasts, installToastEnvironment, latestToast, settleToasts, toastAction, withToaster } from "./__helpers__/toast-probe";
+installToastEnvironment();
 import type { ImmersiveCanvasRuntimeContext } from "@/components/canvas/NorthstarCanvasWorkspace";
 import { LIBRARY_FIXTURE_KEY, type LibraryArchive } from "@/components/library/library-fixture";
 
@@ -73,6 +76,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  clearToasts();
   if (root) await act(async () => root?.unmount());
   container?.remove();
   root = null;
@@ -84,7 +88,7 @@ afterEach(async () => {
 
 async function render(activeProjectId: string): Promise<void> {
   await act(async () => {
-    root!.render(createElement(R22CanvasSurface, { runtimeContext: runtimeContext(activeProjectId), entities: [] }));
+    root!.render(withToaster(createElement(R22CanvasSurface, { runtimeContext: runtimeContext(activeProjectId), entities: [] })));
   });
   await act(async () => { await Promise.resolve(); });
 }
@@ -163,6 +167,8 @@ async function askOtto(prompt: string): Promise<void> {
   await act(async () => {
     need<HTMLFormElement>("form.r22-canvas-composer").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
+  // 回执现在由根布局上的 Toaster 画(审计 A-4),它要等一个宏任务才落进 DOM。
+  await settleToasts();
 }
 
 function chips(): string[] {
@@ -182,7 +188,7 @@ function priceLabel(): string {
 }
 
 function noticeText(): string {
-  return container!.querySelector(".r22-canvas-notice span")?.textContent ?? "";
+  return latestToast();
 }
 
 function stored(projectId: string): Record<string, unknown> {

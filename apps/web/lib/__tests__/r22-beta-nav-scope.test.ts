@@ -36,6 +36,16 @@ vi.mock("next/navigation", () => ({
   useRouter: vi.fn(() => ({ push: vi.fn() })),
 }));
 
+/** cmd+K 归位 `ui/command`(cmdk)之后需要 ResizeObserver —— jsdom 没有,补一个替身。
+ *  这是环境缺件,不是被测行为:它只让组件挂得起来,一条断言都不放松。 */
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 vi.mock("@/lib/global-search-actions", () => ({
   loadGlobalSearchProjects: vi.fn().mockResolvedValue({ projects: [] }),
 }));
@@ -127,7 +137,9 @@ describe("beta V1 导航收窄", () => {
     await mountShell();
     await click(host.querySelector(".r22-dashboard-search"));
 
-    const results = document.body.querySelector("#r22-global-search-results");
+    // cmd+K 归位 `ui/command` 之后,结果列的 id 由 cmdk 自己生成(它要拿去接
+    // `aria-controls`),所以这里认的是那一层自己的记号,不是一个会被覆盖的 id。
+    const results = document.body.querySelector("[data-r22-search-results]");
     expect(results, "搜索层没开出来 —— 下面的断言在核对空气").toBeTruthy();
     for (const label of VISIBLE_DOORS) {
       expect(results!.textContent, `搜索里少了 ${label}`).toContain(label);

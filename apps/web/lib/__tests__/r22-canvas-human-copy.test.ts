@@ -27,6 +27,9 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { clearToasts, installToastEnvironment, latestToast, settleToasts, toastAction, withToaster } from "./__helpers__/toast-probe";
+installToastEnvironment();
 import type { ImmersiveCanvasRuntimeContext } from "@/components/canvas/NorthstarCanvasWorkspace";
 
 /**
@@ -99,6 +102,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  clearToasts();
   if (root) await act(async () => root?.unmount());
   container?.remove();
   root = null;
@@ -113,7 +117,7 @@ async function mount(context: ImmersiveCanvasRuntimeContext = runtimeContext()):
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root!.render(createElement(R22CanvasSurface, { runtimeContext: context, entities: [] }));
+    root!.render(withToaster(createElement(R22CanvasSurface, { runtimeContext: context, entities: [] })));
   });
   await act(async () => { await Promise.resolve(); });
 }
@@ -144,7 +148,7 @@ function conversationLines(): string[] {
 }
 
 function noticeText(): string {
-  return container!.querySelector(".r22-canvas-notice span")?.textContent ?? "";
+  return latestToast();
 }
 
 function ottoState(): string {

@@ -20,6 +20,9 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { clearToasts, installToastEnvironment, latestToast, settleToasts, toastAction, withToaster } from "./__helpers__/toast-probe";
+installToastEnvironment();
 import type { ImmersiveCanvasRuntimeContext } from "@/components/canvas/NorthstarCanvasWorkspace";
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
@@ -61,6 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  clearToasts();
   if (root) await act(async () => root?.unmount());
   container?.remove();
   root = null;
@@ -79,7 +83,7 @@ async function mount(activeProjectId: string): Promise<void> {
 /** 同一个 root 重渲染 = 同一个组件实例换 props,正是 `<Link>` 换 `?project=` 的形状。 */
 async function render(activeProjectId: string): Promise<void> {
   await act(async () => {
-    root!.render(createElement(R22CanvasSurface, { runtimeContext: runtimeContext(activeProjectId), entities: [] }));
+    root!.render(withToaster(createElement(R22CanvasSurface, { runtimeContext: runtimeContext(activeProjectId), entities: [] })));
   });
   await act(async () => { await Promise.resolve(); });
 }
@@ -113,7 +117,7 @@ function primaryAction(): HTMLButtonElement {
 }
 
 function noticeText(): string {
-  return pick(".r22-canvas-notice span")?.textContent ?? "";
+  return latestToast();
 }
 
 /** Decision 的事件流默认折叠,不点开就不在 DOM 里。 */
@@ -245,6 +249,7 @@ describe("同一个回答只落一次账(判官实证 :415/:419)", () => {
 
     expect(primaryAction().textContent).toBe("Continue task");
     await act(async () => { primaryAction().click(); });
+    await settleToasts();
 
     expect(noticeText(), "存档回填的键与运行时读取的键对不上,重复回答被放行了").toContain("This answer was already accepted");
     const events = await openDecisionEvents();

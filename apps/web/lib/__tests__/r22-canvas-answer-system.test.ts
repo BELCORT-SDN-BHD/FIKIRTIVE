@@ -26,6 +26,9 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { clearToasts, installToastEnvironment, latestToast, settleToasts, toastTexts, withToaster } from "./__helpers__/toast-probe";
+installToastEnvironment();
 import type { ImmersiveCanvasRuntimeContext } from "@/components/canvas/NorthstarCanvasWorkspace";
 
 const gen = vi.hoisted(() => ({
@@ -66,6 +69,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  clearToasts();
   if (root) await act(async () => root?.unmount());
   container?.remove();
   root = null;
@@ -80,7 +84,7 @@ async function mount(context: ImmersiveCanvasRuntimeContext = runtimeContext()):
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root!.render(createElement(R22CanvasSurface, { runtimeContext: context, entities: [] }));
+    root!.render(withToaster(createElement(R22CanvasSurface, { runtimeContext: context, entities: [] })));
   });
   await act(async () => { await Promise.resolve(); });
 }
@@ -104,6 +108,8 @@ async function askOtto(prompt: string): Promise<void> {
   await act(async () => {
     need<HTMLFormElement>("form.r22-canvas-composer").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
+  // 回执现在由根布局上的 Toaster 画(审计 A-4),它要等一个宏任务才落进 DOM。
+  await settleToasts();
 }
 
 function answerCards(): HTMLElement[] {
@@ -286,68 +292,63 @@ describe("② 答案卡自己是完整的一件东西", () => {
 // ---------------------------------------------------------------------------
 // ③ toast 纪律
 // ---------------------------------------------------------------------------
-describe("③ 聊天零 toast,创作的那条 toast 遮不到输入框", () => {
-  it("问答与寒暄一条 toast 都不弹", async () => {
+describe("③ 聊天零回执,创作那条回执照旧出", () => {
+  /**
+   * 2026-08-26(审计 A-4):这一面自己画的那条 `.r22-canvas-notice` 退役了,回执与另外
+   * 四扇门一起收敛到 `toast()`,由根布局上的 `<Toaster />` 画。
+   *
+   * 这一段因此换了量法,但量的还是同两件事:
+   *   · 聊天与问答**一条回执都不该出**——它们的答案住在 Conversation 里,不是一条飘过去的
+   *     横幅;
+   *   · 创作那一条照旧要出,而且第一句就说清楚「排上了、还没扣钱」。
+   *
+   * 原来那两条几何/动效断言(回执条抬在输入框上方 `calc(100% + 16px)`、200ms transition)
+   * 随那条横幅一起退役 —— 它们量的是一个不存在的元素。换上的是「那条横幅真的没了」与
+   * 「回执确实由共用的 Toaster 出」两条,否则这一段会静默地不再指认任何东西。
+   */
+  it("问答与寒暄一条回执都不弹", async () => {
     await mount();
 
     for (const prompt of ["hi", "How much does this cost?", "thanks!", "Which channels can this go to?"]) {
       await askOtto(prompt);
-      expect(need(".r22-canvas-notice span").textContent, `「${prompt}」弹了一条 toast`).toBe("");
-      expect(need(".r22-canvas-notice").className, `「${prompt}」把回执条点亮了`).not.toContain("is-visible");
+      expect(toastTexts(), `「${prompt}」弹了一条回执`).toEqual([]);
     }
   });
 
-  it("创作那条 toast 照旧亮 —— 这一条不是要把回执删掉", async () => {
+  it("创作那条回执照旧出 —— 这一条不是要把回执删掉", async () => {
     await mount();
 
     await askOtto("Make 4 images of the teal batik candle");
 
-    expect(need(".r22-canvas-notice").className).toContain("is-visible");
-    expect(need(".r22-canvas-notice span").textContent).toContain("Queued");
+    expect(latestToast()).toContain("Queued");
+    expect(latestToast(), "第一句没说清楚还没扣钱").toContain("nothing has been charged yet");
   });
 
-  /**
-   * 几何断言。jsdom 没有排版引擎,`getBoundingClientRect()` 一律是零 —— 在这里量真实
-   * 像素只会量到一个假绿。所以量的是**结构与那条 CSS 规则本身**:回执条与输入框同住
-   * 一格,并且用 `bottom: calc(100% + 16px)` 把自己抬到输入框上沿之上。这一对成立,
-   * 两个矩形在任何输入框高度下都不可能相交;上一版那个写死的 `bottom: 86px` 做不到
-   * 这一点(输入框本身就有 ~89px 高,一长行就被压住)。
-   */
-  it("回执条按几何抬在输入框上方,不是靠一个猜出来的固定数字", async () => {
+  it("那条自制的横幅真的退役了:css 与源码里都不再有它", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../components/canvas/r22-canvas.css"), "utf8");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const css = readFileSync(resolve(here, "../../components/canvas/r22-canvas.css"), "utf8");
+    const view = readFileSync(resolve(here, "../../components/canvas/R22CanvasSurface.tsx"), "utf8");
 
-    await mount();
-    const dock = need("[data-r22-canvas-dock]");
-    const notice = need(".r22-canvas-notice");
-    const composer = need("form.r22-canvas-composer");
-    expect(notice.parentElement, "回执条不在输入框那一格里 —— 它量不到输入框的高度").toBe(dock);
-    expect(composer.parentElement).toBe(dock);
+    expect(css, "画布还留着自己那条回执横幅的样式").not.toContain("r22-canvas-notice");
+    // 认的是**画出来**的那个类名,不是注释里提到它的那一行 —— 那一行正是在说它为什么走了。
+    expect(view, "画布还在自己画一条回执横幅").not.toMatch(/className=[^\n]*r22-canvas-notice/);
+    expect(view, "回执没有走共用的 toast").toContain('from "sonner"');
 
-    const noticeRule = css.slice(css.indexOf(".r22-canvas-notice {"), css.indexOf(".r22-canvas-notice.is-visible"));
-    expect(noticeRule).toContain("bottom: calc(100% + 16px)");
-    expect(noticeRule, "回执条整条挡住了底下的画布").toContain("pointer-events: none");
-    expect(css, "回执条又被钉回一个固定高度").not.toContain("bottom: 86px");
-    // 输入框自己不再是定位锚点了,它跟着那一格走 —— 否则 `100%` 量到的是别人。
-    expect(css.slice(css.indexOf(".r22-canvas-composer {"), css.indexOf(".r22-canvas-composer:focus-within"))).toContain("position: relative");
+    // Toaster 挂在根布局上 —— 五扇门共用的就是这一份,不是各挂各的。
+    const layout = readFileSync(resolve(here, "../../app/layout.tsx"), "utf8");
+    expect(layout).toContain("<Toaster />");
   });
 
-  it("Emil 工艺:入退场 200ms 的自定 ease-out,走 transition 不走 keyframes", async () => {
+  it("重试那颗键跟着那条回执走,不再是横幅上一颗要自己判断出不出现的按钮", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../components/canvas/r22-canvas.css"), "utf8");
+    const view = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../components/canvas/R22CanvasSurface.tsx"), "utf8");
 
-    expect(css).toContain("--r22-ease-out: cubic-bezier(.23, 1, .32, 1)");
-    const noticeRule = css.slice(css.indexOf(".r22-canvas-notice {"), css.indexOf(".r22-canvas-notice.is-visible"));
-    expect(noticeRule).toContain("opacity 200ms var(--r22-ease-out)");
-    expect(noticeRule).toContain("transform 200ms var(--r22-ease-out)");
-    expect(noticeRule, "回执条改用了 keyframes —— 一次性状态切换该用 transition").not.toContain("animation");
-    // 减弱动效偏好下只剩淡入淡出,不再有位移。
-    const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
-    expect(reduced).toContain(".r22-canvas-notice");
-    expect(reduced).toContain("transform: translateX(-50%)");
+    const failure = view.slice(view.indexOf("That request was not confirmed"));
+    expect(failure.slice(0, 400), "失败回执上没有挂重试动作").toContain("retryFixtureSend");
   });
 });

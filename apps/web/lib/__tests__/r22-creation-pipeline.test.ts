@@ -49,6 +49,9 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clearToasts, installToastEnvironment, latestToast, settleToasts, toastAction, withToaster } from "./__helpers__/toast-probe";
+installToastEnvironment();
+
 import type { ImmersiveCanvasRuntimeContext } from "@/components/canvas/NorthstarCanvasWorkspace";
 import type { FixtureBatch } from "@/components/canvas/r22-canvas-fixture";
 import type { LibraryArchive } from "@/components/library/library-fixture";
@@ -113,6 +116,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  clearToasts();
   if (root) await act(async () => root?.unmount());
   container?.remove();
   document.body.replaceChildren();
@@ -137,7 +141,8 @@ function runtimeContext(): ImmersiveCanvasRuntimeContext {
 }
 
 async function mount(element: ReactElement): Promise<void> {
-  await act(async () => { root!.render(element); });
+  // 回执由根布局上的 Toaster 画(审计 A-4),挂在同一棵树里 —— 与 `app/layout.tsx` 一致。
+  await act(async () => { root!.render(withToaster(element)); });
   await act(async () => { await Promise.resolve(); });
 }
 
@@ -204,7 +209,7 @@ function tileNames(): string[] {
 }
 
 function noticeText(): string {
-  return container!.querySelector(".r22-lib-notice span")?.textContent ?? "";
+  return latestToast();
 }
 
 /** 打开 Quick create 生成条,写一句话。 */
@@ -215,6 +220,8 @@ async function quickCompose(prompt: string): Promise<void> {
 
 async function quickSend(): Promise<void> {
   await click(need(".r22-lib-make-send"));
+  // 回执由 Toaster 画,要等一个宏任务才落进 DOM(审计 A-4)。
+  await settleToasts();
 }
 
 /** 打开生成条上那个参数弹层(形状与张数住在里面,与画布 composer 同一个形状)。 */
@@ -569,7 +576,8 @@ describe("⑪ 画布自动进库失败时,回执照实说", () => {
     await act(async () => { need<HTMLFormElement>("form.r22-canvas-composer").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     await act(async () => { vi.advanceTimersByTime(JOB_MS); });
 
-    const said = container!.querySelector(".r22-canvas-notice span")?.textContent ?? "";
+    await settleToasts();
+    const said = latestToast();
     expect(said, "东西没进库,回执照样报 Done —— 商家下次去 Library 找就是找不到").not.toContain("Done");
     expect(said.toLowerCase(), "没进库这件事一个字都没说").toContain("library");
     expect(window.sessionStorage.getItem(libraryKey), "既然写不进去,库里就不该有这一批").toBeNull();
