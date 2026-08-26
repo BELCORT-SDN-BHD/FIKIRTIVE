@@ -39,7 +39,7 @@
 
 .r22-settings-dialog-empty [data-slot="empty-header"] { max-width: none; align-items: flex-start; gap: 0; text-align: left; }
 .r22-settings-dialog-empty b,
-.r22-settings-dialog-empty [data-slot="empty-title"] { font-size: var(--r22-text-small); font-weight: 700; letter-spacing: 0; }
+.r22-settings-dialog-empty [data-slot="empty-title"] { font-size: var(--r22-text-small); font-weight: 700; letter-spacing: var(--r22-track-heading); }
 .r22-settings-dialog-empty p,
 .r22-settings-dialog-empty [data-slot="empty-description"] { margin: 5px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.5; }
 .r22-settings-dialog-empty a { display: inline-flex; margin-top: 12px; padding: 7px 10px; border-radius: 7px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-mono-label); }

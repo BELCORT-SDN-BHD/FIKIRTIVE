@@ -25,9 +25,9 @@
 .r22-edit-honest { max-width: 420px; margin: 0; color: var(--r22-ink-3); font-size: var(--r22-text-caption); text-align: center; }
 
 .r22-edit-side { display: flex; min-height: 0; overflow-y: auto; flex-direction: column; gap: 8px; padding: 24px 22px; border-left: 1px solid var(--r22-line); background: var(--r22-surface); }
-.r22-edit-name { margin: 0; padding-right: 28px; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 600; letter-spacing: -.01em; }
+.r22-edit-name { margin: 0; padding-right: 28px; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 600; letter-spacing: var(--r22-track-heading); }
 .r22-edit-sub { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.6; }
-.r22-edit-h { margin: 10px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.r22-edit-h { margin: 10px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); font-weight: 600; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
 
 .r22-edit-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .r22-edit-preset { display: grid; grid-template-columns: 15px 22px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; padding: 7px 9px; align-items: center; border: 1px solid var(--r22-line-2); border-radius: 9px; background: var(--r22-surface); cursor: pointer; text-align: left; transition: border-color 140ms ease-out, background-color 140ms ease-out; }

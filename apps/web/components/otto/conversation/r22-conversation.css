@@ -151,7 +151,7 @@
   gap: 6px;
   font-size: var(--r22-text-mono-label);
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: var(--r22-track-caps);
   color: var(--r22-ink-3);
 }
 

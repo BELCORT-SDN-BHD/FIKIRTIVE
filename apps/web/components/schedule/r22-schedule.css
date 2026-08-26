@@ -1,7 +1,7 @@
 .r22-schedule { width: min(1120px, calc(100% - 56px)); margin: 0 auto; padding: 46px 0 84px; color: var(--r22-ink); }
 .r22-schedule > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .r22-schedule-head-actions { display: flex; align-items: center; gap: 9px; }
-.r22-schedule h1 { margin: 0; font-size: var(--r22-text-h1); font-weight: 650; letter-spacing: -.035em; }
+.r22-schedule h1 { margin: 0; font-size: var(--r22-text-h1); font-weight: 650; letter-spacing: var(--r22-track-display); }
 .r22-schedule > header p { margin: 7px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-body); }
 .r22-schedule > header a, .r22-schedule-new { display: flex; min-height: 36px; padding: 0 13px; align-items: center; gap: 6px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-body-lg); font-weight: 600; }
 .r22-schedule-new svg { width: 14px; }
@@ -53,7 +53,7 @@
 .r22-schedule-confirm [data-slot="alert-dialog-description"] { color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.5; }
 .r22-schedule-confirm button { min-height: 34px; padding: 0 11px; border: 1px solid var(--r22-line); border-radius: 7px; font-size: var(--r22-text-small); font-weight: 620; }
 .r22-schedule-confirm [data-slot="alert-dialog-action"] { border-color: var(--r22-bad); background: var(--r22-bad); color: var(--r22-surface); }
-.r22-schedule-composer h2 { font-size: 18px; letter-spacing: -.025em; }
+.r22-schedule-composer h2 { font-size: 18px; letter-spacing: var(--r22-track-display); }
 .r22-schedule-composer [data-slot="dialog-description"] { color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.5; }
 .r22-composer-scroll { display: flex; max-height: min(64vh, 650px); padding-right: 4px; flex-direction: column; gap: 14px; overflow-y: auto; }
 .r22-composer-scroll label, .r22-composer-scroll fieldset { display: flex; margin: 0; padding: 0; flex-direction: column; gap: 6px; border: 0; }

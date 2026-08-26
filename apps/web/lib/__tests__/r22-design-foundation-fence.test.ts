@@ -330,3 +330,132 @@ describe("R22 地基围栏 ④ 减弱动效块里没有无限动画", () => {
     expect(hits, `减弱动效下还留着无限动画 —— 换一种动法不叫减弱动效:${hits.join(" | ")}`).toEqual([]);
   });
 });
+
+/* ── 围栏 ⑤ 禁新增裸 letter-spacing(字距只许住在字距梯上) ────────────────────── */
+
+/**
+ * 照围栏 ① 禁裸 hex 的先例办。
+ *
+ * 病灶(2026-08-26 Founder 亲验点名「标题与正文的 kerning 看着不对」):全站 CSS 里散着
+ * **17 种** letter-spacing 值,同一个角色在不同门写不同数 —— 所有全大写节头横跨
+ * .03–.09em,所有 22px 页标题横跨 -.015 与 -.035em。看着发飘的不是某一处的数值,是
+ * 「同角色不同值」本身,而这种病用眼睛逐面比对是抓不完的。
+ *
+ * 所以钉法和颜色一样:字距梯五档登记在央册 `components/r22/r22-tokens.css`
+ * (`--r22-track-display-lg / -display / -heading / -body / -caps`),业务 `r22-*.css` 里
+ * 一律 `letter-spacing: var(--r22-track-*)`,一个裸值都不许有。新角色 = 先入册一档,
+ * 再引用;不是就地发明第 18 个数。
+ *
+ * 豁免名单**只减不增**:今天是空的(20 个业务文件全部归位完毕),往里加一项要有理由。
+ */
+const TRACK_TOKEN_RE = /^var\(--r22-track-[a-z0-9-]+\)$/;
+
+/**
+ * 允许留在梯外的裸字距,按文件登记。**空 = 今天没有一处豁免。**
+ * 这是 ratchet 的另一半:名单只许变短。往里写一行,要连理由一起写。
+ */
+const LETTER_SPACING_EXEMPT: Record<string, string[]> = {};
+
+/** 一个文件里全部 `letter-spacing` 声明值(保留重复顺序无所谓,去重即可)。 */
+function letterSpacingValues(source: string): string[] {
+  const re = /letter-spacing\s*:\s*([^;}]+)/g;
+  const out = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source))) out.add(match[1].trim());
+  return [...out].sort();
+}
+
+const LETTER_SPACING_SITES = NON_TOKEN_CSS_FILES.map(
+  (file) => [path.relative(WEB_ROOT, file), letterSpacingValues(readFileSync(file, "utf8"))] as const,
+).filter(([, values]) => values.length > 0);
+
+/** 央册里真的登记了的字距档名(`--r22-track-*`)。 */
+function declaredTrackTokens(): Set<string> {
+  const source = readFileSync(TOKEN_FILE, "utf8");
+  const re = /(--r22-track-[a-z0-9-]+)\s*:/g;
+  const out = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source))) out.add(match[1]);
+  return out;
+}
+
+describe("R22 地基围栏 ⑤ 禁新增裸 letter-spacing —— 字距只许住在字距梯上", () => {
+  it("围栏本身没有空转:真的圈到了带字距的业务文件,而且认得出裸值", () => {
+    expect(
+      LETTER_SPACING_SITES.length,
+      "一个带 letter-spacing 的业务 r22-*.css 都没圈到 —— 这条围栏在核对空气",
+    ).toBeGreaterThan(0);
+    expect(TRACK_TOKEN_RE.test("var(--r22-track-display)")).toBe(true);
+    expect(TRACK_TOKEN_RE.test("-0.035em")).toBe(false);
+    expect(TRACK_TOKEN_RE.test("normal")).toBe(false);
+    expect(TRACK_TOKEN_RE.test("var(--tracking-tight)")).toBe(false);
+    // 解析器认得出压平成一行的文件(半数 r22 css 是 minified 的)
+    expect(letterSpacingValues("a{letter-spacing:.06em}b{letter-spacing:var(--r22-track-body)}")).toEqual([
+      ".06em",
+      "var(--r22-track-body)",
+    ]);
+  });
+
+  it.each(LETTER_SPACING_SITES)("%s 的字距全部落在字距梯上", (relative, values) => {
+    const allowed = new Set(LETTER_SPACING_EXEMPT[relative] ?? []);
+    const offenders = values.filter((value) => !TRACK_TOKEN_RE.test(value) && !allowed.has(value));
+    expect(
+      offenders,
+      `字距请用字距梯 token(--r22-track-*);确需新档先入册 r22-tokens.css —— 裸值:${offenders.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("引用到的每一档字距都真的在央册里登记着", () => {
+    const declared = declaredTrackTokens();
+    expect(declared.size, "央册一档字距都没登记 —— 这条围栏在核对空气").toBeGreaterThan(0);
+
+    const referenced = new Set<string>();
+    for (const [, values] of LETTER_SPACING_SITES) {
+      for (const value of values) {
+        const name = /^var\((--r22-track-[a-z0-9-]+)\)$/.exec(value)?.[1];
+        if (name) referenced.add(name);
+      }
+    }
+    const missing = [...referenced].filter((name) => !declared.has(name));
+    expect(
+      missing,
+      `业务 css 引用了央册里不存在的字距档 —— 删档/改名请连引用点一起改:${missing.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * 光学单调 —— 这条钉的不是「每一档必须等于哪个数」(那会让每次调字距都要改测试),而是
+   * 五档之间的**次序**:字号越大越紧、全大写最松。次序一旦塌了(比如把 display 档改成 0,
+   * 或者把 caps 档写成负数),那不是调参数,那是梯子本身坏了。
+   */
+  it("五档字距光学单调:display-lg < display < heading < body < caps", () => {
+    const source = readFileSync(TOKEN_FILE, "utf8");
+    const ladder = ["display-lg", "display", "heading", "body", "caps"] as const;
+    const values = ladder.map((step) => {
+      const raw = new RegExp(`--r22-track-${step}\\s*:\\s*([^;]+);`).exec(source)?.[1]?.trim();
+      expect(raw, `央册里找不到字距档 --r22-track-${step}`).toBeDefined();
+      const em = Number.parseFloat(raw!);
+      expect(Number.isNaN(em), `--r22-track-${step} 不是一个能比大小的数值:${raw}`).toBe(false);
+      return [step, em] as const;
+    });
+
+    for (let i = 1; i < values.length; i += 1) {
+      const [prevStep, prev] = values[i - 1];
+      const [step, current] = values[i];
+      expect(
+        current > prev,
+        `字距梯次序塌了:${prevStep}=${prev}em 不比 ${step}=${current}em 更紧 —— 字号越大越紧、全大写最松是这把梯子的全部意义`,
+      ).toBe(true);
+    }
+    // 两头也钉住:再紧不过 -0.06em(字会粘连),再松不过 0.12em(全大写也散架)。
+    expect(values[0][1]).toBeGreaterThanOrEqual(-0.06);
+    expect(values[values.length - 1][1]).toBeLessThanOrEqual(0.12);
+  });
+
+  it("豁免名单只减不增:今天一处豁免都没有", () => {
+    expect(
+      Object.keys(LETTER_SPACING_EXEMPT),
+      "字距豁免名单是 ratchet —— 只许变短。新增一项要连理由一起写进本文件的注释",
+    ).toEqual([]);
+  });
+});

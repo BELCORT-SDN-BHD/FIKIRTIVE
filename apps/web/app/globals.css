@@ -101,8 +101,14 @@
   --text-caption: 500 11.5px/1.5 var(--font-sans);
   --text-mono-label: 500 11px/1.4 var(--font-mono);
   --text-mono-meta: 400 12px/1.5 var(--font-mono);
+  /* 字距不再住在这里 —— 全站字距梯是 `components/r22/r22-tokens.css` 的 `--r22-track-*` 五档
+     (2026-08-26 字距收敛)。`--tracking-tight` 唯一的引用点(下面 h1/h2/h3 的元素默认)已经
+     改指 `--r22-track-display`(同一个 -0.02em,值没动),token 本身随之下册。
+     `--tracking-display` 在本次改动之前就已经零引用,属于既有死码,原样留着不动。
+     `--tracking-mono-label` 留着:它还被 `app/design-system/DesignSystemReference.tsx` 用
+     `tracking-[var(--tracking-mono-label)]` 引着(那是 .tsx,不在本次 CSS 收敛的施工面里),
+     0.12em 也远离 caps 档的 0.06em —— 登记为字距梯的唯一豁免,不是漏网。 */
   --tracking-display: -0.035em;
-  --tracking-tight: -0.02em;
   --tracking-mono-label: 0.12em;
 
   /* ambient backdrop */
@@ -149,6 +155,15 @@ body {
   font: var(--text-body);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  /* 字距梯管的是「字与字之间加多少」;kerning 管的是「这一对字母本来该挨多近」(Va / To /
+     AV 这些字对,字体文件里自带的成对修正表)。默认的 `font-kerning: auto` 把这件事交给引擎
+     自己判断,历来的做法是在小字号上悄悄关掉 —— 于是标题看着紧、正文看着松,同一份字体两套
+     表现。`normal` 是明说「一直开着」,让字距梯是唯一一个还在调间距的旋钮。
+     `text-rendering: optimizeLegibility` 把 kerning 与常用连字一起钉开,补上 Safari/Firefox
+     上 `auto` 的摇摆。没有用 `geometricPrecision` —— 那一档会连带关掉逐字号的 hinting,
+     11px 的表头会糊。 */
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -156,7 +171,7 @@ body {
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.10); border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.18); background-clip: content-box; border: 2px solid transparent; }
 
-h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: var(--tracking-tight); }
+h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: var(--r22-track-display); }
 
 :focus-visible {
   /* transparent outline keeps a system indicator in forced-colors mode */
@@ -224,7 +239,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    fade-rise. What is left below is still rendered by hand-written markup on the
    canvas, the asset panel and MentionInput, and retires with those screens. */
 
-.al-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-family:var(--font-sans);font-weight:600;letter-spacing:-0.01em;border:1px solid transparent;border-radius:var(--radius-md);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);}
+.al-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-family:var(--font-sans);font-weight:600;letter-spacing:var(--r22-track-heading);border:1px solid transparent;border-radius:var(--radius-md);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);}
 .al-btn:focus-visible{outline:none;box-shadow:var(--ring-focus);}
 .al-btn:active:not(:disabled){transform:scale(0.985);}
 .al-btn:disabled{opacity:.38;cursor:default;}
@@ -297,7 +312,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 .sidenav { width: 236px; flex: none; display: flex; flex-direction: column; padding: 18px 12px 14px; border-right: 1px solid var(--line-2); }
 .sidenav-brand { display: flex; align-items: center; gap: 8px; padding: 0 10px 18px; min-height: 30px; }
-.wordmark { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-family: var(--font-sans); font-weight: 700; font-size: 21px; letter-spacing: -0.035em; color: var(--fg-1); line-height: 1; }
+.wordmark { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-family: var(--font-sans); font-weight: 700; font-size: 21px; letter-spacing: var(--r22-track-display); color: var(--fg-1); line-height: 1; }
 .wordmark-dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: #ffffff; box-shadow: 0 0 12px rgba(255,255,255,.65); margin-top: 4px; }
 .sidenav-project { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 10px; margin-bottom: 14px; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: rgba(255,255,255,.04); cursor: pointer; min-height: 40px; width: 100%; text-align: left; color: inherit; transition: background var(--dur-fast) var(--ease-out); }
 .sidenav-project:hover { background: rgba(255,255,255,.07); }
@@ -316,7 +331,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar { flex: none; height: 58px; display: flex; align-items: center; gap: 8px; padding: 0 18px; }
-.topbar-title { font: var(--text-heading); letter-spacing: -0.01em; color: var(--fg-1); margin-right: 4px; white-space: nowrap; }
+.topbar-title { font: var(--text-heading); letter-spacing: var(--r22-track-heading); color: var(--fg-1); margin-right: 4px; white-space: nowrap; }
 .topbar-spacer { flex: 1; }
 .screen { flex: 1; min-height: 0; position: relative; overflow: auto; }
 .screen-pad { padding: 8px 28px 40px; max-width: 1280px; margin: 0 auto; }
@@ -952,7 +967,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   left: 0;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: normal;
+  letter-spacing: var(--r22-track-body);
   color: var(--primary-foreground);
   background: var(--primary);
   padding: 3px 9px;
@@ -997,7 +1012,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   border-radius: 999px;
   background: color-mix(in oklab, var(--primary-foreground) 22%, transparent);
   font: 600 10px/15px var(--font-mono, ui-monospace, monospace);
-  letter-spacing: 0.02em;
+  letter-spacing: var(--r22-track-body);
 }
 
 /* ── Lineage tree (#605 T6 · spec #599 D8) — "where did this card come from?".
@@ -1029,7 +1044,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   to { opacity: 1; transform: translateX(0); }
 }
 .cv-lineage-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.cv-lineage-title { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.cv-lineage-title { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: var(--r22-track-heading); }
 .cv-lineage-body {
   display: flex;
   flex-direction: column;
@@ -1264,7 +1279,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    `absolute left-3 top-3 size-[34px]`, footprint to 46px) that otherwise sits on top of
    this rail and ate the "Se" of "Settings" (#949 A1). */
 .gb .cv-settings-nav { width: clamp(160px, 20cqi, 210px); flex: none; border-right: 1px solid var(--border); padding: 64px 16px 30px; position: sticky; top: 0; }
-.gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; }
+.gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: var(--r22-track-display); margin-bottom: 16px; }
 .gb .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
 .gb .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
 .gb .cv-settings-nav a.danger { color: var(--error-soft-foreground); }
@@ -1347,7 +1362,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .otto-prose h5,
 .otto-prose h6 { margin: 12px 0 4px; font-weight: 600; line-height: 1.3; }
 .otto-prose h1,
-.otto-prose h2 { font-size: 0.9375rem; letter-spacing: -0.011em; }
+.otto-prose h2 { font-size: 0.9375rem; letter-spacing: var(--r22-track-heading); }
 .otto-prose strong { font-weight: 600; }
 .otto-prose em { font-style: italic; }
 .otto-prose del { text-decoration: line-through; color: var(--muted-foreground); }

@@ -1,6 +1,6 @@
 .r22-campaigns { width: min(1100px, calc(100% - 64px)); margin: 0 auto; padding: 46px 0 86px; color: var(--r22-ink); }
 .r22-campaigns > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
-.r22-campaigns h1 { margin: 0; font-size: var(--r22-text-h1); font-weight: 650; letter-spacing: -.035em; }
+.r22-campaigns h1 { margin: 0; font-size: var(--r22-text-h1); font-weight: 650; letter-spacing: var(--r22-track-display); }
 .r22-campaigns > header p { margin: 7px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-body); }
 .r22-campaigns > header button, .r22-campaigns-state button { display: flex; min-height: 36px; align-items: center; gap: 7px; padding: 0 13px; border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-small); font-weight: 600; }
 .r22-campaigns > header button svg { width: 14px; }
@@ -49,7 +49,7 @@
 .r22-campaigns-dialog button, .r22-campaigns-dialog input, .r22-campaigns-dialog textarea { color: inherit; font: inherit; }
 .r22-campaigns-dialog > button { top: 15px; right: 15px; display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border-radius: 7px; opacity: 1; }
 .r22-campaigns-dialog > button svg { width: 15px; height: 15px; }
-.r22-campaigns-dialog h2 { margin: 0; font-size: var(--r22-text-h2); font-weight: 650; letter-spacing: -.02em; }
+.r22-campaigns-dialog h2 { margin: 0; font-size: var(--r22-text-h2); font-weight: 650; letter-spacing: var(--r22-track-display); }
 .r22-campaigns-dialog [data-slot="dialog-header"] p { margin: 4px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-caption); }
 .r22-campaigns-dialog label { display: grid; margin-top: 16px; gap: 6px; font-size: var(--r22-text-caption); font-weight: 600; }
 .r22-campaigns-dialog label input, .r22-campaigns-dialog label textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--r22-line-2); border-radius: 8px; outline: none; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-body); font-weight: 400; }

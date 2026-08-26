@@ -23,7 +23,7 @@
   font-size: var(--r22-text-h1);
   line-height: 1.2;
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: var(--r22-track-display);
 }
 
 .r22-projects-subtitle {
@@ -180,7 +180,7 @@ table.r22-projects-grid {
   color: var(--r22-ink-3);
   font-size: 10.5px; /* 原型 .pj-head 真值,冻结族 */
   font-weight: 600;
-  letter-spacing: .07em;
+  letter-spacing: var(--r22-track-caps);
   text-transform: uppercase;
 }
 
@@ -393,7 +393,7 @@ table.r22-projects-grid {
   color: var(--r22-ink-3);
   font-size: var(--r22-text-mono-label);
   font-weight: 600;
-  letter-spacing: .05em;
+  letter-spacing: var(--r22-track-caps);
   text-transform: uppercase;
 }
 
@@ -402,7 +402,7 @@ table.r22-projects-grid {
   color: var(--r22-ink);
   font-size: var(--r22-text-body-lg);
   font-weight: 600;
-  letter-spacing: -.01em;
+  letter-spacing: var(--r22-track-heading);
 }
 
 .r22-projects-ask-help {

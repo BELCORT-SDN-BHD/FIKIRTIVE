@@ -19,7 +19,7 @@
   color: var(--r22-canvas-ink-3);
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: .07em;
+  letter-spacing: var(--r22-track-caps);
   text-transform: uppercase;
 }
 
@@ -35,7 +35,7 @@
   font-family: var(--font-jetbrains-mono),monospace;
   font-size: 10px;
   font-style: normal;
-  letter-spacing: 0;
+  letter-spacing: var(--r22-track-body);
   text-transform: none;
 }
 
@@ -43,7 +43,7 @@
   margin: 10px 0 0;
   font-size: 15px;
   font-weight: 600;
-  letter-spacing: -.01em;
+  letter-spacing: var(--r22-track-heading);
 }
 
 .r22-canvas-input-card>p {
@@ -206,7 +206,7 @@
   color: var(--r22-canvas-ink-3);
   font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: .06em;
+  letter-spacing: var(--r22-track-caps);
   text-transform: uppercase;
 }
 
@@ -257,7 +257,7 @@
   font-size: 9px; /* 原型 .dh-recommended 真值,冻结族 */
   font-style: normal;
   font-weight: 600;
-  letter-spacing: .02em;
+  letter-spacing: var(--r22-track-body);
 }
 
 .r22-canvas-input-card footer {
@@ -418,7 +418,7 @@
   border-radius: 8px;
   font-size: var(--r22-text-body);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--r22-track-heading);
 }
 
 .r22-canvas-project-button span {
@@ -655,7 +655,7 @@
   color: var(--r22-paper-ink3);
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--r22-track-caps);
   text-transform: uppercase;
 }
 
@@ -1137,7 +1137,7 @@
   color: var(--r22-ink-3) !important;
   font-size: 10.5px !important;
   font-weight: 600 !important;
-  letter-spacing: 0.09em;
+  letter-spacing: var(--r22-track-caps);
   text-align: left;
   text-transform: uppercase;
 }
@@ -1145,7 +1145,7 @@
 .r22-canvas-conversation-head span {
   font-family: var(--font-jetbrains-mono), monospace;
   font-weight: 500;
-  letter-spacing: 0;
+  letter-spacing: var(--r22-track-body);
 }
 
 .r22-canvas-conversation-head em {
@@ -1156,7 +1156,7 @@
   color: var(--r22-ink);
   font-size: 9.5px; /* 原型 .cv-decision-status 配方真值,冻结族 */
   font-style: normal;
-  letter-spacing: 0;
+  letter-spacing: var(--r22-track-body);
   text-transform: none;
 }
 
@@ -1723,7 +1723,7 @@
   margin: 0 0 5px;
   font-size: var(--r22-text-small);
   font-weight: 600;
-  letter-spacing: -0.005em;
+  letter-spacing: var(--r22-track-heading);
 }
 
 .r22-canvas-answer > p {

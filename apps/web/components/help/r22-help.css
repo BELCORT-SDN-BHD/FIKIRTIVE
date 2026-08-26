@@ -1,7 +1,7 @@
 .r22-help { width: min(1100px, calc(100% - 64px)); margin: 0 auto; padding: 48px 0 80px; color: var(--r22-ink); }
 .r22-help > header { max-width: 650px; }
-.r22-help > header p { margin: 0 0 8px; color: var(--r22-coral); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
-.r22-help h1 { margin: 0; font-size: 34px; font-weight: 650; letter-spacing: -.04em; }
+.r22-help > header p { margin: 0 0 8px; color: var(--r22-coral); font-size: 10px; font-weight: 700; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
+.r22-help h1 { margin: 0; font-size: 34px; font-weight: 650; letter-spacing: var(--r22-track-display-lg); }
 .r22-help > header span { display: block; margin-top: 8px; color: var(--r22-ink-2); font-size: 13.5px; }
 .r22-help-search { display: flex; max-width: 720px; height: 44px; margin-top: 28px; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid var(--r22-line-2); border-radius: 10px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); }
 .r22-help-search > svg { width: 16px; color: var(--r22-ink-3); }
@@ -22,17 +22,17 @@
 .r22-help-articles li + li { border-top: 1px solid var(--r22-line); }
 .r22-help-articles button { display: block; width: 100%; padding: 14px 9px; border-radius: 8px; text-align: left; }
 .r22-help-articles button small, .r22-help-articles button b, .r22-help-articles button span { display: block; }
-.r22-help-articles button small { color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.r22-help-articles button small { color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
 .r22-help-articles button b { margin-top: 5px; font-size: var(--r22-text-body); font-weight: 620; }
 .r22-help-articles button span { margin-top: 4px; color: var(--r22-ink-2); font-size: 12px; line-height: 1.45; }
 .r22-help-article-detail { margin-top: 18px; padding: 16px 9px; }
 .r22-help-article-detail > button { display: flex; padding: 0; align-items: center; gap: 6px; color: var(--r22-ink-2); font-size: var(--r22-text-caption); }
 .r22-help-article-detail > button svg { width: 13px; }
-.r22-help-article-detail > small { display: block; margin-top: 22px; color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.r22-help-article-detail h3 { margin: 6px 0 0; font-size: 18px; letter-spacing: -.02em; }
+.r22-help-article-detail > small { display: block; margin-top: 22px; color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
+.r22-help-article-detail h3 { margin: 6px 0 0; font-size: 18px; letter-spacing: var(--r22-track-display); }
 .r22-help-article-detail p { color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
 .r22-help-contact fieldset { margin: 20px 0 0; padding: 0; border: 0; }
-.r22-help-contact legend { color: var(--r22-ink-3); font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.r22-help-contact legend { color: var(--r22-ink-3); font-size: 10px; font-weight: 650; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
 .r22-help-contact label { display: flex; margin-top: 13px; align-items: flex-start; gap: 9px; }
 .r22-help-contact [data-slot="checkbox"] { margin-top: 3px; }
 .r22-help-contact label b, .r22-help-contact label small { display: block; }
@@ -49,7 +49,7 @@
 .r22-help-support-primary:disabled { background: var(--r22-chrome); color: var(--r22-ink-3); }
 .r22-help-support-error { margin: 9px 0 0; color: var(--r22-coral); font-size: var(--r22-text-caption); line-height: 1.45; }
 .r22-help-support-review { margin-top: 18px; }
-.r22-help-support-review > small { color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.r22-help-support-review > small { color: var(--r22-coral); font-size: 9px; font-weight: 700; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
 .r22-help-support-review > b { display: block; margin-top: 7px; font-size: var(--r22-text-body-lg); }
 .r22-help-support-review > p { margin: 6px 0 0; color: var(--r22-ink-2); font-size: 12px; line-height: 1.5; }
 .r22-help-support-review dl { margin: 16px 0 0; border-top: 1px solid var(--r22-line); }

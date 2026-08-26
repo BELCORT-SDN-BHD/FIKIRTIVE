@@ -56,7 +56,7 @@
   color: var(--r22-ink);
   font-size: 17px;
   font-weight: 750;
-  letter-spacing: -0.03em;
+  letter-spacing: var(--r22-track-display);
 }
 
 .r22-dashboard-search {
@@ -166,7 +166,7 @@
   color: var(--r22-ink-3);
   font-size: 10.5px; /* 原型 .rail-label 真值,冻结族 */
   font-weight: 600;
-  letter-spacing: 0.09em; /* 原型 .rail-label 真值 */
+  letter-spacing: var(--r22-track-caps); /* 原型 .rail-label 真值 */
   text-transform: uppercase;
 }
 
@@ -265,7 +265,7 @@
   color: var(--r22-ink-3);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--r22-track-caps);
   text-transform: uppercase;
 }
 
@@ -446,7 +446,7 @@
 
 .r22-dashboard-side-panel [data-slot="sheet-title"],
 .r22-dashboard-side-panel [data-slot="sheet-description"] {
-  letter-spacing: normal;
+  letter-spacing: var(--r22-track-body);
 }
 
 /* scrim 的底色跟着全局 token 走,不用正典件那句写死的 rgba。 */
@@ -716,7 +716,7 @@
   color: var(--r22-ink-3);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--r22-track-caps);
   text-transform: uppercase;
 }
 
@@ -1124,7 +1124,7 @@ aside[data-otto-panel-variant="r22"] [data-otto-panel-header] {
   margin: 0;
   font-size: var(--r22-text-h2);
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--r22-track-display);
 }
 
 .r22-otto-empty p {
@@ -1445,7 +1445,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   padding: 0 6px 4px;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: var(--r22-track-caps);
   color: var(--r22-ink-3);
 }
 

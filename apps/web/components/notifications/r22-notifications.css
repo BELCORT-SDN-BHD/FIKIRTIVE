@@ -1,7 +1,7 @@
 .r22-notifications { width: min(1040px, calc(100% - 64px)); margin: 0 auto; padding: 46px 0 80px; color: var(--r22-ink); }
 .r22-notifications > header { display: flex; min-height: 76px; align-items: flex-end; justify-content: space-between; gap: 24px; }
-.r22-notifications > header p { margin: 0 0 7px; color: var(--r22-ink-3); font-size: 10px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
-.r22-notifications h1 { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: -.035em; }
+.r22-notifications > header p { margin: 0 0 7px; color: var(--r22-ink-3); font-size: 10px; font-weight: 650; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
+.r22-notifications h1 { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: var(--r22-track-display-lg); }
 .r22-notifications > header span { display: block; margin-top: 7px; color: var(--r22-ink-2); font-size: var(--r22-text-body); }
 .r22-notifications > header > button { display: flex; min-height: 36px; align-items: center; gap: 7px; padding: 0 12px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); font-size: 12px; }
 .r22-notifications > header > button svg { width: 15px; }

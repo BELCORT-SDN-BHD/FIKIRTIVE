@@ -21,7 +21,7 @@
   color: var(--r22-ink);
   font-size: var(--r22-text-body-lg);
 }
-.r22-approvals > header h1 { margin: 0; font-size: var(--r22-text-h1); font-weight: 600; line-height: 1.5; letter-spacing: -.015em; }
+.r22-approvals > header h1 { margin: 0; font-size: var(--r22-text-h1); font-weight: 600; line-height: 1.5; letter-spacing: var(--r22-track-display); }
 .r22-approvals > header p { margin: 5px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-body-lg); line-height: 1.5; }
 
 /* ————— 未接频道的横幅 ————— */
@@ -273,7 +273,7 @@
 .r22-approvals-side { display: flex; min-height: 0; overflow-y: auto; flex-direction: column; gap: 12px; padding: 22px 22px 24px; border-left: 1px solid var(--r22-line); }
 .r22-approvals-lmeta { display: flex; margin: 0; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--r22-ink-2); font-size: var(--r22-text-small); }
 .r22-approvals-lmeta time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
-.r22-approvals-lcap { max-width: 44ch; margin: 0; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 400; line-height: 1.6; letter-spacing: normal; }
+.r22-approvals-lcap { max-width: 44ch; margin: 0; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 400; line-height: 1.6; letter-spacing: var(--r22-track-body); }
 .r22-approvals-lnote { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
 .r22-approvals-lfit { margin: 0; color: var(--r22-ink-3); font-size: var(--r22-text-small); line-height: 1.55; }
 /* 一颗禁用的 Approve 不许在这里孤零零地灰着 —— 那堵墙跟着决定一起走 */

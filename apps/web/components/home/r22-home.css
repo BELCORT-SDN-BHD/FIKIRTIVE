@@ -40,7 +40,7 @@
   font-size: 26px;
   line-height: 1.2;
   font-weight: 650;
-  letter-spacing: -0.025em;
+  letter-spacing: var(--r22-track-display-lg);
 }
 
 .r22-home-header p {
@@ -104,13 +104,13 @@
 .r22-home h2 {
   font-size: 17px; /* 原型 .dh-card h2 真值,冻结族 —— 主卡标题(Connect/Ready) */
   font-weight: 620;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--r22-track-heading);
 }
 
 .r22-home h3 {
   font-size: 15px; /* 原型 .dh-panel h3 真值,冻结族 —— 面板标题(Performance/Otto will analyse) */
   font-weight: 620;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--r22-track-heading);
 }
 
 .r22-home-connect-copy > p {
@@ -214,7 +214,7 @@
   text-align: left;
 }
 
-.r22-home-connect-dialog [data-slot="dialog-title"] { font-size: 18px; font-weight: 650; letter-spacing: -.02em; }
+.r22-home-connect-dialog [data-slot="dialog-title"] { font-size: 18px; font-weight: 650; letter-spacing: var(--r22-track-display); }
 .r22-home-connect-dialog [data-slot="dialog-description"] { color: var(--r22-dialog-ink-2); font-size: var(--r22-text-caption); line-height: 1.5; }
 .r22-home-provider,.r22-home-profile { display:flex;align-items:center;gap:11px;margin:20px 21px 0;padding:13px;border:1px solid var(--r22-dialog-line);border-radius:9px;background:var(--r22-dialog-surface); }
 .r22-home-provider b,.r22-home-provider span,.r22-home-profile b,.r22-home-profile small { display:block; }

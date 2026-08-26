@@ -9,7 +9,7 @@
   margin: 0;
   font-size: var(--r22-text-h1);
   font-weight: 650;
-  letter-spacing: -.035em;
+  letter-spacing: var(--r22-track-display);
 }
 
 .r22-analytics > header p,
@@ -150,7 +150,7 @@
   font-size: 26px; /* 原型 .an-num 真值,冻结族;恢复固定值 */
   font-variant-numeric: tabular-nums;
   font-weight: 560;
-  letter-spacing: -.04em;
+  letter-spacing: var(--r22-track-display-lg);
 }
 
 .r22-analytics-overview article small {
