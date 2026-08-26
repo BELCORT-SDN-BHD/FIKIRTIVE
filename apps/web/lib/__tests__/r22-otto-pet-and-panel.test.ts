@@ -338,7 +338,7 @@ describe("面板里没有工程黑话(Founder 裁决:fixture 诚实由顶栏徽�
   it("底下那句话与 placeholder 逐字照原型", async () => {
     const panel = await openPanel();
     const text = panel.textContent ?? "";
-    expect(text).toContain("General workspace help · no action will run from chat");
+    expect(text).toContain("General workspace help · nothing runs from here");
     expect(text).toContain("Enter to send");
     const composer = panel.querySelector<HTMLInputElement>("#r22-otto-fixture-composer")!;
     expect(composer.placeholder).toBe("Ask Otto — @ adds references");

@@ -264,10 +264,10 @@ export function OttoPanelHost({
       // 服务端动作自己不抛(它把失败折成 {error}),但网络那一段仍可能断。
       let result: Seed | { error: string };
       if (fixture) {
-        if (fixtureLoadState === "permission") result = { error: "Otto is not available to this workspace member. No conversation history was exposed." };
+        if (fixtureLoadState === "permission") result = { error: "You do not have access to Otto in this workspace. No conversation history was shown." };
         else if (fixtureLoadState === "error" && !fixtureFailedOnceRef.current) {
           fixtureFailedOnceRef.current = true;
-          result = { error: "Otto could not load this workspace conversation. Nothing is guessed in its place; retry is safe." };
+          result = { error: "Otto could not open this conversation. Nothing was put here in its place — trying again is safe." };
         } else {
           const workspaceId = readR22WorkspaceDirectory().activeId;
           const stored = readR22OttoFixture(workspaceId);
@@ -592,7 +592,7 @@ export function OttoPanelHost({
         const match = /^fixture-chip-(\d+)$/.exec(thread.id);
         return match ? Math.max(highest, Number(match[1])) : highest;
       }, 0) + 1;
-      const thread: ChatThreadDTO = { id: `fixture-chip-${ordinal}`, projectId: seed.projectId, title: chip.label, updatedAt: now, pinnedAt: null, status: "done", messages: [{ id: `fixture-chip-${ordinal}-user-1`, role: "USER", kind: "TEXT", seq: 1, text: chip.label, payload: null, genJobId: null, createdAt: now }, { id: `fixture-chip-${ordinal}-agent-2`, role: "AGENT", kind: "TEXT", seq: 2, text: "This deterministic fixture opened a local conversation. No Otto action or server request was sent.", payload: null, genJobId: null, createdAt: now }] };
+      const thread: ChatThreadDTO = { id: `fixture-chip-${ordinal}`, projectId: seed.projectId, title: chip.label, updatedAt: now, pinnedAt: null, status: "done", messages: [{ id: `fixture-chip-${ordinal}-user-1`, role: "USER", kind: "TEXT", seq: 1, text: chip.label, payload: null, genJobId: null, createdAt: now }, { id: `fixture-chip-${ordinal}-agent-2`, role: "AGENT", kind: "TEXT", seq: 2, text: "This preview opened a conversation on your screen only. Nothing was sent to Otto.", payload: null, genJobId: null, createdAt: now }] };
       setChipError(null);
       handleThreadStarted(thread);
       return;

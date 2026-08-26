@@ -59,7 +59,7 @@ const { addMemory } = await import("@/lib/memory-actions");
 /** 写死的演示描述开头那几个字 —— 生产上出现它,就是商家读到了别人的品牌。 */
 const FAKE_GENERATED = "Clear, warm and practical";
 /** 已经在 `save()` 里的那句实话。修法复用它,不发明新文案。 */
-const HONEST_BLOCK = "Brand Voice generation and source ingestion are not connected. Nothing was saved.";
+const HONEST_BLOCK = "Making a Brand Voice from your own material is not switched on yet. Nothing was saved.";
 /** 1000 字符下限是这一步自己的规则,喂够了才走得到「生成」。 */
 const APPROVED_TEXT = "Batik House writes plainly about what a piece is made of and who made it. ".repeat(20);
 

@@ -127,7 +127,7 @@ describe("R22 truthful-state UI contracts", () => {
       },
     }));
 
-    expect(html).toContain("This settings read outcome is unknown");
+    expect(html).toContain("We could not tell whether these settings loaded");
     expect(html).not.toContain("Manage the identity and defaults for Protected Workspace");
     expect(html).not.toContain("1,240");
   });
@@ -143,7 +143,7 @@ describe("R22 truthful-state UI contracts", () => {
       fixtureState: "unknown",
       initialMemory: [{ id: "protected", category: "brand_voice", content: "Protected voice", source: "user", pinned: true, updatedAt: new Date("2026-08-25T08:42:00.000Z") }],
     }));
-    expect(iq).toContain("Otto IQ read outcome is unknown");
+    expect(iq).toContain("We could not tell whether Otto IQ loaded");
     expect(iq).not.toContain("Protected voice");
     expect(iq).not.toContain("Start here");
   });

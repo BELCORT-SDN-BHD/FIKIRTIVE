@@ -282,7 +282,7 @@ const JOB_STAGE_LABEL: Record<FixtureCanvasJob["status"], string> = {
 const CANVAS_QUESTION_FLOWS: Record<"creative" | "scope", CanvasQuestionFlow> = {
   creative: {
     title: "Creative direction",
-    reason: "Two valid creative directions would produce materially different work.",
+    reason: "There are two good ways to take this, and they would not look alike.",
     cost: 3,
     questions: [
       { header: "Lead product", question: "Which product should lead this Raya concept?", help: "Otto found two valid products in your references. Choose one so the hero stays specific.", multi: false, required: true, options: [{ label: "Teal batik candle", description: "Use the strongest Raya visual cue", recommended: true }, { label: "Pandan gift set", description: "Lead with gifting and product value" }, { label: "Use both", description: "Create a paired-product hero" }] },
@@ -290,8 +290,8 @@ const CANVAS_QUESTION_FLOWS: Record<"creative" | "scope", CanvasQuestionFlow> = 
     ],
   },
   scope: {
-    title: "Execution scope",
-    reason: "The requested output can be delivered in several channels and sizes.",
+    title: "Where it goes",
+    reason: "What you asked for can go out in more than one place and size.",
     cost: 3,
     questions: [
       { header: "Channels", question: "Where will this version be used?", help: "Choose every destination Otto should prepare in this run.", multi: true, required: true, options: [{ label: "Instagram", description: "Story and feed-ready outputs", recommended: true }, { label: "Facebook", description: "Feed-safe copy and crop" }, { label: "Email", description: "Hero image and campaign copy" }] },
@@ -402,10 +402,10 @@ function baseCanvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCa
   if (/approval|approve|review|schedule|publish|go live/.test(low)) {
     return {
       title: "Why this needs review",
-      lead: "This is an explanation only. The approval stays exactly where it is until someone uses its real action.",
+      lead: "This is an explanation only. The approval stays where it is until someone approves it in Approvals.",
       bullets: [
-        "Approve means schedule, not publish.",
-        "Auto-publish is off, so nothing publishes before approval.",
+        "Approving something schedules it; it does not publish it.",
+        "Auto-publish is off, so nothing goes out before approval.",
         "Whether a channel is connected is answered in Schedule, not on this canvas.",
       ],
       note: "This answer did not change the approval or spend credits.",
@@ -417,35 +417,35 @@ function baseCanvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCa
     const active = context.activeRoutines;
     if (active === null) {
       return {
-        title: "Routine boundary",
-        lead: "I cannot confirm routine state from this canvas, so I will not claim autonomous work is running.",
+        title: "What Otto does without you",
+        lead: "I cannot see your routines from this canvas, so I cannot tell you whether one is running.",
         bullets: [
-          "Autonomous preparation and spending both require an active routine.",
-          "You can still ask for an explanation here.",
-          "Any paid action still shows its cost first and settles only on completion.",
+          "Otto makes work and spends credits without you only inside a routine you switched on.",
+          "You can still ask me to explain something here.",
+          "Anything that costs credits shows the price first, and you are only charged when it finishes.",
         ],
-        note: "This answer did not start a routine or change a routine state.",
+        note: "This answer did not start or change a routine.",
       };
     }
     if (active === 0) {
       return {
-        title: "Routine boundary",
-        lead: "No routine is active right now, so Otto cannot autonomously prepare work, spend credits, schedule, or publish.",
+        title: "What Otto does without you",
+        lead: "No routine is switched on right now, so Otto will not make anything, spend credits, schedule, or publish without you.",
         bullets: [
-          "You can still ask for an explanation here.",
-          "Help you asked for stays clearly separate from routine work.",
-          "Any paid action still shows its cost first and settles only on completion.",
+          "You can still ask me to explain something here.",
+          "Otto only works while you are away once you switch a routine on.",
+          "Anything that costs credits shows the price first, and you are only charged when it finishes.",
         ],
-        note: "This answer did not start a routine or change a routine state.",
+        note: "This answer did not start or change a routine.",
       };
     }
     return {
-      title: "Routine boundary",
-      lead: `${active} routine${active === 1 ? " is" : "s are"} active right now. Autonomous preparation stays inside those routine boundaries.`,
+      title: "What Otto does without you",
+      lead: `${active} routine${active === 1 ? " is" : "s are"} switched on right now. Otto only makes work inside ${active === 1 ? "it" : "them"}.`,
       bullets: [
-        "Approve still means schedule, not publish.",
+        "Approving something still schedules it; it does not publish it.",
         "Auto-publish is off, so scheduled work waits for approval.",
-        "Help you asked for here does not execute a routine action.",
+        "Asking me something here does not run a routine.",
       ],
       note: "This answer did not change the running routine or spend credits.",
     };
@@ -454,28 +454,28 @@ function baseCanvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCa
   // ⑤ Otto IQ 的来处(原型 L6700)。
   if (/otto iq|provenance|learn|learned|learns|source|sources|knowledge|memory|remember/.test(low)) {
     return {
-      title: "Otto IQ provenance",
-      lead: "Otto IQ is knowledge saved in this workspace, and every saved fact carries its source, so you can read what Otto is using.",
+      title: "Where Otto learned this",
+      lead: "Otto IQ is what you have taught Otto in this workspace. Every saved item shows where it came from, so you can check what Otto is using.",
       bullets: [
-        "Pending suggestions are not saved yet.",
-        // 面板 `otto-answer.ts` 的 `responseFor()` 讲的是同一条规则,原话带连字符(理由见
-        // 该文件同一处的注释)。两面措辞必须统一,商家不该在面板与画布读到两种版本。
-        "Do-not-say rules remain under merchant control; Otto cannot remove them.",
+        "Suggestions are not saved until you accept them.",
+        // 面板 `otto-answer.ts` 的 `responseFor()` 讲的是同一条规则(归真理由见该文件同一处
+        // 的注释)。两面措辞必须统一,商家不该在面板与画布读到两种版本。
+        "Rules about what Otto must never say stay yours; Otto cannot remove one.",
         "Open Otto IQ to read the source before you accept a suggestion.",
       ],
-      note: "This answer did not save, remove, or alter any Otto IQ record.",
+      note: "This answer did not save, remove, or change anything in Otto IQ.",
     };
   }
 
   // ⑥ Analytics 语境(原型 L6701)。
   if (/analytics|metric|metrics|performance|results|last \d+ days/.test(low)) {
     return {
-      title: "Analytics context",
-      lead: "You asked this, so it is an explanation only — not an automatic action.",
+      title: "About these numbers",
+      lead: "You asked this, so it is an explanation only — nothing runs unless you run it.",
       bullets: [
-        "I keep uncertainty visible instead of inventing a number.",
-        "Paid analysis shows its cost before it runs and settles only when it completes.",
-        "Open Analytics for a priced insight; this answer has not run one.",
+        "If I am not sure of a number, I say so instead of inventing one.",
+        "Paid analysis shows its price before it runs, and you are only charged when it finishes.",
+        "Open Analytics for a priced insight; nothing here has run one.",
       ],
       note: "No analysis was started and no credits were spent.",
     };
@@ -489,7 +489,7 @@ function baseCanvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCa
       bullets: [
         "Star the images worth keeping so they are easy to find later.",
         "Scheduling and publishing live in Schedule, not on this canvas.",
-        "Approve means schedule, not publish.",
+        "Approving something schedules it; it does not publish it.",
       ],
       note: "This answer did not schedule, publish, or spend credits.",
     };
@@ -498,11 +498,11 @@ function baseCanvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCa
   // ⑧ 兜底(原型 L6702)。
   return {
     title: "Workspace help",
-    lead: "I can explain this workspace and point you to the action that owns a change.",
+    lead: "I can explain what you are looking at and point you to the button that makes the change.",
     bullets: [
       "Work made here stays on this canvas, and anything you save is in Library.",
       "Describe what to make and the request starts right here.",
-      "Costs are shown before paid actions, and cancelled or failed work is never charged.",
+      "You see the price before anything costs credits, and cancelled or failed work is never charged.",
     ],
     note: "This answer did not change anything on this canvas or spend credits.",
   };
@@ -860,13 +860,16 @@ function LiveWorld({ nodes, loading, error, style }: { nodes: CanvasNodeDTO[]; l
           tabIndex={0}
           aria-label={`${node.type} canvas item${node.prompt ? `: ${node.prompt}` : ""}`}
         >
-          {node.url ? <img src={node.url} alt={node.prompt || "Generated canvas media"} /> : null}
+          {node.url ? <img src={node.url} alt={node.prompt || "Made on this canvas"} /> : null}
           {node.type === "text" ? <p>{node.text || "Empty note"}</p> : null}
           {!node.url && node.type !== "text" ? (
             <div className="r22-canvas-live-state">
               {node.status === "queued" || node.status === "generating" ? <Spinner className="r22-canvas-mini-spinner" aria-hidden="true" /> : null}
-              <b>{node.status === "failed" ? "Generation failed" : node.status === "cancelled" ? "Generation canceled" : node.status === "timeout" ? "Still working" : "Generating"}</b>
-              <p>{node.prompt || "Canvas generation"}</p>
+              {/* 措辞归真 2026-08-26:旧句是 "Generation failed / canceled" —— 「generation」是
+                  我们内部对出片作业的叫法。这里说的是商家看得见的那一件事:做没做成。
+                  同一条词在 Library 已经是「Didn't go through」。 */}
+              <b>{node.status === "failed" ? "Didn’t go through" : node.status === "cancelled" ? "Stopped" : node.status === "timeout" ? "Still working" : "Making it"}</b>
+              <p>{node.prompt || "Making this now"}</p>
             </div>
           ) : null}
         </article>
@@ -1917,7 +1920,7 @@ export function R22CanvasSurface({
       return;
     }
     if (!costQuote || !ratioOptions.length) {
-      setNotice("Wait for the exact generation cost and available ratio before sending.");
+      setNotice("Wait for the exact price and the shapes you can pick before sending.");
       return;
     }
     if (submitting) return;

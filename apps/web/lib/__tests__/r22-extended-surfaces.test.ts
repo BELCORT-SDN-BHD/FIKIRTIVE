@@ -106,7 +106,7 @@ describe("R22 extended frontend contracts", () => {
       state: "unknown",
       initialItems: [{ id: "protected", projectId: "fixture-raya", assetId: "asset", url: "/protected.jpg", kind: "image", prompt: "Protected Raya image", favorite: false, createdAt: "2026-08-25T08:42:00.000Z" }],
     }));
-    expect(container!.textContent).toContain("Library read outcome is unknown");
+    expect(container!.textContent).toContain("We could not tell whether your Library loaded");
     expect(container!.textContent).not.toContain("Nothing has been made yet");
     expect(container!.textContent).not.toContain("Protected Raya image");
 
@@ -115,12 +115,12 @@ describe("R22 extended frontend contracts", () => {
       state: "unknown",
       initialItems: [{ id: "protected", title: "Protected approval", detail: "Private detail", time: "Now", href: "/approvals", read: false, kind: "approval" }],
     })));
-    expect(container!.textContent).toContain("Notification read outcome is unknown");
+    expect(container!.textContent).toContain("We could not tell whether your notifications loaded");
     expect(container!.textContent).not.toContain("No notification history");
     expect(container!.textContent).not.toContain("Protected approval");
 
     act(() => root!.render(createElement(R22HelpView, { fixture: true, state: "unknown" })));
-    expect(container!.textContent).toContain("Product help read outcome is unknown");
+    expect(container!.textContent).toContain("We could not tell whether help loaded");
     expect(container!.textContent).not.toContain("No matching article");
     expect(container!.textContent).not.toContain("Reconnect a publishing channel");
 
@@ -333,12 +333,14 @@ describe("R22 extended frontend contracts", () => {
     // 是每一路答案都必须带的那条 `note`。所以这条围栏跟着钉到答案模型上 —— 钉的是
     // 同一件事,而且比上一版更硬:上一版只要那一句在,这一版要求**每一路**都有。
     const ottoAnswer = readFileSync(path.join(WEB_ROOT, "components/otto/panel/otto-answer.ts"), "utf8");
-    expect(ottoAnswer).toContain("This chat did not change workspace state or spend credits.");
+    // 措辞归真 2026-08-26:五条注脚一条不少,只是把「workspace state」「routine state」
+    // 「Otto IQ record」「analytics job」这些内部名词换成商家读得懂的说法。
+    expect(ottoAnswer).toContain("This chat did not change anything or spend credits.");
     expect(ottoAnswer).toContain("This chat did not change the approval or spend credits.");
-    expect(ottoAnswer).toContain("This chat did not start a routine or change a routine state.");
-    expect(ottoAnswer).toContain("This chat did not save, remove, or alter any Otto IQ record.");
-    expect(ottoAnswer).toContain("No analytics job was started and no credits were spent.");
-    expect(ottoConversation).toContain("no action will run from chat");
+    expect(ottoAnswer).toContain("This chat did not start or change a routine.");
+    expect(ottoAnswer).toContain("This chat did not save, remove, or change anything in Otto IQ.");
+    expect(ottoAnswer).toContain("No analysis was started and no credits were spent.");
+    expect(ottoConversation).toContain("nothing runs from here");
     expect(ottoConversation).not.toContain("Visual fixture");
     for (const unstableFixtureId of [
       "fixture-voice-${Date.now",

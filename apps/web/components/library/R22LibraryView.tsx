@@ -101,14 +101,14 @@ export function R22LibraryView({
       : "Nothing has been made yet. Start from Canvas and completed media will gather here.";
 
   const banner = state === "loading"
-    ? <section className="r22-library-empty" aria-busy="true">Loading the current workspace Library…</section>
+    ? <section className="r22-library-empty" aria-busy="true">Opening your Library…</section>
     : state === "permission"
-      ? <section className="r22-library-empty" role="status"><CircleAlert aria-hidden="true" /> This member cannot read the current workspace Library. Nothing is guessed in its place.</section>
+      ? <section className="r22-library-empty" role="status"><CircleAlert aria-hidden="true" /> You do not have access to this Library. Nothing is guessed in its place.</section>
       : <section className="r22-library-empty" role={state === "error" || error ? "alert" : "status"}>
           <CircleAlert aria-hidden="true" />
           {state === "unknown"
-            ? "Library read outcome is unknown. Nothing is guessed in its place."
-            : `Library could not be loaded: ${error || "the workspace read failed"}. Nothing is guessed in its place.`}
+            ? "We could not tell whether your Library loaded. Nothing is guessed in its place."
+            : `Your Library could not be opened: ${error || "the read did not finish"}. Nothing is guessed in its place.`}
           <Link href={fixture ? "/library?fixture=r22" : "/library"}>Retry</Link>
         </section>;
 

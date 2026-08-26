@@ -73,7 +73,7 @@ const CONNECTION_STEPS = [
   { label: "Not connected", description: "Choose a channel to get started" },
   { label: "Verifying", description: "We’ll securely verify your access" },
   { label: "Syncing data", description: "We’ll import your publishing history" },
-  { label: "Ready", description: "Otto will learn and surface insights" },
+  { label: "Ready", description: "Otto learns what is working for you" },
 ] as const;
 
 /** 一行步进器本体 —— 两处消费者(ready 态右栏 / connect-first 态卡内一行)共用同一份

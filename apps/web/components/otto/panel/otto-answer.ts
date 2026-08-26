@@ -44,11 +44,11 @@ export const OTTO_ANSWER_SIGNALS_UNKNOWN: OttoAnswerSignals = {
   channelConnected: null,
 };
 
-/** 等待态那一行字(原型 L6724)。 */
-export const OTTO_ANSWER_WAIT_LABEL = "Thinking through the workspace context…";
+/** 等待态那一行字(原型 L6724;措辞归真 2026-08-26 —— 原句在替商家解释我们内部怎么读上下文)。 */
+export const OTTO_ANSWER_WAIT_LABEL = "Reading this page…";
 
 /** 读不出来时那两句(原型 L6729,去掉只有写代码的人才懂的那个词)。 */
-export const OTTO_ANSWER_ERROR_TITLE = "Couldn’t load the workspace detail.";
+export const OTTO_ANSWER_ERROR_TITLE = "I couldn’t read this just now.";
 export const OTTO_ANSWER_ERROR_NOTE = "No action ran and no credits were spent.";
 
 /** 想一想要多久。照原型 560ms(L6733 的 `setTimeout(...,560)`)。 */
@@ -64,7 +64,7 @@ export const OTTO_ANSWER_CONFIRM = {
   copied: "Copied",
   helpful: "Thanks — marked helpful",
   notHelpful: "Thanks — feedback recorded",
-  support: "Support handoff is ready; no message was sent.",
+  support: "Support is ready to open. Nothing has been sent yet.",
 } as const;
 
 /**
@@ -95,10 +95,10 @@ export function responseFor(context: string, prompt: string, signals: OttoAnswer
     const connected = signals.channelConnected;
     return {
       title: "Why this needs review",
-      lead: "This is an explanation only. The approval remains in the shared Approvals state until someone uses its real action.",
+      lead: "This is an explanation only. The approval stays where it is until someone approves it in Approvals.",
       bullets: [
-        "Approve means schedule, not publish.",
-        "Auto-publish is off, so nothing publishes before approval.",
+        "Approving something schedules it; it does not publish it.",
+        "Auto-publish is off, so nothing goes out before approval.",
         // 渠道那一条只在**知道**答案时才说。读不到就少说一句 —— 少说一句不会骗人,
         // 猜一句会:说反了商家会照着那句话去做决定。
         ...(connected === null
@@ -115,35 +115,35 @@ export function responseFor(context: string, prompt: string, signals: OttoAnswer
     const active = signals.activeRoutines;
     if (active === null) {
       return {
-        title: "Routine boundary",
-        lead: "I cannot confirm routine state yet, so I will not claim autonomous work is running.",
+        title: "What Otto does without you",
+        lead: "I cannot see your routines from here, so I cannot tell you whether one is running.",
         bullets: [
-          "Autonomous preparation and spending require an active routine.",
-          "You can still request an explanation or analysis in this chat.",
-          "Any paid action still shows cost first and settles only on completion.",
+          "Otto makes work and spends credits without you only inside a routine you switched on.",
+          "You can still ask me to explain something here.",
+          "Anything that costs credits shows the price first, and you are only charged when it finishes.",
         ],
-        note: "This chat did not start a routine or change a routine state.",
+        note: "This chat did not start or change a routine.",
       };
     }
     if (active === 0) {
       return {
-        title: "Routine boundary",
-        lead: "No routine is active right now, so Otto cannot autonomously prepare work, spend credits, schedule, or publish.",
+        title: "What Otto does without you",
+        lead: "No routine is switched on right now, so Otto will not make anything, spend credits, schedule, or publish without you.",
         bullets: [
-          "You can still request an explanation or analysis in this chat.",
-          "User-invoked help is clearly separate from routine work.",
-          "Any paid action still shows cost first and settles only on completion.",
+          "You can still ask me to explain something here.",
+          "Otto only works while you are away once you switch a routine on.",
+          "Anything that costs credits shows the price first, and you are only charged when it finishes.",
         ],
-        note: "This chat did not start a routine or change a routine state.",
+        note: "This chat did not start or change a routine.",
       };
     }
     return {
-      title: "Routine boundary",
-      lead: `${active} routine${active === 1 ? " is" : "s are"} active right now. Autonomous preparation stays within those routine boundaries.`,
+      title: "What Otto does without you",
+      lead: `${active} routine${active === 1 ? " is" : "s are"} switched on right now. Otto only makes work inside ${active === 1 ? "it" : "them"}.`,
       bullets: [
-        "Approve still means schedule, not publish.",
+        "Approving something still schedules it; it does not publish it.",
         "Auto-publish is off, so scheduled work waits for approval.",
-        "User-invoked help here does not execute a routine action.",
+        "Asking me something here does not run a routine.",
       ],
       note: "This chat did not change the running routine or spend credits.",
     };
@@ -151,42 +151,42 @@ export function responseFor(context: string, prompt: string, signals: OttoAnswer
 
   if (/otto iq|provenance|learn|source|knowledge/.test(low)) {
     return {
-      title: "Otto IQ provenance",
-      lead: "Otto IQ is workspace-scoped, merchant-controlled knowledge. Each saved fact carries its source so you can inspect what Otto is using.",
+      title: "Where Otto learned this",
+      lead: "Otto IQ is what you have taught Otto in this workspace. Every saved item shows where it came from, so you can check what Otto is using.",
       bullets: [
-        "Pending suggestions are not saved yet.",
+        "Suggestions are not saved until you accept them.",
         // 原型作 "Do not say rules remain under merchant control"。讲的是品牌记忆里那种
-        // 「绝对不要说」的规则(`Rule.kind === "never"`),可是不带连字符时整句会被读成
-        // 一条祈使句(「不要说 rules 仍归商家控制」),意思正好拧过来。这一个连字符是本
-        // 文件与原型唯一的字面差异,加它是为了让原意读得出来。
-        "Do-not-say rules remain under merchant control; Otto cannot remove them.",
-        "Use Otto IQ to review the source before accepting a suggestion.",
+        // 「绝对不要说」的规则(`Rule.kind === "never"`)—— 原句里 "do not say rules" 与
+        // "merchant control" 都是内部说法,商家读到的要么是一条祈使句,要么是一个他没听过
+        // 的词。措辞归真 2026-08-26:把规则讲成「Otto 绝不许说的话」,把归属讲成「是你的」。
+        "Rules about what Otto must never say stay yours; Otto cannot remove one.",
+        "Open Otto IQ to read the source before you accept a suggestion.",
       ],
-      note: "This chat did not save, remove, or alter any Otto IQ record.",
+      note: "This chat did not save, remove, or change anything in Otto IQ.",
     };
   }
 
   if (/analytics|last .*days|metric|performance/.test(low)) {
     return {
-      title: "Analytics context",
-      lead: "This is a user-invoked question about the current analytics view, not an autonomous routine action.",
+      title: "About these numbers",
+      lead: "You asked this, so it is an explanation only — nothing runs unless you run it.",
       bullets: [
-        "I will keep uncertainty visible instead of inventing a metric.",
-        "Paid analysis must show cost before it runs and settles only when complete.",
-        "Use the Analytics action for a priced insight; this chat has not run it.",
+        "If I am not sure of a number, I say so instead of inventing one.",
+        "Paid analysis shows its price before it runs, and you are only charged when it finishes.",
+        "Open Analytics for a priced insight; nothing here has run one.",
       ],
-      note: "No analytics job was started and no credits were spent.",
+      note: "No analysis was started and no credits were spent.",
     };
   }
 
   return {
     title: "Workspace help",
-    lead: "I can explain this workspace and point you to the shared action that owns a change.",
+    lead: "I can explain what you are looking at and point you to the button that makes the change.",
     bullets: [
-      "Routine work stays within an active routine.",
-      "Approval schedules; it does not publish.",
-      "Costs are shown before paid actions and never charged for cancelled or failed work.",
+      "Otto only works while you are away once you switch a routine on.",
+      "Approving something schedules it; it does not publish it.",
+      "You see the price before anything costs credits, and cancelled or failed work is never charged.",
     ],
-    note: "This chat did not change workspace state or spend credits.",
+    note: "This chat did not change anything or spend credits.",
   };
 }

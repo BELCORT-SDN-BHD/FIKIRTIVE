@@ -76,7 +76,7 @@ export const HOME_COPY = {
   /* ── 连接状态:不知道 ≠ 没连上 ────────────────────────────────────────────── */
   connectionStatusUnreadable: "Connection status could not be read just now.",
   connectionStatusUnavailableHeading: "Connection status unavailable",
-  connectionStatusUnavailableBody: "FIKIRTIVE could not verify whether a channel is connected. No connection action is offered until that read succeeds.",
+  connectionStatusUnavailableBody: "FIKIRTIVE could not tell whether a channel is connected, so there is nothing to press here yet. Try again in a moment.",
   /** 读不到状态时,已有的连接**不许**被顺手标成断开。 */
   nothingMarkedDisconnected: "Nothing has been marked disconnected.",
   metaUnreachable: "Meta could not be reached just now. The existing connection has not been marked disconnected.",
@@ -89,24 +89,24 @@ export const HOME_COPY = {
   publishingPermissionsLabel: "Publishing permissions",
   publishingPermissionsScope: "Shown exactly as granted by Meta",
   ottoContextLabel: "Otto context",
-  ottoContextScope: "Uses only available verified data",
-  providerWindowNotice: "FIKIRTIVE will open a secure provider window in production.",
+  ottoContextScope: "Otto only uses numbers we have checked",
+  providerWindowNotice: "On your live account, FIKIRTIVE opens a secure Meta window for this.",
   noPasswordStored: "No password is stored in FIKIRTIVE.",
   permissionReadContent: "Read published content and audience insights",
   permissionPublishApproved: "Publish approved work when you choose",
   permissionVerifyAccount: "Verify the connected account and permissions",
   profileScopeNotice: "Only the selected profile will be connected to this workspace.",
-  metaProfileListTruth: "The secure Meta window lists only profiles you can authorize. FIKIRTIVE does not invent that list.",
-  permissionVerificationNotice: "FIKIRTIVE verifies publishing, insights and ownership permissions before importing data.",
-  verifyingNotice: "Checking the selected account and permissions. No success is shown until verification finishes.",
+  metaProfileListTruth: "The secure Meta window shows only the profiles you may connect. That list comes from Meta, not from us.",
+  permissionVerificationNotice: "FIKIRTIVE checks publishing, insights and ownership permissions before it brings any data in.",
+  verifyingNotice: "Checking the account and its permissions. Nothing is marked connected until that finishes.",
   connectFailedTitle: "Connection could not be completed",
-  connectFailedBody: "The provider did not confirm the account. Nothing was connected and no workspace data changed.",
+  connectFailedBody: "Meta did not confirm the account. Nothing was connected and nothing in your workspace changed.",
   connectSuccessBody: "Publishing and audience access was verified for this workspace.",
 
   /* ── 有没有数据,照实说 ───────────────────────────────────────────────────── */
   performanceUnavailableReady: "Verified performance is not available yet",
-  performanceUnavailableReadyBody: "The connection is real, but this frontend has not received a verified publishing-history dataset.",
-  performanceVerifiedOnlyBody: "FIKIRTIVE will show only verified publishing and audience data.",
+  performanceUnavailableReadyBody: "Your channel is connected, but your publishing history has not come through yet.",
+  performanceVerifiedOnlyBody: "FIKIRTIVE only shows publishing and audience numbers it has checked.",
 
   /* ── 钱:读不出来就说读不出来,绝不显示 0 ─────────────────────────────────────
    * 以下六句今天**一句都没有在 Home 上渲染** —— R22 Data-first Home 把五块仪表盘整个

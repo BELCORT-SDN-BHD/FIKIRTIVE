@@ -229,7 +229,7 @@ describe("⑥ loading / error / 无结果三行", () => {
     const shell = source("components/r22/R22DashboardShell.tsx");
     const loading = shell.slice(shell.indexOf('projectsState === "loading"'));
     expect(loading.slice(0, 200), "等待那一行没有旋转器").toContain("<Spinner");
-    expect(shell, "读不到项目时没有照实说").toContain("Projects could not be searched. Navigation results remain available.");
+    expect(shell, "读不到项目时没有照实说").toContain("Your projects could not be searched. Pages are still listed.");
     // 三行都住在共用的那一格里,不是三种长相。
     expect(shell).toContain("r22-dashboard-search-empty");
   });

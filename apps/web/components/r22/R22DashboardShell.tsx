@@ -384,8 +384,8 @@ export function R22DashboardShell({
               <SheetClose asChild><Button unstyled type="button" aria-label="Close notifications"><X data-icon="inline-start" /></Button></SheetClose>
             </header>
             {fixture ? (
-              fixtureNotifications.length ? <ul>{fixtureNotifications.slice(0, 3).map((item) => <li key={item.id} className={item.read ? "is-read" : ""}><span className={!item.read ? "is-coral" : ""} /><div><b>{item.title}</b><p>{item.detail}</p><Link href={`/notifications?fixture=r22&notification=${encodeURIComponent(item.id)}`} onClick={() => updateFixtureNotifications(fixtureNotifications.map((row) => row.id === item.id ? { ...row, read: true } : row))}>View detail</Link></div></li>)}</ul> : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>No notification history</EmptyTitle><EmptyDescription>Dismissed events stay removed after refresh.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications?fixture=r22">Open notifications</Link></EmptyContent></Empty>
-            ) : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>Notification delivery is not connected yet</EmptyTitle><EmptyDescription>This won&rsquo;t guess at an empty or read state. Open the full page to connect notifications and manage preferences.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications">Open notifications</Link></EmptyContent></Empty>}
+              fixtureNotifications.length ? <ul>{fixtureNotifications.slice(0, 3).map((item) => <li key={item.id} className={item.read ? "is-read" : ""}><span className={!item.read ? "is-coral" : ""} /><div><b>{item.title}</b><p>{item.detail}</p><Link href={`/notifications?fixture=r22&notification=${encodeURIComponent(item.id)}`} onClick={() => updateFixtureNotifications(fixtureNotifications.map((row) => row.id === item.id ? { ...row, read: true } : row))}>View detail</Link></div></li>)}</ul> : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>No notification history</EmptyTitle><EmptyDescription>Anything you dismiss stays gone after a refresh.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications?fixture=r22">Open notifications</Link></EmptyContent></Empty>
+            ) : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>Notification delivery is not connected yet</EmptyTitle><EmptyDescription>We will not pretend there is nothing new. Open the full page to switch notifications on and choose what reaches you.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications">Open notifications</Link></EmptyContent></Empty>}
           </SheetContent>
         </Sheet>
         <span className="r22-dashboard-account-wrap" data-r22-workspace-region>
@@ -410,9 +410,9 @@ export function R22DashboardShell({
             <SheetClose asChild><Button unstyled type="button" aria-label="Close help"><X data-icon="inline-start" /></Button></SheetClose>
           </header>
           <div className="r22-dashboard-help-list">
-            <Button unstyled type="button" disabled={!otto} onClick={() => { setHelpOpen(false); otto?.openPanel(); }}><b>Ask Otto</b><span>Open the real workspace conversation and history.</span></Button>
+            <Button unstyled type="button" disabled={!otto} onClick={() => { setHelpOpen(false); otto?.openPanel(); }}><b>Ask Otto</b><span>Open your conversation with Otto and its history.</span></Button>
             <Link href={fixtureHref("/settings/connections", fixture)}><b>Connection help</b><span>Check channel access and reconnect safely.</span></Link>
-            <Link href={fixture ? "/help?fixture=r22" : "/help"}><b>Help and support</b><span>Search verified guidance or review a support request.</span></Link>
+            <Link href={fixture ? "/help?fixture=r22" : "/help"}><b>Help and support</b><span>Search help articles or check a support request.</span></Link>
           </div>
         </SheetContent>
       </Sheet>
@@ -435,7 +435,7 @@ export function R22DashboardShell({
       <Dialog open={searchOpen} onOpenChange={(open) => { if (open) setSearchOpen(true); else closeSearch(); }}>
           <DialogContent unstyled showCloseButton={false} overlayClassName="r22-dashboard-search-scrim" className="r22-dashboard-search-dialog">
             <DialogTitle className="sr-only">Global Search</DialogTitle>
-            <DialogDescription className="sr-only">Search destinations and workspace projects.</DialogDescription>
+            <DialogDescription className="sr-only">Search pages and your projects.</DialogDescription>
             <Command loop label="Search Fikirtive">
               <div className="r22-dashboard-search-field">
                 <CommandInput ref={searchRef} value={query} onValueChange={setQuery} placeholder="Search Fikirtive" />
@@ -456,8 +456,8 @@ export function R22DashboardShell({
                     </CommandGroup>
                   );
                 })}
-                {projectsState === "loading" && <div className="r22-dashboard-search-empty"><Spinner aria-hidden="true" />Loading workspace projects…</div>}
-                {projectsState === "error" && <div className="r22-dashboard-search-empty">Projects could not be searched. Navigation results remain available.</div>}
+                {projectsState === "loading" && <div className="r22-dashboard-search-empty"><Spinner aria-hidden="true" />Loading your projects…</div>}
+                {projectsState === "error" && <div className="r22-dashboard-search-empty">Your projects could not be searched. Pages are still listed.</div>}
               </CommandList>
               {/* 底部提示栏照 Mobbin 取证的形状(C-3:Vapi / Devin 两家都有这一条)。 */}
               <footer className="r22-dashboard-search-hint">

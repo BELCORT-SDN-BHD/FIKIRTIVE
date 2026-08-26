@@ -146,7 +146,7 @@ describe("答案模型:五条路各自说自己的实话(原型 responseFor)", (
     for (const context of ["Approvals", "Schedule"]) {
       const answer = responseFor(context, "why is this waiting?", KNOWN);
       expect(answer.title).toBe("Why this needs review");
-      expect(answer.bullets).toContain("Approve means schedule, not publish.");
+      expect(answer.bullets).toContain("Approving something schedules it; it does not publish it.");
       expect(answer.note).toBe("This chat did not change the approval or spend credits.");
     }
   });
@@ -164,21 +164,21 @@ describe("答案模型:五条路各自说自己的实话(原型 responseFor)", (
 
   it("routine 三态:读不到 / 零条 / N 条,各说各的,一条都不冒充另一条", () => {
     const unknown = responseFor("Routines", "what can Otto prepare?", { activeRoutines: null, channelConnected: null });
-    expect(unknown.lead).toBe("I cannot confirm routine state yet, so I will not claim autonomous work is running.");
+    expect(unknown.lead).toBe("I cannot see your routines from here, so I cannot tell you whether one is running.");
 
     const none = responseFor("Routines", "what can Otto prepare?", { activeRoutines: 0, channelConnected: null });
-    expect(none.lead).toContain("No routine is active right now");
+    expect(none.lead).toContain("No routine is switched on right now");
 
     const one = responseFor("Routines", "what can Otto prepare?", { activeRoutines: 1, channelConnected: null });
-    expect(one.lead).toBe("1 routine is active right now. Autonomous preparation stays within those routine boundaries.");
+    expect(one.lead).toBe("1 routine is switched on right now. Otto only makes work inside it.");
 
     const many = responseFor("Routines", "what can Otto prepare?", { activeRoutines: 3, channelConnected: null });
-    expect(many.lead).toBe("3 routines are active right now. Autonomous preparation stays within those routine boundaries.");
+    expect(many.lead).toBe("3 routines are switched on right now. Otto only makes work inside them.");
   });
 
   it("Otto IQ / analytics / 兜底各自命中,而且每一路都带一条诚实注脚", () => {
-    expect(responseFor("Otto IQ", "where did Otto learn this?", KNOWN).title).toBe("Otto IQ provenance");
-    expect(responseFor("Analytics", "how did last week perform?", KNOWN).title).toBe("Analytics context");
+    expect(responseFor("Otto IQ", "where did Otto learn this?", KNOWN).title).toBe("Where Otto learned this");
+    expect(responseFor("Analytics", "how did last week perform?", KNOWN).title).toBe("About these numbers");
     expect(responseFor("Library", "hello", KNOWN).title).toBe("Workspace help");
 
     for (const [context, prompt] of [["Approvals", "why"], ["Routines", "prepare"], ["Otto IQ", "provenance"], ["Analytics", "metric"], ["Library", "hi"]]) {
@@ -223,14 +223,20 @@ describe("空态与起手卡(原型 starterHTML,L6709)", () => {
     await act(async () => root!.render(conversationHost()));
   });
 
-  it("空态逐字画出原型三件:上下文行、大标题、说明句 —— 不打招呼、不编占位话", () => {
+  /**
+   * 措辞归真(Founder 亲验 2026-08-26)。原型这三句里有两句是 AI slop:上下文行的尾巴
+   * 「· explicit help, not a routine action」整段是我们内部的动作分类学(商家不知道也不该
+   * 知道什么叫 routine action),说明句「I cannot claim an action ran unless you use that
+   * action」是绕着否认的律师话。诚实一个字没减:上下文行只留页名(边界那半句已经由输入框
+   * 下面那行 `· nothing runs from here` 说了一遍),说明句改成正着说 —— 我能干什么、
+   * 什么都不会自己跑。
+   */
+  it("空态画出三件:上下文行、大标题、说明句 —— 不打招呼、不编占位话、不说内部黑话", () => {
     const el = emptyState();
-    expect(el.querySelector(".r22-otto-context")?.textContent).toBe(
-      `${OTTO_PANEL_CONTEXT_DEFAULT} · explicit help, not a routine action`,
-    );
+    expect(el.querySelector(".r22-otto-context")?.textContent).toBe(OTTO_PANEL_CONTEXT_DEFAULT);
     expect(el.querySelector("h2")?.textContent).toBe("How can Otto help?");
     expect(el.querySelector(".r22-otto-empty p")?.textContent).toBe(
-      "I can explain this workspace and point you to a shared action. I cannot claim an action ran unless you use that action.",
+      "Ask me about this page and I will point you to the right button. Nothing runs unless you choose to run it.",
     );
   });
 
@@ -239,20 +245,20 @@ describe("空态与起手卡(原型 starterHTML,L6709)", () => {
     expect(cards).toHaveLength(3);
     expect(cards.map((c) => c.querySelector("b")?.textContent)).toEqual([
       "Explain what needs review",
-      "Check routine boundaries",
-      "Trace Otto IQ provenance",
+      "See what Otto does without you",
+      "See where Otto learned this",
     ]);
     expect(cards.map((c) => c.querySelector("span")?.textContent)).toEqual([
       "Read the approval and its source.",
-      "See what autonomous work may do.",
-      "Find merchant-controlled knowledge and its source.",
+      "Check what a routine does while you are away.",
+      "Check the source behind what Otto knows.",
     ]);
   });
 
   it.each([
     ["Explain what needs review", "Why is this waiting for review?", "Why this needs review"],
-    ["Check routine boundaries", "What changes while a routine is paused?", "Routine boundary"],
-    ["Trace Otto IQ provenance", "Where did Otto learn this?", "Otto IQ provenance"],
+    ["See what Otto does without you", "What changes while a routine is paused?", "What Otto does without you"],
+    ["See where Otto learned this", "Where did Otto learn this?", "Where Otto learned this"],
   ])("卡「%s」发出去的是预填句「%s」而不是卡标题,并且命中真路由,不落到 Workspace help(%s)", async (title, prompt, expectedTitle) => {
     vi.useFakeTimers();
     const card = starterCards().find((c) => c.querySelector("b")?.textContent === title)!;
@@ -312,7 +318,7 @@ describe("子流 ①②:Giving feedback 与 Copying a chat", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     const copied = writeText.mock.calls[0][0];
     expect(copied).toContain("Why this needs review");
-    expect(copied).toContain("Approve means schedule, not publish.");
+    expect(copied).toContain("Approving something schedules it; it does not publish it.");
 
     const confirm = card.querySelector<HTMLElement>("[data-otto-answer-confirm]")!;
     expect(confirm.textContent).toBe(OTTO_ANSWER_CONFIRM.copied);
@@ -408,7 +414,7 @@ describe("等待态与读不出来(原型 .otto-wait / .otto-error)", () => {
 
   it("底下那一行说的是商家正在看的这一页", async () => {
     expect(document.querySelector("[data-otto-panel-context-note]")!.textContent)
-      .toBe("Analytics · no action will run from chat");
+      .toBe("Analytics · nothing runs from here");
   });
 });
 

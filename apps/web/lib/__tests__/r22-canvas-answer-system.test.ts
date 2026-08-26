@@ -133,10 +133,10 @@ describe("① 每一路提问都换回一张真答案卡(原型 responseFor 的�
     // 参数弹层这一轮把 4:5 也接上了,所以这一面此刻真的可选的是四个形状 —— 这一句
     // 报的永远是「此刻真的可选的那几个」,不是一张写死的表。
     ["What formats can I ask for?", "Shapes you can ask for", "Available right now: 9:16 vertical · 1:1 square · 4:5 portrait · 16:9 wide."],
-    ["Why does this need review?", "Why this needs review", "Approve means schedule, not publish."],
-    ["What can a routine do here?", "Routine boundary", "Autonomous preparation and spending both require an active routine."],
-    ["Where did Otto learn this?", "Otto IQ provenance", "Pending suggestions are not saved yet."],
-    ["How is performance measured?", "Analytics context", "I keep uncertainty visible instead of inventing a number."],
+    ["Why does this need review?", "Why this needs review", "Approving something schedules it; it does not publish it."],
+    ["What can a routine do here?", "What Otto does without you", "Otto makes work and spends credits without you only inside a routine you switched on."],
+    ["Where did Otto learn this?", "Where Otto learned this", "Suggestions are not saved until you accept them."],
+    ["How is performance measured?", "About these numbers", "If I am not sure of a number, I say so instead of inventing one."],
     ["Which channels can this go to?", "Where this can go", "Scheduling and publishing live in Schedule, not on this canvas."],
     ["What happens to my work here?", "Workspace help", "Work made here stays on this canvas, and anything you save is in Library."],
   ])("「%s」→ %s", async (prompt, title, bullet) => {
@@ -160,10 +160,10 @@ describe("① 每一路提问都换回一张真答案卡(原型 responseFor 的�
     const one = canvasAnswerFor("routine", { ...base, activeRoutines: 1 });
     const many = canvasAnswerFor("routine", { ...base, activeRoutines: 3 });
 
-    expect(unknown.lead).toContain("cannot confirm routine state");
-    expect(none.lead).toContain("No routine is active right now");
-    expect(one.lead).toContain("1 routine is active right now");
-    expect(many.lead).toContain("3 routines are active right now");
+    expect(unknown.lead).toContain("cannot see your routines");
+    expect(none.lead).toContain("No routine is switched on right now");
+    expect(one.lead).toContain("1 routine is switched on right now");
+    expect(many.lead).toContain("3 routines are switched on right now");
     // 三态互不复读:不知道那一态绝不能滑成「没有在跑」。
     expect(new Set([unknown.lead, none.lead, one.lead, many.lead]).size).toBe(4);
   });

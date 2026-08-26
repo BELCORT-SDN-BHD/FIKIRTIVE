@@ -345,7 +345,7 @@ describe("④ 文字报状态换成芯片", () => {
 describe("⑤ 常驻解释句收进按需层", () => {
   it("默认不在屏幕上,展开之后原话一字不差", async () => {
     await mount(h(R22SettingsShell, { data: SETTINGS_DATA, initialSection: "roles", fixture: true } as never));
-    const ORIGINAL = "Role names are summaries. Server authorization continues to check concrete permissions and resource scope.";
+    const ORIGINAL = "A role name is only a summary. Every action is still checked against what you are actually allowed to do.";
     expect(document.body.textContent, "收静了就不该常驻在屏幕上").not.toContain(ORIGINAL);
 
     const trigger = need('[data-r22-settings-note="roles"] [data-slot="collapsible-trigger"]');

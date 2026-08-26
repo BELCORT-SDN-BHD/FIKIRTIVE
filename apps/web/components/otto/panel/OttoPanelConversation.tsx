@@ -174,13 +174,15 @@ export function OttoPanelConversation({
  * ——在这里聊天不会替你动任何东西。
  */
 export const OTTO_PANEL_CONTEXT_DEFAULT = "General workspace help";
-const OTTO_PANEL_CONTEXT_SUFFIX = " · no action will run from chat";
+/** 措辞归真 2026-08-26:旧句写「no action will run from chat」——「action」是我们内部对
+ *  共用动作层的叫法,商家读到的只该是「这里不会替我动东西」。 */
+const OTTO_PANEL_CONTEXT_SUFFIX = " · nothing runs from here";
 export const OTTO_PANEL_CONTEXT_NOTE = `${OTTO_PANEL_CONTEXT_DEFAULT}${OTTO_PANEL_CONTEXT_SUFFIX}`;
 
 /**
- * 那句话的完整形状 = `<商家在看的这一页> · no action will run from chat`(原型 L6709 的
- * `$('#ottoContext').textContent=ottoContext+' · no action will run from chat'`)。
- * 认不出这一页时退回最通用的那半句 —— 边界那半句一个字不改,它在任何一页上都成立。
+ * 那句话的完整形状 = `<商家在看的这一页> · nothing runs from here`(原型 L6709 是
+ * `$('#ottoContext').textContent=ottoContext+' · no action will run from chat'`,后半句
+ * 2026-08-26 归真)。认不出这一页时退回最通用的那半句 —— 边界那半句在任何一页上都成立。
  */
 export function ottoPanelContextNote(label?: string): string {
   return `${label?.trim() || OTTO_PANEL_CONTEXT_DEFAULT}${OTTO_PANEL_CONTEXT_SUFFIX}`;
@@ -238,8 +240,8 @@ const R22_FOLLOWUPS = [
  */
 const R22_STARTERS = [
   { title: "Explain what needs review", detail: "Read the approval and its source.", prompt: "Why is this waiting for review?" },
-  { title: "Check routine boundaries", detail: "See what autonomous work may do.", prompt: "What changes while a routine is paused?" },
-  { title: "Trace Otto IQ provenance", detail: "Find merchant-controlled knowledge and its source.", prompt: "Where did Otto learn this?" },
+  { title: "See what Otto does without you", detail: "Check what a routine does while you are away.", prompt: "What changes while a routine is paused?" },
+  { title: "See where Otto learned this", detail: "Check the source behind what Otto knows.", prompt: "Where did Otto learn this?" },
 ] as const;
 
 /** 一轮还没落地的问答:等着的那句话、它按的是哪一页、以及这一次是不是重试。 */
@@ -395,9 +397,9 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
                 起手式。不是一颗假装 Otto 已经说过话的气泡 —— 他还没说过,也不替商家打招呼
                 (原型这里没有称呼,只有边界与三条真能问的问题)。 */}
             {!messages.length ? <MessageScrollerItem messageId="fixture-welcome"><Message unstyled align="start"><MessageContent unstyled><Bubble unstyled align="start"><BubbleContent unstyled className="r22-otto-empty">
-              <div className="r22-otto-context">{context} · explicit help, not a routine action</div>
+              <div className="r22-otto-context">{context}</div>
               <h2>How can Otto help?</h2>
-              <p>I can explain this workspace and point you to a shared action. I cannot claim an action ran unless you use that action.</p>
+              <p>Ask me about this page and I will point you to the right button. Nothing runs unless you choose to run it.</p>
               <div className="r22-otto-starters">
                 {R22_STARTERS.map((starter) => <Button unstyled key={starter.title} type="button" className="r22-otto-starter" onClick={() => send(starter.prompt)}><b>{starter.title}</b><span>{starter.detail}</span></Button>)}
               </div>

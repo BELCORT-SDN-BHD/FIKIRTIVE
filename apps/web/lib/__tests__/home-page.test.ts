@@ -434,7 +434,7 @@ describe("Home 收静:常驻说明句降到最少(Founder 2026-08-25 批的样�
     "Choose a channel to get started",
     "We’ll securely verify your access",
     "We’ll import your publishing history",
-    "Otto will learn and surface insights",
+    "Otto learns what is working for you",
   ];
 
   it("② 步进器:disconnected 时只站得住「Not connected」那一句说明", () => {
@@ -446,7 +446,7 @@ describe("Home 收静:常驻说明句降到最少(Founder 2026-08-25 批的样�
   it("② 步进器:ready 时只站得住「Ready」那一句说明", () => {
     const text = visibleText(render({ kind: "connected", accountLabel: "Meta account", transient: false }));
     const present = STEP_DESCRIPTIONS.filter((sentence) => text.includes(sentence));
-    expect(present, "ready 时上屏的步说明不止一句(或不是一句)").toEqual(["Otto will learn and surface insights"]);
+    expect(present, "ready 时上屏的步说明不止一句(或不是一句)").toEqual(["Otto learns what is working for you"]);
   });
 
   /**
