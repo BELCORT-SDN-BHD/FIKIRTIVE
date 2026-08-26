@@ -92,6 +92,13 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   const anchorRef = useRef<string | null>(null);
   const timersRef = useRef<number[]>([]);
   const runSeqRef = useRef(0);
+  /**
+   * 存档的一面镜子。Quick create 那条延时回调跑在 920ms 之后,闭包里那份存档是**按下发送
+   * 那一刻**的旧快照 —— 等待期间商家星标了一张、加了一个包、传了一张图,用旧快照合并写
+   * 回去就把这几件事悄悄抹掉了。所以落地那一刻读这里,不读闭包。
+   */
+  const archiveRef = useRef(archive);
+  useEffect(() => { archiveRef.current = archive; }, [archive]);
 
   useEffect(() => () => { timersRef.current.forEach((timer) => window.clearTimeout(timer)); }, []);
 
@@ -286,7 +293,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
         duration: `${FIXTURE_VIDEO_CONCEPT_SECONDS}s`,
       }));
       const landed = commit(
-        addLibraryAssets(archive, made),
+        // 读-改-写:合并的是**此刻**的存档,不是按下发送那一刻的旧快照。
+        addLibraryAssets(archiveRef.current, made),
         request.kind === "video"
           ? `${countLabel(made.length)} in your Library. Video is a still stand-in, not a playable video — ${credits} cr.`
           : `${countLabel(made.length)} in your Library — ${credits} cr.`,
