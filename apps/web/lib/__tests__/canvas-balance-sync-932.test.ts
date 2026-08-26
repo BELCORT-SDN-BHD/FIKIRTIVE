@@ -38,6 +38,9 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { clearToasts, installToastEnvironment, latestToast, settleToasts, withToaster } from "./__helpers__/toast-probe";
+installToastEnvironment();
 import { outOfCreditsMessage } from "@/lib/credit-format";
 
 const mocks = vi.hoisted(() => ({
@@ -93,6 +96,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  clearToasts();
   if (root) await act(async () => root?.unmount());
   container?.remove();
   root = null;
@@ -106,7 +110,8 @@ async function renderSurface(): Promise<void> {
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root!.render(createElement(R22CanvasSurface, { runtimeContext: RUNTIME_CONTEXT, entities: [] }));
+    // 回执由根布局上的 Toaster 画(审计 A-4),挂在同一棵树里。
+    root!.render(withToaster(createElement(R22CanvasSurface, { runtimeContext: RUNTIME_CONTEXT, entities: [] })));
   });
   await act(async () => { await Promise.resolve(); });
 }
@@ -169,10 +174,11 @@ describe("钱不够时说实话,不发明第二套说法", () => {
     // 服务端拼的就是这一句(`outOfCreditsMessage` 是它唯一的出处,#699/#979)。
     const serverSentence = outOfCreditsMessage(8);
     await act(async () => { mocks.onError.current!(serverSentence); });
+    await settleToasts();
 
-    expect(container!.textContent, "商家读到的不是服务端那一句").toContain(serverSentence);
+    expect(latestToast(), "商家读到的不是服务端那一句").toContain(serverSentence);
     // 报价被复述成第二个数字、或凭空出现一个余额,都是这条要挡的事。
-    expect(container!.textContent).not.toContain("1,240");
+    expect(document.body.textContent).not.toContain("1,240");
   });
 
   it("这一面自己不重打一份「钱不够」措辞 —— 它只转述服务端说的话", async () => {
