@@ -74,6 +74,9 @@ const R22_SURFACES = [
   "app/approvals/loading.tsx",
   "app/billing/loading.tsx",
   "app/create/loading.tsx",
+  // Library 的等待画面 2026-08-26 从「880px 单栏六方块」重画成落定页真的那副双栏骨架,
+  // 一并补进名单 —— 上面那段话说的正是这件事:不上名单,四条通用围栏一条也扫不到它。
+  "app/library/loading.tsx",
   "app/routines/loading.tsx",
 ] as const;
 

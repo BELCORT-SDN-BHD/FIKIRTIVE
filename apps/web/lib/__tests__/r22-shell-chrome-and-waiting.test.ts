@@ -28,6 +28,7 @@ import { readOk, type HomeData } from "@/components/home/home-data";
 import HomeLoading from "@/app/(home)/loading";
 import ApprovalsLoading from "@/app/approvals/loading";
 import CreateLoading from "@/app/create/loading";
+import LibraryLoading from "@/app/library/loading";
 import RoutinesLoading from "@/app/routines/loading";
 
 vi.mock("next/navigation", () => ({
@@ -148,6 +149,7 @@ describe("每一扇门都有等待画面", () => {
     ["Home", HomeLoading],
     ["Approvals", ApprovalsLoading],
     ["Create", CreateLoading],
+    ["Library", LibraryLoading],
     ["Routines", RoutinesLoading],
   ] as const)("%s 的骨架挂着 data-r22-skeleton(循环动效的总闸)", (_name, Component) => {
     expect(renderToStaticMarkup(h(Component))).toContain("data-r22-skeleton");
@@ -156,9 +158,35 @@ describe("每一扇门都有等待画面", () => {
   it.each([
     ["Approvals", ApprovalsLoading, "r22-approvals"],
     ["Create", CreateLoading, "r22-projects"],
+    ["Library", LibraryLoading, "r22-library"],
     ["Routines", RoutinesLoading, "r22-routines"],
   ] as const)("%s 的骨架用落定画面同一个根容器 .%s", (_name, Component, rootClass) => {
     expect(renderToStaticMarkup(h(Component))).toContain(`class="${rootClass}"`);
+  });
+
+  /**
+   * Library 的骨架单拎出来钉一遍**双栏**这件事。
+   *
+   * 上一版画的是 880px 单栏六方块 —— 那是工作台重建之前的形状,落定页早就是 `.r22-lib` 的
+   * 168px + 1fr。根容器那条断言只管最外层,管不到里面画错栏;这四条管的正是里面:
+   * 左边那条薄导航、右边工具排、按日分组、六列网格,四个容器 class 一个都不许少,
+   * 而且几何必须由 `r22-library.css` 出(所以断言 class,不断言像素)。
+   */
+  it("Library 的骨架是落定页那副双栏,不是旧的 880px 单栏", () => {
+    const markup = renderToStaticMarkup(h(LibraryLoading));
+    for (const cls of ["r22-lib", "r22-lib-nav", "r22-lib-main", "r22-lib-tools", "r22-lib-groups", "r22-lib-grid", "r22-lib-tile"]) {
+      expect(markup, `骨架里找不到 .${cls} —— 形状又跟落定页对不上了`).toContain(`class="${cls}"`);
+    }
+    expect(markup, "880px 单栏是重建之前的形状,不许回来").not.toContain("max-w-[880px]");
+  });
+
+  it("Library 的骨架把栏宽行高交给 r22-library.css,自己不复刻一份几何", () => {
+    const source = readFileSync(path.join(APP_DIR, "library/loading.tsx"), "utf8");
+    expect(source, "骨架必须 import 真页面那份 CSS,否则 .r22-lib 那批 class 在等待态是空的").toContain('import "@/components/library/r22-library.css";');
+  });
+
+  it("Library 的骨架给等待中的商家留了一句可读的状态", () => {
+    expect(renderToStaticMarkup(h(LibraryLoading))).toContain("Loading your Library");
   });
 });
 
