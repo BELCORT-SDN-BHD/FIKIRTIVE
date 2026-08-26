@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 const LABEL_STYLE: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  letterSpacing: "0.04em",
+  letterSpacing: "var(--r22-track-caps)",
   color: "var(--muted-foreground)",
   margin: 0,
 };

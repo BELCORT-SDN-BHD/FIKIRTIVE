@@ -81,7 +81,7 @@ export function buildSettingsSections(args: {
             >
               <div>
                 <div className="cv-set-hint">Credit balance</div>
-                <div style={{ fontSize: 38, fontWeight: 700, letterSpacing: "-0.02em" }}>
+                <div style={{ fontSize: 38, fontWeight: 700, letterSpacing: "var(--r22-track-display-lg)" }}>
                   {creditsLabel(account.balance)}
                 </div>
                 {account.reserved > 0 ? (

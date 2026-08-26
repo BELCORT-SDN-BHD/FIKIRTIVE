@@ -93,7 +93,7 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto?: (prompt: s
             onClick={() => setActive(i)}
             style={{ textAlign: "left", cursor: "pointer", border: "1px solid var(--border)", background: "var(--card)", borderRadius: "14px", padding: "16px", color: "var(--foreground)" }}
           >
-            <div style={{ fontSize: "0.75rem", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: 0.4 }}>{i.category}</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "var(--r22-track-caps)" }}>{i.category}</div>
             <div style={{ fontSize: "0.9375rem", fontWeight: 600, marginTop: 2 }}>{i.title}</div>
             <div style={{ fontSize: "0.8125rem", color: "var(--muted-foreground)", marginTop: "4px" }}>{i.description}</div>
           </button>

@@ -31,7 +31,7 @@ function Notice({ title, message }: { title: string; message: string }) {
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground">
           <AlertCircle className="size-5" />
         </span>
-        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Broadcasts</p>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">CRM Broadcasts</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{title}</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">{message}</p>
         <Button asChild className="mt-6" variant="secondary"><Link href="/crm/broadcasts"><ArrowLeft />Back to broadcasts</Link></Button>

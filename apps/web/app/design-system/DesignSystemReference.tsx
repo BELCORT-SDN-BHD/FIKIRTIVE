@@ -83,7 +83,7 @@ function SectionHeading({ index, title }: { index: string; title: string }) {
       <span className="font-mono text-xs uppercase tracking-[var(--tracking-mono-label)] text-muted-foreground">
         {index}
       </span>
-      <h2 className="text-lg font-semibold tracking-[-0.012em] text-foreground">{title}</h2>
+      <h2 className="text-lg font-semibold tracking-[var(--r22-track-display)] text-foreground">{title}</h2>
     </div>
   );
 }
@@ -193,11 +193,11 @@ export function DesignSystemReference() {
       <header className="mb-14">
         <span
           className="text-foreground"
-          style={{ fontWeight: 750, letterSpacing: "-0.03em", fontSize: 28 }}
+          style={{ fontWeight: 750, letterSpacing: "var(--r22-track-display)", fontSize: 28 }}
         >
           fikirtive
         </span>
-        <h1 className="mt-3 text-2xl font-semibold tracking-[-0.02em] text-foreground">
+        <h1 className="mt-3 text-2xl font-semibold tracking-[var(--r22-track-display)] text-foreground">
           Design system
         </h1>
         <p className="mt-1 text-base text-muted-foreground">The marketing OS.</p>

@@ -459,3 +459,115 @@ describe("R22 地基围栏 ⑤ 禁新增裸 letter-spacing —— 字距只许�
     ).toEqual([]);
   });
 });
+
+/* ── 围栏 ⑥ tsx 侧禁裸 tracking-[…] / letterSpacing(字距梯扩面到组件层) ────────── */
+
+/**
+ * 围栏 ⑤ 只圈 `r22-*.css`。字距梯真正流失的地方是 tsx 里的 Tailwind 任意值
+ * `tracking-[…]` 和内联 `style={{ letterSpacing: … }}`——2026-08-26 字距收敛扫尾
+ * (跟在 ⑤ 之后那一轮)实测全站散着约 60 处。本轮已收静的面钉进这里,ratchet 只减不增。
+ *
+ * 范围**不是**全仓 tsx——`components/otto/{panel,conversation}`、`components/canvas`
+ * (除 CanvasLineagePanel 外)、`components/library`、`components/projects`、
+ * `components/otto-iq`、`MentionInput.tsx` 当时另有 worker 在动,没有收静基线,圈进来
+ * 只会红在别人的在飞改动上。这张清单只登记本轮实测收静完毕的面;新收静一面,在这里加
+ * 一行,不是把整个目录一次性圈进来。
+ */
+const TSX_FENCE_FILES: string[] = [
+  ...readdirSync(path.join(WEB_ROOT, "components/ui"))
+    .filter((name) => name.endsWith(".tsx"))
+    .map((name) => `components/ui/${name}`),
+  ...(function walkCrm(): string[] {
+    const root = path.join(WEB_ROOT, "components/crm");
+    const out: string[] = [];
+    function walk(dir: string) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith(".tsx")) {
+          out.push(path.relative(WEB_ROOT, full));
+        }
+      }
+    }
+    walk(root);
+    return out.sort();
+  })(),
+  "components/otto/OttoSchedule.tsx",
+  "components/otto/OttoAnalytics.tsx",
+  "components/otto/OttoDiscover.tsx",
+  "components/otto/settings/sections.tsx",
+  "app/profile/page.tsx",
+  "app/profile/ProfileNames.tsx",
+  "app/billing/page.tsx",
+  "app/billing/loading.tsx",
+  "app/design-system/DesignSystemReference.tsx",
+  "components/asset/DetailPanel.tsx",
+  "components/canvas/CanvasLineagePanel.tsx",
+];
+
+/**
+ * 允许留在梯外的裸字距,按「文件 → 值列表」登记。**只有 DesignSystemReference 的
+ * mono-label 一项**:那 4 处用的是 `--tracking-mono-label`(0.12em,r22-tokens.css 旧豁免,
+ * 6ce4716a 那一轮定的),不是本轮字距梯的五档之一。design-system 参考页不是商家可见面
+ * (只有开发者会打开 `/design-system`),所以本轮保留这个既有豁免而不是强改成 caps 档 ——
+ * 改了反而混淆两套用途不同的 token。ratchet 只许变短。
+ */
+const TSX_TRACK_EXEMPT: Record<string, string[]> = {
+  "app/design-system/DesignSystemReference.tsx": ["var(--tracking-mono-label)"],
+};
+
+const TSX_TRACK_TOKEN_RE = /^var\(--r22-track-[a-z0-9-]+\)$/;
+
+/** 一个 tsx 文件里全部 `tracking-[…]` 任意值(去重、排序)。 */
+function tsxTrackingArbitraryValues(source: string): string[] {
+  const re = /tracking-\[([^\]]+)\]/g;
+  const out = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source))) out.add(match[1].trim());
+  return [...out].sort();
+}
+
+/** 一个 tsx 文件里全部内联 `letterSpacing:` 字符串值(去重、排序)。数字/无单位字面量
+ *  (2026-08-26 OttoDiscover 那处 `letterSpacing: 0.4` 的写法)也当作裸值抓,不放过。 */
+function tsxInlineLetterSpacingValues(source: string): string[] {
+  const re = /letterSpacing:\s*(?:"([^"]*)"|(-?[\d.]+))/g;
+  const out = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source))) out.add((match[1] ?? match[2]).trim());
+  return [...out].sort();
+}
+
+const TSX_FENCE_SITES = TSX_FENCE_FILES.map((relative) => {
+  const source = readFileSync(path.join(WEB_ROOT, relative), "utf8");
+  const values = [...tsxTrackingArbitraryValues(source), ...tsxInlineLetterSpacingValues(source)];
+  return [relative, [...new Set(values)].sort()] as const;
+}).filter(([, values]) => values.length > 0);
+
+describe("R22 地基围栏 ⑥ tsx 侧禁裸 tracking-[…] / letterSpacing —— 字距梯扩面", () => {
+  it("围栏本身没有空转:圈到的文件里真的有 tracking-[…] 或内联 letterSpacing", () => {
+    expect(TSX_FENCE_SITES.length, "一个带字距声明的 tsx 都没圈到 —— 这条围栏在核对空气").toBeGreaterThan(0);
+    expect(tsxTrackingArbitraryValues('className="tracking-[0.08em]"')).toEqual(["0.08em"]);
+    expect(tsxTrackingArbitraryValues('className="tracking-[var(--r22-track-caps)]"')).toEqual([
+      "var(--r22-track-caps)",
+    ]);
+    expect(tsxInlineLetterSpacingValues('style={{ letterSpacing: "0.4em" }}')).toEqual(["0.4em"]);
+    expect(tsxInlineLetterSpacingValues("style={{ letterSpacing: 0.4 }}")).toEqual(["0.4"]);
+  });
+
+  it.each(TSX_FENCE_SITES)("%s 的字距全部落在字距梯上", (relative, values) => {
+    const allowed = new Set(TSX_TRACK_EXEMPT[relative] ?? []);
+    const offenders = values.filter((value) => !TSX_TRACK_TOKEN_RE.test(value) && !allowed.has(value));
+    expect(
+      offenders,
+      `字距请用字距梯 token(--r22-track-*);确需新档先入册 r22-tokens.css —— 裸值:${offenders.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("豁免名单只减不增:今天只有 design-system 参考页的既有 mono-label 一项", () => {
+    expect(Object.keys(TSX_TRACK_EXEMPT)).toEqual(["app/design-system/DesignSystemReference.tsx"]);
+    expect(TSX_TRACK_EXEMPT["app/design-system/DesignSystemReference.tsx"]).toEqual([
+      "var(--tracking-mono-label)",
+    ]);
+  });
+});

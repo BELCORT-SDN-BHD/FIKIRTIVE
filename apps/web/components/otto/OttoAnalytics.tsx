@@ -59,7 +59,7 @@ export function OttoAnalytics({
       <div className="mx-auto max-w-[880px] px-7 py-6">
         {/* Header */}
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Analytics</h1>
+          <h1 className="text-[1.5rem] font-bold tracking-[var(--r22-track-display)]">Analytics</h1>
           {source}
           <div className="hidden flex-1 sm:block" />
           {isReady && (
@@ -89,7 +89,7 @@ export function OttoAnalytics({
         {/* F37: transient Graph failure — the token is fine, so offer a retry, never a reconnect. */}
         {data.state === "transientError" && (
           <div className="rounded-[16px] border border-border bg-card p-[18px] text-center flex flex-col items-center gap-3 py-14">
-            <div className="text-[1.5rem] font-bold tracking-[-0.02em]">
+            <div className="text-[1.5rem] font-bold tracking-[var(--r22-track-display)]">
               Couldn&apos;t reach Meta just now
             </div>
             <div className="text-[13px] text-muted-foreground" style={{ maxWidth: 360 }}>
@@ -116,10 +116,10 @@ export function OttoAnalytics({
                     <div key={`${v.currency ?? ""}|${v.accountName ?? ""}|${i}`}>
                       <div
                         className={
-                          "font-bold tracking-[-0.02em] " +
+                          "font-bold " +
                           (!data.empty && k.values.length > 1
-                            ? "text-[20px] leading-[1.25]"
-                            : "text-[26px]")
+                            ? "text-[20px] leading-[1.25] tracking-[var(--r22-track-display)]"
+                            : "text-[26px] tracking-[var(--r22-track-display-lg)]")
                         }
                       >
                         {v.text}
@@ -258,7 +258,7 @@ function ConnectPanel({
   return (
     <div className="rounded-[16px] border border-border bg-card p-[18px] text-center flex flex-col items-center gap-3 py-14">
       <CoralCloud size={40} />
-      <div className="text-[1.5rem] font-bold tracking-[-0.02em]">
+      <div className="text-[1.5rem] font-bold tracking-[var(--r22-track-display)]">
         {isConnect ? "Connect Instagram or Facebook to see your numbers" : "Reconnect Meta"}
       </div>
       <div className="text-[13px] text-muted-foreground" style={{ maxWidth: 360 }}>

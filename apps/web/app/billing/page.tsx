@@ -38,7 +38,7 @@ export default async function BillingPage({
   return (
     <div className="gb" style={{ flex: 1, overflow: "auto", minHeight: "100dvh", padding: 24 }}>
       <div style={{ maxWidth: 560, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.03em", margin: 0 }}>Billing</h1>
+        <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: "var(--r22-track-display-lg)", margin: 0 }}>Billing</h1>
         <p className="text-muted-foreground" style={{ fontSize: 16, marginTop: 6, marginBottom: 24 }}>
           Buy credits to power your campaigns.
         </p>
@@ -83,7 +83,7 @@ export default async function BillingPage({
           </div>
           {account ? (
             <>
-              <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: "-0.02em", marginTop: 6 }}>
+              <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: "var(--r22-track-display-lg)", marginTop: 6 }}>
                 {formatCredits(account.balance)}{" "}
                 <span className="text-muted-foreground" style={{ fontSize: 18, fontWeight: 500 }}>
                   credits

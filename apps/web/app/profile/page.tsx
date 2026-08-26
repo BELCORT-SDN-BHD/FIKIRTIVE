@@ -27,7 +27,7 @@ export default async function ProfilePage() {
   return (
     <div className="gb" style={{ flex: 1, overflow: "auto", minHeight: "100dvh", padding: 24 }}>
       <div style={{ maxWidth: 480, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.03em", margin: 0 }}>Profile</h1>
+        <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: "var(--r22-track-display-lg)", margin: 0 }}>Profile</h1>
         <p className="text-muted-foreground" style={{ fontSize: 16, marginTop: 6, marginBottom: 24 }}>
           Who you are on Fikirtive.
         </p>

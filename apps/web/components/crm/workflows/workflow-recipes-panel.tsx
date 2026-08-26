@@ -84,7 +84,7 @@ export default function WorkflowRecipesPanel({ initialPolicies }: { initialPolic
   return (
     <section id="recipes" className="scroll-mt-8" aria-labelledby="workflow-recipes-heading">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Configure</p>
+        <p className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-brand-strong">Configure</p>
         <h2 id="workflow-recipes-heading" className="mt-2 text-2xl font-semibold tracking-tight">Recipes and business hours</h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Recipes create ordinary workflow definitions and disabled Routine drafts. Installing a recipe never authorizes customer contact.</p>
       </div>

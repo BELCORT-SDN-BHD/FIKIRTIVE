@@ -77,7 +77,7 @@ function UnavailableState() {
     <main className="min-h-dvh bg-background px-4 py-10 text-foreground sm:px-6">
       <section className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-6 shadow-[var(--shadow-sm)] sm:p-8">
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground"><AlertCircle className="size-5" /></span>
-        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Workflows</p>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">CRM Workflows</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This workflow is not available</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           It may not exist, or you may not have access. Nothing was changed, and no workflow data was guessed.
@@ -329,7 +329,7 @@ export default function WorkflowDetailPage({
         <header className="mt-4 flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Contact journey" : "Rule"}</Badge>{routineReadError ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutineCount > 0 ? <Badge variant="brand">{activeRoutineCount} active {activeRoutineCount === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div>
-            <h1 className="mt-3 truncate text-2xl font-semibold tracking-[-0.03em] sm:text-3xl">{definition.name}</h1>
+            <h1 className="mt-3 truncate text-2xl font-semibold tracking-[var(--r22-track-display-lg)] sm:text-3xl">{definition.name}</h1>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2"><Button type="button" variant="ghost" disabled={busy !== null} onClick={() => void refresh()}>{busy === "refresh" ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh</Button><ArchiveWorkflowDialog definition={definition} onArchived={(archivedDefinition) => { setDefinition(archivedDefinition); void refreshRoutines(); }} /></div>
         </header>
@@ -350,12 +350,12 @@ export default function WorkflowDetailPage({
         {actionError ? <div className="mt-4 rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={actionError}><p className="font-semibold">The workflow action could not finish</p><p className="mt-1">{workflowErrorMessage(actionError)}</p></div> : null}
 
         <section id="rule-file" className="scroll-mt-20 pt-8" aria-labelledby="rule-file-heading">
-          <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Define</p><h2 id="rule-file-heading" className="mt-2 text-2xl font-semibold tracking-tight">What this workflow does</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">A plain-language summary of the current rule. Open Advanced details below to edit the underlying rule file.</p></div><Badge variant={validation.variant}>{validation.label}</Badge></div>
+          <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-brand-strong">Define</p><h2 id="rule-file-heading" className="mt-2 text-2xl font-semibold tracking-tight">What this workflow does</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">A plain-language summary of the current rule. Open Advanced details below to edit the underlying rule file.</p></div><Badge variant={validation.variant}>{validation.label}</Badge></div>
 
           <dl className="mt-5 grid gap-4 rounded-[var(--radius-card)] border border-border bg-card p-5 sm:grid-cols-3">
-            <div><dt className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Trigger</dt><dd className="mt-1.5 text-sm font-medium leading-6">{ruleSummary.trigger}</dd></div>
-            <div><dt className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Action</dt><dd className="mt-1.5 text-sm font-medium leading-6">{ruleSummary.actions}</dd></div>
-            <div><dt className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Status</dt><dd className="mt-1.5 text-sm font-medium leading-6">{statusSummary}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">Trigger</dt><dd className="mt-1.5 text-sm font-medium leading-6">{ruleSummary.trigger}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">Action</dt><dd className="mt-1.5 text-sm font-medium leading-6">{ruleSummary.actions}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">Status</dt><dd className="mt-1.5 text-sm font-medium leading-6">{statusSummary}</dd></div>
           </dl>
           {ruleSummary.condition ? <p className="mt-2 text-xs text-muted-foreground">Condition: {ruleSummary.condition}</p> : null}
 

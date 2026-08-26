@@ -710,7 +710,7 @@ export default function DetailPanel({
               const shownFinalPrompt = (selectedVariant ? selectedVariant.finalPrompt : gen.finalPrompt) ?? null;
               return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "var(--r22-track-caps)", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
                     What the engine ran
                   </span>
                   <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, ...(shownFinalPrompt ? {} : { fontStyle: "italic" }) }}>
@@ -741,7 +741,7 @@ export default function DetailPanel({
                 sentPromptReceipt 的同一条纪律对齐。 */}
             {gen.kind === "image" && gen.sentPrompt != null && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "var(--r22-track-caps)", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
                   What we sent to the engine
                 </span>
                 <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
@@ -755,7 +755,7 @@ export default function DetailPanel({
                 Same cost in every shape. */}
             {gen.kind === "image" && imageAspectRatios.length > 0 && chosenImageAspect && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Image shape</span>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "var(--r22-track-caps)", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Image shape</span>
                 <ImageShapePicker
                   compact
                   label="Image shape"
@@ -775,7 +775,7 @@ export default function DetailPanel({
                 being told a ratio. The price below follows the chosen spec. */}
             {gen.kind === "image" && videoSpec && videoSpecMenu && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Video spec</span>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "var(--r22-track-caps)", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Video spec</span>
                 <VideoSpecPicker
                   compact
                   value={videoSpec}

@@ -59,7 +59,7 @@ function DetailUnavailable() {
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground">
           <AlertCircle className="size-5" />
         </span>
-        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Reports</p>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">CRM Reports</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This broadcast report is not available</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           It may not exist, or you may not have access. Nothing was changed, and no report data was guessed.

@@ -42,7 +42,7 @@ function DeniedState() {
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground">
           <AlertCircle className="size-5" />
         </span>
-        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Reports</p>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">CRM Reports</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This report workspace is not available</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           It may not exist, or your account may not have access. Delivery reports are owner-scoped and read-only.
@@ -113,8 +113,8 @@ export default function BroadcastReportListPage({
             <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">
               <ArrowLeft className="size-4" />Return to Otto
             </Link>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Delivery reports</h1>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-brand-strong">CRM</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[var(--r22-track-display-lg)] sm:text-4xl">Delivery reports</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
               Review each broadcast across sending attempts, provider receipts, and reconciliation. These axes stay separate so missing evidence never looks successful.
             </p>

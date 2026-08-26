@@ -437,7 +437,7 @@ export default function RoutineAuthorizationPanel({
     <section id="routine" className="scroll-mt-8" aria-labelledby="routine-heading">
       <div className="flex items-start justify-between gap-5">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Authorize</p>
+          <p className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-brand-strong">Authorize</p>
           <h2 id="routine-heading" className="mt-2 text-2xl font-semibold tracking-tight">Routine authorization</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
             A Routine is standing permission for one exact rule revision, scope, budget, expiry, and summary policy. Publishing a rule does not activate it.

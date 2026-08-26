@@ -76,7 +76,7 @@ function DetailUnavailable() {
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground">
           <AlertCircle className="size-5" />
         </span>
-        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Inbox</p>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-muted-foreground">CRM Inbox</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This conversation is not available</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           It may not exist, or you may not have access. Nothing was changed. This message is the same whether the
@@ -186,8 +186,8 @@ function DetailErrorState({
           <ArrowLeft className="size-4" />Back to Inbox
         </Link>
         <header className="mt-4 border-b border-border pb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">This conversation could not load</h1>
+          <p className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-brand-strong">CRM · Conversation</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[var(--r22-track-display-lg)] sm:text-4xl">This conversation could not load</h1>
         </header>
         <section className="mt-6 rounded-[var(--radius-card)] border border-dashed border-destructive/40 bg-card px-6 py-14 text-center shadow-sm">
           <AlertCircle className="mx-auto size-8 text-destructive" />
@@ -524,8 +524,8 @@ function ConversationWorkspace({
 
         <header className="mt-4 flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{identity.contact.name}</h1>
+            <p className="text-xs font-semibold uppercase tracking-[var(--r22-track-caps)] text-brand-strong">CRM · Conversation</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[var(--r22-track-display-lg)] sm:text-4xl">{identity.contact.name}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{channelLabel(identity.channel)} · {identity.externalId}</p>
           </div>
           <div className="flex flex-wrap gap-2">

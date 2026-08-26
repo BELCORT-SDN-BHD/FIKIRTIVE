@@ -181,7 +181,7 @@ export function CustomersPreviewPage() {
             Return to Otto
           </Link>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+            <h1 className="text-3xl font-semibold tracking-[var(--r22-track-display-lg)] sm:text-4xl">
               {PREVIEW_PAGE_TITLE}
             </h1>
             <Badge variant="warning">Preview</Badge>
