@@ -24,6 +24,10 @@ const R22_SURFACES = [
   "components/library/LibraryCard.tsx",
   "components/library/LibraryDetailLayer.tsx",
   "components/library/LibraryPackDialog.tsx",
+  // 仓库里的快产车间是后加的第七个文件,上一版没跟着上名单 —— 上面那段话说的正是这件事,
+  // 而它自己就漏了一次:一整条生成条(输入、分段控件、参数弹层、问题卡单选组)从头到尾
+  // 没被这几条围栏扫过。
+  "components/library/LibraryQuickCreate.tsx",
   "components/otto-iq/R22OttoIQView.tsx",
   // Approvals 八件升级之后一个组件画不下整面,拆成了壳 + 卡 + 详情 + 时间线 + 改版流。
   // 这几条通用围栏(禁裸交互元素、禁手搓语义、DialogTitle 配对、分组组件)是**逐文件**跑的,
