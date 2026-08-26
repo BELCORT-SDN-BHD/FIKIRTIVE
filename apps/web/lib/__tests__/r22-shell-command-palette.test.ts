@@ -268,3 +268,94 @@ describe("⑦ cmd+K 零入场动画 —— C-7 的碑,换件的时候最容易�
     expect(shell, "没有接上 ui/command").toContain('from "@/components/ui/command"');
   });
 });
+
+/* ── ⑧ 一行里两段字不叠印 ─────────────────────────────────────────────────── */
+
+/**
+ * Founder 2026-08-26 截图报的「每行两段文字叠印」不是布局塌了,是**颜色渗漏**:
+ * next-themes 在系统深色时给 <html> 落 `.dark`,shadcn 那三枚文字类
+ * (`text-popover-foreground` / `text-foreground` / `data-[selected=true]:text-accent-foreground`)
+ * 跟着翻成 #FAFAFA;而 r22 这一层是固定浅色(面还是白的),label 那半截白字压在白面上
+ * 只剩一层影,右边写死 `--r22-ink-3` 的 mono detail 照常实色 —— 看上去就是两段字叠在一起。
+ * 同一枚渗漏还把 `ui/kbd` 的 `bg-muted` 底翻成近黑。
+ *
+ * 这里不钉像素:把真渲染出来的那棵树,连同真的 `r22-dashboard.css`,和三枚**深色字面值**的
+ * 打桩类一起丢进 jsdom 的层叠里,问「这一行的字最后由谁上色」。答案必须是 r22 的墨,
+ * 不是那三枚会翻脸的 token。行宽那条同理:靠 `flex` 的从属关系断言,不量像素。
+ */
+describe("⑧ 深色渗漏:一行里 label 与 detail 不叠印", () => {
+  /** 三枚 shadcn 文字类在系统深色下的真实落点(globals.css `.dark` 段:#FAFAFA)。 */
+  const DARK_INK = "rgb(250, 250, 250)";
+
+  function paintDarkTailwind(): void {
+    const style = document.createElement("style");
+    style.textContent = [
+      ".text-popover-foreground{color:" + DARK_INK + "}",
+      ".text-foreground{color:" + DARK_INK + "}",
+      '.data-\\[selected\\=true\\]\\:text-accent-foreground[data-selected="true"]{color:' + DARK_INK + "}",
+      ".bg-muted{background-color:rgb(22, 22, 25)}",
+      source("components/r22/r22-dashboard.css"),
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  afterEach(() => { document.head.querySelectorAll("style").forEach((node) => node.remove()); });
+
+  it("label 的颜色由 r22 的墨说了算,不是深色下会翻脸的那三枚 token", async () => {
+    await mountShell();
+    await pressCmdK();
+    paintDarkTailwind();
+
+    const rows = items();
+    expect(rows.length, "一条结果都没有 —— 下面在核对空气").toBeGreaterThan(2);
+
+    for (const row of rows) {
+      const label = row.querySelector("span")!;
+      const detail = row.querySelector("small")!;
+      expect(getComputedStyle(row).color, "整行的字被深色 token 接管了").not.toBe(DARK_INK);
+      expect(getComputedStyle(label).color, "label 被深色 token 接管了 —— 白字白底,就是那个『叠印』").not.toBe(DARK_INK);
+      expect(getComputedStyle(label).color, "label 不再由 r22 的墨上色").toContain("--r22-ink");
+      // 两段字必须分得开:label 实墨,detail 是浅一档的 ink-3。
+      expect(getComputedStyle(detail).color, "detail 不再是浅一档的 mono 灰").toContain("--r22-ink-3");
+      expect(getComputedStyle(detail).color).not.toBe(getComputedStyle(label).color);
+    }
+  });
+
+  it("选中那一行也一样 —— `data-[selected=true]:text-accent-foreground` 压得住", async () => {
+    await mountShell();
+    await pressCmdK();
+    paintDarkTailwind();
+
+    const selected = selectedItem();
+    expect(selected, "开局没有一条被选中").toBeTruthy();
+    expect(getComputedStyle(selected!).color, "选中行的字被 accent-foreground 接管了").not.toBe(DARK_INK);
+    expect(getComputedStyle(selected!.querySelector("span")!).color).toContain("--r22-ink");
+  });
+
+  it("底部与输入行的按键底色也没被 `bg-muted` 翻成近黑", async () => {
+    await mountShell();
+    await pressCmdK();
+    paintDarkTailwind();
+
+    const keys = [...document.body.querySelectorAll<HTMLElement>(".r22-dashboard-search-dialog kbd")];
+    expect(keys.length, "面里一颗按键都没有").toBeGreaterThan(2);
+    for (const key of keys) expect(getComputedStyle(key).backgroundColor, "按键底被深色 muted 接管了").toContain("--r22-chrome");
+  });
+
+  it("一行就是一个 <a> 摊满整行:label 撑开,detail 落在行尾", async () => {
+    await mountShell();
+    await pressCmdK();
+    paintDarkTailwind();
+
+    for (const row of items()) {
+      expect(row.children.length, "一行里不止一个孩子 —— 结构变了,detail 可能不在同一条流里").toBe(1);
+      const link = row.children[0] as HTMLElement;
+      expect(link.tagName, "行里那一个孩子不是 <a>").toBe("A");
+      expect(getComputedStyle(link).display, "行内那条 <a> 不是 flex —— 图标/label/detail 不再排在一条线上").toBe("flex");
+      // cmdk 的 item 自己是 flex 容器:<a> 不长,就缩成内容宽,detail 会紧贴在 label 屁股后面。
+      expect(getComputedStyle(link).flexGrow, "<a> 没有摊满整行 —— detail 会贴着 label,不在行尾").toBe("1");
+      expect(getComputedStyle(row.querySelector("span")!).flexGrow, "label 没有撑开 —— detail 顶不到行尾").toBe("1");
+      expect(getComputedStyle(row.querySelector("small")!).flexGrow, "detail 不该跟着撑").not.toBe("1");
+    }
+  });
+});
