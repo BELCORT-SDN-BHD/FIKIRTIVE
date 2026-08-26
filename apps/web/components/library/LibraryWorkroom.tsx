@@ -30,6 +30,7 @@ import {
   fixtureQuoteCredits,
 } from "@/components/canvas/r22-canvas-fixture";
 
+import { ImageEditLayer, IMAGE_EDIT_CREDITS, type ImageEditOutcome } from "./ImageEditLayer";
 import { LibraryCard } from "./LibraryCard";
 import { LibraryDetailLayer } from "./LibraryDetailLayer";
 import { LibraryNav } from "./LibraryNav";
@@ -39,6 +40,8 @@ import { LibraryToolbar } from "./LibraryToolbar";
 import {
   addLibraryAssets,
   attachToPack,
+  editedLibraryAsset,
+  editedVersionsOf,
   groupLibraryByDay,
   libraryCanvasHref,
   libraryProjects,
@@ -78,6 +81,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [detailId, setDetailId] = useState<string | null>(null);
+  /** 正在改哪一张。`null` = 没在改。它与详情层不会同时开着 —— 从详情层进去时那一层先关。 */
+  const [editId, setEditId] = useState<string | null>(null);
   const [packTarget, setPackTarget] = useState<"selection" | string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   /** `null` = 没在改名。空串是「改名中,但先清空了」—— 两件事不能共用一个假值。 */
@@ -151,6 +156,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   const openPackId = packIdOf(section);
   const openPack = archive.packs.find((pack) => pack.id === openPackId) ?? null;
   const detail = detailId ? archive.assets.find((asset) => asset.id === detailId) ?? null : null;
+  const editing = editId ? archive.assets.find((asset) => asset.id === editId) ?? null : null;
   const selectedCount = selected.length;
   const packDialogIds = packTarget === "selection" ? selected : packTarget ? [packTarget] : [];
 
@@ -174,8 +180,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      // 详情层与两个弹层是 Radix 自己的地盘,那一记归它们,工作台不抢。
-      if (detailId || packTarget || confirmRemove) return;
+      // 详情层、编辑层与两个弹层是 Radix 自己的地盘,那一记归它们,工作台不抢。
+      if (detailId || editId || packTarget || confirmRemove) return;
       // 生成条开着的时候那一记归它。它自己也守着同一条链,这里明写一句是因为两个监听器
       // 挂在同一个 window 上、次序由挂载顺序决定 —— 靠次序对上的东西迟早会错一次。
       if (createOpen) return;
@@ -186,7 +192,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmRemove, createOpen, detailId, packTarget, selected.length]);
+  }, [confirmRemove, createOpen, detailId, editId, packTarget, selected.length]);
 
   /* ── 批量动作 ─────────────────────────────────────────────────────────────── */
 
@@ -227,6 +233,24 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     if (!openPack || !name) return setRenaming(null);
     commit({ ...archive, packs: archive.packs.map((pack) => (pack.id === openPack.id ? { ...pack, name } : pack)) }, `This pack is now called ${name}.`);
     setRenaming(null);
+  }
+
+  /* ── 改这一张 ─────────────────────────────────────────────────────────────── */
+
+  /**
+   * 一次改动落地:库里多出**新的一条**,原图一个字节都不动。
+   *
+   * 幂等在这里是看得见的一句话,不是一次静默的吞掉:同一张图上按第二次同一个预设,
+   * `editedLibraryAsset` 给出的是同一个 id,所以这里如实回「已经改过这一版」——
+   * 报一句 Done 再什么都不做,商家会以为库里多了一张,回去找却找不到。
+   */
+  function makeEdit(sourceAsset: LibraryAsset, change: string): ImageEditOutcome {
+    const created = editedLibraryAsset({ source: sourceAsset, change });
+    const current = archiveRef.current;
+    if (current.assets.some((row) => row.id === created.id)) return "existing";
+    return commit(addLibraryAssets(current, [created]), `${created.name} is in your Library — ${IMAGE_EDIT_CREDITS} cr.`)
+      ? "added"
+      : "no-room";
   }
 
   /* ── 上传 ─────────────────────────────────────────────────────────────────── */
@@ -435,6 +459,17 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           onStar={(row) => patch([row.id], (item) => ({ ...item, starred: !item.starred }), row.starred ? `${row.name} is out of Starred.` : `${row.name} is in Starred.`)}
           onDownload={download}
           onAddToPack={(row) => { setDetailId(null); setPackTarget(row.id); }}
+          onEdit={(row) => { setDetailId(null); setEditId(row.id); }}
+          onOpenSource={(id) => setDetailId(id)}
+        />
+      ) : null}
+
+      {editing ? (
+        <ImageEditLayer
+          asset={editing}
+          versions={editedVersionsOf(archive.assets, editing.id)}
+          onClose={() => setEditId(null)}
+          onMakeEdit={(change) => makeEdit(editing, change)}
         />
       ) : null}
 

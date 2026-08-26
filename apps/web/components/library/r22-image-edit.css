@@ -1,0 +1,79 @@
+/* 单图编辑层(Library 详情与画布逐图动作排开的是同一层)。
+ *
+ * 这一层 portal 到 body 外面,只读得到 `:root` 上的 `--r22-*` 央册 token —— 所以整份画法
+ * 自带,连 scrim 都是自己的一条,不借任何一面的 css(借了,画布那一面就会开出一个没有底的层)。
+ *
+ * 入场关键帧**专属命名、每一帧都带着居中的那半个 -50%**(approvals 42503fa5 的学费):
+ * 借别人的关键帧、或者写一帧 `transform: none`,层会当场飞出视口。
+ * 动效纪律(Emil):只写具体属性、≤200ms、ease-out;减弱动效下是去运动,不是换一种动法。
+ */
+
+.r22-edit-scrim { position: fixed; inset: 0; z-index: 50; background: var(--r22-scrim); }
+
+.r22-edit-layer { position: fixed; top: 50%; left: 50%; z-index: 51; display: grid; grid-template-columns: minmax(0, 1fr) 344px; grid-template-rows: minmax(0, 1fr); width: min(1040px, calc(100vw - 64px)); max-height: min(740px, calc(100vh - 64px)); overflow: hidden; transform: translate(-50%, -50%); transform-origin: center; border: 1px solid var(--r22-line); border-radius: 16px; background: var(--r22-surface); color: var(--r22-ink); font-family: var(--font-geist-sans), Geist, Arial, sans-serif; box-shadow: var(--r22-shadow-lg); }
+.r22-edit-layer[data-state="open"] { animation: r22-edit-layer-in 180ms cubic-bezier(.16, 1, .3, 1) both; }
+@keyframes r22-edit-layer-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); } to { opacity: 1; transform: translate(-50%, -50%); } }
+
+.r22-edit-stage { display: flex; min-width: 0; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: var(--r22-chrome); }
+.r22-edit-frame { position: relative; height: min(460px, 56vh); min-height: 0; max-height: 100%; margin: 0; overflow: hidden; aspect-ratio: 4 / 5; flex: 0 1 auto; border: 1px solid var(--r22-line); border-radius: 12px; background: var(--r22-surface); box-shadow: var(--r22-shadow-sm); }
+.r22-edit-frame img { width: 100%; height: 100%; object-fit: cover; }
+.r22-edit-honest { max-width: 420px; margin: 0; color: var(--r22-ink-3); font-size: var(--r22-text-caption); text-align: center; }
+
+.r22-edit-side { display: flex; min-height: 0; overflow-y: auto; flex-direction: column; gap: 8px; padding: 24px 22px; border-left: 1px solid var(--r22-line); background: var(--r22-surface); }
+.r22-edit-name { margin: 0; padding-right: 28px; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 600; letter-spacing: -.01em; }
+.r22-edit-sub { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.6; }
+.r22-edit-h { margin: 10px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+
+.r22-edit-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.r22-edit-preset { display: grid; grid-template-columns: 22px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; padding: 7px 9px; align-items: center; border: 1px solid var(--r22-line-2); border-radius: 9px; background: var(--r22-surface); text-align: left; transition: border-color 140ms ease-out, background-color 140ms ease-out; }
+.r22-edit-preset i { grid-row: span 2; width: 22px; height: 22px; border: 1px solid var(--r22-line); border-radius: 6px; }
+.r22-edit-preset b { color: var(--r22-ink); font-size: var(--r22-text-caption); font-weight: 500; }
+.r22-edit-preset small { color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); }
+.r22-edit-preset.is-selected { border-color: var(--r22-ink); background: var(--r22-chrome); }
+.r22-edit-preset:disabled { opacity: .55; }
+
+/* 色块 —— CSS 画的示意,不是照片:没有一张真图会在这里暗示「按下去就长这样」。 */
+.r22-edit-preset[data-r22-edit-preset="warmer-light"] i { background: var(--r22-grad-peach); }
+.r22-edit-preset[data-r22-edit-preset="brighter"] i { background: linear-gradient(135deg, var(--r22-swatch-cream), var(--r22-surface)); }
+.r22-edit-preset[data-r22-edit-preset="studio-backdrop"] i { background: linear-gradient(135deg, var(--r22-chrome), var(--r22-line-2)); }
+.r22-edit-preset[data-r22-edit-preset="batik-pattern"] i { background: linear-gradient(135deg, var(--r22-swatch-teal-1), var(--r22-swatch-teal-2)); }
+.r22-edit-preset[data-r22-edit-preset="festive-glow"] i { background: linear-gradient(135deg, var(--r22-swatch-gold-1), var(--r22-swatch-gold-2)); }
+.r22-edit-preset[data-r22-edit-preset="black-and-white"] i { background: linear-gradient(135deg, var(--r22-ink), var(--r22-ink-3)); }
+
+.r22-edit-phrase { min-height: 54px; padding: 8px 10px; border: 1px solid var(--r22-line-2); border-radius: 9px; background: var(--r22-surface); color: var(--r22-ink); font-family: inherit; font-size: var(--r22-text-small); line-height: 1.5; outline: none; resize: none; transition: border-color 140ms ease-out; }
+.r22-edit-phrase:focus-visible { border-color: var(--r22-ink-3); }
+
+.r22-edit-versions { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.r22-edit-version { display: grid; width: 66px; gap: 4px; padding: 4px; flex: none; border: 1px solid var(--r22-line-2); border-radius: 9px; background: var(--r22-surface); transition: border-color 140ms ease-out; }
+.r22-edit-version img { width: 100%; height: 46px; border-radius: 6px; object-fit: cover; background: var(--r22-chrome); }
+.r22-edit-version span { overflow: hidden; color: var(--r22-ink-2); font-size: var(--r22-text-mono-label); text-overflow: ellipsis; white-space: nowrap; }
+.r22-edit-version.is-selected { border-color: var(--r22-ink); }
+
+.r22-edit-acts { display: flex; margin-top: auto; padding-top: 14px; align-items: center; gap: 10px; border-top: 1px solid var(--r22-line); }
+.r22-edit-status { min-width: 0; flex: 1; color: var(--r22-ink-2); font-size: var(--r22-text-mono-label); line-height: 1.4; }
+.r22-edit-go { display: flex; padding: 8px 13px; align-items: center; gap: 6px; flex: none; border: 1px solid var(--r22-ink); border-radius: 8px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-caption); font-weight: 500; transition: background-color 140ms ease-out; }
+.r22-edit-go svg { width: 13px; height: 13px; }
+.r22-edit-go:disabled { opacity: .5; }
+
+.r22-edit-x { position: absolute; top: 13px; right: 13px; z-index: 2; display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; color: var(--r22-ink-2); transition: background-color 140ms ease-out, color 140ms ease-out; }
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-edit-preset:hover:not(:disabled) { border-color: var(--r22-ink-3); }
+  .r22-edit-version:hover { border-color: var(--r22-ink-3); }
+  .r22-edit-go:hover:not(:disabled) { background: var(--r22-ink-hover); }
+  .r22-edit-x:hover { background: var(--r22-chrome); color: var(--r22-ink); }
+}
+
+@media (max-width: 900px) {
+  .r22-edit-layer { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, auto); }
+  .r22-edit-side { border-left: none; border-top: 1px solid var(--r22-line); }
+}
+
+/* 键盘发起的动作零动画(与 Library 两个浮层同一条)。 */
+html[data-kb="1"] .r22-edit-layer,
+html[data-kb="1"] .r22-edit-scrim { animation: none !important; transition: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-edit-layer[data-state="open"] { animation: none; }
+  .r22-edit-preset, .r22-edit-version, .r22-edit-go, .r22-edit-x, .r22-edit-phrase { transition: none; }
+}

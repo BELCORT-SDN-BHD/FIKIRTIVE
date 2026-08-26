@@ -28,6 +28,11 @@ const R22_SURFACES = [
   // 而它自己就漏了一次:一整条生成条(输入、分段控件、参数弹层、问题卡单选组)从头到尾
   // 没被这几条围栏扫过。
   "components/library/LibraryQuickCreate.tsx",
+  // 单图编辑层是 Creation 终章拆出来的第八个文件,两面(Library 详情、画布逐图动作排)开的
+  // 都是它 —— 上面那段话说的正是这件事:新文件不上名单,四条通用围栏一条也扫不到它。
+  "components/library/ImageEditLayer.tsx",
+  // 起手模板那一排同理:它住在 components/creation/,是画布与 Library 共用的第一个组件。
+  "components/creation/CreationTemplateRow.tsx",
   "components/otto-iq/R22OttoIQView.tsx",
   // Approvals 八件升级之后一个组件画不下整面,拆成了壳 + 卡 + 详情 + 时间线 + 改版流。
   // 这几条通用围栏(禁裸交互元素、禁手搓语义、DialogTitle 配对、分组组件)是**逐文件**跑的,

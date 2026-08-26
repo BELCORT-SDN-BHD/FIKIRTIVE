@@ -134,6 +134,9 @@
 .r22-lib-layer-meta time { font-variant-numeric: tabular-nums; }
 .r22-lib-layer-origin { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); text-decoration: none; }
 a.r22-lib-layer-origin { border-bottom: 1px solid var(--r22-line-2); align-self: flex-start; transition: color 140ms ease-out, border-color 140ms ease-out; }
+/* 「Edited from …」—— 与「Made in …」同一档字,只是它按下去回的是原图,不是一块板。 */
+button.r22-lib-layer-source { border-bottom: 1px solid var(--r22-line-2); align-self: flex-start; text-align: left; transition: color 140ms ease-out, border-color 140ms ease-out; }
+.r22-lib-layer-note { margin: 8px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
 .r22-lib-layer-h { margin: 8px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
 .r22-lib-layer-body { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.6; }
 .r22-lib-layer-acts { display: flex; margin-top: auto; padding-top: 14px; gap: 6px; flex-wrap: wrap; border-top: 1px solid var(--r22-line); }
@@ -216,7 +219,7 @@ a.r22-lib-layer-origin { border-bottom: 1px solid var(--r22-line-2); align-self:
   .r22-lib-upload:hover, .r22-lib-make-kind button:hover, .r22-lib-make-shape:hover, .r22-lib-make-shapes button:hover, .r22-lib-make-counts button:hover, .r22-lib-make-x:hover, .r22-lib-ask-acts button:not(.is-primary):hover, .r22-lib-notice-act:hover { background: var(--r22-chrome); }
   .r22-lib-ask-options button:hover { border-color: var(--r22-ink-3); }
   .r22-lib-bulk button:hover { background: var(--r22-ink-hover); }
-  a.r22-lib-layer-origin:hover { color: var(--r22-ink); border-color: var(--r22-ink); }
+  a.r22-lib-layer-origin:hover, button.r22-lib-layer-source:hover { color: var(--r22-ink); border-color: var(--r22-ink); }
 }
 
 @media (max-width: 1180px) { .r22-lib-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
@@ -241,5 +244,5 @@ html[data-kb="1"] .r22-lib-scrim { animation: none !important; transition: none 
 
 @media (prefers-reduced-motion: reduce) {
   .r22-lib-bulk, .r22-lib-layer[data-state="open"], .r22-lib-packlayer[data-state="open"], .r22-lib-make-form, .r22-lib-make-menu, .r22-lib-ask { animation: none; }
-  .r22-lib-tile, .r22-lib-row, .r22-lib-check, .r22-lib-star, .r22-lib-nav li button, .r22-lib-seg button, .r22-lib-layer-acts button, .r22-lib-layer-x, .r22-lib-make-kind button, .r22-lib-make-shape, .r22-lib-make-shapes button, .r22-lib-make-counts button, .r22-lib-ask-options button, .r22-lib-ask-acts button { transition: none; }
+  .r22-lib-tile, .r22-lib-row, .r22-lib-check, .r22-lib-star, .r22-lib-nav li button, .r22-lib-seg button, .r22-lib-layer-acts button, .r22-lib-layer-x, .r22-lib-make-kind button, .r22-lib-make-shape, .r22-lib-make-shapes button, .r22-lib-make-counts button, .r22-lib-ask-options button, .r22-lib-ask-acts button, button.r22-lib-layer-source { transition: none; }
 }

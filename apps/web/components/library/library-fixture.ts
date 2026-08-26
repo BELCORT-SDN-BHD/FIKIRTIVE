@@ -38,6 +38,15 @@ export type LibraryAsset = {
   packIds: string[];
   /** 从 Library 收起来了。不是删除:东西还在它被做出来的那张画布上。 */
   hidden?: boolean;
+  /**
+   * 这一张是从哪一张改出来的(单图编辑做出来的那一条才有)。
+   *
+   * 存 id **和**名字两样:id 是回链要走的路,名字是商家读的那一句「Edited from Raya hero」。
+   * 只存 id,详情层就得回头去库里翻名字 —— 而原图可能已经被商家从库里收起来了,那一句
+   * 就会当场变成一串编号。
+   */
+  editedFromId?: string;
+  editedFromName?: string;
 };
 
 /** 人工策展的合集。商家话术叫「asset pack」,不叫 collection/folder。 */
@@ -356,6 +365,68 @@ export function quickCreateAsset(input: {
     projectName: QUICK_CREATE_PROJECT_NAME,
     packIds: [],
   };
+}
+
+/* ── 单图编辑:从一张改出下一张 ─────────────────────────────────────────────── */
+
+/**
+ * 商家读得到的六个风格预设。形状照 Magnific 的 Restyling:一个色块示意 + 一个短名 ——
+ * 短名本身就是商家会说的那句话("Warmer light"),所以它同时也是落进新名字里的那半句。
+ *
+ * 色块是 CSS 画的(`r22-image-edit.css` 里按 `data-preset` 上色),不是图片:这里不新增
+ * 一个二进制资产,也不拿一张真照片去暗示「按下去会变成这样」。
+ */
+export const IMAGE_EDIT_PRESETS: ReadonlyArray<{ id: string; label: string; hint: string }> = [
+  { id: "warmer-light", label: "Warmer light", hint: "Golden, late afternoon" },
+  { id: "brighter", label: "Brighter", hint: "Lift the whole picture" },
+  { id: "studio-backdrop", label: "Studio backdrop", hint: "Plain sweep behind it" },
+  { id: "batik-pattern", label: "Batik pattern", hint: "Teal batik cloth under it" },
+  { id: "festive-glow", label: "Festive glow", hint: "Warm lights around it" },
+  { id: "black-and-white", label: "Black and white", hint: "No colour at all" },
+];
+
+/** 改动那句话的短名 → id 的一截。同一张图上同一句改动只会得到同一个 id,幂等靠它。 */
+function editSlug(change: string): string {
+  return change.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "edit";
+}
+
+/**
+ * 改出来的那一条长什么样。
+ *
+ * 三件事是刻意的:
+ *   ① **原图一动不动** —— 这是新的一条,不是覆盖。商家改坏了,原来那张还在。
+ *   ② **id 里带着原图与那句改动**(`edit:<原图 id>:<改动>`),所以同一张图上按两次同一个
+ *      预设,库里只会有一条 —— 幂等是 `addLibraryAssets` 按 id 判的,不需要第二套去重。
+ *   ③ **名字是原名加那半句**(「Raya hero, teal batik — Warmer light」),商家在网格里
+ *      一眼看得出这是哪一张的哪一版,不用点开。
+ *
+ * 缩略图仍然是原图那一张:这一面是样机,真的改图还没接上。屏幕上那句诚实话由编辑层自己
+ * 说出来,这里不拿另一张不相干的样张冒充「改完的样子」。
+ */
+export function editedLibraryAsset(input: { source: LibraryAsset; change: string; createdAt?: string }): LibraryAsset {
+  const change = input.change.trim();
+  return {
+    id: `edit:${input.source.id}:${editSlug(change)}`,
+    poster: input.source.poster,
+    kind: "image",
+    name: `${input.source.name} — ${change}`,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    starred: false,
+    source: "made",
+    prompt: change,
+    projectId: input.source.projectId,
+    projectName: input.source.projectName,
+    packIds: [],
+    editedFromId: input.source.id,
+    editedFromName: input.source.name,
+  };
+}
+
+/** 一张图已经改出过哪几版。旧的在前 —— 版本条从「Original」往后读,时间也该往后走。 */
+export function editedVersionsOf(assets: LibraryAsset[], sourceId: string): LibraryAsset[] {
+  return assets
+    .filter((asset) => asset.editedFromId === sourceId && !asset.hidden)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 /** 「Teal batik candle on a tray」→「Teal batik candle 1」。太长的截断,不给商家读一整段。 */

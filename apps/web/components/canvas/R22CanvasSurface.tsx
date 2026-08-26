@@ -31,12 +31,14 @@ import {
   Star,
   Undo2,
   Video,
+  Wand2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CANVAS_HREF, CREATE_NAV_HREF } from "@fikirtive/core/navigation";
 import type { EntityDTO } from "@/lib/types";
 import { canvasHref } from "./canvas-href";
+import { CreationTemplateRow } from "@/components/creation/CreationTemplateRow";
 import { listCanvasNodes, type CanvasNodeDTO } from "@/lib/canvas-actions";
 import type { ImmersiveCanvasRuntimeContext } from "./NorthstarCanvasWorkspace";
 import { freshCanvasActionId, useCanvasGen, type CanvasGenProgress } from "./useCanvasGen";
@@ -57,12 +59,15 @@ import {
   addLibraryAssets,
   attachToPack,
   canvasLibraryAsset,
+  editedLibraryAsset,
+  editedVersionsOf,
   LIBRARY_FIXTURE_KEY,
   newPackId,
   readLibraryArchive,
   writeLibraryArchive,
   type LibraryArchive,
 } from "@/components/library/library-fixture";
+import { ImageEditLayer, IMAGE_EDIT_CREDITS, type ImageEditOutcome } from "@/components/library/ImageEditLayer";
 import "./r22-canvas.css";
 
 type CanvasTool = "select" | "box" | "hand" | "image" | "star" | "arrange";
@@ -551,8 +556,8 @@ function OttoMark() {
   return <Image className="r22-otto-mark" src="/brand/r22-otto-thinking.svg" width={120} height={110} alt="" />;
 }
 
-/** 一张成品的动作排(Grok 的结果排形状):星标 / 下载 / 再来一批 / 收进素材包。 */
-type ArtAction = "star" | "download" | "variants" | "pack";
+/** 一张成品的动作排(Grok 的结果排形状):星标 / 下载 / 改这一张 / 再来一批 / 收进素材包。 */
+type ArtAction = "star" | "download" | "edit" | "variants" | "pack";
 
 function ArtCell({
   art,
@@ -601,6 +606,12 @@ function ArtCell({
         {kind === "video" ? null : (
           <Button unstyled type="button" aria-label={`Download ${art.label}`} data-canvas-art-action="download" onClick={() => onAction("download", art)}>
             <Download aria-hidden="true" />
+          </Button>
+        )}
+        {/* 概念卡没有可改的那一帧,所以它这一格也没有这一颗 —— 灰着放在那儿同样是一句假话。 */}
+        {kind === "video" ? null : (
+          <Button unstyled type="button" aria-label={`Edit ${art.label}`} data-canvas-art-action="edit" onClick={() => onAction("edit", art)}>
+            <Wand2 aria-hidden="true" />
           </Button>
         )}
         <Button unstyled type="button" aria-label={`Make more like ${art.label}`} data-canvas-art-action="variants" onClick={() => onAction("variants", art)}>
@@ -832,6 +843,8 @@ export function R22CanvasSurface({
   const [library, setLibrary] = useState<LibraryArchive>({ assets: [], packs: [] });
   /** 此刻在哪一张成品上选素材包。`null` = 没在选。 */
   const [packMenuFor, setPackMenuFor] = useState<string | null>(null);
+  /** 正在改板上的哪一张。`null` = 没在改。开的是 Library 那一层同一个组件,不是第二份。 */
+  const [editArt, setEditArt] = useState<FixtureArt | null>(null);
   const [newPackName, setNewPackName] = useState("");
   const [tool, setTool] = useState<CanvasTool>("select");
   /** 平移与倍率是同一件事的两半(原型 L5985 的 `view`),所以它们是同一个状态。 */
@@ -1105,6 +1118,8 @@ export function R22CanvasSurface({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (event.defaultPrevented) return;
+      // 编辑层是 Radix 自己的地盘,那一记归它 —— 板不许跟着剥掉自己的一层。
+      if (editArt) return;
       if (projectMenuOpen || attachOpen || ratioOpen || libraryOpen || packMenuFor) {
         event.preventDefault();
         setProjectMenuOpen(false);
@@ -1120,7 +1135,7 @@ export function R22CanvasSurface({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [attachOpen, libraryOpen, packMenuFor, projectMenuOpen, ratioOpen, selectedArt.length]);
+  }, [attachOpen, editArt, libraryOpen, packMenuFor, projectMenuOpen, ratioOpen, selectedArt.length]);
 
   /** 一次拖拽/框选/平移走完之后的收尾:解掉监听、放开手指、退出「拖拽中」与「手势中」。 */
   const endGesture = useCallback((move: (event: PointerEvent) => void, up: (event: PointerEvent) => void) => {
@@ -1527,6 +1542,39 @@ export function R22CanvasSurface({
     );
   }
 
+  /** 板上这一张在库里长什么样。改图那一层拿它当原图,回链与版本条读的也是它。 */
+  function artAsLibraryAsset(art: FixtureArt) {
+    return canvasLibraryAsset({
+      projectId: runtimeContext.activeProjectId,
+      projectName: libraryProjectName,
+      artId: art.id,
+      name: art.label,
+      src: art.src,
+    });
+  }
+
+  /**
+   * 板上改出来的一版:库里多出**新的一条**,板上那一张一个字节都不动。
+   *
+   * 原图与改出来的那一条一起写进去 —— 板上这一张可能还没进过库(商家没做过任何一批,
+   * 屏幕上就是开局那一批),而一条「Edited from …」指着一个库里没有的东西,回链就是死的。
+   */
+  function makeArtEdit(art: FixtureArt, change: string): ImageEditOutcome {
+    const source = artAsLibraryAsset(art);
+    const created = editedLibraryAsset({ source, change });
+    const stored = readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY));
+    if (stored.assets.some((row) => row.id === created.id)) {
+      setLibrary(stored);
+      return "existing";
+    }
+    if (!commitLibrary(addLibraryAssets(stored, [source, created]))) {
+      setNotice("There is no room left in this preview, so nothing was kept.");
+      return "no-room";
+    }
+    setNotice(`${created.name} is in your Library — ${IMAGE_EDIT_CREDITS} cr.`);
+    return "added";
+  }
+
   /** 挂一张参考图上去。同一张挂两次只留一条 —— 多按一下不该变成两张一样的参考。 */
   function attachReference(attachment: CanvasAttachment) {
     setAttachOpen(false);
@@ -1578,6 +1626,14 @@ export function R22CanvasSurface({
     }
     if (action === "download") {
       downloadArt(art);
+      return;
+    }
+    if (action === "edit") {
+      // 版本条要读的是**此刻**库里的实况(商家可能刚在 Library 那一面改过一版)。
+      setLibrary(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
+      setPackMenuFor(null);
+      setEditArt(art);
+      setNotice("");
       return;
     }
     if (action === "pack") {
@@ -1745,6 +1801,19 @@ export function R22CanvasSurface({
     setNotice("Task cancelled — no credits were used.");
   }
 
+  /**
+   * 板上此刻一批东西都没有 —— 起手模板那一排只在这时出现。
+   *
+   * 判词与板本身画的是**同一条**:样例板恢复完了、项目开得起来、而这个工作区没有开局那一批
+   * (`EmptyWorld` 那一支)。板上已经有东西的时候不出这一排 —— 那时商家要的是「再改一版」,
+   * 不是「从头起手」,跟手改一版的 chips 就长在最后那一批下面。
+   */
+  const boardEmpty = fixture
+    && fixtureRouteState === "ready"
+    && fixtureRestored
+    && Boolean(fixtureWorkspaceId)
+    && fixtureWorkspaceId !== "batik-house";
+
   return (
     <section
       className="r22-canvas-surface"
@@ -1879,6 +1948,10 @@ export function R22CanvasSurface({
           bottom:20px + ~91px 高),这是原型自己的坑,照抄坑不叫忠实。
         */}
         <div className="r22-canvas-dock" data-r22-canvas-dock>
+        {/* 空板上的起手模板 —— 与 Library 快产车间是同一个组件、同一批句子。点一下只把句子
+            填进下面那个输入框,发送仍然是商家自己按的那一下;问题卡在的时候整排锁住,与
+            参数弹层那几个控件同一条纪律。 */}
+        {boardEmpty ? <CreationTemplateRow locked={Boolean(pendingQuestion)} onPick={(template) => setMessage(template.prompt)} /> : null}
         <div className={`r22-canvas-notice${notice ? " is-visible" : ""}`} aria-live="polite"><span>{notice}</span>{fixtureJob?.status === "failed" && (fixtureSendOutcome === "error" || fixtureSendOutcome === "unknown") ? <Button unstyled type="button" disabled={submitting} onClick={retryFixtureSend}>{submitting ? "Retrying…" : fixtureSendOutcome === "unknown" ? "Check this request" : "Retry"}</Button> : null}</div>
 
         <form
@@ -2009,6 +2082,19 @@ export function R22CanvasSurface({
             </Button>
           ))}
         </div>
+
+        {/* 改这一张 —— 与 Library 单图详情开的是**同一个**组件、同一份存档、同一个价钱。 */}
+        {editArt ? (() => {
+          const source = artAsLibraryAsset(editArt);
+          return (
+            <ImageEditLayer
+              asset={source}
+              versions={editedVersionsOf(library.assets, source.id)}
+              onClose={() => setEditArt(null)}
+              onMakeEdit={(change) => makeArtEdit(editArt, change)}
+            />
+          );
+        })() : null}
 
         <div className="r22-canvas-zoom" data-r22-canvas-zoom>
           <Button unstyled type="button" aria-label="Undo" onClick={undoMove}><Undo2 aria-hidden="true" /></Button>

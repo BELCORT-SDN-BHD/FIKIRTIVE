@@ -10,7 +10,7 @@
  * `r22-lib-layer-in` 就是照这条规矩写的,测试也钉着它。
  */
 
-import { Download, FolderPlus, Star } from "lucide-react";
+import { Download, FolderPlus, Star, Wand2 } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,8 @@ export function LibraryDetailLayer({
   onStar,
   onDownload,
   onAddToPack,
+  onEdit,
+  onOpenSource,
 }: {
   asset: LibraryAsset;
   fixture: boolean;
@@ -32,6 +34,10 @@ export function LibraryDetailLayer({
   onStar: (asset: LibraryAsset) => void;
   onDownload: () => void;
   onAddToPack: (asset: LibraryAsset) => void;
+  /** 开那一层「改这一张」。视频没有可改的那一帧,所以那颗键在视频上是关着的。 */
+  onEdit: (asset: LibraryAsset) => void;
+  /** 这一张是改出来的时候,回到它的原图。 */
+  onOpenSource: (assetId: string) => void;
 }) {
   const href = asset.projectId ? libraryCanvasHref(asset.projectId, fixture) : null;
 
@@ -49,6 +55,12 @@ export function LibraryDetailLayer({
             <i aria-hidden="true">·</i>
             <time dateTime={asset.createdAt}>{dayLabel(asset.createdAt)}</time>
           </p>
+          {/* 改出来的那一条先说自己是从哪一张来的 —— 那一句本身就是回原图的路。 */}
+          {asset.editedFromId && asset.editedFromName ? (
+            <Button unstyled type="button" className="r22-lib-layer-origin r22-lib-layer-source" data-r22-lib-edited-from={asset.editedFromId} onClick={() => onOpenSource(asset.editedFromId!)}>
+              Edited from {asset.editedFromName}
+            </Button>
+          ) : null}
           {href && asset.projectName ? (
             <Link className="r22-lib-layer-origin" href={href}>Made in {asset.projectName}</Link>
           ) : (
@@ -64,10 +76,17 @@ export function LibraryDetailLayer({
             <Button unstyled type="button" aria-pressed={asset.starred} onClick={() => onStar(asset)}>
               <Star fill={asset.starred ? "currentColor" : "none"} aria-hidden="true" />{asset.starred ? "Starred" : "Star"}
             </Button>
+            <Button unstyled type="button" disabled={asset.kind === "video"} data-r22-lib-edit onClick={() => onEdit(asset)}>
+              <Wand2 aria-hidden="true" />Edit image
+            </Button>
             <Button unstyled type="button" onClick={onDownload}><Download aria-hidden="true" />Download</Button>
             <Button unstyled type="button" onClick={() => onAddToPack(asset)}><FolderPlus aria-hidden="true" />Add to pack</Button>
             {href ? <Link className="r22-lib-layer-open" href={href}>Open in canvas</Link> : null}
           </div>
+          {/* 关着的那颗键要说得出为什么关着 —— 灰着不说话,商家只会以为坏了。 */}
+          {asset.kind === "video" ? (
+            <p className="r22-lib-layer-note" data-r22-lib-edit-note>Editing works on pictures, so this clip cannot be restyled here.</p>
+          ) : null}
         </div>
 
         <DialogClose className="r22-lib-layer-x" aria-label="Close this picture">
