@@ -227,10 +227,14 @@ function researchPayloadOf(message: ChatThreadDTO["messages"][number]): OttoRese
  * 答尾那一排后续问题(Jasper 形)。
  *
  * 三条都命中 `responseFor` 的真路由 —— 点一下必须真的答得出来,不能是三句好看的空话。
+ *
+ * beta 卫生(2026-08-26):前两条原来问的是审批与例程,答案里点名 Approvals / Schedule /
+ * routine —— beta 那三扇门已经藏起来,商家照着答案去找会找不到。这一排与起手卡是**同一批**
+ * 主动摆在商家面前的问题,所以换成同一批创作线的问题(见 `R22_STARTERS` 的理由)。
  */
-const R22_FOLLOWUPS = [
-  "Why is this waiting for review?",
-  "What changes while a routine is paused?",
+export const R22_FOLLOWUPS = [
+  "What does this cost before I run it?",
+  "Where do my finished pictures go?",
   "Where did Otto learn this?",
 ] as const;
 
@@ -241,10 +245,17 @@ const R22_FOLLOWUPS = [
  * —— 原型同一处这么分(`data-otto-starter` 存预填的提问句,`<b>`/`<span>` 存另外两句可见
  * 文案),因为可见文案是说给商家听的「这格是干嘛的」,不是真的要问 Otto 的那句话。三句
  * `prompt` 各自保证命中 `responseFor` 的一条真路由,不落到兜底的 "Workspace help"。
+ *
+ * **beta 卫生(2026-08-26)换掉前两格**。原型那两格问的是审批与例程,答出来的话点名
+ * Approvals / Schedule / routine —— 这三扇门 beta 都藏了(`BETA_HIDDEN_NAV_KEYS`),
+ * 而这三格是商家按下 Otto 宠物后看到的**第一屏**:第一屏就把人指去三扇进不去的门,是
+ * beta 里最贵的一种误导。换上来的两句是创作线上商家真的会先问的两件事(这一下要花多少、
+ * 做完的东西去哪儿了),各自在 `responseFor` 里有自己的一条路,答案里零被藏门字样。
+ * 第三格指 Otto IQ,门在 beta 范围内,原样保留。
  */
-const R22_STARTERS = [
-  { title: "Explain what needs review", detail: "Read the approval and its source.", prompt: "Why is this waiting for review?" },
-  { title: "See what Otto does without you", detail: "Check what a routine does while you are away.", prompt: "What changes while a routine is paused?" },
+export const R22_STARTERS = [
+  { title: "See the price before you run it", detail: "Check what something costs before it starts.", prompt: "What does this cost before I run it?" },
+  { title: "Find your finished pictures", detail: "Check where finished work is kept.", prompt: "Where do my finished pictures go?" },
   { title: "See where Otto learned this", detail: "Check the source behind what Otto knows.", prompt: "Where did Otto learn this?" },
 ] as const;
 

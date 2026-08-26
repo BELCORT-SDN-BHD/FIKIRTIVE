@@ -103,6 +103,8 @@ export interface OttoPanelShellProps {
   /** 头部那行会话名(R22)。 */
   panelTitle?: string;
   headerBusy?: boolean;
+  /** 已经在一条新对话上 —— 头部那颗 ＋ 在这个状态下做不成任何事(见 `OttoPanel` 同名 prop)。 */
+  atNewChat?: boolean;
   /**
    * 深链「到达」信号(`?otto=1`,规格书 §2.5;判官 r2 根因修复,PR #1086)——盖过
    * localStorage 记的上次开合状态。每次这个值相对上一次真的变化(且不是 `null`)都算一次
@@ -133,6 +135,7 @@ export function OttoPanelShell({
   onNewChat,
   panelTitle,
   headerBusy,
+  atNewChat,
   forceOpenSignal,
   variant = "legacy",
 }: OttoPanelShellProps) {
@@ -349,6 +352,7 @@ export function OttoPanelShell({
             onNewChat={onNewChat}
             title={panelTitle}
             headerBusy={headerBusy}
+            atNewChat={atNewChat}
             contextChip={contextChip}
             contextAttached={contextAttached}
             quickChips={quickChips}

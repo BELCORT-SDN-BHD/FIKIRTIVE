@@ -7,8 +7,10 @@
  * **标题 / 导语 / 要点 / 一句诚实注脚**。上一版实现把这一整套压成了一句自己编的话 ——
  * 那句话既不按话题分路,也没有把「这一轮什么都没动」写成一条可断言的事实。
  *
- * 五条路按原型的顺序与正则逐字搬过来(顺序有意义:`schedule` 走审批那一路,而不是
+ * 原型五条路按它的顺序与正则逐字搬过来(顺序有意义:`schedule` 走审批那一路,而不是
  * 兜底那一路)。分路读的是**上下文 + 商家这句话**拼起来的小写串,与原型同一条。
+ * beta 卫生那一票在这五条**之后**、兜底之前又补了两条(花多少 / 做完的去哪儿),
+ * 排在后面就意味着原型那五路的分路结果一个字都没变 —— 理由写在那两条自己头上。
  *
  * 两处与原型不同,各自的理由写在它自己的位置上:
  *   ① 原型从 `window.RT` / `window.FK` 这两个全局读工作区信号;这里改成入参
@@ -176,6 +178,47 @@ export function responseFor(context: string, prompt: string, signals: OttoAnswer
         "Open Analytics for a priced insight; nothing here has run one.",
       ],
       note: "No analysis was started and no credits were spent.",
+    };
+  }
+
+  /* ── beta 卫生(2026-08-26)新增的两路 ────────────────────────────────────────
+   *
+   * 这两路是为空态起手卡补的**落点**,不是改既有回答:它们排在原型五路**之后**,所以
+   * 原型那五路一句话、一个字都没有换路。补的理由是 beta 只卖创作 —— 审批 / 例程 /
+   * 分析三扇门已经藏起来,起手卡不能再把商家的第一句话送进那三路;而创作线上商家最先
+   * 问的两件事(这一下要花多少、做完的东西去哪儿了)在原型里根本没有路,不补就只能落到
+   * 兜底那一路,而兜底那一路正好又在讲例程与审批。
+   *
+   * 这两路读的是 `said`(**只有商家这句话**),不是上面五路那个「上下文 + 这句话」的串。
+   * 理由是一条实测:按串走的话,商家人在 Library 上随便打一句 "hello",页名里那个
+   * library 就会把这一路点着,答非所问。页名说明的是他在看什么,不是他在问什么;
+   * 这两个问题只该由他自己问出口才算数。
+   */
+  const said = String(prompt ?? "").toLowerCase();
+
+  if (/cost|price|charge|credit|spend|how much/.test(said)) {
+    return {
+      title: "What this costs",
+      lead: "Nothing here starts paid work. Anything that costs credits shows you the price first and waits for you to say yes.",
+      bullets: [
+        "You see the price before the work starts, not after it finishes.",
+        "Credits leave your balance only when the work finishes.",
+        "Work you cancel, and work that fails, is never charged.",
+      ],
+      note: "This chat did not start any work or spend credits.",
+    };
+  }
+
+  if (/librar|finished|picture|image|photo|where do my|saved work/.test(said)) {
+    return {
+      title: "Where your finished work is kept",
+      lead: "Everything Otto finishes is saved in your Library, filed under the project it was made for.",
+      bullets: [
+        "Open Library to see every finished picture, newest first.",
+        "Each picture keeps the project it came from, so you can trace where it came from.",
+        "Closing this panel does not delete anything you have made.",
+      ],
+      note: "This chat did not move, delete, or download anything.",
     };
   }
 

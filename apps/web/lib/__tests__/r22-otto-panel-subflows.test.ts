@@ -21,7 +21,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OttoPanelShell, type OttoPanelShellProps } from "@/components/otto/panel/OttoPanelShell";
-import { OttoPanelConversation, OTTO_PANEL_CONTEXT_DEFAULT } from "@/components/otto/panel/OttoPanelConversation";
+import { OttoPanelConversation, OTTO_PANEL_CONTEXT_DEFAULT, R22_STARTERS, R22_FOLLOWUPS } from "@/components/otto/panel/OttoPanelConversation";
 import { OttoRoomSwitcher, OTTO_ROOMS_ID } from "@/components/otto/panel/OttoRoomSwitcher";
 import {
   OTTO_ANSWER_CONFIRM,
@@ -240,24 +240,24 @@ describe("空态与起手卡(原型 starterHTML,L6709)", () => {
     );
   });
 
-  it("三张起手卡的可见文案逐字等于原型 .otto-starter", () => {
+  it("三张起手卡的可见文案:两格换成创作线,第三格逐字等于原型 .otto-starter", () => {
     const cards = starterCards();
     expect(cards).toHaveLength(3);
     expect(cards.map((c) => c.querySelector("b")?.textContent)).toEqual([
-      "Explain what needs review",
-      "See what Otto does without you",
+      "See the price before you run it",
+      "Find your finished pictures",
       "See where Otto learned this",
     ]);
     expect(cards.map((c) => c.querySelector("span")?.textContent)).toEqual([
-      "Read the approval and its source.",
-      "Check what a routine does while you are away.",
+      "Check what something costs before it starts.",
+      "Check where finished work is kept.",
       "Check the source behind what Otto knows.",
     ]);
   });
 
   it.each([
-    ["Explain what needs review", "Why is this waiting for review?", "Why this needs review"],
-    ["See what Otto does without you", "What changes while a routine is paused?", "What Otto does without you"],
+    ["See the price before you run it", "What does this cost before I run it?", "What this costs"],
+    ["Find your finished pictures", "Where do my finished pictures go?", "Where your finished work is kept"],
     ["See where Otto learned this", "Where did Otto learn this?", "Where Otto learned this"],
   ])("卡「%s」发出去的是预填句「%s」而不是卡标题,并且命中真路由,不落到 Workspace help(%s)", async (title, prompt, expectedTitle) => {
     vi.useFakeTimers();
@@ -676,5 +676,81 @@ describe("子流 ④:Switching to fullscreen view(原型 setFullscreen)", () => 
     await act(async () => expandButton(panel).click());
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(panelEl().style.width).toBe("408px");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// beta 卫生 P2-15 / P2-16 —— 主动摆在商家面前的问题不许指向被藏的门
+// ---------------------------------------------------------------------------
+/**
+ * beta V1 只卖创作,壳把五扇门藏了(`BETA_HIDDEN_NAV_KEYS`:campaign / approvals /
+ * schedule / analytics / routines)。侧栏与 cmd+K 收得干净,漏的是 Otto 面板 ——
+ * 空态那三格起手卡是商家按下宠物后看到的**第一屏**,答尾那一排后续问题是他读完一个答案
+ * 之后最顺手的下一下。这两处原来有两格问的是审批与例程,答出来的话点名 Approvals /
+ * Schedule / routine,商家照着去找会找不到那扇门。
+ *
+ * 这一族考的是**问题连同它的答案全文**,不是只考卡上那句字面:卡面干净、答案里点名一扇
+ * 进不去的门,骗的程度一模一样。
+ *
+ * 边界(有意为之):这里只管**我们主动摆出来的**问题。商家自己打字问审批或例程时,
+ * `responseFor` 那两路照旧原样答 —— 那是被动应答,答得诚实比装作没有这回事好。
+ */
+describe("起手卡与后续问题不指向 beta 藏起来的门 (P2-15 / P2-16)", () => {
+  /** 与壳里的 `BETA_HIDDEN_NAV_KEYS` 同一份名单;答案里也不许出现它们的复数/动词形。 */
+  const HIDDEN_WORDS = ["approval", "schedule", "routine", "campaign", "analytics"];
+
+  /** 一句问题的答案摊平成一段字 —— 标题、导语、每一条要点、注脚,一个字都不漏。 */
+  function answerText(prompt: string, context: string): string {
+    const answer = responseFor(context, prompt, KNOWN);
+    return [answer.title, answer.lead, ...answer.bullets, answer.note].join(" ").toLowerCase();
+  }
+
+  /** 面板真的会用到的两种上下文:认不出这一页时那句,和 beta 还开着的四扇门的名字。 */
+  const CONTEXTS = [OTTO_PANEL_CONTEXT_DEFAULT, "Home", "Create", "Library", "Otto IQ"];
+
+  it.each(R22_STARTERS.map((starter) => [starter.title, starter.prompt] as const))(
+    "起手卡「%s」的答案里没有一个被藏门的字样",
+    (_title, prompt) => {
+      for (const context of CONTEXTS) {
+        const text = answerText(prompt, context);
+        for (const word of HIDDEN_WORDS) {
+          expect(text, `${prompt} @ ${context} 提到了 ${word}`).not.toContain(word);
+        }
+      }
+    },
+  );
+
+  it.each(R22_FOLLOWUPS.map((prompt) => [prompt] as const))(
+    "后续问题「%s」的答案里没有一个被藏门的字样",
+    (prompt) => {
+      for (const context of CONTEXTS) {
+        const text = answerText(prompt, context);
+        for (const word of HIDDEN_WORDS) {
+          expect(text, `${prompt} @ ${context} 提到了 ${word}`).not.toContain(word);
+        }
+      }
+    },
+  );
+
+  it("六句问题都命中一条真路由 —— 一句都不许落到兜底的 Workspace help", () => {
+    for (const prompt of [...R22_STARTERS.map((s) => s.prompt), ...R22_FOLLOWUPS]) {
+      expect(responseFor(OTTO_PANEL_CONTEXT_DEFAULT, prompt, KNOWN).title).not.toBe("Workspace help");
+    }
+  });
+
+  it("起手卡与后续问题是同一批问题 —— 将来只改一处就会红", () => {
+    expect(R22_STARTERS.map((starter) => starter.prompt)).toEqual([...R22_FOLLOWUPS]);
+  });
+
+  /**
+   * 新补的两路排在原型五路**之后**,所以原型那五路的分路结果必须一个字都没变。
+   * 这一条钉的是「补路没有顺手改路」——被动应答保留不动的那条边界,在这里是可断言的。
+   */
+  it("被动应答那三路照旧:商家自己问审批 / 例程 / 出处,答的还是原来那三张卡", () => {
+    expect(responseFor("Approvals", "Why is this waiting for review?", KNOWN).title).toBe("Why this needs review");
+    expect(responseFor("Home", "What changes while a routine is paused?", KNOWN).title).toBe("What Otto does without you");
+    expect(responseFor("Otto IQ", "Where did Otto learn this?", KNOWN).title).toBe("Where Otto learned this");
+    expect(responseFor("Home", "how did last 30 days go?", KNOWN).title).toBe("About these numbers");
+    expect(responseFor("Home", "hello there", KNOWN).title).toBe("Workspace help");
   });
 });

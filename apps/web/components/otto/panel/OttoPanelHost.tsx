@@ -759,6 +759,10 @@ export function OttoPanelHost({
       // 正在把一条会话的消息取回来时,头部这两颗会改变「现在显示哪一条」的按钮先禁掉。
       // 真正的守卫是意图号(见上面 `claimIntent`);禁用只是让这一下不必发生。
       headerBusy={openingThreadId !== null}
+      // 「已经在新对话上」= 没有会话开着,也没有一句等着发出去的第一句 —— 正是 `openNewChat`
+      // 做完之后的那个状态。再按一次 ＋ 只会把同一批 setState 再写一遍同样的值,商家看不到
+      // 任何变化。这一颗因此在这里禁掉(beta 卫生 P2-19)。
+      atNewChat={activeThreadId === null && pendingFirst === null}
       forceOpenSignal={forceOpenToken}
     >
       <PanelOpenWatcher onOpenChange={setOpen} />

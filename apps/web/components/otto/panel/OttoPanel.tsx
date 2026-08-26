@@ -82,6 +82,15 @@ export interface OttoPanelProps {
   title?: string;
   /** 面板正在把一条会话的消息取回来 —— 会改变「现在显示哪一条」的那两颗先禁掉。 */
   headerBusy?: boolean;
+  /**
+   * 现在**已经**在一条新对话上(没有会话开着、也没有等着发的第一句)。
+   *
+   * 头部那颗 ＋ 的整件事就是「把面板换到一条新对话上」。已经在新对话上时按下去,状态一个
+   * 字都不会变、屏幕上一个像素都不会动、也没有任何提示 —— 商家按了一下,什么都没发生,
+   * 只能怀疑是不是坏了。这一颗因此在这个状态下禁用:一个不能改变任何事的按钮,应该看起来
+   * 就不能按(beta 卫生 P2-19,2026-08-26)。
+   */
+  atNewChat?: boolean;
   contextChip?: OttoPanelContextChip;
   /**
    * 这一轮会不会自动把商家看的这一页当上下文(W2-8)。
@@ -130,6 +139,7 @@ export function OttoPanel({
   onNewChat,
   title,
   headerBusy = false,
+  atNewChat = false,
   contextChip,
   contextAttached = false,
   children,
@@ -413,7 +423,9 @@ export function OttoPanel({
           {onNewChat && (
             // 原型 L5447 的 `#ottoNew`,可及名字用它的原话 "New conversation" —— 面板里
             // 每一处讲的都是 conversation(改名/删除弹窗也是),不该只有这一颗叫 chat。
-            <PanelIconButton label="New conversation" disabled={headerBusy} onClick={onNewChat}>
+            //
+            // `atNewChat` 那一路见 prop 上的说明:已经在新对话上时它做不成任何事,所以不许按。
+            <PanelIconButton label="New conversation" disabled={headerBusy || atNewChat} onClick={onNewChat}>
               <Plus className="size-4" strokeWidth={1.9} />
             </PanelIconButton>
           )}

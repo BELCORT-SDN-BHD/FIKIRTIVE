@@ -612,3 +612,42 @@ describe("chip 点失败照前门的形状说话 (P2-2)", () => {
     expect(el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.disabled).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// beta 卫生 P2-19 —— 头部那颗 ＋ 在已经是新对话时是死的
+// ---------------------------------------------------------------------------
+/**
+ * 面板头部并排两颗都写着 "New conversation":左边那颗是会话名(按下去开切换器),右边
+ * 那颗 ＋ 是「换到一条新对话上」。审计实测右边那颗在**新对话状态下**按了什么都不发生 ——
+ * 没有 DOM 变化、没有提示、没有报错。它不是坏的,是这一刻本来就无事可做;既然无事可做,
+ * 就该看起来不能按。
+ *
+ * 这两条考的是**真的商家壳 + 真的 host 接线**,不是给组件手喂一个 prop:接线断了(host
+ * 忘了传)组件测试照样绿,而商家手上那颗照样是死的。
+ */
+describe("头部 ＋ 在新对话状态下禁用 (beta 卫生 P2-19)", () => {
+  const newChat = (el: HTMLDivElement) => el.querySelector<HTMLButtonElement>('[aria-label="New conversation"]')!;
+
+  it("种子里没有开着的会话 = 面板已经在新对话上,＋ 一开始就是禁用的", async () => {
+    const el = await mountOpen(SHELL_ROUTES.campaign);
+    expect(SEED.activeThreadId).toBeNull();
+    expect(newChat(el).disabled).toBe(true);
+  });
+
+  it("打开一条历史会话之后 ＋ 才活过来;按下去回到新对话,它自己又禁掉", async () => {
+    const el = await mountOpen(SHELL_ROUTES.campaign);
+
+    await act(async () => el.querySelector<HTMLButtonElement>("[data-otto-panel-title]")!.click());
+    await act(async () => el.querySelector<HTMLButtonElement>(`[data-otto-room="${META_THREAD.id}"]`)!.click());
+    await settle();
+
+    // 现在真的有一条会话开着 —— ＋ 有事可做了。
+    expect(newChat(el).disabled).toBe(false);
+
+    await act(async () => newChat(el).click());
+    await settle();
+
+    // 它做完了它那件事,于是把自己禁掉 —— 商家不会再按到一颗什么都不做的按钮。
+    expect(newChat(el).disabled).toBe(true);
+  });
+});
