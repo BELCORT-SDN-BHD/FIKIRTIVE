@@ -1831,9 +1831,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* 减弱动效 = **去运动**,不是换一种运动。转圈换成不动的闪烁,屏幕上照样有个东西
+     永远动个不停 —— 对晕动症的人来说这两件事一样难受。所以这里停成一枚静止的标记:
+     「在做」这件事由旁边那行字说(`Generating` / `Still working`),标记只负责被看见。 */
   .r22-canvas-mini-spinner {
-    animation: r22-fade 1.4s ease infinite;
-    border-top-color: currentColor;
+    animation: none;
+    border-color: currentColor;
+    opacity: .55;
   }
 
   .r22-canvas-icon-button:active,
@@ -1869,5 +1873,3 @@
     transition: opacity 150ms ease, visibility 0s;
   }
 }
-
-@keyframes r22-fade { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }

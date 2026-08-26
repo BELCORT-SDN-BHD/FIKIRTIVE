@@ -75,8 +75,9 @@
 }
 @keyframes r22-auth-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .r22-auth-loader { animation: r22-auth-fade 1.4s ease infinite; }
+  /* 减弱动效 = 去运动。换成无限闪烁还是一个停不下来的东西;`!important` 是因为这枚
+     图标同时挂着工具类 `animate-spin`,同权重下靠源码次序赌输赢的东西迟早会赌输。 */
+  .r22-auth-loader { animation: none !important; opacity: .55; }
   .r22-auth-primary, .r22-auth-secondary { transition: background 120ms ease; }
   .r22-auth-primary:active:not(:disabled), .r22-auth-secondary:active:not(:disabled) { transform: none; }
 }
-@keyframes r22-auth-fade { 0%,100% { opacity:.3; } 50% { opacity:1; } }

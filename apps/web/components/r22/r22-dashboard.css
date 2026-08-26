@@ -1478,7 +1478,7 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   }
 }
 
-/* 减弱动效偏好:入场只剩「已经在那里」,转圈换成不移动的呼吸(原型 L743 同一条思路)。
+/* 减弱动效偏好:入场只剩「已经在那里」,转圈停成一枚静止的标记。
    按下的 scale 也一并撤掉 —— 那是一次位移,不是一次颜色。 */
 @media (prefers-reduced-motion: reduce) {
   .r22-otto-answer,
@@ -1486,8 +1486,11 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
     animation: none;
   }
 
+  /* 「不移动的呼吸」还是一个永远停不下来的东西。减弱动效要的是去运动,所以停成静止。 */
   .r22-otto-mini-ring {
-    animation: r22-otto-ringpulse 1.6s ease infinite;
+    animation: none;
+    border-color: currentColor;
+    opacity: .55;
   }
 
   .r22-otto-answer-actions button:active,
@@ -1496,11 +1499,6 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   .r22-room-new:active {
     transform: none;
   }
-}
-
-@keyframes r22-otto-ringpulse {
-  0%, 100% { opacity: .3; }
-  50% { opacity: 1; }
 }
 
 /* ————— Otto pet(可拖、活着)—— 原型 L468-489 逐条对齐 ————— */

@@ -285,3 +285,48 @@ describe("R22 地基围栏 ③ 常驻句预算 ratchet —— Home 首个入栏"
     expect(countResidentSentences("Skip for now")).toBe(0); // 3 词以内,按钮字样不计入
   });
 });
+
+/* ── 围栏 ④ 减弱动效 = 去运动,不是换一种运动 ─────────────────────────────────── */
+
+/**
+ * `prefers-reduced-motion: reduce` 是商家在系统里说「别让屏幕上的东西动」。这一面上一版
+ * 的做法是把 900ms 的转圈**换成** 1.4s 的无限闪烁 —— 换了个动法,东西照样永远在动,
+ * 对晕动症的人来说这两件事一样难受(canvas 的 mini spinner、登录页的 loader、Otto 面板的
+ * mini ring,三处一模一样地犯)。
+ *
+ * 所以这条围栏很短:**减弱动效块里不许出现 `infinite`**。进行中要不要有个标记、要不要
+ * 有文字,那是设计问题;「永远动个不停」不是。
+ */
+function reducedMotionBlocks(source: string): string[] {
+  const blocks: string[] = [];
+  const opener = /@media[^{]*prefers-reduced-motion[^{]*\{/g;
+  let match: RegExpExecArray | null;
+  while ((match = opener.exec(source)) !== null) {
+    let depth = 1;
+    let index = opener.lastIndex;
+    while (index < source.length && depth > 0) {
+      if (source[index] === "{") depth += 1;
+      else if (source[index] === "}") depth -= 1;
+      index += 1;
+    }
+    blocks.push(source.slice(opener.lastIndex, index - 1));
+    opener.lastIndex = index;
+  }
+  return blocks;
+}
+
+const REDUCED_MOTION_FILES = findR22CssFiles()
+  .map((file) => [path.relative(WEB_ROOT, file), reducedMotionBlocks(readFileSync(file, "utf8"))] as const)
+  .filter(([, blocks]) => blocks.length > 0);
+
+describe("R22 地基围栏 ④ 减弱动效块里没有无限动画", () => {
+  it("围栏本身没有空转:真的圈到了减弱动效块", () => {
+    expect(REDUCED_MOTION_FILES.length, "一个 prefers-reduced-motion 块都没圈到 —— 这条围栏在核对空气").toBeGreaterThan(0);
+    expect(reducedMotionBlocks("@media (prefers-reduced-motion: reduce) { .a { animation: x 1s infinite; } }")[0]).toContain("infinite");
+  });
+
+  it.each(REDUCED_MOTION_FILES)("%s 的减弱动效块里没有 infinite", (_relative, blocks) => {
+    const hits = blocks.filter((block) => /\binfinite\b/.test(block));
+    expect(hits, `减弱动效下还留着无限动画 —— 换一种动法不叫减弱动效:${hits.join(" | ")}`).toEqual([]);
+  });
+});
