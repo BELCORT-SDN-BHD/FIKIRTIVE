@@ -16,13 +16,16 @@ import type { LibraryPack, LibrarySection } from "./library-fixture";
 export function LibraryNav({
   section,
   counts,
+  projects,
   packs,
   packCounts,
   onSection,
   onNewPack,
 }: {
   section: LibrarySection;
-  counts: { all: number; starred: number; uploads: number };
+  counts: { all: number; starred: number; made: number; uploads: number };
+  /** 自动从东西本身长出来的项目列表(`libraryProjects`)。零手动整理,所以没有增删按钮。 */
+  projects: Array<{ id: string; name: string; count: number }>;
   packs: LibraryPack[];
   packCounts: Record<string, number>;
   onSection: (section: LibrarySection) => void;
@@ -31,6 +34,8 @@ export function LibraryNav({
   const primary: Array<{ id: LibrarySection; label: string; count: number }> = [
     { id: "all", label: "All", count: counts.all },
     { id: "starred", label: "Starred", count: counts.starred },
+    // 生成物与上传物并列 —— 商家脑子里这就是两堆东西,不是一堆东西的两个属性。
+    { id: "made", label: "Made by Otto", count: counts.made },
     { id: "uploads", label: "Uploads", count: counts.uploads },
   ];
 
@@ -46,6 +51,22 @@ export function LibraryNav({
           </li>
         ))}
       </ul>
+
+      {projects.length ? (
+        <>
+          <p className="r22-lib-nav-h">Projects</p>
+          <ul>
+            {projects.map((project) => (
+              <li key={project.id}>
+                <Button unstyled type="button" aria-current={section === `project:${project.id}`} onClick={() => onSection(`project:${project.id}`)}>
+                  <span>{project.name}</span>
+                  <em>{project.count}</em>
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
 
       <p className="r22-lib-nav-h">Asset packs</p>
       <ul>
