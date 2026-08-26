@@ -313,9 +313,13 @@ describe("⑤ 遮罩不再硬切", () => {
 
 describe("⑥ 旋转器归位 ui/spinner,进度条归位 ui/progress", () => {
   it("转速与「减弱动效下不转」都只定一次,定在那一件里", () => {
-    const spinner = source("components/ui/spinner.tsx");
+    // 那段注释里逐字写着这两个工具类是为什么在的 —— 所以先把注释剥掉再扫,
+    // 否则删掉真正生效的那一份、只留注释,这条照样绿(变异自检第 7 发抓出来的正是这一格)。
+    const spinner = source("components/ui/spinner.tsx").replace(/\/\*[\s\S]*?\*\//g, "");
     expect(spinner, "转速没有收敛到一处").toContain("[animation-duration:700ms]");
     expect(spinner, "减弱动效下旋转器照转 —— 审计 C-10 的那两处缺口会长回来").toContain("motion-reduce:animate-none");
+    // 它得真的落在 className 上,不是躺在文件某处。
+    expect(spinner).toMatch(/className=\{cn\("[^"]*motion-reduce:animate-none[^"]*"/);
   });
 
   it("审计点名的五份手画 keyframes 归零", () => {
