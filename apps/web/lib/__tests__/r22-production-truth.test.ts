@@ -155,7 +155,7 @@ describe("R22 production truth", () => {
       },
     }));
 
-    expect(container!.textContent).toContain("No workspace URL contract");
+    expect(container!.textContent).toContain("No workspace URL yet");
     expect(container!.textContent).not.toMatch(/fikirtive\.(?:com|app)\//i);
   });
 

@@ -317,7 +317,7 @@ describe("R22 extended frontend contracts", () => {
     expect(schedule).toContain("if (fixture) {");
     expect(schedule).toContain("onFixtureUpsert(post)");
     expect(schedule.indexOf("if (fixture) {")).toBeLessThan(schedule.indexOf("await createScheduledPost"));
-    expect(settings).toContain('if (fixture) { onFixtureSave?.(next); return onNotice("Spend cap updated in this fixture only. No server setting changed."); }');
+    expect(settings).toContain('if (fixture) { onFixtureSave?.(next); return onNotice("Spend cap updated in this preview. Nothing has been saved to your live account yet."); }');
     expect(settings.indexOf("if (fixture) { onFixtureSave")).toBeLessThan(settings.indexOf("await setOwnerSetting"));
     expect(settings).toContain("disabled={busy || fixture}");
     expect(home).toContain('window.location.assign("/api/meta/authorize")');

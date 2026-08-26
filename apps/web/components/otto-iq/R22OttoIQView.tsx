@@ -239,9 +239,9 @@ function BrandVoiceFlow({
           <div className="r22-brand-review"><label>Description<Textarea unstyled rows={7} value={description} onChange={(event) => setDescription(event.target.value)} /></label><fieldset><legend>Excerpts</legend>{excerpts.map((excerpt, index) => <Textarea unstyled rows={3} aria-label={`Excerpt ${index + 1}`} key={index} value={excerpt} onChange={(event) => setExcerpts((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />)}</fieldset><p>Source: {sourceLabel} · Scope: {access === "workspace" ? "Workspace" : "Private"}</p></div>
           {error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}
           <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={() => setStep("source")}>Back</Button><Button unstyled type="button" className="is-primary" onClick={save}>Save Brand Voice</Button></DialogFooter>
-        </> : <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Brand Voice saved</DialogTitle><DialogDescription>{name} is now approved fixture context for this workspace.</DialogDescription><Button unstyled type="button" className="is-primary" onClick={() => onOpenChange(false)}>Done</Button></div>}
+        </> : <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Brand Voice saved</DialogTitle><DialogDescription>{name} is now approved context for this workspace.</DialogDescription><Button unstyled type="button" className="is-primary" onClick={() => onOpenChange(false)}>Done</Button></div>}
       </DialogContent>
-      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this Brand Voice draft?</AlertDialogTitle><AlertDialogDescription>Your current step and approved examples are saved for refresh. Discarding removes only this fixture draft and does not change existing Otto IQ.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={discardDraft}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this Brand Voice draft?</AlertDialogTitle><AlertDialogDescription>Your current step and approved examples are kept if you refresh. Discarding removes only this draft and leaves everything already in Otto IQ untouched.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={discardDraft}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </Dialog>
   );
 }
@@ -333,7 +333,7 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
         <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={() => { setStep("choose"); setError(""); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void submit()}>Add to Knowledge Base</Button></DialogFooter>
       </>}
     </DialogContent>
-    <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this knowledge draft?</AlertDialogTitle><AlertDialogDescription>The source type, text, URL, file name and visibility will be removed from this fixture.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(KNOWLEDGE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this knowledge draft?</AlertDialogTitle><AlertDialogDescription>The source type, text, URL, file name and visibility will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(KNOWLEDGE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </Dialog>;
 }
 
@@ -393,7 +393,7 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
     if (step < 3) { setError(""); setStep((value) => value + 1); return; }
     const reviewComplete = [...triggers, ...requirements, ...indicators].every((item) => item.trim()) && characteristics.every((item) => item.key.trim() && item.value.trim());
     if (!reviewComplete) return setError("Complete every audience detail before generating.");
-    if (!fixture && (docs.length || stories.length)) return setError("Audience source ingestion is not connected. Remove attached sources or wait for the backend adapter; nothing was saved.");
+    if (!fixture && (docs.length || stories.length)) return setError("Reading audience sources is not switched on yet. Remove the attached sources or come back later; nothing was saved.");
     setError(""); setStatus("processing");
     const saveRow = async () => {
       const content = `${name.trim()}: ${description.trim()} Buying triggers: ${triggers.join("; ")}. Requirements: ${requirements.join("; ")}. Success: ${indicators.join("; ")}.`;
@@ -431,7 +431,7 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
         {error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}</div><aside className="r22-audience-preview"><b>{name || "Audience"}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><p>{description || "No description yet"}</p><small>Sources: {docs.length + stories.length || "No sources"}</small></aside></div>
       <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { setError(""); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 3 ? "Generate audience" : "Next"}</Button></DialogFooter>
     </>}
-  </DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this audience draft?</AlertDialogTitle><AlertDialogDescription>The audience details, sources and review fields will be removed from this fixture.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(AUDIENCE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
+  </DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this audience draft?</AlertDialogTitle><AlertDialogDescription>The audience details, sources and review fields will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(AUDIENCE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
 
 function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
@@ -492,7 +492,7 @@ function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
       <label>Why this matters<Textarea unstyled rows={4} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Keep claims specific and supported by the product details." /></label>
       <p className="r22-kb-permission">This rule applies to new Otto drafts. Existing published or scheduled work is not rewritten.</p>{error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}</div>
     <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={busy} onClick={requestClose}>Cancel</Button><Button unstyled type="button" className="is-primary" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save rule"}</Button></DialogFooter>
-  </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this style rule?</AlertDialogTitle><AlertDialogDescription>The phrase, replacement and reason will be removed from this fixture.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(STYLE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
+  </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this style rule?</AlertDialogTitle><AlertDialogDescription>The phrase, replacement and reason will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(STYLE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
 
 function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
@@ -536,7 +536,7 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
     if (step === 0 && !name.trim()) return setError("Give this Visual Guideline a name.");
     if (step === 1 && (!colours.length || !guideline.trim())) return setError("Keep at least one colour and add a framing guideline.");
     if (step < 2) { setError(""); setStep((value) => value + 1); return; }
-    if (!fixture && logoName) return setError("Logo ingestion is not connected. Remove the selected file or wait for the visual-asset backend; nothing was saved.");
+    if (!fixture && logoName) return setError("Reading a logo file is not switched on yet. Remove the selected file or come back later; nothing was saved.");
     const content = `${name.trim()}: Colours ${colours.join(", ")}. Fonts: ${[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "not set"}. ${guideline.trim()}`;
     setError(""); setStatus("processing");
     const save = async () => {
@@ -560,7 +560,7 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
       <label>Framing and image direction<Textarea unstyled rows={5} value={guideline} onChange={(event) => setGuideline(event.target.value)} placeholder="Natural morning light, close product detail, teal batik used as a supporting surface." /></label>
     </> : <div className="r22-visual-review"><b>{name}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><dl><div><dt>Logo</dt><dd>{logoName || "Not supplied"}</dd></div><div><dt>Colours</dt><dd>{colours.join(", ")}</dd></div><div><dt>Fonts</dt><dd>{[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "Not set"}</dd></div><div><dt>Direction</dt><dd>{guideline}</dd></div></dl></div>}{error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}</div>
     <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { setError(""); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 2 ? "Save Visual Guideline" : "Next"}</Button></DialogFooter>
-  </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this Visual Guideline draft?</AlertDialogTitle><AlertDialogDescription>The name, assets, colours, font slots and direction will be removed from this fixture.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(VISUAL_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
+  </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this Visual Guideline draft?</AlertDialogTitle><AlertDialogDescription>The name, assets, colours, font slots and direction will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(VISUAL_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
 
 export function R22OttoIQView({
@@ -715,7 +715,7 @@ export function R22OttoIQView({
           })}
         </div>
         {rows.length === 0 ? <section className="r22-iq-start"><div><b>Start here</b><p>Add approved brand context before Otto creates. Every saved item stays workspace-scoped and carries its source.</p></div><Button unstyled type="button" onClick={() => open("voice")}>Open Brand Voice</Button></section> : null}
-        <p className="r22-iq-consent">Only you choose what is saved here. Pending suggestions stay separate until you accept them; nothing is shared with another workspace. <Button unstyled type="button" onClick={() => setError("Export and deletion need the backend data-rights contract. Nothing was exported or deleted.")}>Export or delete everything Otto knows</Button></p>
+        <p className="r22-iq-consent">Only you choose what is saved here. Pending suggestions stay separate until you accept them; nothing is shared with another workspace. <Button unstyled type="button" onClick={() => setError("Exporting and deleting everything is not switched on yet. Nothing was exported or deleted.")}>Export or delete everything Otto knows</Button></p>
         {error ? <p className="r22-iq-hub-notice" role="status">{error}</p> : null}
         <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
           <DialogContent className="r22-iq-detail">
