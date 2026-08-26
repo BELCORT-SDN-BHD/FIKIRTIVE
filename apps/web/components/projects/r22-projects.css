@@ -68,32 +68,42 @@
   gap: 16px;
 }
 
-.r22-projects-toolbar label {
-  display: flex;
+/* 搜索框归 `ui/input-group`(审计 A-12):几何照旧钉在 data-slot 上,图标不再手工定位。 */
+.r22-projects-search[data-slot="input-group"] {
   width: 260px;
   height: 38px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
+  flex: none;
+  gap: 0;
   border: 1px solid var(--r22-line-2);
   border-radius: 8px;
   background: var(--r22-surface);
+  box-shadow: none;
 }
 
-.r22-projects-toolbar label svg {
+.r22-projects-search [data-slot="input-group-addon"] {
+  padding-left: 10px;
+  color: var(--r22-ink-3);
+}
+
+.r22-projects-search [data-slot="input-group-addon"] svg {
   width: 14px;
   height: 14px;
-  color: var(--r22-ink-3);
   stroke-width: 1.8;
 }
 
-.r22-projects-toolbar input {
+.r22-projects-search [data-slot="input-group-control"] {
   min-width: 0;
+  height: 100%;
   flex: 1;
+  padding: 0 10px 0 8px;
   border: 0;
   outline: 0;
   background: transparent;
   font-size: var(--r22-text-body);
+}
+
+.r22-projects-search:focus-within {
+  border-color: var(--r22-ink-3);
 }
 
 .r22-projects-toolbar > button {
@@ -124,21 +134,47 @@
   box-shadow: 0 1px 2px rgb(22 23 28 / 5%);
 }
 
-.r22-projects-row {
-  display: grid;
-  grid-template-columns: minmax(300px, 1.8fr) minmax(140px, .75fr) 145px 120px 42px;
+/* 归位 `ui/table` 之后列宽由 `table-layout: fixed` 出,不再靠 grid-template-columns ——
+   几何照旧(名字撑开、右边四列定宽),但语义是真的表格。 */
+table.r22-projects-grid {
   width: 100%;
-  min-height: 63px;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--r22-line);
-  color: var(--r22-ink-2);
+  border-collapse: collapse;
+  table-layout: fixed;
   font-size: var(--r22-text-body);
 }
 
+.r22-projects-grid th:nth-child(2) { width: 21%; }
+.r22-projects-grid th:nth-child(3) { width: 145px; }
+.r22-projects-grid th:nth-child(4) { width: 120px; }
+.r22-projects-grid th:nth-child(5) { width: 42px; }
+
+.r22-projects-row > th,
+.r22-projects-row > td {
+  height: 63px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--r22-line);
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-body);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: middle;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.r22-projects-row {
+  border: 0;
+  cursor: pointer;
+}
+
 .r22-projects-head {
-  min-height: 34px;
+  cursor: default;
+}
+
+.r22-projects-head > th {
+  height: 34px;
   border-top: 0;
   background: var(--r22-ground);
   color: var(--r22-ink-3);
@@ -174,8 +210,14 @@
 }
 
 .r22-projects-name b,
+.r22-projects-name a,
 .r22-projects-name small {
   display: block;
+}
+
+.r22-projects-name a {
+  color: inherit;
+  text-decoration: none;
 }
 
 .r22-projects-name b {
@@ -189,11 +231,12 @@
   font-size: var(--r22-text-caption);
 }
 
-.r22-projects-row > span:last-child {
+.r22-projects-row > td:last-child {
+  padding-inline: 0;
   text-align: center;
 }
 
-.r22-projects-row > span:last-child svg {
+.r22-projects-row > td:last-child svg {
   width: 15px;
   height: 15px;
   stroke-width: 1.7;
@@ -497,9 +540,10 @@
     padding-inline: 34px;
   }
 
-  .r22-projects-row {
-    grid-template-columns: minmax(230px, 1.5fr) 110px 110px 90px 28px;
-  }
+  .r22-projects-grid th:nth-child(2) { width: 110px; }
+  .r22-projects-grid th:nth-child(3) { width: 110px; }
+  .r22-projects-grid th:nth-child(4) { width: 90px; }
+  .r22-projects-grid th:nth-child(5) { width: 28px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -515,16 +559,14 @@
     padding: 26px 18px 90px;
   }
 
-  .r22-projects-toolbar label {
+  .r22-projects-search[data-slot="input-group"] {
     min-width: 0;
+    width: auto;
     flex: 1;
   }
 
-  .r22-projects-table {
-    overflow-x: auto;
-  }
-
-  .r22-projects-row {
+  /* 横向溢出交给 `Table` 自己那层 `overflow-x-auto`,这一面不再自己开一个滚动容器。 */
+  table.r22-projects-grid {
     min-width: 760px;
   }
 }

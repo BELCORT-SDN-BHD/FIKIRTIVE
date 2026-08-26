@@ -2,10 +2,12 @@
 /* eslint-disable react-hooks/set-state-in-effect -- Non-production R22 fixtures read the browser-scoped workspace after hydration. */
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChevronRight, File, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
@@ -22,6 +24,7 @@ export type R22ProjectRow = {
 };
 
 export function R22ProjectsView({ projects, fixture = false, fixtureState = "ready", fixtureCreateOutcome = "success" }: { projects: R22ProjectRow[]; fixture?: boolean; fixtureState?: "ready" | "loading" | "error" | "permission" | "empty" | "unknown"; fixtureCreateOutcome?: ProjectCreateOutcome }) {
+  const router = useRouter();
   const [tab, setTab] = useState<"mine" | "shared" | "all">("mine");
   const [query, setQuery] = useState("");
   const [startOpen, setStartOpen] = useState(false);
@@ -54,20 +57,44 @@ export function R22ProjectsView({ projects, fixture = false, fixtureState = "rea
       </Tabs>
 
       <div className="r22-projects-toolbar">
-        <label><Search aria-hidden="true" /><Input unstyled value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects" /></label>
+        {/* 搜索框归位 `ui/input-group`(审计 A-12)—— 图标不再靠这一面自己那段绝对定位
+            摆位,focus 环也由正典件统一出,五处搜索框从此长一个样。 */}
+        <InputGroup className="r22-projects-search">
+          <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+          <InputGroupInput aria-label="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects" />
+        </InputGroup>
         <Button unstyled type="button" data-r22-project-create disabled={fixture && fixtureState !== "ready" && fixtureState !== "empty"} onClick={() => setStartOpen(true)}><Plus data-icon="inline-start" aria-hidden="true" />Create project</Button>
       </div>
 
-      <div className="r22-projects-table" role="table" aria-label="Canvas projects" aria-busy={fixtureState === "loading"}>
-        <div className="r22-projects-row r22-projects-head" role="row">
-          <span>Name</span><span>Owner</span><span>Last modified</span><span>Visibility</span><span />
-        </div>
-        {fixtureState === "loading" ? <div className="r22-projects-empty" role="status">Loading authorized projects…</div> : fixtureState === "error" ? <div className="r22-projects-empty" role="alert">Projects could not be loaded. Nothing is guessed in its place. <Link href="/create?fixture=r22">Retry</Link></div> : fixtureState === "unknown" ? <div className="r22-projects-empty" role="status">Project read outcome is unknown. Nothing is guessed in its place. <Link href="/create?fixture=r22">Retry</Link></div> : fixtureState === "permission" ? <div className="r22-projects-empty" role="alert">You do not have permission to view projects in this workspace. <Link href="/?fixture=r22">Back to Home</Link></div> : visibleProjects.map((project) => (
-          <Link className="r22-projects-row" role="row" key={project.id} href={fixture ? `/create/canvas?project=${encodeURIComponent(project.id)}&fixture=r22` : `/create/canvas?project=${encodeURIComponent(project.id)}`}>
-            <span className="r22-projects-name"><i><File aria-hidden="true" /></i><span><b>{project.name}</b><small>{project.briefLabel}</small></span></span>
-            <span>{project.ownerLabel}</span><span>{project.modifiedLabel}</span><span>{project.visibility}</span><span><ChevronRight aria-hidden="true" /></span>
-          </Link>
-        ))}
+      {/*
+        项目列表归位 `ui/table`(审计 A-6)。此前这里是 `<div role="table">` 里一叠
+        `role="row"` 的 `<a>` —— 没有 `role="cell"`,ARIA 表格是残的:屏幕阅读器报得出
+        「行」,报不出「第几列、这一格是什么」。真 `<table>` 之后列头与格子自带关系,
+        `Table` 自己那层 `overflow-x-auto` 也把横向溢出接管了。
+
+        整行可点保留(商家按哪儿都进得去),键盘路径长在名字那一格的 `<Link>` 上 ——
+        `<tr>` 不是可聚焦元素,把整行钉成一颗按钮反而会让 Tab 走进一个读不出名字的东西。
+      */}
+      <div className="r22-projects-table" aria-busy={fixtureState === "loading" || undefined}>
+        <Table className="r22-projects-grid" aria-label="Canvas projects">
+          <TableHeader>
+            <TableRow className="r22-projects-row r22-projects-head">
+              <TableHead>Name</TableHead><TableHead>Owner</TableHead><TableHead>Last modified</TableHead><TableHead>Visibility</TableHead><TableHead><span className="sr-only">Open project</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {fixtureState === "loading" || fixtureState === "error" || fixtureState === "unknown" || fixtureState === "permission" ? null : visibleProjects.map((project) => {
+              const href = fixture ? `/create/canvas?project=${encodeURIComponent(project.id)}&fixture=r22` : `/create/canvas?project=${encodeURIComponent(project.id)}`;
+              return (
+                <TableRow className="r22-projects-row" data-r22-project-row={project.id} key={project.id} onClick={() => router.push(href)}>
+                  <TableCell><span className="r22-projects-name"><i><File aria-hidden="true" /></i><span><Link href={href} onClick={(event) => event.stopPropagation()}><b>{project.name}</b></Link><small>{project.briefLabel}</small></span></span></TableCell>
+                  <TableCell>{project.ownerLabel}</TableCell><TableCell>{project.modifiedLabel}</TableCell><TableCell>{project.visibility}</TableCell><TableCell><ChevronRight aria-hidden="true" /></TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        {fixtureState === "loading" ? <div className="r22-projects-empty" role="status">Loading authorized projects…</div> : fixtureState === "error" ? <div className="r22-projects-empty" role="alert">Projects could not be loaded. Nothing is guessed in its place. <Link href="/create?fixture=r22">Retry</Link></div> : fixtureState === "unknown" ? <div className="r22-projects-empty" role="status">Project read outcome is unknown. Nothing is guessed in its place. <Link href="/create?fixture=r22">Retry</Link></div> : fixtureState === "permission" ? <div className="r22-projects-empty" role="alert">You do not have permission to view projects in this workspace. <Link href="/?fixture=r22">Back to Home</Link></div> : null}
         {fixtureState !== "loading" && fixtureState !== "error" && fixtureState !== "permission" && fixtureState !== "unknown" && !visibleProjects.length && (
           /* 空态归位 `ui/empty`(审计 A-5)。「Create one when you are ready」点名了一个
              动作,所以那颗键就长在这里 —— 它开的是工具排上同一个开局对话框,不是第二条

@@ -119,3 +119,12 @@
     padding: 24px 16px 88px;
   }
 }
+
+/* ── A-11:Brand Voice 的表单行归 `ui/field`,错误长在出错的那一格旁边 ────────────── */
+.r22-brand-voice-fields>[data-slot="field"],.r22-brand-review>[data-slot="field"]{display:flex;width:auto;margin-top:16px;flex-direction:column;gap:6px}
+.r22-brand-voice-fields>[data-slot="field"]>[data-slot="field-label"],.r22-brand-review>[data-slot="field"]>[data-slot="field-label"]{display:block;width:auto;font-size:var(--r22-text-caption);font-weight:620;line-height:inherit}
+.r22-brand-voice-fields>[data-slot="field"]>[data-slot="field-description"],.r22-brand-review>[data-slot="field"]>[data-slot="field-description"]{margin:0;color:var(--voice-ink-3);font-size:10.5px;/*原型.iq-f-c真值,冻结族*/font-weight:400;text-align:right}
+.r22-brand-voice-fields>[data-slot="field"]>[data-slot="field-error"],.r22-brand-review>[data-slot="field"]>[data-slot="field-error"]{margin:0;color:var(--r22-bad-text);font-size:10.5px;font-weight:400}
+.r22-brand-voice-fields fieldset[data-slot="field-set"],.r22-brand-review fieldset[data-slot="field-set"]{gap:7px}
+.r22-brand-voice-fields fieldset>[data-slot="field-legend"],.r22-brand-review fieldset>[data-slot="field-legend"]{margin-bottom:6px;font-size:var(--r22-text-caption);font-weight:620}
+.r22-brand-voice-fields [data-slot="field"][data-invalid] input,.r22-brand-voice-fields [data-slot="field"][data-invalid] textarea,.r22-brand-review [data-slot="field"][data-invalid] textarea{border-color:var(--r22-bad-text)}

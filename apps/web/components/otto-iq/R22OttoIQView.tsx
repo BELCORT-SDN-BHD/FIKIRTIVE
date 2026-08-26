@@ -10,6 +10,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Badge } from "@/components/ui/badge";
+import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +32,7 @@ import {
   Eye,
   MessageSquareText,
   Palette,
+  Search,
   ShieldCheck,
   Trash2,
   UsersRound,
@@ -109,6 +114,43 @@ function removeFixtureSession(key: string) {
   try { window.sessionStorage.removeItem(scopedR22FixtureKey(key)); } catch { /* The surface still works without refresh recovery. */ }
 }
 
+/**
+ * 一行表单 = 标签 + 控件 + (计数/提示) + (就近的错误)。归位 `ui/field`(审计 A-11)。
+ *
+ * 此前这一面写的是 `<label>名字<Input/><small>12 / 80</small></label>`,而那句 `role="alert"`
+ * 的错误挂在**整块字段的末尾** —— 商家在第一格填错,话出现在第五格底下,而且没有任何
+ * 程序上的关联:读屏软件读到那个输入框时不会把错误一起念出来。
+ *
+ * 这里把三件事一次接对:错误长在出错的那一格旁边(`FieldError`),用 `aria-describedby`
+ * 接进控件,`aria-invalid` 让边框自己红。字数计数改住 `FieldDescription` —— 它本来就是
+ * 「这一格的补充说明」那一格。
+ */
+function FlowField({ id, label, hint, error, className, children }: {
+  id: string;
+  label: React.ReactNode;
+  hint?: React.ReactNode;
+  error?: string;
+  className?: string;
+  children: (control: { id: string; "aria-describedby": string | undefined; "aria-invalid": true | undefined }) => React.ReactNode;
+}) {
+  const hintId = hint ? `${id}-hint` : undefined;
+  const errorId = error ? `${id}-error` : undefined;
+  const describedBy = [errorId, hintId].filter(Boolean).join(" ") || undefined;
+  return (
+    <Field className={className} data-invalid={error ? true : undefined}>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      {children({ id, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })}
+      {hint ? <FieldDescription id={hintId}>{hint}</FieldDescription> : null}
+      <FieldError id={errorId}>{error}</FieldError>
+    </Field>
+  );
+}
+
+/** 不长在任何单一格子上的错误(整块的、跨字段的)仍要有去处 —— 同一个 `FieldError`。 */
+function FlowFormError({ error }: { error: string }) {
+  return <FieldError className="r22-brand-voice-error">{error}</FieldError>;
+}
+
 function BrandVoiceFlow({
   open,
   fixture,
@@ -131,8 +173,12 @@ function BrandVoiceFlow({
   const [description, setDescription] = useState("");
   const [excerpts, setExcerpts] = useState(["", "", ""]);
   const [error, setError] = useState("");
+  /** 出错的是**哪一格** —— 有它,错误才长得到那一格旁边(审计 A-11)。空串 = 整块的错。 */
+  const [errorField, setErrorField] = useState("");
   const [draftReady, setDraftReady] = useState(!fixture);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const fail = (field: string, message: string) => { setErrorField(field); setError(message); };
+  const clearError = () => { setErrorField(""); setError(""); };
 
   useEffect(() => {
     if (!open) { setDraftReady(!fixture); return; }
@@ -141,10 +187,10 @@ function BrandVoiceFlow({
       const stored = readFixtureSession(BRAND_VOICE_DRAFT_KEY);
       if (stored) {
         try {
-          const draft = JSON.parse(stored) as { version?: number; step?: BrandVoiceStep; name?: string; access?: "workspace" | "private"; bestUse?: string; source?: BrandVoiceSource; sourceText?: string; sourceUrl?: string; fileName?: string; description?: string; excerpts?: string[]; error?: string };
+          const draft = JSON.parse(stored) as { version?: number; step?: BrandVoiceStep; name?: string; access?: "workspace" | "private"; bestUse?: string; source?: BrandVoiceSource; sourceText?: string; sourceUrl?: string; fileName?: string; description?: string; excerpts?: string[]; error?: string; errorField?: string };
           if (draft.version !== 1) throw new Error("stale draft");
           setStep(draft.step === "success" ? "review" : draft.step ?? "details");
-          setName(draft.name ?? ""); setAccess(draft.access ?? "workspace"); setBestUse(draft.bestUse ?? "Company profile"); setSource(draft.source ?? "text"); setSourceText(draft.sourceText ?? ""); setSourceUrl(draft.sourceUrl ?? ""); setFileName(draft.fileName ?? ""); setDescription(draft.description ?? ""); setExcerpts(draft.excerpts?.length === 3 ? draft.excerpts : ["", "", ""]); setError(draft.error ?? "");
+          setName(draft.name ?? ""); setAccess(draft.access ?? "workspace"); setBestUse(draft.bestUse ?? "Company profile"); setSource(draft.source ?? "text"); setSourceText(draft.sourceText ?? ""); setSourceUrl(draft.sourceUrl ?? ""); setFileName(draft.fileName ?? ""); setDescription(draft.description ?? ""); setExcerpts(draft.excerpts?.length === 3 ? draft.excerpts : ["", "", ""]); setError(draft.error ?? ""); setErrorField(draft.errorField ?? "");
           setDraftReady(true);
           return;
         } catch {
@@ -152,13 +198,13 @@ function BrandVoiceFlow({
         }
       }
     }
-    setStep("details"); setName(""); setAccess("workspace"); setBestUse("Company profile"); setSource("text"); setSourceText(""); setSourceUrl(""); setFileName(""); setDescription(""); setExcerpts(["", "", ""]); setError(""); setDraftReady(true);
+    setStep("details"); setName(""); setAccess("workspace"); setBestUse("Company profile"); setSource("text"); setSourceText(""); setSourceUrl(""); setFileName(""); setDescription(""); setExcerpts(["", "", ""]); setError(""); setErrorField(""); setDraftReady(true);
   }, [fixture, open]);
 
   useEffect(() => {
     if (!fixture || !open || !draftReady || step === "success") return;
-    writeFixtureSession(BRAND_VOICE_DRAFT_KEY, JSON.stringify({ version: 1, step, name, access, bestUse, source, sourceText, sourceUrl, fileName, description, excerpts, error }));
-  }, [access, bestUse, description, draftReady, error, excerpts, fileName, fixture, name, open, source, sourceText, sourceUrl, step]);
+    writeFixtureSession(BRAND_VOICE_DRAFT_KEY, JSON.stringify({ version: 1, step, name, access, bestUse, source, sourceText, sourceUrl, fileName, description, excerpts, error, errorField }));
+  }, [access, bestUse, description, draftReady, error, errorField, excerpts, fileName, fixture, name, open, source, sourceText, sourceUrl, step]);
 
   useEffect(() => {
     if (!open || step !== "generating") return;
@@ -171,29 +217,29 @@ function BrandVoiceFlow({
   }, [open, step]);
 
   function continueDetails() {
-    if (!name.trim()) return setError("Give this Brand Voice a name.");
-    if (!bestUse.trim()) return setError("Add at least one best-use label.");
-    setError("");
+    if (!name.trim()) return fail("name", "Give this Brand Voice a name.");
+    if (!bestUse.trim()) return fail("bestUse", "Add at least one best-use label.");
+    clearError();
     setStep("source");
   }
 
   function generate() {
-    if (source === "text" && sourceText.trim().length < 1000) return setError("1000 character minimum not met. Add more approved example content.");
-    if (source === "url" && !/^https?:\/\//i.test(sourceUrl.trim())) return setError("Enter a complete http or https URL you own or may use.");
-    if (source === "file" && !fileName) return setError("Choose a supported file before generating.");
+    if (source === "text" && sourceText.trim().length < 1000) return fail("source", "1000 character minimum not met. Add more approved example content.");
+    if (source === "url" && !/^https?:\/\//i.test(sourceUrl.trim())) return fail("source", "Enter a complete http or https URL you own or may use.");
+    if (source === "file" && !fileName) return fail("source", "Choose a supported file before generating.");
     // 生产不许进伪造。`generating` 那一步之后是写死的描述与三条摘录 —— 那是**演示**,
     // 不是这家商家粘贴的内容读出来的。以前它照样跑,商家一路读到与自己毫无关系的
     // 「生成结果」,直到 Save 才撞上 `save()` 里那句实话。诚实要在花商家时间之前说,
     // 所以阻断挪到入口,用的是同一句话;fixture 一个字节没变。
     // 形状与同文件的兄弟流一致(KnowledgeBaseFlow `submit()`、AudienceFlow `next()`)。
-    if (!fixture) return setError("Brand Voice generation and source ingestion are not connected. Nothing was saved.");
-    setError("");
+    if (!fixture) return fail("source", "Brand Voice generation and source ingestion are not connected. Nothing was saved.");
+    clearError();
     setStep("generating");
   }
 
   function save() {
-    if (!description.trim()) return setError("Keep a Brand Voice description before saving.");
-    if (!fixture) return setError("Brand Voice generation and source ingestion are not connected. Nothing was saved.");
+    if (!description.trim()) return fail("description", "Keep a Brand Voice description before saving.");
+    if (!fixture) return fail("description", "Brand Voice generation and source ingestion are not connected. Nothing was saved.");
     onFixtureSave({
       id: fixtureMemoryId("voice", name),
       category: "voice",
@@ -222,26 +268,26 @@ function BrandVoiceFlow({
           <DialogHeader><DialogTitle>Add Brand Voice</DialogTitle><DialogDescription>Voice details</DialogDescription></DialogHeader>
           <div className="r22-brand-voice-layout"><div className="r22-brand-voice-fields">
             <h2>Voice details</h2><p>Give your voice a name and choose who can access it. You’ll add example content on the next step.</p>
-            <label>Name<Input unstyled autoFocus value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder="Batik House voice" /><small>{name.length} / 80</small></label>
-            <fieldset><legend>Voice access</legend><RadioGroup unstyled value={access} onValueChange={(value) => setAccess(value as "workspace" | "private")}><label className={access === "workspace" ? "is-selected" : ""}><RadioGroupItem unstyled value="workspace" /><span><b>Anyone in this workspace</b><small>Workspace members can use this voice.</small></span></label><label className={access === "private" ? "is-selected" : ""}><RadioGroupItem unstyled value="private" /><span><b>Private to me</b><small>Only you can access and use this voice.</small></span></label></RadioGroup></fieldset>
-            <label>Best used for<Input unstyled value={bestUse} onChange={(event) => setBestUse(event.target.value)} placeholder="Company profile, blogs, product launches" /></label>
+            <FlowField id="voice-name" label="Name" hint={`${name.length} / 80`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder="Batik House voice" {...control} />}</FlowField>
+            <FieldSet><FieldLegend variant="label">Voice access</FieldLegend><RadioGroup unstyled value={access} onValueChange={(value) => setAccess(value as "workspace" | "private")}><label className={access === "workspace" ? "is-selected" : ""}><RadioGroupItem unstyled value="workspace" /><span><b>Anyone in this workspace</b><small>Workspace members can use this voice.</small></span></label><label className={access === "private" ? "is-selected" : ""}><RadioGroupItem unstyled value="private" /><span><b>Private to me</b><small>Only you can access and use this voice.</small></span></label></RadioGroup></FieldSet>
+            <FlowField id="voice-best-use" label="Best used for" error={errorField === "bestUse" ? error : undefined}>{(control) => <Input unstyled value={bestUse} onChange={(event) => setBestUse(event.target.value)} placeholder="Company profile, blogs, product launches" {...control} />}</FlowField>
           </div><aside className="r22-brand-voice-preview"><b>{name || "Untitled Brand Voice"}</b><span>Best used for: {bestUse || "Not set"}</span><span>Visibility: {access === "workspace" ? "Anyone" : "Private"}</span><Separator /><small>EXAMPLE CONTENT</small><i /><i /><small>DESCRIPTION</small><i /><i /></aside></div>
-          {error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}
+          {error && !errorField ? <FlowFormError error={error} /> : null}
           <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={requestClose}>Cancel</Button><Button unstyled type="button" className="is-primary" onClick={continueDetails}>Next</Button></DialogFooter>
         </> : step === "source" ? <>
           <DialogHeader><DialogTitle>Add Brand Voice</DialogTitle><DialogDescription>Add example content</DialogDescription></DialogHeader>
           <div className="r22-brand-voice-layout"><div className="r22-brand-voice-fields">
             <h2>Add example content</h2><p>Add up to 8 examples. The more on-brand and high-quality the examples are, the better your voice will be.</p>
-            <Tabs unstyled value={source} onValueChange={(value) => { setSource(value as BrandVoiceSource); setError(""); }}><TabsList unstyled className="r22-brand-source-tabs"><TabsTrigger unstyled value="text">Paste text</TabsTrigger><TabsTrigger unstyled value="url">Add URLs</TabsTrigger><TabsTrigger unstyled value="file">Upload files</TabsTrigger></TabsList></Tabs>
-            {source === "text" ? <label key="source-text">Approved example text<Textarea unstyled rows={9} value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="Paste a blog, email, social post, or other approved content." /><small>{sourceText.trim().length} characters · 1000 character minimum</small></label> : source === "url" ? <label key="source-url">Website URL<Input unstyled type="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://batikhouse.example/about" /><small>FIKIRTIVE will only use this source after ingestion is available and permission is confirmed.</small></label> : <label key="source-file" className="r22-brand-file">Upload a file<Input unstyled type="file" accept=".txt,.doc,.docx,.pdf" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? "")} /><small>{fileName || "TXT, DOC, DOCX or PDF"}</small></label>}
+            <Tabs unstyled value={source} onValueChange={(value) => { setSource(value as BrandVoiceSource); clearError(); }}><TabsList unstyled className="r22-brand-source-tabs"><TabsTrigger unstyled value="text">Paste text</TabsTrigger><TabsTrigger unstyled value="url">Add URLs</TabsTrigger><TabsTrigger unstyled value="file">Upload files</TabsTrigger></TabsList></Tabs>
+            {source === "text" ? <FlowField key="source-text" id="voice-source-text" label="Approved example text" hint={`${sourceText.trim().length} characters · 1000 character minimum`} error={errorField === "source" ? error : undefined}>{(control) => <Textarea unstyled rows={9} value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="Paste a blog, email, social post, or other approved content." {...control} />}</FlowField> : source === "url" ? <FlowField key="source-url" id="voice-source-url" label="Website URL" hint="FIKIRTIVE will only use this source after ingestion is available and permission is confirmed." error={errorField === "source" ? error : undefined}>{(control) => <Input unstyled type="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://batikhouse.example/about" {...control} />}</FlowField> : <FlowField key="source-file" className="r22-brand-file" id="voice-source-file" label="Upload a file" hint={fileName || "TXT, DOC, DOCX or PDF"} error={errorField === "source" ? error : undefined}>{(control) => <Input unstyled type="file" accept=".txt,.doc,.docx,.pdf" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? "")} {...control} />}</FlowField>}
             <div className="r22-brand-added"><b>Added context</b><span>{sourceLabel}</span></div>
           </div><aside className="r22-brand-voice-preview"><b>{name}</b><span>Best used for: {bestUse}</span><span>Visibility: {access === "workspace" ? "Anyone" : "Private"}</span><Separator /><small>EXAMPLE CONTENT</small><i /><i /><small>DESCRIPTION</small><i /><i /></aside></div>
-          {error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}
+          {error && !errorField ? <FlowFormError error={error} /> : null}
           <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={() => setStep("details")}>Back</Button><Button unstyled type="button" className="is-primary" onClick={generate}>Generate voice</Button></DialogFooter>
         </> : step === "generating" ? <div className="r22-brand-generating" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Generating Brand Voice</DialogTitle><DialogDescription>This step pauses here while approved sources are reviewed. FIKIRTIVE does not show success until analysis finishes.</DialogDescription><article><b>{name}</b><small>Reviewing your sources</small><i /><i /><i /></article></div> : step === "review" ? <>
           <DialogHeader><DialogTitle>Review and edit</DialogTitle><DialogDescription>Check the generated voice before it becomes approved Otto IQ context.</DialogDescription></DialogHeader>
-          <div className="r22-brand-review"><label>Description<Textarea unstyled rows={7} value={description} onChange={(event) => setDescription(event.target.value)} /></label><fieldset><legend>Excerpts</legend>{excerpts.map((excerpt, index) => <Textarea unstyled rows={3} aria-label={`Excerpt ${index + 1}`} key={index} value={excerpt} onChange={(event) => setExcerpts((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />)}</fieldset><p>Source: {sourceLabel} · Scope: {access === "workspace" ? "Workspace" : "Private"}</p></div>
-          {error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}
+          <div className="r22-brand-review"><FlowField id="voice-description" label="Description" error={errorField === "description" ? error : undefined}>{(control) => <Textarea unstyled rows={7} value={description} onChange={(event) => setDescription(event.target.value)} {...control} />}</FlowField><FieldSet><FieldLegend variant="label">Excerpts</FieldLegend>{excerpts.map((excerpt, index) => <Textarea unstyled rows={3} aria-label={`Excerpt ${index + 1}`} key={index} value={excerpt} onChange={(event) => setExcerpts((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />)}</FieldSet><p>Source: {sourceLabel} · Scope: {access === "workspace" ? "Workspace" : "Private"}</p></div>
+          {error && !errorField ? <FlowFormError error={error} /> : null}
           <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={() => setStep("source")}>Back</Button><Button unstyled type="button" className="is-primary" onClick={save}>Save Brand Voice</Button></DialogFooter>
         </> : <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Brand Voice saved</DialogTitle><DialogDescription>{name} is now approved context for this workspace.</DialogDescription><Button unstyled type="button" className="is-primary" onClick={() => onOpenChange(false)}>Done</Button></div>}
       </DialogContent>
@@ -268,8 +314,11 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
   const [tags, setTags] = useState("");
   const [workspace, setWorkspace] = useState(true);
   const [error, setError] = useState("");
+  const [errorField, setErrorField] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
   const [draftReady, setDraftReady] = useState(!fixture);
+  const fail = (field: string, message: string) => { setErrorField(field); setError(message); };
+  const clearError = () => { setErrorField(""); setError(""); };
 
   useEffect(() => {
     if (!open) { setDraftReady(!fixture); return; }
@@ -277,18 +326,18 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
     const stored = fixture ? readFixtureSession(KNOWLEDGE_DRAFT_KEY) : null;
     if (stored) {
       try {
-        const draft = JSON.parse(stored) as { version?: number; step?: KnowledgeStep; source?: KnowledgeSource; name?: string; content?: string; url?: string; fileName?: string; tags?: string; workspace?: boolean; error?: string };
+        const draft = JSON.parse(stored) as { version?: number; step?: KnowledgeStep; source?: KnowledgeSource; name?: string; content?: string; url?: string; fileName?: string; tags?: string; workspace?: boolean; error?: string; errorField?: string };
         if (draft.version !== 1) throw new Error("stale draft");
-        setStep(draft.step === "success" ? "choose" : draft.step ?? "choose"); setSource(draft.source ?? "text"); setName(draft.name ?? ""); setContent(draft.content ?? ""); setUrl(draft.url ?? ""); setFileName(draft.fileName ?? ""); setTags(draft.tags ?? ""); setWorkspace(draft.workspace ?? true); setError(draft.error ?? ""); setDraftReady(true); return;
+        setStep(draft.step === "success" ? "choose" : draft.step ?? "choose"); setSource(draft.source ?? "text"); setName(draft.name ?? ""); setContent(draft.content ?? ""); setUrl(draft.url ?? ""); setFileName(draft.fileName ?? ""); setTags(draft.tags ?? ""); setWorkspace(draft.workspace ?? true); setError(draft.error ?? ""); setErrorField(draft.errorField ?? ""); setDraftReady(true); return;
       } catch { removeFixtureSession(KNOWLEDGE_DRAFT_KEY); }
     }
-    setStep("choose"); setSource("text"); setName(""); setContent(""); setUrl(""); setFileName(""); setTags(""); setWorkspace(true); setError(""); setDraftReady(true);
+    setStep("choose"); setSource("text"); setName(""); setContent(""); setUrl(""); setFileName(""); setTags(""); setWorkspace(true); setError(""); setErrorField(""); setDraftReady(true);
   }, [fixture, open]);
 
   useEffect(() => {
     if (!fixture || !open || !draftReady || step === "success") return;
-    writeFixtureSession(KNOWLEDGE_DRAFT_KEY, JSON.stringify({ version: 1, step, source, name, content, url, fileName, tags, workspace, error }));
-  }, [content, draftReady, error, fileName, fixture, name, open, source, step, tags, url, workspace]);
+    writeFixtureSession(KNOWLEDGE_DRAFT_KEY, JSON.stringify({ version: 1, step, source, name, content, url, fileName, tags, workspace, error, errorField }));
+  }, [content, draftReady, error, errorField, fileName, fixture, name, open, source, step, tags, url, workspace]);
 
   useEffect(() => {
     if (!open || step !== "processing" || !fixture) return;
@@ -302,18 +351,18 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
 
   const dirty = step !== "choose" || Boolean(name.trim() || content.trim() || url.trim() || fileName || tags.trim());
   const requestClose = () => dirty ? setCancelOpen(true) : onOpenChange(false);
-  const choose = (next: KnowledgeSource) => { setSource(next); setStep(next); setError(""); };
+  const choose = (next: KnowledgeSource) => { setSource(next); setStep(next); clearError(); };
 
   const submit = async () => {
-    if (!name.trim()) return setError("Give this source a name.");
-    if (source === "text" && !content.trim()) return setError("Add the approved text Otto may reference.");
-    if (source === "url" && !/^https?:\/\//i.test(url.trim())) return setError("Enter a complete http or https URL.");
-    if (source === "file" && !fileName) return setError("Choose a DOC, DOCX, PDF or TXT file.");
-    setError("");
+    if (!name.trim()) return fail("name", "Give this source a name.");
+    if (source === "text" && !content.trim()) return fail("body", "Add the approved text Otto may reference.");
+    if (source === "url" && !/^https?:\/\//i.test(url.trim())) return fail("body", "Enter a complete http or https URL.");
+    if (source === "file" && !fileName) return fail("body", "Choose a DOC, DOCX, PDF or TXT file.");
+    clearError();
     if (fixture) { setStep("processing"); return; }
-    if (source !== "text") return setError("URL and file ingestion are not connected. Nothing was uploaded, read or saved.");
+    if (source !== "text") return fail("body", "URL and file ingestion are not connected. Nothing was uploaded, read or saved.");
     const result = await addMemory({ category: "knowledge", content: `${name.trim()}: ${content.trim()}` });
-    if ("error" in result) return setError(result.error);
+    if ("error" in result) return fail("", result.error);
     onSaved({ id: result.id, category: "knowledge", content: `${name.trim()}: ${content.trim()}`, source: "user", pinned: workspace, updatedAt: new Date() });
     setStep("success");
   };
@@ -328,13 +377,13 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
       </> : step === "processing" ? <div className="r22-kb-processing" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Reading {source === "file" ? fileName : source === "url" ? url : name}</DialogTitle><DialogDescription>Usually under a minute. This source is not available to Otto until processing finishes.</DialogDescription><Progress className="r22-kb-progress" aria-label="Working" /></div> : step === "success" ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Knowledge source saved</DialogTitle><DialogDescription>{name} is now available as {workspace ? "workspace" : "private"} context.</DialogDescription><Button unstyled type="button" className="is-primary" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
         <DialogHeader><DialogTitle>{source === "text" ? "Add text to Knowledge Base" : source === "url" ? "Add URL to Knowledge Base" : "Upload file to Knowledge Base"}</DialogTitle><DialogDescription>Source type: {source === "text" ? "Pasted approved text" : source === "url" ? "Public page" : "Uploaded document"}</DialogDescription></DialogHeader>
         <div className="r22-kb-fields">
-          <label>Name<Input unstyled autoFocus value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder={source === "file" ? "Brand story" : "What Otto should call this"} /><small>{name.length} / 100</small></label>
-          {source === "text" ? <label>What Otto should know<Textarea unstyled rows={8} maxLength={200000} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste material this workspace may use." /><small>{content.length} / 200000</small></label> : source === "url" ? <label>URL<Input unstyled type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/about" /><small>Works best on a page with plenty of text.</small></label> : <label className="r22-kb-file">Document<Input unstyled type="file" accept=".txt,.doc,.docx,.pdf" onChange={(event) => { const file = event.target.files?.[0]; setFileName(file?.name ?? ""); if (file && !name) setName(file.name.replace(/\.[^.]+$/, "")); }} /><span>{fileName || "Drag and drop or browse · max 40 MB"}</span></label>}
-          <label>Tags<Input unstyled value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Brand story" /></label>
+          <FlowField id="kb-name" label="Name" hint={`${name.length} / 100`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder={source === "file" ? "Brand story" : "What Otto should call this"} {...control} />}</FlowField>
+          {source === "text" ? <FlowField id="kb-body" label="What Otto should know" hint={`${content.length} / 200000`} error={errorField === "body" ? error : undefined}>{(control) => <Textarea unstyled rows={8} maxLength={200000} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste material this workspace may use." {...control} />}</FlowField> : source === "url" ? <FlowField id="kb-body" label="URL" hint="Works best on a page with plenty of text." error={errorField === "body" ? error : undefined}>{(control) => <Input unstyled type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/about" {...control} />}</FlowField> : <FlowField className="r22-kb-file" id="kb-body" label="Document" hint={fileName || "Drag and drop or browse · max 40 MB"} error={errorField === "body" ? error : undefined}>{(control) => <Input unstyled type="file" accept=".txt,.doc,.docx,.pdf" onChange={(event) => { const file = event.target.files?.[0]; setFileName(file?.name ?? ""); if (file && !name) setName(file.name.replace(/\.[^.]+$/, "")); }} {...control} />}</FlowField>}
+          <FlowField id="kb-tags" label="Tags">{(control) => <Input unstyled value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Brand story" {...control} />}</FlowField>
           <label className="r22-kb-check"><Checkbox unstyled checked={workspace} onCheckedChange={(checked) => setWorkspace(checked === true)} />Available to this workspace</label>
-          {error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}
+          {error && !errorField ? <FlowFormError error={error} /> : null}
         </div>
-        <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={() => { setStep("choose"); setError(""); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void submit()}>Add to Knowledge Base</Button></DialogFooter>
+        <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={() => { setStep("choose"); clearError(); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void submit()}>Add to Knowledge Base</Button></DialogFooter>
       </>}
     </DialogContent>
     <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this knowledge draft?</AlertDialogTitle><AlertDialogDescription>The source type, text, URL, file name and visibility will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(KNOWLEDGE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
@@ -362,9 +411,12 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
   const [indicators, setIndicators] = useState(["Weekend orders"]);
   const [characteristics, setCharacteristics] = useState([{ key: "Shopping window", value: "Friday evening" }]);
   const [error, setError] = useState("");
+  const [errorField, setErrorField] = useState("");
   const [status, setStatus] = useState<"editing" | "processing" | "success">("editing");
   const [cancelOpen, setCancelOpen] = useState(false);
   const [draftReady, setDraftReady] = useState(!fixture);
+  const fail = (field: string, message: string) => { setErrorField(field); setError(message); };
+  const clearError = () => { setErrorField(""); setError(""); };
 
   useEffect(() => {
     if (!open) { setDraftReady(!fixture); return; }
@@ -372,38 +424,39 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
     const stored = fixture ? readFixtureSession(AUDIENCE_DRAFT_KEY) : null;
     if (stored) {
       try {
-        const draft = JSON.parse(stored) as { version?: number; step?: number; name?: string; description?: string; scope?: "workspace" | "private"; sourceTab?: AudienceSourceTab; sourceText?: string; docs?: string[]; stories?: string[]; triggers?: string[]; requirements?: string[]; indicators?: string[]; characteristics?: Array<{ key: string; value: string }>; error?: string };
+        const draft = JSON.parse(stored) as { version?: number; step?: number; name?: string; description?: string; scope?: "workspace" | "private"; sourceTab?: AudienceSourceTab; sourceText?: string; docs?: string[]; stories?: string[]; triggers?: string[]; requirements?: string[]; indicators?: string[]; characteristics?: Array<{ key: string; value: string }>; error?: string; errorField?: string };
         if (draft.version !== 1) throw new Error("stale draft");
-        setStep(Math.min(3, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setDescription(draft.description ?? ""); setScope(draft.scope ?? "workspace"); setSourceTab(draft.sourceTab ?? "file"); setSourceText(draft.sourceText ?? ""); setDocs(draft.docs ?? []); setStories(draft.stories ?? []); setTriggers(draft.triggers ?? [""]); setRequirements(draft.requirements ?? [""]); setIndicators(draft.indicators ?? [""]); setCharacteristics(draft.characteristics ?? []); setError(draft.error ?? ""); setStatus("editing"); setDraftReady(true); return;
+        setStep(Math.min(3, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setDescription(draft.description ?? ""); setScope(draft.scope ?? "workspace"); setSourceTab(draft.sourceTab ?? "file"); setSourceText(draft.sourceText ?? ""); setDocs(draft.docs ?? []); setStories(draft.stories ?? []); setTriggers(draft.triggers ?? [""]); setRequirements(draft.requirements ?? [""]); setIndicators(draft.indicators ?? [""]); setCharacteristics(draft.characteristics ?? []); setError(draft.error ?? ""); setErrorField(draft.errorField ?? ""); setStatus("editing"); setDraftReady(true); return;
       } catch { removeFixtureSession(AUDIENCE_DRAFT_KEY); }
     }
-    setStep(0); setName(""); setDescription(""); setScope("workspace"); setSourceTab("file"); setSourceText(""); setDocs([]); setStories([]); setTriggers(["Looks for a thoughtful weekend gift"]); setRequirements(["Gift-ready after work"]); setIndicators(["Weekend orders"]); setCharacteristics([{ key: "Shopping window", value: "Friday evening" }]); setError(""); setStatus("editing"); setDraftReady(true);
+    setStep(0); setName(""); setDescription(""); setScope("workspace"); setSourceTab("file"); setSourceText(""); setDocs([]); setStories([]); setTriggers(["Looks for a thoughtful weekend gift"]); setRequirements(["Gift-ready after work"]); setIndicators(["Weekend orders"]); setCharacteristics([{ key: "Shopping window", value: "Friday evening" }]); setError(""); setErrorField(""); setStatus("editing"); setDraftReady(true);
   }, [fixture, open]);
 
   useEffect(() => {
     if (!fixture || !open || !draftReady || status !== "editing") return;
-    writeFixtureSession(AUDIENCE_DRAFT_KEY, JSON.stringify({ version: 1, step, name, description, scope, sourceTab, sourceText, docs, stories, triggers, requirements, indicators, characteristics, error }));
-  }, [characteristics, description, docs, draftReady, error, fixture, indicators, name, open, requirements, scope, sourceTab, sourceText, status, step, stories, triggers]);
+    writeFixtureSession(AUDIENCE_DRAFT_KEY, JSON.stringify({ version: 1, step, name, description, scope, sourceTab, sourceText, docs, stories, triggers, requirements, indicators, characteristics, error, errorField }));
+  }, [characteristics, description, docs, draftReady, error, errorField, fixture, indicators, name, open, requirements, scope, sourceTab, sourceText, status, step, stories, triggers]);
 
   const addSource = () => {
     const value = sourceTab === "file" ? (sourceText || `${step === 1 ? "audience" : "customer-story"}-source.pdf`) : sourceTab === "kb" ? "Brand story · Knowledge Base" : sourceText.trim();
-    if (!value) return setError("Add or select one source first.");
+    if (!value) return fail("", "Add or select one source first.");
     (step === 1 ? setDocs : setStories)((current) => [...current, value]);
-    setSourceText(""); setError("");
+    setSourceText(""); clearError();
   };
 
   const next = async () => {
-    if (step === 0 && (!name.trim() || !description.trim())) return setError("Add both a name and description.");
-    if (step < 3) { setError(""); setStep((value) => value + 1); return; }
+    if (step === 0 && !name.trim()) return fail("name", "Add both a name and description.");
+    if (step === 0 && !description.trim()) return fail("description", "Add both a name and description.");
+    if (step < 3) { clearError(); setStep((value) => value + 1); return; }
     const reviewComplete = [...triggers, ...requirements, ...indicators].every((item) => item.trim()) && characteristics.every((item) => item.key.trim() && item.value.trim());
-    if (!reviewComplete) return setError("Complete every audience detail before generating.");
-    if (!fixture && (docs.length || stories.length)) return setError("Reading audience sources is not switched on yet. Remove the attached sources or come back later; nothing was saved.");
-    setError(""); setStatus("processing");
+    if (!reviewComplete) return fail("", "Complete every audience detail before generating.");
+    if (!fixture && (docs.length || stories.length)) return fail("", "Reading audience sources is not switched on yet. Remove the attached sources or come back later; nothing was saved.");
+    clearError(); setStatus("processing");
     const saveRow = async () => {
       const content = `${name.trim()}: ${description.trim()} Buying triggers: ${triggers.join("; ")}. Requirements: ${requirements.join("; ")}. Success: ${indicators.join("; ")}.`;
       if (fixture) return { id: fixtureMemoryId("audience", name), category: "audience", content, source: "user" as const, pinned: scope === "workspace", updatedAt: fixtureUpdatedAt() };
       const result = await addMemory({ category: "audience", content });
-      if ("error" in result) { setStatus("editing"); setError(result.error); return null; }
+      if ("error" in result) { setStatus("editing"); fail("", result.error); return null; }
       return { id: result.id, category: "audience", content, source: "user" as const, pinned: scope === "workspace", updatedAt: new Date() };
     };
     window.setTimeout(async () => {
@@ -422,9 +475,9 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
       <DialogHeader><DialogTitle>Add Audience</DialogTitle><DialogDescription>{["Basic information", "Audience documentation", "Customer stories", "Review"][step]}</DialogDescription></DialogHeader>
       <div className="r22-audience-steps" aria-label={`Step ${step + 1} of 4`}>{["Basic information", "Documentation", "Customer stories", "Review"].map((label, index) => <span className={index === step ? "is-current" : index < step ? "is-done" : ""} key={label}>{index + 1} {label}</span>)}</div>
       <div className="r22-audience-layout"><div className="r22-kb-fields">{step === 0 ? <>
-        <label>Name<Input unstyled autoFocus value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /><small>{name.length} / 100</small></label>
-        <label>Description<Textarea unstyled rows={5} value={description} maxLength={500} onChange={(event) => setDescription(event.target.value)} /><small>{description.length} / 500</small></label>
-        <fieldset><legend>Audience access</legend><RadioGroup unstyled value={scope} onValueChange={(value) => setScope(value as "workspace" | "private")}><label><RadioGroupItem unstyled value="workspace" />Anyone in this workspace</label><label><RadioGroupItem unstyled value="private" />Private to me</label></RadioGroup></fieldset>
+        <FlowField id="audience-name" label="Name" hint={`${name.length} / 100`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus value={name} maxLength={100} onChange={(event) => setName(event.target.value)} {...control} />}</FlowField>
+        <FlowField id="audience-description" label="Description" hint={`${description.length} / 500`} error={errorField === "description" ? error : undefined}>{(control) => <Textarea unstyled rows={5} value={description} maxLength={500} onChange={(event) => setDescription(event.target.value)} {...control} />}</FlowField>
+        <FieldSet><FieldLegend variant="label">Audience access</FieldLegend><RadioGroup unstyled value={scope} onValueChange={(value) => setScope(value as "workspace" | "private")}><label><RadioGroupItem unstyled value="workspace" />Anyone in this workspace</label><label><RadioGroupItem unstyled value="private" />Private to me</label></RadioGroup></FieldSet>
       </> : step < 3 ? <>
         <h3>{step === 1 ? "Audience documentation" : "Customer stories"}</h3><p>Add sources you have permission to use. Every item keeps its provenance.</p>
         <Tabs unstyled value={sourceTab} onValueChange={(value) => { setSourceTab(value as AudienceSourceTab); setSourceText(""); }}><TabsList unstyled className="r22-brand-source-tabs"><TabsTrigger unstyled value="file">Upload files</TabsTrigger><TabsTrigger unstyled value="paste">Paste text</TabsTrigger><TabsTrigger unstyled value="url">Add URL</TabsTrigger><TabsTrigger unstyled value="kb">Knowledge Base</TabsTrigger></TabsList></Tabs>
@@ -432,8 +485,8 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
         <Button unstyled className="is-quiet" type="button" onClick={addSource}>Add source</Button>
         <div className="r22-audience-sources">{(step === 1 ? docs : stories).map((item, index) => <div key={`${item}-${index}`}><span>{item}</span><Button unstyled type="button" onClick={() => (step === 1 ? setDocs : setStories)((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Delete</Button></div>)}</div>
       </> : <>{editableList("Buying triggers", triggers, setTriggers)}{editableList("Use case requirements", requirements, setRequirements)}{editableList("Key success indicators", indicators, setIndicators)}<section className="r22-audience-list"><h3>Additional characteristics <span>{characteristics.length} / 10</span></h3>{characteristics.map((item, index) => <div key={index}><Input unstyled aria-label={`Characteristic ${index + 1} key`} value={item.key} placeholder="Key" onChange={(event) => setCharacteristics((current) => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, key: event.target.value } : entry))} /><b>=</b><Input unstyled aria-label={`Characteristic ${index + 1} value`} value={item.value} placeholder="Value" onChange={(event) => setCharacteristics((current) => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, value: event.target.value } : entry))} /><Button unstyled type="button" onClick={() => setCharacteristics((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button></div>)}<Button unstyled className="is-quiet" type="button" disabled={characteristics.length >= 10} onClick={() => setCharacteristics((current) => [...current, { key: "", value: "" }])}>Add characteristic</Button></section></>}
-        {error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}</div><aside className="r22-audience-preview"><b>{name || "Audience"}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><p>{description || "No description yet"}</p><small>Sources: {docs.length + stories.length || "No sources"}</small></aside></div>
-      <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { setError(""); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 3 ? "Generate audience" : "Next"}</Button></DialogFooter>
+        {error && !errorField ? <FlowFormError error={error} /> : null}</div><aside className="r22-audience-preview"><b>{name || "Audience"}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><p>{description || "No description yet"}</p><small>Sources: {docs.length + stories.length || "No sources"}</small></aside></div>
+      <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { clearError(); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 3 ? "Generate audience" : "Next"}</Button></DialogFooter>
     </>}
   </DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this audience draft?</AlertDialogTitle><AlertDialogDescription>The audience details, sources and review fields will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(AUDIENCE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
@@ -449,9 +502,11 @@ function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
   const [replacement, setReplacement] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
+  const [errorField, setErrorField] = useState("");
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const fail = (field: string, message: string) => { setErrorField(field); setError(message); };
 
   useEffect(() => {
     if (!open) return;
@@ -459,10 +514,10 @@ function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
     if (stored) {
       try {
         const draft = JSON.parse(stored) as { version?: number; kind?: "never" | "promise"; phrase?: string; replacement?: string; reason?: string };
-        if (draft.version === 1) { setKind(draft.kind ?? "never"); setPhrase(draft.phrase ?? ""); setReplacement(draft.replacement ?? ""); setReason(draft.reason ?? ""); setError(""); setSuccess(false); return; }
+        if (draft.version === 1) { setKind(draft.kind ?? "never"); setPhrase(draft.phrase ?? ""); setReplacement(draft.replacement ?? ""); setReason(draft.reason ?? ""); setError(""); setErrorField(""); setSuccess(false); return; }
       } catch { removeFixtureSession(STYLE_DRAFT_KEY); }
     }
-    setKind("never"); setPhrase(""); setReplacement(""); setReason(""); setError(""); setSuccess(false);
+    setKind("never"); setPhrase(""); setReplacement(""); setReason(""); setError(""); setErrorField(""); setSuccess(false);
   }, [fixture, open]);
 
   useEffect(() => {
@@ -471,16 +526,16 @@ function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
   }, [fixture, kind, open, phrase, reason, replacement, success]);
 
   const save = async () => {
-    if (!phrase.trim()) return setError(kind === "never" ? "Add the word or phrase Otto must avoid." : "Add the promise Otto must never make.");
-    if (kind === "never" && !replacement.trim()) return setError("Add the approved replacement Otto should use instead.");
-    if (!reason.trim()) return setError("Explain why this rule exists.");
-    setError(""); setBusy(true);
+    if (!phrase.trim()) return fail("phrase", kind === "never" ? "Add the word or phrase Otto must avoid." : "Add the promise Otto must never make.");
+    if (kind === "never" && !replacement.trim()) return fail("replacement", "Add the approved replacement Otto should use instead.");
+    if (!reason.trim()) return fail("reason", "Explain why this rule exists.");
+    setError(""); setErrorField(""); setBusy(true);
     const content = kind === "never" ? `Never say “${phrase.trim()}”. Use “${replacement.trim()}” instead. Why: ${reason.trim()}` : `Never promise “${phrase.trim()}”. Why: ${reason.trim()}`;
     let row: MemoryRow;
     if (fixture) row = { id: fixtureMemoryId("style", phrase), category: "style", content, source: "user", pinned: true, updatedAt: fixtureUpdatedAt() };
     else {
       const result = await addMemory({ category: "style", content });
-      if ("error" in result) { setBusy(false); setError(result.error); return; }
+      if ("error" in result) { setBusy(false); fail("", result.error); return; }
       row = { id: result.id, category: "style", content, source: "user", pinned: true, updatedAt: new Date() };
     }
     window.setTimeout(() => { onSaved(row); removeFixtureSession(STYLE_DRAFT_KEY); setBusy(false); setSuccess(true); }, fixture ? 420 : 0);
@@ -490,11 +545,11 @@ function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
 
   return <Dialog open={open} onOpenChange={(next) => next ? onOpenChange(true) : requestClose()}><DialogContent className="r22-kb-flow r22-style-flow" showCloseButton={false}>{success ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Style rule saved</DialogTitle><DialogDescription>Otto checks this rule before work reaches review.</DialogDescription><Button unstyled className="is-primary" type="button" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
     <DialogHeader><DialogTitle>Add Style Guide rule</DialogTitle><DialogDescription>The exact rule remains editable and workspace-scoped. Otto may add suggestions, but Otto cannot remove merchant rules.</DialogDescription></DialogHeader>
-    <div className="r22-kb-fields"><fieldset><legend>Rule type</legend><RadioGroup unstyled value={kind} onValueChange={(value) => setKind(value as "never" | "promise")}><label><RadioGroupItem unstyled value="never" />Never say</label><label><RadioGroupItem unstyled value="promise" />Promise we never make</label></RadioGroup></fieldset>
-      <label>{kind === "never" ? "Word or phrase" : "Promise"}<Input unstyled autoFocus value={phrase} onChange={(event) => setPhrase(event.target.value)} placeholder={kind === "never" ? "Cheap" : "Guaranteed results"} /></label>
-      {kind === "never" ? <label>Use instead<Input unstyled value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Accessible" /></label> : null}
-      <label>Why this matters<Textarea unstyled rows={4} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Keep claims specific and supported by the product details." /></label>
-      <p className="r22-kb-permission">This rule applies to new Otto drafts. Existing published or scheduled work is not rewritten.</p>{error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}</div>
+    <div className="r22-kb-fields"><FieldSet><FieldLegend variant="label">Rule type</FieldLegend><RadioGroup unstyled value={kind} onValueChange={(value) => setKind(value as "never" | "promise")}><label><RadioGroupItem unstyled value="never" />Never say</label><label><RadioGroupItem unstyled value="promise" />Promise we never make</label></RadioGroup></FieldSet>
+      <FlowField id="style-phrase" label={kind === "never" ? "Word or phrase" : "Promise"} error={errorField === "phrase" ? error : undefined}>{(control) => <Input unstyled autoFocus value={phrase} onChange={(event) => setPhrase(event.target.value)} placeholder={kind === "never" ? "Cheap" : "Guaranteed results"} {...control} />}</FlowField>
+      {kind === "never" ? <FlowField id="style-replacement" label="Use instead" error={errorField === "replacement" ? error : undefined}>{(control) => <Input unstyled value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Accessible" {...control} />}</FlowField> : null}
+      <FlowField id="style-reason" label="Why this matters" error={errorField === "reason" ? error : undefined}>{(control) => <Textarea unstyled rows={4} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Keep claims specific and supported by the product details." {...control} />}</FlowField>
+      <p className="r22-kb-permission">This rule applies to new Otto drafts. Existing published or scheduled work is not rewritten.</p>{error && !errorField ? <FlowFormError error={error} /> : null}</div>
     <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={busy} onClick={requestClose}>Cancel</Button><Button unstyled type="button" className="is-primary" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save rule"}</Button></DialogFooter>
   </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this style rule?</AlertDialogTitle><AlertDialogDescription>The phrase, replacement and reason will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(STYLE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
@@ -516,8 +571,11 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
   const [bodyFont, setBodyFont] = useState("");
   const [guideline, setGuideline] = useState("");
   const [error, setError] = useState("");
+  const [errorField, setErrorField] = useState("");
   const [status, setStatus] = useState<"editing" | "processing" | "success">("editing");
   const [cancelOpen, setCancelOpen] = useState(false);
+  const fail = (field: string, message: string) => { setErrorField(field); setError(message); };
+  const clearError = () => { setErrorField(""); setError(""); };
 
   useEffect(() => {
     if (!open) return;
@@ -525,10 +583,10 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
     if (stored) {
       try {
         const draft = JSON.parse(stored) as { version?: number; step?: number; name?: string; scope?: "workspace" | "private"; logoName?: string; colours?: string[]; nextColour?: string; titleFont?: string; headingFont?: string; bodyFont?: string; guideline?: string };
-        if (draft.version === 1) { setStep(Math.min(2, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setScope(draft.scope ?? "workspace"); setLogoName(draft.logoName ?? ""); setColours(draft.colours ?? []); setNextColour(draft.nextColour ?? "#16171C"); setTitleFont(draft.titleFont ?? ""); setHeadingFont(draft.headingFont ?? ""); setBodyFont(draft.bodyFont ?? ""); setGuideline(draft.guideline ?? ""); setError(""); setStatus("editing"); return; }
+        if (draft.version === 1) { setStep(Math.min(2, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setScope(draft.scope ?? "workspace"); setLogoName(draft.logoName ?? ""); setColours(draft.colours ?? []); setNextColour(draft.nextColour ?? "#16171C"); setTitleFont(draft.titleFont ?? ""); setHeadingFont(draft.headingFont ?? ""); setBodyFont(draft.bodyFont ?? ""); setGuideline(draft.guideline ?? ""); setError(""); setErrorField(""); setStatus("editing"); return; }
       } catch { removeFixtureSession(VISUAL_DRAFT_KEY); }
     }
-    setStep(0); setName(""); setScope("workspace"); setLogoName(""); setColours(["#0D9488", "#D4A373"]); setNextColour("#16171C"); setTitleFont("Fraunces"); setHeadingFont("Geist"); setBodyFont(""); setGuideline(""); setError(""); setStatus("editing");
+    setStep(0); setName(""); setScope("workspace"); setLogoName(""); setColours(["#0D9488", "#D4A373"]); setNextColour("#16171C"); setTitleFont("Fraunces"); setHeadingFont("Geist"); setBodyFont(""); setGuideline(""); setError(""); setErrorField(""); setStatus("editing");
   }, [fixture, open]);
 
   useEffect(() => {
@@ -537,16 +595,17 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
   }, [bodyFont, colours, fixture, guideline, headingFont, logoName, name, nextColour, open, scope, status, step, titleFont]);
 
   const next = async () => {
-    if (step === 0 && !name.trim()) return setError("Give this Visual Guideline a name.");
-    if (step === 1 && (!colours.length || !guideline.trim())) return setError("Keep at least one colour and add a framing guideline.");
-    if (step < 2) { setError(""); setStep((value) => value + 1); return; }
-    if (!fixture && logoName) return setError("Reading a logo file is not switched on yet. Remove the selected file or come back later; nothing was saved.");
+    if (step === 0 && !name.trim()) return fail("name", "Give this Visual Guideline a name.");
+    if (step === 1 && !colours.length) return fail("colours", "Keep at least one colour and add a framing guideline.");
+    if (step === 1 && !guideline.trim()) return fail("guideline", "Keep at least one colour and add a framing guideline.");
+    if (step < 2) { clearError(); setStep((value) => value + 1); return; }
+    if (!fixture && logoName) return fail("", "Reading a logo file is not switched on yet. Remove the selected file or come back later; nothing was saved.");
     const content = `${name.trim()}: Colours ${colours.join(", ")}. Fonts: ${[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "not set"}. ${guideline.trim()}`;
-    setError(""); setStatus("processing");
+    clearError(); setStatus("processing");
     const save = async () => {
       if (fixture) return { id: fixtureMemoryId("visual", name), category: "visual", content, source: "user" as const, pinned: scope === "workspace", updatedAt: fixtureUpdatedAt() };
       const result = await addMemory({ category: "visual", content });
-      if ("error" in result) { setStatus("editing"); setError(result.error); return null; }
+      if ("error" in result) { setStatus("editing"); fail("", result.error); return null; }
       return { id: result.id, category: "visual", content, source: "user" as const, pinned: scope === "workspace", updatedAt: new Date() };
     };
     window.setTimeout(async () => { const row = await save(); if (!row) return; onSaved(row); removeFixtureSession(VISUAL_DRAFT_KEY); setStatus("success"); }, fixture ? 540 : 0);
@@ -557,13 +616,13 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
   return <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? onOpenChange(true) : requestClose()}><DialogContent className="r22-kb-flow r22-visual-flow" showCloseButton={false}>{status === "processing" ? <div className="r22-kb-processing" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Saving Visual Guideline</DialogTitle><DialogDescription>Keeping the declared colours, font slots, source and scope together.</DialogDescription><Progress className="r22-kb-progress" aria-label="Working" /></div> : status === "success" ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Visual Guideline saved</DialogTitle><DialogDescription>{name} is now approved {scope} context.</DialogDescription><Button unstyled className="is-primary" type="button" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
     <DialogHeader><DialogTitle>Add Visual Guideline</DialogTitle><DialogDescription>{["Basic information", "Brand assets and rules", "Review"][step]}</DialogDescription></DialogHeader>
     <div className="r22-audience-steps is-three" aria-label={`Step ${step + 1} of 3`}>{["Basic information", "Assets and rules", "Review"].map((label, index) => <span className={index === step ? "is-current" : index < step ? "is-done" : ""} key={label}>{index + 1} {label}</span>)}</div>
-    <div className="r22-kb-fields">{step === 0 ? <><label>Name<Input unstyled autoFocus maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="Lilin product photography" /><small>{name.length} / 100</small></label><fieldset><legend>Guideline access</legend><RadioGroup unstyled value={scope} onValueChange={(value) => setScope(value as "workspace" | "private")}><label><RadioGroupItem unstyled value="workspace" />Anyone in this workspace</label><label><RadioGroupItem unstyled value="private" />Private to me</label></RadioGroup></fieldset></> : step === 1 ? <>
-      <label className="r22-kb-file">Logo<Input unstyled type="file" accept=".png,.jpg,.jpeg,.svg,.webp" onChange={(event) => setLogoName(event.target.files?.[0]?.name ?? "")} /><span>{logoName || "Add a logo or drag and drop one"}</span></label>
-      <section className="r22-visual-colours"><h3>Colours ({colours.length})</h3><div>{colours.map((colour, index) => <span key={`${colour}-${index}`}><i style={{ background: colour }} /><code>{colour}</code><Button unstyled type="button" aria-label={`Remove ${colour}`} onClick={() => setColours((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</Button></span>)}</div><label>Add colour<Input unstyled value={nextColour} onChange={(event) => setNextColour(event.target.value.toUpperCase())} /><Button unstyled type="button" className="is-quiet" onClick={() => { if (/^#[0-9A-F]{6}$/.test(nextColour) && !colours.includes(nextColour)) setColours((current) => [...current, nextColour]); else setError("Enter a unique six-digit hex colour, for example #0D9488."); }}>Keep</Button></label></section>
-      <section className="r22-visual-fonts"><h3>Fonts ({[titleFont, headingFont, bodyFont].filter(Boolean).length} of 3 set)</h3><label>Title<Input unstyled value={titleFont} onChange={(event) => setTitleFont(event.target.value)} /></label><label>Heading<Input unstyled value={headingFont} onChange={(event) => setHeadingFont(event.target.value)} /></label><label>Body<Input unstyled value={bodyFont} onChange={(event) => setBodyFont(event.target.value)} placeholder="Not set" /></label></section>
-      <label>Framing and image direction<Textarea unstyled rows={5} value={guideline} onChange={(event) => setGuideline(event.target.value)} placeholder="Natural morning light, close product detail, teal batik used as a supporting surface." /></label>
-    </> : <div className="r22-visual-review"><b>{name}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><dl><div><dt>Logo</dt><dd>{logoName || "Not supplied"}</dd></div><div><dt>Colours</dt><dd>{colours.join(", ")}</dd></div><div><dt>Fonts</dt><dd>{[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "Not set"}</dd></div><div><dt>Direction</dt><dd>{guideline}</dd></div></dl></div>}{error ? <p className="r22-brand-voice-error" role="alert">{error}</p> : null}</div>
-    <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { setError(""); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 2 ? "Save Visual Guideline" : "Next"}</Button></DialogFooter>
+    <div className="r22-kb-fields">{step === 0 ? <><FlowField id="visual-name" label="Name" hint={`${name.length} / 100`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="Lilin product photography" {...control} />}</FlowField><FieldSet><FieldLegend variant="label">Guideline access</FieldLegend><RadioGroup unstyled value={scope} onValueChange={(value) => setScope(value as "workspace" | "private")}><label><RadioGroupItem unstyled value="workspace" />Anyone in this workspace</label><label><RadioGroupItem unstyled value="private" />Private to me</label></RadioGroup></FieldSet></> : step === 1 ? <>
+      <FlowField className="r22-kb-file" id="visual-logo" label="Logo" hint={logoName || "Add a logo or drag and drop one"}>{(control) => <Input unstyled type="file" accept=".png,.jpg,.jpeg,.svg,.webp" onChange={(event) => setLogoName(event.target.files?.[0]?.name ?? "")} {...control} />}</FlowField>
+      <section className="r22-visual-colours"><h3>Colours ({colours.length})</h3><div>{colours.map((colour, index) => <span key={`${colour}-${index}`}><i style={{ background: colour }} /><code>{colour}</code><Button unstyled type="button" aria-label={`Remove ${colour}`} onClick={() => setColours((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</Button></span>)}</div><FlowField id="visual-next-colour" label="Add colour" error={errorField === "colours" ? error : undefined}>{(control) => <><Input unstyled value={nextColour} onChange={(event) => setNextColour(event.target.value.toUpperCase())} {...control} /><Button unstyled type="button" className="is-quiet" onClick={() => { if (/^#[0-9A-F]{6}$/.test(nextColour) && !colours.includes(nextColour)) { setColours((current) => [...current, nextColour]); clearError(); } else fail("colours", "Enter a unique six-digit hex colour, for example #0D9488."); }}>Keep</Button></>}</FlowField></section>
+      <section className="r22-visual-fonts"><h3>Fonts ({[titleFont, headingFont, bodyFont].filter(Boolean).length} of 3 set)</h3><FlowField id="visual-font-title" label="Title">{(control) => <Input unstyled value={titleFont} onChange={(event) => setTitleFont(event.target.value)} {...control} />}</FlowField><FlowField id="visual-font-heading" label="Heading">{(control) => <Input unstyled value={headingFont} onChange={(event) => setHeadingFont(event.target.value)} {...control} />}</FlowField><FlowField id="visual-font-body" label="Body">{(control) => <Input unstyled value={bodyFont} onChange={(event) => setBodyFont(event.target.value)} placeholder="Not set" {...control} />}</FlowField></section>
+      <FlowField id="visual-guideline" label="Framing and image direction" error={errorField === "guideline" ? error : undefined}>{(control) => <Textarea unstyled rows={5} value={guideline} onChange={(event) => setGuideline(event.target.value)} placeholder="Natural morning light, close product detail, teal batik used as a supporting surface." {...control} />}</FlowField>
+    </> : <div className="r22-visual-review"><b>{name}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><dl><div><dt>Logo</dt><dd>{logoName || "Not supplied"}</dd></div><div><dt>Colours</dt><dd>{colours.join(", ")}</dd></div><div><dt>Fonts</dt><dd>{[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "Not set"}</dd></div><div><dt>Direction</dt><dd>{guideline}</dd></div></dl></div>}{error && !errorField ? <FlowFormError error={error} /> : null}</div>
+    <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { clearError(); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 2 ? "Save Visual Guideline" : "Next"}</Button></DialogFooter>
   </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this Visual Guideline draft?</AlertDialogTitle><AlertDialogDescription>The name, assets, colours, font slots and direction will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(VISUAL_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
 
@@ -735,8 +794,18 @@ export function R22OttoIQView({
     <main className="r22-iq" data-r22-otto-iq>
       <nav><Button unstyled type="button" onClick={() => open("hub")}>Otto IQ</Button><ChevronRight className="size-3" aria-hidden="true" /><span>{card?.title}</span></nav>
       <header><div><h1>{card?.title}</h1><p>{card?.description}</p></div><Button unstyled type="button" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></header>
-      <div className="r22-iq-toolbar"><label><span className="sr-only">Search {card?.title}</span><Input unstyled type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${card?.title}`} /></label><span>{visible.length} saved</span></div>
-      {visible.length ? <div className="r22-iq-table"><div><b>{card?.title}</b><b>Source</b><b>Scope</b><b>Updated</b></div>{visible.map((row) => <Button unstyled type="button" key={row.id} onClick={() => openRow(row)}><span><b>{rowName(row)}</b><small>{row.content}</small></span><span>{row.source === "user" ? "You" : "Otto suggestion"}</span><span>Workspace</span><span>{new Date(row.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></Button>)}</div> : <Empty className="r22-iq-empty"><EmptyHeader><EmptyMedia variant="icon"><Eye /></EmptyMedia><EmptyTitle>{query ? "No approved context matches" : "Start with approved context"}</EmptyTitle><EmptyDescription>{query ? "Try a different search. Nothing was hidden as deleted." : "Add text you own. Otto never goes looking for material anywhere else."}</EmptyDescription></EmptyHeader>{!query ? <EmptyContent><Button unstyled type="button" className="is-quiet" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></EmptyContent> : null}</Empty>}
+      {/* 搜索框归 `ui/input-group`(A-12);计数从一句话改成一枚芯片(B-4)—— 数字随
+          筛选实时变,住在标签旁边而不是自己占一句。 */}
+      <div className="r22-iq-toolbar"><InputGroup className="r22-iq-search"><InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon><InputGroupInput type="search" aria-label={`Search ${card?.title}`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${card?.title}`} /></InputGroup><Badge variant="outline" className="r22-iq-count" data-r22-iq-count>{visible.length} saved</Badge></div>
+      {/*
+        已存下来的 context 归位 `ui/table`(审计 A-6)。此前这一块是「四个 `<b>` 当表头 +
+        一叠 `<Button>` 当数据行」,靠 `grid-template-columns` 对齐 —— 屏幕上是一张表,
+        读出来不是:没有列头与格子的关系,商家用读屏软件听到的是四段没有归属的字。
+
+        键盘路径长在名字那一格的按钮上(`<tr>` 不可聚焦);整行可点是给鼠标的,所以那颗
+        按钮的点击要 `stopPropagation`,免得同一下开两遍。
+      */}
+      {visible.length ? <div className="r22-iq-table"><Table className="r22-iq-rows" aria-label={card?.title}><TableHeader><TableRow><TableHead>{card?.title}</TableHead><TableHead>Source</TableHead><TableHead>Scope</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader><TableBody>{visible.map((row) => <TableRow key={row.id} data-r22-iq-row={row.id} onClick={() => openRow(row)}><TableCell><Button unstyled type="button" className="r22-iq-row-open" onClick={(event) => { event.stopPropagation(); openRow(row); }}><b>{rowName(row)}</b><small>{row.content}</small></Button></TableCell><TableCell>{row.source === "user" ? "You" : "Otto suggestion"}</TableCell><TableCell>Workspace</TableCell><TableCell>{new Date(row.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</TableCell></TableRow>)}</TableBody></Table></div> : <Empty className="r22-iq-empty"><EmptyHeader><EmptyMedia variant="icon"><Eye /></EmptyMedia><EmptyTitle>{query ? "No approved context matches" : "Start with approved context"}</EmptyTitle><EmptyDescription>{query ? "Try a different search. Nothing was hidden as deleted." : "Add text you own. Otto never goes looking for material anywhere else."}</EmptyDescription></EmptyHeader>{!query ? <EmptyContent><Button unstyled type="button" className="is-quiet" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></EmptyContent> : null}</Empty>}
 
       <Dialog open={selected !== null} onOpenChange={(next) => { if (!next) setSelected(null); }}>
         <DialogContent className="r22-iq-detail">
