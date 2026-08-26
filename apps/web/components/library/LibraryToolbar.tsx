@@ -1,17 +1,19 @@
 "use client";
 
 /**
- * LibraryToolbar.tsx —— 主区顶上那一排:搜索、类型、排序、视图、上传。
+ * LibraryToolbar.tsx —— 主区顶上那一排:搜索、类型、排序、视图、做点东西、上传。
  *
- * 上传是**主按钮**,坐在这一排最右边。理由是 Founder 的原话:商家必须能自己 create、自己
- * 上传 —— 一个把上传藏进菜单第三层的素材库,等于告诉商家「你的照片不算数」。它没有抢
- * Create 那条主线的位置:这里是素材库,主线在导航第二格。
+ * 这一排最右边现在是**两颗并列**的按钮,主次分明:
+ *   · **Create** 是主按钮 —— 仓库里也能直接开工。商家站在自己的东西中间想再要一张,
+ *     最短的路不是「回首页 → 进画布 → 选项目」,而是就地说一句话。
+ *   · **Upload** 降为次级 —— 它照旧是一等公民(藏进菜单第三层等于告诉商家「你的照片不
+ *     算数」),只是不再是这一排唯一的动作。
  *
  * 真的 file picker:`<Input type="file">` 藏在视觉之外(不是 `display:none` —— 那样键盘也
  * 到不了),按钮点它。
  */
 
-import { LayoutGrid, Rows3, Search, Upload } from "lucide-react";
+import { LayoutGrid, Rows3, Search, Sparkles, Upload } from "lucide-react";
 import { useRef, type ChangeEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -26,22 +28,26 @@ export function LibraryToolbar({
   sort,
   layout,
   fixture,
+  createOpen,
   onQuery,
   onType,
   onSort,
   onLayout,
   onFiles,
+  onCreate,
 }: {
   query: string;
   type: LibraryTypeFilter;
   sort: LibrarySort;
   layout: LibraryLayout;
   fixture: boolean;
+  createOpen: boolean;
   onQuery: (value: string) => void;
   onType: (value: LibraryTypeFilter) => void;
   onSort: (value: LibrarySort) => void;
   onLayout: (value: LibraryLayout) => void;
   onFiles: (files: FileList | null) => void;
+  onCreate: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -75,6 +81,7 @@ export function LibraryToolbar({
 
       {fixture ? <span className="r22-lib-sample">Prototype · sample data</span> : null}
 
+      <Button unstyled type="button" className="r22-lib-create" data-r22-lib-create aria-expanded={createOpen} onClick={onCreate}><Sparkles aria-hidden="true" />Create</Button>
       <Button unstyled type="button" className="r22-lib-upload" onClick={() => fileRef.current?.click()}><Upload aria-hidden="true" />Upload</Button>
       <Input ref={fileRef} unstyled className="r22-lib-file" type="file" accept="image/*" aria-label="Upload a picture" onChange={pick} />
     </div>

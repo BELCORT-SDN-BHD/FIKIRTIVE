@@ -16,22 +16,37 @@
  *      移除只是从这里收起来、不冒充删除,上传超预算当场拒收、不假装成功。
  */
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
+import {
+  appendCanvasFixtureHandoff,
+  FIXTURE_VIDEO_CONCEPT_SECONDS,
+  fixtureBatchHome,
+  fixtureQuoteCredits,
+} from "@/components/canvas/r22-canvas-fixture";
 
 import { LibraryCard } from "./LibraryCard";
 import { LibraryDetailLayer } from "./LibraryDetailLayer";
 import { LibraryNav } from "./LibraryNav";
 import { LibraryPackDialog } from "./LibraryPackDialog";
+import { LibraryQuickCreate, type QuickCreateRequest } from "./LibraryQuickCreate";
 import { LibraryToolbar } from "./LibraryToolbar";
 import {
+  addLibraryAssets,
+  attachToPack,
   groupLibraryByDay,
+  libraryCanvasHref,
+  libraryProjects,
   LIBRARY_FIXTURE_KEY,
+  newPackId,
   packIdOf,
+  QUICK_CREATE_PROJECT_ID,
+  quickCreateAsset,
   readLibraryArchive,
   seedLibraryArchive,
   UPLOAD_BUDGET_BYTES,
@@ -68,7 +83,17 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   /** `null` = 没在改名。空串是「改名中,但先清空了」—— 两件事不能共用一个假值。 */
   const [renaming, setRenaming] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  /** 生成条开着没有。它是页内浮层,不是路由 —— 关掉不该丢掉网格的滚动位置与多选态。 */
+  const [createOpen, setCreateOpen] = useState(false);
+  /** 这一次 Quick create 还在跑没有。跑着的时候发送键关着,一句话不该同时排两次。 */
+  const [running, setRunning] = useState(false);
+  /** 回执里那条「Continue in Canvas」指向哪块板。`null` = 这条回执没有后续动作。 */
+  const [continueTo, setContinueTo] = useState<string | null>(null);
   const anchorRef = useRef<string | null>(null);
+  const timersRef = useRef<number[]>([]);
+  const runSeqRef = useRef(0);
+
+  useEffect(() => () => { timersRef.current.forEach((timer) => window.clearTimeout(timer)); }, []);
 
   useEffect(() => {
     if (!restore) return;
@@ -78,6 +103,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
 
   /** 一次写入 = 一次落盘 + 一句人话。落不进去就照实说,不把改动留在屏幕上骗人。 */
   const commit = useCallback((next: LibraryArchive, message: string): boolean => {
+    // 上一条回执的后续动作跟着上一条走 —— 新的一句话出来了,旧那颗按钮就不该还杵在那儿。
+    setContinueTo(null);
     if (restore && !writeLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY), next)) {
       setNotice(NO_ROOM);
       return false;
@@ -86,6 +113,12 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     setNotice(message);
     return true;
   }, [restore]);
+
+  /** 只说一句话,不动东西。 */
+  const say = useCallback((message: string) => {
+    setContinueTo(null);
+    setNotice(message);
+  }, []);
 
   const patch = useCallback((ids: string[], change: (asset: LibraryAsset) => LibraryAsset, message: string) => {
     const wanted = new Set(ids);
@@ -98,8 +131,10 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   const counts = useMemo(() => ({
     all: live.length,
     starred: live.filter((asset) => asset.starred).length,
+    made: live.filter((asset) => asset.source === "made").length,
     uploads: live.filter((asset) => asset.source === "uploaded").length,
   }), [live]);
+  const projects = useMemo(() => libraryProjects(archive.assets), [archive.assets]);
   const packCounts = useMemo(() => {
     const out: Record<string, number> = {};
     for (const pack of archive.packs) out[pack.id] = live.filter((asset) => asset.packIds.includes(pack.id)).length;
@@ -134,6 +169,9 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
       if (event.key !== "Escape" || event.defaultPrevented) return;
       // 详情层与两个弹层是 Radix 自己的地盘,那一记归它们,工作台不抢。
       if (detailId || packTarget || confirmRemove) return;
+      // 生成条开着的时候那一记归它。它自己也守着同一条链,这里明写一句是因为两个监听器
+      // 挂在同一个 window 上、次序由挂载顺序决定 —— 靠次序对上的东西迟早会错一次。
+      if (createOpen) return;
       if (!selected.length) return;
       event.preventDefault();
       setSelected([]);
@@ -141,7 +179,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmRemove, detailId, packTarget, selected.length]);
+  }, [confirmRemove, createOpen, detailId, packTarget, selected.length]);
 
   /* ── 批量动作 ─────────────────────────────────────────────────────────────── */
 
@@ -150,7 +188,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   }
 
   function download() {
-    setNotice("Downloads are not switched on yet, so nothing was saved to your computer.");
+    say("Downloads are not switched on yet, so nothing was saved to your computer.");
   }
 
   function removeSelected() {
@@ -167,17 +205,13 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
 
   function addToPack(packId: string) {
     const name = archive.packs.find((pack) => pack.id === packId)?.name ?? "the pack";
-    patch(packDialogIds, (asset) => (asset.packIds.includes(packId) ? asset : { ...asset, packIds: [...asset.packIds, packId] }), `${countLabel(packDialogIds.length)} in ${name}.`);
+    commit(attachToPack(archive, packDialogIds, packId), `${countLabel(packDialogIds.length)} in ${name}.`);
     setPackTarget(null);
   }
 
   function createPack(name: string) {
-    const id = `pack-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || archive.packs.length + 1}`;
-    const wanted = new Set(packDialogIds);
-    commit({
-      packs: [...archive.packs, { id, name }],
-      assets: archive.assets.map((asset) => (wanted.has(asset.id) ? { ...asset, packIds: [...asset.packIds, id] } : asset)),
-    }, `${countLabel(packDialogIds.length)} in ${name}.`);
+    const id = newPackId(name, archive.packs);
+    commit(attachToPack({ ...archive, packs: [...archive.packs, { id, name }] }, packDialogIds, id), `${countLabel(packDialogIds.length)} in ${name}.`);
     setPackTarget(null);
   }
 
@@ -193,9 +227,9 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   function upload(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) return setNotice("Only pictures can be added here, so that file was not added.");
+    if (!file.type.startsWith("image/")) return say("Only pictures can be added here, so that file was not added.");
     if (file.size > UPLOAD_BUDGET_BYTES) {
-      return setNotice(`${uploadDisplayName(file.name)} is larger than ${UPLOAD_BUDGET_LABEL}, so it was not added. Pick a smaller picture and it will show up here.`);
+      return say(`${uploadDisplayName(file.name)} is larger than ${UPLOAD_BUDGET_LABEL}, so it was not added. Pick a smaller picture and it will show up here.`);
     }
     const reader = new FileReader();
     reader.onload = () => {
@@ -212,8 +246,70 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
       };
       commit({ ...archive, assets: [asset, ...archive.assets] }, `${name} is in your Library.`);
     };
-    reader.onerror = () => setNotice(`${uploadDisplayName(file.name)} could not be read, so it was not added.`);
+    reader.onerror = () => say(`${uploadDisplayName(file.name)} could not be read, so it was not added.`);
     reader.readAsDataURL(file);
+  }
+
+  /* ── Quick create:仓库里就地做东西 ───────────────────────────────────────── */
+
+  /**
+   * 一次 Quick create 从「排上了」走到「进了库」。
+   *
+   * 三件事在落地那一刻**一起**发生,少一件商家就会觉得东西丢了:
+   *   ① 成品进 Library 存档 —— 归 Quick create 这个项目、归今天那一组,Made by Otto 跟着 +n;
+   *   ② 同一批送进那块画布的会话 —— 于是「Continue in Canvas」与详情层的「Open in canvas」
+   *      指过去看到的是**同一块有东西的板**,不是一块空板;
+   *   ③ 回执带上那颗动作按钮 —— 刚做完的下一步就在手边,不用自己去找路。
+   *
+   * 幂等由批次 `id` 保证(`appendCanvasFixtureHandoff`),来回点两次不会在板上多出一批。
+   */
+  function runQuickCreate(request: QuickCreateRequest) {
+    if (running) return;
+    runSeqRef.current += 1;
+    const runId = `${Date.now()}-${runSeqRef.current}`;
+    const credits = fixtureQuoteCredits(request.kind, request.count);
+    setRunning(true);
+    setCreateOpen(false);
+    say("Otto is on it. Nothing is charged until it lands.");
+
+    timersRef.current.push(window.setTimeout(() => {
+      say("Still the same request — nothing new was started.");
+    }, 320));
+
+    timersRef.current.push(window.setTimeout(() => {
+      setRunning(false);
+      const made = Array.from({ length: request.count }, (_, index) => quickCreateAsset({
+        runId,
+        index,
+        prompt: request.prompt,
+        kind: request.kind,
+        duration: `${FIXTURE_VIDEO_CONCEPT_SECONDS}s`,
+      }));
+      const landed = commit(
+        addLibraryAssets(archive, made),
+        request.kind === "video"
+          ? `${countLabel(made.length)} in your Library. Video is a still stand-in, not a playable video — ${credits} cr.`
+          : `${countLabel(made.length)} in your Library — ${credits} cr.`,
+      );
+      if (!landed) return;
+      if (restore) {
+        appendCanvasFixtureHandoff({
+          projectId: QUICK_CREATE_PROJECT_ID,
+          prompt: request.prompt,
+          batch: {
+            id: `quick-${runId}`,
+            kind: request.kind,
+            ratio: request.ratio,
+            credits,
+            madeFrom: null,
+            references: [],
+            home: fixtureBatchHome(1),
+            art: made.map((asset) => ({ id: asset.id, label: asset.name, src: asset.poster, alt: asset.name })),
+          },
+        });
+      }
+      setContinueTo(QUICK_CREATE_PROJECT_ID);
+    }, 920));
   }
 
   /* ── 画 ───────────────────────────────────────────────────────────────────── */
@@ -224,15 +320,18 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     ? `Nothing here matches “${query.trim()}”.`
     : section === "uploads"
       ? "No pictures of your own yet. Use Upload and they will sit here beside everything Otto made."
-      : section === "starred"
-        ? "Nothing starred yet. Star the keepers and they gather here."
-        : "Nothing here yet. Make something on a canvas, or upload a picture of your own.";
+      : section === "made"
+        ? "Otto has not made anything yet. Use Create and the first ones land here."
+        : section === "starred"
+          ? "Nothing starred yet. Star the keepers and they gather here."
+          : "Nothing here yet. Make something on a canvas, or upload a picture of your own.";
 
   return (
     <div className="r22-lib" data-layout={layout}>
       <LibraryNav
         section={section}
         counts={counts}
+        projects={projects}
         packs={archive.packs}
         packCounts={packCounts}
         onSection={(next) => { setSection(next); setSelected([]); setRenaming(null); }}
@@ -246,11 +345,13 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           sort={sort}
           layout={layout}
           fixture={fixture}
+          createOpen={createOpen}
           onQuery={setQuery}
           onType={setType}
           onSort={setSort}
           onLayout={setLayout}
           onFiles={upload}
+          onCreate={() => setCreateOpen((open) => !open)}
         />
 
         {openPack ? (
@@ -269,7 +370,12 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           </div>
         ) : null}
 
-        {notice ? <p className="r22-lib-notice" role="status">{notice}</p> : null}
+        {notice ? (
+          <p className="r22-lib-notice" role="status">
+            <span>{notice}</span>
+            {continueTo ? <Link className="r22-lib-notice-act" data-r22-lib-continue href={libraryCanvasHref(continueTo, fixture)}>Continue in Canvas</Link> : null}
+          </p>
+        ) : null}
 
         {groups.length ? (
           <div className="r22-lib-groups">
@@ -297,6 +403,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           <section className="r22-lib-empty">{emptyCopy}</section>
         )}
       </div>
+
+      <LibraryQuickCreate open={createOpen} busy={running} onClose={() => setCreateOpen(false)} onRun={runQuickCreate} />
 
       {selectedCount ? (
         <div className="r22-lib-bulk" role="group" aria-label="Selected items">
