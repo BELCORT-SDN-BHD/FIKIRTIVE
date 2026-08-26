@@ -490,6 +490,19 @@
 }
 
 /* 手形工具在手上,光标就该是一只手(原型 L499-500 `.cv-stage.panning`)。 */
+/*
+  手正在板上走的时候,别顺手把整块板的文字刷成蓝色。框选画的是选框、拖卡片挪的是卡片,
+  两件事都跟「选字」无关 —— 而浏览器默认会在这一路上刷出一片原生文字选区,松手还留着。
+
+  这一条**只在手势进行中**挂,松手就摘(`endGesture` 摘掉 `is-gesturing`)。一刀切地把
+  `user-select: none` 焊在 stage 上会连正常的复制一起杀掉:摘录卡上那段商家自己网页的
+  文字,本来就该选得中、复制得走。
+*/
+.r22-canvas-stage.is-gesturing {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .r22-canvas-stage.is-panning { cursor: grab; }
 .r22-canvas-stage.is-panning:active,
 .r22-canvas-stage.is-dragging { cursor: grabbing; }

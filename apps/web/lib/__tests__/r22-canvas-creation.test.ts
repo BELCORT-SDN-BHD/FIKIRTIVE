@@ -10,6 +10,8 @@
  * 的东西(DOM 上的 `aria-pressed` / textContent / `download` 属性)与浏览器里真实存下的东西
  * (sessionStorage),不是源码字符串。
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -451,6 +453,44 @@ describe("⑦ 最新那一批下面给出跟手改一版的几句", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ⑦b 跟手改一版的张数跟着**源批次**走(编排者真机回炉件 P3)
+// ---------------------------------------------------------------------------
+describe("⑦b 「这一批再来一版」的张数是源批次的张数", () => {
+  it("在 4 张的批次上按 Warmer light → 新的一批还是 4 张 12 cr,价格贴纸同步", async () => {
+    vi.useFakeTimers();
+    await mount();
+    // 源批次(开局那一批)是四张。
+    expect(need('[data-canvas-batch="batch"] .r22-canvas-batch-tag').textContent).toContain("4 images");
+
+    await click(need<HTMLButtonElement>('[data-canvas-iterate="Warmer light"]'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(JOB_MS); });
+
+    const cards = all<HTMLElement>("[data-canvas-batch] .r22-canvas-batch-tag");
+    const made = cards[cards.length - 1]!.textContent ?? "";
+    expect(made, "四张的批次改一版只出了一张 —— 商家读到的语义与屏上出来的东西对不上").toContain("4 images");
+    expect(made, "张数对了但价钱没跟上").toContain("12 cr");
+    // 屏上那个报价必须和真正做出来的东西是同一个数。
+    expect(priceLabel(), "价格贴纸还停在改一版之前的那个数").toBe("12 cr");
+  });
+
+  it("商家自己在参数弹层拨过张数,就听商家的", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await openParams();
+    await click(need('[data-canvas-count="2"]'));
+    await click(need(".r22-canvas-ratio"));
+
+    await click(need<HTMLButtonElement>('[data-canvas-iterate="Warmer light"]'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(JOB_MS); });
+
+    const cards = all<HTMLElement>("[data-canvas-batch] .r22-canvas-batch-tag");
+    const made = cards[cards.length - 1]!.textContent ?? "";
+    expect(made, "商家自己拨的张数被源批次盖过去了").toContain("2 images");
+    expect(made).toContain("6 cr");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ⑧ 切项目:新长出来的东西一件都不许跟过去
 // ---------------------------------------------------------------------------
 describe("⑧ 切项目之后,这一面新加的状态全清", () => {
@@ -479,5 +519,54 @@ describe("⑧ 切项目之后,这一面新加的状态全清", () => {
 
     await render("project-a");
     expect(batchIds().length, "清内存态时把 project A 的存档也一起清了").toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑨ 手在板上走的时候,不许顺手刷出一片原生文字选区(编排者真机回炉件 P2)
+// ---------------------------------------------------------------------------
+describe("⑨ 框选与拖拽进行中抑制文本选择", () => {
+  /** jsdom 画不出原生选区,所以这里钉的是浏览器真正据以抑制它的那一样东西:stage 上那面旗。 */
+  function gesturing(): boolean {
+    return need<HTMLElement>("[data-r22-canvas-stage]").className.includes("is-gesturing");
+  }
+
+  it("框选:按下就摁住,拖的全程都摁着,松手立刻摘掉", async () => {
+    await mount();
+    await click(need('[data-r22-canvas-tools] button[aria-label="Box select"]'));
+    const stage = need<HTMLElement>("[data-r22-canvas-stage]");
+    expect(gesturing(), "什么都没做就先把文本选择摁住了 —— 那会连正常复制一起杀掉").toBe(false);
+
+    await act(async () => { stage.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 90, clientY: 90, button: 0 })); });
+    expect(gesturing(), "框选起手没有摁住文本选择 —— 框扫过卡片时整片字会被刷成蓝色").toBe(true);
+
+    await act(async () => { window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: 380, clientY: 340, button: 0 })); });
+    expect(gesturing(), "拖到一半就松开了抑制").toBe(true);
+
+    await act(async () => { window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 380, clientY: 340, button: 0 })); });
+    expect(gesturing(), "松手之后还摁着 —— 商家从此复制不动板上的字").toBe(false);
+  });
+
+  it("拖卡片:按下那一刻就摁住,不等 3px 阈值(文字选区从按下就开始刷)", async () => {
+    await mount();
+    const sticky = need<HTMLElement>('[data-canvas-object="sticky"]');
+
+    await act(async () => { sticky.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 500, clientY: 500, button: 0 })); });
+    expect(gesturing(), "拖卡片起手没有摁住,或者等到越过阈值才摁 —— 那时候字已经被刷蓝了").toBe(true);
+
+    await act(async () => { window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 500, clientY: 500, button: 0 })); });
+    expect(gesturing()).toBe(false);
+  });
+
+  it("那面旗接着的是一条 user-select: none,而且没有被焊死在 stage 上", () => {
+    const css = readFileSync(path.resolve(__dirname, "../../components/canvas/r22-canvas.css"), "utf8");
+    const gesturingRule = /\.r22-canvas-stage\.is-gesturing\s*\{([^}]*)\}/.exec(css);
+    expect(gesturingRule, "旗挂上了,却没有任何一条声明接着它 —— 浏览器那边什么都不会发生").not.toBeNull();
+    expect(gesturingRule![1]).toContain("user-select: none");
+
+    // 一刀切的抑制会杀掉正常复制:摘录卡上那段商家自己网页的文字本来就该选得中。
+    const stageRule = /\.r22-canvas-stage\s*\{([^}]*)\}/.exec(css);
+    expect(stageRule, "stage 那条规则不见了").not.toBeNull();
+    expect(stageRule![1], "user-select: none 被焊死在 stage 上,板上的字从此一个都复制不走").not.toContain("user-select");
   });
 });

@@ -826,6 +826,14 @@ export function R22CanvasSurface({
   const [makeKind, setMakeKind] = useState<CanvasMakeKind>("image");
   /** 这一次要做几张(1–4)。价钱跟着它走。 */
   const [makeCount, setMakeCount] = useState(1);
+  /**
+   * 商家自己在参数弹层里拨过张数没有。
+   *
+   * 「Warmer light」说的是「**这一批**再来一版更暖的」—— 源批次有四张,那一版就该是四张,
+   * 不是悄悄缩成一张。但商家真的自己拨成 2 之后,那句话就该听商家的。所以要记一面旗:
+   * 没拨过 = 跟着源批次走,拨过 = 跟着商家走。
+   */
+  const [countTouched, setCountTouched] = useState(false);
   /** 商家自己做出来的那几批(开局那一批是常量,不进存档)。 */
   const [extraBatches, setExtraBatches] = useState<FixtureBatch[]>([]);
   /** 被星标的成品。星标是「留着」的意思,所以它进存档。 */
@@ -841,6 +849,12 @@ export function R22CanvasSurface({
   /** 框选那个矩形。stage 坐标系,`null` = 此刻没在框。 */
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  /**
+   * 手正在板上走(框选 / 拖物件 / 平移)。它比 `dragging` 早一步、也宽一格 —— 拖物件要
+   * 越过 3px 阈值才算 `dragging`,而**文字选区从按下的那一刻就开始刷**,所以抑制文本选择
+   * 只能挂在这一面旗上。松手就摘:一刀切的 `user-select: none` 会把正常复制一起杀掉。
+   */
+  const [gesturing, setGesturing] = useState(false);
   const [message, setMessage] = useState(runtimeContext.initialPrompt ?? "");
   const [notice, setNotice] = useState("");
   /**
@@ -972,13 +986,14 @@ export function R22CanvasSurface({
       setAttachments([]);
       setMakeKind("image");
       setMakeCount(1);
+      setCountTouched(false);
       moveHistoryRef.current = { undo: [], redo: [] };
       answeredRequestsRef.current.clear();
     };
     const stored = window.sessionStorage.getItem(fixtureStorageKey);
     if (stored) {
       try {
-        const restored = JSON.parse(stored) as { version?: number; messages?: ChatEntry[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null; objects?: Record<string, CanvasPoint>; batches?: FixtureBatch[]; starred?: string[]; attachments?: CanvasAttachment[]; kind?: CanvasMakeKind; count?: number };
+        const restored = JSON.parse(stored) as { version?: number; messages?: ChatEntry[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null; objects?: Record<string, CanvasPoint>; batches?: FixtureBatch[]; starred?: string[]; attachments?: CanvasAttachment[]; kind?: CanvasMakeKind; count?: number; countTouched?: boolean };
         // v2 = 会话记录从「一串我的话」变成「谁说的 + 说了什么」(Otto 现在也会答话)。
         // 旧存档结构对不上,当场丢掉,不去猜它的形状。
         if (restored.version !== 2) throw new Error("stale fixture state");
@@ -996,6 +1011,7 @@ export function R22CanvasSurface({
         setAttachments(restored.attachments ?? []);
         setMakeKind(restored.kind ?? "image");
         setMakeCount(restored.count ?? 1);
+        setCountTouched(restored.countTouched ?? false);
         setSelectedArt([]);
         // 读回来的位置是**别人那一次**挪出来的:这一次会话没有那几步可以往回走。
         moveHistoryRef.current = { undo: [], redo: [] };
@@ -1014,8 +1030,8 @@ export function R22CanvasSurface({
   }, [fixture, fixtureStorageKey]);
   useEffect(() => {
     if (!fixture || !fixtureRestored) return;
-    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 2, messages: chatLog, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob, objects: objectPos, batches: extraBatches, starred: starredArt, attachments, kind: makeKind, count: makeCount }));
-  }, [attachments, decisionRecord, extraBatches, fixture, fixtureJob, chatLog, fixtureRestored, fixtureStorageKey, makeCount, makeKind, objectPos, otherAnswer, pendingQuestion, starredArt]);
+    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 2, messages: chatLog, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob, objects: objectPos, batches: extraBatches, starred: starredArt, attachments, kind: makeKind, count: makeCount, countTouched }));
+  }, [attachments, countTouched, decisionRecord, extraBatches, fixture, fixtureJob, chatLog, fixtureRestored, fixtureStorageKey, makeCount, makeKind, objectPos, otherAnswer, pendingQuestion, starredArt]);
   useEffect(() => () => { fixtureTimersRef.current.forEach((timer) => window.clearTimeout(timer)); }, []);
   /**
    * 刚答出来的那张卡必须看得见。会话面板只有 40vh 高,一张答案卡就比一条消息高好几倍 ——
@@ -1108,13 +1124,14 @@ export function R22CanvasSurface({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [attachOpen, libraryOpen, projectMenuOpen, ratioOpen, selectedArt.length]);
 
-  /** 一次拖拽/框选/平移走完之后的收尾:解掉监听、放开手指、退出「拖拽中」。 */
+  /** 一次拖拽/框选/平移走完之后的收尾:解掉监听、放开手指、退出「拖拽中」与「手势中」。 */
   const endGesture = useCallback((move: (event: PointerEvent) => void, up: (event: PointerEvent) => void) => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", up);
     gesturePointerRef.current = null;
     setDragging(false);
+    setGesturing(false);
   }, []);
 
   /**
@@ -1145,6 +1162,9 @@ export function R22CanvasSurface({
       const startX = event.clientX - rect.left;
       const startY = event.clientY - rect.top;
       gesturePointerRef.current = pointerId;
+      // 框选画的是一个选框,不是选字 —— 手一按下就得把文本选择摁住,不然框扫过便签与
+      // 卡片时,整片文字会被浏览器刷成蓝色,松手了还留在那儿。
+      setGesturing(true);
       setMarquee({ left: startX, top: startY, width: 0, height: 0 });
       // 空地上没有点击要保护,所以框选照原型按下即捕获(L6057)。
       capturePointer(stage, pointerId);
@@ -1189,6 +1209,9 @@ export function R22CanvasSurface({
       const startY = event.clientY;
       const scale = view.zoom / 100;
       gesturePointerRef.current = pointerId;
+      // 同一条:拖卡片时也别顺手把卡上的字刷成蓝色。它挂在按下这一刻,不等 3px 阈值 ——
+      // 文字选区从按下就开始刷,等阈值就已经晚了一截。
+      setGesturing(true);
       let moved = false;
       let to = from;
       const move = (moveEvent: PointerEvent) => {
@@ -1224,6 +1247,7 @@ export function R22CanvasSurface({
     gesturePointerRef.current = pointerId;
     capturePointer(stage, pointerId);
     setDragging(true);
+    setGesturing(true);
     const move = (moveEvent: PointerEvent) => {
       setView((current) => ({ ...current, x: from.x + (moveEvent.clientX - startX), y: from.y + (moveEvent.clientY - startY) }));
     };
@@ -1457,15 +1481,30 @@ export function R22CanvasSurface({
     startFixtureJob(prompt, { kind: "image", madeFrom: art.label });
   }
 
-  /** 跟手改一版:那句话先落进输入框,再照常送出去 —— 走的是同一条生成路。 */
+  /**
+   * 跟手改一版:那句话先落进输入框,再照常送出去 —— 走的是同一条生成路。
+   *
+   * 张数**默认沿用源批次**:「Warmer light」说的是「这一批再来一版更暖的」,源批次四张,
+   * 那一版就该是四张。上一版拿的是 composer 当前那个数,于是四张的批次改一版只出一张 ——
+   * 商家读到的语义与屏上出来的东西对不上。商家自己在参数弹层拨过张数就听商家的。
+   *
+   * 拨定的那个数同时落回 composer:价格贴纸与真正做出来的东西永远是同一个数,不许有一处
+   * 写着 3 cr、另一处做出 12 cr 的东西。
+   */
   function iterateBatch(prompt: string) {
     if (consumedByDrag()) return;
+    const source = batches[batches.length - 1];
+    const count = countTouched ? makeCount : source?.art.length ?? makeCount;
+    setMakeCount(count);
     setMessage(prompt);
-    void submitMessage(prompt);
+    void submitMessage(prompt, { count });
   }
 
-  /** `raw` 是「不经过输入框直接送出去的那一句」(跟手改一版的 chip 走的就是这条)。 */
-  const submitMessage = async (raw?: string) => {
+  /**
+   * `raw` 是「不经过输入框直接送出去的那一句」(跟手改一版的 chip 走的就是这条);
+   * `override` 是那一次自己拨定的参数 —— `setMakeCount` 要下一帧才生效,读状态就读成了旧的。
+   */
+  const submitMessage = async (raw?: string, override?: { count?: number }) => {
     const next = (raw ?? message).trim();
     if (!next) return;
     if (fixture) {
@@ -1519,7 +1558,7 @@ export function R22CanvasSurface({
             setFixtureJob({ id, prompt: next, status: "failed" });
             setNotice(fixtureSendOutcome === "unknown" ? "Otto could not confirm what happened. Check this same request before sending another — nothing counts as done, and nothing was charged." : "That request was not confirmed. Nothing was charged, and sending again picks up the same request instead of a new one.");
           }, 360);
-        } else startFixtureJob(next, { references: sentRefs.map((reference) => reference.name) });
+        } else startFixtureJob(next, { references: sentRefs.map((reference) => reference.name), count: override?.count });
       }
       setMessage("");
       // 参考图已经跟着那条消息走了,输入框上不该再挂着同一批 —— 否则下一句会悄悄再带一遍。
@@ -1639,7 +1678,7 @@ export function R22CanvasSurface({
       </header>
 
       <div
-        className={`r22-canvas-stage${tool === "hand" ? " is-panning" : ""}${dragging ? " is-dragging" : ""}`}
+        className={`r22-canvas-stage${tool === "hand" ? " is-panning" : ""}${dragging ? " is-dragging" : ""}${gesturing ? " is-gesturing" : ""}`}
         data-r22-canvas-stage
         ref={stageRef}
         onPointerDown={onStagePointerDown}
@@ -1829,7 +1868,7 @@ export function R22CanvasSurface({
                 {fixture ? (
                   <div className="r22-canvas-param-row" role="group" aria-label="How many">
                     {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, index) => index + 1).map((value) => (
-                      <Button unstyled type="button" key={value} aria-pressed={makeCount === value} data-canvas-count={value} onClick={() => setMakeCount(value)}>{value}</Button>
+                      <Button unstyled type="button" key={value} aria-pressed={makeCount === value} data-canvas-count={value} onClick={() => { setMakeCount(value); setCountTouched(true); }}>{value}</Button>
                     ))}
                   </div>
                 ) : null}
