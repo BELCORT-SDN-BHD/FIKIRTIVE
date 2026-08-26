@@ -190,10 +190,24 @@ describe("Settings 与 Home 的金额单位写 cr,不写 credits", () => {
  * 弹层里那些回执与放弃草稿的说明句,SSR 一屏渲染不到(它们要商家先按一下才出现)。
  * 这条源码闸补的正是那一半:句子形状的字面量里不许有这一族词。
  */
-describe("两份源码里,句子形状的字面量没有工程词", () => {
+/**
+ * 措辞归真 2026-08-26(Founder 亲验「apply to all」)之后,这条源码闸从两份扩到**十份** ——
+ * beta 五门 + Otto 面板 + 壳共用零件的每一个文案文件。
+ *
+ * 为什么必须扩:上一版只有 Settings 与 Otto IQ 进闸,于是 Notifications 那句
+ * 「This frontend is ready for the server-backed feed … Until that adapter exists …」
+ * 在闸外活了下来 —— 同一族词、同一种病,只因为文件不在名单里就没人管。变异自检第四发
+ * 抓的正是这一格:把那句话改回去,扩栏前一条测试都不红。
+ */
+describe("beta 五门 + Otto 面板 + 壳共用零件的源码里,句子形状的字面量没有工程词", () => {
   it.each([
     ["Settings", "components/settings/R22SettingsShell.tsx"],
     ["Otto IQ", "components/otto-iq/R22OttoIQView.tsx"],
+    ["Notifications", "components/notifications/R22NotificationsView.tsx"],
+    ["Help", "components/help/R22HelpView.tsx"],
+    ["Library", "components/library/R22LibraryView.tsx"],
+    ["Home copy", "components/home/home-data.ts"],
+    ["Otto answer", "components/otto/panel/otto-answer.ts"],
   ] as const)("%s", (_name, relative) => {
     const source = readFileSync(path.join(WEB_ROOT, relative), "utf8");
     const literals = source.match(/"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? [];
