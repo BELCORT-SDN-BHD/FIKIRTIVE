@@ -69,7 +69,6 @@
 
 .r22-home-connect-card,
 .r22-home-performance,
-.r22-home-analysis,
 .r22-home-create-row {
   border: 1px solid var(--r22-line);
   border-radius: 12px;
@@ -234,8 +233,6 @@
 .r22-home-connect-state > svg { width:24px;height:24px;margin-bottom:14px;color:var(--r22-dialog-ink-2); }
 .r22-home-connect-state.is-success > svg { display:grid;width:34px;height:34px;padding:7px;border-radius:50%;background:var(--success);color:var(--r22-dialog-surface); }
 .r22-home-connect-state [data-slot="dialog-description"] { max-width:320px;margin-top:7px; }
-.r22-home-connect-state .is-spinning { animation:r22-home-spin 800ms linear infinite; }
-@keyframes r22-home-spin { to { transform:rotate(360deg); } }
 
 .r22-home-skip {
   display: inline-block;
@@ -389,8 +386,13 @@
   margin-top: 16px;
 }
 
-.r22-home-performance,
-.r22-home-analysis {
+/* 「Otto will analyse」整块撤下之后(Founder 裁决 2026-08-26)网格里只剩 Performance
+   一张卡 —— 让它占满,别在右边留半格空。Analytics 回来的时候把 `is-single` 摘掉即可。 */
+.r22-home-insight-grid.is-single {
+  grid-template-columns: 1fr;
+}
+
+.r22-home-performance {
   min-height: 278px;
   padding: 20px;
 }
@@ -453,31 +455,6 @@
 
 .r22-home-performance i + i + i {
   width: 46%;
-}
-
-/* 三枚芯片行(取代旧版竖排 `ul`/`li` 列表):标签常驻,三句说明迁进了 tooltip。骨架
-   (`app/(home)/loading.tsx`)同样用这个类撑几何,不再画那个旧列表。 */
-.r22-home-analysis-chips {
-  display: flex;
-  flex-wrap: wrap;
-  margin-top: 14px;
-  gap: 8px;
-}
-
-.r22-home-chip {
-  display: inline-flex;
-  padding: 6px 12px;
-  border: 1px solid var(--r22-line);
-  border-radius: 999px;
-  background: var(--r22-chrome);
-  color: var(--r22-ink-2);
-  font-size: 12px;
-  cursor: default;
-}
-
-.r22-home-chip:focus-visible {
-  outline: 2px solid var(--r22-coral);
-  outline-offset: 2px;
 }
 
 .r22-home-create-row {

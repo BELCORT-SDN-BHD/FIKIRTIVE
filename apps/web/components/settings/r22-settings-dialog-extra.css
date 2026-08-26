@@ -25,15 +25,23 @@
 .r22-settings-session-list small { margin-top: 3px; color: var(--r22-ink-3); font-size: 10.5px; }
 .r22-settings-session-list button { padding: 5px 8px; border: 1px solid var(--r22-line-2); border-radius: 6px; font-size: 10.5px; }
 
+/* 归位 `ui/empty` 之后(审计 A-5)这里是对话框里的一块说明砖,不是居中的大空态 ——
+   所以左对齐、不撑满高度,内边距与圆角照旧。 */
 .r22-settings-dialog-empty {
+  display: block;
   padding: 14px;
+  flex: none;
   border: 1px solid var(--r22-line);
   border-radius: 10px;
   background: var(--r22-ground);
+  text-align: left;
 }
 
-.r22-settings-dialog-empty b { font-size: var(--r22-text-small); }
-.r22-settings-dialog-empty p { margin: 5px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.5; }
+.r22-settings-dialog-empty [data-slot="empty-header"] { max-width: none; align-items: flex-start; gap: 0; text-align: left; }
+.r22-settings-dialog-empty b,
+.r22-settings-dialog-empty [data-slot="empty-title"] { font-size: var(--r22-text-small); font-weight: 700; letter-spacing: 0; }
+.r22-settings-dialog-empty p,
+.r22-settings-dialog-empty [data-slot="empty-description"] { margin: 5px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-caption); line-height: 1.5; }
 .r22-settings-dialog-empty a { display: inline-flex; margin-top: 12px; padding: 7px 10px; border-radius: 7px; background: var(--r22-ink); color: var(--r22-surface); font-size: var(--r22-text-mono-label); }
 
 .r22-settings-workspace-directory {

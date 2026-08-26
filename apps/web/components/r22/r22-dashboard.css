@@ -620,7 +620,23 @@
   box-shadow: var(--r22-shadow-lg);
 }
 
-.r22-dashboard-search-dialog > div:first-child {
+/*
+  归位 `ui/command` 之后(审计 A-3),这一层的结构从「div + ul/li + a」换成了 cmdk 的
+  root / input / list / group / item。选择器跟着换成 `data-slot`,几何一个像素没动 ——
+  换的是骨头,不是长相。零动效那条碑照旧:这一段与 scrim 那一段仍然是纯
+  position/背景/边框,没有 animation、没有 transition。
+*/
+.r22-dashboard-search-dialog [data-slot="command"] {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.r22-dashboard-search-dialog [data-slot="command-input-wrapper"] {
+  display: contents;
+}
+
+.r22-dashboard-search-dialog [data-slot="command"] > div:first-child {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -628,14 +644,18 @@
   border-bottom: 1px solid var(--r22-line);
 }
 
-.r22-dashboard-search-dialog > div:first-child > svg {
+.r22-dashboard-search-dialog [data-slot="command-input-wrapper"] > svg {
   width: 17px;
   height: 17px;
+  flex: none;
   color: var(--r22-ink-3);
+  opacity: 1;
 }
 
 .r22-dashboard-search-dialog input {
   min-width: 0;
+  height: auto;
+  padding: 0;
   flex: 1;
   border: 0;
   outline: 0;
@@ -652,7 +672,7 @@
   font-size: 10.5px; /* 原型 .searchbox kbd 真值,冻结族 */
 }
 
-.r22-dashboard-search-dialog > p {
+.r22-dashboard-search-dialog [cmdk-group-heading] {
   margin: 0;
   padding: 10px 14px 5px;
   color: var(--r22-ink-3);
@@ -662,48 +682,82 @@
   text-transform: uppercase;
 }
 
-.r22-dashboard-search-dialog ul {
+.r22-dashboard-search-dialog [data-slot="command-list"] {
   max-height: 430px;
   margin: 0;
   padding: 5px;
   overflow-y: auto;
-  list-style: none;
 }
 
-.r22-dashboard-search-dialog li a {
+.r22-dashboard-search-dialog [data-slot="command-group"] {
+  padding: 0;
+}
+
+.r22-dashboard-search-dialog [data-slot="command-item"] {
+  padding: 0;
+  border-radius: 8px;
+}
+
+.r22-dashboard-search-dialog [data-slot="command-item"] a {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
   border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
 }
 
-.r22-dashboard-search-dialog li.is-selected a {
+.r22-dashboard-search-dialog [data-slot="command-item"][data-selected="true"] {
   background: var(--r22-chrome);
 }
 
-.r22-dashboard-search-dialog li svg {
+.r22-dashboard-search-dialog [data-slot="command-item"] svg {
   width: 16px;
   height: 16px;
+  flex: none;
   color: var(--r22-ink-2);
 }
 
-.r22-dashboard-search-dialog li span {
+.r22-dashboard-search-dialog [data-slot="command-item"] > a > span {
   flex: 1;
   font-size: var(--r22-text-body);
 }
 
-.r22-dashboard-search-dialog li small {
+.r22-dashboard-search-dialog [data-slot="command-item"] small {
   color: var(--r22-ink-3);
   font-family: var(--font-jetbrains-mono), monospace;
   font-size: 12px; /* 原型 .app-search-pop button 继承值真值,冻结族 */
 }
 
+.r22-dashboard-search-dialog [data-slot="command-empty"],
 .r22-dashboard-search-empty {
+  display: flex;
   padding: 30px 14px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   color: var(--r22-ink-3);
   font-size: var(--r22-text-body);
   text-align: center;
+}
+
+/* 底部提示栏(C-3 的 Mobbin 形状):按键住在 `ui/kbd` 里,不是一个裸 <kbd>。 */
+.r22-dashboard-search-hint {
+  display: flex;
+  padding: 8px 14px;
+  align-items: center;
+  gap: 14px;
+  border-top: 1px solid var(--r22-line);
+  background: var(--r22-ground);
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-mono-label);
+}
+
+.r22-dashboard-search-hint span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 @media (max-width: 900px) {
@@ -1270,18 +1324,13 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   color: var(--r22-ink-2);
 }
 
+/* 归位 `ui/spinner`(审计 A-8)—— 转速在那一件里定一次,这里只管尺寸与颜色。
+   手画的那圈 border ring 与它自己的 keyframes 一起退役。 */
 .r22-otto-mini-ring {
   width: 14px;
   height: 14px;
   flex: none;
-  border: 2px solid var(--r22-coral-soft);
-  border-top-color: var(--r22-coral);
-  border-radius: 50%;
-  animation: r22-otto-spin 900ms linear infinite;
-}
-
-@keyframes r22-otto-spin {
-  to { transform: rotate(360deg); }
+  color: var(--r22-coral);
 }
 
 .r22-otto-error {

@@ -78,8 +78,12 @@ const HOME_DATA: HomeData = {
  * `context-row` 整块删掉(按钮并进了 `.r22-home-create-row`)。Home 收尾这一票把骨架
  * (`app/(home)/loading.tsx`)也换成了同一副新几何 —— 步进器归位连接卡内一行、分析卡换成
  * 芯片行 —— 两个旧容器连骨架那一侧也不画了,`r22-home.css` 里对应的规则已经删除,不再是
- * 已知落差。`r22-home-stepper` / `r22-home-skip` / `r22-home-analysis-chips` 三个新容器
- * 补进清单:它们是新形状里骨架与落定共用的那几行。 */
+ * 已知落差。`r22-home-stepper` / `r22-home-skip` 两个新容器补进清单:它们是新形状里骨架
+ * 与落定共用的那几行。
+ *
+ * `r22-home-analysis` / `r22-home-analysis-chips` 2026-08-26 退出清单:「Otto will analyse」
+ * 承诺块整块撤下(Founder 裁决),落定页不画,骨架也不画 —— 骨架画一张落定页没有的卡,
+ * 正是这份文件立起来要防的那次跳屏。 */
 const HOME_GEOMETRY_CONTAINERS = [
   "r22-home",
   "r22-home-header",
@@ -91,8 +95,6 @@ const HOME_GEOMETRY_CONTAINERS = [
   "r22-home-skip",
   "r22-home-insight-grid",
   "r22-home-performance",
-  "r22-home-analysis",
-  "r22-home-analysis-chips",
   "r22-home-create-row",
 ];
 

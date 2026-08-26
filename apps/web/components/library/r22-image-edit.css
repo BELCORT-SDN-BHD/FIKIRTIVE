@@ -8,7 +8,12 @@
  * 动效纪律(Emil):只写具体属性、≤200ms、ease-out;减弱动效下是去运动,不是换一种动法。
  */
 
+/* 遮罩淡入,与面板同一条 180ms(审计 C-7b)—— 取舍与 `r22-library.css` 里那一段同理:
+   只补入场,因为面板本体没有退场动画,单给遮罩补退场反而会让暗底比面板多活 180ms。
+   下面那条 `html[data-kb="1"]` 从今天起真的关得到东西了。 */
 .r22-edit-scrim { position: fixed; inset: 0; z-index: 50; background: var(--r22-scrim); }
+.r22-edit-scrim[data-state="open"] { animation: r22-edit-scrim-in 180ms ease-out both; }
+@keyframes r22-edit-scrim-in { from { opacity: 0; } to { opacity: 1; } }
 
 .r22-edit-layer { position: fixed; top: 50%; left: 50%; z-index: 51; display: grid; grid-template-columns: minmax(0, 1fr) 344px; grid-template-rows: minmax(0, 1fr); width: min(1040px, calc(100vw - 64px)); max-height: min(740px, calc(100vh - 64px)); overflow: hidden; transform: translate(-50%, -50%); transform-origin: center; border: 1px solid var(--r22-line); border-radius: 16px; background: var(--r22-surface); color: var(--r22-ink); font-family: var(--font-geist-sans), Geist, Arial, sans-serif; box-shadow: var(--r22-shadow-lg); }
 .r22-edit-layer[data-state="open"] { animation: r22-edit-layer-in 180ms cubic-bezier(.16, 1, .3, 1) both; }
@@ -77,6 +82,6 @@ html[data-kb="1"] .r22-edit-layer,
 html[data-kb="1"] .r22-edit-scrim { animation: none !important; transition: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
-  .r22-edit-layer[data-state="open"] { animation: none; }
+  .r22-edit-layer[data-state="open"], .r22-edit-scrim[data-state="open"] { animation: none; }
   .r22-edit-preset, .r22-edit-version, .r22-edit-go, .r22-edit-x, .r22-edit-phrase { transition: none; }
 }

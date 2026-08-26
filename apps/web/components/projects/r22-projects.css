@@ -206,6 +206,30 @@
   text-align: center;
 }
 
+/* 归位 `ui/empty` 之后(审计 A-5)这一块是表格里的一行,不是一整屏 —— 不撑高,间距照旧。 */
+.r22-projects-empty[data-slot="empty"] {
+  gap: 14px;
+  flex: none;
+}
+
+.r22-projects-empty [data-slot="empty-description"] {
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-body);
+}
+
+.r22-projects-empty-act {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 8px;
+  background: var(--r22-surface);
+  color: var(--r22-ink);
+  font-size: var(--r22-text-caption);
+  font-weight: 500;
+}
+
 /* ── Create project:Otto 开局那一层(取代退役的七格表单) ───────────────────── */
 
 .r22-projects-start {

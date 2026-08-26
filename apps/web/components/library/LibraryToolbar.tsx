@@ -14,7 +14,7 @@
  */
 
 import { LayoutGrid, Rows3, Search, Sparkles, Upload } from "lucide-react";
-import { useRef, type ChangeEvent } from "react";
+import { useRef, type ChangeEvent, type RefObject } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,7 @@ export function LibraryToolbar({
   onLayout,
   onFiles,
   onCreate,
+  fileRef: sharedFileRef,
 }: {
   query: string;
   type: LibraryTypeFilter;
@@ -48,8 +49,11 @@ export function LibraryToolbar({
   onLayout: (value: LibraryLayout) => void;
   onFiles: (files: FileList | null) => void;
   onCreate: () => void;
+  /** 工作台把这个 ref 借走,好让空态里那颗 Upload 按的是**同一个** input(审计 B-6)。 */
+  fileRef?: RefObject<HTMLInputElement | null>;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
+  const ownFileRef = useRef<HTMLInputElement>(null);
+  const fileRef = sharedFileRef ?? ownFileRef;
 
   function pick(event: ChangeEvent<HTMLInputElement>) {
     onFiles(event.target.files);

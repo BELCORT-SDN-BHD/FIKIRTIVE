@@ -14,13 +14,23 @@
  *   ② **存档升版不迁移** —— 键升到 v2,旧的 v1 形状读不出来就重新播种(approvals f0b7dc9b)。
  *   ③ **诚实** —— 屏幕上没有一句话声称我们做了做不到的事。Download 还没接上就直说没接上,
  *      移除只是从这里收起来、不冒充删除,上传超预算当场拒收、不假装成功。
+ *
+ * **回执只有一种长相**(2026-08-26,审计 A-4):这一面此前自己画一条 `.r22-lib-notice`,
+ * 另外四扇门各画各的 —— 同一件事五种长相。现在全部走 `toast()`,Toaster 挂在
+ * `app/layout.tsx` 的根布局上,措辞一个字没改。带后续动作的那两条(Continue in Canvas、
+ * 隐藏之后的 Undo)走 sonner 的 `action`,不是另起一条自制的动作条。
+ *
+ * **可逆的动作不立模态闸**(2026-08-26,审计 C-5):Hide 只是 `hidden: true`,原图一个
+ * 字节没动 —— 为它弹一次窗,是把商家的手拦在半路,而批量整理素材是一次点几十下的活。
+ * 直接做,回执上给一颗 Undo。Otto IQ 的 Delete context 是**真删**,那一处的模态留着。
  */
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast, type ExternalToast } from "sonner";
 
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
 import {
@@ -84,16 +94,15 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   /** 正在改哪一张。`null` = 没在改。它与详情层不会同时开着 —— 从详情层进去时那一层先关。 */
   const [editId, setEditId] = useState<string | null>(null);
   const [packTarget, setPackTarget] = useState<"selection" | string | null>(null);
-  const [confirmRemove, setConfirmRemove] = useState(false);
   /** `null` = 没在改名。空串是「改名中,但先清空了」—— 两件事不能共用一个假值。 */
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
   /** 生成条开着没有。它是页内浮层,不是路由 —— 关掉不该丢掉网格的滚动位置与多选态。 */
   const [createOpen, setCreateOpen] = useState(false);
   /** 这一次 Quick create 还在跑没有。跑着的时候发送键关着,一句话不该同时排两次。 */
   const [running, setRunning] = useState(false);
-  /** 回执里那条「Continue in Canvas」指向哪块板。`null` = 这条回执没有后续动作。 */
-  const [continueTo, setContinueTo] = useState<string | null>(null);
+  /** 工具排上那个真的 file picker。空态里那颗 Upload 按的是**同一个** input —— 两条路
+   *  一条链,不复制第二份读文件、判类型、算预算的逻辑。 */
+  const uploadRef = useRef<HTMLInputElement>(null);
   const anchorRef = useRef<string | null>(null);
   const timersRef = useRef<number[]>([]);
   const runSeqRef = useRef(0);
@@ -113,23 +122,30 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     setRestored(true);
   }, [restore]);
 
-  /** 一次写入 = 一次落盘 + 一句人话。落不进去就照实说,不把改动留在屏幕上骗人。 */
-  const commit = useCallback((next: LibraryArchive, message: string): boolean => {
-    // 上一条回执的后续动作跟着上一条走 —— 新的一句话出来了,旧那颗按钮就不该还杵在那儿。
-    setContinueTo(null);
-    if (restore && !writeLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY), next)) {
-      setNotice(NO_ROOM);
-      return false;
-    }
+  /**
+   * 一次写入 = 一次落盘 + 一句人话。落不进去就照实说,不把改动留在屏幕上骗人。
+   *
+   * `action` 是这条回执的后续动作(sonner 的 `action`)—— 它跟着**这一条**走,上一条的
+   * 动作随上一条一起消失,不会有一颗指着旧事的按钮杵在屏幕上。
+   */
+  const write = useCallback((next: LibraryArchive): boolean => {
+    if (restore && !writeLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY), next)) return false;
     setArchive(next);
-    setNotice(message);
     return true;
   }, [restore]);
 
+  const commit = useCallback((next: LibraryArchive, message: string, action?: ExternalToast["action"]): boolean => {
+    if (!write(next)) {
+      toast(NO_ROOM);
+      return false;
+    }
+    toast(message, action ? { action } : undefined);
+    return true;
+  }, [write]);
+
   /** 只说一句话,不动东西。 */
   const say = useCallback((message: string) => {
-    setContinueTo(null);
-    setNotice(message);
+    toast(message);
   }, []);
 
   const patch = useCallback((ids: string[], change: (asset: LibraryAsset) => LibraryAsset, message: string) => {
@@ -180,8 +196,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      // 详情层、编辑层与两个弹层是 Radix 自己的地盘,那一记归它们,工作台不抢。
-      if (detailId || editId || packTarget || confirmRemove) return;
+      // 详情层、编辑层与素材包弹层是 Radix 自己的地盘,那一记归它们,工作台不抢。
+      if (detailId || editId || packTarget) return;
       // 生成条开着的时候那一记归它。它自己也守着同一条链,这里明写一句是因为两个监听器
       // 挂在同一个 window 上、次序由挂载顺序决定 —— 靠次序对上的东西迟早会错一次。
       if (createOpen) return;
@@ -192,7 +208,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmRemove, createOpen, detailId, editId, packTarget, selected.length]);
+  }, [createOpen, detailId, editId, packTarget, selected.length]);
 
   /* ── 批量动作 ─────────────────────────────────────────────────────────────── */
 
@@ -204,10 +220,29 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
     say("Downloads are not switched on yet, so nothing was saved to your computer.");
   }
 
+  /**
+   * 收起来的那一批再放回去。读的是 `archiveRef.current` 而不是闭包里那份 —— 商家在按下
+   * Undo 之前还能继续整理(星标、加包、再传一张),用旧快照写回去会把那几件事一起抹掉。
+   */
+  const restoreHidden = useCallback((ids: string[]) => {
+    const wanted = new Set(ids);
+    const current = archiveRef.current;
+    commit(
+      { ...current, assets: current.assets.map((asset) => (wanted.has(asset.id) ? { ...asset, hidden: false } : asset)) },
+      `${countLabel(ids.length)} back in your Library.`,
+    );
+  }, [commit]);
+
   function removeSelected() {
-    setConfirmRemove(false);
-    patch(selected, (asset) => ({ ...asset, hidden: true }), `${countLabel(selectedCount)} hidden from your Library, still in the project where they were made.`);
-    setSelected([]);
+    const ids = [...selected];
+    if (!ids.length) return;
+    const wanted = new Set(ids);
+    const landed = commit(
+      { ...archive, assets: archive.assets.map((asset) => (wanted.has(asset.id) ? { ...asset, hidden: true } : asset)) },
+      `${countLabel(ids.length)} hidden from your Library, still in the project where they were made.`,
+      { label: "Undo", onClick: () => restoreHidden(ids) },
+    );
+    if (landed) setSelected([]);
   }
 
   function removeFromPack() {
@@ -316,14 +351,13 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
         kind: request.kind,
         duration: `${FIXTURE_VIDEO_CONCEPT_SECONDS}s`,
       }));
-      const landed = commit(
-        // 读-改-写:合并的是**此刻**的存档,不是按下发送那一刻的旧快照。
-        addLibraryAssets(archiveRef.current, made),
-        request.kind === "video"
-          ? `${countLabel(made.length)} in your Library. Video is a still stand-in, not a playable video — ${credits} cr.`
-          : `${countLabel(made.length)} in your Library — ${credits} cr.`,
-      );
-      if (!landed) return;
+      // 读-改-写:合并的是**此刻**的存档,不是按下发送那一刻的旧快照。
+      // 先落盘、再送会话、最后才说话 —— 那句话带着「Continue in Canvas」,而那条路只有
+      // 在会话真的写进去之后才通;顺序反过来,回执会指向一块空板。
+      if (!write(addLibraryAssets(archiveRef.current, made))) {
+        toast(NO_ROOM);
+        return;
+      }
       if (restore) {
         appendCanvasFixtureHandoff({
           projectId: QUICK_CREATE_PROJECT_ID,
@@ -340,7 +374,16 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           },
         });
       }
-      setContinueTo(QUICK_CREATE_PROJECT_ID);
+      toast(
+        request.kind === "video"
+          ? `${countLabel(made.length)} in your Library. Video is a still stand-in, not a playable video — ${credits} cr.`
+          : `${countLabel(made.length)} in your Library — ${credits} cr.`,
+        {
+          // 真链接,不是 onClick 转发 —— 商家可以中键新开、可以右键复制地址,而 Next 也
+          // 能照常预取那一屏。sonner 的 `action` 收 ReactNode,不必为此另起一条动作条。
+          action: <Link className="r22-lib-notice-act" data-r22-lib-continue href={libraryCanvasHref(QUICK_CREATE_PROJECT_ID, fixture)}>Continue in Canvas</Link>,
+        },
+      );
     }, 920));
   }
 
@@ -357,6 +400,23 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
         : section === "starred"
           ? "Nothing starred yet. Star the keepers and they gather here."
           : "Nothing here yet. Make something in Canvas, or upload a picture of your own.";
+
+  /**
+   * 空态里那句话点名了动作,屏幕上就得有那颗按钮(审计 B-6)。
+   *
+   * 每一颗都通向**今天真的存在**的去处:Canvas 是 `/create` 那扇门(fixture 时带着记号),
+   * Upload 按的是工具排上那个真的 file picker(同一个 input,不是第二条上传路),Create
+   * 开的是这一面自己的生成条。搜索无结果与「没有星标」两个分支不点名动作,所以它们
+   * 也不长按钮 —— 一句话就是全部。
+   */
+  const emptyActions = query.trim() || section === "starred" ? null : (
+    <>
+      {section !== "uploads" ? <Link className="r22-lib-empty-act" href={fixture ? "/create?fixture=r22" : "/create"}>Open Canvas</Link> : null}
+      {section === "made"
+        ? <Button unstyled type="button" className="r22-lib-empty-act" onClick={() => setCreateOpen(true)}>Create</Button>
+        : <Button unstyled type="button" className="r22-lib-empty-act" onClick={() => uploadRef.current?.click()}>Upload a picture</Button>}
+    </>
+  );
 
   return (
     <div className="r22-lib" data-layout={layout}>
@@ -384,6 +444,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           onLayout={setLayout}
           onFiles={upload}
           onCreate={() => setCreateOpen((open) => !open)}
+          fileRef={uploadRef}
         />
 
         {openPack ? (
@@ -400,13 +461,6 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
               </>
             )}
           </div>
-        ) : null}
-
-        {notice ? (
-          <p className="r22-lib-notice" role="status">
-            <span>{notice}</span>
-            {continueTo ? <Link className="r22-lib-notice-act" data-r22-lib-continue href={libraryCanvasHref(continueTo, fixture)}>Continue in Canvas</Link> : null}
-          </p>
         ) : null}
 
         {groups.length ? (
@@ -432,7 +486,12 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
             ))}
           </div>
         ) : (
-          <section className="r22-lib-empty">{emptyCopy}</section>
+          <Empty className="r22-lib-empty">
+            <EmptyHeader>
+              <EmptyDescription>{emptyCopy}</EmptyDescription>
+            </EmptyHeader>
+            {emptyActions ? <EmptyContent>{emptyActions}</EmptyContent> : null}
+          </Empty>
         )}
       </div>
 
@@ -446,7 +505,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           <Button unstyled type="button" onClick={download}>Download</Button>
           {openPackId
             ? <Button unstyled type="button" onClick={removeFromPack}>Remove from pack</Button>
-            : <Button unstyled type="button" onClick={() => setConfirmRemove(true)}>Remove</Button>}
+            : <Button unstyled type="button" onClick={removeSelected}>Remove</Button>}
           <Button unstyled type="button" className="r22-lib-bulk-x" onClick={() => setSelected([])}>Clear</Button>
         </div>
       ) : null}
@@ -481,19 +540,6 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
         onAdd={addToPack}
         onCreate={createPack}
       />
-
-      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Hide {countLabel(selectedCount)} from your Library?</AlertDialogTitle>
-            <AlertDialogDescription>They stay in the project where they were made, so you can bring them back from there.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep them</AlertDialogCancel>
-            <AlertDialogAction onClick={removeSelected}>Hide them</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

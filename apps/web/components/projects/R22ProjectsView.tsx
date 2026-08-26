@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- Non-production R22 fixtures read the browser-scoped workspace after hydration. */
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -67,7 +68,21 @@ export function R22ProjectsView({ projects, fixture = false, fixtureState = "rea
             <span>{project.ownerLabel}</span><span>{project.modifiedLabel}</span><span>{project.visibility}</span><span><ChevronRight aria-hidden="true" /></span>
           </Link>
         ))}
-        {fixtureState !== "loading" && fixtureState !== "error" && fixtureState !== "permission" && fixtureState !== "unknown" && !visibleProjects.length && <div className="r22-projects-empty">{tab === "shared" ? "No projects have been shared with you." : fixtureState === "empty" ? "No projects yet. Create one when you are ready." : "No projects match this search."}</div>}
+        {fixtureState !== "loading" && fixtureState !== "error" && fixtureState !== "permission" && fixtureState !== "unknown" && !visibleProjects.length && (
+          /* 空态归位 `ui/empty`(审计 A-5)。「Create one when you are ready」点名了一个
+             动作,所以那颗键就长在这里 —— 它开的是工具排上同一个开局对话框,不是第二条
+             建项目的路。另外两支(没人分享给你 / 搜索无结果)不点名动作,也就不长按钮。 */
+          <Empty className="r22-projects-empty">
+            <EmptyHeader>
+              <EmptyDescription>{tab === "shared" ? "No projects have been shared with you." : fixtureState === "empty" ? "No projects yet. Create one when you are ready." : "No projects match this search."}</EmptyDescription>
+            </EmptyHeader>
+            {tab !== "shared" && fixtureState === "empty" ? (
+              <EmptyContent>
+                <Button unstyled type="button" className="r22-projects-empty-act" onClick={() => setStartOpen(true)}>Create project</Button>
+              </EmptyContent>
+            ) : null}
+          </Empty>
+        )}
       </div>
 
       <ProjectStartDialog open={startOpen} onOpenChange={setStartOpen} fixture={fixture} fixtureCreateOutcome={fixtureCreateOutcome} />

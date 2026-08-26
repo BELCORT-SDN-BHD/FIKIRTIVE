@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -22,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import {
   ArrowLeft,
   ArrowUp,
@@ -840,7 +842,7 @@ function LiveWorld({ nodes, loading, error, style }: { nodes: CanvasNodeDTO[]; l
           {node.type === "text" ? <p>{node.text || "Empty note"}</p> : null}
           {!node.url && node.type !== "text" ? (
             <div className="r22-canvas-live-state">
-              {node.status === "queued" || node.status === "generating" ? <span className="r22-canvas-mini-spinner" aria-hidden="true" /> : null}
+              {node.status === "queued" || node.status === "generating" ? <Spinner className="r22-canvas-mini-spinner" aria-hidden="true" /> : null}
               <b>{node.status === "failed" ? "Generation failed" : node.status === "cancelled" ? "Generation canceled" : node.status === "timeout" ? "Still working" : "Generating"}</b>
               <p>{node.prompt || "Canvas generation"}</p>
             </div>
@@ -921,7 +923,15 @@ export function R22CanvasSurface({
    */
   const [gesturing, setGesturing] = useState(false);
   const [message, setMessage] = useState(runtimeContext.initialPrompt ?? "");
-  const [notice, setNotice] = useState("");
+  /**
+   * 回执一律走 `toast()`(审计 A-4)。这一面此前自己画一条常驻的 `.r22-canvas-notice`
+   * 贴在板底,另外四扇门各画各的 —— 同一件事五种长相。
+   *
+   * 三十多个 `setNotice(...)` 的调用点一个字都没动:这里换的是**出口**,不是措辞。
+   * 空串在旧实现里是「把条收起来」,toast 本来就自己会走,所以空串什么都不做 ——
+   * 不弹一条空的。带重试的那一条在它自己的调用点上挂 `action`。
+   */
+  const setNotice = useCallback((text: string) => { if (text) toast(text); }, []);
   /**
    * 会话记录。两面共用一份 —— 一句提问在哪一面问都该换回同一张答案卡;只有存档那一步
    * 是样例画布独有的(下面那个 effect 自己带 `fixture` 闸)。
@@ -1859,7 +1869,12 @@ export function R22CanvasSurface({
             setSubmitting(false);
             setFixtureSendFailedOnce(true);
             setFixtureJob({ id, prompt: next, status: "failed" });
-            setNotice(fixtureSendOutcome === "unknown" ? "Otto could not confirm what happened. Check this same request before sending another — nothing counts as done, and nothing was charged." : "That request was not confirmed. Nothing was charged, and sending again picks up the same request instead of a new one.");
+            // 这一条是唯一带后续动作的回执 —— 重试那颗键跟着这句话走,不再是板底那条
+            // 常驻条上一颗要自己判断该不该出现的按钮。
+            toast(
+              fixtureSendOutcome === "unknown" ? "Otto could not confirm what happened. Check this same request before sending another — nothing counts as done, and nothing was charged." : "That request was not confirmed. Nothing was charged, and sending again picks up the same request instead of a new one.",
+              { action: { label: fixtureSendOutcome === "unknown" ? "Check this request" : "Retry", onClick: () => retryFixtureSend() } },
+            );
           }, 360);
         } else startFixtureJob(next, { references: sentRefs.map((reference) => reference.name), count: override?.count });
       }
@@ -2092,7 +2107,6 @@ export function R22CanvasSurface({
             填进下面那个输入框,发送仍然是商家自己按的那一下;问题卡在的时候整排锁住,与
             参数弹层那几个控件同一条纪律。 */}
         {boardEmpty ? <CreationTemplateRow locked={Boolean(pendingQuestion)} onPick={(template) => setMessage(template.prompt)} /> : null}
-        <div className={`r22-canvas-notice${notice ? " is-visible" : ""}`} aria-live="polite"><span>{notice}</span>{fixtureJob?.status === "failed" && (fixtureSendOutcome === "error" || fixtureSendOutcome === "unknown") ? <Button unstyled type="button" disabled={submitting} onClick={retryFixtureSend}>{submitting ? "Retrying…" : fixtureSendOutcome === "unknown" ? "Check this request" : "Retry"}</Button> : null}</div>
 
         <form
           className="r22-canvas-composer"

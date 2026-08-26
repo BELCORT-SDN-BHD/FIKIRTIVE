@@ -1,9 +1,20 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- Non-production R22 fixtures restore browser-scoped drafts after hydration. */
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 
 import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
@@ -59,7 +70,12 @@ const DESTINATIONS: Array<{ href: string; label: string; icon: LucideIcon; exact
   return [{ href: item.href, label: item.label, icon: NAV_ICONS[key]!, exact: key === "home" }];
 });
 
-type SearchResult = { id: string; href: string; label: string; detail: string; icon: LucideIcon; group: "Go to" | "Projects" };
+/**
+ * cmd+K 的一条结果。`group` 决定它落在哪一组 —— `Actions` 排在最上(C-3:Magnific /
+ * Vapi / Devin / Mistral 四家的 palette 都把动作排在导航之前;beta 只卖创作,创作动作
+ * 正是商家一天里按最多次的东西,而它们此前只能靠鼠标穿过两三个页面到达)。
+ */
+type SearchResult = { id: string; href: string; label: string; detail: string; icon: LucideIcon; group: "Actions" | "Go to" | "Projects" };
 
 function pathOnly(location: string): string {
   return location.split("?", 1)[0] || "/";
@@ -132,7 +148,6 @@ export function R22DashboardShell({
   const [fixtureNotifications, setFixtureNotifications] = useState<R22NotificationItem[]>([]);
   const [projects, setProjects] = useState<GlobalSearchProject[]>(fixture ? [{ id: "fixture-raya", name: "Raya launch" }] : []);
   const [projectsState, setProjectsState] = useState<"loading" | "ready" | "error">(fixture ? "ready" : "loading");
-  const [selectedResult, setSelectedResult] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const notificationsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -143,24 +158,29 @@ export function R22DashboardShell({
   const menuOpenerRef = useRef<HTMLButtonElement | null>(null);
   const projectsRequestedRef = useRef(fixture);
 
-  const searchResults = useMemo<SearchResult[]>(() => {
-    const staticResults: SearchResult[] = [
-      ...DESTINATIONS.map((item) => ({ id: `door:${item.href}`, href: fixtureHref(item.href, fixture), label: item.label, detail: item.href, icon: item.icon, group: "Go to" as const })),
-      { id: "settings:connections", href: fixtureHref("/settings?section=connections", fixture), label: "Connections", detail: "Settings", icon: Settings, group: "Go to" },
-      { id: "settings:billing", href: fixtureHref("/settings?section=billing", fixture), label: "Billing and credits", detail: "Settings", icon: Settings, group: "Go to" },
-      { id: "settings:members", href: fixtureHref("/settings?section=members", fixture), label: "Members", detail: "Settings", icon: Settings, group: "Go to" },
-    ];
-    const projectResults: SearchResult[] = projects.map((project) => ({ id: `project:${project.id}`, href: fixtureHref(`/create/canvas?project=${encodeURIComponent(project.id)}`, fixture), label: project.name, detail: "Canvas project", icon: FolderKanban, group: "Projects" }));
-    const all = [...staticResults, ...projectResults];
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return all;
-    return all.filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(normalized));
-  }, [fixture, projects, query]);
+  /**
+   * 三组结果。过滤不再自己写 —— `Command` 拿每条的 `value` 自己筛,空掉的组自己收起来。
+   *
+   * Actions 组里只许放**今天真的到得了**的门:beta V1 商家看得见的创作三门就是
+   * Canvas / Library / Otto IQ(`r22-beta-nav-scope.test.ts`,Founder 2026-08-26 收窄)。
+   * 被藏起来的那五扇不许从这里偷偷放回去,Home 那颗 chevron 菜单守的是同一条线。
+   */
+  const searchResults = useMemo<SearchResult[]>(() => [
+    { id: "action:start-project", href: fixtureHref("/create", fixture), label: "Start a project", detail: "Canvas", icon: FolderKanban, group: "Actions" },
+    { id: "action:open-library", href: fixtureHref("/library", fixture), label: "Open Library", detail: "Library", icon: ImageIcon, group: "Actions" },
+    { id: "action:add-brand-context", href: fixtureHref("/brand", fixture), label: "Add brand context", detail: "Otto IQ", icon: Sparkles, group: "Actions" },
+    ...DESTINATIONS.map((item) => ({ id: `door:${item.href}`, href: fixtureHref(item.href, fixture), label: item.label, detail: item.href, icon: item.icon, group: "Go to" as const })),
+    { id: "settings:connections", href: fixtureHref("/settings?section=connections", fixture), label: "Connections", detail: "Settings", icon: Settings, group: "Go to" as const },
+    { id: "settings:billing", href: fixtureHref("/settings?section=billing", fixture), label: "Billing and credits", detail: "Settings", icon: Settings, group: "Go to" as const },
+    { id: "settings:members", href: fixtureHref("/settings?section=members", fixture), label: "Members", detail: "Settings", icon: Settings, group: "Go to" as const },
+    ...projects.map((project) => ({ id: `project:${project.id}`, href: fixtureHref(`/create/canvas?project=${encodeURIComponent(project.id)}`, fixture), label: project.name, detail: "Canvas project", icon: FolderKanban, group: "Projects" as const })),
+  ], [fixture, projects]);
+
+  const SEARCH_GROUPS = ["Actions", "Go to", "Projects"] as const;
 
   const closeSearch = () => {
     setSearchOpen(false);
     setQuery("");
-    setSelectedResult(0);
     requestAnimationFrame(() => searchTriggerRef.current?.focus());
   };
 
@@ -278,7 +298,7 @@ export function R22DashboardShell({
     void loadGlobalSearchProjects().then((result) => {
       if (!alive) return;
       if ("error" in result) setProjectsState("error");
-      else { setProjects(result.projects); setProjectsState("ready"); setSelectedResult(0); }
+      else { setProjects(result.projects); setProjectsState("ready"); }
     }).catch(() => { if (alive) setProjectsState("error"); });
     return () => { alive = false; };
   }, [fixture, searchOpen]);
@@ -294,7 +314,7 @@ export function R22DashboardShell({
         <Button unstyled ref={searchTriggerRef} type="button" className="r22-dashboard-search" onClick={() => setSearchOpen(true)}>
           <Search data-icon="inline-start" aria-hidden="true" />
           <span>Search anything</span>
-          <kbd>⌘K</kbd>
+          <Kbd>⌘K</Kbd>
         </Button>
 
         <nav className="r22-dashboard-nav">
@@ -360,8 +380,8 @@ export function R22DashboardShell({
         <aside className="r22-dashboard-side-panel" aria-label="Notifications" data-r22-notifications-region>
           <header><div><b>Notifications</b><p>Updates that need your attention</p></div>{fixture && unreadCount ? <Button unstyled type="button" aria-label="Mark all notifications as read" onClick={() => updateFixtureNotifications(fixtureNotifications.map((item) => ({ ...item, read: true })))}><CheckCircle2 /></Button> : null}<Link href={fixture ? "/notifications?fixture=r22" : "/notifications"}>View all</Link><Button unstyled type="button" aria-label="Close notifications" onClick={() => closeNotifications()}><X data-icon="inline-start" /></Button></header>
           {fixture ? (
-            fixtureNotifications.length ? <ul>{fixtureNotifications.slice(0, 3).map((item) => <li key={item.id} className={item.read ? "is-read" : ""}><span className={!item.read ? "is-coral" : ""} /><div><b>{item.title}</b><p>{item.detail}</p><Link href={`/notifications?fixture=r22&notification=${encodeURIComponent(item.id)}`} onClick={() => updateFixtureNotifications(fixtureNotifications.map((row) => row.id === item.id ? { ...row, read: true } : row))}>View detail</Link></div></li>)}</ul> : <div className="r22-dashboard-panel-empty"><Bell /><b>No notification history</b><p>Dismissed fixture events stay removed after refresh.</p><Link href="/notifications?fixture=r22">Open notifications</Link></div>
-          ) : <div className="r22-dashboard-panel-empty"><Bell /><b>Notification delivery is not connected yet</b><p>This won&rsquo;t guess at an empty or read state. Open the full page to connect notifications and manage preferences.</p><Link href="/notifications">Open notifications</Link></div>}
+            fixtureNotifications.length ? <ul>{fixtureNotifications.slice(0, 3).map((item) => <li key={item.id} className={item.read ? "is-read" : ""}><span className={!item.read ? "is-coral" : ""} /><div><b>{item.title}</b><p>{item.detail}</p><Link href={`/notifications?fixture=r22&notification=${encodeURIComponent(item.id)}`} onClick={() => updateFixtureNotifications(fixtureNotifications.map((row) => row.id === item.id ? { ...row, read: true } : row))}>View detail</Link></div></li>)}</ul> : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>No notification history</EmptyTitle><EmptyDescription>Dismissed events stay removed after refresh.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications?fixture=r22">Open notifications</Link></EmptyContent></Empty>
+          ) : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>Notification delivery is not connected yet</EmptyTitle><EmptyDescription>This won&rsquo;t guess at an empty or read state. Open the full page to connect notifications and manage preferences.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications">Open notifications</Link></EmptyContent></Empty>}
         </aside>
       )}
 
@@ -376,31 +396,54 @@ export function R22DashboardShell({
         </aside>
       )}
 
+      {/*
+        cmd+K 归位 `ui/command`(审计 A-3 / C-3)。此前这里手写了 `role="combobox"`、
+        `aria-expanded`、`aria-controls`、`aria-activedescendant`、`role="listbox"` /
+        `role="option"`、上下键循环、Enter 跳转、`onMouseEnter` 同步高亮 —— 一整套 cmdk
+        的行为,约 25 行。写第二遍不是错,是第二份:两份键盘模型迟早分家,而分家只有用
+        键盘的人碰得到。
+
+        ⚠️ **零入场动画,不许有人顺手加回来**(C-7 的碑)。Raycast 的 palette 没有开关
+        动画 —— 一天按几百次的东西,那是最优解。这里因此**不用** `CommandDialog`(它套的
+        是带 `animate-in` / `zoom-in-95` 的默认 `DialogContent`),而是继续用这一面自己
+        那个 `unstyled` 的 `DialogContent`:`unstyled` 会把那串动画类一路剥掉,
+        `r22-dashboard.css` 里 `.r22-dashboard-search-scrim` 与 `.r22-dashboard-search-dialog`
+        两段也是纯 position/背景/边框,零 animation、零 transition。
+        `r22-shell-command-palette.test.ts` 逐条钉着这件事。
+      */}
       <Dialog open={searchOpen} onOpenChange={(open) => { if (open) setSearchOpen(true); else closeSearch(); }}>
           <DialogContent unstyled showCloseButton={false} overlayClassName="r22-dashboard-search-scrim" className="r22-dashboard-search-dialog">
             <DialogTitle className="sr-only">Global Search</DialogTitle>
             <DialogDescription className="sr-only">Search destinations and workspace projects.</DialogDescription>
-            <div><Search /><Input unstyled
-              ref={searchRef}
-              aria-label="Search anything"
-              role="combobox"
-              aria-expanded="true"
-              aria-controls="r22-global-search-results"
-              aria-activedescendant={searchResults[selectedResult]?.id ? `r22-search-${searchResults[selectedResult]!.id.replace(/[^a-z0-9_-]/gi, "-")}` : undefined}
-              value={query}
-              onChange={(event) => { setQuery(event.target.value); setSelectedResult(0); }}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown" && searchResults.length) { event.preventDefault(); setSelectedResult((value) => (value + 1) % searchResults.length); }
-                if (event.key === "ArrowUp" && searchResults.length) { event.preventDefault(); setSelectedResult((value) => (value - 1 + searchResults.length) % searchResults.length); }
-                if (event.key === "Enter" && searchResults[selectedResult]) { event.preventDefault(); const href = searchResults[selectedResult]!.href; closeSearch(); router.push(href); }
-              }}
-              placeholder="Search Fikirtive"
-            /><kbd>Esc</kbd></div>
-            <p>{query.trim() ? "Results" : "Go to"}</p>
-            <ul id="r22-global-search-results" role="listbox">{searchResults.map(({ id, href, label, detail, icon: Icon }, index) => <li id={`r22-search-${id.replace(/[^a-z0-9_-]/gi, "-")}`} role="option" aria-selected={selectedResult === index} className={selectedResult === index ? "is-selected" : ""} key={id}><Link href={href} onMouseEnter={() => setSelectedResult(index)} onClick={closeSearch}><Icon /><span>{label}</span><small>{detail}</small></Link></li>)}</ul>
-            {projectsState === "loading" && <div className="r22-dashboard-search-empty">Loading workspace projects…</div>}
-            {projectsState === "error" && <div className="r22-dashboard-search-empty">Projects could not be searched. Navigation results remain available.</div>}
-            {!searchResults.length && <div className="r22-dashboard-search-empty">No matching result</div>}
+            <Command loop label="Search Fikirtive">
+              <div>
+                <CommandInput ref={searchRef} value={query} onValueChange={setQuery} placeholder="Search Fikirtive" />
+                <Kbd>Esc</Kbd>
+              </div>
+              <CommandList id="r22-global-search-results">
+                <CommandEmpty>No matching result</CommandEmpty>
+                {SEARCH_GROUPS.map((group) => {
+                  const rows = searchResults.filter((item) => item.group === group);
+                  if (!rows.length) return null;
+                  return (
+                    <CommandGroup key={group} heading={group}>
+                      {rows.map(({ id, href, label, detail, icon: Icon }) => (
+                        <CommandItem key={id} value={`${label} ${detail}`} onSelect={() => { closeSearch(); router.push(href); }}>
+                          <Link href={href} onClick={closeSearch}><Icon /><span>{label}</span><small>{detail}</small></Link>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  );
+                })}
+                {projectsState === "loading" && <div className="r22-dashboard-search-empty"><Spinner aria-hidden="true" />Loading workspace projects…</div>}
+                {projectsState === "error" && <div className="r22-dashboard-search-empty">Projects could not be searched. Navigation results remain available.</div>}
+              </CommandList>
+              {/* 底部提示栏照 Mobbin 取证的形状(C-3:Vapi / Devin 两家都有这一条)。 */}
+              <footer className="r22-dashboard-search-hint">
+                <span><Kbd>↑</Kbd><Kbd>↓</Kbd>navigate</span>
+                <span><Kbd>↵</Kbd>select</span>
+              </footer>
+            </Command>
           </DialogContent>
       </Dialog>
     </div>

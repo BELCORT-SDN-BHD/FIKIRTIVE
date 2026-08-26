@@ -15,10 +15,13 @@
  * Home 收尾(Founder 2026-08-25 批的样张)之后,落定页的连接卡换了形状:connect-first 态
  * 不再是两栏 grid(旧竖排时间线占右栏),而是 `.is-connect-first` 单卡 —— 标题、渠道四行、
  * 一行步进器(`.r22-home-stepper`)、Skip for now,四段纵向堆叠。这份骨架跟着换:
- * 单卡(标题条 + 四行 + 一细行 + 一短行)、下方两卡(Performance / Otto will analyse 的三枚
- * 芯片行 `.r22-home-analysis-chips`)、create 行(图标 + 单行标题 + 三个动作占位)。旧版画的
- * 竖排 `<ol><li>` 时间线、裸 `<ul><li>` 分析列表、`.r22-home-context-row` 整块占位都不在
- * 落定页上了,骨架也跟着退场 —— 那几条 CSS 已经删掉。
+ * 单卡(标题条 + 四行 + 一细行 + 一短行)、下方一卡(Performance 独占整行)、create 行
+ * (图标 + 单行标题 + 三个动作占位)。旧版画的竖排 `<ol><li>` 时间线、裸 `<ul><li>` 分析
+ * 列表、`.r22-home-context-row` 整块占位都不在落定页上了,骨架也跟着退场 —— 那几条 CSS
+ * 已经删掉。
+ *
+ * 「Otto will analyse」那张卡 2026-08-26 整块撤下(Founder 裁决),骨架同一天跟着撤 ——
+ * 骨架画一张落定页没有的卡,就是把那次跳屏亲手请回来。
  *
  * `data-r22-skeleton` 关掉 `ui/skeleton` 自带的 `animate-pulse`(见 r22-dashboard.css):
  * 原型的原话是「骨架只活 450ms,动效预算不许任何东西循环。告诉商家有张卡要来的是形状,
@@ -60,18 +63,10 @@ export default function HomeLoading() {
         </div>
       </section>
 
-      <div className="r22-home-insight-grid">
+      <div className="r22-home-insight-grid is-single">
         <section className="r22-home-performance">
           <Skeleton className="h-[19px] w-[112px] rounded-[6px]" />
           <Skeleton className="mt-[15px] h-[202px] w-full rounded-[10px]" />
-        </section>
-        <section className="r22-home-analysis">
-          <Skeleton className="h-[19px] w-[168px] rounded-[6px]" />
-          <div className="r22-home-analysis-chips">
-            <Skeleton className="h-[26px] w-[96px] rounded-full" />
-            <Skeleton className="h-[26px] w-[148px] rounded-full" />
-            <Skeleton className="h-[26px] w-[132px] rounded-full" />
-          </div>
         </section>
       </div>
 

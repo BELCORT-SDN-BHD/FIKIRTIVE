@@ -1,5 +1,6 @@
 "use client";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message, MessageContent } from "@/components/ui/message";
@@ -317,7 +318,7 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
             {pending && (
               <MessageScrollerItem messageId="otto-wait">
                 <p data-otto-panel-wait="" className="r22-otto-wait">
-                  <span className="r22-otto-mini-ring" aria-hidden />
+                  <Spinner className="r22-otto-mini-ring" aria-hidden />
                   <span>{OTTO_ANSWER_WAIT_LABEL}</span>
                 </p>
               </MessageScrollerItem>

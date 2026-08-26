@@ -18,9 +18,11 @@
 import { CircleAlert, Search, Star } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { canvasHref } from "@/components/canvas/canvas-href";
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { getGenerationHistory, type LibraryItem } from "@/lib/library-actions";
 import type { AdJobItem } from "@/lib/data";
@@ -64,7 +66,6 @@ export function R22LibraryView({
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(readError ?? "");
-  const [notice, setNotice] = useState("");
 
   const counts = useMemo(() => ({
     all: items.length,
@@ -131,8 +132,6 @@ export function R22LibraryView({
             </div>
           </div>
 
-          {notice ? <p className="r22-library-notice" role="status">{notice}</p> : null}
-
           {visible.length ? (
             <div className="r22-library-grid">
               {visible.map((item, index) => (
@@ -152,7 +151,7 @@ export function R22LibraryView({
                     className="r22-library-star"
                     aria-label={`${item.favorite ? "Remove" : "Add"} ${itemLabel(item, index)} ${item.favorite ? "from" : "to"} Starred`}
                     aria-pressed={item.favorite}
-                    onClick={() => setNotice("Starring is not connected to the production Library yet, so nothing changed.")}
+                    onClick={() => toast("Starring is not connected to the production Library yet, so nothing changed.")}
                   >
                     <Star fill={item.favorite ? "currentColor" : "none"} aria-hidden="true" />
                   </Button>
@@ -160,7 +159,18 @@ export function R22LibraryView({
               ))}
             </div>
           ) : (
-            <section className="r22-library-empty">{query ? "No Library item matches this search and filter." : emptyCopy}</section>
+            /* 空态归位 `ui/empty`(审计 A-5),句子里点名的去处配一颗真按钮(B-6)——
+               「Start from Canvas」指的就是 `/create` 那扇门,不是一句读完还得自己找路的话。 */
+            <Empty className="r22-library-empty">
+              <EmptyHeader>
+                <EmptyDescription>{query ? "No Library item matches this search and filter." : emptyCopy}</EmptyDescription>
+              </EmptyHeader>
+              {query ? null : (
+                <EmptyContent>
+                  <Link className="r22-library-empty-act" href="/create">Start from Canvas</Link>
+                </EmptyContent>
+              )}
+            </Empty>
           )}
 
           {hasMore ? (

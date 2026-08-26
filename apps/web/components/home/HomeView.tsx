@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
@@ -22,7 +23,6 @@ import {
   ChevronDown,
   Info,
   LockKeyhole,
-  LoaderCircle,
   MessageCircle,
   Music2,
   Plus,
@@ -66,12 +66,6 @@ export function homeConnectionFromMeta(meta: Read<MetaConnectionResult>): HomeCo
     transient: meta.value.transientError === true,
   };
 }
-
-const ANALYSIS_ITEMS = [
-  { label: "Top content", copy: "Identify your best performing content and formats" },
-  { label: "Audience response", copy: "Understand what resonates with your audience" },
-  { label: "Publishing rhythm", copy: "Find your optimal posting times and consistency" },
-] as const;
 
 /** 一行步进器的四步。标签常驻,说明句只在「这是当前这一步」时渲染一句(见渲染处)——
  *  四句原文都留在这里,不是被删掉了,是版面上同一时刻只站得下一句。 */
@@ -294,7 +288,13 @@ export function HomeView({
         {ready ? <ConnectionStepper currentStep={currentStep} /> : null}
       </section>
 
-      <div className="r22-home-insight-grid">
+      {/*
+        「Otto will analyse」那三枚承诺芯片整块撤下(Founder 裁决 2026-08-26)。
+        它占着洞察网格的一半版面,讲的却是一件还没发生的事 —— beta 不给商家看点不动的
+        承诺。Analytics 那扇门回来的时候这一块跟着回来;在那之前,版面留给下面的创作入口。
+        参见 `r22-beta-nav-scope.test.ts` 里同一批裁决的记法。
+      */}
+      <div className="r22-home-insight-grid is-single">
         <section className={`r22-home-performance${verifiedFixture ? " has-data" : ""}`}>
           <h3>
             <Tooltip>
@@ -310,20 +310,6 @@ export function HomeView({
             {ready ? <p>{HOME_COPY.performanceUnavailableReadyBody}</p> : null}
             <i /><i /><i />
           </div>}
-        </section>
-
-        <section className="r22-home-analysis">
-          <h3>Otto will analyse</h3>
-          <div className="r22-home-analysis-chips">
-            {ANALYSIS_ITEMS.map(({ label, copy }) => (
-              <Tooltip key={label}>
-                <TooltipTrigger asChild>
-                  <span className="r22-home-chip" tabIndex={0}>{label}</span>
-                </TooltipTrigger>
-                <TooltipContent>{copy}</TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
         </section>
       </div>
 
@@ -388,7 +374,7 @@ export function HomeView({
               </DialogFooter>
             </>
           ) : connectFlow?.step === "submitting" ? (
-            <div className="r22-home-connect-state" aria-live="polite"><LoaderCircle className="is-spinning" aria-hidden="true" /><DialogTitle>Verifying {provider}</DialogTitle><DialogDescription>{HOME_COPY.verifyingNotice}</DialogDescription></div>
+            <div className="r22-home-connect-state" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Verifying {provider}</DialogTitle><DialogDescription>{HOME_COPY.verifyingNotice}</DialogDescription></div>
           ) : connectFlow?.step === "error" ? (
             <>
               <div className="r22-home-connect-state" role="alert"><Info aria-hidden="true" /><DialogTitle>{HOME_COPY.connectFailedTitle}</DialogTitle><DialogDescription>{HOME_COPY.connectFailedBody}</DialogDescription></div>

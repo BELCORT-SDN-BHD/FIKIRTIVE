@@ -449,28 +449,40 @@ describe("Home 收静:常驻说明句降到最少(Founder 2026-08-25 批的样�
     expect(present, "ready 时上屏的步说明不止一句(或不是一句)").toEqual(["Otto will learn and surface insights"]);
   });
 
-  /** 「Otto will analyse」三枚芯片背后的说明句 —— 与 `HomeView.tsx` 里 `ANALYSIS_ITEMS`
-   *  逐字一致。 */
+  /**
+   * ③ 「Otto will analyse」整块撤下(Founder 裁决 2026-08-26)。
+   *
+   * 上一版这条钉的是「三句说明迁进 tooltip、三枚标签留在屏上」。裁决把整块拿掉了:
+   * beta 不给商家看点不动的承诺,那块卡占着洞察网格一半的版面讲一件还没发生的事。
+   * 所以这条翻面 —— 钉的不再是「说明在哪」,是**整块零渲染**:标签、说明句、容器
+   * class,一个都不许回来。Analytics 那扇门回来的时候连同这条一起改。
+   *
+   * 记法照 `r22-beta-nav-scope.test.ts` 的惯例:裁决出处写在断言旁边,不写在别处。
+   */
   const ANALYSIS_COPY = [
     "Identify your best performing content and formats",
     "Understand what resonates with your audience",
     "Find your optimal posting times and consistency",
   ];
 
-  it("③ 三句分析说明只住在 tooltip 内容里,不在常驻文本里", () => {
-    const text = visibleText(render({ kind: "not_connected" }));
-    for (const sentence of ANALYSIS_COPY) {
-      expect(text, `分析说明句还常驻在屏上:「${sentence}」`).not.toContain(sentence);
-    }
-    // 芯片的标签(不是说明句)仍然常驻 —— 三枚芯片本身没有退场,退场的只是它们的说明。
-    for (const label of ["Top content", "Audience response", "Publishing rhythm"]) {
-      expect(text, `芯片标签不见了:「${label}」`).toContain(label);
+  it("③ 「Otto will analyse」承诺块整块零渲染(Founder 裁决 2026-08-26)", () => {
+    for (const connection of [{ kind: "not_connected" } as const, { kind: "connected", accountLabel: "Meta account", transient: false } as const]) {
+      const markup = render(connection);
+      const text = visibleText(markup);
+      expect(text, "承诺块的标题还在屏上").not.toContain("Otto will analyse");
+      for (const sentence of ANALYSIS_COPY) {
+        expect(text, `承诺块的说明句还在屏上:「${sentence}」`).not.toContain(sentence);
+      }
+      for (const label of ["Top content", "Audience response", "Publishing rhythm"]) {
+        expect(text, `承诺块的芯片还在屏上:「${label}」`).not.toContain(label);
+      }
+      expect(markup, "承诺块的容器还画着 —— 它是空的,但版面还被它占着").not.toContain("r22-home-analysis");
     }
 
     const view = sourceOf("components/home/HomeView.tsx");
-    const analysisBlock = /ANALYSIS_ITEMS\.map\(\(\{ label, copy \}\) => \(([\s\S]*?)\n {12}\)\)}/.exec(view)?.[1] ?? "";
-    expect(analysisBlock, "ANALYSIS_ITEMS.map 找不到了 —— 上面这条围栏在核对空气").not.toBe("");
-    expect(analysisBlock, "copy 没有被喂进 TooltipContent —— 说明句该迁去 tooltip,不是别处").toContain("<TooltipContent>{copy}</TooltipContent>");
+    expect(view, "ANALYSIS_ITEMS 又长回来了").not.toContain("ANALYSIS_ITEMS");
+    // 网格里只剩 Performance 一张卡,得让它占满 —— 否则右边留半格空,比留着那块卡更难看。
+    expect(view, "洞察网格没收成单栏").toContain('r22-home-insight-grid is-single');
   });
 
   it("④ 徽章去掉了内部代号,只留 fixture 披露那半句", () => {

@@ -117,3 +117,21 @@
   --r22-step-done: #9ca3af; /* knowledge-flow.css 步骤条已完成边框 */
   --r22-star-active: #b67a13; /* library.css 收藏星标的选中态 */
 }
+
+/*
+ * 减弱动效下的旋转器 —— 全场唯一一条。
+ *
+ * 五份手画的 keyframes 收敛成 `ui/spinner` 之后(审计 A-8),「转不转」这件事只剩一个
+ * 开关。此前它是五个开关,而且有两个忘了拨:`r22-brand-spin` 与 `r22-home-spin` 各自
+ * 文件里的减弱动效块只关了 `:active` 缩放,旋转器照转不误(审计 C-10 的两处缺口)。
+ *
+ * 判词照围栏 ④:减弱动效是**去运动**,不是换一种运动 —— 所以是 `animation: none`,
+ * 不是换一条更慢的无限动画。Loader2 那圈缺口弧停下来仍然是一个「在等」的记号,
+ * 不必整个消失(Emil:reduced motion 是更少更轻,不是零)。
+ *
+ * 它住在央册而不是某一份业务 css,正因为 spinner 是全场共用的一件:写进任何一扇门的
+ * css,别的门就照不到 —— 那正是当初五份 keyframes 分家的走法。
+ */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="spinner"] { animation: none; }
+}
