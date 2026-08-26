@@ -22,7 +22,7 @@ import { canvasMarkOf, ottoThreadState, type OttoCanvasMark, type OttoThreadStat
  * 线程**,但同列在这一张表里。商家不该为了找回自己二十分钟前那块板,先去猜它算哪一类
  * 对话。所以尾注跟着改成它现在真的成立的那句话:画布来的那几行带一条回板的路。
  */
-export const OTTO_ROOMS_NOTE = "Conversations that started on a canvas open back on that board.";
+export const OTTO_ROOMS_NOTE = "Conversations that started in Canvas open back on their own board.";
 
 export type OttoRoomGroup = "Today" | "Recent";
 

@@ -245,7 +245,7 @@ export function AskOptions({
  * 「可以跳过」是 Klarna 那一组 chips 的关键,也是这里最容易被做丢的一件:问题问出来,
  * 商家答不上来或者不在乎,他必须有一条不回答也能往下走的路 —— 否则问一句就等于把人卡住。
  *
- * 单选走 `RadioGroup` 而不是一排按钮加 `role="radio"`:方向键循环、焦点跟随、Tab 只占
+ * 单选走 `RadioGroup` 而不是一排按钮各自贴一个单选 role:方向键循环、焦点跟随、Tab 只占
  * 一站那一整套由 Radix 出。写第二遍不是错,是**第二份**,而两份键盘行为迟早分家。
  */
 export function AskOptionCard({

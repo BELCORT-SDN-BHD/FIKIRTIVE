@@ -122,7 +122,7 @@ export function OttoRoomSwitcher({
             className="r22-room-canvas"
             href={fixture ? `${canvasHref(room.canvas.projectId)}&fixture=r22` : canvasHref(room.canvas.projectId)}
           >
-            Open canvas
+            Open in Canvas
           </Link>
         ) : null}
         <DropdownMenu>
