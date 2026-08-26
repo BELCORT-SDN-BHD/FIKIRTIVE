@@ -118,6 +118,40 @@ describe("Otto IQ 商家可见文案没有工程词", () => {
 });
 
 /**
+ * 货币单位:数字后面一律 `cr`,不写 `credits`(Founder 2026-08-26 裁决,同一条钉在
+ * `components/approvals/approvals-fixture.ts` 的 `credits()`)。
+ *
+ * 这条只管**数字后面的单位** ——「Billing and credits」「Recent credit activity」是功能名,
+ * 不是金额,照旧写英文全词;把它们也改成 cr 只会让页面读不通。
+ */
+const AMOUNT_IN_WORDS = /\b[\d,]+\s+credits?\b/i;
+
+describe("Settings 与 Home 的金额单位写 cr,不写 credits", () => {
+  it.each(SETTINGS_SECTIONS.flatMap((section) => [[section, true] as const, [section, false] as const]))(
+    "Settings %s(fixture=%s)",
+    (section, fixture) => {
+      const text = visibleText(
+        renderToStaticMarkup(
+          createElement(R22SettingsShell, { data: SETTINGS_DATA, initialSection: section, fixture } as never),
+        ),
+      );
+      expect(text.match(AMOUNT_IN_WORDS), "金额后面还写着 credits —— 全站单位是 cr").toBeNull();
+    },
+  );
+
+  it("Settings 源码里句子形状的字面量也不写「数字 + credits」", () => {
+    const source = readFileSync(path.join(WEB_ROOT, "components/settings/R22SettingsShell.tsx"), "utf8");
+    const literals = (source.match(/"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? []).map((literal) => literal.slice(1, -1));
+    expect(literals.filter((body) => AMOUNT_IN_WORDS.test(body)), "金额后面还写着 credits").toEqual([]);
+  });
+
+  it("Home 的样张余额也是 cr —— 今天没有渲染路径,但那正是一颗数据雷", () => {
+    const source = readFileSync(path.join(WEB_ROOT, "components/home/HomeView.tsx"), "utf8");
+    expect(source, "R22HomeFixture 的 credits 又写回 credits 了").not.toMatch(/readOk\("[\d,]+ credits"\)/);
+  });
+});
+
+/**
  * 弹层里那些回执与放弃草稿的说明句,SSR 一屏渲染不到(它们要商家先按一下才出现)。
  * 这条源码闸补的正是那一半:句子形状的字面量里不许有这一族词。
  */
