@@ -750,7 +750,7 @@ export function OttoPanelHost({
         description={deleteThreadTarget ? `Otto will delete "${deleteThreadTarget.title}" and its messages.` : ""}
         impacts={[
           "The conversation and its messages are permanently deleted.",
-          "Canvas nodes and generated media are detached from this conversation.",
+          "Canvas cards and generated media are detached from this conversation.",
           "Generated library assets stay available.",
         ]}
         confirmText={deleteThreadTarget?.title}
@@ -767,7 +767,7 @@ export function OttoPanelHost({
         open={!!renameProjectTarget}
         onOpenChange={(open) => { if (!open) setRenameProjectTarget(null); }}
         title="Rename project"
-        description="This only changes the sidebar name. Your chats, canvas, and assets stay where they are."
+        description="This only changes the sidebar name. Your chats, canvas cards, and assets stay where they are."
         label="Project name"
         initialValue={renameProjectTarget?.name ?? ""}
         onSubmit={async (name) => {
@@ -783,7 +783,7 @@ export function OttoPanelHost({
         description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and its project-scoped work.` : ""}
         impacts={[
           "The project record is permanently deleted.",
-          "Its chats, canvas nodes, jobs, and project media records are deleted.",
+          "Its chats, canvas cards, jobs, and project media records are deleted.",
           "Global library assets and credit ledger rows are not deleted here.",
         ]}
         confirmText={deleteProjectTarget?.name}

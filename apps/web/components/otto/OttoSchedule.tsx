@@ -1515,7 +1515,7 @@ function Composer({
           <Field label={`Media ${media.length ? `· ${media.length}/${maxMedia}` : ""}`}>
             {mediaChoices.length === 0 ? (
               <div className="text-[12px] text-muted-foreground rounded-[10px] border border-dashed border-border p-3">
-                No media yet. Make something on the canvas first — Schedule reuses your existing images and videos (it never generates new ones here).
+                No media yet. Make something in Canvas first — Schedule reuses your existing images and videos (it never generates new ones here).
               </div>
             ) : (
               <div className="grid grid-cols-5 gap-1.5 max-h-[160px] overflow-auto">

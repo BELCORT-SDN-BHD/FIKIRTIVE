@@ -81,7 +81,7 @@ export function LibraryDetailLayer({
             </Button>
             <Button unstyled type="button" onClick={onDownload}><Download aria-hidden="true" />Download</Button>
             <Button unstyled type="button" onClick={() => onAddToPack(asset)}><FolderPlus aria-hidden="true" />Add to pack</Button>
-            {href ? <Link className="r22-lib-layer-open" href={href}>Open in canvas</Link> : null}
+            {href ? <Link className="r22-lib-layer-open" href={href}>Open in Canvas</Link> : null}
           </div>
           {/* 关着的那颗键要说得出为什么关着 —— 灰着不说话,商家只会以为坏了。 */}
           {asset.kind === "video" ? (

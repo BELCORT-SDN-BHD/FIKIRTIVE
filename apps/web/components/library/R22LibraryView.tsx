@@ -94,9 +94,9 @@ export function R22LibraryView({
   }
 
   const emptyCopy = filter === "video"
-    ? "No videos yet — ask for one from any canvas composer."
+    ? "No videos yet — ask for one in Canvas."
     : filter === "star"
-      ? "Nothing starred yet — star the keepers on their canvas and they will gather here."
+      ? "Nothing starred yet — star the keepers in their project and they will gather here."
       : "Nothing has been made yet. Start from Canvas and completed media will gather here.";
 
   const banner = state === "loading"

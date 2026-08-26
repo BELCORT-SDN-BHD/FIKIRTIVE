@@ -38,7 +38,7 @@ export function LibraryCard({
 }) {
   const shiftRef = useRef(false);
   const kindLabel = asset.kind === "video" ? "Video" : "Image";
-  const originLabel = asset.source === "uploaded" ? "Uploaded" : asset.projectName ?? "Canvas";
+  const originLabel = asset.source === "uploaded" ? "Uploaded" : asset.projectName ?? "Untitled project";
 
   function rememberShift(event: MouseEvent<HTMLElement>) {
     shiftRef.current = event.shiftKey;

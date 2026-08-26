@@ -21,7 +21,7 @@ function TemplatesNeedACanvas() {
     <div className="px-5 pt-16 pb-5">
       <h2 className="m-0 text-lg text-foreground">Templates</h2>
       <p className="mt-1 mb-0 text-sm text-muted-foreground">
-        Start a canvas above first — a template runs on a canvas.
+        Start a project above first — a template runs in a project.
       </p>
     </div>
   );

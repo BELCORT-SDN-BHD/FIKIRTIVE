@@ -206,7 +206,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
 
   function removeSelected() {
     setConfirmRemove(false);
-    patch(selected, (asset) => ({ ...asset, hidden: true }), `${countLabel(selectedCount)} hidden from your Library, still on the canvas where they were made.`);
+    patch(selected, (asset) => ({ ...asset, hidden: true }), `${countLabel(selectedCount)} hidden from your Library, still in the project where they were made.`);
     setSelected([]);
   }
 
@@ -356,7 +356,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
         ? "Otto has not made anything yet. Use Create and the first ones land here."
         : section === "starred"
           ? "Nothing starred yet. Star the keepers and they gather here."
-          : "Nothing here yet. Make something on a canvas, or upload a picture of your own.";
+          : "Nothing here yet. Make something in Canvas, or upload a picture of your own.";
 
   return (
     <div className="r22-lib" data-layout={layout}>
@@ -486,7 +486,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Hide {countLabel(selectedCount)} from your Library?</AlertDialogTitle>
-            <AlertDialogDescription>They stay on the canvas where they were made, so you can bring them back from there.</AlertDialogDescription>
+            <AlertDialogDescription>They stay in the project where they were made, so you can bring them back from there.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep them</AlertDialogCancel>

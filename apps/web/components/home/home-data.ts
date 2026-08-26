@@ -114,7 +114,7 @@ export const HOME_COPY = {
    * 内是因为按裁决它们正是 HOME_COPY 该管的那一类(unreadable / 钱);背后那条仍在跑却
    * 无人渲染的五块读取管道是另一件事,已上报,不在这次动。 */
   creditsUnreadable: "Your credit balance couldn't be read just now.",
-  canvasesUnreadable: "Your canvases couldn't be read just now.",
+  canvasesUnreadable: "Your projects couldn't be read just now.",
   thumbsUnreadable: "What you made recently couldn't be read just now.",
   scheduleUnreadable: "Your schedule couldn't be read just now.",
   campaignsUnreadable: "Your campaigns couldn't be read just now.",

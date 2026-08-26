@@ -215,7 +215,7 @@ describe("Templates 与 Discover 收编成 /create 的两个区段(规格书 Q6-
     const markup = await renderSections(null);
 
     expect(markup).toContain(`id="${anchorOf("templates")}"`);
-    expect(markup).toContain("Start a canvas above first");
+    expect(markup).toContain("Start a project above first");
     // 灵感是可以先逛的,所以它照常在。
     expect(markup).toContain(INSPIRATIONS[0].title);
   });

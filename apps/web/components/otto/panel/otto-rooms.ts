@@ -14,7 +14,7 @@ import type { ChatThreadDTO } from "@/lib/types";
 import { threadDateBucket } from "@/components/otto/otto-nav-model";
 
 /** 原型 L6712 的尾注,一字不改:画布里的对话不进这份列表,而不是被悄悄合并进来。 */
-export const OTTO_ROOMS_NOTE = "Canvas conversations stay on their canvas and are excluded here.";
+export const OTTO_ROOMS_NOTE = "Canvas conversations stay in their project and are excluded here.";
 
 export type OttoRoomGroup = "Today" | "Recent";
 
