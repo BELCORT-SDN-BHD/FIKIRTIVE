@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -331,7 +332,23 @@ export function HomeView({
         <div><b>Create without data</b></div>
         <div className="r22-home-create-actions">
           <Link className="is-primary" href={fixtureHref("/create")}>Create new</Link>
-          <Button unstyled type="button" aria-label="More creation choices"><ChevronDown /></Button>
+          {/* 这颗 chevron 从画上去那天起就没有 onClick —— 按下去什么都不会发生。挂一个真菜单
+              比留一颗死按钮诚实,而菜单里只许放**今天真的到得了**的门:beta V1 商家看得见的
+              创作三门就是 Canvas / Library / Otto IQ(`r22-beta-nav-scope.test.ts`,Founder
+              2026-08-26 收窄),Campaigns、Routines、Schedule 那几扇是被故意藏起来的,不许
+              从这里偷偷放回去。键盘、Escape、方向键那一整套由 shadcn 的 DropdownMenu 出。 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button unstyled type="button" aria-label="More creation choices"><ChevronDown /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="r22-home-create-pop">
+              <DropdownMenuGroup>
+                <DropdownMenuItem asChild><Link href={fixtureHref("/create")}>Start a project</Link></DropdownMenuItem>
+                <DropdownMenuItem asChild><Link href={fixtureHref("/library")}>Open Library</Link></DropdownMenuItem>
+                <DropdownMenuItem asChild><Link href={fixtureHref("/brand")}>Add brand context</Link></DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Link className="is-secondary" href={fixtureHref("/brand")}>Add brand context</Link>
         </div>
       </section>
@@ -393,7 +410,7 @@ export function HomeView({
 export function R22HomeFixture({ connectionState, channel = "Instagram" }: { connectionState?: "ready" | "error"; channel?: string }) {
   const data: HomeData = {
     greeting: "Good morning, Nadia",
-    credits: readOk("1,240 credits"),
+    credits: readOk("1,240 cr"),
     billingHref: "/billing",
     billingLabel: "Billing & credits",
     canvases: readOk([]),

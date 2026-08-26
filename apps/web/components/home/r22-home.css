@@ -559,6 +559,14 @@
   height: 13px;
 }
 
+/* chevron 那颗按钮的菜单。层本身(圆角、边、影、开合动效、transform-origin)全部由
+   `components/ui/dropdown-menu.tsx` 出 —— 这里只补一件事:菜单项里那个 `<Link>` 要撑满
+   整行,否则可点区只有文字那么宽(与 `.r22-approvals-pop` 同一条,不另发明)。 */
+.r22-home-create-pop a {
+  display: block;
+  width: 100%;
+}
+
 .r22-home footer {
   margin-top: 34px;
   color: var(--r22-ink-3);
