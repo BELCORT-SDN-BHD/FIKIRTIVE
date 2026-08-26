@@ -1440,6 +1440,87 @@
   border-radius: 3px;
 }
 
+/* ————— 选素材包的小弹层 —————
+ *
+ * 它长在触发它的那一格上,`transform-origin` 对着右上角那颗按钮 —— 弹层从按下的地方
+ * 长出来,商家才不用回头找「刚才那一下开出了什么」。
+ */
+
+.r22-canvas-pack-menu {
+  top: 34px;
+  right: 6px;
+  z-index: 12;
+  width: 200px;
+  transform-origin: top right;
+  animation: r22-canvas-pack-in 160ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes r22-canvas-pack-in {
+  from { opacity: 0; transform: scale(.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.r22-canvas-pack-menu > p {
+  margin: 3px 5px 6px;
+  overflow: hidden;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-mono-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.r22-canvas-pack-list {
+  display: flex;
+  max-height: 168px;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.r22-canvas-pack-list button {
+  font-size: var(--r22-text-small) !important;
+}
+
+.r22-canvas-pack-new {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--r22-line);
+}
+
+.r22-canvas-pack-new input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 7px;
+  background: var(--r22-surface);
+  color: var(--r22-ink);
+  font-size: var(--r22-text-caption);
+  outline: none;
+}
+
+.r22-canvas-pack-new button {
+  width: auto !important;
+  padding: 0 9px !important;
+  border-radius: 7px;
+  background: var(--r22-ink);
+  color: var(--r22-surface) !important;
+  font-size: var(--r22-text-mono-label) !important;
+  white-space: nowrap;
+}
+
+.r22-canvas-pack-new button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-canvas-pack-menu { animation: none; }
+}
+
 /* ————— 素材库小弹层 ————— */
 
 .r22-canvas-library-picker {
@@ -1455,10 +1536,13 @@
   font-size: var(--r22-text-mono-label);
 }
 
+/* 挑的是商家整个素材库,不是四张写死的样张 —— 所以它得能滚,而不是把弹层撑穿屏幕。 */
 .r22-canvas-library-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 6px;
+  max-height: 268px;
+  overflow-y: auto;
 }
 
 .r22-canvas-library-grid button {

@@ -46,6 +46,16 @@ export type LibraryPack = { id: string; name: string };
 export type LibraryArchive = { assets: LibraryAsset[]; packs: LibraryPack[] };
 
 /**
+ * Quick create(仓库里的快产车间)做出来的东西归哪个项目。
+ *
+ * 它是**一个真的项目**,不是一个特例标记:卡上的来源行、左导航 PROJECTS 那一节、
+ * 详情层的「Open in canvas」、通知里的「Continue in Canvas」—— 四处读的都是同一个
+ * projectId,所以四处的行为天生一致,不用各写一条 if。
+ */
+export const QUICK_CREATE_PROJECT_ID = "fixture-quick-create";
+export const QUICK_CREATE_PROJECT_NAME = "Quick create";
+
+/**
  * 存档键。
  *
  * v1 存的是一个 `{ items, filter, query }` 的老网格状态,与这一版的 `{ assets, packs }`
@@ -66,7 +76,10 @@ export const UPLOAD_BUDGET_BYTES = 1_500_000;
 /** 上限的人话说法,只有这一处,提示与测试共用。 */
 export const UPLOAD_BUDGET_LABEL = "1.5 MB";
 
-const ART = (index: number) => `/fixtures/r22-canvas/art-${index}.jpg`;
+/** 仓库里真的有的那四张样张。种子、Quick create 的成品,都只从这一份里取。 */
+export const FIXTURE_ART_SOURCES = [1, 2, 3, 4].map((index) => `/fixtures/r22-canvas/art-${index}.jpg`);
+
+const ART = (index: number) => FIXTURE_ART_SOURCES[index - 1]!;
 
 /** 三天、三个项目、十三件东西 —— 按日分组要看得出「组」,所以不是一天全塞完。 */
 export const LIBRARY_SEED_ASSETS: LibraryAsset[] = [
@@ -125,7 +138,7 @@ export function writeLibraryArchive(key: string, archive: LibraryArchive): boole
 
 /* ── 视图规则 ─────────────────────────────────────────────────────────────────── */
 
-export type LibrarySection = "all" | "starred" | "uploads" | `pack:${string}`;
+export type LibrarySection = "all" | "starred" | "made" | "uploads" | `pack:${string}` | `project:${string}`;
 export type LibraryTypeFilter = "all" | "image" | "video";
 export type LibrarySort = "newest" | "oldest";
 export type LibraryLayout = "grid" | "list";
@@ -134,11 +147,107 @@ export function packIdOf(section: LibrarySection): string | null {
   return section.startsWith("pack:") ? section.slice(5) : null;
 }
 
+export function projectIdOf(section: LibrarySection): string | null {
+  return section.startsWith("project:") ? section.slice(8) : null;
+}
+
 function matchesSection(asset: LibraryAsset, section: LibrarySection): boolean {
   if (section === "all") return true;
   if (section === "starred") return asset.starred;
+  if (section === "made") return asset.source === "made";
   if (section === "uploads") return asset.source === "uploaded";
+  if (section.startsWith("project:")) return asset.projectId === section.slice(8);
   return asset.packIds.includes(section.slice(5));
+}
+
+/**
+ * 左导航中段那一节 —— **自动**从东西本身长出来的项目列表,零手动整理。
+ *
+ * 为什么不做成一张手写的项目表:那张表一定会和真实存在的东西漂移(项目改名、项目里
+ * 一件东西都不剩、画布刚在一个新项目里做出第一批)。按资产自己带的来源现算,这三件事
+ * 一件都不用管。顺序按「这个项目里最新的那一件」排:刚做过东西的项目自然浮到上面。
+ */
+export function libraryProjects(assets: LibraryAsset[]): Array<{ id: string; name: string; count: number }> {
+  const rows = new Map<string, { id: string; name: string; count: number; latest: string }>();
+  for (const asset of assets) {
+    if (asset.hidden || !asset.projectId) continue;
+    const found = rows.get(asset.projectId);
+    if (found) {
+      found.count += 1;
+      if (asset.createdAt > found.latest) found.latest = asset.createdAt;
+    } else {
+      rows.set(asset.projectId, { id: asset.projectId, name: asset.projectName ?? asset.projectId, count: 1, latest: asset.createdAt });
+    }
+  }
+  return [...rows.values()]
+    .sort((a, b) => b.latest.localeCompare(a.latest))
+    .map(({ id, name, count }) => ({ id, name, count }));
+}
+
+/* ── 往存档里写东西(画布与 Quick create 共用这三条) ───────────────────────── */
+
+/**
+ * 把新做出来的东西放进存档。**幂等靠 `id`**:同一批渲染两次、同一次生成被回放一次,
+ * 商家的库里都不该多出一张一样的图。
+ *
+ * 新的排在最前面,与上传那条路一致 —— 刚做出来的东西该在第一屏。
+ */
+export function addLibraryAssets(archive: LibraryArchive, assets: LibraryAsset[]): LibraryArchive {
+  const known = new Set(archive.assets.map((asset) => asset.id));
+  const fresh = assets.filter((asset) => !known.has(asset.id));
+  if (!fresh.length) return archive;
+  return { ...archive, assets: [...fresh, ...archive.assets] };
+}
+
+/** 把几件东西挂进一个素材包。已经在包里的原样不动 —— 多按一下不该在包里多出一张。 */
+export function attachToPack(archive: LibraryArchive, assetIds: string[], packId: string): LibraryArchive {
+  const wanted = new Set(assetIds);
+  return {
+    ...archive,
+    assets: archive.assets.map((asset) =>
+      wanted.has(asset.id) && !asset.packIds.includes(packId) ? { ...asset, packIds: [...asset.packIds, packId] } : asset,
+    ),
+  };
+}
+
+/** 新包的 id。重名会撞成同一个 id,所以撞上了就往后编号 —— 两个包不能是同一个包。 */
+export function newPackId(name: string, packs: LibraryPack[]): string {
+  const base = `pack-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  if (base === "pack-") return `pack-${packs.length + 1}`;
+  if (!packs.some((pack) => pack.id === base)) return base;
+  let suffix = 2;
+  while (packs.some((pack) => pack.id === `${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+/**
+ * 一张画布成品在 Library 里长什么样。
+ *
+ * `id` 带上项目 —— 两块板上的「Image 1」不是同一张图,不带项目就会被幂等那一条误判成
+ * 同一件东西,后来的那张从此进不了库。
+ */
+export function canvasLibraryAsset(input: {
+  projectId: string;
+  projectName: string;
+  artId: string;
+  name: string;
+  src: string;
+  prompt?: string;
+  createdAt?: string;
+}): LibraryAsset {
+  return {
+    id: `canvas:${input.projectId}:${input.artId}`,
+    poster: input.src,
+    kind: "image",
+    name: input.name,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    starred: false,
+    source: "made",
+    prompt: input.prompt,
+    projectId: input.projectId,
+    projectName: input.projectName,
+    packIds: [],
+  };
 }
 
 export function visibleLibraryAssets(
@@ -183,4 +292,75 @@ export function libraryCanvasHref(projectId: string, fixture: boolean): string {
 export function uploadDisplayName(fileName: string): string {
   const trimmed = fileName.replace(/\.[a-z0-9]+$/i, "").trim();
   return trimmed || "Uploaded picture";
+}
+
+/* ── Quick create:太含糊的时候先问一句 ─────────────────────────────────────── */
+
+export type QuickCreateQuestion = {
+  header: string;
+  question: string;
+  help: string;
+  options: Array<{ label: string; description: string }>;
+};
+
+/**
+ * 「一句话太含糊」长什么样。
+ *
+ * 这一条不是为了拦人,是为了不拿商家的钱去赌:同一句「make me something nice」有三四个
+ * 都说得通的方向,直接开跑就是四张全不对,还是收了钱的四张。所以先问一句 —— 而且**问的
+ * 时候一分钱都不动**:等待不扣 cr,报价原样冻在那儿。
+ *
+ * 判词只有两条,都机械可判:
+ *   ① 实词少于四个 —— 「a poster」「make something」这种,缺的是内容不是措辞;
+ *   ② 命中含糊词族 —— 「something / anything / nice / better / cool / surprise me …」,
+ *      句子再长也没有说出要做什么东西。
+ * 两条都不中就直接开跑:商家已经说清楚了,再问一句就是拖时间。
+ */
+const QUICK_CREATE_VAGUE = /\b(something|anything|whatever|stuff|nice|nicer|better|best|cool|pretty|beautiful|amazing|awesome|surprise me|you decide|up to you)\b/i;
+
+export function quickCreateQuestion(prompt: string): QuickCreateQuestion | null {
+  const words = prompt.trim().split(/\s+/).filter((word) => /[a-z0-9]/i.test(word));
+  if (words.length >= 4 && !QUICK_CREATE_VAGUE.test(prompt)) return null;
+  return {
+    header: "Before Otto starts",
+    question: "What should this be for?",
+    help: "Pick one so the first try is close. Answering costs nothing, and the price below stays exactly where it is.",
+    options: [
+      { label: "A product shot", description: "One product, clean background, ready for a feed post" },
+      { label: "A lifestyle scene", description: "The product in use, with a room or table around it" },
+      { label: "A promotion graphic", description: "Room left over the picture for a price or an offer" },
+    ],
+  };
+}
+
+/** Quick create 做出来的一件东西。名字是商家读的,所以用他那句话起,不用一串编号。 */
+export function quickCreateAsset(input: {
+  runId: string;
+  index: number;
+  prompt: string;
+  kind: LibraryAssetKind;
+  duration?: string;
+  createdAt?: string;
+}): LibraryAsset {
+  return {
+    id: `quick:${input.runId}:${input.index}`,
+    poster: FIXTURE_ART_SOURCES[input.index % FIXTURE_ART_SOURCES.length]!,
+    kind: input.kind,
+    duration: input.kind === "video" ? input.duration : undefined,
+    name: quickCreateName(input.prompt, input.index),
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    starred: false,
+    source: "made",
+    prompt: input.prompt,
+    projectId: QUICK_CREATE_PROJECT_ID,
+    projectName: QUICK_CREATE_PROJECT_NAME,
+    packIds: [],
+  };
+}
+
+/** 「Teal batik candle on a tray」→「Teal batik candle 1」。太长的截断,不给商家读一整段。 */
+export function quickCreateName(prompt: string, index: number): string {
+  const words = prompt.trim().split(/\s+/).filter(Boolean).slice(0, 4).join(" ");
+  const short = words.length > 40 ? `${words.slice(0, 40).trim()}…` : words;
+  return `${short || "Quick create"} ${index + 1}`;
 }

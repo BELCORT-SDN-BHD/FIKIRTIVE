@@ -16,7 +16,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ImmersiveCanvasRuntimeContext } from "@/components/canvas/NorthstarCanvasWorkspace";
-import { R22_PACK_STORAGE_KEY, R22_PACK_VERSION, type R22PackItem } from "@/components/canvas/r22-canvas-pack";
+import { LIBRARY_FIXTURE_KEY, type LibraryArchive } from "@/components/library/library-fixture";
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock("next/image", () => ({ default: () => null }));
@@ -33,7 +33,8 @@ const { R22CanvasSurface } = await import("@/components/canvas/R22CanvasSurface"
 /** `DEFAULT_R22_WORKSPACE_DIRECTORY.activeId` —— 没有 seed directory 时的默认 workspace。 */
 const WORKSPACE_ID = "batik-house";
 const storageKey = (projectId: string) => `r22:canvas:${projectId}:new:${WORKSPACE_ID}`;
-const packKey = `${R22_PACK_STORAGE_KEY}:${WORKSPACE_ID}`;
+/** 素材包与成品都住在 Library 那一份 v2 存档里 —— 这一面不再另开第二本账。 */
+const libraryKey = `${LIBRARY_FIXTURE_KEY}:${WORKSPACE_ID}`;
 
 /** 一次生成跑完需要的时间(排队 320ms → 落板 920ms)。 */
 const JOB_MS = 1200;
@@ -396,23 +397,32 @@ describe("⑥ 每张成品自己带一排动作", () => {
     expect(star().getAttribute("aria-pressed"), "再按一下没有取消").toBe("false");
   });
 
-  it("Add to pack 写进两面共用的那份存档,而且按两次只留一条", async () => {
+  it("Add to pack 先问收进哪一个包,选完写进 Library 那份存档,再选一次只留一条", async () => {
     await mount();
 
+    // 上一版这一颗是无名一键。现在它开出一个小弹层:商家自己挑收进哪一个包。
     await click(need('[aria-label="Add Image 1 to a Library pack"]'));
+    expect(need('[data-canvas-pack-menu="art-1"]'), "按下之后没有出选包的弹层").toBeTruthy();
 
-    const raw = window.sessionStorage.getItem(packKey);
-    expect(raw, `${packKey} 里什么都没有 —— 素材包那一面读不到画布加的东西`).not.toBeNull();
-    const archive = JSON.parse(raw!) as { version: number; items: R22PackItem[] };
-    expect(archive.version).toBe(R22_PACK_VERSION);
-    expect(archive.items.map((item) => item.label)).toEqual(["Image 1"]);
-    expect(archive.items[0]!.src).toBe("/fixtures/r22-canvas/art-1.jpg");
+    await click(need('[data-canvas-pack-pick="pack-raya"]'));
+
+    const raw = window.sessionStorage.getItem(libraryKey);
+    expect(raw, `${libraryKey} 里什么都没有 —— 素材包那一面读不到画布加的东西`).not.toBeNull();
+    const archive = JSON.parse(raw!) as LibraryArchive;
+    const saved = archive.assets.find((asset) => asset.id === "canvas:project-a:art-1");
+    expect(saved, "画布那张图没有作为一条素材进 Library 存档").toBeTruthy();
+    expect(saved!.name).toBe("Image 1");
+    expect(saved!.poster).toBe("/fixtures/r22-canvas/art-1.jpg");
+    expect(saved!.packIds).toContain("pack-raya");
+    expect(noticeText()).toBe("Image 1 is in Raya assets.");
 
     await click(need('[aria-label="Add Image 1 to a Library pack"]'));
+    await click(need('[data-canvas-pack-pick="pack-raya"]'));
 
-    const again = JSON.parse(window.sessionStorage.getItem(packKey)!) as { items: R22PackItem[] };
-    expect(again.items, "多按一下就在包里多出一张一样的图").toHaveLength(1);
-    expect(noticeText()).toBe("Image 1 is already in your Library pack.");
+    const again = JSON.parse(window.sessionStorage.getItem(libraryKey)!) as LibraryArchive;
+    expect(again.assets.filter((asset) => asset.id === "canvas:project-a:art-1"), "多按一下就多出一张一样的图").toHaveLength(1);
+    expect(again.assets.find((asset) => asset.id === "canvas:project-a:art-1")!.packIds).toEqual(["pack-raya"]);
+    expect(noticeText()).toBe("Image 1 is already in Raya assets.");
   });
 });
 

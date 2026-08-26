@@ -42,14 +42,33 @@ import type { ImmersiveCanvasRuntimeContext } from "./NorthstarCanvasWorkspace";
 import { freshCanvasActionId, useCanvasGen, type CanvasGenProgress } from "./useCanvasGen";
 import { CANVAS_IMAGE_MAX_VARIANT_COUNT, type CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 import { readR22WorkspaceDirectory, scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
-import { addToR22Pack } from "./r22-canvas-pack";
+import {
+  FIXTURE_IMAGE_CREDITS,
+  FIXTURE_RATIO_OPTIONS,
+  FIXTURE_VIDEO_CONCEPT_SECONDS,
+  fixtureBatchHome,
+  fixtureQuoteCredits,
+  type CanvasMakeKind,
+  type CanvasPoint,
+  type FixtureArt,
+  type FixtureBatch,
+} from "./r22-canvas-fixture";
+import {
+  addLibraryAssets,
+  attachToPack,
+  canvasLibraryAsset,
+  LIBRARY_FIXTURE_KEY,
+  newPackId,
+  readLibraryArchive,
+  writeLibraryArchive,
+  type LibraryArchive,
+} from "@/components/library/library-fixture";
 import "./r22-canvas.css";
 
 type CanvasTool = "select" | "box" | "hand" | "image" | "star" | "arrange";
 
 /** 画布视角:世界的平移量 + 缩放百分比(原型 `view={x,y,s}`,L5985 —— 一件事一个出处)。 */
 type CanvasView = { x: number; y: number; zoom: number };
-type CanvasPoint = { x: number; y: number };
 /** 撤销栈上的一步 = 一个物件从哪儿挪到了哪儿(原型 L6024-6026 的 `pushMove`)。 */
 type CanvasMoveStep = { id: string; from: CanvasPoint; to: CanvasPoint };
 
@@ -82,41 +101,13 @@ const FIXTURE_OBJECT_HOME: Record<string, CanvasPoint> = {
 };
 
 /**
- * 样例画布那一张图的价钱。真接后端的那一面读服务端报价(`quoteCosts`),两面共用同一个
- * `imageCredits` 变量往下走 —— 价格贴纸、答案里的单价、批量四张的总价,全从这一处派生。
- * 「同一个价钱写在三处」正是漂移的起点,所以这一面只允许有这一个出处。
+ * 价目与可选形状搬去了 `r22-canvas-fixture.ts` —— Library 的 Quick create 报的必须是同一个
+ * 价,常量留在这一面就意味着那一面要自己再写一遍,而两个字面量从此各涨各的。这一面照旧
+ * 只从那一处派生:价格贴纸、答案卡的单价、批量四张的总价,一个数字都不再自己写。
  */
-const FIXTURE_IMAGE_CREDITS = 3;
-
-/**
- * 一张**视频概念卡**的价钱。V1 这一面做得出的只有概念:一帧占位加一个时长标签,卡上那
- * 句话逐字说清楚它不是一段能播的视频。价钱同样只有这一个出处。
- */
-const FIXTURE_VIDEO_CONCEPT_CREDITS = 6;
-/** 概念卡上那个时长标签的秒数 —— 它是一个标签,不是一段真的时间轴。 */
-const FIXTURE_VIDEO_CONCEPT_SECONDS = 6;
-
-/** 商家这一次要做的是图还是视频。参数弹层上那个分段控件切的就是它。 */
-type CanvasMakeKind = "image" | "video";
-
-/** 一次请求的价钱 = 单价 × 张数。张数与类型都从参数弹层来,谁都不许再写第二个乘法。 */
-function fixtureQuoteCredits(kind: CanvasMakeKind, count: number): number {
-  return (kind === "video" ? FIXTURE_VIDEO_CONCEPT_CREDITS : FIXTURE_IMAGE_CREDITS) * count;
-}
-
-/** 样例画布此刻真的可选的那几个形状(参数弹层的比例格与答案卡共用这一份)。 */
-const FIXTURE_RATIO_OPTIONS = ["9:16", "1:1", "4:5", "16:9"];
 
 /** 参考图的诚实预算:样例存档存在浏览器里,太大的图放不进去,所以先说清楚再拒绝。 */
 const FIXTURE_ATTACHMENT_MAX_BYTES = 1_500_000;
-
-/** 商家自己的素材库里已经存着的几张(样例)。「From Library」那个小弹层挑的就是它们。 */
-const FIXTURE_LIBRARY_ASSETS: Array<{ id: string; name: string; src: string }> = [
-  { id: "library-teal-candle", name: "Teal batik candle", src: "/fixtures/r22-canvas/art-1.jpg" },
-  { id: "library-pandan-set", name: "Pandan gift set", src: "/fixtures/r22-canvas/art-2.jpg" },
-  { id: "library-raya-table", name: "Raya table set", src: "/fixtures/r22-canvas/art-3.jpg" },
-  { id: "library-gold-thread", name: "Gold thread close-up", src: "/fixtures/r22-canvas/art-4.jpg" },
-];
 
 /**
  * 跟手改一版的那几句(Grok 与 Stitch 同证的形状)。chip 上是商家读的短句,发出去的是一整句
@@ -127,25 +118,6 @@ const FIXTURE_ITERATION_CHIPS: Array<{ chip: string; prompt: string }> = [
   { chip: "More table setting", prompt: "Make this batch again with more of the table setting" },
   { chip: "Closer crop", prompt: "Make this batch again with a closer crop" },
 ];
-
-type FixtureArt = { id: string; label: string; src: string; alt: string; variant?: string };
-
-/**
- * 画布上的一批东西。样例画布开局就有一批(`FIXTURE_SEED_BATCH`),此后每做一次就多一批 ——
- * 新的一批是**并存**,不是替换:商家刚才那一批还在原地,才比得出这一版好在哪。
- */
-type FixtureBatch = {
-  id: string;
-  kind: CanvasMakeKind;
-  ratio: string;
-  credits: number;
-  /** 这一批是从哪一张长出来的。`null` = 它自己就是新的一批。 */
-  madeFrom: string | null;
-  /** 这一批用到的参考图名字。空 = 没用参考图。 */
-  references: string[];
-  home: CanvasPoint;
-  art: FixtureArt[];
-};
 
 const FIXTURE_SEED_ART: FixtureArt[] = [
   { id: "art-1", variant: "r22-canvas-art-one", label: "Image 1", src: "/fixtures/r22-canvas/art-1.jpg", alt: "Raya concept 1" },
@@ -162,7 +134,7 @@ const FIXTURE_SEED_BATCH: FixtureBatch = {
   credits: FIXTURE_IMAGE_CREDITS * CANVAS_IMAGE_MAX_VARIANT_COUNT,
   madeFrom: null,
   references: [],
-  home: { x: 1020, y: 520 },
+  home: fixtureBatchHome(0),
   art: FIXTURE_SEED_ART,
 };
 
@@ -199,7 +171,7 @@ function buildFixtureBatch(spec: {
     madeFrom: spec.madeFrom,
     references: spec.references,
     // 一批一批往下摆,不叠在一起 —— 上一批还在原地,商家才比得出这一版。
-    home: { x: FIXTURE_SEED_BATCH.home.x, y: FIXTURE_SEED_BATCH.home.y + 360 * spec.index },
+    home: fixtureBatchHome(spec.index),
     art,
   };
 }
@@ -587,6 +559,7 @@ function ArtCell({
   kind,
   selected,
   starred,
+  packMenu,
   onSelect,
   onAction,
 }: {
@@ -594,6 +567,8 @@ function ArtCell({
   kind: CanvasMakeKind;
   selected: boolean;
   starred: boolean;
+  /** 「收进素材包」按下去之后长在这一格上的选包小弹层。没在选包时是 `null`。 */
+  packMenu?: React.ReactNode;
   onSelect: (id: string) => void;
   onAction: (action: ArtAction, art: FixtureArt) => void;
 }) {
@@ -631,10 +606,11 @@ function ArtCell({
         <Button unstyled type="button" aria-label={`Make more like ${art.label}`} data-canvas-art-action="variants" onClick={() => onAction("variants", art)}>
           <Sparkles aria-hidden="true" />
         </Button>
-        <Button unstyled type="button" aria-label={`Add ${art.label} to a Library pack`} data-canvas-art-action="pack" onClick={() => onAction("pack", art)}>
+        <Button unstyled type="button" aria-label={`Add ${art.label} to a Library pack`} aria-expanded={Boolean(packMenu)} data-canvas-art-action="pack" onClick={() => onAction("pack", art)}>
           <FolderPlus aria-hidden="true" />
         </Button>
       </div>
+      {packMenu}
     </div>
   );
 }
@@ -645,6 +621,8 @@ function FixtureWorld({
   batches,
   selected,
   starred,
+  packMenuFor,
+  renderPackMenu,
   onSelect,
   onArtAction,
   onIterate,
@@ -656,6 +634,9 @@ function FixtureWorld({
   batches: FixtureBatch[];
   selected: string[];
   starred: string[];
+  /** 此刻在哪一张上选包。`null` = 没在选。 */
+  packMenuFor: string | null;
+  renderPackMenu: (art: FixtureArt) => React.ReactNode;
   onSelect: (id: string) => void;
   onArtAction: (action: ArtAction, art: FixtureArt) => void;
   onIterate: (prompt: string) => void;
@@ -700,6 +681,7 @@ function FixtureWorld({
                 kind={batch.kind}
                 selected={selected.includes(art.id)}
                 starred={starred.includes(art.id)}
+                packMenu={packMenuFor === art.id ? renderPackMenu(art) : null}
                 onSelect={onSelect}
                 onAction={onArtAction}
               />
@@ -840,6 +822,17 @@ export function R22CanvasSurface({
   const [starredArt, setStarredArt] = useState<string[]>([]);
   /** 此刻挂在 composer 上的参考图。 */
   const [attachments, setAttachments] = useState<CanvasAttachment[]>([]);
+  /**
+   * 商家的素材库 —— **和 Library 那一面是同一份存档**(`fikirtive.r22.library.state.v2`)。
+   *
+   * 上一版这一面自己另开了一个素材包专用的存档键,于是同一件东西在浏览器里有两份账:
+   * 画布加进包里的图在 Library 的素材包页里根本看不见,而且两边谁都不会报错。对账裁决
+   * 是「Library 的 v2 存档是唯一权威」,所以这里读它、写它,不再有第二份。
+   */
+  const [library, setLibrary] = useState<LibraryArchive>({ assets: [], packs: [] });
+  /** 此刻在哪一张成品上选素材包。`null` = 没在选。 */
+  const [packMenuFor, setPackMenuFor] = useState<string | null>(null);
+  const [newPackName, setNewPackName] = useState("");
   const [tool, setTool] = useState<CanvasTool>("select");
   /** 平移与倍率是同一件事的两半(原型 L5985 的 `view`),所以它们是同一个状态。 */
   const [view, setView] = useState<CanvasView>(CANVAS_HOME_VIEW);
@@ -965,6 +958,7 @@ export function R22CanvasSurface({
   useEffect(() => {
     if (!fixture) return;
     setFixtureWorkspaceId(readR22WorkspaceDirectory().activeId);
+    setLibrary(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
     // 这个 key 会在**同一个组件实例**上随项目/会话切换而改变:顶栏项目菜单走 `<Link>`,
     // 路由只换 query 参数,组件不卸载,内存态一个字都不会自己消失。所以「这个项目没有
     // 存档」必须显式清空,不能什么都不做 —— 否则上一个项目的会话残留在内存里,再被下面
@@ -1055,6 +1049,9 @@ export function R22CanvasSurface({
    * 板上现在有哪几批 —— 开局那一批永远在最前面,后面是商家自己做出来的,并存不替换。
    */
   const batches = useMemo(() => [FIXTURE_SEED_BATCH, ...extraBatches], [extraBatches]);
+  /** 上面那份的一面镜子 —— 延时回调里读它,免得读到闭包里那份早就旧了的。 */
+  const extraBatchesRef = useRef<FixtureBatch[]>([]);
+  useEffect(() => { extraBatchesRef.current = extraBatches; }, [extraBatches]);
   /** 每个物件的老家(便签/摘录是常量,批次卡各自带着自己的)。拖过之后读 `objectPos`。 */
   const objectHomes = useMemo(() => {
     const homes: Record<string, CanvasPoint> = { ...FIXTURE_OBJECT_HOME };
@@ -1108,12 +1105,13 @@ export function R22CanvasSurface({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (event.defaultPrevented) return;
-      if (projectMenuOpen || attachOpen || ratioOpen || libraryOpen) {
+      if (projectMenuOpen || attachOpen || ratioOpen || libraryOpen || packMenuFor) {
         event.preventDefault();
         setProjectMenuOpen(false);
         setAttachOpen(false);
         setRatioOpen(false);
         setLibraryOpen(false);
+        setPackMenuFor(null);
         return;
       }
       if (!selectedArt.length) return;
@@ -1122,7 +1120,7 @@ export function R22CanvasSurface({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [attachOpen, libraryOpen, projectMenuOpen, ratioOpen, selectedArt.length]);
+  }, [attachOpen, libraryOpen, packMenuFor, projectMenuOpen, ratioOpen, selectedArt.length]);
 
   /** 一次拖拽/框选/平移走完之后的收尾:解掉监听、放开手指、退出「拖拽中」与「手势中」。 */
   const endGesture = useCallback((move: (event: PointerEvent) => void, up: (event: PointerEvent) => void) => {
@@ -1147,6 +1145,9 @@ export function R22CanvasSurface({
     if (!stage) return;
     const target = event.target as HTMLElement;
     if (target.isContentEditable) return;
+    // 板上现在也有真的输入框(选包弹层里那个「New pack name」)。按在它上面是要打字,
+    // 不是要拖那张卡 —— 抢过来当拖拽,光标就会在按下的那一刻跳走。
+    if (target.closest("input, textarea")) return;
     // 会话栏、Otto、composer、工具条这些都是**画布上的界面**,不是板。它们一律不在
     // `.r22-canvas-world` 里,所以「按在世界里或按在空地上」这一句就把它们全挡在外面了 ——
     // 比逐个点名一串选择器耐用:以后新加一块浮层,不用回来补名单。
@@ -1399,12 +1400,15 @@ export function R22CanvasSurface({
     fixtureTimersRef.current.push(window.setTimeout(() => {
       setSubmitting(false);
       setFixtureJob({ id, prompt, status: "completed" });
-      setExtraBatches((current) => {
-        const board = [FIXTURE_SEED_BATCH, ...current];
-        const imageCount = board.reduce((total, batch) => total + (batch.kind === "image" ? batch.art.length : 0), 0);
-        const videoCount = board.reduce((total, batch) => total + (batch.kind === "video" ? batch.art.length : 0), 0);
-        return [...current, buildFixtureBatch({ index: board.length, imageCount, videoCount, kind, count, ratio: shape, madeFrom, references })];
-      });
+      // 板上已有几批要读 ref 而不是闭包里那个 state:这一段跑在 920ms 之后,闭包里那份
+      // 早就可能是旧的,而编号错一位,进库那条身份就跟着错。
+      const board = [FIXTURE_SEED_BATCH, ...extraBatchesRef.current];
+      const imageCount = board.reduce((total, batch) => total + (batch.kind === "image" ? batch.art.length : 0), 0);
+      const videoCount = board.reduce((total, batch) => total + (batch.kind === "video" ? batch.art.length : 0), 0);
+      const made = buildFixtureBatch({ index: board.length, imageCount, videoCount, kind, count, ratio: shape, madeFrom, references });
+      setExtraBatches((current) => [...current, made]);
+      // 做完就进库,商家一个动作都不用做。
+      fileBatchIntoLibrary(made);
       setNotice(kind === "video"
         ? "Done — the video concept landed on the canvas. It is a still stand-in, not a playable video."
         : "Done — it landed on the canvas. Star the keepers, or ask for variants.");
@@ -1414,6 +1418,103 @@ export function R22CanvasSurface({
   function retryFixtureSend() {
     if (!fixtureJob || fixtureJob.status !== "failed" || submitting) return;
     startFixtureJob(fixtureJob.prompt);
+  }
+
+  /* ————— 素材库:两面同一份存档 ————— */
+
+  /** 商家读得到的项目名 —— 东西进库之后卡上那一行来源写的就是它。 */
+  const libraryProjectName = activeProject?.name ?? "Canvas";
+
+  /** 一次写入 = 一次落盘 + 内存跟上。落不进去也不把改动留在屏幕上骗人。 */
+  function commitLibrary(next: LibraryArchive): boolean {
+    if (!writeLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY), next)) return false;
+    setLibrary(next);
+    return true;
+  }
+
+  /**
+   * 做出来的东西**自动进库**,商家一个动作都不用做。
+   *
+   * 这是「总管道」这件事的下半截:板上做完了,东西就该在仓库里找得到 —— 逼商家再按一次
+   * 「保存到素材库」,等于把我们的数据结构当成了他的流程。幂等由 `id` 保证(id 带着项目,
+   * 两块板上的「Image 1」不是同一张图),所以重渲染、刷新回放都不会在库里多出一份。
+   *
+   * 视频这一面今天只做得出概念卡 —— 没有可以存进库的那一帧,所以它不进库,也不假装进了。
+   */
+  function fileBatchIntoLibrary(batch: FixtureBatch) {
+    if (!fixture || batch.kind !== "image") return;
+    const stored = readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY));
+    const next = addLibraryAssets(stored, batch.art.map((art) => canvasLibraryAsset({
+      projectId: runtimeContext.activeProjectId,
+      projectName: libraryProjectName,
+      artId: art.id,
+      name: art.label,
+      src: art.src,
+    })));
+    if (next !== stored) commitLibrary(next);
+    else setLibrary(stored);
+  }
+
+  /** 把一张成品收进一个素材包。已经在包里的原样不动,回执如实说这一次有没有真的加进去。 */
+  function saveArtToPack(art: FixtureArt, packId: string, packName: string) {
+    const stored = readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY));
+    const asset = canvasLibraryAsset({
+      projectId: runtimeContext.activeProjectId,
+      projectName: libraryProjectName,
+      artId: art.id,
+      name: art.label,
+      src: art.src,
+    });
+    const already = stored.assets.find((row) => row.id === asset.id)?.packIds.includes(packId) ?? false;
+    if (!commitLibrary(attachToPack(addLibraryAssets(stored, [asset]), [asset.id], packId))) {
+      setNotice("There is no room left in this preview, so nothing was kept.");
+      return;
+    }
+    setPackMenuFor(null);
+    setNewPackName("");
+    setNotice(already ? `${art.label} is already in ${packName}.` : `${art.label} is in ${packName}.`);
+  }
+
+  function createPackForArt(art: FixtureArt, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const stored = readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY));
+    const id = newPackId(trimmed, stored.packs);
+    if (!commitLibrary({ ...stored, packs: [...stored.packs, { id, name: trimmed }] })) {
+      setNotice("There is no room left in this preview, so nothing was kept.");
+      return;
+    }
+    saveArtToPack(art, id, trimmed);
+  }
+
+  /**
+   * 选包那个小弹层。它长在触发它的那一格上,`transform-origin` 也对着那颗按钮 ——
+   * 弹层从按下的地方长出来,商家才不用回头找「刚才那一下开出了什么」。
+   */
+  function renderPackMenu(art: FixtureArt) {
+    return (
+      <div className="r22-canvas-popover r22-canvas-pack-menu" data-canvas-pack-menu={art.id}>
+        <p>Save {art.label} to</p>
+        {library.packs.length ? (
+          <div className="r22-canvas-pack-list">
+            {library.packs.map((pack) => (
+              <Button unstyled type="button" key={pack.id} data-canvas-pack-pick={pack.id} onClick={() => saveArtToPack(art, pack.id, pack.name)}>{pack.name}</Button>
+            ))}
+          </div>
+        ) : null}
+        <div className="r22-canvas-pack-new">
+          <Input
+            unstyled
+            aria-label="New pack name"
+            placeholder="New pack name"
+            value={newPackName}
+            onChange={(event) => setNewPackName(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); createPackForArt(art, newPackName); } }}
+          />
+          <Button unstyled type="button" disabled={!newPackName.trim()} data-canvas-pack-create onClick={() => createPackForArt(art, newPackName)}>New pack</Button>
+        </div>
+      </div>
+    );
   }
 
   /** 挂一张参考图上去。同一张挂两次只留一条 —— 多按一下不该变成两张一样的参考。 */
@@ -1470,10 +1571,12 @@ export function R22CanvasSurface({
       return;
     }
     if (action === "pack") {
-      const result = addToR22Pack({ id: art.id, label: art.label, src: art.src });
-      setNotice(result.added
-        ? `${art.label} is in your Library pack — ${result.total} ${result.total === 1 ? "item" : "items"} saved.`
-        : `${art.label} is already in your Library pack.`);
+      // 上一版这一颗是「无名一键」:按下去东西进了一个叫「your Library pack」的地方,
+      // 而商家的库里有好几个包。收进哪一个是商家的决定,不是我们的默认值 —— 所以先问。
+      setNewPackName("");
+      setPackMenuFor((current) => (current === art.id ? null : art.id));
+      setLibrary(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
+      setNotice("");
       return;
     }
     const prompt = `Make more like ${art.label}`;
@@ -1683,7 +1786,7 @@ export function R22CanvasSurface({
         ref={stageRef}
         onPointerDown={onStagePointerDown}
       >
-        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld style={worldStyle} positions={objectPos} batches={batches} selected={selectedArt} starred={starredArt} onSelect={selectArt} onArtAction={onArtAction} onIterate={iterateBatch} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
+        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld style={worldStyle} positions={objectPos} batches={batches} selected={selectedArt} starred={starredArt} packMenuFor={packMenuFor} renderPackMenu={renderPackMenu} onSelect={selectArt} onArtAction={onArtAction} onIterate={iterateBatch} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
         {marquee ? <div className="r22-canvas-marquee" data-r22-canvas-marquee style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }} /> : null}
         {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
@@ -1833,11 +1936,16 @@ export function R22CanvasSurface({
             {libraryOpen && fixture && (
               <div className="r22-canvas-popover r22-canvas-library-picker" data-r22-canvas-library-picker>
                 <p>Saved in your Library</p>
+                {/*
+                  挑的是商家**真的**存着的东西 —— 读的就是 Library 那一面的存档,所以他刚
+                  上传的照片、刚在别的板上做出来的图,在这里立刻挑得到。上一版这里是四张
+                  写死的私种子:商家看着自己库里有十几张,弹层里却永远只有那四张。
+                */}
                 <div className="r22-canvas-library-grid">
-                  {FIXTURE_LIBRARY_ASSETS.map((asset) => (
-                    <Button unstyled type="button" key={asset.id} data-canvas-library-pick={asset.id} onClick={() => attachReference({ id: asset.id, name: asset.name, src: asset.src, from: "library" })}>
+                  {library.assets.filter((asset) => !asset.hidden).map((asset) => (
+                    <Button unstyled type="button" key={asset.id} data-canvas-library-pick={asset.id} onClick={() => attachReference({ id: `library:${asset.id}`, name: asset.name, src: asset.poster, from: "library" })}>
                       {/* eslint-disable-next-line @next/next/no-img-element -- 小弹层里的缩略图,与 chip 用同一张图,不值得再走一轮远端优化。 */}
-                      <img src={asset.src} alt="" />
+                      <img src={asset.poster} alt="" />
                       <span>{asset.name}</span>
                     </Button>
                   ))}

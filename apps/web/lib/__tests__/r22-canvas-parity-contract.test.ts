@@ -42,8 +42,11 @@ describe("R22 Canvas 是独立可见 surface,旧内核只可留作业务 contrac
     }
     expect(surface).toContain("Ask Otto, or describe what to make");
     // 样例画布那一张图的价钱仍然是 3 cr,只是不再作为字面量散在贴纸和答案里 —— 价格贴纸、
-    // 答案卡的单价、批量四张的总价现在全从这一个常量派生(见 `FIXTURE_IMAGE_CREDITS` 的注释)。
-    expect(surface).toContain("FIXTURE_IMAGE_CREDITS = 3");
+    // 答案卡的单价、批量四张的总价全从这一个常量派生。它现在住在 `r22-canvas-fixture.ts`:
+    // Library 的 Quick create 报的必须是同一个价,常量留在这一面就意味着那一面要自己再写
+    // 一遍,而两个字面量从此各涨各的。这一面照旧只 import,不自己写价钱。
+    expect(surface).toContain("FIXTURE_IMAGE_CREDITS");
+    expect(source(path.join(WEB_ROOT, "components/canvas/r22-canvas-fixture.ts"))).toContain("FIXTURE_IMAGE_CREDITS = 3");
   });
 
   it("production composer 的价格和付费动作共用真实 Canvas generation adapter", () => {
