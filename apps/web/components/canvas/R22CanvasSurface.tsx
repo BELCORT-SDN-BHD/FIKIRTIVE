@@ -50,6 +50,8 @@ import {
   FIXTURE_VIDEO_CONCEPT_SECONDS,
   fixtureBatchHome,
   fixtureQuoteCredits,
+  NEW_PROJECT_FIXTURE_ID,
+  readNewFixtureProjectName,
   type CanvasMakeKind,
   type CanvasPoint,
   type FixtureArt,
@@ -884,7 +886,13 @@ export function R22CanvasSurface({
   const [submitting, setSubmitting] = useState(false);
   const [fixtureRestored, setFixtureRestored] = useState(!fixture);
   const [fixtureWorkspaceId, setFixtureWorkspaceId] = useState(fixture ? "" : "production");
+  /** 刚在 Create 对话框里建出来的那个项目的名字 —— 名录里只有一个兜底名,真名从那句话来。 */
+  const [fixtureNewProjectName, setFixtureNewProjectName] = useState("");
   const [fixtureJob, setFixtureJob] = useState<FixtureCanvasJob | null>(null);
+  /** 顶栏该写哪个名字:这一格是刚建出来的那个项目时,写他那句话派生出来的短名。 */
+  const fixtureProjectName = runtimeContext.activeProjectId === NEW_PROJECT_FIXTURE_ID && fixtureNewProjectName
+    ? fixtureNewProjectName
+    : null;
   const [fixtureSendFailedOnce, setFixtureSendFailedOnce] = useState(false);
   const fixtureTimersRef = useRef<number[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -971,6 +979,7 @@ export function R22CanvasSurface({
   useEffect(() => {
     if (!fixture) return;
     setFixtureWorkspaceId(readR22WorkspaceDirectory().activeId);
+    setFixtureNewProjectName(readNewFixtureProjectName());
     setLibrary(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
     // 这个 key 会在**同一个组件实例**上随项目/会话切换而改变:顶栏项目菜单走 `<Link>`,
     // 路由只换 query 参数,组件不卸载,内存态一个字都不会自己消失。所以「这个项目没有
@@ -1835,7 +1844,7 @@ export function R22CanvasSurface({
           >
             {/* fixture 也有不止一块板(Quick create 就是第二块)—— 顶栏写死一个名字,
                 商家从 Library 点进来看到的就是别人的板名。名字一律读当前项目。 */}
-            <span>{fixture ? fixtureRouteState === "loading" ? "Loading project…" : fixtureRouteState !== "ready" ? "Project unavailable" : !fixtureWorkspaceId ? "Loading project…" : fixtureWorkspaceId === "batik-house" ? (activeProject?.name ?? "Raya launch") : "New workspace project" : (activeProject?.name ?? "Current project")}</span>
+            <span>{fixture ? fixtureRouteState === "loading" ? "Loading project…" : fixtureRouteState !== "ready" ? "Project unavailable" : !fixtureWorkspaceId ? "Loading project…" : fixtureWorkspaceId === "batik-house" ? (fixtureProjectName ?? activeProject?.name ?? "Raya launch") : "New workspace project" : (activeProject?.name ?? "Current project")}</span>
             <ChevronDown aria-hidden="true" />
           </Button>
           {projectMenuOpen && (!fixture || fixtureRouteState === "ready") && (

@@ -13,6 +13,9 @@ const R22_SURFACES = [
   "components/r22/R22DashboardShell.tsx",
   "components/home/HomeView.tsx",
   "components/projects/R22ProjectsView.tsx",
+  // 建项目那一层从七格表单换成 Otto 开局对话框之后自成一个文件 —— 上面那段话说的正是
+  // 这件事:新文件不上名单,四条通用围栏一条也扫不到它。
+  "components/projects/ProjectStartDialog.tsx",
   "components/canvas/R22CanvasSurface.tsx",
   "components/library/R22LibraryView.tsx",
   // Library 从「陈列柜」重建成工作台之后一个组件画不下整面,拆成了壳 + 二级导航 + 工具排 +
@@ -118,6 +121,9 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     const conversation = source("components/otto/panel/OttoPanelConversation.tsx");
 
     expect(projects).toContain("<TabsList");
+    // 建项目那一层的问题卡是一组**真**单选;Library 快产车间那一张同理 —— 两处都不许
+    // 再用一排普通按钮加 `role="radio"` 手搓(键盘行为会跟着一起手搓,而且迟早不一致)。
+    expect(source("components/projects/ProjectStartDialog.tsx")).toContain("<RadioGroup");
     // 这条钉的是「Approvals 这些控件是 shadcn 的,不是手搓的」。八件升级把这一面拆成了
     // 五个文件,于是每个 primitive 钉在**现在真的画它的那个文件**上:筛选留在壳里,
     // 勾选跟着卡走,理由单选跟着改版流走。写成「任意一个 approvals 文件里出现过」会让

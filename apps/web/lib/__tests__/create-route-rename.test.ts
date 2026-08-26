@@ -273,7 +273,10 @@ describe("一屏只有一个开工入口(规格书 Q2-A)", () => {
     // 视觉入口。路由必须直接进入唯一的 R22 Projects 实现，不能再挂回旧 shell。
     expect(sourceCode("app/create/page.tsx")).toContain("@/components/projects/R22ProjectsEntry");
     expect(sourceCode("components/projects/R22ProjectsEntry.tsx")).toContain("./R22ProjectsView");
-    expect(sourceCode("components/projects/R22ProjectsView.tsx")).toContain("createProject(");
+    // 建项目那一下从七格表单换成 Otto 开局对话框之后,`createProject` 跟着搬进了
+    // `ProjectStartDialog` —— 列表页本身不再自己建项目,它只负责摆那一层。
+    expect(sourceCode("components/projects/R22ProjectsView.tsx")).toContain("<ProjectStartDialog");
+    expect(sourceCode("components/projects/ProjectStartDialog.tsx")).toContain("createProject(");
   });
 
   it("开工动作也只有一条:`createProject` 的调用点是一份写明理由的名单", () => {
@@ -287,8 +290,8 @@ describe("一屏只有一个开工入口(规格书 Q2-A)", () => {
       // 调用点不再存在,豁免簿跟着划掉,不是留一条陈账。
       "lib/otto-projects-port.ts":
         "Otto 技能的项目端口:Otto 只提议,商家点了才建 —— 它不画界面,也不静默开画布。",
-      "components/projects/R22ProjectsView.tsx":
-        "R22 Projects 的显式 Create project dialog；提交后进入 canonical Canvas。",
+      "components/projects/ProjectStartDialog.tsx":
+        "R22 Projects 的显式 Create project 对话框：商家说一句话才建，建完进 canonical Canvas。",
       "components/onboarding/R22Onboarding.tsx":
         "Production onboarding 的显式 Continue in Canvas 恢复出口；fixture 不调用真实动作。",
     };

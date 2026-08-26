@@ -327,9 +327,18 @@ export type QuickCreateQuestion = {
  */
 const QUICK_CREATE_VAGUE = /\b(something|anything|whatever|stuff|nice|nicer|better|best|cool|pretty|beautiful|amazing|awesome|surprise me|you decide|up to you)\b/i;
 
+/**
+ * 含糊词族的**唯一出处**。建项目那个对话框(`components/projects/project-start.ts`)问的
+ * 是别的事,用的却必须是同一份词族 —— 两处各写一份正则,同一句「make something nice」
+ * 迟早在一面被拦下、在另一面直接开跑,而且两边谁都不会报错。
+ */
+export function isVagueCreationRequest(text: string): boolean {
+  return QUICK_CREATE_VAGUE.test(text);
+}
+
 export function quickCreateQuestion(prompt: string): QuickCreateQuestion | null {
   const words = prompt.trim().split(/\s+/).filter((word) => /[a-z0-9]/i.test(word));
-  if (words.length >= 4 && !QUICK_CREATE_VAGUE.test(prompt)) return null;
+  if (words.length >= 4 && !isVagueCreationRequest(prompt)) return null;
   return {
     header: "Before Otto starts",
     question: "What should this be for?",

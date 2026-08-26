@@ -135,3 +135,64 @@ export function appendCanvasFixtureHandoff(input: {
     return false;
   }
 }
+
+/* ── 刚建出来的那个项目(Create 对话框 → 画布 的那条路) ─────────────────────── */
+
+/**
+ * 商家刚在 Create 对话框里建出来的那个项目,在样张里的固定身份。
+ *
+ * 为什么必须是一个**登记过的** id:画布入口的 fixture 分支与真实那一支走同一个
+ * `selectImmersiveProject` —— 认不出的 projectId 会静默退回名录第一项(Raya launch)。
+ * 于是商家刚说完那句话、按下建项目,进去看到的是别人的板,而且没有任何一处会报错。
+ * 所以这个 id 与 `ImmersiveCanvasEntry` 的 `FIXTURE_PROJECTS` 是同一个常量。
+ */
+export const NEW_PROJECT_FIXTURE_ID = "fixture-new-project";
+
+/** 还没人建过项目时,这一格在名录里的名字。真的建了就换成商家那句话派生出来的短名。 */
+export const NEW_PROJECT_FIXTURE_FALLBACK_NAME = "New project";
+
+/** 派生出来的短名存在哪(还没带 workspace 后缀 —— 落盘时统一走 `scopedR22FixtureKey`)。 */
+const NEW_PROJECT_NAME_KEY = "r22:canvas:new-project-name";
+
+/** 记下这个项目商家读到的名字。存不下就算了 —— 名录里还有一个诚实的兜底名。 */
+export function writeNewFixtureProjectName(name: string): void {
+  try {
+    window.sessionStorage.setItem(scopedR22FixtureKey(NEW_PROJECT_NAME_KEY), name);
+  } catch {
+    /* 顶栏会退回兜底名,别的一切照常。 */
+  }
+}
+
+/** 读回那个名字。没有就是「还没人在这一格建过项目」。 */
+export function readNewFixtureProjectName(): string {
+  try {
+    return window.sessionStorage.getItem(scopedR22FixtureKey(NEW_PROJECT_NAME_KEY)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 开一块新板,把**开场那几句话**带进去。
+ *
+ * 与 `appendCanvasFixtureHandoff` 的分工:那一个是往**已有**的会话后面接一批成品(所以
+ * 靠批次 id 幂等);这一个是「这是一个刚建出来的项目」,所以它**整份覆盖** —— 上一次
+ * 占着这一格的项目连同它的板一起让位。留着旧存档才是骗人:商家读到的是一块新板的名字,
+ * 板上却是上一个项目的东西。
+ */
+export function startCanvasFixtureConversation(input: {
+  projectId: string;
+  threadId?: string | null;
+  messages: Array<{ from: "me" | "otto"; text: string }>;
+}): boolean {
+  const key = scopedR22FixtureKey(canvasFixtureSessionKey(input.projectId, input.threadId ?? null));
+  try {
+    window.sessionStorage.setItem(
+      key,
+      JSON.stringify({ version: CANVAS_FIXTURE_SESSION_VERSION, messages: input.messages }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}

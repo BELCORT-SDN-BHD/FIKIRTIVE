@@ -15,6 +15,10 @@ import {
   QUICK_CREATE_PROJECT_ID,
   QUICK_CREATE_PROJECT_NAME,
 } from "@/components/library/library-fixture";
+import {
+  NEW_PROJECT_FIXTURE_ID,
+  NEW_PROJECT_FIXTURE_FALLBACK_NAME,
+} from "@/components/canvas/r22-canvas-fixture";
 
 export type ImmersiveCanvasSearchParams = Record<
   string,
@@ -36,6 +40,10 @@ type ThreadChoice = { id: string; updatedAt: Date | string };
 const FIXTURE_PROJECTS: ReadonlyArray<{ id: string; name: string }> = [
   { id: "fixture-raya", name: "Raya launch" },
   { id: QUICK_CREATE_PROJECT_ID, name: QUICK_CREATE_PROJECT_NAME },
+  // 商家刚在 Create 对话框里说完一句话建出来的那一个。名录里认不出它,`selectImmersiveProject`
+  // 就会静默退回第一项 —— 于是他按下建项目、进去看到的是 Raya launch,而且没有一处会报错。
+  // 这里的名字只是兜底:真的建过之后,顶栏读的是那句话派生出来的短名。
+  { id: NEW_PROJECT_FIXTURE_ID, name: NEW_PROJECT_FIXTURE_FALLBACK_NAME },
 ];
 
 function firstSearchParam(value: string | string[] | undefined): string | undefined {
