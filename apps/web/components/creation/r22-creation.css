@@ -1,0 +1,21 @@
+/* 起手模板那一排(画布空态 + Library 快产车间共用一份画法)。
+ *
+ * 颜色一律 `var(--r22-*)`,字号一律字梯 token —— 央册在 `components/r22/r22-tokens.css`。
+ * 动效纪律(Emil):只写具体属性、≤200ms、ease-out;减弱动效下是**去运动**,不是换一种动法。
+ */
+
+.r22-template-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.r22-template-row::-webkit-scrollbar { display: none; }
+
+.r22-template { display: flex; min-width: 0; padding: 5px 10px 5px 5px; align-items: center; gap: 8px; flex: none; border: 1px solid var(--r22-line-2); border-radius: 10px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-caption); font-weight: 500; text-align: left; transition: background-color 140ms ease-out, border-color 140ms ease-out; }
+.r22-template img { width: 30px; height: 30px; flex: none; border-radius: 7px; object-fit: cover; background: var(--r22-chrome); }
+.r22-template span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r22-template:disabled { opacity: .55; }
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-template:hover:not(:disabled) { border-color: var(--r22-ink-3); background: var(--r22-chrome); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-template { transition: none; }
+}

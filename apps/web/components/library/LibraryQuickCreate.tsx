@@ -25,6 +25,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { CreationTemplateRow } from "@/components/creation/CreationTemplateRow";
 import { CANVAS_IMAGE_MAX_VARIANT_COUNT } from "@/lib/canvas-gen-costs";
 import {
   FIXTURE_RATIO_OPTIONS,
@@ -166,6 +167,11 @@ export function LibraryQuickCreate({
           </div>
         </div>
       ) : null}
+
+      {/* 起手模板 —— 与画布空态是同一个组件、同一批句子。点一下只把句子填进下面这个输入框:
+          发送仍然是商家自己按的那一下,这一排一分钱都不动。问题卡在的时候整排锁住,与
+          类型/张数/比例那三个控件同一条纪律。 */}
+      <CreationTemplateRow locked={locked} onPick={(template) => { setPrompt(template.prompt); promptRef.current?.focus(); }} />
 
       <form
         className="r22-lib-make-form"
