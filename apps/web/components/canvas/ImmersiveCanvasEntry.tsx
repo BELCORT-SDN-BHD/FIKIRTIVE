@@ -11,6 +11,10 @@ import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
 import { getCoworkThreads, getEntities, getProjects } from "@/lib/data";
 import { toEntityDTO } from "@/lib/dto";
+import {
+  QUICK_CREATE_PROJECT_ID,
+  QUICK_CREATE_PROJECT_NAME,
+} from "@/components/library/library-fixture";
 
 export type ImmersiveCanvasSearchParams = Record<
   string,
@@ -19,6 +23,20 @@ export type ImmersiveCanvasSearchParams = Record<
 
 type ProjectChoice = { id: string };
 type ThreadChoice = { id: string; updatedAt: Date | string };
+
+/**
+ * 样例画布此刻真的存在的那几块板。
+ *
+ * 为什么它必须是一份**名录**、而不是一个写死的项目:Library 的 Quick create 做完之后给的
+ * 「Continue in Canvas」指的是 `?project=fixture-quick-create`,而这一批成品与那句话正是
+ * 按这个 projectId 存进浏览器会话的。fixture 分支要是把项目一律当成 Raya launch,商家点
+ * 过去看到的永远是另一块板 —— 顶栏写着别人的名字,自己刚做的东西一件都不在,而且没有
+ * 任何一处会报错。所以这一支与真实那一支走同一个 `selectImmersiveProject`。
+ */
+const FIXTURE_PROJECTS: ReadonlyArray<{ id: string; name: string }> = [
+  { id: "fixture-raya", name: "Raya launch" },
+  { id: QUICK_CREATE_PROJECT_ID, name: QUICK_CREATE_PROJECT_NAME },
+];
 
 function firstSearchParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -96,10 +114,15 @@ export async function ImmersiveCanvasEntry({
     const fixtureRouteState = requestedState === "loading" || requestedState === "error" || requestedState === "permission" || requestedState === "missing" || requestedState === "unknown" ? requestedState : "ready";
     const requestedSend = firstSearchParam(sp.send);
     const fixtureSendOutcome = requestedSend === "error" || requestedSend === "permission" || requestedSend === "credits" || requestedSend === "unknown" ? requestedSend : "success";
+    const fixtureSelection = selectImmersiveProject(
+      FIXTURE_PROJECTS,
+      FIXTURE_PROJECTS[0]!.id,
+      firstSearchParam(sp.project),
+    );
     const fixtureContext: ImmersiveCanvasRuntimeContext = {
-      projects: [{ id: "fixture-raya", name: "Raya launch" }],
+      projects: FIXTURE_PROJECTS.map((project) => ({ ...project })),
       threads: [],
-      activeProjectId: "fixture-raya",
+      activeProjectId: fixtureSelection.activeProjectId,
       activeThreadId: null,
       initialBalance: 1240,
       initialPrompt: firstSearchParam(sp.prompt) ?? "",

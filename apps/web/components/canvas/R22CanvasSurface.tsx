@@ -1407,11 +1407,14 @@ export function R22CanvasSurface({
       const videoCount = board.reduce((total, batch) => total + (batch.kind === "video" ? batch.art.length : 0), 0);
       const made = buildFixtureBatch({ index: board.length, imageCount, videoCount, kind, count, ratio: shape, madeFrom, references });
       setExtraBatches((current) => [...current, made]);
-      // 做完就进库,商家一个动作都不用做。
-      fileBatchIntoLibrary(made);
-      setNotice(kind === "video"
-        ? "Done — the video concept landed on the canvas. It is a still stand-in, not a playable video."
-        : "Done — it landed on the canvas. Star the keepers, or ask for variants.");
+      // 做完就进库,商家一个动作都不用做 —— 但进不去的时候不许照样报「Done」:
+      // 板上有、仓库里没有,而回执说全好了,商家下次去 Library 找就是找不到。
+      const filed = fileBatchIntoLibrary(made);
+      setNotice(!filed
+        ? "It landed on the canvas, but there was no room left to keep a copy in your Library."
+        : kind === "video"
+          ? "Done — the video concept landed on the canvas. It is a still stand-in, not a playable video."
+          : "Done — it landed on the canvas. Star the keepers, or ask for variants.");
     }, 920));
   }
 
@@ -1440,9 +1443,13 @@ export function R22CanvasSurface({
    * 两块板上的「Image 1」不是同一张图),所以重渲染、刷新回放都不会在库里多出一份。
    *
    * 视频这一面今天只做得出概念卡 —— 没有可以存进库的那一帧,所以它不进库,也不假装进了。
+   *
+   * 返回值 = 「回执可以说东西进库了吗」。写不进去(存档满了)必须返回 false,让上面那句
+   * 回执改口 —— 悄悄吞掉写入失败再报一句 Done,就是屏幕上写着做到了、仓库里没有。
+   * 视频与非 fixture 这两支本来就不该进库,不是失败,所以返回 true。
    */
-  function fileBatchIntoLibrary(batch: FixtureBatch) {
-    if (!fixture || batch.kind !== "image") return;
+  function fileBatchIntoLibrary(batch: FixtureBatch): boolean {
+    if (!fixture || batch.kind !== "image") return true;
     const stored = readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY));
     const next = addLibraryAssets(stored, batch.art.map((art) => canvasLibraryAsset({
       projectId: runtimeContext.activeProjectId,
@@ -1451,8 +1458,11 @@ export function R22CanvasSurface({
       name: art.label,
       src: art.src,
     })));
-    if (next !== stored) commitLibrary(next);
-    else setLibrary(stored);
+    if (next === stored) {
+      setLibrary(stored);
+      return true;
+    }
+    return commitLibrary(next);
   }
 
   /** 把一张成品收进一个素材包。已经在包里的原样不动,回执如实说这一次有没有真的加进去。 */
@@ -1754,7 +1764,9 @@ export function R22CanvasSurface({
             aria-expanded={projectMenuOpen}
             onClick={() => setProjectMenuOpen((open) => !open)}
           >
-            <span>{fixture ? fixtureRouteState === "loading" ? "Loading project…" : fixtureRouteState !== "ready" ? "Project unavailable" : !fixtureWorkspaceId ? "Loading project…" : fixtureWorkspaceId === "batik-house" ? "Raya launch" : "New workspace project" : (activeProject?.name ?? "Current project")}</span>
+            {/* fixture 也有不止一块板(Quick create 就是第二块)—— 顶栏写死一个名字,
+                商家从 Library 点进来看到的就是别人的板名。名字一律读当前项目。 */}
+            <span>{fixture ? fixtureRouteState === "loading" ? "Loading project…" : fixtureRouteState !== "ready" ? "Project unavailable" : !fixtureWorkspaceId ? "Loading project…" : fixtureWorkspaceId === "batik-house" ? (activeProject?.name ?? "Raya launch") : "New workspace project" : (activeProject?.name ?? "Current project")}</span>
             <ChevronDown aria-hidden="true" />
           </Button>
           {projectMenuOpen && (!fixture || fixtureRouteState === "ready") && (
