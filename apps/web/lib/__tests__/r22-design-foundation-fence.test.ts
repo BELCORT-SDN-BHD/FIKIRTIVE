@@ -24,6 +24,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { readOk, type HomeData } from "@/components/home/home-data";
 import { HomeView, type HomeConnection } from "@/components/home/HomeView";
+import { R22LibraryView } from "@/components/library/R22LibraryView";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 
@@ -242,6 +243,28 @@ const SURFACE_REGISTRY: SurfaceRegistryEntry[] = [
         ),
       ),
     limit: 3,
+  },
+  /**
+   * Library 工作台(2026-08-26 重建时入栏,ready 态 = 商家推开这扇门看到的第一屏)。
+   *
+   * 这一面的常驻说明句**只有一句** —— 页头那句「Find every image and video you have already
+   * made.」。工作台本体一句解释话都没有:左导航是标签,工具排是控件,组头是日期,卡上是
+   * 名字与来源。空态与各种回执都是**条件出现**的,不常驻,所以不在这把尺子量的范围里。
+   *
+   * 上限钉 2 而不是 1,是因为这把尺子的机械特性,不是因为多了一句话:`countResidentSentences`
+   * 按句末标点切段,页面最后那一大串**没有标点的标签**(All / Starred / Uploads / 24 Aug /
+   * 卡名……)天生凑成一个 >3 词的尾段,永远被数进来。Home 那一项同理(样张说 4 句,尺子读 3)。
+   * 真的多写一句解释话,这个数会变成 3 —— 闸照样红。
+   */
+  {
+    surface: "Library workroom",
+    render: () =>
+      visibleText(
+        renderToStaticMarkup(
+          createElement(R22LibraryView, { initialItems: [], fixture: true, fixtureRestore: false } as never),
+        ),
+      ),
+    limit: 2,
   },
 ];
 

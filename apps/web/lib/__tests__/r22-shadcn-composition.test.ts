@@ -15,6 +15,15 @@ const R22_SURFACES = [
   "components/projects/R22ProjectsView.tsx",
   "components/canvas/R22CanvasSurface.tsx",
   "components/library/R22LibraryView.tsx",
+  // Library 从「陈列柜」重建成工作台之后一个组件画不下整面,拆成了壳 + 二级导航 + 工具排 +
+  // 卡 + 详情层 + 素材包层。上面那段话说的正是这件事:拆出来的每一个文件都要自己上名单,
+  // 否则这几条通用围栏一条也扫不到它们,而这种漏是静默的。
+  "components/library/LibraryWorkroom.tsx",
+  "components/library/LibraryNav.tsx",
+  "components/library/LibraryToolbar.tsx",
+  "components/library/LibraryCard.tsx",
+  "components/library/LibraryDetailLayer.tsx",
+  "components/library/LibraryPackDialog.tsx",
   "components/otto-iq/R22OttoIQView.tsx",
   // Approvals 八件升级之后一个组件画不下整面,拆成了壳 + 卡 + 详情 + 时间线 + 改版流。
   // 这几条通用围栏(禁裸交互元素、禁手搓语义、DialogTitle 配对、分组组件)是**逐文件**跑的,

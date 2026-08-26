@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth-guard";
-import { getGenerationHistory, type LibraryItem } from "@/lib/library-actions";
+import { getGenerationHistory } from "@/lib/library-actions";
 import { getMyAdJobs, type AdJobItem } from "@/lib/data";
 import { R22LibraryView } from "@/components/library/R22LibraryView";
 
@@ -11,24 +11,15 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-const FIXTURE_ITEMS: LibraryItem[] = Array.from({ length: 12 }, (_, index) => ({
-  id: `fixture-library-${index + 1}`,
-  projectId: "fixture-raya",
-  assetId: `fixture-asset-${index + 1}`,
-  url: `/fixtures/r22-canvas/art-${index % 4 + 1}.jpg`,
-  kind: "image",
-  prompt: index < 4 ? `Raya promo image ${index + 1}` : index < 10 ? `Candle care image ${index - 3}` : `Weekend market image ${index - 9}`,
-  favorite: false,
-  createdAt: new Date(Date.UTC(2026, 7, 24, 10 - index)).toISOString(),
-}));
-
 export default async function LibraryPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> } = { searchParams: Promise.resolve({}) }) {
   const params = await searchParams;
   const fixture = process.env.NODE_ENV !== "production" && first(params.fixture) === "r22";
   if (fixture) {
+    // 样张的那批素材住在 `components/library/library-fixture.ts`(工作台自己播种),这一页
+    // 不再自己捏一份 12 张的假历史 —— 两处各写一份正是上一版最容易漂移的地方。
     const requestedState = first(params.state);
     const state = requestedState === "loading" || requestedState === "error" || requestedState === "permission" || requestedState === "unknown" ? requestedState : "ready";
-    return <R22LibraryView initialItems={state === "ready" && requestedState !== "empty" ? FIXTURE_ITEMS : []} readError={state === "error" ? "fixture read failed" : undefined} state={state} fixture fixtureRestore={requestedState !== "empty"} />;
+    return <R22LibraryView initialItems={[]} readError={state === "error" ? "fixture read failed" : undefined} state={state} fixture fixtureEmpty={requestedState === "empty"} />;
   }
 
   const owner = await requireOwner();
