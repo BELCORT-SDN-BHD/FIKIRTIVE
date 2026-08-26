@@ -229,20 +229,26 @@ type SurfaceRegistryEntry = {
  * 表面注册表 —— 可扩。每收静一面,在这里加一项并钉当时的实测上限;以后这一面的常驻
  * 说明句只许更少,不许更多。
  *
- * 首项:Home connect-first(`connection.kind === "not_connected"`,数据全部读到了)——
- * Founder 2026-08-25 批的样张把这个态的常驻说明句从原来的多句收到 3 句
- * (`home-page.test.ts`「Home 收静」一段的裁决)。
+ * 首项:Home 默认第一屏(商家推开门看到的那一屏)。
+ *
+ * 上一版这一项渲染的是 connect-first 态、上限 3(Founder 2026-08-25 批的样张)。2026-08-26
+ * 深夜 Founder 把连接线与 Performance 整体闸进幕后(beta V1 只做 creation),`connectionSurface`
+ * 默认关 —— 默认第一屏因此只剩问候副句与创作入口那一行,实测降到 2。ratchet 只许下调,
+ * 所以上限跟着下调到 2:以后这一面不许再冒出第三句常驻说明。
+ *
+ * 深链 `?connection=` 那条路径的常驻句不在这把尺子里 —— 它不是商家进来看到的第一屏,而且
+ * 那一整套连接文案的口径由 `home-page.test.ts` 逐条钉着。
  */
 const SURFACE_REGISTRY: SurfaceRegistryEntry[] = [
   {
-    surface: "Home connect-first",
+    surface: "Home 默认第一屏(连接线闸后)",
     render: () =>
       visibleText(
         renderToStaticMarkup(
           createElement(HomeView, { data: BASE_HOME_DATA, connection: { kind: "not_connected" } } as never),
         ),
       ),
-    limit: 3,
+    limit: 2,
   },
   /**
    * Library 工作台(2026-08-26 重建时入栏,ready 态 = 商家推开这扇门看到的第一屏)。

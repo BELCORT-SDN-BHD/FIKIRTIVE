@@ -25,7 +25,10 @@ describe("R22 correction flow contracts", () => {
   it("keeps the complete Home provider flow inside a shadcn dialog", () => {
     const home = source("components/home/HomeView.tsx");
 
-    expect(home).toContain("<Dialog open={connectFlow !== null}");
+    // 2026-08-26 深夜连接线整体闸进幕后(Founder)之后,这颗 Dialog 的开条件多了那道总闸:
+    // `connectionSurface && connectFlow !== null`。钉的仍然是同一件事 —— provider 流程住在
+    // 一个 shadcn Dialog 里、由 `connectFlow` 驱动,而不是被删掉换成别的东西。
+    expect(home).toContain("<Dialog open={connectionSurface && connectFlow !== null}");
     expect(home).toContain("Continue with");
     // 这两句是**状态句**(权限与 Meta 授权范围),按 Founder 2026-08-25 缩辖区裁决已收进
     // `HOME_COPY` 单一出处 —— 措辞一个字没变,只是搬了家。钉引用,不再钉字面量。

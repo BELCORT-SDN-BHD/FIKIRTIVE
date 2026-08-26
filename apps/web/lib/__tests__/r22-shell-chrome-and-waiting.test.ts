@@ -83,18 +83,17 @@ const HOME_DATA: HomeData = {
  *
  * `r22-home-analysis` / `r22-home-analysis-chips` 2026-08-26 退出清单:「Otto will analyse」
  * 承诺块整块撤下(Founder 裁决),落定页不画,骨架也不画 —— 骨架画一张落定页没有的卡,
- * 正是这份文件立起来要防的那次跳屏。 */
+ * 正是这份文件立起来要防的那次跳屏。
+ *
+ * 2026-08-26 深夜同一条纪律再走一轮:连接卡与 Performance 整体闸进幕后(Founder ——
+ * social media connect 还没准备好,beta V1 只做 creation),`connectionSurface` 默认关。
+ * 连接卡那六个容器(`connect-card` / `connect-copy` / `channels` / `channel` / `stepper` /
+ * `skip`)与洞察网格那两个(`insight-grid` / `performance`)因此一起退出清单:默认第一屏
+ * 不画它们,骨架也就不许画。**它们没有被删** —— 深链 `?connection=` 下这八个容器照常长出来,
+ * 只是那条路径不是骨架要对齐的那一屏。 */
 const HOME_GEOMETRY_CONTAINERS = [
   "r22-home",
   "r22-home-header",
-  "r22-home-connect-card",
-  "r22-home-connect-copy",
-  "r22-home-channels",
-  "r22-home-channel",
-  "r22-home-stepper",
-  "r22-home-skip",
-  "r22-home-insight-grid",
-  "r22-home-performance",
   "r22-home-create-row",
 ];
 
@@ -116,6 +115,31 @@ describe("Home 骨架与落定同几何", () => {
 
   it("骨架的根就是 .r22-home 本身,不是另包一层自己的 main", () => {
     expect(skeleton.startsWith('<div class="r22-home"')).toBe(true);
+  });
+
+  /**
+   * 上面那张清单只管「落定有的,骨架也得有」。反过来那一半才是跳屏真正的来源:骨架画了
+   * 一块落定页没有的东西,内容一到那块就整个消失,版面往上塌一截。
+   *
+   * 连接卡与 Performance 闸进幕后之后,这一半必须有人钉 —— 否则清单缩短反而变成一道更松的
+   * 闸:把那八个容器留在骨架里,清单一条都不会红。这里改成扫**骨架自己画了哪些 r22-home-***,
+   * 逐个回落定页里找。
+   */
+  it("骨架不画落定页没有的块 —— 反向也得对上,否则内容一到就往上塌一截", () => {
+    const drawn = [...new Set([...skeleton.matchAll(/class="([^"]*)"/g)]
+      .flatMap((match) => match[1].split(/\s+/))
+      .filter((token) => token.startsWith("r22-home")))];
+    expect(drawn.length, "骨架一个 r22-home-* 容器都没画到 —— 这条在核对空气").toBeGreaterThan(2);
+    for (const className of drawn) {
+      expect(settled, `骨架画了落定页没有的 .${className}`).toContain(className);
+    }
+  });
+
+  /** 创作入口那一行在闸后是 Home 上唯一的一块,落定页给它 `is-primary` 换了个量级 ——
+   *  骨架不跟着换,第一帧那张卡就比落定后矮 23px,内容一到整页往下推一截。 */
+  it("创作入口那一行的 is-primary 量级,骨架与落定页一起换", () => {
+    expect(skeleton, "骨架还在画闸前那条窄带").toContain('class="r22-home-create-row is-primary"');
+    expect(settled, "落定页没给这一行 is-primary").toContain('class="r22-home-create-row is-primary"');
   });
 });
 
@@ -192,7 +216,17 @@ describe("每一扇门都有等待画面", () => {
   });
 });
 
-describe("Home 右上角:铃、头像、chevron", () => {
+/**
+ * Home 右上角,2026-08-26 深夜之后**只剩一颗铃**。
+ *
+ * 这一段上一版钉的是「头像 + chevron 接在真东西上、开的是壳那一份工作区菜单」。Founder 看
+ * 成品时点的是更上一层的问题:「右上角和左下角 workspace management 重叠」—— 一份菜单两个
+ * 入口,长得还不一样。裁决是合一到侧栏左下角那一颗(它同时写着当前工作区的名字)。
+ *
+ * 所以这一段翻面:钉的不再是那颗头像接得对不对,是它**不在了**,以及工作区菜单那一份能力
+ * 一件都没丢 —— 列表、当前态、settings、sign out 全在左下角那一个入口后面。
+ */
+describe("Home 右上角:只剩一颗铃(Founder 2026-08-26 workspace 管理合一)", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   let host: HTMLDivElement;
   let root: Root;
@@ -229,44 +263,64 @@ describe("Home 右上角:铃、头像、chevron", () => {
     host.remove();
   });
 
-  it("头像是按钮,首字母来自真名字,不是写死的 NA", async () => {
+  it("右上角一个工作区入口都没有 —— 头像、chevron、账号菜单全退场", async () => {
     await mountShell({ displayName: "Harvest Candle Co", email: "nadia@harvest.example" });
-    const account = host.querySelector<HTMLButtonElement>(".r22-dashboard-account");
-    expect(account?.tagName).toBe("BUTTON");
-    expect(host.querySelector(".r22-dashboard-account-avatar")?.textContent).toBe("HC");
+    const quick = host.querySelector(".r22-dashboard-quick-actions");
+    expect(quick, "右上角那一组整个不见了 —— 铃也一起没了").not.toBeNull();
+
+    expect(host.querySelector(".r22-dashboard-account"), "右上角那颗账号按钮又回来了").toBeNull();
+    expect(host.querySelector(".r22-dashboard-account-avatar"), "右上角那枚首字母头像又回来了").toBeNull();
+    // 右上角那一组里除了铃,不许再冒出第二颗按钮。
+    expect([...quick!.querySelectorAll("button")].every((node) => node.classList.contains("r22-dashboard-bell"))).toBe(true);
     expect(host.innerHTML).not.toContain(">NA<");
   });
 
-  it("没有 displayName 就退到 email,仍然不是写死的两个字母", async () => {
+  it("侧栏左下角那一颗仍然写着真名字的首字母,不是写死的两个字母", async () => {
+    await mountShell({ displayName: "Harvest Candle Co", email: "nadia@harvest.example" });
+    expect(host.querySelector(".r22-dashboard-workspace .r22-dashboard-avatar")?.textContent).toBe("HC");
+
     await mountShell({ displayName: "", email: "nadia@harvest.example" });
-    expect(host.querySelector(".r22-dashboard-account-avatar")?.textContent).toBe("N");
+    expect(host.querySelector(".r22-dashboard-workspace .r22-dashboard-avatar")?.textContent).toBe("N");
   });
 
-  it("chevron 在按钮里面 —— 它不是按钮外一个死图标", async () => {
+  it("chevron 在侧栏那颗按钮里面 —— 它不是按钮外一个死图标", async () => {
     await mountShell({ displayName: "Harvest Candle Co", email: "n@h.example" });
-    expect(host.querySelector(".r22-dashboard-account svg")).not.toBeNull();
+    expect(host.querySelector(".r22-dashboard-workspace svg")).not.toBeNull();
   });
 
-  it("按头像开的是壳那一份工作区菜单,而且 DOM 里同一时刻只有一份", async () => {
+  it("工作区菜单只有侧栏那一个入口开得出来,DOM 里同一时刻只有一份", async () => {
     await mountShell({ displayName: "Harvest Candle Co", email: "n@h.example" });
     expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(0);
 
-    await click(host.querySelector(".r22-dashboard-account"));
-    expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(1);
-    expect(host.querySelector(".r22-dashboard-workspace-menu")?.className).toContain("is-account-anchored");
-    expect(host.querySelector(".r22-dashboard-account")?.getAttribute("aria-expanded")).toBe("true");
-
-    // 侧栏那个触发点开的是同一份菜单,只是锚点换了 —— 不是第二个组件。
-    await click(host.querySelector(".r22-dashboard-account"));
     await click(host.querySelector(".r22-dashboard-workspace"));
-    const railMenu = host.querySelectorAll(".r22-dashboard-workspace-menu");
-    expect(railMenu).toHaveLength(1);
-    expect(railMenu[0]!.className).not.toContain("is-account-anchored");
+    expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(1);
+    expect(host.querySelector(".r22-dashboard-workspace")?.getAttribute("aria-expanded")).toBe("true");
+    // 第二个锚点随第二个入口一起退场 —— 菜单只剩一个位置。
+    expect(host.querySelector(".r22-dashboard-workspace-menu")?.className).not.toContain("is-account-anchored");
+
+    // 再按一次就收 —— 开合归同一颗。
+    await click(host.querySelector(".r22-dashboard-workspace"));
+    expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(0);
+  });
+
+  it("菜单里工作区列表、Workspace settings、Sign out 一件都没丢", async () => {
+    await mountShell({ displayName: "Harvest Candle Co", email: "n@h.example" });
+    await click(host.querySelector(".r22-dashboard-workspace"));
+    const menu = host.querySelector(".r22-dashboard-workspace-menu")!;
+
+    expect(menu.textContent, "菜单里没有当前工作区").toContain("Harvest Candle Co");
+    expect(menu.textContent, "当前态那一条不见了").toContain("Current workspace");
+    expect(menu.querySelector('a[href="/settings"]'), "Workspace settings 那扇门不见了").not.toBeNull();
+    expect(menu.textContent, "Sign out 没并进这一份菜单").toContain("Sign out");
+    // 登出是一次 form 提交(server action),不是一条链接 —— 它得真的能登出。
+    expect(menu.querySelector("form button[type=submit]"), "Sign out 不是那个 server action 的提交键").not.toBeNull();
+    // 发丝线把「去某个页面」和「结束这一次使用」分开:两条 Separator,不是一条。
+    expect(menu.querySelectorAll(".r22-dashboard-workspace-separator").length, "Sign out 上面那条发丝线不见了").toBe(2);
   });
 
   it("点外面就关(此前整个不存在这一层)", async () => {
     await mountShell({ displayName: "Harvest Candle Co", email: "n@h.example" });
-    await click(host.querySelector(".r22-dashboard-account"));
+    await click(host.querySelector(".r22-dashboard-workspace"));
     expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(1);
 
     await act(async () => {
@@ -275,14 +329,15 @@ describe("Home 右上角:铃、头像、chevron", () => {
     expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(0);
   });
 
-  it("Esc 关掉菜单,焦点回到按下的那一颗", async () => {
+  it("Esc 关掉菜单,焦点回到那唯一的触发点", async () => {
     await mountShell({ displayName: "Harvest Candle Co", email: "n@h.example" });
-    const account = host.querySelector<HTMLButtonElement>(".r22-dashboard-account");
-    await click(account);
+    await click(host.querySelector(".r22-dashboard-workspace"));
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(0);
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+    expect(document.activeElement).toBe(host.querySelector(".r22-dashboard-workspace"));
   });
 
   it("铃能开抽屉,而且只在 Home 这一屏出现", async () => {

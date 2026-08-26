@@ -12,8 +12,14 @@ const data: HomeData = {
   canvases: readOk([]), thumbs: readOk([]), upcoming: readOk([]), campaigns: readOk([]), equipment: readOk([]),
 };
 
+/**
+ * 连接线 2026-08-26 深夜整体闸进幕后(Founder),`connectionSurface` 默认关。这一份文件钉的
+ * 全是**连接流本身**的真话口径 —— 它们没有退役,只是搬到了 `?connection=` 深链后面。所以这
+ * 里统一开闸渲染:闸后那条路径照测,一条断言都不放松。默认关那一面由
+ * `r22-home-beta-connection-gate.test.ts` 单独钉。
+ */
 function render(connection: HomeConnection, fixture = false) {
-  return renderToStaticMarkup(createElement(HomeView, { data, connection, fixture }));
+  return renderToStaticMarkup(createElement(HomeView, { data, connection, fixture, connectionSurface: true }));
 }
 
 describe("R22 Data-first Home contract", () => {

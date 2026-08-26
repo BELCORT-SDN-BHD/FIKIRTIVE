@@ -282,8 +282,14 @@ const BASE_DATA: HomeData = {
 /** 同一个账号,但这一刻有一块读不出来。它和「都读到了」必须长得不一样。 */
 const DEGRADED_DATA: HomeData = { ...BASE_DATA, canvases: UNREADABLE };
 
+/**
+ * 连接线与 Performance 2026-08-26 深夜整体闸进幕后(Founder),`connectionSurface` 默认关。
+ * 下面这几段钉的是**连接状态的真话口径**(读不出来 ≠ 断开、没验证过就不画数字、状态句只从
+ * 金样来)—— 一条都没退役,只是搬到了 `?connection=` 深链后面。所以这个 helper 统一开闸:
+ * 闸后那条路径照测。默认关那一面由 `r22-home-beta-connection-gate.test.ts` 单独钉。
+ */
 function render(connection: HomeConnection, data: HomeData = BASE_DATA): string {
-  return renderToStaticMarkup(createElement(HomeView, { data, connection } as never));
+  return renderToStaticMarkup(createElement(HomeView, { data, connection, connectionSurface: true } as never));
 }
 
 /** 商家眼睛看到的那一串,不是 HTML 转义之后的那一串。
