@@ -50,6 +50,15 @@ export interface OttoRoomSwitcherProps {
   error?: string | null;
   onSelectThread: (thread: ChatThreadDTO) => void;
   onNewChat: () => void;
+  /**
+   * 这一层里的**链接**被点开之前收合浮层。
+   *
+   * 面板是常挂的(路由换了它还在),所以点一条链接跳走之后,这层浮层会原样留在新那一面
+   * 的上面 —— 商家看见的是「我按了一下,画布在后面开了,而这张单子还压着」。切一条会话
+   * 走的是 `onSelectThread`,那一路本来就在选完之后把浮层关掉(`OttoPanelHost` 的
+   * `setHistoryOpenedAt(null)`);链接这一路没有那一步,这个回调就是补上它。
+   */
+  onNavigate?: () => void;
   onRenameThread: (id: string) => void;
   onSetThreadPinned: (id: string, pinned: boolean) => void;
   onDeleteThread: (id: string) => void;
@@ -68,6 +77,7 @@ export function OttoRoomSwitcher({
   error = null,
   onSelectThread,
   onNewChat,
+  onNavigate,
   onRenameThread,
   onSetThreadPinned,
   onDeleteThread,
@@ -86,6 +96,15 @@ export function OttoRoomSwitcher({
   const { today, recent } = buildOttoRooms({ threads, projects, query, now });
   const busy = openingThreadId !== null;
   const nothingMatched = threads.length > 0 && today.length === 0 && recent.length === 0;
+
+  /**
+   * 一块板的地址 —— creation 那几行的行尾路与 PROJECTS 那一组的项目行读的是**同一句**。
+   * 两处各写一遍的话,样张这一支多带的那个 `fixture=r22` 迟早只补在其中一处,而漏掉的
+   * 那一处会把商家从样张里带走。
+   */
+  function boardHref(projectId: string): string {
+    return fixture ? `${canvasHref(projectId)}&fixture=r22` : canvasHref(projectId);
+  }
 
   function row(room: OttoRoom) {
     const thread = room.thread;
@@ -120,7 +139,8 @@ export function OttoRoomSwitcher({
           <Link
             data-otto-room-canvas={room.canvas.projectId}
             className="r22-room-canvas"
-            href={fixture ? `${canvasHref(room.canvas.projectId)}&fixture=r22` : canvasHref(room.canvas.projectId)}
+            href={boardHref(room.canvas.projectId)}
+            onClick={onNavigate}
           >
             Open in Canvas
           </Link>
@@ -208,10 +228,23 @@ export function OttoRoomSwitcher({
               const pinned = Boolean(project.pinnedAt);
               return (
                 <div key={project.id} className="r22-room-row">
-                  <span data-otto-room-project={project.id} className="r22-room-project">
+                  {/* 项目行的**行身是一条路**,不是一行字:商家在这张单子上看见自己的项目,
+                      按下去要去的地方只有一个 —— 那块板。上一版这里是个 `<span>`,按了什么
+                      都不发生(Founder 亲验),整行于是只剩行尾那颗 ⋯ 有反应。
+                      它与 creation 行尾那条路走的是同一句地址(`boardHref`),也是一条真
+                      **链接**:中键、⌘ 点开新标签页都成立,这在按钮上做不到。
+                      行身与 ⋯ 是**兄弟**不是父子(⋯ 绝对定位压在行身右侧的留白上),所以
+                      行身这条链接吞不掉那颗键 —— 不必靠 `stopPropagation` 去救。 */}
+                  <Link
+                    data-otto-room-project={project.id}
+                    href={boardHref(project.id)}
+                    title={project.name}
+                    onClick={onNavigate}
+                    className="r22-room-item r22-room-project"
+                  >
                     {pinned && <Pin className="size-3 shrink-0" fill="currentColor" aria-hidden />}
                     <span className="truncate">{project.name}</span>
-                  </span>
+                  </Link>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button

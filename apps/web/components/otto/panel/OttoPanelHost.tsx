@@ -713,6 +713,10 @@ export function OttoPanelHost({
       error={threadError}
       onSelectThread={(thread) => void selectThread(thread)}
       onNewChat={openNewChat}
+      // 从这一层里点一条链接跳走(画布行尾那条路、PROJECTS 那一组的项目行):面板是常挂的,
+      // 不收合的话这张单子会压在刚打开的那块板上面。选一条会话本来就会关掉它,链接这一路
+      // 走的是同一个收合。
+      onNavigate={() => setHistoryOpenedAt(null)}
       onRenameThread={requestRenameThread}
       onSetThreadPinned={(id, pinned) => void setThreadPinned(id, pinned)}
       onDeleteThread={requestDeleteThread}

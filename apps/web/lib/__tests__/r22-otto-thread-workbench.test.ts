@@ -23,7 +23,11 @@
  *      ⇒「共用零件三处引用同一份」红,外加 `r22-shadcn-composition` 那条围栏一起红;
  *   6. `OttoRoomSwitcher` 的 `room.canvas` 判断改成恒 `null`(creation 行不带回板的路)
  *      ⇒「creation 线程行尾带回板的路」红;
- *   7. `decideOttoResearchCategory` 的 Skip 也写一条进 Otto IQ ⇒「Skip 什么都不落」红。
+ *   7. `decideOttoResearchCategory` 的 Skip 也写一条进 Otto IQ ⇒「Skip 什么都不落」红;
+ *   8. 切换器 PROJECTS 那一组的项目行退回 `<span>`(Founder 亲验的那个死控件)
+ *      ⇒「行身是一条链接」红;
+ *   9. `boardHref` 把 `project.id` 换成 `project.name`(地址错人)⇒「按下去去的是那个
+ *      项目自己的板」红。
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -209,13 +213,14 @@ const CANVAS_THREAD = thread({
 const WAITING_THREAD = thread({ id: "t-wait", title: "Read harvestcandle.co", status: "working", messages: [RESEARCH_MESSAGE("waiting")] });
 const DONE_THREAD = thread({ id: "t-done", title: "Raya launch plan", status: "done" });
 
-function switcher(threads: ChatThreadDTO[]) {
+function switcher(threads: ChatThreadDTO[], extra: { fixture?: boolean; onNavigate?: () => void } = {}) {
   return createElement(OttoRoomSwitcher, {
     projects: SEED.projects,
     threads,
     activeThreadId: null,
     now: NOW,
-    fixture: true,
+    fixture: extra.fixture ?? true,
+    onNavigate: extra.onNavigate,
     onSelectThread: () => {},
     onNewChat: () => {},
     onRenameThread: () => {},
@@ -253,6 +258,55 @@ describe("② 线程列表:三态看得见,creation 那几行带一条回板的�
     expect(link.getAttribute("href")).toContain("project=fixture-raya");
     expect(link.getAttribute("href"), "样张这一支的链接要留在样张里").toContain("fixture=r22");
     expect(document.querySelectorAll("[data-otto-room-canvas]").length, "普通对话不该多出一条回板的路").toBe(1);
+  });
+});
+
+/* ── 切换器里的项目行 ───────────────────────────────────────────────────────── */
+
+describe("②b PROJECTS 那一组的项目行是一条真的路(Founder 亲验:按了没反应)", () => {
+  it("行身是一条链接,按下去去的是那个项目自己的板", async () => {
+    await render(switcher([DONE_THREAD]));
+    const row = need<HTMLAnchorElement>('[data-otto-room-project="fixture-raya"]');
+    expect(row.tagName, "项目行还是一行按不动的字").toBe("A");
+    expect(row.getAttribute("href")).toContain("project=fixture-raya");
+    expect(row.textContent).toContain("Raya launch");
+  });
+
+  it("样张这一支的项目行留在样张里,真实那一支不带样张参数", async () => {
+    await render(switcher([DONE_THREAD]));
+    expect(need('[data-otto-room-project="fixture-raya"]').getAttribute("href"), "样张的项目行会把商家带出样张").toContain("fixture=r22");
+
+    if (root) await act(async () => root?.unmount());
+    container?.remove();
+    root = null;
+    await render(switcher([DONE_THREAD], { fixture: false }));
+    expect(need('[data-otto-room-project="fixture-raya"]').getAttribute("href")).not.toContain("fixture=r22");
+  });
+
+  it("行尾那颗 ⋯ 没有被行身吞掉:按它开的是菜单,不是那条路", async () => {
+    let closed = 0;
+    await render(switcher([DONE_THREAD], { onNavigate: () => { closed += 1; } }));
+    const row = need<HTMLAnchorElement>('[data-otto-room-project="fixture-raya"]');
+    const more = need<HTMLElement>('[aria-label="Raya launch controls"]');
+    // 行身与 ⋯ 是兄弟:⋯ 不在链接里,所以按它不会顺着冒泡把商家带走。
+    expect(row.contains(more), "⋯ 被塞进了行身那条链接里 —— 按它会跳走").toBe(false);
+    expect(more.closest("a"), "⋯ 长在某条链接里").toBeNull();
+
+    await click(more);
+    expect(closed, "按 ⋯ 把浮层关了 —— 那一下被当成了一次跳转").toBe(0);
+
+    // 菜单真的开得出来(Radix 的触发在键盘这一路上是 Enter)。
+    await act(async () => more.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent), "⋯ 按下去没有菜单").toContain("Rename project");
+  });
+
+  it("点了跳转,这层浮层跟着收合 —— 面板常挂,不收就压在刚打开的那块板上", async () => {
+    let closed = 0;
+    await render(switcher([CANVAS_THREAD], { onNavigate: () => { closed += 1; } }));
+    await click(need('[data-otto-room-project="fixture-raya"]'));
+    expect(closed, "点项目行之后浮层没收").toBe(1);
+    await click(need('[data-otto-room-canvas="fixture-raya"]'));
+    expect(closed, "行尾那条路点完之后浮层没收").toBe(2);
   });
 });
 
