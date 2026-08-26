@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * r22-merchant-copy-jargon.test.ts —— Settings 与 Otto IQ 两面,商家眼前不许有工程词。
  *
@@ -9,9 +10,12 @@
  * 「这里没真的存 / 没真的发」,只是用商家读得懂的字。
  *
  * 这份文件是同一件事的防退步闸,两条:
- *   ① **渲染态**:Settings 的十一段、Otto IQ 的六屏,逐个真的渲染出来,断言商家读得到的
- *      那一串里没有这一族词。fixture 与生产两条路都走一遍 —— 上一版正是生产那条路上
- *      挂着「Backend adapter unavailable」。
+ *   ① **渲染态**:Settings 的十一段、Otto IQ 的六屏,逐个**真的挂载**出来,断言商家读得到
+ *      的那一串里没有这一族词。fixture 与生产两条路都走一遍 —— 上一版正是生产那条路上
+ *      挂着「Backend adapter unavailable」,而那 41 句里的绝大多数活在 fixture 那条路上。
+ *      这里必须挂载(jsdom + act)而不是 `renderToStaticMarkup`:两面的 fixture 分支都要
+ *      等第一个 effect 跑完才吐真内容,SSR 一屏只能拿到「Loading…」那一层,验的是空气
+ *      (这条正是变异自检第一发抓出来的 —— 源码闸红了,而 SSR 版的渲染闸绿着)。
  *   ② **源码态**:文件里任何**四个词以上**的字符串字面量都不许含这一族词。四词这道闸把
  *      标识符、sessionStorage 的键、className、路由参数天然挡在外面(它们都是单词或短
  *      片段),留下的正是句子形状的商家文案。工程标识没有被删,它们仍然是标识符。
@@ -23,9 +27,9 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { R22SettingsSection } from "@/components/settings/R22SettingsShell";
 
@@ -75,9 +79,38 @@ const SETTINGS_DATA = {
   timezone: "Asia/Kuala_Lumpur",
 };
 
-/** 商家眼睛看到的那一串:标签剥掉、实体还原、空白折叠。 */
-function visibleText(markup: string): string {
-  return markup
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+
+beforeEach(() => {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+});
+
+afterEach(async () => {
+  if (root) await act(async () => root?.unmount());
+  host?.remove();
+  root = null;
+  host = null;
+  window.sessionStorage.clear();
+});
+
+/**
+ * 真的挂载一屏,把商家读得到的那一串还回来。
+ *
+ * 两面的 fixture 分支都要等第一个 effect 跑完(Settings 的 `fixtureReady`、Otto IQ 的
+ * `fixtureWorkspaceId`)才吐真内容,所以这里不能用 SSR —— 那样拿到的只有「Loading…」。
+ */
+async function visibleTextOf(element: Parameters<Root["render"]>[0]): Promise<string> {
+  await act(async () => root!.render(element));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  // 走 innerHTML 剥标签,不走 textContent:后者把相邻元素的字**粘**在一起
+  // (`…in this fixtureView invoices`),`\bfixture\b` 的词尾边界就没了,闸会静默漏掉。
+  // 这条是变异自检第二发抓出来的 —— 源码闸红了,渲染闸绿着,而两者验的是同一句话。
+  return (host!.innerHTML ?? "")
     .replace(/<[^>]*>/g, " ")
     .replace(/&#x27;|&#39;/g, "'")
     .replace(/&quot;/g, '"')
@@ -92,13 +125,12 @@ function offenders(text: string): string[] {
 describe("Settings 商家可见文案没有工程词", () => {
   it.each(SETTINGS_SECTIONS.flatMap((section) => [[section, true] as const, [section, false] as const]))(
     "%s(fixture=%s)",
-    (section, fixture) => {
-      const text = visibleText(
-        renderToStaticMarkup(
-          createElement(R22SettingsShell, { data: SETTINGS_DATA, initialSection: section, fixture } as never),
-        ),
+    async (section, fixture) => {
+      const text = await visibleTextOf(
+        createElement(R22SettingsShell, { data: SETTINGS_DATA, initialSection: section, fixture } as never),
       );
-      expect(offenders(text), `商家读得到工程词 —— 请把这句翻成人话,别删掉诚实`).toEqual([]);
+      expect(text, "这一段一个字都没渲染出来 —— 这条闸在核对空气").not.toBe("");
+      expect(offenders(text), "商家读得到工程词 —— 请把这句翻成人话,别删掉诚实").toEqual([]);
     },
   );
 });
@@ -106,13 +138,12 @@ describe("Settings 商家可见文案没有工程词", () => {
 describe("Otto IQ 商家可见文案没有工程词", () => {
   it.each(OTTO_IQ_PANES.flatMap((pane) => [[pane, true] as const, [pane, false] as const]))(
     "%s(fixture=%s)",
-    (pane, fixture) => {
-      const text = visibleText(
-        renderToStaticMarkup(
-          createElement(R22OttoIQView, { initialMemory: [], initialPane: pane, fixture } as never),
-        ),
+    async (pane, fixture) => {
+      const text = await visibleTextOf(
+        createElement(R22OttoIQView, { initialMemory: [], initialPane: pane, fixture } as never),
       );
-      expect(offenders(text), `商家读得到工程词 —— 请把这句翻成人话,别删掉诚实`).toEqual([]);
+      expect(text, "这一屏一个字都没渲染出来 —— 这条闸在核对空气").not.toBe("");
+      expect(offenders(text), "商家读得到工程词 —— 请把这句翻成人话,别删掉诚实").toEqual([]);
     },
   );
 });
@@ -124,25 +155,29 @@ describe("Otto IQ 商家可见文案没有工程词", () => {
  * 这条只管**数字后面的单位** ——「Billing and credits」「Recent credit activity」是功能名,
  * 不是金额,照旧写英文全词;把它们也改成 cr 只会让页面读不通。
  */
-const AMOUNT_IN_WORDS = /\b[\d,]+\s+credits?\b/i;
+// 第一个字符必须是数字:写成 `[\d,]+` 会让「channels, credits」里那个逗号也算一笔金额。
+const AMOUNT_IN_WORDS = /\b\d[\d,]*\s+credits?\b/i;
 
 describe("Settings 与 Home 的金额单位写 cr,不写 credits", () => {
   it.each(SETTINGS_SECTIONS.flatMap((section) => [[section, true] as const, [section, false] as const]))(
     "Settings %s(fixture=%s)",
-    (section, fixture) => {
-      const text = visibleText(
-        renderToStaticMarkup(
-          createElement(R22SettingsShell, { data: SETTINGS_DATA, initialSection: section, fixture } as never),
-        ),
+    async (section, fixture) => {
+      const text = await visibleTextOf(
+        createElement(R22SettingsShell, { data: SETTINGS_DATA, initialSection: section, fixture } as never),
       );
+      expect(text, "这一段一个字都没渲染出来 —— 这条闸在核对空气").not.toBe("");
       expect(text.match(AMOUNT_IN_WORDS), "金额后面还写着 credits —— 全站单位是 cr").toBeNull();
     },
   );
 
-  it("Settings 源码里句子形状的字面量也不写「数字 + credits」", () => {
+  /**
+   * 这条扫的是**整份源码**,不只是字符串字面量 —— Top up 下拉那三档(`<option>200 cr</option>`)
+   * 是 JSX 文本节点,不是字面量,而它们只在弹层打开之后才渲染,渲染闸也够不着。
+   * 两头都够不着的地方,只剩全文扫这一招(变异自检第三发抓出来的正是这一格)。
+   */
+  it("Settings 整份源码里没有「数字 + credits」", () => {
     const source = readFileSync(path.join(WEB_ROOT, "components/settings/R22SettingsShell.tsx"), "utf8");
-    const literals = (source.match(/"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? []).map((literal) => literal.slice(1, -1));
-    expect(literals.filter((body) => AMOUNT_IN_WORDS.test(body)), "金额后面还写着 credits").toEqual([]);
+    expect(source.match(new RegExp(AMOUNT_IN_WORDS.source, "gi")), "金额后面还写着 credits —— 全站单位是 cr").toBeNull();
   });
 
   it("Home 的样张余额也是 cr —— 今天没有渲染路径,但那正是一颗数据雷", () => {
