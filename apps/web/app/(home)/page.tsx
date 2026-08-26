@@ -33,6 +33,10 @@ export default async function Page({
   const fixture = Array.isArray(sp.fixture) ? sp.fixture[0] : sp.fixture;
   const connection = Array.isArray(sp.connection) ? sp.connection[0] : sp.connection;
   const channel = Array.isArray(sp.channel) ? sp.channel[0] : sp.channel;
-  if (process.env.NODE_ENV !== "production" && fixture === "r22") return <R22HomeFixture connectionState={connection === "ready" || connection === "error" ? connection : undefined} channel={channel || "Instagram"} />;
-  return <HomeEntry />;
+  // 连接线与 Performance 的总闸(Founder 2026-08-26,与 `r22-beta-nav-scope.test.ts` 同源):
+  // 默认关,fixture 与生产两路都一样。地址上带 `?connection=`(任何值)就开闸 —— 代码一行
+  // 没删,beta 之后连接线回归时把这个条件改成 `true` 即可。
+  const connectionSurface = Boolean(connection);
+  if (process.env.NODE_ENV !== "production" && fixture === "r22") return <R22HomeFixture connectionSurface={connectionSurface} connectionState={connection === "ready" || connection === "error" ? connection : undefined} channel={channel || "Instagram"} />;
+  return <HomeEntry connectionSurface={connectionSurface} />;
 }

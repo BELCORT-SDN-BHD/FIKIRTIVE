@@ -69,7 +69,10 @@ async function attempt<T>(read: () => Promise<T>): Promise<Read<T>> {
   return read().then(readOk, () => UNREADABLE);
 }
 
-export async function HomeEntry() {
+/** `connectionSurface` 是连接线与 Performance 的总闸(Founder 2026-08-26)。默认关 ——
+ *  路由文件按地址上的 `?connection=` 决定,数据照读不变(读取表是这一页的硬纪律,不许因为
+ *  一次版面收窄而少读一块:少读了,闸一开就是一屏空白)。 */
+export async function HomeEntry({ connectionSurface = false }: { connectionSurface?: boolean } = {}) {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
@@ -150,5 +153,5 @@ export async function HomeEntry() {
     equipment,
   };
 
-  return <HomeView data={data} connection={homeConnectionFromMeta(meta)} />;
+  return <HomeView data={data} connection={homeConnectionFromMeta(meta)} connectionSurface={connectionSurface} />;
 }

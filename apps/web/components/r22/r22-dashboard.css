@@ -235,27 +235,11 @@
   animation: r22-menu-in 140ms cubic-bezier(.23, 1, .32, 1);
 }
 
-/* 同一份菜单的第二个锚点:Home 右上角。挂在触发点底下、右对齐,而不是照原型
-   `wsb.click()` 那样弹到左下角侧栏去 —— 菜单要长在手指落下的地方。 */
-.r22-dashboard-workspace-menu.is-account-anchored {
-  top: calc(100% + 8px);
-  right: 0;
-  bottom: auto;
-  left: auto;
-  transform-origin: top right;
-}
-
+/* 第二个锚点(`.is-account-anchored`,Home 右上角那颗头像)随它的触发点一起退场 ——
+   工作区管理 2026-08-26 合一到侧栏左下角那一颗(Founder)。菜单只剩一个位置,
+   `r22-menu-in-down` 那条向下进场的关键帧也没有消费者了,一并删掉。 */
 @keyframes r22-menu-in {
   from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.r22-dashboard-workspace-menu.is-account-anchored {
-  animation-name: r22-menu-in-down;
-}
-
-@keyframes r22-menu-in-down {
-  from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -336,14 +320,6 @@
   gap: 18px;
 }
 
-.r22-dashboard-quick-actions > span {
-  display: inline-flex;
-}
-
-.r22-dashboard-account-wrap {
-  position: relative;
-}
-
 .r22-dashboard-bell {
   position: relative;
   display: grid;
@@ -361,35 +337,8 @@
   stroke-width: 1.6;
 }
 
-/* 头像 + chevron 是一个按钮。原型把 chevron 留成按钮外一个死的 `<i>`,Founder 点名的
-   正是那一下 —— 合进来,整块都可按,命中区也从 34px 长到 57px。 */
-.r22-dashboard-account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 4px 2px 2px;
-  border-radius: 99px;
-}
-
-.r22-dashboard-account-avatar {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  flex: none;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--r22-chrome);
-  color: var(--r22-ink);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.r22-dashboard-account > svg {
-  width: 15px;
-  height: 15px;
-  color: var(--r22-ink-2);
-}
-
+/* `.r22-dashboard-account` 那一族(头像 + chevron)随右上角那组一起退场 —— 工作区管理
+   2026-08-26 合一到侧栏左下角那一颗(Founder)。右上角现在只剩一颗铃。 */
 .r22-dashboard-otto-launcher {
   position: fixed;
   right: 22px;

@@ -107,10 +107,23 @@ function LoadingTruth({ data }: { data: HomeData }) {
   );
 }
 
+/**
+ * 连接线与 Performance 整体收进幕后的那道闸(Founder 2026-08-26,与 `r22-beta-nav-scope.test.ts`
+ * 里那批 beta 收窄同源:「social media connect not ready yet」「connection page not optimised,
+ * can hide first」「beta V1 只做 creation」)。
+ *
+ * **默认关**,fixture 与生产两路都一样:Home 第一屏不再有连接卡、状态词条、Performance。
+ *
+ * **闸掉,不是删掉**:这一份组件里连接流的每一段代码都原样留着 —— 渠道四行、四步步进器、
+ * 三步 provider 对话框、ready 态的三枚权限标签、Performance 的空态与 KPI。开闸的开关是
+ * 地址上的 `?connection=`(见 `app/(home)/page.tsx`):带上它这一整套就照常跑,行为测试也
+ * 照那条路径继续测。beta 之后连接线回归,这个 prop 改成默认 `true` 就完事,不用把代码找回来。
+ */
 export function HomeView({
   data,
   connection,
   fixture = false,
+  connectionSurface = false,
   fixtureConnectionOutcome = "success",
   fixtureInitialChannel = "Instagram",
   fixtureInitialReady = false,
@@ -119,6 +132,8 @@ export function HomeView({
   data: HomeData;
   connection: HomeConnection;
   fixture?: boolean;
+  /** 连接线与 Performance 的总闸。默认关(beta V1),`?connection=` 深链把它打开。 */
+  connectionSurface?: boolean;
   fixtureConnectionOutcome?: "success" | "error";
   fixtureInitialChannel?: string;
   fixtureInitialReady?: boolean;
@@ -210,13 +225,15 @@ export function HomeView({
       <header className="r22-home-header">
         <div>
           <h1>{data.greeting}</h1>
-          <p>{ready ? HOME_COPY.connectionReadySubhead : "Connect one channel so Otto can learn what is working."}</p>
+          {/* 闸关着的时候,这一句不许再指向连接 —— 那条路 beta 期商家走不了,写着它就是
+              把人往一扇看不见的门推。指向今天真的到得了的那件事:做东西。 */}
+          <p>{!connectionSurface ? "Start a new piece, or pick up one you already made." : ready ? HOME_COPY.connectionReadySubhead : "Connect one channel so Otto can learn what is working."}</p>
         </div>
       </header>
 
       <LoadingTruth data={data} />
 
-      {connection.kind === "unknown" ? (
+      {connectionSurface && connection.kind === "unknown" ? (
         <div className="r22-home-connection-error" role="alert">
           <Info aria-hidden="true" />
           <div><b>{HOME_COPY.connectionStatusUnavailableHeading}</b><p>{connection.message} {HOME_COPY.nothingMarkedDisconnected}</p></div>
@@ -224,7 +241,7 @@ export function HomeView({
         </div>
       ) : null}
 
-      <section className={`r22-home-connect-card${ready ? " is-ready" : ""}${connectFirst ? " is-connect-first" : ""}`}>
+      {connectionSurface ? <section className={`r22-home-connect-card${ready ? " is-ready" : ""}${connectFirst ? " is-connect-first" : ""}`}>
         <div className="r22-home-connect-copy">
           {ready ? (
             <>
@@ -286,15 +303,20 @@ export function HomeView({
         </div>
 
         {ready ? <ConnectionStepper currentStep={currentStep} /> : null}
-      </section>
+      </section> : null}
 
       {/*
         「Otto will analyse」那三枚承诺芯片整块撤下(Founder 裁决 2026-08-26)。
         它占着洞察网格的一半版面,讲的却是一件还没发生的事 —— beta 不给商家看点不动的
         承诺。Analytics 那扇门回来的时候这一块跟着回来;在那之前,版面留给下面的创作入口。
         参见 `r22-beta-nav-scope.test.ts` 里同一批裁决的记法。
+
+        剩下那张 Performance 卡 2026-08-26 深夜跟着整个连接线进了幕后(同一批裁决):
+        它只有两种样子 —— 一句「去连一个渠道」的空态,或者一副只有验证过的样张才拿得出的
+        数字。连接线不在 beta 里,那两种样子就都是在讲一件商家这一版做不到的事。
+        闸在 `connectionSurface` 上,`?connection=` 深链照常打开。
       */}
-      <div className="r22-home-insight-grid is-single">
+      {connectionSurface ? <div className="r22-home-insight-grid is-single">
         <section className={`r22-home-performance${verifiedFixture ? " has-data" : ""}`}>
           <h3>
             <Tooltip>
@@ -311,9 +333,9 @@ export function HomeView({
             <i /><i /><i />
           </div>}
         </section>
-      </div>
+      </div> : null}
 
-      <section className="r22-home-create-row">
+      <section className={connectionSurface ? "r22-home-create-row" : "r22-home-create-row is-primary"}>
         <span><Plus aria-hidden="true" /></span>
         <div><b>Create without data</b></div>
         <div className="r22-home-create-actions">
@@ -341,7 +363,9 @@ export function HomeView({
 
       {fixture ? <footer>Prototype · sample data</footer> : null}
 
-      <Dialog open={connectFlow !== null} onOpenChange={(open) => { if (!open) dismissConnect(); }}>
+      {/* provider 对话框只有连接卡开得出来,闸关着的时候它连挂载都不必 —— 但整段代码原样
+          留在这里,深链一开就照常跑(`r22-correction-flow-contract` 钉的就是它还在)。 */}
+      <Dialog open={connectionSurface && connectFlow !== null} onOpenChange={(open) => { if (!open) dismissConnect(); }}>
         <DialogContent className="r22-home-connect-dialog" showCloseButton={false}>
           {connectFlow?.step === "permissions" ? (
             <>
@@ -393,7 +417,7 @@ export function HomeView({
   );
 }
 
-export function R22HomeFixture({ connectionState, channel = "Instagram" }: { connectionState?: "ready" | "error"; channel?: string }) {
+export function R22HomeFixture({ connectionState, channel = "Instagram", connectionSurface = false }: { connectionState?: "ready" | "error"; channel?: string; connectionSurface?: boolean }) {
   const data: HomeData = {
     greeting: "Good morning, Nadia",
     credits: readOk("1,240 cr"),
@@ -405,7 +429,7 @@ export function R22HomeFixture({ connectionState, channel = "Instagram" }: { con
     campaigns: readOk([]),
     equipment: readOk([]),
   };
-  return <HomeView data={data} connection={{ kind: "not_connected" }} fixture fixtureConnectionOutcome={connectionState === "error" ? "error" : "success"} fixtureInitialChannel={channel} fixtureInitialReady={connectionState === "ready"} fixtureInitialError={connectionState === "error"} />;
+  return <HomeView data={data} connection={{ kind: "not_connected" }} fixture connectionSurface={connectionSurface} fixtureConnectionOutcome={connectionState === "error" ? "error" : "success"} fixtureInitialChannel={channel} fixtureInitialReady={connectionState === "ready"} fixtureInitialError={connectionState === "error"} />;
 }
 
 export default HomeView;

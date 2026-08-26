@@ -23,6 +23,12 @@
  * 「Otto will analyse」那张卡 2026-08-26 整块撤下(Founder 裁决),骨架同一天跟着撤 ——
  * 骨架画一张落定页没有的卡,就是把那次跳屏亲手请回来。
  *
+ * 同一天深夜,连接卡与 Performance 整块进了幕后(Founder:social media connect 还没准备好,
+ * beta V1 只做 creation)。骨架跟着只剩两段:问候 + 创作入口那一行。落定页默认长什么样,
+ * 骨架就画什么样 —— **不许**因为「深链 `?connection=` 下还画得出连接卡」就把它留在骨架里:
+ * 那条路是显式开闸后才走的,而骨架画的是所有人进来时的第一屏,画上去就是每一次进 Home 都
+ * 先闪一张商家这一版看不到的卡。
+ *
  * `data-r22-skeleton` 关掉 `ui/skeleton` 自带的 `animate-pulse`(见 r22-dashboard.css):
  * 原型的原话是「骨架只活 450ms,动效预算不许任何东西循环。告诉商家有张卡要来的是形状,
  * 不是闪」。骨架零入场动画,内容落定时做一次 140ms 的淡入,不做「骨架闪→白闪→内容」。
@@ -46,31 +52,7 @@ export default function HomeLoading() {
         </div>
       </header>
 
-      <section className="r22-home-connect-card is-connect-first">
-        <div className="r22-home-connect-copy">
-          <Skeleton className="h-[19px] w-[196px] rounded-[6px]" />
-          <div className="r22-home-channels">
-            {[0, 1, 2, 3].map((row) => (
-              <div className="r22-home-channel" key={row}>
-                <Skeleton className="h-[18px] w-[18px] rounded-[5px]" />
-                <Skeleton className="h-[14px] w-[92px] rounded-[6px]" />
-                <Skeleton className="ml-auto h-[30px] w-[84px] rounded-[8px]" />
-              </div>
-            ))}
-          </div>
-          <Skeleton className="r22-home-stepper h-[14px] w-[280px] rounded-[6px]" />
-          <Skeleton className="r22-home-skip h-[13px] w-[92px] rounded-[6px]" />
-        </div>
-      </section>
-
-      <div className="r22-home-insight-grid is-single">
-        <section className="r22-home-performance">
-          <Skeleton className="h-[19px] w-[112px] rounded-[6px]" />
-          <Skeleton className="mt-[15px] h-[202px] w-full rounded-[10px]" />
-        </section>
-      </div>
-
-      <section className="r22-home-create-row">
+      <section className="r22-home-create-row is-primary">
         <Skeleton className="h-[38px] w-[38px] shrink-0 rounded-full" />
         <div className="flex-1">
           <Skeleton className="h-[14px] w-[152px] rounded-[6px]" />

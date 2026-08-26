@@ -466,6 +466,16 @@
   padding: 14px 18px;
 }
 
+/* 连接线与 Performance 收进幕后之后(Founder 2026-08-26),这一行是 Home 上**唯一**的一块。
+   它此前是页脚位置的一条窄带 —— 上面压着两张大卡,窄是对的。现在它头顶只有问候,再保持
+   73px 就读成一条被落下的页脚。加的是呼吸,不是填充物:同一张卡、同一批元素、一个字都没多,
+   只是内边距与高度从「第三块」的量级换到「第一块」的量级(留白靠布局,不靠占位块)。 */
+.r22-home-create-row.is-primary {
+  min-height: 96px;
+  margin-top: 22px;
+  padding: 22px 22px 22px 20px;
+}
+
 .r22-home-create-row > span {
   display: grid;
   width: 38px;

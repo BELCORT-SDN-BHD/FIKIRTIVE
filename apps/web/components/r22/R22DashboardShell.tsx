@@ -138,14 +138,18 @@ export function R22DashboardShell({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   /**
-   * 原型 L12211:右上角头像的处理是 `var wsb=$('#workspaceBtn'); if(wsb)wsb.click()` ——
-   * 它不另开一个「账号菜单」,它按下侧栏那一个。所以这里存的是**哪个触发点开的**,不是
-   * 「开没开」:菜单只有一份(`workspaceMenu`),状态只有一份,两个触发点共用,弹出时锚在
-   * 按下的那一个旁边(原型让菜单永远弹在左下角侧栏,离手指 900px —— 那是它 `wsb.click()`
-   * 转发的副作用,不是它想要的效果)。
+   * 工作区管理只有**一个**触发点:侧栏左下角那一颗(Founder 2026-08-26 —— 「右上角和左下角
+   * workspace management 重叠」)。
+   *
+   * 上一版这里存的是「哪个触发点开的」(`"rail" | "account" | null`),因为右上角头像也开
+   * 同一份菜单 —— 一份菜单、两个入口。两个入口本身就是那次重叠:商家在两个角上各看到一个
+   * 长得不一样、开出同样东西的控件,得先试一次才知道它们是一回事。留下的是左下角那一个:
+   * 它同时显示当前工作区的名字,是这份菜单的自然位置(Linear 的做法),右上角那一颗只有
+   * 首字母,认不出自己站在哪个工作区里。
+   *
+   * 所以状态收成一个布尔:开没开。锚点这个概念随第二个入口一起退场。
    */
-  const [menuAnchor, setMenuAnchor] = useState<"rail" | "account" | null>(null);
-  const workspaceOpen = menuAnchor !== null;
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fixtureNotifications, setFixtureNotifications] = useState<R22NotificationItem[]>([]);
   const [projects, setProjects] = useState<GlobalSearchProject[]>(fixture ? [{ id: "fixture-raya", name: "Raya launch" }] : []);
   const [projectsState, setProjectsState] = useState<"loading" | "ready" | "error">(fixture ? "ready" : "loading");
@@ -153,10 +157,6 @@ export function R22DashboardShell({
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const notificationsTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
-  const accountTriggerRef = useRef<HTMLButtonElement>(null);
-  /** 开菜单的那一颗按钮本身。记元素而不是记「哪个锚点」,关闭逻辑就不用读任何 state ——
-   *  焦点也还得更准:还给真正被按下的那一颗。 */
-  const menuOpenerRef = useRef<HTMLButtonElement | null>(null);
   const projectsRequestedRef = useRef(fixture);
 
   /**
@@ -185,11 +185,10 @@ export function R22DashboardShell({
     requestAnimationFrame(() => searchTriggerRef.current?.focus());
   };
 
-  /** 关掉工作区菜单,并把焦点还给**当初按下的那个**触发点(侧栏或右上角)。 */
+  /** 关掉工作区菜单,并把焦点还给那唯一的触发点(侧栏左下角)。 */
   const closeWorkspaceMenu = (restoreFocus = true) => {
-    const opener = menuOpenerRef.current;
-    setMenuAnchor(null);
-    if (restoreFocus) requestAnimationFrame(() => opener?.focus());
+    setWorkspaceOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => workspaceTriggerRef.current?.focus());
   };
 
   useEffect(() => {
@@ -263,7 +262,7 @@ export function R22DashboardShell({
       const next = { ...fixtureWorkspaces, activeId: workspaceId };
       writeR22WorkspaceDirectory(next);
       setFixtureWorkspaces(next);
-      setMenuAnchor(null);
+      setWorkspaceOpen(false);
       window.location.reload();
     }, 320);
   };
@@ -276,16 +275,23 @@ export function R22DashboardShell({
   const unreadCount = fixtureNotifications.filter((item) => !item.read).length;
 
   /**
-   * 工作区菜单 —— 全产品**一份**。侧栏底部与 Home 右上角是它的两个触发点,弹出时长在
-   * 按下的那一个旁边(`menuAnchor` 决定),内容、状态与登出 action 都不复制第二遍。
+   * 工作区菜单 —— 全产品**一份**,而且从 2026-08-26 起只有**一个**触发点:侧栏左下角。
+   *
+   * 三节,发丝线隔开(`Separator`):
+   *   ① 工作区列表 —— 当前那一个带勾(`CheckCircle2`),切换在这里发生;
+   *   ② Workspace settings / Help —— 关于这个工作区的两扇门;
+   *   ③ Sign out —— 离开这一节自己一段。它此前贴在 Help 下面没有分隔,和「去某个页面」
+   *      混成一列;登出不是一扇门,是结束这一次使用,值一条线把它分出来(Founder
+   *      2026-08-26:workspace 管理合一,登出并进这一份菜单底部)。
    */
   const workspaceMenu = (
-    <div className={menuAnchor === "account" ? "r22-dashboard-workspace-menu is-account-anchored" : "r22-dashboard-workspace-menu"}>
+    <div className="r22-dashboard-workspace-menu">
       <p>Workspace</p>
       {fixture ? fixtureWorkspaces.workspaces.map((workspace) => { const current = workspace.id === fixtureWorkspaces.activeId; return <Button unstyled type="button" key={workspace.id} disabled={Boolean(workspaceSwitching)} onClick={() => switchFixtureWorkspace(workspace.id)}><span className="r22-dashboard-avatar">{initials(workspace.name)}</span><span><b>{workspace.name}</b><small>{current ? "Current workspace" : workspaceSwitching === workspace.id ? "Authorizing…" : `${workspace.role} access`}</small></span>{current ? <CheckCircle2 data-icon="inline-end" /> : null}</Button>; }) : <Button unstyled type="button"><span className="r22-dashboard-avatar">{initials(identity)}</span><span><b>{identity}</b><small>Current workspace</small></span><CheckCircle2 data-icon="inline-end" /></Button>}
       <Separator className="r22-dashboard-workspace-separator" />
-      <Link href={fixtureHref("/settings", fixture)} onClick={() => setMenuAnchor(null)}>Workspace settings</Link>
-      <Button unstyled type="button" onClick={() => { setMenuAnchor(null); setHelpOpen(true); }}>Help</Button>
+      <Link href={fixtureHref("/settings", fixture)} onClick={() => setWorkspaceOpen(false)}>Workspace settings</Link>
+      <Button unstyled type="button" onClick={() => { setWorkspaceOpen(false); setHelpOpen(true); }}>Help</Button>
+      <Separator className="r22-dashboard-workspace-separator" />
       <form action={signOutAction}><Button unstyled type="submit">Sign out</Button></form>
     </div>
   );
@@ -340,8 +346,8 @@ export function R22DashboardShell({
 
         <div className="r22-dashboard-rail-spacer" />
         <div className="r22-dashboard-workspace-wrap" data-r22-workspace-region>
-          {menuAnchor === "rail" && workspaceMenu}
-          <Button unstyled ref={workspaceTriggerRef} type="button" className="r22-dashboard-workspace" aria-haspopup="menu" aria-expanded={menuAnchor === "rail"} onClick={() => { menuOpenerRef.current = workspaceTriggerRef.current; setMenuAnchor((anchor) => (anchor === "rail" ? null : "rail")); }}>
+          {workspaceOpen && workspaceMenu}
+          <Button unstyled ref={workspaceTriggerRef} type="button" className="r22-dashboard-workspace" aria-haspopup="menu" aria-expanded={workspaceOpen} onClick={() => setWorkspaceOpen((open) => !open)}>
             <span className="r22-dashboard-avatar">{initials(identity)}</span>
             <span>{identity}</span>
             <ChevronDown data-icon="inline-end" aria-hidden="true" />
@@ -352,15 +358,20 @@ export function R22DashboardShell({
       <main className="r22-dashboard-content">{children}</main>
 
       {/*
-        Home 右上角那一组。原型 L12199 的 `.dh-page-actions` 是「铃 + 头像 + chevron」三件,
-        这里三件都接了真东西:
-          · 铃 → 壳自己那一份通知抽屉(下面那个 `r22-dashboard-side-panel`),badge 从
-            `fixtureNotifications` 的未读数派生,没有写死的数字;
-          · 头像 → 商家真名字的首字母(fixture 取当前工作区名,生产取 displayName / email),
-            不是写死的 `NA`;
-          · chevron → 和头像同属一个按钮,按下开的就是上面那一份工作区菜单。
-        原型把头像与 chevron 拆成一颗按钮加一个不可按的图标;合成一个按钮是有意的偏离 ——
-        Founder 点名的正是「chevron 是死的」,把它留在按钮外面等于把那句话再犯一次。
+        Home 右上角那一组,2026-08-26 起**只剩铃**。
+
+        原型 L12199 的 `.dh-page-actions` 是「铃 + 头像 + chevron」三件,而那个头像按下去开的
+        是侧栏那一份工作区菜单(原型自己就是 `wsb.click()` 转发过去的)。Founder 看的是成品:
+        「右上角和左下角 workspace management 重叠」—— 同一件事在一屏的两个角上各有一个入口,
+        长得还不一样。合一的裁决落在这里:**右上角整组头像与 chevron 拿掉**,工作区归左下角
+        那一颗,它本来就写着当前工作区的名字。
+
+        为什么是整组拿掉而不是「留一个不带菜单的静态头像」:一个不能按的头像在这一屏没有第二
+        件事可做 —— 身份左下角已经写着全名,右上角再放一枚首字母只是同一句话的第二遍,而且
+        看上去仍然像可以按。以更静为准。
+
+        铃留下,接的还是壳自己那一份通知抽屉;badge 从 `fixtureNotifications` 的未读数派生,
+        没有写死的数字。
       */}
       {pathname === "/" ? <div className="r22-dashboard-quick-actions" aria-label="Account actions">
         {/*
@@ -372,7 +383,7 @@ export function R22DashboardShell({
           铃变成 `SheetTrigger`,开合与 `aria-expanded` 由 Radix 出,「再按一次关掉」也
           不用自己写。焦点归还也归它 —— 触发点就在 DOM 里,Radix 认得回去。
         */}
-        <Sheet open={notificationsOpen} onOpenChange={(open) => { setNotificationsOpen(open); if (open) { setHelpOpen(false); setMenuAnchor(null); } }}>
+        <Sheet open={notificationsOpen} onOpenChange={(open) => { setNotificationsOpen(open); if (open) { setHelpOpen(false); setWorkspaceOpen(false); } }}>
           <SheetTrigger asChild>
             <Button unstyled ref={notificationsTriggerRef} type="button" className="r22-dashboard-bell" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}><Bell data-icon="inline-start" />{unreadCount ? <i>{unreadCount}</i> : null}</Button>
           </SheetTrigger>
@@ -388,13 +399,6 @@ export function R22DashboardShell({
             ) : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>Notification delivery is not connected yet</EmptyTitle><EmptyDescription>We will not pretend there is nothing new. Open the full page to switch notifications on and choose what reaches you.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications">Open notifications</Link></EmptyContent></Empty>}
           </SheetContent>
         </Sheet>
-        <span className="r22-dashboard-account-wrap" data-r22-workspace-region>
-          {menuAnchor === "account" && workspaceMenu}
-          <Button unstyled ref={accountTriggerRef} type="button" className="r22-dashboard-account" aria-haspopup="menu" aria-expanded={menuAnchor === "account"} aria-label={`Account menu for ${identity}`} onClick={() => { menuOpenerRef.current = accountTriggerRef.current; setMenuAnchor((anchor) => (anchor === "account" ? null : "account")); setNotificationsOpen(false); setHelpOpen(false); }}>
-            <span className="r22-dashboard-account-avatar">{initials(identity)}</span>
-            <ChevronDown aria-hidden="true" />
-          </Button>
-        </span>
       </div> : null}
 
       {/*
