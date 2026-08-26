@@ -714,7 +714,7 @@
 
 .r22-dashboard-search-dialog kbd {
   padding: 3px 6px;
-  background: var(--r22-chrome); /* `ui/kbd` 自带 `bg-muted`,深色下会翻成近黑 —— 同一枚深色渗漏,见上面那段注解。 */
+  background-color: var(--r22-chrome); /* `ui/kbd` 自带 `bg-muted`,深色下会翻成近黑 —— 同一枚深色渗漏,见上面那段注解。 */
   border: 1px solid var(--r22-line-2);
   border-radius: 5px;
   color: var(--r22-ink-3);
