@@ -14,6 +14,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 
 import Image from "next/image";
@@ -191,11 +192,6 @@ export function R22DashboardShell({
     if (restoreFocus) requestAnimationFrame(() => opener?.focus());
   };
 
-  const closeNotifications = (restoreFocus = true) => {
-    setNotificationsOpen(false);
-    if (restoreFocus) requestAnimationFrame(() => notificationsTriggerRef.current?.focus());
-  };
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -209,8 +205,9 @@ export function R22DashboardShell({
         // 情形,DOM 查询兜两个处理器都挂 window 冒泡、注册顺序不可靠的情形。
         if (event.defaultPrevented) return;
         if (document.querySelector("[data-otto-panel-fullscreen], [data-otto-panel-rooms]")) return;
-        if (notificationsOpen) closeNotifications();
-        if (helpOpen) { setHelpOpen(false); requestAnimationFrame(() => workspaceTriggerRef.current?.focus()); }
+        // 通知与 Help 两层归了 `ui/sheet`(审计 A-10),Esc 由 Radix 的 dismissable layer
+        // 处理 —— 这里只负责**不越层**:它们开着的时候这一记不属于壳,面板不许跟着关。
+        if (notificationsOpen || helpOpen) return;
         if (workspaceOpen) closeWorkspaceMenu();
         otto?.closePanel();
       }
@@ -223,19 +220,21 @@ export function R22DashboardShell({
    * 点外面就关 —— 这一层此前**整个不存在**:菜单与通知抽屉只认 Esc 和再按一次触发点,
    * 商家点到页面别处它们就那么开着。用 `pointerdown` 而不是 `click`,手指一落下就关,
    * 不用等到抬起;捕获阶段监听,免得内部 `stopPropagation` 把它吃掉。
+   *
+   * 通知与 Help 两层不在这里了:它们归 `ui/sheet` 之后,scrim、Esc、焦点陷阱与焦点归还
+   * 全由 Radix 出(审计 A-10)。留在这一层的只剩工作区菜单 —— 它是页面里的一块,不是
+   * portal 里的一层。
    */
   useEffect(() => {
-    if (!workspaceOpen && !notificationsOpen && !helpOpen) return;
+    if (!workspaceOpen) return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (!target?.closest) return;
-      if (workspaceOpen && !target.closest("[data-r22-workspace-region]")) closeWorkspaceMenu(false);
-      if (notificationsOpen && !target.closest("[data-r22-notifications-region]")) closeNotifications(false);
-      if (helpOpen && !target.closest("[data-r22-help-region]")) setHelpOpen(false);
+      if (!target.closest("[data-r22-workspace-region]")) closeWorkspaceMenu(false);
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [helpOpen, notificationsOpen, workspaceOpen]);
+  }, [workspaceOpen]);
 
   useEffect(() => {
     if (searchOpen) requestAnimationFrame(() => searchRef.current?.focus());
@@ -364,9 +363,31 @@ export function R22DashboardShell({
         Founder 点名的正是「chevron 是死的」,把它留在按钮外面等于把那句话再犯一次。
       */}
       {pathname === "/" ? <div className="r22-dashboard-quick-actions" aria-label="Account actions">
-        <span data-r22-notifications-region>
-          <Button unstyled ref={notificationsTriggerRef} type="button" className="r22-dashboard-bell" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen((open) => !open); setHelpOpen(false); setMenuAnchor(null); }}><Bell data-icon="inline-start" />{unreadCount ? <i>{unreadCount}</i> : null}</Button>
-        </span>
+        {/*
+          通知抽屉归位 `ui/sheet`(审计 A-10)。此前这里是一个手搓的 `<aside>`:自己写
+          header、自己写关闭键、自己写焦点归还、自己写 Esc、自己写外部点击探针。那五件
+          全是 Radix Dialog 本来就给的,而手写的那一份还少了 scrim 与焦点陷阱 —— 商家
+          用键盘 Tab 能从抽屉里走出去,走进它盖着的那一页。
+
+          铃变成 `SheetTrigger`,开合与 `aria-expanded` 由 Radix 出,「再按一次关掉」也
+          不用自己写。焦点归还也归它 —— 触发点就在 DOM 里,Radix 认得回去。
+        */}
+        <Sheet open={notificationsOpen} onOpenChange={(open) => { setNotificationsOpen(open); if (open) { setHelpOpen(false); setMenuAnchor(null); } }}>
+          <SheetTrigger asChild>
+            <Button unstyled ref={notificationsTriggerRef} type="button" className="r22-dashboard-bell" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}><Bell data-icon="inline-start" />{unreadCount ? <i>{unreadCount}</i> : null}</Button>
+          </SheetTrigger>
+          <SheetContent side="right" className="r22-dashboard-side-panel" data-r22-notifications-region>
+            <header>
+              <div><SheetTitle asChild><b>Notifications</b></SheetTitle><SheetDescription asChild><p>Updates that need your attention</p></SheetDescription></div>
+              {fixture && unreadCount ? <Button unstyled type="button" aria-label="Mark all notifications as read" onClick={() => updateFixtureNotifications(fixtureNotifications.map((item) => ({ ...item, read: true })))}><CheckCircle2 /></Button> : null}
+              <Link href={fixture ? "/notifications?fixture=r22" : "/notifications"}>View all</Link>
+              <SheetClose asChild><Button unstyled type="button" aria-label="Close notifications"><X data-icon="inline-start" /></Button></SheetClose>
+            </header>
+            {fixture ? (
+              fixtureNotifications.length ? <ul>{fixtureNotifications.slice(0, 3).map((item) => <li key={item.id} className={item.read ? "is-read" : ""}><span className={!item.read ? "is-coral" : ""} /><div><b>{item.title}</b><p>{item.detail}</p><Link href={`/notifications?fixture=r22&notification=${encodeURIComponent(item.id)}`} onClick={() => updateFixtureNotifications(fixtureNotifications.map((row) => row.id === item.id ? { ...row, read: true } : row))}>View detail</Link></div></li>)}</ul> : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>No notification history</EmptyTitle><EmptyDescription>Dismissed events stay removed after refresh.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications?fixture=r22">Open notifications</Link></EmptyContent></Empty>
+            ) : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>Notification delivery is not connected yet</EmptyTitle><EmptyDescription>This won&rsquo;t guess at an empty or read state. Open the full page to connect notifications and manage preferences.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications">Open notifications</Link></EmptyContent></Empty>}
+          </SheetContent>
+        </Sheet>
         <span className="r22-dashboard-account-wrap" data-r22-workspace-region>
           {menuAnchor === "account" && workspaceMenu}
           <Button unstyled ref={accountTriggerRef} type="button" className="r22-dashboard-account" aria-haspopup="menu" aria-expanded={menuAnchor === "account"} aria-label={`Account menu for ${identity}`} onClick={() => { menuOpenerRef.current = accountTriggerRef.current; setMenuAnchor((anchor) => (anchor === "account" ? null : "account")); setNotificationsOpen(false); setHelpOpen(false); }}>
@@ -376,25 +397,25 @@ export function R22DashboardShell({
         </span>
       </div> : null}
 
-      {notificationsOpen && pathname === "/" && (
-        <aside className="r22-dashboard-side-panel" aria-label="Notifications" data-r22-notifications-region>
-          <header><div><b>Notifications</b><p>Updates that need your attention</p></div>{fixture && unreadCount ? <Button unstyled type="button" aria-label="Mark all notifications as read" onClick={() => updateFixtureNotifications(fixtureNotifications.map((item) => ({ ...item, read: true })))}><CheckCircle2 /></Button> : null}<Link href={fixture ? "/notifications?fixture=r22" : "/notifications"}>View all</Link><Button unstyled type="button" aria-label="Close notifications" onClick={() => closeNotifications()}><X data-icon="inline-start" /></Button></header>
-          {fixture ? (
-            fixtureNotifications.length ? <ul>{fixtureNotifications.slice(0, 3).map((item) => <li key={item.id} className={item.read ? "is-read" : ""}><span className={!item.read ? "is-coral" : ""} /><div><b>{item.title}</b><p>{item.detail}</p><Link href={`/notifications?fixture=r22&notification=${encodeURIComponent(item.id)}`} onClick={() => updateFixtureNotifications(fixtureNotifications.map((row) => row.id === item.id ? { ...row, read: true } : row))}>View detail</Link></div></li>)}</ul> : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>No notification history</EmptyTitle><EmptyDescription>Dismissed events stay removed after refresh.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications?fixture=r22">Open notifications</Link></EmptyContent></Empty>
-          ) : <Empty className="r22-dashboard-panel-empty"><EmptyHeader><EmptyMedia variant="icon"><Bell /></EmptyMedia><EmptyTitle>Notification delivery is not connected yet</EmptyTitle><EmptyDescription>This won&rsquo;t guess at an empty or read state. Open the full page to connect notifications and manage preferences.</EmptyDescription></EmptyHeader><EmptyContent><Link href="/notifications">Open notifications</Link></EmptyContent></Empty>}
-        </aside>
-      )}
-
-      {helpOpen && (
-        <aside className="r22-dashboard-side-panel" aria-label="Help" data-r22-help-region>
-          <header><div><b>Help</b><p>Find the fastest way forward</p></div><Button unstyled type="button" aria-label="Close help" onClick={() => { setHelpOpen(false); requestAnimationFrame(() => workspaceTriggerRef.current?.focus()); }}><X data-icon="inline-start" /></Button></header>
+      {/*
+        Help 抽屉同样归 `ui/sheet`(审计 A-10)。它没有 `SheetTrigger` —— 开它的那颗键住在
+        工作区菜单里,按下的同时菜单就收了,Radix 找不回一个已经不在 DOM 里的触发点。所以
+        焦点归还这一件仍由这一面自己交代:`onCloseAutoFocus` 里明确还给侧栏那颗工作区键,
+        也就是商家进来时手所在的地方。其余四件(scrim / Esc / 焦点陷阱 / 外部点击)全归 Radix。
+      */}
+      <Sheet open={helpOpen} onOpenChange={setHelpOpen}>
+        <SheetContent side="right" className="r22-dashboard-side-panel" data-r22-help-region onCloseAutoFocus={(event) => { event.preventDefault(); workspaceTriggerRef.current?.focus(); }}>
+          <header>
+            <div><SheetTitle asChild><b>Help</b></SheetTitle><SheetDescription asChild><p>Find the fastest way forward</p></SheetDescription></div>
+            <SheetClose asChild><Button unstyled type="button" aria-label="Close help"><X data-icon="inline-start" /></Button></SheetClose>
+          </header>
           <div className="r22-dashboard-help-list">
             <Button unstyled type="button" disabled={!otto} onClick={() => { setHelpOpen(false); otto?.openPanel(); }}><b>Ask Otto</b><span>Open the real workspace conversation and history.</span></Button>
             <Link href={fixtureHref("/settings/connections", fixture)}><b>Connection help</b><span>Check channel access and reconnect safely.</span></Link>
             <Link href={fixture ? "/help?fixture=r22" : "/help"}><b>Help and support</b><span>Search verified guidance or review a support request.</span></Link>
           </div>
-        </aside>
-      )}
+        </SheetContent>
+      </Sheet>
 
       {/*
         cmd+K 归位 `ui/command`(审计 A-3 / C-3)。此前这里手写了 `role="combobox"`、

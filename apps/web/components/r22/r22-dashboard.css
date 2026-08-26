@@ -418,6 +418,44 @@
   box-shadow: -16px 0 40px rgb(22 23 28 / 7%);
 }
 
+/*
+ * 通知 / Help 两层归 `ui/sheet`(审计 A-10)之后住在 portal 里 —— 它们不在
+ * `.r22-dashboard-shell` 底下,所以这里只许用全局 `--r22-*` token,不许借壳里的局部变量。
+ * 几何一格没改,只是把正典件那套 Tailwind 默认(max-width / padding / gap / 圆角)按回去。
+ */
+.r22-dashboard-side-panel[data-slot="sheet-content"] {
+  max-width: none;
+  height: auto;
+  padding: 0;
+  gap: 0;
+  border-radius: 0;
+  color: var(--r22-ink);
+  color-scheme: light;
+  font-family: var(--font-geist-sans), Geist, Arial, sans-serif;
+  animation: r22-dashboard-panel-in 240ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes r22-dashboard-panel-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* 抽屉自带一颗浮在右上角的关闭键;这一面的关闭键长在 header 那一排里(它旁边还有
+   「全部标为已读」与「View all」),两颗说同一句话的键不是无障碍,是重复。 */
+.r22-dashboard-side-panel[data-slot="sheet-content"] > button:last-child { display: none; }
+
+.r22-dashboard-side-panel [data-slot="sheet-title"],
+.r22-dashboard-side-panel [data-slot="sheet-description"] {
+  letter-spacing: normal;
+}
+
+/* scrim 的底色跟着全局 token 走,不用正典件那句写死的 rgba。 */
+.r22-dashboard-side-panel ~ [data-slot="sheet-overlay"],
+[data-slot="sheet-overlay"]:has(~ .r22-dashboard-side-panel) {
+  background: var(--r22-scrim);
+  backdrop-filter: none;
+}
+
 .r22-dashboard-side-panel > header,
 .r22-dashboard-otto-panel > header {
   display: flex;
@@ -1691,4 +1729,9 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   .r22-dashboard-content > * {
     animation: none !important;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 减弱动效 = 去运动,不是换一种运动:抽屉直接在那儿,不滑进来。 */
+  .r22-dashboard-side-panel[data-slot="sheet-content"] { animation: none; }
 }
