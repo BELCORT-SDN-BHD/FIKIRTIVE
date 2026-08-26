@@ -11,15 +11,17 @@
  *   ① **语汇照画布 composer** —— prompt 输入 + Image|Video + 比例/张数弹层 + cr 报价。
  *      两面长得不一样,商家就得学两遍;所以连价目都是从画布那份常量里读的
  *      (`r22-canvas-fixture.ts`),这里一个价格字面量都没有。
- *   ② **含糊就先问一句** —— 判词在 `quickCreateQuestion()`。问的时候一分钱不动:
- *      报价在问题卡出现的那一刻**冻住**,商家在等待期间拨参数也不会看到价钱跳动。
- *      (跳动的价钱等于在说「你多想了一会儿就变贵了」。)
+ *   ② **含糊就先问一句** —— 判词在 `quickCreateQuestion()`。问的时候一分钱不动,而且
+ *      **所见即所付**:问题卡在的那段时间,类型/张数/比例三个控件一起锁住,报价因此不动。
+ *      上一版只把**显示**的数字冻住、控件照样能拨,于是卡上写着 3 cr、实际按拨到的 4 张
+ *      收 12 cr —— 冻显示不冻请求,是这一面能犯的最贵的一种谎。
+ *      (顺带:跳动的价钱也等于在说「你多想了一会儿就变贵了」,所以锁,不是让它跳。)
  *   ③ **Esc 不越层** —— 进来先看 `defaultPrevented`,自己吃掉了就喊一声。这条链
  *      壳层与画布都守着,少一头一记 Esc 就撕两层。
  */
 
 import { ArrowUp, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -53,14 +55,16 @@ export function LibraryQuickCreate({
   const [paramsOpen, setParamsOpen] = useState(false);
   const [question, setQuestion] = useState<QuickCreateQuestion | null>(null);
   const [picked, setPicked] = useState("");
-  /**
-   * 问题卡出现那一刻的报价。它在这里**不是缓存**,是一句承诺:等待期间价钱不动。
-   * `null` = 没有在等,读的就是此刻的参数。
-   */
-  const [frozenQuote, setFrozenQuote] = useState<number | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  /** 问题卡上那三个选项各自的按钮 —— 方向键要把焦点搬过去,得先拿得到它们。 */
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  const quote = frozenQuote ?? fixtureQuoteCredits(kind, count);
+  /**
+   * 问题卡在的时候参数锁住。锁的是**请求**,不是显示:报价是从同一组参数算出来的,参数
+   * 动不了,卡上承诺的那个数就是最后真的扣的那个数。
+   */
+  const locked = question !== null;
+  const quote = fixtureQuoteCredits(kind, count);
 
   useEffect(() => {
     if (open) promptRef.current?.focus();
@@ -82,14 +86,12 @@ export function LibraryQuickCreate({
     setParamsOpen(false);
     setQuestion(null);
     setPicked("");
-    setFrozenQuote(null);
     onClose();
   }
 
   function run(text: string) {
     setQuestion(null);
     setPicked("");
-    setFrozenQuote(null);
     setParamsOpen(false);
     setPrompt("");
     onRun({ prompt: text, kind, count, ratio });
@@ -100,9 +102,31 @@ export function LibraryQuickCreate({
     if (!next || busy) return;
     const ask = quickCreateQuestion(next);
     if (!ask) return run(next);
-    // 等着回答的这段时间里,报价原样冻住 —— 一分钱都没动。
-    setFrozenQuote(fixtureQuoteCredits(kind, count));
+    // 等着回答的这段时间里,参数一起锁住 —— 报价不动,而且动不了的是请求本身。
+    setParamsOpen(false);
     setQuestion(ask);
+  }
+
+  /**
+   * 单选组的键盘行为。`role="radiogroup"` 配一排普通按钮时,方向键什么都不做、Tab 会
+   * 一个一个穿过去 —— 屏幕上是一组单选,用起来不是。这里补齐标准那一套:方向键在组内
+   * 循环移动并选中(焦点跟着选中走),空格选中此刻这一个,Tab 只进出组一次。
+   */
+  function onOptionKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
+    if (!question) return;
+    const last = question.options.length - 1;
+    if (event.key === " " || event.key === "Spacebar") {
+      event.preventDefault();
+      setPicked(question.options[index]!.label);
+      return;
+    }
+    const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+    const backward = event.key === "ArrowLeft" || event.key === "ArrowUp";
+    if (!forward && !backward) return;
+    event.preventDefault();
+    const next = forward ? (index === last ? 0 : index + 1) : (index === 0 ? last : index - 1);
+    setPicked(question.options[next]!.label);
+    optionRefs.current[next]?.focus();
   }
 
   if (!open) return null;
@@ -115,15 +139,19 @@ export function LibraryQuickCreate({
           <h3>{question.question}</h3>
           <p className="r22-lib-ask-help">{question.help}</p>
           <div className="r22-lib-ask-options" role="radiogroup" aria-label={question.question}>
-            {question.options.map((option) => (
+            {question.options.map((option, index) => (
               <Button
                 unstyled
                 type="button"
                 key={option.label}
+                ref={(node: HTMLButtonElement | null) => { optionRefs.current[index] = node; }}
                 role="radio"
                 aria-checked={picked === option.label}
+                // 一组单选在 Tab 序里只占一站:选中的那一个可聚焦,没选中的靠方向键到达。
+                tabIndex={picked ? (picked === option.label ? 0 : -1) : index === 0 ? 0 : -1}
                 data-r22-lib-ask-option={option.label}
                 className={picked === option.label ? "is-selected" : ""}
+                onKeyDown={(event) => onOptionKeyDown(event, index)}
                 onClick={() => setPicked(option.label)}
               >
                 <b>{option.label}</b>
@@ -161,17 +189,19 @@ export function LibraryQuickCreate({
             }
           }}
         />
+        {/* `locked` 那几处 disabled 就是「所见即所付」本身:问题卡上写着多少 cr,答完
+            之后跑的就是同一组参数。控件不锁住,冻住的那个数字只是屏幕上的一句好话。 */}
         <div className="r22-lib-make-row">
           <div className="r22-lib-make-kind" role="group" aria-label="What to make">
-            <Button unstyled type="button" aria-pressed={kind === "image"} data-r22-lib-kind="image" onClick={() => setKind("image")}>Image</Button>
-            <Button unstyled type="button" aria-pressed={kind === "video"} data-r22-lib-kind="video" onClick={() => setKind("video")}>Video</Button>
+            <Button unstyled type="button" disabled={locked} aria-pressed={kind === "image"} data-r22-lib-kind="image" onClick={() => setKind("image")}>Image</Button>
+            <Button unstyled type="button" disabled={locked} aria-pressed={kind === "video"} data-r22-lib-kind="video" onClick={() => setKind("video")}>Video</Button>
           </div>
           <span className="r22-lib-make-gap" />
           <div className="r22-lib-make-params">
-            <Button unstyled type="button" className="r22-lib-make-shape" aria-expanded={paramsOpen} onClick={() => setParamsOpen((value) => !value)}>
+            <Button unstyled type="button" className="r22-lib-make-shape" disabled={locked} aria-expanded={paramsOpen} onClick={() => setParamsOpen((value) => !value)}>
               {count > 1 ? `${ratio} · ${count}` : ratio}
             </Button>
-            {paramsOpen ? (
+            {paramsOpen && !locked ? (
               <div className="r22-lib-make-menu" data-r22-lib-params>
                 <div className="r22-lib-make-shapes" role="group" aria-label="Shape">
                   {FIXTURE_RATIO_OPTIONS.map((value) => (

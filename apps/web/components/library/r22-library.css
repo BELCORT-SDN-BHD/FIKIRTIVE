@@ -185,6 +185,8 @@ a.r22-lib-layer-origin { border-bottom: 1px solid var(--r22-line-2); align-self:
 .r22-lib-make-send { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: var(--r22-ink); color: var(--r22-surface); transition: opacity 140ms ease-out; }
 .r22-lib-make-send svg { width: 15px; height: 15px; }
 .r22-lib-make-send:disabled { opacity: .35; cursor: not-allowed; }
+/* 问题卡在的时候参数是锁住的 —— 锁了就得看得出来,否则商家会以为是自己点不准。 */
+.r22-lib-make-kind button:disabled, .r22-lib-make-shape:disabled { opacity: .4; cursor: not-allowed; }
 .r22-lib-make-x { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; color: var(--r22-ink-3); transition: background-color 140ms ease-out, color 140ms ease-out; }
 .r22-lib-make-x svg { width: 15px; height: 15px; }
 
