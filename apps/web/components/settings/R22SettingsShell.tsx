@@ -12,21 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import Link from "next/link";
-import {
-  Bell,
-  Building2,
-  ChevronDown,
-  ChevronLeft,
-  Globe2,
-  KeyRound,
-  Link2,
-  Radio,
-  ShieldCheck,
-  SlidersHorizontal,
-  UserRound,
-  UsersRound,
-  WalletCards,
-} from "lucide-react";
+import { ChevronDown, ChevronLeft, ShieldCheck } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -51,6 +37,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { BETA_SETTINGS_SECTIONS, R22_SETTINGS_SECTION_LABELS, SETTINGS_GROUPS, type R22SettingsSection } from "./r22-settings-sections";
 import "./r22-settings.css";
 import "./r22-settings-dialog.css";
 import "./r22-settings-dialog-extra.css";
@@ -68,14 +55,8 @@ export type R22SettingsData = {
   timezone: string;
   dataError?: string;
 };
-export type R22SettingsSection = "preferences" | "profile" | "notifications" | "security" | "connected" | "workspace" | "members" | "roles" | "connections" | "billing" | "domains";
-
-const GROUPS: Array<{ label: string; items: Array<{ id: R22SettingsSection; label: string; icon: typeof Bell }> }> = [
-  { label: "Personal", items: [{ id: "preferences", label: "Preferences", icon: SlidersHorizontal }, { id: "profile", label: "Profile", icon: UserRound }, { id: "notifications", label: "Notifications", icon: Bell }, { id: "security", label: "Security and access", icon: ShieldCheck }, { id: "connected", label: "Connected accounts", icon: Link2 }] },
-  { label: "Workspace", items: [{ id: "workspace", label: "General", icon: Building2 }, { id: "members", label: "Members", icon: UsersRound }, { id: "roles", label: "Roles and permissions", icon: KeyRound }] },
-  { label: "Publishing", items: [{ id: "connections", label: "Connections", icon: Radio }, { id: "billing", label: "Billing and credits", icon: WalletCards }] },
-  { label: "Administration", items: [{ id: "domains", label: "Domains", icon: Globe2 }] },
-];
+/** 分节名单与 beta 收窄名单的权威在 `r22-settings-sections.ts`(壳是 client,服务端取不了它的值)。 */
+export type { R22SettingsSection } from "./r22-settings-sections";
 
 const SETTINGS_FIXTURE_KEY = "r22:settings:fixture:v2";
 type FixtureMember = { id: string; name: string; email: string; role: string; status: "Active" | "Invited" };
@@ -218,11 +199,13 @@ function DisconnectMetaAction({ onNotice, fixture = false }: { onNotice: (messag
 
 type FixtureSurfaceState = "ready" | "loading" | "error" | "permission" | "unknown";
 
-export function R22SettingsShell({ data, initialSection = "workspace", fixture = false, fixtureState = "ready", fixtureOutcome = "success" }: { data: R22SettingsData; initialSection?: R22SettingsSection; fixture?: boolean; fixtureState?: FixtureSurfaceState; fixtureOutcome?: "success" | "error" | "conflict" | "unknown" }) {
+export function R22SettingsShell({ data, initialSection = "workspace", fixture = false, fixtureState = "ready", fixtureOutcome = "success", betaScope = false, betaFallbackFrom }: { data: R22SettingsData; initialSection?: R22SettingsSection; fixture?: boolean; fixtureState?: FixtureSurfaceState; fixtureOutcome?: "success" | "error" | "conflict" | "unknown"; /** beta 收窄开着:侧栏只画 `BETA_SETTINGS_SECTIONS` 三节。闸在 `R22SettingsEntry`。 */ betaScope?: boolean; /** 商家刚才按的是哪扇被藏的门 —— 有值就在内容区顶上说一句他落在了哪。 */ betaFallbackFrom?: string }) {
   const pathname = usePathname();
   const params = useSearchParams();
   const router = useRouter();
   const [section, setSection] = useState<R22SettingsSection>(initialSection);
+  /** 回落提示只说这一次落地 —— 商家自己按了别的一节,它就该走。 */
+  const [fallbackFrom, setFallbackFrom] = useState(betaFallbackFrom ?? "");
   /**
    * 回执一律走 `toast()`(审计 A-4)—— 这一面此前自己画一条 `.r22-settings-notice`,
    * 另外四扇门各画各的。措辞一个字没改,只是不再各造各的条。空串是「没有话要说」,
@@ -423,6 +406,7 @@ export function R22SettingsShell({ data, initialSection = "workspace", fixture =
 
   const choose = (next: R22SettingsSection) => {
     setSection(next);
+    setFallbackFrom("");
     const nextParams = new URLSearchParams(params.toString());
     nextParams.set("section", next);
     router.replace(`${pathname}?${nextParams.toString()}`, { scroll: false });
@@ -490,7 +474,16 @@ export function R22SettingsShell({ data, initialSection = "workspace", fixture =
   else if (destructiveAction || activeAction.startsWith("Connect ") || activeAction.startsWith("Verify domain:")) dialogFields = <Empty className="r22-settings-dialog-empty"><EmptyHeader><EmptyTitle>{destructiveAction ? "Check what this does before you continue" : "This changes only the workspace you have open"}</EmptyTitle><EmptyDescription>{activeAction.startsWith("Disconnect ") ? "Scheduled work stays visible and waits until a channel is connected again. Nothing on Meta or your live account changes." : activeAction.startsWith("Remove member:") ? "They lose access to this workspace only. Their personal account is not deleted." : "No outside service, domain record or live permission is changed."}</EmptyDescription></EmptyHeader></Empty>;
   else dialogFields = <DialogField id="action-value" label={activeAction === "Edit profile" ? "Display name" : "Workspace name"} error={fieldError("value")}>{(control) => <Input unstyled autoFocus value={actionValue} onChange={(event) => setActionValue(event.target.value)} {...control} />}</DialogField>;
 
-  return <main className="r22-settings-shell" data-r22-settings data-fixture={fixture || undefined}><aside className="r22-settings-nav" aria-label="Settings sections"><Link href={fixture ? "/?fixture=r22" : "/"} className="r22-settings-back"><ChevronLeft />Back to app</Link>{GROUPS.map((group) => <div className="r22-settings-group" key={group.label}><p>{group.label}</p>{group.items.map((item) => { const Icon = item.icon; return <Button unstyled type="button" key={item.id} className={section === item.id ? "is-active" : ""} onClick={() => choose(item.id)}><Icon aria-hidden="true" />{item.label}</Button>; })}</div>)}<div className="r22-settings-workspace"><span>{initials}</span><b>{workspaceName}</b></div></aside><section className="r22-settings-content" aria-live="polite">{data.dataError && <p className="r22-settings-error" role="alert">Some settings could not be loaded: {data.dataError}.</p>}{renderedContent}</section>
-    <Dialog open={Boolean(activeAction)} onOpenChange={(open) => { if (!open && !actionBusy && !workspaceSwitching) setActiveAction(""); }}><DialogContent className="r22-settings-dialog" showCloseButton={false}>{actionSuccess ? <div className="r22-settings-action-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>{actionSuccess}</DialogTitle><DialogDescription>Nothing on your live account changed — no channel, no domain record and no invitation was sent.</DialogDescription><Button unstyled type="button" onClick={() => setActiveAction("")}>Done</Button></div> : <><DialogHeader><DialogTitle>{activeAction.includes(":") ? activeAction.split(":")[0] : activeAction}</DialogTitle><DialogDescription>{activeAction === "Invite member" ? `Invite someone to ${workspaceName} with a specific workspace role.` : activeAction === "Manage" ? "You switch only once we have checked your access and loaded that workspace." : activeAction === "View invoices" ? "See invoices for this workspace only." : activeAction === "View Admin" || activeAction === "View Editor" || activeAction === "View Approver" ? "See exactly what this role can do. Every action is still checked when it runs." : destructiveAction ? "This action affects only the active workspace and requires confirmation." : "Review the value before saving it to this workspace."}</DialogDescription></DialogHeader><div className="r22-settings-dialog-fields">{dialogFields}{activeAction !== "Manage" && actionError && !actionErrorField ? <p role="alert">{actionError}</p> : null}</div><DialogFooter><Button unstyled type="button" disabled={actionBusy || workspaceSwitching} onClick={() => setActiveAction("")}>{showSubmit ? "Cancel" : "Done"}</Button>{showSubmit ? <Button unstyled type="button" className={destructiveAction ? "is-danger" : undefined} disabled={actionBusy || workspaceSwitching} onClick={submitAction}>{actionBusy ? "Saving…" : activeAction === "Invite member" ? "Send invitation" : activeAction === "Create workspace" ? "Create workspace" : activeAction === "View Admin" || activeAction === "View Editor" || activeAction === "View Approver" ? "Save role" : destructiveAction ? "Confirm" : "Save changes"}</Button> : null}</DialogFooter></>}</DialogContent></Dialog>
+  return <main className="r22-settings-shell" data-r22-settings data-fixture={fixture || undefined}><aside className="r22-settings-nav" aria-label="Settings sections"><Link href={fixture ? "/?fixture=r22" : "/"} className="r22-settings-back"><ChevronLeft />Back to app</Link>{SETTINGS_GROUPS.map((group) => {
+      // beta 收窄:名单外的格子不画,整组空掉就连分组标题一起不画(留一个空的「Workspace」
+      // 标题等于告诉商家这里本该有东西却坏了)。权威表本身没动 —— 见 BETA_SETTINGS_SECTIONS。
+      const items = betaScope ? group.items.filter((item) => (BETA_SETTINGS_SECTIONS as readonly R22SettingsSection[]).includes(item.id)) : group.items;
+      if (!items.length) return null;
+      return <div className="r22-settings-group" key={group.label}><p>{group.label}</p>{items.map((item) => { const Icon = item.icon; return <Button unstyled type="button" key={item.id} className={section === item.id ? "is-active" : ""} onClick={() => choose(item.id)}><Icon aria-hidden="true" />{item.label}</Button>; })}</div>;
+    })}<div className="r22-settings-workspace"><span>{initials}</span><b>{workspaceName}</b></div></aside><section className="r22-settings-content" aria-live="polite">{data.dataError && <p className="r22-settings-error" role="alert">Some settings could not be loaded: {data.dataError}.</p>}{fallbackFrom ? <p className="r22-settings-error" role="status" data-r22-settings-fallback={fallbackFrom}>{fallbackFrom} is closed during this beta, so {R22_SETTINGS_SECTION_LABELS[section]} is open instead.</p> : null}{renderedContent}</section>
+    <Dialog open={Boolean(activeAction)} onOpenChange={(open) => { if (!open && !actionBusy && !workspaceSwitching) setActiveAction(""); }}><DialogContent className="r22-settings-dialog" showCloseButton={false}>{actionSuccess ? <div className="r22-settings-action-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>{actionSuccess}</DialogTitle>{/* P2-14:收尾句照现行 preview 口径。上一版逐件否认「没有 channel、没有 domain record、
+                 没有发出邀请」—— beta 三节里根本没有这三样东西,它在替不存在的动作道歉。标题那句
+                 「… saved in this preview」已经把发生了什么说完,这里只补一句边界,不再堆免责。 */}
+      <DialogDescription>Nothing outside this preview changed.</DialogDescription><Button unstyled type="button" onClick={() => setActiveAction("")}>Done</Button></div> : <><DialogHeader><DialogTitle>{activeAction.includes(":") ? activeAction.split(":")[0] : activeAction}</DialogTitle><DialogDescription>{activeAction === "Invite member" ? `Invite someone to ${workspaceName} with a specific workspace role.` : activeAction === "Manage" ? "You switch only once we have checked your access and loaded that workspace." : activeAction === "View invoices" ? "See invoices for this workspace only." : activeAction === "View Admin" || activeAction === "View Editor" || activeAction === "View Approver" ? "See exactly what this role can do. Every action is still checked when it runs." : destructiveAction ? "This action affects only the active workspace and requires confirmation." : "Review the value before saving it to this workspace."}</DialogDescription></DialogHeader><div className="r22-settings-dialog-fields">{dialogFields}{activeAction !== "Manage" && actionError && !actionErrorField ? <p role="alert">{actionError}</p> : null}</div><DialogFooter><Button unstyled type="button" disabled={actionBusy || workspaceSwitching} onClick={() => setActiveAction("")}>{showSubmit ? "Cancel" : "Done"}</Button>{showSubmit ? <Button unstyled type="button" className={destructiveAction ? "is-danger" : undefined} disabled={actionBusy || workspaceSwitching} onClick={submitAction}>{actionBusy ? "Saving…" : activeAction === "Invite member" ? "Send invitation" : activeAction === "Create workspace" ? "Create workspace" : activeAction === "View Admin" || activeAction === "View Editor" || activeAction === "View Approver" ? "Save role" : destructiveAction ? "Confirm" : "Save changes"}</Button> : null}</DialogFooter></>}</DialogContent></Dialog>
   </main>;
 }
