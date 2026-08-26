@@ -24,12 +24,14 @@
  */
 
 import * as React from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, type LucideIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Kbd } from "@/components/ui/kbd";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Spinner } from "@/components/ui/spinner";
@@ -374,5 +376,313 @@ export function FollowupChips({
         </Button>
       ))}
     </div>
+  );
+}
+
+/* ── 问卷卡(Founder 2026-08-26 指定的 shadcn questionnaire 形)──────────────── */
+
+/**
+ * 一道题。`multi` = 可以多选;不写就是「挑一个」。
+ *
+ * 它与 `AskOption` 分开是有意的:`AskOption` 说的是**一个选项**长什么样,这一份说的是
+ * **一道题**长什么样。一串题就是一份问卷 —— 全站每一处「Otto 问我几件事」从此都是它,
+ * 画布的 pendingQuestion、Create 追问、研究链的中途澄清共用同一份键盘与同一副长相。
+ */
+export type QuestionnaireQuestion = {
+  id: string;
+  question: string;
+  /** 题面下那一句灰说明。多选时若不写,自动补上「可以多选,也可以跳过」那一句。 */
+  help?: string;
+  multi?: boolean;
+  options: readonly AskOption[];
+};
+
+/** 多选题的默认说明句 —— Founder 给的参考截图上就是这一句。 */
+export const QUESTIONNAIRE_MULTI_HELP = "Select all that apply, or skip this question.";
+
+/** 第 n 个选项的字母角标。A/B/C/D…… 与真正生效的按键同出这一处。 */
+export function questionnaireLetter(index: number): string {
+  return String.fromCharCode(65 + index);
+}
+
+/** 「Question 2 of 3」那一行。题号从 1 起数 —— 商家不数 0。 */
+export function questionnaireCountLabel(index: number, total: number): string {
+  return `Question ${index + 1} of ${total}`;
+}
+
+/**
+ * 一份问卷,一次一道题。
+ *
+ * 形状逐条照 Founder 给的那张 shadcn 参考截图:左上灰字题号、加粗题面配一句灰说明、
+ * 整行卡的选项、每行右端一枚小圆字母角标、脚排左 Previous / 右 Skip + Next。
+ *
+ * **字母角标不是装饰**:它印在屏幕上的那个字母,就是键盘上真的选得中这一行的那个键
+ * (`questionnaireLetter` 是唯一出处)。印一个按不动的字母,比不印更糟。
+ *
+ * Esc 不在这里吃:问卷可能长在弹层、面板或板上,那一记归它所在的那一层
+ * (壳层与画布守的是同一条链)。这里只吃字母与 Enter,而且只在焦点不在输入框里时吃 ——
+ * 商家在「Something else…」里打字打到一个 c,不该顺手把选项换掉。
+ */
+export function QuestionnaireCard({
+  idPrefix,
+  questions,
+  index,
+  selected,
+  onSelectedChange,
+  onPrevious,
+  onSkip,
+  onNext,
+  nextLabel,
+  kicker,
+  footNote,
+  children,
+  busy = false,
+  className,
+  aliases,
+}: {
+  idPrefix: string;
+  questions: readonly QuestionnaireQuestion[];
+  /** 现在问到第几道(0 起)。 */
+  index: number;
+  /** 这一道已经选中的那几个 label(单选也是一个数组 —— 两种题共用一份状态)。 */
+  selected: readonly string[];
+  onSelectedChange: (next: string[]) => void;
+  /** 回上一题。第一道题上不画这颗。 */
+  onPrevious?: () => void;
+  /** 跳过这一道。不给就没有跳过这条路(问的是非答不可的事时)。 */
+  onSkip?: () => void;
+  onNext: () => void;
+  /** 主键上的字。不写就是 Next,最后一道自动变 Finish。 */
+  nextLabel?: string;
+  kicker?: React.ReactNode;
+  footNote?: React.ReactNode;
+  /** 题面与脚排之间还要塞的东西(例如「Something else…」那一格)。 */
+  children?: React.ReactNode;
+  busy?: boolean;
+  className?: string;
+  /** 调用点自己那套 DOM 钩子(既有验收按它们找元素)。零件的 `data-otto-quiz-*` 永远在。 */
+  aliases?: { card?: string; option?: string; skip?: string; submit?: string };
+}) {
+  const question = questions[index];
+  const titleId = `${idPrefix}-question`;
+  const last = index === questions.length - 1;
+
+  const toggle = React.useCallback((label: string) => {
+    if (!question) return;
+    if (question.multi) {
+      onSelectedChange(selected.includes(label) ? selected.filter((item) => item !== label) : [...selected, label]);
+    } else {
+      onSelectedChange([label]);
+    }
+  }, [onSelectedChange, question, selected]);
+
+  if (!question) return null;
+
+  const help = question.help ?? (question.multi ? QUESTIONNAIRE_MULTI_HELP : undefined);
+
+  /** 字母键与 Enter。焦点在输入框里时一概不吃 —— 那时按键是在打字。 */
+  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    const tag = target?.tagName?.toLowerCase();
+    const typing = tag === "input" || tag === "textarea" || target?.isContentEditable;
+    if (typing) return;
+    if (event.key === "Enter") {
+      if (busy) return;
+      event.preventDefault();
+      onNext();
+      return;
+    }
+    if (event.key.length !== 1) return;
+    const letter = event.key.toUpperCase();
+    const at = letter.charCodeAt(0) - 65;
+    if (at < 0 || at >= question.options.length) return;
+    event.preventDefault();
+    toggle(question.options[at]!.label);
+  }
+
+  const rows = question.options.map((option, at) => {
+    const letter = questionnaireLetter(at);
+    const chosen = selected.includes(option.label);
+    const id = `${idPrefix}-${question.id}-${at}`;
+    return (
+      <label key={option.label} htmlFor={id} className={chosen ? "is-selected" : ""}>
+        {question.multi ? (
+          <Checkbox
+            unstyled
+            id={id}
+            checked={chosen}
+            data-otto-quiz-option={option.label}
+            {...(aliases?.option ? { [aliases.option]: option.label } : {})}
+            onCheckedChange={() => toggle(option.label)}
+          />
+        ) : (
+          <RadioGroupItem
+            unstyled
+            id={id}
+            value={option.label}
+            data-otto-quiz-option={option.label}
+            {...(aliases?.option ? { [aliases.option]: option.label } : {})}
+          />
+        )}
+        <span>
+          <b>{option.label}{option.recommended ? <em>Recommended</em> : null}</b>
+          {option.description ? <small>{option.description}</small> : null}
+        </span>
+        <Kbd className="r22-quiz-key" data-otto-quiz-key={letter}>{letter}</Kbd>
+      </label>
+    );
+  });
+
+  return (
+    <Card
+      data-otto-quiz-card=""
+      data-otto-quiz-index={String(index)}
+      {...(aliases?.card ? { [aliases.card]: "" } : {})}
+      role="region"
+      aria-labelledby={titleId}
+      className={`r22-convo-card r22-convo-quiz${className ? ` ${className}` : ""}`}
+      onKeyDown={onKeyDown}
+    >
+      <div className="r22-quiz-count" data-otto-quiz-count="">
+        {kicker ? <span>{kicker}</span> : null}
+        {questionnaireCountLabel(index, questions.length)}
+      </div>
+      <h3 id={titleId}>{question.question}</h3>
+      {help ? <p className="r22-quiz-help">{help}</p> : null}
+      {question.multi ? (
+        <div className="r22-quiz-options" data-otto-quiz-options="multi">{rows}</div>
+      ) : (
+        <RadioGroup
+          unstyled
+          className="r22-quiz-options"
+          data-otto-quiz-options="single"
+          aria-labelledby={titleId}
+          value={selected[0] ?? ""}
+          onValueChange={(value) => onSelectedChange([value])}
+        >
+          {rows}
+        </RadioGroup>
+      )}
+      {children}
+      <footer className="r22-quiz-acts">
+        {onPrevious && index > 0 ? (
+          <Button unstyled type="button" data-otto-quiz-previous="" disabled={busy} onClick={onPrevious}>Previous</Button>
+        ) : null}
+        {footNote ? <span className="r22-quiz-note">{footNote}</span> : null}
+        <span className="r22-quiz-gap" />
+        {onSkip ? (
+          <Button unstyled type="button" data-otto-quiz-skip="" {...(aliases?.skip ? { [aliases.skip]: "" } : {})} disabled={busy} onClick={onSkip}>Skip</Button>
+        ) : null}
+        <Button
+          unstyled
+          type="button"
+          className="is-primary"
+          data-otto-quiz-next=""
+          {...(aliases?.submit ? { [aliases.submit]: "" } : {})}
+          disabled={busy || !selected.length}
+          onClick={onNext}
+        >
+          {nextLabel ?? (last ? "Finish" : "Next")}
+        </Button>
+      </footer>
+    </Card>
+  );
+}
+
+/* ── 答尾动作卡(Cofounder 语法①)──────────────────────────────────────────── */
+
+/**
+ * 答完之后那一列**能点着开工**的下一步。
+ *
+ * 它与 `FollowupChips` 分工写死,两者并存不合并:
+ *   · chips = **续话建议** —— 点一下把这句话填进输入框,发送仍然由商家自己按,一分钱不动;
+ *   · 动作卡 = **直接开工** —— 点一下真的做了那件事(跳过去、存进去、开始跑)。
+ *
+ * 所以卡上带价钱,chips 上永远不带:带价钱的东西必须点了就真的发生,否则那个数字是句谎。
+ * 零死卡 —— 每一张的 `onRun` 都必须真的做成一件事,做不成的那一张不该出现在这一列里。
+ */
+export type ConversationAction = {
+  id: string;
+  label: string;
+  /** 一句安静的副文(去处、代价、结果)。 */
+  note?: string;
+  icon?: LucideIcon;
+  onRun: () => void;
+};
+
+export function ActionCards({
+  actions,
+  label = "Next steps",
+  className,
+}: {
+  actions: readonly ConversationAction[];
+  label?: string;
+  className?: string;
+}) {
+  if (!actions.length) return null;
+  return (
+    <div data-otto-action-cards="" className={`r22-convo-actions${className ? ` ${className}` : ""}`} role="group" aria-label={label}>
+      {actions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <Button unstyled type="button" key={action.id} data-otto-action-card={action.id} className="r22-convo-action" onClick={action.onRun}>
+            {Icon ? <Icon aria-hidden className="r22-convo-action-icon" /> : null}
+            <span>
+              <b>{action.label}</b>
+              {action.note ? <small>{action.note}</small> : null}
+            </span>
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── 闸卡(Cofounder 语法⑤)────────────────────────────────────────────────── */
+
+/**
+ * 钱不够(或权限不够)的那一刻,**在线程里**解决。
+ *
+ * Cofounder 那张卡的判断很对:闸口出现在商家正在做的这件事旁边,而不是弹一层全局窗把他
+ * 从现场拽走。他此刻的上下文就是「我刚让你再做四张」——余额行、主键、次键都长在那句话下面,
+ * 按完就接着做,不用回来找自己刚才说到哪。
+ *
+ * 余额行永远在:闸卡最该回答的问题是「还差多少」,不是「你不能做」。
+ */
+export function GateCard({
+  title,
+  detail,
+  balanceLabel,
+  primaryLabel,
+  onPrimary,
+  secondaryLabel,
+  onSecondary,
+  busy = false,
+  className,
+}: {
+  title: string;
+  detail: string;
+  /** 「12 cr left · this batch needs 18 cr」那一行。 */
+  balanceLabel: string;
+  primaryLabel: string;
+  onPrimary: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+  busy?: boolean;
+  className?: string;
+}) {
+  return (
+    <Card data-otto-gate-card="" role="group" aria-label={title} className={`r22-convo-card r22-convo-gate${className ? ` ${className}` : ""}`}>
+      <div className="r22-convo-card-head"><b>{title}</b></div>
+      <p>{detail}</p>
+      <small data-otto-gate-balance="">{balanceLabel}</small>
+      <footer className="r22-convo-ask-acts">
+        {onSecondary && secondaryLabel ? (
+          <Button unstyled type="button" data-otto-gate-secondary="" disabled={busy} onClick={onSecondary}>{secondaryLabel}</Button>
+        ) : null}
+        <Button unstyled type="button" className="is-primary" data-otto-gate-primary="" disabled={busy} onClick={onPrimary}>{primaryLabel}</Button>
+      </footer>
+    </Card>
   );
 }

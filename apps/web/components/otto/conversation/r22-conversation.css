@@ -408,3 +408,204 @@
     transition: none;
   }
 }
+
+/* ── 问卷卡(Founder 指定的 shadcn questionnaire 形)────────────────────────── */
+
+.r22-convo-quiz {
+  gap: 10px;
+}
+
+.r22-quiz-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-convo-quiz h3 {
+  margin: 0;
+  font-size: var(--r22-text-body-lg);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+.r22-quiz-help {
+  margin: 0;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink-3);
+}
+
+.r22-quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.r22-quiz-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--r22-line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.r22-quiz-options label:hover {
+  background: var(--r22-tint-hover);
+}
+
+.r22-quiz-options label.is-selected {
+  border-color: var(--r22-ink-3);
+  background: var(--r22-chrome);
+}
+
+.r22-quiz-options label > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.r22-quiz-options label b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--r22-text-small);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+.r22-quiz-options label b em {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--r22-good-soft);
+  font-size: var(--r22-text-mono-label);
+  font-style: normal;
+  color: var(--r22-good-text);
+}
+
+.r22-quiz-options label small {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+/* 右端那枚小圆字母 —— 它印的就是真的按得动的那个键。 */
+.r22-quiz-key {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  font-size: var(--r22-text-mono-label);
+}
+
+.r22-quiz-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.r22-quiz-gap {
+  flex: 1 1 auto;
+}
+
+.r22-quiz-note {
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-quiz-acts button {
+  padding: 6px 12px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 7px;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink-2);
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.r22-quiz-acts button:hover:not(:disabled) {
+  background: var(--r22-tint-hover);
+}
+
+.r22-quiz-acts button.is-primary {
+  border-color: transparent;
+  background: var(--r22-ink);
+  color: var(--r22-surface);
+}
+
+.r22-quiz-acts button.is-primary:hover:not(:disabled) {
+  background: var(--r22-ink-hover);
+}
+
+.r22-quiz-acts button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+/* ── 答尾动作卡 ─────────────────────────────────────────────────────────────── */
+
+.r22-convo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.r22-convo-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--r22-line);
+  border-radius: 8px;
+  background: var(--r22-surface);
+  text-align: left;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.r22-convo-action:hover {
+  border-color: var(--r22-line-2);
+  background: var(--r22-chrome);
+}
+
+.r22-convo-action-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--r22-ink-3);
+}
+
+.r22-convo-action b {
+  display: block;
+  font-size: var(--r22-text-small);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+.r22-convo-action small {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+/* ── 闸卡 ───────────────────────────────────────────────────────────────────── */
+
+.r22-convo-gate {
+  border-color: var(--r22-warn-border);
+  background: var(--r22-warn-soft);
+}
+
+.r22-convo-gate p {
+  color: var(--r22-warn-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-quiz-options label,
+  .r22-quiz-acts button,
+  .r22-convo-action {
+    transition: none;
+  }
+}
