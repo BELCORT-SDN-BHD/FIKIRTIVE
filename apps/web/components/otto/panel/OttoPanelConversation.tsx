@@ -36,6 +36,10 @@ import { OttoFrontDoor } from "@/components/otto/OttoFrontDoor";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoAnswerCard } from "./OttoAnswerCard";
 import { FollowupChips } from "@/components/otto/conversation/ConversationParts";
+import { MentionChips, MentionPicker, useMentionField } from "@/components/otto/conversation/MentionField";
+import { creationMentionCandidates } from "@/components/creation/creation-fixture";
+import { LIBRARY_FIXTURE_KEY, readLibraryArchive, type LibraryArchive } from "@/components/library/library-fixture";
+import { scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
 import { OttoResearchCard } from "@/components/otto/conversation/OttoResearchCard";
 import {
   OTTO_RESEARCH_TICK_MS,
@@ -249,6 +253,22 @@ type PendingTurn = { prompt: string; context: string; retrying: boolean };
 
 function R22FixtureConversation({ projectId, threads, activeThread, contextLabel, onThreadStarted, onThreadUpdate }: { projectId: string; threads: ChatThreadDTO[]; activeThread: ChatThreadDTO | null; contextLabel?: string; onThreadStarted: (thread: ChatThreadDTO) => void; onThreadUpdate: (thread: ChatThreadDTO) => void }) {
   const [text, setText] = React.useState("");
+  const composerRef = React.useRef<HTMLInputElement>(null);
+  /**
+   * `@` 候选(Founder 2026-08-26 第 3 件)。
+   *
+   * 这一面的占位句从 R22 原型起就写着 "Ask Otto — @ adds references" —— 承诺挂了几个月,
+   * 打下去什么都不会发生。补的是实现,不是删承诺;而候选读的是商家**真的**有的东西:
+   * 仓库存档、他的项目、他教过 Otto 的那几条。
+   */
+  const [archive, setArchive] = React.useState<LibraryArchive>({ assets: [], packs: [] });
+  React.useEffect(() => { setArchive(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY))); }, []);
+  const mentions = useMentionField({
+    candidates: React.useMemo(() => creationMentionCandidates(archive), [archive]),
+    text,
+    setText,
+    inputRef: composerRef,
+  });
   /** 正在想(`.otto-wait`)。原型是「发出去 → 等一下 → 落答案或落一句读不出来」。 */
   const [pending, setPending] = React.useState<PendingTurn | null>(null);
   /** 读不出来(`.otto-error`)。它留在会话里,带一颗 Retry —— 不是一句消失的 toast。 */
@@ -360,6 +380,7 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
     const site = siteLinkIn(clean);
     if (site) {
       setText("");
+      mentions.reset();
       onThreadStarted(buildOttoResearchThread({
         projectId,
         site,
@@ -380,6 +401,7 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
     if (activeThread) onThreadUpdate({ ...activeThread, messages: [...messages, said], updatedAt: R22_FIXTURE_NOW, status: "working" });
     else onThreadStarted({ id: fixtureThreadId, projectId, title: clean.length > 42 ? `${clean.slice(0, 39)}…` : clean, updatedAt: R22_FIXTURE_NOW, pinnedAt: null, status: "working", messages: [said] });
     setText("");
+    mentions.reset();
     setPending({ prompt: clean, context, retrying: false });
   }
 
@@ -417,7 +439,7 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
               const lastAnswer = !user && !research && index === messages.length - 1 && !pending;
               return <MessageScrollerItem key={message.id} messageId={String(message.id)} scrollAnchor={user}><Message unstyled align={user ? "end" : "start"}><MessageContent unstyled><Bubble unstyled align={user ? "end" : "start"}><BubbleContent unstyled className={user ? "r22-otto-msg-me" : "r22-otto-msg-otto"}>
                 {research
-                  ? <OttoResearchCard state={research} fixture onDecide={decideResearch} />
+                  ? <OttoResearchCard state={research} fixture onDecide={decideResearch} onAsk={(text) => send(text)} />
                   : answered
                     ? <OttoAnswerCard answerId={String(message.id)} answer={responseFor(answered.context, answered.prompt, R22_FIXTURE_SIGNALS)} />
                     : message.text}
@@ -455,12 +477,24 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
         整段会贴着顶走 —— 那正是 2026-08-25 Founder 看到的「输入框浮在上面」。 */}
     <form data-otto-panel-composer="" onSubmit={submit} className="r22-otto-foot">
       <label className="sr-only" htmlFor="r22-otto-fixture-composer">Ask Otto</label>
+      <MentionPicker field={mentions}>
       <div className="r22-otto-composer">
-        <Input unstyled id="r22-otto-fixture-composer" value={text} onChange={(event) => setText(event.target.value)} placeholder={OTTO_PANEL_PLACEHOLDER} className="r22-otto-composer-input" />
+        <div className="r22-otto-composer-chips" data-otto-panel-chips><MentionChips field={mentions} /></div>
+        <Input
+          unstyled
+          ref={composerRef}
+          id="r22-otto-fixture-composer"
+          value={text}
+          onChange={(event) => { setText(event.target.value); mentions.sync(event.target.value, event.target.selectionStart); }}
+          onKeyDown={(event) => { mentions.onKeyDown(event); }}
+          placeholder={OTTO_PANEL_PLACEHOLDER}
+          className="r22-otto-composer-input"
+        />
         <Button unstyled type="submit" disabled={!text.trim() || pending !== null} aria-label="Send" className="r22-otto-composer-send">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 12.5v-9M4.2 7.2 8 3.4l3.8 3.8" /></svg>
         </Button>
       </div>
+      </MentionPicker>
       <div className="r22-otto-compose-note"><span data-otto-panel-context-note="">{ottoPanelContextNote(contextLabel)}</span><span>Enter to send</span></div>
     </form>
   </div>;

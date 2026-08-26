@@ -24,6 +24,7 @@ import { AtSign, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import "./r22-conversation.css";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 
@@ -251,7 +252,7 @@ export function MentionChips({ field, className }: { field: MentionField; classN
   return (
     <>
       {field.chips.map((chip) => (
-        <span className={`r22-canvas-chip is-mention${className ? ` ${className}` : ""}`} key={chip.id} data-otto-mention-chip={chip.id}>
+        <span className={`r22-mention-chip${className ? ` ${className}` : ""}`} key={chip.id} data-otto-mention-chip={chip.id}>
           <b>{chip.name}</b>
           <Button unstyled type="button" aria-label={`Remove ${chip.name} from this request`} data-otto-mention-chip-remove={chip.id} onClick={() => field.drop(chip.id)}>
             <X aria-hidden="true" />

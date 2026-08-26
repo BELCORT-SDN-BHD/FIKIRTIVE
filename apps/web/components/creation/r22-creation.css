@@ -280,10 +280,6 @@
   color: var(--r22-ink-3);
 }
 
-.r22-canvas-chip.is-mention b {
-  font-size: var(--r22-text-caption);
-}
-
 @media (max-width: 900px) {
   .r22-creation-full {
     grid-template-columns: minmax(0, 1fr);

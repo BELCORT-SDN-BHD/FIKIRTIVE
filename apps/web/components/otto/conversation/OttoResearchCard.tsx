@@ -15,10 +15,12 @@
 import * as React from "react";
 import Link from "next/link";
 
+import { BookOpen, Sparkles } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-import { AssistantProse, ProgressCard, WaitingCard, WorkedLine } from "./ConversationParts";
+import { ActionCards, AssistantProse, ProgressCard, WaitingCard, WorkedLine, type ConversationAction } from "./ConversationParts";
 import {
   OTTO_RESEARCH_ACCEPT_LINE,
   OTTO_RESEARCH_SAMPLE_NOTE,
@@ -70,14 +72,33 @@ function CategoryCard({
   );
 }
 
+/** 完成之后那一列动作卡。做不到的那一张不出现 —— 所以没接 `onAsk` 时只剩真链接那一张。 */
+function doneActions({ fixture, onAsk }: { fixture: boolean; onAsk?: (text: string) => void }): ConversationAction[] {
+  const out: ConversationAction[] = [
+    { id: "open-iq", label: "Open Otto IQ", note: "See everything Otto keeps", icon: BookOpen, href: ottoIQHref(fixture) },
+  ];
+  if (onAsk) {
+    out.push({
+      id: "use-it-now",
+      label: "Show me where Otto uses this",
+      icon: Sparkles,
+      onRun: () => onAsk("Where did Otto learn this?"),
+    });
+  }
+  return out;
+}
+
 export function OttoResearchCard({
   state,
   fixture,
   onDecide,
+  onAsk,
 }: {
   state: OttoResearchState;
   fixture: boolean;
   onDecide: (categoryId: string, decision: "approved" | "skipped") => void;
+  /** 把一句话发进这条线程(答尾动作卡里那张「现在就用上」按下去走的就是它)。 */
+  onAsk?: (text: string) => void;
 }) {
   if (state.stage === "accepted" || state.stage === "working") {
     return (
@@ -130,6 +151,12 @@ export function OttoResearchCard({
         <Link data-otto-research-open-iq="" href={ottoIQHref(fixture)}>Open Otto IQ</Link>
       </div>
       <WorkedLine seconds={state.workedSeconds} steps={OTTO_RESEARCH_STEPS} />
+      {/*
+        答尾那一列动作卡(第 5 件)。零死卡:一张是**真链接**(中键新开、右键复制地址都
+        成立),一张真的把一句话发进这条线程 —— 而那句话命中的是一条真答得出来的路由,
+        不是一句好看的空话。
+      */}
+      <ActionCards actions={doneActions({ fixture, onAsk })} />
     </div>
   );
 }

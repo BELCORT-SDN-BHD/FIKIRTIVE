@@ -75,6 +75,11 @@ const R22_SURFACES = [
   // 扫不到全站每一张问答卡真正的画法,而这种漏是静默的。
   "components/otto/conversation/ConversationParts.tsx",
   "components/otto/conversation/OttoResearchCard.tsx",
+  // composer 的 `@`(2026-08-26 第 3 件)拆出来的一份 —— 三处 composer 引用的都是它。
+  // 上面那段话说的正是这件事:新文件不上名单,四条通用围栏一条也扫不到它。
+  "components/otto/conversation/MentionField.tsx",
+  // 全屏创作对话(2026-08-26 第 1 件)。Create 那条主路径整块地方就是它。
+  "components/creation/CreationConversation.tsx",
   // 四扇门的等待画面同理:它们是商家真的会看见的一屏,只是活得短。
   "app/approvals/loading.tsx",
   "app/billing/loading.tsx",
@@ -167,6 +172,15 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     expect(canvas, "画布的缩放条要用 ButtonGroup").toContain("<ButtonGroup");
     // 单图编辑层那六个风格预设同理 —— 它是最后一份手搓 roving,2026-08-26 一起归位。
     expect(source("components/library/ImageEditLayer.tsx")).toContain("<RadioGroup");
+    // 全屏创作对话(2026-08-26 第 1 件):弹层归 Dialog、分段控件归 ToggleGroup、
+    // 参数弹层归 Popover、问卷归共用零件 —— 一件手搓的都没有。
+    const creation = source("components/creation/CreationConversation.tsx");
+    expect(creation, "全屏创作对话要用 Dialog").toContain("<DialogContent");
+    expect(creation, "图/视频与形状是成组单选,归 ToggleGroup").toContain("<ToggleGroup");
+    expect(creation, "参数弹层归 Popover").toContain("<PopoverContent");
+    expect(creation, "追问要用共用问卷零件").toContain("<QuestionnaireCard");
+    // `@` 候选表是一串可键盘走的选项 —— 归 Command(cmdk),不是手搓一个 listbox。
+    expect(source("components/otto/conversation/MentionField.tsx"), "@ 候选表要用 Command").toContain("<CommandItem");
     // 这条钉的是「Approvals 这些控件是 shadcn 的,不是手搓的」。八件升级把这一面拆成了
     // 五个文件,于是每个 primitive 钉在**现在真的画它的那个文件**上:筛选留在壳里,
     // 勾选跟着卡走,理由单选跟着改版流走。写成「任意一个 approvals 文件里出现过」会让

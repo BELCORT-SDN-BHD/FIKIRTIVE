@@ -609,3 +609,48 @@
     transition: none;
   }
 }
+
+/* ── @ 引用芯片 ─────────────────────────────────────────────────────────────── */
+
+/* 与画布的上下文芯片同族(同一排、同一个圆角、同一颗叉)—— 它们回答的是同一个问题:
+   我这句话在说谁。样式住在共用零件这一份里,三处 composer 因此不必各自导一份画布样式。 */
+.r22-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 999px;
+  background: var(--r22-surface);
+}
+
+.r22-mention-chip b {
+  font-size: var(--r22-text-caption);
+  font-weight: 500;
+  color: var(--r22-ink-2);
+}
+
+.r22-mention-chip button {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--r22-ink-3);
+  transition: background-color 140ms ease;
+}
+
+.r22-mention-chip button:hover {
+  background: var(--r22-tint-hover);
+}
+
+.r22-mention-chip button svg {
+  width: 11px;
+  height: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .r22-mention-chip button {
+    transition: none;
+  }
+}

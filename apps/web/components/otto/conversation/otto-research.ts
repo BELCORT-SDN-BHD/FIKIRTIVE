@@ -25,6 +25,7 @@
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { ChatThreadDTO } from "@/lib/types";
 import { scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
+import { honestDeviationLine } from "./honest-deviation";
 
 export type OttoResearchStage = "accepted" | "working" | "waiting" | "done";
 export type OttoResearchDecision = "pending" | "approved" | "skipped";
@@ -62,9 +63,17 @@ export const OTTO_RESEARCH_STEPS = [
 export const OTTO_RESEARCH_ACCEPT_LINE =
   "This takes a few minutes. You can go and do something else — I will leave everything in this conversation for you.";
 
-/** 呈给商家看的那一句,逐字说清它是样例,不是刚抓回来的。 */
-export const OTTO_RESEARCH_SAMPLE_NOTE =
-  "These are sample lines that show how the result is grouped. Nothing was read from your site in this preview.";
+/**
+ * 呈给商家看的那一句,逐字说清它是样例,不是刚抓回来的。
+ *
+ * 2026-08-26 起它走全站那一条**诚实偏离句式**(第 7 件):做不到的那件事 + 改做了什么,
+ * 一句。上一版是两句 —— 前半句说这是样例,后半句说没读过你的网站;两句说的是同一件事,
+ * 而商家真正要知道的那半件(那我现在看到的是什么)被排在第二句。
+ */
+export const OTTO_RESEARCH_SAMPLE_NOTE = honestDeviationLine(
+  "Reading your own site",
+  "grouped a set of sample lines that show how the result comes back",
+);
 
 /** 每一步大约多久推进一次(样张节拍,几秒内走完)。 */
 export const OTTO_RESEARCH_TICK_MS = 900;

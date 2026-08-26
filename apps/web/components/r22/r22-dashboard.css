@@ -1793,3 +1793,22 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   /* 减弱动效 = 去运动,不是换一种运动:抽屉直接在那儿,不滑进来。 */
   .r22-dashboard-side-panel[data-slot="sheet-content"] { animation: none; }
 }
+
+/* ── 面板 composer 的 @ 引用芯片(Founder 2026-08-26 第 3 件)────────────────────
+   芯片是 composer 的第一行,因为它回答的是「我这句话在说谁」——与画布那一排同族。
+   一个都没有的时候整行不占地方(`:empty`),否则空面板底下会多出一条无缘无故的横条。 */
+.r22-otto-composer {
+  flex-wrap: wrap;
+}
+
+.r22-otto-composer-chips {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 8px 0;
+}
+
+.r22-otto-composer-chips:empty {
+  display: none;
+}

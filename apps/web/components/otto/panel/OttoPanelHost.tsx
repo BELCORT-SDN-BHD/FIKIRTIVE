@@ -51,6 +51,7 @@ import { OttoThreadList } from "./OttoThreadList";
 import { OTTO_ROOMS_ID, OttoRoomSwitcher } from "./OttoRoomSwitcher";
 import { panelContextSubject, panelQuickChips } from "./panel-page";
 import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
+import { OTTO_PANEL_FIXTURE_KEY } from "@/components/otto/conversation/otto-thread-archive";
 import {
   buildOttoResearchThread,
   nextOttoResearchOrdinal,
@@ -102,7 +103,12 @@ const R22_FIXTURE_SEED: Seed = {
   userName: "Nadia",
 };
 
-const R22_OTTO_FIXTURE_KEY = "r22:otto-panel:v1";
+/**
+ * 会话表的键从 `otto-thread-archive.ts` 来 —— 全屏创作对话在 Library 那扇门里往同一张表
+ * 加一条 creation 线程,而写的人与读的人不在同一棵组件树上。键名两处各写一份,少对上一个
+ * 字节,商家做完一场创作回头去面板就是找不到那条线程,而且没有任何一处会报错。
+ */
+const R22_OTTO_FIXTURE_KEY = OTTO_PANEL_FIXTURE_KEY;
 const R22_OTTO_FIXTURE_UPDATED_AT = "2026-08-25T08:42:00.000Z";
 type R22OttoFixtureState = { projects: Seed["projects"]; threads: ChatThreadDTO[]; activeThreadId: string | null };
 

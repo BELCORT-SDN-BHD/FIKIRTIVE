@@ -422,6 +422,9 @@ describe("④ 对话零件:三处引用的是同一份", () => {
       "components/canvas/R22CanvasSurface.tsx",
       "components/otto/panel/OttoPanelConversation.tsx",
       "components/otto/panel/OttoRoomSwitcher.tsx",
+      // 2026-08-26 深夜第 1 件加入的第五个调用点:全屏创作对话。它是 Create 那条主路径
+      // 整块地方,问卷卡、动作卡、闸卡、气泡全部取自同一份零件。
+      "components/creation/CreationConversation.tsx",
     ]) {
       expect(source(relative), `${relative} 没有接上共用零件`).toMatch(importRe);
     }
