@@ -25,20 +25,23 @@
 .r22-edit-h { margin: 10px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
 
 .r22-edit-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.r22-edit-preset { display: grid; grid-template-columns: 22px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; padding: 7px 9px; align-items: center; border: 1px solid var(--r22-line-2); border-radius: 9px; background: var(--r22-surface); text-align: left; transition: border-color 140ms ease-out, background-color 140ms ease-out; }
+.r22-edit-preset { display: grid; grid-template-columns: 15px 22px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; padding: 7px 9px; align-items: center; border: 1px solid var(--r22-line-2); border-radius: 9px; background: var(--r22-surface); cursor: pointer; text-align: left; transition: border-color 140ms ease-out, background-color 140ms ease-out; }
+.r22-edit-preset [data-slot=radio-group-item] { position: relative; display: grid; grid-row: span 2; width: 15px; height: 15px; padding: 0; place-items: center; border: 1.5px solid var(--r22-ink-3); border-radius: 50%; background: var(--r22-surface); }
+.r22-edit-preset [data-slot=radio-group-item][data-state=checked]:after { width: 7px; height: 7px; border-radius: 50%; background: var(--r22-ink); content: ""; }
+.r22-edit-preset [data-slot=radio-group-item]:focus-visible { outline: 2px solid var(--r22-ink); outline-offset: 3px; }
 .r22-edit-preset i { grid-row: span 2; width: 22px; height: 22px; border: 1px solid var(--r22-line); border-radius: 6px; }
 .r22-edit-preset b { color: var(--r22-ink); font-size: var(--r22-text-caption); font-weight: 500; }
 .r22-edit-preset small { color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); }
 .r22-edit-preset.is-selected { border-color: var(--r22-ink); background: var(--r22-chrome); }
-.r22-edit-preset:disabled { opacity: .55; }
+.r22-edit-preset[data-busy] { opacity: .55; cursor: not-allowed; }
 
 /* 色块 —— CSS 画的示意,不是照片:没有一张真图会在这里暗示「按下去就长这样」。 */
-.r22-edit-preset[data-r22-edit-preset="warmer-light"] i { background: var(--r22-grad-peach); }
-.r22-edit-preset[data-r22-edit-preset="brighter"] i { background: linear-gradient(135deg, var(--r22-swatch-cream), var(--r22-surface)); }
-.r22-edit-preset[data-r22-edit-preset="studio-backdrop"] i { background: linear-gradient(135deg, var(--r22-chrome), var(--r22-line-2)); }
-.r22-edit-preset[data-r22-edit-preset="batik-pattern"] i { background: linear-gradient(135deg, var(--r22-swatch-teal-1), var(--r22-swatch-teal-2)); }
-.r22-edit-preset[data-r22-edit-preset="festive-glow"] i { background: linear-gradient(135deg, var(--r22-swatch-gold-1), var(--r22-swatch-gold-2)); }
-.r22-edit-preset[data-r22-edit-preset="black-and-white"] i { background: linear-gradient(135deg, var(--r22-ink), var(--r22-ink-3)); }
+.r22-edit-preset[data-preset="warmer-light"] i { background: var(--r22-grad-peach); }
+.r22-edit-preset[data-preset="brighter"] i { background: linear-gradient(135deg, var(--r22-swatch-cream), var(--r22-surface)); }
+.r22-edit-preset[data-preset="studio-backdrop"] i { background: linear-gradient(135deg, var(--r22-chrome), var(--r22-line-2)); }
+.r22-edit-preset[data-preset="batik-pattern"] i { background: linear-gradient(135deg, var(--r22-swatch-teal-1), var(--r22-swatch-teal-2)); }
+.r22-edit-preset[data-preset="festive-glow"] i { background: linear-gradient(135deg, var(--r22-swatch-gold-1), var(--r22-swatch-gold-2)); }
+.r22-edit-preset[data-preset="black-and-white"] i { background: linear-gradient(135deg, var(--r22-ink), var(--r22-ink-3)); }
 
 .r22-edit-phrase { min-height: 54px; padding: 8px 10px; border: 1px solid var(--r22-line-2); border-radius: 9px; background: var(--r22-surface); color: var(--r22-ink); font-family: inherit; font-size: var(--r22-text-small); line-height: 1.5; outline: none; resize: none; transition: border-color 140ms ease-out; }
 .r22-edit-phrase:focus-visible { border-color: var(--r22-ink-3); }
@@ -58,7 +61,7 @@
 .r22-edit-x { position: absolute; top: 13px; right: 13px; z-index: 2; display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; color: var(--r22-ink-2); transition: background-color 140ms ease-out, color 140ms ease-out; }
 
 @media (hover: hover) and (pointer: fine) {
-  .r22-edit-preset:hover:not(:disabled) { border-color: var(--r22-ink-3); }
+  .r22-edit-preset:not([data-busy]):hover { border-color: var(--r22-ink-3); }
   .r22-edit-version:hover { border-color: var(--r22-ink-3); }
   .r22-edit-go:hover:not(:disabled) { background: var(--r22-ink-hover); }
   .r22-edit-x:hover { background: var(--r22-chrome); color: var(--r22-ink); }

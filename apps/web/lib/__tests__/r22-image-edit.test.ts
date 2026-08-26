@@ -21,7 +21,10 @@
  *     第二条(`addLibraryAssets` 仍按 id 去重),可屏幕上报的是一句 Done —— 正是那种「说做了、
  *     其实没做」的谎;
  *   · `ImageEditLayer` 的版本条 `onClick` 不再 `setPreviewId` ⇒ ⑧ 红;
- *   · `LibraryDetailLayer` 里 `disabled={asset.kind === "video"}` 改成 `disabled={false}` ⇒ ⑨ 红。
+ *   · `LibraryDetailLayer` 里 `disabled={asset.kind === "video"}` 改成 `disabled={false}` ⇒ ⑨ 红;
+ *   · (2026-08-26 归位 shadcn RadioGroup 之后加做)预设格从 `RadioGroup` 换回
+ *     `<div role="radiogroup">` ⇒ ⑤⑥⑦⑧⑩ 六条一起红(`RadioGroupItem` 落在 Root 外面直接
+ *     炸开整层),外加 `r22-shadcn-composition` 的「禁手搓语义」那一格红。
  */
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";

@@ -36,7 +36,8 @@
  *   · `runQuickCreate` 里把 `commit(addLibraryAssets(...))` 换成只 `say(...)` ⇒ ⑥ 红;
  *   · `send()` 里跳过 `quickCreateQuestion` 直接 `run` ⇒ ⑦ 红;
  *   · 参数控件那三处 `disabled={locked}` 撤掉(回到「只冻显示」) ⇒ ⑦ 红;
- *   · 问题卡选项的 `onKeyDown` / `tabIndex` 撤掉 ⇒ ⑦-b 红;
+ *   · 问题卡的 `RadioGroup` 换回一排 `Button` 加 `role="radio"` ⇒ ⑦-b 红,外加
+ *     `r22-shadcn-composition` 的「禁手搓语义」与逐文件 `<RadioGroup>` 两格红;
  *   · `runQuickCreate` 里删掉 `appendCanvasFixtureHandoff(...)` ⇒ ⑧ 红;
  *   · `ImmersiveCanvasEntry` 的 fixture 分支把项目写回 `fixture-raya` ⇒ ⑧ 后半红;
  *   · `runQuickCreate` 里把 `archiveRef.current` 换回闭包里的 `archive` ⇒ ⑩ 红;
@@ -396,20 +397,32 @@ describe("⑦ 太含糊就先问一句,而且承诺多少就收多少", () => {
 
     const options = all<HTMLButtonElement>("[data-r22-lib-ask-option]");
     expect(options.length, "问题卡上没有选项").toBe(3);
-    // 一组单选在 Tab 序里只占一站:还没选时只有第一个可聚焦。
-    expect(options.map((node) => node.tabIndex), "三个选项各占一站 Tab —— 那不是一组单选").toEqual([0, -1, -1]);
+    expect(options.every((node) => node.getAttribute("role") === "radio"), "这几个不是单选").toBe(true);
+    // 一组单选在 Tab 序里只占一站:还没选时那一站在**组**本身上(shadcn RadioGroup 的
+    // roving focus 原生行为),三个选项谁都不抢 Tab。
+    expect(need("[data-r22-lib-ask] [data-slot=radio-group]").getAttribute("tabindex")).toBe("0");
+    expect(options.map((node) => node.tabIndex), "三个选项各占一站 Tab —— 那不是一组单选").toEqual([-1, -1, -1]);
 
-    options[0]!.focus();
-    await act(async () => { options[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    // 方向键之后焦点搬家是排在下一个 macrotask 里的(Radix `setTimeout(() => focusFirst(…))`),
+    // 所以每一次都得等那一拍 —— 不等就是在按下键的同一帧上核对结果,永远核不到。
+    async function arrow(node: HTMLButtonElement, key: string) {
+      await act(async () => {
+        node.focus();
+        node.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    await arrow(options[0]!, "ArrowDown");
     let checked = all<HTMLButtonElement>("[data-r22-lib-ask-option]").map((node) => node.getAttribute("aria-checked"));
     expect(checked, "方向键什么都没发生 —— 键盘上这组单选是死的").toEqual(["false", "true", "false"]);
     expect(document.activeElement, "选中跟着走了,焦点没跟上").toBe(all<HTMLButtonElement>("[data-r22-lib-ask-option]")[1]);
 
-    // 组内循环:从最后一个再往下回到第一个。
-    await act(async () => { all<HTMLButtonElement>("[data-r22-lib-ask-option]")[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })); });
+    // 组内循环:从第一个再往上绕回最后一个。
+    await arrow(all<HTMLButtonElement>("[data-r22-lib-ask-option]")[1]!, "ArrowUp");
     checked = all<HTMLButtonElement>("[data-r22-lib-ask-option]").map((node) => node.getAttribute("aria-checked"));
     expect(checked).toEqual(["true", "false", "false"]);
-    await act(async () => { all<HTMLButtonElement>("[data-r22-lib-ask-option]")[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })); });
+    await arrow(all<HTMLButtonElement>("[data-r22-lib-ask-option]")[0]!, "ArrowUp");
     checked = all<HTMLButtonElement>("[data-r22-lib-ask-option]").map((node) => node.getAttribute("aria-checked"));
     expect(checked, "到头了没有绕回去").toEqual(["false", "false", "true"]);
 

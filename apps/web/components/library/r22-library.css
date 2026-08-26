@@ -199,10 +199,14 @@ button.r22-lib-layer-source { border-bottom: 1px solid var(--r22-line-2); align-
 .r22-lib-ask h3 { margin: 6px 0 0; color: var(--r22-ink); font-size: var(--r22-text-body-lg); font-weight: 600; letter-spacing: -.01em; }
 .r22-lib-ask-help { margin: 4px 0 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.55; }
 .r22-lib-ask-options { display: grid; gap: 6px; margin-top: 11px; }
-.r22-lib-ask-options button { display: grid; gap: 2px; padding: 9px 11px; border: 1px solid var(--r22-line-2); border-radius: 10px; background: var(--r22-surface); text-align: left; transition: border-color 140ms ease-out, background-color 140ms ease-out; }
-.r22-lib-ask-options button b { color: var(--r22-ink); font-size: var(--r22-text-small); font-weight: 600; }
-.r22-lib-ask-options button small { color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
-.r22-lib-ask-options button.is-selected { border-color: var(--r22-ink); background: var(--r22-chrome); }
+.r22-lib-ask-options > label { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--r22-line-2); border-radius: 10px; background: var(--r22-surface); cursor: pointer; text-align: left; transition: border-color 140ms ease-out, background-color 140ms ease-out; }
+.r22-lib-ask-options [data-slot=radio-group-item] { position: relative; display: grid; width: 15px; height: 15px; flex: none; padding: 0; place-items: center; border: 1.5px solid var(--r22-ink-3); border-radius: 50%; background: var(--r22-surface); }
+.r22-lib-ask-options [data-slot=radio-group-item][data-state=checked]:after { width: 7px; height: 7px; border-radius: 50%; background: var(--r22-ink); content: ""; }
+.r22-lib-ask-options [data-slot=radio-group-item]:focus-visible { outline: 2px solid var(--r22-ink); outline-offset: 3px; }
+.r22-lib-ask-options b, .r22-lib-ask-options small { display: block; }
+.r22-lib-ask-options b { color: var(--r22-ink); font-size: var(--r22-text-small); font-weight: 600; }
+.r22-lib-ask-options small { margin-top: 2px; color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
+.r22-lib-ask-options > label.is-selected { border-color: var(--r22-ink); background: var(--r22-chrome); }
 .r22-lib-ask-acts { display: flex; margin-top: 12px; align-items: center; gap: 8px; }
 .r22-lib-ask-acts span { color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
 .r22-lib-ask-acts button { margin-left: 0; padding: 6px 11px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink-2); font-size: var(--r22-text-caption); font-weight: 500; transition: background-color 140ms ease-out; }
@@ -217,7 +221,7 @@ button.r22-lib-layer-source { border-bottom: 1px solid var(--r22-line-2); align-
   .r22-lib-row:hover { background: var(--r22-chrome); }
   .r22-lib-create:hover, .r22-lib-layer-open:hover { background: var(--r22-ink-hover); }
   .r22-lib-upload:hover, .r22-lib-make-kind button:hover, .r22-lib-make-shape:hover, .r22-lib-make-shapes button:hover, .r22-lib-make-counts button:hover, .r22-lib-make-x:hover, .r22-lib-ask-acts button:not(.is-primary):hover, .r22-lib-notice-act:hover { background: var(--r22-chrome); }
-  .r22-lib-ask-options button:hover { border-color: var(--r22-ink-3); }
+  .r22-lib-ask-options > label:hover { border-color: var(--r22-ink-3); }
   .r22-lib-bulk button:hover { background: var(--r22-ink-hover); }
   a.r22-lib-layer-origin:hover, button.r22-lib-layer-source:hover { color: var(--r22-ink); border-color: var(--r22-ink); }
 }
@@ -244,5 +248,5 @@ html[data-kb="1"] .r22-lib-scrim { animation: none !important; transition: none 
 
 @media (prefers-reduced-motion: reduce) {
   .r22-lib-bulk, .r22-lib-layer[data-state="open"], .r22-lib-packlayer[data-state="open"], .r22-lib-make-form, .r22-lib-make-menu, .r22-lib-ask { animation: none; }
-  .r22-lib-tile, .r22-lib-row, .r22-lib-check, .r22-lib-star, .r22-lib-nav li button, .r22-lib-seg button, .r22-lib-layer-acts button, .r22-lib-layer-x, .r22-lib-make-kind button, .r22-lib-make-shape, .r22-lib-make-shapes button, .r22-lib-make-counts button, .r22-lib-ask-options button, .r22-lib-ask-acts button, button.r22-lib-layer-source { transition: none; }
+  .r22-lib-tile, .r22-lib-row, .r22-lib-check, .r22-lib-star, .r22-lib-nav li button, .r22-lib-seg button, .r22-lib-layer-acts button, .r22-lib-layer-x, .r22-lib-make-kind button, .r22-lib-make-shape, .r22-lib-make-shapes button, .r22-lib-make-counts button, .r22-lib-ask-options > label, .r22-lib-ask-acts button, button.r22-lib-layer-source { transition: none; }
 }

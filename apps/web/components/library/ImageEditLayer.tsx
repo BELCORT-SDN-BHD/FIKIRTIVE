@@ -19,10 +19,11 @@
  */
 
 import { Sparkles } from "lucide-react";
-import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { fixtureQuoteCredits } from "@/components/canvas/r22-canvas-fixture";
 
@@ -57,7 +58,8 @@ export function ImageEditLayer({
   const [previewId, setPreviewId] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
-  const presetRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  /** shadcn 官方示例的 `htmlFor` / `id` 配对要一个稳定前缀。 */
+  const presetId = useId();
   const timerRef = useRef<number | null>(null);
 
   /** 预设与人话是同一句话的两种说法,谁后说算谁的 —— 两句一起发,商家就说不清要哪一个。 */
@@ -88,27 +90,6 @@ export function ImageEditLayer({
     }, 640);
   }
 
-  /**
-   * 预设格的键盘行为,与问题卡那一组单选同一套:方向键在组内循环移动并选中(焦点跟着选中
-   * 走),空格选中此刻这一个,Tab 只进出这一组一次。一排普通按钮配 `role="radiogroup"`
-   * 而不补这一套,屏幕上是一组单选、用起来不是。
-   */
-  function onPresetKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
-    const last = IMAGE_EDIT_PRESETS.length - 1;
-    if (event.key === " " || event.key === "Spacebar") {
-      event.preventDefault();
-      setPreset(IMAGE_EDIT_PRESETS[index]!.label);
-      return;
-    }
-    const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
-    const backward = event.key === "ArrowLeft" || event.key === "ArrowUp";
-    if (!forward && !backward) return;
-    event.preventDefault();
-    const next = forward ? (index === last ? 0 : index + 1) : (index === 0 ? last : index - 1);
-    setPreset(IMAGE_EDIT_PRESETS[next]!.label);
-    presetRefs.current[next]?.focus();
-  }
-
   return (
     <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
       <DialogContent unstyled showCloseButton={false} className="r22-edit-layer" overlayClassName="r22-edit-scrim">
@@ -127,28 +108,32 @@ export function ImageEditLayer({
           </DialogDescription>
 
           <h3 className="r22-edit-h">Style</h3>
-          <div className="r22-edit-presets" role="radiogroup" aria-label="Style">
-            {IMAGE_EDIT_PRESETS.map((option, index) => (
-              <Button
-                unstyled
-                type="button"
+          {/* 一组**真**单选:方向键循环、焦点跟随、Tab 只占一站,全是 shadcn RadioGroup
+              (Radix roving focus)自带的。这一面上一版把那一整套自己写了一遍 —— 写得对,
+              但它是第三份实现,而键盘行为分家只有用键盘的人碰得到。 */}
+          <RadioGroup
+            unstyled
+            className="r22-edit-presets"
+            aria-label="Style"
+            value={preset}
+            disabled={busy}
+            onValueChange={setPreset}
+          >
+            {IMAGE_EDIT_PRESETS.map((option) => (
+              <label
                 key={option.id}
-                ref={(node: HTMLButtonElement | null) => { presetRefs.current[index] = node; }}
-                role="radio"
-                aria-checked={preset === option.label}
-                tabIndex={preset ? (preset === option.label ? 0 : -1) : index === 0 ? 0 : -1}
-                data-r22-edit-preset={option.id}
+                htmlFor={`${presetId}-${option.id}`}
+                data-preset={option.id}
                 className={preset === option.label ? "r22-edit-preset is-selected" : "r22-edit-preset"}
-                disabled={busy}
-                onKeyDown={(event) => onPresetKeyDown(event, index)}
-                onClick={() => setPreset(option.label)}
+                data-busy={busy ? "" : undefined}
               >
+                <RadioGroupItem unstyled id={`${presetId}-${option.id}`} value={option.label} data-r22-edit-preset={option.id} />
                 <i aria-hidden="true" />
                 <b>{option.label}</b>
                 <small>{option.hint}</small>
-              </Button>
+              </label>
             ))}
-          </div>
+          </RadioGroup>
 
           <h3 className="r22-edit-h">Describe the change</h3>
           <Textarea

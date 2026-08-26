@@ -89,7 +89,11 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
 
   it.each(R22_SURFACES)("%s does not hand-roll component semantics", (relative) => {
     const text = source(relative);
-    expect(text, `${relative}: use Dialog/Tabs/Switch/Menu primitives`).not.toMatch(/role=["'](?:dialog|tab|tablist|switch|menu|menuitem)["']/);
+    // `radio` / `radiogroup` 是 2026-08-26 加进来的(Founder:全部 UI 严格用 shadcn)——
+    // 一排普通按钮配这两个 role,屏幕上是一组单选、用起来不是,除非把方向键循环、焦点
+    // 跟随、Tab 只占一站那一整套自己再写一遍。写第二遍不是错,是**第二份**:两份键盘
+    // 行为迟早分家,而分家只有用键盘的人碰得到。
+    expect(text, `${relative}: use Dialog/Tabs/Switch/Menu/RadioGroup primitives`).not.toMatch(/role=["'](?:dialog|tab|tablist|switch|menu|menuitem|radio|radiogroup)["']/);
     expect(text, `${relative}: use Separator`).not.toMatch(/<hr(?:\s|\/?>)/);
     expect(text, `${relative}: use gap utilities`).not.toMatch(/\bspace-[xy]-/);
     expect(text, `${relative}: use Checkbox or RadioGroup`).not.toMatch(/<Input\b[^>]*\btype=["'](?:checkbox|radio)["']/);
@@ -124,6 +128,12 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     // 建项目那一层的问题卡是一组**真**单选;Library 快产车间那一张同理 —— 两处都不许
     // 再用一排普通按钮加 `role="radio"` 手搓(键盘行为会跟着一起手搓,而且迟早不一致)。
     expect(source("components/projects/ProjectStartDialog.tsx")).toContain("<RadioGroup");
+    expect(source("components/library/LibraryQuickCreate.tsx")).toContain("<RadioGroup");
+    // 画布的问题卡两路都归位过了:单选走 RadioGroup,多选走 Checkbox。
+    expect(source("components/canvas/R22CanvasSurface.tsx")).toContain("<RadioGroup");
+    expect(source("components/canvas/R22CanvasSurface.tsx")).toContain("<Checkbox");
+    // 单图编辑层那六个风格预设同理 —— 它是最后一份手搓 roving,2026-08-26 一起归位。
+    expect(source("components/library/ImageEditLayer.tsx")).toContain("<RadioGroup");
     // 这条钉的是「Approvals 这些控件是 shadcn 的,不是手搓的」。八件升级把这一面拆成了
     // 五个文件,于是每个 primitive 钉在**现在真的画它的那个文件**上:筛选留在壳里,
     // 勾选跟着卡走,理由单选跟着改版流走。写成「任意一个 approvals 文件里出现过」会让
