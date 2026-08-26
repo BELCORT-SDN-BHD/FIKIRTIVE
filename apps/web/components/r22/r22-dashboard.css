@@ -656,6 +656,9 @@
   border-radius: 12px;
   background: var(--r22-surface);
   box-shadow: var(--r22-shadow-lg);
+  color: var(--r22-ink);
+  color-scheme: light;
+  --ring: var(--r22-ink); /* 深色下 `--ring` 会翻成珊瑚色,输入行的焦点圈跟着变色;这一面是固定浅色,圈也该是墨色。 */
 }
 
 /*
@@ -663,11 +666,19 @@
   root / input / list / group / item。选择器跟着换成 `data-slot`,几何一个像素没动 ——
   换的是骨头,不是长相。零动效那条碑照旧:这一段与 scrim 那一段仍然是纯
   position/背景/边框,没有 animation、没有 transition。
+
+  ⚠️ 墨色必须在这一层就地钉死(Founder 2026-08-26 实证的「叠印」)。next-themes 在系统
+  深色时给 <html> 落 `.dark`,shadcn 的 `text-popover-foreground` 随之翻成 #FAFAFA;
+  r22 这一层却是固定浅色(r22-tokens.css 没有深色分支,面还是白的)。于是 label 那半截
+  白字压在白面上只剩一层影,右边 mono 的 detail 因为自己写死 `--r22-ink-3` 照常实色 ——
+  看上去就是一行里两段字叠在一起。palette 又是 portal 挂到 <body> 的,够不到
+  `.r22-dashboard-shell` 上的墨色,所以两处都要显式写:类在元素自己身上,继承赢不了它。
 */
 .r22-dashboard-search-dialog [data-slot="command"] {
   display: flex;
   flex-direction: column;
   background: transparent;
+  color: var(--r22-ink);
 }
 
 .r22-dashboard-search-dialog [data-slot="command-input-wrapper"] {
@@ -703,6 +714,7 @@
 
 .r22-dashboard-search-dialog kbd {
   padding: 3px 6px;
+  background: var(--r22-chrome); /* `ui/kbd` 自带 `bg-muted`,深色下会翻成近黑 —— 同一枚深色渗漏,见上面那段注解。 */
   border: 1px solid var(--r22-line-2);
   border-radius: 5px;
   color: var(--r22-ink-3);
@@ -727,17 +739,27 @@
   overflow-y: auto;
 }
 
+/* group 带 `text-foreground`、item 选中带 `text-accent-foreground`,两枚都要就地压住 —— 见上面那段深色注解。 */
 .r22-dashboard-search-dialog [data-slot="command-group"] {
   padding: 0;
+  color: var(--r22-ink);
 }
 
 .r22-dashboard-search-dialog [data-slot="command-item"] {
   padding: 0;
   border-radius: 8px;
+  color: var(--r22-ink);
 }
 
+/*
+  换壳前这个 <a> 住在一个 block 的 <li> 里,自己就摊满整行,所以 `span { flex: 1 }` 能把
+  右边那截 mono detail 顶到行尾。cmdk 的 item 自己是 flex 容器,<a> 一进去就缩成内容宽,
+  detail 于是紧贴在 label 后面,可点区也只剩左半行。补 `flex: 1` 把行宽还回来。
+*/
 .r22-dashboard-search-dialog [data-slot="command-item"] a {
   display: flex;
+  min-width: 0;
+  flex: 1;
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
@@ -748,6 +770,7 @@
 
 .r22-dashboard-search-dialog [data-slot="command-item"][data-selected="true"] {
   background: var(--r22-chrome);
+  color: var(--r22-ink);
 }
 
 .r22-dashboard-search-dialog [data-slot="command-item"] svg {
