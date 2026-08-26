@@ -126,6 +126,24 @@ function priceText(): string {
   return container!.querySelector(".r22-canvas-price")?.textContent ?? "";
 }
 
+/**
+ * 在 composer 里打一句话。
+ *
+ * beta 卫生大扫除(2026-08-26,台账 P1-3)之后,空输入时发送键本来就是灰的 —— 那是**另一条**
+ * 闸(「按得动就一定有事发生」)。这一份文件钉的是**价格**那条闸,所以每条断言之前先把字打进去:
+ * 否则「按不下去」会因为输入框是空的而恒真,断言就从「价格拦住了它」滑成「什么都没证明」。
+ * 口径因此是升的,不是降的。
+ */
+async function typePrompt(): Promise<void> {
+  const composer = container!.querySelector<HTMLTextAreaElement>('textarea[aria-label="Describe what to make"]');
+  expect(composer, "composer 没有输入框 —— 下面几条在核对空气").not.toBeNull();
+  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(composer!, "A tray of kuih for Raya");
+    composer!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 describe("花钱先看见:价格贴在发送键旁(设计原则第 3 条)", () => {
   it("报价还没回来时不编一个数字,发送键按不下去", async () => {
     // 报价永远不 resolve —— 就是「这一刻还不知道要花多少」。
@@ -134,6 +152,9 @@ describe("花钱先看见:价格贴在发送键旁(设计原则第 3 条)", () =
 
     expect(priceText()).toBe("Checking cost…");
     expect(priceText(), "还不知道价格,屏上却已经印了一个数").not.toMatch(/\d/);
+
+    await typePrompt();
+
     expect(sendButton().disabled, "价格未知,发送键却按得下去").toBe(true);
   });
 
@@ -142,14 +163,19 @@ describe("花钱先看见:价格贴在发送键旁(设计原则第 3 条)", () =
 
     expect(mocks.quoteCosts).toHaveBeenCalledWith(1);
     expect(priceText()).toBe("8 cr");
-    expect(sendButton().disabled).toBe(false);
+
+    await typePrompt();
+
+    expect(sendButton().disabled, "价格已经在屏上了,发送键还被拦着").toBe(false);
   });
 
   it("形状读不出来时同样按不下去 —— 半份事实不算看见了", async () => {
     mocks.imageShapes.mockRejectedValue(new Error("shapes unavailable"));
     await renderSurface();
 
-    expect(sendButton().disabled).toBe(true);
+    await typePrompt();
+
+    expect(sendButton().disabled, "形状读不出来,发送键却按得下去").toBe(true);
   });
 });
 
