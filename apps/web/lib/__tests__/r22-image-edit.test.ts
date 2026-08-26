@@ -13,12 +13,15 @@
  *   ⑨ 视频没有可改的那一帧,所以那颗键是关着的,而且**说得出为什么**;
  *   ⑩ 改出来的那一条在详情层认得回它的原图。
  *
- * 变异自检(逐条实做,做完以 commit 为锚还原,红 → 绿):
- *   · `ArtCell` 里删掉 `data-canvas-art-action="edit"` 那一颗 ⇒ ⑤ 画布那一半红;
- *   · `editedLibraryAsset` 的 `id` 去掉 `input.source.id` 那一段 ⇒ ⑦ 红(两次改动撞成一条别的东西);
- *   · `makeEdit` 里把 `addLibraryAssets(current, [created])` 换成直接改原图 ⇒ ⑥ 红;
+ * 变异自检(2026-08-26 逐条实做,做完以 commit 为锚还原,红 → 绿):
+ *   · `ArtCell` 里那一颗 Edit 的 `onAction("edit", art)` 改接成 `onAction("star", art)` ⇒ ⑤b 红;
+ *   · `editedLibraryAsset` 的 `editedFromId` 改成 `undefined` ⇒ ⑥⑧⑩ 三条一起红
+ *     (血缘一断,版本条与「Edited from …」同时失灵 —— 它们读的是同一个字段);
+ *   · `LibraryWorkroom.makeEdit` 里去掉「库里已经有这一条」那道判词 ⇒ ⑦ 红:库里确实没有多出
+ *     第二条(`addLibraryAssets` 仍按 id 去重),可屏幕上报的是一句 Done —— 正是那种「说做了、
+ *     其实没做」的谎;
  *   · `ImageEditLayer` 的版本条 `onClick` 不再 `setPreviewId` ⇒ ⑧ 红;
- *   · `LibraryDetailLayer` 里 `disabled={asset.kind === "video"}` 删掉 ⇒ ⑨ 红。
+ *   · `LibraryDetailLayer` 里 `disabled={asset.kind === "video"}` 改成 `disabled={false}` ⇒ ⑨ 红。
  */
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";

@@ -15,10 +15,12 @@
  *   ⑫ 全局搜索的 "Go to" 与侧栏同源 —— 侧栏没有的门,搜索里也搜不出来;
  *   ⑬ 通知样例零指向被藏的门,Approvals 那枚「5」跟着门一起走。
  *
- * 变异自检(逐条实做,做完以 commit 为锚还原,红 → 绿):
+ * 变异自检(2026-08-26 逐条实做,做完以 commit 为锚还原,红 → 绿):
  *   · `NAV_KEYS` 加回 `"approvals"` ⇒ ⑪⑫ 红;
  *   · 通知样例里把第一条换回 `/approvals?fixture=r22` ⇒ ⑬ 红;
- *   · 侧栏 `<em>5</em>` 那一行加回来(并把 approvals 放回 NAV_KEYS)⇒ ⑬ 红。
+ *   · 侧栏 `{fixture && label === "Approvals" && <em>5</em>}` 那一行连同 `NAV_KEYS` 里的
+ *     approvals 一起放回来 ⇒ ⑪⑫⑬ 三条全红(徽标那半条只在样张态才存在,所以 ⑬ 在
+ *     `?fixture=r22` 下核 —— 在生产态核它等于核对空气)。
  */
 import { act, createElement as h } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -72,12 +74,12 @@ const VISIBLE_DOORS = ["home", "create", "library", "brand"]
 let host: HTMLDivElement;
 let root: Root;
 
-async function mountShell() {
+async function mountShell(location = "/") {
   const { R22DashboardShell } = await import("@/components/r22/R22DashboardShell");
   await act(async () => {
     root.render(
       h(R22DashboardShell, {
-        location: "/",
+        location,
         account: { displayName: "Harvest Candle Co", email: "n@h.example", balance: 0 },
         signOutAction: vi.fn(async () => undefined),
         children: h("div", null, "page"),
@@ -144,8 +146,11 @@ describe("beta V1 导航收窄", () => {
       expect(item.title.toLowerCase(), `样例通知「${item.title}」还在说审批`).not.toContain("approval");
     }
 
-    await mountShell();
+    // 徽标只在样张态出现过(`fixture && label === "Approvals"`),所以要在样张态里核 ——
+    // 生产态本来就没有那枚数字,在那里核等于核对空气。
+    await mountShell("/?fixture=r22");
     const rail = host.querySelector('[aria-label="Global navigation"]')!;
+    expect(rail.textContent, "样张态没进去 —— 下面那条在核对空气").toContain("Library");
     expect(rail.querySelector("em"), "侧栏上还挂着一枚指向被藏的门的徽标").toBeNull();
   });
 });

@@ -11,11 +11,12 @@
  *   ③ 画布空板上也有同一排,点一下同样只填进 composer,板上不多出任何东西;
  *   ④ 板上已经有东西的时候不出这一排 —— 那时商家要的是「再改一版」,不是「从头起手」。
  *
- * 变异自检(逐条实做,做完以 commit 为锚还原,红 → 绿):
- *   · `CreationTemplateRow` 的 `onClick` 改成 `onPick(template)` 之外再调一次发送 ⇒ ① 红;
- *   · `LibraryQuickCreate` 里 `locked={locked}` 改成 `locked={false}` ⇒ ② 红;
- *   · `R22CanvasSurface` 的 `boardEmpty` 改成常量 `false` ⇒ ③ 红;
- *   · 同一个 `boardEmpty` 改成常量 `true` ⇒ ④ 红。
+ * 变异自检(2026-08-26 逐条实做,做完以 commit 为锚还原,红 → 绿):
+ *   · `LibraryQuickCreate` 的 `onPick` 里去掉 `setPrompt(template.prompt)` ⇒ ① 红
+ *     (「expected '' to be 'Clean product shot …'」);
+ *   · 同一处 `locked={locked}` 改成 `locked={false}` ⇒ ② 红(「Product shot 在问题卡在的时候还按得动」);
+ *   · `R22CanvasSurface` 的 `boardEmpty` 前面加 `false &&` ⇒ ③ 红(「空板上没有起手模板」);
+ *   · 同一个 `boardEmpty` 前面加 `true ||` ⇒ ④ 红(「板上有东西了还在劝商家从头起手」)。
  */
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
