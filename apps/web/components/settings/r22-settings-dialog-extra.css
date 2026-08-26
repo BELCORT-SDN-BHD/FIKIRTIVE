@@ -87,3 +87,50 @@
   font-size: 10px; /* 原型 L2383-2384 真值,冻结族 */
   font-weight: 650;
 }
+
+/* ── A-13:会话行与工作区目录行归位 `ui/item`,几何照旧钉在 data-slot 上 ────────── */
+.r22-settings-session-list > [data-slot="item"] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 0;
+  border-top: 1px solid var(--r22-line);
+  border-radius: 0;
+}
+
+.r22-settings-session-list > [data-slot="item"]:first-child { border-top: 0; }
+.r22-settings-session-list [data-slot="item-content"] { min-width: 0; flex: 1; gap: 0; }
+.r22-settings-session-list [data-slot="item-title"] { display: block; font-size: 12px; font-weight: 400; }
+.r22-settings-session-list [data-slot="item-description"] { margin: 3px 0 0; color: var(--r22-ink-3); font-size: 10.5px; }
+.r22-settings-session-list [data-slot="item-actions"] { gap: 0; }
+
+.r22-settings-workspace-directory > [data-slot="item"].r22-settings-workspace-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 0;
+  border-top: 1px solid var(--r22-line);
+  border-radius: 0;
+}
+
+.r22-settings-workspace-directory [data-slot="item-content"] { min-width: 0; flex: 1; gap: 0; }
+.r22-settings-workspace-directory [data-slot="item-title"] { display: block; font-size: var(--r22-text-body); font-weight: 560; }
+.r22-settings-workspace-directory [data-slot="item-description"] { margin: 3px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); }
+.r22-settings-workspace-directory [data-slot="item-actions"] { gap: 0; }
+.r22-settings-workspace-directory-avatar[data-slot="item-media"] {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none !important;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: var(--r22-chrome);
+  color: var(--r22-avatar-ink);
+  font-size: 10px; /* 原型 L2383-2384 真值,冻结族 */
+  font-weight: 650;
+  translate: none;
+  align-self: center;
+}
