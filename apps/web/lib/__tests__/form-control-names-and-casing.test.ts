@@ -81,9 +81,15 @@ function readOpeningTag(text: string, start: number): string {
  *  - `label`: the platform's own wrapper association.
  *  - `Field`: OttoSchedule's local wrapper — it renders exactly one `label` element around
  *    its children with its `label` prop as the visible text.
- * If either stops rendering a real label element, this list is the thing to fix.
+ *  - `FlowField` (Otto IQ) / `DialogField` (Settings): the two local wrappers added
+ *    2026-08-26 when the R22 form rows moved onto `ui/field`. Each renders one
+ *    `<FieldLabel htmlFor={id}>` and hands the same `id` to the control it wraps, so
+ *    everything inside carries a name — the association is just built at runtime, where a
+ *    source scanner cannot see it. That the control really takes the id is pinned
+ *    separately (`r22-structural-shadcn.test.ts` ③), so this entry is not a free pass.
+ * If any of them stops rendering a real label element, this list is the thing to fix.
  */
-const LABELLING_TAGS = ["label", "Field"] as const;
+const LABELLING_TAGS = ["label", "Field", "FlowField", "DialogField"] as const;
 
 /**
  * Every control the merchant types into or picks from. #739 filed the multi-line and dropdown
@@ -275,7 +281,7 @@ describe("sweep mechanics", () => {
   });
 
   it("knows which wrappers it accepts as a name source and which controls it polices", () => {
-    expect([...LABELLING_TAGS]).toEqual(["label", "Field"]);
+    expect([...LABELLING_TAGS]).toEqual(["label", "Field", "FlowField", "DialogField"]);
     expect([...CONTROL_TAGS]).toEqual(["textarea", "select", "Textarea", "input", "Input"]);
   });
 

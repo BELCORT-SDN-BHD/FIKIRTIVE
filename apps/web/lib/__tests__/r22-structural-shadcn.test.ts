@@ -278,6 +278,26 @@ describe("③ 表单行归位 ui/field:错误就近 + aria-describedby", () => {
     expect(document.body.querySelectorAll('.r22-settings-dialog-fields > p[role="alert"]').length, "块末尾那条不该再画一遍").toBe(0);
   });
 
+  /**
+   * `form-control-names-and-casing` 那道 sweep 把 `FlowField` / `DialogField` 当作「给里面
+   * 的控件起名字的包装」放行了。放行的前提是**每一处调用都真的把 id 交给控件** —— 少一次
+   * `{...control}`,那一格就悄悄变回没名字的框,而 sweep 看不出来。这条就是那个前提的钉子。
+   */
+  it("d. 每一处 FlowField / DialogField 都真的把 id 交给了控件", () => {
+    for (const relative of ["components/otto-iq/R22OttoIQView.tsx", "components/settings/R22SettingsShell.tsx"]) {
+      const text = source(relative);
+      const calls = [...text.matchAll(/<(FlowField|DialogField)\b/g)];
+      expect(calls.length, `${relative} 一处都没有 —— 这条在核对空气`).toBeGreaterThan(0);
+      for (const call of calls) {
+        // 从调用开头到它自己的收尾标签之间,必须出现一次 `{...control}`。
+        const from = call.index!;
+        const end = text.indexOf(`</${call[1]}>`, from);
+        expect(end, `${relative} 的 <${call[1]}> 没有收尾`).toBeGreaterThan(from);
+        expect(text.slice(from, end), `${relative}:${text.slice(0, from).split("\n").length} 的控件没接上 id`).toContain("{...control}");
+      }
+    }
+  });
+
   it("c. 手写的 `<fieldset><legend>` 全部归 FieldSet / FieldLegend", () => {
     const iq = source("components/otto-iq/R22OttoIQView.tsx");
     expect(iq, "不许再手搓 fieldset").not.toMatch(/<fieldset>/);

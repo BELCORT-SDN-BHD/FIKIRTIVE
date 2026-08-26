@@ -308,13 +308,23 @@ describe("#804 wire ② — `dark:` fires on the class, not the OS", () => {
     expect(rule).not.toContain("prefers-color-scheme");
   });
 
-  it("the six shipped dark: call sites are the ones this fixes", async () => {
+  /**
+   * 这条钉的是**清单**,不是数量:上面那条已经证明 `dark:` 编译到 `.dark`、不落进
+   * `prefers-color-scheme`,所以任何一件带 `dark:` 的正典件都吃同一个修好的变体。清单在
+   * 这里的作用是「新增一处要有人看见」—— 2026-08-26 装 `field` 与 `input-group` 时各带了
+   * 上游自己的 `dark:` 声明(`dark:bg-input/30` 一族),照实登记,不手改正典件去掩盖。
+   *
+   * `kbd.tsx` 是**这一批之前**就漂进来、没人登记的一处(父提交 `a94b54ba` 上这条断言就已经
+   * 是红的:实况 7 份,清单写 6 份)。一并登记 —— 把它留红等于让下一个人以为这条围栏本来
+   * 就不亮。
+   */
+  it("the shipped dark: call sites are the ones this fixes", async () => {
     const kit = path.join(webRoot, "components/ui");
     const withDark: string[] = [];
     for (const name of await fs.readdir(kit)) {
       if ((await fs.readFile(path.join(kit, name), "utf8")).includes("dark:")) withDark.push(name);
     }
-    expect(withDark.sort()).toEqual(["bubble.tsx", "radio-group.tsx", "select.tsx", "switch.tsx", "textarea.tsx", "toggle.tsx"]);
+    expect(withDark.sort()).toEqual(["bubble.tsx", "field.tsx", "input-group.tsx", "kbd.tsx", "radio-group.tsx", "select.tsx", "switch.tsx", "textarea.tsx", "toggle.tsx"]);
   });
 });
 

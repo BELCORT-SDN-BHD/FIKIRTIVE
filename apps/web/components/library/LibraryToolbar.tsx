@@ -9,8 +9,8 @@
  *   · **Upload** 降为次级 —— 它照旧是一等公民(藏进菜单第三层等于告诉商家「你的照片不
  *     算数」),只是不再是这一排唯一的动作。
  *
- * 真的 file picker:`<Input type="file">` 藏在视觉之外(不是 `display:none` —— 那样键盘也
- * 到不了),按钮点它。
+ * 真的 file picker:一个 type=file 的 Input 藏在视觉之外(不是 `display:none` —— 那样键盘
+ * 也到不了),按钮点它。
  */
 
 import { LayoutGrid, Rows3, Search, Sparkles, Upload } from "lucide-react";
