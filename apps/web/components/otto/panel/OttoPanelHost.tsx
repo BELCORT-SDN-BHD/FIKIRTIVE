@@ -51,6 +51,11 @@ import { OttoThreadList } from "./OttoThreadList";
 import { OTTO_ROOMS_ID, OttoRoomSwitcher } from "./OttoRoomSwitcher";
 import { panelContextSubject, panelQuickChips } from "./panel-page";
 import { readR22WorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
+import {
+  buildOttoResearchThread,
+  nextOttoResearchOrdinal,
+  takeOttoSiteResearchRequest,
+} from "@/components/otto/conversation/otto-research";
 
 const OttoPanelConversation = React.lazy(() =>
   import("./OttoPanelConversation").then((m) => ({ default: m.OttoPanelConversation })),
@@ -87,6 +92,10 @@ const R22_FIXTURE_SEED: Seed = {
   threads: [
     { id: "fixture-otto-raya", projectId: "fixture-raya", title: "Raya launch plan", updatedAt: "2026-08-24T12:40:00.000Z", pinnedAt: "2026-08-24T12:41:00.000Z", status: "done", messages: [{ id: "fixture-otto-raya-user", role: "USER", kind: "TEXT", seq: 1, text: "Help me shape the Raya launch into three clear posts.", payload: null, genJobId: null, createdAt: "2026-08-24T12:39:00.000Z" }, { id: "fixture-otto-raya-agent", role: "AGENT", kind: "TEXT", seq: 2, text: "Start with the market-stall story, follow with the scent pairing, then close with the gift deadline.", payload: null, genJobId: null, createdAt: "2026-08-24T12:40:00.000Z" }] },
     { id: "fixture-otto-connect", projectId: "fixture-raya", title: "Reconnect Instagram", updatedAt: "2026-08-23T08:15:00.000Z", pinnedAt: null, status: "done", messages: [{ id: "fixture-otto-connect-user", role: "USER", kind: "TEXT", seq: 1, text: "Why is Instagram held?", payload: null, genJobId: null, createdAt: "2026-08-23T08:14:00.000Z" }, { id: "fixture-otto-connect-agent", role: "AGENT", kind: "TEXT", seq: 2, text: "The provider has not confirmed this workspace connection. Reconnect from Settings before anything can publish.", payload: null, genJobId: null, createdAt: "2026-08-23T08:15:00.000Z" }] },
+    // creation 线程(Founder 2026-08-26 裁决第 1/2 条):它与上面两条是**分开的线程**,
+    // 但同列在这一张表里,行尾带一条回它自己那块板的路。归属写在消息的 payload 上
+    // (`ottoCanvas`),判断只有 `otto-thread-state.ts` 一处。
+    { id: "fixture-canvas-raya", projectId: "fixture-raya", title: "Raya market stall shots", updatedAt: "2026-08-25T08:20:00.000Z", pinnedAt: null, status: "working", messages: [{ id: "fixture-canvas-raya-user", role: "USER", kind: "TEXT", seq: 1, text: "Four shots of the candles on the market stall, warm morning light.", payload: { ottoCanvas: { projectId: "fixture-raya", projectName: "Raya launch" } }, genJobId: null, createdAt: "2026-08-25T08:19:00.000Z" }, { id: "fixture-canvas-raya-agent", role: "AGENT", kind: "TEXT", seq: 2, text: "Two are on the board. The other two are still going.", payload: null, genJobId: null, createdAt: "2026-08-25T08:20:00.000Z" }] },
   ],
   activeThreadId: null,
   balanceUsd: 250,
@@ -264,6 +273,22 @@ export function OttoPanelHost({
           const stored = readR22OttoFixture(workspaceId);
           setFixtureWorkspaceId(workspaceId);
           result = stored ? { ...R22_FIXTURE_SEED, projects: stored.projects, threads: stored.threads, activeThreadId: stored.activeThreadId } : workspaceId === "batik-house" ? R22_FIXTURE_SEED : { ...R22_FIXTURE_SEED, projects: [{ id: `fixture-${workspaceId}`, name: "Workspace project", pinnedAt: null }], projectId: `fixture-${workspaceId}`, threads: [], activeThreadId: null };
+          // Otto IQ 上按下「Ask Otto to read your site」留下的那个条(裁决第 3 条的第一个
+          // 入口)。它在这里变成一条线程并当场打开 —— 商家按完那颗按钮期待的是「Otto 已经
+          // 在做了」,而不是一块自己去把网址再打一遍的空白面板。取一次就没了,所以再开一次
+          // 面板不会重复开线程。
+          const requestedSite = takeOttoSiteResearchRequest();
+          if (requestedSite) {
+            const base = result;
+            const thread = buildOttoResearchThread({
+              projectId: base.projectId,
+              site: requestedSite,
+              said: `Read ${requestedSite} and sort what you find into Otto IQ.`,
+              ordinal: nextOttoResearchOrdinal(base.threads),
+              now: R22_OTTO_FIXTURE_UPDATED_AT,
+            });
+            result = { ...base, threads: [thread, ...base.threads], activeThreadId: thread.id };
+          }
         }
       } else result = await loadOttoPanelSeed(select).catch(() => ({ error: "Otto is not reachable right now." }));
       if (cancelled) return; // 这次取数被后来的关闭顶掉了——pendingSelectRef 原样留着,
@@ -677,6 +702,7 @@ export function OttoPanelHost({
       threads={threads}
       activeThreadId={activeThreadId}
       now={historyOpenedAt}
+      fixture={fixture}
       openingThreadId={openingThreadId}
       error={threadError}
       onSelectThread={(thread) => void selectThread(thread)}

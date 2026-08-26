@@ -34,8 +34,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
+import { AskOptionCard } from "@/components/otto/conversation/ConversationParts";
 import { CreationTemplateRow } from "@/components/creation/CreationTemplateRow";
 import {
   NEW_PROJECT_FIXTURE_ID,
@@ -175,32 +175,26 @@ export function ProjectStartDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* 问题卡换成全站共用的那一份(Founder 2026-08-26 裁决第 2/4 条):Create 弹窗、
+            画布、Otto 线程三处的问答从此是同一个零件。上一版这里、画布、Library 快产车间
+            各画了一遍选项列表 —— 三份键盘行为迟早分家,而分家只有用键盘的人碰得到。
+            `aliases` 保留这一面自己那套 DOM 钩子,既有验收一条都不用改。 */}
         {asked ? (
-          <div className="r22-projects-ask" data-r22-project-ask>
-            <p className="r22-projects-ask-kicker">{asked.header}</p>
-            <h3>{asked.question}</h3>
-            <p className="r22-projects-ask-help">{asked.help}</p>
-            <RadioGroup
-              unstyled
-              className="r22-projects-ask-options"
-              aria-label={asked.question}
-              value={picked}
-              onValueChange={setPicked}
-            >
-              {asked.options.map((option) => (
-                <label className={picked === option.label ? "is-selected" : ""} key={option.label} htmlFor={`${askId}-${option.label}`}>
-                  <RadioGroupItem unstyled id={`${askId}-${option.label}`} value={option.label} data-r22-project-ask-option={option.label} />
-                  <span><b>{option.label}</b><small>{option.description}</small></span>
-                </label>
-              ))}
-            </RadioGroup>
-            <div className="r22-projects-ask-acts">
-              <Button unstyled type="button" data-r22-project-ask-skip disabled={busy} onClick={() => create("")}>Skip</Button>
-              <Button unstyled type="button" className="is-primary" data-r22-project-ask-go disabled={!picked || busy} onClick={() => create(picked)}>
-                {busy ? "Opening…" : "Open the project"}
-              </Button>
-            </div>
-          </div>
+          <AskOptionCard
+            idPrefix={askId}
+            kicker={asked.header}
+            question={asked.question}
+            help={asked.help}
+            options={asked.options}
+            value={picked}
+            onValueChange={setPicked}
+            onSkip={() => create("")}
+            onSubmit={() => create(picked)}
+            submitLabel={busy ? "Opening…" : "Open the project"}
+            busy={busy}
+            className="r22-projects-ask"
+            aliases={{ card: "data-r22-project-ask", option: "data-r22-project-ask-option", skip: "data-r22-project-ask-skip", submit: "data-r22-project-ask-go" }}
+          />
         ) : null}
 
         {/* 起手模板 —— 与画布空态、Library 快产车间是同一个组件、同一批句子。点一下只把

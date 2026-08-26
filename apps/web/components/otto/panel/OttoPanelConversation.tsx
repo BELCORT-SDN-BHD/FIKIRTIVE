@@ -35,6 +35,20 @@ import { OttoChatStream } from "@/components/otto/OttoChatStream";
 import { OttoFrontDoor } from "@/components/otto/OttoFrontDoor";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoAnswerCard } from "./OttoAnswerCard";
+import { FollowupChips } from "@/components/otto/conversation/ConversationParts";
+import { OttoResearchCard } from "@/components/otto/conversation/OttoResearchCard";
+import {
+  OTTO_RESEARCH_TICK_MS,
+  advanceOttoResearch,
+  buildOttoResearchThread,
+  decideOttoResearchCategory,
+  nextOttoResearchOrdinal,
+  ottoResearchMemoryRow,
+  ottoResearchTicking,
+  siteLinkIn,
+  type OttoResearchState,
+} from "@/components/otto/conversation/otto-research";
+import { appendOttoIQSavedRow } from "@/components/otto-iq/otto-iq-fixture";
 import {
   OTTO_ANSWER_ERROR_NOTE,
   OTTO_ANSWER_ERROR_TITLE,
@@ -196,6 +210,24 @@ function answerPayloadOf(message: ChatThreadDTO["messages"][number]): OttoAnswer
   return answer && typeof answer.prompt === "string" ? answer : null;
 }
 
+/** 研究托付把它整件事的状态存在这一条消息的 payload 上 —— 线程存档因此自动带着它。 */
+function researchPayloadOf(message: ChatThreadDTO["messages"][number]): OttoResearchState | null {
+  const payload = message.payload as { ottoResearch?: OttoResearchState } | null;
+  const research = payload?.ottoResearch;
+  return research && typeof research.site === "string" ? research : null;
+}
+
+/**
+ * 答尾那一排后续问题(Jasper 形)。
+ *
+ * 三条都命中 `responseFor` 的真路由 —— 点一下必须真的答得出来,不能是三句好看的空话。
+ */
+const R22_FOLLOWUPS = [
+  "Why is this waiting for review?",
+  "What changes while a routine is paused?",
+  "Where did Otto learn this?",
+] as const;
+
 /**
  * 空态那三格起手卡,逐字取自原型 `starterHTML()`(L6709)的 `.otto-starter`。
  *
@@ -229,6 +261,57 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
   React.useEffect(() => {
     latest.current = { activeThread, onThreadUpdate };
   });
+
+  /* ── 研究托付(裁决第 3 条)──────────────────────────────────────────────────
+   *
+   * 整件事的状态只有**一份**:它挂在应承句那条消息的 payload 上,跟着线程走进
+   * `OttoPanelHost` 的存档。所以「刷新之后回来接着看」不是这里额外做的一件事 —— 它是
+   * 状态住对地方的自然结果。这里只做两件:到点往前推一拍,以及把商家的判断落下去。
+   */
+  const researchState = messages.reduce<OttoResearchState | null>((found, message) => found ?? researchPayloadOf(message), null);
+  /** 只在「还该往前走」的时候排定时器,并且把当前这一拍编进依赖 —— 推进一拍就重排一次。 */
+  const researchTick = researchState && ottoResearchTicking(researchState) ? `${researchState.stage}:${researchState.step}` : null;
+
+  /** 把新的研究状态写回那条消息,并让线程头跟着说同一句话(还在跑 / 做完了)。 */
+  const withResearch = React.useCallback((thread: ChatThreadDTO, next: OttoResearchState): ChatThreadDTO => ({
+    ...thread,
+    updatedAt: R22_FIXTURE_NOW,
+    status: next.stage === "done" ? "done" : "working",
+    messages: thread.messages.map((message) => (researchPayloadOf(message) ? { ...message, payload: { ottoResearch: next } } : message)),
+  }), []);
+
+  React.useEffect(() => {
+    if (!researchTick) return;
+    const timer = setTimeout(() => {
+      const { activeThread: thread, onThreadUpdate: update } = latest.current;
+      if (!thread) return;
+      const current = thread.messages.reduce<OttoResearchState | null>((found, message) => found ?? researchPayloadOf(message), null);
+      // 商家可能在这一拍飞行途中就把它答完了(waiting 之后立刻批完三类)——那种时候
+      // 这一拍什么都不该做,不然会把一件已经完成的事拖回「还在跑」。
+      if (!current || !ottoResearchTicking(current)) return;
+      update(withResearch(thread, advanceOttoResearch(current)));
+    }, OTTO_RESEARCH_TICK_MS);
+    return () => clearTimeout(timer);
+  }, [researchTick, withResearch]);
+
+  /**
+   * 商家对一类下了判断。
+   *
+   * **批准这一下就是真的落进 Otto IQ**(`appendOttoIQSavedRow` 写的是 Otto IQ 那一面自己
+   * 在读的那个键),不是先在线程里画个绿标、指望别处稍后同步。Skip 什么都不落。
+   */
+  const decideResearch = React.useCallback((categoryId: string, decision: "approved" | "skipped") => {
+    const { activeThread: thread, onThreadUpdate: update } = latest.current;
+    if (!thread) return;
+    const current = thread.messages.reduce<OttoResearchState | null>((found, message) => found ?? researchPayloadOf(message), null);
+    if (!current) return;
+    const next = decideOttoResearchCategory(current, categoryId, decision);
+    if (decision === "approved") {
+      const category = next.categories.find((item) => item.id === categoryId);
+      if (category) appendOttoIQSavedRow(ottoResearchMemoryRow(next, category));
+    }
+    update(withResearch(thread, next));
+  }, [withResearch]);
 
   React.useEffect(() => {
     if (!pending) return;
@@ -269,6 +352,21 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
     const clean = (forced ?? text).trim();
     if (!clean || pending) return;
     setFailure(null);
+    // 贴一条链接进来就是一次托付(裁决第 3 条的第二个入口)。它**另开一条线程**,不接在
+    // 商家正在读的这一条后面:研究要跑几分钟,而这条线程接下来的用处就是装这件事的全过程
+    // —— 混进一段别的对话里,商家回头找它就得靠翻。
+    const site = siteLinkIn(clean);
+    if (site) {
+      setText("");
+      onThreadStarted(buildOttoResearchThread({
+        projectId,
+        site,
+        said: clean,
+        ordinal: nextOttoResearchOrdinal(threads),
+        now: R22_FIXTURE_NOW,
+      }));
+      return;
+    }
     const nextOrdinal = threads.reduce((highest, thread) => {
       const match = /^fixture-otto-(\d+)$/.exec(thread.id);
       return match ? Math.max(highest, Number(match[1])) : highest;
@@ -304,15 +402,24 @@ function R22FixtureConversation({ projectId, threads, activeThread, contextLabel
                 {R22_STARTERS.map((starter) => <Button unstyled key={starter.title} type="button" className="r22-otto-starter" onClick={() => send(starter.prompt)}><b>{starter.title}</b><span>{starter.detail}</span></Button>)}
               </div>
             </BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
-            {messages.map((message) => {
+            {messages.map((message, index) => {
               const user = message.role === "USER";
               // Otto 的回话是一张**结构化的卡**(原型 `answerHTML`),不是一段散文:
               // 标题说这是什么、要点说清边界、注脚说这一轮什么都没动,再加一排真动作。
               const answered = user ? null : answerPayloadOf(message);
+              // 研究托付整件事画在它自己那条消息上 —— 应承句、进度、等你、回执都是同一
+              // 条消息的不同时刻,不是四条堆在一起的历史记录。
+              const research = user ? null : researchPayloadOf(message);
+              // 答尾那一排后续问题只挂在**最后一条**回话上:每条回话都挂一排,商家读到的
+              // 是一屏永远在追问的按钮,而不是一次顺手的接续。
+              const lastAnswer = !user && !research && index === messages.length - 1 && !pending;
               return <MessageScrollerItem key={message.id} messageId={String(message.id)} scrollAnchor={user}><Message unstyled align={user ? "end" : "start"}><MessageContent unstyled><Bubble unstyled align={user ? "end" : "start"}><BubbleContent unstyled className={user ? "r22-otto-msg-me" : "r22-otto-msg-otto"}>
-                {answered
-                  ? <OttoAnswerCard answerId={String(message.id)} answer={responseFor(answered.context, answered.prompt, R22_FIXTURE_SIGNALS)} />
-                  : message.text}
+                {research
+                  ? <OttoResearchCard state={research} fixture onDecide={decideResearch} />
+                  : answered
+                    ? <OttoAnswerCard answerId={String(message.id)} answer={responseFor(answered.context, answered.prompt, R22_FIXTURE_SIGNALS)} />
+                    : message.text}
+                {lastAnswer ? <FollowupChips chips={R22_FOLLOWUPS} onPick={(chip) => send(chip)} /> : null}
               </BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem>;
             })}
             {pending && (

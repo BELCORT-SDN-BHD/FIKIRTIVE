@@ -12,9 +12,17 @@
 import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import type { ChatThreadDTO } from "@/lib/types";
 import { threadDateBucket } from "@/components/otto/otto-nav-model";
+import { canvasMarkOf, ottoThreadState, type OttoCanvasMark, type OttoThreadState } from "@/components/otto/conversation/otto-thread-state";
 
-/** 原型 L6712 的尾注,一字不改:画布里的对话不进这份列表,而不是被悄悄合并进来。 */
-export const OTTO_ROOMS_NOTE = "Canvas conversations stay in their project and are excluded here.";
+/**
+ * 尾注。
+ *
+ * 上一版写的是「Canvas conversations stay in their project and are excluded here.」——
+ * Founder 2026-08-26 裁决第 1/2 条把那条规矩推翻了:creation 的对话与别的对话是**分开的
+ * 线程**,但同列在这一张表里。商家不该为了找回自己二十分钟前那块板,先去猜它算哪一类
+ * 对话。所以尾注跟着改成它现在真的成立的那句话:画布来的那几行带一条回板的路。
+ */
+export const OTTO_ROOMS_NOTE = "Conversations that started on a canvas open back on that board.";
 
 export type OttoRoomGroup = "Today" | "Recent";
 
@@ -25,6 +33,10 @@ export type OttoRoom = {
   where: string;
   when: string;
   group: OttoRoomGroup;
+  /** 三态之一(推导只有一处:`otto-thread-state.ts`)。 */
+  state: OttoThreadState;
+  /** 它是不是从一块板上起来的 —— 有值,行尾就画一条「Open canvas」。 */
+  canvas: OttoCanvasMark | null;
 };
 
 /** 四档折成原型的两组:今天的进 Today,其余(含读不懂的时间戳)进 Recent。 */
@@ -94,6 +106,8 @@ export function buildOttoRooms({
       where: projectName.get(thread.projectId) ?? "",
       when: roomWhen(thread.updatedAt, now),
       group: roomGroupOf(thread.updatedAt, now),
+      state: ottoThreadState(thread),
+      canvas: canvasMarkOf(thread),
     }));
 
   return {

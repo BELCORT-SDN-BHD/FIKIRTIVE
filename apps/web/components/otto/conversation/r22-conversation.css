@@ -1,0 +1,410 @@
+/**
+ * r22-conversation.css —— 共用对话零件的外观。
+ *
+ * 只用央册 token(`--r22-*`),一个裸值都没有 —— 这几件零件会被画进浮层(面板、画布上
+ * 那一格、Create 弹窗),而浮层拿不到局部作用域里的变量。字号一律走七档字梯,不新开尺寸。
+ */
+
+/* ── 气泡 ───────────────────────────────────────────────────────────────────── */
+
+.r22-convo-bubble {
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: var(--r22-text-body);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.r22-convo-bubble.is-me {
+  margin-left: auto;
+  background: var(--r22-chrome);
+  color: var(--r22-ink);
+}
+
+.r22-convo-bubble.is-otto {
+  background: var(--r22-surface);
+  color: var(--r22-ink);
+}
+
+.r22-convo-prose {
+  margin: 0;
+  font-size: var(--r22-text-body);
+  line-height: 1.55;
+  color: var(--r22-ink-2);
+}
+
+/* ── 卡的共同底 ─────────────────────────────────────────────────────────────── */
+
+.r22-convo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--r22-line);
+  border-radius: 10px;
+  background: var(--r22-surface);
+  box-shadow: var(--r22-shadow-sm);
+}
+
+.r22-convo-card p {
+  margin: 0;
+  font-size: var(--r22-text-small);
+  line-height: 1.5;
+  color: var(--r22-ink-2);
+}
+
+.r22-convo-card small {
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-convo-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.r22-convo-card-head b {
+  font-size: var(--r22-text-body);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+/* 完成态那一颗安静的绿点 —— 与「进行中」的转圈是两种东西,一眼分得开。 */
+.r22-convo-done-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--r22-good);
+}
+
+/* ── 进度卡 ─────────────────────────────────────────────────────────────────── */
+
+.r22-convo-progress-bar {
+  height: 4px;
+}
+
+.r22-convo-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.r22-convo-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink-3);
+}
+
+.r22-convo-steps li[data-current] {
+  color: var(--r22-ink);
+}
+
+.r22-convo-steps li[data-done] {
+  color: var(--r22-ink-2);
+}
+
+.r22-convo-steps li > span {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  place-items: center;
+  color: var(--r22-good-text);
+}
+
+.r22-convo-steps li > span svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── 等你卡 ─────────────────────────────────────────────────────────────────── */
+
+.r22-convo-waiting {
+  border-color: var(--r22-warn-border);
+  background: var(--r22-warn-soft);
+}
+
+.r22-convo-waiting p {
+  color: var(--r22-warn-text);
+}
+
+/* ── 选项卡 ─────────────────────────────────────────────────────────────────── */
+
+.r22-convo-ask h3 {
+  margin: 0;
+  font-size: var(--r22-text-body-lg);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+.r22-convo-ask-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--r22-text-mono-label);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--r22-ink-3);
+}
+
+.r22-convo-ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.r22-convo-ask-options label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--r22-line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.r22-convo-ask-options label:hover {
+  background: var(--r22-tint-hover);
+}
+
+.r22-convo-ask-options label.is-selected {
+  border-color: var(--r22-ink-3);
+  background: var(--r22-chrome);
+}
+
+.r22-convo-ask-options label b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--r22-text-small);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+.r22-convo-ask-options label b em {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--r22-good-soft);
+  font-size: var(--r22-text-mono-label);
+  font-style: normal;
+  color: var(--r22-good-text);
+}
+
+.r22-convo-ask-options label small {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-convo-ask-acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.r22-convo-ask-note {
+  margin-right: auto;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-convo-ask-acts button {
+  padding: 6px 12px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 7px;
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink-2);
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.r22-convo-ask-acts button:hover:not(:disabled) {
+  background: var(--r22-tint-hover);
+}
+
+.r22-convo-ask-acts button.is-primary {
+  border-color: transparent;
+  background: var(--r22-ink);
+  color: var(--r22-surface);
+}
+
+.r22-convo-ask-acts button.is-primary:hover:not(:disabled) {
+  background: var(--r22-ink-hover);
+}
+
+.r22-convo-ask-acts button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+/* ── 工时行 ─────────────────────────────────────────────────────────────────── */
+
+.r22-convo-worked-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.r22-convo-worked-trigger:hover {
+  background: var(--r22-tint-hover);
+  color: var(--r22-ink-2);
+}
+
+.r22-convo-worked-trigger svg:last-child {
+  transition: transform 140ms ease;
+}
+
+.r22-convo-worked-trigger[data-state="open"] svg:last-child {
+  transform: rotate(180deg);
+}
+
+.r22-convo-worked-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0 0 0 22px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+/* ── 后续问题 ───────────────────────────────────────────────────────────────── */
+
+.r22-convo-followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.r22-convo-followups button {
+  padding: 5px 10px;
+  border: 1px solid var(--r22-line);
+  border-radius: 999px;
+  background: var(--r22-surface);
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-2);
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.r22-convo-followups button:hover {
+  border-color: var(--r22-line-2);
+  background: var(--r22-chrome);
+}
+
+/* ── 研究托付 ───────────────────────────────────────────────────────────────── */
+
+.r22-research {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.r22-research-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.r22-research-category {
+  padding: 8px 10px;
+  border: 1px solid var(--r22-line);
+  border-radius: 8px;
+  background: var(--r22-surface);
+}
+
+.r22-research-category[data-decision="skipped"] {
+  opacity: .7;
+}
+
+.r22-research-category-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.r22-research-category-head b {
+  font-size: var(--r22-text-small);
+  font-weight: 600;
+  color: var(--r22-ink);
+}
+
+.r22-research-category-slot {
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-3);
+}
+
+.r22-research-category ul {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0 0;
+  padding: 0 0 0 16px;
+  font-size: var(--r22-text-caption);
+  line-height: 1.5;
+  color: var(--r22-ink-2);
+}
+
+.r22-research-category-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.r22-research-category-acts button {
+  padding: 4px 10px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 6px;
+  font-size: var(--r22-text-caption);
+  color: var(--r22-ink-2);
+  transition: background-color 140ms ease;
+}
+
+.r22-research-category-acts button:hover {
+  background: var(--r22-tint-hover);
+}
+
+.r22-research-category-acts button.is-primary {
+  border-color: transparent;
+  background: var(--r22-ink);
+  color: var(--r22-surface);
+}
+
+.r22-research-category-acts button.is-primary:hover {
+  background: var(--r22-ink-hover);
+}
+
+.r22-research-done-acts a {
+  font-size: var(--r22-text-small);
+  color: var(--r22-ink);
+  text-decoration: underline;
+}
+
+/* 减弱动效 = 去运动,不是换一种运动(地基围栏 ④)。 */
+@media (prefers-reduced-motion: reduce) {
+  .r22-convo-ask-options label,
+  .r22-convo-ask-acts button,
+  .r22-convo-worked-trigger,
+  .r22-convo-worked-trigger svg:last-child,
+  .r22-convo-followups button,
+  .r22-research-category-acts button {
+    transition: none;
+  }
+}

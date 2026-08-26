@@ -1464,24 +1464,55 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   transition: background-color 140ms ease;
 }
 
-.r22-room-item b,
-.r22-room-item span {
+/* 标题那一行是「名字 + 状态芯片」两件东西并排,所以它自己是一根 flex 行;省略号长在
+   名字那一格上,不长在整行上 —— 否则芯片会跟着被裁掉。 */
+.r22-room-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--r22-ink);
+}
+
+.r22-room-name-text,
+.r22-room-meta {
   display: block;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.r22-room-item b {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--r22-ink);
+.r22-room-state {
+  flex: none;
 }
 
-.r22-room-item span {
+.r22-room-meta {
   margin-top: 2px;
   font-size: 10.5px;
   color: var(--r22-ink-3);
+}
+
+/* creation 那一行行尾的「Open canvas」。它压在第二行的右边,所以那一行要先让出位置
+   （`[data-canvas]` 那条）—— 不让位的话,`when · where` 与这条路会叠在一起。 */
+.r22-room-row[data-canvas] .r22-room-item {
+  padding-right: 100px;
+}
+
+.r22-room-canvas {
+  position: absolute;
+  right: 30px;
+  bottom: 6px;
+  font-size: 10.5px;
+  color: var(--r22-ink-3);
+  transition: color 140ms ease;
+}
+
+.r22-room-canvas:hover,
+.r22-room-canvas:focus-visible {
+  color: var(--r22-ink);
+  text-decoration: underline;
 }
 
 .r22-room-item[data-active] {
@@ -1585,6 +1616,10 @@ aside[data-otto-panel-fullscreen] .r22-otto-compose-note {
   .r22-otto-error button:active,
   .r22-room-new:active {
     transform: none;
+  }
+
+  .r22-room-canvas {
+    transition: none;
   }
 }
 

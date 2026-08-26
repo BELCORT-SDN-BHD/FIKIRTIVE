@@ -15,7 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { AskOptions } from "@/components/otto/conversation/ConversationParts";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -2086,7 +2086,20 @@ export function R22CanvasSurface({
           <div className="r22-canvas-input-kicker"><i /><span>{currentQuestion.header} · {currentQuestion.required ? "Required" : "Optional"}</span><em>{pendingQuestion.index + 1} of {pendingQuestion.flow.questions.length}</em></div>
           <h3 id="r22CanvasInputTitle">{currentQuestion.question}</h3>
           <p>{currentQuestion.help}</p>
-          {currentQuestion.multi ? <div className="r22-canvas-input-options" role="group" aria-label={currentQuestion.question}>{currentQuestion.options.map((option) => { const selected = pendingQuestion.selected.includes(option.label); return <label className={selected ? "is-selected" : ""} key={option.label}><Checkbox unstyled checked={selected} onCheckedChange={() => toggleQuestionOption(option.label)} /><span><b>{option.label}{option.recommended ? <em>Recommended</em> : null}</b><small>{option.description}</small></span></label>; })}</div> : <RadioGroup unstyled className="r22-canvas-input-options" aria-label={currentQuestion.question} value={pendingQuestion.selected[0] ?? ""} onValueChange={toggleQuestionOption}>{currentQuestion.options.map((option) => { const selected = pendingQuestion.selected.includes(option.label); return <label className={selected ? "is-selected" : ""} key={option.label}><RadioGroupItem unstyled value={option.label} /><span><b>{option.label}{option.recommended ? <em>Recommended</em> : null}</b><small>{option.description}</small></span></label>; })}</RadioGroup>}
+          {currentQuestion.multi ? <div className="r22-canvas-input-options" role="group" aria-label={currentQuestion.question}>{currentQuestion.options.map((option) => { const selected = pendingQuestion.selected.includes(option.label); return <label className={selected ? "is-selected" : ""} key={option.label}><Checkbox unstyled checked={selected} onCheckedChange={() => toggleQuestionOption(option.label)} /><span><b>{option.label}{option.recommended ? <em>Recommended</em> : null}</b><small>{option.description}</small></span></label>; })}</div> : (
+            /* 「挑一个」这一路归全站共用的那一份零件(Founder 2026-08-26 裁决第 4 条)——
+               Create 弹窗、Otto 线程与这里的选项从此是同一份实现,视觉仍随画布语境走
+               (className 还是 `r22-canvas-input-options`)。多选那一路留在这里:它挑的是
+               「好几个」,不是同一个形状。 */
+            <AskOptions
+              idPrefix="r22-canvas-ask"
+              label={currentQuestion.question}
+              className="r22-canvas-input-options"
+              options={currentQuestion.options}
+              value={pendingQuestion.selected[0] ?? ""}
+              onValueChange={toggleQuestionOption}
+            />
+          )}
           <Input unstyled className="r22-canvas-input-other" value={otherAnswer} onChange={(event) => { setOtherAnswer(event.target.value); if (!currentQuestion.multi) setPendingQuestion((current) => current ? { ...current, selected: [] } : current); }} placeholder="Something else…" aria-label="Other answer" />
           <footer><span>Paused · 0 cr now · up to {pendingQuestion.flow.cost} cr after review</span><Button unstyled type="button" onClick={cancelQuestion}>Cancel task</Button><Button unstyled type="button" className="is-primary" disabled={!currentAnswer} onClick={continueQuestion}>{pendingQuestion.index < pendingQuestion.flow.questions.length - 1 ? "Next" : "Continue task"}</Button></footer>
         </Card> : null}

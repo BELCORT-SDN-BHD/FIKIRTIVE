@@ -70,6 +70,11 @@ const R22_SURFACES = [
   // 名单没跟着长,四条通用围栏就一条也扫不到它们了。
   "components/otto/panel/OttoRoomSwitcher.tsx",
   "components/otto/panel/OttoAnswerCard.tsx",
+  // 「线程即工作台」拆出来的共用对话零件(2026-08-26)。上面那段注释说的正是这件事:
+  // 三处问答卡从此引用**同一份**实现,那一份必须自己上名单 —— 否则四条通用围栏一条也
+  // 扫不到全站每一张问答卡真正的画法,而这种漏是静默的。
+  "components/otto/conversation/ConversationParts.tsx",
+  "components/otto/conversation/OttoResearchCard.tsx",
   // 四扇门的等待画面同理:它们是商家真的会看见的一屏,只是活得短。
   "app/approvals/loading.tsx",
   "app/billing/loading.tsx",
@@ -133,13 +138,20 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     const conversation = source("components/otto/panel/OttoPanelConversation.tsx");
 
     expect(projects).toContain("<TabsList");
-    // 建项目那一层的问题卡是一组**真**单选;Library 快产车间那一张同理 —— 两处都不许
-    // 再用一排普通按钮加 `role="radio"` 手搓(键盘行为会跟着一起手搓,而且迟早不一致)。
-    expect(source("components/projects/ProjectStartDialog.tsx")).toContain("<RadioGroup");
+    // 问题卡是一组**真**单选:不许一排普通按钮加 `role="radio"` 手搓(键盘行为会跟着一起
+    // 手搓,而且迟早不一致)。
+    //
+    // 2026-08-26「线程即工作台」之后,这条断言的落点跟着实现走:Create 弹窗、画布与 Otto
+    // 线程三处的选项列表收编成**同一份**零件(`ConversationParts` 的 `AskOptions`),所以
+    // 「这是真单选」这句话钉在那一份上,三个调用点各钉「引用的是那一份」。断言的意思没变
+    // ——变的是它该指着谁:继续在调用点上扫 `<RadioGroup`,只会把一条已经不指认任何东西的
+    // 断言留在这里。Library 快产车间还没收编,照旧自己画,断言也照旧钉在它自己身上。
+    expect(source("components/otto/conversation/ConversationParts.tsx"), "共用问答零件必须是真 RadioGroup").toContain("<RadioGroup");
+    expect(source("components/projects/ProjectStartDialog.tsx"), "Create 弹窗的问题卡要用共用零件").toContain("<AskOptionCard");
     expect(source("components/library/LibraryQuickCreate.tsx")).toContain("<RadioGroup");
-    // 画布的问题卡两路都归位过了:单选走 RadioGroup,多选走 Checkbox。
+    // 画布的问题卡两路:单选走共用零件,多选留在本地(它挑的是好几个,不是同一个形状)。
     const canvas = source("components/canvas/R22CanvasSurface.tsx");
-    expect(canvas).toContain("<RadioGroup");
+    expect(canvas, "画布的单选要用共用零件").toContain("<AskOptions");
     expect(canvas).toContain("<Checkbox");
     // 2026-08-26 画布一轮:五个手搓的 absolute 弹层(切项目 / 附件 / 素材库 / 参数 /
     // 选素材包)全部归位。判词按形状分:一串**动作**是 menu(上下键 + 首字母跳),

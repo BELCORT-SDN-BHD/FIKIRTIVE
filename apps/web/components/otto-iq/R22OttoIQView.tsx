@@ -52,6 +52,8 @@ import {
 import { addMemory, deleteMemory, updateMemory, type MemoryRow } from "@/lib/memory-actions";
 import { useOttoPanelControls } from "@/components/otto/panel/OttoPanelShell";
 import { readR22WorkspaceDirectory, scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
+import { OTTO_IQ_FIXTURE_SAVED_KEY, appendOttoIQSavedRow, readOttoIQSavedRows } from "./otto-iq-fixture";
+import { OTTO_RESEARCH_SAMPLE_SITE, requestOttoSiteResearch } from "@/components/otto/conversation/otto-research";
 import "./r22-otto-iq.css";
 import "./r22-otto-iq-hub.css";
 import "./r22-knowledge-flow.css";
@@ -89,7 +91,6 @@ type BrandVoiceSource = "text" | "url" | "file";
 type BrandVoiceStep = "details" | "source" | "generating" | "review" | "success";
 const BRAND_VOICE_DRAFT_KEY = "r22:brand-voice:draft";
 const BRAND_VOICE_SAVED_KEY = "r22:brand-voice:saved";
-const OTTO_IQ_FIXTURE_SAVED_KEY = "r22:otto-iq:saved:v1";
 const KNOWLEDGE_DRAFT_KEY = "r22:knowledge-base:draft:v1";
 const AUDIENCE_DRAFT_KEY = "r22:audience:draft:v1";
 const STYLE_DRAFT_KEY = "r22:style-guide:draft:v1";
@@ -650,6 +651,9 @@ export function R22OttoIQView({
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
+  /** 「让 Otto 读一遍我的网站」那一层(裁决第 3 条的第一个入口)。 */
+  const [researchOpen, setResearchOpen] = useState(false);
+  const [researchSite, setResearchSite] = useState(OTTO_RESEARCH_SAMPLE_SITE);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [fixtureWorkspaceId, setFixtureWorkspaceId] = useState(fixture ? "" : "production");
@@ -697,10 +701,9 @@ export function R22OttoIQView({
   const acceptSavedRow = (row: MemoryRow) => {
     setRows((current) => current.some((item) => item.id === row.id) ? current : [...current, row]);
     if (!fixture) return;
-    const stored = readFixtureSession(OTTO_IQ_FIXTURE_SAVED_KEY);
-    let saved: MemoryRow[] = [];
-    try { saved = stored ? JSON.parse(stored) as MemoryRow[] : []; } catch { saved = []; }
-    writeFixtureSession(OTTO_IQ_FIXTURE_SAVED_KEY, JSON.stringify([...saved.filter((item) => item.id !== row.id), row]));
+    // 存放处搬到了 `otto-iq-fixture.ts` —— 研究托付批准的那一下落的必须是**同一个**格子,
+    // 各写各的键会让商家在线程里读到「已经存好了」,推开这扇门却什么都没有。
+    appendOttoIQSavedRow(row);
   };
 
   const saveFixtureVoice = (row: MemoryRow) => acceptSavedRow(row);
@@ -747,10 +750,7 @@ export function R22OttoIQView({
     setError("");
     if (fixture) {
       setRows((current) => current.filter((row) => row.id !== selected.id));
-      const stored = readFixtureSession(OTTO_IQ_FIXTURE_SAVED_KEY);
-      if (stored) {
-        try { writeFixtureSession(OTTO_IQ_FIXTURE_SAVED_KEY, JSON.stringify((JSON.parse(stored) as MemoryRow[]).filter((row) => row.id !== selected.id))); } catch { removeFixtureSession(OTTO_IQ_FIXTURE_SAVED_KEY); }
-      }
+      writeFixtureSession(OTTO_IQ_FIXTURE_SAVED_KEY, JSON.stringify(readOttoIQSavedRows().filter((row) => row.id !== selected.id)));
       setSelected(null);
       return;
     }
@@ -765,11 +765,55 @@ export function R22OttoIQView({
     });
   }
 
+  /**
+   * 「Ask Otto to read your site」——按下去不是开一条进度条,是**开一条对话**。
+   *
+   * Founder 2026-08-26 裁决第 3 条:这件事从头到尾住在那条线程里 —— 商家给网址、Otto 应承、
+   * 整理完请他 approve、批准的落回这一面。所以这一层只做一件事:收下网址,把面板打开,
+   * 剩下的都在那条线程里发生。这一面不自己画进度,也不自己画结果。
+   */
+  const researchDialog = (
+    <Dialog open={researchOpen} onOpenChange={setResearchOpen}>
+      <DialogContent className="r22-iq-detail" data-otto-iq-research-dialog>
+        <DialogHeader>
+          <DialogTitle>Ask Otto to read your site</DialogTitle>
+          <DialogDescription>Otto reads it, sorts what it finds, and brings the groups back for you to keep or skip. Nothing is saved here until you say so.</DialogDescription>
+        </DialogHeader>
+        <FlowField id="otto-iq-research-site" label="Your site" hint="Otto opens the pages that are already public.">
+          {(control) => <Input unstyled value={researchSite} onChange={(event) => setResearchSite(event.target.value)} placeholder={OTTO_RESEARCH_SAMPLE_SITE} {...control} />}
+        </FlowField>
+        <DialogFooter>
+          <Button
+            unstyled
+            type="button"
+            className="is-primary"
+            data-otto-iq-research-go
+            disabled={!researchSite.trim()}
+            onClick={() => {
+              requestOttoSiteResearch(researchSite.trim());
+              setResearchOpen(false);
+              otto?.openPanel();
+            }}
+          >
+            Ask Otto
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  const researchButton = (
+    <Button unstyled type="button" className="is-quiet" data-otto-iq-research onClick={() => setResearchOpen(true)}>
+      Ask Otto to read your site
+    </Button>
+  );
+
   if (pane === "hub") {
     return (
       <main className="r22-iq" data-r22-otto-iq>
         <header>
           <div><h1>Otto IQ</h1><p>Merchant-controlled knowledge for Otto — every item has a source, owner and scope.</p></div>
+          {researchButton}
           <Button unstyled type="button" className="is-quiet" onClick={() => otto?.openPanel()}>Ask Otto</Button>
         </header>
         {fixture && fixtureWorkspaceId === "batik-house" ? <section className="r22-iq-nudge"><span aria-hidden="true" /><b>Otto</b><p>Otto noticed 4 things worth remembering.</p><Button unstyled type="button" onClick={() => setReviewOpen(true)}>Review</Button></section> : null}
@@ -788,6 +832,7 @@ export function R22OttoIQView({
             <DialogFooter><Button unstyled type="button" className="is-primary" onClick={() => setReviewOpen(false)}>Done reviewing</Button></DialogFooter>
           </DialogContent>
         </Dialog>
+        {researchDialog}
       </main>
     );
   }
@@ -795,7 +840,9 @@ export function R22OttoIQView({
   return (
     <main className="r22-iq" data-r22-otto-iq>
       <nav><Button unstyled type="button" onClick={() => open("hub")}>Otto IQ</Button><ChevronRight className="size-3" aria-hidden="true" /><span>{card?.title}</span></nav>
-      <header><div><h1>{card?.title}</h1><p>{card?.description}</p></div><Button unstyled type="button" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></header>
+      {/* 来源那一格多一条路:与其让商家一条一条手打,不如把网址交给 Otto 一次读完 —— 呈上来
+          的每一组仍然要他自己点头才算数(裁决第 3 条)。 */}
+      <header><div><h1>{card?.title}</h1><p>{card?.description}</p></div>{card?.id === "sources" ? researchButton : null}<Button unstyled type="button" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></header>
       {/* 搜索框归 `ui/input-group`(A-12);计数从一句话改成一枚芯片(B-4)—— 数字随
           筛选实时变,住在标签旁边而不是自己占一句。 */}
       <div className="r22-iq-toolbar"><InputGroup className="r22-iq-search"><InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon><InputGroupInput type="search" aria-label={`Search ${card?.title}`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${card?.title}`} /></InputGroup><Badge variant="outline" className="r22-iq-count" data-r22-iq-count>{visible.length} saved</Badge></div>
@@ -823,6 +870,7 @@ export function R22OttoIQView({
       <AudienceFlow open={adding && card?.id === "audiences"} fixture={fixture} onOpenChange={setAdding} onSaved={acceptSavedRow} />
       <StyleGuideFlow open={adding && card?.id === "style"} fixture={fixture} onOpenChange={setAdding} onSaved={acceptSavedRow} />
       <VisualGuidelineFlow open={adding && card?.id === "visual"} fixture={fixture} onOpenChange={setAdding} onSaved={acceptSavedRow} />
+      {researchDialog}
     </main>
   );
 }

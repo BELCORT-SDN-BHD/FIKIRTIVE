@@ -18,9 +18,12 @@
  */
 
 import * as React from "react";
+import Link from "next/link";
 import { MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ThreadStatusPill } from "@/components/otto/conversation/ConversationParts";
+import { canvasHref } from "@/components/canvas/canvas-href";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +44,8 @@ export interface OttoRoomSwitcherProps {
   activeThreadId: string | null;
   /** 分档相对哪一刻算 —— 由上层在**打开的那一下**读一次,不在渲染里读 `Date.now()`。 */
   now: number;
+  /** 样张这一支的画布地址要多带一个 `fixture=r22`,否则点过去落在真实那一支上。 */
+  fixture?: boolean;
   openingThreadId?: string | null;
   error?: string | null;
   onSelectThread: (thread: ChatThreadDTO) => void;
@@ -58,6 +63,7 @@ export function OttoRoomSwitcher({
   threads,
   activeThreadId,
   now,
+  fixture = false,
   openingThreadId = null,
   error = null,
   onSelectThread,
@@ -86,7 +92,7 @@ export function OttoRoomSwitcher({
     const pinned = Boolean(thread.pinnedAt);
     const active = thread.id === activeThreadId;
     return (
-      <div key={thread.id} className="r22-room-row">
+      <div key={thread.id} className="r22-room-row" data-canvas={room.canvas ? "" : undefined}>
         <Button
           unstyled
           type="button"
@@ -99,9 +105,26 @@ export function OttoRoomSwitcher({
           data-active={active ? "" : undefined}
           className="r22-room-item"
         >
-          <b>{thread.title}</b>
-          <span>{room.where ? `${room.when} · ${room.where}` : room.when}</span>
+          {/* 状态在**标题那一行的右边**,不是另起一行:商家扫这份列表是竖着扫标题的,
+              状态跟着标题走才扫得到。三态的判断在 `otto-thread-state.ts` 一处,面板头、
+              画布、这里读的是同一句话。 */}
+          <b className="r22-room-name">
+            <span className="r22-room-name-text">{thread.title}</span>
+            <ThreadStatusPill state={room.state} className="r22-room-state" />
+          </b>
+          <span className="r22-room-meta">{room.where ? `${room.when} · ${room.where}` : room.when}</span>
         </Button>
+        {/* creation 的那几行行尾一条安静的路,回它自己那块板(裁决第 1 条)。它是一条
+            **链接**不是按钮 —— 商家可能想在新标签页里开着那块板,继续在这里看别的线程。 */}
+        {room.canvas ? (
+          <Link
+            data-otto-room-canvas={room.canvas.projectId}
+            className="r22-room-canvas"
+            href={fixture ? `${canvasHref(room.canvas.projectId)}&fixture=r22` : canvasHref(room.canvas.projectId)}
+          >
+            Open canvas
+          </Link>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
