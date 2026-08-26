@@ -1031,12 +1031,30 @@
   font-weight: 600;
 }
 
-.r22-canvas-otto-head span {
+/* 状态标归 `ui/badge`(审计 B-4):字号字重照旧,语义色只落在前面那颗小点上(判尺⑤)。 */
+.r22-canvas-otto-state[data-slot="badge"] {
   margin-left: 2px;
+  padding: 1px 8px 1px 6px;
+  gap: 5px;
+  border-color: var(--r22-line-2);
+  background: var(--r22-surface);
   color: var(--r22-ink-3);
   font-size: 10.5px;
   font-weight: 500;
 }
+
+.r22-canvas-otto-state i {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--r22-ink-3);
+}
+
+.r22-canvas-otto-state[data-tone="busy"] i { background: var(--r22-notice-tan-text); }
+.r22-canvas-otto-state[data-tone="good"] i { background: var(--r22-good); }
+.r22-canvas-otto-state[data-tone="warn"] i { background: var(--r22-notice-tan-text); }
+.r22-canvas-otto-state[data-tone="bad"] i { background: var(--r22-bad); }
 
 .r22-canvas-otto-head > svg:last-child {
   width: 14px;

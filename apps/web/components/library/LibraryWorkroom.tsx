@@ -29,6 +29,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast, type ExternalToast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
@@ -499,7 +500,8 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
 
       {selectedCount ? (
         <div className="r22-lib-bulk" role="group" aria-label="Selected items">
-          <b>{selectedCount} selected</b>
+          {/* 选中数是一枚芯片,不是一句住在批量条里的话(审计 B-4)。 */}
+          <Badge className="r22-lib-bulk-count" data-r22-lib-selected={selectedCount}>{selectedCount} selected</Badge>
           <Button unstyled type="button" onClick={bulkStar}>Star</Button>
           <Button unstyled type="button" onClick={() => setPackTarget("selection")}>Add to pack</Button>
           <Button unstyled type="button" onClick={download}>Download</Button>

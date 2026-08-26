@@ -50,11 +50,16 @@ export function LibraryDetailLayer({
 
         <div className="r22-lib-layer-side">
           <DialogTitle className="r22-lib-layer-name">{asset.name}</DialogTitle>
-          <p className="r22-lib-layer-meta">
-            <span>{asset.kind === "video" ? `Video · ${asset.duration ?? ""}`.trim() : "Image"}</span>
-            <i aria-hidden="true">·</i>
-            <time dateTime={asset.createdAt}>{dayLabel(asset.createdAt)}</time>
-          </p>
+          {/*
+            属性住行,不住散文(审计 B-5)。此前这里是「Video · 0:12 · 24 Aug」一句用
+            `·` 串起来的话 —— 三个属性,没有一个说得出自己叫什么。改成 `<dl>` 之后每一条
+            都有名字,与 Otto IQ 详情层已经做对的那一份同形。
+          */}
+          <dl className="r22-lib-layer-meta">
+            <div><dt>Type</dt><dd>{asset.kind === "video" ? "Video" : "Image"}</dd></div>
+            {asset.kind === "video" && asset.duration ? <div><dt>Length</dt><dd>{asset.duration}</dd></div> : null}
+            <div><dt>Made</dt><dd><time dateTime={asset.createdAt}>{dayLabel(asset.createdAt)}</time></dd></div>
+          </dl>
           {/* 改出来的那一条先说自己是从哪一张来的 —— 那一句本身就是回原图的路。 */}
           {asset.editedFromId && asset.editedFromName ? (
             <Button unstyled type="button" className="r22-lib-layer-origin r22-lib-layer-source" data-r22-lib-edited-from={asset.editedFromId} onClick={() => onOpenSource(asset.editedFromId!)}>

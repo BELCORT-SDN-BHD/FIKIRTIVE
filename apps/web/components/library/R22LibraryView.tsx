@@ -23,7 +23,7 @@ import { toast } from "sonner";
 import { canvasHref } from "@/components/canvas/canvas-href";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { getGenerationHistory, type LibraryItem } from "@/lib/library-actions";
 import type { AdJobItem } from "@/lib/data";
 
@@ -119,14 +119,21 @@ export function R22LibraryView({
       {state !== "ready" || error ? banner : fixture ? <LibraryWorkroom fixture restore={fixtureRestore} empty={fixtureEmpty} /> : (
         <>
           <div className="r22-library-tools">
-            <label>
-              <Search aria-hidden="true" />
-              <Input unstyled type="search" aria-label="Search library" placeholder="Search Library" value={query} onChange={(event) => setQuery(event.target.value)} />
-            </label>
+            {/* 搜索框归 `ui/input-group`(审计 A-12)。 */}
+            <InputGroup className="r22-library-search">
+              <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+              <InputGroupInput type="search" aria-label="Search library" placeholder="Search Library" value={query} onChange={(event) => setQuery(event.target.value)} />
+            </InputGroup>
+            {/*
+              计数从拼进按钮文字的 `All · 13` 改成标签 + 一枚安静的计数(审计 B-4)——
+              同一扇门里 `LibraryNav` 早就用 `<em>` 这么做了,两种做法留在一门里,商家
+              看到的是同一件事两种长相。这里对齐已经做对的那一种,不发明第三种。
+            */}
             <div className="r22-library-filters" role="group" aria-label="Filter library">
               {(["all", "image", "video", "star"] as const).map((value) => (
                 <Button unstyled type="button" key={value} className={filter === value ? "is-active" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>
-                  {value === "all" ? "All" : value === "image" ? "Images" : value === "video" ? "Videos" : "Starred"} · {counts[value]}{value === "all" && hasMore ? "+" : ""}
+                  <span>{value === "all" ? "All" : value === "image" ? "Images" : value === "video" ? "Videos" : "Starred"}</span>
+                  <em data-r22-library-count={value}>{counts[value]}{value === "all" && hasMore ? "+" : ""}</em>
                 </Button>
               ))}
             </div>

@@ -18,6 +18,7 @@ import { useRef, type ChangeEvent, type RefObject } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 import type { LibraryLayout, LibrarySort, LibraryTypeFilter } from "./library-fixture";
@@ -62,10 +63,12 @@ export function LibraryToolbar({
 
   return (
     <div className="r22-lib-tools">
-      <label className="r22-lib-search">
-        <Search aria-hidden="true" />
-        <Input unstyled type="search" aria-label="Search library" placeholder="Search Library" value={query} onChange={(event) => onQuery(event.target.value)} />
-      </label>
+      {/* 搜索框归 `ui/input-group`(审计 A-12):图标不再靠 `position:absolute` 摆位,
+          focus 环由正典件统一出 —— 五处搜索框此前各写各的。 */}
+      <InputGroup className="r22-lib-search">
+        <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+        <InputGroupInput type="search" aria-label="Search library" placeholder="Search Library" value={query} onChange={(event) => onQuery(event.target.value)} />
+      </InputGroup>
 
       <ToggleGroup unstyled className="r22-lib-seg" type="single" value={type} aria-label="Type" onValueChange={(value) => { if (value) onType(value as LibraryTypeFilter); }}>
         <ToggleGroupItem unstyled value="all">All</ToggleGroupItem>

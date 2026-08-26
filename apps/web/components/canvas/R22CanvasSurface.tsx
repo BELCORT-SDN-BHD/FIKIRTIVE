@@ -1,5 +1,6 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- Non-production R22 fixtures restore browser-scoped drafts after hydration. */
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Card } from "@/components/ui/card";
@@ -581,6 +582,27 @@ const TOOL_SHORTCUTS: Record<string, CanvasTool> = Object.fromEntries(
 
 function OttoMark() {
   return <Image className="r22-otto-mark" src="/brand/r22-otto-thinking.svg" width={120} height={110} alt="" />;
+}
+
+/**
+ * Otto 头部那一枚状态标(审计 B-4)。
+ *
+ * 此前它是一串三元算出来的字塞进一个裸 `<span>` —— 屏幕上是「状态」,写法上是「一句话」。
+ * 归 `ui/badge` 之后它是一枚芯片,颜色只落在前面那颗小点上(判尺⑤:语义色只以小点或小
+ * 芯片出现,不去染整块底)。字一个都没改。
+ */
+const OTTO_STATE_TONE: Record<string, "quiet" | "busy" | "good" | "warn" | "bad"> = {
+  unavailable: "bad",
+  "needs input": "warn",
+  working: "busy",
+  "needs attention": "bad",
+  idle: "quiet",
+  ready: "good",
+  checking: "quiet",
+};
+
+function OttoStatePill({ state }: { state: string }) {
+  return <Badge className="r22-canvas-otto-state" data-tone={OTTO_STATE_TONE[state] ?? "quiet"} data-r22-otto-state={state}><i aria-hidden="true" />{state}</Badge>;
 }
 
 /**
@@ -2035,7 +2057,7 @@ export function R22CanvasSurface({
           <Button unstyled type="button" className="r22-canvas-otto-head" aria-expanded={ottoOpen} onClick={() => setOttoOpen((open) => !open)}>
             <OttoMark />
             <b>Otto</b>
-            <span>{fixture && fixtureRouteState !== "ready" ? "unavailable" : pendingQuestion ? "needs input" : fixtureJob?.status === "queued" || fixtureJob?.status === "running" ? "working" : fixtureJob?.status === "failed" ? "needs attention" : fixture ? "idle" : submitting || generationProgress ? "working" : costQuote && ratioOptions.length && !nodesError ? "ready" : "checking"}</span>
+            <OttoStatePill state={fixture && fixtureRouteState !== "ready" ? "unavailable" : pendingQuestion ? "needs input" : fixtureJob?.status === "queued" || fixtureJob?.status === "running" ? "working" : fixtureJob?.status === "failed" ? "needs attention" : fixture ? "idle" : submitting || generationProgress ? "working" : costQuote && ratioOptions.length && !nodesError ? "ready" : "checking"} />
             <ChevronDown aria-hidden="true" />
           </Button>
           {ottoOpen && (
