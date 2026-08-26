@@ -34,13 +34,29 @@ import { R22_NOTIFICATION_FIXTURE_EVENT, readR22NotificationFixture, writeR22Not
 import { DEFAULT_R22_WORKSPACE_DIRECTORY, R22_WORKSPACE_FIXTURE_EVENT, readR22WorkspaceDirectory, writeR22WorkspaceDirectory, type R22FixtureWorkspaceDirectory } from "@/components/r22/r22-workspace-fixture";
 import "./r22-dashboard.css";
 
+/** 图标表照旧覆盖全部九格 —— 藏起来的那五扇门代码与路由都还在,回来的时候不用重接图标。 */
 const NAV_ICONS: Record<string, LucideIcon> = { home: Home, create: FolderKanban, library: ImageIcon, brand: Sparkles, campaign: Megaphone, approvals: CheckCircle2, schedule: CalendarDays, analytics: BarChart3, routines: RefreshCw };
-const NAV_KEYS = ["home", "create", "library", "brand", "campaign", "approvals", "schedule", "analytics", "routines"] as const;
+
+/**
+ * beta V1 的导航收窄(Founder 裁决 2026-08-26)。
+ *
+ * 侧栏与全局搜索的 "Go to" 都从这一份长出来,所以这里少一格,两处一起少 —— 两边各写一份
+ * 名单,迟早有一天搜索里还留着一扇侧栏已经没有的门。
+ *
+ * **只藏,不删**:`@fikirtive/core` 的 `MERCHANT_NAV` 一格没动(后端线还要用它,而且它是
+ * 全仓导航权威),路由文件也一个都没删 —— 直接输地址仍然到得了,不加闸。收窄发生在壳这
+ * 一层,因为「beta 期先只卖创作」是一个产品决定,不是导航数据的事实变化。
+ */
+const NAV_KEYS = ["home", "create", "library", "brand"] as const;
+
+/** beta V1 期间不在侧栏、也不在搜索结果里的五扇门。回来的时候把它们挪回上面那一行。 */
+export const BETA_HIDDEN_NAV_KEYS = ["campaign", "approvals", "schedule", "analytics", "routines"] as const;
+
 const NAV_LINKS = merchantNavLinks();
 const DESTINATIONS: Array<{ href: string; label: string; icon: LucideIcon; exact?: boolean }> = NAV_KEYS.flatMap((key) => {
   const item = NAV_LINKS.find((candidate) => candidate.key === key);
   if (!item) return [];
-  return [{ href: item.href, label: item.label, icon: NAV_ICONS[key]!, exact: key === "home" || key === "campaign" || key === "schedule" }];
+  return [{ href: item.href, label: item.label, icon: NAV_ICONS[key]!, exact: key === "home" }];
 });
 
 type SearchResult = { id: string; href: string; label: string; detail: string; icon: LucideIcon; group: "Go to" | "Projects" };
@@ -288,7 +304,8 @@ export function R22DashboardShell({
               <Link key={href} href={fixtureHref(href, fixture)} className={active ? "is-active" : ""} aria-current={active ? "page" : undefined}>
                 <Icon aria-hidden="true" />
                 <span>{label}</span>
-                {fixture && label === "Approvals" && <em>5</em>}
+                {/* Approvals 那枚「5」随它那扇门一起藏起来了(Founder 裁决 2026-08-26)——
+                    门不在侧栏里,徽标就没有可指的地方,留着只会指向一处商家到不了的东西。 */}
                 <NavPendingMark />
               </Link>
             );

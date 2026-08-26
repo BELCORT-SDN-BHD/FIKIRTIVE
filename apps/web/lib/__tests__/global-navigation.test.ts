@@ -82,11 +82,17 @@ describe("MerchantShellContent —— 只管这一面要不要壳", () => {
     expect(markup).toContain("Page content");
   });
 
+  /**
+   * 2026-08-26 Founder 裁决:beta V1 导航收窄至 creation 五门,W2-11「七格导航权威」在 beta 期
+   * 由此条取代 —— Campaigns 仍然**是**商家表面(壳照画、路由照在、直接输地址到得了),只是
+   * 它那一格不再画在侧栏里。所以这条断言的是「这一面有壳」,门那一格改钉 Library
+   * (收窄后仍在侧栏里的一格);侧栏到底画哪几格由 `r22-beta-nav-scope.test.ts` 逐格钉。
+   */
   it("在商家表面画出导轨,商家自己的内容原样透出", () => {
     const markup = renderShell(SHELL_ROUTES.campaign);
 
     expect(markup).toContain('aria-label="Global navigation"');
-    expect(markup).toContain(`href="${SHELL_ROUTES.campaign}"`);
+    expect(markup).toContain(`href="${SHELL_ROUTES.library}"`);
     expect(markup).toContain(`href="${SHELL_ROUTES.preferences}"`);
     expect(markup).toContain("Page content");
   });

@@ -13,10 +13,21 @@ export type R22NotificationItem = {
 export const R22_NOTIFICATION_FIXTURE_KEY = "fikirtive.r22.notifications.v1";
 export const R22_NOTIFICATION_FIXTURE_EVENT = "fikirtive:r22-notifications";
 
+/**
+ * 样例通知。
+ *
+ * beta V1 的导航只留创作那五扇门(Founder 裁决 2026-08-26),所以这三条**样例本身**也全部
+ * 落在创作上:上一版那两条指向 Approvals 与 Schedule,那两扇门此刻不在侧栏里,商家点过去
+ * 会掉进一处他刚刚才发现「不存在」的地方。样例不是装饰,它承诺的是「这个产品会跟你说这类
+ * 事」——承诺一件此刻做不到的事,和屏幕上写一句假话是同一件事。
+ *
+ * `kind` 的 approval / publishing 两支留在类型里没动:门回来的时候样例跟着回来,那时不用
+ * 再改一次类型与配色。
+ */
 export const R22_NOTIFICATION_FIXTURE_ITEMS: R22NotificationItem[] = [
-  { id: "fixture-approval", title: "5 posts need approval", detail: "Raya launch is waiting for your decision.", time: "8 min", href: "/approvals?fixture=r22", read: false, kind: "approval" },
-  { id: "fixture-generation", title: "Canvas export is ready", detail: "Four Raya concepts finished generating.", time: "1 hr", href: "/create/canvas?project=fixture-raya&fixture=r22", read: false, kind: "generation" },
-  { id: "fixture-publish", title: "Weekend market post published", detail: "Instagram accepted the scheduled post.", time: "Yesterday", href: "/schedule?fixture=r22", read: true, kind: "publishing" },
+  { id: "fixture-generation", title: "Canvas export is ready", detail: "Four Raya concepts finished generating.", time: "8 min", href: "/create/canvas?project=fixture-raya&fixture=r22", read: false, kind: "generation" },
+  { id: "fixture-quick-create", title: "Quick create finished", detail: "Two new pictures are in your Library.", time: "1 hr", href: "/library?fixture=r22", read: false, kind: "generation" },
+  { id: "fixture-edit", title: "Edited picture saved", detail: "Raya hero, teal batik — Warmer light is in your Library.", time: "Yesterday", href: "/library?fixture=r22", read: true, kind: "generation" },
 ];
 
 export function readR22NotificationFixture(): R22NotificationItem[] {
