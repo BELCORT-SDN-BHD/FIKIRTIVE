@@ -336,7 +336,12 @@ describe("② 商家可见文本里没有工程词族", () => {
     assertHumanScreen("项目读不出结果");
   });
 
-  it("附件菜单里的 From Library", async () => {
+  /**
+   * 「From Library」这一项从一句「还没接上」变成了真的能挑一张(样例画布这一面)——
+   * 所以这里钉的也换成了新形状:它开出素材库那个小弹层,挑一张就挂到 composer 上。
+   * 围栏本身没有松:这一路上的每一屏照旧不许出现工程词族。
+   */
+  it("附件菜单里的 From Library 开出素材库,挑一张就挂上去", async () => {
     await mount();
     await act(async () => { need<HTMLButtonElement>('button[aria-label="Attach"]').click(); });
     const library = [...container!.querySelectorAll<HTMLButtonElement>(".r22-canvas-attach-menu button")]
@@ -345,8 +350,15 @@ describe("② 商家可见文本里没有工程词族", () => {
 
     await act(async () => { library!.click(); });
 
-    expect(noticeText()).toBe("Nothing is saved in your Library yet.");
-    assertHumanScreen("附件菜单");
+    const picks = [...container!.querySelectorAll<HTMLButtonElement>("[data-canvas-library-pick]")];
+    expect(picks.length, "素材库弹层里一张都挑不了").toBeGreaterThan(0);
+    assertHumanScreen("素材库弹层");
+
+    await act(async () => { picks[0]!.click(); });
+
+    expect(container!.querySelector("[data-canvas-reference-chip]"), "挑完之后 composer 上没有那张参考图").not.toBeNull();
+    expect(noticeText()).toContain("attached to your next request");
+    assertHumanScreen("挂上参考图");
   });
 });
 

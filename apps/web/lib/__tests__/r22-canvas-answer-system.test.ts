@@ -124,7 +124,9 @@ function cardBullets(card: HTMLElement): string[] {
 describe("① 每一路提问都换回一张真答案卡(原型 responseFor 的五路 + 画布自己的三路)", () => {
   it.each([
     ["How much does this cost?", "What this costs", "3 cr per image."],
-    ["What formats can I ask for?", "Shapes you can ask for", "Available right now: 9:16 vertical · 1:1 square · 16:9 wide."],
+    // 参数弹层这一轮把 4:5 也接上了,所以这一面此刻真的可选的是四个形状 —— 这一句
+    // 报的永远是「此刻真的可选的那几个」,不是一张写死的表。
+    ["What formats can I ask for?", "Shapes you can ask for", "Available right now: 9:16 vertical · 1:1 square · 4:5 portrait · 16:9 wide."],
     ["Why does this need review?", "Why this needs review", "Approve means schedule, not publish."],
     ["What can a routine do here?", "Routine boundary", "Autonomous preparation and spending both require an active routine."],
     ["Where did Otto learn this?", "Otto IQ provenance", "Pending suggestions are not saved yet."],

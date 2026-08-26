@@ -684,6 +684,170 @@
   box-shadow: 0 0 0 2px var(--r22-surface), 0 0 0 4px var(--r22-ink);
 }
 
+/* ————— 逐图动作排(Grok 的结果排形状:手放上去才浮出来) ————— */
+
+.r22-canvas-art-cell {
+  position: relative;
+}
+
+/*
+  动作排贴在图的下缘。它默认是「不在场」的:opacity 0 + 3px 位移,手放上来才落位 ——
+  两个属性都点名写出来,不写 `transition: all`(那会把日后新加的任何属性一起拖进动效)。
+*/
+.r22-canvas-art-actions {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--r22-surface);
+  box-shadow: var(--r22-shadow-md);
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 160ms var(--r22-ease-out), transform 160ms var(--r22-ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-canvas-art-cell:hover .r22-canvas-art-actions {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 手指没有 hover 可言:触屏上这一排一直在。 */
+@media (hover: none) {
+  .r22-canvas-art-actions {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 键盘 Tab 进来的那一下不带动效 —— 键盘动作是瞬时的,一段淡入只会让人等。 */
+.r22-canvas-art-cell:focus-within .r22-canvas-art-actions {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.r22-canvas-art-actions button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--r22-ink-2) !important;
+  transition: background-color 140ms var(--r22-ease-out), color 140ms var(--r22-ease-out);
+}
+
+.r22-canvas-art-actions button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.r22-canvas-art-actions button[aria-pressed="true"] {
+  background: var(--r22-chrome);
+  color: var(--r22-ink) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-canvas-art-actions button:hover {
+    background: var(--r22-chrome);
+    color: var(--r22-ink) !important;
+  }
+}
+
+/* 星标是「留着」的意思,所以它得在图上看得见,不能只活在那一排里。 */
+.r22-canvas-art-star {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--r22-surface);
+  box-shadow: var(--r22-shadow-sm);
+  color: var(--r22-star-active);
+}
+
+.r22-canvas-art-star svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+/* 视频概念卡的那一帧占位。它长得就不像一张照片,因为它本来就不是。 */
+.r22-canvas-art-concept {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 6px;
+  background: var(--r22-chrome);
+  color: var(--r22-ink-2);
+}
+
+.r22-canvas-art-concept svg {
+  width: 20px;
+  height: 20px;
+}
+
+.r22-canvas-art-concept em {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: var(--r22-text-mono-label);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.r22-canvas-batch-origin {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-mono-label);
+}
+
+.r22-canvas-batch-honest {
+  margin: 10px 0 0;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-mono-label);
+}
+
+/* ————— 跟手改一版的那几颗 chip ————— */
+
+.r22-canvas-batch-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.r22-canvas-batch-next button {
+  padding: 5px 10px !important;
+  border: 1px solid var(--r22-line-2) !important;
+  border-radius: 999px;
+  background: var(--r22-surface) !important;
+  color: var(--r22-ink-2) !important;
+  font-size: var(--r22-text-mono-label) !important;
+  transition: background-color 140ms var(--r22-ease-out), color 140ms var(--r22-ease-out), transform 140ms var(--r22-ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-canvas-batch-next button:hover {
+    background: var(--r22-chrome) !important;
+    color: var(--r22-ink) !important;
+  }
+}
+
+.r22-canvas-batch-next button:active {
+  transform: scale(0.97);
+}
+
 @keyframes r22-spin {
   to { transform: rotate(360deg); }
 }
@@ -1129,7 +1293,190 @@
 .r22-canvas-ratio-menu {
   right: 44px;
   bottom: calc(100% + 8px);
+  min-width: 236px;
   transform-origin: bottom right;
+}
+
+/* ————— 上下文条:选中的图与挂着的参考图 ————— */
+
+.r22-canvas-composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 14px 0;
+}
+
+.r22-canvas-chip {
+  display: inline-flex;
+  max-width: 190px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--r22-line-2);
+  border-radius: 999px;
+  background: var(--r22-surface);
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-mono-label);
+}
+
+.r22-canvas-chip.is-reference {
+  padding-left: 3px;
+}
+
+.r22-canvas-chip b {
+  overflow: hidden;
+  color: var(--r22-ink);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.r22-canvas-chip img {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.r22-canvas-chip button {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--r22-ink-3) !important;
+  transition: background-color 140ms var(--r22-ease-out), color 140ms var(--r22-ease-out);
+}
+
+.r22-canvas-chip button svg {
+  width: 11px;
+  height: 11px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .r22-canvas-chip button:hover {
+    background: var(--r22-chrome);
+    color: var(--r22-ink) !important;
+  }
+}
+
+/* 发出去之后,那几张参考图留在自己那条消息上。 */
+.r22-canvas-message-refs {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.r22-canvas-message-refs img {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+/* ————— 参数弹层:做什么 / 什么形状 / 几张 ————— */
+
+.r22-canvas-param-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.r22-canvas-param-row button {
+  flex: 1;
+  padding: 6px 8px !important;
+  border-radius: 8px;
+  color: var(--r22-ink-2) !important;
+  font-size: var(--r22-text-mono-label) !important;
+  text-align: center !important;
+}
+
+.r22-canvas-param-row button[aria-pressed="true"],
+.r22-canvas-shape-grid button[aria-pressed="true"] {
+  background: var(--r22-chrome);
+  color: var(--r22-ink) !important;
+}
+
+.r22-canvas-shape-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 4px;
+}
+
+.r22-canvas-shape-grid button {
+  display: grid !important;
+  justify-items: center;
+  gap: 5px;
+  padding: 8px 4px !important;
+  border-radius: 8px;
+  color: var(--r22-ink-2) !important;
+  font-family: var(--font-jetbrains-mono), monospace !important;
+  font-size: var(--r22-text-mono-label) !important;
+  text-align: center !important;
+}
+
+/* 形状本身画出来 —— 比例是看的,不是读的。 */
+.r22-canvas-shape-grid button i {
+  display: block;
+  width: 100%;
+  max-width: 20px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+}
+
+/* ————— 素材库小弹层 ————— */
+
+.r22-canvas-library-picker {
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 268px;
+  transform-origin: bottom left;
+}
+
+.r22-canvas-library-picker > p {
+  margin: 3px 5px 7px;
+  color: var(--r22-ink-3);
+  font-size: var(--r22-text-mono-label);
+}
+
+.r22-canvas-library-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.r22-canvas-library-grid button {
+  display: grid !important;
+  gap: 5px;
+  padding: 4px !important;
+  border-radius: 9px;
+}
+
+.r22-canvas-library-grid img {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.r22-canvas-library-grid span {
+  overflow: hidden;
+  color: var(--r22-ink-2);
+  font-size: var(--r22-text-mono-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 真的文件选择器 —— 它不占位置,+ 菜单那一项按下去按的就是它。 */
+.r22-canvas-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .r22-canvas-tools {
@@ -1403,8 +1750,15 @@
   .r22-canvas-send:active,
   .r22-canvas-tools button:active,
   .r22-canvas-zoom button:active,
-  .r22-canvas-answer-actions button:active {
+  .r22-canvas-answer-actions button:active,
+  .r22-canvas-batch-next button:active {
     transform: none;
+  }
+
+  /* 动作排照常出现,只是不再位移淡入。 */
+  .r22-canvas-art-actions {
+    transform: none;
+    transition: opacity 120ms ease;
   }
 
   /* 位移退场,只留一次不动的淡入淡出。 */

@@ -15,6 +15,8 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  Download,
+  FolderPlus,
   Frame,
   Hand,
   ImagePlus,
@@ -25,8 +27,11 @@ import {
   MousePointer2,
   Plus,
   Redo2,
+  Sparkles,
   Star,
   Undo2,
+  Video,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CANVAS_HREF, CREATE_NAV_HREF } from "@fikirtive/core/navigation";
@@ -37,6 +42,7 @@ import type { ImmersiveCanvasRuntimeContext } from "./NorthstarCanvasWorkspace";
 import { freshCanvasActionId, useCanvasGen, type CanvasGenProgress } from "./useCanvasGen";
 import { CANVAS_IMAGE_MAX_VARIANT_COUNT, type CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 import { readR22WorkspaceDirectory, scopedR22FixtureKey } from "@/components/r22/r22-workspace-fixture";
+import { addToR22Pack } from "./r22-canvas-pack";
 import "./r22-canvas.css";
 
 type CanvasTool = "select" | "box" | "hand" | "image" | "star" | "arrange";
@@ -69,19 +75,143 @@ const CANVAS_ZOOM_STEP = 1.2;
  */
 const CANVAS_DRAG_THRESHOLD = 3;
 
-/** 样例画布三个物件的老家(原型 L5514/5520/5527 的 inline `left/top`)。 */
+/** 样例画布两个固定物件的老家(原型 L5514/5520 的 inline `left/top`)。批次卡各有各的家,见 `FixtureBatch.home`。 */
 const FIXTURE_OBJECT_HOME: Record<string, CanvasPoint> = {
   sticky: { x: 640, y: 560 },
   research: { x: 1730, y: 330 },
-  batch: { x: 1020, y: 520 },
 };
 
-const FIXTURE_ART = [
+/**
+ * 样例画布那一张图的价钱。真接后端的那一面读服务端报价(`quoteCosts`),两面共用同一个
+ * `imageCredits` 变量往下走 —— 价格贴纸、答案里的单价、批量四张的总价,全从这一处派生。
+ * 「同一个价钱写在三处」正是漂移的起点,所以这一面只允许有这一个出处。
+ */
+const FIXTURE_IMAGE_CREDITS = 3;
+
+/**
+ * 一张**视频概念卡**的价钱。V1 这一面做得出的只有概念:一帧占位加一个时长标签,卡上那
+ * 句话逐字说清楚它不是一段能播的视频。价钱同样只有这一个出处。
+ */
+const FIXTURE_VIDEO_CONCEPT_CREDITS = 6;
+/** 概念卡上那个时长标签的秒数 —— 它是一个标签,不是一段真的时间轴。 */
+const FIXTURE_VIDEO_CONCEPT_SECONDS = 6;
+
+/** 商家这一次要做的是图还是视频。参数弹层上那个分段控件切的就是它。 */
+type CanvasMakeKind = "image" | "video";
+
+/** 一次请求的价钱 = 单价 × 张数。张数与类型都从参数弹层来,谁都不许再写第二个乘法。 */
+function fixtureQuoteCredits(kind: CanvasMakeKind, count: number): number {
+  return (kind === "video" ? FIXTURE_VIDEO_CONCEPT_CREDITS : FIXTURE_IMAGE_CREDITS) * count;
+}
+
+/** 样例画布此刻真的可选的那几个形状(参数弹层的比例格与答案卡共用这一份)。 */
+const FIXTURE_RATIO_OPTIONS = ["9:16", "1:1", "4:5", "16:9"];
+
+/** 参考图的诚实预算:样例存档存在浏览器里,太大的图放不进去,所以先说清楚再拒绝。 */
+const FIXTURE_ATTACHMENT_MAX_BYTES = 1_500_000;
+
+/** 商家自己的素材库里已经存着的几张(样例)。「From Library」那个小弹层挑的就是它们。 */
+const FIXTURE_LIBRARY_ASSETS: Array<{ id: string; name: string; src: string }> = [
+  { id: "library-teal-candle", name: "Teal batik candle", src: "/fixtures/r22-canvas/art-1.jpg" },
+  { id: "library-pandan-set", name: "Pandan gift set", src: "/fixtures/r22-canvas/art-2.jpg" },
+  { id: "library-raya-table", name: "Raya table set", src: "/fixtures/r22-canvas/art-3.jpg" },
+  { id: "library-gold-thread", name: "Gold thread close-up", src: "/fixtures/r22-canvas/art-4.jpg" },
+];
+
+/**
+ * 跟手改一版的那几句(Grok 与 Stitch 同证的形状)。chip 上是商家读的短句,发出去的是一整句
+ * 请求 —— 短句本身不含创作动词,直接发会被判成一次提问,那就不是「再做一版」了。
+ */
+const FIXTURE_ITERATION_CHIPS: Array<{ chip: string; prompt: string }> = [
+  { chip: "Warmer light", prompt: "Make this batch again with warmer light" },
+  { chip: "More table setting", prompt: "Make this batch again with more of the table setting" },
+  { chip: "Closer crop", prompt: "Make this batch again with a closer crop" },
+];
+
+type FixtureArt = { id: string; label: string; src: string; alt: string; variant?: string };
+
+/**
+ * 画布上的一批东西。样例画布开局就有一批(`FIXTURE_SEED_BATCH`),此后每做一次就多一批 ——
+ * 新的一批是**并存**,不是替换:商家刚才那一批还在原地,才比得出这一版好在哪。
+ */
+type FixtureBatch = {
+  id: string;
+  kind: CanvasMakeKind;
+  ratio: string;
+  credits: number;
+  /** 这一批是从哪一张长出来的。`null` = 它自己就是新的一批。 */
+  madeFrom: string | null;
+  /** 这一批用到的参考图名字。空 = 没用参考图。 */
+  references: string[];
+  home: CanvasPoint;
+  art: FixtureArt[];
+};
+
+const FIXTURE_SEED_ART: FixtureArt[] = [
   { id: "art-1", variant: "r22-canvas-art-one", label: "Image 1", src: "/fixtures/r22-canvas/art-1.jpg", alt: "Raya concept 1" },
   { id: "art-2", variant: "r22-canvas-art-two", label: "Image 2", src: "/fixtures/r22-canvas/art-2.jpg", alt: "Raya concept 2" },
   { id: "art-3", variant: "r22-canvas-art-three", label: "Image 3", src: "/fixtures/r22-canvas/art-3.jpg", alt: "Raya concept 3" },
   { id: "art-4", variant: "r22-canvas-art-four", label: "Image 4", src: "/fixtures/r22-canvas/art-4.jpg", alt: "Raya concept 4" },
-] as const;
+];
+
+/** 开局就在板上的那一批(原型 L5527 的位置)。 */
+const FIXTURE_SEED_BATCH: FixtureBatch = {
+  id: "batch",
+  kind: "image",
+  ratio: "9:16",
+  credits: FIXTURE_IMAGE_CREDITS * CANVAS_IMAGE_MAX_VARIANT_COUNT,
+  madeFrom: null,
+  references: [],
+  home: { x: 1020, y: 520 },
+  art: FIXTURE_SEED_ART,
+};
+
+/** 批次卡上那枚标签 —— 商家读到的就是这一句:做了几张、什么形状、多少 cr。 */
+function batchTagLabel(batch: FixtureBatch): string {
+  const count = batch.art.length;
+  const noun = batch.kind === "video" ? (count === 1 ? "video concept" : "video concepts") : count === 1 ? "image" : "images";
+  return `Batch · ${count} ${noun} · ${batch.ratio} · ${batch.credits} cr`;
+}
+
+/** 新的一批长什么样。编号接着板上已有的往下数,所以 chips 与卡上的名字永远对得上。 */
+function buildFixtureBatch(spec: {
+  index: number;
+  imageCount: number;
+  videoCount: number;
+  kind: CanvasMakeKind;
+  count: number;
+  ratio: string;
+  madeFrom: string | null;
+  references: string[];
+}): FixtureBatch {
+  const id = `batch-${spec.index}`;
+  const art = Array.from({ length: spec.count }, (_, offset): FixtureArt => {
+    const seed = FIXTURE_SEED_ART[(spec.imageCount + offset) % FIXTURE_SEED_ART.length]!;
+    return spec.kind === "video"
+      ? { id: `${id}-${offset + 1}`, label: `Video ${spec.videoCount + offset + 1}`, src: "", alt: "" }
+      : { id: `${id}-${offset + 1}`, label: `Image ${spec.imageCount + offset + 1}`, src: seed.src, alt: seed.alt };
+  });
+  return {
+    id,
+    kind: spec.kind,
+    ratio: spec.ratio,
+    credits: fixtureQuoteCredits(spec.kind, spec.count),
+    madeFrom: spec.madeFrom,
+    references: spec.references,
+    // 一批一批往下摆,不叠在一起 —— 上一批还在原地,商家才比得出这一版。
+    home: { x: FIXTURE_SEED_BATCH.home.x, y: FIXTURE_SEED_BATCH.home.y + 360 * spec.index },
+    art,
+  };
+}
+
+/** 一次请求可以带在身上的参考图。它跟着 composer 走,发出去之后落在那条消息上。 */
+type CanvasAttachment = { id: string; name: string; src: string; from: "upload" | "library" };
+
+/** 「Image 1 和 Image 2」—— 商家读的是这种句子,不是一个数组。 */
+function listPhrase(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
 
 function worldTransform(view: CanvasView): CSSProperties {
   return { transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom / 100})` };
@@ -125,23 +255,24 @@ export type OttoAnswerContext = {
    * 三态里最诚实的那一态:不知道就说不知道,不假装「没有在跑」。
    */
   activeRoutines: number | null;
+  /**
+   * 商家此刻在板上选中的那几张的名字。有选中时,答案必须指名道姓地说它是在讲这几张 ——
+   * 「For Image 1 and Image 2 — …」;读不到就是没选,那一路一个字都不加。
+   */
+  selection?: string[];
+  /** 此刻挂在 composer 上的参考图名字。同理:有就承认,没有就不提。 */
+  references?: string[];
 };
 
 type ChatResponse = { kind: "line"; text: string } | { kind: "answer"; answer: OttoCanvasAnswer };
 
 type ChatEntry =
-  | { from: "me" | "otto"; text: string }
+  /** `refs` = 这条消息发出去时挂在身上的参考图。发完之后它就归这条消息,不再跟着 composer 走。 */
+  | { from: "me" | "otto"; text: string; refs?: CanvasAttachment[] }
   | { from: "answer"; answer: OttoCanvasAnswer; repeat: boolean };
 
 /** 商家读得懂的形状名。表里没有的比例原样报出去,不硬塞一个形容词。 */
 const RATIO_SHAPE_WORD: Record<string, string> = { "9:16": "vertical", "1:1": "square", "16:9": "wide", "4:5": "portrait" };
-
-/**
- * 样例画布那一张图的价钱。真接后端的那一面读服务端报价(`quoteCosts`),两面共用同一个
- * `imageCredits` 变量往下走 —— 价格贴纸、答案里的单价、批量四张的总价,全从这一处派生。
- * 「同一个价钱写在三处」正是漂移的起点,所以这一面只允许有这一个出处。
- */
-const FIXTURE_IMAGE_CREDITS = 3;
 
 /**
  * 商家读到的阶段名。工程状态码(`queued` / `completed` …)只活在 `data-canvas-job-status`、
@@ -225,7 +356,7 @@ const QUESTION = /^\s*(what|what's|whats|how|where|why|when|who|which)\b[\s\S]*\
  * 答话本身没有动任何东西、没有排任何队、没有花一分钱。凡是这一面读不出来的事实
  * (routine 条数、渠道是否已连),一律走「不知道」那一支,不替商家猜。
  */
-export function canvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCanvasAnswer {
+function baseCanvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCanvasAnswer {
   const low = prompt.toLowerCase();
   const credits = context.imageCredits;
 
@@ -383,6 +514,33 @@ export function canvasAnswerFor(prompt: string, context: OttoAnswerContext): Ott
   };
 }
 
+/**
+ * 选中/参考图那一路(Stitch 的画布代理精髓)—— 板上选中了几张,答案就得指名道姓地讲这
+ * 几张,不能给一段谁都适用的通话。
+ *
+ * 它**套在**八路之外,不是第九路:「这几张多少钱?」缺的仍然是价钱那一路的答案,只是
+ * 那张卡得先认下「我说的是 Image 1 和 Image 2」。所以导语前面接一句指名,要点末尾补一句
+ * 边界 —— 八路本身一个字不动。
+ */
+export function canvasAnswerFor(prompt: string, context: OttoAnswerContext): OttoCanvasAnswer {
+  const answer = baseCanvasAnswerFor(prompt, context);
+  const selection = context.selection ?? [];
+  const references = context.references ?? [];
+  if (!selection.length && !references.length) return answer;
+  const bullets = [...answer.bullets];
+  if (selection.length) {
+    bullets.push(`Nothing was changed on ${listPhrase(selection)} — this answer only talks about ${selection.length === 1 ? "it" : "them"}.`);
+  }
+  if (references.length) {
+    bullets.push(`${listPhrase(references)} ${references.length === 1 ? "stays" : "stay"} attached to your next request only.`);
+  }
+  return {
+    ...answer,
+    lead: selection.length ? `For ${listPhrase(selection)} — ${answer.lead}` : answer.lead,
+    bullets,
+  };
+}
+
 /** 复制出去的就是屏上那一整张卡 —— 标题、导语、每条要点、注脚,一行一条(原型 L6704)。 */
 export function answerCopyText(answer: OttoCanvasAnswer): string {
   return [answer.title, answer.lead, ...answer.bullets, answer.note].join("\n");
@@ -421,19 +579,90 @@ function OttoMark() {
   return <Image className="r22-otto-mark" src="/brand/r22-otto-thinking.svg" width={120} height={110} alt="" />;
 }
 
+/** 一张成品的动作排(Grok 的结果排形状):星标 / 下载 / 再来一批 / 收进素材包。 */
+type ArtAction = "star" | "download" | "variants" | "pack";
+
+function ArtCell({
+  art,
+  kind,
+  selected,
+  starred,
+  onSelect,
+  onAction,
+}: {
+  art: FixtureArt;
+  kind: CanvasMakeKind;
+  selected: boolean;
+  starred: boolean;
+  onSelect: (id: string) => void;
+  onAction: (action: ArtAction, art: FixtureArt) => void;
+}) {
+  return (
+    <div className="r22-canvas-art-cell" data-canvas-art-cell={art.id}>
+      <Button
+        unstyled
+        className={`r22-canvas-art${art.variant ? ` ${art.variant}` : ""}${selected ? " is-selected" : ""}`}
+        type="button"
+        aria-label={art.label}
+        aria-pressed={selected}
+        data-canvas-select={art.id}
+        onClick={() => onSelect(art.id)}
+      >
+        {kind === "video" ? (
+          <span className="r22-canvas-art-concept">
+            <Video aria-hidden="true" />
+            <em>{FIXTURE_VIDEO_CONCEPT_SECONDS}s</em>
+          </span>
+        ) : (
+          <Image src={art.src} fill sizes="128px" alt={art.alt} priority />
+        )}
+      </Button>
+      {starred ? <span className="r22-canvas-art-star" aria-hidden="true"><Star /></span> : null}
+      <div className="r22-canvas-art-actions" data-canvas-art-actions={art.id}>
+        <Button unstyled type="button" aria-label={`Star ${art.label}`} aria-pressed={starred} data-canvas-art-action="star" onClick={() => onAction("star", art)}>
+          <Star aria-hidden="true" />
+        </Button>
+        {/* 概念卡没有可以存下来的文件,所以它这一格就没有下载 —— 灰着放在那儿也是一句假话。 */}
+        {kind === "video" ? null : (
+          <Button unstyled type="button" aria-label={`Download ${art.label}`} data-canvas-art-action="download" onClick={() => onAction("download", art)}>
+            <Download aria-hidden="true" />
+          </Button>
+        )}
+        <Button unstyled type="button" aria-label={`Make more like ${art.label}`} data-canvas-art-action="variants" onClick={() => onAction("variants", art)}>
+          <Sparkles aria-hidden="true" />
+        </Button>
+        <Button unstyled type="button" aria-label={`Add ${art.label} to a Library pack`} data-canvas-art-action="pack" onClick={() => onAction("pack", art)}>
+          <FolderPlus aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function FixtureWorld({
   style,
   positions,
+  batches,
   selected,
+  starred,
   onSelect,
+  onArtAction,
+  onIterate,
 }: {
   style: CSSProperties;
-  /** 商家自己拖到的位置。没拖过的物件读不到条目,就还在 `FIXTURE_OBJECT_HOME` 那个老家。 */
+  /** 商家自己拖到的位置。没拖过的物件读不到条目,就还在自己的老家。 */
   positions: Record<string, CanvasPoint>;
+  /** 板上现在有哪几批。第一批是开局那一批,后面的是商家自己做出来的。 */
+  batches: FixtureBatch[];
   selected: string[];
+  starred: string[];
   onSelect: (id: string) => void;
+  onArtAction: (action: ArtAction, art: FixtureArt) => void;
+  onIterate: (prompt: string) => void;
 }) {
-  const at = (id: string): CanvasPoint => positions[id] ?? FIXTURE_OBJECT_HOME[id];
+  const homes: Record<string, CanvasPoint> = { ...FIXTURE_OBJECT_HOME };
+  batches.forEach((batch) => { homes[batch.id] = batch.home; });
+  const at = (id: string): CanvasPoint => positions[id] ?? homes[id];
   return (
     <div className="r22-canvas-world" style={style} aria-label="Sample canvas board" data-r22-visual-fixture>
       <article className="r22-canvas-object r22-canvas-sticky" data-canvas-object="sticky" style={{ left: at("sticky").x, top: at("sticky").y }}>
@@ -447,28 +676,48 @@ function FixtureWorld({
         <p>“Four scents inspired by Raya mornings — teal batik, gold thread, warm oud, and pandan light.”</p>
       </article>
 
-      <section className="r22-canvas-object r22-canvas-batch" data-canvas-object="batch" style={{ left: at("batch").x, top: at("batch").y }} aria-label="Batch of four images">
-        <span className="r22-canvas-batch-tag">Batch · {CANVAS_IMAGE_MAX_VARIANT_COUNT} images · {FIXTURE_IMAGE_CREDITS * CANVAS_IMAGE_MAX_VARIANT_COUNT} cr</span>
-        <div className="r22-canvas-batch-row">
-          {FIXTURE_ART.map((art) => {
-            const isSelected = selected.includes(art.id);
-            return (
-              <Button
-                unstyled
+      {batches.map((batch, index) => (
+        <section
+          className={`r22-canvas-object r22-canvas-batch${batch.kind === "video" ? " is-video" : ""}`}
+          key={batch.id}
+          data-canvas-object={batch.id}
+          data-canvas-batch={batch.id}
+          style={{ left: at(batch.id).x, top: at(batch.id).y }}
+          aria-label={batchTagLabel(batch)}
+        >
+          <span className="r22-canvas-batch-tag">{batchTagLabel(batch)}</span>
+          {batch.madeFrom ? <span className="r22-canvas-batch-origin" data-canvas-batch-origin>Variant of {batch.madeFrom}</span> : null}
+          {batch.references.length ? (
+            <span className="r22-canvas-batch-origin">
+              Made with your reference {batch.references.length === 1 ? "image" : "images"}: {listPhrase(batch.references)}
+            </span>
+          ) : null}
+          <div className="r22-canvas-batch-row">
+            {batch.art.map((art) => (
+              <ArtCell
                 key={art.id}
-                className={`r22-canvas-art ${art.variant}${isSelected ? " is-selected" : ""}`}
-                type="button"
-                aria-label={art.label}
-                aria-pressed={isSelected}
-                data-canvas-select={art.id}
-                onClick={() => onSelect(art.id)}
-              >
-                <Image src={art.src} fill sizes="128px" alt={art.alt} priority />
-              </Button>
-            );
-          })}
-        </div>
-      </section>
+                art={art}
+                kind={batch.kind}
+                selected={selected.includes(art.id)}
+                starred={starred.includes(art.id)}
+                onSelect={onSelect}
+                onAction={onArtAction}
+              />
+            ))}
+          </div>
+          {/* 概念卡自己说清楚自己是什么 —— 一帧占位加一个时长标签,不是一段能播的视频。 */}
+          {batch.kind === "video" ? <p className="r22-canvas-batch-honest">Concept only — a still stand-in, not a playable video.</p> : null}
+          {index === batches.length - 1 ? (
+            <div className="r22-canvas-batch-next" data-canvas-batch-next>
+              {FIXTURE_ITERATION_CHIPS.map((suggestion) => (
+                <Button unstyled type="button" key={suggestion.chip} data-canvas-iterate={suggestion.chip} onClick={() => onIterate(suggestion.prompt)}>
+                  {suggestion.chip}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ))}
     </div>
   );
 }
@@ -569,8 +818,20 @@ export function R22CanvasSurface({
   const [conversationOpen, setConversationOpen] = useState(true);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  /** 「From Library」那个小弹层。它是附件菜单的下一层,所以 Esc 也要认得它。 */
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [ratioOpen, setRatioOpen] = useState(false);
   const [ratio, setRatio] = useState("9:16");
+  /** 这一次要做图还是做视频概念 —— 参数弹层上那个分段控件。 */
+  const [makeKind, setMakeKind] = useState<CanvasMakeKind>("image");
+  /** 这一次要做几张(1–4)。价钱跟着它走。 */
+  const [makeCount, setMakeCount] = useState(1);
+  /** 商家自己做出来的那几批(开局那一批是常量,不进存档)。 */
+  const [extraBatches, setExtraBatches] = useState<FixtureBatch[]>([]);
+  /** 被星标的成品。星标是「留着」的意思,所以它进存档。 */
+  const [starredArt, setStarredArt] = useState<string[]>([]);
+  /** 此刻挂在 composer 上的参考图。 */
+  const [attachments, setAttachments] = useState<CanvasAttachment[]>([]);
   const [tool, setTool] = useState<CanvasTool>("select");
   /** 平移与倍率是同一件事的两半(原型 L5985 的 `view`),所以它们是同一个状态。 */
   const [view, setView] = useState<CanvasView>(CANVAS_HOME_VIEW);
@@ -598,7 +859,7 @@ export function R22CanvasSurface({
   const [nodesLoading, setNodesLoading] = useState(!fixture);
   const [nodesError, setNodesError] = useState<string | null>(null);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
-  const [ratioOptions, setRatioOptions] = useState<string[]>(fixture ? ["9:16", "1:1", "16:9"] : []);
+  const [ratioOptions, setRatioOptions] = useState<string[]>(fixture ? FIXTURE_RATIO_OPTIONS : []);
   const [generationProgress, setGenerationProgress] = useState<CanvasGenProgress | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fixtureRestored, setFixtureRestored] = useState(!fixture);
@@ -607,6 +868,8 @@ export function R22CanvasSurface({
   const [fixtureSendFailedOnce, setFixtureSendFailedOnce] = useState(false);
   const fixtureTimersRef = useRef<number[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
+  /** 真的那个文件选择器。+ 菜单里那一项按下去,按的就是它。 */
+  const fileInputRef = useRef<HTMLInputElement>(null);
   /** 正在走的那一根手指。已经有一根在走时,第二根一律忽略(原型只认 `e.button===0` 的那一根)。 */
   const gesturePointerRef = useRef<number | null>(null);
   /**
@@ -703,13 +966,19 @@ export function R22CanvasSurface({
       // 否则上一个项目的摆法会被下面那个写入 effect 原样存进新项目的 key。
       setObjectPos({});
       setSelectedArt([]);
+      // 做出来的批次、星标、挂着的参考图、这一次的参数 —— 全是这个项目的东西,一起清。
+      setExtraBatches([]);
+      setStarredArt([]);
+      setAttachments([]);
+      setMakeKind("image");
+      setMakeCount(1);
       moveHistoryRef.current = { undo: [], redo: [] };
       answeredRequestsRef.current.clear();
     };
     const stored = window.sessionStorage.getItem(fixtureStorageKey);
     if (stored) {
       try {
-        const restored = JSON.parse(stored) as { version?: number; messages?: ChatEntry[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null; objects?: Record<string, CanvasPoint> };
+        const restored = JSON.parse(stored) as { version?: number; messages?: ChatEntry[]; pending?: PendingCanvasQuestion | null; other?: string; decision?: DecisionRecord | null; job?: FixtureCanvasJob | null; objects?: Record<string, CanvasPoint>; batches?: FixtureBatch[]; starred?: string[]; attachments?: CanvasAttachment[]; kind?: CanvasMakeKind; count?: number };
         // v2 = 会话记录从「一串我的话」变成「谁说的 + 说了什么」(Otto 现在也会答话)。
         // 旧存档结构对不上,当场丢掉,不去猜它的形状。
         if (restored.version !== 2) throw new Error("stale fixture state");
@@ -721,11 +990,17 @@ export function R22CanvasSurface({
         setFixtureJob(restored.job ?? null);
         // 这一条是 v2 存档后加的字段:老存档读不到就是「一个都没拖过」,不当成坏存档丢掉。
         setObjectPos(restored.objects ?? {});
+        // 同一条纪律:这几个字段都是 v2 存档之后加的,老存档读不到就是「还没做过这件事」。
+        setExtraBatches(restored.batches ?? []);
+        setStarredArt(restored.starred ?? []);
+        setAttachments(restored.attachments ?? []);
+        setMakeKind(restored.kind ?? "image");
+        setMakeCount(restored.count ?? 1);
         setSelectedArt([]);
         // 读回来的位置是**别人那一次**挪出来的:这一次会话没有那几步可以往回走。
         moveHistoryRef.current = { undo: [], redo: [] };
         if (restored.job?.status === "queued" || restored.job?.status === "running") {
-          window.setTimeout(() => startFixtureJob(restored.job!.prompt, restored.job!.id), 0);
+          window.setTimeout(() => startFixtureJob(restored.job!.prompt, { actionId: restored.job!.id }), 0);
         }
         if (restored.decision?.status === "answered") answeredRequestsRef.current.add(answeredRequestKey(restored.decision.inputRequestId, restored.decision.taskVersion));
       } catch {
@@ -739,8 +1014,8 @@ export function R22CanvasSurface({
   }, [fixture, fixtureStorageKey]);
   useEffect(() => {
     if (!fixture || !fixtureRestored) return;
-    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 2, messages: chatLog, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob, objects: objectPos }));
-  }, [decisionRecord, fixture, fixtureJob, chatLog, fixtureRestored, fixtureStorageKey, objectPos, otherAnswer, pendingQuestion]);
+    window.sessionStorage.setItem(fixtureStorageKey, JSON.stringify({ version: 2, messages: chatLog, pending: pendingQuestion, other: otherAnswer, decision: decisionRecord, job: fixtureJob, objects: objectPos, batches: extraBatches, starred: starredArt, attachments, kind: makeKind, count: makeCount }));
+  }, [attachments, decisionRecord, extraBatches, fixture, fixtureJob, chatLog, fixtureRestored, fixtureStorageKey, makeCount, makeKind, objectPos, otherAnswer, pendingQuestion, starredArt]);
   useEffect(() => () => { fixtureTimersRef.current.forEach((timer) => window.clearTimeout(timer)); }, []);
   /**
    * 刚答出来的那张卡必须看得见。会话面板只有 40vh 高,一张答案卡就比一条消息高好几倍 ——
@@ -760,6 +1035,16 @@ export function R22CanvasSurface({
     }).catch(() => setRatioOptions([]));
   }, [fixture, imageShapes, quoteCosts]);
 
+  /**
+   * 板上现在有哪几批 —— 开局那一批永远在最前面,后面是商家自己做出来的,并存不替换。
+   */
+  const batches = useMemo(() => [FIXTURE_SEED_BATCH, ...extraBatches], [extraBatches]);
+  /** 每个物件的老家(便签/摘录是常量,批次卡各自带着自己的)。拖过之后读 `objectPos`。 */
+  const objectHomes = useMemo(() => {
+    const homes: Record<string, CanvasPoint> = { ...FIXTURE_OBJECT_HOME };
+    batches.forEach((batch) => { homes[batch.id] = batch.home; });
+    return homes;
+  }, [batches]);
   /* ————— 板本身:平移 / 缩放 / 拖拽 / 框选(原型 L5983-6189) ————— */
 
   /** 以 stage 上的某一点为定点缩放(原型 L6009-6013)。不这么做,倍率一动内容就飘走。 */
@@ -807,11 +1092,12 @@ export function R22CanvasSurface({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (event.defaultPrevented) return;
-      if (projectMenuOpen || attachOpen || ratioOpen) {
+      if (projectMenuOpen || attachOpen || ratioOpen || libraryOpen) {
         event.preventDefault();
         setProjectMenuOpen(false);
         setAttachOpen(false);
         setRatioOpen(false);
+        setLibraryOpen(false);
         return;
       }
       if (!selectedArt.length) return;
@@ -820,7 +1106,7 @@ export function R22CanvasSurface({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [attachOpen, projectMenuOpen, ratioOpen, selectedArt.length]);
+  }, [attachOpen, libraryOpen, projectMenuOpen, ratioOpen, selectedArt.length]);
 
   /** 一次拖拽/框选/平移走完之后的收尾:解掉监听、放开手指、退出「拖拽中」。 */
   const endGesture = useCallback((move: (event: PointerEvent) => void, up: (event: PointerEvent) => void) => {
@@ -897,7 +1183,7 @@ export function R22CanvasSurface({
     const objectEl = insideWorld ? target.closest<HTMLElement>("[data-canvas-object]") : null;
     const objectId = objectEl?.dataset.canvasObject;
     if (objectId && tool !== "hand") {
-      const from = objectPos[objectId] ?? FIXTURE_OBJECT_HOME[objectId];
+      const from = objectPos[objectId] ?? objectHomes[objectId];
       if (!from) return;
       const startX = event.clientX;
       const startY = event.clientY;
@@ -947,13 +1233,19 @@ export function R22CanvasSurface({
     window.addEventListener("pointercancel", up);
   };
 
+  /**
+   * 刚拖完手一松,浏览器还会补一记 click。那一记不是商家的一次点击(原型 L6098/L6155)——
+   * 板上每一颗按得动的东西都得先问它一句,否则拖一下批次卡就会顺手触发一次动作。
+   */
+  function consumedByDrag(): boolean {
+    if (!dragEndClickRef.current) return false;
+    dragEndClickRef.current = false;
+    return true;
+  }
+
   /** 单选(原型 `toggleSel`,L6117-6122):选中的永远只有刚点的这一张,再点一下取消。 */
   function selectArt(id: string) {
-    // 刚拖完手一松,浏览器还会补一记 click。那不是一次选择(原型 L6098/L6155)。
-    if (dragEndClickRef.current) {
-      dragEndClickRef.current = false;
-      return;
-    }
+    if (consumedByDrag()) return;
     setSelectedArt((current) => (current.length === 1 && current[0] === id ? [] : [id]));
   }
 
@@ -990,20 +1282,34 @@ export function R22CanvasSurface({
    * 报价。价格贴纸与答案卡里的每一个数字都从这里派生 —— 谁都不许再写一遍。
    */
   const imageCredits = fixture ? FIXTURE_IMAGE_CREDITS : costQuote ? costQuote.imageCredits : null;
-  const priceLabel = imageCredits === null ? "Checking cost…" : `${imageCredits} cr`;
+  /**
+   * 送出去之前商家读到的那个数。样例画布这一面它随「几张 / 图还是视频」联动 —— 参数改了
+   * 价钱不动,才是真正会咬人的那种谎。真接后端那一面照旧读服务端报价,一次一张。
+   */
+  const priceLabel = fixture
+    ? `${fixtureQuoteCredits(makeKind, makeCount)} cr`
+    : imageCredits === null ? "Checking cost…" : `${imageCredits} cr`;
+  /** 此刻选中的那几张(按板上的顺序,不按点的顺序 —— 商家读的是板)。 */
+  const selectionChips = batches.flatMap((batch) => batch.art.filter((art) => selectedArt.includes(art.id)));
+  const selectedLabels = selectionChips.map((art) => art.label);
   const answerContext: OttoAnswerContext = {
     board: fixture ? fixtureBoardLabel : "this canvas",
     imageCredits,
     ratioOptions,
     // 画布这一面没有 routine 的出处。给 `null` 不是省事,是三态里唯一诚实的那一态。
     activeRoutines: null,
+    selection: fixture ? selectedLabels : [],
+    references: attachments.map((attachment) => attachment.name),
   };
 
-  /** 一次答话落进会话记录。同一个标题第二次出现就是一次「重复问」,导语换成变体。 */
+  /**
+   * 一次答话落进会话记录。同一张卡第二次出现才是一次「重复问」—— 比的是标题**和**导语:
+   * 同一个问题在选中不同图时问出来,答的不是同一件事,那不叫重复。
+   */
   function pushAnswer(answer: OttoCanvasAnswer) {
     setChatLog((current) => [
       ...current,
-      { from: "answer", answer, repeat: current.some((entry) => entry.from === "answer" && entry.answer.title === answer.title) },
+      { from: "answer", answer, repeat: current.some((entry) => entry.from === "answer" && entry.answer.title === answer.title && entry.answer.lead === answer.lead) },
     ]);
   }
 
@@ -1032,14 +1338,36 @@ export function R22CanvasSurface({
       onFeedback={(vote) => voteAnswer(index, vote)}
     />
   ) : (
-    <li className={item.from === "me" ? "from-me" : "from-otto"} key={`${item.from}:${index}:${item.text}`}>{item.text}</li>
+    <li className={item.from === "me" ? "from-me" : "from-otto"} key={`${item.from}:${index}:${item.text}`}>
+      {item.text}
+      {item.refs?.length ? (
+        // 发出去时挂在这条消息上的参考图。它留在记录里,商家回头读得出「那一次我给了什么」。
+        <span className="r22-canvas-message-refs" data-canvas-message-refs>
+          {item.refs.map((reference) => (
+            // eslint-disable-next-line @next/next/no-img-element -- 参考图是商家自己挑的一张图,连尺寸都不知道,没有可优化的远端资源。
+            <img key={reference.id} src={reference.src} alt={reference.name} title={reference.name} />
+          ))}
+        </span>
+      ) : null}
+    </li>
   ));
 
-  function startFixtureJob(prompt: string, actionId?: string) {
-    const id = actionId ?? fixtureJob?.id ?? `fixture-action-${chatLog.length}`;
+  /**
+   * 一次请求从排队走到落板。跑完之后板上**多出一批**,上一批原样留在原地 —— 这一条是
+   * 「跟手改一版」整件事成立的前提:旧的没了就没得比,那不叫改一版,叫覆盖。
+   */
+  function startFixtureJob(prompt: string, options: { actionId?: string; kind?: CanvasMakeKind; count?: number; ratio?: string; references?: string[]; madeFrom?: string | null } = {}) {
+    const id = options.actionId ?? fixtureJob?.id ?? `fixture-action-${chatLog.length}`;
+    const kind = options.kind ?? makeKind;
+    const count = options.count ?? makeCount;
+    const shape = options.ratio ?? ratio;
+    const references = options.references ?? [];
+    const madeFrom = options.madeFrom ?? null;
     setSubmitting(true);
     setFixtureJob({ id, prompt, status: "queued" });
-    setNotice("Queued — nothing has been charged yet.");
+    setNotice(references.length
+      ? `Queued with your ${references.length === 1 ? "reference image" : `${references.length} reference images`} — nothing has been charged yet.`
+      : "Queued — nothing has been charged yet.");
     fixtureTimersRef.current.push(window.setTimeout(() => {
       setFixtureJob({ id, prompt, status: "running" });
       setNotice("Still on the same request — nothing new was started.");
@@ -1047,7 +1375,15 @@ export function R22CanvasSurface({
     fixtureTimersRef.current.push(window.setTimeout(() => {
       setSubmitting(false);
       setFixtureJob({ id, prompt, status: "completed" });
-      setNotice("Done — it landed on the canvas. Star the keepers, or ask for variants.");
+      setExtraBatches((current) => {
+        const board = [FIXTURE_SEED_BATCH, ...current];
+        const imageCount = board.reduce((total, batch) => total + (batch.kind === "image" ? batch.art.length : 0), 0);
+        const videoCount = board.reduce((total, batch) => total + (batch.kind === "video" ? batch.art.length : 0), 0);
+        return [...current, buildFixtureBatch({ index: board.length, imageCount, videoCount, kind, count, ratio: shape, madeFrom, references })];
+      });
+      setNotice(kind === "video"
+        ? "Done — the video concept landed on the canvas. It is a still stand-in, not a playable video."
+        : "Done — it landed on the canvas. Star the keepers, or ask for variants.");
     }, 920));
   }
 
@@ -1056,15 +1392,90 @@ export function R22CanvasSurface({
     startFixtureJob(fixtureJob.prompt);
   }
 
-  const submitMessage = async () => {
-    const next = message.trim();
+  /** 挂一张参考图上去。同一张挂两次只留一条 —— 多按一下不该变成两张一样的参考。 */
+  function attachReference(attachment: CanvasAttachment) {
+    setAttachOpen(false);
+    setLibraryOpen(false);
+    setAttachments((current) => (current.some((item) => item.id === attachment.id) ? current : [...current, attachment]));
+    setNotice(`${attachment.name} is attached to your next request. It costs nothing to attach.`);
+  }
+
+  function onPickFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // 同一个文件选两次也要能触发一次 change,所以先把它清空。
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > FIXTURE_ATTACHMENT_MAX_BYTES) {
+      setNotice("That image is larger than 1.5 MB, so this canvas cannot keep it. Pick a smaller one.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = typeof reader.result === "string" ? reader.result : "";
+      if (!src) {
+        setNotice("That image could not be read. Try another one.");
+        return;
+      }
+      attachReference({ id: `upload:${file.name}:${file.size}`, name: file.name, src, from: "upload" });
+    };
+    reader.onerror = () => setNotice("That image could not be read. Try another one.");
+    reader.readAsDataURL(file);
+  }
+
+  /** 成品自己的下载 —— 存下去的就是屏上那一张,不是一个「即将支持」的提示。 */
+  function downloadArt(art: FixtureArt) {
+    const link = document.createElement("a");
+    link.href = art.src;
+    link.download = `${art.label.toLowerCase().replace(/\s+/g, "-")}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setNotice(`${art.label} is saved to your device.`);
+  }
+
+  /** 逐图动作排上那四颗(Grok 的结果排形状)。 */
+  function onArtAction(action: ArtAction, art: FixtureArt) {
+    if (consumedByDrag()) return;
+    if (action === "star") {
+      setStarredArt((current) => (current.includes(art.id) ? current.filter((id) => id !== art.id) : [...current, art.id]));
+      setNotice("");
+      return;
+    }
+    if (action === "download") {
+      downloadArt(art);
+      return;
+    }
+    if (action === "pack") {
+      const result = addToR22Pack({ id: art.id, label: art.label, src: art.src });
+      setNotice(result.added
+        ? `${art.label} is in your Library pack — ${result.total} ${result.total === 1 ? "item" : "items"} saved.`
+        : `${art.label} is already in your Library pack.`);
+      return;
+    }
+    const prompt = `Make more like ${art.label}`;
+    setChatLog((current) => [...current, { from: "me", text: prompt }]);
+    startFixtureJob(prompt, { kind: "image", madeFrom: art.label });
+  }
+
+  /** 跟手改一版:那句话先落进输入框,再照常送出去 —— 走的是同一条生成路。 */
+  function iterateBatch(prompt: string) {
+    if (consumedByDrag()) return;
+    setMessage(prompt);
+    void submitMessage(prompt);
+  }
+
+  /** `raw` 是「不经过输入框直接送出去的那一句」(跟手改一版的 chip 走的就是这条)。 */
+  const submitMessage = async (raw?: string) => {
+    const next = (raw ?? message).trim();
     if (!next) return;
     if (fixture) {
       if (fixtureRouteState !== "ready") {
         setNotice("This project is not available. Return to Projects before sending anything.");
         return;
       }
-      setChatLog((current) => [...current, { from: "me", text: next }]);
+      // 挂着的参考图跟这一条消息一起走:发出去之后它归这条消息,不再跟着输入框。
+      const sentRefs = attachments;
+      setChatLog((current) => [...current, sentRefs.length ? { from: "me", text: next, refs: sentRefs } : { from: "me", text: next }]);
       const chatReply = chatResponseFor(next, answerContext);
       // 一句真的疑问句先于提问流:它缺的是一个答案,不是一次拍板。「Make the Raya hero
       // more premium」不是疑问句,那条路照旧走 `fixtureQuestionFlow`,一个字没变。
@@ -1108,9 +1519,11 @@ export function R22CanvasSurface({
             setFixtureJob({ id, prompt: next, status: "failed" });
             setNotice(fixtureSendOutcome === "unknown" ? "Otto could not confirm what happened. Check this same request before sending another — nothing counts as done, and nothing was charged." : "That request was not confirmed. Nothing was charged, and sending again picks up the same request instead of a new one.");
           }, 360);
-        } else startFixtureJob(next);
+        } else startFixtureJob(next, { references: sentRefs.map((reference) => reference.name) });
       }
       setMessage("");
+      // 参考图已经跟着那条消息走了,输入框上不该再挂着同一批 —— 否则下一句会悄悄再带一遍。
+      setAttachments([]);
       return;
     }
     // 同一道闸装在真接后端这一面 —— 在这里一句 "hi" 会真的排一次生成、真的花商家的钱。
@@ -1231,7 +1644,7 @@ export function R22CanvasSurface({
         ref={stageRef}
         onPointerDown={onStagePointerDown}
       >
-        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld style={worldStyle} positions={objectPos} selected={selectedArt} onSelect={selectArt} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
+        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld style={worldStyle} positions={objectPos} batches={batches} selected={selectedArt} starred={starredArt} onSelect={selectArt} onArtAction={onArtAction} onIterate={iterateBatch} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
         {marquee ? <div className="r22-canvas-marquee" data-r22-canvas-marquee style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }} /> : null}
         {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
@@ -1322,6 +1735,32 @@ export function R22CanvasSurface({
             void submitMessage();
           }}
         >
+          {/*
+            上下文条 —— 板上选中的那几张、以及挂着的参考图。它是 composer 的第一行,因为
+            它回答的是「我这句话在说谁」:选中两张再问一句,答的就该是那两张的事。
+          */}
+          {fixture && (selectionChips.length > 0 || attachments.length > 0) ? (
+            <div className="r22-canvas-composer-chips" data-r22-canvas-chips>
+              {selectionChips.map((art) => (
+                <span className="r22-canvas-chip" key={art.id} data-canvas-context-chip={art.id}>
+                  <b>{art.label}</b>
+                  <Button unstyled type="button" aria-label={`Remove ${art.label} from this request`} data-canvas-chip-remove={art.id} onClick={() => setSelectedArt((current) => current.filter((id) => id !== art.id))}>
+                    <X aria-hidden="true" />
+                  </Button>
+                </span>
+              ))}
+              {attachments.map((reference) => (
+                <span className="r22-canvas-chip is-reference" key={reference.id} data-canvas-reference-chip={reference.id}>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- 商家刚挑的一张图,连尺寸都不知道,没有可优化的远端资源。 */}
+                  <img src={reference.src} alt="" />
+                  <b>{reference.name}</b>
+                  <Button unstyled type="button" aria-label={`Remove ${reference.name} from this request`} data-canvas-reference-remove={reference.id} onClick={() => setAttachments((current) => current.filter((item) => item.id !== reference.id))}>
+                    <X aria-hidden="true" />
+                  </Button>
+                </span>
+              ))}
+            </div>
+          ) : null}
           <Textarea unstyled
             rows={1}
             value={message}
@@ -1339,20 +1778,61 @@ export function R22CanvasSurface({
             <Button unstyled type="button" className="r22-canvas-plus" aria-label="Attach" aria-expanded={attachOpen} onClick={() => setAttachOpen((open) => !open)}>
               <Plus aria-hidden="true" />
             </Button>
-            {attachOpen && (
+            {attachOpen && (fixture ? (
+              // 样例画布这一面两项都是真的:一颗开真的文件选择器,一颗开素材库小弹层。
+              <div className="r22-canvas-popover r22-canvas-attach-menu">
+                <Button unstyled type="button" onClick={() => { setAttachOpen(false); setLibraryOpen(true); }}>From Library</Button>
+                <Button unstyled type="button" onClick={() => { setAttachOpen(false); fileInputRef.current?.click(); }}>Upload an image</Button>
+              </div>
+            ) : (
               <div className="r22-canvas-popover r22-canvas-attach-menu">
                 <Button unstyled type="button" onClick={() => setNotice(entities.length ? "Pick from Library — attaching a saved reference is not connected yet." : "Nothing is saved in your Library yet.")}>From Library</Button>
                 <Button unstyled type="button" onClick={() => setNotice("Upload is not connected yet.")}>Upload a file</Button>
                 <Button unstyled type="button" onClick={() => setNotice("Link attachment is not connected yet.")}>Paste a link</Button>
               </div>
+            ))}
+            {libraryOpen && fixture && (
+              <div className="r22-canvas-popover r22-canvas-library-picker" data-r22-canvas-library-picker>
+                <p>Saved in your Library</p>
+                <div className="r22-canvas-library-grid">
+                  {FIXTURE_LIBRARY_ASSETS.map((asset) => (
+                    <Button unstyled type="button" key={asset.id} data-canvas-library-pick={asset.id} onClick={() => attachReference({ id: asset.id, name: asset.name, src: asset.src, from: "library" })}>
+                      {/* eslint-disable-next-line @next/next/no-img-element -- 小弹层里的缩略图,与 chip 用同一张图,不值得再走一轮远端优化。 */}
+                      <img src={asset.src} alt="" />
+                      <span>{asset.name}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
             )}
+            {/* 真的文件选择器。它不占位置,+ 菜单那一项按下去按的就是它。 */}
+            <Input unstyled ref={fileInputRef} className="r22-canvas-file-input" type="file" accept="image/*" tabIndex={-1} aria-label="Upload an image" onChange={onPickFile} />
             <span />
-            <Button unstyled type="button" className="r22-canvas-ratio" aria-expanded={ratioOpen} onClick={() => setRatioOpen((open) => !open)}>{ratio}</Button>
+            <Button unstyled type="button" className="r22-canvas-ratio" aria-expanded={ratioOpen} onClick={() => setRatioOpen((open) => !open)}>{fixture && makeCount > 1 ? `${ratio} · ${makeCount}` : ratio}</Button>
             {ratioOpen && ratioOptions.length > 0 && (
-              <div className="r22-canvas-popover r22-canvas-ratio-menu">
-                {ratioOptions.map((value) => (
-                  <Button unstyled type="button" key={value} onClick={() => { setRatio(value); setRatioOpen(false); }}>{value}</Button>
-                ))}
+              // 参数收在一个弹层里,不铺在输入框上:商家一次只在这里改「做什么、什么形状、几张」。
+              <div className="r22-canvas-popover r22-canvas-ratio-menu" data-r22-canvas-params>
+                {fixture ? (
+                  <div className="r22-canvas-param-row" role="group" aria-label="What to make">
+                    <Button unstyled type="button" aria-pressed={makeKind === "image"} data-canvas-kind="image" onClick={() => setMakeKind("image")}>Image</Button>
+                    <Button unstyled type="button" aria-pressed={makeKind === "video"} data-canvas-kind="video" onClick={() => setMakeKind("video")}>Video</Button>
+                  </div>
+                ) : null}
+                <div className="r22-canvas-shape-grid" role="group" aria-label="Shape">
+                  {ratioOptions.map((value) => (
+                    <Button unstyled type="button" key={value} aria-pressed={ratio === value} data-canvas-ratio={value} onClick={() => { setRatio(value); if (!fixture) setRatioOpen(false); }}>
+                      <i style={{ aspectRatio: value.replace(":", " / ") }} aria-hidden="true" />
+                      <span>{value}</span>
+                    </Button>
+                  ))}
+                </div>
+                {fixture ? (
+                  <div className="r22-canvas-param-row" role="group" aria-label="How many">
+                    {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, index) => index + 1).map((value) => (
+                      <Button unstyled type="button" key={value} aria-pressed={makeCount === value} data-canvas-count={value} onClick={() => setMakeCount(value)}>{value}</Button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             )}
             <span className="r22-canvas-price">{priceLabel}</span>
