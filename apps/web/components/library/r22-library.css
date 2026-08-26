@@ -170,17 +170,18 @@
 .r22-lib-layer-meta dd { margin: 0; }
 .r22-lib-layer-meta time { font-variant-numeric: tabular-nums; }
 .r22-lib-layer-origin { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); text-decoration: none; }
-a.r22-lib-layer-origin { border-bottom: 1px solid var(--r22-line-2); align-self: flex-start; transition: color 140ms ease-out, border-color 140ms ease-out; }
+/* P2-20:两条链接合成这一条之后,它也是通往那块板的路 —— 一枚箭头把「按下去会走开」说出来。 */
+a.r22-lib-layer-origin { display: inline-flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--r22-line-2); align-self: flex-start; transition: color 140ms ease-out, border-color 140ms ease-out; }
+a.r22-lib-layer-origin svg { width: 12px; height: 12px; }
 /* 「Edited from …」—— 与「Made in …」同一档字,只是它按下去回的是原图,不是一块板。 */
 button.r22-lib-layer-source { border-bottom: 1px solid var(--r22-line-2); align-self: flex-start; text-align: left; transition: color 140ms ease-out, border-color 140ms ease-out; }
 .r22-lib-layer-note { margin: 8px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-caption); }
 .r22-lib-layer-h { margin: 8px 0 0; color: var(--r22-ink-3); font-size: var(--r22-text-mono-label); font-weight: 600; letter-spacing: var(--r22-track-caps); text-transform: uppercase; }
 .r22-lib-layer-body { margin: 0; color: var(--r22-ink-2); font-size: var(--r22-text-small); line-height: 1.6; }
 .r22-lib-layer-acts { display: flex; margin-top: auto; padding-top: 14px; gap: 6px; flex-wrap: wrap; border-top: 1px solid var(--r22-line); }
-.r22-lib-layer-acts button, .r22-lib-layer-open { display: flex; padding: 7px 11px; align-items: center; gap: 6px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-caption); font-weight: 500; text-decoration: none; transition: background-color 140ms ease-out, color 140ms ease-out; }
+.r22-lib-layer-acts button { display: flex; padding: 7px 11px; align-items: center; gap: 6px; border: 1px solid var(--r22-line-2); border-radius: 8px; background: var(--r22-surface); color: var(--r22-ink); font-size: var(--r22-text-caption); font-weight: 500; text-decoration: none; transition: background-color 140ms ease-out, color 140ms ease-out; }
 .r22-lib-layer-acts svg { width: 13px; height: 13px; }
 .r22-lib-layer-acts button[aria-pressed="true"] { color: var(--r22-star-active); }
-.r22-lib-layer-open { border-color: var(--r22-ink); background: var(--r22-ink); color: var(--r22-surface); }
 .r22-lib-layer-x { position: absolute; top: 13px; right: 13px; z-index: 2; display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; color: var(--r22-ink-2); transition: background-color 140ms ease-out, color 140ms ease-out; }
 
 /* ————— 素材包那一层 ————— */
@@ -256,7 +257,7 @@ button.r22-lib-layer-source { border-bottom: 1px solid var(--r22-line-2); align-
   .r22-lib-tile:hover .r22-lib-check, .r22-lib-tile:hover .r22-lib-star, .r22-lib-row:hover .r22-lib-check, .r22-lib-row:hover .r22-lib-star { opacity: 1; }
   .r22-lib-nav li button:hover, .r22-lib-nav-new:hover, .r22-lib-seg button:hover, .r22-lib-packhead button:hover, .r22-lib-layer-acts button:hover, .r22-lib-layer-x:hover, .r22-lib-packlayer-list button:hover { background: var(--r22-chrome); color: var(--r22-ink); }
   .r22-lib-row:hover { background: var(--r22-chrome); }
-  .r22-lib-create:hover, .r22-lib-layer-open:hover { background: var(--r22-ink-hover); }
+  .r22-lib-create:hover { background: var(--r22-ink-hover); }
   .r22-lib-upload:hover, .r22-lib-make-kind button:hover, .r22-lib-make-shape:hover, .r22-lib-make-shapes button:hover, .r22-lib-make-counts button:hover, .r22-lib-make-x:hover, .r22-lib-ask-acts button:not(.is-primary):hover, .r22-lib-notice-act:hover, .r22-lib-empty-act:hover { background: var(--r22-chrome); }
   .r22-lib-ask-options > label:hover { border-color: var(--r22-ink-3); }
   .r22-lib-bulk button:hover { background: var(--r22-ink-hover); }

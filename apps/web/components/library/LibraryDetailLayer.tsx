@@ -10,7 +10,7 @@
  * `r22-lib-layer-in` 就是照这条规矩写的,测试也钉着它。
  */
 
-import { Download, FolderPlus, Star, Wand2 } from "lucide-react";
+import { ArrowUpRight, Download, FolderPlus, Star, Wand2 } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,8 @@ export function LibraryDetailLayer({
   fixture: boolean;
   onClose: () => void;
   onStar: (asset: LibraryAsset) => void;
-  onDownload: () => void;
+  /** `null` = Download 这一颗这一期不摆出来(见 `LibraryWorkroom` 的 `LIBRARY_DOWNLOAD_ENABLED`)。 */
+  onDownload: (() => void) | null;
   onAddToPack: (asset: LibraryAsset) => void;
   /** 开那一层「改这一张」。视频没有可改的那一帧,所以那颗键在视频上是关着的。 */
   onEdit: (asset: LibraryAsset) => void;
@@ -66,8 +67,19 @@ export function LibraryDetailLayer({
               Edited from {asset.editedFromName}
             </Button>
           ) : null}
+          {/*
+            **通往那块板的路只剩这一条**(2026-08-26 beta 清扫,审计 P2-20)。此前这一层画
+            了两条链接、同一个 `href`:这里的「Made in Raya launch」与动作排末尾那颗
+            「Open in Canvas」。商家读到两个控件,按下去到同一个地方 —— 重复的入口不是多
+            一条路,是多一次「这两颗有什么不一样」的犹豫。
+            留下的是带项目名这一条:它多说了一件对方不知道的事(这张是在哪块板上做出来
+            的),而「Open in Canvas」只重复了门名。丢掉的那半件事(说得出自己开的是
+            Canvas)补在可及名字与那枚箭头上,所以合并之后这一条仍然两件事都做。
+          */}
           {href && asset.projectName ? (
-            <Link className="r22-lib-layer-origin" href={href}>Made in {asset.projectName}</Link>
+            <Link className="r22-lib-layer-origin" href={href} data-r22-lib-open aria-label={`Open ${asset.projectName} in Canvas`}>
+              Made in {asset.projectName}<ArrowUpRight aria-hidden="true" />
+            </Link>
           ) : (
             <p className="r22-lib-layer-origin">Uploaded by you</p>
           )}
@@ -84,9 +96,9 @@ export function LibraryDetailLayer({
             <Button unstyled type="button" disabled={asset.kind === "video"} data-r22-lib-edit onClick={() => onEdit(asset)}>
               <Wand2 aria-hidden="true" />Edit image
             </Button>
-            <Button unstyled type="button" onClick={onDownload}><Download aria-hidden="true" />Download</Button>
+            {/* 藏起来的那一期,动作排就是三颗 —— flex 排的,少一颗自己收拢,不留空位。 */}
+            {onDownload ? <Button unstyled type="button" onClick={onDownload}><Download aria-hidden="true" />Download</Button> : null}
             <Button unstyled type="button" onClick={() => onAddToPack(asset)}><FolderPlus aria-hidden="true" />Add to pack</Button>
-            {href ? <Link className="r22-lib-layer-open" href={href}>Open in Canvas</Link> : null}
           </div>
           {/* 关着的那颗键要说得出为什么关着 —— 灰着不说话,商家只会以为坏了。 */}
           {asset.kind === "video" ? (

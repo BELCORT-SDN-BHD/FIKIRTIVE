@@ -485,9 +485,10 @@ describe("⑧ Continue in Canvas 把这一次带进那块板", () => {
     expect(session.batches).toHaveLength(1);
     expect(session.batches[0]!.art).toHaveLength(1);
 
-    // 详情层的「Open in canvas」回的是同一块板 —— 两条路不该指向两个地方。
+    // 详情层那条回链回的是同一块板 —— 两条路不该指向两个地方。
+    // (P2-20 之后详情层只剩这一条链接:带项目名的「Made in …」。)
     await click(need(`button[aria-label="Open ${session.batches[0]!.art[0]!.label}"]`));
-    const open = document.body.querySelector<HTMLAnchorElement>("a.r22-lib-layer-open");
+    const open = document.body.querySelector<HTMLAnchorElement>("a.r22-lib-layer-origin[data-r22-lib-open]");
     expect(open, "Quick create 的产物在详情层里没有回画布的路").toBeTruthy();
     expect(open!.getAttribute("href")).toContain(`project=${QUICK_CREATE_PROJECT_ID}`);
   });

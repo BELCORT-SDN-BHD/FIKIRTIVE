@@ -11,7 +11,8 @@
  *   ③ 上传是一等公民 —— 真 file picker、真读成 data URL、真进存档,重挂一次还在;
  *   ④ 超预算当场拒收 —— 一句人话,而且**东西没进去**(假装成功再悄悄消失是最贵的那种谎);
  *   ⑤ 素材包 —— 加进去之后在包页看得见;
- *   ⑥ 详情层回链 —— 「Made in …」与「Open in canvas」都带得回那个 project;
+ *   ⑥ 详情层回链 —— 通往那块板的**唯一**那一条「Made in …」带得回那个 project(P2-20 合并前
+ *      这里是两条同 href 的链接);
  *   ⑦ Esc 不越层 —— 轮得到自己才吃,吃了就喊一声;轮不到就原样放过去给壳。
  *   ⑧ 浮层的关键帧是**专属**的,而且每一帧都带着居中的那半个 `-50%`(approvals 42503fa5
  *      付过这笔学费:借来的关键帧收尾帧一个 `transform:none`,层当场飞出视口)。
@@ -275,17 +276,20 @@ describe("Library 工作台:单图详情", () => {
     expect(layer.textContent).toContain("Raya table setting");
     expect(layer.textContent).toContain("A Raya table with a teal batik runner");
 
-    const origin = layer.querySelector("a.r22-lib-layer-origin") as HTMLAnchorElement;
-    expect(origin.textContent).toBe("Made in Raya launch");
+    // P2-20 之后回那块板的路**只有一条**:带项目名的这一条,它自己说得出开的是 Canvas。
+    const origins = layer.querySelectorAll("a[href]");
+    expect(origins, "详情层又画出了第二条通往同一块板的链接").toHaveLength(1);
+    const origin = origins[0] as HTMLAnchorElement;
+    expect(origin.textContent).toContain("Made in Raya launch");
+    expect(origin.getAttribute("aria-label")).toBe("Open Raya launch in Canvas");
     expect(origin.getAttribute("href")).toContain("project=fixture-raya");
-    expect((layer.querySelector("a.r22-lib-layer-open") as HTMLAnchorElement).getAttribute("href")).toContain("project=fixture-raya");
 
     act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
 
     click(container!.querySelector('button[aria-label="Open Shopfront photo"]') as HTMLElement);
     const uploaded = inLayer(".r22-lib-layer");
     expect(uploaded.textContent).toContain("Uploaded by you");
-    expect(uploaded.querySelector("a.r22-lib-layer-open"), "上传物没有来源项目,却画了一条回画布的链接").toBeNull();
+    expect(uploaded.querySelector("a[href]"), "上传物没有来源项目,却画了一条回画布的链接").toBeNull();
   });
 });
 

@@ -12,7 +12,8 @@
  *      `defaultPrevented`,自己吃掉了就 `preventDefault()`。少守一头,一记 Esc 就撕两层
  *      (commit 67de2bd5 付过的学费)。轮不到自己的那一记原样放过去。
  *   ② **存档升版不迁移** —— 键升到 v2,旧的 v1 形状读不出来就重新播种(approvals f0b7dc9b)。
- *   ③ **诚实** —— 屏幕上没有一句话声称我们做了做不到的事。Download 还没接上就直说没接上,
+ *   ③ **诚实** —— 屏幕上没有一句话声称我们做了做不到的事。Download 还没接上,beta 期干脆
+ *      不摆出来(`LIBRARY_DOWNLOAD_ENABLED`),
  *      移除只是从这里收起来、不冒充删除,上传超预算当场拒收、不假装成功。
  *
  * **回执只有一种长相**(2026-08-26,审计 A-4):这一面此前自己画一条 `.r22-lib-notice`,
@@ -78,6 +79,18 @@ import {
 } from "./library-fixture";
 
 const NO_ROOM = `There is no room left in this preview, so nothing was kept.`;
+
+/**
+ * beta V1:Download 这一颗这一期不摆出来(2026-08-26 beta 清扫,审计 P2-3)。
+ *
+ * 按下去只会得到一句「下载还没接上」—— 诚实,但商家按之前并不知道要按到一句道歉,而下载
+ * 是创作交付的最后一公里:摆着它等于在成品旁边挂一扇打不开的门。
+ *
+ * **只藏,不删**:`download()` 与两处控件(批量条、单图详情动作排)一行没删,藏在这个开关
+ * 后面。存储通道接上之后把这里翻成 `true`,两处一起回来 —— 两处各写一份条件,迟早有一天
+ * 只回来一处。
+ */
+export const LIBRARY_DOWNLOAD_ENABLED = false;
 
 function countLabel(count: number): string {
   return count === 1 ? "1 item" : `${count} items`;
@@ -536,7 +549,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           <Badge className="r22-lib-bulk-count" data-r22-lib-selected={selectedCount}>{selectedCount} selected</Badge>
           <Button unstyled type="button" onClick={bulkStar}>Star</Button>
           <Button unstyled type="button" onClick={() => setPackTarget("selection")}>Add to pack</Button>
-          <Button unstyled type="button" onClick={download}>Download</Button>
+          {LIBRARY_DOWNLOAD_ENABLED ? <Button unstyled type="button" onClick={download}>Download</Button> : null}
           {openPackId
             ? <Button unstyled type="button" onClick={removeFromPack}>Remove from pack</Button>
             : <Button unstyled type="button" onClick={removeSelected}>Remove</Button>}
@@ -550,7 +563,7 @@ export function LibraryWorkroom({ fixture = true, restore = true, empty = false 
           fixture={fixture}
           onClose={() => setDetailId(null)}
           onStar={(row) => patch([row.id], (item) => ({ ...item, starred: !item.starred }), row.starred ? `${row.name} is out of Starred.` : `${row.name} is in Starred.`)}
-          onDownload={download}
+          onDownload={LIBRARY_DOWNLOAD_ENABLED ? download : null}
           onAddToPack={(row) => { setDetailId(null); setPackTarget(row.id); }}
           onEdit={(row) => { setDetailId(null); setEditId(row.id); }}
           onOpenSource={(id) => setDetailId(id)}

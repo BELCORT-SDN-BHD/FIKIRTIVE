@@ -5,7 +5,8 @@
  *
  * **为什么是两条路**:R22 样张把 Library 从「陈列柜」重建成了工作台(`LibraryWorkroom`)——
  * 多选、批量、素材包、上传,每一件都要写回一个真的存档。生产上这些还没有接线:没有素材包
- * 表,没有上传通道,收藏也还没接。把工作台照搬到生产上,商家会点到一排点了不算数的按钮。
+ * 表,没有上传通道。把工作台照搬到生产上,商家会点到一排点了不算数的按钮。
+ * (星标是例外 —— 它有 `setFavorite`,所以生产这条路上的那颗星是真写回库的,见下面 `toggleStar`。)
  *
  * 所以生产走的仍是那张只读的网格 —— 它对得住今天真的存在的东西:读得到的历史、读不到时
  * 照实说、进行中与失败的任务另画一块。等后端把这几件接上,`fixture` 这道岔口就删掉,两条
@@ -24,6 +25,7 @@ import { canvasHref } from "@/components/canvas/canvas-href";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { setFavorite } from "@/lib/asset-actions";
 import { getGenerationHistory, type LibraryItem } from "@/lib/library-actions";
 import type { AdJobItem } from "@/lib/data";
 
@@ -94,6 +96,28 @@ export function R22LibraryView({
     setHasMore(result.hasMore);
   }
 
+  /**
+   * 星标真的落库(2026-08-26 beta 清扫,审计 P2-5)。
+   *
+   * 此前这一颗只弹一句「星标还没接到生产 Library」,而且带着 `aria-pressed={item.favorite}`
+   * —— 按下去 aria 状态不动,读屏软件读出来的是一个假的按下态,比没有这颗键更糟。
+   *
+   * 「还没接上」这个前提本身是错的:`setFavorite` 早就在,owner 作用域在服务端(requireOwner),
+   * 同一颗星在 `components/asset/DetailPanel.tsx` 上已经这么写回去了。缺的只是这一格没调它。
+   *
+   * 先翻本地、失败再翻回去:星标是一次点几十下的动作,等一趟往返再动会让整面发黏;而写不
+   * 进去的时候必须当场翻回原样并说一句 —— 留着一颗翻了面却没存的星,就是刚被修掉的那种谎。
+   */
+  async function toggleStar(item: LibraryItem) {
+    const next = !item.favorite;
+    setItems((current) => current.map((row) => (row.id === item.id ? { ...row, favorite: next } : row)));
+    const result = await setFavorite(item.id, next);
+    if ("error" in result) {
+      setItems((current) => current.map((row) => (row.id === item.id ? { ...row, favorite: item.favorite } : row)));
+      toast(`That star could not be saved (${result.error}) so it is back the way it was.`);
+    }
+  }
+
   const emptyCopy = filter === "video"
     ? "No videos yet — ask for one in Canvas."
     : filter === "star"
@@ -158,7 +182,7 @@ export function R22LibraryView({
                     className="r22-library-star"
                     aria-label={`${item.favorite ? "Remove" : "Add"} ${itemLabel(item, index)} ${item.favorite ? "from" : "to"} Starred`}
                     aria-pressed={item.favorite}
-                    onClick={() => toast("Starring is not connected to the production Library yet, so nothing changed.")}
+                    onClick={() => void toggleStar(item)}
                   >
                     <Star fill={item.favorite ? "currentColor" : "none"} aria-hidden="true" />
                   </Button>

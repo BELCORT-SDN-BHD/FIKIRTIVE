@@ -163,10 +163,13 @@ describe("② 抽查:商家真的读到的是那几句", () => {
     expect(text).toContain("Canvas projects");
   });
 
-  it("详情层那颗按钮与回执那条链子叫的是同一扇门", () => {
+  it("详情层那条回链与回执那条链子叫的是同一扇门", () => {
     // 同一个动作在两处叫两个名字(「Open in canvas」/「Continue in Canvas」),商家会以为
     // 那是两件事。这条钉的正是「两处逐字对得上门名」。
-    expect(sourceCode("components/library/LibraryDetailLayer.tsx")).toContain("Open in Canvas");
+    // P2-20 之后详情层那颗独立的「Open in Canvas」按钮并进了「Made in …」那条链接,门名
+    // 活在它的可及名字里 —— 名字还在,大小写照旧。
+    expect(sourceCode("components/library/LibraryDetailLayer.tsx")).toContain("in Canvas");
+    expect(sourceCode("components/library/LibraryDetailLayer.tsx")).not.toMatch(/\bin canvas\b/);
     expect(sourceCode("components/library/LibraryWorkroom.tsx")).toContain("Continue in Canvas");
   });
 });
