@@ -20,7 +20,7 @@
  *   ④ 版本号、What changed、以及随卡可见的「已结清」旧意见,都进了 ② 的注解位。
  *   ⑤ 阻断从一个方框变成 ③ 里的一行字 + Fix with Otto;被阻断时 Approve 仍然禁用,
  *      并用 `aria-describedby` 把「为什么不能批」接到那颗按钮上。
- *   ⑥ 钱贴动作:有费卡写成 `Approve · 16 credits`,后果句就在按钮上一行,金额用等宽。
+ *   ⑥ 钱贴动作:有费卡写成 `Approve · 16 cr`,后果句就在按钮上一行,金额用等宽。
  *   ⑧ 「Decide by …」与 slot 时间彼此独立;临期由 `isDecideByUrgent` 一处判定。
  */
 

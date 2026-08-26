@@ -238,14 +238,14 @@ describe("R22 Approvals 八件升级的行为契约", () => {
   it("⑥ 被阻断的卡:Approve 禁用并说明为何,按 a 也不动,Fix with Otto 不假装预填", async () => {
     mount(createElement(R22ApprovalsView, { fixture: true }));
     const blocked = card("i3")!;
-    expect(blocked.textContent).toContain("Over weekly credit cap");
+    expect(blocked.textContent).toContain("Over weekly cr cap");
 
-    // ⑥ 金额贴在动作上,而且写全 —— 稿的裁定:`16 credits`,不是内部简写 `16 cr`。
-    const approve = button("Approve · 16 credits", blocked);
+    // ⑥ 金额贴在动作上,而且写全 —— Founder 2026-08-26 裁决:货币单位全站统一 `16 cr`。
+    const approve = button("Approve · 16 cr", blocked);
     expect(approve.disabled, "被阻断的卡仍然可以批准").toBe(true);
     const describedBy = approve.getAttribute("aria-describedby");
     expect(describedBy, "禁用的按钮没有说明为何").toBeTruthy();
-    expect(container!.querySelector(`#${describedBy}`)!.textContent).toContain("8 credits left this week");
+    expect(container!.querySelector(`#${describedBy}`)!.textContent).toContain("8 cr left this week");
 
     press(blocked, "a");
     await settle(400);
@@ -255,7 +255,7 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     // 这个测试没有挂 Otto 面板 —— 那正是「面板够不着」那一态,回执必须说实话。
     click(button("Fix with Otto", blocked));
     expect(container!.textContent).toContain("The Otto panel is not mounted on this page, so nothing was prefilled");
-    expect(container!.textContent).toContain("Raise the weekly credit cap for the Weekend routine");
+    expect(container!.textContent).toContain("Raise the weekly cr cap for the Weekend routine");
   });
 
   /**
@@ -275,8 +275,8 @@ describe("R22 Approvals 八件升级的行为契约", () => {
     expect(container!.querySelector("[data-otto-panel]"), "面板没有被打开").not.toBeNull();
     const notice = container!.querySelector(".r22-approvals-notice")!;
     expect(notice.textContent).toContain("Otto is open, but nothing was prefilled — the panel has no channel to receive it yet");
-    expect(notice.textContent).toContain("What needs fixing: Raise the weekly credit cap for the Weekend routine, or cut this batch to 2 images");
-    expect(notice.textContent).toContain("no cap, batch or credit was changed");
+    expect(notice.textContent).toContain("What needs fixing: Raise the weekly cr cap for the Weekend routine, or cut this batch to 2 images");
+    expect(notice.textContent).toContain("no cap, batch or cr was changed");
     expect(notice.textContent, "回执又在宣称阻断上下文已经在面板里").not.toContain("in view");
   });
 

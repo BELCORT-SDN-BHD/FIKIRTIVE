@@ -204,8 +204,6 @@ export function R22ProjectsView({ projects, fixture = false, fixtureState = "rea
         {fixtureState !== "loading" && fixtureState !== "error" && fixtureState !== "permission" && fixtureState !== "unknown" && !visibleProjects.length && <div className="r22-projects-empty">{tab === "shared" ? "No projects have been shared with you." : fixtureState === "empty" ? "No projects yet. Create one when you are ready." : "No projects match this search."}</div>}
       </div>
 
-      <p className="r22-projects-footnote">Project structure based on Jasper Projects · creation canvas based on Stitch</p>
-
       <DialogContent className="r22-projects-modal">
             <DialogHeader><DialogTitle>Create project</DialogTitle><DialogDescription>Give Otto a stable brief before opening the creation canvas.</DialogDescription></DialogHeader>
             <div className="r22-projects-form">

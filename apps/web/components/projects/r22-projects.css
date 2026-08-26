@@ -206,12 +206,6 @@
   text-align: center;
 }
 
-.r22-projects-footnote {
-  margin-top: 43px !important;
-  color: var(--r22-ink-3);
-  font-size: 12px;
-}
-
 .r22-projects-modal {
   width: min(560px, 92vw);
   max-width: 560px;

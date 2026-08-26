@@ -7,7 +7,7 @@
  * 一遍数据,而 `otto-pronoun-consistency` 的变体扫描也会因为条件分支暴涨直接超上限。
  *
  * 这里的每一条都是 fixture:零后端、零 provider、零积分。商家屏幕上出现的每一个数字
- * 都必须能从这份数据里指出出处 —— 卡上没有一处硬写的「2 due today」或「16 credits」。
+ * 都必须能从这份数据里指出出处 —— 卡上没有一处硬写的「2 due today」或「16 cr」。
  */
 
 export type ApprovalStatus = "waiting" | "approved" | "rejected";
@@ -318,15 +318,15 @@ export const FIXTURE_ITEMS: ApprovalItem[] = [
     ],
     pendingImage: true,
     sources: ["candle scent list"],
-    openLabel: "See the credit ledger",
+    openLabel: "See the cr ledger",
     openHref: "/settings?section=billing&fixture=r22",
-    consequence: "Approving makes 4 images and 16 credits leave your balance.",
+    consequence: "Approving makes 4 images and 16 cr leave your balance.",
     decideBy: "Fri 18:00",
     decideByHours: 30,
     blocker: {
-      chip: "Over weekly credit cap",
-      why: "The Weekend routine has 8 credits left this week and this batch needs 16, so nothing can be made until the cap or the batch changes.",
-      fixContext: "Raise the weekly credit cap for the Weekend routine, or cut this batch to 2 images",
+      chip: "Over weekly cr cap",
+      why: "The Weekend routine has 8 cr left this week and this batch needs 16, so nothing can be made until the cap or the batch changes.",
+      fixContext: "Raise the weekly cr cap for the Weekend routine, or cut this batch to 2 images",
     },
     previews: [
       {
@@ -340,11 +340,11 @@ export const FIXTURE_ITEMS: ApprovalItem[] = [
     brief: {
       routine: "Weekend routine · runs Saturday 10:00",
       promptGist: "Four more variants of the Deepavali set so each scent has its own image.",
-      cost: "16 credits. 4 credits per image, charged when the images are made.",
+      cost: "16 cr. 4 cr per image, charged when the images are made.",
     },
     timeline: [
       { id: "i3-t1", label: "Created by Otto · Weekend routine", when: "Yesterday 21:46" },
-      { id: "i3-t2", label: "Held by the weekly credit cap", when: "Yesterday 21:46", detail: "8 credits left this week, 16 needed." },
+      { id: "i3-t2", label: "Held by the weekly cr cap", when: "Yesterday 21:46", detail: "8 cr left this week, 16 needed." },
     ],
   },
   {
@@ -486,7 +486,7 @@ export const FIXTURE_ITEMS: ApprovalItem[] = [
       { image: "/fixtures/r22-canvas/art-1.jpg", ratio: "4:5", previewIndex: 1 },
     ],
     images: ["/fixtures/r22-canvas/art-4.jpg", "/fixtures/r22-canvas/art-1.jpg"],
-    decision: "Approved by Nicks · Mon 07:55 · see the 8 credits in the ledger",
+    decision: "Approved by Nicks · Mon 07:55 · see the 8 cr in the ledger",
     resolution: "approved",
     previews: [
       {
@@ -509,11 +509,11 @@ export const FIXTURE_ITEMS: ApprovalItem[] = [
     brief: {
       routine: "Weekday mornings · runs 09:00, Monday to Friday",
       promptGist: "Two posts about the soy wax restock, one for each scent that came back.",
-      cost: "8 credits. 4 credits per image.",
+      cost: "8 cr. 4 cr per image.",
     },
     timeline: [
       { id: "h2-t1", label: "Created by Otto · Weekday mornings", when: "Mon 06:10" },
-      { id: "h2-t2", label: "Approved by Nicks", when: "Mon 07:55", detail: "8 credits charged when the images were made." },
+      { id: "h2-t2", label: "Approved by Nicks", when: "Mon 07:55", detail: "8 cr charged when the images were made." },
     ],
   },
   {
@@ -621,14 +621,14 @@ export function reviseRecipient(item: ApprovalItem): string {
 /**
  * ⑥ 金额的说法,只有这一处。
  *
- * 稿的裁定:写 `16 credits`,不写 `16 cr`。「cr」是我们内部的简写,商家的余额单位是
- * credits —— 屏幕上少两个字母,换来的是一个要猜的缩写。单数写 `1 credit`。
+ * Founder 2026-08-26 裁决:货币单位全站统一写 `16 cr`,不写 `16 credits`。这一稿曾经
+ * 裁定写全词(见本文件历史),已被推翻 —— 回到与 canvas/面板一致的简写,不再有第二种写法。
  */
 export function credits(amount: number): string {
-  return `${amount} ${amount === 1 ? "credit" : "credits"}`;
+  return `${amount} cr`;
 }
 
-/** ⑥ 贴在动作上的那一截(`Approve · 16 credits`)。0 不写「0 credits」,那是假精确。 */
+/** ⑥ 贴在动作上的那一截(`Approve · 16 cr`)。0 不写「0 cr」,那是假精确。 */
 export function creditSuffix(cost: number): string {
   return cost > 0 ? ` · ${credits(cost)}` : "";
 }
