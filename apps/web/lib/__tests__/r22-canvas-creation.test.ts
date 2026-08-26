@@ -26,6 +26,21 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
   useCanvasGen: () => ({ generateImage: vi.fn(), quoteCosts: vi.fn(), imageShapes: vi.fn() }),
 }));
 
+// Radix 的 popover / menu 在 jsdom 里要这几样才活得起来(popper 量尺寸、指针捕获、
+// 滚动到高亮项)。抄 `r22-home-create-menu.test.ts` 的同一份,不重发明。
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { R22CanvasSurface } = await import("@/components/canvas/R22CanvasSurface");
@@ -81,18 +96,36 @@ async function mount(activeProjectId = "project-a"): Promise<void> {
   await render(activeProjectId);
 }
 
+/**
+ * 从 `document` 找,不是从 `container` 找。
+ *
+ * 五层浮层现在是 Radix 的 popover / dropdown-menu,它们 **portal 到 `document.body`** ——
+ * 只在 container 里翻,弹层里的每一个按钮都会「找不到」,而那种失败长得像功能坏了。
+ * container 本身就挂在 body 下,所以从 document 找是同一批节点再加上浮层那几层。
+ */
 function need<T extends Element>(selector: string): T {
-  const node = container!.querySelector<T>(selector);
+  const node = document.querySelector<T>(selector);
   expect(node, `找不到 ${selector} —— 下面的断言在核对空气`).not.toBeNull();
   return node as T;
 }
 
 function all<T extends Element>(selector: string): T[] {
-  return [...container!.querySelectorAll<T>(selector)];
+  return [...document.querySelectorAll<T>(selector)];
 }
 
 async function click(node: Element): Promise<void> {
   await act(async () => { (node as HTMLElement).click(); });
+}
+
+/**
+ * 开一个 Radix **menu**。菜单是在 `pointerdown` 上开的(popover 是在 `click` 上),
+ * 所以光 `.click()` 开不出来 —— 这里补上真浏览器里一定会先到的那一记。
+ */
+async function openMenu(node: Element): Promise<void> {
+  await act(async () => {
+    node.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+    (node as HTMLElement).click();
+  });
 }
 
 /** 商家真的点一张图:先按下再松手(那一记 pointerdown 会清掉上一次拖拽留下的旗子),再 click。 */
@@ -165,8 +198,9 @@ async function openParams(): Promise<void> {
 
 /** 挂一张素材库里的图上去。 */
 async function attachFromLibrary(index = 0): Promise<void> {
-  await click(need('button[aria-label="Attach"]'));
+  await openMenu(need('button[aria-label="Attach"]'));
   const fromLibrary = all<HTMLButtonElement>(".r22-canvas-attach-menu button").find((node) => node.textContent === "From Library");
+  expect(fromLibrary, "附件菜单开了但里头没有「From Library」").toBeTruthy();
   await click(fromLibrary!);
   await click(all<HTMLButtonElement>("[data-canvas-library-pick]")[index]!);
 }
@@ -324,7 +358,10 @@ describe("④ 参数改了,价钱当场跟着改", () => {
     await click(need('[data-canvas-ratio="4:5"]'));
 
     expect(need(".r22-canvas-ratio").textContent, "挑了一个形状,输入框上那颗 chip 没换").toBe("4:5");
-    expect(need('[data-canvas-ratio="4:5"]').getAttribute("aria-pressed")).toBe("true");
+    // 形状格子归位到 ToggleGroup `type="single"` 之后,选中态说的是 `aria-checked`
+    // (一组里挑一个),不再是 `aria-pressed`(一颗各自开关的按钮)。
+    expect(need('[data-canvas-ratio="4:5"]').getAttribute("aria-checked")).toBe("true");
+    expect(need('[data-canvas-ratio="9:16"]').getAttribute("aria-checked"), "挑了新形状,旧的那颗还留着选中").toBe("false");
   });
 });
 

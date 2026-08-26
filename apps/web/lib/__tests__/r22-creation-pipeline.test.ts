@@ -158,6 +158,28 @@ async function click(node: Element): Promise<void> {
   await act(async () => { (node as HTMLElement).click(); });
 }
 
+/**
+ * 浮层里的那一份。画布的五层浮层是 Radix 的 popover / dropdown-menu,**portal 到
+ * `document.body`** —— 只在 container 里翻,弹层里的按钮全都会「找不到」。
+ */
+function needPop<T extends Element>(selector: string): T {
+  const node = document.querySelector<T>(selector);
+  expect(node, `找不到 ${selector} —— 下面的断言在核对空气`).not.toBeNull();
+  return node as T;
+}
+
+function allPop<T extends Element>(selector: string): T[] {
+  return [...document.querySelectorAll<T>(selector)];
+}
+
+/** 开一个 Radix menu:菜单是在 `pointerdown` 上开的(popover 是在 `click` 上)。 */
+async function openMenu(node: Element): Promise<void> {
+  await act(async () => {
+    node.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+    (node as HTMLElement).click();
+  });
+}
+
 function typeInto(node: HTMLTextAreaElement | HTMLInputElement, value: string): void {
   const proto = node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(node, value);
@@ -207,7 +229,7 @@ describe("① 画布 Add to pack 写的是 Library 那一份存档", () => {
     await openCanvas();
 
     await click(need('[aria-label="Add Image 2 to a Library pack"]'));
-    await click(need('[data-canvas-pack-pick="pack-candle"]'));
+    await click(needPop('[data-canvas-pack-pick="pack-candle"]'));
 
     const saved = archive().assets.filter((asset) => asset.id === "canvas:project-a:art-2");
     expect(saved, "画布那张图没有作为一条素材进存档").toHaveLength(1);
@@ -216,7 +238,7 @@ describe("① 画布 Add to pack 写的是 Library 那一份存档", () => {
     expect(saved[0]!.projectId, "存下来的东西没记住它是在哪块板上做的").toBe("project-a");
 
     await click(need('[aria-label="Add Image 2 to a Library pack"]'));
-    await click(need('[data-canvas-pack-pick="pack-candle"]'));
+    await click(needPop('[data-canvas-pack-pick="pack-candle"]'));
 
     const again = archive().assets.filter((asset) => asset.id === "canvas:project-a:art-2");
     expect(again, "多收一次就在库里多出一张一样的图").toHaveLength(1);
@@ -227,8 +249,8 @@ describe("① 画布 Add to pack 写的是 Library 那一份存档", () => {
     await openCanvas();
 
     await click(need('[aria-label="Add Image 3 to a Library pack"]'));
-    await act(async () => { typeInto(need<HTMLInputElement>('[data-canvas-pack-menu="art-3"] input'), "Merdeka assets"); });
-    await click(need("[data-canvas-pack-create]"));
+    await act(async () => { typeInto(needPop<HTMLInputElement>('[data-canvas-pack-menu="art-3"] input'), "Merdeka assets"); });
+    await click(needPop("[data-canvas-pack-create]"));
 
     const stored = archive();
     expect(stored.packs.map((pack) => pack.name), "新包没进存档 —— 商家下次打开就没有这个包").toContain("Merdeka assets");
@@ -258,10 +280,10 @@ describe("③ 画布的 From Library 挑的是商家真的存着的东西", () =
     window.sessionStorage.setItem(libraryKey, JSON.stringify(seeded));
 
     await openCanvas();
-    await click(need('button[aria-label="Attach"]'));
-    await click(all<HTMLButtonElement>(".r22-canvas-attach-menu button").find((node) => node.textContent === "From Library")!);
+    await openMenu(need('button[aria-label="Attach"]'));
+    await click(allPop<HTMLButtonElement>(".r22-canvas-attach-menu button").find((node) => node.textContent === "From Library")!);
 
-    const picks = all<HTMLElement>("[data-canvas-library-pick]");
+    const picks = allPop<HTMLElement>("[data-canvas-library-pick]");
     expect(picks.map((node) => node.textContent), "画布挑的仍然是它自己那几张私种子").toEqual(["Shopfront awning"]);
 
     await click(picks[0]!);

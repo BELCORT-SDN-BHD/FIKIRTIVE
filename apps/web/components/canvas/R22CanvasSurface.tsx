@@ -1,11 +1,23 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- Non-production R22 fixtures restore browser-scoped drafts after hydration. */
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -545,28 +557,44 @@ const TOOL_BUTTONS: Array<{
   id: CanvasTool;
   label: string;
   icon: typeof MousePointer2;
+  /** 单键快捷键。没有的那几颗就是 `null` —— tooltip 里也不假装有一个。 */
+  key: string | null;
 }> = [
-  { id: "select", label: "Select", icon: MousePointer2 },
-  { id: "box", label: "Box select", icon: Frame },
-  { id: "hand", label: "Pan", icon: Hand },
-  { id: "image", label: "Add image", icon: ImagePlus },
-  { id: "star", label: "Star selected", icon: Star },
-  { id: "arrange", label: "Arrange canvas", icon: LayoutGrid },
+  { id: "select", label: "Select", icon: MousePointer2, key: "V" },
+  { id: "box", label: "Box select", icon: Frame, key: "B" },
+  { id: "hand", label: "Pan", icon: Hand, key: "H" },
+  { id: "image", label: "Add image", icon: ImagePlus, key: null },
+  { id: "star", label: "Star selected", icon: Star, key: null },
+  { id: "arrange", label: "Arrange canvas", icon: LayoutGrid, key: null },
 ];
+
+/**
+ * 单键换工具(V / H / B)—— 画布类产品的通用手势(Figma / Sketch / Framer 同一套字母)。
+ * 这张表由 `TOOL_BUTTONS` 派生,不另写一遍:tooltip 上写着哪个键,按下去就一定是那一颗,
+ * 两处对不上这件事从此不可能发生。
+ */
+const TOOL_SHORTCUTS: Record<string, CanvasTool> = Object.fromEntries(
+  TOOL_BUTTONS.filter((button) => button.key).map((button) => [button.key!.toLowerCase(), button.id]),
+);
 
 function OttoMark() {
   return <Image className="r22-otto-mark" src="/brand/r22-otto-thinking.svg" width={120} height={110} alt="" />;
 }
 
-/** 一张成品的动作排(Grok 的结果排形状):星标 / 下载 / 改这一张 / 再来一批 / 收进素材包。 */
-type ArtAction = "star" | "download" | "edit" | "variants" | "pack";
+/**
+ * 一张成品的动作排(Grok 的结果排形状):星标 / 下载 / 改这一张 / 再来一批。
+ * 「收进素材包」不在这张表里 —— 它是一枚 popover 的触发器,开合走 `onPackOpenChange`。
+ */
+type ArtAction = "star" | "download" | "edit" | "variants";
 
 function ArtCell({
   art,
   kind,
   selected,
   starred,
+  packOpen,
   packMenu,
+  onPackOpenChange,
   onSelect,
   onAction,
 }: {
@@ -574,8 +602,11 @@ function ArtCell({
   kind: CanvasMakeKind;
   selected: boolean;
   starred: boolean;
-  /** 「收进素材包」按下去之后长在这一格上的选包小弹层。没在选包时是 `null`。 */
-  packMenu?: React.ReactNode;
+  /** 此刻这一格的选包弹层开着没有。开合由宿主的 `packMenuFor` 一处说了算。 */
+  packOpen: boolean;
+  /** 选包弹层的内容(一枚 `<PopoverContent>`)。挂不挂在 DOM 上由 Radix 按 `packOpen` 决定。 */
+  packMenu: React.ReactNode;
+  onPackOpenChange: (open: boolean, art: FixtureArt) => void;
   onSelect: (id: string) => void;
   onAction: (action: ArtAction, art: FixtureArt) => void;
 }) {
@@ -619,11 +650,19 @@ function ArtCell({
         <Button unstyled type="button" aria-label={`Make more like ${art.label}`} data-canvas-art-action="variants" onClick={() => onAction("variants", art)}>
           <Sparkles aria-hidden="true" />
         </Button>
-        <Button unstyled type="button" aria-label={`Add ${art.label} to a Library pack`} aria-expanded={Boolean(packMenu)} data-canvas-art-action="pack" onClick={() => onAction("pack", art)}>
-          <FolderPlus aria-hidden="true" />
-        </Button>
+        {/*
+          选包弹层归 Radix 的 popover:点外面关、Esc 关、焦点回到这颗按钮,三件都不再手写。
+          `aria-expanded` 也由 `PopoverTrigger` 自己挂 —— 手写那一份迟早和真状态分家。
+        */}
+        <Popover open={packOpen} onOpenChange={(open) => onPackOpenChange(open, art)}>
+          <PopoverTrigger asChild>
+            <Button unstyled type="button" aria-label={`Add ${art.label} to a Library pack`} data-canvas-art-action="pack">
+              <FolderPlus aria-hidden="true" />
+            </Button>
+          </PopoverTrigger>
+          {packMenu}
+        </Popover>
       </div>
-      {packMenu}
     </div>
   );
 }
@@ -636,6 +675,7 @@ function FixtureWorld({
   starred,
   packMenuFor,
   renderPackMenu,
+  onPackOpenChange,
   onSelect,
   onArtAction,
   onIterate,
@@ -650,6 +690,7 @@ function FixtureWorld({
   /** 此刻在哪一张上选包。`null` = 没在选。 */
   packMenuFor: string | null;
   renderPackMenu: (art: FixtureArt) => React.ReactNode;
+  onPackOpenChange: (open: boolean, art: FixtureArt) => void;
   onSelect: (id: string) => void;
   onArtAction: (action: ArtAction, art: FixtureArt) => void;
   onIterate: (prompt: string) => void;
@@ -694,7 +735,9 @@ function FixtureWorld({
                 kind={batch.kind}
                 selected={selected.includes(art.id)}
                 starred={starred.includes(art.id)}
-                packMenu={packMenuFor === art.id ? renderPackMenu(art) : null}
+                packOpen={packMenuFor === art.id}
+                packMenu={renderPackMenu(art)}
+                onPackOpenChange={onPackOpenChange}
                 onSelect={onSelect}
                 onAction={onArtAction}
               />
@@ -748,8 +791,22 @@ function OttoAnswerCard({
       <p className="r22-canvas-answer-note">{answer.note}</p>
       <div className="r22-canvas-answer-actions">
         <Button unstyled type="button" data-otto-copy onClick={onCopy}>Copy</Button>
-        <Button unstyled type="button" className={feedback === "up" ? "is-selected" : ""} aria-pressed={feedback === "up"} onClick={() => onFeedback("up")}>Helpful</Button>
-        <Button unstyled type="button" className={feedback === "down" ? "is-selected" : ""} aria-pressed={feedback === "down"} onClick={() => onFeedback("down")}>Not helpful</Button>
+        {/*
+          Helpful / Not helpful 是**一组互斥的选择**,不是两颗各自开关的按钮 —— 手搓两个
+          `aria-pressed` 说不出这件事(读屏会念成两个独立开关),而方向键循环、焦点只占一站
+          那一整套也得跟着自己再写一遍。归位到 shadcn 的 ToggleGroup,那一套由 Radix 出。
+        */}
+        <ToggleGroup
+          unstyled
+          className="r22-canvas-answer-votes"
+          type="single"
+          value={feedback ?? ""}
+          aria-label="Was this answer helpful?"
+          onValueChange={(value) => { if (value === "up" || value === "down") onFeedback(value); }}
+        >
+          <ToggleGroupItem unstyled value="up" data-otto-vote="up">Helpful</ToggleGroupItem>
+          <ToggleGroupItem unstyled value="down" data-otto-vote="down">Not helpful</ToggleGroupItem>
+        </ToggleGroup>
       </div>
       <span className="r22-canvas-answer-confirm" role="status" aria-live="polite">{confirm}</span>
     </li>
@@ -898,6 +955,8 @@ export function R22CanvasSurface({
   const stageRef = useRef<HTMLDivElement>(null);
   /** 真的那个文件选择器。+ 菜单里那一项按下去,按的就是它。 */
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** + 那颗按钮外面那层锚点。素材库弹层认它当锚,也认它是「不算外面」的那一块。 */
+  const attachAnchorRef = useRef<HTMLSpanElement>(null);
   /** 正在走的那一根手指。已经有一根在走时,第二根一律忽略(原型只认 `e.button===0` 的那一根)。 */
   const gesturePointerRef = useRef<number | null>(null);
   /**
@@ -1115,10 +1174,46 @@ export function R22CanvasSurface({
   }, [zoomAt]);
 
   /**
-   * Esc 一层一层往下剥(原型 L5915-5930):先关还开着的浮层,都关完了才清选中。
-   * 剥不到自己头上的那一下不拦、不 `preventDefault` —— 壳层那条 Esc 链还要用。
+   * 往回走一步 / 再走回来一步(原型 L6033-6040)。栈空了就照实说,不假装做了什么。
    *
-   * 两头都得守,少一头就会一记 Esc 撕两层(壳层 `R22DashboardShell` 的同一道守卫,
+   * 它们是 `useCallback` 而不是普通函数声明,因为下面那条键盘 effect 把它们放进了依赖表:
+   * 每渲染一次就换一个新身份的话,拖一次卡片(每记 pointermove 都重渲染)就会把 window
+   * 上那个监听器摘下来再挂回去几十次。
+   */
+  const undoMove = useCallback(() => {
+    const step = moveHistoryRef.current.undo.pop();
+    if (!step) {
+      setNotice("Nothing to undo.");
+      return;
+    }
+    moveHistoryRef.current.redo.push(step);
+    setObjectPos((current) => ({ ...current, [step.id]: step.from }));
+    setNotice("");
+  }, []);
+
+  const redoMove = useCallback(() => {
+    const step = moveHistoryRef.current.redo.pop();
+    if (!step) {
+      setNotice("Nothing to redo.");
+      return;
+    }
+    moveHistoryRef.current.undo.push(step);
+    setObjectPos((current) => ({ ...current, [step.id]: step.to }));
+    setNotice("");
+  }, []);
+
+  /**
+   * Esc 一层一层往下剥(原型 L5915-5930)。这一版**只剩最后一层**:清掉板上的选中。
+   *
+   * 上一版这里还手写着「先关五个浮层」那一段。五个浮层现在是 Radix 的 popover/menu,
+   * 它们的 Esc 走 dismissable layer:监听挂在 `document` 上、**capture 阶段**,而且吃掉
+   * 之前先 `event.preventDefault()`(`@radix-ui/react-dismissable-layer` 的
+   * `useEscapeKeydown(…, { capture: true })` + `if (!event.defaultPrevented && onDismiss)
+   * { event.preventDefault(); onDismiss(); }`)。这个处理器挂在 `window` 的冒泡阶段,
+   * 排在它后面,所以浮层开着的时候第一行 `defaultPrevented` 就把这一记挡下了 ——
+   * 一记 Esc 关一层,选中不会被顺手清掉。手写那一段留着只会变成第二份判词。
+   *
+   * 两头仍然都得守,少一头就会一记 Esc 撕两层(壳层 `R22DashboardShell` 的同一道守卫,
    * commit 67de2bd5):
    *   ① **进来先看** `defaultPrevented` —— 更上面那一层已经吃掉这一记了,画布不许再吃第二口;
    *   ② **自己吃掉就喊一声** `preventDefault()` —— 否则后注册的处理器会跟着再剥一层。
@@ -1129,22 +1224,50 @@ export function R22CanvasSurface({
       if (event.defaultPrevented) return;
       // 编辑层是 Radix 自己的地盘,那一记归它 —— 板不许跟着剥掉自己的一层。
       if (editArt) return;
-      if (projectMenuOpen || attachOpen || ratioOpen || libraryOpen || packMenuFor) {
-        event.preventDefault();
-        setProjectMenuOpen(false);
-        setAttachOpen(false);
-        setRatioOpen(false);
-        setLibraryOpen(false);
-        setPackMenuFor(null);
-        return;
-      }
       if (!selectedArt.length) return;
       event.preventDefault();
       setSelectedArt([]);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [attachOpen, editArt, libraryOpen, packMenuFor, projectMenuOpen, ratioOpen, selectedArt.length]);
+  }, [editArt, selectedArt.length]);
+
+  /**
+   * 键盘上的板:⌘Z / ⇧⌘Z 往回走一步、再走回来一步,V / H / B 换工具。
+   *
+   * 三道守卫,少一道就会咬人:
+   *   ① `defaultPrevented` —— 上面那一层已经吃掉这一记了(编辑层里的输入、浮层自己的
+   *      键盘模型),画布不许再吃第二口;
+   *   ② **焦点在能打字的地方就一个字都不吃** —— 在 composer 里写「video」会当场把工具
+   *      换成别的,那是最会咬人的一种「快捷键」;`contenteditable` 同理;
+   *   ③ 编辑层开着的时候整条不生效 —— 那一层是另一件事的现场。
+   *
+   * `preventDefault()` 是为了挡浏览器自己的撤销(输入框之外 ⌘Z 会撤销上一次页面级编辑)。
+   * Windows/Linux 的 Ctrl+Z / Ctrl+⇧+Z 一起收:同一个动作,不该只有一半的人按得动。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (editArt) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable) return;
+      if (target && /^(?:INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (event.metaKey || event.ctrlKey) {
+        if (event.altKey || event.key.toLowerCase() !== "z") return;
+        event.preventDefault();
+        if (event.shiftKey) redoMove();
+        else undoMove();
+        return;
+      }
+      if (event.altKey || event.shiftKey) return;
+      const nextTool = TOOL_SHORTCUTS[event.key.toLowerCase()];
+      if (!nextTool) return;
+      event.preventDefault();
+      setTool(nextTool);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editArt, redoMove, undoMove]);
 
   /** 一次拖拽/框选/平移走完之后的收尾:解掉监听、放开手指、退出「拖拽中」与「手势中」。 */
   const endGesture = useCallback((move: (event: PointerEvent) => void, up: (event: PointerEvent) => void) => {
@@ -1296,29 +1419,6 @@ export function R22CanvasSurface({
   function selectArt(id: string) {
     if (consumedByDrag()) return;
     setSelectedArt((current) => (current.length === 1 && current[0] === id ? [] : [id]));
-  }
-
-  /** 往回走一步 / 再走回来一步(原型 L6033-6040)。栈空了就照实说,不假装做了什么。 */
-  function undoMove() {
-    const step = moveHistoryRef.current.undo.pop();
-    if (!step) {
-      setNotice("Nothing to undo.");
-      return;
-    }
-    moveHistoryRef.current.redo.push(step);
-    setObjectPos((current) => ({ ...current, [step.id]: step.from }));
-    setNotice("");
-  }
-
-  function redoMove() {
-    const step = moveHistoryRef.current.redo.pop();
-    if (!step) {
-      setNotice("Nothing to redo.");
-      return;
-    }
-    moveHistoryRef.current.undo.push(step);
-    setObjectPos((current) => ({ ...current, [step.id]: step.to }));
-    setNotice("");
   }
 
   const worldStyle = worldTransform(view);
@@ -1522,12 +1622,46 @@ export function R22CanvasSurface({
   }
 
   /**
+   * 「收进素材包」那颗按钮的开合。
+   *
+   * 它长在 `onOpenChange` 上而不是按钮的 `onClick` 上,因为开合现在有三个来源:按钮、
+   * 点外面、Esc —— 只认按钮那一个,后两条路关掉弹层时这一面的状态就跟屏幕分家了。
+   *
+   * 拖拽那道闸留在最前面:刚拖完手一松浏览器还会补一记 click(原型 L6098),那一记不是
+   * 商家的一次点击,不许拿它开一个弹层。受控的 `open` 读的是这一面的状态,所以这里直接
+   * 返回就等于「这一下没发生过」。
+   */
+  function onPackOpenChange(open: boolean, art: FixtureArt) {
+    if (!open) {
+      setPackMenuFor(null);
+      return;
+    }
+    if (consumedByDrag()) return;
+    setNewPackName("");
+    // 包的名单要读**此刻**库里的实况(商家可能刚在 Library 那一面新建过一个包)。
+    setLibrary(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
+    setNotice("");
+    setPackMenuFor(art.id);
+  }
+
+  /**
    * 选包那个小弹层。它长在触发它的那一格上,`transform-origin` 也对着那颗按钮 ——
    * 弹层从按下的地方长出来,商家才不用回头找「刚才那一下开出了什么」。
+   *
+   * ⚠️ 它是 portal 出去的:整层活在 `document.body` 底下,`.r22-canvas-surface` 上那批
+   * `--r22-canvas-*` 局部别名在这里一个也解析不出来。所以这一层的 css 只许用央册的
+   * `--r22-*` 全局 token(样板与那次 P1 的现场见 `components/library/r22-library.css`
+   * 单图详情层那段注释)。
    */
   function renderPackMenu(art: FixtureArt) {
     return (
-      <div className="r22-canvas-popover r22-canvas-pack-menu" data-canvas-pack-menu={art.id}>
+      <PopoverContent
+        className="r22-canvas-popover r22-canvas-pack-menu"
+        align="end"
+        side="bottom"
+        sideOffset={6}
+        data-canvas-pack-menu={art.id}
+      >
         <p>Save {art.label} to</p>
         {library.packs.length ? (
           <div className="r22-canvas-pack-list">
@@ -1547,7 +1681,7 @@ export function R22CanvasSurface({
           />
           <Button unstyled type="button" disabled={!newPackName.trim()} data-canvas-pack-create onClick={() => createPackForArt(art, newPackName)}>New pack</Button>
         </div>
-      </div>
+      </PopoverContent>
     );
   }
 
@@ -1642,15 +1776,6 @@ export function R22CanvasSurface({
       setLibrary(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
       setPackMenuFor(null);
       setEditArt(art);
-      setNotice("");
-      return;
-    }
-    if (action === "pack") {
-      // 上一版这一颗是「无名一键」:按下去东西进了一个叫「your Library pack」的地方,
-      // 而商家的库里有好几个包。收进哪一个是商家的决定,不是我们的默认值 —— 所以先问。
-      setNewPackName("");
-      setPackMenuFor((current) => (current === art.id ? null : art.id));
-      setLibrary(readLibraryArchive(scopedR22FixtureKey(LIBRARY_FIXTURE_KEY)));
       setNotice("");
       return;
     }
@@ -1834,32 +1959,38 @@ export function R22CanvasSurface({
         <Link className="r22-canvas-icon-button" href={fixture ? `${CREATE_NAV_HREF}?fixture=r22` : CREATE_NAV_HREF} aria-label="Back to Canvas projects">
           <ArrowLeft aria-hidden="true" />
         </Link>
+        {/*
+          切项目那一层是**一串动作**(每一项都把商家带到另一块板),所以它是 menu 不是
+          popover:上下键走、首字母跳、Escape 关、焦点回到触发器 —— 这一整套键盘模型由
+          shadcn 的 DropdownMenu(Radix)出,手写的 `div` 一样都没有。
+        */}
         <div className="r22-canvas-project-switcher">
-          <Button unstyled
-            type="button"
-            className="r22-canvas-project-button"
-            disabled={fixture && fixtureRouteState !== "ready"}
-            aria-expanded={projectMenuOpen}
-            onClick={() => setProjectMenuOpen((open) => !open)}
+          <DropdownMenu
+            open={projectMenuOpen && (!fixture || fixtureRouteState === "ready")}
+            onOpenChange={setProjectMenuOpen}
           >
-            {/* fixture 也有不止一块板(Quick create 就是第二块)—— 顶栏写死一个名字,
-                商家从 Library 点进来看到的就是别人的板名。名字一律读当前项目。 */}
-            <span>{fixture ? fixtureRouteState === "loading" ? "Loading project…" : fixtureRouteState !== "ready" ? "Project unavailable" : !fixtureWorkspaceId ? "Loading project…" : fixtureWorkspaceId === "batik-house" ? (fixtureProjectName ?? activeProject?.name ?? "Raya launch") : "New workspace project" : (activeProject?.name ?? "Current project")}</span>
-            <ChevronDown aria-hidden="true" />
-          </Button>
-          {projectMenuOpen && (!fixture || fixtureRouteState === "ready") && (
-            <div className="r22-canvas-project-menu">
-              {runtimeContext.projects.map((project) => (
-                <Link
-                  key={project.id}
-                  href={projectHref(project.id)}
-                  onClick={() => setProjectMenuOpen(false)}
-                >
-                  {project.name}
-                </Link>
-              ))}
-            </div>
-          )}
+            <DropdownMenuTrigger asChild>
+              <Button unstyled
+                type="button"
+                className="r22-canvas-project-button"
+                disabled={fixture && fixtureRouteState !== "ready"}
+              >
+                {/* fixture 也有不止一块板(Quick create 就是第二块)—— 顶栏写死一个名字,
+                    商家从 Library 点进来看到的就是别人的板名。名字一律读当前项目。 */}
+                <span>{fixture ? fixtureRouteState === "loading" ? "Loading project…" : fixtureRouteState !== "ready" ? "Project unavailable" : !fixtureWorkspaceId ? "Loading project…" : fixtureWorkspaceId === "batik-house" ? (fixtureProjectName ?? activeProject?.name ?? "Raya launch") : "New workspace project" : (activeProject?.name ?? "Current project")}</span>
+                <ChevronDown aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="r22-canvas-popover r22-canvas-project-menu" align="start" sideOffset={8}>
+              <DropdownMenuGroup>
+                {runtimeContext.projects.map((project) => (
+                  <DropdownMenuItem key={project.id} asChild>
+                    <Link href={projectHref(project.id)}>{project.name}</Link>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <span className="r22-canvas-saved">
           {fixture ? fixtureRouteState === "ready" ? "Saved just now" : fixtureRouteState === "loading" ? "Checking project…" : "Project unavailable" : nodesLoading ? "Loading project…" : nodesError ? "Project unavailable" : "Loaded from project"}
@@ -1876,7 +2007,7 @@ export function R22CanvasSurface({
         ref={stageRef}
         onPointerDown={onStagePointerDown}
       >
-        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld style={worldStyle} positions={objectPos} batches={batches} selected={selectedArt} starred={starredArt} packMenuFor={packMenuFor} renderPackMenu={renderPackMenu} onSelect={selectArt} onArtAction={onArtAction} onIterate={iterateBatch} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
+        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld style={worldStyle} positions={objectPos} batches={batches} selected={selectedArt} starred={starredArt} packMenuFor={packMenuFor} renderPackMenu={renderPackMenu} onPackOpenChange={onPackOpenChange} onSelect={selectArt} onArtAction={onArtAction} onIterate={iterateBatch} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
         {marquee ? <div className="r22-canvas-marquee" data-r22-canvas-marquee style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }} /> : null}
         {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
@@ -2011,24 +2142,66 @@ export function R22CanvasSurface({
             aria-label="Describe what to make"
           />
           <div className="r22-canvas-composer-row">
-            <Button unstyled type="button" className="r22-canvas-plus" aria-label="Attach" aria-expanded={attachOpen} onClick={() => setAttachOpen((open) => !open)}>
-              <Plus aria-hidden="true" />
-            </Button>
-            {attachOpen && (fixture ? (
-              // 样例画布这一面两项都是真的:一颗开真的文件选择器,一颗开素材库小弹层。
-              <div className="r22-canvas-popover r22-canvas-attach-menu">
-                <Button unstyled type="button" onClick={() => { setAttachOpen(false); setLibraryOpen(true); }}>From Library</Button>
-                <Button unstyled type="button" onClick={() => { setAttachOpen(false); fileInputRef.current?.click(); }}>Upload an image</Button>
-              </div>
-            ) : (
-              <div className="r22-canvas-popover r22-canvas-attach-menu">
-                <Button unstyled type="button" onClick={() => setNotice(entities.length ? "Pick from Library — attaching a saved reference is not connected yet." : "Nothing is saved in your Library yet.")}>From Library</Button>
-                <Button unstyled type="button" onClick={() => setNotice("Upload is not connected yet.")}>Upload a file</Button>
-                <Button unstyled type="button" onClick={() => setNotice("Link attachment is not connected yet.")}>Paste a link</Button>
-              </div>
-            ))}
-            {libraryOpen && fixture && (
-              <div className="r22-canvas-popover r22-canvas-library-picker" data-r22-canvas-library-picker>
+            {/*
+              + 那颗按钮身上挂着两层:附件**菜单**(两三个动作 → DropdownMenu),以及它
+              第二层开出来的素材库**弹层**(一格一格的缩略图,是内容不是动作 → Popover)。
+              两层长在同一个位置上,所以素材库那一层用 `PopoverAnchor` 认这颗按钮当锚点 ——
+              锚点包在外面而不是让两个 Radix 触发器互相套,链路少一节就少一处会断的地方。
+            */}
+            <Popover open={libraryOpen && fixture} onOpenChange={setLibraryOpen}>
+              <PopoverAnchor asChild>
+                <span className="r22-canvas-attach-anchor" ref={attachAnchorRef}>
+                  <DropdownMenu open={attachOpen} onOpenChange={setAttachOpen}>
+                    <DropdownMenuTrigger asChild>
+                      <Button unstyled type="button" className="r22-canvas-plus" aria-label="Attach">
+                        <Plus aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="r22-canvas-popover r22-canvas-attach-menu" align="start" side="top" sideOffset={8}>
+                      <DropdownMenuGroup>
+                        {fixture ? (
+                          // 样例画布这一面两项都是真的:一颗开真的文件选择器,一颗开素材库小弹层。
+                          <>
+                            <DropdownMenuItem asChild>
+                              <Button unstyled type="button" onClick={() => setLibraryOpen(true)}>From Library</Button>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <Button unstyled type="button" onClick={() => fileInputRef.current?.click()}>Upload an image</Button>
+                            </DropdownMenuItem>
+                          </>
+                        ) : (
+                          <>
+                            <DropdownMenuItem asChild>
+                              <Button unstyled type="button" onClick={() => setNotice(entities.length ? "Pick from Library — attaching a saved reference is not connected yet." : "Nothing is saved in your Library yet.")}>From Library</Button>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <Button unstyled type="button" onClick={() => setNotice("Upload is not connected yet.")}>Upload a file</Button>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <Button unstyled type="button" onClick={() => setNotice("Link attachment is not connected yet.")}>Paste a link</Button>
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </span>
+              </PopoverAnchor>
+              <PopoverContent
+                className="r22-canvas-popover r22-canvas-library-picker"
+                align="start"
+                side="top"
+                sideOffset={8}
+                data-r22-canvas-library-picker
+                onFocusOutside={(event) => {
+                  /*
+                   * 附件菜单关掉的时候,Radix 会把焦点还给开它的那颗 + 按钮 —— 而那颗按钮
+                   * 正是这一层自己的锚点。焦点落回自己的锚点不是「点到了外面」,顺手把刚
+                   * 开出来的这一层关掉,商家按下「From Library」就会看见弹层一闪就没了。
+                   */
+                  if (attachAnchorRef.current?.contains(event.target as Node)) event.preventDefault();
+                }}
+              >
                 <p>Saved in your Library</p>
                 {/*
                   挑的是商家**真的**存着的东西 —— 读的就是 Library 那一面的存档,所以他刚
@@ -2044,38 +2217,66 @@ export function R22CanvasSurface({
                     </Button>
                   ))}
                 </div>
-              </div>
-            )}
+              </PopoverContent>
+            </Popover>
             {/* 真的文件选择器。它不占位置,+ 菜单那一项按下去按的就是它。 */}
             <Input unstyled ref={fileInputRef} className="r22-canvas-file-input" type="file" accept="image/*" tabIndex={-1} aria-label="Upload an image" onChange={onPickFile} />
             <span />
-            <Button unstyled type="button" className="r22-canvas-ratio" aria-expanded={ratioOpen} onClick={() => setRatioOpen((open) => !open)}>{fixture && makeCount > 1 ? `${ratio} · ${makeCount}` : ratio}</Button>
-            {ratioOpen && ratioOptions.length > 0 && (
-              // 参数收在一个弹层里,不铺在输入框上:商家一次只在这里改「做什么、什么形状、几张」。
-              <div className="r22-canvas-popover r22-canvas-ratio-menu" data-r22-canvas-params>
+            {/*
+              参数收在一个弹层里,不铺在输入框上:商家一次只在这里改「做什么、什么形状、
+              几张」。三排都是**一组里挑一个**,所以三排都是 ToggleGroup `type="single"` ——
+              手搓的 `role="group"` + 一排 `aria-pressed` 说的是「三个各自开关的按钮」,
+              而且方向键循环、焦点只占一站那一整套得自己再写一遍(写第二遍就是第二份)。
+            */}
+            <Popover open={ratioOpen && ratioOptions.length > 0} onOpenChange={setRatioOpen}>
+              <PopoverTrigger asChild>
+                <Button unstyled type="button" className="r22-canvas-ratio">{fixture && makeCount > 1 ? `${ratio} · ${makeCount}` : ratio}</Button>
+              </PopoverTrigger>
+              <PopoverContent className="r22-canvas-popover r22-canvas-ratio-menu" align="end" side="top" sideOffset={8} data-r22-canvas-params>
                 {fixture ? (
-                  <div className="r22-canvas-param-row" role="group" aria-label="What to make">
-                    <Button unstyled type="button" aria-pressed={makeKind === "image"} data-canvas-kind="image" onClick={() => setMakeKind("image")}>Image</Button>
-                    <Button unstyled type="button" aria-pressed={makeKind === "video"} data-canvas-kind="video" onClick={() => setMakeKind("video")}>Video</Button>
-                  </div>
+                  <ToggleGroup
+                    unstyled
+                    className="r22-canvas-param-row"
+                    type="single"
+                    value={makeKind}
+                    aria-label="What to make"
+                    onValueChange={(value) => { if (value) setMakeKind(value as CanvasMakeKind); }}
+                  >
+                    <ToggleGroupItem unstyled value="image" data-canvas-kind="image">Image</ToggleGroupItem>
+                    <ToggleGroupItem unstyled value="video" data-canvas-kind="video">Video</ToggleGroupItem>
+                  </ToggleGroup>
                 ) : null}
-                <div className="r22-canvas-shape-grid" role="group" aria-label="Shape">
+                <ToggleGroup
+                  unstyled
+                  className="r22-canvas-shape-grid"
+                  type="single"
+                  value={ratio}
+                  aria-label="Shape"
+                  onValueChange={(value) => { if (!value) return; setRatio(value); if (!fixture) setRatioOpen(false); }}
+                >
                   {ratioOptions.map((value) => (
-                    <Button unstyled type="button" key={value} aria-pressed={ratio === value} data-canvas-ratio={value} onClick={() => { setRatio(value); if (!fixture) setRatioOpen(false); }}>
+                    <ToggleGroupItem unstyled key={value} value={value} data-canvas-ratio={value}>
                       <i style={{ aspectRatio: value.replace(":", " / ") }} aria-hidden="true" />
                       <span>{value}</span>
-                    </Button>
+                    </ToggleGroupItem>
                   ))}
-                </div>
+                </ToggleGroup>
                 {fixture ? (
-                  <div className="r22-canvas-param-row" role="group" aria-label="How many">
+                  <ToggleGroup
+                    unstyled
+                    className="r22-canvas-param-row"
+                    type="single"
+                    value={String(makeCount)}
+                    aria-label="How many"
+                    onValueChange={(value) => { if (!value) return; setMakeCount(Number(value)); setCountTouched(true); }}
+                  >
                     {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, index) => index + 1).map((value) => (
-                      <Button unstyled type="button" key={value} aria-pressed={makeCount === value} data-canvas-count={value} onClick={() => { setMakeCount(value); setCountTouched(true); }}>{value}</Button>
+                      <ToggleGroupItem unstyled key={value} value={String(value)} data-canvas-count={value}>{value}</ToggleGroupItem>
                     ))}
-                  </div>
+                  </ToggleGroup>
                 ) : null}
-              </div>
-            )}
+              </PopoverContent>
+            </Popover>
             <span className="r22-canvas-price">{priceLabel}</span>
             <Button unstyled type="submit" className="r22-canvas-send" aria-label="Send" disabled={submitting || (fixture && fixtureRouteState !== "ready") || (!fixture && (!costQuote || !ratioOptions.length))}>
               <ArrowUp aria-hidden="true" />
@@ -2084,13 +2285,37 @@ export function R22CanvasSurface({
         </form>
         </div>
 
-        <div className="r22-canvas-tools" data-r22-canvas-tools role="toolbar" aria-label="Canvas tools">
-          {TOOL_BUTTONS.map(({ id, label, icon: Icon }) => (
-            <Button unstyled type="button" key={id} className={tool === id ? "is-active" : ""} aria-label={label} aria-pressed={tool === id} onClick={() => setTool(id)}>
-              <Icon aria-hidden="true" />
-            </Button>
-          ))}
-        </div>
+        {/*
+          工具条 —— 手上只可能有一件工具,所以它是一组单选,不是一排各自开关的按钮:
+          `ToggleGroup type="single"` 出方向键循环、Tab 只占一站、选中态由 `data-state` 说。
+          快捷键写在 tooltip 里(`<Kbd>` 是 shadcn 官方给 tooltip 内按键的那一件),字母
+          与真正生效的映射同出 `TOOL_BUTTONS`,不会有一处写着 V、另一处按出别的工具。
+        */}
+        <TooltipProvider>
+          <ToggleGroup
+            unstyled
+            className="r22-canvas-tools"
+            data-r22-canvas-tools
+            type="single"
+            value={tool}
+            aria-label="Canvas tools"
+            onValueChange={(value) => { if (value) setTool(value as CanvasTool); }}
+          >
+            {TOOL_BUTTONS.map(({ id, label, icon: Icon, key }) => (
+              <Tooltip key={id}>
+                <TooltipTrigger asChild>
+                  <ToggleGroupItem unstyled value={id} aria-label={label}>
+                    <Icon aria-hidden="true" />
+                  </ToggleGroupItem>
+                </TooltipTrigger>
+                <TooltipContent side="left">
+                  {label}
+                  {key ? <Kbd className="ml-1.5">{key}</Kbd> : null}
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </ToggleGroup>
+        </TooltipProvider>
 
         {/* 改这一张 —— 与 Library 单图详情开的是**同一个**组件、同一份存档、同一个价钱。 */}
         {editArt ? (() => {
@@ -2105,14 +2330,19 @@ export function R22CanvasSurface({
           );
         })() : null}
 
-        <div className="r22-canvas-zoom" data-r22-canvas-zoom>
+        {/*
+          缩放条那五颗是**一件东西的五个按钮**,不是五颗各自飘着的键 —— 归位到 shadcn 的
+          ButtonGroup:它出 `role="group"` 与相邻按钮的 focus 环 z-index(挨着的两颗谁被
+          键盘选中,谁的环就压在上面,不会被邻居切掉半圈)。
+        */}
+        <ButtonGroup className="r22-canvas-zoom" data-r22-canvas-zoom aria-label="Canvas view">
           <Button unstyled type="button" aria-label="Undo" onClick={undoMove}><Undo2 aria-hidden="true" /></Button>
           <Button unstyled type="button" aria-label="Redo" onClick={redoMove}><Redo2 aria-hidden="true" /></Button>
           <Button unstyled type="button" aria-label="Zoom out" onClick={() => zoomAtStageCenter(1 / CANVAS_ZOOM_STEP)}><Minus aria-hidden="true" /></Button>
           {/* 按一下回到出发时那个视角 —— 重置的是整个视角,不只是倍率(原型 L6022)。 */}
           <Button unstyled type="button" className="r22-canvas-zoom-label" aria-label="Reset zoom" onClick={() => setView(CANVAS_HOME_VIEW)}>{Math.round(view.zoom)}%</Button>
           <Button unstyled type="button" aria-label="Zoom in" onClick={() => zoomAtStageCenter(CANVAS_ZOOM_STEP)}><Plus aria-hidden="true" /></Button>
-        </div>
+        </ButtonGroup>
       </div>
     </section>
   );

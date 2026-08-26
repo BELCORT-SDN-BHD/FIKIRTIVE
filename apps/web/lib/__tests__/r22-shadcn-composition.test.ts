@@ -96,7 +96,12 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     // 一排普通按钮配这两个 role,屏幕上是一组单选、用起来不是,除非把方向键循环、焦点
     // 跟随、Tab 只占一站那一整套自己再写一遍。写第二遍不是错,是**第二份**:两份键盘
     // 行为迟早分家,而分家只有用键盘的人碰得到。
-    expect(text, `${relative}: use Dialog/Tabs/Switch/Menu/RadioGroup primitives`).not.toMatch(/role=["'](?:dialog|tab|tablist|switch|menu|menuitem|radio|radiogroup)["']/);
+    // `toolbar` 是 2026-08-26 跟着画布那一轮加进来的,理由与 `radio` / `radiogroup` 同一条:
+    // 一排普通按钮配 `role="toolbar"` + 一排 `aria-pressed`,屏幕上是一条工具条、用起来
+    // 不是 —— 方向键在组内循环、Tab 只占一站、按下的那一颗才是焦点,这一整套得自己再写
+    // 一遍。写第二遍不是错,是**第二份**。归位的去处是 `ToggleGroup`(一组里挑一个,
+    // 它出的是 radiogroup 语义)或 `ButtonGroup`(一组各自独立的动作)。
+    expect(text, `${relative}: use Dialog/Tabs/Switch/Menu/RadioGroup/ToggleGroup primitives`).not.toMatch(/role=["'](?:dialog|tab|tablist|switch|menu|menuitem|radio|radiogroup|toolbar)["']/);
     expect(text, `${relative}: use Separator`).not.toMatch(/<hr(?:\s|\/?>)/);
     expect(text, `${relative}: use gap utilities`).not.toMatch(/\bspace-[xy]-/);
     expect(text, `${relative}: use Checkbox or RadioGroup`).not.toMatch(/<Input\b[^>]*\btype=["'](?:checkbox|radio)["']/);
@@ -133,8 +138,18 @@ describe("R22 desktop surfaces use the repository shadcn composition contract", 
     expect(source("components/projects/ProjectStartDialog.tsx")).toContain("<RadioGroup");
     expect(source("components/library/LibraryQuickCreate.tsx")).toContain("<RadioGroup");
     // 画布的问题卡两路都归位过了:单选走 RadioGroup,多选走 Checkbox。
-    expect(source("components/canvas/R22CanvasSurface.tsx")).toContain("<RadioGroup");
-    expect(source("components/canvas/R22CanvasSurface.tsx")).toContain("<Checkbox");
+    const canvas = source("components/canvas/R22CanvasSurface.tsx");
+    expect(canvas).toContain("<RadioGroup");
+    expect(canvas).toContain("<Checkbox");
+    // 2026-08-26 画布一轮:五个手搓的 absolute 弹层(切项目 / 附件 / 素材库 / 参数 /
+    // 选素材包)全部归位。判词按形状分:一串**动作**是 menu(上下键 + 首字母跳),
+    // 任意**内容**是 popover。手搓的那五层只有 Esc 一条关闭路径,点外面不会关。
+    expect(canvas, "画布的弹层要用 Popover(任意内容)").toContain("<Popover");
+    expect(canvas, "画布的动作菜单要用 DropdownMenu(带键盘模型)").toContain("<DropdownMenu");
+    // 工具条 / 比例 / 张数 / 图还是视频 —— 四组「一组里挑一个」全归 ToggleGroup;
+    // 缩放条那五颗是一组各自独立的动作,归 ButtonGroup。
+    expect(canvas, "画布的成组单选要用 ToggleGroup").toContain("<ToggleGroup");
+    expect(canvas, "画布的缩放条要用 ButtonGroup").toContain("<ButtonGroup");
     // 单图编辑层那六个风格预设同理 —— 它是最后一份手搓 roving,2026-08-26 一起归位。
     expect(source("components/library/ImageEditLayer.tsx")).toContain("<RadioGroup");
     // 这条钉的是「Approvals 这些控件是 shadcn 的,不是手搓的」。八件升级把这一面拆成了

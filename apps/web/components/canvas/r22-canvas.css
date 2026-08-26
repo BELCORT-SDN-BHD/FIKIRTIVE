@@ -434,22 +434,69 @@
   stroke-width: 1.8;
 }
 
-.r22-canvas-project-menu,
-.r22-canvas-popover {
-  position: absolute;
-  z-index: 60;
+/* ————— 画布上的五层浮层 —————
+ *
+ * ⚠️ 这一段的每一个 `var()` 都必须是**央册的 `--r22-*` 全局 token**,一个局部别名都不许有。
+ *
+ * 五层现在全是 Radix 的 popover / dropdown-menu:它们 portal 到 `document.body`,层根本不
+ * 在 `.r22-canvas-surface` 底下,而那一批 `--r22-canvas-*` 短别名(以及被就地重定义的
+ * `--r22-shadow-lg` / `--r22-ease-out`)全都定义在 `.r22-canvas-surface` **自己身上**。
+ * 在这里借一个,解析出来就是空 —— 面板整片透明、字叠在下层的卡片上。Library 那一面付过
+ * 这笔学费,现场与判词见 `components/library/r22-library.css` 单图详情层那段注释。
+ *
+ * 选择器前面那半截 `[data-slot="…"]` 不是装饰:shadcn 的 `PopoverContent` /
+ * `DropdownMenuContent` 自带 `w-72` / `p-4` / `bg-popover` 这类单类工具类,单靠一个
+ * `.r22-canvas-popover` 是平手,谁赢要看两份 css 谁后进包。加上属性选择器就赢定了。
+ *
+ * z-index 也在这里定:`.r22-canvas-surface` 自己是 `z-index: 70` 的定位元素,而浮层
+ * portal 出去之后与它同在一个层叠上下文里 —— 用 shadcn 默认的 `z-50` 会被整块画布盖住。
+ */
+[data-slot="popover-content"].r22-canvas-popover,
+[data-slot="dropdown-menu-content"].r22-canvas-popover {
+  z-index: 80;
+  width: auto;
+  max-height: none;
   min-width: 190px;
   padding: 5px;
   border: 1px solid var(--r22-line);
   border-radius: 12px;
   background: var(--r22-surface);
+  color: var(--r22-ink);
+  font-family: var(--font-geist-sans), Geist, Arial, sans-serif;
   box-shadow: var(--r22-shadow-lg);
 }
 
-.r22-canvas-project-menu {
-  top: calc(100% + 8px);
-  left: 0;
-  transform-origin: top left;
+/* 弹层从按下的那颗按钮长出来 —— Radix 把那个点算好了放在
+   `--radix-*-content-transform-origin` 里,这里读它,不再自己猜一个角。
+   动效与 Library 的同款同一条曲线、同一个时长(`r22-lib-pop-in`)。 */
+[data-slot="popover-content"].r22-canvas-popover {
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+
+[data-slot="dropdown-menu-content"].r22-canvas-popover {
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+
+[data-slot="popover-content"].r22-canvas-popover[data-state="open"],
+[data-slot="dropdown-menu-content"].r22-canvas-popover[data-state="open"] {
+  animation: r22-canvas-pop-in 160ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes r22-canvas-pop-in {
+  from { opacity: 0; transform: scale(.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="popover-content"].r22-canvas-popover[data-state="open"],
+  [data-slot="dropdown-menu-content"].r22-canvas-popover[data-state="open"] {
+    animation: none;
+  }
+}
+
+/* + 那颗按钮既是附件菜单的触发器,也是素材库弹层的锚点 —— 锚点只负责占住那个位置。 */
+.r22-canvas-attach-anchor {
+  display: inline-flex;
 }
 
 .r22-canvas-project-menu a,
@@ -1297,17 +1344,10 @@
   stroke-width: 2;
 }
 
-.r22-canvas-attach-menu {
-  bottom: calc(100% + 8px);
-  left: 0;
-  transform-origin: bottom left;
-}
-
-.r22-canvas-ratio-menu {
-  right: 44px;
-  bottom: calc(100% + 8px);
+/* 位置与出场方向都由 Radix 算(`side` / `align` / `--radix-*-transform-origin`)——
+   这里只剩这一层自己的尺寸。 */
+[data-slot="popover-content"].r22-canvas-ratio-menu {
   min-width: 236px;
-  transform-origin: bottom right;
 }
 
 /* ————— 上下文条:选中的图与挂着的参考图 ————— */
@@ -1406,8 +1446,11 @@
   text-align: center !important;
 }
 
-.r22-canvas-param-row button[aria-pressed="true"],
-.r22-canvas-shape-grid button[aria-pressed="true"] {
+/* 选中态由 shadcn/Radix 的 `data-state` 说 —— 手写的 `aria-pressed` 已经退役,
+   ToggleGroup `type="single"` 给出的是 `role="radio"` + `aria-checked`,那才是
+   「一组里挑一个」真正的说法。 */
+.r22-canvas-param-row button[data-state="on"],
+.r22-canvas-shape-grid button[data-state="on"] {
   background: var(--r22-chrome);
   color: var(--r22-ink) !important;
 }
@@ -1442,22 +1485,13 @@
 
 /* ————— 选素材包的小弹层 —————
  *
- * 它长在触发它的那一格上,`transform-origin` 对着右上角那颗按钮 —— 弹层从按下的地方
- * 长出来,商家才不用回头找「刚才那一下开出了什么」。
+ * 它长在触发它的那一格上 —— 弹层从按下的地方长出来,商家才不用回头找「刚才那一下开出了
+ * 什么」。定位、出场方向、点外面关、Esc、焦点归还,全部由 Radix 的 popover 出。
  */
 
-.r22-canvas-pack-menu {
-  top: 34px;
-  right: 6px;
-  z-index: 12;
+[data-slot="popover-content"].r22-canvas-pack-menu {
   width: 200px;
-  transform-origin: top right;
-  animation: r22-canvas-pack-in 160ms cubic-bezier(.16, 1, .3, 1) both;
-}
-
-@keyframes r22-canvas-pack-in {
-  from { opacity: 0; transform: scale(.94); }
-  to { opacity: 1; transform: scale(1); }
+  min-width: 0;
 }
 
 .r22-canvas-pack-menu > p {
@@ -1517,17 +1551,10 @@
   cursor: not-allowed;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .r22-canvas-pack-menu { animation: none; }
-}
-
 /* ————— 素材库小弹层 ————— */
 
-.r22-canvas-library-picker {
-  bottom: calc(100% + 8px);
-  left: 0;
+[data-slot="popover-content"].r22-canvas-library-picker {
   width: 268px;
-  transform-origin: bottom left;
 }
 
 .r22-canvas-library-picker > p {
@@ -1601,7 +1628,8 @@
   color: var(--r22-ink-2);
 }
 
-.r22-canvas-tools button.is-active {
+/* 手上是哪件工具由 ToggleGroup 的 `data-state` 说,不再有第二份手写的 `is-active`。 */
+.r22-canvas-tools button[data-state="on"] {
   background: var(--r22-ink);
   color: var(--r22-surface);
 }
@@ -1625,6 +1653,19 @@
   border-radius: 8px;
   background: var(--r22-surface);
   box-shadow: var(--r22-shadow-sm);
+}
+
+/*
+  ButtonGroup 自带的 `items-stretch` 与「相邻按钮把内侧圆角削平」是给有边框的分段控件
+  准备的。这一条是无边框的浮条,五颗各自是一枚小圆键 —— 属性选择器那半截是为了稳赢
+  ButtonGroup 那几条 `[&>*:not(:first-child)]` 变体(它们本身就带一层伪类特异性)。
+*/
+[data-slot="button-group"].r22-canvas-zoom {
+  align-items: center;
+}
+
+[data-slot="button-group"].r22-canvas-zoom > * {
+  border-radius: 6px;
 }
 
 .r22-canvas-zoom button {
@@ -1766,7 +1807,15 @@
   transition: background-color 140ms var(--r22-ease-out), color 140ms var(--r22-ease-out), transform 140ms var(--r22-ease-out);
 }
 
-.r22-canvas-answer-actions button.is-selected {
+/* Helpful / Not helpful 是一组单选(ToggleGroup),所以它自己是一个盒子 ——
+   `gap` 与外面那排对齐,插进来一层不改屏上的间距。 */
+.r22-canvas-answer-votes {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.r22-canvas-answer-actions button[data-state="on"] {
   background: var(--r22-chrome);
   color: var(--r22-ink) !important;
 }

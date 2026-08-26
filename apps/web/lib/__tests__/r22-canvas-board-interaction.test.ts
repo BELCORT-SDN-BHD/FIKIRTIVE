@@ -24,6 +24,21 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
   useCanvasGen: () => ({ generateImage: vi.fn(), quoteCosts: vi.fn(), imageShapes: vi.fn() }),
 }));
 
+// Radix 的 popover / menu / tooltip 在 jsdom 里要这几样才活得起来(popper 量尺寸、
+// 指针捕获、滚动到高亮项)。抄 `r22-home-create-menu.test.ts` 的同一份,不重发明。
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { R22CanvasSurface } = await import("@/components/canvas/R22CanvasSurface");
@@ -245,7 +260,10 @@ describe("④ 框选拉出一个框,框住几张就选中几张(原型 L6053-607
     await gesture(stage(), [90, 90], [200, 200], [380, 340]);
 
     expect(selectedArt(), "框选没有框住该框的那两张").toEqual(["art-1", "art-2"]);
-    expect(toolButton("Select").getAttribute("aria-pressed"), "框完了工具没有自己回到 Select").toBe("true");
+    // 工具条归位到 ToggleGroup `type="single"` 之后,手上是哪件工具说的是 `aria-checked`
+    // (一组里挑一个),不再是 `aria-pressed`(一排各自开关的按钮)。
+    expect(toolButton("Select").getAttribute("aria-checked"), "框完了工具没有自己回到 Select").toBe("true");
+    expect(toolButton("Box select").getAttribute("aria-checked"), "回到了 Select,框选那颗却还亮着").toBe("false");
   });
 });
 

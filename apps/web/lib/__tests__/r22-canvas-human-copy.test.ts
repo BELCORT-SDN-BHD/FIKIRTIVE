@@ -49,6 +49,21 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
   useCanvasGen: () => gen,
 }));
 
+// Radix 的 popover / menu 在 jsdom 里要这几样才活得起来(popper 量尺寸、指针捕获、
+// 滚动到高亮项)。抄 `r22-home-create-menu.test.ts` 的同一份,不重发明。
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { R22CanvasSurface } = await import("@/components/canvas/R22CanvasSurface");
@@ -136,8 +151,13 @@ function ottoState(): string {
   return need(".r22-canvas-otto-head span").textContent ?? "";
 }
 
+/**
+ * 商家读得到的整屏。读的是 `document.body` 而不是 `container` —— 浮层(附件菜单、素材库
+ * 弹层、参数弹层……)现在是 Radix 的 popover / menu,它们 portal 到 body 底下,只读
+ * container 就等于把那几层从这条围栏里放走了。口径只宽不窄。
+ */
 function screenText(): string {
-  return container!.textContent ?? "";
+  return document.body.textContent ?? "";
 }
 
 describe("① 寒暄不进生成机", () => {
@@ -343,14 +363,20 @@ describe("② 商家可见文本里没有工程词族", () => {
    */
   it("附件菜单里的 From Library 开出素材库,挑一张就挂上去", async () => {
     await mount();
-    await act(async () => { need<HTMLButtonElement>('button[aria-label="Attach"]').click(); });
-    const library = [...container!.querySelectorAll<HTMLButtonElement>(".r22-canvas-attach-menu button")]
+    // Radix 的 menu 是在 pointerdown 上开的(popover 在 click 上),所以先补上那一记;
+    // 开出来的那一层 portal 在 `document.body` 底下,不在 container 里。
+    await act(async () => {
+      const attach = need<HTMLButtonElement>('button[aria-label="Attach"]');
+      attach.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      attach.click();
+    });
+    const library = [...document.querySelectorAll<HTMLButtonElement>(".r22-canvas-attach-menu button")]
       .find((node) => node.textContent === "From Library");
     expect(library, "附件菜单里没有 From Library").toBeDefined();
 
     await act(async () => { library!.click(); });
 
-    const picks = [...container!.querySelectorAll<HTMLButtonElement>("[data-canvas-library-pick]")];
+    const picks = [...document.querySelectorAll<HTMLButtonElement>("[data-canvas-library-pick]")];
     expect(picks.length, "素材库弹层里一张都挑不了").toBeGreaterThan(0);
     assertHumanScreen("素材库弹层");
 

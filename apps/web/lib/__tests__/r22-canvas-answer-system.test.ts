@@ -257,16 +257,23 @@ describe("② 答案卡自己是完整的一件东西", () => {
   it("Helpful / Not helpful 只能选一个,并且答一句确认", async () => {
     await mount();
     await askOtto("How much does this cost?");
-    const [up, down] = [...need("[data-otto-answer]").querySelectorAll<HTMLButtonElement>(".r22-canvas-answer-actions button")].slice(1);
+    // 两颗评价归位到 ToggleGroup `type="single"` 之后,「只能选一个」这件事由
+    // `aria-checked`(一组里挑一个)说,不再是两个各自开关的 `aria-pressed`。
+    const card = need("[data-otto-answer]");
+    const up = card.querySelector<HTMLButtonElement>('[data-otto-vote="up"]');
+    const down = card.querySelector<HTMLButtonElement>('[data-otto-vote="down"]');
+    expect(up, "答案卡上没有 Helpful").not.toBeNull();
+    expect(down, "答案卡上没有 Not helpful").not.toBeNull();
+    expect(up!.closest('[role="radiogroup"]'), "两颗评价不在同一组里 —— 读屏会念成两个独立开关").not.toBeNull();
 
     await act(async () => { up!.click(); });
-    expect(up!.getAttribute("aria-pressed")).toBe("true");
-    expect(down!.getAttribute("aria-pressed")).toBe("false");
+    expect(up!.getAttribute("aria-checked")).toBe("true");
+    expect(down!.getAttribute("aria-checked")).toBe("false");
     expect(need(".r22-canvas-answer-confirm").textContent).toBe("Thanks — marked helpful");
 
     await act(async () => { down!.click(); });
-    expect(up!.getAttribute("aria-pressed"), "两个评价同时亮着").toBe("false");
-    expect(down!.getAttribute("aria-pressed")).toBe("true");
+    expect(up!.getAttribute("aria-checked"), "两个评价同时亮着").toBe("false");
+    expect(down!.getAttribute("aria-checked")).toBe("true");
     expect(need(".r22-canvas-answer-confirm").textContent).toBe("Thanks — feedback recorded");
   });
 
