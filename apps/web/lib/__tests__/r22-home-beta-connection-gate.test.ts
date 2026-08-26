@@ -61,8 +61,6 @@ const source = (relative: string) => readFileSync(path.join(WEB_ROOT, relative),
 const HOME_DATA: HomeData = {
   greeting: "Good morning, Nadia",
   credits: readOk("1,240 cr"),
-  billingHref: "/settings?section=billing",
-  billingLabel: "Billing & credits",
   canvases: readOk([]), thumbs: readOk([]), upcoming: readOk([]), campaigns: readOk([]), equipment: readOk([]),
 };
 
@@ -115,21 +113,24 @@ describe("① 右上角没有第二个 workspace 入口了", () => {
     document.body.replaceChildren();
   });
 
-  it("Home 右上角只剩铃 —— 头像、chevron、账号菜单一件都不在", async () => {
+  /**
+   * 2026-08-26 深夜第二刀:铃也跟着进了幕后(beta 卫生大扫除 P2-23)。上一版这里钉的是
+   * 「右上角只剩铃」—— 那一条已经是旧现实。铃的病是它**只长在 `/` 上**:商家在 Library 里
+   * 收到的通知得走回首页才看得见。裁决取「beta 整个拿掉」,闸在 `BETA_NOTIFICATION_BELL`。
+   */
+  it("Home 右上角整组不在了 —— 头像、chevron、账号菜单、铃,一件都不画", async () => {
     await mountShell();
-    const quick = host.querySelector(".r22-dashboard-quick-actions")!;
-    expect(quick, "右上角那一组整个没了 —— 铃也一起丢了").not.toBeNull();
+    expect(host.querySelector(".r22-dashboard-quick-actions"), "右上角那一组又画回来了").toBeNull();
     expect(host.querySelector(".r22-dashboard-account"), "右上角那颗账号按钮又回来了").toBeNull();
     expect(host.querySelector(".r22-dashboard-account-avatar"), "右上角那枚首字母头像又回来了").toBeNull();
-    expect(quick.querySelectorAll("button")).toHaveLength(1);
-    expect(quick.querySelector("button")!.className).toContain("r22-dashboard-bell");
+    expect(host.querySelector(".r22-dashboard-bell"), "通知铃又回来了").toBeNull();
   });
 
-  it("按右上角任何一处都开不出工作区菜单 —— 铃开的是通知,不是工作区", async () => {
+  it("工作区菜单只有侧栏那一颗开得出来 —— 右上角已经没有第二个触发点了", async () => {
     await mountShell();
-    await click(host.querySelector(".r22-dashboard-bell"));
-    expect(host.querySelectorAll(".r22-dashboard-workspace-menu"), "铃开出了工作区菜单").toHaveLength(0);
-    expect(document.body.querySelector("[data-r22-notifications-region]"), "铃开不出通知抽屉了").not.toBeNull();
+    expect(host.querySelectorAll(".r22-dashboard-workspace-menu")).toHaveLength(0);
+    await click(host.querySelector(".r22-dashboard-workspace"));
+    expect(host.querySelectorAll(".r22-dashboard-workspace-menu"), "侧栏那颗开不出菜单了").toHaveLength(1);
   });
 
   it("`.is-account-anchored` 那个第二锚点连样式带用法一起退场", async () => {
@@ -237,8 +238,8 @@ describe("③ Home 默认第一屏:零连接卡、零状态词条、零 Performa
     expect(markup).toContain("Good morning, Nadia");
     expect(markup, "副句还在把商家往连接那条路上推").not.toContain("Connect one channel");
     expect(markup).toContain("Start a new piece, or pick up one you already made.");
-    // 创作入口一族一件不少。
-    expect(markup).toContain("Create without data");
+    // 创作入口一族一件不少(行标题 2026-08-26 换成创作口径,见 `r22-home-create-row.test.ts`)。
+    expect(markup).toContain("Start from a blank canvas");
     expect(markup).toContain("Create new");
     expect(markup).toContain("Add brand context");
     expect(markup, "唯一那一块没换成第一块的量级").toContain('class="r22-home-create-row is-primary"');

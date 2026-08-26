@@ -12,7 +12,6 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -20,7 +19,6 @@ import {
   BriefcaseBusiness,
   Camera,
   Check,
-  ChevronDown,
   Info,
   LockKeyhole,
   MessageCircle,
@@ -335,28 +333,26 @@ export function HomeView({
         </section>
       </div> : null}
 
+      {/*
+        创作行 2026-08-26 深夜收成**三件**:一句标题、一颗主按钮、一条次要链接。
+
+        ① chevron 菜单整颗退场(beta 卫生大扫除 P2-17)。它上一版才从死按钮换成真菜单,
+           但换完之后菜单的三项里有两项就摆在同一行上:`Start a project` 与紧邻的
+           `Create new` 同去 `/create`,`Add brand context` 与紧邻的次要链接同去 `/brand`。
+           同一行里同一句话出现两遍,商家得先按一次才知道两颗是一回事。剩下的独有项只有
+           `Open Library` —— 而 Library 在侧栏常驻、在 ⌘K 的 Actions 组里也有一条,不缺
+           这第三个入口。一颗按下去只给出「你已经看得见的东西」的菜单,不如没有。
+
+        ② 「Create without data」改名(Founder 裁决的措辞悬空案)。那个 data 指的是连接进来
+           的渠道数据 —— 而连接线同一晚整块闸进幕后,商家这一版根本看不到它,于是这句话在
+           回答一个没人问过的问题。换成创作口径:这一行真正在说的是「手上什么都还没有,
+           直接开一张空白画布」。
+      */}
       <section className={connectionSurface ? "r22-home-create-row" : "r22-home-create-row is-primary"}>
         <span><Plus aria-hidden="true" /></span>
-        <div><b>Create without data</b></div>
+        <div><b>Start from a blank canvas</b></div>
         <div className="r22-home-create-actions">
           <Link className="is-primary" href={fixtureHref("/create")}>Create new</Link>
-          {/* 这颗 chevron 从画上去那天起就没有 onClick —— 按下去什么都不会发生。挂一个真菜单
-              比留一颗死按钮诚实,而菜单里只许放**今天真的到得了**的门:beta V1 商家看得见的
-              创作三门就是 Canvas / Library / Otto IQ(`r22-beta-nav-scope.test.ts`,Founder
-              2026-08-26 收窄),Campaigns、Routines、Schedule 那几扇是被故意藏起来的,不许
-              从这里偷偷放回去。键盘、Escape、方向键那一整套由 shadcn 的 DropdownMenu 出。 */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button unstyled type="button" aria-label="More creation choices"><ChevronDown /></Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="r22-home-create-pop">
-              <DropdownMenuGroup>
-                <DropdownMenuItem asChild><Link href={fixtureHref("/create")}>Start a project</Link></DropdownMenuItem>
-                <DropdownMenuItem asChild><Link href={fixtureHref("/library")}>Open Library</Link></DropdownMenuItem>
-                <DropdownMenuItem asChild><Link href={fixtureHref("/brand")}>Add brand context</Link></DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
           <Link className="is-secondary" href={fixtureHref("/brand")}>Add brand context</Link>
         </div>
       </section>
@@ -421,8 +417,6 @@ export function R22HomeFixture({ connectionState, channel = "Instagram", connect
   const data: HomeData = {
     greeting: "Good morning, Nadia",
     credits: readOk("1,240 cr"),
-    billingHref: "/billing",
-    billingLabel: "Billing & credits",
     canvases: readOk([]),
     thumbs: readOk([]),
     upcoming: readOk([]),

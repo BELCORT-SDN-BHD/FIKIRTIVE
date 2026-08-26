@@ -328,13 +328,20 @@ export function equipmentSteps(input: {
 /**
  * 整页。每一块都是 {@link Read}:**空**与**读不出来**在类型层面就分得开,渲染层没有把两者
  * 写成同一支的自由(判官 r1 P3-1)。
+ *
+ * ── `billingHref` / `billingLabel` 退场(beta 卫生大扫除 P3-1,2026-08-26)──
+ * R22 Data-first Home 把余额那一行收归 Billing 一处(设计原则第 18 条,Founder 2026-08-21)
+ * 之后,这两个字段**一处都不再渲染** —— 它们是从五块仪表盘时代留下来的两个孤儿,每一次
+ * 构造 `HomeData` 的地方都还得填一遍。留着的代价不是版面而是误导:下一个人会以为 Home 上
+ * 有一条余额链接,然后去找它为什么不显示。
+ *
+ * 余下六块 `Read` **一块都不删**:它们今天虽然没有各自的版面,却是 `LoadingTruth` 判「这一刻
+ * 有东西读不出来」的全部依据 —— 少读一块,Home 就会在一次瞬时故障里静静装作一切正常。
  */
 export type HomeData = {
   greeting: string;
   /** `creditsLabel()` 格好的余额。读不出来就说读不出来 —— 绝不显示 0,0 是一个关于钱的主张。 */
   credits: Read<string>;
-  billingHref: string;
-  billingLabel: string;
   canvases: Read<HomeCanvas[]>;
   thumbs: Read<HomeThumb[]>;
   upcoming: Read<HomeUpcomingPost[]>;

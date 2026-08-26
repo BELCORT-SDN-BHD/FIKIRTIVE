@@ -175,8 +175,6 @@ describe("R22 地基围栏 ② 字号 ratchet —— 白名单 + 不许新增即
 const BASE_HOME_DATA: HomeData = {
   greeting: "Good morning, Aisha",
   credits: readOk("20 credits"),
-  billingHref: "/billing",
-  billingLabel: "Billing & credits",
   canvases: readOk([]),
   thumbs: readOk([]),
   upcoming: readOk([]),

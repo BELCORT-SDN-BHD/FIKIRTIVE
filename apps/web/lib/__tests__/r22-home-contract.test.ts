@@ -7,8 +7,6 @@ import { readOk, UNREADABLE, type HomeData } from "@/components/home/home-data";
 const data: HomeData = {
   greeting: "Good morning, Nadia",
   credits: readOk("1,240 credits"),
-  billingHref: "/settings?section=billing",
-  billingLabel: "Billing & credits",
   canvases: readOk([]), thumbs: readOk([]), upcoming: readOk([]), campaigns: readOk([]), equipment: readOk([]),
 };
 

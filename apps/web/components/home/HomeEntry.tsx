@@ -98,9 +98,10 @@ export async function HomeEntry({ connectionSurface = false }: { connectionSurfa
     ]);
 
   // 路径只由导航权威源写(§1.3)—— 这一页一条都不硬写,W2-11 改那棵树时它们跟着换。
-  // 这三个 key 由围栏钉着存在(home-page.test.ts),所以这里不给一个编出来的地址兜底:
+  // 这两个 key 由围栏钉着存在(home-page.test.ts),所以这里不给一个编出来的地址兜底:
   // 一条假地址比一次红更贵 —— 它会静静把商家送到一扇不存在的门前(判官 r1 P3-3)。
-  const billing = navLinkByKey("billing");
+  // (`billing` 那一个 2026-08-26 随 `HomeData.billingHref/billingLabel` 一起退场:Home 上
+  //  没有任何一处渲染它,取一个没人用的地址只是让围栏多钉一条空规则。)
   const brand = navLinkByKey("brand");
   const campaign = navLinkByKey("campaign");
 
@@ -121,8 +122,6 @@ export async function HomeEntry({ connectionSurface = false }: { connectionSurfa
     greeting: homeGreeting(greetingName, now),
     // 余额读不出来就说读不出来,不显示 0 —— 0 是一个关于钱的**主张**,而我们这一刻什么都不知道。
     credits: account.ok && !("error" in account.value) ? readOk(creditsLabel(account.value.balance)) : UNREADABLE,
-    billingHref: billing.href,
-    billingLabel: billing.label,
     canvases: projects.ok
       ? readOk(
           projects.value.slice(0, HOME_CANVAS_LIMIT).map((project) => ({

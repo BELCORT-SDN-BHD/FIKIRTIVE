@@ -66,8 +66,6 @@ function source(relative: string): string {
 const HOME_DATA: HomeData = {
   greeting: "Good morning, Nadia",
   credits: readOk("1,240 credits"),
-  billingHref: "/settings?section=billing",
-  billingLabel: "Billing & credits",
   canvases: readOk([]), thumbs: readOk([]), upcoming: readOk([]), campaigns: readOk([]), equipment: readOk([]),
 };
 
@@ -226,17 +224,17 @@ describe("每一扇门都有等待画面", () => {
  * 所以这一段翻面:钉的不再是那颗头像接得对不对,是它**不在了**,以及工作区菜单那一份能力
  * 一件都没丢 —— 列表、当前态、settings、sign out 全在左下角那一个入口后面。
  */
-describe("Home 右上角:只剩一颗铃(Founder 2026-08-26 workspace 管理合一)", () => {
+describe("右上角整组退场(Founder 2026-08-26 workspace 管理合一 + P2-23 铃进幕后)", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   let host: HTMLDivElement;
   let root: Root;
 
-  async function mountShell(identity: { displayName: string; email: string } | null) {
+  async function mountShell(identity: { displayName: string; email: string } | null, location = "/") {
     const { R22DashboardShell } = await import("@/components/r22/R22DashboardShell");
     await act(async () => {
       root.render(
         h(R22DashboardShell, {
-          location: "/",
+          location,
           account: identity ? { ...identity, balance: 0 } : null,
           signOutAction: vi.fn(async () => undefined),
           children: h("div", null, "page"),
@@ -263,15 +261,12 @@ describe("Home 右上角:只剩一颗铃(Founder 2026-08-26 workspace 管理合�
     host.remove();
   });
 
-  it("右上角一个工作区入口都没有 —— 头像、chevron、账号菜单全退场", async () => {
+  it("右上角整组退场 —— 头像、chevron、账号菜单、铃全不画(P2-23,2026-08-26)", async () => {
     await mountShell({ displayName: "Harvest Candle Co", email: "nadia@harvest.example" });
-    const quick = host.querySelector(".r22-dashboard-quick-actions");
-    expect(quick, "右上角那一组整个不见了 —— 铃也一起没了").not.toBeNull();
-
+    expect(host.querySelector(".r22-dashboard-quick-actions"), "右上角那一组又画回来了").toBeNull();
     expect(host.querySelector(".r22-dashboard-account"), "右上角那颗账号按钮又回来了").toBeNull();
     expect(host.querySelector(".r22-dashboard-account-avatar"), "右上角那枚首字母头像又回来了").toBeNull();
-    // 右上角那一组里除了铃,不许再冒出第二颗按钮。
-    expect([...quick!.querySelectorAll("button")].every((node) => node.classList.contains("r22-dashboard-bell"))).toBe(true);
+    expect(host.querySelector(".r22-dashboard-bell"), "通知铃又回来了").toBeNull();
     expect(host.innerHTML).not.toContain(">NA<");
   });
 
@@ -340,12 +335,13 @@ describe("Home 右上角:只剩一颗铃(Founder 2026-08-26 workspace 管理合�
     expect(document.activeElement).toBe(host.querySelector(".r22-dashboard-workspace"));
   });
 
-  it("铃能开抽屉,而且只在 Home 这一屏出现", async () => {
-    await mountShell({ displayName: "Harvest Candle Co", email: "n@h.example" });
-    const bell = host.querySelector<HTMLButtonElement>(".r22-dashboard-bell");
-    expect(bell).not.toBeNull();
-    await click(bell);
-    expect(host.querySelector('[aria-label="Notifications"]')).not.toBeNull();
+  /** 铃 2026-08-26 进幕后(P2-23)。这一条从「铃能开抽屉」改钉「哪一扇门后都没有铃」——
+   *  它的病正是「只有首页有」,所以核的是**两扇门都没有**,而不是首页没有。 */
+  it("铃在哪一扇门后都不出现了(闸在 BETA_NOTIFICATION_BELL)", async () => {
+    for (const location of ["/", "/library", "/create"]) {
+      await mountShell({ displayName: "Harvest Candle Co", email: "n@h.example" }, location);
+      expect(host.querySelector(".r22-dashboard-bell"), `${location} 上还有铃`).toBeNull();
+    }
   });
 });
 

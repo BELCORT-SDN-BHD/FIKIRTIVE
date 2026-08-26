@@ -64,6 +64,22 @@ const NAV_KEYS = ["home", "create", "library", "brand"] as const;
 /** beta V1 期间不在侧栏、也不在搜索结果里的五扇门。回来的时候把它们挪回上面那一行。 */
 export const BETA_HIDDEN_NAV_KEYS = ["campaign", "approvals", "schedule", "analytics", "routines"] as const;
 
+/**
+ * 通知铃的总闸(Founder 裁决 2026-08-26 深夜,beta 卫生大扫除 P2-23)。**默认关。**
+ *
+ * 病灶不是「铃丑」,是它**只长在 `/` 上**:商家在 Library 里做完一批图收到的通知,得先走回
+ * 首页才看得见。那是产品里最难解释的一种形状 —— 同一件事在一扇门后有、在另一扇门后没有。
+ * 两条出路里(四门都给 / beta 整个拿掉),裁决取后者:beta V1 只卖创作,通知投递本身还没
+ * 接上(生产态抽屉里那句话自己就写着「Notification delivery is not connected yet」),
+ * 一枚指向未接通管道的铃在 beta 期没有对象。
+ *
+ * **只藏,不删**,与 `BETA_HIDDEN_NAV_KEYS` 同一种手法:抽屉那一整套(`Sheet`、未读数、
+ * 标记已读、样张三条、生产态空态)一行没动,`/notifications` 那扇门也照常在。把这个常量
+ * 翻成 `true`,铃与抽屉原样回来 —— 那时候顺手把 `pathname === "/"` 那道门限一起去掉,
+ * 别让它带着「只有首页有」的老毛病回来。
+ */
+const BETA_NOTIFICATION_BELL = false;
+
 const NAV_LINKS = merchantNavLinks();
 const DESTINATIONS: Array<{ href: string; label: string; icon: LucideIcon; exact?: boolean }> = NAV_KEYS.flatMap((key) => {
   const item = NAV_LINKS.find((candidate) => candidate.key === key);
@@ -171,9 +187,12 @@ export function R22DashboardShell({
     { id: "action:open-library", href: fixtureHref("/library", fixture), label: "Open Library", detail: "Library", icon: ImageIcon, group: "Actions" },
     { id: "action:add-brand-context", href: fixtureHref("/brand", fixture), label: "Add brand context", detail: "Otto IQ", icon: Sparkles, group: "Actions" },
     ...DESTINATIONS.map((item) => ({ id: `door:${item.href}`, href: fixtureHref(item.href, fixture), label: item.label, detail: item.href, icon: item.icon, group: "Go to" as const })),
-    { id: "settings:connections", href: fixtureHref("/settings?section=connections", fixture), label: "Connections", detail: "Settings", icon: Settings, group: "Go to" as const },
+    // Settings 深链只留 beta 期仍然开着的那一节。Connections 与 Members 两条 2026-08-26
+    // 随 Settings 收窄一起撤下(beta 卫生大扫除 P2-21):一条深链指向一个被闸起来的节,
+    // 商家按下去只会落在一屏没有那一节的 Settings 上 —— 比没有这条结果更难解释。
+    // Connections 那一条同时是「同一件事两个地址」的一半(⌘K 写 `?section=connections`,
+    // Help 抽屉写 `/settings/connections`);两处一起撤,地址漂移的根也就没了。
     { id: "settings:billing", href: fixtureHref("/settings?section=billing", fixture), label: "Billing and credits", detail: "Settings", icon: Settings, group: "Go to" as const },
-    { id: "settings:members", href: fixtureHref("/settings?section=members", fixture), label: "Members", detail: "Settings", icon: Settings, group: "Go to" as const },
     ...projects.map((project) => ({ id: `project:${project.id}`, href: fixtureHref(`/create/canvas?project=${encodeURIComponent(project.id)}`, fixture), label: project.name, detail: "Canvas project", icon: FolderKanban, group: "Projects" as const })),
   ], [fixture, projects]);
 
@@ -370,10 +389,11 @@ export function R22DashboardShell({
         件事可做 —— 身份左下角已经写着全名,右上角再放一枚首字母只是同一句话的第二遍,而且
         看上去仍然像可以按。以更静为准。
 
-        铃留下,接的还是壳自己那一份通知抽屉;badge 从 `fixtureNotifications` 的未读数派生,
-        没有写死的数字。
+        铃 2026-08-26 深夜跟着进了幕后 —— 闸在 `BETA_NOTIFICATION_BELL`(见文件顶部那段裁决)。
+        右上角因此在 beta 期整组不渲染;badge 仍从 `fixtureNotifications` 的未读数派生,
+        没有写死的数字,闸一开原样回来。
       */}
-      {pathname === "/" ? <div className="r22-dashboard-quick-actions" aria-label="Account actions">
+      {BETA_NOTIFICATION_BELL && pathname === "/" ? <div className="r22-dashboard-quick-actions" aria-label="Account actions">
         {/*
           通知抽屉归位 `ui/sheet`(审计 A-10)。此前这里是一个手搓的 `<aside>`:自己写
           header、自己写关闭键、自己写焦点归还、自己写 Esc、自己写外部点击探针。那五件
@@ -415,7 +435,10 @@ export function R22DashboardShell({
           </header>
           <div className="r22-dashboard-help-list">
             <Button unstyled type="button" disabled={!otto} onClick={() => { setHelpOpen(false); otto?.openPanel(); }}><b>Ask Otto</b><span>Open your conversation with Otto and its history.</span></Button>
-            <Link href={fixtureHref("/settings/connections", fixture)}><b>Connection help</b><span>Check channel access and reconnect safely.</span></Link>
+            {/* 「Connection help → /settings/connections」2026-08-26 撤下(beta 卫生大扫除
+                P2-21)。它是同一件事的第二个地址(⌘K 那一条写的是 `?section=connections`),
+                而且指着一个 beta 期被闸起来的 Settings 节 —— 一条通向看不见的门的帮助。
+                连接线回来的时候两处一起加回来,而且只加**一份**地址。 */}
             <Link href={fixture ? "/help?fixture=r22" : "/help"}><b>Help and support</b><span>Search help articles or check a support request.</span></Link>
           </div>
         </SheetContent>

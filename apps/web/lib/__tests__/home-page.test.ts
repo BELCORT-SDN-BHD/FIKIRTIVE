@@ -270,8 +270,6 @@ describe("Home 上没有一个 Meta 数字", () => {
 const BASE_DATA: HomeData = {
   greeting: "Good morning, Aisha",
   credits: readOk("20 credits"),
-  billingHref: "/billing",
-  billingLabel: "Billing & credits",
   canvases: readOk([]),
   thumbs: readOk([]),
   upcoming: readOk([]),
@@ -590,7 +588,7 @@ describe("状态句只从 HOME_COPY 来(Founder 2026-08-25 缩辖区裁决)", ()
       expect(TRUTH_MARKERS.test(sentence), `尺子认不出这一句:${sentence}`).toBe(true);
     }
     // 装饰句不该被这把尺子抓住 —— 抓住了就等于把辖区又撑回整页。
-    for (const decoration of ["Pick up where you left off", "What Otto will analyse", "Create without data", "Syncing data"]) {
+    for (const decoration of ["Pick up where you left off", "What Otto will analyse", "Start from a blank canvas", "Syncing data"]) {
       expect(TRUTH_MARKERS.test(decoration), `尺子把装饰句也抓了:${decoration}`).toBe(false);
     }
   });
@@ -688,8 +686,10 @@ describe("读不出来 ≠ 没有:入口只有一条降级路", () => {
  * 修法选的是**围栏**而不是兜底地址:一条编出来的 URL 会静静把商家送到一扇不存在的门前,
  * 而那正是这一波换壳要根治的病(§1.3)。key 改名是一次 CI 红,不是一次线上 500。
  */
-describe("Home 用到的三个导航 key 都在权威源里(判官 r1 P3-3)", () => {
-  const KEYS = ["billing", "brand", "campaign"] as const;
+describe("Home 用到的两个导航 key 都在权威源里(判官 r1 P3-3)", () => {
+  // `billing` 2026-08-26 退场:`HomeData.billingHref/billingLabel` 一处都不渲染,取一个
+  // 没人用的地址只是让这道围栏多钉一条空规则(beta 卫生大扫除 P3-1)。
+  const KEYS = ["brand", "campaign"] as const;
 
   it.each(KEYS)("navLinkByKey(\"%s\") 取得到,且有真地址", (key) => {
     const link = navLinkByKey(key);
@@ -697,7 +697,7 @@ describe("Home 用到的三个导航 key 都在权威源里(判官 r1 P3-3)", ()
     expect(link.label.length).toBeGreaterThan(0);
   });
 
-  it("HomeEntry 用的就是这三个 key,不多不少 —— 多一个就得先在这里报到", () => {
+  it("HomeEntry 用的就是这两个 key,不多不少 —— 多一个就得先在这里报到", () => {
     const source = sourceOf("components/home/HomeEntry.tsx");
     const used = [...source.matchAll(/navLinkByKey\("([^"]+)"\)/g)].map((m) => m[1]).sort();
     expect(used, "HomeEntry 换了导航 key,而围栏还在钉旧的那几个").toEqual([...KEYS].sort());

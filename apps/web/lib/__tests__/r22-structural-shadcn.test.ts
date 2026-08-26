@@ -196,25 +196,34 @@ describe("② 抽屉归位 ui/sheet", () => {
     await mount(h(R22DashboardShell, { location: "/?fixture=r22", account: null, signOutAction: async () => {}, children: null } as never));
   }
 
-  it("a. 按铃开通知:抽屉住在 portal 里,scrim 也在 —— 手搓的 `<aside>` 退役了", async () => {
-    await mountShell();
-    expect(document.body.querySelector("[data-r22-notifications-region][data-slot='sheet-content']"), "开之前不该有").toBeNull();
-    await click(need(".r22-dashboard-bell"));
-    const panel = need("[data-r22-notifications-region][data-slot='sheet-content']");
-    expect(panel.tagName, "portal 里的一层,不是页面里的 aside").toBe("DIV");
-    expect(document.body.querySelector("[data-slot='sheet-overlay']"), "scrim 由正典件出,此前整个没有").not.toBeNull();
-    expect(panel.getAttribute("role"), "Radix Dialog 的模态语义").toBe("dialog");
+  /**
+   * a / b / d 上一版是「按铃 → 抽屉开 → Esc / SheetClose 关」三条**活的**断言。铃 2026-08-26
+   * 深夜整个进了幕后(beta 卫生大扫除 P2-23,闸 `BETA_NOTIFICATION_BELL`),beta 期壳里没有
+   * 任何一个触发点开得出这一层,那三条因此在核对空气。
+   *
+   * 处置不是删覆盖,是换证据形状:抽屉这一层的**正典件用法**原样封存在闸后(源码里逐件核),
+   * 而 `ui/sheet` 那一整套行为(portal、scrim、role、Esc、焦点归还、SheetClose)由 c 那条
+   * **活的** Help 抽屉继续钉 —— 两层是同一份 `.r22-dashboard-side-panel` 用法,同一个正典件。
+   * 铃回来的那天把 a/b/d 按 c 的写法改回活断言。
+   */
+  it("a. 通知抽屉那一层原样封存在闸后:正典件用法一件不少", () => {
+    const shell = source("components/r22/R22DashboardShell.tsx");
+    expect(shell, "闸不见了").toContain("const BETA_NOTIFICATION_BELL = false;");
+    for (const anchor of [
+      "<SheetTrigger asChild>",
+      'data-r22-notifications-region',
+      '<SheetClose asChild><Button unstyled type="button" aria-label="Close notifications">',
+      '<SheetTitle asChild><b>Notifications</b></SheetTitle>',
+    ]) {
+      expect(shell, `${anchor} 被删掉了 —— 裁决是藏,不是删`).toContain(anchor);
+    }
+    expect(shell, "手搓的 <aside> 又回来了").not.toContain("const closeNotifications");
   });
 
-  it("b. 一记 Esc 关掉通知抽屉,焦点回到那颗铃", async () => {
+  it("b. 闸关着时这一层连挂都不挂 —— 不留一个空壳占着 portal", async () => {
     await mountShell();
-    const bell = need(".r22-dashboard-bell");
-    bell.focus();
-    await click(bell);
-    expect(document.body.querySelector("[data-r22-notifications-region][data-slot='sheet-content']")).not.toBeNull();
-    await pressEscape();
-    expect(document.body.querySelector("[data-r22-notifications-region][data-slot='sheet-content']"), "Esc 要关掉").toBeNull();
-    expect(document.activeElement, "焦点要还回按下的那一颗").toBe(bell);
+    expect(document.body.querySelector("[data-r22-notifications-region]"), "抽屉自己挂上来了").toBeNull();
+    expect(document.body.querySelector(".r22-dashboard-quick-actions"), "右上角那一组还画着").toBeNull();
   });
 
   it("c. Help 抽屉的触发点按下就消失了,所以焦点明确还给侧栏那颗工作区键", async () => {
@@ -222,7 +231,11 @@ describe("② 抽屉归位 ui/sheet", () => {
     const workspaceTrigger = need(".r22-dashboard-workspace");
     await click(workspaceTrigger);
     await click(byText(".r22-dashboard-workspace-menu button", "Help"));
-    expect(document.body.querySelector("[data-r22-help-region][data-slot='sheet-content']"), "Help 抽屉要开着").not.toBeNull();
+    const panel = need("[data-r22-help-region][data-slot='sheet-content']");
+    // portal / scrim / 模态语义 —— 铃进幕后之后,这三件由仍然活着的 Help 抽屉来钉。
+    expect(panel.tagName, "portal 里的一层,不是页面里的 aside").toBe("DIV");
+    expect(document.body.querySelector("[data-slot='sheet-overlay']"), "scrim 由正典件出,此前整个没有").not.toBeNull();
+    expect(panel.getAttribute("role"), "Radix Dialog 的模态语义").toBe("dialog");
     await pressEscape();
     expect(document.body.querySelector("[data-r22-help-region][data-slot='sheet-content']")).toBeNull();
     expect(document.activeElement, "焦点不许掉回 body").toBe(workspaceTrigger);
@@ -230,9 +243,10 @@ describe("② 抽屉归位 ui/sheet", () => {
 
   it("d. 关闭键也走 SheetClose,一样关得掉", async () => {
     await mountShell();
-    await click(need(".r22-dashboard-bell"));
-    await click(need('[aria-label="Close notifications"]'));
-    expect(document.body.querySelector("[data-r22-notifications-region][data-slot='sheet-content']")).toBeNull();
+    await click(need(".r22-dashboard-workspace"));
+    await click(byText(".r22-dashboard-workspace-menu button", "Help"));
+    await click(need('[aria-label="Close help"]'));
+    expect(document.body.querySelector("[data-r22-help-region][data-slot='sheet-content']")).toBeNull();
   });
 
   it("e. 手写的关闭 / 外部点击探针整段退役,只剩工作区菜单那一处", () => {

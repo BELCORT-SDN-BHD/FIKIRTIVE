@@ -57,9 +57,11 @@ export default function HomeLoading() {
         <div className="flex-1">
           <Skeleton className="h-[14px] w-[152px] rounded-[6px]" />
         </div>
+        {/* 两件,不是三件:chevron 那颗方形占位随菜单本身 2026-08-26 一起退场
+            (beta 卫生大扫除 P2-17)。骨架多画一颗落定页没有的按钮,就是每次进 Home 都先
+            闪一个待会儿会消失的东西 —— 这份文件开头那条纪律的原案。 */}
         <div className="r22-home-create-actions">
           <Skeleton className="h-[34px] w-[96px] rounded-[8px]" />
-          <Skeleton className="h-[34px] w-[34px] rounded-[8px]" />
           <Skeleton className="h-[34px] w-[140px] rounded-[8px]" />
         </div>
       </section>

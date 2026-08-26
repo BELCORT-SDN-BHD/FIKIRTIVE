@@ -531,28 +531,10 @@
   color: var(--r22-ink-2);
 }
 
-.r22-home-create-actions > button {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border: 1px solid var(--r22-line-2) !important;
-  border-radius: 8px;
-  background: var(--r22-surface) !important;
-}
-
-.r22-home-create-actions > button svg {
-  width: 13px;
-  height: 13px;
-}
-
-/* chevron 那颗按钮的菜单。层本身(圆角、边、影、开合动效、transform-origin)全部由
-   `components/ui/dropdown-menu.tsx` 出 —— 这里只补一件事:菜单项里那个 `<Link>` 要撑满
-   整行,否则可点区只有文字那么宽(与 `.r22-approvals-pop` 同一条,不另发明)。 */
-.r22-home-create-pop a {
-  display: block;
-  width: 100%;
-}
+/* `.r22-home-create-actions > button`(那颗 34×34 的 chevron)与 `.r22-home-create-pop`
+   (它的菜单层)2026-08-26 一起退场 —— 菜单三项里有两项就摆在同一行上,剩下的独有项
+   Library 在侧栏与 ⌘K 里各有一个入口(beta 卫生大扫除 P2-17)。这一排现在只有两条链接,
+   没有按钮。 */
 
 .r22-home footer {
   margin-top: 34px;
