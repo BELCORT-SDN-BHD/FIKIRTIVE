@@ -185,10 +185,9 @@ const VARIANT_CAP_EXEMPTIONS = [
     file: "apps/web/components/canvas/R22CanvasSurface.tsx",
     why: "R22 收口期高密度 fixture 面(106 个条件分支),随 Approvals/Campaigns 重构拆分,登记 2026-08-25;整份源码那条流仍覆盖它。",
   },
-  {
-    file: "apps/web/components/otto-iq/R22OttoIQView.tsx",
-    why: "R22 收口期高密度 fixture 面(98 个条件分支),随 Approvals/Campaigns 重构拆分,登记 2026-08-25;整份源码那条流仍覆盖它。",
-  },
+  // Otto IQ 已下板(2026-08-26 beta 卫生大扫除):P1-2 的 Review 层、五卡写死计数、
+  // Knowledge Base 的两条支路、Audience 的中间两步、Visual 的 Logo 格一并删掉之后,
+  // 它的条件分支落回上限之内 —— 变体扫描现在真的跑得动它,豁免没有对象了。
   {
     file: "apps/web/components/settings/R22SettingsShell.tsx",
     why: "R22 收口期高密度 fixture 面(92 个条件分支),随 Approvals/Campaigns 重构拆分,登记 2026-08-25;整份源码那条流仍覆盖它。",

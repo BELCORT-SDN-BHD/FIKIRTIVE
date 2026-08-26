@@ -145,10 +145,14 @@ describe("① 回执一律走 toast", () => {
     expect(hits, "还有门自己画着一条回执横幅").toEqual([]);
   });
 
-  it("Settings 与 Otto IQ 也改口了:两份源码里都在调 toast,不再自己画一条", () => {
-    for (const relative of ["components/settings/R22SettingsShell.tsx", "components/otto-iq/R22OttoIQView.tsx"]) {
+  it("Settings 改口了:源码里在调 toast,不再自己画一条", () => {
+    // Otto IQ 2026-08-26 下栏:它唯一那条回执是「Export or delete everything Otto knows」
+    // 按下去的一句道歉(台账 P2-4),那颗按钮连同回执一起删了 —— 这一面现在一条回执都不发,
+    // 所以它不再需要接 sonner。下面那条负向断言接手:它也不许长回自己画的那种横幅。
+    for (const relative of ["components/settings/R22SettingsShell.tsx"]) {
       expect(source(relative), `${relative} 没有接上共用的回执`).toContain('from "sonner"');
     }
+    expect(source("components/otto-iq/R22OttoIQView.tsx"), "Otto IQ 又自己画回执了").not.toMatch(/r22-\w*-(receipt|banner)/);
     // Toaster 只有一份,挂在根布局上 —— 五扇门共用的就是它。
     expect(source("app/layout.tsx")).toContain("<Toaster />");
   });
@@ -244,7 +248,10 @@ describe("③ 空态点名了动作,屏幕上就有那颗按钮", () => {
       ["components/library/LibraryWorkroom.tsx", 1],
       ["components/library/R22LibraryView.tsx", 1],
       ["components/projects/R22ProjectsView.tsx", 1],
-      ["components/otto-iq/R22OttoIQView.tsx", 2],
+      // beta 卫生大扫除 2026-08-26:hub 那块「Start here」空态横幅整块删了(台账 P2-18)——
+      // 它与五张卡说的是同一件事,而五张卡自己就报「Nothing here yet」。剩下的一处是
+      // 各分类面的空态,仍然归位 `ui/empty`。
+      ["components/otto-iq/R22OttoIQView.tsx", 1],
       ["components/r22/R22DashboardShell.tsx", 2],
       ["components/settings/R22SettingsShell.tsx", 3],
     ];
@@ -258,7 +265,7 @@ describe("③ 空态点名了动作,屏幕上就有那颗按钮", () => {
     }
     // 台账 A-5 的标题写「九处」,但它自己那张表列的是十行(Settings 那一处是 ×3,
     // Otto IQ 与壳各 ×2)。这里按**表**算,不按标题算。
-    expect(total, "审计 A-5 那张表列的是十处").toBe(10);
+    expect(total, "审计 A-5 那张表列的是十处,减去 Otto IQ 撤下的那一处").toBe(9);
   });
 });
 

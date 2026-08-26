@@ -13,7 +13,6 @@ import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Badge } from "@/components/ui/badge";
-import { Item, ItemActions, ItemContent, ItemTitle } from "@/components/ui/item";
 import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import {
   AlertDialog,
@@ -27,20 +26,9 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-import {
-  BookOpenText,
-  ChevronRight,
-  Eye,
-  MessageSquareText,
-  Palette,
-  Search,
-  ShieldCheck,
-  Trash2,
-  UsersRound,
-} from "lucide-react";
+import { ChevronRight, Eye, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -64,24 +52,26 @@ type Card = {
   title: string;
   description: string;
   categories: string[];
-  icon: typeof MessageSquareText;
 };
 
 const CARDS: Card[] = [
-  { id: "voice", title: "Brand Voice", description: "How you sound. Otto reads this before writing any caption or reply.", categories: ["voice", "tone"], icon: MessageSquareText },
-  { id: "audiences", title: "Audiences", description: "Who you are writing to. Otto picks one before drafting.", categories: ["audience", "people"], icon: UsersRound },
-  { id: "sources", title: "Knowledge Base", description: "Pages, files and notes you choose for Otto to use — each one keeps its source.", categories: ["knowledge", "source", "fact", "product"], icon: BookOpenText },
-  { id: "style", title: "Style Guide", description: "Writing defaults, approved language and claims Otto must avoid.", categories: ["style", "rule", "never", "do not say"], icon: ShieldCheck },
-  { id: "visual", title: "Visual Guidelines", description: "The images, colours and framing Otto can reference when making a picture.", categories: ["visual", "look", "color", "colour"], icon: Palette },
+  { id: "voice", title: "Brand Voice", description: "How you sound. Otto reads this before writing any caption or reply.", categories: ["voice", "tone"] },
+  { id: "audiences", title: "Audiences", description: "Who you are writing to. Otto picks one before drafting.", categories: ["audience", "people"] },
+  { id: "sources", title: "Knowledge Base", description: "Pages, files and notes you choose for Otto to use — each one keeps its source.", categories: ["knowledge", "source", "fact", "product"] },
+  { id: "style", title: "Style Guide", description: "Writing defaults, approved language and claims Otto must avoid.", categories: ["style", "rule", "never", "do not say"] },
+  { id: "visual", title: "Visual Guidelines", description: "The images, colours and framing Otto can reference when making a picture.", categories: ["visual", "look", "color", "colour"] },
 ];
 
-const FIXTURE_COUNTS: Record<Exclude<Pane, "hub">, string> = {
-  voice: "1 voice",
-  audiences: "2 audiences",
-  sources: "2 sources",
-  style: "2 rules",
-  visual: "1 logo · 5 colours · 2 fonts · 1 guideline",
-};
+/**
+ * beta V1 只做 creation(Founder 2026-08-26)。Brand Voice 的真路 —— 读商家自己的素材生成
+ * 一份声音 —— 还没接上,生产上按下「Generate voice」只会撞上一句实话,而那句实话要等他
+ * 填完名字与 1000 字素材两屏才出现。
+ *
+ * 处置照 `BETA_HIDDEN_NAV_KEYS` 的手法:**只藏入口,不删面**。hub 上不摆这张卡,
+ * `/brand?tab=voice` 直接输地址仍然到得了,那一面的诚实阻断一个字没动。门回来的时候
+ * 把这张表清空即可。
+ */
+const BETA_HIDDEN_CARDS: ReadonlyArray<Exclude<Pane, "hub">> = ["voice"];
 
 function rowName(row: MemoryRow): string {
   return row.content.split(":", 1)[0]?.trim() || "Untitled context";
@@ -298,8 +288,13 @@ function BrandVoiceFlow({
   );
 }
 
-type KnowledgeSource = "text" | "url" | "file";
-type KnowledgeStep = "choose" | KnowledgeSource | "processing" | "success";
+/**
+ * P2-9(beta 卫生大扫除 2026-08-26):这一层原本把 From text / Upload file / Enter URL
+ * 三条路画得一样真,而后两条在生产上走到底只有一句「Links and file uploads are not
+ * switched on yet」。收成能真的存下来的那一条 —— 选择器只剩一颗时它本身也没有意义了,
+ * 所以按下 Add 直接进表单。读链接与读文件回来的时候,把选择器与另两条支路一起加回来。
+ */
+type KnowledgeStep = "form" | "processing" | "success";
 
 function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
   open: boolean;
@@ -307,12 +302,9 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
   onOpenChange: (open: boolean) => void;
   onSaved: (row: MemoryRow) => void;
 }) {
-  const [step, setStep] = useState<KnowledgeStep>("choose");
-  const [source, setSource] = useState<KnowledgeSource>("text");
+  const [step, setStep] = useState<KnowledgeStep>("form");
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
-  const [url, setUrl] = useState("");
-  const [fileName, setFileName] = useState("");
   const [tags, setTags] = useState("");
   const [workspace, setWorkspace] = useState(true);
   const [error, setError] = useState("");
@@ -328,41 +320,37 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
     const stored = fixture ? readFixtureSession(KNOWLEDGE_DRAFT_KEY) : null;
     if (stored) {
       try {
-        const draft = JSON.parse(stored) as { version?: number; step?: KnowledgeStep; source?: KnowledgeSource; name?: string; content?: string; url?: string; fileName?: string; tags?: string; workspace?: boolean; error?: string; errorField?: string };
-        if (draft.version !== 1) throw new Error("stale draft");
-        setStep(draft.step === "success" ? "choose" : draft.step ?? "choose"); setSource(draft.source ?? "text"); setName(draft.name ?? ""); setContent(draft.content ?? ""); setUrl(draft.url ?? ""); setFileName(draft.fileName ?? ""); setTags(draft.tags ?? ""); setWorkspace(draft.workspace ?? true); setError(draft.error ?? ""); setErrorField(draft.errorField ?? ""); setDraftReady(true); return;
+        const draft = JSON.parse(stored) as { version?: number; name?: string; content?: string; tags?: string; workspace?: boolean; error?: string; errorField?: string };
+        if (draft.version !== 2) throw new Error("stale draft");
+        setStep("form"); setName(draft.name ?? ""); setContent(draft.content ?? ""); setTags(draft.tags ?? ""); setWorkspace(draft.workspace ?? true); setError(draft.error ?? ""); setErrorField(draft.errorField ?? ""); setDraftReady(true); return;
       } catch { removeFixtureSession(KNOWLEDGE_DRAFT_KEY); }
     }
-    setStep("choose"); setSource("text"); setName(""); setContent(""); setUrl(""); setFileName(""); setTags(""); setWorkspace(true); setError(""); setErrorField(""); setDraftReady(true);
+    setStep("form"); setName(""); setContent(""); setTags(""); setWorkspace(true); setError(""); setErrorField(""); setDraftReady(true);
   }, [fixture, open]);
 
   useEffect(() => {
     if (!fixture || !open || !draftReady || step === "success") return;
-    writeFixtureSession(KNOWLEDGE_DRAFT_KEY, JSON.stringify({ version: 1, step, source, name, content, url, fileName, tags, workspace, error, errorField }));
-  }, [content, draftReady, error, errorField, fileName, fixture, name, open, source, step, tags, url, workspace]);
+    writeFixtureSession(KNOWLEDGE_DRAFT_KEY, JSON.stringify({ version: 2, name, content, tags, workspace, error, errorField }));
+  }, [content, draftReady, error, errorField, fixture, name, open, step, tags, workspace]);
 
   useEffect(() => {
     if (!open || step !== "processing" || !fixture) return;
     const timer = window.setTimeout(() => {
-      onSaved({ id: fixtureMemoryId("knowledge", name), category: "knowledge", content: `${name.trim()}: ${source === "text" ? content.trim().slice(0, 220) : source === "url" ? url.trim() : fileName}`, source: "user", pinned: workspace, updatedAt: fixtureUpdatedAt() });
+      onSaved({ id: fixtureMemoryId("knowledge", name), category: "knowledge", content: `${name.trim()}: ${content.trim().slice(0, 220)}`, source: "user", pinned: workspace, updatedAt: fixtureUpdatedAt() });
       removeFixtureSession(KNOWLEDGE_DRAFT_KEY);
       setStep("success");
     }, 620);
     return () => window.clearTimeout(timer);
-  }, [content, fileName, fixture, name, onSaved, open, source, step, url, workspace]);
+  }, [content, fixture, name, onSaved, open, step, workspace]);
 
-  const dirty = step !== "choose" || Boolean(name.trim() || content.trim() || url.trim() || fileName || tags.trim());
+  const dirty = Boolean(name.trim() || content.trim() || tags.trim());
   const requestClose = () => dirty ? setCancelOpen(true) : onOpenChange(false);
-  const choose = (next: KnowledgeSource) => { setSource(next); setStep(next); clearError(); };
 
   const submit = async () => {
     if (!name.trim()) return fail("name", "Give this source a name.");
-    if (source === "text" && !content.trim()) return fail("body", "Add the approved text Otto may reference.");
-    if (source === "url" && !/^https?:\/\//i.test(url.trim())) return fail("body", "Enter a complete http or https URL.");
-    if (source === "file" && !fileName) return fail("body", "Choose a DOC, DOCX, PDF or TXT file.");
+    if (!content.trim()) return fail("body", "Add the approved text Otto may reference.");
     clearError();
     if (fixture) { setStep("processing"); return; }
-    if (source !== "text") return fail("body", "Links and file uploads are not switched on yet. Nothing was uploaded, read or saved.");
     const result = await addMemory({ category: "knowledge", content: `${name.trim()}: ${content.trim()}` });
     if ("error" in result) return fail("", result.error);
     onSaved({ id: result.id, category: "knowledge", content: `${name.trim()}: ${content.trim()}`, source: "user", pinned: workspace, updatedAt: new Date() });
@@ -371,29 +359,29 @@ function KnowledgeBaseFlow({ open, fixture, onOpenChange, onSaved }: {
 
   return <Dialog open={open} onOpenChange={(next) => next ? onOpenChange(true) : requestClose()}>
     <DialogContent className="r22-kb-flow" showCloseButton={false}>
-      {step === "choose" ? <>
-        <DialogHeader><DialogTitle>Add to Knowledge Base</DialogTitle><DialogDescription>Choose one source type. Files, links and pasted text each keep their own source.</DialogDescription></DialogHeader>
-        <div className="r22-kb-picker"><Button unstyled type="button" onClick={() => choose("text")}><b>From text</b><span>Write or paste information.</span></Button><Button unstyled type="button" onClick={() => choose("file")}><b>Upload file</b><span>DOC, DOCX, PDF or TXT · max 40 MB.</span></Button><Button unstyled type="button" onClick={() => choose("url")}><b>Enter URL</b><span>Otto reads one public, text-heavy page.</span></Button></div>
-        <p className="r22-kb-permission">Add only material this workspace is allowed to use. Nothing is saved until the source finishes processing.</p>
-        <DialogFooter><Button unstyled className="is-quiet" type="button" onClick={requestClose}>Cancel</Button></DialogFooter>
-      </> : step === "processing" ? <div className="r22-kb-processing" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Reading {source === "file" ? fileName : source === "url" ? url : name}</DialogTitle><DialogDescription>Usually under a minute. This source is not available to Otto until processing finishes.</DialogDescription><Progress className="r22-kb-progress" aria-label="Working" /></div> : step === "success" ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Knowledge source saved</DialogTitle><DialogDescription>{name} is saved for {workspace ? "everyone in this workspace" : "you only"}.</DialogDescription><Button unstyled type="button" className="is-primary" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
-        <DialogHeader><DialogTitle>{source === "text" ? "Add text to Knowledge Base" : source === "url" ? "Add URL to Knowledge Base" : "Upload file to Knowledge Base"}</DialogTitle><DialogDescription>Source type: {source === "text" ? "Pasted approved text" : source === "url" ? "Public page" : "Uploaded document"}</DialogDescription></DialogHeader>
+      {step === "processing" ? <div className="r22-kb-processing" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Reading {name}</DialogTitle><DialogDescription>Usually under a minute. This source is not available to Otto until processing finishes.</DialogDescription><Progress className="r22-kb-progress" aria-label="Working" /></div> : step === "success" ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Knowledge source saved</DialogTitle><DialogDescription>{name} is saved for {workspace ? "everyone in this workspace" : "you only"}.</DialogDescription><Button unstyled type="button" className="is-primary" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
+        <DialogHeader><DialogTitle>Add text to Knowledge Base</DialogTitle><DialogDescription>Add only material this workspace is allowed to use. Nothing is saved until you add it.</DialogDescription></DialogHeader>
         <div className="r22-kb-fields">
-          <FlowField id="kb-name" label="Name" hint={`${name.length} / 100`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder={source === "file" ? "Brand story" : "What Otto should call this"} {...control} />}</FlowField>
-          {source === "text" ? <FlowField id="kb-body" label="What Otto should know" hint={`${content.length} / 200000`} error={errorField === "body" ? error : undefined}>{(control) => <Textarea unstyled rows={8} maxLength={200000} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste material this workspace may use." {...control} />}</FlowField> : source === "url" ? <FlowField id="kb-body" label="URL" hint="Works best on a page with plenty of text." error={errorField === "body" ? error : undefined}>{(control) => <Input unstyled type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/about" {...control} />}</FlowField> : <FlowField className="r22-kb-file" id="kb-body" label="Document" hint={fileName || "Drag and drop or browse · max 40 MB"} error={errorField === "body" ? error : undefined}>{(control) => <Input unstyled type="file" accept=".txt,.doc,.docx,.pdf" onChange={(event) => { const file = event.target.files?.[0]; setFileName(file?.name ?? ""); if (file && !name) setName(file.name.replace(/\.[^.]+$/, "")); }} {...control} />}</FlowField>}
+          <FlowField id="kb-name" label="Name" hint={`${name.length} / 100`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder="What Otto should call this" {...control} />}</FlowField>
+          <FlowField id="kb-body" label="What Otto should know" hint={`${content.length} / 200000`} error={errorField === "body" ? error : undefined}>{(control) => <Textarea unstyled rows={8} maxLength={200000} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste material this workspace may use." {...control} />}</FlowField>
           <FlowField id="kb-tags" label="Tags">{(control) => <Input unstyled value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Brand story" {...control} />}</FlowField>
           <label className="r22-kb-check"><Checkbox unstyled checked={workspace} onCheckedChange={(checked) => setWorkspace(checked === true)} />Available to this workspace</label>
           {error && !errorField ? <FlowFormError error={error} /> : null}
         </div>
-        <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={() => { setStep("choose"); clearError(); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void submit()}>Add to Knowledge Base</Button></DialogFooter>
+        <DialogFooter><Button unstyled type="button" className="is-quiet" onClick={requestClose}>Cancel</Button><Button unstyled type="button" className="is-primary" onClick={() => void submit()}>Add to Knowledge Base</Button></DialogFooter>
       </>}
     </DialogContent>
-    <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this knowledge draft?</AlertDialogTitle><AlertDialogDescription>The source type, text, URL, file name and visibility will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(KNOWLEDGE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this knowledge draft?</AlertDialogTitle><AlertDialogDescription>The name, text, tags and visibility will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(KNOWLEDGE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </Dialog>;
 }
 
-type AudienceSourceTab = "file" | "paste" | "url" | "kb";
-
+/**
+ * P2-10(beta 卫生大扫除 2026-08-26):这条流原本四步 —— 基本信息、Audience documentation、
+ * Customer stories、Review。中间两步只做一件事:收 file / URL / 粘贴文本 / Knowledge Base
+ * 四种来源,而生产上带着任何一条来源走到底,得到的是「Reading audience sources is not
+ * switched on yet」。收成能真的存下来的两步(基本信息 + Review)。读来源回来的时候,把
+ * 那两步与 `docs` / `stories` 一起加回来。
+ */
 function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
   open: boolean;
   fixture: boolean;
@@ -404,10 +392,6 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [scope, setScope] = useState<"workspace" | "private">("workspace");
-  const [sourceTab, setSourceTab] = useState<AudienceSourceTab>("file");
-  const [sourceText, setSourceText] = useState("");
-  const [docs, setDocs] = useState<string[]>([]);
-  const [stories, setStories] = useState<string[]>([]);
   const [triggers, setTriggers] = useState(["Looks for a thoughtful weekend gift"]);
   const [requirements, setRequirements] = useState(["Gift-ready after work"]);
   const [indicators, setIndicators] = useState(["Weekend orders"]);
@@ -426,33 +410,25 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
     const stored = fixture ? readFixtureSession(AUDIENCE_DRAFT_KEY) : null;
     if (stored) {
       try {
-        const draft = JSON.parse(stored) as { version?: number; step?: number; name?: string; description?: string; scope?: "workspace" | "private"; sourceTab?: AudienceSourceTab; sourceText?: string; docs?: string[]; stories?: string[]; triggers?: string[]; requirements?: string[]; indicators?: string[]; characteristics?: Array<{ key: string; value: string }>; error?: string; errorField?: string };
-        if (draft.version !== 1) throw new Error("stale draft");
-        setStep(Math.min(3, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setDescription(draft.description ?? ""); setScope(draft.scope ?? "workspace"); setSourceTab(draft.sourceTab ?? "file"); setSourceText(draft.sourceText ?? ""); setDocs(draft.docs ?? []); setStories(draft.stories ?? []); setTriggers(draft.triggers ?? [""]); setRequirements(draft.requirements ?? [""]); setIndicators(draft.indicators ?? [""]); setCharacteristics(draft.characteristics ?? []); setError(draft.error ?? ""); setErrorField(draft.errorField ?? ""); setStatus("editing"); setDraftReady(true); return;
+        const draft = JSON.parse(stored) as { version?: number; step?: number; name?: string; description?: string; scope?: "workspace" | "private"; triggers?: string[]; requirements?: string[]; indicators?: string[]; characteristics?: Array<{ key: string; value: string }>; error?: string; errorField?: string };
+        if (draft.version !== 2) throw new Error("stale draft");
+        setStep(Math.min(1, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setDescription(draft.description ?? ""); setScope(draft.scope ?? "workspace"); setTriggers(draft.triggers ?? [""]); setRequirements(draft.requirements ?? [""]); setIndicators(draft.indicators ?? [""]); setCharacteristics(draft.characteristics ?? []); setError(draft.error ?? ""); setErrorField(draft.errorField ?? ""); setStatus("editing"); setDraftReady(true); return;
       } catch { removeFixtureSession(AUDIENCE_DRAFT_KEY); }
     }
-    setStep(0); setName(""); setDescription(""); setScope("workspace"); setSourceTab("file"); setSourceText(""); setDocs([]); setStories([]); setTriggers(["Looks for a thoughtful weekend gift"]); setRequirements(["Gift-ready after work"]); setIndicators(["Weekend orders"]); setCharacteristics([{ key: "Shopping window", value: "Friday evening" }]); setError(""); setErrorField(""); setStatus("editing"); setDraftReady(true);
+    setStep(0); setName(""); setDescription(""); setScope("workspace"); setTriggers(["Looks for a thoughtful weekend gift"]); setRequirements(["Gift-ready after work"]); setIndicators(["Weekend orders"]); setCharacteristics([{ key: "Shopping window", value: "Friday evening" }]); setError(""); setErrorField(""); setStatus("editing"); setDraftReady(true);
   }, [fixture, open]);
 
   useEffect(() => {
     if (!fixture || !open || !draftReady || status !== "editing") return;
-    writeFixtureSession(AUDIENCE_DRAFT_KEY, JSON.stringify({ version: 1, step, name, description, scope, sourceTab, sourceText, docs, stories, triggers, requirements, indicators, characteristics, error, errorField }));
-  }, [characteristics, description, docs, draftReady, error, errorField, fixture, indicators, name, open, requirements, scope, sourceTab, sourceText, status, step, stories, triggers]);
-
-  const addSource = () => {
-    const value = sourceTab === "file" ? (sourceText || `${step === 1 ? "audience" : "customer-story"}-source.pdf`) : sourceTab === "kb" ? "Brand story · Knowledge Base" : sourceText.trim();
-    if (!value) return fail("", "Add or select one source first.");
-    (step === 1 ? setDocs : setStories)((current) => [...current, value]);
-    setSourceText(""); clearError();
-  };
+    writeFixtureSession(AUDIENCE_DRAFT_KEY, JSON.stringify({ version: 2, step, name, description, scope, triggers, requirements, indicators, characteristics, error, errorField }));
+  }, [characteristics, description, draftReady, error, errorField, fixture, indicators, name, open, requirements, scope, status, step, triggers]);
 
   const next = async () => {
     if (step === 0 && !name.trim()) return fail("name", "Add both a name and description.");
     if (step === 0 && !description.trim()) return fail("description", "Add both a name and description.");
-    if (step < 3) { clearError(); setStep((value) => value + 1); return; }
+    if (step < 1) { clearError(); setStep((value) => value + 1); return; }
     const reviewComplete = [...triggers, ...requirements, ...indicators].every((item) => item.trim()) && characteristics.every((item) => item.key.trim() && item.value.trim());
     if (!reviewComplete) return fail("", "Complete every audience detail before generating.");
-    if (!fixture && (docs.length || stories.length)) return fail("", "Reading audience sources is not switched on yet. Remove the attached sources or come back later; nothing was saved.");
     clearError(); setStatus("processing");
     const saveRow = async () => {
       const content = `${name.trim()}: ${description.trim()} Buying triggers: ${triggers.join("; ")}. Requirements: ${requirements.join("; ")}. Success: ${indicators.join("; ")}.`;
@@ -468,30 +444,23 @@ function AudienceFlow({ open, fixture, onOpenChange, onSaved }: {
     }, fixture ? 620 : 0);
   };
 
-  const dirty = step > 0 || Boolean(name.trim() || description.trim() || docs.length || stories.length);
+  const dirty = step > 0 || Boolean(name.trim() || description.trim());
   const requestClose = () => dirty ? setCancelOpen(true) : onOpenChange(false);
   const editableList = (label: string, values: string[], setValues: React.Dispatch<React.SetStateAction<string[]>>) => <section className="r22-audience-list"><h3>{label} <span>{values.length} / 8</span></h3>{values.map((value, index) => <div key={`${label}-${index}`}><Input unstyled value={value} aria-label={`${label} ${index + 1}`} onChange={(event) => setValues((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /><Button unstyled type="button" onClick={() => setValues((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button></div>)}<Button unstyled type="button" className="is-quiet" disabled={values.length >= 8} onClick={() => setValues((current) => [...current, ""])}>Add</Button></section>;
 
   return <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? onOpenChange(true) : requestClose()}><DialogContent className="r22-kb-flow r22-audience-flow" showCloseButton={false}>
     {status === "processing" ? <div className="r22-kb-processing" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Generating audience</DialogTitle><DialogDescription>Reviewing the details and approved source list. Nothing is saved until this finishes.</DialogDescription><Progress className="r22-kb-progress" aria-label="Working" /></div> : status === "success" ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Audience saved</DialogTitle><DialogDescription>{name} is saved for Otto to use.</DialogDescription><Button unstyled className="is-primary" type="button" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
-      <DialogHeader><DialogTitle>Add Audience</DialogTitle><DialogDescription>{["Basic information", "Audience documentation", "Customer stories", "Review"][step]}</DialogDescription></DialogHeader>
-      <div className="r22-audience-steps" aria-label={`Step ${step + 1} of 4`}>{["Basic information", "Documentation", "Customer stories", "Review"].map((label, index) => <span className={index === step ? "is-current" : index < step ? "is-done" : ""} key={label}>{index + 1} {label}</span>)}</div>
+      <DialogHeader><DialogTitle>Add Audience</DialogTitle><DialogDescription>{["Basic information", "Review"][step]}</DialogDescription></DialogHeader>
+      <div className="r22-audience-steps" aria-label={`Step ${step + 1} of 2`}>{["Basic information", "Review"].map((label, index) => <span className={index === step ? "is-current" : index < step ? "is-done" : ""} key={label}>{index + 1} {label}</span>)}</div>
       <div className="r22-audience-layout"><div className="r22-kb-fields">{step === 0 ? <>
         <FlowField id="audience-name" label="Name" hint={`${name.length} / 100`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus value={name} maxLength={100} onChange={(event) => setName(event.target.value)} {...control} />}</FlowField>
         <FlowField id="audience-description" label="Description" hint={`${description.length} / 500`} error={errorField === "description" ? error : undefined}>{(control) => <Textarea unstyled rows={5} value={description} maxLength={500} onChange={(event) => setDescription(event.target.value)} {...control} />}</FlowField>
         <FieldSet><FieldLegend variant="label">Audience access</FieldLegend><RadioGroup unstyled value={scope} onValueChange={(value) => setScope(value as "workspace" | "private")}><label><RadioGroupItem unstyled value="workspace" />Anyone in this workspace</label><label><RadioGroupItem unstyled value="private" />Private to me</label></RadioGroup></FieldSet>
-      </> : step < 3 ? <>
-        <h3>{step === 1 ? "Audience documentation" : "Customer stories"}</h3><p>Add sources you have permission to use. Every item keeps its source.</p>
-        <Tabs unstyled value={sourceTab} onValueChange={(value) => { setSourceTab(value as AudienceSourceTab); setSourceText(""); }}><TabsList unstyled className="r22-brand-source-tabs"><TabsTrigger unstyled value="file">Upload files</TabsTrigger><TabsTrigger unstyled value="paste">Paste text</TabsTrigger><TabsTrigger unstyled value="url">Add URL</TabsTrigger><TabsTrigger unstyled value="kb">Knowledge Base</TabsTrigger></TabsList></Tabs>
-        {sourceTab === "file" ? <label>Document<Input unstyled type="file" accept=".doc,.docx,.pdf,.txt" onChange={(event) => setSourceText(event.target.files?.[0]?.name ?? "")} /><small>{sourceText || "DOC, DOCX, PDF or TXT · max 40 MB"}</small></label> : sourceTab === "paste" ? <label>Approved text<Textarea unstyled rows={5} value={sourceText} onChange={(event) => setSourceText(event.target.value)} /></label> : sourceTab === "url" ? <label>URL<Input unstyled type="url" value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="https://example.com/customer-story" /></label> : <label className="r22-kb-check"><Checkbox unstyled checked={sourceText === "Brand story · Knowledge Base"} onCheckedChange={(checked) => setSourceText(checked ? "Brand story · Knowledge Base" : "")} />Brand story · Knowledge Base</label>}
-        <Button unstyled className="is-quiet" type="button" onClick={addSource}>Add source</Button>
-        {/* 来源行归位 `ui/item`(审计 A-13):一行 = 一件东西 + 对它的动作。 */}
-        <div className="r22-audience-sources">{(step === 1 ? docs : stories).map((item, index) => <Item size="sm" key={`${item}-${index}`}><ItemContent><ItemTitle>{item}</ItemTitle></ItemContent><ItemActions><Button unstyled type="button" onClick={() => (step === 1 ? setDocs : setStories)((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Delete</Button></ItemActions></Item>)}</div>
       </> : <>{editableList("Buying triggers", triggers, setTriggers)}{editableList("Use case requirements", requirements, setRequirements)}{editableList("Key success indicators", indicators, setIndicators)}<section className="r22-audience-list"><h3>Additional characteristics <span>{characteristics.length} / 10</span></h3>{characteristics.map((item, index) => <div key={index}><Input unstyled aria-label={`Characteristic ${index + 1} key`} value={item.key} placeholder="Key" onChange={(event) => setCharacteristics((current) => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, key: event.target.value } : entry))} /><b>=</b><Input unstyled aria-label={`Characteristic ${index + 1} value`} value={item.value} placeholder="Value" onChange={(event) => setCharacteristics((current) => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, value: event.target.value } : entry))} /><Button unstyled type="button" onClick={() => setCharacteristics((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button></div>)}<Button unstyled className="is-quiet" type="button" disabled={characteristics.length >= 10} onClick={() => setCharacteristics((current) => [...current, { key: "", value: "" }])}>Add characteristic</Button></section></>}
-        {error && !errorField ? <FlowFormError error={error} /> : null}</div><aside className="r22-audience-preview"><b>{name || "Audience"}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><p>{description || "No description yet"}</p><small>Sources: {docs.length + stories.length || "No sources"}</small></aside></div>
-      <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { clearError(); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 3 ? "Generate audience" : "Next"}</Button></DialogFooter>
+        {error && !errorField ? <FlowFormError error={error} /> : null}</div><aside className="r22-audience-preview"><b>{name || "Audience"}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><p>{description || "No description yet"}</p></aside></div>
+      <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { clearError(); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 1 ? "Generate audience" : "Next"}</Button></DialogFooter>
     </>}
-  </DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this audience draft?</AlertDialogTitle><AlertDialogDescription>The audience details, sources and review fields will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(AUDIENCE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
+  </DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this audience draft?</AlertDialogTitle><AlertDialogDescription>The audience details and review fields will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(AUDIENCE_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
 
 function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
@@ -547,7 +516,7 @@ function StyleGuideFlow({ open, fixture, onOpenChange, onSaved }: {
   const requestClose = () => dirty && !success ? setCancelOpen(true) : onOpenChange(false);
 
   return <Dialog open={open} onOpenChange={(next) => next ? onOpenChange(true) : requestClose()}><DialogContent className="r22-kb-flow r22-style-flow" showCloseButton={false}>{success ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Style rule saved</DialogTitle><DialogDescription>Otto checks this rule before work reaches review.</DialogDescription><Button unstyled className="is-primary" type="button" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
-    <DialogHeader><DialogTitle>Add Style Guide rule</DialogTitle><DialogDescription>You can edit this rule at any time, and it stays in this workspace. Otto can suggest rules, but only you can remove one.</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>Add Style Guide rule</DialogTitle><DialogDescription>You can edit or remove this rule at any time, and it stays in this workspace.</DialogDescription></DialogHeader>
     <div className="r22-kb-fields"><FieldSet><FieldLegend variant="label">Rule type</FieldLegend><RadioGroup unstyled value={kind} onValueChange={(value) => setKind(value as "never" | "promise")}><label><RadioGroupItem unstyled value="never" />Never say</label><label><RadioGroupItem unstyled value="promise" />Promise we never make</label></RadioGroup></FieldSet>
       <FlowField id="style-phrase" label={kind === "never" ? "Word or phrase" : "Promise"} error={errorField === "phrase" ? error : undefined}>{(control) => <Input unstyled autoFocus value={phrase} onChange={(event) => setPhrase(event.target.value)} placeholder={kind === "never" ? "Cheap" : "Guaranteed results"} {...control} />}</FlowField>
       {kind === "never" ? <FlowField id="style-replacement" label="Use instead" error={errorField === "replacement" ? error : undefined}>{(control) => <Input unstyled value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Accessible" {...control} />}</FlowField> : null}
@@ -566,7 +535,8 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [scope, setScope] = useState<"workspace" | "private">("workspace");
-  const [logoName, setLogoName] = useState("");
+  /** P2-11(beta 卫生大扫除 2026-08-26):Logo 那一格已删 —— 读 logo 文件在生产上没接上,
+   *  留着它等于让商家选完一个文件再被拒。颜色、字体、取景方向三格都真的存得下来。 */
   const [colours, setColours] = useState(["#0D9488", "#D4A373"]);
   const [nextColour, setNextColour] = useState("#16171C");
   const [titleFont, setTitleFont] = useState("Fraunces");
@@ -585,24 +555,23 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
     const stored = fixture ? readFixtureSession(VISUAL_DRAFT_KEY) : null;
     if (stored) {
       try {
-        const draft = JSON.parse(stored) as { version?: number; step?: number; name?: string; scope?: "workspace" | "private"; logoName?: string; colours?: string[]; nextColour?: string; titleFont?: string; headingFont?: string; bodyFont?: string; guideline?: string };
-        if (draft.version === 1) { setStep(Math.min(2, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setScope(draft.scope ?? "workspace"); setLogoName(draft.logoName ?? ""); setColours(draft.colours ?? []); setNextColour(draft.nextColour ?? "#16171C"); setTitleFont(draft.titleFont ?? ""); setHeadingFont(draft.headingFont ?? ""); setBodyFont(draft.bodyFont ?? ""); setGuideline(draft.guideline ?? ""); setError(""); setErrorField(""); setStatus("editing"); return; }
+        const draft = JSON.parse(stored) as { version?: number; step?: number; name?: string; scope?: "workspace" | "private"; colours?: string[]; nextColour?: string; titleFont?: string; headingFont?: string; bodyFont?: string; guideline?: string };
+        if (draft.version === 2) { setStep(Math.min(2, Math.max(0, draft.step ?? 0))); setName(draft.name ?? ""); setScope(draft.scope ?? "workspace"); setColours(draft.colours ?? []); setNextColour(draft.nextColour ?? "#16171C"); setTitleFont(draft.titleFont ?? ""); setHeadingFont(draft.headingFont ?? ""); setBodyFont(draft.bodyFont ?? ""); setGuideline(draft.guideline ?? ""); setError(""); setErrorField(""); setStatus("editing"); return; }
       } catch { removeFixtureSession(VISUAL_DRAFT_KEY); }
     }
-    setStep(0); setName(""); setScope("workspace"); setLogoName(""); setColours(["#0D9488", "#D4A373"]); setNextColour("#16171C"); setTitleFont("Fraunces"); setHeadingFont("Geist"); setBodyFont(""); setGuideline(""); setError(""); setErrorField(""); setStatus("editing");
+    setStep(0); setName(""); setScope("workspace"); setColours(["#0D9488", "#D4A373"]); setNextColour("#16171C"); setTitleFont("Fraunces"); setHeadingFont("Geist"); setBodyFont(""); setGuideline(""); setError(""); setErrorField(""); setStatus("editing");
   }, [fixture, open]);
 
   useEffect(() => {
     if (!fixture || !open || status !== "editing") return;
-    writeFixtureSession(VISUAL_DRAFT_KEY, JSON.stringify({ version: 1, step, name, scope, logoName, colours, nextColour, titleFont, headingFont, bodyFont, guideline }));
-  }, [bodyFont, colours, fixture, guideline, headingFont, logoName, name, nextColour, open, scope, status, step, titleFont]);
+    writeFixtureSession(VISUAL_DRAFT_KEY, JSON.stringify({ version: 2, step, name, scope, colours, nextColour, titleFont, headingFont, bodyFont, guideline }));
+  }, [bodyFont, colours, fixture, guideline, headingFont, name, nextColour, open, scope, status, step, titleFont]);
 
   const next = async () => {
     if (step === 0 && !name.trim()) return fail("name", "Give this Visual Guideline a name.");
     if (step === 1 && !colours.length) return fail("colours", "Keep at least one colour and add a framing guideline.");
     if (step === 1 && !guideline.trim()) return fail("guideline", "Keep at least one colour and add a framing guideline.");
     if (step < 2) { clearError(); setStep((value) => value + 1); return; }
-    if (!fixture && logoName) return fail("", "Reading a logo file is not switched on yet. Remove the selected file or come back later; nothing was saved.");
     const content = `${name.trim()}: Colours ${colours.join(", ")}. Fonts: ${[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "not set"}. ${guideline.trim()}`;
     clearError(); setStatus("processing");
     const save = async () => {
@@ -613,20 +582,19 @@ function VisualGuidelineFlow({ open, fixture, onOpenChange, onSaved }: {
     };
     window.setTimeout(async () => { const row = await save(); if (!row) return; onSaved(row); removeFixtureSession(VISUAL_DRAFT_KEY); setStatus("success"); }, fixture ? 540 : 0);
   };
-  const dirty = step > 0 || Boolean(name.trim() || logoName || guideline.trim());
+  const dirty = step > 0 || Boolean(name.trim() || guideline.trim());
   const requestClose = () => dirty && status !== "success" ? setCancelOpen(true) : onOpenChange(false);
 
   return <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? onOpenChange(true) : requestClose()}><DialogContent className="r22-kb-flow r22-visual-flow" showCloseButton={false}>{status === "processing" ? <div className="r22-kb-processing" aria-live="polite"><Spinner aria-hidden="true" /><DialogTitle>Saving Visual Guideline</DialogTitle><DialogDescription>Keeping the declared colours, font slots, source and scope together.</DialogDescription><Progress className="r22-kb-progress" aria-label="Working" /></div> : status === "success" ? <div className="r22-brand-success" role="status"><ShieldCheck aria-hidden="true" /><DialogTitle>Visual Guideline saved</DialogTitle><DialogDescription>{name} is saved for Otto to use.</DialogDescription><Button unstyled className="is-primary" type="button" onClick={() => onOpenChange(false)}>Done</Button></div> : <>
-    <DialogHeader><DialogTitle>Add Visual Guideline</DialogTitle><DialogDescription>{["Basic information", "Brand assets and rules", "Review"][step]}</DialogDescription></DialogHeader>
-    <div className="r22-audience-steps is-three" aria-label={`Step ${step + 1} of 3`}>{["Basic information", "Assets and rules", "Review"].map((label, index) => <span className={index === step ? "is-current" : index < step ? "is-done" : ""} key={label}>{index + 1} {label}</span>)}</div>
+    <DialogHeader><DialogTitle>Add Visual Guideline</DialogTitle><DialogDescription>{["Basic information", "Colours, fonts and framing", "Review"][step]}</DialogDescription></DialogHeader>
+    <div className="r22-audience-steps is-three" aria-label={`Step ${step + 1} of 3`}>{["Basic information", "Colours and rules", "Review"].map((label, index) => <span className={index === step ? "is-current" : index < step ? "is-done" : ""} key={label}>{index + 1} {label}</span>)}</div>
     <div className="r22-kb-fields">{step === 0 ? <><FlowField id="visual-name" label="Name" hint={`${name.length} / 100`} error={errorField === "name" ? error : undefined}>{(control) => <Input unstyled autoFocus maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="Lilin product photography" {...control} />}</FlowField><FieldSet><FieldLegend variant="label">Guideline access</FieldLegend><RadioGroup unstyled value={scope} onValueChange={(value) => setScope(value as "workspace" | "private")}><label><RadioGroupItem unstyled value="workspace" />Anyone in this workspace</label><label><RadioGroupItem unstyled value="private" />Private to me</label></RadioGroup></FieldSet></> : step === 1 ? <>
-      <FlowField className="r22-kb-file" id="visual-logo" label="Logo" hint={logoName || "Add a logo or drag and drop one"}>{(control) => <Input unstyled type="file" accept=".png,.jpg,.jpeg,.svg,.webp" onChange={(event) => setLogoName(event.target.files?.[0]?.name ?? "")} {...control} />}</FlowField>
       <section className="r22-visual-colours"><h3>Colours ({colours.length})</h3><div>{colours.map((colour, index) => <span key={`${colour}-${index}`}><i style={{ background: colour }} /><code>{colour}</code><Button unstyled type="button" aria-label={`Remove ${colour}`} onClick={() => setColours((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</Button></span>)}</div><FlowField id="visual-next-colour" label="Add colour" error={errorField === "colours" ? error : undefined}>{(control) => <><Input unstyled value={nextColour} onChange={(event) => setNextColour(event.target.value.toUpperCase())} {...control} /><Button unstyled type="button" className="is-quiet" onClick={() => { if (/^#[0-9A-F]{6}$/.test(nextColour) && !colours.includes(nextColour)) { setColours((current) => [...current, nextColour]); clearError(); } else fail("colours", "Enter a unique six-digit hex colour, for example #0D9488."); }}>Keep</Button></>}</FlowField></section>
       <section className="r22-visual-fonts"><h3>Fonts ({[titleFont, headingFont, bodyFont].filter(Boolean).length} of 3 set)</h3><FlowField id="visual-font-title" label="Title">{(control) => <Input unstyled value={titleFont} onChange={(event) => setTitleFont(event.target.value)} {...control} />}</FlowField><FlowField id="visual-font-heading" label="Heading">{(control) => <Input unstyled value={headingFont} onChange={(event) => setHeadingFont(event.target.value)} {...control} />}</FlowField><FlowField id="visual-font-body" label="Body">{(control) => <Input unstyled value={bodyFont} onChange={(event) => setBodyFont(event.target.value)} placeholder="Not set" {...control} />}</FlowField></section>
       <FlowField id="visual-guideline" label="Framing and image direction" error={errorField === "guideline" ? error : undefined}>{(control) => <Textarea unstyled rows={5} value={guideline} onChange={(event) => setGuideline(event.target.value)} placeholder="Natural morning light, close product detail, teal batik used as a supporting surface." {...control} />}</FlowField>
-    </> : <div className="r22-visual-review"><b>{name}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><dl><div><dt>Logo</dt><dd>{logoName || "Not supplied"}</dd></div><div><dt>Colours</dt><dd>{colours.join(", ")}</dd></div><div><dt>Fonts</dt><dd>{[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "Not set"}</dd></div><div><dt>Direction</dt><dd>{guideline}</dd></div></dl></div>}{error && !errorField ? <FlowFormError error={error} /> : null}</div>
+    </> : <div className="r22-visual-review"><b>{name}</b><span>{scope === "workspace" ? "Workspace" : "Private"}</span><dl><div><dt>Colours</dt><dd>{colours.join(", ")}</dd></div><div><dt>Fonts</dt><dd>{[titleFont, headingFont, bodyFont].filter(Boolean).join(", ") || "Not set"}</dd></div><div><dt>Direction</dt><dd>{guideline}</dd></div></dl></div>}{error && !errorField ? <FlowFormError error={error} /> : null}</div>
     <DialogFooter><Button unstyled type="button" className="is-quiet" disabled={step === 0} onClick={() => { clearError(); setStep((value) => Math.max(0, value - 1)); }}>Back</Button><Button unstyled type="button" className="is-primary" onClick={() => void next()}>{step === 2 ? "Save Visual Guideline" : "Next"}</Button></DialogFooter>
-  </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this Visual Guideline draft?</AlertDialogTitle><AlertDialogDescription>The name, assets, colours, font slots and direction will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(VISUAL_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
+  </>}</DialogContent><AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Discard this Visual Guideline draft?</AlertDialogTitle><AlertDialogDescription>The name, colours, font slots and direction will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { removeFixtureSession(VISUAL_DRAFT_KEY); setCancelOpen(false); onOpenChange(false); }}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Dialog>;
 }
 
 export function R22OttoIQView({
@@ -650,7 +618,13 @@ export function R22OttoIQView({
   const [editingContent, setEditingContent] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
-  const [reviewOpen, setReviewOpen] = useState(false);
+  /*
+   * P1-2(beta 卫生大扫除 2026-08-26):hub 上那条「Otto noticed 4 things worth remembering」
+   * 与它开出的 Review 层整块删了。层里写着「Nothing joins Otto IQ until you keep it」,
+   * 却只有一颗 Done reviewing —— 没有 keep、没有 skip,关掉之后提示条原地不动,
+   * 商家进得去出不来。要留就得补一份 pending 状态与两颗真按钮,那是一个功能不是一次打磨;
+   * 真正能落格的建议路径是「Ask Otto to read your site」那一条,它在面板线程里逐组点头。
+   */
   /** 「让 Otto 读一遍我的网站」那一层(裁决第 3 条的第一个入口)。 */
   const [researchOpen, setResearchOpen] = useState(false);
   const [researchSite, setResearchSite] = useState(OTTO_RESEARCH_SAMPLE_SITE);
@@ -658,6 +632,7 @@ export function R22OttoIQView({
   const [pending, startTransition] = useTransition();
   const [fixtureWorkspaceId, setFixtureWorkspaceId] = useState(fixture ? "" : "production");
   const card = CARDS.find((item) => item.id === pane);
+  const visibleCards = fixture ? CARDS : CARDS.filter((item) => !BETA_HIDDEN_CARDS.includes(item.id));
   const visible = useMemo(() => {
     if (!card) return rows;
     const normalizedQuery = query.trim().toLowerCase();
@@ -802,8 +777,17 @@ export function R22OttoIQView({
     </Dialog>
   );
 
-  const researchButton = (
-    <Button unstyled type="button" className="is-quiet" data-otto-iq-research onClick={() => setResearchOpen(true)}>
+  /**
+   * P2-18(beta 卫生大扫除 2026-08-26):hub 头部原本挤着三个入口 —— 这一颗、一颗只写
+   * 「Ask Otto」的、还有空态横幅里那颗 Open Brand Voice。前两颗只差四个词,商家得按一次
+   * 才知道哪颗干什么。只留这一颗:它有明确产出(Otto 读完把整理好的几组带回来请他点头)。
+   * 光按开面板那一颗删了 —— 宠物在每一页右下角都在,不缺第二个入口。
+   *
+   * hub 上它是那一颗主键(实心),来源那一面上它站在「Add Knowledge Base」旁边,所以在
+   * 那里仍是次要的一颗。
+   */
+  const researchButton = (quiet: boolean) => (
+    <Button unstyled type="button" className={quiet ? "is-quiet" : undefined} data-otto-iq-research onClick={() => setResearchOpen(true)}>
       Ask Otto to read your site
     </Button>
   );
@@ -813,25 +797,15 @@ export function R22OttoIQView({
       <main className="r22-iq" data-r22-otto-iq>
         <header>
           <div><h1>Otto IQ</h1><p>What you have taught Otto — every item shows where it came from and who can use it.</p></div>
-          {researchButton}
-          <Button unstyled type="button" className="is-quiet" onClick={() => otto?.openPanel()}>Ask Otto</Button>
+          {researchButton(false)}
         </header>
-        {fixture && fixtureWorkspaceId === "batik-house" ? <section className="r22-iq-nudge"><span aria-hidden="true" /><b>Otto</b><p>Otto noticed 4 things worth remembering.</p><Button unstyled type="button" onClick={() => setReviewOpen(true)}>Review</Button></section> : null}
         <div className="r22-iq-grid">
-          {CARDS.map((item) => {
+          {visibleCards.map((item) => {
             const count = rows.filter((row) => item.categories.some((category) => row.category.toLowerCase().includes(category))).length;
-            return <Button unstyled type="button" data-kind={item.id} key={item.id} onClick={() => open(item.id)}><i aria-hidden="true" /><span><b>{item.title}</b><small>{item.description}</small><em>{fixture && fixtureWorkspaceId === "batik-house" ? FIXTURE_COUNTS[item.id] : count ? `${count} saved` : "Not set up yet"}</em></span></Button>;
+            return <Button unstyled type="button" data-kind={item.id} key={item.id} onClick={() => open(item.id)}><i aria-hidden="true" className="r22-iq-tile" data-pattern={item.id} /><span><b>{item.title}</b><small>{item.description}</small><em>{count ? `${count} saved` : "Nothing here yet"}</em></span></Button>;
           })}
         </div>
-        {rows.length === 0 ? <Empty className="r22-iq-start"><EmptyHeader><EmptyTitle>Start here</EmptyTitle><EmptyDescription>Add approved brand context before Otto creates. Everything you save stays in this workspace and shows where it came from.</EmptyDescription></EmptyHeader><EmptyContent><Button unstyled type="button" onClick={() => open("voice")}>Open Brand Voice</Button></EmptyContent></Empty> : null}
-        <p className="r22-iq-consent">Only you choose what is saved here. Pending suggestions stay separate until you accept them; nothing is shared with another workspace. <Button unstyled type="button" onClick={() => toast("Exporting and deleting everything is not switched on yet. Nothing was exported or deleted.")}>Export or delete everything Otto knows</Button></p>
-        <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
-          <DialogContent className="r22-iq-detail">
-            <DialogHeader><DialogTitle>Review Otto suggestions</DialogTitle><DialogDescription>These four observations are pending. Nothing joins Otto IQ until you keep it.</DialogDescription></DialogHeader>
-            <ul className="r22-iq-review-list"><li>Customers often mention gift-ready packaging.</li><li>Teal batik appears across the latest Raya work.</li><li>Morning market photos use calm natural light.</li><li>Candle-care copy avoids unverified claims.</li></ul>
-            <DialogFooter><Button unstyled type="button" className="is-primary" onClick={() => setReviewOpen(false)}>Done reviewing</Button></DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <p className="r22-iq-consent">Only you choose what is saved here. Pending suggestions stay separate until you accept them; nothing is shared with another workspace.</p>
         {researchDialog}
       </main>
     );
@@ -842,7 +816,7 @@ export function R22OttoIQView({
       <nav><Button unstyled type="button" onClick={() => open("hub")}>Otto IQ</Button><ChevronRight className="size-3" aria-hidden="true" /><span>{card?.title}</span></nav>
       {/* 来源那一格多一条路:与其让商家一条一条手打,不如把网址交给 Otto 一次读完 —— 呈上来
           的每一组仍然要他自己点头才算数(裁决第 3 条)。 */}
-      <header><div><h1>{card?.title}</h1><p>{card?.description}</p></div>{card?.id === "sources" ? researchButton : null}<Button unstyled type="button" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></header>
+      <header><div><h1>{card?.title}</h1><p>{card?.description}</p></div>{card?.id === "sources" ? researchButton(true) : null}<Button unstyled type="button" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></header>
       {/* 搜索框归 `ui/input-group`(A-12);计数从一句话改成一枚芯片(B-4)—— 数字随
           筛选实时变,住在标签旁边而不是自己占一句。 */}
       <div className="r22-iq-toolbar"><InputGroup className="r22-iq-search"><InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon><InputGroupInput type="search" aria-label={`Search ${card?.title}`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${card?.title}`} /></InputGroup><Badge variant="outline" className="r22-iq-count" data-r22-iq-count>{visible.length} saved</Badge></div>
@@ -854,12 +828,12 @@ export function R22OttoIQView({
         键盘路径长在名字那一格的按钮上(`<tr>` 不可聚焦);整行可点是给鼠标的,所以那颗
         按钮的点击要 `stopPropagation`,免得同一下开两遍。
       */}
-      {visible.length ? <div className="r22-iq-table"><Table className="r22-iq-rows" aria-label={card?.title}><TableHeader><TableRow><TableHead>{card?.title}</TableHead><TableHead>Source</TableHead><TableHead>Scope</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader><TableBody>{visible.map((row) => <TableRow key={row.id} data-r22-iq-row={row.id} onClick={() => openRow(row)}><TableCell><Button unstyled type="button" className="r22-iq-row-open" onClick={(event) => { event.stopPropagation(); openRow(row); }}><b>{rowName(row)}</b><small>{row.content}</small></Button></TableCell><TableCell>{row.source === "user" ? "You" : "Otto suggestion"}</TableCell><TableCell>Workspace</TableCell><TableCell>{new Date(row.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</TableCell></TableRow>)}</TableBody></Table></div> : <Empty className="r22-iq-empty"><EmptyHeader><EmptyMedia variant="icon"><Eye /></EmptyMedia><EmptyTitle>{query ? "No approved context matches" : "Start with approved context"}</EmptyTitle><EmptyDescription>{query ? "Try a different search. Nothing was hidden as deleted." : "Add text you own. Otto never goes looking for material anywhere else."}</EmptyDescription></EmptyHeader>{!query ? <EmptyContent><Button unstyled type="button" className="is-quiet" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></EmptyContent> : null}</Empty>}
+      {visible.length ? <div className="r22-iq-table"><Table className="r22-iq-rows" aria-label={card?.title}><TableHeader><TableRow><TableHead>{card?.title}</TableHead><TableHead>Source</TableHead><TableHead>Scope</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader><TableBody>{visible.map((row) => <TableRow key={row.id} data-r22-iq-row={row.id} onClick={() => openRow(row)}><TableCell><Button unstyled type="button" className="r22-iq-row-open" onClick={(event) => { event.stopPropagation(); openRow(row); }}><b>{rowName(row)}</b><small>{row.content}</small></Button></TableCell><TableCell>{row.source === "user" ? "You" : "Otto suggestion"}</TableCell><TableCell>{row.pinned ? "Workspace" : "Private"}</TableCell><TableCell>{new Date(row.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</TableCell></TableRow>)}</TableBody></Table></div> : <Empty className="r22-iq-empty"><EmptyHeader><EmptyMedia variant="icon"><Eye /></EmptyMedia><EmptyTitle>{query ? "No approved context matches" : "Start with approved context"}</EmptyTitle><EmptyDescription>{query ? "Try a different search. Nothing was hidden as deleted." : "Add text you own. Otto never goes looking for material anywhere else."}</EmptyDescription></EmptyHeader>{!query ? <EmptyContent><Button unstyled type="button" className="is-quiet" onClick={() => card?.id === "voice" ? setVoiceFlowOpen(true) : setAdding(true)}>Add {card?.title}</Button></EmptyContent> : null}</Empty>}
 
       <Dialog open={selected !== null} onOpenChange={(next) => { if (!next) setSelected(null); }}>
         <DialogContent className="r22-iq-detail">
           <DialogHeader><DialogTitle>{selected ? rowName(selected) : card?.title}</DialogTitle><DialogDescription>You can see where this came from and who can use it while you edit.</DialogDescription></DialogHeader>
-          <dl><div><dt>Source</dt><dd>{selected?.source === "user" ? "You" : "Otto suggestion"}</dd></div><div><dt>Scope</dt><dd>Workspace</dd></div></dl>
+          <dl><div><dt>Source</dt><dd>{selected?.source === "user" ? "You" : "Otto suggestion"}</dd></div><div><dt>Scope</dt><dd>{selected?.pinned ? "Workspace" : "Private"}</dd></div></dl>
           <label><span>Approved context</span><Textarea unstyled rows={9} value={editingContent} onChange={(event) => setEditingContent(event.target.value)} /></label>
           {error ? <p role="alert">{error}</p> : null}
           <DialogFooter><AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}><AlertDialogTrigger asChild><Button unstyled type="button" className="is-danger" disabled={pending}><Trash2 /> Delete</Button></AlertDialogTrigger><AlertDialogContent className="r22-brand-cancel-dialog"><AlertDialogHeader><AlertDialogTitle>Delete {selected ? rowName(selected) : "this context"}?</AlertDialogTitle><AlertDialogDescription>Otto will stop using this source in new work. Existing generated, scheduled or published work will not be rewritten.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep context</AlertDialogCancel><AlertDialogAction onClick={removeSelected}>Delete context</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog><Button unstyled type="button" className="is-primary" disabled={!editingContent.trim() || pending} onClick={saveSelected}>{pending ? "Saving…" : "Save changes"}</Button></DialogFooter>
