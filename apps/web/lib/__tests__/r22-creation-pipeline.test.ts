@@ -214,7 +214,7 @@ function noticeText(): string {
 
 /** 打开 Quick create 生成条,写一句话。 */
 async function quickCompose(prompt: string): Promise<void> {
-  await click(need("[data-r22-lib-create]"));
+  await click(need("[data-r22-lib-quick]"));
   await act(async () => { typeInto(need<HTMLTextAreaElement>('textarea[aria-label="Describe what to make"]'), prompt); });
 }
 

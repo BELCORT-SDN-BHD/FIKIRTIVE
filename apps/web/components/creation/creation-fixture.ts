@@ -28,7 +28,7 @@ import type { QuestionnaireQuestion } from "@/components/otto/conversation/Conve
  * 它有意**不大**:第 6 件要演的正是「连着做几次就撞上闸」,而一个大到撞不上的余额等于
  * 把闸卡藏起来 —— 那张卡商家永远看不到,也就永远没被验过。
  */
-export const CREATION_FIXTURE_START_CREDITS = 8;
+export const CREATION_FIXTURE_START_CREDITS = 9;
 
 /** 闸卡主键一次加多少 cr(与 Settings 那份充值面额的第一档同一个数)。 */
 export const CREATION_FIXTURE_TOPUP_CREDITS = 200;

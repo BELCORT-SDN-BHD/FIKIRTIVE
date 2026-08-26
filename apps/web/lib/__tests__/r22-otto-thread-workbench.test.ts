@@ -314,7 +314,9 @@ describe("③ 研究托付:应承 → 进度 → 等你 → 批准落格 → 完
 
     expect(need("[data-otto-waiting-card]"), "等人的那一刻没有一张实体卡").not.toBeNull();
     expect(all("[data-otto-research-category]").length).toBe(3);
-    expect(need("[data-otto-waiting-card]").textContent, "没有说清这是样例内容").toContain("Nothing was read from your site");
+    // 2026-08-26 第 7 件:这一句改走诚实偏离句式 —— 没做成的那件事 + 改做了什么,一句。
+    expect(need("[data-otto-waiting-card]").textContent, "没有说清这是样例内容").toContain("is not switched on yet, so I ");
+    expect(need("[data-otto-waiting-card]").textContent, "没有说清这是样例内容").toContain("sample lines");
     expect(ottoThreadState(live.threads[0]), "等人的线程该读成「等你」").toBe("needs-you");
   });
 
@@ -475,10 +477,13 @@ const AskOptionCardForTest: FC<{ value: string; setValue: (value: string) => voi
 /* ── 画布 Ask 卡同族 ────────────────────────────────────────────────────────── */
 
 describe("⑤ 画布的问题卡与线程问答卡同族", () => {
-  it("画布单选那一路用的是共用零件,多选那一路留在本地(它挑的是好几个)", () => {
+  // 2026-08-26 第 2 件之后画布那张卡整张走共用问卷零件(单选、多选、题号、
+  // Previous/Skip/Next 全在那一份里),所以这条断言跟着实现走:「画布用的是共用零件」
+  // 钉在画布上,「多选是真 Checkbox」钉在现在真的画它的那一份上。
+  it("画布的问题卡整张用共用零件,多选那一路也在那一份里", () => {
     const canvas = readFileSync(path.join(WEB_ROOT, "components/canvas/R22CanvasSurface.tsx"), "utf8");
-    expect(canvas).toContain("<AskOptions");
-    expect(canvas, "多选那一路不该被一起收编").toContain("<Checkbox");
+    expect(canvas).toContain("<QuestionnaireCard");
+    expect(readFileSync(path.join(WEB_ROOT, "components/otto/conversation/ConversationParts.tsx"), "utf8"), "多选要用真 Checkbox").toContain("<Checkbox");
   });
 
   it("creation 线程的画布归属只由 `otto-thread-state` 判断,列表不自己再猜一遍", () => {

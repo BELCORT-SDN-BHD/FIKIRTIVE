@@ -195,12 +195,19 @@ export function CreationConversation({
   >(null);
   const running = pending !== null;
 
-  function run(text: string, options: { kind?: CanvasMakeKind; count?: number } = {}) {
+  /**
+   * `options.balance` = 「按这个余额算,不按 state 里那个」。
+   *
+   * 闸卡主键那一下必须给:`setBalance` 要下一帧才生效,而充值与接着跑发生在同一拍里 ——
+   * 读 state 就读成了充值**之前**那个数,于是刚充完值立刻又撞一次闸。商家看到的是按了
+   * 「Top up and continue」之后又冒出一张一模一样的闸卡。
+   */
+  function run(text: string, options: { kind?: CanvasMakeKind; count?: number; balance?: number } = {}) {
     if (running) return;
     const runKind = options.kind ?? kind;
     const runCount = options.count ?? count;
     const credits = fixtureQuoteCredits(runKind, runCount);
-    if (!creationCanAfford(balance, credits)) {
+    if (!creationCanAfford(options.balance ?? balance, credits)) {
       // 闸长在线程里,不弹一层全局窗:商家此刻的上下文就是他刚说的那句话。
       push({ kind: "gate", needed: credits });
       return;
@@ -412,7 +419,7 @@ export function CreationConversation({
                       setEntries((current) => current.filter((row) => row.id !== entry.id));
                       push({ kind: "prose", id: `topup-${entry.id}`, text: CREATION_TOPUP_NOTICE });
                       const said = [...entries].reverse().find((row) => row.kind === "said");
-                      if (said && said.kind === "said") run(said.text);
+                      if (said && said.kind === "said") run(said.text, { balance: balance + CREATION_FIXTURE_TOPUP_CREDITS });
                     }}
                     secondaryLabel="Not now"
                     onSecondary={() => setEntries((current) => current.filter((row) => row.id !== entry.id))}

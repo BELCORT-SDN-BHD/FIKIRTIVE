@@ -111,7 +111,7 @@ function need<T extends Element>(selector: string): T {
 describe("起手模板:Library 快产车间", () => {
   function openQuickCreate() {
     mount(createElement(LibraryWorkroom, {}));
-    click(need("[data-r22-lib-create]"));
+    click(need("[data-r22-lib-quick]"));
   }
 
   it("① 点一下只把那一句填进输入框,一个字都没发出去", () => {

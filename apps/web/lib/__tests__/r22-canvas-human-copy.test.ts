@@ -201,7 +201,7 @@ describe("① 寒暄不进生成机", () => {
     expect(lines.length, "一问一答应该正好多两行").toBe(before + 2);
 
     // 这一条才是 Founder 亲验抓到的病:寒暄不许排任务卡、不许出现阶段词、不许报价。
-    expect(container!.querySelector(".r22-canvas-job"), "一句寒暄排出了一张生成任务卡").toBeNull();
+    expect(container!.querySelector("[data-canvas-job-status]"), "一句寒暄排出了一次生成").toBeNull();
     expect(screenText()).not.toContain("Queued");
     expect(screenText()).not.toContain("Working on");
     expect(ottoState(), "寒暄把 Otto 推进了工作态").toBe("idle");
@@ -221,9 +221,11 @@ describe("① 寒暄不进生成机", () => {
 
     await askOtto(CREATE_PROMPT);
 
-    const job = need(".r22-canvas-job");
+    const job = need("[data-canvas-job-status]");
     expect(job.getAttribute("data-canvas-job-status")).toBe("queued");
-    expect(job.textContent).toContain(CREATE_PROMPT);
+    // 那句话住在会话里,不在状态那一格上 —— 板上那张任务卡 2026-08-26 整个删掉了
+    // (同一件事屏幕上说三遍,而它是唯一盖住画的那一个)。
+    expect(need("[data-r22-canvas-conversation]").textContent).toContain(CREATE_PROMPT);
     expect(ottoState()).toBe("working");
     // 创作请求不该被当成聊天答一句就完事。
     expect(container!.querySelector("[data-otto-answer]"), "一次创作请求被答成了一张答案卡").toBeNull();
@@ -238,7 +240,7 @@ describe("① 寒暄不进生成机", () => {
 
     await askOtto("Thanks! Now make a video of the candle");
 
-    const job = need(".r22-canvas-job");
+    const job = need("[data-canvas-job-status]");
     expect(job.getAttribute("data-canvas-job-status")).toBe("queued");
     expect(conversationLines().some((line) => line.startsWith("Anytime"))).toBe(false);
   });
@@ -249,7 +251,7 @@ describe("① 寒暄不进生成机", () => {
     await askOtto(ASK_PROMPT);
 
     expect(container!.querySelector(".r22-canvas-input-card"), "提问流被改动了").not.toBeNull();
-    expect(container!.querySelector(".r22-canvas-job")).toBeNull();
+    expect(container!.querySelector("[data-canvas-job-status]")).toBeNull();
     expect(ottoState()).toBe("needs input");
   });
 });
@@ -281,7 +283,7 @@ describe("② 商家可见文本里没有工程词族", () => {
     await askOtto(CREATE_PROMPT);
     await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
 
-    expect(need(".r22-canvas-job").getAttribute("data-canvas-job-status")).toBe("completed");
+    expect(need("[data-canvas-job-status]").getAttribute("data-canvas-job-status")).toBe("completed");
     expect(screenText(), "完成态没有把结果讲给商家听").toContain("Done");
     assertHumanScreen("完成");
   });
@@ -290,7 +292,7 @@ describe("② 商家可见文本里没有工程词族", () => {
     await mount(runtimeContext({ fixtureSendOutcome: "permission" }));
     await askOtto(CREATE_PROMPT);
 
-    expect(need(".r22-canvas-job").getAttribute("data-canvas-job-status")).toBe("failed");
+    expect(need("[data-canvas-job-status]").getAttribute("data-canvas-job-status")).toBe("failed");
     expect(noticeText()).toContain("no credits were used");
     assertHumanScreen("权限失败");
   });
