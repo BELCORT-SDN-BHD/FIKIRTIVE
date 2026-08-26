@@ -61,9 +61,9 @@ const STICKY_HOME = { x: 640, y: 560 };
 
 function runtimeContext(): ImmersiveCanvasRuntimeContext {
   return {
-    projects: [{ id: "project-a", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
+    projects: [{ id: "fixture-raya", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
     threads: [],
-    activeProjectId: "project-a",
+    activeProjectId: "fixture-raya",
     activeThreadId: null,
     initialBalance: null,
     visualFixture: "r22",

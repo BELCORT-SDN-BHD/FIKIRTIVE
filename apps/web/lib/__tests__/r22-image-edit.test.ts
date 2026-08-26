@@ -138,9 +138,9 @@ describe("单图编辑:两个入口开的是同一层", () => {
     await act(async () => {
       root!.render(createElement(R22CanvasSurface, {
         runtimeContext: {
-          projects: [{ id: "project-a", name: "Raya launch" }],
+          projects: [{ id: "fixture-raya", name: "Raya launch" }],
           threads: [],
-          activeProjectId: "project-a",
+          activeProjectId: "fixture-raya",
           activeThreadId: null,
           initialBalance: null,
           visualFixture: "r22",

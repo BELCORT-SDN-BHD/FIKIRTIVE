@@ -147,9 +147,9 @@ describe("起手模板:Library 快产车间", () => {
 describe("起手模板:画布空板", () => {
   function runtimeContext(): ImmersiveCanvasRuntimeContext {
     return {
-      projects: [{ id: "project-a", name: "Raya launch" }],
+      projects: [{ id: "fixture-raya", name: "Raya launch" }],
       threads: [],
-      activeProjectId: "project-a",
+      activeProjectId: "fixture-raya",
       activeThreadId: null,
       initialBalance: null,
       visualFixture: "r22",

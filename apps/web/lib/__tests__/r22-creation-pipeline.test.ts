@@ -131,9 +131,9 @@ afterEach(async () => {
 
 function runtimeContext(): ImmersiveCanvasRuntimeContext {
   return {
-    projects: [{ id: "project-a", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
+    projects: [{ id: "fixture-raya", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
     threads: [],
-    activeProjectId: "project-a",
+    activeProjectId: "fixture-raya",
     activeThreadId: null,
     initialBalance: null,
     visualFixture: "r22",
@@ -238,16 +238,16 @@ describe("① 画布 Add to pack 写的是 Library 那一份存档", () => {
     await click(need('[aria-label="Add Image 2 to a Library pack"]'));
     await click(needPop('[data-canvas-pack-pick="pack-candle"]'));
 
-    const saved = archive().assets.filter((asset) => asset.id === "canvas:project-a:art-2");
+    const saved = archive().assets.filter((asset) => asset.id === "canvas:fixture-raya:art-2");
     expect(saved, "画布那张图没有作为一条素材进存档").toHaveLength(1);
     expect(saved[0]!.packIds).toEqual(["pack-candle"]);
     expect(saved[0]!.source, "画布做出来的东西不算生成物").toBe("made");
-    expect(saved[0]!.projectId, "存下来的东西没记住它是在哪块板上做的").toBe("project-a");
+    expect(saved[0]!.projectId, "存下来的东西没记住它是在哪块板上做的").toBe("fixture-raya");
 
     await click(need('[aria-label="Add Image 2 to a Library pack"]'));
     await click(needPop('[data-canvas-pack-pick="pack-candle"]'));
 
-    const again = archive().assets.filter((asset) => asset.id === "canvas:project-a:art-2");
+    const again = archive().assets.filter((asset) => asset.id === "canvas:fixture-raya:art-2");
     expect(again, "多收一次就在库里多出一张一样的图").toHaveLength(1);
     expect(again[0]!.packIds, "多收一次就在包里多挂一次").toEqual(["pack-candle"]);
   });
@@ -262,7 +262,7 @@ describe("① 画布 Add to pack 写的是 Library 那一份存档", () => {
     const stored = archive();
     expect(stored.packs.map((pack) => pack.name), "新包没进存档 —— 商家下次打开就没有这个包").toContain("Merdeka assets");
     const pack = stored.packs.find((row) => row.name === "Merdeka assets")!;
-    expect(stored.assets.find((asset) => asset.id === "canvas:project-a:art-3")!.packIds).toEqual([pack.id]);
+    expect(stored.assets.find((asset) => asset.id === "canvas:fixture-raya:art-3")!.packIds).toEqual([pack.id]);
   });
 });
 
@@ -309,7 +309,7 @@ describe("④ 画布一批做完就自动进库", () => {
     await act(async () => { need<HTMLFormElement>("form.r22-canvas-composer").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     await act(async () => { vi.advanceTimersByTime(JOB_MS); });
 
-    const filed = archive().assets.filter((asset) => asset.id.startsWith("canvas:project-a:batch-"));
+    const filed = archive().assets.filter((asset) => asset.id.startsWith("canvas:fixture-raya:batch-"));
     expect(filed.length, "板上做完了,库里一件都没有 —— 商家得再手动存一次").toBe(1);
     expect(filed[0]!.projectName).toBe("Raya launch");
     expect(filed[0]!.source).toBe("made");

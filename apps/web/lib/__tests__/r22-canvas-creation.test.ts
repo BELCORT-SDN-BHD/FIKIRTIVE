@@ -59,7 +59,7 @@ const JOB_MS = 1200;
 
 function runtimeContext(activeProjectId: string): ImmersiveCanvasRuntimeContext {
   return {
-    projects: [{ id: "project-a", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
+    projects: [{ id: "fixture-raya", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
     threads: [],
     activeProjectId,
     activeThreadId: null,
@@ -93,7 +93,7 @@ async function render(activeProjectId: string): Promise<void> {
   await act(async () => { await Promise.resolve(); });
 }
 
-async function mount(activeProjectId = "project-a"): Promise<void> {
+async function mount(activeProjectId = "fixture-raya"): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -279,7 +279,7 @@ describe("③ 参考图挂在这一次请求上", () => {
     await attachFromLibrary();
 
     expect(all("[data-canvas-reference-chip]").length, "挑了一张,composer 上没有参考 chip").toBe(1);
-    expect(stored("project-a").attachments, "挂上的参考图没进存档,刷新一次就没了").toHaveLength(1);
+    expect(stored("fixture-raya").attachments, "挂上的参考图没进存档,刷新一次就没了").toHaveLength(1);
   });
 
   it("上传一张图走的是真的文件选择器,存下来的是那张图本身", async () => {
@@ -293,7 +293,7 @@ describe("③ 参考图挂在这一次请求上", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
     expect(need("[data-canvas-reference-chip] b").textContent, "上传的那张图没有变成一枚 chip").toBe("table-setting.png");
-    const attachments = stored("project-a").attachments as Array<{ src: string }>;
+    const attachments = stored("fixture-raya").attachments as Array<{ src: string }>;
     expect(attachments, "上传的参考图没进存档").toHaveLength(1);
     expect(attachments[0]!.src.startsWith("data:"), "存进档的不是那张图本身").toBe(true);
   });
@@ -434,7 +434,7 @@ describe("⑥ 每张成品自己带一排动作", () => {
 
     await click(star());
     expect(star().getAttribute("aria-pressed"), "星标没记上").toBe("true");
-    expect(stored("project-a").starred, "星标没进存档").toEqual(["art-3"]);
+    expect(stored("fixture-raya").starred, "星标没进存档").toEqual(["art-3"]);
 
     await click(star());
     expect(star().getAttribute("aria-pressed"), "再按一下没有取消").toBe("false");
@@ -452,7 +452,7 @@ describe("⑥ 每张成品自己带一排动作", () => {
     const raw = window.sessionStorage.getItem(libraryKey);
     expect(raw, `${libraryKey} 里什么都没有 —— 素材包那一面读不到画布加的东西`).not.toBeNull();
     const archive = JSON.parse(raw!) as LibraryArchive;
-    const saved = archive.assets.find((asset) => asset.id === "canvas:project-a:art-1");
+    const saved = archive.assets.find((asset) => asset.id === "canvas:fixture-raya:art-1");
     expect(saved, "画布那张图没有作为一条素材进 Library 存档").toBeTruthy();
     expect(saved!.name).toBe("Image 1");
     expect(saved!.poster).toBe("/fixtures/r22-canvas/art-1.jpg");
@@ -463,8 +463,8 @@ describe("⑥ 每张成品自己带一排动作", () => {
     await click(need('[data-canvas-pack-pick="pack-raya"]'));
 
     const again = JSON.parse(window.sessionStorage.getItem(libraryKey)!) as LibraryArchive;
-    expect(again.assets.filter((asset) => asset.id === "canvas:project-a:art-1"), "多按一下就多出一张一样的图").toHaveLength(1);
-    expect(again.assets.find((asset) => asset.id === "canvas:project-a:art-1")!.packIds).toEqual(["pack-raya"]);
+    expect(again.assets.filter((asset) => asset.id === "canvas:fixture-raya:art-1"), "多按一下就多出一张一样的图").toHaveLength(1);
+    expect(again.assets.find((asset) => asset.id === "canvas:fixture-raya:art-1")!.packIds).toEqual(["pack-raya"]);
     expect(noticeText()).toBe("Image 1 is already in Raya assets.");
   });
 });
@@ -549,7 +549,7 @@ describe("⑦b 「这一批再来一版」的张数是源批次的张数", () =>
 describe("⑧ 切项目之后,这一面新加的状态全清", () => {
   it("A 里做的批次 / 星标 / 参考图 / 参数都不跟到 B,也不被写进 B 的存档", async () => {
     vi.useFakeTimers();
-    await mount("project-a");
+    await mount("fixture-raya");
     await attachFromLibrary();
     await click(need('[aria-label="Star Image 1"]'));
     await openParams();
@@ -561,16 +561,18 @@ describe("⑧ 切项目之后,这一面新加的状态全清", () => {
 
     await render("project-b");
 
-    expect(batchIds(), "上一个项目做出来的那一批跟着切过来了").toEqual(["batch"]);
+    // B 不是演示项目 —— 板上一批都没有。上一版这里核对的是「只剩开局那一批」,那前提是
+    // 每块板都长着 Raya 那一批;判据改成项目身份之后,别人的项目就是一块空板。
+    expect(batchIds(), "上一个项目做出来的东西跟着切过来了 —— B 该是一块空板").toEqual([]);
     expect(all("[data-canvas-reference-chip]").length, "上一个项目挂着的参考图跟过来了").toBe(0);
-    expect(need('[aria-label="Star Image 1"]').getAttribute("aria-pressed"), "上一个项目的星标跟过来了").toBe("false");
+    expect(container!.querySelector('[aria-label="Star Image 1"]'), "样例那一批长到了别人的空项目上").toBeNull();
     expect(priceLabel(), "上一个项目的张数跟过来了").toBe("3 cr");
     const archiveB = stored("project-b");
     expect(archiveB.batches, "project A 做的批次被存进了 project B 的 key").toEqual([]);
     expect(archiveB.starred).toEqual([]);
     expect(archiveB.attachments).toEqual([]);
 
-    await render("project-a");
+    await render("fixture-raya");
     expect(batchIds().length, "清内存态时把 project A 的存档也一起清了").toBe(2);
   });
 });

@@ -359,9 +359,9 @@ describe("③ composer 的 @:承诺了就得真的做得到", () => {
 
   it("画布 composer 的占位句承诺了 @,那一面也真的 @ 得动", async () => {
     const runtimeContext: ImmersiveCanvasRuntimeContext = {
-      projects: [{ id: "project-a", name: "Raya launch" }],
+      projects: [{ id: "fixture-raya", name: "Raya launch" }],
       threads: [],
-      activeProjectId: "project-a",
+      activeProjectId: "fixture-raya",
       activeThreadId: null,
       initialBalance: null,
       visualFixture: "r22",
@@ -402,9 +402,9 @@ describe("④ 板上不再有那张任务卡,空板也不配完成语", () => {
 
   it("空板上的开局话里没有「已完成」那一族", async () => {
     const runtimeContext: ImmersiveCanvasRuntimeContext = {
-      projects: [{ id: "project-a", name: "New project" }],
+      projects: [{ id: "fixture-raya", name: "New project" }],
       threads: [],
-      activeProjectId: "project-a",
+      activeProjectId: "fixture-raya",
       activeThreadId: null,
       initialBalance: null,
       visualFixture: "r22",
@@ -453,9 +453,9 @@ describe("⑤ 答尾动作卡:零死卡", () => {
 
   it("画布的答案尾部也接上了同一份零件", async () => {
     const runtimeContext: ImmersiveCanvasRuntimeContext = {
-      projects: [{ id: "project-a", name: "Raya launch" }],
+      projects: [{ id: "fixture-raya", name: "Raya launch" }],
       threads: [],
-      activeProjectId: "project-a",
+      activeProjectId: "fixture-raya",
       activeThreadId: null,
       initialBalance: null,
       visualFixture: "r22",

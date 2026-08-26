@@ -73,6 +73,27 @@ export function fixtureBatchHome(index: number): CanvasPoint {
   return { x: FIXTURE_BATCH_HOME.x, y: FIXTURE_BATCH_HOME.y + 360 * index };
 }
 
+/* ── 谁的板上开局就摆着样例 ─────────────────────────────────────────────────── */
+
+/**
+ * 开局那一批样例(四张 Raya 概念、那张便签、那张 harvestcandle.co 摘录卡)属于**演示项目**
+ * 本身,不属于「batik-house 这个工作区里的任何一块板」。
+ *
+ * 上一版的判据是工作区:只要还在 Batik House 里,**每**一块板都会长出 Raya 那一批。于是
+ * 商家在 Create 对话里刚说完一句话、建出一个空项目,进去看到的是四张别人的图、一张写着
+ * 别人网址的摘录卡,Otto 还在头上报「All 4 images are done」—— 一个字都没做,却被告知做完了。
+ *
+ * 判据改成**项目身份**:这块样例板是 Raya launch 这一个演示项目的东西。别的项目(商家刚
+ * 建的、Quick create 交接过来的)板上只有他自己真做出来的那几批;一批都没有就是空板,
+ * 空板该出的是 `EmptyWorld` 加起手模板那一排。
+ */
+export const DEMO_BOARD_PROJECT_ID = "fixture-raya";
+
+/** 这个项目开局是否自带样例板。演示项目之外一律为假 —— 空板就诚实地空着。 */
+export function projectHasDemoBoard(projectId: string): boolean {
+  return projectId === DEMO_BOARD_PROJECT_ID;
+}
+
 /* ── 会话存档(Quick create → 画布 的那条路) ───────────────────────────────── */
 
 /**

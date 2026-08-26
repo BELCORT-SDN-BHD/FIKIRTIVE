@@ -54,7 +54,7 @@ const HOME_TRANSFORM = "translate(-560px, -260px) scale(1)";
 
 function runtimeContext(activeProjectId: string): ImmersiveCanvasRuntimeContext {
   return {
-    projects: [{ id: "project-a", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
+    projects: [{ id: "fixture-raya", name: "Raya launch" }, { id: "project-b", name: "Merdeka teaser" }],
     threads: [],
     activeProjectId,
     activeThreadId: null,
@@ -86,7 +86,7 @@ async function render(activeProjectId: string): Promise<void> {
   await act(async () => { await Promise.resolve(); });
 }
 
-async function mount(activeProjectId = "project-a"): Promise<void> {
+async function mount(activeProjectId = "fixture-raya"): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -196,7 +196,7 @@ describe("② 拖过之后位置真的变了,而且刷新还在(原型 L6084-610
 
     expect(sticky().style.left, "拖了但屏上没动").toBe(`${STICKY_HOME.x + 120}px`);
     expect(sticky().style.top).toBe(`${STICKY_HOME.y + 80}px`);
-    expect(storedObjects("project-a").sticky, "拖出来的位置没进存档,刷新一次就回老家").toEqual({
+    expect(storedObjects("fixture-raya").sticky, "拖出来的位置没进存档,刷新一次就回老家").toEqual({
       x: STICKY_HOME.x + 120,
       y: STICKY_HOME.y + 80,
     });
@@ -302,19 +302,20 @@ describe("⑤ Esc 只剥一层(壳层同一道守卫:commit 67de2bd5)", () => {
 
 describe("⑥ 切项目不带走位置与选择(与会话同一条隔离)", () => {
   it("A 里拖过的便签不跟到 B,也不被写进 B 的存档;切回 A 原样还在", async () => {
-    await mount("project-a");
+    await mount("fixture-raya");
     await gesture(sticky(), [500, 500], [620, 580]);
     await clickArt("art-1");
     expect(selectedArt()).toEqual(["art-1"]);
 
     await render("project-b");
 
-    expect(sticky().style.left, "上一个项目的摆法跟着切过来了").toBe(`${STICKY_HOME.x}px`);
-    expect(sticky().style.top).toBe(`${STICKY_HOME.y}px`);
+    // B 不是演示项目 —— 它板上一件东西都没有,连那张便签都不该在。上一版这里核对的是
+    // 「便签回到老家」,那前提是每块板都长着 Raya 那一批;判据改成项目身份之后,B 是空板。
+    expect(container!.querySelector('[data-canvas-object="sticky"]'), "样例便签长到了别人的空项目上").toBeNull();
     expect(selectedArt(), "上一个项目的选中跟着切过来了").toEqual([]);
     expect(storedObjects("project-b"), "project A 的摆法被存进了 project B 的 key").toEqual({});
 
-    await render("project-a");
+    await render("fixture-raya");
     expect(sticky().style.left, "清内存态时把 project A 的存档也一起清了").toBe(`${STICKY_HOME.x + 120}px`);
   });
 });

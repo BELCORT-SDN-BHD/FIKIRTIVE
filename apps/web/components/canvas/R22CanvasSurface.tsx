@@ -66,6 +66,7 @@ import {
   fixtureBatchHome,
   fixtureQuoteCredits,
   NEW_PROJECT_FIXTURE_ID,
+  projectHasDemoBoard,
   readNewFixtureProjectName,
   type CanvasMakeKind,
   type CanvasPoint,
@@ -165,6 +166,20 @@ function batchTagLabel(batch: FixtureBatch): string {
   const count = batch.art.length;
   const noun = batch.kind === "video" ? (count === 1 ? "video concept" : "video concepts") : count === 1 ? "image" : "images";
   return `Batch · ${count} ${noun} · ${batch.ratio} · ${batch.credits} cr`;
+}
+
+/**
+ * 板上此刻真的有几件东西,写成商家读的那句话(「3 images」「1 video concept」
+ * 「2 images and 1 video concept」)。Otto 状态头报的数从这里派生 —— 样例板那句写死的
+ * 「All 4 images are done」只属于样例板,别的板必须报自己那块板上的数。
+ */
+function boardCountPhrase(batches: FixtureBatch[]): string {
+  const images = batches.reduce((total, batch) => total + (batch.kind === "image" ? batch.art.length : 0), 0);
+  const videos = batches.reduce((total, batch) => total + (batch.kind === "video" ? batch.art.length : 0), 0);
+  const parts: string[] = [];
+  if (images) parts.push(`${images} ${images === 1 ? "image" : "images"}`);
+  if (videos) parts.push(`${videos} ${videos === 1 ? "video concept" : "video concepts"}`);
+  return listPhrase(parts);
 }
 
 /** 新的一批长什么样。编号接着板上已有的往下数,所以 chips 与卡上的名字永远对得上。 */
@@ -683,6 +698,7 @@ function ArtCell({
 function FixtureWorld({
   style,
   positions,
+  demoObjects,
   batches,
   selected,
   starred,
@@ -696,7 +712,12 @@ function FixtureWorld({
   style: CSSProperties;
   /** 商家自己拖到的位置。没拖过的物件读不到条目,就还在自己的老家。 */
   positions: Record<string, CanvasPoint>;
-  /** 板上现在有哪几批。第一批是开局那一批,后面的是商家自己做出来的。 */
+  /**
+   * 那张便签与那张 harvestcandle.co 摘录卡要不要摆上去。它们是**演示项目**的东西 ——
+   * 商家刚建的项目上出现别人网址的摘录卡,是白给的一条假事实。
+   */
+  demoObjects: boolean;
+  /** 板上现在有哪几批。演示项目第一批是开局那一批,后面的是商家自己做出来的。 */
   batches: FixtureBatch[];
   selected: string[];
   starred: string[];
@@ -713,16 +734,20 @@ function FixtureWorld({
   const at = (id: string): CanvasPoint => positions[id] ?? homes[id];
   return (
     <div className="r22-canvas-world" style={style} aria-label="Sample canvas board" data-r22-visual-fixture>
-      <article className="r22-canvas-object r22-canvas-sticky" data-canvas-object="sticky" style={{ left: at("sticky").x, top: at("sticky").y }}>
-        <span>Sticky · free</span>
-        <p>Teal + gold table set. Try one flat-lay, one lifestyle shot.</p>
-      </article>
+      {demoObjects ? (
+        <>
+          <article className="r22-canvas-object r22-canvas-sticky" data-canvas-object="sticky" style={{ left: at("sticky").x, top: at("sticky").y }}>
+            <span>Sticky · free</span>
+            <p>Teal + gold table set. Try one flat-lay, one lifestyle shot.</p>
+          </article>
 
-      <article className="r22-canvas-object r22-canvas-research" data-canvas-object="research" style={{ left: at("research").x, top: at("research").y }}>
-        <b>Extracted from your page</b>
-        <code>harvestcandle.co / raya-collection</code>
-        <p>“Four scents inspired by Raya mornings — teal batik, gold thread, warm oud, and pandan light.”</p>
-      </article>
+          <article className="r22-canvas-object r22-canvas-research" data-canvas-object="research" style={{ left: at("research").x, top: at("research").y }}>
+            <b>Extracted from your page</b>
+            <code>harvestcandle.co / raya-collection</code>
+            <p>“Four scents inspired by Raya mornings — teal batik, gold thread, warm oud, and pandan light.”</p>
+          </article>
+        </>
+      ) : null}
 
       {batches.map((batch, index) => (
         <section
@@ -978,6 +1003,16 @@ export function R22CanvasSurface({
   const fixtureProjectName = runtimeContext.activeProjectId === NEW_PROJECT_FIXTURE_ID && fixtureNewProjectName
     ? fixtureNewProjectName
     : null;
+  /**
+   * 这块板开局是否自带那一批样例(Founder 2026-08-26 第 4 件的后半)。
+   *
+   * 判据是**项目身份**,不是板子空不空、也不是工作区 —— 演示项目 Raya launch 的样例属于
+   * 它自己;商家刚建的项目、Quick create 交接过来的项目,板上只该有他自己真做出来的东西。
+   * 工作区那一层照旧要过:样例数据不跨工作区。
+   */
+  const demoBoard = fixture
+    && fixtureWorkspaceId === "batik-house"
+    && projectHasDemoBoard(runtimeContext.activeProjectId);
   const [fixtureSendFailedOnce, setFixtureSendFailedOnce] = useState(false);
   const fixtureTimersRef = useRef<number[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -1168,10 +1203,16 @@ export function R22CanvasSurface({
   /**
    * 板上现在有哪几批 —— 开局那一批永远在最前面,后面是商家自己做出来的,并存不替换。
    */
-  const batches = useMemo(() => [FIXTURE_SEED_BATCH, ...extraBatches], [extraBatches]);
+  const batches = useMemo(
+    () => (demoBoard ? [FIXTURE_SEED_BATCH, ...extraBatches] : extraBatches),
+    [demoBoard, extraBatches],
+  );
   /** 上面那份的一面镜子 —— 延时回调里读它,免得读到闭包里那份早就旧了的。 */
   const extraBatchesRef = useRef<FixtureBatch[]>([]);
   useEffect(() => { extraBatchesRef.current = extraBatches; }, [extraBatches]);
+  /** 同一条理由的镜子:920ms 之后那一段要知道「这块板开局有没有样例」才数得对编号。 */
+  const demoBoardRef = useRef(false);
+  useEffect(() => { demoBoardRef.current = demoBoard; }, [demoBoard]);
   /** 每个物件的老家(便签/摘录是常量,批次卡各自带着自己的)。拖过之后读 `objectPos`。 */
   const objectHomes = useMemo(() => {
     const homes: Record<string, CanvasPoint> = { ...FIXTURE_OBJECT_HOME };
@@ -1463,7 +1504,7 @@ export function R22CanvasSurface({
   const worldStyle = worldTransform(view);
 
   /** Otto 答话时指得出「我们现在在哪块板上」—— 顶栏叫什么,它就叫什么。 */
-  const fixtureBoardLabel = fixtureWorkspaceId === "batik-house" ? "the Raya launch board" : "this canvas";
+  const fixtureBoardLabel = demoBoard ? "the Raya launch board" : "this canvas";
 
   /**
    * 一张图的确切价钱只有这一个出处:样例画布用原型样张那一份,真接后端的那一面用服务端
@@ -1605,7 +1646,7 @@ export function R22CanvasSurface({
       setFixtureJob({ id, prompt, status: "completed" });
       // 板上已有几批要读 ref 而不是闭包里那个 state:这一段跑在 920ms 之后,闭包里那份
       // 早就可能是旧的,而编号错一位,进库那条身份就跟着错。
-      const board = [FIXTURE_SEED_BATCH, ...extraBatchesRef.current];
+      const board = demoBoardRef.current ? [FIXTURE_SEED_BATCH, ...extraBatchesRef.current] : [...extraBatchesRef.current];
       const imageCount = board.reduce((total, batch) => total + (batch.kind === "image" ? batch.art.length : 0), 0);
       const videoCount = board.reduce((total, batch) => total + (batch.kind === "video" ? batch.art.length : 0), 0);
       const made = buildFixtureBatch({ index: board.length, imageCount, videoCount, kind, count, ratio: shape, madeFrom, references });
@@ -2039,15 +2080,18 @@ export function R22CanvasSurface({
   /**
    * 板上此刻一批东西都没有 —— 起手模板那一排只在这时出现。
    *
-   * 判词与板本身画的是**同一条**:样例板恢复完了、项目开得起来、而这个工作区没有开局那一批
+   * 判词与板本身画的是**同一条**:样例板恢复完了、项目开得起来、而板上一批都没有
    * (`EmptyWorld` 那一支)。板上已经有东西的时候不出这一排 —— 那时商家要的是「再改一版」,
    * 不是「从头起手」,跟手改一版的 chips 就长在最后那一批下面。
+   *
+   * 数的是 `batches` 本身,不是「在哪个工作区」:刚建出来的项目就在 Batik House 里,而它
+   * 板上一批都没有 —— 拿工作区当判词,空板照样被当成有东西的板。
    */
   const boardEmpty = fixture
     && fixtureRouteState === "ready"
     && fixtureRestored
     && Boolean(fixtureWorkspaceId)
-    && fixtureWorkspaceId !== "batik-house";
+    && batches.length === 0;
 
   return (
     <section
@@ -2108,7 +2152,7 @@ export function R22CanvasSurface({
         ref={stageRef}
         onPointerDown={onStagePointerDown}
       >
-        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : fixtureWorkspaceId === "batik-house" ? <FixtureWorld style={worldStyle} positions={objectPos} batches={batches} selected={selectedArt} starred={starredArt} packMenuFor={packMenuFor} renderPackMenu={renderPackMenu} onPackOpenChange={onPackOpenChange} onSelect={selectArt} onArtAction={onArtAction} onIterate={iterateBatch} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
+        {fixture && fixtureRouteState !== "ready" ? <EmptyWorld style={worldStyle} loading={fixtureRouteState === "loading"} error={fixtureRouteState === "error" ? "Project data could not be loaded." : fixtureRouteState === "permission" ? "You do not have permission to open this project." : fixtureRouteState === "unknown" ? "Otto could not confirm whether this project opened. Retry — this is not an empty project." : "This project no longer exists in the current workspace."} /> : fixture ? !fixtureRestored || !fixtureWorkspaceId ? <EmptyWorld style={worldStyle} loading /> : batches.length ? <FixtureWorld style={worldStyle} positions={objectPos} demoObjects={demoBoard} batches={batches} selected={selectedArt} starred={starredArt} packMenuFor={packMenuFor} renderPackMenu={renderPackMenu} onPackOpenChange={onPackOpenChange} onSelect={selectArt} onArtAction={onArtAction} onIterate={iterateBatch} /> : <EmptyWorld style={worldStyle} /> : <LiveWorld nodes={liveNodes} loading={nodesLoading} error={nodesError} style={worldStyle} />}
         {marquee ? <div className="r22-canvas-marquee" data-r22-canvas-marquee style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }} /> : null}
         {fixture && fixtureRouteState !== "ready" && fixtureRouteState !== "loading" ? <div className="r22-canvas-route-actions"><Link href={`${CREATE_NAV_HREF}?fixture=r22`}>Back to projects</Link>{fixtureRouteState === "error" || fixtureRouteState === "unknown" ? <Link href={`${canvasHref("fixture-raya")}&fixture=r22`}>Retry</Link> : null}</div> : null}
         {!fixture && nodesError ? <Button unstyled type="button" className="r22-canvas-live-retry" onClick={() => { setNodesLoading(true); void refreshNodes(); }}>Retry canvas</Button> : null}
@@ -2148,13 +2192,26 @@ export function R22CanvasSurface({
                     <li><span>?</span>Waiting for your first request</li>
                   </ul>
                 </>
-              ) : (
+              ) : demoBoard ? (
                 <>
                   <p>All 4 images are done. Star the keepers, or ask for variants.</p>
                   <ul>
                     <li><span className="is-done"><Check aria-hidden="true" /></span>Reading your brand memory</li>
                     <li><span className="is-done"><Check aria-hidden="true" /></span>Image 1 &amp; 2 ready</li>
                     <li><span className="is-done"><Check aria-hidden="true" /></span>Image 3 &amp; 4 ready</li>
+                  </ul>
+                </>
+              ) : (
+                /*
+                  板上有东西、但这块板不是样例板 —— 那几件是商家自己做出来的(创作对话里
+                  先做完再进来的那一批也走这里)。报的数只能是这块板自己的数:写死的
+                  「All 4 images」在一块只有一张图的板上,就是又一句自相矛盾的完成汇报。
+                */
+                <>
+                  <p>{boardCountPhrase(batches)} on this board. Star the keepers, or ask for variants.</p>
+                  <ul>
+                    <li><span className="is-done"><Check aria-hidden="true" /></span>Read your brief and Otto IQ</li>
+                    <li><span className="is-done"><Check aria-hidden="true" /></span>{boardCountPhrase(batches)} ready</li>
                   </ul>
                 </>
               ) : (
