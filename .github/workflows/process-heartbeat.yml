@@ -1,0 +1,29 @@
+name: process-heartbeat
+
+# 《开发作业手册》自毁开关的执行体:每日一跑,三条死亡指标机器核算,命中自动开 issue
+# 点名 Founder(指标定义与判词在 scripts/ci/process-heartbeat.sh 头注)。
+#
+# 刻意不挂在合并链上:它不是必需检查,不拦任何 PR——它只负责让制度死得响。
+# 每日 22:30 UTC = 吉隆坡早上 06:30,Founder 起床能看到昨夜的报警。
+
+on:
+  schedule:
+    - cron: "30 22 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 指标一/二要翻 7 天提交史
+      - name: 三项死亡指标核算
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/process-heartbeat.sh

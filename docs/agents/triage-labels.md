@@ -1,5 +1,7 @@
 # Triage Labels
 
+> 收编说明(2026-08-28,《开发作业手册》废止表):本文件不再是独立流程权威——六类标签并入 S4 开票惯例继续使用;流程权威见 `.claude/CLAUDE.md`「开发流程」。
+
 The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
 
 | Label in mattpocock/skills | Label in our tracker | Meaning                                  |

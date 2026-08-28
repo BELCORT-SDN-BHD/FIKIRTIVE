@@ -1,6 +1,6 @@
 # Wave 2 「换壳」规格书 —— human-first dashboard + Otto 侧栏
 
-> 状态：**定稿**（2026-08-18 Founder 经决策 UI 六问全拍板，全部选推荐：Q1-A 五块真数据 Home / Q2-A 共享开工框 / Q3-A 面板首开后记忆 / Q4-A Analytics 并进 Schedule 页签 / Q5-A 不留旧 /otto 全屏页 / Q6-A 三扇门收编不占格）。
+> 状态：**已交付 · 归档**（原「定稿」；W2 换壳 2026-08 已上生产，2026-08-28 随《开发作业手册》落地统一状态词汇——历史内容一字未动。原记录：2026-08-18 Founder 经决策 UI 六问全拍板，全部选推荐：Q1-A 五块真数据 Home / Q2-A 共享开工框 / Q3-A 面板首开后记忆 / Q4-A Analytics 并进 Schedule 页签 / Q5-A 不留旧 /otto 全屏页 / Q6-A 三扇门收编不占格）。
 > 取证基准：主检出 `/Users/winnin/Desktop/FIKIRTIVE` @ `42cd5fba`（壳相关文件在此提交上全部逐行读过）；
 > 钱路文案取自当前工作分支 `claude/otto-chat-free` @ `9a555257`（该分支只动钱路文件，壳文件与主检出一致）。
 > 调查手段：`grep` + 直接读文件（worker 在 worktree，按项目法不用 CodeGraph）。

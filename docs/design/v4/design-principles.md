@@ -34,7 +34,7 @@
 **8. 一页一网格,一页一种卡。**每页一套网格、一套间距阶、一种卡片语言;圆角、边框、阴影全用 token 阶。一页出现三种不同长相的卡 = 拼贴,打回。
 判法:截图上画网格线;对不齐、卡样式混杂即违规。
 
-**9. shadcn 原语,不手搓。**dialog、tabs、select、skeleton 等一律 shadcn/ui 原语 + 样张页 `/design-system` 现役 token。新组件或新变体先进样张页,再上产品——样张页是组件唯一橱窗。
+**9. 组件库原语,不手搓。**dialog、tabs、select、skeleton 等一律走 `@/components/ui` 包装层原语 + 样张页 `/design-system` 现役 token;包装层内部用哪个基座由基座 S1 决定(2026-08-28 Founder 裁决方向切换 Base UI,碑:`docs/specs/base-ui-switch.md`;本条原文「shadcn/ui 原语」为 2026-08-20 立法时的历史表述,与围栏头注同批改写)。新组件或新变体先进样张页,再上产品——样张页是组件唯一橱窗。
 判法:diff 里出现手搓的对话框/页签/骨架屏,违规。
 
 **10. AI 味违禁表。**以下形状见即打回:居中大 hero + 三列 feature 卡的模板布局;icon+标题+副标题三件套铺网格;emoji 当装饰;夸饰文案(Supercharge / Unleash / Elevate 之类);渐变文字;为填空而生的卡片墙。
