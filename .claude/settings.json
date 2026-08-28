@@ -10,5 +10,17 @@
       "mcp__codegraph__codegraph_files",
       "mcp__codegraph__codegraph_status"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/tools/spec-status.sh"
+          }
+        ]
+      }
+    ]
   }
 }

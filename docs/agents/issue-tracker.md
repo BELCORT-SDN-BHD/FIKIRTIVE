@@ -1,5 +1,7 @@
 # Issue tracker: GitHub
 
+> 收编说明(2026-08-28,《开发作业手册》废止表):本文件只是 `gh` 操作惯例,不是流程权威。规格的家在 `docs/specs/`;PRD 一词的现行对应物是 S1 规格(模板 `docs/specs/TEMPLATE.md`);冻结 = Founder 本人在功能 issue 评论「S1 批准」。
+
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
 ## Conventions
