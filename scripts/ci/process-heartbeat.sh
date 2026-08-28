@@ -21,12 +21,14 @@ FOUNDER_LOGIN="nicksgan-belcort"
 SPECS_DIR="docs/specs"
 
 # 同名 open issue 已在 = 已经报过警还没人处理,不重复开(报警器响一次就够,响十次是噪音)。
+# 不用 GitHub search(中文分词与特殊字符不稳,盲审):拉全量 open 列表本地逐字比对。
+# 列表拿不到就整个脚本红——「查不到」不等于「没报过」,静默时每天重开一张才是真噪音。
 open_issue_exists() {
   local title="$1"
-  local count
-  count="$(gh issue list --repo "$REPO" --state open --search "in:title \"$title\"" --json title \
-    --jq "[.[] | select(.title == \"$title\")] | length" 2>/dev/null || echo 0)"
-  [[ "${count:-0}" -ge 1 ]]
+  local titles
+  titles="$(gh issue list --repo "$REPO" --state open --limit 500 --json title --jq '.[].title')" \
+    || { echo "heartbeat: 拉不到 open issue 列表,无法去重——fail closed,本次不开票并把 job 标红。" >&2; exit 1; }
+  grep -qxF "$title" <<< "$titles"
 }
 
 alarm() {
@@ -40,17 +42,23 @@ alarm() {
 }
 
 # ── 指标一:流程停摆 ─────────────────────────────────────────────────────────
+# 「活着」的判据不是「有新规格文件」——一份冻结规格带着几周施工是手册的正常形态,
+# 冻结后第 8 天还照着它写代码不叫停摆(盲审)。活着 = 近 7 天 docs/specs/ 有任何提交
+# (新增、改签、变更登记都算),或近 7 天合并的 PR 里有人带过 Spec:/轻改 引用。
 check_stall() {
-  local product_commits new_specs
+  local product_commits spec_commits ref_prs
   product_commits="$(git log --since=7.days --format=%H -- apps packages | wc -l | tr -d ' ')"
-  new_specs="$(git log --since=7.days --diff-filter=A --format=%H -- "$SPECS_DIR" | wc -l | tr -d ' ')"
-  echo "heartbeat: 近 7 天产品提交 $product_commits 笔,docs/specs/ 新增提交 $new_specs 笔。"
-  if [[ "$product_commits" -gt 0 && "$new_specs" -eq 0 ]]; then
+  spec_commits="$(git log --since=7.days --format=%H -- "$SPECS_DIR" | wc -l | tr -d ' ')"
+  ref_prs="$(gh pr list --repo "$REPO" --state merged --limit 100 --json body,mergedAt \
+    --jq "[.[] | select(.mergedAt >= \"$(date -u -v-7d +%Y-%m-%d 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%d)\") | select(.body | test(\"(Spec|轻改)(:|：)\"))] | length" \
+    2>/dev/null || echo 0)"
+  echo "heartbeat: 近 7 天产品提交 $product_commits 笔,docs/specs/ 提交 $spec_commits 笔,带流程标记的已合并 PR ${ref_prs:-0} 张。"
+  if [[ "$product_commits" -gt 0 && "$spec_commits" -eq 0 && "${ref_prs:-0}" -eq 0 ]]; then
     alarm "[流程] 已停摆:近 7 天有产品提交、docs/specs/ 零新增" \
 "@$FOUNDER_LOGIN 自毁开关指标一命中(机器核算,非人工报告):
 
 - 近 7 天产品提交:$product_commits 笔
-- 同期 docs/specs/ 新增规格:0 份
+- 同期 docs/specs/ 提交:0 笔;带 Spec:/轻改 标记的已合并 PR:0 张
 
 《开发作业手册》的判词:产品在动而规格不动,说明流程在被绕过或已死亡——不许默默续命。
 要么有人在跳过 S1(查最近的 PR 是不是全走了「轻改」),要么这 7 天确实全是轻挡(那也该看一眼是否属实)。
@@ -90,7 +98,11 @@ check_resign_churn() {
 check_double_bounce() {
   local since issues issue ids id cnt _
   since="$(date -u -v-14d +%Y-%m-%d 2>/dev/null || date -u -d '14 days ago' +%Y-%m-%d)"
-  issues="$(gh issue list --repo "$REPO" --state all --search "updated:>=$since" --json number --jq '.[].number' 2>/dev/null || true)"
+  # gh issue list 默认只取 30 条——本仓 issue 已过千,不加 --limit 报警器会静默漏报(盲审)。
+  issues="$(gh issue list --repo "$REPO" --state all --limit 500 --search "updated:>=$since" --json number --jq '.[].number' 2>/dev/null || true)"
+  if [[ "$(printf '%s\n' "$issues" | grep -c . || true)" -ge 500 ]]; then
+    echo "heartbeat: 警告——issue 枚举打到 500 条上限,可能有截断;指标三的覆盖不完整。" >&2
+  fi
   for issue in $issues; do
     ids="$(gh api "repos/$REPO/issues/$issue/comments" --paginate \
       --jq '.[].body' 2>/dev/null | grep -oE 'S5 打回 [A-Z][A-Z0-9]{1,15}-A[0-9]+' | sort | uniq -c || true)"

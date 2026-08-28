@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/tools/spec-status.sh"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/tools/spec-status.sh\""
           }
         ]
       }
