@@ -1,7 +1,7 @@
 # Otto 引擎 规格书（S1）
 
-> 状态: 草稿
-> 批准: （冻结时填）https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/<N> Founder 评论「S1 批准 otto-engine.md」(YYYY-MM-DD)
+> 状态: 已冻结 · v1
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1099 Founder 评论「S1 批准 otto-engine.md」(2026-08-29)
 > 规格前缀: ENGINE（验收编号 = ENGINE-A1、A2…）
 
 ## 0. 一句话
