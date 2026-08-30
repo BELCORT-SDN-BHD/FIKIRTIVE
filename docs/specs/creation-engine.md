@@ -103,6 +103,7 @@
 | 2026-08-30 | 分销商调查结案（Higgsfield/Artlist/fal/Freepik/Krea/Replicate/聚合商）：无一家解锁真人参考（一手引文＝「blocked at the model level…not configurable」），无一家低于直连 $1.89/条（5s·1080p 实价 $1.97–$3.58；Artlist 无视频 API 且条款禁 automation/resale；Higgsfield 服务端 API 无 2.0）——维持直连 | 随 v2 重签追认（2026-08-30） |
 | 2026-08-30 | 待验彩蛋登记：账号实名/活体完成后，Seedream 图生图产物是否获视频端信任（Artlist 文档口径「Image-to-Image after account identity verification (KYC)」；我方直连未验）——Founder 活体日顺带 $0 实测 | 登记待验 |
 | 2026-08-30 | Founder 裁决：beta 演员库规模由「首发 50 名」改为**创始 5 名即全量**（A1–A5 五人组已定妆：Aisyah/Weijie/Arjun/Rahman/Xinyi，组图法产出特写＋全身对、五脸两两互认 QC 过；无损原件＋人物卡归档 preserved/actor-library-v1-2026-08-30/）。扩产与否 beta 后再裁；九问1⑤「beta 首发 50 名」按本条口径读 | 2026-08-30 |
+| 2026-08-30 | **像素完整性铁律**（九问4「产物直引」的工程收紧，Founder 当日追问确认）：血统信任的标记在**像素**里，演员图必须**端到端保留 Seedream 原始产物字节**。实证两笔：①原字节重新上传（base64 直传）过门出片（task `cgt-20260830161827-p28pq` succeeded）；②对已过门文生图做**裁剪**后提交＝拒收「may contain real person」（request id `021788096448297c…`，任务未创建 $0）。工程规则：提交视频端一律用无损原件；显示用缩略图/裁剪图只能另存副本、永不回流生成路径；缩放/滤镜/加字/转格式/再压缩等一切像素级再处理**未实测＝未验先禁**。证据 preserved/creation-probe-2026-08-29/pixel-integrity-20260830/ | 2026-08-30 |
 
 ## 6. 改签记录
 
