@@ -872,30 +872,31 @@ interface Exemption {
 const EXEMPTIONS: Exemption[] = [
   {
     file: "components/otto/edit/EditDesk.tsx",
-    // 如实口径:规格说「现仅收 audio」,而代码里**只有** <Input accept="audio/*"> 这个
-    // 选择器提示 —— HTML 的 accept 是给文件选择框的过滤建议,不是校验:商家在系统弹窗里
-    // 把筛选改成「所有文件」就能选一张图,uploadMusic 不看 MIME 直接送去 finalize。
-    // 所以这条豁免今天靠的是「入口意图」,不是「类型守卫」。原样写出来,不粉饰。
     reason:
-      "只收音频;audio 不在收费的三类里(§7.3 单列)。⚠️仅 accept=\"audio/*\" 选择器提示,uploadMusic 无 MIME/类型守卫 —— 豁免建立在入口意图上,不是强制校验",
+      "只收音频;audio 不在收费的三类里(§7.3 单列)。两道守:<Input accept=\"audio/*\"> 的选择器提示,"
+      + "加 uploadMusic 里的 MIME/扩展名守卫(非音频不进 finalizeCandidateUploads,当场提示)",
     spec: "docs/specs/money-engine.md#7.3-A9-素材理解计费面",
     callSites: 1,
     guard: () => {
       const src = codeOf("components/otto/edit/EditDesk.tsx");
-      expect(src, "EditDesk 的文件选择器不再限定 audio/*,这条豁免的前提没了").toContain(
+      // ① 选择器提示:商家打开弹窗时默认只看得到音频。
+      expect(src, "EditDesk 的文件选择器不再限定 audio/*,这条豁免少了一道守").toContain(
         'accept="audio/*"',
       );
+      // ② 真正的守卫:accept 只是建议,弹窗里改个筛选就绕过去了。豁免立在这一条上。
       const handler = functionSourceOf("components/otto/edit/EditDesk.tsx", "uploadMusic");
       expect(handler, "找不到 uploadMusic —— 豁免要核对的处理函数变了,豁免得重新判").not.toBeNull();
       expect(
         handler!,
-        "uploadMusic 仍然直接把选到的文件送去 finalize:如果这里已经加了类型守卫,请把 reason 里的 ⚠️ 改成更强的说法",
-      ).toContain("finalizeCandidateUploads");
-      const hasTypeGuard = /\.type\b|mime|MIME|startsWith\(\s*["']audio/.test(handler!);
-      expect(
-        hasTypeGuard,
-        "uploadMusic 加了类型守卫 —— 这是好事,但 reason 里「无类型守卫」那句话现在是假的,改掉它",
-      ).toBe(false);
+        "uploadMusic 里的音频守卫没了 —— 非音频文件会重新落成会被理解计费的 UPLOAD 素材,而这个入口不挂披露",
+      ).toContain("looksLikeAudio");
+      expect(src, "looksLikeAudio 不再按 audio/ 前缀判断 —— 守卫被掏空了").toContain('startsWith("audio/")');
+      // ③ 守卫要真的拦在 finalize 之前,不是拦完还继续走。
+      const guardIndex = handler!.indexOf("looksLikeAudio");
+      const finalizeIndex = handler!.indexOf("finalizeCandidateUploads");
+      expect(guardIndex, "守卫排到了 finalizeCandidateUploads 之后 —— 那就没拦住").toBeLessThan(
+        finalizeIndex,
+      );
     },
   },
 ];

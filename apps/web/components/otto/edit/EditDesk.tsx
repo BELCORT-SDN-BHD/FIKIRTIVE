@@ -43,6 +43,22 @@ function lengthLabel(seconds: number | null): string {
   return seconds === null ? "Length still unknown" : clock(seconds);
 }
 
+/** 商家挑的文件看起来是不是音频。
+ *
+ *  先信浏览器给的 MIME;它为空或不着调时(某些平台对 .m4a/.ogg 给空 type,对 .m4a 甚至给
+ *  video/mp4 —— m4a 本来就是 MP4 容器)再看扩展名白名单。两者都不沾边才拒。
+ *
+ *  这是**入口守卫**,不是安全边界:真正判定字节的是服务端的 `resolveUploadMime`。
+ *  它要拦的是「商家在选择框里把筛选改成所有文件、顺手点了一张图」这种误选 —— 那一下今天会
+ *  变成一笔没被披露的理解扣费。 */
+const AUDIO_UPLOAD_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "webm"]);
+
+function looksLikeAudio(file: File): boolean {
+  if (file.type.startsWith("audio/")) return true;
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  return AUDIO_UPLOAD_EXTENSIONS.has(ext);
+}
+
 export function EditDesk({ projectId }: { projectId: string }) {
   const [media, setMedia] = useState<DeskMedia[]>([]);
   const [cut, setCut] = useState<CutSummary>({ clips: [], seconds: 0, captionCount: 0, music: null });
@@ -226,6 +242,17 @@ export function EditDesk({ projectId }: { projectId: string }) {
   async function uploadMusic(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
+    // MONEY-A9 §7.3 —— 这个入口按规格「现仅收 audio」被单列豁免、不挂价目小字。
+    // 在此之前那句话只靠 <Input accept="audio/*"> 撑着,而 accept 是文件选择框的过滤**建议**,
+    // 不是校验:商家在系统弹窗里把筛选改成「所有文件」就能选一张图,它会以 UPLOAD image 素材
+    // 落盘、被自动理解计费 —— 一笔他在任何屏幕上都没见过价目的钱。豁免的前提得自己成立。
+    if (!looksLikeAudio(file)) {
+      setError("Only audio files can be added here.");
+      setMessage(null);
+      // 让同一个文件还能被重新选中(否则 onChange 不会再触发)
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
     setBusy("upload");
     setError(null);
     setMessage(null);
