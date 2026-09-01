@@ -24,6 +24,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -333,20 +335,22 @@ export function TenantDetail({ detail }: { detail: Detail }) {
               <span className="text-xs font-medium text-muted-foreground">Original payment (pi_…)</span>
               <Input value={refundPi} onChange={(event) => setRefundPi(event.target.value)} placeholder="pi_3Q…" required className="h-10 font-mono text-sm" />
             </label>
-            <label className="grid gap-1.5">
+            <div className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Pack they bought</span>
-              <select
-                value={refundPack}
-                onChange={(event) => setRefundPack(event.target.value)}
-                className="h-10 rounded-md border border-border bg-background px-3 text-sm"
-              >
-                {creditPacks.map((pack) => (
-                  <option key={pack.credits} value={pack.credits}>
-                    {pack.name} · RM{(pack.amountMinor / 100).toFixed(0)}
-                  </option>
-                ))}
-              </select>
-            </label>
+              {/* 走 @/components/ui 的对位组件,不是裸原生下拉(#840 围栏:调用点一律走包装层)。 */}
+              <Select value={refundPack} onValueChange={setRefundPack}>
+                <SelectTrigger className="h-10 bg-background text-sm" aria-label="Pack they bought">
+                  <span>{creditPacks.find((pack) => String(pack.credits) === refundPack)?.name ?? "Pick a pack"}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {creditPacks.map((pack) => (
+                    <SelectItem key={pack.credits} value={String(pack.credits)}>
+                      {pack.name} · RM{(pack.amountMinor / 100).toFixed(0)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Button type="submit" variant="secondary" disabled={refundBusy}>{refundBusy ? "Refunding" : "Refund"}</Button>
           </div>
           <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -354,8 +358,8 @@ export function TenantDetail({ detail }: { detail: Detail }) {
               <span className="text-xs font-medium text-muted-foreground">Reason</span>
               <Input value={refundReason} onChange={(event) => setRefundReason(event.target.value)} maxLength={500} placeholder="unused credits, merchant asked on 2026-09-02" className="h-10 text-sm" />
             </label>
-            <label className="flex items-center gap-2 pb-2 text-xs text-muted-foreground">
-              <input type="checkbox" checked={refundPartial} onChange={(event) => setRefundPartial(event.target.checked)} />
+            <label htmlFor="refund-partial" className="flex items-center gap-2 pb-2 text-xs text-muted-foreground">
+              <Checkbox id="refund-partial" checked={refundPartial} onCheckedChange={(next) => setRefundPartial(next === true)} />
               Refund what the balance can cover
             </label>
           </div>
