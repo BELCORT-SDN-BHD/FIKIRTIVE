@@ -21,9 +21,11 @@
  *      一条正则围栏,而补一个洞就换一种写法绕过去。语法树把这四件一次答完。
  *      作用域按**块**分(不只按函数),所以块内同名声明不会遮蔽块外的写点;动作身份是
  *      **(模块, 导出名)** 并做**跨文件传递闭包**,所以 UI → wrapper/barrel → 写点模块
- *      这条链整支都在围栏里,而不是只看直接来自写点文件的 import。模块键还归一了
- *      目录入口(`lib/foo/index.ts` 与 `@/lib/foo` 是同一个模块)与具名重导出,
- *      这两种写法仓库里都有现成的。
+ *      这条链整支都在围栏里,而不是只看直接来自写点文件的 import。传播面是**全部产品
+ *      源码目录**(会自己长,新开一个 `hooks/` 不需要有人记得来改这里),而登记表只收
+ *      `lib/**`。模块键归一了目录入口(`lib/foo/index.ts` 与 `@/lib/foo` 同一个模块)、
+ *      默认导出(统一记成 `模块#default`)与具名重导出;调用点除裸标识符外,还认
+ *      `ns.upload()` 与静态说明符的动态 import。上面这些写法仓库里多数都有现成的。
  *      §7.3 明写「施工首件事用 grep 复核入口清单」—— 手抄的清单只在抄它的那一天是对的,
  *      而漏挂一个入口的代价,是商家被收一笔他从没在任何屏幕上见过的钱(顾问复审 2026-09-02
  *      就是这样抓到 Canvas 拖放与裁剪保存两个漏网入口的)。EditDesk 单列豁免:只收音频,
@@ -79,7 +81,15 @@ function copyLines(src: string): string[] {
 
 /** 扫描要跳过的目录。测试与夹具里到处都是假的写点和假的动作调用 —— 把它们算进普查,
  *  围栏就会被自己的样例数据喂出一堆不存在的计费路径,然后逼人去更新登记表。 */
-const SKIPPED_DIRECTORIES = new Set(["node_modules", "__tests__", "__mocks__", "__fixtures__", "fixtures"]);
+const SKIPPED_DIRECTORIES = new Set([
+  "node_modules",
+  "__tests__",
+  "__mocks__",
+  "__fixtures__",
+  "fixtures",
+  "public",
+  ".next",
+]);
 
 /** 测试文件本身(与目录无关,`foo.test.ts` 摆在源码目录里一样跳过)。 */
 const TEST_FILE = /\.(?:test|spec)\.tsx?$/;
@@ -95,9 +105,24 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** 普查的扫描面:动作定义在 `lib`,入口在 `app` / `components`。 */
+/**
+ * `apps/web` 下的**全部产品源码目录**,当场列出来而不是写死三个。
+ *
+ * 写死 `lib` / `app` / `components` 会留下一个大洞:一次再常规不过的「把上传逻辑抽成
+ * `hooks/useUpload.ts`」就能让整条链跑到扫描面之外 —— 那个文件不在任何一张表里,
+ * UI 调它的包装函数计零,三张表纹丝不动,静默全绿。目录是长出来的,所以这里得会长。
+ */
+function productDirectories(): string[] {
+  return readdirSync(WEB_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !SKIPPED_DIRECTORIES.has(entry.name) && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .filter((dir) => sourceFiles(dir).length > 0)
+    .sort();
+}
+
+/** 普查的扫描面:`apps/web` 下所有产品源码。 */
 function scannedSourceFiles(): string[] {
-  return sourceFiles("lib").concat(sourceFiles("app"), sourceFiles("components"));
+  return productDirectories().flatMap((dir) => sourceFiles(dir));
 }
 
 // ══════════════════ 围栏用 TypeScript 编译器解析,不用正则 ══════════════════
@@ -165,21 +190,38 @@ function isUploadWrite(node: ts.Node): boolean {
   return literalTextOf(unwrap(node.initializer)) === "UPLOAD";
 }
 
-/** 文件对外暴露的名字 → 它在文件内的本地名。`export { a as b }` 记成 b → a。 */
+/**
+ * 文件对外暴露的名字 → 它在文件内的本地名。
+ *
+ * `default` 也是一个导出名,而且是最容易被漏掉的那个:`export default function upload(){}`
+ * 对外叫 `default`(导入方写 `import anything from "…"`),照 `upload` 记就跟上游对不上,
+ * `export { default as x } from "…"` 这条边永远接不到东西。四种写法统一成键 `模块#default`:
+ *   · `export default function upload(){}`      · `export default upload;`
+ *   · `export { x as default }`                 · `export { default as x } from "…"`(在 reexportEdges)
+ * 已知边界:`export default function(){}` / `export default () => {}` 匿名默认导出没有本地名可对。
+ */
 function exportedNames(sf: ts.SourceFile): Map<string, string> {
   const out = new Map<string, string>();
   for (const st of sf.statements) {
-    const exported =
-      ts.canHaveModifiers(st) &&
-      (ts.getModifiers(st) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-    if (ts.isFunctionDeclaration(st) && exported && st.name) out.set(st.name.text, st.name.text);
+    const modifiers = ts.canHaveModifiers(st) ? ts.getModifiers(st) ?? [] : [];
+    const exported = modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+    const isDefault = modifiers.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+    if (ts.isFunctionDeclaration(st) && exported && st.name) {
+      out.set(isDefault ? "default" : st.name.text, st.name.text);
+    }
     if (ts.isVariableStatement(st) && exported) {
       for (const d of st.declarationList.declarations) {
         if (ts.isIdentifier(d.name)) out.set(d.name.text, d.name.text);
       }
     }
-    if (ts.isExportDeclaration(st) && st.exportClause && ts.isNamedExports(st.exportClause)) {
-      for (const el of st.exportClause.elements) out.set(el.name.text, (el.propertyName ?? el.name).text);
+    if (ts.isExportAssignment(st) && !st.isExportEquals && ts.isIdentifier(st.expression)) {
+      out.set("default", st.expression.text);
+    }
+    if (ts.isExportDeclaration(st) && !st.isTypeOnly && st.exportClause && ts.isNamedExports(st.exportClause)) {
+      for (const el of st.exportClause.elements) {
+        if (el.isTypeOnly) continue;
+        out.set(el.name.text, (el.propertyName ?? el.name).text);
+      }
     }
   }
   return out;
@@ -255,7 +297,19 @@ interface CallRecord {
   scope: number;
   name: string;
   member: boolean;
+  /** `ns.upload()` 里的 `ns` —— 用来分辨「命名空间导入的动作」与「本文件的对象方法」。 */
+  objectName?: string;
 }
+
+/** 一个文件里「哪些名字调用起来等于调了已知动作」。 */
+interface ImportedActions {
+  /** 裸标识符:`import { upload }` / `import upload from` / 别名。 */
+  locals: Set<string>;
+  /** 命名空间本地名 → 该模块里已知是动作的导出名(`import * as ns` / `await import()`)。 */
+  namespaces: Map<string, Set<string>>;
+}
+
+const NO_IMPORTED_ACTIONS: ImportedActions = { locals: new Set(), namespaces: new Map() };
 
 /**
  * 一个模块的「谁会落 UPLOAD 素材」闭包。
@@ -276,15 +330,19 @@ interface CallRecord {
  *   3. 动态调用:`obj[nameVar]()`、`eval`、`Function`。
  *   4. 跨文件同名成员:`obj.m()` 的名字对齐只在本文件内做,不会跨文件乱连。
  *   5. 星号重导出 `export * from "…"`:星号没有名字可对,跟不了。**具名**重导出
- *      (`export { a as b } from "…"`,以及 import 之后再 `export { a }`)已经认了,
- *      见 `reexportEdges`。
+ *      (`export { a as b } from "…"`、import 之后再 `export { a }`、
+ *      `export { default as a } from "…"`)都已经认了,见 `reexportEdges`。
  *
- * 这五条各有一条负向断言钉着(「闭包边界逐条对表」那条测试),说了认不到就得真的认不到 ——
- * 哪天某条被意外覆盖,那里会红,该更新的是这份清单,不是默默删掉断言。
+ * 导入/导出侧另有三条,列在 `moduleBindingsOf`:动态说明符不是静态字符串、把命名空间解构后
+ * 再调用、匿名默认导出配不出键(但它仍会被**写点普查**抓住,不会整条静默)。
+ *
+ * 这八条各有一条负向断言钉着(「闭包边界逐条对表」与「导入/导出的已知边界」两条测试),
+ * 说了认不到就得真的认不到 —— 哪天某条被意外覆盖,那里会红,该更新的是这份清单,
+ * 不是默默删掉断言。
  */
 function uploadWritersOf(
   sf: ts.SourceFile,
-  knownActionLocals: ReadonlySet<string>,
+  imported: ImportedActions,
 ): { hasWritePoint: boolean; exportedWriters: string[] } {
   const scopes: Scope[] = [{ parent: null, decls: new Map() }];
   const nodes: FnNode[] = [];
@@ -324,7 +382,14 @@ function uploadWritersOf(
       if (ts.isIdentifier(callee)) {
         callRecords.push({ from: childFn, scope: childScope, name: callee.text, member: false });
       } else if (ts.isPropertyAccessExpression(callee)) {
-        callRecords.push({ from: childFn, scope: childScope, name: callee.name.text, member: true });
+        const object = unwrap(callee.expression);
+        callRecords.push({
+          from: childFn,
+          scope: childScope,
+          name: callee.name.text,
+          member: true,
+          objectName: ts.isIdentifier(object) ? object.text : undefined,
+        });
       }
     }
     ts.forEachChild(node, (child) => visit(child, childScope, childFn));
@@ -348,12 +413,20 @@ function uploadWritersOf(
   });
   const edges = new Map<number, Set<number>>();
   for (const record of callRecords) {
+    // `ns.upload()`:命名空间绑定优先于本文件的同名成员 —— 它指的是另一个模块的导出。
+    if (record.member && record.objectName) {
+      const viaNamespace = imported.namespaces.get(record.objectName);
+      if (viaNamespace?.has(record.name)) {
+        writers.add(record.from);
+        continue;
+      }
+    }
     const targets = record.member
       ? members.get(record.name) ?? []
       : resolveLexical(record.scope, record.name);
     if (targets.length === 0) {
       // 本文件里找不到这个名字 —— 如果它是 import 进来的已知动作,这一支就是 writer。
-      if (!record.member && knownActionLocals.has(record.name)) writers.add(record.from);
+      if (!record.member && imported.locals.has(record.name)) writers.add(record.from);
       continue;
     }
     let outgoing = edges.get(record.from);
@@ -442,69 +515,135 @@ function actionKey(moduleId: string, exportName: string): string {
 
 /**
  * 普查的输入面。真实项目从磁盘读,夹具从内存读 —— **同一条链路,不是两套实现**。
- * 夹具走的是 `computeCensus` → `knownActionLocalsOf` → 模块键 → 不动点 → `countCallSites`
+ * 夹具走的是 `computeCensus` → `importedActionsOf` → 模块键 → 不动点 → `countCallSites`
  * 的完整流程,而不是手工把「已知动作」注进去;注进去的夹具只能证明最后一格,
  * 证不了前面那几格接得上。
  */
 interface Sources {
   /** 写点扫描面:哪些文件里可能有 `source: "UPLOAD"`。 */
   allFiles: string[];
-  /**
-   * 跨文件闭包的迭代面 —— **只有 `lib/**`**,不含 UI。
-   *
-   * 这不是为了省时间,是语义:UI 组件调了上传动作是**入口**,不是**动作**。
-   * 把 `components/` 也放进闭包,`FlowCanvas` 这种组件会因为「调了 uploadReference」
-   * 而自己变成一个动作,动作表里就混进一堆组件名 —— 动作表是「谁会落 UPLOAD 素材」,
-   * 组件属于「谁该挂披露」,两张表混了,两边都读不懂。
-   */
+  /** 跨文件闭包的迭代面 —— **全部产品源码**,包括将来才长出来的目录(hooks/ 之类)。 */
   moduleFiles: string[];
   /** UI 入口候选。 */
   entryFiles: string[];
   parse(rel: string): ts.SourceFile;
 }
 
-/** 一个文件里 `import { a as b } from "…"` 的绑定:本地名 → (源模块, 原名)。类型导入不算。 */
-function importBindings(file: string, sf: ts.SourceFile): Map<string, { module: string; name: string }> {
-  const bindings = new Map<string, { module: string; name: string }>();
+/** 一个文件里的模块绑定:本地名 → 它到底指向哪个模块的哪个导出。 */
+interface ModuleBindings {
+  /** 裸标识符绑定。`import { a as b }` → b→(m,a);`import x from` → x→(m,"default")。 */
+  named: Map<string, { module: string; name: string }>;
+  /** 命名空间绑定。`import * as ns` / `const m = await import()` / `import().then(m => …)`。 */
+  namespaces: Map<string, string>;
+}
+
+/** `import("…")` / `await import("…")` 的目标模块(说明符必须是静态字符串)。 */
+function dynamicImportModuleOf(file: string, expr: ts.Expression | undefined): string | null {
+  if (!expr) return null;
+  let inner = unwrap(expr);
+  if (ts.isAwaitExpression(inner)) inner = unwrap(inner.expression);
+  if (!ts.isCallExpression(inner) || inner.expression.kind !== ts.SyntaxKind.ImportKeyword) return null;
+  const arg = inner.arguments[0];
+  return arg && ts.isStringLiteral(arg) ? resolveSpecifier(file, arg.text) : null;
+}
+
+/**
+ * 收集一个文件的模块绑定。
+ *
+ * 静态 import 只看 statements 就够;动态 import 得走全树,两种常见形态各认一种:
+ *   · `const m = await import("./actions"); m.upload();`
+ *   · `import("./actions").then((m) => m.upload());`
+ * 命名空间绑定按**文件**记(不按作用域)—— 这会多连边不会少连边,与成员对齐同一个方向。
+ * **已知边界(穷举)**:
+ *   1. 说明符不是静态字符串的动态 import(`import(pathVar)`)—— 解析器不知道它指向哪。
+ *   2. 把命名空间解构或转手(`const { upload } = await import(…)`、`const f = ns.upload`)。
+ *   3. 匿名默认导出(`export default function(){}` / `export default () => {}`)没有本地名
+ *      可对,配不出 `#default` 键 —— 但那个文件仍会被**写点普查**抓住,不会整条静默。
+ *   4. `require()` / `module.exports` 这类 CJS 写法(仓库全 ESM,今天不存在)。
+ * 前三条各有一条负向断言钉着(「导入/导出的已知边界」那条测试)。
+ */
+function moduleBindingsOf(file: string, sf: ts.SourceFile): ModuleBindings {
+  const named = new Map<string, { module: string; name: string }>();
+  const namespaces = new Map<string, string>();
+
   for (const st of sf.statements) {
     if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
     if (st.importClause?.isTypeOnly) continue;
     const moduleId = resolveSpecifier(file, st.moduleSpecifier.text);
     if (!moduleId) continue;
-    const named = st.importClause?.namedBindings;
-    if (!named || !ts.isNamedImports(named)) continue;
-    for (const el of named.elements) {
+    const clause = st.importClause;
+    if (!clause) continue;
+    if (clause.name) named.set(clause.name.text, { module: moduleId, name: "default" });
+    const bindings = clause.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      namespaces.set(bindings.name.text, moduleId);
+      continue;
+    }
+    for (const el of bindings.elements) {
       if (el.isTypeOnly) continue;
-      bindings.set(el.name.text, { module: moduleId, name: (el.propertyName ?? el.name).text });
+      named.set(el.name.text, { module: moduleId, name: (el.propertyName ?? el.name).text });
     }
   }
-  return bindings;
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const moduleId = dynamicImportModuleOf(file, node.initializer);
+      if (moduleId) namespaces.set(node.name.text, moduleId);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const access = node.expression;
+      if (access.name.text === "then") {
+        const moduleId = dynamicImportModuleOf(file, access.expression);
+        const handler = node.arguments[0];
+        if (moduleId && handler && (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler))) {
+          const param = handler.parameters[0];
+          if (param && ts.isIdentifier(param.name)) namespaces.set(param.name.text, moduleId);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+
+  return { named, namespaces };
 }
 
-/** 这个文件从**已知动作模块**import 进来的本地名(含 `as` 别名)。 */
-function knownActionLocalsOf(file: string, sf: ts.SourceFile, actions: ReadonlySet<string>): Set<string> {
+/** 这个文件里「调用起来等于调了已知动作」的名字。 */
+function importedActionsOf(file: string, sf: ts.SourceFile, actions: ReadonlySet<string>): ImportedActions {
+  const bindings = moduleBindingsOf(file, sf);
   const locals = new Set<string>();
-  for (const [local, origin] of importBindings(file, sf)) {
+  for (const [local, origin] of bindings.named) {
     if (actions.has(actionKey(origin.module, origin.name))) locals.add(local);
   }
-  return locals;
+  const namespaces = new Map<string, Set<string>>();
+  for (const [local, moduleId] of bindings.namespaces) {
+    const prefix = `${moduleId}#`;
+    const exportNames = new Set<string>();
+    for (const key of actions) {
+      if (key.startsWith(prefix)) exportNames.add(key.slice(prefix.length));
+    }
+    if (exportNames.size > 0) namespaces.set(local, exportNames);
+  }
+  return { locals, namespaces };
 }
 
 /**
  * 具名重导出的**别名边**:`(本模块#导出名) ← (源模块#原名)`。
  *
- * 两种写法都要认,而且仓库里两种都有现成的:
+ * 三种写法都要认,仓库里前两种都有现成的:
  *   · `export { upload as wrap } from "./actions"` —— 带 specifier(`lib/rate-limit-gates.ts`);
- *   · `import { upload } from "./actions"; export { upload };` —— 不带 specifier,
- *     按本地导入绑定解析(`lib/email/index.ts` 是同一族的 barrel 写法)。
- * barrel 转出去的动作还是同一个动作;不认这条边,UI 从 barrel 导入就整支漏报。
- * `export * from "…"` 维持边界:星号没有名字可对,见闭包边界清单第 5 条。
+ *   · `import { upload } from "./actions"; export { upload };` —— 按本地导入绑定解析
+ *     (`lib/email/index.ts` 是同一族的 barrel 写法);
+ *   · `export { default as upload } from "./actions"` —— 上游那一头得真的产出 `#default` 键,
+ *     否则这条边表面在、实际永远接不到东西(见 exportedNames 的 default 处理)。
+ * `export * from "…"` 维持边界:星号没有名字可对,见闭包边界清单。
  */
 function reexportEdges(
   file: string,
   sf: ts.SourceFile,
 ): { exported: string; from: { module: string; name: string } }[] {
-  const bindings = importBindings(file, sf);
+  const bindings = moduleBindingsOf(file, sf).named;
   const edges: { exported: string; from: { module: string; name: string } }[] = [];
   for (const st of sf.statements) {
     if (!ts.isExportDeclaration(st) || st.isTypeOnly) continue;
@@ -531,19 +670,23 @@ function reexportEdges(
  * 上传动作的**跨文件传递闭包**,迭代到不动点。
  *
  *   第 0 轮:每个写点文件里的导出 writer = 动作。
- *   第 n 轮:任何模块,只要 ①具名重导出了一个已知动作,或者 ②import 了已知动作且某个
- *           导出函数(经模块内闭包)调到了它 —— 那个导出就成为新动作。
+ *   第 n 轮:任何模块,只要 ①具名重导出了一个已知动作,或者 ②import 了已知动作(裸标识符、
+ *           默认导入、命名空间、静态说明符的动态 import 都算)且某个导出函数经模块内闭包
+ *           调到了它 —— 那个导出就成为新动作。
  *
- * 上一版只认「直接来自写点文件的 import」,于是 UI → barrel/wrapper → 写点模块这条链
- * 整支漏报:barrel 的导出压根不会被认成入口。
+ * **传播面 = 全部产品源码目录**,不是只有 `lib/**`。只在 lib 里传播会留一个洞:
+ * 一次常规的「抽成 `hooks/useUpload.ts`」或「放个 `components/upload-helper.ts`」就能让
+ * 包装函数落在传播面之外,UI 调它计零、三张表纹丝不动。
+ *
+ * **但登记表只收 `lib/**` 的动作**(见 `uploadActionKeys`):UI 组件调了上传动作是**入口**,
+ * 不是**动作**。两者混在一张表里,动作表会长出一串组件名,两边都读不懂。
  */
 function computeCensus(src: Sources): { writePointFiles: string[]; actions: Set<string> } {
   const writePointFiles: string[] = [];
   const actions = new Set<string>();
-  const noImportedActions: ReadonlySet<string> = new Set();
 
   for (const file of src.allFiles) {
-    const { hasWritePoint, exportedWriters } = uploadWritersOf(src.parse(file), noImportedActions);
+    const { hasWritePoint, exportedWriters } = uploadWritersOf(src.parse(file), NO_IMPORTED_ACTIONS);
     if (!hasWritePoint) continue;
     writePointFiles.push(file);
     for (const name of exportedWriters) actions.add(actionKey(moduleIdOf(file), name));
@@ -563,24 +706,32 @@ function computeCensus(src: Sources): { writePointFiles: string[]; actions: Set<
       for (const edge of reexportEdges(file, sf)) {
         if (actions.has(actionKey(edge.from.module, edge.from.name))) add(edge.exported);
       }
-      const locals = knownActionLocalsOf(file, sf, actions);
-      if (locals.size === 0) continue;
-      for (const name of uploadWritersOf(sf, locals).exportedWriters) add(name);
+      const imported = importedActionsOf(file, sf, actions);
+      if (imported.locals.size === 0 && imported.namespaces.size === 0) continue;
+      for (const name of uploadWritersOf(sf, imported).exportedWriters) add(name);
     }
   }
   return { writePointFiles: writePointFiles.sort(), actions };
 }
 
 /** 一个 UI 文件里对上传动作的**调用点数量**。
- *  注释与字符串里出现同名文本不会计数(它们根本不是 CallExpression),`await f(...)` 会计数。
+ *  裸标识符调用与 `ns.upload()` 都计;注释与字符串里出现同名文本不会计数(它们不是
+ *  CallExpression);`await f(...)` 会计数。
  *  已知边界:把动作传给变量或回调再间接调用,这里数不到 —— 与写点侧同一条边界。 */
 function countCallSites(src: Sources, file: string, actions: ReadonlySet<string>): number {
   const sf = src.parse(file);
-  const locals = knownActionLocalsOf(file, sf, actions);
-  if (locals.size === 0) return 0;
+  const imported = importedActionsOf(file, sf, actions);
+  if (imported.locals.size === 0 && imported.namespaces.size === 0) return 0;
   let count = 0;
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && locals.has(node.expression.text)) count++;
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      if (ts.isIdentifier(callee) && imported.locals.has(callee.text)) count++;
+      else if (ts.isPropertyAccessExpression(callee)) {
+        const object = unwrap(callee.expression);
+        if (ts.isIdentifier(object) && imported.namespaces.get(object.text)?.has(callee.name.text)) count++;
+      }
+    }
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(sf, visit);
@@ -593,7 +744,7 @@ function virtualSources(files: Record<string, string>): Sources {
   const cache = new Map<string, ts.SourceFile>();
   return {
     allFiles: all,
-    moduleFiles: all.filter((f) => f.startsWith("lib/")),
+    moduleFiles: all,
     entryFiles: all.filter((f) => f.startsWith("app/") || f.startsWith("components/")),
     parse(rel) {
       let cached = cache.get(rel);
@@ -620,7 +771,7 @@ function realSources(): Sources {
   if (realSourcesCache) return realSourcesCache;
   return (realSourcesCache = {
     allFiles: scannedSourceFiles(),
-    moduleFiles: sourceFiles("lib"),
+    moduleFiles: scannedSourceFiles(),
     entryFiles: sourceFiles("app").concat(sourceFiles("components")),
     parse: parseFile,
   });
@@ -636,10 +787,12 @@ function writePointFiles(): string[] {
   return actionCensus().writePointFiles;
 }
 
-/** 会落 image/video UPLOAD 素材的动作,`模块#导出名`,从语法树推导,没有任何手抄名单。 */
+/** **登记表**收的动作:`模块#导出名`,从语法树推导,没有任何手抄名单。
+ *  只取 `lib/**` —— 传播集里还有 UI 侧的包装函数,那些属于「谁该挂披露」不属于「动作」。 */
 function uploadActionKeys(): string[] {
-  return [...actionCensus().actions].sort();
+  return [...actionCensus().actions].filter((key) => key.startsWith("lib/")).sort();
 }
+
 
 function callSiteCount(file: string): number {
   return countCallSites(realSources(), file, actionCensus().actions);
@@ -678,14 +831,74 @@ const MOUNTS = [
   ["components/otto/stuff/AddAssetDialog.tsx", "素材库的多图上传", 2],
 ] as const;
 
-/** 明示豁免。豁免要有理由,而且理由要能当场核 —— 不写理由的豁免就是漏挂。
- *  豁免也数调用点:EditDesk 今天只收音频,它哪天多接一个收图的入口,这里同样会红。 */
-const EXEMPT: Record<string, { reason: string; callSites: number }> = {
-  "components/otto/edit/EditDesk.tsx": {
-    reason: "只收音频;audio 不在收费的三类里(§7.3 单列)",
+/** 取一个具名函数的源码片段(豁免 guard 要核的是**处理函数**,不是整份文件)。 */
+function functionSourceOf(file: string, name: string): string | null {
+  const sf = parseFile(file);
+  let found: string | null = null;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (functionDeclarationOf(node)?.name === name) {
+      found = sf.text.slice(node.getStart(sf), node.end);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return found;
+}
+
+/** 仓库根(WEB_ROOT 是 apps/web)。豁免要引规格,规格得真的读得到。 */
+const REPO_ROOT = path.join(WEB_ROOT, "..", "..");
+const specText = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
+
+/**
+ * 明示豁免。
+ *
+ * 上一版的豁免只验「理由字符串够长」—— 那等于没验:一句编得好听的话照样过。
+ * 现在每条豁免带三样东西,而且**都要能当场执行**:
+ *   · `spec` 指向规格里真正写了这条豁免的位置,测试去读那一行,读不到就红;
+ *   · `guard()` 断言豁免的**前提在代码里仍然成立**,而不是当年成立过;
+ *   · `callSites` 钉住调用点数量,它一变就说明这个入口的形状变了。
+ */
+interface Exemption {
+  file: string;
+  reason: string;
+  /** 规格里的出处,`路径#锚点`。 */
+  spec: string;
+  callSites: number;
+  guard: () => void;
+}
+
+const EXEMPTIONS: Exemption[] = [
+  {
+    file: "components/otto/edit/EditDesk.tsx",
+    // 如实口径:规格说「现仅收 audio」,而代码里**只有** <Input accept="audio/*"> 这个
+    // 选择器提示 —— HTML 的 accept 是给文件选择框的过滤建议,不是校验:商家在系统弹窗里
+    // 把筛选改成「所有文件」就能选一张图,uploadMusic 不看 MIME 直接送去 finalize。
+    // 所以这条豁免今天靠的是「入口意图」,不是「类型守卫」。原样写出来,不粉饰。
+    reason:
+      "只收音频;audio 不在收费的三类里(§7.3 单列)。⚠️仅 accept=\"audio/*\" 选择器提示,uploadMusic 无 MIME/类型守卫 —— 豁免建立在入口意图上,不是强制校验",
+    spec: "docs/specs/money-engine.md#7.3-A9-素材理解计费面",
     callSites: 1,
+    guard: () => {
+      const src = codeOf("components/otto/edit/EditDesk.tsx");
+      expect(src, "EditDesk 的文件选择器不再限定 audio/*,这条豁免的前提没了").toContain(
+        'accept="audio/*"',
+      );
+      const handler = functionSourceOf("components/otto/edit/EditDesk.tsx", "uploadMusic");
+      expect(handler, "找不到 uploadMusic —— 豁免要核对的处理函数变了,豁免得重新判").not.toBeNull();
+      expect(
+        handler!,
+        "uploadMusic 仍然直接把选到的文件送去 finalize:如果这里已经加了类型守卫,请把 reason 里的 ⚠️ 改成更强的说法",
+      ).toContain("finalizeCandidateUploads");
+      const hasTypeGuard = /\.type\b|mime|MIME|startsWith\(\s*["']audio/.test(handler!);
+      expect(
+        hasTypeGuard,
+        "uploadMusic 加了类型守卫 —— 这是好事,但 reason 里「无类型守卫」那句话现在是假的,改掉它",
+      ).toBe(false);
+    },
   },
-};
+];
 
 describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
   const markup = renderToStaticMarkup(createElement(UnderstandingCostHint));
@@ -759,10 +972,10 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
   });
 
   /** 用一段合成源码跑一遍模块闭包 —— 夹具比探针值钱:探针跑完就没了,夹具会一直在。 */
-  const writersOf = (source: string, imported: string[] = []): string[] =>
+  const writersOf = (source: string, importedLocals: string[] = []): string[] =>
     uploadWritersOf(
       ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS),
-      new Set(imported),
+      { locals: new Set(importedLocals), namespaces: new Map() },
     ).exportedWriters.sort();
 
   it("块级作用域:块里的同名声明不该遮蔽块外的写点(否则外层 writer 整支漏报)", () => {
@@ -811,10 +1024,15 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
   const censusOf = (files: Record<string, string>) => {
     const project = virtualSources(files);
     const census = computeCensus(project);
+    const all = [...census.actions].sort();
     return {
-      actions: [...census.actions].sort(),
+      /** 传播集全量(含 UI 侧包装)—— 入口计数用的就是它。 */
+      propagated: all,
+      /** 登记表口径:只有 `lib/**` 的动作。UI 侧包装属于「谁该挂披露」,不进动作表。 */
+      registered: all.filter((key) => key.startsWith("lib/")),
       writePoints: census.writePointFiles,
       count: (file: string) => countCallSites(project, file, census.actions),
+      entries: project.entryFiles.filter((f) => countCallSites(project, f, census.actions) > 0),
     };
   };
 
@@ -824,7 +1042,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       "lib/wrapper.ts": 'import { upload } from "./actions";\nexport function wrap(p) { return upload(p); }',
       "components/Ui.tsx": 'import { wrap } from "@/lib/wrapper";\nexport function Ui() { return () => wrap("p"); }',
     });
-    expect(result.actions, "包装函数没有继承上游动作的身份 —— 跨文件闭包断了").toEqual([
+    expect(result.registered, "包装函数没有继承上游动作的身份 —— 跨文件闭包断了").toEqual([
       "lib/actions#upload",
       "lib/wrapper#wrap",
     ]);
@@ -838,7 +1056,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       "lib/foo/index.ts": 'export function upload(p) { return { id: p, source: "UPLOAD" }; }',
       "components/Ui.tsx": 'import { upload } from "@/lib/foo";\nexport function Ui() { return () => upload("p"); }',
     });
-    expect(result.actions, "lib/foo/index.ts 的动作键没有归一到 lib/foo").toEqual(["lib/foo#upload"]);
+    expect(result.registered, "lib/foo/index.ts 的动作键没有归一到 lib/foo").toEqual(["lib/foo#upload"]);
     expect(result.count("components/Ui.tsx"), "从目录入口导入的调用没被计到").toBe(1);
   });
 
@@ -848,7 +1066,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       "lib/barrel.ts": 'export { upload as wrap } from "./actions";',
       "components/Ui.tsx": 'import { wrap } from "@/lib/barrel";\nexport function Ui() { return () => wrap("p"); }',
     });
-    expect(viaFrom.actions, "`export { x as y } from` 的别名边没接上").toContain("lib/barrel#wrap");
+    expect(viaFrom.registered, "`export { x as y } from` 的别名边没接上").toContain("lib/barrel#wrap");
     expect(viaFrom.count("components/Ui.tsx"), "从 barrel 导入的调用没被计到").toBe(1);
 
     const viaLocal = censusOf({
@@ -856,8 +1074,137 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       "lib/barrel.ts": 'import { upload } from "./actions";\nexport { upload };',
       "components/Ui.tsx": 'import { upload } from "@/lib/barrel";\nexport function Ui() { return () => upload("p"); }',
     });
-    expect(viaLocal.actions, "`import 后 export { x }` 的绑定边没接上").toContain("lib/barrel#upload");
+    expect(viaLocal.registered, "`import 后 export { x }` 的绑定边没接上").toContain("lib/barrel#upload");
     expect(viaLocal.count("components/Ui.tsx"), "从 barrel 导入的调用没被计到").toBe(1);
+  });
+
+  /** 写点模块的最小样子:一个导出函数,函数体里落一条 UPLOAD 素材。 */
+  const WRITE_POINT_MODULE = 'export function upload(p) { return { id: p, source: "UPLOAD" }; }';
+
+  it("传播面覆盖全部产品目录:抽到 hooks/ 的包装不该让整条链跑出围栏", () => {
+    // 「把上传逻辑抽成 hooks/useUpload.ts」是一次再常规不过的重构。传播面写死 lib/** 时,
+    // 这个文件不在任何一张表里,UI 调 uploadImage() 计零,三张表纹丝不动 —— 静默全绿。
+    const result = censusOf({
+      "lib/actions.ts": WRITE_POINT_MODULE,
+      "hooks/useUpload.ts": 'import { upload } from "@/lib/actions";\nexport function uploadImage(p) { return upload(p); }',
+      "components/Ui.tsx": 'import { uploadImage } from "@/hooks/useUpload";\nexport function Ui() { return () => uploadImage("p"); }',
+    });
+    expect(result.count("components/Ui.tsx"), "经 hooks/ 包装的调用没被计成入口").toBe(1);
+    expect(result.entries, "Ui.tsx 没进入口表").toContain("components/Ui.tsx");
+    expect(result.propagated, "hooks/ 的包装没进传播集").toContain("hooks/useUpload#uploadImage");
+    expect(result.registered, "hooks/ 的包装不该进登记表(它不是 lib/** 的动作)").toEqual([
+      "lib/actions#upload",
+    ]);
+  });
+
+  it("传播面覆盖 components/ 内的包装:helper 算入口,但不混进动作登记表", () => {
+    const result = censusOf({
+      "lib/actions.ts": WRITE_POINT_MODULE,
+      "components/helper.ts": 'import { upload } from "@/lib/actions";\nexport function uploadImage(p) { return upload(p); }',
+      "components/Ui.tsx": 'import { uploadImage } from "./helper";\nexport function Ui() { return () => uploadImage("p"); }',
+    });
+    expect(result.count("components/Ui.tsx"), "经同目录 helper 的调用没被计成入口").toBe(1);
+    expect(result.count("components/helper.ts"), "helper 自己直接调动作,它也是入口").toBe(1);
+    expect(result.registered, "components/ 的包装混进了动作登记表").toEqual(["lib/actions#upload"]);
+  });
+
+  it("默认导出四种写法都归到 `模块#default`,默认导入也认", () => {
+    const viaDeclaration = censusOf({
+      "lib/actions.ts": 'export default function upload(p) { return { id: p, source: "UPLOAD" }; }',
+      "components/Ui.tsx": 'import upload from "@/lib/actions";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(viaDeclaration.registered, "`export default function upload(){}` 没记成 #default").toEqual([
+      "lib/actions#default",
+    ]);
+    expect(viaDeclaration.count("components/Ui.tsx"), "默认导入的调用没被计到").toBe(1);
+
+    const viaAssignment = censusOf({
+      "lib/actions.ts": 'function upload(p) { return { id: p, source: "UPLOAD" }; }\nexport default upload;',
+      "components/Ui.tsx": 'import upload from "@/lib/actions";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(viaAssignment.registered, "`export default upload;` 没记成 #default").toContain(
+      "lib/actions#default",
+    );
+    expect(viaAssignment.count("components/Ui.tsx")).toBe(1);
+
+    const viaNamedDefault = censusOf({
+      "lib/actions.ts": 'function upload(p) { return { id: p, source: "UPLOAD" }; }\nexport { upload as default };',
+    });
+    expect(viaNamedDefault.registered, "`export { x as default }` 没记成 #default").toContain(
+      "lib/actions#default",
+    );
+
+    const viaBarrel = censusOf({
+      "lib/actions.ts": 'export default function upload(p) { return { id: p, source: "UPLOAD" }; }',
+      "lib/barrel.ts": 'export { default as upload } from "./actions";',
+      "components/Ui.tsx": 'import { upload } from "@/lib/barrel";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(viaBarrel.registered, "`export { default as x } from` 这条边接不到 #default").toContain(
+      "lib/barrel#upload",
+    );
+    expect(viaBarrel.count("components/Ui.tsx"), "经 default barrel 的调用没被计到").toBe(1);
+  });
+
+  it("命名空间导入与动态 import 的调用点都要计(裸标识符之外的两种常见写法)", () => {
+    const namespace = censusOf({
+      "lib/actions.ts": WRITE_POINT_MODULE,
+      "components/Ui.tsx": 'import * as actions from "@/lib/actions";\nexport function Ui() { return () => actions.upload("p"); }',
+    });
+    expect(namespace.count("components/Ui.tsx"), "`import * as ns` 后的 ns.upload() 没被计到").toBe(1);
+
+    const awaited = censusOf({
+      "lib/actions.ts": WRITE_POINT_MODULE,
+      "components/Ui.tsx":
+        'export async function Ui() { const m = await import("@/lib/actions"); return m.upload("p"); }',
+    });
+    expect(awaited.count("components/Ui.tsx"), "`const m = await import()` 后的 m.upload() 没被计到").toBe(1);
+
+    const thenable = censusOf({
+      "lib/actions.ts": WRITE_POINT_MODULE,
+      "components/Ui.tsx":
+        'export function Ui() { return import("@/lib/actions").then((m) => m.upload("p")); }',
+    });
+    expect(thenable.count("components/Ui.tsx"), "`import().then(m => m.upload())` 没被计到").toBe(1);
+  });
+
+  it("导入/导出的已知边界:动态说明符、解构命名空间、匿名默认导出(认不到=预期)", () => {
+    const dynamicSpecifier = censusOf({
+      "lib/actions.ts": WRITE_POINT_MODULE,
+      "components/Ui.tsx":
+        'const where = "@/lib/actions";\nexport async function Ui() { const m = await import(where); return m.upload("p"); }',
+    });
+    expect(dynamicSpecifier.count("components/Ui.tsx"), "边界:说明符不是静态字符串的动态 import").toBe(0);
+
+    const destructured = censusOf({
+      "lib/actions.ts": WRITE_POINT_MODULE,
+      "components/Ui.tsx":
+        'export async function Ui() { const { upload } = await import("@/lib/actions"); return upload("p"); }',
+    });
+    expect(destructured.count("components/Ui.tsx"), "边界:把命名空间解构后再调用").toBe(0);
+
+    // 匿名默认导出没有本地名可对,配不出 #default 键 —— 但它仍是**写点文件**,
+    // 写点普查那一层照样会红,不会整条静默。
+    const anonymous = censusOf({
+      "lib/actions.ts": 'export default function (p) { return { id: p, source: "UPLOAD" }; }',
+    });
+    expect(anonymous.registered, "边界:匿名默认导出配不出动作键").toEqual([]);
+    expect(anonymous.writePoints, "匿名默认导出仍必须被写点普查抓住").toEqual(["lib/actions.ts"]);
+  });
+
+  it("目录入口的两种显式写法也归一(`@/lib/foo/index` 与 `./index.js`)", () => {
+    const explicitAlias = censusOf({
+      "lib/foo/index.ts": WRITE_POINT_MODULE,
+      "components/Ui.tsx": 'import { upload } from "@/lib/foo/index";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(explicitAlias.count("components/Ui.tsx"), "`@/lib/foo/index` 没归一到 lib/foo").toBe(1);
+
+    const relativeJs = censusOf({
+      "lib/foo/index.ts": WRITE_POINT_MODULE,
+      "lib/caller.ts": 'import { upload } from "./foo/index.js";\nexport function wrap(p) { return upload(p); }',
+      "components/Ui.tsx": 'import { wrap } from "@/lib/caller";\nexport function Ui() { return () => wrap("p"); }',
+    });
+    expect(relativeJs.registered, "`./foo/index.js` 没归一到 lib/foo").toContain("lib/caller#wrap");
+    expect(relativeJs.count("components/Ui.tsx")).toBe(1);
   });
 
   it("闭包边界逐条对表:注释里列的五条,这里逐条断言「认不到就是预期」", () => {
@@ -892,7 +1239,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       "lib/a.ts": 'const store = { persist() { return 1; } };\nexport function fa() { return store.persist(); }',
       "lib/b.ts": 'const other = { persist() { return { source: "UPLOAD" }; } };\nexport function fb() { return other.persist(); }',
     });
-    expect(crossFile.actions, "边界④跨文件同名成员:名字对齐越界了,只该在文件内对齐").toEqual([
+    expect(crossFile.registered, "边界④跨文件同名成员:名字对齐越界了,只该在文件内对齐").toEqual([
       "lib/b#fb",
     ]);
 
@@ -901,7 +1248,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       "lib/star.ts": 'export * from "./actions";',
       "components/Ui.tsx": 'import { upload } from "@/lib/star";\nexport function Ui() { return () => upload("p"); }',
     });
-    expect(star.actions, "边界⑤export *:被意外覆盖了,清单该更新").toEqual(["lib/actions#upload"]);
+    expect(star.registered, "边界⑤export *:被意外覆盖了,清单该更新").toEqual(["lib/actions#upload"]);
     expect(star.count("components/Ui.tsx"), "边界⑤export *:星号重导出不该被计到").toBe(0);
   });
 
@@ -997,7 +1344,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
   });
 
   it("入口普查:调上传动作的 UI 文件 = 挂点表 + 豁免表(新入口漏挂当场红)", () => {
-    const declared = [...MOUNTS.map(([file]) => file), ...Object.keys(EXEMPT)].sort();
+    const declared = [...MOUNTS.map(([file]) => file), ...EXEMPTIONS.map((e) => e.file)].sort();
     expect(
       uploadEntryFiles(),
       "有 UI 开始调上传动作:要么挂 <UnderstandingCostHint />,要么进 EXEMPT 并写明理由",
@@ -1011,17 +1358,28 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     ).toBe(callSites);
   });
 
-  it("入口普查:挂点表与豁免表不重叠,豁免每条都带理由,豁免的调用点数量也钉住", () => {
-    for (const [file] of MOUNTS) {
-      expect(EXEMPT[file], `${file} 同时出现在挂点表和豁免表`).toBeUndefined();
-    }
-    for (const [file, { reason, callSites }] of Object.entries(EXEMPT)) {
-      expect(reason.length, `${file} 的豁免没写理由`).toBeGreaterThan(10);
-      expect(codeOf(file), `${file} 被豁免了却挂着披露`).not.toContain("UnderstandingCostHint");
+  it("豁免不是一句好听的话:每条都要引规格、跑 guard、钉调用点数量", () => {
+    const mounted = new Set<string>(MOUNTS.map(([file]) => file));
+    for (const exemption of EXEMPTIONS) {
+      expect(mounted.has(exemption.file), `${exemption.file} 同时出现在挂点表和豁免表`).toBe(false);
+      expect(codeOf(exemption.file), `${exemption.file} 被豁免了却挂着披露`).not.toContain(
+        "UnderstandingCostHint",
+      );
+
+      // ① 规格出处必须读得到,而且那一段真的在谈这个豁免。
+      const [specFile] = exemption.spec.split("#");
+      const spec = specText(specFile);
+      expect(spec, `${exemption.spec} 读不到 —— 豁免的出处是空的`).toContain("EditDesk` 现仅收 audio");
+      expect(spec, "规格里的豁免条文变了,豁免要重新判").toContain("audio 不入理解三类、不收费");
+
+      // ② 豁免的前提在代码里仍然成立。
+      exemption.guard();
+
+      // ③ 入口形状没变。
       expect(
-        callSiteCount(file),
-        `${file} 的上传调用点数量变了:豁免的理由(只收音频)可能已经不成立`,
-      ).toBe(callSites);
+        callSiteCount(exemption.file),
+        `${exemption.file} 的上传调用点数量变了:豁免可能已经不成立`,
+      ).toBe(exemption.callSites);
     }
   });
 });
