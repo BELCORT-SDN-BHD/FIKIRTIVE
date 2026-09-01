@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { Download, Copy, Check, Sparkles, ChevronLeft, AlertCircle, RefreshCw } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { bustUrl } from "@/lib/media-retry";
@@ -74,7 +75,7 @@ function Media({
           type="button"
           variant="link"
           onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
-          className="h-auto w-auto p-0 text-[0.875rem] text-brand-strong underline"
+          className="h-auto w-auto p-0 text-[0.875rem] underline"
         >
           Reload
         </Button>
@@ -303,7 +304,7 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
                 href={url}
                 target="_blank"
                 rel="noreferrer"
-                className="font-semibold text-brand-strong underline underline-offset-2"
+                className="font-semibold text-foreground underline underline-offset-2"
               >
                 Open asset
               </a>
@@ -311,14 +312,14 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
                 type="button"
                 variant="link"
                 onClick={() => copyLink(url)}
-                className="h-auto w-auto p-0 text-brand-strong underline underline-offset-2"
+                className="h-auto w-auto p-0 underline underline-offset-2"
               >
                 Try again
               </Button>
             </div>
           ) : (
             <Button
-              variant="soft"
+              variant="default"
               onClick={() => copyLink(url)}
             >
               {copyState === "copied" ? <Check size={18} /> : <Copy size={18} />}
@@ -344,9 +345,9 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
           </div>
         )}
         {makeAnotherError && (
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {makeAnotherError}
-          </div>
+          <Alert role="alert" variant="destructive" density="compact" className="mt-2">
+            <AlertDescription>{makeAnotherError}</AlertDescription>
+          </Alert>
         )}
         {typeof payload?.costCredits === "number" && (
           <div className="mt-3 text-[0.875rem] text-muted-foreground">

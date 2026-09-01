@@ -638,4 +638,39 @@ describe("#922 缺口 A — 按下去之前一分钱都不花", () => {
     expect(buttonNamed("Get a price").disabled).toBe(true);
     expect(uiMocks.coworkGenerate).not.toHaveBeenCalled();
   });
+
+  it("确认付费后立即显示 Spinner、锁住取消键，并把失败原因放进标准 Alert", async () => {
+    let finish: ((result: { id: string } | { error: string }) => void) | undefined;
+    uiMocks.coworkGenerate.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    await mount();
+    await click(buttonNamed("Edit this clip"));
+
+    const box = container!.querySelector("textarea")!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(box, "the shirt to red");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(buttonNamed("Get a price"));
+
+    const confirm = buttonNamed("Confirm");
+    const cancel = buttonNamed("Cancel");
+    await click(confirm);
+
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.textContent).toContain("Starting edit…");
+    expect(confirm.querySelector(".animate-spin")).not.toBeNull();
+    expect(cancel.disabled).toBe(true);
+
+    await act(async () => {
+      finish?.({ error: "Your balance is too low for this edit." });
+      await Promise.resolve();
+    });
+
+    const alert = container!.querySelector('[data-slot="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert!.getAttribute("role")).toBe("alert");
+    expect(alert!.textContent).toContain("Your balance is too low for this edit.");
+    expect(buttonNamed("Confirm").disabled).toBe(false);
+  });
 });

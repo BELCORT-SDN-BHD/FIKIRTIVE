@@ -1,7 +1,19 @@
 // apps/web/components/canvas/nodes/ImageNode.tsx
 import { useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
+import {
+  CloudIcon,
+  CopyPlusIcon,
+  GitBranchIcon,
+  InfoIcon,
+  SlidersHorizontalIcon,
+  Trash2Icon,
+  VideoIcon,
+} from "lucide-react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { CanvasNodeLabel } from "./CanvasNodeLabel";
+import { NodeRemakeComposer } from "./NodeRemakeComposer";
+import { NodeToolbarIconButton } from "./NodeToolbarIconButton";
 import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { isGenFailureReason } from "@fikirtive/core/gen-failure";
 import { NodeResize } from "./NodeResize";
@@ -10,8 +22,9 @@ import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineag
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { NODE_TOOL_BUTTON_CLASS } from "./node-tool-button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import { InputGroupAddon } from "@/components/ui/input-group";
+import { Spinner } from "@/components/ui/spinner";
 
 /** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
  *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
@@ -49,6 +62,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     onAnimate?: () => void;
     onEvolve?: (id: string, prompt: string, aspect?: string) => void;
     onVariant?: (id: string, aspect?: string) => void;
+    /** One direct image action is being accepted. All image spend controls pause; the control
+     *  that started it also shows activity so the merchant knows which request is moving. */
+    imageActionPending?: boolean;
+    imageVariantPending?: boolean;
+    imageEvolvePending?: boolean;
     /** #643 T2：一张新图默认交付的形状 = 这张卡自己记着的形状（「改这张图」不改形状）。 */
     imageShape?: string;
     /** 服务端解析的形状菜单。缺席 ⇒ 不渲染选择器（仍按默认形状出图）。 */
@@ -123,57 +141,52 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         position={Position.Top}
         align="start"
         offset={22}
-        style={{ display: "flex", gap: 6, pointerEvents: "all", zIndex: 50 }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        <ButtonGroup aria-label="Image actions" className="cv-node-action-group">
         {actionable && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            aria-label="Show how this image was made"
+            label="Show how this image was made"
+            visibleLabel="Info"
+            tooltip="When it was made, the settings, and what it cost"
             aria-pressed={infoOpen}
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
-            title="When it was made, the settings, and what it cost"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
-            Info
-          </Button>
+            <InfoIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
         {/* T6: the card's whole story — what made it, what it made, who came out of the same
             press. Unlike Info it is offered on a card that FAILED too: what a merchant most
             wants to know about a card that did not work is where it came from (#605). */}
         {d.onOpenLineage && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            aria-label="Show what this card came from"
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
-            title="What made this card, and what it made"
+            label="Show what this card came from"
+            visibleLabel="Lineage"
+            tooltip="What made this card, and what it made"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
           >
-            Lineage
-          </Button>
+            <GitBranchIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
         {/* D6: the one and only way a card reaches Otto. Clicking the picture used to do it
             silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
         {canSendToOtto && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            aria-label="Send the picked cards to Otto"
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
+            label="Send the picked cards to Otto"
+            visibleLabel="Send to Otto"
+            tooltip={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             title={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
           >
-            Send to Otto
-          </Button>
+            <CloudIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
         {/* A3: one click makes another take of THIS image from its own prompt — the old path
             was Detail → Regenerate (two clicks and a panel). Paid, and priced right here. */}
@@ -182,161 +195,126 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             type="button"
             aria-label="Make another version of this image"
             variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
+            size="xs"
+            className="nodrag nopan"
+            disabled={d.imageActionPending}
             onPointerDown={(e) => e.stopPropagation()}
             // #643 T2：形状用这张卡上正显示的那一格 —— 同一张卡上的两个按钮不许交付两种形状。
             onClick={(e) => { e.stopPropagation(); d.onVariant?.(id, evolveShape); }}
             title={`Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
           >
-            More like this
+            {d.imageVariantPending ? (
+              <>
+                <Spinner data-icon="inline-start" aria-hidden="true" />
+                Starting…
+              </>
+            ) : (
+              <>
+                <CopyPlusIcon data-icon="inline-start" aria-hidden />
+                More like this
+              </>
+            )}
           </Button>
         )}
         {actionable && d.onOpenDetail && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
+            label="Open image details"
+            visibleLabel="Detail"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
           >
-            Detail
-          </Button>
+            <SlidersHorizontalIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
         {actionable && d.onAnimate && (
           <Button
             type="button"
             variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
+            size="xs"
+            className="nodrag nopan"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onAnimate?.(); }}
             title="Make a video from this image"
           >
+            <VideoIcon data-icon="inline-start" aria-hidden />
             Make video
           </Button>
         )}
-        <Button
+        <NodeToolbarIconButton
           type="button"
-          aria-label="Delete image node"
-          variant="secondary"
-          size="sm"
-          className={NODE_TOOL_BUTTON_CLASS}
+          label="Delete image node"
+          visibleLabel="Delete"
+          variant="destructive-secondary"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
-          title="Delete image node"
         >
-          ✕
-        </Button>
+          <Trash2Icon aria-hidden />
+        </NodeToolbarIconButton>
+        </ButtonGroup>
       </NodeToolbar>
       {infoOpen && (
         <NodeToolbar
-          className="nodrag nopan"
+          className="cv-node-info-toolbar nodrag nopan"
           isVisible={soloSelected}
           position={Position.Right}
           align="start"
           offset={12}
-          style={{ pointerEvents: "all", zIndex: 51 }}
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <NodeLineagePanel lineage={d.lineage} prompt={d.prompt} hasSource={canvasNodeHasSource(d)} />
+          <NodeLineagePanel
+            lineage={d.lineage}
+            prompt={d.prompt}
+            hasSource={canvasNodeHasSource(d)}
+            onClose={() => setInfoOpen(false)}
+          />
         </NodeToolbar>
       )}
       {canEvolve && (
         <NodeToolbar
-          className="nodrag nopan"
+          className="cv-node-remake-toolbar nodrag nopan"
           isVisible={soloSelected}
           position={Position.Bottom}
           align="center"
           offset={12}
-          style={{ pointerEvents: "all", zIndex: 50 }}
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, width: 320 }}>
-            <form
-              className="al-promptbar"
-              style={{ width: "100%", display: "flex", flexDirection: "row", gap: 6, alignItems: "center", padding: "6px 10px" }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const text = evolvePrompt.trim();
-                if (!text) return;
-                d.onEvolve?.(id, text, evolveShape);
-              }}
-            >
-              {/* #840 车4:迁到 ui/Input。覆盖的四项都是组件默认值与这条紧凑 bar 的冲突 ——
-                  `h-auto` 压回 `h-11`(44px 会把 6px 内距的 bar 撑成两倍高)、`w-auto` 压回
-                  `w-full`(它是 flex:1 的项,width:100% 会挤爆整行)、`p-0` 压回 `px-3.5 py-2`
-                  (preflight 已把原生 input 内距清零,原来就是 0)、`shadow-none` 压回
-                  `shadow-xs`。边框/背景/字体在下面那份 inline style 里,inline 赢过表里规则,
-                  一字未动;新落到屏幕上的只有 focus-visible 的焦点环与 placeholder 配色。 */}
-              <Input
-                value={evolvePrompt}
-                onChange={(e) => setEvolvePrompt(e.target.value)}
-                placeholder="Change the wording, then send to make a new take…"
-                aria-label="Edit this image's prompt and make a new image"
-                className="nodrag nopan h-auto w-auto rounded-none p-0 shadow-none"
-                onPointerDown={(e) => e.stopPropagation()}
-                style={{ flex: 1, minWidth: 0, border: "none", background: "none", outline: "none", font: "inherit" }}
-              />
-              {/* #643 T2: same shape as this card unless the merchant picks another one. What is
-                  on screen here is exactly what the next paid image will be made in. */}
-              {d.imageShapeOptions && evolveShape && (
-                <div className="nodrag nopan" onPointerDown={(e) => e.stopPropagation()}>
+          <NodeRemakeComposer
+            value={evolvePrompt}
+            onChange={setEvolvePrompt}
+            onSubmit={() => d.onEvolve?.(id, evolvePrompt.trim(), evolveShape)}
+            placeholder="Change the wording for a new take…"
+            inputLabel="Edit this image's prompt and make a new image"
+            submitLabel="Make a new image from this edited prompt"
+            costHint={d.evolveCostHint}
+            costLabel="New image from this one"
+            disabled={d.imageActionPending}
+            pending={d.imageEvolvePending}
+            pendingLabel="Starting a new image"
+            controls={d.imageShapeOptions && evolveShape ? (
+              <InputGroupAddon align="inline-end">
+                <div className="nodrag nopan">
                   <ImageShapePicker
                     compact
                     value={evolveShape}
                     options={d.imageShapeOptions}
                     onChange={setEvolveShape}
+                    disabled={d.imageActionPending}
                     title="The shape the new image will be made in — same cost in every shape"
                   />
                 </div>
-              )}
-              <Button
-                type="submit"
-                aria-label="Make a new image from this edited prompt"
-                variant="default"
-                size="sm"
-                className="nodrag nopan h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
-                disabled={!evolvePrompt.trim()}
-              >
-                →
-              </Button>
-            </form>
-            {/* This bar starts a paid image generation built on THIS image, so its price is
-                visible before the merchant can trigger it. Before #550 ② it was the only paid
-                entry point in the product with no price at all; before #547 A4 its title and
-                placeholder also disagreed about whether it made an image or a video. */}
-            {d.evolveCostHint && (
-              <span
-                style={{
-                  fontSize: 11,
-                  lineHeight: 1.4,
-                  textAlign: "center",
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                New image from this one · {d.evolveCostHint}
-              </span>
-            )}
-          </div>
+              </InputGroupAddon>
+            ) : null}
+          />
         </NodeToolbar>
       )}
-      <span className="cv-nodelabel">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
-        Image
-        {/* The A/B letter, read off the recorded batch position and nothing else — dragging B
-            above A does not swap them, because a coordinate never said which one this is
-            (#603 T4 · #605 T6). Only a press that really made two has an A and a B. */}
-        {letter && <span className="cv-nodeletter">{letter}</span>}
-      </span>
+      <CanvasNodeLabel kind="image" letter={letter} />
     {/* The picture is a picture, not a button: clicking it picks the card up and nothing else
         (#604 · spec #599 D6). Everything the card can DO lives on its toolbar above. */}
     <div
-      className="al-panel"
-      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
+      className="al-panel cv-node-frame"
     >
       {/* NO MEDIA IS NOT "BEING MADE" (#602 r2, judge P1-3). The old fallback here was
           `in-flight || !url → spinner`, so any card that reached this renderer without a picture
@@ -357,7 +335,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
           src={d.url}
           alt={d.prompt ?? ""}
           onLoad={(e) => d.onMediaSize?.({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
-          style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "var(--muted)" }}
+          className="cv-node-media"
         />
       )}
       {/* Lineage endpoints: an image can now be BOTH the parent of a video/new image and the

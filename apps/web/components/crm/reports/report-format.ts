@@ -7,7 +7,6 @@ export { channelLabel, purposeLabel } from "@/lib/crm-labels";
 
 type BadgeVariant =
   | "default"
-  | "brand"
   | "outline"
   | "success"
   | "warning"
@@ -34,9 +33,9 @@ export function runStatusPresentation(status: string): { label: string; variant:
     case "draft":
       return { label: "Draft", variant: "outline" };
     case "audience_frozen":
-      return { label: "Audience frozen", variant: "brand" };
+      return { label: "Audience frozen", variant: "info" };
     case "confirmed":
-      return { label: "Confirmed", variant: "brand" };
+      return { label: "Confirmed", variant: "success" };
     case "executing":
       return { label: "Simulating", variant: "warning" };
     case "completed":
@@ -53,7 +52,7 @@ export function runStatusPresentation(status: string): { label: string; variant:
 export function sendStatePresentation(state: string): { label: string; variant: BadgeVariant } {
   switch (state) {
     case "simulated_sent":
-      return { label: "Simulated attempt", variant: "brand" };
+      return { label: "Simulated attempt", variant: "info" };
     case "skipped_ineligible":
       return { label: "Skipped before sending", variant: "warning" };
     case "send_unavailable":

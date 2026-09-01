@@ -31,6 +31,26 @@ describe("buildStuffItems", () => {
     expect(items.find((i) => i.id === "ad:a1")).toMatchObject({ generationId: "a1", projectId: "p3", assetId: "aa1", label: "Raya teaser" });
   });
 
+  it("shows an ad generation once and keeps it in the Ads filter", () => {
+    const shared = {
+      id: "g-ad",
+      projectId: "p1",
+      assetId: "asset-ad",
+      kind: "image" as const,
+      prompt: "Raya bundle",
+    };
+    const items = buildStuffItems({
+      entities: [],
+      history: [{ ...shared, src: "/history-ad.png" }],
+      ads: [{ ...shared, src: "/ad.png", createdAt: "2026-01-01T00:00:00.000Z" }],
+      records: [],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id: "ad:g-ad", source: "ad", generationId: "g-ad" });
+    expect(filterStuffItems(items, "ads", "")).toEqual(items);
+  });
+
   // #949 A4 — a generation with no prompt (an Otto reference edit, or a row the
   // prompt never landed on) used to fall back to the raw id (a ULID) as the label.
   it("labels a prompt-less item by media kind, never the raw id", () => {

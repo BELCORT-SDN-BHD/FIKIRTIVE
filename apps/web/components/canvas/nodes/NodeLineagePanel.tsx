@@ -7,17 +7,23 @@
 // 每个东西都要有迹可循). Display only: it renders the lineage the server already read and
 // never asks for anything. It never names the generation engine.
 import { useState } from "react";
+import { CheckIcon, CopyIcon, XIcon } from "lucide-react";
+
 import { canvasLineageRows, type CanvasNodeLineage } from "@/lib/canvas-lineage";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { TooltipButton } from "@/components/ui/tooltip-button";
 
 export function NodeLineagePanel({
   lineage,
   prompt,
   hasSource = false,
+  onClose,
 }: {
   lineage: CanvasNodeLineage | null | undefined;
   prompt?: string | null;
   hasSource?: boolean;
+  onClose?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const rows = lineage ? canvasLineageRows(lineage, { hasSource }) : [];
@@ -35,59 +41,66 @@ export function NodeLineagePanel({
   };
 
   return (
-    <div
-      className="nodrag nopan"
-      style={{
-        width: 280,
-        maxWidth: "80vw",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        padding: "10px 12px",
-        borderRadius: 12,
-        border: "1px solid var(--border)",
-        background: "var(--card)",
-        color: "var(--foreground)",
-        boxShadow: "0 8px 24px rgba(20, 20, 24, 0.14)",
-        textAlign: "left",
-      }}
-    >
-      {text && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>Prompt</span>
-            {/* #840 车4:`al-btn al-btn-sm`(无配色修饰)= 透明底、透明边、继承文字色的小键
-                → ghost 变体同一套;高度/内距/字号显式压回 al-btn-sm 的原值(圆角天生同值:
-                --radius-sm 与 Button 的 rounded-[10px] 都是 10px)。ghost 的 hover 底色是
-                新增的反馈,原来没有 —— 与第一车对同类键的处置同口径,算打磨。 */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="nodrag nopan h-auto px-[13px] py-1.5 text-[12.5px]"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); copyPrompt(); }}
-            >
-              {copied ? "Copied" : "Copy"}
-            </Button>
-          </div>
-          <p style={{ fontSize: 12, lineHeight: 1.45, margin: 0, maxHeight: 96, overflowY: "auto" }}>{text}</p>
+    <Card size="sm" className="cv-node-info nodrag nopan">
+      <CardHeader className="flex-row items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <CardTitle>Generation details</CardTitle>
+          <CardDescription>Recorded facts for this card.</CardDescription>
         </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {text && (
+            <TooltipButton
+              type="button"
+              label={copied ? "Prompt copied" : "Copy prompt"}
+              tooltip={copied ? "Copied" : "Copy prompt"}
+              variant="ghost"
+              size="icon-xs"
+              className="nodrag nopan"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => { event.stopPropagation(); copyPrompt(); }}
+            >
+              {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+            </TooltipButton>
+          )}
+          {onClose && (
+            <TooltipButton
+              type="button"
+              label="Close generation details"
+              tooltip="Close"
+              variant="ghost"
+              size="icon-xs"
+              className="nodrag nopan"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => { event.stopPropagation(); onClose(); }}
+            >
+              <XIcon aria-hidden />
+            </TooltipButton>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+      {text && (
+        <section className="flex flex-col gap-1.5">
+          <span className="cv-node-info-label">Prompt</span>
+          <p className="cv-node-info-prompt">{text}</p>
+        </section>
       )}
+      {text && <Separator />}
       {rows.length > 0 ? (
-        <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 10px", margin: 0, fontSize: 12 }}>
+        <dl className="cv-node-info-facts">
           {rows.map((row) => (
-            <div key={row.label} style={{ display: "contents" }}>
-              <dt style={{ color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{row.label}</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>{row.value}</dd>
+            <div key={row.label} className="cv-node-info-fact">
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
             </div>
           ))}
         </dl>
       ) : (
-        <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
+        <span className="text-xs text-muted-foreground">
           No generation record for this card.
         </span>
       )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

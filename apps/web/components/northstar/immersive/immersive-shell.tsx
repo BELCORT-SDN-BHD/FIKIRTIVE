@@ -8,8 +8,8 @@
  * Canvas 变成主导航第一格 Create,另外四扇(Library / 品牌与商品资料 / 买积分账单 / 设置)
  * 主导航本来就有。留着第二套导航,就是留着两份会各自漂移的「说的」。
  *
- * 现在这层壳只做一件事:内容 pane —— 唯一滚动所有者(§L1),换路由做一次极轻 fade-in
- * (§8b;prefers-reduced-motion 下不动)。
+ * 现在这层壳只做一件事:内容 pane —— 唯一滚动所有者(§L1)。高频导航不做转场,
+ * 避免键盘与鼠标切页时每次都让整个工作面重新淡入。
  *
  * W2-11(切换总票,规格书 §5.1):`<1024` 的自有顶栏退场——它原来的活是给全局抽屉开一个
  * 入口(#747),而全局抽屉本身随移动端整层一起删除了(新导轨是单层 240px↔64px,不再按
@@ -22,47 +22,12 @@
  * `panel-surface.ts`(壳只能有一个地方决定挂不挂)。
  */
 
-import * as React from "react";
-import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
 
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-function useReducedMotion(): boolean {
-  return React.useSyncExternalStore(
-    (cb) => {
-      const mq = window.matchMedia(REDUCED_MOTION_QUERY);
-      mq.addEventListener("change", cb);
-      return () => mq.removeEventListener("change", cb);
-    },
-    () => window.matchMedia(REDUCED_MOTION_QUERY).matches,
-    () => false,
-  );
-}
-
-const FADE_KF_ID = "ns-immersive-fade-kf";
-const FADE_KF = `@keyframes ns-immersive-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }`;
-
-export function ImmersiveShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const reduced = useReducedMotion();
-
-  React.useEffect(() => {
-    if (document.getElementById(FADE_KF_ID)) return;
-    const el = document.createElement("style");
-    el.id = FADE_KF_ID;
-    el.textContent = FADE_KF;
-    document.head.appendChild(el);
-  }, []);
-
+export function ImmersiveShell({ children }: { children: ReactNode }) {
   return (
     <div className="gb ns-immersive flex h-dvh flex-col bg-background text-foreground">
-      {/* 内容 pane:唯一滚动所有者;换路由 = 换 key 做一次轻 fade */}
-      <main
-        key={pathname}
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto"
-        style={reduced ? undefined : { animation: "ns-immersive-fade 220ms ease-out" }}
-      >
-        {children}
-      </main>
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</main>
     </div>
   );
 }

@@ -117,7 +117,8 @@ export async function deleteBrandRecord(raw: unknown): Promise<{ ok: true } | { 
   if ("error" in gate) return gate;
   try {
     const { count } = await prisma.brandRecord.updateMany({
-      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+      // Include an already-deleted row so an uncertain request can be retried safely.
+      where: { id: r.id, ownerId: gate.ownerId },
       data: { deletedAt: new Date() },
     });
     if (!count) return { error: "Record not found." };

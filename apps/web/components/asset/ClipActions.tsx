@@ -15,8 +15,13 @@
  *
  * 商家在按下 ③ 之前看得见卡上冻结的那一整段字 —— 批准的与引擎收到的是同一份。
  */
-import { useState } from "react";
+import { useId, useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { creditsLabel } from "@/lib/credit-format";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
@@ -39,6 +44,7 @@ export function ClipActions({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const wordingId = useId();
 
   function reset() {
     setAction(null);
@@ -49,7 +55,7 @@ export function ClipActions({
   }
 
   async function getPrice(): Promise<void> {
-    if (busy || !action) return;
+    if (disabled || busy || !action) return;
     setBusy(true);
     setError(null);
     try {
@@ -65,7 +71,7 @@ export function ClipActions({
   }
 
   async function confirm(): Promise<void> {
-    if (busy || !card) return;
+    if (disabled || busy || !card) return;
     setBusy(true);
     setError(null);
     try {
@@ -91,105 +97,118 @@ export function ClipActions({
 
   if (started) {
     return (
-      <div className="flex flex-col gap-1 border-t border-border px-4 py-3">
-        <span className="text-[13px] text-muted-foreground">
-          On its way — it&apos;ll land in your library when it&apos;s done.
-        </span>
-        <div>
-          <Button variant="ghost" size="sm" onClick={reset}>
-            Do another
-          </Button>
+      <>
+        <Separator />
+        <div className="px-4 py-3">
+          <Alert variant="success" density="compact" role="status">
+            <AlertTitle>Video started</AlertTitle>
+            <AlertDescription>
+              <span>It&apos;ll land in your library when it&apos;s done.</span>
+              <Button variant="ghost" size="sm" onClick={reset}>Do another</Button>
+            </AlertDescription>
+          </Alert>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="flex flex-col gap-2 border-t border-border px-4 py-3">
-      {action === null ? (
-        <div className="flex flex-wrap gap-2">
-          {/* #922 —— 画哪几个键由 core 的下架名单说了算,不在这里另列一份。 */}
-          {CLIP_ENTRY_ACTIONS.map((key) => (
-            <Button
-              key={key}
-              variant="ghost"
-              size="sm"
-              disabled={disabled}
-              title={disabledReason}
-              onClick={() => { setAction(key); setError(null); }}
-            >
-              {CLIP_ENTRY_COPY[key].cta}
-            </Button>
-          ))}
-        </div>
-      ) : card === null ? (
-        <>
-          <span className="text-[12px] font-medium text-muted-foreground">
-            {CLIP_ENTRY_COPY[action].heading}
-          </span>
-          <Textarea
-            aria-label={CLIP_ENTRY_COPY[action].heading}
-            value={wording}
-            onChange={(e) => setWording(e.target.value)}
-            rows={2}
-            placeholder={CLIP_ENTRY_COPY[action].placeholder}
-            // 定高框,不随打字长高(同 #920 对四处 composer 的处置)。
-            className="field-sizing-fixed min-h-0 w-full resize-none rounded-[10px] border-border bg-card px-3 py-2 text-[13px] shadow-none md:text-[13px]"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="default"
-              size="sm"
-              disabled={busy || wording.trim().length === 0}
-              onClick={() => void getPrice()}
-            >
-              {busy ? "Checking…" : "Get a price"}
-            </Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={reset}>
-              Cancel
-            </Button>
-            {/* 说在按下之前:这一步不花钱。 */}
-            <span className="text-[12px] text-muted-foreground">No charge until you confirm.</span>
-          </div>
-        </>
-      ) : (
-        <>
-          {/* 卡上冻结的那一整段 —— 批准的与引擎收到的是同一份,所以按之前就摊开给他看。 */}
-          <span className="text-[12px] font-medium text-muted-foreground">What we&apos;ll ask for</span>
-          <p className="m-0 text-[13px] leading-[1.5] whitespace-pre-wrap text-foreground">
-            {card.structuredPrompt}
-          </p>
-          {card.specChips.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {card.specChips.map((chip) => (
-                <span
-                  key={chip}
-                  className="rounded-full bg-secondary px-2 py-[2px] text-[12px] text-muted-foreground"
-                >
-                  {chip}
-                </span>
-              ))}
-            </div>
-          )}
-          {card.downgradeNote && (
-            <span className="text-[12px] text-muted-foreground">{card.downgradeNote}</span>
-          )}
-          <span className="text-[13px] text-foreground">
-            {CLIP_ENTRY_COPY[action].confirmLead} — {creditsLabel(card.estimatedCredits)}? This will spend
-            real credits.
-          </span>
+    <>
+      <Separator />
+      <div className="flex flex-col gap-3 px-4 py-3">
+        {action === null ? (
           <div className="flex flex-wrap gap-2">
-            <Button variant="default" size="sm" disabled={busy} onClick={() => void confirm()}>
-              {busy ? "Starting…" : "Confirm"}
-            </Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={reset}>
-              Cancel
-            </Button>
+            {/* #922 —— 画哪几个键由 core 的下架名单说了算,不在这里另列一份。 */}
+            {CLIP_ENTRY_ACTIONS.map((key) => (
+              <Button
+                key={key}
+                variant="ghost"
+                size="sm"
+                disabled={disabled}
+                title={disabledReason}
+                onClick={() => { setAction(key); setError(null); }}
+              >
+                {CLIP_ENTRY_COPY[key].cta}
+              </Button>
+            ))}
           </div>
-        </>
-      )}
-      {error && <span className="text-[12px] text-[var(--error)]">{error}</span>}
-    </div>
+        ) : card === null ? (
+          <FieldGroup className="gap-3">
+            <Field data-disabled={busy || disabled}>
+              <FieldLabel htmlFor={wordingId}>{CLIP_ENTRY_COPY[action].heading}</FieldLabel>
+              <Textarea
+                id={wordingId}
+                aria-label={CLIP_ENTRY_COPY[action].heading}
+                value={wording}
+                onChange={(e) => setWording(e.target.value)}
+                rows={2}
+                placeholder={CLIP_ENTRY_COPY[action].placeholder}
+                disabled={busy || disabled}
+                // 定高框,不随打字长高(同 #920 对四处 composer 的处置)。
+                className="field-sizing-fixed min-h-0 resize-none"
+              />
+              <FieldDescription>No charge until you confirm.</FieldDescription>
+            </Field>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                disabled={disabled || busy || wording.trim().length === 0}
+                onClick={() => void getPrice()}
+                aria-live="polite"
+              >
+                {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
+                {busy ? "Checking price…" : "Get a price"}
+              </Button>
+              <Button variant="ghost" size="sm" disabled={disabled || busy} onClick={reset}>
+                Cancel
+              </Button>
+            </div>
+          </FieldGroup>
+        ) : (
+          <>
+            {/* 卡上冻结的那一整段 —— 批准的与引擎收到的是同一份,所以按之前就摊开给他看。 */}
+            <span className="text-[12px] font-medium text-muted-foreground">What we&apos;ll ask for</span>
+            <p className="m-0 whitespace-pre-wrap text-[13px] leading-[1.5] text-foreground">
+              {card.structuredPrompt}
+            </p>
+            {card.specChips.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {card.specChips.map((chip) => <Badge key={chip}>{chip}</Badge>)}
+              </div>
+            )}
+            {card.downgradeNote && (
+              <span className="text-[12px] text-muted-foreground">{card.downgradeNote}</span>
+            )}
+            <span className="text-[13px] text-foreground">
+              {CLIP_ENTRY_COPY[action].confirmLead} — {creditsLabel(card.estimatedCredits)}? This will spend
+              real credits.
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                disabled={disabled || busy}
+                onClick={() => void confirm()}
+                aria-live="polite"
+              >
+                {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
+                {busy ? (action === "edit" ? "Starting edit…" : "Starting continuation…") : "Confirm"}
+              </Button>
+              <Button variant="ghost" size="sm" disabled={disabled || busy} onClick={reset}>
+                Cancel
+              </Button>
+            </div>
+          </>
+        )}
+        {error && (
+          <Alert variant="destructive" density="compact" role="alert">
+            <AlertTitle>Couldn&apos;t complete this action</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+      </div>
+    </>
   );
 }
 

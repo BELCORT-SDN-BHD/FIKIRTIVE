@@ -5,6 +5,7 @@
  * 谁要指路都用它们,不许再在别处手写一句不能点的文字(#686 #687 #701 #707)。
  */
 import type { ReactNode } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { BILLING_HREF, supportMailto } from "@/lib/exits";
 import { TOP_UP_CTA } from "@/lib/credit-format";
 
@@ -65,9 +66,12 @@ export function ErrorWithTopUp({ text }: { text: string }) {
 
 export function TopUpNotice({ need, alternative }: { need: string; alternative?: string }) {
   return (
-    <div role="alert" className="text-[0.875rem] text-[var(--error-soft-foreground)]">
-      Not enough credits to {need} — <ExitLink href={BILLING_HREF}>top up in Billing</ExitLink>
-      {alternative ? ` or ${alternative}` : ""}.
-    </div>
+    <Alert role="alert" variant="destructive" density="compact">
+      <AlertTitle>Not enough credits</AlertTitle>
+      <AlertDescription>
+        To {need}, <ExitLink href={BILLING_HREF}>top up in Billing</ExitLink>
+        {alternative ? ` or ${alternative}` : ""}.
+      </AlertDescription>
+    </Alert>
   );
 }

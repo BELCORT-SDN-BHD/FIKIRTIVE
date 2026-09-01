@@ -27,7 +27,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { OTTO_VIEW_REDIRECTS, SHELL_ROUTES } from "@fikirtive/core/navigation";
+import { MERCHANT_NAV_REDIRECTS, OTTO_VIEW_REDIRECTS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { OTTO_VIEW_KEYS } from "@/components/otto/otto-view-param";
 
 const mockRedirect = vi.fn((url: string) => {
@@ -36,6 +36,10 @@ const mockRedirect = vi.fn((url: string) => {
 vi.mock("next/navigation", () => ({ redirect: mockRedirect }));
 
 const { default: OttoRedirect } = await import("../../app/otto/page");
+const { default: ParkedCampaignLayout } = await import("../../app/campaign/layout");
+const { default: ParkedSchedulePage } = await import("../../app/schedule/page");
+const { default: LegacyScheduleAnalyticsPage } = await import("../../app/schedule/analytics/page");
+const { default: ParkedEditorPage } = await import("../../app/library/editor/page");
 
 /** 去处里的路径部分 —— `?otto=1` 与 `#templates` 都不是新路由,不参与地址对账。 */
 function pathOf(target: string): string {
@@ -87,9 +91,10 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
   // billing / profile 四条今天没有任何一条对账碰得到,把 `/create/canvas` 拼成
   // `/create/canvass` 全绿。所以这一条把十三个值逐字钉死:地址是规格书 §2.2 拍的板,
   // 改它必须是一次**明写**的改动,不能是一个手滑。
-  it("十三条新地址逐字就是规格书 §2.2 那一份", () => {
+  it("runtime route registry 逐字只有这一份", () => {
     expect(SHELL_ROUTES).toEqual({
       home: "/",
+      homeAnalysis: "/analysis",
       create: "/create",
       canvas: "/create/canvas",
       library: "/library",
@@ -102,6 +107,8 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
       connections: "/settings/connections",
       preferences: "/settings",
       profile: "/profile",
+      crm: "/crm",
+      publicSharePreview: "/schedule/share-preview",
     });
   });
 
@@ -120,11 +127,12 @@ describe("换壳的新地址只有一份(规格书 §1.3)", () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
-  it("新地址里没有旧壳的残留:既没有 ?view=,也没有 CRM(Founder 裁决:整段收起来)", () => {
+  it("route registry 不含旧壳 query；CRM 只保留为 redirect source", () => {
     for (const [key, href] of Object.entries(SHELL_ROUTES)) {
       expect(href, `${key} 还挂着旧壳的 query`).not.toContain("view=");
-      expect(href.startsWith("/crm"), `${key} 指向了收起来的 CRM`).toBe(false);
     }
+    expect(MERCHANT_NAV_REDIRECTS.find((row) => row.from === SHELL_ROUTES.crm)?.to).toBe(SHELL_ROUTES.home);
+    expect(Object.values(OTTO_VIEW_REDIRECTS).some((href) => pathOf(href).startsWith(SHELL_ROUTES.crm))).toBe(false);
   });
 
   it("子路由长在自己那扇门后面 —— 不是另一处孤岛", () => {
@@ -171,11 +179,11 @@ describe("CRM 十四条旧地址一条都不撞墙(W2-13 / #993)", () => {
     ]);
   });
 
-  it.each(crmRoutes())("%s 只做一件事:redirect(\"/\")", (file) => {
+  it.each(crmRoutes())("%s 只做一件事:redirect(SHELL_ROUTES.home)", (file) => {
     const src = readFileSync(path.join(CRM_APP_DIR, file), "utf8");
 
-    expect(src, `${file} 没有把人送走`).toContain('redirect("/")');
-    expect(src, `${file} 的落点不是 Home`).not.toMatch(/redirect\((?!"\/"\))/);
+    expect(src, `${file} 没有把人送走`).toContain("redirect(SHELL_ROUTES.home)");
+    expect(src, `${file} 没有消费 route SSOT`).toContain('@fikirtive/core/navigation');
     // 重定向页不渲染、不取数:留着任何一样,「收起来」就只是嘴上说说。
     expect(src, `${file} 还在渲染 CRM 页面`).not.toContain('from "@/components/crm');
     expect(src, `${file} 还在取数`).not.toContain('from "@/lib/');
@@ -191,6 +199,38 @@ describe("CRM 十四条旧地址一条都不撞墙(W2-13 / #993)", () => {
       file.endsWith("loading.tsx"),
     );
     expect(loading).toEqual([]);
+  });
+});
+
+describe("Phase 1 parked routes 的真实 server redirects", () => {
+  it("Campaign subtree 在 layout 层统一回 Home", async () => {
+    await expect(Promise.resolve().then(() => ParkedCampaignLayout())).rejects.toThrow(
+      `NEXT_REDIRECT:${SHELL_ROUTES.home}`,
+    );
+  });
+
+  it("Schedule merchant surface 回 Home", async () => {
+    await expect(Promise.resolve().then(() => ParkedSchedulePage())).rejects.toThrow(
+      `NEXT_REDIRECT:${SHELL_ROUTES.home}`,
+    );
+  });
+
+  it("legacy Schedule analytics 进入 Home analysis", async () => {
+    await expect(Promise.resolve().then(() => LegacyScheduleAnalyticsPage())).rejects.toThrow(
+      `NEXT_REDIRECT:${SHELL_ROUTES.homeAnalysis}`,
+    );
+  });
+
+  it("manual editor 回 Create", async () => {
+    await expect(Promise.resolve().then(() => ParkedEditorPage())).rejects.toThrow(
+      `NEXT_REDIRECT:${SHELL_ROUTES.create}`,
+    );
+  });
+
+  it("public share page 不被 Schedule merchant redirect 捕获", () => {
+    const source = readFileSync(path.resolve(__dirname, "../../app/schedule/share-preview/page.tsx"), "utf8");
+    expect(source).not.toContain("redirect(SHELL_ROUTES.home)");
+    expect(source).not.toContain("redirect(SHELL_ROUTES.homeAnalysis)");
   });
 });
 

@@ -31,6 +31,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   channelConnectionFrom,
@@ -186,7 +194,7 @@ function DetailErrorState({
           <ArrowLeft className="size-4" />Back to Inbox
         </Link>
         <header className="mt-4 border-b border-border pb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM · Conversation</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">This conversation could not load</h1>
         </header>
         <section className="mt-6 rounded-[var(--radius-card)] border border-dashed border-destructive/40 bg-card px-6 py-14 text-center shadow-sm">
@@ -524,7 +532,7 @@ function ConversationWorkspace({
 
         <header className="mt-4 flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM · Conversation</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{identity.contact.name}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{channelLabel(identity.channel)} · {identity.externalId}</p>
           </div>
@@ -616,20 +624,20 @@ function ConversationWorkspace({
                     </p>
                   ) : (
                     <>
-                      <select
-                        className="min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm disabled:opacity-50"
-                        aria-label="Assign to"
-                        value={targetMembershipId}
-                        onChange={(event) => setTargetMembershipId(event.target.value)}
-                        disabled={!canReply}
-                      >
-                        <option value="">Select a teammate…</option>
-                        {assignableMembers.map((member) => (
-                          <option key={member.membershipId} value={member.membershipId}>
-                            {member.displayName}{member.isSelf ? " (you)" : ""} · {member.role}
-                          </option>
-                        ))}
-                      </select>
+                      <Select value={targetMembershipId} onValueChange={setTargetMembershipId} disabled={!canReply}>
+                        <SelectTrigger className="w-full" aria-label="Assign to">
+                          <SelectValue placeholder="Select a teammate…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {assignableMembers.map((member) => (
+                              <SelectItem key={member.membershipId} value={member.membershipId}>
+                                {member.displayName}{member.isSelf ? " (you)" : ""} · {member.role}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
                       <p className="text-xs text-muted-foreground">Only teammates who can reply in the Inbox are listed.</p>
                     </>
                   )}
@@ -797,11 +805,11 @@ function MessageBubble({ message }: { message: HistoryMessage }) {
   return (
     <div
       className={`max-w-[85%] rounded-xl border p-3 text-sm ${
-        inbound ? "self-start border-border bg-muted/45" : "self-end border-brand/25 bg-brand-soft text-brand-soft-foreground"
+        inbound ? "self-start border-border bg-muted/45" : "self-end border-primary bg-primary text-primary-foreground"
       }`}
     >
       <p className="whitespace-pre-wrap break-words">{"text" in content ? content.text : "Unsupported message type"}</p>
-      <p className="mt-1.5 text-xs text-muted-foreground">{inbound ? "Customer" : "Sent"} · {dateTimeLabel(message.receivedAt)}</p>
+      <p className={`mt-1.5 text-xs ${inbound ? "text-muted-foreground" : "text-primary-foreground/70"}`}>{inbound ? "Customer" : "Sent"} · {dateTimeLabel(message.receivedAt)}</p>
     </div>
   );
 }

@@ -1,14 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { authClient } from "@/lib/better-auth/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { MIN_PASSWORD_LENGTH } from "@/app/signup/SignupForm";
+import Link from "next/link";
+import { ArrowLeftIcon } from "lucide-react";
 
-/** Consumes a one-time reset token and sets a new password. On success the merchant is sent
- *  to the sign-in page — the reset itself does not mint a session. */
-export function ResetPasswordForm({ token }: { token: string }) {
+import { MIN_PASSWORD_LENGTH } from "@/app/signup/SignupForm";
+import { AuthStepCard } from "@/components/auth/AuthStepCard";
+import { PasswordInput } from "@/components/auth/PasswordInput";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Spinner } from "@/components/ui/spinner";
+import { authDestination, authRouteHref } from "@/lib/auth-journey";
+import { authClient } from "@/lib/better-auth/client";
+
+/** Consumes a one-time reset token. Reset does not mint a session. */
+export function ResetPasswordForm({ token, from = "/" }: { token: string; from?: string }) {
+  const destination = authDestination(from);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,10 +31,13 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
     setBusy(true);
     setError(null);
-    const { error } = await authClient.resetPassword({ newPassword: password, token });
+    const { error: resetError } = await authClient.resetPassword({
+      newPassword: password,
+      token,
+    });
     setBusy(false);
-    if (error) {
-      setError(error.message ?? "We couldn't set that password. Request a new link and try again.");
+    if (resetError) {
+      setError("We couldn't set that password. Request a new link and try again.");
       return;
     }
     setDone(true);
@@ -34,48 +45,75 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
   if (done) {
     return (
-      <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
-        <p className="text-[15px] font-semibold text-foreground">Password updated</p>
-        <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-          Sign in with your new password.
-        </p>
-        <a
-          href="/login"
-          className="mt-3.5 inline-flex h-10 w-full items-center justify-center rounded-[var(--radius-card)] border border-border text-[14px] font-semibold text-foreground hover:bg-muted"
+      <AuthStepCard
+        title="Password updated"
+        description="Log in with your new password."
+        footer={
+          <Link
+            href={authRouteHref("/login", destination)}
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            Back to login
+          </Link>
+        }
+      >
+        <Link
+          href={authRouteHref("/login", destination)}
+          className={buttonVariants({ className: "w-full" })}
         >
-          Go to sign in
-        </a>
-      </div>
+          Continue to login
+        </Link>
+      </AuthStepCard>
     );
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3.5">
-      {error && (
-        <p role="alert" className="text-[13.5px] font-medium text-destructive">
-          {error}
-        </p>
-      )}
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="newPassword" className="text-[13px] font-semibold text-foreground/85">
-          New password
-        </label>
-        <Input
-          id="newPassword"
-          name="newPassword"
-          type="password"
-          required
-          autoFocus
-          minLength={MIN_PASSWORD_LENGTH}
-          placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
-          autoComplete="new-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </div>
-      <Button type="submit" disabled={busy} className="w-full">
-        {busy ? "Saving…" : "Save new password"}
-      </Button>
-    </form>
+    <AuthStepCard
+      title="Set a new password"
+      description="Choose a new password for your account."
+      footer={
+        <Link
+          href={authRouteHref("/login", destination)}
+          className={buttonVariants({ variant: "ghost", size: "sm" })}
+        >
+          <ArrowLeftIcon aria-hidden />
+          Back to login
+        </Link>
+      }
+    >
+      <form onSubmit={submit}>
+        <FieldGroup className="gap-5">
+          {error ? (
+            <Alert role="alert" variant="destructive">
+              <AlertTitle>Password could not be updated</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+          <Field data-invalid={error?.startsWith("Use at least") === true ? true : undefined}>
+            <FieldLabel htmlFor="newPassword">New password</FieldLabel>
+            <PasswordInput
+              id="newPassword"
+              name="newPassword"
+              aria-label="New password"
+              required
+              autoFocus
+              minLength={MIN_PASSWORD_LENGTH}
+              placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+              autoComplete="new-password"
+              aria-invalid={error?.startsWith("Use at least") === true ? true : undefined}
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setError(null);
+              }}
+            />
+          </Field>
+          <Button type="submit" disabled={busy} className="w-full">
+            {busy && <Spinner data-icon="inline-start" />}
+            {busy ? "Saving…" : "Save new password"}
+          </Button>
+        </FieldGroup>
+      </form>
+    </AuthStepCard>
   );
 }

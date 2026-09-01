@@ -5,7 +5,6 @@ import { MY_DATE_TIME_FORMAT } from "@/lib/my-date-format";
 import { humanizeTokenPhrase as humanizeCode } from "@/lib/machine-token";
 
 export type WorkflowBadgeVariant =
-  | "brand"
   | "outline"
   | "success"
   | "warning"
@@ -86,7 +85,7 @@ export function definitionStatusPresentation(status: string): WorkflowPresentati
     case "draft":
       return { label: "Draft", variant: "outline" };
     case "published":
-      return { label: "Published", variant: "brand" };
+      return { label: "Published", variant: "info" };
     case "archived":
       return { label: "Archived", variant: "outline" };
     default:
@@ -133,7 +132,7 @@ export function runStatusPresentation(status: string): WorkflowPresentation {
     case "waiting":
       return { label: "Waiting", variant: "warning" };
     case "completed":
-      return { label: "Completed (simulated)", variant: "brand" };
+      return { label: "Completed (simulated)", variant: "success" };
     case "blocked":
       return { label: "Blocked", variant: "warning" };
     case "cancelled":
@@ -152,7 +151,7 @@ export function stepStatusPresentation(status: string): WorkflowPresentation {
     case "blocked":
       return { label: "Blocked", variant: "warning" };
     case "simulated":
-      return { label: "Simulated", variant: "brand" };
+      return { label: "Simulated", variant: "info" };
     case "delegated":
       return { label: "Delegated", variant: "info" };
     case "unavailable":

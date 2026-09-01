@@ -297,7 +297,7 @@ describe("one connection authority, read once per route (#727)", () => {
   // W2-13 (#993) — these three routes used to preload the workspace's channel accounts for
   // the page below them. The whole CRM section is hidden until Meta verification passes
   // (Founder ruling 2026-08-18; restore trigger recorded on issue #359), so every /crm route
-  // is now a bare `redirect("/")` and loads nothing at all.
+  // now redirects through the route SSOT and loads nothing at all.
   //
   // The claim this test made — "a route that states connection reads the real connection
   // state" — is kept by pinning the new fact instead: a route that loads NOTHING cannot
@@ -310,7 +310,8 @@ describe("one connection authority, read once per route (#727)", () => {
       "../../app/crm/broadcasts/page.tsx",
     ]) {
       const src = source(route);
-      expect(src, `${route} 还在取数`).toContain('redirect("/")');
+      expect(src, `${route} 还在取数`).toContain("redirect(SHELL_ROUTES.home)");
+      expect(src, `${route} 没有读取 route SSOT`).toContain('@fikirtive/core/navigation');
       expect(src, `${route} 还在读渠道账号`).not.toContain("listChannelScopes");
     }
   });

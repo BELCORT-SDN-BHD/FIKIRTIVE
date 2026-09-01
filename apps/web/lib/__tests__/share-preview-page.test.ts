@@ -104,11 +104,11 @@ const ALLOWED_EXTERNAL_IMPORTS = [
   "lib/caller-identity.ts → node:net",
   // Presentation only.
   "components/ui/badge.tsx → class-variance-authority",
-  "components/ui/badge.tsx → radix-ui",
+  "components/ui/badge.tsx → @base-ui/react/merge-props",
+  "components/ui/badge.tsx → @base-ui/react/use-render",
   "components/ui/badge.tsx → react",
   "components/ui/card.tsx → react",
-  "components/ui/separator.tsx → radix-ui",
-  "components/ui/separator.tsx → react",
+  "components/ui/separator.tsx → @base-ui/react/separator",
   "lib/utils.ts → clsx",
   "lib/utils.ts → tailwind-merge",
 ].sort();
@@ -269,8 +269,12 @@ describe("the merchant shell must never wrap this page", () => {
     expect(isMerchantSurface("/schedule/share-preview/abc123")).toBe(false);
   });
 
-  it("a same-prefix sibling is NOT the carve-out and gets wrapped (/schedule/share-previewx)", () => {
-    expect(isMerchantSurface("/schedule/share-previewx")).toBe(true);
+  it("a same-prefix sibling is NOT a carve-out; shell ownership is decided independently", () => {
+    // Schedule 本身在 Beta 已 parked,所以这个 sibling 仍然没有 merchant shell。
+    expect(isMerchantSurface("/schedule/share-previewx")).toBe(false);
+    // Create 是 active owner:真正的 Canvas 子树无壳,同字串 sibling 仍由 Create 的壳接住。
+    expect(isMerchantSurface("/create/canvas/example")).toBe(false);
+    expect(isMerchantSurface("/create/canvasx")).toBe(true);
   });
 
   it("the page renders no shell of its own either — no nav, no identity menu, no sign-out", () => {

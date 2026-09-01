@@ -34,7 +34,6 @@ export { humanizeToken };
 
 export type CrmBadgeVariant =
   | "default"
-  | "brand"
   | "outline"
   | "success"
   | "warning"

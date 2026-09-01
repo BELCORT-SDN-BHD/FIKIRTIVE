@@ -1,62 +1,280 @@
 "use client";
-import React, { useState } from "react";
+
+import React, { useRef, useState } from "react";
+import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import type { MemoryRow } from "@/lib/memory-actions";
+import { MemorySourceBadge } from "./MemorySourceBadge";
+import { useAsyncActionFeedback } from "./useAsyncActionFeedback";
+
+function FactForm({
+  value,
+  label,
+  placeholder,
+  submitLabel,
+  onCancel,
+  onSubmit,
+  onSaved,
+}: {
+  value: string;
+  label: string;
+  placeholder: string;
+  submitLabel: string;
+  onCancel: () => void;
+  onSubmit: (value: string) => Promise<string | null>;
+  onSaved: () => void;
+}) {
+  const [text, setText] = useState(value);
+  const submission = useAsyncActionFeedback("The brand detail couldn't be saved. Check your connection and try again.");
+
+  async function save() {
+    const outcome = await submission.run(() => onSubmit(text.trim()));
+    if (outcome === "success") onSaved();
+  }
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel className="sr-only">{label}</FieldLabel>
+            <Textarea
+              aria-label={label}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              rows={3}
+              placeholder={placeholder}
+              autoFocus
+            />
+          </Field>
+        </FieldGroup>
+      </CardHeader>
+      {submission.error && (
+        <CardContent>
+          <Alert variant="destructive" role="alert">
+            <AlertTitle>Brand detail wasn&apos;t saved</AlertTitle>
+            <AlertDescription>{submission.error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      )}
+      <CardFooter>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!text.trim() || submission.pending}
+          onClick={() => void save()}
+        >
+          {submission.pending && <Spinner data-icon="inline-start" />}
+          {submission.pending ? (submitLabel === "Add detail" ? "Adding…" : "Saving…") : submitLabel}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" disabled={submission.pending} onClick={onCancel}>
+          Cancel
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
 
 export function FactSection({ label, rows, freshIds, onSave, onDelete, onAdd }: {
   label: string;
   rows: MemoryRow[];
   freshIds: Set<string>;
-  onSave: (id: string, content: string) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-  onAdd: (content: string) => Promise<void>;
+  onSave: (id: string, content: string) => Promise<string | null>;
+  onDelete: (id: string) => Promise<string | null>;
+  onAdd: (content: string) => Promise<string | null>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [text, setText] = useState("");
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<MemoryRow | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSubmittingRef = useRef(false);
+
+  async function removeDetail() {
+    if (!deleteTarget || deleteSubmittingRef.current) return;
+
+    deleteSubmittingRef.current = true;
+    setDeletePending(true);
+    setDeleteError(null);
+
+    try {
+      const failure = await onDelete(deleteTarget.id);
+      if (failure) {
+        setDeleteError(failure);
+        return;
+      }
+
+      setDeleteTarget(null);
+    } catch {
+      setDeleteError("The detail couldn't be removed. Check your connection and try again.");
+    } finally {
+      deleteSubmittingRef.current = false;
+      setDeletePending(false);
+    }
+  }
 
   return (
-    <section>
-      {label && <h2 className="text-[0.75rem] font-semibold tracking-[0.05em] uppercase text-muted-foreground mt-6 mb-2">{label}</h2>}
-      <div className="rounded-[16px] border border-border bg-card divide-y divide-border">
-        {rows.map((r) => (
-          <div key={r.id} className={`px-[15px] py-[10px] ${freshIds.has(r.id) ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}>
-            {editingId === r.id ? (
-              <div className="flex flex-col gap-2">
-                <Textarea aria-label="Edit this fact" value={text} onChange={(e) => setText(e.target.value)} rows={2} />
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => void onSave(r.id, text).then(() => setEditingId(null))}>Save</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-start gap-2">
-                <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">{r.content}</span>
-                <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
-                  {r.source === "otto" ? "✦ Otto learned" : "You added"}
-                </span>
-                <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setEditingId(r.id); setText(r.content); }}>✎</Button>
-                <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onDelete(r.id)}>🗑</Button>
-              </div>
-            )}
-          </div>
-        ))}
-        <div className="px-[15px] py-[10px]">
-          {adding ? (
-            <div className="flex flex-col gap-2">
-              <Textarea aria-label="Add a fact about your brand" value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Add a fact about your brand…" />
-              <div className="flex gap-2">
-                <Button size="sm" disabled={!draft.trim()} onClick={() => void onAdd(draft.trim()).then(() => { setDraft(""); setAdding(false); })}>Add</Button>
-                <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
-              </div>
-            </div>
+    <section aria-label={label || "Saved brand details"} className="flex flex-col gap-3">
+      {label && <h3 className="text-sm font-semibold text-foreground">{label}</h3>}
+
+      {rows.length === 0 && !adding ? (
+        <Empty className="min-h-56 border border-dashed border-border">
+          <EmptyHeader>
+            <EmptyTitle>No saved details yet</EmptyTitle>
+            <EmptyDescription>
+              Add the first detail here, or ask Otto to organise what you describe above.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button type="button" size="sm" variant="secondary" onClick={() => setAdding(true)}>
+              <Plus data-icon="inline-start" />
+              Add detail
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : (
+        rows.map((row) => (
+          editingId === row.id ? (
+            <FactForm
+              key={row.id}
+              value={row.content}
+              label="Edit this fact"
+              placeholder="Write a durable detail Otto should remember…"
+              submitLabel="Save"
+              onCancel={() => setEditingId(null)}
+              onSubmit={(content) => onSave(row.id, content)}
+              onSaved={() => setEditingId(null)}
+            />
           ) : (
-            <Button type="button" variant="ghost" className="h-auto w-auto p-0 text-[0.8125rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setAdding(true)}>+ Add a fact</Button>
+            <Card key={row.id} size="sm" tone={freshIds.has(row.id) ? "otto" : "default"}>
+              <CardHeader>
+                <p className="text-sm leading-6 text-foreground">{row.content}</p>
+              </CardHeader>
+              <CardFooter className="justify-between">
+                <MemorySourceBadge source={row.source} />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="icon-xs" variant="ghost" aria-label={`Actions for ${row.content}`}>
+                      <MoreHorizontal aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem onSelect={() => setEditingId(row.id)}>
+                        <Pencil aria-hidden />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={() => {
+                          setDeleteError(null);
+                          setDeleteTarget(row);
+                        }}
+                      >
+                        <Trash2 aria-hidden />
+                        Remove detail
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </CardFooter>
+            </Card>
+          )
+        ))
+      )}
+
+      {adding && (
+        <FactForm
+          value=""
+          label="Add a fact about your brand"
+          placeholder="Write a durable detail Otto should remember…"
+          submitLabel="Add detail"
+          onCancel={() => setAdding(false)}
+          onSubmit={onAdd}
+          onSaved={() => setAdding(false)}
+        />
+      )}
+
+      {rows.length > 0 && !adding && (
+        <Button type="button" size="sm" variant="secondary" className="self-start" onClick={() => setAdding(true)}>
+          <Plus data-icon="inline-start" />
+          Add detail
+        </Button>
+      )}
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deletePending) {
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this brand detail?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the saved detail from Brand memory.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Alert variant="warning" density="compact">
+            <AlertTitle>What changes</AlertTitle>
+            <AlertDescription>
+              Otto will stop using this detail in future projects. Existing projects and generated assets stay unchanged.
+            </AlertDescription>
+          </Alert>
+          {deleteError && (
+            <Alert variant="destructive" density="compact" role="alert">
+              <AlertTitle>Detail wasn&apos;t removed</AlertTitle>
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
           )}
-        </div>
-      </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={deletePending}>Keep detail</AlertDialogCancel>
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={deletePending}
+              onClick={() => void removeDetail()}
+            >
+              {deletePending && <Spinner data-icon="inline-start" />}
+              {deletePending ? "Removing…" : "Remove detail"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

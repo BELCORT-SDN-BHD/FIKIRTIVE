@@ -1,16 +1,45 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { MSG_ENTER_STYLE } from "./parts/motion";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useStickToBottom } from "use-stick-to-bottom";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { OttoMentionPopover } from "@/components/otto/OttoMentionPopover";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { getCoworkThreadClient } from "@/lib/cowork-fetch";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
+import {
+  Message,
+  MessageAvatar,
+  MessageContent,
+  MessageGroup,
+  MessageHeader,
+} from "@/components/ui/message";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
+import { Marker, MarkerContent } from "@/components/ui/marker";
+import { Spinner } from "@/components/ui/spinner";
+import { getCoworkThreadClient, getOlderCoworkThreadMessagesClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
-import { ImageIcon, MessageSquarePlus } from "lucide-react";
+import { ChevronDown, ImageIcon, MessageSquarePlus, XIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";
@@ -90,6 +119,9 @@ export interface OttoChatStreamProps {
   composerReferences?: OttoComposerReference[] | null;
   /** Clears the parent handoff once this stream has copied it into local composer state. */
   onComposerReferencesConsumed?: (requestIds: string[]) => void;
+  /** Canvas keeps the same chat state/action tree, but places current turn, history and composer
+   *  around the spatial board instead of rendering a second full-height chat page. */
+  layout?: "default" | "canvas";
 }
 
 type AttachedReference = Omit<OttoComposerReference, "requestId">;
@@ -127,11 +159,13 @@ export function OttoChatStream({
   onPendingFirstSent,
   composerReferences,
   onComposerReferencesConsumed,
+  layout = "default",
 }: OttoChatStreamProps) {
   const [text, setText] = useState("");
   const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
+  const mentionListId = useId();
   /** Latest data-status received for the in-flight turn; reset on each new turn. */
   const [liveStatus, setLiveStatus] = useState<OttoStatusData | null>(null);
   /** Ordered agent step events for this turn (data-step) → the live OttoTrace. Reset per turn. */
@@ -160,6 +194,7 @@ export function OttoChatStream({
   const [attachError, setAttachError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastSubmittedTextRef = useRef("");
+  const submitLockRef = useRef(false);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoPick, setVideoPick] = useState<{ url: string; duration: number } | null>(null);
@@ -167,6 +202,11 @@ export function OttoChatStream({
   // F28: only true once a frame has actually been drawn to the canvas (onSeeked), so "Use this
   // frame" can't attach a blank JPEG before the first paint.
   const [frameReady, setFrameReady] = useState(false);
+  const [canvasHistoryOpen, setCanvasHistoryOpen] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(Boolean(thread.hasOlderMessages));
+  const [oldestSeq, setOldestSeq] = useState<number | null>(thread.messages[0]?.seq ?? null);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [olderMessagesError, setOlderMessagesError] = useState<string | null>(null);
   /** The original video File for the current videoPick — used by "Use whole video"
    *  to upload the clip itself (not an extracted frame). */
   const wholeVideoFileRef = useRef<File | null>(null);
@@ -333,6 +373,34 @@ export function OttoChatStream({
   const isStreaming = status === "streaming";
   const isBusy = status === "submitted" || status === "streaming";
 
+  async function loadOlderMessages() {
+    if (!hasOlderMessages || oldestSeq === null || loadingOlderMessages) return;
+    setLoadingOlderMessages(true);
+    setOlderMessagesError(null);
+    try {
+      const page = await getOlderCoworkThreadMessagesClient(thread.id, oldestSeq);
+      if (!page) {
+        setOlderMessagesError("Earlier messages couldn't be loaded — please try again.");
+        return;
+      }
+      const older = threadToUiMessages(page);
+      setMessages((current) => {
+        const currentIds = new Set(current.map((message) => message.id));
+        return [...older.filter((message) => !currentIds.has(message.id)), ...current];
+      });
+      setOldestSeq(page.messages[0]?.seq ?? oldestSeq);
+      setHasOlderMessages(Boolean(page.hasOlderMessages));
+    } catch {
+      setOlderMessagesError("Earlier messages couldn't be loaded — please try again.");
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isBusy) submitLockRef.current = false;
+  }, [isBusy]);
+
   // True once the first assistant token has arrived — drives skeleton → real bubble swap.
   const lastMsg = messages[messages.length - 1];
   const hasAssistantText =
@@ -441,8 +509,6 @@ export function OttoChatStream({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasWorkingJob, thread.id, pollGaveUp, pollRound, pollNonce]);
 
-  const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom();
-
   // Streaming front door: auto-send the first message ONCE into the empty thread.
   // The per-mount ref guards against double-send; onPendingFirstSent clears the
   // parent's pendingFirst so a later remount (switch away + back) never re-fires.
@@ -461,7 +527,8 @@ export function OttoChatStream({
 
   function submit() {
     const trimmed = text.trim();
-    if (!trimmed || isBusy) return;
+    if (!trimmed || isBusy || submitLockRef.current) return;
+    submitLockRef.current = true;
     const entityIds = resolveSentEntityIds(trimmed, pickedMentions);
     lastSubmittedTextRef.current = trimmed;
     setText(""); // clear the composer immediately; sendMessage echoes the user msg
@@ -484,17 +551,21 @@ export function OttoChatStream({
     // sourceGenerationId (attached image) or referenceVideoGenerationId (attached whole
     // clip) via the per-call body; prepareSendMessagesRequest reads them off `body` and
     // shapes the strict route payload.
-    void sendMessage(
-      { text: trimmed },
-      {
-        body: {
-          projectId,
-          threadId: thread.id,
-          ...(entityIds.length ? { entityIds } : {}),
-          ...composerReferencePayload(attachedNow),
+    void Promise.resolve(
+      sendMessage(
+        { text: trimmed },
+        {
+          body: {
+            projectId,
+            threadId: thread.id,
+            ...(entityIds.length ? { entityIds } : {}),
+            ...composerReferencePayload(attachedNow),
+          },
         },
-      },
-    );
+      ),
+    ).catch(() => {
+      submitLockRef.current = false;
+    });
   }
 
   async function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -694,6 +765,11 @@ export function OttoChatStream({
     setTimeout(() => textarea?.focus(), 0);
   };
 
+  const dismissMentions = () => {
+    setMentionQuery(null);
+    setMentionHighlight(0);
+  };
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (mentionSuggestions.length > 0) {
       if (e.key === "ArrowUp") {
@@ -723,7 +799,7 @@ export function OttoChatStream({
         return;
       }
     }
-    if (e.key === "Enter" && e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
     }
@@ -736,9 +812,20 @@ export function OttoChatStream({
     messages.length > 0 &&
     messages[messages.length - 1].role === "assistant";
 
+  const latestAssistantText = [...messages].reverse().find((message) => message.role === "assistant")
+    ?.parts.filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join(" ")
+    .trim();
+  const canvasLayout = layout === "canvas";
+
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div
+      className={canvasLayout
+        ? "gb pointer-events-none absolute inset-0 z-30 leading-[1.5]"
+        : "gb flex min-h-0 flex-1 flex-col overflow-hidden leading-[1.5]"}
+    >
       <style>{`
         @keyframes otto-caret-blink { 50% { opacity: 0; } }
         @keyframes otto-msg-enter {
@@ -760,38 +847,109 @@ export function OttoChatStream({
           .otto-send-hint { display: none; }
         }
       `}</style>
-      {/* Header — New conversation is always visible here, not only on a sidebar hover. */}
-      <div
-        className="otto-chat-header flex items-center gap-[9px] border-b border-border bg-card px-4 py-[13px]"
-      >
-        <OttoAvatar size={22} state={isBusy ? "thinking" : "idle"} />
-        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.90625rem] font-semibold text-foreground">
-          {thread.title}
+      {canvasLayout ? (
+        <div
+          aria-label="Otto current turn"
+          className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]"
+        >
+          <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+            <span className="flex items-center gap-2 text-xs font-semibold">
+              <OttoAvatar size={22} state={isBusy ? "thinking" : "idle"} />
+              Otto
+            </span>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={`size-1.5 rounded-full ${isBusy ? "bg-brand" : thread.status === "failed" ? "bg-destructive" : "bg-success"}`} />
+              {isBusy ? "Working" : thread.status === "failed" ? "Failed" : "Ready"}
+            </span>
+          </div>
+          <p className="line-clamp-3 px-3 py-3 text-sm leading-5 text-foreground">
+            {isBusy ? "Working through your latest request…" : latestAssistantText || "Tell Otto what you want to create or change."}
+          </p>
         </div>
-        {onNewConversation && (
+      ) : null}
+      {/* Header — New conversation is always visible here, not only on a sidebar hover. */}
+      {canvasLayout ? (
+        <div className="otto-chat-header pointer-events-auto absolute bottom-4 left-4 flex h-10 w-[280px] items-center gap-1 rounded-[var(--radius-card)] border border-border bg-card p-1 shadow-[var(--shadow-sm)]">
           <Button
             type="button"
-            variant="outline"
-            onClick={onNewConversation}
-            title="Start a new conversation in this project"
-            aria-label="New conversation"
-            className="h-auto shrink-0 gap-[6px] rounded-[9px] px-[10px] py-[6px] text-[0.8125rem] font-medium text-foreground"
+            variant="ghost"
+            size="sm"
+            aria-expanded={canvasHistoryOpen}
+            className="min-w-0 flex-1 justify-between px-2"
+            onClick={() => setCanvasHistoryOpen((open) => !open)}
           >
-            <MessageSquarePlus size={14} aria-hidden />
-            New conversation
+            <span className="truncate">Conversation</span>
+            <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground tabular-nums">
+              {messages.length}
+              <ChevronDown className={`size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none ${canvasHistoryOpen ? "rotate-180" : ""}`} aria-hidden />
+            </span>
           </Button>
-        )}
-      </div>
+          {onNewConversation ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={onNewConversation}
+              title="Start a new conversation in this Canvas"
+              aria-label="New conversation"
+            >
+              <MessageSquarePlus aria-hidden />
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="otto-chat-header flex items-center gap-[9px] border-b border-border bg-card px-4 py-[13px]">
+          <OttoAvatar size={22} state={isBusy ? "thinking" : "idle"} />
+          <div className="min-w-0 flex-1 truncate text-[0.90625rem] font-semibold text-foreground">
+            {thread.title}
+          </div>
+          {onNewConversation && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onNewConversation}
+              title="Start a new conversation in this Canvas"
+              aria-label="New conversation"
+              className="shrink-0"
+            >
+              <MessageSquarePlus data-icon="inline-start" aria-hidden />
+              New conversation
+            </Button>
+          )}
+        </div>
+      )}
 
-      {/* Messages (stick-to-bottom scroll region) */}
-      <div
-        ref={scrollRef}
-        className="otto-chat-scroll relative flex-1 overflow-auto p-4"
-      >
-        <div
-          ref={contentRef}
-          className="mx-auto flex max-w-[680px] flex-col gap-[14px]"
+      {/* Messages — shadcn owns follow, anchoring, and jump-to-latest behavior. */}
+      <MessageScrollerProvider autoScroll>
+        <MessageScroller className={canvasLayout
+          ? `${canvasHistoryOpen ? "flex" : "hidden"} pointer-events-auto absolute bottom-16 left-4 h-[min(58vh,560px)] w-[380px] overflow-hidden rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-md)]`
+          : "min-h-0 flex-1"}
         >
+          <MessageScrollerViewport>
+            <MessageScrollerContent
+              className="otto-chat-scroll mx-auto w-full max-w-[680px] gap-[14px] p-4"
+              role="log"
+              aria-live="polite"
+              aria-label="Conversation with Otto"
+            >
+          {hasOlderMessages ? (
+            <div className="flex flex-col items-center gap-2 pb-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                disabled={loadingOlderMessages}
+                onClick={() => void loadOlderMessages()}
+              >
+                {loadingOlderMessages ? <Spinner data-icon="inline-start" aria-hidden="true" /> : null}
+                {loadingOlderMessages ? "Loading…" : "Load earlier messages"}
+              </Button>
+              {olderMessagesError ? (
+                <span role="alert" className="text-xs text-destructive">{olderMessagesError}</span>
+              ) : null}
+            </div>
+          ) : null}
           {(() => {
             // Pre-pass: coalesce consecutive GEN_CARD messages that share the same
             // non-empty packId into a single pack group. Non-pack GEN_CARDs (packId
@@ -896,7 +1054,7 @@ export function OttoChatStream({
                   void pollAndInjectResults(outcome.narrationMessageIds);
                 };
                 return (
-                  <WidgetRow key={`pack:${packId}`} animateIn={animateIn}>
+                  <WidgetRow key={`pack:${packId}`} messageId={`pack:${packId}`} animateIn={animateIn}>
                     <PackCard
                       packTitle={packTitle}
                       cards={packCards}
@@ -926,7 +1084,7 @@ export function OttoChatStream({
               const genJobId = m.metadata?.genJobId ?? null;
               const durableId = m.metadata!.durableId;
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoPlanCard
                     cardId={durableId}
                     payload={m.metadata?.payload}
@@ -1006,7 +1164,7 @@ export function OttoChatStream({
             // (approveMetaActionPlan / approveAdBuild); this only renders them.
             if (kind === "ACTION_CARD") {
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoActionPlanCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
@@ -1014,7 +1172,7 @@ export function OttoChatStream({
 
             if (kind === "BUILD_CARD") {
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoAdBuildCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
@@ -1024,7 +1182,7 @@ export function OttoChatStream({
             // user's consent. Confirm/Decline call ottoApprove/ottoReject inside the card.
             if (kind === "APPROVAL_CARD") {
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoApprovalCard
                     cardId={m.metadata!.durableId}
                     threadId={thread.id}
@@ -1049,7 +1207,7 @@ export function OttoChatStream({
                 | null;
               const sourceCardId = m.metadata?.genJobId ? cardIdByJobId.get(m.metadata.genJobId) : undefined;
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoResult
                     payload={r}
                     sourceCardId={sourceCardId}
@@ -1064,13 +1222,22 @@ export function OttoChatStream({
 
             if (kind === "DENIAL") {
               return (
-                <div key={m.id} className="flex items-start gap-3" style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}>
-                  <OttoAvatar size={26} state="idle" />
-                  <div className="rounded-[5px_14px_14px_14px] bg-error-soft px-[13px] py-[10px] text-[0.875rem] leading-normal text-[var(--error-soft-foreground)]">
-                    {/* DENIAL carries its user-facing copy on the durable message text. */}
-                    {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
-                  </div>
-                </div>
+                <ConversationItem key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
+                  <Message align="start">
+                    <MessageAvatar aria-hidden>
+                      <OttoAvatar size={32} state="idle" />
+                    </MessageAvatar>
+                    <MessageContent>
+                      <MessageHeader>Otto</MessageHeader>
+                      <Bubble variant="destructive">
+                        <BubbleContent>
+                          {/* DENIAL carries its user-facing copy on the durable message text. */}
+                          {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
+                        </BubbleContent>
+                      </Bubble>
+                    </MessageContent>
+                  </Message>
+                </ConversationItem>
               );
             }
 
@@ -1081,13 +1248,11 @@ export function OttoChatStream({
               // index) but it is not an error: no alert styling, and nothing to retry (#602 T3).
               if (cancelledTurnPayload(m.metadata?.payload)) {
                 return (
-                  <div
-                    key={m.id}
-                    className="text-[0.875rem] leading-normal text-muted-foreground"
-                    style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}
-                  >
-                    {durableText}
-                  </div>
+                  <ConversationItem key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
+                    <Marker variant="separator">
+                      <MarkerContent>{durableText}</MarkerContent>
+                    </Marker>
+                  </ConversationItem>
                 );
               }
               const durableError = persistedStreamErrorOf(m.metadata?.payload, durableText);
@@ -1096,19 +1261,19 @@ export function OttoChatStream({
                 ? thread.messages.find((message) => message.id === failedUserMessageId && message.role === "USER")?.text ?? null
                 : null;
               return (
-                <OttoStreamErrorNotice
-                  key={m.id}
-                  error={durableError}
-                  retryDraft={durableRetryDraft}
-                  onRetry={(draft) => setText(draft)}
-                  style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}
-                />
+                <ConversationItem key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
+                  <OttoStreamErrorNotice
+                    error={durableError}
+                    retryDraft={durableRetryDraft}
+                    onRetry={(draft) => setText(draft)}
+                  />
+                </ConversationItem>
               );
             }
 
             if (kind === "STORYBOARD_CARD") {
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <StoryboardCard
                     cardId={m.metadata!.durableId}
                     payload={m.metadata?.payload}
@@ -1121,7 +1286,7 @@ export function OttoChatStream({
 
             if (kind === "RESEARCH_CARD") {
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <ResearchCard
                     cardId={m.metadata!.durableId}
                     payload={m.metadata?.payload}
@@ -1135,7 +1300,7 @@ export function OttoChatStream({
 
             if (kind === "PERFORMANCE_CARD") {
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <PerformanceCard payload={m.metadata?.payload} />
                 </WidgetRow>
               );
@@ -1143,7 +1308,7 @@ export function OttoChatStream({
 
             if (kind === "RESEARCH_REPORT") {
               return (
-                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
                   <ResearchReport cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
@@ -1174,47 +1339,50 @@ export function OttoChatStream({
             const turnCost = m.role === "user"
               ? null
               : turnCostOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);
-            return [
-              ...textParts.map((p, pi) => {
-                const isLastTextPart = pi === textParts.length - 1;
-                const streaming =
-                  lastMessageIsStreamingAssistant && isLastMessage && isLastTextPart;
-                return (
-                  <TextPart
-                    key={`${m.id}:t${pi}`}
-                    role={m.role === "user" ? "user" : "assistant"}
-                    text={p.text}
-                    streaming={streaming}
-                    animateIn={isNewMessage(m.id)}
-                  />
-                );
-              }),
-              ...reasoningParts.map((p, ri) => (
-                // Graceful: only rendered when reasoning arrives; most models omit it.
-                <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
-              )),
-              ...(turnCost !== null
-                ? [
-                    <div
-                      key={`${m.id}:cost`}
-                      className="pl-[44px] text-[0.6875rem] text-muted-foreground/70"
-                    >
-                      This reply used {creditsLabel(turnCost)}.
-                    </div>,
-                  ]
-                : []),
-              ...(partError && !streamError
-                ? [
+            const showPartError = partError && !streamError;
+            if (!textParts.length && !reasoningParts.length && turnCost === null && !showPartError) {
+              return null;
+            }
+            return (
+              <ConversationItem
+                key={m.id}
+                messageId={m.id}
+                scrollAnchor={m.role === "user"}
+                animateIn={isNewMessage(m.id)}
+              >
+                <MessageGroup>
+                  {textParts.map((p, pi) => {
+                    const isLastTextPart = pi === textParts.length - 1;
+                    const streaming =
+                      lastMessageIsStreamingAssistant && isLastMessage && isLastTextPart;
+                    return (
+                      <TextPart
+                        key={`${m.id}:t${pi}`}
+                        role={m.role === "user" ? "user" : "assistant"}
+                        text={p.text}
+                        streaming={streaming}
+                      />
+                    );
+                  })}
+                  {reasoningParts.map((p, ri) => (
+                    // Graceful: only rendered when reasoning arrives; most models omit it.
+                    <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
+                  ))}
+                  {turnCost !== null && (
+                    <Marker>
+                      <MarkerContent>This reply used {creditsLabel(turnCost)}.</MarkerContent>
+                    </Marker>
+                  )}
+                  {showPartError && (
                     <OttoStreamErrorNotice
-                      key={`${m.id}:err`}
                       error={partError}
                       retryDraft={partError.kind === "error" ? latestUserText(messages.slice(0, mi + 1)) || null : null}
                       onRetry={(draft) => setText(draft)}
-                      style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}
-                    />,
-                  ]
-                : []),
-            ];
+                    />
+                  )}
+                </MessageGroup>
+              </ConversationItem>
+            );
             }); // end renderItems.map
           })()} {/* end IIFE */}
 
@@ -1225,85 +1393,85 @@ export function OttoChatStream({
               The old module-level broadcast hid every waiting panel on any card's
               success and was never sent by the universal approval card at all. */}
           {shouldShowTracePanel({ steps: traceSteps, pendingCardIds: pendingApprovalCardIds }) && (
-            <div className="my-2 mb-3">
+            <ConversationItem messageId="live-trace">
               <OttoTrace steps={traceSteps} />
-            </div>
+            </ConversationItem>
           )}
 
           {/* Live status line: narrates the turn's current phase in one short sentence
               (#996 — copy lives in lib/otto-turn-narration.ts); hides automatically once
               the first token arrives or isBusy goes false. */}
-          <StatusLine
-            isBusy={isBusy}
-            liveStatus={liveStatus}
-            hasAssistantText={hasAssistantText}
-          />
+          {isBusy && !hasAssistantText && (
+            <ConversationItem messageId="live-status">
+              <StatusLine
+                isBusy={isBusy}
+                liveStatus={liveStatus}
+                hasAssistantText={hasAssistantText}
+              />
+            </ConversationItem>
+          )}
 
           {/* Terminal degrade/stale status: shown after an abnormal turn end.
               Clears automatically when submit() calls setLiveStatus(null). */}
           {!isBusy && (liveStatus?.kind === "degraded" || liveStatus?.kind === "stale") && (
-            <div className="flex items-start gap-3" style={MSG_ENTER_STYLE}>
-              <OttoAvatar size={26} state="idle" />
-              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
-                {liveStatus.text}
-              </div>
-            </div>
+            <ConversationItem messageId={`live-${liveStatus.kind}`} animateIn>
+              <OttoStatusMessage>{liveStatus.text}</OttoStatusMessage>
+            </ConversationItem>
           )}
 
           {/* Async generation in progress: a card was approved (genJobId set) and the
               worker hasn't written a terminal result yet. */}
           {!isBusy && hasWorkingJob && !pollGaveUp && (
-            <div className="flex items-start gap-3">
-              <OttoAvatar size={26} state="thinking" />
-              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] italic text-muted-foreground">
+            <ConversationItem messageId="working-generation">
+              <OttoStatusMessage state="thinking">
                 Otto is making this — this can take a moment…
-              </div>
-            </div>
+              </OttoStatusMessage>
+            </ConversationItem>
           )}
 
           {!isBusy && hasWorkingJob && pollGaveUp && !pollTerminal && (
-            <div className="flex items-start gap-3">
-              <OttoAvatar size={26} state="idle" />
-              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
+            <ConversationItem messageId="working-generation-delayed">
+              <OttoStatusMessage>
                 This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
                 <Button
                   type="button"
                   variant="link"
+                  size="xs"
                   onClick={() => {
                     setPollRound("retry");
                     setPollGaveUp(false);
                     void pollAndInjectResults();
                   }}
-                  className="h-auto w-auto p-0 text-primary underline"
                 >
                   Check again
                 </Button>
-              </div>
-            </div>
+              </OttoStatusMessage>
+            </ConversationItem>
           )}
 
           {!isBusy && hasWorkingJob && pollTerminal && (
-            <div className="flex items-start gap-3">
-              <OttoAvatar size={26} state="idle" />
-              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
+            <ConversationItem messageId="working-generation-stuck">
+              <OttoStatusMessage>
                 This looks stuck. Cancel it on the card to get your credits back, or start a new card.
-              </div>
-            </div>
+              </OttoStatusMessage>
+            </ConversationItem>
           )}
 
           {/* Live data-error. The route also persists the same typed failure as a
               TURN_ERROR, so remount/refresh rehydrates this exact presentation. */}
           {streamError && (
-            <OttoStreamErrorNotice
-              error={{ kind: streamErrorKind ?? "error", text: streamError }}
-              retryDraft={retryDraft}
-              onRetry={(draft) => {
-                setText(draft);
-                setStreamError(null);
-                setStreamErrorKind(null);
-                setRetryDraft(null);
-              }}
-            />
+            <ConversationItem messageId="live-stream-error">
+              <OttoStreamErrorNotice
+                error={{ kind: streamErrorKind ?? "error", text: streamError }}
+                retryDraft={retryDraft}
+                onRetry={(draft) => {
+                  setText(draft);
+                  setStreamError(null);
+                  setStreamErrorKind(null);
+                  setRetryDraft(null);
+                }}
+              />
+            </ConversationItem>
           )}
 
           {/* useChat transport-level error (network / parse failures distinct from
@@ -1312,56 +1480,26 @@ export function OttoChatStream({
               ("Failed to fetch" and the like), not something a merchant can act on;
               it's logged above instead (#949 A2). */}
           {status === "error" && !streamError && (
-            <div
-              role="alert"
-              className="rounded-[14px] bg-error-soft px-4 py-3 text-[0.875rem] text-[var(--error-soft-foreground)]"
-            >
-              Otto hit a snag — please try again.
-            </div>
+            <ConversationItem messageId="transport-error">
+              <Alert role="alert" variant="destructive">
+                <AlertTitle>Otto couldn&apos;t finish this turn</AlertTitle>
+                <AlertDescription>Otto hit a snag — please try again.</AlertDescription>
+              </Alert>
+            </ConversationItem>
           )}
-        </div>
-
-        {!isAtBottom && (
-          <div className="sticky bottom-4 flex justify-center pointer-events-none">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => void scrollToBottom()}
-              aria-label="Scroll to bottom"
-              className="pointer-events-auto h-auto gap-1 rounded-full px-3 py-2 text-[0.875rem] font-normal shadow-sm"
-            >
-              ↓ Scroll to bottom
-            </Button>
-          </div>
-        )}
-      </div>
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton variant="secondary" />
+        </MessageScroller>
+      </MessageScrollerProvider>
 
       {/* Composer */}
       <div
-        className="otto-chat-composer border-t border-border bg-card p-3"
+        className={canvasLayout
+          ? "otto-chat-composer pointer-events-auto absolute bottom-4 left-[calc(50%_+_140px)] w-[min(620px,calc(100%_-_340px))] -translate-x-1/2 rounded-[var(--radius-card)] border border-border bg-card p-2 shadow-[var(--shadow-md)]"
+          : "otto-chat-composer border-t border-border bg-card p-3"}
       >
         <div className="relative mx-auto max-w-[680px]">
-          {mentionSuggestions.length > 0 && (
-            <div
-              role="listbox"
-              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[14px] border border-border bg-card shadow-lg z-50"
-            >
-              {mentionSuggestions.map((e, i) => (
-                <Button
-                  key={e.id}
-                  type="button"
-                  variant="ghost"
-                  role="option"
-                  aria-selected={i === mentionHighlight}
-                  onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
-                  className="h-auto w-full justify-start rounded-none px-3 py-2 text-left text-[0.875rem] font-normal text-foreground hover:bg-transparent"
-                  style={{ background: i === mentionHighlight ? "var(--accent)" : "transparent" }}
-                >
-                  @{e.name}
-                </Button>
-              ))}
-            </div>
-          )}
           {/* Hidden file input — triggered by the attach button below */}
           <Input
             ref={fileInputRef}
@@ -1419,116 +1557,192 @@ export function OttoChatStream({
 
           {/* Reference chips: shown while uploading or when image/video refs are attached */}
           {(uploading || attachedRefs.length > 0) && (
-            <div className="mb-2 flex flex-wrap items-center gap-2">
+            <AttachmentGroup className="mb-2">
               {uploading ? (
-                <div className="inline-flex items-center gap-2 rounded-[14px] border border-border bg-muted px-2 py-1 text-[0.875rem] text-muted-foreground">
-                  attaching…
-                </div>
+                <Attachment state="uploading" size="sm">
+                  <AttachmentMedia>
+                    <Spinner aria-label="Attaching reference" />
+                  </AttachmentMedia>
+                  <AttachmentContent>
+                    <AttachmentTitle>Attaching reference</AttachmentTitle>
+                    <AttachmentDescription>Preparing upload</AttachmentDescription>
+                  </AttachmentContent>
+                </Attachment>
               ) : null}
               {attachedRefs.map((ref) => (
-                <div key={ref.generationId} className="inline-flex items-center gap-2 rounded-[14px] border border-border bg-muted px-2 py-1">
-                  {ref.previewKind === "video" ? (
-                    <video
-                      src={ref.src}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      className="h-10 w-10 rounded-[7px] bg-black object-cover"
-                    />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={ref.src}
-                      alt="Attached reference"
-                      className="h-10 w-10 rounded-[7px] object-cover"
-                    />
-                  )}
-                  <span className="max-w-[110px] truncate text-[0.8125rem] font-medium text-muted-foreground">
-                    {ref.label}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`Remove ${ref.label}`}
-                    onClick={() => {
-                      revokeAttachedPreview(ref);
-                      setAttachedRefs((current) => removeComposerReference(current, ref.generationId));
-                      setAttachError(null);
-                    }}
-                    className="h-auto w-auto rounded-none p-0 text-[0.875rem] leading-none text-muted-foreground hover:bg-transparent hover:text-foreground"
-                  >
-                    ×
-                  </Button>
-                </div>
+                <Attachment key={ref.generationId} state="done" size="sm">
+                  <AttachmentMedia variant="image">
+                    {ref.previewKind === "video" ? (
+                      <video
+                        src={ref.src}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="size-full object-cover"
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={ref.src} alt="Attached reference" />
+                    )}
+                  </AttachmentMedia>
+                  <AttachmentContent>
+                    <AttachmentTitle>{ref.label}</AttachmentTitle>
+                    <AttachmentDescription>
+                      {ref.previewKind === "video" ? "Video reference" : "Image reference"}
+                    </AttachmentDescription>
+                  </AttachmentContent>
+                  <AttachmentActions>
+                    <AttachmentAction
+                      type="button"
+                      aria-label={`Remove ${ref.label}`}
+                      onClick={() => {
+                        revokeAttachedPreview(ref);
+                        setAttachedRefs((current) => removeComposerReference(current, ref.generationId));
+                        setAttachError(null);
+                      }}
+                    >
+                      <XIcon />
+                    </AttachmentAction>
+                  </AttachmentActions>
+                </Attachment>
               ))}
-            </div>
+            </AttachmentGroup>
           )}
 
           {/* Attach error */}
           {attachError && (
-            <div className="mb-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-              {attachError}
-            </div>
+            <Alert role="alert" variant="destructive" density="compact" className="mb-2">
+              <AlertTitle>Reference couldn&apos;t be attached</AlertTitle>
+              <AlertDescription>{attachError}</AlertDescription>
+            </Alert>
           )}
 
-          <div className="overflow-hidden rounded-[14px] border-[1.5px] border-border bg-background shadow-sm">
-            <Textarea
-              id="otto-composer"
-              // #739 — the placeholder changes with the attached references and vanishes on
-              // the first keystroke; the name stays put.
-              aria-label="Reply to Otto"
-              value={text}
-              onChange={handleTextChange}
-              onKeyDown={handleKeyDown}
-              disabled={isBusy}
-              placeholder={composerReferencesPlaceholder(attachedRefs)}
-              rows={2}
-              // #920 判官 r1 P2 — ui/textarea's own field-sizing-content would grow this
-              // fixed-chrome composer box taller with every line typed; field-sizing-fixed
-              // restores the original rows-locked height.
-              className="field-sizing-fixed min-h-0 w-full resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground shadow-none outline-none"
-            />
-            <div className="flex items-center justify-between border-t border-border px-3 py-2">
-              {/* Attach image button */}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Attach reference image"
-                disabled={isBusy || uploading || !!videoPick}
-                onClick={() => fileInputRef.current?.click()}
-                className="h-auto w-auto p-1 hover:bg-transparent disabled:opacity-50"
-                style={{ color: attachedRefs.length ? "var(--primary)" : undefined }}
-              >
-                <ImageIcon size={18} className={attachedRefs.length ? "text-primary" : "text-muted-foreground"} />
-              </Button>
-              <div className="flex items-center gap-2">
-                <span
-                  className="otto-send-hint text-[0.75rem] text-muted-foreground"
-                  title="Shift+Enter sends. Enter starts a new line."
+          <OttoMentionPopover
+            suggestions={mentionSuggestions}
+            highlightedIndex={mentionHighlight}
+            listId={mentionListId}
+            onDismiss={dismissMentions}
+            onHighlightChange={setMentionHighlight}
+            onSelect={selectMention}
+          >
+            <InputGroup className="overflow-hidden rounded-[var(--radius-card)] bg-card shadow-[var(--shadow-sm)]">
+              <InputGroupTextarea
+                id="otto-composer"
+                // #739 — the placeholder changes with the attached references and vanishes on
+                // the first keystroke; the name stays put.
+                aria-label="Reply to Otto"
+                value={text}
+                onChange={handleTextChange}
+                onKeyDown={handleKeyDown}
+                aria-autocomplete="list"
+                aria-controls={mentionSuggestions.length > 0 ? mentionListId : undefined}
+                aria-expanded={mentionSuggestions.length > 0}
+                aria-activedescendant={mentionSuggestions.length > 0 ? `${mentionListId}-option-${mentionHighlight}` : undefined}
+                disabled={isBusy}
+                placeholder={composerReferencesPlaceholder(attachedRefs)}
+                rows={2}
+                // #920 判官 r1 P2 — ui/textarea's own field-sizing-content would grow this
+                // fixed-chrome composer box taller with every line typed; field-sizing-fixed
+                // restores the original rows-locked height.
+                className="field-sizing-fixed min-h-0 w-full px-4 text-[0.90625rem]"
+              />
+              <InputGroupAddon align="block-end" className="justify-between border-t border-border">
+                {/* Attach image button */}
+                <InputGroupButton
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Attach reference image"
+                  disabled={isBusy || uploading || !!videoPick}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={attachedRefs.length ? "text-primary" : "text-muted-foreground"}
                 >
-                  Shift+Enter to send
-                </span>
-                <Button variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
-                  {isBusy ? "Sending…" : "Send"}
-                </Button>
-              </div>
-            </div>
-          </div>
+                  <ImageIcon aria-hidden="true" />
+                </InputGroupButton>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="otto-send-hint text-[0.75rem] text-muted-foreground"
+                    title="Enter sends. Shift+Enter starts a new line."
+                  >
+                    Enter to send
+                  </span>
+                  <InputGroupButton variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
+                    {isBusy && <Spinner data-icon="inline-start" aria-label="Sending message" />}
+                    {isBusy ? "Sending…" : "Send"}
+                  </InputGroupButton>
+                </div>
+              </InputGroupAddon>
+            </InputGroup>
+          </OttoMentionPopover>
         </div>
       </div>
     </div>
   );
 }
 
-/** Avatar + flexible body row used for the inline plan card / result widgets
- *  (GEN_CARD / GEN_RESULT). */
-function WidgetRow({ children, animateIn }: { children: React.ReactNode; animateIn?: boolean }) {
+function ConversationItem({
+  messageId,
+  children,
+  scrollAnchor = false,
+  animateIn = false,
+}: {
+  messageId: string;
+  children: React.ReactNode;
+  scrollAnchor?: boolean;
+  animateIn?: boolean;
+}) {
   return (
-    <div className="flex items-start gap-[9px]" style={animateIn ? MSG_ENTER_STYLE : undefined}>
-      <OttoAvatar size={26} state="idle" />
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
+    <MessageScrollerItem
+      messageId={messageId}
+      scrollAnchor={scrollAnchor}
+      style={animateIn ? MSG_ENTER_STYLE : undefined}
+    >
+      {children}
+    </MessageScrollerItem>
+  );
+}
+
+function OttoStatusMessage({
+  children,
+  state = "idle",
+}: {
+  children: React.ReactNode;
+  state?: "idle" | "thinking";
+}) {
+  return (
+    <Message align="start">
+      <MessageAvatar aria-hidden>
+        <OttoAvatar size={32} state={state} />
+      </MessageAvatar>
+      <MessageContent>
+        <MessageHeader>Otto</MessageHeader>
+        <Bubble variant="status">
+          <BubbleContent>{children}</BubbleContent>
+        </Bubble>
+      </MessageContent>
+    </Message>
+  );
+}
+
+/** Avatar + flexible body row used for inline plan cards and result widgets. */
+function WidgetRow({
+  messageId,
+  children,
+  animateIn,
+}: {
+  messageId: string;
+  children: React.ReactNode;
+  animateIn?: boolean;
+}) {
+  return (
+    <ConversationItem messageId={messageId} animateIn={animateIn}>
+      <Message align="start">
+        <MessageAvatar aria-hidden>
+          <OttoAvatar size={32} state="idle" />
+        </MessageAvatar>
+        <MessageContent>{children}</MessageContent>
+      </Message>
+    </ConversationItem>
   );
 }
 

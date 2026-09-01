@@ -25,6 +25,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -33,7 +34,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   dateTimeLabel,
@@ -437,13 +447,13 @@ export default function RoutineAuthorizationPanel({
     <section id="routine" className="scroll-mt-8" aria-labelledby="routine-heading">
       <div className="flex items-start justify-between gap-5">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Authorize</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Authorize</p>
           <h2 id="routine-heading" className="mt-2 text-2xl font-semibold tracking-tight">Routine authorization</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
             A Routine is standing permission for one exact rule revision, scope, budget, expiry, and summary policy. Publishing a rule does not activate it.
           </p>
         </div>
-        {routineReadError ? <Badge variant="outline">Status unavailable</Badge> : activePersistedCount > 0 ? <Badge variant="brand">{activePersistedCount} active</Badge> : <Badge variant="outline">No active Routines</Badge>}
+        {routineReadError ? <Badge variant="outline">Status unavailable</Badge> : activePersistedCount > 0 ? <Badge variant="success">{activePersistedCount} active</Badge> : <Badge variant="outline">No active Routines</Badge>}
       </div>
 
       {routineReadError ? <div className="mt-5 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><Unplug className="mt-0.5 size-4 shrink-0" /><span><strong>Routine status could not be refreshed.</strong> {routineReadError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(routineReadError)} No authorization is inferred.</span></div> : null}
@@ -485,22 +495,35 @@ export default function RoutineAuthorizationPanel({
           {activationTarget ? <Button type="button" disabled={disabled || busy !== null} onClick={() => void reviewActivation(activationTarget.id)}><ShieldCheck />Review activation</Button> : null}
         </div>
       ) : (
-        <Card className="mt-5 border-brand/25">
+        <Card className="mt-5 border-foreground/20">
           <CardContent>
             <div className="flex items-start justify-between gap-4">
               <div><h3 className="text-lg font-semibold">{mode === "reauthorize" ? "Prepare a replacement authorization" : "Define this authorization"}</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">Every field below becomes part of the exact approval. Changing any field later requires a new authorization.</p></div>
               <ChevronDown className="size-5 text-muted-foreground" />
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-5">
-              <label className="grid gap-2 text-sm font-semibold">Rule revision<select className="h-11 rounded-lg border border-input bg-card px-3 text-sm font-normal" value={workflowRevisionId} onChange={(event) => setWorkflowRevisionId(event.target.value)}><option value="">Select a valid revision…</option>{validRevisions.map((revision) => <option key={revision.id} value={revision.id}>Revision {revision.revision}</option>)}</select></label>
-              <label className="grid gap-2 text-sm font-semibold">Routine key<Input value={mode === "reauthorize" && reauthorizeTarget ? reauthorizeTarget.routineKey : routineKey} disabled={mode === "reauthorize"} onChange={(event) => setRoutineKey(event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-"))} placeholder="outside-hours-reply" /></label>
-            </div>
+            <FieldGroup className="mt-5 grid grid-cols-2 gap-5">
+              <Field>
+                <FieldLabel htmlFor="routine-rule-revision">Rule revision</FieldLabel>
+                <Select value={workflowRevisionId} onValueChange={setWorkflowRevisionId}>
+                  <SelectTrigger id="routine-rule-revision" className="w-full"><SelectValue placeholder="Select a valid revision…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {validRevisions.map((revision) => <SelectItem key={revision.id} value={revision.id}>Revision {revision.revision}</SelectItem>)}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="routine-key">Routine key</FieldLabel>
+                <Input id="routine-key" value={mode === "reauthorize" && reauthorizeTarget ? reauthorizeTarget.routineKey : routineKey} disabled={mode === "reauthorize"} onChange={(event) => setRoutineKey(event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-"))} placeholder="outside-hours-reply" />
+              </Field>
+            </FieldGroup>
 
-            <fieldset className="mt-5"><legend className="text-sm font-semibold">What this Routine may do</legend><div className="mt-3 grid grid-cols-2 gap-3">{ACTION_OPTIONS.map((option) => <label key={option.value} className="flex cursor-pointer gap-3 rounded-xl border border-border bg-secondary/20 p-3"><input className="mt-1 size-4 accent-[var(--brand)]" type="checkbox" checked={actionKinds.includes(option.value)} onChange={() => toggleAction(option.value)} /><span><span className="block text-sm font-semibold">{option.label}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.description}</span></span></label>)}</div></fieldset>
+            <fieldset className="mt-5"><legend className="text-sm font-semibold">What this Routine may do</legend><div className="mt-3 grid grid-cols-2 gap-3">{ACTION_OPTIONS.map((option) => <label key={option.value} className="flex cursor-pointer gap-3 rounded-xl border border-border bg-secondary/20 p-3"><Checkbox className="mt-1" checked={actionKinds.includes(option.value)} onCheckedChange={() => toggleAction(option.value)} /><span><span className="block text-sm font-semibold">{option.label}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.description}</span></span></label>)}</div></fieldset>
 
             <div className="mt-5 grid grid-cols-2 gap-5">
-              <div><p className="text-sm font-semibold">Allowed channel</p><label className="mt-3 flex items-center justify-between rounded-xl border border-border bg-secondary/20 px-4 py-3"><span><span className="block text-sm font-semibold">WhatsApp</span><span className="mt-1 block text-xs text-muted-foreground">Provider connection is not pinned in this simulated authorization.</span></span><input className="size-4 accent-[var(--brand)]" type="checkbox" checked={whatsapp} onChange={(event) => setWhatsapp(event.target.checked)} /></label></div>
+              <div><p className="text-sm font-semibold">Allowed channel</p><label className="mt-3 flex items-center justify-between rounded-xl border border-border bg-secondary/20 px-4 py-3"><span><span className="block text-sm font-semibold">WhatsApp</span><span className="mt-1 block text-xs text-muted-foreground">Provider connection is not pinned in this simulated authorization.</span></span><Checkbox checked={whatsapp} onCheckedChange={(checked) => setWhatsapp(checked === true)} /></label></div>
               <div><p className="text-sm font-semibold">Budget</p><div className="mt-3 rounded-xl border border-border bg-secondary/20 px-4 py-3"><p className="text-sm font-semibold">No credit spend</p><p className="mt-1 text-xs leading-5 text-muted-foreground">0 credits per run and 0 credits per month. Zero is a hard stop with no way to exceed it.</p></div></div>
             </div>
 
@@ -558,7 +581,7 @@ export default function RoutineAuthorizationPanel({
           })()}
           {mode === "reauthorize" && reauthorizeTarget ? <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>This creates a new, unchangeable authorization and revokes authorization {reauthorizeTarget.authorization.revision}. The new Routine will visibly supersede {reauthorizeTarget.id}.</span></div> : null}
           {errorCode ? <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={errorCode}><p className="font-semibold">The Routine action could not finish</p><p className="mt-1">{workflowErrorMessage(errorCode)}</p></div> : null}
-          <label className="flex cursor-pointer gap-3 rounded-xl border border-border p-4"><input className="mt-1 size-4 accent-[var(--brand)]" type="checkbox" checked={confirmationChecked} onChange={(event) => setConfirmationChecked(event.target.checked)} /><span><span className="block text-sm font-semibold">I reviewed this exact authorization</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">I understand the scope, zero-credit budget, expiry, and after-run summary policy.</span></span></label>
+          <label className="flex cursor-pointer gap-3 rounded-xl border border-border p-4"><Checkbox className="mt-1" checked={confirmationChecked} onCheckedChange={(checked) => setConfirmationChecked(checked === true)} /><span><span className="block text-sm font-semibold">I reviewed this exact authorization</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">I understand the scope, zero-credit budget, expiry, and after-run summary policy.</span></span></label>
           <DialogFooter><Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmationOpen(false)}>Not now</Button><Button type="button" disabled={!confirmationChecked || busy !== null || (activationLoading || !activationFacts || activationFacts.unexplained.length > 0)} onClick={() => void confirmAuthorization()}>{busy === "activate" || busy === "reauthorize" ? <LoaderCircle className="animate-spin" /> : <Check />}{mode === "reauthorize" ? "Reauthorize Routine" : "Activate Routine"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>

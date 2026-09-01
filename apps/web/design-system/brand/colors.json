@@ -1,0 +1,58 @@
+{
+  "$comment": "Fikirtive brand palette v4 · Founder approved 2026-08-20. Product chrome uses the cold neutral foundation; gradients and paper are content accents only. Coral identifies Fikirtive and Otto. Semantic colors signal state only. Accessibility amendments: ink3 #686D79 and bad #D02F35.",
+  "foundation": {
+    "ground": "#FAFAFC",
+    "surface": "#FFFFFF",
+    "chrome": "#F2F3F7",
+    "line": "#E8E9EF",
+    "line2": "#DDDEE6",
+    "ink": "#16171C",
+    "ink2": "#5B5F6C",
+    "ink3": "#686D79"
+  },
+  "brand": {
+    "coral": "#EC5828",
+    "coralSoft": "#FBE7DC",
+    "paper": "#F5F1E8",
+    "ottoEyes": "#2B1308",
+    "$rule": "Coral #EC5828 = brand mark color (F tile, Otto cloud). In product UI, coral marks Otto presence only; human-action buttons are ink."
+  },
+  "gradients": {
+    "$rule": "135°, two stops. Content accents only, never page frames. At most two per screen. Text on gradients uses the matching textOn tone at >= 4.5:1. Named exception (Founder 2026-08-21): the Create composer prism edge — 120°, four stops, violet->peach->sky tokens — is the only multi-stop gradient; adding another requires a named Founder approval.",
+    "violet": {
+      "stops": [
+        "#EDE9FE",
+        "#DBEAFE"
+      ],
+      "textOn": "#3B3663",
+      "use": "start tiles, template cards"
+    },
+    "peach": {
+      "stops": [
+        "#FFEDD5",
+        "#FFE1E1"
+      ],
+      "textOn": "#7C3D2A",
+      "use": "campaign tiles, empty states"
+    },
+    "sky": {
+      "stops": [
+        "#E0F2FE",
+        "#BAE6FD"
+      ],
+      "textOn": "#2E4A66",
+      "use": "data cards, onboarding"
+    }
+  },
+  "semantic": {
+    "good": "#16A34A",
+    "warn": "#D97706",
+    "bad": "#D02F35",
+    "info": "#3B6FE6"
+  },
+  "typography": {
+    "sans": "Geist",
+    "data": "JetBrains Mono",
+    "$rule": "英文 sentence case;数字成列开 tabular figures;中文回退 PingFang SC / Noto Sans SC。"
+  }
+}

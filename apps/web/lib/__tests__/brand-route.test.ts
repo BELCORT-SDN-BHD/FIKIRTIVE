@@ -166,7 +166,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/otto-client-actions", () => ({ ottoTurn: vi.fn() }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn(async () => null) }));
 vi.mock("@/lib/memory-actions", () => ({
-  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(),
+  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(), restoreMemory: vi.fn(),
   listMyMemory: vi.fn(async () => []),
   listMemory: vi.fn(async () => []),
 }));
@@ -263,9 +263,7 @@ function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement | un
 /**
  * 等**那件事真的发生**,而不是等一段时间(#1030)。
  *
- * Radix 的 roving focus 不在按键那一刻搬焦点:`RovingFocusGroupItem` 的 `onKeyDown` 把
- * `focusFirst(candidateNodes)` 塞进一个 `setTimeout(…)` 里
- * (`@radix-ui/react-roving-focus`,1.1.13 的 dist 第 180 行)。而 `await act(...)` 保证的
+ * Roving focus 可能在按键后的调度阶段才搬焦点，而 `await act(...)` 保证的
  * 是「React 的活干完了、微任务排空了」——**它不保证 Node 的定时器队列轮到过**。于是
  * 「焦点走没走到下一个页签」变成一场和 1ms 定时器的赛跑:文件顺序一换、机器负载一变,
  * 同一份代码就一半绿一半红。#1030 记的三次独立观察,失败字节永远是同一句
@@ -394,7 +392,7 @@ describe("W2-2 ② 手搓 tablist 退场,换成 ui/tabs(规格书 §5.6 ②)", (
     expect(tabs.filter((t) => t.getAttribute("tabindex") !== "-1")).toEqual([]);
   });
 
-  it("方向键在页签之间走 —— 手搓那版按了什么都不会发生", async () => {
+  it("上下方向键在垂直资料目录之间走 —— 手搓那版按了什么都不会发生", async () => {
     const dom = await mountBrand();
     const tabs = Array.from(dom.querySelectorAll<HTMLElement>('[role="tab"]'));
     const [first, second] = tabs;
@@ -405,7 +403,7 @@ describe("W2-2 ② 手搓 tablist 退场,换成 ui/tabs(规格书 §5.6 ②)", (
     expect(document.activeElement, "方向键还没按,焦点就不在第一个页签上").toBe(first);
 
     await act(async () => {
-      first.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      first.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
     // 焦点推进是 Radix 推迟到宏任务里干的 —— 等它真的发生,而不是赌它已经发生(见 actUntil)。
     await actUntil(() => document.activeElement === second);
@@ -428,7 +426,8 @@ describe("W2-2 ② 手搓 tablist 退场,换成 ui/tabs(规格书 §5.6 ②)", (
 describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①)", () => {
   it("源码里没有那个自制的整屏遮罩 —— 剥掉注释之后一处都不剩", () => {
     expect(code("components/otto/OttoMemory.tsx"), "手搓弹窗又回来了").not.toContain("fixed inset-0");
-    expect(source("components/otto/OttoMemory.tsx")).toContain('from "@/components/ui/dialog"');
+    expect(source("components/otto/OttoMemory.tsx")).toContain("<ProductImagePickerDialog");
+    expect(source("components/otto/memory/ProductImagePickerDialog.tsx")).toContain('from "@/components/ui/dialog"');
   });
 
   async function openPicker(): Promise<HTMLElement> {
@@ -469,8 +468,9 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
 
   it("选一张图就把它设成产品图,并且把弹窗收起来", async () => {
     const { saveBrandRecord } = await import("@/lib/brand-record-actions");
+    vi.mocked(saveBrandRecord).mockResolvedValue({ ok: true, id: "rec_1" });
     const dialog = await openPicker();
-    const tile = buttonWithText(dialog, "Nasi lemak plate");
+    const tile = dialog.querySelector<HTMLButtonElement>('button[aria-label="Choose Nasi lemak plate"]');
     expect(tile, "弹窗里没有可点的图").toBeTruthy();
     await act(async () => { tile!.click(); });
     expect(saveBrandRecord).toHaveBeenCalledWith(expect.objectContaining({

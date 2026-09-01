@@ -15,7 +15,7 @@
  * single image; the price shown comes from the central pricing helper, never a literal.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { ImageIcon, MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -23,16 +23,45 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/spinner";
 import {
   createVariant,
   deleteVariant,
@@ -77,8 +106,12 @@ export function ElementVariantsDialog({
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uncertainMessage, setUncertainMessage] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
   // What the server last said about each variant's NEWEST generation job (see lib/variant-progress).
   const [jobs, setJobs] = useState<VariantJobs>({});
   // Every paid button is guarded synchronously: `busy` is state and lands a render too late to
@@ -90,6 +123,8 @@ export function ElementVariantsDialog({
   const baseRef = entity?.refs.find((r) => r.assetId === entity.baseAssetId) ?? null;
   const hasBase = !!baseRef;
   const variantCost = creditsLabel(displayCredits(pricedRefgenCredits({ model: "seedream", count: 1 })));
+  const writeLocked = busy || deleting || pendingAction !== null;
+  const paidLocked = writeLocked || uncertainMessage !== null;
 
   // The variants as CURRENTLY rendered, readable inside the poll without making the poll restart on
   // every parent render. This is what "the images the merchant can see" means, and it is what a
@@ -106,10 +141,17 @@ export function ElementVariantsDialog({
    *  element is simply never looked up. */
   const handleOpenChange = useCallback(
     (next: boolean) => {
-      if (!next) setJobs({});
+      if (!next && writeLocked) return;
+      if (!next) {
+        setJobs({});
+        setDeleteTarget(null);
+        setRenamingId(null);
+        setError(null);
+        setUncertainMessage(null);
+      }
       onOpenChange(next);
     },
-    [onOpenChange],
+    [onOpenChange, writeLocked],
   );
 
   // A stable key for the watched set, so the poll restarts only when that set actually changes
@@ -181,11 +223,15 @@ export function ElementVariantsDialog({
    *  own words, and re-read server truth either way. The action itself says what happened to the
    *  money; what the merchant then WATCHES is the variant marked running above. */
   const runPaid = useCallback(
-    async (work: () => Promise<{ error: string } | { ok: true }>) => {
-      if (submittingRef.current) return;
+    async (
+      work: () => Promise<{ error: string } | { ok: true }>,
+      uncertainVariantId?: string,
+    ) => {
+      if (submittingRef.current || uncertainMessage) return;
       submittingRef.current = true;
       setBusy(true);
       setError(null);
+      setUncertainMessage(null);
       try {
         const res = await work();
         if ("error" in res) {
@@ -194,7 +240,17 @@ export function ElementVariantsDialog({
         }
         onChanged();
       } catch {
-        setError("Couldn't do that right now. Please try again.");
+        setUncertainMessage(
+          "We couldn't confirm whether generation started. Close this window and check the element before trying another paid action.",
+        );
+        if (uncertainVariantId) {
+          setJobs((cur) => {
+            const next = { ...cur };
+            delete next[uncertainVariantId];
+            return next;
+          });
+        }
+        onChanged();
       } finally {
         // A reserve happens the moment the action accepts — and a refused start can still have
         // reserved and refunded — so the balance is announced either way (#550).
@@ -203,7 +259,7 @@ export function ElementVariantsDialog({
         setBusy(false);
       }
     },
-    [onChanged],
+    [onChanged, uncertainMessage],
   );
 
   async function submitVariant() {
@@ -237,48 +293,79 @@ export function ElementVariantsDialog({
       // variant goes back on the watch list, and stays on it until the server says DONE.
       markRunning(variantId);
       return { ok: true };
-    });
+    }, variantId);
   }
 
   async function saveRename(variantId: string) {
     const cleanName = renameValue.trim();
     if (!cleanName) return;
     setError(null);
-    const res = await renameVariant(variantId, cleanName);
-    if ("error" in res) {
-      setError(res.error);
-      return;
+    setPendingAction(`rename:${variantId}`);
+    try {
+      const res = await renameVariant(variantId, cleanName);
+      if ("error" in res) {
+        setError(res.error);
+        return;
+      }
+      setRenamingId(null);
+      onChanged();
+    } catch {
+      setError("The variant name couldn't be saved. Check your connection and try again.");
+    } finally {
+      setPendingAction(null);
     }
-    setRenamingId(null);
-    onChanged();
   }
 
   async function removeVariant(variantId: string) {
     setError(null);
-    const res = await deleteVariant(variantId);
-    if ("error" in res) {
-      setError(res.error);
-      return;
+    setDeleting(true);
+    try {
+      const res = await deleteVariant(variantId);
+      if ("error" in res) {
+        setError(res.error);
+        return;
+      }
+      setDeleteTarget(null);
+      onChanged();
+    } catch {
+      setError("The variant couldn't be deleted. Check your connection and try again.");
+    } finally {
+      setDeleting(false);
     }
-    onChanged();
   }
 
   async function makeBase(assetId: string) {
     if (!entityId) return;
     setError(null);
-    const res = await setBaseAsset(entityId, assetId);
-    if ("error" in res) {
-      setError(res.error);
-      return;
+    setPendingAction(`base:${assetId}`);
+    try {
+      const res = await setBaseAsset(entityId, assetId);
+      if ("error" in res) {
+        setError(res.error);
+        return;
+      }
+      onChanged();
+    } catch {
+      setError("The base look couldn't be changed. Check your connection and try again.");
+    } finally {
+      setPendingAction(null);
     }
-    onChanged();
   }
 
   if (!entity) return null;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]">
+      <DialogContent
+        className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]"
+        closeDisabled={writeLocked}
+        onEscapeKeyDown={(event) => {
+          if (writeLocked) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (writeLocked) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{entity.name}</DialogTitle>
           <DialogDescription>
@@ -289,33 +376,45 @@ export function ElementVariantsDialog({
 
         {/* #979 —— 变体这一步的钱不够同样不许是死路(与计划卡、AddAssetDialog 同一个修法)。 */}
         {error && (
-          <div
-            role="alert"
-            className="rounded-[14px] bg-error-soft px-3 py-2 text-[0.875rem] text-[var(--error-soft-foreground)]"
-          >
-            <ErrorWithTopUp text={error} />
-          </div>
+          <Alert role="alert" variant="destructive">
+            <AlertTitle>Action couldn&apos;t finish</AlertTitle>
+            <AlertDescription>
+              <ErrorWithTopUp text={error} />
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {uncertainMessage && (
+          <Alert role="alert" variant="warning">
+            <AlertTitle>Status not confirmed</AlertTitle>
+            <AlertDescription>{uncertainMessage}</AlertDescription>
+          </Alert>
         )}
 
         {/* Base look */}
         <section className="flex flex-col gap-2">
           <h3 className="m-0 text-[0.875rem] font-semibold text-foreground">Base look</h3>
           {entity.refs.length === 0 ? (
-            <p className="m-0 text-[0.8125rem] text-muted-foreground">
-              This element has no photo yet. Add one from the Library first — variants are made
-              from the base look.
-            </p>
+            <Empty className="gap-3 border border-dashed p-5 md:p-5">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><ImageIcon /></EmptyMedia>
+                <EmptyTitle className="text-sm">No base photo</EmptyTitle>
+                <EmptyDescription>
+                  Add a photo from Library first. Every variant starts from that base look.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
             <div className="flex flex-wrap gap-2">
               {entity.refs.map((ref) => {
                 const isBase = ref.assetId === entity.baseAssetId;
                 return (
                   <div key={ref.id} className="flex w-[104px] flex-col gap-1">
-                    <div className="relative aspect-square overflow-hidden rounded-[14px] border border-border bg-muted">
+                    <div className="relative aspect-square overflow-hidden rounded-[var(--radius-card)] border border-border bg-muted">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={ref.url} alt={entity.name} className="h-full w-full object-cover" />
                       {isBase && (
-                        <Badge variant="brand" className="absolute left-1.5 top-1.5">
+                        <Badge variant="outline" className="absolute left-1.5 top-1.5 bg-card/90 backdrop-blur-sm">
                           Base
                         </Badge>
                       )}
@@ -324,10 +423,13 @@ export function ElementVariantsDialog({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 px-2 text-[0.75rem]"
+                        disabled={writeLocked}
                         onClick={() => void makeBase(ref.assetId)}
                       >
-                        Use as base
+                        {pendingAction === `base:${ref.assetId}` && (
+                          <Spinner aria-label="Changing base look" />
+                        )}
+                        {pendingAction === `base:${ref.assetId}` ? "Changing…" : "Use as base"}
                       </Button>
                     )}
                   </div>
@@ -341,10 +443,15 @@ export function ElementVariantsDialog({
         <section className="flex flex-col gap-2">
           <h3 className="m-0 text-[0.875rem] font-semibold text-foreground">Styling variants</h3>
           {variants.length === 0 ? (
-            <p className="m-0 text-[0.8125rem] text-muted-foreground">
-              No variants yet. The base look stays the same person; a variant changes the outfit,
-              the styling or the setting.
-            </p>
+            <Empty className="gap-3 border border-dashed p-5 md:p-5">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><Sparkles /></EmptyMedia>
+                <EmptyTitle className="text-sm">No styling variants</EmptyTitle>
+                <EmptyDescription>
+                  Keep the same identity while changing the outfit, styling or setting.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {variants.map((variant) => {
@@ -355,111 +462,138 @@ export function ElementVariantsDialog({
                 // showing the picture the merchant paid to replace (see lib/variant-progress).
                 const thumb = latestVariantRef(variant);
                 return (
-                  <div
+                  <Card
                     key={variant.id}
-                    className="flex flex-col overflow-hidden rounded-[16px] border border-border bg-card"
+                    size="sm"
+                    className="gap-0 overflow-hidden p-0 shadow-none"
                   >
-                    <div className="relative aspect-square bg-muted">
-                      {thumb ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={thumb.url} alt={variant.name} className="h-full w-full object-cover" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center px-2 text-center text-[0.75rem] text-muted-foreground">
-                          {running ? "Making this look…" : problem ? "Didn't finish" : "No image yet"}
-                        </div>
-                      )}
-                      {/* A re-run keeps the old image on screen while it works, so say so — otherwise
-                          paying for "Make it again" looks like nothing happened, and the obvious next
-                          move is to pay again. */}
-                      {thumb && running && (
-                        <div className="absolute inset-x-0 bottom-0 bg-black/50 px-2 py-1 text-center text-[0.75rem] text-white">
-                          Making it again…
-                        </div>
-                      )}
-                      <div className="absolute right-1 top-1">
+                    <CardHeader className="relative p-0">
+                      <div className="relative aspect-square bg-muted">
+                        {thumb ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={thumb.url} alt={variant.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <Empty className="h-full gap-2 rounded-none p-3 md:p-3">
+                            <EmptyHeader className="gap-1">
+                              <EmptyMedia variant="icon" className="mb-1">
+                                {running ? <Spinner aria-label={`Making ${variant.name}`} /> : <ImageIcon />}
+                              </EmptyMedia>
+                              <EmptyTitle className="text-xs">
+                                {running ? "Making this look" : problem ? "Didn't finish" : "No image yet"}
+                              </EmptyTitle>
+                            </EmptyHeader>
+                          </Empty>
+                        )}
+                      </div>
+                      <div className="absolute right-1.5 top-1.5">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
-                              size="icon"
+                              size="icon-xs"
                               variant="secondary"
-                              className="size-8"
+                              disabled={writeLocked}
                               aria-label={`Actions for ${variant.name}`}
                             >
-                              <MoreHorizontal size={15} />
+                              <MoreHorizontal />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              disabled={busy}
-                              onSelect={() => void regenerate(variant.id)}
-                            >
-                              <RotateCcw size={14} />
-                              Make it again · {variantCost}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onSelect={() => {
-                                setRenamingId(variant.id);
-                                setRenameValue(variant.name);
-                              }}
-                            >
-                              <Pencil size={14} />
-                              Rename
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onSelect={() => void removeVariant(variant.id)}
-                            >
-                              <Trash2 size={14} />
-                              Delete
-                            </DropdownMenuItem>
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                disabled={paidLocked || running}
+                                onSelect={() => void regenerate(variant.id)}
+                              >
+                                <RotateCcw />
+                                Make it again · {variantCost}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={writeLocked}
+                                onSelect={() => {
+                                  setRenamingId(variant.id);
+                                  setRenameValue(variant.name);
+                                }}
+                              >
+                                <Pencil />
+                                Rename
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={writeLocked || running}
+                                onSelect={() => setDeleteTarget({ id: variant.id, name: variant.name })}
+                              >
+                                <Trash2 />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
-                    </div>
-                    <div className="flex flex-col gap-1 px-2 py-2">
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-2 px-3 pt-3">
                       {renamingId === variant.id ? (
-                        <div className="flex flex-col gap-1">
-                          <Input
-                            value={renameValue}
-                            onChange={(e) => setRenameValue(e.target.value)}
-                            aria-label={`New name for ${variant.name}`}
-                            className="h-8"
-                          />
-                          <div className="flex gap-1">
+                        <FieldGroup className="gap-2">
+                          <Field data-disabled={writeLocked}>
+                            <FieldLabel htmlFor={`variant-rename-${variant.id}`} className="sr-only">
+                              New name for {variant.name}
+                            </FieldLabel>
+                            <Input
+                              id={`variant-rename-${variant.id}`}
+                              value={renameValue}
+                              onChange={(event) => setRenameValue(event.target.value)}
+                              disabled={writeLocked}
+                            />
+                          </Field>
+                          <div className="flex gap-2">
                             <Button
-                              size="sm"
-                              className="h-7 flex-1 px-2 text-[0.75rem]"
+                              size="xs"
+                              className="flex-1"
+                              disabled={writeLocked || !renameValue.trim()}
                               onClick={() => void saveRename(variant.id)}
                             >
-                              Save
+                              {pendingAction === `rename:${variant.id}` && (
+                                <Spinner aria-label="Saving variant name" />
+                              )}
+                              {pendingAction === `rename:${variant.id}` ? "Saving…" : "Save"}
                             </Button>
                             <Button
-                              size="sm"
+                              size="xs"
                               variant="ghost"
-                              className="h-7 px-2 text-[0.75rem]"
+                              disabled={writeLocked}
                               onClick={() => setRenamingId(null)}
                             >
                               Cancel
                             </Button>
                           </div>
-                        </div>
+                        </FieldGroup>
                       ) : (
-                        <>
-                          <span className="truncate text-[0.8125rem] font-medium text-foreground">
-                            {variant.name}
-                          </span>
-                          <span className="truncate text-[0.75rem] text-muted-foreground">
-                            @{variant.handle}
-                          </span>
-                        </>
+                        <CardHeader className="gap-0 p-0">
+                          <CardTitle className="truncate">{variant.name}</CardTitle>
+                          <CardDescription className="truncate text-xs">@{variant.handle}</CardDescription>
+                        </CardHeader>
                       )}
                       {problem && (
-                        <span className="text-[0.75rem] text-muted-foreground">
-                          {problem.error || "That variant didn't finish. You weren't charged for it."}
-                        </span>
+                        <Alert variant="destructive" density="compact">
+                          <AlertDescription className="text-xs">
+                            {problem.error || "That variant didn't finish. You weren't charged for it."}
+                          </AlertDescription>
+                        </Alert>
                       )}
-                    </div>
-                  </div>
+                    </CardContent>
+                    <CardFooter className="px-3 pb-3 pt-2">
+                      {running ? (
+                        <Badge variant="warning">
+                          <Spinner aria-label={thumb ? "Making variant again" : "Making variant"} />
+                          {thumb ? "Making it again" : "Making variant"}
+                        </Badge>
+                      ) : problem ? (
+                        <Badge variant="destructive">Didn&apos;t finish</Badge>
+                      ) : thumb ? (
+                        <Badge variant="success">Ready</Badge>
+                      ) : (
+                        <Badge variant="outline">Waiting for image</Badge>
+                      )}
+                    </CardFooter>
+                  </Card>
                 );
               })}
             </div>
@@ -472,35 +606,92 @@ export function ElementVariantsDialog({
         </section>
 
         {/* Add a variant */}
-        <section className="flex flex-col gap-2 rounded-[16px] border border-border bg-muted/40 p-3">
-          <h3 className="m-0 text-[0.875rem] font-semibold text-foreground">Add a variant</h3>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Name it, e.g. Red dress"
-            aria-label="Variant name"
-            disabled={!hasBase || busy}
-          />
-          <Textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="What changes — e.g. wearing an elegant red evening gown"
-            aria-label="What changes in this variant"
-            rows={3}
-            disabled={!hasBase || busy}
-          />
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[0.75rem] text-muted-foreground">
+        <Card size="sm" className="gap-3 shadow-none">
+          <CardHeader>
+            <CardTitle>Add a variant</CardTitle>
+            <CardDescription>
               {hasBase
-                ? "Same person as the base look, restyled."
+                ? "Keep the same identity and describe only what should change."
                 : "Set a base look first — variants are generated from it."}
-            </span>
-            <Button disabled={!hasBase || busy} onClick={() => void submitVariant()}>
-              <Sparkles size={16} />
-              {busy ? "Working…" : `Make variant · ${variantCost}`}
-            </Button>
-          </div>
-        </section>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup className="gap-3">
+              <Field data-disabled={!hasBase || paidLocked}>
+                <FieldLabel htmlFor="variant-name">Variant name</FieldLabel>
+                <Input
+                  id="variant-name"
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    setError(null);
+                  }}
+                  placeholder="e.g. Red dress"
+                  disabled={!hasBase || paidLocked}
+                />
+              </Field>
+              <Field data-disabled={!hasBase || paidLocked}>
+                <FieldLabel htmlFor="variant-change">What changes</FieldLabel>
+                <Textarea
+                  id="variant-change"
+                  value={prompt}
+                  onChange={(e) => {
+                    setPrompt(e.target.value);
+                    setError(null);
+                  }}
+                  placeholder="e.g. Wearing an elegant red evening gown"
+                  rows={3}
+                  disabled={!hasBase || paidLocked}
+                />
+              </Field>
+            </FieldGroup>
+          </CardContent>
+          <CardFooter className="justify-end">
+            {!uncertainMessage && (
+              <Button
+                disabled={!hasBase || paidLocked || !name.trim() || !prompt.trim()}
+                onClick={() => void submitVariant()}
+              >
+                {busy ? (
+                  <Spinner aria-label="Making variant" />
+                ) : (
+                  <Sparkles />
+                )}
+                {busy ? "Making variant…" : `Make variant · ${variantCost}`}
+              </Button>
+            )}
+          </CardFooter>
+        </Card>
+
+        <AlertDialog
+          open={deleteTarget !== null}
+          onOpenChange={(next) => {
+            if (!next && !deleting) setDeleteTarget(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {deleteTarget?.name ?? "this variant"}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This removes the saved look from this element. Prompts that already used it stay
+                unchanged, but you will not be able to select this look again.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={deleting || !deleteTarget}
+                variant="destructive"
+                onClick={() => {
+                  if (deleteTarget) void removeVariant(deleteTarget.id);
+                }}
+              >
+                {deleting && <Spinner aria-label="Deleting variant" />}
+                {deleting ? "Deleting…" : "Delete variant"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

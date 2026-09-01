@@ -13,9 +13,23 @@
  * this component, and there is no price to show.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Captions, Film, ImageIcon, LoaderCircle, Music, Trash2, Upload } from "lucide-react";
+import { Captions, ExternalLink, Film, ImageIcon, Music, Scissors, Trash2, Upload } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 import {
   getEditDesk,
   joinClipsIntoCut,
@@ -54,6 +68,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
   const [unreadable, setUnreadable] = useState(false);
   const [openFailed, setOpenFailed] = useState(false);
   const [exportState, setExportState] = useState<{ status: string; progress: number; url: string | null } | null>(null);
+  const [previewIndex, setPreviewIndex] = useState(0);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -257,245 +272,357 @@ export function EditDesk({ projectId }: { projectId: string }) {
   const working = busy !== null;
   /** The cut stores only what the renderer needs, so a clip's NAME is looked up beside it. */
   const nameOf = (clipSrc: string) => media.find((m) => m.src === clipSrc)?.label ?? "Clip";
+  const activePreviewIndex = cut.clips[previewIndex] ? previewIndex : 0;
+  const previewClip = cut.clips[activePreviewIndex] ?? null;
+  const exportInProgress = exportState?.status === "QUEUED" || exportState?.status === "RENDERING";
 
   return (
     // padding-top 64px (not 20px) — clears the floating "show sidebar" toggle
     // (OttoApp.tsx: `absolute left-3 top-3 size-[34px]`, footprint to 46px) that
     // otherwise sits on top of this pane and ate the "Vi" of "Video editor" (#949 A1).
-    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "64px 20px 20px" }}>
-      <div className="mb-4">
-        <h2 className="m-0 text-[1.125rem] text-foreground">Video editor</h2>
-        <p className="mt-1 mb-0 text-[0.875rem] text-muted-foreground">
-          Put your clips together into one video, add captions, and lay music under it. All of this is free —
-          it never uses your credits.
-        </p>
-      </div>
-
-      {error && (
-        <div className="mb-3 rounded-[12px] border border-border bg-error-soft px-3 py-2 text-[0.8125rem] text-[var(--error-soft-foreground)]">
-          {error}
-        </div>
-      )}
-      {message && !error && (
-        <div className="mb-3 rounded-[12px] border border-border bg-card px-3 py-2 text-[0.8125rem] text-muted-foreground">
-          {message}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="flex items-center gap-2 text-[0.875rem] text-muted-foreground">
-          <LoaderCircle size={15} className="animate-spin" /> Opening your video…
-        </div>
-      ) : openFailed ? (
-        <div className="flex flex-wrap items-center gap-2 text-[0.875rem] text-muted-foreground">
-          <span>We couldn&apos;t open your video. Nothing has been changed.</span>
-          <Button type="button" size="sm" variant="secondary" onClick={retryOpen}>
-            Try again
-          </Button>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {/* ---- the video as it stands ---- */}
-          <section className="rounded-[14px] border border-border bg-card p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="m-0 text-[0.9375rem] text-foreground">Your video</h3>
-              <span className="text-[0.8125rem] text-muted-foreground">
-                {unreadable
-                  ? "We can't read what's saved here"
-                  : cut.clips.length === 0
-                    ? "Nothing in it yet"
-                    : `${cut.clips.length} clip${cut.clips.length === 1 ? "" : "s"} · ${clock(cut.seconds)}`}
-              </span>
+    <div className="gb flex-1 overflow-auto px-5 pb-5 pt-16 leading-[1.5] lg:px-6 lg:pb-6">
+      <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-4">
+        <header className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <div className="mb-1.5 flex items-center gap-2">
+              <h2 className="m-0 text-xl font-semibold tracking-[-0.02em] text-foreground">Video editor</h2>
+              <Badge variant="outline">Free editor</Badge>
             </div>
-
-            {/* A cut we can't read is NOT an empty one. Saying "Nothing in it yet" over saved work
-                is the lie this line exists to prevent — and every button that would write is off,
-                because the safe thing to do with work we can't read is leave it alone. */}
-            {unreadable && (
-              <p className="mt-2 mb-0 text-[0.8125rem] text-muted-foreground">
-                Something is saved for this video, but we can&apos;t read it — so nothing here can be
-                changed and nothing has been thrown away. Ask us to take a look at it.
-              </p>
-            )}
-
-            {cut.clips.length > 0 && (
-              <ol className="mt-3 mb-0 flex list-none flex-col gap-1.5 p-0">
-                {cut.clips.map((clip, index) => (
-                  <li
-                    key={`${clip.src}-${index}`}
-                    className="flex flex-wrap items-center gap-2 rounded-[10px] border border-border px-2.5 py-1.5 text-[0.8125rem]"
-                  >
-                    <span className="text-muted-foreground/70">
-                      {clip.kind === "video" ? <Film size={14} /> : <ImageIcon size={14} />}
-                    </span>
-                    <span className="text-foreground">
-                      {index + 1}. {nameOf(clip.src)}
-                    </span>
-                    <span className="text-muted-foreground">{clock(clip.seconds)}</span>
-                    {clip.kind === "video" && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="ml-auto h-7 px-2 text-[0.75rem]"
-                        disabled={working || unreadable}
-                        onClick={() => void captionClip(clip.src)}
-                      >
-                        {busy === `caption:${clip.src}` ? <LoaderCircle size={13} className="animate-spin" /> : <Captions size={13} />}
-                        {busy === `caption:${clip.src}` ? "Working out the words…" : "Add captions"}
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            )}
-
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.8125rem] text-muted-foreground">
-              <span>{cut.captionCount > 0 ? `${cut.captionCount} captions on screen` : "No captions yet"}</span>
-              {cut.captionCount > 0 && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 px-2 text-[0.75rem]"
-                  disabled={working || unreadable}
-                  onClick={() => void run("clear-captions", () => clearCutCaptions(projectId), "Captions are off.")}
-                >
-                  <Trash2 size={13} /> Take captions off
-                </Button>
-              )}
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button type="button" variant="brand" size="sm" disabled={working || unreadable || cut.clips.length === 0} onClick={() => void exportVideo()}>
-                {busy === "export" ? <LoaderCircle size={14} className="animate-spin" /> : null}
-                Export video
-              </Button>
-              {exportState && (
-                <span className="text-[0.8125rem] text-muted-foreground">
-                  {exportState.status === "DONE" ? "Ready" : `${exportState.status.toLowerCase()} · ${exportState.progress}%`}
-                </span>
-              )}
-              {exportState?.url && (
-                <Button asChild type="button" size="sm" variant="secondary">
-                  <a href={exportState.url} target="_blank" rel="noreferrer">Open your video</a>
-                </Button>
-              )}
-            </div>
-          </section>
-
-          {/* ---- pick clips and join them ---- */}
-          <section className="rounded-[14px] border border-border bg-card p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="m-0 text-[0.9375rem] text-foreground">Your clips</h3>
-              <span className="text-[0.8125rem] text-muted-foreground">
-                {picked.length > 0 ? `${picked.length} picked, in this order` : "Pick them in the order they should play"}
-              </span>
-            </div>
-            {visualMedia.length === 0 ? (
-              <p className="mt-2 mb-0 text-[0.8125rem] text-muted-foreground">
-                Nothing to put together yet — make a clip first, then come back here.
-              </p>
-            ) : (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {visualMedia.map((clip) => {
-                  const order = picked.indexOf(clip.src);
-                  return (
-                    <Button
-                      key={clip.src}
-                      type="button"
-                      size="sm"
-                      variant={order >= 0 ? "soft" : "secondary"}
-                      onClick={() => togglePick(clip.src)}
-                      aria-pressed={order >= 0}
-                    >
-                      {clip.kind === "video" ? <Film size={14} /> : <ImageIcon size={14} />}
-                      <span className="max-w-[16ch] truncate">
-                        {order >= 0 ? `${order + 1}. ` : ""}
-                        {clip.label}
-                      </span>
-                      <span className="text-muted-foreground">{lengthLabel(clip.seconds)}</span>
-                    </Button>
-                  );
-                })}
-              </div>
-            )}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                disabled={working || unreadable || picked.length === 0}
-                onClick={() =>
-                  void run("join", () => joinClipsIntoCut(projectId, picked), "Those clips are one video now.")
-                }
-              >
-                {busy === "join" ? <LoaderCircle size={14} className="animate-spin" /> : null}
-                Join into one video
-              </Button>
-              {picked.length > 0 && (
-                <Button type="button" size="sm" variant="ghost" disabled={working} onClick={() => setPicked([])}>
-                  Clear picks
-                </Button>
-              )}
-            </div>
-          </section>
-
-          {/* ---- music under the whole thing ---- */}
-          <section className="rounded-[14px] border border-border bg-card p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="m-0 text-[0.9375rem] text-foreground">Music</h3>
-              <span className="text-[0.8125rem] text-muted-foreground">
-                {cut.music ? `Playing under the video · ${nameOf(cut.music)}` : "No music yet"}
-              </span>
-            </div>
-            <p className="mt-2 mb-0 text-[0.8125rem] text-muted-foreground">
-              Music sits under the whole video and steps back on its own whenever someone is talking.
+            <p className="m-0 max-w-2xl text-sm text-muted-foreground">
+              Arrange clips, add captions, and mix in music. All of this is free — it never uses your credits.
             </p>
-            {audioMedia.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {audioMedia.map((track) => (
+          </div>
+        </header>
+
+        {error && (
+          <Alert variant="destructive" role="alert">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {message && !error && (
+          <Alert variant="success" role="status" aria-live="polite">
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        )}
+
+        {loading ? (
+          <Empty className="min-h-80 border border-border bg-card shadow-[var(--shadow-sm)]">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><Spinner /></EmptyMedia>
+              <EmptyTitle>Opening your video…</EmptyTitle>
+              <EmptyDescription>Loading the saved cut and media for this project.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : openFailed ? (
+          <Empty className="min-h-80 border border-border bg-card shadow-[var(--shadow-sm)]">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><Film /></EmptyMedia>
+              <EmptyTitle>We couldn&apos;t open your video</EmptyTitle>
+              <EmptyDescription>Nothing has been changed. Try opening the editor again.</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button type="button" size="sm" variant="secondary" onClick={retryOpen}>Try again</Button>
+            </EmptyContent>
+          </Empty>
+        ) : (
+          <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
+            <div className="flex min-w-0 flex-col gap-4">
+              <Card className="gap-0 overflow-hidden p-0">
+                <CardHeader className="flex-row flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+                  <div>
+                    <CardTitle>Your video</CardTitle>
+                    <CardDescription>
+                      {unreadable
+                        ? "We can't read what's saved here"
+                        : cut.clips.length === 0
+                          ? "Nothing in it yet"
+                          : `${cut.clips.length} clip${cut.clips.length === 1 ? "" : "s"} · ${clock(cut.seconds)}`}
+                    </CardDescription>
+                  </div>
+                  {cut.clips.length > 0 && <Badge variant="outline">Clip preview</Badge>}
+                </CardHeader>
+
+                {unreadable && (
+                  <Alert variant="warning" className="m-4 w-auto" role="status">
+                    <AlertDescription>
+                      Something is saved for this video, but we can&apos;t read it — so nothing here can be changed and
+                      nothing has been thrown away. Ask us to take a look at it.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {cut.clips.length === 0 ? (
+                  <Empty className="min-h-72 rounded-none">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon"><Scissors /></EmptyMedia>
+                      <EmptyTitle>Build your first cut</EmptyTitle>
+                      <EmptyDescription>Pick clips from your media library below, then join them in the order they should play.</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : previewClip ? (
+                  <CardContent className="p-4">
+                    <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-foreground/[0.04]">
+                      <div className="flex aspect-video items-center justify-center bg-[#111214] lg:h-80 lg:aspect-auto">
+                        {previewClip.kind === "video" ? (
+                          <video
+                            key={previewClip.src}
+                            src={previewClip.src}
+                            controls
+                            muted
+                            playsInline
+                            preload="metadata"
+                            className="h-full w-full bg-[#111214] object-contain"
+                            aria-label={`Preview ${nameOf(previewClip.src)}`}
+                          />
+                        ) : (
+                          // eslint-disable-next-line @next/next/no-img-element -- edit sources may be local authenticated files.
+                          <img
+                            src={previewClip.src}
+                            alt={`Preview ${nameOf(previewClip.src)}`}
+                            className="h-full w-full bg-[#111214] object-contain"
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                        <span>Timeline</span>
+                        <span className="font-mono tabular-nums">{clock(cut.seconds)}</span>
+                      </div>
+                      <ol className="m-0 flex list-none gap-1 overflow-x-auto rounded-[var(--radius-card)] bg-muted p-1.5">
+                        {cut.clips.map((clip, index) => {
+                          const selected = activePreviewIndex === index;
+                          const share = cut.seconds > 0 ? Math.max(14, (clip.seconds / cut.seconds) * 100) : 100 / cut.clips.length;
+                          return (
+                            <li key={`${clip.src}-${index}`} className="min-w-20" style={{ flexGrow: share, flexBasis: 0 }}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className={cn(
+                                  "h-14 w-full min-w-0 flex-col items-stretch justify-between rounded-lg px-2.5 py-2 text-left",
+                                  selected ? "border-foreground/40 bg-accent" : "border-border",
+                                )}
+                                onClick={() => setPreviewIndex(index)}
+                                aria-pressed={selected}
+                                aria-label={`Preview clip ${index + 1}: ${nameOf(clip.src)}`}
+                              >
+                                <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground">
+                                  {clip.kind === "video" ? <Film className="size-3.5" /> : <ImageIcon className="size-3.5" />}
+                                  <span className="truncate">{index + 1}. {nameOf(clip.src)}</span>
+                                </span>
+                                <span className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground">{clock(clip.seconds)}</span>
+                              </Button>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </div>
+
+                    <div className="mt-3 flex flex-col gap-1">
+                      {cut.clips.map((clip, index) => (
+                        <div key={`caption-${clip.src}-${index}`} className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-muted/70">
+                          <span className="min-w-0 flex-1 truncate text-foreground">{index + 1}. {nameOf(clip.src)}</span>
+                          {clip.kind === "video" && (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="ghost"
+                              disabled={working || unreadable}
+                              onClick={() => void captionClip(clip.src)}
+                            >
+                              {busy === `caption:${clip.src}` ? <Spinner data-icon="inline-start" /> : <Captions data-icon="inline-start" />}
+                              {busy === `caption:${clip.src}` ? "Working out the words…" : "Add captions"}
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                ) : null}
+              </Card>
+
+              <Card>
+                <CardHeader className="flex-row flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <CardTitle>Your clips</CardTitle>
+                    <CardDescription>
+                      {picked.length > 0 ? `${picked.length} picked, in this order` : "Pick them in the order they should play"}
+                    </CardDescription>
+                  </div>
+                  {picked.length > 0 && <Badge>{picked.length} selected</Badge>}
+                </CardHeader>
+                <CardContent>
+                  {visualMedia.length === 0 ? (
+                    <Empty className="min-h-56 border border-dashed border-border">
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon"><Film /></EmptyMedia>
+                        <EmptyTitle>No clips yet</EmptyTitle>
+                        <EmptyDescription>Nothing to put together yet — make a clip first, then come back here.</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {visualMedia.map((clip) => {
+                        const order = picked.indexOf(clip.src);
+                        const selected = order >= 0;
+                        return (
+                          <Button
+                            key={clip.src}
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              "group relative h-auto min-w-0 overflow-hidden rounded-[var(--radius-card)] p-0 text-left hover:-translate-y-0.5 hover:bg-card hover:shadow-[var(--shadow-md)]",
+                              selected ? "border-foreground/50 ring-1 ring-foreground/20" : "border-border",
+                            )}
+                            onClick={() => togglePick(clip.src)}
+                            aria-pressed={selected}
+                            aria-label={`${selected ? "Remove" : "Pick"} ${nameOf(clip.src)}`}
+                          >
+                            <span className="relative block aspect-video overflow-hidden bg-muted">
+                              {clip.kind === "video" ? (
+                                <video src={clip.src} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                              ) : (
+                                // eslint-disable-next-line @next/next/no-img-element -- edit sources may be local authenticated files.
+                                <img src={clip.src} alt="" className="h-full w-full object-cover" />
+                              )}
+                              {selected && <Badge className="absolute left-2 top-2 bg-foreground text-background">{order + 1}</Badge>}
+                              <Badge variant="outline" className="absolute bottom-2 right-2 border-white/20 bg-black/65 font-mono text-white">
+                                {lengthLabel(clip.seconds)}
+                              </Badge>
+                            </span>
+                            <span className="flex min-w-0 items-center gap-2 px-3 py-2.5">
+                              {clip.kind === "video" ? <Film className="size-4 shrink-0 text-muted-foreground" /> : <ImageIcon className="size-4 shrink-0 text-muted-foreground" />}
+                              <span className="truncate text-sm font-medium text-foreground">{clip.label}</span>
+                            </span>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+                <div className="flex flex-wrap items-center gap-2 border-t border-border px-6 pt-4">
                   <Button
-                    key={track.src}
                     type="button"
                     size="sm"
-                    variant={cut.music === track.src ? "soft" : "secondary"}
-                    disabled={working || unreadable || cut.clips.length === 0}
-                    onClick={() => void run(`music:${track.src}`, () => setCutMusic(projectId, track.src), "That music is under your video.")}
+                    disabled={working || unreadable || picked.length === 0}
+                    onClick={() => void run("join", () => joinClipsIntoCut(projectId, picked), "Those clips are one video now.")}
                   >
-                    {busy === `music:${track.src}` ? <LoaderCircle size={13} className="animate-spin" /> : <Music size={13} />}
-                    {track.label} · {lengthLabel(track.seconds)}
+                    {busy === "join" ? <Spinner data-icon="inline-start" /> : <Scissors data-icon="inline-start" />}
+                    Join into one video
                   </Button>
-                ))}
-              </div>
-            )}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Input
-                ref={fileInput}
-                type="file"
-                accept="audio/*"
-                aria-label="Choose a music file"
-                className="hidden"
-                onChange={(e) => void uploadMusic(e.target.files)}
-              />
-              <Button type="button" size="sm" variant="secondary" disabled={working} onClick={() => fileInput.current?.click()}>
-                {busy === "upload" ? <LoaderCircle size={13} className="animate-spin" /> : <Upload size={13} />}
-                Upload music
-              </Button>
-              {cut.music && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  disabled={working || unreadable}
-                  onClick={() => void run("clear-music", () => clearCutMusic(projectId), "The music is off.")}
-                >
-                  <Trash2 size={13} /> Take music off
-                </Button>
-              )}
+                  {picked.length > 0 && (
+                    <Button type="button" size="sm" variant="ghost" disabled={working} onClick={() => setPicked([])}>Clear picks</Button>
+                  )}
+                </div>
+              </Card>
             </div>
-          </section>
-        </div>
-      )}
+
+            <aside className="flex min-w-0 flex-col gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Output</CardTitle>
+                  <CardDescription>Your current cut and export status.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-4">
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div><dt className="text-xs text-muted-foreground">Duration</dt><dd className="mt-0.5 font-mono font-medium tabular-nums">{clock(cut.seconds)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Clips</dt><dd className="mt-0.5 font-mono font-medium tabular-nums">{cut.clips.length}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Captions</dt><dd className="mt-0.5 font-medium">{cut.captionCount > 0 ? `${cut.captionCount} on screen` : "None"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Music</dt><dd className="mt-0.5 truncate font-medium">{cut.music ? nameOf(cut.music) : "None"}</dd></div>
+                  </dl>
+
+                  {exportState && (
+                    <div className="rounded-[var(--radius-card)] border border-border bg-muted/50 p-3" role="status" aria-live="polite">
+                      <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                        <Badge variant={exportState.status === "DONE" ? "success" : exportState.status === "FAILED" ? "destructive" : "info"}>
+                          {exportState.status === "DONE" ? "Ready" : exportState.status.toLowerCase()}
+                        </Badge>
+                        <span className="font-mono tabular-nums text-muted-foreground">{exportState.progress}%</span>
+                      </div>
+                      {exportInProgress && <Progress value={exportState.progress} aria-label="Export progress" />}
+                    </div>
+                  )}
+
+                  <Button type="button" size="sm" disabled={working || unreadable || cut.clips.length === 0} onClick={() => void exportVideo()}>
+                    {busy === "export" ? <Spinner data-icon="inline-start" /> : <Film data-icon="inline-start" />}
+                    Export video
+                  </Button>
+                  {exportState?.url && (
+                    <Button asChild type="button" size="sm" variant="secondary">
+                      <a href={exportState.url} target="_blank" rel="noreferrer">
+                        Open your video <ExternalLink data-icon="inline-end" />
+                      </a>
+                    </Button>
+                  )}
+                  {cut.captionCount > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={working || unreadable}
+                      onClick={() => void run("clear-captions", () => clearCutCaptions(projectId), "Captions are off.")}
+                    >
+                      <Trash2 data-icon="inline-start" /> Take captions off
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Music</CardTitle>
+                  <CardDescription>
+                    {cut.music ? `Playing under the video · ${nameOf(cut.music)}` : "No music yet"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  <p className="m-0 text-xs leading-relaxed text-muted-foreground">
+                    Music steps back automatically whenever someone is talking.
+                  </p>
+                  {audioMedia.length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      {audioMedia.map((track) => {
+                        const selected = cut.music === track.src;
+                        return (
+                          <Button
+                            key={track.src}
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className={cn("h-auto min-w-0 justify-start py-2.5", selected && "border-foreground/50 bg-accent")}
+                            disabled={working || unreadable || cut.clips.length === 0}
+                            onClick={() => void run(`music:${track.src}`, () => setCutMusic(projectId, track.src), "That music is under your video.")}
+                            aria-pressed={selected}
+                          >
+                            {busy === `music:${track.src}` ? <Spinner data-icon="inline-start" /> : <Music data-icon="inline-start" />}
+                            <span className="min-w-0 flex-1 truncate text-left">{track.label}</span>
+                            <span className="font-mono text-xs tabular-nums text-muted-foreground">{lengthLabel(track.seconds)}</span>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="m-0 text-xs text-muted-foreground">Upload a track to add music to this cut.</p>
+                  )}
+                  <Input ref={fileInput} type="file" accept="audio/*" aria-label="Choose a music file" className="hidden" onChange={(e) => void uploadMusic(e.target.files)} />
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="secondary" disabled={working} onClick={() => fileInput.current?.click()}>
+                      {busy === "upload" ? <Spinner data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
+                      Upload music
+                    </Button>
+                    {cut.music && (
+                      <Button type="button" size="sm" variant="ghost" disabled={working || unreadable} onClick={() => void run("clear-music", () => clearCutMusic(projectId), "The music is off.")}>
+                        <Trash2 data-icon="inline-start" /> Take music off
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </aside>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

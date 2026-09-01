@@ -55,19 +55,18 @@ describe("每一个目的地都手写在案,权威表与它互为对照", () => 
    * 所以这份名单是**手写的、逐条点名的**:商家必须到得了的每一处。它与 MERCHANT_NAV 谁都
    * 不生成谁 —— 权威表漏一条,这里就红;这里漏一条,下面那条「反向核对」就红。
    *
-   * W2-11 权威改写:七格 + Settings 组内三项。渲染层面的「导轨真的画出了这些」已经由
-   * `nav-rail.test.ts`(交互挂载 + 打开分组菜单逐条核对)钉过,这里只钉数据面。
+   * Phase 1 权威改写:五格 + Settings 内部三项。渲染层面的「导轨真的画出了五格」已经由
+   * `nav-rail.test.ts` 钉过,这里只钉数据面。
    */
   const EVERY_DOOR_A_MERCHANT_MUST_REACH: readonly string[] = [
     "/",                       // Home
     "/create",                 // Create(画布的家)
     "/library",                // 已经做出来的每一张图、每一条片
     "/brand",                  // Otto 该记住的品牌与产品
-    "/campaign",                // 战役
-    "/schedule",                // 唯一的日历
     "/billing",                 // Settings › Billing & credits
     "/settings/connections",    // Settings › Connections
-    "/settings",                 // Settings › Preferences
+    "/settings",                // Settings
+    "/profile",                 // Settings › Profile
   ];
 
   it("权威表与这份名单互为对照 —— 谁多一条谁少一条都红", () => {
@@ -94,7 +93,9 @@ describe("收敛掉的旧路由一律 redirect,不 404", () => {
   it.each(MERCHANT_NAV_REDIRECTS.map((row) => [row.from, row.to] as const))(
     "%s 有一个真的重定向路由送人去 %s",
     (from, to) => {
-      const route = path.join(WEB_ROOT, "app", from.replace(/^\//, ""), "page.tsx");
+      const route = from.startsWith(SHELL_ROUTES.campaign)
+        ? path.join(WEB_ROOT, "app/campaign/layout.tsx")
+        : path.join(WEB_ROOT, "app", from.replace(/^\//, ""), "page.tsx");
       expect(existsSync(route), `${from} 没有路由文件`).toBe(true);
 
       const source = readFileSync(route, "utf8");
@@ -189,13 +190,15 @@ describe("Otto 的指路文案与导轨同源", () => {
     }
   });
 
-  it("Otto 被明确告知只有一本日历", () => {
+  it("Otto 不会把 Parked 的 Campaigns 或 Schedule 说成 Beta 页面", () => {
     const instructions = readFileSync(
       path.join(REPO_ROOT, "packages/otto/src/__snapshots__/otto-instructions.golden.txt"),
       "utf8",
     );
 
-    expect(instructions).toContain("There is ONE calendar");
+    expect(instructions).toContain("Campaigns and scheduling have no place on this Beta map");
+    expect(instructions).not.toContain("Campaigns (/campaign)");
+    expect(instructions).not.toContain("Schedule (/schedule)");
     expect(instructions).not.toContain("/campaign/calendar");
   });
 
@@ -212,8 +215,8 @@ describe("Otto 的指路文案与导轨同源", () => {
   });
 });
 
-describe("SHELL_ROUTES.profile 是商家表面,但不是导航格", () => {
-  it("身份菜单进得去的一页,不占板块位", () => {
-    expect(everyNavDestination().some((item) => item.href === SHELL_ROUTES.profile)).toBe(false);
+describe("SHELL_ROUTES.profile 属于 Settings,但不是主导航格", () => {
+  it("身份菜单进得去,同时只让 Settings 在主导航出现一次", () => {
+    expect(everyNavDestination().some((item) => item.href === SHELL_ROUTES.profile)).toBe(true);
   });
 });

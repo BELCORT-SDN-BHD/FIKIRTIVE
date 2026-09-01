@@ -90,6 +90,10 @@ describe("#714 backwards campaign period", () => {
     fillCampaign("2026-12-31", "2026-01-01");
     expect(createButton().disabled).toBe(true);
     expect(container!.textContent).toContain(PERIOD_ERROR);
+    const endDate = [...container!.querySelectorAll('input[type="date"]')][1] as HTMLInputElement;
+    expect(endDate.getAttribute("aria-invalid")).toBe("true");
+    expect(container!.querySelector('[role="alert"]')?.textContent).toContain(PERIOD_ERROR);
+    expect(container!.querySelectorAll('[data-slot="field"]').length).toBeGreaterThanOrEqual(5);
   });
 
   it("keeps Create campaign live for a period that runs forwards, and for a single-day one", () => {

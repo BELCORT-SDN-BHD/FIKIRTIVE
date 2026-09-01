@@ -25,6 +25,7 @@ const WEB_ROOT = path.resolve(__dirname, "../..");
 const read = (relative: string) => fs.readFileSync(path.join(WEB_ROOT, relative), "utf8");
 
 const DIALOG = "components/otto/stuff/ElementVariantsDialog.tsx";
+const ADD_ASSET = "components/otto/stuff/AddAssetDialog.tsx";
 const LIBRARY = "components/otto/stuff/StuffLibrary.tsx";
 const STUFF = "components/otto/OttoStuff.tsx";
 const PORT = "lib/otto-refgen-port.ts";
@@ -39,6 +40,11 @@ const VARIANT_ACTIONS = [
 ] as const;
 
 describe("#781 — the merchant can actually get in", () => {
+  it("human choices stay neutral — neither selected formats nor the Base badge borrow Otto coral", () => {
+    const merchantSurfaces = `${read(ADD_ASSET)}\n${read(DIALOG)}`;
+    expect(merchantSurfaces).not.toMatch(/(?:border|bg|text)-brand(?:\b|\/)/);
+  });
+
   it("the element dialog calls every variant action the merchant needs (none is dark)", () => {
     const src = read(DIALOG);
     // one import from the shared action layer…
@@ -81,6 +87,13 @@ describe("#781 — the merchant can actually get in", () => {
     const src = read(DIALOG);
     // `busy` state lands a render too late to stop the second click; the ref is what actually stops it.
     expect(src).toMatch(/submittingRef\.current/);
+  });
+
+  it("an irreversible variant delete asks once more before it calls the shared delete action", () => {
+    const src = read(DIALOG);
+    expect(src).toContain("@/components/ui/alert-dialog");
+    expect(src).toMatch(/setDeleteTarget\(\{ id: variant\.id, name: variant\.name \}\)/);
+    expect(src).toMatch(/AlertDialogAction[\s\S]{0,500}removeVariant\(deleteTarget\.id\)/);
   });
 
   // #781 r2 P1 — what a merchant BUYS with "Make it again" has to become visible. The rules are

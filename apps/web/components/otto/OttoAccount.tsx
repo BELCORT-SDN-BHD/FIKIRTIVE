@@ -6,6 +6,19 @@ import { buildSettingsSections } from "./settings/sections";
 import { getAccountViewData, type AccountViewData } from "@/lib/account-view-data";
 import { supportMailto } from "@/lib/exits";
 import { OttoConfirmDialog } from "./OttoPromptDialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+
+function SettingsError({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="mx-auto w-full max-w-3xl px-5 py-10 sm:px-8">
+      <Alert role="alert" variant="warning">
+        <AlertTitle>{title}</AlertTitle>
+        <AlertDescription>{description}</AlertDescription>
+      </Alert>
+    </div>
+  );
+}
 
 export function OttoAccount({ account, previewData }: { account: AccountInfo | null; previewData?: AccountViewData }) {
   const [data, setData] = useState<AccountViewData | null>(previewData ?? null);
@@ -20,9 +33,17 @@ export function OttoAccount({ account, previewData }: { account: AccountInfo | n
     return () => { alive = false; };
   }, [previewData]);
 
-  if (!account) return <div className="cv-settings-body">Could not load your account.</div>;
-  if (failed) return <div className="cv-settings-body">Could not load your settings. Please refresh.</div>;
-  if (!data) return <div className="cv-settings-body">Loading…</div>;
+  if (!account) return <SettingsError title="Account unavailable" description="Refresh to try reading your account again." />;
+  if (failed) return <SettingsError title="Settings unavailable" description="Refresh to try loading your workspace settings again." />;
+  if (!data) {
+    return (
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-5 py-10 sm:px-8" aria-label="Loading settings">
+        <Skeleton className="h-8 w-44" />
+        <Skeleton className="h-4 w-80 max-w-full" />
+        <Skeleton className="mt-4 h-56 w-full" />
+      </div>
+    );
+  }
   const sections = buildSettingsSections({
     account,
     settings: data.settings,

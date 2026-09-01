@@ -12,6 +12,9 @@ import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extensions";
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import type { EntityDTO } from "@/lib/types";
 
 // A suggestion row: either a bare entity (variantId undefined) or one of its named
@@ -19,13 +22,26 @@ import type { EntityDTO } from "@/lib/types";
 // entity id; selecting a variant chips the entity AND binds the variant for conditioning.
 interface MentionItem { id: string; name: string; type: EntityDTO["type"]; aka?: string; variantId?: string; variantLabel?: string }
 interface MentionListHandle { onKeyDown: (props: SuggestionKeyDownProps) => boolean }
+type MentionListProps = SuggestionProps<MentionItem> & { open: boolean };
 
 const HUES: Record<EntityDTO["type"], string> = {
   CHARACTER: "var(--hue-character)", LOCATION: "var(--hue-location)", PRODUCT: "var(--hue-product)", BRANDMARK: "var(--hue-brand)",
 };
 
-const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(function MentionList(props, ref) {
+const ENTITY_TYPE_LABELS: Record<EntityDTO["type"], string> = {
+  CHARACTER: "Character",
+  LOCATION: "Location",
+  PRODUCT: "Product",
+  BRANDMARK: "Brand mark",
+};
+
+const MentionList = forwardRef<MentionListHandle, MentionListProps>(function MentionList(props, ref) {
   const [selected, setSelected] = useState(0);
+  const virtualRef = {
+    current: {
+      getBoundingClientRect: () => props.clientRect?.() ?? props.editor.view.dom.getBoundingClientRect(),
+    },
+  };
   // reset the highlight to the top whenever the suggestion list changes (intentional)
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setSelected(0), [props.items]);
@@ -48,23 +64,55 @@ const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(
     },
   }));
   return (
-    <div className="pop-menu" style={{ position: "static", minWidth: 220 }} role="listbox" aria-label="Entity suggestions">
-      {props.items.length === 0 ? (
-        <p style={{ font: "var(--text-small)", color: "var(--muted-foreground)", padding: "7px 11px", margin: 0 }}>No matching elements — create one in Elements.</p>
-      ) : (
-        props.items.map((item, i) => (
-          // variants share the entity id → key on the variantId too, else React collides them
-          <div key={item.variantId ? `${item.id}:${item.variantId}` : item.id} role="option" aria-selected={i === selected} className={`pop-item${i === selected ? " active" : ""}`}
-            onMouseEnter={() => setSelected(i)} onClick={() => pick(i)}>
-            <span style={{ width: 8, height: 8, borderRadius: 99, background: HUES[item.type], flex: "none" }} aria-hidden />
-            <span className="pop-item-main"><span className="pop-item-label">{item.name}
-              {item.variantLabel && <span style={{ color: "var(--muted-foreground)" }}> · {item.variantLabel}</span>}
-              {item.aka && <span style={{ color: "var(--muted-foreground)", fontWeight: 400 }}> · aka {item.aka}</span>}</span></span>
-            <span style={{ font: "var(--text-mono-label)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>{item.variantId ? "variant" : item.type.toLowerCase()}</span>
-          </div>
-        ))
-      )}
-    </div>
+    <Popover open={props.open} modal={false}>
+      <PopoverAnchor virtualRef={virtualRef} />
+      <PopoverContent
+        role="listbox"
+        aria-label="Entity suggestions"
+        side="top"
+        align="start"
+        sideOffset={8}
+        collisionPadding={12}
+        sticky="always"
+        hideWhenDetached
+        motion="instant"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onFocusOutside={(event) => event.preventDefault()}
+        className="max-h-[min(20rem,var(--radix-popover-content-available-height))] w-[min(22rem,calc(100vw-1.5rem))] overflow-y-auto p-1"
+      >
+        {props.items.length === 0 ? (
+          <p className="px-3 py-2 text-sm text-muted-foreground">No matching elements — create one in Elements.</p>
+        ) : (
+          props.items.map((item, i) => (
+            <Button
+              key={item.variantId ? `${item.id}:${item.variantId}` : item.id}
+              type="button"
+              variant="ghost"
+              size="sm"
+              motion="instant"
+              role="option"
+              aria-selected={i === selected}
+              tabIndex={-1}
+              onMouseEnter={() => setSelected(i)}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pick(i);
+              }}
+              className="h-auto min-h-9 w-full justify-start gap-2.5 px-2.5 py-2 text-left"
+            >
+              <span className="size-2 shrink-0 rounded-full" style={{ background: HUES[item.type] }} aria-hidden />
+              <span className="min-w-0 flex-1 truncate">
+                {item.name}
+                {item.variantLabel && <span className="text-muted-foreground"> · {item.variantLabel}</span>}
+                {item.aka && <span className="text-muted-foreground"> · aka {item.aka}</span>}
+              </span>
+              <Badge variant="outline">{item.variantId ? "Variant" : ENTITY_TYPE_LABELS[item.type]}</Badge>
+            </Button>
+          ))
+        )}
+      </PopoverContent>
+    </Popover>
   );
 });
 
@@ -208,34 +256,34 @@ export function MentionInput({ entities, initialDoc, docKey, placeholder, disabl
             return out.slice(0, 8);
           },
           render: () => {
-            let component: ReactRenderer<MentionListHandle> | null = null;
-            let popup: HTMLDivElement | null = null;
+            let component: ReactRenderer<MentionListHandle, MentionListProps> | null = null;
+            let currentProps: SuggestionProps<MentionItem> | null = null;
             let dismissed = false;
-            const position = (clientRect?: (() => DOMRect | null) | null) => {
-              const rect = clientRect?.();
-              if (!popup || !rect) return;
-              popup.style.left = `${rect.left}px`;
-              popup.style.top = "auto";
-              popup.style.bottom = `${window.innerHeight - rect.top + 8}px`;
-            };
             return {
               onStart(props: SuggestionProps<MentionItem>) {
                 dismissed = false;
-                component = new ReactRenderer(MentionList, { props, editor: props.editor });
-                popup = document.createElement("div");
-                popup.style.position = "fixed";
-                popup.style.zIndex = "60";
-                popup.appendChild(component.element);
-                document.body.appendChild(popup);
-                position(props.clientRect);
+                currentProps = props;
+                component = new ReactRenderer(MentionList, { props: { ...props, open: true }, editor: props.editor });
+                document.body.appendChild(component.element);
               },
-              onUpdate(props: SuggestionProps<MentionItem>) { component?.updateProps(props); position(props.clientRect); },
+              onUpdate(props: SuggestionProps<MentionItem>) {
+                currentProps = props;
+                component?.updateProps({ ...props, open: !dismissed });
+              },
               onKeyDown(props: SuggestionKeyDownProps) {
-                if (props.event.key === "Escape") { dismissed = true; if (popup) popup.style.display = "none"; return true; }
+                if (props.event.key === "Escape") {
+                  dismissed = true;
+                  if (currentProps) component?.updateProps({ ...currentProps, open: false });
+                  return true;
+                }
                 if (dismissed) return false;
                 return component?.ref?.onKeyDown(props) ?? false;
               },
-              onExit() { popup?.remove(); component?.destroy(); component = null; popup = null; },
+              onExit() {
+                component?.destroy();
+                component = null;
+                currentProps = null;
+              },
             };
           },
         },

@@ -1,5 +1,5 @@
 /**
- * #920(#840 判官 r1 P2)— Otto's three fixed-row `<Textarea>` boxes must not grow with
+ * #920(#840 判官 r1 P2)— Otto's three fixed-row textarea boxes must not grow with
  * content.
  *
  * `@/components/ui/textarea` ships `field-sizing-content` in its own base classes —
@@ -31,11 +31,11 @@ import { describe, expect, it } from "vitest";
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const globalsPath = path.join(WEB_ROOT, "app/globals.css");
 
-/** The four fixed-row composer/caption boxes and the `rows` each one is built around. */
+/** The three fixed-row composer/caption boxes and the `rows` each one is built around. */
 const FIXED_HEIGHT_TEXTAREAS: { file: string; rows: number }[] = [
   { file: "components/otto/OttoChatStream.tsx", rows: 2 },
   { file: "components/otto/OttoFrontDoor.tsx", rows: 3 },
-  { file: "components/otto/OttoSchedule.tsx", rows: 4 },
+  { file: "components/otto/OttoSchedule.tsx", rows: 3 },
 ];
 
 async function compileGlobals(candidates: string[]): Promise<string> {
@@ -52,12 +52,12 @@ async function compileGlobals(candidates: string[]): Promise<string> {
   return compiler.build(candidates);
 }
 
-/** The `<Textarea ... />` block for a given file — self-closing, so no brace-depth
- *  tracking is needed the way a `readOpeningTag`-style parser would for `<button>`. */
+/** The `<Textarea ... />` or `<InputGroupTextarea ... />` block for a given file —
+ *  self-closing, so no brace-depth tracking is needed. */
 function textareaBlock(file: string): string {
   const text = fs.readFileSync(path.join(WEB_ROOT, file), "utf8");
-  const block = text.match(/<Textarea[\s\S]*?\/>/)?.[0];
-  if (!block) throw new Error(`${file}: no <Textarea ... /> found`);
+  const block = text.match(/<(?:InputGroupTextarea|Textarea)\b[\s\S]*?\/>/)?.[0];
+  if (!block) throw new Error(`${file}: no fixed-row textarea component found`);
   return block;
 }
 
@@ -66,7 +66,7 @@ function textareaBlock(file: string): string {
  *  this very fix do) without that being a class on the element. */
 function textareaClassName(file: string): string {
   const value = textareaBlock(file).match(/\bclassName="([^"]*)"/)?.[1];
-  if (value === undefined) throw new Error(`${file}: <Textarea> has no className="..."`);
+  if (value === undefined) throw new Error(`${file}: textarea component has no className="..."`);
   return value;
 }
 

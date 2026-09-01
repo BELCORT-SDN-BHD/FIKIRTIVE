@@ -114,10 +114,10 @@ function buttonByText(text: string, root: ParentNode = document.body): HTMLButto
   return found;
 }
 
-/** 某个 Field 的整块(标签 + 控件)—— Field 渲染成 <label><span>标题</span>…</label>。 */
+/** 某个 shadcn Field 的整块(标签 + 控件)。 */
 function field(label: string, root: ParentNode = scope()): HTMLElement {
-  const found = Array.from(root.querySelectorAll<HTMLLabelElement>("label")).find(
-    (l) => l.querySelector("span")?.textContent === label,
+  const found = Array.from(root.querySelectorAll<HTMLElement>('[data-slot="field"]')).find(
+    (candidate) => candidate.querySelector('[data-slot="field-label"]')?.textContent === label,
   );
   if (!found) throw new Error(`no "${label}" field`);
   return found;
@@ -474,8 +474,8 @@ describe("#741 r1 打开一条历史 X 草稿", () => {
     // 病灶:可连渠道过滤被无条件用在编辑器上,X 整个消失,界面看不出这条草稿属于谁。
     expect(labels).toContain("X");
     const xButton = buttons.find((b) => (b.textContent ?? "").trim() === "X")!;
-    // 选中态用的是同一套高亮 class(border-foreground bg-secondary)。
-    expect(xButton.className).toContain("border-foreground");
+    // 选中态由 ToggleGroup 的标准状态承载,不再绑定某一套视觉 class。
+    expect(xButton.getAttribute("data-state")).toBe("on");
   });
 
   it("X 仍然不可选:按钮禁用,并说清这条帖子发不出去", async () => {
@@ -523,7 +523,7 @@ describe("#741 r1 打开一条历史 X 草稿", () => {
     const ig = Array.from(field("Channel").querySelectorAll<HTMLButtonElement>("button")).find(
       (b) => (b.textContent ?? "").trim() === "Instagram",
     )!;
-    expect(ig.className).toContain("border-foreground");
+    expect(ig.getAttribute("data-state")).toBe("on");
     expect(ig.disabled).toBe(false);
     expect(field("Channel").textContent).not.toMatch(/not available yet/i);
   });

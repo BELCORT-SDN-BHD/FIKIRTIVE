@@ -83,6 +83,19 @@ import {
 // React refuses act() outside a configured act environment.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 // --- interactive harness (jsdom + react-dom/client; the real client event path) ---
 
 let root: Root | null = null;
@@ -114,17 +127,19 @@ async function click(el: Element) {
   });
 }
 
-// React tracks the last value it set on a controlled element and drops events whose value
-// "didn't change" — write through the NATIVE prototype setter so the event is respected.
-function setNativeValue(el: HTMLInputElement | HTMLSelectElement, value: string) {
-  const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-  Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+async function openSelect(trigger: HTMLButtonElement): Promise<HTMLElement[]> {
+  await act(async () => {
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
 }
 
-async function chooseOption(select: HTMLSelectElement, value: string) {
+async function chooseOption(trigger: HTMLButtonElement, label: string) {
+  const options = await openSelect(trigger);
+  const option = options.find((candidate) => (candidate.textContent ?? "").includes(label));
+  expect(option, `expected a Select option containing "${label}"`).toBeTruthy();
   await act(async () => {
-    setNativeValue(select, value);
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    option!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   });
 }
 
@@ -220,7 +235,7 @@ describe("broadcast lifecycle actions report their own rejection (#724)", () => 
 
       const dom = await render(createElement(BroadcastDetailPage, broadcastProps(testCase.status)));
       if (testCase.label === "Freeze audience") {
-        await chooseOption(dom.querySelector<HTMLSelectElement>("select")!, "seg-1");
+        await chooseOption(dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Audience segment"]')!, "All customers");
       }
       await click(buttonWithText(dom, testCase.label));
 
@@ -239,7 +254,7 @@ describe("broadcast lifecycle actions report their own rejection (#724)", () => 
       .mockResolvedValueOnce({ ok: true } as never);
 
     const dom = await render(createElement(BroadcastDetailPage, broadcastProps("draft")));
-    await chooseOption(dom.querySelector<HTMLSelectElement>("select")!, "seg-1");
+    await chooseOption(dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Audience segment"]')!, "All customers");
 
     await click(buttonWithText(dom, "Freeze audience"));
     expect(dom.textContent).toContain("That request wasn't valid");
@@ -356,13 +371,18 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
 
     const dom = await render(createElement(InboxConversationPage, inboxProps(null)));
 
-    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]');
+    const picker = dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Assign to"]');
     expect(picker, "assignment must offer a member picker, not a free-text id field").toBeTruthy();
-    const optionLabels = Array.from(picker!.options).map((option) => option.textContent ?? "");
+    const optionLabels = (await openSelect(picker!)).map((option) => option.textContent ?? "");
     expect(optionLabels.some((label) => label.includes("Farid Hassan"))).toBe(true);
     expect(optionLabels.some((label) => label.includes("Aisyah Rahman"))).toBe(true);
 
-    await chooseOption(picker!, MEMBER_OTHER.membershipId);
+    const faridOption = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
+      .find((option) => (option.textContent ?? "").includes("Farid Hassan"));
+    expect(faridOption).toBeTruthy();
+    await act(async () => {
+      faridOption!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
     await click(buttonWithText(dom, "Assign"));
 
     expect(assignConversation).toHaveBeenCalledWith({
@@ -397,14 +417,12 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
       ),
     );
 
-    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
-    const values = Array.from(picker.options).map((option) => option.value).filter(Boolean);
-    expect(values).toContain(MEMBER_SELF.membershipId);
-    expect(values).toContain(MEMBER_OTHER.membershipId);
-    expect(values).not.toContain(MEMBER_CREATOR.membershipId);
-    expect(values).not.toContain(MEMBER_APPROVER.membershipId);
-    expect(dom.textContent).not.toContain("Lina Chong");
-    expect(dom.textContent).not.toContain("Hakim Yusof");
+    const picker = dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Assign to"]')!;
+    const labels = (await openSelect(picker)).map((option) => option.textContent ?? "");
+    expect(labels.some((label) => label.includes("Aisyah Rahman"))).toBe(true);
+    expect(labels.some((label) => label.includes("Farid Hassan"))).toBe(true);
+    expect(labels.some((label) => label.includes("Lina Chong"))).toBe(false);
+    expect(labels.some((label) => label.includes("Hakim Yusof"))).toBe(false);
     // …and the merchant is told why the list is shorter than the team, rather than left guessing.
     expect(dom.textContent).toContain("reply in the Inbox");
   });
@@ -422,8 +440,8 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
       ),
     );
 
-    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
-    await chooseOption(picker, MEMBER_SELF.membershipId);
+    const picker = dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Assign to"]')!;
+    await chooseOption(picker, "Aisyah Rahman");
 
     // Hand off is legal for the holder — the server would accept it.
     expect(buttonWithText(dom, "Hand off to the selected teammate").disabled).toBe(false);
@@ -440,12 +458,12 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
         inboxProps(null, [MEMBER_SELF, MEMBER_OTHER], MEMBER_OTHER),
       ),
     );
-    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
+    const picker = dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Assign to"]')!;
 
-    await chooseOption(picker, MEMBER_OTHER.membershipId);
+    await chooseOption(picker, "Farid Hassan");
     expect(buttonWithText(dom, "Assign").disabled).toBe(false);
 
-    await chooseOption(picker, MEMBER_SELF.membershipId);
+    await chooseOption(picker, "Aisyah Rahman");
     expect(buttonWithText(dom, "Assign").disabled).toBe(true);
   });
 
@@ -453,8 +471,8 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
     const dom = await render(
       createElement(InboxConversationPage, inboxProps({ id: MEMBER_OTHER.membershipId, role: "member" })),
     );
-    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
-    await chooseOption(picker, MEMBER_SELF.membershipId);
+    const picker = dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Assign to"]')!;
+    await chooseOption(picker, "Aisyah Rahman");
     expect(buttonWithText(dom, "Assign").disabled).toBe(false);
     expect(buttonWithText(dom, "Hand off to the selected teammate").disabled).toBe(false);
     expect(buttonWithText(dom, "Unassign").disabled).toBe(false);
@@ -466,10 +484,10 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
     const dom = await render(
       createElement(InboxConversationPage, inboxProps({ id: MEMBER_OTHER.membershipId, role: "member" })),
     );
-    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
-    const values = Array.from(picker.options).map((option) => option.value).filter(Boolean);
-    expect(values).not.toContain(MEMBER_OTHER.membershipId);
-    expect(values).toContain(MEMBER_SELF.membershipId);
+    const picker = dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Assign to"]')!;
+    const labels = (await openSelect(picker)).map((option) => option.textContent ?? "");
+    expect(labels.some((label) => label.includes("Farid Hassan"))).toBe(false);
+    expect(labels.some((label) => label.includes("Aisyah Rahman"))).toBe(true);
     // The panel still names who has it.
     expect(dom.textContent).toContain("Farid Hassan");
   });
@@ -484,9 +502,9 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
     // The conversation-wide gate really is closed for this reader…
     expect(dom.textContent).toContain("No one has taken this conversation yet");
     // …and claiming it is still available, because that is a different server rule.
-    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
+    const picker = dom.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Assign to"]')!;
     expect(picker.disabled).toBe(false);
-    await chooseOption(picker, MEMBER_OTHER.membershipId);
+    await chooseOption(picker, "Farid Hassan");
     expect(buttonWithText(dom, "Assign").disabled).toBe(false);
   });
 
@@ -495,7 +513,7 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
       createElement(InboxConversationPage, inboxProps(null, [MEMBER_CREATOR, MEMBER_APPROVER])),
     );
 
-    expect(dom.querySelector('select[aria-label="Assign to"]')).toBeNull();
+    expect(dom.querySelector('[role="combobox"][aria-label="Assign to"]')).toBeNull();
     expect(dom.textContent).toContain("No teammate in this workspace can take a conversation yet");
   });
 });
@@ -654,7 +672,7 @@ describe("Routine authorization is driven by the server read, not by this page l
 
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     expect(dialog, "activation opens the human confirmation dialog").toBeTruthy();
-    const acknowledgement = dialog!.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    const acknowledgement = dialog!.querySelector<HTMLButtonElement>('[role="checkbox"]');
     expect(acknowledgement, "activation still requires the human confirmation checkbox").toBeTruthy();
     await click(acknowledgement!);
     await click(buttonWithText(dialog!, "Activate Routine"));
@@ -788,7 +806,7 @@ describe("Routine authorization is driven by the server read, not by this page l
     expect(text).not.toContain("No summary policy is recorded");
     expect(text).toContain("cannot be shown in plain language");
     // Fail closed: ticking the box cannot make an unexplainable envelope signable.
-    await click(dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    await click(dialog.querySelector<HTMLButtonElement>('[role="checkbox"]')!);
     const activate = buttonWithText(dialog, "Activate Routine");
     expect(activate.disabled).toBe(true);
     await click(activate);
@@ -808,7 +826,7 @@ describe("Routine authorization is driven by the server read, not by this page l
     // 判官 r2 P3 — the merchant reads plain language, never the error code.
     expect(dialog.textContent).not.toContain("AUTHORITY_UNAVAILABLE");
     // Fail closed: ticking the box must not make an unreadable envelope activatable.
-    await click(dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    await click(dialog.querySelector<HTMLButtonElement>('[role="checkbox"]')!);
     const activate = buttonWithText(dialog, "Activate Routine");
     expect(activate.disabled).toBe(true);
     await click(activate);

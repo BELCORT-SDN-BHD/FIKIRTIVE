@@ -70,7 +70,16 @@ describe("delete / restore", () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "r1", ownerId: "o1", deletedAt: null },
+      where: { id: "r1", ownerId: "o1" },
+      data: { deletedAt: expect.any(Date) },
+    });
+  });
+  it("soft-delete is safe to repeat after an uncertain response", async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
+    expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
+    expect(mockUpdateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "r1", ownerId: "o1" },
       data: { deletedAt: expect.any(Date) },
     });
   });

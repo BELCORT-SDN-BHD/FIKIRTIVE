@@ -195,21 +195,24 @@ describe("#714 the plan-entry card is described in the merchant's words", () => 
 });
 
 describe("#744 P2 a refused delete leaves the page usable", () => {
-  it("shows the refusal and lets the merchant press Delete again", async () => {
+  it("keeps the AlertDialog open, shows the refusal, and retries in place", async () => {
     m.deleteCampaign.mockResolvedValue({ error: "Campaign not found." });
     render();
 
     await click(button("Delete"));
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      "Your published work stays",
+    );
     await click(button("Delete campaign"));
 
     expect(m.deleteCampaign).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).toContain("Campaign not found.");
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
     // The whole point: `busy` was cleared, so nothing on the page is frozen.
     expect(button("Delete").disabled).toBe(false);
     expect(buttonsLabelled("Undo approval").every((node) => node.disabled)).toBe(false);
 
-    // And a retry really goes through to the server again.
-    await click(button("Delete"));
+    // And a retry goes through from the same decision point — no reopen loop.
     await click(button("Delete campaign"));
     expect(m.deleteCampaign).toHaveBeenCalledTimes(2);
   });

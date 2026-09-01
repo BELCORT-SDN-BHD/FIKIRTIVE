@@ -12,6 +12,7 @@
  */
 import React, { useState } from "react";
 import { ShieldCheck, CheckCircle2, Loader2, CalendarCheck } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ottoApprove, ottoReject } from "@/lib/otto-client-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
@@ -191,9 +192,9 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
 
         {/* Error */}
         {errorMsg && (
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {errorMsg}
-          </div>
+          <Alert role="alert" variant="destructive" density="compact" className="mt-2">
+            <AlertDescription>{errorMsg}</AlertDescription>
+          </Alert>
         )}
 
         {/* Trust footer */}

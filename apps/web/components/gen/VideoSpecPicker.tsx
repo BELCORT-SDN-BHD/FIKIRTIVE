@@ -20,6 +20,13 @@
  * 回执里。悬浮态发现,不占位、不打断高频操作。
  */
 
+import { useId } from "react";
+import { CircleHelp } from "lucide-react";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { TooltipButton } from "@/components/ui/tooltip-button";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
 /**
  * #914 r2(orchestrator 裁定,判官同一条原则贯彻到底):只许主张可证明的**回报行为**
  * （官方契约:视频响应结构可能带 revised_prompt),不许主张「引擎改了才回报」这类内部
@@ -79,9 +86,6 @@ export type VideoSpecMenu = {
   aspectRatios: readonly string[];
 };
 
-const selectClass =
-  "rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground disabled:opacity-40";
-
 export function VideoSpecPicker({
   value,
   menu,
@@ -101,74 +105,84 @@ export function VideoSpecPicker({
   /** 这一次出片有没有源图。只影响**说法**(Adaptive 的含义两条路不同),不影响菜单。 */
   hasSourceImage?: boolean;
 }) {
-  const field = (label: string, control: React.ReactNode) => {
+  const durationId = useId();
+  const resolutionId = useId();
+  const aspectId = useId();
+
+  const field = (label: string, id: string, control: React.ReactNode) => {
     if (compact) return control;
     return (
-      <label className="flex items-center gap-2 text-[0.75rem] text-muted-foreground">
-        <span className="font-semibold text-foreground">{label}</span>
+      <Field orientation="horizontal" className="w-auto gap-2">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
         {control}
-      </label>
+      </Field>
     );
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <TooltipProvider>
+      <div className="flex flex-wrap items-center gap-2">
       {menu.durations.length > 0 && field(
         "Length",
-        <select
+        durationId,
+        <NativeSelect
+          id={durationId}
+          size="sm"
           value={value.seconds}
           disabled={disabled}
           aria-label="Length of the video"
           title="How long this video will be — longer costs more"
           onChange={(event) => onChange({ ...value, seconds: Number(event.target.value) })}
-          className={selectClass}
-          style={{ flex: "none" }}
         >
           {menu.durations.map((seconds) => (
-            <option key={seconds} value={seconds}>{seconds}s</option>
+            <NativeSelectOption key={seconds} value={seconds}>{seconds}s</NativeSelectOption>
           ))}
-        </select>,
+        </NativeSelect>,
       )}
       {menu.resolutions.length > 0 && field(
         "Quality",
-        <select
+        resolutionId,
+        <NativeSelect
+          id={resolutionId}
+          size="sm"
           value={value.resolution}
           disabled={disabled}
           aria-label="Quality of the video"
           title="How sharp this video will be — standard costs about half"
           onChange={(event) => onChange({ ...value, resolution: event.target.value })}
-          className={selectClass}
-          style={{ flex: "none" }}
         >
           {menu.resolutions.map((resolution) => (
-            <option key={resolution} value={resolution}>{videoResolutionLabel(resolution)}</option>
+            <NativeSelectOption key={resolution} value={resolution}>{videoResolutionLabel(resolution)}</NativeSelectOption>
           ))}
-        </select>,
+        </NativeSelect>,
       )}
       {menu.aspectRatios.length > 0 && field(
         "Shape",
-        <select
+        aspectId,
+        <NativeSelect
+          id={aspectId}
+          size="sm"
           value={value.aspectRatio}
           disabled={disabled}
           aria-label="Shape of the video"
           title={videoShapeHint(hasSourceImage)}
           onChange={(event) => onChange({ ...value, aspectRatio: event.target.value })}
-          className={selectClass}
-          style={{ flex: "none" }}
         >
           {menu.aspectRatios.map((aspect) => (
-            <option key={aspect} value={aspect}>{videoAspectLabel(aspect)}</option>
+            <NativeSelectOption key={aspect} value={aspect}>{videoAspectLabel(aspect)}</NativeSelectOption>
           ))}
-        </select>,
+        </NativeSelect>,
       )}
       {/* #914:一个小图标,悬浮才说话——高频控件旁边不铺一整句常驻文案。 */}
-      <span
-        aria-label="How this engine handles your prompt"
-        title={VIDEO_ENGINE_PROMPT_CAPABILITY_NOTE}
-        style={{ fontSize: 12, lineHeight: 1, color: "var(--muted-foreground)", cursor: "help", flex: "none" }}
+      <TooltipButton
+        label="How this engine handles your prompt"
+        tooltip={VIDEO_ENGINE_PROMPT_CAPABILITY_NOTE}
+        variant="ghost"
+        size="icon-xs"
       >
-        ⓘ
-      </span>
-    </div>
+        <CircleHelp aria-hidden="true" />
+      </TooltipButton>
+      </div>
+    </TooltipProvider>
   );
 }

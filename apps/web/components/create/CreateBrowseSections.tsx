@@ -1,6 +1,9 @@
 import type { EntityDTO } from "@/lib/types";
+import { PanelsTopLeft } from "lucide-react";
 import OttoTemplates from "@/components/otto/OttoTemplates";
 import OttoDiscover from "@/components/otto/OttoDiscover";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Separator } from "@/components/ui/separator";
 
 /**
  * Templates 与 Discover —— `/create` 页面下方的两个区段(W2-5,规格书 Q6-A,Founder
@@ -18,11 +21,20 @@ import OttoDiscover from "@/components/otto/OttoDiscover";
 /** 一个模板要在一张画布上跑(上传底图、出图都落在那张画布里),所以没有画布就没得跑。 */
 function TemplatesNeedACanvas() {
   return (
-    <div className="px-5 pt-16 pb-5">
-      <h2 className="m-0 text-lg text-foreground">Templates</h2>
-      <p className="mt-1 mb-0 text-sm text-muted-foreground">
-        Start a canvas above first — a template runs on a canvas.
+    <div className="mx-auto w-full max-w-[1120px] px-6 py-12">
+      <h2 className="text-lg font-semibold tracking-[-0.012em] text-foreground">Templates</h2>
+      <p className="mt-1 text-sm leading-6 text-muted-foreground">
+        Templates use a canvas to keep the source photo, result, and cost together.
       </p>
+      <Empty className="mt-5 min-h-48 border border-dashed bg-card">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <PanelsTopLeft aria-hidden="true" />
+          </EmptyMedia>
+          <EmptyTitle className="text-base">Start a canvas above first</EmptyTitle>
+          <EmptyDescription>Your templates will be ready as soon as the canvas exists.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     </div>
   );
 }
@@ -36,17 +48,18 @@ export function CreateBrowseSections({
   entities: EntityDTO[];
 }) {
   return (
-    <div className="mx-auto w-full max-w-[768px]">
-      <section id="templates">
+    <div className="w-full pb-12">
+      <section id="templates" className="scroll-mt-6">
         {projectId ? (
           <OttoTemplates projectId={projectId} entities={entities} />
         ) : (
           <TemplatesNeedACanvas />
         )}
       </section>
-      {/* Otto 面板还没挂到每一页上(W2-7 建好,W2-11 挂),所以这里不传 `onUseInOtto`:
+      <Separator className="mx-auto w-[calc(100%-3rem)] max-w-[1120px]" />
+      {/* 全局 Otto 面板还没有暴露 prompt 预填接口,所以这里不传 `onUseInOtto`:
           那颗「Use in Otto」按钮随之不画,而不是按了没反应。见 OttoDiscover 的说明。 */}
-      <section id="ideas">
+      <section id="ideas" className="scroll-mt-6">
         <OttoDiscover />
       </section>
     </div>

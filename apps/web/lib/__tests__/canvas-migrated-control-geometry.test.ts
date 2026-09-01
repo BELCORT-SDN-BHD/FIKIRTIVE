@@ -25,7 +25,7 @@
  * 红→绿演练(逐一实做,做完全部还原):
  *   · 去掉 GeneratingBody 的 `h-auto` ⇒ 第①闸红并点名那一行。
  *   · 把 StoryboardCard 的 `data-[size=default]:h-auto` 改回裸 `h-auto` ⇒ 第②闸红。
- *   · 去掉 `CV_TOOLBAR_BUTTON_CLASS` 的 `p-0` ⇒ 第③闸红。
+ *   · 去掉海报播放键的 `p-0` ⇒ 第③闸红。
  *
  * ── 已知盲区,留档不补(判官 r3 P3)──────────────────────────────────────
  * 第①闸的触发条件是「这个调用点**自己带着**几何来源」——一份 inline `style`,或者一个
@@ -62,13 +62,13 @@ const CAR4_FILES = [
   "components/otto/StoryboardCard.tsx",
 ];
 
-const SIZED_CONTROLS = ["Button", "Input", "Textarea", "SelectTrigger"];
+const SIZED_CONTROLS = ["Button", "TooltipButton", "Input", "Textarea", "SelectTrigger"];
 
-/** 写死了尺寸、且专有度高过工具类的三个旧配方类(见 app/globals.css)。 */
-const LEGACY_GEOMETRY_CLASSES = ["cv-tb", "cv-play", "cv-lineage-row"];
+/** 写死了尺寸、且专有度高过工具类的旧配方类(见 app/globals.css)。 */
+const LEGACY_GEOMETRY_CLASSES = ["cv-play", "cv-lineage-row"];
 
-/** 显式的高度声明(含 `data-[…]:` 修饰形式),或本车两个自带高度的共享常量。 */
-const DECLARES_HEIGHT = /\bh-auto\b|\bh-\d|\bh-\[|\bmin-h-|:h-auto\b|:h-\d|NODE_TOOL_BUTTON_CLASS|CV_TOOLBAR_BUTTON_CLASS/;
+/** 显式的高度声明(含 `data-[…]:` 修饰形式),或自带高度的共享常量。 */
+const DECLARES_HEIGHT = /\bh-auto\b|\bh-\d|\bh-\[|\bmin-h-|:h-auto\b|:h-\d/;
 
 /** 一个开标签的完整文本(从 `<Name` 到与之配对的 `>`,跳过字符串与花括号里的 `>`)。 */
 function openingTags(source: string, name: string): { text: string; line: number }[] {
@@ -134,14 +134,13 @@ describe("#840 车4 — 组件默认尺寸不许悄悄落到屏幕上", () => {
     expect(wrong).toEqual([]);
   });
 
-  it("③ 两个共享常量各自带着它们该带的那一份", () => {
-    // 卡片工具条那一枚:自己写死了几何。
-    expect(read("components/canvas/nodes/node-tool-button.ts")).toMatch(/\bh-auto\b/);
-    // 板底工具条那一枚:尺寸来自 `.gb .cv-tb`(0,2,0,压得过工具类),所以它要钉的是
-    // 旧类还在,外加把 Button 会盖掉、而旧类没声明的那一项(内距)显式压回。
-    const constant = read("components/canvas/FlowCanvas.tsx").match(/const CV_TOOLBAR_BUTTON_CLASS = "([^"]+)"/)?.[1] ?? "";
-    expect(constant).toContain("cv-tb");
-    expect(constant, "旧类没声明内距,Button 的 px-5 会把 36px 的方钮挤爆").toContain("p-0");
+  it("③ 旧配方只在仍需要桥接的控件上存在", () => {
+    // 卡片工具条已直接使用 Button 的 xs / icon-xs 尺寸，不再保存第二套几何常量。
+    expect(read("components/canvas/nodes/ImageNode.tsx")).not.toContain("NODE_TOOL_BUTTON_CLASS");
+    expect(read("components/canvas/nodes/VideoNode.tsx")).not.toContain("NODE_TOOL_BUTTON_CLASS");
+    // 板底工具条已直接使用 Button 的 icon-sm 尺寸与 ToggleGroup,不再保留第二套 cv-tb 几何。
+    expect(read("components/canvas/FlowCanvas.tsx")).not.toContain("CV_TOOLBAR_BUTTON_CLASS");
+    expect(read("components/canvas/FlowCanvas.tsx")).not.toContain("cv-tb");
     // 海报播放键同理(30px 圆钮)。
     expect(read("components/canvas/nodes/VideoNode.tsx")).toMatch(/cv-play[^"]*\bp-0\b/);
   });
@@ -150,7 +149,9 @@ describe("#840 车4 — 组件默认尺寸不许悄悄落到屏幕上", () => {
     const all = car4Controls();
     // 2026-08-14 实测:本车 11 个文件里共 60+ 个 shadcn 控件调用点。
     expect(all.length).toBeGreaterThanOrEqual(50);
-    expect(all.filter((c) => c.text.includes("style={{")).length).toBeGreaterThanOrEqual(3);
+    // Node remake inputs and the text node moved into shared shadcn recipes; one older control in
+    // this migration fence still intentionally bridges inline legacy geometry.
+    expect(all.filter((c) => c.text.includes("style={{")).length).toBeGreaterThanOrEqual(1);
     expect(all.filter((c) => c.control === "SelectTrigger").length).toBeGreaterThanOrEqual(1);
     // 判据本身认得出该认的东西。
     expect(DECLARES_HEIGHT.test('<Button className="nodrag nopan">')).toBe(false);

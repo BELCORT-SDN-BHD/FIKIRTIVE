@@ -19,7 +19,6 @@ import { ottoOnboardingComplete, ottoOnboardingFacts } from "@/lib/otto-onboardi
 import { MY_TIME_ZONE } from "@/lib/my-date-format";
 import { formatDayHeading, formatTime, partsInTz, statusPill } from "@/lib/schedule-view";
 import { socialPlatformLabel } from "@/lib/social-labels";
-import { CAMPAIGN_STATUS_BADGE, CAMPAIGN_STATUS_LABELS, isCampaignStatus } from "@fikirtive/core/campaign-lifecycle";
 
 /* ── 读得到,还是这一刻不知道 ────────────────────────────────────────────────── */
 
@@ -66,10 +65,7 @@ export const HOME_COPY = {
   recentlyMade: "Recently made",
   // ③ 接下来发什么
   scheduleHeading: "What goes out next",
-  // ④ 进行中的战役
-  campaignsHeading: "Campaigns in progress",
-  openCampaign: "Open campaign",
-  // ⑤ 把 Otto 装备好
+  // ④ 把 Otto 装备好
   equipmentHeading: "Get Otto ready",
   stepDone: "Done",
   // 「这一刻读不出来」的一整套。同一个句型,因为它们说的是同一件事。
@@ -77,7 +73,6 @@ export const HOME_COPY = {
   canvasesUnreadable: "Your canvases couldn't be read just now.",
   thumbsUnreadable: "What you made recently couldn't be read just now.",
   scheduleUnreadable: "Your schedule couldn't be read just now.",
-  campaignsUnreadable: "Your campaigns couldn't be read just now.",
   equipmentUnreadable: "What Otto still needs couldn't be read just now.",
 } as const;
 
@@ -181,47 +176,7 @@ export function upcomingPosts(rows: readonly ScheduledPostShape[]): HomeUpcoming
     });
 }
 
-/* ── ④ 进行中的战役 ──────────────────────────────────────────────────────────── */
-
-/** 一条战役需要的字段 —— `CampaignListRow` 结构上就是它的超集。 */
-export type CampaignShape = {
-  id: string;
-  name: string;
-  goal: string;
-  status: string;
-};
-
-export type HomeCampaign = {
-  id: string;
-  name: string;
-  goal: string;
-  statusLabel: string;
-  badge: "outline" | "success" | "warning" | "destructive";
-  /** 由调用方按导航权威源拼好递进来 —— 这一页不自己写第二份 `/campaign` 路径(§1.3)。 */
-  href: string;
-};
-
-/** 收了工的战役(DONE / CANCELLED)不是「进行中」。草稿算 —— 它正在被计划,而徽章会照实
- *  说它是草稿,所以 Home 不必替商家判断哪一条「更重要」。 */
-const CLOSED_CAMPAIGN_STATUSES: ReadonlySet<string> = new Set(["DONE", "CANCELLED"]);
-
-export const HOME_CAMPAIGN_LIMIT = 3;
-
-export function openCampaigns(rows: readonly CampaignShape[], campaignBaseHref: string): HomeCampaign[] {
-  return rows
-    .filter((row) => !CLOSED_CAMPAIGN_STATUSES.has(row.status))
-    .slice(0, HOME_CAMPAIGN_LIMIT)
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      goal: row.goal,
-      statusLabel: isCampaignStatus(row.status) ? CAMPAIGN_STATUS_LABELS[row.status] : row.status,
-      badge: isCampaignStatus(row.status) ? CAMPAIGN_STATUS_BADGE[row.status] : "warning",
-      href: `${campaignBaseHref}/${row.id}`,
-    }));
-}
-
-/* ── ⑤ 把 Otto 装备好 ────────────────────────────────────────────────────────── */
+/* ── ④ 把 Otto 装备好 ────────────────────────────────────────────────────────── */
 
 export type HomeEquipmentStep = {
   key: string;
@@ -293,7 +248,6 @@ export type HomeData = {
   canvases: Read<HomeCanvas[]>;
   thumbs: Read<HomeThumb[]>;
   upcoming: Read<HomeUpcomingPost[]>;
-  campaigns: Read<HomeCampaign[]>;
   /** 读到了、且值是 `null` = 两件事都做完了,这块整个不出现;读不出来则照说读不出来。 */
   equipment: Read<HomeEquipmentStep[] | null>;
 };

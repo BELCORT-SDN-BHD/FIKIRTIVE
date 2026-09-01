@@ -80,6 +80,16 @@ describe("#711 campaign detail shows the conclusions filed under it", () => {
 });
 
 describe("#711 trend archive names the campaign each conclusion belongs to", () => {
+  it("uses the shared shadcn form and evidence-card language", () => {
+    const trendsPage = source("../../components/campaign/campaign-trends-page.tsx");
+
+    expect(trendsPage).toContain("<FieldGroup");
+    expect(trendsPage).toContain("<Field>");
+    expect(trendsPage).toContain("<SelectGroup>");
+    expect(trendsPage).toContain("<Empty");
+    expect(trendsPage).not.toContain("text-brand-strong");
+  });
+
   it("labels an attached conclusion with its campaign and links to it", () => {
     const props = {
       initialTrends: {

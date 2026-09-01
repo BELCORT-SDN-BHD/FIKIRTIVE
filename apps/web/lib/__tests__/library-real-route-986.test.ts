@@ -254,17 +254,10 @@ describe("两页真的画得出来(真 React,真组件)", () => {
     await expect(LibraryPage()).rejects.toThrow("NEXT_REDIRECT:/login");
   });
 
-  it("`/library/editor` 画的是剪辑台,而且拿到了一个真项目", async () => {
-    const dom = await mount(await LibraryEditorPage({ searchParams: Promise.resolve({}) }));
-
-    expect(dom.textContent).toContain("Video editor");
-    expect(mocks.getEditDesk).toHaveBeenCalledWith("prj_1");
-  });
-
-  it("地址里那个项目不是自己的,就把地址改回干净的那条 —— 不默默打开别人的剪辑台", async () => {
-    await expect(
-      LibraryEditorPage({ searchParams: Promise.resolve({ project: "prj_someone_else" }) }),
-    ).rejects.toThrow(`NEXT_REDIRECT:${SHELL_ROUTES.edit}`);
+  it("`/library/editor` 是旧书签入口,直接回到 Create", async () => {
+    await expect(Promise.resolve().then(() => LibraryEditorPage())).rejects.toThrow(
+      `NEXT_REDIRECT:${SHELL_ROUTES.create}`,
+    );
     expect(mocks.getEditDesk).not.toHaveBeenCalled();
   });
 
@@ -338,8 +331,13 @@ describe("两处手搓弹窗换成 ui/dialog(规格书 §4.3)", () => {
       createElement(OttoStuff, { entities: [], ads: [], adJobs: [], records: [], history: [] }),
     );
 
-    const setAsProduct = Array.from(dom.querySelectorAll("button")).find(
-      (b) => b.textContent?.trim() === "Set as product image",
+    const actionMenu = dom.querySelector<HTMLButtonElement>('button[aria-label^="Actions for "]');
+    expect(actionMenu, "找不到素材操作菜单").toBeTruthy();
+    await act(async () => {
+      actionMenu!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    const setAsProduct = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => item.textContent?.trim() === "Set as product image",
     );
     expect(setAsProduct, "找不到「设为产品图」那颗键").toBeTruthy();
     await act(async () => setAsProduct!.click());

@@ -42,9 +42,18 @@ vi.mock("react-easy-crop", () => ({ default: () => null }));
 // (MentionInput.tsx's editorProps.handleKeyDown → onSubmit) was invisible to every test here
 // — and that invisible entrance was exactly the one that could spend without a price on screen.
 vi.mock("@/components/MentionInput", () => ({
-  MentionInput: ({ onChange, onSubmit }: { onChange?: (t: string, ids: string[]) => void; onSubmit?: () => void }) =>
+  MentionInput: ({
+    onChange,
+    onSubmit,
+    disabled,
+  }: {
+    onChange?: (t: string, ids: string[]) => void;
+    onSubmit?: () => void;
+    disabled?: boolean;
+  }) =>
     createElement("textarea", {
       "data-testid": "edit-input",
+      disabled,
       onChange: (e: { target: { value: string } }) => onChange?.(e.target.value, []),
       onKeyDown: (e: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => {
         if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) onSubmit?.();
@@ -111,7 +120,7 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function renderPanel(imageAspect: string | null): Promise<void> {
+async function renderPanel(imageAspect: string | null, onClose: () => void = () => {}): Promise<void> {
   mocks.getGeneration.mockResolvedValue(generation(imageAspect));
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -120,7 +129,7 @@ async function renderPanel(imageAspect: string | null): Promise<void> {
     root!.render(createElement(DetailPanel, {
       generationId: "g1",
       projectId: "p1",
-      onClose: () => {},
+      onClose,
       entities: [],
     } as never));
   });
@@ -128,15 +137,22 @@ async function renderPanel(imageAspect: string | null): Promise<void> {
   await act(async () => { await Promise.resolve(); });
 }
 
+/** Sheet content is portalled to document.body, outside the React mount node. */
+function detailSurface(): HTMLElement {
+  const found = document.body.querySelector<HTMLElement>('[data-slot="sheet-content"]');
+  expect(found, "资产详情 Sheet 应该已经打开").not.toBeNull();
+  return found!;
+}
+
 function imageShapePicker(): HTMLSelectElement {
-  const found = container!.querySelector<HTMLSelectElement>('select[aria-label="Image shape of the image"]');
+  const found = detailSurface().querySelector<HTMLSelectElement>('select[aria-label="Image shape of the image"]');
   expect(found, "面板上应该有一个图片形状选择器").not.toBeNull();
   return found!;
 }
 
 /** 按钮上现在带着价（「Regenerate · 8 credits」），所以按前缀找。 */
 function buttonsLabelled(text: string): HTMLButtonElement[] {
-  return [...container!.querySelectorAll("button")].filter((b) => b.textContent?.trim().startsWith(text) ?? false);
+  return [...detailSurface().querySelectorAll("button")].filter((b) => b.textContent?.trim().startsWith(text) ?? false);
 }
 
 /** #896（Founder 2026-08-13）：详情面板的付费动作对齐画布 —— 按钮自己带价，**按下去就是批准**，
@@ -148,7 +164,7 @@ async function pressPaidAction(label: string): Promise<void> {
   expect(mocks.startAssetGen, "还没按就已经花钱了").not.toHaveBeenCalled();
   await act(async () => { button!.click(); });
   await act(async () => { await Promise.resolve(); });
-  expect(document.querySelector('[role="dialog"]'), "付费动作不该再弹确认框").toBeNull();
+  expect(document.querySelector('[data-slot="dialog-content"]'), "付费动作不该再弹确认框").toBeNull();
 }
 
 function startGenArg(): Record<string, unknown> {
@@ -157,6 +173,50 @@ function startGenArg(): Record<string, unknown> {
   expect(mocks.startAssetGen).toHaveBeenCalled();
   return mocks.startAssetGen.mock.calls[0]![0] as Record<string, unknown>;
 }
+
+describe("资产详情使用标准 Sheet 外壳", () => {
+  it("有可读标题、焦点陷阱，并把背景挡在读屏与 Tab 之外", async () => {
+    await renderPanel("1:1");
+
+    const sheet = detailSurface();
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.textContent).toContain("Asset details");
+    expect(sheet.contains(document.activeElement), "打开后焦点没有进入 inspector").toBe(true);
+    expect(container!.getAttribute("aria-hidden"), "背景仍暴露给读屏").toBe("true");
+  });
+
+  it("Escape 关闭 inspector，并走父组件唯一的 onClose", async () => {
+    const onClose = vi.fn();
+    await renderPanel("1:1", onClose);
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("裁剪中第一次 Escape 只退出裁剪，不把整个 inspector 一起关掉", async () => {
+    const onClose = vi.fn();
+    await renderPanel("1:1", onClose);
+    const crop = buttonsLabelled("Crop")[0];
+    expect(crop).toBeDefined();
+
+    await act(async () => crop!.click());
+    expect(detailSurface().querySelector(".cv-detail-crop")).not.toBeNull();
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(detailSurface().querySelector(".cv-detail-crop")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
 
 describe("资产详情：图片形状(#643 T2)", () => {
   it("菜单是服务端给的那份，选中的是这张图**当初交付的**形状", async () => {
@@ -190,7 +250,7 @@ describe("资产详情：图片形状(#643 T2)", () => {
 
   it("编辑框(Edit)同样带着屏幕上那一格，并且仍然挂着底图", async () => {
     await renderPanel("4:3");
-    const input = container!.querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
+    const input = detailSurface().querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
       setter?.call(input, "make the mug red");
@@ -206,12 +266,12 @@ describe("资产详情：图片形状(#643 T2)", () => {
 
   it("两个形状控件不会被认错：图片一个、视频一个，各说各的名字", async () => {
     await renderPanel("1:1");
-    const labels = [...container!.querySelectorAll("span")].map((s) => s.textContent);
+    const labels = [...detailSurface().querySelectorAll("span")].map((s) => s.textContent);
     expect(labels).toContain("Image shape");
     // #645 T4：视频那一组现在是完整规格（长度/清晰度/形状），所以标题是 Video spec。
     expect(labels).toContain("Video spec");
     // 视频形状那一格仍然只喂 Animate —— 它的菜单是视频侧的，不是图片侧的。
-    const videoShape = container!.querySelector('[aria-label="Shape of the video"]');
+    const videoShape = detailSurface().querySelector('[aria-label="Shape of the video"]');
     expect(videoShape).not.toBeNull();
     expect(videoShape!.textContent).toBe("16:99:161:14:33:421:9Adaptive");
     // adaptive 在卡面上如实叫 Adaptive —— 绝不冒充某个具体比例。
@@ -220,12 +280,12 @@ describe("资产详情：图片形状(#643 T2)", () => {
 
   it("#645 T4：Animate 的形状默认 Adaptive（有首帧 ⇒ 引擎跟着首帧走，不替商家改画幅）", async () => {
     await renderPanel("1:1");
-    const videoShape = container!.querySelector('[aria-label="Shape of the video"]') as HTMLSelectElement | null;
+    const videoShape = detailSurface().querySelector('[aria-label="Shape of the video"]') as HTMLSelectElement | null;
     expect(videoShape).not.toBeNull();
     expect(videoShape!.value).toBe("adaptive");
     // 长度/清晰度默认与今日一致。
-    expect((container!.querySelector('[aria-label="Length of the video"]') as HTMLSelectElement).value).toBe("5");
-    expect((container!.querySelector('[aria-label="Quality of the video"]') as HTMLSelectElement).value).toBe("720p");
+    expect((detailSurface().querySelector('[aria-label="Length of the video"]') as HTMLSelectElement).value).toBe("5");
+    expect((detailSurface().querySelector('[aria-label="Quality of the video"]') as HTMLSelectElement).value).toBe("720p");
   });
 });
 
@@ -257,7 +317,7 @@ describe("#645 T4:资产详情的付费请求带着屏幕上那个价", () => {
 
   it("商家在面板里把片子改成 12 秒 ⇒ 带出去的价跟着变成 27,不是旧的 11", async () => {
     await renderPanel("1:1");
-    const length = container!.querySelector('[aria-label="Length of the video"]') as HTMLSelectElement;
+    const length = detailSurface().querySelector('[aria-label="Length of the video"]') as HTMLSelectElement;
     await act(async () => {
       length.value = "12";
       length.dispatchEvent(new Event("change", { bubbles: true }));
@@ -307,7 +367,7 @@ describe("#896 r2 P0-a:报价没到位时,每一种触发方式都花不出钱",
   }
 
   async function typeEdit(text: string): Promise<HTMLTextAreaElement> {
-    const input = container!.querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
+    const input = detailSurface().querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
       setter?.call(input, text);
@@ -336,6 +396,10 @@ describe("#896 r2 P0-a:报价没到位时,每一种触发方式都花不出钱",
       const editButton = buttonsLabelled("Checking cost…").at(-1);
       expect(editButton, "报价没到时,编辑按钮应该说它还不知道价").toBeDefined();
       expect(editButton!.disabled).toBe(true);
+      expect(
+        buttonsLabelled("Checking cost…").every((button) => button.querySelector(".animate-spin")),
+        "三个等待报价的付费按钮都应该使用同一个 Spinner",
+      ).toBe(true);
 
       const input = await typeEdit("make the mug red");
       await pressSubmitShortcut(input, modifier);
@@ -372,8 +436,92 @@ describe("#896 r2 P0-a:报价没到位时,每一种触发方式都花不出钱",
 
   it("编辑框是空的 ⇒ 快捷键同样什么都不做(和按钮判的是同一件事)", async () => {
     await renderPanel("1:1");
-    const input = container!.querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
+    const input = detailSurface().querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
     await pressSubmitShortcut(input, "metaKey");
     expect(mocks.startAssetGen).not.toHaveBeenCalled();
+  });
+});
+
+describe("资产详情：付费动作的即时反馈与授权内容锁定", () => {
+  function deferStart(): {
+    land: (result: { id: string; disposition: "fresh" } | { error: string }) => Promise<void>;
+  } {
+    let resolveStart: (result: { id: string; disposition: "fresh" } | { error: string }) => void = () => {};
+    mocks.startAssetGen.mockReturnValue(new Promise((resolve) => { resolveStart = resolve; }));
+    return {
+      land: async (result) => {
+        await act(async () => {
+          resolveStart(result);
+          await Promise.resolve();
+        });
+      },
+    };
+  }
+
+  async function typeEdit(text: string): Promise<HTMLTextAreaElement> {
+    const input = detailSurface().querySelector<HTMLTextAreaElement>('[data-testid="edit-input"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+      setter?.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    return input;
+  }
+
+  it("Regenerate 一按就转、锁住图片形状，并把服务端失败原因显示出来", async () => {
+    const pending = deferStart();
+    await renderPanel("9:16");
+    const button = buttonsLabelled("Regenerate")[0]!;
+
+    await act(async () => { button.click(); });
+
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain("Generating…");
+    expect(button.querySelector(".animate-spin")).not.toBeNull();
+    expect(imageShapePicker().disabled).toBe(true);
+    expect((detailSurface().querySelector('[aria-label="Length of the video"]') as HTMLSelectElement).disabled).toBe(false);
+
+    await pending.land({ error: "Your balance is too low for this image." });
+    expect(detailSurface().textContent).toContain("Couldn't complete this action");
+    expect(detailSurface().textContent).toContain("Your balance is too low for this image.");
+    expect(button.textContent).toContain("Failed — retry?");
+  });
+
+  it("Animate 只锁住这支视频的规格，并显示正在制作", async () => {
+    const pending = deferStart();
+    await renderPanel("1:1");
+    const button = buttonsLabelled("Animate")[0]!;
+
+    await act(async () => { button.click(); });
+
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain("Animating…");
+    expect(button.querySelector(".animate-spin")).not.toBeNull();
+    for (const label of ["Length", "Quality", "Shape"]) {
+      const select = detailSurface().querySelector<HTMLSelectElement>(`[aria-label="${label} of the video"]`)!;
+      expect(select.disabled, `${label} 应该在请求中锁住`).toBe(true);
+    }
+    expect(imageShapePicker().disabled).toBe(false);
+
+    await pending.land({ error: "Video generation is unavailable right now." });
+  });
+
+  it("Generate edit 请求中锁住文字与图片形状，按钮明确显示 Editing", async () => {
+    const pending = deferStart();
+    await renderPanel("4:3");
+    const input = await typeEdit("make the mug red");
+    const button = buttonsLabelled("Generate edit")[0]!;
+
+    await act(async () => { button.click(); });
+
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain("Editing…");
+    expect(button.querySelector(".animate-spin")).not.toBeNull();
+    expect(input.disabled).toBe(true);
+    expect(imageShapePicker().disabled).toBe(true);
+
+    await pending.land({ error: "The edit could not be started." });
+    expect(detailSurface().textContent).toContain("The edit could not be started.");
+    expect(button.textContent).toContain("Failed — try again");
   });
 });

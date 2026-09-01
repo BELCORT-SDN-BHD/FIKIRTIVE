@@ -1,7 +1,20 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, Plus, Film, ImageIcon, RotateCcw, X } from "lucide-react";
+import Link from "next/link";
+import {
+  ExternalLink,
+  Plus,
+  Film,
+  ImageIcon,
+  RotateCcw,
+  Scissors,
+  X,
+} from "lucide-react";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -69,63 +82,92 @@ function AdJobCard({
   onHide?: (jobId: string) => void;
 }) {
   const isProcessing = job.status === "processing";
-  const pillClass = isProcessing
-    ? "bg-warning-soft text-warning-soft-foreground"
-    : "bg-error-soft text-[var(--error-soft-foreground)]";
   const pillLabel = isProcessing ? "Processing…" : "Didn't go through";
   const when = new Date(job.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   return (
-    <div className="flex flex-col gap-2 rounded-[14px] border border-border bg-card p-3">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground/70">
-          {job.kind === "video" ? <Film size={15} /> : <ImageIcon size={15} />}
-        </span>
-        <span className={`rounded-[99px] px-2 py-0.5 text-[0.75rem] font-medium ${pillClass}`}>
-          {pillLabel}
-        </span>
-      </div>
-      {job.prompt && (
-        <div className="overflow-hidden text-[0.75rem] text-muted-foreground [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
-          {job.prompt}
+    <Card size="sm" className="gap-3 shadow-none">
+      <CardHeader className="gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground/70">
+            {job.kind === "video" ? <Film size={15} /> : <ImageIcon size={15} />}
+          </span>
+          <Badge variant={isProcessing ? "warning" : "destructive"}>{pillLabel}</Badge>
         </div>
-      )}
-      <div className="text-[0.75rem] text-muted-foreground/70">{when}</div>
-      {job.error && !isProcessing && (
-        <div className="overflow-hidden text-[0.75rem] text-muted-foreground [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
-          {job.error}
+        {job.prompt && (
+          <CardTitle className="overflow-hidden text-[0.8125rem] leading-5 [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
+            {job.prompt}
+          </CardTitle>
+        )}
+        <div className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground">
+          {when}
         </div>
-      )}
-      <div className="flex flex-wrap gap-1.5 pt-1">
-        {/* W2-1 —— 这两颗键做的都是「跳进聊天里」,而聊天不在这一页上:`/library` 变成真
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {job.error && !isProcessing && (
+          <p className="overflow-hidden text-[0.75rem] leading-5 text-muted-foreground [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
+            {job.error}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-1.5">
+          {/* W2-1 —— 这两颗键做的都是「跳进聊天里」,而聊天不在这一页上:`/library` 变成真
             路由之后,商家可以站在一个没有聊天面的 Library 上(Otto 面板是 W2-7 才来的)。
             原来它们只看 job 有没有 threadId / prompt,handler 缺席时按下去什么都不发生 ——
             一颗按不动的按钮比没有按钮更糟。所以改成:谁给得起这个动作,谁才画这颗键。
             旧壳(OttoView)两个 handler 一直都传,所以那边一颗不少、行为一模一样。 */}
-        {job.threadId && onOpenThread && (
-          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onOpenThread(job.threadId, job.projectId)}>
-            <ExternalLink size={13} />
-            Open conversation
-          </Button>
-        )}
-        {!isProcessing && job.prompt && onRetryWithOtto && (
-          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onRetryWithOtto(`Try again with this failed generation: ${job.prompt}`)}>
-            <RotateCcw size={13} />
-            Retry with Otto
-          </Button>
-        )}
-        {!isProcessing && (
-          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[0.75rem]" onClick={() => onHide?.(job.id)}>
-            <X size={13} />
-            Hide
-          </Button>
-        )}
-      </div>
-    </div>
+          {job.threadId && onOpenThread && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-7 px-2 text-[0.75rem]"
+              onClick={() => onOpenThread(job.threadId, job.projectId)}
+            >
+              <ExternalLink size={13} />
+              Open conversation
+            </Button>
+          )}
+          {!isProcessing && job.prompt && onRetryWithOtto && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-7 px-2 text-[0.75rem]"
+              onClick={() =>
+                onRetryWithOtto(`Try again with this failed generation: ${job.prompt}`)
+              }
+            >
+              <RotateCcw size={13} />
+              Retry with Otto
+            </Button>
+          )}
+          {!isProcessing && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[0.75rem]"
+              onClick={() => onHide?.(job.id)}
+            >
+              <X size={13} />
+              Hide
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
-export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThread, onRetryWithOtto }: OttoStuffProps) {
+export function OttoStuff({
+  entities,
+  ads,
+  adJobs,
+  records,
+  history,
+  onOpenThread,
+  onRetryWithOtto,
+}: OttoStuffProps) {
   const router = useRouter();
   const [entityList, setEntityList] = useState<EntityDTO[]>(entities);
   const [prevEntities, setPrevEntities] = useState(entities);
@@ -145,7 +187,6 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const historyRequestRef = useRef(0);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [hiddenFailedJobs, setHiddenFailedJobs] = useState<Set<string>>(new Set());
 
   // Stable across renders: the element dialog polls a running variant generation and takes this
@@ -189,15 +230,22 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
     [entityList, generationHistory, ads, records],
   );
 
-  async function handleRename(entityId: string, newName: string) {
+  async function handleRename(entityId: string, newName: string): Promise<string | null> {
     const trimmed = newName.trim();
-    if (!trimmed) return;
+    if (!trimmed) return "Enter a name.";
     const snapshot = entityList.find((e) => e.id === entityId);
-    if (!snapshot || trimmed === snapshot.name) return;
+    if (!snapshot || trimmed === snapshot.name) return null;
     setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, name: trimmed } : e)));
-    const res = await updateEntity(entityId, { name: trimmed });
-    if ("error" in res) {
+    try {
+      const res = await updateEntity(entityId, { name: trimmed });
+      if ("error" in res) {
+        setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, name: snapshot.name } : e)));
+        return res.error;
+      }
+      return null;
+    } catch {
       setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, name: snapshot.name } : e)));
+      throw new Error("The rename response was lost.");
     }
   }
 
@@ -208,22 +256,32 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
     const snapshot = entityList.find((e) => e.id === entityId);
     if (!snapshot || snapshot.type === type) return null;
     setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, type } : e)));
-    const res = await updateEntity(entityId, { type });
-    if ("error" in res) {
+    try {
+      const res = await updateEntity(entityId, { type });
+      if ("error" in res) {
+        setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, type: snapshot.type } : e)));
+        return res.error;
+      }
+      return null;
+    } catch {
       setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, type: snapshot.type } : e)));
-      return res.error;
+      throw new Error("The type change response was lost.");
     }
-    return null;
   }
 
-  async function handleDelete(entityId: string) {
+  async function handleDelete(entityId: string): Promise<string | null> {
     const snapshot = entityList.find((e) => e.id === entityId);
     setEntityList((cur) => cur.filter((e) => e.id !== entityId));
-    setDeleteError(null);
-    const res = await softDeleteEntity(entityId);
-    if ("error" in res) {
+    try {
+      const res = await softDeleteEntity(entityId);
+      if ("error" in res) {
+        setEntityList((cur) => (snapshot ? [...cur, snapshot] : cur));
+        return res.error;
+      }
+      return null;
+    } catch {
       setEntityList((cur) => (snapshot ? [...cur, snapshot] : cur));
-      setDeleteError(res.error);
+      throw new Error("The removal response was lost.");
     }
   }
 
@@ -241,41 +299,57 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
   }
 
   return (
-    // leading-[1.5] — design-baseline body line-height (Analytics standard)
-    <div className="otto-stuff-scroll gb flex-1 overflow-auto p-6 leading-[1.5]">
-      <style>{`
-        @media (max-width: 680px) {
-          .otto-stuff-scroll { padding: 1rem 0.75rem !important; }
-        }
-      `}</style>
-      <div className="mx-auto max-w-[880px]">
-        <div className="mb-4 flex items-start justify-between gap-4">
+    <div className="gb flex-1 overflow-auto px-3 py-4 leading-[1.5] sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-[1120px]">
+        <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <h1 className="m-0 text-[1.5rem] font-bold tracking-[-0.02em] text-foreground">
+            <h1 className="m-0 text-[1.5rem] font-semibold tracking-[-0.025em] text-foreground">
               Library
             </h1>
-            <p className="mt-1 mb-0 max-w-[560px] text-[0.9375rem] text-muted-foreground leading-[1.5]">
+            <p className="mb-0 mt-1 max-w-[620px] text-[0.875rem] leading-5 text-muted-foreground">
               Everything you and Otto have made or saved across every project.
+              <span aria-hidden className="mx-1.5">·</span>
+              <span className="font-mono text-xs tabular-nums">
+                {items.length} {items.length === 1 ? "item" : "items"}
+              </span>
             </p>
           </div>
-          <Button size="sm" onClick={() => setAddOpen(true)} className="shrink-0">
-            <Plus size={16} />
-            Add
-          </Button>
+          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
+            <Button
+              asChild
+              nativeButton={false}
+              size="sm"
+              variant="secondary"
+              className="flex-1 sm:flex-none"
+            >
+              <Link href={SHELL_ROUTES.create}>
+                <Scissors aria-hidden />
+                Create
+              </Link>
+            </Button>
+            <Button size="sm" onClick={() => setAddOpen(true)} className="flex-1 sm:flex-none">
+              <Plus aria-hidden />
+              Add asset
+            </Button>
+          </div>
         </div>
 
-        {deleteError && (
-          <div role="alert" className="mb-3 rounded-[14px] bg-error-soft px-3 py-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {deleteError}
-          </div>
-        )}
-
         {processingJobs.length > 0 && (
-          <div className="mb-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
-            {processingJobs.map((job) => (
-              <AdJobCard key={job.id} job={job} onOpenThread={onOpenThread} />
-            ))}
-          </div>
+          <section className="mb-6" aria-labelledby="library-in-progress">
+            <div className="mb-3 flex items-center gap-2">
+              <h2 id="library-in-progress" className="text-sm font-semibold">
+                In progress
+              </h2>
+              <Badge variant="warning" className="font-mono tabular-nums">
+                {processingJobs.length}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
+              {processingJobs.map((job) => (
+                <AdJobCard key={job.id} job={job} onOpenThread={onOpenThread} />
+              ))}
+            </div>
+          </section>
         )}
 
         <StuffLibrary
@@ -285,7 +359,9 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
           onChangeType={handleChangeType}
           onDelete={handleDelete}
           onSetProductImage={(assetId) => setChooseProductFor(assetId)}
-          onOpenGeneration={(generationId, itemProjectId) => setDetailFor({ generationId, projectId: itemProjectId })}
+          onOpenGeneration={(generationId, itemProjectId) =>
+            setDetailFor({ generationId, projectId: itemProjectId })
+          }
           onOpenEntity={(id) => setOpenEntityId(id)}
           onAdd={() => setAddOpen(true)}
         />
@@ -302,19 +378,26 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
             </Button>
           )}
           {historyError && (
-            <span className="text-[0.8125rem] text-destructive">{historyError}</span>
+            <Alert variant="destructive" className="max-w-lg">
+              <AlertDescription>{historyError}</AlertDescription>
+            </Alert>
           )}
         </div>
 
         {failedJobs.length > 0 && (
-          <div className="mt-6 rounded-[14px] border border-border bg-card p-4">
-            <div className="mb-3">
-              <h2 className="m-0 text-[1rem] font-semibold text-foreground">Needs attention</h2>
-              <p className="m-0 mt-1 text-[0.8125rem] text-muted-foreground">
+          <Card className="mt-6 gap-4 shadow-none">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <CardTitle>Needs attention</CardTitle>
+                <Badge variant="destructive" className="font-mono tabular-nums">
+                  {failedJobs.length}
+                </Badge>
+              </div>
+              <p className="text-[0.8125rem] text-muted-foreground">
                 Failed generations stay here so the library remains focused on reusable assets.
               </p>
-            </div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
+            </CardHeader>
+            <CardContent className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
               {failedJobs.map((job) => (
                 <AdJobCard
                   key={job.id}
@@ -324,8 +407,8 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
                   onHide={(id) => setHiddenFailedJobs((cur) => new Set(cur).add(id))}
                 />
               ))}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
       </div>
 

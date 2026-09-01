@@ -1,13 +1,28 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
+import {
+  ArrowRight,
+  ArrowUp,
+  CircleDollarSign,
+  Clapperboard,
+  ShieldCheck,
+  ShoppingBag,
+  Tags,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { startStreamedThread } from "@/lib/otto-start-thread";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
+import { OttoMentionPopover } from "@/components/otto/OttoMentionPopover";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { ottoGreeting } from "@/lib/otto-greeting";
 import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
@@ -26,71 +41,33 @@ interface GoalTile {
   label: string;
   hint: string;
   goalKey: FrontDoorGoalKey;
-  icon: React.ReactNode;
-}
-
-function IconShoppingBag() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-      <line x1="3" x2="21" y1="6" y2="6" />
-      <path d="M16 10a4 4 0 0 1-8 0" />
-    </svg>
-  );
-}
-function IconTag() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z" />
-      <path d="M7 7h.01" />
-    </svg>
-  );
-}
-function IconUsers() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-function IconClapperboard() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1-.3 2.1.3 2.4 1.3Z" />
-      <path d="m6.2 5.3 3.1 3.9" />
-      <path d="m12.4 3.4 3.1 4" />
-      <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
-    </svg>
-  );
+  icon: LucideIcon;
 }
 
 const GOAL_TILES: GoalTile[] = [
   {
     label: FRONT_DOOR_GOAL_LABELS["sell-product"],
-    hint: "Show off one thing you make",
+    hint: "Turn one product into a campaign",
     goalKey: "sell-product",
-    icon: <IconShoppingBag />,
+    icon: ShoppingBag,
   },
   {
     label: FRONT_DOOR_GOAL_LABELS["announce-sale"],
-    hint: "Get people in this week",
+    hint: "Build a promotion for this week",
     goalKey: "announce-sale",
-    icon: <IconTag />,
+    icon: Tags,
   },
   {
     label: FRONT_DOOR_GOAL_LABELS["get-followers"],
-    hint: "Grow your audience",
+    hint: "Plan content that grows your audience",
     goalKey: "get-followers",
-    icon: <IconUsers />,
+    icon: Users,
   },
   {
     label: FRONT_DOOR_GOAL_LABELS["make-video"],
-    hint: "A short clip for social",
+    hint: "Create a short video for social",
     goalKey: "make-video",
-    icon: <IconClapperboard />,
+    icon: Clapperboard,
   },
 ];
 
@@ -110,6 +87,8 @@ export interface OttoFrontDoorProps {
   /** Called once the seed has been applied so the parent can clear it — otherwise a stale
    *  seed re-fills an unrelated NEW conversation later (F29). */
   onSeedConsumed?: () => void;
+  /** Canvas uses the same conversation action with a spatial, minimal shell. */
+  layout?: "default" | "canvas";
 }
 
 export function OttoFrontDoor({
@@ -121,6 +100,7 @@ export function OttoFrontDoor({
   onStreamStart,
   seedText,
   onSeedConsumed,
+  layout = "default",
 }: OttoFrontDoorProps) {
   const [text, setText] = useState("");
   // #791-7: below one video's price, say so now. Balance arrives in USD (the same value the
@@ -147,6 +127,7 @@ export function OttoFrontDoor({
   const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
+  const mentionListId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -182,6 +163,11 @@ export function OttoFrontDoor({
     setMentionQuery(null);
     setMentionHighlight(0);
     setTimeout(() => textarea?.focus(), 0);
+  };
+
+  const dismissMentions = () => {
+    setMentionQuery(null);
+    setMentionHighlight(0);
   };
 
   async function start(opts: { goalKey?: GoalTile["goalKey"] }) {
@@ -279,33 +265,105 @@ export function OttoFrontDoor({
         return;
       }
     }
-    if (e.key === "Enter" && e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void start({});
     }
   }
 
+  const composer = (
+    <OttoMentionPopover
+      suggestions={mentionSuggestions}
+      highlightedIndex={mentionHighlight}
+      listId={mentionListId}
+      onDismiss={dismissMentions}
+      onHighlightChange={setMentionHighlight}
+      onSelect={selectMention}
+    >
+      <InputGroup className="overflow-hidden rounded-[var(--radius-card)]">
+        <InputGroupTextarea
+          ref={textareaRef}
+          aria-label="Describe what you want to make"
+          value={text}
+          onChange={handleTextChange}
+          onKeyDown={handleKeyDown}
+          aria-autocomplete="list"
+          aria-controls={mentionSuggestions.length > 0 ? mentionListId : undefined}
+          aria-expanded={mentionSuggestions.length > 0}
+          aria-activedescendant={mentionSuggestions.length > 0 ? `${mentionListId}-option-${mentionHighlight}` : undefined}
+          disabled={busy}
+          placeholder="Describe what you want to make…"
+          rows={3}
+          className="field-sizing-fixed min-h-0 w-full px-4 text-[0.90625rem] leading-[1.5]"
+        />
+        <InputGroupAddon align="block-end" className="justify-between border-t border-border">
+          <span className="text-xs font-normal text-muted-foreground">Enter to send</span>
+          <InputGroupButton
+            variant="default"
+            size="sm"
+            motion="instant"
+            disabled={busy || !text.trim()}
+            onClick={() => void start({})}
+          >
+            {busy ? (
+              <Spinner data-icon="inline-start" aria-label="Starting conversation" />
+            ) : (
+              <ArrowUp data-icon="inline-start" aria-hidden="true" />
+            )}
+            {busy ? "Starting…" : "Send"}
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+    </OttoMentionPopover>
+  );
+
+  if (layout === "canvas") {
+    return (
+      <div className="gb pointer-events-none absolute inset-0 z-30 leading-[1.5]">
+        <div className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]">
+          <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+            <span className="flex items-center gap-2 text-xs font-semibold">
+              <OttoAvatar size={22} state={busy ? "thinking" : "idle"} />
+              Otto
+            </span>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={`size-1.5 rounded-full ${busy ? "bg-brand" : "bg-muted-foreground/40"}`} />
+              {busy ? "Starting" : "Ready"}
+            </span>
+          </div>
+          <p className="px-3 py-3 text-sm leading-5 text-foreground">
+            Tell Otto what you want to create or change.
+          </p>
+        </div>
+
+        <div className="pointer-events-auto absolute bottom-4 left-[calc(50%_+_140px)] w-[min(620px,calc(100%_-_340px))] -translate-x-1/2">
+          {composer}
+          {error ? (
+            <Alert role="alert" variant="destructive" className="mt-2">
+              <AlertTitle>Conversation couldn&apos;t start</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="otto-front-door gb flex flex-1 flex-col items-center justify-start overflow-auto px-6 py-8 leading-[1.5]">
-      <style>{`
-        @media (max-width: 480px) {
-          .otto-goal-grid { grid-template-columns: 1fr !important; }
-          .otto-front-door-inner { padding: 1rem 1rem !important; }
-        }
-      `}</style>
+    <div className="otto-front-door gb flex flex-1 flex-col items-center justify-start overflow-auto px-5 py-6 leading-[1.5]">
       {/* my-auto (not the container's justify-center) — safe centering inside a scroll
           container: auto main-axis margins take the free space when the content fits, and
           collapse to 0 when it overflows, so the top never lands above scrollTop 0. */}
-      <div className="otto-front-door-inner my-auto flex w-full max-w-[560px] flex-col items-center gap-6">
+      <div className="otto-front-door-inner my-auto flex w-full max-w-[600px] flex-col gap-6">
         {/* Otto avatar + greeting */}
-        <div className="flex flex-col items-center gap-4 text-center">
-          <OttoAvatar size={64} state={busy ? "thinking" : "idle"} />
-          <div>
-            <h1 className="m-0 mb-2 text-[1.5rem] font-bold tracking-[-0.02em] text-foreground" style={{ lineHeight: 1.2 }}>
+        <div className="flex items-start gap-3">
+          <OttoAvatar size={44} state={busy ? "thinking" : "idle"} />
+          <div className="min-w-0 pt-0.5">
+            <h1 className="text-xl font-bold leading-tight tracking-[-0.02em] text-foreground">
               {greeting}
             </h1>
-            <p className="m-0 text-[0.875rem] text-muted-foreground leading-normal">
+            <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
               {/* #805 — Otto's in-app self-introduction says what comes back finished, not how
                   pleasant the conversation is. */}
               Tell me in your own words, or pick a goal below. No experience needed — I&apos;ll do the work and bring it back for you to approve.
@@ -314,137 +372,89 @@ export function OttoFrontDoor({
         </div>
 
         {/* Composer */}
-        <div className="relative w-full">
-          {mentionSuggestions.length > 0 && (
-            <div
-              role="listbox"
-              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[14px] border border-border bg-card z-50"
-              style={{ boxShadow: "0 18px 40px rgba(20 18 14 / 0.10), 0 6px 14px rgba(20 18 14 / 0.07)" }}
-            >
-              {mentionSuggestions.map((e, i) => (
-                <Button
-                  key={e.id}
-                  type="button"
-                  variant="ghost"
-                  role="option"
-                  aria-selected={i === mentionHighlight}
-                  onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
-                  className="h-auto w-full justify-start rounded-none px-3 py-2 text-left text-[0.875rem] font-normal text-foreground hover:bg-transparent"
-                  style={{
-                    background: i === mentionHighlight ? "var(--muted)" : "transparent",
-                  }}
-                >
-                  @{e.name}
-                </Button>
-              ))}
-            </div>
-          )}
-          <div
-            className="w-full overflow-hidden rounded-[14px] border border-border bg-card"
-            style={{ borderWidth: "1.5px", boxShadow: "0 8px 20px rgba(20 18 14 / 0.08), 0 2px 6px rgba(20 18 14 / 0.06)" }}
-          >
-          <Textarea
-            ref={textareaRef}
-            // #739 (same root as the Otto composer) — placeholder-only, so no name once typing starts.
-            aria-label="Describe what you want to make"
-            value={text}
-            onChange={handleTextChange}
-            onKeyDown={handleKeyDown}
-            disabled={busy}
-            placeholder="Describe what you want to make…"
-            rows={3}
-            // #920 判官 r1 P2 — same fixed-height guard as the Otto composers.
-            className="field-sizing-fixed min-h-0 w-full resize-none rounded-none border-none bg-transparent px-5 py-4 text-[0.90625rem] text-foreground shadow-none outline-none leading-[1.5]"
-          />
-          <div className="flex items-center justify-end border-t border-border px-4 py-3">
-            <Button
-              variant="default"
-              size="sm"
-              disabled={busy || !text.trim()}
-              onClick={() => void start({})}
-            >
-              {busy ? "Starting…" : "Let's go"}
-            </Button>
-          </div>
-          </div>
+        <div className="w-full">
+          {composer}
         </div>
 
         {error && (
-          <div
-            role="alert"
-            className="w-full rounded-[14px] bg-error-soft px-4 py-3 text-[0.875rem] text-[var(--error-soft-foreground)]"
-          >
-            {error}
-          </div>
+          <Alert role="alert" variant="destructive">
+            <AlertTitle>Conversation couldn&apos;t start</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
 
-        {/* Goal chips */}
-        <div className="w-full">
-          <div className="mb-3 text-center text-[0.8125rem] font-semibold text-muted-foreground/70">
-            Or pick a goal
+        {/* Goal starters — merchant actions stay neutral; coral is reserved for Otto itself. */}
+        <section className="flex w-full flex-col gap-3" aria-labelledby="otto-goal-heading">
+          <div className="flex flex-col gap-0.5">
+            <h2 id="otto-goal-heading" className="text-sm font-semibold text-foreground">
+              Start with a goal
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Otto will turn it into a plan for you to review.
+            </p>
           </div>
-          <div
-            className="otto-goal-grid grid gap-2"
-            style={{ gridTemplateColumns: "1fr 1fr" }}
-          >
-            {GOAL_TILES.map((goal) => (
-              <Button
-                key={goal.goalKey}
-                type="button"
-                variant="outline"
-                disabled={busy}
-                onClick={() => start({ goalKey: goal.goalKey })}
-                className="h-auto w-full flex-col items-start justify-start gap-[11px] rounded-[13px] border-border bg-card px-[13px] py-[11px] text-left font-normal shadow-sm"
-                style={{
-                  cursor: busy ? "not-allowed" : "pointer",
-                  opacity: busy ? 0.6 : 1,
-                }}
-              >
-                {/* Coral-soft chip: bg-brand-soft (coral tint) + coral icon color.
-                    Under .gb, --brand is coral — NOT --accent (which is neutral gray).
-                    Inversion trap: keeping var(--brand-soft) here would render gray. */}
-                <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[10px] bg-brand-soft" style={{ color: "#B23A12" }}>
-                  {goal.icon}
-                </div>
-                <div>
-                  <div className="mb-0.5 text-[0.875rem] font-semibold text-foreground">
-                    {goal.label}
-                  </div>
-                  <div className="text-[0.75rem] text-muted-foreground">
-                    {goal.hint}
-                  </div>
-                </div>
-              </Button>
-            ))}
+          <div className="otto-goal-grid grid grid-cols-2 gap-2 max-[480px]:grid-cols-1">
+            {GOAL_TILES.map((goal) => {
+              const GoalIcon = goal.icon;
+              return (
+                <Button
+                  key={goal.goalKey}
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => start({ goalKey: goal.goalKey })}
+                  className="h-auto min-h-20 w-full justify-start gap-3 whitespace-normal p-3 text-left"
+                >
+                  <GoalIcon data-icon="inline-start" aria-hidden="true" />
+                  <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                    <span className="text-[13px] font-semibold text-foreground">
+                      {goal.label}
+                    </span>
+                    <span className="text-xs font-normal leading-4 text-muted-foreground">
+                      {goal.hint}
+                    </span>
+                  </span>
+                  <ArrowRight data-icon="inline-end" aria-hidden="true" />
+                </Button>
+              );
+            })}
           </div>
-        </div>
+        </section>
 
         {/* Quick brief */}
-        <QuickBrief projectId={projectId} />
+        <div className="flex flex-col gap-3">
+          <Separator />
+          <QuickBrief projectId={projectId} />
+        </div>
 
         {/* #791-7: say it while they still have a choice. Below one video's price is the
             point where the next thing they ask for cannot be paid for, and being told that
             here is worth more than being stopped later. Rendered only when the balance is
             actually known — an unknown balance says nothing. */}
         {lowBalanceNotice ? (
-          <p className="m-0 text-center text-[0.71875rem] text-muted-foreground">
-            {lowBalanceNotice} <ExitLink href={BILLING_HREF}>Top up in Billing</ExitLink>
-          </p>
+          <Alert role="status" variant="warning" density="compact">
+            <CircleDollarSign aria-hidden="true" />
+            <AlertTitle>Low balance for video</AlertTitle>
+            <AlertDescription>
+              <span>{lowBalanceNotice}</span>
+              <ExitLink href={BILLING_HREF}>Top up in Billing</ExitLink>
+            </AlertDescription>
+          </Alert>
         ) : null}
 
-        {/* Trust line */}
-        <p className="m-0 flex items-center gap-2 text-center text-[0.71875rem] text-muted-foreground/70">
-          {/* Decorative — the sentence already names Otto; hide the avatar's aria-label from screen readers. */}
-          <span aria-hidden="true" className="inline-flex">
-            <OttoAvatar size={16} />
-          </span>
-          Otto plans and makes it — creations start only after you confirm on the card. {CHAT_SPEND_NOTE}
-        </p>
-
-        {/* #791-9: the hold, said out loud. The balance dips before a reply and partly comes
-            back after it; with nothing explaining either move it reads like an accounting
-            bug, when the real behaviour is more generous than anyone would guess. */}
-        <p className="m-0 text-center text-[0.71875rem] text-muted-foreground/70">{CHAT_HOLD_NOTE}</p>
+        {/* Standing trust note: the approval boundary and conversation charge are related,
+            but not the same promise. Keep both explicit in one readable callout. */}
+        <Alert density="compact">
+          <ShieldCheck aria-hidden="true" />
+          <AlertTitle>You stay in control</AlertTitle>
+          <AlertDescription>
+            <span>Otto plans and makes it — creations start only after you confirm on the card.</span>
+            <span>{CHAT_SPEND_NOTE}</span>
+            {/* #791-9: the hold is named before the first turn, so the temporary balance dip
+                cannot read like an accounting bug. */}
+            <span>{CHAT_HOLD_NOTE}</span>
+          </AlertDescription>
+        </Alert>
       </div>
     </div>
   );

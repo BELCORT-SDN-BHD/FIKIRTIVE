@@ -1,13 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { authClient } from "@/lib/better-auth/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import Link from "next/link";
+import { ArrowLeftIcon } from "lucide-react";
 
-/** Password-reset request. The confirmation is deliberately NEUTRAL — it never reveals
- *  whether an address has an account (the same rule the sign-in-code form follows). */
-export function ForgotPasswordForm() {
+import { AuthStepCard } from "@/components/auth/AuthStepCard";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { authDestination, authRouteHref } from "@/lib/auth-journey";
+import { authClient } from "@/lib/better-auth/client";
+
+/** Password-reset request. Its result is neutral and preserves the original destination. */
+export function ForgotPasswordForm({ from = "/" }: { from?: string }) {
+  const destination = authDestination(from);
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,56 +29,85 @@ export function ForgotPasswordForm() {
 
     setBusy(true);
     setError(null);
-    const { error } = await authClient.requestPasswordReset({
+    const { error: requestError } = await authClient.requestPasswordReset({
       email: address,
-      redirectTo: "/reset-password",
+      redirectTo: authRouteHref("/reset-password", destination),
     });
     setBusy(false);
-    if (error) {
-      setError(error.message ?? "We couldn't send the link. Try again.");
+    if (requestError) {
+      setError("We couldn't send the link. Try again.");
       return;
     }
     setSent(true);
   }
 
+  const backToLogin = (
+    <Link
+      href={authRouteHref("/login", destination)}
+      className={buttonVariants({ variant: "ghost", size: "sm" })}
+    >
+      <ArrowLeftIcon aria-hidden />
+      Back to login
+    </Link>
+  );
+
   if (sent) {
     return (
-      <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
-        <p className="text-[15px] font-semibold text-foreground">Check your email</p>
-        <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-          If <span className="font-medium text-foreground">{email.trim()}</span> has an account, a
-          reset link is on its way. The link works once and expires in an hour.
-        </p>
-      </div>
+      <AuthStepCard
+        title="Check your email"
+        description={
+          <>
+            If <span className="font-medium text-foreground">{email.trim()}</span> has an account, a
+            one-time reset link is on its way.
+          </>
+        }
+        footer={backToLogin}
+      >
+        <div className="rounded-[var(--radius-control)] bg-success-soft px-4 py-3 text-sm leading-6 text-success-soft-foreground">
+          The link expires in one hour. You can safely close this page.
+        </div>
+      </AuthStepCard>
     );
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3.5">
-      {error && (
-        <p role="alert" className="text-[13.5px] font-medium text-destructive">
-          {error}
-        </p>
-      )}
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="email" className="text-[13px] font-semibold text-foreground/85">
-          Email
-        </label>
-        <Input
-          id="email"
-          name="email"
-          type="email"
-          required
-          autoFocus
-          placeholder="you@yourbrand.com"
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-      </div>
-      <Button type="submit" disabled={busy} className="w-full">
-        {busy ? "Sending…" : "Email me a reset link"}
-      </Button>
-    </form>
+    <AuthStepCard
+      title="Reset your password"
+      description="We'll email a one-time reset link if the account exists."
+      footer={backToLogin}
+    >
+      <form onSubmit={submit}>
+        <FieldGroup className="gap-5">
+          {error ? (
+            <Alert role="alert" variant="destructive">
+              <AlertTitle>Reset link could not be sent</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+          <Field data-invalid={error === "Enter your email address." ? true : undefined}>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              required
+              autoFocus
+              placeholder="you@yourbrand.com"
+              autoComplete="email"
+              aria-invalid={error === "Enter your email address." ? true : undefined}
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setError(null);
+              }}
+            />
+          </Field>
+          <Button type="submit" disabled={busy} className="w-full">
+            {busy && <Spinner data-icon="inline-start" />}
+            {busy ? "Sending…" : "Email me a reset link"}
+          </Button>
+        </FieldGroup>
+      </form>
+    </AuthStepCard>
   );
 }

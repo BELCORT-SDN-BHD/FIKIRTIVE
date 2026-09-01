@@ -232,6 +232,14 @@ describe("六扇门合流", () => {
     expect(shell).not.toContain("useOpenGlobalNavigation");
     expect(shell).not.toContain("useGlobalNavigationOpen");
   });
+
+  it("高频切页不让整个工作面重复做进场动画", () => {
+    const shell = readFileSync(resolve(WEB_ROOT, "components/northstar/immersive/immersive-shell.tsx"), "utf8");
+
+    expect(shell).not.toContain("usePathname");
+    expect(shell).not.toContain("@keyframes");
+    expect(shell).not.toMatch(/style=\{[^}]*animation/);
+  });
 });
 
 /* ── ② 假物清零 ─────────────────────────────────────────────────────────────── */

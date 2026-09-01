@@ -26,13 +26,11 @@
  */
 
 import Link from "next/link";
-import { CalendarClock, Megaphone, Check } from "lucide-react";
+import { CalendarClock, Check } from "lucide-react";
 import { PUBLISHING_AVAILABLE, publishSurfaceCopy } from "@fikirtive/core/schedule-draft";
 import { canvasHref } from "@/components/canvas/canvas-href";
 import { StartSomething } from "@/components/start-something/StartSomething";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { HOME_COPY, creditsLine, type HomeData } from "./home-data";
 
 /** 每一块共用的小标题。 */
@@ -174,43 +172,7 @@ export function HomeView({ data }: { data: HomeData }) {
           </section>
         )}
 
-        {/* ④ 进行中的战役 —— 有战役才出现;读不出来同③,照说读不出来 */}
-        {!data.campaigns.ok && (
-          <section>
-            <BlockHeading>{HOME_COPY.campaignsHeading}</BlockHeading>
-            <Unreadable>{HOME_COPY.campaignsUnreadable}</Unreadable>
-          </section>
-        )}
-        {data.campaigns.ok && data.campaigns.value.length > 0 && (
-          <section>
-            <BlockHeading>{HOME_COPY.campaignsHeading}</BlockHeading>
-            <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {data.campaigns.value.map((campaign) => (
-                <Card key={campaign.id} className="min-w-0">
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <CardTitle className="truncate">{campaign.name}</CardTitle>
-                        <CardDescription className="mt-1 line-clamp-2">{campaign.goal}</CardDescription>
-                      </div>
-                      <Badge variant={campaign.badge}>{campaign.statusLabel}</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="mt-auto">
-                    <Button asChild variant="secondary" className="w-full">
-                      <Link href={campaign.href}>
-                        <Megaphone />
-                        {HOME_COPY.openCampaign}
-                      </Link>
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* ⑤ 把 Otto 装备好 —— 只在没做完的时候出现;判不了做完没有时,说自己判不了,
+        {/* ④ 把 Otto 装备好 —— 只在没做完的时候出现;判不了做完没有时,说自己判不了,
             而不是默认商家还没做(那会对已经教过品牌的商家重弹一次同样的话) */}
         {!data.equipment.ok && (
           <section>

@@ -3,14 +3,32 @@ import { getSpendOverview } from "@/lib/spend-history-data";
 import { listCreditPacks } from "@/lib/billing-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
 import { SpendHistory } from "@/components/billing/SpendHistory";
-import { Card } from "@/components/ui/card";
-import { Wallet } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { ShieldCheck, WalletCards } from "lucide-react";
 import { formatCredits } from "@/lib/credit-format";
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
+import { SettingsShell } from "@/components/settings/SettingsShell";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Billing · Fikirtive" };
+export const metadata = { title: "Billing & credits · Fikirtive" };
 
 function fmtPrice(amountCents: number, currency: string): string {
   return (amountCents / 100).toLocaleString(undefined, {
@@ -36,130 +54,122 @@ export default async function BillingPage({
   const spend = "error" in spendResult ? null : spendResult;
 
   return (
-    <div className="gb" style={{ flex: 1, overflow: "auto", minHeight: "100dvh", padding: 24 }}>
-      <div style={{ maxWidth: 560, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.03em", margin: 0 }}>Billing</h1>
-        <p className="text-muted-foreground" style={{ fontSize: 16, marginTop: 6, marginBottom: 24 }}>
-          Buy credits to power your campaigns.
-        </p>
-
+    <SettingsShell
+      active="billing"
+      title="Billing & credits"
+      description="See what is available, top up this workspace, and track every credit movement."
+      scopeNote="Credits and purchases belong to this workspace."
+    >
+      <div className="flex w-full flex-col gap-8">
         {status === "success" && (
-          <div
-            role="status"
-            style={{
-              padding: "12px 16px",
-              borderRadius: "var(--radius-card)",
-              background: "var(--success-soft)",
-              color: "var(--success-soft-foreground)",
-              fontSize: 14,
-              marginBottom: 20,
-            }}
-          >
-            Payment received. Credits will appear shortly.
-          </div>
+          <Alert role="status" variant="success">
+            <ShieldCheck aria-hidden />
+            <AlertTitle>Payment received</AlertTitle>
+            <AlertDescription>Your credits will appear here shortly.</AlertDescription>
+          </Alert>
         )}
         {status === "cancel" && (
-          <div
-            role="status"
-            style={{
-              padding: "12px 16px",
-              borderRadius: "var(--radius-card)",
-              background: "var(--secondary)",
-              color: "var(--muted-foreground)",
-              fontSize: 14,
-              marginBottom: 20,
-            }}
-          >
-            Checkout canceled. No charge was made.
-          </div>
+          <Alert role="status">
+            <AlertTitle>Checkout canceled</AlertTitle>
+            <AlertDescription>No charge was made and your balance did not change.</AlertDescription>
+          </Alert>
         )}
 
-        <Card style={{ marginBottom: 20 }}>
-          <div
-            className="text-muted-foreground"
-            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}
-          >
-            <Wallet size={18} style={{ color: "var(--brand)" }} /> Your balance
-          </div>
-          {account ? (
-            <>
-              <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: "-0.02em", marginTop: 6 }}>
-                {formatCredits(account.balance)}{" "}
-                <span className="text-muted-foreground" style={{ fontSize: 18, fontWeight: 500 }}>
-                  credits
-                </span>
+        <section className="grid gap-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,2fr)]">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <WalletCards className="size-4" aria-hidden />
+                <span className="text-sm font-medium">Available balance</span>
               </div>
-              {account.reserved > 0 ? (
-                <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 4 }}>
-                  {formatCredits(account.reserved)} held for work in progress
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 6 }}>
-              Could not load balance. Please refresh.
-            </div>
-          )}
-        </Card>
-
-        <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 12px" }}>Top up</h2>
-
-        {"unreadable" in shelf ? (
-          // #786 — we did not read the shelf, so we may not say it is empty, and we may not
-          // hand out a human exit either: a catalogue read that failed is a retryable state,
-          // and this layer's fence is "no human exit on a retryable error".
-          <div className="text-muted-foreground" style={{ fontSize: 14 }}>
-            {CREDIT_PACKS_UNREADABLE_MESSAGE}
-          </div>
-        ) : shelf.packs.length === 0 ? (
-          // #687 — one sentence for one state (Settings renders the same constant), and an
-          // exit: a merchant on this page has already decided to pay, so "there is nothing
-          // here" cannot be the last thing the product says to them.
-          <div className="text-muted-foreground" style={{ fontSize: 14 }}>
-            {NO_CREDIT_PACKS_MESSAGE} <SupportExit subject="I want to buy credits" />
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {shelf.packs.map((pack) => (
-              <Card key={pack.priceId}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 16 }}>{pack.label}</div>
-                    <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 2 }}>
-                      {formatCredits(pack.credits)} credits · {fmtPrice(pack.amountCents, pack.currency)}
-                    </div>
+              <CardDescription>Shared across creation, research, and Otto.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {account ? (
+                <div className="flex flex-col gap-3">
+                  <div className="font-mono text-4xl font-semibold tracking-tight tabular-nums">
+                    {formatCredits(account.balance)} <span className="font-sans text-base font-medium text-muted-foreground">credits</span>
                   </div>
-                  <BuyPackButton
-                    priceId={pack.priceId}
-                    label={`Buy · ${fmtPrice(pack.amountCents, pack.currency)}`}
-                  />
+                  {account.reserved > 0 ? (
+                    <Badge variant="warning">{formatCredits(account.reserved)} credits held</Badge>
+                  ) : (
+                    <Badge variant="success">Nothing on hold</Badge>
+                  )}
                 </div>
-              </Card>
-            ))}
+              ) : (
+                <Alert role="alert" variant="warning">
+                  <AlertTitle>Balance unavailable</AlertTitle>
+                  <AlertDescription>Refresh to try reading it again.</AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+            <CardFooter className="items-start border-t pt-4 text-sm text-muted-foreground">
+              Held credits belong to work in progress. Unused credits return automatically when that work settles.
+            </CardFooter>
+          </Card>
+
+          <div className="flex min-w-0 flex-col gap-4">
+            <div>
+              <div>
+                <h2 className="text-lg font-semibold">Top up credits</h2>
+                <p className="text-sm text-muted-foreground">One-time purchases. Choose only what this workspace needs.</p>
+              </div>
+            </div>
+
+            {"unreadable" in shelf ? (
+              // #786 — we did not read the shelf, so we may not say it is empty, and we may not
+              // hand out a human exit either: a catalogue read that failed is a retryable state.
+              <Alert role="alert" variant="warning">
+                <AlertTitle>Credit packs unavailable</AlertTitle>
+                <AlertDescription>{CREDIT_PACKS_UNREADABLE_MESSAGE}</AlertDescription>
+              </Alert>
+            ) : shelf.packs.length === 0 ? (
+              // #687 — one sentence for one state (Settings renders the same constant), and an
+              // exit for a merchant who has already decided to pay.
+              <Empty className="border">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><WalletCards aria-hidden /></EmptyMedia>
+                  <EmptyTitle>No packs to buy</EmptyTitle>
+                  <EmptyDescription>{NO_CREDIT_PACKS_MESSAGE}</EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent><SupportExit subject="I want to buy credits" /></EmptyContent>
+              </Empty>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                {shelf.packs.map((pack) => (
+                  <Card key={pack.priceId} size="sm">
+                    <CardHeader>
+                      <Badge variant="outline">{pack.label}</Badge>
+                      <CardTitle>{formatCredits(pack.credits)} credits</CardTitle>
+                      <CardDescription>{fmtPrice(pack.amountCents, pack.currency)} one time</CardDescription>
+                    </CardHeader>
+                    <CardContent className="text-sm text-muted-foreground">
+                      Added to this workspace after checkout is confirmed.
+                    </CardContent>
+                    <CardFooter className="mt-auto">
+                      <BuyPackButton
+                        priceId={pack.priceId}
+                        label={`Buy for ${fmtPrice(pack.amountCents, pack.currency)}`}
+                      />
+                    </CardFooter>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </section>
 
         {/* #555: where the credits went. Conversation turns (Chat / Review) are listed
             here like any other charge — before this, the page showed only a balance. */}
         {spend ? (
           <SpendHistory entries={spend.entries} window={spend.window} />
         ) : (
-          <section style={{ marginTop: 28 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Spend history</h2>
-            <div className="text-muted-foreground" style={{ fontSize: 14 }}>
-              Could not load your spend history. Please refresh.
-            </div>
-          </section>
+          <Alert role="alert" variant="warning">
+            <AlertTitle>Spend history unavailable</AlertTitle>
+            <AlertDescription>Refresh to try reading it again.</AlertDescription>
+          </Alert>
         )}
       </div>
-    </div>
+    </SettingsShell>
   );
 }

@@ -39,6 +39,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AXIS_LABELS,
   AXIS_ORDER,
   axisReasonCopy,
@@ -391,18 +399,16 @@ export default function BroadcastDetailPage({
                 <p className="text-sm font-semibold">1 · Freeze the audience</p>
                 <p className="text-xs text-muted-foreground">Snapshot the segment now. Contacts with unknown permission stay in and are flagged — the estimate never drops them.</p>
                 <div className="mt-1 grid gap-2 sm:grid-cols-[1fr_auto]">
-                  <select
-                    className="min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm disabled:opacity-50"
-                    // #739 (same root, found by the family sweep) — the one merchant-facing
-                    // dropdown with neither a wrapping label element nor an aria-label.
-                    aria-label="Audience segment"
-                    value={segmentId}
-                    onChange={(e) => setSegmentId(e.target.value)}
-                    disabled={!canFreeze || busy !== null}
-                  >
-                    <option value="">Select a segment…</option>
-                    {(options?.segments ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                  <Select value={segmentId} onValueChange={setSegmentId} disabled={!canFreeze || busy !== null}>
+                    <SelectTrigger className="w-full" aria-label="Audience segment">
+                      <SelectValue placeholder="Select a segment…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {(options?.segments ?? []).map((segment) => <SelectItem key={segment.id} value={segment.id}>{segment.name}</SelectItem>)}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
                   <Button type="button" disabled={!canFreeze || busy !== null || !segmentId} onClick={() => void runMutation("freeze", () => freezeAudience({ broadcastRunId, expectedRevision: run.revision, segmentId }))}>
                     {busy === "freeze" ? <LoaderCircle className="animate-spin" /> : <Snowflake />}{run.status === "audience_frozen" ? "Re-freeze audience" : "Freeze audience"}
                   </Button>
@@ -424,7 +430,7 @@ export default function BroadcastDetailPage({
 
             {/* Execute step */}
             {(run.status === "confirmed" || run.status === "executing") ? (
-              <div className="grid gap-2 rounded-xl border border-brand/25 bg-brand-soft/40 p-4">
+              <div className="grid gap-2 rounded-xl border border-info/25 bg-info-soft/40 p-4">
                 <p className="text-sm font-semibold">3 · Run the simulated send</p>
                 <p className="text-xs text-muted-foreground">Re-reads all four axes per contact right now. Four-axis-pass contacts are marked simulated-sent and count against the frequency cap; anyone blocked is skipped with a reason. Zero real messages, zero spend.</p>
                 <Button className="mt-1 w-fit" type="button" disabled={!canExecute || busy !== null} onClick={() => void runMutation("execute", () => executeBroadcastRun({ broadcastRunId, expectedRevision: run.revision }))}>

@@ -12,7 +12,9 @@ import { autoPublishHint, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
 import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export type ChannelState = {
   id: string;
@@ -52,15 +54,15 @@ export function buildSettingsSections(args: {
   // once in the nav's identity menu). "billing" is KEPT past the #520 merge with
   // #516: its balance/Top-up field is still required by decision③'s own test
   // (apps/web/lib/__tests__/account-settings.test.ts — "billing top-up (decision
-  // ③)"), and its ledger field is the ONLY place account.recent renders anywhere
-  // in the app (the standalone /billing page shows balance + packs only, no
-  // history) — so #516's real improvements here (explicit save+confirm lives in
+  // ③)"), and its ledger field keeps a short account.recent preview beside the
+  // controls; the standalone /billing page now owns the complete spend history.
+  // #516's real improvements here (explicit save+confirm lives in
   // SettingsPage's NumberField, unaffected by this file; the honest spend-cap
   // copy right below was already shared going into the merge; formatCredits'
   // thousands formatting and the per-task detail/atLabel ledger rows below are
   // this section's own content) would be silently deleted, not just de-duplicated,
   // if this section were dropped too. Tradeoff recorded in PR #517's description.
-  return [
+  const sections: SettingsSection[] = [
     {
       id: "billing",
       title: "Billing and credits",
@@ -70,24 +72,14 @@ export function buildSettingsSections(args: {
           kind: "custom",
           id: "balance",
           render: () => (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                width: "100%",
-                gap: 16,
-              }}
-            >
-              <div>
-                <div className="cv-set-hint">Credit balance</div>
-                <div style={{ fontSize: 38, fontWeight: 700, letterSpacing: "-0.02em" }}>
+            <div className="flex w-full flex-col justify-between gap-4 sm:flex-row sm:items-start">
+              <div className="flex flex-col gap-2">
+                <div className="text-sm font-medium text-muted-foreground">Credit balance</div>
+                <div className="font-mono text-3xl font-semibold tracking-tight tabular-nums">
                   {creditsLabel(account.balance)}
                 </div>
                 {account.reserved > 0 ? (
-                  <div className="cv-set-hint">
-                    {creditsLabel(account.reserved)} on hold
-                  </div>
+                  <Badge variant="warning">{creditsLabel(account.reserved)} held</Badge>
                 ) : null}
               </div>
               {/* Single top-up entry (decision ③): one button into the unified /billing
@@ -97,14 +89,14 @@ export function buildSettingsSections(args: {
                 // #786 — the catalogue read failed, so we know neither that there are packs
                 // nor that there are none. Same sentence /billing shows for the same state,
                 // and no human exit: a retryable error does not get one.
-                <span className="cv-set-hint">{CREDIT_PACKS_UNREADABLE_MESSAGE}</span>
+                <span className="max-w-xs text-sm text-muted-foreground">{CREDIT_PACKS_UNREADABLE_MESSAGE}</span>
               ) : shelf.packs.length > 0 ? (
-                <a className="cv-set-btn" href="/billing">Top up</a>
+                <Button asChild size="sm" variant="outline"><a href="/billing">Top up</a></Button>
               ) : (
                 // #687 — the same sentence /billing shows for the same state, plus the one
                 // exit that is actually open. An empty shelf must not be a full stop for a
                 // merchant who has already decided to pay.
-                <span className="cv-set-hint">
+                <span className="max-w-xs text-sm text-muted-foreground">
                   {NO_CREDIT_PACKS_MESSAGE} <SupportExit subject="I want to buy credits" />
                 </span>
               )}
@@ -115,29 +107,40 @@ export function buildSettingsSections(args: {
           kind: "custom",
           id: "ledger",
           render: () => (
-            <div style={{ width: "100%" }}>
-              {account.recent.slice(0, 8).map((a) => (
-                <div key={a.id} style={{ padding: "12px 15px", display: "flex", flexDirection: "column", gap: 2 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13.5 }}>
-                    <span style={{ color: "var(--foreground)", fontWeight: 500 }}>{a.label}</span>
-                    <span
-                      style={{
-                        color: a.delta > 0 ? "#15803D" : "var(--muted-foreground)",
-                        fontVariantNumeric: "tabular-nums",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 13,
-                      }}
-                    >
-                      {a.delta > 0 ? "+" : ""}
-                      {formatCredits(a.delta)}
-                    </span>
-                  </div>
-                  <div className="cv-set-hint" style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                    <span>{a.detail ?? " "}</span>
-                    <span>{a.atLabel}</span>
-                  </div>
+            <div className="flex w-full flex-col gap-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-sm font-medium">Recent credit activity</div>
+                  <div className="text-sm text-muted-foreground">The latest movements on this workspace.</div>
                 </div>
-              ))}
+                <Button asChild size="sm" variant="ghost"><a href="/billing">View all</a></Button>
+              </div>
+              {account.recent.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No credit activity yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Activity</TableHead>
+                      <TableHead className="hidden sm:table-cell">Details</TableHead>
+                      <TableHead className="hidden md:table-cell">Date</TableHead>
+                      <TableHead className="text-right">Credits</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {account.recent.slice(0, 8).map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell className="font-medium">{entry.label}</TableCell>
+                        <TableCell className="hidden max-w-sm whitespace-normal text-muted-foreground sm:table-cell">{entry.detail ?? "—"}</TableCell>
+                        <TableCell className="hidden text-muted-foreground md:table-cell">{entry.atLabel}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {entry.delta > 0 ? <Badge variant="success">+{formatCredits(entry.delta)}</Badge> : formatCredits(entry.delta)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </div>
           ),
         },
@@ -159,23 +162,12 @@ export function buildSettingsSections(args: {
             const connectable = channels.filter((c) => isConnectableChannel(c.id));
             const connectedCount = connectable.filter((c) => c.status === "connected").length;
             return (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  width: "100%",
-                }}
-              >
+              <div className="flex w-full flex-col justify-between gap-4 sm:flex-row sm:items-center">
                 <div>
-                  <div className="cv-set-lbl">Publishing channels</div>
-                  <div className="cv-set-hint">
-                    {connectedCount} of {connectable.length} connected
-                  </div>
+                  <div className="text-sm font-medium">Publishing channels</div>
+                  <div className="mt-1"><Badge variant={connectedCount > 0 ? "success" : "outline"}>{connectedCount} of {connectable.length} connected</Badge></div>
                 </div>
-                <a className="cv-set-btn" href={SHELL_ROUTES.connections}>
-                  Manage connections
-                </a>
+                <Button asChild size="sm" variant="outline"><a href={SHELL_ROUTES.connections}>Manage connections</a></Button>
               </div>
             );
           },
@@ -251,17 +243,6 @@ export function buildSettingsSections(args: {
         },
       ],
     },
-    // #804 — the home of the dark-mode choice. Preferences is where "how this workspace
-    // behaves for me" already lives (spend cap, posting defaults), and appearance is a
-    // preference, not an identity fact — /profile is deliberately "who you are, nothing
-    // more". The control renders itself: a theme is a device preference read from
-    // localStorage on the client, so there is no server value for this file to pass in.
-    {
-      id: "appearance",
-      title: "Appearance",
-      subtitle: "How Fikirtive looks on this device.",
-      fields: [{ kind: "custom", id: "theme", render: () => <ThemeToggle /> }],
-    },
     {
       id: "danger",
       title: "Danger zone",
@@ -286,4 +267,13 @@ export function buildSettingsSections(args: {
       ],
     },
   ];
+
+  // Preferences should open on behavior, not on a duplicate billing surface. Billing stays
+  // reachable here as a summary, while the full purchase and history workflow lives at /billing.
+  const order = ["otto", "connections", "schedule", "billing", "danger"];
+  const rank = (id: string) => {
+    const index = order.indexOf(id);
+    return index === -1 ? order.length : index;
+  };
+  return sections.sort((a, b) => rank(a.id) - rank(b.id));
 }

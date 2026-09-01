@@ -61,7 +61,6 @@ import {
   NAV_PATH_SEPARATOR_FAMILY,
   OTTO_ASSISTANT,
   everyNavDestination,
-  isNavGroup,
   merchantNavMap,
   navLabel,
   navLinkByKey,
@@ -94,12 +93,11 @@ const AUTHORIZED_NAME = new RegExp(
 const POINTABLE_SET = new Set(navPointableNames());
 
 /** 每一个导航标签(顶层、分组、组内、助手)—— 手打其中任何一个都是第二份地图。 */
-const EVERY_LABEL = [
+const EVERY_LABEL = [...new Set([
   OTTO_ASSISTANT.label,
-  ...MERCHANT_NAV.flatMap((node) =>
-    isNavGroup(node) ? [node.label, ...node.items.map((item) => item.label)] : [node.label],
-  ),
-];
+  ...MERCHANT_NAV.map((node) => node.label),
+  ...everyNavDestination().map((item) => item.label),
+])];
 
 
 // 哨兵里把路名自己的分隔符换成 `|`,否则 (a)「残留里还有分隔符」会被哨兵自己触发。
@@ -159,11 +157,12 @@ function splicedPairs(text: string): string[] {
 function linesNamingUnmappedPlaces(text: string): string[] {
   return text.split("\n").filter((line) => {
     const rest = residue(line);
+    const outsideAuthorizedPaths = rest.replace(/«nav:[^»]*»/g, "");
     return (
       rest.includes(NAV_PATH_SEPARATOR) ||
       EXTENDS_NAV_PATH.test(rest) ||
       SPLICED_ONTO_NAV_NAME.test(rest) ||
-      SPLICED_ONTO_BARE_LABEL.test(rest) ||
+      SPLICED_ONTO_BARE_LABEL.test(outsideAuthorizedPaths) ||
       splicedPairs(line).length > 0
     );
   });
@@ -349,13 +348,13 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
     // 拼路样本必须用**当下树上的真名字**(两个真名相邻才是这条尺子量的形状)。
     // W2-11 权威改写:顶层的 Campaign 改叫 Campaigns(复数),标准 Analytics 不再是导航标签
     // (并入 Schedule 页内第二个页签),样本跟着换成当下真名字。
-    for (const spliced of ["Campaigns Library", "Settings Home", "Brand Schedule", "Create Preferences"]) {
+    for (const spliced of ["Home Library", "Settings Home", "Brand Create", "Create Library"]) {
       expect(splicedPairs(`Point them to ${spliced}.`), `拼路「${spliced}」必须被逮住`).not.toEqual([]);
       expect(linesNamingUnmappedPlaces(`Point them to ${spliced}.`)).toHaveLength(1);
     }
     // 地图上真实存在的组合 = 白名单(判官指定)。W2-11 之后树上只剩一个组(Settings),
     // 三个真组合都取自它自己的三个子项。
-    for (const real of ["Settings Connections", "Settings Preferences", "Settings Billing & credits"]) {
+    for (const real of ["Settings Connections", "Settings Profile", "Settings Billing & credits"]) {
       expect(splicedPairs(`Read the user's ${real} here.`), `真组合「${real}」不该被逮`).toEqual([]);
     }
   });
@@ -370,9 +369,9 @@ describe("#802 ② 描述面提到的每个入口都在地图里", () => {
     // 真路名后面接标点、括号、加粗标记,都不算「接了一截」。
     for (const around of [
       `Point them to **${navPath("billing")}** when they want to look for themselves.`,
-      `There is ONE calendar — ${navPath("schedule")}. ${navPath("campaign")} plan dates live elsewhere.`,
+      `Point them to ${navPath("profile")} for their personal account details.`,
       `"How do I connect Instagram?" → ${navPath("connections")}. "Where did my video go?" → ${navPath("library")}.`,
-      `- ${navPath("schedule")} (/otto?view=schedule) — the one calendar.`,
+      `- ${navPath("connections")} (${navLinkByKey("connections").href}) — connected accounts.`,
     ]) {
       expect(linesNamingUnmappedPlaces(around), `真句子「${around}」不该被逮`).toEqual([]);
     }
@@ -432,25 +431,25 @@ describe("#802 ③ 源码里一个地名都不许手打(判官 r1 [P1-1] / r3 [P
     // W2-11 权威改写把顶层标签从 `Campaign` 改成了复数 `Campaigns`,探针词跟着换 ——
     // 钉的是扫描器的能力,不是这一个字面量本身。
     // 注释里的地名不算数(注释是写给人看的,不会进模型)。
-    expect(handTypedLabels("// 这句话提到 Campaigns 只是注释\nconst a = 1;")).toEqual([]);
-    expect(handTypedLabels("/* Campaigns 也可以出现在块注释里 */")).toEqual([]);
-    // 走权威的插值不算数 —— key 是小写的 "campaign",不是标签 "Campaigns"。
-    expect(handTypedLabels('const s = `open ${navPath("campaign")} now`;')).toEqual([]);
-    // 判官漏洞①:`${"Campaigns"}` —— 手搓状态机无条件漏,AST 照样看见。
-    expect(handTypedLabels('const s = `open ${"Campaigns"} now`;')).toEqual(["Campaigns"]);
+    expect(handTypedLabels("// 这句话提到 Library 只是注释\nconst a = 1;")).toEqual([]);
+    expect(handTypedLabels("/* Library 也可以出现在块注释里 */")).toEqual([]);
+    // 走权威的插值不算数 —— key 是小写的 "library",不是标签 "Library"。
+    expect(handTypedLabels('const s = `open ${navPath("library")} now`;')).toEqual([]);
+    // 判官漏洞①:`${"Library"}` —— 手搓状态机无条件漏,AST 照样看见。
+    expect(handTypedLabels('const s = `open ${"Library"} now`;')).toEqual(["Library"]);
     // 判官漏洞②:嵌套模板 + 插值里的花括号,手搓状态机会数错,AST 不会。
     expect(
-      handTypedLabels("const s = `a ${cond ? `x ${ {k: 1}.k } y` : `z`} b Campaigns`;"),
-    ).toEqual(["Campaigns"]);
+      handTypedLabels("const s = `a ${cond ? `x ${ {k: 1}.k } y` : `z`} b Library`;"),
+    ).toEqual(["Library"]);
     expect(
       handTypedLabels("const s = `a ${cond ? `x ${ {k: 1}.k } y` : `z`} b`;"),
     ).toEqual([]);
     // 手打的算数,不管用哪种引号。
-    expect(handTypedLabels('const s = "open Campaigns now";')).toEqual(["Campaigns"]);
-    expect(handTypedLabels("const s = 'open Campaigns now';")).toEqual(["Campaigns"]);
-    expect(handTypedLabels("const s = `open Campaigns now`;")).toEqual(["Campaigns"]);
+    expect(handTypedLabels('const s = "open Library now";')).toEqual(["Library"]);
+    expect(handTypedLabels("const s = 'open Library now';")).toEqual(["Library"]);
+    expect(handTypedLabels("const s = `open Library now`;")).toEqual(["Library"]);
     // URL 里的 `//` 不是注释开头 —— 后面的地名照样要被看见。
-    expect(handTypedLabels('const s = "https://x.test — then open Campaigns";')).toEqual(["Campaigns"]);
+    expect(handTypedLabels('const s = "https://x.test — then open Library";')).toEqual(["Library"]);
     // 标签是词,不是子串:标识符里的同名片段不算手打。
     expect(handTypedLabels('const s = "call manageLibrary now";')).toEqual([]);
   });
@@ -488,17 +487,17 @@ describe("#802 ④ 没有人指着某个界面说话(r3 判官 [P1])", () => {
   it("尺子逮得住判官点名的六处原文,放得过正当业务句", () => {
     // 判官 r3 [P1] 的六处,逐条验红。
     for (const reference of [
-      "through the same validated, owner-scoped action layer as the Schedule page.",
+      "through the same validated, owner-scoped action layer as the Home page.",
       "through the same authenticated actions as the Library UI.",
-      "$0 internal planning writes through the same owner-scoped actions as the Campaigns UI.",
-      "through the same owner-scoped actions as the Campaigns pages.",
+      "$0 internal planning writes through the same owner-scoped actions as the Brand UI.",
+      "through the same owner-scoped actions as the Brand pages.",
       // 判官原文写的是 `Contacts pages` / `CRM page`。那两个词先后不再是导航标签
       // (#792 折叠、W2-13(#993)整段收起),所以逐次换成**当下**的标签,钉的形状不变
       // (标签 + 单/复数 page(s))。W2-11 权威改写又把 `Campaign` 改成了复数 `Campaigns`。
       "through the same owner-scoped actions as the Library pages.",
-      "through the same owner-scoped action layer as the Campaigns page.",
+      "through the same owner-scoped action layer as the Brand page.",
       // 同族的其它写法:
-      "open the Schedule screen",
+      "open the Home screen",
       "the Library tab",
     ]) {
       expect(namesAScreen(reference), `界面引用「${reference}」必须被逮住`).toHaveLength(1);
@@ -546,7 +545,7 @@ describe("#802 双面:商家问路,地图里真有一条能答的入口", () => 
   const WAYFINDING = [
     { ask: "How do I connect Instagram?", key: "connections", cue: /connect/i },
     { ask: "Where did my video go?", key: "library", cue: /video/i },
-    { ask: "When is this going out?", key: "schedule", cue: /posted/i },
+    { ask: "Where can I change my account details?", key: "profile", cue: /account|details/i },
     { ask: "How many credits do I have left?", key: "billing", cue: /credits/i },
     // 这里原来问的是「客户档案在哪」。W2-13(#993)CRM 整段收起来之后,那件事在商家表面上
     // **确实没有地方**,Otto 也就不该答得出一个地名 —— 换成一个今天真答得出的问路。

@@ -28,7 +28,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
@@ -225,6 +225,10 @@ describe("#699 nothing in apps/ or packages/ calls them beta credits", () => {
 
     const offenders = tracked
       .filter((relative) => relative !== GUARD_ITSELF)
+      // `git ls-files` still names a tracked file while it is being deleted in the worktree.
+      // A file that no longer exists cannot ship copy, and must not make the guard throw before
+      // it can inspect the files that do ship.
+      .filter((relative) => existsSync(path.join(REPO_ROOT, relative)))
       .filter((relative) => /beta[\s_-]*credit/i.test(readFileSync(path.join(REPO_ROOT, relative), "utf8")));
 
     expect(offenders, `these still say "beta credits":\n${offenders.join("\n")}`).toEqual([]);

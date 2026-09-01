@@ -393,7 +393,9 @@ describe("#996 ②:窄档走单列、按钮组换行;宽档并排", () => {
   it("卡身内边距窄档收一档,宽档照旧", () => {
     for (const render of [() => renderPackCard(), () => renderApprovalCard()]) {
       const root = render();
-      const bodies = [...root.querySelectorAll("*")].filter((el) =>
+      // PackCard now uses the shadcn Card itself as its container-aware body; the
+      // legacy ApprovalCard still keeps the padding recipe on a child wrapper.
+      const bodies = [root, ...root.querySelectorAll("*")].filter((el) =>
         (el.getAttribute("class") ?? "").includes("@max-[420px]:p-4"),
       );
       expect(bodies.length).toBe(1);

@@ -1,15 +1,35 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { categoryKey, distinctCategories } from "@fikirtive/core/brand-records";
+import { Archive, ArchiveRestore, Check, ImageOff, ImagePlus, Link2, MoreHorizontal, PackageOpen, Pencil, Pin, Plus, Search } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { Link2, Check } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { StuffItem } from "@/lib/stuff-items";
 import type { ProductDraftResult } from "@/lib/product-ingest-actions";
 import { shortDayLabel } from "@/lib/short-date-label";
+import { cn } from "@/lib/utils";
+import { MemoryNoteCard } from "./MemoryNoteCard";
+import { MemorySourceBadge } from "./MemorySourceBadge";
+import { useAsyncActionFeedback } from "./useAsyncActionFeedback";
 
 /** Short "Mon D" label for a row's updatedAt. Deterministic — no toLocaleDateString (SSR-safe).
  *  The month names come from lib/short-date-label; OfferList.tsx held the identical copy. */
@@ -51,44 +71,37 @@ function toData(f: ProdFields): Record<string, unknown> {
   };
 }
 
-function ProdForm({ initial, categories, onCancel, onSubmit }: {
+function ProdForm({ initial, categories, onCancel, onSubmit, onSaved }: {
   initial: ProdFields;
   categories: string[];
   onCancel: () => void;
-  onSubmit: (data: Record<string, unknown>) => Promise<void>;
+  onSubmit: (data: Record<string, unknown>) => Promise<string | null>;
+  onSaved: () => void;
 }) {
   const [f, setF] = useState<ProdFields>(initial);
-  const [saving, setSaving] = useState(false);
+  const submission = useAsyncActionFeedback("The product couldn't be saved. Check your connection and try again.");
   const set = (k: keyof ProdFields) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setF((cur) => ({ ...cur, [k]: e.target.value }));
+
+  async function save() {
+    const outcome = await submission.run(() => onSubmit(toData(f)));
+    if (outcome === "success") onSaved();
+  }
+
   return (
-    <div className="flex flex-col gap-2">
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Name *</span>
-        <Input value={f.name} onChange={set("name")} placeholder="Latte Blend" />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Description</span>
-        <Textarea value={f.description} onChange={set("description")} rows={2} />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Price</span>
-        <Input value={f.price} onChange={set("price")} placeholder="RM 49" />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Link</span>
-        <Input value={f.url} onChange={set("url")} placeholder="https://…" />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Selling angle</span>
-        <Textarea value={f.sellingAngle} onChange={set("sellingAngle")} rows={1} />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Tags (comma-separated)</span>
-        <Input value={f.tags} onChange={set("tags")} placeholder="coffee, everyday" />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Category</span>
+    <FieldGroup className="gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field><FieldLabel>Name *</FieldLabel><Input value={f.name} onChange={set("name")} placeholder="Latte Blend" /></Field>
+        <Field><FieldLabel>Price</FieldLabel><Input value={f.price} onChange={set("price")} placeholder="RM 49" /></Field>
+      </div>
+      <Field><FieldLabel>Description</FieldLabel><Textarea value={f.description} onChange={set("description")} rows={2} /></Field>
+      <Field><FieldLabel>Selling angle</FieldLabel><Textarea value={f.sellingAngle} onChange={set("sellingAngle")} rows={2} /></Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field><FieldLabel>Link</FieldLabel><Input value={f.url} onChange={set("url")} placeholder="https://…" /></Field>
+        <Field><FieldLabel>Tags</FieldLabel><Input value={f.tags} onChange={set("tags")} placeholder="coffee, everyday" /></Field>
+      </div>
+      <Field>
+        <FieldLabel>Category</FieldLabel>
         <Input
           value={f.category}
           onChange={set("category")}
@@ -100,21 +113,25 @@ function ProdForm({ initial, categories, onCancel, onSubmit }: {
             <option key={c} value={c} />
           ))}
         </datalist>
-      </label>
+      </Field>
+      {submission.error && (
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>Product wasn&apos;t saved</AlertTitle>
+          <AlertDescription>{submission.error}</AlertDescription>
+        </Alert>
+      )}
       <div className="flex gap-2">
         <Button
           size="sm"
-          disabled={!f.name.trim() || saving}
-          onClick={() => {
-            setSaving(true);
-            void onSubmit(toData(f)).finally(() => setSaving(false));
-          }}
+          disabled={!f.name.trim() || submission.pending}
+          onClick={() => void save()}
         >
-          {saving ? "Saving…" : "Save"}
+          {submission.pending && <Spinner data-icon="inline-start" />}
+          {submission.pending ? "Saving…" : "Save"}
         </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" variant="ghost" disabled={submission.pending} onClick={onCancel}>Cancel</Button>
       </div>
-    </div>
+    </FieldGroup>
   );
 }
 
@@ -126,11 +143,11 @@ export function ProductShowcase({
   looseNotes: MemoryRow[];
   freshIds: Set<string>;
   stuffItems?: StuffItem[];
-  onSave: (id: string | undefined, data: Record<string, unknown>) => Promise<void>;
-  onArchive: (id: string, data: Record<string, unknown>, status: "active" | "archived") => Promise<void>;
-  onNoteSave: (id: string, content: string) => Promise<void>;
-  onNoteDelete: (id: string) => Promise<void>;
-  onSetImage: (rec: BrandRecordRow, assetId: string | null) => Promise<void>;
+  onSave: (id: string | undefined, data: Record<string, unknown>) => Promise<string | null>;
+  onArchive: (id: string, data: Record<string, unknown>, status: "active" | "archived") => Promise<string | null>;
+  onNoteSave: (id: string, content: string) => Promise<string | null>;
+  onNoteDelete: (id: string) => Promise<string | null>;
+  onSetImage: (rec: BrandRecordRow, assetId: string | null) => Promise<string | null>;
   onOpenPicker: (rec: BrandRecordRow) => void;
   /** P1-01: read a product URL → draft (never saves). Undefined disables the "Paste a link" affordance. */
   onIngest?: (url: string) => Promise<ProductDraftResult>;
@@ -140,31 +157,66 @@ export function ProductShowcase({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [link, setLink] = useState<LinkState>({ phase: "idle" });
-  const [noteEditId, setNoteEditId] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState("");
+  const [archivePendingId, setArchivePendingId] = useState<string | null>(null);
+  const [imagePendingId, setImagePendingId] = useState<string | null>(null);
+  const ingestSubmittingRef = useRef(false);
+  const archiveFeedback = useAsyncActionFeedback("The product couldn't be updated. Check your connection and try again.");
+  const imageFeedback = useAsyncActionFeedback("The product image couldn't be removed. Check your connection and try again.");
+
+  async function toggleArchive(record: BrandRecordRow) {
+    if (archiveFeedback.pending) return;
+    setArchivePendingId(record.id);
+    const outcome = await archiveFeedback.run(() => onArchive(
+      record.id,
+      record.data,
+      record.status === "archived" ? "active" : "archived",
+    ));
+    if (outcome !== "ignored") setArchivePendingId(null);
+  }
+
+  async function removeImage(record: BrandRecordRow) {
+    if (imageFeedback.pending) return;
+    setImagePendingId(record.id);
+    const outcome = await imageFeedback.run(() => onSetImage(record, null));
+    if (outcome !== "ignored") setImagePendingId(null);
+  }
+
+  function openImagePicker(record: BrandRecordRow) {
+    imageFeedback.clearError();
+    onOpenPicker(record);
+  }
 
   // P1-01: read a URL → prefilled draft. Deterministic only (JSON-LD/OG/title) — no LLM, no spend.
   // A sparse page just pre-fills fewer fields. Nothing is saved — the review form's Save does that.
   const runIngest = async (url: string) => {
-    if (!onIngest) return;
+    if (!onIngest || ingestSubmittingRef.current) return;
+    ingestSubmittingRef.current = true;
     setLink({ phase: "url", url, busy: true, err: null });
-    const res = await onIngest(url);
-    // Stale-guard: if the user hit Cancel (or started another fetch) during the await,
-    // don't clobber their state — only apply to the in-flight url step we started.
-    setLink((cur) => {
-      if (cur.phase !== "url" || cur.url !== url || !cur.busy) return cur;
-      if ("error" in res) return { phase: "url", url, busy: false, err: res.error };
-      const d = res.draft;
-      const initial = fieldsOf({ name: d.name, description: d.description, price: d.price, url: d.sourceUrl });
-      let source: string;
-      try {
-        source = new URL(d.sourceUrl).host;
-      } catch {
-        source = d.sourceUrl;
-      }
-      const filled = d.filled.filter((f) => f === "name" || f === "price" || f === "description");
-      return { phase: "review", initial, source, filled };
-    });
+    try {
+      const res = await onIngest(url);
+      setLink((cur) => {
+        if (cur.phase !== "url" || cur.url !== url || !cur.busy) return cur;
+        if ("error" in res) return { phase: "url", url, busy: false, err: res.error };
+        const d = res.draft;
+        const initial = fieldsOf({ name: d.name, description: d.description, price: d.price, url: d.sourceUrl });
+        let source: string;
+        try {
+          source = new URL(d.sourceUrl).host;
+        } catch {
+          source = d.sourceUrl;
+        }
+        const filled = d.filled.filter((f) => f === "name" || f === "price" || f === "description");
+        return { phase: "review", initial, source, filled };
+      });
+    } catch {
+      setLink((cur) => (
+        cur.phase === "url" && cur.url === url && cur.busy
+          ? { phase: "url", url, busy: false, err: "The product page couldn't be read. Check your connection and try again." }
+          : cur
+      ));
+    } finally {
+      ingestSubmittingRef.current = false;
+    }
   };
 
   // assetId → image url (only image items that carry an assetId + url).
@@ -251,128 +303,146 @@ export function ProductShowcase({
   const activeCount = records.filter((r) => r.status === "active").length;
 
   return (
-    <section>
+    <section className="flex flex-col gap-4">
+      {archiveFeedback.error && (
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>Product wasn&apos;t updated</AlertTitle>
+          <AlertDescription>{archiveFeedback.error}</AlertDescription>
+        </Alert>
+      )}
+      {imageFeedback.error && (
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>Product image wasn&apos;t removed</AlertTitle>
+          <AlertDescription>{imageFeedback.error}</AlertDescription>
+        </Alert>
+      )}
       {/* Toolbar: search (flex) + Add product + Paste a link (P1-01). */}
-      <div className="mt-6 mb-3 flex items-center gap-2">
-        <Input
-          aria-label="Search products"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search products…"
-          className="flex-1"
-        />
-        <Button size="sm" onClick={() => setAdding(true)}>+ Add product</Button>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <InputGroup className="flex-1">
+          <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+          <InputGroupInput aria-label="Search products" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search products…" />
+        </InputGroup>
+        <Button size="sm" onClick={() => setAdding(true)}><Plus data-icon="inline-start" />Add product</Button>
         {onIngest && (
           <Button
             size="sm"
             variant="secondary"
+            disabled={link.phase !== "idle"}
             onClick={() => setLink({ phase: "url", url: "", busy: false, err: null })}
           >
-            <Link2 /> Paste a link
+            <Link2 data-icon="inline-start" />Paste a link
           </Button>
         )}
       </div>
 
       {/* "Add from link" flow: URL capture → prefilled ProdForm. Persists nothing until Save. */}
       {link.phase !== "idle" && (
-        <div className="mb-4 max-w-[560px] rounded-[16px] border border-border bg-card p-4 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-[9px] bg-[color:var(--brand-soft)] text-[color:var(--brand)]">
-              <Link2 className="h-4 w-4" />
-            </span>
-            <span className="text-[0.875rem] font-semibold">Add product from link</span>
-            <span className="ml-auto rounded-full border border-border bg-secondary px-2 py-0.5 font-mono text-[0.625rem] uppercase tracking-wide text-muted-foreground">
-              read only · free
-            </span>
-          </div>
-
+        <Card size="sm" className="max-w-2xl">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <CardTitle>Add product from link</CardTitle>
+              <Badge variant="outline" className="ml-auto">Read only · free</Badge>
+            </div>
+            <CardDescription>Read a product page and review every detail before anything is saved.</CardDescription>
+          </CardHeader>
           {link.phase === "url" ? (
             <>
-              <div className="flex items-center gap-2">
-                <Input
-                  aria-label="Product page link"
-                  value={link.url}
-                  onChange={(e) => setLink({ phase: "url", url: e.target.value, busy: false, err: null })}
-                  placeholder="https://… a product page"
-                  className="flex-1"
-                  disabled={link.busy}
-                />
-                <Button size="sm" disabled={link.busy || !link.url.trim()} onClick={() => void runIngest(link.url.trim())}>
-                  {link.busy ? "Reading…" : "Fetch"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setLink({ phase: "idle" })}>
+              <CardContent>
+                <FieldGroup>
+                  <Field data-invalid={!!link.err}>
+                    <FieldLabel className="sr-only">Product page link</FieldLabel>
+                    <InputGroup>
+                      <InputGroupInput
+                        aria-label="Product page link"
+                        aria-invalid={!!link.err}
+                        value={link.url}
+                        onChange={(event) => setLink({ phase: "url", url: event.target.value, busy: false, err: null })}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !link.busy && link.url.trim()) {
+                            event.preventDefault();
+                            void runIngest(link.url.trim());
+                          }
+                        }}
+                        placeholder="https://… a product page"
+                        disabled={link.busy}
+                      />
+                      <InputGroupAddon align="inline-start"><Link2 aria-hidden /></InputGroupAddon>
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupButton
+                          size="sm"
+                          variant="secondary"
+                          disabled={link.busy || !link.url.trim()}
+                          onClick={() => void runIngest(link.url.trim())}
+                        >
+                          {link.busy && <Spinner data-icon="inline-start" />}
+                          {link.busy ? "Reading…" : "Read product"}
+                        </InputGroupButton>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    <FieldDescription>Free to read. Nothing is saved until you review the draft and choose Save.</FieldDescription>
+                  </Field>
+                  {link.err && (
+                    <Alert variant="destructive" role="alert">
+                      <AlertTitle>Product page wasn&apos;t read</AlertTitle>
+                      <AlertDescription>{link.err}</AlertDescription>
+                    </Alert>
+                  )}
+                </FieldGroup>
+              </CardContent>
+              <CardFooter>
+                <Button type="button" size="sm" variant="ghost" disabled={link.busy} onClick={() => setLink({ phase: "idle" })}>
                   Cancel
                 </Button>
-              </div>
-              {link.err && <p className="mt-2 text-[0.8125rem] text-[color:var(--destructive)]">{link.err}</p>}
-              <p className="mt-2 text-[0.75rem] text-muted-foreground">
-                Paste a product page — we read it and pre-fill the form for you. Free — nothing is saved until you do.
-              </p>
+              </CardFooter>
             </>
           ) : (
-            <>
-              <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-muted-foreground">
-                <Check className="h-3.5 w-3.5 text-[color:var(--brand)]" />
-                Read from <span className="font-medium text-foreground">{link.source}</span>
-                {link.filled.length > 0 && <span>· filled: {link.filled.join(", ")}</span>}
-              </div>
+            <CardContent className="flex flex-col gap-4">
+              <Alert variant="success">
+                <Check aria-hidden />
+                <AlertTitle>Product details found</AlertTitle>
+                <AlertDescription>
+                  Read from {link.source}{link.filled.length > 0 ? ` · filled: ${link.filled.join(", ")}` : ""}.
+                </AlertDescription>
+              </Alert>
               <ProdForm
                 initial={link.initial}
                 categories={categories}
                 onCancel={() => setLink({ phase: "idle" })}
-                onSubmit={(data) => onSave(undefined, data).then(() => setLink({ phase: "idle" }))}
+                onSaved={() => setLink({ phase: "idle" })}
+                onSubmit={(data) => onSave(undefined, data)}
               />
-            </>
+            </CardContent>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Category filter chips (active products only) — multi-select toggles. */}
       {categories.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-1 rounded-[14px] bg-muted p-1">
-          {(() => {
-            const toggle = (key: string) =>
-              setCatSel((cur) => {
-                const next = new Set(cur);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
-            const chip = (active: boolean, onClick: () => void, label: string, key: string) => (
-              <Button
-                key={key}
-                type="button"
-                variant="ghost"
-                onClick={onClick}
-                className={`h-auto whitespace-nowrap rounded-[10px] px-3 py-1.5 text-[0.8125rem] font-normal ${
-                  active ? "bg-card text-foreground shadow-sm hover:bg-card" : "bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
-                }`}
-              >
-                {label}
-              </Button>
-            );
-            return (
-              <>
-                {chip(validSel.size === 0, () => setCatSel(new Set()), `All (${activeCount})`, "all")}
-                {categories.map((c) => {
-                  const key = categoryKey(c);
-                  return chip(validSel.has(key), () => toggle(key), `${c} (${catCounts.byKey.get(key) ?? 0})`, key);
-                })}
-                {catCounts.uncat > 0 &&
-                  chip(validSel.has("uncat"), () => toggle("uncat"), `Uncategorized (${catCounts.uncat})`, "uncat")}
-              </>
-            );
-          })()}
-        </div>
+        <ToggleGroup
+          type="multiple"
+          variant="outline"
+          size="sm"
+          value={validSel.size === 0 ? ["all"] : [...validSel]}
+          onValueChange={(values) => {
+            if (values.includes("all") && validSel.size > 0) setCatSel(new Set());
+            else setCatSel(new Set(values.filter((value) => value !== "all")));
+          }}
+          className="w-full flex-wrap justify-start rounded-lg bg-muted p-1"
+        >
+          <ToggleGroupItem value="all">All ({activeCount})</ToggleGroupItem>
+          {categories.map((category) => {
+            const key = categoryKey(category);
+            return <ToggleGroupItem key={key} value={key}>{category} ({catCounts.byKey.get(key) ?? 0})</ToggleGroupItem>;
+          })}
+          {catCounts.uncat > 0 && <ToggleGroupItem value="uncat">Uncategorized ({catCounts.uncat})</ToggleGroupItem>}
+        </ToggleGroup>
       )}
 
       {records.length === 0 && looseNotes.length === 0 && (
-        <div className="rounded-[16px] border border-border bg-card px-[15px] py-[10px] text-[0.875rem] leading-[1.45] text-muted-foreground">
-          No products yet — tell Otto what you sell, or add one.
-        </div>
+        <Empty className="min-h-64 border border-dashed border-border"><EmptyHeader><EmptyMedia variant="icon"><PackageOpen aria-hidden /></EmptyMedia><EmptyTitle>No products yet</EmptyTitle><EmptyDescription>Add what you sell so Otto can reuse the right details, positioning, and imagery.</EmptyDescription></EmptyHeader><EmptyContent><Button size="sm" variant="secondary" onClick={() => setAdding(true)}><Plus data-icon="inline-start" />Add product</Button></EmptyContent></Empty>
       )}
 
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filtered.map((r) => {
           const d = r.data as Record<string, unknown>;
           const f = fieldsOf(d);
@@ -383,11 +453,12 @@ export function ProductShowcase({
 
           if (editingId === r.id) {
             return (
-              <div key={r.id} className="rounded-[16px] border border-border bg-card p-4">
-                <ProdForm
+              <Card key={r.id} size="sm" className="sm:col-span-2 xl:col-span-3">
+                <CardContent><ProdForm
                   initial={f}
                   categories={categories}
                   onCancel={() => setEditingId(null)}
+                  onSaved={() => setEditingId(null)}
                   onSubmit={(data) => {
                     // Merge over the original record, but let a cleared category
                     // actually clear: toData() omits `category` when empty, so an
@@ -395,19 +466,19 @@ export function ProductShowcase({
                     // prodSetImage delete-the-key discipline). Only `category`.
                     const merged = { ...d, ...data };
                     if (!("category" in data)) delete merged.category;
-                    return onSave(r.id, merged).then(() => setEditingId(null));
+                    return onSave(r.id, merged);
                   }}
-                />
-              </div>
+                /></CardContent>
+              </Card>
             );
           }
 
           return (
-            <div
+            <Card
               key={r.id}
-              className={`rounded-[16px] border border-border bg-card overflow-hidden ${archived ? "opacity-55" : ""} ${
-                fresh ? "border-l-[3px] border-l-brand" : ""
-              }`}
+              size="sm"
+              tone={fresh ? "otto" : "default"}
+              className={cn("gap-0 overflow-hidden p-0", archived && "opacity-55")}
             >
               {/* Image area */}
               <div className="relative">
@@ -418,131 +489,103 @@ export function ProductShowcase({
                   <Button
                     type="button"
                     variant="ghost"
-                    onClick={() => onOpenPicker(r)}
-                    className="h-[150px] w-full rounded-none bg-accent/50 text-[0.8125rem] font-normal text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    onClick={() => openImagePicker(r)}
+                    className="h-[150px] w-full rounded-none bg-muted text-sm font-normal text-muted-foreground hover:bg-muted/80 hover:text-foreground"
                   >
-                    Add image · from Library
+                    <ImageOff data-icon="inline-start" />Add image · from Library
                   </Button>
                 )}
                 {r.pinned && (
-                  <span className="absolute left-2 top-2 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand-strong">
-                    ⭐ Pinned
-                  </span>
+                  <Badge variant="outline" className="absolute left-2 top-2 bg-card/90"><Pin aria-hidden />Pinned</Badge>
                 )}
               </div>
 
               {/* Body */}
-              <div className="p-4">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[0.875rem] leading-[1.45] font-semibold text-foreground">{f.name}</span>
-                  {f.price && <span className="whitespace-nowrap font-mono text-[13px] text-muted-foreground">{f.price}</span>}
+              <CardHeader className="p-4 pb-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0"><CardTitle>{f.name}</CardTitle>{f.price && <p className="mt-1 font-mono text-xs text-muted-foreground">{f.price}</p>}</div>
+                  <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="icon-xs" variant="ghost" disabled={archivePendingId === r.id || imagePendingId === r.id} aria-label={`Actions for ${f.name}`}><MoreHorizontal aria-hidden /></Button></DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem onSelect={() => setEditingId(r.id)}><Pencil aria-hidden />Edit</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openImagePicker(r)}><ImagePlus aria-hidden />{assetId ? "Replace image" : "Choose image"}</DropdownMenuItem>
+                      </DropdownMenuGroup>
+                      {assetId && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem onSelect={() => void removeImage(r)}><ImageOff aria-hidden />Remove from product</DropdownMenuItem>
+                          </DropdownMenuGroup>
+                        </>
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem onSelect={() => void toggleArchive(r)}>{archived ? <ArchiveRestore aria-hidden /> : <Archive aria-hidden />}{archived ? "Unarchive" : "Archive"}</DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
                 {f.description && (
-                  <div className="mt-0.5 text-[0.8125rem] leading-[1.45] text-muted-foreground line-clamp-2">
+                  <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">
                     {f.description}
-                  </div>
+                  </p>
                 )}
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2 p-4">
                 {/* Row 1: badges wrap as whole units; updated label pushed right. */}
-                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.6875rem] text-muted-foreground/70">
-                  <span className="whitespace-nowrap rounded-full bg-accent px-2 py-[2px] font-medium text-muted-foreground">
-                    {r.source === "otto" ? "✦ Otto learned" : "You added"}
-                  </span>
-                  {f.category && (
-                    <span className="whitespace-nowrap rounded-full bg-accent px-2 py-[2px] text-[0.6875rem] text-muted-foreground">
-                      {f.category}
-                    </span>
-                  )}
-                  {whenLabel(r.updatedAt) && (
-                    <span className="ml-auto whitespace-nowrap">updated {whenLabel(r.updatedAt)}</span>
-                  )}
-                </div>
-                {/* Row 2: actions as small ghost buttons (comfortable tap targets). */}
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1">
-                  {imgUrl && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="-ml-2 h-auto rounded-[8px] px-2 py-1 text-[0.8125rem] font-normal text-muted-foreground first:ml-0"
-                      onClick={() => void onSetImage(r, null)}
-                    >
-                      Remove image
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label="Edit"
-                    className="-ml-2 h-auto rounded-[8px] px-2 py-1 text-[0.8125rem] font-normal text-muted-foreground first:ml-0"
-                    onClick={() => setEditingId(r.id)}
-                  >
-                    ✎ Edit
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="-ml-2 h-auto rounded-[8px] px-2 py-1 text-[0.8125rem] font-normal text-muted-foreground first:ml-0"
-                    onClick={() => void onArchive(r.id, d, archived ? "active" : "archived")}
-                  >
-                    {archived ? "Unarchive" : "Archive"}
-                  </Button>
-                </div>
-              </div>
-            </div>
+                <MemorySourceBadge source={r.source} />
+                {f.category && <Badge variant="outline">{f.category}</Badge>}
+                {archived && <Badge variant="outline">Archived</Badge>}
+              </CardContent>
+              <CardFooter className="justify-between border-t border-border p-4 text-xs text-muted-foreground">
+                {whenLabel(r.updatedAt) ? `Updated ${whenLabel(r.updatedAt)}` : "Saved product"}
+                {archivePendingId === r.id && <Badge><Spinner />{archived ? "Unarchiving…" : "Archiving…"}</Badge>}
+                {imagePendingId === r.id && <Badge><Spinner />Removing image…</Badge>}
+              </CardFooter>
+            </Card>
           );
         })}
 
         {/* Add-product dashed card at grid end. */}
         {adding ? (
-          <div className="rounded-[16px] border border-border bg-card p-4">
-            <ProdForm
+          <Card size="sm" className="sm:col-span-2 xl:col-span-3">
+            <CardContent><ProdForm
               initial={EMPTY}
               categories={categories}
               onCancel={() => setAdding(false)}
-              onSubmit={(data) => onSave(undefined, data).then(() => setAdding(false))}
-            />
-          </div>
+              onSaved={() => setAdding(false)}
+              onSubmit={(data) => onSave(undefined, data)}
+            /></CardContent>
+          </Card>
         ) : (
           <Button
             type="button"
             variant="outline"
             onClick={() => setAdding(true)}
-            className="h-auto min-h-[150px] rounded-[16px] border-dashed border-border bg-card text-[0.8125rem] font-normal text-muted-foreground hover:bg-card"
+            className="h-auto min-h-[220px] rounded-[var(--radius-card)] border-dashed border-border bg-card text-sm font-normal text-muted-foreground hover:bg-muted/40 hover:text-foreground"
           >
-            + Add product
+            <Plus data-icon="inline-start" />Add product
           </Button>
         )}
       </div>
 
       {archivedCount > 0 && (
-        <div className="mt-3 text-[0.6875rem] text-muted-foreground/70">
+        <div className="text-xs text-muted-foreground">
           Archived ({archivedCount}) — hidden from Otto
         </div>
       )}
 
       {/* Legacy loose product notes render as plain fact rows below the grid. */}
       {looseNotes.length > 0 && (
-        <div className="mt-4 rounded-[16px] border border-border bg-card divide-y divide-border">
-          {looseNotes.map((n) => (
-            <div key={n.id} className={`px-[15px] py-[10px] ${freshIds.has(n.id) ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}>
-              {noteEditId === n.id ? (
-                <div className="flex flex-col gap-2">
-                  <Textarea aria-label="Edit this product note" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} />
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => void onNoteSave(n.id, noteText).then(() => setNoteEditId(null))}>Save</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setNoteEditId(null)}>Cancel</Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-start gap-2">
-                  <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">{n.content}</span>
-                  <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
-                    {n.source === "otto" ? "✦ Otto learned" : "You added"}
-                  </span>
-                  <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</Button>
-                  <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onNoteDelete(n.id)}>🗑</Button>
-                </div>
-              )}
-            </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {looseNotes.map((note) => (
+            <MemoryNoteCard
+              key={note.id}
+              note={note}
+              fresh={freshIds.has(note.id)}
+              onSave={onNoteSave}
+              onDelete={onNoteDelete}
+            />
           ))}
         </div>
       )}

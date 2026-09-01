@@ -1,13 +1,18 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Search, Loader2 } from "lucide-react";
+import { Search } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
 import { parseResearchCardPayload, RESEARCH_TIER_LABELS, type ResearchStatusView } from "@/lib/research-card";
 import { approveResearch, getResearchCard } from "@/lib/research-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { creditsLabel } from "@/lib/credit-format";
 import { TopUpNotice } from "@/components/exits/Exits";
 import { canAffordPack } from "./pack-credit-math";
+import { SpendConfirmation, SpendProgress } from "./spend-state";
 
 export interface ResearchCardProps {
   /** The durable RESEARCH_CARD message id — the cardId approveResearch/getResearchCard scope off. */
@@ -137,50 +142,32 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
   }
 
   return (
-    // leading-[1.5] — design-baseline body line-height (Analytics standard)
-    <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
-      <div className="rounded-[18px] border border-border bg-secondary p-6">
-        {/* Header */}
-        <div className="flex items-center gap-2 mb-4">
-          <Search size={20} className="text-foreground" />
-          <span className="font-bold text-[0.8125rem] text-foreground">
-            {view.topic || "Research"}
-          </span>
-          {/* tier badge */}
-          <span className="ml-auto text-[0.75rem] font-semibold px-[7px] py-[2px] rounded-full bg-card text-muted-foreground">
-            {tierLabel}
-          </span>
+    <Card size="sm" className="gb w-full max-w-[480px] leading-[1.5]">
+      <CardHeader className="flex-row items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <CardTitle className="flex items-center gap-2">
+            <Search size={18} aria-hidden="true" />
+            <span className="truncate">{view.topic || "Research"}</span>
+          </CardTitle>
+          {view.goal && <CardDescription>{view.goal}</CardDescription>}
         </div>
+        <Badge variant="outline">{tierLabel}</Badge>
+      </CardHeader>
 
-        {/* Goal */}
-        {view.goal && (
-          <div className="text-[0.875rem] text-muted-foreground mb-4">{view.goal}</div>
-        )}
-
-        {/* Sub-questions */}
-        {view.questions.length > 0 && (
-          <div className="flex flex-col gap-2 mb-4">
-            {view.questions.map((q, i) => (
-              <div
-                key={i}
-                className="bg-card rounded-[14px] text-[0.8125rem] text-foreground"
-                style={{ padding: "10px 12px" }}
-              >
-                {q}
-              </div>
+      {view.questions.length > 0 && (
+        <CardContent>
+          <ol className="flex flex-col gap-2">
+            {view.questions.map((question, index) => (
+              <li key={index} className="flex items-start gap-3 rounded-lg bg-muted p-3 text-sm text-foreground">
+                <Badge variant="default">Q{index + 1}</Badge>
+                <span>{question}</span>
+              </li>
             ))}
-          </div>
-        )}
+          </ol>
+        </CardContent>
+      )}
 
-        {/* Estimated credits — a card with no guaranteed quote says so rather than
-            printing a number nobody stands behind. */}
-        <div className="pt-3 border-t border-border mb-4">
-          <span className="text-[0.75rem] text-muted-foreground">
-            {estimate === null ? "Checking cost…" : `Estimated ${creditsLabel(estimate)}`}
-          </span>
-        </div>
-
-        {/* Status area */}
+      <CardFooter className="flex-col items-stretch">
         {status === "planned" ? (
           <div className="flex flex-col gap-2">
             {/* #707 — one notice for one fact, whether the shortfall was visible up front
@@ -193,42 +180,54 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
             {(insufficient || (estimate !== null && !affordable)) && (
               <TopUpNotice need="run this research" />
             )}
-            {/* #896: one press, with the estimate on it. No estimate ⇒ nothing to approve. */}
-            <Button
-              variant="default"
-              disabled={approving || approveBlocked}
-              onClick={() => void confirmApprove()}
+            <SpendConfirmation
+              title={estimate === null ? "Cost unavailable" : "Research quote"}
+              description={
+                estimate === null
+                  ? "Otto is still checking the cost. Nothing can start until the quote is ready."
+                  : `${creditsLabel(estimate)}. Research starts as soon as you approve.`
+              }
             >
-              {approving
-                ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
-                : estimate === null
-                ? "Checking cost…"
-                : `Run research · ${creditsLabel(estimate)}`}
-            </Button>
+              {/* #896: one press, with the estimate on it. No estimate ⇒ nothing to approve. */}
+              <Button
+                variant="default"
+                size="sm"
+                disabled={approving || approveBlocked}
+                onClick={() => void confirmApprove()}
+              >
+                {approving && <Spinner data-icon="inline-start" aria-label="Starting research" />}
+                {approving
+                  ? "Starting research…"
+                  : estimate === null
+                  ? "Checking cost…"
+                  : `Run research · ${creditsLabel(estimate)}`}
+              </Button>
+            </SpendConfirmation>
           </div>
         ) : status === "running" ? (
-          <div className="flex items-center gap-2 text-[0.875rem] text-muted-foreground">
-            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Researching… this can take a few minutes.
-          </div>
+          <SpendProgress title="Researching" description="This can take a few minutes." />
         ) : status === "failed" ? (
-          <div className="flex flex-col gap-1">
-            <div role="alert" className="text-[0.875rem] text-[var(--error-soft-foreground)]">
-              Research didn&apos;t finish.
-            </div>
-            <span className="text-[0.75rem] text-muted-foreground">
+          <Alert role="alert" variant="destructive" density="compact">
+            <AlertTitle>Research didn&apos;t finish</AlertTitle>
+            <AlertDescription>
               Ask Otto to research this again — Otto will propose a fresh plan.
-            </span>
-          </div>
+            </AlertDescription>
+          </Alert>
         ) : (
-          <div className="text-[0.875rem] text-[var(--success)]">Report ready below</div>
+          <Alert variant="success" density="compact">
+            <AlertTitle>Report ready below</AlertTitle>
+            <AlertDescription>Otto&apos;s findings are in the next message.</AlertDescription>
+          </Alert>
         )}
 
         {error && (
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">{error}</div>
+          <Alert role="alert" variant="destructive" density="compact">
+            <AlertTitle>Research wasn&apos;t started</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
+      </CardFooter>
+    </Card>
   );
 }
 

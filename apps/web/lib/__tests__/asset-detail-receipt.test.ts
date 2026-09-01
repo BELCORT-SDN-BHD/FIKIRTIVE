@@ -132,9 +132,16 @@ async function renderPanel(variants: Variant[], kind: "image" | "video" = "image
   await act(async () => { await Promise.resolve(); });
 }
 
+/** Sheet content is portalled to document.body, outside the React mount node. */
+function detailSurface(): HTMLElement {
+  const found = document.body.querySelector<HTMLElement>('[data-slot="sheet-content"]');
+  expect(found, "资产详情 Sheet 应该已经打开").not.toBeNull();
+  return found!;
+}
+
 /** 「What the engine ran」那一块底下的那句话 —— 屏幕上真正写着的字。只在这一块存在时调用。 */
 function engineRanText(): string {
-  const labels = [...container!.querySelectorAll("span")].filter((s) => s.textContent?.trim() === "What the engine ran");
+  const labels = [...detailSurface().querySelectorAll("span")].filter((s) => s.textContent?.trim() === "What the engine ran");
   expect(labels[0], "面板上应该有「What the engine ran」这一块").toBeDefined();
   const body = labels[0]!.parentElement!.querySelector("p");
   expect(body, "这一块底下应该有一句话").not.toBeNull();
@@ -143,17 +150,17 @@ function engineRanText(): string {
 
 /** #914:「What the engine ran」这一块存不存在 —— 图片回执的核心断言,不看文案看有没有这一行。 */
 function hasEngineRanRow(): boolean {
-  return [...container!.querySelectorAll("span")].some((s) => s.textContent?.trim() === "What the engine ran");
+  return [...detailSurface().querySelectorAll("span")].some((s) => s.textContent?.trim() === "What the engine ran");
 }
 
 /** #914 r4:「What we sent to the engine」这一块存不存在 —— 历史行的核心断言。 */
 function hasSentToEngineRow(): boolean {
-  return [...container!.querySelectorAll("span")].some((s) => s.textContent?.trim() === "What we sent to the engine");
+  return [...detailSurface().querySelectorAll("span")].some((s) => s.textContent?.trim() === "What we sent to the engine");
 }
 
 /** #914 r4:「What we sent to the engine」那一块底下的那句话 —— 我们实际送出的事实。 */
 function sentToEngineText(): string {
-  const labels = [...container!.querySelectorAll("span")].filter((s) => s.textContent?.trim() === "What we sent to the engine");
+  const labels = [...detailSurface().querySelectorAll("span")].filter((s) => s.textContent?.trim() === "What we sent to the engine");
   expect(labels[0], "图片回执应该有「What we sent to the engine」这一块").toBeDefined();
   const body = labels[0]!.parentElement!.querySelector("p");
   expect(body, "这一块底下应该有一句话").not.toBeNull();
@@ -164,14 +171,14 @@ describe("#914 图片回执:「引擎实际提示词」整行永不出现", () =
   it("引擎(结构上)没报 ⇒ 不出现占位句,这一行整个不渲染", async () => {
     await renderPanel(one(null), "image");
     expect(hasEngineRanRow()).toBe(false);
-    expect(container!.textContent).not.toContain("Not reported by the engine.");
+    expect(detailSurface().textContent).not.toContain("Not reported by the engine.");
   });
 
   it("即便这一张带着 finalPrompt 值,图片回执也不显示这一行 —— 不分「有/无」两种形状", async () => {
     await renderPanel(one("a bright poster, weekend sale, bold type"), "image");
     expect(hasEngineRanRow()).toBe(false);
     // 有值也不许泄漏到别处——这一行整块不存在,不是换了个地方藏起来。
-    expect(container!.textContent).not.toContain("a bright poster, weekend sale, bold type");
+    expect(detailSurface().textContent).not.toContain("a bright poster, weekend sale, bold type");
   });
 
   it("多图切换缩略图,图片回执始终不出现这一行", async () => {
@@ -180,7 +187,7 @@ describe("#914 图片回执:「引擎实际提示词」整行永不出现", () =
       { id: "g2", url: "https://cdn.test/g2.png", favorite: false, finalPrompt: null },
     ], "image");
     expect(hasEngineRanRow()).toBe(false);
-    const thumbs = [...container!.querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
+    const thumbs = [...detailSurface().querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
     expect(thumbs.length, "多图时应该有变体缩略图").toBeGreaterThanOrEqual(2);
     await act(async () => { thumbs[1]!.click(); });
     expect(hasEngineRanRow()).toBe(false);
@@ -193,7 +200,7 @@ describe("#914 r4(判官 r3)图片回执:我们实际送出的那一句", () => 
   it("历史生成(worker 记这一列之前产的图)⇒ 整块不渲染,一个字都不说", async () => {
     await renderPanel(one(null), "image", null);
     expect(hasSentToEngineRow()).toBe(false);
-    expect(container!.textContent).not.toContain("Sent exactly as you wrote it.");
+    expect(detailSurface().textContent).not.toContain("Sent exactly as you wrote it.");
   });
 
   it("逐字相同 ⇒ 一句「原样送出」,不把同一段文字再贴一遍", async () => {
@@ -220,7 +227,7 @@ describe("#914 r4(判官 r3)图片回执:我们实际送出的那一句", () => 
       { id: "g2", url: "https://cdn.test/g2.png", favorite: false, finalPrompt: null },
     ], "image", { verbatim: false, text: sent });
     expect(sentToEngineText()).toBe(sent);
-    const thumbs = [...container!.querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
+    const thumbs = [...detailSurface().querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
     await act(async () => { thumbs[1]!.click(); });
     expect(sentToEngineText()).toBe(sent);
   });
@@ -252,7 +259,7 @@ describe("#776 r2 → #914:视频回执行为不变", () => {
     ], "video");
     expect(engineRanText()).toBe("first rewrite");
 
-    const thumbs = [...container!.querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
+    const thumbs = [...detailSurface().querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
     expect(thumbs.length, "多图时应该有变体缩略图").toBeGreaterThanOrEqual(2);
     await act(async () => { thumbs[1]!.click(); });
     expect(engineRanText()).toBe("second rewrite");
@@ -263,7 +270,7 @@ describe("#776 r2 → #914:视频回执行为不变", () => {
       { id: "g1", url: "https://cdn.test/g1.png", favorite: false, finalPrompt: "first rewrite" },
       { id: "g2", url: "https://cdn.test/g2.png", favorite: false, finalPrompt: null },
     ], "video");
-    const thumbs = [...container!.querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
+    const thumbs = [...detailSurface().querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
     await act(async () => { thumbs[1]!.click(); });
     expect(engineRanText()).toBe("Not reported by the engine.");
   });
@@ -272,6 +279,6 @@ describe("#776 r2 → #914:视频回执行为不变", () => {
   // 它照旧只说「引擎跑的那句」。fixture 这里刻意带着一份非空的 sentPrompt。
   it("视频回执不显示图片专属的「What we sent to the engine」这一行", async () => {
     await renderPanel(one("a bright poster, weekend sale, bold type"), "video", { verbatim: true });
-    expect(container!.textContent).not.toContain("What we sent to the engine");
+    expect(detailSurface().textContent).not.toContain("What we sent to the engine");
   });
 });

@@ -89,7 +89,9 @@ const LABELLING_TAGS = ["label", "Field"] as const;
  * Every control the merchant types into or picks from. #739 filed the multi-line and dropdown
  * families; #813 added the single-line input family — the one the merchant meets most often.
  */
-const CONTROL_TAGS = ["textarea", "select", "Textarea", "input", "Input"] as const;
+const CONTROL_TAGS = [
+  "textarea", "select", "Textarea", "input", "Input", "InputGroupInput", "InputGroupTextarea",
+] as const;
 
 /** `foo="bar"` or `foo={expr}` — an id association can be written either way. */
 function attributeValue(tag: string, name: string): string | undefined {
@@ -186,7 +188,6 @@ describe("#739 — every form control carries a name, not just a placeholder", (
       "components/otto/OttoMemory.tsx",
       "components/canvas/nodes/TextNode.tsx",
       "components/canvas/FlowCanvas.tsx",
-      "components/crm/broadcasts/broadcast-detail-page.tsx",
     ]) {
       expect(byFile.get(file) ?? 0, file).toBeGreaterThanOrEqual(1);
     }
@@ -194,9 +195,9 @@ describe("#739 — every form control carries a name, not just a placeholder", (
 
   it("names the product's main input the same way the merchant sees it", () => {
     for (const file of ["components/otto/OttoChatStream.tsx"]) {
-      // #840 — the composer renders the design-system <Textarea>, not a bare
-      // <textarea>; match either spelling, same union the sweep itself polices.
-      const composer = source(file).match(/<[Tt]extarea[\s\S]*?id="otto-composer"[\s\S]*?\/>/)?.[0];
+      // The composer uses shadcn's InputGroupTextarea composition. Keep the bare and
+      // standalone component spellings in the union so this guard survives a valid move.
+      const composer = source(file).match(/<(?:InputGroupTextarea|Textarea|textarea)\b[\s\S]*?id="otto-composer"[\s\S]*?\/>/)?.[0];
       expect(composer, file).toBeDefined();
       expect(composer, file).toContain('aria-label="Reply to Otto"');
     }
@@ -207,11 +208,16 @@ describe("#739 — every form control carries a name, not just a placeholder", (
   // already carry a name on the trigger — the element a screen reader lands on. The two
   // nameless dropdowns the audit measured are Radix's own form-bubble inputs, rendered
   // aria-hidden and tabIndex -1 purely so a form submit carries the value
-  // (@radix-ui/react-select SelectBubbleInput). This pins the part that is ours.
+  // (Base UI Select's hidden input). This pins the part that is ours.
   it("names both lifecycle dropdowns on the contacts page", () => {
     const contacts = source("components/crm/contacts-page.tsx");
     expect(contacts).toContain('<SelectTrigger aria-label="Filter lifecycle">');
     expect(contacts).toContain('<SelectTrigger aria-label="Lifecycle stage">');
+  });
+
+  it("names the shadcn audience picker on the broadcast detail page", () => {
+    const broadcast = source("components/crm/broadcasts/broadcast-detail-page.tsx");
+    expect(broadcast).toContain('aria-label="Audience segment"');
   });
 
   // #813 — the single-line boxes the widened sweep caught (one of the original eight,
@@ -241,10 +247,10 @@ describe("#739 — capitalisation lives in the copy, not in text-transform", () 
     expect(offenders).toEqual([]);
   });
 
-  it("ships the canvas side tabs and the calendar granularity as written labels", () => {
+  it("ships the Canvas return action and calendar granularity as written labels", () => {
     const canvas = source("components/canvas/NorthstarCanvasWorkspace.tsx");
-    expect(canvas).toContain('{ id: "chat", label: "Chat" }');
-    expect(canvas).toContain('{ id: "projects", label: "Projects" }');
+    expect(canvas).toContain("Create");
+    expect(canvas).not.toContain("SIDE_TABS");
 
     const schedule = source("components/otto/OttoSchedule.tsx");
     expect(schedule).toContain('{ id: "month", label: "Month" }');
@@ -265,7 +271,9 @@ describe("sweep mechanics", () => {
 
   it("knows which wrappers it accepts as a name source and which controls it polices", () => {
     expect([...LABELLING_TAGS]).toEqual(["label", "Field"]);
-    expect([...CONTROL_TAGS]).toEqual(["textarea", "select", "Textarea", "input", "Input"]);
+    expect([...CONTROL_TAGS]).toEqual([
+      "textarea", "select", "Textarea", "input", "Input", "InputGroupInput", "InputGroupTextarea",
+    ]);
   });
 
   // #813 — an id association written as an expression is still an association. Without

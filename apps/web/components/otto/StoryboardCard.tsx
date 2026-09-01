@@ -1,11 +1,16 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Loader2, RotateCw } from "lucide-react";
+import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, RotateCw } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   parseStoryboardCardPayload,
   shotsNeedingMintedFirstFrame,
@@ -40,6 +45,7 @@ import { creditsLabel } from "@/lib/credit-format";
 import { QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { TopUpNotice } from "@/components/exits/Exits";
 import { canAffordPack } from "./pack-credit-math";
+import { SpendConfirmation, SpendProgress } from "./spend-state";
 
 export interface StoryboardCardProps {
   cardId: string;
@@ -72,13 +78,11 @@ const SLOW_SYNC_MAX_TRIES = 30;
  */
 const DURATION_AUTO = "auto";
 
-const spinner = <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />;
-
 /** A one-line status under a shot. */
 function Note({ children, busy }: { children: React.ReactNode; busy?: boolean }) {
   return (
-    <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
-      {busy ? spinner : null} {children}
+    <div role={busy ? "status" : undefined} className="flex items-center gap-1 text-xs text-muted-foreground">
+      {busy ? <Spinner aria-hidden="true" /> : null} {children}
     </div>
   );
 }
@@ -141,8 +145,7 @@ function FrameSlot({ state, shotIndex }: { state: ShotMediaState; shotIndex: num
         <img
           src={owned.url}
           alt={"Shot " + (shotIndex + 1) + " first frame"}
-          className="rounded-[10px] border border-border"
-          style={{ maxWidth: 180 }}
+          className="w-full max-w-[180px] rounded-lg border border-border"
         />
       )}
       <MediaNote state={state} kind="frame" />
@@ -162,8 +165,7 @@ function VideoSlot({ state }: { state: ShotMediaState }) {
           controls
           preload="metadata"
           src={owned.url}
-          className="rounded-[10px] border border-border"
-          style={{ maxWidth: 240 }}
+          className="w-full max-w-60 rounded-lg border border-border"
         />
       )}
       <MediaNote state={state} kind="video" />
@@ -762,43 +764,46 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const showMakeVideos = videoEligibleCount > 0 && idleForAffordance;
 
   return (
-    <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
-      <div className="rounded-[18px] border border-border bg-secondary p-6">
-        {/* Header */}
-        <div className="flex items-center gap-2 mb-2">
-          <Film size={20} className="text-foreground" />
-          <span className="font-bold text-[1rem] text-foreground">
-            {view.storyboardTitle || "Storyboard"}
-          </span>
-        </div>
+    <Card size="sm" className="gb w-full max-w-[480px] leading-[1.65]">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Film size={18} aria-hidden="true" />
+          {view.storyboardTitle || "Storyboard"}
+        </CardTitle>
+        <CardDescription>
+          Review each shot, then make the first frames and videos when you&apos;re ready.
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-4">
 
         {/* #782 continuous shots — $0, and it changes what gate① will make. `run` clears any
             prepared-but-unspent children on success, so a confirm can never spend a set that
             was staged under the other setting. */}
-        <div className="mb-4 flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <Switch
-              id={`continuity-${cardId}`}
-              checked={view.continuity}
-              disabled={busy || editLocked}
-              onCheckedChange={(on) => void run(() => setStoryboardContinuity({ cardId, continuity: on }))}
-            />
-            <Label htmlFor={`continuity-${cardId}`} className="text-[0.8125rem] text-foreground">
+        <Field orientation="horizontal" data-disabled={busy || editLocked}>
+          <FieldContent>
+            <FieldLabel htmlFor={`continuity-${cardId}`}>
               Shots continue from each other
-            </Label>
-          </div>
-          {view.continuity && (
-            <div className="text-[0.75rem] text-muted-foreground">
-              {/* #782 r2b (判官 r1 P1): "exactly where it ends" was an absolute promise the
-                  code doesn't keep — re-making an earlier shot never updates a later shot's
-                  first frame once that frame already exists. Say what's actually true: the
-                  hand-off only happens as each shot is FIRST made, one after another. */}
-              As each shot is first made, it picks up from the one before it — so you only make
-              the first frame, and the shots are made one after another. Re-making an earlier
-              shot won&rsquo;t change a later shot&rsquo;s first frame once it already has one.
-            </div>
-          )}
-        </div>
+            </FieldLabel>
+            {view.continuity && (
+              <FieldDescription>
+                {/* #782 r2b (判官 r1 P1): "exactly where it ends" was an absolute promise the
+                    code doesn't keep — re-making an earlier shot never updates a later shot's
+                    first frame once that frame already exists. Say what's actually true: the
+                    hand-off only happens as each shot is FIRST made, one after another. */}
+                As each shot is first made, it picks up from the one before it — so you only make
+                the first frame, and the shots are made one after another. Re-making an earlier
+                shot won&rsquo;t change a later shot&rsquo;s first frame once it already has one.
+              </FieldDescription>
+            )}
+          </FieldContent>
+          <Switch
+            id={`continuity-${cardId}`}
+            checked={view.continuity}
+            disabled={busy || editLocked}
+            onCheckedChange={(on) => void run(() => setStoryboardContinuity({ cardId, continuity: on }))}
+          />
+        </Field>
 
         {/* Shots */}
         {shots.length > 0 && (
@@ -829,69 +834,71 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               // action buttons — clone gate①'s "only one regen at a time" rule, extended to videos.
               const anyRegenOpen = regenShotId !== null || regenVideoShotId !== null;
               return (
-                <div key={shot.shotId} className="bg-card rounded-[14px] flex flex-col gap-1" style={{ padding: "10px 12px" }}>
+                <Card key={shot.shotId} size="sm" className="gap-2">
                   {/* Row header: shot number + optional title + controls */}
                   <div className="flex items-center gap-2">
-                    <span className="text-[0.75rem] font-semibold px-[7px] py-[2px] rounded-full bg-secondary text-muted-foreground">
+                    <Badge variant="default">
                       Shot {shot.index + 1}
-                    </span>
+                    </Badge>
                     {shot.title && (
-                      <span className="font-semibold text-[0.875rem] text-foreground">{shot.title}</span>
+                      <span className="text-sm font-semibold text-foreground">{shot.title}</span>
                     )}
-                    {/* #840 车4:四枚裸图标键迁到 ui/Button。原来是完全裸的原生按钮(preflight
-                        已把内距/边框清零),所以 `h-auto w-auto p-0` 把 Button 的 h-11/px-5
-                        压回原样,`hover:bg-transparent` 压掉 ghost 新增的底色(原来 hover 只
-                        变文字色),`[&_svg]:size-*` 把图标钉回各自原本的 15/14px(Button 强制
-                        子级 svg 为 1.1em)。停用态原来的 `disabled:opacity-30` 保留,它在
-                        className 末位,twMerge 会让它盖过组件默认的 40。#888 的编辑锁语义
-                        (`busy || editLocked || …`)与 onClick 一字未动。 */}
                     <div className="ml-auto flex items-center gap-1">
-                      <Button type="button" variant="ghost" aria-label="Move up" disabled={busy || editLocked || shot.index === 0}
+                      <Button type="button" variant="ghost" size="icon-xs" aria-label="Move up" disabled={busy || editLocked || shot.index === 0}
                         onClick={() => run(() => reorderShots({ cardId, order: swap(shots.map((s) => s.index), shot.index, shot.index - 1) }))}
-                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[15px]">
-                        <ChevronUp size={15} />
+                      >
+                        <ChevronUp aria-hidden="true" />
                       </Button>
-                      <Button type="button" variant="ghost" aria-label="Move down" disabled={busy || editLocked || shot.index === shots.length - 1}
+                      <Button type="button" variant="ghost" size="icon-xs" aria-label="Move down" disabled={busy || editLocked || shot.index === shots.length - 1}
                         onClick={() => run(() => reorderShots({ cardId, order: swap(shots.map((s) => s.index), shot.index, shot.index + 1) }))}
-                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[15px]">
-                        <ChevronDown size={15} />
+                      >
+                        <ChevronDown aria-hidden="true" />
                       </Button>
-                      <Button type="button" variant="ghost" aria-label="Edit shot" disabled={busy || editLocked}
+                      <Button type="button" variant="ghost" size="icon-xs" aria-label="Edit shot" disabled={busy || editLocked}
                         onClick={() => (isEditing ? setEditing(null) : startEdit(shot))}
-                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[14px]">
-                        <Pencil size={14} />
+                      >
+                        <Pencil aria-hidden="true" />
                       </Button>
-                      <Button type="button" variant="ghost" aria-label="Delete shot" disabled={busy || editLocked || shots.length <= 1}
+                      <Button type="button" variant="ghost" size="icon-xs" aria-label="Delete shot" disabled={busy || editLocked || shots.length <= 1}
                         onClick={() => run(() => deleteShot({ cardId, index: shot.index }))}
-                        className="h-auto w-auto p-0 text-muted-foreground disabled:opacity-30 hover:bg-transparent hover:text-foreground [&_svg]:size-[14px]">
-                        <Trash2 size={14} />
+                      >
+                        <Trash2 aria-hidden="true" />
                       </Button>
                     </div>
                   </div>
 
                   {isEditing ? (
-                    <div className="flex flex-col gap-2 mt-1">
-                      {/* #840 车4:两个编辑框迁到 ui/Textarea。`field-sizing-fixed` 压回组件
-                          默认的 `field-sizing-content`(rows={2} 是定高框,不该随打字长高 ——
-                          同 #920 对四处 composer 的处置),`min-h-0` 压回 `min-h-16`,
-                          `shadow-none` 压回 `shadow-xs`。字号另写一条 `md:` 同值:组件带
-                          `md:text-sm`,它与 base 的 `text-*` 不同组,twMerge 不消解,不写宽屏
-                          下会悄悄从 13px 变成 14px。原有的圆角/边框/底色/内距/字号一字未改。 */}
-                      <label className="text-[0.75rem] text-muted-foreground">
-                        <span className="font-semibold text-foreground">First frame</span>
-                        <Textarea value={draftFf} onChange={(e) => setDraftFf(e.target.value)} rows={2}
-                          className="field-sizing-fixed mt-1 min-h-0 w-full rounded-[10px] border border-border bg-card p-2 text-[0.8125rem] text-foreground shadow-none md:text-[0.8125rem]" />
-                      </label>
-                      <label className="text-[0.75rem] text-muted-foreground">
-                        <span className="font-semibold text-foreground">Video</span>
-                        <Textarea value={draftV} onChange={(e) => setDraftV(e.target.value)} rows={2}
-                          className="field-sizing-fixed mt-1 min-h-0 w-full rounded-[10px] border border-border bg-card p-2 text-[0.8125rem] text-foreground shadow-none md:text-[0.8125rem]" />
-                      </label>
+                    <div className="mt-1 flex flex-col gap-3">
+                      <FieldGroup className="gap-3">
+                        <Field data-disabled={busy}>
+                          <FieldLabel htmlFor={`frame-prompt-${shot.shotId}`}>First frame</FieldLabel>
+                          <Textarea
+                            id={`frame-prompt-${shot.shotId}`}
+                            value={draftFf}
+                            onChange={(e) => setDraftFf(e.target.value)}
+                            rows={2}
+                            disabled={busy}
+                            className="field-sizing-fixed min-h-0"
+                          />
+                        </Field>
+                        <Field data-disabled={busy}>
+                          <FieldLabel htmlFor={`video-prompt-${shot.shotId}`}>Video</FieldLabel>
+                          <Textarea
+                            id={`video-prompt-${shot.shotId}`}
+                            value={draftV}
+                            onChange={(e) => setDraftV(e.target.value)}
+                            rows={2}
+                            disabled={busy}
+                            className="field-sizing-fixed min-h-0"
+                          />
+                        </Field>
+                      </FieldGroup>
                       <div className="flex gap-2">
-                        <Button variant="default" disabled={busy} onClick={() => saveEdit(shot.index)}>
-                          {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : "Save"}
+                        <Button variant="default" size="sm" disabled={busy} onClick={() => saveEdit(shot.index)}>
+                          {busy && <Spinner data-icon="inline-start" aria-label="Saving shot" />}
+                          {busy ? "Saving…" : "Save"}
                         </Button>
-                        <Button variant="secondary" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button>
+                        <Button variant="secondary" size="sm" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button>
                       </div>
                     </div>
                   ) : (
@@ -933,24 +940,24 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           the server closes it again underneath (isUnconsumedInFlight). */}
                       {frameState.kind === "landed" && !generating && editing === null && (
                         isRegenConfirm && regenChild ? (
-                          <div className="mt-1 flex flex-col gap-2">
-                            <div className="text-[0.75rem] text-foreground">
-                              Replace this frame — {creditsLabel(regenChild.estimatedCredits)}? This will spend real credits.
-                            </div>
-                            <div className="flex gap-2">
+                          <SpendConfirmation
+                            className="mt-1"
+                            title="Confirm credit spend"
+                            description={`Replace this frame — ${creditsLabel(regenChild.estimatedCredits)}? This will spend real credits.`}
+                          >
                               <Button variant="default" disabled={generating} onClick={() => void confirmRegen()}>
                                 Confirm — replace
                               </Button>
                               <Button variant="secondary" disabled={generating} onClick={() => { setRegenShotId(null); setRegenChild(null); }}>
                                 Cancel
                               </Button>
-                            </div>
-                          </div>
+                          </SpendConfirmation>
                         ) : (
                           !anyRegenOpen && (
                             <div className="mt-1">
-                              <Button variant="secondary" disabled={busy} onClick={() => void prepareRegen(shot.shotId)}>
-                                <span className="flex items-center gap-1"><RotateCw size={13} /> Regenerate frame</span>
+                              <Button variant="secondary" size="sm" disabled={busy} onClick={() => void prepareRegen(shot.shotId)}>
+                                <RotateCw data-icon="inline-start" aria-hidden="true" />
+                                Regenerate frame
                               </Button>
                             </div>
                           )
@@ -959,10 +966,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
 
                       {/* --- Video block (only for shots that HAVE a first frame) --- */}
                       {hasFrame && (
-                        <div className="mt-1 flex flex-col gap-1 border-t border-border pt-2">
+                        <div className="mt-1 flex flex-col gap-2">
+                          <Separator />
                           {/* Duration select (model-driven options; editing-class → disabled while generating). */}
-                          <label className="flex items-center gap-2 text-[0.75rem] text-muted-foreground">
-                            <span className="font-semibold text-foreground">Duration</span>
+                          <Field orientation="horizontal" data-disabled={busy || generating || editing !== null}>
+                            <FieldLabel htmlFor={`duration-${shot.shotId}`}>Duration</FieldLabel>
                             {/* #840 车4:迁到 ui/Select(Radix)。屏幕上的东西一样不变 —— 未设时
                                 触发器仍读 "Auto",菜单里仍是 Auto + 各时长档,选 Auto 仍是
                                 no-op(编辑动作没有清回自动的路)。唯一的变化是那一格的内部值:
@@ -980,26 +988,24 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                                 void run(() => editShotPrompt({ cardId, index: shot.index, durationSeconds: Number(v) }));
                               }}
                             >
-                              {/* 高度这一条要写成 `data-[size=default]:h-auto`,不能只写 `h-auto`
-                                  (判官 r1 P1-1 的自查里抓到的第二例):SelectTrigger 的默认高度是
-                                  `data-[size=default]:h-9`,类+属性选择器(0,2,0),专有度高过裸
-                                  `h-auto`(0,1,0);而 twMerge 只在**同一组修饰符**内消解冲突,
-                                  带 `data-[…]` 的与不带的不同组,所以裸写会被它盖掉,原本约 26px
-                                  的这一格会变成 36px。写成同一个修饰符,twMerge 就会如常只留后者。 */}
                               <SelectTrigger
+                                id={`duration-${shot.shotId}`}
                                 aria-label="Duration"
-                                className="data-[size=default]:h-auto rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground shadow-none disabled:opacity-40"
+                                size="sm"
+                                className="w-24"
                               >
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value={DURATION_AUTO}>Auto</SelectItem>
-                                {videoDurations.map((d) => (
-                                  <SelectItem key={d} value={String(d)}>{d}s</SelectItem>
-                                ))}
+                                <SelectGroup>
+                                  <SelectItem value={DURATION_AUTO}>Auto</SelectItem>
+                                  {videoDurations.map((d) => (
+                                    <SelectItem key={d} value={String(d)}>{d}s</SelectItem>
+                                  ))}
+                                </SelectGroup>
                               </SelectContent>
                             </Select>
-                          </label>
+                          </Field>
 
                           {/* Player, status or nothing — ONE derived state decides. A remake in
                               flight keeps the old clip on screen with one "Replacing video…" line
@@ -1024,32 +1030,32 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                               until that job ends — no second bill for one replacement. */}
                           {(videoState.kind === "landed" || videoState.kind === "dead") && !generating && editing === null && (
                             isVideoRegenConfirm && regenVideoChild ? (
-                              <div className="mt-1 flex flex-col gap-2">
-                                <div className="text-[0.75rem] text-foreground">
+                              <SpendConfirmation
+                                className="mt-1"
+                                title="Confirm credit spend"
+                                description={<>
                                   {hasClip ? "Replace this video" : "Make this video"} — {creditsLabel(regenVideoChild.estimatedCredits)}? This will spend real credits.
-                                </div>
+                                  <span className="mt-1 block text-muted-foreground">
+                                    This won&rsquo;t change the first frame of any shot that already has one.
+                                  </span>
+                                </>}
+                              >
                                 {/* #782 r2b (判官 r1 P1): honest downstream note — sync only ever
                                     FILLS an empty first frame, it never overwrites one that's
                                     already set, so a later shot's frame stays exactly as it is. */}
-                                <div className="text-[0.75rem] text-muted-foreground">
-                                  This won&rsquo;t change the first frame of any shot that already has one.
-                                </div>
-                                <div className="flex gap-2">
                                   <Button variant="default" disabled={generating} onClick={() => void confirmVideoRegen()}>
                                     {hasClip ? "Confirm — replace" : "Confirm — make video"}
                                   </Button>
                                   <Button variant="secondary" disabled={generating} onClick={() => { setRegenVideoShotId(null); setRegenVideoChild(null); }}>
                                     Cancel
                                   </Button>
-                                </div>
-                              </div>
+                              </SpendConfirmation>
                             ) : (
                               !anyRegenOpen && (
                                 <div className="mt-1">
-                                  <Button variant="secondary" disabled={busy} onClick={() => void prepareVideoRegen(shot.shotId)}>
-                                    <span className="flex items-center gap-1">
-                                      <RotateCw size={13} /> {hasClip ? "Remake video" : "Try this video again"}
-                                    </span>
+                                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => void prepareVideoRegen(shot.shotId)}>
+                                    <RotateCw data-icon="inline-start" aria-hidden="true" />
+                                    {hasClip ? "Remake video" : "Try this video again"}
                                   </Button>
                                 </div>
                               )
@@ -1059,41 +1065,46 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                       )}
                     </>
                   )}
-                </div>
+                </Card>
               );
             })}
           </div>
         )}
+      </CardContent>
 
+      <CardFooter className="flex-col items-stretch">
         {/* Add shot */}
-        <div className="mt-3">
-          <Button variant="secondary" disabled={busy || editLocked || shots.length >= MAX_STORYBOARD_SHOTS}
+        <div>
+          <Button variant="secondary" size="sm" disabled={busy || editLocked || shots.length >= MAX_STORYBOARD_SHOTS}
             onClick={() => run(() => addShot({ cardId, firstFramePrompt: "New shot — describe the opening frame", videoPrompt: "New shot — describe the motion" }))}>
-            <span className="flex items-center gap-1"><Plus size={14} /> Add shot</span>
+            <Plus data-icon="inline-start" aria-hidden="true" />
+            Add shot
           </Button>
         </div>
 
         {/* Gate①: generate all first frames */}
         {showGenerateAll && (
-          <div className="mt-4 border-t border-border pt-4">
+          <div className="flex flex-col gap-3">
+            <Separator />
             {confirming && children ? (
               <div className="flex flex-col gap-3">
                 {!affordAll && <TopUpNotice need="generate these frames" />}
-                <div className="text-[0.875rem] text-foreground">
-                  Generate {children.filter((c) => !c.spent).length} {children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} for {creditsLabel(totalCredits)}? This will spend real credits.
-                </div>
-                <div className="flex gap-3">
-                  <Button variant="default" disabled={!affordAll || generating} onClick={() => void confirmGenerateAll()}>
+                <SpendConfirmation
+                  title="Confirm credit spend"
+                  description={`Generate ${children.filter((c) => !c.spent).length} ${children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} for ${creditsLabel(totalCredits)}? This will spend real credits.`}
+                >
+                  <Button variant="default" size="sm" disabled={!affordAll || generating} onClick={() => void confirmGenerateAll()}>
                     Confirm — {children.filter((c) => !c.spent).length} {children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} · {creditsLabel(totalCredits)}
                   </Button>
-                  <Button variant="secondary" disabled={generating} onClick={() => { setConfirming(false); setChildren(null); }}>
+                  <Button variant="secondary" size="sm" disabled={generating} onClick={() => { setConfirming(false); setChildren(null); }}>
                     Cancel
                   </Button>
-                </div>
+                </SpendConfirmation>
               </div>
             ) : (
-              <Button variant="default" disabled={busy} onClick={() => void prepareAll()}>
-                {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : `Generate all first frames (${missingCount})`}
+              <Button variant="default" size="sm" disabled={busy} onClick={() => void prepareAll()}>
+                {busy && <Spinner data-icon="inline-start" aria-label="Preparing first frames" />}
+                {busy ? "Preparing first frames…" : `Generate all first frames (${missingCount})`}
               </Button>
             )}
           </div>
@@ -1101,33 +1112,35 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
 
         {/* Gate②: make all videos */}
         {showMakeVideos && (
-          <div className="mt-4 border-t border-border pt-4">
+          <div className="flex flex-col gap-3">
+            <Separator />
             {videoConfirming && videoChildren ? (
               <div className="flex flex-col gap-3">
                 {!affordAllVideos && <TopUpNotice need="make these videos" />}
-                <div className="text-[0.875rem] text-foreground">
-                  Make {videoChildren.filter((c) => !c.spent).length} {videoChildren.filter((c) => !c.spent).length === 1 ? "video" : "videos"} for {creditsLabel(videoTotalCredits)}? This will spend real credits.
-                </div>
-                <div className="flex gap-3">
-                  <Button variant="default" disabled={!affordAllVideos || generating} onClick={() => void confirmGenerateAllVideos()}>
+                <SpendConfirmation
+                  title="Confirm credit spend"
+                  description={`Make ${videoChildren.filter((c) => !c.spent).length} ${videoChildren.filter((c) => !c.spent).length === 1 ? "video" : "videos"} for ${creditsLabel(videoTotalCredits)}? This will spend real credits.`}
+                >
+                  <Button variant="default" size="sm" disabled={!affordAllVideos || generating} onClick={() => void confirmGenerateAllVideos()}>
                     Confirm — {videoChildren.filter((c) => !c.spent).length} {videoChildren.filter((c) => !c.spent).length === 1 ? "clip" : "clips"} · {creditsLabel(videoTotalCredits)}
                   </Button>
-                  <Button variant="secondary" disabled={generating} onClick={() => { setVideoConfirming(false); setVideoChildren(null); }}>
+                  <Button variant="secondary" size="sm" disabled={generating} onClick={() => { setVideoConfirming(false); setVideoChildren(null); }}>
                     Cancel
                   </Button>
-                </div>
+                </SpendConfirmation>
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                <Button variant="default" disabled={busy} onClick={() => void prepareVideos()}>
-                  {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : `Make all videos (${videoEligibleCount} ${videoEligibleCount === 1 ? "clip" : "clips"})`}
+                <Button variant="default" size="sm" disabled={busy} onClick={() => void prepareVideos()}>
+                  {busy && <Spinner data-icon="inline-start" aria-label="Preparing videos" />}
+                  {busy ? "Preparing videos…" : `Make all videos (${videoEligibleCount} ${videoEligibleCount === 1 ? "clip" : "clips"})`}
                 </Button>
                 {videoWaitingCount > 0 ? (
-                  <div className="text-[0.75rem] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {videoWaitingCount} {videoWaitingCount === 1 ? "shot follows on" : "shots follow on"} — each one starts once the shot before it is made.
                   </div>
                 ) : videoBlockedCount > 0 ? (
-                  <div className="text-[0.75rem] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {videoBlockedCount} {videoBlockedCount === 1 ? "shot needs" : "shots need"} a first frame first.
                   </div>
                 ) : null}
@@ -1142,25 +1155,31 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
             loaded, or a "generating" claim with no watch behind it. $0 and read-only — it reuses
             the same sync the poll uses, so it can only ever ADD information. */}
         {showRefresh && (
-          <div className="mt-3">
-            <Button variant="secondary" disabled={busy || generating} onClick={() => void refreshNow()}>
-              <span className="flex items-center gap-1"><RotateCw size={13} /> Check for updates</span>
+          <div>
+            <Button variant="secondary" size="sm" disabled={busy || generating} onClick={() => void refreshNow()}>
+              <RotateCw data-icon="inline-start" aria-hidden="true" />
+              Check for updates
             </Button>
           </div>
         )}
 
         {generating && (
-          <div className="mt-3 flex items-center gap-2 text-[0.875rem] text-muted-foreground">
-            {/* #979:等待措辞只有一处作者(`QUEUE_WAIT_NOTE`)—— 这句话本来就是仓库里
-                那句诚实的原型,现在计划卡也引它,两处不会再各自漂成两句。 */}
-            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Working — {QUEUE_WAIT_NOTE}…
-          </div>
+          /* #979:等待措辞只有一处作者(`QUEUE_WAIT_NOTE`)—— 这句话本来就是仓库里
+             那句诚实的原型,现在计划卡也引它,两处不会再各自漂成两句。 */
+          <SpendProgress
+            title="Working"
+            description={`${QUEUE_WAIT_NOTE}…`}
+          />
         )}
 
-        {error && <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">{error}</div>}
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
+        {error && (
+          <Alert role="alert" variant="destructive" density="compact">
+            <AlertTitle>Action wasn&apos;t completed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+      </CardFooter>
+    </Card>
   );
 }
 

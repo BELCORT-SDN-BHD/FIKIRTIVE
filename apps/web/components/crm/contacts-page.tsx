@@ -229,7 +229,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
             <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">
               <ArrowLeft className="size-4" />Return to Otto
             </Link>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Contacts</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
               Records are the merchant&apos;s asset. Fikirtive records facts and reminders; it never merges, deletes, or decides for the merchant.
@@ -359,7 +359,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
               {importResult.rows.map((row) => (
                 <div key={row.rowNumber} className="rounded-xl border border-border p-4">
                   <div className="flex items-start justify-between gap-3"><p className="font-semibold">Row {row.rowNumber}: {row.name}</p><Badge variant={row.status === "failed" ? "destructive" : row.status === "imported" ? "success" : "warning"}>{row.status.replaceAll("_", " ")}</Badge></div>
-                  {row.contactId ? <Link className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-strong" href={`/crm/contacts/${row.contactId}`}>Open profile<ArrowRight className="size-4" /></Link> : null}
+                  {row.contactId ? <Link className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-foreground underline-offset-4 hover:underline" href={`/crm/contacts/${row.contactId}`}>Open profile<ArrowRight className="size-4" /></Link> : null}
                   {row.possibleDuplicates.length ? <p className="mt-2 text-xs text-muted-foreground">Suggestions: {row.possibleDuplicates.map((item) => item.name).join(", ")}. Nothing was merged.</p> : null}
                   {row.warnings.map((warning) => <p key={warning} className="mt-2 text-xs leading-5 text-warning-soft-foreground">{warning}</p>)}
                 </div>

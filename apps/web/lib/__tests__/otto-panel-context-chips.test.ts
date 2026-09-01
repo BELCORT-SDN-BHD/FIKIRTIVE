@@ -104,7 +104,7 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
-  // 点一颗 chip 会把会话流画出来,而它挂了 use-stick-to-bottom(jsdom 没有 ResizeObserver)。
+  // 点一颗 chip 会把 MessageScroller 画出来;jsdom 没有它用来跟随新消息的 ResizeObserver。
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
     unobserve() {}

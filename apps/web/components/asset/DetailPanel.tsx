@@ -2,8 +2,8 @@
 /**
  * G2a · per-asset detail panel.
  * G2b adds: variant switcher (25), aspect picker (17), edit @composer (24), crop (16).
- * Opens as an absolute overlay inside the canvas container (not position:fixed).
- * Escape or click-on-backdrop closes; clicking the panel itself does not.
+ * Opens as a shadcn Sheet so it stays anchored to the viewport, traps focus, and restores focus
+ * when it closes. Escape closes the crop layer first, then the inspector.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
@@ -20,9 +20,21 @@ import {
 } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { CropIcon, DownloadIcon, HeartIcon, LinkIcon, PlayIcon, RotateCcwIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Separator } from "@/components/ui/separator";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { MentionInput } from "@/components/MentionInput";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
@@ -144,6 +156,7 @@ export default function DetailPanel({
   // Action states
   const [regenStatus, setRegenStatus] = useState<AssetSpendStatus>("idle");
   const [animStatus, setAnimStatus] = useState<AssetSpendStatus>("idle");
+  const [paidActionError, setPaidActionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const regenBusyRef = useRef(false);
@@ -171,6 +184,7 @@ export default function DetailPanel({
       setSelectedIdx(0);
       setCropOpen(false);
       setEditStatus("idle");
+      setPaidActionError(null);
     });
     getGeneration(generationId).then((result) => {
       if (cancelledRef.current) return;
@@ -224,18 +238,6 @@ export default function DetailPanel({
     queueMicrotask(() => setFavoriteLocal(gen.variants[selectedIdx]?.favorite ?? gen.favorite));
   }, [gen, selectedIdx]);
 
-  // Esc key
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (cropOpen) { setCropOpen(false); return; }
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, cropOpen]);
-
   // The generation the user is actually LOOKING AT — the selected variant, not the primary
   // prop. All mutate/spend handlers act on this so a sibling variant isn't animated/deleted/
   // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
@@ -257,6 +259,11 @@ export default function DetailPanel({
   const animateBlocked = assetSpendControlDisabled(animStatus, readOnly) || videoCost == null;
   const editBlocked =
     assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim() || imageCost == null;
+  // Freeze only while the request is actively moving. A cancelled or failed action may keep its
+  // spend button unavailable briefly, but the merchant is free to prepare different material.
+  const regenMaterialLocked = regenStatus === "running";
+  const animateMaterialLocked = animStatus === "running";
+  const editMaterialLocked = editStatus === "running";
 
   const handleFavorite = useCallback(async () => {
     if (readOnly) return;
@@ -325,6 +332,7 @@ export default function DetailPanel({
     if (!gen || regenBusyRef.current) return;
     regenBusyRef.current = true;
     try {
+      setPaidActionError(null);
       setRegenStatus("running");
       const models = await ensureModels(); // F18: server-resolved model
       // #643 T2：形状是屏幕上正显示的那一格 —— 重做一张不会悄悄换掉形状。
@@ -345,6 +353,7 @@ export default function DetailPanel({
         assetAnchorGenerationId: generationId,
       });
       if ("error" in result) {
+        setPaidActionError(result.error);
         setRegenStatus("failed");
         return;
       }
@@ -357,6 +366,9 @@ export default function DetailPanel({
       notifyBalanceRefresh();
       if (!cancelledRef.current) {
         setRegenStatus(status);
+        if (status === "failed") {
+          setPaidActionError("The new image did not finish. You can try again.");
+        }
         // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
         // "still processing" state so the control never reverts to an inviting "Regenerate" for
         // work that is already under way. This is honesty, not the money guard: since the key is
@@ -377,6 +389,7 @@ export default function DetailPanel({
     if (!gen || animBusyRef.current) return;
     animBusyRef.current = true;
     try {
+      setPaidActionError(null);
       setAnimStatus("running");
       const models = await ensureModels();
       const vm = models.video;
@@ -387,7 +400,13 @@ export default function DetailPanel({
       // #645 T4(判官 r1 P0-2)：屏幕上那个价是商家授权的一部分，所以它随请求一起发出去。
       // 服务端自己算一遍，不符就在扣款前拒绝 —— 与 Canvas / Otto 同一套绑定。
       const quoted = videoSpecCredits(models, spec);
-      if (quoted == null) { if (!cancelledRef.current) setAnimStatus("failed"); return; }
+      if (quoted == null) {
+        if (!cancelledRef.current) {
+          setPaidActionError("We could not confirm the video price. Check the selected spec and try again.");
+          setAnimStatus("failed");
+        }
+        return;
+      }
       const result = await startAssetGen({
         expectedCredits: quoted,
         projectId: targetProjectId,
@@ -405,7 +424,10 @@ export default function DetailPanel({
         assetAnchorGenerationId: selectedGenId,
       });
       if ("error" in result) {
-        if (!cancelledRef.current) setAnimStatus("failed");
+        if (!cancelledRef.current) {
+          setPaidActionError(result.error);
+          setAnimStatus("failed");
+        }
         return;
       }
       notifyBalanceRefresh();
@@ -413,6 +435,9 @@ export default function DetailPanel({
       notifyBalanceRefresh();
       if (!cancelledRef.current) {
         setAnimStatus(status);
+        if (status === "failed") {
+          setPaidActionError("The video did not finish. You can try again.");
+        }
         // Timeout ⇒ the paid video job is still running (worker settles late ones) — stay in
         // "still processing" so a re-click can't fire a second charge. See handleRegen.
         if (status !== "timeout") {
@@ -469,6 +494,7 @@ export default function DetailPanel({
     if (!gen || editBusyRef.current) return;
     editBusyRef.current = true;
     try {
+      setPaidActionError(null);
       setEditStatus("running");
       const models = await ensureModels(); // F18: server-resolved model
       // #643 T2：编辑同样交付屏幕上显示的那一格。服务端在没收到形状时会按底图快照继承，
@@ -494,7 +520,10 @@ export default function DetailPanel({
         assetAnchorGenerationId: selectedGenId,
       });
       if ("error" in result) {
-        if (!cancelledRef.current) setEditStatus("failed");
+        if (!cancelledRef.current) {
+          setPaidActionError(result.error);
+          setEditStatus("failed");
+        }
         return;
       }
       notifyBalanceRefresh();
@@ -502,6 +531,9 @@ export default function DetailPanel({
       notifyBalanceRefresh();
       if (!cancelledRef.current) {
         setEditStatus(status);
+        if (status === "failed") {
+          setPaidActionError("The edited image did not finish. You can try again.");
+        }
         // Timeout ⇒ the paid edit job is still running — stay in "still processing" so a re-click
         // can't fire a second charge. See handleRegen.
         if (status !== "timeout") {
@@ -565,117 +597,94 @@ export default function DetailPanel({
   const imageAspectRatios = activeModels?.imageAspectRatios ?? [];
 
   return (
-    // Faux-viewport overlay — absolute inside the canvas container, not fixed
-    <div
-      onClick={cropOpen ? undefined : onClose}
-      style={{
-        position: "absolute",
-        inset: 0,
-        background: "rgba(20,20,24,0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 50,
-      }}
-    >
-      {/* Panel card — click stops propagation so backdrop click still works */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="al-panel cv-detail"
-        style={{
-          position: "relative",
-          width: 520,
-          maxWidth: "90%",
-          maxHeight: "85%",
-          overflowY: "auto",
-          borderRadius: 20,
-          padding: 22,
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
+    <TooltipProvider>
+      <Sheet
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
         }}
       >
-        {/* Close button */}
-        <Button
-          onClick={onClose}
-          aria-label="Close detail panel"
-          variant="ghost"
-          size="icon"
-          className="size-9 rounded-[14px]"
-          style={{ position: "absolute", top: 12, right: 12 }}
+        <SheetContent
+          side="right"
+          className="cv-detail max-w-[min(440px,calc(100vw-1rem))] sm:max-w-[440px]"
+          onEscapeKeyDown={(event) => {
+            if (!cropOpen) return;
+            event.preventDefault();
+            setCropOpen(false);
+          }}
+          onInteractOutside={(event) => {
+            if (cropOpen) event.preventDefault();
+          }}
         >
-          <XIcon size={17} />
-        </Button>
+          <SheetHeader className="cv-detail-header">
+            <SheetTitle>Asset details</SheetTitle>
+            <SheetDescription>Review this asset and continue working from it.</SheetDescription>
+          </SheetHeader>
 
-        {/* Content */}
-        {state === "loading" && (
-          <div style={{ minHeight: 200, display: "grid", placeItems: "center", opacity: 0.5 }}>
-            Loading…
-          </div>
-        )}
+          {/* Content */}
+          {state === "loading" && (
+            <Empty className="cv-detail-state">
+              <EmptyHeader>
+                <EmptyTitle>Loading asset…</EmptyTitle>
+                <EmptyDescription>Fetching the latest saved version.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-        {state === "error" && (
-          <div style={{ minHeight: 200, display: "grid", placeItems: "center", color: "var(--error)" }}>
-            Could not load this asset.
-          </div>
-        )}
+          {state === "error" && (
+            <Empty className="cv-detail-state">
+              <EmptyHeader>
+                <EmptyTitle>Could not load this asset</EmptyTitle>
+                <EmptyDescription>Close this panel and try opening the asset again.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-        {state === "ready" && gen && displayUrl && (
-          <>
-            {/* Media preview */}
-            <div style={{ borderRadius: 14, overflow: "hidden", background: "var(--muted)", lineHeight: 0 }}>
-              {gen.kind === "video" ? (
-                <video
-                  key={displayUrl}
-                  src={displayUrl}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  style={{ width: "100%", maxHeight: 340, objectFit: "contain" }}
-                />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={displayUrl}
-                  alt={gen.prompt}
-                  style={{ width: "100%", maxHeight: 340, objectFit: "contain" }}
-                />
-              )}
-            </div>
+          {state === "ready" && gen && displayUrl && (
+            <div className="cv-detail-content">
+              {/* Media preview */}
+              <div className="cv-detail-preview">
+                {gen.kind === "video" ? (
+                  <video
+                    key={displayUrl}
+                    src={displayUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="cv-detail-media"
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={displayUrl}
+                    alt={gen.prompt}
+                    className="cv-detail-media"
+                  />
+                )}
+              </div>
 
             {/* Variant switcher (25): thumbnail strip when multiple urls */}
             {gen.urls.length > 1 && (
               <div
                 role="listbox"
                 aria-label="Variant thumbnails"
-                style={{ display: "flex", gap: 9, overflowX: "auto", paddingBottom: 2 }}
+                className="cv-detail-variants"
               >
                 {gen.urls.map((u, i) => (
                   <Button
                     key={u}
                     role="option"
                     aria-selected={i === selectedIdx}
+                    data-selected={i === selectedIdx ? "true" : undefined}
                     onClick={() => handleVariantPick(i)}
                     variant="ghost"
-                    className="h-auto"
-                    style={{
-                      flex: "none",
-                      width: 62,
-                      height: 62,
-                      padding: 0,
-                      border: `${i === selectedIdx ? "2px" : "1px"} solid ${i === selectedIdx ? "var(--brand)" : "var(--border)"}`,
-                      borderRadius: 10,
-                      overflow: "hidden",
-                      cursor: "pointer",
-                      background: "var(--muted)",
-                      opacity: i === selectedIdx ? 1 : 0.55,
-                    }}
+                    className="cv-detail-variant h-[62px] w-[62px] p-0"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={u}
                       alt={`Variant ${i + 1}`}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      className="size-full object-cover"
                     />
                   </Button>
                 ))}
@@ -684,7 +693,7 @@ export default function DetailPanel({
 
             {/* Prompt text */}
             {gen.prompt && (
-              <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
+              <p className="cv-detail-prompt">{gen.prompt}</p>
             )}
 
             {/* #776/#914 生成回执 —— 引擎自报「它真正跑的那句话」，只有视频契约会给这个字段
@@ -698,8 +707,7 @@ export default function DetailPanel({
                 自己改写我的话」，去选引擎的位置（ImageShapePicker / VideoSpecPicker）看一次
                 静态能力说明就够了，不必每张图重复念一遍。视频这条路上这一行**行为不变**，r2
                 判官的五条纪律原样保留：未知也要说出口、读这一张自己的那句、一模一样就只说
-                一句、供应商指纹词已在服务端滤掉。
-                样式沿用本面板既有的内联写法；这一面的 shadcn 化属于 #840 的界面族拆分。 */}
+                一句、供应商指纹词已在服务端滤掉。 */}
             {gen.kind === "video" && (() => {
               // 回退只在「这一张根本不在列表里」时发生（与 displayUrl 同一套），**不是**在
               // 「这一张的值是 null」时发生 —— 后者正是要显示的答案。写成 `?.finalPrompt ??`
@@ -709,11 +717,9 @@ export default function DetailPanel({
               // 未知。归一成 null，下面只需要判一种「不知道」。
               const shownFinalPrompt = (selectedVariant ? selectedVariant.finalPrompt : gen.finalPrompt) ?? null;
               return (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
-                    What the engine ran
-                  </span>
-                  <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, ...(shownFinalPrompt ? {} : { fontStyle: "italic" }) }}>
+                <div className="cv-detail-fact">
+                  <span className="cv-panel-label">What the engine ran</span>
+                  <p className="cv-detail-fact-copy" data-unknown={shownFinalPrompt ? undefined : "true"}>
                     {shownFinalPrompt === null
                       ? "Not reported by the engine."
                       : shownFinalPrompt.trim() === gen.prompt.trim()
@@ -740,11 +746,9 @@ export default function DetailPanel({
                 这条记录」是同一件事 —— 两种都往「什么都不说」那一边倒,与服务端
                 sentPromptReceipt 的同一条纪律对齐。 */}
             {gen.kind === "image" && gen.sentPrompt != null && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
-                  What we sent to the engine
-                </span>
-                <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+              <div className="cv-detail-fact">
+                <span className="cv-panel-label">What we sent to the engine</span>
+                <p className="cv-detail-fact-copy whitespace-pre-wrap">
                   {gen.sentPrompt.verbatim ? "Sent exactly as you wrote it." : gen.sentPrompt.text}
                 </p>
               </div>
@@ -754,15 +758,15 @@ export default function DetailPanel({
                 Seeded from the shape this image was made in, so neither one silently reshapes it.
                 Same cost in every shape. */}
             {gen.kind === "image" && imageAspectRatios.length > 0 && chosenImageAspect && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Image shape</span>
+              <div className="cv-detail-spec">
+                <span className="cv-panel-label">Image shape</span>
                 <ImageShapePicker
                   compact
                   label="Image shape"
                   value={chosenImageAspect}
                   options={imageAspectRatios}
                   onChange={setChosenImageAspect}
-                  disabled={readOnly}
+                  disabled={readOnly || regenMaterialLocked || editMaterialLocked}
                   title="The shape a new image made here will have — same cost in every shape"
                 />
               </div>
@@ -774,43 +778,47 @@ export default function DetailPanel({
                 Animate always starts from this image, so the engine follows it rather than
                 being told a ratio. The price below follows the chosen spec. */}
             {gen.kind === "image" && videoSpec && videoSpecMenu && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Video spec</span>
+              <div className="cv-detail-spec">
+                <span className="cv-panel-label">Video spec</span>
                 <VideoSpecPicker
                   compact
                   value={videoSpec}
                   menu={videoSpecMenu}
                   onChange={setVideoSpec}
-                  disabled={readOnly}
+                  disabled={readOnly || animateMaterialLocked}
                   hasSourceImage
                 />
               </div>
             )}
 
             {/* Action rail */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <div className="cv-detail-actions">
               {/* Favorite */}
               <Button
-                variant={favorite ? "default" : "ghost"}
+                variant={favorite ? "secondary" : "ghost"}
                 size="sm"
                 onClick={handleFavorite}
                 disabled={readOnly}
                 title={readOnlyReason}
               >
-                {favorite ? "♥ Saved" : "♡ Save"}
+                <HeartIcon data-icon="inline-start" fill={favorite ? "currentColor" : "none"} />
+                {favorite ? "Saved" : "Save"}
               </Button>
 
               {/* Regenerate — #896: the canvas rule. The price is on the button, the press
                   does it, and until the server quote lands the button says so and is off. */}
               {gen.kind === "image" && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={() => void handleRegen()}
                   disabled={regenBlocked}
                   title={readOnlyReason}
+                  aria-live="polite"
                 >
-                  <RotateCcwIcon />
+                  {regenStatus === "running" || imageCost == null
+                    ? <Spinner data-icon="inline-start" aria-hidden="true" />
+                    : <RotateCcwIcon data-icon="inline-start" />}
                   {regenStatus === "running"
                     ? "Generating…"
                     : regenStatus === "done"
@@ -831,13 +839,16 @@ export default function DetailPanel({
                   the button follows the picker rather than a stale default tier (#645 T4). */}
               {gen.kind === "image" && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={() => void handleAnimate()}
                   disabled={animateBlocked}
                   title={readOnlyReason}
+                  aria-live="polite"
                 >
-                  <PlayIcon />
+                  {animStatus === "running" || videoCost == null
+                    ? <Spinner data-icon="inline-start" aria-hidden="true" />
+                    : <PlayIcon data-icon="inline-start" />}
                   {animStatus === "running"
                     ? "Animating…"
                     : animStatus === "done"
@@ -863,30 +874,37 @@ export default function DetailPanel({
                   disabled={readOnly}
                   title={readOnlyReason}
                 >
+                  <CropIcon data-icon="inline-start" />
                   Crop
                 </Button>
               )}
 
               {/* Download */}
-              <a
-                href={displayUrl}
-                download
-                className="al-btn al-btn-secondary al-btn-sm"
-                style={{ textDecoration: "none" }}
-              >
-                Download
-              </a>
+              <Button asChild variant="ghost" size="sm">
+                <a href={displayUrl} download>
+                  <DownloadIcon data-icon="inline-start" />
+                  Download
+                </a>
+              </Button>
 
               {/* Copy link */}
               <Button variant="ghost" size="sm" onClick={handleCopyLink}>
+                <LinkIcon data-icon="inline-start" />
                 {copied ? "Copied!" : "Copy link"}
               </Button>
 
               {/* Delete */}
-              <Button variant="ghost" size="sm" onClick={() => { if (!readOnly) setConfirmAction("delete"); }} disabled={readOnly} title={readOnlyReason}>
+              <Button variant="destructive-secondary" size="sm" onClick={() => { if (!readOnly) setConfirmAction("delete"); }} disabled={readOnly} title={readOnlyReason}>
                 Delete
               </Button>
             </div>
+
+            {paidActionError && (
+              <Alert variant="destructive" density="compact" role="alert">
+                <AlertTitle>Couldn&apos;t complete this action</AlertTitle>
+                <AlertDescription>{paidActionError}</AlertDescription>
+              </Alert>
+            )}
 
             {/* #922 缺口 A —— 「改这条片子 / 把这条片子接下去」的商家自己那一面。
                 在这里而不是在素材库网格上,是因为**画布也在这里**:画布视频卡的 "Detail"
@@ -899,64 +917,63 @@ export default function DetailPanel({
 
             {/* Edit @composer (24) */}
             {gen.kind === "image" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border)", padding: "13px 16px" }}>
-                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted-foreground)" }}>Describe your edit, @ to reference</span>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1.5px solid var(--border)", borderRadius: 12, padding: "5px 5px 5px 12px" }}>
-                    <MentionInput
-                      entities={entities}
-                      docKey={composerKey}
-                      placeholder="Describe your edit, @ to reference"
-                      disabled={readOnly || editStatus === "running"}
-                      onChange={(text, ids) => {
-                        if (readOnly) return;
-                        setEditPrompt(text);
-                        setEditIds(ids);
-                      }}
-                      onSubmit={() => void handleEditSubmit()}
-                    />
+              <>
+                <Separator />
+                <div className="cv-detail-edit">
+                  <span className="cv-panel-label">Describe your edit, @ to reference</span>
+                  <div className="cv-detail-edit-row">
+                    <div className="al-input-wrap cv-detail-edit-input">
+                      <MentionInput
+                        entities={entities}
+                        docKey={composerKey}
+                        placeholder="Describe your edit, @ to reference"
+                        disabled={readOnly || editStatus === "running"}
+                        onChange={(text, ids) => {
+                          if (readOnly) return;
+                          setEditPrompt(text);
+                          setEditIds(ids);
+                        }}
+                        onSubmit={() => void handleEditSubmit()}
+                      />
+                    </div>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => void handleEditSubmit()}
+                      disabled={editBlocked}
+                      title={readOnlyReason}
+                      aria-live="polite"
+                    >
+                      {(editStatus === "running" || imageCost == null) && (
+                        <Spinner data-icon="inline-start" aria-hidden="true" />
+                      )}
+                      {editStatus === "running"
+                        ? "Editing…"
+                        : editStatus === "done"
+                        ? "Edit ready!"
+                        : editStatus === "timeout"
+                        ? "Still processing — check the library"
+                        : editStatus === "cancelled"
+                        ? "Canceled"
+                        : editStatus === "failed"
+                        ? "Failed — try again"
+                        : imageCost == null
+                        ? "Checking cost…"
+                        : `Generate edit · ${creditsLabel(imageCost)}`}
+                    </Button>
                   </div>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => void handleEditSubmit()}
-                    disabled={editBlocked}
-                    title={readOnlyReason}
-                  >
-                    {editStatus === "running"
-                      ? "Editing…"
-                      : editStatus === "done"
-                      ? "Edit ready!"
-                      : editStatus === "timeout"
-                      ? "Still processing — check the library"
-                      : editStatus === "cancelled"
-                      ? "Canceled"
-                      : editStatus === "failed"
-                      ? "Failed"
-                      : imageCost == null
-                      ? "Checking cost…"
-                      : `Generate edit · ${creditsLabel(imageCost)}`}
-                  </Button>
                 </div>
-              </div>
+              </>
             )}
 
             {/* Crop modal (16) — normal-flow overlay inside panel, NOT position:fixed */}
             {cropOpen && !readOnly && (
               <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  background: "rgba(0,0,0,0.85)",
-                  borderRadius: 16,
-                  zIndex: 10,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
+                className="cv-detail-crop"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Crop area — takes remaining space */}
-                <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+                <div className="cv-detail-crop-stage">
                   <Cropper
                     image={displayUrl}
                     crop={crop}
@@ -969,9 +986,9 @@ export default function DetailPanel({
                   />
                 </div>
                 {/* Crop controls */}
-                <div style={{ display: "flex", gap: 8, padding: 16, justifyContent: "flex-end", background: "rgba(0,0,0,.4)" }}>
+                <div className="cv-detail-crop-actions">
                   {cropStatus === "failed" && (
-                    <span style={{ fontSize: 12, color: "var(--error)", alignSelf: "center", marginRight: "auto" }}>
+                    <span className="mr-auto self-center text-xs text-destructive">
                       Crop failed — try again
                     </span>
                   )}
@@ -989,27 +1006,35 @@ export default function DetailPanel({
                 </div>
               </div>
             )}
-          </>
-        )}
-      </div>
-      <Dialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null); }}>
-        <DialogContent onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-          <DialogHeader>
-            <DialogTitle>{confirmDetails?.title ?? ""}</DialogTitle>
-            <DialogDescription>{confirmDetails?.description ?? ""}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setConfirmAction(null)}>Cancel</Button>
-            <Button
-              variant={confirmAction === "delete" ? "destructive" : "default"}
-              disabled={confirmDetails?.disabled ?? true}
-              onClick={runConfirmedAction}
-            >
-              {confirmDetails?.confirmLabel ?? "Confirm"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+            </div>
+          )}
+          <Dialog
+            open={confirmAction !== null}
+            onOpenChange={(open) => {
+              if (!open) setConfirmAction(null);
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{confirmDetails?.title ?? ""}</DialogTitle>
+                <DialogDescription>{confirmDetails?.description ?? ""}</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setConfirmAction(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant={confirmAction === "delete" ? "destructive" : "default"}
+                  disabled={confirmDetails?.disabled ?? true}
+                  onClick={runConfirmedAction}
+                >
+                  {confirmDetails?.confirmLabel ?? "Confirm"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </SheetContent>
+      </Sheet>
+    </TooltipProvider>
   );
 }

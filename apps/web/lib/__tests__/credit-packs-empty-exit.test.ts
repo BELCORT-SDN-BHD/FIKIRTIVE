@@ -140,7 +140,9 @@ describe("#687 an empty credit shelf reads the same on both money pages", () => 
     const host = await render();
 
     // No "Top up" button can exist — there is nothing to sell.
-    expect(host.querySelector('a[href="/billing"]')).toBeNull();
+    expect(
+      Array.from(host.querySelectorAll('a[href="/billing"]')).find((link) => link.textContent?.includes("Top up")),
+    ).toBeUndefined();
 
     const exit = host.querySelector<HTMLAnchorElement>('a[href^="mailto:"]');
     expect(exit, "a merchant who wants to pay is shown a full stop and nothing else").toBeTruthy();

@@ -26,6 +26,10 @@
 - 产品方向、身份、用户行为和验收改变由 Founder 决定。实现细节在不改变这些决定时由开发者按最简单可靠方案处理。
 - specs 与工程文档使用华语；UI copy 使用 English sentence case。
 
+## 前端接线与设计变更
+
+涉及后端接入 UI、新增／修改前端组件、页面／流程变更或将验收版本接入正式路由时，必须先完整阅读 `apps/web/design-system/governance/frontend-integration-handoff.md`，再按其中指针核对本次设计来源与批准。它规定接线方法，不授予新功能、重设计或发布权限。
+
 ## 代码地图（CodeGraph）
 
 - 唯一持图树是主检出 `/Users/winnin/Desktop/FIKIRTIVE`。orchestrator 做全局调查时在主检出上 CodeGraph-first。

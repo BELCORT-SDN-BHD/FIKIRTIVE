@@ -1,19 +1,32 @@
 "use client";
 
 import { useState } from "react";
-import { authClient } from "@/lib/better-auth/client";
+import Link from "next/link";
+
+import { AuthStepCard } from "@/components/auth/AuthStepCard";
+import { PasswordInput } from "@/components/auth/PasswordInput";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { authDestination, authRouteHref } from "@/lib/auth-journey";
+import { authClient } from "@/lib/better-auth/client";
 
 export const MIN_PASSWORD_LENGTH = 8;
 
-/** Self-service registration: shop name + email + password. Nothing is promised that the
- *  product doesn't do — the credits land after the email is verified, and the copy says so. */
-export function SignupForm() {
+/** Self-service registration. Verification returns to the same sanitized destination. */
+export function SignupForm({
+  from,
+  starterCredits,
+}: {
+  from: string;
+  starterCredits: number;
+}) {
+  const destination = authDestination(from);
   const [shopName, setShopName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
@@ -31,13 +44,15 @@ export function SignupForm() {
 
     setBusy(true);
     setError(null);
-    // #940 — callbackURL goes straight to /otto rather than "/": the root route is nothing but
-    // a server redirect to /otto, so landing there directly drops one full round trip out of the
-    // already-slow post-verification chain.
-    const { error } = await authClient.signUp.email({ email: address, password, name, callbackURL: "/otto" });
+    const { error: signUpError } = await authClient.signUp.email({
+      email: address,
+      password,
+      name,
+      callbackURL: destination,
+    });
     setBusy(false);
-    if (error) {
-      setError(error.message ?? "We couldn't create the account. Try again.");
+    if (signUpError) {
+      setError("We couldn't create the account. Try again.");
       return;
     }
     setSentTo(address);
@@ -45,113 +60,123 @@ export function SignupForm() {
 
   if (sentTo) {
     return (
-      <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
-        <p className="text-[15px] font-semibold text-foreground">Confirm your email</p>
-        <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-          We sent a confirmation link to{" "}
-          <span className="font-medium text-foreground">{sentTo}</span>. Open it to finish setting
-          up {shopName.trim()} — your free starter credits are added once the email is confirmed.
-        </p>
-        <p className="mt-3 text-[12.5px] text-muted-foreground">
-          Nothing in your inbox? Check spam, or{" "}
+      <AuthStepCard
+        title="Check your email"
+        description={
+          <>
+            We sent a confirmation link to{" "}
+            <span className="font-medium text-foreground">{sentTo}</span>.
+          </>
+        }
+        footer={
           <Button
             type="button"
-            variant="link"
-            onClick={() => { setSentTo(null); setPassword(""); }}
-            className="h-auto w-auto p-0 align-baseline text-[12.5px] font-semibold text-muted-foreground underline hover:text-foreground"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSentTo(null);
+              setPassword("");
+            }}
           >
-            try a different email
+            Try a different email
           </Button>
-          .
-        </p>
-      </div>
+        }
+      >
+        <div className="rounded-[var(--radius-control)] bg-success-soft px-4 py-3 text-sm leading-6 text-success-soft-foreground">
+          Open the link to confirm your email and finish setting up {shopName.trim()}. Your{" "}
+          {starterCredits} starter credits are added after confirmation.
+        </div>
+      </AuthStepCard>
     );
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3.5">
-      {error && (
-        <p role="alert" className="text-[13.5px] font-medium text-destructive">
-          {error}
-        </p>
-      )}
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="shopName" className="text-[13px] font-semibold text-foreground/85">
-          Shop name
-        </label>
-        <Input
-          id="shopName"
-          name="shopName"
-          required
-          autoFocus
-          maxLength={80}
-          placeholder="Kopi Corner"
-          autoComplete="organization"
-          value={shopName}
-          onChange={(e) => setShopName(e.target.value)}
-        />
-        <p className="text-[12px] text-muted-foreground">This names your workspace. You can change it later.</p>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="email" className="text-[13px] font-semibold text-foreground/85">
-          Email
-        </label>
-        <Input
-          id="email"
-          name="email"
-          type="email"
-          required
-          placeholder="you@yourbrand.com"
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="password" className="text-[13px] font-semibold text-foreground/85">
-          Password
-        </label>
-        <div className="relative">
-          <Input
-            id="password"
-            name="password"
-            type={showPw ? "text" : "password"}
-            required
-            minLength={MIN_PASSWORD_LENGTH}
-            placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
-            autoComplete="new-password"
-            className="pr-11"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowPw((v) => !v)}
-            aria-label={showPw ? "Hide password" : "Show password"}
-            className="absolute right-1.5 top-1/2 size-9 -translate-y-1/2 rounded-[10px] text-muted-foreground hover:bg-transparent hover:text-foreground"
+    <AuthStepCard
+      title="Create your account"
+      description="Set up your Fikirtive workspace."
+      footer={
+        <p className="text-sm text-muted-foreground">
+          Already have an account?{" "}
+          <Link
+            href={authRouteHref("/login", destination)}
+            className="font-semibold text-foreground underline underline-offset-4"
           >
-            {showPw ? (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
-                <path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-2.2 3M6.1 6.1A13.3 13.3 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 3.9-.9M3 3l18 18" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
-                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            )}
-          </Button>
-        </div>
-      </div>
+            Log in
+          </Link>
+        </p>
+      }
+    >
+      <form onSubmit={submit}>
+        <FieldGroup className="gap-5">
+          {error ? (
+            <Alert role="alert" variant="destructive">
+              <AlertTitle>Account could not be created</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-      <Button type="submit" disabled={busy} className="mt-0.5 w-full">
-        {busy ? "Creating your account…" : "Create account"}
-      </Button>
-    </form>
+          <Field data-invalid={error === "Enter your shop name." ? true : undefined}>
+            <FieldLabel htmlFor="shopName">Shop name</FieldLabel>
+            <Input
+              id="shopName"
+              name="shopName"
+              required
+              autoFocus
+              maxLength={80}
+              placeholder="Kopi Corner"
+              autoComplete="organization"
+              aria-invalid={error === "Enter your shop name." ? true : undefined}
+              value={shopName}
+              onChange={(event) => {
+                setShopName(event.target.value);
+                setError(null);
+              }}
+            />
+          </Field>
+
+          <Field data-invalid={error === "Enter your email address." ? true : undefined}>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              required
+              placeholder="you@yourbrand.com"
+              autoComplete="email"
+              aria-invalid={error === "Enter your email address." ? true : undefined}
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setError(null);
+              }}
+            />
+          </Field>
+
+          <Field data-invalid={error?.startsWith("Use at least") === true ? true : undefined}>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <PasswordInput
+              id="password"
+              name="password"
+              aria-label="Password"
+              required
+              minLength={MIN_PASSWORD_LENGTH}
+              placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+              autoComplete="new-password"
+              aria-invalid={error?.startsWith("Use at least") === true ? true : undefined}
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setError(null);
+              }}
+            />
+          </Field>
+
+          <Button type="submit" disabled={busy} className="w-full">
+            {busy && <Spinner data-icon="inline-start" />}
+            {busy ? "Creating your account…" : "Create account"}
+          </Button>
+        </FieldGroup>
+      </form>
+    </AuthStepCard>
   );
 }

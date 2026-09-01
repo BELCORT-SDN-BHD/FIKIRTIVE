@@ -1,7 +1,15 @@
 "use client";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { updateDisplayName, updateWorkspaceName } from "@/lib/profile-actions";
 
 type SaveResult = { ok: true; name: string } | { error: string };
@@ -70,48 +78,49 @@ function NameField({
   }
 
   return (
-    <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label htmlFor={inputId} className="text-muted-foreground" style={{ fontSize: 13 }}>
-        {label}
-      </label>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <Input
-          id={inputId}
-          value={draft}
-          maxLength={MAX_NAME_LENGTH}
-          placeholder={placeholder}
-          autoComplete={autoComplete}
-          aria-invalid={status === "error" ? true : undefined}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            setStatus(null);
-            setErrorMsg(null);
-          }}
-        />
-        <Button type="submit" variant="secondary" disabled={!dirty || !valid || status === "saving"}>
-          {status === "saving" ? "Saving…" : "Save"}
-        </Button>
-      </div>
-      {status === "error" ? (
-        <span role="status" aria-live="polite" className="text-destructive" style={{ fontSize: 12.5 }}>
-          {errorMsg ?? "Could not save. Try again."}
-        </span>
-      ) : status === "saved" ? (
-        <span role="status" aria-live="polite" style={{ fontSize: 12.5, color: "#15803D" }}>
-          Saved
-        </span>
-      ) : (
-        <span className="text-muted-foreground" style={{ fontSize: 12.5 }}>
-          {hint}
-        </span>
-      )}
+    <form onSubmit={submit} className="w-full">
+      <Field data-invalid={status === "error"}>
+        <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+          <Input
+            id={inputId}
+            className="sm:flex-1"
+            value={draft}
+            maxLength={MAX_NAME_LENGTH}
+            placeholder={placeholder}
+            autoComplete={autoComplete}
+            aria-invalid={status === "error" ? true : undefined}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setStatus(null);
+              setErrorMsg(null);
+            }}
+          />
+          <Button
+            type="submit"
+            variant="secondary"
+            className="sm:min-w-24"
+            disabled={!dirty || !valid || status === "saving"}
+          >
+            {status === "saving" && <Spinner data-icon="inline-start" />}
+            {status === "saving" ? "Saving…" : "Save"}
+          </Button>
+        </div>
+        {status === "error" ? (
+          <FieldError errors={[{ message: errorMsg ?? "Could not save. Try again." }]} />
+        ) : (
+          <FieldDescription role="status" aria-live="polite">
+            {status === "saved" ? "Saved" : hint}
+          </FieldDescription>
+        )}
+      </Field>
     </form>
   );
 }
 
 export function ProfileNames({ displayName, workspaceName }: { displayName: string; workspaceName: string }) {
   return (
-    <>
+    <FieldGroup>
       <NameField
         label="Your name"
         hint="How Otto greets you."
@@ -131,6 +140,36 @@ export function ProfileNames({ displayName, workspaceName }: { displayName: stri
         autoComplete="organization"
         onSave={updateWorkspaceName}
       />
-    </>
+    </FieldGroup>
+  );
+}
+
+export function DisplayNameField({ displayName }: { displayName: string }) {
+  return (
+    <FieldGroup>
+      <NameField
+        label="Your name"
+        hint="How Otto greets you."
+        initialValue={displayName}
+        placeholder="Your name"
+        autoComplete="name"
+        onSave={updateDisplayName}
+      />
+    </FieldGroup>
+  );
+}
+
+export function WorkspaceNameField({ workspaceName }: { workspaceName: string }) {
+  return (
+    <FieldGroup>
+      <NameField
+        label="Workspace"
+        hint="Your shop name — shown across Fikirtive."
+        initialValue={workspaceName}
+        placeholder="Set your shop name"
+        autoComplete="organization"
+        onSave={updateWorkspaceName}
+      />
+    </FieldGroup>
   );
 }

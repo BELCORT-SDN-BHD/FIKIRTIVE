@@ -1,0 +1,47 @@
+{
+  "$schema": "./authority.schema.json",
+  "version": 1,
+  "canonicalRoot": "apps/web/design-system",
+  "current": {
+    "brand": "apps/web/design-system/brand",
+    "direction": "apps/web/design-system/direction",
+    "foundations": "apps/web/design-system/foundations/globals.css",
+    "primitives": "apps/web/design-system/primitives",
+    "applicationShell": "apps/web/design-system/patterns/application-shell",
+    "founderHome": "apps/web/design-system/patterns/founder-home",
+    "ottoPanel": "apps/web/design-system/patterns/otto-panel",
+    "canvas": "apps/web/design-system/patterns/canvas",
+    "library": "apps/web/design-system/patterns/library",
+    "brandPattern": "apps/web/design-system/patterns/brand",
+    "settingsPattern": "apps/web/design-system/patterns/settings",
+    "authPattern": "apps/web/design-system/patterns/auth",
+    "referencePicker": "apps/web/design-system/patterns/reference-picker",
+    "informationArchitecture": "apps/web/design-system/information-architecture",
+    "governance": "apps/web/design-system/governance",
+    "frontendIntegrationHandoff": "apps/web/design-system/governance/frontend-integration-handoff.md",
+    "frontendBaselineHandoff": "apps/web/design-system/governance/frontend-baseline-handoff.md"
+  },
+  "compatibilityAliases": {
+    "apps/web/app/globals.css": "apps/web/design-system/foundations/globals.css",
+    "apps/web/components/ui": "apps/web/design-system/primitives",
+    "apps/web/components/brand": "apps/web/design-system/brand/components",
+    "apps/web/components/navigation": "apps/web/design-system/patterns/application-shell/navigation",
+    "apps/web/components/otto/panel": "apps/web/design-system/patterns/otto-panel",
+    "apps/web/components/otto/OttoAvatar.tsx": "apps/web/design-system/brand/components/OttoAvatar.tsx",
+    "docs/brand": "apps/web/design-system/brand",
+    "docs/design/v4": "apps/web/design-system/direction",
+    "docs/design-system": "apps/web/design-system/governance"
+  },
+  "deliveryAliases": {
+    "apps/web/public/brand/f-app-icon-coral.svg": "apps/web/design-system/brand/logo/svg/f-app-icon-coral.svg",
+    "apps/web/public/brand/otto.svg": "apps/web/design-system/brand/otto/otto.svg",
+    "apps/web/public/brand/otto-helpful.svg": "apps/web/design-system/brand/otto/otto-helpful.svg",
+    "apps/web/public/brand/otto-thinking.svg": "apps/web/design-system/brand/otto/otto-thinking.svg",
+    "apps/web/public/brand/otto-approving.svg": "apps/web/design-system/brand/otto/otto-approving.svg",
+    "apps/web/public/brand/otto-success.svg": "apps/web/design-system/brand/otto/otto-success.svg"
+  },
+  "references": {
+    "legacyV3": "apps/web/design-system/references/legacy-v3",
+    "retiredAssets": "apps/web/design-system/references/retired-assets"
+  }
+}

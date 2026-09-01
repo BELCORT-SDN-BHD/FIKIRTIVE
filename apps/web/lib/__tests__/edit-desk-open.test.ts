@@ -175,6 +175,7 @@ describe("an export outlives the page, so the desk picks it back up", () => {
 
     expect(container.textContent).toContain("rendering");
     expect(container.textContent).toContain("42%");
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-label")).toBe("Export progress");
   });
 
   it("no export yet means no export strip — nothing is invented", async () => {
@@ -191,5 +192,28 @@ describe("an export outlives the page, so the desk picks it back up", () => {
     // the desk still opened, and it did not claim an export state it never read
     expect(container.textContent).toContain("our new chilli sauce");
     expect(container.textContent).not.toContain("Ready");
+  });
+});
+
+describe("the editor is a visual workspace, not a settings form", () => {
+  it("shows the real current clip in a preview and keeps its actions neutral", async () => {
+    mocks.getEditDesk.mockResolvedValue({ media: MEDIA, cut: ONE_CLIP_CUT, unreadable: false });
+    await open();
+
+    const preview = container.querySelector(`video[src="${src(1)}"]`);
+    expect(preview?.getAttribute("aria-label")).toContain("our new chilli sauce");
+    expect(container.textContent).toContain("Timeline");
+    expect(button("Export video").className).not.toContain("bg-brand");
+  });
+
+  it("selects media with an ordered, non-coral state", async () => {
+    mocks.getEditDesk.mockResolvedValue({ media: MEDIA, cut: EMPTY_CUT, unreadable: false });
+    await open();
+
+    await act(async () => { button("our new chilli sauce").click(); });
+
+    expect(button("our new chilli sauce").getAttribute("aria-pressed")).toBe("true");
+    expect(button("our new chilli sauce").className).not.toContain("brand");
+    expect(container.textContent).toContain("1 selected");
   });
 });

@@ -41,6 +41,7 @@ import type {
 } from "@/lib/admin-v2";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AdminActionConfirmDialog } from "./AdminActionConfirmDialog";
 import {
   Dialog,
   DialogContent,
@@ -749,6 +750,7 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function submitInvite(event: FormEvent<HTMLFormElement>) {
@@ -776,34 +778,28 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
     router.refresh();
   }
 
-  async function revokeInvite(target: string) {
-    if (revoking) return;
-    // Confirm first: a stray click on the wrong row is not harmless. Scoped to what revoking
-    // actually does — it blocks future self-signup with this address. It does NOT guarantee
-    // the address cannot sign in: FOUNDER_ADMIN_EMAILS / AUTH_ALLOWED_EMAILS are checked
-    // before the DB row and win over it (allowlist.ts).
-    if (!window.confirm(`Revoke the invite for ${target}? This blocks future self-signup with this address.`)) return;
+  async function revokeInvite(target: string): Promise<string | null> {
+    if (revoking) return null;
     setRevoking(target);
     setMessage(null);
-    const result = await revokeTenantInvite(target).catch(() => null);
-    setRevoking(null);
-    if (!result) {
-      setMessage({ ok: false, text: "Revoke failed." });
-      return;
+    try {
+      const result = await revokeTenantInvite(target).catch(() => null);
+      if (!result) return "The invite could not be revoked. Check your connection and try again.";
+      if ("error" in result) return result.error;
+      setMessage({ ok: true, text: `Revoked ${target}.` });
+      router.refresh();
+      return null;
+    } finally {
+      setRevoking(null);
     }
-    if ("error" in result) {
-      setMessage({ ok: false, text: result.error });
-      return;
-    }
-    setMessage({ ok: true, text: `Revoked ${target}.` });
-    router.refresh();
   }
 
   return (
-    <Panel
-      title="Invite a merchant"
-      subtitle="Admits an email address so it can sign in. Nothing is emailed from here — tell the merchant yourself. The row leaves this list once they sign in and their workspace exists."
-    >
+    <>
+      <Panel
+        title="Invite a merchant"
+        subtitle="Admits an email address so it can sign in. Nothing is emailed from here — tell the merchant yourself. The row leaves this list once they sign in and their workspace exists."
+      >
       <form onSubmit={submitInvite} className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <label className="grid gap-1.5">
           <span className="text-xs font-medium text-muted-foreground">Merchant email</span>
@@ -849,17 +845,37 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
               type="button"
               variant="secondary"
               size="sm"
-              disabled={revoking === row.email}
+              disabled={revoking !== null}
               aria-label={`Revoke invite for ${row.email}`}
-              onClick={() => revokeInvite(row.email)}
+              onClick={() => {
+                setMessage(null);
+                setRevokeTarget(row.email);
+              }}
             >
-              <Ban className="size-4" />
-              {revoking === row.email ? "Revoking" : "Revoke"}
+              <Ban data-icon="inline-start" />
+              Revoke
             </Button>
           </div>
         ))}
       </div>
-    </Panel>
+      </Panel>
+
+      <AdminActionConfirmDialog
+        open={revokeTarget !== null}
+        onOpenChange={(open) => { if (!open) setRevokeTarget(null); }}
+        title={revokeTarget ? `Revoke invite for ${revokeTarget}?` : "Revoke invite?"}
+        description="This removes the pending invitation from the signup door."
+        impactTitle="This changes future self-signup only"
+        impacts={[
+          "Future self-signup with this email is blocked.",
+          "No email is sent and no existing workspace data is changed.",
+          "Configured founder or environment allowlists are not overridden here.",
+        ]}
+        confirmLabel="Revoke invite"
+        confirmingLabel="Revoking…"
+        onConfirm={() => revokeTarget ? revokeInvite(revokeTarget) : null}
+      />
+    </>
   );
 }
 

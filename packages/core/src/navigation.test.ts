@@ -17,23 +17,44 @@ import {
   NAV_LABEL_ALLOWED_CHARS,
   NAV_PATH_SEPARATOR_FAMILY,
   OTTO_ASSISTANT,
+  SETTINGS_DESTINATIONS,
+  SETTINGS_SECTIONS,
+  SHELL_ROUTES,
   everyNavDestination,
   isNavGroup,
   merchantNavLinks,
   merchantNavMap,
+  navLinkByKey,
   navLabel,
   navPath,
   navPointableNames,
 } from "./navigation.js";
 
 describe("MERCHANT_NAV 的形状", () => {
-  // W2-11 验收条 1(#998):七格权威改写。数字写死,不是「至少七个」——多一格或少一格都是
+  // Beta frontend convergence Phase 1:五格权威改写。数字写死,不是「至少五个」——多一格或少一格都是
   // 一次没被讨论过的导航改动。
-  it("恰好七个顶层节点(Home / Create / Library / Brand / Campaigns / Schedule / Settings)", () => {
-    expect(MERCHANT_NAV.length).toBe(7);
+  it("恰好五个顶层节点(Home / Create / Library / Brand / Settings)", () => {
+    expect(MERCHANT_NAV.length).toBe(5);
     expect(MERCHANT_NAV.map((node) => node.key)).toEqual([
-      "home", "create", "library", "brand", "campaign", "schedule", "settings",
+      "home", "create", "library", "brand", "settings",
     ]);
+  });
+
+  it("Billing / Connections 是 Settings 内部目的地,不是额外顶层导航", () => {
+    expect(navLinkByKey("billing").href).toBe("/billing");
+    expect(navLinkByKey("connections").href).toBe("/settings/connections");
+    expect(navPath("billing")).toBe("Settings › Billing & credits");
+    expect(navPath("connections")).toBe("Settings › Connections");
+    expect(MERCHANT_NAV.map((node) => node.key)).not.toContain("billing");
+    expect(MERCHANT_NAV.map((node) => node.key)).not.toContain("connections");
+  });
+
+  it("Settings 内壳只有获批的四个 sections,并且 General 复用顶层 Settings 地址", () => {
+    expect(SETTINGS_SECTIONS.map((item) => item.key)).toEqual([
+      "profile", "general", "connections", "billing",
+    ]);
+    expect(SETTINGS_SECTIONS.find((item) => item.key === "general")?.href).toBe(SHELL_ROUTES.preferences);
+    expect(navPath("general")).toBe("Settings › General");
   });
 
   it("每个 key 只出现一次(图标、测试与后续票都按 key 认人)", () => {
@@ -56,21 +77,13 @@ describe("MERCHANT_NAV 的形状", () => {
     }
   });
 
-  // W2-11 判官修复轮 P2:光查长度挡不住一句 does 悄悄多写或少写一个从句(Create 那次多带
-  // 的 "and making anything always asks you first." 就是这样漏过去的)。这里逐字锁死
-  // 规格书 §2.3① 那张表(`docs/specs/wave2-shell.md:117-131`)——九条 does,一个字都不许改,
-  // 改了就是一次没有讨论过的导航文案改动。
-  it("does 逐字锁死规格书 §2.3① 那张表,不是只查长度", () => {
+  it("主导航 does 逐字锁死 Phase 1 五格权威,不是只查长度", () => {
     expect(Object.fromEntries(merchantNavLinks().map((item) => [item.key, item.does]))).toEqual({
-      create: "Start something new and open it on a canvas — every canvas you have lives here.",
+      create: "Start or continue creative work in the Create workspace, then enter the full-screen Canvas.",
       library: "Find every image and video you have already made.",
       brand: "Keep what Otto should remember about your brand and the things you sell.",
-      campaign: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
-      schedule: "The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.",
-      billing: "Buy credits, and read what your credits have gone on.",
-      connections: "Connect or disconnect the accounts you post from.",
-      preferences: "Set your spend cap and posting defaults.",
-      home: "See what is waiting for you, what you made lately, and what goes out next.",
+      home: "Review your marketing health, understand important changes, and decide what to do next.",
+      settings: "Manage your profile, workspace, connections, and billing.",
     });
   });
 
@@ -109,6 +122,7 @@ describe("创作正名(Founder 裁决:画布是旗舰面,不下线)", () => {
   it("创作入口的名字只写在一处 —— 白标命名体系定了改这一行就够", () => {
     const create = merchantNavLinks().find((item) => item.key === "create");
     expect(create).toBeDefined();
+    expect(CREATE_NAV_LABEL).toBe("Create");
     expect(create!.label).toBe(CREATE_NAV_LABEL);
   });
 
@@ -181,15 +195,21 @@ describe("Otto 是助手,不是模块(W2-11:而且不是地址)", () => {
   });
 });
 
-describe("两个日历择一为准", () => {
-  it("树里只有一本日历,就是排期", () => {
+describe("Campaigns 与 Schedule 在 Beta parked", () => {
+  it("主导航没有 Campaigns 或 Schedule", () => {
     const calendars = merchantNavLinks().filter((item) => /calendar|schedule/i.test(item.href));
-    expect(calendars.map((item) => item.href)).toEqual(["/schedule"]);
+    expect(calendars.map((item) => item.href)).toEqual([]);
+    expect(merchantNavLinks().map((item) => item.key)).not.toContain("campaign");
+    expect(merchantNavLinks().map((item) => item.key)).not.toContain("schedule");
   });
 
-  it("旧的战役日历有去处,不是 404", () => {
-    const retired = MERCHANT_NAV_REDIRECTS.find((row) => row.from === "/campaign/calendar");
-    expect(retired?.to).toBe("/schedule");
+  it("Parked merchant routes 都有冻结 destination", () => {
+    expect(Object.fromEntries(MERCHANT_NAV_REDIRECTS.map((row) => [row.from, row.to]))).toMatchObject({
+      [SHELL_ROUTES.campaign]: SHELL_ROUTES.home,
+      [SHELL_ROUTES.schedule]: SHELL_ROUTES.home,
+      [SHELL_ROUTES.analytics]: SHELL_ROUTES.homeAnalysis,
+      [SHELL_ROUTES.edit]: SHELL_ROUTES.create,
+    });
   });
 
   it("每一条收敛掉的旧路由都写明了去哪、为什么", () => {
@@ -203,9 +223,9 @@ describe("两个日历择一为准", () => {
 
 describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
   it("组内的写成「分组 › 子项」,顶层的就是它自己的名字", () => {
-    // W2-11:schedule 换成七格之一,顶层直呼其名,不再挂在 Workspace 分组下面。
-    expect(navPath("schedule")).toBe("Schedule");
     expect(navPath("connections")).toBe("Settings › Connections");
+    expect(navPath("billing")).toBe("Settings › Billing & credits");
+    expect(navPath("profile")).toBe("Settings › Profile");
     expect(navPath("create")).toBe(CREATE_NAV_LABEL);
     expect(navPath("otto")).toBe(OTTO_ASSISTANT.label);
   });
@@ -221,7 +241,6 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
   // 两者都不许手打 —— 判官逮到的是提示词里一处手打的 `Campaign`。
   it("navLabel 给的是导轨上那个词(不带分组前缀),分组名也取得到", () => {
     expect(navLabel("library")).toBe("Library");
-    expect(navLabel("campaign")).toBe("Campaigns");
     expect(navLabel("settings")).toBe("Settings");
     expect(navLabel("otto")).toBe(OTTO_ASSISTANT.label);
     // 组内项:navPath 带分组前缀,navLabel 不带 —— 两者只差那一格。
@@ -246,6 +265,7 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
       ...MERCHANT_NAV.flatMap((node) =>
         isNavGroup(node) ? [node.label, ...node.items.map((item) => navPath(item.key))] : [node.label],
       ),
+      ...SETTINGS_SECTIONS.map((item) => navPath(item.key)),
     ];
     expect([...names].sort()).toEqual([...expected].sort());
     expect(new Set(names).size, "名单里不许有重名").toBe(names.length);

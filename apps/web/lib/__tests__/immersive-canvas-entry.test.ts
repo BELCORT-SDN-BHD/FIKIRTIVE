@@ -10,6 +10,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCoworkThreads: vi.fn(),
+  getCoworkThreadPage: vi.fn(),
+  resolveCoworkResultUrls: vi.fn(),
+  getCanvasConversationHandoff: vi.fn(),
   getEntities: vi.fn(),
   getMyAccount: vi.fn(),
   getOrCreateDefaultProject: vi.fn(),
@@ -22,9 +25,35 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/actions", () => ({ getOrCreateDefaultProject: mocks.getOrCreateDefaultProject }));
-vi.mock("@/lib/data", () => ({ getCoworkThreads: mocks.getCoworkThreads, getEntities: mocks.getEntities, getProjects: mocks.getProjects }));
-vi.mock("@/lib/dto", () => ({ toEntityDTO: (entity: { id: string }) => entity }));
+vi.mock("@/lib/data", () => ({
+  getCoworkThreadPage: mocks.getCoworkThreadPage,
+  getCoworkThreads: mocks.getCoworkThreads,
+  getEntities: mocks.getEntities,
+  getProjects: mocks.getProjects,
+  resolveCoworkResultUrls: mocks.resolveCoworkResultUrls,
+}));
+vi.mock("@/lib/dto", () => ({
+  toEntityDTO: (entity: { id: string }) => entity,
+  toChatThreadDTO: (thread: {
+    id: string;
+    projectId: string;
+    title: string;
+    updatedAt: Date;
+    pinnedAt: Date | null;
+    messages: unknown[];
+  }) => ({
+    id: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    updatedAt: thread.updatedAt.toISOString(),
+    pinnedAt: thread.pinnedAt?.toISOString() ?? null,
+    messages: thread.messages,
+  }),
+}));
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
+vi.mock("@/lib/canvas-entry-actions", () => ({
+  getCanvasConversationHandoff: mocks.getCanvasConversationHandoff,
+}));
 vi.mock("@/components/canvas/NorthstarCanvasWorkspace", () => ({ NorthstarCanvasWorkspace: vi.fn() }));
 
 const {
@@ -38,8 +67,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireOwner.mockResolvedValue({ email: "owner@example.com", ownerId: "owner-1" });
   mocks.getOrCreateDefaultProject.mockResolvedValue({ id: "p-oldest" });
-  mocks.getMyAccount.mockResolvedValue({ balance: 42 });
+  mocks.getMyAccount.mockResolvedValue({ balance: 42, balanceUsd: 4.2 });
   mocks.getEntities.mockResolvedValue([]);
+  mocks.getCoworkThreadPage.mockResolvedValue(null);
+  mocks.resolveCoworkResultUrls.mockResolvedValue(new Map());
+  mocks.getCanvasConversationHandoff.mockResolvedValue(null);
 });
 
 describe("immersive canvas owned runtime selection", () => {
@@ -148,6 +180,15 @@ describe("ImmersiveCanvasEntry", () => {
         pinnedAt: null,
       },
     ]);
+    mocks.getCoworkThreadPage.mockResolvedValue({
+      id: "t-new",
+      projectId: "p-selected",
+      title: "New",
+      updatedAt: new Date("2026-07-16T00:00:00.000Z"),
+      pinnedAt: null,
+      messages: [],
+      hasOlderMessages: false,
+    });
 
     const element = await ImmersiveCanvasEntry({
       searchParams: Promise.resolve({ project: "p-selected" }),
@@ -180,6 +221,53 @@ describe("ImmersiveCanvasEntry", () => {
       activeProjectId: "p-selected",
       activeThreadId: "t-new",
       initialBalance: 42,
+      initialBalanceUsd: 4.2,
+      activeThread: {
+        id: "t-new",
+        projectId: "p-selected",
+        title: "New",
+        updatedAt: "2026-07-16T00:00:00.000Z",
+        pinnedAt: null,
+        messages: [],
+        hasOlderMessages: false,
+      },
+      pendingFirst: null,
+    });
+  });
+
+  it("passes a valid empty-thread handoff once as the first durable Otto turn", async () => {
+    mocks.getProjects.mockResolvedValue([{ id: "p-oldest", name: "Raya stills" }]);
+    mocks.getCoworkThreads.mockResolvedValue([{
+      id: "t-new",
+      projectId: "p-oldest",
+      title: "Merdeka gift box",
+      updatedAt: new Date("2026-07-16T00:00:00.000Z"),
+      pinnedAt: null,
+    }]);
+    mocks.getCoworkThreadPage.mockResolvedValue({
+      id: "t-new",
+      projectId: "p-oldest",
+      title: "Merdeka gift box",
+      updatedAt: new Date("2026-07-16T00:00:00.000Z"),
+      pinnedAt: null,
+      messages: [],
+      hasOlderMessages: false,
+    });
+    mocks.getCanvasConversationHandoff.mockResolvedValue({ prompt: "Create a Merdeka gift-box hero" });
+
+    const element = await ImmersiveCanvasEntry({
+      searchParams: Promise.resolve({ project: "p-oldest", thread: "t-new", handoff: "handoff-1" }),
+    });
+
+    expect(mocks.getCanvasConversationHandoff).toHaveBeenCalledWith({
+      ownerId: "owner-1",
+      handoffId: "handoff-1",
+      projectId: "p-oldest",
+      threadId: "t-new",
+    });
+    expect(element.props.runtimeContext.pendingFirst).toEqual({
+      handoffId: "handoff-1",
+      text: "Create a Merdeka gift-box hero",
     });
   });
 

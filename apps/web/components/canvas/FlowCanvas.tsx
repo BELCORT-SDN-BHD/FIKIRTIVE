@@ -11,7 +11,7 @@ import {
   freshCanvasActionId,
   loadCanvasActionReceipts,
 } from "./useCanvasGen";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode, type CanvasNodeDTO } from "../../lib/canvas-actions";
 import { uploadReference } from "../../lib/actions";
 import { syncOttoCanvasNodes } from "../../lib/otto-canvas-bridge";
@@ -19,12 +19,33 @@ import { OttoCanvasStatus } from "../otto/OttoTrace";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
-import { X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { Hand, ImageIcon, Maximize2, MousePointer2, RefreshCw, Type, Video, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipButton } from "@/components/ui/tooltip-button";
+import { cn } from "@/lib/utils";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
@@ -81,23 +102,6 @@ type CanvasFlowNode = Node & {
   batchIndex?: number | null;
   batchSize?: number | null;
 };
-/**
- * #840 车4 —— 板底那条工具条上一枚键的类。
- *
- * `cv-tb` 留在原地:`.gb .cv-tb` 是两个类的选择器,专有度高过 Button 自带的任何一条工具类,
- * 所以 36×36、9px 圆角、透明底、hover 变 muted、以及 `.gb .cv-tb-active` 的选中底色都照旧
- * 由它说了算,一处没动。Button 只补进原语该有的东西(焦点环、disabled 语义、按下反馈)。
- * 三条显式压回 —— 每一条都是 `.gb .cv-tb` **没有声明**、因而压不住的那一项:
- *  · `p-0` —— 这一枚是 36×36 的定宽方钮,自己不写内距(preflight 已把原生按钮的内距清零)。
- *    Button 的 `size` 默认带 `px-5`,左右各 20px 加起来超过 36px 的整宽,content box 被压到
- *    0,里面那枚 shrink-0 的图标就会溢出、偏出中心。同理下面 `.cv-play` 那一枚 30×30 的圆钮。
- *  · `[&_svg]:size-[18px]` —— Button 强制子级 svg 为 1.1em(命中的是子元素,不是这枚键
- *    自己,所以 `.gb .cv-tb` 压不住它),而这一排图标原本就是 18px。
- *  · `disabled:opacity-100` —— `.gb .cv-tb:disabled` 只改文字色不改透明度,Button 默认的
- *    `disabled:opacity-40` 会让停用态比原来更淡。
- */
-const CV_TOOLBAR_BUTTON_CLASS = "cv-tb p-0 [&_svg]:size-[18px] disabled:opacity-100";
-
 const CANVAS_CARD_SIDE = 320;
 /**
  * #643 T2 —— 一张卡默认会交付的形状：它自己记着的那一格（板子读回来的 lineage），
@@ -315,6 +319,10 @@ export default function FlowCanvas({
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [videoSubmitting, setVideoSubmitting] = useState(false);
+  const [pendingImageAction, setPendingImageAction] = useState<{
+    nodeId: string;
+    origin: "variant" | "edit";
+  } | null>(null);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
   const imageActionRef = useRef<{ material: string; actionId: string } | null>(null);
   const videoActionRef = useRef<{ material: string; actionId: string } | null>(null);
@@ -344,6 +352,7 @@ export default function FlowCanvas({
   const lineageReloadTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [boardStatus, setBoardStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const closeComposer = useCallback((clearPrompt = false) => {
     setComposerOpen(false);
     if (!clearPrompt) return;
@@ -891,7 +900,12 @@ export default function FlowCanvas({
    */
   const evolveActionRef = useRef<{ material: string; actionId: string } | null>(null);
   const evolveBusyRef = useRef(false);
-  const runImageEvolve = useCallback(async (id: string, rawPrompt: string, aspect?: string): Promise<boolean> => {
+  const runImageEvolve = useCallback(async (
+    id: string,
+    rawPrompt: string,
+    aspect: string | undefined,
+    origin: "variant" | "edit",
+  ): Promise<boolean> => {
     const text = rawPrompt.trim();
     if (!text) return false;
     if (!costQuote) {
@@ -905,6 +919,7 @@ export default function FlowCanvas({
       return false;
     }
     evolveBusyRef.current = true;
+    setPendingImageAction({ nodeId: id, origin });
     // #643 T2：「改这张图 / 再来一张」默认交付**和这张一样的形状**（那张卡自己记着的形状；
     // 记录不到的老图就是默认方图，那也正是它们当年真的形状）。商家在卡上换了形状，就带
     // 他换的那一格 —— 换形状是另一个动作，所以它进材料。
@@ -947,11 +962,12 @@ export default function FlowCanvas({
       return accepted;
     } finally {
       evolveBusyRef.current = false;
+      setPendingImageAction(null);
     }
   }, [activeThreadId, costQuote, generateImage, projectId, spawnRect]);
 
   const handleEvolve = useCallback((id: string, text: string, aspect?: string) => {
-    void runImageEvolve(id, text, aspect);
+    void runImageEvolve(id, text, aspect, "edit");
   }, [runImageEvolve]);
 
   /** 事件处理里按 id 取同一件事（渲染期不许读 ref —— 那是 React 的规矩，也是本仓库的 lint 闸）。 */
@@ -966,7 +982,7 @@ export default function FlowCanvas({
       toast.error("This image has no saved description to build on.");
       return;
     }
-    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id));
+    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id), "variant");
   }, [runImageEvolve, nodeImageShape]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
@@ -1175,7 +1191,11 @@ export default function FlowCanvas({
     // Deferred with queueMicrotask for the same reason OttoConnections defers its load: `reload`
     // is invoked from an effect, and although this line runs after an await, the effect lint
     // does not follow the await across the helper and reads it as a synchronous setState.
-    queueMicrotask(() => setLineageUnavailable(!("rows" in read)));
+    queueMicrotask(() => {
+      const available = "rows" in read;
+      setLineageUnavailable(!available);
+      setBoardStatus(available ? "ready" : "unavailable");
+    });
     if (!("rows" in read)) return;
     const mapped = read.rows.map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
@@ -1399,6 +1419,11 @@ export default function FlowCanvas({
           sendToOttoTitle,
           onEvolve: handleEvolve,
           onVariant: handleVariant,
+          imageActionPending: pendingImageAction !== null,
+          imageVariantPending:
+            pendingImageAction?.nodeId === n.id && pendingImageAction.origin === "variant",
+          imageEvolvePending:
+            pendingImageAction?.nodeId === n.id && pendingImageAction.origin === "edit",
           evolveCostHint,
           onOpenLineage: openLineage,
           // #643 T2: the shape a new take of THIS card will be delivered in — this card's own
@@ -1558,22 +1583,47 @@ export default function FlowCanvas({
   });
 
   return (
-    <div
-      ref={canvasHostRef}
-      style={{ flex: 1, width: "100%", height: "100%", minHeight: 0, position: "relative", overflow: "hidden" }}
-      className={skin === "gb" ? (panMode ? "gb" : "gb cv-select-mode") : undefined}
-      onDragOver={(e) => {
-        if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
-        setDragOver(true);
-      }}
-      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
-      onDrop={handleCanvasDrop}
-    >
+    <TooltipProvider>
+      <div
+        ref={canvasHostRef}
+        className={cn(
+          "relative h-full min-h-0 w-full flex-1 overflow-hidden",
+          skin === "gb" && (panMode ? "gb" : "gb cv-select-mode"),
+        )}
+        onDragOver={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
+        onDrop={handleCanvasDrop}
+      >
       {/* OTTO working — mirrors the agent's activity onto the canvas (Grok pattern). */}
       {activeThreadId && activity?.has(activeThreadId) && (
-        <OttoCanvasStatus label="working on it…" />
+        <OttoCanvasStatus label="Working on it…" />
+      )}
+      {boardStatus === "loading" && (
+        <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center" role="status" aria-live="polite">
+          <Badge variant="outline">
+            <Spinner aria-hidden="true" />
+            Loading canvas…
+          </Badge>
+        </div>
+      )}
+      {boardStatus === "unavailable" && (
+        <div className="absolute inset-x-0 top-4 z-10 flex justify-center px-4">
+          <Alert role="alert" variant="destructive" density="compact" className="max-w-md">
+            <AlertTitle>Couldn&apos;t refresh Canvas</AlertTitle>
+            <AlertDescription>
+              <span>Nothing on your board was changed. Retry to check for newer work.</span>
+              <Button type="button" variant="outline" size="xs" onClick={requestReload}>
+                <RefreshCw data-icon="inline-start" aria-hidden="true" />
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
       )}
       {/* Drop-to-add-image hint (drag a file from anywhere onto the canvas). */}
       {dragOver && (
@@ -1582,7 +1632,7 @@ export default function FlowCanvas({
         </div>
       )}
       {showGraph && (
-        <div style={{ position: "absolute", inset: 0 }}>
+        <div className="absolute inset-0">
           <ReactFlow
             style={{ width: "100%", height: "100%", minHeight: 0 }}
             onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
@@ -1646,13 +1696,12 @@ export default function FlowCanvas({
           {composerOpen && (
             <form
               ref={composerFormRef}
-              className="al-promptbar cv-composer-pop"
               // Fixed 520px used to get clipped by the host's overflow:hidden whenever
               // the canvas pane shrank below that (narrow chat pane + nav rail at
               // 1024–1279px, #513). maxWidth caps it to the stack's own width, which is
               // already inset from the host, so the fee note and close button are never
               // cut off.
-              style={{ width: 520, maxWidth: "100%" }}
+              className="al-promptbar cv-composer-pop w-[520px] max-w-full"
               onSubmit={(e) => { e.preventDefault(); void handleGenerate(); }}
             >
               <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
@@ -1660,6 +1709,7 @@ export default function FlowCanvas({
                   entities={entities}
                   docKey={`canvas-${composerKey}`}
                   placeholder="Describe an image… (@ to reference your stuff)"
+                  disabled={submitting}
                   onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
                   onSubmit={() => void handleGenerate()}
                 />
@@ -1667,31 +1717,29 @@ export default function FlowCanvas({
               {/* One row for "what this Generate will make": how many, and what shape. Both are
                   answers to the same question, so they sit together rather than as two stray
                   full-width rows in the composer's column (#643 T2). */}
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div className="flex flex-wrap items-center gap-2">
                 {/* A2: how many images this one Generate makes. The price beside it follows the
                     choice, so the merchant sees the real total before pressing anything. */}
-                <div
-                  role="group"
+                <ToggleGroup
+                  type="single"
+                  value={String(imageCount)}
+                  onValueChange={(value) => value && setImageCount(Number(value))}
+                  variant="outline"
+                  size="sm"
+                  disabled={submitting}
                   aria-label="How many images to make"
-                  style={{ display: "flex", gap: 2, alignItems: "center" }}
                 >
                   {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
-                    <Button
+                    <ToggleGroupItem
                       key={n}
-                      type="button"
-                      variant={imageCount === n ? "default" : "ghost"}
-                      size="sm"
-                      className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
-                      aria-pressed={imageCount === n}
+                      value={String(n)}
                       aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
                       title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
-                      style={{ minWidth: 30, paddingInline: 8 }}
-                      onClick={() => setImageCount(n)}
                     >
                       {n}
-                    </Button>
+                    </ToggleGroupItem>
                   ))}
-                </div>
+                </ToggleGroup>
                 {/* #643 T2: the shape this Generate will deliver. The menu is whatever the server
                     says the engine can make — nothing is written down here — and the selected one
                     is exactly what the request carries. Costs the same in every shape. */}
@@ -1701,6 +1749,7 @@ export default function FlowCanvas({
                     value={imageShape}
                     options={imageShapeMenu.options}
                     onChange={setImageShape}
+                    disabled={submitting}
                     title="The shape these images will be made in — same cost in every shape"
                   />
                 )}
@@ -1716,6 +1765,7 @@ export default function FlowCanvas({
                     <Checkbox
                       id="canvas-coherent-set"
                       checked={imageCoherentSet}
+                      disabled={submitting}
                       onCheckedChange={(checked) => setImageCoherentSet(checked === true)}
                     />
                     <Label htmlFor="canvas-coherent-set" className="text-[0.75rem] font-normal text-muted-foreground">
@@ -1724,19 +1774,32 @@ export default function FlowCanvas({
                   </div>
                 )}
               </div>
-              <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
-              <Button variant="default" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</Button>
+              <Badge variant="outline" title="Charged when you press Generate">{composerCostHint}</Badge>
               <Button
-                variant="ghost"
+                variant="default"
                 size="sm"
-                className="h-auto px-[13px] py-1.5 text-[12.5px] [&_svg]:size-[15px]"
+                type="submit"
+                disabled={!costQuote || submitting || !prompt.trim()}
+                aria-live="polite"
+              >
+                {submitting ? (
+                  <>
+                    <Spinner data-icon="inline-start" aria-hidden="true" />
+                    Starting…
+                  </>
+                ) : "Generate"}
+              </Button>
+              <TooltipButton
+                label="Close image prompt"
+                tooltip="Close prompt"
+                variant="ghost"
+                size="icon-sm"
                 type="button"
-                title="Close prompt"
-                aria-label="Close image prompt"
+                disabled={submitting}
                 onClick={() => closeComposer(true)}
               >
-                <X size={15} strokeWidth={2.2} aria-hidden />
-              </Button>
+                <X aria-hidden="true" strokeWidth={2.2} />
+              </TooltipButton>
             </form>
           )}
           {/* B6: what to do with several cards at once. Appears only when more than one card
@@ -1747,7 +1810,7 @@ export default function FlowCanvas({
             // hand/select tools and they stopped being clickable (#604 r2 P2①). The row still
             // wraps rather than getting clipped when the pane is narrow (#513).
             <div className="cv-batchbar" role="toolbar" aria-label="Selected cards">
-              <span className="text-[0.8125rem]" style={{ whiteSpace: "nowrap" }}>{selection.count} selected</span>
+              <span className="whitespace-nowrap text-[0.8125rem]">{selection.count} selected</span>
               {/* Side by side, and only for what the recorded facts allow: the two cards of a
                   press that really made two. Any two cards of a batch of four have no A and no B,
                   and a card beside the card it was made from is a different thing to put on
@@ -1757,7 +1820,6 @@ export default function FlowCanvas({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-auto px-[13px] py-1.5 text-[12.5px]"
                   title="Look at these two side by side"
                   onClick={() => setCompareIds([comparePair.left.id, comparePair.right.id])}
                 >
@@ -1770,7 +1832,6 @@ export default function FlowCanvas({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-auto px-[13px] py-1.5 text-[12.5px]"
                 title={sendToOttoTitle}
                 onClick={sendSelectionToOtto}
               >
@@ -1780,7 +1841,6 @@ export default function FlowCanvas({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-auto px-[13px] py-1.5 text-[12.5px]"
                 disabled={selection.downloads.length === 0}
                 title={selection.downloads.length === 0 ? "None of these are finished yet" : "Save these to your computer"}
                 onClick={() => downloadSelection(selection.downloads)}
@@ -1791,13 +1851,12 @@ export default function FlowCanvas({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-auto px-[13px] py-1.5 text-[12.5px]"
                 title="Take these cards off the board"
                 onClick={() => setPendingBatchDeleteIds(selection.ids)}
               >
                 Remove
               </Button>
-              <Button type="button" variant="ghost" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px]" title="Deselect" onClick={clearSelection}>
+              <Button type="button" variant="ghost" size="sm" title="Deselect" onClick={clearSelection}>
                 Clear
               </Button>
             </div>
@@ -1811,89 +1870,87 @@ export default function FlowCanvas({
               gets clipped by the host's overflow:hidden. maxWidth + flexWrap here wrap
               it to a second row instead of clipping it; the cap is the stack's width,
               which is already inset from the host. */}
-          <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools" style={{ flexWrap: "wrap", justifyContent: "center", maxWidth: "100%" }}>
-            <Button
+          <div className="cv-toolbar max-w-full flex-wrap justify-center" role="toolbar" aria-label="Canvas tools">
+            <TooltipButton
+              label="Zoom out"
               type="button"
               variant="ghost"
-              className={CV_TOOLBAR_BUTTON_CLASS}
-              title="Zoom out"
-              aria-label="Zoom out"
+              size="icon-sm"
               onClick={() => void flowRef.current?.zoomOut({ duration: 150 })}
             >
-              <ZoomOut size={18} strokeWidth={1.9} aria-hidden />
-            </Button>
-            <Button
+              <ZoomOut aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+            <TooltipButton
+              label="Zoom in"
               type="button"
               variant="ghost"
-              className={CV_TOOLBAR_BUTTON_CLASS}
-              title="Zoom in"
-              aria-label="Zoom in"
+              size="icon-sm"
               onClick={() => void flowRef.current?.zoomIn({ duration: 150 })}
             >
-              <ZoomIn size={18} strokeWidth={1.9} aria-hidden />
-            </Button>
-            <Button
+              <ZoomIn aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+            <TooltipButton
+              label="Fit to screen"
               type="button"
               variant="ghost"
-              className={CV_TOOLBAR_BUTTON_CLASS}
-              title="Fit to screen"
-              aria-label="Fit to screen"
+              size="icon-sm"
               onClick={() => void flowRef.current?.fitView({ padding: 0.22, duration: 220 })}
             >
-              <Maximize2 size={18} strokeWidth={1.9} aria-hidden />
-            </Button>
-            <span className="cv-tb-div" />
+              <Maximize2 aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+            <Separator orientation="vertical" className="mx-1 h-5" />
             {/* B6: two tools instead of one toggle. As a toggle, both modes shared a button
                 whose pressed state read the same after two clicks — the merchant could not
                 tell which tool was live, and the box-select mode was effectively unreachable.
                 Each tool now shows its own on/off state and needs exactly one click. */}
-            <Button
-              type="button"
-              variant="ghost"
-              className={cn(CV_TOOLBAR_BUTTON_CLASS, panMode && "cv-tb-active")}
-              title="Hand tool — drag the board to move around"
-              aria-label="Hand tool"
-              aria-pressed={panMode}
-              onClick={() => setPanMode(true)}
+            <ToggleGroup
+              type="single"
+              value={panMode ? "hand" : "select"}
+              onValueChange={(value) => value && setPanMode(value === "hand")}
+              aria-label="Canvas interaction mode"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0" /><path d="M14 10V4a2 2 0 0 0-4 0v2" /><path d="M10 10.5V6a2 2 0 0 0-4 0v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></svg>
-            </Button>
-            <Button
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ToggleGroupItem value="hand" aria-label="Hand tool">
+                    <Hand aria-hidden="true" strokeWidth={1.9} />
+                  </ToggleGroupItem>
+                </TooltipTrigger>
+                <TooltipContent>Hand tool — drag the board to move around</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ToggleGroupItem value="select" aria-label="Select tool">
+                    <MousePointer2 aria-hidden="true" strokeWidth={1.9} />
+                  </ToggleGroupItem>
+                </TooltipTrigger>
+                <TooltipContent>Select tool — drag a box to pick several cards</TooltipContent>
+              </Tooltip>
+            </ToggleGroup>
+            <Separator orientation="vertical" className="mx-1 h-5" />
+            <TooltipButton
+              label="Generate image"
+              tooltip="Generate an image — describe what you want"
               type="button"
               variant="ghost"
-              className={cn(CV_TOOLBAR_BUTTON_CLASS, !panMode && "cv-tb-active")}
-              title="Select tool — drag a box to pick several cards"
-              aria-label="Select tool"
-              aria-pressed={!panMode}
-              onClick={() => setPanMode(false)}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
-            </Button>
-            <span className="cv-tb-div" />
-            <Button
-              type="button"
-              variant="ghost"
-              className={CV_TOOLBAR_BUTTON_CLASS}
-              title="Generate an image — describe what you want"
-              aria-label="Generate image"
+              size="icon-sm"
               aria-expanded={composerOpen}
               onClick={() => setComposerOpen((v) => !v)}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
-            </Button>
-            <Button
+              <ImageIcon aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+            <TooltipButton
+              label="Video"
+              tooltip="Make a video from a prompt"
               type="button"
               variant="ghost"
-              className={CV_TOOLBAR_BUTTON_CLASS}
-              title="Make a video from a prompt"
-              aria-label="Video"
+              size="icon-sm"
               onClick={() => { closeComposer(false); setCostQuote(null); setT2vOpen(true); }}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
-            </Button>
-            <Button type="button" variant="ghost" className={CV_TOOLBAR_BUTTON_CLASS} title="Add text" aria-label="Add text" onClick={addTextNode}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
-            </Button>
+              <Video aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+            <TooltipButton label="Add text" type="button" variant="ghost" size="icon-sm" onClick={addTextNode}>
+              <Type aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
           </div>
         </div>
       ) : (
@@ -1907,12 +1964,27 @@ export default function FlowCanvas({
               entities={entities}
               docKey={`canvas-${composerKey}`}
               placeholder="Type to imagine… (@ to reference elements)"
+              disabled={submitting}
               onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
               onSubmit={handleGenerate}
             />
           </div>
           <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
-          <Button variant="default" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</Button>
+          <Button
+            variant="default"
+            size="sm"
+            className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
+            type="submit"
+            disabled={!costQuote || submitting || !prompt.trim()}
+            aria-live="polite"
+          >
+            {submitting ? (
+              <>
+                <Spinner data-icon="inline-start" aria-hidden="true" />
+                Starting…
+              </>
+            ) : "Generate"}
+          </Button>
           {activeThreadId && (
             <Button
               type="button"
@@ -1928,47 +2000,47 @@ export default function FlowCanvas({
           <Button variant="ghost" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px]" type="button" onClick={addTextNode}>+ Text</Button>
         </form>
       )}
-      <Dialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{pendingDeletePaid ? "Still generating — remove anyway?" : "Remove from canvas?"}</DialogTitle>
-            <DialogDescription>
+      <AlertDialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingDeletePaid ? "Still generating — remove anyway?" : "Remove from canvas?"}</AlertDialogTitle>
+            <AlertDialogDescription>
               {pendingDeletePaid
                 ? "This one is still being made and you've already been charged for it. Removing it won't refund the credits, and it will still finish and land in your Library. If you remove it and generate again, you'll be charged a second time."
                 : "This takes the card off your board. Any generated image or video stays saved in your library."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingDeleteId(null)}>{pendingDeletePaid ? "Keep it" : "Cancel"}</Button>
-            <Button
-              variant="destructive"
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{pendingDeletePaid ? "Keep it" : "Cancel"}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90"
               onClick={() => { if (pendingDeleteId) deleteNode(pendingDeleteId); setPendingDeleteId(null); }}
             >
               Remove
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={pendingBatchDeleteIds !== null} onOpenChange={(open) => { if (!open) setPendingBatchDeleteIds(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{batchDeleteCopy.title}</DialogTitle>
-            <DialogDescription>{batchDeleteCopy.description}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingBatchDeleteIds(null)}>Cancel</Button>
-            <Button
-              variant="destructive"
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={pendingBatchDeleteIds !== null} onOpenChange={(open) => { if (!open) setPendingBatchDeleteIds(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{batchDeleteCopy.title}</AlertDialogTitle>
+            <AlertDialogDescription>{batchDeleteCopy.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90"
               onClick={() => {
                 if (pendingBatchDeleteIds) deleteNodes(pendingBatchDeleteIds);
                 setPendingBatchDeleteIds(null);
               }}
             >
               Remove
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open && !videoSubmitting) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
         <DialogContent>
           <DialogHeader>
@@ -1989,23 +2061,25 @@ export default function FlowCanvas({
                 hasSourceImage
               />
             )}
-            <div className="flex gap-2">
+            <ToggleGroup
+              type="single"
+              value={motion}
+              onValueChange={(value) => value && setMotion(value as typeof motion)}
+              variant="outline"
+              disabled={videoSubmitting}
+              className="grid w-full grid-cols-3"
+              aria-label="Camera motion"
+            >
               {([["gentle", "Gentle"], ["dynamic", "Dynamic"], ["custom", "Custom"]] as const).map(([key, label]) => (
-                <Button
+                <ToggleGroupItem
                   key={key}
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMotion(key)}
-                  aria-pressed={motion === key}
-                  // #840 车4:两态配色原来就是显式写的,原样保留;只把 Button 自带的
-                  // h-11 / px-5 / font-semibold 压回这一排选项键的原值(内距 px-3 py-2、
-                  // 高度随内容、常规字重)。
-                  className={`h-auto flex-1 rounded-lg border px-3 py-2 text-sm font-normal transition-colors ${motion === key ? "border-foreground bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-accent"}`}
+                  value={key}
+                  className="w-full"
                 >
                   {label}
-                </Button>
+                </ToggleGroupItem>
               ))}
-            </div>
+            </ToggleGroup>
             {motion === "custom" && (
               // #840 车4:迁到 ui/Input。原来的手搓样子与组件默认值同形,只逐条压回它自己的
               // 值:1px 边框(非 1.5px)、border 用 --border(非 --input)、bg-background
@@ -2016,7 +2090,7 @@ export default function FlowCanvas({
                 value={customMotion}
                 onChange={(e) => setCustomMotion(e.target.value)}
                 placeholder="e.g. slow zoom in as she turns to camera"
-                className="h-auto rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-none focus-visible:ring-ring/40"
+                disabled={videoSubmitting}
               />
             )}
           </div>
@@ -2024,6 +2098,7 @@ export default function FlowCanvas({
             <Button variant="ghost" disabled={videoSubmitting} onClick={() => setPendingAnimateId(null)}>Cancel</Button>
             <Button
               disabled={!costQuote || videoSubmitting}
+              aria-live="polite"
               onClick={async () => {
                 const p =
                   motion === "dynamic"
@@ -2038,7 +2113,17 @@ export default function FlowCanvas({
                 }
               }}
             >
-              {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}
+              {!costQuote ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Checking cost…
+                </>
+              ) : videoSubmitting ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Starting video…
+                </>
+              ) : "Make video"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2082,16 +2167,28 @@ export default function FlowCanvas({
             <Button variant="ghost" disabled={videoSubmitting} onClick={resetT2v}>Cancel</Button>
             <Button
               disabled={!t2vPrompt.trim() || !costQuote || videoSubmitting}
+              aria-live="polite"
               onClick={async () => {
                 const p = t2vPrompt.trim();
                 if (p && await runT2v(p)) resetT2v();
               }}
             >
-              {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}
+              {!costQuote ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Checking cost…
+                </>
+              ) : videoSubmitting ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Starting video…
+                </>
+              ) : "Make video"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

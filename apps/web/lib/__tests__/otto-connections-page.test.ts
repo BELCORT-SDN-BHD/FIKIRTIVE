@@ -85,8 +85,8 @@ const CONNECTED_CHANNELS = [
   { id: "x", label: "X", status: "needs_reconnect" as const, targets: [], connectUrl: "/api/x/authorize" },
 ];
 
-describe("Connections page groups by merchant task (#518)", () => {
-  it("shows Publishing and Messaging as separate groups; makes exactly one data call", async () => {
+describe("Connections page uses the Phase 4 service inspector", () => {
+  it("shows one provider list and detail inspector; makes exactly one data call", async () => {
     mocks.getAccountViewData.mockResolvedValue({
       settings: {},
       channels: DISCONNECTED_CHANNELS,
@@ -103,35 +103,25 @@ describe("Connections page groups by merchant task (#518)", () => {
     // getAccountViewData() — it must never call getMetaConnection() itself.
     expect(mocks.getMetaConnection).not.toHaveBeenCalled();
 
-    expect(text).toContain("Publishing");
-    expect(text).toContain("Messaging");
+    expect(text).toContain("Services");
+    expect(text).toContain("Workspace access");
+    expect(text).toContain("Add connection");
 
-    // Meta disconnected ⇒ Instagram and Facebook both show Connect, never Manage.
+    // Selected disconnected provider has one real action, never Manage.
     const connectLinks = Array.from(dom.querySelectorAll<HTMLAnchorElement>('a[href="/api/meta/authorize"]'));
-    expect(connectLinks).toHaveLength(2);
-    connectLinks.forEach((a) => expect(a.textContent).toBe("Connect"));
+    expect(connectLinks).toHaveLength(1);
+    expect(connectLinks[0].textContent).toBe("Connect");
     expect(Array.from(dom.querySelectorAll("a")).some((a) => a.textContent === "Manage")).toBe(false);
 
     // X: no OAuth route exists yet — honest "Not available yet", no button, regardless
     // of the (irrelevant) needs_reconnect/connectUrl the channels-load fixture carries.
     expect(dom.querySelector('a[href="/api/x/authorize"]')).toBeNull();
 
-    // WhatsApp and X: capabilities that don't exist yet — honest label, and definitely
-    // NOT a fake Connect/Reconnect button (no anchor/button anywhere in their row).
-    expect(text).toContain("WhatsApp");
-    for (const label of ["WhatsApp", "X"]) {
-      // querySelectorAll returns document order (ancestors before descendants), so the
-      // LAST matching div is the innermost, most specific row — not the whole-page wrapper.
-      const candidates = Array.from(dom.querySelectorAll("div")).filter(
-        (el) => el.textContent?.includes(label) && el.textContent.includes("Not available yet"),
-      );
-      const row = candidates.at(-1);
-      expect(row, `${label} row should say "Not available yet"`).toBeTruthy();
-      expect(row!.querySelector("a, button")).toBeNull();
-    }
+    expect(text).toContain("XUnavailable");
+    expect(text).not.toContain("WhatsApp");
   });
 
-  it("keeps the Meta ad kill-switch working, nested under Publishing once the connection is live", async () => {
+  it("keeps the Meta ad kill-switch working inside the selected provider detail", async () => {
     mocks.getAccountViewData.mockResolvedValue({
       settings: {},
       channels: CONNECTED_CHANNELS,
@@ -156,12 +146,14 @@ describe("Connections page groups by merchant task (#518)", () => {
     expect(dom.textContent).toContain("Meta ad accounts");
     expect(dom.textContent).toContain("Pause all ad changes");
 
-    // Instagram AND Facebook both show "Manage", matching their real targets — one status
-    // source (getAccountViewData()'s single Meta read), one button each.
+    // Instagram is the initial detail; selecting Facebook changes the detail without changing its truth source.
     expect(dom.textContent).toContain("Acme IG Page");
+    const facebookRow = dom.querySelector<HTMLButtonElement>('button[aria-label="View Facebook connection"]');
+    expect(facebookRow).toBeTruthy();
+    await act(async () => facebookRow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(dom.textContent).toContain("Acme Page");
     const manageLinks = Array.from(dom.querySelectorAll("a")).filter((a) => a.textContent === "Manage");
-    expect(manageLinks.length).toBe(2);
+    expect(manageLinks.length).toBe(1);
 
     // X still has no real connect flow even once Meta is connected — it isn't Meta-backed.
     expect(dom.querySelector('a[href="/api/x/authorize"]')).toBeNull();

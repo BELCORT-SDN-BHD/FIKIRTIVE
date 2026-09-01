@@ -9,7 +9,13 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { startAssetGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
@@ -68,7 +74,7 @@ export function templateRunReducer(state: TemplateRunState, event: TemplateRunEv
       return {
         ...state,
         phase: "unknown",
-        message: "This didn't finish. Check your Library in a minute.",
+        message: "We couldn't confirm whether this finished. Check your Library in a minute.",
       };
     case "done":
       return { phase: "done", message: null, resultUrl: event.url, resultGenId: event.genId };
@@ -234,6 +240,7 @@ export default function TemplateModal({
 
   const canGenerate =
     !uploading && !!sourceGenId && (!template.question || answer.trim().length > 0) && isTemplatePaidConfirmAvailable(run);
+  const formLocked = uploading || phase !== "form";
 
   /** ONE press (#896, Founder 2026-08-13): the button carries the price, so pressing it is
    *  the approval. The spend path below — idempotency key, in-flight lock, the paid-confirm
@@ -314,22 +321,19 @@ export default function TemplateModal({
       <>
         <Button type="button" variant="ghost" size="sm" onClick={() => setDetailOpen(true)}>Open in detail</Button>
         <Button type="button" variant="ghost" size="sm" onClick={() => dispatchRun({ type: "reset" })}>Make another</Button>
-        <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
+        <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
       </>
     ) : phase === "generating" ? (
-      <Button type="button" variant="brand" size="sm" disabled>
+      <Button type="button" variant="default" size="sm" disabled>
+        <Spinner data-icon="inline-start" aria-label="Generating template" />
         Generating…
       </Button>
     ) : phase === "cancelled" ? (
-      // Nothing to retry and nothing to apologise for — the merchant stopped it (#602 r2).
-      <div className="flex w-full items-center justify-between gap-3">
-        <p className="m-0 text-[0.8125rem] text-muted-foreground">Canceled — you weren&rsquo;t charged.</p>
-        <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
-      </div>
+      <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
     ) : phase === "unknown" ? (
       <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
     ) : (
-      <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={onGenerate}>
+      <Button type="button" variant="default" size="sm" disabled={!canGenerate} onClick={onGenerate}>
         Generate · {costLabel}
       </Button>
     );
@@ -361,71 +365,117 @@ export default function TemplateModal({
           </DialogHeader>
 
           <div className="min-h-0 overflow-y-auto">
-          {phase === "done" && resultUrl ? (
-            <div className="flex flex-col gap-3">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={resultUrl}
-                alt="result"
-                style={{ maxWidth: "100%", maxHeight: "42vh", borderRadius: "14px", display: "block", margin: "0 auto" }}
-              />
-              {template.captions.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <span className="text-[0.8125rem] text-muted-foreground">
-                    A ready caption. Everything in brackets is a blank — fill them in before you post.
-                  </span>
-                  {template.captions.map((c) => (
-                    <div
-                      key={`${c.language}:${c.text}`}
-                      className="flex items-start justify-between gap-2 rounded-[14px] border border-border bg-card p-3"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-[0.75rem] uppercase tracking-[0.4px] text-muted-foreground">
-                          {TEMPLATE_CAPTION_LANGUAGE_LABELS[c.language]}
-                        </div>
-                        <p className="m-0 mt-0.5 text-[0.8125rem] text-foreground">{c.text}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
+            {phase === "done" && resultUrl ? (
+              <div className="flex flex-col gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={resultUrl}
+                  alt={`Generated ${template.name}`}
+                  className="mx-auto block max-h-[42vh] max-w-full rounded-[var(--radius-card)]"
+                />
+                {template.captions.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-[0.8125rem] text-muted-foreground">
+                      A ready caption. Everything in brackets is a blank — fill them in before you post.
+                    </span>
+                    {template.captions.map((c) => (
+                      <Card
+                        key={`${c.language}:${c.text}`}
                         size="sm"
-                        onClick={() => copyCaption(c.text)}
+                        className="gap-3 shadow-none"
                       >
-                        {copiedCaption === c.text ? "Copied" : "Copy"}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <span className="text-[0.8125rem] text-muted-foreground">Product image</span>
-                {thumbUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={thumbUrl} alt="upload" style={{ width: 120, height: 120, objectFit: "cover", borderRadius: "14px" }} />
-                ) : (
-                  <input type="file" accept="image/*" onChange={onPickFile} disabled={uploading} />
+                        <CardHeader>
+                          <CardTitle>
+                            <Badge variant="outline">
+                              {TEMPLATE_CAPTION_LANGUAGE_LABELS[c.language]}
+                            </Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="m-0 text-sm text-foreground">{c.text}</p>
+                        </CardContent>
+                        <CardFooter className="justify-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyCaption(c.text)}
+                          >
+                            {copiedCaption === c.text ? (
+                              <CheckIcon data-icon="inline-start" />
+                            ) : (
+                              <CopyIcon data-icon="inline-start" />
+                            )}
+                            {copiedCaption === c.text ? "Copied" : "Copy"}
+                          </Button>
+                        </CardFooter>
+                      </Card>
+                    ))}
+                  </div>
                 )}
-                {uploading && <span className="text-[0.75rem] text-muted-foreground">Uploading…</span>}
-              </label>
-              {template.question && (
-                <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                  <span className="text-[0.8125rem] text-muted-foreground">{template.question.label}</span>
-                  <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={template.question.placeholder} />
-                </label>
-              )}
-              {message && (
-                <div
-                  role="alert"
-                  className="rounded-[14px] bg-error-soft px-3 py-2 text-[13px] font-medium leading-[18px] text-[var(--error-soft-foreground)]"
-                >
-                  {message}
-                </div>
-              )}
-            </div>
-          )}
+              </div>
+            ) : (
+              <FieldGroup className="gap-4">
+                <Field className="gap-1.5" data-disabled={formLocked}>
+                  <FieldLabel htmlFor="template-product-image">Product image</FieldLabel>
+                  {thumbUrl ? (
+                    <div className="flex items-end gap-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={thumbUrl}
+                        alt="Uploaded product"
+                        className="size-[120px] rounded-[var(--radius-card)] object-cover"
+                      />
+                      <Badge variant="success">Ready</Badge>
+                    </div>
+                  ) : (
+                    <Input
+                      id="template-product-image"
+                      type="file"
+                      accept="image/*"
+                      onChange={onPickFile}
+                      disabled={formLocked}
+                      className="h-auto py-2 file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-2.5 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
+                    />
+                  )}
+                  {uploading && (
+                    <FieldDescription className="flex items-center gap-2">
+                      <Spinner aria-label="Uploading product image" />
+                      Uploading…
+                    </FieldDescription>
+                  )}
+                </Field>
+                {template.question && (
+                  <Field className="gap-1.5" data-disabled={formLocked}>
+                    <FieldLabel htmlFor="template-answer">{template.question.label}</FieldLabel>
+                    <Input
+                      id="template-answer"
+                      value={answer}
+                      onChange={(e) => setAnswer(e.target.value)}
+                      placeholder={template.question.placeholder}
+                      disabled={formLocked}
+                    />
+                  </Field>
+                )}
+                {phase === "cancelled" ? (
+                  <Alert role="status" density="compact">
+                    <AlertTitle>Generation canceled</AlertTitle>
+                    <AlertDescription>You weren&rsquo;t charged.</AlertDescription>
+                  </Alert>
+                ) : message ? (
+                  <Alert
+                    role="alert"
+                    variant={phase === "unknown" ? "warning" : "destructive"}
+                    density="compact"
+                  >
+                    <AlertTitle>
+                      {phase === "unknown" ? "Status not confirmed" : "Generation couldn’t start"}
+                    </AlertTitle>
+                    <AlertDescription>{message}</AlertDescription>
+                  </Alert>
+                ) : null}
+              </FieldGroup>
+            )}
           </div>
 
           <DialogFooter>{footer}</DialogFooter>

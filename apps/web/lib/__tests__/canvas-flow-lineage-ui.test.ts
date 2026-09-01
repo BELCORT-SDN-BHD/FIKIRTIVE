@@ -66,7 +66,7 @@ vi.mock("@/lib/canvas-actions", () => ({
 }));
 vi.mock("@/lib/otto-canvas-bridge", () => ({ syncOttoCanvasNodes: mocks.boardRead }));
 vi.mock("@/lib/actions", () => ({ uploadReference: mocks.uploadReference }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("@/components/ui/toast", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/MentionInput", () => ({ MentionInput: () => null }));
 vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }));

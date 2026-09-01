@@ -18,7 +18,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StuffItem } from "@/lib/stuff-items";
 
-// Radix Select 在 jsdom 里要这三样才活得起来(popper 量尺寸、指针捕获、滚动到选中项)。
+// Radix overlays 在 jsdom 里要这三样才活得起来(popper 量尺寸、指针捕获、滚动)。
 class ResizeObserverStub {
   observe() {}
   unobserve() {}
@@ -60,19 +60,27 @@ function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement | un
   return Array.from(scope.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
 }
 
-/** Open the Select and pick the option whose label starts with `label`. */
-async function pickType(label: string): Promise<void> {
-  const trigger = document.querySelector<HTMLButtonElement>('[role="combobox"]');
-  expect(trigger, "the type Select is gone").toBeTruthy();
+async function openAction(scope: ParentNode, label: string): Promise<void> {
+  const trigger = scope.querySelector<HTMLButtonElement>('button[aria-label^="Actions for "]');
+  expect(trigger, "the item action menu is gone").toBeTruthy();
   await act(async () => {
     trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   });
-  const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
-    .find((o) => o.textContent?.trim().startsWith(label));
-  expect(option, `no "${label}" option in the type Select`).toBeTruthy();
-  await act(async () => {
-    option!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  });
+  const action = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    .find((item) => item.textContent?.trim() === label);
+  expect(action, `the item menu has no ${label} action`).toBeTruthy();
+  await act(async () => { action!.click(); });
+}
+
+/** Pick the visible ToggleGroup option whose label starts with `label`. */
+async function pickType(label: string): Promise<void> {
+  const dialog = document.querySelector('[role="dialog"]');
+  expect(dialog, "the Change type dialog is gone").toBeTruthy();
+  const option = Array.from(
+    dialog!.querySelectorAll<HTMLButtonElement>('[data-slot="toggle-group-item"]'),
+  ).find((item) => item.textContent?.trim().startsWith(label));
+  expect(option, `no "${label}" option in the type choices`).toBeTruthy();
+  await act(async () => { option!.click(); });
 }
 
 const BOTTLE_AS_PERSON: StuffItem[] = [
@@ -118,9 +126,7 @@ describe("Library — the Change type entry exists on an element card (beta bug 
       createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType }),
     );
 
-    const trigger = buttonWithText(dom, "Change type");
-    expect(trigger, "the element card has no Change type control").toBeTruthy();
-    await act(async () => { trigger!.click(); });
+    await openAction(dom, "Change type");
 
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog, "Change type opened nothing").toBeTruthy();
@@ -132,7 +138,7 @@ describe("Library — the Change type entry exists on an element card (beta bug 
     const dom = await mount(
       createElement(StuffLibrary, { items: A_GENERATION, mode: "library" as const, onChangeType: vi.fn(async () => null) }),
     );
-    expect(buttonWithText(dom, "Change type")).toBeFalsy();
+    expect(dom.querySelector('button[aria-label^="Actions for "]')).toBeFalsy();
   });
 });
 
@@ -141,7 +147,7 @@ describe("Library — Change type says what the change costs before it is saved"
     const dom = await mount(
       createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType: vi.fn(async () => null) }),
     );
-    await act(async () => { buttonWithText(dom, "Change type")!.click(); });
+    await openAction(dom, "Change type");
     expect(buttonWithText(document.body, "Save")!.disabled, "Save is live before anything changed").toBe(true);
   });
 
@@ -149,7 +155,7 @@ describe("Library — Change type says what the change costs before it is saved"
     const dom = await mount(
       createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType: vi.fn(async () => null) }),
     );
-    await act(async () => { buttonWithText(dom, "Change type")!.click(); });
+    await openAction(dom, "Change type");
     expect(document.querySelector('[role="dialog"]')!.textContent).toContain("keeps the wording it was made with");
   });
 
@@ -157,7 +163,7 @@ describe("Library — Change type says what the change costs before it is saved"
     const dom = await mount(
       createElement(StuffLibrary, { items: A_PRODUCT, mode: "library" as const, onChangeType: vi.fn(async () => null) }),
     );
-    await act(async () => { buttonWithText(dom, "Change type")!.click(); });
+    await openAction(dom, "Change type");
     expect(document.querySelector('[role="dialog"]')!.textContent).not.toContain("Cast needs a reference photo");
 
     await pickType("Cast");
@@ -168,19 +174,55 @@ describe("Library — Change type says what the change costs before it is saved"
     const dom = await mount(
       createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType: vi.fn(async () => null) }),
     );
-    await act(async () => { buttonWithText(dom, "Change type")!.click(); });
+    await openAction(dom, "Change type");
     await pickType("Product");
     expect(document.querySelector('[role="dialog"]')!.textContent).not.toContain("Cast needs a reference photo");
   });
 });
 
 describe("Library — Change type saves, and a refusal is readable", () => {
+  it("locks every exit and blocks a same-tick double save while the type changes", async () => {
+    let finish!: (value: string | null) => void;
+    const onChangeType = vi.fn(
+      () => new Promise<string | null>((resolve) => { finish = resolve; }),
+    );
+    const dom = await mount(
+      createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType }),
+    );
+    await openAction(dom, "Change type");
+    await pickType("Product");
+
+    const save = buttonWithText(document.body, "Save")!;
+    await act(async () => {
+      save.click();
+      save.click();
+      await Promise.resolve();
+    });
+
+    expect(onChangeType).toHaveBeenCalledTimes(1);
+    expect(buttonWithText(document.body, "Saving…")?.disabled).toBe(true);
+    expect(document.querySelector('[aria-label="Saving type"]')).toBeTruthy();
+    expect(buttonWithText(document.body, "Cancel")?.disabled).toBe(true);
+    expect(buttonWithText(document.body, "Close")?.disabled).toBe(true);
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          '[role="dialog"] [data-slot="toggle-group-item"]',
+        ),
+      )
+        .every((item) => item.disabled),
+    ).toBe(true);
+
+    await act(async () => { finish(null); });
+    expect(document.querySelector('[role="dialog"]')).toBeFalsy();
+  });
+
   it("saving routes the element id and the chosen kind exactly once", async () => {
     const onChangeType = vi.fn(async () => null);
     const dom = await mount(
       createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType }),
     );
-    await act(async () => { buttonWithText(dom, "Change type")!.click(); });
+    await openAction(dom, "Change type");
     await pickType("Product");
     await act(async () => { buttonWithText(document.body, "Save")!.click(); });
 
@@ -195,13 +237,33 @@ describe("Library — Change type saves, and a refusal is readable", () => {
     const dom = await mount(
       createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType }),
     );
-    await act(async () => { buttonWithText(dom, "Change type")!.click(); });
+    await openAction(dom, "Change type");
     await pickType("Product");
     await act(async () => { buttonWithText(document.body, "Save")!.click(); });
 
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog, "the dialog closed on a refusal — the merchant never learns why").toBeTruthy();
-    expect(dialog!.querySelector('[role="alert"]')?.textContent).toBe(busy);
+    expect(dialog!.querySelector('[role="alert"]')?.textContent).toContain(busy);
+  });
+
+  it("turns a thrown response into readable feedback and leaves a retry path", async () => {
+    const onChangeType = vi.fn(async () => {
+      throw new Error("response lost");
+    });
+    const dom = await mount(
+      createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType }),
+    );
+    await openAction(dom, "Change type");
+    await pickType("Product");
+    await act(async () => { buttonWithText(document.body, "Save")!.click(); });
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).toBeTruthy();
+    expect(dialog!.querySelector('[role="alert"]')?.textContent).toContain(
+      "The type couldn't be changed. Check your connection and try again.",
+    );
+    expect(buttonWithText(document.body, "Save")?.disabled).toBe(false);
+    expect(buttonWithText(document.body, "Cancel")?.disabled).toBe(false);
   });
 
   it("Cancel closes without changing anything", async () => {
@@ -209,7 +271,7 @@ describe("Library — Change type saves, and a refusal is readable", () => {
     const dom = await mount(
       createElement(StuffLibrary, { items: BOTTLE_AS_PERSON, mode: "library" as const, onChangeType }),
     );
-    await act(async () => { buttonWithText(dom, "Change type")!.click(); });
+    await openAction(dom, "Change type");
     await pickType("Product");
     await act(async () => { buttonWithText(document.body, "Cancel")!.click(); });
 

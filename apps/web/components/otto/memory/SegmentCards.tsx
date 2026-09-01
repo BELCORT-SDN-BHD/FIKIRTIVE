@@ -1,73 +1,85 @@
 "use client";
+
 import React, { useState } from "react";
+import { Archive, ArchiveRestore, MoreHorizontal, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { MemoryRow } from "@/lib/memory-actions";
+import { BrandRecordRemovalDialog } from "./BrandRecordRemovalDialog";
+import { MemoryNoteCard } from "./MemoryNoteCard";
+import { MemorySourceBadge } from "./MemorySourceBadge";
+import { useAsyncActionFeedback } from "./useAsyncActionFeedback";
 
 type SegFields = { name: string; who: string; pains: string; wants: string; channels: string; toneTips: string };
 
 const EMPTY: SegFields = { name: "", who: "", pains: "", wants: "", channels: "", toneTips: "" };
 
 function fieldsOf(data: Record<string, unknown>): SegFields {
-  const s = (v: unknown) => (typeof v === "string" ? v : "");
+  const s = (value: unknown) => (typeof value === "string" ? value : "");
   return {
     name: s(data.name), who: s(data.who), pains: s(data.pains),
     wants: s(data.wants), channels: s(data.channels), toneTips: s(data.toneTips),
   };
 }
 
-function SegForm({ initial, onCancel, onSubmit }: {
+function SegForm({ initial, onCancel, onSubmit, onSaved }: {
   initial: SegFields;
   onCancel: () => void;
-  onSubmit: (data: SegFields) => Promise<void>;
+  onSubmit: (data: SegFields) => Promise<string | null>;
+  onSaved: () => void;
 }) {
-  const [f, setF] = useState<SegFields>(initial);
-  const [saving, setSaving] = useState(false);
-  const set = (k: keyof SegFields) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setF((cur) => ({ ...cur, [k]: e.target.value }));
-  const valid = f.name.trim() && f.who.trim();
+  const [fields, setFields] = useState<SegFields>(initial);
+  const submission = useAsyncActionFeedback("The customer group couldn't be saved. Check your connection and try again.");
+  const set = (key: keyof SegFields) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setFields((current) => ({ ...current, [key]: event.target.value }));
+  const valid = fields.name.trim() && fields.who.trim();
+
+  async function save() {
+    const outcome = await submission.run(() => onSubmit(fields));
+    if (outcome === "success") onSaved();
+  }
+
   return (
-    <div className="flex flex-col gap-2">
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Name *</span>
-        <Input value={f.name} onChange={set("name")} placeholder="Young working moms" />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Who they are *</span>
-        <Textarea value={f.who} onChange={set("who")} rows={2} placeholder="25–38, urban, time-poor" />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Pains</span>
-        <Textarea value={f.pains} onChange={set("pains")} rows={1} />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Wants</span>
-        <Textarea value={f.wants} onChange={set("wants")} rows={1} />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Where to reach them</span>
-        <Input value={f.channels} onChange={set("channels")} placeholder="IG Reels, TikTok" />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.75rem] text-muted-foreground">Tone tips</span>
-        <Textarea value={f.toneTips} onChange={set("toneTips")} rows={1} />
-      </label>
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          disabled={!valid || saving}
-          onClick={() => {
-            setSaving(true);
-            void onSubmit(f).finally(() => setSaving(false));
-          }}
-        >
-          {saving ? "Saving…" : "Save"}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+    <FieldGroup className="gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field><FieldLabel>Name *</FieldLabel><Input value={fields.name} onChange={set("name")} placeholder="Young working moms" /></Field>
+        <Field><FieldLabel>Where to reach them</FieldLabel><Input value={fields.channels} onChange={set("channels")} placeholder="IG Reels, TikTok" /></Field>
       </div>
-    </div>
+      <Field><FieldLabel>Who they are *</FieldLabel><Textarea value={fields.who} onChange={set("who")} rows={2} placeholder="25–38, urban, time-poor" /></Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field><FieldLabel>Pains</FieldLabel><Textarea value={fields.pains} onChange={set("pains")} rows={2} /></Field>
+        <Field><FieldLabel>Wants</FieldLabel><Textarea value={fields.wants} onChange={set("wants")} rows={2} /></Field>
+      </div>
+      <Field><FieldLabel>Tone tips</FieldLabel><Textarea value={fields.toneTips} onChange={set("toneTips")} rows={2} /></Field>
+      {submission.error && (
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>Customer group wasn&apos;t saved</AlertTitle>
+          <AlertDescription>{submission.error}</AlertDescription>
+        </Alert>
+      )}
+      <div className="flex gap-2">
+        <Button size="sm" disabled={!valid || submission.pending} onClick={() => void save()}>
+          {submission.pending && <Spinner data-icon="inline-start" />}{submission.pending ? "Saving…" : "Save"}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={submission.pending} onClick={onCancel}>Cancel</Button>
+      </div>
+    </FieldGroup>
   );
 }
 
@@ -75,123 +87,81 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
   records: BrandRecordRow[];
   looseNotes: MemoryRow[];
   freshIds: Set<string>;
-  onSave: (id: string | undefined, data: SegFields) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-  onArchive: (id: string, data: Record<string, unknown>, status: "active" | "archived") => Promise<void>;
-  onNoteSave: (id: string, content: string) => Promise<void>;
-  onNoteDelete: (id: string) => Promise<void>;
+  onSave: (id: string | undefined, data: SegFields) => Promise<string | null>;
+  onDelete: (id: string) => Promise<string | null>;
+  onArchive: (id: string, data: Record<string, unknown>, status: "active" | "archived") => Promise<string | null>;
+  onNoteSave: (id: string, content: string) => Promise<string | null>;
+  onNoteDelete: (id: string) => Promise<string | null>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [noteEditId, setNoteEditId] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<BrandRecordRow | null>(null);
+  const [archivePendingId, setArchivePendingId] = useState<string | null>(null);
+  const archiveFeedback = useAsyncActionFeedback("The customer group couldn't be updated. Check your connection and try again.");
+  const activeCount = records.filter((record) => record.status === "active").length;
+  const ordered = [...records].sort((a, b) => Number(a.status === "archived") - Number(b.status === "archived"));
 
-  const activeCount = records.filter((r) => r.status === "active").length;
-
-  // Active cards first, archived after (dimmed) — same treatment as ProductShowcase.
-  const ordered = [...records].sort((a, b) => {
-    const av = a.status === "archived" ? 1 : 0;
-    const bv = b.status === "archived" ? 1 : 0;
-    return av - bv;
-  });
+  async function toggleArchive(record: BrandRecordRow) {
+    if (archiveFeedback.pending) return;
+    setArchivePendingId(record.id);
+    const outcome = await archiveFeedback.run(() => onArchive(
+      record.id,
+      record.data,
+      record.status === "archived" ? "active" : "archived",
+    ));
+    if (outcome !== "ignored") setArchivePendingId(null);
+  }
 
   return (
-    <section>
-      <h2 className="text-[0.75rem] font-semibold tracking-[0.05em] uppercase text-muted-foreground mt-6 mb-2">Your customers</h2>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {ordered.map((r) => {
-          const d = fieldsOf(r.data);
-          const archived = r.status === "archived";
-          const fresh = freshIds.has(r.id);
-          return (
-            <div
-              key={r.id}
-              className={`rounded-[16px] border border-border bg-card px-[15px] py-[10px] ${archived ? "opacity-60" : ""} ${fresh ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}
-            >
-              {editingId === r.id ? (
-                <SegForm
-                  initial={d}
-                  onCancel={() => setEditingId(null)}
-                  onSubmit={(data) => onSave(r.id, data).then(() => setEditingId(null))}
-                />
-              ) : (
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-start gap-2 flex-wrap">
-                    <span className="text-[0.875rem] leading-[1.45] font-semibold text-foreground flex-1">{d.name}</span>
-                    {archived && (
-                      <span className="text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap text-muted-foreground bg-accent">Archived</span>
-                    )}
-                    <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
-                      {r.source === "otto" ? "✦ Otto learned" : "You added"}
-                    </span>
-                    <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setEditingId(r.id)}>✎</Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-auto w-auto whitespace-nowrap p-0 text-[0.75rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
-                      onClick={() => void onArchive(r.id, r.data, archived ? "active" : "archived")}
-                    >
-                      {archived ? "Unarchive" : "Archive"}
-                    </Button>
-                    <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onDelete(r.id)}>🗑</Button>
-                  </div>
-                  <span className="text-[0.875rem] leading-[1.45] text-muted-foreground">{d.who}</span>
-                  {d.pains && <span className="text-[0.8125rem] leading-[1.45] text-muted-foreground">Pains: {d.pains}</span>}
-                  {d.channels && <span className="text-[0.8125rem] leading-[1.45] text-muted-foreground">Reach: {d.channels}</span>}
-                  {d.toneTips && <span className="text-[0.8125rem] leading-[1.45] text-muted-foreground">Tone: {d.toneTips}</span>}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* Legacy loose audience notes render as plain fact cards. */}
-        {looseNotes.map((n) => (
-          <div
-            key={n.id}
-            className={`rounded-[16px] border border-border bg-card px-[15px] py-[10px] ${freshIds.has(n.id) ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}
-          >
-            {noteEditId === n.id ? (
-              <div className="flex flex-col gap-2">
-                <Textarea aria-label="Edit this audience note" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} />
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => void onNoteSave(n.id, noteText).then(() => setNoteEditId(null))}>Save</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setNoteEditId(null)}>Cancel</Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-start gap-2">
-                <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">{n.content}</span>
-                <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
-                  {n.source === "otto" ? "✦ Otto learned" : "You added"}
-                </span>
-                <Button type="button" variant="ghost" aria-label="Edit" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</Button>
-                <Button type="button" variant="ghost" aria-label="Delete" className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void onNoteDelete(n.id)}>🗑</Button>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {adding && (
-        <div className="rounded-[16px] border border-border bg-card px-[15px] py-[10px] mt-3">
-          <SegForm
-            initial={EMPTY}
-            onCancel={() => setAdding(false)}
-            onSubmit={(data) => onSave(undefined, data).then(() => setAdding(false))}
-          />
+    <section className="flex flex-col gap-3">
+      {archiveFeedback.error && (
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>Customer group wasn&apos;t updated</AlertTitle>
+          <AlertDescription>{archiveFeedback.error}</AlertDescription>
+        </Alert>
+      )}
+      {ordered.length === 0 && looseNotes.length === 0 && !adding ? (
+        <Empty className="min-h-64 border border-dashed border-border"><EmptyHeader><EmptyMedia variant="icon"><Users aria-hidden /></EmptyMedia><EmptyTitle>No customer groups yet</EmptyTitle><EmptyDescription>Add the people your brand serves so Otto can shape messages around their needs.</EmptyDescription></EmptyHeader><EmptyContent><Button size="sm" variant="secondary" onClick={() => setAdding(true)}><Plus data-icon="inline-start" />Add customer group</Button></EmptyContent></Empty>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {ordered.map((record) => {
+            const details = fieldsOf(record.data);
+            const archived = record.status === "archived";
+            return (
+              <Card key={record.id} size="sm" tone={freshIds.has(record.id) ? "otto" : "default"} className={archived ? "opacity-60" : undefined}>
+                {editingId === record.id ? (
+                  <CardContent><SegForm initial={details} onCancel={() => setEditingId(null)} onSaved={() => setEditingId(null)} onSubmit={(data) => onSave(record.id, data)} /></CardContent>
+                ) : (
+                  <><CardHeader><div className="flex items-start justify-between gap-3"><CardTitle>{details.name}</CardTitle>
+                    <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="icon-xs" variant="ghost" disabled={archivePendingId === record.id} aria-label={`Actions for ${details.name}`}><MoreHorizontal aria-hidden /></Button></DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44"><DropdownMenuGroup>
+                        <DropdownMenuItem onSelect={() => setEditingId(record.id)}><Pencil aria-hidden />Edit</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => void toggleArchive(record)}>{archived ? <ArchiveRestore aria-hidden /> : <Archive aria-hidden />}{archived ? "Unarchive" : "Archive"}</DropdownMenuItem>
+                        <DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onSelect={() => setDeleteTarget(record)}><Trash2 aria-hidden />Remove group</DropdownMenuItem>
+                      </DropdownMenuGroup></DropdownMenuContent>
+                    </DropdownMenu></div><p className="text-sm leading-6 text-muted-foreground">{details.who}</p></CardHeader>
+                    <CardContent className="grid gap-2 text-sm text-muted-foreground">
+                      {details.pains && <p><span className="font-medium text-foreground">Pains:</span> {details.pains}</p>}
+                      {details.wants && <p><span className="font-medium text-foreground">Wants:</span> {details.wants}</p>}
+                      {details.channels && <p><span className="font-medium text-foreground">Reach:</span> {details.channels}</p>}
+                      {details.toneTips && <p><span className="font-medium text-foreground">Tone:</span> {details.toneTips}</p>}
+                    </CardContent>
+                    <CardFooter className="justify-between"><MemorySourceBadge source={record.source} />{archivePendingId === record.id ? <Badge><Spinner />{archived ? "Unarchiving…" : "Archiving…"}</Badge> : archived && <Badge variant="outline">Archived</Badge>}</CardFooter></>
+                )}
+              </Card>
+            );
+          })}
+          {looseNotes.map((note) => <MemoryNoteCard key={note.id} note={note} fresh={freshIds.has(note.id)} onSave={onNoteSave} onDelete={onNoteDelete} />)}
         </div>
       )}
-
-      {!adding && (
-        <div className="mt-3">
-          {activeCount >= 6 && (
-            <p className="text-[0.75rem] text-muted-foreground mb-1.5">Tip: keep groups few — archive one before adding more.</p>
-          )}
-          <Button type="button" variant="ghost" className="h-auto w-auto p-0 text-[0.8125rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setAdding(true)}>+ Add a customer group</Button>
-        </div>
-      )}
+      {adding && <Card size="sm"><CardContent><SegForm initial={EMPTY} onCancel={() => setAdding(false)} onSaved={() => setAdding(false)} onSubmit={(data) => onSave(undefined, data)} /></CardContent></Card>}
+      {!adding && (ordered.length > 0 || looseNotes.length > 0) && <div className="flex flex-col items-start gap-2">{activeCount >= 6 && <p className="text-xs text-muted-foreground">Keep groups focused — archive one before adding more.</p>}<Button type="button" size="sm" variant="secondary" onClick={() => setAdding(true)}><Plus data-icon="inline-start" />Add customer group</Button></div>}
+      <BrandRecordRemovalDialog
+        kind="customer group"
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        onConfirm={() => deleteTarget ? onDelete(deleteTarget.id) : Promise.resolve(null)}
+      />
     </section>
   );
 }

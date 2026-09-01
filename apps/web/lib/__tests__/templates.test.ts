@@ -69,7 +69,9 @@ describe("the Templates panel", () => {
     // 专名在 UI copy 里照旧大写(sentence case ≠ 把 Raya 写成 raya)。
     expect(src).not.toContain("Search — raya");
     expect(src).toContain("Search — Raya");
-    expect(src).toContain("aria-pressed");
+    expect(src).toContain("ToggleGroup");
+    expect(src).toContain('aria-label="Template category"');
+    expect(src).not.toMatch(/<button[\s>]/);
   });
 
   it("keeps its own template list — it never hardcodes one", () => {
@@ -101,7 +103,7 @@ describe("the template run", () => {
     expect(src).toContain("max-h-[calc(100dvh-2rem)]");
     expect(src).toContain("grid-rows-[auto_minmax(0,1fr)_auto]");
     expect(src).toContain('className="min-h-0 overflow-y-auto"');
-    expect(src).toContain('maxHeight: "42vh"');
+    expect(src).toContain("max-h-[42vh]");
     // 滚的是中间那一行,不是底部操作条 —— 否则按钮会跟着内容滚出去。
     const footer = src.match(/<DialogFooter>([\s\S]*?)<\/DialogFooter>/)?.[1] ?? "";
     expect(footer).not.toContain("overflow-y-auto");
@@ -111,6 +113,9 @@ describe("the template run", () => {
   it("hands the merchant the ready caption once the image is done", () => {
     expect(src).toContain("template.captions");
     expect(src).toContain("TEMPLATE_CAPTION_LANGUAGE_LABELS");
+    expect(src).toContain("<Card");
+    expect(src).toContain('<Badge variant="outline">');
+    expect(src).toContain('data-icon="inline-start"');
     // 判官 r1 P3:括号指导必须与内容一致 —— 现在每一句经营事实都是括号里的空格。
     expect(src).toContain("Everything in brackets is a blank");
   });

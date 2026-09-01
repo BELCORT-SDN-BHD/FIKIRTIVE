@@ -29,7 +29,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/otto-client-actions", () => ({ ottoTurn: ottoTurnMock }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: getThreadMock }));
 vi.mock("@/lib/memory-actions", () => ({
-  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(),
+  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(), restoreMemory: vi.fn(),
   listMyMemory: vi.fn(async () => []),
 }));
 vi.mock("@/lib/brand-record-actions", () => ({
@@ -82,13 +82,18 @@ async function unmount() {
   container = null;
 }
 
-async function say(dom: HTMLDivElement, text: string) {
+async function typeDraft(dom: HTMLDivElement, text: string) {
   const box = dom.querySelector<HTMLTextAreaElement>('textarea[aria-label="Tell Otto about your brand"]')!;
   const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
   await act(async () => {
     setValue.call(box, text);
     box.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  return box;
+}
+
+async function say(dom: HTMLDivElement, text: string) {
+  await typeDraft(dom, text);
   const send = [...dom.querySelectorAll("button")].find((b) => b.textContent?.includes("Send"))!;
   await act(async () => send.click());
 }
@@ -140,5 +145,63 @@ describe("BUG 6 — the brand conversation survives a remount", () => {
     getThreadMock.mockImplementation(async (id: string) => ({ id, messages: server.messages }));
     await say(second, "Starting over.");
     expect(ottoTurnMock).toHaveBeenLastCalledWith(expect.not.objectContaining({ threadId: expect.anything() }));
+  });
+
+  it("composes the transcript from shadcn chat primitives instead of hand-rolled bubbles", async () => {
+    const dom = await mount();
+    await say(dom, "We sell hand-poured candles.");
+
+    expect(dom.querySelector('[data-slot="message-scroller"]')).not.toBeNull();
+    expect(dom.querySelector('[data-slot="message"]')).not.toBeNull();
+    expect(dom.querySelector('[data-slot="bubble"][data-variant="default"]')).not.toBeNull();
+    expect(dom.querySelector('[data-slot="bubble"][data-variant="otto"]')).not.toBeNull();
+  });
+
+  it("locks the send synchronously so a same-tick double click starts one metered turn", async () => {
+    let resolveTurn!: (value: { threadId: string; status: "done"; reply: string }) => void;
+    ottoTurnMock.mockReturnValueOnce(new Promise((resolve) => { resolveTurn = resolve; }));
+    const dom = await mount();
+    await typeDraft(dom, "Our candles are vegan.");
+    const send = [...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("Send"))!;
+
+    await act(async () => {
+      send.click();
+      send.click();
+    });
+
+    expect(ottoTurnMock).toHaveBeenCalledTimes(1);
+    await act(async () => resolveTurn({ threadId: "thread_brand", status: "done", reply: "Saved once." }));
+  });
+
+  it("keeps an unconfirmed message visible and restores its draft after a refusal", async () => {
+    ottoTurnMock.mockResolvedValueOnce({ error: "Otto is temporarily unavailable." });
+    const dom = await mount();
+    await say(dom, "Our packaging never uses plastic.");
+
+    const box = dom.querySelector<HTMLTextAreaElement>('textarea[aria-label="Tell Otto about your brand"]')!;
+    expect(box.value).toBe("Our packaging never uses plastic.");
+    expect(dom.querySelector('[role="alert"]')?.textContent).toContain("Message wasn't completed");
+    expect(dom.querySelector('[role="alert"]')?.textContent).toContain("Your draft is back below");
+    expect(dom.textContent).toContain("Delivery not confirmed");
+    expect(ottoTurnMock).toHaveBeenCalledTimes(1);
+
+    const review = [...dom.querySelectorAll("button")].find((button) => button.textContent === "Review draft")!;
+    await act(async () => review.click());
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("sends with Enter, while Shift + Enter remains available for a new line", async () => {
+    const dom = await mount();
+    const box = await typeDraft(dom, "Our tone is warm and practical.");
+
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
+    });
+    expect(ottoTurnMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(ottoTurnMock).toHaveBeenCalledTimes(1);
   });
 });

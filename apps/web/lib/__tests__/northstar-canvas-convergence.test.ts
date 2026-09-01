@@ -52,6 +52,9 @@ const mocks = vi.hoisted(() => ({
   getOrCreateDefaultProject: vi.fn(),
   getProjects: vi.fn(),
   getCoworkThreads: vi.fn(),
+  getCoworkThreadPage: vi.fn(),
+  resolveCoworkResultUrls: vi.fn(),
+  getCanvasConversationHandoff: vi.fn(),
   getEntities: vi.fn(),
   requireOwner: vi.fn(),
   notFound: vi.fn(),
@@ -83,11 +86,19 @@ vi.mock("@/lib/auth-guard", async () => ({
 // Only the DB reads are replaced. `@/lib/dto` stays REAL, so the entity the prompt box
 // receives has to be the genuine toEntityDTO product — a raw row slipping through fails.
 vi.mock("@/lib/data", () => ({
+  getCoworkThreadPage: mocks.getCoworkThreadPage,
   getCoworkThreads: mocks.getCoworkThreads,
   getEntities: mocks.getEntities,
   getProjects: mocks.getProjects,
+  resolveCoworkResultUrls: mocks.resolveCoworkResultUrls,
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("@/lib/canvas-entry-actions", () => ({
+  getCanvasConversationHandoff: mocks.getCanvasConversationHandoff,
+}));
+vi.mock("@/components/canvas/CanvasOttoOverlay", () => ({
+  CanvasOttoOverlay: () => createElement("div", { "data-testid": "canvas-otto-overlay" }, "Otto canvas conversation"),
+}));
+vi.mock("@/components/ui/toast", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }));
 vi.mock("next/link", () => ({
@@ -222,6 +233,16 @@ const RUNTIME_CONTEXT = {
   activeProjectId: "p1",
   activeThreadId: "t1",
   initialBalance: 1240,
+  initialBalanceUsd: 124,
+  activeThread: {
+    id: "t1",
+    projectId: "p1",
+    title: "Morning shots",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    pinnedAt: null,
+    messages: [],
+  },
+  pendingFirst: null,
 };
 
 const boardRow = (id: string, overrides: Record<string, unknown> = {}) => ({
@@ -266,11 +287,14 @@ beforeEach(() => {
       Math.ceil((seconds * (resolution === "480p" ? 11 : 22)) / 10),
   });
   mocks.generateImage.mockResolvedValue(true);
-  mocks.getMyAccount.mockResolvedValue({ balance: 1240 });
+  mocks.getMyAccount.mockResolvedValue({ balance: 1240, balanceUsd: 124 });
   mocks.requireOwner.mockResolvedValue({ email: "owner@example.com", ownerId: "owner-1" });
   mocks.getOrCreateDefaultProject.mockResolvedValue({ id: "p1" });
   mocks.getProjects.mockResolvedValue([{ id: "p1", name: "Kedai Kopi" }]);
   mocks.getCoworkThreads.mockResolvedValue([]);
+  mocks.getCoworkThreadPage.mockResolvedValue(null);
+  mocks.resolveCoworkResultUrls.mockResolvedValue(new Map());
+  mocks.getCanvasConversationHandoff.mockResolvedValue(null);
   mocks.getEntities.mockResolvedValue([]);
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
@@ -312,6 +336,12 @@ function buttonLabelled(label: string): HTMLButtonElement | undefined {
 
 function select(ids: string[]): void {
   act(() => mocks.flow.current!.onNodesChange(ids.map((id) => ({ id, type: "select" as const, selected: true }))));
+}
+
+function openImageComposer(): void {
+  const button = buttonLabelled("Generate image");
+  if (!button) throw new Error("Generate image tool not found");
+  act(() => button.click());
 }
 
 /**
@@ -357,12 +387,16 @@ describe("what the merchant lands on", () => {
     expect([...container!.querySelectorAll("button")].filter((b) => b.textContent === "Info")).toHaveLength(1);
   });
 
-  it("keeps the north-star chrome: credits always on screen, plus where they are", async () => {
+  it("keeps the minimal Canvas chrome: back to Create, Canvas name and credits", async () => {
     await renderPage();
 
     const text = container!.textContent ?? "";
     expect(text).toContain("1,240 credits");
-    expect(text).toContain("Kedai Kopi · Morning shots");
+    expect(text).toContain("Create");
+    expect(text).toContain("Kedai Kopi");
+    expect(container!.querySelector('[data-testid="canvas-otto-overlay"]')).not.toBeNull();
+    expect(container!.querySelector('[data-slot="breadcrumb"]')).toBeNull();
+    expect(container!.querySelectorAll('[role="tab"]')).toHaveLength(0);
   });
 
   it("keeps the zoom controls", async () => {
@@ -374,12 +408,12 @@ describe("what the merchant lands on", () => {
     expect(container!.querySelector('[aria-label="Canvas tools"]')).not.toBeNull();
   });
 
-  it("keeps the embedded prompt box visible on arrival, with @ references", async () => {
+  it("starts with Otto as the primary composer and keeps the direct image tool one click away", async () => {
     await renderPage();
 
-    const composer = container!.querySelector<HTMLTextAreaElement>('[data-testid="canvas-prompt"]');
-    expect(composer).not.toBeNull();
-    expect(composer!.placeholder).toContain("@");
+    expect(container!.querySelector<HTMLTextAreaElement>('[data-testid="canvas-prompt"]')).toBeNull();
+    openImageComposer();
+    expect(container!.querySelector<HTMLTextAreaElement>('[data-testid="canvas-prompt"]')?.placeholder).toContain("@");
   });
 });
 
@@ -396,6 +430,7 @@ describe("the kernel's behaviour came along with it", () => {
   it("never lands a new card on top of one already paid for", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderPage();
+    openImageComposer();
 
     await act(async () => { mocks.mentionChange.current!("a bowl of laksa", [], {}); });
     await act(async () => { mocks.mentionSubmit.current!(); });
@@ -412,6 +447,8 @@ describe("the kernel's behaviour came along with it", () => {
       boardRow("near-origin"),
     ]);
     await renderPage();
+    openImageComposer();
+    await act(async () => { await Promise.resolve(); });
 
     const anchor = mocks.flow.current!.nodes.find((node) => node.id === "far")!;
     await act(async () => {
@@ -467,6 +504,7 @@ describe("@ references reach the merchant's own things", () => {
 
     // ③ 输入框真收到它 —— 直接渲染 Entry 交出来的那棵树,中间没人补货。
     await renderElement(element);
+    openImageComposer();
     expect(mocks.mentionEntities.current).toEqual([expected]);
   });
 
@@ -474,6 +512,7 @@ describe("@ references reach the merchant's own things", () => {
     mocks.getEntities.mockResolvedValue([entityRow]);
 
     await renderElement(await ImmersiveCanvasEntry({ searchParams: Promise.resolve({}) }));
+    openImageComposer();
 
     const option = [...container!.querySelectorAll<HTMLButtonElement>('[data-testid="canvas-mention-option"]')]
       .find((button) => button.textContent === "Signature mug");
@@ -491,6 +530,7 @@ describe("@ references reach the merchant's own things", () => {
     mocks.getEntities.mockResolvedValue([]);
 
     await renderElement(await ImmersiveCanvasEntry({ searchParams: Promise.resolve({}) }));
+    openImageComposer();
 
     expect(mocks.mentionEntities.current).toEqual([]);
     expect(container!.querySelectorAll('[data-testid="canvas-mention-option"]')).toHaveLength(0);

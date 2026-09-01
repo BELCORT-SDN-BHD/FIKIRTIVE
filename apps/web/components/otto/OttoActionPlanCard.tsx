@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { ClipboardList, ShieldCheck, CheckCircle2, Loader2 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { approveMetaActionPlan } from "@/lib/otto-client-actions";
 import type { MetaActionCardPayload } from "@/lib/meta-plan-card";
@@ -210,9 +211,9 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
 
         {/* Error */}
         {errorMsg && (
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {errorMsg}
-          </div>
+          <Alert role="alert" variant="destructive" density="compact" className="mt-2">
+            <AlertDescription>{errorMsg}</AlertDescription>
+          </Alert>
         )}
 
         {/* Trust footer */}

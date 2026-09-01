@@ -30,7 +30,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   dateTimeLabel,
   definitionStatusPresentation,
@@ -169,7 +178,7 @@ export default function WorkflowListPage({
         <header className="flex flex-col gap-5 border-b border-border pb-7 sm:flex-row sm:items-end sm:justify-between sm:gap-8">
           <div>
             <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" />Return to Otto</Link>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Workflows</h1>
             <p className="mt-3 max-w-3xl text-base leading-7 text-muted-foreground">Write readable rules, authorize exactly what a Routine may do, and inspect every simulated decision. Workflows never send or spend from this workspace.</p>
           </div>
@@ -219,7 +228,7 @@ export default function WorkflowListPage({
                     <Card className="transition-[border-color,transform,box-shadow] group-hover:-translate-y-0.5 group-hover:border-foreground/20 group-hover:shadow-md">
                       <CardContent className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_220px_auto] sm:items-center sm:gap-6">
                         <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Journey" : "Rule"}</Badge>{definition.originKind === "inbox_recipe" ? <Badge variant="outline">Recipe</Badge> : null}</div><h3 className="mt-3 truncate text-lg font-semibold">{definition.name}</h3><p className="mt-1 truncate font-mono text-xs text-muted-foreground">/workflows/{definition.slug}.workflow.yaml</p></div>
-                        <div className="border-t border-border pt-4 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0"><div className="flex flex-wrap items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" />{routineErrorCode ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutines.length > 0 ? <Badge variant="brand">{activeRoutines.length} active {activeRoutines.length === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">{routineErrorCode ? workflowErrorMessage(routineErrorCode) : `${definitionRoutines.length} saved ${definitionRoutines.length === 1 ? "authorization" : "authorizations"}. Published never implies active.`}</p></div>
+                        <div className="border-t border-border pt-4 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0"><div className="flex flex-wrap items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" />{routineErrorCode ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutines.length > 0 ? <Badge variant="success">{activeRoutines.length} active {activeRoutines.length === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">{routineErrorCode ? workflowErrorMessage(routineErrorCode) : `${definitionRoutines.length} saved ${definitionRoutines.length === 1 ? "authorization" : "authorizations"}. Published never implies active.`}</p></div>
                         <div className="sm:text-right"><p className="text-xs text-muted-foreground">Updated {dateTimeLabel(definition.updatedAt)}</p><p className="mt-2 font-mono text-[11px] text-muted-foreground">{shortWorkflowId(definition.id)}</p><ArrowRight className="mt-3 size-4 text-muted-foreground transition-transform group-hover:translate-x-1 sm:ml-auto" /></div>
                       </CardContent>
                     </Card>
@@ -234,9 +243,29 @@ export default function WorkflowListPage({
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!creating) setDialogOpen(open); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Create a workflow</DialogTitle><DialogDescription>Start with a stable definition. The readable rule file and every saved revision come next.</DialogDescription></DialogHeader>
-          <label className="grid gap-2 text-sm font-semibold">Name<Input autoFocus value={name} onChange={(event) => { const next = event.target.value; setName(next); if (!slugEdited) setSlug(safeSlug(next)); }} placeholder="Outside-hours reply" /></label>
-          <label className="grid gap-2 text-sm font-semibold">File path<Input value={slug} onChange={(event) => { setSlugEdited(true); setSlug(safeSlug(event.target.value)); }} placeholder="outside-hours-reply" /><span className="font-mono text-xs font-normal text-muted-foreground">/workflows/{slug || "your-workflow"}.workflow.yaml</span></label>
-          <label className="grid gap-2 text-sm font-semibold">Type<select className="h-11 rounded-lg border border-input bg-card px-3 text-sm font-normal" value={kind} onChange={(event) => setKind(event.target.value as "rule" | "journey")}><option value="rule">Rule</option><option value="journey">Contact journey</option></select></label>
+          <FieldGroup className="gap-5">
+            <Field>
+              <FieldLabel htmlFor="workflow-name">Name</FieldLabel>
+              <Input id="workflow-name" autoFocus value={name} onChange={(event) => { const next = event.target.value; setName(next); if (!slugEdited) setSlug(safeSlug(next)); }} placeholder="Outside-hours reply" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="workflow-file-path">File path</FieldLabel>
+              <Input id="workflow-file-path" value={slug} onChange={(event) => { setSlugEdited(true); setSlug(safeSlug(event.target.value)); }} placeholder="outside-hours-reply" />
+              <FieldDescription className="font-mono">/workflows/{slug || "your-workflow"}.workflow.yaml</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="workflow-type">Type</FieldLabel>
+              <Select value={kind} onValueChange={(value) => setKind(value as "rule" | "journey")}>
+                <SelectTrigger id="workflow-type" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="rule">Rule</SelectItem>
+                    <SelectItem value="journey">Contact journey</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          </FieldGroup>
           <div className="rounded-xl border border-border bg-secondary/25 px-4 py-3 text-sm leading-6 text-muted-foreground">Creating a definition does not publish a rule or authorize a Routine.</div>
           {errorCode ? <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={errorCode}><p className="font-semibold">The workflow request could not finish</p><p className="mt-1">{workflowErrorMessage(errorCode)}</p></div> : null}
           <DialogFooter><Button type="button" variant="secondary" disabled={creating} onClick={() => setDialogOpen(false)}>Cancel</Button><Button type="button" disabled={creating || !name.trim() || !slug} onClick={() => void create()}>{creating ? <LoaderCircle className="animate-spin" /> : <Plus />}Create workflow</Button></DialogFooter>

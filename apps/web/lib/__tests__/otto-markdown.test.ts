@@ -259,7 +259,7 @@ describe("render exits — every surface that shows Otto prose (#586 acceptance)
     );
 
     expect(source).toContain('import { OttoMarkdown } from "./parts/OttoMarkdown"');
-    expect(source).toContain('b.role === "you" ? b.text : <OttoMarkdown text={b.text} />');
+    expect(source).toContain('isMerchant ? bubble.text : <OttoMarkdown text={bubble.text} />');
   });
 
   it("exit 3/3 · ResearchReport renders the synthesis as markdown", () => {

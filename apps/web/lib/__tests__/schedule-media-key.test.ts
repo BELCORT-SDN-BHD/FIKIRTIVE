@@ -327,7 +327,9 @@ describe("#691 编辑已有帖子", () => {
     // 序号角标 = 这张图被选中,且排在第 1 位。旧代码里 media.indexOf(label) 永远 -1,
     // 商家会以为图掉了。
     expect(tile.textContent).toContain("1");
-    expect(tile.className).toContain("border-brand");
+    // Selected media is a human choice, so the design-system treatment is neutral ink,
+    // not Otto coral. The visual state still has to be explicit alongside the order badge.
+    expect(tile.className).toContain("border-foreground");
   });
 
   it("回显后原样保存,media 不变形(不会把提示词混进去)", async () => {

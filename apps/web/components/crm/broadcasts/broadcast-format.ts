@@ -9,7 +9,7 @@ import { MY_DATE_TIME_FORMAT } from "@/lib/my-date-format";
 // family keeps its single import site without keeping a second copy of the map.
 export { axisStatusPresentation, channelAccountLabel, channelLabel, purposeLabel } from "@/lib/crm-labels";
 
-type BadgeVariant = "default" | "brand" | "outline" | "success" | "warning" | "destructive";
+type BadgeVariant = "default" | "outline" | "success" | "warning" | "info" | "destructive";
 
 const DATE_TIME = MY_DATE_TIME_FORMAT;
 
@@ -35,9 +35,9 @@ export function runStatusPresentation(status: string): { label: string; variant:
     case "draft":
       return { label: "Draft", variant: "outline" };
     case "audience_frozen":
-      return { label: "Audience frozen", variant: "brand" };
+      return { label: "Audience frozen", variant: "info" };
     case "confirmed":
-      return { label: "Confirmed", variant: "brand" };
+      return { label: "Confirmed", variant: "success" };
     case "executing":
       return { label: "Simulating", variant: "warning" };
     case "completed":

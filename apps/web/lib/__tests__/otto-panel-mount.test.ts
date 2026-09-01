@@ -318,13 +318,13 @@ describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
     expect(el.querySelector("[data-page]")).not.toBeNull();
   });
 
-  // W2-11 —— 导轨里那颗 Ask Otto(`NavigationRailContainer`,`components/global-navigation.tsx`)
+  // Application shell —— utility bar 的 Ask Otto(`MerchantShellFrame`,`components/global-navigation.tsx`)
   // 是第二个入口,挂在 `OttoPanelMount` **之内**才够得着 `useOttoPanelControls()`。这里不重复
   // 验面板本身怎么开合(上面两条已经钉过),只验这颗按钮拨的和 launcher/Close 拨的是**同一个**
   // 开关,而不是它自己另开一路。
-  it("导轨里的 Ask Otto 拨的是同一个开关,不是另一路", async () => {
+  it("utility bar 的 Ask Otto 拨的是同一个开关,不是另一路", async () => {
     const el = await mount(shell("/campaign"));
-    const askOtto = () => el.querySelector<HTMLButtonElement>("[data-nav-rail-ask-otto]")!;
+    const askOtto = () => el.querySelector<HTMLButtonElement>("[data-shell-ask-otto]")!;
 
     expect(askOtto().tagName).toBe("BUTTON");
     expect(askOtto().getAttribute("href")).toBeNull();
@@ -660,12 +660,18 @@ describe("层级表:模态框永远在最上面", () => {
       );
     }
 
-    // z 值从 ui/dialog 自己的遮罩层读,不在这里抄第二份。
+    // dialog 使用语义 z token；数字只从 foundations 的 token source 读取，不在测试里抄第二份。
     const dialogSource = readFileSync(resolve(WEB_ROOT, "components/ui/dialog.tsx"), "utf8");
-    const modalScrims = [...dialogSource.matchAll(/fixed inset-0 z-\[?(\d+)\]?/g)].map((m) => Number(m[1]));
-    expect(modalScrims.length, "components/ui/dialog.tsx 里应当有那层遮罩").toBeGreaterThan(0);
-    const modalZ = Math.min(...modalScrims);
-    const railZ = Math.max(...zOf(readFileSync(resolve(WEB_ROOT, "components/global-navigation.tsx"), "utf8")));
+    expect(dialogSource, "components/ui/dialog.tsx 里应当有语义化的模态遮罩").toContain(
+      "fixed inset-0 z-[var(--z-modal)]",
+    );
+    const tokenSource = readFileSync(resolve(WEB_ROOT, "app/globals.css"), "utf8");
+    const tokenValue = (name: string) => Number(tokenSource.match(new RegExp(`${name}:\\s*(\\d+)`))?.[1]);
+    const modalZ = tokenValue("--z-modal");
+    const railZ = tokenValue("--z-base");
+
+    expect(Number.isFinite(modalZ)).toBe(true);
+    expect(Number.isFinite(railZ)).toBe(true);
 
     expect(panelZ.length + launcherZ.length).toBeGreaterThan(0);
     for (const z of [...panelZ, ...launcherZ]) {
@@ -830,10 +836,11 @@ describe("整理会话在面板里接得到(W2-11 收编导轨)", () => {
     });
 
     const input = document.querySelector<HTMLInputElement>('[aria-label="Conversation name"]')!;
-    setInputValue(input, "Raya launch plan");
+    await act(async () => setInputValue(input, "Raya launch plan"));
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
     });
+    await settle();
 
     expect(renameCoworkThread).toHaveBeenCalledWith("th_1", "Raya launch plan");
     expect(el.querySelector('[data-otto-thread-list-thread="th_1"]')!.textContent).toContain("Raya launch plan");
@@ -858,11 +865,37 @@ describe("整理会话在面板里接得到(W2-11 收编导轨)", () => {
     expect(confirmButton().disabled).toBe(true);
 
     const typed = document.querySelector<HTMLInputElement>('[aria-label="Type Raya promo to confirm"]')!;
-    setInputValue(typed, "Raya promo");
+    await act(async () => setInputValue(typed, "Raya promo"));
     await act(async () => confirmButton().click());
+    await settle();
 
     expect(deleteCoworkThread).toHaveBeenCalledWith("th_1");
     expect(el.querySelector('[data-otto-thread-list-thread="th_1"]')).toBeNull();
+  });
+
+  it("删除被服务端拒绝时恢复会话,并把原因留在确认框里", async () => {
+    loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
+    deleteCoworkThread.mockResolvedValue({ error: "This conversation is still in use." });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+    await act(async () => {
+      el.querySelector<HTMLButtonElement>('[aria-label="Delete Raya promo"]')!.click();
+    });
+
+    const typed = document.querySelector<HTMLInputElement>('[aria-label="Type Raya promo to confirm"]')!;
+    await act(async () => setInputValue(typed, "Raya promo"));
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "Delete conversation",
+    )!;
+    await act(async () => confirm.click());
+    await settle();
+
+    expect(el.querySelector('[data-otto-thread-list-thread="th_1"]')).not.toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "This conversation is still in use.",
+    );
   });
 });
 
@@ -935,10 +968,11 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     await act(async () => menuItem("Rename project").click());
 
     const input = document.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
-    setInputValue(input, "Raya launch");
+    await act(async () => setInputValue(input, "Raya launch"));
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
     });
+    await settle();
 
     expect(renameProject).toHaveBeenCalledWith("prj_1", "Raya launch");
     expect(el.querySelector('[data-otto-thread-list-project="prj_1"]')!.textContent).toContain("Raya launch");
@@ -968,12 +1002,37 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     expect(confirmButton().disabled).toBe(true);
 
     const typed = document.querySelector<HTMLInputElement>('[aria-label="Type Raya campaign to confirm"]')!;
-    setInputValue(typed, "Raya campaign");
+    await act(async () => setInputValue(typed, "Raya campaign"));
     await act(async () => confirmButton().click());
     await settle();
 
     expect(deleteProject).toHaveBeenCalledWith("prj_1");
     // 种子重取过一次(挂载时一次 + 删除后一次) —— 新的项目名字必须真的出现在历史里。
     expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+  });
+
+  it("项目删除被拒绝时不重取种子,原因留在确认框里", async () => {
+    loadOttoPanelSeed.mockResolvedValue(SEED_WITH_PROJECT);
+    deleteProject.mockResolvedValue({ error: "This project cannot be deleted yet." });
+
+    const el = await mount(shell("/campaign"));
+    await openHistory(el);
+    await openProjectMenu(el, "Raya campaign");
+    await act(async () => menuItem("Delete project").click());
+
+    const typed = document.querySelector<HTMLInputElement>('[aria-label="Type Raya campaign to confirm"]')!;
+    await act(async () => setInputValue(typed, "Raya campaign"));
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "Delete project",
+    )!;
+    await act(async () => confirm.click());
+    await settle();
+
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
+    expect(el.querySelector('[data-otto-thread-list-project="prj_1"]')).not.toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "This project cannot be deleted yet.",
+    );
   });
 });

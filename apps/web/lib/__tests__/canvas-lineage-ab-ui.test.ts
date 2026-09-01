@@ -50,7 +50,7 @@ vi.mock("@/lib/canvas-actions", () => ({
 }));
 vi.mock("@/lib/otto-canvas-bridge", () => ({ syncOttoCanvasNodes: mocks.boardRead }));
 vi.mock("@/lib/actions", () => ({ uploadReference: mocks.uploadReference }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("@/components/ui/toast", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/MentionInput", () => ({ MentionInput: () => null }));
 vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }));
@@ -549,7 +549,7 @@ describe("side-by-side compare", () => {
     select(["p0", "p1"]);
     await click(buttonNamed("Compare")!);
 
-    const dialog = container!.querySelector<HTMLElement>('[role="dialog"]')!;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Comparing A and B");
     const sides = [...dialog.querySelectorAll<HTMLElement>("[data-compare-side]")];
     expect(sides.map((side) => side.getAttribute("data-compare-side"))).toEqual(["p0", "p1"]);
@@ -567,7 +567,7 @@ describe("side-by-side compare", () => {
     select(["p1", "p0"]);
     await click(buttonNamed("Compare")!);
 
-    const sides = [...container!.querySelectorAll<HTMLElement>("[data-compare-side]")];
+    const sides = [...document.querySelectorAll<HTMLElement>("[data-compare-side]")];
     expect(sides.map((side) => side.getAttribute("data-compare-side"))).toEqual(["p0", "p1"]);
   });
 

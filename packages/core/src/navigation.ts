@@ -10,13 +10,14 @@
  * 纯数据、零依赖(没有 React、没有图标、没有 node/network),所以主 barrel 装得下,
  * Otto 的指令与浏览器端导轨可以读同一份。图标在 apps/web 按 key 配。
  *
- * 四条 Founder 裁决落在这份数据上:
- *   ① **画布是 creation 旗舰面,不下线** —— 它有主导航第一格(见 CREATE_NAV_LABEL),
- *      沉浸式外壳原来的「六扇门」全部收编进这棵树,不再有第二套导航。
+ * 当前 Founder 裁决落在这份数据上:
+ *   ① **画布是 creation 旗舰面,不下线** —— Home 内嵌的 Create action 仍由
+ *      CREATE_NAV_LABEL 命名,沉浸式外壳原来的「六扇门」全部收编进这棵树,
+ *      不再有第二套导航。
  *   ② **Otto 是助手,不是模块** —— 它不在 MERCHANT_NAV 里占板块位;它是
  *      OTTO_ASSISTANT,导轨把它画在板块之上、随处可点。
- *   ③ **一个日历** —— 排期日历是唯一权威(真有 ScheduledPost 表、worker 会照它发布);
- *      /campaign/calendar 那张草稿列表收敛成重定向,见 MERCHANT_NAV_REDIRECTS。
+ *   ③ **Beta 主导航只有五格** —— Campaigns、Schedule 与手动 Video editor 暂停作为产品
+ *      入口；旧地址只保留为兼容重定向,见 MERCHANT_NAV_REDIRECTS。
  *   ④ **CRM 整段先收起来**(W2-13 / #993,Founder 裁决 2026-08-18 裁决2)—— 从前这里有
  *      一格 Customers 预览门(#792,七扇 /crm 子门收成一扇并挂一句 `preview`)。渠道一条都
  *      连不上,预览门再诚实也仍然是一扇通向空房间的门,所以这一格整个删掉:
@@ -76,7 +77,8 @@ export function isNavGroup(node: MerchantNavNode): node is MerchantNavGroup {
  * 所以表必须先于读它的人。**十三个值逐字节不变**;跟着改的只有两句已经过期的注释 ——
  * 这一段自己的「W2-5 改名搬家」预告,与 `create:` 那一行的「今天叫 `/northstar-immersive`」。
  *
- * **它仍然不是导航数据**:`MERCHANT_NAV` 的七格权威改写留给切换总票(W2-11)。
+ * **它仍然不是导航数据**:`MERCHANT_NAV` 只从这张路由表引用 active destinations；
+ * Parked 地址仍可留在这里作为 redirect source,但不能重新进入主导航。
  *
  * 用 key 而不是一串散常量:后续票要按 key 取(`SHELL_ROUTES.library`),围栏也要能把它当
  * 枚举源逐条对账(`Object.values`)。
@@ -84,21 +86,23 @@ export function isNavGroup(node: MerchantNavNode): node is MerchantNavGroup {
 export const SHELL_ROUTES = {
   /** 商家自己的总览。今天 `/` 是 `redirect("/otto")`,W2-6 把它换成真页面。 */
   home: "/",
+  /** Home 的深入分析页,不占主导航一格。 */
+  homeAnalysis: "/analysis",
   /** 创作旗舰面。W2-5 起这就是它真正的地址(旧 `/northstar-immersive` 永久重定向到这里)。 */
   create: "/create",
   /** 画布本身,永远在 Create 那扇门后面。 */
   canvas: "/create/canvas",
   /** 已经做出来的每一张图、每一条片。今天是 `/otto?view=library`。 */
   library: "/library",
-  /** 剪辑台 —— 要剪的东西就在 Library,所以它跟着 Library 走(规格书 Q6)。 */
+  /** 旧剪辑台地址；Beta 期间只作为 redirect source 保留。 */
   edit: "/library/editor",
   /** Otto 该记住的品牌与产品。今天是 `/otto?view=memory`。 */
   brand: "/brand",
-  /** 战役。今天已经是真路由,新旧同址。 */
+  /** Campaigns 在 Beta 停用,只作为旧地址的 redirect source 保留。 */
   campaign: "/campaign",
-  /** 唯一的日历。今天是 `/otto?view=schedule`。 */
+  /** Schedule 在 Beta 停用,只作为旧地址的 redirect source 保留。 */
   schedule: "/schedule",
-  /** Analytics 并进 Schedule 的第二个页签(规格书 Q4):它对每个商家都还是空态,不占一格。 */
+  /** 旧 Schedule analytics 地址；现在重定向到 Home analysis。 */
   analytics: "/schedule/analytics",
   /** 买 credits 与消费历史。今天已经是真路由,新旧同址。 */
   billing: "/billing",
@@ -108,13 +112,18 @@ export const SHELL_ROUTES = {
   preferences: "/settings",
   /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
   profile: "/profile",
+  /** CRM 在 Beta 停用,只作为旧地址的 redirect source 保留。 */
+  crm: "/crm",
+  /** 无账号读者也能打开的只读分享页;不属于 merchant shell。 */
+  publicSharePreview: "/schedule/share-preview",
 } as const;
 
 /**
  * 创作入口的名字 —— **全仓只写这一处**。
  *
- * 白标命名体系还没定(Founder 未拍板),先叫 "Create";体系定了就改这一行,导轨、Otto
- * 指路文案与围栏一起跟着换,没有第二处要找。
+ * Founder 已于 2026-08-29 确认 Home / Create workspace / Canvas architecture:
+ * Home 是业务总览,Create 是同级的独立 product area,Canvas 是具体项目工作区。
+ * 导轨、Otto 指路文案与围栏都从这一行读,不把 Create 伪装成第二个 Home。
  */
 export const CREATE_NAV_LABEL = "Create";
 
@@ -127,7 +136,7 @@ export const CREATE_NAV_LABEL = "Create";
  */
 export const CREATE_NAV_HREF = SHELL_ROUTES.create;
 
-/** 画布本身。Create 首页把商家送到自己那张画布上,所以导轨不再单列一行。 */
+/** 画布本身。Create workspace 把商家送到自己的画布上,所以导轨不再单列一行。 */
 export const CANVAS_HREF = SHELL_ROUTES.canvas;
 
 /**
@@ -150,15 +159,14 @@ export const OTTO_ASSISTANT = {
 /**
  * 主导航,顺序即导轨从上到下的顺序(W2-11,规格书 §2.3 ①)。
  *
- * 七格权威改写 —— 前面各票已经把真路由建好(W2-1…6、W2-10),这里只改数据本身。地址一律
- * 引 `SHELL_ROUTES`,不在这里再写第二遍字面量。
+ * Phase 1 收敛成五格权威 —— Home / Create / Library / Brand / Settings。地址一律引
+ * `SHELL_ROUTES`,不在这里再写第二遍字面量。
  *
  * 两处诚实修正(`simulated-features.json` 已实证,随本票一并修掉):
  *   - `preferences.does` 不再提 "notifications"——通知开关早已删除,没有任何邮件或站内渠道
  *     读它。
- *   - `analytics` 不再作为导航承诺出现:它读的是 Meta 广告账户,不是自然帖表现(规格书
- *     §2.3 ①);Analytics 仍在,是 Schedule 页内的第二个页签(`SHELL_ROUTES.analytics`),
- *     不占导航格。
+ *   - `analytics` 不再作为导航承诺出现；旧 `/schedule/analytics` 只会进入
+ *     Home analysis (`SHELL_ROUTES.homeAnalysis`),不占导航格。
  *
  * `Templates` / `Discover` / `Video editor` 不再各占一格(规格书 Q6-A):Video editor 跟着
  * Library 走(`SHELL_ROUTES.edit`),Templates / Discover 收编进 Create 页面下方的两个区段
@@ -169,13 +177,13 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     key: "home",
     label: "Home",
     href: SHELL_ROUTES.home,
-    does: "See what is waiting for you, what you made lately, and what goes out next.",
+    does: "Review your marketing health, understand important changes, and decide what to do next.",
   },
   {
     key: "create",
     label: CREATE_NAV_LABEL,
     href: CREATE_NAV_HREF,
-    does: "Start something new and open it on a canvas — every canvas you have lives here.",
+    does: "Start or continue creative work in the Create workspace, then enter the full-screen Canvas.",
   },
   {
     key: "library",
@@ -190,29 +198,85 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     does: "Keep what Otto should remember about your brand and the things you sell.",
   },
   {
-    key: "campaign",
-    label: "Campaigns",
-    href: SHELL_ROUTES.campaign,
-    does: "Plan a campaign, edit its plan entries and their dates, and approve what may be made.",
-  },
-  {
-    key: "schedule",
-    label: "Schedule",
-    href: SHELL_ROUTES.schedule,
-    // 唯一的日历。/campaign/calendar 那张草稿列表已收敛(见 MERCHANT_NAV_REDIRECTS):
-    // 计划日期在战役自己那一页改,真正要发出去的东西只有这一本。
-    does: "The one calendar: everything waiting to be posted, when it goes out, and your approval before it does.",
-  },
-  {
     key: "settings",
     label: "Settings",
-    items: [
-      { key: "billing", label: "Billing & credits", href: SHELL_ROUTES.billing, does: "Buy credits, and read what your credits have gone on." },
-      { key: "connections", label: "Connections", href: SHELL_ROUTES.connections, does: "Connect or disconnect the accounts you post from." },
-      { key: "preferences", label: "Preferences", href: SHELL_ROUTES.preferences, does: "Set your spend cap and posting defaults." },
-    ],
+    href: SHELL_ROUTES.preferences,
+    does: "Manage your profile, workspace, connections, and billing.",
   },
 ];
+
+/**
+ * Settings 内部目的地。
+ *
+ * 它们能被身份菜单、credits 入口与 Otto 指路直接打开,但不是额外的主导航项。把这层关系
+ * 留在导航权威源里,壳就不需要各自猜 `/billing` 与 `/profile` 应该点亮哪一格。
+ */
+export type SettingsScope = "Personal" | "Workspace";
+
+/**
+ * Settings 自己的四个 sections。`General` 与顶层 Settings 共用 `/settings` 这扇门，
+ * 所以它不能重复进入 `everyNavDestination()`；但 Settings 内壳、Otto 指路与测试仍要从
+ * 同一份 registry 读取它的名字、scope 与地址。
+ */
+export const SETTINGS_SECTIONS = [
+  {
+    key: "profile",
+    label: "Profile",
+    href: SHELL_ROUTES.profile,
+    does: "Manage your personal profile and account details.",
+    scope: "Personal",
+  },
+  {
+    key: "general",
+    label: "General",
+    href: SHELL_ROUTES.preferences,
+    does: "Manage the name and identity of this workspace.",
+    scope: "Workspace",
+  },
+  {
+    key: "connections",
+    label: "Connections",
+    href: SHELL_ROUTES.connections,
+    does: "Connect or disconnect the accounts you use with Fikirtive.",
+    scope: "Workspace",
+  },
+  {
+    key: "billing",
+    label: "Billing & credits",
+    href: SHELL_ROUTES.billing,
+    does: "Buy credits, and read what your credits have gone on.",
+    scope: "Workspace",
+  },
+] as const satisfies readonly (MerchantNavLink & { readonly scope: SettingsScope })[];
+
+/** Child routes only. General is already the top-level Settings destination at `/settings`. */
+export const SETTINGS_DESTINATIONS: readonly MerchantNavLink[] = SETTINGS_SECTIONS.filter(
+  (item) => item.key !== "general",
+);
+
+/**
+ * 不占主导航格、但必须点亮其 owner 的 child surfaces。
+ * 最长 path 先匹配,所以 `/create/canvas` 永远归 Create、`/billing` 永远归 Settings。
+ */
+export const NAVIGATION_OWNED_SURFACES: readonly {
+  readonly key: string;
+  readonly href: string;
+  readonly ownerKey: "home" | "create" | "library" | "brand" | "settings";
+}[] = [
+  { key: "homeAnalysis", href: SHELL_ROUTES.homeAnalysis, ownerKey: "home" },
+  { key: "canvas", href: SHELL_ROUTES.canvas, ownerKey: "create" },
+  ...SETTINGS_DESTINATIONS.map((item) => ({
+    key: item.key,
+    href: item.href,
+    ownerKey: "settings" as const,
+  })),
+] as const;
+
+/** Full-screen 或 public surfaces：有产品 owner，但不得重复画 application shell。 */
+export const APPLICATION_SHELL_CARVE_OUTS = [
+  SHELL_ROUTES.canvas,
+  SHELL_ROUTES.publicSharePreview,
+] as const;
 
 /**
  * 收敛掉的旧路由 —— 一律 redirect,永不 404。
@@ -222,8 +286,33 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
 export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly to: string; readonly why: string }[] = [
   {
     from: "/campaign/calendar",
-    to: SHELL_ROUTES.schedule,
-    why: "One calendar, not two. The campaign calendar only re-edited plan-entry dates that the campaign's own page already edits; the schedule is the calendar that actually posts.",
+    to: SHELL_ROUTES.home,
+    why: "Campaigns are parked in the Beta, so an old campaign calendar bookmark returns to the active Home surface.",
+  },
+  {
+    from: SHELL_ROUTES.campaign,
+    to: SHELL_ROUTES.home,
+    why: "Campaigns are parked in the Beta, so legacy campaign routes return to the active Home surface.",
+  },
+  {
+    from: SHELL_ROUTES.schedule,
+    to: SHELL_ROUTES.home,
+    why: "Merchant scheduling is deferred from the Beta, so legacy schedule routes return to Home.",
+  },
+  {
+    from: SHELL_ROUTES.analytics,
+    to: SHELL_ROUTES.homeAnalysis,
+    why: "Performance analysis belongs to Home, so the legacy Schedule analytics route enters the Home analysis detail.",
+  },
+  {
+    from: SHELL_ROUTES.edit,
+    to: SHELL_ROUTES.create,
+    why: "The manual video editor is parked in the Beta, so its legacy route returns to the active Create surface.",
+  },
+  {
+    from: SHELL_ROUTES.crm,
+    to: SHELL_ROUTES.home,
+    why: "CRM is disabled until its integrations are ready, so its legacy routes return to the active Home surface.",
   },
   // `/library` 曾经在这张表里(「旧的独立素材库已并进工作区 Library」)。W2-1 把它撤了 ——
   // 不是改了去处,是**它不再是一条收敛掉的旧路由**:`/library` 现在是真页面
@@ -253,17 +342,17 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
  * `#templates` / `#ideas` 是 `/create` 页面下方的两个区段(Q6),它们都不是新路由。
  */
 export const OTTO_VIEW_REDIRECTS: Readonly<Record<string, string>> = {
-  otto: "/?otto=1",
-  library: "/library",
-  stuff: "/library",
-  edit: "/library/editor",
-  memory: "/brand",
-  templates: "/create#templates",
-  discover: "/create#ideas",
-  schedule: "/schedule",
-  analytics: "/schedule/analytics",
-  connections: "/settings/connections",
-  account: "/settings",
+  otto: `${SHELL_ROUTES.home}?otto=1`,
+  library: SHELL_ROUTES.library,
+  stuff: SHELL_ROUTES.library,
+  edit: SHELL_ROUTES.create,
+  memory: SHELL_ROUTES.brand,
+  templates: `${SHELL_ROUTES.create}#templates`,
+  discover: `${SHELL_ROUTES.create}#ideas`,
+  schedule: SHELL_ROUTES.home,
+  analytics: SHELL_ROUTES.homeAnalysis,
+  connections: SHELL_ROUTES.connections,
+  account: SHELL_ROUTES.preferences,
 };
 
 /**
@@ -271,7 +360,8 @@ export const OTTO_VIEW_REDIRECTS: Readonly<Record<string, string>> = {
  * 而不是在壳里再硬写一次它的路径 —— 路径只有权威源写。
  */
 export function navLinkByKey(key: string): MerchantNavLink {
-  const found = everyNavDestination().find((item) => item.key === key);
+  const found = everyNavDestination().find((item) => item.key === key)
+    ?? SETTINGS_SECTIONS.find((item) => item.key === key);
   if (!found) throw new Error(`navLinkByKey: no navigation destination with key "${key}"`);
   return found;
 }
@@ -290,7 +380,7 @@ export function merchantNavLinks(): readonly MerchantNavLink[] {
  * 改名。
  */
 export function everyNavDestination(): readonly MerchantNavLink[] {
-  return merchantNavLinks();
+  return [...merchantNavLinks(), ...SETTINGS_DESTINATIONS];
 }
 
 /** 分组名与组内项之间的那一格 —— 商家跟着走的那条路只有这一种写法。 */
@@ -344,6 +434,10 @@ export const NAV_LABEL_ALLOWED_CHARS = /^[A-Za-z0-9 &'-]+$/;
  */
 export function navPath(key: string): string {
   if (key === OTTO_ASSISTANT.key) return OTTO_ASSISTANT.label;
+  const settingsDestination = SETTINGS_SECTIONS.find((item) => item.key === key);
+  if (settingsDestination) {
+    return `Settings ${NAV_PATH_SEPARATOR} ${settingsDestination.label}`;
+  }
   for (const node of MERCHANT_NAV) {
     if (!isNavGroup(node)) {
       if (node.key === key) return node.label;
@@ -364,7 +458,8 @@ export function navPath(key: string): string {
  */
 export function navLabel(key: string): string {
   if (key === OTTO_ASSISTANT.key) return OTTO_ASSISTANT.label;
-  const found = merchantNavLinks().find((item) => item.key === key);
+  const found = everyNavDestination().find((item) => item.key === key)
+    ?? SETTINGS_SECTIONS.find((item) => item.key === key);
   if (found) return found.label;
   const group = MERCHANT_NAV.find((node) => isNavGroup(node) && node.key === key);
   if (group) return group.label;
@@ -384,6 +479,7 @@ export function navPointableNames(): readonly string[] {
     if (!isNavGroup(node)) continue;
     for (const item of node.items) names.push(navPath(item.key));
   }
+  for (const item of SETTINGS_SECTIONS) names.push(navPath(item.key));
   return names;
 }
 
@@ -403,6 +499,9 @@ export function merchantNavMap(): string {
   for (const node of MERCHANT_NAV) {
     if (!isNavGroup(node)) {
       lines.push(describeNavLink(node));
+      if (node.key === "settings") {
+        for (const item of SETTINGS_SECTIONS) lines.push(describeNavLink(item, "  "));
+      }
       continue;
     }
     lines.push(`- ${node.label}`);

@@ -287,7 +287,7 @@ describe("导轨上一格都不剩,而且没有半扇门", () => {
     expect(badges.length).toBe(0);
   });
 
-  it("14 个 /crm 路由文件一个不少,而且每一个都只是 redirect(\"/\") —— 旧书签不撞墙", () => {
+  it("14 个 /crm 路由文件一个不少,而且每一个都通过 SSOT 回 Home —— 旧书签不撞墙", () => {
     const routes = crmRouteFiles();
 
     // 数目钉死:少一个 = 有人把书签的落点删成了 404;多一个 = 有人在收起来的段里新开了页。
@@ -295,7 +295,11 @@ describe("导轨上一格都不剩,而且没有半扇门", () => {
 
     const notRedirecting = routes.filter((file) => {
       const src = readFileSync(path.join(CRM_APP_DIR, file), "utf8");
-      return !src.includes('redirect("/")') || /from "@\/components\/crm|from "@\/lib\//.test(src);
+      return (
+        !src.includes("redirect(SHELL_ROUTES.home)") ||
+        !src.includes('@fikirtive/core/navigation') ||
+        /from "@\/components\/crm|from "@\/lib\//.test(src)
+      );
     });
     expect(notRedirecting, "这些路由还在渲染页面或取数").toEqual([]);
   });

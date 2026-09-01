@@ -1,19 +1,18 @@
 // @vitest-environment jsdom
 /**
- * #804 — the §K3 activation contract, asserted wire by wire.
+ * Fikirtive v4 light-only activation plus dormant dark-token safety.
  *
- * Dark mode was not missing before this ticket. The `.gb.dark` token block had existed and
- * been contrast-audited for months; it was simply unreachable — nothing ever set the class,
- * so every value in it was dead code that no screen and no test could tell apart from a
- * correct one. That is the failure mode this file guards: a token block that LOOKS right and
- * reaches nothing. Each assertion below therefore checks a wire, not a value:
+ * #804 once activated the existing dark token block. The later Founder-approved v4 palette
+ * supersedes that product choice with “V1 light only.” The app therefore mounts no theme
+ * provider, exposes no appearance picker, and fixes browser chrome to the approved ground.
+ * The dormant dark tokens remain contrast-checked so a future approved dark direction can
+ * reuse sound foundations instead of starting from unchecked values.
  *
- *   ① provider   — next-themes is mounted, with the class strategy and a system default.
- *   ② variant    — `dark:` compiles to the CLASS, never to the OS media query.
+ *   ① activation — no provider or settings entry can activate dark in V1.
+ *   ② variant    — dormant `dark:` utilities still compile to a class, never the OS query.
  *   ③ scheme     — `color-scheme` is declared in both token blocks (§K2.7), so native
- *                  controls (date pickers, selects, file inputs) follow the theme.
- *   ④ themeColor — both ground colours reach the browser chrome, and they are the two
- *                  `--background` literals, not a hand-typed near-miss.
+ *                  controls remain coherent if the future block is deliberately activated.
+ *   ④ themeColor — only the approved light ground reaches browser chrome in V1.
  *   ⑤ shadows    — the six dark shadow tokens land in the dark block (§K1).
  *
  * Plus the two things that make the wires worth having: every `.gb` token root — the global
@@ -260,32 +259,32 @@ function resolveVar(subject: Element, property: string, roots: TokenRoot[]): str
   return undefined;
 }
 
-describe("#804 wire ① — the provider is mounted", () => {
-  it("layout.tsx renders ThemeProvider around the app", async () => {
+describe("v4 V1 light-only activation", () => {
+  it("layout mounts no theme provider and needs no hydration exception", async () => {
     const layout = await readLayout();
-    expect(layout).toContain('import { ThemeProvider } from "@/components/theme-provider"');
-    expect(layout).toContain("<ThemeProvider>");
-    // next-themes writes onto <html> before hydration; without this React would blow the
-    // tree away on every load and the flash-free script would be pointless.
-    expect(layout).toContain("suppressHydrationWarning");
+    expect(layout).not.toContain('import { ThemeProvider } from "@/components/theme-provider"');
+    expect(layout).not.toContain("<ThemeProvider>");
+    expect(layout).not.toContain("suppressHydrationWarning");
   });
 
-  it("the provider uses the class strategy, keeps System, and defaults to it", async () => {
-    const provider = await fs.readFile(path.join(webRoot, "components/theme-provider.tsx"), "utf8");
-    expect(provider).toContain('from "next-themes"');
-    expect(provider).toContain('attribute="class"');
-    expect(provider).toContain('defaultTheme="system"');
-    expect(provider).toContain("enableSystem");
+  it("settings exposes no appearance picker while V1 is light-only", async () => {
+    const settings = await fs.readFile(path.join(webRoot, "components/otto/settings/sections.tsx"), "utf8");
+    expect(settings).not.toContain('import { ThemeToggle }');
+    expect(settings).not.toContain('id: "appearance"');
+    expect(settings).not.toContain("<ThemeToggle");
   });
 
-  it("the merchant has all three choices, System included", async () => {
-    const toggle = await fs.readFile(path.join(webRoot, "components/theme-toggle.tsx"), "utf8");
-    for (const value of ["light", "dark", "system"]) {
-      expect(toggle, value).toContain(`value: "${value}"`);
-    }
-    // A two-state switch can leave System but never return to it — the default would be
-    // unreachable the moment it was touched once.
-    expect(toggle).toContain("useTheme");
+  it("loads only the approved interface fonts and keeps toast chrome on design tokens", async () => {
+    const layout = await readLayout();
+    const toast = await fs.readFile(path.join(webRoot, "components/ui/toast.tsx"), "utf8");
+
+    expect(layout).toContain("JetBrains_Mono");
+    expect(layout).toContain("Geist");
+    expect(layout).not.toContain("Hanken_Grotesk");
+    expect(toast).toContain("bg-popover");
+    expect(toast).toContain("text-popover-foreground");
+    expect(toast).not.toContain('from "next-themes"');
+    expect(toast).not.toContain("useTheme");
   });
 });
 
@@ -308,13 +307,19 @@ describe("#804 wire ② — `dark:` fires on the class, not the OS", () => {
     expect(rule).not.toContain("prefers-color-scheme");
   });
 
-  it("the three shipped dark: call sites are the ones this fixes", async () => {
+  it("every shipped dark: primitive remains class-gated for a future approved direction", async () => {
     const kit = path.join(webRoot, "components/ui");
     const withDark: string[] = [];
     for (const name of await fs.readdir(kit)) {
       if ((await fs.readFile(path.join(kit, name), "utf8")).includes("dark:")) withDark.push(name);
     }
-    expect(withDark.sort()).toEqual(["select.tsx", "switch.tsx", "textarea.tsx"]);
+    expect(withDark.sort()).toEqual([
+      "bubble.tsx",
+      "chart.tsx",
+      "field.tsx",
+      "switch.tsx",
+      "toggle.tsx",
+    ]);
   });
 });
 
@@ -333,7 +338,7 @@ describe("#804 wire ③ — color-scheme (§K2.7)", () => {
 });
 
 describe("#804 wire ④ — themeColor metadata", () => {
-  it("both ground colours reach the browser chrome, and they ARE the --background pair", async () => {
+  it("only the approved light ground reaches browser chrome in V1", async () => {
     const layout = await readLayout();
     const css = await readGlobals();
 
@@ -341,14 +346,11 @@ describe("#804 wire ④ — themeColor metadata", () => {
     expect(layout).toContain("themeColor");
 
     const light = token(lightBlock(css), "background");
-    const dark = token(darkBlock(css), "background");
     expect(light).toBe("#FAFAFC");
-    expect(dark).toBe("#0B0B0C");
-    // Typed once in §K3 and again in the metadata is exactly how the two drift apart.
-    expect(layout).toContain(`color: "${light}"`);
-    expect(layout).toContain(`color: "${dark}"`);
-    expect(layout).toContain("(prefers-color-scheme: light)");
-    expect(layout).toContain("(prefers-color-scheme: dark)");
+    expect(layout).toContain(`themeColor: "${light}"`);
+    expect(layout).toContain('colorScheme: "light"');
+    expect(layout).not.toContain("prefers-color-scheme");
+    expect(layout).not.toContain("#0B0B0C");
   });
 });
 
@@ -517,9 +519,9 @@ describe("#804 — dark semantic colour keeps WCAG AA", () => {
       ["info text on info-soft", value("info-soft-foreground"), value("info-soft")],
       ["info text on page", value("info-soft-foreground"), background],
       ["brand text on brand-soft", value("brand-soft-foreground"), value("brand-soft")],
-      // The `link` button variant is `text-brand-strong` — a link is small text, §A1.3.
-      ["link text on page", value("brand-strong"), background],
-      ["link text on card", value("brand-strong"), value("card")],
+      // Human links use ink. Coral remains available only for explicit Otto authorship.
+      ["link text on page", value("foreground"), background],
+      ["link text on card", value("foreground"), value("card")],
     ];
 
     for (const [name, foreground, ground] of pairs) {

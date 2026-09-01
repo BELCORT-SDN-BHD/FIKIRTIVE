@@ -16,22 +16,13 @@
  */
 
 import type { CanvasLineageTree, CanvasLineageTreeRow } from "@/lib/canvas-lineage-tree";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-
-const LABEL_STYLE: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 600,
-  letterSpacing: "0.04em",
-  color: "var(--muted-foreground)",
-  margin: 0,
-};
-
-const NOTE_STYLE: React.CSSProperties = {
-  fontSize: 12,
-  lineHeight: 1.45,
-  color: "var(--muted-foreground)",
-  margin: 0,
-};
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Separator } from "@/components/ui/separator";
+import { TooltipButton } from "@/components/ui/tooltip-button";
+import { XIcon } from "lucide-react";
 
 /** What the focused card records about its own source, in the merchant's words. */
 const ORIGIN_NOTE: Record<CanvasLineageTree["origin"], string | null> = {
@@ -51,29 +42,21 @@ function LineageRow({
 }) {
   const said = row.prompt;
   return (
-    // #840 车4:迁到 ui/Button,`cv-lineage-row` 留在原地 —— 它是一整套带状态的配方
-    // (hover / :active / [aria-current="true"] 选中态 / prefers-reduced-motion),没有对位
-    // 的 shadcn 变体。但它是单类选择器、住在 @layer components,而 Tailwind 工具类住在其后的
-    // @layer utilities —— 所以 Button 自带的工具类会盖过它,冲突的每一项都在下面显式压回原值:
-    // 尺寸(h-11 → h-auto/min-h-[30px])、内距(px-5 → px-2 py-1)、字号字重(text-sm
-    // font-semibold → text-xs font-normal)、对齐(justify-center → justify-start)、
-    // 间距(gap-2 → gap-1.5)、圆角(rounded-lg → rounded-[10px])、文字色(text-foreground
-    // → text-muted-foreground)。选中态那条是 `.cv-lineage-row[aria-current="true"]`(类+属性,
-    // 专有度高过工具类),原样生效,不需要压。
     <Button
       type="button"
       variant="ghost"
+      size="xs"
       data-lineage-row={row.id}
       aria-current={row.isFocus ? "true" : undefined}
       onClick={() => onPick(row.id)}
-      className="cv-lineage-row h-auto min-h-[30px] w-full justify-start gap-1.5 rounded-[10px] px-2 py-1 text-xs font-normal text-muted-foreground"
+      className="cv-lineage-row h-8 w-full justify-start px-2 font-normal text-muted-foreground"
       style={{ marginLeft: Math.max(0, row.depth - indentFrom) * 12 }}
     >
       <span className="cv-lineage-kind">{row.kind}</span>
       <span className="cv-lineage-said">{said || "No description kept"}</span>
-      {row.letter && <span className="cv-lineage-letter">{row.letter}</span>}
+      {row.letter && <Badge className="cv-lineage-letter">{row.letter}</Badge>}
       {!row.letter && row.batchPosition && (
-        <span className="cv-lineage-pos">{row.batchPosition}</span>
+        <Badge variant="outline" className="cv-lineage-pos">{row.batchPosition}</Badge>
       )}
     </Button>
   );
@@ -94,41 +77,50 @@ export function CanvasLineagePanel({
 }) {
   const originNote = tree ? ORIGIN_NOTE[tree.origin] : null;
   return (
-    <aside aria-label="Lineage" className="al-panel cv-lineage">
-      <header className="cv-lineage-head">
-        <h2 className="cv-lineage-title">Lineage</h2>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-auto px-[13px] py-1.5 text-[12.5px]"
-          aria-label="Close lineage"
-          onClick={onClose}
-        >
-          Close
-        </Button>
-      </header>
+    <aside aria-label="Lineage" className="cv-lineage">
+      <Card size="sm" className="cv-lineage-card">
+        <CardHeader className="relative pr-9">
+          <CardTitle>Lineage</CardTitle>
+          <CardDescription>Trace how the selected card was made.</CardDescription>
+          <TooltipButton
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="absolute -right-1 -top-1"
+            label="Close lineage"
+            tooltip="Close"
+            onClick={onClose}
+          >
+            <XIcon aria-hidden="true" />
+          </TooltipButton>
+        </CardHeader>
 
-      {unavailable ? (
+        <CardContent className="cv-lineage-content">
+        {unavailable ? (
         // FAIL CLOSED. A board read that failed says nothing about today's relationships, and the
         // snapshot still on screen may already be wrong — so the tree stops talking rather than
         // keep telling a story it cannot stand behind.
-        <div className="cv-lineage-empty">
-          <p className="cv-lineage-strong">Lineage unavailable</p>
-          <p style={NOTE_STYLE}>
-            We couldn&apos;t read this board&apos;s history just now, so nothing is shown here. Your
-            cards are untouched.
-          </p>
-        </div>
+          <Empty className="cv-lineage-empty">
+            <EmptyHeader>
+              <EmptyTitle>Lineage unavailable</EmptyTitle>
+              <EmptyDescription>
+                We couldn&apos;t read this board&apos;s history just now, so nothing is shown here. Your
+                cards are untouched.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
       ) : !tree ? (
-        <div className="cv-lineage-empty">
-          <p style={NOTE_STYLE}>Pick one card to see where it came from.</p>
-        </div>
+          <Empty className="cv-lineage-empty">
+            <EmptyHeader>
+              <EmptyTitle>Pick a card</EmptyTitle>
+              <EmptyDescription>Choose one card to see where it came from.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
       ) : (
         <div className="cv-lineage-body">
           <section>
-            <p style={LABEL_STYLE}>Made from</p>
-            {originNote && <p style={NOTE_STYLE}>{originNote}</p>}
+            <p className="cv-panel-label">Made from</p>
+            {originNote && <p className="cv-panel-note">{originNote}</p>}
             <div className="cv-lineage-rows">
               {tree.chain.map((row) => (
                 <LineageRow key={`chain-${row.id}`} row={row} indentFrom={0} onPick={onPick} />
@@ -137,37 +129,45 @@ export function CanvasLineagePanel({
           </section>
 
           {tree.batch && (
-            <section>
-              <p style={LABEL_STYLE}>Same batch · Batch of {tree.batch.size}</p>
-              <p style={NOTE_STYLE}>
-                One press made these together. Standing side by side is not the same as coming from
-                one another.
-              </p>
-              <div className="cv-lineage-rows">
-                {tree.batch.rows.map((row) => (
-                  <LineageRow key={`batch-${row.id}`} row={row} indentFrom={0} onPick={onPick} />
-                ))}
-              </div>
-            </section>
+            <>
+              <Separator />
+              <section>
+                <p className="cv-panel-label">Same batch · Batch of {tree.batch.size}</p>
+                <p className="cv-panel-note">
+                  One press made these together. Standing side by side is not the same as coming from
+                  one another.
+                </p>
+                <div className="cv-lineage-rows">
+                  {tree.batch.rows.map((row) => (
+                    <LineageRow key={`batch-${row.id}`} row={row} indentFrom={0} onPick={onPick} />
+                  ))}
+                </div>
+              </section>
+            </>
           )}
 
           {tree.descendants.length > 0 && (
-            <section>
-              <p style={LABEL_STYLE}>Made from this</p>
-              <div className="cv-lineage-rows">
-                {tree.descendants.map((row) => (
-                  <LineageRow
-                    key={`down-${row.id}`}
-                    row={row}
-                    indentFrom={tree.chain.length}
-                    onPick={onPick}
-                  />
-                ))}
-              </div>
-            </section>
+            <>
+              <Separator />
+              <section>
+                <p className="cv-panel-label">Made from this</p>
+                <div className="cv-lineage-rows">
+                  {tree.descendants.map((row) => (
+                    <LineageRow
+                      key={`down-${row.id}`}
+                      row={row}
+                      indentFrom={tree.chain.length}
+                      onPick={onPick}
+                    />
+                  ))}
+                </div>
+              </section>
+            </>
           )}
         </div>
       )}
+        </CardContent>
+      </Card>
     </aside>
   );
 }

@@ -51,7 +51,7 @@ vi.mock("@/lib/canvas-actions", () => ({
 }));
 vi.mock("@/lib/otto-canvas-bridge", () => ({ syncOttoCanvasNodes: mocks.boardRead }));
 vi.mock("@/lib/actions", () => ({ uploadReference: mocks.uploadReference }));
-vi.mock("sonner", () => ({
+vi.mock("@/components/ui/toast", () => ({
   toast: { error: mocks.toastError, success: mocks.toastSuccess, message: mocks.toastMessage },
 }));
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));

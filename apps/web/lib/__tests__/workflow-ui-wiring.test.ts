@@ -10,7 +10,7 @@ function source(relativePath: string) {
 // Stage 3's four reads and paginate Routines to exhaustion before handing them to the detail
 // page. The whole CRM section is hidden until Meta verification passes (Founder ruling
 // 2026-08-18; restore trigger recorded on issue #359), so every /crm route is a bare
-// `redirect("/")` now and its loader is gone with it — rebuilding those loaders is part of
+// `redirect(SHELL_ROUTES.home)` now and its loader is gone with it — rebuilding those loaders is part of
 // restoring CRM, and this file says so out loud rather than going quiet.
 //
 // Everything below the route is untouched and still fully pinned here: the detail page, the
@@ -19,7 +19,8 @@ describe("workflow UI read wiring", () => {
   it("the route no longer loads anything — it redirects (CRM hidden, W2-13/#993)", () => {
     const route = source("../../app/crm/workflows/[id]/page.tsx");
 
-    expect(route).toContain('redirect("/")');
+    expect(route).toContain("redirect(SHELL_ROUTES.home)");
+    expect(route).toContain('@fikirtive/core/navigation');
     for (const read of [
       "listRoutines",
       "listRoutineRuns",

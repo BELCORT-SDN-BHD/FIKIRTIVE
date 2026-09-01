@@ -17,12 +17,17 @@
  */
 
 import { HomeEntry } from "@/components/home/HomeEntry";
+import { parseHomeSearchState } from "@/lib/home-marketing-health";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Home · Fikirtive" };
 
 /** 等待态由同目录的 `loading.tsx` 提供 —— App Router 自己会拿它当这条路由的 Suspense 边界,
  *  所以这里不再手写第二个 fallback。 */
-export default function Page() {
-  return <HomeEntry />;
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  return <HomeEntry filters={parseHomeSearchState(await searchParams)} />;
 }
