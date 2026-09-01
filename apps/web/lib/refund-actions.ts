@@ -13,7 +13,9 @@
  *   ② `stripe.refunds.create` —— 拿到 `re_…`。
  *   ③ `settleCredits` —— 落账,SETTLE 行 **reason 当场载 `re_…`**(落账时单号已经存在,
  *      所以账本仍然只追加、零修改;这正是 v1 那版物理上做不到、被改签的地方)。
- *   Stripe 失败 → `refundReservation` 释放,商家余额净变 0、账本成对。
+ *   Stripe **明确拒绝** → `refundReservation` 释放,商家余额净变 0、账本成对。
+ *   Stripe **答案不明**(超时 / 5xx / 幂等键撞参数)→ 预扣留着 + 报警,见
+ *   {@link stripeDefinitelyRefused} 的判词:释放的前提是「确定没退成」。
  *
  * **退款单号就是幂等键**:`refundId` 由发起方带进来(一张退款单一个,重试用同一个),它同时是
  * 账本 refId 的后缀和 Stripe 的 idempotency key。所以「点了两次」「settle 之前进程挂了」都收敛
