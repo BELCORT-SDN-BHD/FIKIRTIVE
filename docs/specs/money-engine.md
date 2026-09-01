@@ -1,6 +1,6 @@
 # 钱引擎 规格书(S1)
 
-> 状态: 已冻结 · v1
+> 状态: 已冻结 · v2
 > 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1109#issuecomment-5481523165 Founder 评论「S1 批准 money-engine.md」(2026-09-01)
 > 规格前缀: MONEY(验收编号 = MONEY-A1、A2…,全仓不得与其他规格撞前缀)
 
@@ -71,7 +71,7 @@
 | MONEY-A11 | (工程演示)三条信任通道各发一次「卡面冻结价≠现算价」的请求;另发一次不带 expectedCredits 的请求 | 前者一律拒绝执行并提示价格已变(绝不静默按新价扣);后者由服务端现算价成交——报价与扣款同出 `pricedGenCredits` 一个函数(同源可查)。本行是 S2 定价重构(字面量→公式推导)的回归锚:重构前后本行判定不变 |
 | MONEY-A12 | (工程演示)在 Stripe 后台加一个代码表没有的新包并尝试购买;另演示:制造一笔入账缺口并静置 | 购买被三态核对拦下(mismatch 不入账+报警)或货架根本不显示未在代码表的包——#1044 双权威漂移窗口关闭;对账哨兵报警走 founderAlert 三通道(不再裸 Sentry),缺口未解决不随 48 小时扫描窗静默消失(持续追踪至人工关闭) |
 | MONEY-A13 | (工程演示)模拟 charge.dispute.created 事件到达 | 产生一条含商家 org 标识与金额的三通道报警;按 runbook 执行**账号级暂停**(Founder 2026-09-01 拍板冻结形态)后,该商家一切消费动作被拒;平台损失在人工台账有落点;拒付 runbook 在 docs/runbooks/ 存在 |
-| MONEY-A14 | (工程演示)按退款 runbook 给演示商家退未使用的 100cr | 顺序=先 ledger 负 ADJUST 扣减、后 Stripe 后台退款(余额不足则拒退或按可扣部分退);ADJUST 行 reason 载 Stripe 退款单号,两边金额按汇率钉点对得上;商家消费历史该行可读出是「退款」而非泛泛 Adjustment;退款 runbook 在 docs/runbooks/ 存在 |
+| MONEY-A14 | (工程演示)按退款 runbook 给演示商家退未使用的 100cr | 顺序=先 RESERVE 预扣锁定退款额、后 Stripe 退款、再 SETTLE 落账(余额不足则拒退或按可扣部分退;Stripe 退款失败则 REFUND 释放,商家余额净变 0、账本成对);SETTLE 行 reason 载 Stripe 退款单号(落账时单号已存在,账本零修改),两边金额按汇率钉点对得上;商家消费历史该退款行可读出是「退款」而非泛泛 Adjustment;退款 runbook 在 docs/runbooks/ 存在 |
 
 (注:MONEY-A2 所指 45% 地板闸、A7 所涉退款成对语义,与 Otto、Creation 两规格的既有验收行同源不重复——交叉引用见九问 5,表内按 M2 闸纪律不写他家编号。)
 
@@ -101,7 +101,7 @@
 
 ## 6. 改签记录
 
-- 无
+- **2026-09-01 v1→v2:A14 措辞修订**。原文三要求物理冲突(账本 append-only × 先负 ADJUST 扣减 × reason 载只在退款后才存在的 Stripe 单号)——跨厂判官 P0 坐实,S2 场呈 Founder 二选一,Founder 裁决:退款改走钱路现成 RESERVE→SETTLE 通道(预扣锁定→Stripe 退款→结算落账,失败 REFUND 释放),账本保持只追加。顺序铁律(先锁 credits 后退钱)与全部其余语义不变。批准载体=Founder 在 S2 docs-only PR 评论「S2 批准 money-engine.md」(该评论同时批准本改签与 §7)。
 
 ---
 
@@ -120,8 +120,9 @@
 2. **Stripe 手续费实测值入钉点表**——Founder 改令由本场用 CLI+研究处理(不亲取后台)。取证结果:①官方公示价页(stripe.com/en-my/pricing,2026-09-01 当日核对)=本地卡 3%+RM1.00、国际卡 +1%、货币转换 +2%;②本账户沙盒 balance_transaction 逐仙实证费率结构——RM25.00 测试充值 fee=RM2.00(=4%+RM1,国际测试卡即本地 3%+国际 1%,分毫不差),另一笔 RM121.83 处理费 587 仙(=4%+RM1 精确)+转换费 244 仙(=2% 精确)。**live 生产账户首笔真实付款后以 balance_transaction 复核一次**(复核条款入钉点行),live 模式 CLI 需重新授权,属 Founder 钥匙,本场未碰。
 3. **素材理解维持「上传即理解」**,披露形态=五个上传入口常驻一行价目小字(样式照抄 Canvas 现成 cost hint);「按需理解」想法入 §5 变更登记待 beta 数据复裁。
 4. **调账累计闸=按 org 滚动 30 天、累计上限 2000 显示 credits**(单笔 ≤1000 不变,正负按绝对值合并计),超限拒绝+三通道报警;调升上限唯一路径=改单一源常量走 PR+Founder 批。
+5. **A14 退款通道改裁**(跨厂判官 P0 呈批后定):原「负 ADJUST 先扣+事后回填 reason」与账本 append-only 铁律物理冲突;Founder 裁决改走钱路现成 **RESERVE→SETTLE** 三段(预扣锁定→Stripe 退款→结算落账、reason 当场载单号;失败 REFUND 释放),A14 措辞随本稿修订、规格升 v2(见改签记录)。
 
-**量尺口径备案(独立复算 2026-09-01,算术全部与 S1 异议栏逐位一致)**:实收系数 0.8944 完全由汇率钉点的**刻意保守缓冲**产生(钉点 4.5 vs 参考现汇 4.062917,+10.76%);按参考现汇复算,研究档最坏实收为 49.53%,并未破线。故 45% 地板的实收口径闸是**压力测试口径**(假设马币已贬至钉点),不是现金已损——这正是钉点存在的目的,闸的注释必须写明此口径身份,免得后人把「压力口径破线」误读成「正在亏钱」。三包实收系数逐包复算:Starter 1.0333(溢价)、Standard 0.9697、Pro 0.8944——**最坏包是算出来的,不是「最深折扣包」公理**;三个数全部入闸测试,防未来加包/改包时口径失真。
+**量尺口径备案(独立复算 2026-09-01,算术全部与 S1 异议栏逐位一致)**:实收系数 0.8944=包折扣×手续费**叠乘**、以汇率**钉点**(4.5)计价——其与「按参考现汇(4.062917)计价」的差异主要来自钉点的刻意保守缓冲(+10.76%)。按参考现汇复算:2.0× 旧费率最坏实收 49.53%(对照值)、**2.05× 新费率最坏实收 50.76%**,均未破线。故 45% 地板的实收口径闸是**压力测试口径**(假设马币已贬至钉点),不是现金已损——这正是钉点存在的目的,闸的注释必须写明此口径身份,免得后人把「压力口径破线」误读成「正在亏钱」。三包实收系数逐包复算:Starter 1.0333(溢价)、Standard 0.9697、Pro 0.8944——**最坏包是算出来的,不是「最深折扣包」公理**;三个数全部入闸测试,防未来加包/改包时口径失真。
 
 **聊天档口径注记(不改费率,不静默)**:同一压力实收口径下,聊天 1.05× 实收为 −6.48%(按参考现汇则 +3.86%)。S1「不做」节禁止本规格重裁聊天费率,施工只做两件事:①`margin-truth.ts` 聊天 RULED 行 reason 追加此口径事实(「不许亏着卖」不变量维持**面值口径**评估,1.05>1 成立;压力实收为负是钉点缓冲的账面现象);②S5 若 Founder 想重议,走 §5 变更登记。
 
@@ -138,7 +139,7 @@
 | seedream pro | $0.045/张 | arkcli 实查(**代码今日无此条目**,建表新增) | 2026-08-29 | pro 图 2cr/张 由此推导 |
 | 素材理解 | in $0.10/M、out $0.40/M | 现役 `asset-understanding.ts:69-70` | 2026-08-18 | 三类(看图/读文档/看视频)同价按用量 |
 | 搜索 Tavily | basic $0.008/次、advanced $0.016/次 | 现役 `pricing-config.ts:255` | 2026-07-03 | |
-| 搜索 Brave | **待实测补钉** | — | — | 补钉前 Brave 回退通道按 Tavily basic 代理钉点收费(现状收编);施工首周查 Brave 牌价补钉 |
+| 搜索 Brave | $5/1,000 次(=$0.005/次,Search plan) | 官方 API 定价页(brave.com/search/api)当日核对;**复核条款:首笔真实账单复核** | 2026-09-01 | 计价锚维持主通道 Tavily basic($0.008×3);Brave 成本更低,回退通道毛利只高不低,毛利表以本钉点证明之 |
 | Stripe 手续费(本地卡) | 3% + RM1.00/笔 | 官方公示价页(en-my/pricing)当日核对+沙盒费率结构逐仙实证;**复核条款:live 首笔真实付款以 balance_transaction 复核** | 2026-09-01 | 实收系数闸消费本行(Pro 包 ≈3.4%,系数 0.8944 维持 S1 现值) |
 | Stripe 国际卡加成 | +1%(合 4%+RM1) | 沙盒 balance_transaction 逐仙实证(fee=RM2.00 on RM25.00;587 仙 on RM121.83) | 2026-09-01 | 备案带:国际卡买 Pro 包系数 0.8852,研究档 2.05× 该带实收 44.89%(见 7.9 注记) |
 | Stripe 货币转换加成 | +2% | 沙盒逐仙实证(244 仙 on RM121.83) | 2026-09-01 | 充值包 MYR 计价+MYR 结算,**当前不适用**;改币种提案须重过实收算术 |
@@ -155,15 +156,16 @@
 - **65% 目标线闸**(A2,今日代码无任何 65% 机制痕迹,全新):`check-margin-floor.mjs` 升级双线——生成侧 SKU 按**面值口径**查 ≥65% 目标线(破线=红+「等 Founder 重定价」判词;停车展期仅限带登记与复核期的待裁决名单行,到期自动转红);45% 宪法地板改按**最坏实收口径**(面值×最坏包系数×实测手续费)。实收系数**不许手抄死数**,由 `CREDIT_PACKS`+`FX_PIN`+手续费钉点现算;三包系数(1.0333/0.9697/0.8944)入测试。取整容差沿用 `MARGIN_FLOOR_EPSILON` 写法;**图/参考图两档恰好 65.0000% 且进位余量为 $0.00**,注释点名:供应商图价任何上涨即闸红=设计意图(等 Founder 重定价),不是 bug。
 - **#1047 生产值盲区关闭**(A2):`OTTO_LLM_MARGIN_FLOOR` 从 1.0 抬到 **2.05**(=裁决值;env 覆盖只能调高不能调低,方向永远多收),`env-contract` minimum 同步;**warn 免疫**:env-contract 新增「钱路不变量」类别,`FIKIRTIVE_ENV_CONTRACT=warn` 下毛利/费率违规照红不降级。
 - **研究档 2.05×落地**:`OTTO_LLM_MARGIN_DEFAULT` 2.0→2.05(`llm-prices.ts:52`);`margin-truth.ts` 注释同步(面值 51.22%/最坏实收 45.46%);无新豁免行。
+- **图片 SKU 结构枚举**(A2 第三判定,判官点名此前无设计):图片可售 model 的 canonical registry=gen.ts 的图片模型能力表(与视频 `GEN_VIDEO_MODEL_OPTIONS` 同族),毛利表与 `check-margin-floor.mjs` 的图片档从该 registry **枚举**(镜像 `margin-truth.ts:237-256` 视频档现成枚举法),废除手写 `image:seedream`/`refgen:seedream` 两行(`check-margin-floor.mjs:76-84`);新增图片 model 而无对应成本钉点=闸红。MONEY-A2 测试含此判定。
 - 顺手项:`spend.ts:38-39` 的 $0.78408 过时史注补上 #769 现值一站(S1 已点名)。
 
 ### 7.3 A9 素材理解计费面
 
 - **定价**:理解三类按 65% 法计价成按量 SKU,`pricedUnderstandingCredits(kind)` 比照 `pricedGenCredits` 形状,逐类向上取整到 internal credit(现值下三类各≈1 internal=0.1 显示 credit/件)。
 - **上传时刻价快照**:上传落 Asset 时把当刻各 kind 报价快照写入理解行(新列),结算按快照(计费四则①;扫描隔日执行不改价)。级联 doc-extract 行继承**同一上传时刻**的快照价(四则②:两段价目上传时一并披露、一并锁价)。
-- **钱路接入**:worker 处理开始时 `reserveCredits(refId=AssetUnderstanding.id)` 按快照价→provider 调用→`settleCredits`;失败 `refundReservation`。幂等=现成 `(ownerId, assetId, kind)` 唯一约束+`QUEUED→RUNNING` CAS 双兜底,不另造键(四则③:我方故障重试同素材同阶段只计费一次)。`understand.ts` 头部「本文件不碰 reserveCredits」铁律与 `understand.test.ts` 的「商家一分钱不付」断言块**随本稿正式废止重写**。
+- **钱路接入与钱态机**(判官指出仅唯一约束+CAS 不足,补三崩溃窗协议):worker 处理开始时 `reserveCredits(refId=AssetUnderstanding.id)` 按快照价→provider 调用→`settleCredits`;provider 失败→`refundReservation`。**重投恢复协议**:handler 进入时先按 `(orgId, refId)` 查账本终态——已有 SETTLE=此行已结清,置 DONE no-op;已有 REFUND=上轮已退,按重试余额重新 reserve 或落 FAILED;有 RESERVE 无 finalizer=**复用已有 hold** 继续(reserve 撞 `reserve:<refId>` 唯一键不视为错误,视为「hold 已在」);三个崩溃窗(reserve 后/provider 后/settle 前)全部落入上述三分支。兜底巡检:比照 `llm-reservation-reaper` 现成形状,超时未 finalize 的理解 reserve 走 refund+行回 QUEUED。行级幂等仍由 `(ownerId, assetId, kind)` 唯一约束+`QUEUED→RUNNING` CAS 把守(四则③)。`understand.ts` 头部「本文件不碰 reserveCredits」铁律与 `understand.test.ts` 的「商家一分钱不付」断言块**随本稿正式废止重写**。
 - **「待补余额」暂停态**(四则④):状态枚举新增 `PAUSED_BALANCE`(迁移照 `20260818140000` 的 CHECK 重建形状);进入条件=reserve 抛 `InsufficientCredits`;恢复=充值事件唤醒+扫描器兜底轮询,捞回条件=余额≥快照价;不判终态死门、暂停期间不打供应商(不无限重扫);暂停素材无限期保留(credits 不过期,同理)。
-- **披露组件**(Founder 拍板形态 A):五个上传入口(`OttoChatStream`/`EditDesk`/`TemplateModal`/`AddAssetDialog`/media-port 面)统一挂**同一**共享小字组件,样式照抄 `FlowCanvas.tsx:1727` 现成 cost hint(`text-muted-foreground`+title 说明);文案列三类价+级联说明,数值由推导现算**禁字面量**;billing 页价目区同步展示同源数据。披露先于扣费=该行在选择文件前即可见。
+- **披露组件**(Founder 拍板形态 A;入口清单经判官核正):挂点=**实际会产生 AssetUnderstanding 的 image/video 上传入口**——`OttoChatStream`、`TemplateModal`、`AddAssetDialog` 统一挂**同一**共享小字组件,样式照抄 `FlowCanvas.tsx:1727` 现成 cost hint(`text-muted-foreground`+title 说明);文案列三类价+级联说明,数值由推导现算**禁字面量**;billing 页价目区同步展示同源数据。披露先于扣费=该行在选择文件前即可见。**两个非典型入口单列**:`EditDesk` 现仅收 audio(audio 不入理解三类、不收费)——不挂价目,若未来收图/视频再挂;Otto 的 URL import(`otto-media-port`,服务端动作无 UI 面)——披露走**动作前报价**(共享动作层的报价卡/确认语),价格快照同样按上传时刻落行。施工首件事用 grep 复核入口清单,以「谁写 `source:"UPLOAD"` 的 image/video Asset」为准。
 - **预算闸降级+#1056 随修**:每日 $5 闸保留为平台侧保险丝;竞态修法=**预扣式预算**——provider 调用前先条件 upsert(`spent+worstCase≤budget` 才成功,失败即 hold),调用后按实际用量校正差额;并发 2 下不再可能双双越线。
 - **消费历史**:理解扣费行走常规 RESERVE/SETTLE 呈现,`spend-history` 类目新增 understanding 白标文案。
 
@@ -171,7 +173,7 @@
 
 - **并轨**:`researchWeb` 接 `searchUnitChargeInternal`(`pricing-config.ts:267`)同源计价,聊天轮 `withLlmBudget` 增加搜索腿 hold/settle;计价后删除 `margin-truth.ts:134/205` 两处「零计价」缺口注释与豁免行内的 ⚠️ 段(该注释明文以此为废止条件)。
 - **计数器**:挂 `OttoContext.research`(与深研 `ResearchContext.searchesUsed` 同构,每轮天然重置);上限=单一源常量 `OTTO_CHAT_MAX_SEARCHES_PER_TURN = 5`;第 6 次诚实拒绝+建议转深度研究(A10 判词)。
-- **「只为成功的供应商调用收费」收敛**(两腿统一):计数从「调用前 +1、失败不回退」(`research-agent.ts:87`)改为**成功返回后 +1**;深研 `buildSearch()` 无 key 时的恒成功空 stub(`research.ts:96-99`)删除,改与聊天侧一致返回 undefined=搜索源不可用诚实报告、$0;失败调用不计费。深研 reserve 仍按 maxSearches 上限 hold(worst case),settle 按成功次数。
+- **「只为成功的供应商调用收费」收敛**(两腿统一;判官指出纯「成功后计数」会被单步并行 fan-out 绕过上限,改槽协议):**in-flight 槽**——调用前原子占一槽(占用数≥上限即当场拒绝,不打 provider),调用失败释放槽且不计费,调用成功保留槽并计费;上限判定=已占槽数,计费=成功数。深研 `buildSearch()` 无 key 时的恒成功空 stub(`research.ts:96-99`)删除,改与聊天侧一致返回 undefined=搜索源不可用诚实报告、$0。深研 reserve 仍按 maxSearches 上限 hold(worst case),settle 按成功次数。**行为测试**:单轮并发发起 6 次搜索,断言最多 5 次到达 provider、第 6 次被拒(MONEY-A10)。
 - #1046 的 research 结算竞态部分按原票修复,本稿不复述票面。
 
 ### 7.5 A12/A13 webhook、对账哨兵与拒付
@@ -179,15 +181,15 @@
 - **三事件报警升级**(`webhook/route.ts:242-267`):裸 Sentry→`founderAlert` 三通道;dispute.created/closed 分开 kind;**携带商家 org**(经 payment_intent/checkout metadata 或 ledger `(orgId, idempotencyKey)` 反查),审计行 `ownerId:"founder"` 硬编码改真实 org,查不到=如实标 unresolved+报警。
 - **对账哨兵**(A12):`stripe-reconcile.ts` 的 `alert()` 改 `founderAlert`(文件内 TODO 已可执行——founder-alert 模块早已在 main);已登记未解决的观察行(`stripe_unreconciled:<id>`)**超 48h 扫描窗不静默消失**,每轮持续重报直至人工关闭(admin 动作落 ActionEvent 标记)。
 - **#1044 双权威关闭**(A12):充值货架改**代码表为唯一权威**——`listCreditPacks` 从 `CREDIT_PACKS` 渲染,Stripe Price 仅作 checkout 载体、渲染前与表核对,不匹配的包不显示;`verifyCreditPackPurchase` 三态核对照旧兜底。
-- **A13 拒付账号级暂停**:暂停开关沿用现成 `Membership.status`(admin `TenantDetail` 一键翻转+ban+杀 session);**覆盖缺口修复**——深研 worker 中途轮次今天不查暂停(`research.ts`/`meter.ts` 零命中,已坐实),修法=`CreditAccount` 加 `suspendedAt` 列(nullable),`setMembershipStatus` 同事务写入,**`reserveCredits` 单一咽喉检查**:暂停 org 一切新 reserve 失败 fail closed——一处检查覆盖现在与未来全部花钱路径。
+- **A13 拒付账号级暂停**:暂停开关沿用现成 `Membership.status`(admin `TenantDetail` 一键翻转+ban+杀 session),**它是唯一暂停权威,不建第二份事实**(判官否决了投影列方案:第二事实面+无 backfill 方案=漂移雷)。**覆盖缺口修复**——深研 worker 中途轮次今天不查暂停(`research.ts`/`meter.ts` 零命中,已坐实),修法=**`reserveCredits` 单一咽喉检查**:在 reserve 同一事务内直接读 Membership(判定规则:该 org **存在成员行且全部** suspended/revoked=拒绝 fail closed;零成员行=放行,维持现状语义),暂停 org 一切新 reserve 失败——一处检查覆盖现在与未来全部花钱路径,零迁移零回填。
 - **平台损失人工台账**(A13/欠账⑦落点):新建 `docs/ops/manual-money-ledger.md`(append-only 表:日期/org/事件类型[拒付|吸收引擎成本|人工退款]/金额/Stripe 单号/处置/关闭人)。`REDELIVERY_DISCARD` 分支(gen 与 refgen)报警升级 `founderAlert` 且**带按 job 参数现算的 COGS 金额**(今天连金额都不记,只发一条不带钱数的 Sentry),alert 的 action 字段指引登记台账。
 - 拒付 runbook=`docs/runbooks/chargeback.md`(随本稿交付,A13 存在性要求)。
 
 ### 7.6 A14 人工退款与调账累计闸
 
-- **退款顺序铁律**(A14):先 ledger 负 ADJUST 扣减、后 Stripe 退款——方向=绝不让商家「留着 credits 又拿回钱」;余额不足则拒退或按可扣部分退。
-- **机器可读的「退款」标记**:退款 ADJUST 行 `refId` 用 `manual-refund:` 前缀(今天 GRANT/ADJUST 的 refId 恒为 null,前缀无撞);`spendCategoryOf` 新规则:ADJUST 且 refId 前缀 manual-refund→类目 Refund——商家消费历史可读出「退款」,`reason` 维持不进商家读路径(#683 纪律不破)。`reason` 载 Stripe 退款单号(A14):S4 落 admin 退款动作(①校验②负 ADJUST③调 Stripe refund API 得 re_xxx④窄改回填该行 reason——仅限 manual-refund 行、仅限 reason 字段,不动任何金额);工具落地前按 runbook 人工三步+台账登记 re_xxx。
-- **调账累计闸**(Founder 拍板:30 天/2000cr):新单一源常量组 `FINANCE_ADJUST_LIMITS = { perAction: 1000, rolling30dTotal: 2000 }` 于 packages/core;`grantTenantCredits`/`grantCreditsAction` 事务内查该 org 滚动 30 天 `source=ADMIN` 的 GRANT+ADJUST 行 `|balanceDelta|` 累计(含本笔),超 2000=拒绝+`founderAlert`;负向同计(修「负向调整永不报超限」);实况备案:上限手抄实为 **4 处**(服务端 `tenant-actions.ts:12`/`credit-actions.ts:14` + 客户端预检 `TenantDetail.tsx`/`AdminDashboardV2.tsx` 各 1)另加 3 处提示文案字符串,全部改引单一源;admin 报表(`admin-v2.ts` largeGrants/`tenant-admin.ts`)改按 org 滚动累计判+超限标红(修「报表按行不按累计」)。人工退款走同一 ADJUST 通道**自然入闸**;诚实备注:单月大额退款(如两个 Pro 包 1200cr)可能撞 2000 累计闸,属设计内摩擦,解法=改常量走 PR+Founder 批。
+- **退款三段协议**(A14 v2,Founder 2026-09-01 裁决,拍板⑤):专用 admin 退款动作走钱路现成机械——①`reserveCredits(refId=manual-refund:<uuid>)` 预扣锁定退款额(顺序铁律保住:credits 先动不了,绝不让商家「留着 credits 又拿回钱」;余额不足=reserve 失败=拒退或按可扣部分退);②调 Stripe refund API 得 `re_…`;③`settleCredits` 落账,**SETTLE 行 reason 当场载 `re_…`**(落账时单号已存在,账本零修改、只追加);Stripe 退款失败→`refundReservation` 释放,余额净变 0、账本成对。
+- **机器可读的「退款」标记**:`refId` 前缀 `manual-refund:`;`spendCategoryOf` 新规则:refId 前缀 manual-refund→类目 Refund——商家消费历史可读出「退款」;`reason` 维持不进商家读路径(#683 纪律不破)。专用工具落地前按 runbook 人工过渡版(负 grant 扣减+单号登记台账,不改任何已写行)。
+- **调账累计闸**(Founder 拍板:30 天/2000cr;判官指出 Server Action 层判定可被并发绕过,下沉唯一钱服务):新单一源常量组 `FINANCE_ADJUST_LIMITS = { perAction: 1000, rolling30dTotal: 2000 }` 于 packages/core;**累计判定与写入同落 `packages/db/src/credits.ts` 的 `grantCredits` 同一事务**——先锁该 org 的 `CreditAccount` 行(`SELECT … FOR UPDATE`,与余额更新同锁),再查滚动 30 天累计(口径=`source=ADMIN` 的 GRANT/ADJUST 行+refId 前缀 manual-refund 的 SETTLE 行,`|balanceDelta|` 合计含本笔),超 2000=事务内拒绝+`founderAlert`;两笔并发 +1000 在行锁下串行化,不可再双双放行。负向同计(修「负向调整永不报超限」)。`grantTenantCredits`/`grantCreditsAction` 只留 UX 预检,不再是判定权威。实况备案:上限手抄实为 **4 处**(服务端 `tenant-actions.ts:12`/`credit-actions.ts:14` + 客户端预检 `TenantDetail.tsx`/`AdminDashboardV2.tsx` 各 1)另加 3 处提示文案字符串,全部改引单一源;admin 报表(`admin-v2.ts` largeGrants/`tenant-admin.ts`)改按 org 滚动累计判+超限标红(修「报表按行不按累计」)。人工退款 SETTLE 行计入同一累计口径;诚实备注:单月大额退款(如两个 Pro 包 1200cr)可能撞 2000 累计闸,属设计内摩擦,解法=改常量走 PR+Founder 批。
 - 退款 runbook=`docs/runbooks/manual-refund.md`(随本稿交付,A14 存在性要求)。
 
 ### 7.7 其余验收基建与硬化尾项

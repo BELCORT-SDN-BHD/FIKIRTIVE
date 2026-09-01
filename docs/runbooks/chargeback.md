@@ -21,9 +21,9 @@
    效果:该 org 全部成员立即踢下线 + 禁止重新登录(`setMembershipStatus` 事务同时 ban 用户、清 session);施工后追加:一切新消费动作在 `reserveCredits` 咽喉被拒(fail closed)。
 2. **应诉或接受**:Stripe Dashboard → Disputes → 该笔。二选一:提交证据应诉(交付记录、消费历史截图、条款),或接受拒付。注意 Stripe 页面上的应诉截止日。**对外沟通与法律判断是 Founder 红线,agent 不代答。**
 3. **登记平台损失**:在 `docs/ops/manual-money-ledger.md` 追加一行(事件=拒付),记 org、金额(RM/credits/USD 三口径)、Stripe dispute 单号、处置、状态=进行中。
-4. **等 `charge.dispute.closed`**:
-   - 赢(款项回来):台账该行改「已关闭·胜诉」,是否解除暂停由 Founder 逐案裁。
-   - 输(款项没了):台账定案损失;商家保持暂停,后续由 Founder 决定(个案沟通/关闭账号)。
+4. **等 `charge.dispute.closed`**(台账只追加,不改历史行——结果永远是**新行引用原事件行**):
+   - 赢(款项回来):台账**追加**一行「结案·胜诉,引用 <原行单号>」;是否解除暂停由 Founder 逐案裁。
+   - 输(款项没了):台账**追加**一行「结案·败诉,损失定案,引用 <原行单号>」;商家保持暂停,后续由 Founder 决定(个案沟通/关闭账号)。
 5. **解除暂停**(仅胜诉或 Founder 明示):同一开关切回 `active`。
 
 ## 验证(与 MONEY-A13 逐字对应)
