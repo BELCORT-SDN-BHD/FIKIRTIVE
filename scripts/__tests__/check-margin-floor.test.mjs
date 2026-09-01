@@ -439,4 +439,52 @@ for (const field of ["reason", "rulingRef", "reviewBy"]) {
   assert.ok(coeffs[0] > 1, "小包是溢价卖的 —— 「买得越多我们收得越少」是算术不是直觉");
 }
 
+// ── MONEY-A9:素材理解三类必须在闸里,而且两条线都清 ────────────────────────────────
+// 理解 2026-09-01 之前是**平台自费**,于是它从来没被这个闸量过 —— 一个开始收钱却没人量过
+// 的面,正是这个闸存在的理由。三行必须:① 在手抄成本表里(缺 = buildSellableSkus 的
+// MISSING 判红);② 成本来源写明它是**推导来的**(token 上限 × 钉点),不是随手一个数;
+// ③ 面值清 65% 目标线(它是按件档,不吃按量计价的豁免),最坏实收清 45% 宪法地板。
+{
+  const { UNDERSTANDING_KINDS } = await import("../../packages/core/dist/asset-understanding.js");
+  const { pricedUnderstandingCredits, CREDITS_PER_USD, GEN_MARGIN_TARGET } = await import(
+    "../../packages/core/dist/spend.js"
+  );
+  const { worstPackReceiptCoefficient } = await import("../../packages/core/dist/pricing-config.js");
+  const worst = worstPackReceiptCoefficient();
+
+  assert.equal(UNDERSTANDING_KINDS.length, 3, "MONEY-A9: 理解三件套");
+  for (const kind of UNDERSTANDING_KINDS) {
+    const id = `understanding:${kind}`;
+    assert.ok(COGS_INPUTS[id], `MONEY-A9: ${id} 必须在 COGS_INPUTS 里(缺 = 闸判 MISSING)`);
+    assert.ok(
+      COGS_INPUTS[id].source.includes("UNDERSTANDING_CAPS"),
+      `MONEY-A9: ${id} 的成本来源必须写明是 token 上限 × 钉点推出来的`,
+    );
+
+    const chargeUsd = pricedUnderstandingCredits(kind) / CREDITS_PER_USD;
+    const cogsUsd = COGS_INPUTS[id].cogsUsd;
+    assert.ok(chargeUsd > cogsUsd, `MONEY-A9: ${id} 收费 $${chargeUsd} 必须高于成本 $${cogsUsd}(R1)`);
+
+    // 面值口径 → 65% 目标线(生成侧那条线,理解按件档同吃)。
+    const face = (chargeUsd - cogsUsd) / chargeUsd;
+    assert.ok(
+      face >= GEN_MARGIN_TARGET - 1e-9,
+      `MONEY-A9: ${id} 面值毛利率 ${(face * 100).toFixed(1)}% 跌破 ${(GEN_MARGIN_TARGET * 100).toFixed(0)}% 目标线`,
+    );
+
+    // 最坏实收口径 → 45% 宪法地板(与 main() 里同一条算式、同一个系数)。
+    const receiptCharge = chargeUsd * worst;
+    const receipt = (receiptCharge - cogsUsd) / receiptCharge;
+    assert.ok(
+      receipt >= MARGIN_FLOOR - 1e-9,
+      `MONEY-A9: ${id} 最坏实收毛利率 ${(receipt * 100).toFixed(1)}% 跌破 ${(MARGIN_FLOOR * 100).toFixed(0)}% 地板`,
+    );
+  }
+
+  // 三类各 1 internal credit = $0.01/件(现值锚;改 token 上限或改钉点会把它顶走,那正是要红的)。
+  for (const kind of UNDERSTANDING_KINDS) {
+    assert.equal(pricedUnderstandingCredits(kind), 1, `MONEY-A9: ${kind} 现值 1 internal credit/件`);
+  }
+}
+
 console.log("✓ check-margin-floor red/green self-test passed");

@@ -203,9 +203,11 @@ model Asset {
 // 「Otto 好像认识我的店」。行本身就是**幂等键**:(ownerId, assetId, kind) 唯一,所以
 // 无论扫描器重跑、pg-boss 重投还是两个副本同时看到同一件素材,同一件事只会被读一次。
 //
-// 不进 CreditLedger:理解是平台成本,商家一分钱不付(见 @fikirtive/core
-// asset-understanding.ts 的铁律 2)。inputTokens/outputTokens 是**记账**,用来事后核对
-// 「真的没超预算」,绝不参与任何扣费判定。
+// 【2026-09-01 MONEY-A9 起改口径】理解**进 CreditLedger**:Founder 2026-08-31 裁决
+// 「就是用户使用照算」,理解从平台自费改成商家计费面(规格 docs/specs/money-engine.md §7.3)。
+// 钱走 reserve→settle,认的是**建行时刻的快照价**(priceInternalSnapshot),不是结算时现算。
+// inputTokens/outputTokens 的身份**没变**:它们仍然只是**记账**(事后核对没超平台预算),
+// 绝不参与任何扣费判定 —— 按用量收费会让同一件素材的价在事前无法披露,而 A9 要求披露先于扣费。
 //
 // kind/status 是代码校验的 String(house style,不建 PG enum)。
 model AssetUnderstanding {
@@ -214,7 +216,8 @@ model AssetUnderstanding {
   organization Organization @relation(fields: [ownerId], references: [id])
   assetId      String
   kind         String   // 'image-caption' | 'doc-extract' | 'video-qa'
-  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED | PAUSED
+  // PAUSED_BALANCE(MONEY-A9)= 商家余额不足的可恢复暂停,与 PAUSED(我方配置坏了)不是一回事。
+  status       String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED | SKIPPED | PAUSED | PAUSED_BALANCE
   /// 商家读得到的那一句(Otto 取回时说的就是它)。白标,落盘前过 redact。
   summary      String   @default("")
   /// 该 kind 的结构化产物(ImageCaptionData / DocExtractData / VideoQaData)。
@@ -222,6 +225,20 @@ model AssetUnderstanding {
   /// 记账口径,不参与扣费。null = 还没跑过 / 跑了但供应商没回用量。
   inputTokens  Int?
   outputTokens Int?
+  /// **上传(建行)时刻锁定的本行报价**,单位 internal credits(1 internal = $0.01)。
+  /// 结算按它,不按结算时刻现算(MONEY-A9 计费四则①:扫描隔日执行不改价;调价不追溯 A7)。
+  /// null = **计费前的老行**(A9 上线之前落的),按免费祖父条款处理,永不补收。
+  priceInternalSnapshot Int?
+  /// 级联第二段(doc-extract)的**同一上刻**报价,单位 internal credits。
+  /// 只有 image-caption 行填:看图读完才知道这是一份文档、要再读一次(四则②),而那两段价
+  /// 必须在上传界面**一次性披露、一并锁价** —— 级联出来的 doc-extract 行继承这一格,
+  /// 而不是按它自己建行的那一刻重新报价。
+  cascadePriceInternal   Int?
+  /// **当前计费回合**的 ledger refId,形如 `understanding:<rowId>` 或 `understanding:<rowId>:r<n>`。
+  /// 为什么需要「回合」:reserve 的幂等键 `reserve:<refId>` 终身唯一,退款之后同一个 refId
+  /// 再也 reserve 不了 —— 所以 REFUND 之后重扣必须换一个新 refId(:r2、:r3…),这一列记的就是
+  /// 「这一行现在认哪一个」。null = 本行还没进过钱路。
+  moneyRefId             String?
   /// SKIPPED 的原因,或 FAILED 的白标措辞。
   error        String?
   createdAt    DateTime @default(now())

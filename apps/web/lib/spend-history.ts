@@ -40,6 +40,10 @@ export type SpendCategory =
                   // (otto-verdict:) that used to run and bill. No new rows are minted —
                   // the branch stays so an old charge is never relabelled as something else.
   | "research"    // an approved deep-research run (research:)
+  | "understanding" // an asset auto-understanding charge (understanding:) — the background
+                  // read of an uploaded photo/menu/video. It is the one charge the merchant
+                  // never clicked a button for, so it must read as its own thing rather than
+                  // hide inside "Credit change" (MONEY-A9).
   | "image"       // a generation job that made image(s)
   | "video"       // a generation job that made video
   | "topup"       // a Stripe credit purchase
@@ -51,6 +55,7 @@ export const SPEND_CATEGORY_LABEL: Record<SpendCategory, string> = {
   chat: "Chat",
   review: "Review",
   research: "Research",
+  understanding: "Understanding",
   image: "Image",
   video: "Video",
   topup: "Top-up",
@@ -101,6 +106,10 @@ export function spendCategoryOf(
     if (refId.startsWith("otto-verdict:")) return "review";
     if (refId.startsWith("otto-")) return "chat";
     if (refId.startsWith("research:")) return "research";
+    // MONEY-A9: `understanding:<rowId>` (and `…:r<n>` for a re-billed round after a refund).
+    // startsWith covers both — the round suffix is a money-path mechanic, not something a
+    // merchant should ever see split into two different categories.
+    if (refId.startsWith("understanding:")) return "understanding";
     const jobKind = jobKindByRefId.get(refId);
     if (jobKind === "IMAGE") return "image";
     if (jobKind === "VIDEO") return "video";
