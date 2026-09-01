@@ -206,17 +206,15 @@ async function resolvePaymentFacts(args: {
     return { error: "That payment belongs to a different workspace. Nothing was refunded." };
   }
 
-  // 入账 credits 的权威:账本那一行 GRANT。它同时是归属链的最后一环。
+  // 入账 credits 的权威:账本那一行 GRANT。它同时是**归属链的最后一环** —— PI 与 session 都没写
+  // orgId 的老付款(`piOrgId`/`sessionOrgId` 皆空)靠它证明归属:这一行是按 (orgId, 幂等键) 查出
+  // 来的,它存在本身就说明这笔 session 的 credits 进的是这个 org。
   const granted = await prisma.creditLedger.findFirst({
     where: { orgId, idempotencyKey: `stripe:${session.id}`, kind: "GRANT" },
     select: { balanceDelta: true },
   });
   if (!granted || granted.balanceDelta <= 0) {
     return { error: "That payment never credited this workspace (no ledger grant for it). Refusing — check the payment intent id." };
-  }
-  if (!piOrgId && !sessionOrgId) {
-    // 归属只能靠账本那一行证明 —— 它是按 (orgId, idempotencyKey) 查出来的,所以它存在本身
-    // 就说明这笔 session 的 credits 进的是这个 org。
   }
 
   const creditedInternal = granted.balanceDelta;
