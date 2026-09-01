@@ -58,6 +58,7 @@ import {
   FINANCE_PER_ACTION_LIMIT_MESSAGE,
   displayCredits,
   manualRefundRefId,
+  MANUAL_REFUND_REF_PREFIX,
   myrMinorToUsd,
 } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
@@ -78,8 +79,9 @@ const PENDING_EVENT_TYPE = "manual-refund-pending";
 export type RefundCreditsResult =
   | {
       ok: true;
-      /** `settled` 落账完成;`pending` Stripe 还没给终态、hold 留着等收口;`already-settled` 这张单以前就退完了。 */
-      status: "settled" | "pending" | "already-settled" | "abandoned";
+      /** `settled` 落账完成;`pending` Stripe 还没给终态、hold 留着等收口;`already-settled` 这张单以前就退完了;
+       *  `abandoned` 人放弃了这张单;`released` Stripe 自己说这笔退款 failed/canceled,hold 成对放掉。 */
+      status: "settled" | "pending" | "already-settled" | "abandoned" | "released";
       refundId: string;
       displayedAmount: number;
       amountMinor: number;
@@ -108,26 +110,42 @@ function stripeDefinitelyRefused(e: unknown): boolean {
 }
 
 /**
+ * Stripe 那一侧的幂等键。**必须带 org**:账本的唯一键是 (orgId, refId),org 天然在里面;
+ * Stripe 的幂等键是全账户一个平面的字符串,不带 org 就等于把两个租户的同名单号焊在一起。
+ */
+function stripeRefundIdempotencyKey(orgId: string, refundId: string): string {
+  return `${MANUAL_REFUND_REF_PREFIX}${orgId}:${refundId}`;
+}
+
+/** 翻页防呆上限:100 页 × 100 条 = 一万条退款。 */
+const REFUND_PAGE_CAP = 100;
+
+/**
  * 这笔付款上**全部**的退款,翻完每一页(复审二 P2-1)。
  *
  * `limit: 100` 只是第一页。一笔被拆成上百次小额退的付款(争议处理里真的会发生)在旧写法下
  * 只被看见前 100 条,于是「还能退多少」算多了 —— 那是直接多退钱。`has_more` 为真就接着翻。
+ *
+ * 复审三 P2:翻到防呆上限而 `has_more` **仍然为真**时**抛错**,绝不返回「部分结果」。
+ * 返回一份不完整的清单会让上面两件事同时算错:已退金额算少 ⇒ 多退;找不到那笔 `re_…` ⇒
+ * Abandon 误以为它不存在、把 hold 放掉。两条都是真赔钱,所以这里 fail closed 交给人。
  */
-async function listAllRefunds(paymentIntentId: string): Promise<{ id: string; amount: number; status: string | null; metadata?: unknown }[]> {
-  const all: { id: string; amount: number; status: string | null; metadata?: unknown }[] = [];
+async function listAllRefunds(paymentIntentId: string): Promise<{ id: string; amount: number; status: string | null; payment_intent?: unknown; metadata?: unknown }[]> {
+  const all: { id: string; amount: number; status: string | null; payment_intent?: unknown; metadata?: unknown }[] = [];
   let startingAfter: string | undefined;
-  // 上限只是防呆:100 页 = 一万条退款,真到了那个量级也该是人去看,而不是页面转圈。
-  for (let page = 0; page < 100; page++) {
+  for (let page = 0; page < REFUND_PAGE_CAP; page++) {
     const chunk = await stripe.refunds.list({
       payment_intent: paymentIntentId,
       limit: 100,
       ...(startingAfter ? { starting_after: startingAfter } : {}),
     });
     all.push(...chunk.data);
-    if (!chunk.has_more || chunk.data.length === 0) break;
+    if (!chunk.has_more || chunk.data.length === 0) return all;
     startingAfter = chunk.data[chunk.data.length - 1]!.id;
   }
-  return all;
+  throw new Error(
+    `That payment has more than ${REFUND_PAGE_CAP * 100} refunds — more than we can check in one pass. Reconcile it by hand at Stripe first.`,
+  );
 }
 
 /** 钱真的出去了的那些退款(failed/canceled 不算)。 */
@@ -177,9 +195,11 @@ async function resolvePaymentFacts(args: {
     return { error: `Could not read that payment from Stripe: ${e instanceof Error ? e.message : "unknown error"}` };
   }
 
-  const receivedMinor = typeof pi.amount_received === "number" && pi.amount_received > 0 ? pi.amount_received : pi.amount;
+  // 复审三 P2:分母只认**实收**。回退到 `pi.amount`(授权额)会拿一个可能根本没扣到的数当单价
+  // 分母 —— 授权未捕获、部分捕获、被撤销的付款都会因此算出一个凭空的单价并真的退出钱去。
+  const receivedMinor = typeof pi.amount_received === "number" ? pi.amount_received : 0;
   if (!Number.isSafeInteger(receivedMinor) || receivedMinor <= 0) {
-    return { error: "That payment has no captured amount to refund." };
+    return { error: "That payment has no captured amount to refund (Stripe reports nothing received). Nothing was refunded." };
   }
   if (pi.currency?.toLowerCase() !== CREDIT_PACK_CURRENCY) {
     return { error: `That payment is in ${pi.currency?.toUpperCase() ?? "an unknown currency"}, not ${CREDIT_PACK_CURRENCY.toUpperCase()}. Nothing was refunded.` };
@@ -193,7 +213,12 @@ async function resolvePaymentFacts(args: {
   // Session:入账 credits 的反查钥匙(`stripe:<sessionId>`),同时是归属链的第二环。
   let session: { id: string; metadata?: unknown; client_reference_id?: string | null } | undefined;
   try {
-    const sessions = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 1 });
+    // 复审三 P2:要 2 条不是 1 条 —— 取 `data[0]` 时若有第二条命中,我们其实是在几个 session
+    // 里**随便挑了一个**去反查入账 credits,而单价的分母正是它。歧义只能交给人,不能默默挑。
+    const sessions = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 2 });
+    if (sessions.data.length > 1) {
+      return { error: "That payment maps to multiple checkout sessions. Refusing — reconcile it by hand before refunding." };
+    }
     session = sessions.data[0];
   } catch {
     // 读不到 session 不改变结论:下面「找不到入账记录就拒」照旧执行。
@@ -493,13 +518,20 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
   }
 
   // ── ② Stripe:钱回商家的卡 ────────────────────────────────────────────────
-  // idempotency key = 同一个 refId;metadata 里再写一份退款单号(复审二 P1-2):我们这边的
-  // 审计行万一没写成,收口时还能从 Stripe 那边按 uuid 找回这笔退款。
+  // **两把键,两条边界**(复审三 P2):
+  //   · 账本 refId = `manual-refund:<uuid>` —— 唯一键是 (orgId, refId),org 已经在键里,
+  //     所以两个 org 各自用同一个 uuid 也互不干扰;
+  //   · Stripe 幂等键 = `manual-refund:<orgId>:<uuid>` —— Stripe 那边**没有 org 这一维**,
+  //     键里不带 org 的话,两个 org 恰好用同一个 uuid(操作员复制粘贴、脚本重放)就会共用一把
+  //     幂等键:第二个 org 的退款请求会拿回第一个 org 那笔退款的结果,钱退给了错的商家,而两边
+  //     账本都各自「成功」。org 必须进键。
+  // metadata 里再写一份退款单号与 org(复审二 P1-2):我们这边的审计行万一没写成,收口时还能
+  // 从 Stripe 那边按 uuid 找回这笔退款、并核对它确实属于本单。
   let refund: { id: string; status: string | null };
   try {
     refund = await stripe.refunds.create(
       { payment_intent: pin.paymentIntentId, amount: pin.amountMinor, metadata: { manualRefundId: refundId, orgId } },
-      { idempotencyKey: refId },
+      { idempotencyKey: stripeRefundIdempotencyKey(orgId, refundId) },
     );
   } catch (e) {
     const detail = e instanceof Error ? e.message : "Stripe refused the refund.";
@@ -620,20 +652,57 @@ async function findStripeRefund(args: { orgId: string; refundId: string; payment
   });
   const recorded = (audit?.payload as { stripeRefundId?: unknown } | null)?.stripeRefundId;
   if (typeof recorded === "string" && recorded) {
+    let candidate: { id: string; status: string | null; payment_intent?: unknown; metadata?: unknown };
     try {
-      return { found: true, refund: await stripe.refunds.retrieve(recorded) };
+      candidate = await stripe.refunds.retrieve(recorded);
     } catch (e) {
       return { error: `Could not read refund ${recorded} from Stripe: ${e instanceof Error ? e.message : "unknown error"}` };
     }
+    // 复审三 P2:审计行只是**一个指针**,不是证据。它可能被写错、被别的单号的载荷覆盖,或者
+    // 指向另一个租户的退款。照着它 SETTLE 就是拿另一笔退款给这张单结账,照着它释放同样错。
+    // 三项事实(付款、单号、org)必须逐项对上,任何一项不符 ⇒ 拒,既不落账也不释放。
+    const mismatch = refundMismatch(candidate, { orgId, refundId, paymentIntentId });
+    if (mismatch) {
+      return { error: `The audited refund ${candidate.id} does not match this ticket (${mismatch}). Refusing — reconcile it by hand at Stripe.` };
+    }
+    return { found: true, refund: candidate };
   }
   try {
     const match = (await listAllRefunds(paymentIntentId)).find(
       (r) => metadataString(r.metadata, "manualRefundId") === refundId,
     );
-    return match ? { found: true, refund: match } : { found: false };
+    if (!match) return { found: false };
+    // 列表本身是按这笔付款查的,单号也刚比过;org 再核一次,来源同一把尺。
+    const mismatch = refundMismatch({ ...match, payment_intent: paymentIntentId }, { orgId, refundId, paymentIntentId });
+    if (mismatch) {
+      return { error: `Stripe refund ${match.id} carries this ticket id but does not match it (${mismatch}). Refusing — reconcile it by hand at Stripe.` };
+    }
+    return { found: true, refund: match };
   } catch (e) {
     return { error: `Could not search that payment's refunds at Stripe: ${e instanceof Error ? e.message : "unknown error"}` };
   }
+}
+
+/** Stripe 退款对象上的 `payment_intent`(可能是 id,也可能是被展开的对象)。 */
+function refundPaymentIntentId(refund: { payment_intent?: unknown }): string | null {
+  const value = refund.payment_intent;
+  if (typeof value === "string") return value || null;
+  const id = (value as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** 这笔 Stripe 退款到底是不是本单的?对不上就说出**哪一项**对不上(复审三 P2)。 */
+function refundMismatch(
+  refund: { payment_intent?: unknown; metadata?: unknown },
+  expect: { orgId: string; refundId: string; paymentIntentId: string },
+): string | null {
+  const pi = refundPaymentIntentId(refund);
+  if (pi !== expect.paymentIntentId) return `it refunds ${pi ?? "an unknown payment"}, not ${expect.paymentIntentId}`;
+  const ticket = metadataString(refund.metadata, "manualRefundId");
+  if (ticket !== expect.refundId) return `it carries refund id ${ticket ?? "none"}`;
+  const owner = metadataString(refund.metadata, "orgId");
+  if (owner !== expect.orgId) return `it belongs to workspace ${owner ?? "unknown"}`;
+  return null;
 }
 
 /**
@@ -664,9 +733,11 @@ export async function completeManualRefund(raw: unknown): Promise<RefundCreditsR
 /**
  * 放弃一张退款单:把锁着的 credits 还给商家,账本成对(复审二 P1-2c)。
  *
- * **只在 Stripe 那边确实没有这笔退款时才放行** —— 钱已经退出去却把 credits 也还回去,就是平台
- * 白付两遍。残余竞态:`refunds.create` 还在路上(几百毫秒)时来 abandon 会漏看它,所以 runbook
- * 要求操作员先在 Stripe 后台确认,再回来 abandon;正常流程里这两件事隔着分钟级,撞不上。
+ * **只在钱确定没出去时才放行**:Stripe 上没有这笔退款,或者有、但它自己说 `failed`/`canceled`
+ * (复审三 P2)。钱已经退出去却把 credits 也还回去,就是平台白付两遍;反过来,一笔已经 failed
+ * 的退款如果连放弃都不许,那商家的 credits 就永远锁在那里等人改库。
+ * 残余竞态:`refunds.create` 还在路上(几百毫秒)时来 abandon 会漏看它,所以 runbook 要求操作员
+ * 先在 Stripe 后台确认,再回来 abandon;正常流程里这两件事隔着分钟级,撞不上。
  */
 export async function abandonManualRefund(raw: unknown): Promise<RefundCreditsResult> {
   const entry = await gateOrgAndTicket(raw as { orgId?: unknown; refundId?: unknown });
@@ -682,10 +753,25 @@ export async function abandonManualRefund(raw: unknown): Promise<RefundCreditsRe
 
   const found = await findStripeRefund({ orgId, refundId, paymentIntentId: pin.paymentIntentId });
   if ("error" in found) return found;
+  // 复审三 P2:Stripe 上**有**这笔退款,但它自己说 failed/canceled —— 钱一分没出去,这个 hold
+  // 就是死锁在那儿的。以前一律拒绝放弃,商家的 credits 只能等人去改数据库。现在照 Complete 的
+  // 同一条口径成对释放(幂等靠账本 finalizer 的唯一键,重复点只会得到「已释放」)。
   if (found.found) {
-    return {
-      error: `Stripe has refund ${found.refund.id} (${found.refund.status ?? "pending"}) for that id — it cannot be abandoned. Use Complete once Stripe settles it.`,
-    };
+    const status = found.refund.status;
+    if (status !== "failed" && status !== "canceled") {
+      return {
+        error: `Stripe has refund ${found.refund.id} (${status ?? "pending"}) for that id — it cannot be abandoned. Use Complete once Stripe settles it.`,
+      };
+    }
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId, reason: STRIPE_FAILED_REASON }));
+    await prisma.actionEvent.create({
+      data: {
+        id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.credits.refund.released",
+        payload: { orgId, refundId, stripeRefundId: found.refund.id, status, paymentIntentId: pin.paymentIntentId, displayedAmount: displayCredits(pin.heldInternal), amountMinor: pin.amountMinor, via },
+      },
+    }).catch(() => {});
+    revalidatePath(`/admin/tenants/${orgId}`);
+    return { ok: true, status: "released", refundId: found.refund.id, displayedAmount: displayCredits(pin.heldInternal), amountMinor: pin.amountMinor };
   }
 
   await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId, reason: ABANDONED_REASON }));

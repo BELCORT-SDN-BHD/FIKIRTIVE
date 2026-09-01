@@ -77,7 +77,7 @@ function Metric({ label, value, detail, tone = "neutral" }: { label: string; val
 }
 
 export function TenantDetail({ detail }: { detail: Detail }) {
-  const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit, adjustRolling30dDisplay, adjustRolling30dLimitDisplay, openManualRefunds } = detail;
+  const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit, adjustRolling30dDisplay, adjustRolling30dLimitDisplay, openManualRefunds, openManualRefundsHasMore } = detail;
   const router = useRouter();
   const grantBusyRef = useRef(false);
 
@@ -227,7 +227,10 @@ export function TenantDetail({ detail }: { detail: Detail }) {
         ok: true,
         text: result.status === "abandoned"
           ? `Released ${result.displayedAmount} credits back to the merchant. Log the abandoned refund in docs/ops/manual-money-ledger.md.`
-          : `Settled ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId}). Log it in docs/ops/manual-money-ledger.md.`,
+          : result.status === "released"
+            // Stripe 自己说那笔退款 failed/canceled:钱没出去,hold 成对放掉(复审三 P2)。
+            ? `Stripe reports ${result.refundId} as failed or canceled, so the ${result.displayedAmount} held credits went back to the merchant. Log it in docs/ops/manual-money-ledger.md.`
+            : `Settled ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId}). Log it in docs/ops/manual-money-ledger.md.`,
       });
       router.refresh();
     } finally {
@@ -403,6 +406,13 @@ export function TenantDetail({ detail }: { detail: Detail }) {
           subtitle="Credits already locked for a refund that Stripe has not settled. They come from the ledger, so a page refresh never loses one. No sweeper will ever release them — only Complete or Abandon."
         >
           <div className="grid gap-2">
+            {openManualRefundsHasMore ? (
+              // 复审三 P1:列表有页,但**没有更多入口**。与其静静地少列几张(那正是 credits
+              // 无声锁死的原因),不如如实说还有更早的、要人来接手。
+              <p className="rounded-xl bg-warning-soft p-3 text-xs text-warning-soft-foreground">
+                There are older open refund holds than the {openManualRefunds.length} shown here. Ask engineering to list the rest before closing these — every unlisted hold is credits the merchant cannot spend.
+              </p>
+            ) : null}
             {openManualRefunds.map((hold) => (
               <div key={hold.refundId} className="grid gap-2 rounded-xl border border-border bg-background p-3 md:grid-cols-[1fr_auto] md:items-center">
                 <div className="min-w-0">

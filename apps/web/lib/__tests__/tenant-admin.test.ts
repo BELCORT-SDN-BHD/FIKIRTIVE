@@ -270,28 +270,25 @@ describe("getTenantDetail — 未收口退款单(MONEY-A14)", () => {
     baseDetailMocks();
     const at = new Date("2026-09-02T03:00:00Z");
     creditLedgerFindMany.mockImplementation(async (args: {
-      where: { orgId?: string; kind?: unknown; refId?: { startsWith?: string; in?: string[] } };
+      where: { orgId?: string; kind?: unknown; refId?: { startsWith?: string; notIn?: string[] } };
+      take?: number;
     }) => {
       // ① 租户页自己的账本流水读(没有 refId 过滤)。
       if (!args.where.refId) return [];
-      // ② 未收口列表第一跳:该 org 的 manual-refund RESERVE 行。
-      if (args.where.refId.startsWith) {
-        expect(args.where.orgId).toBe("org_1");
-        expect(args.where.refId.startsWith).toBe("manual-refund:");
-        return [
-          { refId: "manual-refund:ticket-open", reason: "pi:pi_1|req:1000|held:1000|minor:4166|cur:myr|partial:0", createdAt: at },
-          { refId: "manual-refund:ticket-done", reason: "pi:pi_2|req:500|held:500|minor:2083|cur:myr|partial:0", createdAt: at },
-          { refId: "manual-refund:ticket-garbled", reason: "no facts here", createdAt: at },
-        ];
+      expect(args.where.orgId, "两跳都必须按 orgId 收口").toBe("org_1");
+      expect(args.where.refId.startsWith).toBe("manual-refund:");
+      // ② 第一跳:这个 org 收口过的退款单(全集合,不截断)。
+      if (!args.take) {
+        expect(args.where.kind).toEqual({ in: ["SETTLE", "REFUND"] });
+        return [{ refId: "manual-refund:ticket-done" }];
       }
-      // ③ 第二跳:这批单号里哪些已经落账/已释放 —— 同样按 orgId 收口。
-      expect(args.where.orgId).toBe("org_1");
-      expect(args.where.refId.in).toEqual([
-        "manual-refund:ticket-open",
-        "manual-refund:ticket-done",
-        "manual-refund:ticket-garbled",
-      ]);
-      return [{ refId: "manual-refund:ticket-done" }];
+      // ③ 第二跳:**减完之后**才排序取页 —— 已终结的那张不许再进来。
+      expect(args.where.kind).toBe("RESERVE");
+      expect(args.where.refId.notIn).toEqual(["manual-refund:ticket-done"]);
+      return [
+        { refId: "manual-refund:ticket-open", reason: "pi:pi_1|req:1000|held:1000|minor:4166|cur:myr|partial:0", createdAt: at },
+        { refId: "manual-refund:ticket-garbled", reason: "no facts here", createdAt: at },
+      ];
     });
 
     const detail = await getTenantDetail("org_1");
@@ -308,5 +305,49 @@ describe("getTenantDetail — 未收口退款单(MONEY-A14)", () => {
         at: at.toISOString(),
       },
     ]);
+    expect(detail!.openManualRefundsHasMore).toBe(false);
+  });
+
+  // ── 复审三 P1:先减后截 ────────────────────────────────────────────────────
+  it("25 张更新且已收口 + 1 张更老仍开着 ⇒ 那张老的照样列出来(不能先截后减)", async () => {
+    baseDetailMocks();
+    const oldAt = new Date("2026-08-01T00:00:00Z");
+    const newer = Array.from({ length: 25 }, (_, i) => `manual-refund:done-${i}`);
+    creditLedgerFindMany.mockImplementation(async (args: {
+      where: { refId?: { startsWith?: string; notIn?: string[] } };
+      take?: number;
+    }) => {
+      if (!args.where.refId) return [];
+      if (!args.take) return newer.map((refId) => ({ refId }));
+      // 数据库照 notIn 过滤:那 25 张已收口的根本不会回来,老的那张不再被挤掉。
+      expect(args.where.refId.notIn).toEqual(newer);
+      return [{ refId: "manual-refund:ticket-old", reason: "pi:pi_9|req:200|held:200|minor:833|cur:myr|partial:0", createdAt: oldAt }];
+    });
+
+    const detail = await getTenantDetail("org_1");
+
+    expect(detail!.openManualRefunds.map((h) => h.refundId)).toEqual(["ticket-old"]);
+    expect(detail!.openManualRefundsHasMore).toBe(false);
+  });
+
+  it("开着的单比一页还多 ⇒ hasMore=true,页面据此提示还有更早的", async () => {
+    baseDetailMocks();
+    const at = new Date("2026-09-02T03:00:00Z");
+    creditLedgerFindMany.mockImplementation(async (args: { where: { refId?: unknown }; take?: number }) => {
+      if (!args.where.refId) return [];
+      if (!args.take) return [];
+      // 多取一条正是用来回答「还有没有更早的」:26 条回来 ⇒ 有。
+      expect(args.take).toBe(26);
+      return Array.from({ length: 26 }, (_, i) => ({
+        refId: `manual-refund:open-${i}`,
+        reason: `pi:pi_${i}|req:1000|held:1000|minor:4166|cur:myr|partial:0`,
+        createdAt: at,
+      }));
+    });
+
+    const detail = await getTenantDetail("org_1");
+
+    expect(detail!.openManualRefunds).toHaveLength(25);
+    expect(detail!.openManualRefundsHasMore).toBe(true);
   });
 });

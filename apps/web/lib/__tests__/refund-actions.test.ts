@@ -75,6 +75,8 @@ const PI = "pi_3QabcDEF";
 const SESSION = "cs_test_1";
 const TICKET = "refund-ticket-0001";
 const REF_ID = `manual-refund:${TICKET}`;
+/** Stripe 幂等键**带 org**(复审三 P2):账本唯一键里有 org,Stripe 那边没有。 */
+const STRIPE_KEY = `manual-refund:${ORG}:${TICKET}`;
 /** 今天的 Pro 包:RM250 → 600 显示 credits(= 6000 internal)。 */
 const PAID_MINOR = 25_000;
 const CREDITED_INTERNAL = 600 * INTERNAL_PER_DISPLAY;
@@ -120,7 +122,7 @@ beforeEach(() => {
   sessionsList.mockResolvedValue(page([{ id: SESSION, metadata: { orgId: ORG, credits: "600" } }]));
   refundsList.mockResolvedValue(page());
   refundsCreate.mockResolvedValue({ id: "re_1Xyz", status: "succeeded" });
-  refundsRetrieve.mockResolvedValue({ id: "re_1Xyz", status: "succeeded" });
+  refundsRetrieve.mockResolvedValue({ id: "re_1Xyz", status: "succeeded", payment_intent: PI, metadata: { manualRefundId: TICKET, orgId: ORG } });
 });
 
 describe("MONEY-A14 — 单价由付款事实推导(复审二 P1-1)", () => {
@@ -152,7 +154,7 @@ describe("MONEY-A14 — 单价由付款事实推导(复审二 P1-1)", () => {
     // ⌊1000 × 25000 ÷ 5000⌋ = 5000 仙(RM50.00),而不是按 600cr 算出来的 4166。
     expect(refundsCreate).toHaveBeenCalledWith(
       expect.objectContaining({ payment_intent: PI, amount: 5_000 }),
-      { idempotencyKey: REF_ID },
+      { idempotencyKey: STRIPE_KEY },
     );
     expect(result).toMatchObject({ ok: true, amountMinor: 5_000 });
   });
@@ -227,6 +229,99 @@ describe("MONEY-A14 — Stripe 列表必须翻完每一页(复审二 P2-1)", () 
   });
 });
 
+// ── 复审三:七条落修 ─────────────────────────────────────────────────────────
+describe("MONEY-A14 — 翻页到上限仍有下一页 ⇒ fail closed(复审三 P2)", () => {
+  it("不返回部分结果:整个动作拒绝,零账本写入", async () => {
+    // 每一页都说「还有下一页」:翻到防呆上限也翻不完。
+    refundsList.mockResolvedValue(page([{ id: "re_x", amount: 1, status: "succeeded" }], true));
+
+    const result = await refundCreditsAction(payload());
+
+    expect(result).toMatchObject({ error: expect.stringContaining("Could not read existing refunds") });
+    expect(reserveCredits).not.toHaveBeenCalled();
+    expect(refundsCreate).not.toHaveBeenCalled();
+  });
+
+  it("找回那笔退款时同样 fail closed —— Abandon 不许在看不全的清单上放掉 hold", async () => {
+    openHold();
+    actionEventFindFirst.mockResolvedValue(null);
+    refundsList.mockResolvedValue(page([{ id: "re_x", amount: 1, status: "succeeded" }], true));
+
+    const result = await abandonManualRefund({ orgId: ORG, refundId: TICKET });
+
+    expect(result).toMatchObject({ error: expect.stringContaining("Could not search") });
+    expect(refundReservation).not.toHaveBeenCalled();
+  });
+});
+
+describe("MONEY-A14 — 实收为 0 的付款不能退(复审三 P2)", () => {
+  it("amount 有值但 amount_received=0 ⇒ 拒,账本零写入", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ id: PI, amount: PAID_MINOR, amount_received: 0, currency: "myr", metadata: { orgId: ORG } });
+
+    const result = await refundCreditsAction(payload());
+
+    expect(result).toMatchObject({ error: expect.stringContaining("nothing received") });
+    expect(reserveCredits).not.toHaveBeenCalled();
+    expect(refundsCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("MONEY-A14 — 一笔付款命中多个 Checkout Session ⇒ 歧义,拒(复审三 P2)", () => {
+  it("不许在几个 session 里随便挑一个去反查入账 credits", async () => {
+    sessionsList.mockResolvedValue(page([
+      { id: "cs_a", metadata: { orgId: ORG, credits: "600" } },
+      { id: "cs_b", metadata: { orgId: ORG, credits: "500" } },
+    ]));
+
+    const result = await refundCreditsAction(payload());
+
+    expect(sessionsList).toHaveBeenCalledWith(expect.objectContaining({ limit: 2 }));
+    expect(result).toMatchObject({ error: expect.stringContaining("multiple checkout sessions") });
+    expect(reserveCredits).not.toHaveBeenCalled();
+  });
+});
+
+describe("MONEY-A14 — 审计行只是指针,不是证据(复审三 P2)", () => {
+  it.each([
+    ["付款对不上", { id: "re_other", status: "succeeded", payment_intent: "pi_someone_else", metadata: { manualRefundId: TICKET, orgId: ORG } }],
+    ["单号对不上", { id: "re_other", status: "succeeded", payment_intent: PI, metadata: { manualRefundId: "other-ticket", orgId: ORG } }],
+    ["租户对不上", { id: "re_other", status: "succeeded", payment_intent: PI, metadata: { manualRefundId: TICKET, orgId: "org_other" } }],
+  ])("审计行指向的退款 %s ⇒ 拒,既不落账也不释放", async (_label, refund) => {
+    openHold();
+    actionEventFindFirst.mockResolvedValue({ payload: { stripeRefundId: "re_other" } });
+    refundsRetrieve.mockResolvedValue(refund);
+
+    const result = await completeManualRefund({ orgId: ORG, refundId: TICKET });
+
+    expect(result).toMatchObject({ error: expect.stringContaining("does not match this ticket") });
+    expect(settleCredits).not.toHaveBeenCalled();
+    expect(refundReservation).not.toHaveBeenCalled();
+  });
+});
+
+describe("MONEY-A14 — Stripe 幂等键必须带 org(复审三 P2)", () => {
+  it("两个 org 用同一个 uuid 各自成功,拿到的是**两把不同的**幂等键", async () => {
+    const OTHER = "org_merchant_2";
+    const OTHER_PI = "pi_3QotherXYZ";
+    await refundCreditsAction(payload());
+
+    // 第二个租户,**同一个 uuid**(操作员复制粘贴、脚本重放,都真的会发生)。
+    activeMerchantOrg.mockResolvedValue({ id: OTHER });
+    noLedgerRows();
+    paymentIntentsRetrieve.mockResolvedValue({ id: OTHER_PI, amount: PAID_MINOR, amount_received: PAID_MINOR, currency: "myr", metadata: { orgId: OTHER } });
+    sessionsList.mockResolvedValue(page([{ id: "cs_test_2", metadata: { orgId: OTHER, credits: "600" } }]));
+    await refundCreditsAction(payload({ orgId: OTHER, paymentIntentId: OTHER_PI }));
+
+    const keys = refundsCreate.mock.calls.map((call) => (call[1] as { idempotencyKey: string }).idempotencyKey);
+    expect(keys).toEqual([`manual-refund:${ORG}:${TICKET}`, `manual-refund:${OTHER}:${TICKET}`]);
+    expect(new Set(keys).size).toBe(2);
+    // 账本那一侧的 refId 反过来**不带** org —— 它的唯一键 (orgId, refId) 里已经有了。
+    for (const call of reserveCredits.mock.calls) expect(call[1]).toMatchObject({ refId: REF_ID });
+    // metadata 里两笔各自认自己的 org。
+    expect(refundsCreate.mock.calls.map((call) => (call[0] as { metadata: { orgId: string } }).metadata.orgId)).toEqual([ORG, OTHER]);
+  });
+});
+
 describe("MONEY-A14 — 事实钉在账本,单位是整数 internal(复审二 P2-2)", () => {
   it("首次预扣把整数事实钉进 RESERVE 行 reason", async () => {
     await refundCreditsAction(payload());
@@ -254,7 +349,7 @@ describe("MONEY-A14 — 事实钉在账本,单位是整数 internal(复审二 P2
     refundsCreate.mockResolvedValue({ id: "re_1Xyz", status: "succeeded" });
     settleCredits.mockResolvedValue(undefined);
     const resumed = await refundCreditsAction(payload({ allowPartial: true }));
-    expect(refundsCreate).toHaveBeenCalledWith(expect.objectContaining({ amount: 1687 }), { idempotencyKey: REF_ID });
+    expect(refundsCreate).toHaveBeenCalledWith(expect.objectContaining({ amount: 1687 }), { idempotencyKey: STRIPE_KEY });
     expect(resumed).toMatchObject({ ok: true, displayedAmount: 40.5, amountMinor: 1687 });
   });
 });
@@ -303,7 +398,7 @@ describe("MONEY-A14 — 同一单号的参数漂移一律拒绝(复审二 P2-3)"
     });
     const [a, b] = await Promise.all([refundCreditsAction(payload()), refundCreditsAction(payload())]);
     for (const result of [a, b]) expect(result).toMatchObject({ ok: true, status: "settled", amountMinor: EXPECTED_MINOR });
-    for (const call of refundsCreate.mock.calls) expect(call[1]).toEqual({ idempotencyKey: REF_ID });
+    for (const call of refundsCreate.mock.calls) expect(call[1]).toEqual({ idempotencyKey: STRIPE_KEY });
   });
 });
 
@@ -314,7 +409,7 @@ describe("MONEY-A14 — pending 不是成功,收口凭据活过刷新(复审 P1-
     expect(result).toMatchObject({ ok: true, status: "pending", refundId: "re_pending", auditRecorded: true });
     expect(refundsCreate).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: { manualRefundId: TICKET, orgId: ORG } }),
-      { idempotencyKey: REF_ID },
+      { idempotencyKey: STRIPE_KEY },
     );
     expect(settleCredits).not.toHaveBeenCalled();
     expect(refundReservation).not.toHaveBeenCalled();
@@ -336,7 +431,7 @@ describe("MONEY-A14 — pending 不是成功,收口凭据活过刷新(复审 P1-
     actionEventFindFirst.mockResolvedValue(null);
     refundsList.mockResolvedValue(page([
       { id: "re_someone_else", amount: 100, status: "succeeded", metadata: { manualRefundId: "other-ticket" } },
-      { id: "re_ours", amount: EXPECTED_MINOR, status: "succeeded", metadata: { manualRefundId: TICKET } },
+      { id: "re_ours", amount: EXPECTED_MINOR, status: "succeeded", metadata: { manualRefundId: TICKET, orgId: ORG } },
     ]));
 
     const result = await completeManualRefund({ orgId: ORG, refundId: TICKET });
@@ -350,7 +445,7 @@ describe("MONEY-A14 — pending 不是成功,收口凭据活过刷新(复审 P1-
     openHold();
     actionEventFindFirst.mockResolvedValue({ payload: { stripeRefundId: "re_pending" } });
 
-    refundsRetrieve.mockResolvedValue({ id: "re_pending", status: "succeeded" });
+    refundsRetrieve.mockResolvedValue({ id: "re_pending", status: "succeeded", payment_intent: PI, metadata: { manualRefundId: TICKET, orgId: ORG } });
     expect(await completeManualRefund({ orgId: ORG, refundId: TICKET })).toMatchObject({ status: "settled" });
     expect(refundsRetrieve).toHaveBeenCalledWith("re_pending");
 
@@ -358,7 +453,7 @@ describe("MONEY-A14 — pending 不是成功,收口凭据活过刷新(复审 P1-
     requireRole.mockResolvedValue(GATE);
     openHold();
     actionEventFindFirst.mockResolvedValue({ payload: { stripeRefundId: "re_pending" } });
-    refundsRetrieve.mockResolvedValue({ id: "re_pending", status: "failed" });
+    refundsRetrieve.mockResolvedValue({ id: "re_pending", status: "failed", payment_intent: PI, metadata: { manualRefundId: TICKET, orgId: ORG } });
     refundReservation.mockResolvedValue("refunded");
     expect(await completeManualRefund({ orgId: ORG, refundId: TICKET })).toMatchObject({ error: expect.stringContaining("failed") });
     expect(refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: ORG, refId: REF_ID, reason: "manual-refund:stripe-failed" });
@@ -367,7 +462,7 @@ describe("MONEY-A14 — pending 不是成功,收口凭据活过刷新(复审 P1-
     requireRole.mockResolvedValue(GATE);
     openHold();
     actionEventFindFirst.mockResolvedValue({ payload: { stripeRefundId: "re_pending" } });
-    refundsRetrieve.mockResolvedValue({ id: "re_pending", status: "pending" });
+    refundsRetrieve.mockResolvedValue({ id: "re_pending", status: "pending", payment_intent: PI, metadata: { manualRefundId: TICKET, orgId: ORG } });
     expect(await completeManualRefund({ orgId: ORG, refundId: TICKET })).toMatchObject({ status: "pending" });
     expect(settleCredits).not.toHaveBeenCalled();
   });
@@ -398,12 +493,23 @@ describe("MONEY-A14 — Abandon 两态(复审二 P1-2c)", () => {
   it("Stripe 上**存在**这笔退款 ⇒ 拒绝放弃(钱可能已经出去了),指向 Complete", async () => {
     openHold();
     actionEventFindFirst.mockResolvedValue(null);
-    refundsList.mockResolvedValue(page([{ id: "re_live", amount: EXPECTED_MINOR, status: "pending", metadata: { manualRefundId: TICKET } }]));
+    refundsList.mockResolvedValue(page([{ id: "re_live", amount: EXPECTED_MINOR, status: "pending", metadata: { manualRefundId: TICKET, orgId: ORG } }]));
 
     const result = await abandonManualRefund({ orgId: ORG, refundId: TICKET });
 
     expect(result).toMatchObject({ error: expect.stringContaining("cannot be abandoned") });
     expect(refundReservation).not.toHaveBeenCalled();
+  });
+
+  it.each(["failed", "canceled"])("Stripe 说那笔退款是 %s ⇒ 钱没出去,hold 成对释放(复审三 P2)", async (status) => {
+    openHold();
+    actionEventFindFirst.mockResolvedValue(null);
+    refundsList.mockResolvedValue(page([{ id: "re_dead", amount: EXPECTED_MINOR, status, metadata: { manualRefundId: TICKET, orgId: ORG } }]));
+
+    const result = await abandonManualRefund({ orgId: ORG, refundId: TICKET });
+
+    expect(refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: ORG, refId: REF_ID, reason: "manual-refund:stripe-failed" });
+    expect(result).toMatchObject({ ok: true, status: "released", refundId: "re_dead", displayedAmount: 100 });
   });
 
   it("没有开着的 hold / 已终结的单号 ⇒ 明说,不猜", async () => {

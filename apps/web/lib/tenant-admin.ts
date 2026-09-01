@@ -63,6 +63,8 @@ export type TenantDetail = {
     allowPartial: boolean;
     at: string;
   }[];
+  /** 未收口的单比这一页还多(复审三 P1):页面据此提示,不能让更早的那些从正常入口消失。 */
+  openManualRefundsHasMore: boolean;
 };
 
 /** RESERVE 行 reason 里钉着的退款事实(整数 internal 单位);写侧在 `refund-actions.ts`。 */
@@ -77,42 +79,52 @@ function decodeRefundPin(reason: string): { paymentIntentId: string; requestedIn
   return { paymentIntentId: pi, requestedInternal: req, heldInternal: held, amountMinor: minor, currency: cur, allowPartial: partial === "1" };
 }
 
+/** 页面一次列这么多张未收口的单;多出来的用 `hasMore` 如实说还有。 */
+const OPEN_REFUND_PAGE = 25;
+
 /**
  * 这个 org 里还没收口的人工退款单(MONEY-A14,复审二 P1-2d)。
  *
  * 判据 = 有 RESERVE、没有 SETTLE/REFUND。两句查询而不是一句 NOT EXISTS,是因为 Prisma 表达不了
- * 同表自关联;窗口很小(未收口的单是个位数),两句都带 `orgId` 租户约束。
+ * 同表自关联;两句都带 `orgId` 租户约束。
+ *
+ * **顺序是先减后截,不是先截后减**(复审三 P1)。旧写法先取最新 25 条 RESERVE 再减掉已终结的:
+ * 25 张更新且都已收口的单 + 1 张更老、仍然开着的 → 那张更老的永远排不进这 25 条,于是它从
+ * 正常入口彻底消失,而它锁着的 credits 商家一分都花不了。现在先把该 org 该前缀的**终结集合**
+ * 查出来(有界:等于这个 org 历史上收口过的退款单数),再在「全体 open hold」上排序取页。
  */
 async function openManualRefundsFor(orgId: string) {
-  const holds = await prisma.creditLedger.findMany({
-    where: { orgId, kind: "RESERVE", refId: { startsWith: MANUAL_REFUND_REF_PREFIX } },
-    orderBy: { createdAt: "desc" },
-    take: 25,
-    select: { refId: true, reason: true, createdAt: true },
-  });
-  if (holds.length === 0) return [];
-  const refIds = holds.map((h) => h.refId!).filter(Boolean);
   const finalized = await prisma.creditLedger.findMany({
-    where: { orgId, refId: { in: refIds }, kind: { in: ["SETTLE", "REFUND"] } },
+    where: { orgId, kind: { in: ["SETTLE", "REFUND"] }, refId: { startsWith: MANUAL_REFUND_REF_PREFIX } },
     select: { refId: true },
   });
-  const closed = new Set(finalized.map((f) => f.refId));
-  return holds
-    .filter((hold) => !closed.has(hold.refId))
-    .flatMap((hold) => {
-      const pin = decodeRefundPin(hold.reason);
-      if (!pin) return [];
-      return [{
-        refundId: hold.refId!.slice(MANUAL_REFUND_REF_PREFIX.length),
-        paymentIntentId: pin.paymentIntentId,
-        heldDisplay: displayCredits(pin.heldInternal),
-        requestedDisplay: displayCredits(pin.requestedInternal),
-        amountMinor: pin.amountMinor,
-        currency: pin.currency,
-        allowPartial: pin.allowPartial,
-        at: hold.createdAt.toISOString(),
-      }];
-    });
+  const closed = [...new Set(finalized.map((f) => f.refId).filter((id): id is string => Boolean(id)))];
+  const holds = await prisma.creditLedger.findMany({
+    where: {
+      orgId,
+      kind: "RESERVE",
+      refId: { startsWith: MANUAL_REFUND_REF_PREFIX, ...(closed.length > 0 ? { notIn: closed } : {}) },
+    },
+    orderBy: { createdAt: "desc" },
+    // 多取一条:它只用来回答「还有没有更早的」,不进列表。
+    take: OPEN_REFUND_PAGE + 1,
+    select: { refId: true, reason: true, createdAt: true },
+  });
+  const items = holds.slice(0, OPEN_REFUND_PAGE).flatMap((hold) => {
+    const pin = decodeRefundPin(hold.reason);
+    if (!pin) return [];
+    return [{
+      refundId: hold.refId!.slice(MANUAL_REFUND_REF_PREFIX.length),
+      paymentIntentId: pin.paymentIntentId,
+      heldDisplay: displayCredits(pin.heldInternal),
+      requestedDisplay: displayCredits(pin.requestedInternal),
+      amountMinor: pin.amountMinor,
+      currency: pin.currency,
+      allowPartial: pin.allowPartial,
+      at: hold.createdAt.toISOString(),
+    }];
+  });
+  return { items, hasMore: holds.length > OPEN_REFUND_PAGE };
 }
 
 export async function listTenants(): Promise<{ tenants: TenantRow[]; invited: InvitedRow[] }> {
@@ -247,6 +259,7 @@ export async function getTenantDetail(orgId: string): Promise<TenantDetail | nul
     })),
     adjustRolling30dDisplay: displayCredits(adjustTotals.get(orgId)?.internalTotal ?? 0),
     adjustRolling30dLimitDisplay: FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay,
-    openManualRefunds,
+    openManualRefunds: openManualRefunds.items,
+    openManualRefundsHasMore: openManualRefunds.hasMore,
   };
 }

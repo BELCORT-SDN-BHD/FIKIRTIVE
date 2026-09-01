@@ -28,9 +28,13 @@
    ② 那笔付款当初**入过账**——账本上有 `stripe:<sessionId>` 的 GRANT 行;没有就拒(它从没变成过 credits);
    ③ Session 上记的 credits 与账本 GRANT 行**对得上**;对不上说明记账本身有问题,拒退,先对账;
    ④ 要退的 credits 没超过这笔付款还能退的 credits(= 入账 credits − 已退金额折算回的 credits),金额与币种同时核。
+   另外三条硬性拒绝:实收为 0 的付款(授权了没扣到钱)不能退;一笔 `pi_…` 命中**多个** Checkout Session
+   时不许随便挑一个当分母,拒;那笔付款上的退款多到一次翻不完时,拒。
 2. 面板上那个 **Refund id** 就是这一单的退款单号(uuid),它同时是:
-   - 账本 refId(`manual-refund:<uuid>`);
-   - Stripe 的 idempotency key。
+   - 账本 refId(`manual-refund:<uuid>`)—— 账本的唯一键是 (org, refId),org 已经在键里;
+   - Stripe 的 idempotency key(`manual-refund:<orgId>:<uuid>`)—— Stripe 那边没有 org 这一维,
+     键里不带 org 的话,两个商家恰好用同一个 uuid 就会共用一把幂等键,第二笔请求拿回第一笔的结果,
+     钱退给错的商家而两边账本都写着「成功」。
    **重试必须用同一个号**——面板在这一单结清之前不会换号。自己另起一个新号去重试 = 把防重复退款的保护关掉。
 3. 动作内部三段,顺序固定:
    ① `reserveCredits(refId=manual-refund:<uuid>)` 预扣锁定 N cr——余额不足=预扣失败=当场拒退。这一笔的**事实**(`pi_…`、申请与实扣的 credits、马币仙数、币种、是否按可扣部分退)当场钉进 RESERVE 行的 reason,单位是内部整数,不会四舍五入;账本只追加,所以它此后不可改,重试只会照着它跑,任何一项对不上都当场拒。
@@ -40,7 +44,7 @@
 4. 台账登记一行(见「登记」)。
 5. 核对:商家消费历史该行显示 **Refund**;SETTLE 行 reason 里的 `myr_minor` 与 Stripe 上的退款金额逐仙一致;`usd:` 与台账 USD 口径一致。
 
-## 会被挡下来的九种情况(都不是 bug)
+## 会被挡下来的十二种情况(都不是 bug)
 
 | 页面提示 | 含义 | 怎么办 |
 |---|---|---|
@@ -50,6 +54,9 @@
 | …never credited this workspace | 账本上找不到这笔付款的 GRANT 行 | 这笔钱从没变成过 credits,不能按 credits 退;先查充值为什么没入账 |
 | …Refusing until that is reconciled | Session 记的 credits 与账本 GRANT 行对不上 | 记账本身有问题,**先对账再退**,不要在错的底数上叠退款 |
 | Could not find the checkout… / …not MYR | 查不到那笔 Checkout Session,或那笔付款不是马币充值 | 回 Dashboard 核对是不是这一笔 `pi_…` |
+| …nothing received | 那笔付款实收为 0(授权未捕获 / 已撤销) | 钱从没到账,没有可退的东西 |
+| …maps to multiple checkout sessions | 一笔付款查出多个 Checkout Session | 归属与入账 credits 有歧义,先人工对账 |
+| …more than we can check in one pass | 那笔付款上的退款超过一万条 | 去 Stripe 人工对账后再退 |
 | …left to refund | 这笔付款已经退过一部分 | 只退剩下的额度,或换一笔付款 |
 | That refund id is already opened for… | 同一个单号却改了付款/退多少/partial 勾选去续跑 | 照账本上钉着的那份事实重填,或换一个新单号 |
 | The credits stay held… | Stripe 没给出明确答案(超时/5xx/幂等键撞参数) | 见下节「答案不明」——**不释放**,去 Dashboard 核,再用同一个单号重跑 |
@@ -68,12 +75,25 @@
 
 处置:回同一个商家页,那一单会自己出现在 **Open refund holds** 面板上——这张表**从账本读**
 (所有 `manual-refund:` 的 RESERVE 行,减去已经落账或已释放的),所以刷新、换人、换机器都还在,
-不依赖任何页面上的临时状态。每行两个按钮:
+不依赖任何页面上的临时状态。判定顺序是**先减后截**:先把收口过的排除掉,再按时间取一页,所以一张
+很老、但一直没收口的单不会被更新的单挤没。真的多到一页装不下时,面板顶部会明说「还有更早的未收口
+退款」——**看到这句就找工程把剩下的列出来**,每一张没被列出的 hold 都是商家花不了的 credits。
+每行两个按钮:
 
 - **Complete** —— 重读那笔退款的状态:`succeeded` 落账、`failed`/`canceled` 成对释放、还在 pending 就如实说还在等。它**不会**发起第二笔退款。
   找那笔 `re_…` 的顺序是:先看审计行 `manual-refund-pending:<uuid>`;没有(审计行当时写失败,页面会回 `auditRecorded: false` 并在日志里留一条 error)就**翻完** Stripe 上这笔 `pi_…` 的全部退款,按 `metadata.manualRefundId` 认回来;两处都没有才说找不到,而且**什么都不动**。
-- **Abandon** —— 只在 Stripe 上**确实没有**这笔退款时才用:它把 hold 成对释放(reason `manual-refund:abandoned`),商家的 credits 回到可用。动作自己会再查一遍 Stripe;只要查到同 `manualRefundId` 的退款(哪怕还在 pending),就拒绝放弃并让你改用 Complete。
+  找到之后还要**逐项核对**才算数:那笔退款的 `payment_intent`、`metadata.manualRefundId`、`metadata.orgId`
+  必须与本单钉着的事实三项全中。对不上就拒(「does not match this ticket」),既不落账也不释放 ——
+  审计行只是一个指针,拿错了指针就是用别人的退款给这张单结账。
+- **Abandon** —— 只在**钱确定没出去**时放行,两种情形:
+  ① Stripe 上根本没有这笔退款 → 成对释放(reason `manual-refund:abandoned`);
+  ② Stripe 上有,但它自己说 `failed` / `canceled` → 同样成对释放(reason `manual-refund:stripe-failed`),
+     页面会写明「Stripe reports … as failed or canceled」。这一条以前是被拒绝的,结果是一张已经失败的
+     单把商家的 credits 永远锁在那儿等人改库。
+  查到的退款还是 `succeeded` / `pending` / `requires_action` → 拒绝放弃,让你改用 Complete。
   ⚠️ 仍有一个人工判断留给你:退款刚发出、Stripe 还没把它列出来的那个瞬间点 Abandon,理论上可能释放一个其实会成功的 hold。**没在 Dashboard 上亲眼确认那笔 `pi_…` 上没有退款之前,不要点 Abandon。**
+  ⚠️ 另一种拒绝:那笔付款上的退款多到一次翻不完(超过一万条),Complete 与 Abandon 都会**拒绝动作**
+     而不是拿一份看不全的清单下判断 —— 先去 Stripe 人工对账。
 
 ⚠️ 这条前缀的 hold **没有任何清道夫会自动收口**(`manual-refund:` 登记在
 `apps/worker/src/jobs/llm-reservation-reaper.test.ts` 的 `NEVER_REAPED`,有守卫测试逐个清道夫核实):
@@ -106,7 +126,7 @@
 - SETTLE 行 reason 载 Stripe 退款单号;两边金额按汇率钉点对得上。
 - 商家消费历史该退款行可读出是「退款」(类目 Refund,不是 Adjustment)。
 - 本手册存在于 `docs/runbooks/`。
-- 行为测试:`apps/web/lib/__tests__/refund-actions.test.ts`(三段顺序、成对释放、幂等、累计闸、单价按账本事实、pending 收口两态);未收口清单的租户约束在 `apps/web/lib/__tests__/tenant-admin.test.ts`。
+- 行为测试:`apps/web/lib/__tests__/refund-actions.test.ts`(三段顺序、成对释放、幂等键带 org、累计闸、单价按账本事实、pending 收口两态、审计行三项核对、翻页 fail closed);未收口清单的租户约束、先减后截与 hasMore 在 `apps/web/lib/__tests__/tenant-admin.test.ts`。
 
 ## 工程侧已备 vs 等 Founder
 
