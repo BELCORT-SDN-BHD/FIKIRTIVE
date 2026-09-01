@@ -118,6 +118,17 @@ describe("MONEY-A12 双租户:一家的补发关不掉另一家的缺口", () =>
     expect(await prisma.actionEvent.findUnique({ where: { id: reconcileClosureId(sessionB) } })).toBeNull();
   }, DB_CASE_TIMEOUT_MS);
 
+  it("复审四 P1:reason 里写的是**更长的相似 id** ⇒ 拒绝(真库里两行都在,只有 token 边界挡得住)", async () => {
+    const key = `grant:${randomUUID()}`;
+    // 这一笔补发指的是 `<sessionB>4` —— 另一笔付款。子串匹配会把它当成命中。
+    await seedGrant(orgB, `${sessionB}4`, key);
+
+    const res = await closeReconcileObservation({ sessionId: sessionB, disposition: "credited_manually", ledgerRef: key });
+
+    expect("error" in res && res.error).toContain("does not name this payment");
+    expect(await prisma.actionEvent.findUnique({ where: { id: reconcileClosureId(sessionB) } })).toBeNull();
+  }, DB_CASE_TIMEOUT_MS);
+
   it("复审三 P1(b):同一行补发关掉第一笔之后,第二笔当场被拒,且第一条关闭行不受影响", async () => {
     // 同一个商家的两笔缺口,同额。一笔 220 的补发只能顶掉其中一笔 —— 另一笔仍然欠着。
     const second = `cs_test_${randomUUID().replace(/-/g, "")}`;

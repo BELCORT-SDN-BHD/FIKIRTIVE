@@ -144,6 +144,7 @@ export type StripeReconcileResult = {
 /** 观察行 payload 里我们自己写下、后面要读回来的那几格。 */
 type ObservationPayload = {
   sessionId?: unknown;
+  ledgerVerified?: unknown;
   orgId?: unknown;
   credits?: unknown;
   amountTotal?: unknown;
@@ -160,6 +161,8 @@ type GapFacts = {
   currency: string;
   paymentIntentId: string | null;
   firstSeenAt: string | null;
+  /** 这一行首见时问到账本了吗。false = 还没被确认成缺口(下一轮确认后由本文件翻真)。 */
+  ledgerVerified: boolean;
 };
 
 /** 真 Stripe client,按需构造。没有密钥就没有这一面 —— 本地开发与测试是常态,不是错误。 */
@@ -402,8 +405,13 @@ export async function reconcileStripePayments(opts?: {
       // 状态放在库里而不是进程内存,是因为 worker 随时可能重启,而「见过没见过」必须跨重启成立。
       const seenBefore = await recordObservation(session, { orgId, amount, currency, nowMs: now, ledgerVerified: true });
 
-      const firstSeenAt = openGaps.get(session.id)?.firstSeenAt ?? null;
+      const tracked0 = openGaps.get(session.id);
+      const firstSeenAt = tracked0?.firstSeenAt ?? null;
       openGaps.delete(session.id); // 这一笔本轮已经处理过,下面的窗口外那一段不必再碰它
+      // 这一轮账本读得动、而且确认了它没入账 ⇒ 它现在是**确认过的缺口**。首见那一轮写下的
+      // 「还没验」必须就地翻真,否则页面会永远说「Not yet confirmed」、关闭行也会记下一个
+      // 与事实相反的证据强度 —— 而缺口本身早就升级报警了。
+      if (tracked0 && !tracked0.ledgerVerified) await markObservationVerified(session.id);
       // 首见,或者首见得还不够久 —— 一个扫描窗都还没过完,不惊动 founder。
       if (!seenBefore || tooYoungToEscalate(firstSeenAt, now)) {
         if (!seenBefore) firstSeen++;
@@ -417,7 +425,7 @@ export async function reconcileStripePayments(opts?: {
       }
 
       await escalateGap(
-        { sessionId: session.id, orgId, amountTotal: amount, currency, paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null, firstSeenAt },
+        { sessionId: session.id, orgId, amountTotal: amount, currency, paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null, firstSeenAt, ledgerVerified: true },
         now,
         true,
       );
@@ -446,6 +454,7 @@ export async function reconcileStripePayments(opts?: {
         continue;
       }
       tracked++;
+      if (!gap.ledgerVerified) await markObservationVerified(gap.sessionId); // 同上:这一轮确认了,翻真
       // **同一道确认窗**(终审 P2-1)。窗口内那一段读 firstSeenAt 才升级,这一段以前不读 ——
       // 于是有一条绕过去的路:一笔快到 48 小时边界的未验证行,worker 一重启就滑出 Stripe 窗口,
       // 下一秒在这里被当成陈年缺口喊成紧急告警。判定必须是同一个函数,不是两份各写各的。
@@ -497,6 +506,8 @@ function observedGap(sessionId: string, p: ObservationPayload): GapFacts {
     currency: typeof p.currency === "string" ? p.currency : "",
     paymentIntentId: typeof p.paymentIntentId === "string" ? p.paymentIntentId : null,
     firstSeenAt: typeof p.firstSeenAt === "string" ? p.firstSeenAt : null,
+    // 缺这一格的老行(本次施工之前写下的)按**已确认**读:它们当年就是确认过才写的。
+    ledgerVerified: p.ledgerVerified !== false,
   };
 }
 
@@ -594,6 +605,28 @@ async function alertLedgerUnreadable(e: unknown, sessionId: string, nowMs: numbe
     nowMs,
     ownerId,
   );
+}
+
+/**
+ * 把观察行的 `ledgerVerified` 从 false 翻成 true —— 「这一轮账本读得动,而且确认了它没入账」。
+ *
+ * **只翻这一格**,行本身不重写(firstSeenAt / 金额 / 商家一个字不动),与 webhook 侧那条送达
+ * 回执同一种做法:ActionEvent 仍然是只追加的审计日志,这里改的是一格状态位。
+ * **永不抛**:翻不动只是页面上多显示一轮「还没确认」,不值得把整趟扫描带下去。
+ */
+async function markObservationVerified(sessionId: string): Promise<void> {
+  const id = reconcileObservationId(sessionId);
+  try {
+    const row = await prisma.actionEvent.findUnique({ where: { id }, select: { payload: true } });
+    const payload = (row?.payload ?? {}) as Record<string, unknown>;
+    if (payload.ledgerVerified !== false) return; // 已经是 true(或老行没有这一格)—— 不写
+    await prisma.actionEvent.update({
+      where: { id },
+      data: { payload: { ...payload, ledgerVerified: true, ledgerVerifiedAt: new Date().toISOString() } },
+    });
+  } catch (e) {
+    console.error(`[stripe-reconcile] could not mark ${id} as ledger-verified:`, e);
+  }
 }
 
 /** 写关闭行。**永不抛**:一笔关不上的观察行只是下一轮再喊一次,而抛出去会带走整趟扫描。

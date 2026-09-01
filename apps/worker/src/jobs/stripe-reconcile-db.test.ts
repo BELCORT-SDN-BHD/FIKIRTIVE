@@ -469,6 +469,35 @@ describe("MONEY-A12 P2-3:一次数据库错误不许把整轮扫描带下去", (
     expect(second).toMatchObject({ unreconciled: 1, firstSeen: 0, unverified: 0, alerted: 1 });
     expect(alertCall().alert.key).toBe("stripe.paid_but_no_ledger_entry");
     expect(alertCall().alert.context.firstSeenAt).toBe(NOW.toISOString()); // 时钟从首见那一刻起算
+
+    // 复审四 P2-1:确认过了,观察行上那句「还没验」必须就地翻真 —— 否则管理页会永远说
+    // 「Not yet confirmed」,关闭行也会记下一个与事实相反的证据强度,而缺口早就在报警了。
+    const row = await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } });
+    const payload = row?.payload as { ledgerVerified?: boolean; ledgerVerifiedAt?: string; firstSeenAt?: string };
+    expect(payload.ledgerVerified).toBe(true);
+    expect(typeof payload.ledgerVerifiedAt).toBe("string");
+    expect(payload.firstSeenAt, "翻的是那一格,行本身一个字不许重写").toBe(NOW.toISOString());
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("复审四 P2-1:窗口外那一段确认之后同样翻真(两条判定路一致)", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const original = prisma.creditLedger.findUnique;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (prisma.creditLedger as any).findUnique = vi.fn().mockRejectedValue(new Error("connection reset"));
+    try {
+      await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (prisma.creditLedger as any).findUnique = original;
+      err.mockRestore();
+    }
+
+    // 三天后:已经滑出 Stripe 窗口,只剩观察行名单看得见它;账本读得动、仍然没有那一行。
+    const sweep = await reconcileStripePayments({ client: fakeStripe([[]]), now: new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000) });
+    expect(sweep).toMatchObject({ tracked: 1, alerted: 1 });
+
+    const row = await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } });
+    expect((row?.payload as { ledgerVerified?: boolean }).ledgerVerified).toBe(true);
   }, DB_CASE_TIMEOUT_MS);
 
   it("查不动账本 ⇒ 不判这一笔并报警,其余各行照常处理(不冤枉、不静默)", async () => {

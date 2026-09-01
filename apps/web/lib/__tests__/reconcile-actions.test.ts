@@ -5,6 +5,9 @@ import { RECONCILE_CLOSED_TYPE, RECONCILE_OBSERVED_TYPE, reconcileClosureId, rec
 
 const requireRole = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireRole }));
+// 说不清的那一种要叫人 —— 报警管道注入成假 transport,一个真实外呼都不发。
+const founderAlert = vi.fn();
+vi.mock("@/lib/founder-alert", () => ({ founderAlert }));
 const actionEventFindUnique = vi.fn();
 const actionEventFindMany = vi.fn();
 const actionEventCreate = vi.fn();
@@ -29,6 +32,7 @@ beforeEach(() => {
   actionEventCreate.mockResolvedValue({});
   txCreate.mockResolvedValue({});
   creditLedgerFindFirst.mockResolvedValue(null);
+  founderAlert.mockResolvedValue([]);
 });
 
 /** 一行合法的手工补发:同商家、GRANT、金额相符,**且 reason 里粘着这一笔 session id**。 */
@@ -165,6 +169,32 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     expect($transaction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["前缀更长", "manual re-grant for cs_test_1234"],
+    ["后缀", "manual re-grant for xcs_test_123"],
+    ["紧邻字符", "manual re-grant for cs_test_123abc"],
+  ])("复审四 P1:reason 里是**相似**的 id(%s)⇒ 拒绝(子串匹配会把它当成命中)", async (_label, reason) => {
+    // `cs_test_1234` 与 `cs_test_123` 是两笔不同的付款,而金额、商家、形态可以完全一样。
+    creditLedgerFindFirst.mockResolvedValue(grantRow({ reason }));
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
+
+    expect("error" in res && res.error).toContain("does not name this payment");
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["行首", "cs_test_123 re-granted by hand"],
+    ["行尾", "manual re-grant for cs_test_123"],
+    ["标点包住", "re-grant (cs_test_123) after webhook loss"],
+  ])("复审四 P1:token 边界上的精确匹配(%s)⇒ 通过", async (_label, reason) => {
+    creditLedgerFindFirst.mockResolvedValue(grantRow({ reason }));
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
+
+    expect(res).toEqual({ ok: true });
+  });
+
   it("复审三 P1(a):幂等键就是 stripe:<sessionId> 的自动入账形态 ⇒ 算指名,通过", async () => {
     creditLedgerFindFirst.mockResolvedValue(grantRow({ reason: "stripe top-up", idempotencyKey: `stripe:${SESSION}` }));
 
@@ -189,11 +219,30 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     creditLedgerFindFirst.mockResolvedValue(grantRow());
     $transaction.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
     actionEventFindUnique.mockResolvedValueOnce({ ownerId: "org_1", payload: { orgId: "org_1", credits: 220 } });
-    actionEventFindUnique.mockResolvedValueOnce({ payload: { ledgerRowId: "cl_9", sessionId: SESSION } });
+    actionEventFindUnique.mockResolvedValueOnce({ payload: { ledgerRowId: "cl_9", sessionId: SESSION } }); // 占用标记
+    actionEventFindUnique.mockResolvedValueOnce({ id: "stripe_unreconciled_closed:cs_test_123" }); // 关闭行确实在
 
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect(res).toEqual({ ok: true, alreadyClosed: true });
+  });
+
+  it("复审四 P2-2:第三态(标记在、却没有关闭行)⇒ fail closed 拒绝 + 叫人,绝不答成 alreadyClosed", async () => {
+    // 把说不清的那一种答成「已经关过了」,等于告诉操作员「这笔不用管了」—— 而关闭行根本不在,
+    // 缺口还在,人却不会再回来看它。
+    creditLedgerFindFirst.mockResolvedValue(grantRow());
+    $transaction.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    actionEventFindUnique.mockResolvedValueOnce({ ownerId: "org_1", payload: { orgId: "org_1", credits: 220 } });
+    actionEventFindUnique.mockResolvedValueOnce({ payload: { ledgerRowId: "cl_9" } }); // 标记里没有 sessionId
+    actionEventFindUnique.mockResolvedValueOnce(null); // 关闭行不在
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
+
+    expect("error" in res).toBe(true);
+    expect("error" in res && res.error).toContain("unexpected state");
+    expect("error" in res && res.error).toContain("NOT closed");
+    expect(founderAlert).toHaveBeenCalledTimes(1);
+    expect(founderAlert.mock.calls[0]![0].key).toBe("reconcile.credit_use_marker_inconsistent");
   });
 
   it("复审三 P2-2:关闭行记下**当时**那一笔是不是确认过的缺口", async () => {

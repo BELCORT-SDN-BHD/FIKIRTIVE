@@ -31,11 +31,25 @@ import {
   reconcileObservationId,
 } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
+import { founderAlert } from "./founder-alert";
 
 /** Stripe 退款单号的形状。格式校验挡的是「随手打一串字当单号」,不是伪造 —— 真伪由 Stripe 后台核。 */
 const STRIPE_REFUND_ID = /^re_[A-Za-z0-9]{6,}$/;
 /** `other` 处置的最短说明。二十个字大约是「一句说得清为什么可以关」的下限。 */
 const OTHER_NOTE_MIN = 20;
+
+/**
+ * 这条 reason 里**指名**了这一笔 session 吗?
+ *
+ * 子串匹配不够:`cs_test_123` 会命中一条写着 `cs_test_1234` 的补发 —— 那是**另一笔**付款,
+ * 而两笔的金额、商家、形态可以完全一样。所以按 token 边界比:Stripe 的 id 用 `[A-Za-z0-9_]`,
+ * 于是按「非 id 字符」切开,要求其中**某一个 token 逐字等于**这个 session id。
+ * 前缀(`cs_test_1234`)、后缀(`xcs_test_123`)、紧邻字符(`cs_test_123abc`)因此全部落空,
+ * 而空格、标点、行首行尾包住的那一个才算数。
+ */
+function reasonNamesSession(reason: string, sessionId: string): boolean {
+  return reason.split(/[^A-Za-z0-9_]+/).some((token) => token === sessionId);
+}
 
 /** 一行未了结的观察行(admin 页面读的就是这个)。 */
 export type ReconcileObservationRow = {
@@ -175,7 +189,7 @@ export async function closeReconcileObservation(
     //    但那是**另一笔**补发 —— 拿它关掉这一笔,商家仍然少了 220。两种指名都算数:
     //      · `stripe:<sessionId>` —— 自动入账的形态(webhook 后来补投成功了)。
     //      · reason 里粘着完整的 session id —— 人工补发的形态(runbook 要求这么写)。
-    const namesThisSession = entry.idempotencyKey === `stripe:${sessionId}` || (entry.reason ?? "").includes(sessionId);
+    const namesThisSession = entry.idempotencyKey === `stripe:${sessionId}` || reasonNamesSession(entry.reason ?? "", sessionId);
     if (!namesThisSession) {
       return {
         error: `That grant does not name this payment. A manual grant must carry the session id (${sessionId}) in its reason, or use the idempotency key stripe:${sessionId} — otherwise close this under “Something else” with an explanation.`,
@@ -237,19 +251,39 @@ export async function closeReconcileObservation(
   } catch (e) {
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       // 撞了主键 —— 但撞的是哪一条?事务里分不出来(一条语句失败,整笔就废了),所以事后读一次。
-      //   占用标记在,且记的是**别的** session ⇒ 这行补发已经被拿去关过另一笔缺口。
-      //   其余情形(标记不在、或标记就是这一笔)⇒ 撞的是关闭行,也就是「已经关过了」。
+      //
+      // **三态,不是两态**(复审四 P2-2)。把说不清的那一种也答成「已经关过了」,等于告诉操作员
+      // 「这笔已经了结,不用管了」—— 而实际上关闭行可能根本不存在,缺口还在,人却不会再来看它。
+      //   ① 标记记的是**这一笔** + 关闭行确实在  ⇒ 真的已经关过了(两个人先后按了同一个按钮)。
+      //   ② 标记记的是**别的** session          ⇒ 这行补发被拿去关过另一笔缺口,拒。
+      //   ③ 其余(没有标记 / 标记里没有 session / 关闭行不在)⇒ 说不清,**fail closed**:拒 + 叫人。
       if (creditUseRowId) {
-        const used = await prisma.actionEvent.findUnique({
-          where: { id: reconcileCreditUseId(creditUseRowId) },
-          select: { payload: true },
-        });
-        const usedFor = (used?.payload as { sessionId?: unknown } | null)?.sessionId;
+        const markerId = reconcileCreditUseId(creditUseRowId);
+        const [marker, closedRow] = await Promise.all([
+          prisma.actionEvent.findUnique({ where: { id: markerId }, select: { payload: true } }),
+          prisma.actionEvent.findUnique({ where: { id: reconcileClosureId(sessionId) }, select: { id: true } }),
+        ]);
+        const usedFor = (marker?.payload as { sessionId?: unknown } | null)?.sessionId;
         if (typeof usedFor === "string" && usedFor !== sessionId) {
           return { error: `That grant was already used to close another gap (${usedFor}). One manual grant closes one payment — find the grant that belongs to this one, or close this under “Something else”.` };
         }
+        if (typeof usedFor === "string" && usedFor === sessionId && closedRow) {
+          return { ok: true, alreadyClosed: true };
+        }
+        // ③ 说不清。报警不许决定这次的返回值(与钱路其它报警点同一条规矩)。
+        try {
+          await founderAlert({
+            key: "reconcile.credit_use_marker_inconsistent",
+            title: "A reconciliation close hit a unique-constraint collision that does not match any known state",
+            action: `Inspect ActionEvent ${markerId} and ${reconcileClosureId(sessionId)} by hand. The gap was NOT closed — nothing was written.`,
+            context: { sessionId, markerId, ledgerRowId: creditUseRowId, markerSessionId: typeof usedFor === "string" ? usedFor : null, closureRowExists: Boolean(closedRow), closedBy: gate.email },
+          });
+        } catch (alertErr) {
+          console.error(`[reconcile] inconsistent credit-use marker ${markerId}; alert failed:`, alertErr);
+        }
+        return { error: `The single-use marker for that grant is in an unexpected state (${markerId}) and this gap was NOT closed — check it by hand before retrying.` };
       }
-      // 已经关过了。这不是错误:两个人先后按下同一个按钮,结果应当一样。
+      // 非手工补发那一支只有一条写:撞的必然是关闭行,也就是「已经关过了」。
       return { ok: true, alreadyClosed: true };
     }
     throw e;
