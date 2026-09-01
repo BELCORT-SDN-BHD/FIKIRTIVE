@@ -55,6 +55,9 @@ import { founderAlert } from "./founder-alert";
 
 /** Stripe 退款失败后写在 REFUND 行上的标签(账本成对释放的那一半)。 */
 const STRIPE_FAILED_REASON = "manual-refund:stripe-failed";
+/** 金额小到在马币上取整成 0 —— Stripe 一次都没碰过,所以不许写成「Stripe 失败」:
+ *  账本上的标签是给以后查账的人看的,不是随手拿一个现成常量凑数。 */
+const ROUNDS_TO_ZERO_REASON = "manual-refund:rounds-to-zero";
 
 /**
  * **Stripe 是「明确拒绝了」,还是「我们不知道」?** 这两件事的处置相反,合并它们会亏钱。
@@ -202,7 +205,7 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
   const heldDisplay = displayCredits(heldInternal);
   const amountMinor = refundMinorForPack(heldDisplay, pack);
   if (amountMinor <= 0) {
-    await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId, reason: STRIPE_FAILED_REASON }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId, reason: ROUNDS_TO_ZERO_REASON }));
     return { error: "That amount rounds to nothing in ringgit. Nothing was refunded." };
   }
 
