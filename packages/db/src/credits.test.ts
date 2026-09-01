@@ -1319,4 +1319,78 @@ describe("MONEY-A10 — reserveChatTurnWithSearchSlots:搜索腿按整格坚实�
     );
     expect(legacy).toBe(25); // min(40, 25) —— 与抽出 firm 核心之前一模一样
   });
+
+  it("MONEY-A10 ⑦ 边界:余额恰好 = 开门额 + 一格 ⇒ 发 1 格,且 hold 恰好等于两者之和", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: MIN + UNIT } }); // 13
+
+    const { holdInternal, grantedSearchUnits } = await reserveChat(ORG, REF);
+
+    expect(grantedSearchUnits).toBe(1);                  // floor((13 − 10) / 3) = 1
+    expect(holdInternal).toBe(MIN + UNIT);               // min(40 + 3, 13) = 13
+    // 不变量在这一点上**恰好取等**:再少一分就发不出这一格。
+    expect(holdInternal).toBe(grantedSearchUnits * UNIT + MIN);
+  });
+});
+
+// ── 判官复审 P1 —— 坚实腿四个数的形状闸 ────────────────────────────────────────────
+//
+// 这四个数全是组合期常量(费率表 × 规格上限 × otto-budget.ts 的 cap 与开门额),没有一个来自
+// 请求。所以坏组合是配置错误,不是运行时输入:fail closed = 当场抛,一分钱不预留、一格不发。
+// 每一条都在**真库**上验「账本零新增行 + 余额一分没动」—— 一个只抛错却已经写了行的闸不算闸。
+describe("MONEY-A10 复审 P1 — 坏参数当场抛错,而且什么都没写", () => {
+  const OK = { llmCapInternal: 40, minimumInternal: 10, searchUnitInternal: 3, maxSearchUnits: 5 };
+
+  const reserveWith = (over: Partial<typeof OK>) =>
+    prisma.$transaction((tx) => reserveChatTurnWithSearchSlots(tx, { orgId: ORG, refId: REF, ...OK, ...over }));
+
+  const expectNothingHappened = async (balanceBefore: number) => {
+    expect(await ledger(ORG)).toHaveLength(0);
+    expect((await account(ORG)).balance).toBe(balanceBefore);
+  };
+
+  it("弹性腿的 cap 小于开门额 ⇒ 抛错(不变量的前提没了:发 5 格却只持 16)", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+    // 判官给的原始反例:elasticCap=1 / minimum=10 / unit=3 / maxUnits=5 / balance=25。
+    // 旧写法会发满 5 格却只持 min(1 + 15, 25) = 16 —— 搜索腿又被 clamp。
+    await expect(reserveWith({ llmCapInternal: 1 })).rejects.toThrow(/elasticCapInternal must be >= minimumInternal/);
+    await expectNothingHappened(25);
+  });
+
+  it("单价非有限 / 非整数 / 非正 ⇒ 抛错(旧写法会让 0 × NaN 把 NaN 写进 hold)", async () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 2.5, 0, -3]) {
+      await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+      await expect(reserveWith({ searchUnitInternal: bad }), `unit=${String(bad)}`).rejects.toThrow(
+        /unitInternal must be a positive safe integer/,
+      );
+      await expectNothingHappened(25);
+    }
+  });
+
+  it("格数上限为 0 / 负 / 非整数 ⇒ 抛错(一条发不出格的腿不许静默变成 0 格通过)", async () => {
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+      await expect(reserveWith({ maxSearchUnits: bad }), `maxUnits=${String(bad)}`).rejects.toThrow(
+        /maxUnits must be a positive safe integer/,
+      );
+      await expectNothingHappened(25);
+    }
+  });
+
+  it("开门额 / cap 本身非有限或为负 ⇒ 抛错", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+    await expect(reserveWith({ minimumInternal: -1 })).rejects.toThrow(/minimumInternal must be a non-negative safe integer/);
+    await expect(reserveWith({ llmCapInternal: Number.NaN })).rejects.toThrow(
+      /elasticCapInternal must be a non-negative safe integer/,
+    );
+    await expectNothingHappened(25);
+  });
+
+  it("闸只管带搜索腿的那条路:`reserveCreditsUpTo` 的老调用方一条新校验都没多", async () => {
+    // cap < minimum 在老路上是**允许**的既有形状(#898:一步预算 7 < 开门额 10),闸不许碰它。
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+    const hold = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: 7, minimumInternal: 10 }),
+    );
+    expect(hold).toBe(7); // min(7, 25) —— 照旧,没有抛错
+  });
 });

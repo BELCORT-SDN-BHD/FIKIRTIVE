@@ -1137,20 +1137,31 @@ describe("MONEY-A10 — 低余额预留与搜索腿并存(判官 P1)", () => {
     expect(mocks.settleCredits).not.toHaveBeenCalled();
   });
 
-  it("MONEY-A10:一个抛错的 onExtraUnitsGranted 不许拖垮已经成功的预留(发放数停在 0)", async () => {
+  it("MONEY-A10:一个抛错的 onExtraUnitsGranted 不许拖垮预留,而调用方的槽停在 fail-closed 的 0", async () => {
     mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 25, grantedSearchUnits: 5 });
-    const fn = vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } });
+    // 真实形状的槽:生产里 buildOttoContext 每轮新建一个 {granted:0,taken:0,succeeded:0},
+    // runtime.ts 的钩子往 granted 上写。这里让写之前先炸,验的是**商家侧的后果**——
+    // 槽仍是 0 格 ⇒ 工具一次都不许搜 ⇒ 不可能出现「搜了却没被预扣罩住」。
+    const slots = { granted: 0, taken: 0, succeeded: 0 };
+    const fn = vi.fn().mockImplementation(async () => {
+      // fn 跑的时候槽必须已经是终态 —— 工具就是在这里面被调用的。
+      expect(slots.granted).toBe(0);
+      return { result: "ok", usage: { inputTokens: 10, outputTokens: 5 } };
+    });
     await expect(
       withLlmBudget(
         makeArgs({
           reserveCapInternal: 40,
           reserveMinInternal: 10,
           extraHoldUnits: UNITS,
-          onExtraUnitsGranted: () => { throw new Error("hook blew up"); },
+          onExtraUnitsGranted: (g: number) => {
+            throw new Error(`hook blew up before writing ${String(g)}`);
+          },
         }),
         fn,
       ),
     ).resolves.toBe("ok");
+    expect(slots.granted).toBe(0);          // 一格都没发出去
     expect(fn).toHaveBeenCalledOnce();      // 钱已经持住了,这一轮照跑
     expect(mocks.settleCredits).toHaveBeenCalledOnce();
   });

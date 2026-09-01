@@ -259,9 +259,11 @@ export async function reserveCreditsUpTo(
  * 发出去的每一格都被**坚实持有**;买不起就发 0 格,工具当场拒绝(而不是搜完了才发现没钱)。
  *
  * 由此得到这条不变量:`hold ≥ granted × unitInternal + minimumInternal`
- * (因为 granted×unit ≤ balance − minimum,且 elasticCap ≥ minimum),所以**成功的搜索永远
- * 被预扣罩得住**,`settleCredits` 的 clamp 不可能再吃掉搜索那条腿。弹性腿仍然可能在低余额
- * 下被 clamp —— 那是 #898 既有的、Founder 已裁的行为,这里一个字都没改它。
+ * (因为 granted×unit ≤ balance − minimum,且 elasticCap ≥ minimum)。第二个前提**不是假设,
+ * 是闸**:`assertFirmLegShape` 在读余额之前就把它连同四个数的形状一起验掉(判官复审 P1:
+ * elasticCap=1/minimum=10/unit=3/balance=25 会发 5 格却只持 16,搜索腿又被 clamp)。前提成立,
+ * 所以**成功的搜索永远被预扣罩得住**,`settleCredits` 的 clamp 不可能再吃掉搜索那条腿。
+ * 弹性腿仍然可能在低余额下被 clamp —— 那是 #898 既有的、Founder 已裁的行为,这里一个字都没改它。
  *
  * 返回发放的格数,调用方据此决定这一轮真的能搜几次。
  */
@@ -304,6 +306,12 @@ async function reserveUpToCore(
   },
 ): Promise<{ holdInternal: number; grantedUnits: number }> {
   const { orgId, refId, elasticCapInternal, minimumInternal, firm } = args;
+  // 判官复审 P1 —— 坚实腿的四个数全是**组合期常量**(费率表 × 规格上限 × otto-budget.ts 的 cap
+  // 与开门额),没有一个来自请求。所以一个坏组合是配置/编程错误,不是可以钳制的运行时输入:
+  // 静默钳制会把一个装反的价目表变成一笔算错的钱,而这里的规矩是 fail closed —— 当场抛,
+  // 一分钱不预留、一格不发。只在带 firm 的路径上跑;`reserveCreditsUpTo` 传不进 firm,
+  // 它的行为逐字不变(不加新校验 = 不改旧调用方)。
+  if (firm) assertFirmLegShape(elasticCapInternal, minimumInternal, firm);
   const account = await tx.creditAccount.findUnique({ where: { orgId }, select: { balance: true } });
   const balance = account?.balance ?? 0;
   if (balance < minimumInternal) {
@@ -314,16 +322,66 @@ async function reserveUpToCore(
       balanceInternal: account?.balance ?? null,
     });
   }
-  // 坚实腿:只发整格,而且只从「给弹性腿留够开门额之后」剩下的钱里发。坏参数一律 0 格 ——
-  // 方向永远是少发一格,不是多持一分。
-  const grantedUnits =
-    firm && Number.isInteger(firm.unitInternal) && firm.unitInternal > 0 && Number.isInteger(firm.maxUnits) && firm.maxUnits > 0
-      ? Math.max(0, Math.min(firm.maxUnits, Math.floor((balance - minimumInternal) / firm.unitInternal)))
-      : 0;
-  const firmInternal = grantedUnits * (firm?.unitInternal ?? 0);
+  // 坚实腿:只发整格,而且只从「给弹性腿留够开门额之后」剩下的钱里发。四个数已经过闸,
+  // 门也已经过(balance ≥ minimum),所以这里只剩算术 —— 方向永远是少发一格,不是多持一分。
+  const grantedUnits = firm
+    ? Math.max(0, Math.min(firm.maxUnits, Math.floor((balance - minimumInternal) / firm.unitInternal)))
+    : 0;
+  // 只有真发了格才相乘。0 格恒等于 0,不经过一次「0 × 单价」—— 一个非有限的单价正是从那种
+  // 乘法里漏进账本的(0 × NaN = NaN)。
+  const firmInternal = firm && grantedUnits > 0 ? grantedUnits * firm.unitInternal : 0;
   const hold = Math.min(elasticCapInternal + firmInternal, balance);
   await reserveAgainstBalance(tx, { orgId, refId, cost: hold });
   return { holdInternal: hold, grantedUnits };
+}
+
+/**
+ * 坚实腿(MONEY-A10)四个数的形状闸,判官复审 P1 的落点。跑在读余额**之前**,所以违反 = 这一轮
+ * 一分钱不预留、一格不发。
+ *
+ * 两类它挡的东西,各有一个实测反例:
+ *  · `elasticCap < minimum` —— 不变量 `hold ≥ granted×unit + minimum` 的证明整个建立在
+ *    `elasticCap ≥ minimum` 上。反例 elasticCap=1 / minimum=10 / unit=3 / maxUnits=5 /
+ *    balance=25:发满 5 格,却只持 `min(1+15, 25) = 16`,搜索腿又被 clamp —— 本段要消灭的那个
+ *    洞换了个入口回来。语义上它本来也说不通:商家已经过了 10 的门,这一轮却只打算持 7。
+ *  · 非有限 / 非整数 / 非正的四个数 —— 旧写法用 `Number.isInteger` 判假后发 0 格,但随后仍然
+ *    做了一次 `0 × unit`:`0 × NaN = NaN`,于是 `hold` 是 NaN,一路写进账本行。
+ *
+ * 为什么是抛错而不是钳制:这四个数没有一个来自请求,全是组合期常量(`searchUnitChargeInternal`
+ * 的费率、规格的单轮上限、`OTTO_CONVERSATION_TURN_RESERVE_INTERNAL` 与
+ * `OTTO_CHAT_MIN_START_INTERNAL`)。坏组合 = 有人把价目表或预算常量改坏了,静默钳制只会把它
+ * 变成一笔算错的钱,而且没人会发现。今天的生产组合离这条闸很远(聊天轮 maxSteps=10 ⇒
+ * 弹性腿 = min(worstCase, 40) = 40,开门额 10)。
+ */
+function assertFirmLegShape(
+  elasticCapInternal: number,
+  minimumInternal: number,
+  firm: { unitInternal: number; maxUnits: number },
+): void {
+  const reject = (what: string): never => {
+    throw new Error(
+      `MONEY-A10 firm reservation leg is misconfigured: ${what} ` +
+        `(elasticCapInternal=${String(elasticCapInternal)}, minimumInternal=${String(minimumInternal)}, ` +
+        `unitInternal=${String(firm.unitInternal)}, maxUnits=${String(firm.maxUnits)}). ` +
+        "These four numbers are composition-time constants, never request data — nothing was reserved.",
+    );
+  };
+  if (!Number.isSafeInteger(elasticCapInternal) || elasticCapInternal < 0) {
+    reject("elasticCapInternal must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(minimumInternal) || minimumInternal < 0) {
+    reject("minimumInternal must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(firm.unitInternal) || firm.unitInternal <= 0) {
+    reject("unitInternal must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(firm.maxUnits) || firm.maxUnits <= 0) {
+    reject("maxUnits must be a positive safe integer");
+  }
+  if (elasticCapInternal < minimumInternal) {
+    // 这一条不是形状,是**不变量的前提**:少了它,发出去的格会超出持住的钱。
+    reject("elasticCapInternal must be >= minimumInternal, or the firm units can exceed the hold");
+  }
 }
 
 /** SETTLE the held charge for a successfully-committed job. MUST run in the worker's commit
