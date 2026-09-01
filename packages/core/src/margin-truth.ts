@@ -140,8 +140,10 @@ export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [
       "评估(1.05 > 1 成立);压力实收为负是汇率钉点刻意保守缓冲的账面现象,不是现金已损" +
       "(docs/specs/money-engine.md §7.0)。本注记只是把这个事实写明,不改费率 —— " +
       "S1「不做」节禁止本规格重裁聊天费率,要重议走 §5 变更登记。" +
-      "⚠️ 本行只建模聊天的 LLM 成本:聊天自己的搜索腿(researchWeb)至今零计价、不在本表内," +
-      "所以这里的 4.76% 偏乐观,真实毛利率更低。缺口已知,另票跟进接同一套 3× 计价。",
+      "【口径边界】本行建模的是聊天的 **LLM 成本**,这是它的全部量程,不是一个缺口:聊天里的" +
+      "搜索(researchWeb)自 2026-09-02 起是**独立计价的第二条钱腿**(3×,与深研同源同函数," +
+      "MONEY-A10),按次单独向商家收,不摊进这条 1.05× 的曲线。两条腿各自入闸:搜索那条清地板" +
+      "(66.7%),这条按裁决豁免。",
     ruledOn: "2026-08-18",
     source:
       "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/970 —— Founder 裁决 9(2026-08-18," +
@@ -208,7 +210,10 @@ type MarginSku = { id: string; label: string; charge: () => number; cogs: () => 
  * 三行分别是:
  *   otto:chat            聊天一轮的 LLM 成本 × 1.05  → 4.76%,**跌破地板**,Founder 已裁接受(裁决 9)。
  *   otto:research:llm    深研的 LLM 成本 × ottoLlmMargin() → 默认 **2.06 ⇒ 51.46%**,清地板。
- *   otto:research:search 深研的搜索成本 × 3.0        → 66.7%,清地板(裁决 9b 落地的 3× 判决)。
+ *   otto:research:search **全部**搜索成本 × 3.0     → 66.7%,清地板(裁决 9b 落地的 3× 判决)。
+ *                        深研与聊天两条搜索腿走同一个费率、同一个 `searchChargeInternal`,所以
+ *                        它们是**同一行**,不是两行 —— 复制一份数字一模一样的行,只会多一个
+ *                        将来会漂移的地方(MONEY-A10 起,聊天搜索并入这一行)。
  *
  * **这张表的毛利率是面值口径**(商家账面),而宪法 5 的 45% 地板在 CI 闸那边按**最坏实收口径**
  * 复判一次(面值 × 最坏包实收系数 0.8944,见 `pricing-config.ts` 的 `worstPackReceiptCoefficient`)。
@@ -217,15 +222,13 @@ type MarginSku = { id: string; label: string; charge: () => number; cogs: () => 
  * (前值 2.0× 的实收是 44.10%,破线)。详见 docs/specs/money-engine.md §7.0。
  */
 export const USAGE_PRICED_SURFACES: readonly { id: string; label: string; multiplier: () => number }[] = [
-  // ⚠️ 这一行只建模**聊天的 LLM 成本**。聊天自己那条搜索腿(researchWeb,
-  // packages/otto/src/skills/research-web.ts)至今零计价、也不在这张表里,所以这里印出来的
-  // 4.76% 是**偏乐观**的:真实毛利率比它低,低多少取决于商家聊天里触发了多少次轻查。
-  // 这个缺口是**已知的**,不在本票范围内(本票只落地深研那条腿的 3× 计价);把它写在这里,
-  // 是为了让这一行不再声称自己量全了 —— 一个量了一半却看起来像量全了的闸,比没有闸更危险。
-  // 另票跟进:给 researchWeb 接上同一套 3× 计价,然后把这条注释连同缺口一起删掉。
-  { id: "otto:chat", label: "Otto 聊天(每 $1 provider 成本)", multiplier: () => OTTO_CONVERSATION_TURN_MARGIN },
+  // 这一行建模的是**聊天的 LLM 成本**,而那就是它的全部量程。聊天里的搜索腿
+  // (researchWeb,packages/otto/src/skills/research-web.ts)从 MONEY-A10 起按 3× 单独计价,
+  // 落在下面 otto:research:search 那一行里 —— 两条腿分别入闸,这里的 4.76% 不再偏乐观。
+  { id: "otto:chat", label: "Otto 聊天 LLM(每 $1 provider 成本)", multiplier: () => OTTO_CONVERSATION_TURN_MARGIN },
   { id: "otto:research:llm", label: "深研 LLM(每 $1 provider 成本)", multiplier: () => ottoLlmMargin() },
-  { id: "otto:research:search", label: "深研搜索(每 $1 provider 成本)", multiplier: () => SEARCH_MARGIN_MULTIPLIER },
+  // 深研搜索 + 聊天搜索:同一个费率、同一个收费函数,所以是同一行(见上面的表)。
+  { id: "otto:research:search", label: "搜索(深研+聊天,每 $1 provider 成本)", multiplier: () => SEARCH_MARGIN_MULTIPLIER },
 ];
 
 /** 按量计价面的成本计量单位:**$1 的 provider 成本**。这是单位的定义,不是一个抄来的价格

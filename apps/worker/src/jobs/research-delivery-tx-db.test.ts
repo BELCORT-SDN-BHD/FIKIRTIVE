@@ -25,7 +25,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
   return { ...actual, run: m.run };
 });
 
-import { prisma } from "@fikirtive/db";
+import { prisma, refundReservation } from "@fikirtive/db";
 import { handleResearch } from "./research.js";
 
 // 同其它真库用例的守卫:绝不对着一个不是 *_test 的库跑。
@@ -176,6 +176,35 @@ describe("钱路 M1-b ②:research 的交付与结算同一笔提交", () => {
     const job = await prisma.researchJob.findFirstOrThrow({ where: { id: jobId, ownerId: orgId }, select: { status: true, error: true } });
     expect(job.status).toBe("FAILED");
     expect(job.error).toBe("research was interrupted — please try again");
+  }, DB_CASE_TIMEOUT_MS);
+
+  // ── #1046-P1:退款已经赢了 finalizer,但作业行还没被改动 ────────────────────────────
+  //
+  // 上一条靠的是终态 CAS(作业已经不是 RUNNING)。这一条打的是它够不到的那个窗口:
+  // 预扣清道夫按 60 分钟阈值退了 `research:<cardId>` 的款,而 research-status 清道夫还没跑到
+  // 这一行 —— 作业**仍然是 RUNNING**。此刻模型返回结果:`settleCredits` 撞上 finalizer 唯一
+  // 约束,createMany 计数 0,函数返回 void 一如成功;CAS 匹配到 RUNNING,于是交付照写。
+  // 结果是商家白拿一份报告,权威账本记着 REFUND。守卫 = 交付前直接读一次终态。
+  it("#1046-P1 退款已在但作业仍 RUNNING:迟到的结算不许交货(直接读终态,不信 settle 的空操作)", async () => {
+    m.run.mockImplementation(async () => {
+      // 清道夫退款:预扣被释放,作业行一个字都没动。
+      await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId: `research:${cardId}` }));
+      return { finalOutput: "# Report", newItems: [], state: { usage: { inputTokens: 1000, outputTokens: 500 } } };
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await handleResearch({ jobId }, 0);
+    } finally {
+      warn.mockRestore();
+    }
+
+    const money = await moneyTrail();
+    // 只有一条 finalizer,而且是 REFUND —— 没有第二笔钱动过。
+    expect(money.kinds).toEqual(["RESERVE", "REFUND"]);
+    expect(money.balance, "退过款之后又收了一次钱").toBe(START);
+    expect(money.reserved).toBe(0);
+    expect(await reportRows(), "对着一笔已经退掉的预扣交了货").toHaveLength(0);
+    expect((await jobRow()).status).toBe("FAILED");
   }, DB_CASE_TIMEOUT_MS);
 
   it("双租户:一次 research 的结算/退款只动它自己那个组织的钱", async () => {

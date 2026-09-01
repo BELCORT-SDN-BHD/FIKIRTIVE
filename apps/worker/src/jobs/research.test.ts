@@ -221,6 +221,48 @@ describe("handleResearch — happy path", () => {
     expect(mocks.searchChargeInternal).toHaveBeenCalled();
   });
 
+  // ── MONEY-A10 / #1046-P2:无 key 时搜索端口**缺席**,不是一个恒返回 [] 的假端口 ──────
+  //
+  // 旧形状 `buildSearch()` 在无 key 时返回 `async () => []`:agent 调一次「搜索」,没有任何
+  // 外部调用发生,却拿到一个成功的空结果 —— 它以为自己搜过了(于是不去说「这条没能核实」),
+  // 计数器照样 +1,一次成功的深研因此多结算 3 个 internal credits。
+  it("MONEY-A10:没有配置任何搜索 key ⇒ ctx.search === undefined(诚实报不可用,$0)", async () => {
+    const prevTavily = process.env.TAVILY_API_KEY;
+    const prevBrave = process.env.BRAVE_SEARCH_API_KEY;
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.BRAVE_SEARCH_API_KEY;
+    try {
+      await handleResearch({ jobId: "job-1" }, 0);
+      const [, , opts] = mocks.run.mock.calls[0]!;
+      expect((opts as { context: { search?: unknown } }).context.search).toBeUndefined();
+    } finally {
+      if (prevTavily !== undefined) process.env.TAVILY_API_KEY = prevTavily;
+      if (prevBrave !== undefined) process.env.BRAVE_SEARCH_API_KEY = prevBrave;
+    }
+  });
+
+  it("MONEY-A10:配置了 key ⇒ ctx.search 是一个真端口", async () => {
+    const prev = process.env.TAVILY_API_KEY;
+    process.env.TAVILY_API_KEY = "tvly-test";
+    try {
+      await handleResearch({ jobId: "job-1" }, 0);
+      const [, , opts] = mocks.run.mock.calls[0]!;
+      expect(typeof (opts as { context: { search?: unknown } }).context.search).toBe("function");
+    } finally {
+      if (prev === undefined) delete process.env.TAVILY_API_KEY;
+      else process.env.TAVILY_API_KEY = prev;
+    }
+  });
+
+  it("MONEY-A10:上限判 searchesTaken(占槽),计费按 searchesUsed(成功数)—— 两个计数器都从 0 起", async () => {
+    await handleResearch({ jobId: "job-1" }, 0);
+    const [, , opts] = mocks.run.mock.calls[0]!;
+    const ctx = (opts as { context: { searchesTaken: number; searchesUsed: number; maxSearches: number } }).context;
+    expect(ctx.searchesTaken).toBe(0);
+    expect(ctx.searchesUsed).toBe(0);
+    expect(ctx.maxSearches).toBe(mocks.RESEARCH_TIERS.standard.maxSearches);
+  });
+
   it("runs the researchAgent with maxTurns=tier.maxSteps", async () => {
     await handleResearch({ jobId: "job-1" }, 0);
     expect(mocks.run).toHaveBeenCalledTimes(1);

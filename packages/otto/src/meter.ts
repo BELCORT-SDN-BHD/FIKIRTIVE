@@ -27,6 +27,10 @@
  *     Callers that do not pass it are byte-identical to before. NOTE the one path it does NOT
  *     cover, spelled out on the field itself: a `usageOnError` settle (invariant #2's truncated
  *     turn) charges real tokens and never calls the hook — delivery-less but paid, by design.
+ *     #1046-P1: before the hook runs, the SAME transaction reads this refId's finalizer directly.
+ *     A REFUND already there ⇒ `SettleLostToRefund` ⇒ the whole transaction rolls back. "settle
+ *     no-opped" is otherwise indistinguishable from "settle succeeded", and delivering on the
+ *     first is handing a merchant goods the ledger has already refunded.
  * 11. (钱路 M1-c) `extraHoldInternal` / `extraSettleInternal` carry a NON-LLM leg of the same
  *     charge — today only the research search fee (Founder 2026-07-03's 3× ruling, finally
  *     implemented). It is the ONE bound that makes the hold BIGGER, and that is exactly why it
@@ -286,6 +290,17 @@ export class ReservationNotClaimed extends Error {
   }
 }
 
+/** #1046-P1 — thrown INSIDE the settle transaction when a REFUND already owns this refId's
+ *  finalizer: the hold came back to the merchant before this run finished, so the SETTLE is a
+ *  no-op and the delivery must not happen either. Rolls the whole transaction back, which is the
+ *  point. Callers see it as an ordinary settle failure and mark their job failed. */
+export class SettleLostToRefund extends Error {
+  constructor(readonly refId: string) {
+    super("this reservation was already refunded — not delivering against a released hold");
+    this.name = "SettleLostToRefund";
+  }
+}
+
 /**
  * The EXACT number of internal credits `withLlmBudget` will hold for this call — extracted so
  * there is one definition of it, and `withLlmBudget` below is its only in-tree consumer that
@@ -485,7 +500,25 @@ export async function withLlmBudget<T>(
   try {
     await prisma.$transaction(async (tx) => {
       await settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal });
-      if (commit) await commit(tx);
+      if (commit) {
+        // #1046-P1 —— 交付前**直接读一次终态**,不再拿间接信号当证据。
+        //
+        // 机理:`settleCredits` 返回 void,内部的 `createMany(skipDuplicates)` 把「计数 0」
+        // 当成功的空操作 —— 而计数 0 也包括「REFUND 已经赢下 finalizer 唯一约束」。于是一次
+        // 跑满 60 分钟被清道夫退了款的深研,模型随后返回结果时:SETTLE 空操作(商家的钱已经
+        // 退回去了),`commitInSettleTx` 却照样把报告写出来、把 job 翻 DONE —— 商家白拿一份
+        // 报告,权威账本记着 REFUND。
+        //
+        // 修法就是这一读:同一笔事务里查这个 refId 有没有 REFUND 行,有就抛。抛 ⇒ 整笔回滚
+        // ⇒ 交付不存在 ⇒ 下面的 catch 走既有的退款兜底(对着已存在的 REFUND 是 no-op,退不了
+        // 第二次)。fail closed:宁可让这一单报 FAILED,也不发一件账上已经退过钱的货。
+        const refunded = await tx.creditLedger.findFirst({
+          where: { orgId: args.orgId, refId: args.refId, kind: "REFUND" },
+          select: { id: true },
+        });
+        if (refunded) throw new SettleLostToRefund(args.refId);
+        await commit(tx);
+      }
     });
   } catch (e) {
     if (!commit) throw e; // 零行为变更:没托付交付给我们的调用方,原样抛出

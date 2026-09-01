@@ -9,6 +9,24 @@ import type {
 } from "@fikirtive/core";
 import type { GenFailureReason } from "@fikirtive/core/gen-failure";
 
+/**
+ * MONEY-A10(docs/specs/money-engine.md §7.4)—— 聊天一轮的搜索 **in-flight 槽**。
+ *
+ * 一个纯粹的「搜完了再数」的计数器挡不住单步 fan-out:模型在一步里并发发出 6 次搜索,6 次都
+ * 在任何一次返回之前通过了「已用 < 上限」的检查,于是 6 次全部打到供应商。所以判的是**已占槽
+ * 数**,而不是已成功数:
+ *
+ *   打供应商之前  —— `taken >= 上限` ⇒ 当场拒绝(不打供应商、不收费);否则 `taken += 1`。
+ *   调用失败      —— `taken -= 1`(把槽还回去),不计费。
+ *   调用成功      —— 槽保留,`succeeded += 1`;计费按 `succeeded`。
+ *
+ * 「检查 + 占槽」之间不许有 `await` —— Node 单线程里那一段是原子的,这就是这个协议的全部机械。
+ *
+ * 生命周期 = **一轮**。每次装配 context 新建一个,不跨轮累计(跨轮敞口由「每次都真收钱」本身
+ * 抑制)。预扣按上限满额 hold、结算按 `succeeded`,见 runtime.ts `ottoBudgetArgsFor`。
+ */
+export type OttoSearchSlots = { taken: number; succeeded: number };
+
 /** Patch for the editScheduledPost skill (debt-72). Structural re-declaration mirroring the web
  *  UpdateScheduledPostPatch — the web type (apps/web/lib/schedule-actions.ts) must NOT be imported
  *  here (same rule as MetaAdObject). `channel` reuses the CORE ScheduleChannel (already imported). */
@@ -646,6 +664,9 @@ export interface OttoContext {
       url: string,
       page?: number,
     ): Promise<{ url: string; title?: string; page: number; totalPages: number; text: string; stale: boolean }>;
+    /** MONEY-A10 — 这一轮的搜索**槽**。必须与 `search` 一起注入:没有它,`researchWeb` 的
+     *  query 腿会当场拒绝(fail closed),因为一次没人计数的搜索就是一次没人收费的搜索。 */
+    searchSlots?: OttoSearchSlots;
   };
   /** Meta propose port (G7) — injected by the web caller; builds + persists an ACTION_CARD
    *  chat message from a structured plan. Skills reach it ONLY via ctx.metaPropose,

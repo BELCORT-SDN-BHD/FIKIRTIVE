@@ -86,7 +86,13 @@ const mocks = vi.hoisted(() => {
   const $transaction = vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
     const snap = { acct: { ...state.acct }, reserveRow: state.reserveRow, finalizer: state.finalizer };
     try {
-      return await cb({});
+      // #1046-P1:交付钩子跑之前,meter 在同一笔事务里直接读这个 refId 的终态。这个迷你
+      // 台账已经有 `finalizer` 这一格,所以这里就是它的诚实投影,而不是又一个替身。
+      return await cb({
+        creditLedger: {
+          findFirst: async () => (state.finalizer === "REFUND" ? { id: "refund-row" } : null),
+        },
+      });
     } catch (e) {
       state.acct = snap.acct;
       state.reserveRow = snap.reserveRow;

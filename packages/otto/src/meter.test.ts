@@ -22,7 +22,9 @@ const mocks = vi.hoisted(() => {
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
   const assertWithinSpendCap = vi.fn();
-  const fakeTx = {};
+  // #1046-P1:结算事务在跑交付钩子之前,会用这个句柄直接读一次终态。默认「没有 REFUND」。
+  const creditLedgerFindFirst = vi.fn(async () => null as { id: string } | null);
+  const fakeTx = { creditLedger: { findFirst: creditLedgerFindFirst } };
   const $transaction = vi.fn((cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx));
 
   class InsufficientCredits extends Error {
@@ -39,7 +41,7 @@ const mocks = vi.hoisted(() => {
     }
   }
 
-  return { reserveCredits, reserveCreditsUpTo, settleCredits, refundReservation, assertWithinSpendCap, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
+  return { reserveCredits, reserveCreditsUpTo, settleCredits, refundReservation, assertWithinSpendCap, creditLedgerFindFirst, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
 });
 
 vi.mock("@fikirtive/db", () => ({
@@ -56,7 +58,7 @@ vi.mock("@fikirtive/db", () => ({
 // ---------------------------------------------------------------------------
 // Now import the module under test (after mock is registered)
 // ---------------------------------------------------------------------------
-import { withLlmBudget, actualCostInternal, mapOttoUsage, llmHoldInternal, ReservationNotClaimed, ClaimFailed } from "./meter.js";
+import { withLlmBudget, actualCostInternal, mapOttoUsage, llmHoldInternal, ReservationNotClaimed, ClaimFailed, SettleLostToRefund } from "./meter.js";
 import { llmPricesFor, CREDITS_PER_USD, turnBudgetInternal } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
@@ -79,8 +81,10 @@ beforeEach(() => {
   mocks.reserveCreditsUpTo.mockResolvedValue(40);
   mocks.settleCredits.mockResolvedValue(undefined);
   mocks.refundReservation.mockResolvedValue(undefined);
+  // #1046-P1:默认这个 refId 上没有 REFUND 行(vi.clearAllMocks 会清掉实现,这里补回来)。
+  mocks.creditLedgerFindFirst.mockResolvedValue(null);
   // Reset $transaction to always run its callback
-  const fakeTx = {};
+  const fakeTx = { creditLedger: { findFirst: mocks.creditLedgerFindFirst } };
   mocks.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx));
 });
 
@@ -1225,6 +1229,48 @@ describe("commitInSettleTx — 交付与结算同一笔提交", () => {
     ).rejects.toBe(boom);
 
     expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+});
+
+// ── #1046-P1:REFUND 已在 ⇒ 不许交付(MONEY-A10 同批修) ──────────────────────────────
+//
+// `settleCredits` 返回 void,内部 `createMany(skipDuplicates)` 把「计数 0」当成功的空操作 ——
+// 而计数 0 也包括「REFUND 已经赢下 finalizer 唯一约束」。旧形状下:清道夫退了款,模型随后
+// 返回结果,SETTLE 空操作而交付照写 —— 商家白拿一份报告,账本记着 REFUND。
+describe("commitInSettleTx — #1046-P1 台账终态守卫", () => {
+  it("REFUND 已在 ⇒ 交付钩子根本不跑,抛 SettleLostToRefund,随后走全额退款兜底", async () => {
+    mocks.creditLedgerFindFirst.mockResolvedValue({ id: "refund-row" });
+    const commit = vi.fn();
+
+    await expect(
+      withLlmBudget(
+        makeArgs({ commitInSettleTx: commit }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+      ),
+    ).rejects.toBeInstanceOf(SettleLostToRefund);
+
+    expect(commit, "对着一笔已经退掉的预扣交了货").not.toHaveBeenCalled();
+    // 兜底退款照旧发生(对已存在的 REFUND 是 no-op,退不了第二次)。
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+  });
+
+  it("查的是**这一个 refId 的 REFUND 行**,不是别人的", async () => {
+    await withLlmBudget(
+      makeArgs({ commitInSettleTx: async () => {} }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.creditLedgerFindFirst).toHaveBeenCalledWith({
+      where: { orgId: ORG, refId: REF, kind: "REFUND" },
+      select: { id: true },
+    });
+  });
+
+  it("没托付交付的调用方:一次多余的台账读都不做(零行为变更)", async () => {
+    await withLlmBudget(
+      makeArgs(),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.creditLedgerFindFirst).not.toHaveBeenCalled();
   });
 });
 

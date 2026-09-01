@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { OTTO_CHAT_MAX_SEARCHES_PER_TURN, displayCredits, searchUnitChargeInternal } from "@fikirtive/core";
 import { researchWebSkill, executeResearchWeb, researchWebInput } from "./research-web.js";
-import type { OttoContext } from "../context.js";
+import type { OttoContext, OttoSearchSlots } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -19,6 +20,11 @@ function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
 
 function makeRunCtx(ctx: OttoContext) {
   return { context: ctx };
+}
+
+/** MONEY-A10:一轮的搜索槽,每个测试自己新建一份(生产里由 buildOttoContext 每轮新建)。 */
+function makeSlots(): OttoSearchSlots {
+  return { taken: 0, succeeded: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +260,7 @@ describe("executeResearchWeb — query mode, search wired", () => {
     };
     const search = vi.fn().mockResolvedValue(searchResults);
     const fetchUrl = vi.fn();
-    const ctx = makeCtx({ research: { fetchUrl, search } });
+    const ctx = makeCtx({ research: { fetchUrl, search, searchSlots: makeSlots() } });
 
     const result = await executeResearchWeb(
       { query: "example brand" },
@@ -269,7 +275,7 @@ describe("executeResearchWeb — query mode, search wired", () => {
   it("returns structured error when search throws", async () => {
     const search = vi.fn().mockRejectedValue(new Error("Search service unavailable"));
     const fetchUrl = vi.fn();
-    const ctx = makeCtx({ research: { fetchUrl, search } });
+    const ctx = makeCtx({ research: { fetchUrl, search, searchSlots: makeSlots() } });
 
     const result = await executeResearchWeb(
       { query: "example brand" },
@@ -294,6 +300,117 @@ describe("executeResearchWeb — research port absent", () => {
     );
 
     expect((result as any).error).toMatch(/Web research isn't available/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MONEY-A10 — 聊天搜索计费(规格 docs/specs/money-engine.md §7.4)
+// ---------------------------------------------------------------------------
+//
+// 这一组钉的是钱:每一次到达 provider 的搜索都要么被计入 succeeded(会被结算),要么根本
+// 没打出去。上限判**已占槽数**而不是已成功数,因为纯「成功后计数」会被单步并发 fan-out
+// 绕过 —— 6 次并发全部在任何一次返回之前通过检查,6 次全打到供应商。
+
+describe("executeResearchWeb — MONEY-A10 搜索槽与单轮上限", () => {
+  it("MONEY-A10:成功的搜索占一槽并计一次费", async () => {
+    const slots = makeSlots();
+    const search = vi.fn().mockResolvedValue({ results: [] });
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search, searchSlots: slots } });
+
+    await executeResearchWeb({ query: "nike" }, makeRunCtx(ctx));
+
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(slots).toEqual({ taken: 1, succeeded: 1 });
+  });
+
+  it("MONEY-A10:搜索失败释放槽且不计费 —— 商家不为一次没拿到结果的搜索付钱", async () => {
+    const slots = makeSlots();
+    const search = vi.fn().mockRejectedValue(new Error("provider down"));
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search, searchSlots: slots } });
+
+    const result = await executeResearchWeb({ query: "nike" }, makeRunCtx(ctx));
+
+    expect((result as any).error).toBe("provider down");
+    expect(slots).toEqual({ taken: 0, succeeded: 0 });
+  });
+
+  it("MONEY-A10:单轮并发发起 6 次搜索 —— 只有 5 次到达 provider,第 6 次被拒", async () => {
+    // 规格 §7.4 逐字点名的行为测试。gate 让 5 次调用同时挂在飞行中,第 6 次因此面对的是
+    // 「5 个槽全被占着、一个都还没返回」的最坏时刻。
+    const slots = makeSlots();
+    let release!: () => void;
+    const inFlight = new Promise<void>((r) => { release = r; });
+    const search = vi.fn(async () => {
+      await inFlight;
+      return { results: [{ url: "https://a.com", title: "A", snippet: "s" }] };
+    });
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search, searchSlots: slots } });
+
+    const calls = Array.from({ length: 6 }, (_, i) =>
+      executeResearchWeb({ query: `q${i}` }, makeRunCtx(ctx)),
+    );
+
+    // 供应商只被打了上限那么多次 —— 第 6 次连网络都没碰。
+    expect(search).toHaveBeenCalledTimes(OTTO_CHAT_MAX_SEARCHES_PER_TURN);
+    expect(OTTO_CHAT_MAX_SEARCHES_PER_TURN).toBe(5);
+
+    release();
+    const outs = (await Promise.all(calls)) as any[];
+    const refused = outs.filter((o) => o.refused === true);
+    expect(refused).toHaveLength(1);
+    // 拒绝要诚实,并把商家引到深度研究那条路上(A10 判词)。
+    expect(refused[0].reason).toMatch(/Search limit reached for this turn \(5 searches\)/);
+    expect(refused[0].reason).toMatch(/proposeResearch/);
+
+    // 结算口径:5 次成功 ⇒ 5 × 单次费率。
+    expect(slots.succeeded).toBe(OTTO_CHAT_MAX_SEARCHES_PER_TURN);
+  });
+
+  it("MONEY-A10:占满槽之后的第 7、8 次同样被拒,且不再打供应商", async () => {
+    const slots = { taken: OTTO_CHAT_MAX_SEARCHES_PER_TURN, succeeded: OTTO_CHAT_MAX_SEARCHES_PER_TURN };
+    const search = vi.fn().mockResolvedValue({ results: [] });
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search, searchSlots: slots } });
+
+    const a = (await executeResearchWeb({ query: "x" }, makeRunCtx(ctx))) as any;
+    const b = (await executeResearchWeb({ query: "y" }, makeRunCtx(ctx))) as any;
+
+    expect(a.refused).toBe(true);
+    expect(b.refused).toBe(true);
+    expect(search).not.toHaveBeenCalled();
+    expect(slots.succeeded).toBe(OTTO_CHAT_MAX_SEARCHES_PER_TURN); // 拒绝不产生收费
+  });
+
+  it("MONEY-A10:接了 search 却没有槽计数器 ⇒ fail closed,不打供应商", async () => {
+    // 一次没人计数的搜索就是一次没人收费的搜索(结算腿读的正是 slots.succeeded)。
+    const search = vi.fn().mockResolvedValue({ results: [] });
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search } }); // 无 searchSlots
+
+    const result = (await executeResearchWeb({ query: "nike" }, makeRunCtx(ctx))) as any;
+
+    expect(search).not.toHaveBeenCalled();
+    expect(result.message).toMatch(/isn't available/i);
+  });
+
+  it("MONEY-A10:url 腿仍然免费 —— 读页面不占槽、不计费", async () => {
+    const slots = makeSlots();
+    const fetchUrl = vi.fn().mockResolvedValue({ url: "https://a.com", title: "A", text: "hi" });
+    const ctx = makeCtx({ research: { fetchUrl, search: vi.fn(), searchSlots: slots } });
+
+    await executeResearchWeb({ url: "https://a.com" }, makeRunCtx(ctx));
+
+    expect(fetchUrl).toHaveBeenCalledTimes(1);
+    expect(slots).toEqual({ taken: 0, succeeded: 0 });
+  });
+
+  it("MONEY-A10:工具描述对模型说真话 —— 价现算、不再声称 $0", () => {
+    const d = researchWebSkill.description;
+    expect(d).not.toMatch(/This is \$0/);
+    expect(d).toContain("COSTS THE MERCHANT CREDITS");
+    // 价是算出来的:改费率这句话当场跟着改,而不是留一个手抄的旧数字骗模型。
+    expect(d).toContain(`about ${displayCredits(searchUnitChargeInternal("basic"))} credits`);
+    expect(d).toContain(`at most ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches`);
+    // 读页面确实免费,这句真话不许被一起改掉。
+    expect(d).toContain("Reading a page with url is free");
   });
 });
 

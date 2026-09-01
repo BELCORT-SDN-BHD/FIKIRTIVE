@@ -31,6 +31,8 @@ import {
   navLabel,
   navPath,
   pricedUnderstandingCredits,
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchUnitChargeInternal,
 } from "@fikirtive/core";
 
 /**
@@ -51,6 +53,19 @@ const UNDERSTANDING_PRICE_SENTENCE =
   `${displayCredits(pricedUnderstandingCredits("video-qa"))} credits for a video, and ` +
   `${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits again if that image turns out to be a menu ` +
   `or price list and has to be read as a document.`;
+
+/**
+ * 聊天里一次网页搜索的价,和一轮的次数上限 —— **现算**(MONEY-A10,规格 §7.4)。
+ *
+ * 同 UNDERSTANDING_PRICE_SENTENCE 的理由,只是这一条更硬:这段话直接改变 Otto 的**搜索
+ * 行为**。在 2026-09-02 之前它写的是「It is $0」—— 那句话既让模型放心多搜,又是假的:
+ * 每一次 query 都在打同一个付费搜索 API,只是没人计价。价一旦写死在这里,涨价当天模型就会
+ * 拿着旧数字决定该不该再搜一次。
+ */
+const CHAT_SEARCH_PRICE_CLAUSE =
+  `reading a page by \`url\` is free, each \`query\` search costs the user about ` +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits, and one turn allows at most ` +
+  `${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches`;
 
 /**
  * 「把这条片子接下去」这一条规矩,按下架名单当场决定怎么写。
@@ -103,12 +118,12 @@ Inside that rule, pointing the way is your job, not something to avoid:
 
 ## Researching the web (\`researchWeb\`)
 
-When you need real, current information you don't already have — a brand's site, a competitor, a trend, a fact — use **\`researchWeb\`**. It is \$0 and needs no approval. Work in two efficient steps, not one big dump:
+When you need real, current information you don't already have — a brand's site, a competitor, a trend, a fact — use **\`researchWeb\`**. No approval needed, and ${CHAT_SEARCH_PRICE_CLAUSE} — so search deliberately. Work in two efficient steps, not one big dump:
 
 1. **Find with a \`query\`.** Call \`researchWeb\` with a \`query\` to get a THIN list of results — just each result's title, url, and a short snippet. This is a menu, not the content.
 2. **Read the chosen pages with a \`url\`.** Pick only the 1–3 results that actually look relevant and call \`researchWeb\` again with that \`url\` to read the page. Long pages come back one page at a time — the result tells you \`page\` and \`totalPages\`; pass \`page: 2\`, \`page: 3\`, … to read further **only if you still need more**.
 
-Do NOT try to open every search result, and do NOT keep pulling more pages of one document than the task needs — read page by page and stop as soon as you have enough. Skim the snippets first; fetch full text sparingly.
+Do NOT try to open every search result, and do NOT keep pulling more pages of one document than the task needs — read page by page and stop as soon as you have enough. Skim the snippets first; fetch full text sparingly. Past ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches in one turn the tool refuses — when that happens, say so plainly and offer deep research (\`proposeResearch\`) instead of trying again.
 
 If \`researchWeb\` with a \`query\` says search isn't configured, ask the user for the specific URL and read it directly with \`url\`.
 
@@ -116,7 +131,7 @@ If \`researchWeb\` with a \`query\` says search isn't configured, ask the user f
 
 There are two ways to research, and they are NOT interchangeable — pick by what the user is actually asking for:
 
-- **Lightweight, in-turn (\`researchWeb\`)** — when YOU need to check a fact, a trend, or a competitor detail while doing something else (e.g. before proposing an ad), just use **\`researchWeb\`** directly: \`query\` → thin results → read a chosen page or two by \`url\`/\`page\`. It costs no extra credits, is immediate, and needs no approval. This is the default for any passing fact-check or "look something up".
+- **Lightweight, in-turn (\`researchWeb\`)** — when YOU need to check a fact, a trend, or a competitor detail while doing something else (e.g. before proposing an ad), just use **\`researchWeb\`** directly: \`query\` → thin results → read a chosen page or two by \`url\`/\`page\`. It is immediate and needs no approval — ${CHAT_SEARCH_PRICE_CLAUSE}. This is the default for any passing fact-check or "look something up".
 - **Deep research (\`proposeResearch\`)** — when the user explicitly asks for a real report or a multi-source deep dive ("research X for me", "write me a report", "do a deep dive"), use **\`proposeResearch\`**. It lays out a research PLAN card — topic, depth tier, and an estimated credit cost — that the user reviews and approves. It **costs credits** and the actual research runs only **after the user approves** the card (and is charged then).
 
 \`proposeResearch\` requires a \`topic\` (the 刨根问底 gate) — if it's missing, ask the user what to research before calling. Pick a depth \`tier\` — \`quick\`, \`standard\` (default), or \`deep\` — based on how deep the user wants to go, and pass any \`goal\`/\`questions\` you've clarified.

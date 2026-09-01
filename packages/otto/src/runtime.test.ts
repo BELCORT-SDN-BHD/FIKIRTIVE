@@ -55,6 +55,9 @@ import {
   llmPricesFor,
   ottoLlmMargin,
   turnBudgetInternal,
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchChargeInternal,
+  searchUnitChargeInternal,
 } from "@fikirtive/core";
 import {
   createOttoRuntime,
@@ -263,6 +266,61 @@ describe("createOttoRuntime — profile matrix (profiles only limit tools/steps)
     expect(() => {
       (rt as unknown as { maxTurns: number }).maxTurns = 99;
     }).toThrow(TypeError);
+  });
+});
+
+// ── MONEY-A10: 聊天搜索的第二条钱腿(规格 §7.4) ──────────────────────────────
+//
+// 这一组钉的是「腿存在与否的条件」与「hold/settle 的口径」。腿不存在时,args 必须与本改动
+// 之前逐字节相同 —— 一个没接搜索的运行时不该因为这次改动多持住一分钱。
+
+describe("ottoBudgetArgsFor — MONEY-A10 搜索腿", () => {
+  const slots = () => ({ taken: 0, succeeded: 0 });
+  const req = { orgId: "org_1", refId: "otto-turn:m1", input: "x" as const };
+
+  it("MONEY-A10:没有 context ⇒ 没有搜索腿(与本改动前逐字节相同)", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req);
+    expect(args.extraHoldInternal).toBeUndefined();
+    expect(args.extraSettleInternal).toBeUndefined();
+  });
+
+  it("MONEY-A10:接了 search 但没有槽 ⇒ 没有钱腿(技能那边也会 fail closed 拒绝搜索)", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }) },
+    });
+    expect(args.extraHoldInternal).toBeUndefined();
+    expect(args.extraSettleInternal).toBeUndefined();
+  });
+
+  it("MONEY-A10:有槽但没接 search ⇒ 没有钱腿(搜不了就不许持钱)", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), searchSlots: slots() },
+    });
+    expect(args.extraHoldInternal).toBeUndefined();
+    expect(args.extraSettleInternal).toBeUndefined();
+  });
+
+  it("MONEY-A10:接了 search + 槽 ⇒ hold 按上限满额,settle 按实际成功次数", () => {
+    const s = slots();
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }), searchSlots: s },
+    });
+    // 预扣 = 5 × 单次费率(worst case)。写死这个数会在改费率那天变成一个悄悄的欠收口。
+    expect(args.extraHoldInternal).toBe(searchChargeInternal(OTTO_CHAT_MAX_SEARCHES_PER_TURN));
+    // 结算是**跑完才读**的闭包:此刻 0 次,搜了 3 次就是 3 次。
+    expect(args.extraSettleInternal?.()).toBe(0);
+    s.succeeded = 3;
+    expect(args.extraSettleInternal?.()).toBe(searchChargeInternal(3));
+    // 预扣永远罩得住结算 —— 否则 settleCredits 会 clamp 掉差额,收费函数说收了、账本没收。
+    s.succeeded = OTTO_CHAT_MAX_SEARCHES_PER_TURN;
+    expect(args.extraSettleInternal!()).toBeLessThanOrEqual(args.extraHoldInternal!);
+  });
+
+  it("MONEY-A10:搜索腿与深研同源同费率(3×),不是第二份价目表", () => {
+    expect(searchChargeInternal(1)).toBe(searchUnitChargeInternal("basic"));
+    expect(searchChargeInternal(OTTO_CHAT_MAX_SEARCHES_PER_TURN)).toBe(
+      OTTO_CHAT_MAX_SEARCHES_PER_TURN * searchUnitChargeInternal("basic"),
+    );
   });
 });
 

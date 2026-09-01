@@ -26,7 +26,12 @@
  *   这正是设计意图 —— 不是把它挡在测试里,是把它摆到复审桌上。
  */
 import { describe, it, expect } from "vitest";
-import { displayCredits, pricedUnderstandingCredits } from "@fikirtive/core";
+import {
+  displayCredits,
+  pricedUnderstandingCredits,
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchUnitChargeInternal,
+} from "@fikirtive/core";
 import { ottoSimpleModeBlock, ottoInstructions } from "./instructions.js";
 
 /**
@@ -41,6 +46,18 @@ const UNDERSTANDING_PRICE_CLAUSES = [
   `${displayCredits(pricedUnderstandingCredits("video-qa"))} credits for a video`,
   `${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits again if that image turns out to be a menu`,
 ];
+
+/**
+ * MONEY-A10(规格 §7.4):聊天搜索那句披露的**期望值,现算**。
+ *
+ * 与上面 A9 三条同一条纪律。这一句同时踩了金额启发式的两个词族(裸词 free + 阿拉伯数字
+ * credits),所以它必须进白名单 —— 但进白名单的是一条**算出来的**串:真有人手抄一个价
+ * 进提示词,它对不上这里,照样红。
+ */
+const CHAT_SEARCH_PRICE_CLAUSE =
+  "reading a page by `url` is free, each `query` search costs the user about " +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits, and one turn allows at most ` +
+  `${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches`;
 
 describe("ottoInstructions — golden 快照(#541 r6 主守卫)", () => {
   // 没有判定环节:不解析、不匹配、不推断语义,只比字节。
@@ -530,6 +547,12 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     // 任何价目小字。规格因此把它的披露放在动作层 —— Otto 在导入之前亲口报那个价,是商家
     // 被扣费之前唯一可能听见的一句。给不出数字的「这会花一点钱」不是披露。
     ...UNDERSTANDING_PRICE_CLAUSES,
+    // ── MONEY-A10 的聊天搜索价(规格 §7.4)──────────────────────────────────────
+    //
+    // 同样现算、同样必须出现数字:在 2026-09-02 之前这里写的是「It is $0」,而每一次
+    // query 都在打同一个付费搜索 API —— 那句话既让模型放心多搜,又是假的。模型要按价决定
+    // 该不该搜,就得知道价;不给数字的「这会花一点钱」不是披露。
+    CHAT_SEARCH_PRICE_CLAUSE,
   ];
 
   // 词表:比较词 + 免费词 + 单价词。覆盖常见写法,不覆盖全部。
