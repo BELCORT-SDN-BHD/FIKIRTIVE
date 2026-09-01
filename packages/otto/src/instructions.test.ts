@@ -69,9 +69,9 @@ const CHAT_SEARCH_PRICE_CLAUSE =
  * 同一条纪律:进白名单的是**算出来的**串,手抄一个价照样红。
  */
 const CHAT_SEARCH_MERCHANT_CLAUSE =
-  "each search that actually comes back with results adds about " +
-  `${displayCredits(searchUnitChargeInternal("basic"))} credits, and one message can make at most ` +
-  `${OTTO_CHAT_MAX_SEARCHES_PER_TURN} of them`;
+  "each search request that completes successfully adds about " +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits — including one that comes back empty-handed — ` +
+  `and one message can make at most ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} of them`;
 
 describe("ottoInstructions — golden 快照(#541 r6 主守卫)", () => {
   // 没有判定环节:不解析、不匹配、不推断语义,只比字节。

@@ -1408,6 +1408,30 @@ describe("MONEY-A10 复审 P1 — 弹性腿钳到开门额;畸形参数当场抛
     await expectNothingHappened(25);
   });
 
+  // ── 复审③ P2:超出安全整数范围的四个数 ────────────────────────────────────────────
+  //
+  // `Number.MAX_SAFE_INTEGER + 1` 是**整数**(`Number.isInteger` 为真),只是不再安全 ——
+  // 从这个数往上,加法开始丢精度,`x + 1 === x`。一个这样的数走进钱的算式,结果就是一个
+  // 看起来正常、其实对不上的 hold。这四条钉的就是闸判的是 `isSafeInteger` 而不是 `isInteger`:
+  // 把闸退化成 `isInteger`,下面四条会立刻红。
+  it("复审③ 四个数超出安全整数范围 ⇒ 一律抛错,账本零新增(isInteger 挡不住的那一档)", async () => {
+    const UNSAFE = Number.MAX_SAFE_INTEGER + 1;
+    expect(Number.isInteger(UNSAFE)).toBe(true);        // 旧判据会放行
+    expect(Number.isSafeInteger(UNSAFE)).toBe(false);   // 现判据不会
+
+    const cases: [Partial<typeof OK>, RegExp][] = [
+      [{ llmCapInternal: UNSAFE }, /elasticCapInternal must be a non-negative safe integer/],
+      [{ minimumInternal: UNSAFE }, /minimumInternal must be a non-negative safe integer/],
+      [{ searchUnitInternal: UNSAFE }, /unitInternal must be a positive safe integer/],
+      [{ maxSearchUnits: UNSAFE }, /maxUnits must be a positive safe integer/],
+    ];
+    for (const [over, message] of cases) {
+      await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+      await expect(reserveWith(over), JSON.stringify(over)).rejects.toThrow(message);
+      await expectNothingHappened(25);
+    }
+  });
+
   it("闸与钳都只管带搜索腿的那条路:`reserveCreditsUpTo` 的老调用方一分钱都没变", async () => {
     // cap < minimum 在老路上是**允许**的既有形状(#898:一步预算 7 < 开门额 10)。
     // 老路既不抛错,也**不钳** —— 它持的仍然是 min(cap, balance)=7,不是 10。

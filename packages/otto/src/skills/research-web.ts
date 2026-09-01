@@ -146,7 +146,10 @@ export async function executeResearchWeb(
     slots.taken += 1;
     try {
       const { results } = await search(input.query);
-      slots.succeeded += 1; // 只有真的拿到 provider 结果才计费
+      // 计费的判据是**这次供应商调用成功返回**,不是「返回里有几条结果」—— 空数组照样计费
+      // (规格 §7.4「成功的供应商调用」;我们为这一次调用付了钱,商家的话术因此也这么说)。
+      // 抛错才不计费,那一支在下面把槽还回去。
+      slots.succeeded += 1;
       return { results };
     } catch (e) {
       slots.taken -= 1; // 失败释放槽,不计费(重试仍受上限约束,因为成功的槽不会被释放)

@@ -602,7 +602,17 @@ export async function withLlmBudget<T>(
     // 预扣里属于 LLM 的那一份。按格路径上 hold ≥ granted×单价 + 开门额,所以这个差非负;
     // `Math.max(0, …)` 是对平铺路径上「hold 被余额压到比 extra 还小」的兜底 —— 方向是不倒收。
     const llmHeldInternal = Math.max(0, reserve - firmHeldInternal);
-    actualInternal = llmHeldInternal + extraSettleOf(args);
+    // 复审③ P1 —— 「满额」指的是**这条腿自己的**满额,不是它在账本里恰好占了多少位置。
+    //
+    // 账本为了守不变量会把弹性腿**钳**到开门额(credits.ts 的 elasticForHold),而那多出来的
+    // 一截按定义是「超额预留,settle 时原样退回」。照 hold 收就等于把它收走 —— 实测:
+    // cap=7 / 开门额=10 / 单价=3 / 余额=13 ⇒ 发 1 格、持 13,搜 0 次时 llmHeld=10,而这条腿
+    // 本来最多只要 7。多收的 3 正是钳出来的那 3,与 credits.ts 那句承诺直接打架。
+    //
+    // 所以收之前先按这条腿自己的上限封顶。`llmLegInternal` 就是那个上限(worst case 与 #543
+    // 的 cap 取小),两条既有路径上它不改变任何数:全额固定预留 llmHeld 恰好等于它,
+    // 余额自适应路径上 llmHeld 只会更小。
+    actualInternal = Math.min(llmHeldInternal, llmLegInternal(args)) + extraSettleOf(args);
   }
 
   // 钱路 M1-b —— 结算与交付同一笔提交(见 `commitInSettleTx` 的字段说明)。

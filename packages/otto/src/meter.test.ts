@@ -1235,6 +1235,46 @@ describe("MONEY-A10 — 低余额预留与搜索腿并存(判官 P1)", () => {
     expect(settled).toBeLessThanOrEqual(HOLD);
   });
 
+  // ── 复审③ P1:钳出来的那一截不许被「按满额收」顺手收走 ─────────────────────────────
+  //
+  // 账本为了守不变量会把弹性腿钳到开门额(credits.ts 的 elasticForHold),而 credits.ts 同时
+  // 承诺「多持的那一截是超额预留,settle 时原样退回」。照 hold 收就毁掉那句承诺。
+  // 配置:cap=7 / 开门额=10 / 单价=3 / 余额=13 ⇒ 账本发 1 格、持 13(= 钳到的 10 + 3)。
+  describe("复审③ P1 — 钳制配置下,no-usage 的 LLM 腿按**自己的**上限收", () => {
+    const CAP = 7, MIN = 10, HOLD = 13, GRANTED = 1;
+    const CLAMPED_UNITS = { unitInternal: 3, maxUnits: 5 };
+    // 这条腿自己的上限 = min(worst case, #543 的 cap),现算,不手抄。
+    const llmOwnCap = () => llmHoldInternal(makeArgs({ reserveCapInternal: CAP }));
+
+    const runWithSucceeded = async (succeeded: number) => {
+      mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: HOLD, grantedSearchUnits: GRANTED });
+      await withLlmBudget(
+        makeArgs({
+          reserveCapInternal: CAP,
+          reserveMinInternal: MIN,
+          extraHoldUnits: CLAMPED_UNITS,
+          extraSettleInternal: () => succeeded * CLAMPED_UNITS.unitInternal,
+        }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+      );
+      return (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    };
+
+    it("succeeded=0 ⇒ 只收这条腿自己的 7,不是它在 hold 里占的 10", async () => {
+      const settled = await runWithSucceeded(0);
+      expect(llmOwnCap()).toBe(CAP);               // min(worst, 7) = 7 —— 算式看得见
+      expect(settled).toBe(CAP);                   // 修之前是 10:钳出来的 3 被收走了
+      expect(settled).toBeLessThanOrEqual(HOLD);
+    });
+
+    it("succeeded=1 ⇒ 7 + 一格 = 10,一格不多", async () => {
+      const settled = await runWithSucceeded(1);
+      expect(settled).toBe(CAP + CLAMPED_UNITS.unitInternal); // 7 + 3
+      expect(settled).toBe(10);
+      expect(settled).toBeLessThanOrEqual(HOLD);
+    });
+  });
+
   it("MONEY-A10 审核 P2:深研那条平铺腿同理 —— usage 缺失也只收实际搜的次数", async () => {
     const EXTRA_HOLD = 36;                       // researchTierSearchBudgetInternal(12)
     const llmOnly = llmHoldInternal(makeArgs()); // 全额固定预留:reserve = llmOnly + 36
