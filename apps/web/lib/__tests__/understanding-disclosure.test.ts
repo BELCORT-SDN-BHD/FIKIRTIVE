@@ -20,8 +20,10 @@
  *      单引号、`import { x as y }` 别名、注释与字符串里的假写点,四种常见写法各能绕过
  *      一条正则围栏,而补一个洞就换一种写法绕过去。语法树把这四件一次答完。
  *      作用域按**块**分(不只按函数),所以块内同名声明不会遮蔽块外的写点;动作身份是
- *      **(模块, 导出名)** 并做**跨文件传递闭包**,所以 UI → wrapper → 写点模块这条链
- *      整支都在围栏里,而不是只看直接来自写点文件的 import。
+ *      **(模块, 导出名)** 并做**跨文件传递闭包**,所以 UI → wrapper/barrel → 写点模块
+ *      这条链整支都在围栏里,而不是只看直接来自写点文件的 import。模块键还归一了
+ *      目录入口(`lib/foo/index.ts` 与 `@/lib/foo` 是同一个模块)与具名重导出,
+ *      这两种写法仓库里都有现成的。
  *      §7.3 明写「施工首件事用 grep 复核入口清单」—— 手抄的清单只在抄它的那一天是对的,
  *      而漏挂一个入口的代价,是商家被收一笔他从没在任何屏幕上见过的钱(顾问复审 2026-09-02
  *      就是这样抓到 Canvas 拖放与裁剪保存两个漏网入口的)。EditDesk 单列豁免:只收音频,
@@ -273,7 +275,12 @@ interface CallRecord {
  *      调用发生在返回值上,本模块的调用图连不上去。
  *   3. 动态调用:`obj[nameVar]()`、`eval`、`Function`。
  *   4. 跨文件同名成员:`obj.m()` 的名字对齐只在本文件内做,不会跨文件乱连。
- *   5. 重导出 `export * from`:只认具名 import/export,星号重导出不跟。
+ *   5. 星号重导出 `export * from "…"`:星号没有名字可对,跟不了。**具名**重导出
+ *      (`export { a as b } from "…"`,以及 import 之后再 `export { a }`)已经认了,
+ *      见 `reexportEdges`。
+ *
+ * 这五条各有一条负向断言钉着(「闭包边界逐条对表」那条测试),说了认不到就得真的认不到 ——
+ * 哪天某条被意外覆盖,那里会红,该更新的是这份清单,不是默默删掉断言。
  */
 function uploadWritersOf(
   sf: ts.SourceFile,
@@ -407,11 +414,18 @@ const WRITE_POINT_FILES: Record<string, string> = {
  *  `x` / `x.ts` / `x.tsx` / `x.js` 才会归一到同一个模块 id。 */
 const SOURCE_EXTENSION = /\.(?:m|c)?[jt]sx?$/;
 
+/** 目录入口。`lib/email/index.ts` 这个文件和 `import … from "@/lib/email"` 这个说明符
+ *  指的是同一个模块 —— 不把尾部 `/index` 也归一掉,写点定义在 `lib/foo/index.ts` 的模块
+ *  会得到 `lib/foo/index#upload` 这个键,而 UI 那边算出来的是 `lib/foo#upload`,对不上,
+ *  整个入口漏报。仓库里现成就有这写法:`lib/better-auth/sender.ts` 从 `@/lib/email` 导入,
+ *  真实文件是 `lib/email/index.ts`。 */
+const INDEX_SUFFIX = /\/index$/;
+
 function moduleIdOf(rel: string): string {
-  return rel.replace(SOURCE_EXTENSION, "");
+  return rel.replace(SOURCE_EXTENSION, "").replace(INDEX_SUFFIX, "");
 }
 
-/** 把 import 说明符解析成仓库内模块 id(已剥扩展名);第三方包返回 null。 */
+/** 把 import/export 说明符解析成仓库内模块 id(已剥扩展名与 `/index`);第三方包返回 null。 */
 function resolveSpecifier(fromFile: string, spec: string): string | null {
   if (spec.startsWith("@/")) return moduleIdOf(spec.slice(2));
   if (spec.startsWith(".")) {
@@ -426,71 +440,196 @@ function actionKey(moduleId: string, exportName: string): string {
   return `${moduleId}#${exportName}`;
 }
 
+/**
+ * 普查的输入面。真实项目从磁盘读,夹具从内存读 —— **同一条链路,不是两套实现**。
+ * 夹具走的是 `computeCensus` → `knownActionLocalsOf` → 模块键 → 不动点 → `countCallSites`
+ * 的完整流程,而不是手工把「已知动作」注进去;注进去的夹具只能证明最后一格,
+ * 证不了前面那几格接得上。
+ */
+interface Sources {
+  /** 写点扫描面:哪些文件里可能有 `source: "UPLOAD"`。 */
+  allFiles: string[];
+  /**
+   * 跨文件闭包的迭代面 —— **只有 `lib/**`**,不含 UI。
+   *
+   * 这不是为了省时间,是语义:UI 组件调了上传动作是**入口**,不是**动作**。
+   * 把 `components/` 也放进闭包,`FlowCanvas` 这种组件会因为「调了 uploadReference」
+   * 而自己变成一个动作,动作表里就混进一堆组件名 —— 动作表是「谁会落 UPLOAD 素材」,
+   * 组件属于「谁该挂披露」,两张表混了,两边都读不懂。
+   */
+  moduleFiles: string[];
+  /** UI 入口候选。 */
+  entryFiles: string[];
+  parse(rel: string): ts.SourceFile;
+}
+
+/** 一个文件里 `import { a as b } from "…"` 的绑定:本地名 → (源模块, 原名)。类型导入不算。 */
+function importBindings(file: string, sf: ts.SourceFile): Map<string, { module: string; name: string }> {
+  const bindings = new Map<string, { module: string; name: string }>();
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+    if (st.importClause?.isTypeOnly) continue;
+    const moduleId = resolveSpecifier(file, st.moduleSpecifier.text);
+    if (!moduleId) continue;
+    const named = st.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named)) continue;
+    for (const el of named.elements) {
+      if (el.isTypeOnly) continue;
+      bindings.set(el.name.text, { module: moduleId, name: (el.propertyName ?? el.name).text });
+    }
+  }
+  return bindings;
+}
+
 /** 这个文件从**已知动作模块**import 进来的本地名(含 `as` 别名)。 */
 function knownActionLocalsOf(file: string, sf: ts.SourceFile, actions: ReadonlySet<string>): Set<string> {
   const locals = new Set<string>();
-  for (const st of sf.statements) {
-    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
-    const moduleId = resolveSpecifier(file, st.moduleSpecifier.text);
-    if (!moduleId) continue;
-    const bindings = st.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
-    for (const el of bindings.elements) {
-      if (actions.has(actionKey(moduleId, (el.propertyName ?? el.name).text))) locals.add(el.name.text);
-    }
+  for (const [local, origin] of importBindings(file, sf)) {
+    if (actions.has(actionKey(origin.module, origin.name))) locals.add(local);
   }
   return locals;
 }
 
 /**
- * 上传动作的**跨文件传递闭包**。
+ * 具名重导出的**别名边**:`(本模块#导出名) ← (源模块#原名)`。
  *
- * 上一版只认「直接来自写点文件的 import」,于是 UI → `lib/wrapper.ts` → `lib/actions.ts`
- * 这条链整支漏报:wrapper 的导出函数不是写点文件的导出,入口侧根本不看它。
- * (上一版注释里写过「入口侧登记表兜底」—— 那句话不成立,wrapper 文件压根不会被认成入口,
- * 已删。)
- *
- * 迭代到不动点:
- *   第 0 轮:每个写点文件里的导出 writer = 动作。
- *   第 n 轮:`lib/**` 里任何模块,只要它 import 了已知动作、且某个导出函数(经模块内闭包)
- *           调到了它,那个导出就成为新动作。
+ * 两种写法都要认,而且仓库里两种都有现成的:
+ *   · `export { upload as wrap } from "./actions"` —— 带 specifier(`lib/rate-limit-gates.ts`);
+ *   · `import { upload } from "./actions"; export { upload };` —— 不带 specifier,
+ *     按本地导入绑定解析(`lib/email/index.ts` 是同一族的 barrel 写法)。
+ * barrel 转出去的动作还是同一个动作;不认这条边,UI 从 barrel 导入就整支漏报。
+ * `export * from "…"` 维持边界:星号没有名字可对,见闭包边界清单第 5 条。
  */
-interface ActionCensus {
-  writePointFiles: string[];
-  actions: Set<string>;
+function reexportEdges(
+  file: string,
+  sf: ts.SourceFile,
+): { exported: string; from: { module: string; name: string } }[] {
+  const bindings = importBindings(file, sf);
+  const edges: { exported: string; from: { module: string; name: string } }[] = [];
+  for (const st of sf.statements) {
+    if (!ts.isExportDeclaration(st) || st.isTypeOnly) continue;
+    if (!st.exportClause || !ts.isNamedExports(st.exportClause)) continue;
+    const viaModule =
+      st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)
+        ? resolveSpecifier(file, st.moduleSpecifier.text)
+        : null;
+    for (const el of st.exportClause.elements) {
+      if (el.isTypeOnly) continue;
+      const original = (el.propertyName ?? el.name).text;
+      if (viaModule) {
+        edges.push({ exported: el.name.text, from: { module: viaModule, name: original } });
+        continue;
+      }
+      const bound = bindings.get(original);
+      if (bound) edges.push({ exported: el.name.text, from: bound });
+    }
+  }
+  return edges;
 }
-let censusCache: ActionCensus | null = null;
-function actionCensus(): ActionCensus {
-  if (censusCache) return censusCache;
-  const scanned = scannedSourceFiles();
+
+/**
+ * 上传动作的**跨文件传递闭包**,迭代到不动点。
+ *
+ *   第 0 轮:每个写点文件里的导出 writer = 动作。
+ *   第 n 轮:任何模块,只要 ①具名重导出了一个已知动作,或者 ②import 了已知动作且某个
+ *           导出函数(经模块内闭包)调到了它 —— 那个导出就成为新动作。
+ *
+ * 上一版只认「直接来自写点文件的 import」,于是 UI → barrel/wrapper → 写点模块这条链
+ * 整支漏报:barrel 的导出压根不会被认成入口。
+ */
+function computeCensus(src: Sources): { writePointFiles: string[]; actions: Set<string> } {
   const writePointFiles: string[] = [];
   const actions = new Set<string>();
-  const empty: ReadonlySet<string> = new Set();
+  const noImportedActions: ReadonlySet<string> = new Set();
 
-  for (const file of scanned) {
-    const { hasWritePoint, exportedWriters } = uploadWritersOf(parseFile(file), empty);
+  for (const file of src.allFiles) {
+    const { hasWritePoint, exportedWriters } = uploadWritersOf(src.parse(file), noImportedActions);
     if (!hasWritePoint) continue;
     writePointFiles.push(file);
     for (const name of exportedWriters) actions.add(actionKey(moduleIdOf(file), name));
   }
 
-  const wrapperCandidates = sourceFiles("lib");
   for (let changed = true; changed; ) {
     changed = false;
-    for (const file of wrapperCandidates) {
-      const sf = parseFile(file);
+    for (const file of src.moduleFiles) {
+      const sf = src.parse(file);
+      const moduleId = moduleIdOf(file);
+      const add = (exportName: string): void => {
+        const key = actionKey(moduleId, exportName);
+        if (actions.has(key)) return;
+        actions.add(key);
+        changed = true;
+      };
+      for (const edge of reexportEdges(file, sf)) {
+        if (actions.has(actionKey(edge.from.module, edge.from.name))) add(edge.exported);
+      }
       const locals = knownActionLocalsOf(file, sf, actions);
       if (locals.size === 0) continue;
-      for (const name of uploadWritersOf(sf, locals).exportedWriters) {
-        const key = actionKey(moduleIdOf(file), name);
-        if (!actions.has(key)) {
-          actions.add(key);
-          changed = true;
-        }
-      }
+      for (const name of uploadWritersOf(sf, locals).exportedWriters) add(name);
     }
   }
-  return (censusCache = { writePointFiles: writePointFiles.sort(), actions });
+  return { writePointFiles: writePointFiles.sort(), actions };
+}
+
+/** 一个 UI 文件里对上传动作的**调用点数量**。
+ *  注释与字符串里出现同名文本不会计数(它们根本不是 CallExpression),`await f(...)` 会计数。
+ *  已知边界:把动作传给变量或回调再间接调用,这里数不到 —— 与写点侧同一条边界。 */
+function countCallSites(src: Sources, file: string, actions: ReadonlySet<string>): number {
+  const sf = src.parse(file);
+  const locals = knownActionLocalsOf(file, sf, actions);
+  if (locals.size === 0) return 0;
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && locals.has(node.expression.text)) count++;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return count;
+}
+
+/** 内存源码面 —— 夹具用。走的函数和真实项目一模一样。 */
+function virtualSources(files: Record<string, string>): Sources {
+  const all = Object.keys(files).sort();
+  const cache = new Map<string, ts.SourceFile>();
+  return {
+    allFiles: all,
+    moduleFiles: all.filter((f) => f.startsWith("lib/")),
+    entryFiles: all.filter((f) => f.startsWith("app/") || f.startsWith("components/")),
+    parse(rel) {
+      let cached = cache.get(rel);
+      if (!cached) {
+        cache.set(
+          rel,
+          (cached = ts.createSourceFile(
+            rel,
+            files[rel] ?? "",
+            ts.ScriptTarget.Latest,
+            false,
+            rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+          )),
+        );
+      }
+      return cached;
+    },
+  };
+}
+
+/** 真实项目的源码面。 */
+let realSourcesCache: Sources | null = null;
+function realSources(): Sources {
+  if (realSourcesCache) return realSourcesCache;
+  return (realSourcesCache = {
+    allFiles: scannedSourceFiles(),
+    moduleFiles: sourceFiles("lib"),
+    entryFiles: sourceFiles("app").concat(sourceFiles("components")),
+    parse: parseFile,
+  });
+}
+
+let censusCache: { writePointFiles: string[]; actions: Set<string> } | null = null;
+function actionCensus(): { writePointFiles: string[]; actions: Set<string> } {
+  if (!censusCache) censusCache = computeCensus(realSources());
+  return censusCache;
 }
 
 function writePointFiles(): string[] {
@@ -502,27 +641,14 @@ function uploadActionKeys(): string[] {
   return [...actionCensus().actions].sort();
 }
 
-/** 一个 UI 文件里对上传动作的**调用点数量**。
- *  注释与字符串里出现同名文本不会计数(它们根本不是 CallExpression),`await f(...)` 会计数。
- *  已知边界:把动作传给变量或回调再间接调用,这里数不到 —— 与写点侧同一条边界。 */
 function callSiteCount(file: string): number {
-  const sf = parseFile(file);
-  const locals = knownActionLocalsOf(file, sf, actionCensus().actions);
-  if (locals.size === 0) return 0;
-  let count = 0;
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && locals.has(node.expression.text)) count++;
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sf, visit);
-  return count;
+  return countCallSites(realSources(), file, actionCensus().actions);
 }
 
 /** 调了任何一个上传动作的 UI 文件 —— 这就是「上传入口」的定义,不是谁记得住的那三处。 */
 function uploadEntryFiles(): string[] {
-  return sourceFiles("app")
-    .concat(sourceFiles("components"))
-    .filter((f) => callSiteCount(f) > 0)
+  return realSources()
+    .entryFiles.filter((f) => callSiteCount(f) > 0)
     .sort();
 }
 
@@ -680,19 +806,116 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     ).toEqual(["memberCall"]);
   });
 
-  it("跨文件包装:import 进来的已知动作被调用,包装函数自己也成为动作", () => {
-    // 这是 wrapper 模块那一半(整条链的三文件版在 PR 的探针输出里)。
+  /** 整条链跑一遍真实普查:`computeCensus` → 模块键 → 不动点 → `countCallSites`。
+   *  只有源码在内存里,函数一个都没换 —— 手工把「已知动作」注进去的夹具只能证明最后一格。 */
+  const censusOf = (files: Record<string, string>) => {
+    const project = virtualSources(files);
+    const census = computeCensus(project);
+    return {
+      actions: [...census.actions].sort(),
+      writePoints: census.writePointFiles,
+      count: (file: string) => countCallSites(project, file, census.actions),
+    };
+  };
+
+  it("跨文件包装:UI → wrapper → 写点模块,整条链走真实普查", () => {
+    const result = censusOf({
+      "lib/actions.ts": 'export function upload(p) { return { id: p, source: "UPLOAD" }; }',
+      "lib/wrapper.ts": 'import { upload } from "./actions";\nexport function wrap(p) { return upload(p); }',
+      "components/Ui.tsx": 'import { wrap } from "@/lib/wrapper";\nexport function Ui() { return () => wrap("p"); }',
+    });
+    expect(result.actions, "包装函数没有继承上游动作的身份 —— 跨文件闭包断了").toEqual([
+      "lib/actions#upload",
+      "lib/wrapper#wrap",
+    ]);
+    expect(result.count("components/Ui.tsx"), "UI 经 wrapper 的调用没被计到").toBe(1);
+  });
+
+  it("目录入口归一:写点在 lib/foo/index.ts,UI 从 @/lib/foo 导入也要算入口", () => {
+    // 仓库里现成就有这写法:lib/better-auth/sender.ts 从 "@/lib/email" 导入,
+    // 真实文件是 lib/email/index.ts。不归一 `/index`,两边的模块键对不上,整支漏报。
+    const result = censusOf({
+      "lib/foo/index.ts": 'export function upload(p) { return { id: p, source: "UPLOAD" }; }',
+      "components/Ui.tsx": 'import { upload } from "@/lib/foo";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(result.actions, "lib/foo/index.ts 的动作键没有归一到 lib/foo").toEqual(["lib/foo#upload"]);
+    expect(result.count("components/Ui.tsx"), "从目录入口导入的调用没被计到").toBe(1);
+  });
+
+  it("具名重导出:barrel 两种写法都要把动作转出去(export…from 与 import 后再 export)", () => {
+    const viaFrom = censusOf({
+      "lib/actions.ts": 'export function upload(p) { return { id: p, source: "UPLOAD" }; }',
+      "lib/barrel.ts": 'export { upload as wrap } from "./actions";',
+      "components/Ui.tsx": 'import { wrap } from "@/lib/barrel";\nexport function Ui() { return () => wrap("p"); }',
+    });
+    expect(viaFrom.actions, "`export { x as y } from` 的别名边没接上").toContain("lib/barrel#wrap");
+    expect(viaFrom.count("components/Ui.tsx"), "从 barrel 导入的调用没被计到").toBe(1);
+
+    const viaLocal = censusOf({
+      "lib/actions.ts": 'export function upload(p) { return { id: p, source: "UPLOAD" }; }',
+      "lib/barrel.ts": 'import { upload } from "./actions";\nexport { upload };',
+      "components/Ui.tsx": 'import { upload } from "@/lib/barrel";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(viaLocal.actions, "`import 后 export { x }` 的绑定边没接上").toContain("lib/barrel#upload");
+    expect(viaLocal.count("components/Ui.tsx"), "从 barrel 导入的调用没被计到").toBe(1);
+  });
+
+  it("闭包边界逐条对表:注释里列的五条,这里逐条断言「认不到就是预期」", () => {
+    // 边界不是借口,是承诺:说了认不到,就得真的认不到。哪天某条被意外覆盖了,
+    // 这里会红 —— 那时该更新的是注释清单,而不是默默把断言删掉。
     expect(
-      writersOf(
-        `
-        import { uploadReference } from "@/lib/actions";
-        export function wrap(p, fd) { return uploadReference(p, fd); }
-        export function unrelated() { return 1; }
-      `,
-        ["uploadReference"],
-      ),
-      "包装函数没有继承上游动作的身份 —— 跨文件闭包断了",
-    ).toEqual(["wrap"]);
+      writersOf(`
+        function persist() { return { source: "UPLOAD" }; }
+        const alias = persist;
+        export function f() { return alias(); }
+      `),
+      "边界①间接调用:被意外覆盖了,清单该更新",
+    ).toEqual([]);
+
+    expect(
+      writersOf(`
+        function persist() { return { source: "UPLOAD" }; }
+        export function makePort() { return { run: () => persist() }; }
+      `),
+      "边界②返回函数(端口工厂形状):被意外覆盖了,清单该更新",
+    ).toEqual([]);
+
+    expect(
+      writersOf(`
+        const store = { persist() { return { source: "UPLOAD" }; } };
+        export function f(key) { return store[key](); }
+      `),
+      "边界③动态调用:被意外覆盖了,清单该更新",
+    ).toEqual([]);
+
+    const crossFile = censusOf({
+      "lib/a.ts": 'const store = { persist() { return 1; } };\nexport function fa() { return store.persist(); }',
+      "lib/b.ts": 'const other = { persist() { return { source: "UPLOAD" }; } };\nexport function fb() { return other.persist(); }',
+    });
+    expect(crossFile.actions, "边界④跨文件同名成员:名字对齐越界了,只该在文件内对齐").toEqual([
+      "lib/b#fb",
+    ]);
+
+    const star = censusOf({
+      "lib/actions.ts": 'export function upload(p) { return { id: p, source: "UPLOAD" }; }',
+      "lib/star.ts": 'export * from "./actions";',
+      "components/Ui.tsx": 'import { upload } from "@/lib/star";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(star.actions, "边界⑤export *:被意外覆盖了,清单该更新").toEqual(["lib/actions#upload"]);
+    expect(star.count("components/Ui.tsx"), "边界⑤export *:星号重导出不该被计到").toBe(0);
+  });
+
+  it("模块键唯一:两个源码文件不许归一到同一个模块 id(否则动作会张冠李戴)", () => {
+    // `lib/foo.ts` 与 `lib/foo/index.ts` 同时存在就会撞键。今天没有,撞了要当场知道。
+    const seen = new Map<string, string>();
+    const collisions: string[] = [];
+    for (const file of scannedSourceFiles()) {
+      const id = moduleIdOf(file);
+      const previous = seen.get(id);
+      if (previous) collisions.push(`${previous} ⇄ ${file} → ${id}`);
+      else seen.set(id, file);
+    }
+    expect(collisions, "两个文件归一到了同一个模块 id").toEqual([]);
   });
 
   it("扫描范围:普查不看测试文件,也不看 fixtures / __mocks__(样例数据不是计费路径)", () => {
