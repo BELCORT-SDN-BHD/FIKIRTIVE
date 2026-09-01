@@ -688,7 +688,10 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     // (`adjustWindowRows` / `adjustWindowTotals` 与闸同一条谓词),报表和闸不可能各说各话。
     const grantLimit = FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay;
     const adjustRows = await adjustWindowRows(24);
-    const adjustTotals = await adjustWindowTotals([...new Set(adjustRows.map((row) => row.orgId))]);
+    // 判官 P2-2 —— 累计的候选集是**整个 30 天窗口的所有 org**,不是「最新 24 行涉及的 org」。
+    // 先取 24 行再算,会让一个超限 org 因为被更新的行挤出那 24 行而从计数里凭空消失,而报表
+    // 恰恰是为了看见它才存在。展示行仍然只取 24 条(一屏够读),判定与它无关。
+    const adjustTotals = await adjustWindowTotals();
     const largeGrants: LargeGrantRow[] = adjustRows
       .map((row) => {
         const amount = displayCredits(row.balanceDelta);

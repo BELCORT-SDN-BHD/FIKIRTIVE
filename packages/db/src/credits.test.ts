@@ -1642,3 +1642,79 @@ describe("MONEY-A14 — 人工调账 30 天累计闸", () => {
     ).rejects.toMatchObject({ name: "FinanceAdjustBlocked", reason: "unknown-org" });
   });
 });
+
+// ── 编排者裁定 2026-09-02:人工退款豁免两道**给消费用的**闸 ────────────────────────
+//
+// 退款不是消费。商家自设的单笔上限管的是「我一次愿意花多少」,账号暂停管的是「被拒付的人
+// 不许再花钱」—— 两条都对「我们把钱还给他」没有意见。豁免的判据是 refId 前缀,而这个前缀
+// 只有 admin 退款动作造得出来(它自己要 tenants.mutate),所以边界是结构性的。
+describe("MONEY-A14 — manual-refund 预扣的两条豁免(以及仍然生效的那一条闸)", () => {
+  const REFUND_REF = `${MANUAL_REFUND_REF_PREFIX}ticket-0001`;
+
+  async function suspendEveryone(orgId: string): Promise<void> {
+    const user = await prisma.user.create({
+      data: { email: `${randomUUID()}@a14.test`, name: "a14" },
+      select: { id: true },
+    });
+    await prisma.membership.create({
+      data: { id: randomUUID(), userId: user.id, orgId, status: "suspended", deletedAt: null },
+    });
+  }
+
+  it("暂停的 org 仍然退得了款(被拒付暂停之后逐笔退未用 credits,是最常见的人工路径)", async () => {
+    await suspendEveryone(ORG);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100 }));
+    expect((await account(ORG)).balance).toBe(900);
+    expect((await account(ORG)).reserved).toBe(100);
+  });
+
+  it("同一个暂停 org 的**普通消费**照样被拒(豁免只认前缀,不是把闸关了)", async () => {
+    await suspendEveryone(ORG);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "some-gen-job", cost: 100 })),
+    ).rejects.toThrow(OrgSuspended);
+    expect((await account(ORG)).balance).toBe(1000);
+  });
+
+  it("商家自设的单笔上限挡不住退款,却照样挡得住同额的消费", async () => {
+    // 上限 5 显示 credits = 50 internal;退 100 internal 远超它。
+    await prisma.organization.update({ where: { id: ORG }, data: { settings: { spendCapCredits: 5 } } });
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100 }));
+    expect((await account(ORG)).balance).toBe(900);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "some-gen-job", cost: 100 })),
+    ).rejects.toThrow(SpendCapBlocked);
+  });
+
+  it("30 天累计闸**照常**罩着退款(豁免的是消费闸,不是人工搬钱的额度)", async () => {
+    await grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: randomUUID() });
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await assertWithinAdjustWindow(tx, ORG, 6_000);
+        await reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 6_000 });
+      }),
+    ).rejects.toThrow(FinanceAdjustBlocked);
+    // 拒绝 = 一分钱没动。
+    expect((await account(ORG)).reserved).toBe(0);
+  });
+
+  it("退款单的事实钉在 RESERVE 行的 reason 上,账本只追加所以它此后不可改", async () => {
+    const facts = "pi:pi_3Qabc|pack:600|credits:100|myr_minor:4166";
+    await prisma.$transaction((tx) =>
+      reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100, reason: facts }),
+    );
+    const row = (await ledger(ORG)).find((r) => r.kind === "RESERVE");
+    expect(row!.reason).toBe(facts);
+    // 同一个退款单号再预扣一次 = 撞唯一键(调用方据此读回既有事实,而不是写第二笔)。
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100, reason: "pi:pi_OTHER|pack:50|credits:100|myr_minor:5000" })),
+    ).rejects.toMatchObject({ code: "P2002" });
+    expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+    expect((await ledger(ORG)).find((r) => r.kind === "RESERVE")!.reason).toBe(facts);
+  });
+
+  it("不带 reason 的老调用方写出来的 RESERVE 行逐字不变(reason 为空串)", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 }));
+    expect((await ledger(ORG)).find((r) => r.kind === "RESERVE")!.reason).toBe("");
+  });
+});

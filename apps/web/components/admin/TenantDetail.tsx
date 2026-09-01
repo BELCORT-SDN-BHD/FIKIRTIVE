@@ -11,7 +11,7 @@ import {
   impersonateTenant,
   setMembershipStatus,
 } from "@/lib/tenant-actions";
-import { refundCreditsAction } from "@/lib/refund-actions";
+import { refundCreditsAction, completeManualRefund } from "@/lib/refund-actions";
 import { FINANCE_ADJUST_LIMITS, FINANCE_PER_ACTION_LIMIT_MESSAGE } from "@fikirtive/core/finance-limits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -178,15 +178,55 @@ export function TenantDetail({ detail }: { detail: Detail }) {
         setRefundMsg({ ok: false, text: result.error });
         return;
       }
+      if (result.status === "pending") {
+        // Stripe 受理了但还没到终态:credits 仍然锁着,**单号不换** —— 收口要用同一个号。
+        setRefundMsg({
+          ok: true,
+          text: `Stripe accepted ${result.refundId} but has not settled it yet. The credits stay held. Do NOT start another refund — press "Finish pending refund" once Stripe reports succeeded.`,
+        });
+        router.refresh();
+        return;
+      }
       setRefundMsg({
         ok: true,
-        text: `Refunded ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId})${result.duplicate ? " — already done earlier, nothing moved twice" : ""}. Log it in docs/ops/manual-money-ledger.md.`,
+        text: `Refunded ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId})${result.status === "already-settled" ? " — already done earlier, nothing moved twice" : ""}. Log it in docs/ops/manual-money-ledger.md.`,
       });
       setRefundAmount("");
       setRefundPi("");
       setRefundReason("");
       setRefundPartial(false);
       setRefundTicket(crypto.randomUUID()); // 这一单结清了,下一单换新号
+      router.refresh();
+    } finally {
+      refundBusyRef.current = false;
+      setRefundBusy(false);
+    }
+  }
+
+  /** 收口一张受理中的退款单:去 Stripe 重读状态,succeeded 才落账。不会发起第二笔退款。 */
+  async function finishPendingRefund() {
+    if (refundBusyRef.current) return;
+    refundBusyRef.current = true;
+    setRefundBusy(true);
+    try {
+      const result = await completeManualRefund({ orgId, refundId: refundTicket });
+      if ("error" in result) {
+        setRefundMsg({ ok: false, text: result.error });
+        return;
+      }
+      if (result.status === "pending") {
+        setRefundMsg({ ok: true, text: `Stripe still reports ${result.refundId} as not settled. The credits stay held — try again later.` });
+        return;
+      }
+      setRefundMsg({
+        ok: true,
+        text: `Settled ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId}). Log it in docs/ops/manual-money-ledger.md.`,
+      });
+      setRefundAmount("");
+      setRefundPi("");
+      setRefundReason("");
+      setRefundPartial(false);
+      setRefundTicket(crypto.randomUUID());
       router.refresh();
     } finally {
       refundBusyRef.current = false;
@@ -365,6 +405,9 @@ export function TenantDetail({ detail }: { detail: Detail }) {
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Badge variant="outline">Refund id {refundTicket.slice(0, 8)}</Badge>
+            <Button type="button" variant="ghost" size="sm" disabled={refundBusy} onClick={finishPendingRefund}>
+              Finish pending refund
+            </Button>
             <span>Ringgit is worked out from that pack&apos;s real price per credit. A retry must reuse this refund id — it is what stops a second refund.</span>
             {refundMsg ? <span className={refundMsg.ok ? "text-success" : "text-destructive"}>{refundMsg.text}</span> : null}
           </div>

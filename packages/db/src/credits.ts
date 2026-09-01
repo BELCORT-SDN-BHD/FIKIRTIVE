@@ -211,12 +211,37 @@ export async function assertWithinSpendCap(tx: Tx, orgId: string, cost: number):
  *  refusal, so it must run on the authority path, in the same transaction, or it is only a
  *  sentence in a settings screen. Cap first, balance second: a merchant who is both over
  *  their ceiling and short on credits is told about the ceiling, because that is the limit
- *  they set and the one they can move. Nothing is charged on either refusal. */
-export async function reserveCredits(tx: Tx, args: { orgId: string; refId: string; cost: number }): Promise<void> {
+ *  they set and the one they can move. Nothing is charged on either refusal.
+ *
+ *  `reason` 是写在 RESERVE 行上的标签(默认 `""` = 今天每一个调用方写的那一行,逐字不变)。
+ *  MONEY-A14 用它把一张退款单的**事实**(原付款、包、credits、马币数)钉在账本里:账本只追加,
+ *  所以钉进去的那一刻它就不可改,同一个退款单号重试时读回来的只能是当初批的那一笔。 */
+export async function reserveCredits(
+  tx: Tx,
+  args: { orgId: string; refId: string; cost: number; reason?: string },
+): Promise<void> {
   const { orgId, refId, cost } = args;
   if (cost <= 0) return;
-  await assertWithinSpendCap(tx, orgId, cost);
+  // 编排者裁定 2026-09-02:**退款不是消费**。商家自己设的单笔上限管的是「我一次愿意花多少」,
+  // 它对一笔**我们退还给他的钱**没有任何意见 —— 拿它去挡退款,等于让商家的省钱设置卡住我们
+  // 还他钱。同理由见 `assertOrgNotSuspended` 里的暂停豁免。
+  if (!isManualRefundRef(refId)) await assertWithinSpendCap(tx, orgId, cost);
   await reserveAgainstBalance(tx, args);
+}
+
+/**
+ * 这条预扣是不是**人工退款**那条腿?(编排者裁定 2026-09-02 的唯一判据。)
+ *
+ * 判据是 refId 前缀,而这个前缀只有一个地方造得出来:admin 的 `refundCreditsAction`
+ * (`apps/web/lib/refund-actions.ts`),它自己要 `tenants.mutate`(super-admin)才进得去。
+ * 商家侧的任何一条钱路都不经过那个动作,也就没有办法给自己造一个 `manual-refund:` 的 refId
+ * 来绕开消费上限或暂停闸 —— 豁免的边界因此是**结构性的**,不是一句约定。
+ *
+ * 豁免的是两道**给消费用的**闸(商家自设上限、账号暂停);30 天人工调账累计闸**照常生效**,
+ * 它管的正是「人一个月能人工搬多少钱」,退款本来就该占它的额度。
+ */
+function isManualRefundRef(refId: string): boolean {
+  return refId.startsWith(MANUAL_REFUND_REF_PREFIX);
 }
 
 /** The BALANCE half of a reserve: the atomic conditional decrement plus its ledger row, with no
@@ -231,14 +256,22 @@ export async function reserveCredits(tx: Tx, args: { orgId: string; refId: strin
  *
  *  Not exported: every caller outside this file goes through one of the two functions above, so
  *  there is no way to spend on a generation while stepping around the ceiling. */
-async function reserveAgainstBalance(tx: Tx, args: { orgId: string; refId: string; cost: number }): Promise<void> {
-  const { orgId, refId, cost } = args;
+async function reserveAgainstBalance(
+  tx: Tx,
+  args: { orgId: string; refId: string; cost: number; reason?: string },
+): Promise<void> {
+  const { orgId, refId, cost, reason = "" } = args;
   if (cost <= 0) return;
   // MONEY-A13 —— 暂停咽喉。放在这里而不是 `reserveCredits`,是因为聊天/深研那条腿走的是
   // `reserveCreditsUpTo` / `reserveChatTurnWithSearchSlots`,它们**不经过** `reserveCredits`
   // (#524 × #898 的免闸是结构性的)。两条公开入口共用的写路径只有这一条,咽喉必须在这里,
   // 否则聊天腿从旁边绕过去。
-  await assertOrgNotSuspended(tx, orgId);
+  //
+  // 唯一的例外(编排者裁定 2026-09-02):**人工退款**。暂停闸的用途是「被拒付的商家不许再花钱」,
+  // 而退款是我们主动把钱还回去 —— 拒付个案的处理里,「先暂停、再逐笔退未用的 credits」正是
+  // 最常见的那条人工路径。把退款也挡掉,等于要求操作员先解除暂停(那一刻商家又能花钱了)才能
+  // 退款,拿一个更大的风险去守一句机械的规则。判据见 `isManualRefundRef`。
+  if (!isManualRefundRef(refId)) await assertOrgNotSuspended(tx, orgId);
   const { count } = await tx.creditAccount.updateMany({
     where: { orgId, balance: { gte: cost } },
     data: { balance: { decrement: cost }, reserved: { increment: cost } },
@@ -254,7 +287,7 @@ async function reserveAgainstBalance(tx: Tx, args: { orgId: string; refId: strin
     });
   }
   await tx.creditLedger.create({
-    data: { id: randomUUID(), orgId, balanceDelta: -cost, reservedDelta: cost, kind: "RESERVE", source: "SYSTEM", refId, idempotencyKey: `reserve:${refId}` },
+    data: { id: randomUUID(), orgId, balanceDelta: -cost, reservedDelta: cost, kind: "RESERVE", source: "SYSTEM", reason, refId, idempotencyKey: `reserve:${refId}` },
   });
 }
 
@@ -565,10 +598,15 @@ export async function adjustWindowRows(limit: number): Promise<
  * READ-ONLY,不锁不写。存在的理由是 admin 报表此前**按行判**——单行 1000 以内就绿,一天发
  * 二十行也绿——而真正会拒绝操作员的是**累计**。报表和闸从此读同一条谓词
  * ({@link adjustWindowFilter}),两个数字不可能再各说各话。
+ *
+ * 判官 P2-2:`orgIds` **省略 = 全窗口所有 org**。报表若先取最新 N 行、再只算这 N 行涉及的 org,
+ * 一个超限 org 会因为被更新的行挤出那 N 行而从「超限」计数里消失 —— 候选集必须独立于展示行。
+ * 窗口本身是有界的(30 天里的人工调账与人工退款,量级是几十到几百行),所以直接读整窗、在
+ * 内存里按 org 求 |Δ| 合计;放进 SQL 就得把那条谓词再手抄一遍,那正是这个函数存在的理由的反面。
  */
-export async function adjustWindowTotals(orgIds: readonly string[]): Promise<Map<string, number>> {
+export async function adjustWindowTotals(orgIds?: readonly string[]): Promise<Map<string, number>> {
   const totals = new Map<string, number>();
-  if (orgIds.length === 0) return totals;
+  if (orgIds && orgIds.length === 0) return totals;
   const rows = await prisma.creditLedger.findMany({
     where: adjustWindowFilter(orgIds),
     select: { orgId: true, balanceDelta: true },
