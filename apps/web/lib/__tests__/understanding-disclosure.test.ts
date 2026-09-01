@@ -15,6 +15,10 @@
  *      连**动作名本身**都是从写点文件里推导的(手抄的动作名会让新增一支 uploadHeroImage()
  *      的整套围栏照样全绿),入口再按**调用点计数**钉一层:同一个文件里多一个上传调用点,
  *      计数就对不上,评审者必须先确认披露覆盖了它才能改登记。
+ *      这套推导用的是 **TypeScript 编译器**(`ts.createSourceFile` + `ts.forEachChild`),
+ *      不是正则:文本匹配没有语法,`const upload = async file => {}`、`source: 'UPLOAD'`
+ *      单引号、`import { x as y }` 别名、注释与字符串里的假写点,四种常见写法各能绕过
+ *      一条正则围栏,而补一个洞就换一种写法绕过去。语法树把这四件一次答完。
  *      §7.3 明写「施工首件事用 grep 复核入口清单」—— 手抄的清单只在抄它的那一天是对的,
  *      而漏挂一个入口的代价,是商家被收一笔他从没在任何屏幕上见过的钱(顾问复审 2026-09-02
  *      就是这样抓到 Canvas 拖放与裁剪保存两个漏网入口的)。EditDesk 单列豁免:只收音频,
@@ -29,6 +33,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 import {
   UNDERSTANDING_PRICED_INTERNAL,
@@ -78,13 +83,161 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** 真的写 `source: "UPLOAD"` 的文件 —— 注释里提到这个字样的不算(copyLines 已经把注释滤掉,
- *  otto-media-port 就只在注释里提它:它自己不写行,它转手给 finalizeCandidateUploads)。 */
+// ══════════════════ 围栏用 TypeScript 编译器解析,不用正则 ══════════════════
+// 上一版整套围栏是正则拼的,Codex 复核当场列出四类常见写法能静默绕过它:
+//   · `export const upload = async file => {…}`(无括号箭头)不匹配「export function」;
+//   · 返回类型 `Promise<{ \n ok: true }>` 里换行的 `{` 被当成函数体起点,函数体整段读错;
+//   · 注释或字符串里的 `source: "UPLOAD"` 被当成真写点;
+//   · `import { finalizeCandidateUploads as finalize }` 之后的 `finalize(...)` 一次都不计,
+//     而行尾注释里出现的同名文本反倒计了一次;并且只认双引号那一种写法。
+// 这些不是「正则再写细一点」能修的:文本匹配没有语法,补一个洞就换一种写法绕过去。
+// 所以整套改成 AST —— `ts.createSourceFile` + `ts.forEachChild`,注释与字符串天然不参与,
+// 引号形式、别名、箭头写法都由语法树自己回答。仓库本来就依赖 typescript,零新增依赖。
+
+/** 一个源码文件的语法树(.tsx 用 TSX 方言,否则 JSX 会被读成类型断言)。 */
+function parseFile(rel: string): ts.SourceFile {
+  return ts.createSourceFile(
+    rel,
+    codeOf(rel),
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+}
+
+/** 剥掉 `as const` / `satisfies` / 括号这类包装,露出里面真正的表达式。
+ *  写点现场就是 `source: "UPLOAD" as const`,不剥就认不出来。 */
+function unwrap(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  for (;;) {
+    if (ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isParenthesizedExpression(e)) {
+      e = e.expression;
+      continue;
+    }
+    return e;
+  }
+}
+
+/** 写点本身:对象字面量里 `source` 这一项、值是字符串 "UPLOAD"。
+ *  StringLiteral 不分单双引号,所以 `source: 'UPLOAD'` 一样命中(旧版正则只认双引号)。
+ *  已知边界:简写 `{ source }` 看不出值,不算写点 —— 写点文件里今天没有这种写法。 */
+function isUploadWrite(node: ts.Node): boolean {
+  if (!ts.isPropertyAssignment(node)) return false;
+  const key = node.name;
+  const keyText = ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : null;
+  if (keyText !== "source") return false;
+  const value = unwrap(node.initializer);
+  return ts.isStringLiteral(value) && value.text === "UPLOAD";
+}
+
+/** 一个节点如果是「有名字的函数」,返回那个名字。三种都认:`function f(){}`、
+ *  对象/类里的 `f(){}`、以及 `const f = ... => {}` —— 最后一种是从**变量声明**取名的,
+ *  所以 `const upload = async file => {}` 这种无括号箭头照样有名字(正则版正是死在这里)。 */
+function functionNameOf(node: ts.Node): string | undefined {
+  if (ts.isFunctionDeclaration(node)) return node.name?.text;
+  if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) return node.name.text;
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+    const init = unwrap(node.initializer);
+    if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) return node.name.text;
+  }
+  return undefined;
+}
+
+/** 文件对外暴露的名字 → 它在文件内的本地名。`export { a as b }` 记成 b → a。 */
+function exportedNames(sf: ts.SourceFile): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const st of sf.statements) {
+    const exported =
+      ts.canHaveModifiers(st) &&
+      (ts.getModifiers(st) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+    if (ts.isFunctionDeclaration(st) && exported && st.name) out.set(st.name.text, st.name.text);
+    if (ts.isVariableStatement(st) && exported) {
+      for (const d of st.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) out.set(d.name.text, d.name.text);
+      }
+    }
+    if (ts.isExportDeclaration(st) && st.exportClause && ts.isNamedExports(st.exportClause)) {
+      for (const el of st.exportClause.elements) out.set(el.name.text, (el.propertyName ?? el.name).text);
+    }
+  }
+  return out;
+}
+
+/**
+ * 一个文件的「谁会落 UPLOAD 素材」闭包。
+ *
+ * 直接写点归给**最近的那个有名字的外层函数** —— 写点常常躺在匿名回调里
+ * (`prisma.$transaction(async (tx) => { … source: "UPLOAD" … })`),归给匿名箭头等于没归。
+ * 然后按文件内调用关系做传递闭包:调了 writer 的也是 writer。
+ *
+ * 这一步把上一版的 `WRITE_HELPERS` 手写名单整个删掉了。那份名单是围栏上最后一个手抄面:
+ * 在写点文件里新增一个非导出的 `persistUpload()` 直接写 UPLOAD、再由新导出动作转调它,
+ * 名单不更新就全绿。现在 helper 的完整性由闭包本身保证,没有名单可以忘记更新。
+ *
+ * 已知边界(如实写明,不假装覆盖):只认 callee 是标识符的直接调用。把动作塞进变量、
+ * 对象属性或回调再间接调用,闭包看不见 —— 入口侧同一条边界。
+ */
+function uploadWritersOf(sf: ts.SourceFile): { hasWritePoint: boolean; exportedWriters: string[] } {
+  const directWriters = new Set<string>();
+  const calls = new Map<string, Set<string>>();
+  let hasWritePoint = false;
+
+  const visit = (node: ts.Node, enclosing: string | undefined): void => {
+    const named = functionNameOf(node);
+    const current = named ?? enclosing;
+    if (isUploadWrite(node)) {
+      hasWritePoint = true;
+      if (current) directWriters.add(current);
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && current) {
+      let callees = calls.get(current);
+      if (!callees) calls.set(current, (callees = new Set()));
+      callees.add(node.expression.text);
+    }
+    ts.forEachChild(node, (child) => visit(child, current));
+  };
+  ts.forEachChild(sf, (child) => visit(child, undefined));
+
+  const writers = new Set(directWriters);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [fn, callees] of calls) {
+      if (writers.has(fn)) continue;
+      for (const callee of callees) {
+        if (writers.has(callee)) {
+          writers.add(fn);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  const exportedWriters: string[] = [];
+  for (const [external, local] of exportedNames(sf)) {
+    if (writers.has(local)) exportedWriters.push(external);
+  }
+  return { hasWritePoint, exportedWriters };
+}
+
+/** 解析一次就够,后面每条断言都复用(整仓逐个解析不便宜)。 */
+const analysisCache = new Map<string, { hasWritePoint: boolean; exportedWriters: string[] }>();
+function analyze(rel: string): { hasWritePoint: boolean; exportedWriters: string[] } {
+  let cached = analysisCache.get(rel);
+  if (!cached) analysisCache.set(rel, (cached = uploadWritersOf(parseFile(rel))));
+  return cached;
+}
+
+/** 真的写 UPLOAD 素材的文件。文本 grep 只用来**预筛候选**(整仓逐个解析太慢),
+ *  最终判据一律是 AST —— 注释和字符串里的 `source: "UPLOAD"` 不会被算成写点。
+ *  `lib/otto-media-port.ts` 正是这种:只在注释里提,自己不写行,转手给 finalizeCandidateUploads。 */
+let writePointFilesCache: string[] | null = null;
 function writePointFiles(): string[] {
-  return sourceFiles("lib")
+  if (writePointFilesCache) return writePointFilesCache;
+  const candidates = sourceFiles("lib")
     .concat(sourceFiles("app"), sourceFiles("components"))
-    .filter((f) => copyLines(codeOf(f)).some((line) => /source:\s*"UPLOAD"/.test(line)))
-    .sort();
+    .filter((f) => codeOf(f).includes("UPLOAD"));
+  return (writePointFilesCache = candidates.filter((f) => analyze(f).hasWritePoint).sort());
 }
 
 /** 写点所在的文件。多一个文件开始写 UPLOAD 素材,这里当场红 —— 那意味着有一条新的计费路径,
@@ -95,64 +248,65 @@ const WRITE_POINT_FILES: Record<string, string> = {
   "lib/upload-actions.ts": "finalizeCandidateUploads —— 直传落盘的唯一权威(Otto 的 URL 导入也走它)",
 };
 
-/** 写点文件里**不导出**的落盘 helper。动作本身常常不写那一行,而是把它交给 helper
- *  (`createEntity` 就一个字面量都没有,它调 `ingestFile`),所以推导必须认这一层;
- *  helper 名单虽然是人列的,但下面有一条断言逼它自己也含 `source: "UPLOAD"` ——
- *  helper 一旦不再是写点,名单当场红,而不是安静地漏掉一整支动作。 */
-const WRITE_HELPERS = ["ingestFile"] as const;
-
-/** 一个导出函数的源码片段。函数体的那个 `{` 是**声明行末尾那个**(后面直接换行):
- *  `Promise<{ ok: true } | { error: string }>` 这类返回类型注解里的 `{` 后面跟的是空格,
- *  不会被当成函数体开口(第一版就是栽在这里,把半个类型注解当成了整个函数体)。
- *  再用「下一个顶层 export」当硬边界,括号计数被字符串或注释带偏时也只会多算、不会跑飞。 */
-function exportedFunctionBodies(src: string): Map<string, string> {
-  const bodies = new Map<string, string>();
-  const decl = /^export\s+(?:async\s+)?function\s+(\w+)|^export\s+const\s+(\w+)\s*=\s*(?:async\s*)?[(<]/gm;
-  let m: RegExpExecArray | null;
-  while ((m = decl.exec(src)) !== null) {
-    const name = m[1] ?? m[2];
-    const bodyOpen = /\{[ \t]*\r?\n/g;
-    bodyOpen.lastIndex = m.index;
-    const open = bodyOpen.exec(src);
-    if (!open) continue;
-    const nextExport = /^export\s/gm;
-    nextExport.lastIndex = m.index + 1;
-    const next = nextExport.exec(src);
-    const hardEnd = next ? next.index : src.length;
-    let depth = 0;
-    let i = open.index;
-    for (; i < src.length && i < hardEnd; i++) {
-      if (src[i] === "{") depth++;
-      else if (src[i] === "}" && --depth === 0) { i++; break; }
-    }
-    bodies.set(name, src.slice(m.index, Math.min(i, hardEnd)));
-  }
-  return bodies;
-}
-
-/** 会落 image/video UPLOAD 素材的导出动作 —— **从源码推导,不手抄**。
- *  手抄的动作名和手抄的入口清单是同一个病:将来在 lib/actions.ts 里加一个
- *  `uploadHeroImage()` 并接上新 UI,手抄的名单会让整套围栏照样全绿。
- *  判据两条(满足其一即算):函数体里直接写了 `source: "UPLOAD"`,或者它调了写点 helper。 */
+/** 会落 image/video UPLOAD 素材的导出动作 —— 从语法树推导,没有任何一份手抄名单。 */
+let uploadActionsCache: string[] | null = null;
 function uploadActionNames(): string[] {
+  if (uploadActionsCache) return uploadActionsCache;
   const names = new Set<string>();
-  for (const file of Object.keys(WRITE_POINT_FILES)) {
-    for (const [name, body] of exportedFunctionBodies(codeOf(file))) {
-      const writesDirectly = /source:\s*"UPLOAD"/.test(body);
-      const writesViaHelper = WRITE_HELPERS.some((h) => new RegExp(`\\b${h}\\s*\\(`).test(body));
-      if (writesDirectly || writesViaHelper) names.add(name);
-    }
+  for (const file of writePointFiles()) {
+    for (const action of analyze(file).exportedWriters) names.add(action);
   }
-  return [...names].sort();
+  return (uploadActionsCache = [...names].sort());
 }
 
-/** 一个 UI 文件里对上传动作的**调用点数量**(注释行不算 —— 注释里提到某个动作不是入口)。 */
+/** 写点文件在 import 里长什么样(`@/lib/actions` 与 `../../lib/actions` 是同一个模块)。 */
+function moduleIdOf(rel: string): string {
+  return rel.replace(/\.tsx?$/, "");
+}
+
+/** 把 import 说明符解析成仓库内相对路径;第三方包返回 null。 */
+function resolveSpecifier(fromFile: string, spec: string): string | null {
+  if (spec.startsWith("@/")) return spec.slice(2);
+  if (spec.startsWith(".")) return path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), spec));
+  return null;
+}
+
+/** 这个 UI 文件从动作模块 import 进来的**本地名**(含 `as` 别名)。
+ *  别名是正则版的另一个洞:`import { finalizeCandidateUploads as finalize }` 之后
+ *  代码里一个 `finalizeCandidateUploads(` 都不会出现,而 `finalize(...)` 才是真调用。 */
+function importedActionLocals(file: string, sf: ts.SourceFile): Set<string> {
+  const actions = new Set(uploadActionNames());
+  const modules = new Set(writePointFiles().map(moduleIdOf));
+  const locals = new Set<string>();
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+    const resolved = resolveSpecifier(file, st.moduleSpecifier.text);
+    if (!resolved || !modules.has(resolved)) continue;
+    const bindings = st.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const el of bindings.elements) {
+      if (actions.has((el.propertyName ?? el.name).text)) locals.add(el.name.text);
+    }
+  }
+  return locals;
+}
+
+/** 一个 UI 文件里对上传动作的**调用点数量**。
+ *  注释与字符串里出现同名文本不会计数(它们根本不是 CallExpression),`await f(...)` 会计数。
+ *  已知边界:把动作传给变量或回调再间接调用,这里数不到 —— 与写点侧同一条边界。 */
 function callSiteCount(file: string): number {
-  const code = copyLines(codeOf(file)).join("\n");
-  return uploadActionNames().reduce(
-    (n, action) => n + (code.match(new RegExp(`\\b${action}\\s*\\(`, "g"))?.length ?? 0),
-    0,
-  );
+  const src = codeOf(file);
+  if (!uploadActionNames().some((action) => src.includes(action))) return 0;
+  const sf = parseFile(file);
+  const locals = importedActionLocals(file, sf);
+  if (locals.size === 0) return 0;
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && locals.has(node.expression.text)) count++;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return count;
 }
 
 /** 调了任何一个上传动作的 UI 文件 —— 这就是「上传入口」的定义,不是谁记得住的那三处。 */
@@ -248,16 +402,26 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     ).toEqual(Object.keys(WRITE_POINT_FILES).sort());
   });
 
-  it("写点普查:落盘 helper 自己就是写点(helper 名单不许变成第二份手抄清单)", () => {
-    // 动作名是推导出来的,但「哪些 helper 算落盘」这一层是人列的。这条把那一层也钉住:
-    // helper 一旦不再写 source:"UPLOAD",它就不该再当推导依据 —— 当场红,而不是安静地
-    // 把 createEntity 这类「自己一个字面量都没有」的动作整支漏掉。
-    const allWritePointCode = Object.keys(WRITE_POINT_FILES).map(codeOf).join("\n");
-    for (const helper of WRITE_HELPERS) {
-      const body = new RegExp(`(?:async\\s+)?function\\s+${helper}\\b[\\s\\S]*?\\n\\}`).exec(allWritePointCode);
-      expect(body, `找不到落盘 helper ${helper} —— 它被改名或删了,推导依据已失效`).not.toBeNull();
-      expect(body![0], `${helper} 不再写 source:"UPLOAD",它不该继续当推导依据`).toMatch(/source:\s*"UPLOAD"/);
-    }
+  it("写点普查:转调内部 helper 的导出动作也算上传动作(闭包取代了手抄的 helper 名单)", () => {
+    // createEntity 自己一个 source:"UPLOAD" 都没写,它调 ingestFile。上一版靠一份手写的
+    // WRITE_HELPERS 名单才认得出这一层,而那份名单本身就是个漏洞:在写点文件里新增一个
+    // 非导出的 persistUpload() 再由新动作转调,名单不更新就全绿。现在由调用闭包保证。
+    const actions = uploadActionNames();
+    expect(actions, "createEntity 只通过 helper 落盘,闭包必须认出它").toContain("createEntity");
+    expect(actions, "addReferenceImages 同样只通过 helper 落盘").toContain("addReferenceImages");
+    // 而 helper 自己不导出,不会被当成「UI 该去调的动作」漏进入口侧
+    expect(actions, "ingestFile 是非导出 helper,不该出现在动作表里").not.toContain("ingestFile");
+  });
+
+  it("写点普查:注释与字符串里的 source:\"UPLOAD\" 不是写点(AST 天然不看注释)", () => {
+    // otto-media-port 在注释里写了 `Generation(source:"UPLOAD")` 来解释它的下游成本,
+    // 它自己不写行 —— 转手给 finalizeCandidateUploads。正则版靠「滤掉注释行」勉强躲开,
+    // 换成字符串常量就会误判;AST 版根本不会去看注释和字符串。
+    expect(codeOf("lib/otto-media-port.ts")).toContain('source:"UPLOAD"');
+    expect(
+      writePointFiles(),
+      "otto-media-port 只在注释里提 UPLOAD,不该被当成写点文件",
+    ).not.toContain("lib/otto-media-port.ts");
   });
 
   it("动作普查:上传动作名由源码推导,登记表只用来核对(新增一支写 UPLOAD 的导出动作当场红)", () => {
