@@ -1188,6 +1188,64 @@ describe("MONEY-A10 — 低余额预留与搜索腿并存(判官 P1)", () => {
     }
   });
 
+  // ── 七维审核 P2:拿不到 usage 的那一轮,搜索腿不许跟着 LLM 腿一起按满额收 ──────────────
+  //
+  // 旧写法 `actualInternal = reserve`:`reserve` 里含着这一轮**持住**的搜索钱,于是一个 0 次
+  // 成功搜索的回合会被收满 5 格。两条腿的可知性不同 —— 成功搜索次数是我们自己数的,拿不到
+  // usage 一点都不影响它。
+  it("MONEY-A10 审核 P2:usage 缺失 + 0 次成功搜索 ⇒ 只收 LLM 预扣满额,搜索腿收 0", async () => {
+    const HOLD = 25;
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: HOLD, grantedSearchUnits: 5 });
+    const slots = { granted: 0, taken: 0, succeeded: 0 };
+    await withLlmBudget(
+      makeArgs({
+        reserveCapInternal: 40,
+        reserveMinInternal: 10,
+        extraHoldUnits: UNITS,
+        onExtraUnitsGranted: (g: number) => { slots.granted = g; },
+        extraSettleInternal: () => slots.succeeded * UNITS.unitInternal,
+      }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settled = (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    // 预扣 25 里,坚实持住的搜索钱是 5×3=15,LLM 那一份是 10。搜了 0 次 ⇒ 只收那 10。
+    expect(settled).toBe(HOLD - 5 * UNITS.unitInternal);
+    expect(settled).toBe(10);
+    expect(settled).toBeLessThan(HOLD); // 旧写法在这里等于 25 —— 那 15 是凭空多收的
+  });
+
+  it("MONEY-A10 审核 P2:usage 缺失 + 2 次成功搜索 ⇒ LLM 预扣满额 + 2 格,一格不多", async () => {
+    const HOLD = 25;
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: HOLD, grantedSearchUnits: 5 });
+    const slots = { granted: 0, taken: 2, succeeded: 2 };
+    await withLlmBudget(
+      makeArgs({
+        reserveCapInternal: 40,
+        reserveMinInternal: 10,
+        extraHoldUnits: UNITS,
+        onExtraUnitsGranted: (g: number) => { slots.granted = g; },
+        extraSettleInternal: () => slots.succeeded * UNITS.unitInternal,
+      }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settled = (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    expect(settled).toBe(HOLD - 5 * UNITS.unitInternal + 2 * UNITS.unitInternal); // 10 + 6
+    expect(settled).toBe(16);
+    // 永远罩得住:结算 ≤ 预扣,settleCredits 那边的 clamp 一次都用不上。
+    expect(settled).toBeLessThanOrEqual(HOLD);
+  });
+
+  it("MONEY-A10 审核 P2:深研那条平铺腿同理 —— usage 缺失也只收实际搜的次数", async () => {
+    const EXTRA_HOLD = 36;                       // researchTierSearchBudgetInternal(12)
+    const llmOnly = llmHoldInternal(makeArgs()); // 全额固定预留:reserve = llmOnly + 36
+    await withLlmBudget(
+      makeArgs({ extraHoldInternal: EXTRA_HOLD, extraSettleInternal: () => 9 }), // 实际只搜了 3 次
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settled = (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    expect(settled).toBe(llmOnly + 9);           // 旧写法是 llmOnly + 36
+  });
+
   it("MONEY-A10:llmHoldInternal 把按格腿按**最大格数**计入 —— 预检只许更严,不许放行", () => {
     const withUnits = llmHoldInternal(makeArgs({ reserveCapInternal: 40, extraHoldUnits: UNITS }));
     const withoutUnits = llmHoldInternal(makeArgs({ reserveCapInternal: 40 }));

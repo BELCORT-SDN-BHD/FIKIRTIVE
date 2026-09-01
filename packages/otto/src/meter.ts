@@ -590,8 +590,19 @@ export async function withLlmBudget<T>(
     // 到 ≤ 持有额,所以加法不可能变成超收;而 hold 侧已经把 worst case 一起持住了。
     actualInternal = actualCostInternal(out.usage, prices, margin) + extraSettleOf(args);
   } else {
-    // No usage info → charge the full reserve (no refund). 全额里已经含了 extra hold。
-    actualInternal = reserve;
+    // No usage info → LLM 腿按**预扣满额**收(#5 的既有保守行为:token 用量不可知,就按最坏收,
+    // 不退)。但搜索腿不跟着走这条保守路 —— 七维审核 P2:`reserve` 里含着这一轮**持住**的搜索
+    // 钱(按格路径 = granted×单价,深研的平铺路径 = worst case),照原样整包收,等于向一个
+    // 0 次成功搜索的回合收满 5 格。
+    //
+    // 两条腿的可知性根本不同,这才是分开算的理由:token 用量只有模型返回才知道,而**成功搜索
+    // 次数是我们自己数的**(OttoSearchSlots.succeeded),任何时候都可知,拿不到 usage 一点都
+    // 不影响它。所以 LLM 腿收满、搜索腿收实数 —— 没搜就不收,搜了几次收几次。
+    const firmHeldInternal = firmUnits ? grantedUnits * firmUnits.unitInternal : extraHoldOf(args);
+    // 预扣里属于 LLM 的那一份。按格路径上 hold ≥ granted×单价 + 开门额,所以这个差非负;
+    // `Math.max(0, …)` 是对平铺路径上「hold 被余额压到比 extra 还小」的兜底 —— 方向是不倒收。
+    const llmHeldInternal = Math.max(0, reserve - firmHeldInternal);
+    actualInternal = llmHeldInternal + extraSettleOf(args);
   }
 
   // 钱路 M1-b —— 结算与交付同一笔提交(见 `commitInSettleTx` 的字段说明)。
