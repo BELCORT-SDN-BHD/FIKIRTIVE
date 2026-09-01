@@ -18,6 +18,7 @@
  *   - **本文件**        = 上面三者都装不下的定价输入:汇率、充值包、搜索费率。
  *   - `margin-truth.ts` = 把以上全部拉进 45% 毛利地板检查的那张表(闸)。
  */
+import { costPinValue } from "./cost-pins.js";
 import { CREDITS_PER_USD } from "./spend.js";
 
 /* ───────────────────────── §1 FX 钉点(Founder 裁决 10) ───────────────────────── */
@@ -251,8 +252,13 @@ export const SEARCH_MARGIN_MULTIPLIER = 3.0;
  * 搜索 provider 的**每次搜索**成本(USD),按 depth 分档。
  * Tavily 牌价:basic $0.008 / advanced $0.016(Founder 2026-07-03 裁决内逐字记录的两个数)。
  * 现役 research 走 basic —— `tavilySearch` 不传 `search_depth`,Tavily 默认 basic。
+ *
+ * 数值已收编 `cost-pins.ts`(成本的单一权威),这张表只是命名出口 —— 改价改钉点。
  */
-export const SEARCH_PROVIDER_COST_USD = { basic: 0.008, advanced: 0.016 } as const;
+export const SEARCH_PROVIDER_COST_USD = {
+  basic: costPinValue("search:tavily:basic-per-call"),
+  advanced: costPinValue("search:tavily:advanced-per-call"),
+} as const;
 export type SearchDepth = keyof typeof SEARCH_PROVIDER_COST_USD;
 
 /**

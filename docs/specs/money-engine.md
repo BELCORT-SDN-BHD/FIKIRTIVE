@@ -107,8 +107,8 @@
 
 ## 7. S2 施工稿(设计阶段产出;S1 正文 §0–§6 一字未动)
 
-> S2 状态: 草案呈批
-> S2 批准: (批准动作=Founder 本人在 S2 docs-only PR 评论「S2 批准 money-engine.md」;批准后本行填 PR 链接与日期)
+> S2 状态: 已批准
+> S2 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1112(Founder 本人评论批准,2026-09-01;合并 main=9baa7143。研究档费率终值 2.06× 为批准后同日追加裁决,时序留档见 §6 改签记录与 §7.9)
 
 ### 7.0 范围、量尺与本场拍板
 
