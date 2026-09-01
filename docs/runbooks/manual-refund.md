@@ -36,6 +36,17 @@
 | …rolling limit / 30 days | 撞上 30 天 2000 显示 credits 的人工调账累计闸(退款与授信共用同一额度) | 设计内摩擦。真要放大,改 `FINANCE_ADJUST_LIMITS`(`packages/core/src/finance-limits.ts`)走 PR + Founder 批,**不绕闸** |
 | That workspace is suspended… | 该 org 被账号级暂停(MONEY-A13 咽喉罩住一切预扣) | 先恢复、退完再暂停;两步都有审计行 |
 | That merchant's own spend cap refused the hold. | 商家自己设的单笔上限低于退款额 | 当前口径下退款也走 `reserveCredits`,因此受商家 cap 约束;拆成多笔小额退款,或呈 Founder 决定是否给退款免掉这道 cap(已在 PR 备案) |
+| The credits stay held… | Stripe 没给出明确答案(超时/5xx/幂等键撞参数) | 见下节「答案不明」——**不释放**,去 Dashboard 核,再用同一个单号重跑 |
+
+## 若 Stripe 那一步「答案不明」(超时 / 5xx / 幂等键撞参数)
+
+页面会说 **The credits stay held**,并发一条 founderAlert(`finance.manual_refund_outcome_unknown`)。
+这不是失败,是**不知道**:超时完全可能发生在钱已经退出去之后。所以预扣**不释放**——释放了就成了
+「钱退了、credits 也留着」,平台吃两遍。
+处置:去 Stripe Dashboard 看那笔 `pi_…` 上有没有退款。
+- 有 → 用**同一个退款单号**重跑,动作会跳过预扣、直接补落账。
+- 没有 → 同样用同一个单号重跑,正常退。
+**不要**手工把 credits 加回去。
 
 ## 若「已退款但没落账」(第 3 段的③失败)
 

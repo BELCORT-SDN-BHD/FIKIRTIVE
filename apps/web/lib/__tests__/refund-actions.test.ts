@@ -128,12 +128,39 @@ describe("MONEY-A14 — 成功路径", () => {
 });
 
 describe("MONEY-A14 — 失败与成对释放", () => {
-  it("Stripe 抛错 ⇒ REFUND 成对释放,余额净变 0,永不落账", async () => {
-    refundsCreate.mockRejectedValue(new Error("card_declined"));
+  it("Stripe **明确拒绝**(业务级错误)⇒ REFUND 成对释放,余额净变 0,永不落账", async () => {
+    refundsCreate.mockRejectedValue(Object.assign(new Error("No such payment_intent"), { type: "StripeInvalidRequestError", statusCode: 400 }));
     const result = await refundCreditsAction(payload());
     expect(result).toMatchObject({ error: expect.stringContaining("released") });
     expect(refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: ORG, refId: "manual-refund:refund-ticket-0001", reason: "manual-refund:stripe-failed" });
     expect(settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("Stripe **答案不明**(超时 / 5xx / 幂等键撞参数)⇒ 预扣**留着** + 报警,绝不释放", async () => {
+    // 释放的前提是「那笔退款确定没建出来」。超时可能发生在钱已经退出去之后 —— 这时候把 credits
+    // 还回去,就是「钱退了、credits 也留着」,平台吃两遍。方向刻意不对称。
+    for (const thrown of [
+      new Error("socket hang up"),
+      Object.assign(new Error("Stripe is down"), { type: "StripeAPIError", statusCode: 503 }),
+      Object.assign(new Error("Keys for idempotent requests can only be used with the same parameters"), { type: "StripeIdempotencyError", statusCode: 400 }),
+    ]) {
+      vi.clearAllMocks();
+      requireRole.mockResolvedValue(GATE);
+      activeMerchantOrg.mockResolvedValue({ id: ORG });
+      creditLedgerFindMany.mockResolvedValue([]);
+      reserveCredits.mockResolvedValue(undefined);
+      assertWithinAdjustWindow.mockResolvedValue(undefined);
+      refundsCreate.mockRejectedValue(thrown);
+
+      const result = await refundCreditsAction(payload());
+
+      expect(result, thrown.message).toMatchObject({ error: expect.stringContaining("stay held") });
+      expect(refundReservation, thrown.message).not.toHaveBeenCalled();
+      expect(settleCredits, thrown.message).not.toHaveBeenCalled();
+      expect(founderAlert, thrown.message).toHaveBeenCalledWith(
+        expect.objectContaining({ key: "finance.manual_refund_outcome_unknown" }),
+      );
+    }
   });
 
   it("Stripe 报 failed 状态 ⇒ 同样成对释放", async () => {

@@ -54,6 +54,30 @@ import { founderAlert } from "./founder-alert";
 /** Stripe 退款失败后写在 REFUND 行上的标签(账本成对释放的那一半)。 */
 const STRIPE_FAILED_REASON = "manual-refund:stripe-failed";
 
+/**
+ * **Stripe 是「明确拒绝了」,还是「我们不知道」?** 这两件事的处置相反,合并它们会亏钱。
+ *
+ * 释放预扣的前提是「那笔退款确定没有建出来」。一个网络超时、一个 5xx、一次幂等键撞参数,
+ * 都可能发生在 Stripe **已经把钱退出去之后** —— 这时候再把 credits 还给商家,就成了「钱退了、
+ * credits 也留着」,平台自己吃两遍。所以只有 Stripe 自己回了一个业务级拒绝(请求根本没被受理)
+ * 才释放;其余一律**保持预扣**并报警,由人去 Dashboard 核一眼,再用同一个单号补跑或人工收尾。
+ *
+ * 方向是刻意不对称的:保持预扣最坏是商家的 credits 被多锁一会儿(一条正向调账就能补),
+ * 错误释放则是一笔查不回来的平台损失。
+ */
+function stripeDefinitelyRefused(e: unknown): boolean {
+  const err = e as { type?: unknown; statusCode?: unknown };
+  // 5xx = Stripe 那边出事,状态未知。
+  if (typeof err?.statusCode === "number" && err.statusCode >= 500) return false;
+  // 幂等键撞参数:同一个单号此前**用别的参数**发过,那一笔可能已经成功。同样是「不知道」。
+  return (
+    err?.type === "StripeInvalidRequestError" ||
+    err?.type === "StripeCardError" ||
+    err?.type === "StripeAuthenticationError" ||
+    err?.type === "StripePermissionError"
+  );
+}
+
 export type RefundCreditsResult =
   | { ok: true; refundId: string; displayedAmount: number; amountMinor: number; duplicate?: boolean }
   | { error: string };
@@ -191,8 +215,20 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
       { idempotencyKey: refId },
     );
   } catch (e) {
-    await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId, reason: STRIPE_FAILED_REASON }));
     const detail = e instanceof Error ? e.message : "Stripe refused the refund.";
+    if (!stripeDefinitelyRefused(e)) {
+      // 不知道有没有退成 ⇒ 预扣**留着**,人去核。
+      await founderAlert({
+        key: "finance.manual_refund_outcome_unknown",
+        title: `Manual refund ${refundId} for ${orgId} did not get a clear answer from Stripe.`,
+        action:
+          `Check Stripe for a refund on ${paymentIntentId}. If it exists, re-run the SAME refund id to settle the ledger; ` +
+          "if it does not, re-run it to refund. The credits stay held until then — never release them by hand.",
+        context: { orgId, refundId, paymentIntentId, amountMinor, displayedAmount: heldDisplay, via: gate.email, detail },
+      });
+      return { error: `Stripe did not give a clear answer (${detail}). The credits stay held — check Stripe, then re-run the SAME refund id.` };
+    }
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId, refId, reason: STRIPE_FAILED_REASON }));
     return { error: `Stripe refused the refund, so the hold was released and the balance is unchanged: ${detail}` };
   }
   // pending / requires_action = **已受理**(单号已经存在),照常落账;规格要的是「落账时单号已存在」,
