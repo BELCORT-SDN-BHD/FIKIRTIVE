@@ -12,6 +12,9 @@
  *      成本钉点一动,界面上的数字会安静地开始撒谎。
  *   ③ 上传入口挂的是**同一个**组件,而且入口清单是**普查出来的,不是手抄的**:测试自己扫
  *      `source: "UPLOAD"` 的写点、扫谁调了那些写点动作,任一侧多出一个而披露没跟上就红。
+ *      连**动作名本身**都是从写点文件里推导的(手抄的动作名会让新增一支 uploadHeroImage()
+ *      的整套围栏照样全绿),入口再按**调用点计数**钉一层:同一个文件里多一个上传调用点,
+ *      计数就对不上,评审者必须先确认披露覆盖了它才能改登记。
  *      §7.3 明写「施工首件事用 grep 复核入口清单」—— 手抄的清单只在抄它的那一天是对的,
  *      而漏挂一个入口的代价,是商家被收一笔他从没在任何屏幕上见过的钱(顾问复审 2026-09-02
  *      就是这样抓到 Canvas 拖放与裁剪保存两个漏网入口的)。EditDesk 单列豁免:只收音频,
@@ -92,39 +95,97 @@ const WRITE_POINT_FILES: Record<string, string> = {
   "lib/upload-actions.ts": "finalizeCandidateUploads —— 直传落盘的唯一权威(Otto 的 URL 导入也走它)",
 };
 
-/** 上面那些文件里、会落 image/video UPLOAD 素材的导出动作。UI 面认这些名字。 */
-const UPLOAD_ACTIONS = [
-  "createEntity",
-  "addReferenceImages",
-  "uploadCandidates",
-  "uploadReference",
-  "finalizeCandidateUploads",
-  "saveCroppedGeneration",
-] as const;
+/** 写点文件里**不导出**的落盘 helper。动作本身常常不写那一行,而是把它交给 helper
+ *  (`createEntity` 就一个字面量都没有,它调 `ingestFile`),所以推导必须认这一层;
+ *  helper 名单虽然是人列的,但下面有一条断言逼它自己也含 `source: "UPLOAD"` ——
+ *  helper 一旦不再是写点,名单当场红,而不是安静地漏掉一整支动作。 */
+const WRITE_HELPERS = ["ingestFile"] as const;
 
-/** 调了上面任何一个动作的 UI 文件 —— 这就是「上传入口」的定义,不是谁记得住的那三处。 */
+/** 一个导出函数的源码片段。函数体的那个 `{` 是**声明行末尾那个**(后面直接换行):
+ *  `Promise<{ ok: true } | { error: string }>` 这类返回类型注解里的 `{` 后面跟的是空格,
+ *  不会被当成函数体开口(第一版就是栽在这里,把半个类型注解当成了整个函数体)。
+ *  再用「下一个顶层 export」当硬边界,括号计数被字符串或注释带偏时也只会多算、不会跑飞。 */
+function exportedFunctionBodies(src: string): Map<string, string> {
+  const bodies = new Map<string, string>();
+  const decl = /^export\s+(?:async\s+)?function\s+(\w+)|^export\s+const\s+(\w+)\s*=\s*(?:async\s*)?[(<]/gm;
+  let m: RegExpExecArray | null;
+  while ((m = decl.exec(src)) !== null) {
+    const name = m[1] ?? m[2];
+    const bodyOpen = /\{[ \t]*\r?\n/g;
+    bodyOpen.lastIndex = m.index;
+    const open = bodyOpen.exec(src);
+    if (!open) continue;
+    const nextExport = /^export\s/gm;
+    nextExport.lastIndex = m.index + 1;
+    const next = nextExport.exec(src);
+    const hardEnd = next ? next.index : src.length;
+    let depth = 0;
+    let i = open.index;
+    for (; i < src.length && i < hardEnd; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) { i++; break; }
+    }
+    bodies.set(name, src.slice(m.index, Math.min(i, hardEnd)));
+  }
+  return bodies;
+}
+
+/** 会落 image/video UPLOAD 素材的导出动作 —— **从源码推导,不手抄**。
+ *  手抄的动作名和手抄的入口清单是同一个病:将来在 lib/actions.ts 里加一个
+ *  `uploadHeroImage()` 并接上新 UI,手抄的名单会让整套围栏照样全绿。
+ *  判据两条(满足其一即算):函数体里直接写了 `source: "UPLOAD"`,或者它调了写点 helper。 */
+function uploadActionNames(): string[] {
+  const names = new Set<string>();
+  for (const file of Object.keys(WRITE_POINT_FILES)) {
+    for (const [name, body] of exportedFunctionBodies(codeOf(file))) {
+      const writesDirectly = /source:\s*"UPLOAD"/.test(body);
+      const writesViaHelper = WRITE_HELPERS.some((h) => new RegExp(`\\b${h}\\s*\\(`).test(body));
+      if (writesDirectly || writesViaHelper) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+/** 一个 UI 文件里对上传动作的**调用点数量**(注释行不算 —— 注释里提到某个动作不是入口)。 */
+function callSiteCount(file: string): number {
+  const code = copyLines(codeOf(file)).join("\n");
+  return uploadActionNames().reduce(
+    (n, action) => n + (code.match(new RegExp(`\\b${action}\\s*\\(`, "g"))?.length ?? 0),
+    0,
+  );
+}
+
+/** 调了任何一个上传动作的 UI 文件 —— 这就是「上传入口」的定义,不是谁记得住的那三处。 */
 function uploadEntryFiles(): string[] {
   return sourceFiles("app")
     .concat(sourceFiles("components"))
-    .filter((f) => {
-      const src = codeOf(f);
-      return UPLOAD_ACTIONS.some((action) => new RegExp(`\\b${action}\\b`).test(src));
-    })
+    .filter((f) => callSiteCount(f) > 0)
     .sort();
 }
 
-/** 必须挂披露的入口(每一条写清它是哪个动作的面)。 */
+/**
+ * 必须挂披露的入口:文件 → 说明 → **该文件里的上传调用点数量**。
+ *
+ * 计数这一栏是围栏语义,不是逐点证明:grep 证不了「第 3 个调用点旁边有没有披露」,
+ * 但它能证「调用点数量变了」。变了就红,评审者必须先确认披露仍然覆盖那个新调用点、
+ * 再来更新这个数字 —— 也就是把「在 OttoChatStream 里再塞一个不披露的上传弹层」
+ * 从一次静默的合并,变成一次必须有人签字的改动。
+ */
 const MOUNTS = [
-  ["components/asset/DetailPanel.tsx", "素材详情的裁剪保存(saveCroppedGeneration)"],
-  ["components/canvas/FlowCanvas.tsx", "Canvas 拖放上传(uploadReference)"],
-  ["components/otto/OttoChatStream.tsx", "Otto 对话的附件入口"],
-  ["components/otto/TemplateModal.tsx", "模板的产品图上传"],
-  ["components/otto/stuff/AddAssetDialog.tsx", "素材库的多图上传"],
+  ["components/asset/DetailPanel.tsx", "素材详情的裁剪保存(saveCroppedGeneration)", 1],
+  ["components/canvas/FlowCanvas.tsx", "Canvas 拖放上传(uploadReference)", 1],
+  ["components/otto/OttoChatStream.tsx", "Otto 对话的附件入口", 3],
+  ["components/otto/TemplateModal.tsx", "模板的产品图上传", 1],
+  ["components/otto/stuff/AddAssetDialog.tsx", "素材库的多图上传", 2],
 ] as const;
 
-/** 明示豁免。豁免要有理由,而且理由要能当场核 —— 不写理由的豁免就是漏挂。 */
-const EXEMPT: Record<string, string> = {
-  "components/otto/edit/EditDesk.tsx": "只收音频;audio 不在收费的三类里(§7.3 单列)",
+/** 明示豁免。豁免要有理由,而且理由要能当场核 —— 不写理由的豁免就是漏挂。
+ *  豁免也数调用点:EditDesk 今天只收音频,它哪天多接一个收图的入口,这里同样会红。 */
+const EXEMPT: Record<string, { reason: string; callSites: number }> = {
+  "components/otto/edit/EditDesk.tsx": {
+    reason: "只收音频;audio 不在收费的三类里(§7.3 单列)",
+    callSites: 1,
+  },
 };
 
 describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
@@ -187,15 +248,30 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     ).toEqual(Object.keys(WRITE_POINT_FILES).sort());
   });
 
-  it("写点普查:登记的每个动作名都还在它登记的文件里(改名/搬家当场红)", () => {
-    for (const [file, note] of Object.entries(WRITE_POINT_FILES)) {
-      const src = codeOf(file);
-      const actions = UPLOAD_ACTIONS.filter((a) => note.includes(a));
-      expect(actions.length, `${file} 的登记备注里没点名任何动作`).toBeGreaterThan(0);
-      for (const action of actions) {
-        expect(src, `${file} 里找不到 ${action} —— 登记表过期了`).toContain(action);
-      }
+  it("写点普查:落盘 helper 自己就是写点(helper 名单不许变成第二份手抄清单)", () => {
+    // 动作名是推导出来的,但「哪些 helper 算落盘」这一层是人列的。这条把那一层也钉住:
+    // helper 一旦不再写 source:"UPLOAD",它就不该再当推导依据 —— 当场红,而不是安静地
+    // 把 createEntity 这类「自己一个字面量都没有」的动作整支漏掉。
+    const allWritePointCode = Object.keys(WRITE_POINT_FILES).map(codeOf).join("\n");
+    for (const helper of WRITE_HELPERS) {
+      const body = new RegExp(`(?:async\\s+)?function\\s+${helper}\\b[\\s\\S]*?\\n\\}`).exec(allWritePointCode);
+      expect(body, `找不到落盘 helper ${helper} —— 它被改名或删了,推导依据已失效`).not.toBeNull();
+      expect(body![0], `${helper} 不再写 source:"UPLOAD",它不该继续当推导依据`).toMatch(/source:\s*"UPLOAD"/);
     }
+  });
+
+  it("动作普查:上传动作名由源码推导,登记表只用来核对(新增一支写 UPLOAD 的导出动作当场红)", () => {
+    expect(
+      uploadActionNames(),
+      "写点文件里的上传动作集合变了:先追它的 UI 面,再决定挂披露还是写进豁免",
+    ).toEqual([
+      "addReferenceImages",
+      "createEntity",
+      "finalizeCandidateUploads",
+      "saveCroppedGeneration",
+      "uploadCandidates",
+      "uploadReference",
+    ]);
   });
 
   it("入口普查:调上传动作的 UI 文件 = 挂点表 + 豁免表(新入口漏挂当场红)", () => {
@@ -206,13 +282,24 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     ).toEqual(declared);
   });
 
-  it("入口普查:挂点表与豁免表不重叠,豁免每条都带理由", () => {
+  it.each(MOUNTS)("%s 的上传调用点数量 = 登记值(多一个调用点=强制人工复核披露)", (file, _note, callSites) => {
+    expect(
+      callSiteCount(file),
+      `${file} 的上传调用点数量变了:先确认披露仍覆盖新的调用点,再来更新这个数字`,
+    ).toBe(callSites);
+  });
+
+  it("入口普查:挂点表与豁免表不重叠,豁免每条都带理由,豁免的调用点数量也钉住", () => {
     for (const [file] of MOUNTS) {
       expect(EXEMPT[file], `${file} 同时出现在挂点表和豁免表`).toBeUndefined();
     }
-    for (const [file, reason] of Object.entries(EXEMPT)) {
+    for (const [file, { reason, callSites }] of Object.entries(EXEMPT)) {
       expect(reason.length, `${file} 的豁免没写理由`).toBeGreaterThan(10);
       expect(codeOf(file), `${file} 被豁免了却挂着披露`).not.toContain("UnderstandingCostHint");
+      expect(
+        callSiteCount(file),
+        `${file} 的上传调用点数量变了:豁免的理由(只收音频)可能已经不成立`,
+      ).toBe(callSites);
     }
   });
 });
