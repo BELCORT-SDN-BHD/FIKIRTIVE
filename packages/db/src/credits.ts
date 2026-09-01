@@ -603,17 +603,31 @@ export async function adjustWindowRows(limit: number): Promise<
  * 一个超限 org 会因为被更新的行挤出那 N 行而从「超限」计数里消失 —— 候选集必须独立于展示行。
  * 窗口本身是有界的(30 天里的人工调账与人工退款,量级是几十到几百行),所以直接读整窗、在
  * 内存里按 org 求 |Δ| 合计;放进 SQL 就得把那条谓词再手抄一遍,那正是这个函数存在的理由的反面。
+ *
+ * 复审二 P2-4:返回值从「合计」升成 {@link AdjustWindowSummary}(合计 + 笔数 + 最近一笔时间),
+ * 因为 admin 那张表此后**整张都由它派生** —— 一行一个 workspace,而不是「最新 N 条明细」。
+ * 按明细行构造的表,会让一个超限 org 因为别人写得更新而从表上消失。
  */
-export async function adjustWindowTotals(orgIds?: readonly string[]): Promise<Map<string, number>> {
-  const totals = new Map<string, number>();
+export async function adjustWindowTotals(orgIds?: readonly string[]): Promise<Map<string, AdjustWindowSummary>> {
+  const totals = new Map<string, AdjustWindowSummary>();
   if (orgIds && orgIds.length === 0) return totals;
   const rows = await prisma.creditLedger.findMany({
     where: adjustWindowFilter(orgIds),
-    select: { orgId: true, balanceDelta: true },
+    select: { orgId: true, balanceDelta: true, createdAt: true },
   });
-  for (const row of rows) totals.set(row.orgId, (totals.get(row.orgId) ?? 0) + Math.abs(row.balanceDelta));
+  for (const row of rows) {
+    const prev = totals.get(row.orgId);
+    totals.set(row.orgId, {
+      internalTotal: (prev?.internalTotal ?? 0) + Math.abs(row.balanceDelta),
+      movements: (prev?.movements ?? 0) + 1,
+      lastAt: prev && prev.lastAt > row.createdAt ? prev.lastAt : row.createdAt,
+    });
+  }
   return totals;
 }
+
+/** 一个 org 在滚动窗口里的人工钱账:合计、笔数、最近一笔的时间。 */
+export type AdjustWindowSummary = { internalTotal: number; movements: number; lastAt: Date };
 
 /** SETTLE the held charge for a successfully-committed job. MUST run in the worker's commit
  *  $transaction. The held amount B is read FROM THE RESERVE ROW (reservedDelta), never

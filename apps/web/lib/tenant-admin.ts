@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma, adjustWindowTotals } from "@fikirtive/db";
-import { displayCredits, FOUNDER_OWNER_ID, FINANCE_ADJUST_LIMITS, CREDIT_PACKS } from "@fikirtive/core";
+import { displayCredits, FOUNDER_OWNER_ID, FINANCE_ADJUST_LIMITS, MANUAL_REFUND_REF_PREFIX } from "@fikirtive/core";
 
 /** 一个**还活着的商家 org**,或者 null。
  *
@@ -48,11 +48,72 @@ export type TenantDetail = {
   adjustRolling30dDisplay: number;
   /** 同上口径的上限(显示 credits),来自 `FINANCE_ADJUST_LIMITS` 单一源。 */
   adjustRolling30dLimitDisplay: number;
-  /** 在售充值包(人工退款要按商家**原购包的实付单价**换算,见 runbook 第 4 条)。
-   *  从服务端带下去,而不是让 admin 客户端自己 import 价目表 —— 选项与动作真正接受的那张表
-   *  因此永远是同一张。 */
-  creditPacks: { name: string; credits: number; amountMinor: number }[];
+  /** MONEY-A14 —— 这个 org 里**还没收口**的人工退款单(RESERVE 在、SETTLE/REFUND 都不在)。
+   *
+   *  它必须来自**账本**而不是页面内存:退款单号既是账本 refId 也是 Stripe 幂等键,上一版把它
+   *  只放在 React state 里,刷新一次就再也找不回那张单,而 credits 还锁着。事实来自 RESERVE 行
+   *  reason 里钉着的那一份(整数 internal 单位,读侧才换算成显示 credits)。 */
+  openManualRefunds: {
+    refundId: string;
+    paymentIntentId: string;
+    heldDisplay: number;
+    requestedDisplay: number;
+    amountMinor: number;
+    currency: string;
+    allowPartial: boolean;
+    at: string;
+  }[];
 };
+
+/** RESERVE 行 reason 里钉着的退款事实(整数 internal 单位);写侧在 `refund-actions.ts`。 */
+function decodeRefundPin(reason: string): { paymentIntentId: string; requestedInternal: number; heldInternal: number; amountMinor: number; currency: string; allowPartial: boolean } | null {
+  const pi = /pi:(pi_[A-Za-z0-9]+)/.exec(reason)?.[1];
+  const req = Number(/\|req:(\d+)/.exec(reason)?.[1]);
+  const held = Number(/\|held:(\d+)/.exec(reason)?.[1]);
+  const minor = Number(/\|minor:(\d+)/.exec(reason)?.[1]);
+  const cur = /\|cur:([a-z]+)/.exec(reason)?.[1];
+  const partial = /\|partial:([01])/.exec(reason)?.[1];
+  if (!pi || !cur || !partial || ![req, held, minor].every((n) => Number.isSafeInteger(n))) return null;
+  return { paymentIntentId: pi, requestedInternal: req, heldInternal: held, amountMinor: minor, currency: cur, allowPartial: partial === "1" };
+}
+
+/**
+ * 这个 org 里还没收口的人工退款单(MONEY-A14,复审二 P1-2d)。
+ *
+ * 判据 = 有 RESERVE、没有 SETTLE/REFUND。两句查询而不是一句 NOT EXISTS,是因为 Prisma 表达不了
+ * 同表自关联;窗口很小(未收口的单是个位数),两句都带 `orgId` 租户约束。
+ */
+async function openManualRefundsFor(orgId: string) {
+  const holds = await prisma.creditLedger.findMany({
+    where: { orgId, kind: "RESERVE", refId: { startsWith: MANUAL_REFUND_REF_PREFIX } },
+    orderBy: { createdAt: "desc" },
+    take: 25,
+    select: { refId: true, reason: true, createdAt: true },
+  });
+  if (holds.length === 0) return [];
+  const refIds = holds.map((h) => h.refId!).filter(Boolean);
+  const finalized = await prisma.creditLedger.findMany({
+    where: { orgId, refId: { in: refIds }, kind: { in: ["SETTLE", "REFUND"] } },
+    select: { refId: true },
+  });
+  const closed = new Set(finalized.map((f) => f.refId));
+  return holds
+    .filter((hold) => !closed.has(hold.refId))
+    .flatMap((hold) => {
+      const pin = decodeRefundPin(hold.reason);
+      if (!pin) return [];
+      return [{
+        refundId: hold.refId!.slice(MANUAL_REFUND_REF_PREFIX.length),
+        paymentIntentId: pin.paymentIntentId,
+        heldDisplay: displayCredits(pin.heldInternal),
+        requestedDisplay: displayCredits(pin.requestedInternal),
+        amountMinor: pin.amountMinor,
+        currency: pin.currency,
+        allowPartial: pin.allowPartial,
+        at: hold.createdAt.toISOString(),
+      }];
+    });
+}
 
 export async function listTenants(): Promise<{ tenants: TenantRow[]; invited: InvitedRow[] }> {
   const [orgs, memberships, accounts, genAgg, invitedRows] = await Promise.all([
@@ -160,7 +221,7 @@ export async function getTenantDetail(orgId: string): Promise<TenantDetail | nul
   ]);
 
   // 报表按**累计**判,不按单行判(此前一天发二十行 1000 也全绿)。口径来自钱服务本身。
-  const adjustTotals = await adjustWindowTotals([orgId]);
+  const [adjustTotals, openManualRefunds] = await Promise.all([adjustWindowTotals([orgId]), openManualRefundsFor(orgId)]);
 
   return {
     orgId: org.id,
@@ -184,8 +245,8 @@ export async function getTenantDetail(orgId: string): Promise<TenantDetail | nul
       type: a.type,
       createdAt: a.createdAt.toISOString(),
     })),
-    adjustRolling30dDisplay: displayCredits(adjustTotals.get(orgId) ?? 0),
+    adjustRolling30dDisplay: displayCredits(adjustTotals.get(orgId)?.internalTotal ?? 0),
     adjustRolling30dLimitDisplay: FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay,
-    creditPacks: CREDIT_PACKS.map((pack) => ({ name: pack.name, credits: pack.credits, amountMinor: pack.amountMinor })),
+    openManualRefunds,
   };
 }

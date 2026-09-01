@@ -76,20 +76,27 @@ export type RiskSignal = {
  * that name attached and the queue itself was never built. The name is now the truth — whether to
  * build the real thing stays a product decision, not something this read model should imply.
  */
+/**
+ * 一个 **workspace** 在滚动 30 天里的人工钱账(复审二 P2-4)。
+ *
+ * 此前这里是「最新 24 条明细」,于是一个已经超限的 org 会因为别人写了更新的行而被挤出表外 ——
+ * 而这张表存在的唯一理由就是看见它。现在整张表由 `adjustWindowTotals()`(全 org 窗口累计)派生:
+ * 一行一个 workspace,超限与否是它自己的合计说了算,与别人写了多少行无关。
+ */
 export type LargeGrantRow = {
+  /** orgId —— 一行一个 workspace。 */
   id: string;
   tenant: string;
   ownerEmail: string;
-  kind: string;
-  amount: number;
   /** 滚动 30 天累计上限(显示 credits),来自 `FINANCE_ADJUST_LIMITS` 单一源。 */
   limit: number;
-  /** 这一行所属 org 在滚动 30 天里动过的人工钱合计(显示 credits,|Δ| 合计,含本行)。 */
+  /** 这个 org 在窗口里动过的人工钱合计(显示 credits,|Δ| 合计)。 */
   rollingTotal: number;
-  state: "within limit" | "over limit" | "adjustment";
-  reason: string;
-  createdBy: string;
-  createdAt: string;
+  /** 窗口里的人工钱笔数。 */
+  movements: number;
+  state: "within limit" | "over limit";
+  /** 最近一笔人工钱的时间。 */
+  lastAt: string;
 };
 
 export type TenantHealthRow = {
@@ -683,42 +690,29 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       createdAt: row.createdAt.toISOString(),
     }));
 
-    // MONEY-A14 —— **按 org 的滚动 30 天累计判,不再按单行判**。旧口径是「这一行超过 1000 吗」,
-    // 于是一天发二十行 999 全绿,而真正会拒绝操作员的是累计闸。行与合计都来自钱服务本身
-    // (`adjustWindowRows` / `adjustWindowTotals` 与闸同一条谓词),报表和闸不可能各说各话。
+    // MONEY-A14 / 复审二 P2-4 —— 这张表**整张**由窗口累计派生,一行一个 workspace。
+    // 用「最新 N 条明细」构造过一版,后果是:一个超限的 org 只要别人写了更新的行就从表上消失,
+    // 而这张表存在的唯一理由正是看见它。明细行与判定从此彻底解耦。
     const grantLimit = FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay;
-    const adjustRows = await adjustWindowRows(24);
-    // 判官 P2-2 —— 累计的候选集是**整个 30 天窗口的所有 org**,不是「最新 24 行涉及的 org」。
-    // 先取 24 行再算,会让一个超限 org 因为被更新的行挤出那 24 行而从计数里凭空消失,而报表
-    // 恰恰是为了看见它才存在。展示行仍然只取 24 条(一屏够读),判定与它无关。
     const adjustTotals = await adjustWindowTotals();
-    const largeGrants: LargeGrantRow[] = adjustRows
-      .map((row) => {
-        const amount = displayCredits(row.balanceDelta);
-        const rollingTotal = displayCredits(adjustTotals.get(row.orgId) ?? 0);
-        const state: LargeGrantRow["state"] =
-          rollingTotal > grantLimit ? "over limit" : amount < 0 ? "adjustment" : "within limit";
-        // #736 — resolve the org through the SAME helper the case list uses, instead of a local
-        // "founder or raw id" ternary that put `org_cmsj8y…` where a shop name belongs (and put
-        // an org id in a field called `ownerEmail`). MONEY-A14 起这些行**真的**跨 org 了,
-        // 当年埋下的那条正确分支从此天天在跑。
-        const owner = ownerName(ownerByOrg, row.orgId);
+    const largeGrants: LargeGrantRow[] = [...adjustTotals.entries()]
+      .map(([rowOrgId, summary]) => {
+        const rollingTotal = displayCredits(summary.internalTotal);
+        const owner = ownerName(ownerByOrg, rowOrgId);
         return {
-          id: row.id,
+          id: rowOrgId,
           tenant: owner.name,
           ownerEmail: owner.email,
-          // 人工退款那条腿写的是 RESERVE 行(SETTLE 行的 balanceDelta 恒为 0),在报表上如实
-          // 读作 REFUND —— 它是退款,不是一次授信。
-          kind: row.refId?.startsWith(MANUAL_REFUND_REF_PREFIX) ? "REFUND" : row.kind,
-          amount,
           limit: grantLimit,
           rollingTotal,
-          state,
-          reason: row.reason,
-          createdBy: row.createdBy,
-          createdAt: row.createdAt.toISOString(),
+          movements: summary.movements,
+          state: (rollingTotal > grantLimit ? "over limit" : "within limit") as LargeGrantRow["state"],
+          lastAt: summary.lastAt.toISOString(),
         };
-      });
+      })
+      // 超限的排前面,其次按合计从大到小 —— 需要人看的那几行永远在最上面。
+      .sort((a, b) => (a.state === b.state ? b.rollingTotal - a.rollingTotal : a.state === "over limit" ? -1 : 1))
+      .slice(0, 24);
 
     const genCounts = countsByStatus(genGroups, GEN_STATUSES);
     const refGenCounts = countsByStatus(refGenGroups, GEN_STATUSES);
@@ -989,8 +983,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     const lowBalanceCount = tenants.filter((tenant) => tenant.risk === "watch").length;
     const blockedTenantCount = tenants.filter((tenant) => tenant.risk === "blocked").length;
     // 超限是 **org 级**事实,不是行级:同一个 org 的五行都超限,那也只是一个 workspace 出事。
+    // 数的是**整个窗口**的 org,不是表上那 24 行(它已经截过一次了)。
     const overLimitGrants = [...adjustTotals.values()].filter(
-      (internal) => displayCredits(internal) > grantLimit,
+      (summary) => displayCredits(summary.internalTotal) > grantLimit,
     ).length;
     const queueFailureCount = failedRows.length;
 

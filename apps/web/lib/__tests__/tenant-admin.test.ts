@@ -240,14 +240,73 @@ describe("getTenantDetail — 人工调账累计(MONEY-A14)", () => {
     generationCount.mockResolvedValue(0);
     actionEventFindMany.mockResolvedValue([]);
     // 18000 内部 = 1800 显示。
-    adjustWindowTotals.mockResolvedValue(new Map([["org_1", 18_000]]));
+    adjustWindowTotals.mockResolvedValue(new Map([["org_1", { internalTotal: 18_000, movements: 4, lastAt: new Date("2026-09-01T00:00:00Z") }]]));
 
     const detail = await getTenantDetail("org_1");
 
     expect(adjustWindowTotals).toHaveBeenCalledWith(["org_1"]);
     expect(detail!.adjustRolling30dDisplay).toBe(1800);
     expect(detail!.adjustRolling30dLimitDisplay).toBe(2000);
-    // 退款换算要的在售包表也从服务端带下去,admin 客户端不自己抄价目表。
-    expect(detail!.creditPacks.map((p) => p.credits)).toEqual([50, 220, 600]);
+    // 复审二 P1-2d:未收口的退款单由账本列出(这个 org 一张都没有)。
+    expect(detail!.openManualRefunds).toEqual([]);
+  });
+});
+
+// ── MONEY-A14:未收口的退款单只能从账本读,而且只读这个租户的(复审二 P1-2d) ──────
+describe("getTenantDetail — 未收口退款单(MONEY-A14)", () => {
+  function baseDetailMocks() {
+    organizationFindFirst.mockResolvedValue({ id: "org_1", name: "Shop" });
+    membershipFindFirst.mockResolvedValue({ status: "active", user: { email: "a@b.test" } });
+    creditAccountFindUnique.mockResolvedValue({ balance: 100, reserved: 0 });
+    genJobAggregate.mockResolvedValue({ _sum: { spentUsd: null } });
+    refGenJobAggregate.mockResolvedValue({ _sum: { spentUsd: null } });
+    projectCount.mockResolvedValue(0);
+    generationCount.mockResolvedValue(0);
+    actionEventFindMany.mockResolvedValue([]);
+    adjustWindowTotals.mockResolvedValue(new Map());
+  }
+
+  it("开着的 hold 列出来、已收口的不列;两条查询都带 orgId,别的租户的单子进不来", async () => {
+    baseDetailMocks();
+    const at = new Date("2026-09-02T03:00:00Z");
+    creditLedgerFindMany.mockImplementation(async (args: {
+      where: { orgId?: string; kind?: unknown; refId?: { startsWith?: string; in?: string[] } };
+    }) => {
+      // ① 租户页自己的账本流水读(没有 refId 过滤)。
+      if (!args.where.refId) return [];
+      // ② 未收口列表第一跳:该 org 的 manual-refund RESERVE 行。
+      if (args.where.refId.startsWith) {
+        expect(args.where.orgId).toBe("org_1");
+        expect(args.where.refId.startsWith).toBe("manual-refund:");
+        return [
+          { refId: "manual-refund:ticket-open", reason: "pi:pi_1|req:1000|held:1000|minor:4166|cur:myr|partial:0", createdAt: at },
+          { refId: "manual-refund:ticket-done", reason: "pi:pi_2|req:500|held:500|minor:2083|cur:myr|partial:0", createdAt: at },
+          { refId: "manual-refund:ticket-garbled", reason: "no facts here", createdAt: at },
+        ];
+      }
+      // ③ 第二跳:这批单号里哪些已经落账/已释放 —— 同样按 orgId 收口。
+      expect(args.where.orgId).toBe("org_1");
+      expect(args.where.refId.in).toEqual([
+        "manual-refund:ticket-open",
+        "manual-refund:ticket-done",
+        "manual-refund:ticket-garbled",
+      ]);
+      return [{ refId: "manual-refund:ticket-done" }];
+    });
+
+    const detail = await getTenantDetail("org_1");
+
+    expect(detail!.openManualRefunds).toEqual([
+      {
+        refundId: "ticket-open",
+        paymentIntentId: "pi_1",
+        heldDisplay: 100,
+        requestedDisplay: 100,
+        amountMinor: 4166,
+        currency: "myr",
+        allowPartial: false,
+        at: at.toISOString(),
+      },
+    ]);
   });
 });

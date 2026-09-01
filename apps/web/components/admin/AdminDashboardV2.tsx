@@ -318,7 +318,7 @@ function LargeGrantList({ rows }: { rows: LargeGrantRow[] }) {
   return (
     <Panel
       title="Large grants and adjustments"
-      subtitle="Manual credit movements across every workspace, newest first, judged on each workspace's rolling 30-day total. Already recorded in the append-only ledger — nothing here is waiting on a decision."
+      subtitle="One row per workspace: everything moved by hand (grants, adjustments, refunds) in the rolling 30-day window, against the limit that would refuse the next one. Over-limit workspaces sort first. Settled ledger history — nothing here is waiting on a decision."
     >
       <div className="grid gap-2">
         {rows.length === 0 ? <EmptyState label="No recent grant or adjustment rows." /> : null}
@@ -330,13 +330,12 @@ function LargeGrantList({ rows }: { rows: LargeGrantRow[] }) {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm font-medium text-foreground">{row.tenant}</span>
-                <Badge variant={row.state === "over limit" ? "destructive" : row.state === "adjustment" ? "warning" : "outline"}>{row.state}</Badge>
-                <span className="text-xs text-muted-foreground">{row.rollingTotal.toLocaleString()} / {row.limit.toLocaleString()} in 30 days</span>
+                <Badge variant={row.state === "over limit" ? "destructive" : "outline"}>{row.state}</Badge>
               </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{row.kind} · {row.reason || row.createdBy || "No reason captured"}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{row.ownerEmail || "No owner email on file"} · {row.movements} manual movement{row.movements === 1 ? "" : "s"}</p>
             </div>
-            <div className="text-sm font-semibold text-foreground">{row.amount > 0 ? "+" : ""}{row.amount.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground md:text-right">{fmtDate(row.createdAt)}</div>
+            <div className="text-sm font-semibold text-foreground">{row.rollingTotal.toLocaleString()} / {row.limit.toLocaleString()}</div>
+            <div className="text-xs text-muted-foreground md:text-right">{fmtDate(row.lastAt)}</div>
           </div>
         ))}
       </div>
