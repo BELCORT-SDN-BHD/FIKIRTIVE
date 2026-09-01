@@ -1,13 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const constructEvent = vi.fn();
-vi.mock("@/lib/stripe", () => ({ stripe: { webhooks: { constructEvent } } }));
+// MONEY-A13:拒付/退款事件要反查商家 org —— 两条只读的 Stripe 面,一个真实外呼都不发。
+const paymentIntentsRetrieve = vi.fn();
+const checkoutSessionsList = vi.fn();
+vi.mock("@/lib/stripe", () => ({
+  stripe: {
+    webhooks: { constructEvent },
+    paymentIntents: { retrieve: paymentIntentsRetrieve },
+    checkout: { sessions: { list: checkoutSessionsList } },
+  },
+}));
 const grantCredits = vi.fn();
 const actionEventCreate = vi.fn();
+// MONEY-A13 P1-1:送达回执 —— 重投时读那一行,送出去过才安静。
+const actionEventFindUnique = vi.fn();
+const actionEventUpdate = vi.fn();
 const creditLedgerFindUnique = vi.fn();
+// MONEY-A13 P2-1:归因最后一步 —— 按幂等键反查账本。
+const creditLedgerFindFirst = vi.fn();
 // MONEY-A9:充值成功要顺手把这个租户「等余额」的素材理解行拨回队列(规格 §7.3 四则④)。
 const assetUnderstandingUpdateMany = vi.fn();
-vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate }, creditLedger: { findUnique: creditLedgerFindUnique }, assetUnderstanding: { updateMany: assetUnderstandingUpdateMany } } }));
+vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate, findUnique: actionEventFindUnique, update: actionEventUpdate }, creditLedger: { findUnique: creditLedgerFindUnique, findFirst: creditLedgerFindFirst }, assetUnderstanding: { updateMany: assetUnderstandingUpdateMany } } }));
 // 钱路 M1-c:包核对用**真的**核对函数与**真的**包表 —— 假一个进来,这组用例就只是在测
 // 自己写的夹具,而这次要防的病恰恰是「代码里的包表与真实在售的包不是一回事」。
 vi.mock("@fikirtive/core", async () => {
@@ -29,9 +43,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   actionEventCreate.mockResolvedValue({});
-  founderAlert.mockResolvedValue([]);
+  actionEventFindUnique.mockResolvedValue(null);
+  actionEventUpdate.mockResolvedValue({});
+  creditLedgerFindFirst.mockResolvedValue(null);
+  // 默认:报警真的送出去了(至少一条通道 sent)—— 没送到是另一组用例的事。
+  founderAlert.mockResolvedValue([{ channel: "sentry", status: "sent" }]);
   creditLedgerFindUnique.mockResolvedValue(null); // default: this session was never granted
   assetUnderstandingUpdateMany.mockResolvedValue({ count: 0 });
+  paymentIntentsRetrieve.mockResolvedValue({ metadata: {} }); // default: 老付款,PI 上没有 orgId
+  checkoutSessionsList.mockResolvedValue({ data: [] });
 });
 
 const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -328,33 +348,244 @@ describe("stripe webhook", () => {
     expect(grantCredits).not.toHaveBeenCalled();
   });
 
-  // ── 2026-07-04 盲区修复:争议/退款 = 钱被拉回,必须有人被叫到 ──────────────
-  it("charge.dispute.created → audit event + Sentry alert, NO money mutation, 200", async () => {
+  // ── 2026-07-04 盲区修复 + MONEY-A13:争议/退款 = 钱被拉回,必须有人被叫到 ──────────
+  it("MONEY-A13:charge.dispute.created ⇒ 三通道报警带商家 org 与金额,零钱变动,200", async () => {
+    // 新付款走这条:结账时 payment_intent_data 把 orgId 写在了 PaymentIntent 上。
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: { orgId: "org_7" } });
     constructEvent.mockReturnValue({
       id: "evt_d1", type: "charge.dispute.created",
-      data: { object: { id: "dp_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000, reason: "fraudulent", status: "needs_response" } },
+      data: { object: { id: "dp_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000, currency: "myr", reason: "fraudulent", status: "needs_response" } },
     });
+
     const res = await POST(req());
+
     expect(res.status).toBe(200);
-    expect(grantCredits).not.toHaveBeenCalled(); // alert-only: clawback 是 founder 的钱决定
-    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("charge.dispute.created"), "warning");
+    expect(grantCredits).not.toHaveBeenCalled(); // alert-only:拒付不倒扣,账本不建负数
+    // 裸 Sentry 已经退场 —— 拒付是当天要动手的事,只进 Sentry 等于说给没有人听。
+    expect(captureMessage).not.toHaveBeenCalled();
+    expect(founderAlert).toHaveBeenCalledTimes(1);
+    const alert = founderAlert.mock.calls[0]![0];
+    expect(alert.key).toBe("stripe.dispute_opened");
+    expect(alert.title).toContain("MYR 50.00"); // 金额
+    expect(alert.context).toMatchObject({ orgId: "org_7", orgAttribution: "payment-intent", amountMinor: 5000, currency: "MYR" });
+    expect(alert.action).toContain("docs/runbooks/chargeback.md"); // 收到报警的人不必去读代码
+    // 审计行:kind 分开、ownerId 是**真的商家**(不再硬编码 founder)、主键由 event.id 派生。
     expect(actionEventCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ type: "credits.dispute" }) }),
+      expect.objectContaining({ data: expect.objectContaining({ id: "stripe_pullback:evt_d1", ownerId: "org_7", type: "credits.dispute.created" }) }),
     );
   });
 
-  it("charge.refunded → audit event + Sentry alert, NO money mutation, 200", async () => {
+  it("MONEY-A13:dispute.closed 与 dispute.created 是两件事,kind 与报警键都分开", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: { orgId: "org_7" } });
+    constructEvent.mockReturnValue({
+      id: "evt_d2", type: "charge.dispute.closed",
+      data: { object: { id: "dp_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000, currency: "myr", status: "lost" } },
+    });
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(200);
+    expect(founderAlert.mock.calls[0]![0].key).toBe("stripe.dispute_closed");
+    expect(founderAlert.mock.calls[0]![0].context).toMatchObject({ disputeStatus: "lost", orgId: "org_7" });
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "credits.dispute.closed" }) }),
+    );
+  });
+
+  it("MONEY-A13:老付款靠 payment_intent 反查 Checkout Session 认人(PI 上没有 metadata)", async () => {
+    // payment_intent_data 是这次施工才加的;在那之前的付款,orgId 只在 Checkout Session 上。
+    checkoutSessionsList.mockResolvedValue({ data: [{ id: "cs_old", metadata: { orgId: "org_legacy" } }] });
+    constructEvent.mockReturnValue({
+      id: "evt_d3", type: "charge.dispute.created",
+      data: { object: { id: "dp_2", charge: "ch_3", payment_intent: "pi_3", amount: 2500, currency: "myr", status: "needs_response" } },
+    });
+
+    await POST(req());
+
+    expect(checkoutSessionsList).toHaveBeenCalledWith(expect.objectContaining({ payment_intent: "pi_3" }));
+    expect(founderAlert.mock.calls[0]![0].context).toMatchObject({ orgId: "org_legacy", orgAttribution: "checkout-session", checkoutSessionId: "cs_old" });
+  });
+
+  it("MONEY-A13:认不出商家就如实标 unresolved —— 报警照发,绝不猜一个 org", async () => {
+    paymentIntentsRetrieve.mockRejectedValue(new Error("no such payment_intent"));
+    checkoutSessionsList.mockRejectedValue(new Error("stripe down"));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    constructEvent.mockReturnValue({
+      id: "evt_d4", type: "charge.dispute.created",
+      data: { object: { id: "dp_3", charge: "ch_4", payment_intent: "pi_4", amount: 10000, currency: "myr", status: "needs_response" } },
+    });
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(200); // 认不出人绝不影响 200 契约
+    expect(founderAlert).toHaveBeenCalledTimes(1);
+    expect(founderAlert.mock.calls[0]![0].context).toMatchObject({ orgId: "unresolved", orgAttribution: "unresolved" });
+    expect(founderAlert.mock.calls[0]![0].action).toContain("metadata.orgId"); // 告诉人去哪里翻
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ownerId: "founder" }) }),
+    );
+    err.mockRestore();
+  });
+
+  it("MONEY-A13:重投一个**已经送达**的事件 ⇒ 不写第二条审计行、不发第二次报警", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: { orgId: "org_7" } });
+    // 审计行主键由 event.id 派生 —— 重投撞主键。撞主键只说明「见过」,还要看那一行的送达回执。
+    actionEventCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+    actionEventFindUnique.mockResolvedValue({ payload: { alertDelivered: true } });
+    constructEvent.mockReturnValue({
+      id: "evt_d1", type: "charge.dispute.created",
+      data: { object: { id: "dp_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000, currency: "myr", status: "needs_response" } },
+    });
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(200);
+    expect(founderAlert).not.toHaveBeenCalled();
+  });
+
+  it("MONEY-A13 P1-1:三条通道全挂 ⇒ 审计行留着但回执是 false,重投**会再喊一次**", async () => {
+    // 这是这条钱路最坏的形状:钱被拉回、审计行写下了、报警一个人都没收到,而重投撞主键被
+    // 静默 —— 没有任何人知道。`founderAlert` 是不抛的,所以「写过行」绝不能当成「有人收到」。
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: { orgId: "org_7" } });
+    founderAlert.mockResolvedValue([
+      { channel: "sentry", status: "failed", reason: "no dsn" },
+      { channel: "email", status: "failed", reason: "resend 500" },
+      { channel: "telegram", status: "skipped" },
+    ]);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const event = {
+      id: "evt_d7", type: "charge.dispute.created",
+      data: { object: { id: "dp_7", charge: "ch_7", payment_intent: "pi_7", amount: 5000, currency: "myr", status: "needs_response" } },
+    };
+    constructEvent.mockReturnValue(event);
+
+    const first = await POST(req());
+
+    expect(first.status).toBe(200);
+    expect(founderAlert).toHaveBeenCalledTimes(1);
+    // 一条都没送出去 ⇒ 绝不盖回执(盖了就等于告诉重投「不用再喊了」)。
+    expect(actionEventUpdate).not.toHaveBeenCalled();
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ payload: expect.objectContaining({ alertDelivered: false }) }) }),
+    );
+
+    // Stripe 重投同一个事件:撞主键,但那一行写着「没送到」⇒ 再喊一次。
+    actionEventCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+    actionEventFindUnique.mockResolvedValue({ payload: { alertDelivered: false } });
+    founderAlert.mockResolvedValue([{ channel: "email", status: "sent" }]);
+
+    const second = await POST(req());
+
+    expect(second.status).toBe(200);
+    expect(founderAlert).toHaveBeenCalledTimes(2);
+    // 这一次送到了 ⇒ 盖回执,再重投就该安静了。
+    expect(actionEventUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "stripe_pullback:evt_d7" },
+        data: { payload: expect.objectContaining({ alertDelivered: true }) },
+      }),
+    );
+    err.mockRestore();
+  });
+
+  it("MONEY-A13 P1-1:回执读不出来(库抖了)⇒ 宁可再喊一次,也不让重投被静默", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: { orgId: "org_7" } });
+    actionEventCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+    actionEventFindUnique.mockRejectedValue(new Error("connection reset"));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    constructEvent.mockReturnValue({
+      id: "evt_d8", type: "charge.dispute.created",
+      data: { object: { id: "dp_8", charge: "ch_8", payment_intent: "pi_8", amount: 5000, currency: "myr", status: "needs_response" } },
+    });
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(200);
+    expect(founderAlert).toHaveBeenCalledTimes(1);
+    err.mockRestore();
+  });
+
+  it("MONEY-A13 P2-1:session 的 metadata 也没了 ⇒ 按幂等键反查**账本**认人", async () => {
+    // 归因链的最后一步(规格 §7.5 的「或 ledger 反查」):账本行是这笔钱最终的落点,
+    // 它的存在本身就证明这笔钱进过谁的账。
+    checkoutSessionsList.mockResolvedValue({ data: [{ id: "cs_nometa", metadata: {} }] });
+    creditLedgerFindFirst.mockResolvedValue({ orgId: "org_from_ledger" });
+    constructEvent.mockReturnValue({
+      id: "evt_d10", type: "charge.dispute.created",
+      data: { object: { id: "dp_10", charge: "ch_10", payment_intent: "pi_10", amount: 2500, currency: "myr", status: "needs_response" } },
+    });
+
+    await POST(req());
+
+    expect(creditLedgerFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { idempotencyKey: "stripe:cs_nometa" } }));
+    expect(founderAlert.mock.calls[0]![0].context).toMatchObject({ orgId: "org_from_ledger", orgAttribution: "ledger", checkoutSessionId: "cs_nometa" });
+  });
+
+  it("MONEY-A13 P2-4:dispute.closed 也能认不出人 —— 如实 unresolved,报警照发", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: {} });
+    checkoutSessionsList.mockResolvedValue({ data: [] });
+    constructEvent.mockReturnValue({
+      id: "evt_d11", type: "charge.dispute.closed",
+      data: { object: { id: "dp_11", charge: "ch_11", payment_intent: "pi_11", amount: 5000, currency: "myr", status: "won" } },
+    });
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(200);
+    expect(founderAlert.mock.calls[0]![0].key).toBe("stripe.dispute_closed");
+    expect(founderAlert.mock.calls[0]![0].context).toMatchObject({ orgId: "unresolved", orgAttribution: "unresolved", disputeStatus: "won" });
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ownerId: "founder", type: "credits.dispute.closed" }) }),
+    );
+  });
+
+  it("MONEY-A13 P2-4:charge.refunded 也能认不出人 —— 如实 unresolved,报警照发", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: {} });
+    checkoutSessionsList.mockResolvedValue({ data: [] });
+    constructEvent.mockReturnValue({
+      id: "evt_r9", type: "charge.refunded",
+      data: { object: { id: "ch_9", payment_intent: "pi_r9", amount: 3000, amount_refunded: 3000, currency: "myr" } },
+    });
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(200);
+    expect(founderAlert.mock.calls[0]![0].key).toBe("stripe.charge_refunded");
+    expect(founderAlert.mock.calls[0]![0].title).toContain("MYR 30.00");
+    expect(founderAlert.mock.calls[0]![0].context).toMatchObject({ orgId: "unresolved", orgAttribution: "unresolved" });
+  });
+
+  it("MONEY-A13:charge.refunded ⇒ 报警 + 审计行,零钱变动,200", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: { orgId: "org_8" } });
     constructEvent.mockReturnValue({
       id: "evt_r1", type: "charge.refunded",
-      data: { object: { id: "ch_2", payment_intent: "pi_2", amount: 3000, amount_refunded: 3000 } },
+      data: { object: { id: "ch_2", payment_intent: "pi_2", amount: 3000, amount_refunded: 3000, currency: "myr" } },
     });
+
     const res = await POST(req());
+
     expect(res.status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled();
-    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("charge.refunded"), "warning");
+    expect(founderAlert.mock.calls[0]![0].key).toBe("stripe.charge_refunded");
+    expect(founderAlert.mock.calls[0]![0].title).toContain("MYR 30.00");
     expect(actionEventCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ type: "credits.refund" }) }),
+      expect.objectContaining({ data: expect.objectContaining({ ownerId: "org_8", type: "credits.refund" }) }),
     );
+  });
+
+  it("MONEY-A13:报警通道抛错也绝不动响应码(非 2xx 会把 Stripe 推进无限重投)", async () => {
+    paymentIntentsRetrieve.mockResolvedValue({ metadata: { orgId: "org_7" } });
+    founderAlert.mockRejectedValue(new Error("resend down"));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    constructEvent.mockReturnValue({
+      id: "evt_d9", type: "charge.dispute.created",
+      data: { object: { id: "dp_9", charge: "ch_9", payment_intent: "pi_9", amount: 5000, currency: "myr", status: "needs_response" } },
+    });
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(200);
+    err.mockRestore();
   });
 
   it("200 + no grant when credits is fractional (metadata.credits = '1.5')", async () => {

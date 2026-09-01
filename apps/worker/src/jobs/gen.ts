@@ -219,6 +219,29 @@ const SETTLED_DONE_EMPTY = new Error("done-without-output-but-charge-settled");
 // user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
 // mid-flight. A plain `return` would commit those rows = a free delivery. The store/commit
 // retry loop recognizes this exact instance and discards instead of retrying or failing.
+/**
+ * 这一单的**平台成本参数**(MONEY-A13)。
+ *
+ * 同一组字段此前逐字抄了四遍:落 `spentUsd` 的两处、终态那一处,以及吸收成本报警那一处。
+ * 抄本之间只要有一处漂了,「报警里说的钱」与「账上记的钱」就会是两个数 —— 而台账正是拿这
+ * 两个数对账的。立成一处之后,它们**在结构上**不可能不一致。
+ */
+export function genSpendArgsOf(job: {
+  kind: GenJob["kind"];
+  model: string;
+  count: number;
+  referenceVideoGenerationId: string | null;
+  videoOptions: unknown;
+}) {
+  return {
+    kind: job.kind,
+    model: job.model,
+    count: job.count,
+    referenceVideoGenerationId: job.referenceVideoGenerationId,
+    videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null,
+  };
+}
+
 const REDELIVERY_DISCARD = new Error("redelivery-already-failed-and-refunded");
 
 // The store+record step after the paid call is FREE and idempotent (content-addressed
@@ -489,7 +512,7 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
         // defensive backfill: a row committed before spentUsd existed (or a partial
         // write) has the marker but null spentUsd — reconstruct from the frozen job
         // inputs. Never overwrites a value the commit tx already froze.
-        ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
+        ...(job.spentUsd == null ? { spentUsd: genSpentUsd(genSpendArgsOf(job)) } : {}),
       },
     });
     // settle the hold (idempotent: P2002 no-op if a prior delivery's commit tx
@@ -1380,7 +1403,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
             const marked = await tx.genJob.updateMany({
               where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
-              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) },
+              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd(genSpendArgsOf(job)) },
             });
             if (marked.count === 0) throw REDELIVERY_DISCARD;
             // SETTLE the hold atomically with the resume marker — the generation succeeded,
@@ -1398,6 +1421,29 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             // 商家没损失(已退款),平台损失了一次真实的引擎调用。它不是缺陷,是竞态的正确
             // 结局——但它是**真钱**,零上报就等于没人知道它一天发生几次。
             captureMoneyPathError(storeErr, { event: "gen.founder_absorbed_engine_cost", jobId: job.id, orgId: job.ownerId, kind: job.kind, model: job.model });
+            // MONEY-A13(规格 §7.5 平台损失台账):此前这里连**多少钱**都不记 —— 只有一条
+            // 「发生过一次」的 Sentry 事件,而台账要的是金额。按这一单自己的参数现算 COGS
+            // (与写进 spentUsd 的是同一个函数、同一批参数),再指路去登记。
+            // 报警**绝不许改变这条分支的去向**:`await` 一个被拒的 promise 会跳过下面那个
+            // `return`,把这一单摔进外层 catch —— 而外层会把一个「已经退过款、正确丢弃」的
+            // 作业当成失败去终态化。alerting 的 founderAlert 自己不抛,这一层是不依赖它守约。
+            try {
+              await founderAlert({
+                key: "gen.founder_absorbed_engine_cost",
+                title: "The platform paid for a generation nobody received (a redelivery had already refunded the merchant)",
+                action:
+                  "No merchant action needed — they were refunded. Log the platform loss in docs/ops/manual-money-ledger.md (event = 吸收引擎成本) with the job id and the USD below.",
+                context: {
+                  jobId: job.id,
+                  orgId: job.ownerId,
+                  kind: job.kind,
+                  model: job.model,
+                  absorbedUsd: genSpentUsd(genSpendArgsOf(job)),
+                },
+              });
+            } catch (alertErr) {
+              console.error(`[gen] ${job.id}: absorbed-cost alert failed (the discard itself stands):`, alertErr);
+            }
             return;
           }
           // exhausted: a persistent R2/DB outage. Re-throw to the terminal post-charge
@@ -1478,7 +1524,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         await prisma.$transaction(async (tx) => {
           const { count } = await tx.genJob.updateMany({
             where: { id: job.id, ownerId: job.ownerId, status: { in: [...GEN_IN_FLIGHT_STATUSES] } },
-            data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) },
+            data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd(genSpendArgsOf(job)) } : {}) },
           });
           if (count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
         });
