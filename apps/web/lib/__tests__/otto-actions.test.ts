@@ -1235,6 +1235,32 @@ describe("buildOttoContext — research.search env-key wiring", () => {
     expect(mockBraveSearch).not.toHaveBeenCalled();
   });
 
+  // ── MONEY-A10:搜索槽是**每回合一个新对象** ────────────────────────────────────────
+  //
+  // 槽的整个协议都建立在「一轮一份」上:上限判 granted、计费按 succeeded。若两回合共用一个
+  // 对象,第二轮开局就带着上一轮的 taken/succeeded —— 商家会被重复收费,或者莫名其妙搜不了。
+  // 今天它靠「buildOttoContext 每轮跑一次、字面量每次新建」成立,而那是**没有类型保护的**,
+  // 所以这条回归锚在这里。
+  it("MONEY-A10: searchSlots 每回合都是一个新对象,且初值 fail closed(granted 0)", async () => {
+    const mk = (n: string) =>
+      buildOttoContext({ ownerId: `owner_${n}`, projectId: `proj_${n}`, threadId: `thread_${n}` });
+
+    const first = await mk("turn1");
+    const second = await mk("turn2");
+
+    expect(first.research!.searchSlots).toEqual({ granted: 0, taken: 0, succeeded: 0 });
+    expect(second.research!.searchSlots).toEqual({ granted: 0, taken: 0, succeeded: 0 });
+    // 不是同一个对象 —— 这是「不跨轮累计」的机器证明。
+    expect(second.research!.searchSlots).not.toBe(first.research!.searchSlots);
+
+    // 把第一轮用满,第二轮必须仍然是干净的 0/0/0。
+    first.research!.searchSlots!.granted = 5;
+    first.research!.searchSlots!.taken = 5;
+    first.research!.searchSlots!.succeeded = 5;
+    const third = await mk("turn3");
+    expect(third.research!.searchSlots).toEqual({ granted: 0, taken: 0, succeeded: 0 });
+  });
+
   it("Tavily key only: search is wired via tavilySearch, returns {results}-wrapped, brave unused", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
 

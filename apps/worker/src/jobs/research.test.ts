@@ -49,6 +49,14 @@ const mocks = vi.hoisted(() => {
     state?: any;
     constructor(msg = "max turns") { super(msg); this.name = "MaxTurnsExceededError"; }
   }
+  // #1046-P1:真 withLlmBudget 在「REFUND 已经赢下 finalizer」时抛的那个类。替身必须也导出它,
+  // 否则 handleResearch 里的 `e instanceof SettleLostToRefund` 会拿 undefined 去比。
+  class SettleLostToRefund extends Error {
+    constructor(readonly refId: string) {
+      super("this reservation was already refunded — not delivering against a released hold");
+      this.name = "SettleLostToRefund";
+    }
+  }
   const researchAgent = { name: "Researcher" };
 
   const RESEARCH_TIERS = {
@@ -68,7 +76,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     prisma, reserveCredits, settleCredits, refundReservation, newId,
-    withLlmBudget, run, mapOttoUsage, MaxTurnsExceededError, researchAgent, RESEARCH_TIERS,
+    withLlmBudget, run, mapOttoUsage, MaxTurnsExceededError, SettleLostToRefund, researchAgent, RESEARCH_TIERS,
     researchJobFindUnique, researchJobUpdateMany, chatMessageFindFirst, chatMessageCreate, chatMessageUpdateMany,
     searchChargeInternal, researchTierSearchBudgetInternal, SEARCH_UNIT_INTERNAL,
   };
@@ -89,6 +97,7 @@ vi.mock("@fikirtive/otto", () => ({
   ottoModelRuntime: { billableModelId: "claude-sonnet-4-6" },
   run: mocks.run,
   MaxTurnsExceededError: mocks.MaxTurnsExceededError,
+  SettleLostToRefund: mocks.SettleLostToRefund,
   mapOttoUsage: mocks.mapOttoUsage,
 }));
 
@@ -221,6 +230,48 @@ describe("handleResearch — happy path", () => {
     expect(mocks.searchChargeInternal).toHaveBeenCalled();
   });
 
+  // ── MONEY-A10 / #1046-P2:无 key 时搜索端口**缺席**,不是一个恒返回 [] 的假端口 ──────
+  //
+  // 旧形状 `buildSearch()` 在无 key 时返回 `async () => []`:agent 调一次「搜索」,没有任何
+  // 外部调用发生,却拿到一个成功的空结果 —— 它以为自己搜过了(于是不去说「这条没能核实」),
+  // 计数器照样 +1,一次成功的深研因此多结算 3 个 internal credits。
+  it("MONEY-A10:没有配置任何搜索 key ⇒ ctx.search === undefined(诚实报不可用,$0)", async () => {
+    const prevTavily = process.env.TAVILY_API_KEY;
+    const prevBrave = process.env.BRAVE_SEARCH_API_KEY;
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.BRAVE_SEARCH_API_KEY;
+    try {
+      await handleResearch({ jobId: "job-1" }, 0);
+      const [, , opts] = mocks.run.mock.calls[0]!;
+      expect((opts as { context: { search?: unknown } }).context.search).toBeUndefined();
+    } finally {
+      if (prevTavily !== undefined) process.env.TAVILY_API_KEY = prevTavily;
+      if (prevBrave !== undefined) process.env.BRAVE_SEARCH_API_KEY = prevBrave;
+    }
+  });
+
+  it("MONEY-A10:配置了 key ⇒ ctx.search 是一个真端口", async () => {
+    const prev = process.env.TAVILY_API_KEY;
+    process.env.TAVILY_API_KEY = "tvly-test";
+    try {
+      await handleResearch({ jobId: "job-1" }, 0);
+      const [, , opts] = mocks.run.mock.calls[0]!;
+      expect(typeof (opts as { context: { search?: unknown } }).context.search).toBe("function");
+    } finally {
+      if (prev === undefined) delete process.env.TAVILY_API_KEY;
+      else process.env.TAVILY_API_KEY = prev;
+    }
+  });
+
+  it("MONEY-A10:上限判 searchesTaken(占槽),计费按 searchesUsed(成功数)—— 两个计数器都从 0 起", async () => {
+    await handleResearch({ jobId: "job-1" }, 0);
+    const [, , opts] = mocks.run.mock.calls[0]!;
+    const ctx = (opts as { context: { searchesTaken: number; searchesUsed: number; maxSearches: number } }).context;
+    expect(ctx.searchesTaken).toBe(0);
+    expect(ctx.searchesUsed).toBe(0);
+    expect(ctx.maxSearches).toBe(mocks.RESEARCH_TIERS.standard.maxSearches);
+  });
+
   it("runs the researchAgent with maxTurns=tier.maxSteps", async () => {
     await handleResearch({ jobId: "job-1" }, 0);
     expect(mocks.run).toHaveBeenCalledTimes(1);
@@ -310,6 +361,29 @@ describe("handleResearch — persisted error sanitization", () => {
     expect(jobFailed).toBeTruthy();
     expect(jobFailed![0].data.error).toContain("<redacted-url>");
     expect(jobFailed![0].data.error).not.toContain("X-Amz-Signature");
+  });
+
+  // ── #1046-P1:守卫的内部措辞不许漏到商家卡片上 ────────────────────────────────────
+  //
+  // SettleLostToRefund 的 message 是写给读代码的人看的(「not delivering against a released
+  // hold」)。商家该读到的是**发生了什么**:这一单被中断了、钱已经退清、重试一次就好 ——
+  // 而那句话 reaper 家族早就写好了(RESEARCH_INTERRUPTED),两条路因此说的是同一句。
+  it("#1046-P1 退款已在:商家读到的是 reaper 家族那句话,不是守卫的内部措辞", async () => {
+    mocks.withLlmBudget.mockRejectedValue(new mocks.SettleLostToRefund("research:card-1"));
+    await handleResearch({ jobId: "job-1" }, 0);
+
+    const jobFailed = mocks.researchJobUpdateMany.mock.calls.find((c) => c[0].data.status === "FAILED");
+    expect(jobFailed).toBeTruthy();
+    expect(jobFailed![0].data.error).toBe("research was interrupted — please try again");
+    expect(jobFailed![0].data.error).not.toContain("released hold");
+
+    const cardFailed = mocks.chatMessageUpdateMany.mock.calls.find(
+      (c) => (c[0].data.payload as { status?: string })?.status === "failed",
+    );
+    expect(cardFailed).toBeTruthy();
+    expect((cardFailed![0].data.payload as { error?: string }).error).toBe(
+      "research was interrupted — please try again",
+    );
   });
 
   it("keeps the friendly MaxTurnsExceededError text as-is (fixed string, not a leak source)", async () => {

@@ -335,3 +335,17 @@ export function searchChargeInternal(searches: number, depth: SearchDepth = "bas
   if (!Number.isInteger(n) || n <= 0) return 0;
   return n * searchUnitChargeInternal(depth);
 }
+
+/**
+ * **聊天单轮的搜索次数上限 = 5**(MONEY-A10,docs/specs/money-engine.md §7.4;
+ * Founder 2026-09-01 采纳推荐值定形)。
+ *
+ * 为什么需要一个专门的数:聊天今天只有「每轮 10 步」这个通用步数闸,没有搜索专属计数器 ——
+ * 一轮里模型想搜几次就搜几次,而每一次都是商家在付费。5 次是「够查清一件事、又不会一轮烧掉
+ * 一个包」的上限;第 6 次不打供应商、不收费,工具当场诚实拒绝并建议转深度研究(proposeResearch)。
+ *
+ * 这个常量同时是**预扣额**的来源:聊天轮按 5 × 单次费率 hold(worst case),结算按这一轮真正
+ * 成功的次数。改这个数 = 同时改上限、改预扣,不需要有人记得去改第二处。深研走的是各档自己的
+ * `tier.maxSearches`,与本常量无关。
+ */
+export const OTTO_CHAT_MAX_SEARCHES_PER_TURN = 5;

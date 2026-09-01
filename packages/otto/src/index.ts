@@ -40,11 +40,11 @@ export { anchoredClipLines } from "./skills/seedance-prompt.helpers.js";
 export { ProposeRefusal } from "./skills/propose.js";
 export type { CardPayload, ProposeCardResult } from "./skills/propose.js";
 export { sanitizeRefDescription } from "./skills/describe-refs.js";
-export type { OttoContext, EntityType, LibraryItemView, LibraryHistoryView } from "./context.js";
+export type { OttoContext, OttoSearchSlots, EntityType, LibraryItemView, LibraryHistoryView } from "./context.js";
 export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState, tryRestoreRunStateWithContext } from "./run-input.js";
 export type { RefImage } from "./run-input.js";
 export { extractText } from "./run-output.js";
-export { withLlmBudget, llmHoldInternal, actualCostInternal, mapOttoUsage, ReservationNotClaimed, ClaimFailed, type LlmBudgetArgs } from "./meter.js";
+export { withLlmBudget, llmHoldInternal, actualCostInternal, mapOttoUsage, ReservationNotClaimed, ClaimFailed, SettleLostToRefund, type LlmBudgetArgs } from "./meter.js";
 export type { TokenUsage } from "./meter.js";
 // Re-export SDK primitives needed by web callers (Task 1.8 / streaming)
 export { run, RunState, MaxTurnsExceededError } from "@openai/agents";

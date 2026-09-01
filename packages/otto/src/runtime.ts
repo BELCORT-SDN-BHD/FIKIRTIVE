@@ -29,7 +29,7 @@
  */
 import { Agent, run, MaxTurnsExceededError } from "@openai/agents";
 import type { AgentInputItem, Model, RunStreamEvent, RunState } from "@openai/agents";
-import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_MARGIN, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL } from "@fikirtive/core";
+import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_MARGIN, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, OTTO_CHAT_MIN_START_INTERNAL, OTTO_CHAT_MAX_SEARCHES_PER_TURN, searchChargeInternal, searchUnitChargeInternal } from "@fikirtive/core";
 import type { LlmPrices } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import type { OttoSkill } from "./skill.js";
@@ -200,9 +200,24 @@ export type OttoTurnRunResult = {
 export function ottoBudgetArgsFor(
   runtime: OttoRuntime,
   request: Pick<OttoTurnRequest, "orgId" | "refId" | "input">,
+  context?: Pick<OttoContext, "research">,
   MaxTurnsError: typeof MaxTurnsExceededError = MaxTurnsExceededError,
 ): Parameters<typeof withLlmBudget>[0] {
   const mr = runtime.modelRuntime;
+  // MONEY-A10(spec §7.4)—— 聊天的**第二条钱腿**:搜索。它不是从 token 数算出来的,所以它
+  // 走 M1-c 的 extra 通道,和深研那条腿同一套费率、同一个函数(searchChargeInternal,3×)。
+  //
+  // 只有当这一轮真的接了 search 端口**并且**带了槽计数器,这条腿才存在:没接 = 搜不了 =
+  // 没有钱腿;接了却没槽 = 技能会 fail closed 拒绝搜索(research-web.ts),所以同样没有钱腿。
+  // 两边是同一个条件,不可能一边收钱一边不让搜、或者一边搜一边不收钱。
+  //
+  //   hold   = **按整格坚实预留**(最多 5 格 × 单次费率):账本在读余额的同一笔事务里算出这一轮
+  //            买得起几格,坚实持有那几格,并把格数写回 slots.granted。判官 P1 实测过平铺
+  //            worst-case 的下场——低余额下它会跟 LLM 腿一起被压掉,而工具照发满额的槽,
+  //            settle 随后被 clamp,平台吃差额。
+  //   settle = 这一轮真正**成功**的搜索次数 × 单次费率(跑完才知道;失败的调用已经把槽还回去了)。
+  //            succeeded ≤ taken ≤ granted,所以它必然 ≤ 坚实预留的那一份。
+  const slots = context?.research?.search ? context.research.searchSlots : undefined;
   // A conversation turn is priced by ONE number. Founder's second ruling 2026-08-18 set it to
   // 1.05 — the provider's API cost plus 5% — so a turn charges what it actually used, and a long
   // thinking turn can never cost the platform more than it earns. See
@@ -230,6 +245,16 @@ export function ottoBudgetArgsFor(
     // With a minimum the hold shrinks to fit the balance instead, so the last credit is
     // spendable. Composition-time constant; see otto-budget.ts.
     reserveMinInternal: chatChargesCredits ? OTTO_CHAT_MIN_START_INTERNAL : undefined,
+    // MONEY-A10 的两条腿(见上)。没有槽 ⇒ 三个字段都不存在 ⇒ 与本改动之前逐字节相同。
+    extraHoldUnits: slots
+      ? { unitInternal: searchUnitChargeInternal("basic"), maxUnits: OTTO_CHAT_MAX_SEARCHES_PER_TURN }
+      : undefined,
+    onExtraUnitsGranted: slots
+      ? (granted: number) => {
+          slots.granted = granted;
+        }
+      : undefined,
+    extraSettleInternal: slots ? () => searchChargeInternal(slots.succeeded) : undefined,
     prices: mr.pricing(mr.billableModelId),
     usageOnError: (e: unknown) =>
       e instanceof MaxTurnsError && (e as { state?: { usage?: unknown } }).state?.usage
@@ -292,7 +317,7 @@ export async function runOttoTurn(
   const mr = runtime.modelRuntime;
   assertResumedStateCarriesLiveContext(request.input, context);
   return execution.meter(
-    ottoBudgetArgsFor(runtime, request, execution.maxTurnsExceededError),
+    ottoBudgetArgsFor(runtime, request, context, execution.maxTurnsExceededError),
     async () => {
       if (request.stream) {
         const r = await execution.runAgent(runtime.agent, request.input as never, {
