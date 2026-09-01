@@ -1337,7 +1337,7 @@ describe("MONEY-A10 — reserveChatTurnWithSearchSlots:搜索腿按整格坚实�
 // 这四个数全是组合期常量(费率表 × 规格上限 × otto-budget.ts 的 cap 与开门额),没有一个来自
 // 请求。所以坏组合是配置错误,不是运行时输入:fail closed = 当场抛,一分钱不预留、一格不发。
 // 每一条都在**真库**上验「账本零新增行 + 余额一分没动」—— 一个只抛错却已经写了行的闸不算闸。
-describe("MONEY-A10 复审 P1 — 坏参数当场抛错,而且什么都没写", () => {
+describe("MONEY-A10 复审 P1 — 弹性腿钳到开门额;畸形参数当场抛错且什么都没写", () => {
   const OK = { llmCapInternal: 40, minimumInternal: 10, searchUnitInternal: 3, maxSearchUnits: 5 };
 
   const reserveWith = (over: Partial<typeof OK>) =>
@@ -1348,12 +1348,35 @@ describe("MONEY-A10 复审 P1 — 坏参数当场抛错,而且什么都没写", 
     expect((await account(ORG)).balance).toBe(balanceBefore);
   };
 
-  it("弹性腿的 cap 小于开门额 ⇒ 抛错(不变量的前提没了:发 5 格却只持 16)", async () => {
+  // ── 弹性腿小于开门额:钳,不抛 ──────────────────────────────────────────────────
+  //
+  // 判官给的原始反例:elasticCap=1 / minimum=10 / unit=3 / maxUnits=5 / balance=25。照原样取
+  // hold 会发满 5 格却只持 min(1+15, 25) = 16 —— 搜索腿又被 clamp。修法是把取 hold 用的弹性腿
+  // 钳到开门额:`elasticForHold = max(1, 10) = 10`。抛错不行 —— 一步预算(sonnet, maxSteps=1)
+  // 只有 7,低于开门额 10,那是合法配置,不该让整轮聊天炸掉。
+  it("复审② 弹性腿 cap 低于开门额 ⇒ 钳到开门额,不变量成立,而且照常预留一行", async () => {
     await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
-    // 判官给的原始反例:elasticCap=1 / minimum=10 / unit=3 / maxUnits=5 / balance=25。
-    // 旧写法会发满 5 格却只持 min(1 + 15, 25) = 16 —— 搜索腿又被 clamp。
-    await expect(reserveWith({ llmCapInternal: 1 })).rejects.toThrow(/elasticCapInternal must be >= minimumInternal/);
-    await expectNothingHappened(25);
+
+    const { holdInternal, grantedSearchUnits } = await reserveWith({ llmCapInternal: 1 });
+
+    expect(grantedSearchUnits).toBe(5);                       // floor((25 − 10) / 3) = 5
+    expect(holdInternal).toBe(25);                            // min(max(1,10) + 15, 25) = 25
+    expect(holdInternal).toBeGreaterThanOrEqual(grantedSearchUnits * 3 + 10);  // 不变量 25 ≥ 25
+    const rows = await ledger(ORG);
+    expect(rows).toHaveLength(1);                             // 抛错的那一版这里是 0
+    expect(rows[0]!.kind).toBe("RESERVE");
+    expect(rows[0]!.reservedDelta).toBe(25);
+  });
+
+  it("复审② 钳只钳到开门额,不多持一分:余额 40、同参数 ⇒ hold 仍是 10 + 15", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 40 } });
+
+    const { holdInternal, grantedSearchUnits } = await reserveWith({ llmCapInternal: 1 });
+
+    expect(grantedSearchUnits).toBe(5);                       // min(5, floor((40 − 10)/3)=10) = 5
+    expect(holdInternal).toBe(25);                            // min(10 + 15, 40) = 25 —— 不是 40
+    // 多持的那 (10 − 1) 是弹性腿的超额预留,settle 按实际用量结算时原样退回。
+    expect(holdInternal).toBe(10 + 5 * 3);
   });
 
   it("单价非有限 / 非整数 / 非正 ⇒ 抛错(旧写法会让 0 × NaN 把 NaN 写进 hold)", async () => {
@@ -1385,12 +1408,13 @@ describe("MONEY-A10 复审 P1 — 坏参数当场抛错,而且什么都没写", 
     await expectNothingHappened(25);
   });
 
-  it("闸只管带搜索腿的那条路:`reserveCreditsUpTo` 的老调用方一条新校验都没多", async () => {
-    // cap < minimum 在老路上是**允许**的既有形状(#898:一步预算 7 < 开门额 10),闸不许碰它。
+  it("闸与钳都只管带搜索腿的那条路:`reserveCreditsUpTo` 的老调用方一分钱都没变", async () => {
+    // cap < minimum 在老路上是**允许**的既有形状(#898:一步预算 7 < 开门额 10)。
+    // 老路既不抛错,也**不钳** —— 它持的仍然是 min(cap, balance)=7,不是 10。
     await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
     const hold = await prisma.$transaction((tx) =>
       reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: 7, minimumInternal: 10 }),
     );
-    expect(hold).toBe(7); // min(7, 25) —— 照旧,没有抛错
+    expect(hold).toBe(7);
   });
 });

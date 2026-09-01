@@ -335,14 +335,17 @@ describe("ottoBudgetArgsFor — MONEY-A10 搜索腿", () => {
     );
   });
 
-  // ── 复审 P1 的前置条件,钉在生产组合上 ─────────────────────────────────────────────
+  // ── 复审 P1 的早期预警,钉在生产组合上 ─────────────────────────────────────────────
   //
-  // `reserveChatTurnWithSearchSlots` 现在**强制** elasticCap ≥ minimum(否则抛错,一分不预留)。
-  // 交给账本的 elasticCap = 这一轮的纯 LLM 腿 = min(worstCase, cap)。它随 maxSteps 走:
-  // 今天两个聊天 profile 都是 OTTO_MAX_STEPS(=10)⇒ worst 70 ⇒ 弹性腿 40 ≥ 开门额 10。
-  // 但一步预算是 7(sonnet, maxSteps=1)—— **低于开门额**。所以「谁把聊天的步数砍到很小」
-  // 就会武装那条闸,而这条断言是它武装之前唯一会响的东西。
-  it("MONEY-A10 复审 P1:生产聊天组合交给账本的弹性腿 ≥ 开门额(闸的前置条件成立)", () => {
+  // 交给账本的 elasticCap = 这一轮的纯 LLM 腿 = min(worstCase, cap),它随 maxSteps 走:今天两个
+  // 聊天 profile 都是 OTTO_MAX_STEPS(=10)⇒ worst 70 ⇒ 弹性腿 40 ≥ 开门额 10;而一步预算只有
+  // 7(sonnet, maxSteps=1),**低于开门额**。
+  //
+  // 低于开门额**不是故障**:账本那边(reserveUpToCore 的 elasticForHold)会把它钳到开门额,
+  // 不变量照样成立,聊天照跑 —— 复审②改裁的就是这一条(先前那版是抛错,会让小步数配置整轮炸)。
+  // 所以这条断言是**预警**不是防炸线:它一旦红,意味着有人把聊天步数砍到了「弹性腿要靠钳才够
+  // 罩住开门额」的档位,那时该复核的是步数预算本身,而不是这条断言。
+  it("MONEY-A10 复审 P1:生产聊天组合交给账本的弹性腿 ≥ 开门额(无需钳制,早期预警)", () => {
     for (const rt of [ottoInteractiveRuntime, ottoApprovalResumeRuntime]) {
       const withSearch = ottoBudgetArgsFor(rt, req, {
         research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }), searchSlots: slots() },
