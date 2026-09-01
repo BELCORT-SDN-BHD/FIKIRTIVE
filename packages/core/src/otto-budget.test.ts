@@ -69,15 +69,21 @@ describe("OTTO_CONVERSATION_TURN_MARGIN (usage pricing: provider cost + 5%)", ()
 
   it("the measured beta reply: 2.5 credits at the old 2.0 markup becomes 1.4 at cost + 5%", () => {
     // 那条回复真实的供应商成本是 $0.125(25 内部 ÷ 2.0 ÷ CREDITS_PER_USD)。
-    const rawUsd = 25 / (OTTO_LLM_MARGIN_DEFAULT * 100);
+    // **2.0 是当时那次测量的历史费率,不是今天的常量**(2026-09-01 起 OTTO_LLM_MARGIN_DEFAULT
+    // = 2.06)。这里写字面量而不是读常量:一条「beta 期实测到的回复花了多少」是过去的事实,
+    // 它不该因为今天改了费率就变成另一个数 —— 读活常量会让这条历史记录悄悄跟着漂。
+    const MEASURED_AT_MARKUP = 2.0;
+    const rawUsd = 25 / (MEASURED_AT_MARKUP * 100);
     expect(rawUsd).toBeCloseTo(0.125, 6);
     expect(Math.ceil(rawUsd * OTTO_CONVERSATION_TURN_MARGIN * 100)).toBe(14); // 1.4 显示 credits
   });
 
   it("leaves GENERATION pricing alone — the generation markup is untouched", () => {
     // 两次裁决动的都只是对话。共用一个 margin 会把每一张图、每一条视频一起重新定价。
-    expect(OTTO_LLM_MARGIN_DEFAULT).toBe(2.0);
+    // 生成侧费率自己的值归 llm-prices.test.ts 管(2026-09-01 起 2.06,Founder 研究档裁决);
+    // 这里要钉的是**两者不是同一个数** —— 聊天的裁决没有顺手把生成重定价。
     expect(OTTO_CONVERSATION_TURN_MARGIN).not.toBe(OTTO_LLM_MARGIN_DEFAULT);
+    expect(OTTO_CONVERSATION_TURN_MARGIN).toBeLessThan(OTTO_LLM_MARGIN_DEFAULT);
   });
 });
 
@@ -88,14 +94,18 @@ describe("OTTO_CONVERSATION_TURN_RESERVE_INTERNAL (#543 conversation-turn hold c
   });
 
   it("caps the 120-internal worst case a live conversation turn used to hold", () => {
-    // Live values: sonnet prices, the default 2.0x margin, OTTO_MAX_STEPS steps.
-    const worstCase = turnBudgetInternal(
-      llmPricesFor("claude-sonnet-4-6"),
-      OTTO_LLM_MARGIN_DEFAULT,
-      OTTO_MAX_STEPS,
-    );
+    // 这一条量的是**过去**:#543 之前,一轮对话按生成侧费率冻结,最坏 120 内部 credits。
+    // 那个 120 是在 **2.0× 的历史费率**下算出来的(sonnet 价、OTTO_MAX_STEPS 步),所以这里
+    // 写字面量 —— 和上面那条实测记录同一个道理:历史数字不该跟着今天的费率漂
+    // (2026-09-01 起生成侧费率 = 2.06,同一算式会给出 130,而 #543 当年面对的是 120)。
+    const MARKUP_AT_543 = 2.0;
+    const worstCase = turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), MARKUP_AT_543, OTTO_MAX_STEPS);
     expect(worstCase).toBe(120);
     expect(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL).toBeLessThan(worstCase);
+    // 上限对**今天**的费率同样咬得住(费率只会更高 ⇒ 最坏值只会更大)。
+    expect(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL).toBeLessThan(
+      turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_LLM_MARGIN_DEFAULT, OTTO_MAX_STEPS),
+    );
   });
 
   it("stays above the measured single-turn peak (33 internal / 3.3 displayed)", () => {

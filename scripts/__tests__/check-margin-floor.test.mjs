@@ -7,8 +7,10 @@ import assert from "node:assert/strict";
 import {
   evaluateMarginFloor,
   evaluateFloorDecisions,
+  evaluateTargetLine,
   assertCogsAgreement,
   reportFxPin,
+  reportCostPins,
   MARGIN_FLOOR,
   COGS_INPUTS,
 } from "../check-margin-floor.mjs";
@@ -266,6 +268,175 @@ for (const id of ["otto:chat", "otto:research:llm", "otto:research:search"]) {
   );
   // 到期日必须在观察日之后(否则闹钟一上来就在响)。
   assert.ok(FX_PIN.nextReviewDate > FX_PIN.reference.observedOn, "复核到期日必须晚于观察日");
+}
+
+// ── MONEY-A2:65% 目标线的红/黄/绿自测(规格 §7.2,全新的第二条线) ────────────────
+// 这条线判的是「价目该不该重定」,不是「是不是在亏钱」,所以它的红判词必须逐字带
+// 「等 Founder 重定价」—— 一条说不清该找谁的闸,最后会被当成噪音关掉。
+const TARGET = 0.65;
+const genRow = (over = {}) => ({ id: "image:seedream", chargeUsd: 0.1, cogsUsd: 0.035, ...over });
+const usageRow = (over = {}) => ({ id: "otto:chat", chargeUsd: 1.05, cogsUsd: 1, usagePriced: true, ...over });
+const parkAt = (over = {}) => ({
+  tier: "image:seedream",
+  reason: "供应商图价上涨 20%,价目待重定",
+  rulingRef: "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1113",
+  reviewBy: "2026-09-30",
+  ...over,
+});
+{
+  // GREEN:恰好压在 65.0000% 上必须过(图 / 参考图今天就是这个形状,进位余量 $0.00)。
+  const t = evaluateTargetLine([genRow()], TARGET, [], TODAY);
+  assert.equal(t.ok, true, `恰好 65.0% 必须过(IEEE754 容差):${t.reds.join("; ")}`);
+  assert.equal(t.parked.length, 0);
+}
+{
+  // MONEY-A2 RED:供应商图价涨到 $0.04 → 面值毛利 60%,破 65% 目标线,判词点名「等 Founder 重定价」。
+  const t = evaluateTargetLine([genRow({ cogsUsd: 0.04 })], TARGET, [], TODAY);
+  assert.equal(t.ok, false, "MONEY-A2: 跌破 65% 目标线必须红");
+  assert.match(t.reds[0], /等 Founder 重定价/, "MONEY-A2: 目标线红判词必须逐字含「等 Founder 重定价」");
+  assert.match(t.reds[0], /65% 目标线/);
+}
+{
+  // YELLOW:同一条破线,进了带登记与复核期的待裁决名单 → 降黄,不拦。
+  const t = evaluateTargetLine([genRow({ cogsUsd: 0.04 })], TARGET, [parkAt()], TODAY);
+  assert.equal(t.ok, true, `合规停车必须降黄不红:${t.reds.join("; ")}`);
+  assert.deepEqual(t.parked.map((r) => r.id), ["image:seedream"], "停车的档仍然被 REPORTED");
+}
+{
+  // RED:停车展期过期自动转红,判词点名到期。到期口径与地板闸 R5 逐字同一
+  // (reviewBy 当天含在展期内,次日转红)—— 同一张登记表,两条线不许对同一天给两个答案。
+  const t = evaluateTargetLine([genRow({ cogsUsd: 0.04 })], TARGET, [parkAt()], "2026-10-01");
+  assert.equal(t.ok, false, "到期次日必须转红");
+  assert.match(t.reds[0], /停车展期已到期/);
+  assert.match(t.reds[0], /reviewBy 2026-09-30/);
+  assert.match(t.reds[0], /等 Founder 重定价/);
+  // 到期当天仍是黄的 —— 与地板闸 "reviewBy is inclusive of its own day" 同口径。
+  assert.equal(evaluateTargetLine([genRow({ cogsUsd: 0.04 })], TARGET, [parkAt()], "2026-09-30").ok, true);
+  // 到期前一天仍是黄的 —— 闹钟不许提前响。
+  assert.equal(evaluateTargetLine([genRow({ cogsUsd: 0.04 })], TARGET, [parkAt()], "2026-09-29").ok, true);
+}
+for (const field of ["reason", "rulingRef", "reviewBy"]) {
+  // RED:裸 id 不是展期,是永久豁免 —— 与地板闸 R4 同一条纪律。
+  const t = evaluateTargetLine([genRow({ cogsUsd: 0.04 })], TARGET, [parkAt({ [field]: "  " })], TODAY);
+  assert.equal(t.ok, false, `停车登记缺 ${field} 必须红`);
+  assert.match(t.reds[0], new RegExp(`缺 "${field}"`));
+  assert.match(t.reds[0], /等 Founder 重定价/);
+}
+{
+  // 按量计价的三行**不吃** 65% 目标线:聊天 4.76%、深研 51.46% 都不该被这条线判。
+  const t = evaluateTargetLine([usageRow(), usageRow({ id: "otto:research:llm", chargeUsd: 2.06 })], TARGET, [], TODAY);
+  assert.equal(t.ok, true, "按量计价面不进 65% 目标线(各有各的裁决费率)");
+  assert.equal(t.parked.length, 0);
+}
+
+// ── MONEY-A2:45% 地板改按最坏实收口径 ───────────────────────────────────────────
+{
+  // 默认系数 1 = 面值口径,与本函数的历史行为逐字相同(上面所有旧用例靠的就是这条)。
+  const face = evaluateMarginFloor([{ id: "x", chargeUsd: 1.0, cogsUsd: 0.5 }]);
+  assert.equal(face.rows[0].margin, 0.5);
+  assert.equal(face.rows[0].receiptChargeUsd, 1.0);
+}
+{
+  // MONEY-A2 RED:面值 50% 是过的,按最坏实收系数 0.8944 复判只剩 44.1% → 破地板。
+  // 这正是研究档旧费率 2.0× 的形状,也是这次把它抬到 2.06 的全部理由。
+  const WORST = 0.894444444;
+  const facePass = evaluateMarginFloor([{ id: "otto:research:llm", chargeUsd: 2.0, cogsUsd: 1 }]);
+  assert.equal(facePass.ok, true, "面值口径下 2.0× 是过的 —— 这就是旧闸看不见的那件事");
+  const receipt = evaluateMarginFloor([{ id: "otto:research:llm", chargeUsd: 2.0, cogsUsd: 1 }], MARGIN_FLOOR, WORST);
+  assert.equal(receipt.ok, false, "MONEY-A2: 最坏实收口径下 2.0× 破 45% 地板");
+  assert.ok(receipt.rows[0].margin < 0.45 && receipt.rows[0].margin > 0.44);
+  // 而裁决值 2.06 在同一口径下清线(45.73%)。
+  const ruled = evaluateMarginFloor([{ id: "otto:research:llm", chargeUsd: 2.06, cogsUsd: 1 }], MARGIN_FLOOR, WORST);
+  assert.equal(ruled.ok, true, "2.06× 在最坏实收口径下清 45% 地板");
+  assert.ok(ruled.rows[0].margin > 0.457 && ruled.rows[0].margin < 0.458);
+}
+{
+  // 口径分工:实收算进 margin,**chargeUsd 保持面值** —— 否则聊天 1.05×(实收 0.939 < 成本 1)
+  // 会触发 R1「收费 ≤ 成本恒红」,而 Founder 从没裁过那件事。这一条把那个假红钉死。
+  const WORST = 0.894444444;
+  const { rows } = evaluateMarginFloor([{ id: "otto:chat", chargeUsd: 1.05, cogsUsd: 1 }], MARGIN_FLOOR, WORST);
+  assert.equal(rows[0].chargeUsd, 1.05, "chargeUsd 必须仍是面值");
+  assert.ok(rows[0].margin < 0, "实收毛利是负的(已知、已注记)");
+  const f = evaluateFloorDecisions(rows, [], TODAY, [{ ...validAccept(), tier: "otto:chat" }]).hardFails;
+  assert.ok(!f.some((x) => /R1/.test(x)), "面值口径的 R1 不许被实收口径误触发");
+}
+
+// ── MONEY-A2 第三判定:图片档从 registry 枚举,新增 model 而无成本钉点 = 闸红 ──────
+{
+  const marginTruth = await import("../../packages/core/dist/margin-truth.js");
+  const { GEN_MODELS } = await import("../../packages/core/dist/gen.js");
+  const { REFGEN_MODELS } = await import("../../packages/core/dist/refgen.js");
+  // 现役每一个图片 / 参考图 model 都必须有钉点键,且键必须真的在钉点表里。
+  const { COST_PINS } = await import("../../packages/core/dist/cost-pins.js");
+  for (const model of GEN_MODELS) {
+    const key = marginTruth.IMAGE_MODEL_COST_PIN[model];
+    assert.ok(key, `MONEY-A2: 图片 model ${model} 没有成本钉点 = 闸红`);
+    assert.ok(COST_PINS[key], `MONEY-A2: 图片 model ${model} 的钉点键 ${key} 不在钉点表里`);
+  }
+  for (const model of REFGEN_MODELS) {
+    const key = marginTruth.REFGEN_MODEL_COST_PIN[model];
+    assert.ok(key, `MONEY-A2: 参考图 model ${model} 没有成本钉点 = 闸红`);
+    assert.ok(COST_PINS[key], `MONEY-A2: 参考图 model ${model} 的钉点键 ${key} 不在钉点表里`);
+  }
+  // 枚举出来的 SKU id 与手抄 COGS_INPUTS 逐字对齐(双证人机制靠的就是这个对齐)。
+  for (const model of GEN_MODELS) assert.ok(COGS_INPUTS[`image:${model}`], `image:${model} 必须在 COGS_INPUTS 里`);
+  for (const model of REFGEN_MODELS) assert.ok(COGS_INPUTS[`refgen:${model}`], `refgen:${model} 必须在 COGS_INPUTS 里`);
+  // 缺钉点的形状是可判的:模拟一个只上了菜单没配钉点的 model。
+  const pinMap = { ...marginTruth.IMAGE_MODEL_COST_PIN };
+  assert.equal(pinMap["seedream-pro"], undefined, "未上架的 model 本来就没有钉点 —— 这正是闸要红的那一刻");
+}
+
+// ── MONEY-A4:成本钉点闸的红/黄/绿自测(判词样式与 FX 钉点一致) ────────────────────
+{
+  const green = reportCostPins([]);
+  assert.equal(green.ok, true, "无问题 → 绿");
+}
+{
+  // 黄:复核到期。ok 仍是 true —— 复核牌价是 Founder 的定价动作,不该拦发布。
+  const yellow = reportCostPins([{ level: "yellow", pin: "image:seedream-lite:per-image", message: "复核期到了 (C4)" }]);
+  assert.equal(yellow.ok, true, "成本钉点黄灯不许把闸判红");
+  assert.equal(yellow.yellow.length, 1);
+}
+{
+  // 红:缺来源。ok 必须是 false —— 没出处的成本不是证据。
+  const red = reportCostPins([{ level: "red", pin: "x", message: "缺 source (C3)" }]);
+  assert.equal(red.ok, false, "成本钉点红灯必须判红");
+  assert.equal(red.red.length, 1);
+}
+{
+  // 红压过黄。
+  const both = reportCostPins([
+    { level: "yellow", pin: "a", message: "复核期到了" },
+    { level: "red", pin: "b", message: "缺 source" },
+  ]);
+  assert.equal(both.ok, false, "同时有红有黄时,闸是红的");
+}
+// 仓库现行的成本钉点表在今天必须全绿 —— 闸自己也不许带着一条已知红线合并。
+{
+  const { COST_PINS, evaluateAllCostPins } = await import("../../packages/core/dist/cost-pins.js");
+  const today = new Date().toISOString().slice(0, 10);
+  const problems = evaluateAllCostPins(today);
+  assert.equal(
+    problems.filter((p) => p.level === "red").length,
+    0,
+    `现行成本钉点有红线:${problems.map((p) => p.message).join("; ")}`,
+  );
+  assert.ok(Object.keys(COST_PINS).length >= 15, "首批钉点 15 条");
+}
+
+// ── MONEY-A2:实收系数由 core 现算,三包的数逐个钉住(不许手抄 0.8944) ──────────────
+{
+  const { CREDIT_PACKS, packReceiptCoefficient, worstPackReceiptCoefficient } = await import(
+    "../../packages/core/dist/pricing-config.js"
+  );
+  const coeffs = CREDIT_PACKS.map((p) => packReceiptCoefficient(p));
+  const near = (a, b) => Math.abs(a - b) < 5e-5;
+  assert.ok(near(coeffs[0], 1.0333), `Starter 系数 ${coeffs[0]} ≠ 1.0333`);
+  assert.ok(near(coeffs[1], 0.9697), `Standard 系数 ${coeffs[1]} ≠ 0.9697`);
+  assert.ok(near(coeffs[2], 0.8944), `Pro 系数 ${coeffs[2]} ≠ 0.8944`);
+  // 最坏包是**算出来的**(min),不是「最深折扣包」这条公理。
+  assert.equal(worstPackReceiptCoefficient(), Math.min(...coeffs), "最坏系数 = min,不是记住的那个包");
+  assert.ok(coeffs[0] > 1, "小包是溢价卖的 —— 「买得越多我们收得越少」是算术不是直觉");
 }
 
 console.log("✓ check-margin-floor red/green self-test passed");

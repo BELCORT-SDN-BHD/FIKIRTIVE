@@ -12,8 +12,11 @@ import {
   SEARCH_PROVIDER_COST_USD,
   searchUnitChargeInternal,
   searchChargeInternal,
+  packReceiptCoefficient,
+  worstPackReceiptCoefficient,
 } from "./pricing-config.js";
 import { CREDITS_PER_USD } from "./spend.js";
+import { costPinValue } from "./cost-pins.js";
 
 /**
  * 钱路 M1-c —— 集中定价配置的行为测试。
@@ -238,5 +241,58 @@ describe("搜索计价 3×(Founder 2026-07-03 裁决,2026-08-18 裁决 9b 落地
     for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(searchChargeInternal(bad), `searches=${String(bad)}`).toBe(0);
     }
+  });
+});
+
+/* ─────── §2b 实收系数(MONEY-A2:45% 地板的最坏实收口径) ─────── */
+
+/**
+ * 三个系数是这次施工里唯一「看起来像常量」的数字,所以它们必须被钉死 —— 但钉的是
+ * **算出来的值**,不是抄进来的值。任何一样输入动了(包价、包 credits、Stripe 费率、
+ * 汇率钉点),这一节当场变红,逼一次口径重审。
+ */
+describe("充值包实收系数(MONEY-A2:面值 × 包折扣 × 手续费 × 汇率钉点)", () => {
+  const byName = (needle: string) => CREDIT_PACKS.find((p) => p.name.startsWith(needle))!;
+
+  it("MONEY-A2:三包系数 = Starter 1.0333(溢价)/ Standard 0.9697 / Pro 0.8944", () => {
+    expect(packReceiptCoefficient(byName("Starter"))).toBeCloseTo(1.0333, 4);
+    expect(packReceiptCoefficient(byName("Standard"))).toBeCloseTo(0.9697, 4);
+    expect(packReceiptCoefficient(byName("Pro"))).toBeCloseTo(0.8944, 4);
+  });
+
+  it("最坏包是**算出来的**(min),不是「最深折扣包」这条公理", () => {
+    const coeffs = CREDIT_PACKS.map((p) => ({ name: p.name, c: packReceiptCoefficient(p) }));
+    const worst = coeffs.reduce((a, b) => (b.c < a.c ? b : a));
+    // 今天答案是 Pro —— 但它是比出来的,不是记住的。
+    expect(worst.name).toContain("Pro");
+    expect(worstPackReceiptCoefficient()).toBeCloseTo(worst.c, 12);
+    expect(worstPackReceiptCoefficient()).toBeCloseTo(0.8944, 4);
+  });
+
+  it("小包是**溢价**卖的:Starter 系数 > 1 —— 「买得越多我们收得越少」不是一条直觉,是算术", () => {
+    expect(packReceiptCoefficient(byName("Starter"))).toBeGreaterThan(1);
+    expect(packReceiptCoefficient(byName("Standard"))).toBeLessThan(1);
+    expect(packReceiptCoefficient(byName("Pro"))).toBeLessThan(packReceiptCoefficient(byName("Standard")));
+  });
+
+  it("系数由现算,不是手抄:逐包复算一遍算式(手续费 = round(金额×3%) + RM1)", () => {
+    for (const pack of CREDIT_PACKS) {
+      const feeMinor =
+        Math.round(pack.amountMinor * costPinValue("stripe:fee:local-card-percent")) +
+        costPinValue("stripe:fee:local-card-fixed-myr-minor");
+      const expected = myrMinorToUsd(pack.amountMinor - feeMinor) / (pack.credits / 10);
+      expect(packReceiptCoefficient(pack), pack.name).toBeCloseTo(expected, 12);
+    }
+  });
+
+  it("研究档 2.06× 在最坏实收口径下**刚清** 45% 地板,旧费率 2.0× 破线", () => {
+    const worst = worstPackReceiptCoefficient();
+    const receiptMargin = (k: number) => (k * worst - 1) / (k * worst);
+    expect(receiptMargin(2.06)).toBeCloseTo(0.4573, 4);
+    expect(receiptMargin(2.06)).toBeGreaterThanOrEqual(0.45);
+    expect(receiptMargin(2.0)).toBeCloseTo(0.441, 3);
+    expect(receiptMargin(2.0)).toBeLessThan(0.45);
+    // 聊天 1.05× 在同一口径下是负的 —— 已知、已注记、不改费率(margin-truth.ts 的 RULED 行)。
+    expect(receiptMargin(1.05)).toBeCloseTo(-0.0648, 4);
   });
 });

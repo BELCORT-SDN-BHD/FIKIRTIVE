@@ -19,7 +19,7 @@
  *   - `margin-truth.ts` = 把以上全部拉进 45% 毛利地板检查的那张表(闸)。
  */
 import { costPinValue } from "./cost-pins.js";
-import { CREDITS_PER_USD } from "./spend.js";
+import { CREDITS_PER_USD, INTERNAL_PER_DISPLAY } from "./spend.js";
 
 /* ───────────────────────── §1 FX 钉点(Founder 裁决 10) ───────────────────────── */
 
@@ -233,6 +233,58 @@ export function verifyCreditPackPurchase(input: {
     };
   }
   return { verdict: "match", pack };
+}
+
+/* ───────── §2b 实收系数(MONEY-A2:45% 地板改按最坏实收口径评估) ───────── */
+
+/**
+ * **一个充值包的实收系数** = 我们真收到的美元 ÷ 这个包的 credits 面值。
+ *
+ * 三样东西一起咬掉面值,顺序就是钱实际走的路:
+ *   ① **包折扣** —— RM100 换 220 credits(面值 $22),RM250 换 600(面值 $60)。买得越多,
+ *      每一块钱换到的 credits 越多,我们收到的钱相对面值就越少。
+ *   ② **Stripe 手续费** —— 本地卡 3% + RM1.00/笔(两条成本钉点,§7.1)。固定的那 RM1 对
+ *      小额包咬得最狠,这也是为什么最坏的那个包**不能靠猜**。
+ *   ③ **汇率钉点** —— 收的是令吉,成本是美元,按 `FX_PIN.myrPerUsd` = 4.5 换算。
+ *
+ * 举个商家例子:Pro 包 RM250。手续费 = round(25000 × 3%) + 100 = 850 仙,到手 RM241.50,
+ * 按钉点换回 $53.67;而这 600 credits 的面值是 $60。系数 = 53.67 / 60 ≈ **0.8944** ——
+ * 也就是说商家账面上花的每 $1,我们实际只收到 89 美分。毛利闸的 45% 地板量的就是这个口径。
+ *
+ * **系数一个都不许手抄**:三包的数今天是 1.0333 / 0.9697 / 0.8944,但它们是 `CREDIT_PACKS`
+ * ×手续费钉点×`FX_PIN` 算出来的结果,不是常量。改包价、改包 credits、Stripe 调费率、重定汇率
+ * 钉点 —— 任何一个动了,这三个数当场跟着动,毛利闸当场重判。
+ *
+ * 注意 Starter 的系数 **> 1**:RM25 换 50 credits(面值 $5),手续费后到手 $5.17 —— 小包是
+ * 溢价卖的。所以「最深折扣包 = 最坏包」是个**假设**,不是定理:真正的最坏包由 `Math.min` 算
+ * (见 `worstPackReceiptCoefficient`),将来加一个更狠的包时不用有人记得来改这里。
+ *
+ * 口径是**本地卡**。国际卡再叠 +1%(`stripe:fee:international-card-percent-surcharge`),
+ * Pro 包系数 0.8852 —— 那一带只入注记备案,不入闸(money-engine.md §7.9)。
+ */
+export function packReceiptCoefficient(pack: CreditPack): number {
+  const feeMinor =
+    Math.round(pack.amountMinor * costPinValue("stripe:fee:local-card-percent")) +
+    costPinValue("stripe:fee:local-card-fixed-myr-minor");
+  const netUsd = myrMinorToUsd(pack.amountMinor - feeMinor);
+  // credits 面值:1 显示 credit = INTERNAL_PER_DISPLAY 内部 credits = $0.10。
+  const faceValueUsd = (pack.credits * INTERNAL_PER_DISPLAY) / CREDITS_PER_USD;
+  return netUsd / faceValueUsd;
+}
+
+/**
+ * **最坏包的实收系数** —— 45% 宪法地板按这个口径评估(MONEY-A2)。
+ *
+ * `Math.min` 而不是「取最深折扣包」:最坏包是**算出来的**。今天答案是 Pro(0.8944),
+ * 但那是三个数比出来的结论,不是一条会烂掉的记忆。
+ *
+ * **这是压力测试口径**,不是「我们正在亏钱」:系数里的汇率用的是钉点 4.5(= 假设马币已经
+ * 贬到那里),而 2026-08-18 的参考现汇是 4.062917。钉点比现汇高 10.76% 是**刻意的保守缓冲**
+ * —— 按现汇复算,研究档 2.06× 的实收是 51.00%,离地板还很远。闸按压力口径判,是因为缓冲
+ * 存在的意义就是「哪天真贬到这里,我们仍然没破线」(money-engine.md §7.0 量尺口径备案)。
+ */
+export function worstPackReceiptCoefficient(): number {
+  return Math.min(...CREDIT_PACKS.map(packReceiptCoefficient));
 }
 
 /* ───────────── §3 搜索计价(Founder 2026-07-03 裁决 3×,2026-08-18 裁决 9b 落地) ───────────── */

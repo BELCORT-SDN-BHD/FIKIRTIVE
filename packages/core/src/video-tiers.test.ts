@@ -370,8 +370,10 @@ describe("#645 T4 毛利真值表(2 分辨率 × 12 时长 = 24 行,穷举)", ()
   it("深研两条腿都清 45% 地板(裁决 9b:research 纳入毛利闸,搜索按 3× 计价)", () => {
     const llm = marginTruthTable().find((r) => r.id === "otto:research:llm")!;
     const search = marginTruthTable().find((r) => r.id === "otto:research:search")!;
-    // LLM 腿:默认 2.0× ⇒ 50%,清地板且不在任何豁免名单上。
-    expect(llm.margin).toBeCloseTo(0.5, 9);
+    // LLM 腿:默认 **2.06×** ⇒ 面值 51.46%(Founder 2026-09-01 裁决,前值 2.0× = 50%),
+    // 清地板且不在任何豁免名单上。CI 闸那边还会按最坏实收口径复判一次(45.73%),
+    // 这张表是**面值口径**的报表 —— 两个口径的差是汇率钉点的保守缓冲,见 margin-truth.ts 注释。
+    expect(llm.margin).toBeCloseTo(0.5146, 4);
     expect(llm.clearsFloor).toBe(true);
     expect(acceptedExceptionFor("otto:research:llm")).toBeUndefined();
     // 搜索腿:Founder 2026-07-03 裁的 3× ⇒ 66.7%,清地板。
