@@ -1,6 +1,17 @@
 import "server-only";
-import { prisma } from "@fikirtive/db";
-import { displayCredits, FOUNDER_OWNER_ID } from "@fikirtive/core";
+import { prisma, adjustWindowTotals } from "@fikirtive/db";
+import { displayCredits, FOUNDER_OWNER_ID, FINANCE_ADJUST_LIMITS, CREDIT_PACKS } from "@fikirtive/core";
+
+/** 一个**还活着的商家 org**,或者 null。
+ *
+ *  合并到这里(此前是 `tenant-actions.ts` 里的私有拷贝)是因为跨租户动钱的入口现在有三个
+ *  ——授信、founder 面调账、人工退款——三处必须用同一条判定,否则「哪个入口能对已关闭的
+ *  org 动钱」会变成一个要逐个入口去读代码才能回答的问题。founder org 永远不是商家 org:
+ *  跨租户动作绝不能悄悄落回 founder 自己身上。 */
+export async function activeMerchantOrg(orgId: string): Promise<{ id: string } | null> {
+  if (!orgId || orgId === FOUNDER_OWNER_ID) return null;
+  return prisma.organization.findFirst({ where: { id: orgId, deletedAt: null }, select: { id: true } });
+}
 
 export type TenantRow = {
   orgId: string;
@@ -31,6 +42,16 @@ export type TenantDetail = {
   genCount: number;
   ledger: { id: string; kind: string; displayedDelta: number; reason: string; createdAt: string }[];
   audit: { id: string; type: string; createdAt: string }[];
+  /** MONEY-A14:这个 org 在滚动 30 天里动过的**人工**钱(显示 credits,|Δ| 合计)。
+   *  与真正会拒绝操作员的那把闸读同一条谓词(`adjustWindowTotals`),所以页面上的数字
+   *  和闸的判定不可能各说各话。 */
+  adjustRolling30dDisplay: number;
+  /** 同上口径的上限(显示 credits),来自 `FINANCE_ADJUST_LIMITS` 单一源。 */
+  adjustRolling30dLimitDisplay: number;
+  /** 在售充值包(人工退款要按商家**原购包的实付单价**换算,见 runbook 第 4 条)。
+   *  从服务端带下去,而不是让 admin 客户端自己 import 价目表 —— 选项与动作真正接受的那张表
+   *  因此永远是同一张。 */
+  creditPacks: { name: string; credits: number; amountMinor: number }[];
 };
 
 export async function listTenants(): Promise<{ tenants: TenantRow[]; invited: InvitedRow[] }> {
@@ -138,6 +159,9 @@ export async function getTenantDetail(orgId: string): Promise<TenantDetail | nul
     }),
   ]);
 
+  // 报表按**累计**判,不按单行判(此前一天发二十行 1000 也全绿)。口径来自钱服务本身。
+  const adjustTotals = await adjustWindowTotals([orgId]);
+
   return {
     orgId: org.id,
     name: org.name,
@@ -160,5 +184,8 @@ export async function getTenantDetail(orgId: string): Promise<TenantDetail | nul
       type: a.type,
       createdAt: a.createdAt.toISOString(),
     })),
+    adjustRolling30dDisplay: displayCredits(adjustTotals.get(orgId) ?? 0),
+    adjustRolling30dLimitDisplay: FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay,
+    creditPacks: CREDIT_PACKS.map((pack) => ({ name: pack.name, credits: pack.credits, amountMinor: pack.amountMinor })),
   };
 }

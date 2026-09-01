@@ -11,6 +11,8 @@ import {
   impersonateTenant,
   setMembershipStatus,
 } from "@/lib/tenant-actions";
+import { refundCreditsAction } from "@/lib/refund-actions";
+import { FINANCE_ADJUST_LIMITS, FINANCE_PER_ACTION_LIMIT_MESSAGE } from "@fikirtive/core/finance-limits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -74,7 +76,7 @@ function Metric({ label, value, detail, tone = "neutral" }: { label: string; val
 }
 
 export function TenantDetail({ detail }: { detail: Detail }) {
-  const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit } = detail;
+  const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit, adjustRolling30dDisplay, adjustRolling30dLimitDisplay, creditPacks } = detail;
   const router = useRouter();
   const grantBusyRef = useRef(false);
 
@@ -89,13 +91,25 @@ export function TenantDetail({ detail }: { detail: Detail }) {
   const [cutBusy, setCutBusy] = useState(false);
   const [cutMsg, setCutMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // MONEY-A14 人工退款。**退款单号在表单里生成一次就不再变**:它同时是账本 refId 和 Stripe 的
+  // idempotency key,每点一次就换一个新号,等于把幂等保护自己关掉。重试要用同一个号。
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundPi, setRefundPi] = useState("");
+  const [refundPack, setRefundPack] = useState(String(creditPacks[0]?.credits ?? ""));
+  const [refundReason, setRefundReason] = useState("");
+  const [refundPartial, setRefundPartial] = useState(false);
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundMsg, setRefundMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [refundTicket, setRefundTicket] = useState(() => crypto.randomUUID());
+  const refundBusyRef = useRef(false);
+
   const [impersonateOpen, setImpersonateOpen] = useState(false);
   const [impersonateReason, setImpersonateReason] = useState("");
   const [impersonateBusy, setImpersonateBusy] = useState(false);
   const [impersonateMsg, setImpersonateMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const canImpersonate = impersonateReason.trim().length >= 8;
   const parsedGrantAmount = Number(grantAmount);
-  const grantOverLimit = Number.isFinite(parsedGrantAmount) && Math.abs(parsedGrantAmount) > 1000;
+  const grantOverLimit = Number.isFinite(parsedGrantAmount) && Math.abs(parsedGrantAmount) > FINANCE_ADJUST_LIMITS.perActionDisplay;
 
   async function submitGrant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -107,8 +121,8 @@ export function TenantDetail({ detail }: { detail: Detail }) {
         setGrantMsg({ ok: false, text: "Enter a non-zero whole number of credits." });
         return;
       }
-      if (Math.abs(displayedAmount) > 1000) {
-        setGrantMsg({ ok: false, text: "Credit actions are capped at 1,000 displayed credits each." });
+      if (Math.abs(displayedAmount) > FINANCE_ADJUST_LIMITS.perActionDisplay) {
+        setGrantMsg({ ok: false, text: FINANCE_PER_ACTION_LIMIT_MESSAGE });
         return;
       }
       setGrantBusy(true);
@@ -130,6 +144,51 @@ export function TenantDetail({ detail }: { detail: Detail }) {
       router.refresh();
     } finally {
       grantBusyRef.current = false;
+    }
+  }
+
+  async function submitRefund(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (refundBusyRef.current) return;
+    refundBusyRef.current = true;
+    try {
+      const displayedAmount = Number(refundAmount);
+      if (!Number.isInteger(displayedAmount) || displayedAmount <= 0) {
+        setRefundMsg({ ok: false, text: "Enter a whole number of credits to refund." });
+        return;
+      }
+      if (!confirm(`Refund ${displayedAmount} credits to ${ownerEmail || orgId} and take the credits back? This moves real money.`)) return;
+      setRefundBusy(true);
+      setRefundMsg(null);
+      const result = await refundCreditsAction({
+        orgId,
+        displayedAmount,
+        paymentIntentId: refundPi.trim(),
+        packCredits: Number(refundPack),
+        refundId: refundTicket,
+        allowPartial: refundPartial,
+        reason: refundReason,
+      });
+      setRefundBusy(false);
+      if ("error" in result) {
+        // 单号**不换**:失败的下一步通常是「用同一个号再跑一次」(Stripe 那一步幂等),
+        // 换号会把这层保护关掉。
+        setRefundMsg({ ok: false, text: result.error });
+        return;
+      }
+      setRefundMsg({
+        ok: true,
+        text: `Refunded ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId})${result.duplicate ? " — already done earlier, nothing moved twice" : ""}. Log it in docs/ops/manual-money-ledger.md.`,
+      });
+      setRefundAmount("");
+      setRefundPi("");
+      setRefundReason("");
+      setRefundPartial(false);
+      setRefundTicket(crypto.randomUUID()); // 这一单结清了,下一单换新号
+      router.refresh();
+    } finally {
+      refundBusyRef.current = false;
+      setRefundBusy(false);
     }
   }
 
@@ -224,6 +283,10 @@ export function TenantDetail({ detail }: { detail: Detail }) {
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant={grantOverLimit ? "warning" : "outline"}>{grantOverLimit ? "Over finance limit" : "Within finance limit"}</Badge>
+              {/* MONEY-A14:真正会拒绝你的是**累计**,不是单笔 —— 所以累计就摆在按钮旁边。 */}
+              <Badge variant={adjustRolling30dDisplay > adjustRolling30dLimitDisplay ? "destructive" : "outline"}>
+                {adjustRolling30dDisplay.toLocaleString()} / {adjustRolling30dLimitDisplay.toLocaleString()} manual credits in 30 days
+              </Badge>
               <span>Negative values deduct credits if the account can stay non-negative.</span>
               {grantMsg ? <span className={grantMsg.ok ? "text-success" : "text-destructive"}>{grantMsg.text}</span> : null}
             </div>
@@ -255,6 +318,54 @@ export function TenantDetail({ detail }: { detail: Detail }) {
           </div>
         </Panel>
       </div>
+
+      <Panel
+        title="Manual refund"
+        subtitle="Locks the credits first, then refunds the card, then settles the ledger with the Stripe refund id. Log every refund in docs/ops/manual-money-ledger.md."
+      >
+        <form onSubmit={submitRefund} className="grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-[120px_1fr_1fr_auto] sm:items-end">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Credits</span>
+              <Input type="number" step="1" min="1" inputMode="numeric" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} placeholder="100" required className="h-10 text-sm" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Original payment (pi_…)</span>
+              <Input value={refundPi} onChange={(event) => setRefundPi(event.target.value)} placeholder="pi_3Q…" required className="h-10 font-mono text-sm" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Pack they bought</span>
+              <select
+                value={refundPack}
+                onChange={(event) => setRefundPack(event.target.value)}
+                className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+              >
+                {creditPacks.map((pack) => (
+                  <option key={pack.credits} value={pack.credits}>
+                    {pack.name} · RM{(pack.amountMinor / 100).toFixed(0)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button type="submit" variant="secondary" disabled={refundBusy}>{refundBusy ? "Refunding" : "Refund"}</Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Reason</span>
+              <Input value={refundReason} onChange={(event) => setRefundReason(event.target.value)} maxLength={500} placeholder="unused credits, merchant asked on 2026-09-02" className="h-10 text-sm" />
+            </label>
+            <label className="flex items-center gap-2 pb-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={refundPartial} onChange={(event) => setRefundPartial(event.target.checked)} />
+              Refund what the balance can cover
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">Refund id {refundTicket.slice(0, 8)}</Badge>
+            <span>Ringgit is worked out from that pack&apos;s real price per credit. A retry must reuse this refund id — it is what stops a second refund.</span>
+            {refundMsg ? <span className={refundMsg.ok ? "text-success" : "text-destructive"}>{refundMsg.text}</span> : null}
+          </div>
+        </form>
+      </Panel>
 
       <div className="grid gap-5 xl:grid-cols-2">
         <Panel title="Credit activity" subtitle="Recent append-only ledger rows.">

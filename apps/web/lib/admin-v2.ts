@@ -2,6 +2,8 @@ import "server-only";
 
 import {
   displayCredits,
+  FINANCE_ADJUST_LIMITS,
+  MANUAL_REFUND_REF_PREFIX,
   COWORK_PLANNER_SYSTEM,
   GEN_MODES,
   FOUNDER_OWNER_ID,
@@ -19,7 +21,7 @@ import {
   type Section,
 } from "@fikirtive/core";
 // Founder-only platform admin read model; every query below is bounded and metadata-first.
-import { prisma } from "@fikirtive/db";
+import { prisma, adjustWindowRows, adjustWindowTotals } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { listConversations } from "@/lib/conversation-admin";
@@ -80,7 +82,10 @@ export type LargeGrantRow = {
   ownerEmail: string;
   kind: string;
   amount: number;
+  /** 滚动 30 天累计上限(显示 credits),来自 `FINANCE_ADJUST_LIMITS` 单一源。 */
   limit: number;
+  /** 这一行所属 org 在滚动 30 天里动过的人工钱合计(显示 credits,|Δ| 合计,含本行)。 */
+  rollingTotal: number;
   state: "within limit" | "over limit" | "adjustment";
   reason: string;
   createdBy: string;
@@ -423,8 +428,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         where: { orgId: FOUNDER_OWNER_ID },
         select: { balance: true, reserved: true },
       }),
+      // #736 后续(MONEY-A14):账本面板此前只读 founder 一个 org —— 商家那边的每一笔人工调账
+      // 在报表上根本不存在,而报表正是「有人在乱发 credits 吗」这个问题的唯一入口。改读全 org。
       prisma.creditLedger.findMany({
-        where: { orgId: FOUNDER_OWNER_ID },
         orderBy: { createdAt: "desc" },
         take: 80,
         select: {
@@ -677,31 +683,37 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       createdAt: row.createdAt.toISOString(),
     }));
 
-    const grantLimit = 1000;
-    const largeGrants: LargeGrantRow[] = ledger
-      .filter((row) => row.kind === "GRANT" || row.kind === "ADJUST")
-      .slice(0, 24)
+    // MONEY-A14 —— **按 org 的滚动 30 天累计判,不再按单行判**。旧口径是「这一行超过 1000 吗」,
+    // 于是一天发二十行 999 全绿,而真正会拒绝操作员的是累计闸。行与合计都来自钱服务本身
+    // (`adjustWindowRows` / `adjustWindowTotals` 与闸同一条谓词),报表和闸不可能各说各话。
+    const grantLimit = FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay;
+    const adjustRows = await adjustWindowRows(24);
+    const adjustTotals = await adjustWindowTotals([...new Set(adjustRows.map((row) => row.orgId))]);
+    const largeGrants: LargeGrantRow[] = adjustRows
       .map((row) => {
-        const amount = row.displayedDelta;
+        const amount = displayCredits(row.balanceDelta);
+        const rollingTotal = displayCredits(adjustTotals.get(row.orgId) ?? 0);
         const state: LargeGrantRow["state"] =
-          amount < 0 ? "adjustment" : amount > grantLimit ? "over limit" : "within limit";
+          rollingTotal > grantLimit ? "over limit" : amount < 0 ? "adjustment" : "within limit";
         // #736 — resolve the org through the SAME helper the case list uses, instead of a local
         // "founder or raw id" ternary that put `org_cmsj8y…` where a shop name belongs (and put
-        // an org id in a field called `ownerEmail`). Today the ledger read above is scoped to the
-        // founder org, so the merchant branch is unreachable — this removes the trap rather than
-        // a live symptom, and the moment that read widens the rows read correctly.
+        // an org id in a field called `ownerEmail`). MONEY-A14 起这些行**真的**跨 org 了,
+        // 当年埋下的那条正确分支从此天天在跑。
         const owner = ownerName(ownerByOrg, row.orgId);
         return {
           id: row.id,
           tenant: owner.name,
           ownerEmail: owner.email,
-          kind: row.kind,
+          // 人工退款那条腿写的是 RESERVE 行(SETTLE 行的 balanceDelta 恒为 0),在报表上如实
+          // 读作 REFUND —— 它是退款,不是一次授信。
+          kind: row.refId?.startsWith(MANUAL_REFUND_REF_PREFIX) ? "REFUND" : row.kind,
           amount,
           limit: grantLimit,
+          rollingTotal,
           state,
           reason: row.reason,
           createdBy: row.createdBy,
-          createdAt: row.createdAt,
+          createdAt: row.createdAt.toISOString(),
         };
       });
 
@@ -973,7 +985,10 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
 
     const lowBalanceCount = tenants.filter((tenant) => tenant.risk === "watch").length;
     const blockedTenantCount = tenants.filter((tenant) => tenant.risk === "blocked").length;
-    const overLimitGrants = largeGrants.filter((item) => item.state === "over limit").length;
+    // 超限是 **org 级**事实,不是行级:同一个 org 的五行都超限,那也只是一个 workspace 出事。
+    const overLimitGrants = [...adjustTotals.values()].filter(
+      (internal) => displayCredits(internal) > grantLimit,
+    ).length;
     const queueFailureCount = failedRows.length;
 
     return {
@@ -986,7 +1001,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
           // needs you"; these rows are settled ledger history that no control can clear, so the
           // old warning could only ever sit on the founder's home page forever.
           value: String(overLimitGrants),
-          detail: "Recorded ledger movements above the 1,000 credit single-action limit.",
+          detail: `Workspaces whose manual credit movements passed ${FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay.toLocaleString("en-US")} displayed credits in ${FINANCE_ADJUST_LIMITS.windowDays} days.`,
           tone: "neutral",
           href: "/admin/money",
         },

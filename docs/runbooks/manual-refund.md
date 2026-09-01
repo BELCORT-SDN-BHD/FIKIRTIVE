@@ -6,43 +6,57 @@
 ## 前置(查不清就不退)
 
 1. 退款申请与理由(逐单人工审,Founder 或其授权者裁定退不退)。
-2. **未使用余额 ≥ 申请退的 credits 数**;不足则拒退,或经 Founder 同意按可扣部分退。
+2. **未使用余额 ≥ 申请退的 credits 数**;不足则拒退,或经 Founder 同意勾选「Refund what the balance can cover」按可扣部分退。
 3. 找到原充值:Stripe Dashboard → Payments → 该商家的付款(`pi_…`),确认包与实付金额。
-4. **退款金额换算=按商家原购包的实付单价**(不是面值):RM = N × 该包 RM 价 ÷ 该包 credits 数。
-   例:从 Pro 包(RM250→600cr)退 100cr = 100 × 250/600 ≈ **RM41.67**。台账同时按汇率钉点(`FX_PIN`,现值 4.5)记 USD 口径。
+4. **退款金额换算=按商家原购包的实付单价**(不是面值):RM = N × 该包 RM 价 ÷ 该包 credits 数,**向下取整到仙**。
+   例:从 Pro 包(RM250→600cr)退 100cr = 100 × 250/600 = **RM41.66**。台账同时按汇率钉点(`FX_PIN`,现值 4.5)记 USD 口径;该 USD 数也写在账本 SETTLE 行的 reason 上。
 
-## 步骤 A:S4 专用退款动作落地后(验收 S5 按此演示)
+## 步骤:admin 面的专用退款动作(已落地,S5 按此演示)
 
-1. admin 面发起退款动作,填 N cr 与 `pi_…`。动作内部三段:
-   ① `reserveCredits(refId=manual-refund:<uuid>)` 预扣锁定 N cr——余额不足=reserve 失败=当场拒退;
-   ② 调 Stripe refund API 得退款单号 `re_…`;
-   ③ `settleCredits` 落账,SETTLE 行 reason 当场载 `re_…`。
-   Stripe 退款失败 → `refundReservation` 自动释放,余额净变 0、账本成对。
-2. 台账登记一行(见「登记」)。
-3. 核对:SETTLE 扣减数 × 包单价 = Stripe 退款 RM 数;按 `FX_PIN` 折 USD 两边一致;商家消费历史该行显示「Refund」。
+入口:`/admin/tenants/<orgId>` → **Manual refund** 面板(动作 `refundCreditsAction`,`apps/web/lib/refund-actions.ts`;权限 = `tenants.mutate`,即 super-admin)。
 
-注意:退款计入 30 天/2000cr 人工调账累计闸(S2 稿 7.6);大额退款撞闸=设计内摩擦,解法是改上限常量走 PR+Founder 批,不绕闸。
+1. 填四个东西:退多少 credits(N)、原付款 `pi_…`、商家**原购的包**(下拉,来自在售包表)、理由。需要按可扣部分退时勾选 **Refund what the balance can cover**。
+2. 面板上那个 **Refund id** 就是这一单的退款单号(uuid),它同时是:
+   - 账本 refId(`manual-refund:<uuid>`);
+   - Stripe 的 idempotency key。
+   **重试必须用同一个号**——面板在这一单结清之前不会换号。自己另起一个新号去重试 = 把防重复退款的保护关掉。
+3. 动作内部三段,顺序固定:
+   ① `reserveCredits(refId=manual-refund:<uuid>)` 预扣锁定 N cr——余额不足=预扣失败=当场拒退;
+   ② `stripe.refunds.create(payment_intent, amount)` 得退款单号 `re_…`(`pending` 也算已受理);
+   ③ `settleCredits` 落账,SETTLE 行 reason 当场载 `stripe-refund:re_… myr_minor:… usd:…`。
+   Stripe 失败(抛错、或返回 `failed`/`canceled`)→ `refundReservation` 自动释放,余额净变 0、账本成对,页面明说「已释放」。
+4. 台账登记一行(见「登记」)。
+5. 核对:商家消费历史该行显示 **Refund**;SETTLE 行 reason 里的 `myr_minor` 与 Stripe 上的退款金额逐仙一致;`usd:` 与台账 USD 口径一致。
 
-## 步骤 B:过渡人工版(专用动作落地前;不改任何已写行)
+## 会被挡下来的四种情况(都不是 bug)
 
-1. **扣 credits(先行)**:admin 面负向调账 −N cr,reason 写 `Manual refund against <pi_…>`(此时无退款单号,单号**不回填**,只进台账)。
-2. **Stripe 退款(后行)**:Dashboard → 该笔付款 → Refund → 填换算 RM 金额 → 得 `re_…`。
-3. **登记**:`docs/ops/manual-money-ledger.md` 追加一行(事件=人工退款),含 ledger 行 id、`pi_…`、`re_…`、三口径金额、经手人——过渡期内退款单号的落点是台账,不是账本行。
-4. 核对同步骤 A 第 3 条(消费历史此期间显示为 Adjustment,属已知过渡态)。
+| 页面提示 | 含义 | 怎么办 |
+|---|---|---|
+| Not enough unused credits… | 余额不够扣 | 拒退,或经批准勾 partial 重来 |
+| …rolling limit / 30 days | 撞上 30 天 2000 显示 credits 的人工调账累计闸(退款与授信共用同一额度) | 设计内摩擦。真要放大,改 `FINANCE_ADJUST_LIMITS`(`packages/core/src/finance-limits.ts`)走 PR + Founder 批,**不绕闸** |
+| That workspace is suspended… | 该 org 被账号级暂停(MONEY-A13 咽喉罩住一切预扣) | 先恢复、退完再暂停;两步都有审计行 |
+| That merchant's own spend cap refused the hold. | 商家自己设的单笔上限低于退款额 | 当前口径下退款也走 `reserveCredits`,因此受商家 cap 约束;拆成多笔小额退款,或呈 Founder 决定是否给退款免掉这道 cap(已在 PR 备案) |
 
-## 若「已扣未退」(步骤 B 第 2 步失败)
+## 若「已退款但没落账」(第 3 段的③失败)
 
-方向安全(钱还在我们这边):重试 Stripe 退款;确认不退了,就用等额**正向调账新行**冲回(reason 注明冲销与原因),台账追加一行引用原行。**禁止**先退钱后扣账的逆序补救;**禁止**修改任何已写行。
+方向是安全的:钱已经回商家,credits 仍锁在 reserved 里花不掉。页面会明说,并且会发一条 founderAlert(`finance.manual_refund_settle_failed`)。
+处置=**用同一个退款单号重跑一次**:Stripe 那一步幂等,不会退第二次,动作会跳过预扣直接补落账。
+注意:Stripe 的幂等键 24 小时后过期。超过一天才补跑的单子,先去 Dashboard 核一眼那笔 `re_…` 是否已经存在,再决定重跑还是人工收尾。
+**禁止**先退钱后扣账的逆序补救;**禁止**修改任何已写行。
+
+## 登记
+
+`docs/ops/manual-money-ledger.md` 追加一行(事件=人工退款),含 org、退款单号(uuid)、`pi_…`、`re_…`、三口径金额(cr/RM/USD)、经手人。台账只追加不改。
 
 ## 验证(与 MONEY-A14 v2 逐字对应)
 
 - 顺序=先 RESERVE 预扣、后 Stripe 退款、再 SETTLE 落账;余额不足则拒退或按可扣部分退;失败 REFUND 成对释放。
 - SETTLE 行 reason 载 Stripe 退款单号;两边金额按汇率钉点对得上。
-- 商家消费历史该退款行可读出是「退款」。
+- 商家消费历史该退款行可读出是「退款」(类目 Refund,不是 Adjustment)。
 - 本手册存在于 `docs/runbooks/`。
+- 行为测试:`apps/web/lib/__tests__/refund-actions.test.ts`(三段顺序、成对释放、幂等、累计闸)。
 
 ## 工程侧已备 vs 等 Founder
 
-- ✅ 已备:reserve→settle→refund 机械与幂等键;admin 负向调账通道(过渡版用)。
-- ⏳ 施工中(S2 稿 7.6):专用退款动作(三段一步走);消费历史 Refund 类目;累计闸下沉 `grantCredits` 事务。
-- 👤 永远人工:退不退的裁定与金额批准(动钱=Founder 或其授权者;过渡期的 Stripe 后台退款由其亲手执行,S4 后改为其在 admin 面批准触发)。
+- ✅ 已备:专用退款动作(三段一步走,幂等)、消费历史 Refund 类目、累计闸下沉 `grantCredits`/退款预扣同事务、暂停咽喉。
+- 👤 永远人工:退不退的裁定与金额批准(动钱=Founder 或其授权者),以及台账登记。

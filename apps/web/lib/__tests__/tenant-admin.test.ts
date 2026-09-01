@@ -21,8 +21,11 @@ const genJobAggregate = vi.fn();
 const refGenJobAggregate = vi.fn();
 const projectCount = vi.fn();
 const actionEventFindMany = vi.fn();
+/** MONEY-A14:人工调账 30 天累计 —— 报表与闸读同一条谓词,所以这里也是钱服务的函数。 */
+const adjustWindowTotals = vi.fn();
 
 vi.mock("@fikirtive/db", () => ({
+  adjustWindowTotals,
   prisma: {
     organization: { findMany: organizationFindMany, findFirst: organizationFindFirst },
     membership: { findMany: membershipFindMany, findFirst: membershipFindFirst },
@@ -57,6 +60,8 @@ beforeEach(() => {
   refGenJobAggregate.mockReset();
   projectCount.mockReset();
   actionEventFindMany.mockReset();
+  adjustWindowTotals.mockReset();
+  adjustWindowTotals.mockResolvedValue(new Map());
 });
 
 describe("listTenants", () => {
@@ -219,5 +224,30 @@ describe("getTenantDetail", () => {
     expect(detail!.spentUsd).toBe(0);
     expect(detail!.ownerEmail).toBe("");
     expect(detail!.status).toBe("unknown");
+  });
+});
+
+// ── MONEY-A14:租户页读的「30 天人工调账累计」与闸同源 ───────────────────────────
+describe("getTenantDetail — 人工调账累计(MONEY-A14)", () => {
+  it("累计与上限一起给出来,数字来自钱服务的同一条谓词", async () => {
+    organizationFindFirst.mockResolvedValue({ id: "org_1", name: "Shop" });
+    membershipFindFirst.mockResolvedValue({ status: "active", user: { email: "a@b.test" } });
+    creditAccountFindUnique.mockResolvedValue({ balance: 100, reserved: 0 });
+    creditLedgerFindMany.mockResolvedValue([]);
+    genJobAggregate.mockResolvedValue({ _sum: { spentUsd: null } });
+    refGenJobAggregate.mockResolvedValue({ _sum: { spentUsd: null } });
+    projectCount.mockResolvedValue(0);
+    generationCount.mockResolvedValue(0);
+    actionEventFindMany.mockResolvedValue([]);
+    // 18000 内部 = 1800 显示。
+    adjustWindowTotals.mockResolvedValue(new Map([["org_1", 18_000]]));
+
+    const detail = await getTenantDetail("org_1");
+
+    expect(adjustWindowTotals).toHaveBeenCalledWith(["org_1"]);
+    expect(detail!.adjustRolling30dDisplay).toBe(1800);
+    expect(detail!.adjustRolling30dLimitDisplay).toBe(2000);
+    // 退款换算要的在售包表也从服务端带下去,admin 客户端不自己抄价目表。
+    expect(detail!.creditPacks.map((p) => p.credits)).toEqual([50, 220, 600]);
   });
 });

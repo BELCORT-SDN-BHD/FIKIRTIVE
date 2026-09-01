@@ -44,7 +44,9 @@ const DATA = {
       ownerEmail: "founder",
       kind: "GRANT",
       amount: 10_000_000,
-      limit: 1000,
+      // MONEY-A14:上限与判定都改成了「org 的滚动 30 天累计」,行上因此多带一个累计数。
+      limit: 2000,
+      rollingTotal: 10_000_000,
       state: "over limit" as const,
       reason: "founder beta seed",
       createdBy: "seed",
