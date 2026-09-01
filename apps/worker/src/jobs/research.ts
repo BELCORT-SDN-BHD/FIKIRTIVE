@@ -48,6 +48,7 @@ import {
   ottoModelRuntime,
   run,
   MaxTurnsExceededError,
+  SettleLostToRefund,
   mapOttoUsage,
   type ResearchContext,
 } from "@fikirtive/otto";
@@ -349,10 +350,16 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
       // PERSISTED error surfaces in the RESEARCH_CARD/ResearchJob and is rendered to the user/admin —
       // strip any URL a fetch/network error from researchWeb may carry (mirrors gen.ts/refgen.ts/
       // render.ts/caption.ts/publish.ts, the other 5 jobs that sanitize before persisting).
+      // #1046-P1:预扣清道夫已经把这一单的钱退给商家了(作业行还没被另一个清道夫翻过来,
+      // 所以上面那条 CAS 拦不住它)。商家看到的应该是**发生了什么**,而不是守卫自己的内部
+      // 措辞 —— 用 reaper 家族对这一族早就写好的那句话:钱已经退清,重试一次就好。
+      // 照 MaxTurnsExceededError 的同一条惯例:内部错误 → 一句固定的商家话,不走 sanitizeError。
       const errorText =
-        e instanceof MaxTurnsExceededError
-          ? "The research hit its step budget before finishing."
-          : sanitizeError(e);
+        e instanceof SettleLostToRefund
+          ? RESEARCH_INTERRUPTED
+          : e instanceof MaxTurnsExceededError
+            ? "The research hit its step budget before finishing."
+            : sanitizeError(e);
       console.warn(`[research] job ${job.id}: withLlmBudget threw — marking failed:`, errorText);
       await failResearch(job, errorText);
       return;

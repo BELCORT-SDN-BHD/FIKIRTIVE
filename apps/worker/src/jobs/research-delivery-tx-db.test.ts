@@ -204,7 +204,10 @@ describe("钱路 M1-b ②:research 的交付与结算同一笔提交", () => {
     expect(money.balance, "退过款之后又收了一次钱").toBe(START);
     expect(money.reserved).toBe(0);
     expect(await reportRows(), "对着一笔已经退掉的预扣交了货").toHaveLength(0);
-    expect((await jobRow()).status).toBe("FAILED");
+    // 商家读到的是 reaper 家族那句话,而不是守卫自己的内部措辞。
+    const job = await prisma.researchJob.findFirstOrThrow({ where: { id: jobId, ownerId: orgId }, select: { status: true, error: true } });
+    expect(job.status).toBe("FAILED");
+    expect(job.error).toBe("research was interrupted — please try again");
   }, DB_CASE_TIMEOUT_MS);
 
   it("双租户:一次 research 的结算/退款只动它自己那个组织的钱", async () => {

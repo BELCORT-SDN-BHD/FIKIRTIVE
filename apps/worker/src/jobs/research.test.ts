@@ -49,6 +49,14 @@ const mocks = vi.hoisted(() => {
     state?: any;
     constructor(msg = "max turns") { super(msg); this.name = "MaxTurnsExceededError"; }
   }
+  // #1046-P1:真 withLlmBudget 在「REFUND 已经赢下 finalizer」时抛的那个类。替身必须也导出它,
+  // 否则 handleResearch 里的 `e instanceof SettleLostToRefund` 会拿 undefined 去比。
+  class SettleLostToRefund extends Error {
+    constructor(readonly refId: string) {
+      super("this reservation was already refunded — not delivering against a released hold");
+      this.name = "SettleLostToRefund";
+    }
+  }
   const researchAgent = { name: "Researcher" };
 
   const RESEARCH_TIERS = {
@@ -68,7 +76,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     prisma, reserveCredits, settleCredits, refundReservation, newId,
-    withLlmBudget, run, mapOttoUsage, MaxTurnsExceededError, researchAgent, RESEARCH_TIERS,
+    withLlmBudget, run, mapOttoUsage, MaxTurnsExceededError, SettleLostToRefund, researchAgent, RESEARCH_TIERS,
     researchJobFindUnique, researchJobUpdateMany, chatMessageFindFirst, chatMessageCreate, chatMessageUpdateMany,
     searchChargeInternal, researchTierSearchBudgetInternal, SEARCH_UNIT_INTERNAL,
   };
@@ -89,6 +97,7 @@ vi.mock("@fikirtive/otto", () => ({
   ottoModelRuntime: { billableModelId: "claude-sonnet-4-6" },
   run: mocks.run,
   MaxTurnsExceededError: mocks.MaxTurnsExceededError,
+  SettleLostToRefund: mocks.SettleLostToRefund,
   mapOttoUsage: mocks.mapOttoUsage,
 }));
 
@@ -352,6 +361,29 @@ describe("handleResearch — persisted error sanitization", () => {
     expect(jobFailed).toBeTruthy();
     expect(jobFailed![0].data.error).toContain("<redacted-url>");
     expect(jobFailed![0].data.error).not.toContain("X-Amz-Signature");
+  });
+
+  // ── #1046-P1:守卫的内部措辞不许漏到商家卡片上 ────────────────────────────────────
+  //
+  // SettleLostToRefund 的 message 是写给读代码的人看的(「not delivering against a released
+  // hold」)。商家该读到的是**发生了什么**:这一单被中断了、钱已经退清、重试一次就好 ——
+  // 而那句话 reaper 家族早就写好了(RESEARCH_INTERRUPTED),两条路因此说的是同一句。
+  it("#1046-P1 退款已在:商家读到的是 reaper 家族那句话,不是守卫的内部措辞", async () => {
+    mocks.withLlmBudget.mockRejectedValue(new mocks.SettleLostToRefund("research:card-1"));
+    await handleResearch({ jobId: "job-1" }, 0);
+
+    const jobFailed = mocks.researchJobUpdateMany.mock.calls.find((c) => c[0].data.status === "FAILED");
+    expect(jobFailed).toBeTruthy();
+    expect(jobFailed![0].data.error).toBe("research was interrupted — please try again");
+    expect(jobFailed![0].data.error).not.toContain("released hold");
+
+    const cardFailed = mocks.chatMessageUpdateMany.mock.calls.find(
+      (c) => (c[0].data.payload as { status?: string })?.status === "failed",
+    );
+    expect(cardFailed).toBeTruthy();
+    expect((cardFailed![0].data.payload as { error?: string }).error).toBe(
+      "research was interrupted — please try again",
+    );
   });
 
   it("keeps the friendly MaxTurnsExceededError text as-is (fixed string, not a leak source)", async () => {
