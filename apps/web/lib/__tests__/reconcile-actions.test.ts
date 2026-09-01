@@ -9,8 +9,13 @@ const actionEventFindUnique = vi.fn();
 const actionEventFindMany = vi.fn();
 const actionEventCreate = vi.fn();
 const creditLedgerFindFirst = vi.fn();
+// 占用标记与关闭行同一笔事务写 —— 假的 $transaction 直接把同一个 actionEvent 面交给回调,
+// 于是「两条写在一起」这件事在用例里可见,而事务语义由真库那一组用例去证。
+const txCreate = vi.fn();
+const $transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn({ actionEvent: { create: txCreate } }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
+    $transaction,
     actionEvent: { findUnique: actionEventFindUnique, findMany: actionEventFindMany, create: actionEventCreate },
     creditLedger: { findFirst: creditLedgerFindFirst },
   },
@@ -22,7 +27,19 @@ beforeEach(() => {
   actionEventFindUnique.mockResolvedValue({ ownerId: "org_1", payload: { orgId: "org_1", credits: 220 } });
   actionEventFindMany.mockResolvedValue([]);
   actionEventCreate.mockResolvedValue({});
+  txCreate.mockResolvedValue({});
   creditLedgerFindFirst.mockResolvedValue(null);
+});
+
+/** 一行合法的手工补发:同商家、GRANT、金额相符,**且 reason 里粘着这一笔 session id**。 */
+const grantRow = (over: Record<string, unknown> = {}) => ({
+  id: "cl_9",
+  orgId: "org_1",
+  kind: "GRANT",
+  balanceDelta: 220 * 10,
+  reason: `manual re-grant for ${SESSION}`,
+  idempotencyKey: "grant:abc",
+  ...over,
 });
 
 const { closeReconcileObservation, listReconcileObservations } = await import("@/lib/reconcile-actions");
@@ -92,7 +109,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
   });
 
   it("终审 P2:同一个商家但那一行不是补发形态(RESERVE/SETTLE)⇒ 拒绝", async () => {
-    creditLedgerFindFirst.mockResolvedValue({ id: "cl_r", orgId: "org_1", kind: "RESERVE", balanceDelta: -2200 });
+    creditLedgerFindFirst.mockResolvedValue(grantRow({ id: "cl_r", kind: "RESERVE", balanceDelta: -2200 }));
 
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "reserve:gen_1" });
 
@@ -101,7 +118,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
   });
 
   it("终审 P2:同一个商家、形态也对,但**金额不符** ⇒ 拒绝(补 50 关不掉一笔 220 的缺口)", async () => {
-    creditLedgerFindFirst.mockResolvedValue({ id: "cl_small", orgId: "org_1", kind: "GRANT", balanceDelta: 50 * 10 });
+    creditLedgerFindFirst.mockResolvedValue(grantRow({ id: "cl_small", balanceDelta: 50 * 10 }));
 
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:small" });
 
@@ -120,18 +137,71 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
   });
 
   it("手工补发了结:同商家 + GRANT + 金额相符 ⇒ 放行,关闭行把那一行的 id / org / 金额一起钉下来", async () => {
-    creditLedgerFindFirst.mockResolvedValue({ id: "cl_9", orgId: "org_1", kind: "GRANT", balanceDelta: 220 * 10 });
+    creditLedgerFindFirst.mockResolvedValue(grantRow());
 
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect(res).toEqual({ ok: true });
-    expect(actionEventCreate.mock.calls[0]![0].data.payload).toMatchObject({
+    // 占用标记 + 关闭行,同一笔事务两条写。
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(txCreate.mock.calls[0]![0].data.id).toBe("reconcile_credit_use:cl_9");
+    expect(txCreate.mock.calls[1]![0].data.payload).toMatchObject({
       disposition: "credited_manually",
       ledgerRef: "grant:abc",
       ledgerRowId: "cl_9",
       ledgerOrgId: "org_1",
       ledgerCredits: "220",
     });
+  });
+
+  it("复审三 P1(a):同商家同额,但 reason 不指名这一笔 session ⇒ 拒绝", async () => {
+    // 同一个商家同一天补两次 220,金额与形态都对得上 —— 不指名就分不出是哪一笔,
+    // 拿错的那一笔关掉,商家仍然少一份钱。
+    creditLedgerFindFirst.mockResolvedValue(grantRow({ reason: "goodwill top-up", idempotencyKey: "grant:other" }));
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:other" });
+
+    expect("error" in res && res.error).toContain("does not name this payment");
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
+  it("复审三 P1(a):幂等键就是 stripe:<sessionId> 的自动入账形态 ⇒ 算指名,通过", async () => {
+    creditLedgerFindFirst.mockResolvedValue(grantRow({ reason: "stripe top-up", idempotencyKey: `stripe:${SESSION}` }));
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: `stripe:${SESSION}` });
+
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("复审三 P1(b):同一行补发被拿去关第二笔缺口 ⇒ 拒绝,并说出它已经关了哪一笔", async () => {
+    creditLedgerFindFirst.mockResolvedValue(grantRow());
+    // 占用标记撞主键 —— 这一行早就被用掉了。
+    $transaction.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    actionEventFindUnique.mockResolvedValueOnce({ ownerId: "org_1", payload: { orgId: "org_1", credits: 220 } });
+    actionEventFindUnique.mockResolvedValueOnce({ payload: { ledgerRowId: "cl_9", sessionId: "cs_other_gap" } });
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
+
+    expect("error" in res && res.error).toContain("already used to close another gap (cs_other_gap)");
+  });
+
+  it("复审三 P1(b):撞的是关闭行(这一笔早就关过了)⇒ 仍然是 alreadyClosed,不误报占用", async () => {
+    creditLedgerFindFirst.mockResolvedValue(grantRow());
+    $transaction.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    actionEventFindUnique.mockResolvedValueOnce({ ownerId: "org_1", payload: { orgId: "org_1", credits: 220 } });
+    actionEventFindUnique.mockResolvedValueOnce({ payload: { ledgerRowId: "cl_9", sessionId: SESSION } });
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
+
+    expect(res).toEqual({ ok: true, alreadyClosed: true });
+  });
+
+  it("复审三 P2-2:关闭行记下**当时**那一笔是不是确认过的缺口", async () => {
+    actionEventFindUnique.mockResolvedValue({ ownerId: "org_1", payload: { orgId: "org_1", credits: 220, ledgerVerified: false } });
+
+    await closeReconcileObservation(REFUNDED);
+
+    expect(actionEventCreate.mock.calls[0]![0].data.payload).toMatchObject({ ledgerVerifiedAtClose: false });
   });
 
   it("其它处置:说明太短不许关", async () => {
@@ -214,7 +284,23 @@ describe("MONEY-A12:未了结清单(admin 页面读的那一份)", () => {
     expect("rows" in res).toBe(true);
     if (!("rows" in res)) return;
     expect(res.rows.map((r) => r.sessionId)).toEqual(["cs_open"]); // 关掉的那条不在清单里
-    expect(res.rows[0]).toMatchObject({ orgId: "org_1", amountTotal: 2500, currency: "MYR", lastAlertedAt: "2026-08-19T09:00:00.000Z" });
+    expect(res.rows[0]).toMatchObject({ orgId: "org_1", amountTotal: 2500, currency: "MYR", lastAlertedAt: "2026-08-19T09:00:00.000Z", ledgerVerified: true });
+  });
+
+  it("复审三 P2-2:未验证的观察行在清单里带 ledgerVerified=false(页面据此换一句话)", async () => {
+    actionEventFindMany
+      .mockResolvedValueOnce([
+        {
+          type: RECONCILE_OBSERVED_TYPE,
+          createdAt: new Date("2026-08-18T12:00:00.000Z"),
+          payload: { sessionId: "cs_unverified", orgId: "org_1", amountTotal: 2500, currency: "MYR", ledgerVerified: false },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const res = await listReconcileObservations();
+
+    expect("rows" in res && res.rows[0]!.ledgerVerified).toBe(false);
   });
 
   it("与哨兵读同一条索引:projectId=null + 那两个 type(人看到的与机器追的必须是同一个集合)", async () => {

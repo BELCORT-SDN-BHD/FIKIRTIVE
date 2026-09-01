@@ -157,10 +157,12 @@ export function ReconcileBoard({ result }: { result: { rows: ReconcileObservatio
       <div className="grid gap-1">
         <h1 className="text-lg font-semibold">Payment reconciliation</h1>
         <p className="text-sm text-muted-foreground">
-          Stripe says these were paid; the credits ledger has no entry for them. The sweeper re-checks every 30 minutes and
-          alerts once a day until each one is settled. It closes a gap by itself the moment the ledger row appears — replaying
-          the Checkout Session&rsquo;s webhook event in Stripe is the correct fix. Close one here only when the payment was
-          settled some other way.
+          Stripe says these were paid. Most of them are confirmed gaps — the credits ledger has no entry. Rows marked{" "}
+          <em>not yet confirmed</em> are different: the sweeper could not read the ledger when it first saw them, so nobody has
+          checked yet whether they are gaps at all; they are tracked so they cannot slip out of the 48h window unnoticed, and the
+          next readable sweep decides. The sweeper re-checks every 30 minutes and alerts once a day until each one is settled. It
+          closes a gap by itself the moment the ledger row appears — replaying the Checkout Session&rsquo;s webhook event in
+          Stripe is the correct fix. Close one here only when the payment was settled some other way.
         </p>
       </div>
 
@@ -180,10 +182,17 @@ export function ReconcileBoard({ result }: { result: { rows: ReconcileObservatio
                 <span className="text-xs text-muted-foreground">
                   first seen {ago(row.firstSeenAt)} · last alert {row.lastAlertedAt ? ago(row.lastAlertedAt) : "not yet"}
                 </span>
+                {row.ledgerVerified ? (
+                  <span className="text-xs text-muted-foreground">The credits ledger has no entry for this payment.</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    Ledger unreadable at first sighting — not yet confirmed as a gap. The next readable sweep decides.
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant={row.lastAlertedAt ? "destructive" : "outline"}>
-                  {row.lastAlertedAt ? "Alerting" : "Watching"}
+                <Badge variant={!row.ledgerVerified ? "outline" : row.lastAlertedAt ? "destructive" : "outline"}>
+                  {!row.ledgerVerified ? "Not yet confirmed" : row.lastAlertedAt ? "Alerting" : "Watching"}
                 </Badge>
                 <Button
                   type="button"

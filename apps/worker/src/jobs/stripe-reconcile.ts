@@ -405,7 +405,7 @@ export async function reconcileStripePayments(opts?: {
       const firstSeenAt = openGaps.get(session.id)?.firstSeenAt ?? null;
       openGaps.delete(session.id); // 这一笔本轮已经处理过,下面的窗口外那一段不必再碰它
       // 首见,或者首见得还不够久 —— 一个扫描窗都还没过完,不惊动 founder。
-      if (!seenBefore || (firstSeenAt !== null && now - Date.parse(firstSeenAt) < STRIPE_RECONCILE_CONFIRM_MS)) {
+      if (!seenBefore || tooYoungToEscalate(firstSeenAt, now)) {
         if (!seenBefore) firstSeen++;
         console.warn(
           `[stripe-reconcile] ${seenBefore ? "seen since" : "first sighting"} ${firstSeenAt ?? "just now"}: ${money} paid on Stripe with no ledger entry yet ` +
@@ -446,6 +446,16 @@ export async function reconcileStripePayments(opts?: {
         continue;
       }
       tracked++;
+      // **同一道确认窗**(终审 P2-1)。窗口内那一段读 firstSeenAt 才升级,这一段以前不读 ——
+      // 于是有一条绕过去的路:一笔快到 48 小时边界的未验证行,worker 一重启就滑出 Stripe 窗口,
+      // 下一秒在这里被当成陈年缺口喊成紧急告警。判定必须是同一个函数,不是两份各写各的。
+      if (tooYoungToEscalate(gap.firstSeenAt, now)) {
+        console.warn(
+          `[stripe-reconcile] tracked gap ${gap.sessionId} is still inside its first confirmation window ` +
+            `(first seen ${gap.firstSeenAt ?? "unknown"}) — tracking it, not alerting yet.`,
+        );
+        continue;
+      }
       await escalateGap(gap, now, false);
       alerted++;
     }
@@ -463,6 +473,19 @@ export async function reconcileStripePayments(opts?: {
       skipped: null,
     };
   });
+}
+
+/**
+ * 这一笔首见得还不够久吗?—— **两条升级路共用的同一道确认窗**(#1046-P2 / 终审 P2-1)。
+ *
+ * 首见时刻读不出来(老行没有这一格)按「够久了」处理:那是本次施工之前写下的行,它们本来
+ * 就已经活过不止一轮 —— 拿一个读不到的字段去把一笔真实缺口永久压住,是错的方向。
+ */
+function tooYoungToEscalate(firstSeenAt: string | null, nowMs: number): boolean {
+  if (firstSeenAt === null) return false;
+  const firstSeen = Date.parse(firstSeenAt);
+  if (!Number.isFinite(firstSeen)) return false;
+  return nowMs - firstSeen < STRIPE_RECONCILE_CONFIRM_MS;
 }
 
 /** 观察行 payload → 缺口事实。窗口内(Stripe 直供)与窗口外(库里读回)统一成同一形状。 */

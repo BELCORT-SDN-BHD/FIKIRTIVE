@@ -26,3 +26,17 @@ export function reconcileObservationId(sessionId: string): string {
 export function reconcileClosureId(sessionId: string): string {
   return `stripe_unreconciled_closed:${sessionId}`;
 }
+
+/** 一笔手工补发**已被用来关闭某个缺口**的占用标记。 */
+export const RECONCILE_CREDIT_USE_TYPE = "credits.purchase.unreconciled.creditUsed";
+
+/**
+ * 占用标记的主键 —— 由**账本行 id** 派生。
+ *
+ * 为什么需要它:一笔 220cr 的补发可以被拿去依次关掉两笔 220cr 的缺口,第二笔从此永久静默,
+ * 而商家实际只收到过一次补发。主键派生自账本行,于是「一行只能关一个缺口」由数据库唯一
+ * 约束回答,而不是靠人记得。
+ */
+export function reconcileCreditUseId(ledgerRowId: string): string {
+  return `reconcile_credit_use:${ledgerRowId}`;
+}

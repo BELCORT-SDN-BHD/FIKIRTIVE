@@ -191,6 +191,25 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
     expect(alertCall(2).opts.repeat).toBe(false);
   }, DB_CASE_TIMEOUT_MS);
 
+  it("复审三 P2-1:窗口外那一段也要过确认窗 —— 刚滑窗 + 重启,5 秒后不许升级", async () => {
+    // 绕过去的那条路:一笔快到 48 小时边界的缺口首见,worker 一重启就再扫一轮,而这一轮它
+    // 已经滑出 Stripe 窗口 —— 于是它落进「窗口外」那一段。那一段以前不读 firstSeenAt,
+    // 首见之后 5 秒就被当成陈年缺口喊成紧急告警。两条升级路必须共用同一道确认窗。
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    expect(m.founderAlert).not.toHaveBeenCalled();
+
+    // 重启后的那一轮:Stripe 返回空(已滑窗),只剩观察行名单看得见它。
+    const justAfterRestart = await reconcileStripePayments({ client: fakeStripe([[]]), now: new Date(NOW.getTime() + 5_000) });
+    expect(justAfterRestart, "首见 5 秒后就被窗口外那一段喊成了紧急告警").toMatchObject({ tracked: 1, alerted: 0 });
+    expect(m.founderAlert).not.toHaveBeenCalled();
+
+    // 一个扫描窗之后:这才是确认过的缺口,照喊。
+    const later = await reconcileStripePayments({ client: fakeStripe([[]]), now: LATER });
+    expect(later).toMatchObject({ tracked: 1, alerted: 1 });
+    expect(alertCall().alert.key).toBe("stripe.paid_but_no_ledger_entry");
+    expect(alertCall().alert.context.stillInStripeScanWindow).toBe(false);
+  }, DB_CASE_TIMEOUT_MS);
+
   it("MONEY-A12:缺口滑出 48 小时扫描窗也不许静默消失 —— 靠观察行名单继续追踪", async () => {
     // 首见时它还在窗口里。
     await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });

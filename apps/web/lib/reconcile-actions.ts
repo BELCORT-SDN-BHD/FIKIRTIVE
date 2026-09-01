@@ -24,8 +24,10 @@ import {
   FOUNDER_OWNER_ID,
   INTERNAL_PER_DISPLAY,
   RECONCILE_CLOSED_TYPE,
+  RECONCILE_CREDIT_USE_TYPE,
   RECONCILE_OBSERVED_TYPE,
   reconcileClosureId,
+  reconcileCreditUseId,
   reconcileObservationId,
 } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
@@ -44,6 +46,9 @@ export type ReconcileObservationRow = {
   firstSeenAt: string | null;
   lastAlertedAt: string | null;
   observedAt: string;
+  /** 首见那一刻问到账本了吗?false = 哨兵当时读不动账本,这一行**还没被确认成缺口**。
+   *  页面必须把这个差别说出来:「账本里没有这笔」和「当时没能查账本」不是同一句话。 */
+  ledgerVerified: boolean;
 };
 
 /**
@@ -93,6 +98,8 @@ export async function listReconcileObservations(): Promise<{ rows: ReconcileObse
         firstSeenAt: typeof p.firstSeenAt === "string" ? p.firstSeenAt : null,
         lastAlertedAt: lastAlert.get(sessionId) ?? null,
         observedAt: row.createdAt.toISOString(),
+        // 缺这一格的老行(本次提交之前写下的)按**已确认**读:它们当年就是确认过才写的。
+        ledgerVerified: p.ledgerVerified !== false,
       });
     }
   }
@@ -122,9 +129,14 @@ export async function closeReconcileObservation(
     select: { ownerId: true, payload: true },
   });
   if (!observation) return { error: "No reconciliation observation exists for that session id." };
-  const observed = (observation.payload ?? {}) as { orgId?: unknown; credits?: unknown };
+  const observed = (observation.payload ?? {}) as { orgId?: unknown; credits?: unknown; ledgerVerified?: unknown };
   const gapOrgId = typeof observed.orgId === "string" && observed.orgId ? observed.orgId : observation.ownerId;
   const gapCredits = Number(observed.credits);
+  // 关的这一笔当初到底有没有问到账本(哨兵的 ledgerVerified:false = 「还没验」)。半年后翻账的
+  // 人要能看出:这条关闭盖掉的是一个**确认过的**缺口,还是一个从来没被确认过的观察。
+  const gapLedgerVerified = observed.ledgerVerified !== false;
+  /** 手工补发那一支要占用的账本行 —— 占用标记与关闭行同一笔事务写(见下)。 */
+  let creditUseRowId = "";
 
   if (disposition === "refunded_in_stripe") {
     // 退款了结:单号是这条处置**唯一**可核的凭据,没有它这条关闭记录就没法追。
@@ -147,7 +159,7 @@ export async function closeReconcileObservation(
     }
     const entry = await prisma.creditLedger.findFirst({
       where: { orgId: gapOrgId, OR: [{ idempotencyKey: ledgerRef }, { refId: ledgerRef }] },
-      select: { id: true, orgId: true, kind: true, balanceDelta: true },
+      select: { id: true, orgId: true, kind: true, balanceDelta: true, reason: true, idempotencyKey: true },
     });
     if (!entry) return { error: "No credits-ledger row for THIS merchant carries that refId or idempotency key — check it before closing this gap." };
     if (entry.kind !== "GRANT" && entry.kind !== "ADJUST") {
@@ -159,10 +171,21 @@ export async function closeReconcileObservation(
         error: `That grant is ${entry.balanceDelta / INTERNAL_PER_DISPLAY} credits but this payment was for ${gapCredits} — they do not match.`,
       };
     }
+    // ④ **这一行必须指名这一笔 session**。同一个商家同一天补两次 220,金额与形态都对得上,
+    //    但那是**另一笔**补发 —— 拿它关掉这一笔,商家仍然少了 220。两种指名都算数:
+    //      · `stripe:<sessionId>` —— 自动入账的形态(webhook 后来补投成功了)。
+    //      · reason 里粘着完整的 session id —— 人工补发的形态(runbook 要求这么写)。
+    const namesThisSession = entry.idempotencyKey === `stripe:${sessionId}` || (entry.reason ?? "").includes(sessionId);
+    if (!namesThisSession) {
+      return {
+        error: `That grant does not name this payment. A manual grant must carry the session id (${sessionId}) in its reason, or use the idempotency key stripe:${sessionId} — otherwise close this under “Something else” with an explanation.`,
+      };
+    }
     details.ledgerRef = ledgerRef;
     details.ledgerRowId = entry.id;
     details.ledgerOrgId = entry.orgId;
     details.ledgerCredits = String(gapCredits);
+    creditUseRowId = entry.id;
   } else if (disposition === "other") {
     // 剩下的一切。这一支最危险(它什么都能装),所以要求写清楚 **且** 再确认一次。
     if (note.length < OTHER_NOTE_MIN) {
@@ -173,18 +196,59 @@ export async function closeReconcileObservation(
     return { error: "Pick how this payment was settled." };
   }
 
+  const ownerId = observation.ownerId || FOUNDER_OWNER_ID;
+  const closure = {
+    // 主键由 session id 派生:同一个缺口关两次,第二次撞主键 —— 一个缺口只有一条关闭事实。
+    id: reconcileClosureId(sessionId),
+    ownerId,
+    type: RECONCILE_CLOSED_TYPE,
+    payload: {
+      sessionId,
+      disposition,
+      ...details,
+      note,
+      closedBy: gate.email,
+      closedAt: new Date().toISOString(),
+      // 关的是「确认过的缺口」还是「还没验过的观察」——两者的证据强度不同,别让它糊在一起。
+      ledgerVerifiedAtClose: gapLedgerVerified,
+    },
+  };
+
   try {
-    await prisma.actionEvent.create({
-      data: {
-        // 主键由 session id 派生:同一个缺口关两次,第二次撞主键 —— 一个缺口只有一条关闭事实。
-        id: reconcileClosureId(sessionId),
-        ownerId: observation.ownerId || FOUNDER_OWNER_ID,
-        type: RECONCILE_CLOSED_TYPE,
-        payload: { sessionId, disposition, ...details, note, closedBy: gate.email, closedAt: new Date().toISOString() },
-      },
-    });
+    if (creditUseRowId) {
+      // **一行只能关一个缺口**。占用标记与关闭行同一笔事务:要么两条都在,要么一条都不在,
+      // 绝不会出现「关闭行写了、占用没记上」(那等于这行补发还能再关一笔)。
+      // 占用标记自本次提交起生效 —— 在此之前写下的关闭行没有对应标记(零回填、零迁移),
+      // 所以它挡的是**今后**的重复引用,不追认历史。
+      await prisma.$transaction(async (tx) => {
+        await tx.actionEvent.create({
+          data: {
+            id: reconcileCreditUseId(creditUseRowId),
+            ownerId,
+            type: RECONCILE_CREDIT_USE_TYPE,
+            payload: { ledgerRowId: creditUseRowId, sessionId, closedBy: gate.email },
+          },
+        });
+        await tx.actionEvent.create({ data: closure });
+      });
+    } else {
+      await prisma.actionEvent.create({ data: closure });
+    }
   } catch (e) {
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
+      // 撞了主键 —— 但撞的是哪一条?事务里分不出来(一条语句失败,整笔就废了),所以事后读一次。
+      //   占用标记在,且记的是**别的** session ⇒ 这行补发已经被拿去关过另一笔缺口。
+      //   其余情形(标记不在、或标记就是这一笔)⇒ 撞的是关闭行,也就是「已经关过了」。
+      if (creditUseRowId) {
+        const used = await prisma.actionEvent.findUnique({
+          where: { id: reconcileCreditUseId(creditUseRowId) },
+          select: { payload: true },
+        });
+        const usedFor = (used?.payload as { sessionId?: unknown } | null)?.sessionId;
+        if (typeof usedFor === "string" && usedFor !== sessionId) {
+          return { error: `That grant was already used to close another gap (${usedFor}). One manual grant closes one payment — find the grant that belongs to this one, or close this under “Something else”.` };
+        }
+      }
       // 已经关过了。这不是错误:两个人先后按下同一个按钮,结果应当一样。
       return { ok: true, alreadyClosed: true };
     }
