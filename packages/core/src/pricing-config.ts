@@ -296,7 +296,7 @@ export function worstPackReceiptCoefficient(): number {
  * (钱路审计:搜索成本至今零计价),裁决 9b(2026-08-18)把它落地并把 research 整体拉进
  * 45% 毛利地板检查。3× ⇒ 毛利率 (3−1)/3 = 66.7%,离地板 20 多个点。
  *
- * 与生成侧 2.0×、聊天 1.05× 各走各的率 —— 这是裁决明写的:「独立费率不并进」。
+ * 与生成侧 2.06×(权威 llm-prices.ts)、聊天 1.05× 各走各的率 —— 这是裁决明写的:「独立费率不并进」。
  */
 export const SEARCH_MARGIN_MULTIPLIER = 3.0;
 

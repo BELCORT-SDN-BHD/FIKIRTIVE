@@ -110,25 +110,34 @@ export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRI
 export const GEN_MARGIN_TARGET = 0.65;
 
 /**
- * 取整容差 —— `Math.ceil` 之前先减掉它。
+ * 向上取整到收费格 —— `Math.ceil` 之前先减一个**相对量级**的容差。
  *
- * 为什么必须有:IEEE754 里「恰好压在整数上」的除法常常落在整数**之上**一丁点。
- * 实证 `0.035 / 0.35 * 10 = 1.0000000000000002`,裸 `ceil` 会把 1 显示 credit 抬成 2 ——
- * 图片档凭空贵一倍,而没有任何一次裁决说过这件事。写法与 `margin-truth.ts` 的
- * `MARGIN_FLOOR_EPSILON` 同一个精神:精确压线是设计意图,浮点的最后一位不该改变价格。
+ * ① **容差只为吞浮点噪声**:IEEE754 里「恰好压在整数上」的除法常常落在整数**之上**
+ *    一丁点,实证 `0.035 / 0.35 * 10 = 1.0000000000000002`(相对误差 ~2e-16),裸 `ceil`
+ *    会把 1 显示 credit 抬成 2 —— 图片档凭空贵一倍,而没有任何一次裁决说过这件事。
+ *    1e-12 的**相对**容差足够盖住这一位噪声,还留了四个数量级的余量。
+ * ② **为什么从绝对 1e-9 改成相对量级**:绝对容差是一条固定宽度的漏收带 —— 公式价落在
+ *    `(n, n+1e-9]` 里就会被压回 n,少收一格。改相对量级后这条带压到 ~1e-12;而钉点是
+ *    十进制人手录入的(最细到 1e-4 位),它经 65% 公式算出来的真实价在数学上不可能落进
+ *    这条带里,只有浮点噪声才进得去。
+ * ③ 判官 P0-1 的反例(单件成本 $0.0350000000175 → 公式价 1.0000000005cr,规格要求
+ *    ceil 到 **2cr**,旧的绝对容差却压成 1cr,启动断言与 65% 闸同时漏过)已入回归测试
+ *    (`money-derivation.test.ts` 的「判官 P0-1」两组用例)。
  */
-const PRICE_CEIL_EPSILON = 1e-9;
+function ceilToPriceGrid(x: number): number {
+  return Math.ceil(x - Math.max(Math.abs(x) * 1e-12, Number.EPSILON));
+}
 
 /** 按秒 SKU:每秒成本(USD)→ **每 10 秒的整数显示 credits**(§7.2 的按秒取整格)。 */
 export function deriveVideoDisplayPer10s(cogsPerSecondUsd: number): number {
   const priceUsdPer10s = (cogsPerSecondUsd * 10) / (1 - GEN_MARGIN_TARGET);
-  return Math.ceil((priceUsdPer10s * CREDITS_PER_USD) / INTERNAL_PER_DISPLAY - PRICE_CEIL_EPSILON);
+  return ceilToPriceGrid((priceUsdPer10s * CREDITS_PER_USD) / INTERNAL_PER_DISPLAY);
 }
 
 /** 按件 SKU(图片 / 参考图 / 整段参考视频):单件成本(USD)→ 整数显示 credits。 */
 export function deriveImageDisplayCredits(costUsd: number): number {
   const priceUsd = costUsd / (1 - GEN_MARGIN_TARGET);
-  return Math.ceil((priceUsd * CREDITS_PER_USD) / INTERNAL_PER_DISPLAY - PRICE_CEIL_EPSILON);
+  return ceilToPriceGrid((priceUsd * CREDITS_PER_USD) / INTERNAL_PER_DISPLAY);
 }
 
 /**
@@ -307,24 +316,42 @@ const MAX_GUARDRAIL_SECONDS = Math.max(
  * 毛利 −17.9%,15 秒档更是 −253.8%。**一个定额挡不住长档**:时长越长越亏,而护栏
  * 本来就是给「不知道这是什么」的行兜底的,它必须随时长走。
  *
- * 三条规矩:
+ * 四条规矩:
  *   ① 费率取**这一档自己的**每 10 秒价;分辨率不认识就取全表最贵的那档(宁可贵)。
- *   ② 秒数畸形(0 / 负数 / NaN / ∞ / 根本不是数)→ 按**最长可售档**计。畸形不等于免费:
- *      `reserveCredits` 对 cost<=0 直接跳过,那就是一条真的免费付费任务。
- *   ③ 正的非整数秒向上取整(4.5s 按 5s 收),同样是「宁可贵」的方向。
+ *   ② 秒数畸形(0 / 负数 / NaN / ∞ / 空串 / 垃圾串 / 根本不是数)→ 按**最长可售档**计。
+ *      畸形不等于免费:`reserveCredits` 对 cost<=0 直接跳过,那就是一条真的免费付费任务。
+ *   ③ **数字长相的字符串秒数(`"16"`)按它的实秒收**,不按最长可售档封顶 —— 判官 P0-2:
+ *      不能把安全性寄托在供应商一定拒绝字符串上。`GenJob.videoOptions` 是无约束 JSON,
+ *      worker 那条路只做 TS 强转就把它原样发给付费供应商(apps/worker/src/jobs/gen.ts:1227
+ *      的 cast → :1241 的 durationSeconds → packages/generation/src/byteplus.ts),供应商真把
+ *      `"16"` 当 16 秒执行时,公式护栏价是 1760 而封顶只收 1650 —— **少收 11cr**。
+ *      数字长相的坏数据按它可能被执行的实秒收:收多不收少,方向和这条护栏的血统一致。
+ *   ④ 正的非整数秒向上取整(4.5s 按 5s 收),同样是「宁可贵」的方向。
  *
  * 与「价格只定义在已裁格上」那条纪律不冲突:护栏价**不是**一个 Founder 裁过的菜单价,
  * 它是这一档的**毛利地板**(≥ 65% 公式价)。菜单价只在 `seedanceDisplayCredits` 里,
  * 那里照旧只认已裁的档位,一格不外推。
+ *
+ * 取整走**纯整数**(`+9` 再整除 10 = 向上取整,与 `seedanceDisplayCredits` 同一个写法):
+ * 秒数与费率到这里都已是整数,不经过小数就没有浮点容差这回事 —— 上面 `ceilToPriceGrid`
+ * 的相对容差是给「成本 ÷ 0.35」那种真除法准备的,这里不需要,也不该借。
  */
 export function videoGuardrailInternal(resolution: string, seconds: unknown): number {
   const ratePer10s = SEEDANCE_DISPLAY_CREDITS_PER_10S[resolution] ?? MAX_DISPLAY_CREDITS_PER_10S;
-  const billedSeconds =
-    typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
-      ? Math.ceil(seconds)
-      : MAX_GUARDRAIL_SECONDS;
-  const displayCreditsCharged = Math.ceil((billedSeconds * ratePer10s) / 10 - PRICE_CEIL_EPSILON);
+  const billedSeconds = guardrailBilledSeconds(seconds);
+  const displayCreditsCharged = Math.floor((billedSeconds * ratePer10s + 9) / 10);
   return displayCreditsCharged * INTERNAL_PER_DISPLAY;
+}
+
+/** 护栏计费秒数(规矩 ②③④ 的实现):正的有限数 → 向上取整;数字长相的字符串 → 先转数
+ *  再向上取整(判官 P0-2);其余一切 → 最长可售档。 */
+function guardrailBilledSeconds(seconds: unknown): number {
+  if (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds);
+  if (typeof seconds === "string" && seconds.trim()) {
+    const parsed = Number(seconds);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.ceil(parsed);
+  }
+  return MAX_GUARDRAIL_SECONDS;
 }
 
 export function pricedGenCredits(job: GenSpendInput): number {

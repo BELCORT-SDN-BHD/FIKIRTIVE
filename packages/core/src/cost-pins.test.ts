@@ -92,6 +92,30 @@ describe("MONEY-A4 成本钉点闸(判词样式与汇率钉点闸一致)", () =>
     }
   });
 
+  it("MONEY-A4 / 判官 P1:合形状但**不存在**的日历日 → 同样闸红(复核闹钟被静默推迟到永远)", () => {
+    // 判官反例:"2026-13-01" 合 /^\d{4}-\d{2}-\d{2}$/,旧闸放行;而 C4 的到期比较是字典序,
+    // 13 月排在任何真实日期之后 ⇒ 这条钉点永远不会到期,复核提醒静默失效。
+    for (const fake of ["2026-13-01", "2026-02-30", "2026-00-10", "2026-01-32", "2026-02-29"]) {
+      expect(
+        evaluateCostPin("test:pin", { ...good, observedOn: fake }, "2026-09-01")
+          .some((p) => p.level === "red" && p.message.includes("observedOn")),
+        `observedOn=${fake}`,
+      ).toBe(true);
+      const problems = evaluateCostPin("test:pin", { ...good, nextReviewDate: fake }, "2026-12-01");
+      expect(problems.some((p) => p.level === "red" && p.message.includes("nextReviewDate")), `nextReviewDate=${fake}`).toBe(true);
+      // 坏日期不再冒充「还没到期」:红已经报出来了,不许再以黄的名义悄悄延后。
+      expect(problems.filter((p) => p.level === "yellow"), `nextReviewDate=${fake} 不发黄`).toEqual([]);
+    }
+    // 真实存在的日历日照旧不红 —— 包括闰年的 2 月 29 日。
+    for (const real of ["2026-02-28", "2028-02-29", "2026-11-18"]) {
+      expect(
+        evaluateCostPin("test:pin", { ...good, observedOn: real }, "2026-09-01")
+          .filter((p) => p.level === "red"),
+        `observedOn=${real}`,
+      ).toEqual([]);
+    }
+  });
+
   it("MONEY-A4:判词都带钉点键名 —— 闸红时人能直接找到是哪一条", () => {
     const problems = evaluateCostPin("image:seedream-pro:per-image", { ...good, source: "" }, "2026-09-01");
     expect(problems[0]!.pin).toBe("image:seedream-pro:per-image");

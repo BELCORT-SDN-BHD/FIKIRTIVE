@@ -300,11 +300,25 @@ export type CostPinProblem = { level: "red" | "yellow"; pin: string; message: st
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * 「这是不是一个**真实存在的日历日**」—— 光合形状(`^\d{4}-\d{2}-\d{2}$`)不够。
+ *
+ * 判官 P1:`"2026-13-01"` 合形状但不存在,旧闸放行,而 C4 的到期比较是**字典序** ——
+ * 一个 13 月的到期日永远排在任何真实日期之后,于是复核闹钟被静默推迟到永远。
+ * 用 UTC 往返(`new Date(...)` 再 `toISOString()` 切回前 10 位)判真伪:JS 会把 13 月
+ * 卷成次年 1 月、把 2 月 30 日卷成 3 月,卷过之后字符串就对不上原值了。
+ */
+function isRealIsoDate(value: unknown): boolean {
+  if (typeof value !== "string" || !ISO_DATE.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/**
  * 纯函数:把一条成本钉点的全部规则跑一遍。`today` 注入,所以「到期」这条是可测的。
  *
  * 规则(判词样式照抄 `evaluateFxPin`):
  *   C1 数值不是正有限数            → 红(声明烂掉了,不许当成没事)
- *   C2 日期不是 YYYY-MM-DD        → 红(同上:复核闹钟本身坏了)
+ *   C2 日期不是真实的 YYYY-MM-DD   → 红(同上:复核闹钟本身坏了)
  *   C3 缺 source                  → 红(**没出处的成本不是证据**)
  *   C4 today ≥ nextReviewDate     → 黄(复核到期,提醒;不拦发布)
  *
@@ -327,11 +341,11 @@ export function evaluateCostPin(key: string, pin: CostPin, today: string): CostP
     ["observedOn", pin?.observedOn],
     ["nextReviewDate", pin?.nextReviewDate],
   ] as const) {
-    if (typeof dateValue !== "string" || !ISO_DATE.test(dateValue)) {
+    if (!isRealIsoDate(dateValue)) {
       out.push({
         level: "red",
         pin: key,
-        message: `成本钉点 ${key} 的 ${field} 不是 YYYY-MM-DD(${String(dateValue)})—— 复核闹钟本身坏了 (C2)`,
+        message: `成本钉点 ${key} 的 ${field} 不是 YYYY-MM-DD(或不是真实存在的日历日)(${String(dateValue)})—— 复核闹钟本身坏了 (C2)`,
       });
     }
   }
@@ -344,7 +358,7 @@ export function evaluateCostPin(key: string, pin: CostPin, today: string): CostP
     });
   }
 
-  if (typeof pin?.nextReviewDate === "string" && ISO_DATE.test(pin.nextReviewDate) && today >= pin.nextReviewDate) {
+  if (isRealIsoDate(pin?.nextReviewDate) && today >= pin.nextReviewDate) {
     out.push({
       level: "yellow",
       pin: key,

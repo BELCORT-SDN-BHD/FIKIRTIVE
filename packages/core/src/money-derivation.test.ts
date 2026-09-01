@@ -95,6 +95,26 @@ describe("MONEY-A1 定价推导:价格由成本钉点算出来,全仓没有第�
     expect(IMAGE_DISPLAY_CREDITS_PER_IMAGE).toBe(1);
   });
 
+  it("判官 P0-1:取整容差是**相对量级**的 —— 真实高于格线一丁点必须进位,浮点噪声不进位", () => {
+    // 反例(判官原例):单件成本 $0.0350000000175 —— 比 lite 图钉点高 5e-10 美元。
+    //   公式价 = 0.0350000000175 ÷ 0.35 × 100 ÷ 10 = 1.0000000005cr
+    // 规格 §7.2 要求向上取整到收费格 ⇒ 2cr。旧的**绝对** 1e-9 容差把它压回 1cr,
+    // 而 charged 与 formula 出自同一个函数 ⇒ 启动断言与 65% 毛利闸会同时漏过这一格。
+    expect(deriveImageDisplayCredits(0.0350000000175)).toBe(2);
+    // 同一把尺子对纯浮点噪声(相对误差 ~2e-16)必须不动价:钉点原值仍是 1cr。
+    expect(deriveImageDisplayCredits(0.035)).toBe(1);
+
+    // 按秒 SKU 同型两例。
+    // ① 现役 480p 钉点不受影响(10.044 → 11,一格不动)。
+    expect(deriveVideoDisplayPer10s(0.035154)).toBe(11);
+    // ② 构造一个恰高于格线一丁点的每秒成本:
+    //    每秒 $0.00350000000175 → 每 10 秒成本 $0.0350000000175
+    //    → ÷ 0.35 = $0.1000000000500 → × 100 ÷ 10 = 1.0000000005cr ⇒ ceil = 2cr(旧实现给 1cr)。
+    expect(deriveVideoDisplayPer10s(0.00350000000175)).toBe(2);
+    // 对照:去掉那一丁点(每秒 $0.0035,恰好压线)只有浮点噪声 ⇒ 仍是 1cr。
+    expect(deriveVideoDisplayPer10s(0.0035)).toBe(1);
+  });
+
   it("启动断言:现价低于公式价就 throw(成本涨穿定价 = 停售等 Founder 重定价)", () => {
     // 生产里这条断言在模块加载时跑,所以现役价目一定是合法的。
     expect(() => assertDerivedPricing(derivedPriceRows())).not.toThrow();
@@ -148,12 +168,32 @@ describe("MONEY-A3 两 SKU 回填 + 护栏按档:1080p 11cr/秒、pro 图 2cr/�
   });
 
   it("畸形秒数按最长可售档收,绝不算成免费;正的非整数向上取整", () => {
-    for (const seconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, "5", null, undefined, {}]) {
+    // 注:数字长相的字符串("5")自判官 P0-2 起**不再**算畸形,改按实秒计 —— 见下一条。
+    for (const seconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, null, undefined, {}]) {
       expect(videoGuardrailInternal("未知res", seconds), `seconds=${String(seconds)}`).toBe(1650); // 15 × 11cr
       expect(videoGuardrailInternal("未知res", seconds), `seconds=${String(seconds)} 绝不免费`).toBeGreaterThan(0);
     }
     expect(videoGuardrailInternal("未知res", 4.5)).toBe(550);   // ceil(4.5)=5 秒 × 11cr
     expect(videoGuardrailInternal("未知res", 0.001)).toBe(110); // ceil(0.001)=1 秒 —— 不是 0cr
+  });
+
+  it("判官 P0-2:数字长相的字符串秒数按**实秒**收,不按最长档封顶(少收 11cr 的洞已堵)", () => {
+    // 反例(判官原例):videoOptions.seconds = "16"。worker 只做 TS 强转就把它原样发给付费
+    // 供应商(apps/worker/src/jobs/gen.ts:1227 → :1241 → packages/generation/src/byteplus.ts),
+    // 供应商若真按 16 秒执行,公式护栏价 = 16 × 110 ÷ 10 = 176cr;旧写法按 15 秒封顶只收
+    // 165cr —— 少收 11cr。护栏的血统是「宁可贵,不许贱卖」,所以按可能被执行的实秒收。
+    expect(videoGuardrailInternal("1080p", "16")).toBe(1760);
+    expect(videoGuardrailInternal("1080p", "16")).toBeGreaterThan(videoGuardrailInternal("1080p", 15));
+    // 字符串按这一档**自己的**费率算,不误伤成最贵档。
+    expect(videoGuardrailInternal("720p", "5")).toBe(110);   // 5 × 22 ÷ 10 = 11cr
+    expect(videoGuardrailInternal("未知res", "5")).toBe(550); // 未知分辨率仍按最贵档费率
+    // 不是数字长相的串仍然是畸形 → 最长可售档(1650),绝不因为「是个字符串」就免费或贱卖。
+    for (const bad of ["abc", "", "   ", "-3", "0", "16abc", "1e309"]) {
+      expect(videoGuardrailInternal("1080p", bad), `seconds=${JSON.stringify(bad)}`).toBe(1650);
+    }
+    // 数字路径回归:一格不动。
+    expect(videoGuardrailInternal("1080p", 16)).toBe(1760);
+    expect(videoGuardrailInternal("未知res", 5)).toBe(550);
   });
 
   it("16cr 倒挂已修:1080p 与未知分辨率都不再落那个定额", () => {
