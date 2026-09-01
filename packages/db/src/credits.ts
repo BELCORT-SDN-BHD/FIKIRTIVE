@@ -230,7 +230,80 @@ export async function reserveCreditsUpTo(
   tx: Tx,
   args: { orgId: string; refId: string; capInternal: number; minimumInternal: number },
 ): Promise<number> {
-  const { orgId, refId, capInternal, minimumInternal } = args;
+  // Zero firm units ⇒ `hold = min(capInternal, balance)` and nothing else — byte-identical to
+  // the shape this function had before the firm-leg core was extracted (see reserveUpToCore).
+  const { holdInternal } = await reserveUpToCore(tx, {
+    orgId: args.orgId,
+    refId: args.refId,
+    elasticCapInternal: args.capInternal,
+    minimumInternal: args.minimumInternal,
+  });
+  return holdInternal;
+}
+
+/**
+ * MONEY-A10 —— **一条弹性腿 + 一条按整格坚实预留的腿**,一笔事务里一起决定、一起写。
+ *
+ * 为什么不能只用 `reserveCreditsUpTo`。它把**整个** cap 压到余额(`min(cap, balance)`),
+ * 而聊天轮的 cap 现在含两条性质完全不同的腿:LLM 那条是「能开聊就行,用多少算多少」(#898
+ * 刻意的弹性),搜索那条是「每次 3 internal,收多少是确定的」。把两条一起压的后果实测过:
+ * 余额 10 的商家,意图预留 55(LLM 40 + 搜索 15)被压成 10,而工具照发 5 个搜索槽 ⇒ 应结
+ * 23、实收 10,平台自己吃掉 13(SETTLE 行留下 `hold-shortfall:13`)。规格 §7.4 要的是
+ * 「按上限预留、按成功次数结算」,那个形状下它不成立。
+ *
+ * 修法不是「把搜索腿也做成弹性」——半格搜索是不存在的东西。是**按整格发放**:
+ *
+ *   granted = min(maxUnits, floor((balance − minimumInternal) / unitInternal))
+ *
+ * 也就是「先给弹性腿留够开门的最低额,剩下的钱还能买几整格搜索」。买得起几格就发几格槽,
+ * 发出去的每一格都被**坚实持有**;买不起就发 0 格,工具当场拒绝(而不是搜完了才发现没钱)。
+ *
+ * 由此得到这条不变量:`hold ≥ granted × unitInternal + minimumInternal`
+ * (因为 granted×unit ≤ balance − minimum,且 elasticCap ≥ minimum),所以**成功的搜索永远
+ * 被预扣罩得住**,`settleCredits` 的 clamp 不可能再吃掉搜索那条腿。弹性腿仍然可能在低余额
+ * 下被 clamp —— 那是 #898 既有的、Founder 已裁的行为,这里一个字都没改它。
+ *
+ * 返回发放的格数,调用方据此决定这一轮真的能搜几次。
+ */
+export async function reserveChatTurnWithSearchSlots(
+  tx: Tx,
+  args: {
+    orgId: string;
+    refId: string;
+    /** 弹性腿(LLM)的上限 —— 会被余额压缩,#898 语义不变。 */
+    llmCapInternal: number;
+    /** 开门门槛:余额低于它整轮拒绝。也是坚实腿必须给弹性腿留下的那一份。 */
+    minimumInternal: number;
+    /** 一格搜索的价(internal credits)。 */
+    searchUnitInternal: number;
+    /** 这一轮最多几格(规格上限)。 */
+    maxSearchUnits: number;
+  },
+): Promise<{ holdInternal: number; grantedSearchUnits: number }> {
+  const { holdInternal, grantedUnits } = await reserveUpToCore(tx, {
+    orgId: args.orgId,
+    refId: args.refId,
+    elasticCapInternal: args.llmCapInternal,
+    minimumInternal: args.minimumInternal,
+    firm: { unitInternal: args.searchUnitInternal, maxUnits: args.maxSearchUnits },
+  });
+  return { holdInternal, grantedSearchUnits: grantedUnits };
+}
+
+/** 上面两个公开入口共用的那一段:读余额 → 判门 → 算坚实格数 → 取 hold → 写预扣。
+ *  抽出来是为了让「不带坚实腿的调用方行为逐字不变」成为**结构事实**而不是一句承诺:
+ *  `reserveCreditsUpTo` 传不进 `firm`,于是它走的就是 firm=0 的那条算式。 */
+async function reserveUpToCore(
+  tx: Tx,
+  args: {
+    orgId: string;
+    refId: string;
+    elasticCapInternal: number;
+    minimumInternal: number;
+    firm?: { unitInternal: number; maxUnits: number };
+  },
+): Promise<{ holdInternal: number; grantedUnits: number }> {
+  const { orgId, refId, elasticCapInternal, minimumInternal, firm } = args;
   const account = await tx.creditAccount.findUnique({ where: { orgId }, select: { balance: true } });
   const balance = account?.balance ?? 0;
   if (balance < minimumInternal) {
@@ -241,9 +314,16 @@ export async function reserveCreditsUpTo(
       balanceInternal: account?.balance ?? null,
     });
   }
-  const hold = Math.min(capInternal, balance);
+  // 坚实腿:只发整格,而且只从「给弹性腿留够开门额之后」剩下的钱里发。坏参数一律 0 格 ——
+  // 方向永远是少发一格,不是多持一分。
+  const grantedUnits =
+    firm && Number.isInteger(firm.unitInternal) && firm.unitInternal > 0 && Number.isInteger(firm.maxUnits) && firm.maxUnits > 0
+      ? Math.max(0, Math.min(firm.maxUnits, Math.floor((balance - minimumInternal) / firm.unitInternal)))
+      : 0;
+  const firmInternal = grantedUnits * (firm?.unitInternal ?? 0);
+  const hold = Math.min(elasticCapInternal + firmInternal, balance);
   await reserveAgainstBalance(tx, { orgId, refId, cost: hold });
-  return hold;
+  return { holdInternal: hold, grantedUnits };
 }
 
 /** SETTLE the held charge for a successfully-committed job. MUST run in the worker's commit

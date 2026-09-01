@@ -38,6 +38,15 @@
  *     settleCredits and the cost would silently land on us. Invariants 1–3 are untouched — a
  *     failed call still refunds the WHOLE hold (search fee included), and settle is still
  *     clamped to the held amount, so the pair can never over-charge.
+ * 12. (MONEY-A10) `extraHoldUnits` / `onExtraUnitsGranted` are invariant 11's leg in WHOLE UNITS —
+ *     for a leg with a fixed unit price and a per-turn cap (today: the chat turn's search leg).
+ *     Under #898's balance-aware hold a FLAT extra gets squeezed together with the LLM leg while
+ *     the tool keeps handing out full-price slots, and settle is then clamped: the merchant gets
+ *     searches nobody paid for. So the ledger decides — in the reserve's own transaction — how
+ *     many whole units this balance can buy, holds those FIRMLY (they are never squeezed), and
+ *     reports the count back through the hook BEFORE fn runs. Invariants 1–3 and 9 are untouched:
+ *     the count can only ever be smaller than the cap, and a caller that never hears it stays at
+ *     0 (fail closed — reserve threw, so nothing may be spent).
  */
 import {
   CREDITS_PER_USD,
@@ -51,6 +60,7 @@ import {
   Prisma,
   reserveCredits,
   reserveCreditsUpTo,
+  reserveChatTurnWithSearchSlots,
   settleCredits,
   refundReservation,
   assertWithinSpendCap,
@@ -257,6 +267,32 @@ export type LlmBudgetArgs = {
    */
   extraHoldInternal?: number;
   /**
+   * 钱路 MONEY-A10 —— `extraHoldInternal` 的**按格版本**,给「单价固定、次数有上限」的那类腿
+   * (今天唯一用户 = 聊天的搜索腿)。
+   *
+   * 为什么平的 `extraHoldInternal` 在聊天轮上不够用:聊天走 #898 的自适应预留
+   * (`reserveMinInternal`),它把**整个** hold 压到余额。平的 extra 因此会跟 LLM 腿一起被压
+   * 掉,而工具那边照发满额的搜索槽 —— 实测过:余额 10 的商家意图预留 55 被压成 10,应结 23
+   * 实收 10,平台自己吃 13。深研不受影响:它走的是全额固定预留,没有压缩这回事,所以它继续
+   * 用平的 `extraHoldInternal`,一个字都不用改。
+   *
+   * 传了它,预留就改走 `reserveChatTurnWithSearchSlots`:在**读余额的同一笔事务里**算出这一轮
+   * 买得起几整格,坚实持有那几格,并把格数经 `onExtraUnitsGranted` 交回调用方。于是「发出去的
+   * 槽」与「持住的钱」在同一个数上,`extraSettleInternal` 不可能再超出预扣。
+   *
+   * 与 `extraHoldInternal` 互斥:同时传时以本字段为准(它是更严格的那个)。
+   */
+  extraHoldUnits?: { unitInternal: number; maxUnits: number };
+  /**
+   * 钱路 MONEY-A10 —— 预留提交之后、`afterReserve` 与 `fn` 之前调用一次,告诉调用方账本**实际
+   * 发放了几格**。没走按格预留的路径上,发放数 = 满额:全额固定预留(深研)本来就把 worst case
+   * 持住了,而 `paid:false` 的免费路一分钱都不动 —— 那条路上「余额不够」是句假话。
+   *
+   * 预留抛错时它**不会**被调用 —— 调用方那边的初值必须是 0(发不出槽 = 不许花钱),
+   * fail closed 由此成立。
+   */
+  onExtraUnitsGranted?: (grantedUnits: number) => void;
+  /**
    * 钱路 M1-c — 这一次调用里 LLM 之外**实际**发生的钱,单位 internal credits。在 `fn` 之后读
    * (搜索次数只有跑完才知道),加进 settle。
    *
@@ -318,21 +354,54 @@ export class SettleLostToRefund extends Error {
  */
 export function llmHoldInternal(args: LlmBudgetArgs): number {
   if (!args.paid) return 0;
+  // 钱路 M1-c:非 LLM 的那一笔加在 cap **外面**。cap 是 #543 给对话轮的 LLM hold 定的天花板,
+  // 它管的是 token 那条腿;一笔确定会被 settle 的非 token 费用如果被同一个 cap 压住,settle
+  // 就会 clamp 掉它 —— 收费函数说收了,账本没收。
+  //
+  // MONEY-A10 之后这个数是**上界**而不再逐字等于实际预扣:走按格预留(`extraHoldUnits`)的
+  // 聊天轮,低余额下账本只发得起更少的格,实际 hold 因此更小。作为预检它仍然正确——方向是
+  // 「按最大可能判」,只会更严,不会放行一笔 reserve 会拒的动作。
+  return llmLegInternal(args) + extraHoldOf(args);
+}
+
+/** hold 的 **LLM 那一条腿**(#543 的 cap 只管这一条)。MONEY-A10 的按格预留要把两条腿分开
+ *  交给账本:弹性的这条随余额压缩,坚实的那条按整格发放,所以它必须能被单独取到。 */
+function llmLegInternal(args: LlmBudgetArgs): number {
+  if (!args.paid) return 0;
   const prices = args.prices ?? llmPricesFor(args.model);
   const margin = args.margin ?? ottoLlmMargin();
   const worstCase = turnBudgetInternal(prices, margin, args.maxSteps ?? 1);
   const cap = args.reserveCapInternal;
-  const llm = typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
-  // 钱路 M1-c:非 LLM 的那一笔(现役唯一用户 = 深研的搜索费)加在 cap **外面**。cap 是
-  // #543 给对话轮的 LLM hold 定的天花板,它管的是 token 那条腿;一笔确定会被 settle 的
-  // 非 token 费用如果被同一个 cap 压住,settle 就会 clamp 掉它 —— 收费函数说收了,账本没收。
-  return llm + extraHoldOf(args);
+  return typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
 }
 
-/** `extraHoldInternal` 的取值规则:正整数才算数,其余一律 0(坏值 = 不额外持有)。 */
+/** 非 LLM 那条腿的 **worst case**。按格的(MONEY-A10)优先:它是更严格的那个,而且平的字段
+ *  在按格路径上没有意义。坏值一律 0(坏值 = 不额外持有)。 */
 function extraHoldOf(args: LlmBudgetArgs): number {
+  const units = firmUnitsOf(args);
+  if (units) return units.unitInternal * units.maxUnits;
   const extra = args.extraHoldInternal;
   return typeof extra === "number" && Number.isInteger(extra) && extra >= 1 ? extra : 0;
+}
+
+/** `extraHoldUnits` 的取值规则:两个数都必须是正整数,否则当没传(退回平的 extra 或 0)。 */
+function firmUnitsOf(args: LlmBudgetArgs): { unitInternal: number; maxUnits: number } | undefined {
+  const u = args.extraHoldUnits;
+  if (!u) return undefined;
+  const ok = Number.isInteger(u.unitInternal) && u.unitInternal >= 1 && Number.isInteger(u.maxUnits) && u.maxUnits >= 1;
+  return ok ? { unitInternal: u.unitInternal, maxUnits: u.maxUnits } : undefined;
+}
+
+/** 把「这一轮发了几格坚实腿」交回调用方。付费路与免费路共用同一段,所以两条路不可能在
+ *  「钩子抛错怎么办」上长出两套答案:吞掉并记日志(与 onRefundedFailure 同一条纪律),
+ *  发放数就停在调用方 fail-closed 的初值 0 —— 方向是少搜,不是白搜。 */
+function reportGrantedUnits(args: LlmBudgetArgs, grantedUnits: number): void {
+  if (!args.onExtraUnitsGranted) return;
+  try {
+    args.onExtraUnitsGranted(grantedUnits);
+  } catch (hookErr) {
+    console.warn("[withLlmBudget] onExtraUnitsGranted hook threw; the turn keeps 0 granted units.", hookErr);
+  }
 }
 
 /** `extraSettleInternal` 的取值规则:非负有限数向上取整,其余(含抛错)一律 0。
@@ -364,6 +433,11 @@ export async function withLlmBudget<T>(
 ): Promise<T> {
   // Invariant #4: mock/free path — no metering at all.
   if (!args.paid) {
+    // MONEY-A10:免费路上一分钱都不动,所以坚实腿**满格**发放。少了这一行,调用方停在 fail-closed
+    // 的 0 格,而工具会把每一次搜索都当成「余额不够」拒掉 —— 那句话在这条路上是假的(这里根本
+    // 没有余额这回事),而且它悄悄改掉了 paid:false 从前的行为。发放数不是计量:免费路上没有
+    // 预扣、没有结算,invariant #4 一个字未动。
+    reportGrantedUnits(args, firmUnitsOf(args)?.maxUnits ?? 0);
     const out = await fn();
     // 钱路 M1-b:免费路上没有 settle 可言,但**交付仍然必须发生**。少了这三行,一个把交付
     // 托付给这个钩子的调用方在 paid:false 上会安静地什么都不交付 —— 正是这张票要消灭的那类
@@ -415,9 +489,27 @@ export async function withLlmBudget<T>(
   // `reserve` is the amount ACTUALLY held — on the balance-aware path (#898) it can be less than
   // `capped`, and the no-usage settle below must charge the real hold, not the intended one.
   let reserve = capped;
+  // MONEY-A10:账本这一轮实际发放了几格坚实腿。**初值 0 = fail closed** —— 预留抛错时下面那个
+  // 回调不会被调用,调用方拿到的仍然是 0 格,于是一格也不许花。
+  const firmUnits = firmUnitsOf(args);
+  let grantedUnits = 0;
   await prisma.$transaction(async (tx) => {
     if (judgeWholeAction) await assertWithinSpendCap(tx, args.orgId, capCost as number);
-    if (balanceAware) {
+    if (balanceAware && firmUnits) {
+      // MONEY-A10 —— 两条腿分开交给账本,在**读余额的同一笔事务里**一起决定:
+      // 弹性的 LLM 腿照旧被余额压缩(#898 不变),坚实的搜索腿按整格发放并被完整持有。
+      // 一起压的旧形状会把搜索腿压没,而工具照发满额的槽 —— settle 随后被 clamp,平台吃差额。
+      const out = await reserveChatTurnWithSearchSlots(tx, {
+        orgId: args.orgId,
+        refId: args.refId,
+        llmCapInternal: llmLegInternal(args),
+        minimumInternal: min,
+        searchUnitInternal: firmUnits.unitInternal,
+        maxSearchUnits: firmUnits.maxUnits,
+      });
+      reserve = out.holdInternal;
+      grantedUnits = out.grantedSearchUnits;
+    } else if (balanceAware) {
       // #898 — the hold fits the balance. Founder 2026-08-13 also exempted this hold from the
       // spend cap (see reserveCreditsUpTo in @fikirtive/db): the ceiling governs new paid actions,
       // not a conversation already under way, so this leg reserves against the balance alone.
@@ -428,9 +520,17 @@ export async function withLlmBudget<T>(
         minimumInternal: min,
       });
     } else {
+      // 全额固定预留(深研走这条):worst case 本来就被完整持住,所以坚实腿是满格发放。
+      if (firmUnits) grantedUnits = firmUnits.maxUnits;
       await reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve });
     }
   });
+
+  // MONEY-A10 —— 预留已经提交,把账本真正发放的格数交回调用方。位置刻意在**认领窗口与 fn
+  // 之前**:工具在 fn 里才会被调用,它必须先知道这一轮能搜几次。一个抛错的钩子不许拖垮已经
+  // 成功的预留,所以吞掉并记日志(与 onRefundedFailure 同一条纪律)——发放数就停在 0,
+  // 方向是少搜,不是白搜。
+  reportGrantedUnits(args, grantedUnits);
 
   // #524 r3 — the claim window. It sits HERE, between a successful hold and the model call, so a
   // caller consuming a one-shot consent does it only once the ledger has already agreed to pay.

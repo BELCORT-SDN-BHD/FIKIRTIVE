@@ -9,6 +9,7 @@ import {
   prisma,
   reserveCredits,
   reserveCreditsUpTo,
+  reserveChatTurnWithSearchSlots,
   settleCredits,
   refundReservation,
   InsufficientCredits,
@@ -1221,5 +1222,101 @@ describe("a priced conversation turn moves credits and leaves an honest pair of 
     expect(rows.map((r) => r.kind)).toEqual(["RESERVE", "SETTLE"]);
     expect(sumBalance(rows)).toBe(-110);
     expect(sumReserved(rows)).toBe(0);
+  });
+});
+
+
+// ── MONEY-A10(规格 §7.4)—— 弹性 LLM 腿 + 按整格坚实预留的搜索腿 ──────────────────────
+//
+// 判官 P1 的原始机制,在真库上跑一遍再修:`reserveCreditsUpTo` 把**整个** cap 压到余额,
+// 而聊天轮的 cap 含两条性质不同的腿。余额 10 的商家,意图预留 55(LLM 40 + 搜索 15)被压成
+// 10;工具若按全局常量发满 5 个槽,5 次搜索照搜,应结 23、实收 10 —— 平台自己吃 13,
+// SETTLE 行留下 `hold-shortfall:13`。§7.4 要的「按上限预留、按成功次数结算」在那个形状下
+// 不成立。
+//
+// 修法是按整格发放:granted = min(maxUnits, floor((balance − minimum) / unit))。
+// 由此得到不变量 hold ≥ granted×unit + minimum,所以成功的搜索永远被预扣罩得住。
+describe("MONEY-A10 — reserveChatTurnWithSearchSlots:搜索腿按整格坚实预留", () => {
+  const LLM_CAP = 40; // OTTO_CONVERSATION_TURN_RESERVE_INTERNAL
+  const MIN = 10;     // OTTO_CHAT_MIN_START_INTERNAL
+  const UNIT = 3;     // searchUnitChargeInternal("basic")
+  const MAX_UNITS = 5;
+
+  const reserveChat = (orgId: string, refId: string) =>
+    prisma.$transaction((tx) =>
+      reserveChatTurnWithSearchSlots(tx, {
+        orgId, refId,
+        llmCapInternal: LLM_CAP,
+        minimumInternal: MIN,
+        searchUnitInternal: UNIT,
+        maxSearchUnits: MAX_UNITS,
+      }),
+    );
+
+  it("MONEY-A10 ① 余额 10(恰好等于开门额)⇒ 发 0 格:开得了聊,但一次搜索都买不起", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 10 } });
+
+    const { holdInternal, grantedSearchUnits } = await reserveChat(ORG, REF);
+
+    expect(grantedSearchUnits).toBe(0);   // floor((10 − 10) / 3) = 0
+    expect(holdInternal).toBe(10);        // LLM 腿照旧被余额压缩(#898 行为不变)
+    // 发不出槽 ⇒ 工具会当场拒绝 ⇒ settle 只含 LLM,永远 ≤ hold,平台不吃差额。
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF, actualInternal: 8 }));
+    const rows = await ledger(ORG);
+    const settle = rows.find((r) => r.kind === "SETTLE")!;
+    expect(settle.reason).toBe("");       // 没有 hold-shortfall —— 这就是 P1 被修掉的证据
+    expect((await account(ORG)).balance).toBe(2);
+  });
+
+  it("MONEY-A10 ② 余额 25 ⇒ 发满 5 格,且那 15 被坚实持有(hold ≥ 5×3 + 开门额)", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+
+    const { holdInternal, grantedSearchUnits } = await reserveChat(ORG, REF);
+
+    expect(grantedSearchUnits).toBe(MAX_UNITS);              // floor((25 − 10) / 3) = 5
+    expect(holdInternal).toBe(25);                           // min(40 + 15, 25)
+    // 不变量:坚实腿 + 开门额都在 hold 里面 —— 搜索费不可能被 clamp 掉。
+    expect(holdInternal).toBeGreaterThanOrEqual(grantedSearchUnits * UNIT + MIN);
+
+    // 5 次全成功 + 一笔小 LLM:结算完全被预扣罩住,零 shortfall。
+    await prisma.$transaction((tx) =>
+      settleCredits(tx, { orgId: ORG, refId: REF, actualInternal: 6 + grantedSearchUnits * UNIT }),
+    );
+    const settle = (await ledger(ORG)).find((r) => r.kind === "SETTLE")!;
+    expect(settle.reason).toBe("");
+  });
+
+  it("MONEY-A10 ③ 中间地带 余额 17 ⇒ 只发 2 格(整格,不发半格)", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 17 } });
+
+    const { holdInternal, grantedSearchUnits } = await reserveChat(ORG, REF);
+
+    expect(grantedSearchUnits).toBe(2);   // floor((17 − 10) / 3) = 2,不是 2.33
+    expect(holdInternal).toBe(17);
+    expect(holdInternal).toBeGreaterThanOrEqual(grantedSearchUnits * UNIT + MIN);
+  });
+
+  it("MONEY-A10 ④ 余额低于开门额 ⇒ 整轮拒绝(与 reserveCreditsUpTo 同一扇门)", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 9 } });
+    await expect(reserveChat(ORG, REF)).rejects.toBeInstanceOf(InsufficientCredits);
+    expect((await ledger(ORG))).toHaveLength(0);   // 一行都没写
+    expect((await account(ORG)).balance).toBe(9);  // 一分没动
+  });
+
+  it("MONEY-A10 ⑤ 余额充裕 ⇒ 满格,且 hold 是 LLM cap + 坚实腿(不再被余额压)", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 100_000 } });
+
+    const { holdInternal, grantedSearchUnits } = await reserveChat(ORG, REF);
+
+    expect(grantedSearchUnits).toBe(MAX_UNITS);
+    expect(holdInternal).toBe(LLM_CAP + MAX_UNITS * UNIT);   // 40 + 15 = 55
+  });
+
+  it("MONEY-A10 ⑥ 不带搜索腿的老调用方行为逐字不变(同余额、同 cap、同 hold)", async () => {
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 25 } });
+    const legacy = await prisma.$transaction((tx) =>
+      reserveCreditsUpTo(tx, { orgId: ORG, refId: "ref-legacy", capInternal: LLM_CAP, minimumInternal: MIN }),
+    );
+    expect(legacy).toBe(25); // min(40, 25) —— 与抽出 firm 核心之前一模一样
   });
 });

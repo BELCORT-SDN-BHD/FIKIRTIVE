@@ -22,9 +22,10 @@ function makeRunCtx(ctx: OttoContext) {
   return { context: ctx };
 }
 
-/** MONEY-A10:一轮的搜索槽,每个测试自己新建一份(生产里由 buildOttoContext 每轮新建)。 */
-function makeSlots(): OttoSearchSlots {
-  return { taken: 0, succeeded: 0 };
+/** MONEY-A10:一轮的搜索槽,每个测试自己新建一份(生产里由 buildOttoContext 每轮新建)。
+ *  `granted` 默认给满 —— 那是「余额买得起满额搜索」的商家;低余额的路各自传自己的格数。 */
+function makeSlots(granted: number = OTTO_CHAT_MAX_SEARCHES_PER_TURN): OttoSearchSlots {
+  return { granted, taken: 0, succeeded: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +321,7 @@ describe("executeResearchWeb — MONEY-A10 搜索槽与单轮上限", () => {
     await executeResearchWeb({ query: "nike" }, makeRunCtx(ctx));
 
     expect(search).toHaveBeenCalledTimes(1);
-    expect(slots).toEqual({ taken: 1, succeeded: 1 });
+    expect(slots).toEqual({ granted: OTTO_CHAT_MAX_SEARCHES_PER_TURN, taken: 1, succeeded: 1 });
   });
 
   it("MONEY-A10:搜索失败释放槽且不计费 —— 商家不为一次没拿到结果的搜索付钱", async () => {
@@ -331,7 +332,7 @@ describe("executeResearchWeb — MONEY-A10 搜索槽与单轮上限", () => {
     const result = await executeResearchWeb({ query: "nike" }, makeRunCtx(ctx));
 
     expect((result as any).error).toBe("provider down");
-    expect(slots).toEqual({ taken: 0, succeeded: 0 });
+    expect(slots).toEqual({ granted: OTTO_CHAT_MAX_SEARCHES_PER_TURN, taken: 0, succeeded: 0 });
   });
 
   it("MONEY-A10:单轮并发发起 6 次搜索 —— 只有 5 次到达 provider,第 6 次被拒", async () => {
@@ -367,7 +368,11 @@ describe("executeResearchWeb — MONEY-A10 搜索槽与单轮上限", () => {
   });
 
   it("MONEY-A10:占满槽之后的第 7、8 次同样被拒,且不再打供应商", async () => {
-    const slots = { taken: OTTO_CHAT_MAX_SEARCHES_PER_TURN, succeeded: OTTO_CHAT_MAX_SEARCHES_PER_TURN };
+    const slots = {
+      granted: OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+      taken: OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+      succeeded: OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+    };
     const search = vi.fn().mockResolvedValue({ results: [] });
     const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search, searchSlots: slots } });
 
@@ -399,7 +404,59 @@ describe("executeResearchWeb — MONEY-A10 搜索槽与单轮上限", () => {
     await executeResearchWeb({ url: "https://a.com" }, makeRunCtx(ctx));
 
     expect(fetchUrl).toHaveBeenCalledTimes(1);
-    expect(slots).toEqual({ taken: 0, succeeded: 0 });
+    expect(slots).toEqual({ granted: OTTO_CHAT_MAX_SEARCHES_PER_TURN, taken: 0, succeeded: 0 });
+  });
+
+  // ── 判官 P1:槽由**账本**发,不是全局常量 ────────────────────────────────────────────
+  //
+  // 低余额下预扣会被压缩,账本因此只发得起更少的格。工具若仍按常量 5 放行,搜完了 settle 会
+  // 被 clamp,平台吃差额 —— 这一组钉的就是「工具只放行账本买得起的次数」。
+  it("MONEY-A10:granted=0(余额只够开聊)⇒ 一次都不许搜,不打供应商", async () => {
+    const slots = makeSlots(0);
+    const search = vi.fn().mockResolvedValue({ results: [] });
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search, searchSlots: slots } });
+
+    const out = (await executeResearchWeb({ query: "nike" }, makeRunCtx(ctx))) as any;
+
+    expect(search).not.toHaveBeenCalled();
+    expect(out.refused).toBe(true);
+    expect(slots.succeeded).toBe(0);
+    // 余额话,不是上限话 —— 说错了商家会去做没用的动作。
+    expect(out.reason).toMatch(/more credits/i);
+    expect(out.reason).not.toMatch(/proposeResearch/);
+    // 0 格有它自己的说法:「covers 0 searches, and they are used up」是句废话,模型会照着它编。
+    expect(out.reason).toMatch(/does not cover a web search this turn/);
+    expect(out.reason).not.toMatch(/used up/);
+  });
+
+  it("MONEY-A10:granted=2 ⇒ 第 3 次被拒,供应商只被打 2 次,结算按 2 格", async () => {
+    const slots = makeSlots(2);
+    const search = vi.fn().mockResolvedValue({ results: [] });
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search, searchSlots: slots } });
+
+    await executeResearchWeb({ query: "a" }, makeRunCtx(ctx));
+    await executeResearchWeb({ query: "b" }, makeRunCtx(ctx));
+    const third = (await executeResearchWeb({ query: "c" }, makeRunCtx(ctx))) as any;
+
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(third.refused).toBe(true);
+    expect(third.reason).toMatch(/covers 2 searches/);
+    expect(slots.succeeded).toBe(2);            // settle = 2 × 单价,被那 2 格坚实预扣罩住
+  });
+
+  it("MONEY-A10:granted=1 时拒绝文案用单数(数字是算出来的,不是拼出来的)", async () => {
+    const slots = { granted: 1, taken: 1, succeeded: 1 };
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search: vi.fn(), searchSlots: slots } });
+    const out = (await executeResearchWeb({ query: "x" }, makeRunCtx(ctx))) as any;
+    expect(out.reason).toMatch(/covers 1 search,/);
+  });
+
+  it("MONEY-A10:granted 达到上限才说「转深度研究」—— 两句话不许说反", async () => {
+    const atCap = { granted: OTTO_CHAT_MAX_SEARCHES_PER_TURN, taken: OTTO_CHAT_MAX_SEARCHES_PER_TURN, succeeded: 5 };
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), search: vi.fn(), searchSlots: atCap } });
+    const out = (await executeResearchWeb({ query: "x" }, makeRunCtx(ctx))) as any;
+    expect(out.reason).toMatch(/proposeResearch/);
+    expect(out.reason).not.toMatch(/more credits/i);
   });
 
   it("MONEY-A10:工具描述对模型说真话 —— 价现算、不再声称 $0", () => {

@@ -275,12 +275,13 @@ describe("createOttoRuntime — profile matrix (profiles only limit tools/steps)
 // 之前逐字节相同 —— 一个没接搜索的运行时不该因为这次改动多持住一分钱。
 
 describe("ottoBudgetArgsFor — MONEY-A10 搜索腿", () => {
-  const slots = () => ({ taken: 0, succeeded: 0 });
+  const slots = (granted = OTTO_CHAT_MAX_SEARCHES_PER_TURN) => ({ granted, taken: 0, succeeded: 0 });
   const req = { orgId: "org_1", refId: "otto-turn:m1", input: "x" as const };
 
   it("MONEY-A10:没有 context ⇒ 没有搜索腿(与本改动前逐字节相同)", () => {
     const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req);
-    expect(args.extraHoldInternal).toBeUndefined();
+    expect(args.extraHoldUnits).toBeUndefined();
+    expect(args.onExtraUnitsGranted).toBeUndefined();
     expect(args.extraSettleInternal).toBeUndefined();
   });
 
@@ -288,7 +289,8 @@ describe("ottoBudgetArgsFor — MONEY-A10 搜索腿", () => {
     const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
       research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }) },
     });
-    expect(args.extraHoldInternal).toBeUndefined();
+    expect(args.extraHoldUnits).toBeUndefined();
+    expect(args.onExtraUnitsGranted).toBeUndefined();
     expect(args.extraSettleInternal).toBeUndefined();
   });
 
@@ -296,24 +298,41 @@ describe("ottoBudgetArgsFor — MONEY-A10 搜索腿", () => {
     const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
       research: { fetchUrl: async () => ({ url: "u", text: "" }), searchSlots: slots() },
     });
-    expect(args.extraHoldInternal).toBeUndefined();
+    expect(args.extraHoldUnits).toBeUndefined();
+    expect(args.onExtraUnitsGranted).toBeUndefined();
     expect(args.extraSettleInternal).toBeUndefined();
   });
 
-  it("MONEY-A10:接了 search + 槽 ⇒ hold 按上限满额,settle 按实际成功次数", () => {
+  it("MONEY-A10:接了 search + 槽 ⇒ 按格坚实预留(单价+格数),settle 按实际成功次数", () => {
     const s = slots();
     const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
       research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }), searchSlots: s },
     });
-    // 预扣 = 5 × 单次费率(worst case)。写死这个数会在改费率那天变成一个悄悄的欠收口。
-    expect(args.extraHoldInternal).toBe(searchChargeInternal(OTTO_CHAT_MAX_SEARCHES_PER_TURN));
+    // 交给账本的是**单价 + 最多几格**,不是一个平铺的总额 —— 判官 P1:平铺的总额会跟 LLM 腿
+    // 一起被低余额压掉,而工具照发满额的槽。写死这两个数会在改费率那天变成悄悄的欠收口。
+    expect(args.extraHoldUnits).toEqual({
+      unitInternal: searchUnitChargeInternal("basic"),
+      maxUnits: OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+    });
     // 结算是**跑完才读**的闭包:此刻 0 次,搜了 3 次就是 3 次。
     expect(args.extraSettleInternal?.()).toBe(0);
     s.succeeded = 3;
     expect(args.extraSettleInternal?.()).toBe(searchChargeInternal(3));
-    // 预扣永远罩得住结算 —— 否则 settleCredits 会 clamp 掉差额,收费函数说收了、账本没收。
-    s.succeeded = OTTO_CHAT_MAX_SEARCHES_PER_TURN;
-    expect(args.extraSettleInternal!()).toBeLessThanOrEqual(args.extraHoldInternal!);
+  });
+
+  it("MONEY-A10:账本发的格数经 onExtraUnitsGranted 落进本轮的槽(低余额 ⇒ 少发)", () => {
+    const s = slots(0); // 初值 fail closed
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }), searchSlots: s },
+    });
+    args.onExtraUnitsGranted!(2); // 账本说:这一轮只买得起 2 格
+    expect(s.granted).toBe(2);
+    // 结算永远被那 2 格罩得住 —— 工具最多只放 2 次搜索出去(见 research-web.test.ts)。
+    s.succeeded = 2;
+    expect(args.extraSettleInternal!()).toBe(2 * searchUnitChargeInternal("basic"));
+    expect(args.extraSettleInternal!()).toBeLessThanOrEqual(
+      s.granted * args.extraHoldUnits!.unitInternal,
+    );
   });
 
   it("MONEY-A10:搜索腿与深研同源同费率(3×),不是第二份价目表", () => {

@@ -672,9 +672,11 @@ export async function buildOttoContext({
       search,
       readPage: (url: string, page?: number) => readPageCached(url, page),
       // MONEY-A10:这一轮的搜索槽。**每次装配一个新的**,所以它天然是 per-turn 的 —— 上限
-      // 判 `taken`、计费按 `succeeded`,协议全文见 OttoSearchSlots。它同时是钱腿存在与否的
-      // 开关(runtime.ts ottoBudgetArgsFor):少了它,researchWeb 的 query 腿会拒绝搜索。
-      searchSlots: { taken: 0, succeeded: 0 },
+      // 判 `granted`(账本预留时发的格数)、计费按 `succeeded`,协议全文见 OttoSearchSlots。
+      // 它同时是钱腿存在与否的开关(runtime.ts ottoBudgetArgsFor):少了它,researchWeb 的
+      // query 腿会拒绝搜索。`granted: 0` 是 fail closed 的初值 —— 预留还没跑/跑失败,
+      // 一格也不许搜。
+      searchSlots: { granted: 0, taken: 0, succeeded: 0 },
     },
     // Single write authority: Otto's schedulePosts skill drafts through the SAME server function
     // the human createScheduledPost action uses (shared validation + owner-scoped media check).

@@ -19,6 +19,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => {
   const reserveCredits = vi.fn();
   const reserveCreditsUpTo = vi.fn();
+  // MONEY-A10:按格坚实预留的入口。默认「余额充裕、满格发放」,关心低余额的用例自己改。
+  const reserveChatTurnWithSearchSlots = vi.fn();
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
   const assertWithinSpendCap = vi.fn();
@@ -41,13 +43,14 @@ const mocks = vi.hoisted(() => {
     }
   }
 
-  return { reserveCredits, reserveCreditsUpTo, settleCredits, refundReservation, assertWithinSpendCap, creditLedgerFindFirst, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
+  return { reserveCredits, reserveCreditsUpTo, reserveChatTurnWithSearchSlots, settleCredits, refundReservation, assertWithinSpendCap, creditLedgerFindFirst, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
 });
 
 vi.mock("@fikirtive/db", () => ({
   prisma: { $transaction: mocks.$transaction },
   reserveCredits: mocks.reserveCredits,
   reserveCreditsUpTo: mocks.reserveCreditsUpTo,
+  reserveChatTurnWithSearchSlots: mocks.reserveChatTurnWithSearchSlots,
   settleCredits: mocks.settleCredits,
   refundReservation: mocks.refundReservation,
   assertWithinSpendCap: mocks.assertWithinSpendCap,
@@ -79,6 +82,7 @@ beforeEach(() => {
   mocks.reserveCredits.mockResolvedValue(undefined);
   // #898: default is "the whole cap was available" — tests that care set their own hold.
   mocks.reserveCreditsUpTo.mockResolvedValue(40);
+  mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 55, grantedSearchUnits: 5 });
   mocks.settleCredits.mockResolvedValue(undefined);
   mocks.refundReservation.mockResolvedValue(undefined);
   // #1046-P1:默认这个 refId 上没有 REFUND 行(vi.clearAllMocks 会清掉实现,这里补回来)。
@@ -1039,6 +1043,147 @@ describe("#524 × #898 — the conversation hold and the capped charge take diff
 });
 
 // ---------------------------------------------------------------------------
+// ── MONEY-A10(判官 P1)—— 低余额自适应预留 × 按格坚实的搜索腿 ───────────────────────
+//
+// 修之前的形状:两条腿被打包成一个平铺的 `capped` 交给 `reserveCreditsUpTo`,它把整包压到
+// 余额 —— 余额 10 的商家意图预留 55 被压成 10,而工具照发满额 5 个槽,settle 23 被 clamp 到
+// 10,平台自己吃 13。这一组钉的就是「发出去的槽」与「持住的钱」必须是同一个数。
+describe("MONEY-A10 — 低余额预留与搜索腿并存(判官 P1)", () => {
+  const UNITS = { unitInternal: 3, maxUnits: 5 };
+
+  it("MONEY-A10:带 extraHoldUnits 的回合改走按格预留,LLM 腿单独交出去(不再打包成一个平铺总额)", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 25, grantedSearchUnits: 5 });
+    await withLlmBudget(
+      makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    // 平铺的老路一次都没走 —— 那条路正是 P1 的病灶。
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    // 交给账本的弹性腿 = **纯 LLM 那一份**,一分搜索钱都不含。期望值现算(llmHoldInternal 在
+    // 不带按格腿时就是纯 LLM 腿),不手抄一个数 —— 手抄的那个会在改 margin/步数那天变成假绿。
+    const llmOnly = llmHoldInternal(makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10 }));
+    expect(mocks.reserveChatTurnWithSearchSlots).toHaveBeenCalledWith(
+      mocks.fakeTx,
+      expect.objectContaining({
+        orgId: ORG,
+        refId: REF,
+        llmCapInternal: llmOnly,  // 弹性腿单独交出去,不含搜索的 15
+        minimumInternal: 10,
+        searchUnitInternal: 3,
+        maxSearchUnits: 5,
+      }),
+    );
+    // 而它确实比「打包总额」小了整整一条搜索腿 —— 那个打包总额正是 P1 的病灶。
+    expect(llmHoldInternal(makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS })) - llmOnly)
+      .toBe(UNITS.unitInternal * UNITS.maxUnits);
+  });
+
+  it("MONEY-A10:账本发几格就回传几格,而且在 fn 之前 —— 工具跑起来时必须已经知道能搜几次", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 10, grantedSearchUnits: 0 });
+    const order: string[] = [];
+    const granted: number[] = [];
+    await withLlmBudget(
+      makeArgs({
+        reserveCapInternal: 40,
+        reserveMinInternal: 10,
+        extraHoldUnits: UNITS,
+        onExtraUnitsGranted: (g) => { order.push("granted"); granted.push(g); },
+      }),
+      vi.fn().mockImplementation(async () => {
+        order.push("fn");
+        return { result: "ok", usage: { inputTokens: 10, outputTokens: 5 } };
+      }),
+    );
+    expect(granted).toEqual([0]);                 // 余额只够开聊,一格搜索都买不起
+    expect(order).toEqual(["granted", "fn"]);     // 顺序是硬要求,不是巧合
+  });
+
+  it("MONEY-A10:预留抛错 ⇒ 回调根本不响(调用方停在 fail-closed 的 0 格)", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockRejectedValue(new mocks.InsufficientCredits());
+    const onGranted = vi.fn();
+    await expect(
+      withLlmBudget(
+        makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS, onExtraUnitsGranted: onGranted }),
+        vi.fn(),
+      ),
+    ).rejects.toBeInstanceOf(mocks.InsufficientCredits);
+    expect(onGranted).not.toHaveBeenCalled();
+  });
+
+  it("MONEY-A10:全额固定预留(深研那条路)⇒ 满格发放 —— worst case 本来就持住了", async () => {
+    const onGranted = vi.fn();
+    await withLlmBudget(
+      // 没有 reserveMinInternal = 不走自适应,走 reserveCredits 全额预留
+      makeArgs({ extraHoldUnits: UNITS, onExtraUnitsGranted: onGranted }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    expect(onGranted).toHaveBeenCalledWith(5);
+  });
+
+  it("MONEY-A10:paid:false 的免费路 ⇒ 满格发放,且一笔账都没动(免费路上没有余额可言)", async () => {
+    const onGranted = vi.fn();
+    await withLlmBudget(
+      makeArgs({ paid: false, reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS, onExtraUnitsGranted: onGranted }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    // 发满格:否则调用方停在 fail-closed 的 0,工具会把每一次搜索都当成「余额不够」拒掉 ——
+    // 而那句话在这条路上是假的,并且悄悄改掉了 paid:false 从前的行为。
+    expect(onGranted).toHaveBeenCalledWith(UNITS.maxUnits);
+    // invariant #4 一个字未动:免费路不预留、不结算。
+    expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("MONEY-A10:一个抛错的 onExtraUnitsGranted 不许拖垮已经成功的预留(发放数停在 0)", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 25, grantedSearchUnits: 5 });
+    const fn = vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } });
+    await expect(
+      withLlmBudget(
+        makeArgs({
+          reserveCapInternal: 40,
+          reserveMinInternal: 10,
+          extraHoldUnits: UNITS,
+          onExtraUnitsGranted: () => { throw new Error("hook blew up"); },
+        }),
+        fn,
+      ),
+    ).resolves.toBe("ok");
+    expect(fn).toHaveBeenCalledOnce();      // 钱已经持住了,这一轮照跑
+    expect(mocks.settleCredits).toHaveBeenCalledOnce();
+  });
+
+  it("MONEY-A10:没有 extraHoldUnits 的回合走原来的 reserveCreditsUpTo —— 老路逐字不变", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+    await withLlmBudget(
+      makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    expect(mocks.reserveCreditsUpTo).toHaveBeenCalledOnce();
+  });
+
+  it("MONEY-A10:坏的 extraHoldUnits(0 格/负单价)当没传 —— 方向永远是不额外持有", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+    for (const bad of [{ unitInternal: 0, maxUnits: 5 }, { unitInternal: 3, maxUnits: 0 }, { unitInternal: -3, maxUnits: 5 }]) {
+      mocks.reserveChatTurnWithSearchSlots.mockClear();
+      await withLlmBudget(
+        makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: bad }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+      );
+      expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    }
+  });
+
+  it("MONEY-A10:llmHoldInternal 把按格腿按**最大格数**计入 —— 预检只许更严,不许放行", () => {
+    const withUnits = llmHoldInternal(makeArgs({ reserveCapInternal: 40, extraHoldUnits: UNITS }));
+    const withoutUnits = llmHoldInternal(makeArgs({ reserveCapInternal: 40 }));
+    expect(withUnits - withoutUnits).toBe(UNITS.unitInternal * UNITS.maxUnits);
+  });
+});
+
 // 钱路 M1-c — extraHoldInternal / extraSettleInternal(非 LLM 的那一笔)
 //
 // 现役唯一用户 = 深研的搜索费(Founder 2026-07-03 裁的 3×,裁决 9b 落地)。搜索此前被标成

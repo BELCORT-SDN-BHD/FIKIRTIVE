@@ -116,15 +116,32 @@ export async function executeResearchWeb(
       };
     }
     // 占槽:检查与递增之间**没有 await**,所以单步 fan-out 的 6 次并发调用会依次通过这一段,
-    // 只有前 5 次拿得到槽(OttoSearchSlots 的文件注释是这个协议的完整说明)。
-    if (slots.taken >= OTTO_CHAT_MAX_SEARCHES_PER_TURN) {
-      return {
-        refused: true,
-        reason:
-          `Search limit reached for this turn (${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches). ` +
-          "Work with what you already found, read a specific page with url, or offer the merchant " +
-          "deep research (proposeResearch) — it is built for multi-source digging and they approve the cost first.",
-      };
+    // 只有拿得到槽的那几次能往下走(OttoSearchSlots 的文件注释是这个协议的完整说明)。
+    //
+    // 判的是 `granted` —— 账本这一轮真的买得起的格数 —— 而**不是**全局常量。判常量的后果实测
+    // 过:低余额下预扣被压到余额,槽却照发满额,搜完了 settle 被 clamp,平台吃差额。
+    if (slots.taken >= slots.granted) {
+      // 两件不同的事,两句不同的话:说错了商家就会去做没用的动作(余额不够时叫他转深研,
+      // 深研更贵;真到了上限却说余额不足,他会去充值而其实充了也没用)。
+      return slots.granted >= OTTO_CHAT_MAX_SEARCHES_PER_TURN
+        ? {
+            refused: true,
+            reason:
+              `Search limit reached for this turn (${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches). ` +
+              "Work with what you already found, read a specific page with url, or offer the merchant " +
+              "deep research (proposeResearch) — it is built for multi-source digging and they approve the cost first.",
+          }
+        : {
+            refused: true,
+            reason:
+              // 0 格与「买得起 n 格但用完了」是同一件事的两个说法,但同一句话套不住两边:
+              // 「covers 0 searches, and they are used up」是句废话,模型会照着它编。
+              (slots.granted === 0
+                ? "The balance does not cover a web search this turn."
+                : `This turn's balance covers ${slots.granted} ${slots.granted === 1 ? "search" : "searches"}, and they are used up.`) +
+              " Tell the merchant plainly that a web search needs more credits than the balance can cover right now, " +
+              "work with what you already have, or read a specific page with url — that part is free.",
+          };
     }
     slots.taken += 1;
     try {
