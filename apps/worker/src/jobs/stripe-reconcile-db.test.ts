@@ -385,7 +385,74 @@ describe("MONEY-A12 P2-3:一次数据库错误不许把整轮扫描带下去", (
     }
   }, DB_CASE_TIMEOUT_MS);
 
-  it("查不动账本 ⇒ 跳过这一笔并报警,其余各行照常处理(不冤枉、不静默)", async () => {
+  it("终审 P1:首见时账本查不动 ⇒ **观察行照写**(标 unverified),缺口不会滑出窗口后失踪", async () => {
+    // 这条路原来是「报警 + continue,不写行」。30 分钟后这笔 session 滑出 48 小时 Stripe 窗口,
+    // 而它从来没有进过追踪名单 —— 一笔真实缺口就此永久失踪,且没有任何东西会再提起它。
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const original = prisma.creditLedger.findUnique;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (prisma.creditLedger as any).findUnique = vi.fn().mockRejectedValue(new Error("connection reset"));
+    try {
+      const first = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+      // 没判成缺口(unreconciled 不动、不升级),但**记下来了**。
+      expect(first).toMatchObject({ paid: 1, unreconciled: 0, firstSeen: 0, unverified: 1, alerted: 1 });
+      expect(alertCall().alert.key).toBe("stripe.reconcile_ledger_unreadable");
+      const row = await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } });
+      expect(row, "首见那一轮账本查不动就不留行 = 这笔缺口会永久失踪").not.toBeNull();
+      expect((row?.payload as { ledgerVerified?: boolean; firstSeenAt?: string }).ledgerVerified).toBe(false);
+      expect((row?.payload as { firstSeenAt?: string }).firstSeenAt).toBe(NOW.toISOString());
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (prisma.creditLedger as any).findUnique = original;
+      err.mockRestore();
+    }
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("终审 P1:那一行下一轮照常判定 —— 已入账 ⇒ 自动关闭", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const original = prisma.creditLedger.findUnique;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (prisma.creditLedger as any).findUnique = vi.fn().mockRejectedValue(new Error("connection reset"));
+    try {
+      await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (prisma.creditLedger as any).findUnique = original;
+      err.mockRestore();
+    }
+    await grantRow(); // 账本其实早就有那一行,只是上一轮没问到
+
+    // 它已经滑出 48 小时窗口(Stripe 返回空)—— 全靠观察行名单才追得到。
+    const later = new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const sweep = await reconcileStripePayments({ client: fakeStripe([[]]), now: later });
+
+    expect(sweep).toMatchObject({ tracked: 0, closed: 1, alerted: 0 });
+    expect(await prisma.actionEvent.findUnique({ where: { id: reconcileClosureId(sessionId) } })).not.toBeNull();
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("终审 P1:那一行下一轮照常判定 —— 仍然缺 ⇒ 按 firstSeenAt 升级", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const original = prisma.creditLedger.findUnique;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (prisma.creditLedger as any).findUnique = vi.fn().mockRejectedValue(new Error("connection reset"));
+    try {
+      await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (prisma.creditLedger as any).findUnique = original;
+      err.mockRestore();
+    }
+    m.founderAlert.mockClear();
+
+    // 一个扫描窗之后:账本读得动了,那一行仍然不在 ⇒ 这才是确认过的缺口,升级。
+    const second = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: LATER });
+
+    expect(second).toMatchObject({ unreconciled: 1, firstSeen: 0, unverified: 0, alerted: 1 });
+    expect(alertCall().alert.key).toBe("stripe.paid_but_no_ledger_entry");
+    expect(alertCall().alert.context.firstSeenAt).toBe(NOW.toISOString()); // 时钟从首见那一刻起算
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("查不动账本 ⇒ 不判这一笔并报警,其余各行照常处理(不冤枉、不静默)", async () => {
     const other = `cs_test_${randomUUID().replace(/-/g, "")}`;
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     let calls = 0;
@@ -398,12 +465,13 @@ describe("MONEY-A12 P2-3:一次数据库错误不许把整轮扫描带下去", (
     });
     try {
       const result = await reconcileStripePayments({ client: fakeStripe([[paidSession(), paidSession({ id: other })]]), now: NOW });
-      // 第一笔查不动 ⇒ 报警一条、不判它是不是缺口;第二笔照常走两轮确认(首见,不喊)。
-      expect(result).toMatchObject({ paid: 2, unreconciled: 1, firstSeen: 1, alerted: 1 });
+      // 第一笔查不动 ⇒ 报警一条、不判它是不是缺口(但行照写);第二笔照常走两轮确认(首见,不喊)。
+      expect(result).toMatchObject({ paid: 2, unreconciled: 1, firstSeen: 1, unverified: 1, alerted: 1 });
       expect(alertCall().alert.key).toBe("stripe.reconcile_ledger_unreadable");
       expect(alertCall().alert.context.sessionId).toBe(sessionId);
-      // 查不动的那一笔**不许**被写成观察行 —— 我们根本还不知道它是不是缺口。
-      expect(await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } })).toBeNull();
+      // 查不动的那一笔写成**未验证**的观察行:不当缺口,但绝不许它从追踪名单里消失(终审 P1)。
+      const unjudged = await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } });
+      expect((unjudged?.payload as { ledgerVerified?: boolean }).ledgerVerified).toBe(false);
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (prisma.creditLedger as any).findUnique = original;

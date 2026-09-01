@@ -38,7 +38,7 @@
  * 审计写不下去时(比如组织行已经不在)也一律按「见过」处理并报警 —— 宁可早喊一轮,
  * 也不许一次数据库故障把缺口变哑。
  *
- * ────────── MONEY-A12(规格 §7.5)三处升级 ──────────
+ * ────────── MONEY-A12(规格 §7.5)的升级 ──────────
  *
  * ① **告警走 founderAlert 三通道**(Sentry + 邮件 + Telegram)。原来的 TODO 说的就是这件事,
  *    founder-alert 模块早已在 main。裸 Sentry 的问题不是它不记录,是没有人二十四小时盯着它。
@@ -57,6 +57,12 @@
  * ④ **首见不再靠「撞主键」一件事定生死**(#1046-P2)。原判据是「观察行已存在 = 已经过了一轮」,
  *    但这个 sweeper 开机也跑一轮:worker 一重启,刚写下的观察行立刻被当成「活过一整轮」,
  *    首见就成了紧急告警。现在读观察行里的 `firstSeenAt`,真的过了一个扫描窗才升级。
+ *
+ * ⑤ **一次数据库错误不许把整轮扫描带下去,更不许让一笔缺口失踪**(终审 P1)。名单读不到 ⇒
+ *    报警 + 照扫 Stripe 那一侧;某一笔的账本读不动 ⇒ 这一轮不判它,但**观察行照写**
+ *    (`ledgerVerified:false`)。最后这一条是命门:观察行是这笔付款进入追踪名单的唯一凭证,
+ *    而 Stripe 只捞得到 48 小时内的 session —— 首见那一轮不留行,30 分钟后它滑出窗口,
+ *    就再也没有任何东西记得它。留了行,下一轮账本读得动时照常判定(入账则关闭,仍缺则升级)。
  */
 import Stripe from "stripe";
 import { prisma } from "@fikirtive/db";
@@ -126,6 +132,8 @@ export type StripeReconcileResult = {
   tracked: number;
   /** 这一轮自动关闭的观察行数(账本行已经补上 —— 缺口真的没了)。 */
   closed: number;
+  /** 这一轮账本查不动、只留了观察行没下判断的笔数(P1:行照写,缺口不会失踪)。 */
+  unverified: number;
   /** 这一轮没读到未了结名单(库抖了一下)⇒ 窗口外的老缺口这一轮没人看。**不是**「没跑成」:
    *  Stripe 那一侧照常扫完了,所以它不写进 `skipped`,自己占一格,让日志看得出差别。 */
   trailUnreadable: boolean;
@@ -227,7 +235,7 @@ export async function reconcileStripePayments(opts?: {
   client?: StripeSessionsPort | null;
   now?: Date;
 }): Promise<StripeReconcileResult> {
-  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, tracked: 0, closed: 0, trailUnreadable: false, skipped: null };
+  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, tracked: 0, closed: 0, unverified: 0, trailUnreadable: false, skipped: null };
   const port = opts?.client ?? realStripePort();
   if (!port) return { ...empty, skipped: "STRIPE_SECRET_KEY is not set — nothing to reconcile against" };
 
@@ -273,6 +281,7 @@ export async function reconcileStripePayments(opts?: {
     let firstSeen = 0;
     let alerted = 0;
     let closedThisSweep = 0;
+    let unverified = 0;
     if (truncated) {
       await alertThrottledDaily(
         "stripe_reconcile_truncated",
@@ -343,17 +352,29 @@ export async function reconcileStripePayments(opts?: {
       // 索引**,一次索引命中。没有 orgId 是异常形状(webhook 侧会记 credits.purchase.bad),此时
       // 只能按键扫 —— 罕见,而且这种 session 本来就一定要报警。
       const idempotencyKey = `stripe:${session.id}`;
+      const amount = typeof session.amount_total === "number" ? session.amount_total : null;
+      const currency = typeof session.currency === "string" ? session.currency.toUpperCase() : "";
+      const money = amount === null ? "an unknown amount" : `${currency} ${(amount / 100).toFixed(2)}`;
       // 查不动账本 ⇒ **说不准**这一笔到底入没入账。两个方向都错:当成没缺口是静默,当成缺口是
-      // 冤枉。所以跳过这一笔、报一声「这一轮没验全」,让下一轮再看 —— 观察行还在,缺口不会丢。
+      // 冤枉。所以这一笔本轮不判、只报一声「没验全」——
+      //
+      // 但**先把观察行写下来**(标 ledgerVerified=false)。这一步是这条路的命门:观察行是这笔
+      // 付款进入「持续追踪名单」的唯一凭证,而 Stripe 那一侧只捞得到 48 小时内的 session。
+      // 首见那一轮如果因为库抖了一下就直接跳过、不留行,30 分钟后它滑出窗口,`openGaps` 再也
+      // 评估不到它 —— 一笔真实缺口就此永久失踪,而且没有任何东西会再提起它。
+      // 下一轮账本读得动时,这一行照常参与判定:已入账 ⇒ 自动关闭;仍缺 ⇒ 按 firstSeenAt 升级。
       let entry: { id: string } | null;
       try {
         entry = orgId
           ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId, idempotencyKey } }, select: { id: true } })
           : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
       } catch (e) {
-        console.error(`[stripe-reconcile] could not read the ledger for ${session.id}; leaving it for the next sweep:`, e);
+        console.error(`[stripe-reconcile] could not read the ledger for ${session.id}; recording it as unverified and leaving it for the next sweep:`, e);
+        await recordObservation(session, { orgId, amount, currency, nowMs: now, ledgerVerified: false });
         await alertLedgerUnreadable(e, session.id, now, orgId);
         alerted++;
+        unverified++;
+        openGaps.delete(session.id); // 本轮已处理:窗口外那一段不必再为它查一次同样查不动的库
         continue;
       }
       if (entry) {
@@ -370,9 +391,6 @@ export async function reconcileStripePayments(opts?: {
       unreconciled++;
       // 人已经把这笔关掉了(退款了结、测试 session……)—— 记数照旧,但绝不再喊。
       if (closedSessions.has(session.id)) continue;
-      const amount = typeof session.amount_total === "number" ? session.amount_total : null;
-      const currency = typeof session.currency === "string" ? session.currency.toUpperCase() : "";
-      const money = amount === null ? "an unknown amount" : `${currency} ${(amount / 100).toFixed(2)}`;
 
       // 两轮确认制的状态机,整个装在这一行审计的**主键**里(判官 P2-1)。
       //   create 成功  ⇒ 这一笔是**首见** ⇒ 只观察,不惊动 founder。延迟到账(FPX/GrabPay)
@@ -382,36 +400,7 @@ export async function reconcileStripePayments(opts?: {
       //   其它写失败  ⇒ 分不清首见还是再见(比如组织行已经不在、库抖了一下)⇒ 按再见处理,
       //                  报警。宁可早喊一轮,也绝不让一次数据库故障把缺口变哑。
       // 状态放在库里而不是进程内存,是因为 worker 随时可能重启,而「见过没见过」必须跨重启成立。
-      let seenBefore: boolean;
-      try {
-        await prisma.actionEvent.create({
-          data: {
-            id: reconcileObservationId(session.id),
-            ownerId: orgId || FOUNDER_OWNER_ID,
-            type: RECONCILE_OBSERVED_TYPE,
-            payload: {
-              sessionId: session.id,
-              orgId: orgId || null,
-              credits: session.metadata?.credits ?? null,
-              amountTotal: amount,
-              currency: currency || null,
-              paymentIntentId: session.payment_intent ?? null,
-              // 判官 P3-2:这是 session 的**创建**时间,不是付款时间 —— 名字必须说实话。
-              // Checkout Session 本身不带「何时付的款」,那在 PaymentIntent 上;延迟到账时
-              // 两者可以差好几个小时,而这个差正是两轮确认制存在的原因。
-              sessionCreatedAt: typeof session.created === "number" ? new Date(session.created * 1000).toISOString() : null,
-              firstSeenAt: new Date(now).toISOString(),
-            },
-          },
-        });
-        seenBefore = false;
-      } catch (e) {
-        const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
-        seenBefore = true; // 撞主键 = 真见过;其它错 = 说不准,按见过报警(fail loud)
-        if (!duplicate) {
-          console.error(`[stripe-reconcile] could not record the observation row for ${session.id}; escalating anyway:`, e);
-        }
-      }
+      const seenBefore = await recordObservation(session, { orgId, amount, currency, nowMs: now, ledgerVerified: true });
 
       const firstSeenAt = openGaps.get(session.id)?.firstSeenAt ?? null;
       openGaps.delete(session.id); // 这一笔本轮已经处理过,下面的窗口外那一段不必再碰它
@@ -469,6 +458,7 @@ export async function reconcileStripePayments(opts?: {
       alerted,
       tracked,
       closed: closedThisSweep,
+      unverified,
       trailUnreadable: !trailReadable,
       skipped: null,
     };
@@ -515,6 +505,57 @@ async function escalateGap(gap: GapFacts, nowMs: number, inStripeWindow: boolean
     nowMs,
     gap.orgId,
   );
+}
+
+/**
+ * 写下(或撞上)这一笔的观察行,返回**之前是不是已经见过**。
+ *
+ * 两轮确认制的状态机整个装在这一行审计的**主键**里(判官 P2-1):
+ *   create 成功  ⇒ 这一笔是**首见** ⇒ 只观察,不惊动 founder。延迟到账(FPX/GrabPay)的付款
+ *                  几乎必然在下一轮之前落账,于是它就此安静消失。
+ *   撞主键 P2002 ⇒ 之前见过 ⇒ 由调用方**再看首见时刻**决定要不要升级(#1046-P2:开机那一轮
+ *                  会紧接着首见跑,不读时间就会把首见喊成紧急告警)。
+ *   其它写失败  ⇒ 分不清首见还是再见(组织行已经不在、库抖了一下)⇒ 按再见处理(fail loud)。
+ * 状态放在库里而不是进程内存,是因为 worker 随时可能重启,而「见过没见过」必须跨重启成立。
+ *
+ * `ledgerVerified=false` 是「这一轮没能问到账本」的那一种首见:行照写(否则这笔付款滑出
+ * 48 小时窗口后就再没有东西记得它),但调用方不把它当缺口、也不升级报警。
+ */
+async function recordObservation(
+  session: StripeCheckoutSessionLike,
+  opts: { orgId: string; amount: number | null; currency: string; nowMs: number; ledgerVerified: boolean },
+): Promise<boolean> {
+  try {
+    await prisma.actionEvent.create({
+      data: {
+        id: reconcileObservationId(session.id),
+        ownerId: opts.orgId || FOUNDER_OWNER_ID,
+        type: RECONCILE_OBSERVED_TYPE,
+        payload: {
+          sessionId: session.id,
+          orgId: opts.orgId || null,
+          credits: session.metadata?.credits ?? null,
+          amountTotal: opts.amount,
+          currency: opts.currency || null,
+          paymentIntentId: session.payment_intent ?? null,
+          // 判官 P3-2:这是 session 的**创建**时间,不是付款时间 —— 名字必须说实话。
+          // Checkout Session 本身不带「何时付的款」,那在 PaymentIntent 上;延迟到账时
+          // 两者可以差好几个小时,而这个差正是两轮确认制存在的原因。
+          sessionCreatedAt: typeof session.created === "number" ? new Date(session.created * 1000).toISOString() : null,
+          firstSeenAt: new Date(opts.nowMs).toISOString(),
+          // 首见那一刻到底问到账本没有。false = 这一行是「还没验」,不是「已确认的缺口」。
+          ledgerVerified: opts.ledgerVerified,
+        },
+      },
+    });
+    return false;
+  } catch (e) {
+    const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+    if (!duplicate) {
+      console.error(`[stripe-reconcile] could not record the observation row for ${session.id}; treating it as seen before:`, e);
+    }
+    return true;
+  }
 }
 
 /** 账本读不动的报警。按天节流,并且**按缺口分开**:一笔笔缺口各自的读失败是各自的事故。 */

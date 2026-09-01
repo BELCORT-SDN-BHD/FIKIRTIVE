@@ -22,6 +22,7 @@
 import { prisma } from "@fikirtive/db";
 import {
   FOUNDER_OWNER_ID,
+  INTERNAL_PER_DISPLAY,
   RECONCILE_CLOSED_TYPE,
   RECONCILE_OBSERVED_TYPE,
   reconcileClosureId,
@@ -114,6 +115,17 @@ export async function closeReconcileObservation(
   const note = typeof v?.note === "string" ? v.note.trim().slice(0, 500) : "";
   const details: Record<string, string> = {};
 
+  // 观察行**先读**:这一笔缺口属于哪个商家、金额是多少,都只有它说了算。下面的账本核对拿它
+  // 当租户边界 —— 没有这一步,「查账本」就是一次全局查询,A 家的缺口可以拿 B 家的补发单据关掉。
+  const observation = await prisma.actionEvent.findUnique({
+    where: { id: reconcileObservationId(sessionId) },
+    select: { ownerId: true, payload: true },
+  });
+  if (!observation) return { error: "No reconciliation observation exists for that session id." };
+  const observed = (observation.payload ?? {}) as { orgId?: unknown; credits?: unknown };
+  const gapOrgId = typeof observed.orgId === "string" && observed.orgId ? observed.orgId : observation.ownerId;
+  const gapCredits = Number(observed.credits);
+
   if (disposition === "refunded_in_stripe") {
     // 退款了结:单号是这条处置**唯一**可核的凭据,没有它这条关闭记录就没法追。
     const refundId = typeof v?.refundId === "string" ? v.refundId.trim() : "";
@@ -121,16 +133,36 @@ export async function closeReconcileObservation(
     details.refundId = refundId;
   } else if (disposition === "credited_manually") {
     // 手工补发了结:那就一定有一行账。**当场查**,查不到就不许关 —— 「我记得补过了」不是证据。
+    //
+    // 三道校验,少一道这条凭据就不算凭据:
+    //   ① **同一个商家**(租户边界)—— 全局查一把 refId,等于允许拿 B 家的补发单据关掉 A 家的缺口。
+    //   ② **是补发的形态**(GRANT / ADJUST)—— 一笔 RESERVE 或 SETTLE 证明的是别的事。
+    //   ③ **金额对得上**这笔缺口 —— 补了 50 关掉一笔 600 的缺口,商家还是少了 550。
     const ledgerRef = typeof v?.ledgerRef === "string" ? v.ledgerRef.trim() : "";
     if (!ledgerRef || ledgerRef.length > 200) return { error: "Enter the credits-ledger refId or idempotency key of the manual grant." };
+    if (!Number.isInteger(gapCredits) || gapCredits <= 0) {
+      // 缺口自己的 credits 数都读不出来(session metadata 当初就是坏的),就没有东西可比对。
+      // 这一支不许放行:改走 "Something else",写清楚 + 二次确认。
+      return { error: "This gap has no recorded credit amount, so a manual grant cannot be matched against it — close it under “Something else” with an explanation." };
+    }
     const entry = await prisma.creditLedger.findFirst({
-      where: { OR: [{ idempotencyKey: ledgerRef }, { refId: ledgerRef }] },
-      select: { id: true, orgId: true },
+      where: { orgId: gapOrgId, OR: [{ idempotencyKey: ledgerRef }, { refId: ledgerRef }] },
+      select: { id: true, orgId: true, kind: true, balanceDelta: true },
     });
-    if (!entry) return { error: "No credits-ledger row carries that refId or idempotency key — check it before closing this gap." };
+    if (!entry) return { error: "No credits-ledger row for THIS merchant carries that refId or idempotency key — check it before closing this gap." };
+    if (entry.kind !== "GRANT" && entry.kind !== "ADJUST") {
+      return { error: `That ledger row is a ${entry.kind}, not a manual grant — point at the GRANT or ADJUST row that put the credits in.` };
+    }
+    const expected = gapCredits * INTERNAL_PER_DISPLAY;
+    if (entry.balanceDelta !== expected) {
+      return {
+        error: `That grant is ${entry.balanceDelta / INTERNAL_PER_DISPLAY} credits but this payment was for ${gapCredits} — they do not match.`,
+      };
+    }
     details.ledgerRef = ledgerRef;
     details.ledgerRowId = entry.id;
     details.ledgerOrgId = entry.orgId;
+    details.ledgerCredits = String(gapCredits);
   } else if (disposition === "other") {
     // 剩下的一切。这一支最危险(它什么都能装),所以要求写清楚 **且** 再确认一次。
     if (note.length < OTHER_NOTE_MIN) {
@@ -140,12 +172,6 @@ export async function closeReconcileObservation(
   } else {
     return { error: "Pick how this payment was settled." };
   }
-
-  const observation = await prisma.actionEvent.findUnique({
-    where: { id: reconcileObservationId(sessionId) },
-    select: { ownerId: true },
-  });
-  if (!observation) return { error: "No reconciliation observation exists for that session id." };
 
   try {
     await prisma.actionEvent.create({

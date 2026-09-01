@@ -104,7 +104,9 @@ function CloseForm({ row, onDone }: { row: ReconcileObservationRow; onDone: () =
             placeholder="grant:…"
             autoComplete="off"
           />
-          <span className="text-xs text-muted-foreground">Checked against the ledger before this closes.</span>
+          <span className="text-xs text-muted-foreground">
+            Checked before this closes: the row must belong to this merchant, be a GRANT or ADJUST, and match this payment&rsquo;s credits.
+          </span>
         </div>
       ) : null}
 

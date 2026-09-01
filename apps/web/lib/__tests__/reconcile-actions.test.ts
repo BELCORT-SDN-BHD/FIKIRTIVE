@@ -19,7 +19,7 @@ vi.mock("@fikirtive/db", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   requireRole.mockResolvedValue({ email: "finance@fikirtive.test", roles: ["finance"], role: "finance" });
-  actionEventFindUnique.mockResolvedValue({ ownerId: "org_1" });
+  actionEventFindUnique.mockResolvedValue({ ownerId: "org_1", payload: { orgId: "org_1", credits: 220 } });
   actionEventFindMany.mockResolvedValue([]);
   actionEventCreate.mockResolvedValue({});
   creditLedgerFindFirst.mockResolvedValue(null);
@@ -72,24 +72,65 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
 
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:nope" });
 
-    expect(res).toEqual({ error: "No credits-ledger row carries that refId or idempotency key — check it before closing this gap." });
+    expect(res).toEqual({ error: "No credits-ledger row for THIS merchant carries that refId or idempotency key — check it before closing this gap." });
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
-  it("手工补发了结:账本查得到 ⇒ 关闭行把那一行的 id 与 org 一起钉下来", async () => {
-    creditLedgerFindFirst.mockResolvedValue({ id: "cl_9", orgId: "org_1" });
+  it("终审 P2:账本查询钉在**这笔缺口自己的商家**上 —— 别家的补发单据关不掉这一笔", async () => {
+    // 全局查一把 refId,等于允许拿 B 家的补发记录关掉 A 家的缺口。租户边界必须进 where。
+    creditLedgerFindFirst.mockResolvedValue(null); // 加了 orgId 约束之后,别家那一行查不到
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:belongs_to_org_2" });
+
+    expect(creditLedgerFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orgId: "org_1", OR: [{ idempotencyKey: "grant:belongs_to_org_2" }, { refId: "grant:belongs_to_org_2" }] },
+      }),
+    );
+    expect("error" in res).toBe(true);
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("终审 P2:同一个商家但那一行不是补发形态(RESERVE/SETTLE)⇒ 拒绝", async () => {
+    creditLedgerFindFirst.mockResolvedValue({ id: "cl_r", orgId: "org_1", kind: "RESERVE", balanceDelta: -2200 });
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "reserve:gen_1" });
+
+    expect("error" in res && res.error).toContain("not a manual grant");
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("终审 P2:同一个商家、形态也对,但**金额不符** ⇒ 拒绝(补 50 关不掉一笔 220 的缺口)", async () => {
+    creditLedgerFindFirst.mockResolvedValue({ id: "cl_small", orgId: "org_1", kind: "GRANT", balanceDelta: 50 * 10 });
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:small" });
+
+    expect("error" in res && res.error).toContain("50 credits but this payment was for 220");
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("终审 P2:缺口自己没有 credits 数(metadata 当初就坏了)⇒ 不许走这一支,指路 Something else", async () => {
+    actionEventFindUnique.mockResolvedValue({ ownerId: "org_1", payload: { orgId: "org_1", credits: null } });
+
+    const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
+
+    expect("error" in res && res.error).toContain("Something else");
+    expect(creditLedgerFindFirst).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("手工补发了结:同商家 + GRANT + 金额相符 ⇒ 放行,关闭行把那一行的 id / org / 金额一起钉下来", async () => {
+    creditLedgerFindFirst.mockResolvedValue({ id: "cl_9", orgId: "org_1", kind: "GRANT", balanceDelta: 220 * 10 });
 
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect(res).toEqual({ ok: true });
-    expect(creditLedgerFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { OR: [{ idempotencyKey: "grant:abc" }, { refId: "grant:abc" }] } }),
-    );
     expect(actionEventCreate.mock.calls[0]![0].data.payload).toMatchObject({
       disposition: "credited_manually",
       ledgerRef: "grant:abc",
       ledgerRowId: "cl_9",
       ledgerOrgId: "org_1",
+      ledgerCredits: "220",
     });
   });
 
