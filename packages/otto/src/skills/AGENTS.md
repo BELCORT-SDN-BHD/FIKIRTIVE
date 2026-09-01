@@ -5,7 +5,14 @@ from your 3-field declaration and fails closed. See the design spec:
 `docs/superpowers/specs/2026-06-26-otto-skill-framework-design.md`.
 
 ## The 3 fields (answer these — you cannot omit them)
-- `cost`: `"free" | "spend"` — spends FIKIRTIVE credits? `spend` also REQUIRES `idempotencyKey`.
+- `cost`: `"free" | "spend"` — does **this skill** route through approval and hold a reservation
+  **of its own**? `spend` = yes, and it also REQUIRES `idempotencyKey`. `free` = no — it does **NOT**
+  mean "the merchant is never billed for this". A `free` skill's work can still be paid for by the
+  money leg of the turn it runs in, or by a price charged elsewhere in the flow. Two live examples:
+  `researchWeb`'s `query` leg is billed per **successful** search against the conversation turn's own
+  reservation (MONEY-A10), and `importMedia` charges the understanding price at the moment of upload
+  (MONEY-A9). Both are `free` because neither one holds a reservation itself — not because they are
+  gratis. Getting this backwards is how a billed action ends up with no approval story.
 - `effect`: `"read" | "write"` — changes state (our DB OR the outside world)?
 - `reach`: `"internal" | "external"` — touches the outside world (network/3rd-party)?
 

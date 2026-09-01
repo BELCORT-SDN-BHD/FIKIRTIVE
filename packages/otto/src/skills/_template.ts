@@ -12,7 +12,9 @@ const templateInput = z.object({
 
 export const templateSkill = defineOttoSkill({
   name: "TODO_rename",
-  // cost:   does it spend FIKIRTIVE credits?      "free" | "spend"   (spend ⇒ also add idempotencyKey)
+  // cost:   does THIS skill approve + reserve on its own?  "free" | "spend"  (spend ⇒ also add
+  //         idempotencyKey). "free" ≠ "the merchant is not billed" — the turn's own money leg may
+  //         still charge for it (researchWeb, importMedia). Full definition: AGENTS.md.
   // effect: does it change state (our DB OR outside)? "read" | "write"
   // reach:  does it touch the outside world?       "internal" | "external"
   cost: "free",

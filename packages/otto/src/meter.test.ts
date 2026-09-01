@@ -19,10 +19,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => {
   const reserveCredits = vi.fn();
   const reserveCreditsUpTo = vi.fn();
+  // MONEY-A10:按格坚实预留的入口。默认「余额充裕、满格发放」,关心低余额的用例自己改。
+  const reserveChatTurnWithSearchSlots = vi.fn();
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
   const assertWithinSpendCap = vi.fn();
-  const fakeTx = {};
+  // #1046-P1:结算事务在跑交付钩子之前,会用这个句柄直接读一次终态。默认「没有 REFUND」。
+  const creditLedgerFindFirst = vi.fn(async () => null as { id: string } | null);
+  const fakeTx = { creditLedger: { findFirst: creditLedgerFindFirst } };
   const $transaction = vi.fn((cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx));
 
   class InsufficientCredits extends Error {
@@ -39,13 +43,14 @@ const mocks = vi.hoisted(() => {
     }
   }
 
-  return { reserveCredits, reserveCreditsUpTo, settleCredits, refundReservation, assertWithinSpendCap, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
+  return { reserveCredits, reserveCreditsUpTo, reserveChatTurnWithSearchSlots, settleCredits, refundReservation, assertWithinSpendCap, creditLedgerFindFirst, $transaction, InsufficientCredits, SpendCapBlocked, fakeTx };
 });
 
 vi.mock("@fikirtive/db", () => ({
   prisma: { $transaction: mocks.$transaction },
   reserveCredits: mocks.reserveCredits,
   reserveCreditsUpTo: mocks.reserveCreditsUpTo,
+  reserveChatTurnWithSearchSlots: mocks.reserveChatTurnWithSearchSlots,
   settleCredits: mocks.settleCredits,
   refundReservation: mocks.refundReservation,
   assertWithinSpendCap: mocks.assertWithinSpendCap,
@@ -56,7 +61,7 @@ vi.mock("@fikirtive/db", () => ({
 // ---------------------------------------------------------------------------
 // Now import the module under test (after mock is registered)
 // ---------------------------------------------------------------------------
-import { withLlmBudget, actualCostInternal, mapOttoUsage, llmHoldInternal, ReservationNotClaimed, ClaimFailed } from "./meter.js";
+import { withLlmBudget, actualCostInternal, mapOttoUsage, llmHoldInternal, ReservationNotClaimed, ClaimFailed, SettleLostToRefund } from "./meter.js";
 import { llmPricesFor, CREDITS_PER_USD, turnBudgetInternal } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
@@ -77,10 +82,13 @@ beforeEach(() => {
   mocks.reserveCredits.mockResolvedValue(undefined);
   // #898: default is "the whole cap was available" — tests that care set their own hold.
   mocks.reserveCreditsUpTo.mockResolvedValue(40);
+  mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 55, grantedSearchUnits: 5 });
   mocks.settleCredits.mockResolvedValue(undefined);
   mocks.refundReservation.mockResolvedValue(undefined);
+  // #1046-P1:默认这个 refId 上没有 REFUND 行(vi.clearAllMocks 会清掉实现,这里补回来)。
+  mocks.creditLedgerFindFirst.mockResolvedValue(null);
   // Reset $transaction to always run its callback
-  const fakeTx = {};
+  const fakeTx = { creditLedger: { findFirst: mocks.creditLedgerFindFirst } };
   mocks.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx));
 });
 
@@ -1035,6 +1043,256 @@ describe("#524 × #898 — the conversation hold and the capped charge take diff
 });
 
 // ---------------------------------------------------------------------------
+// ── MONEY-A10(判官 P1)—— 低余额自适应预留 × 按格坚实的搜索腿 ───────────────────────
+//
+// 修之前的形状:两条腿被打包成一个平铺的 `capped` 交给 `reserveCreditsUpTo`,它把整包压到
+// 余额 —— 余额 10 的商家意图预留 55 被压成 10,而工具照发满额 5 个槽,settle 23 被 clamp 到
+// 10,平台自己吃 13。这一组钉的就是「发出去的槽」与「持住的钱」必须是同一个数。
+describe("MONEY-A10 — 低余额预留与搜索腿并存(判官 P1)", () => {
+  const UNITS = { unitInternal: 3, maxUnits: 5 };
+
+  it("MONEY-A10:带 extraHoldUnits 的回合改走按格预留,LLM 腿单独交出去(不再打包成一个平铺总额)", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 25, grantedSearchUnits: 5 });
+    await withLlmBudget(
+      makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    // 平铺的老路一次都没走 —— 那条路正是 P1 的病灶。
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    // 交给账本的弹性腿 = **纯 LLM 那一份**,一分搜索钱都不含。期望值现算(llmHoldInternal 在
+    // 不带按格腿时就是纯 LLM 腿),不手抄一个数 —— 手抄的那个会在改 margin/步数那天变成假绿。
+    const llmOnly = llmHoldInternal(makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10 }));
+    expect(mocks.reserveChatTurnWithSearchSlots).toHaveBeenCalledWith(
+      mocks.fakeTx,
+      expect.objectContaining({
+        orgId: ORG,
+        refId: REF,
+        llmCapInternal: llmOnly,  // 弹性腿单独交出去,不含搜索的 15
+        minimumInternal: 10,
+        searchUnitInternal: 3,
+        maxSearchUnits: 5,
+      }),
+    );
+    // 而它确实比「打包总额」小了整整一条搜索腿 —— 那个打包总额正是 P1 的病灶。
+    expect(llmHoldInternal(makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS })) - llmOnly)
+      .toBe(UNITS.unitInternal * UNITS.maxUnits);
+  });
+
+  it("MONEY-A10:账本发几格就回传几格,而且在 fn 之前 —— 工具跑起来时必须已经知道能搜几次", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 10, grantedSearchUnits: 0 });
+    const order: string[] = [];
+    const granted: number[] = [];
+    await withLlmBudget(
+      makeArgs({
+        reserveCapInternal: 40,
+        reserveMinInternal: 10,
+        extraHoldUnits: UNITS,
+        onExtraUnitsGranted: (g) => { order.push("granted"); granted.push(g); },
+      }),
+      vi.fn().mockImplementation(async () => {
+        order.push("fn");
+        return { result: "ok", usage: { inputTokens: 10, outputTokens: 5 } };
+      }),
+    );
+    expect(granted).toEqual([0]);                 // 余额只够开聊,一格搜索都买不起
+    expect(order).toEqual(["granted", "fn"]);     // 顺序是硬要求,不是巧合
+  });
+
+  it("MONEY-A10:预留抛错 ⇒ 回调根本不响(调用方停在 fail-closed 的 0 格)", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockRejectedValue(new mocks.InsufficientCredits());
+    const onGranted = vi.fn();
+    await expect(
+      withLlmBudget(
+        makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS, onExtraUnitsGranted: onGranted }),
+        vi.fn(),
+      ),
+    ).rejects.toBeInstanceOf(mocks.InsufficientCredits);
+    expect(onGranted).not.toHaveBeenCalled();
+  });
+
+  it("MONEY-A10:全额固定预留(深研那条路)⇒ 满格发放 —— worst case 本来就持住了", async () => {
+    const onGranted = vi.fn();
+    await withLlmBudget(
+      // 没有 reserveMinInternal = 不走自适应,走 reserveCredits 全额预留
+      makeArgs({ extraHoldUnits: UNITS, onExtraUnitsGranted: onGranted }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    expect(onGranted).toHaveBeenCalledWith(5);
+  });
+
+  it("MONEY-A10:paid:false 的免费路 ⇒ 满格发放,且一笔账都没动(免费路上没有余额可言)", async () => {
+    const onGranted = vi.fn();
+    await withLlmBudget(
+      makeArgs({ paid: false, reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: UNITS, onExtraUnitsGranted: onGranted }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    // 发满格:否则调用方停在 fail-closed 的 0,工具会把每一次搜索都当成「余额不够」拒掉 ——
+    // 而那句话在这条路上是假的,并且悄悄改掉了 paid:false 从前的行为。
+    expect(onGranted).toHaveBeenCalledWith(UNITS.maxUnits);
+    // invariant #4 一个字未动:免费路不预留、不结算。
+    expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    expect(mocks.reserveCreditsUpTo).not.toHaveBeenCalled();
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("MONEY-A10:一个抛错的 onExtraUnitsGranted 不许拖垮预留,而调用方的槽停在 fail-closed 的 0", async () => {
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: 25, grantedSearchUnits: 5 });
+    // 真实形状的槽:生产里 buildOttoContext 每轮新建一个 {granted:0,taken:0,succeeded:0},
+    // runtime.ts 的钩子往 granted 上写。这里让写之前先炸,验的是**商家侧的后果**——
+    // 槽仍是 0 格 ⇒ 工具一次都不许搜 ⇒ 不可能出现「搜了却没被预扣罩住」。
+    const slots = { granted: 0, taken: 0, succeeded: 0 };
+    const fn = vi.fn().mockImplementation(async () => {
+      // fn 跑的时候槽必须已经是终态 —— 工具就是在这里面被调用的。
+      expect(slots.granted).toBe(0);
+      return { result: "ok", usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+    await expect(
+      withLlmBudget(
+        makeArgs({
+          reserveCapInternal: 40,
+          reserveMinInternal: 10,
+          extraHoldUnits: UNITS,
+          onExtraUnitsGranted: (g: number) => {
+            throw new Error(`hook blew up before writing ${String(g)}`);
+          },
+        }),
+        fn,
+      ),
+    ).resolves.toBe("ok");
+    expect(slots.granted).toBe(0);          // 一格都没发出去
+    expect(fn).toHaveBeenCalledOnce();      // 钱已经持住了,这一轮照跑
+    expect(mocks.settleCredits).toHaveBeenCalledOnce();
+  });
+
+  it("MONEY-A10:没有 extraHoldUnits 的回合走原来的 reserveCreditsUpTo —— 老路逐字不变", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+    await withLlmBudget(
+      makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    expect(mocks.reserveCreditsUpTo).toHaveBeenCalledOnce();
+  });
+
+  it("MONEY-A10:坏的 extraHoldUnits(0 格/负单价)当没传 —— 方向永远是不额外持有", async () => {
+    mocks.reserveCreditsUpTo.mockResolvedValue(12);
+    for (const bad of [{ unitInternal: 0, maxUnits: 5 }, { unitInternal: 3, maxUnits: 0 }, { unitInternal: -3, maxUnits: 5 }]) {
+      mocks.reserveChatTurnWithSearchSlots.mockClear();
+      await withLlmBudget(
+        makeArgs({ reserveCapInternal: 40, reserveMinInternal: 10, extraHoldUnits: bad }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+      );
+      expect(mocks.reserveChatTurnWithSearchSlots).not.toHaveBeenCalled();
+    }
+  });
+
+  // ── 七维审核 P2:拿不到 usage 的那一轮,搜索腿不许跟着 LLM 腿一起按满额收 ──────────────
+  //
+  // 旧写法 `actualInternal = reserve`:`reserve` 里含着这一轮**持住**的搜索钱,于是一个 0 次
+  // 成功搜索的回合会被收满 5 格。两条腿的可知性不同 —— 成功搜索次数是我们自己数的,拿不到
+  // usage 一点都不影响它。
+  it("MONEY-A10 审核 P2:usage 缺失 + 0 次成功搜索 ⇒ 只收 LLM 预扣满额,搜索腿收 0", async () => {
+    const HOLD = 25;
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: HOLD, grantedSearchUnits: 5 });
+    const slots = { granted: 0, taken: 0, succeeded: 0 };
+    await withLlmBudget(
+      makeArgs({
+        reserveCapInternal: 40,
+        reserveMinInternal: 10,
+        extraHoldUnits: UNITS,
+        onExtraUnitsGranted: (g: number) => { slots.granted = g; },
+        extraSettleInternal: () => slots.succeeded * UNITS.unitInternal,
+      }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settled = (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    // 预扣 25 里,坚实持住的搜索钱是 5×3=15,LLM 那一份是 10。搜了 0 次 ⇒ 只收那 10。
+    expect(settled).toBe(HOLD - 5 * UNITS.unitInternal);
+    expect(settled).toBe(10);
+    expect(settled).toBeLessThan(HOLD); // 旧写法在这里等于 25 —— 那 15 是凭空多收的
+  });
+
+  it("MONEY-A10 审核 P2:usage 缺失 + 2 次成功搜索 ⇒ LLM 预扣满额 + 2 格,一格不多", async () => {
+    const HOLD = 25;
+    mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: HOLD, grantedSearchUnits: 5 });
+    const slots = { granted: 0, taken: 2, succeeded: 2 };
+    await withLlmBudget(
+      makeArgs({
+        reserveCapInternal: 40,
+        reserveMinInternal: 10,
+        extraHoldUnits: UNITS,
+        onExtraUnitsGranted: (g: number) => { slots.granted = g; },
+        extraSettleInternal: () => slots.succeeded * UNITS.unitInternal,
+      }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settled = (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    expect(settled).toBe(HOLD - 5 * UNITS.unitInternal + 2 * UNITS.unitInternal); // 10 + 6
+    expect(settled).toBe(16);
+    // 永远罩得住:结算 ≤ 预扣,settleCredits 那边的 clamp 一次都用不上。
+    expect(settled).toBeLessThanOrEqual(HOLD);
+  });
+
+  // ── 复审③ P1:钳出来的那一截不许被「按满额收」顺手收走 ─────────────────────────────
+  //
+  // 账本为了守不变量会把弹性腿钳到开门额(credits.ts 的 elasticForHold),而 credits.ts 同时
+  // 承诺「多持的那一截是超额预留,settle 时原样退回」。照 hold 收就毁掉那句承诺。
+  // 配置:cap=7 / 开门额=10 / 单价=3 / 余额=13 ⇒ 账本发 1 格、持 13(= 钳到的 10 + 3)。
+  describe("复审③ P1 — 钳制配置下,no-usage 的 LLM 腿按**自己的**上限收", () => {
+    const CAP = 7, MIN = 10, HOLD = 13, GRANTED = 1;
+    const CLAMPED_UNITS = { unitInternal: 3, maxUnits: 5 };
+    // 这条腿自己的上限 = min(worst case, #543 的 cap),现算,不手抄。
+    const llmOwnCap = () => llmHoldInternal(makeArgs({ reserveCapInternal: CAP }));
+
+    const runWithSucceeded = async (succeeded: number) => {
+      mocks.reserveChatTurnWithSearchSlots.mockResolvedValue({ holdInternal: HOLD, grantedSearchUnits: GRANTED });
+      await withLlmBudget(
+        makeArgs({
+          reserveCapInternal: CAP,
+          reserveMinInternal: MIN,
+          extraHoldUnits: CLAMPED_UNITS,
+          extraSettleInternal: () => succeeded * CLAMPED_UNITS.unitInternal,
+        }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+      );
+      return (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    };
+
+    it("succeeded=0 ⇒ 只收这条腿自己的 7,不是它在 hold 里占的 10", async () => {
+      const settled = await runWithSucceeded(0);
+      expect(llmOwnCap()).toBe(CAP);               // min(worst, 7) = 7 —— 算式看得见
+      expect(settled).toBe(CAP);                   // 修之前是 10:钳出来的 3 被收走了
+      expect(settled).toBeLessThanOrEqual(HOLD);
+    });
+
+    it("succeeded=1 ⇒ 7 + 一格 = 10,一格不多", async () => {
+      const settled = await runWithSucceeded(1);
+      expect(settled).toBe(CAP + CLAMPED_UNITS.unitInternal); // 7 + 3
+      expect(settled).toBe(10);
+      expect(settled).toBeLessThanOrEqual(HOLD);
+    });
+  });
+
+  it("MONEY-A10 审核 P2:深研那条平铺腿同理 —— usage 缺失也只收实际搜的次数", async () => {
+    const EXTRA_HOLD = 36;                       // researchTierSearchBudgetInternal(12)
+    const llmOnly = llmHoldInternal(makeArgs()); // 全额固定预留:reserve = llmOnly + 36
+    await withLlmBudget(
+      makeArgs({ extraHoldInternal: EXTRA_HOLD, extraSettleInternal: () => 9 }), // 实际只搜了 3 次
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settled = (mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }])[1].actualInternal;
+    expect(settled).toBe(llmOnly + 9);           // 旧写法是 llmOnly + 36
+  });
+
+  it("MONEY-A10:llmHoldInternal 把按格腿按**最大格数**计入 —— 预检只许更严,不许放行", () => {
+    const withUnits = llmHoldInternal(makeArgs({ reserveCapInternal: 40, extraHoldUnits: UNITS }));
+    const withoutUnits = llmHoldInternal(makeArgs({ reserveCapInternal: 40 }));
+    expect(withUnits - withoutUnits).toBe(UNITS.unitInternal * UNITS.maxUnits);
+  });
+});
+
 // 钱路 M1-c — extraHoldInternal / extraSettleInternal(非 LLM 的那一笔)
 //
 // 现役唯一用户 = 深研的搜索费(Founder 2026-07-03 裁的 3×,裁决 9b 落地)。搜索此前被标成
@@ -1225,6 +1483,48 @@ describe("commitInSettleTx — 交付与结算同一笔提交", () => {
     ).rejects.toBe(boom);
 
     expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+});
+
+// ── #1046-P1:REFUND 已在 ⇒ 不许交付(MONEY-A10 同批修) ──────────────────────────────
+//
+// `settleCredits` 返回 void,内部 `createMany(skipDuplicates)` 把「计数 0」当成功的空操作 ——
+// 而计数 0 也包括「REFUND 已经赢下 finalizer 唯一约束」。旧形状下:清道夫退了款,模型随后
+// 返回结果,SETTLE 空操作而交付照写 —— 商家白拿一份报告,账本记着 REFUND。
+describe("commitInSettleTx — #1046-P1 台账终态守卫", () => {
+  it("REFUND 已在 ⇒ 交付钩子根本不跑,抛 SettleLostToRefund,随后走全额退款兜底", async () => {
+    mocks.creditLedgerFindFirst.mockResolvedValue({ id: "refund-row" });
+    const commit = vi.fn();
+
+    await expect(
+      withLlmBudget(
+        makeArgs({ commitInSettleTx: commit }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+      ),
+    ).rejects.toBeInstanceOf(SettleLostToRefund);
+
+    expect(commit, "对着一笔已经退掉的预扣交了货").not.toHaveBeenCalled();
+    // 兜底退款照旧发生(对已存在的 REFUND 是 no-op,退不了第二次)。
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+  });
+
+  it("查的是**这一个 refId 的 REFUND 行**,不是别人的", async () => {
+    await withLlmBudget(
+      makeArgs({ commitInSettleTx: async () => {} }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.creditLedgerFindFirst).toHaveBeenCalledWith({
+      where: { orgId: ORG, refId: REF, kind: "REFUND" },
+      select: { id: true },
+    });
+  });
+
+  it("没托付交付的调用方:一次多余的台账读都不做(零行为变更)", async () => {
+    await withLlmBudget(
+      makeArgs(),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+    expect(mocks.creditLedgerFindFirst).not.toHaveBeenCalled();
   });
 });
 

@@ -165,7 +165,7 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     const report = formatMarginTruthTable(marginTruthTable());
     console.log(`\n${report}\n`);
     // 24 个视频档 + 图片 + 参考图 + 整段参考视频 = 27 行,**加上**钱路 M1-c 补进来的
-    // 3 个按量计价面(聊天 / 深研 LLM / 深研搜索)= 30 行,**再加上** MONEY-A9 补进来的
+    // 3 个按量计价面(聊天 LLM / 深研 LLM / 搜索(深研+聊天))= 30 行,**再加上** MONEY-A9 补进来的
     // 素材理解三类(看图 / 读文档 / 看视频)= 33 行。
     expect(report.split("\n")).toHaveLength(33 + 1);
     // 跌破地板的行必须**看得见**地标出来 —— 报表不许把它们印得跟过了地板一样。
