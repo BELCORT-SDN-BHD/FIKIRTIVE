@@ -237,8 +237,10 @@ async function main(): Promise<void> {
   // adapter orchestration. Fail-closed by construction: the scheduler below only enqueues posts
   // whose connection can publish RIGHT NOW, and the handler re-checks + triple-locks idempotency.
   await consume<PublishJobData>(PUBLISH_QUEUE, handlePublish);
-  // #784 素材理解三件套。**不碰商家余额**(理解是平台成本),所以它和钱路队列的形状不同:
-  // 允许正常重试,防重靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS。
+  // #784 素材理解三件套。**是一条钱路**(MONEY-A9,2026-09-01 起按上传时刻的快照价计费;
+  // 旧的「不碰商家余额、理解是平台成本」已随规格 §7.3 废止)。它仍然允许正常重试 ——
+  // 防重不靠 retryLimit:0,靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS,
+  // 再加钱侧那套 `(orgId, refId)` 台账终态恢复协议(见 jobs/understand.ts 文件头)。
   //
   // 返回值 = 要立刻接着跑的那一行(caption 认出这张图是菜单之后建出来的 doc-extract 行)。
   // 在这里发,而不是等下一轮扫描 —— 差别是商家的十分钟。send 失败也不丢:行还是 QUEUED,

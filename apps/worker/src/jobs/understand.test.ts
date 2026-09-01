@@ -34,7 +34,9 @@ const mocks = vi.hoisted(() => {
   const asset = { findMany: vi.fn(), findFirst: vi.fn() };
   /** 平台花费计量器(累加,按 UTC 日分桶)—— 预算闸读它,每次付费调用写它。 */
   const understandingSpendDay = { findUnique: vi.fn(), upsert: vi.fn() };
-  const brandRecord = { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() };
+  // `createMany` 而不是 `create`:产品行现在写在 settle 那个事务**里面**,而在交互式事务里
+  // 捕获 P2002 是假的保护(唯一冲突已经把整个事务标成 aborted)。同 caption 建 doc 行那一步。
+  const brandRecord = { findFirst: vi.fn(), createMany: vi.fn(), update: vi.fn() };
   const memory = { findFirst: vi.fn(), create: vi.fn() };
   /** 台账。恢复协议问的就是它:这一行的这一个回合,已经 SETTLE / REFUND / 还挂着? */
   const creditLedger = { findFirst: vi.fn() };
@@ -104,11 +106,14 @@ import {
   UNDERSTANDING_CAPS,
   UNDERSTANDING_PROVIDER_PAUSED,
   UNDERSTANDING_WAITING_FOR_CREDITS,
+  pricedUnderstandingCredits,
   understandingCostUsd,
   type UnderstandingKind,
 } from "@fikirtive/core";
 import {
   UNDERSTAND_PAUSED_RETRY_MS,
+  UNDERSTAND_REDISPATCH_MIN_AGE_MS,
+  UNDERSTAND_REQUEUE_MIN_IDLE_MS,
   UNDERSTAND_SCAN_BATCH,
   handleUnderstand,
   scanAssetsNeedingUnderstanding,
@@ -157,7 +162,7 @@ beforeEach(() => {
   });
   mocks.asset.findMany.mockResolvedValue([]);
   mocks.brandRecord.findFirst.mockResolvedValue(null);
-  mocks.brandRecord.create.mockResolvedValue({});
+  mocks.brandRecord.createMany.mockResolvedValue({ count: 1 });
   mocks.memory.findFirst.mockResolvedValue(null);
   mocks.memory.create.mockResolvedValue({});
   mocks.presignedGet.mockResolvedValue("https://r2.example/obj?sig=x");
@@ -308,6 +313,28 @@ describe("MONEY-A9 理解计费:reserve-first / settle 同事务 / 三崩溃窗�
     expect(mocks.understand.mock.invocationCallOrder[0]!).toBeLessThan(
       mocks.settleCredits.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("**新上传的素材端到端真的收钱**:扫描器建行 → handler 按那一格快照价扣", async () => {
+    // 这一条是判官那次实测的直接对照。上面每一条钱路用例都自己喂一行**显式带价**的夹具行,
+    // 于是「扫描器压根没写价」这个缺陷可以整组全绿地躲过去 —— 而生产上每一件新上传的素材
+    // 都会因此掉进免费祖父,一分钱收不到。这里的行由**扫描器自己建**,一个字段都不补。
+    mocks.asset.findMany.mockResolvedValue([{ id: ASSET, ownerId: OWNER, mime: "image/jpeg" }]);
+    const [id] = await scanAssetsNeedingUnderstanding();
+    const created = mocks.assetUnderstanding.create.mock.calls[0]![0].data;
+    expect(created.id).toBe(id);
+
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(created);
+    await handleUnderstand({ understandingId: id! }, 0, port);
+
+    expect(mocks.reserveCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.reserveCredits.mock.calls[0]![1]).toEqual({
+      orgId: OWNER,
+      refId: `understanding:${id}`,
+      cost: pricedUnderstandingCredits("image-caption"), // 现算,不手抄
+    });
+    expect(mocks.settleCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits.mock.calls[0]![1].refId).toBe(`understanding:${id}`);
   });
 
   it("扣的是**行上的快照价**,不是现算的价(四则①:扫描隔日执行不改价)", async () => {
@@ -462,6 +489,103 @@ describe("MONEY-A9 理解计费:reserve-first / settle 同事务 / 三崩溃窗�
     expect(order).toEqual(["settle inTx=true", "done inTx=true"]);
   });
 
+  // ── 另外两类的落盘也必须进同一个事务(判官 P1)────────────────────────────────
+  //
+  // caption 那一步早就是原子的;doc-extract 的产品行与 video-qa 的品牌记忆上一版写在事务
+  // **外面**,理由是「它们各自幂等,重跑不会多出一份」。那句话是真的,但它答的不是这里的
+  // 问题:真问题是**中断的方向** —— 结果先落、settle 在后,进程死在中间就是「商家的产品
+  // 目录已经多出这一页 / 品牌记忆已经多出这几句,而这一笔钱一格没收」,行还停在 RUNNING
+  // 等着被清道夫退回队列重跑一遍(平台再吃一次供应商成本)。幂等保证不重复,保证不了不白送。
+  //
+  // 假件没有回滚能力,所以能证明的最强形式是**边界**:业务写落在 tx 回调里(真库据此
+  // 与 settle 同生共死),而不是「它没被调用」。
+  function trackTxDepth(): { at: (name: string) => void; log: string[] } {
+    let depth = 0;
+    const log: string[] = [];
+    mocks.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      depth++;
+      try {
+        return await fn(mocks.prisma);
+      } finally {
+        depth--;
+      }
+    });
+    return { at: (name: string) => log.push(`${name} inTx=${depth > 0}`), log };
+  }
+
+  it("doc-extract:产品行与 settle/DONE 在**同一个事务**里,而且产品行先落", async () => {
+    const t = trackTxDepth();
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("doc-extract"));
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ products: [{ name: "Nasi Lemak", price: "RM 8.50" }] }),
+      usage: { inputTokens: 3_000, outputTokens: 300 },
+    });
+    mocks.brandRecord.createMany.mockImplementation(async () => {
+      t.at("product");
+      return { count: 1 };
+    });
+    mocks.settleCredits.mockImplementation(async () => t.at("settle"));
+    mocks.assetUnderstanding.updateMany.mockImplementation(async (args: any) => {
+      if (args.data?.status === "DONE") t.at("done");
+      return { count: 1 };
+    });
+
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(t.log).toEqual(["product inTx=true", "settle inTx=true", "done inTx=true"]);
+  });
+
+  it("doc-extract:settle 在事务里炸掉 ⇒ 整趟抛出去重来,产品行写在会被回滚的那个事务里", async () => {
+    const t = trackTxDepth();
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("doc-extract"));
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ products: [{ name: "Nasi Lemak" }] }),
+      usage: { inputTokens: 3_000, outputTokens: 300 },
+    });
+    mocks.brandRecord.createMany.mockImplementation(async () => {
+      t.at("product");
+      return { count: 1 };
+    });
+    mocks.settleCredits.mockRejectedValue(new Error("connection lost mid-settle"));
+
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).rejects.toThrow("connection lost");
+    // 产品行确实写了 —— 但写在 tx 里,所以真库把它和这次没结成的账一起回滚
+    expect(t.log).toEqual(["product inTx=true"]);
+    // 而且这一行绝不许落 DONE:落了就是「读完了、没收钱、再也不会重跑」
+    expect(mocks.assetUnderstanding.updateMany.mock.calls.some((c: any[]) => c[0].data?.status === "DONE")).toBe(false);
+  });
+
+  it("video-qa:品牌记忆与 settle/DONE 在同一个事务里,settle 炸了就一起回滚", async () => {
+    const t = trackTxDepth();
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("video-qa"));
+    mocks.asset.findFirst.mockResolvedValue({
+      contentHash: "a1".repeat(32), ext: "mp4", mime: "video/mp4",
+      durationS: 12, width: null, height: null, sizeBytes: BigInt(4_000_000), deletedAt: null,
+    });
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ summary: "A busy kopitiam", facts: ["Open from 7am."] }),
+      usage: { inputTokens: 5_000, outputTokens: 200 },
+    });
+    mocks.memory.create.mockImplementation(async () => {
+      t.at("memory");
+      return {};
+    });
+    mocks.settleCredits.mockImplementation(async () => t.at("settle"));
+    mocks.assetUnderstanding.updateMany.mockImplementation(async (args: any) => {
+      if (args.data?.status === "DONE") t.at("done");
+      return { count: 1 };
+    });
+
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(t.log).toEqual(["memory inTx=true", "settle inTx=true", "done inTx=true"]);
+
+    // 同一条链路的另一半:settle 炸掉 ⇒ 抛出去重来,那几句记忆随事务一起回滚
+    t.log.length = 0;
+    vi.clearAllMocks();
+    mocks.settleCredits.mockRejectedValue(new Error("connection lost mid-settle"));
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).rejects.toThrow("connection lost");
+    expect(t.log).toEqual(["memory inTx=true"]);
+  });
+
   it("终局失败(这份字节读不了)⇒ 退款,商家不为没读成的东西付钱", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
     mocks.understand.mockRejectedValue(unreadableMediaError("rejected the file (415)"));
@@ -572,7 +696,7 @@ describe("不重复读(幂等)", () => {
     mocks.assetUnderstanding.updateMany.mockResolvedValue({ count: 0 });
     await handleUnderstand({ understandingId: "u-1" }, 1, port);
     expect(mocks.understand).not.toHaveBeenCalled();
-    expect(mocks.brandRecord.create).not.toHaveBeenCalled();
+    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
     expect(mocks.memory.create).not.toHaveBeenCalled();
     expectNoCreditCalls();
   });
@@ -1082,10 +1206,13 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
       usage: { inputTokens: 3000, outputTokens: 300 },
     });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.create).toHaveBeenCalledTimes(1);
-    const created = mocks.brandRecord.create.mock.calls[0]![0].data;
+    expect(mocks.brandRecord.createMany).toHaveBeenCalledTimes(1);
+    const created = mocks.brandRecord.createMany.mock.calls[0]![0].data[0];
     expect(created).toMatchObject({ ownerId: OWNER, kind: "product", nameKey: "nasi lemak", source: "otto" });
     expect(created.data).toMatchObject({ name: "Nasi Lemak", price: "RM 8.50" });
+    // ON CONFLICT DO NOTHING,不是一个吞掉一切的 catch —— 同一轮里菜单出现两次同名时,
+    // catch 会把「事务已经 aborted」也一起吞掉,连后面的 settle 都提交不了。
+    expect(mocks.brandRecord.createMany.mock.calls[0]![0].skipDuplicates).toBe(true);
   });
 
   it("同名产品**合并**,不再造一份(同一张菜单读第二次也一样)", async () => {
@@ -1095,7 +1222,7 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
       usage: { inputTokens: 3000, outputTokens: 300 },
     });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.create).not.toHaveBeenCalled();
+    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
     expect(mocks.brandRecord.update).toHaveBeenCalledTimes(1);
     // 商家自己写过的字段保住了
     expect(mocks.brandRecord.update.mock.calls[0]![0].data.data).toMatchObject({
@@ -1107,7 +1234,7 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
     mocks.understand.mockResolvedValue({ text: "Sorry, the photo is too blurry.", usage: { inputTokens: 3000, outputTokens: 20 } });
     // 重试额度用完的那一次:落 PAUSED,不是 FAILED —— 档位修好之后这张菜单还会被读到
     await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
-    expect(mocks.brandRecord.create).not.toHaveBeenCalled();
+    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
     expect(mocks.brandRecord.update).not.toHaveBeenCalled();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
     expect(last.data.status).toBe("PAUSED");
@@ -1118,7 +1245,7 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
   it("空清单是合法结果(读不出来就不猜)—— DONE,零产品行", async () => {
     mocks.understand.mockResolvedValue({ text: JSON.stringify({ products: [] }), usage: { inputTokens: 3000, outputTokens: 10 } });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.create).not.toHaveBeenCalled();
+    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
     expect(last.data.status).toBe("DONE");
     expect(String(last.data.summary)).toMatch(/no readable items/i);
@@ -1130,8 +1257,8 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
       usage: { inputTokens: 3000, outputTokens: 100 },
     });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.create).toHaveBeenCalledTimes(1);
-    expect(mocks.brandRecord.create.mock.calls[0]![0].data.nameKey).toBe("teh tarik");
+    expect(mocks.brandRecord.createMany).toHaveBeenCalledTimes(1);
+    expect(mocks.brandRecord.createMany.mock.calls[0]![0].data[0].nameKey).toBe("teh tarik");
   });
 });
 
@@ -1324,7 +1451,7 @@ describe("租户", () => {
     }
     expect(mocks.asset.findFirst.mock.calls[0]![0].where.ownerId).toBe(OWNER);
     expect(mocks.brandRecord.findFirst.mock.calls[0]![0].where.ownerId).toBe(OWNER);
-    expect(mocks.brandRecord.create.mock.calls[0]![0].data.ownerId).toBe(OWNER);
+    expect(mocks.brandRecord.createMany.mock.calls[0]![0].data[0].ownerId).toBe(OWNER);
   });
 
   it("presign 用的是这一行自己的租户目录", async () => {
@@ -1344,6 +1471,48 @@ describe("扫描器:唯一的生产者", () => {
     expect(ids).toHaveLength(2);
     const kinds = mocks.assetUnderstanding.create.mock.calls.map((c) => c[0].data.kind);
     expect(kinds).toEqual(["image-caption", "video-qa"]);
+  });
+
+  // ── MONEY-A9 P0:**建行就是锁价那一刻** ───────────────────────────────────────
+  //
+  // 这两条是整条收费链路的心脏。少了这两列,每一行新素材的快照都是 null、全部走免费祖父,
+  // 于是**生产上一分钱都收不到** —— 而上面那一整组钱路用例照样全绿(它们各自喂的是显式
+  // 带价的夹具行,压根不经过扫描器)。判官正是这样实测出「新上传全部免费」的。
+  it("建行时把本段价写死在行上(四则①:上传时刻锁价,不是结算时现算)", async () => {
+    mocks.asset.findMany.mockResolvedValue([
+      { id: "a-img", ownerId: OWNER, mime: "image/jpeg" },
+      { id: "a-vid", ownerId: OWNER, mime: "video/mp4" },
+    ]);
+    await scanAssetsNeedingUnderstanding();
+
+    const [img, vid] = mocks.assetUnderstanding.create.mock.calls.map((c) => c[0].data);
+    // 期望值现算 —— 和被测代码同一个函数,不是同一份手抄的字面量(涨价当天一起动)
+    expect(img).toMatchObject({
+      kind: "image-caption",
+      priceInternalSnapshot: pricedUnderstandingCredits("image-caption"),
+    });
+    expect(vid).toMatchObject({
+      kind: "video-qa",
+      priceInternalSnapshot: pricedUnderstandingCredits("video-qa"),
+    });
+    // 免费祖父只剩迁移前的存量行:新建的行一个 null 快照都不许有
+    expect(img!.priceInternalSnapshot).not.toBeNull();
+    expect(vid!.priceInternalSnapshot).not.toBeNull();
+  });
+
+  it("级联第二段的价也在同一刻锁上,而且只有图片有(四则②)", async () => {
+    mocks.asset.findMany.mockResolvedValue([
+      { id: "a-img", ownerId: OWNER, mime: "image/jpeg" },
+      { id: "a-vid", ownerId: OWNER, mime: "video/mp4" },
+    ]);
+    await scanAssetsNeedingUnderstanding();
+
+    const [img, vid] = mocks.assetUnderstanding.create.mock.calls.map((c) => c[0].data);
+    // 看图读完才知道这是一份文档、要再读一次;两段价在上传界面是一次性披露的,所以第二段
+    // 必须冻在**同一刻**,不按 doc-extract 行建出来的那一刻重新报价。
+    expect(img!.cascadePriceInternal).toBe(pricedUnderstandingCredits("doc-extract"));
+    // 视频不会级联出 doc-extract —— 给它填一格价就是承诺一笔永远不会发生的扣费
+    expect(vid!.cascadePriceInternal).toBeNull();
   });
 
   it("音频等不认识的类型一件都不建 —— 不猜就是不花钱", async () => {
@@ -1403,6 +1572,26 @@ describe("扫描器:唯一的生产者", () => {
     expect(await scanAssetsNeedingUnderstanding()).toEqual(["u-stranded"]);
   });
 
+  it("**被重新排队的年轻行**静置 60 秒也补投 —— 充值唤醒不必再干等 10 分钟", async () => {
+    // 判官 P2:充值 webhook 把 PAUSED_BALANCE 拨回 QUEUED、清道夫把 RUNNING 退回 QUEUED,
+    // 两条路都**只改状态、不发队列消息**。第 ② 段原来只按 createdAt 捞满 10 分钟的行,
+    // 于是一个刚上传两分钟就余额不足的商家,充完钱最长要干等到那一行满 10 分钟。
+    const now = new Date("2026-09-01T12:00:00.000Z");
+    await scanAssetsNeedingUnderstanding(now);
+
+    const where = mocks.assetUnderstanding.findMany.mock.calls.find(
+      (c) => c[0].where?.status === "QUEUED",
+    )![0].where;
+    const [byAge, byIdle] = where.OR;
+    // 老臂不动:建了行、boss.send 却失败的那一类,判据仍是 createdAt
+    expect(byAge.createdAt.lt).toEqual(new Date(now.getTime() - UNDERSTAND_REDISPATCH_MIN_AGE_MS));
+    // 新臂:还没满重投窗口的年轻行,改看 updatedAt 静置了多久(被拨回 QUEUED 时它被 touch 过)
+    expect(byIdle.createdAt.gte).toEqual(new Date(now.getTime() - UNDERSTAND_REDISPATCH_MIN_AGE_MS));
+    expect(byIdle.updatedAt.lt).toEqual(new Date(now.getTime() - UNDERSTAND_REQUEUE_MIN_IDLE_MS));
+    // 两条臂不重叠(gte/lt 互补),所以一行只会被一条臂捞到,take 不被自己吃掉一半
+    expect(UNDERSTAND_REQUEUE_MIN_IDLE_MS).toBeLessThan(UNDERSTAND_REDISPATCH_MIN_AGE_MS);
+  });
+
   it("刚建出来的行不会在同一轮里被算两次", async () => {
     mocks.asset.findMany.mockResolvedValue([{ id: "a-img", ownerId: OWNER, mime: "image/jpeg" }]);
     mocks.assetUnderstanding.create.mockImplementation(async () => ({}));
@@ -1437,7 +1626,7 @@ describe("清道夫", () => {
  * 存在的理由只有一条 —— 上面那些逐调用断言钉不住「最终会怎样」。一个把 1950 张图逐一写死的
  * 实现能让它们全绿。要钉住主张,只能推进多轮,然后看仓库里剩下什么。
  */
-function makeStore() {
+function makeStore(opts: { preA9Rows?: boolean } = {}) {
   type A = {
     id: string;
     ownerId: string;
@@ -1455,6 +1644,10 @@ function makeStore() {
     kind: string;
     status: string;
     createdAt: Date;
+    /** 真库上 `@updatedAt` 会自己动;假库得自己 touch,不然第 ② 段那条静置臂无从判起。 */
+    updatedAt: Date;
+    priceInternalSnapshot: number | null;
+    cascadePriceInternal: number | null;
   };
   const assets: A[] = [];
   const rows: U[] = [];
@@ -1534,7 +1727,17 @@ function makeStore() {
     const set = rowsByAsset.get(data.assetId) ?? new Set<string>();
     set.add(data.id);
     rowsByAsset.set(data.assetId, set);
-    const r: U = { ...data, createdAt: new Date(clock) };
+    const r: U = {
+      priceInternalSnapshot: null,
+      cascadePriceInternal: null,
+      ...data,
+      createdAt: new Date(clock),
+      updatedAt: new Date(clock),
+      // `preA9Rows`:把两格快照抹回 null,模拟的是**A9 迁移之前就落在库里**的存量行
+      // (迁移零回填)。A9 之后扫描器不会再建出这样的行 —— 那由「建行时把本段价写死在
+      // 行上」那条用例钉着;这个开关只为了让免费祖父条款仍然有一条端到端的证人。
+      ...(opts.preA9Rows ? { priceInternalSnapshot: null, cascadePriceInternal: null } : {}),
+    };
     rows.push(r);
     rowById.set(r.id, r);
     return true;
@@ -1559,12 +1762,19 @@ function makeStore() {
   });
   mocks.assetUnderstanding.findMany.mockImplementation(async (args: any) => {
     const w = args.where;
-    // 第 ② 段:躺着没被投递出去的 QUEUED 行。**真的实现它** —— 「下一轮会补回来」这句话
-    // 只有在下一轮真的由扫描器产生时才被证明。
-    if (w.status === "QUEUED" && w.createdAt?.lt) {
-      const cutoff = (w.createdAt.lt as Date).getTime();
+    // 第 ② 段:躺着没被投递出去的 QUEUED 行。**真的实现它**(两条臂都实现)—— 「下一轮
+    // 会补回来」这句话只有在下一轮真的由扫描器产生时才被证明,而那两条臂各兜一种「躺着」。
+    if (w.status === "QUEUED" && Array.isArray(w.OR)) {
+      const [byAge, byIdle] = w.OR;
+      const ageCutoff = (byAge.createdAt.lt as Date).getTime();
+      const idleCutoff = (byIdle.updatedAt.lt as Date).getTime();
       return rows
-        .filter((r) => r.status === "QUEUED" && r.createdAt.getTime() < cutoff)
+        .filter(
+          (r) =>
+            r.status === "QUEUED" &&
+            (r.createdAt.getTime() < ageCutoff ||
+              (r.createdAt.getTime() >= ageCutoff && r.updatedAt.getTime() < idleCutoff)),
+        )
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         .slice(0, args.take)
         .map((r) => ({ id: r.id, ownerId: r.ownerId }));
@@ -1577,6 +1787,7 @@ function makeStore() {
     if (!r || r.ownerId !== where.ownerId) return { count: 0 };
     if (where.status && r.status !== where.status) return { count: 0 };
     r.status = data.status ?? r.status;
+    r.updatedAt = new Date(clock); // 真库的 `@updatedAt` —— 静置那条臂全靠它
     return { count: 1 };
   });
 
@@ -1631,7 +1842,7 @@ async function tickConcurrent(
 }
 
 describe("一次导入两千张,最终一张都不会漏", () => {
-  it("多轮推进之后,每一张图都有一行 DONE —— 零永久遗漏", async () => {
+  it("多轮推进之后,每一张图都有一行 DONE —— 零永久遗漏,而且每一行都真的收了钱", async () => {
     const store = makeStore();
     for (let i = 0; i < 2_000; i++) store.addAsset({ id: `a-${i}` });
 
@@ -1644,6 +1855,37 @@ describe("一次导入两千张,最终一张都不会漏", () => {
     // 一行终态都不许是 SKIPPED —— 那正是「静悄悄忘掉商家 2/3 的店」的形状
     expect(store.rows.some((r) => r.status === "SKIPPED")).toBe(false);
     expect(rounds).toBeGreaterThanOrEqual(80);
+
+    // ── 钱那一半(MONEY-A9)────────────────────────────────────────────────────
+    // 上一版这里写的是 `expectNoCreditCalls()`。那句断言在 A9 之后是**反的**:它绿,恰恰
+    // 证明这 2000 张一分钱没收 —— 判官实测到的「新上传全部免费」正是它遮住的。
+    // 现在钉的是真形状:2000 行,每行恰好预扣一次、结算一次,一次退款都没有。
+    expect(mocks.reserveCredits).toHaveBeenCalledTimes(2_000);
+    expect(mocks.settleCredits).toHaveBeenCalledTimes(2_000);
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+    // 扣的是**扫描器建行那一刻锁的价**,期望值现算(不手抄一个 1)
+    const costs = new Set(mocks.reserveCredits.mock.calls.map((c: any[]) => c[1].cost));
+    expect(costs).toEqual(new Set([pricedUnderstandingCredits("image-caption")]));
+    // 每一行一个自己的回合键 ⇒ 2000 个互不相同的 refId(共用一个键 = 只有一笔扣得成)
+    const refIds = new Set(mocks.reserveCredits.mock.calls.map((c: any[]) => c[1].refId));
+    expect(refIds.size).toBe(2_000);
+  });
+
+  it("**迁移前的存量行**(快照为 null)整批照读不误,一格钱都不碰 —— 免费祖父", async () => {
+    // 四则④ 的端到端证人。上面那条钉的是「新上传一定收钱」,这条钉的是它的另一半:
+    // A9 上线之前就落在库里的行(迁移零回填)商家上传时没见过任何价目披露,永不补收,
+    // 而且**照样被读完** —— 免费祖父是「不收钱」,不是「不服务」。
+    const store = makeStore({ preA9Rows: true });
+    for (let i = 0; i < 200; i++) store.addAsset({ id: `a-${i}` });
+
+    let rounds = 0;
+    while (rounds < 50 && (await tick(store)) > 0) rounds++;
+
+    expect(store.rows).toHaveLength(200);
+    expect(store.rows.every((r) => r.status === "DONE")).toBe(true);
+    expect(store.rows.some((r) => r.status === "SKIPPED")).toBe(false);
+    // 连台账都不查:免费祖父判在恢复协议的最前面
+    expect(mocks.creditLedger.findFirst).not.toHaveBeenCalled();
     expectNoCreditCalls();
   });
 

@@ -268,8 +268,12 @@ model AssetUnderstanding {
 //   · 这张表     —— 「今天全平台一共花了多少」,只增不减,每一次**付费调用**记一笔。
 //
 // 没有 ownerId 是刻意的:「我们一天最多被账单多少钱」本来就没有租户可归。它也因此不进
-// TENANT_MODELS(那份名单管的是带 ownerId 的模型)。不进 CreditLedger、不参与任何扣费 ——
-// 理解是平台成本,商家一分钱不付(@fikirtive/core 的铁律 2)。
+// TENANT_MODELS(那份名单管的是带 ownerId 的模型)。
+//
+// **不进 CreditLedger、不参与任何扣费**:MONEY-A9(2026-09-01)之后理解是按件收费的 SKU,
+// 但商家付的是 AssetUnderstanding 行上那格快照价,和这张表毫无关系。这张表量的是**平台自己
+// 被供应商账单多少**(每日 $5 的保险丝读它),两笔账各走各的 —— 按 token 用量收商家的钱会
+// 让同一件素材的价在事前无法披露,而 A9 要求披露先于扣费。
 model UnderstandingSpendDay {
   /** UTC 日(DATE,不带时分秒)—— 桶的身份就是它。 */
   day          DateTime @id @db.Date

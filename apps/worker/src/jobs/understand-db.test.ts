@@ -23,7 +23,7 @@ const presignedGet = vi.hoisted(() => vi.fn(async () => "https://storage.example
 vi.mock("../storage.js", () => ({ storage: { presignedGet } }));
 
 import { prisma } from "@fikirtive/db";
-import { UNDERSTANDING_CAPS, newId, understandingCostUsd } from "@fikirtive/core";
+import { UNDERSTANDING_CAPS, newId, pricedUnderstandingCredits, understandingCostUsd } from "@fikirtive/core";
 import type { UnderstandingProvider } from "@fikirtive/generation";
 import {
   handleUnderstand,
@@ -122,6 +122,11 @@ async function scanMine(now = new Date()): Promise<string[]> {
 
 beforeAll(async () => {
   await prisma.organization.create({ data: { id: OWNER, name: "t784" } });
+  // MONEY-A9:扫描器建行时就把快照价写死,所以这个文件里**每一件**被扫到的素材都是一笔真
+  // 扣费。没有余额的租户会一路停在 PAUSED_BALANCE —— 那正是这些用例在 A9 接线之后集体变红
+  // 的原因,而它们要钉的根本不是钱(钱由本文件末尾那几个 describe 自己设余额去钉)。
+  // 给一笔够整份文件跑完的余额:一件 1 internal(现值),这里几十件。
+  await setBalance(10_000);
 });
 
 afterAll(async () => {
@@ -195,6 +200,54 @@ describe("删掉再重传:商家唯一的自救路径必须真的通(真库)", (
       await handleUnderstand({ understandingId: id! }, 0, port);
       const row = await myRow(id!);
       expect(row!.status).toBe("DONE");
+    },
+    30_000,
+  );
+});
+
+describe("MONEY-A9:扫描器建行就锁价(真库上那两格真的落下去了)", () => {
+  it(
+    "新上传的图片 → 行上带本段价 + 级联价 → 跑完真的扣了那一笔(免费祖父一件都轮不上)",
+    async () => {
+      const assetId = await seedAsset();
+      const [id] = await scanMine();
+      expect(id).toBeTruthy();
+
+      // ① 建行那一刻两格价就在库里(假库钉不住列真的存在、也钉不住写得进去)
+      const fresh = await myRow(id!);
+      expect(fresh!.priceInternalSnapshot).toBe(pricedUnderstandingCredits("image-caption"));
+      expect(fresh!.cascadePriceInternal).toBe(pricedUnderstandingCredits("doc-extract"));
+
+      // ② 跑完之后台账上真的有这一行的 RESERVE + SETTLE,金额就是那格快照价
+      const before = await prisma.creditAccount.findUnique({ where: { orgId: OWNER } });
+      await handleUnderstand({ understandingId: id! }, 0, port);
+      expect((await myRow(id!))!.status).toBe("DONE");
+
+      const refId = `understanding:${id}`;
+      const ledger = await prisma.creditLedger.findMany({ where: { orgId: OWNER, refId } });
+      expect(ledger.map((l) => l.kind).sort()).toEqual(["RESERVE", "SETTLE"]);
+      // 余额真的少了那一格 —— 「收费链路接上了」最后只能由余额本身作证
+      const after = await prisma.creditAccount.findUnique({ where: { orgId: OWNER } });
+      expect(before!.balance - after!.balance).toBe(pricedUnderstandingCredits("image-caption"));
+      expect(after!.reserved).toBe(before!.reserved); // hold 已结清,没漏在半路
+
+      await prisma.assetUnderstanding.deleteMany({ where: { ownerId: OWNER, assetId } });
+    },
+    30_000,
+  );
+
+  it(
+    "视频行没有级联价 —— 视频不会触发 doc-extract,填一格就是承诺一笔不会发生的扣费",
+    async () => {
+      const assetId = await seedAsset({ mime: "video/mp4", width: null, height: null, durationS: 12 });
+      const [id] = await scanMine();
+      const fresh = await myRow(id!);
+      expect(fresh!.kind).toBe("video-qa");
+      expect(fresh!.priceInternalSnapshot).toBe(pricedUnderstandingCredits("video-qa"));
+      expect(fresh!.cascadePriceInternal).toBeNull();
+
+      await prisma.assetUnderstanding.deleteMany({ where: { ownerId: OWNER, assetId } });
+      await prisma.asset.deleteMany({ where: { id: assetId, ownerId: OWNER } });
     },
     30_000,
   );

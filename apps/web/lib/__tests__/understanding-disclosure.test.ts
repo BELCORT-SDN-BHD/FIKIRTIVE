@@ -168,4 +168,22 @@ describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", ()
   it("级联那一句只给图片 —— 视频不会触发 doc-extract,承诺它就是另一句假话", () => {
     expect(port).toContain('kind === "image-caption"');
   });
+
+  it("**动作前**那一半真的在动作层:Otto 的说明书与 importMedia 工具描述都带着现算的价", async () => {
+    // 上面三条钉的是 port 回来那一句(**事后**报价)。规格 §7.3 要的是「动作前报价」——
+    // 事后才告诉商家花了多少,正是这一票开头写的那种「商家唯一不会原谅的钱 bug」。
+    // 这条把另一半也钉住:模型在**伸手去调这个工具之前**读到的两处文本里都有那个价。
+    const { ottoInstructions, skillCatalog } = await import("@fikirtive/otto");
+    const importMedia = skillCatalog.find((s) => s.name === "importMedia");
+    expect(importMedia, "importMedia 不在 Otto 的动作表里").toBeDefined();
+
+    for (const kind of Object.keys(UNDERSTANDING_PRICED_INTERNAL) as (keyof typeof UNDERSTANDING_PRICED_INTERNAL)[]) {
+      const amount = `${displayCredits(pricedUnderstandingCredits(kind))} credits`;
+      expect(ottoInstructions, `Otto 说明书缺 ${kind} 的价`).toContain(amount);
+      expect(importMedia!.description, `importMedia 描述缺 ${kind} 的价`).toContain(amount);
+    }
+    // 先报价、再导入 —— 顺序本身就是这条验收
+    expect(ottoInstructions).toContain("Say that price BEFORE you import, never after");
+    expect(importMedia!.description).toContain("BEFORE CALLING THIS");
+  });
 });

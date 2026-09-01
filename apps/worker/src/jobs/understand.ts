@@ -20,8 +20,10 @@
  *      settle 前)。handler 进门先问台账:已 SETTLE = 这一行结清了;已 REFUND = 上一回合退了,
  *      换一个新 refId 重开一回合;有 RESERVE 没 finalizer = **复用那个 hold**,不重复预扣。
  *      恢复靠的是**问台账**,不是靠记住上次做到哪 —— 崩溃不会让台账失忆。
- *   ④ **快照为 null = 计费前的老行,免费祖父**。A9 上线之前落的行,商家上传时没见过任何
- *      价目披露,永不补收:整条钱路跳过,一格都不碰。
+ *   ④ **快照在建行那一刻就写死**。扫描器建 QUEUED 行时把本段价(和 image 的级联第二段价)
+ *      一起锁上 —— 那一刻正是商家看过价目披露、按下上传的那一刻。快照为 null 因此**只可能**
+ *      是 A9 迁移之前就已经落在库里的老行(迁移零回填),它们商家上传时没见过任何披露,
+ *      永不补收:整条钱路跳过,一格都不碰。新上传的素材没有一件走得进这条免费路。
  *   ⑤ **PAUSED_BALANCE 期间零供应商调用**。余额不够就停在那里等充值(充值事件唤醒 +
  *      扫描器按「余额 ≥ 快照价」捞回),不无限重扫、不打供应商。
  *
@@ -89,6 +91,7 @@ import {
   parseImageCaption,
   parseUnderstandingJson,
   parseVideoQa,
+  pricedUnderstandingCredits,
   productRecordData,
   storageKey,
   understandingCostUsd,
@@ -128,6 +131,20 @@ export const UNDERSTAND_SCAN_BATCH = 25;
  * 比一次投递的过期窗口宽,免得跟还活着的消息抢。
  */
 export const UNDERSTAND_REDISPATCH_MIN_AGE_MS = 10 * 60_000;
+
+/**
+ * 一行**被重新排队**的年轻行静置多久就补投(MONEY-A9 判官 P2:唤醒后的入队延迟)。
+ *
+ * 上面那个 10 分钟窗口按 `createdAt` 算,兜的是「刚建的行,`boss.send` 没成功」。但充值
+ * 唤醒走的是另一条形状:Stripe webhook 把 PAUSED_BALANCE 拨回 QUEUED,**没有人发队列消息** ——
+ * 于是一个刚上传两分钟就余额不足的商家,充完钱还要再干等到那一行满 10 分钟。同一个形状还有
+ * 清道夫退回 QUEUED 的年轻行。
+ *
+ * 判据换成 `updatedAt`:被拨回 QUEUED 那一刻行就被 touch 过,静置 60 秒(远长于一次正常
+ * 投递→消费的往返)还没人动它,就补投一次。重复投递无害 —— QUEUED→RUNNING 的 CAS 让第二条
+ * 消息空转,连供应商都不打;而每轮至多 UNDERSTAND_SCAN_BATCH 条,噪声有界。
+ */
+export const UNDERSTAND_REQUEUE_MIN_IDLE_MS = 60_000;
 
 /** RUNNING 滞留多久算「worker 崩在半路」。远大于一次请求超时 + 落盘尾巴。 */
 export const UNDERSTAND_STALE_MS = 30 * 60_000;
@@ -391,7 +408,26 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
       const created = await runAsTenant(asset.ownerId, async () => {
         try {
           await prisma.assetUnderstanding.create({
-            data: { id, ownerId: asset.ownerId, assetId: asset.id, kind, status: "QUEUED" },
+            data: {
+              id,
+              ownerId: asset.ownerId,
+              assetId: asset.id,
+              kind,
+              status: "QUEUED",
+              // ── 锁价就在这一行(MONEY-A9 计费四则①②)────────────────────────────────
+              // ① **上传时刻锁价**。这一段是「上传时刻」在代码里的落点:商家把文件放进来,
+              //    下一轮扫描就建行,建行**同时**把价写死。结算按这一格,不按结算那一刻现算 ——
+              //    积压的队列隔日才跑到、期间调了价,商家付的仍是他上传时看见的那个数
+              //    (调价不追溯,A7)。
+              //    少了这两列 = 每一行新素材的快照都是 null = 走免费祖父 = **整条收费链路
+              //    在生产上一分钱都收不到**,而所有钱路用例照样绿(它们各自喂显式带价的行)。
+              // ② **级联第二段一并锁**。看图读完才知道这是一份文档、要再读一次;而那两段价
+              //    在上传界面是一次性披露的,所以第二段的价必须冻在同一刻,不按 doc-extract
+              //    行建出来的那一刻重新报价。只有 image-caption 会级联,其余两类填 null。
+              priceInternalSnapshot: pricedUnderstandingCredits(kind),
+              cascadePriceInternal:
+                kind === "image-caption" ? pricedUnderstandingCredits("doc-extract") : null,
+            },
           });
           return true;
         } catch {
@@ -404,8 +440,26 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
 
     // ② 躺着没被投递出去的 QUEUED 行(含 caption 刚刚为菜单建出来的 doc-extract 行)。
     //    `understandings: { none: {} }` 那一段永远看不见它们 —— 素材上已经有行了。
+    //
+    //    **两条臂,兜的是两种「躺着」**:
+    //      · 老行(createdAt 满 10 分钟)—— 扫描器建了行、`boss.send` 却失败的那一类;
+    //      · **被重新排队的年轻行**(createdAt 还没满 10 分钟,但 updatedAt 静置够 60 秒)——
+    //        充值 webhook 把 PAUSED_BALANCE 拨回 QUEUED、或清道夫把 RUNNING 退回 QUEUED
+    //        的那一类。这两条路都**只改状态、不发队列消息**,少了这条臂,一个刚上传就余额
+    //        不足的商家充完钱要干等最多 10 分钟才被读到。
+    //    重复投递无害:QUEUED→RUNNING 的 CAS 让多余的那条消息空转,一个供应商请求都不发。
+    const redispatchCutoff = new Date(now.getTime() - UNDERSTAND_REDISPATCH_MIN_AGE_MS);
     const stranded = await prisma.assetUnderstanding.findMany({
-      where: { status: "QUEUED", createdAt: { lt: new Date(now.getTime() - UNDERSTAND_REDISPATCH_MIN_AGE_MS) } },
+      where: {
+        status: "QUEUED",
+        OR: [
+          { createdAt: { lt: redispatchCutoff } },
+          {
+            createdAt: { gte: redispatchCutoff },
+            updatedAt: { lt: new Date(now.getTime() - UNDERSTAND_REQUEUE_MIN_IDLE_MS) },
+          },
+        ],
+      },
       select: { id: true },
       orderBy: { createdAt: "asc" },
       take: UNDERSTAND_SCAN_BATCH,
@@ -477,7 +531,8 @@ type Row = {
   kind: string;
   /** 本行当前计费回合的 refId(`understanding:<id>[:r<n>]`)。null = 还没进过钱路。 */
   moneyRefId?: string | null;
-  /** 上传时刻锁的价(internal credits)。null = 计费前的老行 ⇒ 免费祖父,整条钱路跳过。 */
+  /** 上传(建行)时刻锁的价(internal credits)。扫描器建行时必写 ——
+   *  null **只可能**是 A9 迁移之前就在库里的老行 ⇒ 免费祖父,整条钱路跳过。 */
   priceInternalSnapshot?: number | null;
 };
 
@@ -609,7 +664,9 @@ function isDuplicateReserve(e: unknown): boolean {
  */
 async function ensureUnderstandingHold(row: Row): Promise<MoneyStep> {
   const price = row.priceInternalSnapshot ?? null;
-  // 四则④ 免费祖父:A9 上线之前落的行,商家上传时没见过任何价目披露 —— 永不补收。
+  // 四则④ 免费祖父。**这条分支只服务迁移前的存量行**:扫描器建行时必写快照价(见
+  // scanAssetsNeedingUnderstanding 第 ① 段),所以 A9 之后新上传的素材一件都进不来。
+  // 那些老行商家上传时没见过任何价目披露 —— 永不补收。
   // 判在最前面,所以这类行连一次台账查询都不做。
   if (price === null) return { verdict: "free", refId: null };
 
@@ -745,20 +802,30 @@ function reportUnderstandingFailure(
 }
 
 /**
+ * 事务客户端。从 `settleCredits` 的签名反推,不在这里另抄一个 Prisma 类型别名 ——
+ * 结算和业务结果落盘必须是**同一个** tx,类型同源才保证不会有人传进来一个裸 prisma。
+ */
+type Tx = Parameters<typeof settleCredits>[0];
+
+/**
  * 一条产品行落进 BrandRecord。**按 nameKey 合并,不新建重复行** —— 同一张菜单被读第二次
  * (或者商家自己已经录过同名产品)时,合并而不是再造一份。
  *
  * `source: "otto"` —— 这是 Otto 自己读出来的,和商家亲手录的要分得清(Memory.source 同语义)。
  * 价格是**展示文本**,永不进任何计价逻辑(productRecordData.price 的既有纪律)。
+ *
+ * **必须收 tx**:这些行和 settle 在同一个事务里(MONEY-A9 不变量②)。拿裸 prisma 写就
+ * 又回到「产品行已经落了,settle 还没跑,进程死在中间 ⇒ 商家白拿一张读好的菜单」。
  */
 async function upsertProductRecord(
+  tx: Tx,
   ownerId: string,
   product: { name: string; description?: string; price?: string; category?: string },
 ): Promise<boolean> {
   const nameKey = normalizeNameKey(product.name);
   if (!nameKey) return false;
 
-  const existing = await prisma.brandRecord.findFirst({
+  const existing = await tx.brandRecord.findFirst({
     where: { ownerId, brandId: null, kind: "product", nameKey, deletedAt: null },
     select: { id: true, data: true },
   });
@@ -770,12 +837,16 @@ async function upsertProductRecord(
 
   const data = parsed.data as unknown as Record<string, unknown>;
   if (existing) {
-    await prisma.brandRecord.update({ where: { id: existing.id }, data: { data: data as never, source: "otto" } });
+    await tx.brandRecord.update({ where: { id: existing.id }, data: { data: data as never, source: "otto" } });
     return true;
   }
-  try {
-    await prisma.brandRecord.create({
-      data: {
+  // `createMany({ skipDuplicates })` 而不是 create+catch —— 和 caption 那一步同一个理由:
+  // 在交互式事务里捕获 P2002 是**假的**保护,唯一冲突已经让 Postgres 把整个事务标成 aborted,
+  // 之后连 settle 都提交不了。ON CONFLICT DO NOTHING 让「同一轮里菜单出现两次同名」不产生
+  // 错误(赢家已经写好了),而其它任何 DB 错误照常抛出去回滚 + 让队列重试。
+  const { count } = await tx.brandRecord.createMany({
+    data: [
+      {
         id: newId(),
         ownerId,
         brandId: null,
@@ -786,12 +857,10 @@ async function upsertProductRecord(
         source: "otto",
         pinned: false,
       },
-    });
-    return true;
-  } catch {
-    // 部分唯一索引撞车(同一轮里菜单出现两次同名)—— 赢家已经写好了,跳过。
-    return false;
-  }
+    ],
+    skipDuplicates: true,
+  });
+  return count === 1;
 }
 
 function stripUndefined(o: Record<string, unknown>): Record<string, unknown> {
@@ -803,18 +872,20 @@ function stripUndefined(o: Record<string, unknown>): Record<string, unknown> {
  * category 用 "about"(rememberBrandFact 的三档之一),source "otto"。
  * 同内容不重复写:一行理解只跑一次,所以这里不需要额外去重,但同一句话商家可能自己也写过,
  * 于是仍然按内容查一次 —— 商家的记忆面板里出现两句一模一样的话是很显眼的缺陷。
+ *
+ * **必须收 tx**:和 settle 同一个事务(MONEY-A9 不变量②),同 {@link upsertProductRecord}。
  */
-async function rememberVideoFacts(ownerId: string, facts: string[]): Promise<number> {
+async function rememberVideoFacts(tx: Tx, ownerId: string, facts: string[]): Promise<number> {
   let written = 0;
   for (const fact of facts) {
     const content = fact.trim().slice(0, 600);
     if (!content) continue;
-    const dup = await prisma.memory.findFirst({
+    const dup = await tx.memory.findFirst({
       where: { ownerId, brandId: null, category: "about", content, deletedAt: null },
       select: { id: true },
     });
     if (dup) continue;
-    await prisma.memory.create({
+    await tx.memory.create({
       data: { id: newId(), ownerId, brandId: null, category: "about", content, source: "otto", pinned: false },
     });
     written++;
@@ -1103,19 +1174,26 @@ export async function handleUnderstand(
       // 糟得多 —— 商家会以为 Otto 已经认识他的菜单了。落什么状态见 holdUnusableResponse:
       // 不写终态,这样档位修好之后这张菜单还会被读到。
       if (!doc) return holdUnusableResponse(row, retryCount, tokens, moneyRefId);
+      // **产品行、settle、DONE 三件事在同一个事务里**(MONEY-A9 不变量②)。
+      //
+      // 上一版把产品行写在事务**外面**,理由写的是「它们各自幂等,重跑不会多出一份」——
+      // 那句话是真的,但它答的不是这里的问题。真问题是**中断的方向**:产品行先落、settle
+      // 在后,进程死在中间就是「商家的产品目录已经多出这一页,而这一笔钱一格没收」,
+      // 而且行还停在 RUNNING、清道夫会把它退回 QUEUED 重跑一遍(那一趟平台再吃一次供应商
+      // 成本)。幂等保证的是不重复,保证不了不白送。同一个事务里,菜单读进目录和这笔钱结清
+      // 要么一起成立,要么一起不成立。
       let saved = 0;
-      for (const product of doc.products) {
-        if (await upsertProductRecord(row.ownerId, product)) saved++;
-      }
-      const summary =
-        saved > 0 ? `Read ${saved} item${saved === 1 ? "" : "s"} from this menu.` : "No readable items on this page.";
-      // 结算 + DONE 同一个事务(MONEY-A9 不变量②)。产品行在这之前逐条写 —— 它们各自
-      // 幂等(按 nameKey 合并),重跑不会多出一份,所以不必也进这个事务。
+      const summaryOf = (n: number) =>
+        n > 0 ? `Read ${n} item${n === 1 ? "" : "s"} from this menu.` : "No readable items on this page.";
       await prisma.$transaction(async (tx) => {
+        saved = 0; // 事务重试时从零数起 —— 半个上一轮的计数写进 summary 就是一句假话
+        for (const product of doc.products) {
+          if (await upsertProductRecord(tx, row.ownerId, product)) saved++;
+        }
         if (moneyRefId) await settleCredits(tx, { orgId: row.ownerId, refId: moneyRefId });
         await tx.assetUnderstanding.updateMany({
           where: { id: row.id, ownerId: row.ownerId },
-          data: { status: "DONE", summary, data: { ...doc, saved } as never, error: null, ...tokens },
+          data: { status: "DONE", summary: summaryOf(saved), data: { ...doc, saved } as never, error: null, ...tokens },
         });
       });
       console.log(`[understand] ${row.id}: doc-extract saved ${saved}/${doc.products.length} product row(s)`);
@@ -1125,9 +1203,11 @@ export async function handleUnderstand(
     // video-qa
     const video = parseVideoQa(parsedJson);
     if (!video) return holdUnusableResponse(row, retryCount, tokens, moneyRefId);
-    const remembered = await rememberVideoFacts(row.ownerId, video.facts);
-    // 结算 + DONE 同一个事务(MONEY-A9 不变量②),同 doc-extract 的理由。
+    // 品牌记忆 + settle + DONE 同一个事务(MONEY-A9 不变量②),同 doc-extract 的理由:
+    // 记忆先落、结算在后,中断一次就是商家白得一条读好的门店事实而平台零收入。
+    let remembered = 0;
     await prisma.$transaction(async (tx) => {
+      remembered = await rememberVideoFacts(tx, row.ownerId, video.facts);
       if (moneyRefId) await settleCredits(tx, { orgId: row.ownerId, refId: moneyRefId });
       await tx.assetUnderstanding.updateMany({
         where: { id: row.id, ownerId: row.ownerId },
