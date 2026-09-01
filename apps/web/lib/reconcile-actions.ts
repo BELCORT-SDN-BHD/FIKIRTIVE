@@ -1,18 +1,20 @@
 "use server";
 /**
- * 关闭一条 Stripe 对账观察行(MONEY-A12,规格 §7.5)。
+ * Stripe 对账观察行的两个 admin 动作(MONEY-A12,规格 §7.5):**看**未了结的缺口,**关掉**其中一条。
  *
  * 哨兵(`apps/worker/src/jobs/stripe-reconcile.ts`)的新规矩是「缺口不了结就一直喊」——
  * 它自己只认一种了结:账本那一行出现了(webhook 被重投,钱补上了),那种它会自动关闭。
  * 剩下的一种只有人知道:这笔付款是用**别的方式**了结的(在 Stripe 后台退了款、那是一笔
- * 测试 session、买家自己撤单)。没有这个动作,那种缺口会每天吵一次,永远。
+ * 测试 session、买家自己撤单)。没有这两个动作,那种缺口会每天吵一次,永远。
  *
  * 三条边界:
  *   · **只写关闭行,一个字都不碰钱**。账本行仍然只由 webhook 那条唯一入账路径产生
  *     (哨兵不补账,这里同样不补账)。关闭的是「还要不要继续喊」,不是「这笔钱算不算数」。
  *   · **必须先有观察行**。凭空关闭一个不存在的缺口,只会在审计日志里留下一条谁也对不上的
  *     记录 —— 那正是审计的反面。
- *   · **谁关的、什么时候、为什么**逐字落在关闭行里:关闭一笔平台已知的资损,必须留下人。
+ *   · **处置是结构化的,不是一句自由文本**。关掉的是一笔「商家可能付了钱没拿到东西」的追踪,
+ *     所以要么指得出 Stripe 退款单号,要么指得出账本上那一行(当场查),要么就得写清楚并
+ *     再确认一次。一句「已处理」关掉一笔真实资损,是这个按钮最容易造成的伤害。
  *
  * 权限沿用 `credits.mutate`(finance / super-admin)—— 与人工调账同一把钥匙:能决定
  * 「这笔缺口不用再追了」的人,和能动账本的人是同一批。
@@ -21,10 +23,81 @@ import { prisma } from "@fikirtive/db";
 import {
   FOUNDER_OWNER_ID,
   RECONCILE_CLOSED_TYPE,
+  RECONCILE_OBSERVED_TYPE,
   reconcileClosureId,
   reconcileObservationId,
 } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
+
+/** Stripe 退款单号的形状。格式校验挡的是「随手打一串字当单号」,不是伪造 —— 真伪由 Stripe 后台核。 */
+const STRIPE_REFUND_ID = /^re_[A-Za-z0-9]{6,}$/;
+/** `other` 处置的最短说明。二十个字大约是「一句说得清为什么可以关」的下限。 */
+const OTHER_NOTE_MIN = 20;
+
+/** 一行未了结的观察行(admin 页面读的就是这个)。 */
+export type ReconcileObservationRow = {
+  sessionId: string;
+  orgId: string | null;
+  amountTotal: number | null;
+  currency: string | null;
+  firstSeenAt: string | null;
+  lastAlertedAt: string | null;
+  observedAt: string;
+};
+
+/**
+ * 未了结的观察行,新的在前。
+ *
+ * 与哨兵读的是**同一组行、同一条索引**(`(projectId, type)`;观察行与关闭行的 projectId 都是
+ * null)—— 页面上看到的「还没关」与哨兵心里的「还要喊」必须是同一个集合,否则人关掉的东西
+ * 和机器追的东西会各说各话。
+ */
+export async function listReconcileObservations(): Promise<{ rows: ReconcileObservationRow[] } | { error: string }> {
+  const gate = await requireRole("credits", "mutate");
+  if ("error" in gate) return gate;
+
+  const [trail, alerts] = await Promise.all([
+    prisma.actionEvent.findMany({
+      where: { projectId: null, type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE] } },
+      select: { type: true, payload: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    // 最近一次真的喊过人是什么时候 —— 节流行的主键就是 `<throttleId>:<UTC 日>`。
+    prisma.actionEvent.findMany({
+      where: { projectId: null, type: "credits.reconcile.alerted" },
+      select: { id: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  const lastAlert = new Map<string, string>();
+  for (const row of alerts) {
+    const m = /^stripe_unreconciled_alert:(.+):\d{4}-\d{2}-\d{2}$/.exec(row.id);
+    if (m && m[1] && !lastAlert.has(m[1])) lastAlert.set(m[1], row.createdAt.toISOString());
+  }
+
+  const closed = new Set<string>();
+  const open = new Map<string, ReconcileObservationRow>();
+  for (const row of trail) {
+    const p = (row.payload ?? {}) as Record<string, unknown>;
+    const sessionId = typeof p.sessionId === "string" ? p.sessionId : "";
+    if (!sessionId) continue;
+    if (row.type === RECONCILE_CLOSED_TYPE) closed.add(sessionId);
+    else if (!open.has(sessionId)) {
+      open.set(sessionId, {
+        sessionId,
+        orgId: typeof p.orgId === "string" ? p.orgId : null,
+        amountTotal: typeof p.amountTotal === "number" ? p.amountTotal : null,
+        currency: typeof p.currency === "string" ? p.currency : null,
+        firstSeenAt: typeof p.firstSeenAt === "string" ? p.firstSeenAt : null,
+        lastAlertedAt: lastAlert.get(sessionId) ?? null,
+        observedAt: row.createdAt.toISOString(),
+      });
+    }
+  }
+  for (const sessionId of closed) open.delete(sessionId);
+  return { rows: [...open.values()] };
+}
 
 export async function closeReconcileObservation(
   raw: unknown,
@@ -33,13 +106,40 @@ export async function closeReconcileObservation(
   if ("error" in gate) return gate;
 
   // 手写校验 —— 与 credit-actions.ts 同一种做法(web 侧不直接依赖 zod)。
-  const v = raw as { sessionId?: unknown; note?: unknown };
+  const v = raw as { sessionId?: unknown; disposition?: unknown; refundId?: unknown; ledgerRef?: unknown; note?: unknown; confirmed?: unknown };
   const sessionId = typeof v?.sessionId === "string" ? v.sessionId.trim() : "";
   if (!sessionId || sessionId.length > 200) return { error: "Enter the Stripe Checkout Session id (cs_…)." };
+
+  const disposition = typeof v?.disposition === "string" ? v.disposition : "";
   const note = typeof v?.note === "string" ? v.note.trim().slice(0, 500) : "";
-  // 空理由 = 一条读不出所以然的关闭记录。这一条闸不是形式:关掉的是一笔「商家可能付了钱
-  // 没拿到东西」的追踪,半年后翻账的人必须看得懂当初为什么可以关。
-  if (!note) return { error: "Say how this payment was settled — the closing note is the audit trail." };
+  const details: Record<string, string> = {};
+
+  if (disposition === "refunded_in_stripe") {
+    // 退款了结:单号是这条处置**唯一**可核的凭据,没有它这条关闭记录就没法追。
+    const refundId = typeof v?.refundId === "string" ? v.refundId.trim() : "";
+    if (!STRIPE_REFUND_ID.test(refundId)) return { error: "Enter the Stripe refund id (re_…) for this refund." };
+    details.refundId = refundId;
+  } else if (disposition === "credited_manually") {
+    // 手工补发了结:那就一定有一行账。**当场查**,查不到就不许关 —— 「我记得补过了」不是证据。
+    const ledgerRef = typeof v?.ledgerRef === "string" ? v.ledgerRef.trim() : "";
+    if (!ledgerRef || ledgerRef.length > 200) return { error: "Enter the credits-ledger refId or idempotency key of the manual grant." };
+    const entry = await prisma.creditLedger.findFirst({
+      where: { OR: [{ idempotencyKey: ledgerRef }, { refId: ledgerRef }] },
+      select: { id: true, orgId: true },
+    });
+    if (!entry) return { error: "No credits-ledger row carries that refId or idempotency key — check it before closing this gap." };
+    details.ledgerRef = ledgerRef;
+    details.ledgerRowId = entry.id;
+    details.ledgerOrgId = entry.orgId;
+  } else if (disposition === "other") {
+    // 剩下的一切。这一支最危险(它什么都能装),所以要求写清楚 **且** 再确认一次。
+    if (note.length < OTHER_NOTE_MIN) {
+      return { error: `Describe how this was settled in at least ${OTHER_NOTE_MIN} characters — this closes the tracking on money a merchant may never have received.` };
+    }
+    if (v?.confirmed !== true) return { error: "Tick the confirmation box: closing this stops all further alerts for this payment." };
+  } else {
+    return { error: "Pick how this payment was settled." };
+  }
 
   const observation = await prisma.actionEvent.findUnique({
     where: { id: reconcileObservationId(sessionId) },
@@ -54,7 +154,7 @@ export async function closeReconcileObservation(
         id: reconcileClosureId(sessionId),
         ownerId: observation.ownerId || FOUNDER_OWNER_ID,
         type: RECONCILE_CLOSED_TYPE,
-        payload: { sessionId, closedBy: gate.email, closedAt: new Date().toISOString(), note },
+        payload: { sessionId, disposition, ...details, note, closedBy: gate.email, closedAt: new Date().toISOString() },
       },
     });
   } catch (e) {

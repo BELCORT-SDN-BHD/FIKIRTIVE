@@ -49,9 +49,12 @@
 它由 30 分钟一轮的对账哨兵报出,**每天最多一封**,直到了结。两种了结:
 
 - 账本行补上了(在 Stripe 后台重投那个 webhook 事件)⇒ 哨兵下一轮**自动关闭**,不需要人做任何事。
-- 这笔付款是用别的方式了结的(退了款、是测试 session)⇒ 需要人工关闭:server action
-  `closeReconcileObservation`(`apps/web/lib/reconcile-actions.ts`,权限 `credits.mutate`,必须写关闭理由)。
-  ⚠️ 现状:admin 面板还没有对账区,这个动作**暂无 UI 入口**,需工程侧调用;自动关闭那条路不受影响。
+- 这笔付款是用别的方式了结的(退了款、是测试 session)⇒ 人工关闭:**admin 面 → Reconciliation**
+  (`/admin/reconcile`,权限 `credits.mutate`)。清单列出每一笔未了结的缺口(金额 / 商家 / 首见多久 /
+  最近一次报警),逐条关闭。处置三选一,各自要一个可核的东西:
+  - **Refunded in Stripe** —— 填 Stripe 退款单号 `re_…`;
+  - **Credits granted by hand** —— 填账本 refId 或补发时用的幂等键,**服务端当场查账本**,查不到不许关;
+  - **Something else** —— 至少 20 字说明 + 勾选二次确认(这一支什么都能装,所以最严)。
 
 ## 工程侧已备 vs 等 Founder
 

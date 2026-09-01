@@ -286,13 +286,20 @@ export async function POST(req: NextRequest): Promise<Response> {
       const money = minor === null ? "an unknown amount" : `${currency ?? "?"} ${(minor / 100).toFixed(2)}`;
 
       // 审计行的主键由 **Stripe event.id** 派生(以前是 newId(),于是一次重投就多一条审计行、
-      // 多一封邮件)。写得下去 = 这是这个事件的第一次投递 ⇒ 报警;撞主键 = 重投 ⇒ 一声不响。
-      // 其它写失败 = 说不准 ⇒ 照常报警(fail loud:钱被拉回,宁可多喊一次)。
-      let firstDelivery = true;
+      // 多一封邮件)。但「写过审计行」不等于「有人收到了」——`founderAlert` 是**不抛**的:三条
+      // 通道全挂它照样返回,只是每一条都写着 failed。所以光靠主键去重,会出现这种最坏形状:
+      // 首投写下了行、报警一条都没送出去、Stripe 重投撞主键被静默 —— 钱被拉回,而没有一个人
+      // 知道。判据因此不是「见过这个事件没有」,而是「**这个事件的报警送到人手里了没有**」。
+      //
+      //   写得下去           ⇒ 首投,报警;送出去了就把行标成 alertDelivered=true。
+      //   撞主键 P2002       ⇒ 重投,读那一行:上一次没送到就**再喊一次**,送到了才安静。
+      //   其它写失败         ⇒ 说不准 ⇒ 照常报警(fail loud:钱被拉回,宁可多喊一次)。
+      const auditId = `stripe_pullback:${event.id}`;
+      let mustAlert = true;
       try {
         await prisma.actionEvent.create({
           data: {
-            id: `stripe_pullback:${event.id}`,
+            id: auditId,
             ownerId: found.orgId ?? "founder",
             type: kind,
             payload: {
@@ -310,20 +317,23 @@ export async function POST(req: NextRequest): Promise<Response> {
               orgId: found.orgId,
               orgAttribution: found.source,
               checkoutSessionId: found.sessionId,
+              // 送达回执。写行的这一刻还没喊过,所以只能是 false;送出去之后才翻成 true。
+              alertDelivered: false,
             },
           },
         });
       } catch (e) {
         const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
-        if (duplicate) firstDelivery = false;
+        if (duplicate) mustAlert = await pullbackAlertUndelivered(auditId);
         else console.error(`[stripe] ${event.type} audit write failed (event=${event.id}); alerting anyway:`, e);
       }
 
-      if (firstDelivery) {
+      if (mustAlert) {
         // 报警绝不决定响应码(与本文件其它分支同一条规矩):一个会抛的报警通道会让 handler
         // 返回非 2xx,把 Stripe 推进一场发生在钱事件上的无限重投。
+        let delivered = false;
         try {
-          await founderAlert({
+          const outcomes = await founderAlert({
             key:
               event.type === "charge.refunded"
                 ? "stripe.charge_refunded"
@@ -354,13 +364,52 @@ export async function POST(req: NextRequest): Promise<Response> {
               disputeReason: typeof obj.reason === "string" ? obj.reason : null,
             },
           });
+          // 「送到了」= 至少一条通道真的把它交出去了。`skipped`(这台部署没配这条通道)与
+          // `failed` 都不算:两者的共同点是**没有人收到**,而回执要记的就是这件事。
+          delivered = outcomes.some((o) => o.status === "sent");
         } catch (e) {
           console.error(`[stripe] ${event.type} founder alert failed (event=${event.id}):`, e);
+        }
+        if (delivered) await markPullbackAlertDelivered(auditId);
+        else {
+          console.error(
+            `[stripe] ${event.type} alert reached NOBODY (event=${event.id}) — the audit row stays alertDelivered=false, ` +
+              `so a Stripe redelivery of this event will try again.`,
+          );
         }
       }
     }
     return new Response("ok", { status: 200 });
   });
+}
+
+/** 这个事件的报警上次**没送到**吗?读不到那一行(或它读不出回执)就当没送到 —— 钱被拉回,
+ *  宁可多喊一次,也不许因为一次读失败让重投被静默。**永不抛**。 */
+async function pullbackAlertUndelivered(auditId: string): Promise<boolean> {
+  try {
+    const row = await prisma.actionEvent.findUnique({ where: { id: auditId }, select: { payload: true } });
+    if (!row) return true;
+    return (row.payload as { alertDelivered?: unknown } | null)?.alertDelivered !== true;
+  } catch (e) {
+    console.error(`[stripe] could not read the pullback audit row ${auditId}; alerting again to be safe:`, e);
+    return true;
+  }
+}
+
+/** 盖上送达回执。**只翻这一格**:事件本身的事实(金额、org、归因来源)一个字都不重写 ——
+ *  ActionEvent 仍然是只追加的审计日志,这里改的是「这条报警送到了没有」的收条。**永不抛**。 */
+async function markPullbackAlertDelivered(auditId: string): Promise<void> {
+  try {
+    const row = await prisma.actionEvent.findUnique({ where: { id: auditId }, select: { payload: true } });
+    const payload = (row?.payload ?? {}) as Record<string, unknown>;
+    await prisma.actionEvent.update({
+      where: { id: auditId },
+      data: { payload: { ...payload, alertDelivered: true, alertDeliveredAt: new Date().toISOString() } },
+    });
+  } catch (e) {
+    // 回执写不上去只有一个后果:这个事件万一被重投,人会多收到一次报警。可以接受。
+    console.error(`[stripe] could not stamp the delivery receipt on ${auditId}:`, e);
+  }
 }
 
 /**
@@ -373,13 +422,16 @@ export async function POST(req: NextRequest): Promise<Response> {
  *      (本次施工新增),新付款走这条。
  *   ③ 按 payment_intent 反查 Checkout Session —— 老付款(PaymentIntent 上没写过 metadata 的
  *      那些)只能靠它,是**历史兼容**的那一步。
+ *   ④ 拿到了 session id 却连它的 metadata 都没有(被清过、或那笔根本不是我们开的结账),就用
+ *      入账那把幂等键 `stripe:<sessionId>` **反查账本**(规格 §7.5 明写的「或 ledger 反查」)。
+ *      账本行是这笔钱最后的落点:它记着 orgId,而且它的存在本身就证明这笔钱进过谁的账。
  * 每一步都吞掉自己的异常:认不出人不是不报警的理由,报警照发、如实标 unresolved。
  */
 async function attributeStripeOrg(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   obj: any,
   paymentIntentId: string | null,
-): Promise<{ orgId: string | null; sessionId: string | null; source: "event-metadata" | "payment-intent" | "checkout-session" | "unresolved" }> {
+): Promise<{ orgId: string | null; sessionId: string | null; source: "event-metadata" | "payment-intent" | "checkout-session" | "ledger" | "unresolved" }> {
   const direct = typeof obj?.metadata?.orgId === "string" ? obj.metadata.orgId : "";
   if (direct) return { orgId: direct, sessionId: null, source: "event-metadata" };
   if (!paymentIntentId) return { orgId: null, sessionId: null, source: "unresolved" };
@@ -390,13 +442,24 @@ async function attributeStripeOrg(
   } catch (e) {
     console.error(`[stripe] could not read PaymentIntent ${paymentIntentId} for org attribution:`, e);
   }
+  let sessionId: string | null = null;
   try {
     const sessions = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 1 });
     const session = sessions?.data?.[0];
+    sessionId = typeof session?.id === "string" ? session.id : null;
     const fromSession = typeof session?.metadata?.orgId === "string" ? session.metadata.orgId : "";
-    if (fromSession) return { orgId: fromSession, sessionId: typeof session?.id === "string" ? session.id : null, source: "checkout-session" };
+    if (fromSession) return { orgId: fromSession, sessionId, source: "checkout-session" };
   } catch (e) {
     console.error(`[stripe] could not list Checkout Sessions for ${paymentIntentId} during org attribution:`, e);
   }
-  return { orgId: null, sessionId: null, source: "unresolved" };
+  if (sessionId) {
+    try {
+      // 入账那一行的身份就是这把幂等键 —— 与 grantCredits 写下的逐字同一把。
+      const entry = await prisma.creditLedger.findFirst({ where: { idempotencyKey: `stripe:${sessionId}` }, select: { orgId: true } });
+      if (entry?.orgId) return { orgId: entry.orgId, sessionId, source: "ledger" };
+    } catch (e) {
+      console.error(`[stripe] could not read the credits ledger for session ${sessionId} during org attribution:`, e);
+    }
+  }
+  return { orgId: null, sessionId, source: "unresolved" };
 }

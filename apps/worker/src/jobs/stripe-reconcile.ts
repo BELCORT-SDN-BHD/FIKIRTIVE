@@ -126,6 +126,9 @@ export type StripeReconcileResult = {
   tracked: number;
   /** 这一轮自动关闭的观察行数(账本行已经补上 —— 缺口真的没了)。 */
   closed: number;
+  /** 这一轮没读到未了结名单(库抖了一下)⇒ 窗口外的老缺口这一轮没人看。**不是**「没跑成」:
+   *  Stripe 那一侧照常扫完了,所以它不写进 `skipped`,自己占一格,让日志看得出差别。 */
+  trailUnreadable: boolean;
   /** 没跑成的原因(没配 Stripe 密钥 / 拉取失败),跑成了就是 null。 */
   skipped: string | null;
 };
@@ -224,7 +227,7 @@ export async function reconcileStripePayments(opts?: {
   client?: StripeSessionsPort | null;
   now?: Date;
 }): Promise<StripeReconcileResult> {
-  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, tracked: 0, closed: 0, skipped: null };
+  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, tracked: 0, closed: 0, trailUnreadable: false, skipped: null };
   const port = opts?.client ?? realStripePort();
   if (!port) return { ...empty, skipped: "STRIPE_SECRET_KEY is not set — nothing to reconcile against" };
 
@@ -290,10 +293,35 @@ export async function reconcileStripePayments(opts?: {
     // 走 `(projectId, type)` 这个**既有索引**(观察行与关闭行的 projectId 都是 null,type 逐字
     // 相等)—— ActionEvent 是平台级 append-only 日志,对它全表扫迟早会把这一轮扫描拖垮。
     // 名单是有界的:一行对应一笔真实缺口,而缺口一旦了结(账本补上或人工关闭)就写关闭行退出。
-    const trail = await prisma.actionEvent.findMany({
-      where: { projectId: null, type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE] } },
-      select: { type: true, payload: true },
-    });
+    //
+    // 读不出来的时候**这一轮不许就此结束**:Stripe 那一侧的扫描仍然是缺口的第一道眼睛,它不该
+    // 因为审计表抖了一下而整轮停摆(这个函数对调用方的承诺是「永不抛」)。名单为空的代价是这
+    // 一轮看不见窗口外的老缺口、也认不出已关闭的那些 —— 所以要如实喊一声「对账读不全」。
+    let trail: Array<{ type: string; payload: unknown }> = [];
+    let trailReadable = true;
+    try {
+      trail = await prisma.actionEvent.findMany({
+        where: { projectId: null, type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE] } },
+        select: { type: true, payload: true },
+      });
+    } catch (e) {
+      trailReadable = false;
+      const reason = e instanceof Error ? e.message : String(e);
+      console.error("[stripe-reconcile] could not read the observation trail; this sweep only sees the Stripe window:", e);
+      await alertThrottledDaily(
+        "stripe_reconcile_trail_unreadable",
+        {
+          key: "stripe.reconcile_trail_unreadable",
+          title: "The reconciliation sweep could not read its own open-gap list — older gaps are UNTRACKED this sweep",
+          action:
+            "Check the database. Gaps older than the 48h Stripe window are only tracked through those audit rows, so nothing is watching them until this read works again.",
+          context: { reason },
+        },
+        now,
+        FOUNDER_OWNER_ID,
+      );
+      alerted++;
+    }
     const closedSessions = new Set<string>();
     const openGaps = new Map<string, GapFacts>();
     for (const row of trail) {
@@ -315,9 +343,19 @@ export async function reconcileStripePayments(opts?: {
       // 索引**,一次索引命中。没有 orgId 是异常形状(webhook 侧会记 credits.purchase.bad),此时
       // 只能按键扫 —— 罕见,而且这种 session 本来就一定要报警。
       const idempotencyKey = `stripe:${session.id}`;
-      const entry = orgId
-        ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId, idempotencyKey } }, select: { id: true } })
-        : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
+      // 查不动账本 ⇒ **说不准**这一笔到底入没入账。两个方向都错:当成没缺口是静默,当成缺口是
+      // 冤枉。所以跳过这一笔、报一声「这一轮没验全」,让下一轮再看 —— 观察行还在,缺口不会丢。
+      let entry: { id: string } | null;
+      try {
+        entry = orgId
+          ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId, idempotencyKey } }, select: { id: true } })
+          : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
+      } catch (e) {
+        console.error(`[stripe-reconcile] could not read the ledger for ${session.id}; leaving it for the next sweep:`, e);
+        await alertLedgerUnreadable(e, session.id, now, orgId);
+        alerted++;
+        continue;
+      }
       if (entry) {
         // 账本已经有那一行 —— 缺口没了。如果它还挂在观察名单上(webhook 事后被重投、或人工
         // 补了同一把幂等键),就地写关闭行:名单只留**真的还没了结**的缺口,否则它会越滚越长,
@@ -403,9 +441,17 @@ export async function reconcileStripePayments(opts?: {
     let tracked = 0;
     for (const gap of openGaps.values()) {
       const idempotencyKey = `stripe:${gap.sessionId}`;
-      const entry = gap.orgId
-        ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId: gap.orgId, idempotencyKey } }, select: { id: true } })
-        : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
+      let entry: { id: string } | null;
+      try {
+        entry = gap.orgId
+          ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId: gap.orgId, idempotencyKey } }, select: { id: true } })
+          : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
+      } catch (e) {
+        console.error(`[stripe-reconcile] could not read the ledger for tracked gap ${gap.sessionId}; leaving it open:`, e);
+        await alertLedgerUnreadable(e, gap.sessionId, now, gap.orgId);
+        alerted++;
+        continue;
+      }
       if (entry) {
         if (await closeObservation(gap.sessionId, gap.orgId, "ledger entry present — the payment reconciled itself")) closedThisSweep++;
         continue;
@@ -415,7 +461,17 @@ export async function reconcileStripePayments(opts?: {
       alerted++;
     }
 
-    return { scanned: sessions.length, paid, unreconciled, firstSeen, alerted, tracked, closed: closedThisSweep, skipped: null };
+    return {
+      scanned: sessions.length,
+      paid,
+      unreconciled,
+      firstSeen,
+      alerted,
+      tracked,
+      closed: closedThisSweep,
+      trailUnreadable: !trailReadable,
+      skipped: null,
+    };
   });
 }
 
@@ -458,6 +514,21 @@ async function escalateGap(gap: GapFacts, nowMs: number, inStripeWindow: boolean
     },
     nowMs,
     gap.orgId,
+  );
+}
+
+/** 账本读不动的报警。按天节流,并且**按缺口分开**:一笔笔缺口各自的读失败是各自的事故。 */
+async function alertLedgerUnreadable(e: unknown, sessionId: string, nowMs: number, ownerId: string): Promise<void> {
+  await alertThrottledDaily(
+    `stripe_reconcile_ledger_unreadable:${sessionId}`,
+    {
+      key: "stripe.reconcile_ledger_unreadable",
+      title: "The reconciliation sweep could not read the credits ledger for one payment — it was NOT verified this sweep",
+      action: "Check the database. The observation row stays open, so the next sweep will check this payment again.",
+      context: { sessionId, orgId: ownerId || "unresolved", reason: e instanceof Error ? e.message : String(e) },
+    },
+    nowMs,
+    ownerId,
   );
 }
 

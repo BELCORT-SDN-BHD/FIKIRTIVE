@@ -400,6 +400,12 @@ async function main(): Promise<void> {
     try {
       const r = await reconcileStripePayments();
       if (r.skipped) console.log(`[worker] stripe reconcile skipped: ${r.skipped}`);
+      // 名单读不到 ⇒ 窗口外的老缺口这一轮没人看。它不是「没跑成」,但也绝不是「一切正常」。
+      else if (r.trailUnreadable)
+        console.error(
+          `[worker] stripe reconcile: the open-gap list was UNREADABLE this sweep — only the 48h Stripe window was checked ` +
+            `(${r.unreconciled} gap(s) there, ${r.alerted} alert(s) sent)`,
+        );
       else if (r.unreconciled || r.tracked)
         // 两轮确认制:首见的只是观察(延迟到账的付款长得一模一样),确认过的才是真缺口。
         // `tracked` 是已经滑出 48 小时扫描窗、靠观察行名单继续追踪的那些(MONEY-A12):

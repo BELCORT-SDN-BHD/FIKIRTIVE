@@ -35,6 +35,15 @@ import {
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
 import { captureMoneyPathError, founderAlert } from "../alerting.js";
+
+/**
+ * 这一单的**平台成本参数**(MONEY-A13)—— 与 gen.ts 的 `genSpendArgsOf` 同一个理由:
+ * 落 `spentUsd` 的三处与吸收成本报警那一处必须看同一个对象,否则「报警里说的钱」与
+ * 「账上记的钱」会是两个数,而人工台账正是拿这两个数对账的。
+ */
+export function refgenSpendArgsOf(job: { model: string; count: number }) {
+  return { model: job.model, count: job.count };
+}
 import { provider } from "../generation.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { isModelDisabled } from "@fikirtive/core";
@@ -166,7 +175,7 @@ async function resumeCommittedRefGenJob(job: RefGenJob): Promise<void> {
   // between the outputAssetIds write and DONE) has the marker but null spentUsd — reconstruct
   // from the frozen job inputs. No re-spend (paid already).
   if (job.spentUsd == null) {
-    await prisma.refGenJob.update({ where: { id: job.id }, data: { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
+    await prisma.refGenJob.update({ where: { id: job.id }, data: { spentUsd: refgenSpentUsd(refgenSpendArgsOf(job)) } });
   }
   // settle the hold (idempotent: P2002 no-op if the original commit already settled;
   // no-op if there was no reservation). Outputs exist → the charge is permanent.
@@ -482,7 +491,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
           // #914 r6:回执与产出、与结算同一笔提交 —— 交付成立的那一刻,「我们送出的是这一句」
           // 也就成立。它是我们自己的数据(`refGenRequest` 入队时已校长度,同一张表的
           // `prompt` 就装着同一段文字),不是引擎能撑爆的输入,所以进这笔事务不新增失败面。
-          data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }), sentPromptText: sentPrompt },
+          data: { outputAssetIds, spentUsd: refgenSpentUsd(refgenSpendArgsOf(job)), sentPromptText: sentPrompt },
         });
         if (marked.count === 0) return false;
         await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
@@ -500,19 +509,24 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         });
         // MONEY-A13(规格 §7.5 平台损失台账):同 gen.ts 的对应分支 —— 报警必须带**金额**,
         // 按这一单参数现算(与写进 spentUsd 的是同一个函数),并指路去人工台账登记。
-        await founderAlert({
-          key: "refgen.founder_absorbed_engine_cost",
-          title: "The platform paid for a reference generation nobody received (a redelivery had already refunded the merchant)",
-          action:
-            "No merchant action needed — they were refunded. Log the platform loss in docs/ops/manual-money-ledger.md (event = 吸收引擎成本) with the job id and the USD below.",
-          context: {
-            jobId: job.id,
-            orgId: job.ownerId,
-            mode: job.mode,
-            model: job.model,
-            absorbedUsd: refgenSpentUsd({ model: job.model, count: job.count }),
-          },
-        });
+        // 同 gen.ts:报警被拒绝也不许改变这条分支的去向(下面那个 return 是它的正确结局)。
+        try {
+          await founderAlert({
+            key: "refgen.founder_absorbed_engine_cost",
+            title: "The platform paid for a reference generation nobody received (a redelivery had already refunded the merchant)",
+            action:
+              "No merchant action needed — they were refunded. Log the platform loss in docs/ops/manual-money-ledger.md (event = 吸收引擎成本) with the job id and the USD below.",
+            context: {
+              jobId: job.id,
+              orgId: job.ownerId,
+              mode: job.mode,
+              model: job.model,
+              absorbedUsd: refgenSpentUsd(refgenSpendArgsOf(job)),
+            },
+          });
+        } catch (alertErr) {
+          console.error(`[refgen] ${job.id}: absorbed-cost alert failed (the discard itself stands):`, alertErr);
+        }
         return;
       }
       committed = true; // outputs recorded + settled — past here a failure RESUMES, never re-spends
@@ -565,7 +579,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
               id: job.id, ownerId: job.ownerId, status: { in: [...REFGEN_IN_FLIGHT_STATUSES] },
               outputAssetIds: { isEmpty: true },
             },
-            data: { status: "FAILED", error: message, finishedAt: new Date(), ...((spent || charged) ? { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } : {}) },
+            data: { status: "FAILED", error: message, finishedAt: new Date(), ...((spent || charged) ? { spentUsd: refgenSpentUsd(refgenSpendArgsOf(job)) } : {}) },
           });
           if (count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
         });
