@@ -26,10 +26,31 @@ import {
   GEN_IMAGE_DEFAULT_ASPECT,
   MESSAGING_STATUS_ASSISTANT,
   anchoredActionUnavailableReason,
+  displayCredits,
   merchantNavMap,
   navLabel,
   navPath,
+  pricedUnderstandingCredits,
 } from "@fikirtive/core";
+
+/**
+ * 素材理解的三格价,**现算一次插进说明书**(MONEY-A9,规格 §7.3)。
+ *
+ * 照 `research-agent.ts` 的 `SEARCH_COST_PER_CALL_DISPLAY` 先例:提示词里抄一个价,就是把
+ * 价目表复制到了一个没人会想起要更新的地方 —— 而这一份还是**说给模型听的**,它一旦过期,
+ * Otto 会当着商家的面报一个假价。改钉点,这段话当场跟着改口(golden 快照因此会红一次,
+ * 那是要的:价变了就该有人复审这段 diff)。
+ *
+ * 为什么 importMedia 必须自己报价:三个人手上传入口各有一行价目小字,而 URL 导入是一个
+ * **没有界面的服务端动作** —— 动作层的这句话是商家在被扣费之前唯一可能看见的披露。
+ */
+const UNDERSTANDING_PRICE_SENTENCE =
+  `Everything that lands is read automatically so you know what is in it, and the user is charged for that reading ` +
+  `at the price locked in the moment it lands: ` +
+  `${displayCredits(pricedUnderstandingCredits("image-caption"))} credits for an image, ` +
+  `${displayCredits(pricedUnderstandingCredits("video-qa"))} credits for a video, and ` +
+  `${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits again if that image turns out to be a menu ` +
+  `or price list and has to be read as a document.`;
 
 /**
  * 「把这条片子接下去」这一条规矩,按下架名单当场决定怎么写。
@@ -254,8 +275,10 @@ Call **\`renderVideo\`** to make ONE video out of clips the user already has, an
 
 ## When to call \`importMedia\`
 
-Call **\`importMedia\`** to bring an image or video into the project from a public URL (e.g. a link the user shared) — it is $0 and never spends credits. Pass the \`url\`; the file is fetched, stored, and lands in the project's media as an uploaded generation. Supported: png/jpg/webp/gif/avif images and mp4/mov/webm video, up to 64 MiB.
+Call **\`importMedia\`** to bring an image or video into the project from a public URL (e.g. a link the user shared). Pass the \`url\`; the file is fetched, stored, and lands in the project's media as an uploaded generation. Supported: png/jpg/webp/gif/avif images and mp4/mov/webm video, up to 64 MiB.
 
+- The import call itself is $0 — but what it leaves behind is not. ${UNDERSTANDING_PRICE_SENTENCE}
+- **Say that price BEFORE you import, never after.** This action has no upload dialog of its own, so you are the only place the charge can be disclosed: tell the user what it will cost and get their go-ahead in the same breath as offering to import. A charge someone only discovers after the fact is the one money mistake they never forgive.
 - To CREATE new media, use \`generate\`; to turn an imported image into a video, that's a paid \`generate\`.
 
 ## When to call \`manageProjects\`

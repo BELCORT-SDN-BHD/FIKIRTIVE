@@ -20,6 +20,11 @@ import {
   type GenVideoModel,
 } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
+import {
+  UNDERSTANDING_KINDS,
+  understandingWorstCaseUsd,
+  type UnderstandingKind,
+} from "./asset-understanding.js";
 
 /** Exactly the GenJob fields the price needs (a subset of the row). */
 export interface GenSpendInput {
@@ -99,6 +104,12 @@ export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRI
  * 公式一条:**售价 = 成本 ÷ (1 − 65%)**,再向上取整到收费格(按秒 SKU 取到「每 10 秒
  * 整数显示 credits」,按件 SKU 取到整显示 credit)。允许把结果**上调**到好记数,
  * 绝不许落到公式价之下 —— 由本区末尾的启动断言把守。
+ *
+ * **两种收费格,不是一种**(S2 §7.3 / MONEY-A9 起):生成侧(图片 / 视频 / 参考视频)取整到
+ * **显示 credit**(1 显示 = 10 internal = $0.10),因为一条视频的成本本来就是几毛到几块;
+ * 素材理解取整到 **internal credit**(1 internal = $0.01),因为它的最坏成本只有 $0.0013–$0.0016
+ * 一件 —— 拿显示格去套会把它卖成 $0.10/件,溢价 25 倍以上,而没有任何一次裁决说过那件事。
+ * 格子选哪一档是**定价法的一部分**,理由写在 `deriveUsageInternalCredits` 的头上。
  */
 
 /**
@@ -138,6 +149,27 @@ export function deriveVideoDisplayPer10s(cogsPerSecondUsd: number): number {
 export function deriveImageDisplayCredits(costUsd: number): number {
   const priceUsd = costUsd / (1 - GEN_MARGIN_TARGET);
   return ceilToPriceGrid((priceUsd * CREDITS_PER_USD) / INTERNAL_PER_DISPLAY);
+}
+
+/**
+ * **小额按件 SKU(素材理解)**:单件成本(USD)→ 整数 **internal** credits(1 internal = $0.01)。
+ *
+ * 同一条 65% 公式,**换了收费格**,而换格这件事必须在这里说清楚,否则下一个人只会看到
+ * 「为什么理解不用 deriveImageDisplayCredits」:
+ *
+ * 理解一件的最坏成本是 **$0.00128 / $0.0016 / $0.0014**(看图 / 读文档 / 看视频),公式价
+ * 分别是 $0.00366 / $0.00457 / $0.0040。取到**显示格**($0.10)会把这三个数一律抬到
+ * **$0.10 一件 —— 相对公式价溢价 22–27 倍**,而 Founder 裁的是「就是用户使用照算」
+ * (2026-08-31),不是「按最小收费格收」。取到 internal 格($0.01)则一律落在 **1 internal**,
+ * 溢价 2.2–2.7 倍,毛利率 84–87%(仍高于 65% 目标线,那是向上取整的必然结果,不是加价)。
+ *
+ * 换句话说:格子越粗,小额 SKU 被取整抬得越狠。生成侧一条视频成本几毛,显示格的取整噪声
+ * 只有几个百分点;理解一件成本一分钱都不到,显示格的取整噪声就是价格本身。
+ * **加价要 Founder 裁,取整格不该替他裁。**
+ */
+export function deriveUsageInternalCredits(costUsd: number): number {
+  const priceUsd = costUsd / (1 - GEN_MARGIN_TARGET);
+  return ceilToPriceGrid(priceUsd * CREDITS_PER_USD);
 }
 
 /**
@@ -208,6 +240,36 @@ export const PRO_IMAGE_DISPLAY_CREDITS_PER_IMAGE = deriveImageDisplayCredits(
  */
 export const REFERENCE_VIDEO_CREDITS = 16;
 
+/**
+ * **素材理解三类的按件价目**(S2 §7.3 / MONEY-A9,Founder 2026-08-31 裁决「就是用户使用照算」)。
+ *
+ * 单位是 **internal credits**(1 internal = $0.01),不是显示 credits —— 理由在
+ * `deriveUsageInternalCredits` 的头上,一句话:显示格会把 $0.0016 的成本卖成 $0.10。
+ *
+ * 表**从 `UNDERSTANDING_KINDS` 枚举出来**,不是三行手抄:理解三件套哪天加第四类
+ * (票面第二批),这张表当场多一格、毛利闸当场要它的成本 —— 而手抄一份的话,新 kind 只会
+ * 安静地没有价,然后在 worker 里落成 undefined。成本一律现取 `understandingWorstCaseUsd`
+ * (token 上限 × 成本钉点),所以改 token 上限或改钉点,价当场跟着动。
+ *
+ * 现值:三类各 **1 internal = 0.1 显示 credit / 件**(公式价 0.366 / 0.457 / 0.400,全部进位到 1)。
+ */
+export const UNDERSTANDING_PRICED_INTERNAL: Record<UnderstandingKind, number> = Object.fromEntries(
+  UNDERSTANDING_KINDS.map((kind) => [kind, deriveUsageInternalCredits(understandingWorstCaseUsd(kind))]),
+) as Record<UnderstandingKind, number>;
+
+/**
+ * 一件素材理解收多少 **internal credits**。比照 `pricedGenCredits` 的身份:这是
+ * **商家真被扣的那一笔**,reserve 与 settle 用的是同一个值(理解没有可变用量档,
+ * 所以 reserve == settle 恒成立,不存在差额)。
+ *
+ * 计费四则①:结算按**上传时刻**的价目 —— 那份快照由 `AssetUnderstanding.priceInternalSnapshot`
+ * 落行时锁住,worker 结算读快照而不是重新调本函数。本函数是**报价**(上传那一刻、披露那一刻),
+ * 不是结算;调价不追溯(MONEY-A7)靠的就是这个分工。
+ */
+export function pricedUnderstandingCredits(kind: UnderstandingKind): number {
+  return UNDERSTANDING_PRICED_INTERNAL[kind];
+}
+
 /** 一条可复算的价目行:现价 vs 公式价。启动断言逐行查。 */
 export type DerivedPriceRow = { tier: string; charged: number; formula: number };
 
@@ -234,7 +296,14 @@ export function assertDerivedPricing(rows: readonly DerivedPriceRow[]): void {
   }
 }
 
-/** 本模块推导出来的全部在售价目行(视频逐档 + 图片两档 + 整段参考视频)。 */
+/**
+ * 本模块推导出来的全部在售价目行(视频逐档 + 图片两档 + 整段参考视频 + 理解三类)。
+ *
+ * **一行之内单位自洽,行与行之间不必同格**:`assertDerivedPricing` 只把同一行的
+ * `charged` 与 `formula` 相比,两者都是那一行自己的格(生成侧=显示 credit,理解=internal
+ * credit),所以混在一张表里不会算错。行名里写明格子,是为了让断言炸出来的那句话
+ * 不用读代码也能看懂是哪一格的多少钱。
+ */
 export function derivedPriceRows(): DerivedPriceRow[] {
   return [
     ...Object.entries(SEEDANCE_DISPLAY_CREDITS_PER_10S).map(([resolution, charged]) => ({
@@ -257,6 +326,13 @@ export function derivedPriceRows(): DerivedPriceRow[] {
       charged: REFERENCE_VIDEO_CREDITS,
       formula: deriveImageDisplayCredits(REFERENCE_VIDEO_COGS_USD),
     },
+    // 理解三类(MONEY-A9)。charged 与 formula 同源同值 —— 理解**没有好记数上调**,
+    // 价就是公式价。两边都写出来不是重复:上调表哪天要加理解格,断言当场按同一条规矩管它。
+    ...UNDERSTANDING_KINDS.map((kind) => ({
+      tier: `理解 ${kind}(每件,internal 格)`,
+      charged: UNDERSTANDING_PRICED_INTERNAL[kind],
+      formula: deriveUsageInternalCredits(understandingWorstCaseUsd(kind)),
+    })),
   ];
 }
 

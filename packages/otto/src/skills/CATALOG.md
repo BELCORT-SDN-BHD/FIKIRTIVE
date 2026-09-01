@@ -13,7 +13,7 @@
 | editStoryboard | free | write | internal | ❌ | Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts  |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
 | generateReferences | spend | write | internal | ✅ | Generate reference images for one of the user's saved elements (a character, pro |
-| importMedia | free | write | internal | ❌ | Import an image or video into the project from a public URL ($0 — never generate |
+| importMedia | free | write | internal | ❌ | Import an image or video into the project from a public URL. Use this to bring i |
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | listChannelScopes | free | read | internal | ❌ | List the workspace's connected messaging channel accounts (channel + scope key). |

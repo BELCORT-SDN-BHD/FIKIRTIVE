@@ -27,7 +27,12 @@ import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
 import { reconcileStripePayments } from "./jobs/stripe-reconcile.js";
-import { handleUnderstand, reapStaleUnderstanding, scanAssetsNeedingUnderstanding } from "./jobs/understand.js";
+import {
+  handleUnderstand,
+  reapStaleUnderstanding,
+  reapStaleUnderstandingReservations,
+  scanAssetsNeedingUnderstanding,
+} from "./jobs/understand.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
@@ -232,8 +237,10 @@ async function main(): Promise<void> {
   // adapter orchestration. Fail-closed by construction: the scheduler below only enqueues posts
   // whose connection can publish RIGHT NOW, and the handler re-checks + triple-locks idempotency.
   await consume<PublishJobData>(PUBLISH_QUEUE, handlePublish);
-  // #784 素材理解三件套。**不碰商家余额**(理解是平台成本),所以它和钱路队列的形状不同:
-  // 允许正常重试,防重靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS。
+  // #784 素材理解三件套。**是一条钱路**(MONEY-A9,2026-09-01 起按上传时刻的快照价计费;
+  // 旧的「不碰商家余额、理解是平台成本」已随规格 §7.3 废止)。它仍然允许正常重试 ——
+  // 防重不靠 retryLimit:0,靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS,
+  // 再加钱侧那套 `(orgId, refId)` 台账终态恢复协议(见 jobs/understand.ts 文件头)。
   //
   // 返回值 = 要立刻接着跑的那一行(caption 认出这张图是菜单之后建出来的 doc-extract 行)。
   // 在这里发,而不是等下一轮扫描 —— 差别是商家的十分钟。send 失败也不丢:行还是 QUEUED,
@@ -312,11 +319,17 @@ async function main(): Promise<void> {
           boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
         );
         if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
-        // #784: understanding rows a crashed worker left RUNNING. $0 and credit-free by
-        // construction — this chain never reserves — so the sweep just returns them to QUEUED
-        // and the scanner below re-delivers. A file half-read should be finished, not abandoned.
+        // #784: understanding rows a crashed worker left RUNNING. Pure UX — it just returns them
+        // to QUEUED and the scanner below re-delivers. A file half-read should be finished, not
+        // abandoned. (The money half is the next sweep, not this one.)
         const un = await reapStaleUnderstanding();
         if (un) console.log(`[worker] returned ${un} interrupted understanding row(s) to the queue`);
+        // MONEY-A9: understanding is a PAID action since 2026-09-01, so this chain now leaks holds
+        // the same way Otto's does — a death between reserve and settle. Its own reaper (not the
+        // LLM one: that sweep's refund also retires an approval card, which this chain has none of)
+        // refunds the hold and returns the row it belonged to.
+        const ur = await reapStaleUnderstandingReservations();
+        if (ur) console.log(`[worker] refunded ${ur} leaked understanding reservation(s)`);
       });
     } catch (e) {
       console.error("[worker] reaper error:", e);
@@ -444,7 +457,8 @@ async function main(): Promise<void> {
       `[worker] asset understanding — platform budget $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
         `(${assetUnderstandingEnabled(process.env) ? "switch ON" : "switch OFF — paused, nothing is discarded"}). ` +
         `Over budget or switched off, files stay queued and are read the next day. ` +
-        `Merchants are never charged for this.`,
+        `This budget is the PLATFORM's provider-spend fuse; merchants are billed separately per ` +
+        `understood file at the price locked on upload (MONEY-A9).`,
     );
     // The interval is installed either way: the switch is re-read on EVERY scan, so flipping it
     // off pauses the reading instead of destroying whatever arrives while it is off.

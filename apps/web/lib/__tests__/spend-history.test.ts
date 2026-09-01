@@ -60,6 +60,15 @@ describe("spendCategoryOf", () => {
     expect(spendCategoryOf({ refId: null, kind: "ADJUST", source: "ADMIN" }, jobKinds)).toBe("adjustment");
   });
 
+  it("MONEY-A9: an asset-understanding charge reads as its own category, re-billed rounds included", () => {
+    // The one charge a merchant never clicked a button for — it must not hide inside the
+    // neutral fallback. `:r<n>` is the re-bill round after a refund (a money-path mechanic);
+    // both shapes are the same thing to a shop owner.
+    expect(spendCategoryOf({ refId: "understanding:abc", kind: "RESERVE", source: "SYSTEM" }, jobKinds)).toBe("understanding");
+    expect(spendCategoryOf({ refId: "understanding:abc:r2", kind: "SETTLE", source: "SYSTEM" }, jobKinds)).toBe("understanding");
+    expect(SPEND_CATEGORY_LABEL.understanding).toBe("Understanding");
+  });
+
   it("never guesses: an unknown refId falls back instead of claiming a category", () => {
     expect(spendCategoryOf({ refId: "unknown-ref", kind: "RESERVE", source: "SYSTEM" }, jobKinds)).toBe("other");
   });
@@ -70,6 +79,7 @@ describe("spendCategoryOf", () => {
     expect(SPEND_CATEGORY_LABEL.image).toBe("Image");
     expect(SPEND_CATEGORY_LABEL.video).toBe("Video");
     expect(SPEND_CATEGORY_LABEL.topup).toBe("Top-up");
+    expect(SPEND_CATEGORY_LABEL.understanding).toBe("Understanding");
   });
 });
 

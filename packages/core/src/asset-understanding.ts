@@ -14,10 +14,16 @@
  * ── 铁律 ────────────────────────────────────────────────────────────────────
  *  1. **商家永远不点「分析」按钮。** 理解在后台自动跑(worker 的 understand 队列),
  *     商家的体感是「Otto 好像认识我的店」。这个模块因此不导出任何「开始分析」的入参形状。
- *  2. **商家一分钱都不付。** 理解是平台成本,不进 CreditLedger,不 reserve/settle。
- *     真正兜住花费的是三样都在这个文件里的东西:总开关、**平台级的每日美元预算**、
- *     每次调用的 token 上限(以及让 token 上限真正成立的两道 pre-flight 闸:视频按时长、
- *     图片按像素/字节 —— 没有它们,「每次 token 上限」只是许愿)。
+ *  2. ~~**商家一分钱都不付。**~~ **【2026-09-01 S2 §7.3 / MONEY-A9 起废止】** Founder
+ *     2026-08-31 裁决原话「不要分开,也不要我们吸收,就是用户使用照算」:理解改为
+ *     **商家计费面** —— 三类按 65% 定价法各算出一个按件价(`spend.ts` 的
+ *     `pricedUnderstandingCredits`,价从下面 `understandingWorstCaseUsd` 的最坏成本推),
+ *     走同一条 reserve→settle 钱路,进 CreditLedger。**披露先于扣费**(上传界面事先可见价目)。
+ *     本文件仍然只管**成本与上限**,一格价都不放:定价住 `spend.ts`(推导的单一权威),
+ *     计费接线住 worker。**平台级的每日美元预算降级为平台侧保险丝**(不再是唯一的花费兜底),
+ *     真正兜住单次花费的仍是每次调用的 token 上限(以及让 token 上限真正成立的两道
+ *     pre-flight 闸:视频按时长、图片按像素/字节 —— 没有它们,「每次 token 上限」只是许愿),
+ *     因为它同时是**报价的分母**:token 上限一变,售价当场跟着变。
  *  3. **白标。** 这个文件里没有供应商名字;产物里也不许出现(worker 落盘走 redact)。
  *
  * ── 一条纪律:资源闸不许毁数据 ────────────────────────────────────────────────
@@ -56,8 +62,25 @@ export function isUnderstandingKind(v: string): v is UnderstandingKind {
  *  key 不对、schema 被拒),文件本身一点问题都没有。重试用完之后行停在这里等人修,
  *  修好了扫描器把它捡回 QUEUED。它存在的唯一理由是 2026-08-18 那次事故:一个没核过的
  *  模型 id 让每次调用 404,而 404 当时被当成「这份素材读不了」写成 FAILED 终态,于是
- *  每个商家的每一份好文件被逐个永久判死,而且没有任何一条恢复路径。 */
-export const UNDERSTANDING_STATUSES = ["QUEUED", "RUNNING", "DONE", "FAILED", "SKIPPED", "PAUSED"] as const;
+ *  每个商家的每一份好文件被逐个永久判死,而且没有任何一条恢复路径。
+ *
+ *  PAUSED_BALANCE = **「待补余额」暂停**(MONEY-A9 计费四则④,2026-09-01),同样**不是终态**:
+ *  商家余额不足,reserve 抛 InsufficientCredits,这一行停在这里等充值。恢复=充值事件唤醒 +
+ *  扫描器兜底轮询,捞回条件=余额 ≥ 行上的快照价;暂停期间**不打供应商**(不无限重扫),
+ *  素材无限期保留(credits 不过期,同理)。
+ *  **和 PAUSED 是两回事,别合并**:PAUSED 是**我方**配置/请求坏了(要人去修代码或配置),
+ *  PAUSED_BALANCE 是**商家侧**余额不够(要商家去充值)。合成一个状态就等于把「我们坏了」
+ *  和「你没钱了」讲成同一句话:扫描器捞回的判据不同(一个等人修、一个等余额),商家看到的
+ *  也该是完全不同的两件事。 */
+export const UNDERSTANDING_STATUSES = [
+  "QUEUED",
+  "RUNNING",
+  "DONE",
+  "FAILED",
+  "SKIPPED",
+  "PAUSED",
+  "PAUSED_BALANCE",
+] as const;
 export type UnderstandingStatus = (typeof UNDERSTANDING_STATUSES)[number];
 
 /** 理解模型的**内部**代号。白标:对外(日志、卡面、Otto 的嘴)一律不出现供应商 id;
@@ -548,6 +571,16 @@ export const UNDERSTANDING_PAUSED = "Reading is paused right now.";
 export const UNDERSTANDING_NO_MEDIA_URL = "This environment can't hand the file to the reader yet.";
 export const UNDERSTANDING_METADATA_PENDING = "That file's dimensions aren't known yet — it will be read once they are.";
 export const UNDERSTANDING_BUDGET_REACHED = "Today's reading budget is used up — this file is read tomorrow.";
+/**
+ * **PAUSED_BALANCE 的措辞**(MONEY-A9 计费四则④)。
+ *
+ * 和上面那句「今天的预算用完了」说的是两回事,商家要做的事也相反:那一句是**平台**侧的
+ * 保险丝,商家什么都不用做、明天自己会读;这一句是**商家**余额不够,只有充值能让它继续。
+ * 所以它必须点名 credits,并且说清楚文件还在(不是被丢掉了)—— 素材无限期保留,
+ * credits 也不过期,商家隔多久回来充值都读得到。
+ */
+export const UNDERSTANDING_WAITING_FOR_CREDITS =
+  "That file is waiting for credits — it will be read as soon as your balance covers it.";
 /**
  * **PAUSED 的措辞** —— 这一句必须和 FAILED 那一句说的是两回事,因为它们要商家做的事相反。
  * 「读不清楚」的正确建议是传一份更清楚的;而这一行的文件本来就好好的,商家做什么都没用,

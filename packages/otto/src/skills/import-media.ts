@@ -1,5 +1,5 @@
 /**
- * importMedia — $0 media import skill (W-B3-B, parity debts 14,15,78,79,80,81,82 / E1-17 upload
+ * importMedia — media import skill (W-B3-B, parity debts 14,15,78,79,80,81,82 / E1-17 upload
  * chain; anchor A2 direct-upload).
  *
  * The Otto-side analogue of the human upload: a person drags a local file in; Otto has no local
@@ -14,13 +14,36 @@
  * (Asset upsert + Generation(source:UPLOAD) + size re-check + mime byte-verify + ingest dispatch).
  * This skill never touches Prisma, storage, or the web action files directly.
  *
- * $0 by construction: importing REFERENCES/stores bytes only — no GenJob, no reserve, no provider.
- * Turning an imported image into a video (i2v) is a separate, PAID generate call.
+ * ── What it costs (MONEY-A9, spec docs/specs/money-engine.md §7.3) ──────────────────────────
+ * The IMPORT is still $0 by construction: it stores bytes — no GenJob, no reserve, no provider.
+ * What it LEAVES BEHIND is not. It lands a `source:"UPLOAD"` image/video Asset, and since
+ * 2026-09-01 every such asset is read automatically and BILLED to the merchant at the price
+ * locked in the moment the row is created (worker `jobs/understand.ts`). The old header line
+ * here — "$0 by construction … no reserve" — was true of this call and misleading about its
+ * consequence, so it is gone.
+ *
+ * That makes disclosure this file's job. The three human upload entries each carry a price hint
+ * in the UI; a URL import is a server-side action with NO surface of its own, so the spec routes
+ * its disclosure through the action layer: `ottoInstructions` tells Otto to quote the price
+ * BEFORE calling this, and `otto-media-port.ts` returns the same quote with the result.
+ *
+ * `cost: "free"` is UNCHANGED and correct: that field is the approval router
+ * (`needsApproval = cost === "spend" || …`), and it answers "does THIS CALL spend the merchant's
+ * credits?" — it does not. The spec asks for disclosure here, not an approval dialog; flipping it
+ * to "spend" would gate the human upload's own analogue behind a confirm the human upload has
+ * never had, and would also demand an `idempotencyKey` this call has no charge to key.
  */
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
+import { displayCredits, pricedUnderstandingCredits } from "@fikirtive/core";
 import type { RunContext } from "@openai/agents";
 import type { OttoContext } from "../context.js";
+
+/** 价现算,不手抄 —— 同 instructions.ts 与 otto-media-port.ts,三处同源一个函数。
+ *  手抄一份在工具描述里,涨价当天模型就会拿着一个旧数字去跟商家报价。 */
+const IMAGE_PRICE = displayCredits(pricedUnderstandingCredits("image-caption"));
+const VIDEO_PRICE = displayCredits(pricedUnderstandingCredits("video-qa"));
+const DOC_PRICE = displayCredits(pricedUnderstandingCredits("doc-extract"));
 
 const params = z.object({
   url: z.string().min(1).max(2000).describe("The public http(s) URL of the image or video to import."),
@@ -51,23 +74,33 @@ export async function executeImportMedia(
     ...(input.promptText !== undefined ? { promptText: input.promptText } : {}),
     ...(input.entityIds ? { entityIds: input.entityIds } : {}),
   });
-  return "error" in r ? { ok: false, error: r.error } : { ok: true, generationId: r.generationId };
+  return "error" in r
+    ? { ok: false, error: r.error }
+    : { ok: true, generationId: r.generationId, ...(r.note ? { note: r.note } : {}) };
 }
 
 export const importMediaSkill = defineOttoSkill({
   name: "importMedia",
-  // $0 import surface: fetches an external URL (a guarded READ) and writes OUR Asset/Generation
-  // rows (the write lands internally, never mutates the outside world). free + write + internal ⇒
-  // needsApproval=false — same as the human upload, which lands media without a confirm dialog;
-  // the SSRF guard on the fetch is the safety boundary, not an approval gate.
+  // This CALL spends nothing: it fetches an external URL (a guarded READ) and writes OUR
+  // Asset/Generation rows (the write lands internally, never mutates the outside world).
+  // free + write + internal ⇒ needsApproval=false — same as the human upload, which lands media
+  // without a confirm dialog; the SSRF guard on the fetch is the safety boundary, not an approval
+  // gate. The automatic understanding charge the landed asset then incurs (MONEY-A9) is disclosed,
+  // not approval-gated — see the header for why this field stays "free".
   cost: "free",
   effect: "write",
   reach: "internal",
   description:
-    "Import an image or video into the project from a public URL ($0 — never generates media or spends credits). " +
+    "Import an image or video into the project from a public URL. " +
     "Use this to bring in an external reference (e.g. a link the user shared): the file is fetched, stored, " +
     "and lands in the project's media as an uploaded generation. " +
     "Supported: png/jpg/webp/gif/avif images and mp4/mov/webm video, up to 64 MiB. " +
+    "The import call itself costs nothing to run, but what it leaves behind is billed: every imported " +
+    `image or video is read automatically so Otto knows what is in it, charging the user ${IMAGE_PRICE} credits ` +
+    `for an image or ${VIDEO_PRICE} credits for a video at the price locked in the moment it lands, plus ` +
+    `${DOC_PRICE} credits again if that image turns out to be a menu or price list. ` +
+    "TELL THE USER THAT PRICE AND GET THEIR GO-AHEAD BEFORE CALLING THIS — there is no upload dialog here, " +
+    "so this is the only place the charge can be disclosed. " +
     "To CREATE new media, use generate instead; to turn an imported image into a video, that's a paid generate.",
   parameters: params,
   requires: [{ field: "url", question: "What is the URL of the image or video to import?" }],

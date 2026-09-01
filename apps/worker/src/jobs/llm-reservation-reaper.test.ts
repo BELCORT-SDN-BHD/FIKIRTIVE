@@ -150,15 +150,49 @@ function prefixesInSource(): Map<string, string[]> {
   return found;
 }
 
-/** 清道夫 SQL 里的 LIKE 前缀名单。 */
-function prefixesInReaper(): Set<string> {
-  const src = fs.readFileSync(REAPER_FILE, "utf8");
+/** 某个文件里的 LIKE 前缀名单(这个清道夫扫哪些 refId)。 */
+function prefixesInReaperFile(file: string): Set<string> {
+  const src = fs.readFileSync(file, "utf8");
   return new Set([...src.matchAll(/LIKE '([a-z0-9-]+):%'/g)].map((match) => match[1]!));
 }
+
+/** 清道夫 SQL 里的 LIKE 前缀名单。 */
+function prefixesInReaper(): Set<string> {
+  return prefixesInReaperFile(REAPER_FILE);
+}
+
+/**
+ * **有专属清道夫的前缀** —— 不在这个 LLM 清道夫的 LIKE 名单里,但绝不是没人扫。
+ *
+ * 登记而不是直接加进上面那份名单,是因为这个清道夫的退款带着 approval-card 的收口语义
+ * (第 2、3 遍要去把卡片改成 failed)。理解那条链路根本没有卡片,借它的名单等于借它的语义 ——
+ * 一次错误的耦合。所以前缀各归各的清道夫,而这张表负责让守卫仍然咬得住:登记一条,
+ * 就必须在它点名的文件里**真的**找得到那句 `LIKE '<前缀>:%'`,否则这条登记就是一句空话。
+ */
+const DEDICATED_REAPERS: Record<string, string> = {
+  // MONEY-A9(2026-09-01):素材理解从「平台自己付」变成按件计费,于是这条链路也会漏 hold。
+  understanding: "apps/worker/src/jobs/understand.ts", // reapStaleUnderstandingReservations
+};
 
 describe("reaper prefix coverage — every prefixed refId in the codebase is reaped", () => {
   const inSource = prefixesInSource();
   const inReaper = prefixesInReaper();
+
+  it("每条「专属清道夫」登记都必须在它点名的文件里真的扫那个前缀(登记不许是空话)", () => {
+    for (const [prefix, file] of Object.entries(DEDICATED_REAPERS)) {
+      const swept = prefixesInReaperFile(path.join(REPO_ROOT, file));
+      expect(
+        swept.has(prefix),
+        `DEDICATED_REAPERS 说 "${prefix}:" 由 ${file} 扫,但那个文件里没有 LIKE '${prefix}:%' —— ` +
+          `要么那个清道夫没写/被删了,要么这条登记该撤。任何一种,那个前缀现在都没人扫。`,
+      ).toBe(true);
+      expect(
+        inReaper.has(prefix),
+        `"${prefix}:" 同时在两个清道夫的名单里 —— 一笔漏掉的预扣会被退两次判断、` +
+          `两条恢复语义混在一起。只留一个。`,
+      ).toBe(false);
+    }
+  });
 
   it("scanner sanity: finds the known prefixes (a broken regex must not green-wash)", () => {
     // 'brand-research' was dropped 2026-07-04 with the dead pre-Otto module; 'draft'/'enhance'
@@ -171,13 +205,14 @@ describe("reaper prefix coverage — every prefixed refId in the codebase is rea
     expect(inReaper.size).toBeGreaterThanOrEqual(8);
   });
 
-  it("every source prefix is in the reaper's LIKE list (a miss locks credits forever)", () => {
+  it("every source prefix is swept by SOME reaper (a miss locks credits forever)", () => {
     for (const [prefix, files] of inSource) {
       expect(
-        inReaper.has(prefix),
+        inReaper.has(prefix) || prefix in DEDICATED_REAPERS,
         `refId prefix "${prefix}:" (used in ${files.join(", ")}) is NOT in the reaper's LIKE list ` +
-          `(apps/worker/src/jobs/llm-reservation-reaper.ts). A crash between reserve and settle would ` +
-          `leak that reservation FOREVER — add the prefix to the reaper (or consciously handle recovery).`,
+          `(apps/worker/src/jobs/llm-reservation-reaper.ts) and has no entry in DEDICATED_REAPERS. ` +
+          `A crash between reserve and settle would leak that reservation FOREVER — add the prefix ` +
+          `to the reaper, or give it a reaper of its own and register it here.`,
       ).toBe(true);
     }
   });

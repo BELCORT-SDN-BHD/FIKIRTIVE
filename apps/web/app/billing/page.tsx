@@ -5,12 +5,20 @@ import { BuyPackButton } from "@/components/billing/BuyPackButton";
 import { SpendHistory } from "@/components/billing/SpendHistory";
 import { Card } from "@/components/ui/card";
 import { Wallet } from "lucide-react";
-import { formatCredits } from "@/lib/credit-format";
+import { creditsLabel, formatCredits } from "@/lib/credit-format";
+import { displayCredits, pricedUnderstandingCredits } from "@fikirtive/core/spend";
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Billing · Fikirtive" };
+
+/** MONEY-A9 §7.3 — the price list side of the upload disclosure. Same functions the upload
+ *  hint and the charge itself run (`pricedUnderstandingCredits`), so the shelf page and the
+ *  file picker can never quote two different numbers; nothing here is typed by hand. */
+function understandingPrice(kind: "image-caption" | "doc-extract" | "video-qa"): string {
+  return creditsLabel(displayCredits(pricedUnderstandingCredits(kind)));
+}
 
 function fmtPrice(amountCents: number, currency: string): string {
   return (amountCents / 100).toLocaleString(undefined, {
@@ -146,6 +154,21 @@ export default async function BillingPage({
             ))}
           </div>
         )}
+
+        {/* MONEY-A9 §7.3 — the price list for the one charge a merchant never asked for:
+            every image and video they upload is read automatically. The upload entries carry
+            the same numbers as a one-line hint (components/otto/UnderstandingCostHint.tsx);
+            this section is the fuller version, on the page where prices belong. */}
+        <section style={{ marginTop: 28 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Auto-understanding</h2>
+          <div className="text-muted-foreground" style={{ fontSize: 14, lineHeight: 1.5 }}>
+            Every image and video you upload is read automatically so Otto knows what is in it:{" "}
+            {understandingPrice("image-caption")} an image and {understandingPrice("video-qa")} a
+            video. An image that turns out to be a menu or a price list is also read as a
+            document, for {understandingPrice("doc-extract")} more. You are charged the price
+            shown when you upload, even if the reading finishes later.
+          </div>
+        </section>
 
         {/* #555: where the credits went. Conversation turns (Chat / Review) are listed
             here like any other charge — before this, the page showed only a balance. */}

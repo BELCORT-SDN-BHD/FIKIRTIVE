@@ -31,7 +31,9 @@ test("A delivered image is one charge for exactly what it cost", async ({ page }
   await expect(page.getByText("held for work in progress")).toHaveCount(0);
   await expect(page.getByText("On hold — the final cost is charged when this finishes")).toHaveCount(0);
 
-  await expect(page.getByText("Image")).toBeVisible();
+  // exact: billing 页自 A9 起有「Auto-understanding」价目散文(含小写 "image"),
+  // Playwright 字符串匹配大小写不敏感,非 exact 会撞出两个元素;这里钉的是消费历史的类目标签。
+  await expect(page.getByText("Image", { exact: true })).toBeVisible();
   await expect(page.getByText("-11", { exact: true })).toBeVisible();
 });
 

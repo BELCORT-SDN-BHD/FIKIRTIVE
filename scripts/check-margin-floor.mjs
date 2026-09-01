@@ -180,6 +180,30 @@ export const COGS_INPUTS = {
   "otto:chat": { cogsUsd: 1, source: USAGE_PRICED_COGS_SOURCE },
   "otto:research:llm": { cogsUsd: 1, source: USAGE_PRICED_COGS_SOURCE },
   "otto:research:search": { cogsUsd: 1, source: USAGE_PRICED_COGS_SOURCE },
+  // ── MONEY-A9(2026-09-01):素材理解三类,从平台自费改成商家计费面 ─────────────
+  // 这三行是**按件**的(有档位价),不是按量计价 —— 所以它们和图片档一样吃 65% 目标线。
+  // 成本是各类**最坏情况**的一次调用:token 上限吃满 × 理解牌价钉点。手抄一遍是这个闸的
+  // 独立性本身(core 那边由 UNDERSTANDING_CAPS × cost-pins 现算,两边算完必须逐位相等,
+  // 不等 = assertCogsAgreement 红):
+  //   in  $0.10/M token、out $0.40/M token(cost-pins 的 understanding:in/out-per-mtoken)
+  //   看图   11,200 in(16MP 像素闸 × 700 tok/MP)+   400 out = $0.001120 + $0.000160 = $0.00128
+  //   读文档 11,200 in(同一张图,同一道闸)      + 1,200 out = $0.001120 + $0.000480 = $0.00160
+  //   看视频 12,000 in(时长闸 × 抽帧 × 每帧 400)+   500 out = $0.001200 + $0.000200 = $0.00140
+  "understanding:image-caption": {
+    cogsUsd: 0.00128,
+    source:
+      "UNDERSTANDING_CAPS 最坏 token(11,200 in / 400 out)× 理解钉点(cost-pins understanding:in-per-mtoken $0.10/M、out-per-mtoken $0.40/M),2026-09-01 手算双证人",
+  },
+  "understanding:doc-extract": {
+    cogsUsd: 0.0016,
+    source:
+      "UNDERSTANDING_CAPS 最坏 token(11,200 in / 1,200 out)× 理解钉点(cost-pins understanding:in-per-mtoken $0.10/M、out-per-mtoken $0.40/M),2026-09-01 手算双证人",
+  },
+  "understanding:video-qa": {
+    cogsUsd: 0.0014,
+    source:
+      "UNDERSTANDING_CAPS 最坏 token(12,000 in / 500 out)× 理解钉点(cost-pins understanding:in-per-mtoken $0.10/M、out-per-mtoken $0.40/M),2026-09-01 手算双证人",
+  },
 };
 
 /**
@@ -483,6 +507,17 @@ async function buildSellableSkus() {
       videoOptions: { seconds: 5, resolution: opts.resolutions[0] ?? "720p", audio: true },
     });
     add(`video:${model}:ref`, `Reference video ${model} (E1-06)`, toUsd(refCharge));
+  }
+
+  // ── MONEY-A9 素材理解三类(2026-09-01)─────────────────────────────────────
+  // 理解从「平台自费、商家零触点」改成商家计费面,所以它第一次需要被这个闸量。清单从
+  // core 的 registry 来(UNDERSTANDING_KINDS),收费从 core 的定价函数现取 —— 三件套哪天
+  // 加第四类,这里当场多一行,而它没有 COGS_INPUTS 就是 missing = 红。
+  // 不带 usagePriced 标记:理解**有档位价**(每类一个按件价),所以它和图片档一样吃 65% 目标线。
+  const understanding = await import(pathToFileURL(path.join(root, "packages/core/dist/asset-understanding.js")).href);
+  const { pricedUnderstandingCredits } = spend;
+  for (const kind of understanding.UNDERSTANDING_KINDS ?? []) {
+    add(`understanding:${kind}`, `Asset understanding (${kind} ×1)`, toUsd(pricedUnderstandingCredits(kind)));
   }
 
   // 钱路 M1-c: the usage-priced paid surfaces (chat, research LLM, research search). They are

@@ -865,11 +865,13 @@ export interface OttoContext {
    *  browser direct-upload chain: SSRF-guarded fetch → storage.put → the SAME finalizeCandidateUploads
    *  authority the human upload lands through. $0 (no gen). Skills reach it ONLY via ctx.mediaImport. */
   mediaImport?: {
-    /** $0: import an image/video from a public URL into this project (Generation source:UPLOAD). */
+    /** Import an image/video from a public URL into this project (Generation source:UPLOAD).
+     *  The import itself is $0; the landed asset is auto-understood at the price locked on
+     *  upload (MONEY-A9), so `note` carries the action-time price disclosure for Otto to relay. */
     fromUrl(
       url: string,
       opts?: { promptText?: string; entityIds?: string[] },
-    ): Promise<{ ok: true; generationId: string } | { error: string }>;
+    ): Promise<{ ok: true; generationId: string; note?: string } | { error: string }>;
   };
   /** Projects port (W-B3-D, $0, debt-03~07) — injected by the web caller. Every function is a thin
    *  closure over the SAME owner-gated project server actions the human sidebar uses (actions.ts:

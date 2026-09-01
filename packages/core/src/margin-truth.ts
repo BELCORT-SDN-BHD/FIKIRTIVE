@@ -17,9 +17,11 @@ import {
   genSpentUsd,
   pricedGenCredits,
   pricedRefgenCredits,
+  pricedUnderstandingCredits,
   refgenSpentUsd,
   type GenSpendInput,
 } from "./spend.js";
+import { UNDERSTANDING_KINDS, understandingWorstCaseUsd } from "./asset-understanding.js";
 import { GEN_MODELS, GEN_VIDEO_MODEL_OPTIONS, type GenModel, type GenVideoModel } from "./gen.js";
 import { REFGEN_MODELS, type RefGenModel } from "./refgen.js";
 import type { CostPinKey } from "./cost-pins.js";
@@ -277,6 +279,31 @@ function sellableImageSkus(): MarginSku[] {
   });
 }
 
+/**
+ * 现役可售**素材理解**档 = 从 `UNDERSTANDING_KINDS` 枚举(MONEY-A9,规格 §7.3)。
+ *
+ * 为什么进的是这条**按件枚举**路线而不是上面的 `USAGE_PRICED_SURFACES`:按量计价面收的是
+ * 「这一次真实成本 × 倍数」,毛利率与用量无关、连「一档」都没有;理解**有档位价** ——
+ * 三类各一个按件的整数 internal 价(`pricedUnderstandingCredits`),成本是各类的**最坏**
+ * token 上限成本。它和图片档是同一种东西(一件多少钱),所以量法也该一样。
+ *
+ * 收费走 `pricedUnderstandingCredits`、成本走 `understandingWorstCaseUsd` —— 与定价推导
+ * 逐字同源,这里一个手抄的数字都没有。
+ */
+function sellableUnderstandingSkus(): MarginSku[] {
+  const label: Record<(typeof UNDERSTANDING_KINDS)[number], string> = {
+    "image-caption": "素材理解 看图(每件)",
+    "doc-extract": "素材理解 读文档(每件)",
+    "video-qa": "素材理解 看视频(每件)",
+  };
+  return UNDERSTANDING_KINDS.map((kind) => ({
+    id: `understanding:${kind}`,
+    label: label[kind],
+    charge: () => pricedUnderstandingCredits(kind) / CREDITS_PER_USD,
+    cogs: () => understandingWorstCaseUsd(kind),
+  }));
+}
+
 /** 现役可售参考图档 = 从 `REFGEN_MODELS` 枚举。同上。 */
 function sellableRefgenSkus(): MarginSku[] {
   return REFGEN_MODELS.map((model) => ({
@@ -319,8 +346,8 @@ function sellableVideoSkus(): MarginSku[] {
 /**
  * 报表覆盖的档位。**现役可售的每一档都在这里**:图片、参考图(MONEY-A2 起同样**从
  * `GEN_MODELS` / `REFGEN_MODELS` 枚举**,不再是两行手写字面量),现役视频模型的
- * 全部时长 × 分辨率(#645 T4 起 24 档),整段参考视频,以及(钱路 M1-c 起)三个
- * **按量计价的付费面** —— 聊天、深研 LLM、深研搜索。
+ * 全部时长 × 分辨率(#645 T4 起 24 档),整段参考视频,(MONEY-A9 起)素材理解三类,
+ * 以及(钱路 M1-c 起)三个**按量计价的付费面** —— 聊天、深研 LLM、深研搜索。
  * (视频任务恒 count=1 —— gen-actions 强制。)
  *
  * 「可售」= 会向商家收钱。按量计价面此前不在这张表上,于是毛利闸从来没量过它们:
@@ -331,6 +358,9 @@ export const MARGIN_TRUTH_SKUS: readonly MarginSku[] = [
   ...sellableImageSkus(),
   ...sellableRefgenSkus(),
   ...sellableVideoSkus(),
+  // MONEY-A9(2026-09-01):素材理解从「平台自费、商家零触点」改成商家计费面,于是它第一次
+  // 需要被量。三类各一行,按件枚举(不是按量计价),见 sellableUnderstandingSkus。
+  ...sellableUnderstandingSkus(),
   {
     id: "video:seedance-2-mini:ref",
     label: "整段参考视频(6 秒参考上限 + 5 秒出片)",

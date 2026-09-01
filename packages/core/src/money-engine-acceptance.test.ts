@@ -17,7 +17,10 @@ describe("money-engine 验收占位(M3)", () => {
   it.todo("MONEY-A6 两次报价逐字相等;消费历史不存在「演员费」行");
   it.todo("MONEY-A7 调价只改其后动作的报价,调价前已扣的账一分不重算");
   it.todo("MONEY-A8 前者零新增行;后者 reserve/refund 成对");
-  it.todo("MONEY-A9 消费历史出现对应理解扣费行、金额与上传时刻价目一致");
+  // MONEY-A9 已转正,不再是占位:钱路在 apps/worker/src/jobs/understand.ts,断言在
+  // apps/worker/src/jobs/understand.test.ts(「MONEY-A9 理解计费」三组)与
+  // understand-db.test.ts(预扣原子性、PAUSED_BALANCE 按余额捞回);消费历史那一侧的
+  // understanding 类目在 apps/web/lib/spend-history.ts。
   it.todo("MONEY-A10 该轮消费含搜索费,单价与深研同源(3×)");
   it.todo("MONEY-A12 购买被三态核对拦下(mismatch 不入账+报警)");
   it.todo("MONEY-A13 产生一条含商家 org 标识与金额的三通道报警");
