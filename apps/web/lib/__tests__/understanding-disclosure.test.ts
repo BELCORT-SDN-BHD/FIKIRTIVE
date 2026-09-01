@@ -19,6 +19,9 @@
  *      不是正则:文本匹配没有语法,`const upload = async file => {}`、`source: 'UPLOAD'`
  *      单引号、`import { x as y }` 别名、注释与字符串里的假写点,四种常见写法各能绕过
  *      一条正则围栏,而补一个洞就换一种写法绕过去。语法树把这四件一次答完。
+ *      作用域按**块**分(不只按函数),所以块内同名声明不会遮蔽块外的写点;动作身份是
+ *      **(模块, 导出名)** 并做**跨文件传递闭包**,所以 UI → wrapper → 写点模块这条链
+ *      整支都在围栏里,而不是只看直接来自写点文件的 import。
  *      §7.3 明写「施工首件事用 grep 复核入口清单」—— 手抄的清单只在抄它的那一天是对的,
  *      而漏挂一个入口的代价,是商家被收一笔他从没在任何屏幕上见过的钱(顾问复审 2026-09-02
  *      就是这样抓到 Canvas 拖放与裁剪保存两个漏网入口的)。EditDesk 单列豁免:只收音频,
@@ -72,15 +75,27 @@ function copyLines(src: string): string[] {
 // 一直在落同样会被理解计费的 UPLOAD 素材,没人再去数一遍。下面两张表都由测试**当场扫出来**,
 // 只有「为什么豁免」这一栏是人写的。
 
-/** `apps/web` 里递归列出源码文件(跳过测试与 node_modules)。 */
+/** 扫描要跳过的目录。测试与夹具里到处都是假的写点和假的动作调用 —— 把它们算进普查,
+ *  围栏就会被自己的样例数据喂出一堆不存在的计费路径,然后逼人去更新登记表。 */
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "__tests__", "__mocks__", "__fixtures__", "fixtures"]);
+
+/** 测试文件本身(与目录无关,`foo.test.ts` 摆在源码目录里一样跳过)。 */
+const TEST_FILE = /\.(?:test|spec)\.tsx?$/;
+
+/** `apps/web` 里递归列出**产品源码**文件。 */
 function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(path.join(WEB_ROOT, dir), { withFileTypes: true })) {
-    if (entry.name === "node_modules" || entry.name === "__tests__" || entry.name.startsWith(".")) continue;
+    if (SKIPPED_DIRECTORIES.has(entry.name) || entry.name.startsWith(".")) continue;
     const rel = `${dir}/${entry.name}`;
     if (entry.isDirectory()) sourceFiles(rel, out);
-    else if (/\.tsx?$/.test(entry.name)) out.push(rel);
+    else if (/\.tsx?$/.test(entry.name) && !TEST_FILE.test(entry.name)) out.push(rel);
   }
   return out;
+}
+
+/** 普查的扫描面:动作定义在 `lib`,入口在 `app` / `components`。 */
+function scannedSourceFiles(): string[] {
+  return sourceFiles("lib").concat(sourceFiles("app"), sourceFiles("components"));
 }
 
 // ══════════════════ 围栏用 TypeScript 编译器解析,不用正则 ══════════════════
@@ -148,27 +163,6 @@ function isUploadWrite(node: ts.Node): boolean {
   return literalTextOf(unwrap(node.initializer)) === "UPLOAD";
 }
 
-/** 一个节点如果是「有名字的函数」,返回那个名字。五种都认:
- *  `function f(){}`、类/对象里的 `f(){}`、`const f = ... => {}`(含无括号箭头)、
- *  对象字面量里的 `f: () => {}`、类字段 `f = () => {}`。 */
-function functionNameOf(node: ts.Node): string | undefined {
-  const isFunctionValue = (expr: ts.Expression | undefined): boolean => {
-    if (!expr) return false;
-    const inner = unwrap(expr);
-    return ts.isArrowFunction(inner) || ts.isFunctionExpression(inner);
-  };
-  if (ts.isFunctionDeclaration(node)) return node.name?.text;
-  if (ts.isMethodDeclaration(node)) return propertyKeyText(node.name) ?? undefined;
-  if (ts.isVariableDeclaration(node) || ts.isPropertyDeclaration(node)) {
-    if (!isFunctionValue(node.initializer) || !ts.isIdentifier(node.name)) return undefined;
-    return node.name.text;
-  }
-  if (ts.isPropertyAssignment(node)) {
-    return isFunctionValue(node.initializer) ? propertyKeyText(node.name) ?? undefined : undefined;
-  }
-  return undefined;
-}
-
 /** 文件对外暴露的名字 → 它在文件内的本地名。`export { a as b }` 记成 b → a。 */
 function exportedNames(sf: ts.SourceFile): Map<string, string> {
   const out = new Map<string, string>();
@@ -189,115 +183,200 @@ function exportedNames(sf: ts.SourceFile): Map<string, string> {
   return out;
 }
 
-/** 调用图上的一个节点 = **一处具体的函数声明**,不是一个名字。
- *  以名字为键会把两个作用域里同名的 `persist` 当成同一个节点(串线);以声明为键就不会。 */
+/** 调用图上的一个节点 = **一处具体的函数声明**,不是一个名字。 */
 interface FnNode {
   name: string;
-  /** 词法上最近的有名字的外层函数;null = 模块作用域。 */
-  parent: number | null;
-  /** callee 是裸标识符的调用 —— 按**词法可见性**解析到具体声明。 */
-  callsIdent: Set<string>;
-  /** callee 是 `obj.m()` / `this.m()` 的调用 —— 只能按名字对齐,见下方边界说明。 */
-  callsMember: Set<string>;
+  /** 这个函数体自己的作用域 id。 */
+  bodyScope: number;
   writes: boolean;
 }
 
+/** 词法作用域。函数体是作用域,`{}` 块、for、switch、catch 也是 ——
+ *  少了块级这一层,`if (flag) { const persist = () => {} }` 里的声明会被登记到整个函数上,
+ *  把函数体后面那句 `persist()` 错误地遮蔽掉,外层真正写 UPLOAD 的那支就此漏报。 */
+interface Scope {
+  parent: number | null;
+  decls: Map<string, number[]>;
+}
+
+/** 块级作用域节点。`ts.isBlock` 覆盖函数体与裸块,其余是自带作用域的语句形式。 */
+function isBlockScope(node: ts.Node): boolean {
+  return (
+    ts.isBlock(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isCaseClause(node) ||
+    ts.isDefaultClause(node) ||
+    ts.isCatchClause(node) ||
+    ts.isModuleBlock(node)
+  );
+}
+
+/** 一处函数声明的名字,以及它是**词法绑定**还是**成员**。
+ *  分开是必要的:`const store = { persist(){} }` 里的 `persist` 只能通过 `store.persist()`
+ *  够到,它不该出现在裸标识符 `persist()` 的作用域表里(否则会误连)。 */
+function functionDeclarationOf(node: ts.Node): { name: string; member: boolean } | undefined {
+  const isFunctionValue = (expr: ts.Expression | undefined): boolean => {
+    if (!expr) return false;
+    const inner = unwrap(expr);
+    return ts.isArrowFunction(inner) || ts.isFunctionExpression(inner);
+  };
+  if (ts.isFunctionDeclaration(node)) {
+    return node.name ? { name: node.name.text, member: false } : undefined;
+  }
+  if (ts.isVariableDeclaration(node)) {
+    if (!isFunctionValue(node.initializer) || !ts.isIdentifier(node.name)) return undefined;
+    return { name: node.name.text, member: false };
+  }
+  if (ts.isMethodDeclaration(node)) {
+    const name = propertyKeyText(node.name);
+    return name === null ? undefined : { name, member: true };
+  }
+  if (ts.isPropertyDeclaration(node)) {
+    if (!isFunctionValue(node.initializer)) return undefined;
+    const name = propertyKeyText(node.name);
+    return name === null ? undefined : { name, member: true };
+  }
+  if (ts.isPropertyAssignment(node)) {
+    if (!isFunctionValue(node.initializer)) return undefined;
+    const name = propertyKeyText(node.name);
+    return name === null ? undefined : { name, member: true };
+  }
+  return undefined;
+}
+
+/** 一次调用,连同它发生的作用域 —— 解析要等整棵树走完(函数声明会提升)。 */
+interface CallRecord {
+  from: number;
+  scope: number;
+  name: string;
+  member: boolean;
+}
+
 /**
- * 一个文件的「谁会落 UPLOAD 素材」闭包。
+ * 一个模块的「谁会落 UPLOAD 素材」闭包。
  *
- * 写点归给**最近的有名字的外层函数**(写点常躺在 `$transaction(async (tx) => …)` 这种匿名
- * 回调里,归给匿名箭头等于没归),再按调用关系做传递闭包:调了 writer 的也是 writer。
- * 导出的 writer(含传递)= 上传动作。上一版靠一份手写的 `WRITE_HELPERS` 名单才认得出
- * 「动作自己不写行、交给 helper 写」这一层,那份名单本身就是漏洞;闭包取代了它。
+ * 种子有两类:①函数体里直接有写点;②函数调用了 `knownActionLocals` 里的名字 ——
+ * 那是**从别的模块 import 进来的、已知会落 UPLOAD 的动作**,跨文件包装就是靠这一条接上的。
+ * 然后按调用关系做传递闭包,导出的 writer(含传递)就是这个模块对外的上传动作。
  *
  * 两类调用边,精度不同,如实分开:
- *   · `f()` 裸标识符 —— 从调用处的作用域逐层向外找同名声明,**词法解析**,不串线;
- *   · `obj.m()` / `this.m()` —— 解析器不做类型推断,不知道 `obj` 是谁,所以退化成
- *     「文件里所有叫 m 的声明」。这会多连边(误报),不会少连边(漏报)——
- *     围栏宁可红了让人看一眼,也不能绿着放过一条计费路径。
+ *   · `f()` 裸标识符 —— 从调用点所在作用域沿**块链**逐层向外找同名词法声明,不串线、不误连;
+ *   · `obj.m()` / `this.m()` —— 解析器不做类型推断,不知道 `obj` 是谁,退化成
+ *     「本文件里所有叫 m 的**成员**声明」。这会多连边(误报),不会少连边(漏报)。
  *
  * **已知边界(穷举)**:
- *   1. 跨文件包装:别的模块 import 了动作、再导出一个包装函数,本文件的闭包看不见它。
- *      入口侧的「文件 → 调用点数量」登记表是这一条的兜底 —— 那个包装文件一旦被 UI 调用,
- *      它自己会以新入口的身份出现在入口普查里。
- *   2. 间接调用:把动作塞进变量、数组、对象属性或回调再调用(`const g = upload; g()`)。
+ *   1. 间接调用:把动作塞进变量、数组、对象属性或回调再调用(`const g = upload; g()`)。
+ *   2. 返回函数:导出函数 return 一个内部调了动作的闭包(端口工厂就是这形状),
+ *      调用发生在返回值上,本模块的调用图连不上去。
  *   3. 动态调用:`obj[nameVar]()`、`eval`、`Function`。
- *   4. 跨文件同名方法:`obj.m()` 的名字对齐只在**本文件内**做,不会跨文件乱连。
+ *   4. 跨文件同名成员:`obj.m()` 的名字对齐只在本文件内做,不会跨文件乱连。
+ *   5. 重导出 `export * from`:只认具名 import/export,星号重导出不跟。
  */
-function uploadWritersOf(sf: ts.SourceFile): { hasWritePoint: boolean; exportedWriters: string[] } {
+function uploadWritersOf(
+  sf: ts.SourceFile,
+  knownActionLocals: ReadonlySet<string>,
+): { hasWritePoint: boolean; exportedWriters: string[] } {
+  const scopes: Scope[] = [{ parent: null, decls: new Map() }];
   const nodes: FnNode[] = [];
-  const byScope = new Map<number | null, Map<string, number[]>>();
-  const byName = new Map<string, number[]>();
+  const members = new Map<string, number[]>();
+  const callRecords: CallRecord[] = [];
   let hasWritePoint = false;
 
-  const declare = (scope: number | null, name: string, index: number): void => {
-    let inScope = byScope.get(scope);
-    if (!inScope) byScope.set(scope, (inScope = new Map()));
-    inScope.set(name, [...(inScope.get(name) ?? []), index]);
-    byName.set(name, [...(byName.get(name) ?? []), index]);
+  const pushScope = (parent: number): number => {
+    scopes.push({ parent, decls: new Map() });
+    return scopes.length - 1;
+  };
+  const append = (table: Map<string, number[]>, name: string, index: number): void => {
+    table.set(name, [...(table.get(name) ?? []), index]);
   };
 
-  const visit = (node: ts.Node, enclosing: number | null): void => {
-    const name = functionNameOf(node);
-    let current = enclosing;
-    if (name !== undefined) {
+  const visit = (node: ts.Node, scope: number, fn: number | null): void => {
+    let childScope = scope;
+    let childFn = fn;
+    const declaration = functionDeclarationOf(node);
+    if (declaration) {
       const index = nodes.length;
-      nodes.push({ name, parent: enclosing, callsIdent: new Set(), callsMember: new Set(), writes: false });
-      declare(enclosing, name, index);
-      current = index;
+      const bodyScope = pushScope(scope);
+      nodes.push({ name: declaration.name, bodyScope, writes: false });
+      if (declaration.member) append(members, declaration.name, index);
+      else append(scopes[scope].decls, declaration.name, index);
+      childScope = bodyScope;
+      childFn = index;
+    } else if (isBlockScope(node)) {
+      childScope = pushScope(scope);
     }
     if (isUploadWrite(node)) {
       hasWritePoint = true;
-      if (current !== null) nodes[current].writes = true;
+      if (childFn !== null) nodes[childFn].writes = true;
     }
-    if (ts.isCallExpression(node) && current !== null) {
+    if (ts.isCallExpression(node) && childFn !== null) {
       const callee = unwrap(node.expression);
-      if (ts.isIdentifier(callee)) nodes[current].callsIdent.add(callee.text);
-      else if (ts.isPropertyAccessExpression(callee)) nodes[current].callsMember.add(callee.name.text);
+      if (ts.isIdentifier(callee)) {
+        callRecords.push({ from: childFn, scope: childScope, name: callee.text, member: false });
+      } else if (ts.isPropertyAccessExpression(callee)) {
+        callRecords.push({ from: childFn, scope: childScope, name: callee.name.text, member: true });
+      }
     }
-    ts.forEachChild(node, (child) => visit(child, current));
+    ts.forEachChild(node, (child) => visit(child, childScope, childFn));
   };
-  ts.forEachChild(sf, (child) => visit(child, null));
+  ts.forEachChild(sf, (child) => visit(child, 0, null));
 
-  /** 从 `from` 这个声明所在的位置向外逐层找同名声明 —— 词法可见性,不是全文件同名。 */
-  const resolveIdent = (from: number, name: string): number[] => {
-    let scope: number | null = from;
-    for (;;) {
-      const hit = byScope.get(scope)?.get(name);
+  /** 沿作用域链(块级也算一层)向外找同名**词法**声明。 */
+  const resolveLexical = (scope: number, name: string): number[] => {
+    let current: number | null = scope;
+    while (current !== null) {
+      const hit = scopes[current].decls.get(name);
       if (hit) return hit;
-      if (scope === null) return [];
-      scope = nodes[scope].parent;
+      current = scopes[current].parent;
     }
+    return [];
   };
 
   const writers = new Set<number>();
   nodes.forEach((node, index) => {
     if (node.writes) writers.add(index);
   });
+  const edges = new Map<number, Set<number>>();
+  for (const record of callRecords) {
+    const targets = record.member
+      ? members.get(record.name) ?? []
+      : resolveLexical(record.scope, record.name);
+    if (targets.length === 0) {
+      // 本文件里找不到这个名字 —— 如果它是 import 进来的已知动作,这一支就是 writer。
+      if (!record.member && knownActionLocals.has(record.name)) writers.add(record.from);
+      continue;
+    }
+    let outgoing = edges.get(record.from);
+    if (!outgoing) edges.set(record.from, (outgoing = new Set()));
+    for (const target of targets) outgoing.add(target);
+  }
   for (let changed = true; changed; ) {
     changed = false;
-    nodes.forEach((node, index) => {
-      if (writers.has(index)) return;
-      const targets = [
-        ...[...node.callsIdent].flatMap((name) => resolveIdent(index, name)),
-        ...[...node.callsMember].flatMap((name) => byName.get(name) ?? []),
-      ];
-      if (targets.some((target) => writers.has(target))) {
-        writers.add(index);
-        changed = true;
+    for (const [from, targets] of edges) {
+      if (writers.has(from)) continue;
+      for (const target of targets) {
+        if (writers.has(target)) {
+          writers.add(from);
+          changed = true;
+          break;
+        }
       }
-    });
+    }
   }
 
-  const moduleScope = byScope.get(null) ?? new Map<string, number[]>();
   const exportedWriters: string[] = [];
   for (const [external, local] of exportedNames(sf)) {
-    if ((moduleScope.get(local) ?? []).some((index) => writers.has(index))) exportedWriters.push(external);
+    if ((scopes[0].decls.get(local) ?? []).some((index) => writers.has(index))) {
+      exportedWriters.push(external);
+    }
   }
   return { hasWritePoint, exportedWriters };
 }
 
-/** 解析一次就够(全仓 526 个源码文件解析实测约 340ms,所以下面不再做任何文本预筛)。 */
+/** 解析一次就够。全仓源码文件全量 AST 扫描是毫秒级的量级,所以下面不做任何文本预筛。 */
 const parseCache = new Map<string, ts.SourceFile>();
 function parseFile(rel: string): ts.SourceFile {
   let cached = parseCache.get(rel);
@@ -316,25 +395,6 @@ function parseFile(rel: string): ts.SourceFile {
   return cached;
 }
 
-const analysisCache = new Map<string, { hasWritePoint: boolean; exportedWriters: string[] }>();
-function analyze(rel: string): { hasWritePoint: boolean; exportedWriters: string[] } {
-  let cached = analysisCache.get(rel);
-  if (!cached) analysisCache.set(rel, (cached = uploadWritersOf(parseFile(rel))));
-  return cached;
-}
-
-/** 真的写 UPLOAD 素材的文件。**没有文本预筛** —— 全部解析,判据一律是 AST。
- *  预筛曾经是围栏上最后一处文本匹配:大小写、分隔符、拼接写法都能骗过它,
- *  而全量解析只要 340ms,省这一下换来的风险不划算。
- *  于是注释和字符串里的 `source: "UPLOAD"` 天然不算写点 —— `lib/otto-media-port.ts`
- *  正是这种:只在注释里提,自己不写行,转手给 finalizeCandidateUploads。 */
-let writePointFilesCache: string[] | null = null;
-function writePointFiles(): string[] {
-  if (writePointFilesCache) return writePointFilesCache;
-  const all = sourceFiles("lib").concat(sourceFiles("app"), sourceFiles("components"));
-  return (writePointFilesCache = all.filter((f) => analyze(f).hasWritePoint).sort());
-}
-
 /** 写点所在的文件。多一个文件开始写 UPLOAD 素材,这里当场红 —— 那意味着有一条新的计费路径,
  *  而它的 UI 入口还没有人问过「商家看得见价目吗」。 */
 const WRITE_POINT_FILES: Record<string, string> = {
@@ -343,28 +403,15 @@ const WRITE_POINT_FILES: Record<string, string> = {
   "lib/upload-actions.ts": "finalizeCandidateUploads —— 直传落盘的唯一权威(Otto 的 URL 导入也走它)",
 };
 
-/** 会落 image/video UPLOAD 素材的导出动作 —— 从语法树推导,没有任何一份手抄名单。 */
-let uploadActionsCache: string[] | null = null;
-function uploadActionNames(): string[] {
-  if (uploadActionsCache) return uploadActionsCache;
-  const names = new Set<string>();
-  for (const file of writePointFiles()) {
-    for (const action of analyze(file).exportedWriters) names.add(action);
-  }
-  return (uploadActionsCache = [...names].sort());
-}
-
 /** 源码扩展名。`import … from "./x.js"` 在 ESM 里指的就是 `x.ts` —— 两侧都剥掉扩展名,
- *  `x` / `x.ts` / `x.tsx` / `x.js` 才会归一到同一个模块。不剥的话,一个写成 `.js` 的
- *  新入口会安静地不命中模块集合,整条入口普查对它全绿。 */
+ *  `x` / `x.ts` / `x.tsx` / `x.js` 才会归一到同一个模块 id。 */
 const SOURCE_EXTENSION = /\.(?:m|c)?[jt]sx?$/;
 
-/** 写点文件在 import 里长什么样(`@/lib/actions` 与 `../../lib/actions.js` 是同一个模块)。 */
 function moduleIdOf(rel: string): string {
   return rel.replace(SOURCE_EXTENSION, "");
 }
 
-/** 把 import 说明符解析成仓库内相对路径(已剥扩展名);第三方包返回 null。 */
+/** 把 import 说明符解析成仓库内模块 id(已剥扩展名);第三方包返回 null。 */
 function resolveSpecifier(fromFile: string, spec: string): string | null {
   if (spec.startsWith("@/")) return moduleIdOf(spec.slice(2));
   if (spec.startsWith(".")) {
@@ -373,32 +420,94 @@ function resolveSpecifier(fromFile: string, spec: string): string | null {
   return null;
 }
 
-/** 这个 UI 文件从动作模块 import 进来的**本地名**(含 `as` 别名)。
- *  别名是正则版的另一个洞:`import { finalizeCandidateUploads as finalize }` 之后
- *  代码里一个 `finalizeCandidateUploads(` 都不会出现,而 `finalize(...)` 才是真调用。 */
-function importedActionLocals(file: string, sf: ts.SourceFile): Set<string> {
-  const actions = new Set(uploadActionNames());
-  const modules = new Set(writePointFiles().map(moduleIdOf));
+/** 一个动作的身份是**(模块, 导出名)**,不是光一个名字 ——
+ *  跨文件闭包会让同名导出出现在不同模块里,只比名字会张冠李戴。 */
+function actionKey(moduleId: string, exportName: string): string {
+  return `${moduleId}#${exportName}`;
+}
+
+/** 这个文件从**已知动作模块**import 进来的本地名(含 `as` 别名)。 */
+function knownActionLocalsOf(file: string, sf: ts.SourceFile, actions: ReadonlySet<string>): Set<string> {
   const locals = new Set<string>();
   for (const st of sf.statements) {
     if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
-    const resolved = resolveSpecifier(file, st.moduleSpecifier.text);
-    if (!resolved || !modules.has(resolved)) continue;
+    const moduleId = resolveSpecifier(file, st.moduleSpecifier.text);
+    if (!moduleId) continue;
     const bindings = st.importClause?.namedBindings;
     if (!bindings || !ts.isNamedImports(bindings)) continue;
     for (const el of bindings.elements) {
-      if (actions.has((el.propertyName ?? el.name).text)) locals.add(el.name.text);
+      if (actions.has(actionKey(moduleId, (el.propertyName ?? el.name).text))) locals.add(el.name.text);
     }
   }
   return locals;
 }
 
-/** 一个 UI 文件里对上传动作的**调用点数量**(同样没有文本预筛)。
+/**
+ * 上传动作的**跨文件传递闭包**。
+ *
+ * 上一版只认「直接来自写点文件的 import」,于是 UI → `lib/wrapper.ts` → `lib/actions.ts`
+ * 这条链整支漏报:wrapper 的导出函数不是写点文件的导出,入口侧根本不看它。
+ * (上一版注释里写过「入口侧登记表兜底」—— 那句话不成立,wrapper 文件压根不会被认成入口,
+ * 已删。)
+ *
+ * 迭代到不动点:
+ *   第 0 轮:每个写点文件里的导出 writer = 动作。
+ *   第 n 轮:`lib/**` 里任何模块,只要它 import 了已知动作、且某个导出函数(经模块内闭包)
+ *           调到了它,那个导出就成为新动作。
+ */
+interface ActionCensus {
+  writePointFiles: string[];
+  actions: Set<string>;
+}
+let censusCache: ActionCensus | null = null;
+function actionCensus(): ActionCensus {
+  if (censusCache) return censusCache;
+  const scanned = scannedSourceFiles();
+  const writePointFiles: string[] = [];
+  const actions = new Set<string>();
+  const empty: ReadonlySet<string> = new Set();
+
+  for (const file of scanned) {
+    const { hasWritePoint, exportedWriters } = uploadWritersOf(parseFile(file), empty);
+    if (!hasWritePoint) continue;
+    writePointFiles.push(file);
+    for (const name of exportedWriters) actions.add(actionKey(moduleIdOf(file), name));
+  }
+
+  const wrapperCandidates = sourceFiles("lib");
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const file of wrapperCandidates) {
+      const sf = parseFile(file);
+      const locals = knownActionLocalsOf(file, sf, actions);
+      if (locals.size === 0) continue;
+      for (const name of uploadWritersOf(sf, locals).exportedWriters) {
+        const key = actionKey(moduleIdOf(file), name);
+        if (!actions.has(key)) {
+          actions.add(key);
+          changed = true;
+        }
+      }
+    }
+  }
+  return (censusCache = { writePointFiles: writePointFiles.sort(), actions });
+}
+
+function writePointFiles(): string[] {
+  return actionCensus().writePointFiles;
+}
+
+/** 会落 image/video UPLOAD 素材的动作,`模块#导出名`,从语法树推导,没有任何手抄名单。 */
+function uploadActionKeys(): string[] {
+  return [...actionCensus().actions].sort();
+}
+
+/** 一个 UI 文件里对上传动作的**调用点数量**。
  *  注释与字符串里出现同名文本不会计数(它们根本不是 CallExpression),`await f(...)` 会计数。
  *  已知边界:把动作传给变量或回调再间接调用,这里数不到 —— 与写点侧同一条边界。 */
 function callSiteCount(file: string): number {
   const sf = parseFile(file);
-  const locals = importedActionLocals(file, sf);
+  const locals = knownActionLocalsOf(file, sf, actionCensus().actions);
   if (locals.size === 0) return 0;
   let count = 0;
   const visit = (node: ts.Node): void => {
@@ -416,6 +525,16 @@ function uploadEntryFiles(): string[] {
     .filter((f) => callSiteCount(f) > 0)
     .sort();
 }
+
+/** 登记的动作集合(`模块#导出名`)。跨文件包装也在里面 —— 集合变了就红。 */
+const EXPECTED_ACTION_KEYS = [
+  "lib/actions#addReferenceImages",
+  "lib/actions#createEntity",
+  "lib/actions#uploadCandidates",
+  "lib/actions#uploadReference",
+  "lib/asset-actions#saveCroppedGeneration",
+  "lib/upload-actions#finalizeCandidateUploads",
+];
 
 /**
  * 必须挂披露的入口:文件 → 说明 → **该文件里的上传调用点数量**。
@@ -506,11 +625,82 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     // createEntity 自己一个 source:"UPLOAD" 都没写,它调 ingestFile。上一版靠一份手写的
     // WRITE_HELPERS 名单才认得出这一层,而那份名单本身就是个漏洞:在写点文件里新增一个
     // 非导出的 persistUpload() 再由新动作转调,名单不更新就全绿。现在由调用闭包保证。
-    const actions = uploadActionNames();
-    expect(actions, "createEntity 只通过 helper 落盘,闭包必须认出它").toContain("createEntity");
-    expect(actions, "addReferenceImages 同样只通过 helper 落盘").toContain("addReferenceImages");
+    const actions = uploadActionKeys();
+    expect(actions, "createEntity 只通过 helper 落盘,闭包必须认出它").toContain("lib/actions#createEntity");
+    expect(actions, "addReferenceImages 同样只通过 helper 落盘").toContain("lib/actions#addReferenceImages");
     // 而 helper 自己不导出,不会被当成「UI 该去调的动作」漏进入口侧
-    expect(actions, "ingestFile 是非导出 helper,不该出现在动作表里").not.toContain("ingestFile");
+    expect(actions, "ingestFile 是非导出 helper,不该出现在动作表里").not.toContain("lib/actions#ingestFile");
+  });
+
+  /** 用一段合成源码跑一遍模块闭包 —— 夹具比探针值钱:探针跑完就没了,夹具会一直在。 */
+  const writersOf = (source: string, imported: string[] = []): string[] =>
+    uploadWritersOf(
+      ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS),
+      new Set(imported),
+    ).exportedWriters.sort();
+
+  it("块级作用域:块里的同名声明不该遮蔽块外的写点(否则外层 writer 整支漏报)", () => {
+    // `if (flag) { const persist = … }` 里的 persist 出了这个块就不存在了,
+    // 后面那句 persist() 指的是模块级那支 —— 而模块级那支写 UPLOAD。
+    // 只按函数分作用域的话,块内声明会被登记到整个函数上,把这句调用错误遮蔽掉。
+    expect(
+      writersOf(`
+        function persist() { return { source: "UPLOAD" }; }
+        export function upload(flag) {
+          if (flag) { const persist = () => null; void persist; }
+          return persist();
+        }
+      `),
+      "块内声明遮蔽了块外的写点 —— 作用域链缺了块级这一层",
+    ).toEqual(["upload"]);
+
+    // 反向:同一个函数体里的遮蔽是真遮蔽,不能因为加了块级就连这个也认错。
+    expect(
+      writersOf(`
+        function persist() { return { source: "UPLOAD" }; }
+        export function upload() {
+          const persist = () => null;
+          return persist();
+        }
+      `),
+      "同作用域的遮蔽是真遮蔽,不该再连到模块级那支",
+    ).toEqual([]);
+  });
+
+  it("裸标识符不误连对象方法:成员只能通过 obj.m() 够到", () => {
+    // `store.persist()` 要连上;而一个裸的 `persist()` 在这个文件里根本没有词法声明,
+    // 它指的是别处的东西 —— 把对象方法登记进裸标识符作用域表就会把它错连成 writer。
+    expect(
+      writersOf(`
+        const store = { persist() { return { source: "UPLOAD" }; } };
+        export function memberCall() { return store.persist(); }
+        export function bareCall() { return persist(); }
+      `),
+      "成员调用没连上,或裸标识符被误连到了对象方法",
+    ).toEqual(["memberCall"]);
+  });
+
+  it("跨文件包装:import 进来的已知动作被调用,包装函数自己也成为动作", () => {
+    // 这是 wrapper 模块那一半(整条链的三文件版在 PR 的探针输出里)。
+    expect(
+      writersOf(
+        `
+        import { uploadReference } from "@/lib/actions";
+        export function wrap(p, fd) { return uploadReference(p, fd); }
+        export function unrelated() { return 1; }
+      `,
+        ["uploadReference"],
+      ),
+      "包装函数没有继承上游动作的身份 —— 跨文件闭包断了",
+    ).toEqual(["wrap"]);
+  });
+
+  it("扫描范围:普查不看测试文件,也不看 fixtures / __mocks__(样例数据不是计费路径)", () => {
+    const offenders = scannedSourceFiles().filter(
+      (f) => /\.(?:test|spec)\.tsx?$/.test(f) || /(?:^|\/)(?:fixtures|__fixtures__|__mocks__|__tests__)\//.test(f),
+    );
+    expect(offenders, "测试或夹具文件混进了普查扫描面").toEqual([]);
+    expect(scannedSourceFiles().length, "扫描面空了 —— 目录名或过滤器写错了").toBeGreaterThan(100);
   });
 
   it("写点语法覆盖:该认的都认,注释里列的已知边界确实不认(边界清单可核)", () => {
@@ -541,6 +731,8 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       '{ ["source"]: "UPLOAD" }',
       '{ source: "UPLOAD" as const }',
       '{ source: ("UPLOAD") }',
+      '{ source: "UPLOAD" satisfies string }',
+      '{ source: ((("UPLOAD" as const))) }',
       '{ source: "\\u0055PLOAD" }',
     ]) {
       expect(detects(form), `这种写法没被认成写点:${form}`).toBe(true);
@@ -553,10 +745,14 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       "{ source }",
       "{ ...uploadDefaults }",
       '{ [keyVar]: "UPLOAD" }',
-      '{ source: "DOWNLOAD" }',
+      "prisma.$executeRaw`INSERT INTO gen(source) VALUES(\'UPLOAD\')`",
     ]) {
       expect(detects(form), `边界清单说不认,实现却认了 —— 清单该更新:${form}`).toBe(false);
     }
+
+    // 这一条不是边界,是**值不对**:`source: "DOWNLOAD"` 本来就不是写点,
+    // 认不出它是正确行为,不该跟上面那些「想认但认不到」的混在一起。
+    expect(detects('{ source: "DOWNLOAD" }'), "非 UPLOAD 的值被当成了写点").toBe(false);
   });
 
   it("写点普查:注释与字符串里的 source:\"UPLOAD\" 不是写点(AST 天然不看注释)", () => {
@@ -572,16 +768,9 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
 
   it("动作普查:上传动作名由源码推导,登记表只用来核对(新增一支写 UPLOAD 的导出动作当场红)", () => {
     expect(
-      uploadActionNames(),
-      "写点文件里的上传动作集合变了:先追它的 UI 面,再决定挂披露还是写进豁免",
-    ).toEqual([
-      "addReferenceImages",
-      "createEntity",
-      "finalizeCandidateUploads",
-      "saveCroppedGeneration",
-      "uploadCandidates",
-      "uploadReference",
-    ]);
+      uploadActionKeys(),
+      "上传动作集合变了(含跨文件包装):先追它的 UI 面,再决定挂披露还是写进豁免",
+    ).toEqual(EXPECTED_ACTION_KEYS);
   });
 
   it("入口普查:调上传动作的 UI 文件 = 挂点表 + 豁免表(新入口漏挂当场红)", () => {
