@@ -400,11 +400,14 @@ async function main(): Promise<void> {
     try {
       const r = await reconcileStripePayments();
       if (r.skipped) console.log(`[worker] stripe reconcile skipped: ${r.skipped}`);
-      else if (r.unreconciled)
+      else if (r.unreconciled || r.tracked)
         // 两轮确认制:首见的只是观察(延迟到账的付款长得一模一样),确认过的才是真缺口。
+        // `tracked` 是已经滑出 48 小时扫描窗、靠观察行名单继续追踪的那些(MONEY-A12):
+        // 它可以在 unreconciled=0 的一轮里非零 —— 缺口老了,但没有了结。
         console.error(
           `[worker] stripe reconcile: ${r.unreconciled} PAID session(s) with no ledger entry (of ${r.paid} paid in the last 48h) — ` +
-            `${r.firstSeen} first sighting(s) recorded but NOT alerted, ${r.alerted} confirmed and alerted`,
+            `${r.firstSeen} first sighting(s) recorded but NOT alerted, ${r.alerted} alert(s) sent, ` +
+            `${r.tracked} older gap(s) still open outside the window, ${r.closed} observation(s) closed`,
         );
       else console.log(`[worker] stripe reconcile: ${r.paid} paid session(s) in the last 48h, all present in the ledger`);
     } catch (e) {

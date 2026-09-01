@@ -1398,6 +1398,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             // 商家没损失(已退款),平台损失了一次真实的引擎调用。它不是缺陷,是竞态的正确
             // 结局——但它是**真钱**,零上报就等于没人知道它一天发生几次。
             captureMoneyPathError(storeErr, { event: "gen.founder_absorbed_engine_cost", jobId: job.id, orgId: job.ownerId, kind: job.kind, model: job.model });
+            // MONEY-A13(规格 §7.5 平台损失台账):此前这里连**多少钱**都不记 —— 只有一条
+            // 「发生过一次」的 Sentry 事件,而台账要的是金额。按这一单自己的参数现算 COGS
+            // (与写进 spentUsd 的是同一个函数、同一批参数),再指路去登记。
+            await founderAlert({
+              key: "gen.founder_absorbed_engine_cost",
+              title: "The platform paid for a generation nobody received (a redelivery had already refunded the merchant)",
+              action:
+                "No merchant action needed — they were refunded. Log the platform loss in docs/ops/manual-money-ledger.md (event = 吸收引擎成本) with the job id and the USD below.",
+              context: {
+                jobId: job.id,
+                orgId: job.ownerId,
+                kind: job.kind,
+                model: job.model,
+                absorbedUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }),
+              },
+            });
             return;
           }
           // exhausted: a persistent R2/DB outage. Re-throw to the terminal post-charge

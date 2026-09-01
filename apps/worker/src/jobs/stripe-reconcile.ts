@@ -38,14 +38,38 @@
  * 审计写不下去时(比如组织行已经不在)也一律按「见过」处理并报警 —— 宁可早喊一轮,
  * 也不许一次数据库故障把缺口变哑。
  *
- * TODO(#359 收敛):告警此刻直连 Sentry。分支 claude/c1a-alerting 的 founder-alert 模块
- * (Sentry + 邮件 + Telegram,Founder 2026-08-18 裁决)合入 main 之后,把下面的 `alert()`
- * 一处改成调它即可 —— 触发条件就是那个模块落地。
+ * ────────── MONEY-A12(规格 §7.5)三处升级 ──────────
+ *
+ * ① **告警走 founderAlert 三通道**(Sentry + 邮件 + Telegram)。原来的 TODO 说的就是这件事,
+ *    founder-alert 模块早已在 main。裸 Sentry 的问题不是它不记录,是没有人二十四小时盯着它。
+ *
+ * ② **一天最多吵一次人**(顾问复审 ⑧)。缺口在被补上之前每 30 分钟就还在,三通道逐轮发
+ *    等于一天 48 封邮件 —— 而那把 `RESEND_API_KEY` 和商家登录邮件是同一把。所以超过当天
+ *    第一次的都走 `repeat`:Sentry 照收(计数与聚类一个字不少),只有会响的两条通道被压掉。
+ *    节流状态和「见过没见过」一样放在 ActionEvent 的**主键**里,worker 重启不重置。
+ *
+ * ③ **缺口不随 48 小时扫描窗静默消失**。Stripe 的 `created` 过滤器只捞得到窗口内的 session:
+ *    一笔缺口活过两天就从扫描结果里消失,而它从来没有被解决,只是没人再看得见它。现在每一轮
+ *    先把**还没了结的观察行**从库里捞出来(它们是缺口自己的名单,与 Stripe 窗口无关),逐笔
+ *    重查账本:账本已经补上 ⇒ 自动写关闭行、不再吵;仍然没有 ⇒ 继续报警,直到人工关闭
+ *    (admin 动作 `apps/web/lib/reconcile-actions.ts` 写关闭行)。
+ *
+ * ④ **首见不再靠「撞主键」一件事定生死**(#1046-P2)。原判据是「观察行已存在 = 已经过了一轮」,
+ *    但这个 sweeper 开机也跑一轮:worker 一重启,刚写下的观察行立刻被当成「活过一整轮」,
+ *    首见就成了紧急告警。现在读观察行里的 `firstSeenAt`,真的过了一个扫描窗才升级。
  */
 import Stripe from "stripe";
-import * as Sentry from "@sentry/node";
 import { prisma } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
+import {
+  FOUNDER_OWNER_ID,
+  RECONCILE_CLOSED_TYPE,
+  RECONCILE_OBSERVED_TYPE,
+  reconcileClosureId,
+  reconcileObservationId,
+} from "@fikirtive/core";
+import type { FounderAlert } from "@fikirtive/core/founder-alert";
+import { founderAlert } from "../alerting.js";
 
 /** 这个 sweeper 用到的 Stripe 面 —— 只有 checkout.sessions.list 这一个只读调用。
  *  定成一个窄端口(而不是整个 Stripe SDK)是为了测试能注入一个假 client:钱路的用例
@@ -72,6 +96,15 @@ export type StripeSessionsPort = {
 export const STRIPE_RECONCILE_WINDOW_MS = 48 * 60 * 60 * 1000;
 /** 宽限期:最近 30 分钟内成交的不算缺口 —— webhook 还在路上是正常的。 */
 export const STRIPE_RECONCILE_GRACE_MS = 30 * 60 * 1000;
+/**
+ * 一个缺口要活多久才算「活过了一整轮扫描」(#1046-P2)。
+ *
+ * 与扫描间隔、与宽限期**刻意是同一个数**:定时器就是每 30 分钟一轮,所以「首见之后又过了
+ * 30 分钟还在」正是「下一轮仍是缺口」的时间说法。判据从「观察行存在」换成「观察行够老」,
+ * 是因为前者会被**开机那一轮**骗到:worker 一重启就再扫一次,刚写下的观察行当场被当成
+ * 陈年缺口,首见直接升级成紧急告警。
+ */
+export const STRIPE_RECONCILE_CONFIRM_MS = STRIPE_RECONCILE_GRACE_MS;
 
 const PAGE_SIZE = 100; // Stripe 单页上限
 /** 翻页上限。20 × 100 = 一个 48h 窗口里 2000 笔,远超实际量;真撞上了会另报一次警,
@@ -89,8 +122,33 @@ export type StripeReconcileResult = {
   firstSeen: number;
   /** 实际发出的告警数(= 二次及以后确认的缺口,外加分页截断 / 读 Stripe 失败各一条)。 */
   alerted: number;
+  /** 已滑出 48 小时窗口、靠观察行名单继续追踪的未了结缺口数(MONEY-A12)。 */
+  tracked: number;
+  /** 这一轮自动关闭的观察行数(账本行已经补上 —— 缺口真的没了)。 */
+  closed: number;
   /** 没跑成的原因(没配 Stripe 密钥 / 拉取失败),跑成了就是 null。 */
   skipped: string | null;
+};
+
+/** 观察行 payload 里我们自己写下、后面要读回来的那几格。 */
+type ObservationPayload = {
+  sessionId?: unknown;
+  orgId?: unknown;
+  credits?: unknown;
+  amountTotal?: unknown;
+  currency?: unknown;
+  paymentIntentId?: unknown;
+  firstSeenAt?: unknown;
+};
+
+/** 一笔缺口的事实 —— 窗口内(来自 Stripe)与窗口外(来自观察行)统一成同一形状。 */
+type GapFacts = {
+  sessionId: string;
+  orgId: string;
+  amountTotal: number | null;
+  currency: string;
+  paymentIntentId: string | null;
+  firstSeenAt: string | null;
 };
 
 /** 真 Stripe client,按需构造。没有密钥就没有这一面 —— 本地开发与测试是常态,不是错误。 */
@@ -122,14 +180,35 @@ function realStripePort(): StripeSessionsPort | null {
   };
 }
 
-/** 告警。Sentry 未配 DSN 时 captureException 是安全 no-op;它自己抛错也绝不能把这一轮扫描
- *  带下去(退化成 console.error)。 */
-function alert(message: string, extra: Record<string, unknown>): void {
+/**
+ * 告警(MONEY-A12 ①②):founderAlert 三通道 + **同一件事一天只吵一次人**。
+ *
+ * 节流不是静音:超过当天第一次的走 `repeat`,Sentry 照收(它本来就是按 key 聚类计数的那一层),
+ * 只有邮件与 Telegram 被压掉。节流状态写在 ActionEvent 的主键 `<throttleId>:<UTC 日期>` 上,
+ * 因为 worker 随时可能重启,而「今天喊过没有」必须跨重启成立。
+ *
+ * 写不进节流行(不是撞主键的那种失败)⇒ 分不清今天喊没喊过 ⇒ **照常全渠道喊**:一次数据库
+ * 抖动可以让人多收一封邮件,不可以让一笔缺口变哑。`founderAlert` 自己永不抛。
+ */
+async function alertThrottledDaily(throttleId: string, alert: FounderAlert, nowMs: number): Promise<void> {
+  const day = new Date(nowMs).toISOString().slice(0, 10);
+  let repeat = false;
   try {
-    Sentry.captureException(new Error(message), { extra });
+    await prisma.actionEvent.create({
+      data: {
+        id: `${throttleId}:${day}`,
+        ownerId: FOUNDER_OWNER_ID,
+        type: "credits.reconcile.alerted",
+        payload: { key: alert.key, day, sentAt: new Date(nowMs).toISOString() },
+      },
+    });
   } catch (e) {
-    console.error(`[stripe-reconcile] alert transport failed: ${message}`, extra, e);
+    repeat = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+    if (!repeat) {
+      console.error(`[stripe-reconcile] could not record the alert-throttle row for ${throttleId}; alerting in full anyway:`, e);
+    }
   }
+  await founderAlert(alert, { repeat });
 }
 
 /**
@@ -141,7 +220,7 @@ export async function reconcileStripePayments(opts?: {
   client?: StripeSessionsPort | null;
   now?: Date;
 }): Promise<StripeReconcileResult> {
-  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, skipped: null };
+  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, tracked: 0, closed: 0, skipped: null };
   const port = opts?.client ?? realStripePort();
   if (!port) return { ...empty, skipped: "STRIPE_SECRET_KEY is not set — nothing to reconcile against" };
 
@@ -167,7 +246,17 @@ export async function reconcileStripePayments(opts?: {
     } catch (e) {
       // 读不到 Stripe ≠ 没有缺口。绝不能安静地当成「一切正常」。
       const reason = e instanceof Error ? e.message : String(e);
-      alert(`[stripe-reconcile] could not read Stripe — payments in the last 48h are UNVERIFIED this sweep: ${reason}`, { reason });
+      await alertThrottledDaily(
+        "stripe_reconcile_unreadable",
+        {
+          key: "stripe.reconcile_could_not_read_stripe",
+          title: "The Stripe reconciliation sweep could not read Stripe — the last 48h of payments are UNVERIFIED",
+          action:
+            "Check the Stripe API status and STRIPE_SECRET_KEY. Until a sweep completes, nothing is watching for 'merchant paid and the ledger has no entry'.",
+          context: { reason },
+        },
+        now,
+      );
       return { ...empty, alerted: 1, skipped: `stripe list failed: ${reason}` };
     }
 
@@ -175,13 +264,40 @@ export async function reconcileStripePayments(opts?: {
     let unreconciled = 0;
     let firstSeen = 0;
     let alerted = 0;
+    let closedThisSweep = 0;
     if (truncated) {
-      alert(
-        `[stripe-reconcile] the 48h window returned more than ${STRIPE_RECONCILE_MAX_PAGES * PAGE_SIZE} checkout sessions — this sweep did NOT see all of them; raise the page cap`,
-        { cap: STRIPE_RECONCILE_MAX_PAGES * PAGE_SIZE },
+      await alertThrottledDaily(
+        "stripe_reconcile_truncated",
+        {
+          key: "stripe.reconcile_window_truncated",
+          title: `The 48h reconciliation window returned more than ${STRIPE_RECONCILE_MAX_PAGES * PAGE_SIZE} checkout sessions — this sweep did NOT see all of them`,
+          action: "Raise STRIPE_RECONCILE_MAX_PAGES in apps/worker/src/jobs/stripe-reconcile.ts and deploy — a truncated sweep can hide a real gap.",
+          context: { cap: STRIPE_RECONCILE_MAX_PAGES * PAGE_SIZE },
+        },
+        now,
       );
       alerted++;
     }
+
+    // MONEY-A12 ③:缺口自己的名单,与 Stripe 的 48 小时窗口无关。
+    //
+    // 走 `(projectId, type)` 这个**既有索引**(观察行与关闭行的 projectId 都是 null,type 逐字
+    // 相等)—— ActionEvent 是平台级 append-only 日志,对它全表扫迟早会把这一轮扫描拖垮。
+    // 名单是有界的:一行对应一笔真实缺口,而缺口一旦了结(账本补上或人工关闭)就写关闭行退出。
+    const trail = await prisma.actionEvent.findMany({
+      where: { projectId: null, type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE] } },
+      select: { type: true, payload: true },
+    });
+    const closedSessions = new Set<string>();
+    const openGaps = new Map<string, GapFacts>();
+    for (const row of trail) {
+      const p = (row.payload ?? {}) as ObservationPayload;
+      const sessionId = typeof p.sessionId === "string" ? p.sessionId : "";
+      if (!sessionId) continue;
+      if (row.type === RECONCILE_CLOSED_TYPE) closedSessions.add(sessionId);
+      else openGaps.set(sessionId, observedGap(sessionId, p));
+    }
+    for (const sessionId of closedSessions) openGaps.delete(sessionId);
 
     for (const session of sessions) {
       if (session.payment_status !== "paid") continue;
@@ -196,9 +312,20 @@ export async function reconcileStripePayments(opts?: {
       const entry = orgId
         ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId, idempotencyKey } }, select: { id: true } })
         : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
-      if (entry) continue; // 有账本行 —— 这笔已经入账,什么都不做
+      if (entry) {
+        // 账本已经有那一行 —— 缺口没了。如果它还挂在观察名单上(webhook 事后被重投、或人工
+        // 补了同一把幂等键),就地写关闭行:名单只留**真的还没了结**的缺口,否则它会越滚越长,
+        // 而每一轮都要为已经解决的事再查一次库、再判一次要不要喊。
+        if (openGaps.has(session.id)) {
+          openGaps.delete(session.id);
+          if (await closeObservation(session.id, orgId, "ledger entry present — the payment reconciled itself")) closedThisSweep++;
+        }
+        continue;
+      }
 
       unreconciled++;
+      // 人已经把这笔关掉了(退款了结、测试 session……)—— 记数照旧,但绝不再喊。
+      if (closedSessions.has(session.id)) continue;
       const amount = typeof session.amount_total === "number" ? session.amount_total : null;
       const currency = typeof session.currency === "string" ? session.currency.toUpperCase() : "";
       const money = amount === null ? "an unknown amount" : `${currency} ${(amount / 100).toFixed(2)}`;
@@ -206,7 +333,8 @@ export async function reconcileStripePayments(opts?: {
       // 两轮确认制的状态机,整个装在这一行审计的**主键**里(判官 P2-1)。
       //   create 成功  ⇒ 这一笔是**首见** ⇒ 只观察,不惊动 founder。延迟到账(FPX/GrabPay)
       //                  的付款几乎必然在下一轮之前落账,于是它就此安静消失。
-      //   撞主键 P2002 ⇒ **上一轮就见过** ⇒ 缺口活过了一整轮,升级报警。
+      //   撞主键 P2002 ⇒ 之前见过 ⇒ **再看首见时刻**:真的过了一整个扫描窗才升级(#1046-P2;
+      //                  开机那一轮会紧接着首见跑,不读时间就会把首见喊成紧急告警)。
       //   其它写失败  ⇒ 分不清首见还是再见(比如组织行已经不在、库抖了一下)⇒ 按再见处理,
       //                  报警。宁可早喊一轮,也绝不让一次数据库故障把缺口变哑。
       // 状态放在库里而不是进程内存,是因为 worker 随时可能重启,而「见过没见过」必须跨重启成立。
@@ -214,9 +342,9 @@ export async function reconcileStripePayments(opts?: {
       try {
         await prisma.actionEvent.create({
           data: {
-            id: `stripe_unreconciled:${session.id}`,
-            ownerId: orgId || "founder",
-            type: "credits.purchase.unreconciled",
+            id: reconcileObservationId(session.id),
+            ownerId: orgId || FOUNDER_OWNER_ID,
+            type: RECONCILE_OBSERVED_TYPE,
             payload: {
               sessionId: session.id,
               orgId: orgId || null,
@@ -241,32 +369,107 @@ export async function reconcileStripePayments(opts?: {
         }
       }
 
-      if (!seenBefore) {
-        firstSeen++;
+      const firstSeenAt = openGaps.get(session.id)?.firstSeenAt ?? null;
+      openGaps.delete(session.id); // 这一笔本轮已经处理过,下面的窗口外那一段不必再碰它
+      // 首见,或者首见得还不够久 —— 一个扫描窗都还没过完,不惊动 founder。
+      if (!seenBefore || (firstSeenAt !== null && now - Date.parse(firstSeenAt) < STRIPE_RECONCILE_CONFIRM_MS)) {
+        if (!seenBefore) firstSeen++;
         console.warn(
-          `[stripe-reconcile] first sighting: ${money} paid on Stripe with no ledger entry yet (session=${session.id} org=${orgId || "unknown"}). ` +
+          `[stripe-reconcile] ${seenBefore ? "seen since" : "first sighting"} ${firstSeenAt ?? "just now"}: ${money} paid on Stripe with no ledger entry yet ` +
+            `(session=${session.id} org=${orgId || "unknown"}). ` +
             `Not alerting yet — a delayed-notification payment (FPX/GrabPay) looks exactly like this while its webhook is still in flight. ` +
-            `If it is still missing next sweep, that is when the founder hears about it.`,
+            `If it is still missing a full sweep window later, that is when the founder hears about it.`,
         );
         continue;
       }
 
-      alert(
-        `[stripe-reconcile] a merchant PAID ${money} on Stripe and the credits ledger STILL has no entry for it a full sweep later — they were charged and received nothing. ` +
-          `Replay the Checkout Session's webhook event in the Stripe dashboard (that is the only correct fix; this sweep never writes credits). ` +
-          `session=${session.id} org=${orgId || "unknown"}`,
-        {
-          sessionId: session.id,
-          orgId: orgId || null,
-          amountTotal: amount,
-          currency: currency || null,
-          paymentIntentId: session.payment_intent ?? null,
-          idempotencyKey,
-        },
+      await escalateGap(
+        { sessionId: session.id, orgId, amountTotal: amount, currency, paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null, firstSeenAt },
+        now,
+        true,
       );
       alerted++;
     }
 
-    return { scanned: sessions.length, paid, unreconciled, firstSeen, alerted, skipped: null };
+    // MONEY-A12 ③:窗口外的未了结缺口。到这里 openGaps 里剩下的,全是 Stripe 这一轮**没有
+    // 返回**的观察行 —— 绝大多数是因为它们的 session 早已滑出 48 小时。缺口不会因为看不见就
+    // 消失,所以逐笔重查账本:补上了就关闭,没补上就继续喊(每天一次),直到人工关闭。
+    let tracked = 0;
+    for (const gap of openGaps.values()) {
+      const idempotencyKey = `stripe:${gap.sessionId}`;
+      const entry = gap.orgId
+        ? await prisma.creditLedger.findUnique({ where: { orgId_idempotencyKey: { orgId: gap.orgId, idempotencyKey } }, select: { id: true } })
+        : await prisma.creditLedger.findFirst({ where: { idempotencyKey }, select: { id: true } });
+      if (entry) {
+        if (await closeObservation(gap.sessionId, gap.orgId, "ledger entry present — the payment reconciled itself")) closedThisSweep++;
+        continue;
+      }
+      tracked++;
+      await escalateGap(gap, now, false);
+      alerted++;
+    }
+
+    return { scanned: sessions.length, paid, unreconciled, firstSeen, alerted, tracked, closed: closedThisSweep, skipped: null };
   });
+}
+
+/** 观察行 payload → 缺口事实。窗口内(Stripe 直供)与窗口外(库里读回)统一成同一形状。 */
+function observedGap(sessionId: string, p: ObservationPayload): GapFacts {
+  return {
+    sessionId,
+    orgId: typeof p.orgId === "string" ? p.orgId : "",
+    amountTotal: typeof p.amountTotal === "number" ? p.amountTotal : null,
+    currency: typeof p.currency === "string" ? p.currency : "",
+    paymentIntentId: typeof p.paymentIntentId === "string" ? p.paymentIntentId : null,
+    firstSeenAt: typeof p.firstSeenAt === "string" ? p.firstSeenAt : null,
+  };
+}
+
+/** 一笔缺口的升级报警(三通道,同一笔一天一次)。**永不抛**。 */
+async function escalateGap(gap: GapFacts, nowMs: number, inStripeWindow: boolean): Promise<void> {
+  const money = gap.amountTotal === null ? "an unknown amount" : `${gap.currency || "?"} ${(gap.amountTotal / 100).toFixed(2)}`;
+  await alertThrottledDaily(
+    `stripe_unreconciled_alert:${gap.sessionId}`,
+    {
+      key: "stripe.paid_but_no_ledger_entry",
+      title: `A merchant PAID ${money} on Stripe and the credits ledger still has no entry for it — they were charged and received nothing`,
+      action:
+        "Replay that Checkout Session's webhook event in the Stripe dashboard — that is the only correct fix (this sweep never writes credits). " +
+        "The sweep closes the observation by itself once the ledger row lands; if the payment was settled some other way (refunded, a test session), " +
+        "close it with the admin action in apps/web/lib/reconcile-actions.ts so it stops alerting.",
+      context: {
+        sessionId: gap.sessionId,
+        orgId: gap.orgId || "unresolved",
+        amountTotal: gap.amountTotal,
+        currency: gap.currency || null,
+        paymentIntentId: gap.paymentIntentId,
+        idempotencyKey: `stripe:${gap.sessionId}`,
+        firstSeenAt: gap.firstSeenAt,
+        // 窗口外 = 这笔缺口已经老过 48 小时,Stripe 的扫描再也捞不到它;它还在被追踪,
+        // 靠的是观察行名单。收到报警的人需要知道这个差别(它意味着「很久了」)。
+        stillInStripeScanWindow: inStripeWindow,
+      },
+    },
+    nowMs,
+  );
+}
+
+/** 写关闭行。**永不抛**:一笔关不上的观察行只是下一轮再喊一次,而抛出去会带走整趟扫描。
+ *  返回是否真的新写了一行(撞主键 = 早就关过了,不重复记数)。 */
+async function closeObservation(sessionId: string, orgId: string, note: string): Promise<boolean> {
+  try {
+    await prisma.actionEvent.create({
+      data: {
+        id: reconcileClosureId(sessionId),
+        ownerId: orgId || FOUNDER_OWNER_ID,
+        type: RECONCILE_CLOSED_TYPE,
+        payload: { sessionId, orgId: orgId || null, closedBy: "stripe-reconciler", note },
+      },
+    });
+    return true;
+  } catch (e) {
+    const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+    if (!duplicate) console.error(`[stripe-reconcile] could not close the observation row for ${sessionId}:`, e);
+    return false;
+  }
 }

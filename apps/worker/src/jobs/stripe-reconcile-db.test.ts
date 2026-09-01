@@ -12,17 +12,22 @@
  * 另外三条边界一起钉:未支付不算缺口、宽限期(刚成交的付款不冤枉)、**只报不补账**
  * (扫描前后余额与账本逐行不变)。
  *
- * 假 Stripe client 是注入的 —— 钱路的用例绝不打真 Stripe。
+ * MONEY-A12(规格 §7.5)加钉四件:报警走 founderAlert 三通道、同一缺口一天只吵一次人、
+ * 缺口不随 48 小时扫描窗静默消失(持续追踪至了结)、首见判据读 firstSeenAt(#1046-P2)。
+ *
+ * 假 Stripe client 是注入的 —— 钱路的用例绝不打真 Stripe;报警管道同样是假的,一封信都不发。
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 
-const m = vi.hoisted(() => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
-vi.mock("@sentry/node", () => ({ captureException: m.captureException, captureMessage: m.captureMessage }));
+const m = vi.hoisted(() => ({ founderAlert: vi.fn(), captureMoneyPathError: vi.fn() }));
+vi.mock("../alerting.js", () => ({ founderAlert: m.founderAlert, captureMoneyPathError: m.captureMoneyPathError }));
 
 import { prisma } from "@fikirtive/db";
+import { RECONCILE_CLOSED_TYPE, RECONCILE_OBSERVED_TYPE, reconcileClosureId, reconcileObservationId } from "@fikirtive/core";
 import {
   reconcileStripePayments,
+  STRIPE_RECONCILE_CONFIRM_MS,
   STRIPE_RECONCILE_GRACE_MS,
   STRIPE_RECONCILE_MAX_PAGES,
   STRIPE_RECONCILE_WINDOW_MS,
@@ -39,6 +44,10 @@ if (!dbName.endsWith("_test")) {
 const DB_CASE_TIMEOUT_MS = 60_000;
 const START = 100_000;
 const NOW = new Date("2026-08-18T12:00:00.000Z");
+/** 首见之后又过了一整个扫描窗 —— 这一刻起缺口才算「活过一轮」(#1046-P2)。 */
+const LATER = new Date(NOW.getTime() + STRIPE_RECONCILE_CONFIRM_MS + 60_000);
+/** 第二天(节流是按 UTC 日算的)。 */
+const TOMORROW = new Date(NOW.getTime() + 24 * 60 * 60 * 1000 + 60_000);
 
 let orgId: string;
 let sessionId: string;
@@ -49,6 +58,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // 哨兵现在会把**全库**还没了结的观察行都捞出来继续追踪(MONEY-A12)—— 那正是它要做的事,
+  // 但也意味着上一个用例留下的行会跟进下一个用例。逐个用例清掉这三种行,隔离才成立。
+  await prisma.actionEvent.deleteMany({ where: { type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE, "credits.reconcile.alerted"] } } });
   orgId = `org_${randomUUID()}`;
   sessionId = `cs_test_${randomUUID().replace(/-/g, "")}`;
   await prisma.organization.create({ data: { id: orgId } });
@@ -88,6 +100,28 @@ function fakeStripe(pages: StripeCheckoutSessionLike[][]): StripeSessionsPort & 
   };
 }
 
+/** 第 n 次报警的 (alert, options)。 */
+function alertCall(n = 0) {
+  const call = m.founderAlert.mock.calls[n] as [{ key: string; title: string; action: string; context: Record<string, unknown> }, { repeat?: boolean } | undefined];
+  return { alert: call[0], opts: call[1] ?? {} };
+}
+
+async function grantRow() {
+  await prisma.creditLedger.create({
+    data: {
+      id: `cl_${randomUUID()}`,
+      orgId,
+      balanceDelta: 2500,
+      reservedDelta: 0,
+      kind: "GRANT",
+      source: "PURCHASE",
+      reason: "stripe top-up",
+      idempotencyKey: `stripe:${sessionId}`,
+      createdBy: "stripe",
+    },
+  });
+}
+
 async function moneyTrail() {
   const ledger = await prisma.creditLedger.findMany({ where: { orgId }, select: { kind: true, idempotencyKey: true } });
   const account = await prisma.creditAccount.findFirstOrThrow({ where: { orgId }, select: { balance: true, reserved: true } });
@@ -95,38 +129,111 @@ async function moneyTrail() {
 }
 
 describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", () => {
-  it("缺行必报:已支付但账本没有 stripe:<session> 那一行 ⇒ 报警 + 审计行", async () => {
+  it("MONEY-A12 缺行必报:已支付但账本没有 stripe:<session> 那一行 ⇒ 三通道报警 + 审计行", async () => {
     const stripe = fakeStripe([[paidSession()]]);
 
     // 第一轮:只观察,不惊动 founder(延迟到账的合法付款长得一模一样)。
     const first = await reconcileStripePayments({ client: stripe, now: NOW });
-    expect(first).toMatchObject({ scanned: 1, paid: 1, unreconciled: 1, firstSeen: 1, alerted: 0, skipped: null });
-    expect(m.captureException).not.toHaveBeenCalled();
+    expect(first).toMatchObject({ scanned: 1, paid: 1, unreconciled: 1, firstSeen: 1, alerted: 0, tracked: 0, closed: 0, skipped: null });
+    expect(m.founderAlert).not.toHaveBeenCalled();
 
-    const audit = await prisma.actionEvent.findUnique({ where: { id: `stripe_unreconciled:${sessionId}` } });
-    expect(audit?.type).toBe("credits.purchase.unreconciled");
+    const audit = await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } });
+    expect(audit?.type).toBe(RECONCILE_OBSERVED_TYPE);
     expect(audit?.ownerId).toBe(orgId);
-    // 判官 P3-2:这一格是 session 的创建时间,名字必须说实话;另有首见时刻。
+    // 判官 P3-2:这一格是 session 的**创建**时间,名字必须说实话;另有首见时刻。
     const payload = audit?.payload as { sessionCreatedAt?: string; firstSeenAt?: string; paidAt?: unknown };
     expect(payload.sessionCreatedAt).toBe(new Date(NOW.getTime() - 60 * 60 * 1000).toISOString());
     expect(payload.firstSeenAt).toBe(NOW.toISOString());
     expect(payload.paidAt, "paidAt 名不副实,应已改名").toBeUndefined();
 
-    // 第二轮:缺口活过了一整轮 ⇒ 升级报警。
-    const second = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    // 第二轮(一个扫描窗之后):缺口活过了一整轮 ⇒ 升级报警,三条通道都走。
+    const second = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: LATER });
     expect(second).toMatchObject({ scanned: 1, paid: 1, unreconciled: 1, firstSeen: 0, alerted: 1 });
-    expect(m.captureException).toHaveBeenCalledTimes(1);
-    const [err, ctx] = m.captureException.mock.calls[0] as [Error, { extra: Record<string, unknown> }];
-    expect(err.message).toContain(sessionId);
+    expect(m.founderAlert).toHaveBeenCalledTimes(1);
+    const { alert, opts } = alertCall();
+    expect(alert.key).toBe("stripe.paid_but_no_ledger_entry");
     // 告警必须把「商家真的被扣了多少钱」说出来 —— 只说「有个 session 对不上」的告警,收到的人
     // 还得自己去 Stripe 翻,而这是一笔正在缺失的付款。
-    expect(err.message).toContain("MYR 25.00");
-    expect(ctx.extra).toMatchObject({ sessionId, orgId, amountTotal: 2500, idempotencyKey: `stripe:${sessionId}` });
+    expect(alert.title).toContain("MYR 25.00");
+    expect(alert.context).toMatchObject({ sessionId, orgId, amountTotal: 2500, idempotencyKey: `stripe:${sessionId}`, stillInStripeScanWindow: true });
+    expect(opts.repeat, "当天第一次必须是完整三通道").toBe(false);
+  }, DB_CASE_TIMEOUT_MS);
 
-    // 之后每一轮都继续喊(at-least-once,补上之前不许安静)。
-    const third = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
-    expect(third.alerted).toBe(1);
-    expect(m.captureException).toHaveBeenCalledTimes(2);
+  it("#1046-P2:首见之后紧接着再扫一轮(worker 重启就是这个形状)⇒ 还不报", async () => {
+    // 开机也跑一轮,所以「观察行已存在」根本不等于「过了一整轮」。判据必须读 firstSeenAt。
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    const restartSweep = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: new Date(NOW.getTime() + 5_000) });
+
+    expect(restartSweep).toMatchObject({ unreconciled: 1, firstSeen: 0, alerted: 0 });
+    expect(m.founderAlert, "首见之后 5 秒的重启扫描把首见喊成了紧急告警").not.toHaveBeenCalled();
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("MONEY-A12 节流:同一笔缺口一天只吵一次人,之后的轮次只进 Sentry(repeat)", async () => {
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: LATER });
+    expect(alertCall(0).opts.repeat).toBe(false);
+
+    // 半小时后又一轮 —— 缺口还在,但今天已经吵过了:压掉邮件与 Telegram,Sentry 照收。
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: new Date(LATER.getTime() + STRIPE_RECONCILE_GRACE_MS) });
+    expect(m.founderAlert).toHaveBeenCalledTimes(2);
+    expect(alertCall(1).opts.repeat).toBe(true);
+
+    // 第二天照样完整喊一次 —— 节流是「一天一次」,不是「喊过就算了」。
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: TOMORROW });
+    expect(m.founderAlert).toHaveBeenCalledTimes(3);
+    expect(alertCall(2).opts.repeat).toBe(false);
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("MONEY-A12:缺口滑出 48 小时扫描窗也不许静默消失 —— 靠观察行名单继续追踪", async () => {
+    // 首见时它还在窗口里。
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+
+    // 三天后:Stripe 的 created 过滤器再也捞不到这个 session(返回空)。缺口一个字都没解决,
+    // 而在这次施工之前,它就在这一刻从视野里消失了 —— 永远。
+    const threeDaysLater = new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const sweep = await reconcileStripePayments({ client: fakeStripe([[]]), now: threeDaysLater });
+
+    expect(sweep).toMatchObject({ scanned: 0, paid: 0, unreconciled: 0, tracked: 1, alerted: 1 });
+    const { alert } = alertCall();
+    expect(alert.context).toMatchObject({ sessionId, orgId, stillInStripeScanWindow: false });
+    expect(alert.context.firstSeenAt).toBe(NOW.toISOString()); // 「很久了」必须看得出来
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("MONEY-A12:账本行补上了(Stripe 后台重投)⇒ 自动写关闭行,从此不再吵", async () => {
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    await grantRow(); // webhook 被重投,同一把幂等键把账补上了
+
+    const threeDaysLater = new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const sweep = await reconcileStripePayments({ client: fakeStripe([[]]), now: threeDaysLater });
+
+    expect(sweep).toMatchObject({ tracked: 0, closed: 1, alerted: 0 });
+    const closure = await prisma.actionEvent.findUnique({ where: { id: reconcileClosureId(sessionId) } });
+    expect(closure?.type).toBe(RECONCILE_CLOSED_TYPE);
+    expect((closure?.payload as { closedBy?: string }).closedBy).toBe("stripe-reconciler");
+
+    // 再扫一轮:名单里已经没有它了,一声不吭,也不会重复写关闭行。
+    const after = await reconcileStripePayments({ client: fakeStripe([[]]), now: new Date(threeDaysLater.getTime() + 60_000) });
+    expect(after).toMatchObject({ tracked: 0, closed: 0, alerted: 0 });
+    expect(m.founderAlert).not.toHaveBeenCalled();
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("MONEY-A12:人工关闭之后就不再报警(窗口内窗口外都算)", async () => {
+    await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    // admin 动作写下的那一行(apps/web/lib/reconcile-actions.ts 写的是同一个主键、同一个 type)。
+    await prisma.actionEvent.create({
+      data: {
+        id: reconcileClosureId(sessionId),
+        ownerId: orgId,
+        type: RECONCILE_CLOSED_TYPE,
+        payload: { sessionId, closedBy: "finance@fikirtive.test", note: "refunded in Stripe, buyer agreed" },
+      },
+    });
+
+    const inWindow = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: LATER });
+    expect(inWindow).toMatchObject({ unreconciled: 1, alerted: 0 }); // 仍然是缺口,只是不再吵人
+    const outOfWindow = await reconcileStripePayments({ client: fakeStripe([[]]), now: new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000) });
+    expect(outOfWindow).toMatchObject({ tracked: 0, alerted: 0 });
+    expect(m.founderAlert).not.toHaveBeenCalled();
   }, DB_CASE_TIMEOUT_MS);
 
   it("判官 P2-1 延迟到账(FPX/GrabPay):三小时前创建、刚刚才 paid ⇒ 首轮不响,落账后永远不响", async () => {
@@ -136,49 +243,25 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
 
     const first = await reconcileStripePayments({ client: fakeStripe([[delayed]]), now: NOW });
     expect(first, "刚到账的合法付款被第一轮就喊成了缺口").toMatchObject({ unreconciled: 1, firstSeen: 1, alerted: 0 });
-    expect(m.captureException).not.toHaveBeenCalled();
+    expect(m.founderAlert).not.toHaveBeenCalled();
 
     // webhook 在两轮之间落了地 —— 账本有了那一行。
-    await prisma.creditLedger.create({
-      data: {
-        id: `cl_${randomUUID()}`,
-        orgId,
-        balanceDelta: 2500,
-        reservedDelta: 0,
-        kind: "GRANT",
-        source: "PURCHASE",
-        reason: "stripe top-up",
-        idempotencyKey: `stripe:${sessionId}`,
-        createdBy: "stripe",
-      },
-    });
+    await grantRow();
 
-    const second = await reconcileStripePayments({ client: fakeStripe([[delayed]]), now: NOW });
-    expect(second).toMatchObject({ unreconciled: 0, firstSeen: 0, alerted: 0 });
-    expect(m.captureException, "延迟到账的合法付款最终还是把 founder 吵醒了").not.toHaveBeenCalled();
+    const second = await reconcileStripePayments({ client: fakeStripe([[delayed]]), now: LATER });
+    expect(second).toMatchObject({ unreconciled: 0, firstSeen: 0, alerted: 0, closed: 1 });
+    expect(m.founderAlert, "延迟到账的合法付款最终还是把 founder 吵醒了").not.toHaveBeenCalled();
   }, DB_CASE_TIMEOUT_MS);
 
   it("有行不报:账本已有那一行 ⇒ 一声不吭(否则每一笔正常充值都会报警)", async () => {
-    await prisma.creditLedger.create({
-      data: {
-        id: `cl_${randomUUID()}`,
-        orgId,
-        balanceDelta: 2500,
-        reservedDelta: 0,
-        kind: "GRANT",
-        source: "PURCHASE",
-        reason: "stripe top-up",
-        idempotencyKey: `stripe:${sessionId}`,
-        createdBy: "stripe",
-      },
-    });
+    await grantRow();
     const stripe = fakeStripe([[paidSession()]]);
 
     const result = await reconcileStripePayments({ client: stripe, now: NOW });
 
-    expect(result).toMatchObject({ scanned: 1, paid: 1, unreconciled: 0, alerted: 0, skipped: null });
-    expect(m.captureException).not.toHaveBeenCalled();
-    expect(await prisma.actionEvent.findUnique({ where: { id: `stripe_unreconciled:${sessionId}` } })).toBeNull();
+    expect(result).toMatchObject({ scanned: 1, paid: 1, unreconciled: 0, alerted: 0, closed: 0, skipped: null });
+    expect(m.founderAlert).not.toHaveBeenCalled();
+    expect(await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } })).toBeNull();
   }, DB_CASE_TIMEOUT_MS);
 
   it("未支付的 session 不是缺口", async () => {
@@ -187,7 +270,7 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
     const result = await reconcileStripePayments({ client: stripe, now: NOW });
 
     expect(result).toMatchObject({ scanned: 1, paid: 0, unreconciled: 0, alerted: 0 });
-    expect(m.captureException).not.toHaveBeenCalled();
+    expect(m.founderAlert).not.toHaveBeenCalled();
   }, DB_CASE_TIMEOUT_MS);
 
   it("宽限期:窗口是 [now-48h, now-30min] —— 刚成交、webhook 还在路上的不冤枉", async () => {
@@ -205,7 +288,7 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
     const before = await moneyTrail();
 
     await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
-    const result = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: NOW });
+    const result = await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: LATER });
 
     expect(result.unreconciled).toBe(1);
     expect(result.alerted).toBe(1); // 确认过、喊过了 —— 但一个字都没往账本里写
@@ -226,8 +309,9 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
 
     expect(result.skipped).toContain("stripe list failed");
     expect(result.alerted).toBe(1);
-    expect(m.captureException).toHaveBeenCalledTimes(1);
-    expect((m.captureException.mock.calls[0] as [Error])[0].message).toContain("UNVERIFIED");
+    expect(m.founderAlert).toHaveBeenCalledTimes(1);
+    expect(alertCall().alert.key).toBe("stripe.reconcile_could_not_read_stripe");
+    expect(alertCall().alert.title).toContain("UNVERIFIED");
   }, DB_CASE_TIMEOUT_MS);
 
   it("没配 STRIPE_SECRET_KEY 时如实跳过,而不是假装扫过了", async () => {
@@ -264,7 +348,7 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
     expect(first).toMatchObject({ scanned: 2, paid: 2, unreconciled: 2, firstSeen: 2, alerted: 0 });
 
     const stripe = fakeStripe(pages());
-    const second = await reconcileStripePayments({ client: stripe, now: NOW });
+    const second = await reconcileStripePayments({ client: stripe, now: LATER });
     expect(second).toMatchObject({ scanned: 2, paid: 2, unreconciled: 2, firstSeen: 0, alerted: 2 });
     const params = stripe.calls[1] as { starting_after?: string };
     expect(params.starting_after).toBe(sessionId);
@@ -283,46 +367,33 @@ describe("钱路 M1-b ①:这一轮没看全 ≠ 这一轮没发现问题", () =
 
     expect(stripe.calls).toHaveLength(STRIPE_RECONCILE_MAX_PAGES);
     expect(result.alerted).toBe(1);
-    const [err] = m.captureException.mock.calls[0] as [Error];
-    expect(err.message).toContain("did NOT see all of them");
+    expect(alertCall().alert.key).toBe("stripe.reconcile_window_truncated");
+    expect(alertCall().alert.title).toContain("did NOT see all of them");
   }, DB_CASE_TIMEOUT_MS);
 });
 
 describe("钱路 M1-b ①:metadata 缺 orgId 的异常形状", () => {
   it("缺 orgId 但账本有那一行 ⇒ 仍然不报(按键回退查也必须查得到)", async () => {
-    await prisma.creditLedger.create({
-      data: {
-        id: `cl_${randomUUID()}`,
-        orgId,
-        balanceDelta: 2500,
-        reservedDelta: 0,
-        kind: "GRANT",
-        source: "PURCHASE",
-        reason: "stripe top-up",
-        idempotencyKey: `stripe:${sessionId}`,
-        createdBy: "stripe",
-      },
-    });
+    await grantRow();
     const stripe = fakeStripe([[paidSession({ metadata: {} })]]);
 
     const result = await reconcileStripePayments({ client: stripe, now: NOW });
 
     expect(result).toMatchObject({ paid: 1, unreconciled: 0, alerted: 0 });
-    expect(m.captureException).not.toHaveBeenCalled();
+    expect(m.founderAlert).not.toHaveBeenCalled();
   }, DB_CASE_TIMEOUT_MS);
 
-  it("缺 orgId 且账本没有 ⇒ 两轮之后照报,审计行挂在 founder 名下", async () => {
+  it("缺 orgId 且账本没有 ⇒ 一个扫描窗之后照报,审计行挂在 founder 名下", async () => {
     await prisma.organization.upsert({ where: { id: "founder" }, update: {}, create: { id: "founder" } });
 
     const first = await reconcileStripePayments({ client: fakeStripe([[paidSession({ metadata: {} })]]), now: NOW });
     expect(first).toMatchObject({ paid: 1, unreconciled: 1, firstSeen: 1, alerted: 0 });
-    const audit = await prisma.actionEvent.findUnique({ where: { id: `stripe_unreconciled:${sessionId}` } });
+    const audit = await prisma.actionEvent.findUnique({ where: { id: reconcileObservationId(sessionId) } });
     expect(audit?.ownerId).toBe("founder");
 
-    const second = await reconcileStripePayments({ client: fakeStripe([[paidSession({ metadata: {} })]]), now: NOW });
+    const second = await reconcileStripePayments({ client: fakeStripe([[paidSession({ metadata: {} })]]), now: LATER });
     expect(second).toMatchObject({ paid: 1, unreconciled: 1, firstSeen: 0, alerted: 1 });
-    const [err] = m.captureException.mock.calls[0] as [Error];
-    expect(err.message).toContain("org=unknown");
+    expect(alertCall().alert.context.orgId).toBe("unresolved");
   }, DB_CASE_TIMEOUT_MS);
 
   it("审计写不下去时(组织行不在)⇒ 首轮就报,绝不让一次数据库故障把缺口变哑", async () => {
@@ -339,6 +410,6 @@ describe("钱路 M1-b ①:metadata 缺 orgId 的异常形状", () => {
     } finally {
       errorSpy.mockRestore();
     }
-    expect(m.captureException).toHaveBeenCalledTimes(1);
+    expect(m.founderAlert).toHaveBeenCalledTimes(1);
   }, DB_CASE_TIMEOUT_MS);
 });

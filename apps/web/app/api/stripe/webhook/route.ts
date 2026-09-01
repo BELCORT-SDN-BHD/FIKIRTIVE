@@ -255,35 +255,148 @@ export async function POST(req: NextRequest): Promise<Response> {
         .catch(() => {}); // best-effort audit; a redelivery hits the PK and is correctly dropped
     }
     // 2026-07-04 盲区修复:争议/退款 = 真钱被拉回,而系统此前对这些事件完全静默
-    // (credits 已发、钱没了、没人知道)。这里是 ALERT-ONLY:记审计 + 叫人,绝不
-    // 自动 clawback —— 扣回用户额度是 founder 的钱决定(设计上 deferred 到 Phase 3b),
-    // 且账本的负 ADJUST 需要人工核对 balance。Sentry 未配 DSN 时 captureMessage 安全 no-op。
+    // (credits 已发、钱没了、没人知道)。这里仍然是 ALERT-ONLY:记审计 + 叫人,绝不
+    // 自动 clawback —— 拒付总法(规格九问 5)明写不建负余额、不倒扣,处置一律人工逐案。
+    // 旧注释里「deferred 到 Phase 3b」的说法已废止:归宿就是那条拒付总法。
+    //
+    // MONEY-A13(规格 §7.5)在这里改了三件事:
+    //   ① 裸 Sentry → founderAlert 三通道。拒付是要人当天动手的事(暂停账号、应诉或接受、
+    //      登记平台损失),只进 Sentry 等于说给没有人听。
+    //   ② dispute.created / dispute.closed **分开 kind**:一个是「开始了」,一个是「结案了」,
+    //      处置动作完全不同(前者要暂停+应诉,后者要按输赢在台账追加结案行)。
+    //   ③ 报警**带商家 org 与金额**。以前审计行的 ownerId 硬编码 "founder",认人全靠人工翻
+    //      Stripe 后台 —— 而这三个事件的对象(Dispute / Charge)身上根本没有 Checkout Session
+    //      的 metadata,所以要靠 `attributeStripeOrg` 一路反查;查不到就如实标 unresolved,
+    //      绝不猜。
     if (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed" || event.type === "charge.refunded") {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const obj = event.data.object as any;
-      const kind = event.type === "charge.refunded" ? "credits.refund" : "credits.dispute";
-      Sentry.captureMessage(`[stripe] ${event.type} — money pulled back; check the Stripe dashboard and the credits ledger`, "warning");
-      await prisma.actionEvent
-        .create({
+      const kind =
+        event.type === "charge.refunded"
+          ? "credits.refund"
+          : event.type === "charge.dispute.created"
+            ? "credits.dispute.created"
+            : "credits.dispute.closed";
+      const paymentIntentId = typeof obj.payment_intent === "string" ? obj.payment_intent : null;
+      const found = await attributeStripeOrg(obj, paymentIntentId);
+      const amount = typeof obj.amount === "number" ? obj.amount : null;
+      const amountRefunded = typeof obj.amount_refunded === "number" ? obj.amount_refunded : null;
+      const currency = typeof obj.currency === "string" ? obj.currency.toUpperCase() : null;
+      const minor = amountRefunded ?? amount;
+      const money = minor === null ? "an unknown amount" : `${currency ?? "?"} ${(minor / 100).toFixed(2)}`;
+
+      // 审计行的主键由 **Stripe event.id** 派生(以前是 newId(),于是一次重投就多一条审计行、
+      // 多一封邮件)。写得下去 = 这是这个事件的第一次投递 ⇒ 报警;撞主键 = 重投 ⇒ 一声不响。
+      // 其它写失败 = 说不准 ⇒ 照常报警(fail loud:钱被拉回,宁可多喊一次)。
+      let firstDelivery = true;
+      try {
+        await prisma.actionEvent.create({
           data: {
-            id: newId(),
-            ownerId: "founder",
+            id: `stripe_pullback:${event.id}`,
+            ownerId: found.orgId ?? "founder",
             type: kind,
             payload: {
               eventType: event.type,
               eventId: event.id,
               disputeOrChargeId: obj.id ?? null,
               chargeId: obj.charge ?? null,
-              paymentIntentId: obj.payment_intent ?? null,
-              amount: obj.amount ?? null,
-              amountRefunded: obj.amount_refunded ?? null,
+              paymentIntentId,
+              amount,
+              amountRefunded,
+              currency,
               reason: obj.reason ?? null,
               status: obj.status ?? null,
+              // 认人的结果与**怎么认出来的**一起留档:半年后翻账的人要能判断这个 org 可不可信。
+              orgId: found.orgId,
+              orgAttribution: found.source,
+              checkoutSessionId: found.sessionId,
             },
           },
-        })
-        .catch(() => {}); // best-effort audit — the 200 (stop Stripe retries) must not depend on it
+        });
+      } catch (e) {
+        const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+        if (duplicate) firstDelivery = false;
+        else console.error(`[stripe] ${event.type} audit write failed (event=${event.id}); alerting anyway:`, e);
+      }
+
+      if (firstDelivery) {
+        // 报警绝不决定响应码(与本文件其它分支同一条规矩):一个会抛的报警通道会让 handler
+        // 返回非 2xx,把 Stripe 推进一场发生在钱事件上的无限重投。
+        try {
+          await founderAlert({
+            key:
+              event.type === "charge.refunded"
+                ? "stripe.charge_refunded"
+                : event.type === "charge.dispute.created"
+                  ? "stripe.dispute_opened"
+                  : "stripe.dispute_closed",
+            title:
+              event.type === "charge.dispute.created"
+                ? `A cardholder disputed a Stripe payment (chargeback) — ${money}`
+                : event.type === "charge.dispute.closed"
+                  ? `A Stripe payment dispute closed (${typeof obj.status === "string" ? obj.status : "outcome unknown"}) — ${money}`
+                  : `A Stripe charge was refunded — ${money}`,
+            action:
+              found.orgId === null
+                ? "We could NOT tell which merchant this belongs to. Find them in the Stripe dashboard (Payments → this charge → its Checkout Session → metadata.orgId), then follow docs/runbooks/chargeback.md."
+                : "Follow docs/runbooks/chargeback.md: suspend the org from the admin Tenants panel, decide in Stripe whether to contest or accept, and log the platform loss in docs/ops/manual-money-ledger.md. Nothing is clawed back automatically — the ledger never goes negative.",
+            context: {
+              orgId: found.orgId ?? "unresolved",
+              orgAttribution: found.source,
+              amountMinor: minor,
+              currency,
+              eventType: event.type,
+              stripeEventId: event.id,
+              disputeOrChargeId: typeof obj.id === "string" ? obj.id : null,
+              paymentIntentId,
+              checkoutSessionId: found.sessionId,
+              disputeStatus: typeof obj.status === "string" ? obj.status : null,
+              disputeReason: typeof obj.reason === "string" ? obj.reason : null,
+            },
+          });
+        } catch (e) {
+          console.error(`[stripe] ${event.type} founder alert failed (event=${event.id}):`, e);
+        }
+      }
     }
     return new Response("ok", { status: 200 });
   });
+}
+
+/**
+ * 「这笔被拉回的钱是谁的?」—— 拒付/退款事件的商家归因(MONEY-A13,规格 §7.5)。
+ *
+ * 为什么需要一条链:Dispute 与 Charge 身上**没有** Checkout Session 的 metadata,而账本行的
+ * 反查键是 `(orgId, idempotencyKey)` —— 要 orgId 才查得动,链是断的。三步,从便宜到贵:
+ *   ① 事件对象自己的 metadata —— 零外呼。
+ *   ② PaymentIntent 的 metadata —— `createTopupCheckout` 的 `payment_intent_data` 写的就是它
+ *      (本次施工新增),新付款走这条。
+ *   ③ 按 payment_intent 反查 Checkout Session —— 老付款(PaymentIntent 上没写过 metadata 的
+ *      那些)只能靠它,是**历史兼容**的那一步。
+ * 每一步都吞掉自己的异常:认不出人不是不报警的理由,报警照发、如实标 unresolved。
+ */
+async function attributeStripeOrg(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  obj: any,
+  paymentIntentId: string | null,
+): Promise<{ orgId: string | null; sessionId: string | null; source: "event-metadata" | "payment-intent" | "checkout-session" | "unresolved" }> {
+  const direct = typeof obj?.metadata?.orgId === "string" ? obj.metadata.orgId : "";
+  if (direct) return { orgId: direct, sessionId: null, source: "event-metadata" };
+  if (!paymentIntentId) return { orgId: null, sessionId: null, source: "unresolved" };
+  try {
+    const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    const fromIntent = typeof intent?.metadata?.orgId === "string" ? intent.metadata.orgId : "";
+    if (fromIntent) return { orgId: fromIntent, sessionId: null, source: "payment-intent" };
+  } catch (e) {
+    console.error(`[stripe] could not read PaymentIntent ${paymentIntentId} for org attribution:`, e);
+  }
+  try {
+    const sessions = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 1 });
+    const session = sessions?.data?.[0];
+    const fromSession = typeof session?.metadata?.orgId === "string" ? session.metadata.orgId : "";
+    if (fromSession) return { orgId: fromSession, sessionId: typeof session?.id === "string" ? session.id : null, source: "checkout-session" };
+  } catch (e) {
+    console.error(`[stripe] could not list Checkout Sessions for ${paymentIntentId} during org attribution:`, e);
+  }
+  return { orgId: null, sessionId: null, source: "unresolved" };
 }

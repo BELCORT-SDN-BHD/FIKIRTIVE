@@ -34,7 +34,7 @@ import {
   type RefGenModel,
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
-import { captureMoneyPathError } from "../alerting.js";
+import { captureMoneyPathError, founderAlert } from "../alerting.js";
 import { provider } from "../generation.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { isModelDisabled } from "@fikirtive/core";
@@ -497,6 +497,21 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
           jobId: job.id,
           orgId: job.ownerId,
           mode: job.mode,
+        });
+        // MONEY-A13(规格 §7.5 平台损失台账):同 gen.ts 的对应分支 —— 报警必须带**金额**,
+        // 按这一单参数现算(与写进 spentUsd 的是同一个函数),并指路去人工台账登记。
+        await founderAlert({
+          key: "refgen.founder_absorbed_engine_cost",
+          title: "The platform paid for a reference generation nobody received (a redelivery had already refunded the merchant)",
+          action:
+            "No merchant action needed — they were refunded. Log the platform loss in docs/ops/manual-money-ledger.md (event = 吸收引擎成本) with the job id and the USD below.",
+          context: {
+            jobId: job.id,
+            orgId: job.ownerId,
+            mode: job.mode,
+            model: job.model,
+            absorbedUsd: refgenSpentUsd({ model: job.model, count: job.count }),
+          },
         });
         return;
       }
