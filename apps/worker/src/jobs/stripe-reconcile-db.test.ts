@@ -173,6 +173,13 @@ describe("钱路 M1-b ①:Stripe 已支付 ↔ 账本入账行,双向对账", ()
     await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: LATER });
     expect(alertCall(0).opts.repeat).toBe(false);
 
+    // 节流行必须挂在**这笔缺口的商家**名下:ActionEvent.ownerId 有外键,而 `founder` 那一行
+    // 不是每台库都有(全新库就没有)。挂错组织 = 外键报错 = 节流永远写不进去 = 每 30 分钟
+    // 一封邮件,正好是节流要防的那件事。
+    const throttleRow = await prisma.actionEvent.findFirst({ where: { type: "credits.reconcile.alerted" }, select: { ownerId: true, id: true } });
+    expect(throttleRow?.ownerId).toBe(orgId);
+    expect(throttleRow?.id).toBe(`stripe_unreconciled_alert:${sessionId}:2026-08-18`);
+
     // 半小时后又一轮 —— 缺口还在,但今天已经吵过了:压掉邮件与 Telegram,Sentry 照收。
     await reconcileStripePayments({ client: fakeStripe([[paidSession()]]), now: new Date(LATER.getTime() + STRIPE_RECONCILE_GRACE_MS) });
     expect(m.founderAlert).toHaveBeenCalledTimes(2);

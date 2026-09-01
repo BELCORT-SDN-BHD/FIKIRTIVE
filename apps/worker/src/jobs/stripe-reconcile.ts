@@ -189,15 +189,19 @@ function realStripePort(): StripeSessionsPort | null {
  *
  * 写不进节流行(不是撞主键的那种失败)⇒ 分不清今天喊没喊过 ⇒ **照常全渠道喊**:一次数据库
  * 抖动可以让人多收一封邮件,不可以让一笔缺口变哑。`founderAlert` 自己永不抛。
+ *
+ * `ownerId` 跟着**这笔缺口自己的 org** 走(与观察行同一条规矩),不是一律挂 founder:
+ * ActionEvent.ownerId 有外键,而 `founder` 那一行不是每一台数据库都有(CI 的全新库就没有)。
+ * 挂错组织 = 外键报错 = 节流永远写不进去 = 每 30 分钟一封邮件,恰好是这段代码要防的那件事。
  */
-async function alertThrottledDaily(throttleId: string, alert: FounderAlert, nowMs: number): Promise<void> {
+async function alertThrottledDaily(throttleId: string, alert: FounderAlert, nowMs: number, ownerId: string): Promise<void> {
   const day = new Date(nowMs).toISOString().slice(0, 10);
   let repeat = false;
   try {
     await prisma.actionEvent.create({
       data: {
         id: `${throttleId}:${day}`,
-        ownerId: FOUNDER_OWNER_ID,
+        ownerId: ownerId || FOUNDER_OWNER_ID,
         type: "credits.reconcile.alerted",
         payload: { key: alert.key, day, sentAt: new Date(nowMs).toISOString() },
       },
@@ -256,6 +260,7 @@ export async function reconcileStripePayments(opts?: {
           context: { reason },
         },
         now,
+        FOUNDER_OWNER_ID,
       );
       return { ...empty, alerted: 1, skipped: `stripe list failed: ${reason}` };
     }
@@ -275,6 +280,7 @@ export async function reconcileStripePayments(opts?: {
           context: { cap: STRIPE_RECONCILE_MAX_PAGES * PAGE_SIZE },
         },
         now,
+        FOUNDER_OWNER_ID,
       );
       alerted++;
     }
@@ -451,6 +457,7 @@ async function escalateGap(gap: GapFacts, nowMs: number, inStripeWindow: boolean
       },
     },
     nowMs,
+    gap.orgId,
   );
 }
 
