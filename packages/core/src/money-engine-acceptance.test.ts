@@ -21,7 +21,12 @@ describe("money-engine 验收占位(M3)", () => {
   // apps/worker/src/jobs/understand.test.ts(「MONEY-A9 理解计费」三组)与
   // understand-db.test.ts(预扣原子性、PAUSED_BALANCE 按余额捞回);消费历史那一侧的
   // understanding 类目在 apps/web/lib/spend-history.ts。
-  it.todo("MONEY-A10 该轮消费含搜索费,单价与深研同源(3×)");
+  // MONEY-A10 已转正,不再是占位:钱腿在 packages/otto/src/runtime.ts(`ottoBudgetArgsFor`
+  // 的 extraHold/extraSettle),槽协议在 packages/otto/src/skills/research-web.ts,上限常量
+  // OTTO_CHAT_MAX_SEARCHES_PER_TURN 在 packages/core/src/pricing-config.ts。断言在
+  // packages/otto/src/skills/research-web.test.ts(「MONEY-A10 搜索槽与单轮上限」,含规格
+  // 点名的并发 6 次行为测试)、runtime.test.ts(「MONEY-A10 搜索腿」hold/settle 口径)与
+  // research-agent.test.ts(深研侧同一套槽协议 + 失败不计费 + 无 key 诚实报不可用)。
   it.todo("MONEY-A12 购买被三态核对拦下(mismatch 不入账+报警)");
   it.todo("MONEY-A13 产生一条含商家 org 标识与金额的三通道报警");
   it.todo("MONEY-A14 顺序=先 RESERVE 预扣锁定退款额、后 Stripe 退款、再 SETTLE 落账");

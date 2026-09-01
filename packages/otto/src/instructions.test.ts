@@ -26,7 +26,12 @@
  *   这正是设计意图 —— 不是把它挡在测试里,是把它摆到复审桌上。
  */
 import { describe, it, expect } from "vitest";
-import { displayCredits, pricedUnderstandingCredits } from "@fikirtive/core";
+import {
+  displayCredits,
+  pricedUnderstandingCredits,
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchUnitChargeInternal,
+} from "@fikirtive/core";
 import { ottoSimpleModeBlock, ottoInstructions } from "./instructions.js";
 
 /**
@@ -41,6 +46,32 @@ const UNDERSTANDING_PRICE_CLAUSES = [
   `${displayCredits(pricedUnderstandingCredits("video-qa"))} credits for a video`,
   `${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits again if that image turns out to be a menu`,
 ];
+
+/**
+ * MONEY-A10(规格 §7.4):聊天搜索那句披露的**期望值,现算**。
+ *
+ * 与上面 A9 三条同一条纪律。这一句同时踩了金额启发式的两个词族(裸词 free + 阿拉伯数字
+ * credits),所以它必须进白名单 —— 但进白名单的是一条**算出来的**串:真有人手抄一个价
+ * 进提示词,它对不上这里,照样红。
+ */
+const CHAT_SEARCH_PRICE_CLAUSE =
+  "reading a page by `url` is free, each `query` search costs the user about " +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits, and one turn allows at most ` +
+  `${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches`;
+
+/**
+ * MONEY-A10(七维审核):**商家侧**那句搜索披露的期望值,同样现算。
+ *
+ * 上面那条 `CHAT_SEARCH_PRICE_CLAUSE` 是说给**模型**听的(它按价决定该不该再搜一次);
+ * 这一条是 Otto 说给**商家**听的 —— 「聊天怎么收费」那一段原本只讲 LLM 成本 +5%,而同一笔
+ * 扣款里还有一条搜索腿。商家听不到它,就会把账单上那一笔当成算错了。
+ *
+ * 同一条纪律:进白名单的是**算出来的**串,手抄一个价照样红。
+ */
+const CHAT_SEARCH_MERCHANT_CLAUSE =
+  "each search request that completes successfully adds about " +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits — including one that comes back empty-handed — ` +
+  `and one message can make at most ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} of them`;
 
 describe("ottoInstructions — golden 快照(#541 r6 主守卫)", () => {
   // 没有判定环节:不解析、不匹配、不推断语义,只比字节。
@@ -506,6 +537,10 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     expect(ottoInstructions).not.toContain("Talking to you is FREE");
     // 计价口径要说出口:按这条消息真实用量算,所以短问题便宜、长思考贵。
     expect(ottoInstructions).toMatch(/what the message actually uses/i);
+    // MONEY-A10(七维审核):同一笔扣款里的**第二条腿**也要说出口。少了这一句,商家看到
+    // 账单上比「模型成本 +5%」多出来的那一块,只能当成算错了。
+    expect(ottoInstructions).toContain("rides inside the SAME message charge");
+    expect(ottoInstructions).toContain(CHAT_SEARCH_MERCHANT_CLAUSE);
   });
 
   // 3) 金额启发式 —— 同一把尺子,同样只是预警。
@@ -530,6 +565,15 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     // 任何价目小字。规格因此把它的披露放在动作层 —— Otto 在导入之前亲口报那个价,是商家
     // 被扣费之前唯一可能听见的一句。给不出数字的「这会花一点钱」不是披露。
     ...UNDERSTANDING_PRICE_CLAUSES,
+    // ── MONEY-A10 的聊天搜索价(规格 §7.4)──────────────────────────────────────
+    //
+    // 同样现算、同样必须出现数字:在 2026-09-02 之前这里写的是「It is $0」,而每一次
+    // query 都在打同一个付费搜索 API —— 那句话既让模型放心多搜,又是假的。模型要按价决定
+    // 该不该搜,就得知道价;不给数字的「这会花一点钱」不是披露。
+    CHAT_SEARCH_PRICE_CLAUSE,
+    // 同一条腿的**商家侧**说法(七维审核):同样现算、同样必须带数字 —— 一句不给数的
+    // 「搜索也要钱」不是披露,商家对不上账单上那一笔。
+    CHAT_SEARCH_MERCHANT_CLAUSE,
   ];
 
   // 词表:比较词 + 免费词 + 单价词。覆盖常见写法,不覆盖全部。
