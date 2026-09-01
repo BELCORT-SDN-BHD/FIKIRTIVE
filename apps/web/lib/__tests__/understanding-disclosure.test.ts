@@ -873,7 +873,7 @@ const EXEMPTIONS: Exemption[] = [
   {
     file: "components/otto/edit/EditDesk.tsx",
     reason:
-      "只收音频;audio 不在收费的三类里(§7.3 单列)。两道守:<Input accept=\"audio/*\"> 的选择器提示,"
+      "只收音频;audio 不在收费的三类里(§7.3 单列)。两道守:文件选择器的 accept=\"audio/*\" 提示,"
       + "加 uploadMusic 里的 MIME/扩展名守卫(非音频不进 finalizeCandidateUploads,当场提示)",
     spec: "docs/specs/money-engine.md#7.3-A9-素材理解计费面",
     callSites: 1,

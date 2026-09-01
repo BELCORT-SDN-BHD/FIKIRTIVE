@@ -200,7 +200,7 @@ describe("an export outlives the page, so the desk picks it back up", () => {
  * MONEY-A9 §7.3 —— 配乐入口的类型守卫。
  *
  * 这个入口按规格「现仅收 audio」被单列**豁免**:它不挂那行价目小字。整条豁免立在
- * 「这里进不来会被计费的 image/video」之上,而在这之前那句话只靠 `<Input accept="audio/*">`
+ * 「这里进不来会被计费的 image/video」之上,而在这之前那句话只靠选择器上的 accept="audio/*"
  * 撑着 —— accept 是文件选择框的过滤**建议**,不是校验。商家把系统弹窗的筛选改成「所有文件」
  * 选了一张图,它就会以 UPLOAD image 素材落盘、被自动理解计费:一笔他在任何屏幕上都没见过
  * 价目的钱。所以这里钉的是**行为**:非音频根本走不到 finalize。

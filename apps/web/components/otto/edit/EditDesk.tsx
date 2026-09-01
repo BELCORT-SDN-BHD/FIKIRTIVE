@@ -243,7 +243,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
     const file = files?.[0];
     if (!file) return;
     // MONEY-A9 §7.3 —— 这个入口按规格「现仅收 audio」被单列豁免、不挂价目小字。
-    // 在此之前那句话只靠 <Input accept="audio/*"> 撑着,而 accept 是文件选择框的过滤**建议**,
+    // 在此之前那句话只靠文件选择器上的 accept="audio/*" 撑着,而 accept 是选择框的过滤**建议**,
     // 不是校验:商家在系统弹窗里把筛选改成「所有文件」就能选一张图,它会以 UPLOAD image 素材
     // 落盘、被自动理解计费 —— 一笔他在任何屏幕上都没见过价目的钱。豁免的前提得自己成立。
     if (!looksLikeAudio(file)) {
