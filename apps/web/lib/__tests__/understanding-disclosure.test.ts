@@ -10,7 +10,11 @@
  *      `pricedUnderstandingCredits` 算期望值,不手抄一个数;两边同源,涨价当天一起动。
  *   ② 组件源码里**一个手抄的价钱都不许有**(源码文本断言)。手抄的那一刻,披露就变成了陷阱:
  *      成本钉点一动,界面上的数字会安静地开始撒谎。
- *   ③ 三个上传入口挂的是**同一个**组件(§7.3 点名的三处);EditDesk 不挂 —— 它今天只收音频,
+ *   ③ 上传入口挂的是**同一个**组件,而且入口清单是**普查出来的,不是手抄的**:测试自己扫
+ *      `source: "UPLOAD"` 的写点、扫谁调了那些写点动作,任一侧多出一个而披露没跟上就红。
+ *      §7.3 明写「施工首件事用 grep 复核入口清单」—— 手抄的清单只在抄它的那一天是对的,
+ *      而漏挂一个入口的代价,是商家被收一笔他从没在任何屏幕上见过的钱(顾问复审 2026-09-02
+ *      就是这样抓到 Canvas 拖放与裁剪保存两个漏网入口的)。EditDesk 单列豁免:只收音频,
  *      音频不在收费的三类里。
  *   ④ 级联说明必须在(计费四则②):一张图被认出是菜单/价目表时会**再收一次**,
  *      只报第一段价是「真话,但仍然是骗人」。
@@ -20,7 +24,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -54,11 +58,74 @@ function copyLines(src: string): string[] {
     .map((line) => line.trim());
 }
 
+// ────────────────────────── 入口普查(结构性围栏) ──────────────────────────
+// 手抄的入口清单是这一票的病根本身:②段照 §7.3 点名的三处挂完就收工,而 Canvas 拖放
+// (FlowCanvas → uploadReference)和素材详情的裁剪保存(DetailPanel → saveCroppedGeneration)
+// 一直在落同样会被理解计费的 UPLOAD 素材,没人再去数一遍。下面两张表都由测试**当场扫出来**,
+// 只有「为什么豁免」这一栏是人写的。
+
+/** `apps/web` 里递归列出源码文件(跳过测试与 node_modules)。 */
+function sourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(path.join(WEB_ROOT, dir), { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name === "__tests__" || entry.name.startsWith(".")) continue;
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) sourceFiles(rel, out);
+    else if (/\.tsx?$/.test(entry.name)) out.push(rel);
+  }
+  return out;
+}
+
+/** 真的写 `source: "UPLOAD"` 的文件 —— 注释里提到这个字样的不算(copyLines 已经把注释滤掉,
+ *  otto-media-port 就只在注释里提它:它自己不写行,它转手给 finalizeCandidateUploads)。 */
+function writePointFiles(): string[] {
+  return sourceFiles("lib")
+    .concat(sourceFiles("app"), sourceFiles("components"))
+    .filter((f) => copyLines(codeOf(f)).some((line) => /source:\s*"UPLOAD"/.test(line)))
+    .sort();
+}
+
+/** 写点所在的文件。多一个文件开始写 UPLOAD 素材,这里当场红 —— 那意味着有一条新的计费路径,
+ *  而它的 UI 入口还没有人问过「商家看得见价目吗」。 */
+const WRITE_POINT_FILES: Record<string, string> = {
+  "lib/actions.ts": "ingestFile → createEntity / addReferenceImages / uploadCandidates / uploadReference",
+  "lib/asset-actions.ts": "saveCroppedGeneration —— 裁剪保存落一条全新的 UPLOAD 素材",
+  "lib/upload-actions.ts": "finalizeCandidateUploads —— 直传落盘的唯一权威(Otto 的 URL 导入也走它)",
+};
+
+/** 上面那些文件里、会落 image/video UPLOAD 素材的导出动作。UI 面认这些名字。 */
+const UPLOAD_ACTIONS = [
+  "createEntity",
+  "addReferenceImages",
+  "uploadCandidates",
+  "uploadReference",
+  "finalizeCandidateUploads",
+  "saveCroppedGeneration",
+] as const;
+
+/** 调了上面任何一个动作的 UI 文件 —— 这就是「上传入口」的定义,不是谁记得住的那三处。 */
+function uploadEntryFiles(): string[] {
+  return sourceFiles("app")
+    .concat(sourceFiles("components"))
+    .filter((f) => {
+      const src = codeOf(f);
+      return UPLOAD_ACTIONS.some((action) => new RegExp(`\\b${action}\\b`).test(src));
+    })
+    .sort();
+}
+
+/** 必须挂披露的入口(每一条写清它是哪个动作的面)。 */
 const MOUNTS = [
+  ["components/asset/DetailPanel.tsx", "素材详情的裁剪保存(saveCroppedGeneration)"],
+  ["components/canvas/FlowCanvas.tsx", "Canvas 拖放上传(uploadReference)"],
   ["components/otto/OttoChatStream.tsx", "Otto 对话的附件入口"],
   ["components/otto/TemplateModal.tsx", "模板的产品图上传"],
   ["components/otto/stuff/AddAssetDialog.tsx", "素材库的多图上传"],
 ] as const;
+
+/** 明示豁免。豁免要有理由,而且理由要能当场核 —— 不写理由的豁免就是漏挂。 */
+const EXEMPT: Record<string, string> = {
+  "components/otto/edit/EditDesk.tsx": "只收音频;audio 不在收费的三类里(§7.3 单列)",
+};
 
 describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
   const markup = renderToStaticMarkup(createElement(UnderstandingCostHint));
@@ -110,6 +177,43 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
 
   it("EditDesk 不挂 —— 它今天只收音频,音频不在收费的三类里(§7.3 单列)", () => {
     expect(codeOf("components/otto/edit/EditDesk.tsx")).not.toContain("UnderstandingCostHint");
+  });
+
+  // ── 围栏:两侧各扫一遍,任一侧动了而另一侧没跟上就红 ────────────────────────────
+  it("写点普查:落 UPLOAD 素材的文件就是登记的这几个(多一个=多一条没人问过披露的计费路径)", () => {
+    expect(
+      writePointFiles(),
+      "有文件开始写 source:\"UPLOAD\":先追它的 UI 面,再决定挂披露还是写进豁免",
+    ).toEqual(Object.keys(WRITE_POINT_FILES).sort());
+  });
+
+  it("写点普查:登记的每个动作名都还在它登记的文件里(改名/搬家当场红)", () => {
+    for (const [file, note] of Object.entries(WRITE_POINT_FILES)) {
+      const src = codeOf(file);
+      const actions = UPLOAD_ACTIONS.filter((a) => note.includes(a));
+      expect(actions.length, `${file} 的登记备注里没点名任何动作`).toBeGreaterThan(0);
+      for (const action of actions) {
+        expect(src, `${file} 里找不到 ${action} —— 登记表过期了`).toContain(action);
+      }
+    }
+  });
+
+  it("入口普查:调上传动作的 UI 文件 = 挂点表 + 豁免表(新入口漏挂当场红)", () => {
+    const declared = [...MOUNTS.map(([file]) => file), ...Object.keys(EXEMPT)].sort();
+    expect(
+      uploadEntryFiles(),
+      "有 UI 开始调上传动作:要么挂 <UnderstandingCostHint />,要么进 EXEMPT 并写明理由",
+    ).toEqual(declared);
+  });
+
+  it("入口普查:挂点表与豁免表不重叠,豁免每条都带理由", () => {
+    for (const [file] of MOUNTS) {
+      expect(EXEMPT[file], `${file} 同时出现在挂点表和豁免表`).toBeUndefined();
+    }
+    for (const [file, reason] of Object.entries(EXEMPT)) {
+      expect(reason.length, `${file} 的豁免没写理由`).toBeGreaterThan(10);
+      expect(codeOf(file), `${file} 被豁免了却挂着披露`).not.toContain("UnderstandingCostHint");
+    }
   });
 });
 
