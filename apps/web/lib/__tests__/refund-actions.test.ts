@@ -195,7 +195,8 @@ describe("MONEY-A14 — 幂等", () => {
       { kind: "RESERVE", reason: "", reservedDelta: 100 * INTERNAL_PER_DISPLAY },
       { kind: "SETTLE", reason: "stripe-refund:re_1Xyz myr_minor:4166 usd:9.26", reservedDelta: 0 },
     ]);
-    const result = await refundCreditsAction(payload());
+    // 报的是**当时真的退了多少**(从 SETTLE 行的 reason 读回来),不是拿这次表单参数再算一遍。
+    const result = await refundCreditsAction(payload({ packCredits: 50 }));
     expect(result).toEqual({ ok: true, duplicate: true, refundId: "re_1Xyz", displayedAmount: 100, amountMinor: 4166 });
     expect(refundsCreate).not.toHaveBeenCalled();
     expect(reserveCredits).not.toHaveBeenCalled();

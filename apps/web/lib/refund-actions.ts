@@ -74,9 +74,13 @@ function settleReasonFor(refundStripeId: string, amountMinor: number): string {
   return `stripe-refund:${refundStripeId} myr_minor:${amountMinor} usd:${myrMinorToUsd(amountMinor).toFixed(2)}`;
 }
 
-/** 从已落账的 SETTLE 行里读回退款单号(重放时如实回答「哪一笔已经退过了」)。 */
-function refundIdFromReason(reason: string): string {
-  return /stripe-refund:(re_[A-Za-z0-9]+)/.exec(reason)?.[1] ?? "";
+/** 从已落账的 SETTLE 行里读回退款单号与真正退出去的马币数 —— 重放时回答的是**当时发生了什么**,
+ *  不是拿这次表单里的参数再算一遍(操作员这次可能选了另一个包)。 */
+function settledRefundFromReason(reason: string): { refundId: string; amountMinor: number } {
+  return {
+    refundId: /stripe-refund:(re_[A-Za-z0-9]+)/.exec(reason)?.[1] ?? "",
+    amountMinor: Number(/myr_minor:(\d+)/.exec(reason)?.[1] ?? 0),
+  };
 }
 
 export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsResult> {
@@ -131,10 +135,8 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
   const settled = existing.find((row) => row.kind === "SETTLE");
   if (settled) {
     const held = existing.find((row) => row.kind === "RESERVE")?.reservedDelta ?? 0;
-    return {
-      ok: true, duplicate: true, refundId: refundIdFromReason(settled.reason),
-      displayedAmount: displayCredits(held), amountMinor: refundMinorForPack(displayCredits(held), pack),
-    };
+    const done = settledRefundFromReason(settled.reason);
+    return { ok: true, duplicate: true, refundId: done.refundId, displayedAmount: displayCredits(held), amountMinor: done.amountMinor };
   }
   if (existing.some((row) => row.kind === "REFUND")) {
     return { error: "That refund id was already released after a Stripe failure. Start a new refund id." };
