@@ -59,38 +59,63 @@ describe("ottoLlmMargin", () => {
     }
   };
 
-  it("defaults to OTTO_LLM_MARGIN_DEFAULT (2.0) when the env var is unset/invalid", () => {
+  it("defaults to OTTO_LLM_MARGIN_DEFAULT (2.06) when the env var is unset/invalid", () => {
     withMargin(undefined, () => {
       expect(ottoLlmMargin()).toBe(OTTO_LLM_MARGIN_DEFAULT);
-      expect(OTTO_LLM_MARGIN_DEFAULT).toBe(2.0);
+      expect(OTTO_LLM_MARGIN_DEFAULT).toBe(2.06);
     });
   });
 
   // ── 钱路 M1-c(审计 P1):下限守卫 ────────────────────────────────────────────
   // 病灶就是一行:`Number.isFinite(v) && v > 0`。0.5 是个正经的正有限数,而它的意思是
   // 「每一次 LLM 调用按 provider 账单的一半收费」—— 每卖一单亏一单,没有任何测试会红。
-  it("下限是 1.0 = 绝不低于 provider 自己的账单", () => {
-    expect(OTTO_LLM_MARGIN_FLOOR).toBe(1.0);
-    expect(OTTO_LLM_MARGIN_DEFAULT).toBeGreaterThan(OTTO_LLM_MARGIN_FLOOR);
+  it("下限 = 裁决值 2.06(Founder 2026-09-01),与默认值合一 —— 覆盖只能调高不能调低", () => {
+    expect(OTTO_LLM_MARGIN_FLOOR).toBe(2.06);
+    expect(OTTO_LLM_MARGIN_DEFAULT).toBe(OTTO_LLM_MARGIN_FLOOR);
   });
 
-  it("配成 0.5(亏着卖)→ 忽略,退回默认值 2.0", () => {
+  it("面值毛利 51.46%、本地卡带最坏实收 45.73% —— 2.06 是「刚清 45% 地板」的裁决值", () => {
+    // 面值口径:1 − 1/2.06。
+    expect(1 - 1 / OTTO_LLM_MARGIN_DEFAULT).toBeCloseTo(0.5146, 4);
+    // 最坏实收口径(压力测试口径):面值 × 最坏包实收系数 0.8944(pricing-config 现算,
+    // 见 packReceiptCoefficient)。旧费率 2.0 在这个口径下是 44.10% —— 破线,这正是要改的原因。
+    const worstCoeff = 0.894444444;
+    const receipt = (k: number) => (k * worstCoeff - 1) / (k * worstCoeff);
+    expect(receipt(OTTO_LLM_MARGIN_DEFAULT)).toBeCloseTo(0.4573, 4);
+    expect(receipt(2.0)).toBeCloseTo(0.441, 3);
+    expect(receipt(2.0)).toBeLessThan(0.45);
+  });
+
+  it("配成 0.5(亏着卖)→ 忽略,退回默认值 2.06", () => {
     withMargin("0.5", () => expect(ottoLlmMargin()).toBe(OTTO_LLM_MARGIN_DEFAULT));
   });
 
-  it("下限以下的每一种写法都被拒:0.5 / 0.99 / 0 / 负数", () => {
-    for (const bad of ["0.5", "0.99", "0", "-3"]) {
+  it("下限以下的每一种写法都被拒:0.5 / 0.99 / 0 / 负数 / 1.5 / 1.82 / 2.05", () => {
+    for (const bad of ["0.5", "0.99", "0", "-3", "1.5", "1.82", "2.05"]) {
       withMargin(bad, () => expect(ottoLlmMargin(), `OTTO_LLM_MARGIN=${bad}`).toBe(OTTO_LLM_MARGIN_DEFAULT));
     }
   });
 
-  it("正好 1.0 是允许的 —— 下限是闭区间(平价转售不亏,只是不赚)", () => {
-    withMargin("1", () => expect(ottoLlmMargin()).toBe(1.0));
+  // MONEY-A2:验收表点名的那个区间。旧地板 1.0 下 [1.0, 1.82) 是**一路绿灯**的
+  // ——钳位放行、开机检查放行、CI 毛利闸读的却是代码默认值,于是生产按 1.5 在卖而无人知晓。
+  // 现在同样的覆盖值在运行时被**收紧到 2.06**(这一条),并在开机时被点名(env-contract.test)。
+  it("MONEY-A2:费率覆盖设入 [1.0, 1.82) 区间不再静默 —— 运行时地板收紧到 2.06", () => {
+    for (const inRange of ["1.0", "1.2", "1.5", "1.81"]) {
+      withMargin(inRange, () => {
+        expect(ottoLlmMargin(), `OTTO_LLM_MARGIN=${inRange}`).toBe(2.06);
+        // 收紧的方向:实际生效的费率**高于**配置值,绝不低于。
+        expect(ottoLlmMargin()).toBeGreaterThan(Number(inRange));
+      });
+    }
   });
 
-  it("下限之上的合法覆盖照旧生效(守卫只拦亏本,不改行为)", () => {
+  it("正好 2.06 是允许的 —— 下限是闭区间(裁决值本身当然合法)", () => {
+    withMargin("2.06", () => expect(ottoLlmMargin()).toBe(2.06));
+  });
+
+  it("下限之上的合法覆盖照旧生效(守卫只拦调低,不拦调高)", () => {
     withMargin("2.5", () => expect(ottoLlmMargin()).toBe(2.5));
-    withMargin("1.82", () => expect(ottoLlmMargin()).toBe(1.82));
+    withMargin("3", () => expect(ottoLlmMargin()).toBe(3));
   });
 
   it("退回方向是 fail-closed:被拒时收得**更多**,不是更少", () => {

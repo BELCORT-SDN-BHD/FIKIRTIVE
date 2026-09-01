@@ -20,6 +20,7 @@
  * condition a generation on arbitrary bytes.
  */
 import { z } from "zod";
+import { costPinValue } from "./cost-pins.js";
 
 /** v1 model menu — one workhorse. The port, not this list, is the extension
  *  point; adding a model is a provider concern, not a contract change. */
@@ -43,8 +44,12 @@ export type RefGenMode = (typeof REFGEN_MODES)[number];
  * 来源 https://docs.byteplus.com/en/docs/ModelArk/Pricing(2026-08-05 核)。
  * 旧值 $0.04 是当初备用供应商的基数占位,高记约 14%;#644 改真。刻意与 `GEN_PRICE_USD_PER_IMAGE`
  * 保持**各自独立**的常量:两条链路将来可能换不同模型。
+ *
+ * 数值已收编 `cost-pins.ts`(成本的单一权威),此处只是命名出口。今天两条链路跑同一台
+ * 引擎、同一张账单基数,所以**两个常量消费同一条钉点**;将来任一条链路换成别的模型时,
+ * 在钉点表里给它另立一条钉点,这两个常量各取各的 —— 常量独立这条纪律不变。
  */
-export const REFGEN_PRICE_USD_PER_IMAGE = 0.035;
+export const REFGEN_PRICE_USD_PER_IMAGE = costPinValue("image:seedream-lite:per-image");
 
 /** What the web action accepts. Conditioning is derived server-side from the
  *  entity, so it is deliberately absent here (D19 trust boundary). */

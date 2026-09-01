@@ -20,7 +20,9 @@ import {
   refgenSpentUsd,
   type GenSpendInput,
 } from "./spend.js";
-import { GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
+import { GEN_MODELS, GEN_VIDEO_MODEL_OPTIONS, type GenModel, type GenVideoModel } from "./gen.js";
+import { REFGEN_MODELS, type RefGenModel } from "./refgen.js";
+import type { CostPinKey } from "./cost-pins.js";
 import { OTTO_CONVERSATION_TURN_MARGIN } from "./otto-budget.js";
 import { ottoLlmMargin } from "./llm-prices.js";
 import { SEARCH_MARGIN_MULTIPLIER } from "./pricing-config.js";
@@ -131,6 +133,11 @@ export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [
       "对话不是这个产品赚钱的地方,它是让商家不用省着用的入口;真正要守住 45% 的是生成。" +
       "注意这一条豁免的是**地板**,不是「收费 > 成本」—— 1.05 > 1,聊天仍然不许亏着卖," +
       "R1 规则照旧管着它。" +
+      "【2026-09-01 S2 口径注记】同一压力实收口径(面值 × 最深包折扣 × 实测手续费,汇率按钉点 4.5)下," +
+      "聊天 1.05× 实收为 −6.48%;按参考现汇 4.062917 则 +3.86%。「不许亏着卖」不变量维持**面值口径**" +
+      "评估(1.05 > 1 成立);压力实收为负是汇率钉点刻意保守缓冲的账面现象,不是现金已损" +
+      "(docs/specs/money-engine.md §7.0)。本注记只是把这个事实写明,不改费率 —— " +
+      "S1「不做」节禁止本规格重裁聊天费率,要重议走 §5 变更登记。" +
       "⚠️ 本行只建模聊天的 LLM 成本:聊天自己的搜索腿(researchWeb)至今零计价、不在本表内," +
       "所以这里的 4.76% 偏乐观,真实毛利率更低。缺口已知,另票跟进接同一套 3× 计价。",
     ruledOn: "2026-08-18",
@@ -198,8 +205,14 @@ type MarginSku = { id: string; label: string; charge: () => number; cogs: () => 
  *
  * 三行分别是:
  *   otto:chat            聊天一轮的 LLM 成本 × 1.05  → 4.76%,**跌破地板**,Founder 已裁接受(裁决 9)。
- *   otto:research:llm    深研的 LLM 成本 × ottoLlmMargin() → 默认 2.0 ⇒ 50%,清地板。
+ *   otto:research:llm    深研的 LLM 成本 × ottoLlmMargin() → 默认 **2.06 ⇒ 51.46%**,清地板。
  *   otto:research:search 深研的搜索成本 × 3.0        → 66.7%,清地板(裁决 9b 落地的 3× 判决)。
+ *
+ * **这张表的毛利率是面值口径**(商家账面),而宪法 5 的 45% 地板在 CI 闸那边按**最坏实收口径**
+ * 复判一次(面值 × 最坏包实收系数 0.8944,见 `pricing-config.ts` 的 `worstPackReceiptCoefficient`)。
+ * 两个口径的差是汇率钉点的保守缓冲,不是两份真相:深研 LLM 面值 51.46% / 实收 45.73%(本地卡带)
+ * / 45.16%(国际卡带,只备案不入闸)—— 2.06× 是 Founder 2026-09-01 为了**三条带全部清线**裁的费率
+ * (前值 2.0× 的实收是 44.10%,破线)。详见 docs/specs/money-engine.md §7.0。
  */
 export const USAGE_PRICED_SURFACES: readonly { id: string; label: string; multiplier: () => number }[] = [
   // ⚠️ 这一行只建模**聊天的 LLM 成本**。聊天自己那条搜索腿(researchWeb,
@@ -223,6 +236,54 @@ function usagePricedSkus(): MarginSku[] {
     label: s.label,
     charge: () => USAGE_PRICED_COGS_UNIT_USD * s.multiplier(),
     cogs: () => USAGE_PRICED_COGS_UNIT_USD,
+  }));
+}
+
+/**
+ * **图片 model → 成本钉点** 的结构映射(MONEY-A2 第三判定,规格 §7.2「图片 SKU 结构枚举」)。
+ *
+ * 类型写成 `Record<GenModel, CostPinKey>` 是这条围栏的**全部内容**:`GenModel` 是 `GEN_MODELS`
+ * 的完整联合,所以在图片菜单上架一个新 model 而不在这里给它配一条成本钉点,**编译期就红**——
+ * 不是 CI 红,不是运行时红,是根本编译不过。这正是要的东西:此前图片档在毛利表里是两行**手写
+ * 字面量**,加一个 model 只会让它安静地不出现在毛利表上,而视频档早在 #645 T4 就改成枚举了。
+ * 一个量了一半却看起来像量全了的闸,比没有闸更危险。
+ *
+ * 值是 `CostPinKey`(cost-pins.ts 的键联合),所以「配了钉点」也不能是随口写的字符串:
+ * 钉点表里没有的键同样编译不过(fail closed,cost-pins.ts 规矩 ②)。
+ */
+export const IMAGE_MODEL_COST_PIN: Record<GenModel, CostPinKey> = {
+  seedream: "image:seedream-lite:per-image",
+};
+
+/** 参考图 model → 成本钉点。同一条围栏,盯的是 `REFGEN_MODELS`(今天与图片同价同钉点)。 */
+export const REFGEN_MODEL_COST_PIN: Record<RefGenModel, CostPinKey> = {
+  seedream: "image:seedream-lite:per-image",
+};
+
+/**
+ * 现役可售图片档 = **从 `GEN_MODELS` 枚举**(MONEY-A2),镜像下面视频档的做法。
+ * 收费走 `pricedGenCredits`、成本走 `genSpentUsd` —— 与视频档逐字同源,这张表里
+ * 没有一个手抄的数字。
+ */
+function sellableImageSkus(): MarginSku[] {
+  return GEN_MODELS.map((model) => {
+    const job: GenSpendInput = { kind: "IMAGE", model, count: 1, videoOptions: null };
+    return {
+      id: `image:${model}`,
+      label: `图片 ${model} ×1`,
+      charge: () => pricedGenCredits(job) / CREDITS_PER_USD,
+      cogs: () => genSpentUsd(job),
+    };
+  });
+}
+
+/** 现役可售参考图档 = 从 `REFGEN_MODELS` 枚举。同上。 */
+function sellableRefgenSkus(): MarginSku[] {
+  return REFGEN_MODELS.map((model) => ({
+    id: `refgen:${model}`,
+    label: `参考图 ${model} ×1`,
+    charge: () => pricedRefgenCredits({ model, count: 1 }) / CREDITS_PER_USD,
+    cogs: () => refgenSpentUsd({ model, count: 1 }),
   }));
 }
 
@@ -256,7 +317,8 @@ function sellableVideoSkus(): MarginSku[] {
 }
 
 /**
- * 报表覆盖的档位。**现役可售的每一档都在这里**:图片、参考图,现役视频模型的
+ * 报表覆盖的档位。**现役可售的每一档都在这里**:图片、参考图(MONEY-A2 起同样**从
+ * `GEN_MODELS` / `REFGEN_MODELS` 枚举**,不再是两行手写字面量),现役视频模型的
  * 全部时长 × 分辨率(#645 T4 起 24 档),整段参考视频,以及(钱路 M1-c 起)三个
  * **按量计价的付费面** —— 聊天、深研 LLM、深研搜索。
  * (视频任务恒 count=1 —— gen-actions 强制。)
@@ -266,18 +328,8 @@ function sellableVideoSkus(): MarginSku[] {
  * 它本来声称的那个 —— **每一个收钱的面**。
  */
 export const MARGIN_TRUTH_SKUS: readonly MarginSku[] = [
-  {
-    id: "image:seedream",
-    label: "图片 ×1",
-    charge: () => pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null }) / CREDITS_PER_USD,
-    cogs: () => genSpentUsd({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null }),
-  },
-  {
-    id: "refgen:seedream",
-    label: "参考图 ×1",
-    charge: () => pricedRefgenCredits({ model: "seedream", count: 1 }) / CREDITS_PER_USD,
-    cogs: () => refgenSpentUsd({ model: "seedream", count: 1 }),
-  },
+  ...sellableImageSkus(),
+  ...sellableRefgenSkus(),
   ...sellableVideoSkus(),
   {
     id: "video:seedance-2-mini:ref",

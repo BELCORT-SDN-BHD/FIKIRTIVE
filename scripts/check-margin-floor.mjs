@@ -1,8 +1,22 @@
 #!/usr/bin/env node
 /**
- * 宪法 5 毛利地板 CI 闸 — every sellable gen SKU keeps (price − cost)/price ≥ 45%.
+ * 宪法 5 毛利 CI 闸 —— **双线**(MONEY-A2,Founder 2026-09-01,docs/specs/money-engine.md §7.2):
+ *
+ *   ① **65% 目标线**(生成侧 SKU,**面值口径**)—— 价就是照这条线算出来的
+ *      (`spend.ts` 的 `GEN_MARGIN_TARGET`),破线 = 供应商涨价了 = **等 Founder 重定价**。
+ *      停车展期只有一条路:进 `BELOW_FLOOR_PENDING_FOUNDER_RULING`(带登记与复核期),
+ *      到期自动转红。按量计价的三行(聊天 / 深研 LLM / 深研搜索)不吃这条线 —— 各有各的裁决费率。
+ *   ② **45% 宪法地板**(全部付费面,**最坏实收口径**)—— 面值 × 最坏包实收系数
+ *      (包折扣 × Stripe 手续费钉点 × 汇率钉点,由 core 现算,系数今天 0.8944)。
+ *      这条是**压力测试口径**(假设马币已贬到钉点 4.5),不是「正在亏钱」:按参考现汇复算,
+ *      同样的价目离地板还很远。破线的意思是「哪天真贬到这里就破了」,那正是要提前知道的事。
+ *      「不许亏着卖」(R1:收费 ≤ 成本恒红)仍按**面值**判,见 evaluateMarginFloor 的注释。
+ *
  * (B10 · MASTERPLAN P0 · money-safety. Constitution 5: docs/BLUEPRINT.md:64 +
  *  docs/research/GRILL-VERDICTS-2026-07-03.md:105.)
+ *
+ * 闸尾还跑两张**钉点表**:FX 汇率钉点(裁决 10)与成本钉点表(MONEY-A4)—— 同一套四要素声明,
+ * 同一套红黄分界(声明坏掉 = 红;复核到期 = 黄,不拦发布)。
  *
  * What it does (deterministic, no DB, no LLM, no network):
  *   - LIVE CHARGE side: imports the ACTUAL charge function from @fikirtive/core
@@ -38,7 +52,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Constitutional margin floor: (price − cost)/price ≥ 45%. */
+/** Constitutional margin floor: (price − cost)/price ≥ 45%.
+ *  **口径身份(MONEY-A2,2026-09-01):这条线按「最坏实收」量,不按面值量。** 见 main() 的
+ *  实收段落与 `worstPackReceiptCoefficient` 的注释 —— 它是压力测试口径,不是「正在亏钱」。 */
 export const MARGIN_FLOOR = 0.45;
 /** IEEE754 tolerance: pricing is allowed to sit EXACTLY on the 45.0% floor, and a tier
  *  that does lands one ulp under it in float. Under the #644 Founder ruling (2026-08-06)
@@ -170,13 +186,86 @@ export const COGS_INPUTS = {
  * PURE: given rows [{ id, label, chargeUsd, cogsUsd, cogsSource }], compute the
  * margin and pass/fail for each against `floor`. Returns { rows, ok }.
  * Exported for the red/green self-test in scripts/__tests__/check-margin-floor.test.mjs.
+ *
+ * `receiptCoefficient`(MONEY-A2,2026-09-01)= **实收系数**:商家账面付 $1,我们真收到多少
+ * 美元(包折扣 × Stripe 手续费 × 汇率钉点,由 @fikirtive/core 的 `worstPackReceiptCoefficient`
+ * 现算)。默认 1 = 面值口径,与本函数的历史行为逐字相同。
+ *
+ * **注意 `chargeUsd` 保持面值不动**,新增的 `receiptChargeUsd` 才是实收 —— 这不是洁癖:
+ * `evaluateFloorDecisions` 的 R1(「收费 ≤ 成本 = 恒红」)按**面值**判,是 §7.0 明写的口径
+ * (「不许亏着卖」不变量维持面值评估)。把实收塞进 chargeUsd 会让聊天 1.05×(实收 0.939 < 成本 1)
+ * 当场触发 R1,而 Founder 从没裁过那件事 —— 那会是闸自己造出来的假红。
  */
-export function evaluateMarginFloor(rows, floor = MARGIN_FLOOR) {
+export function evaluateMarginFloor(rows, floor = MARGIN_FLOOR, receiptCoefficient = 1) {
   const evaluated = rows.map((r) => {
-    const margin = (r.chargeUsd - r.cogsUsd) / r.chargeUsd;
-    return { ...r, margin, pass: margin >= floor - FLOOR_EPSILON };
+    const receiptChargeUsd = r.chargeUsd * receiptCoefficient;
+    const margin = (receiptChargeUsd - r.cogsUsd) / receiptChargeUsd;
+    return { ...r, receiptChargeUsd, margin, pass: margin >= floor - FLOOR_EPSILON };
   });
   return { rows: evaluated, ok: evaluated.every((r) => r.pass) };
+}
+
+/**
+ * PURE: **65% 目标线**(MONEY-A2,规格 §7.2「65% 目标线闸」;此前代码里没有任何 65% 机制)。
+ *
+ * 与 45% 地板的分工是**一句话**:65% 是定价照着算的**目标**(生成侧 SKU 的价就是
+ * `cogs / (1 − 0.65)` 向上取整来的,`spend.ts` 的 `GEN_MARGIN_TARGET`),45% 是宪法**地板**。
+ * 目标线破了不代表在亏钱,代表**价目该重定了** —— 所以判词逐字是「等 Founder 重定价」,
+ * 而不是「修一下代码」。定价是 B12/founder,闸只负责让它停下来问。
+ *
+ * 三件事故意与地板闸不同:
+ *   ① **只量生成侧**(`usagePriced` 的三行不吃这条线)。聊天 1.05×、深研 2.06×、搜索 3× 各有
+ *      各的 Founder 裁决,拿一条为「按张按秒的商品」定的目标线去判它们是张冠李戴。
+ *   ② **按面值口径**(§7.2 明写)。实收口径是地板那条线的事。
+ *   ③ **停车展期只降黄,不豁免**:必须在 `BELOW_FLOOR_PENDING_FOUNDER_RULING` 里带
+ *      reason / rulingRef / reviewBy,过期自动转红。
+ *
+ * ⚠️ **已知耦合(留给第一个真的要停车的人)**:这里复用的是地板闸那张待裁决名单。一个
+ * 「破 65% 但仍清 45%」的档位停进去,`evaluateFloorDecisions` 的 R3(「在名单上却已经清了
+ * 地板 → 红」)会同时响。今天名单是空的,所以这不是活着的冲突;真要停第一个的时候,该做的是
+ * 给名单加一个「停的是哪条线」的字段,而不是把 R3 放松 —— R3 防的是豁免烂在账上,不能动。
+ *
+ * `today` 注入,所以「到期」这条在自测里是可测的。
+ */
+export function evaluateTargetLine(rows, target, pending, today) {
+  const reds = [];
+  const parked = [];
+  const byTier = new Map((pending ?? []).filter((p) => typeof p?.tier === "string").map((p) => [p.tier, p]));
+
+  for (const r of rows) {
+    if (r.usagePriced) continue;
+    const faceMargin = (r.chargeUsd - r.cogsUsd) / r.chargeUsd;
+    if (faceMargin >= target - FLOOR_EPSILON) continue;
+
+    const head =
+      `${r.id}: 面值毛利 ${(faceMargin * 100).toFixed(2)}% 跌破 ${(target * 100).toFixed(0)}% 目标线` +
+      `(收费 $${r.chargeUsd.toFixed(4)} / 成本 $${r.cogsUsd.toFixed(4)})`;
+    const entry = byTier.get(r.id);
+    if (!entry) {
+      reds.push(`${head} —— 等 Founder 重定价(T1:不在待裁决名单上,没有停车展期)`);
+      continue;
+    }
+    const blank = ["reason", "rulingRef", "reviewBy"].find((f) => typeof entry[f] !== "string" || !entry[f].trim());
+    if (blank) {
+      reds.push(`${head},停车登记缺 "${blank}" —— 裸 id 是永久豁免不是展期。等 Founder 重定价(T2)`);
+      continue;
+    }
+    if (!ISO_DATE.test(entry.reviewBy)) {
+      reds.push(`${head},reviewBy "${entry.reviewBy}" 不是 YYYY-MM-DD。等 Founder 重定价(T2)`);
+      continue;
+    }
+    // 到期口径与 45% 地板的 R5 逐字同一(reviewBy < today:到期日当天仍绿,次日转红)——
+    // 同一张停车登记表,两条线对同一天不许给出两个答案(编排者裁定 2026-09-01)。
+    if (entry.reviewBy < today) {
+      reds.push(
+        `${head},**停车展期已到期**(reviewBy ${entry.reviewBy},今天 ${today})—— ` +
+          `等 Founder 重定价(T3)。Ref: ${entry.rulingRef}`,
+      );
+      continue;
+    }
+    parked.push({ ...r, faceMargin, entry });
+  }
+  return { reds, parked, ok: reds.length === 0 };
 }
 
 /** Cost sources agree to a tenth of a US cent — tighter than any real price move. */
@@ -332,24 +421,43 @@ export function evaluateFloorDecisions(rows, pending, today, accepted = []) {
 async function buildSellableSkus() {
   const spend = await import(pathToFileURL(path.join(root, "packages/core/dist/spend.js")).href);
   const gen = await import(pathToFileURL(path.join(root, "packages/core/dist/gen.js")).href);
+  const refgen = await import(pathToFileURL(path.join(root, "packages/core/dist/refgen.js")).href);
   const { pricedGenCredits, pricedRefgenCredits, CREDITS_PER_USD, FLAT_PRICED_VIDEO_MODELS } = spend;
-  const { GEN_VIDEO_MODEL_OPTIONS } = gen;
+  const { GEN_VIDEO_MODEL_OPTIONS, GEN_MODELS } = gen;
+  const { REFGEN_MODELS } = refgen;
   const toUsd = (internal) => internal / CREDITS_PER_USD;
 
   const skus = [];
   const missing = [];
-  const add = (id, label, chargeUsd) => {
+  const unpinned = [];
+  const add = (id, label, chargeUsd, usagePriced = false) => {
     const c = COGS_INPUTS[id];
     if (!c) {
       missing.push(id);
       return;
     }
-    skus.push({ id, label, chargeUsd, cogsUsd: c.cogsUsd, cogsSource: c.source });
+    skus.push({ id, label, chargeUsd, cogsUsd: c.cogsUsd, cogsSource: c.source, usagePriced });
   };
 
-  // Image + reference image (seedream, count = 1 displayed credit each).
-  add("image:seedream", "Image (seedream ×1)", toUsd(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })));
-  add("refgen:seedream", "Reference image (refgen ×1)", toUsd(pricedRefgenCredits({ model: "seedream", count: 1 })));
+  // ── MONEY-A2 图片 SKU 结构枚举 ─────────────────────────────────────────────
+  // 图片与参考图此前是这里的**两行手写字面量**,而视频档早在 #645 T4 就改成枚举了。
+  // 差别不是风格:手写清单里,图片菜单加一个 model 只会让那个 model 安静地不出现在毛利表上
+  // —— 一个可售却从没被量过的档,正是这个闸存在的理由。现在清单从 registry 来
+  // (`GEN_MODELS` / `REFGEN_MODELS`),成本钉点从 core 的结构映射来,两头都不许手抄。
+  //
+  // 「新增图片 model 而无对应成本钉点 = 闸红」有两道:core 那边是**编译期**红
+  // (`Record<GenModel, CostPinKey>` 少一格就编译不过),这边是**运行期**红 —— 因为 dist 有可能
+  // 是旧的,而闸不能因为读了一份旧构建就放行一个没成本的可售档。
+  const marginTruth = await import(pathToFileURL(path.join(root, "packages/core/dist/margin-truth.js")).href);
+  const { IMAGE_MODEL_COST_PIN = {}, REFGEN_MODEL_COST_PIN = {} } = marginTruth;
+  for (const model of GEN_MODELS) {
+    if (!IMAGE_MODEL_COST_PIN[model]) unpinned.push(`image:${model}`);
+    add(`image:${model}`, `Image (${model} ×1)`, toUsd(pricedGenCredits({ kind: "IMAGE", model, count: 1, videoOptions: null })));
+  }
+  for (const model of REFGEN_MODELS) {
+    if (!REFGEN_MODEL_COST_PIN[model]) unpinned.push(`refgen:${model}`);
+    add(`refgen:${model}`, `Reference image (${model} ×1)`, toUsd(pricedRefgenCredits({ model, count: 1 })));
+  }
 
   // Every flat-priced (margin-floored) video model × its REAL sellable
   // durations/resolutions, plus the whole-clip reference-video path (E1-06).
@@ -381,12 +489,11 @@ async function buildSellableSkus() {
   // NOT tiered — charge = this run's real provider cost × a multiplier — so the gate prices them
   // per $1 of provider cost, which is exactly how core models them. The multipliers come from
   // core (live constants), so re-pricing chat or search moves this gate on the next run.
-  const marginTruth = await import(pathToFileURL(path.join(root, "packages/core/dist/margin-truth.js")).href);
   for (const surface of marginTruth.USAGE_PRICED_SURFACES ?? []) {
-    add(surface.id, surface.label, marginTruth.USAGE_PRICED_COGS_UNIT_USD * surface.multiplier());
+    add(surface.id, surface.label, marginTruth.USAGE_PRICED_COGS_UNIT_USD * surface.multiplier(), true);
   }
 
-  return { skus, missing };
+  return { skus, missing, unpinned };
 }
 
 /**
@@ -402,36 +509,90 @@ export function reportFxPin(problems) {
   return { red, yellow, ok: red.length === 0 };
 }
 
+/**
+ * 成本钉点闸(MONEY-A4,规格 §7.1)。判词样式与红黄分界**逐字照抄** `reportFxPin`:
+ * 声明本身坏掉(缺来源 / 数值不是正有限数 / 日期烂了)= 红,退出码 1;
+ * 复核到期 = 黄,只提醒不拦 —— 复核供应商牌价是 Founder 的定价动作,不该把发布线钉死。
+ * 规则本体是 @fikirtive/core 的纯函数 `evaluateAllCostPins`,这里只负责打印与生死。
+ */
+export function reportCostPins(problems) {
+  const red = problems.filter((p) => p.level === "red");
+  const yellow = problems.filter((p) => p.level === "yellow");
+  for (const p of yellow) console.warn(`[margin-floor] 成本钉点 黄灯 — ${p.message}`);
+  for (const p of red) console.error(`[margin-floor] 成本钉点 红灯 — ${p.message}`);
+  return { red, yellow, ok: red.length === 0 };
+}
+
 function pct(x) {
   return `${(x * 100).toFixed(1)}%`;
 }
 
 async function main() {
-  const { skus, missing } = await buildSellableSkus();
-  const { rows } = evaluateMarginFloor(skus);
+  const { skus, missing, unpinned } = await buildSellableSkus();
   // @fikirtive/core owns BOTH the derived cost table (from the official token formula)
   // and the single pending-ruling registry — so the unit tests and this gate can never
   // disagree about which tiers are parked, and their two cost sources are pinned below.
   const { BELOW_FLOOR_PENDING_FOUNDER_RULING, BELOW_FLOOR_FOUNDER_ACCEPTED, marginTruthTable } = await import(
     pathToFileURL(path.join(root, "packages/core/dist/margin-truth.js")).href
   );
+  const { GEN_MARGIN_TARGET } = await import(pathToFileURL(path.join(root, "packages/core/dist/spend.js")).href);
+  const { CREDIT_PACKS, packReceiptCoefficient, worstPackReceiptCoefficient, FX_PIN, evaluateFxPin } = await import(
+    pathToFileURL(path.join(root, "packages/core/dist/pricing-config.js")).href
+  );
+
+  // ── 实收系数(MONEY-A2)──────────────────────────────────────────────────────
+  // 45% 宪法地板从**面值口径**改判**最坏实收口径**:商家账面付 $1,我们真收到多少美元。
+  // 系数由 core 现算(充值包表 × Stripe 手续费钉点 × 汇率钉点),这边一个数都不抄。
+  const worstCoeff = worstPackReceiptCoefficient();
+  const { rows } = evaluateMarginFloor(skus, MARGIN_FLOOR, worstCoeff);
+
   const today = new Date().toISOString().slice(0, 10);
   const parkedIds = new Set((BELOW_FLOOR_PENDING_FOUNDER_RULING ?? []).map((p) => p?.tier));
   const acceptedIds = new Set((BELOW_FLOOR_FOUNDER_ACCEPTED ?? []).map((e) => e?.tier));
 
-  console.log(`[margin-floor] 宪法 5 floor = ${pct(MARGIN_FLOOR)} · formula = (price − cost) / price`);
+  console.log(
+    `[margin-floor] 双线闸 · 目标线 ${pct(GEN_MARGIN_TARGET)}(生成侧,面值口径) · ` +
+      `宪法 5 地板 ${pct(MARGIN_FLOOR)}(全部付费面,最坏实收口径)`,
+  );
+  // 实收系数逐包打印:三个数是**算出来的**,印出来是为了让「最坏包是哪个」永远不靠记忆。
+  console.log(
+    `[margin-floor] 实收系数 · ${CREDIT_PACKS.map((p) => `${p.name.split(" ")[0]} ${packReceiptCoefficient(p).toFixed(4)}`).join(" · ")}` +
+      ` → 最坏 ${worstCoeff.toFixed(4)}(面值 × 包折扣 × Stripe 手续费 × 汇率钉点 ${FX_PIN.myrPerUsd})`,
+  );
+  // ⚠️ 口径身份(§7.0,写在这里免得后人误读):**45% 实收地板是压力测试口径** —— 系数里的
+  // 汇率用的是钉点 4.5,也就是假设马币**已经贬到那里**;2026-08-18 的参考现汇是 4.062917,
+  // 钉点比它高 10.76% 是刻意的保守缓冲。按参考现汇复算,研究档 2.06× 的实收是 51.00%,
+  // 离地板还很远。所以「压力口径破线 ≠ 正在亏钱」—— 缓冲存在的意义就是「哪天真贬到这里,
+  // 我们仍然没破线」。把这句话删掉,下一个人看到 45.7% 会以为公司在流血。
+  console.log(
+    "[margin-floor] 口径身份:实收地板是**压力测试口径**(假设马币已贬至钉点 4.5)—— " +
+      `按参考现汇 ${FX_PIN.reference.rate} 复算研究档 2.06× 实收 51.00%,不破线;压力口径破线≠正在亏钱。`,
+  );
   for (const r of rows) {
     // RULED = below the floor with the founder's explicit acceptance on record. It is printed
     // as its own word, never as "OK" — an accepted exemption must stay visible every run.
     const flag = r.pass ? "OK " : acceptedIds.has(r.id) ? "RULED" : parkedIds.has(r.id) ? "PENDING" : "RED";
+    const faceMargin = (r.chargeUsd - r.cogsUsd) / r.chargeUsd;
     console.log(
-      `[margin-floor] ${flag.padEnd(7)} ${r.label.padEnd(34)} charge $${r.chargeUsd.toFixed(3)}  cost $${r.cogsUsd.toFixed(3)}  margin ${pct(r.margin)}`,
+      `[margin-floor] ${flag.padEnd(7)} ${r.label.padEnd(34)} charge $${r.chargeUsd.toFixed(3)}  cost $${r.cogsUsd.toFixed(3)}` +
+        `  面值 ${pct(faceMargin)}  实收 ${pct(r.margin)}`,
     );
   }
 
   if (missing.length) {
     console.error(`[margin-floor] MISSING costing input for sellable SKU(s): ${missing.join(", ")}`);
     console.error("[margin-floor] add the provider COGS (with a primary-source citation) to COGS_INPUTS — a sellable combo must never ship without a certified cost.");
+    process.exit(1);
+  }
+
+  // MONEY-A2 第三判定:可售的图片档必须有对应的成本钉点。core 那边是编译期红,这边是运行期红
+  // —— 两道都要,因为 dist 有可能是旧构建,而闸不能因为读了一份旧构建就放行一个没成本的可售档。
+  if (unpinned.length) {
+    console.error(`[margin-floor] 可售图片档没有对应成本钉点: ${unpinned.join(", ")}`);
+    console.error(
+      "[margin-floor] 在 @fikirtive/core 的 IMAGE_MODEL_COST_PIN / REFGEN_MODEL_COST_PIN 里给它配一条 cost-pins 的键 —— " +
+        "一个说不清成本的 model 不许上架(fail closed,cost-pins.ts 规矩 ②)。",
+    );
     process.exit(1);
   }
 
@@ -483,13 +644,45 @@ async function main() {
     console.warn("[margin-floor] Accepted ≠ invisible: they are printed every run so the exemption can never fade into the background.");
   }
   const clear = rows.length - parked.length - accepted.length;
-  console.log(`[margin-floor] ${clear}/${rows.length} sellable SKU(s) clear the ${pct(MARGIN_FLOOR)} floor (${accepted.length} below it by founder ruling).`);
+  console.log(
+    `[margin-floor] ${clear}/${rows.length} sellable SKU(s) clear the ${pct(MARGIN_FLOOR)} floor ` +
+      `(最坏实收口径,系数 ${worstCoeff.toFixed(4)};${accepted.length} below it by founder ruling).`,
+  );
+
+  // ── 65% 目标线(MONEY-A2,规格 §7.2)──────────────────────────────────────────
+  // 生成侧 SKU 的价就是 `cogs / (1 − 65%)` 向上取整来的(spend.ts 的 GEN_MARGIN_TARGET),
+  // 所以跌破 65% 只有一个意思:**供应商涨价了,价目该重定了**。它不是「代码坏了」,
+  // 判词因此逐字写「等 Founder 重定价」。按量计价的三行不吃这条线(各有各的裁决费率)。
+  //
+  // ⚠️ 图 / 参考图两档今天**恰好压在 65.0000% 上,进位余量 $0.00**($0.035 ÷ 0.35 = $0.10 = 1 显示
+  // credit,一分不多)。这是**设计意图,不是 bug**:供应商图价任何上涨都会当场把这条闸打红
+  // ——那正是我们想要的行为(等 Founder 重定价),而不是让毛利安静地滑到 64%、63%……
+  // 不要为了「留点余量」把这条线调低,也不要给图片档加豁免:余量为零是这一档的报警器。
+  const genRows = rows.filter((r) => !r.usagePriced);
+  const target = evaluateTargetLine(rows, GEN_MARGIN_TARGET, BELOW_FLOOR_PENDING_FOUNDER_RULING, today);
+  if (target.parked.length) {
+    console.warn(`[margin-floor] ${target.parked.length} 个生成侧 SKU 跌破 ${pct(GEN_MARGIN_TARGET)} 目标线,停车展期中(黄灯):`);
+    for (const r of target.parked) {
+      console.warn(`[margin-floor]   ${r.id}: 面值毛利 ${pct(r.faceMargin)} — cost basis: ${r.cogsSource}`);
+      console.warn(`[margin-floor]     why: ${r.entry.reason}`);
+      console.warn(`[margin-floor]     ruling: ${r.entry.rulingRef} · 复核期 ${r.entry.reviewBy}(到期次日转红,与地板闸 R5 同口径)`);
+    }
+  }
+  if (!target.ok) {
+    console.error(`[margin-floor] ${target.reds.length} 个生成侧 SKU 跌破 ${pct(GEN_MARGIN_TARGET)} 目标线:`);
+    for (const f of target.reds) console.error(`[margin-floor]   ${f}`);
+    console.error("[margin-floor] 目标线破线 = 价目该重定了(定价是 B12/founder)。不要改 COGS_INPUTS、也不要调低目标线来把闸弄绿 —— 等 Founder 重定价。");
+    process.exit(1);
+  }
+  console.log(
+    `[margin-floor] ${genRows.length - target.parked.length}/${genRows.length} 个生成侧 SKU 清 ${pct(GEN_MARGIN_TARGET)} 目标线(面值口径)。` +
+      "图 / 参考图恰好压在 65.0000%(进位余量 $0.00)= 设计意图:供应商图价一涨即闸红,等 Founder 重定价。",
+  );
 
   // ── FX 钉点(Founder 2026-08-18 裁决 10)────────────────────────────────────────
   // 毛利地板算的是 USD;商家付的是 MYR。中间那个换算此前只活在 2026-06 的设计文档里
   // (写 4.7,已过时),代码一个字都不知道 —— 于是汇率漂移可以一直吃毛利而没有任何东西会响。
   // 现在它是 @fikirtive/core 的一条带闹钟的声明,和上面的毛利地板跑在同一个闸里。
-  const { FX_PIN, evaluateFxPin } = await import(pathToFileURL(path.join(root, "packages/core/dist/pricing-config.js")).href);
   console.log(
     `[margin-floor] FX 钉点 1 USD = ${FX_PIN.myrPerUsd} MYR · 参考现汇 ${FX_PIN.reference.rate}` +
       `(${FX_PIN.reference.observedOn}) · 下次复核 ${FX_PIN.nextReviewDate}`,
@@ -497,6 +690,17 @@ async function main() {
   const fx = reportFxPin(evaluateFxPin(FX_PIN, today));
   if (!fx.ok) {
     console.error("[margin-floor] FX 钉点是定价决定(B12/founder)。不要为了把闸弄绿而改钉点 —— 报到控制面。");
+    process.exit(1);
+  }
+
+  // ── 成本钉点表(MONEY-A4,规格 §7.1)──────────────────────────────────────────
+  // 汇率钉点管「收到的钱值多少」,成本钉点管「付出去的钱是多少」——同一套四要素声明,
+  // 同一套红黄分界,所以它们在同一个闸里跑完最后一段。
+  const { COST_PINS, evaluateAllCostPins } = await import(pathToFileURL(path.join(root, "packages/core/dist/cost-pins.js")).href);
+  console.log(`[margin-floor] 成本钉点表 ${Object.keys(COST_PINS).length} 条 · 复核闹钟与 FX 钉点同日`);
+  const pins = reportCostPins(evaluateAllCostPins(today));
+  if (!pins.ok) {
+    console.error("[margin-floor] 成本钉点坏了就没有推导价可言(没出处的成本不是证据)。修钉点本身 —— 不要为了把闸弄绿而改数值。");
     process.exit(1);
   }
 }

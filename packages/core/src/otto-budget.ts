@@ -27,7 +27,9 @@ export const OTTO_MAX_STEPS = 10;
  * question stays nearly free without us pricing it as if it might not be.
  *
  * WHY 1.05 AND NOT THE 2.0 GENERATION MARKUP. Conversation is not where this product earns —
- * generation is (OTTO_LLM_MARGIN_DEFAULT in llm-prices.ts, unchanged at 2.0). The 5% is cost
+ * generation is (OTTO_LLM_MARGIN_DEFAULT in llm-prices.ts, unchanged at 2.0). (2026-08-18 裁决时
+ * 生成档为 2.0×;2026-09-01 起生成/研究档已升 2.06×,权威见 llm-prices.ts —— 上面这句 2.0 是
+ * 当时的历史语境,保留原样,这条 1.05 的理由不受影响。) The 5% is cost
  * RECOVERY with a thin margin on top, so talking to Otto stays cheap enough that nobody rations
  * it, while no conversation can be sold below what it costs us to serve.
  *

@@ -32,6 +32,6 @@ export function assertWebEnv(env: Env = process.env): void {
     return;
   }
   console.error(decision.report);
-  console.error("[env-contract] refusing to serve with an incomplete production environment. Set FIKIRTIVE_ENV_CONTRACT=warn to start anyway.");
+  console.error("[env-contract] refusing to serve with an incomplete production environment. Set FIKIRTIVE_ENV_CONTRACT=warn to start anyway (money-invariant violations stay fatal — see the ⚠️ lines above).");
   process.exit(1);
 }

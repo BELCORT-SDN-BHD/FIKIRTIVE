@@ -307,7 +307,9 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     // The number the cap is capping, at the CHAT price…
     expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS)).toBe(70);
     // …and at the generation markup, which this turn deliberately does NOT use.
-    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), OTTO_MAX_STEPS)).toBe(120);
+    // 130 = 2.06× 的生成侧费率(Founder 2026-09-01 研究档裁决;2.0× 时代这里是 120)。
+    // 这个数**跟着裁决走**是对的 —— 它就是「聊天档若共用生成费率会持有多少」的锚。
+    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), OTTO_MAX_STEPS)).toBe(130);
   });
 
   it("#543: the conversation turn carries the 40-internal hold cap", () => {

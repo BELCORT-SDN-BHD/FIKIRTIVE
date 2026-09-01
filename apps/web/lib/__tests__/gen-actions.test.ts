@@ -282,7 +282,7 @@ describe("startGen", () => {
     });
   });
 
-  it("binds a persisted GEN_CARD's exact displayed quote before create + reserve", async () => {
+  it("binds a persisted GEN_CARD's exact displayed quote before create + reserve [MONEY-A11]", async () => {
     const result = await startCoworkGen({
       projectId: "p1",
       threadId: "thread-1",
@@ -320,7 +320,7 @@ describe("startGen", () => {
   it.each([
     { approved: 2, count: 1, current: 1 },
     { approved: 1, count: 2, current: 2 },
-  ])("refuses a fresh GEN_CARD when its approved quote changed from $approved to $current", async ({ approved, count, current }) => {
+  ])("refuses a fresh GEN_CARD when its approved quote changed from $approved to $current [MONEY-A11]", async ({ approved, count, current }) => {
     db.chatMessageFindFirst.mockResolvedValueOnce({
       threadId: "thread-1",
       payload: { estimatedCredits: approved },
@@ -447,7 +447,7 @@ describe("startGen", () => {
     expect(db.reserveCredits).not.toHaveBeenCalled();
   });
 
-  it("fails before create or reserve when the displayed Canvas quote is stale", async () => {
+  it("fails before create or reserve when the displayed Canvas quote is stale [MONEY-A11]", async () => {
     const result = await startCanvasGen({
       actionId: "action-stale-quote",
       expectedCredits: 2,
@@ -473,7 +473,7 @@ describe("startGen", () => {
   // 很久的面板 —— 价格在这期间改了,商家就是「按旧价签字、按新价扣款」。Canvas / Otto /
   // Campaign 三条路都有价格重核,唯独这条没有。这里用**同一套** expectedCredits 绑定补上:
   // 面板把屏幕上那个价随请求带上,服务端算出来不符就拒,一分钱不动。
-  describe("#645 T4:资产详情入口的价格绑定(与 Canvas/Otto 同一套机制)", () => {
+  describe("#645 T4:资产详情入口的价格绑定(与 Canvas/Otto 同一套机制)[MONEY-A11]", () => {
     const assetRequest = (over: Record<string, unknown> = {}) => ({
       expectedCredits: 1,
       assetOp: "regen",
@@ -522,7 +522,7 @@ describe("startGen", () => {
       expect(db.reserveCredits).not.toHaveBeenCalled();
     });
 
-    it("不带 expectedCredits 一律出界 —— 这条路不许绕过绑定", async () => {
+    it("不带 expectedCredits 一律出界 —— 这条路不许绕过绑定 [MONEY-A11]", async () => {
       for (const bad of [{}, { expectedCredits: "1" }, { expectedCredits: -1 }, { expectedCredits: Number.NaN }]) {
         const result = await startAssetGen({ ...assetRequest(), ...bad, expectedCredits: (bad as Record<string, unknown>).expectedCredits });
         expect(result).toEqual({ error: "That generation request is out of bounds." });
@@ -1706,7 +1706,7 @@ describe("generation read boundaries", () => {
     expect(serialized).not.toMatch(SECRET_TERMS);
   });
 
-  it("#645 T4:按档价目表 = 收费函数本人算的 —— 卡面报价与预扣额不可能分家", async () => {
+  it("#645 T4:按档价目表 = 收费函数本人算的 —— 卡面报价与预扣额不可能分家 [MONEY-A11]", async () => {
     const { pricedGenCredits, displayCredits, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel } =
       await import("@fikirtive/core");
     const models = await getActiveGenModels();

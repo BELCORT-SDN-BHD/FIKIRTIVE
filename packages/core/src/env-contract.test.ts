@@ -434,21 +434,30 @@ describe("OTTO_LLM_MARGIN 下限守卫(钱路审计 P1)", () => {
         const margin = problems.find((p) => p.name === "OTTO_LLM_MARGIN");
         expect(margin, `production=${production} 下必须报错`).toBeTruthy();
         expect(margin?.kind).toBe("invalid");
-        expect(margin?.message).toContain("1");
+        expect(margin?.message).toContain("2.06");
         // 报错要说清楚为什么,否则没法照着修。
-        expect(margin?.message).toMatch(/below the provider|sell at a loss|less than the provider/i);
+        expect(margin?.message).toMatch(/below the provider|sell at a loss|less than the provider|under the floor/i);
       }
     });
 
-    it(`1.0 / 2.0 / 2.5 = GREEN —— 守卫只拦亏本,不拦定价 (${surface})`, () => {
-      for (const ok of ["1", "1.0", "2", "2.5", "10"]) {
+    it(`2.06 / 2.5 / 10 = GREEN —— 守卫只拦调低,不拦调高 (${surface})`, () => {
+      for (const ok of ["2.06", "2.5", "10"]) {
         const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, OTTO_LLM_MARGIN: ok }, { surface, production: true });
         expect(problems.filter((p) => p.name === "OTTO_LLM_MARGIN"), `OTTO_LLM_MARGIN=${ok}`).toEqual([]);
       }
     });
+
+    // MONEY-A2:验收表点名的 [1.0, 1.82) 区间。这些值在旧下限 1.0 下**全是绿的**,
+    // 而 CI 毛利闸读的是代码默认值 —— 生产按 1.5 在卖,没有任何一处会响。
+    it(`[1.0, 1.82) 区间的费率覆盖现在一律 RED —— #1047 生产值盲区 (${surface})`, () => {
+      for (const bad of ["1", "1.0", "1.5", "1.81", "2", "2.05"]) {
+        const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, OTTO_LLM_MARGIN: bad }, { surface, production: true });
+        expect(problems.filter((p) => p.name === "OTTO_LLM_MARGIN"), `OTTO_LLM_MARGIN=${bad}`).toHaveLength(1);
+      }
+    });
   }
 
-  it("不设(用默认 2.0)照旧 GREEN —— 这是个可选变量", () => {
+  it("不设(用默认 2.06)照旧 GREEN —— 这是个可选变量", () => {
     const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE }, { surface: "web", production: true });
     expect(problems.filter((p) => p.name === "OTTO_LLM_MARGIN")).toEqual([]);
   });
@@ -459,6 +468,49 @@ describe("OTTO_LLM_MARGIN 下限守卫(钱路审计 P1)", () => {
       { surface: "worker", production: true },
     );
     expect(decision.action).toBe("exit");
+  });
+});
+
+/**
+ * MONEY-A2 —— **钱路不变量对 warn 免疫**(Founder 2026-09-01,money-engine.md §7.2)。
+ *
+ * 逃生门 `FIKIRTIVE_ENV_CONTRACT=warn` 是给**可用性**开的:半夜缺一条监控 DSN 不该把发布线
+ * 钉死。问题是它一刀切 —— 打开之后,「看不见错误」和「每一笔研究都在破地板卖」被当成同一件
+ * 事降级。这三条把新的分界钉死:钱路问题在生产照旧 exit,普通问题照旧被降级,dev 一律 warn。
+ */
+describe("钱路不变量对 FIKIRTIVE_ENV_CONTRACT=warn 免疫(MONEY-A2)", () => {
+  const prodWarn = { NODE_ENV: "production", ...CORE, ...REMOTE_STORAGE, FIKIRTIVE_ENV_CONTRACT: "warn" };
+
+  it("MONEY-A2:生产 + warn + OTTO_LLM_MARGIN=1.5 → 照旧 exit(warn 模式下毛利违规照红)", () => {
+    const d = bootEnvDecision({ ...prodWarn, OTTO_LLM_MARGIN: "1.5" }, { surface: "worker", production: true });
+    expect(d.action).toBe("exit");
+    expect(d.action === "exit" && d.report).toContain("OTTO_LLM_MARGIN");
+    // 判词必须说清楚「逃生门救不了它」,否则运维只会以为逃生门坏了。
+    expect(d.action === "exit" && d.report).toContain("钱路不变量");
+  });
+
+  it("生产 + warn + 普通问题(缺 SENTRY_DSN)→ 仍然 warn,逃生门没有被顺手关掉", () => {
+    const { SENTRY_DSN: _dropped, ...noDsn } = CORE;
+    const d = bootEnvDecision(
+      { NODE_ENV: "production", ...noDsn, ...REMOTE_STORAGE, FIKIRTIVE_ENV_CONTRACT: "warn" },
+      { surface: "worker", production: true },
+    );
+    expect(d.action).toBe("warn");
+  });
+
+  it("非生产 + 同样的钱路问题 → 只 warn(dev 不砖:开发机上配错费率不花任何人的钱)", () => {
+    const d = bootEnvDecision({ OTTO_LLM_MARGIN: "1.5" }, { surface: "worker", production: false });
+    expect(d.action).toBe("warn");
+    expect(d.action === "warn" && d.report).toContain("OTTO_LLM_MARGIN");
+  });
+
+  it("免疫名单是**具名**的,不是「所有带 minimum 的变量」—— 今天只有 OTTO_LLM_MARGIN", () => {
+    const flagged = ENV_CONTRACT.filter((s) => s.moneyInvariant).map((s) => s.name);
+    expect(flagged).toEqual(["OTTO_LLM_MARGIN"]);
+    // 打了标记就必须有理由可说(minimum/productionValues 至少一样),否则标记会退化成装饰。
+    for (const spec of ENV_CONTRACT.filter((s) => s.moneyInvariant)) {
+      expect(typeof spec.minimum === "number" || Boolean(spec.productionValues), `${spec.name}`).toBe(true);
+    }
   });
 });
 

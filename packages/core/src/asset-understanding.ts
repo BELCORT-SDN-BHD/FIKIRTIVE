@@ -30,6 +30,7 @@
  * 是一道假闸(字节推不出像素),而放行则是没有闸 —— 两者都在 r2 上被实证破掉了 1%。
  */
 
+import { costPinValue } from "./cost-pins.js";
 import { SEEDANCE_COGS_USD_PER_SECOND, GEN_VIDEO_SECONDS } from "./gen.js";
 
 type Env = Record<string, string | undefined>;
@@ -65,9 +66,10 @@ export const UNDERSTANDING_MODEL = "understand-mini";
 
 // ── 单价与 token 上限(成本敏感,全部集中在此)────────────────────────────────
 
-/** 理解模型牌价(USD / 1M token,票面给定)。 */
-export const UNDERSTANDING_USD_PER_MTOKEN_IN = 0.1;
-export const UNDERSTANDING_USD_PER_MTOKEN_OUT = 0.4;
+/** 理解模型牌价(USD / 1M token,票面给定)。
+ *  数值已收编 `cost-pins.ts`(成本的单一权威),这两行只是命名出口 —— 改价改钉点。 */
+export const UNDERSTANDING_USD_PER_MTOKEN_IN = costPinValue("understanding:in-per-mtoken");
+export const UNDERSTANDING_USD_PER_MTOKEN_OUT = costPinValue("understanding:out-per-mtoken");
 
 /**
  * 视频理解的采样口径 —— **这一组数字是「视频 token 上限」能成立的全部原因**。
