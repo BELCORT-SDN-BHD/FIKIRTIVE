@@ -143,6 +143,8 @@ export const UNDERSTAND_REDISPATCH_MIN_AGE_MS = 10 * 60_000;
  * 判据换成 `updatedAt`:被拨回 QUEUED 那一刻行就被 touch 过,静置 60 秒(远长于一次正常
  * 投递→消费的往返)还没人动它,就补投一次。重复投递无害 —— QUEUED→RUNNING 的 CAS 让第二条
  * 消息空转,连供应商都不打;而每轮至多 UNDERSTAND_SCAN_BATCH 条,噪声有界。
+ * 诚实口径(判官 2026-09-01 复核):扫描器本身 60 秒一轮,唤醒若恰好错过上一轮,下一轮
+ * 静置还不满 60 秒 —— 最坏要到再下一轮才命中,≈两个扫描周期(~120 秒),不是字面 60 秒。
  */
 export const UNDERSTAND_REQUEUE_MIN_IDLE_MS = 60_000;
 
@@ -1185,6 +1187,9 @@ export async function handleUnderstand(
       let saved = 0;
       const summaryOf = (n: number) =>
         n > 0 ? `Read ${n} item${n === 1 ? "" : "s"} from this menu.` : "No readable items on this page.";
+      // 显式 timeout(判官 2026-09-01 复核 P1):40 项菜单 × 每项一查一写 ≈ 80 次往返,
+      // Prisma 交互事务默认 5s 在生产延迟下可能超时 → 整批回滚 → 重投再打一次供应商。
+      // 30s 给足余量;真超时仍是 fail closed(settle 同滚,商家零扣费)。
       await prisma.$transaction(async (tx) => {
         saved = 0; // 事务重试时从零数起 —— 半个上一轮的计数写进 summary 就是一句假话
         for (const product of doc.products) {
@@ -1195,7 +1200,7 @@ export async function handleUnderstand(
           where: { id: row.id, ownerId: row.ownerId },
           data: { status: "DONE", summary: summaryOf(saved), data: { ...doc, saved } as never, error: null, ...tokens },
         });
-      });
+      }, { timeout: 30_000 });
       console.log(`[understand] ${row.id}: doc-extract saved ${saved}/${doc.products.length} product row(s)`);
       return null;
     }

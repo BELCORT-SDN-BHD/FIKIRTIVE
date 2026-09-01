@@ -457,7 +457,8 @@ async function main(): Promise<void> {
       `[worker] asset understanding — platform budget $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
         `(${assetUnderstandingEnabled(process.env) ? "switch ON" : "switch OFF — paused, nothing is discarded"}). ` +
         `Over budget or switched off, files stay queued and are read the next day. ` +
-        `Merchants are never charged for this.`,
+        `This budget is the PLATFORM's provider-spend fuse; merchants are billed separately per ` +
+        `understood file at the price locked on upload (MONEY-A9).`,
     );
     // The interval is installed either way: the switch is re-read on EVERY scan, so flipping it
     // off pauses the reading instead of destroying whatever arrives while it is off.

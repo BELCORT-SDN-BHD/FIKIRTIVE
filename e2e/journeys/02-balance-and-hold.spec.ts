@@ -32,7 +32,8 @@ test("An open hold leaves the balance smaller and says so, instead of just going
 
   // The same in-flight job, in the history, labelled as a hold rather than as a final charge.
   const history = spendHistory(page);
-  await expect(history.getByText("Video")).toBeVisible();
+  // exact: getByText 字符串匹配是大小写不敏感子串,防止散文里的小写 "video" 撞词;钉的是类目标签。
+  await expect(history.getByText("Video", { exact: true })).toBeVisible();
   await expect(
     history.getByText("On hold — the final cost is charged when this finishes"),
   ).toBeVisible();
