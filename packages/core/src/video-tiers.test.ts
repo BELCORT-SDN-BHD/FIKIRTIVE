@@ -21,7 +21,7 @@ import {
   VIDEO_ASPECT_ADAPTIVE,
   type GenVideoModel,
 } from "./gen.js";
-import { pricedGenCredits, genSpentUsd, INTERNAL_PER_DISPLAY, CREDITS_PER_USD, VIDEO_CREDITS_BY_RESOLUTION, REFERENCE_VIDEO_CREDITS, SEEDANCE_DISPLAY_CREDITS_PER_10S, seedanceDisplayCredits } from "./spend.js";
+import { pricedGenCredits, genSpentUsd, INTERNAL_PER_DISPLAY, CREDITS_PER_USD, videoGuardrailInternal, REFERENCE_VIDEO_CREDITS, SEEDANCE_DISPLAY_CREDITS_PER_10S, seedanceDisplayCredits } from "./spend.js";
 import { MARGIN_FLOOR, marginTruthTable, acceptedExceptionFor, BELOW_FLOOR_FOUNDER_ACCEPTED } from "./margin-truth.js";
 import { OTTO_CONVERSATION_TURN_MARGIN } from "./otto-budget.js";
 
@@ -50,6 +50,17 @@ const videoJob = (seconds: number, resolution: string) => ({
   count: 1,
   videoOptions: { seconds, resolution, audio: true },
 });
+
+/** MONEY-A3 护栏价的**独立手抄复算**(与 FOUNDER_PRICE_TABLE 同一个用法:测试这一侧手抄,
+ *  生产那一侧推导,两边对不上就当场变红)。规矩三条:费率取这一档自己的每 10 秒价、
+ *  分辨率不认识取全表最贵档(110)、秒数畸形按最长可售档(15 秒)计。 */
+const GUARDRAIL_RATE_PER_10S: Record<string, number> = { "480p": 11, "720p": 22, "1080p": 110 };
+const guardrail = (seconds: unknown, resolution: string) => {
+  const rate = GUARDRAIL_RATE_PER_10S[resolution] ?? 110;
+  const billed =
+    typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : 15;
+  return Math.ceil((billed * rate) / 10 - 1e-9) * INTERNAL_PER_DISPLAY;
+};
 
 // ── 1. 档位表:卖什么 ────────────────────────────────────────────────────────
 describe("#645 T4 档位表(引擎真能给的每一档,一格不多一格不少)", () => {
@@ -142,31 +153,41 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
     }
   });
 
-  it("FAIL CLOSED:畸形秒数(0 / 负数 / NaN)落到 16cr 护栏,绝不算成免费", () => {
+  it("FAIL CLOSED(MONEY-A3):畸形秒数(0 / 负数 / NaN)按**最长可售档**收护栏价,绝不算成免费", () => {
     // 这些只可能来自畸形或历史 videoOptions JSON 行。按秒公式对 0 会算出 0 credits ——
     // 那就是一条**免费**的付费任务;宁可收护栏价,也不贱卖(方向与 #645 之前一致)。
+    // MONEY-A3 只改了「收多少」:旧写法一律 16cr,现在按这一档自己的费率 × 15 秒
+    // (720p ⇒ 33cr、480p ⇒ 17cr)—— 畸形不知道是几秒,就按最贵的时长算。
     for (const seconds of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(seedanceDisplayCredits(MODEL, "720p", seconds), `seconds=${seconds}`).toBeNull();
       expect(pricedGenCredits(videoJob(seconds, "720p")), `seconds=${seconds}`)
-        .toBe(16 * INTERNAL_PER_DISPLAY);
+        .toBe(guardrail(seconds, "720p"));
+      expect(pricedGenCredits(videoJob(seconds, "480p")), `480p seconds=${seconds}`)
+        .toBe(guardrail(seconds, "480p"));
     }
+    expect(guardrail(0, "720p")).toBe(330);   // 15 × 2.2cr/秒
+    expect(guardrail(0, "480p")).toBe(170);   // 15 × 1.1cr/秒 ⇒ ceil(16.5)
     // 正常档位不受影响。
     expect(seedanceDisplayCredits(MODEL, "720p", 5)).toBe(11);
     expect(seedanceDisplayCredits(MODEL, "480p", 5)).toBe(6);
   });
 
-  it("FAIL CLOSED(判官 r1 P0-1):**正的非整数**秒同样落 16cr 护栏,绝不 round", () => {
+  it("FAIL CLOSED(判官 r1 P0-1 / MONEY-A3):**正的非整数**秒同样落护栏,绝不 round", () => {
     // 价格只定义在 Founder 裁过的**整数**格上。格外的秒数一律护栏 —— round 等于替
     // Founder 发明价格:0.4s 会 round 成 0 ⇒ 0cr(reserveCredits 对 cost<=0 直接跳过,
     // 也就是**免费出片**);4.4s 会 round 成 4 ⇒ 9cr,一个从没被裁过的价。
+    // MONEY-A3:护栏这一侧对正的非整数秒**向上**取整(4.4s 按 5s 收),方向仍然是「宁可贵」。
     for (const seconds of [0.4, 4.4, 14.999, 5.5, 0.999]) {
       expect(seedanceDisplayCredits(MODEL, "720p", seconds), `720p ${seconds}s`).toBeNull();
       expect(seedanceDisplayCredits(MODEL, "480p", seconds), `480p ${seconds}s`).toBeNull();
       expect(pricedGenCredits(videoJob(seconds, "720p")), `720p ${seconds}s`)
-        .toBe(16 * INTERNAL_PER_DISPLAY);
+        .toBe(guardrail(seconds, "720p"));
       expect(pricedGenCredits(videoJob(seconds, "480p")), `480p ${seconds}s`)
-        .toBe(16 * INTERNAL_PER_DISPLAY);
+        .toBe(guardrail(seconds, "480p"));
+      expect(pricedGenCredits(videoJob(seconds, "720p")), `720p ${seconds}s 绝不免费`).toBeGreaterThan(0);
     }
+    expect(guardrail(4.4, "720p")).toBe(110); // ceil(4.4)=5 秒 × 2.2cr
+    expect(guardrail(0.4, "720p")).toBe(30);  // ceil(0.4)=1 秒 × 2.2 ⇒ ceil(2.2)=3cr,不是 0
     // 已裁的整数格一格未动。
     for (const row of FOUNDER_PRICE_TABLE) {
       expect(seedanceDisplayCredits(MODEL, "720p", row.seconds)).toBe(row["720p"]);
@@ -174,19 +195,29 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
     }
   });
 
-  it("FAIL CLOSED(判官 r2 P0):**已裁 12 档以外的正整数**同样落 16cr 护栏", () => {
-    // 上一轮只封住了非整数,没封住「整数但不在已裁的十二格里」:3s 会算出 7cr、16s 算出
-    // 36cr —— 两个 Founder 从没裁过的价。新请求那侧有 zod 拦着,但 GenJob.videoOptions
-    // 是**无约束 JSON**,worker 的两条历史重算路(apps/worker/src/jobs/gen.ts 的
-    // GEN_RESULT 两处)直达价格函数,那条路上没有 zod。
+  it("FAIL CLOSED(判官 r2 P0 / MONEY-A3):**已裁 12 档以外的正整数**同样落护栏(按档,不是定额)", () => {
+    // 上一轮只封住了非整数,没封住「整数但不在已裁的十二格里」。新请求那侧有 zod 拦着,
+    // 但 GenJob.videoOptions 是**无约束 JSON**,worker 的两条历史重算路
+    // (apps/worker/src/jobs/gen.ts 的 GEN_RESULT 两处)直达价格函数,那条路上没有 zod。
     //
-    // 原则不变:**价格只定义在已裁格上,格外不 round、不外推、只护栏**。
+    // 菜单价那一侧原则不变:**只定义在已裁格上,格外不 round、不外推**(下面 durations 那条
+    // 测试逐格钉死)。变的是**护栏收多少**:MONEY-A3 之前一律 16cr,而 16s@720p 的成本就是
+    // $1.22 —— 16cr=$1.60 只剩 24% 毛利,穿了 45% 宪法地板。护栏改按这一档自己的费率算,
+    // 于是每一个时长都 ≥65% 公式价(下面逐档验算)。
     for (const seconds of [1, 2, 3, 16, 20, 100]) {
       expect(pricedGenCredits(videoJob(seconds, "720p")), `720p ${seconds}s`)
-        .toBe(16 * INTERNAL_PER_DISPLAY);
+        .toBe(guardrail(seconds, "720p"));
       expect(pricedGenCredits(videoJob(seconds, "480p")), `480p ${seconds}s`)
-        .toBe(16 * INTERNAL_PER_DISPLAY);
+        .toBe(guardrail(seconds, "480p"));
+      // 护栏价对**每一个**时长都不低于 65% 公式价 —— 这正是单一定额挡不住的那件事。
+      for (const r of ["720p", "480p"] as const) {
+        const priceUsd = guardrail(seconds, r) / CREDITS_PER_USD;
+        const costUsd = seconds * SEEDANCE_COGS_USD_PER_SECOND[r];
+        expect((priceUsd - costUsd) / priceUsd, `${r} ${seconds}s 护栏毛利`).toBeGreaterThanOrEqual(0.65 - 1e-9);
+      }
     }
+    expect(guardrail(16, "720p")).toBe(360); // 旧值 160(毛利 24%,穿地板)⇒ 现 36cr
+    expect(guardrail(3, "720p")).toBe(70);
     // 已裁的十二格一格未动(护栏不许误伤真档位)。
     for (const row of FOUNDER_PRICE_TABLE) {
       expect(pricedGenCredits(videoJob(row.seconds, "720p")), `720p ${row.seconds}s`)
@@ -197,25 +228,35 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
   });
 
   it("判据的单一事实来源 = 能力表的 durations,不是抄一份 [4..15] 字面量", () => {
-    // 护栏放行的那一组秒数,必须**恰好**等于这个模型菜单上开出来的那一组 —— 两边靠
+    // 有菜单价的那一组秒数,必须**恰好**等于这个模型菜单上开出来的那一组 —— 两边靠
     // 同一份 GEN_VIDEO_MODEL_OPTIONS 推导,所以 T6 或未来改档时不可能分家。
-    // 判据不能只看「是不是 16cr」—— 720p 7 秒**本来**就是 16cr,那是真档位不是护栏。
-    // 可靠的分辨法:按秒表在每一档都让两个分辨率**不同价**(半价档),而护栏对两者
-    // 给的是同一个 16cr。于是「两档同价」⇔「走了护栏」。
+    //
+    // MONEY-A3 之前这里用的分辨法是「两个分辨率同价 ⇔ 走了护栏」(护栏当时是一个与
+    // 分辨率无关的 16cr 定额)。护栏改成按档之后它对两档也给不同价,那个分辨法失效了 ——
+    // 换成直接问菜单价函数:`seedanceDisplayCredits` 返回 null ⇔ 这一秒数没有菜单价。
+    // 判据更直,而且不再依赖「护栏碰巧撞不上真档位价」这种间接证据。
     const menu = GEN_VIDEO_MODEL_OPTIONS[MODEL].durations;
-    const priced = [...Array(120).keys()]
-      .map((i) => i + 1)
-      .filter((seconds) =>
-        pricedGenCredits(videoJob(seconds, "720p")) !== pricedGenCredits(videoJob(seconds, "480p")));
-    expect(priced.sort((a, b) => a - b)).toEqual([...menu].sort((a, b) => a - b));
+    const seconds = [...Array(120).keys()].map((i) => i + 1);
+    const menuPriced = seconds.filter((s) => seedanceDisplayCredits(MODEL, "720p", s) !== null);
+    expect(menuPriced.sort((a, b) => a - b)).toEqual([...menu].sort((a, b) => a - b));
+    // 菜单外的每一秒都落护栏,而且护栏与菜单价**不共用**一条路(算出来的数就是护栏的数)。
+    for (const s of seconds.filter((x) => !menu.includes(x))) {
+      expect(pricedGenCredits(videoJob(s, "720p")), `${s}s 应落护栏`).toBe(videoGuardrailInternal("720p", s));
+    }
   });
 
-  it("零改动:1080p 兜底 16cr、未知分辨率兜底 16cr、整段参考视频 16cr", () => {
-    expect(VIDEO_CREDITS_BY_RESOLUTION["1080p"]).toBe(16);
+  it("MONEY-A3:1080p 改按秒 11cr/秒(5s=55cr,16cr 倒挂已修)、未知分辨率按最贵档护栏、整段参考视频仍 16cr", () => {
+    // 旧行为:1080p 与未知分辨率一律 16cr 定额。1080p 5 秒的成本 $1.8867,16cr=$1.60 ⇒
+    // 毛利 −17.9%(卖一单亏一单),15 秒档 −253.8%。S1 已裁 1080p = 11cr/秒。
+    expect(SEEDANCE_DISPLAY_CREDITS_PER_10S["1080p"]).toBe(110);
+    expect(pricedGenCredits(videoJob(5, "1080p"))).toBe(550);
+    expect(pricedGenCredits(videoJob(15, "1080p"))).toBe(1650);
+    // 未知分辨率:结算路径兜底 = 最贵可售档按秒价(110/10s),并由 worker 侧报警(A3 后半句)。
+    expect(pricedGenCredits(videoJob(5, "4K"))).toBe(guardrail(5, "4K"));
+    expect(pricedGenCredits(videoJob(5, ""))).toBe(guardrail(5, ""));
+    expect(guardrail(5, "4K")).toBe(550);
+    // 整段参考视频的收费一格没动(好记数 16 ≥ 公式价 15)。
     expect(REFERENCE_VIDEO_CREDITS).toBe(16);
-    expect(pricedGenCredits(videoJob(5, "1080p"))).toBe(16 * INTERNAL_PER_DISPLAY);
-    expect(pricedGenCredits(videoJob(5, "4K"))).toBe(16 * INTERNAL_PER_DISPLAY);
-    expect(pricedGenCredits(videoJob(5, ""))).toBe(16 * INTERNAL_PER_DISPLAY);
     expect(pricedGenCredits({ ...videoJob(5, "720p"), referenceVideoGenerationId: "gen_ref" }))
       .toBe(16 * INTERNAL_PER_DISPLAY);
   });

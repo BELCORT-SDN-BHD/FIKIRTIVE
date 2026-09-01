@@ -31,6 +31,7 @@ import {
   REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
   pricedGenCredits,
+  isGuardrailPricedVideo,
   displayCredits,
   genJobEndedWithoutDelivering,
   merchantGenFailureMessage,
@@ -45,6 +46,49 @@ import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
+
+/** 这一行 GenJob 的计价输入 —— 报价与报警必须看**同一个**对象,否则两边可能各算各的。 */
+function genSpendInputOf(job: GenJob) {
+  return {
+    kind: job.kind as "IMAGE" | "VIDEO",
+    model: job.model,
+    count: job.count,
+    referenceVideoGenerationId: job.referenceVideoGenerationId,
+    videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null,
+  };
+}
+
+/**
+ * MONEY-A3 后半句:**结算路径落到护栏价就报警**。
+ *
+ * 护栏价按定义只该给「下架前存下的历史行」和「畸形 videoOptions JSON」兜底 —— 一条
+ * **新**的付费任务走到护栏上,意思是请求侧的菜单闸(zod 契约 + assertSpendableModel)
+ * 被绕过去了。那是要人看一眼的事,不是静静按一个更贵的价收一笔就算了。
+ *
+ * 只报警、不改钱:这一步跑在 settle 之后,商家已经收到片子、账也已经落定。`founderAlert`
+ * 自己吞掉所有投递失败(返回空数组),所以 `await` 不可能把交付路弄崩;await 是照本文件
+ * 既有报警的写法(`gen.paid_for_nothing`,见下),理由也一样 —— fire-and-forget 会让报警
+ * 死在进程退出的竞态里。
+ */
+async function alertIfGuardrailPriced(job: GenJob, spendInput: ReturnType<typeof genSpendInputOf>): Promise<void> {
+  if (!isGuardrailPricedVideo(spendInput)) return;
+  const vo = spendInput.videoOptions;
+  await founderAlert({
+    key: "gen.video_guardrail_price",
+    title: `一条视频按**护栏价**结算了:job ${job.id}(${job.model} / ${String(vo?.resolution ?? "(无分辨率)")} / ${String(vo?.seconds ?? "(无秒数)")}秒)—— 这一档没有菜单价`,
+    action:
+      "核对这一行是不是历史行(下架前存下的、或 videoOptions JSON 畸形)。若是**新**下的单,菜单闸被绕过去了:查请求侧的 zod 契约与 assertSpendableModel,别让第二单再走到这里。护栏价只保证不低于该档 65% 公式价,它不是 Founder 裁过的菜单价。",
+    context: {
+      genJobId: job.id,
+      orgId: job.ownerId,
+      kind: job.kind,
+      model: job.model,
+      resolution: vo?.resolution ?? null,
+      seconds: vo?.seconds ?? null,
+      chargedCredits: displayCredits(pricedGenCredits(spendInput)),
+    },
+  });
+}
 
 /**
  * #776 —— 这一单**引擎自报的真实计费量**,或者 null = 未知。
@@ -453,7 +497,9 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
     // generation succeeded → the charge becomes permanent.
     await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
   });
-  await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
+  const resumeSpendInput = genSpendInputOf(job);
+  await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits(resumeSpendInput))); // idempotent — P2002 swallowed if already written
+  await alertIfGuardrailPriced(job, resumeSpendInput);
   await settleCanvasBoard(job);
   // #791-4: the automatic post-generation "does this look right?" Otto turn used to run
   // here — and bill for itself. Founder ruling 2026-08-08: the merchant can see the result
@@ -1387,7 +1433,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // FAILED+settled+delivered mismatch in that ordering.)
       await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
       console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
-      await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
+      const spendInput = genSpendInputOf(job);
+      await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits(spendInput)));
+      await alertIfGuardrailPriced(job, spendInput);
       await settleCanvasBoard(job);
     } catch (err) {
       // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a

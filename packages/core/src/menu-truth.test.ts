@@ -189,22 +189,24 @@ describe("#647 T6 历史安全(下架前存下的行还读得动)", () => {
     expect(() => genSpentUsd({ kind: "VIDEO", model: "kling", count: 1, videoOptions: null })).not.toThrow();
   });
 
-  it("价签落护栏价而不是 1cr:退役模型算不出价,只许贵不许贱", () => {
+  it("价签落护栏价而不是 1cr:退役模型算不出价,按档护栏接手 [MONEY-A3]", () => {
+    // A3(2026-09-01)把 16cr 单一定额护栏改成按档函数:退役 720p 10s = 22cr/10s × 10s = 220 internal。
     for (const id of RETIRED_VIDEO_MODELS) {
       const cr = pricedGenCredits({ kind: "VIDEO", model: id, count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } });
       expect(Number.isNaN(cr)).toBe(false);
-      expect(cr).toBe(16 * INTERNAL_PER_DISPLAY);
+      expect(cr).toBe(22 * INTERNAL_PER_DISPLAY);
     }
   });
 
-  it("零改动:在产那一格的价与规格一格没动(T4 的护栏语义原样)", () => {
+  it("零改动:在产那一格的价与规格一格没动;1080p 按档护栏接手 [MONEY-A3]", () => {
     const d = videoDefaults("seedance-2-mini");
     expect(d.resolution).toBe("720p");
     expect(d.seconds).toBe(5);
     expect(d.aspectRatio).toBe("16:9");
     const job = { kind: "VIDEO" as const, model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } };
     expect(pricedGenCredits(job)).toBe(11 * INTERNAL_PER_DISPLAY);
+    // A3:1080p 价目回填 11cr/秒(5s = 55 显示 credit)——16cr 倒挂已修。
     expect(pricedGenCredits({ ...job, videoOptions: { seconds: 5, resolution: "1080p", audio: true } }))
-      .toBe(16 * INTERNAL_PER_DISPLAY);
+      .toBe(55 * INTERNAL_PER_DISPLAY);
   });
 });
