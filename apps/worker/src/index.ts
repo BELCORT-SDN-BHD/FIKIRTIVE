@@ -27,7 +27,12 @@ import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
 import { reconcileStripePayments } from "./jobs/stripe-reconcile.js";
-import { handleUnderstand, reapStaleUnderstanding, scanAssetsNeedingUnderstanding } from "./jobs/understand.js";
+import {
+  handleUnderstand,
+  reapStaleUnderstanding,
+  reapStaleUnderstandingReservations,
+  scanAssetsNeedingUnderstanding,
+} from "./jobs/understand.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
@@ -312,11 +317,17 @@ async function main(): Promise<void> {
           boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
         );
         if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
-        // #784: understanding rows a crashed worker left RUNNING. $0 and credit-free by
-        // construction — this chain never reserves — so the sweep just returns them to QUEUED
-        // and the scanner below re-delivers. A file half-read should be finished, not abandoned.
+        // #784: understanding rows a crashed worker left RUNNING. Pure UX — it just returns them
+        // to QUEUED and the scanner below re-delivers. A file half-read should be finished, not
+        // abandoned. (The money half is the next sweep, not this one.)
         const un = await reapStaleUnderstanding();
         if (un) console.log(`[worker] returned ${un} interrupted understanding row(s) to the queue`);
+        // MONEY-A9: understanding is a PAID action since 2026-09-01, so this chain now leaks holds
+        // the same way Otto's does — a death between reserve and settle. Its own reaper (not the
+        // LLM one: that sweep's refund also retires an approval card, which this chain has none of)
+        // refunds the hold and returns the row it belonged to.
+        const ur = await reapStaleUnderstandingReservations();
+        if (ur) console.log(`[worker] refunded ${ur} leaked understanding reservation(s)`);
       });
     } catch (e) {
       console.error("[worker] reaper error:", e);

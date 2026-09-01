@@ -23,9 +23,15 @@ const presignedGet = vi.hoisted(() => vi.fn(async () => "https://storage.example
 vi.mock("../storage.js", () => ({ storage: { presignedGet } }));
 
 import { prisma } from "@fikirtive/db";
-import { newId, understandingCostUsd } from "@fikirtive/core";
+import { UNDERSTANDING_CAPS, newId, understandingCostUsd } from "@fikirtive/core";
 import type { UnderstandingProvider } from "@fikirtive/generation";
-import { handleUnderstand, scanAssetsNeedingUnderstanding, understandingSpentTodayUsd } from "./understand.js";
+import {
+  handleUnderstand,
+  reapStaleUnderstandingReservations,
+  scanAssetsNeedingUnderstanding,
+  tryHoldUnderstandingBudget,
+  understandingSpentTodayUsd,
+} from "./understand.js";
 
 // ── 安全闸(同 packages/db/test/setup.ts):非 *_test 库一律拒跑 ──────────────────
 const dbUrl = process.env.DATABASE_URL;
@@ -90,6 +96,15 @@ async function myRow(id: string) {
   return prisma.assetUnderstanding.findFirst({ where: { id, ownerId: OWNER } });
 }
 
+/** 这个租户的余额账户(钱路那几条用例共用一个,所以是 upsert 不是 create)。 */
+async function setBalance(balance: number, reserved = 0) {
+  await prisma.creditAccount.upsert({
+    where: { orgId: OWNER },
+    create: { orgId: OWNER, balance, reserved },
+    update: { balance, reserved },
+  });
+}
+
 async function setAsset(assetId: string, data: Record<string, unknown>) {
   await prisma.asset.updateMany({ where: { id: assetId, ownerId: OWNER }, data: data as never });
 }
@@ -114,6 +129,7 @@ afterAll(async () => {
   await prisma.brandRecord.deleteMany({ where: { ownerId: OWNER } });
   await prisma.memory.deleteMany({ where: { ownerId: OWNER } });
   await prisma.asset.deleteMany({ where: { ownerId: OWNER } });
+  await prisma.creditAccount.deleteMany({ where: { orgId: OWNER } }); // FK:必须在 org 之前
   await prisma.organization.deleteMany({ where: { id: OWNER } });
 });
 
@@ -372,6 +388,147 @@ describe("日预算计量器:同一行 N 次付费调用必须记 N 笔", () => 
       );
       const after = await understandingSpentTodayUsd();
       expect(after - before).toBeCloseTo(2 * UNIT_USD, 10);
+    },
+    30_000,
+  );
+});
+
+/**
+ * **预扣式预算的原子性**(#1056,MONEY-A9 随修)。
+ *
+ * 为什么只能打真库:要防的病就是「两个副本同时读到同一个『还没超』,于是双双越线」。
+ * 假库里两次调用之间没有并发,我写的假件想让它原子它就原子 —— 那证明的是我的假件,不是
+ * 那条 `INSERT … ON CONFLICT DO UPDATE … WHERE` 真的在同一行上把两路排成队。
+ */
+describe("平台日预算:预扣是一条原子语句(并发下不许双双越线)", () => {
+  const CAPS = UNDERSTANDING_CAPS["image-caption"];
+  const UNIT_USD = understandingCostUsd({
+    inputTokens: CAPS.maxInputTokens,
+    outputTokens: CAPS.maxOutputTokens,
+  });
+
+  it(
+    "预算只装得下一件时,两路并发预扣**恰好**一路挤得进去",
+    async () => {
+      // 这个库跨套件共用,所以基线现读、断言看增量。
+      const before = await understandingSpentTodayUsd();
+      const previous = process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD;
+      process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = String(before + UNIT_USD * 1.5);
+      try {
+        const held = await Promise.all([
+          tryHoldUnderstandingBudget("image-caption"),
+          tryHoldUnderstandingBudget("image-caption"),
+        ]);
+        // check-then-act 的实现在这里会两路都拿到 —— 那正是 #1056。
+        expect(held.filter(Boolean)).toHaveLength(1);
+        // 挤进去的那一笔真的记在桶上,没挤进去的那一笔一格都没动。
+        expect(await understandingSpentTodayUsd()).toBeCloseTo(before + UNIT_USD, 10);
+      } finally {
+        if (previous === undefined) delete process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD;
+        else process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = previous;
+      }
+    },
+    30_000,
+  );
+});
+
+/**
+ * **PAUSED_BALANCE 在真库上**(MONEY-A9 计费四则④)。两件事只有真库钉得住:
+ * 新状态过不过得了 CHECK 约束(迁移真的跟上了),以及捞回那句 SQL 的 WHERE ——
+ * 它跨了两张表比大小(行上的快照价 vs 账户余额),而那个比较正是「不无限重扫」的全部内容。
+ */
+describe("PAUSED_BALANCE:写得进真库,并且只在余额够了之后才捞回", () => {
+  it(
+    "余额不够 ⇒ 一轮都不捞;余额够了 ⇒ 下一轮回到 QUEUED",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      await setBalance(0);
+      await prisma.assetUnderstanding.create({
+        data: {
+          id,
+          ownerId: OWNER,
+          assetId,
+          kind: "image-caption",
+          status: "PAUSED_BALANCE", // ← CHECK 约束跟上了没有,这一句说了算
+          error: "waiting for credits",
+          priceInternalSnapshot: 5,
+          moneyRefId: `understanding:${id}`,
+        },
+      });
+      expect((await myRow(id))!.status).toBe("PAUSED_BALANCE");
+
+      // 余额 0 < 快照价 5 ⇒ 捞不回来(暂停期间不打供应商、不无限重扫)
+      expect(await scanAssetsNeedingUnderstanding()).not.toContain(id);
+      expect((await myRow(id))!.status).toBe("PAUSED_BALANCE");
+
+      // 差一格也不行 —— 判据是 `>=`,不是「差不多够」
+      await prisma.creditAccount.updateMany({ where: { orgId: OWNER }, data: { balance: 4 } });
+      expect(await scanAssetsNeedingUnderstanding()).not.toContain(id);
+
+      // 充到快照价 ⇒ 这一轮就回队列,error 也一起清掉(那句话不再是真的)
+      await prisma.creditAccount.updateMany({ where: { orgId: OWNER }, data: { balance: 5 } });
+      expect(await scanAssetsNeedingUnderstanding()).toContain(id);
+      const back = (await myRow(id))!;
+      expect(back.status).toBe("QUEUED");
+      expect(back.error).toBeNull();
+    },
+    30_000,
+  );
+});
+
+/**
+ * **钱清道夫**(MONEY-A9):进程死在 reserve 和 settle 之间,留下一个没有 finalizer 的
+ * 预扣。这一族只能打真库,因为要证明的东西全在一句原生 SQL 的 WHERE 里(`NOT EXISTS` 的
+ * finalizer 子查询 + 前缀 + 时间窗),而假库里那句 SQL 根本不会被 Postgres 解析。
+ */
+describe("钱清道夫:漏在半路的理解预扣(真库)", () => {
+  it(
+    "退回商家余额 + 把还挂着这个回合的 RUNNING 行退回队列;第二遍是 no-op",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      const refId = `understanding:${id}`;
+      // 预扣发生过之后的样子:余额扣了 1、reserved 挂着 1、台账一条 RESERVE、没有 finalizer。
+      await setBalance(9, 1);
+      await prisma.creditLedger.create({
+        data: {
+          id: newId(),
+          orgId: OWNER,
+          balanceDelta: -1,
+          reservedDelta: 1,
+          kind: "RESERVE",
+          source: "SYSTEM",
+          refId,
+          idempotencyKey: `reserve:${refId}`,
+        },
+      });
+      await prisma.assetUnderstanding.create({
+        data: {
+          id,
+          ownerId: OWNER,
+          assetId,
+          kind: "image-caption",
+          status: "RUNNING", // worker 死在这里
+          priceInternalSnapshot: 1,
+          moneyRefId: refId,
+        },
+      });
+
+      // 时间窗:把 now 往后拨一小时以上,而不是去伪造 createdAt。
+      const later = new Date(Date.now() + 2 * 3_600_000);
+      expect(await reapStaleUnderstandingReservations(later)).toBeGreaterThanOrEqual(1);
+
+      const refund = await prisma.creditLedger.findFirst({ where: { orgId: OWNER, refId, kind: "REFUND" } });
+      expect(refund).not.toBeNull();
+      expect(refund!.reason).toBe("understanding-reservation-reaper");
+      const account = await prisma.creditAccount.findUnique({ where: { orgId: OWNER } });
+      expect(account).toMatchObject({ balance: 10, reserved: 0 }); // 钱回到商家手上
+      expect((await myRow(id))!.status).toBe("QUEUED"); // 素材回到队列,不是判死
+
+      // 第二遍:finalizer 已经在了,这一行再也不会被扫到(名单不会越滚越大,钱也不会退第二次)
+      expect(await reapStaleUnderstandingReservations(later)).toBe(0);
+      expect(await prisma.creditLedger.count({ where: { orgId: OWNER, refId, kind: "REFUND" } })).toBe(1);
     },
     30_000,
   );

@@ -572,6 +572,16 @@ export const UNDERSTANDING_NO_MEDIA_URL = "This environment can't hand the file 
 export const UNDERSTANDING_METADATA_PENDING = "That file's dimensions aren't known yet — it will be read once they are.";
 export const UNDERSTANDING_BUDGET_REACHED = "Today's reading budget is used up — this file is read tomorrow.";
 /**
+ * **PAUSED_BALANCE 的措辞**(MONEY-A9 计费四则④)。
+ *
+ * 和上面那句「今天的预算用完了」说的是两回事,商家要做的事也相反:那一句是**平台**侧的
+ * 保险丝,商家什么都不用做、明天自己会读;这一句是**商家**余额不够,只有充值能让它继续。
+ * 所以它必须点名 credits,并且说清楚文件还在(不是被丢掉了)—— 素材无限期保留,
+ * credits 也不过期,商家隔多久回来充值都读得到。
+ */
+export const UNDERSTANDING_WAITING_FOR_CREDITS =
+  "That file is waiting for credits — it will be read as soon as your balance covers it.";
+/**
  * **PAUSED 的措辞** —— 这一句必须和 FAILED 那一句说的是两回事,因为它们要商家做的事相反。
  * 「读不清楚」的正确建议是传一份更清楚的;而这一行的文件本来就好好的,商家做什么都没用,
  * 也不该被叫去重传。所以它只说两件事:还没读到、会自己再来。

@@ -5,7 +5,9 @@ vi.mock("@/lib/stripe", () => ({ stripe: { webhooks: { constructEvent } } }));
 const grantCredits = vi.fn();
 const actionEventCreate = vi.fn();
 const creditLedgerFindUnique = vi.fn();
-vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate }, creditLedger: { findUnique: creditLedgerFindUnique } } }));
+// MONEY-A9:充值成功要顺手把这个租户「等余额」的素材理解行拨回队列(规格 §7.3 四则④)。
+const assetUnderstandingUpdateMany = vi.fn();
+vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate }, creditLedger: { findUnique: creditLedgerFindUnique }, assetUnderstanding: { updateMany: assetUnderstandingUpdateMany } } }));
 // 钱路 M1-c:包核对用**真的**核对函数与**真的**包表 —— 假一个进来,这组用例就只是在测
 // 自己写的夹具,而这次要防的病恰恰是「代码里的包表与真实在售的包不是一回事」。
 vi.mock("@fikirtive/core", async () => {
@@ -29,6 +31,7 @@ beforeEach(() => {
   actionEventCreate.mockResolvedValue({});
   founderAlert.mockResolvedValue([]);
   creditLedgerFindUnique.mockResolvedValue(null); // default: this session was never granted
+  assetUnderstandingUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 const { POST } = await import("@/app/api/stripe/webhook/route");
@@ -74,6 +77,46 @@ describe("stripe webhook", () => {
     expect(grantCredits).toHaveBeenCalledWith(expect.objectContaining({
       orgId: "org_9", amount: 220 * 10, source: "PURCHASE", idempotencyKey: "stripe:cs_async",
     }));
+  });
+
+  // ── MONEY-A9 计费四则④:充值**唤醒**因余额不足停下来的素材理解 ────────────────────
+  //
+  // 没有这一句,商家充完值要等最多一分钟的扫描轮询才看得到 Otto 继续认识他的店 ——
+  // 而他刚刚付过钱,那一分钟是他盯着屏幕的一分钟。
+  it("MONEY-A9: a top-up wakes this org's PAUSED_BALANCE understanding rows", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_wake", type: "checkout.session.completed",
+      data: { object: { id: "cs_wake", payment_status: "paid", metadata: { orgId: "org_w", credits: "50" }, payment_intent: "pi_w", amount_total: 2500, currency: "myr" } },
+    });
+    grantCredits.mockResolvedValue({ ok: true });
+    assetUnderstandingUpdateMany.mockResolvedValue({ count: 3 });
+
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(assetUnderstandingUpdateMany).toHaveBeenCalledWith({
+      // 只唤醒**这个商家**的行,而且只唤醒等余额的那些(等人修配置的 PAUSED 不是这一类)
+      where: { ownerId: "org_w", status: "PAUSED_BALANCE" },
+      // error 一起清掉:那句「等 credits」已经不再是真的,而商家读得到它
+      data: { status: "QUEUED", error: null },
+    });
+    // 余额够不够**不在这里判**:唯一有权决定的是 reserve 本身(原子条件扣减)。
+    // 在这里抄第二份余额判据,两份迟早会不一样。
+    expect(assetUnderstandingUpdateMany.mock.calls[0]![0].where).not.toHaveProperty("priceInternalSnapshot");
+  });
+
+  it("MONEY-A9: a wake-up that throws never changes the 200 (Stripe must not be pushed into retries)", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_wake2", type: "checkout.session.completed",
+      data: { object: { id: "cs_wake2", payment_status: "paid", metadata: { orgId: "org_w2", credits: "50" }, payment_intent: "pi_w2", amount_total: 2500, currency: "myr" } },
+    });
+    grantCredits.mockResolvedValue({ ok: true });
+    assetUnderstandingUpdateMany.mockRejectedValue(new Error("connection terminated unexpectedly"));
+
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    // 钱照样入账,审计照样写 —— 唤醒失败只是慢一分钟(扫描器第 ④ 段是同一件事的兜底)
+    expect(grantCredits).toHaveBeenCalledTimes(1);
+    expect(actionEventCreate).toHaveBeenCalled();
   });
 
   // ── #552:延迟到账失败(FPX/GrabPay)不再被裸 200 吞掉 ─────────────────────────

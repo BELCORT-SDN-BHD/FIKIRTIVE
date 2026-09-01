@@ -2,8 +2,10 @@
  * understand.test.ts — #784 素材理解的后台执行器。
  *
  * 断言的都是这条链路上会真的出事的地方:
- *  - **商家一分钱不付**:reserveCredits / settleCredits / refundReservation / withLlmBudget
- *    一次都不许被调用(spy 全程盯着)。
+ *  - **MONEY-A9 钱路**(2026-09-01 起理解是按件计费的 SKU,「商家一分钱不付」那一组随规格
+ *    §7.3 废止重写):按快照价 reserve → 打供应商 → 与结果落盘**同一个事务**里 settle;
+ *    三个崩溃窗全部由 `(orgId, refId)` 的台账终态收口;快照为 null 的老行免费祖父;
+ *    余额不足 ⇒ PAUSED_BALANCE 且一个请求都不发。
  *  - **不重复读**:重投时 CAS 输掉 ⇒ 连供应商都不打。
  *  - **闸门在花钱之前**:总开关关、平台预算见底、视频太长、图片太大 —— provider 一次不调。
  *  - **暂缓 ≠ 丢弃**:资源类原因退回 QUEUED,下一轮/次日照样读得到;终态只留真终局。
@@ -34,11 +36,21 @@ const mocks = vi.hoisted(() => {
   const understandingSpendDay = { findUnique: vi.fn(), upsert: vi.fn() };
   const brandRecord = { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() };
   const memory = { findFirst: vi.fn(), create: vi.fn() };
+  /** 台账。恢复协议问的就是它:这一行的这一个回合,已经 SETTLE / REFUND / 还挂着? */
+  const creditLedger = { findFirst: vi.fn() };
 
-  // 这四个是**绝对不许**被调用的 —— 理解是平台成本,不进商家账本。
+  // MONEY-A9:这三个现在是**真会被调用**的钱路入口(规格 §7.3 废止了旧的「一分钱不付」)。
+  // 仍然逐调用断言参数与次序 —— 钱路的正确性从来不在「被不被调用」,而在扣的是哪一笔。
   const reserveCredits = vi.fn();
   const settleCredits = vi.fn();
   const refundReservation = vi.fn();
+  /** 余额不足。生产里由 credits.ts 抛出,这里给一个同名同形的类 —— handler 用 instanceof 分路。 */
+  class InsufficientCredits extends Error {
+    constructor() {
+      super("Not enough credits.");
+      this.name = "InsufficientCredits";
+    }
+  }
 
   const presignedGet = vi.fn();
   const understand = vi.fn();
@@ -51,16 +63,21 @@ const mocks = vi.hoisted(() => {
     brandRecord,
     memory,
     understandingSpendDay,
-    // 交互式事务:把同一组 mock 当 tx 交回去。**不是**装饰 —— caption 落 DONE 与
-    // doc-extract 建行必须在同一个事务里(见 understand.ts),而「它们真的都走了 tx」
+    creditLedger,
+    // 交互式事务:把同一组 mock 当 tx 交回去。**不是**装饰 —— caption 落 DONE、doc-extract
+    // 建行、以及 settle 必须在同一个事务里(见 understand.ts),而「它们真的都走了 tx」
     // 是下面那组崩溃形状用例断言的东西。
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+    /** 预扣式预算的那两条语句(条件 upsert / 校正 update)。 */
+    $executeRaw: vi.fn(),
+    /** 扫描器第 ④ 段(PAUSED_BALANCE × 余额)与钱清道夫的扫描。 */
+    $queryRaw: vi.fn(),
   };
 
   return {
     prisma,
-    assetUnderstanding, asset, brandRecord, memory, understandingSpendDay,
-    reserveCredits, settleCredits, refundReservation,
+    assetUnderstanding, asset, brandRecord, memory, understandingSpendDay, creditLedger,
+    reserveCredits, settleCredits, refundReservation, InsufficientCredits,
     presignedGet, understand, captureException,
   };
 });
@@ -70,6 +87,7 @@ vi.mock("@fikirtive/db", () => ({
   reserveCredits: mocks.reserveCredits,
   settleCredits: mocks.settleCredits,
   refundReservation: mocks.refundReservation,
+  InsufficientCredits: mocks.InsufficientCredits,
 }));
 
 // 真身份帧太重,这里只保留「回调真的被跑了」这一点 —— 租户断言看的是每一次调用的 where。
@@ -82,7 +100,13 @@ vi.mock("../storage.js", () => ({ storage: { presignedGet: mocks.presignedGet } 
 vi.mock("@sentry/node", () => ({ captureException: mocks.captureException }));
 
 import { emptyUnderstandingResponseError, providerConfigError, unreadableMediaError } from "@fikirtive/generation";
-import { UNDERSTANDING_PROVIDER_PAUSED, understandingCostUsd } from "@fikirtive/core";
+import {
+  UNDERSTANDING_CAPS,
+  UNDERSTANDING_PROVIDER_PAUSED,
+  UNDERSTANDING_WAITING_FOR_CREDITS,
+  understandingCostUsd,
+  type UnderstandingKind,
+} from "@fikirtive/core";
 import {
   UNDERSTAND_PAUSED_RETRY_MS,
   UNDERSTAND_SCAN_BATCH,
@@ -90,6 +114,7 @@ import {
   scanAssetsNeedingUnderstanding,
   understandingSpentTodayUsd,
   reapStaleUnderstanding,
+  reapStaleUnderstandingReservations,
 } from "./understand.js";
 
 const OWNER = "owner-1";
@@ -116,6 +141,16 @@ beforeEach(() => {
   mocks.assetUnderstanding.aggregate.mockResolvedValue({ _sum: { inputTokens: 0, outputTokens: 0 } });
   mocks.understandingSpendDay.findUnique.mockResolvedValue(null); // 今天还没花过
   mocks.understandingSpendDay.upsert.mockResolvedValue({});
+  // 预算默认挤得进去(1 = 语句影响了一行);要测「挤不进去」的用例自己改成 0 或用 fakeMeter。
+  mocks.prisma.$executeRaw.mockResolvedValue(1);
+  mocks.prisma.$queryRaw.mockResolvedValue([]);
+  // 台账默认干净。**注意**:夹具行默认不带 priceInternalSnapshot ⇒ 免费祖父路径 ⇒ 与钱
+  // 无关的那些组一格钱都不碰(expectNoCreditCalls 仍然是它们的复核)。钱路本身由
+  // 「MONEY-A9」那一组用显式带快照价的行来测。
+  mocks.creditLedger.findFirst.mockResolvedValue(null);
+  mocks.reserveCredits.mockResolvedValue(undefined);
+  mocks.settleCredits.mockResolvedValue(undefined);
+  mocks.refundReservation.mockResolvedValue("refunded");
   mocks.asset.findFirst.mockResolvedValue({
     contentHash: "a1".repeat(32), ext: "jpg", mime: "image/jpeg",
     durationS: null, width: 1600, height: 1200, sizeBytes: BigInt(400_000), deletedAt: null,
@@ -143,40 +178,391 @@ function meterBucket(inputTokens: number, outputTokens = 0) {
 }
 
 /**
- * 一个**会记住加法**的假计量器,语义和真库那张表一致:upsert 增量、findUnique 读当前值。
+ * 一个**会记住加法**的假计量器,语义和真库那张表一致 —— 现在照的是**预扣式**那两条语句
+ * (#1056):条件 upsert 预加最坏情况、调用回来再 update 校正差额。
+ *
  * 用它而不是一个固定值,是因为预算闸的正确性完全取决于「这一轮花掉的钱下一次读得到」——
  * 一个不会加的假计量器会让 cap 的测试永远绿(那正是判官实测到的真实缺陷形状)。
+ * 它只镜像**真库那两条语句的语义**;「这条 upsert 在并发下真的原子」由 understand-db.test.ts
+ * 打真库证明,假库证明不了原子性,也不假装能。
  */
 function fakeMeter() {
   let inputTokens = 0;
   let outputTokens = 0;
-  mocks.understandingSpendDay.findUnique.mockImplementation(async () => meterBucket(inputTokens, outputTokens));
-  mocks.understandingSpendDay.upsert.mockImplementation(async (args: any) => {
-    inputTokens += Number(args.update.inputTokens.increment);
-    outputTokens += Number(args.update.outputTokens.increment);
-    return {};
+  let calls = 0;
+  let exists = false; // 今天这个桶存不存在 —— INSERT 分支和 DO UPDATE 分支的分界
+  mocks.understandingSpendDay.findUnique.mockImplementation(async () =>
+    exists ? meterBucket(inputTokens, outputTokens) : null,
+  );
+  mocks.prisma.$executeRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: any[]) => {
+    const sql = Array.from(strings).join("?");
+    if (sql.includes(`INSERT INTO "UnderstandingSpendDay"`)) {
+      const [, addIn, addOut, inRate, outRate, budget] = values;
+      const nextIn = inputTokens + Number(addIn);
+      const nextOut = outputTokens + Number(addOut);
+      // 空日走 INSERT 分支,没有 WHERE(真库同形状 —— 「一件都塞不下的预算」由 TS 侧挡)。
+      const cost = (nextIn * Number(inRate) + nextOut * Number(outRate)) / 1_000_000;
+      if (exists && cost > Number(budget)) return 0; // 挤不进去
+      inputTokens = nextIn;
+      outputTokens = nextOut;
+      exists = true;
+      return 1;
+    }
+    if (sql.includes(`UPDATE "UnderstandingSpendDay"`)) {
+      const [backIn, backOut, callsDelta] = values;
+      if (!exists) return 0;
+      inputTokens = Math.max(0, inputTokens - Number(backIn));
+      outputTokens = Math.max(0, outputTokens - Number(backOut));
+      calls += Number(callsDelta);
+      return 1;
+    }
+    throw new Error(`计量器假件遇到一条没登记的语句 —— 新语句要在这里加一条路由:\n${sql}`);
   });
   return {
     reset() {
       inputTokens = 0;
       outputTokens = 0;
+      calls = 0;
+      exists = false;
     },
+    /** 计量器现在读出来是多少美元 —— 和 understandingSpentTodayUsd 同一条算式。 */
+    usd: () => understandingCostUsd({ inputTokens, outputTokens }),
+    /** 记了几笔**真的打出去过**的调用(预扣退回的路径不加)。 */
+    calls: () => calls,
   };
 }
 
-/** 每个用例跑完都复核一次:商家的余额一格没动。 */
+/**
+ * 复核:商家的余额一格没动。
+ *
+ * MONEY-A9 之后它**不再**是全局铁律(理解现在收费),而是这几类路径的复核:免费祖父行
+ * (夹具行默认就是 —— 不带 priceInternalSnapshot)、钱步之前就折返的闸门、以及扫描器/清道夫。
+ */
 function expectNoCreditCalls() {
   expect(mocks.reserveCredits).not.toHaveBeenCalled();
   expect(mocks.settleCredits).not.toHaveBeenCalled();
   expect(mocks.refundReservation).not.toHaveBeenCalled();
 }
 
-describe("商家一分钱不付", () => {
-  it("跑完一整趟,credit 三个入口一次都没被碰", async () => {
-    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+/** 这一趟往预算计量器里**预扣**过几笔,每笔加了多少(条件 upsert 那一条)。 */
+function budgetHolds(): { addIn: number; addOut: number }[] {
+  return mocks.prisma.$executeRaw.mock.calls
+    .filter((call: any[]) => Array.from(call[0] as TemplateStringsArray).join("?").includes(`INSERT INTO "UnderstandingSpendDay"`))
+    .map((call: any[]) => ({ addIn: Number(call[2]), addOut: Number(call[3]) }));
+}
+
+/** 这一趟对预算计量器做过的**校正**(预扣那一条是 INSERT,不在这里)。 */
+function budgetAdjustments(): { backIn: number; backOut: number; calls: number }[] {
+  return mocks.prisma.$executeRaw.mock.calls
+    .filter((call: any[]) => Array.from(call[0] as TemplateStringsArray).join("?").includes(`UPDATE "UnderstandingSpendDay"`))
+    .map((call: any[]) => ({ backIn: Number(call[1]), backOut: Number(call[2]), calls: Number(call[3]) }));
+}
+
+/** 「一个请求都没发出去」的钱侧证据:预扣的最坏情况**全额**退回,而且不记一笔调用。 */
+function expectBudgetReleased(kind: UnderstandingKind = "image-caption") {
+  const caps = UNDERSTANDING_CAPS[kind];
+  expect(budgetAdjustments()).toContainEqual({
+    backIn: caps.maxInputTokens,
+    backOut: caps.maxOutputTokens,
+    calls: 0,
+  });
+}
+
+// ── MONEY-A9:素材理解计费面(规格 docs/specs/money-engine.md §7.3)──────────────────
+//
+// 这一组**取代**了旧的「商家一分钱不付」。Founder 2026-08-31 裁决「就是用户使用照算」之后
+// 理解是一条真钱路,而钱路的正确性从来不在「调没调 reserveCredits」,在:扣的是哪一笔、
+// 什么时候扣、**崩了之后怎么把它认回来**。三个崩溃窗(reserve 后 / provider 后 / settle 前)
+// 各有一条用例,判据全部是 `(orgId, refId)` 上的台账终态,不是任何一份「我做到哪了」的笔记。
+describe("MONEY-A9 理解计费:reserve-first / settle 同事务 / 三崩溃窗由台账收口", () => {
+  const PRICE = 1; // internal credits —— 现值三类各 1(= 0.1 显示 credit/件)
+  const REF = "understanding:u-1";
+
+  /** 一行**会计费**的理解行:上传那一刻锁了本段价,级联那一段的价也一起锁着(四则①②)。 */
+  const paidRow = (kind = "image-caption", over: Record<string, unknown> = {}) =>
+    row(kind, { priceInternalSnapshot: PRICE, cascadePriceInternal: PRICE, moneyRefId: null, ...over });
+
+  /** 台账怎么答:finalizer 查(kind in [SETTLE,REFUND])和 RESERVE 查是两条不同的问题,
+   *  用一个固定答案会让「复用 hold」和「新回合」互相顶掉,那正是恢复协议最容易写错的地方。 */
+  function ledger(answer: { finalizer?: "SETTLE" | "REFUND" | null; reserve?: boolean } = {}) {
+    const { finalizer = null, reserve = false } = answer;
+    mocks.creditLedger.findFirst.mockImplementation(async (args: any) =>
+      Array.isArray(args?.where?.kind?.in) ? (finalizer ? { kind: finalizer } : null) : reserve ? { id: "led-1" } : null,
+    );
+  }
+
+  it("① 正常一趟:按快照价 reserve → 打供应商 → settle,而且次序就是这个", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+
+    expect(mocks.reserveCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.reserveCredits.mock.calls[0]![1]).toEqual({ orgId: OWNER, refId: REF, cost: PRICE });
+    expect(mocks.understand).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits.mock.calls[0]![1]).toEqual({ orgId: OWNER, refId: REF });
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+    // 次序是承重的:先出片后收钱 = 余额不足当场变成一笔坏账。
+    expect(mocks.reserveCredits.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.understand.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.understand.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.settleCredits.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("扣的是**行上的快照价**,不是现算的价(四则①:扫描隔日执行不改价)", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { priceInternalSnapshot: 9 }));
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.reserveCredits.mock.calls[0]![1].cost).toBe(9);
+  });
+
+  it("回合 refId 是**条件写**上去的(where 带旧值),形状 `understanding:<行 id>`", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    const mint = mocks.assetUnderstanding.updateMany.mock.calls.find((c) => c[0].data?.moneyRefId)!;
+    expect(mint[0].where).toMatchObject({ id: "u-1", ownerId: OWNER, moneyRefId: null });
+    expect(mint[0].data.moneyRefId).toBe(REF);
+  });
+
+  it("条件写 0 行(这一回合被别人接管)⇒ 让位:不 reserve、不打供应商、预扣退回", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    mocks.assetUnderstanding.updateMany.mockImplementation(async (args: any) => ({
+      count: args.data?.moneyRefId ? 0 : 1, // 只有那一次认领输掉
+    }));
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).resolves.toBeNull();
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.understand).not.toHaveBeenCalled();
+    expectBudgetReleased();
+  });
+
+  it("② 崩溃窗三之三(settle 之后重投):台账已 SETTLE ⇒ 收口 DONE,零供应商零新钱调用", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { moneyRefId: REF }));
+    ledger({ finalizer: "SETTLE" });
+    await expect(handleUnderstand({ understandingId: "u-1" }, 1, port)).resolves.toBeNull();
+    expect(mocks.understand).not.toHaveBeenCalled();
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
+    expect(last.where).toMatchObject({ id: "u-1", ownerId: OWNER, status: "RUNNING" });
+    // **不碰 summary/data**:那是上一趟真的读出来的产物,这里没有更好的版本
+    expect(last.data).toEqual({ status: "DONE" });
+    expectBudgetReleased();
+  });
+
+  it("③ 崩溃窗三之一(reserve 之后崩):有 RESERVE 没 finalizer ⇒ **复用**那个 hold", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { moneyRefId: REF }));
+    ledger({ finalizer: null, reserve: true });
+    await handleUnderstand({ understandingId: "u-1" }, 1, port);
+    // 承重的就是这一行:重复预扣 = 商家为同一件素材付两次
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.understand).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits.mock.calls[0]![1]).toEqual({ orgId: OWNER, refId: REF });
+  });
+
+  it("崩在「写了 refId、还没 reserve」那一瞬 ⇒ 用**同一个** refId 补扣,不换回合", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { moneyRefId: REF }));
+    ledger({ finalizer: null, reserve: false });
+    await handleUnderstand({ understandingId: "u-1" }, 1, port);
+    expect(mocks.reserveCredits.mock.calls[0]![1]).toEqual({ orgId: OWNER, refId: REF, cost: PRICE });
+    // 没有第二次认领写:回合没变
+    expect(mocks.assetUnderstanding.updateMany.mock.calls.some((c) => c[0].data?.moneyRefId)).toBe(false);
+  });
+
+  it("④ 台账已 REFUND ⇒ 开**新回合**(换 refId 再 reserve;旧键终身扣不动了)", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { moneyRefId: REF }));
+    ledger({ finalizer: "REFUND" });
+    await handleUnderstand({ understandingId: "u-1" }, 1, port);
+
+    const mint = mocks.assetUnderstanding.updateMany.mock.calls.find((c) => c[0].data?.moneyRefId)!;
+    expect(mint[0].where).toMatchObject({ id: "u-1", ownerId: OWNER, moneyRefId: REF });
+    const nextRefId = String(mint[0].data.moneyRefId);
+    expect(nextRefId).toMatch(/^understanding:u-1:r.{8}$/);
+    expect(mocks.reserveCredits.mock.calls[0]![1]).toEqual({ orgId: OWNER, refId: nextRefId, cost: PRICE });
+    // 换键是硬要求:`reserve:<refId>` 终身唯一,同一个 refId 退款之后再也 reserve 不了
+    expect(nextRefId).not.toBe(REF);
+    expect(mocks.settleCredits.mock.calls[0]![1].refId).toBe(nextRefId);
+  });
+
+  it("⑤ 余额不足 ⇒ PAUSED_BALANCE:零供应商调用,预扣全额退回,措辞是白标那一句", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    mocks.reserveCredits.mockRejectedValue(new mocks.InsufficientCredits());
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).resolves.toBeNull();
+
+    expect(mocks.understand).not.toHaveBeenCalled(); // 「暂停期间不打供应商」
+    expect(mocks.presignedGet).toHaveBeenCalledTimes(1); // 钱步在签完 URL 之后
+    const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
+    expect(last.where).toMatchObject({ id: "u-1", ownerId: OWNER, status: "RUNNING" });
+    expect(last.data.status).toBe("PAUSED_BALANCE");
+    expect(last.data.status).not.toBe("FAILED"); // 不是终态 —— 素材无限期保留
+    expect(last.data.error).toBe(UNDERSTANDING_WAITING_FOR_CREDITS);
+    expectBudgetReleased();
+  });
+
+  it("并发撞上 `reserve:<refId>` 唯一键(P2002)= hold 已在,不是错误", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    mocks.reserveCredits.mockRejectedValue(Object.assign(new Error("Unique constraint"), { code: "P2002" }));
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.understand).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits.mock.calls[0]![1]).toEqual({ orgId: OWNER, refId: REF });
+  });
+
+  it("⑥ 快照为 null 的老行 = 免费祖父:一格钱都不碰,连台账都不查,但照样读完", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption")); // 夹具默认没有快照
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.understand).toHaveBeenCalledTimes(1);
+    expect(mocks.creditLedger.findFirst).not.toHaveBeenCalled();
+    expect(mocks.assetUnderstanding.updateMany.mock.calls.some((c) => c[0].data?.moneyRefId)).toBe(false);
     expectNoCreditCalls();
+    expect(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.status).toBe("DONE");
+  });
+
+  it("⑦ 级联出来的 doc-extract 行继承**上传时刻**的第二段价(四则②)", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { cascadePriceInternal: 7 }));
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ summary: "A printed menu", isDocument: true }),
+      usage: { inputTokens: 800, outputTokens: 40 },
+    });
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.assetUnderstanding.createMany.mock.calls[0]![0].data[0]).toMatchObject({
+      kind: "doc-extract",
+      priceInternalSnapshot: 7,
+    });
+  });
+
+  it("父行免费(级联价也没有)⇒ 子行也免费,不会在半路凭空开始收费", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ summary: "A printed menu", isDocument: true }),
+      usage: { inputTokens: 800, outputTokens: 40 },
+    });
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.assetUnderstanding.createMany.mock.calls[0]![0].data[0].priceInternalSnapshot).toBeNull();
+  });
+
+  it("settle 与结果落盘在**同一个事务**里(分开写就有「读完了没结账」的窗口)", async () => {
+    let depth = 0;
+    const order: string[] = [];
+    mocks.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      depth++;
+      try {
+        return await fn(mocks.prisma);
+      } finally {
+        depth--;
+      }
+    });
+    mocks.settleCredits.mockImplementation(async () => {
+      order.push(`settle inTx=${depth > 0}`);
+    });
+    mocks.assetUnderstanding.updateMany.mockImplementation(async (args: any) => {
+      if (args.data?.status === "DONE") order.push(`done inTx=${depth > 0}`);
+      return { count: 1 };
+    });
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(order).toEqual(["settle inTx=true", "done inTx=true"]);
+  });
+
+  it("终局失败(这份字节读不了)⇒ 退款,商家不为没读成的东西付钱", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    mocks.understand.mockRejectedValue(unreadableMediaError("rejected the file (415)"));
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation.mock.calls[0]![1]).toEqual({
+      orgId: OWNER,
+      refId: REF,
+      reason: "understanding-terminal-failure",
+    });
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("暂时性失败(还有重试额度)⇒ **hold 留着**,下一轮复用同一个回合", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    mocks.understand.mockRejectedValue(emptyUnderstandingResponseError({ inputTokens: 2_100, outputTokens: 4 }));
+    await expect(handleUnderstand({ understandingId: "u-1" }, 0, port)).rejects.toThrow();
+    // 中途退再重扣只会在台账上留下一串来回,而这一行的钱从头到尾就是那一笔
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("重试用完落 PAUSED(我方配置坏了)⇒ 也退款:等人修的这段时间不该占着商家的钱", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    mocks.understand.mockRejectedValue(providerConfigError("understanding request was refused (404)"));
+    await handleUnderstand({ understandingId: "u-1" }, 2, port);
+    expect(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.status).toBe("PAUSED");
+    expect(mocks.refundReservation.mock.calls[0]![1].reason).toBe("understanding-terminal-failure");
+  });
+
+  it("200 但正文用不了、重试也用完 ⇒ PAUSED + 退款(同一条纪律,另一条入口)", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow());
+    mocks.understand.mockResolvedValue({ text: "I think it's a mug!", usage: { inputTokens: 2_000, outputTokens: 30 } });
+    await handleUnderstand({ understandingId: "u-1" }, 2, port);
+    expect(mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0].data.status).toBe("PAUSED");
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+  });
+
+  it("素材被删(删行)⇒ 挂着的 hold 当场退,不等一小时的清道夫", async () => {
+    mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { moneyRefId: REF }));
+    mocks.asset.findFirst.mockResolvedValue(null);
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.assetUnderstanding.deleteMany).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation.mock.calls[0]![1].refId).toBe(REF);
+  });
+});
+
+describe("MONEY-A9 钱清道夫:漏在半路的理解预扣(进程死在 reserve 和 settle 之间)", () => {
+  const REF = "understanding:u-1";
+
+  it("超时未 finalize 的 RESERVE ⇒ 退款,并把还挂着这个回合的 RUNNING 行退回队列", async () => {
+    mocks.prisma.$queryRaw.mockResolvedValue([{ orgId: OWNER, refId: REF }]);
+    expect(await reapStaleUnderstandingReservations()).toBe(1);
+    expect(mocks.refundReservation.mock.calls[0]![1]).toEqual({
+      orgId: OWNER,
+      refId: REF,
+      reason: "understanding-reservation-reaper",
+    });
+    const call = mocks.assetUnderstanding.updateMany.mock.calls[0]![0];
+    expect(call.where).toMatchObject({ ownerId: OWNER, moneyRefId: REF, status: "RUNNING" });
+    expect(call.data.status).toBe("QUEUED");
+  });
+
+  it("扫的是**没有 finalizer 的** understanding 预扣(SQL 里写死了这两条判据)", async () => {
+    mocks.prisma.$queryRaw.mockResolvedValue([]);
+    await reapStaleUnderstandingReservations();
+    const sql = Array.from(mocks.prisma.$queryRaw.mock.calls[0]![0] as TemplateStringsArray).join("?");
+    expect(sql).toContain("understanding:%");
+    expect(sql).toContain("NOT EXISTS");
+    expect(sql).toContain("'RESERVE'");
+  });
+
+  it("退款 no-op(扫描之后有人正常结算了)⇒ 一行都不碰,也不计进「今天漏了多少」", async () => {
+    mocks.prisma.$queryRaw.mockResolvedValue([{ orgId: OWNER, refId: REF }]);
+    mocks.refundReservation.mockResolvedValue("already-settled");
+    expect(await reapStaleUnderstandingReservations()).toBe(0);
+    expect(mocks.assetUnderstanding.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("MONEY-A9 扫描器第 ④ 段:等余额的行按「余额 ≥ 快照价」捞回", () => {
+  it("捞回判据写在 SQL 里(PAUSED_BALANCE × 余额 ≥ 快照价),捞到就 CAS 回 QUEUED", async () => {
+    mocks.prisma.$queryRaw.mockResolvedValue([{ id: "u-9", ownerId: OWNER }]);
+    const ids = await scanAssetsNeedingUnderstanding();
+    expect(ids).toContain("u-9");
+
+    const sql = Array.from(mocks.prisma.$queryRaw.mock.calls[0]![0] as TemplateStringsArray).join("?");
+    expect(sql).toContain("PAUSED_BALANCE");
+    expect(sql).toMatch(/a\."balance" >= u\."priceInternalSnapshot"/);
+    // 免费祖父行进不了这个状态,顺手排除掉 —— 少了它,一行 null 快照会被无条件捞回
+    expect(sql).toContain(`u."priceInternalSnapshot" IS NOT NULL`);
+
+    const call = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
+    expect(call.where).toMatchObject({ id: "u-9", ownerId: OWNER, status: "PAUSED_BALANCE" });
+    expect(call.data).toEqual({ status: "QUEUED", error: null }); // 那句「等 credits」不再是真的
+  });
+
+  it("CAS 输掉(别的副本先捡走)⇒ 不重复派活", async () => {
+    mocks.prisma.$queryRaw.mockResolvedValue([{ id: "u-9", ownerId: OWNER }]);
+    mocks.assetUnderstanding.updateMany.mockResolvedValue({ count: 0 });
+    expect(await scanAssetsNeedingUnderstanding()).toEqual([]);
   });
 });
 
@@ -416,33 +802,35 @@ describe("平台日预算:超线本轮停,次日恢复", () => {
    * 记账点的**位置**断言(判官 delta)。计量器只有在「一次供应商调用 = 一笔」时才是对的:
    * 记在各个落盘分支上会重复计数(一趟调用要写好几次行),记在别处会漏。
    */
-  it("一次供应商调用 = 计量器一笔增量,而且是 increment 不是覆写", async () => {
+  it("一次供应商调用 = 一次预扣 + 一次校正(预扣最坏情况,回来换成实际用量)", async () => {
+    const caps = UNDERSTANDING_CAPS["image-caption"];
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.understandingSpendDay.upsert).toHaveBeenCalledTimes(1);
-    const call = mocks.understandingSpendDay.upsert.mock.calls[0]![0];
-    // 覆写(直接给数字)会让同一天的第二笔抹掉第一笔 —— 必须是 increment
-    expect(call.update.inputTokens).toEqual({ increment: BigInt(900) });
-    expect(call.update.outputTokens).toEqual({ increment: BigInt(60) });
-    expect(call.update.calls).toEqual({ increment: 1 });
-    expect(call.create).toMatchObject({ inputTokens: BigInt(900), outputTokens: BigInt(60), calls: 1 });
+    // 预扣:判断和记账压成同一条语句(见 tryHoldUnderstandingBudget),加的是 token 上限
+    expect(budgetHolds()).toEqual([{ addIn: caps.maxInputTokens, addOut: caps.maxOutputTokens }]);
+    // 校正:一趟调用一笔。差额减回去 ⇒ 净效果 = 实际用量,和旧的「按实际记一笔」等价
+    expect(budgetAdjustments()).toEqual([
+      { backIn: caps.maxInputTokens - 900, backOut: caps.maxOutputTokens - 60, calls: 1 },
+    ]);
   });
 
-  it("失败但已经计费的那一趟也记一笔,而且只记一笔(落盘写了好几次)", async () => {
+  it("失败但已经计费的那一趟也校正一笔,而且只校正一笔(落盘写了好几次)", async () => {
+    const caps = UNDERSTANDING_CAPS["image-caption"];
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockRejectedValue(emptyUnderstandingResponseError({ inputTokens: 2_100, outputTokens: 4 }));
     await handleUnderstand({ understandingId: "u-1" }, 2, port);
-    expect(mocks.understandingSpendDay.upsert).toHaveBeenCalledTimes(1);
-    expect(mocks.understandingSpendDay.upsert.mock.calls[0]![0].update.inputTokens).toEqual({
-      increment: BigInt(2_100),
-    });
+    expect(budgetAdjustments()).toEqual([
+      { backIn: caps.maxInputTokens - 2_100, backOut: caps.maxOutputTokens - 4, calls: 1 },
+    ]);
   });
 
-  it("供应商一个字都没回(没花钱)⇒ 计量器一笔都不记", async () => {
+  it("供应商回不出用量(超时、断线)⇒ **一格都不减**:记高不记低", async () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     mocks.understand.mockRejectedValue(new Error("understanding request got no response (timeout)"));
     await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
-    expect(mocks.understandingSpendDay.upsert).not.toHaveBeenCalled();
+    // 请求真的发出去了 —— 对面有没有开始算钱我们不知道,所以预扣留着(calls 照记一笔)。
+    // 上一版这里断言「一笔都不记」,那句话把「不知道」读成了「零」。
+    expect(budgetAdjustments()).toEqual([{ backIn: 0, backOut: 0, calls: 1 }]);
   });
 
   it("已经计费的失败也进账 —— 供应商回了 200 但产物读不出来的那一趟", async () => {
@@ -501,8 +889,8 @@ describe("预算闸必须也在 handler 里(积压队列会绕过扫描器那一
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
   });
 
-  it("付费调用之前复查 —— 超了就 hold 回队列,供应商一次不调", async () => {
-    mocks.understandingSpendDay.findUnique.mockResolvedValue(meterBucket(20_000_000)); // $2
+  it("挤不进预算 ⇒ hold 回队列,供应商一次不调、URL 一次不签", async () => {
+    mocks.prisma.$executeRaw.mockResolvedValue(0); // 条件 upsert 的 WHERE 没过 = 挤不进去
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.understand).not.toHaveBeenCalled();
     expect(mocks.presignedGet).not.toHaveBeenCalled(); // 连 URL 都不签
@@ -513,25 +901,37 @@ describe("预算闸必须也在 handler 里(积压队列会绕过扫描器那一
   });
 
   it("预算以内照跑", async () => {
-    mocks.understandingSpendDay.findUnique.mockResolvedValue(meterBucket(1_000_000)); // $0.1
+    fakeMeter();
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.understand).toHaveBeenCalledTimes(1);
   });
 
+  it("一件都塞不下的预算(含 0 = 全停)⇒ 空日那条 INSERT 分支也不许放行", async () => {
+    // 真库上 INSERT 分支没有 WHERE 兜着 —— 挡它的是 TS 侧那一句「最坏情况 > 预算就直接回绝」。
+    // 少了那一句,把预算调成 0 反而每天会放一件进去。
+    process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "0";
+    fakeMeter();
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    expect(mocks.understand).not.toHaveBeenCalled();
+    expect(budgetHolds()).toEqual([]); // 连那条语句都不发
+  });
+
   /**
-   * 这一条同时钉住两件事:handler 里的复查真的在,**以及计量器真的会加** ——
-   * 六趟同一行的调用必须一趟一趟往上累,而不是每趟把桶覆写成同一个数。上一版的快照 SUM
-   * 在这里会永远停在 $0.5,于是六趟全放行 —— 那正是判官实测到的 cap 永不触发。
+   * #1056 的**修法本身**:预扣式让「判断」和「记账」变成同一条语句,所以积压的一整批
+   * 只有预算装得下的那几件会真的打出去 —— 上一版是 check-then-act,同一个「还没超」会被
+   * 好几趟读到。这里用**贴着 token 上限**的用量跑,因为预扣式给出的界就是按最坏情况算的:
+   * 一趟真花的钱越接近它预扣的那一笔,这道闸就越准。
    */
-  it("积压的一整批:预算在第二件之后见底 ⇒ 后面的一件都不打供应商", async () => {
-    // 一个会记住加法的假计量器 —— 语义和真库那张表一致(increment,不是覆写)
+  it("积压的一整批:预算装得下几件就只打几件,多一件都不发", async () => {
+    const caps = UNDERSTANDING_CAPS["image-caption"];
+    const unitUsd = understandingCostUsd({ inputTokens: caps.maxInputTokens, outputTokens: caps.maxOutputTokens });
+    process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = String(unitUsd * 2.5); // 恰好装得下 2 件
     fakeMeter();
     mocks.understand.mockResolvedValue({
       text: JSON.stringify({ summary: "A ceramic mug", isDocument: false }),
-      usage: { inputTokens: 5_000_000, outputTokens: 0 }, // 每趟 $0.5
+      usage: { inputTokens: caps.maxInputTokens, outputTokens: caps.maxOutputTokens }, // 吃满上限
     });
     for (let i = 0; i < 6; i++) await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    // $1 的预算 ⇒ 前两趟跑掉($0 起、$0.5 时),第三趟起计量器已经是 $1.0 ⇒ 全部 hold
     expect(mocks.understand).toHaveBeenCalledTimes(2);
   });
 });

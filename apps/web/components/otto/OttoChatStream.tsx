@@ -28,6 +28,7 @@ import {
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
+import { UnderstandingCostHint } from "./UnderstandingCostHint";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -1470,6 +1471,11 @@ export function OttoChatStream({
               {attachError}
             </div>
           )}
+
+          {/* MONEY-A9 §7.3 — mounted directly above the composer box, which is where the
+              attach button lives: the price is on screen while the file picker is still
+              closed (披露先于扣费), and it does not squeeze the composer's bottom toolbar. */}
+          <div className="mb-2"><UnderstandingCostHint /></div>
 
           <div className="overflow-hidden rounded-[14px] border-[1.5px] border-border bg-background shadow-sm">
             <Textarea

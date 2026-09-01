@@ -51,7 +51,9 @@ export async function executeImportMedia(
     ...(input.promptText !== undefined ? { promptText: input.promptText } : {}),
     ...(input.entityIds ? { entityIds: input.entityIds } : {}),
   });
-  return "error" in r ? { ok: false, error: r.error } : { ok: true, generationId: r.generationId };
+  return "error" in r
+    ? { ok: false, error: r.error }
+    : { ok: true, generationId: r.generationId, ...(r.note ? { note: r.note } : {}) };
 }
 
 export const importMediaSkill = defineOttoSkill({

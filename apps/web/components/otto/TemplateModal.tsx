@@ -24,6 +24,7 @@ import {
   templateRunCredits,
 } from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
+import { UnderstandingCostHint } from "./UnderstandingCostHint";
 
 type Phase = "form" | "generating" | "done" | "cancelled" | "unknown";
 
@@ -402,6 +403,10 @@ export default function TemplateModal({
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                 <span className="text-[0.8125rem] text-muted-foreground">Product image</span>
+                {/* MONEY-A9 §7.3 — under the field label and above the picker, so the upload
+                    price is read before the file is chosen (披露先于扣费). It stays on screen
+                    after the thumb replaces the input, which is when the charge is real. */}
+                <UnderstandingCostHint />
                 {thumbUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={thumbUrl} alt="upload" style={{ width: 120, height: 120, objectFit: "cover", borderRadius: "14px" }} />

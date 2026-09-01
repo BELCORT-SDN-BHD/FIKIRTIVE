@@ -1,7 +1,7 @@
 import { stripe } from "@/lib/stripe";
 import { founderAlert } from "@/lib/founder-alert";
 import { grantCredits, prisma } from "@fikirtive/db";
-import { runAsSystem } from "@fikirtive/db/principal";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import { newId, INTERNAL_PER_DISPLAY, verifyCreditPackPurchase } from "@fikirtive/core";
 import * as Sentry from "@sentry/node";
 import type { NextRequest } from "next/server";
@@ -163,6 +163,25 @@ export async function POST(req: NextRequest): Promise<Response> {
         const res = await grantCredits({
           orgId, amount: credits * INTERNAL_PER_DISPLAY, source: "PURCHASE",
           reason: "stripe top-up", createdBy: "stripe", idempotencyKey: `stripe:${session.id}`,
+        });
+        // MONEY-A9 计费四则④:充值**唤醒**因余额不足停下来的素材理解(规格 §7.3
+        // 「恢复=充值事件唤醒+扫描器兜底轮询」)。没有这一句,商家充完值还要等最多一分钟的
+        // 扫描轮询才看得到 Otto 继续认识他的店 —— 而他刚刚付过钱,那一分钟是他在盯着看的。
+        //
+        // 这里**不判余额够不够**:唯一有权决定钱够不够的是 reserve 本身(它是原子条件扣减)。
+        // 这一句只负责把行放回队列,不够就再暂停一次 —— 而那是有界的,因为下一次充值才会再
+        // 唤醒。反过来在这里判,就等于把余额判据抄了第二份,两份迟早不一样。
+        // 幂等:重投同一个 session 只是又跑一次 updateMany,没有匹配的行就 0 行,无害。
+        // #463 两段式:webhook 整体跑在系统身份下,这一笔写入回到它自己的租户。
+        await runAsTenant(orgId, async () =>
+          prisma.assetUnderstanding.updateMany({
+            where: { ownerId: orgId, status: "PAUSED_BALANCE" },
+            data: { status: "QUEUED", error: null },
+          }),
+        ).catch((e) => {
+          // 唤醒失败绝不许改这条 webhook 的响应码(200 契约 —— 非 2xx 会把 Stripe 推进重投),
+          // 也绝不许挡住下面那行审计。扫描器第 ④ 段是同一件事的兜底,下一轮照样把行捞回来。
+          console.error(`[stripe] understanding wake-up failed for org=${orgId}:`, e);
         });
         await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "credits.purchase", payload: { credits, amountTotal: session.amount_total ?? null, paymentIntentId: session.payment_intent ?? null, sessionId: session.id ?? null, eventId: event.id, duplicate: "duplicate" in res } } }).catch(() => {});
       }
