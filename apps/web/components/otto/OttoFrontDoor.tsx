@@ -346,13 +346,16 @@ export function OttoFrontDoor({
           </p>
         </div>
 
-        {/* 这一块占掉画布底边多少高度,由 NorthstarCanvasWorkspace 量出来交给画布工具条让位
+        {/* 已批准 pattern 的创作带(`.cv-creation-band`:`bottom-4 left-[300px] right-[160px]`、
+            居中、`max-w-[620px]`,数字只在 globals.css 声明一次)。右边那 160px 是 pattern
+            留给右下角缩放簇的角 —— 原来的 `left-[calc(50%+140px)]` 不留,于是压住它。
+            这一块占掉画布底边多少高度由 NorthstarCanvasWorkspace 量出来,交给画布创作列让位
             (2026-09-03 走查 D1,病根全文在 `lib/canvas-otto-dock.ts`)。记号挂在**整块**上,
             所以下面那条报错也算进让位高度里 —— 报错一冒出来就把工具条重新盖住,是同一个缺陷
             的下一次发作。 */}
         <div
           {...{ [CANVAS_OTTO_DOCK_ATTR]: "" }}
-          className="pointer-events-auto absolute bottom-4 left-[calc(50%_+_140px)] w-[min(620px,calc(100%_-_340px))] -translate-x-1/2"
+          className="cv-creation-band pointer-events-auto"
         >
           {composer}
           {error ? (

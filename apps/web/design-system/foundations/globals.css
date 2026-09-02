@@ -816,6 +816,30 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
  * cover another — before #604 r2 the selection bar shared `bottom: 20px` with the
  * tool row and simply sat on top of it, and the tools underneath stopped being
  * clickable. Transparent between the rows so the board itself stays reachable. */
+/* THE CREATION BAND — the approved canvas pattern's own numbers, declared ONCE and read by
+ * both things that sit in it (Founder 2026-09-03: 生产界面严格按 UIUX 设计走).
+ * `design-system/patterns/canvas/CanvasReference.tsx` puts the composer band at
+ * `bottom-4 left-[300px] right-[160px]`, centred, `max-w-[620px]`: 300px clears the column
+ * Otto keeps on the left (status card and conversation are `left-4 w-[280px]`), and the
+ * 160px on the right is what leaves the bottom-right zoom cluster its corner. Two consumers
+ * read this one declaration — the Otto composer (`.cv-creation-band`) and the canvas's own
+ * creation column (`.cv-bottom-stack`), which stacks straight above it. A second copy of
+ * either number is how the two would drift apart and start covering each other again. */
+.gb .cv-bottom-stack,
+.gb .cv-creation-band {
+  left: 300px;
+  right: 160px;
+}
+/* Otto's composer in the canvas layout: the band, capped and centred exactly as the pattern
+ * caps and centres it. `margin-inline: auto` is what centres an absolutely positioned box
+ * that has both insets and a max-width. */
+.gb .cv-creation-band {
+  position: absolute;
+  bottom: 16px;
+  margin-inline: auto;
+  max-width: 620px;
+}
+
 /* THE FOURTH THING IN THAT CORNER (2026-09-03 Founder 六面走查 D1). The rule above holds
  * inside this column, but the Otto overlay is not in it: it is a sibling of the whole
  * board (`absolute inset-0`, z-index 30) whose composer sits at `bottom-4`, and that
@@ -829,22 +853,18 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
  * day it grew. Fallback 0px — a canvas rendered without the Otto overlay lays out exactly
  * as before.
  *
- * The rows also hug the RIGHT edge now, which is where the approved canvas pattern puts
- * canvas chrome (`design-system/patterns/canvas/CanvasReference.tsx`: zoom cluster at
- * `bottom-4 right-4`, tool rail at `right-4`, the composer band explicitly reserving
- * `right-[160px]`). Centred rows lifted this high would have run into the left column
- * Otto reserves for itself — its conversation panel is `bottom-16 left-4 w-[380px]` — at
- * any board narrower than ~1082px. `.cv-batchbar` already ended at that edge. */
+ * What is left in the column is the creation half — the image prompt, the multi-card bar and
+ * the image/video/text tools — so it now sits in the approved pattern's CREATION BAND
+ * (`--cv-band-*` below) directly above the Otto composer, instead of spanning the whole
+ * board. The board's own controls (mode rail, zoom) moved to the two places the pattern
+ * gives them; see `.cv-mode-rail` / `.cv-zoom-cluster`. */
 .gb .cv-bottom-stack {
   position: absolute;
-  left: 50%;
   bottom: calc(20px + var(--cv-otto-dock, 0px));
-  transform: translateX(-50%);
   z-index: 5;
-  width: calc(100% - 24px);
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
   pointer-events: none;
   /* The column may never grow taller than the board it sits in. The board hides its
@@ -879,6 +899,31 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-md);
   padding: 6px;
+}
+/* WHERE THE BOARD'S OWN CONTROLS LIVE — the approved canvas pattern's two places, not a
+ * position of our own (Founder 2026-09-03: 生产界面严格按 UIUX 设计走).
+ * `design-system/patterns/canvas/CanvasReference.tsx` puts the interaction-mode tools on a
+ * vertical rail at `right-4 top-1/2 -translate-y-1/2 flex-col`, and the zoom cluster at
+ * `bottom-4 right-4`; the creation composer band beside them reserves `right-[160px]` so the
+ * two never share a column. Production follows all three.
+ *
+ * Before this they were one centred row at the board's bottom edge — the row the Otto
+ * composer sat on top of, which is the 2026-09-03 walkthrough's D1. Splitting them the way
+ * the design already splits them is what takes them out from under it; nothing here is a
+ * placement we invented. */
+.gb .cv-mode-rail {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  flex-direction: column;
+}
+.gb .cv-zoom-cluster {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 5;
 }
 /* What a multi-card pick can do (#547 B6) — its own row above the tool row (#604 r2). */
 .gb .cv-batchbar {

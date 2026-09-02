@@ -1504,13 +1504,18 @@ export function OttoChatStream({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {/* Composer —— 画布形态下,这一块占掉画布底边多少高度由 NorthstarCanvasWorkspace 量出来,
-          交给画布工具条让位(2026-09-03 走查 D1,病根全文在 `lib/canvas-otto-dock.ts`)。
-          记号只在画布形态挂:面板形态里它是正常流里的一行,没有谁需要为它让位。 */}
+      {/* Composer —— 画布形态下它坐在已批准 pattern 的创作带里(`.cv-creation-band`:
+          `bottom-4 left-[300px] right-[160px]`、居中、`max-w-[620px]`,数字只在 globals.css
+          声明一次)。原来的 `left-[calc(50%+140px)] w-[min(620px,100%-340px)]` 不给右边留位,
+          于是它会压住 pattern 放在右下角的缩放簇;带子改回 pattern 的样子,右边那 160px
+          就是缩放簇的角。
+          这一块占掉画布底边多少高度由 NorthstarCanvasWorkspace 量出来,交给画布创作列让位
+          (2026-09-03 走查 D1,病根全文在 `lib/canvas-otto-dock.ts`)。记号只在画布形态挂:
+          面板形态里它是正常流里的一行,没有谁需要为它让位。 */}
       <div
         {...(canvasLayout ? { [CANVAS_OTTO_DOCK_ATTR]: "" } : {})}
         className={canvasLayout
-          ? "otto-chat-composer pointer-events-auto absolute bottom-4 left-[calc(50%_+_140px)] w-[min(620px,calc(100%_-_340px))] -translate-x-1/2 rounded-[var(--radius-card)] border border-border bg-card p-2 shadow-[var(--shadow-md)]"
+          ? "otto-chat-composer cv-creation-band pointer-events-auto rounded-[var(--radius-card)] border border-border bg-card p-2 shadow-[var(--shadow-md)]"
           : "otto-chat-composer border-t border-border bg-card p-3"}
       >
         <div className="relative mx-auto max-w-[680px]">

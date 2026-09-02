@@ -1,50 +1,59 @@
 /**
- * Journey 14 — the canvas tool row is reachable by a real hand (FRONT-A14).
+ * Journey 14 — every control the canvas puts on the board is reachable by a real hand (FRONT-A14).
  *
  * THE DEFECT THIS CLOSES, found in the Founder's 2026-09-03 six-surface walkthrough (trunk
- * d24079b5, production build, 1440×900). The new shell puts TWO bottom-anchored things in the
- * same corner of the canvas: FlowCanvas's tool row (`.cv-bottom-stack`, z-index 5) and the Otto
- * overlay (`absolute inset-0`, z-index 30) whose composer sits at `bottom-4`. The composer's
- * block-end addon — the strip carrying Attach / "Enter to send" / Send — is itself clickable, so
- * it took every pointer aimed at the tools underneath it: `elementFromPoint()` at the centre of
- * Generate image, Video and Add text all returned that addon, at 1280×800, 1440×900, 1440×1024
- * and 1920×1080 alike. Nothing was broken in the handlers; the merchant simply could not reach
- * them.
+ * d24079b5, production build, 1440×900). The canvas had TWO things fighting for one corner: the
+ * board's own tool row (`.cv-bottom-stack`, z-index 5, `bottom: 20px`) and the Otto overlay
+ * (`absolute inset-0`, z-index 30) whose composer sits at `bottom-4`. The composer's block-end
+ * addon — the strip carrying Attach / "Enter to send" / Send — is itself clickable, so it took
+ * every pointer aimed at the tools underneath it: `elementFromPoint()` at the centre of all eight
+ * controls returned that addon, at 1280×800, 1440×900, 1440×1024 and 1920×1080 alike. And the
+ * overlay's root carried the `gb` token class, which paints `background-color: var(--background)`
+ * — so an `inset-0` copy of it was an opaque sheet over the whole board, hiding the dot grid, the
+ * tools and every card. Nothing was broken in the handlers; the merchant could neither see nor
+ * reach them.
+ *
+ * WHERE THE CONTROLS LIVE NOW — the approved canvas pattern's own three places, not ours (Founder
+ * 2026-09-03: 生产界面严格按 UIUX 设计走). `design-system/patterns/canvas/CanvasReference.tsx`
+ * puts the interaction mode on a rail at `right-4 top-1/2`, zoom in the `bottom-4 right-4` corner,
+ * and the creation band at `bottom-4 left-[300px] right-[160px]` — that 160px is what leaves the
+ * zoom cluster its corner. The three direct creation tools (image / video / text) have no home in
+ * that design, so they stay in the band with the prompt they open, above the Otto composer.
  *
  * WHY A REAL `click()` AND NOT `dispatchEvent`. The bug lives entirely in hit-testing: a
  * dispatched event is delivered straight to the target and goes green over a button buried under
  * a hundred pixels of another component. Playwright's `click()` does what a hand does — it aims
  * at a point and lets the browser decide who receives it — so it is the only form of the
- * assertion that can see this class of defect at all. The `elementFromPoint` sweep beside it says
- * the same thing about EVERY tool in the row rather than only the two the journey then presses,
- * and names the covering element when it fails, so the next regression reads as "the Otto addon
- * is on top of Video" instead of "timeout".
+ * assertion that can see this class of defect at all. The two sweeps beside it ask the same
+ * question of EVERY control rather than only the two the journey then presses, and they ask it
+ * twice: who receives the click, and what is painted on top. The second is not the first — a
+ * `pointer-events: none` sheet is invisible to hit-testing and perfectly visible to the merchant,
+ * which is exactly what the `gb` overlay was.
  *
- * BOTH BOTTOM-ANCHORED SURFACES ARE ASSERTED, deliberately. Moving the tools out from under the
- * composer is trivial to get wrong in the other direction — a stack that clears the composer by
- * covering it just moves the unreachable control. So the journey ends by typing into the Otto
- * composer and reading the value back: the tools are pressable AND Otto still takes a keystroke,
- * or this is red.
+ * BOTH SIDES ARE ASSERTED, deliberately. Moving the tools out from under the composer is trivial
+ * to get wrong in the other direction — a layout that clears the composer by covering it just
+ * moves the unreachable control. So the journey ends by typing into the Otto composer and reading
+ * the value back: the tools are pressable AND Otto still takes a keystroke, or this is red.
  *
- * TWO VIEWPORTS, because the overlap is a layout fact and layout facts are width-dependent: the
- * composer is `w-[min(620px,calc(100% - 340px))]`, so 1440 and 1280 put it in two different
- * places relative to a centred tool row.
+ * TWO VIEWPORTS, because the overlap is a layout fact and layout facts are width-dependent.
  */
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { waitUntilInteractive } from "../support/ui.js";
 
-/** Every control in the canvas tool row, by the accessible name a merchant's screen reader reads. */
-const TOOL_NAMES = [
-  "Zoom out",
-  "Zoom in",
-  "Fit to screen",
-  "Hand tool",
-  "Select tool",
-  "Generate image",
-  "Video",
-  "Add text",
+/**
+ * Every control the canvas puts on the board, in the three groups the approved pattern gives
+ * them — the creation row in the band above the Otto composer, the interaction-mode rail on the
+ * right edge, and the zoom cluster in the bottom-right corner. Named by the accessible name a
+ * merchant's screen reader reads, and grouped so a failure says which cluster moved.
+ */
+const TOOL_GROUPS = [
+  { group: "Canvas tools", role: "toolbar", names: ["Generate image", "Video", "Add text"] },
+  // The mode rail is a ToggleGroup, which the primitive renders as role="group" — asked for by the
+  // role it really has rather than the one it looks like.
+  { group: "Canvas interaction mode", role: "group", names: ["Hand tool", "Select tool"] },
+  { group: "Canvas zoom", role: "toolbar", names: ["Zoom out", "Fit to screen", "Zoom in"] },
 ] as const;
 
 const VIEWPORTS = [
@@ -110,9 +119,9 @@ async function whatPaintsOver(control: Locator): Promise<string | null> {
   });
 }
 
-/** The canvas tool row — scoped, because "Video" also names things on the cards themselves. */
-function canvasTools(page: Page): Locator {
-  return page.getByRole("toolbar", { name: "Canvas tools" });
+/** One of the canvas's control groups — scoped, because "Video" also names things on the cards. */
+function canvasGroup(page: Page, name: string, role: "toolbar" | "group" = "toolbar"): Locator {
+  return page.getByRole(role, { name });
 }
 
 test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer is on screen", async ({ page }) => {
@@ -140,7 +149,7 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
 
   // The canvas is in its REAL state for this defect: a thread exists, so the Otto overlay is the
   // chat stream with its bottom composer — the same surface the walkthrough was on.
-  const tools = canvasTools(page);
+  const tools = canvasGroup(page, "Canvas tools");
   await expect(tools).toBeVisible();
   const ottoComposer = page.getByRole("textbox", { name: "Reply to Otto" });
   await expect(ottoComposer).toBeVisible();
@@ -150,23 +159,27 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
     await page.setViewportSize(viewport);
     await expect(tools).toBeVisible();
 
-    // ① Nothing is on top of any tool — neither for the pointer nor for the eye. Named one by one
-    //    so a failure says WHICH tool and WHAT is over it.
+    // ① Nothing is on top of any control — neither for the pointer nor for the eye. Named one by
+    //    one so a failure says WHICH control, in WHICH group, and WHAT is over it.
     //
-    //    POLLED, NOT READ ONCE. The height the column gives way to the Otto composer is measured by
-    //    a ResizeObserver, so a viewport change settles a frame after the resize returns. A single
-    //    instantaneous read here would be a race — and this suite runs with `retries: 0` on purpose,
-    //    so the one flake it grew would be this one. Polling costs nothing when the layout is
-    //    already right and keeps the failure message.
-    for (const name of TOOL_NAMES) {
-      const control = tools.getByRole("button", { name, exact: true }).first();
-      await expect(control, `${name} is missing from the tool row at ${where}`).toBeVisible();
-      await expect
-        .poll(() => whatCovers(control), { message: `at ${where}, a click on "${name}" lands somewhere else` })
-        .toBeNull();
-      await expect
-        .poll(() => whatPaintsOver(control), { message: `at ${where}, "${name}" is painted over` })
-        .toBeNull();
+    //    POLLED, NOT READ ONCE. The height the creation column gives way to the Otto composer is
+    //    measured by a ResizeObserver, so a viewport change settles a frame after the resize
+    //    returns. A single instantaneous read here would be a race — and this suite runs with
+    //    `retries: 0` on purpose, so the one flake it grew would be this one. Polling costs nothing
+    //    when the layout is already right and keeps the failure message.
+    for (const { group, role, names } of TOOL_GROUPS) {
+      const cluster = canvasGroup(page, group, role);
+      await expect(cluster, `the "${group}" group is missing at ${where}`).toBeVisible();
+      for (const name of names) {
+        const control = cluster.getByRole("button", { name, exact: true }).first();
+        await expect(control, `${name} is missing from "${group}" at ${where}`).toBeVisible();
+        await expect
+          .poll(() => whatCovers(control), { message: `at ${where}, a click on "${name}" lands somewhere else` })
+          .toBeNull();
+        await expect
+          .poll(() => whatPaintsOver(control), { message: `at ${where}, "${name}" is painted over` })
+          .toBeNull();
+      }
     }
 
     // ② The two tools a merchant loses the most by not reaching, pressed for real.
