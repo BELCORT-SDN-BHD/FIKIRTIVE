@@ -12,6 +12,7 @@ import {
   type HomeComponentId,
   type HomeGoal,
   type HomeRange,
+import { assertReviewFixtureRoute } from "@/lib/review-fixture-guard";
 } from "@/design-system/patterns/founder-home/model";
 
 export const metadata: Metadata = {
@@ -34,6 +35,7 @@ export default async function Page({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  assertReviewFixtureRoute();
   const params = await searchParams;
   const read = (key: string) => typeof params[key] === "string" ? params[key] as string : undefined;
   const intent = read("intent");
