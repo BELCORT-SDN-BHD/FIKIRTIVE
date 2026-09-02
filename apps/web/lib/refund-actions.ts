@@ -429,6 +429,9 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
 
   // ── ① 预扣:credits 先锁死 ────────────────────────────────────────────────
   let pin: RefundPin;
+  // 这一趟是**续跑**吗?(hold 早就在了,或者并发里我是输的那一笔。)续跑在发 Stripe 之前必须
+  // 先查一次(复审四 P1),首次则不必 —— 它自己就是第一笔。
+  let resuming = false;
   if (!state.hold) {
     // 动 Stripe 之前先把这笔付款的事实查清楚:归属、实收、入账 credits(P1-1)。
     const resolved = await resolvePaymentFacts({ orgId, paymentIntentId });
@@ -496,6 +499,7 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
         const drift = pinDrift(pinned, request);
         if (drift) return driftError(pinned, drift);
         pin = pinned;
+        resuming = true;
       } else if (e instanceof FinanceAdjustBlocked) {
         return { error: await financeAdjustBlockedMessage(e, { via, entry: "refundCreditsAction" }) };
       } else if (e instanceof OrgSuspended) {
@@ -515,6 +519,24 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
     const drift = pinDrift(pinned, request);
     if (drift) return driftError(pinned, drift);
     pin = pinned;
+    resuming = true;
+  }
+
+  // ── ①.5 续跑先查、后建(复审四 P1)────────────────────────────────────────
+  //
+  // 幂等键**不是**一道能一直站着的防线:Stripe 的幂等键 24 小时后过期,过期之后同一个请求会被
+  // 当成全新的一笔,于是退第二次钱、而账本只扣了一次。同样的事在换键那一刻也会发生一次(旧键
+  // 建过单、客户端超时,新键重试 = 新请求)。所以任何**已经有 hold** 的重跑,在发 create 之前
+  // 先只读地问一次 Stripe「这张单是不是已经有退款了」:
+  //   有 → 按它的状态收口(succeeded 落账 / failed·canceled 成对释放 / pending 保持 hold);
+  //   没有 → 才 create。
+  // 查找本身翻页 fail closed,看不全就整趟拒绝 —— 看不全时 create 等于在瞎猜。
+  if (resuming) {
+    const existing = await findStripeRefund({ orgId, refundId, paymentIntentId: pin.paymentIntentId });
+    if ("error" in existing) return existing;
+    if (existing.found) {
+      return finishRefund({ orgId, refId, refundId, refund: existing.refund, pin, note, via });
+    }
   }
 
   // ── ② Stripe:钱回商家的卡 ────────────────────────────────────────────────

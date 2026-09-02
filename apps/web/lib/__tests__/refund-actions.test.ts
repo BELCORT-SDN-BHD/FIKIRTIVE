@@ -354,6 +354,68 @@ describe("MONEY-A14 — 事实钉在账本,单位是整数 internal(复审二 P2
   });
 });
 
+describe("MONEY-A14 — 续跑先查后建(复审四 P1)", () => {
+  it("旧键已在 Stripe 建过单、本地超时:同单号重跑**不再 create**,直接按它的状态落账", async () => {
+    // 账本上 hold 还在(第一趟没走完),Stripe 上其实已经有一笔成功的退款。
+    openHold();
+    actionEventFindFirst.mockResolvedValue(null);
+    refundsList.mockResolvedValue(page([
+      { id: "re_from_old_key", amount: EXPECTED_MINOR, status: "succeeded", metadata: { manualRefundId: TICKET, orgId: ORG } },
+    ]));
+
+    const result = await refundCreditsAction(payload());
+
+    // 幂等键换过、或者过了 24 小时,create 都会被 Stripe 当成全新一笔 —— 所以这里根本不许 create。
+    expect(refundsCreate).not.toHaveBeenCalled();
+    expect(settleCredits).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ refId: REF_ID, reason: expect.stringContaining("re_from_old_key") }));
+    expect(result).toMatchObject({ ok: true, status: "settled", amountMinor: EXPECTED_MINOR });
+  });
+
+  it("续跑时 Stripe 上那笔是 failed ⇒ 成对释放,同样不 create", async () => {
+    openHold();
+    actionEventFindFirst.mockResolvedValue({ payload: { stripeRefundId: "re_dead" } });
+    refundsRetrieve.mockResolvedValue({ id: "re_dead", status: "failed", payment_intent: PI, metadata: { manualRefundId: TICKET, orgId: ORG } });
+
+    const result = await refundCreditsAction(payload());
+
+    expect(refundsCreate).not.toHaveBeenCalled();
+    expect(refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: ORG, refId: REF_ID, reason: "manual-refund:stripe-failed" });
+    expect(result).toMatchObject({ error: expect.stringContaining("failed") });
+  });
+
+  it("超过 24 小时的 hold 重跑、而 Stripe 上确实没有那一笔 ⇒ 才 create,且只 create 一次", async () => {
+    openHold();
+    actionEventFindFirst.mockResolvedValue(null);
+    refundsList.mockResolvedValue(page([]));
+
+    const result = await refundCreditsAction(payload());
+
+    expect(refundsCreate).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: true, status: "settled" });
+  });
+
+  it("查找看不全(翻页到上限仍有下一页)⇒ 整趟拒绝,绝不在瞎猜的基础上 create", async () => {
+    openHold();
+    actionEventFindFirst.mockResolvedValue(null);
+    refundsList.mockResolvedValue(page([{ id: "re_x", amount: 1, status: "succeeded" }], true));
+
+    const result = await refundCreditsAction(payload());
+
+    expect(result).toMatchObject({ error: expect.stringContaining("Could not search") });
+    expect(refundsCreate).not.toHaveBeenCalled();
+  });
+
+  it("首次(账本上还没有 hold)不做这次查找 —— 它自己就是第一笔", async () => {
+    noLedgerRows();
+
+    await refundCreditsAction(payload());
+
+    // 只有「还能退多少」那一次列表调用,没有第二次找回调用。
+    expect(refundsList).toHaveBeenCalledTimes(1);
+    expect(refundsCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("MONEY-A14 — 同一单号的参数漂移一律拒绝(复审二 P2-3)", () => {
   it("① 续跑时改了付款 / 改了额度 / 改了 partial ⇒ 三样都拒", async () => {
     openHold();

@@ -62,7 +62,16 @@ async function ledgerRow(orgId: string, internal: number, minutesAgo: number, se
   });
 }
 
+/** 上一趟被中断留下的行会撞固定 id;先自清,重跑才是幂等的。 */
+async function wipeFixtures() {
+  await prisma.creditLedger.deleteMany({ where: { id: { startsWith: `cl_${TAG}_` } } });
+  await prisma.membership.deleteMany({ where: { orgId: { in: [ORG_OVER, ...NOISE_ORGS] } } });
+  await prisma.user.deleteMany({ where: { email: { startsWith: `${TAG}-` } } });
+  await prisma.organization.deleteMany({ where: { id: { in: [ORG_OVER, ...NOISE_ORGS] } } });
+}
+
 beforeAll(async () => {
+  await wipeFixtures();
   await makeOrg(ORG_OVER, "Over limit shop", OWNER_EMAIL);
   for (const [i, id] of NOISE_ORGS.entries()) await makeOrg(id, `Noise shop ${i + 1}`, `${TAG}-n${i + 1}@example.test`);
 
@@ -75,12 +84,7 @@ beforeAll(async () => {
   }
 });
 
-afterAll(async () => {
-  await prisma.creditLedger.deleteMany({ where: { id: { startsWith: `cl_${TAG}_` } } });
-  await prisma.membership.deleteMany({ where: { orgId: { in: [ORG_OVER, ...NOISE_ORGS] } } });
-  await prisma.user.deleteMany({ where: { id: { in: userIds } } });
-  await prisma.organization.deleteMany({ where: { id: { in: [ORG_OVER, ...NOISE_ORGS] } } });
-});
+afterAll(wipeFixtures);
 
 describe("MONEY-A14 — 超限的 workspace 不会被更新的明细行挤出报表", () => {
   it("前置条件:窗口里最新的 24 行**一行都不是**超限那家的", async () => {

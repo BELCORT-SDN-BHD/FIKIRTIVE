@@ -85,36 +85,37 @@ const OPEN_REFUND_PAGE = 25;
 /**
  * 这个 org 里还没收口的人工退款单(MONEY-A14,复审二 P1-2d)。
  *
- * 判据 = 有 RESERVE、没有 SETTLE/REFUND。两句查询而不是一句 NOT EXISTS,是因为 Prisma 表达不了
- * 同表自关联;两句都带 `orgId` 租户约束。
+ * 判据 = 有 RESERVE、没有 SETTLE/REFUND,**先减后截**(复审三 P1):旧写法先取最新 25 条 RESERVE
+ * 再减掉已终结的,于是「25 张更新且都已收口 + 1 张更老仍开着」会让那张老的从正常入口彻底消失,
+ * 而它锁着的 credits 商家一分都花不了。
  *
- * **顺序是先减后截,不是先截后减**(复审三 P1)。旧写法先取最新 25 条 RESERVE 再减掉已终结的:
- * 25 张更新且都已收口的单 + 1 张更老、仍然开着的 → 那张更老的永远排不进这 25 条,于是它从
- * 正常入口彻底消失,而它锁着的 credits 商家一分都花不了。现在先把该 org 该前缀的**终结集合**
- * 查出来(有界:等于这个 org 历史上收口过的退款单数),再在「全体 open hold」上排序取页。
+ * 减法必须**在数据库里**做(复审四 P2)。中间那一版把该 org 全部终结 refId 读回来塞进 `notIn`:
+ * 那个集合随历史单调增长,迟早撞上绑定参数上限,而它炸掉的不是这一个面板,是整个租户详情页。
+ * 所以改成一句 `NOT EXISTS` 反连接 —— 集合不出数据库,参数永远只有三个。
+ * 表名/列名照 `schema.prisma`(CreditLedger 没有 `@@map`,列名即字段名);`$queryRaw` 的标签模板
+ * 会把每个插值参数化,拼不出注入面。
  */
 async function openManualRefundsFor(orgId: string) {
-  const finalized = await prisma.creditLedger.findMany({
-    where: { orgId, kind: { in: ["SETTLE", "REFUND"] }, refId: { startsWith: MANUAL_REFUND_REF_PREFIX } },
-    select: { refId: true },
-  });
-  const closed = [...new Set(finalized.map((f) => f.refId).filter((id): id is string => Boolean(id)))];
-  const holds = await prisma.creditLedger.findMany({
-    where: {
-      orgId,
-      kind: "RESERVE",
-      refId: { startsWith: MANUAL_REFUND_REF_PREFIX, ...(closed.length > 0 ? { notIn: closed } : {}) },
-    },
-    orderBy: { createdAt: "desc" },
-    // 多取一条:它只用来回答「还有没有更早的」,不进列表。
-    take: OPEN_REFUND_PAGE + 1,
-    select: { refId: true, reason: true, createdAt: true },
-  });
+  const holds = await prisma.$queryRaw<{ refId: string; reason: string; createdAt: Date }[]>`
+    SELECT r."refId", r."reason", r."createdAt"
+    FROM "CreditLedger" r
+    WHERE r."orgId" = ${orgId}
+      AND r."kind" = 'RESERVE'::"CreditTxnKind"
+      AND r."refId" LIKE ${`${MANUAL_REFUND_REF_PREFIX}%`}
+      AND NOT EXISTS (
+        SELECT 1 FROM "CreditLedger" f
+        WHERE f."orgId" = r."orgId"
+          AND f."refId" = r."refId"
+          AND f."kind" IN ('SETTLE'::"CreditTxnKind", 'REFUND'::"CreditTxnKind")
+      )
+    ORDER BY r."createdAt" DESC
+    LIMIT ${OPEN_REFUND_PAGE + 1}
+  `;
   const items = holds.slice(0, OPEN_REFUND_PAGE).flatMap((hold) => {
     const pin = decodeRefundPin(hold.reason);
     if (!pin) return [];
     return [{
-      refundId: hold.refId!.slice(MANUAL_REFUND_REF_PREFIX.length),
+      refundId: hold.refId.slice(MANUAL_REFUND_REF_PREFIX.length),
       paymentIntentId: pin.paymentIntentId,
       heldDisplay: displayCredits(pin.heldInternal),
       requestedDisplay: displayCredits(pin.requestedInternal),

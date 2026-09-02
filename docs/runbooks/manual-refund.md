@@ -36,6 +36,11 @@
      键里不带 org 的话,两个商家恰好用同一个 uuid 就会共用一把幂等键,第二笔请求拿回第一笔的结果,
      钱退给错的商家而两边账本都写着「成功」。
    **重试必须用同一个号**——面板在这一单结清之前不会换号。自己另起一个新号去重试 = 把防重复退款的保护关掉。
+   同一个单号重跑**不会退第二次**,但依据不是幂等键:Stripe 的幂等键 24 小时就过期,过期之后同样的
+   请求会被当成全新一笔。真正的依据是**先查后建**——账本上只要已经有这张单的预扣,动作在发起退款
+   之前一定先只读地问一次 Stripe「这张单是不是已经有退款了」(审计行 → 按 `metadata.manualRefundId`
+   翻完该付款的退款列表);查到就按它的状态收口,查不到才发起。查不全(退款多到一次翻不完)时整趟
+   拒绝,不在看不全的清单上发起第二笔。
 3. 动作内部三段,顺序固定:
    ① `reserveCredits(refId=manual-refund:<uuid>)` 预扣锁定 N cr——余额不足=预扣失败=当场拒退。这一笔的**事实**(`pi_…`、申请与实扣的 credits、马币仙数、币种、是否按可扣部分退)当场钉进 RESERVE 行的 reason,单位是内部整数,不会四舍五入;账本只追加,所以它此后不可改,重试只会照着它跑,任何一项对不上都当场拒。
    ② `stripe.refunds.create(payment_intent, amount)` 得退款单号 `re_…`;这笔退款上带 `metadata.manualRefundId = <uuid>`,是事后从 Stripe 认回它的唯一凭据;
@@ -126,9 +131,9 @@
 - SETTLE 行 reason 载 Stripe 退款单号;两边金额按汇率钉点对得上。
 - 商家消费历史该退款行可读出是「退款」(类目 Refund,不是 Adjustment)。
 - 本手册存在于 `docs/runbooks/`。
-- 行为测试:`apps/web/lib/__tests__/refund-actions.test.ts`(三段顺序、成对释放、幂等键带 org、累计闸、单价按账本事实、pending 收口两态、审计行三项核对、翻页 fail closed);未收口清单的租户约束、先减后截与 hasMore 在 `apps/web/lib/__tests__/tenant-admin.test.ts`。
+- 行为测试:`apps/web/lib/__tests__/refund-actions.test.ts`(三段顺序、成对释放、幂等键带 org、续跑先查后建、累计闸、单价按账本事实、pending 收口两态、审计行三项核对、翻页 fail closed);未收口清单的租户约束、先减后截与 hasMore 在真库测试 `apps/web/lib/__tests__/open-refund-holds-db.test.ts`。
 
 ## 工程侧已备 vs 等 Founder
 
-- ✅ 已备:专用退款动作(三段一步走,幂等)、动 Stripe 前的四重核对(归属/入过账/记账对得上/还能退多少)、单价由账本事实推导、退款单事实钉在账本、未收口清单 + Complete/Abandon 两个收口动作、消费历史 Refund 类目、累计闸下沉 `grantCredits`/退款预扣同事务、暂停咽喉。
+- ✅ 已备:专用退款动作(三段一步走,重跑先查后建)、动 Stripe 前的四重核对(归属/入过账/记账对得上/还能退多少)、单价由账本事实推导、退款单事实钉在账本、未收口清单 + Complete/Abandon 两个收口动作、消费历史 Refund 类目、累计闸下沉 `grantCredits`/退款预扣同事务、暂停咽喉。
 - 👤 永远人工:退不退的裁定与金额批准(动钱=Founder 或其授权者),以及台账登记。
