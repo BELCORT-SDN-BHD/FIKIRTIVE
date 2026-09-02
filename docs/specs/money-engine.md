@@ -112,6 +112,11 @@
 | 2026-09-02 | **§7.6 施工漂移备案(④b,PR #1120)**:①累计闸行锁改锁 **Organization** 行而非 CreditAccount——`SELECT … FOR UPDATE` 锁不住不存在的账户行(从未充值的 org),且须与 `assertWithinSpendCap` 锁序一致否则交叉等待;②累计口径对人工退款改数 `manual-refund:` 前缀的 **RESERVE** 行 |balanceDelta|,原文写 SETTLE 行而 SETTLE 的 balanceDelta 恒为 0,照字面数出来闸不存在。意图不变、算术更正,待 S5 追认 | |
 | 2026-09-02 | **退款不是消费(编排者裁定,④b 落地)**:`manual-refund:` 前缀的 reserve **豁免商家 spend cap 与拒付暂停咽喉**——否则商家把单笔上限设低会挡住自己的退款、被暂停的商家永远退不了款(人工个案需要退款)。豁免按 refId 前缀在共用写路径识别,该前缀只能由 admin 退款动作(tenants.mutate)产生;累计闸仍生效。待 S5 追认 | |
 | 2026-09-02 | **A9 披露入口补挂(PR #1118)**:顾问复审确认 Canvas 拖放与素材裁剪保存两入口产生理解扣费却无价目,已挂同一披露组件;披露围栏测试改为 TypeScript 语法树解析(写点→动作→入口三侧普查,跨文件闭包,边界穷举)。顺带登记两条产品观察待 S5:裁剪控制条深色岛对比度≈2.6:1(既有);`addReferenceImages`/`uploadCandidates` 两个无 UI 调用方的导出动作待清理或立碑 | |
+| 2026-09-02 | **④b 退款单价口径漂移(实现备案,非 Founder 裁决)**:§7.6/runbook 原口径「N × 该包 RM 价 ÷ 该包 credits 数」在实现中改为「该笔付款实收(Stripe PaymentIntent.amount_received)÷ 该笔付款实际入账的 credits(账本 GRANT 行 `stripe:<sessionId>` 的 balanceDelta)」,操作员不再选包,CREDIT_PACKS 只用于展示标签。原因:跨厂复审 P1——同额不同包(历史包 RM250/500cr 与现 Pro 包 RM250/600cr)按操作员选包会误算单价;按付款事实推导对既有三包与旧包结果一致。PR #1120 | |
+| 2026-09-02 | **④b 人工退款重试防线=先查后建**:同单号重跑在向 Stripe 发起前先查既有退款(审计行 → 按 payment_intent 列表按 metadata.manualRefundId),找到按状态收口,查不到才发起;不依赖 Stripe 幂等键(24 小时过期)。Stripe 幂等键改带 org(`manual-refund:<orgId>:<uuid>`),账本 refId 仍 `manual-refund:<uuid>`。PR #1120 | |
+| 2026-09-02 | **④b Abandon 残余竞态(待决)**:放弃未收口退款前先查 Stripe、UI 二次确认、runbook 明写;理论缝=退款 create 刚发出而 Stripe 尚未列出的一瞬。更严规则(仅当 create 从未发出且超过 N 分钟才允许放弃)需规格授权,登记待 Founder 裁 | |
+| 2026-09-02 | **④a 对账缺口「已手工补发」关闭的绑定规则(实现备案)**:关闭凭据账本行必须 `idempotencyKey = stripe:<sessionId>` 或 reason 含该 session id(完整 token);一条账本行只能关闭一个缺口(占用标记同事务,撞键即拒);账本首见查不动时观察行照写并标未验证,不升级只进名单,确认后翻真。PR #1119 | |
+| 2026-09-02 | **A9 披露入口补挂的附带事实**:EditDesk 音频上传入口原无类型守卫(仅 accept 提示),补客户端守卫——扩展名为硬条件(白名单由 `@fikirtive/core/upload` 的 mimeOf 派生,webm 因判 video 剔除),豁免「音频不计费」前提由围栏 guard 钉住;披露围栏改为 TypeScript AST 双侧普查(写点函数计数、全目录传播闭包、default/namespace/动态导入)。PR #1118 | |
 
 ## 6. 改签记录
 
