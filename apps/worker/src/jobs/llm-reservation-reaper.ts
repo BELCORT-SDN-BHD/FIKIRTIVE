@@ -123,6 +123,23 @@ async function retireApprovalCard(orgId: string, cardId: string): Promise<void> 
  *  index, so a settle/refund that lands between the query and the refund makes this a safe
  *  no-op. Returns how many leaked reservations it swept.
  *
+ *  HISTORICAL PREFIXES, DELIBERATELY KEPT (2026-09-02, 钱引擎5B). `brand-research:`,
+ *  `draft:` and `enhance:` have no writer left in the tree - the dead pre-Otto module went
+ *  2026-07-04 and the dead paid cowork endpoints went 2026-07-07 - and the coverage guard in
+ *  llm-reservation-reaper.test.ts asserts that stays true. They are still swept anyway, and
+ *  removing them was reverted on purpose:
+ *
+ *    A leaked hold from those eras is a merchant's credits frozen forever, and NOTHING ELSE
+ *    would find it. The daily ledger-conservation check cannot: a leaked RESERVE keeps
+ *    `balance == sum(balanceDelta)` and `reserved == sum(reservedDelta)` perfectly intact -
+ *    that is exactly what a legal, un-finalized hold looks like to a conservation check. So
+ *    dropping these three lines trades "three unmatched LIKE clauses per sweep" for "if any
+ *    historical row is out there, no code path will ever refund it".
+ *
+ *  The condition for actually deleting them is therefore evidence, not reasoning: a read-only
+ *  production query showing zero un-finalized RESERVE rows under all three prefixes. Until that
+ *  has been run, they stay.
+ *
  *  #463 two-phase identity: the scan is cross-tenant by construction (there is no job row and
  *  no request to attach an owner to), so it runs under "llm-reservation-reaper"; each refund is
  *  re-scoped to the org the leaked RESERVE belongs to. Note the scan is raw SQL and therefore

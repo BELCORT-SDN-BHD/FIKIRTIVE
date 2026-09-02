@@ -157,9 +157,11 @@ describe("总开关与平台日预算(真正兜住花费的两样)", () => {
     }
   });
 
-  it("预算可调,非法值退回默认(绝不静默变成无限)", () => {
+  it("报警线可调,非法值退回默认(绝不静默变成无限)", () => {
     expect(understandingDailyBudgetUsd({ ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "12.5" })).toBe(12.5);
-    expect(understandingDailyBudgetUsd({ ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "0" })).toBe(0); // 0 = 全停,合法
+    // `0` 仍然是合法值,但语义随 Founder 2026-09-02 的「只报警不拦」裁决变了:
+    // 以前是「全停」,现在只是「每天都越线、每天喊一次」。停掉理解的开关是 ASSET_UNDERSTANDING=off。
+    expect(understandingDailyBudgetUsd({ ASSET_UNDERSTANDING_DAILY_BUDGET_USD: "0" })).toBe(0);
     for (const bad of ["-1", "abc", ""]) {
       expect(understandingDailyBudgetUsd({ ASSET_UNDERSTANDING_DAILY_BUDGET_USD: bad })).toBe(
         UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT,
@@ -167,12 +169,15 @@ describe("总开关与平台日预算(真正兜住花费的两样)", () => {
     }
   });
 
-  it("预算的单位是**美元**,不是行数 —— 它回答的是「一天最多被账单多少」", () => {
+  it("报警线的单位是**美元**,不是行数 —— 它回答的是「一天被账单多少之后要叫人」", () => {
     const budget = understandingDailyBudgetUsd({});
     expect(budget).toBeGreaterThan(0);
-    // 一天的预算够读很多素材,但也就是几十条视频的钱 —— 一个人看得懂的量级
+    // 一天的线够读很多素材 —— 它是烧钱异常的探测线,不是"每天只让读这么多"。
     expect(budget / Math.max(...UNDERSTANDING_KINDS.map(understandingWorstCaseUsd))).toBeGreaterThan(1_000);
-    expect(budget).toBeLessThan(CHEAPEST_VIDEO_COGS_USD * 100);
+    // 上界:仍然是一个人看得懂的量级。$50/天 ≈ 几百条最便宜视频的钱 —— 越过它值得看一眼,
+    // 但它拦不住任何东西(Founder 2026-09-02:只报警不拦),所以上界比闸时代宽是对的。
+    // 真正的花费上限是商家自己的余额(理解从 MONEY-A9 起按件向商家收费)。
+    expect(budget).toBeLessThan(CHEAPEST_VIDEO_COGS_USD * 1_000);
   });
 });
 

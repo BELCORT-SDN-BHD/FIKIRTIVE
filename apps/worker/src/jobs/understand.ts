@@ -12,20 +12,30 @@
  * 现在这条链路是一条真正的钱路,它的**计费不变量**是下面五条 —— 每一条都由
  * understand.test.ts 的 `MONEY-A9` 那一组钉着,不是靠这段注释声明:
  *
- *   ① **reserve-first,按快照价**。先按行上的 `priceInternalSnapshot`(上传那一刻锁的价,
- *      四则①)预扣,再打供应商。绝不许先出片后收钱 —— 那等于把余额不足变成一笔坏账。
+ *   ① **reserve-first,按快照价**。先按行上的 `priceInternalSnapshot`(扫描器**建行那一刻**
+ *      锁的价,四则①;口径见第 ④ 条与建行处的注释)预扣,再打供应商。绝不许先出片后收钱 ——
+ *      那等于把余额不足变成一笔坏账。
  *   ② **settle 与结果落盘同一个事务**。结算和 DONE 一起提交:分成两步写就有一个窗口,
- *      商家的文件读完了而钱没结(或反过来),而这条链路重投是常态。
+ *      商家的文件读完了而钱没结(或反过来),而这条链路重投是常态。同一笔提交里还核两件事,
+ *      任何一件不成立就整笔回滚(fail closed):台账上这个回合**没有** REFUND(否则等于
+ *      对着一个已经退掉的 hold 交货),以及这一行**还是 RUNNING**(否则等于把别人接手的
+ *      回合踩掉)。见 settleInTx / markDoneInTx / commitUnderstanding。
  *   ③ **三个崩溃窗全部由 `(orgId, refId)` 的终态查询收口**(reserve 后 / provider 后 /
  *      settle 前)。handler 进门先问台账:已 SETTLE = 这一行结清了;已 REFUND = 上一回合退了,
  *      换一个新 refId 重开一回合;有 RESERVE 没 finalizer = **复用那个 hold**,不重复预扣。
  *      恢复靠的是**问台账**,不是靠记住上次做到哪 —— 崩溃不会让台账失忆。
  *   ④ **快照在建行那一刻就写死**。扫描器建 QUEUED 行时把本段价(和 image 的级联第二段价)
- *      一起锁上 —— 那一刻正是商家看过价目披露、按下上传的那一刻。快照为 null 因此**只可能**
- *      是 A9 迁移之前就已经落在库里的老行(迁移零回填),它们商家上传时没见过任何披露,
- *      永不补收:整条钱路跳过,一格都不碰。新上传的素材没有一件走得进这条免费路。
+ *      一起锁上。规格 §7.3 把这一刻称作「上传时刻」,而**代码里它是建行时刻** —— 通常同刻
+ *      (上传后下一轮扫描就建行),但每轮只建 UNDERSTAND_SCAN_BATCH 行,两千张的批量导入
+ *      要 ~80 分钟才建完,期间调价会让后半批按新价锁。Founder 2026-09-02 接受这个偏差
+ *      (规格 §5 变更登记);触发条件=调价频率高于每周一次时改为上传落库同事务写价。
+ *      快照为 null 因此**只可能**是 A9 迁移之前就已经落在库里的老行(迁移零回填),它们
+ *      商家上传时没见过任何披露,永不补收:整条钱路跳过,一格都不碰。新上传的素材没有
+ *      一件走得进这条免费路。
  *   ⑤ **PAUSED_BALANCE 期间零供应商调用**。余额不够就停在那里等充值(充值事件唤醒 +
- *      扫描器按「余额 ≥ 快照价」捞回),不无限重扫、不打供应商。
+ *      扫描器按「余额 ≥ 快照价、且这个 workspace 没被暂停」捞回),不无限重扫、不打供应商。
+ *      **被暂停的 workspace 走同一条路**(MONEY-A13):以前它是原样抛出去的,那条路是
+ *      重投 → 死信 → 30 分钟后行清道夫退回 QUEUED → 再撞,一个死循环。
  *
  * `refId` 是**回合制**的:首回合 `understanding:<行 id>`,退款之后的新回合
  * `understanding:<行 id>:r<8 位>`,当前回合记在行上的 `moneyRefId`。为什么要换键:
@@ -33,10 +43,13 @@
  * 而「已退款按余额重新 reserve」是规格明写的恢复路径 —— 换键并把它记在行上,恢复协议
  * 才能确定性地重放。漏在半路的 hold 由本文件的 `reapStaleUnderstandingReservations` 兜底。
  *
- * 每日 $5 那道闸**降格为平台侧保险丝**(不再是「兜住花费」的主力 —— 主力现在是商家的
- * 余额):它改成**预扣式**(#1056),付费调用前先把该 kind 的最坏 token 预加进当日桶、
- * 加完仍在预算内才算挤进去,调用回来再按实际用量校正差额。旧的 check-then-act 在并发 2
- * 下可以双双越线,而一条 SQL 的条件 upsert 不能。
+ * 每日预算那道闸**已经不是闸**(Founder 2026-09-02 裁决,规格 §5 变更登记):默认从 $5
+ * 抬到 $50,并且**只报警不拦**。$5/天是平台自付时代的止损线;A9 之后理解是商家付费的 SKU,
+ * 同一个数字就变成一道限制收入、且全平台先到先得的闸 —— 一个商家批量导入两千张图,当天
+ * 所有商家的素材都被标成「明天再读」。现在越线只发一条 founderAlert(每天最多一条)然后
+ * 照读;真正的花费上限是商家自己的余额(不变量①的 reserve-first)。计量本身保留并且仍是
+ * 预扣式(#1056):付费调用前先把该 kind 的最坏 token 加进当日桶,调用回来按实际用量校正 ——
+ * 那是「供应商那边在异常烧钱」在生产上唯一的探测器。
  *
  * ── 暂缓 ≠ 丢弃(这条链路最贵的一条纪律)──────────────────────────────────────
  * 扫描器第 ① 段只找**完全没有理解行**的素材,所以任何一行终态都是一道再也开不了的门。
@@ -66,12 +79,11 @@
  * 先花三分之一分钱判一次,再决定要不要花第二次 —— 菜单最常见的形态就是一张照片,
  * 而给每张产品照都跑一遍 doc-extract 是纯浪费。
  */
-import { InsufficientCredits, prisma, refundReservation, reserveCredits, settleCredits } from "@fikirtive/db";
+import { InsufficientCredits, OrgSuspended, prisma, refundReservation, reserveCredits, settleCredits } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   UNDERSTAND_QUEUE,
   UNDERSTAND_RETRY_LIMIT,
-  UNDERSTANDING_BUDGET_REACHED,
   UNDERSTANDING_CAPS,
   UNDERSTANDING_CLIP_TOO_LONG,
   UNDERSTANDING_IMAGE_TOO_LARGE,
@@ -81,9 +93,8 @@ import {
   UNDERSTANDING_PAUSED,
   UNDERSTANDING_PROVIDER_PAUSED,
   UNDERSTANDING_UNREADABLE,
-  UNDERSTANDING_USD_PER_MTOKEN_IN,
-  UNDERSTANDING_USD_PER_MTOKEN_OUT,
   UNDERSTANDING_WAITING_FOR_CREDITS,
+  FOUNDER_OWNER_ID,
   assetUnderstandingEnabled,
   newId,
   normalizeNameKey,
@@ -110,6 +121,7 @@ import {
   type UnderstandingProvider,
 } from "@fikirtive/generation";
 import * as Sentry from "@sentry/node";
+import { founderAlert } from "../alerting.js";
 import { storage } from "../storage.js";
 import { sanitizeError } from "../redact.js";
 
@@ -181,49 +193,111 @@ function spendDayKey(now: Date): string {
 }
 
 /**
- * **预扣一次最坏情况的平台预算**(#1056 的修法,规格 §7.3「预算闸降级+#1056 随修」)。
+ * **记一笔最坏情况的平台花费**,并回答「今天越过报警线了吗」(#1056 的计量修法 + Founder
+ * 2026-09-02「只报警不拦」裁决,规格 §7.3 与 §5 变更登记)。
  *
- * ── 为什么必须是一条语句 ────────────────────────────────────────────────────
- * 上一版是 check-then-act:先 SUM 出「今天花了多少」,再决定打不打供应商。两个副本在同
- * 一刻读到同一个「还没超」,于是**双双**越线 —— 闸门读的是过去,而花钱发生在未来。
- * 这一版把判断和记账压成同一条 `INSERT … ON CONFLICT DO UPDATE … WHERE`:预加之后仍在
- * 预算内才算挤进去,两个副本在同一行上排队,第二个读到的是第一个已经提交的值。
+ * ── 它曾经是一道闸,现在只是一支温度计 ──────────────────────────────────────
+ * 上一版这里是 `INSERT … ON CONFLICT DO UPDATE … WHERE 预算内`:挤不进去就把行退回队列,
+ * 商家的素材被标成「明天再读」。MONEY-A9 之后理解是商家付费的 SKU,那道闸就变成了一道
+ * **限制收入**的闸,而且全平台先到先得。Founder 裁决:抬到 $50/天并且**只报警不拦**。
+ * 所以 `WHERE` 没了,记账照旧 —— 计量本身仍然是发现「供应商那边异常烧钱」的唯一探测器。
  *
  * ── 记的是最坏情况,不是实际 ──────────────────────────────────────────────────
- * 实际用量要等调用回来才知道,而闸必须在**调用之前**关上。所以先按该 kind 的 token 上限
- * (`UNDERSTANDING_CAPS`)记高,回来再由 {@link correctUnderstandingBudget} 把差额减回去,
- * 没打成供应商的路径由 {@link releaseUnderstandingBudget} 全额退回。净效果和旧的「按实际
- * 记一笔」一样,差别只在**窗口期间**账面是高的 —— 而这正是要的方向:并发时宁可少放行
- * 一件,不可多花一笔。
+ * 实际用量要等调用回来才知道,而这一笔必须在**调用之前**记下。所以先按该 kind 的 token
+ * 上限(`UNDERSTANDING_CAPS`)记高,回来再由 {@link correctUnderstandingBudget} 把差额减
+ * 回去,没打成供应商的路径由 {@link releaseUnderstandingBudget} 全额退回。净效果和「按实际
+ * 记一笔」一样,差别只在**窗口期间**账面是高的 —— 那正是报警要的方向:宁可早喊一声。
  *
- * 返回**这一笔记在哪个桶**(`YYYY-MM-DD`),`null` = 没挤进去。返回桶键而不是布尔值,是因
- * 为一趟调用最长 90 秒,跨过 UTC 零点时校正必须回到**当初预扣的那个桶**,否则昨天挂着一笔
- * 最坏情况、今天凭空少一笔。
+ * 返回**这一笔记在哪个桶**(`YYYY-MM-DD`)。返回桶键而不是别的,是因为一趟调用最长 90 秒,
+ * 跨过 UTC 零点时校正必须回到**当初记账的那个桶**,否则昨天挂着一笔最坏情况、今天凭空少一笔。
+ * `overBudget` 用的是**加完这一笔之后**的桶总额(`RETURNING` 拿回来的就是提交后的值,不是
+ * 一次单独的读)—— 两个副本同时越线时各自都看得见,而报警的每日节流在上层收敛成一条。
  *
- * 费率从 `@fikirtive/core` 的钉点传参进来(不在 SQL 里手抄一份数字):改钉点,这道闸当场
- * 跟着变。空日那一支单独判 —— `INSERT` 分支不走 `WHERE`,预算被调到 0(「全停」的合法意图)
- * 时它会放一件进去,而那正是这道闸唯一存在的理由。
+ * 费率从 `@fikirtive/core` 的钉点传参进来(不在 SQL 里手抄一份数字):改钉点,这支温度计
+ * 当场跟着变。
  */
-export async function tryHoldUnderstandingBudget(
+export async function recordUnderstandingBudget(
   kind: UnderstandingKind,
   now: Date = new Date(),
-): Promise<string | null> {
-  const budget = understandingDailyBudgetUsd();
-  // 一件都塞不下的预算(含 0 = 全停):空日那条 INSERT 分支没有 WHERE 兜着,只能在这里挡。
-  if (understandingWorstCaseUsd(kind) > budget) return null;
+): Promise<{ day: string; spentUsd: number; budgetUsd: number; overBudget: boolean }> {
+  const budgetUsd = understandingDailyBudgetUsd();
   const caps = UNDERSTANDING_CAPS[kind];
   const day = spendDayKey(now);
-  const held = await prisma.$executeRaw`
+  const [bucket] = await prisma.$queryRaw<{ inputTokens: bigint; outputTokens: bigint }[]>`
     INSERT INTO "UnderstandingSpendDay" AS d ("day", "inputTokens", "outputTokens", "calls", "updatedAt")
     VALUES (${day}::date, ${caps.maxInputTokens}::bigint, ${caps.maxOutputTokens}::bigint, 0, now())
     ON CONFLICT ("day") DO UPDATE
       SET "inputTokens"  = d."inputTokens"  + EXCLUDED."inputTokens",
           "outputTokens" = d."outputTokens" + EXCLUDED."outputTokens",
           "updatedAt"    = now()
-      WHERE ((d."inputTokens"  + EXCLUDED."inputTokens")::float8  * ${UNDERSTANDING_USD_PER_MTOKEN_IN}
-           + (d."outputTokens" + EXCLUDED."outputTokens")::float8 * ${UNDERSTANDING_USD_PER_MTOKEN_OUT})
-            / 1000000 <= ${budget}`;
-  return held > 0 ? day : null;
+    RETURNING d."inputTokens", d."outputTokens"`;
+  const spentUsd = understandingCostUsd({
+    inputTokens: Number(bucket?.inputTokens ?? 0),
+    outputTokens: Number(bucket?.outputTokens ?? 0),
+  });
+  return { day, spentUsd, budgetUsd, overBudget: spentUsd > budgetUsd };
+}
+
+/** 越线报警的节流行 type(主键带 UTC 日期,同对账哨兵与守恒巡检的形状)。 */
+const BUDGET_ALERTED_TYPE = "understanding.budget.alerted";
+
+/**
+ * 越线报警,**每天最多一条**(Founder 2026-09-02 裁决的「报警」那一半)。
+ *
+ * ── 节流状态为什么在库里而不在进程里(复审 P2)──────────────────────────────
+ * 上一版是一个模块变量 + 「回到线以下重新上膛」的边沿触发。两个问题:worker 一重启就
+ * 忘了今天喊过(而这个 worker 每次部署都重启);更麻烦的是那个「上膛」—— 计量桶会因为
+ * 校正(把预记的最坏情况换成实际用量)在同一天里回落到线下,于是同一天可以来回喊很多次。
+ * 「每天最多一条」写在注释里,行为却是「每次穿越都喊一次」。
+ *
+ * 现在状态写在 ActionEvent 的**主键** `<type>:<UTC 日期>` 上,与
+ * `stripe-reconcile` 的缺口节流、`ledger-conservation` 的漂移节流同一套机械:撞主键
+ * (P2002)= 今天喊过了 ⇒ 走 `repeat`(Sentry 照收,只压掉会响的两条通道);次日是一把
+ * 新键,自然复位。跨重启成立。
+ *
+ * 写不进节流行(**不是**撞主键的那种失败)⇒ 分不清今天喊没喊过 ⇒ **照常全渠道喊**:
+ * 一次数据库抖动可以让人多收一封邮件,不可以让一条烧钱信号变哑。`founderAlert` 自己永不抛。
+ *
+ * 挂在 founder org 上:这是一条**平台级**信号(「我们今天一共被账单多少」),没有哪个商家
+ * 收得了它;而 ActionEvent.ownerId 有外键,所以必须是一个真实存在的 org —— `founder` 那一行
+ * 由 credits 迁移种下,全新库上也在(已在 fikirtive_seg5b_test 上实查)。
+ *
+ * 为什么是 founderAlert 而不是 console:这条线烧穿意味着供应商那边可能在异常计费,
+ * 而没有人读 worker 的 stdout —— 2026-08-18 那次事故的静默就是这么来的。
+ */
+async function alertUnderstandingOverBudget(day: string, spentUsd: number, budgetUsd: number): Promise<void> {
+  console.warn(
+    `[understand] platform understanding spend $${spentUsd.toFixed(4)} crossed the $${budgetUsd.toFixed(2)}/day ` +
+      `alert line — files are STILL being read (alert-only since 2026-09-02)`,
+  );
+  let repeat = false;
+  try {
+    await prisma.actionEvent.create({
+      data: {
+        id: `${BUDGET_ALERTED_TYPE}:${day}`,
+        ownerId: FOUNDER_OWNER_ID,
+        type: BUDGET_ALERTED_TYPE,
+        payload: { day, spentUsd: spentUsd.toFixed(4), thresholdUsd: budgetUsd.toFixed(2) },
+      },
+    });
+  } catch (e) {
+    repeat = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+    if (!repeat) {
+      console.error(`[understand] could not record the budget alert-throttle row for ${day}; alerting in full anyway:`, e);
+    }
+  }
+  await founderAlert(
+    {
+      key: "understanding.daily_spend_over_threshold",
+      title: "Asset understanding crossed its daily spend alert line",
+      action:
+        "Check the provider bill for an anomaly. Reading is NOT blocked — merchants pay per file, so this is a burn " +
+        "signal, not a cap. Raise ASSET_UNDERSTANDING_DAILY_BUDGET_USD if the line is simply too low, or set " +
+        "ASSET_UNDERSTANDING=off to pause reading.",
+      context: { day, spentUsd: spentUsd.toFixed(4), thresholdUsd: budgetUsd.toFixed(2) },
+    },
+    { repeat },
+  );
 }
 
 /**
@@ -278,9 +352,9 @@ async function releaseUnderstandingBudget(kind: UnderstandingKind, day: string):
 /**
  * 今天全平台的理解已经花了多少美元。
  *
- * 预扣式之后这个读数**包含还在飞的那几笔最坏情况**(见 {@link tryHoldUnderstandingBudget}):
- * 窗口期间它偏高,调用一回来就被校正回实际用量。偏高是要的方向 —— 这个读数只被扫描器当
- * 「今天还值不值得派新活」的便宜早退用,而真正的闸是那条条件 upsert。
+ * 预记式之后这个读数**包含还在飞的那几笔最坏情况**(见 {@link recordUnderstandingBudget}):
+ * 窗口期间它偏高,调用一回来就被校正回实际用量。偏高是要的方向 —— 报警宁可早喊一声。
+ * 扫描器拿它判「今天越线了没有」,而越线之后**照样派活**(Founder 2026-09-02:只报警不拦)。
  *
  * 读的是累加计量器,不是行上那两列的快照 SUM。
  * 数的是**钱**不是行数:`understandingCostUsd()` 是现成的算式,而行数在两头都会错
@@ -371,16 +445,15 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
     return [];
   }
 
-  // 平台日预算:今天全平台已经花掉的真实美元。超线 ⇒ 这一轮不派新活,次日自动复位。
-  // 已经在队列里的那一批仍会跑完(至多 UNDERSTAND_SCAN_BATCH 件),这是刻意的:
-  // 用一次扫描的粒度换掉每一趟都做一次全表 SUM。
-  const budget = understandingDailyBudgetUsd();
-  const spent = await understandingSpentTodayUsd(now);
-  if (spent >= budget) {
-    noticePause(`today's platform understanding budget is used up ($${spent.toFixed(4)} of $${budget.toFixed(2)})`);
-    return [];
-  }
   noticePause(null);
+
+  // 平台日花费**报警线**(Founder 2026-09-02:只报警不拦)。上一版这里是 `return []` ——
+  // 超线就整轮不派新活,商家的素材被标成「明天再读」。A9 之后理解是商家付费的 SKU,那道闸
+  // 拦掉的是收入,而不是我们的钱;真正的花费上限是商家自己的余额(reserve-first)。
+  // 所以这里只喊一声就往下走,喊声由 alertUnderstandingOverBudget 按 UTC 日收敛成每天一条。
+  const budgetUsd = understandingDailyBudgetUsd();
+  const spentUsd = await understandingSpentTodayUsd(now);
+  if (spentUsd > budgetUsd) await alertUnderstandingOverBudget(spendDayKey(now), spentUsd, budgetUsd);
 
   return runAsSystem("understanding-scan", async () => {
     const ids: string[] = [];
@@ -417,10 +490,14 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
               kind,
               status: "QUEUED",
               // ── 锁价就在这一行(MONEY-A9 计费四则①②)────────────────────────────────
-              // ① **上传时刻锁价**。这一段是「上传时刻」在代码里的落点:商家把文件放进来,
-              //    下一轮扫描就建行,建行**同时**把价写死。结算按这一格,不按结算那一刻现算 ——
-              //    积压的队列隔日才跑到、期间调了价,商家付的仍是他上传时看见的那个数
-              //    (调价不追溯,A7)。
+              // ① **建行时刻锁价**。商家把文件放进来,下一轮扫描就建行,建行**同时**把价写死。
+              //    结算按这一格,不按结算那一刻现算 —— 积压的队列隔日才跑到、期间调了价,
+              //    商家付的仍是建行那一刻的数(调价不追溯,A7)。
+              //    口径说准(Founder 2026-09-02 接受偏差,规格 §5 变更登记):规格 §7.3 写的是
+              //    「上传时刻价」,而这里落的是**扫描器建行时刻**的价。通常同刻,但每轮只建
+              //    UNDERSTAND_SCAN_BATCH(25)行 —— 两千张图的批量导入要 ~80 分钟才建完,
+              //    期间调价就会让后半批按新价锁。触发条件在规格里:调价频率高于每周一次时,
+              //    改成上传落库同事务写价、扫描器只读不算价。
               //    少了这两列 = 每一行新素材的快照都是 null = 走免费祖父 = **整条收费链路
               //    在生产上一分钱都收不到**,而所有钱路用例照样绿(它们各自喂显式带价的行)。
               // ② **级联第二段一并锁**。看图读完才知道这是一份文档、要再读一次;而那两段价
@@ -502,6 +579,15 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
     //
     //    原生 SQL 是因为条件跨了两张表(行上的快照价 vs 账户余额),Prisma 的 where 表达不了
     //    「一列 ≥ 另一张表的一列」。跨租户扫描,逐行写入照旧各自带自己的租户。
+    //
+    //    **第二条判据:这个 workspace 没有被整个暂停**(MONEY-A13)。被拒付暂停的商家余额
+    //    照样够,少了这一条,他名下每一件停着的素材都会每分钟被捞起来、CAS 成 RUNNING、
+    //    reserve 撞暂停咽喉、再写回 PAUSED_BALANCE —— 一分钟 25 行的空转,而规格明写
+    //    「不重投、不打供应商」。判据与 `assertOrgNotSuspended`(credits.ts,**唯一权威**)
+    //    逐字同构:存在成员行且全部 suspended/revoked 才算暂停,零成员行放行。
+    //    这里是一道**便宜的过滤器**,不是第二个权威 —— 它漂了,reserve 那道咽喉照样 fail
+    //    closed,代价只是回到上面那种空转。`bool_and` 在空集上是 NULL ⇒ HAVING 不成立 ⇒
+    //    NOT EXISTS 为真 ⇒ 零成员行照样放行,和那个函数一模一样。
     const waitingForCredits = await prisma.$queryRaw<{ id: string; ownerId: string }[]>`
       SELECT u."id", u."ownerId"
       FROM "AssetUnderstanding" u
@@ -509,6 +595,11 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
       WHERE u."status" = 'PAUSED_BALANCE'
         AND u."priceInternalSnapshot" IS NOT NULL
         AND a."balance" >= u."priceInternalSnapshot"
+        AND NOT EXISTS (
+          SELECT 1 FROM "Membership" m
+          WHERE m."orgId" = u."ownerId" AND m."deletedAt" IS NULL
+          HAVING bool_and(m."status" IN ('suspended', 'revoked'))
+        )
       ORDER BY u."updatedAt" ASC
       LIMIT ${UNDERSTAND_SCAN_BATCH}`;
     for (const row of waitingForCredits) {
@@ -533,8 +624,8 @@ type Row = {
   kind: string;
   /** 本行当前计费回合的 refId(`understanding:<id>[:r<n>]`)。null = 还没进过钱路。 */
   moneyRefId?: string | null;
-  /** 上传(建行)时刻锁的价(internal credits)。扫描器建行时必写 ——
-   *  null **只可能**是 A9 迁移之前就在库里的老行 ⇒ 免费祖父,整条钱路跳过。 */
+  /** 扫描器**建行那一刻**锁的价(internal credits)。建行时必写 —— null **只可能**是
+   *  A9 迁移之前就在库里的老行 ⇒ 免费祖父,整条钱路跳过。 */
   priceInternalSnapshot?: number | null;
 };
 
@@ -545,15 +636,32 @@ type Row = {
  *
  * 「素材没了」不走这里(它可逆,见 {@link drop});「我们还不知道」也不走这里(见 {@link hold})。
  */
+/**
+ * **这一行已经不归我们了**(条件写落 0 行)。
+ *
+ * 每一个终态写都带 `status: "RUNNING"`(和 {@link hold} 一样),因为 handler 从 CAS 赢下
+ * 这一行到写终态之间隔着一次供应商往返 —— 30 分钟的行清道夫、或者充值唤醒,都可能在那个
+ * 窗口里把它拨回 QUEUED。少了这个条件,一条迟到的 FAILED / SKIPPED 会盖掉已经重新排队
+ * (甚至已经跑完)的行:商家的素材凭空判死,而且没有任何一条路径会再回来看它。
+ *
+ * 落 0 行不是错误,是「别人接手了」。说一声就够 —— 抢回来只会把对方的活踩掉。
+ */
+function noticeRowNotOurs(row: Row, intended: string): void {
+  console.log(`[understand] ${row.id}: not RUNNING any more — ${intended} skipped (another round owns this row)`);
+}
+
 async function skip(row: Row, reason: string): Promise<void> {
   // 终态 ⇒ 上一回合可能还挂着的 hold 必须现在还给商家(MONEY-A9 不变量②的另一半:
   // 没读成的东西不收钱)。正常路径上这里没有 hold —— pre-flight 判在钱步之前;
   // 会有的形状是「上一回合预扣了、暂时性失败退回 QUEUED、素材的字节这一轮变得读不动了」。
+  // 退款在状态判定**之前**是刻意的:refundReservation 幂等且与 SETTLE 互斥,对一个别人已经
+  // 收口过的回合是 no-op,而漏退一笔真挂着的 hold 是把商家的钱锁死一小时。
   await refundUnderstandingHold(row, row.moneyRefId ?? null, UNDERSTANDING_REFUND_REASON);
-  await prisma.assetUnderstanding.updateMany({
-    where: { id: row.id, ownerId: row.ownerId },
+  const { count } = await prisma.assetUnderstanding.updateMany({
+    where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
     data: { status: "SKIPPED", error: reason },
   });
+  if (count === 0) noticeRowNotOurs(row, "SKIPPED");
 }
 
 /**
@@ -587,7 +695,12 @@ async function drop(row: Row, why: string): Promise<void> {
   // 删行之前先把可能还挂着的 hold 退掉。行没了之后钱侧的兜底清道夫仍然会退它(它扫的是台账
   // 不是行),但那要等一小时;素材已经不在了,商家的 credits 没有任何理由再被锁一小时。
   await refundUnderstandingHold(row, row.moneyRefId ?? null, UNDERSTANDING_REFUND_REASON);
-  await prisma.assetUnderstanding.deleteMany({ where: { id: row.id, ownerId: row.ownerId } });
+  // 条件带 RUNNING(见 noticeRowNotOurs):删行同样是一个不可逆的写。落 0 行不留后遗症 ——
+  // 素材还软删着就没人捞这一行,真被重传复活了,下一趟 handler 会在同一处再判一次。
+  const { count } = await prisma.assetUnderstanding.deleteMany({
+    where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
+  });
+  if (count === 0) return noticeRowNotOurs(row, "row removal");
   console.log(`[understand] ${row.id}: ${why} — row removed (re-upload will be read normally)`);
 }
 
@@ -598,10 +711,11 @@ async function drop(row: Row, why: string): Promise<void> {
  * 不记账,平台日预算就会对一整类失败视而不见。
  */
 async function fail(row: Row, message: string, usage?: { inputTokens: number; outputTokens: number }): Promise<void> {
-  await prisma.assetUnderstanding.updateMany({
-    where: { id: row.id, ownerId: row.ownerId },
+  const { count } = await prisma.assetUnderstanding.updateMany({
+    where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
     data: { status: "FAILED", error: message.slice(0, 300), ...(usage ?? {}) },
   });
+  if (count === 0) noticeRowNotOurs(row, "FAILED");
 }
 
 /**
@@ -613,10 +727,11 @@ async function fail(row: Row, message: string, usage?: { inputTokens: number; ou
  * {@link UNDERSTAND_PAUSED_RETRY_MS} 的节奏捡回来。两者都不是终态,商家的素材一件不丢。
  */
 async function pauseForConfig(row: Row, usage?: { inputTokens: number; outputTokens: number }): Promise<void> {
-  await prisma.assetUnderstanding.updateMany({
-    where: { id: row.id, ownerId: row.ownerId },
+  const { count } = await prisma.assetUnderstanding.updateMany({
+    where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
     data: { status: "PAUSED", error: UNDERSTANDING_PROVIDER_PAUSED, ...(usage ?? {}) },
   });
+  if (count === 0) noticeRowNotOurs(row, "PAUSED");
 }
 
 // ── 钱路(MONEY-A9)────────────────────────────────────────────────────────────
@@ -640,8 +755,9 @@ type MoneyStep =
   | { verdict: "settled"; refId: string }
   /** 这一回合被别人接管了(条件写 0 行)⇒ 让位,什么都别做。 */
   | { verdict: "raced"; refId: string | null }
-  /** 余额不够 ⇒ PAUSED_BALANCE,等充值。 */
-  | { verdict: "no-credits"; refId: string };
+  /** 这一行付不了钱 ⇒ PAUSED_BALANCE。两种原因走同一个状态,但要分得清(见 cause):
+   *  余额不够(等充值),或者这个 workspace 整个被暂停了(等人解除,MONEY-A13)。 */
+  | { verdict: "no-credits"; refId: string; cause: "insufficient-credits" | "org-suspended" };
 
 /** 并发撞上 `reserve:<refId>` 那个终身唯一键。**不是错误**:它证明 hold 已经在了。 */
 function isDuplicateReserve(e: unknown): boolean {
@@ -714,7 +830,22 @@ async function ensureUnderstandingHold(row: Row): Promise<MoneyStep> {
     return { verdict: "held", refId: current };
   } catch (e) {
     // 余额不够 ⇒ 不是错误,是一个**可恢复的状态**。这一行停下来等充值,一个请求都不发。
-    if (e instanceof InsufficientCredits) return { verdict: "no-credits", refId: current };
+    if (e instanceof InsufficientCredits) {
+      return { verdict: "no-credits", refId: current, cause: "insufficient-credits" };
+    }
+    // **被暂停的 workspace 走同一条路**(MONEY-A13,规格 §7.5「不重投、不打供应商」)。
+    //
+    // 它以前是从这里原样抛出去的,而那条路径在这条链路上是一个**死循环**:抛 ⇒ pg-boss
+    // 重投 2 次 ⇒ 进死信 ⇒ 行停在 RUNNING ⇒ 30 分钟后行清道夫把它退回 QUEUED ⇒ 扫描器
+    // 重新投递 ⇒ 再撞一次暂停。一个被拒付暂停的商家会让他名下每一件素材每半小时空转一轮,
+    // 而每一轮都在死信队列里留一条噪声,把真正的故障淹掉。
+    //
+    // 「暂停的行」和「没钱的行」同池:两者都是**可恢复**的、都不该打供应商、都由扫描器第 ④
+    // 段捞回(那段的 SQL 里也带着同一条暂停判据,见 waitingForCredits)。解除暂停之后,
+    // 那一行下一轮自然回到队列 —— 不需要任何补偿性回填。
+    if (e instanceof OrgSuspended) {
+      return { verdict: "no-credits", refId: current, cause: "org-suspended" };
+    }
     // 并发下同一个 refId 已经被扣过了 —— 规格明写「不视为错误,视为 hold 已在」。
     if (isDuplicateReserve(e)) return { verdict: "held", refId: current };
     // 其余(含商家自己的消费上限 SpendCapBlocked)照原样抛出去:没打供应商、没写终态,
@@ -808,6 +939,98 @@ function reportUnderstandingFailure(
  * 结算和业务结果落盘必须是**同一个** tx,类型同源才保证不会有人传进来一个裸 prisma。
  */
 type Tx = Parameters<typeof settleCredits>[0];
+
+/**
+ * **这一回合的钱已经被退掉了**(#1046-P1 在理解链路上的同一形状)。
+ *
+ * 机理:`settleCredits` 返回 void,内部那条 `createMany(skipDuplicates)` 把「计数 0」当成
+ * 一次成功的空操作 —— 而计数 0 也包括「REFUND 已经赢下 finalizer 唯一索引」。于是一趟跑满
+ * 60 分钟被钱清道夫退了款的理解,供应商随后把结果送回来时:SETTLE 空操作(商家的钱早退回
+ * 去了),同一个事务里的 DONE 却照样落地 —— 商家白拿一份读好的菜单,权威账本记着 REFUND。
+ *
+ * 抛在**事务里**,让整笔回滚:结果不落盘、行不置 DONE、账本零新增。fail closed。
+ */
+class UnderstandingSettleLostToRefund extends Error {
+  constructor(readonly refId: string) {
+    super("this understanding reservation was already refunded — not delivering against a released hold");
+    this.name = "UnderstandingSettleLostToRefund";
+  }
+}
+
+/** **这一行不再是 RUNNING** —— 落 DONE 的那一刻别人已经接管了它(行清道夫、充值唤醒)。
+ *  同样抛在事务里让整笔回滚:结算和交付是一笔提交,少了行那一半就一格都不许提交。 */
+class UnderstandingRoundLost extends Error {
+  constructor(readonly rowId: string) {
+    super("this understanding row is no longer RUNNING — another round owns it");
+    this.name = "UnderstandingRoundLost";
+  }
+}
+
+/**
+ * **结算,并在同一笔事务里核一次终态**(MONEY-A9 不变量②/③)。
+ *
+ * 免费祖父行(refId 为 null)直接返回 —— 它整条钱路都不走。
+ */
+async function settleInTx(tx: Tx, row: Row, refId: string | null): Promise<void> {
+  if (!refId) return;
+  await settleCredits(tx, { orgId: row.ownerId, refId });
+  // 直读终态,不拿「settle 没抛」当证据(它对空操作也不抛)。同一笔事务里读,所以读到的
+  // 一定是能和这次写互斥的那一行。
+  const refunded = await tx.creditLedger.findFirst({
+    where: { orgId: row.ownerId, refId, kind: "REFUND" },
+    select: { id: true },
+  });
+  if (refunded) throw new UnderstandingSettleLostToRefund(refId);
+}
+
+/** 落 DONE(条件写,见 {@link noticeRowNotOurs});不是我们的行就抛,让整笔回滚。 */
+async function markDoneInTx(
+  tx: Tx,
+  row: Row,
+  fields: { summary: string; data: unknown; inputTokens: number; outputTokens: number },
+): Promise<void> {
+  const { count } = await tx.assetUnderstanding.updateMany({
+    where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
+    data: {
+      status: "DONE",
+      error: null,
+      summary: fields.summary,
+      data: fields.data as never,
+      inputTokens: fields.inputTokens,
+      outputTokens: fields.outputTokens,
+    },
+  });
+  if (count === 0) throw new UnderstandingRoundLost(row.id);
+}
+
+/**
+ * 三处落盘事务共用的收口:**这一笔提交没成立时,行该怎么办**。
+ *
+ * · 钱已经被退了(`UnderstandingSettleLostToRefund`)⇒ 行退回 QUEUED 开新回合。恢复协议下
+ *   一趟进门会在台账上看到 REFUND,换一个 `understanding:<id>:r<8 位>` 重新预扣重新读。
+ *   供应商这一趟的成本平台自己吞 —— 一件没收到钱的东西不许交付,这条比省一次调用重要。
+ * · 行已经不归我们(`UnderstandingRoundLost`)⇒ 什么都不做。抢回来只会踩掉接手的那一方。
+ * 其余错误原样抛出去(pg-boss 记账 + 退避重投)。
+ */
+async function commitUnderstanding<T>(row: Row, commit: () => Promise<T>): Promise<T | null> {
+  try {
+    return await commit();
+  } catch (e) {
+    if (e instanceof UnderstandingSettleLostToRefund) {
+      await hold(row, UNDERSTANDING_INTERRUPTED);
+      console.warn(
+        `[understand] ${row.id}: round ${e.refId} was already refunded — rolled the whole commit back ` +
+          `(nothing delivered, nothing charged) and requeued for a fresh round`,
+      );
+      return null;
+    }
+    if (e instanceof UnderstandingRoundLost) {
+      noticeRowNotOurs(row, "DONE");
+      return null;
+    }
+    throw e;
+  }
+}
 
 /**
  * 一条产品行落进 BrandRecord。**按 nameKey 合并,不新建重复行** —— 同一张菜单被读第二次
@@ -981,18 +1204,13 @@ export async function handleUnderstand(
       return null;
     }
 
-    // 平台日预算 —— **付费调用之前预扣一笔最坏情况**(#1056)。扫描器那一道拦的是「还没派
-    // 出去的活」,拦不住已经排在队列里的那一批:预算在半路见底时,积压的消息会继续一条条
-    // 消费掉。上一版这里是「先读 SUM 再决定」,两个副本可以读到同一个「还没超」双双越线;
-    // 现在判断和记账是同一条 SQL,挤不进去就直接暂缓。见 tryHoldUnderstandingBudget。
-    const budgetDay = await tryHoldUnderstandingBudget(kind);
-    if (!budgetDay) {
-      await hold(row, UNDERSTANDING_BUDGET_REACHED);
-      console.log(
-        `[understand] ${row.id}: platform budget reached ($${understandingDailyBudgetUsd().toFixed(2)}/day) — held for tomorrow`,
-      );
-      return null;
-    }
+    // 平台日花费 —— **付费调用之前先把这一笔最坏情况记上**(#1056 的计量修法)。
+    // 它不再是一道闸(Founder 2026-09-02:只报警不拦):越线照读,只是喊一声。扫描器那一侧
+    // 也喊,两处共用同一个每日节流,所以一天最多一条。记账仍然必须在调用**之前**,否则
+    // 这支温度计对「打出去了但没回来」的那一整类是瞎的。见 recordUnderstandingBudget。
+    const budget = await recordUnderstandingBudget(kind);
+    const budgetDay = budget.day;
+    if (budget.overBudget) await alertUnderstandingOverBudget(budgetDay, budget.spentUsd, budget.budgetUsd);
 
     const mediaUrl = await storage.presignedGet(
       storageKey(row.ownerId, asset.contentHash, asset.ext),
@@ -1024,20 +1242,35 @@ export async function handleUnderstand(
         // 台账说这一行已经结清 —— 结算和 DONE 是同一个事务,所以正常路径上这一行早就是
         // DONE、CAS 在函数开头就输了。走到这里只可能是一个撕裂的状态,把行收口到 DONE
         // (**不碰 summary/data**:那是上一趟真的读出来的产物,这里没有更好的版本)。
-        await prisma.assetUnderstanding.updateMany({
+        const { count: closed } = await prisma.assetUnderstanding.updateMany({
           where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
           data: { status: "DONE" },
         });
-        console.log(`[understand] ${row.id}: already settled (${money.refId}) — no second charge, no provider call`);
+        // 条件写落 0 行 ⇒ 这一行已经不归我们了(同其它终态写)。上一版无论写没写成都打
+        // 「already settled」,于是一条「我把它收口成 DONE 了」的日志会出现在一次**什么都
+        // 没写**的调用上 —— 排查撕裂状态时那正好是最误导人的一句话。
+        if (closed === 0) noticeRowNotOurs(row, "DONE (already-settled recovery)");
+        else console.log(`[understand] ${row.id}: already settled (${money.refId}) — no second charge, no provider call`);
         return null;
       }
       if (money.verdict === "no-credits") {
-        // 四则④:停在这里等充值。**不是终态**,素材无限期保留,一个请求都不发。
-        await prisma.assetUnderstanding.updateMany({
+        // 四则④:停在这里等充值(或等暂停被解除)。**不是终态**,素材无限期保留,
+        // 一个请求都不发、一次重投都不排。
+        //
+        // 两种原因共用 UNDERSTANDING_WAITING_FOR_CREDITS 这一句商家文案是刻意的:被暂停的
+        // workspace 商家根本登不进来(暂停动作同时 ban + 杀 session),这一句他看不到;
+        // 而为一个看不到的状态新造一句商家文案,只会多一处要维护的措辞。真要改,改的是
+        // 暂停那一侧的商家沟通,不是这一行的 error 列。
+        const { count } = await prisma.assetUnderstanding.updateMany({
           where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
           data: { status: "PAUSED_BALANCE", error: UNDERSTANDING_WAITING_FOR_CREDITS },
         });
-        console.log(`[understand] ${row.id}: not enough credits — waiting for a top-up`);
+        if (count === 0) noticeRowNotOurs(row, "PAUSED_BALANCE");
+        else if (money.cause === "org-suspended") {
+          console.log(`[understand] ${row.id}: this workspace is suspended — parked, no provider call, no redelivery`);
+        } else {
+          console.log(`[understand] ${row.id}: not enough credits — waiting for a top-up`);
+        }
         return null;
       }
       // raced:这一回合被别人接管了。行留在 RUNNING 不动 —— 抢着改状态只会把对方的活踩掉;
@@ -1140,12 +1373,9 @@ export async function handleUnderstand(
       // 却什么都没得到)。同一个事务里,三件事要么一起成立,要么一起不成立,而重投时
       // 「已 SETTLE」正是恢复协议认得的那个终态。
       const followUpId = caption.isDocument ? newId() : null;
-      const queued = await prisma.$transaction(async (tx) => {
-        if (moneyRefId) await settleCredits(tx, { orgId: row.ownerId, refId: moneyRefId });
-        await tx.assetUnderstanding.updateMany({
-          where: { id: row.id, ownerId: row.ownerId },
-          data: { status: "DONE", summary: caption.summary, data: caption as never, error: null, ...tokens },
-        });
+      const queued = await commitUnderstanding(row, () => prisma.$transaction(async (tx) => {
+        await settleInTx(tx, row, moneyRefId);
+        await markDoneInTx(tx, row, { summary: caption.summary, data: caption, ...tokens });
         if (!followUpId) return null;
         const { count } = await tx.assetUnderstanding.createMany({
           data: [
@@ -1155,16 +1385,17 @@ export async function handleUnderstand(
               assetId: row.assetId,
               kind: "doc-extract" satisfies UnderstandingKind,
               status: "QUEUED",
-              // 计费四则②:级联出来的第二段**继承上传时刻的那一格报价**,不按它建行的这一刻
+              // 计费四则②:级联出来的第二段**继承父行那一格报价**,不按它自己建行的这一刻
               // 重新报价。两段价在上传界面是一次性披露、一并锁价的,所以它们必须一起冻在
-              // 上传那一刻。父行没有快照(免费祖父)⇒ 子行也没有 ⇒ 同样免费。
+              // 父行建行的那一刻(口径同文件头第 ④ 条)。父行没有快照(免费祖父)⇒ 子行也
+              // 没有 ⇒ 同样免费。
               priceInternalSnapshot: row.cascadePriceInternal ?? null,
             },
           ],
           skipDuplicates: true, // 已经有了(重投/并发)—— 本来就不该有第二行
         });
         return count === 1 ? followUpId : null;
-      });
+      }));
       // 建好的行 id 原样返回给 index.ts 去发队列(见函数头:差别是商家的十分钟)。
       if (queued) console.log(`[understand] ${row.id}: looks like a document — queued doc-extract ${queued}`);
       return queued;
@@ -1190,18 +1421,16 @@ export async function handleUnderstand(
       // 显式 timeout(判官 2026-09-01 复核 P1):40 项菜单 × 每项一查一写 ≈ 80 次往返,
       // Prisma 交互事务默认 5s 在生产延迟下可能超时 → 整批回滚 → 重投再打一次供应商。
       // 30s 给足余量;真超时仍是 fail closed(settle 同滚,商家零扣费)。
-      await prisma.$transaction(async (tx) => {
+      const committed = await commitUnderstanding(row, () => prisma.$transaction(async (tx) => {
         saved = 0; // 事务重试时从零数起 —— 半个上一轮的计数写进 summary 就是一句假话
         for (const product of doc.products) {
           if (await upsertProductRecord(tx, row.ownerId, product)) saved++;
         }
-        if (moneyRefId) await settleCredits(tx, { orgId: row.ownerId, refId: moneyRefId });
-        await tx.assetUnderstanding.updateMany({
-          where: { id: row.id, ownerId: row.ownerId },
-          data: { status: "DONE", summary: summaryOf(saved), data: { ...doc, saved } as never, error: null, ...tokens },
-        });
-      }, { timeout: 30_000 });
-      console.log(`[understand] ${row.id}: doc-extract saved ${saved}/${doc.products.length} product row(s)`);
+        await settleInTx(tx, row, moneyRefId);
+        await markDoneInTx(tx, row, { summary: summaryOf(saved), data: { ...doc, saved }, ...tokens });
+        return true;
+      }, { timeout: 30_000 }));
+      if (committed) console.log(`[understand] ${row.id}: doc-extract saved ${saved}/${doc.products.length} product row(s)`);
       return null;
     }
 
@@ -1211,15 +1440,13 @@ export async function handleUnderstand(
     // 品牌记忆 + settle + DONE 同一个事务(MONEY-A9 不变量②),同 doc-extract 的理由:
     // 记忆先落、结算在后,中断一次就是商家白得一条读好的门店事实而平台零收入。
     let remembered = 0;
-    await prisma.$transaction(async (tx) => {
+    const committed = await commitUnderstanding(row, () => prisma.$transaction(async (tx) => {
       remembered = await rememberVideoFacts(tx, row.ownerId, video.facts);
-      if (moneyRefId) await settleCredits(tx, { orgId: row.ownerId, refId: moneyRefId });
-      await tx.assetUnderstanding.updateMany({
-        where: { id: row.id, ownerId: row.ownerId },
-        data: { status: "DONE", summary: video.summary, data: { ...video, remembered } as never, error: null, ...tokens },
-      });
-    });
-    console.log(`[understand] ${row.id}: video-qa remembered ${remembered} new brand fact(s)`);
+      await settleInTx(tx, row, moneyRefId);
+      await markDoneInTx(tx, row, { summary: video.summary, data: { ...video, remembered }, ...tokens });
+      return true;
+    }));
+    if (committed) console.log(`[understand] ${row.id}: video-qa remembered ${remembered} new brand fact(s)`);
     return null;
   });
 }
