@@ -100,6 +100,7 @@ export * from "./otto-budget.js";
 export * from "./llm-prices.js";
 export * from "./pricing-config.js";
 export * from "./cost-pins.js";
+export * from "./finance-limits.js";
 export * from "./reconcile-observations.js";
 export { GOAL_PRESETS, GOAL_KEYS, isGoalKey, type GoalKey } from "./goals.js";
 export * from "./model-config.js";

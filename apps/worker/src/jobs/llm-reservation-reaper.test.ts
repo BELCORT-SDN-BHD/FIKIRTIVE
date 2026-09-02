@@ -174,6 +174,28 @@ const DEDICATED_REAPERS: Record<string, string> = {
   understanding: "apps/worker/src/jobs/understand.ts", // reapStaleUnderstandingReservations
 };
 
+/**
+ * **刻意没有清道夫的前缀** —— 而且任何清道夫都不许去扫它们(MONEY-A14,2026-09-02)。
+ *
+ * `manual-refund:` 的 hold 是一张人工退款单的**前半段**:credits 先被锁死,钱才允许离开
+ * Stripe。Stripe 把退款收成 `pending` 的时候,这个 hold 必须原样留着等人来收口 ——
+ * 一个「60 分钟没收口就退回去」的通用巡检在这里的后果是**平台双付**:hold 被退还给商家,
+ * Stripe 随后把同一笔钱也退了。
+ *
+ * 所以这条前缀的收口只有两个出口:`completeManualRefund`(重读 Stripe 状态后落账或释放),
+ * 或者人按 runbook 处置。它不是「漏登记」,是「登记为不许碰」—— 下面那条测试逐个清道夫
+ * 文件去核实这句话是真的。
+ */
+const NEVER_REAPED: Record<string, string> = {
+  "manual-refund": "MONEY-A14 人工退款:pending 期间 hold 必须留着,自动退回 = 平台双付",
+};
+
+/** 所有会扫台账的清道夫文件 —— 新增一个就往这里加一行,守卫据此逐个核实。 */
+const REAPER_FILES = [
+  "apps/worker/src/jobs/llm-reservation-reaper.ts",
+  "apps/worker/src/jobs/understand.ts",
+];
+
 describe("reaper prefix coverage — every prefixed refId in the codebase is reaped", () => {
   const inSource = prefixesInSource();
   const inReaper = prefixesInReaper();
@@ -205,12 +227,26 @@ describe("reaper prefix coverage — every prefixed refId in the codebase is rea
     expect(inReaper.size).toBeGreaterThanOrEqual(8);
   });
 
+  it("MONEY-A14:登记为「不许碰」的前缀,没有任何一个清道夫在扫它", () => {
+    for (const [prefix, why] of Object.entries(NEVER_REAPED)) {
+      for (const file of REAPER_FILES) {
+        expect(
+          prefixesInReaperFile(path.join(REPO_ROOT, file)).has(prefix),
+          `${file} 扫了 "${prefix}:" —— 这条前缀登记为不许自动收口(${why})。` +
+            `把它从那个清道夫的 LIKE 名单里拿掉,或者先去改这条登记(那要先想清楚双付怎么办)。`,
+        ).toBe(false);
+      }
+      expect(prefix in DEDICATED_REAPERS, `"${prefix}:" 不能同时登记成「有专属清道夫」和「不许碰」`).toBe(false);
+    }
+  });
+
   it("every source prefix is swept by SOME reaper (a miss locks credits forever)", () => {
     for (const [prefix, files] of inSource) {
       expect(
-        inReaper.has(prefix) || prefix in DEDICATED_REAPERS,
+        inReaper.has(prefix) || prefix in DEDICATED_REAPERS || prefix in NEVER_REAPED,
         `refId prefix "${prefix}:" (used in ${files.join(", ")}) is NOT in the reaper's LIKE list ` +
-          `(apps/worker/src/jobs/llm-reservation-reaper.ts) and has no entry in DEDICATED_REAPERS. ` +
+          `(apps/worker/src/jobs/llm-reservation-reaper.ts) and has no entry in DEDICATED_REAPERS ` +
+          `or NEVER_REAPED. ` +
           `A crash between reserve and settle would leak that reservation FOREVER — add the prefix ` +
           `to the reaper, or give it a reaper of its own and register it here.`,
       ).toBe(true);

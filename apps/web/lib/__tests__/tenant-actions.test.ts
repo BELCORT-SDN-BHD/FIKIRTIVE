@@ -42,6 +42,14 @@ class MockInsufficientCredits extends Error {
   }
 }
 
+/** MONEY-A14:30 天累计闸的拒绝类型(判定在账本层,动作层只翻译它)。 */
+class MockFinanceAdjustBlocked extends Error {
+  reason = "rolling-window" as const;
+  orgId = "org_merchant";
+  usedInternal = 26_000;
+  limitInternal = 20_000;
+}
+
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     membership: { updateMany: membershipUpdateMany, findMany: membershipFindMany, findFirst: membershipFindFirst },
@@ -68,6 +76,8 @@ vi.mock("@fikirtive/db", () => ({
   },
   grantCredits: mockGrantCredits,
   InsufficientCredits: MockInsufficientCredits,
+  // MONEY-A14:30 天累计闸的拒绝类型。动作层只翻译它,判定在账本层。
+  FinanceAdjustBlocked: MockFinanceAdjustBlocked,
 }));
 
 const { isFounderAdmin } = await import("@/lib/allowlist");
@@ -168,6 +178,22 @@ describe("setMembershipStatus", () => {
     expect(membershipUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { orgId: "orgX", deletedAt: null }, data: { status: "suspended" } })
     );
+  });
+
+  it("MONEY-A13:暂停是 **org 级**的 —— 一次把该 org 全部活着的成员置 suspended", async () => {
+    // 判定谓词与写入谓词必须逐字相同:账本咽喉判的是「该 org `deletedAt: null` 的成员是否
+    // 全部 suspended/revoked」,所以这里写的也只能是同一批行。少写一个成员 = 咽喉判不出暂停,
+    // 那个商家继续花钱;多写(碰软删行)= 恢复时漏掉谁。
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipUpdateMany.mockResolvedValue({ count: 3 });
+    membershipFindMany.mockResolvedValue([]);
+
+    const res = await setMembershipStatus("orgX", "suspended");
+
+    expect(res).toEqual({ ok: true });
+    expect(membershipUpdateMany).toHaveBeenCalledTimes(1);
+    const call = membershipUpdateMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toEqual({ orgId: "orgX", deletedAt: null }); // 没有 userId / role 之类的窄化
   });
 
   it("accepts 'active' as a valid status", async () => {

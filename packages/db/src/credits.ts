@@ -16,7 +16,12 @@
  * Costs are INTERNAL credits (1 = $0.01).
  */
 import { randomUUID } from "node:crypto";
-import { readSpendCap } from "@fikirtive/core";
+import {
+  readSpendCap,
+  FINANCE_ADJUST_LIMITS,
+  FINANCE_ADJUST_WINDOW_MS,
+  MANUAL_REFUND_REF_PREFIX,
+} from "@fikirtive/core";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "./index.js";
 
@@ -74,6 +79,61 @@ export class SpendCapBlocked extends Error {
     this.name = "SpendCapBlocked";
     this.requiredInternal = detail.requiredInternal;
     this.capInternal = detail.capInternal;
+  }
+}
+
+/**
+ * MONEY-A13 —— 这个 workspace 整个被暂停了,所以没有任何新的钱可以动。
+ *
+ * 暂停的**唯一权威**是现成的 `Membership.status`(admin 一键翻转 + ban + 杀 session,见
+ * `tenant-actions.ts` 的 `setMembershipStatus`)。规格 §7.5 明令不建第二份事实:投影列 =
+ * 第二个事实面 + 没有回填方案 = 漂移雷。
+ *
+ * 为什么闸装在**预扣**这一条线上:被暂停的商家今天仍然能把已经跑起来的深研 worker 跑完
+ * ——`research.ts` / `meter.ts` 里查暂停的地方**一处都没有**(已坐实)。挨个入口补检查,
+ * 等于承诺「以后每一条新钱路都要记得补一次」;而每一条钱路都必须穿过这里的预扣,所以一处
+ * 检查覆盖现在与未来的全部花钱路径,零迁移零回填。
+ *
+ * fail closed:抛出 = 调用方的事务回滚 = 一分钱不动、作业不创建。
+ */
+export class OrgSuspended extends Error {
+  readonly orgId: string;
+
+  /** 措辞对商家安全且不带内部词(深研卡片会把 `e.message` 消毒后直接印给商家看)。 */
+  constructor(orgId: string) {
+    super("This workspace is paused — no new charges can be made.");
+    this.name = "OrgSuspended";
+    this.orgId = orgId;
+  }
+}
+
+/**
+ * MONEY-A14 —— 人工调账/人工退款撞上额度闸(规格 §7.6,Founder 拍板 30 天 / 2000 显示 credits)。
+ *
+ * 两种 reason 刻意分开:
+ *   `rolling-window` 这个 org 在滚动 30 天里动过的人工钱(含本笔)超了合计上限。
+ *   `unknown-org`    连 Organization 行都不存在 —— 锁不住、也无从判定,所以拒绝而不是放行。
+ *                    (账本对 Organization 有外键,这一笔本来也写不进去;区别在于我们**说出来**。)
+ */
+export class FinanceAdjustBlocked extends Error {
+  readonly reason: "rolling-window" | "unknown-org";
+  readonly orgId: string;
+  /** 滚动窗口内的人工钱合计(内部 credits,**含本笔**);unknown-org 时为 null。 */
+  readonly usedInternal: number | null;
+  /** 合计上限(内部 credits)。 */
+  readonly limitInternal: number;
+
+  constructor(detail: { reason: "rolling-window" | "unknown-org"; orgId: string; usedInternal: number | null }) {
+    super(
+      detail.reason === "unknown-org"
+        ? "No such organization — the adjustment was refused."
+        : "Manual credit movements for this workspace are over the rolling limit.",
+    );
+    this.name = "FinanceAdjustBlocked";
+    this.reason = detail.reason;
+    this.orgId = detail.orgId;
+    this.usedInternal = detail.usedInternal;
+    this.limitInternal = FINANCE_ADJUST_LIMITS.rolling30dTotalInternal;
   }
 }
 
@@ -151,12 +211,37 @@ export async function assertWithinSpendCap(tx: Tx, orgId: string, cost: number):
  *  refusal, so it must run on the authority path, in the same transaction, or it is only a
  *  sentence in a settings screen. Cap first, balance second: a merchant who is both over
  *  their ceiling and short on credits is told about the ceiling, because that is the limit
- *  they set and the one they can move. Nothing is charged on either refusal. */
-export async function reserveCredits(tx: Tx, args: { orgId: string; refId: string; cost: number }): Promise<void> {
+ *  they set and the one they can move. Nothing is charged on either refusal.
+ *
+ *  `reason` 是写在 RESERVE 行上的标签(默认 `""` = 今天每一个调用方写的那一行,逐字不变)。
+ *  MONEY-A14 用它把一张退款单的**事实**(原付款、包、credits、马币数)钉在账本里:账本只追加,
+ *  所以钉进去的那一刻它就不可改,同一个退款单号重试时读回来的只能是当初批的那一笔。 */
+export async function reserveCredits(
+  tx: Tx,
+  args: { orgId: string; refId: string; cost: number; reason?: string },
+): Promise<void> {
   const { orgId, refId, cost } = args;
   if (cost <= 0) return;
-  await assertWithinSpendCap(tx, orgId, cost);
+  // 编排者裁定 2026-09-02:**退款不是消费**。商家自己设的单笔上限管的是「我一次愿意花多少」,
+  // 它对一笔**我们退还给他的钱**没有任何意见 —— 拿它去挡退款,等于让商家的省钱设置卡住我们
+  // 还他钱。同理由见 `assertOrgNotSuspended` 里的暂停豁免。
+  if (!isManualRefundRef(refId)) await assertWithinSpendCap(tx, orgId, cost);
   await reserveAgainstBalance(tx, args);
+}
+
+/**
+ * 这条预扣是不是**人工退款**那条腿?(编排者裁定 2026-09-02 的唯一判据。)
+ *
+ * 判据是 refId 前缀,而这个前缀只有一个地方造得出来:admin 的 `refundCreditsAction`
+ * (`apps/web/lib/refund-actions.ts`),它自己要 `tenants.mutate`(super-admin)才进得去。
+ * 商家侧的任何一条钱路都不经过那个动作,也就没有办法给自己造一个 `manual-refund:` 的 refId
+ * 来绕开消费上限或暂停闸 —— 豁免的边界因此是**结构性的**,不是一句约定。
+ *
+ * 豁免的是两道**给消费用的**闸(商家自设上限、账号暂停);30 天人工调账累计闸**照常生效**,
+ * 它管的正是「人一个月能人工搬多少钱」,退款本来就该占它的额度。
+ */
+function isManualRefundRef(refId: string): boolean {
+  return refId.startsWith(MANUAL_REFUND_REF_PREFIX);
 }
 
 /** The BALANCE half of a reserve: the atomic conditional decrement plus its ledger row, with no
@@ -171,9 +256,22 @@ export async function reserveCredits(tx: Tx, args: { orgId: string; refId: strin
  *
  *  Not exported: every caller outside this file goes through one of the two functions above, so
  *  there is no way to spend on a generation while stepping around the ceiling. */
-async function reserveAgainstBalance(tx: Tx, args: { orgId: string; refId: string; cost: number }): Promise<void> {
-  const { orgId, refId, cost } = args;
+async function reserveAgainstBalance(
+  tx: Tx,
+  args: { orgId: string; refId: string; cost: number; reason?: string },
+): Promise<void> {
+  const { orgId, refId, cost, reason = "" } = args;
   if (cost <= 0) return;
+  // MONEY-A13 —— 暂停咽喉。放在这里而不是 `reserveCredits`,是因为聊天/深研那条腿走的是
+  // `reserveCreditsUpTo` / `reserveChatTurnWithSearchSlots`,它们**不经过** `reserveCredits`
+  // (#524 × #898 的免闸是结构性的)。两条公开入口共用的写路径只有这一条,咽喉必须在这里,
+  // 否则聊天腿从旁边绕过去。
+  //
+  // 唯一的例外(编排者裁定 2026-09-02):**人工退款**。暂停闸的用途是「被拒付的商家不许再花钱」,
+  // 而退款是我们主动把钱还回去 —— 拒付个案的处理里,「先暂停、再逐笔退未用的 credits」正是
+  // 最常见的那条人工路径。把退款也挡掉,等于要求操作员先解除暂停(那一刻商家又能花钱了)才能
+  // 退款,拿一个更大的风险去守一句机械的规则。判据见 `isManualRefundRef`。
+  if (!isManualRefundRef(refId)) await assertOrgNotSuspended(tx, orgId);
   const { count } = await tx.creditAccount.updateMany({
     where: { orgId, balance: { gte: cost } },
     data: { balance: { decrement: cost }, reserved: { increment: cost } },
@@ -189,7 +287,7 @@ async function reserveAgainstBalance(tx: Tx, args: { orgId: string; refId: strin
     });
   }
   await tx.creditLedger.create({
-    data: { id: randomUUID(), orgId, balanceDelta: -cost, reservedDelta: cost, kind: "RESERVE", source: "SYSTEM", refId, idempotencyKey: `reserve:${refId}` },
+    data: { id: randomUUID(), orgId, balanceDelta: -cost, reservedDelta: cost, kind: "RESERVE", source: "SYSTEM", reason, refId, idempotencyKey: `reserve:${refId}` },
   });
 }
 
@@ -387,6 +485,150 @@ function assertFirmLegShape(
   }
 }
 
+/**
+ * 这个 org 是不是**整个**被暂停了?(MONEY-A13,判定规则逐字来自规格 §7.5。)
+ *
+ * 量词是 ALL,不是 ANY:**存在成员行且全部** suspended/revoked 才算暂停。一个 owner 被停、
+ * 另一个同事还在用的 workspace 不该整体断供 —— 那是成员级的事,不是账号级的事。
+ *
+ * **零成员行 = 放行**,这是刻意的 fail-open 口子(规格明写「维持现状语义」):org 刚 bootstrap
+ * 出来、成员行还没落地的那一瞬,以及系统自己代 org 记账的路径,都长这样;把它读成「暂停」会
+ * 让新商家的第一笔动作直接被拒。
+ *
+ * 判定的行集合与写入的行集合**逐字相同**(`deletedAt: null`)—— admin 的暂停动作只翻
+ * `deletedAt=null` 的行,这里也只看同一批,否则「已经翻完了却判不暂停」这种鬼故事迟早发生。
+ */
+async function assertOrgNotSuspended(tx: Tx, orgId: string): Promise<void> {
+  const members = await tx.membership.findMany({ where: { orgId, deletedAt: null }, select: { status: true } });
+  if (members.length === 0) return;
+  if (members.every((m) => m.status === "suspended" || m.status === "revoked")) throw new OrgSuspended(orgId);
+}
+
+/**
+ * MONEY-A14 调账累计闸:这个 org 在滚动 30 天里动过的**人工钱**,加上本笔,还在上限之内吗?
+ *
+ * 为什么在账本层而不是 Server Action 层(判官坐实):动作层的判定是「读一次、再写一次」,两笔
+ * 各 +1000 的并发在两次读之间彼此看不见,于是双双放行,合计 2000 的闸形同虚设。判定与写入进
+ * **同一个事务、同一把锁**,并发就只能串行化。
+ *
+ * **锁的是 Organization 行,不是 CreditAccount**,两个理由:
+ *   ① `SELECT … FOR UPDATE` 锁不住**不存在**的行,而 CreditAccount 行完全可能还没被建出来
+ *      (一个从没充过值的 org 就没有账户行),那样这把锁在最需要它的场景下是空的;
+ *      Organization 行一定存在(账本对它有外键)。
+ *   ② 锁序与既有钱路**一致**:`assertWithinSpendCap` 也是先锁 Organization,再由预扣去改
+ *      CreditAccount。反过来先锁 CreditAccount 会造出「A: 账户→组织 / B: 组织→账户」的交叉
+ *      等待,那是死锁的标准配方。
+ *
+ * 口径(规格 §7.6 + 判官复审 ⑥):`source=ADMIN` 的 GRANT/ADJUST 行,加上 refId 前缀
+ * `manual-refund:` 的 **RESERVE** 行 —— 退款那条腿的钱是在 RESERVE 上动的,它的 SETTLE 行
+ * `balanceDelta` 恒为 0,照规格原文去数 SETTLE 会数出一串 0(规格那句是笔误,本实现按判官
+ * 复审落地并在 PR 里备案)。负向同计:一笔 −1000 的扣减与一笔 +1000 的授信一样占额度。
+ *
+ * `additionalInternal` = 本笔中**还没写进账本**的那一部分(已经写进去的传 0)。`grantCredits`
+ * 先写行后判,所以传 0;人工退款在预扣之前判,所以把待预扣的数传进来。两条路都保证「含本笔」。
+ */
+export async function assertWithinAdjustWindow(tx: Tx, orgId: string, additionalInternal: number): Promise<void> {
+  await lockOrgForAdjust(tx, orgId);
+  await assertAdjustWindowUnderLock(tx, orgId, additionalInternal);
+}
+
+/**
+ * 闸的**锁**这一半。单独存在,是因为锁与数的**顺序**在这里不是风格问题,是死锁问题(实测)。
+ *
+ * Postgres 给外键的插入加的是父行的 `FOR KEY SHARE`。两笔并发的人工授信如果都「先插账本行、
+ * 再 `FOR UPDATE` 锁 org」,就各自握着一把共享锁去要对方也握着的排他锁 —— 真库上稳定复现
+ * `40P01 deadlock detected`(本地实测 6 次里中 3 次)。所以顺序固定为:**先排他锁,再插行**。
+ * 先拿到锁的那一笔一路走完,后到的那一笔在第一句就等着,手里什么锁都没有,没有回路可成环。
+ */
+async function lockOrgForAdjust(tx: Tx, orgId: string): Promise<void> {
+  // Interpolation is a bound parameter (Prisma tagged template), never string concatenation.
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Organization" WHERE "id" = ${orgId} FOR UPDATE`;
+  if (locked.length === 0) throw new FinanceAdjustBlocked({ reason: "unknown-org", orgId, usedInternal: null });
+}
+
+/** 闸的**数**这一半:必须跑在 {@link lockOrgForAdjust} 之后、同一个事务里。 */
+async function assertAdjustWindowUnderLock(tx: Tx, orgId: string, additionalInternal: number): Promise<void> {
+  const rows = await tx.creditLedger.findMany({
+    where: adjustWindowFilter([orgId]),
+    select: { balanceDelta: true },
+  });
+  const usedInternal =
+    rows.reduce((sum, row) => sum + Math.abs(row.balanceDelta), 0) + Math.abs(additionalInternal);
+  if (usedInternal > FINANCE_ADJUST_LIMITS.rolling30dTotalInternal) {
+    throw new FinanceAdjustBlocked({ reason: "rolling-window", orgId, usedInternal });
+  }
+}
+
+/** 闸与报表**共用**的那一条谓词。分成两份手写的 where 就等于给自己两个口径:admin 页面会
+ *  显示一个和真正拒绝你的那个闸不一样的数字,而这种不一致没有人会当场发现。 */
+function adjustWindowFilter(orgIds?: readonly string[]): Prisma.CreditLedgerWhereInput {
+  return {
+    ...(orgIds ? { orgId: { in: [...orgIds] } } : {}),
+    createdAt: { gte: new Date(Date.now() - FINANCE_ADJUST_WINDOW_MS) },
+    OR: [
+      { source: "ADMIN", kind: { in: ["GRANT", "ADJUST"] } },
+      { kind: "RESERVE", refId: { startsWith: MANUAL_REFUND_REF_PREFIX } },
+    ],
+  };
+}
+
+/** 报表口径:滚动 30 天里**所有 org** 的人工钱行,新的在前。与闸同一条谓词。
+ *  READ-ONLY。admin 报表此前只读 founder 一个 org,商家那边的人工调账在报表上根本不存在。 */
+export async function adjustWindowRows(limit: number): Promise<
+  {
+    id: string; orgId: string; kind: string; source: string; balanceDelta: number;
+    reason: string; refId: string | null; createdBy: string; createdAt: Date;
+  }[]
+> {
+  return prisma.creditLedger.findMany({
+    where: adjustWindowFilter(),
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true, orgId: true, kind: true, source: true, balanceDelta: true,
+      reason: true, refId: true, createdBy: true, createdAt: true,
+    },
+  });
+}
+
+/**
+ * 报表口径:这些 org 在滚动 30 天里各自动过多少人工钱(内部 credits,取 |balanceDelta| 合计)。
+ *
+ * READ-ONLY,不锁不写。存在的理由是 admin 报表此前**按行判**——单行 1000 以内就绿,一天发
+ * 二十行也绿——而真正会拒绝操作员的是**累计**。报表和闸从此读同一条谓词
+ * ({@link adjustWindowFilter}),两个数字不可能再各说各话。
+ *
+ * 判官 P2-2:`orgIds` **省略 = 全窗口所有 org**。报表若先取最新 N 行、再只算这 N 行涉及的 org,
+ * 一个超限 org 会因为被更新的行挤出那 N 行而从「超限」计数里消失 —— 候选集必须独立于展示行。
+ * 窗口本身是有界的(30 天里的人工调账与人工退款,量级是几十到几百行),所以直接读整窗、在
+ * 内存里按 org 求 |Δ| 合计;放进 SQL 就得把那条谓词再手抄一遍,那正是这个函数存在的理由的反面。
+ *
+ * 复审二 P2-4:返回值从「合计」升成 {@link AdjustWindowSummary}(合计 + 笔数 + 最近一笔时间),
+ * 因为 admin 那张表此后**整张都由它派生** —— 一行一个 workspace,而不是「最新 N 条明细」。
+ * 按明细行构造的表,会让一个超限 org 因为别人写得更新而从表上消失。
+ */
+export async function adjustWindowTotals(orgIds?: readonly string[]): Promise<Map<string, AdjustWindowSummary>> {
+  const totals = new Map<string, AdjustWindowSummary>();
+  if (orgIds && orgIds.length === 0) return totals;
+  const rows = await prisma.creditLedger.findMany({
+    where: adjustWindowFilter(orgIds),
+    select: { orgId: true, balanceDelta: true, createdAt: true },
+  });
+  for (const row of rows) {
+    const prev = totals.get(row.orgId);
+    totals.set(row.orgId, {
+      internalTotal: (prev?.internalTotal ?? 0) + Math.abs(row.balanceDelta),
+      movements: (prev?.movements ?? 0) + 1,
+      lastAt: prev && prev.lastAt > row.createdAt ? prev.lastAt : row.createdAt,
+    });
+  }
+  return totals;
+}
+
+/** 一个 org 在滚动窗口里的人工钱账:合计、笔数、最近一笔的时间。 */
+export type AdjustWindowSummary = { internalTotal: number; movements: number; lastAt: Date };
+
 /** SETTLE the held charge for a successfully-committed job. MUST run in the worker's commit
  *  $transaction. The held amount B is read FROM THE RESERVE ROW (reservedDelta), never
  *  recomputed — immune to pricing-code drift while a job is in flight.
@@ -406,7 +648,10 @@ function assertFirmLegShape(
  *
  *  Invariants preserved: balance == Σ balanceDelta, reserved == Σ reservedDelta (per org).
  *  Never charges more than reserved; never drives balance or reserved negative. */
-export async function settleCredits(tx: Tx, args: { orgId: string; refId: string; actualInternal?: number }): Promise<void> {
+export async function settleCredits(
+  tx: Tx,
+  args: { orgId: string; refId: string; actualInternal?: number; reason?: string },
+): Promise<void> {
   const { orgId, refId, actualInternal } = args;
   const reserve = await tx.creditLedger.findFirst({ where: { orgId, refId, kind: "RESERVE" }, select: { reservedDelta: true } });
   if (!reserve) return; // no reservation (historical/pre-credits job) → nothing to settle
@@ -422,7 +667,10 @@ export async function settleCredits(tx: Tx, args: { orgId: string; refId: string
   // double-count the absorption. Merchant-facing surfaces don't read `reason`; the founder admin
   // ledger does.
   const shortfall = requested - A;
-  const reason = shortfall > 0 ? `${HOLD_SHORTFALL_REASON_PREFIX}${shortfall}` : "";
+  // 调用方给的标签只在**没有 shortfall** 时落到行上:shortfall 是钱的事实(平台吃掉了多少),
+  // 它必须优先占住这一列。MONEY-A14 的人工退款结算永远是全额落账(A = B),shortfall 恒为 0,
+  // 所以 Stripe 退款单号一定写得进去,两者不会互相挤掉。
+  const reason = shortfall > 0 ? `${HOLD_SHORTFALL_REASON_PREFIX}${shortfall}` : (args.reason ?? "");
   // createMany(skipDuplicates) = INSERT … ON CONFLICT DO NOTHING — NOT try/catch: a caught
   // unique-violation would still leave the WHOLE Postgres transaction aborted, silently rolling
   // back the caller's job-status write (e.g. the resume DONE update). count===0 ⇒ already settled
@@ -593,7 +841,11 @@ export async function grantCreditsTx(
 
 /** Admin/system GRANT (positive) or ADJUST (signed). Opens its own transaction. Idempotent
  *  via (orgId, idempotencyKey) — a replay returns { duplicate: true } without double-granting.
- *  A future Stripe purchase reuses this verbatim with source="PURCHASE". */
+ *  A future Stripe purchase reuses this verbatim with source="PURCHASE".
+ *
+ *  MONEY-A14:`source="ADMIN"` 的每一笔在同一事务里过一次滚动 30 天累计闸
+ *  (`assertWithinAdjustWindow`)。动作层此后只留 UX 预检,判定权威在这里 —— 两笔并发 +1000
+ *  在 Organization 行锁下串行化,不可能再双双放行。超限抛 {@link FinanceAdjustBlocked}。 */
 export async function grantCredits(args: {
   orgId: string;
   amount: number;
@@ -608,9 +860,19 @@ export async function grantCredits(args: {
     await prisma.$transaction(async (tx) => {
       // Ledger FIRST: a replay of the same idempotencyKey hits the (orgId,idempotencyKey)
       // unique and rolls the tx back BEFORE any account mutation (no double-apply).
+      // MONEY-A14 累计闸 —— 只对**人工**动的钱(source=ADMIN)。充值(PURCHASE)、beta 种子
+      // 与系统自己的记账不是人工调账,不占这个额度,也不受它拒绝。
+      //
+      // 三步的顺序都是被实测钉死的:**锁 → 写行 → 数**。
+      //   · 锁在最前:先写行再锁会 40P01 死锁(见 lockOrgForAdjust 的判词)。
+      //   · 数在写行之后:重放同一个 idempotencyKey 先撞唯一键(P2002 → 外面的 catch →
+      //     `{ duplicate: true }`),所以双击的第二下拿到的仍然是「已经记过了」,而不是一句
+      //     莫名其妙的「超限」;而且行已经在本事务里,「含本笔」是结构事实,不用再传一遍金额。
+      if (source === "ADMIN") await lockOrgForAdjust(tx, orgId);
       await tx.creditLedger.create({
         data: { id: randomUUID(), orgId, balanceDelta: amount, reservedDelta: 0, kind: amount > 0 ? "GRANT" : "ADJUST", source, reason, createdBy, idempotencyKey },
       });
+      if (source === "ADMIN") await assertAdjustWindowUnderLock(tx, orgId, 0);
       if (amount > 0) {
         await tx.creditAccount.upsert({
           where: { orgId },

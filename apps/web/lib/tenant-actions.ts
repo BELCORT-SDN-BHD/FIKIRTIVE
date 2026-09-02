@@ -1,7 +1,15 @@
 "use server";
-import { prisma, grantCredits, InsufficientCredits } from "@fikirtive/db";
-import { newId, FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import { prisma, grantCredits, InsufficientCredits, FinanceAdjustBlocked } from "@fikirtive/db";
+import {
+  newId,
+  FOUNDER_OWNER_ID,
+  INTERNAL_PER_DISPLAY,
+  FINANCE_ADJUST_LIMITS,
+  FINANCE_PER_ACTION_LIMIT_MESSAGE,
+} from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
+import { activeMerchantOrg } from "./tenant-admin";
+import { financeAdjustBlockedMessage } from "./finance-limit-seam";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { auth } from "@/lib/better-auth/server";
@@ -9,12 +17,6 @@ import { isFounderAdmin } from "@/lib/allowlist";
 import { currentImpersonation } from "@/lib/better-auth/compat";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
-const FINANCE_DIRECT_CREDIT_LIMIT = 1_000;
-
-async function activeMerchantOrg(orgId: string): Promise<{ id: string } | null> {
-  if (!orgId || orgId === FOUNDER_OWNER_ID) return null;
-  return prisma.organization.findFirst({ where: { id: orgId, deletedAt: null }, select: { id: true } });
-}
 
 /** Resolve an org's active members to their Better Auth user ids.
  *  Membership.userId → User.email → BetterAuthUser.id (the two user tables join by email;
@@ -251,7 +253,8 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
   if (!org) return { error: "Unknown or closed org." }; // NEVER fall back to founder
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
   if (!Number.isInteger(displayedAmount) || displayedAmount === 0 || Math.abs(displayedAmount) > 1_000_000) return { error: "Enter a non-zero whole number of credits (max ±1,000,000)." };
-  if (Math.abs(displayedAmount) > FINANCE_DIRECT_CREDIT_LIMIT) return { error: "Credit actions are capped at 1,000 displayed credits each." };
+  // 单笔上限只是 UX 预检:真正的判定(单笔 + 滚动 30 天累计)在 `grantCredits` 的同一事务里。
+  if (Math.abs(displayedAmount) > FINANCE_ADJUST_LIMITS.perActionDisplay) return { error: FINANCE_PER_ACTION_LIMIT_MESSAGE };
   const reason = typeof v?.reason === "string" ? v.reason.slice(0, 500) : "";
   const idempotencyKey = typeof v?.idempotencyKey === "string" ? v.idempotencyKey : "";
   if (idempotencyKey.length < 8 || idempotencyKey.length > 100) return { error: "Invalid request." };
@@ -261,6 +264,8 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
     res = await grantCredits({ orgId, amount, reason, source: "ADMIN", createdBy: gate.email, idempotencyKey });
   } catch (e) {
     if (e instanceof InsufficientCredits) return { error: "That adjustment would drive the balance negative (or the account doesn't exist)." };
+    // MONEY-A14:撞上 30 天累计闸 —— 判定在账本层,这里只负责说人话并把它报给 founder。
+    if (e instanceof FinanceAdjustBlocked) return { error: await financeAdjustBlockedMessage(e, { via: gate.email, entry: "grantTenantCredits" }) };
     throw e;
   }
   const dup = "duplicate" in res;

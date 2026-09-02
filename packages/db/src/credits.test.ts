@@ -5,6 +5,8 @@
  * TDD cases from otto-task-1.3-brief.md.
  */
 import { describe, it, expect, beforeEach } from "vitest";
+import { randomUUID } from "node:crypto";
+import { FINANCE_ADJUST_LIMITS, MANUAL_REFUND_REF_PREFIX } from "@fikirtive/core";
 import {
   prisma,
   reserveCredits,
@@ -12,7 +14,10 @@ import {
   reserveChatTurnWithSearchSlots,
   settleCredits,
   refundReservation,
+  assertWithinAdjustWindow,
   InsufficientCredits,
+  OrgSuspended,
+  FinanceAdjustBlocked,
   HOLD_SHORTFALL_REASON_PREFIX,
 } from "./index.js";
 import { seedOrg } from "../test/setup.js";
@@ -1440,5 +1445,276 @@ describe("MONEY-A10 复审 P1 — 弹性腿钳到开门额;畸形参数当场抛
       reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: 7, minimumInternal: 10 }),
     );
     expect(hold).toBe(7);
+  });
+});
+
+// ── MONEY-A13:暂停咽喉 ──────────────────────────────────────────────────────
+//
+// 规格 §7.5:暂停权威是现成的 `Membership.status`(admin 一键翻转),判定规则=该 org
+// **存在成员行且全部** suspended/revoked ⇒ 拒绝;零成员行 ⇒ 放行(刻意的现状语义)。
+// 咽喉装在两条公开预扣入口**共用的写路径**上,所以生成腿、聊天腿、搜索腿一起被罩住。
+describe("MONEY-A13 — 暂停的 workspace 一分钱都动不了", () => {
+  async function addMember(orgId: string, status: string, opts: { deleted?: boolean } = {}): Promise<void> {
+    const user = await prisma.user.create({
+      data: { email: `${randomUUID()}@a13.test`, name: "a13" },
+      select: { id: true },
+    });
+    await prisma.membership.create({
+      data: { id: randomUUID(), userId: user.id, orgId, status, deletedAt: opts.deleted ? new Date() : null },
+    });
+  }
+
+  /** 账本零新增、余额一分不动 —— 拒绝必须是**什么都没发生**,不是「发生了再回滚一半」。 */
+  async function expectUntouched(): Promise<void> {
+    expect(await ledger(ORG)).toHaveLength(0);
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000);
+    expect(acc.reserved).toBe(0);
+  }
+
+  it("生成腿(reserveCredits):全员 suspended ⇒ 拒绝,账本零新增", async () => {
+    await addMember(ORG, "suspended");
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 })),
+    ).rejects.toThrow(OrgSuspended);
+    await expectUntouched();
+  });
+
+  it("聊天腿(reserveCreditsUpTo):全员 suspended ⇒ 拒绝 —— 免闸的那条腿也绕不过咽喉", async () => {
+    await addMember(ORG, "suspended");
+    await expect(
+      prisma.$transaction((tx) => reserveCreditsUpTo(tx, { orgId: ORG, refId: REF, capInternal: 40, minimumInternal: 10 })),
+    ).rejects.toThrow(OrgSuspended);
+    await expectUntouched();
+  });
+
+  it("聊天+搜索腿(reserveChatTurnWithSearchSlots):全员 suspended ⇒ 拒绝,一格搜索也不发", async () => {
+    await addMember(ORG, "suspended");
+    await expect(
+      prisma.$transaction((tx) =>
+        reserveChatTurnWithSearchSlots(tx, {
+          orgId: ORG, refId: REF, llmCapInternal: 40, minimumInternal: 10, searchUnitInternal: 3, maxSearchUnits: 5,
+        }),
+      ),
+    ).rejects.toThrow(OrgSuspended);
+    await expectUntouched();
+  });
+
+  it("revoked 与 suspended 同等对待", async () => {
+    await addMember(ORG, "revoked");
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 })),
+    ).rejects.toThrow(OrgSuspended);
+    await expectUntouched();
+  });
+
+  it("量词是 ALL 不是 ANY:还有一个成员是 active ⇒ 放行", async () => {
+    await addMember(ORG, "suspended");
+    await addMember(ORG, "active");
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 }));
+    expect((await account(ORG)).balance).toBe(900);
+  });
+
+  it("零成员行 ⇒ 放行(刻意的 fail-open 口子,规格 §7.5「维持现状语义」)", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 }));
+    expect((await account(ORG)).balance).toBe(900);
+  });
+
+  it("软删除的成员行不参与判定:唯一活着的成员是 active ⇒ 放行", async () => {
+    await addMember(ORG, "suspended", { deleted: true });
+    await addMember(ORG, "active");
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 }));
+    expect((await account(ORG)).balance).toBe(900);
+  });
+
+  it("一个 org 的暂停从不牵连另一个 org", async () => {
+    await addMember(ORG, "suspended");
+    const other = "test-org-a13-other";
+    await seedOrg(other, 500);
+    await addMember(other, "active");
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: other, refId: "ref-other", cost: 100 }));
+    expect((await account(other)).balance).toBe(400);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 })),
+    ).rejects.toThrow(OrgSuspended);
+  });
+});
+
+// ── MONEY-A14:调账/退款的 30 天累计闸 ────────────────────────────────────────
+//
+// Founder 拍板 30 天 / 2000 显示 credits。判定与写入同事务、同一把 Organization 行锁,
+// 所以两笔并发不可能双双放行(动作层的「读一次再写一次」正是被判官坐实可绕过的那种)。
+describe("MONEY-A14 — 人工调账 30 天累计闸", () => {
+  const KEY = () => `admin-grant:${randomUUID()}`;
+
+  it("单位换算:上限是 2000 显示 = 20000 内部", () => {
+    expect(FINANCE_ADJUST_LIMITS.rolling30dTotalInternal).toBe(20_000);
+  });
+
+  it("窗口内累计到顶为止都放行,越过就拒绝(含本笔)", async () => {
+    // 1800 显示 = 18000 内部,来自人工授信。
+    await grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: KEY() });
+    // 再来 200 显示:合计正好 2000,不超 ⇒ 放行。
+    await grantCredits({ orgId: ORG, amount: 2_000, source: "ADMIN", idempotencyKey: KEY() });
+    expect((await account(ORG)).balance).toBe(1000 + 18_000 + 2_000);
+    // 再来 1 分钱就超。
+    await expect(
+      grantCredits({ orgId: ORG, amount: 1, source: "ADMIN", idempotencyKey: KEY() }),
+    ).rejects.toThrow(FinanceAdjustBlocked);
+    // 拒绝 = 账本零新增、余额不动。
+    expect((await account(ORG)).balance).toBe(1000 + 18_000 + 2_000);
+    expect((await ledger(ORG)).filter((r) => r.kind === "GRANT")).toHaveLength(2);
+  });
+
+  it("负向同计:扣减一样占额度(修「负向调整永不报超限」)", async () => {
+    await grantCredits({ orgId: ORG, amount: 19_500, source: "ADMIN", idempotencyKey: KEY() });
+    await expect(
+      grantCredits({ orgId: ORG, amount: -1_000, source: "ADMIN", idempotencyKey: KEY() }),
+    ).rejects.toThrow(FinanceAdjustBlocked);
+    expect((await account(ORG)).balance).toBe(1000 + 19_500);
+  });
+
+  it("只管人工的钱:PURCHASE / BETA 充值不占额度,也不被额度拒", async () => {
+    await grantCredits({ orgId: ORG, amount: 50_000, source: "PURCHASE", idempotencyKey: KEY() });
+    await grantCredits({ orgId: ORG, amount: 50_000, source: "BETA", idempotencyKey: KEY() });
+    // 人工的额度仍然是满的。
+    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() });
+    expect((await account(ORG)).balance).toBe(1000 + 120_000);
+  });
+
+  it("人工退款的 RESERVE 行计入同一口径(SETTLE 行的 balanceDelta 是 0,数它等于什么都没数)", async () => {
+    // 1800 显示已用于人工授信,再退 600 显示 ⇒ 2400 > 2000 ⇒ 拒退。
+    await grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: KEY() });
+    await expect(
+      prisma.$transaction((tx) => assertWithinAdjustWindow(tx, ORG, 6_000)),
+    ).rejects.toThrow(FinanceAdjustBlocked);
+
+    // 反过来:先记一笔 1800 显示的人工退款预扣,再来 600 显示的人工授信也一样撞闸。
+    await prisma.creditLedger.deleteMany({ where: { orgId: ORG } });
+    await prisma.creditAccount.update({ where: { orgId: ORG }, data: { balance: 30_000 } });
+    await prisma.$transaction((tx) =>
+      reserveCredits(tx, { orgId: ORG, refId: `${MANUAL_REFUND_REF_PREFIX}${randomUUID()}`, cost: 18_000 }),
+    );
+    await expect(
+      grantCredits({ orgId: ORG, amount: 6_000, source: "ADMIN", idempotencyKey: KEY() }),
+    ).rejects.toThrow(FinanceAdjustBlocked);
+  });
+
+  it("两笔并发 +1000 显示在行锁下串行化:一笔成、一笔被拒(不再双双放行)", async () => {
+    // 先用掉 100 显示,于是两笔各 1000 显示里只有一笔放得下(100+1000+1000 = 2100 > 2000)。
+    await grantCredits({ orgId: ORG, amount: 1_000, source: "ADMIN", idempotencyKey: KEY() });
+    const results = await Promise.allSettled([
+      grantCredits({ orgId: ORG, amount: 10_000, source: "ADMIN", idempotencyKey: KEY() }),
+      grantCredits({ orgId: ORG, amount: 10_000, source: "ADMIN", idempotencyKey: KEY() }),
+    ]);
+    const ok = results.filter((r) => r.status === "fulfilled");
+    const blocked = results.filter((r) => r.status === "rejected");
+    expect(ok).toHaveLength(1);
+    expect(blocked).toHaveLength(1);
+    expect((blocked[0] as PromiseRejectedResult).reason).toBeInstanceOf(FinanceAdjustBlocked);
+    // 余额只涨了一笔的量。
+    expect((await account(ORG)).balance).toBe(1000 + 1_000 + 10_000);
+  });
+
+  it("重放同一个幂等键仍然是 duplicate,不会被闸改判成「超限」", async () => {
+    const key = KEY();
+    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: key });
+    // 额度已经用满,但这是同一笔的重放 —— 唯一键先命中,答案必须是 duplicate。
+    await expect(grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: key })).resolves.toEqual({
+      duplicate: true,
+    });
+    expect((await account(ORG)).balance).toBe(1000 + 20_000);
+  });
+
+  it("窗口是滚动的:31 天前的人工授信不再占额度", async () => {
+    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() });
+    await prisma.creditLedger.updateMany({
+      where: { orgId: ORG, kind: "GRANT" },
+      data: { createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) },
+    });
+    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() });
+    expect((await account(ORG)).balance).toBe(1000 + 40_000);
+  });
+
+  it("org 行不存在 ⇒ 拒绝而不是放行(锁不住的东西不能当成没事)", async () => {
+    await expect(
+      prisma.$transaction((tx) => assertWithinAdjustWindow(tx, "no-such-org", 100)),
+    ).rejects.toMatchObject({ name: "FinanceAdjustBlocked", reason: "unknown-org" });
+  });
+});
+
+// ── 编排者裁定 2026-09-02:人工退款豁免两道**给消费用的**闸 ────────────────────────
+//
+// 退款不是消费。商家自设的单笔上限管的是「我一次愿意花多少」,账号暂停管的是「被拒付的人
+// 不许再花钱」—— 两条都对「我们把钱还给他」没有意见。豁免的判据是 refId 前缀,而这个前缀
+// 只有 admin 退款动作造得出来(它自己要 tenants.mutate),所以边界是结构性的。
+describe("MONEY-A14 — manual-refund 预扣的两条豁免(以及仍然生效的那一条闸)", () => {
+  const REFUND_REF = `${MANUAL_REFUND_REF_PREFIX}ticket-0001`;
+
+  async function suspendEveryone(orgId: string): Promise<void> {
+    const user = await prisma.user.create({
+      data: { email: `${randomUUID()}@a14.test`, name: "a14" },
+      select: { id: true },
+    });
+    await prisma.membership.create({
+      data: { id: randomUUID(), userId: user.id, orgId, status: "suspended", deletedAt: null },
+    });
+  }
+
+  it("暂停的 org 仍然退得了款(被拒付暂停之后逐笔退未用 credits,是最常见的人工路径)", async () => {
+    await suspendEveryone(ORG);
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100 }));
+    expect((await account(ORG)).balance).toBe(900);
+    expect((await account(ORG)).reserved).toBe(100);
+  });
+
+  it("同一个暂停 org 的**普通消费**照样被拒(豁免只认前缀,不是把闸关了)", async () => {
+    await suspendEveryone(ORG);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "some-gen-job", cost: 100 })),
+    ).rejects.toThrow(OrgSuspended);
+    expect((await account(ORG)).balance).toBe(1000);
+  });
+
+  it("商家自设的单笔上限挡不住退款,却照样挡得住同额的消费", async () => {
+    // 上限 5 显示 credits = 50 internal;退 100 internal 远超它。
+    await prisma.organization.update({ where: { id: ORG }, data: { settings: { spendCapCredits: 5 } } });
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100 }));
+    expect((await account(ORG)).balance).toBe(900);
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "some-gen-job", cost: 100 })),
+    ).rejects.toThrow(SpendCapBlocked);
+  });
+
+  it("30 天累计闸**照常**罩着退款(豁免的是消费闸,不是人工搬钱的额度)", async () => {
+    await grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: randomUUID() });
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await assertWithinAdjustWindow(tx, ORG, 6_000);
+        await reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 6_000 });
+      }),
+    ).rejects.toThrow(FinanceAdjustBlocked);
+    // 拒绝 = 一分钱没动。
+    expect((await account(ORG)).reserved).toBe(0);
+  });
+
+  it("退款单的事实钉在 RESERVE 行的 reason 上,账本只追加所以它此后不可改", async () => {
+    const facts = "pi:pi_3Qabc|pack:600|credits:100|myr_minor:4166";
+    await prisma.$transaction((tx) =>
+      reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100, reason: facts }),
+    );
+    const row = (await ledger(ORG)).find((r) => r.kind === "RESERVE");
+    expect(row!.reason).toBe(facts);
+    // 同一个退款单号再预扣一次 = 撞唯一键(调用方据此读回既有事实,而不是写第二笔)。
+    await expect(
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 100, reason: "pi:pi_OTHER|pack:50|credits:100|myr_minor:5000" })),
+    ).rejects.toMatchObject({ code: "P2002" });
+    expect((await ledger(ORG)).filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+    expect((await ledger(ORG)).find((r) => r.kind === "RESERVE")!.reason).toBe(facts);
+  });
+
+  it("不带 reason 的老调用方写出来的 RESERVE 行逐字不变(reason 为空串)", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 100 }));
+    expect((await ledger(ORG)).find((r) => r.kind === "RESERVE")!.reason).toBe("");
   });
 });
