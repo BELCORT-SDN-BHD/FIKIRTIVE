@@ -53,6 +53,45 @@ export const TENANT_MODELS = new Set([
   "AssetUnderstanding",
 ]);
 
+/** Tenant-scoped models whose tenant column is `orgId`, NOT `ownerId` (钱引擎⑤B, 规格 §7.7
+ *  「租户兜底闸盲区」欠账⑧).
+ *
+ *  WHY THEY ARE LISTED AT ALL. The coverage test used to scan schema.prisma for `ownerId` only,
+ *  so these three tables — the two that hold every merchant's MONEY — were not "exempt", they
+ *  were **structurally invisible**: nobody had ever made a choice about them, and nobody would
+ *  have noticed. Listing them turns "invisible" into "a decision with a reason attached", which
+ *  is the whole point of the coverage test.
+ *
+ *  WHY THEY ARE NOT IN TENANT_MODELS. The runtime guard does not merely CHECK a tenant column,
+ *  it INJECTS one: `scopeWhere` writes `args.where.ownerId`, `scopeCreateData` writes
+ *  `data.ownerId`, and `whereHasOwnerId` / `compoundKeyOwnerIds` / `dataHasOwnerId` /
+ *  `dataRewritesOwner` all read that literal name. Registering an `orgId` table as-is therefore
+ *  does not guard it — it BREAKS it. Measured 2026-09-02: adding `CreditAccount` to TENANT_MODELS
+ *  turns all 12 cases in apps/web/lib/__tests__/gen-ledger.test.ts red with
+ *  `[tenant-guard] CreditAccount.create has no ownerId in created data`, because the row genuinely
+ *  has no such column. Making it work means parameterising the tenant column through seven
+ *  functions in this file — a change to the behaviour of all 40+ currently guarded models, which
+ *  does not belong inside a hardening sweep. It is a scoped follow-up, not a line of this PR.
+ *
+ *  WHAT GUARDS THEM TODAY (measured, not asserted). Instrumenting the guard on 2026-09-02 and
+ *  running the money suites (gen-ledger / refund-actions / tenant-actions) recorded **59
+ *  operations on these three tables under an active tenant frame and ZERO missing `orgId`** —
+ *  every call site already passes it. On top of that: `(orgId, refId, kind)` and
+ *  `(orgId, idempotencyKey)` are DB-enforced unique, every credits.ts write takes `orgId` as a
+ *  required argument, and e2e carries a two-tenant wallet journey in required CI (e2e.yml).
+ *  So the boundary holds; what was missing was a place where someone had SAID so. */
+export const ORG_SCOPED_TENANT_GUARD_EXEMPT: Record<string, string> = {
+  CreditAccount:
+    "orgId-scoped, not ownerId — the guard injects the literal `ownerId` and would break every query on it. " +
+    "Scoped by the (orgId) primary key plus every credits.ts entry point taking orgId as a required argument.",
+  CreditLedger:
+    "orgId-scoped, not ownerId — same mechanism blocker. Scoped by the (orgId, refId, kind) and " +
+    "(orgId, idempotencyKey) unique indexes plus the two-tenant wallet journey in required CI.",
+  Membership:
+    "orgId-scoped, not ownerId — same mechanism blocker. It is also the suspension AUTHORITY, read " +
+    "platform-wide by the admin console, so a tenant-pinned read would be wrong for it anyway.",
+};
+
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
  *  A new model must choose: TENANT_MODELS (all list-queries owner-scoped) or here.
  *  Entries marked "pending guard review" are candidates to move UP into TENANT_MODELS

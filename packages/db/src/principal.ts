@@ -45,6 +45,19 @@ export type SystemReason =
    * 而「查到缺口却留不下痕迹」正是这张票要消灭的形状。
    */
   | "stripe-reconciler"
+  /**
+   * 钱路守恒巡检(apps/worker/src/jobs/ledger-conservation.ts;规格 §5 变更登记 2026-09-02
+   * 顾问复审⑥)。同 `stripe-reconciler` 的身份形状:它问的是「**每一个** org 的余额都对得上
+   * 它自己的流水吗」,而这句话没有单一租户可以收口 —— 一个租户帧只能证明它自己那一行。
+   *
+   * 只读账本与账户,只写平台级的 ActionEvent 节流行,一个字都不写钱:发现漂移之后补哪一边
+   * 是人的决定,自动补账等于在钱路上开出第二个权威。
+   *
+   * 和 `stripe-reconciler` 一样**刻意不进** READ_ONLY_SYSTEM_REASONS:那道闸会连节流行的
+   * 审计写一起拒掉(它也会拒掉聚合用的 raw SQL),而「查到漂移却每轮都全渠道轰炸」正是
+   * 那行节流要消灭的形状。
+   */
+  | "ledger-conservation"
   | "meta-data-deletion"
   | "worker-heartbeat"
   /** #794 — appends a BackupRun row (platform-level ops record, no tenant to scope). */

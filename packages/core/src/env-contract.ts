@@ -539,14 +539,14 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     readBy: "code",
     requirement: "optional",
     // non-negative-number,不是 number(判官 P3-3)。消费方是
-    // `Number.isFinite(n) && n >= 0 ? n : 默认 5`——**非数字和负数走的是同一条静默回落**,
-    // 只拦非数字等于只拦了一半:有人想写「停掉」写成 -1,拿到的是每天 5 美元照跑,
+    // `Number.isFinite(n) && n >= 0 ? n : 默认值`——**非数字和负数走的是同一条静默回落**,
+    // 只拦非数字等于只拦了一半:有人想写「调低阈值」写成 -1,拿到的是默认阈值照跑,
     // 而没有任何一处会说这件事。两种写错都拦下来,这句话才配说「格式检查兜住了它」。
     format: "non-negative-number",
     secret: false,
     shared: false,
     summary:
-      "Platform-wide understanding spend ceiling per day, in USD. Unset = 5. \"0\" is a legitimate value meaning fully paused. Both a negative and a non-numeric value would silently fall back to the default 5 in the reader, so the boot check rejects both — a typo can never quietly become a budget nobody chose.",
+      "Platform-wide daily understanding-spend ALERT threshold, in USD. Unset = 50. Since 2026-09-02 it only alerts (founderAlert, at most once a day) and never blocks — merchants pay per understood file, so the real ceiling is their own balance, and \"0\" now means \"alert every day\", NOT paused. To pause understanding use ASSET_UNDERSTANDING=off. Both a negative and a non-numeric value would silently fall back to the default in the reader, so the boot check rejects both — a typo can never quietly become a threshold nobody chose.",
   },
 
   // ── 对象存储 ──────────────────────────────────────────────────────────────

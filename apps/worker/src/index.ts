@@ -26,6 +26,7 @@ import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
+import { checkLedgerConservation } from "./jobs/ledger-conservation.js";
 import { reconcileStripePayments } from "./jobs/stripe-reconcile.js";
 import {
   handleUnderstand,
@@ -430,6 +431,43 @@ async function main(): Promise<void> {
     void reconcileStripe(); // 开机也跑一轮:停机期间掉的 webhook 正是这个扫描存在的理由
   }
 
+  // 钱路守恒巡检(规格 §5 变更登记 2026-09-02 顾问复审⑥)。「余额 = 流水之和」这条不变量
+  // 此前只活在注释和单测里 —— 两个都在开发机上。这一趟每天按 org 重算一次,漂移三通道报警。
+  // **只报不补**,理由同上面那个哨兵:补账是人的决定,自动化它就是在钱路上开第二个权威。
+  //
+  // 一天一轮(不是半小时):守恒破了就一直破着,不会自愈也不会在半小时内变得更严重,而全表
+  // 聚合每半小时跑一次是白花的数据库钱。同 reconcile 只在 supervise 的角色上跑 —— 两个服务
+  // 都跑会把同一笔漂移报两遍。
+  let conserving = false;
+  const conserveLedger = async () => {
+    if (conserving) return;
+    conserving = true;
+    try {
+      const r = await checkLedgerConservation();
+      if (r.skipped) console.error(`[worker] ledger conservation skipped: ${r.skipped} — nothing was checked this sweep`);
+      else if (r.drifted)
+        console.error(
+          `[worker] ledger conservation: ${r.drifted} org(s) whose balance disagrees with their ledger ` +
+            `(${r.alerted} alerted); ${r.shortfallRows} settle(s) clamped in the last 24h totalling ${r.shortfallInternal} internal`,
+        );
+      else
+        console.log(
+          `[worker] ledger conservation: every org's balance matches its ledger; ` +
+            `${r.shortfallRows} settle(s) clamped in the last 24h totalling ${r.shortfallInternal} internal`,
+        );
+    } catch (e) {
+      // checkLedgerConservation 自己就不抛;这里是最后一道,免得一次意外把 worker 带下去。
+      console.error("[worker] ledger conservation error:", e);
+      captureError(e);
+    } finally {
+      conserving = false;
+    }
+  };
+  if (plan.supervises) {
+    setInterval(() => void conserveLedger(), 24 * 60 * 60_000);
+    void conserveLedger(); // 开机也跑一轮:一次坏部署造成的漂移不该等到明天才被看见
+  }
+
   // #784 asset understanding — the ONLY producer on UNDERSTAND_QUEUE, and deliberately so:
   // the merchant never presses "Analyse". This scan finds files nobody has read yet, claims
   // each one by CREATING its AssetUnderstanding row (the (ownerId, assetId, kind) unique index
@@ -464,11 +502,11 @@ async function main(): Promise<void> {
     // PLATFORM number in real dollars — "what can this cost us in a day" is a platform question,
     // so a per-merchant row count was never an answer to it.
     console.log(
-      `[worker] asset understanding — platform budget $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
+      `[worker] asset understanding — platform spend ALERT line $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
         `(${assetUnderstandingEnabled(process.env) ? "switch ON" : "switch OFF — paused, nothing is discarded"}). ` +
-        `Over budget or switched off, files stay queued and are read the next day. ` +
-        `This budget is the PLATFORM's provider-spend fuse; merchants are billed separately per ` +
-        `understood file at the price locked on upload (MONEY-A9).`,
+        `Since 2026-09-02 that line only ALERTS (founderAlert, at most once a day) and never blocks: merchants are ` +
+        `billed per understood file at the price locked when its row is created (MONEY-A9), so their own balance is ` +
+        `the real ceiling. Only the switch pauses reading — and it pauses, it does not discard.`,
     );
     // The interval is installed either way: the switch is re-read on EVERY scan, so flipping it
     // off pauses the reading instead of destroying whatever arrives while it is off.
