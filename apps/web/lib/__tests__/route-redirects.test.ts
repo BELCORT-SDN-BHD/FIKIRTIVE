@@ -286,6 +286,105 @@ describe("§2.2 表的去处都落在真路由文件上(W2-11)", () => {
       `${target} 没有路由文件(找过:${candidates.join("、")})`,
     ).toBe(true);
   });
+
+  /* ── #1139 判官 P2-3:去处**带锚点**时,那个锚点在落点上真的到得了 ─────────────── */
+
+  /**
+   * 「有一条真路由」证不了「跳过去看得见那一段」。
+   *
+   * 判官发现的正是这个缝:`templates`/`discover` 一直指着 `/create#templates` 与
+   * `/create#ideas`,而换壳后的 `/create` 只挂 Otto 入口与画布历史 —— 印着那两个 id 的
+   * `CreateBrowseSections` 早就不在它的 import 图里了。上面那条照样绿(`/create` 当然有
+   * `page.tsx`),商家却会带着一个到不了的锚点落在页顶。原来钉这件事的那条测试
+   * (`create-route-rename.test.ts`「重定向表指的那两个锚点,页面上真的有」)随那一段版式
+   * 一起被删掉了,这里把它按新壳的形状接回来。
+   *
+   * 判据 =「**无锚点**,或者**锚点真的到得了**」。今天全表零锚点,所以它走的是前一半;
+   * 这不等于空转 —— 把 `#templates` 加回权威表,这条立刻红(变异验证做过)。走后一半用的
+   * 那套 import 图遍历,由下面「自检」那条证明它本身找得到东西。
+   */
+  const WEB_ROOT = path.resolve(__dirname, "../..");
+
+  /** 一条 import 说明符在磁盘上的位置;不是本仓源码(第三方、packages/*)就返回 null。 */
+  function resolveImport(fromFile: string, spec: string): string | null {
+    let base: string;
+    if (spec.startsWith("@/")) base = path.join(WEB_ROOT, spec.slice(2));
+    else if (spec.startsWith(".")) base = path.resolve(path.dirname(fromFile), spec);
+    else return null;
+    for (const candidate of [
+      base,
+      `${base}.tsx`,
+      `${base}.ts`,
+      path.join(base, "index.tsx"),
+      path.join(base, "index.ts"),
+    ]) {
+      if (existsSync(candidate) && !candidate.endsWith(path.sep)) {
+        try {
+          if (readFileSync(candidate).length >= 0) return candidate;
+        } catch {
+          // 目录:继续试下一个候选。
+        }
+      }
+    }
+    return null;
+  }
+
+  /** 从一个入口文件出发,沿仓内 import 走一遍,交出所有到得了的源码。 */
+  function reachableSources(entry: string): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const queue = [entry];
+    while (queue.length > 0) {
+      const file = queue.shift()!;
+      if (seen.has(file) || !existsSync(file)) continue;
+      seen.add(file);
+      let src: string;
+      try {
+        src = readFileSync(file, "utf8");
+      } catch {
+        continue; // 目录,不是文件。
+      }
+      out.push(src);
+      for (const m of src.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']+)["']/g)) {
+        const next = resolveImport(file, m[1]!);
+        if (next) queue.push(next);
+      }
+    }
+    return out;
+  }
+
+  /** 落点那条 URL 的路由文件(上一条已经保证它存在)。 */
+  function pageFileFor(urlPath: string): string {
+    const found = pageFileCandidates(urlPath).find((route) => existsSync(route));
+    if (!found) throw new Error(`${urlPath} 没有路由文件`);
+    return found;
+  }
+
+  it("自检:这套 import 图遍历确实找得到锚点(否则下面那条只是空转)", () => {
+    // `CreateBrowseSections` 就是 `id="templates"` / `id="ideas"` 的唯一出处,而
+    // `CreateBrowseEntry` 直接 import 它 —— 从那里出发必须找得到,从 `/create` 出发必须找不到。
+    const viaEntry = reachableSources(path.join(WEB_ROOT, "components/create/CreateBrowseEntry.tsx"));
+    expect(viaEntry.some((src) => src.includes('id="templates"'))).toBe(true);
+
+    const viaCreate = reachableSources(pageFileFor(SHELL_ROUTES.create));
+    expect(
+      viaCreate.some((src) => src.includes('id="templates"')),
+      "`/create` 又长回那两个区段了 —— 那就该把锚点一起加回重定向表",
+    ).toBe(false);
+  });
+
+  it.each(Object.entries(OTTO_VIEW_REDIRECTS))(
+    "?view=%s → %s:要么没锚点,要么那个锚点在落点上到得了",
+    (_view, target) => {
+      const hash = target.includes("#") ? target.slice(target.indexOf("#") + 1) : "";
+      if (hash === "") return;
+      const sources = reachableSources(pageFileFor(pathOf(target)));
+      expect(
+        sources.some((src) => src.includes(`id="${hash}"`)),
+        `${target} 的 #${hash} 在落点的 import 图里找不到 —— 商家会落在页顶`,
+      ).toBe(true);
+    },
+  );
 });
 
 /**
@@ -334,12 +433,18 @@ describe("?project= / ?thread= 重定向后不丢(W2-11)", () => {
     ).rejects.toThrow("NEXT_REDIRECT:/?otto=1&project=P&thread=T");
   });
 
-  it("落点带锚点时(#templates)query 在锚点之前,锚点仍在最后", async () => {
+  // #1139 判官 P2-3:这一条原本靠 `templates` 那一行自带的 `#templates` 来验「query 在锚点
+  // 之前」。那个锚点已经撤了(落点上没有这个 id,见上面那组围栏),所以这里改钉今天的事实:
+  // 表里零锚点,`?view=templates` 就是 `/create` 本身,project 照常接在后面。
+  // `mergeRedirectTarget` 里处理锚点的那一支因此暂时没有用例走到 —— 它留着是为了「哪天
+  // 落点真的长出一个区段」,而那一天由上面「锚点真的到得了」那条把关。
+  it("落点不带锚点(表里今天一条都没有):project 照常接在后面", async () => {
+    expect(Object.values(OTTO_VIEW_REDIRECTS).filter((href) => href.includes("#"))).toEqual([]);
     await expect(
       OttoRedirect({
         searchParams: Promise.resolve({ view: "templates", project: "P" }),
       }),
-    ).rejects.toThrow("NEXT_REDIRECT:/create?project=P#templates");
+    ).rejects.toThrow("NEXT_REDIRECT:/create?project=P");
   });
 
   it("view 参数本身不会跟着一起被转发(已被消费掉,不属于任何人)", async () => {

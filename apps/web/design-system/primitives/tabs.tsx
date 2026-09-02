@@ -32,7 +32,15 @@ function TabsList({ className, ...props }: TabsPrimitive.List.Props) {
   )
 }
 
-function TabsTrigger({ asChild = false, children, render, className, ...props }: TabsPrimitive.Tab.Props & { asChild?: boolean }) {
+/**
+ * `asChild` 套一个真 `<Link>`(campaign-nav / schedule-tabs)时,渲染出来的是 `<a>`,不是
+ * `<button>`。Base UI 的 `nativeButton` 默认为 true,于是它按「原生按钮」的口径往那个 `<a>`
+ * 上挂属性(`type="button"` —— 锚点上的无效属性),并在开发期打出
+ * "expected a native <button>" 警告。`button.tsx` 早就把这件事做对了
+ * (`nativeButton={asChild ? false : nativeButton}`),tabs 这里漏了 —— 同一个基座上的同一件
+ * 事只能有一种做法。围栏在 `lib/__tests__/tabs-aschild-semantics.test.tsx`。
+ */
+function TabsTrigger({ asChild = false, children, render, nativeButton, className, ...props }: TabsPrimitive.Tab.Props & { asChild?: boolean }) {
   return (
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
@@ -47,6 +55,7 @@ function TabsTrigger({ asChild = false, children, render, className, ...props }:
         className
       )}
       render={asChild && React.isValidElement(children) ? children : render}
+      nativeButton={asChild ? false : nativeButton}
       {...props}
     >
       {asChild ? undefined : children}

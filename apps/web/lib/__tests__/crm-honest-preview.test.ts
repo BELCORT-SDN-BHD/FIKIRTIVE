@@ -1134,6 +1134,43 @@ describe("「连不上渠道」是产品事实,不只是页面上的一句话", 
     // 而且这一句实话仍然只有一个出处(与本文件 ④ 层的 MESSAGING_STATUS_* 断言同一份权威)。
     expect(MESSAGING_STATUS_CANNOT_CONNECT).toContain("not available to connect");
   });
+
+  /**
+   * #1139 判官 P2-1 —— 上面那条改钉「有没有这个渠道」之后,**「不可连的那一行长什么样」
+   * 这一半没人管了**:旧版读 `MessagingRow` 的源码,断言那一段 markup 里既没有 `href=`
+   * 也没有 `onClick=`;新壳里那个函数没了,断言也跟着没了。
+   *
+   * 它换个钉法回来:不可连的渠道今天在 Connections 页里走的是 `!row.connectable` 那一支
+   * (`lib/channels/channel-meta.ts` 的 `UNAVAILABLE_PUBLISHING_CHANNEL_IDS`)。用 AST 找出
+   * 这些分支**真正渲染出来的那一截**,断言它里面一个可点的东西都没有 —— 不是按函数名切,
+   * 所以下一次改版式只要这一支还在,这条围栏就还在。
+   *
+   * 屏幕上的那一半由 `otto-connections-page.test.ts`「不可连的渠道:行级零控件」用真渲染钉;
+   * 这一条钉源码,两条一起才算「这一行不可能长出一颗假按钮」。
+   */
+  it("不可连的那一支渲染出来的 markup 里,没有 href= 也没有 onClick=", () => {
+    const file = "components/otto/OttoConnections.tsx";
+    const tree = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+    /** `!<something>.connectable ? (这一截) : …` —— 「连不上」那一支渲染的东西。 */
+    const branches: string[] = [];
+    (function walk(node: ts.Node): void {
+      if (
+        ts.isConditionalExpression(node) &&
+        /^!\s*\w+\.connectable$/.test(node.condition.getText().trim())
+      ) {
+        branches.push(node.whenTrue.getText());
+      }
+      ts.forEachChild(node, walk);
+    })(tree);
+
+    expect(branches.length, "Connections 页里已经没有「连不上」那一支了 —— 判据要跟着走").toBeGreaterThan(0);
+    for (const branch of branches) {
+      expect(branch, "连不上的那一支里出现了一条链接").not.toMatch(/href=/);
+      expect(branch, "连不上的那一支里出现了一个点击处理").not.toMatch(/onClick=/);
+      expect(branch, "连不上的那一支里出现了一颗按钮").not.toMatch(/<(Button|button|a|Link)\b/);
+    }
+  });
 });
 
 /* ── ④ Otto 一面 ───────────────────────────────────────────────────────────── */

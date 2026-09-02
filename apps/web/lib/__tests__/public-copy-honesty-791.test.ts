@@ -82,9 +82,20 @@ describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", 
 // 商家看得到的这三面(登录页 = 未登录唯一读得到的落地面、注册页、Otto 进门自我介绍)
 // 必须说同一句话。仓内没有独立官网,登录页左半屏就是落地文案本体。
 describe("#805 对外主话术:先说把活干完", () => {
-  /** 商家看得到、且承载主话术的三面。Otto 提示词那一面由
-   *  packages/otto/src/instructions.test.ts 钉(它在另一个包,读不到这里)。 */
+  /** 商家看得到、且承载主话术的那几面。Otto 提示词那一面由
+   *  packages/otto/src/instructions.test.ts 钉(它在另一个包,读不到这里)。
+   *
+   *  #1139 判官 P2-2 —— 这份名单一度缩成只剩 Otto 进门那一面。缩的理由(登录/注册不再是
+   *  landing page,主话术不写在那里)成立,但下面这两族禁令**与主话术无关**:白标铁律
+   *  (供应商/模型名一个字都不许露)与「像真人」不当卖点,是**不管那一面卖不卖东西**都要
+   *  守的。没登录的人读得到的就是登录页与注册页 —— 名单缩了,这两族禁令就等于对着一面
+   *  空墙执行。所以两面连同各自的表单组件一起回来:文案今天住在表单里(`LoginForm` /
+   *  `SignupForm`),只读 `page.tsx` 会漏掉商家真正看到的那些字。 */
   const SURFACES: ReadonlyArray<[string, string]> = [
+    ["登录页", "app/login/page.tsx"],
+    ["登录表单", "app/login/LoginForm.tsx"],
+    ["注册页", "app/signup/page.tsx"],
+    ["注册表单", "app/signup/SignupForm.tsx"],
     ["Otto 进门", "components/otto/OttoFrontDoor.tsx"],
   ];
 
@@ -99,6 +110,26 @@ describe("#805 对外主话术:先说把活干完", () => {
       }
     });
   });
+
+  // r2 · 判官 P1(PR #831 评论 5232023830)的那条禁令回来了(#1139 判官 P2-2 登记它被删)。
+  // 第一版写的是「brings every paid step back for you to approve first」——**这句话是假的**:
+  // 和 Otto 聊天本身就按消息预扣结算,那条路上根本没有审批卡。审批卡真实覆盖的是付费生成
+  // 与发布。商家读到的第一句钱路承诺,只能说得比事实小,不许说得比事实大。
+  //
+  // 它当时只钉登录页;现在对全部这几面一起钉 —— 这句话在哪一面上都同样是假的。
+  //
+  // 与它配对的**正向**断言(「nothing gets made or published until you approve」必须写在
+  // 前门上)**没有跟着回来**,因为今天前门上没有这句话:换壳后的登录/注册页只剩身份表单,
+  // 全仓这句承诺只剩两处 —— `components/otto/OttoApprovalCard.tsx`(审批卡自己)与
+  // `packages/core/src/schedule-draft.ts`。「前门要不要重新承诺一次」是产品决定,不是围栏
+  // 能替 Founder 做的,已登记进 docs/specs/frontend-baseline.md §5 变更登记等 FRONT-A14。
+  for (const [name, rel] of SURFACES) {
+    it(`${name}不承诺「凡花钱都先经你点头」`, () => {
+      const copy = readCopy(rel);
+      expect(copy).not.toMatch(/every paid step/i);
+      expect(copy).not.toMatch(/every step that (?:spends|costs)/i);
+    });
+  }
 
   it("Otto 进门那句说的是做完的活,不是「我陪你走一遍」", () => {
     const frontDoor = readCopy("components/otto/OttoFrontDoor.tsx");

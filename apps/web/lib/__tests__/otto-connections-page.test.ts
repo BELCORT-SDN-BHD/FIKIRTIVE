@@ -496,3 +496,113 @@ describe("#741 r5 连着但用不了:连接页与排程页用同一套说法", (
     expect(dom.textContent).toContain(CONNECTION_BLOCKER_COPY.needs_reconnect.status);
   });
 });
+
+// ── 前端基线①(#1139 判官 P2-1):「不可连的渠道行上没有任何可点的东西」是行级事实 ──────
+//
+// 旧壳这条围栏钉的是 DOM 里那一行本身 —— `row.querySelector("a, button")` 必须是 null。
+// 换壳时它被换成了 `expect(text).toContain("XUnavailable")`,而整页文本包含这两个相邻的词,
+// 与「X 那一行上没有一颗按下去要去连 X 的控件」是两件不同的事:页面上别处冒出一颗 X 的
+// Connect 按钮,整页文本照样包含 "XUnavailable",那条断言照样绿。
+//
+// 新壳里服务清单的每一行**本身**就是一颗选择按钮(按它换右边的详情),那不是假承诺,所以
+// 判据按新壳的形状分三处写清楚,一处都不放过:
+//   ① 服务清单行:除了「选中它」这一颗,行内不许再有链接或按钮,行上不许带 href;
+//   ② 选中之后的详情面板:一个控件都没有 —— Connect / Reconnect / Manage 一个不许出现;
+//   ③ Add connection 弹层里的那一行:只有一枚 "Unavailable" 徽章,零控件(旧断言原样成立)。
+// 判据不写死在 "x" 这个 id 上:凡状态读作 "Unavailable" 的行,三处一起核。
+describe("不可连的渠道:行级零控件(#1139 P2-1 补回)", () => {
+  const LABELS = ["Instagram", "Facebook", "X"] as const;
+
+  /** Add connection 弹层里那份服务清单 —— 装着全部渠道的最内层容器,它的每个直接子元素就是一行。 */
+  function dialogRows(dialog: HTMLElement): HTMLElement[] {
+    const holders = Array.from(dialog.querySelectorAll<HTMLElement>("div")).filter((el) =>
+      LABELS.every((label) => (el.textContent ?? "").includes(label)),
+    );
+    const list = holders.at(-1);
+    if (!list) throw new Error("Add connection 弹层里找不到那份服务清单");
+    return Array.from(list.children) as HTMLElement[];
+  }
+
+  async function openAddConnection(dom: HTMLElement): Promise<HTMLElement> {
+    const trigger = Array.from(dom.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Add connection"),
+    );
+    expect(trigger, "Add connection 这颗按钮不在了").toBeTruthy();
+    await act(async () => trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+    expect(dialog, "Add connection 弹层没有打开").toBeTruthy();
+    return dialog!;
+  }
+
+  it("X:清单行、详情面板、Add connection 行,三处都没有一颗连接控件", async () => {
+    mocks.getAccountViewData.mockResolvedValue({
+      settings: {},
+      channels: DISCONNECTED_CHANNELS,
+      shelf: { packs: [] },
+      adsAutonomy: "ASK",
+      canPublish: false,
+      meta: { connected: false },
+    });
+
+    const dom = await renderConnections();
+
+    // ① 清单行。行本身是那颗选择按钮(aria-label 写明它只是「查看」),行**内**必须空无一物。
+    const listRow = dom.querySelector<HTMLElement>('[data-channel="x"]');
+    expect(listRow, "服务清单里没有 X 这一行").toBeTruthy();
+    expect(listRow!.getAttribute("aria-label")).toBe("View X connection");
+    expect(listRow!.getAttribute("href"), "选择行不该是一条链接").toBeNull();
+    expect(listRow!.querySelector("a, button"), "X 这一行里长出了一个可点的控件").toBeNull();
+    expect(listRow!.textContent).toContain("Unavailable");
+
+    // ② 详情面板。选中 X 之后,右边整块面板一个控件都不该有。
+    await act(async () => listRow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const detail = dom.querySelector<HTMLElement>('section[aria-live="polite"]');
+    expect(detail, "详情面板不在了").toBeTruthy();
+    expect(detail!.textContent).toContain("This service is not available to connect.");
+    expect(detail!.querySelector("a, button"), "连不上的服务详情里出现了控件").toBeNull();
+    expect(detail!.querySelector('a[href^="/api/"]'), "详情里出现了一条连接路由").toBeNull();
+
+    // ③ Add connection 弹层。这一行只有一枚徽章 —— 旧壳那条断言在这里一字不改地成立。
+    const dialog = await openAddConnection(dom);
+    const rows = dialogRows(dialog);
+    expect(rows.length).toBe(LABELS.length);
+    const unavailable = rows.filter((row) => (row.textContent ?? "").includes("Unavailable"));
+    expect(unavailable.length, "弹层里没有一行读作 Unavailable").toBe(1);
+    for (const row of unavailable) {
+      expect(row.textContent).toContain("X");
+      expect(row.querySelector("a, button"), "Unavailable 的那一行上有可点的控件").toBeNull();
+      expect(row.querySelector('a[href="/api/x/authorize"]')).toBeNull();
+    }
+    // 而且能连的那两行照常有出路 —— 否则「零控件」只是因为整个弹层都是死的。
+    expect(rows.filter((row) => row.querySelector('a[href="/api/meta/authorize"]')).length).toBe(2);
+  });
+
+  it("Meta 连上之后,X 那一行仍然三处零控件", async () => {
+    mocks.getAccountViewData.mockResolvedValue({
+      settings: {},
+      channels: CONNECTED_CHANNELS,
+      shelf: { packs: [] },
+      adsAutonomy: "ASK",
+      canPublish: true,
+      meta: { connected: true, status: "active", accounts: [], canWrite: true, adsAutonomy: "ASK", adsWritesPaused: false },
+    });
+    mocks.getMetaInsights.mockResolvedValue({ accounts: [] });
+
+    const dom = await renderConnections();
+
+    const listRow = dom.querySelector<HTMLElement>('[data-channel="x"]');
+    expect(listRow!.querySelector("a, button")).toBeNull();
+
+    await act(async () => listRow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const detail = dom.querySelector<HTMLElement>('section[aria-live="polite"]');
+    expect(detail!.querySelector("a, button")).toBeNull();
+
+    const dialog = await openAddConnection(dom);
+    for (const row of dialogRows(dialog).filter((r) => (r.textContent ?? "").includes("Unavailable"))) {
+      expect(row.querySelector("a, button")).toBeNull();
+    }
+  });
+});
