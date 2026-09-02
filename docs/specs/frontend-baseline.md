@@ -1,7 +1,7 @@
 # 前端基线规格书（S1）
 
-> 状态: 草稿
-> 批准: （冻结时填）https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1128 Founder 评论「S1 批准 frontend-baseline.md」(YYYY-MM-DD)
+> 状态: 已冻结 · v1
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1128 Founder 评论「S1 批准 frontend-baseline.md」(2026-09-02)
 > 规格前缀: FRONT（验收编号 = FRONT-A1、A2…，全仓不得与其他规格撞前缀）
 
 <!--
