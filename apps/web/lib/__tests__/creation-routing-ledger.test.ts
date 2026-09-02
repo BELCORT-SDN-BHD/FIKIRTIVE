@@ -16,6 +16,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { INTERNAL_PER_DISPLAY, routeReasonFor } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
@@ -683,5 +685,67 @@ describe("CREATE-A5 4k:能力表上有,却卖不出去 —— 拒绝、$0、不�
     const models = await getActiveGenModels();
     expect(models.videoResolutions).not.toContain("4k");
     expect(videoSpecCredits(models, { seconds: 5, resolution: "4k", aspectRatio: "16:9" })).toBeNull();
+  });
+});
+
+/**
+ * CREATE-A12 的**围栏** —— 「谁能读 `Generation.routeReason` 这一列」不靠人记。
+ *
+ * 判官 r3 P2 抓到的是这份文件本身的短处:上面那几条钉的是**两条已知路**(出片轮询与
+ * 资产回执),用的是手写断言。今天谁在 apps/web 里新写一个 `select: { routeReason: true }`
+ * 并把它原样交给浏览器,全套测试照样绿 —— 因为没有一条断言问过「读点一共有几个」。
+ * 这正是 r2 那次泄露的形状:出口有两个,其中一个没过白标。
+ *
+ * 所以这一条不数断言,它**数文件**:扫 apps/web 的全部非测试源码(lib / app / components),
+ * `routeReason` 这个标识符只许出现在下面三个文件里。多一个就红,红的时候告诉他该怎么办。
+ * 做法照仓库先例(`video-audio-toggle.test.ts` 的 CREATE-A3 围栏:readFileSync 扫源码,
+ * 断言标识符不出现)。
+ *
+ * 三个文件各自的资格:
+ *   · `lib/gen-actions.ts`   —— 出片轮询,已过 `merchantRouteReason`;
+ *   · `lib/asset-actions.ts` —— 资产回执,已过 `merchantRouteReason`;
+ *   · `components/asset/DetailPanel.tsx` —— **只读显示**,服务端已经比完,它一个字不改。
+ */
+describe("CREATE-A12 围栏:routeReason 的读点只有三个文件", () => {
+  /** 允许出现 `routeReason` 的非测试源码,路径相对 apps/web。 */
+  const ALLOWED = [
+    "components/asset/DetailPanel.tsx",
+    "lib/asset-actions.ts",
+    "lib/gen-actions.ts",
+  ];
+
+  it("CREATE-A12:apps/web 非测试源码里,routeReason 只出现在这三个文件", () => {
+    // jsdom / node 下 import.meta.url 靠不住,走 cwd —— vitest 的根就是 apps/web
+    // (与 video-audio-toggle.test.ts 的 CREATE-A3 围栏同一套读法)。
+    const root = process.cwd();
+    const hits: string[] = [];
+    const walk = (rel: string): void => {
+      for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+        const child = `${rel}/${entry.name}`;
+        if (entry.isDirectory()) {
+          // 测试自己当然要提这个词 —— 围栏管的是**生产读点**。
+          if (entry.name === "__tests__" || entry.name === "node_modules") continue;
+          walk(child);
+          continue;
+        }
+        if (!/\.tsx?$/u.test(entry.name) || /\.test\.tsx?$/u.test(entry.name)) continue;
+        if (readFileSync(join(root, child), "utf8").includes("routeReason")) hits.push(child);
+      }
+    };
+    for (const dir of ["lib", "app", "components"]) walk(dir);
+
+    // 扫出来是空的 = 这条围栏什么都没守(读点被整个删了,或路径写错了)。
+    expect(hits.length, "一个读点都没扫到 —— 围栏失效了,先修围栏").toBeGreaterThan(0);
+    const strays = hits.filter((f) => !ALLOWED.includes(f)).sort();
+    expect(
+      strays,
+      `${strays.join("、")} 直接读了 Generation.routeReason。这一列跨过商家边界只能走**一个**出口：` +
+      "@fikirtive/core 的 merchantRouteReason(白标 + 空即未知,与写这句话的 routeReasonFor 同住)。" +
+      "新增读点必须走 merchantRouteReason 单一出口，然后把文件加进本围栏的 ALLOWED；" +
+      "只显示、不取值的面(像 DetailPanel)也要登记，否则下一个人不知道它凭什么在名单上。",
+    ).toEqual([]);
+    // 两个服务端出口必须还在 —— 名单不是许可证,是台账。
+    expect(hits).toContain("lib/gen-actions.ts");
+    expect(hits).toContain("lib/asset-actions.ts");
   });
 });

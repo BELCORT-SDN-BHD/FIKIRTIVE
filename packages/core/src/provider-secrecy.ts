@@ -60,10 +60,19 @@ const PROVIDER_NAME_RE = new RegExp(
     // character so the `\b` leaves them alone. At 4 characters it is far shorter than
     // `volcengine`, so the MAX_MATCH_SPAN arithmetic below is unchanged.
     //
-    // A name is only ever missing from this line because a human forgot it, so the coverage is
-    // now DERIVED rather than remembered: packages/generation/src/byteplus.test.ts feeds every
-    // token of every id in the two model-id maps through `redactProviderNames` and fails if one
-    // survives. Adding a supplier id without adding its name here now turns that test red.
+    // A name is only ever missing from this line because a human forgot it, so the coverage of
+    // the GENERATION ids is derived rather than remembered: packages/generation/src/byteplus.test.ts
+    // feeds every token of every id in `IMAGE_MODEL_MAP` and `VIDEO_MODEL_MAP` through
+    // `redactProviderNames` and fails if one survives. Adding an id to EITHER OF THOSE TWO maps
+    // without adding its name here now turns that test red.
+    //
+    // Scope, stated honestly (Creation ① judge r3 P3): two maps, not every map. The
+    // understanding side keeps its own third table — `UNDERSTANDING_MODEL_MAP` in
+    // packages/generation/src/understanding.ts (`seed-2-0-mini-260428`) — and no derived test
+    // covers it, so `seed` is neither matched here nor asserted anywhere. Widening the filter to
+    // that table is a separate decision with its own near-miss cost (`seed` is an ordinary
+    // English word a merchant may well be selling), and it is NOT this PR's business; it is
+    // written down here so the next reader does not mistake "derived" for "exhaustive".
     `\\b(?:seedance|seedream|byteplus|bytedance|jimeng|volcengine|volc|vmp|prometheus|modelark|dreamina|dola)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
     `\\bfal(?:provider|client|error|[./:_-][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b`,
     `即梦`,

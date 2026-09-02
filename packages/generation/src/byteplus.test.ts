@@ -49,7 +49,9 @@ describe("BytePlusProvider — wiring", () => {
   /**
    * Codex r2 P1 —— **过滤表 × 供应商 id 全集**。
    *
-   * 这两张表是仓库里**唯一**允许出现供应商真 id 的地方,而 `provider-secrecy` 的过滤表是
+   * 这两张表是**生成侧**唯一允许出现供应商真 id 的地方(理解侧另有一张
+   * `UNDERSTANDING_MODEL_MAP`,不在这一条的射程内 —— 判官 r3 P3 点名,别把「派生」读成
+   * 「穷尽」),而 `provider-secrecy` 的过滤表是
    * 一张人手维护的名单 —— 一张名单只和「最后一个有人记得加进去的名字」一样好。r2 抓到的
    * 正是这个:`dola-seedream-5-0-pro-260628` 上架时没人把 `dola` 加进过滤表,于是
    * `redactProviderNames("dola")` 原样返回 "dola",而它是我们今天真在送的 id 的第一段。
