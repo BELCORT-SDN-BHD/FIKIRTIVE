@@ -110,11 +110,18 @@ describe("MONEY-A10 商家侧披露:billing 价目区的搜索行", () => {
     vi.doMock("@/lib/account-actions", () => ({ getMyAccount: async () => ({ error: "not signed in" }) }));
     vi.doMock("@/lib/billing-actions", () => ({ listCreditPacks: async () => ({ packs: [] }) }));
     vi.doMock("@/lib/spend-history-data", () => ({ getSpendOverview: async () => ({ error: "unavailable" }) }));
+    vi.doMock("@/lib/owner-settings-actions", () => ({
+      // 前端基线合并(FRONT-A1):花费上限搬到 /billing 之后这一页多读一个数据源;
+      // 这一票不测上限,但不 mock 就会打真 auth 假红。
+      getOwnerSettings: async () => ({ spendCapCredits: 0 }),
+      setOwnerSetting: async () => ({ ok: true as const }),
+    }));
     const { default: BillingPage } = await import("@/app/billing/page");
     const html = asReadText(renderToStaticMarkup(await BillingPage({ searchParams: Promise.resolve({}) })));
     vi.doUnmock("@/lib/account-actions");
     vi.doUnmock("@/lib/billing-actions");
     vi.doUnmock("@/lib/spend-history-data");
+    vi.doUnmock("@/lib/owner-settings-actions");
 
     expect(html).toContain("Web search in chat");
     expect(html, "价目区少了单次搜索价").toContain(unitLabel);

@@ -1950,6 +1950,12 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
     vi.doMock("@/lib/spend-history-data", () => ({
       getSpendOverview: async () => ({ error: "unavailable" }),
     }));
+    vi.doMock("@/lib/owner-settings-actions", () => ({
+      // 前端基线合并(FRONT-A1):花费上限搬到 /billing 之后这一页多读一个数据源;
+      // 这一票不测上限,但不 mock 就会打真 auth 假红。
+      getOwnerSettings: async () => ({ spendCapCredits: 0 }),
+      setOwnerSetting: async () => ({ ok: true as const }),
+    }));
     const { default: BillingPage } = await import("@/app/billing/page");
 
     const html = renderToStaticMarkup(await BillingPage({ searchParams: Promise.resolve({}) }));
@@ -1969,6 +1975,7 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
     vi.doUnmock("@/lib/account-actions");
     vi.doUnmock("@/lib/billing-actions");
     vi.doUnmock("@/lib/spend-history-data");
+    vi.doUnmock("@/lib/owner-settings-actions");
   });
 
   it("billing 页的数字也是现算的,不是页面里另抄的一份", () => {

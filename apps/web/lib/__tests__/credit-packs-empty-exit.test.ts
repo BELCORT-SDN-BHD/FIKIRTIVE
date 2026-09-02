@@ -43,6 +43,9 @@ const mocks = vi.hoisted(() => ({
   listCreditPacks: vi.fn(),
   getSpendOverview: vi.fn(),
   setOwnerSetting: vi.fn(),
+  // 前端基线合并(FRONT-A1):花费上限搬到了 /billing,所以这一页多读一个数据源。
+  // 这一票测的是充值货架的措辞,上限读成什么都不影响它 —— 但不 mock 就会打真 auth 假红。
+  getOwnerSettings: vi.fn(async () => ({ spendCapCredits: 0 })),
   setAdsAutonomy: vi.fn(),
   requireOwner: vi.fn(),
   isImpersonating: vi.fn(),
@@ -52,7 +55,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
 vi.mock("@/lib/billing-actions", () => ({ listCreditPacks: mocks.listCreditPacks }));
 vi.mock("@/lib/spend-history-data", () => ({ getSpendOverview: mocks.getSpendOverview }));
-vi.mock("@/lib/owner-settings-actions", () => ({ setOwnerSetting: mocks.setOwnerSetting }));
+vi.mock("@/lib/owner-settings-actions", () => ({
+  setOwnerSetting: mocks.setOwnerSetting,
+  getOwnerSettings: mocks.getOwnerSettings,
+}));
 vi.mock("@/lib/otto-client-actions", () => ({ setAdsAutonomy: mocks.setAdsAutonomy }));
 // The REAL listCreditPacks runs against these two below (importActual), so the shelf
 // verdict the pages read is the one the action really produces (#786).
