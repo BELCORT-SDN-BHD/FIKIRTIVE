@@ -50,6 +50,14 @@ vi.mock("@/lib/upload-actions", () => ({ finalizeCandidateUploads: vi.fn() }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { EditDesk } = await import("@/components/otto/edit/EditDesk");
+const { UPLOAD_EXTS, mimeOf } = await import("@fikirtive/core/upload");
+
+/** 从 core **枚举**,不手抄:服务端会落 audio/* 的那些扩展名,和其余全部。
+ *  有人往守卫白名单里加一个 mp4,下面的拒绝用例会直接红。 */
+const AUDIO_EXTS = UPLOAD_EXTS.filter((ext) => mimeOf(ext).startsWith("audio/"));
+const NON_AUDIO_EXTS = UPLOAD_EXTS.filter((ext) => !mimeOf(ext).startsWith("audio/"));
+const { finalizeCandidateUploads } = await import("@/lib/upload-actions");
+const { uploadFilesDirect } = await import("@/lib/direct-upload");
 
 const OWNER = "org_a";
 const hash = (n: number) => String(n).repeat(64).slice(0, 64);
@@ -191,5 +199,115 @@ describe("an export outlives the page, so the desk picks it back up", () => {
     // the desk still opened, and it did not claim an export state it never read
     expect(container.textContent).toContain("our new chilli sauce");
     expect(container.textContent).not.toContain("Ready");
+  });
+});
+
+/**
+ * MONEY-A9 §7.3 —— 配乐入口的类型守卫。
+ *
+ * 这个入口按规格「现仅收 audio」被单列**豁免**:它不挂那行价目小字。整条豁免立在
+ * 「这里进不来会被计费的 image/video」之上,而在这之前那句话只靠选择器上的 accept="audio/*"
+ * 撑着 —— accept 是文件选择框的过滤**建议**,不是校验。商家把系统弹窗的筛选改成「所有文件」
+ * 选了一张图,它就会以 UPLOAD image 素材落盘、被自动理解计费:一笔他在任何屏幕上都没见过
+ * 价目的钱。所以这里钉的是**行为**:非音频根本走不到 finalize。
+ */
+describe("MONEY-A9 配乐入口只收音频 —— 豁免的前提必须自己成立", () => {
+  /** 直接驱动那个隐藏的 type="file" 输入框,和商家在选择框里点确定是同一条路。 */
+  async function pick(name: string, type: string) {
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    if (!input) throw new Error(`no file input — screen says: ${container.textContent}`);
+    const file = new File([new Uint8Array([1, 2, 3])], name, { type });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: { 0: file, length: 1, item: (i: number) => (i === 0 ? file : null) },
+    });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  }
+
+  beforeEach(() => {
+    mocks.getEditDesk.mockResolvedValue({ media: MEDIA, cut: ONE_CLIP_CUT, unreadable: false });
+  });
+
+  it("选了一张图:不上传、不结算,屏幕上说清为什么", async () => {
+    await open();
+    await pick("poster.png", "image/png");
+
+    expect(vi.mocked(uploadFilesDirect), "非音频文件仍然被送去上传了").not.toHaveBeenCalled();
+    expect(
+      vi.mocked(finalizeCandidateUploads),
+      "非音频文件仍然走到了 finalize —— 那就会落一条会被理解计费的 UPLOAD 素材",
+    ).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Only audio files can be added here.");
+  });
+
+  it("扩展名是硬条件:内容是图、名字是 .png、而浏览器报 audio/mpeg —— 必须拒", async () => {
+    // 这是真能走通的一条绕过:只看 MIME 就放行,服务端对**图片扩展名**才读字节,
+    // 于是它被判成 image/png 落盘、被建收费理解行,而这个入口按豁免是不披露的。
+    await open();
+    await pick("poster.png", "audio/mpeg");
+
+    expect(vi.mocked(uploadFilesDirect), "谎报 audio/mpeg 的 .png 被放行了").not.toHaveBeenCalled();
+    expect(
+      vi.mocked(finalizeCandidateUploads),
+      "谎报 audio/mpeg 的 .png 走到了 finalize —— 它会落成 image 素材并被计费",
+    ).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Only audio files can be added here.");
+  });
+
+  // ── 拒绝面:从 core 枚举出的**每一个非音频扩展名** × 三种 MIME 说法 ──────────────
+  // 三种说法都要拒,因为扩展名才是硬条件:服务端对非图片扩展名不读字节、直接按扩展名落
+  // MIME,所以只要扩展名不是音频,这个文件到了服务端就会变成 image/* 或 video/*,
+  // 被建成收费理解行 —— 而这个入口按豁免是不挂披露的。
+  const REJECTION_CASES = NON_AUDIO_EXTS.flatMap((ext) => [
+    [`clip.${ext}`, "", `${ext}:浏览器不给 MIME`] as const,
+    [`clip.${ext}`, mimeOf(ext), `${ext}:老实报的 ${mimeOf(ext)}`] as const,
+    [`clip.${ext}`, "audio/mpeg", `${ext}:谎报成 audio/mpeg`] as const,
+  ]);
+
+  it.each(REJECTION_CASES)("非音频必须拒:%s(type=%s,%s)", async (name, type) => {
+    await open();
+    await pick(name, type);
+
+    expect(vi.mocked(uploadFilesDirect), `${name} 被放行了`).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(finalizeCandidateUploads),
+      `${name} 走到了 finalize —— 它会落成会被理解计费的素材,而这个入口不挂披露`,
+    ).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Only audio files can be added here.");
+  });
+
+  // ── 放行面:从 core 枚举出的**每一个音频扩展名** ────────────────────────────────
+  it.each(AUDIO_EXTS)("真音频不该被误拦:track.%s(浏览器不给 MIME)", async (ext) => {
+    vi.mocked(uploadFilesDirect).mockResolvedValue({ files: [], failures: [] } as never);
+    vi.mocked(finalizeCandidateUploads).mockResolvedValue({ error: "stop here" } as never);
+    await open();
+    await pick(`track.${ext}`, "");
+
+    expect(vi.mocked(uploadFilesDirect), `track.${ext} 被误拦了`).toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Only audio files can be added here.");
+  });
+
+  // ── 已知容器误报:这几条不在 core 里,是浏览器的脾气,只能人写 ──────────────────
+  it.each([
+    ["theme.m4a", "video/mp4", "m4a 装在 MP4 容器里"],
+    ["theme.aac", "video/mp4", "aac 同上"],
+    ["track.flac", "application/octet-stream", "浏览器没意见"],
+    ["track.wav", "audio/wav", "老实报的"],
+  ])("真音频不该被误拦:%s(type=%s,%s)", async (name, type) => {
+    vi.mocked(uploadFilesDirect).mockResolvedValue({ files: [], failures: [] } as never);
+    vi.mocked(finalizeCandidateUploads).mockResolvedValue({ error: "stop here" } as never);
+    await open();
+    await pick(name, type);
+
+    expect(vi.mocked(uploadFilesDirect), `${name} 被误拦了`).toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Only audio files can be added here.");
+  });
+
+  it("枚举面本身不许塌掉:音频与非音频两组都得有东西", () => {
+    expect(AUDIO_EXTS.length, "core 里一个音频扩展名都没枚举到 —— 上面的放行用例会全部空跑").toBeGreaterThan(0);
+    expect(NON_AUDIO_EXTS.length, "core 里一个非音频扩展名都没枚举到 —— 拒绝用例会全部空跑").toBeGreaterThan(0);
   });
 });
