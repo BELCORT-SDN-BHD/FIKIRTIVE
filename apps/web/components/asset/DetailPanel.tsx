@@ -24,6 +24,7 @@ import { PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
+import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
 import {
@@ -970,8 +971,15 @@ export default function DetailPanel({
                 </div>
                 {/* Crop controls */}
                 <div style={{ display: "flex", gap: 8, padding: 16, justifyContent: "flex-end", background: "rgba(0,0,0,.4)" }}>
+                  {/* MONEY-A9 §7.3 —— 披露先于扣费。裁一张已有的图不是「只是裁一下」:
+                   *  `saveCroppedGeneration` 落的是一条全新的 `source:"UPLOAD"` image Asset,
+                   *  扫描器照样建理解行、照样扣。商家只改了构图却被收一笔他不知道存在的钱,
+                   *  正是这条验收要拦的那种账。所以这一行挂在 Confirm crop 旁边,而不是之后。 */}
+                  <div style={{ alignSelf: "center", marginRight: "auto", maxWidth: "60%" }}>
+                    <UnderstandingCostHint />
+                  </div>
                   {cropStatus === "failed" && (
-                    <span style={{ fontSize: 12, color: "var(--error)", alignSelf: "center", marginRight: "auto" }}>
+                    <span style={{ fontSize: 12, color: "var(--error)", alignSelf: "center" }}>
                       Crop failed — try again
                     </span>
                   )}
