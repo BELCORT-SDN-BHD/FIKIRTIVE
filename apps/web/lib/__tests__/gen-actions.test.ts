@@ -1745,28 +1745,50 @@ describe("generation read boundaries", () => {
   });
 
   it("#645 T4:按档价目表 = 收费函数本人算的 —— 卡面报价与预扣额不可能分家 [MONEY-A11]", async () => {
-    const { pricedGenCredits, displayCredits, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel } =
-      await import("@fikirtive/core");
+    const {
+      pricedGenCredits, displayCredits, GEN_VIDEO_MODEL_OPTIONS, GEN_VIDEO_MODELS,
+      activeVideoModel, isSellableVideoSku, routeVideoModel,
+    } = await import("@fikirtive/core");
     const models = await getActiveGenModels();
     const opts = GEN_VIDEO_MODEL_OPTIONS[activeVideoModel() as keyof typeof GEN_VIDEO_MODEL_OPTIONS];
 
-    // 菜单原样来自能力表 —— 服务端不另编一份。
+    // Creation S2 §8.1①(Codex r1 P1-1 落修):清晰度菜单是**全部槽位的可售 SKU 并集**,
+    // 不再只是默认槽位那一格 —— 此前 1080p 从来没有出现在商家的选择器上。时长与形状
+    // 仍然只交一份(两个槽位同表,`creation-routing.test.ts` 把那个前提钉住了)。
+    // 这一份期望值由**判据本身**推出来,不是第二份手抄:菜单加一档,这里当场跟着走。
+    const expectedResolutions: string[] = [];
+    for (const slot of [activeVideoModel(), ...GEN_VIDEO_MODELS.filter((m) => m !== activeVideoModel())]) {
+      const o = GEN_VIDEO_MODEL_OPTIONS[slot as keyof typeof GEN_VIDEO_MODEL_OPTIONS];
+      for (const resolution of o.resolutions) {
+        if (routeVideoModel(resolution).model !== slot) continue;
+        if (!o.durations.some((seconds) => isSellableVideoSku(slot, resolution, seconds))) continue;
+        if (!expectedResolutions.includes(resolution)) expectedResolutions.push(resolution);
+      }
+    }
+    expect(models.videoResolutions).toEqual(expectedResolutions);
+    expect(models.videoResolutions).toContain("1080p"); // 商家真的选得到高清档
     expect(models.videoDurations).toEqual([...opts.durations]);
-    expect(models.videoResolutions).toEqual([...opts.resolutions]);
     expect(models.videoAspectRatios).toEqual([...opts.aspectRatios]);
 
-    // 24 档全表逐格对上 pricedGenCredits(startGen 预扣用的就是它)。
+    // 全表逐格对上 pricedGenCredits(startGen 预扣用的就是它),而且每一格的价按
+    // **它提交后真会落到的那个槽位**算 —— 报价与预扣同源。
     let checked = 0;
-    for (const resolution of opts.resolutions) {
-      for (const seconds of opts.durations) {
+    for (const resolution of models.videoResolutions) {
+      for (const seconds of models.videoDurations) {
+        const slot = routeVideoModel(resolution).model;
+        expect(isSellableVideoSku(slot, resolution, seconds), `${resolution}:${seconds} 上了菜单却没有价`).toBe(true);
         const expected = displayCredits(pricedGenCredits({
-          kind: "VIDEO", model: activeVideoModel(), count: 1, videoOptions: { seconds, resolution },
+          kind: "VIDEO", model: slot, count: 1, videoOptions: { seconds, resolution },
         }));
         expect(models.videoCreditsBySpec[`${resolution}:${seconds}`], `${seconds}s ${resolution}`).toBe(expected);
         checked += 1;
       }
     }
-    expect(checked).toBe(24);
+    // 24 档默认槽位 + 12 档高清 = 36。
+    expect(checked).toBe(36);
+    expect(Object.keys(models.videoCreditsBySpec)).toHaveLength(36);
+    // 菜单外的档一格都不许有价(4k 在能力表上,但它没有价)。
+    expect(models.videoCreditsBySpec["4k:5"]).toBeUndefined();
 
     // t2v 默认与 i2v 默认是**两个**值,不许互相顶替。
     expect(models.videoDefaults.aspectRatio).toBe("16:9");

@@ -44,8 +44,10 @@ export function videoAspectLabel(aspect: string): string {
   return aspect.charAt(0).toUpperCase() + aspect.slice(1);
 }
 
-/** 清晰度那一格的人话 —— 商家不该需要知道 "p" 是什么。 */
+/** 清晰度那一格的人话 —— 商家不该需要知道 "p" 是什么。
+ *  (Creation S2 §8.1①:1080p 从高清槽位上架,菜单第一次会出现它。) */
 export function videoResolutionLabel(resolution: string): string {
+  if (resolution === "1080p") return "Sharpest (1080p)";
   if (resolution === "720p") return "Sharper (720p)";
   if (resolution === "480p") return "Standard (480p)";
   return resolution;
@@ -135,7 +137,7 @@ export function VideoSpecPicker({
           value={value.resolution}
           disabled={disabled}
           aria-label="Quality of the video"
-          title="How sharp this video will be — standard costs about half"
+          title="How sharp this video will be — the price beside this changes with it"
           onChange={(event) => onChange({ ...value, resolution: event.target.value })}
           className={selectClass}
           style={{ flex: "none" }}

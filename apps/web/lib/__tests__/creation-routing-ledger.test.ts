@@ -33,7 +33,9 @@ vi.mock("../queue", () => ({
 vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
-const { startCanvasGen } = await import("../gen-actions");
+const { startCanvasGen, getActiveGenModels, getGenJob } = await import("../gen-actions");
+const { getGeneration } = await import("../asset-actions");
+const { clampVideoSpec, videoSpecCredits, videoSpecMenu } = await import("../video-spec");
 const { prisma, settleCredits } = await import("@fikirtive/db");
 
 /** 1080p 5 秒 = 11cr/秒 × 5 = 55 显示 credits(Founder 2026-09-02 追认,规格 §5)。 */
@@ -53,6 +55,11 @@ async function seedWorld(balanceDisplay: number) {
 
 async function ledgerRows(ownerId: string) {
   return prisma.creditLedger.findMany({ where: { orgId: ownerId }, orderBy: { createdAt: "asc" } });
+}
+
+/** 内容哈希是 sha256 的 64 位十六进制 —— `storageKey` 会校验形状(短一位就抛)。 */
+function freshContentHash(): string {
+  return (randomUUID() + randomUUID()).replace(/-/gu, "");
 }
 
 /** worker 的成功结算,走它自己那个函数(不传 actualInternal ⇒ 全额落账)。 */
@@ -155,7 +162,7 @@ describe("CREATE-A4 商家要 1080p:路由到高清档,报价 == reserve == sett
     const assetId = `ast_${randomUUID()}`;
     await prisma.asset.create({
       data: {
-        id: assetId, ownerId: world.ownerId, contentHash: randomUUID().replace(/-/gu, ""),
+        id: assetId, ownerId: world.ownerId, contentHash: freshContentHash(),
         ext: "mp4", mime: "video/mp4", sizeBytes: BigInt(1), originalFilename: "clip.mp4", source: "GENERATED",
       },
     });
@@ -313,5 +320,296 @@ describe("CREATE-A6 图片侧同形:未定价的 pro 变体拒绝 $0;pro 标准�
     expect(refused).toHaveProperty("error");
     expect(await ledgerRows(world.ownerId)).toHaveLength(0);
     expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+  });
+});
+
+/* ═══════════════ Codex 跨厂复审 r1 落修(2026-09-02):**真入口** ═══════════════
+ *
+ * 上面几节走的是「手工构造一份请求」,证明的是管线接对了。判官 r1 P1-1 / P1-2 说的是
+ * 另一件事:**商家在真实界面上根本拿不到 1080p / 精修那一格**,所以 A4/A6 的第一步
+ * (「商家要求 1080p」)在生产路径上执行不了,验收是假绿。
+ *
+ * 下面这几条因此从 `getActiveGenModels()` —— 也就是选择器唯一的菜单来源 —— 取值,
+ * 再拿取到的那一格去走真的付费路。菜单里没有那一格 ⇒ 当场红。
+ */
+
+describe("CREATE-A4 真入口:商家从**服务端菜单**拿到 1080p,同屏看到 55cr,提交落到高清档", () => {
+  it("CREATE-A4 菜单里有 1080p,而且它的价就是 55cr(选择器读的就是这张表)", async () => {
+    const models = await getActiveGenModels();
+    // ① 选择器渲染的就是这份列表(apps/web/lib/video-spec.ts 的 videoSpecMenu)。
+    expect(models.videoResolutions, "菜单里没有 1080p —— 商家选不到").toContain("1080p");
+    expect(videoSpecMenu(models).resolutions).toContain("1080p");
+    // ② 同屏的那个数字来自同一份服务端表,不是界面自己算的。
+    expect(videoSpecCredits(models, { seconds: 5, resolution: "1080p", aspectRatio: "16:9" }))
+      .toBe(HD_5S_DISPLAY);
+    // ③ 回放/夹取不会把它夹回默认档(此前 clamp 正是这么把 1080p 吃掉的)。
+    expect(clampVideoSpec(models, { seconds: 5, resolution: "1080p", aspectRatio: "16:9" }).resolution)
+      .toBe("1080p");
+    // ④ 默认档一格没动:商家什么都不选时仍然交付 720p 5 秒。
+    expect(models.videoDefaults.resolution).toBe("720p");
+    expect(models.videoDurations).toContain(5);
+    // ⑤ 菜单上的每一格都真的有价 —— 出现一个查不到价的档,商家会看到 "Checking cost…" 卡死。
+    for (const resolution of models.videoResolutions) {
+      for (const seconds of models.videoDurations) {
+        expect(videoSpecCredits(models, { seconds, resolution, aspectRatio: "16:9" }), `${resolution}:${seconds} 没有价`)
+          .toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("CREATE-A4 从菜单取值 → 组请求 → 真 startGen:落到高清档,reserve == 菜单上那个数字", async () => {
+    const world = await seedWorld(500);
+    const models = await getActiveGenModels();
+    const spec = clampVideoSpec(models, { seconds: 5, resolution: "1080p", aspectRatio: "16:9" });
+    const quoted = videoSpecCredits(models, spec);
+    expect(quoted).toBe(HD_5S_DISPLAY);
+
+    // 商家的浏览器发的就是这一份:**服务端给的别名**(默认槽位那一格)+ 他在菜单上选的规格。
+    // 请求里没有任何槽位名 —— 挑引擎的是服务端。
+    const started = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: quoted!,
+      projectId: world.projectId,
+      prompt: "a slow push-in on the product on a marble counter",
+      count: 1,
+      kind: "video",
+      model: models.video,
+      resolution: spec.resolution,
+      durationSeconds: spec.seconds,
+      aspectRatio: spec.aspectRatio,
+    });
+    expect(started, JSON.stringify(started)).toHaveProperty("id");
+    const jobId = (started as { id: string }).id;
+    const job = await prisma.genJob.findFirstOrThrow({ where: { id: jobId, ownerId: world.ownerId } });
+    expect(job.model).toBe("seedance-2-0");
+    const reserve = (await ledgerRows(world.ownerId)).find((r) => r.idempotencyKey === `reserve:${jobId}`);
+    expect(Math.abs(reserve!.balanceDelta)).toBe(HD_5S_DISPLAY * INTERNAL_PER_DISPLAY);
+  });
+});
+
+describe("CREATE-A4 / CREATE-A12 路由理由的**产品读路径**:两个商家接口都读得到", () => {
+  it("CREATE-A12 getGenJob 与资产回执都把这句话交给商家,且不带型号名", async () => {
+    const world = await seedWorld(500);
+    const models = await getActiveGenModels();
+    const started = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: HD_5S_DISPLAY,
+      projectId: world.projectId,
+      prompt: "a slow push-in on the product",
+      count: 1,
+      kind: "video",
+      model: models.video,
+      resolution: "1080p",
+      durationSeconds: 5,
+    });
+    const jobId = (started as { id: string }).id;
+    const job = await prisma.genJob.findFirstOrThrow({ where: { id: jobId, ownerId: world.ownerId } });
+
+    // worker 落库的那一行(它自己那份证据在 apps/worker/src/jobs/gen-receipt.test.ts;
+    // 这里要证的是**读得回来**)。
+    const routeReason = routeReasonFor({
+      kind: "video",
+      model: job.model,
+      resolution: (job.videoOptions as { resolution?: string }).resolution ?? null,
+    });
+    const assetId = `ast_${randomUUID()}`;
+    await prisma.asset.create({
+      data: {
+        id: assetId, ownerId: world.ownerId, contentHash: freshContentHash(),
+        ext: "mp4", mime: "video/mp4", sizeBytes: BigInt(1), originalFilename: "clip.mp4", source: "GENERATED",
+      },
+    });
+    const genId = `gen_${randomUUID()}`;
+    await prisma.generation.create({
+      data: {
+        id: genId, ownerId: world.ownerId, projectId: world.projectId, assetId,
+        source: "GENERATED", promptText: job.prompt, modelRef: job.model,
+        routeReason, entitySnapshot: { entities: [] }, version: 1,
+      },
+    });
+    await prisma.genJob.update({
+      where: { id: jobId, ownerId: world.ownerId },
+      data: { status: "DONE", generationIds: [genId] },
+    });
+
+    // ① 出片轮询这条路(画布/出片框都读它)。
+    const polled = await getGenJob(jobId, world.projectId);
+    expect(polled!.routeReason, "getGenJob 没把路由理由交出来").toBe(routeReason);
+    // ② 资产回执这条路(详情面板读它,与 sentPrompt / finalPrompt 同族)。
+    const receipt = await getGeneration(genId);
+    expect(receipt).not.toHaveProperty("error");
+    expect((receipt as { routeReason: string | null }).routeReason).toBe(routeReason);
+    // ③ 两条路交出来的都是**能力名词**,一个型号名都没有。
+    for (const secret of ["seedance", "seedream", "dreamina", "dola", "byteplus", "mini"]) {
+      expect(String(polled!.routeReason).toLowerCase()).not.toContain(secret);
+      expect(String((receipt as { routeReason: string | null }).routeReason).toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it("CREATE-A12 没升档 ⇒ 两条路都交出 null(不编一句「用了默认档」)", async () => {
+    const world = await seedWorld(500);
+    const models = await getActiveGenModels();
+    const started = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: 11,
+      projectId: world.projectId,
+      prompt: "a slow push-in on the product",
+      count: 1,
+      kind: "video",
+      model: models.video,
+      resolution: "720p",
+      durationSeconds: 5,
+    });
+    const jobId = (started as { id: string }).id;
+    const job = await prisma.genJob.findFirstOrThrow({ where: { id: jobId, ownerId: world.ownerId } });
+    expect(job.model).toBe("seedance-2-mini");
+    const assetId = `ast_${randomUUID()}`;
+    await prisma.asset.create({
+      data: {
+        id: assetId, ownerId: world.ownerId, contentHash: freshContentHash(),
+        ext: "mp4", mime: "video/mp4", sizeBytes: BigInt(1), originalFilename: "clip.mp4", source: "GENERATED",
+      },
+    });
+    const genId = `gen_${randomUUID()}`;
+    await prisma.generation.create({
+      data: {
+        id: genId, ownerId: world.ownerId, projectId: world.projectId, assetId,
+        source: "GENERATED", promptText: job.prompt, modelRef: job.model,
+        routeReason: routeReasonFor({ kind: "video", model: job.model, resolution: "720p" }),
+        entitySnapshot: { entities: [] }, version: 1,
+      },
+    });
+    await prisma.genJob.update({
+      where: { id: jobId, ownerId: world.ownerId },
+      data: { status: "DONE", generationIds: [genId] },
+    });
+    expect((await getGenJob(jobId, world.projectId))!.routeReason).toBeNull();
+    expect((await getGeneration(genId) as { routeReason: string | null }).routeReason).toBeNull();
+  });
+});
+
+describe("CREATE-A6 真入口:商家在图片选项里勾「精修」,按 2cr 报价并路由到 pro", () => {
+  it("CREATE-A6 菜单交出这一格能力:价 2cr + 它自己那份形状菜单,**没有型号名**", async () => {
+    const models = await getActiveGenModels();
+    expect(models.imageFineDetail, "菜单里没有精修那一格 —— 商家勾不到").not.toBeNull();
+    expect(models.imageFineDetail!.credits).toBe(2);
+    expect(models.imageCredits).toBe(1); // 默认档一格没动
+    // 这一档收不下最宽的那两个形状 —— 菜单上不许出现它们(那是一次注定失败的付费请求)。
+    expect(models.imageFineDetail!.aspectRatios).not.toContain("16:9");
+    expect(models.imageFineDetail!.aspectRatios).not.toContain("9:16");
+    expect(models.imageFineDetail!.aspectRatios).toContain("1:1");
+    // 默认档的形状菜单原样保留(宽的那两格仍然在)。
+    expect(models.imageAspectRatios).toContain("16:9");
+    // 交给浏览器的东西里一个型号名都没有。
+    for (const secret of ["seedream", "dola", "byteplus", "pro", "lite"]) {
+      expect(JSON.stringify(models.imageFineDetail).toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it("CREATE-A6 勾上精修 ⇒ 路由到 pro 并按 2cr 预扣;不勾 ⇒ 默认档 1cr", async () => {
+    const world = await seedWorld(50);
+    const models = await getActiveGenModels();
+    // 商家发的是**默认槽位的别名 + 一格能力**。挑引擎的是服务端 —— 这正是判官 P1-2
+    // 说「带外点名不算能力路由」的那条线:这份请求里没有第二个别名。
+    const fine = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: models.imageFineDetail!.credits,
+      projectId: world.projectId,
+      prompt: "the bottle on a marble counter",
+      count: 1,
+      kind: "image",
+      model: models.image,
+      aspectRatio: models.imageFineDetail!.aspectRatios[0],
+      fineDetail: true,
+    });
+    expect(fine, JSON.stringify(fine)).toHaveProperty("id");
+    const fineJobId = (fine as { id: string }).id;
+    const fineJob = await prisma.genJob.findFirstOrThrow({ where: { id: fineJobId, ownerId: world.ownerId } });
+    expect(fineJob.model).toBe("seedream-pro");
+    const fineReserve = (await ledgerRows(world.ownerId)).find((r) => r.idempotencyKey === `reserve:${fineJobId}`);
+    expect(Math.abs(fineReserve!.balanceDelta)).toBe(2 * INTERNAL_PER_DISPLAY);
+    await workerSettle(world.ownerId, fineJobId);
+    const fineSettle = (await ledgerRows(world.ownerId)).find((r) => r.idempotencyKey === `settle:${fineJobId}`);
+    expect(Math.abs(fineSettle!.reservedDelta)).toBe(2 * INTERNAL_PER_DISPLAY);
+
+    // 同一份请求不勾那一格 ⇒ 默认槽位、1cr。
+    const plain = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: models.imageCredits,
+      projectId: world.projectId,
+      prompt: "the bottle on a marble counter",
+      count: 1,
+      kind: "image",
+      model: models.image,
+      aspectRatio: models.imageFineDetail!.aspectRatios[0],
+    });
+    expect(plain, JSON.stringify(plain)).toHaveProperty("id");
+    const plainJob = await prisma.genJob.findFirstOrThrow({ where: { id: (plain as { id: string }).id, ownerId: world.ownerId } });
+    expect(plainJob.model).toBe("seedream");
+  });
+
+  it("CREATE-A6 勾了精修却按默认档报价 ⇒ create/reserve 之前拒,ledger 零新增行", async () => {
+    const world = await seedWorld(50);
+    const models = await getActiveGenModels();
+    const refused = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: models.imageCredits, // 1cr —— 屏幕上写的是旧价
+      projectId: world.projectId,
+      prompt: "the bottle on a marble counter",
+      count: 1,
+      kind: "image",
+      model: models.image,
+      fineDetail: true,
+    });
+    expect(refused).toHaveProperty("error");
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+  });
+
+  it("CREATE-A6 勾了精修 + 这一档收不下的形状 ⇒ 花钱之前拒,ledger 零新增行", async () => {
+    const world = await seedWorld(50);
+    const models = await getActiveGenModels();
+    const refused = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: models.imageFineDetail!.credits,
+      projectId: world.projectId,
+      prompt: "the bottle on a marble counter",
+      count: 1,
+      kind: "image",
+      model: models.image,
+      aspectRatio: "16:9", // 默认档收得下,pro 收不下
+      fineDetail: true,
+    });
+    expect(refused, JSON.stringify(refused)).toHaveProperty("error");
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+  });
+});
+
+describe("CREATE-A5 4k:能力表上有,却卖不出去 —— 拒绝、$0、不降级", () => {
+  it("CREATE-A5 点名高清槽位要 4k ⇒ **付费闸**拒,ledger 零新增行、零任务", async () => {
+    const world = await seedWorld(500);
+    const refused = await startCanvasGen(canvasRequest(world, {
+      model: "capability-video-2", // 高清槽位:4k 在它的能力表上
+      resolution: "4k",
+      expectedCredits: HD_5S_DISPLAY,
+    }));
+    expect(refused, JSON.stringify(refused)).toHaveProperty("error");
+    // 开口的是付费闸(这一格没有价),不是契约闸(引擎做不到)—— 这正是 r1 判官 P2-1
+    // 说的「能力与可售被混成一件事」的反面。
+    expect((refused as { error: string }).error)
+      .toBe("That video quality isn't on sale yet — pick another quality or length.");
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+    // 不降级:没有任何一行落在别的档上。
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId, model: "seedance-2-mini" } })).toBe(0);
+    const acct = await prisma.creditAccount.findUniqueOrThrow({ where: { orgId: world.ownerId } });
+    expect(acct.balance).toBe(500 * INTERNAL_PER_DISPLAY);
+  });
+
+  it("CREATE-A5 4k 也不在**商家菜单**上(能力 ≠ 可售,菜单只放可售的)", async () => {
+    const models = await getActiveGenModels();
+    expect(models.videoResolutions).not.toContain("4k");
+    expect(videoSpecCredits(models, { seconds: 5, resolution: "4k", aspectRatio: "16:9" })).toBeNull();
   });
 });
