@@ -58,8 +58,11 @@ const mocks = vi.hoisted(() => ({
   getSpendOverview: vi.fn(),
   setOwnerSetting: vi.fn(),
   // 前端基线合并(FRONT-A1):花费上限搬到了 /billing,所以这一页多读一个数据源。
-  // 这一票测的是充值货架的措辞,上限读成什么都不影响它 —— 但不 mock 就会打真 auth 假红。
-  getOwnerSettings: vi.fn(async () => ({ spendCapCredits: 0 })),
+  // 不 mock 就会打真 auth 假红。它的返回形状与真 action 一样有两种(读到 / 读不到),
+  // 第二臂要两种都渲染一遍,所以这里就照真形状标注类型。
+  getOwnerSettings: vi.fn<() => Promise<{ spendCapCredits: number } | { error: string }>>(
+    async () => ({ spendCapCredits: 0 }),
+  ),
   setAdsAutonomy: vi.fn(),
   requireOwner: vi.fn(),
   isImpersonating: vi.fn(),
