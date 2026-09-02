@@ -34,7 +34,8 @@
    - 账本 refId(`manual-refund:<uuid>`)—— 账本的唯一键是 (org, refId),org 已经在键里;
    - Stripe 的 idempotency key(`manual-refund:<orgId>:<uuid>`)—— Stripe 那边没有 org 这一维,
      键里不带 org 的话,两个商家恰好用同一个 uuid 就会共用一把幂等键,第二笔请求拿回第一笔的结果,
-     钱退给错的商家而两边账本都写着「成功」。
+     钱退给错的商家而两边账本都写着「成功」。注意它**只是第二道带子**(24 小时就过期),防重复退款
+     真正靠的是下一段那条。
    **重试必须用同一个号**——面板在这一单结清之前不会换号。自己另起一个新号去重试 = 把防重复退款的保护关掉。
    同一个单号重跑**不会退第二次**,但依据不是幂等键:Stripe 的幂等键 24 小时就过期,过期之后同样的
    请求会被当成全新一笔。真正的依据是**先查后建**——账本上只要已经有这张单的预扣,动作在发起退款
@@ -64,7 +65,7 @@
 | …more than we can check in one pass | 那笔付款上的退款超过一万条 | 去 Stripe 人工对账后再退 |
 | …left to refund | 这笔付款已经退过一部分 | 只退剩下的额度,或换一笔付款 |
 | That refund id is already opened for… | 同一个单号却改了付款/退多少/partial 勾选去续跑 | 照账本上钉着的那份事实重填,或换一个新单号 |
-| The credits stay held… | Stripe 没给出明确答案(超时/5xx/幂等键撞参数) | 见下节「答案不明」——**不释放**,去 Dashboard 核,再用同一个单号重跑 |
+| The credits stay held… | Stripe 没给出明确答案(超时/5xx/幂等键撞参数) | 见下节「答案不明」——**不释放**,用同一个单号重跑(重跑自己会先查 Stripe) |
 
 **不再**会挡你的两条(编排者裁定 2026-09-02:**退款不是消费**):商家自设的单笔上限、账号暂停。
 被拒付暂停的商家可以直接退款,不必先解除暂停(那一刻他又能花钱了)。30 天 2000cr 的人工调账
@@ -102,23 +103,35 @@
 
 ⚠️ 这条前缀的 hold **没有任何清道夫会自动收口**(`manual-refund:` 登记在
 `apps/worker/src/jobs/llm-reservation-reaper.test.ts` 的 `NEVER_REAPED`,有守卫测试逐个清道夫核实):
-自动退回 hold、Stripe 随后又退成 = 平台双付。收口只有 Open refund holds 上的 Complete / Abandon 两条路。
+自动退回 hold、Stripe 随后又退成 = 平台双付。收口只有人来做:Open refund holds 上的 Complete / Abandon
+(用同一个单号重跑主动作走的也是同一次查找,结果一样)。
 
 ## 若 Stripe 那一步「答案不明」(超时 / 5xx / 幂等键撞参数)
 
 页面会说 **The credits stay held**,并发一条 founderAlert(`finance.manual_refund_outcome_unknown`)。
 这不是失败,是**不知道**:超时完全可能发生在钱已经退出去之后。所以预扣**不释放**——释放了就成了
 「钱退了、credits 也留着」,平台吃两遍。
-处置:去 Stripe Dashboard 看那笔 `pi_…` 上有没有退款。
-- 有 → 用**同一个退款单号**重跑,动作会跳过预扣、直接补落账。
-- 没有 → 同样用同一个单号重跑,正常退。
+处置:**用同一个退款单号重跑**就行 —— 重跑自己会先查一次 Stripe(审计行 → 按
+`metadata.manualRefundId` 翻完这笔 `pi_…` 的退款列表):
+- 查到 → 按它的状态收口(`succeeded` 落账 / `failed`·`canceled` 成对释放 / pending 保持 hold);
+- 查不到 → 才发起退款,正常退。
+
+所以「那一笔到底建出来没有」不需要你先替它判断,超过 24 小时也一样(挡住第二笔的是这次查找,
+不是会过期的幂等键)。去 Dashboard 亲眼看一遍那笔 `pi_…` 仍然值得,但那是额外的复核。
 **不要**手工把 credits 加回去。
 
 ## 若「已退款但没落账」(第 3 段的③失败)
 
 方向是安全的:钱已经回商家,credits 仍锁在 reserved 里花不掉。页面会明说,并且会发一条 founderAlert(`finance.manual_refund_settle_failed`)。
-处置=**用同一个退款单号重跑一次**:Stripe 那一步幂等,不会退第二次,动作会跳过预扣直接补落账。
-注意:Stripe 的幂等键 24 小时后过期。超过一天才补跑的单子,先去 Dashboard 核一眼那笔 `re_…` 是否已经存在,再决定重跑还是人工收尾。
+处置=**用同一个退款单号重跑一次**。它不会退第二次,依据是**先查后建**,不是 Stripe 的幂等键:
+账本上这张单的预扣还在,所以动作在发起任何退款之前,先只读地问一次 Stripe「这张单是不是已经有退款
+了」——先看审计行 `manual-refund-pending:<uuid>`,没有就按 `metadata.manualRefundId` 翻完这笔 `pi_…`
+的退款列表。找到就按它的状态补收口(`succeeded` 落账 / `failed`·`canceled` 成对释放 / 还在 pending
+就保持 hold 继续等),查不到才真的发起。
+**超过 24 小时的单子走的是同一条路**,不需要另做人工判断:虽然 Stripe 的幂等键那时已经过期,但挡住
+第二笔的从来不是它。翻不完那笔付款的退款列表时(超过一万条)动作整趟拒绝,而不是在看不全的清单上
+再建一笔。
+去 Dashboard 核一眼那笔 `re_…`仍然值得做,但它是**额外的复核**,不是重跑的前置条件。
 **禁止**先退钱后扣账的逆序补救;**禁止**修改任何已写行。
 
 ## 登记
