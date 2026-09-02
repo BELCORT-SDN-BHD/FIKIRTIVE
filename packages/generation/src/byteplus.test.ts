@@ -1349,3 +1349,63 @@ describe("#795 出网截止时间", () => {
     expect((err as { charged?: unknown }).charged).toBe(true);
   });
 });
+
+/**
+ * Creation S2 §8.1①(CREATE-A4 / A6)—— **越限的 size 发不出去**,逐槽位判。
+ *
+ * Codex 跨厂复审 r1 P1-4:此前这条纪律只钉在 Zod 契约上(`gen.test.ts` 断言
+ * `genRequest.safeParse` 拒),而适配器自己拿一张全家族共用的尺寸表拼 `size` ——
+ * 契约闸挡不住 **worker 从数据库快照重放的那一路**(`job.imageOptions.aspectRatio`
+ * 是一个无约束字符串,历史行与畸形行原样送到适配器)。所以这里断言的是
+ * **适配器本人**:pro + 16:9 一个 POST 都不发。
+ */
+describe("CREATE-A4 图片适配器:pro 收不下的画幅**不 POST**", () => {
+  it("CREATE-A6 pro + 16:9 / 9:16 ⇒ 抛错拒绝,fetch 一次都没被调用", async () => {
+    for (const aspectRatio of ["16:9", "9:16"] as const) {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      await expect(new BytePlusProvider("ark-test").generate({
+        prompt: "the bottle", inputImageUrls: [], count: 1, model: "seedream-pro", aspectRatio,
+      })).rejects.toThrow();
+      // 这一句才是这条 P1 的全部内容:**没有任何请求出网** ⇒ 可证明零花费。
+      expect(fetchSpy, `${aspectRatio} 竟然 POST 出去了`).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("CREATE-A6 组图那条路同样挡在 POST 之前(它是另一个分支)", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(new BytePlusProvider("ark-test").generate({
+      prompt: "the bottle", inputImageUrls: [], count: 2, model: "seedream-pro",
+      aspectRatio: "16:9", coherentSet: true,
+    })).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("CREATE-A6 pro 自己菜单上的画幅照常 POST(拒的是收不下的,不是这台引擎)", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    await new BytePlusProvider("ark-test").generate({
+      prompt: "the bottle", inputImageUrls: [], count: 1, model: "seedream-pro", aspectRatio: "21:9",
+    });
+    expect(body.model).toBe("dola-seedream-5-0-pro-260628");
+    expect(body.size).toBe("3136x1344"); // 4,214,784 px < pro 的 4,624,220 上限
+  });
+
+  it("CREATE-A4 默认槽位一格没动:16:9 照常 POST 2880x1620", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    await new BytePlusProvider("ark-test").generate({
+      prompt: "an apple", inputImageUrls: [], count: 1, model: "seedream", aspectRatio: "16:9",
+    });
+    expect(body.size).toBe("2880x1620");
+  });
+});

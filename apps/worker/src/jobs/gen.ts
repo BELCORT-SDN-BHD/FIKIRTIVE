@@ -36,8 +36,8 @@ import {
   genJobEndedWithoutDelivering,
   merchantGenFailureMessage,
   routeReasonFor,
+  genImageModel,
   type GenJobData,
-  type GenerationRequest,
   type GenModel,
   type GenVideoModel,
   type GenerationReceipt,
@@ -1313,14 +1313,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // #914 r4:编号句在这一行才长出来 —— 所以「实际送出的那一整句」也只有在这一行
         // 之后才存在。落库落的就是这个变量本身(见 sentPromptText 的写入)。
         sentPrompt = withReferenceMap(job.prompt, refSlots);
-        // ⚠️ 写集边界(Creation S2 §8.4):`GenerationRequest.model` 今天的类型是 `RefGenModel`
-        // (参考图菜单),而图片菜单从本片起**比它宽一格**(`seedream-pro`)。诚实的修法是把
-        // 那一格放宽成 `RefGenModel | GenModel`(`packages/core/src/refgen.ts` 一行,纯类型、
-        // 零行为变化),但该文件不在本段写集里,所以这里沿用这一格**本来就有的**强转
-        // (`job.model` 是一个无约束的 DB 字符串,从来就要转成菜单类型才交得出去),
-        // 只是把目标写成契约自己的类型而不是另一个菜单的类型。放宽那一行写进交接报告。
-        // 运行期不受影响:适配器按 `IMAGE_MODEL_MAP[req.model]` 查表,查不到 = 付费前抛错。
-        outputs = await provider.generate({ prompt: sentPrompt, inputImageUrls, count: job.count, model: job.model as GenerationRequest["model"], aspectRatio, coherentSet });
+        // 判官 r1 P2 落修:`GenerationRequest.model` 已放宽成 `RefGenModel | GenModel`
+        // (`packages/core/src/refgen.ts`),所以 pro 槽位不再靠 `as` 强转过门 ——
+        // 编译器现在真的会检查这一格与适配器契约对不对得上。`job.model` 仍是一个无约束的
+        // DB 字符串,所以它经 `genImageModel()` 收窄到菜单上的一格,而**菜单外的 id 一律抛**
+        // (不回落默认槽位:回落 = 一条没在册的行照常跑、照常收钱)。抛点仍在付费调用之前,
+        // 与适配器过去那句「no image model mapping」落在同一个 try、同一条退款路上。
+        outputs = await provider.generate({ prompt: sentPrompt, inputImageUrls, count: job.count, model: genImageModel(job.model), aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       // #782 r13 (judge r12 P1-F1) — THE WRITE-POINT INVARIANT: a DONE job can always point at

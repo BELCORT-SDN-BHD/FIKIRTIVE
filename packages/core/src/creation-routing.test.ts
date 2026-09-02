@@ -8,13 +8,22 @@
  */
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
+  GEN_IMAGE_MODEL_OPTIONS,
+  GEN_IMAGE_MODEL_PIXEL_LIMITS,
   GEN_IMAGE_VARIANTS,
   GEN_VIDEO_MODEL_OPTIONS,
   HD_VIDEO_RESOLUTION,
+  IMAGE_SIZE_OUT_OF_RANGE,
+  IMAGE_TIER_UNKNOWN,
+  genImageModel,
+  genRequest,
+  imageOutputSize,
+  imageOutputSizeForModel,
   routeImageModel,
   routeReasonFor,
   routeVideoModel,
 } from "./gen.js";
+import type { GenerationRequest } from "./refgen.js";
 import { activeVideoModel, assertSpendableModel } from "./model-config.js";
 import {
   CREDITS_PER_USD,
@@ -181,5 +190,127 @@ describe("CREATE-A6 图片侧同形:未定价的 pro 变体拒绝 $0,显式价�
     }
     // 已定价的那一格反过来必须在表上(否则「有价」这句话也是空的)。
     expect(MARGIN_TRUTH_SKUS.map((s) => s.id)).toContain("image:seedream-pro");
+  });
+});
+
+/* ═══════════════ Codex 跨厂复审 r1 落修(2026-09-02)═══════════════ */
+
+describe("CREATE-A6 图片能力路由:商家勾的是能力,槽位由我们挑", () => {
+  it("CREATE-A6 `fineDetail` 这一格能力 → pro 槽位;不勾 → 默认槽位", () => {
+    // r1 判官 P1-2:此前 pro 槽位**没有任何能力位指得到它** —— `routeImageModel` 只认
+    // `transparent` / `portraitRefine` 两格,而那两格没有入口,于是 pro 只能靠一个知道
+    // 隐藏别名的调用方点名。`fineDetail` 是商家今天真的勾得到的那一格。
+    expect(routeImageModel({ fineDetail: true }).model).toBe("seedream-pro");
+    expect(routeImageModel({ fineDetail: false }).model).toBe("seedream");
+    expect(routeImageModel({ fineDetail: null }).model).toBe("seedream");
+    expect(routeImageModel({}).model).toBe("seedream");
+    expect(routeImageModel().model).toBe("seedream");
+    // 三个能力位是同一族,任一为真都升档(另两格的入口随批 II 进来)。
+    expect(routeImageModel({ transparent: true }).model).toBe("seedream-pro");
+    expect(routeImageModel({ portraitRefine: true }).model).toBe("seedream-pro");
+  });
+
+  it("CREATE-A6 升档理由只写能力名词;没升档就是 null", () => {
+    const routed = routeImageModel({ fineDetail: true });
+    expect(routed.reason).not.toBeNull();
+    assertNoModelName(routed.reason!);
+    expect(routeImageModel({ fineDetail: false }).reason).toBeNull();
+  });
+
+  it("CREATE-A6 契约闸:能力位与它落到的槽位必须一致,视频侧一律拒", () => {
+    const base = {
+      projectId: "prj_1", prompt: "the bottle on a marble counter", count: 1,
+      idempotencyKey: "asset:test:1",
+    };
+    // 勾了精修 + 已经路由到 pro ⇒ 放行。
+    expect(genRequest.safeParse({ ...base, kind: "image", model: "seedream-pro", fineDetail: true }).success).toBe(true);
+    // 勾了精修却挂在默认槽位上 = 一次绕开路由的直接构造 ⇒ 拒(花钱之前)。
+    expect(genRequest.safeParse({ ...base, kind: "image", model: "seedream", fineDetail: true }).success).toBe(false);
+    // 视频带图片能力位 ⇒ 拒。
+    expect(genRequest.safeParse({ ...base, kind: "video", model: "seedance-2-mini", fineDetail: true }).success).toBe(false);
+    // 不勾 = 与今日逐字一致。
+    expect(genRequest.safeParse({ ...base, kind: "image", model: "seedream" }).success).toBe(true);
+  });
+});
+
+describe("CREATE-A5 能力表如实表达供应商能力:4k 在能力表上,但不可售", () => {
+  it("CREATE-A5 4k 在**能力表**上(回执如实),却不在可售白名单里", () => {
+    // r1 判官 P2-1:规格 §8.1① 记录的回执是 `[480p,720p,1080p,4k]`。能力表少写一档,
+    // 「能力」与「可售」就混成了一件事 —— 4k 会被契约闸(引擎做不到)拒,而事实是
+    // 引擎做得到、我们没有给它定价。
+    expect(GEN_VIDEO_MODEL_OPTIONS["seedance-2-0"].resolutions).toContain("4k");
+    expect(SELLABLE_VIDEO_RESOLUTIONS["seedance-2-0"]).not.toContain("4k");
+    expect(isSellableVideoSku("seedance-2-0", "4k", 5)).toBe(false);
+    // 毛利表(= 每一个会向商家收钱的档)里没有它的条目。
+    expect(MARGIN_TRUTH_SKUS.map((s) => s.id)).not.toContain("video:seedance-2-0:5:4k");
+  });
+
+  it("CREATE-A5 请求 4k:**付费闸**拒(不是契约闸),$0、不降级", () => {
+    // 契约闸放行(4k 真的在这台引擎的能力表上)——
+    const parsed = genRequest.safeParse({
+      projectId: "prj_1", prompt: "a slow push-in", count: 1, idempotencyKey: "asset:test:4k",
+      kind: "video", model: "seedance-2-0", resolution: "4k", durationSeconds: 5,
+    });
+    expect(parsed.success, "4k 被契约闸拦了 —— 那说明能力表又不如实了").toBe(true);
+    // …开口的是付费闸:这一格没有价。
+    const refused = assertSpendableModel("seedance-2-0", "video", {}, { resolution: "4k", seconds: 5 });
+    expect(refused.ok).toBe(false);
+    assertNoModelName((refused as { error: string }).error);
+    expect(refused).not.toHaveProperty("model"); // 不降级:没有「已替你换成别的档」的出口
+  });
+});
+
+describe("CREATE-A4 适配器画幅闸:越限的 size 发不出去(逐槽位)", () => {
+  it("CREATE-A4 pro 的像素上限比默认档低,16:9 / 9:16 在 pro 上**抛错拒绝**", () => {
+    // r1 判官 P1-4:`imageOutputSize` 不认槽位,于是 pro + 16:9(4,665,600 px)会被
+    // 原样拼成 `size` POST 出去,而 pro 的上限是 4,624,220 px。
+    for (const aspect of ["16:9", "9:16"] as const) {
+      expect(imageOutputSize(aspect).width * imageOutputSize(aspect).height)
+        .toBeGreaterThan(GEN_IMAGE_MODEL_PIXEL_LIMITS["seedream-pro"].max);
+      // 默认档收得下 ⇒ 原样放行(本片没有动它一格)。
+      expect(imageOutputSizeForModel("seedream", aspect)).toEqual(imageOutputSize(aspect));
+      // pro 收不下 ⇒ **抛**,不是降级、不是自动缩小。
+      expect(() => imageOutputSizeForModel("seedream-pro", aspect)).toThrow(IMAGE_SIZE_OUT_OF_RANGE);
+    }
+    // pro 自己菜单上的每一格都必须过得了它自己的闸(否则菜单在骗人)。
+    for (const aspect of GEN_IMAGE_MODEL_OPTIONS["seedream-pro"].aspectRatios) {
+      expect(() => imageOutputSizeForModel("seedream-pro", aspect)).not.toThrow();
+    }
+    // 认不出来的槽位:未验先禁。
+    expect(() => imageOutputSizeForModel("not-a-model", "1:1")).toThrow(IMAGE_SIZE_OUT_OF_RANGE);
+    // 抛出来的这句话是商家可能读到的 —— 不许带型号名。
+    assertNoModelName(IMAGE_SIZE_OUT_OF_RANGE);
+  });
+});
+
+describe("CREATE-A6 pro 槽位进供应商请求的**静态类型契约**", () => {
+  it("CREATE-A6 `GenerationRequest.model` 认得图片菜单的每一格(编译期证据)", () => {
+    // r1 判官 P2-2:此前 worker 用 `as` 把 pro 塞进这个契约,编译器于是从来没有检查过
+    // pro 的映射与适配器对不对得上。下面这两个**带类型标注**的字面量就是编译期证据 ——
+    // 类型收窄回去,`pnpm --filter @fikirtive/core typecheck` 当场红。
+    const pro: GenerationRequest = { prompt: "p", inputImageUrls: [], count: 1, model: "seedream-pro" };
+    const lite: GenerationRequest = { prompt: "p", inputImageUrls: [], count: 1, model: "seedream" };
+    expect(pro.model).toBe("seedream-pro");
+    expect(lite.model).toBe("seedream");
+    // 收窄函数:菜单上的一格原样回,菜单外的**抛**(不回落默认槽位 —— 回落 = 一条
+    // 没在册的历史行照常跑、照常收钱)。
+    expect(genImageModel("seedream-pro")).toBe("seedream-pro");
+    expect(genImageModel("seedream")).toBe("seedream");
+    expect(() => genImageModel("seedream-legacy")).toThrow(IMAGE_TIER_UNKNOWN);
+    assertNoModelName(IMAGE_TIER_UNKNOWN);
+  });
+});
+
+describe("CREATE-A4 并集菜单的前提:两个槽位的形状与时长必须同表", () => {
+  it("CREATE-A4 形状与时长在两个槽位上逐字相同(菜单只交一份出去)", () => {
+    // 商家的规格选择器拿到的是**一份**形状列表和**一份**时长列表(`getActiveGenModels`),
+    // 而清晰度那一格是两个槽位的并集。所以只要两个槽位的形状/时长表出现分歧,
+    // 商家就选得到一个「路由到的那台引擎不收」的组合 —— 契约闸会在花钱之前拒(fail closed,
+    // $0),但那是一次注定失败的动作。这条断言把那个前提钉住:分歧的那一天当场红,
+    // 提醒把菜单也拆成逐档的(而不是等商家去撞)。
+    const mini = GEN_VIDEO_MODEL_OPTIONS["seedance-2-mini"];
+    const hd = GEN_VIDEO_MODEL_OPTIONS["seedance-2-0"];
+    expect([...hd.aspectRatios].sort()).toEqual([...mini.aspectRatios].sort());
+    expect([...hd.durations].sort((a, b) => a - b)).toEqual([...mini.durations].sort((a, b) => a - b));
   });
 });
