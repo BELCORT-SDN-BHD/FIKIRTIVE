@@ -41,7 +41,6 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Hand, ImageIcon, Maximize2, MousePointer2, RefreshCw, Type, Video, X, ZoomIn, ZoomOut } from "lucide-react";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -1924,72 +1923,17 @@ export default function FlowCanvas({
               </Button>
             </div>
           )}
-          {/* Slim bottom toolbar — the single operation center for the canvas: zoom,
-              fit, hand/select, image, video, text. No separate React Flow default
-              controls panel and no canvas-lock button.
-              .cv-toolbar has no fixed width (sized by content), but the canvas pane
-              can shrink below its natural row width (narrow chat pane + nav rail at
-              1024–1279px, #513/#522) — without a cap it just grows past the host and
-              gets clipped by the host's overflow:hidden. maxWidth + flexWrap here wrap
-              it to a second row instead of clipping it; the cap is the stack's width,
-              which is already inset from the host. */}
+          {/* What this canvas can MAKE — image, video, text. The row sits in the creation
+              band with the prompt it opens and the Otto composer below it, which is where
+              the approved pattern keeps making-things (`CanvasReference.tsx` has no separate
+              creation row: its composer is the whole entry, and Fikirtive's three direct
+              tools have no other home in that design). The board's own controls — zoom and
+              the interaction mode — left this row for the two places the pattern DOES give
+              them; see `.cv-zoom-cluster` / `.cv-mode-rail` below.
+              .cv-toolbar has no fixed width (sized by content), but the canvas pane can
+              shrink below its natural row width (#513/#522) — maxWidth + flexWrap wrap it to
+              a second row instead of letting the host's overflow:hidden clip it. */}
           <div className="cv-toolbar max-w-full flex-wrap justify-center" role="toolbar" aria-label="Canvas tools">
-            <TooltipButton
-              label="Zoom out"
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void flowRef.current?.zoomOut({ duration: 150 })}
-            >
-              <ZoomOut aria-hidden="true" strokeWidth={1.9} />
-            </TooltipButton>
-            <TooltipButton
-              label="Zoom in"
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void flowRef.current?.zoomIn({ duration: 150 })}
-            >
-              <ZoomIn aria-hidden="true" strokeWidth={1.9} />
-            </TooltipButton>
-            <TooltipButton
-              label="Fit to screen"
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void flowRef.current?.fitView({ padding: 0.22, duration: 220 })}
-            >
-              <Maximize2 aria-hidden="true" strokeWidth={1.9} />
-            </TooltipButton>
-            <Separator orientation="vertical" className="mx-1 h-5" />
-            {/* B6: two tools instead of one toggle. As a toggle, both modes shared a button
-                whose pressed state read the same after two clicks — the merchant could not
-                tell which tool was live, and the box-select mode was effectively unreachable.
-                Each tool now shows its own on/off state and needs exactly one click. */}
-            <ToggleGroup
-              type="single"
-              value={panMode ? "hand" : "select"}
-              onValueChange={(value) => value && setPanMode(value === "hand")}
-              aria-label="Canvas interaction mode"
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToggleGroupItem value="hand" aria-label="Hand tool">
-                    <Hand aria-hidden="true" strokeWidth={1.9} />
-                  </ToggleGroupItem>
-                </TooltipTrigger>
-                <TooltipContent>Hand tool — drag the board to move around</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToggleGroupItem value="select" aria-label="Select tool">
-                    <MousePointer2 aria-hidden="true" strokeWidth={1.9} />
-                  </ToggleGroupItem>
-                </TooltipTrigger>
-                <TooltipContent>Select tool — drag a box to pick several cards</TooltipContent>
-              </Tooltip>
-            </ToggleGroup>
-            <Separator orientation="vertical" className="mx-1 h-5" />
             <TooltipButton
               label="Generate image"
               tooltip="Generate an image — describe what you want"
@@ -2016,6 +1960,78 @@ export default function FlowCanvas({
             </TooltipButton>
           </div>
         </div>
+      ) : null}
+      {skin === "gb" ? (
+        <>
+          {/* The interaction mode, on the right rail the approved pattern puts it on
+              (`CanvasReference.tsx`: `right-4 top-1/2 -translate-y-1/2 flex-col`, one button
+              per mode). Founder 2026-09-03: 生产界面严格按 UIUX 设计走 — this is that place,
+              not one of ours. The pattern's third mode ("Frame select") is not offered here
+              because this canvas has no separate frame tool: the Select tool's own box drag
+              is that behaviour, and inventing a button for it would be inventing a feature.
+
+              B6: two tools instead of one toggle. As a toggle, both modes shared a button
+              whose pressed state read the same after two clicks — the merchant could not
+              tell which tool was live, and the box-select mode was effectively unreachable.
+              Each tool now shows its own on/off state and needs exactly one click. */}
+          <ToggleGroup
+            type="single"
+            className="cv-toolbar cv-mode-rail rounded-[var(--radius-card)]"
+            value={panMode ? "hand" : "select"}
+            onValueChange={(value) => value && setPanMode(value === "hand")}
+            aria-label="Canvas interaction mode"
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ToggleGroupItem value="hand" aria-label="Hand tool">
+                  <Hand aria-hidden="true" strokeWidth={1.9} />
+                </ToggleGroupItem>
+              </TooltipTrigger>
+              <TooltipContent side="left">Hand tool — drag the board to move around</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ToggleGroupItem value="select" aria-label="Select tool">
+                  <MousePointer2 aria-hidden="true" strokeWidth={1.9} />
+                </ToggleGroupItem>
+              </TooltipTrigger>
+              <TooltipContent side="left">Select tool — drag a box to pick several cards</TooltipContent>
+            </Tooltip>
+          </ToggleGroup>
+          {/* Zoom, in the corner the approved pattern gives it (`CanvasReference.tsx`:
+              `bottom-4 right-4`, zoom out / reset / zoom in). Undo and redo sit in that
+              cluster in the design and are NOT added here: this canvas has no undo to wire
+              them to, and a button that only apologises is worse than no button. */}
+          <div className="cv-toolbar cv-zoom-cluster" role="toolbar" aria-label="Canvas zoom">
+            <TooltipButton
+              label="Zoom out"
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void flowRef.current?.zoomOut({ duration: 150 })}
+            >
+              <ZoomOut aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+            <TooltipButton
+              label="Fit to screen"
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void flowRef.current?.fitView({ padding: 0.22, duration: 220 })}
+            >
+              <Maximize2 aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+            <TooltipButton
+              label="Zoom in"
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void flowRef.current?.zoomIn({ duration: 150 })}
+            >
+              <ZoomIn aria-hidden="true" strokeWidth={1.9} />
+            </TooltipButton>
+          </div>
+        </>
       ) : (
         <form
           className="al-promptbar"

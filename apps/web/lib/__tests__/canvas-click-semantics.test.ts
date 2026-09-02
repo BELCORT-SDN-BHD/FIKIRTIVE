@@ -16,6 +16,7 @@
 import { act, createElement, useEffect, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CANVAS_OTTO_DOCK_VAR, canvasOttoDockPx } from "@/lib/canvas-otto-dock";
 
 type FlowProps = {
   nodes: Array<{ id: string; type?: string; selected?: boolean; data: Record<string, unknown> }>;
@@ -392,11 +393,94 @@ describe("the bars along the bottom stay out of each other's way (#604 r2 P2①)
     // `import.meta.url` is not a file URL under the jsdom environment.
     const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
     const stackRule = css.slice(css.indexOf(".gb .cv-bottom-stack {"));
-    expect(stackRule).toContain("max-height: calc(100% - 40px)");
+    expect(stackRule).toContain(`max-height: calc(100% - 40px - var(${CANVAS_OTTO_DOCK_VAR}, 0px))`);
     expect(css).toContain(".gb .cv-bottom-stack > .cv-toolbar { flex: 0 0 auto; }");
     expect(css).toMatch(
       /\.gb \.cv-bottom-stack > \.cv-composer-pop,\s*\.gb \.cv-bottom-stack > \.cv-batchbar \{[^}]*flex: 0 1 auto;[^}]*overflow-y: auto;/,
     );
+  });
+
+  /**
+   * FRONT-A14 · 2026-09-03 走查 D1:第四样东西也在抢那个角落 —— Otto 覆盖层的输入框
+   * (`absolute inset-0` 的兄弟层,z-index 30,`bottom-4`)。它那条 block-end 附加栏自己可点,
+   * 于是八颗工具按钮中心的 `elementFromPoint()` 全部返回那条附加栏(1280×800 / 1440×900 /
+   * 1440×1024 / 1920×1080 四个视口实测)。
+   *
+   * 同上一条:jsdom 量不出矩形,这里只守规则还在。真几何读数由 e2e 旅程
+   * `e2e/journeys/14-canvas-toolbar-reachable.spec.ts` 在真浏览器里逐颗按钮断言。
+   */
+  it("lifts the column above the Otto composer by a measured height, not a guessed offset", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    const stackRule = css.slice(css.indexOf(".gb .cv-bottom-stack {"));
+    // 让位高度是量出来的那一个变量;没人写它时回落 0px,没有 Otto 覆盖层的画布版式不变。
+    expect(stackRule).toContain(`bottom: calc(20px + var(${CANVAS_OTTO_DOCK_VAR}, 0px))`);
+  });
+
+  /**
+   * 创作带的两个数字(`left: 300px` / `right: 160px`)来自已批准的画布 pattern
+   * (`design-system/patterns/canvas/CanvasReference.tsx` 的 `bottom-4 left-[300px] right-[160px]`),
+   * 而且**只声明一次**:Otto 输入框与画布创作列共读同一条规则。各抄一份,就是两者重新错开、
+   * 重新盖住对方的那条路。
+   */
+  it("declares the approved creation band once, and both things in it read that one rule", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    expect(css).toMatch(
+      /\.gb \.cv-bottom-stack,\s*\.gb \.cv-creation-band \{\s*left: 300px;\s*right: 160px;\s*\}/,
+    );
+  });
+
+  /**
+   * 画布自己的控件放在 pattern 给它们的两个位置:右侧竖轨(交互模式)与右下缩放簇。
+   * Founder 2026-09-03 令:生产界面严格按 UIUX 设计走,位置不自创。
+   */
+  it("puts the board's own controls where the approved pattern puts them", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    const rail = css.slice(css.indexOf(".gb .cv-mode-rail {"));
+    expect(rail.slice(0, rail.indexOf("}"))).toContain("right: 16px;");
+    expect(rail.slice(0, rail.indexOf("}"))).toContain("top: 50%;");
+    expect(rail.slice(0, rail.indexOf("}"))).toContain("flex-direction: column;");
+    const zoom = css.slice(css.indexOf(".gb .cv-zoom-cluster {"));
+    expect(zoom.slice(0, zoom.indexOf("}"))).toContain("right: 16px;");
+    expect(zoom.slice(0, zoom.indexOf("}"))).toContain("bottom: 16px;");
+  });
+
+  /** 三个控件组各自有名字,而且都不在同一根纵列里 —— 缩放与模式已经离开被盖住的那一行。 */
+  it("splits the chrome into the creation row, the mode rail and the zoom cluster", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+
+    const creation = container!.querySelector<HTMLElement>('[aria-label="Canvas tools"]')!;
+    const rail = container!.querySelector<HTMLElement>('[aria-label="Canvas interaction mode"]')!;
+    const zoom = container!.querySelector<HTMLElement>('[aria-label="Canvas zoom"]')!;
+    expect(creation).not.toBeNull();
+    expect(rail).not.toBeNull();
+    expect(zoom).not.toBeNull();
+
+    const stack = container!.querySelector<HTMLElement>(".cv-bottom-stack")!;
+    expect(stack.contains(creation)).toBe(true);
+    expect(stack.contains(rail)).toBe(false);
+    expect(stack.contains(zoom)).toBe(false);
+    expect(rail.className).toContain("cv-mode-rail");
+    expect(zoom.className).toContain("cv-zoom-cluster");
+    // 三个直接创作工具留在创作带里;缩放与模式一个都不在。
+    const creationLabels = [...creation.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"));
+    expect(creationLabels).toEqual(["Generate image", "Video", "Add text"]);
+  });
+
+  /**
+   * 让位高度的算术只有这一份(`lib/canvas-otto-dock.ts`):画布底边到 Otto 输入框顶边,
+   * 所以 `bottom-4` 那 16px 内缩和输入框自己的高度一起算进去。
+   */
+  it("measures from the board's bottom edge to the composer's top edge, and never goes negative", () => {
+    expect(canvasOttoDockPx({ bottom: 900 }, { top: 676 })).toBe(224);
+    // 输入框被推到画布底边以下:该让的高度是 0,不是把工具条推出画布(推出去=又点不到)。
+    expect(canvasOttoDockPx({ bottom: 400 }, { top: 460 })).toBe(0);
   });
 });
 

@@ -30,6 +30,7 @@ import { ExitLink } from "@/components/exits/Exits";
 import { BILLING_HREF } from "@/lib/exits";
 import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
+import { CANVAS_OTTO_DOCK_ATTR } from "@/lib/canvas-otto-dock";
 import {
   FRONT_DOOR_GOAL_LABELS, type FrontDoorGoalKey,
 } from "@/lib/otto-canned-starters";
@@ -319,7 +320,16 @@ export function OttoFrontDoor({
 
   if (layout === "canvas") {
     return (
-      <div className="gb pointer-events-none absolute inset-0 z-30 leading-[1.5]">
+      // 这一层是**定位框**,不是一张纸 —— 所以它不带 `gb`(2026-09-03 走查 D1 的另一半)。
+      // `.gb` 是 token 根,而 token 根在 globals.css 里自己 `background-color: var(--background)`:
+      // 一个 `inset-0` 的 `.gb` 就是一张铺满整块画板的不透明纸,盖在 z-index 5 的画布之上。
+      // 它 `pointer-events: none`,所以 `elementFromPoint` 照样穿过去 —— 只有商家的眼睛穿不过去。
+      // 实测(1440×900 生产构建):点阵底纹、工具条、板上的卡全部被它遮掉;把它设成透明,画板
+      // 立刻回来。画布路由永远渲染在 `.gb.ns-immersive` 壳根里
+      // (components/northstar/immersive/immersive-shell.tsx),token 本来就继承得到,这一份
+      // 嵌套的 `gb` 只多做了两件坏事:铺纸,以及把沉浸壳的 scoped 覆盖
+      // (`app/create/immersive-tokens.css` 的 --background / --ring / --info)重置回全局值。
+      <div className="pointer-events-none absolute inset-0 z-30 leading-[1.5]">
         <div className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]">
           <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
             <span className="flex items-center gap-2 text-xs font-semibold">
@@ -336,7 +346,17 @@ export function OttoFrontDoor({
           </p>
         </div>
 
-        <div className="pointer-events-auto absolute bottom-4 left-[calc(50%_+_140px)] w-[min(620px,calc(100%_-_340px))] -translate-x-1/2">
+        {/* 已批准 pattern 的创作带(`.cv-creation-band`:`bottom-4 left-[300px] right-[160px]`、
+            居中、`max-w-[620px]`,数字只在 globals.css 声明一次)。右边那 160px 是 pattern
+            留给右下角缩放簇的角 —— 原来的 `left-[calc(50%+140px)]` 不留,于是压住它。
+            这一块占掉画布底边多少高度由 NorthstarCanvasWorkspace 量出来,交给画布创作列让位
+            (2026-09-03 走查 D1,病根全文在 `lib/canvas-otto-dock.ts`)。记号挂在**整块**上,
+            所以下面那条报错也算进让位高度里 —— 报错一冒出来就把工具条重新盖住,是同一个缺陷
+            的下一次发作。 */}
+        <div
+          {...{ [CANVAS_OTTO_DOCK_ATTR]: "" }}
+          className="cv-creation-band pointer-events-auto"
+        >
           {composer}
           {error ? (
             <Alert role="alert" variant="destructive" className="mt-2">
