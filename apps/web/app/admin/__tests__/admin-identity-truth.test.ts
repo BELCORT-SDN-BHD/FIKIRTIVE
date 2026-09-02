@@ -330,4 +330,29 @@ describe("#736 — the overview stops warning about approvals that do not exist"
       expect(row.tenant, `row ${row.id}`).not.toMatch(/^org_/);
     }
   });
+
+  /**
+   * 判官 2026-09-02(l)—— 同一条规矩要覆盖**租户表**。
+   *
+   * 上面那条只核了人工钱账那张表。租户表(Tenant watchlist / Tenant operations)走的是另一
+   * 条读路径(`listTenants`),而界面在那两处曾经写着 `row.ownerEmail || row.orgId` ——
+   * 同一个病的第二、第三处发作:没有 owner 成员的工作区,人名位上会印出一串 `org_…`。
+   * 读模型这一侧的实话是**空串**,这条钉的就是它:租户表不许自己造一个人名出来。
+   * (屏幕那一侧由 `lib/__tests__/admin-identity-ui.test.ts` 钉,两侧都要。)
+   */
+  it("never shows an internal org id where a person's name belongs — on the tenant table too", async () => {
+    const data = await getAdminV2Data();
+    // 前置条件:那家没有 owner 成员的工作区真的在租户表上(它没有软删,所以列得出来)。
+    const noOwner = data.tenants.find((row) => row.orgId === ORG_NO_OWNER);
+    expect(noOwner, "fixture precondition: the ownerless workspace is on the tenant list").toBeTruthy();
+    expect(noOwner!.ownerEmail, "读模型自己造了一个人名出来").toBe("");
+    expect(noOwner!.name).toBe("Shop with no owner on record");
+    // 软删的那一家不在租户表上 —— 租户表的口径是「还在的店」。
+    expect(data.tenants.find((row) => row.orgId === ORG_CLOSED)).toBeUndefined();
+
+    for (const row of data.tenants) {
+      expect(row.ownerEmail, `tenant ${row.orgId}`).not.toMatch(/^org_/);
+      expect(row.name, `tenant ${row.orgId}`).not.toMatch(/^org_/);
+    }
+  });
 });

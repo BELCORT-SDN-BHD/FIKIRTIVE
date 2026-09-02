@@ -1,5 +1,6 @@
 // Subpath imports, not the barrel: this module is reachable from client components, and
 // the barrel is Node-capable (guarded by lib/__tests__/client-core-imports.test.ts).
+import { SETTINGS_SECTIONS } from "@fikirtive/core/navigation";
 import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core/otto-budget";
 import { displayCredits } from "@fikirtive/core/spend";
 
@@ -66,9 +67,11 @@ export const TOP_UP_CTA = "Top up in Billing.";
 
 /** The ONE thing a merchant is told when THEIR OWN spend cap stopped an action (#524).
  *
- *  Deliberately not the out-of-credits line: they are not out of credits, and sending them to
- *  Billing to top up would not unblock anything. The limit is theirs, it lives in Settings,
- *  and it is the only thing that moves. Both numbers are named for the same reason the
+ *  Deliberately not the out-of-credits line: they are not out of credits, so a TOP-UP would not
+ *  unblock anything. The limit is theirs and it is the only thing that moves. Since the new
+ *  shell it lives on Billing & credits (`app/billing/SpendCapCard.tsx`) — the same page the
+ *  top-up shelf is on, reached for a different reason — so `SPEND_CAP_RAISE_CTA` below names
+ *  that page and every exit button points at it. Both numbers are named for the same reason the
  *  out-of-credits line names its own — a refusal that hides the number it was judged against
  *  reads as a fault in the product.
  *
@@ -89,7 +92,20 @@ export function spendCapBlockedMessage(quotedCredits: number, capCredits: number
  *  搬到了 Billing & credits —— 商家照着「Settings」找过去,落在 General 那一页,那里一个
  *  跟钱有关的控件都没有。一句指错路的出路句比没有出路句更糟:商家已经决定要改了,产品却
  *  让他自己去找。 */
-export const SPEND_CAP_RAISE_CTA = "Raise the cap in Billing & credits to run it.";
+/**
+ * 那一面的名字**不手抄**(判官 P2-c)。
+ *
+ * 「Billing & credits」是导航权威 `SETTINGS_SECTIONS` 里那一格的 label。抄一份在这里,
+ * 改名那天商家读到的出路句会指着一个屏幕上已经不存在的名字 —— 而两处都写着同样的字,
+ * 没有任何一次红会告诉你。所以从单一来源取。
+ */
+const CAP_SECTION_LABEL = (() => {
+  const billing = SETTINGS_SECTIONS.find((section) => section.key === "billing");
+  if (!billing) throw new Error("SETTINGS_SECTIONS 里没有 billing 那一格 —— 上限出路句无处可指");
+  return billing.label;
+})();
+
+export const SPEND_CAP_RAISE_CTA = `Raise the cap in ${CAP_SECTION_LABEL} to run it.`;
 
 /** 花费上限那个控件自己的解释句 —— 也是**只有这一份**。
  *
@@ -101,9 +117,10 @@ export const SPEND_CAP_HINT =
   "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)";
 
 /** What a merchant is told when a CONVERSATION turn can't start for lack of CREDITS (#791-7,
- *  #898). A turn stopped by the merchant's own spend cap is a different sentence and a different
- *  exit — see `spendCapBlockedMessage` above; sending them to Billing over a cap they set would
- *  be untrue and would not unblock anything.
+ *  #898). A turn stopped by the merchant's own spend cap is a different sentence — see
+ *  `spendCapBlockedMessage` above. Both exits land on Billing & credits, but for different
+ *  reasons and with different words: this one says BUY credits, that one says RAISE the cap.
+ *  Telling a capped merchant to top up would be untrue and would not unblock anything.
  *
  *  It replaced "You're out of credits." — a sentence that was usually not true. A turn HOLDS
  *  an amount up front, so a merchant sitting on 3.9 credits, who has spent nothing, was told

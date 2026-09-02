@@ -76,6 +76,20 @@ describe("旧 /otto?view= 的每一个视图都有去处(规格书 §2.3 ③)", 
       expect(target, `?view=${view} 又指回了旧地址`).not.toContain("view=");
     }
   });
+
+  /**
+   * 判官 P2-d —— 旧钱面的书签落在钱在的地方。
+   *
+   * `/otto?view=account` 在旧壳是整屏的**钱面**(余额、充值货架、花费上限)。它原来被收到
+   * `SHELL_ROUTES.preferences`(`/settings` = General),而新壳的 General 只剩工作区名字,
+   * 一个跟钱有关的控件都没有 —— 商家照着旧书签点过去,会站在一页没有任何钱的屏幕上,以为
+   * 自己的余额不见了。「一条不 404 的重定向」与「一条把人送到他要找的东西那里的重定向」
+   * 不是一回事:上面那几条只保证前者,这一条钉后者。
+   */
+  it("旧钱面的书签落到钱在的那一面(Billing & credits),不是落到 General", () => {
+    expect(OTTO_VIEW_REDIRECTS.account).toBe(SHELL_ROUTES.billing);
+    expect(OTTO_VIEW_REDIRECTS.account).not.toBe(SHELL_ROUTES.preferences);
+  });
 });
 
 describe("换壳的新地址只有一份(规格书 §1.3)", () => {

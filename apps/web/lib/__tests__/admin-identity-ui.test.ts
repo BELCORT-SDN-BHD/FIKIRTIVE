@@ -116,7 +116,10 @@ function saveButton(row: HTMLElement): HTMLButtonElement {
   return button!;
 }
 
-async function render(section: "overview" | "staff" | "audit" | "money"): Promise<HTMLDivElement> {
+async function render(
+  section: "overview" | "staff" | "audit" | "money" | "tenants",
+  data: AdminV2Data = DATA,
+): Promise<HTMLDivElement> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -124,7 +127,7 @@ async function render(section: "overview" | "staff" | "audit" | "money"): Promis
     root!.render(
       createElement(AdminDashboardV2, {
         section,
-        data: DATA,
+        data,
         selfEmail: FOUNDER,
       }),
     ),
@@ -369,5 +372,62 @@ describe("#736 — the ledger projection stops pretending to be a queue", () => 
   it("says plainly what happens above the limit: refusal, not a queue", async () => {
     const dom = await render("money");
     expect(dom.textContent?.toLowerCase()).toContain("refused");
+  });
+});
+
+/**
+ * #736 的第二、第三处发作(判官 2026-09-02 l)—— **租户表**上的人名位。
+ *
+ * 人工钱账那张表 2026-08 已经改成「没有 owner 就说 No owner email on file」,但同一页上的
+ * 两张租户表(概览的 Tenant watchlist、租户面的 Tenant operations)还写着
+ * `row.ownerEmail || row.orgId`:一家没有 owner 成员的工作区,人名位上印出来的是一串
+ * `org_…`。那不是一个人,那是数据库里的一把钥匙 —— 运营看着它会以为那就是这家店的联系人。
+ *
+ * 读模型那一侧(空串)由 `app/admin/__tests__/admin-identity-truth.test.ts` 钉;这一条钉的是
+ * 屏幕:同一句实话,两张表都要说得出口。
+ */
+describe("#736 — the tenant tables never print an org id where a person belongs", () => {
+  const OWNERLESS_ORG = "org_ownerless_fixture";
+  const TENANT_DATA = {
+    ...DATA,
+    tenants: [
+      {
+        orgId: OWNERLESS_ORG,
+        name: "Shop with no owner on record",
+        // 读模型对「这家没有 owner 成员」的实话就是空串(listTenants 的口径)。
+        ownerEmail: "",
+        status: "active",
+        balance: 40,
+        genCount: 2,
+        lastActiveAt: "2026-08-07T09:00:00.000Z",
+        risk: "healthy" as const,
+      },
+      {
+        orgId: "org_with_owner_fixture",
+        name: "Kaia Cafe",
+        ownerEmail: MERCHANT,
+        status: "active",
+        balance: 900,
+        genCount: 30,
+        lastActiveAt: "2026-08-07T10:00:00.000Z",
+        risk: "healthy" as const,
+      },
+    ],
+  } as unknown as AdminV2Data;
+
+  it.each([
+    ["overview", "Tenant watchlist"],
+    ["tenants", "Tenant operations"],
+  ] as const)("%s 的「%s」上,没有 owner 的工作区说的是实话,不是它的 org id", async (section, title) => {
+    const dom = await render(section, TENANT_DATA);
+    const table = panel(dom, title);
+    const text = table.textContent ?? "";
+
+    expect(text, "人名位上印出了内部 org id").not.toContain(OWNERLESS_ORG);
+    expect(text, "查不到人名,却什么都没说").toContain("No owner email on file");
+    // 有 owner 的那一行照旧说人名 —— 这一条修的是缺失态,不是把所有人都改成一句套话。
+    expect(text).toContain(MERCHANT);
+    // 这一页别的地方也不许有 org id 露出来给人当名字读。
+    expect(text).not.toMatch(/org_[a-z0-9_]+/i);
   });
 });

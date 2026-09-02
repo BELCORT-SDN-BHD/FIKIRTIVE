@@ -1849,12 +1849,10 @@ describe("#758 the merchant can reach the option himself, and the list says whic
     expect(
       unapprovedUniversalClaims(markup, initialState.segments.map((segment) => segment.name)),
     ).toEqual([]);
-    // 换基座:Base UI 的 Switch 根节点是 `<span role="switch">`,不再是 `<button>`。
-    // 这一条钉的是「开关在页面上、默认关着、读屏听得出是个开关」,标签名不是承诺的一部分。
     // 换基座:Base UI 的 Switch 根节点是 `<span role="switch">`(不再是 `<button>`),
     // 而传进去的 `id` 落到它为 `<label for>` 关联而渲染的那个隐藏 checkbox 上。所以这里
-    // 改成按**读屏看到的那个角色**取控件,再单独确认 label 的关联 id 还在页面上 ——
-    // 钉的仍是「开关在、默认关着、宣告自己是个开关、和它的说明文字连着」。
+    // 改成按**读屏看到的那个角色**取控件 —— 钉的仍是「开关在、默认关着、宣告自己是个开关、
+    // 和它的说明文字连着」。
     const switches = markup.match(/<[a-z]+[^>]*role="switch"[^>]*>/g) ?? [];
     expect(switches).toHaveLength(1);
     const control = switches[0];
@@ -1862,8 +1860,42 @@ describe("#758 the merchant can reach the option himself, and the list says whic
     expect(control).toBeDefined();
     expect(control).toContain('aria-checked="false"');
     expect(control).toContain(`aria-label="${APPROVED_SWITCH_LABEL}"`);
-    expect(markup).toContain('id="segment-exclude-reported-opt-out"');
-    expect(markup).toContain('for="segment-exclude-reported-opt-out"');
+
+    // 判官 2026-09-02(n)——「标签连着开关」重新钉住。
+    //
+    // 原来这里是两条**各自独立**的整页 contains(页面上存在 `id=X`、页面上存在 `for=X`)。
+    // 两条都绿,并不表示它们说的是同一个控件:把 `id` 挪到另一个输入框上,这条围栏照样全绿,
+    // 而商家点那行字将不再打开这个开关。关联本身才是承诺,所以改成解析 DOM,把三件事钉在
+    // **同一个控件**上。
+    const host = document.createElement("div");
+    host.innerHTML = markup;
+    const label = host.querySelector<HTMLLabelElement>('label[for="segment-exclude-reported-opt-out"]');
+    expect(label, "开关那行字不再是一个 label —— 点它不会切换任何东西").toBeTruthy();
+    const labelled = host.querySelector("#segment-exclude-reported-opt-out");
+    expect(labelled, "label 的 for 指着一个页面上根本不存在的 id").toBeTruthy();
+    const switchNode = host.querySelector('[role="switch"]');
+    expect(switchNode, "页面上没有一个宣告自己是开关的节点").toBeTruthy();
+    // ① label 指到的那个元素,就是这个开关本人,或是 Base UI 的 `<Switch>` 为了让
+    //    `<label for>` 有东西可指而**一同吐出来**的那个隐藏 checkbox —— 后者是今天的形状:
+    //    `<span role="switch">` 与 `<input type="checkbox" aria-hidden>` 是同一个组件
+    //    渲染出的两个部分,并排站在同一个父节点下。
+    const hiddenControlOfThisSwitch =
+      labelled!.tagName === "INPUT" &&
+      labelled!.getAttribute("type") === "checkbox" &&
+      labelled!.getAttribute("aria-hidden") === "true" &&
+      labelled!.parentElement === switchNode!.parentElement;
+    expect(
+      labelled === switchNode || hiddenControlOfThisSwitch,
+      "label 指到的元素与那个开关是两个不相干的控件 —— 标签没有连着开关",
+    ).toBe(true);
+    // ② 而且它们同属一个控件容器(那一格),容器里只有这一个开关、只有这一个 label ——
+    //    所以那行字**只可能**指着这个开关,不可能指着别的什么东西。
+    const field = label!.parentElement;
+    expect(field, "label 没有任何容器 —— 无法判定它与开关同属一个控件").toBeTruthy();
+    expect(field!.contains(switchNode!), "标签与开关不在同一个控件容器里").toBe(true);
+    expect(field!.contains(labelled!), "label 指到的控件不在这一格里").toBe(true);
+    expect(field!.querySelectorAll('[role="switch"]')).toHaveLength(1);
+    expect(field!.querySelectorAll("label")).toHaveLength(1);
   });
 
   it("names the tightening in the saved segment's own sentence", async () => {

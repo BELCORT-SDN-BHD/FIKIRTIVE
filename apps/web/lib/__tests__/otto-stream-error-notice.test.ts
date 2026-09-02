@@ -3,7 +3,7 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { SHELL_ROUTES } from "@fikirtive/core/navigation";
+import { SETTINGS_SECTIONS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/storage", () => ({
@@ -33,6 +33,12 @@ const pageOf = (href: string) =>
  * 所以这里不再钉一个字面地址,改成钉**关系**:出路必须指向真的画着上限控件的那一页。
  * 控件将来再搬家,这条围栏跟着搬,而产品不跟着搬就红。
  */
+/** 导航 registry 里「上限住在哪一面」那一格 —— 名字与地址的单一来源。 */
+const CAP_SECTION = SETTINGS_SECTIONS.find((section) => section.key === "billing")!;
+
+/** renderToStaticMarkup 会把 `&` 转义,断言得按转义后的样子比。 */
+const escapeHtml = (text: string) => text.replace(/&/g, "&amp;");
+
 const CAP_CONTROL_ROUTE = (() => {
   const candidates = [SHELL_ROUTES.billing, SHELL_ROUTES.preferences];
   const owners = candidates.filter((href) => pageOf(href).includes("<SpendCapCard"));
@@ -135,8 +141,13 @@ describe("OttoStreamErrorNotice", () => {
     expect(markup, "拒绝提示里那颗按钮没指向上限控件所在的页").toContain(
       `href="${CAP_CONTROL_ROUTE}"`,
     );
+    // 按钮上的名字也来自同一份 registry —— 不许自己另起一个叫法。
+    expect(markup, "按钮上的名字不是导航 registry 里那一格的名字").toContain(
+      `Open ${escapeHtml(CAP_SECTION.label)}`,
+    );
     // 句子念的地方,和按钮去的地方,必须是同一个地方。
-    expect(capCopy, "文案念的目的地与按钮的目的地对不上").toContain("Billing & credits");
+    expect(capCopy, "文案念的目的地与按钮的目的地对不上").toContain(CAP_SECTION.label);
+    expect(CAP_CONTROL_ROUTE).toBe(CAP_SECTION.href);
     expect(CAP_CONTROL_ROUTE).toBe(SHELL_ROUTES.billing);
     // 上限被拒 ≠ 没钱:这条出路不许退化成一颗充值键。
     expect(markup).not.toContain("Top up");

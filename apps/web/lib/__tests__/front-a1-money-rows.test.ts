@@ -80,9 +80,20 @@ const NOT_A_LANDING = new Set([
 
 const rel = (file: string) => path.relative(REPO_ROOT, file).split(path.sep).join("/");
 
-/** 这个编号今天由哪些**真文件**认领(索引与自证不算)。 */
+/**
+ * 注释里的编号是**历史,不是落点**。
+ *
+ * 判官 2026-09-02(j):`e2e/journeys/07` 的标题原来挂着 `MONEY-A1`,而 A1 是钱引擎的定价
+ * 推导验收行,与两处钱面读同一个余额无关 —— 标题改掉之后,那个编号只剩在说明为什么改掉的
+ * 注释里。一条只在注释里被提到的验收,不是有人在守它。所以判定前先把注释剥掉
+ * (与 library-real-route-986 / edit-desk-two-surfaces 同一个做法)。
+ */
+const stripComments = (text: string) =>
+  text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+/** 这个编号今天由哪些**真文件**认领(索引、自证与纯注释提及都不算)。 */
 function ownersOf(row: string): string[] {
-  return TEST_SOURCES.filter(({ text }) => rowPattern(row).test(text))
+  return TEST_SOURCES.filter(({ text }) => rowPattern(row).test(stripComments(text)))
     .map(({ file }) => rel(file))
     .filter((file) => !NOT_A_LANDING.has(file));
 }
@@ -91,12 +102,38 @@ function ownersOf(row: string): string[] {
  * 会**真的跑起来**的用例条数。
  *
  * `it.todo(` / `it.skip(` / `describe.skip(` 都不算 —— 一条验收如果只剩占位,它在 CI 上不产生
- * 任何一次判定,与被删掉的差别只在于 grep 还找得到它。
+ * 任何一次判定,与被删掉的差别只在于 grep 还找得到它。**注释掉的也不算**:一条被行注释或
+ * 块注释包起来的 `it(` 在 CI 上同样一次都不跑 —— 这正是判官指定的变异,所以先剥注释。
  */
 function liveCaseCount(text: string): number {
-  const plain = text.match(/\b(?:it|test)\s*\(/g) ?? [];
-  const parametrised = text.match(/\b(?:it|test)\.(?:each|concurrent|for)\b/g) ?? [];
+  const code = stripComments(text);
+  const plain = code.match(/\b(?:it|test)\s*\(/g) ?? [];
+  const parametrised = code.match(/\b(?:it|test)\.(?:each|concurrent|for)\b/g) ?? [];
   return plain.length + parametrised.length;
+}
+
+/**
+ * 一份测试文件里所有 `it(...)` / `test(...)` 的**标题字符串**。
+ *
+ * M3 闸只要编号 fixed-string 出现在文件里 —— 注释里也算。这里比它严一格:编号必须出现在
+ * 一条**真用例的标题**上,因为那才是 CI 报红时会念出来的那句话。`describe(` 不算(它是分组),
+ * `it.todo(` 也不算(下面的正则要求 `it`/`test` 后面直接是括号或 each/concurrent/for),
+ * **被注释掉的 `it(` 也不算**(先剥注释 —— 判官指定的变异就是「把某条 MONEY 测试改成注释」,
+ * 认原文的话那条变异照样绿)。
+ */
+function caseTitles(text: string): string[] {
+  const pattern =
+    /\b(?:it|test)(?:\.each\s*\((?:[^()]|\([^()]*\))*\)|\.concurrent|\.for\s*\((?:[^()]|\([^()]*\))*\))?\s*\(\s*(["`'])((?:\\.|(?!\1)[\s\S])*)\1/g;
+  const titles: string[] = [];
+  for (const match of stripComments(text).matchAll(pattern)) titles.push(match[2]!);
+  return titles;
+}
+
+/** 这个编号今天被哪些文件写进了**真用例标题**里。 */
+function titleClaimantsOf(row: string): string[] {
+  return TEST_SOURCES.filter(({ file, text }) =>
+    !NOT_A_LANDING.has(rel(file)) && caseTitles(text).some((title) => rowPattern(row).test(title)),
+  ).map(({ file }) => rel(file));
 }
 
 /**
@@ -168,6 +205,39 @@ describe("FRONT-A1 §7.1①a — 14 条编号各有**真**落点(注释索引不
       `${row} 在整棵测试树里没有任何落点 —— 合并把它的测试带走了`,
     ).not.toEqual([]);
   });
+
+  it.each(MONEY_ROWS)("%s 的编号写在一条**真用例的标题**上,不是只躺在注释里", (row) => {
+    expect(
+      titleClaimantsOf(row),
+      `${row} 在整棵测试树里找不到任何一条 it()/test() 标题带着它 —— ` +
+        "剩下的那些命中全在注释、describe 名或 it.todo 上,CI 报红时没有一句话会念出这个编号",
+    ).not.toEqual([]);
+  });
+
+  it("标题抽取本身是活的(它没有在空集上假绿)", () => {
+    // 自证:真用例抽得出来,而 `describe(`、`it.todo(` 与**被注释掉的用例**都抽不出来。
+    // 最后两行就是判官指定的那个变异(把一条 MONEY 测试改成注释)的最小复现。
+    const sample = [
+      'it("MONEY-A99 真用例", () => {});',
+      'describe("MONEY-A98 分组", () => {});',
+      'it.todo("MONEY-A97 占位");',
+      'it.each([1])("MONEY-A96 参数化 %s", () => {});',
+      '// it("MONEY-A95 行注释掉的用例", () => {});',
+      ['/*', 'it("MONEY-A94 块注释掉的用例", () => {});', '*/'].join("\n"),
+    ].join("\n");
+    expect(caseTitles(sample)).toEqual(["MONEY-A99 真用例", "MONEY-A96 参数化 %s"]);
+  });
+
+  it("整份文件被注释掉之后,认领与「会跑的用例」都归零(变异的第二半)", () => {
+    const live = 'it("MONEY-A93 真用例", () => { expect(1).toBe(1); });';
+    expect(caseTitles(live)).toEqual(["MONEY-A93 真用例"]);
+    expect(liveCaseCount(live)).toBe(1);
+    // 同一段代码整块注释掉:CI 上它一次都不跑,所以这里也必须当它不在。
+    const commented = ["/*", live, "*/"].join("\n");
+    expect(caseTitles(commented)).toEqual([]);
+    expect(liveCaseCount(commented)).toBe(0);
+    expect(rowPattern("MONEY-A93").test(stripComments(commented))).toBe(false);
+  });
 });
 
 describe("FRONT-A1 §7.1①b — 每条验收点名的行为测试还在,而且真的会跑", () => {
@@ -208,6 +278,35 @@ describe("FRONT-A1 §7.1①b — 每条验收点名的行为测试还在,而且�
  */
 const WEB = path.join(REPO_ROOT, "apps/web");
 const webSource = (relative: string) => readFileSync(path.join(WEB, relative), "utf8");
+
+/**
+ * 四处交付面各自的**真围栏**——本文件不重写它们的断言,只保证它们还在、还会跑。
+ *
+ * 判官 2026-09-02(k):这四条的深度断言早就各有文件(价目现算、禁字面量、入口普查、
+ * 级联披露…),在这里再写一遍等于把同一件事钉两处,改一次要改两处,迟早各说各话。
+ * 所以这里只做合并段该做的事:那份围栏文件被合并带走 / 只剩占位,当场红。
+ */
+const SURFACE_GUARDS: Record<string, string> = {
+  "/admin/reconcile": "apps/web/lib/__tests__/reconcile-actions.test.ts",
+  "账单页「Credits don't expire」": "apps/web/lib/__tests__/money-a5-credits-never-expire.test.ts",
+  "上传入口价目小字": "apps/web/lib/__tests__/understanding-disclosure.test.ts",
+  "聊天搜索成本提示": "apps/web/lib/__tests__/money-a10-search-disclosure.test.ts",
+};
+
+describe("FRONT-A1 §7.1①c — 四处钱交付面各自的围栏还在,而且真的会跑", () => {
+  it.each(Object.entries(SURFACE_GUARDS))("%s 的围栏文件在,并且有会跑的用例", (surface, guard) => {
+    const source = TEST_SOURCES.find(({ file }) => rel(file) === guard);
+    expect(source, `${surface} 的围栏 ${guard} 不见了 —— 这一面从此没人守`).toBeTruthy();
+    expect(
+      liveCaseCount(source!.text),
+      `${guard} 里一条会跑的用例都没有 —— ${surface} 今天没人守`,
+    ).toBeGreaterThan(0);
+    expect(
+      /\b(?:describe|it|test)\.skip\s*\(/.test(source!.text),
+      `${guard} 里有 .skip —— 压绿不算通过`,
+    ).toBe(false);
+  });
+});
 
 describe("FRONT-A1 §7.1①c — 四处钱交付面在新壳上仍然看得见", () => {
   it("`/admin/reconcile` 还是一页真的对账台", () => {

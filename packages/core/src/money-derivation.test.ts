@@ -54,7 +54,10 @@ describe("MONEY-A1 定价推导:价格由成本钉点算出来,全仓没有第�
     expect(SEEDANCE_1080P_COGS_USD_PER_SECOND).toBeCloseTo(0.3773385, 9);
   });
 
-  it("改一个成本钉点 → 只有对应 SKU 的价格变,其余 SKU 一格不动", () => {
+  // 编号写在**用例标题**上,不只写在外面那个 describe 上:前端基线合并的 FRONT-A1 围栏
+  // (apps/web/lib/__tests__/front-a1-money-rows.test.ts)要求每条 MONEY 验收都有一条真的
+  // 会跑的用例把编号念出来 —— 这一条就是 A1 验收行本身的那句话。
+  it("MONEY-A1 改一个成本钉点 → 只有对应 SKU 的价格变,其余 SKU 一格不动", () => {
     // 演示环境改钉点等价于给推导函数换一个输入(推导是纯函数,这就是 A1 要的可复算性)。
     // 把 480p 的每秒成本翻倍:20.088 → 21cr,那一档确实动了。
     expect(deriveVideoDisplayPer10s(SEEDANCE_COGS_USD_PER_SECOND["480p"] * 2)).toBe(21);

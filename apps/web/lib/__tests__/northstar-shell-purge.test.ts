@@ -209,12 +209,18 @@ const BANNED_COPY = ["This will spend real credits", "upgrade ticket", "1,240"] 
  * 与幂等键证明。这条围栏挡的是北极星那些**假**的经营承诺(一个不会扣钱却说自己会扣钱的
  * 假 Otto 小窗),不是审真产品的文案。仍然只豁免这一条短语:「upgrade ticket」与「1,240」
  * 在这条可达链上一处都没有(下面那条「没变成通行证」的断言逐条核这件事)。
+ *
+ * 判官 2026-09-02(h):范围从整棵 `components/otto/` 收到**那一张卡自己**。那句话今天只印在
+ * `StoryboardCard.tsx` 上(实查:全 apps/web 只有它的四处)。豁免整棵树等于替这棵树里
+ * **将来**任何一份文件先签了字 —— 明天有人在 Otto 树里另写一句一模一样的承诺,而它背后
+ * 并没有一次真的扣钱,这条围栏会一声不响地放行。豁免只有它需要的那么大,这一条从「一棵树 ×
+ * 一条短语」收成「一个文件 × 一条短语」。
  */
 const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [
   {
-    tree: "components/otto/",
+    tree: "components/otto/StoryboardCard.tsx",
     phrase: "This will spend real credits",
-    why: "新壳的画布把真 Otto 会话树接进工作面(canvas → CanvasOttoOverlay → OttoChatStream → StoryboardCard);那句话印在真审批卡上,按下去真的扣钱。",
+    why: "新壳的画布把真 Otto 会话树接进工作面(canvas → CanvasOttoOverlay → OttoChatStream → StoryboardCard);那句话印在这张真审批卡上,按下去真的扣钱。",
   },
 ];
 

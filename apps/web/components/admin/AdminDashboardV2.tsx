@@ -361,7 +361,10 @@ function TenantWatchlist({ rows, invitedCount }: { rows: TenantHealthRow[]; invi
           >
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium text-foreground">{row.ownerEmail || row.orgId}</span>
+                {/* #736(判官 2026-09-02 l):人名位空着就说空着。`listTenants` 用空串
+                    表示「这家没有 owner 成员」,拿 org id 顶上去等于把一句实话改写成一串
+                    机器码,读的人会以为那就是这家店的人。与上面那张表同一句话。 */}
+                <span className="truncate text-sm font-medium text-foreground">{row.ownerEmail || "No owner email on file"}</span>
                 <Badge variant={riskBadge(row.risk)}>{row.risk}</Badge>
               </div>
               <p className="mt-1 truncate text-xs text-muted-foreground">{row.name}</p>
@@ -711,7 +714,9 @@ function TenantsSection({ data }: { data: AdminV2Data }) {
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-2">
                   <Building2 className="size-4 text-muted-foreground" />
-                  <span className="truncate text-sm font-medium text-foreground">{row.ownerEmail || row.orgId}</span>
+                  {/* #736(判官 2026-09-02 l):同上 —— 没有 owner 就说没有,不拿内部
+                      org id 冒充人名。 */}
+                  <span className="truncate text-sm font-medium text-foreground">{row.ownerEmail || "No owner email on file"}</span>
                 </div>
                 <p className="mt-1 truncate text-xs text-muted-foreground">{row.name}</p>
               </div>

@@ -245,7 +245,7 @@ export const SETTINGS_SECTIONS = [
     key: "billing",
     label: "Billing & credits",
     href: SHELL_ROUTES.billing,
-    does: "Buy credits, and read what your credits have gone on.",
+    does: "Buy credits, set your spend cap, and read what your credits have gone on.",
     scope: "Workspace",
   },
 ] as const satisfies readonly (MerchantNavLink & { readonly scope: SettingsScope })[];
@@ -353,7 +353,10 @@ export const OTTO_VIEW_REDIRECTS: Readonly<Record<string, string>> = {
   schedule: SHELL_ROUTES.home,
   analytics: SHELL_ROUTES.homeAnalysis,
   connections: SHELL_ROUTES.connections,
-  account: SHELL_ROUTES.preferences,
+  // 前端基线①(判官 P2-d):`?view=account` 在旧壳是**钱面**(余额、充值、花费上限)。
+  // 新壳把这三样全放在 Billing & credits,General 只剩工作区名字 —— 把旧书签落到
+  // General,商家会站在一页没有任何钱的屏幕上,以为自己的钱不见了。所以落到钱在的地方。
+  account: SHELL_ROUTES.billing,
 };
 
 /**
