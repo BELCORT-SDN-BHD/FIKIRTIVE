@@ -79,3 +79,34 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 ## 6. 改签记录
 
 - 无
+
+## 7. S2 施工稿（设计阶段产出；S1 正文 §0–§6 一字未动）
+
+> S2 状态: 草稿呈批
+> S2 批准: （待）Founder 在 S2 PR 评论「S2 批准 frontend-baseline.md」
+
+### 7.0 范围与本场拍板（Founder 2026-09-02）
+
+- **纯合并段先行、今天做**：只解冲突、不加功能，过全套机器验收与 Founder 视觉验收；Creation 引擎批 I 与之并行（写集互斥见 creation-engine.md §8.4）。
+- **合并规则**（侦察实证 9 文件 10 块）：钱的行为以 main 为准——冲突块里 main 侧的业务逻辑与披露文案一字不改、取价函数不改；页面长相以分支为准——JSX 骨架、className、组件选型、`design-system/` symlink 基座照收。需要判断的只有一件：把 main 的钱字按原相对位置挂回分支的新布局（标签之后/选择器之前、确认按钮同排、输入框正下方）。
+- **机器验收**：main 带入的四个 AST 级围栏（`understanding-disclosure.test.ts` 写点计数表、`money-a10-search-disclosure`、`money-a5-credits-never-expire`、`understanding-quote-copy`）＋全量 apps/web 测试＋typecheck＋production build＋e2e。写点计数若因重构改变＝需 Founder 签字的改动，不得顺手改数字。
+- **分支占用**：`codex/uiux-frontend` 被 Founder 的 4232 工作树占用，施工开新分支 `claude/frontend-baseline-merge`（从 `origin/codex/uiux-frontend` 起，merge `origin/main`）。
+- **评审夹具路由**：`/product-patterns/*` 与 `/design-system/*` 今天无守卫；纯合并段即加生产构建 `notFound()`（FRONT-A12），不等后段。
+- **零迁移、零新环境变量、lockfile 无冲突**（侦察实证）：合并后 `pnpm install --frozen-lockfile` 直接可用；需跑的迁移只有 main 带来的 `20260901150000_understanding_billing_snapshot_and_paused_balance`。
+
+### 7.1 施工切段
+
+| 段 | 内容 | 验收行 |
+|---|---|---|
+| ① 纯合并 | 上述规则解 9 处冲突；`globals.css` 保留分支 symlink、把 main 的改动搬进 `design-system/foundations/globals.css`；`.claude/CLAUDE.md` 两边都留；夹具路由加守卫；四处 server 邻接改动逐条对照 main 复审并补行为测试 | A1、A12、A13 |
+| ② Library | `Collection`/`CollectionItem` 迁移；Elements 用现有 Entity；收藏、搜索、Use in canvas 接真 | A5、A6、A7 |
+| ③ 引用选择器 | 统一 reference search（租户内、分页、类型化 ID＋来源）；消息保存真实引用 ID；Official avatar 类别经 `catalogKey` 官方角色点亮（creation-engine.md §8.1③） | A10 |
+| ④ Brand | 五分区落 `BrandRecord`/`Memory`；谁改/何时改列；`getBrandContextText` 覆盖五分区 | A8、A9 |
+| ⑤ Home | 布局持久化（org 级一行，迁移）＋`Manage home` capability；多来源 aggregate 带 freshness | A3、A4 |
+| ⑥ Auth | 本地接 Resend 测试 key；注册/验证码/回跳/重置旅程 | A2 |
+| ⑦ Settings/Billing | 新壳上复核现有真能力；无契约控件不出现 | A11 |
+| ⑧ Founder 验收 | 六面登录态走查；差异登记 §5 | A14 |
+
+### 7.2 本地起动（纯合并段收尾即跑）
+
+新 worktree → `merge origin/main` → 解冲突 → 从主检出复制 `.env.local` 与 `apps/web/.env.local`（只复制，不改值）→ `pnpm install --frozen-lockfile` → `pnpm --filter "./packages/*" build` → `prisma migrate deploy` → `next dev`；worker 同起。Founder 用主检出已有账号登录走 Create → Canvas → Library。

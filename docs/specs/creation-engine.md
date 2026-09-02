@@ -108,6 +108,10 @@
 | 2026-08-30 | Founder 拍板:演员库**两轴模型+九套造型 preset+新增演员铸造法**——后续每次加 avatar 一律遵循本行。**两轴模型**:演员(定妆对+人物卡)× 造型 preset(prompt 层 wardrobe 块)正交组合,任何演员可穿任何 preset;preset 定的是「意图」,细节按人物卡适配(如 Aisyah 一律 hijab 友好 modest 版、厨师装=围裙版不动头巾)。**九套 preset(Founder 2026-08-30「就先这九套」)**:①素装(默认定妆原样)②Street wear(UGC/年轻向)③厨师后厨白制服(已实测过片)④门店服务(polo/围裙前场,咖啡/零售/便利店)⑤商务(blazer/smart casual,房产/金融/B2B)⑥医护(白袍/刷手服,诊所/牙科/药房)⑦美容沙龙(黑制服围裙)⑧健身(运动装)⑨节庆传统装(Raya baju kurung/melayu、CNY 旗袍、Deepavali kurta)。每套上架前 mini 480p 各验一条同脸(约 $0.05/套,帽饰头饰类重点盯同脸稳定性),验过才挂给商家。**新增演员铸造法**:①人物卡先行(ID/FACE/HAIR/身高/BUILD/WARDROBE+防撞脸独有特征各不相同),与库内全部现役演员**两两互认** QC 过才收编;②seedream-5-0 组图(sequential auto,max_images=2)一次调用出「特写+全身」同身份对(官方配方 ModelArk/2222480:竖幅正面、特写无表情脸占 2/3、全身正面;2.0 禁多视角拼表);③素装统一制服+#8a8a8a 棚灰背景+photorealism 拉满;④`.bin` 无损原件=生成层唯一资产(像素完整性铁律见上,端到端直传永不再处理),`.jpg` 仅展示;⑤preset 适配块写进人物卡,Otto 与 UI 同源取用(一卡三用)。 | 2026-08-30 |
 | 2026-08-31 | 严口径重查落账（Founder 裁决「严口径，重查 Creation」；125 条主张逐条对码＋Opus 复核＋Codex 跨厂判官）：①九问2 animate 口径为事实错误，已按改签记录机械纠错；②九问4 配额口径纠正（账户级总量）；③九问4 输入上限段标注为目标态；④中途想法：**画布 Animate Custom 通道要不要纳入增强稿＋A12 覆盖** | ①②③ Founder 2026-08-31 拍板「机械纠错，本轮不增强」；④留空待 S5 |
 | 2026-09-01 | 钱引擎线定价回填(类型②,money-engine.md 九问4 已冻数字+S2 施工稿 7.2 落地):**1080p 视频=11cr/秒**(5 秒=55cr,毛利 65.7%)、**pro 图=2cr/张**(毛利 77.5%)——公式=成本×1/(1−0.65) 向上取整到收费格;上架仍随本规格施工(围栏改完才可售),数字待 Founder 追认 | |
+| 2026-09-02 | **Founder 现场令**：「今天直接做完一个部分——像在 beta 那样用 Creation 的所有东西，要真实的、完全可用的版本、真的 product」。本稿据此把 12 条切三批（§8）；**「一 session 一阶段」本场例外**：S2 呈批与批 I 施工同日进行，范围只限本场（Founder 现场裁决，写回于此） | 2026-09-02（随 S2 批准生效） |
+| 2026-09-02 | §7 实验 4 结案（零成本只读，`arkcli models get … --transform supported_params`）：mini 与 2.0 的 `supported_params` **唯一差异是 resolution 枚举**（mini=[480p,720p]，2.0=[480p,720p,1080p,4k]），其余 20 个参数逐字相同；价目表 ChargeItems 无任何音频计价项＝`generate_audio` 在价目层面不另计费；图片 lite `optimize_prompt_options.mode` support:false、pro 有 `optimize_prompt`(boolean, default true)。与规格预期一致，回填。原始 JSON 归档 preserved/creation-probe-2026-09-02/ | 回填（随 S2 批准追认） |
+| 2026-09-02 | §7 实验 3 **问题形状被实查改变**：在产图片型号 seedream-5-0（lite）没有可关的优化开关；只有 pro 有 `optimize_prompt`（默认 true）；我方请求体从不发该字段＝一直跑服务端默认。承重口径「`sentPromptText`＝商家批准稿逐字」**未被推翻**（它管我们发出的串；供应商改写记录在 `finalPromptText`）。剩余 A/B（pro 开/关各一张，$0.16–0.48，§7 已批额度内）在批 I 执行，结果决定 pro 请求体默认值 | 待批 I 回执 |
+| 2026-09-02 | 演员库归属模型（§8.0 拍板建议）：**每租户播种**——org 引导时把 5 名创始演员各建一份 CHARACTER 实体＋2 张参考图，字节经 `storage.put` 原样落各 owner；`Entity` 新增可空列 `catalogKey` 标记官方角色；**不引入跨租户共享实体**，租户边界零变化 | 随 S2 批准生效 |
 
 ## 6. 改签记录
 
@@ -126,3 +130,51 @@
 5. 【已结案 2026-08-30：图片端不拦＝证实；但其图生图产物进视频被拒，身份层前置证伪】**Seedream 图片端收不收真人脸**（身份层前置的门题）：商家真人照片走 Seedream i2i，拦或不拦？——我们的人脸拒收实测（2026-08-08）只发生在**视频**提交端，图片端历史上从未返回过该错误、但也从未实测。若图片端不拦：身份层可全用现役 Seedream 做（真人照→AI 肖像→存为形象→进 Seedance），**零新供应商**；若也拦：身份层需外部图像模型或 ACR 素材库承担「照片→肖像」一步。真人照片用谁的、如何报备，照实验 1 同一规矩。
 
 已结案的取证（不再验）：参考图＋首尾帧混用＝官方明文互斥，免实测；mini「API coming soon」雷已排除（`enabled:false`＋8 月 17 次真实成功调用）。
+
+## 8. S2 施工稿（设计阶段产出；S1 正文 §0–§7 一字未动，§5 只追加登记行）
+
+> S2 状态: 草稿呈批
+> S2 批准: （待）Founder 在 S2 PR 评论「S2 批准 creation-engine.md」；该评论同时追认 §5 2026-09-01 定价回填行（1080p 视频 11cr/秒、pro 图 2cr/张）与本节 §8.0 四项拍板建议
+
+### 8.0 范围、量尺与本场拍板（Founder 2026-09-02）
+
+- **目标**：Founder 现场令「今天做完 Creation，像真产品一样完全可用」。本稿的诚实量尺：12 条验收按依赖切三批——**批 I 今天**（后端、围栏、资产；不碰 PR #1117 重写的商家面文件）、**批 II 新前端纯合并落主干后**（商家面：增强预览、指派句、音频素材、角色选择器）、**批 III 随 Otto 引擎**（A8 评测基线、A1 画布路径的 Otto 卡片）。今天结束时 Founder 能真实用到：现有生成全链＋1080p 高清档与 pro 图上架（报价前置、型号不外露）＋声音开关＋演员库五人可在 `@` 引用出片＋真人脸口径。批 II 估 2–3 天，批 III 随 Otto S2。
+- **拍板一（追认）**：1080p＝11cr/秒、pro 图＝2cr/张（§5 2026-09-01 行）随 S2 批准追认；上架随批 I。
+- **拍板二（演员库归属）**：每租户播种（§5 2026-09-02 行）。备选「跨租户共享/官方实体」触碰租户边界＝schema 与隔离语义变更，不做。
+- **拍板三（手艺文件路径占位）**：`packages/otto/craft/seedance.md`、`seedream.md`；otto-engine.md S2 若另定路径，本稿随之改路径，不算改签。
+- **拍板四（pro 图优化开关默认值）**：由批 I 的实验 3 A/B 决定：若开启优化会改写提示词且质量无明显增益，请求体显式 `optimize_prompt=false`（保「实发＝批准稿」的最短链）；若增益明显，保留默认并把改写记进 `finalPromptText`。
+- **机器闸**：每段 PR 带 `Spec: docs/specs/creation-engine.md`；验收编号逐字入测试（M3）；两条迁移守形状（M5）；新开关无 `BETA_*`。
+
+### 8.1 批 I（今天；写集见 8.4）
+
+① **能力路由＋SKU 白名单（A4/A5/A6）**：`packages/core/src/gen.ts` 视频菜单加第二槽位 `seedance-2-0`（能力：480p/720p/1080p；4k 不卖）、图片菜单加 `seedream-pro`；`packages/generation/src/byteplus.ts` 型号映射加 `dreamina-seedance-2-0` 与 `dola-seedream-5-0-pro`；`model-config.ts` 的 `assertSpendableModel` 判据从「等于唯一在产型号」改为「SKU 级已定价白名单」（消费钱引擎已落地的 `sellableVideoSkus()/sellableImageSkus()`），白名单外＝拒绝、$0、不降级；默认档配错仍降级留日志（现行）。新增路由器：视频按分辨率（1080p→2.0，其余→mini），图片按能力（透明底/人物精修→pro）；`Generation` 新增可空列 `routeReason`（迁移），商家可见口径只写能力名词。`spend.ts` 图片分支按型号取价（lite 1cr / pro 2cr）；`seedanceDisplayCredits` 认 2.0 档。测试：CREATE-A4、A5、A6 逐字。
+② **声音开关（A3）**：`VideoSpecPicker` 的 `VideoSpec` 加 `audio`，开关文案「Sound doesn't change the price」；`DetailPanel.tsx:402` 一行改为传商家选择（该文件是 #1117 冲突文件，只改这一行，合并方保留）。测试：CREATE-A3 断言实发 `generate_audio=false` 且报价不变。
+③ **演员库入库（A10 后端）＋真人脸口径（A9）**：迁移加 `Entity.catalogKey String?`；脚本 `scripts/ops/seed-actor-library.ts` 读 `preserved/actor-library-v1-2026-08-30/` 的 `.bin` 与 `card.json`，走 `storage.put(原字节,'jpg')`→`assetUpsert`→`Entity(CHARACTER, catalogKey)`＋2 张 `ReferenceImage`(closeup/fullbody)；org 引导（`requireOwner` bootstrap）对新租户播种；九套造型 preset 写入 `Entity.descriptionJson.presets`（一卡三用）。**像素完整性防回归测试**：断言送供应商的参考图字节 sha256＝入库字节 sha256，生成路径零再处理。A9：`gen-failure.ts` 口径改「Real human faces aren't supported yet」＋出路句指向演员库（按钮 UI 归批 II）。测试：CREATE-A9、A10（后端半：演员实体经 `@` 引用出片、引用落盘）。
+④ **实验 3 A/B**（pro 开/关各一张，$0.16–0.48，§7 额度内）＋回执归档 `preserved/creation-probe-2026-09-02/`；结论回填 §5，决定拍板四。
+⑤ **A12 前半**：`routeReason` 落盘随①；Regenerate 改发 `sentPromptText`（`DetailPanel.tsx:337`）归批 II。
+⑥ **复审**：每段 Codex 跨厂复审；全量 apps/web 测试＋typecheck＋production build＋e2e。
+
+### 8.2 批 II（新前端纯合并落主干后）
+
+- **增强层（A1/A7/A12）**：新建 `packages/core/src/enhance.ts`（读手艺文件、单次上界 $0.01、每动作 ≤6 次、`founder_absorbed` 计量、失败回退原文＋「Not enhanced」标注）；画布 composer 与 Generate edit 新增「输入→增强中→可改预览＋报价→提交」一态；增强稿即付费请求携带的 `sentPromptText`；Regenerate 重发上次 `sentPromptText`。
+- **自动指派＋拒绝闸（A2）**：素材→合法角色枚举指派器；指派句入增强稿；越界指派与首尾帧×全模态互斥＝花钱前拒绝、$0（替换现行「截断＋披露＋照收」）；输入上限公式化（九问 4 目标态）。
+- **参考音频（A11）**：composer 素材区收音频；适配器发 audio 部件；三条上限（≤3 段、视频＋音频总长 ≤15 秒、音频不可单独）花钱前拒绝。
+- **演员库商家面（A10 UI、A9 出路）**：Library Elements 与 `@` 显示官方角色（`catalogKey` 标记）；真人脸拦截卡的出路按钮。
+
+### 8.3 批 III（随 Otto 引擎 S2）
+
+- **A8**：依赖 ENGINE-A1 评测基线与 `packages/otto/evals/` 骨架（今天不存在）；Creation 评测集 ≥10 题与四项机械检查建在同一骨架上。
+- **A1 画布路径**：ENGINE-A3 落地后判定在 Otto 确认卡片上生效。
+
+### 8.4 写集互斥表
+
+| 施工线 | 写集 |
+|---|---|
+| Creation 批 I | `packages/core/src/{gen,model-config,spend,margin-truth,gen-failure}.ts`、`packages/generation/src/byteplus.ts`、`apps/worker/src/jobs/gen.ts`、`packages/db/prisma`（两条迁移）、`scripts/ops/seed-actor-library.ts`、`apps/web/lib/auth-guard.ts`（播种钩子）、`apps/web/components/gen/VideoSpecPicker.tsx`、`apps/web/components/asset/DetailPanel.tsx` 第 402 行一行 |
+| 前端基线纯合并 | 9 个冲突文件＋`apps/web/design-system/`＋`apps/web/components/ui` symlink（frontend-baseline.md §7） |
+| 交集 | `DetailPanel.tsx`：批 I 只改一行，合并方保留该行 |
+
+### 8.5 环境前置（Founder 钥匙）
+
+- 本地真出片：worker 需 `GENERATION_PROVIDER=byteplus`＋`BYTEPLUS_API_KEY`（主检出 `.env.local` 已有部分变量；缺则 mock 出纯色假图）。
+- 实验 3 与实查：`arkcli` SSO 已到期，需 Founder 重新登录。
