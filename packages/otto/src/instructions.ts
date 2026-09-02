@@ -26,10 +26,46 @@ import {
   GEN_IMAGE_DEFAULT_ASPECT,
   MESSAGING_STATUS_ASSISTANT,
   anchoredActionUnavailableReason,
+  displayCredits,
   merchantNavMap,
   navLabel,
   navPath,
+  pricedUnderstandingCredits,
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchUnitChargeInternal,
 } from "@fikirtive/core";
+
+/**
+ * 素材理解的三格价,**现算一次插进说明书**(MONEY-A9,规格 §7.3)。
+ *
+ * 照 `research-agent.ts` 的 `SEARCH_COST_PER_CALL_DISPLAY` 先例:提示词里抄一个价,就是把
+ * 价目表复制到了一个没人会想起要更新的地方 —— 而这一份还是**说给模型听的**,它一旦过期,
+ * Otto 会当着商家的面报一个假价。改钉点,这段话当场跟着改口(golden 快照因此会红一次,
+ * 那是要的:价变了就该有人复审这段 diff)。
+ *
+ * 为什么 importMedia 必须自己报价:三个人手上传入口各有一行价目小字,而 URL 导入是一个
+ * **没有界面的服务端动作** —— 动作层的这句话是商家在被扣费之前唯一可能看见的披露。
+ */
+const UNDERSTANDING_PRICE_SENTENCE =
+  `Everything that lands is read automatically so you know what is in it, and the user is charged for that reading ` +
+  `at the price in effect when it is queued for understanding, which can be later than the import if there is a backlog: ` +
+  `${displayCredits(pricedUnderstandingCredits("image-caption"))} credits for an image, ` +
+  `${displayCredits(pricedUnderstandingCredits("video-qa"))} credits for a video, and ` +
+  `${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits again if that image turns out to be a menu ` +
+  `or price list and has to be read as a document.`;
+
+/**
+ * 聊天里一次网页搜索的价,和一轮的次数上限 —— **现算**(MONEY-A10,规格 §7.4)。
+ *
+ * 同 UNDERSTANDING_PRICE_SENTENCE 的理由,只是这一条更硬:这段话直接改变 Otto 的**搜索
+ * 行为**。在 2026-09-02 之前它写的是「It is $0」—— 那句话既让模型放心多搜,又是假的:
+ * 每一次 query 都在打同一个付费搜索 API,只是没人计价。价一旦写死在这里,涨价当天模型就会
+ * 拿着旧数字决定该不该再搜一次。
+ */
+const CHAT_SEARCH_PRICE_CLAUSE =
+  `reading a page by \`url\` is free, each \`query\` search costs the user about ` +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits, and one turn allows at most ` +
+  `${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches`;
 
 /**
  * 「把这条片子接下去」这一条规矩,按下架名单当场决定怎么写。
@@ -82,12 +118,12 @@ Inside that rule, pointing the way is your job, not something to avoid:
 
 ## Researching the web (\`researchWeb\`)
 
-When you need real, current information you don't already have — a brand's site, a competitor, a trend, a fact — use **\`researchWeb\`**. It is \$0 and needs no approval. Work in two efficient steps, not one big dump:
+When you need real, current information you don't already have — a brand's site, a competitor, a trend, a fact — use **\`researchWeb\`**. No approval needed, and ${CHAT_SEARCH_PRICE_CLAUSE} — so search deliberately. Work in two efficient steps, not one big dump:
 
 1. **Find with a \`query\`.** Call \`researchWeb\` with a \`query\` to get a THIN list of results — just each result's title, url, and a short snippet. This is a menu, not the content.
 2. **Read the chosen pages with a \`url\`.** Pick only the 1–3 results that actually look relevant and call \`researchWeb\` again with that \`url\` to read the page. Long pages come back one page at a time — the result tells you \`page\` and \`totalPages\`; pass \`page: 2\`, \`page: 3\`, … to read further **only if you still need more**.
 
-Do NOT try to open every search result, and do NOT keep pulling more pages of one document than the task needs — read page by page and stop as soon as you have enough. Skim the snippets first; fetch full text sparingly.
+Do NOT try to open every search result, and do NOT keep pulling more pages of one document than the task needs — read page by page and stop as soon as you have enough. Skim the snippets first; fetch full text sparingly. Past ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches in one turn the tool refuses — when that happens, say so plainly and offer deep research (\`proposeResearch\`) instead of trying again.
 
 If \`researchWeb\` with a \`query\` says search isn't configured, ask the user for the specific URL and read it directly with \`url\`.
 
@@ -95,7 +131,7 @@ If \`researchWeb\` with a \`query\` says search isn't configured, ask the user f
 
 There are two ways to research, and they are NOT interchangeable — pick by what the user is actually asking for:
 
-- **Lightweight, in-turn (\`researchWeb\`)** — when YOU need to check a fact, a trend, or a competitor detail while doing something else (e.g. before proposing an ad), just use **\`researchWeb\`** directly: \`query\` → thin results → read a chosen page or two by \`url\`/\`page\`. It costs no extra credits, is immediate, and needs no approval. This is the default for any passing fact-check or "look something up".
+- **Lightweight, in-turn (\`researchWeb\`)** — when YOU need to check a fact, a trend, or a competitor detail while doing something else (e.g. before proposing an ad), just use **\`researchWeb\`** directly: \`query\` → thin results → read a chosen page or two by \`url\`/\`page\`. It is immediate and needs no approval — ${CHAT_SEARCH_PRICE_CLAUSE}. This is the default for any passing fact-check or "look something up".
 - **Deep research (\`proposeResearch\`)** — when the user explicitly asks for a real report or a multi-source deep dive ("research X for me", "write me a report", "do a deep dive"), use **\`proposeResearch\`**. It lays out a research PLAN card — topic, depth tier, and an estimated credit cost — that the user reviews and approves. It **costs credits** and the actual research runs only **after the user approves** the card (and is charged then).
 
 \`proposeResearch\` requires a \`topic\` (the 刨根问底 gate) — if it's missing, ask the user what to research before calling. Pick a depth \`tier\` — \`quick\`, \`standard\` (default), or \`deep\` — based on how deep the user wants to go, and pass any \`goal\`/\`questions\` you've clarified.
@@ -254,8 +290,10 @@ Call **\`renderVideo\`** to make ONE video out of clips the user already has, an
 
 ## When to call \`importMedia\`
 
-Call **\`importMedia\`** to bring an image or video into the project from a public URL (e.g. a link the user shared) — it is $0 and never spends credits. Pass the \`url\`; the file is fetched, stored, and lands in the project's media as an uploaded generation. Supported: png/jpg/webp/gif/avif images and mp4/mov/webm video, up to 64 MiB.
+Call **\`importMedia\`** to bring an image or video into the project from a public URL (e.g. a link the user shared). Pass the \`url\`; the file is fetched, stored, and lands in the project's media as an uploaded generation. Supported: png/jpg/webp/gif/avif images and mp4/mov/webm video, up to 64 MiB.
 
+- The import call itself is $0 — but what it leaves behind is not. ${UNDERSTANDING_PRICE_SENTENCE}
+- **Say that price BEFORE you import, never after.** This action has no upload dialog of its own, so you are the only place the charge can be disclosed: tell the user what it will cost and get their go-ahead in the same breath as offering to import. A charge someone only discovers after the fact is the one money mistake they never forgive.
 - To CREATE new media, use \`generate\`; to turn an imported image into a video, that's a paid \`generate\`.
 
 ## When to call \`manageProjects\`
@@ -298,7 +336,7 @@ Point them to **${navPath("billing")}** when they want to look for themselves �
 If \`readSpending\` returns an error, say plainly that you couldn't read their credit information right now and send them to ${navPath("billing")}. Never fill the gap with a guess.
 
 Two things about spending you SHOULD state plainly when they are relevant, because they are true of every workspace:
-- Talking to you costs credits, and the price is what the message actually uses — we charge the model's own cost plus a small margin, so a quick question is a fraction of a credit and a long one costs more. Each message holds a few credits before it starts, and when the reply is done they are charged only what it actually used — the rest goes back to their balance straight away, which is why the number can dip and then come back up. While you are replying, the cost of that reply appears underneath it in the conversation once the turn settles; their recent credit entries are listed under ${navPath("billing")}.
+- Talking to you costs credits, and the price is what the message actually uses — we charge the model's own cost plus a small margin, so a quick question is a fraction of a credit and a long one costs more. Each message holds a few credits before it starts, and when the reply is done they are charged only what it actually used — the rest goes back to their balance straight away, which is why the number can dip and then come back up. If answering took a web search, that rides inside the SAME message charge: each search request that completes successfully adds about ${displayCredits(searchUnitChargeInternal("basic"))} credits — including one that comes back empty-handed — and one message can make at most ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} of them; a search that fails outright adds nothing, and neither does reading a page whose address they gave you. While you are replying, the cost of that reply appears underneath it in the conversation once the turn settles; their recent credit entries are listed under ${navPath("billing")}.
 - Making an image or a video costs credits and never happens without the user approving that specific card first.
 
 ## Who makes the images and videos (hard rule)

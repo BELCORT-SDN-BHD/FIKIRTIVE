@@ -130,6 +130,21 @@ export type EnvVarSpec = {
   minimum?: number;
   /** minimum 的人话理由,进报错信息。 */
   minimumReason?: string;
+  /**
+   * **钱路不变量**(MONEY-A2,Founder 2026-09-01,docs/specs/money-engine.md §7.2)。
+   *
+   * 打上这个标记的变量,它的问题**对 `FIKIRTIVE_ENV_CONTRACT=warn` 免疫**:生产进程照旧
+   * 拒绝启动,降级逃生门救不了它(见 `bootEnvDecision`)。
+   *
+   * 为什么要开这个类别:逃生门是**可用性**工具 —— 半夜缺一个 SENTRY_DSN 不该把发布线钉死,
+   * 所以 warn 存在,而且必须存在。但它是**一刀切**的:一旦打开,毛利违规与缺一条监控 DSN
+   * 被当成同一件事降级。而这两件事的失败形状完全不同 —— 缺 DSN 是「看不见」,费率配错是
+   * 「每一笔都在亏,而且亏在商家看不见的地方」。一个为可用性开的开关不该顺手把定价闸也关掉。
+   *
+   * 名单要短:只有**配错就直接改变钱的方向或幅度**的变量配得上它。今天只有 OTTO_LLM_MARGIN
+   * (费率覆盖)。「配错会让某个功能失灵」不算 —— 那是可用性,归常规 warn。
+   */
+  moneyInvariant?: true;
   /** 一行说明,渲染进 .env.example 的生成片段。 */
   summary: string;
 };
@@ -484,13 +499,17 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     requirement: "optional",
     format: "number",
     // 钱路审计 P1(2026-08-18):此前无下限,0.5 是合法取值而它的意思是每卖一单亏一单。
+    // MONEY-A2(2026-09-01):下限从 1.0 抬到裁决值 2.06,并标为钱路不变量(warn 免疫)。
+    // #1047 关的盲区:旧下限 1.0 让 [1.0, 1.82) 一路绿灯,而 CI 毛利闸读的是代码默认值 ——
+    // 生产按 1.5 在卖,仓库里没有一处会响。下限与裁决值合一之后这条路物理上没了。
     minimum: OTTO_LLM_MARGIN_FLOOR,
     minimumReason:
-      "a markup below 1.0 charges LESS than the provider's own bill — every metered Otto turn and research run would sell at a loss",
+      "a markup below the ruled 2.06 breaks the constitutional 45% floor on the worst-case receipt basis (研究档 Founder 2026-09-01 裁决;below 1.0 it charges LESS than the provider's own bill) — every metered research run would sell under the floor",
+    moneyInvariant: true,
     secret: false,
     shared: false,
     summary:
-      "LLM pricing margin override (default 2.0). Must be ≥ 1.0 — below that every metered call sells below cost, so the boot check refuses it and the runtime falls back to the default.",
+      "LLM pricing margin override (default 2.06, Founder 2026-09-01). Must be ≥ 2.06 — below that the research leg breaks the 45% floor on the worst-case receipt basis, so the boot check refuses it (money invariant: NOT downgraded by FIKIRTIVE_ENV_CONTRACT=warn) and the runtime tightens back up to the default.",
   },
 
   // ── 素材理解(#784)——平台自己掏钱的那一路 ────────────────────────────────
@@ -520,14 +539,14 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     readBy: "code",
     requirement: "optional",
     // non-negative-number,不是 number(判官 P3-3)。消费方是
-    // `Number.isFinite(n) && n >= 0 ? n : 默认 5`——**非数字和负数走的是同一条静默回落**,
-    // 只拦非数字等于只拦了一半:有人想写「停掉」写成 -1,拿到的是每天 5 美元照跑,
+    // `Number.isFinite(n) && n >= 0 ? n : 默认值`——**非数字和负数走的是同一条静默回落**,
+    // 只拦非数字等于只拦了一半:有人想写「调低阈值」写成 -1,拿到的是默认阈值照跑,
     // 而没有任何一处会说这件事。两种写错都拦下来,这句话才配说「格式检查兜住了它」。
     format: "non-negative-number",
     secret: false,
     shared: false,
     summary:
-      "Platform-wide understanding spend ceiling per day, in USD. Unset = 5. \"0\" is a legitimate value meaning fully paused. Both a negative and a non-numeric value would silently fall back to the default 5 in the reader, so the boot check rejects both — a typo can never quietly become a budget nobody chose.",
+      "Platform-wide daily understanding-spend ALERT threshold, in USD. Unset = 50. Since 2026-09-02 it only alerts (founderAlert, at most once a day) and never blocks — merchants pay per understood file, so the real ceiling is their own balance, and \"0\" now means \"alert every day\", NOT paused. To pause understanding use ASSET_UNDERSTANDING=off. Both a negative and a non-numeric value would silently fall back to the default in the reader, so the boot check rejects both — a typo can never quietly become a threshold nobody chose.",
   },
 
   // ── 对象存储 ──────────────────────────────────────────────────────────────
@@ -1313,13 +1332,24 @@ export type BootEnvDecision =
  *   - 非生产 → 一律 warn。上线前大量能力刻意 inert,dev/CI 缺配置是正常态,
  *     把开发者的机器搞得起不来只会让人把整个检查关掉。
  *   - 生产 → exit,除非 FIKIRTIVE_ENV_CONTRACT=warn 明确要求降级。
+ *   - **例外(MONEY-A2,2026-09-01):钱路不变量对 warn 免疫** —— 逃生门降不了它们,
+ *     生产照旧 exit。逃生门是给可用性开的(半夜缺一条监控 DSN 不该钉死发布线),
+ *     不是给定价开的:一个为了让服务起来而打开的开关,不该顺手把毛利闸一起关掉。
+ *     非生产仍然只 warn(dev 不砖 —— 开发机上配错费率不花任何人的钱)。
  */
 export function bootEnvDecision(env: EnvRecord, opts: CheckEnvOptions): BootEnvDecision {
   const problems = checkEnv(env, opts);
   if (problems.length === 0) return { action: "ok" };
-  const report = formatEnvProblems(problems, opts.surface);
+  const moneyProblems = problems.filter((p) => ENV_CONTRACT_BY_NAME.get(p.name)?.moneyInvariant === true);
+  const report =
+    formatEnvProblems(problems, opts.surface) +
+    (moneyProblems.length && opts.production
+      ? `\n  ⚠️ 钱路不变量对 FIKIRTIVE_ENV_CONTRACT=warn 免疫(MONEY-A2):` +
+        `${moneyProblems.map((p) => p.name).join(", ")} 必须先修好,降级逃生门救不了它。`
+      : "");
   const mode = (env.FIKIRTIVE_ENV_CONTRACT ?? "").trim().toLowerCase();
-  if (!opts.production || mode === "warn") return { action: "warn", report, problems };
+  if (!opts.production) return { action: "warn", report, problems };
+  if (mode === "warn" && moneyProblems.length === 0) return { action: "warn", report, problems };
   return { action: "exit", report, problems };
 }
 

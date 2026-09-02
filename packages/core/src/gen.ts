@@ -11,6 +11,7 @@
  * Video (i2v) lands as a follow-up slice on this same skeleton.
  */
 import { z } from "zod";
+import { costPinValue } from "./cost-pins.js";
 import { anchoredVideoAction, anchoredActionUnavailableReason } from "./video-actions.js";
 
 export const GEN_MODELS = ["seedream"] as const;
@@ -158,8 +159,10 @@ export const MAX_VIDEO_IMAGE_PARTS = 9;
  *
  * 旧值 $0.04 是当初备用供应商的基数占位 —— F39 的注释自认「pending the founder's
  * actual Ark per-image rate」,高记约 14%。#644 改真。
+ *
+ * 数值已收编 `cost-pins.ts`(成本的单一权威),此处只是命名出口 —— 改价改钉点,不改这行。
  */
-export const GEN_PRICE_USD_PER_IMAGE = 0.035;
+export const GEN_PRICE_USD_PER_IMAGE = costPinValue("image:seedream-lite:per-image");
 
 /* ---------------- image shape (#642) ---------------- */
 
@@ -425,15 +428,19 @@ export function seedanceWorstRatioTokensPerSecond(resolution: "480p" | "720p"): 
  * ($1.40/M 折后),我们不抄它 —— 折扣既不保证续、也可能静默失效,成本按牌价记才安全。
  * 同一读法在 fast 的档案上复核过:`NV2VCompletion.original_price` = 0.0056/K = $5.60/M,
  * 与 #644 手抄自定价页的旧值逐字相同 —— 两个来源互证,读法没有走样。
+ *
+ * 数值已收编 `cost-pins.ts`(成本的单一权威),此处只是命名出口 —— 改价改钉点,不改这行。
  */
-export const BYTEPLUS_USD_PER_MTOKEN = 3.5;
+export const BYTEPLUS_USD_PER_MTOKEN = costPinValue("video:seedance-2-mini:t2v-per-mtoken");
 /**
  * 含视频输入(整段参考视频)牌价,$/M tokens —— 比无视频输入那档更便宜。
  *
  * #769:同一份 mini 档案的 `V2VCompletion.original_price` = 0.0021 / K = **$2.10/M**
  * (fast 是 0.0033/K = $3.30/M,同样与 #644 的旧值互证)。折后价 $0.84/M 同样不抄。
+ *
+ * 数值已收编 `cost-pins.ts`(成本的单一权威),此处只是命名出口 —— 改价改钉点,不改这行。
  */
-export const BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT = 2.1;
+export const BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT = costPinValue("video:seedance-2-mini:v2v-per-mtoken");
 /**
  * 参考视频输入的**最低计费秒数**(token 地板)。官方「含参考视频 720p 5s」区间下限
  * $0.64 恰好 = (4 + 5) 秒 × 21,600 × $3.30/M(fast 牌价),即输入不足 4 秒也按 4 秒计

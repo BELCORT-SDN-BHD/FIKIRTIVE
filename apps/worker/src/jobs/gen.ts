@@ -31,6 +31,7 @@ import {
   REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
   pricedGenCredits,
+  isGuardrailPricedVideo,
   displayCredits,
   genJobEndedWithoutDelivering,
   merchantGenFailureMessage,
@@ -45,6 +46,49 @@ import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
+
+/** 这一行 GenJob 的计价输入 —— 报价与报警必须看**同一个**对象,否则两边可能各算各的。 */
+function genSpendInputOf(job: GenJob) {
+  return {
+    kind: job.kind as "IMAGE" | "VIDEO",
+    model: job.model,
+    count: job.count,
+    referenceVideoGenerationId: job.referenceVideoGenerationId,
+    videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null,
+  };
+}
+
+/**
+ * MONEY-A3 后半句:**结算路径落到护栏价就报警**。
+ *
+ * 护栏价按定义只该给「下架前存下的历史行」和「畸形 videoOptions JSON」兜底 —— 一条
+ * **新**的付费任务走到护栏上,意思是请求侧的菜单闸(zod 契约 + assertSpendableModel)
+ * 被绕过去了。那是要人看一眼的事,不是静静按一个更贵的价收一笔就算了。
+ *
+ * 只报警、不改钱:这一步跑在 settle 之后,商家已经收到片子、账也已经落定。`founderAlert`
+ * 自己吞掉所有投递失败(返回空数组),所以 `await` 不可能把交付路弄崩;await 是照本文件
+ * 既有报警的写法(`gen.paid_for_nothing`,见下),理由也一样 —— fire-and-forget 会让报警
+ * 死在进程退出的竞态里。
+ */
+async function alertIfGuardrailPriced(job: GenJob, spendInput: ReturnType<typeof genSpendInputOf>): Promise<void> {
+  if (!isGuardrailPricedVideo(spendInput)) return;
+  const vo = spendInput.videoOptions;
+  await founderAlert({
+    key: "gen.video_guardrail_price",
+    title: `一条视频按**护栏价**结算了:job ${job.id}(${job.model} / ${String(vo?.resolution ?? "(无分辨率)")} / ${String(vo?.seconds ?? "(无秒数)")}秒)—— 这一档没有菜单价`,
+    action:
+      "核对这一行是不是历史行(下架前存下的、或 videoOptions JSON 畸形)。若是**新**下的单,菜单闸被绕过去了:查请求侧的 zod 契约与 assertSpendableModel,别让第二单再走到这里。护栏价只保证不低于该档 65% 公式价,它不是 Founder 裁过的菜单价。",
+    context: {
+      genJobId: job.id,
+      orgId: job.ownerId,
+      kind: job.kind,
+      model: job.model,
+      resolution: vo?.resolution ?? null,
+      seconds: vo?.seconds ?? null,
+      chargedCredits: displayCredits(pricedGenCredits(spendInput)),
+    },
+  });
+}
 
 /**
  * #776 —— 这一单**引擎自报的真实计费量**,或者 null = 未知。
@@ -175,6 +219,29 @@ const SETTLED_DONE_EMPTY = new Error("done-without-output-but-charge-settled");
 // user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
 // mid-flight. A plain `return` would commit those rows = a free delivery. The store/commit
 // retry loop recognizes this exact instance and discards instead of retrying or failing.
+/**
+ * 这一单的**平台成本参数**(MONEY-A13)。
+ *
+ * 同一组字段此前逐字抄了四遍:落 `spentUsd` 的两处、终态那一处,以及吸收成本报警那一处。
+ * 抄本之间只要有一处漂了,「报警里说的钱」与「账上记的钱」就会是两个数 —— 而台账正是拿这
+ * 两个数对账的。立成一处之后,它们**在结构上**不可能不一致。
+ */
+export function genSpendArgsOf(job: {
+  kind: GenJob["kind"];
+  model: string;
+  count: number;
+  referenceVideoGenerationId: string | null;
+  videoOptions: unknown;
+}) {
+  return {
+    kind: job.kind,
+    model: job.model,
+    count: job.count,
+    referenceVideoGenerationId: job.referenceVideoGenerationId,
+    videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null,
+  };
+}
+
 const REDELIVERY_DISCARD = new Error("redelivery-already-failed-and-refunded");
 
 // The store+record step after the paid call is FREE and idempotent (content-addressed
@@ -445,7 +512,7 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
         // defensive backfill: a row committed before spentUsd existed (or a partial
         // write) has the marker but null spentUsd — reconstruct from the frozen job
         // inputs. Never overwrites a value the commit tx already froze.
-        ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
+        ...(job.spentUsd == null ? { spentUsd: genSpentUsd(genSpendArgsOf(job)) } : {}),
       },
     });
     // settle the hold (idempotent: P2002 no-op if a prior delivery's commit tx
@@ -453,7 +520,9 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
     // generation succeeded → the charge becomes permanent.
     await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
   });
-  await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
+  const resumeSpendInput = genSpendInputOf(job);
+  await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits(resumeSpendInput))); // idempotent — P2002 swallowed if already written
+  await alertIfGuardrailPriced(job, resumeSpendInput);
   await settleCanvasBoard(job);
   // #791-4: the automatic post-generation "does this look right?" Otto turn used to run
   // here — and bill for itself. Founder ruling 2026-08-08: the merchant can see the result
@@ -1334,7 +1403,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
             const marked = await tx.genJob.updateMany({
               where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
-              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) },
+              data: { generationIds: ids, spent: true, spentUsd: genSpentUsd(genSpendArgsOf(job)) },
             });
             if (marked.count === 0) throw REDELIVERY_DISCARD;
             // SETTLE the hold atomically with the resume marker — the generation succeeded,
@@ -1352,6 +1421,29 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             // 商家没损失(已退款),平台损失了一次真实的引擎调用。它不是缺陷,是竞态的正确
             // 结局——但它是**真钱**,零上报就等于没人知道它一天发生几次。
             captureMoneyPathError(storeErr, { event: "gen.founder_absorbed_engine_cost", jobId: job.id, orgId: job.ownerId, kind: job.kind, model: job.model });
+            // MONEY-A13(规格 §7.5 平台损失台账):此前这里连**多少钱**都不记 —— 只有一条
+            // 「发生过一次」的 Sentry 事件,而台账要的是金额。按这一单自己的参数现算 COGS
+            // (与写进 spentUsd 的是同一个函数、同一批参数),再指路去登记。
+            // 报警**绝不许改变这条分支的去向**:`await` 一个被拒的 promise 会跳过下面那个
+            // `return`,把这一单摔进外层 catch —— 而外层会把一个「已经退过款、正确丢弃」的
+            // 作业当成失败去终态化。alerting 的 founderAlert 自己不抛,这一层是不依赖它守约。
+            try {
+              await founderAlert({
+                key: "gen.founder_absorbed_engine_cost",
+                title: "The platform paid for a generation nobody received (a redelivery had already refunded the merchant)",
+                action:
+                  "No merchant action needed — they were refunded. Log the platform loss in docs/ops/manual-money-ledger.md (event = 吸收引擎成本) with the job id and the USD below.",
+                context: {
+                  jobId: job.id,
+                  orgId: job.ownerId,
+                  kind: job.kind,
+                  model: job.model,
+                  absorbedUsd: genSpentUsd(genSpendArgsOf(job)),
+                },
+              });
+            } catch (alertErr) {
+              console.error(`[gen] ${job.id}: absorbed-cost alert failed (the discard itself stands):`, alertErr);
+            }
             return;
           }
           // exhausted: a persistent R2/DB outage. Re-throw to the terminal post-charge
@@ -1387,7 +1479,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // FAILED+settled+delivered mismatch in that ordering.)
       await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
       console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
-      await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
+      const spendInput = genSpendInputOf(job);
+      await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits(spendInput)));
+      await alertIfGuardrailPriced(job, spendInput);
       await settleCanvasBoard(job);
     } catch (err) {
       // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a
@@ -1430,7 +1524,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         await prisma.$transaction(async (tx) => {
           const { count } = await tx.genJob.updateMany({
             where: { id: job.id, ownerId: job.ownerId, status: { in: [...GEN_IN_FLIGHT_STATUSES] } },
-            data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) },
+            data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd(genSpendArgsOf(job)) } : {}) },
           });
           if (count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
         });

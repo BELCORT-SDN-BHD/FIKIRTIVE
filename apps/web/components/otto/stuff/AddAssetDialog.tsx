@@ -34,6 +34,7 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 import { ErrorWithTopUp } from "@/components/exits/Exits";
+import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 
 type Mode = "upload" | "generate";
 
@@ -295,6 +296,10 @@ export function AddAssetDialog({
 
               <Field data-disabled={formLocked}>
                 <FieldLabel htmlFor="add-asset-images">Images</FieldLabel>
+                {/* MONEY-A9 §7.3 — between the "Images" label and the picker: this dialog takes
+                    MULTIPLE files at once, so the per-image price has to be visible before the
+                    merchant selects a folder's worth of them (披露先于扣费). */}
+                <UnderstandingCostHint />
                 <Input
                   id="add-asset-images"
                   type="file"

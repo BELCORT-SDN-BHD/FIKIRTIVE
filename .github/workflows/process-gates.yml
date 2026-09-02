@@ -1,0 +1,96 @@
+name: process-gates
+
+# 《开发作业手册》的五道机器闸(Founder 2026-08-28 批准落地)。
+#
+# 为什么是独立文件、绝不改 ci.yml:同 post-merge.yml 的理由——`quality` 是 protect-main
+# ruleset 里被 lock 钉死的必需检查,动它的形态的那一族错误,代价是整仓无法合并。
+# 这里是另一个 workflow、另一个 job 名,PR 上的 `quality` 一个字节都没动。
+#
+# 立法完成的定义(手册):机器围栏进了主干 CI 才算数。本 workflow 合并后还差最后一步:
+# 把 `process-gates` 加进 protect-main ruleset 的必需检查——那是一步 GitHub 设置动作,
+# 在落地 PR 的描述里单列,等 Founder 点头后执行。没加必需之前,这些闸会跑、会红,
+# 但红了还合得进去;加了必需才是「物理合不进去」。
+#
+# `edited` 触发器是刻意的:M1 读的是 PR 描述,补一行 Spec:/轻改: 之后闸要立刻重判,
+# 不能要求作者再推一个空提交。
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: read
+
+# edited 每改一次描述就触发一次:同一 PR 的重叠运行取消旧的,免得过时判词后落地
+# 盖掉新判词(盲审)。组按 PR 号分,不会误伤别的 PR。
+concurrency:
+  group: process-gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    # job 级 name 就是 ruleset 必需检查认的字符串——没有它,对外呈现的是 job id `gates`,
+    # 按头注去把 `process-gates` 设为必需会配出一个永远不汇报的检查,整仓锁死(盲审 P1)。
+    name: process-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 明确检出 PR 的头提交本身(不是 GitHub 预合成的 merge ref):闸判定的对象
+          # 是作者交上来的树。fetch-depth: 0 是因为闸要 diff base、翻分支提交时间线。
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      # PR 描述是不可信输入:经 env 变量落盘成文件,不经过任何 shell 求值位置
+      # (${{ }} 直接内插进 run: 是注入通道,这里刻意不那么写)。
+      - name: PR 描述落盘
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n' "$PR_BODY" > /tmp/pr-body.txt
+
+      - name: M1 规格引用闸
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY_FILE: /tmp/pr-body.txt
+        run: bash scripts/ci/process-gates.sh m1
+
+      - name: M2 规格形状闸(含批准签名作者校验)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/process-gates.sh m2
+
+      - name: M3 验收↔测试映射闸
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY_FILE: /tmp/pr-body.txt
+        run: bash scripts/ci/process-gates.sh m3
+
+      - name: M4 反「只藏不删」闸
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY_FILE: /tmp/pr-body.txt
+        run: bash scripts/ci/process-gates.sh m4
+
+      - name: M5 归位闸(含闸门自守卫)
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY_FILE: /tmp/pr-body.txt
+        run: bash scripts/ci/process-gates.sh m5
+
+      - name: 事后规格公示(只示众,不拦截)
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY_FILE: /tmp/pr-body.txt
+        run: bash scripts/ci/process-gates.sh notice

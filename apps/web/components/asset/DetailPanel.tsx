@@ -36,6 +36,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { MentionInput } from "@/components/MentionInput";
+import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
 import {
@@ -987,8 +988,15 @@ export default function DetailPanel({
                 </div>
                 {/* Crop controls */}
                 <div className="cv-detail-crop-actions">
+                  {/* MONEY-A9 §7.3 —— 披露先于扣费。裁一张已有的图不是「只是裁一下」:
+                   *  `saveCroppedGeneration` 落的是一条全新的 `source:"UPLOAD"` image Asset,
+                   *  扫描器照样建理解行、照样扣。商家只改了构图却被收一笔他不知道存在的钱,
+                   *  正是这条验收要拦的那种账。所以这一行挂在 Confirm crop 旁边,而不是之后。 */}
+                  <div className="mr-auto max-w-[60%] self-center">
+                    <UnderstandingCostHint />
+                  </div>
                   {cropStatus === "failed" && (
-                    <span className="mr-auto self-center text-xs text-destructive">
+                    <span className="self-center text-xs text-destructive">
                       Crop failed — try again
                     </span>
                   )}

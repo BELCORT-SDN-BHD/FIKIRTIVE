@@ -103,18 +103,21 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     // 之后,它们各自抄来的费率也随之作废(videoRateUsdPerSec 对菜单外的 id 回 0),USD 公式会
     // 算出 1 显示 credit —— 一条视频卖一毛钱。新的付费请求永远走不到这里(契约闸只放行
     // 在产那一台),这只是历史行读价的兜底,而兜底的语义只有一个:护栏价。
+    // MONEY-A3:护栏从「16cr 定额」改成按档 —— 未知分辨率按最贵可售档按秒价(11cr/秒),
+    // 已知分辨率按它自己的费率。数字变了,语义没变:算不出价就落护栏,绝不贱卖。
     const job = { kind: "VIDEO" as const, model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "", audio: false } };
     const c = pricedGenCredits(job);
     expect(c % INTERNAL_PER_DISPLAY).toBe(0); // whole displayed credits
-    expect(c).toBe(16 * INTERNAL_PER_DISPLAY);
+    expect(c).toBe(55 * INTERNAL_PER_DISPLAY); // 未知分辨率 5 秒 → 5 × 11cr/秒
     expect(Number.isNaN(c)).toBe(false);
     // 记账那一侧照旧是 record-only:不知道成本就是 0,而不是编一个数
     expect(genSpentUsd(job)).toBe(0);
 
     // #769:换引擎之后 seedance-2-fast 自己也变成「菜单外的历史 id」,走同一条兜底 ——
-    // 老行读价落 16cr 护栏(不是免费),记账落 0(不是编一个 fast 时代的成本)。
+    // 老行读价落护栏(不是免费),记账落 0(不是编一个 fast 时代的成本)。
+    // 720p 认得出,所以按 720p 自己的 2.2cr/秒收:5 秒 = 11cr。
     const retiredFast = { kind: "VIDEO" as const, model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } };
-    expect(pricedGenCredits(retiredFast)).toBe(16 * INTERNAL_PER_DISPLAY);
+    expect(pricedGenCredits(retiredFast)).toBe(11 * INTERNAL_PER_DISPLAY);
     expect(genSpentUsd(retiredFast)).toBe(0);
   });
   it("refgen = 1 displayed credit per image", () => {
@@ -125,18 +128,18 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(displayCredits(2500)).toBe(250);
     expect(CREDITS_PER_USD).toBe(100);
   });
-  it("video charge is per-second by resolution: 720p 5s=11cr, 720p 10s=22cr, 480p 5s=6cr, 1080p=16cr", () => {
+  it("video charge is per-second by resolution: 720p 5s=11cr, 720p 10s=22cr, 480p 5s=6cr, 1080p 5s=55cr(MONEY-A3)", () => {
     const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
     expect(v("720p")).toBe(110);  // 11 displayed credits(#644 Founder 裁决 2026-08-06,#645 按秒表复算同值)
     expect(v("480p")).toBe(60);   // #645 T4:半价档 1.1cr/秒 ⇒ ceil(5.5) = 6 displayed
-    expect(v("1080p")).toBe(160); // 16 displayed credits(护栏价,mini 同样给不了 1080p)
+    expect(v("1080p")).toBe(550); // MONEY-A3:11cr/秒(S1 已裁),取代旧的 16cr 定额倒挂
     expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } }))
       .toBe(220);
   });
-  it("seedance-2-mini: unknown resolution → the 16cr guardrail (never under-charge)", () => {
+  it("seedance-2-mini: unknown resolution → 按最贵可售档的按秒护栏 (never under-charge, MONEY-A3)", () => {
     const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
-    expect(v("4K")).toBe(160);  // unknown res → guardrail price (16 displayed × 10)
-    expect(v("")).toBe(160);
+    expect(v("4K")).toBe(550);  // unknown res → 5 秒 × 最贵可售档 11cr/秒
+    expect(v("")).toBe(550);
   });
   it("image charge stays 1 displayed credit per image", () => {
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
@@ -207,7 +210,8 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
 
 // ── 宪法 5 毛利地板守卫:每个可售视频组合 ≥45% ─────────────────────────────────
 // 这个测试是"地板的警报器":BytePlus 成本(videoRateUsdPerSec)涨了、或有人改了
-// VIDEO_CREDITS_BY_RESOLUTION 的售价、或给 flat 名单加了没算过账的模型 —— 任何
+// 推导出来的售价(SEEDANCE_DISPLAY_CREDITS_PER_10S / 好记数上调表)、或给 flat 名单
+// 加了没算过账的模型 —— 任何
 // 一种情况把某个可售组合的毛利打到 45% 以下,这里立刻变红。视频任务恒 count=1
 // (gen-actions 强制),所以按 count=1 逐组合断言。
 //

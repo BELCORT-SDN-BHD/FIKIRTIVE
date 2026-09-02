@@ -29,7 +29,7 @@
  * task and decides "settled" from the presence of a SETTLE/REFUND row, not from its amount.
  * The two differ in WHICH rows they show; the WORDS for a row come from here for both.
  */
-import { displayCredits, creditDirection, type CreditDirection } from "@fikirtive/core";
+import { displayCredits, creditDirection, MANUAL_REFUND_REF_PREFIX, type CreditDirection } from "@fikirtive/core";
 import { formatCredits } from "./credit-format";
 import { partsInTz, formatDayLabel, formatTime } from "./schedule-view";
 
@@ -40,10 +40,19 @@ export type SpendCategory =
                   // (otto-verdict:) that used to run and bill. No new rows are minted —
                   // the branch stays so an old charge is never relabelled as something else.
   | "research"    // an approved deep-research run (research:)
+  | "understanding" // an asset auto-understanding charge (understanding:) — the background
+                  // read of an uploaded photo/menu/video. It is the one charge the merchant
+                  // never clicked a button for, so it must read as its own thing rather than
+                  // hide inside "Credit change" (MONEY-A9).
   | "image"       // a generation job that made image(s)
   | "video"       // a generation job that made video
   | "topup"       // a Stripe credit purchase
   | "grant"       // a non-purchase credit grant (beta seed, promo, admin)
+  | "refund"      // a manual refund we PAID BACK to their card (MONEY-A14): the credits leave
+                  // the balance and the money goes home. It is not an "Adjustment" — a merchant
+                  // looking for the refund they were promised has to be able to SEE it, and the
+                  // operator's ledger note never reaches this screen (#683), so the row's own
+                  // shape (refId prefix `manual-refund:`) is the only thing that can say it.
   | "adjustment"  // an admin correction
   | "other";      // a real row we cannot categorise — shown, never hidden or mislabelled
 
@@ -51,10 +60,12 @@ export const SPEND_CATEGORY_LABEL: Record<SpendCategory, string> = {
   chat: "Chat",
   review: "Review",
   research: "Research",
+  understanding: "Understanding",
   image: "Image",
   video: "Video",
   topup: "Top-up",
   grant: "Credits added",
+  refund: "Refund",
   adjustment: "Adjustment",
   other: "Credit change",
 };
@@ -101,6 +112,13 @@ export function spendCategoryOf(
     if (refId.startsWith("otto-verdict:")) return "review";
     if (refId.startsWith("otto-")) return "chat";
     if (refId.startsWith("research:")) return "research";
+    // MONEY-A9: `understanding:<rowId>` (and `…:r<n>` for a re-billed round after a refund).
+    // startsWith covers both — the round suffix is a money-path mechanic, not something a
+    // merchant should ever see split into two different categories.
+    if (refId.startsWith("understanding:")) return "understanding";
+    // MONEY-A14 `manual-refund:<退款单号>`。三条腿(RESERVE / SETTLE / 失败时的 REFUND)共用同一个
+    // refId,所以整笔退款在历史里折成**一行**,读作「Refund」。
+    if (refId.startsWith(MANUAL_REFUND_REF_PREFIX)) return "refund";
     const jobKind = jobKindByRefId.get(refId);
     if (jobKind === "IMAGE") return "image";
     if (jobKind === "VIDEO") return "video";

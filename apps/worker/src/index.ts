@@ -26,8 +26,14 @@ import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
+import { checkLedgerConservation } from "./jobs/ledger-conservation.js";
 import { reconcileStripePayments } from "./jobs/stripe-reconcile.js";
-import { handleUnderstand, reapStaleUnderstanding, scanAssetsNeedingUnderstanding } from "./jobs/understand.js";
+import {
+  handleUnderstand,
+  reapStaleUnderstanding,
+  reapStaleUnderstandingReservations,
+  scanAssetsNeedingUnderstanding,
+} from "./jobs/understand.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
@@ -232,8 +238,10 @@ async function main(): Promise<void> {
   // adapter orchestration. Fail-closed by construction: the scheduler below only enqueues posts
   // whose connection can publish RIGHT NOW, and the handler re-checks + triple-locks idempotency.
   await consume<PublishJobData>(PUBLISH_QUEUE, handlePublish);
-  // #784 素材理解三件套。**不碰商家余额**(理解是平台成本),所以它和钱路队列的形状不同:
-  // 允许正常重试,防重靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS。
+  // #784 素材理解三件套。**是一条钱路**(MONEY-A9,2026-09-01 起按上传时刻的快照价计费;
+  // 旧的「不碰商家余额、理解是平台成本」已随规格 §7.3 废止)。它仍然允许正常重试 ——
+  // 防重不靠 retryLimit:0,靠 AssetUnderstanding 上的唯一约束 + QUEUED→RUNNING 的 CAS,
+  // 再加钱侧那套 `(orgId, refId)` 台账终态恢复协议(见 jobs/understand.ts 文件头)。
   //
   // 返回值 = 要立刻接着跑的那一行(caption 认出这张图是菜单之后建出来的 doc-extract 行)。
   // 在这里发,而不是等下一轮扫描 —— 差别是商家的十分钟。send 失败也不丢:行还是 QUEUED,
@@ -312,11 +320,17 @@ async function main(): Promise<void> {
           boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
         );
         if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
-        // #784: understanding rows a crashed worker left RUNNING. $0 and credit-free by
-        // construction — this chain never reserves — so the sweep just returns them to QUEUED
-        // and the scanner below re-delivers. A file half-read should be finished, not abandoned.
+        // #784: understanding rows a crashed worker left RUNNING. Pure UX — it just returns them
+        // to QUEUED and the scanner below re-delivers. A file half-read should be finished, not
+        // abandoned. (The money half is the next sweep, not this one.)
         const un = await reapStaleUnderstanding();
         if (un) console.log(`[worker] returned ${un} interrupted understanding row(s) to the queue`);
+        // MONEY-A9: understanding is a PAID action since 2026-09-01, so this chain now leaks holds
+        // the same way Otto's does — a death between reserve and settle. Its own reaper (not the
+        // LLM one: that sweep's refund also retires an approval card, which this chain has none of)
+        // refunds the hold and returns the row it belonged to.
+        const ur = await reapStaleUnderstandingReservations();
+        if (ur) console.log(`[worker] refunded ${ur} leaked understanding reservation(s)`);
       });
     } catch (e) {
       console.error("[worker] reaper error:", e);
@@ -387,11 +401,21 @@ async function main(): Promise<void> {
     try {
       const r = await reconcileStripePayments();
       if (r.skipped) console.log(`[worker] stripe reconcile skipped: ${r.skipped}`);
-      else if (r.unreconciled)
+      // 名单读不到 ⇒ 窗口外的老缺口这一轮没人看。它不是「没跑成」,但也绝不是「一切正常」。
+      else if (r.trailUnreadable)
+        console.error(
+          `[worker] stripe reconcile: the open-gap list was UNREADABLE this sweep — only the 48h Stripe window was checked ` +
+            `(${r.unreconciled} gap(s) there, ${r.alerted} alert(s) sent)`,
+        );
+      else if (r.unreconciled || r.tracked || r.unverified)
         // 两轮确认制:首见的只是观察(延迟到账的付款长得一模一样),确认过的才是真缺口。
+        // `tracked` 是已经滑出 48 小时扫描窗、靠观察行名单继续追踪的那些(MONEY-A12):
+        // 它可以在 unreconciled=0 的一轮里非零 —— 缺口老了,但没有了结。
         console.error(
           `[worker] stripe reconcile: ${r.unreconciled} PAID session(s) with no ledger entry (of ${r.paid} paid in the last 48h) — ` +
-            `${r.firstSeen} first sighting(s) recorded but NOT alerted, ${r.alerted} confirmed and alerted`,
+            `${r.firstSeen} first sighting(s) recorded but NOT alerted, ${r.alerted} alert(s) sent, ` +
+            `${r.tracked} older gap(s) still open outside the window, ${r.unverified} recorded but NOT judged (ledger unreadable), ` +
+            `${r.closed} observation(s) closed`,
         );
       else console.log(`[worker] stripe reconcile: ${r.paid} paid session(s) in the last 48h, all present in the ledger`);
     } catch (e) {
@@ -405,6 +429,43 @@ async function main(): Promise<void> {
   if (plan.supervises) {
     setInterval(() => void reconcileStripe(), 30 * 60_000);
     void reconcileStripe(); // 开机也跑一轮:停机期间掉的 webhook 正是这个扫描存在的理由
+  }
+
+  // 钱路守恒巡检(规格 §5 变更登记 2026-09-02 顾问复审⑥)。「余额 = 流水之和」这条不变量
+  // 此前只活在注释和单测里 —— 两个都在开发机上。这一趟每天按 org 重算一次,漂移三通道报警。
+  // **只报不补**,理由同上面那个哨兵:补账是人的决定,自动化它就是在钱路上开第二个权威。
+  //
+  // 一天一轮(不是半小时):守恒破了就一直破着,不会自愈也不会在半小时内变得更严重,而全表
+  // 聚合每半小时跑一次是白花的数据库钱。同 reconcile 只在 supervise 的角色上跑 —— 两个服务
+  // 都跑会把同一笔漂移报两遍。
+  let conserving = false;
+  const conserveLedger = async () => {
+    if (conserving) return;
+    conserving = true;
+    try {
+      const r = await checkLedgerConservation();
+      if (r.skipped) console.error(`[worker] ledger conservation skipped: ${r.skipped} — nothing was checked this sweep`);
+      else if (r.drifted)
+        console.error(
+          `[worker] ledger conservation: ${r.drifted} org(s) whose balance disagrees with their ledger ` +
+            `(${r.alerted} alerted); ${r.shortfallRows} settle(s) clamped in the last 24h totalling ${r.shortfallInternal} internal`,
+        );
+      else
+        console.log(
+          `[worker] ledger conservation: every org's balance matches its ledger; ` +
+            `${r.shortfallRows} settle(s) clamped in the last 24h totalling ${r.shortfallInternal} internal`,
+        );
+    } catch (e) {
+      // checkLedgerConservation 自己就不抛;这里是最后一道,免得一次意外把 worker 带下去。
+      console.error("[worker] ledger conservation error:", e);
+      captureError(e);
+    } finally {
+      conserving = false;
+    }
+  };
+  if (plan.supervises) {
+    setInterval(() => void conserveLedger(), 24 * 60 * 60_000);
+    void conserveLedger(); // 开机也跑一轮:一次坏部署造成的漂移不该等到明天才被看见
   }
 
   // #784 asset understanding — the ONLY producer on UNDERSTAND_QUEUE, and deliberately so:
@@ -441,10 +502,11 @@ async function main(): Promise<void> {
     // PLATFORM number in real dollars — "what can this cost us in a day" is a platform question,
     // so a per-merchant row count was never an answer to it.
     console.log(
-      `[worker] asset understanding — platform budget $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
+      `[worker] asset understanding — platform spend ALERT line $${understandingDailyBudgetUsd(process.env).toFixed(2)} per day ` +
         `(${assetUnderstandingEnabled(process.env) ? "switch ON" : "switch OFF — paused, nothing is discarded"}). ` +
-        `Over budget or switched off, files stay queued and are read the next day. ` +
-        `Merchants are never charged for this.`,
+        `Since 2026-09-02 that line only ALERTS (founderAlert, at most once a day) and never blocks: merchants are ` +
+        `billed per understood file at the price locked when its row is created (MONEY-A9), so their own balance is ` +
+        `the real ceiling. Only the switch pauses reading — and it pauses, it does not discard.`,
     );
     // The interval is installed either way: the switch is re-read on EVERY scan, so flipping it
     // off pauses the reading instead of destroying whatever arrives while it is off.

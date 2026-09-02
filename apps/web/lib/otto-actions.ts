@@ -671,6 +671,12 @@ export async function buildOttoContext({
       fetchUrl: fetchAndExtract,
       search,
       readPage: (url: string, page?: number) => readPageCached(url, page),
+      // MONEY-A10:这一轮的搜索槽。**每次装配一个新的**,所以它天然是 per-turn 的 —— 上限
+      // 判 `granted`(账本预留时发的格数)、计费按 `succeeded`,协议全文见 OttoSearchSlots。
+      // 它同时是钱腿存在与否的开关(runtime.ts ottoBudgetArgsFor):少了它,researchWeb 的
+      // query 腿会拒绝搜索。`granted: 0` 是 fail closed 的初值 —— 预留还没跑/跑失败,
+      // 一格也不许搜。
+      searchSlots: { granted: 0, taken: 0, succeeded: 0 },
     },
     // Single write authority: Otto's schedulePosts skill drafts through the SAME server function
     // the human createScheduledPost action uses (shared validation + owner-scoped media check).
@@ -1977,7 +1983,9 @@ export async function ottoApprove(raw: unknown): Promise<
           // the real gates; over-counting would refuse work the ledger would have allowed, so
           // unknown tool costs count as 0 rather than being guessed.
           const holdInternal = llmHoldInternal(
-            ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: ownerId, refId, input: state }),
+            // ctx 一并传进去:这一轮的真实预扣**包含** MONEY-A10 的搜索腿(resume 一样能搜),
+            // 预检少算它就会放行一笔真实 reserve 会被 cap 拒掉的动作。
+            ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: ownerId, refId, input: state }, ctx),
           );
           const approvedCostInternal = holdInternal + approvedToolCostInternal(cardPayload.toolName, targetArgs);
           // #524 r5 (judge r4 P1-B) — the number that DECIDES. It rides into the meter and is
@@ -2048,7 +2056,8 @@ export async function ottoApprove(raw: unknown): Promise<
               })
             : 0;
         const holdInternal = llmHoldInternal(
-          ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: ownerId, refId, input: state }),
+          // 同上:预检与真实预扣必须看同一套腿(MONEY-A10 搜索腿)。
+          ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: ownerId, refId, input: state }, ctx),
         );
         // The number that DECIDES — asserted against the cap inside the reserve's own transaction.
         approvedActionCostInternal = holdInternal + generateLegInternal;

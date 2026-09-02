@@ -69,9 +69,19 @@ describe("RESEARCH_TIERS", () => {
         ),
       );
       expect(t.estimatedCredits).toBe(expected);
-      // And it is NOT the retired S2 placeholder (10/25/60).
-      expect(t.estimatedCredits).not.toBe({ quick: 10, standard: 25, deep: 60 }[key]);
     }
+    // And the card is NOT the retired S2 placeholder triple (10/25/60).
+    //
+    // 比**整组**而不是逐档比:2026-09-01 研究档费率 2.0→2.06 之后,quick 档推导出来的
+    // 数正好也是 10 —— 与退役占位值撞了。逐档断言在那一刻会红,而它想抓的东西(「卡面是
+    // 拍脑袋写死的」)根本没有发生:三档全部由 researchTierEstimate 现算,上面那条已经证明了。
+    // 一条会因为巧合而红的守卫,抓不到病却会消耗一次「闸红=有事」的信任。
+    const live = { quick: RESEARCH_TIERS.quick, standard: RESEARCH_TIERS.standard, deep: RESEARCH_TIERS.deep };
+    expect({
+      quick: live.quick.estimatedCredits,
+      standard: live.standard.estimatedCredits,
+      deep: live.deep.estimatedCredits,
+    }).not.toEqual({ quick: 10, standard: 25, deep: 60 });
   });
 
   it("卡面预估真的**含**搜索那一笔 —— 少算它就是报低价", () => {

@@ -9,17 +9,17 @@ name: e2e
 # 代价:E2E 首批要的是「有一份常驻的、每天都跑的证据」,不是「再多一道挡合并的闸」。
 #
 # 于是这里的取舍写明白:
-#   - 本 workflow **不是** required check。它红了不会冻结任何 PR。它的作用是把商家手碰的那一层
-#     的回归**变得可见**,而不是把它变成一道新的门。
-#   - 什么时候变成门,由 Founder 决定(票 #799 写的是「上线门=首批主干」)。真要挡门时,做法是
-#     在 protect-main ruleset 里把 `e2e` 加进必需检查——一次仓库设置,零代码改动,ci.yml 依旧不动。
+#   - 2026-08-28 Founder 裁决转正:本 workflow **是** required check(08-14 原裁「跑一周再转正」,
+#     随《开发作业手册》落地一并执行)。它红了,PR 合不进去。
+#   - 转正逼出一个结构变化:原先靠 pull_request 的 paths-ignore 跳过 docs-only PR——但被路径
+#     过滤跳过的 workflow 不汇报 check,对必需检查等于永远无法合并(ci.yml 头注早写明的坑),
+#     那会把「规格-only PR 走 docs 快路」整条路锁死。所以 paths-ignore 退场,换成 job 内第一步
+#     的 scope 判定(复用 scripts/ci/pr-scope.sh,与 `quality` 的 docs-only 判定同一个法源):
+#     docs-only 时跳过全部旅程步骤、job 照样绿、check 照样汇报。代价是 docs-only PR 上白起一个
+#     postgres service(约 20 秒),买到的是「必需检查在每张 PR 上都有答案」。
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    # 只改 docs/ 的 PR 没有任何旅程可跑。这里可以用 paths-ignore 而 ci.yml 不可以:被路径过滤
-    # 跳过的 workflow 不汇报 check,对必需检查等于永远无法合并;本 workflow 不是必需检查。
-    paths-ignore:
-      - "docs/**"
   schedule:
     # 每天吉隆坡时间早上 8 点(UTC 00:00)。夜间跑一遍是这票「常驻」两个字的实体:
     # 没有人打开 PR 的日子,main 上的这一层也仍然每天被走一遍。
@@ -28,6 +28,8 @@ on:
 
 permissions:
   contents: read
+  # scope 步骤要列 PR 的文件清单(docs-only 判定);与 ci.yml 同一理由。
+  pull-requests: read
 
 concurrency:
   # 事件与 ref 都带上:少任何一半,手动或定时的一次运行就会取消 PR 上正在跑的那次。
@@ -68,15 +70,55 @@ jobs:
       # 有就直接失败。一个每天自动跑的套件如果能真出片,那是每天在烧商家的余额。
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+
+      # docs-only 判定,照抄 ci.yml scope job 的取证手法:两份 API 原文落盘、零文本投影,
+      # 决定权在 scripts/ci/pr-scope.jq(它被 scripts/__tests__/pr-scope.test.sh 看守)。
+      # 任何拿不到、读不懂、答非 false 的情形都是「跑全部旅程」——fail 的方向是多跑,不是漏跑。
+      # PR 号经环境变量进脚本体,不用 ${{ }} 内插——schedule/workflow_dispatch 下没有 PR,
+      # 空值必须是脚本能测试的值,不是源代码里的一个洞。
+      - name: Scope — docs-only PR 没有旅程可跑,但必须汇报
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          emit() {
+            echo "code=$1" >> "$GITHUB_OUTPUT"
+            echo "scope: code=$1, reason=$2"
+          }
+          if [ -z "${PR_NUMBER:-}" ]; then
+            emit true "no-pr-context (event: $EVENT_NAME)"
+            exit 0
+          fi
+          files_json="${RUNNER_TEMP:-/tmp}/pr-files.json"
+          pr_json="${RUNNER_TEMP:-/tmp}/pr-object.json"
+          pr="repos/${REPOSITORY}/pulls/${PR_NUMBER}"
+          gh api --paginate --slurp "$pr/files" >"$files_json" 2>/dev/null || : >"$files_json"
+          gh api "$pr" >"$pr_json" 2>/dev/null || : >"$pr_json"
+          if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
+            emit true api-unreadable
+            exit 0
+          fi
+          code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json" || echo true)"
+          if [ "$code" = "false" ]; then emit false docs-only; else emit true touches-code; fi
+
+      - if: steps.scope.outputs.code == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.scope.outputs.code == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
 
-      - run: pnpm --filter "./packages/*" build
-      - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm --filter "./packages/*" build
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm --filter @fikirtive/db exec prisma migrate deploy
 
       # 套件自己的类型检查。刻意在这里跑而不是挂进 `pnpm -r typecheck`:e2e/ 不是 pnpm workspace
       # 项目(见 e2e/package.json 的说明),把它加进去就等于把这些文件塞进 `quality` 的 tests /
@@ -85,14 +127,21 @@ jobs:
       # 位置在 packages build **之后**,而且必须如此:套件按路径引用 packages/*/dist 里的类型
       # (e2e/support/db.ts 说明了为什么按路径),dist 不存在时这一步报的是「找不到模块」,
       # 而不是任何关于套件本身的话。第一次上云就是这么红的。
-      - run: pnpm exec tsc -p e2e/tsconfig.json
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm exec tsc -p e2e/tsconfig.json
 
-      - run: pnpm --filter @fikirtive/web build
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm --filter @fikirtive/web build
 
       # 只装 chromium:套件只跑这一个 project,装三个引擎是三倍下载换零覆盖。
-      - run: pnpm exec playwright install --with-deps chromium
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm exec playwright install --with-deps chromium
 
-      - run: pnpm e2e
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm e2e
+
+      - if: steps.scope.outputs.code == 'false'
+        run: echo "docs-only PR——旅程无事可跑,e2e 以绿汇报(必需检查在每张 PR 上都要有答案)。"
 
       # 失败时把证据带出来。夜里跑红的那一次没有人能附上调试器,trace 就是唯一的现场。
       - if: failure()

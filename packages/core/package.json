@@ -40,6 +40,10 @@
       "types": "./dist/env-contract.d.ts",
       "default": "./dist/env-contract.js"
     },
+    "./finance-limits": {
+      "types": "./dist/finance-limits.d.ts",
+      "default": "./dist/finance-limits.js"
+    },
     "./founder-alert": {
       "types": "./dist/founder-alert.d.ts",
       "default": "./dist/founder-alert.js"
@@ -79,6 +83,10 @@
     "./otto-budget": {
       "types": "./dist/otto-budget.d.ts",
       "default": "./dist/otto-budget.js"
+    },
+    "./pricing-config": {
+      "types": "./dist/pricing-config.d.ts",
+      "default": "./dist/pricing-config.js"
     },
     "./provider-secrecy": {
       "types": "./dist/provider-secrecy.d.ts",

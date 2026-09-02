@@ -48,6 +48,7 @@ import {
   ottoModelRuntime,
   run,
   MaxTurnsExceededError,
+  SettleLostToRefund,
   mapOttoUsage,
   type ResearchContext,
 } from "@fikirtive/otto";
@@ -87,16 +88,18 @@ async function readPageWorker(
 }
 
 /** Build the search port from env keys — SAME sourcing as buildOttoContext (web).
- *  The port itself moves no credits; the fee is settled by the wrapper off `ctx.searchesUsed`. */
+ *  The port itself moves no credits; the fee is settled by the wrapper off `ctx.searchesUsed`.
+ *
+ *  MONEY-A10 收敛(#1046-P2 的另一半):没有 key 时返回 **undefined**,不再返回一个恒成功、
+ *  恒返回 `[]` 的 stub。旧形状对 agent 撒了两次谎 —— 它以为自己搜过了(于是不去说「这条没能
+ *  核实」),而计数器照样 +1,一次没打过供应商的「搜索」被结算成 3 个 internal credits。
+ *  端口缺席是**可表达的事实**:executeSearchSources 会诚实报「搜索源不可用」,$0。 */
 function buildSearch(): ResearchContext["search"] {
   const k1 = process.env.TAVILY_API_KEY;
   const k2 = process.env.BRAVE_SEARCH_API_KEY;
   const primary = k1 ? tavilySearch(k1) : k2 ? braveSearch(k2) : undefined;
   const fb = k1 && k2 ? braveSearch(k2) : undefined;
-  if (!primary) {
-    // No key configured → a search that returns nothing (the agent still writes from what it has).
-    return async () => [];
-  }
+  if (!primary) return undefined; // 无 key = 搜索源不可用,如实告诉 agent
   const fn = searchWithFallback(primary, fb);
   return (q: string) => fn(q);
 }
@@ -266,14 +269,17 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
     const tier = RESEARCH_TIERS[tierKey] ?? RESEARCH_TIERS.standard;
     const topic = payload.topic ?? "";
 
-    // (d) Build the small, mutable ResearchContext. readPage is free; search is CHARGED — its
-    // counter (searchesUsed) is what the settle below bills against. Counters also cap use.
+    // (d) Build the small, mutable ResearchContext. readPage is free; search is CHARGED — the
+    // settle below bills against searchesUsed (successful calls only), while searchesTaken
+    // (occupied slots) is what the cap is judged against. search may be undefined = no key.
     const ctx: ResearchContext = {
       search: buildSearch(),
       readPage: (url: string, page?: number) => readPageWorker(url, page),
       sourcesRead: [],
       maxSearches: tier.maxSearches,
       maxPages: tier.maxPages,
+      // MONEY-A10:上限判 searchesTaken(占槽),计费按 searchesUsed(成功数)。
+      searchesTaken: 0,
       searchesUsed: 0,
       pagesUsed: 0,
     };
@@ -344,10 +350,16 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
       // PERSISTED error surfaces in the RESEARCH_CARD/ResearchJob and is rendered to the user/admin —
       // strip any URL a fetch/network error from researchWeb may carry (mirrors gen.ts/refgen.ts/
       // render.ts/caption.ts/publish.ts, the other 5 jobs that sanitize before persisting).
+      // #1046-P1:预扣清道夫已经把这一单的钱退给商家了(作业行还没被另一个清道夫翻过来,
+      // 所以上面那条 CAS 拦不住它)。商家看到的应该是**发生了什么**,而不是守卫自己的内部
+      // 措辞 —— 用 reaper 家族对这一族早就写好的那句话:钱已经退清,重试一次就好。
+      // 照 MaxTurnsExceededError 的同一条惯例:内部错误 → 一句固定的商家话,不走 sanitizeError。
       const errorText =
-        e instanceof MaxTurnsExceededError
-          ? "The research hit its step budget before finishing."
-          : sanitizeError(e);
+        e instanceof SettleLostToRefund
+          ? RESEARCH_INTERRUPTED
+          : e instanceof MaxTurnsExceededError
+            ? "The research hit its step budget before finishing."
+            : sanitizeError(e);
       console.warn(`[research] job ${job.id}: withLlmBudget threw — marking failed:`, errorText);
       await failResearch(job, errorText);
       return;

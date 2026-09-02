@@ -26,7 +26,52 @@
  *   这正是设计意图 —— 不是把它挡在测试里,是把它摆到复审桌上。
  */
 import { describe, it, expect } from "vitest";
+import {
+  displayCredits,
+  pricedUnderstandingCredits,
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchUnitChargeInternal,
+} from "@fikirtive/core";
 import { ottoSimpleModeBlock, ottoInstructions } from "./instructions.js";
+
+/**
+ * MONEY-A9(规格 §7.3):importMedia 段里那三格理解价的**期望值,现算**。
+ *
+ * 和 `understanding-disclosure.test.ts` 同一条纪律:测试自己调 `pricedUnderstandingCredits`
+ * 算期望,不手抄一个数 —— 两边同源,涨价当天一起动。这三条既是下面金额启发式的豁免,
+ * 也是「披露真的在提示词里」的正面断言。
+ */
+const UNDERSTANDING_PRICE_CLAUSES = [
+  `${displayCredits(pricedUnderstandingCredits("image-caption"))} credits for an image`,
+  `${displayCredits(pricedUnderstandingCredits("video-qa"))} credits for a video`,
+  `${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits again if that image turns out to be a menu`,
+];
+
+/**
+ * MONEY-A10(规格 §7.4):聊天搜索那句披露的**期望值,现算**。
+ *
+ * 与上面 A9 三条同一条纪律。这一句同时踩了金额启发式的两个词族(裸词 free + 阿拉伯数字
+ * credits),所以它必须进白名单 —— 但进白名单的是一条**算出来的**串:真有人手抄一个价
+ * 进提示词,它对不上这里,照样红。
+ */
+const CHAT_SEARCH_PRICE_CLAUSE =
+  "reading a page by `url` is free, each `query` search costs the user about " +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits, and one turn allows at most ` +
+  `${OTTO_CHAT_MAX_SEARCHES_PER_TURN} searches`;
+
+/**
+ * MONEY-A10(七维审核):**商家侧**那句搜索披露的期望值,同样现算。
+ *
+ * 上面那条 `CHAT_SEARCH_PRICE_CLAUSE` 是说给**模型**听的(它按价决定该不该再搜一次);
+ * 这一条是 Otto 说给**商家**听的 —— 「聊天怎么收费」那一段原本只讲 LLM 成本 +5%,而同一笔
+ * 扣款里还有一条搜索腿。商家听不到它,就会把账单上那一笔当成算错了。
+ *
+ * 同一条纪律:进白名单的是**算出来的**串,手抄一个价照样红。
+ */
+const CHAT_SEARCH_MERCHANT_CLAUSE =
+  "each search request that completes successfully adds about " +
+  `${displayCredits(searchUnitChargeInternal("basic"))} credits — including one that comes back empty-handed — ` +
+  `and one message can make at most ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} of them`;
 
 describe("ottoInstructions — golden 快照(#541 r6 主守卫)", () => {
   // 没有判定环节:不解析、不匹配、不推断语义,只比字节。
@@ -43,6 +88,53 @@ describe("ottoInstructions — golden 快照(#541 r6 主守卫)", () => {
     await expect(ottoInstructions).toMatchFileSnapshot(
       "./__snapshots__/otto-instructions.golden.txt",
     );
+  });
+});
+
+// ── MONEY-A9 §7.3:URL 导入的**动作前报价** ─────────────────────────────────────
+//
+// 三个人手上传入口各挂一行价目小字;URL 导入没有界面,规格因此把它的披露放在动作层。
+// 这一组钉的就是那句披露真的在提示词里,而且旧的「$0 永不消耗 credits」已经不在了 ——
+// 那句话在 2026-09-01 之后是假的:导入本身确实 $0,但它落下的每一件素材都会被自动理解并计费。
+describe("ottoInstructions — MONEY-A9:importMedia 段带动作前报价", () => {
+  /** 只切 importMedia 那一节。别的 $0 技能(manageCanvas / manageMedia / renderVideo)照旧
+   *  说「$0 and never spends credits」——**它们那句仍然是真的**,不许被这一组误伤。 */
+  const section = (() => {
+    const start = ottoInstructions.indexOf("## When to call `importMedia`");
+    expect(start, "importMedia 那一节不见了").toBeGreaterThan(-1);
+    const rest = ottoInstructions.slice(start + 1);
+    const end = rest.indexOf("\n## ");
+    return end === -1 ? rest : rest.slice(0, end);
+  })();
+
+  it("三格理解价逐条出现,而且是现算的(测试自己算期望值,不手抄)", () => {
+    for (const clause of UNDERSTANDING_PRICE_CLAUSES) {
+      expect(section, `导入段缺了这一格价:「${clause}」`).toContain(clause);
+    }
+  });
+
+  it("旧的「$0 永不消耗 credits」说法已废止 —— 它在这一节现在是一句假话", () => {
+    // 「导入这一次调用是 $0」仍然是真的,提示词照说;不许再说的是**后果**也免费那半句。
+    expect(section).not.toContain("never spends credits");
+    // 而且这一节必须自己交代后果:落地的东西会被计费
+    expect(section).toContain("what it leaves behind is not");
+  });
+
+  it("指示 Otto**先报价再导入**(没有界面,这是唯一的披露口)", () => {
+    expect(section).toContain("Say that price BEFORE you import, never after");
+    expect(section).toMatch(/get their go-ahead in the same breath as offering to import/i);
+  });
+
+  it("报的是**建行时刻锁的价**(四则①),不是「跑的时候现算」,也不是「落地那一刻」", () => {
+    // 快照写在扫描器建 AssetUnderstanding 行的那一刻(worker `jobs/understand.ts`,每分钟至多
+    // 25 行),**不是**素材落地那一刻。跨厂复审 2026-09-02 的唯一 P1 打的就是旧措辞
+    // 「at the price locked in the moment it lands」—— 它把排队说成了瞬时,而排队期间调价,
+    // 后面的文件按新价建行。Otto 当着商家的面说的这一句,必须和商家自己屏幕上那一行同一个口径。
+    expect(section).toContain("at the price in effect when it is queued for understanding");
+    expect(section, "只说「排队时」不说排队可能要等,读起来还是「落地即锁价」").toContain("backlog");
+    for (const lie of ["locked in the moment", "the moment it lands", "moment you upload"]) {
+      expect(section, `又出现了「${lie}」—— 那是产品做不到的承诺`).not.toContain(lie);
+    }
   });
 });
 
@@ -453,6 +545,10 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     expect(ottoInstructions).not.toContain("Talking to you is FREE");
     // 计价口径要说出口:按这条消息真实用量算,所以短问题便宜、长思考贵。
     expect(ottoInstructions).toMatch(/what the message actually uses/i);
+    // MONEY-A10(七维审核):同一笔扣款里的**第二条腿**也要说出口。少了这一句,商家看到
+    // 账单上比「模型成本 +5%」多出来的那一块,只能当成算错了。
+    expect(ottoInstructions).toContain("rides inside the SAME message charge");
+    expect(ottoInstructions).toContain(CHAT_SEARCH_MERCHANT_CLAUSE);
   });
 
   // 3) 金额启发式 —— 同一把尺子,同样只是预警。
@@ -466,6 +562,26 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     "no words start it, whatever the user types, and nothing is charged for making an image or video until that approval happens",
     // 既有的、说明生成要批准才花钱的那句
     "Making an image or a video costs credits and never happens without the user approving that specific card first.",
+    // ── MONEY-A9 的三格理解价(规格 §7.3)────────────────────────────────────────
+    //
+    // 这是 NUMERIC_CREDITS 唯一的例外,而且它**没有放松那条规则的理由**。那条规则怕的是
+    // 「价目会变,提示词不许写死数字」—— 这三个数字不是写死的,它们是 instructions.ts 从
+    // `pricedUnderstandingCredits` 现算插进去的,而下面这三条豁免同样现算。改钉点,提示词
+    // 和这份白名单一起动;真有人手抄一个数进提示词,它对不上这里,照样红。
+    //
+    // 为什么非要在提示词里出现一个数:URL 导入是一个**没有界面的服务端动作**,商家看不到
+    // 任何价目小字。规格因此把它的披露放在动作层 —— Otto 在导入之前亲口报那个价,是商家
+    // 被扣费之前唯一可能听见的一句。给不出数字的「这会花一点钱」不是披露。
+    ...UNDERSTANDING_PRICE_CLAUSES,
+    // ── MONEY-A10 的聊天搜索价(规格 §7.4)──────────────────────────────────────
+    //
+    // 同样现算、同样必须出现数字:在 2026-09-02 之前这里写的是「It is $0」,而每一次
+    // query 都在打同一个付费搜索 API —— 那句话既让模型放心多搜,又是假的。模型要按价决定
+    // 该不该搜,就得知道价;不给数字的「这会花一点钱」不是披露。
+    CHAT_SEARCH_PRICE_CLAUSE,
+    // 同一条腿的**商家侧**说法(七维审核):同样现算、同样必须带数字 —— 一句不给数的
+    // 「搜索也要钱」不是披露,商家对不上账单上那一笔。
+    CHAT_SEARCH_MERCHANT_CLAUSE,
   ];
 
   // 词表:比较词 + 免费词 + 单价词。覆盖常见写法,不覆盖全部。

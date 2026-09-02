@@ -11,6 +11,8 @@ import {
   impersonateTenant,
   setMembershipStatus,
 } from "@/lib/tenant-actions";
+import { refundCreditsAction, completeManualRefund, abandonManualRefund } from "@/lib/refund-actions";
+import { FINANCE_ADJUST_LIMITS, FINANCE_PER_ACTION_LIMIT_MESSAGE } from "@fikirtive/core/finance-limits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AdminActionConfirmDialog } from "./AdminActionConfirmDialog";
@@ -23,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -75,7 +78,7 @@ function Metric({ label, value, detail, tone = "neutral" }: { label: string; val
 }
 
 export function TenantDetail({ detail }: { detail: Detail }) {
-  const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit } = detail;
+  const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit, adjustRolling30dDisplay, adjustRolling30dLimitDisplay, openManualRefunds, openManualRefundsHasMore } = detail;
   const router = useRouter();
   const grantBusyRef = useRef(false);
   const statusBusyRef = useRef(false);
@@ -93,13 +96,24 @@ export function TenantDetail({ detail }: { detail: Detail }) {
   const [cutMsg, setCutMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmAction, setConfirmAction] = useState<"suspend" | "cut-sessions" | null>(null);
 
+  // MONEY-A14 人工退款。**退款单号在表单里生成一次就不再变**:它同时是账本 refId 和 Stripe 的
+  // idempotency key,每点一次就换一个新号,等于把幂等保护自己关掉。重试要用同一个号。
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundPi, setRefundPi] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [refundPartial, setRefundPartial] = useState(false);
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundMsg, setRefundMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [refundTicket, setRefundTicket] = useState(() => crypto.randomUUID());
+  const refundBusyRef = useRef(false);
+
   const [impersonateOpen, setImpersonateOpen] = useState(false);
   const [impersonateReason, setImpersonateReason] = useState("");
   const [impersonateBusy, setImpersonateBusy] = useState(false);
   const [impersonateMsg, setImpersonateMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const canImpersonate = impersonateReason.trim().length >= 8;
   const parsedGrantAmount = Number(grantAmount);
-  const grantOverLimit = Number.isFinite(parsedGrantAmount) && Math.abs(parsedGrantAmount) > 1000;
+  const grantOverLimit = Number.isFinite(parsedGrantAmount) && Math.abs(parsedGrantAmount) > FINANCE_ADJUST_LIMITS.perActionDisplay;
 
   async function submitGrant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -111,8 +125,8 @@ export function TenantDetail({ detail }: { detail: Detail }) {
         setGrantMsg({ ok: false, text: "Enter a non-zero whole number of credits." });
         return;
       }
-      if (Math.abs(displayedAmount) > 1000) {
-        setGrantMsg({ ok: false, text: "Credit actions are capped at 1,000 displayed credits each." });
+      if (Math.abs(displayedAmount) > FINANCE_ADJUST_LIMITS.perActionDisplay) {
+        setGrantMsg({ ok: false, text: FINANCE_PER_ACTION_LIMIT_MESSAGE });
         return;
       }
       setGrantBusy(true);
@@ -134,6 +148,98 @@ export function TenantDetail({ detail }: { detail: Detail }) {
       router.refresh();
     } finally {
       grantBusyRef.current = false;
+    }
+  }
+
+  async function submitRefund(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (refundBusyRef.current) return;
+    refundBusyRef.current = true;
+    try {
+      const displayedAmount = Number(refundAmount);
+      if (!Number.isInteger(displayedAmount) || displayedAmount <= 0) {
+        setRefundMsg({ ok: false, text: "Enter a whole number of credits to refund." });
+        return;
+      }
+      if (!confirm(`Refund ${displayedAmount} credits to ${ownerEmail || orgId} and take the credits back? This moves real money.`)) return;
+      setRefundBusy(true);
+      setRefundMsg(null);
+      // 单价不由这里决定:动作会从那笔付款自己的事实(实收 ÷ 入账 credits)推导出来。
+      const result = await refundCreditsAction({
+        orgId,
+        displayedAmount,
+        paymentIntentId: refundPi.trim(),
+        refundId: refundTicket,
+        allowPartial: refundPartial,
+        reason: refundReason,
+      });
+      setRefundBusy(false);
+      if ("error" in result) {
+        // 单号**不换**:失败的下一步通常是「用同一个号再跑一次」(Stripe 那一步幂等),
+        // 换号会把这层保护关掉。
+        setRefundMsg({ ok: false, text: result.error });
+        return;
+      }
+      if (result.status === "pending") {
+        // Stripe 受理了但还没到终态:credits 仍然锁着。这张单现在出现在下面「Open refund holds」
+        // 里(它来自账本,刷新页面也丢不了),收口从那里按 Complete。
+        setRefundMsg({
+          ok: true,
+          text:
+            `Stripe accepted ${result.refundId} but has not settled it yet. The credits stay held and this refund is now listed under "Open refund holds" — finish it there once Stripe reports succeeded. Do NOT start another refund.` +
+            (result.auditRecorded === false ? " (The audit row could not be written — Complete will still find it through Stripe.)" : ""),
+        });
+        setRefundTicket(crypto.randomUUID());
+        router.refresh();
+        return;
+      }
+      setRefundMsg({
+        ok: true,
+        text: `Refunded ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId})${result.status === "already-settled" ? " — already done earlier, nothing moved twice" : ""}. Log it in docs/ops/manual-money-ledger.md.`,
+      });
+      setRefundAmount("");
+      setRefundPi("");
+      setRefundReason("");
+      setRefundPartial(false);
+      setRefundTicket(crypto.randomUUID()); // 这一单结清了,下一单换新号
+      router.refresh();
+    } finally {
+      refundBusyRef.current = false;
+      setRefundBusy(false);
+    }
+  }
+
+  /** 收口一张受理中的退款单:去 Stripe 重读状态,succeeded 才落账。不会发起第二笔退款。 */
+  async function finishHold(ticket: string, mode: "complete" | "abandon") {
+    if (refundBusyRef.current) return;
+    if (mode === "abandon" && !confirm("Release this hold? Only do this after checking Stripe has no refund for it.")) return;
+    refundBusyRef.current = true;
+    setRefundBusy(true);
+    try {
+      const result = mode === "complete"
+        ? await completeManualRefund({ orgId, refundId: ticket })
+        : await abandonManualRefund({ orgId, refundId: ticket });
+      if ("error" in result) {
+        setRefundMsg({ ok: false, text: result.error });
+        return;
+      }
+      if (result.status === "pending") {
+        setRefundMsg({ ok: true, text: `Stripe still reports ${result.refundId} as not settled. The credits stay held — try again later.` });
+        return;
+      }
+      setRefundMsg({
+        ok: true,
+        text: result.status === "abandoned"
+          ? `Released ${result.displayedAmount} credits back to the merchant. Log the abandoned refund in docs/ops/manual-money-ledger.md.`
+          : result.status === "released"
+            // Stripe 自己说那笔退款 failed/canceled:钱没出去,hold 成对放掉(复审三 P2)。
+            ? `Stripe reports ${result.refundId} as failed or canceled, so the ${result.displayedAmount} held credits went back to the merchant. Log it in docs/ops/manual-money-ledger.md.`
+            : `Settled ${result.displayedAmount} credits (RM${(result.amountMinor / 100).toFixed(2)}, ${result.refundId}). Log it in docs/ops/manual-money-ledger.md.`,
+      });
+      router.refresh();
+    } finally {
+      refundBusyRef.current = false;
+      setRefundBusy(false);
     }
   }
 
@@ -241,6 +347,10 @@ export function TenantDetail({ detail }: { detail: Detail }) {
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant={grantOverLimit ? "warning" : "outline"}>{grantOverLimit ? "Over finance limit" : "Within finance limit"}</Badge>
+              {/* MONEY-A14:真正会拒绝你的是**累计**,不是单笔 —— 所以累计就摆在按钮旁边。 */}
+              <Badge variant={adjustRolling30dDisplay > adjustRolling30dLimitDisplay ? "destructive" : "outline"}>
+                {adjustRolling30dDisplay.toLocaleString()} / {adjustRolling30dLimitDisplay.toLocaleString()} manual credits in 30 days
+              </Badge>
               <span>Negative values deduct credits if the account can stay non-negative.</span>
               {grantMsg ? <span className={grantMsg.ok ? "text-success" : "text-destructive"}>{grantMsg.text}</span> : null}
             </div>
@@ -293,6 +403,81 @@ export function TenantDetail({ detail }: { detail: Detail }) {
           </div>
         </Panel>
       </div>
+
+      <Panel
+        title="Manual refund"
+        subtitle="Locks the credits first, then refunds the card, then settles the ledger with the Stripe refund id. Log every refund in docs/ops/manual-money-ledger.md."
+      >
+        <form onSubmit={submitRefund} className="grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-[120px_1fr_auto] sm:items-end">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Credits</span>
+              <Input type="number" step="1" min="1" inputMode="numeric" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} placeholder="100" required className="h-10 text-sm" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Original payment (pi_…)</span>
+              <Input value={refundPi} onChange={(event) => setRefundPi(event.target.value)} placeholder="pi_3Q…" required className="h-10 font-mono text-sm" />
+            </label>
+            <Button type="submit" variant="secondary" disabled={refundBusy}>{refundBusy ? "Refunding" : "Refund"}</Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Reason</span>
+              <Input value={refundReason} onChange={(event) => setRefundReason(event.target.value)} maxLength={500} placeholder="unused credits, merchant asked on 2026-09-02" className="h-10 text-sm" />
+            </label>
+            <label htmlFor="refund-partial" className="flex items-center gap-2 pb-2 text-xs text-muted-foreground">
+              <Checkbox id="refund-partial" checked={refundPartial} onCheckedChange={(next) => setRefundPartial(next === true)} />
+              Refund what the balance can cover
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">Refund id {refundTicket.slice(0, 8)}</Badge>
+            <span>Ringgit is worked out from that payment&apos;s own price per credit — what it charged, divided by the credits it actually granted. A retry must reuse the same refund id; unfinished ones are listed below.</span>
+            {refundMsg ? <span className={refundMsg.ok ? "text-success" : "text-destructive"}>{refundMsg.text}</span> : null}
+          </div>
+        </form>
+      </Panel>
+
+      {openManualRefunds.length > 0 ? (
+        <Panel
+          title="Open refund holds"
+          subtitle="Credits already locked for a refund that Stripe has not settled. They come from the ledger, so a page refresh never loses one. No sweeper will ever release them — only Complete or Abandon."
+        >
+          <div className="grid gap-2">
+            {openManualRefundsHasMore ? (
+              // 复审三 P1:列表有页,但**没有更多入口**。与其静静地少列几张(那正是 credits
+              // 无声锁死的原因),不如如实说还有更早的、要人来接手。
+              <p className="rounded-xl bg-warning-soft p-3 text-xs text-warning-soft-foreground">
+                There are older open refund holds than the {openManualRefunds.length} shown here. Ask engineering to list the rest before closing these — every unlisted hold is credits the merchant cannot spend.
+              </p>
+            ) : null}
+            {openManualRefunds.map((hold) => (
+              <div key={hold.refundId} className="grid gap-2 rounded-xl border border-border bg-background p-3 md:grid-cols-[1fr_auto] md:items-center">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="warning">held {hold.heldDisplay.toLocaleString()} credits</Badge>
+                    <span className="font-mono text-xs text-muted-foreground">{hold.refundId.slice(0, 8)}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{hold.paymentIntentId}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {hold.currency.toUpperCase()}{(hold.amountMinor / 100).toFixed(2)} to refund
+                    {hold.allowPartial && hold.heldDisplay !== hold.requestedDisplay ? ` · partial of ${hold.requestedDisplay.toLocaleString()} asked` : ""}
+                    {" · opened "}{fmtDate(hold.at)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="secondary" disabled={refundBusy} onClick={() => finishHold(hold.refundId, "complete")}>
+                    Complete
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" disabled={refundBusy} onClick={() => finishHold(hold.refundId, "abandon")}>
+                    Abandon
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
 
       <div className="grid gap-5 xl:grid-cols-2">
         <Panel title="Credit activity" subtitle="Recent append-only ledger rows.">

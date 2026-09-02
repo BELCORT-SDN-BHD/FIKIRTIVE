@@ -14,10 +14,16 @@
  * ── 铁律 ────────────────────────────────────────────────────────────────────
  *  1. **商家永远不点「分析」按钮。** 理解在后台自动跑(worker 的 understand 队列),
  *     商家的体感是「Otto 好像认识我的店」。这个模块因此不导出任何「开始分析」的入参形状。
- *  2. **商家一分钱都不付。** 理解是平台成本,不进 CreditLedger,不 reserve/settle。
- *     真正兜住花费的是三样都在这个文件里的东西:总开关、**平台级的每日美元预算**、
- *     每次调用的 token 上限(以及让 token 上限真正成立的两道 pre-flight 闸:视频按时长、
- *     图片按像素/字节 —— 没有它们,「每次 token 上限」只是许愿)。
+ *  2. ~~**商家一分钱都不付。**~~ **【2026-09-01 S2 §7.3 / MONEY-A9 起废止】** Founder
+ *     2026-08-31 裁决原话「不要分开,也不要我们吸收,就是用户使用照算」:理解改为
+ *     **商家计费面** —— 三类按 65% 定价法各算出一个按件价(`spend.ts` 的
+ *     `pricedUnderstandingCredits`,价从下面 `understandingWorstCaseUsd` 的最坏成本推),
+ *     走同一条 reserve→settle 钱路,进 CreditLedger。**披露先于扣费**(上传界面事先可见价目)。
+ *     本文件仍然只管**成本与上限**,一格价都不放:定价住 `spend.ts`(推导的单一权威),
+ *     计费接线住 worker。**平台级的每日美元预算降级为平台侧保险丝**(不再是唯一的花费兜底),
+ *     真正兜住单次花费的仍是每次调用的 token 上限(以及让 token 上限真正成立的两道
+ *     pre-flight 闸:视频按时长、图片按像素/字节 —— 没有它们,「每次 token 上限」只是许愿),
+ *     因为它同时是**报价的分母**:token 上限一变,售价当场跟着变。
  *  3. **白标。** 这个文件里没有供应商名字;产物里也不许出现(worker 落盘走 redact)。
  *
  * ── 一条纪律:资源闸不许毁数据 ────────────────────────────────────────────────
@@ -30,6 +36,7 @@
  * 是一道假闸(字节推不出像素),而放行则是没有闸 —— 两者都在 r2 上被实证破掉了 1%。
  */
 
+import { costPinValue } from "./cost-pins.js";
 import { SEEDANCE_COGS_USD_PER_SECOND, GEN_VIDEO_SECONDS } from "./gen.js";
 
 type Env = Record<string, string | undefined>;
@@ -55,8 +62,25 @@ export function isUnderstandingKind(v: string): v is UnderstandingKind {
  *  key 不对、schema 被拒),文件本身一点问题都没有。重试用完之后行停在这里等人修,
  *  修好了扫描器把它捡回 QUEUED。它存在的唯一理由是 2026-08-18 那次事故:一个没核过的
  *  模型 id 让每次调用 404,而 404 当时被当成「这份素材读不了」写成 FAILED 终态,于是
- *  每个商家的每一份好文件被逐个永久判死,而且没有任何一条恢复路径。 */
-export const UNDERSTANDING_STATUSES = ["QUEUED", "RUNNING", "DONE", "FAILED", "SKIPPED", "PAUSED"] as const;
+ *  每个商家的每一份好文件被逐个永久判死,而且没有任何一条恢复路径。
+ *
+ *  PAUSED_BALANCE = **「待补余额」暂停**(MONEY-A9 计费四则④,2026-09-01),同样**不是终态**:
+ *  商家余额不足,reserve 抛 InsufficientCredits,这一行停在这里等充值。恢复=充值事件唤醒 +
+ *  扫描器兜底轮询,捞回条件=余额 ≥ 行上的快照价;暂停期间**不打供应商**(不无限重扫),
+ *  素材无限期保留(credits 不过期,同理)。
+ *  **和 PAUSED 是两回事,别合并**:PAUSED 是**我方**配置/请求坏了(要人去修代码或配置),
+ *  PAUSED_BALANCE 是**商家侧**余额不够(要商家去充值)。合成一个状态就等于把「我们坏了」
+ *  和「你没钱了」讲成同一句话:扫描器捞回的判据不同(一个等人修、一个等余额),商家看到的
+ *  也该是完全不同的两件事。 */
+export const UNDERSTANDING_STATUSES = [
+  "QUEUED",
+  "RUNNING",
+  "DONE",
+  "FAILED",
+  "SKIPPED",
+  "PAUSED",
+  "PAUSED_BALANCE",
+] as const;
 export type UnderstandingStatus = (typeof UNDERSTANDING_STATUSES)[number];
 
 /** 理解模型的**内部**代号。白标:对外(日志、卡面、Otto 的嘴)一律不出现供应商 id;
@@ -65,9 +89,10 @@ export const UNDERSTANDING_MODEL = "understand-mini";
 
 // ── 单价与 token 上限(成本敏感,全部集中在此)────────────────────────────────
 
-/** 理解模型牌价(USD / 1M token,票面给定)。 */
-export const UNDERSTANDING_USD_PER_MTOKEN_IN = 0.1;
-export const UNDERSTANDING_USD_PER_MTOKEN_OUT = 0.4;
+/** 理解模型牌价(USD / 1M token,票面给定)。
+ *  数值已收编 `cost-pins.ts`(成本的单一权威),这两行只是命名出口 —— 改价改钉点。 */
+export const UNDERSTANDING_USD_PER_MTOKEN_IN = costPinValue("understanding:in-per-mtoken");
+export const UNDERSTANDING_USD_PER_MTOKEN_OUT = costPinValue("understanding:out-per-mtoken");
 
 /**
  * 视频理解的采样口径 —— **这一组数字是「视频 token 上限」能成立的全部原因**。
@@ -242,20 +267,29 @@ export function assetUnderstandingEnabled(env?: Env): boolean {
 }
 
 /**
- * **平台**一天的理解预算(USD)。回答的是「我们一天最多被账单多少钱」——
+ * **平台**一天的理解花费**报警阈值**(USD)。回答的是「我们一天被账单多少钱之后要叫人」——
  * 那是一个 platform-wide 的问题,所以答案也必须是 platform-wide 的。
  *
  * 计量用的是**真实美元**,不是行数:`AssetUnderstanding` 上已经有 inputTokens /
  * outputTokens 两列,`understandingCostUsd()` 是现成的算式。数行数会在两头都错 ——
  * 一行失败但已经计费的读图数成 0,一行三次重试数成 1。
  *
- * 超线的动作是**暂缓**不是**丢弃**:那一轮不派新活,行留在 QUEUED,次日预算自然复位。
+ * ── 它不再是一道闸(Founder 2026-09-02 裁决,规格 §5 变更登记)────────────────────
+ * $5/天是**平台自付时代**的止损线。MONEY-A9 之后理解是商家付费的 SKU,同一个数字就变成了
+ * 一道**限制收入**的闸,而且是全平台先到先得:一个商家批量导入两千张图,当天所有商家的
+ * 素材都被标成「明天再读」。所以裁决是两件事一起做 —— 默认抬到 $50/天,并且**只报警不拦**:
+ * 超线时照记账、照读文件,发一条 founderAlert 三通道(每天最多一次),让人来看一眼是不是
+ * 供应商那边出了异常烧钱的事。真正的花费上限现在是**商家自己的余额**(reserve-first)。
+ *
+ * 随之作废的一句话:`0` 曾经是「全停」的合法意图。现在 `0` 只是「每天都报警」——
+ * 停掉理解的唯一开关是 {@link assetUnderstandingEnabled}(`ASSET_UNDERSTANDING=off`)。
  */
-export const UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT = 5;
+export const UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT = 50;
 export const UNDERSTANDING_DAILY_BUDGET_ENV = "ASSET_UNDERSTANDING_DAILY_BUDGET_USD";
 export function understandingDailyBudgetUsd(env?: Env): number {
-  // 空串/全空白算「没设」—— `Number("")` 是 0,而 0 在这里是「全停」这个合法意图。
-  // 不先挑出来,一个空环境变量就会被读成 Founder 亲自把理解关了。
+  // 空串/全空白算「没设」—— `Number("")` 是 0,而 0 是一个合法值(自 2026-09-02 起它的
+  // 意思是「每天都越线、每天报警一次」,**不是**暂停;暂停走 ASSET_UNDERSTANDING=off)。
+  // 不先挑出来,一个空环境变量就会被读成 Founder 亲自把线调到了 0。
   const raw = (getEnv(env)[UNDERSTANDING_DAILY_BUDGET_ENV] ?? "").trim();
   if (raw === "") return UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT;
   const n = Number(raw);
@@ -545,7 +579,19 @@ export const UNDERSTANDING_IMAGE_TOO_LARGE =
 export const UNDERSTANDING_PAUSED = "Reading is paused right now.";
 export const UNDERSTANDING_NO_MEDIA_URL = "This environment can't hand the file to the reader yet.";
 export const UNDERSTANDING_METADATA_PENDING = "That file's dimensions aren't known yet — it will be read once they are.";
-export const UNDERSTANDING_BUDGET_REACHED = "Today's reading budget is used up — this file is read tomorrow.";
+// `UNDERSTANDING_BUDGET_REACHED`(「今天的预算用完了,明天再读这份文件」)随 Founder
+// 2026-09-02 的「只报警不拦」裁决一并删除:没有任何一条路径会再把一行退回队列说这句话,
+// 留着一句永不出现的商家文案只会让下一个人以为那道闸还在。
+/**
+ * **PAUSED_BALANCE 的措辞**(MONEY-A9 计费四则④)。
+ *
+ * 和上面那句「今天的预算用完了」说的是两回事,商家要做的事也相反:那一句是**平台**侧的
+ * 保险丝,商家什么都不用做、明天自己会读;这一句是**商家**余额不够,只有充值能让它继续。
+ * 所以它必须点名 credits,并且说清楚文件还在(不是被丢掉了)—— 素材无限期保留,
+ * credits 也不过期,商家隔多久回来充值都读得到。
+ */
+export const UNDERSTANDING_WAITING_FOR_CREDITS =
+  "That file is waiting for credits — it will be read as soon as your balance covers it.";
 /**
  * **PAUSED 的措辞** —— 这一句必须和 FAILED 那一句说的是两回事,因为它们要商家做的事相反。
  * 「读不清楚」的正确建议是传一份更清楚的;而这一行的文件本来就好好的,商家做什么都没用,

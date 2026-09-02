@@ -60,6 +60,27 @@ describe("spendCategoryOf", () => {
     expect(spendCategoryOf({ refId: null, kind: "ADJUST", source: "ADMIN" }, jobKinds)).toBe("adjustment");
   });
 
+  it("MONEY-A9: an asset-understanding charge reads as its own category, re-billed rounds included", () => {
+    // The one charge a merchant never clicked a button for — it must not hide inside the
+    // neutral fallback. `:r<n>` is the re-bill round after a refund (a money-path mechanic);
+    // both shapes are the same thing to a shop owner.
+    expect(spendCategoryOf({ refId: "understanding:abc", kind: "RESERVE", source: "SYSTEM" }, jobKinds)).toBe("understanding");
+    expect(spendCategoryOf({ refId: "understanding:abc:r2", kind: "SETTLE", source: "SYSTEM" }, jobKinds)).toBe("understanding");
+    expect(SPEND_CATEGORY_LABEL.understanding).toBe("Understanding");
+  });
+
+  it("MONEY-A14: 人工退款读作「Refund」,而不是泛泛的 Adjustment", () => {
+    // 三条腿(预扣 / 落账 / 失败释放)共用同一个 refId,所以都必须落在同一个类目上 ——
+    // 商家在消费历史里找的是「我的退款」,不是三行看不懂的账本机械。操作员写在 reason 里的
+    // 内部备注仍然不进这条读路径(#683):判定只看 refId 的形状。
+    for (const kind of ["RESERVE", "SETTLE", "REFUND"]) {
+      expect(spendCategoryOf({ refId: "manual-refund:ticket-1", kind, source: "SYSTEM" }, jobKinds)).toBe("refund");
+    }
+    expect(SPEND_CATEGORY_LABEL.refund).toBe("Refund");
+    // 隔壁的 ADMIN 调账仍然是 Adjustment —— 两件事没有被合并。
+    expect(spendCategoryOf({ refId: null, kind: "ADJUST", source: "ADMIN" }, jobKinds)).toBe("adjustment");
+  });
+
   it("never guesses: an unknown refId falls back instead of claiming a category", () => {
     expect(spendCategoryOf({ refId: "unknown-ref", kind: "RESERVE", source: "SYSTEM" }, jobKinds)).toBe("other");
   });
@@ -70,6 +91,7 @@ describe("spendCategoryOf", () => {
     expect(SPEND_CATEGORY_LABEL.image).toBe("Image");
     expect(SPEND_CATEGORY_LABEL.video).toBe("Video");
     expect(SPEND_CATEGORY_LABEL.topup).toBe("Top-up");
+    expect(SPEND_CATEGORY_LABEL.understanding).toBe("Understanding");
   });
 });
 

@@ -150,34 +150,129 @@ function prefixesInSource(): Map<string, string[]> {
   return found;
 }
 
-/** 清道夫 SQL 里的 LIKE 前缀名单。 */
-function prefixesInReaper(): Set<string> {
-  const src = fs.readFileSync(REAPER_FILE, "utf8");
+/** 某个文件里的 LIKE 前缀名单(这个清道夫扫哪些 refId)。 */
+function prefixesInReaperFile(file: string): Set<string> {
+  const src = fs.readFileSync(file, "utf8");
   return new Set([...src.matchAll(/LIKE '([a-z0-9-]+):%'/g)].map((match) => match[1]!));
 }
+
+/** 清道夫 SQL 里的 LIKE 前缀名单。 */
+function prefixesInReaper(): Set<string> {
+  return prefixesInReaperFile(REAPER_FILE);
+}
+
+/**
+ * **有专属清道夫的前缀** —— 不在这个 LLM 清道夫的 LIKE 名单里,但绝不是没人扫。
+ *
+ * 登记而不是直接加进上面那份名单,是因为这个清道夫的退款带着 approval-card 的收口语义
+ * (第 2、3 遍要去把卡片改成 failed)。理解那条链路根本没有卡片,借它的名单等于借它的语义 ——
+ * 一次错误的耦合。所以前缀各归各的清道夫,而这张表负责让守卫仍然咬得住:登记一条,
+ * 就必须在它点名的文件里**真的**找得到那句 `LIKE '<前缀>:%'`,否则这条登记就是一句空话。
+ */
+const DEDICATED_REAPERS: Record<string, string> = {
+  // MONEY-A9(2026-09-01):素材理解从「平台自己付」变成按件计费,于是这条链路也会漏 hold。
+  understanding: "apps/worker/src/jobs/understand.ts", // reapStaleUnderstandingReservations
+};
+
+/**
+ * **刻意没有清道夫的前缀** —— 而且任何清道夫都不许去扫它们(MONEY-A14,2026-09-02)。
+ *
+ * `manual-refund:` 的 hold 是一张人工退款单的**前半段**:credits 先被锁死,钱才允许离开
+ * Stripe。Stripe 把退款收成 `pending` 的时候,这个 hold 必须原样留着等人来收口 ——
+ * 一个「60 分钟没收口就退回去」的通用巡检在这里的后果是**平台双付**:hold 被退还给商家,
+ * Stripe 随后把同一笔钱也退了。
+ *
+ * 所以这条前缀的收口只有两个出口:`completeManualRefund`(重读 Stripe 状态后落账或释放),
+ * 或者人按 runbook 处置。它不是「漏登记」,是「登记为不许碰」—— 下面那条测试逐个清道夫
+ * 文件去核实这句话是真的。
+ */
+const NEVER_REAPED: Record<string, string> = {
+  "manual-refund": "MONEY-A14 人工退款:pending 期间 hold 必须留着,自动退回 = 平台双付",
+};
+
+/** 所有会扫台账的清道夫文件 —— 新增一个就往这里加一行,守卫据此逐个核实。 */
+const REAPER_FILES = [
+  "apps/worker/src/jobs/llm-reservation-reaper.ts",
+  "apps/worker/src/jobs/understand.ts",
+];
 
 describe("reaper prefix coverage — every prefixed refId in the codebase is reaped", () => {
   const inSource = prefixesInSource();
   const inReaper = prefixesInReaper();
 
+  it("每条「专属清道夫」登记都必须在它点名的文件里真的扫那个前缀(登记不许是空话)", () => {
+    for (const [prefix, file] of Object.entries(DEDICATED_REAPERS)) {
+      const swept = prefixesInReaperFile(path.join(REPO_ROOT, file));
+      expect(
+        swept.has(prefix),
+        `DEDICATED_REAPERS 说 "${prefix}:" 由 ${file} 扫,但那个文件里没有 LIKE '${prefix}:%' —— ` +
+          `要么那个清道夫没写/被删了,要么这条登记该撤。任何一种,那个前缀现在都没人扫。`,
+      ).toBe(true);
+      expect(
+        inReaper.has(prefix),
+        `"${prefix}:" 同时在两个清道夫的名单里 —— 一笔漏掉的预扣会被退两次判断、` +
+          `两条恢复语义混在一起。只留一个。`,
+      ).toBe(false);
+    }
+  });
+
   it("scanner sanity: finds the known prefixes (a broken regex must not green-wash)", () => {
-    // 'brand-research' was dropped 2026-07-04 with the dead pre-Otto module; 'draft'/'enhance'
-    // were dropped 2026-07-07 with the dead paid cowork endpoints (batch-3 7-10). The reaper
-    // still lists those prefixes (harmless — sweeps any historical leaked rows) but source no
-    // longer builds them.
     for (const known of ["otto-stream", "otto-turn", "research"]) {
       expect([...inSource.keys()], `expected the scanner to find "${known}:"`).toContain(known);
     }
     expect(inReaper.size).toBeGreaterThanOrEqual(8);
   });
 
-  it("every source prefix is in the reaper's LIKE list (a miss locks credits forever)", () => {
+  /**
+   * **历史前缀刻意保留**(编排者裁定 2026-09-02,保守侧;钱引擎⑤B 复审落修)。
+   *
+   * `brand-research` 随 2026-07-04 的死 pre-Otto 模块下架,`draft`/`enhance` 随 2026-07-07
+   * 的死付费 cowork 端点下架 —— 从那以后仓库里没有任何一处再用它们 reserve 过。⑤B 一度把
+   * 这三条 LIKE 删掉(「匹配不到的子句不是安全网」),复审时改回来了,理由是那条推理漏了
+   * 一件事:**日账本守恒检测器看不见漏掉的 hold**。一条没有 finalizer 的 RESERVE 仍然让
+   * `balance == Σ balanceDelta` 与 `reserved == Σ reservedDelta` 两条不变量完全成立 ——
+   * 那正是一笔**合法的、还挂着的**冻结长的样子。所以删掉这三行换来的不是「省下三次扫描」,
+   * 是「万一真有遗留行,再也没有任何一条路径会退它」,而那是商家的钱被永久冻住。
+   *
+   * 删除的条件因此是**证据**不是推理:生产上跑一次只读查询,证实这三个前缀下没有未终结的
+   * RESERVE 行。在那之前它们留着。
+   *
+   * 这条用例钉的是**双向**的:名单里仍然有它们(别再手滑删掉),而且源码里确实没人再写
+   * (真有人重新启用,上面那条「every source prefix is swept」会照常把他拦下)。
+   */
+  it("历史前缀(brand-research / draft / enhance)仍在名单里扫着,而源码确实没人再写", () => {
+    for (const dead of ["brand-research", "draft", "enhance"]) {
+      expect(
+        inReaper.has(dead),
+        `"${dead}:" 不在清道夫的 LIKE 名单里了。遗留 hold 是合法冻结 —— 守恒检测器看不到它,` +
+          `没有第二条路径会退它。删除的前提是生产只读查询证实无未终结 RESERVE 行,不是推理。`,
+      ).toBe(true);
+      expect([...inSource.keys()], `源码又开始写 "${dead}:" 了 —— 那它就不再是「历史前缀」`).not.toContain(dead);
+    }
+  });
+
+  it("MONEY-A14:登记为「不许碰」的前缀,没有任何一个清道夫在扫它", () => {
+    for (const [prefix, why] of Object.entries(NEVER_REAPED)) {
+      for (const file of REAPER_FILES) {
+        expect(
+          prefixesInReaperFile(path.join(REPO_ROOT, file)).has(prefix),
+          `${file} 扫了 "${prefix}:" —— 这条前缀登记为不许自动收口(${why})。` +
+            `把它从那个清道夫的 LIKE 名单里拿掉,或者先去改这条登记(那要先想清楚双付怎么办)。`,
+        ).toBe(false);
+      }
+      expect(prefix in DEDICATED_REAPERS, `"${prefix}:" 不能同时登记成「有专属清道夫」和「不许碰」`).toBe(false);
+    }
+  });
+
+  it("every source prefix is swept by SOME reaper (a miss locks credits forever)", () => {
     for (const [prefix, files] of inSource) {
       expect(
-        inReaper.has(prefix),
+        inReaper.has(prefix) || prefix in DEDICATED_REAPERS || prefix in NEVER_REAPED,
         `refId prefix "${prefix}:" (used in ${files.join(", ")}) is NOT in the reaper's LIKE list ` +
-          `(apps/worker/src/jobs/llm-reservation-reaper.ts). A crash between reserve and settle would ` +
-          `leak that reservation FOREVER — add the prefix to the reaper (or consciously handle recovery).`,
+          `(apps/worker/src/jobs/llm-reservation-reaper.ts) and has no entry in DEDICATED_REAPERS ` +
+          `or NEVER_REAPED. ` +
+          `A crash between reserve and settle would leak that reservation FOREVER — add the prefix ` +
+          `to the reaper, or give it a reaper of its own and register it here.`,
       ).toBe(true);
     }
   });

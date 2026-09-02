@@ -16,7 +16,6 @@ import {
   storageKeyToSrc,
   resolveUploadMime,
   MEDIA_SNIFF_BYTES,
-  INGEST_QUEUE,
   RENDER_QUEUE,
   CAPTION_QUEUE,
   TRANSCRIPT_GENERATION,
@@ -29,7 +28,6 @@ import type { EntityType, ShotStatus } from "@fikirtive/db";
 import { storage, extFromFilename } from "./storage";
 import { getBoss } from "./queue";
 import { isCannedStarter } from "./otto-canned-starters";
-import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -101,20 +99,6 @@ function assetUpsert(
     update: { deletedAt: null, ext, mime, sizeBytes, originalFilename },
     create: ingested.create,
   });
-}
-
-/** Attach a (base-level) ReferenceImage, swallowing the live-uniqueness P2002.
- *  Content-addressed upload dedups identical bytes to one Asset, so re-picking or
- *  re-uploading the same image would attach it twice; ReferenceImage_live_entity_
- *  asset_variant_key rejects the dup and we skip it (already attached) instead of
- *  500-ing the upload. Mirrors attachOutputs' skip in apps/worker/src/jobs/refgen.ts. */
-async function createRefSkippingDup(data: { id: string; ownerId: string; entityId: string; assetId: string; position: number }): Promise<void> {
-  try {
-    await prisma.referenceImage.create({ data });
-  } catch (e) {
-    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return;
-    throw e;
-  }
 }
 
 // ---------- projects ----------
@@ -459,8 +443,8 @@ export async function createEntity(formData: FormData) {
         // (ReferenceImage_live_entity_asset_variant_key) rejects the dup with P2002, and
         // inside a transaction that P2002 aborts the whole upload. The entity is brand new
         // here, so its only possible duplicate is a repeat within THIS pick: skip it up
-        // front instead of letting the database raise (createRefSkippingDup's swallow only
-        // works outside a transaction).
+        // front instead of letting the database raise: a post-hoc P2002 swallow cannot help
+        // inside a transaction, which is why this path skips BEFORE the insert.
         const attached = new Set<string>();
         for (const item of ingested) {
           const asset = await assetUpsert(tx, ownerId, item);
@@ -471,7 +455,7 @@ export async function createEntity(formData: FormData) {
           });
           attached.add(asset.id);
         }
-        // the first reference becomes the locked base (same invariant as addReferenceImages + the migration backfill)
+        // the first reference becomes the locked base (same invariant as the migration backfill)
         if (firstAssetId) {
           await tx.entity.update({
             where: { id_ownerId: { id: entityId, ownerId } },
@@ -655,52 +639,6 @@ export async function softDeleteReferenceImage(refImageId: string): Promise<{ ok
   });
 }
 
-export async function addReferenceImages(entityId: string, formData: FormData): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireOwner(); if ("error" in gate) return gate;
-  const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, async () => {
-    const { ownerId } = gate;
-    const entity = await prisma.entity.findFirst({ where: { id: entityId, ownerId, deletedAt: null } });
-    if (!entity) return { error: "Entity not found." };
-    // #698 — the tenant has to be named here too: the count runs unframed, and an ownerId-less
-    // filter is refused before it can report how much room is left.
-    const existing = await prisma.referenceImage.count({ where: { ownerId, entityId, deletedAt: null } });
-    const files = acceptRefFiles(formData, existing);
-    if (files.length === 0) return { error: "No valid images — PNG, JPG or WebP, ≤ 10 MB, up to 10 per element." };
-    const last = await prisma.referenceImage.findFirst({
-      where: { ownerId, entityId, deletedAt: null },
-      orderBy: { position: "desc" },
-    });
-    let position = (last?.position ?? -1) + 1;
-    for (const file of files) {
-      const asset = await assetUpsert(prisma, ownerId, await ingestFile(ownerId, file));
-      // re-uploading an already-attached image dedups to the same Asset → the
-      // live-uniqueness index rejects the dup with P2002; skip it (already attached).
-      await createRefSkippingDup({ id: newId(), ownerId, entityId, assetId: asset.id, position: position++ });
-    }
-    // an entity's base defaults to its first (lowest-position) live reference — so
-    // "Upload photo" locks the base in one step, matching the migration backfill.
-    if (!entity.baseAssetId) {
-      const first = await prisma.referenceImage.findFirst({
-        where: { ownerId, entityId, deletedAt: null },
-        orderBy: { position: "asc" },
-        select: { assetId: true },
-      });
-      // #698 — name the tenant in the key: an unframed `where: { id }` carries no ownerId,
-      // and the guard refuses it, so "Upload photo" died right after landing the images.
-      if (first) {
-        await prisma.entity.update({
-          where: { id_ownerId: { id: entityId, ownerId } },
-          data: { baseAssetId: first.assetId },
-        });
-      }
-    }
-    await logAction(ownerId, "entity.update", null, { entityId, addedRefs: files.length });
-    revalidatePath("/", "layout");
-    return { ok: true };
-  });
-}
-
 export async function softDeleteEntity(entityId: string): Promise<{ ok: true; shotRefs: number } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -858,85 +796,6 @@ export async function softDeleteShot(shotId: string): Promise<{ ok: true } | { e
 
 // ---------- generations (candidate zone + manual attach) ----------
 
-/**
- * M0 manual flow: user generates in ComfyUI with the copied prompt, then drops
- * the result here. Lands in the candidate zone (shotId = null). The whole
- * batch commits atomically — a mid-batch failure leaves nothing half-recorded.
- */
-export async function uploadCandidates(projectId: string, formData: FormData): Promise<{ ok: true; count: number } | { error: string }> {
-  const gate = await requireOwner(); if ("error" in gate) return gate;
-  const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, async () => {
-    const { ownerId } = gate;
-    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
-    if (!project) return { error: "Project not found." };
-    const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
-    if (files.length === 0) return { error: "No files received." };
-    const promptText = String(formData.get("promptText") ?? "");
-    const entityIds = formData.getAll("entityIds").map(String).filter(Boolean);
-    const entitySnapshot = await buildEntitySnapshot(ownerId, entityIds);
-
-    const ingested: Awaited<ReturnType<typeof ingestFile>>[] = [];
-    for (const file of files) ingested.push(await ingestFile(ownerId, file));
-
-    await prisma.$transaction(async (tx) => {
-      for (const item of ingested) {
-        const asset = await tx.asset.upsert({
-          where: {
-            ownerId_contentHash: { ownerId, contentHash: item.contentHash },
-          },
-          // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
-          update: {
-            deletedAt: null,
-            ext: item.create.ext,
-            mime: item.create.mime,
-            sizeBytes: item.create.sizeBytes,
-            originalFilename: item.create.originalFilename,
-          },
-          create: item.create,
-        });
-        await tx.generation.create({
-          data: {
-            id: newId(),
-            ownerId,
-            projectId,
-            shotId: null,
-            assetId: asset.id,
-            source: "UPLOAD",
-            promptText,
-            entitySnapshot,
-          },
-        });
-      }
-      await tx.actionEvent.create({
-        data: {
-          id: newId(),
-          ownerId,
-          projectId,
-          type: "generation.upload",
-          payload: { count: ingested.length, entityIds },
-        },
-      });
-    });
-    // best-effort metadata probe (real durations for the editor) — the upload
-    // itself must never fail on queue hiccups
-    try {
-      const boss = await getBoss();
-      const assets = await prisma.asset.findMany({
-        where: { ownerId, contentHash: { in: ingested.map((i) => i.contentHash) } },
-        select: { id: true, durationS: true },
-      });
-      for (const a of assets) {
-        if (a.durationS == null) await boss.send(INGEST_QUEUE, { assetId: a.id });
-      }
-    } catch (e) {
-      console.warn("[upload] ingest dispatch skipped:", e instanceof Error ? e.message : e);
-    }
-    revalidatePath("/", "layout");
-    return { ok: true, count: files.length };
-  });
-}
-
 // only the exts the i2v worker can animate (kept in sync with the worker's
 // source-image filter): png / jpg / webp
 const REF_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
@@ -952,8 +811,7 @@ async function looksLikeImage(file: File): Promise<boolean> {
 }
 
 /** Upload one image as a candidate Generation and return it, so Gen space can
- *  use it as an image-to-video source. Mirrors uploadCandidates for a single
- *  image; the i2v itself is a separate (paid) gen job. */
+ *  use it as an image-to-video source; the i2v itself is a separate (paid) gen job. */
 export async function uploadReference(projectId: string, formData: FormData): Promise<{ id: string; src: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);

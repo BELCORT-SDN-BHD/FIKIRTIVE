@@ -55,6 +55,9 @@ import {
   llmPricesFor,
   ottoLlmMargin,
   turnBudgetInternal,
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchChargeInternal,
+  searchUnitChargeInternal,
 } from "@fikirtive/core";
 import {
   createOttoRuntime,
@@ -266,6 +269,101 @@ describe("createOttoRuntime — profile matrix (profiles only limit tools/steps)
   });
 });
 
+// ── MONEY-A10: 聊天搜索的第二条钱腿(规格 §7.4) ──────────────────────────────
+//
+// 这一组钉的是「腿存在与否的条件」与「hold/settle 的口径」。腿不存在时,args 必须与本改动
+// 之前逐字节相同 —— 一个没接搜索的运行时不该因为这次改动多持住一分钱。
+
+describe("ottoBudgetArgsFor — MONEY-A10 搜索腿", () => {
+  const slots = (granted = OTTO_CHAT_MAX_SEARCHES_PER_TURN) => ({ granted, taken: 0, succeeded: 0 });
+  const req = { orgId: "org_1", refId: "otto-turn:m1", input: "x" as const };
+
+  it("MONEY-A10:没有 context ⇒ 没有搜索腿(与本改动前逐字节相同)", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req);
+    expect(args.extraHoldUnits).toBeUndefined();
+    expect(args.onExtraUnitsGranted).toBeUndefined();
+    expect(args.extraSettleInternal).toBeUndefined();
+  });
+
+  it("MONEY-A10:接了 search 但没有槽 ⇒ 没有钱腿(技能那边也会 fail closed 拒绝搜索)", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }) },
+    });
+    expect(args.extraHoldUnits).toBeUndefined();
+    expect(args.onExtraUnitsGranted).toBeUndefined();
+    expect(args.extraSettleInternal).toBeUndefined();
+  });
+
+  it("MONEY-A10:有槽但没接 search ⇒ 没有钱腿(搜不了就不许持钱)", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), searchSlots: slots() },
+    });
+    expect(args.extraHoldUnits).toBeUndefined();
+    expect(args.onExtraUnitsGranted).toBeUndefined();
+    expect(args.extraSettleInternal).toBeUndefined();
+  });
+
+  it("MONEY-A10:接了 search + 槽 ⇒ 按格坚实预留(单价+格数),settle 按实际成功次数", () => {
+    const s = slots();
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }), searchSlots: s },
+    });
+    // 交给账本的是**单价 + 最多几格**,不是一个平铺的总额 —— 判官 P1:平铺的总额会跟 LLM 腿
+    // 一起被低余额压掉,而工具照发满额的槽。写死这两个数会在改费率那天变成悄悄的欠收口。
+    expect(args.extraHoldUnits).toEqual({
+      unitInternal: searchUnitChargeInternal("basic"),
+      maxUnits: OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+    });
+    // 结算是**跑完才读**的闭包:此刻 0 次,搜了 3 次就是 3 次。
+    expect(args.extraSettleInternal?.()).toBe(0);
+    s.succeeded = 3;
+    expect(args.extraSettleInternal?.()).toBe(searchChargeInternal(3));
+  });
+
+  it("MONEY-A10:账本发的格数经 onExtraUnitsGranted 落进本轮的槽(低余额 ⇒ 少发)", () => {
+    const s = slots(0); // 初值 fail closed
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, req, {
+      research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }), searchSlots: s },
+    });
+    args.onExtraUnitsGranted!(2); // 账本说:这一轮只买得起 2 格
+    expect(s.granted).toBe(2);
+    // 结算永远被那 2 格罩得住 —— 工具最多只放 2 次搜索出去(见 research-web.test.ts)。
+    s.succeeded = 2;
+    expect(args.extraSettleInternal!()).toBe(2 * searchUnitChargeInternal("basic"));
+    expect(args.extraSettleInternal!()).toBeLessThanOrEqual(
+      s.granted * args.extraHoldUnits!.unitInternal,
+    );
+  });
+
+  // ── 复审 P1 的早期预警,钉在生产组合上 ─────────────────────────────────────────────
+  //
+  // 交给账本的 elasticCap = 这一轮的纯 LLM 腿 = min(worstCase, cap),它随 maxSteps 走:今天两个
+  // 聊天 profile 都是 OTTO_MAX_STEPS(=10)⇒ worst 70 ⇒ 弹性腿 40 ≥ 开门额 10;而一步预算只有
+  // 7(sonnet, maxSteps=1),**低于开门额**。
+  //
+  // 低于开门额**不是故障**:账本那边(reserveUpToCore 的 elasticForHold)会把它钳到开门额,
+  // 不变量照样成立,聊天照跑 —— 复审②改裁的就是这一条(先前那版是抛错,会让小步数配置整轮炸)。
+  // 所以这条断言是**预警**不是防炸线:它一旦红,意味着有人把聊天步数砍到了「弹性腿要靠钳才够
+  // 罩住开门额」的档位,那时该复核的是步数预算本身,而不是这条断言。
+  it("MONEY-A10 复审 P1:生产聊天组合交给账本的弹性腿 ≥ 开门额(无需钳制,早期预警)", () => {
+    for (const rt of [ottoInteractiveRuntime, ottoApprovalResumeRuntime]) {
+      const withSearch = ottoBudgetArgsFor(rt, req, {
+        research: { fetchUrl: async () => ({ url: "u", text: "" }), search: async () => ({ results: [] }), searchSlots: slots() },
+      });
+      // 纯 LLM 腿 = 同一份 args 去掉按格腿之后的 hold(meter.ts 交给账本的就是这个数)。
+      const llmLeg = llmHoldInternal({ ...withSearch, extraHoldUnits: undefined });
+      expect(llmLeg).toBeGreaterThanOrEqual(withSearch.reserveMinInternal!);
+    }
+  });
+
+  it("MONEY-A10:搜索腿与深研同源同费率(3×),不是第二份价目表", () => {
+    expect(searchChargeInternal(1)).toBe(searchUnitChargeInternal("basic"));
+    expect(searchChargeInternal(OTTO_CHAT_MAX_SEARCHES_PER_TURN)).toBe(
+      OTTO_CHAT_MAX_SEARCHES_PER_TURN * searchUnitChargeInternal("basic"),
+    );
+  });
+});
+
 // ── PH1-A1: budget args single-source ────────────────────────────────────────
 
 describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the manifest (PH1-A1)", () => {
@@ -307,7 +405,9 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     // The number the cap is capping, at the CHAT price…
     expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), OTTO_CONVERSATION_TURN_MARGIN, OTTO_MAX_STEPS)).toBe(70);
     // …and at the generation markup, which this turn deliberately does NOT use.
-    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), OTTO_MAX_STEPS)).toBe(120);
+    // 130 = 2.06× 的生成侧费率(Founder 2026-09-01 研究档裁决;2.0× 时代这里是 120)。
+    // 这个数**跟着裁决走**是对的 —— 它就是「聊天档若共用生成费率会持有多少」的锚。
+    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), OTTO_MAX_STEPS)).toBe(130);
   });
 
   it("#543: the conversation turn carries the 40-internal hold cap", () => {

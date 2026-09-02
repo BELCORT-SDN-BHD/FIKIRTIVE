@@ -35,8 +35,11 @@ import { ottoModel } from "./model.js";
  * so the report can cite them. The counters cap tool use; the tools read them + the caps.
  */
 export type ResearchContext = {
-  /** Thin web search — returns {title,url,snippet}[] (worker wires tavily/brave via env). */
-  search: (q: string) => Promise<{ title: string; url: string; snippet: string }[]>;
+  /** Thin web search — returns {title,url,snippet}[] (worker wires tavily/brave via env).
+   *  **Optional**(MONEY-A10 收敛):没有配置任何搜索 key 时,worker 注入 `undefined` ——
+   *  搜索源不可用就诚实说不可用($0),而不是给一个永远返回空数组的假端口,让 agent 以为
+   *  它搜过了、还替商家付了一次钱。 */
+  search?: (q: string) => Promise<{ title: string; url: string; snippet: string }[]>;
   /** Read ONE page of a public URL's clean text (worker wires fetchAndExtract + page-slice). */
   readPage: (
     url: string,
@@ -48,7 +51,12 @@ export type ResearchContext = {
   maxSearches: number;
   /** Cap: how many readSource calls are allowed. */
   maxPages: number;
-  /** Internal counter — searchSources calls made so far (starts at 0). */
+  /** MONEY-A10 in-flight 槽 —— **上限判的是这个数**,不是 searchesUsed。调用前占一槽,失败
+   *  释放,成功保留。纯「成功后计数」会被单步并发 fan-out 绕过上限(6 次并发全部先通过检查),
+   *  占槽把这条路堵死。与聊天侧 `OttoSearchSlots.taken` 同一个协议。 */
+  searchesTaken: number;
+  /** 计费计数器 —— 真正**成功**返回结果的 searchSources 次数(starts at 0)。worker 的
+   *  `extraSettleInternal` 按它结算,所以失败的调用一分钱都不收(#1046-P2)。 */
   searchesUsed: number;
   /** Internal counter — readSource calls made so far (starts at 0). */
   pagesUsed: number;
@@ -78,17 +86,30 @@ export async function executeSearchSources(
   runContext: { context: ResearchContext },
 ): Promise<unknown> {
   const ctx = runContext.context;
-  if (ctx.searchesUsed >= ctx.maxSearches) {
+  const search = ctx.search;
+  if (!search) {
+    // 没有配置任何搜索 key。诚实说不可用($0),不假装搜过 —— 从前这里拿到的是一个恒返回 []
+    // 的 stub,agent 以为自己搜了一次、商家也真的被收了一次钱(#1046-P2 的一半)。
+    return {
+      unavailable: true,
+      reason:
+        "Web search isn't available in this environment. Write the report from the sources you can read with readSource, and say plainly what you could not verify.",
+    };
+  }
+  // 上限判**已占槽数**;检查与占槽之间没有 await(单步并发 fan-out 因此只能占满上限,不能越过)。
+  if (ctx.searchesTaken >= ctx.maxSearches) {
     return {
       refused: true,
       reason: `Search budget reached (${ctx.maxSearches} searches). Read the sources you have and write the report now.`,
     };
   }
-  ctx.searchesUsed += 1;
+  ctx.searchesTaken += 1;
   try {
-    const results = await ctx.search(input.query);
+    const results = await search(input.query);
+    ctx.searchesUsed += 1; // 计费只认成功返回的那一次(#1046-P2)
     return { results };
   } catch (e) {
+    ctx.searchesTaken -= 1; // 失败释放槽,不计费
     return { error: e instanceof Error ? e.message : "Search failed." };
   }
 }

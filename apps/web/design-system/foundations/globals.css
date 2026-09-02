@@ -892,16 +892,32 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   border-radius: 16px;
   background: color-mix(in oklab, var(--foreground) 4%, transparent);
   display: flex;
+  flex-direction: column;
+  gap: 10px;
   align-items: center;
   justify-content: center;
   pointer-events: none;
 }
-.gb .cv-dropzone span {
+/* `> span` (was a descendant selector): the cost line mounted below is itself a <span>,
+   and the pill treatment would have swallowed its own `text-[0.75rem] text-muted-foreground`
+   — a disclosure that looks different on every surface is one a merchant stops recognising. */
+.gb .cv-dropzone > span {
   font-size: 14px;
   font-weight: 600;
   color: var(--foreground);
   background: var(--card);
   padding: 8px 16px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+}
+/* MONEY-A9 §7.3 — the understanding price rides under the drop label. Card ground, because
+   `text-muted-foreground` over whatever the merchant's board happens to show is unreadable. */
+.gb .cv-dropzone-cost {
+  max-width: min(520px, 80%);
+  text-align: center;
+  background: var(--card);
+  padding: 6px 14px;
   border-radius: 999px;
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--border);

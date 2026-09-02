@@ -9,9 +9,9 @@ import "server-only";
  * or cross-project id is rejected loudly, never silently acted on (mirrors the #266
  * makeOttoCanvasPort discipline).
  *
- * $0 by construction: nothing here touches startGen / reserveCredits / the provider.
+ * No generation here: nothing in this file touches startGen / reserveCredits / the provider.
  *  - media:  list/organize already-produced generations (attach/detach to shots, delete or
- *            discard, cancel a still-QUEUED job — which only ever REFUNDS, never charges).
+ *            discard, cancel a still-QUEUED job — which only ever REFUNDS, never charges). $0.
  *  - render: build and export the cut — join clips into one video, put a clip's words on
  *            screen, lay music under it (edit-desk-actions.ts, the SAME functions the
  *            merchant's own edit desk calls), plus export (ffmpeg concat, "re-rendering is
@@ -19,7 +19,17 @@ import "server-only";
  *  - mediaImport: bring an image/video into the project FROM A URL — the server-side analogue
  *            of the browser direct-upload chain (direct-upload.ts): SSRF-guarded fetch →
  *            storage.put → the SAME finalizeCandidateUploads authority the human upload lands
- *            through (Asset upsert + Generation(source:UPLOAD) + ingest verify). No spend.
+ *            through (Asset upsert + Generation(source:UPLOAD) + ingest verify).
+ *
+ *            **NOT $0 downstream, and this file used to claim it was** (MONEY-A9, 规格 §7.3).
+ *            The import itself still spends nothing — but the row it lands is an
+ *            `Generation(source:"UPLOAD")` image/video, and since Founder's 2026-08-31 ruling
+ *            every one of those is auto-understood and CHARGED at the price snapshotted when
+ *            the scanner QUEUES it for understanding — which can be later than the import if
+ *            there is a backlog. Inheriting the human upload's authority means inheriting the
+ *            human upload's bill. So this port quotes that price back to Otto (`note` on the
+ *            success result) the way the three upload UIs show it before a merchant picks a
+ *            file: 披露先于扣费, on the action layer because there is no UI here to put it on.
  *
  * NOT an action surface: no "use server", not *-actions — the parity scanner must not
  * discover this module (its capabilities are the manifest entries of the wrapped actions).
@@ -27,6 +37,7 @@ import "server-only";
 import { prisma } from "@fikirtive/db";
 import { assertPublicHttpUrlResolved } from "@fikirtive/core/server";
 import { uploadExtFromFilename, UPLOAD_SINGLE_MAX_BYTES } from "@fikirtive/core";
+import { CT_EXT, importUnderstandingQuote } from "@/lib/understanding-quote-copy";
 import { storage } from "@/lib/storage";
 import {
   getEditorMedia,
@@ -125,23 +136,11 @@ export function makeOttoRenderPort(_ownerId: string, projectId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// ctx.mediaImport — bring external media into the project from a URL ($0)
+// ctx.mediaImport — bring external media into the project from a URL
+// (the fetch/store is $0; the imported asset is then auto-understood and charged — MONEY-A9)
 // ---------------------------------------------------------------------------
 /** Single-shot import ceiling. Larger files need the app's chunked (multipart) upload. */
 const IMPORT_MAX_BYTES = UPLOAD_SINGLE_MAX_BYTES; // 64 MiB
-
-/** content-type → candidate ext (re-validated through the canonical deriver below). */
-const CT_EXT: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/jpg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-  "image/avif": "avif",
-  "video/mp4": "mp4",
-  "video/quicktime": "mov",
-  "video/webm": "webm",
-};
 
 /** Derive a valid upload ext from the URL path, falling back to the content-type header.
  *  Everything routes through uploadExtFromFilename so only exts the upload contract accepts
@@ -208,7 +207,10 @@ export function makeOttoMediaImportPort(ownerId: string, projectId: string) {
     fromUrl: async (
       rawUrl: string,
       opts?: { promptText?: string; entityIds?: string[] },
-    ): Promise<{ ok: true; generationId: string } | { error: string }> => {
+      // `note` = the understanding quote (MONEY-A9 §7.3). It rides on the SUCCESS result so
+      // Otto has something true to say the moment the file lands; the port stays structurally
+      // compatible with the narrower `ctx.mediaImport` contract in packages/otto (extra field).
+    ): Promise<{ ok: true; generationId: string; note: string } | { error: string }> => {
       const fetched = await fetchMediaBytes(rawUrl);
       if ("error" in fetched) return fetched;
       const ext = extFromUrlOrType(rawUrl, fetched.contentType);
@@ -232,7 +234,7 @@ export function makeOttoMediaImportPort(ownerId: string, projectId: string) {
       if ("error" in res) return { error: res.error };
       const generationId = res.generationIds[0];
       if (!generationId) return { error: res.failures[0]?.reason ?? "That file couldn't be imported." };
-      return { ok: true, generationId };
+      return { ok: true, generationId, note: importUnderstandingQuote(ext, fetched.contentType) };
     },
   };
 }

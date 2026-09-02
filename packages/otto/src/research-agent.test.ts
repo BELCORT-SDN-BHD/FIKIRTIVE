@@ -34,6 +34,7 @@ function makeCtx(overrides?: Partial<ResearchContext>): ResearchContext {
     sourcesRead: [],
     maxSearches: 5,
     maxPages: 8,
+    searchesTaken: 0,
     searchesUsed: 0,
     pagesUsed: 0,
     ...overrides,
@@ -94,20 +95,78 @@ describe("searchSources", () => {
   });
 
   it("refuses past maxSearches WITHOUT calling ctx.search", async () => {
-    const ctx = makeCtx({ maxSearches: 2, searchesUsed: 2 });
+    // 上限判的是**已占槽数**(MONEY-A10),所以 fixture 把 taken 顶到 cap。
+    const ctx = makeCtx({ maxSearches: 2, searchesTaken: 2, searchesUsed: 2 });
     const out = (await executeSearchSources({ query: "again" }, { context: ctx })) as { refused?: boolean };
     expect(out.refused).toBe(true);
     expect(ctx.search).not.toHaveBeenCalled();
     // counter NOT bumped past the cap
+    expect(ctx.searchesTaken).toBe(2);
     expect(ctx.searchesUsed).toBe(2);
   });
 
-  it("returns { error } (no throw) when the search port throws", async () => {
+  // ── MONEY-A10 / #1046-P2 ────────────────────────────────────────────────────────────────
+  // 「只为成功的供应商调用收费」。旧形状在**调用之前**就 +1,于是 provider 抛错的那一次
+  // 照样进了结算 —— 商家为一次没拿到任何结果的搜索付了 3 个 internal credits。
+  it("MONEY-A10:供应商调用失败时不计费(searchesUsed 不动),并把槽还回去", async () => {
     const ctx = makeCtx({ search: vi.fn(async () => { throw new Error("provider down"); }) });
     const out = (await executeSearchSources({ query: "x" }, { context: ctx })) as { error?: string };
     expect(out.error).toBe("provider down");
-    // counter still consumed (an attempted search counts against budget)
-    expect(ctx.searchesUsed).toBe(1);
+    // 计费计数器纹丝不动 —— 失败的调用一分钱都不收。
+    expect(ctx.searchesUsed).toBe(0);
+    // 槽已释放,预算没有被一次失败白白吃掉。
+    expect(ctx.searchesTaken).toBe(0);
+  });
+
+  it("MONEY-A10:成功的调用保留槽,失败的不保留 —— 混合序列后两个计数器各自正确", async () => {
+    let call = 0;
+    const ctx = makeCtx({
+      maxSearches: 3,
+      search: vi.fn(async () => {
+        call += 1;
+        if (call === 2) throw new Error("transient");
+        return [{ title: "T", url: "https://a.com", snippet: "s" }];
+      }),
+    });
+    await executeSearchSources({ query: "a" }, { context: ctx }); // 成功
+    await executeSearchSources({ query: "b" }, { context: ctx }); // 失败
+    await executeSearchSources({ query: "c" }, { context: ctx }); // 成功
+    expect(ctx.searchesUsed).toBe(2); // 结算按 2 次
+    expect(ctx.searchesTaken).toBe(2); // 失败那一次的槽已还回
+  });
+
+  it("MONEY-A10:单步并发发起 6 次搜索,只有 maxSearches 次到达 provider", async () => {
+    // 判官指出的 fan-out:纯「成功后计数」时,6 次并发都会在任何一次返回之前通过检查。
+    // 占槽协议(检查与递增之间没有 await)把它堵死。
+    let resolve!: () => void;
+    const gate = new Promise<void>((r) => { resolve = r; });
+    const search = vi.fn(async () => {
+      await gate;
+      return [{ title: "T", url: "https://a.com", snippet: "s" }];
+    });
+    const ctx = makeCtx({ maxSearches: 5, search });
+    const calls = Array.from({ length: 6 }, (_, i) =>
+      executeSearchSources({ query: `q${i}` }, { context: ctx }),
+    );
+    expect(search).toHaveBeenCalledTimes(5); // 第 6 次从未打到 provider
+    resolve();
+    const outs = (await Promise.all(calls)) as { refused?: boolean }[];
+    expect(outs.filter((o) => o.refused === true)).toHaveLength(1);
+    expect(ctx.searchesUsed).toBe(5);
+  });
+
+  it("MONEY-A10:没有搜索源(无 key ⇒ ctx.search undefined)时诚实报不可用,$0", async () => {
+    // 旧形状给的是一个恒返回 [] 的 stub:agent 以为搜过了,计数器照样 +1,商家为一次
+    // 从未发生的外部搜索付了钱(#1046-P2)。
+    const ctx = makeCtx({ search: undefined });
+    const out = (await executeSearchSources({ query: "x" }, { context: ctx })) as {
+      unavailable?: boolean;
+      reason?: string;
+    };
+    expect(out.unavailable).toBe(true);
+    expect(out.reason).toMatch(/isn't available/i);
+    expect(ctx.searchesUsed).toBe(0);
+    expect(ctx.searchesTaken).toBe(0);
   });
 });
 

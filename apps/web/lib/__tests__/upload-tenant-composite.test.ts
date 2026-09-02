@@ -67,8 +67,7 @@ beforeAll(() => {
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const { runAsTenant } = await import("@fikirtive/db/principal");
-const { createEntity, addReferenceImages, uploadCandidates, uploadReference } =
-  await import("@/lib/actions");
+const { createEntity, uploadReference } = await import("@/lib/actions");
 const { saveCroppedGeneration } = await import("@/lib/asset-actions");
 const { finalizeCandidateUploads } = await import("@/lib/upload-actions");
 const { storage } = await import("@/lib/storage");
@@ -184,15 +183,6 @@ describe("#698 — every merchant upload entry point clears the guard", () => {
     await prisma.project.create({ data: { id: projectId, ownerId: orgA, name: "A upload project" } });
   });
 
-  it("uploadCandidates (actions.ts) lands the asset + generation", async () => {
-    await asUser(A_EMAIL);
-    const fd = new FormData();
-    fd.append("files", pngFile("candidate.png", "candidates"));
-    fd.set("promptText", "");
-    const res = await uploadCandidates(projectId, fd);
-    expect(res).toMatchObject({ ok: true, count: 1 });
-  });
-
   it("uploadReference (actions.ts) lands the i2v source image", async () => {
     await asUser(A_EMAIL);
     const fd = new FormData();
@@ -227,21 +217,6 @@ describe("#698 — every merchant upload entry point clears the guard", () => {
       },
     ]);
     expect(res).toMatchObject({ ok: true, count: 1 });
-  });
-
-  it("addReferenceImages (actions.ts) attaches to an existing element and locks its base", async () => {
-    await asUser(A_EMAIL);
-    const created = await createEntity(entityForm("Later photos", []));
-    expect(created).toMatchObject({ id: expect.any(String) });
-    const entityId = (created as { id: string }).id;
-    const fd = new FormData();
-    fd.append("files", pngFile("later.png", "later"));
-    const res = await addReferenceImages(entityId, fd);
-    expect(res).toMatchObject({ ok: true });
-    const refs = await prisma.referenceImage.findMany({ where: { ownerId: orgA, entityId } });
-    expect(refs).toHaveLength(1);
-    const entity = await prisma.entity.findFirst({ where: { ownerId: orgA, id: entityId } });
-    expect(entity?.baseAssetId).toBe(refs[0]!.assetId);
   });
 });
 

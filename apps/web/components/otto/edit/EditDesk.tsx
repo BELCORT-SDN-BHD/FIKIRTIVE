@@ -42,6 +42,7 @@ import {
 import { startCaption, getCaptionJob, getRenderJobs } from "@/lib/actions";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
+import { UPLOAD_EXTS, mimeOf } from "@fikirtive/core/upload";
 import type { CutSummary, DeskMedia } from "@/lib/edit-desk";
 
 const POLL_MS = 2000;
@@ -55,6 +56,56 @@ function clock(seconds: number): string {
  *  made up would be the one thing on this screen the merchant cannot check. */
 function lengthLabel(seconds: number | null): string {
   return seconds === null ? "Length still unknown" : clock(seconds);
+}
+
+/**
+ * 商家挑的文件看起来是不是音频。
+ *
+ * **扩展名是硬条件,MIME 只是副条件** —— 顺序反过来就有一条真实的绕过路径:
+ * 一个内容真是 PNG、名字 `poster.png`、而浏览器报 `File.type="audio/mpeg"` 的文件,
+ * 只看 MIME 就会被放行;服务端 `finalizeCandidateUploads` 对**图片扩展名**才读字节
+ * (`lib/upload-actions.ts` 里 `isStaticImageExt` 那个分支),于是它被 media-sniff 判成
+ * `image/png` 落盘 → worker 的 `understandingKindForMime` 对 `image/*` 建收费理解行 →
+ * 而这个入口按 §7.3 是**豁免披露**的。一笔没被告知的钱就是这么进来的。
+ *
+ * 反过来只要扩展名落在音频白名单里就安全:服务端对**非图片扩展名不读字节**,直接采用
+ * 扩展名→MIME 映射(`packages/core/src/upload.ts` 的 `mimeOf`),六个音频扩展名全部映射到
+ * `audio/*`,而 `understandingKindForMime` 对 `audio/*` 返回 null —— 不建理解行、不计费。
+ *
+ * 白名单**不手抄,直接算**:拿 core 的 `UPLOAD_EXTS`(服务端唯一允许上传的扩展名)逐个跑
+ * `mimeOf`,留下映射到 `audio/*` 的那些。这条式子写的就是我们真正要的那个性质 ——
+ * 「服务端会把它落成 audio/*,因此不计费」—— 而不是一份需要有人记得同步的名单。
+ * 于是两个曾经手抄进来的扩展名自动消失,而且消失得对:
+ *   · `.webm` 是 **video** 扩展名(`mimeOf("webm") === "video/webm"`),放行它等于放一条
+ *     video-qa 计费路径进来;
+ *   · `.oga` 根本不在 `UPLOAD_EXTS` 里,服务端会直接拒,写在这里只是句空话。
+ * 用 `mimeOf` 而不是 `EXT_BY_TYPE.audio`,是因为前者才是服务端真正用来定 MIME 的那个函数:
+ * 万一有人往 `EXT_BY_TYPE.audio` 加了个 `mimeOf` 不认识的扩展名(会落 octet-stream),
+ * 这里会正确地把它排除在外。
+ *
+ * 这是**入口守卫,不是安全边界**:字节层面的判定仍在服务端。它要拦的是「把弹窗筛选改成
+ * 所有文件、顺手点了一张图」这种误选 —— 那一下今天会变成一笔没被披露的理解扣费。
+ */
+const AUDIO_UPLOAD_EXTENSIONS: ReadonlySet<string> = new Set(
+  UPLOAD_EXTS.filter((ext) => mimeOf(ext).startsWith("audio/")),
+);
+
+/** 浏览器对这些扩展名的已知误报:容器格式共用,MIME 猜错不代表文件不是音频。
+ *  m4a/aac 本来就装在 MP4 容器里,某些平台因此报 `video/mp4`。 */
+const AUDIO_MIME_QUIRKS: Record<string, ReadonlySet<string>> = {
+  m4a: new Set(["video/mp4"]),
+  aac: new Set(["video/mp4"]),
+};
+
+function looksLikeAudio(file: File): boolean {
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  // 硬条件:扩展名决定服务端落哪个 MIME,也就决定这个文件会不会被理解计费。
+  if (!AUDIO_UPLOAD_EXTENSIONS.has(ext)) return false;
+  const type = file.type.trim().toLowerCase();
+  if (type.startsWith("audio/")) return true;
+  // 浏览器没意见(空字符串,或笼统的 octet-stream)时,认扩展名。
+  if (type === "" || type === "application/octet-stream") return true;
+  return AUDIO_MIME_QUIRKS[ext]?.has(type) ?? false;
 }
 
 export function EditDesk({ projectId }: { projectId: string }) {
@@ -241,6 +292,17 @@ export function EditDesk({ projectId }: { projectId: string }) {
   async function uploadMusic(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
+    // MONEY-A9 §7.3 —— 这个入口按规格「现仅收 audio」被单列豁免、不挂价目小字。
+    // 在此之前那句话只靠文件选择器上的 accept="audio/*" 撑着,而 accept 是选择框的过滤**建议**,
+    // 不是校验:商家在系统弹窗里把筛选改成「所有文件」就能选一张图,它会以 UPLOAD image 素材
+    // 落盘、被自动理解计费 —— 一笔他在任何屏幕上都没见过价目的钱。豁免的前提得自己成立。
+    if (!looksLikeAudio(file)) {
+      setError("Only audio files can be added here.");
+      setMessage(null);
+      // 让同一个文件还能被重新选中(否则 onChange 不会再触发)
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
     setBusy("upload");
     setError(null);
     setMessage(null);

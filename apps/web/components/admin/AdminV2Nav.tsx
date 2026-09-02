@@ -11,6 +11,7 @@ import {
   Gauge,
   LayoutDashboard,
   ListOrdered,
+  Scale,
   ShieldCheck,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
@@ -19,6 +20,8 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/money", label: "Money", icon: Banknote },
+  // MONEY-A12:未了结的 Stripe 缺口(哨兵报到人工关闭为止)—— 没有入口的关闭动作等于没有。
+  { href: "/admin/reconcile", label: "Reconciliation", icon: Scale },
   { href: "/admin/tenants", label: "Tenants", icon: Building2 },
   { href: "/admin/staff", label: "Staff & permissions", icon: ShieldCheck },
   { href: "/admin/cases", label: "Cases", icon: ClipboardList },

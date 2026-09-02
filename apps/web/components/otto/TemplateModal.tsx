@@ -30,6 +30,7 @@ import {
   templateRunCredits,
 } from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
+import { UnderstandingCostHint } from "./UnderstandingCostHint";
 
 type Phase = "form" | "generating" | "done" | "cancelled" | "unknown";
 
@@ -418,6 +419,10 @@ export default function TemplateModal({
               <FieldGroup className="gap-4">
                 <Field className="gap-1.5" data-disabled={formLocked}>
                   <FieldLabel htmlFor="template-product-image">Product image</FieldLabel>
+                  {/* MONEY-A9 §7.3 — under the field label and above the picker, so the upload
+                      price is read before the file is chosen (披露先于扣费). It stays on screen
+                      after the thumb replaces the input, which is when the charge is real. */}
+                  <UnderstandingCostHint />
                   {thumbUrl ? (
                     <div className="flex items-end gap-3">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
