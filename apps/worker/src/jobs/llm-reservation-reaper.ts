@@ -123,6 +123,15 @@ async function retireApprovalCard(orgId: string, cardId: string): Promise<void> 
  *  index, so a settle/refund that lands between the query and the refund makes this a safe
  *  no-op. Returns how many leaked reservations it swept.
  *
+ *  2026-09-02 (钱引擎5B, spec 7.7): `brand-research:`, `draft:` and `enhance:` are GONE from
+ *  the list. Nothing in the tree has written a RESERVE under them since the dead pre-Otto module
+ *  (2026-07-04) and the dead paid cowork endpoints (2026-07-07) were removed, and a LIKE clause
+ *  that can never match is not a safety net - it is three lines of scan cost and a standing
+ *  invitation to believe a reaper exists for something that no longer does. If historical rows
+ *  under those prefixes ever DO leak, the daily ledger-conservation check (ledger-conservation.ts)
+ *  is what surfaces them: it re-sums every org ledger against its account balance and alerts on
+ *  drift, which is a stronger claim than a prefix nobody writes.
+ *
  *  #463 two-phase identity: the scan is cross-tenant by construction (there is no job row and
  *  no request to attach an owner to), so it runs under "llm-reservation-reaper"; each refund is
  *  re-scoped to the org the leaked RESERVE belongs to. Note the scan is raw SQL and therefore
@@ -162,8 +171,7 @@ export async function reapStaleLlmReservations(): Promise<number> {
       AND (
         r."refId" LIKE 'otto-turn:%' OR r."refId" LIKE 'otto-stream:%' OR
         r."refId" LIKE 'otto-approve:%' OR r."refId" LIKE 'otto-verdict:%' OR
-        r."refId" LIKE 'brand-research:%' OR r."refId" LIKE 'draft:%' OR
-        r."refId" LIKE 'enhance:%' OR r."refId" LIKE 'research:%'
+        r."refId" LIKE 'research:%'
       )
       AND NOT EXISTS (
         SELECT 1 FROM "CreditLedger" f

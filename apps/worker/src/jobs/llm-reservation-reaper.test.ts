@@ -217,14 +217,28 @@ describe("reaper prefix coverage — every prefixed refId in the codebase is rea
   });
 
   it("scanner sanity: finds the known prefixes (a broken regex must not green-wash)", () => {
-    // 'brand-research' was dropped 2026-07-04 with the dead pre-Otto module; 'draft'/'enhance'
-    // were dropped 2026-07-07 with the dead paid cowork endpoints (batch-3 7-10). The reaper
-    // still lists those prefixes (harmless — sweeps any historical leaked rows) but source no
-    // longer builds them.
     for (const known of ["otto-stream", "otto-turn", "research"]) {
       expect([...inSource.keys()], `expected the scanner to find "${known}:"`).toContain(known);
     }
-    expect(inReaper.size).toBeGreaterThanOrEqual(8);
+    expect(inReaper.size).toBeGreaterThanOrEqual(5);
+  });
+
+  /**
+   * **死前缀已经删掉**(钱引擎⑤B,2026-09-02)。
+   *
+   * `brand-research` 随 2026-07-04 的死 pre-Otto 模块下架,`draft`/`enhance` 随 2026-07-07
+   * 的死付费 cowork 端点下架 —— 从那以后仓库里没有任何一处再用它们 reserve 过。一条永远
+   * 匹配不到的 LIKE 不是安全网,它是三行扫描成本 + 一句「这里有清道夫在看着」的错觉。
+   *
+   * 这条用例钉的是**双向**的:名单里没有它们,而且源码里也确实没人再写它们 —— 哪天有人
+   * 重新启用其中一个前缀去 reserve,上面那条「every source prefix is swept」会当场红,
+   * 逼他要么进名单要么登记。历史遗留行由日账本守恒检测器暴露(ledger-conservation.ts)。
+   */
+  it("死前缀(brand-research / draft / enhance)已从名单删除,而且源码里确实没人再写", () => {
+    for (const dead of ["brand-research", "draft", "enhance"]) {
+      expect(inReaper.has(dead), `"${dead}:" 还在清道夫的 LIKE 名单里 —— 没人写它,扫它是白扫`).toBe(false);
+      expect([...inSource.keys()], `源码又开始写 "${dead}:" 了 —— 那它必须重新进某个清道夫`).not.toContain(dead);
+    }
   });
 
   it("MONEY-A14:登记为「不许碰」的前缀,没有任何一个清道夫在扫它", () => {
