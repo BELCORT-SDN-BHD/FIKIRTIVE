@@ -14,6 +14,7 @@
 import {
   CREDITS_PER_USD,
   FLAT_PRICED_VIDEO_MODELS,
+  SELLABLE_VIDEO_RESOLUTIONS,
   genSpentUsd,
   pricedGenCredits,
   pricedRefgenCredits,
@@ -22,7 +23,13 @@ import {
   type GenSpendInput,
 } from "./spend.js";
 import { UNDERSTANDING_KINDS, understandingWorstCaseUsd } from "./asset-understanding.js";
-import { GEN_MODELS, GEN_VIDEO_MODEL_OPTIONS, type GenModel, type GenVideoModel } from "./gen.js";
+import {
+  GEN_IMAGE_COST_PIN,
+  GEN_MODELS,
+  GEN_VIDEO_MODEL_OPTIONS,
+  type GenModel,
+  type GenVideoModel,
+} from "./gen.js";
 import { REFGEN_MODELS, type RefGenModel } from "./refgen.js";
 import type { CostPinKey } from "./cost-pins.js";
 import { OTTO_CONVERSATION_TURN_MARGIN } from "./otto-budget.js";
@@ -255,10 +262,13 @@ function usagePricedSkus(): MarginSku[] {
  *
  * 值是 `CostPinKey`(cost-pins.ts 的键联合),所以「配了钉点」也不能是随口写的字符串:
  * 钉点表里没有的键同样编译不过(fail closed,cost-pins.ts 规矩 ②)。
+ *
+ * Creation S2 §8.1①:真正的表搬去 `gen.ts`(`GEN_IMAGE_COST_PIN`)与成本函数同住 ——
+ * `genSpentUsd` 现在也要按槽位取成本钉点,两个地方各存一份就会漂移。这里是**别名**,
+ * 不是第二份手抄:CI 闸(`scripts/check-margin-floor.mjs`)读的是这个名字,而围栏
+ * (`Record<GenModel, CostPinKey>`,菜单加一格不配钉点就编译不过)在那边一字不变。
  */
-export const IMAGE_MODEL_COST_PIN: Record<GenModel, CostPinKey> = {
-  seedream: "image:seedream-lite:per-image",
-};
+export const IMAGE_MODEL_COST_PIN: Record<GenModel, CostPinKey> = GEN_IMAGE_COST_PIN;
 
 /** 参考图 model → 成本钉点。同一条围栏,盯的是 `REFGEN_MODELS`(今天与图片同价同钉点)。 */
 export const REFGEN_MODEL_COST_PIN: Record<RefGenModel, CostPinKey> = {
@@ -328,10 +338,14 @@ function sellableRefgenSkus(): MarginSku[] {
 function sellableVideoSkus(): MarginSku[] {
   const out: MarginSku[] = [];
   for (const model of FLAT_PRICED_VIDEO_MODELS) {
-    const o = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel];
-    if (!o) continue;
-    const resolutions = o.resolutions.length ? o.resolutions : [""];
-    for (const seconds of o.durations) {
+    // Creation S2 §8.1①:枚举源从**能力表**换成**已定价白名单** ——
+    // 「可售」的定义是「有一个 Founder 裁过的价」,不是「引擎做得出来」。高清槽位的
+    // 720p/480p 是能力而不是 SKU(没有属于它的成本钉点),把它们放进毛利表只会得到
+    // 一行拿别档成本冒充出来的假毛利。白名单空/未知 ⇒ 这个槽位一行都不出,与
+    // `assertSpendableModel` 同一条判据、同一个来源(`isSellableVideoSku`)。
+    const resolutions = SELLABLE_VIDEO_RESOLUTIONS[model as GenVideoModel] ?? [];
+    const durations = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel]?.durations ?? [];
+    for (const seconds of durations) {
       for (const resolution of resolutions) {
         const job = { kind: "VIDEO" as const, model, count: 1, videoOptions: { seconds, resolution, audio: true } };
         out.push({

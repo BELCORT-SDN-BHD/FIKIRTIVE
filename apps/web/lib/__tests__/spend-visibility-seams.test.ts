@@ -251,7 +251,11 @@ describe("Card prompt-bar price tag seam (#550 ② · #547 A4)", () => {
     expect(src).toMatch(/videoSpecMenu\.creditsFor\(spec\)/);
     // The composer's price follows the chosen batch size through the same clamp the paid
     // call applies, so the label and the charge cannot drift apart (#547 A2).
-    expect(src).toMatch(/canvasGenCostQuote\(costQuote,\s*imageCount\)\.imageCredits/);
+    // Creation S2 §8.1①(CREATE-A6):每张的**单价**从此还跟着「精修」那一格走
+    // (2cr vs 1cr),所以这里钉的是两截:单价只能从服务端来(默认档的报价,或服务端
+    // 交出来的那一格能力自己的价 —— 两者都不是界面算的),乘张数仍然走同一个 clamp。
+    expect(src).toMatch(/imageUnitCredits\s*=\s*fineDetailOn\s*\?\s*fineDetailOption!\.credits\s*:\s*costQuote\?\.imageCredits/);
+    expect(src).toMatch(/canvasGenCostQuote\(\{\s*\.\.\.costQuote,\s*imageCredits:\s*imageUnitCredits\s*\},\s*imageCount\)\.imageCredits/);
     // A price can never be on screen without its quote having been loaded.
     expect(src).toMatch(/cardBarVisible/);
     expect(src).toMatch(/if \(composerVisible \|\| cardBarVisible \|\| pendingAnimateId !== null \|\| t2vOpen\) refreshCostQuote\(\)/);

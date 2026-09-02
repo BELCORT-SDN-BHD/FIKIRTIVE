@@ -63,6 +63,16 @@ export type CanvasImageGenOptions = {
    * 重放,刷新之后重放的必须还是「一组」,不是一堆散图。
    */
   coherentSet?: boolean;
+  /**
+   * Creation S2 §8.1①(CREATE-A6)—— 这一张要走**精修 / 高细节**那一档。
+   *
+   * 与形状、张数同一条规矩:界面上勾着的时候一定带着它发出去,没勾就不发。它是
+   * **能力位,不是型号名** —— 请求里一个引擎名都没有,槽位由服务端按它挑
+   * (`gen-actions.ts` 的 `routeCapabilitySlot` → `routeImageModel`)。
+   * 它**会改价**,所以 `approvedCredits` 必须跟着它取那一档的价,而且它要跟着回执
+   * 一起重放:刷新后重放的必须还是「精修」,不是悄悄换回默认档的另一个价。
+   */
+  fineDetail?: boolean;
   /** Exact accepted request material used only when resuming a browser receipt. */
   resumeModel?: string;
   resumeThreadId?: string | null;
@@ -102,10 +112,36 @@ function isConfirmedCreditQuote(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+/**
+ * 服务端交来的「精修」那一格:`null`(说了「今天不卖」)或**完整**的一份(价 + 形状菜单)。
+ *
+ * **半份 = 读不出来 ⇒ 整个响应作废**:一个只有价没有形状菜单(或反过来)的答案,会让界面
+ * 拿一份自己补出来的东西去当预扣额或菜单 —— 那正是这一整块校验存在的理由。
+ *
+ * 缺席(`undefined`)与 `null` 同义:**没说 = 不提供**。界面于是整格不渲染、这一趟按默认档
+ * 走,一分钱都不会按另一档算 —— 与「半份」不同,缺席不会让界面编出任何东西来。
+ */
+function isFineDetailCapability(value: unknown): value is { credits: number; aspectRatios: string[] } | null | undefined {
+  if (value === null || value === undefined) return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as { credits?: unknown; aspectRatios?: unknown };
+  return isConfirmedCreditQuote(item.credits)
+    && Array.isArray(item.aspectRatios)
+    && item.aspectRatios.length > 0
+    && item.aspectRatios.every((a) => typeof a === "string" && a.length > 0);
+}
+
 /** 服务端解析的图片形状菜单 + 商家没选时会交付的那一格。 */
 export type CanvasImageShapes = {
   options: string[];
   defaultAspect: string;
+  /**
+   * Creation S2 §8.1①(CREATE-A6)—— 「精修 / 高细节」这一格能力。
+   * `null` = 今天卖不了 ⇒ 出片框整格不渲染,一个字都不说。
+   * 有值时 `credits` 是勾上之后**每张**的价(界面按下之前必须显示它),
+   * `options` 是这一档自己那份形状菜单(比默认档窄:收不下的形状不许出现)。
+   */
+  fineDetail: { credits: number; options: string[] } | null;
 };
 
 /** 服务端解析的视频规格菜单 + 两条路各自的默认档(t2v / 带首帧的 i2v)。 */
@@ -180,6 +216,8 @@ export type StoredCanvasActionReceipt = {
   aspectRatio?: string;
   /** #777:「一组连贯的图」同理 —— 它不改价,但它改交付物,所以重放的必须还是一组。 */
   coherentSet?: true;
+  /** Creation S2 §8.1①:精修那一格**会改价**,所以重放必须连能力带价格一起原样重发。 */
+  fineDetail?: true;
   /** #645 T4：视频规格同理 —— 而且它**会改价**，所以重放必须连规格带价格一起原样重发，
    *  否则刷新后重放的可能是一档更贵/更便宜的片子，与商家当时按下去的那一档不是同一件事。 */
   videoSeconds?: number;
@@ -610,7 +648,10 @@ export function useCanvasGen(
         typeof (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec !== "object" ||
         // #785 判官 r2 P1-a：@元素能不能真的进视频引擎，同样必须由服务端说。少了这一格，
         // 出片框只能自己编一个默认值去决定要不要承诺 —— 编成 true 就是替一条做不到的路许诺。
-        typeof (response as { videoElementReferences?: unknown }).videoElementReferences !== "boolean"
+        typeof (response as { videoElementReferences?: unknown }).videoElementReferences !== "boolean" ||
+        // Creation S2 §8.1①:精修那一格要么**如实缺席**(null = 今天卖不了),要么带着
+        // 它自己的价与形状菜单一起到齐。半份答案会让界面拿一个自己编的价去当预扣额。
+        !isFineDetailCapability((response as { imageFineDetail?: unknown }).imageFineDetail)
       ) {
         throw new Error("Unexpected generation model response");
       }
@@ -624,7 +665,14 @@ export function useCanvasGen(
   /** #643 T2：形状菜单只有一个来源 —— 服务端解析的那份。界面一格都不写死。 */
   const imageShapes = useCallback(async (): Promise<CanvasImageShapes> => {
     const models = await ensureModels();
-    return { options: models.imageAspectRatios, defaultAspect: models.imageDefaultAspect };
+    return {
+      options: models.imageAspectRatios,
+      defaultAspect: models.imageDefaultAspect,
+      // Creation S2 §8.1①:能力与它自己的价、自己的形状菜单一起交给界面。菜单一格都不写死。
+      fineDetail: models.imageFineDetail
+        ? { credits: models.imageFineDetail.credits, options: models.imageFineDetail.aspectRatios }
+        : null,
+    };
   }, [ensureModels]);
   /** #645 T4：视频规格菜单与价目表同理 —— 一个来源,界面一格都不写死、一分钱都不自己算。 */
   const videoSpecs = useCallback(async (): Promise<CanvasVideoSpecs> => {
@@ -685,7 +733,17 @@ export function useCanvasGen(
       const models = await loadModelsForAction();
       if (!models) return false;
       image = models.image;
-      approvedCredits = models.imageCredits * safeCount;
+      // Creation S2 §8.1①(CREATE-A6):**勾了精修就按那一档报价**。价仍然只有服务端
+      // 那一个来源(`getActiveGenModels`);勾着却拿默认档的价去授权,就是「按旧价签字、
+      // 按新价扣款」—— 服务端会在 create/reserve 之前拒,商家的动作白白失败一次。
+      // 服务端说这一格今天卖不了(null)⇒ 这一趟不带这个能力位,按默认档走。
+      if (options.fineDetail === true && !models.imageFineDetail) {
+        fail("That option isn't available right now — try again without it.");
+        return false;
+      }
+      approvedCredits = (options.fineDetail === true && models.imageFineDetail
+        ? models.imageFineDetail.credits
+        : models.imageCredits) * safeCount;
     }
     const actionId = options.actionId ?? freshCanvasActionId();
     const requestThreadId = options.resumeThreadId !== undefined
@@ -694,6 +752,7 @@ export function useCanvasGen(
     // #777:一张图不成组。界面在只出一张时不显示这个开关,这里再把口径钉一次 ——
     // 送一个 count=1 的 coherentSet 上去只会被服务端契约闸拒掉,白白让商家的动作失败。
     const coherentSet = options.coherentSet === true && safeCount > 1;
+    const fineDetail = options.fineDetail === true;
     const req = {
       actionId,
       expectedCredits: approvedCredits,
@@ -707,6 +766,7 @@ export function useCanvasGen(
       ...(options.sourceGenerationId && { sourceGenerationId: options.sourceGenerationId }),
       ...(options.aspectRatio && { aspectRatio: options.aspectRatio }),
       ...(coherentSet && { coherentSet: true }),
+      ...(fineDetail && { fineDetail: true }),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -726,6 +786,7 @@ export function useCanvasGen(
       ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
       ...(options.aspectRatio ? { aspectRatio: options.aspectRatio } : {}),
       ...(coherentSet ? { coherentSet: true as const } : {}),
+      ...(fineDetail ? { fineDetail: true as const } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -1140,6 +1201,8 @@ export function useCanvasGen(
               ...(receipt.aspectRatio ? { aspectRatio: receipt.aspectRatio } : {}),
               // #777:同理 —— 商家按下去的是「一组连贯的图」,重放的就必须还是一组。
               ...(receipt.coherentSet ? { coherentSet: true } : {}),
+              // Creation S2 §8.1①:精修同理,而且它会改价 —— 重放必须还是那一档。
+              ...(receipt.fineDetail ? { fineDetail: true } : {}),
             },
           );
           continue;

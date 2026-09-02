@@ -458,3 +458,52 @@ describe("#776 回执在钱的事务之外", () => {
     expect(m.settleCredits.mock.calls.length).toBe(settleCallsWith);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CREATE-A4 / CREATE-A12 —— **路由理由由 worker 自己写**(r1 判官 P1 落修)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * 此前 A4 的「该次路由理由可查」只有一条真库证据,而那条证据里的 Generation 行是**测试
+ * 自己**算出理由、自己插进去、再读回来的 —— 它证明的是这一列存得下、读得出,不是产品
+ * 会写。把 `apps/worker/src/jobs/gen.ts` 里那一行删掉,全仓测试照样全绿。
+ *
+ * 这里跑真的 `handleGen`,直接看它交给 `generation.create` 的那份 data:
+ *   · 高清槽位 ⇒ 写商家看得懂的那句话,且一个型号名都没有;
+ *   · 默认槽位 ⇒ 写 null(没有升档,没什么可解释的),不编一句话出来。
+ */
+describe("CREATE-A4 / CREATE-A12 路由理由:worker 建 Generation 行时自己写这一列", () => {
+  it("CREATE-A4 高清槽位 ⇒ routeReason 落在 worker 写的那一行上,只有能力名词", async () => {
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    const { generationRows } = await runWorker({
+      ...videoJob,
+      model: "seedance-2-0",
+      videoOptions: { seconds: 5, resolution: "1080p" },
+    });
+    expect(generationRows).toHaveLength(1);
+    expect(generationRows[0]!.routeReason).toBe("You asked for 1080p, so this went to the HD tier.");
+    // 商家只见能力,不见型号 —— 这一列是给商家看的。
+    for (const secret of ["seedance", "seedream", "dreamina", "byteplus", "mini"]) {
+      expect(String(generationRows[0]!.routeReason).toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it("CREATE-A12 默认槽位 ⇒ routeReason 是 null(没升档就没有理由),不是编出来的一句话", async () => {
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    const { generationRows } = await runWorker({ ...videoJob });
+    expect(generationRows[0]!.routeReason).toBeNull();
+  });
+
+  it("CREATE-A12 图片默认槽位同样是 null", async () => {
+    m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
+    const { generationRows } = await runWorker({ ...imageJob });
+    expect(generationRows[0]!.routeReason).toBeNull();
+  });
+
+  it("CREATE-A12 图片 pro 槽位则写它自己那句(同一个纯函数,图片侧同形)", async () => {
+    m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
+    const { generationRows } = await runWorker({ ...imageJob, model: "seedream-pro" });
+    expect(generationRows[0]!.routeReason)
+      .toBe("You asked for a capability only the fine-detail tier can do, so this went there.");
+  });
+});

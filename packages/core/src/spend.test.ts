@@ -218,7 +218,7 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
 // 唯一的例外:挂在 BELOW_FLOOR_PENDING_FOUNDER_RULING 上、正等 Founder 裁决的档位
 // (2026-08-06 裁决落地后名单为空)。**新**跌破的组合(换档位、换定价、成本上涨)
 // 照旧当场变红。
-import { FLAT_PRICED_VIDEO_MODELS } from "./spend.js";
+import { FLAT_PRICED_VIDEO_MODELS, SELLABLE_VIDEO_RESOLUTIONS, isSellableVideoSku } from "./spend.js";
 import { GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
 
 describe("margin floor — every sellable video combo keeps ≥45% gross margin (宪法 5)", () => {
@@ -227,7 +227,11 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
     for (const model of FLAT_PRICED_VIDEO_MODELS) {
       const opts = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel];
       expect(opts, `flat-priced model ${model} must exist in GEN_VIDEO_MODEL_OPTIONS`).toBeDefined();
-      const resolutions = opts.resolutions.length ? opts.resolutions : [""];
+      // Creation S2 §8.1①:枚举**已定价白名单**,不是能力表。高清槽位能做 720p/480p,
+      // 但那两档没有属于它的成本钉点、也没有裁过的价 ⇒ 不可售 ⇒ 不该在毛利闸上出现。
+      // (真要有人把它们放行,`assertSpendableModel` 那一侧的 A5/A6 测试当场变红。)
+      const resolutions = SELLABLE_VIDEO_RESOLUTIONS[model as GenVideoModel] ?? [];
+      expect(resolutions.length, `flat-priced model ${model} must declare its sellable resolutions`).toBeGreaterThan(0);
       const audios = opts.audioToggle ? [true, false] : [false];
       for (const seconds of opts.durations) {
         for (const resolution of resolutions) {
@@ -256,5 +260,17 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
       }
     }
     expect(checked, "可售视频组合一个都没被检查到 —— 枚举坏了").toBeGreaterThan(0);
+  });
+
+  // 上面那个循环的枚举源与付费闸的判据必须是**同一句话**,否则毛利闸量的档与真正卖出去的
+  // 档可以分家(量了 A、卖的是 B)。这一条把两边钉在一起。
+  it("枚举源 == 付费闸判据(白名单里的每一格 isSellableVideoSku 都为真)", () => {
+    for (const model of FLAT_PRICED_VIDEO_MODELS) {
+      for (const resolution of SELLABLE_VIDEO_RESOLUTIONS[model as GenVideoModel] ?? []) {
+        for (const seconds of GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel]!.durations) {
+          expect(isSellableVideoSku(model, resolution, seconds), `${model} ${seconds}s ${resolution}`).toBe(true);
+        }
+      }
+    }
   });
 });

@@ -1,6 +1,6 @@
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenerationReceipt } from "@fikirtive/core";
 import {
-  imageOutputSize,
+  imageOutputSizeForModel,
   MAX_VIDEO_IMAGE_PARTS,
   REFERENCE_IMAGE_PERSON_REJECTED,
   referenceImagePersonRejected,
@@ -99,12 +99,36 @@ export function readVideoReceipt(payload: unknown): GenerationReceipt | undefine
 
 export const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
 /** internal model id → Ark foundation-model id (verified active on the account). */
-export const IMAGE_MODEL_MAP: Record<string, string> = { seedream: "seedream-5-0-260128" };
+export const IMAGE_MODEL_MAP: Record<string, string> = {
+  seedream: "seedream-5-0-260128",
+  // Creation S2 §8.1①(2026-09-02):pro 图槽位。供应商 id 只住在这张表里 —— 商家可见的
+  // 任何字符串都不许出现型号名(S1 九问4;`provider-secrecy` 是兜底,不是许可证)。
+  // 版本尾只读核实(r1 判官 P1 落修,2026-09-02):`arkcli models get dola-seedream-5-0-pro`
+  // → `id` = `dola-seedream-5-0-pro-260628`、`version` = `primary_version` = `260628`;
+  // `arkcli models versions dola-seedream-5-0-pro` 只回这一个版本。与视频侧同理:
+  // 这一格的价(2cr/张、毛利 77.5%)钉在一个**版本相关**的牌价上,基名会跟着平台换版本走。
+  "seedream-pro": "dola-seedream-5-0-pro-260628",
+};
 /** #769(Founder 已裁 2026-08-08):战役视频引擎从 2.0 Fast 换 2.0 mini。
  *  版本化 id 取自 ModelArk 模型档案(只读核实):`arkcli models get dreamina-seedance-2-0-mini`
  *  → `id` / `primary_version` = `dreamina-seedance-2-0-mini-260615`;
  *  `arkcli models versions dreamina-seedance-2-0-mini` 只回这一个版本 260615。 */
-export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-mini": "dreamina-seedance-2-0-mini-260615" };
+export const VIDEO_MODEL_MAP: Record<string, string> = {
+  "seedance-2-mini": "dreamina-seedance-2-0-mini-260615",
+  // Creation S2 §8.1①(2026-09-02):高清槽位。与 mini 一样,这里是**唯一**允许出现供应商
+  // id 的地方;`@fikirtive/core` 的菜单只认内部槽位名 `seedance-2-0`。
+  //
+  // 版本尾同样只读核实过(r1 判官 P1 落修,2026-09-02):
+  //   `arkcli models get dreamina-seedance-2-0`
+  //     → `id` = `dreamina-seedance-2-0-260128`、`version` = `primary_version` = `260128`;
+  //   `arkcli models versions dreamina-seedance-2-0` 只回这一个版本 260128。
+  // 为什么非写版本尾不可:基名会跟着平台换版本走,而 1080p 全 12 档的毛利地基是一次
+  // **版本相关**的实测(cost-pins `video:seedance-2.0:1080p-tokens-per-5s = 245,025`,
+  // 2026-08-29 实测账单)。基名成功且计费,只是按我们从未量过的那一版计费 ——
+  // 那不是「id 错就 4xx、可证明没花钱」的那条路,而是一笔按未知成本收的钱。
+  // 换版本 = 重跑一次实测再改这一行,不许只改 id。
+  "seedance-2-0": "dreamina-seedance-2-0-260128",
+};
 
 /**
  * #795 — every call out to the engine gets a deadline, because a socket that never answers is
@@ -233,12 +257,18 @@ export class BytePlusProvider implements GenerationProvider {
     if (!model) throw new Error("generation provider has no image model mapping"); // pre-spend
     const conditioned = req.inputImageUrls.length > 0;
     // #642: the merchant's shape, as the exact pixels the engine will produce.
-    // The WxH form is bound by the engine to total pixels ∈ [3,686,400, 16,777,216] and
-    // ratio ∈ [1/16, 16]; every entry in the shared GEN_IMAGE_SIZES table satisfies both
-    // (asserted per-entry in packages/core/src/gen.test.ts). An absent/unknown shape falls
-    // back to the default square — never send a value the engine would reject. Price is
-    // unaffected: this engine bills per image, not per size.
-    const { width, height } = imageOutputSize(req.aspectRatio);
+    // The WxH form is bound by the engine to total pixels and ratio — and the bounds are
+    // **per slot**, not one family-wide pair (`GEN_IMAGE_MODEL_PIXEL_LIMITS`): pro's ceiling
+    // (4,624,220 px) is LOWER than lite's, so 16:9 / 9:16 (2880×1620 = 4,665,600 px) are
+    // legal on lite and over the line on pro.
+    //
+    // 判官 r1 P1 落修 —— 这里改成**逐模型校验**，而不是拿一张全家族共用的尺寸表拼 `size`。
+    // 新建请求那一路有契约闸（`genRequest` 按槽位自己的 `aspectRatios` 收窄），但那道闸
+    // 挡不住 **worker 从数据库快照重放的那一路**：`job.imageOptions.aspectRatio` 是一个无约束
+    // 字符串，历史行与畸形行都会原样送到这里。越限 = **抛错拒绝，不降级、不自动缩小**
+    // （规格「未验先禁」），而且抛在任何付费 POST **之前** ⇒ 可证明零花费、worker 退款。
+    // Price is unaffected either way: this engine bills per image, not per size.
+    const { width, height } = imageOutputSizeForModel(req.model, req.aspectRatio);
     // #777 组图:整组一次请求出齐。分岔在这里,因为**下面那条路的每一条注释都建立在
     // 「一次 POST = 一张图」上** —— 计费边界、并发闸的占位、短交判定,全部按那个前提写的。
     // 把两种形状塞进同一个循环,只会让那些注释开始说谎。

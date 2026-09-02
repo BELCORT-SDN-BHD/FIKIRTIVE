@@ -568,3 +568,47 @@ describe("#645 T4:Adaptive 的说明按场景说准", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// CREATE-A3(判官 r1 P0,2026-09-02)—— 画布上不许出现声音开关
+// ---------------------------------------------------------------------------
+//
+// 声音那一格住在同一个 VideoSpecPicker 里,而画布这两条路的提交把 audio 整个丢掉:
+// `clampVideoSpec` 只重建 seconds/resolution/aspectRatio,`useCanvasGen.ts` 的请求体
+// 也只展开那三格。所以在这两个框里渲染一个能拨的开关,是个**收了钱的假控件**——
+// 商家关掉声音、照原价付费、拿回带 AI 配音的片子,界面全程零提示;更贵的是拨动它会改掉
+// material JSON ⇒ actionId 换身份 ⇒ 服务端判 fresh ⇒「关掉重做一次」再付一次全价。
+//
+// 这两条钉的是**看得见的那一面**(围栏的另一半在 video-audio-toggle.test.ts:
+// 不自报 audioToggle 的调用点没有这一格 ＋ 画布源码至今没有自报)。
+// §8.2 批 II 把 clamp 与两处请求体收口后,这两条改成「必须有开关且发得出去」。
+describe("CREATE-A3:画布两条视频路在接线之前不显示声音开关", () => {
+  function soundSwitch(): Element | null {
+    return document.querySelector('[role="switch"][aria-label="Sound"]');
+  }
+
+  async function openAnimateOn(nodeId: string): Promise<void> {
+    const button = [...container!.querySelectorAll<HTMLButtonElement>(`[data-node="${nodeId}"] button`)]
+      .find((b) => (b.textContent ?? "").trim() === "Make video") ?? null;
+    expect(button, "图片卡上应该有 Make video").not.toBeNull();
+    await act(async () => { button!.click(); });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it("CREATE-A3:t2v 弹窗上没有声音开关(会改价的三格照常在)", async () => {
+    await renderBoard();
+    await openT2v();
+    expect(specSelect("Length"), "规格选择器本身要在 —— 拿掉的只有声音那一格").not.toBeNull();
+    expect(soundSwitch(), "画布 t2v 提交不带 audio,不许显示声音开关").toBeNull();
+    expect(dialogText()).not.toContain("Sound doesn't change the price");
+  });
+
+  it("CREATE-A3:Animate 弹窗上没有声音开关", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    select(["n1"]);
+    await openAnimateOn("n1");
+    expect(specSelect("Shape")).not.toBeNull();
+    expect(soundSwitch(), "画布 Animate 提交不带 audio,不许显示声音开关").toBeNull();
+  });
+});

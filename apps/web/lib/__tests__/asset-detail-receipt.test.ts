@@ -282,3 +282,57 @@ describe("#776 r2 → #914:视频回执行为不变", () => {
     expect(detailSurface().textContent).not.toContain("What we sent to the engine");
   });
 });
+
+/**
+ * Creation S2 §8.1①(CREATE-A4 / CREATE-A12,Codex 跨厂复审 r1 P1-3 落修)——
+ * **「为什么是这一档」这句话真的到得了商家眼前**。
+ *
+ * 判官说的是:`routeReason` 只被写、没有任何产品路径读它,所以「路由理由可查」这条验收
+ * 在生产代码上是空的。服务端那一半(getGenJob / getGeneration 真的交出来)钉在
+ * `creation-routing-ledger.test.ts`;这一份钉的是最后一段:面板把它显示出来,
+ * 而「没升档」长得像没升档 —— 整块消失,不是一句编出来的占位话。
+ */
+/** 面板上「Why this tier」这一块底下那句话 —— 屏幕上真正写着的字。 */
+function whyThisTierRow(): HTMLElement | null {
+  return [...container!.querySelectorAll("span")]
+    .find((el) => el.textContent?.trim() === "Why this tier") ?? null;
+}
+
+/** 与 renderPanel 同一条路,只是这一份要额外塞一个字段进 DTO。 */
+async function renderPanelWith(extra: Record<string, unknown>): Promise<void> {
+  mocks.getGeneration.mockResolvedValue({ ...generation(one(null), "video", null), ...extra });
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => {
+    root!.render(createElement(DetailPanel, {
+      generationId: "g1", projectId: "p1", onClose: () => {}, entities: [],
+    } as never));
+  });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+}
+
+describe("CREATE-A12 资产回执:这一趟为什么落到这一档", () => {
+  it("CREATE-A12 有理由 ⇒ 面板把这句话显示出来,且不带型号名", async () => {
+    const reason = "You asked for 1080p, so this went to the HD tier.";
+    await renderPanelWith({ routeReason: reason });
+    expect(whyThisTierRow(), "面板上应该有「Why this tier」这一块").not.toBeNull();
+    const text = container!.textContent ?? "";
+    expect(text).toContain("Why this tier");
+    expect(text).toContain(reason);
+    for (const secret of ["seedance", "seedream", "dreamina", "byteplus", "mini"]) {
+      expect(text.toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it("CREATE-A12 没升档(null)⇒ 整块不渲染,一个字都不说", async () => {
+    await renderPanelWith({ routeReason: null });
+    expect(whyThisTierRow()).toBeNull();
+  });
+
+  it("CREATE-A12 字段整个读不到(老调用点)⇒ 同样什么都不说", async () => {
+    await renderPanelWith({});
+    expect(whyThisTierRow()).toBeNull();
+  });
+});

@@ -289,6 +289,12 @@ export default function FlowCanvas({
   // 所以商家看见的每一格都是引擎真给得了的，且选中的那一格就是会交付的那一格。
   const [imageShapeMenu, setImageShapeMenu] = useState<CanvasImageShapes | null>(null);
   const [imageShape, setImageShape] = useState<string | null>(null);
+  // Creation S2 §8.1①(CREATE-A6):这次出图要不要走**精修 / 高细节**那一档。默认关。
+  // 它**会改价**,所以旁边那个价钱跟着它走(与张数同一条规矩:商家授权的是他看见的数字),
+  // 而且它自己那份形状菜单比默认档窄 —— 勾上之后形状那一格会跟着收窄。
+  // 商家侧只见能力:这里没有、也不会有任何引擎名。
+  const [imageFineDetail, setImageFineDetail] = useState(false);
+
   // #645 T4：这条片子的规格（长度 / 清晰度 / 形状）。菜单、默认档与每一档的价格都来自
   // 服务端解析（`videoSpecs`）—— 界面一格都不写死，一分钱都不自己算。
   // t2v 与 Animate 各记各的：前者默认 16:9，后者默认 Adaptive（跟着首帧走），两条路的
@@ -325,6 +331,16 @@ export default function FlowCanvas({
     origin: "variant" | "edit";
   } | null>(null);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
+  // Creation S2 §8.1①(CREATE-A6)—— 精修那一格在**服务端说它卖得了**的时候才存在。
+  // 菜单读不到 / 服务端说 null ⇒ 整格不渲染,而且这一趟一定按默认档走(见 `fineDetailOn`)。
+  const fineDetailOption = imageShapeMenu?.fineDetail ?? null;
+  const fineDetailOn = imageFineDetail && !!fineDetailOption;
+  // 勾了精修就用**那一档自己**的形状菜单:它的像素上限更低,收不下的形状不许出现在菜单上
+  // (菜单上出现一个必然生成失败的形状,就是一次注定要让商家白花一趟的付费请求)。
+  const imageShapeOptionsNow = fineDetailOn ? fineDetailOption!.options : (imageShapeMenu?.options ?? []);
+  // 这一档每张的价。仍然只有服务端那一个来源 —— 界面一分钱都不自己算。
+  const imageUnitCredits = fineDetailOn ? fineDetailOption!.credits : costQuote?.imageCredits;
+
   const imageActionRef = useRef<{ material: string; actionId: string } | null>(null);
   const videoActionRef = useRef<{ material: string; actionId: string } | null>(null);
 
@@ -843,10 +859,14 @@ export default function FlowCanvas({
       const count = clampImageVariantCount(imageCount);
       // #643 T2：形状和张数一样，是商家授权内容的一部分 —— 要竖版之后再要方图是**另一个**
       // 动作，不是同一个动作的重试。所以它进材料。
-      const aspectRatio = imageShapeMenu ? imageShape : null;
+      const aspectRatio = imageShapeOptionsNow.length > 0 ? imageShape : null;
       // #777:「一组连贯的图」不改价,但它改的是**交付物** —— 要一组之后再要一堆散图
       // 是另一个动作,不是同一个动作的重试。所以它和张数、形状一样进材料。
       const coherentSet = count > 1 && imageCoherentSet;
+      // Creation S2 §8.1①(CREATE-A6):精修与形状、张数同一条规矩 —— 它**会改价**、
+      // 也会换掉交付物,所以要精修之后再要默认档是**另一个**动作,不是同一个动作的重试。
+      // 所以它进材料。
+      const fineDetail = fineDetailOn;
       const material = JSON.stringify({
         projectId,
         threadId: activeThreadId ?? null,
@@ -859,6 +879,7 @@ export default function FlowCanvas({
         count,
         aspectRatio,
         coherentSet,
+        fineDetail,
       });
       if (imageActionRef.current?.material !== material) {
         imageActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -873,6 +894,7 @@ export default function FlowCanvas({
           actionId: imageActionRef.current.actionId,
           ...(aspectRatio ? { aspectRatio } : {}),
           ...(coherentSet ? { coherentSet: true } : {}),
+          ...(fineDetail ? { fineDetail: true } : {}),
         },
       );
       if (accepted) {
@@ -888,7 +910,7 @@ export default function FlowCanvas({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [activeThreadId, closeComposer, costQuote, generateImage, imageCoherentSet, imageCount, imageShape, imageShapeMenu, projectId, prompt, promptIds, spawnRect, variantSel]);
+  }, [activeThreadId, closeComposer, costQuote, fineDetailOn, generateImage, imageCoherentSet, imageCount, imageShape, imageShapeOptionsNow, projectId, prompt, promptIds, spawnRect, variantSel]);
 
   /**
    * "More like this" / the edited prompt on a selected image card (#547 A3 · A4).
@@ -1389,7 +1411,9 @@ export default function FlowCanvas({
   // The composer's price follows the chosen number of images, from the same clamp the paid
   // call applies — the label and the charge can never disagree (#547 A2).
   const composerCostHint = genCostHint(
-    costQuote ? canvasGenCostQuote(costQuote, imageCount).imageCredits : undefined,
+    costQuote && typeof imageUnitCredits === "number"
+      ? canvasGenCostQuote({ ...costQuote, imageCredits: imageUnitCredits }, imageCount).imageCredits
+      : undefined,
   );
   // A card's own bar makes ONE image built on that card, so it is priced by the single-image
   // quote — one source, no second price for the same action (#550 ②, #547 A4).
@@ -1751,15 +1775,46 @@ export default function FlowCanvas({
                 {/* #643 T2: the shape this Generate will deliver. The menu is whatever the server
                     says the engine can make — nothing is written down here — and the selected one
                     is exactly what the request carries. Costs the same in every shape. */}
-                {imageShapeMenu && imageShape && (
+                {imageShapeOptionsNow.length > 0 && imageShape && (
                   <ImageShapePicker
                     compact
                     value={imageShape}
-                    options={imageShapeMenu.options}
+                    options={imageShapeOptionsNow}
                     onChange={setImageShape}
                     disabled={submitting}
                     title="The shape these images will be made in — same cost in every shape"
                   />
+                )}
+                {/* Creation S2 §8.1①(CREATE-A6):高细节那一档。它**会改价**,所以标签里
+                    写着那个价 —— 一个会动价钱的开关旁边不写价,商家只能猜。这一格由服务端
+                    说它今天卖不卖得了(`fineDetail === null` ⇒ 整格不渲染);勾上之后形状
+                    那一格会跟着收窄,因为这一档收不下最宽的那两个形状。 */}
+                {fineDetailOption && (
+                  <div
+                    className="flex items-center gap-2"
+                    title={`Sharper, finer detail on this image — ${creditsLabel(fineDetailOption.credits)} each instead of ${costQuote ? creditsLabel(costQuote.imageCredits) : "the standard price"}. Some shapes aren't available at this level.`}
+                  >
+                    <Checkbox
+                      id="canvas-fine-detail"
+                      checked={imageFineDetail}
+                      onCheckedChange={(checked) => {
+                        const on = checked === true;
+                        setImageFineDetail(on);
+                        // 勾上之后当前形状可能已经不在这一档的菜单上 —— 立刻夹回它自己的
+                        // 第一格,免得界面显示一个这一档发不出去的形状。
+                        if (on) {
+                          setImageShape((current) => (
+                            current && fineDetailOption.options.includes(current)
+                              ? current
+                              : fineDetailOption.options[0] ?? current
+                          ));
+                        }
+                      }}
+                    />
+                    <Label htmlFor="canvas-fine-detail" className="text-[0.75rem] font-normal text-muted-foreground">
+                      Fine detail ({creditsLabel(fineDetailOption.credits)} each)
+                    </Label>
+                  </div>
                 )}
                 {/* #777: one coherent set vs several independent options. Only meaningful for
                     more than one image, so it only exists then. It costs the same either way —

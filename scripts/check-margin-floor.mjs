@@ -168,6 +168,33 @@ export const COGS_INPUTS = {
   "video:seedance-2-mini:13:480p": { cogsUsd: 0.457002, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 13s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
   "video:seedance-2-mini:14:480p": { cogsUsd: 0.492156, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 14s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
   "video:seedance-2-mini:15:480p": { cogsUsd: 0.52731, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 15s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  // ── Creation S2 §8.1①(2026-09-02):高清槽位 seedance-2-0 的 1080p 档,12 个时长 ──
+  // 这一台**只卖 1080p**。它的 720p/480p 是能力而不是 SKU —— 那两档没有属于这个槽位的
+  // 成本钉点,而这个闸的规矩是「可售却没量过 = 红」,不是「先编一个数让它过」。
+  // 独立手抄的那一份在这里:$0.0077/K token × 245,025 token/5s(实测账单,不是官方公式
+  // 推的 243,000 —— 差 0.83% 未解释,取实测;记高不记低)⇒ $0.3773385/s。
+  // core 那边由 cost-pins 的同两条钉点现算(SEEDANCE_1080P_COGS_USD_PER_SECOND),
+  // 两边算完必须逐位相等,不等 = assertCogsAgreement 红。
+  // 收费侧:11cr/秒(Founder 2026-09-02 追认,规格 §5 2026-09-01 回填行)⇒ 毛利率 65.7%,
+  // 清 65% 目标线,也清 45% 地板。
+  "video:seedance-2-0:4:1080p": { cogsUsd: 1.509354, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 4s × 245,025 tok/5s = 196,020 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:5:1080p": { cogsUsd: 1.8866925, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 5s × 245,025 tok/5s = 245,025 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:6:1080p": { cogsUsd: 2.264031, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 6s × 245,025 tok/5s = 294,030 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:7:1080p": { cogsUsd: 2.6413695, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 7s × 245,025 tok/5s = 343,035 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:8:1080p": { cogsUsd: 3.018708, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 8s × 245,025 tok/5s = 392,040 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:9:1080p": { cogsUsd: 3.3960465, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 9s × 245,025 tok/5s = 441,045 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:10:1080p": { cogsUsd: 3.773385, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 10s × 245,025 tok/5s = 490,050 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:11:1080p": { cogsUsd: 4.1507235, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 11s × 245,025 tok/5s = 539,055 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:12:1080p": { cogsUsd: 4.528062, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 12s × 245,025 tok/5s = 588,060 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:13:1080p": { cogsUsd: 4.905400500000001, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 13s × 245,025 tok/5s = 637,065 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:14:1080p": { cogsUsd: 5.282739, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 14s × 245,025 tok/5s = 686,070 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "video:seedance-2-0:15:1080p": { cogsUsd: 5.6600775, source: "cost-pins video:seedance-2.0:1080p-per-ktoken $0.0077/K + :1080p-tokens-per-5s 245,025(2026-08-29 arkcli 实查 + 实测账单,回执 preserved/creation-probe-2026-08-29/)— 15s × 245,025 tok/5s = 735,075 tok × $0.0077/K;官方公式推 243,000 未采,取实测(记高不记低)" },
+  "image:seedream-pro": {
+    cogsUsd: 0.045,
+    source:
+      "cost-pins image:seedream-pro:per-image $0.045/张(2026-08-29 arkcli 实查)—— Creation S2 §8.1① 上架的 pro 图槽位;" +
+      "收费 2cr/张(Founder 2026-09-02 追认)⇒ 毛利率 77.5%",
+  },
   "video:seedance-2-mini:ref": {
     cogsUsd: 0.49896,
     source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 V2VCompletion.original_price — (6s ref cap + 5s output) × 21,600 tok/s × $2.10/M = $0.49896(含视频输入档;我们参考片窗口的最坏情形)",
@@ -447,8 +474,8 @@ async function buildSellableSkus() {
   const spend = await import(pathToFileURL(path.join(root, "packages/core/dist/spend.js")).href);
   const gen = await import(pathToFileURL(path.join(root, "packages/core/dist/gen.js")).href);
   const refgen = await import(pathToFileURL(path.join(root, "packages/core/dist/refgen.js")).href);
-  const { pricedGenCredits, pricedRefgenCredits, CREDITS_PER_USD, FLAT_PRICED_VIDEO_MODELS } = spend;
-  const { GEN_VIDEO_MODEL_OPTIONS, GEN_MODELS } = gen;
+  const { pricedGenCredits, pricedRefgenCredits, CREDITS_PER_USD, FLAT_PRICED_VIDEO_MODELS, SELLABLE_VIDEO_RESOLUTIONS = {} } = spend;
+  const { GEN_VIDEO_MODEL_OPTIONS, GEN_MODELS, REFERENCE_VIDEO_MODEL } = gen;
   const { REFGEN_MODELS } = refgen;
   const toUsd = (internal) => internal / CREDITS_PER_USD;
 
@@ -493,21 +520,31 @@ async function buildSellableSkus() {
       missing.push(`opts:${model}`);
       continue;
     }
-    const resolutions = opts.resolutions.length ? opts.resolutions : [""];
+    // Creation S2 §8.1①:枚举源从**能力表**换成**已定价白名单**(`SELLABLE_VIDEO_RESOLUTIONS`)。
+    // 两个槽位之后,「引擎做得出来」不再等于「我们卖」——高清槽位的 720p/480p 是能力,
+    // 却没有属于它的成本钉点。照能力表枚举会给这个闸凭空多出几行拿别档成本冒充的假毛利,
+    // 而且与 core 的毛利表(同样按白名单枚举)当场对不上 = assertCogsAgreement 红。
+    const resolutions = SELLABLE_VIDEO_RESOLUTIONS[model] ?? [];
     for (const seconds of opts.durations) {
       for (const resolution of resolutions) {
         const charge = pricedGenCredits({ kind: "VIDEO", model, count: 1, videoOptions: { seconds, resolution, audio: true } });
         add(`video:${model}:${seconds}:${resolution}`, `Video ${model} ${seconds}s ${resolution || "(default res)"}`, toUsd(charge));
       }
     }
-    const refCharge = pricedGenCredits({
-      kind: "VIDEO",
-      model,
-      count: 1,
-      referenceVideoGenerationId: "gate",
-      videoOptions: { seconds: 5, resolution: opts.resolutions[0] ?? "720p", audio: true },
-    });
-    add(`video:${model}:ref`, `Reference video ${model} (E1-06)`, toUsd(refCharge));
+    // 整段参考视频**只有一台引擎能收**(`REFERENCE_VIDEO_MODEL`,契约闸 genRequest 里那条
+    // 「reference video requires …」的 refine 就是它)。此前只有一台在产引擎,所以「每台都加
+    // 一行 ref」与「只给那一台加」看不出差别;Creation S2 §8.1① 上架第二台之后,照旧枚举
+    // 就会给一条**根本请求不到**的路凭空要一份成本 —— 那不是漏量,是量了一个不存在的档。
+    if (model === REFERENCE_VIDEO_MODEL) {
+      const refCharge = pricedGenCredits({
+        kind: "VIDEO",
+        model,
+        count: 1,
+        referenceVideoGenerationId: "gate",
+        videoOptions: { seconds: 5, resolution: resolutions[0] ?? "720p", audio: true },
+      });
+      add(`video:${model}:ref`, `Reference video ${model} (E1-06)`, toUsd(refCharge));
+    }
   }
 
   // ── MONEY-A9 素材理解三类(2026-09-01)─────────────────────────────────────
