@@ -198,7 +198,8 @@ function isUploadWrite(node: ts.Node): boolean {
  * `export { default as x } from "…"` 这条边永远接不到东西。四种写法统一成键 `模块#default`:
  *   · `export default function upload(){}`      · `export default upload;`
  *   · `export { x as default }`                 · `export { default as x } from "…"`(在 reexportEdges)
- * 已知边界:`export default function(){}` / `export default () => {}` 匿名默认导出没有本地名可对。
+ * 匿名默认导出 `export default function(){}` / `export default () => {}` 也认:它们没有**本地**名,
+ * 但对外的名字就是 `default`,所以按合成名 `default` 进表(见 functionDeclarationOf)。
  */
 function exportedNames(sf: ts.SourceFile): Map<string, string> {
   const out = new Map<string, string>();
@@ -206,16 +207,21 @@ function exportedNames(sf: ts.SourceFile): Map<string, string> {
     const modifiers = ts.canHaveModifiers(st) ? ts.getModifiers(st) ?? [] : [];
     const exported = modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
     const isDefault = modifiers.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
-    if (ts.isFunctionDeclaration(st) && exported && st.name) {
-      out.set(isDefault ? "default" : st.name.text, st.name.text);
+    if (ts.isFunctionDeclaration(st) && exported) {
+      if (st.name) out.set(isDefault ? "default" : st.name.text, st.name.text);
+      // 匿名默认导出:对外名与本地合成名都是 default。
+      else if (isDefault) out.set("default", "default");
     }
     if (ts.isVariableStatement(st) && exported) {
       for (const d of st.declarationList.declarations) {
         if (ts.isIdentifier(d.name)) out.set(d.name.text, d.name.text);
       }
     }
-    if (ts.isExportAssignment(st) && !st.isExportEquals && ts.isIdentifier(st.expression)) {
-      out.set("default", st.expression.text);
+    if (ts.isExportAssignment(st) && !st.isExportEquals) {
+      const value = unwrap(st.expression);
+      if (ts.isIdentifier(value)) out.set("default", value.text);
+      // `export default () => {}` —— 合成名 default(见 functionDeclarationOf)。
+      else if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) out.set("default", "default");
     }
     if (ts.isExportDeclaration(st) && !st.isTypeOnly && st.exportClause && ts.isNamedExports(st.exportClause)) {
       for (const el of st.exportClause.elements) {
@@ -258,6 +264,16 @@ function isBlockScope(node: ts.Node): boolean {
   );
 }
 
+/** 这个声明带着 `export default` 吗。 */
+function isDefaultExported(node: ts.Node): boolean {
+  if (!ts.canHaveModifiers(node)) return false;
+  const modifiers = ts.getModifiers(node) ?? [];
+  return (
+    modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) &&
+    modifiers.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+  );
+}
+
 /** 一处函数声明的名字,以及它是**词法绑定**还是**成员**。
  *  分开是必要的:`const store = { persist(){} }` 里的 `persist` 只能通过 `store.persist()`
  *  够到,它不该出现在裸标识符 `persist()` 的作用域表里(否则会误连)。 */
@@ -268,7 +284,17 @@ function functionDeclarationOf(node: ts.Node): { name: string; member: boolean }
     return ts.isArrowFunction(inner) || ts.isFunctionExpression(inner);
   };
   if (ts.isFunctionDeclaration(node)) {
-    return node.name ? { name: node.name.text, member: false } : undefined;
+    if (node.name) return { name: node.name.text, member: false };
+    // 匿名默认导出 `export default function (…) {}`:没有本地名,但它对外**有**名字 ——
+    // 就叫 default。给它这个合成名,它才能进调用图、进闭包、配出 `模块#default` 动作键。
+    return isDefaultExported(node) ? { name: "default", member: false } : undefined;
+  }
+  // `export default () => {}` / `export default function () {}`(表达式形态)同理。
+  if (ts.isExportAssignment(node) && !node.isExportEquals) {
+    const value = unwrap(node.expression);
+    if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+      return { name: "default", member: false };
+    }
   }
   if (ts.isVariableDeclaration(node)) {
     if (!isFunctionValue(node.initializer) || !ts.isIdentifier(node.name)) return undefined;
@@ -333,17 +359,17 @@ const NO_IMPORTED_ACTIONS: ImportedActions = { locals: new Set(), namespaces: ne
  *      (`export { a as b } from "…"`、import 之后再 `export { a }`、
  *      `export { default as a } from "…"`)都已经认了,见 `reexportEdges`。
  *
- * 导入/导出侧另有三条,列在 `moduleBindingsOf`:动态说明符不是静态字符串、把命名空间解构后
- * 再调用、匿名默认导出配不出键(但它仍会被**写点普查**抓住,不会整条静默)。
+ * 导入/导出侧另有两条,列在 `moduleBindingsOf`:动态说明符不是静态字符串、把命名空间解构后
+ * 再调用。
  *
- * 这八条各有一条负向断言钉着(「闭包边界逐条对表」与「导入/导出的已知边界」两条测试),
+ * 这七条各有一条负向断言钉着(「闭包边界逐条对表」与「导入/导出的已知边界」两条测试),
  * 说了认不到就得真的认不到 —— 哪天某条被意外覆盖,那里会红,该更新的是这份清单,
  * 不是默默删掉断言。
  */
 function uploadWritersOf(
   sf: ts.SourceFile,
   imported: ImportedActions,
-): { hasWritePoint: boolean; exportedWriters: string[] } {
+): { hasWritePoint: boolean; writePointFunctions: number; exportedWriters: string[] } {
   const scopes: Scope[] = [{ parent: null, decls: new Map() }];
   const nodes: FnNode[] = [];
   const members = new Map<string, number[]>();
@@ -453,7 +479,13 @@ function uploadWritersOf(
       exportedWriters.push(external);
     }
   }
-  return { hasWritePoint, exportedWriters };
+  return {
+    hasWritePoint,
+    // **写点函数**的个数(函数体里直接写 UPLOAD 的那些,不含只是转调的)。
+    // 只比文件名集合不够:在既有写点文件里再加一支写 UPLOAD 的函数,文件集合纹丝不动。
+    writePointFunctions: nodes.filter((node) => node.writes).length,
+    exportedWriters,
+  };
 }
 
 /** 解析一次就够。全仓源码文件全量 AST 扫描是毫秒级的量级,所以下面不做任何文本预筛。 */
@@ -477,10 +509,19 @@ function parseFile(rel: string): ts.SourceFile {
 
 /** 写点所在的文件。多一个文件开始写 UPLOAD 素材,这里当场红 —— 那意味着有一条新的计费路径,
  *  而它的 UI 入口还没有人问过「商家看得见价目吗」。 */
-const WRITE_POINT_FILES: Record<string, string> = {
-  "lib/actions.ts": "ingestFile → createEntity / addReferenceImages / uploadCandidates / uploadReference",
-  "lib/asset-actions.ts": "saveCroppedGeneration —— 裁剪保存落一条全新的 UPLOAD 素材",
-  "lib/upload-actions.ts": "finalizeCandidateUploads —— 直传落盘的唯一权威(Otto 的 URL 导入也走它)",
+const WRITE_POINT_FILES: Record<string, { note: string; writePointFunctions: number }> = {
+  "lib/actions.ts": {
+    note: "ingestFile / uploadCandidates / uploadReference 三处直接落行,再经 createEntity、addReferenceImages 转出去",
+    writePointFunctions: 3,
+  },
+  "lib/asset-actions.ts": {
+    note: "saveCroppedGeneration —— 裁剪保存落一条全新的 UPLOAD 素材",
+    writePointFunctions: 1,
+  },
+  "lib/upload-actions.ts": {
+    note: "finalizeCandidateUploads —— 直传落盘的唯一权威(Otto 的 URL 导入也走它)",
+    writePointFunctions: 1,
+  },
 };
 
 /** 源码扩展名。`import … from "./x.js"` 在 ESM 里指的就是 `x.ts` —— 两侧都剥掉扩展名,
@@ -557,10 +598,9 @@ function dynamicImportModuleOf(file: string, expr: ts.Expression | undefined): s
  * **已知边界(穷举)**:
  *   1. 说明符不是静态字符串的动态 import(`import(pathVar)`)—— 解析器不知道它指向哪。
  *   2. 把命名空间解构或转手(`const { upload } = await import(…)`、`const f = ns.upload`)。
- *   3. 匿名默认导出(`export default function(){}` / `export default () => {}`)没有本地名
- *      可对,配不出 `#default` 键 —— 但那个文件仍会被**写点普查**抓住,不会整条静默。
- *   4. `require()` / `module.exports` 这类 CJS 写法(仓库全 ESM,今天不存在)。
- * 前三条各有一条负向断言钉着(「导入/导出的已知边界」那条测试)。
+ *   3. `require()` / `module.exports` 这类 CJS 写法(仓库全 ESM,今天不存在)。
+ * 前两条各有一条负向断言钉着(「导入/导出的已知边界」那条测试)。
+ * (匿名默认导出曾在这份清单里,现已认 —— 见「匿名默认导出也是动作」那条正向夹具。)
  */
 function moduleBindingsOf(file: string, sf: ts.SourceFile): ModuleBindings {
   const named = new Map<string, { module: string; name: string }>();
@@ -681,14 +721,23 @@ function reexportEdges(
  * **但登记表只收 `lib/**` 的动作**(见 `uploadActionKeys`):UI 组件调了上传动作是**入口**,
  * 不是**动作**。两者混在一张表里,动作表会长出一串组件名,两边都读不懂。
  */
-function computeCensus(src: Sources): { writePointFiles: string[]; actions: Set<string> } {
+function computeCensus(src: Sources): {
+  writePointFiles: string[];
+  writePointCounts: Record<string, number>;
+  actions: Set<string>;
+} {
   const writePointFiles: string[] = [];
+  const writePointCounts: Record<string, number> = {};
   const actions = new Set<string>();
 
   for (const file of src.allFiles) {
-    const { hasWritePoint, exportedWriters } = uploadWritersOf(src.parse(file), NO_IMPORTED_ACTIONS);
+    const { hasWritePoint, writePointFunctions, exportedWriters } = uploadWritersOf(
+      src.parse(file),
+      NO_IMPORTED_ACTIONS,
+    );
     if (!hasWritePoint) continue;
     writePointFiles.push(file);
+    writePointCounts[file] = writePointFunctions;
     for (const name of exportedWriters) actions.add(actionKey(moduleIdOf(file), name));
   }
 
@@ -711,7 +760,7 @@ function computeCensus(src: Sources): { writePointFiles: string[]; actions: Set<
       for (const name of uploadWritersOf(sf, imported).exportedWriters) add(name);
     }
   }
-  return { writePointFiles: writePointFiles.sort(), actions };
+  return { writePointFiles: writePointFiles.sort(), writePointCounts, actions };
 }
 
 /** 一个 UI 文件里对上传动作的**调用点数量**。
@@ -777,8 +826,8 @@ function realSources(): Sources {
   });
 }
 
-let censusCache: { writePointFiles: string[]; actions: Set<string> } | null = null;
-function actionCensus(): { writePointFiles: string[]; actions: Set<string> } {
+let censusCache: ReturnType<typeof computeCensus> | null = null;
+function actionCensus(): ReturnType<typeof computeCensus> {
   if (!censusCache) censusCache = computeCensus(realSources());
   return censusCache;
 }
@@ -874,7 +923,9 @@ const EXEMPTIONS: Exemption[] = [
     file: "components/otto/edit/EditDesk.tsx",
     reason:
       "只收音频;audio 不在收费的三类里(§7.3 单列)。两道守:文件选择器的 accept=\"audio/*\" 提示,"
-      + "加 uploadMusic 里的 MIME/扩展名守卫(非音频不进 finalizeCandidateUploads,当场提示)",
+      + "加 uploadMusic 里的守卫 —— 扩展名必须落在「core 的 mimeOf 判为 audio/*」的那组里(硬条件:服务端对非图片"
+      + "扩展名不读字节,直接按扩展名落 MIME,音频扩展名一律落 audio/*,understandingKindForMime 返回 null 不计费),"
+      + "MIME 只作副条件(audio/ 前缀、浏览器没意见、或 m4a/aac 报 video/mp4 这类已知容器误报)",
     spec: "docs/specs/money-engine.md#7.3-A9-素材理解计费面",
     callSites: 1,
     guard: () => {
@@ -890,7 +941,30 @@ const EXEMPTIONS: Exemption[] = [
         handler!,
         "uploadMusic 里的音频守卫没了 —— 非音频文件会重新落成会被理解计费的 UPLOAD 素材,而这个入口不挂披露",
       ).toContain("looksLikeAudio");
-      expect(src, "looksLikeAudio 不再按 audio/ 前缀判断 —— 守卫被掏空了").toContain('startsWith("audio/")');
+
+      // 守卫的**函数体自己**要有两项检查。只在整份文件里 toContain 是假绿:
+      // 把 looksLikeAudio 换成 `() => true`,常量和别处的字符串都还在,断言照样过。
+      const audioGuard = functionSourceOf("components/otto/edit/EditDesk.tsx", "looksLikeAudio");
+      expect(audioGuard, "找不到 looksLikeAudio —— 守卫被删或改名了").not.toBeNull();
+      expect(
+        audioGuard!,
+        "looksLikeAudio 里没有扩展名白名单检查 —— 扩展名是硬条件:它决定服务端把文件落成哪种 MIME,也就决定会不会被理解计费",
+      ).toContain("AUDIO_UPLOAD_EXTENSIONS");
+      expect(
+        audioGuard!,
+        "looksLikeAudio 不再按 audio/ 前缀判断 —— 守卫被掏空了",
+      ).toContain('startsWith("audio/")');
+      // 白名单本身必须取自 core 的单一权威,不许再手抄一份(手抄过一次就混进了
+      // .webm(其实是 video 扩展、会被 video-qa 计费)与 .oga(服务端根本不收)。
+      // 断言落在**函数体**上,不是整份文件:注释里提一句 mimeOf 不算数。
+      expect(
+        audioGuard!,
+        "白名单不再由 core 的 mimeOf 算出来 —— 那是服务端真正定 MIME 的函数,手抄一份就会再混进 .webm 这种 video 扩展名",
+      ).toContain("AUDIO_UPLOAD_EXTENSIONS");
+      expect(
+        src,
+        "白名单又变回手抄的了 —— 要用 core 的 mimeOf 从 UPLOAD_EXTS 算出来",
+      ).toContain('mimeOf(ext).startsWith("audio/")');
       // ③ 守卫要真的拦在 finalize 之前,不是拦完还继续走。
       const guardIndex = handler!.indexOf("looksLikeAudio");
       const finalizeIndex = handler!.indexOf("finalizeCandidateUploads");
@@ -959,6 +1033,17 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       writePointFiles(),
       "有文件开始写 source:\"UPLOAD\":先追它的 UI 面,再决定挂披露还是写进豁免",
     ).toEqual(Object.keys(WRITE_POINT_FILES).sort());
+
+    // 只比文件名不够:在既有写点文件里再加一支写 UPLOAD 的函数(比如一个匿名默认导出),
+    // 文件集合纹丝不动。所以每个文件的**写点函数个数**也要对上。
+    expect(
+      actionCensus().writePointCounts,
+      "某个写点文件里的写点函数个数变了:多出来的那一支要么进动作表,要么说明有条新的计费路径",
+    ).toEqual(
+      Object.fromEntries(
+        Object.entries(WRITE_POINT_FILES).map(([file, { writePointFunctions }]) => [file, writePointFunctions]),
+      ),
+    );
   });
 
   it("写点普查:转调内部 helper 的导出动作也算上传动作(闭包取代了手抄的 helper 名单)", () => {
@@ -1032,6 +1117,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       /** 登记表口径:只有 `lib/**` 的动作。UI 侧包装属于「谁该挂披露」,不进动作表。 */
       registered: all.filter((key) => key.startsWith("lib/")),
       writePoints: census.writePointFiles,
+      writePointCounts: census.writePointCounts,
       count: (file: string) => countCallSites(project, file, census.actions),
       entries: project.entryFiles.filter((f) => countCallSites(project, f, census.actions) > 0),
     };
@@ -1168,7 +1254,7 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     expect(thenable.count("components/Ui.tsx"), "`import().then(m => m.upload())` 没被计到").toBe(1);
   });
 
-  it("导入/导出的已知边界:动态说明符、解构命名空间、匿名默认导出(认不到=预期)", () => {
+  it("导入/导出的已知边界:动态说明符、解构命名空间(认不到=预期)", () => {
     const dynamicSpecifier = censusOf({
       "lib/actions.ts": WRITE_POINT_MODULE,
       "components/Ui.tsx":
@@ -1183,13 +1269,51 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     });
     expect(destructured.count("components/Ui.tsx"), "边界:把命名空间解构后再调用").toBe(0);
 
-    // 匿名默认导出没有本地名可对,配不出 #default 键 —— 但它仍是**写点文件**,
-    // 写点普查那一层照样会红,不会整条静默。
-    const anonymous = censusOf({
+    // (匿名默认导出曾经列在这里当边界,现在已经认了 —— 见下面「匿名默认导出」那条。)
+  });
+
+  it("匿名默认导出也是动作:`export default function (…)` 配得出 `模块#default`", () => {
+    const result = censusOf({
       "lib/actions.ts": 'export default function (p) { return { id: p, source: "UPLOAD" }; }',
+      "components/Ui.tsx": 'import upload from "@/lib/actions";\nexport function Ui() { return () => upload("p"); }',
     });
-    expect(anonymous.registered, "边界:匿名默认导出配不出动作键").toEqual([]);
-    expect(anonymous.writePoints, "匿名默认导出仍必须被写点普查抓住").toEqual(["lib/actions.ts"]);
+    expect(result.registered, "匿名默认导出没配出 #default 键").toEqual(["lib/actions#default"]);
+    expect(result.count("components/Ui.tsx"), "默认导入匿名默认导出的调用没被计到").toBe(1);
+
+    const arrow = censusOf({
+      "lib/actions.ts": 'export default (p) => ({ id: p, source: "UPLOAD" });',
+      "components/Ui.tsx": 'import upload from "@/lib/actions";\nexport function Ui() { return () => upload("p"); }',
+    });
+    expect(arrow.registered, "`export default (p) => …` 没配出 #default 键").toEqual([
+      "lib/actions#default",
+    ]);
+    expect(arrow.count("components/Ui.tsx")).toBe(1);
+  });
+
+  it("既有写点文件里再加一支匿名默认写点:动作表、入口、写点计数三样都要动", () => {
+    // 这就是复审那条探针的场景:往已经在登记表里的写点文件后面追加一支匿名默认导出的写点,
+    // 再加一个默认导入它的 UI。只比「文件名集合」的话,三张表可以纹丝不动 —— 静默全绿。
+    const before = censusOf({
+      "lib/actions.ts": 'export function upload(p) { return { id: p, source: "UPLOAD" }; }',
+    });
+    expect(before.registered).toEqual(["lib/actions#upload"]);
+    expect(before.writePointCounts["lib/actions.ts"]).toBe(1);
+
+    const after = censusOf({
+      "lib/actions.ts":
+        'export function upload(p) { return { id: p, source: "UPLOAD" }; }\n'
+        + 'export default function (p) { return { id: p, source: "UPLOAD" }; }',
+      "components/Sneaky.tsx": 'import upload from "@/lib/actions";\nexport function Sneaky() { return () => upload("p"); }',
+    });
+    expect(after.registered, "追加的匿名默认写点没进动作表").toEqual([
+      "lib/actions#default",
+      "lib/actions#upload",
+    ]);
+    expect(after.count("components/Sneaky.tsx"), "偷偷加的 UI 入口没被计到").toBe(1);
+    expect(
+      after.writePointCounts["lib/actions.ts"],
+      "写点函数计数没跟着变 —— 只比文件名集合正是这条探针能钻的洞",
+    ).toBe(2);
   });
 
   it("目录入口的两种显式写法也归一(`@/lib/foo/index` 与 `./index.js`)", () => {

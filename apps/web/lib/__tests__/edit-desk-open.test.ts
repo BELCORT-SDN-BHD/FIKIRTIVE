@@ -206,7 +206,7 @@ describe("an export outlives the page, so the desk picks it back up", () => {
  * 价目的钱。所以这里钉的是**行为**:非音频根本走不到 finalize。
  */
 describe("MONEY-A9 配乐入口只收音频 —— 豁免的前提必须自己成立", () => {
-  /** 直接驱动那个隐藏的 <input type="file">,和商家在选择框里点确定是同一条路。 */
+  /** 直接驱动那个隐藏的 type="file" 输入框,和商家在选择框里点确定是同一条路。 */
   async function pick(name: string, type: string) {
     const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
     if (!input) throw new Error(`no file input — screen says: ${container.textContent}`);
@@ -237,13 +237,45 @@ describe("MONEY-A9 配乐入口只收音频 —— 豁免的前提必须自己�
     expect(container.textContent).toContain("Only audio files can be added here.");
   });
 
-  it("浏览器不给 MIME 时按扩展名兜底 —— 真音频不该被误拦(.m4a 常见)", async () => {
+  it("扩展名是硬条件:内容是图、名字是 .png、而浏览器报 audio/mpeg —— 必须拒", async () => {
+    // 这是真能走通的一条绕过:只看 MIME 就放行,服务端对**图片扩展名**才读字节,
+    // 于是它被判成 image/png 落盘、被建收费理解行,而这个入口按豁免是不披露的。
+    await open();
+    await pick("poster.png", "audio/mpeg");
+
+    expect(vi.mocked(uploadFilesDirect), "谎报 audio/mpeg 的 .png 被放行了").not.toHaveBeenCalled();
+    expect(
+      vi.mocked(finalizeCandidateUploads),
+      "谎报 audio/mpeg 的 .png 走到了 finalize —— 它会落成 image 素材并被计费",
+    ).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Only audio files can be added here.");
+  });
+
+  it.each([
+    ["theme.m4a", "", "浏览器不给 MIME"],
+    ["track.mp3", "", "浏览器不给 MIME"],
+    ["theme.m4a", "video/mp4", "m4a 装在 MP4 容器里,平台报 video/mp4"],
+    ["theme.aac", "video/mp4", "aac 同上"],
+    ["track.flac", "application/octet-stream", "浏览器没意见"],
+    ["track.wav", "audio/wav", "老实报的"],
+  ])("真音频不该被误拦:%s(type=%s,%s)", async (name, type) => {
     vi.mocked(uploadFilesDirect).mockResolvedValue({ files: [], failures: [] } as never);
     vi.mocked(finalizeCandidateUploads).mockResolvedValue({ error: "stop here" } as never);
     await open();
-    await pick("theme.m4a", "");
+    await pick(name, type);
 
-    expect(vi.mocked(uploadFilesDirect), "空 MIME 的 .m4a 被误拦了").toHaveBeenCalled();
+    expect(vi.mocked(uploadFilesDirect), `${name} 被误拦了`).toHaveBeenCalled();
     expect(container.textContent).not.toContain("Only audio files can be added here.");
+  });
+
+  it(".webm 被拒 —— 它是 video 扩展名,服务端按 mimeOf 落 video/webm,会被 video-qa 计费", async () => {
+    await open();
+    await pick("clip.webm", "audio/webm");
+
+    expect(
+      vi.mocked(finalizeCandidateUploads),
+      ".webm 被放行了 —— 它会落成 video 素材,那正是一条会计费的路径",
+    ).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Only audio files can be added here.");
   });
 });
