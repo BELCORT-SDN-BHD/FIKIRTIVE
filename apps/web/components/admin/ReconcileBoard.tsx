@@ -158,7 +158,7 @@ export function ReconcileBoard({ result }: { result: { rows: ReconcileObservatio
         <h1 className="text-lg font-semibold">Payment reconciliation</h1>
         <p className="text-sm text-muted-foreground">
           Stripe says these were paid. Most of them are confirmed gaps — the credits ledger has no entry. Rows marked{" "}
-          <em>not yet confirmed</em> are different: the sweeper could not read the ledger when it first saw them, so nobody has
+          <em>not yet confirmed</em>{" "}are different: the sweeper could not read the ledger when it first saw them, so nobody has
           checked yet whether they are gaps at all; they are tracked so they cannot slip out of the 48h window unnoticed, and the
           next readable sweep decides. The sweeper re-checks every 30 minutes and alerts once a day until each one is settled. It
           closes a gap by itself the moment the ledger row appears — replaying the Checkout Session&rsquo;s webhook event in
