@@ -38,6 +38,12 @@ const DETAIL = {
   genCount: 8,
   ledger: [],
   audit: [],
+  // 前端基线合并(FRONT-A1):main 的 MONEY-A14 给 TenantDetail 加了四个必填字段,
+  // 组件渲染时就会读。这份夹具跟着补齐,断言一条没动 —— 这一票测的仍然是访问控制确认弹层。
+  adjustRolling30dDisplay: 0,
+  adjustRolling30dLimitDisplay: 2000,
+  openManualRefunds: [],
+  openManualRefundsHasMore: false,
 };
 
 let root: Root | null = null;
