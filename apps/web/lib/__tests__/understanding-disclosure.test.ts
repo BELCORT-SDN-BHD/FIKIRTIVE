@@ -896,6 +896,150 @@ function functionSourceOf(file: string, name: string): string | null {
   return found;
 }
 
+/** 断言一个节点是某种语法形态,并把类型收窄 —— 失败时给出人能看懂的话。 */
+function must<T extends ts.Node>(
+  node: ts.Node | undefined,
+  is: (n: ts.Node) => n is T,
+  message: string,
+): T {
+  expect(node !== undefined && is(node), message).toBe(true);
+  return node as T;
+}
+
+/** 一个模块级 `const` 的**初始化表达式节点**(不是文本)。 */
+function initializerOf(file: string, name: string): { node: ts.Expression; text: string } | null {
+  const sf = parseFile(file);
+  let found: ts.Expression | null = null;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) {
+      found = node.initializer;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return found === null ? null : { node: found, text: sf.text.slice((found as ts.Expression).getStart(sf), (found as ts.Expression).end) };
+}
+
+/** `import { X } from "…"` 里 X 的来源说明符,**原样**返回(不解析成模块 id)。 */
+function importSpecifierOf(file: string, local: string): string | null {
+  for (const st of parseFile(file).statements) {
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+    const bindings = st.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const el of bindings.elements) {
+      if (el.name.text === local) return st.moduleSpecifier.text;
+    }
+  }
+  return null;
+}
+
+/**
+ * 钉住音频扩展名白名单**确实是从 core 算出来的**,而且是按语法树钉,不是按文本。
+ *
+ * 为什么必须按语法树:文本 `toContain` 钉不住「这个集合是怎么来的」。把真实集合改成
+ * 「六个音频扩展名 + mp4」,再在文件别处留一段没人用的
+ * `UPLOAD_EXTS.filter((ext) => mimeOf(ext).startsWith("audio/"))` 当诱饵,文本断言照样全绿 ——
+ * 而 `clip.mp4` 会被放行,服务端落 `video/mp4`、建 video-qa 收费行,这个入口却不挂披露。
+ * 所以这里逐层拆 `new Set(UPLOAD_EXTS.filter((p) => mimeOf(p).startsWith("audio/")))`,
+ * 任何一层不对就红,并把实际写法打在失败信息里。
+ */
+function assertAudioWhitelistIsDerived(file: string): void {
+  for (const local of ["UPLOAD_EXTS", "mimeOf"]) {
+    expect(
+      importSpecifierOf(file, local),
+      `${local} 不是从 @fikirtive/core/upload 导入的 —— 白名单必须来自 core 的单一权威`,
+    ).toBe("@fikirtive/core/upload");
+  }
+
+  const found = initializerOf(file, "AUDIO_UPLOAD_EXTENSIONS");
+  expect(found, "找不到 AUDIO_UPLOAD_EXTENSIONS 的定义 —— 白名单被删或改名了").not.toBeNull();
+  const actual = found!.text;
+
+  const created = must(
+    found!.node,
+    ts.isNewExpression,
+    `白名单不是 new Set(...) 的形态,实际写法:${actual}`,
+  );
+  expect(
+    ts.isIdentifier(created.expression) && created.expression.text === "Set",
+    `白名单不是 new Set(...),实际写法:${actual}`,
+  ).toBe(true);
+  expect((created.arguments ?? []).length, `new Set(...) 的参数不是恰好一个:${actual}`).toBe(1);
+
+  const filterCall = must(
+    unwrap(created.arguments![0]!),
+    ts.isCallExpression,
+    `白名单不是算出来的(new Set 里不是一次 filter 调用),实际写法:${actual}`,
+  );
+  const filterCallee = must(
+    filterCall.expression,
+    ts.isPropertyAccessExpression,
+    `白名单不是 UPLOAD_EXTS.filter(...),实际写法:${actual}`,
+  );
+  expect(
+    ts.isIdentifier(filterCallee.expression) &&
+      filterCallee.expression.text === "UPLOAD_EXTS" &&
+      filterCallee.name.text === "filter",
+    `白名单不是从 UPLOAD_EXTS 过滤出来的(手抄的名单会再混进 .webm 这种 video 扩展名),实际写法:${actual}`,
+  ).toBe(true);
+  expect(filterCall.arguments.length, `filter 的参数不是恰好一个:${actual}`).toBe(1);
+
+  const predicate = must(
+    unwrap(filterCall.arguments[0]!),
+    ts.isArrowFunction,
+    `filter 的参数不是箭头函数:${actual}`,
+  );
+  expect(predicate.parameters.length, `过滤函数的参数不是恰好一个:${actual}`).toBe(1);
+  const parameter = must(
+    predicate.parameters[0]!.name,
+    ts.isIdentifier,
+    `过滤函数的参数不是一个普通标识符:${actual}`,
+  );
+  expect(
+    ts.isBlock(predicate.body),
+    `过滤函数写成了带 {} 的块体,这条结构检查只认单表达式形态:${actual}`,
+  ).toBe(false);
+
+  const startsWithCall = must(
+    unwrap(predicate.body as ts.Expression),
+    ts.isCallExpression,
+    `过滤条件不是一次调用:${actual}`,
+  );
+  const startsWithCallee = must(
+    startsWithCall.expression,
+    ts.isPropertyAccessExpression,
+    `过滤条件不是 ….startsWith(...):${actual}`,
+  );
+  expect(startsWithCallee.name.text, `过滤条件不是 startsWith:${actual}`).toBe("startsWith");
+  expect(startsWithCall.arguments.length, `startsWith 的参数不是恰好一个:${actual}`).toBe(1);
+  expect(
+    literalTextOf(unwrap(startsWithCall.arguments[0]!)),
+    `过滤条件比的不是 "audio/" 前缀:${actual}`,
+  ).toBe("audio/");
+
+  const mimeCall = must(
+    unwrap(startsWithCallee.expression),
+    ts.isCallExpression,
+    `startsWith 的接收者不是 mimeOf(...) 的结果:${actual}`,
+  );
+  expect(
+    ts.isIdentifier(mimeCall.expression) && mimeCall.expression.text === "mimeOf",
+    `过滤条件没有调用 core 的 mimeOf —— 那才是服务端定 MIME 的那个函数:${actual}`,
+  ).toBe(true);
+  expect(mimeCall.arguments.length, `mimeOf 的参数不是恰好一个:${actual}`).toBe(1);
+  const mimeArgument = must(
+    unwrap(mimeCall.arguments[0]!),
+    ts.isIdentifier,
+    `mimeOf 的参数不是过滤函数那个参数:${actual}`,
+  );
+  expect(
+    mimeArgument.text,
+    `mimeOf 判的不是被过滤的那个扩展名(参数对不上):${actual}`,
+  ).toBe(parameter.text);
+}
+
 /** 仓库根(WEB_ROOT 是 apps/web)。豁免要引规格,规格得真的读得到。 */
 const REPO_ROOT = path.join(WEB_ROOT, "..", "..");
 const specText = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
@@ -954,17 +1098,9 @@ const EXEMPTIONS: Exemption[] = [
         audioGuard!,
         "looksLikeAudio 不再按 audio/ 前缀判断 —— 守卫被掏空了",
       ).toContain('startsWith("audio/")');
-      // 白名单本身必须取自 core 的单一权威,不许再手抄一份(手抄过一次就混进了
-      // .webm(其实是 video 扩展、会被 video-qa 计费)与 .oga(服务端根本不收)。
-      // 断言落在**函数体**上,不是整份文件:注释里提一句 mimeOf 不算数。
-      expect(
-        audioGuard!,
-        "白名单不再由 core 的 mimeOf 算出来 —— 那是服务端真正定 MIME 的函数,手抄一份就会再混进 .webm 这种 video 扩展名",
-      ).toContain("AUDIO_UPLOAD_EXTENSIONS");
-      expect(
-        src,
-        "白名单又变回手抄的了 —— 要用 core 的 mimeOf 从 UPLOAD_EXTS 算出来",
-      ).toContain('mimeOf(ext).startsWith("audio/")');
+      // 白名单本身必须**是从 core 算出来的**,按语法树逐层拆,不是文本 toContain ——
+      // 文本断言钉不住「这个集合是怎么来的」,别处留一段死表达式当诱饵就能骗过去。
+      assertAudioWhitelistIsDerived("components/otto/edit/EditDesk.tsx");
       // ③ 守卫要真的拦在 finalize 之前,不是拦完还继续走。
       const guardIndex = handler!.indexOf("looksLikeAudio");
       const finalizeIndex = handler!.indexOf("finalizeCandidateUploads");
