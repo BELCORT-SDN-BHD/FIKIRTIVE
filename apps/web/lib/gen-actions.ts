@@ -436,7 +436,8 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
   // 上传进来的素材,`Generation.promptText` 是空串,而面板把那一列原样当 `prompt` 送来;
   // `genRequest.prompt` 要求非空,于是「对上传的图按 Animate」整单被拒、连 GenJob 都不建。
   // 兜底句由 `@fikirtive/core` 的 `assetActionPrompt` 给(那里也写着它为什么不是商家原话、
-  // 为什么不动钱、为什么 edit / template 没有兜底)。
+  // 为什么不动钱、为什么只有 animate 有兜底 —— regen / edit / template 一律没有:拿不到
+  // 兜底句的动作照旧被 `genRequest` 拒在 schema 那一步,$0、连 GenJob 都不建)。
   //
   // 位置是**在算键之前**:键是从请求体摘出来的,所以替换必须先发生 —— 同一个意图
   // (同一张上传图 + 同一个动作 + 同一档规格)两次提交才会摘出同一个键,落回既有的
