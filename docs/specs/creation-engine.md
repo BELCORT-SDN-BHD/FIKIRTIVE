@@ -112,6 +112,7 @@
 | 2026-09-02 | §7 实验 4 结案（零成本只读，`arkcli models get … --transform supported_params`）：mini 与 2.0 的 `supported_params` **唯一差异是 resolution 枚举**（mini=[480p,720p]，2.0=[480p,720p,1080p,4k]），其余 20 个参数逐字相同；价目表 ChargeItems 无任何音频计价项＝`generate_audio` 在价目层面不另计费；图片 lite `optimize_prompt_options.mode` support:false、pro 有 `optimize_prompt`(boolean, default true)。与规格预期一致，回填。原始 JSON 归档 preserved/creation-probe-2026-09-02/ | 回填（随 S2 批准追认） |
 | 2026-09-02 | §7 实验 3 **问题形状被实查改变**：在产图片型号 seedream-5-0（lite）没有可关的优化开关；只有 pro 有 `optimize_prompt`（默认 true）；我方请求体从不发该字段＝一直跑服务端默认。承重口径「`sentPromptText`＝商家批准稿逐字」**未被推翻**（它管我们发出的串；供应商改写记录在 `finalPromptText`）。剩余 A/B（pro 开/关各一张，$0.16–0.48，§7 已批额度内）在批 I 执行，结果决定 pro 请求体默认值 | 待批 I 回执 |
 | 2026-09-02 | 演员库归属模型（§8.0 拍板建议）：**每租户播种**——org 引导时把 5 名创始演员各建一份 CHARACTER 实体＋2 张参考图，字节经 `storage.put` 原样落各 owner；`Entity` 新增可空列 `catalogKey` 标记官方角色；**不引入跨租户共享实体**，租户边界零变化 | 随 S2 批准生效 |
+| 2026-09-02 | **Founder 裁决（分两阶段验收）**：§8 批 I（今晚：现有生成全链在新前端、1080p/pro 上架与报价前置、未定价拒绝、声音开关、演员库五人可经 `@` 引用、真人脸口径）作为**阶段一**单独出 S5 证据表由 Founder 勾选（只勾批 I 覆盖的验收行：A3/A4/A5/A6/A9/A10 后端半/A12 路由理由半）；批 II＋批 III 合为**阶段二**＝完整 Creation，另出 S5。Founder 原话：「这个当一个阶段，我验收；完整的 creation 当第二阶段」；并令「全速前进，不浪费 attention 与资源，做好 checkpoint 就报告然后继续」 | 2026-09-02 |
 
 ## 6. 改签记录
 
