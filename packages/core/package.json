@@ -8,6 +8,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./actor-library": {
+      "types": "./dist/actor-library.d.ts",
+      "default": "./dist/actor-library.js"
+    },
     "./brand-records": {
       "types": "./dist/brand-records.d.ts",
       "default": "./dist/brand-records.js"

@@ -98,12 +98,19 @@ model Entity {
   // live in refgen-actions before any mode=VARIANT spend. Safe from the D21 sweep
   // while a base-level ReferenceImage points at the same asset.
   baseAssetId         String?
+  // 演员库(docs/specs/creation-engine.md §8.1③):这一行是平台演员库里的哪一位。
+  // 商家自己建的元素永远是 null —— 它只是个**标记**,不是新的权限维度:租户隔离照旧
+  // 全靠 ownerId,每个 org 各播各的五名(Founder 2026-09-02 拍板「每租户播种」,
+  // 备选的跨租户共享实体会动租户语义,不做)。唯一约束保证同一个 org 里一位演员只入库
+  // 一次 —— 播种脚本的幂等就压在这个约束上,不靠先查后建。
+  catalogKey          String?
 
   referenceImages ReferenceImage[]
   variants        EntityVariant[]
   shotRefs        ShotEntityRef[]
 
   @@unique([id, ownerId])
+  @@unique([ownerId, catalogKey])
   @@index([ownerId, type, deletedAt])
 }
 

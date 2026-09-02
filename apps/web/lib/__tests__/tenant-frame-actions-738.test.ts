@@ -82,6 +82,9 @@ afterAll(async () => {
   for (const ownerId of [merchantOrg, neighbourOrg]) {
     await prisma.shotEntityRef.deleteMany({ where: { ownerId } });
     await prisma.shot.deleteMany({ where: { ownerId } });
+    // 演员库(CREATE-A10):org 引导时会给这个租户播五名演员,连带十张 ReferenceImage。
+    // 它们挂在下面这些 Entity 上,所以要先摘引用再删元素 —— 否则收尾会撞 FK。
+    await prisma.referenceImage.deleteMany({ where: { ownerId } });
     await prisma.entity.deleteMany({ where: { ownerId } });
     await prisma.refGenJob.deleteMany({ where: { ownerId } });
     await prisma.actionEvent.deleteMany({ where: { ownerId } });
